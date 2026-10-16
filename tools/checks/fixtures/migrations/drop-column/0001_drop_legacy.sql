@@ -1,0 +1,1 @@
+ALTER TABLE capybara.t DROP COLUMN IF EXISTS legacy;

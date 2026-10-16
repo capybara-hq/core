@@ -12,8 +12,9 @@
     "format": "biome check --write .",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "check": "echo \"no checks yet\"",
-    "changeset": "changeset"
+    "check": "pnpm check:migrations",
+    "changeset": "changeset",
+    "check:migrations": "tsx tools/checks/src/cli/migrations.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
@@ -21,6 +22,7 @@
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.3",
     "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }
