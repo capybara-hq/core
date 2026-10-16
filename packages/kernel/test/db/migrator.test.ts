@@ -72,14 +72,12 @@ describe("migrate", () => {
   it("creates a missing schema before _migrations", async () => {
     const schema = schemaName();
     const dir = await fixture({ "0001_a.sql": `create table if not exists ${schema}.a (id int);` });
-    const d = db();
     expect((await migrate(pg.url, { schema, dir })).applied).toEqual(["0001_a.sql"]);
   });
 
   it("rejects on checksum mismatch", async () => {
     const schema = schemaName();
     const dir = await fixture({ "0001_a.sql": `create table ${schema}.a (id int);` });
-    const d = db();
     await migrate(pg.url, { schema, dir });
     await writeFile(join(dir, "0001_a.sql"), `create table ${schema}.a (id int, x int);`);
     await expect(migrate(pg.url, { schema, dir })).rejects.toThrow(/0001_a\.sql/);

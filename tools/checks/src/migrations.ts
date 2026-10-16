@@ -74,6 +74,21 @@ function splitStatements(src: string): Statement[] {
       push("'");
       continue;
     }
+    if (c === '"') {
+      push('"');
+      i++;
+      while (i < src.length) {
+        if (src[i] === '"' && src[i + 1] === '"') i += 2;
+        else if (src[i] === '"') break;
+        else {
+          if (src[i] === "\n") line++;
+          i++;
+        }
+      }
+      i++;
+      push('"');
+      continue;
+    }
     if (c === "$") {
       const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(src.slice(i));
       if (m) {
@@ -100,8 +115,9 @@ function splitStatements(src: string): Statement[] {
 }
 
 const CREATE_RE =
-  /^CREATE\s+(?:(?:UNIQUE|UNLOGGED|TEMP|TEMPORARY)\s+)*(TABLE|INDEX|SCHEMA)\s+(?:CONCURRENTLY\s+)?(IF NOT EXISTS\b)?/i;
-const TX_RE = /^(BEGIN|START\s+TRANSACTION|COMMIT|ROLLBACK|SAVEPOINT)\b/i;
+  /^CREATE\s+(?:(?:UNIQUE|UNLOGGED|TEMP|TEMPORARY)\s+)*(TABLE|INDEX|SCHEMA|EXTENSION|SEQUENCE)\s+(?:CONCURRENTLY\s+)?(IF NOT EXISTS\b)?/i;
+const TX_RE =
+  /^(BEGIN|START\s+TRANSACTION|COMMIT|ROLLBACK|SAVEPOINT|END|ABORT|RELEASE|PREPARE\s+TRANSACTION)\b/i;
 const CONCURRENTLY_RE = /^(CREATE|DROP)\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b/i;
 
 /**
@@ -123,15 +139,35 @@ export function checkSql(file: string, source: string): Finding[] {
     if (create && !create[2]) {
       add(st.line, "idempotent", `CREATE ${create[1]?.toUpperCase()} 必须带 IF NOT EXISTS`);
     }
+    if (/^DO\b/i.test(t)) {
+      add(st.line, "do-block", "迁移不允许 DO 块（其内部语句无法静态审查）；拆成普通幂等语句");
+    }
+
+    let dropsColumn = false;
     if (/^DROP\b/i.test(t) && !/\bIF EXISTS\b/i.test(t)) {
       add(st.line, "idempotent", "DROP 必须带 IF EXISTS");
-    } else if (/^ALTER\b/i.test(t) && /\bDROP\s+(COLUMN|CONSTRAINT)\b(?!\s+IF EXISTS)/i.test(t)) {
-      add(st.line, "idempotent", "DROP COLUMN / DROP CONSTRAINT 必须带 IF EXISTS");
+    } else if (/^ALTER\s+TABLE\b/i.test(t)) {
+      for (const m of t.matchAll(
+        /\bDROP\s+(COLUMN\s+)?(IF\s+EXISTS\s+)?(NOT\s+NULL\b|DEFAULT\b|EXPRESSION\b|IDENTITY\b|CONSTRAINT\b|\S+)/gi,
+      )) {
+        const kw = (m[3] ?? "").toUpperCase();
+        if (!m[1] && /^(NOT\s+NULL|DEFAULT|EXPRESSION|IDENTITY)$/.test(kw)) continue;
+        if (!m[1] && kw === "CONSTRAINT") {
+          if (!/^\s*(IF\s+EXISTS\b)/i.test(t.slice((m.index ?? 0) + m[0].length))) {
+            add(st.line, "idempotent", "DROP CONSTRAINT 必须带 IF EXISTS");
+          }
+          continue;
+        }
+        dropsColumn = true;
+        if (!m[2]) add(st.line, "idempotent", "DROP COLUMN 必须带 IF EXISTS");
+      }
     }
 
     const destructive =
-      /^DROP\s+TABLE\b/i.test(t) ||
-      /\bDROP\s+COLUMN\b/i.test(t) ||
+      dropsColumn ||
+      /^DROP\s+(?:TABLE|SCHEMA)\b/i.test(t) ||
+      /^TRUNCATE\b/i.test(t) ||
+      /^DELETE\s+FROM\b/i.test(t) ||
       /\bRENAME\b/i.test(t) ||
       /\bALTER\s+(?:COLUMN\s+)?\S+\s+(?:SET\s+DATA\s+)?TYPE\b/i.test(t);
     if (destructive) {
