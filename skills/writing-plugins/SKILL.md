@@ -5,7 +5,7 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 
 # 写插件
 
-参考实现：`plugins/example-counter`（kv + db + queue + provide 全用到了，直接复制它起步）。
+参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。
 
 ## 硬约束（先看这个）
 
@@ -15,7 +15,7 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 | 不得使用 `setTimeout` / `setInterval` / `setImmediate` / `node:timers` | `pnpm check:plugin-state` | `plugin-timer` |
 | 模块顶层不得有 `let` / `var` / `new Map/Set/WeakMap/WeakSet` / 数组字面量 | `pnpm check:plugin-state` | `plugin-module-state` |
 | `ctx.kv` 写入必须带 `ttlSeconds`（类型层强制） | `pnpm typecheck` | — |
-| 队列名、job id 不含 `:`（BullMQ 限制） | 无检查，靠自觉 | — |
+| 队列名、job id 不含 `:`（BullMQ 限制） | 运行时：`ctx.queue.define` / `add` 直接抛 `TypeError` | — |
 
 `pnpm check` 一次跑全部。
 
@@ -55,6 +55,8 @@ export default definePlugin({
 
 `definePlugin` 在加载时校验清单，不合法直接抛错。
 
+`sdk` 范围由内核按 `SDK_VERSION`（等于 `@capybara-hq/plugin-sdk` 的 package 版本，有测试钉住）校验。0.x 阶段 `^0.1.0` 只匹配 `0.1.x`：**SDK 升 minor（如 0.2.0）时，仓库内所有插件的 `sdk` 范围都要同步改**，否则内核拒绝加载。
+
 ## 两级配置
 
 - **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON）。内核启动时按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
@@ -66,7 +68,7 @@ export default definePlugin({
 | 项 | 用途 | 要点 |
 |---|---|---|
 | `ctx.kv` | **临时、会过期**的状态：限流计数、短缓存、幂等键 | `set` / `incr` 必须带 `{ ttlSeconds }`；`incr` 每次只加 1，没有 `incrBy`。**持久数据（业务计数、账务）不要放 kv**：TTL 一到就没了，且与 db 双写无法保证一致 |
-| `ctx.db` | 持久数据 | Kysely，已切到本插件 schema，写表名**不带** schema 前缀；表由 `migrations/` 建，见 `skills/writing-migrations` |
+| `ctx.db` | 持久数据 | Kysely，已切到本插件 schema，写表名**不带** schema 前缀；表由 `migrations/` 建，见 `skills/writing-migrations`。**注意**：原始 SQL `` sql`...`.execute(ctx.db) `` 不经过 `withSchema`，会落到连接默认的 search_path（`public`）——要么用查询构建器，要么在 SQL 里写全 `plugin_<name>.<表>` |
 | `ctx.queue` | 延迟 / 异步 / 周期任务 | `define(name, handler)` 在 `setup` 里注册；`add(name, data, { delayMs, jobId })`；任务可能在任一副本执行，投递是**至少一次**（失败重试，最多 3 次），handler 必须幂等（见下）；名称与 jobId 不含 `:` |
 | `ctx.lock` | 互斥 | `acquire(key, { ttlMs })` 返回租约或 `null`；长任务要 `renew()`，用完 `release()` |
 | `ctx.bus` | 跨副本广播 | `publish` / `subscribe`，订阅返回取消函数；消息可能丢，别当唯一的结束信号 |

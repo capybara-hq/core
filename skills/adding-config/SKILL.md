@@ -57,6 +57,10 @@ description: 给内核新增或修改配置项（packages/kernel/src/config/sche
 
 `CAPYBARA_CONFIG_*` 与 `CAPYBARA_NACOS_*` 是配置来源自身的选择（`CAPYBARA_CONFIG_SOURCE=file|nacos`、`CAPYBARA_CONFIG_FILE`、`CAPYBARA_NACOS_SERVER` / `_NAMESPACE` / `_DATA_ID`），**不会**被当成配置项；新字段不要起 `config` 或 `nacos` 这种会撞前缀的顶层名。
 
-## 范围说明
+## 主密钥轮换
 
-主密钥轮换（`masterKeyPrevious` 的使用流程）不在 M0 范围内；schema 里保留了该字段，但不要在此基础上扩展轮换逻辑。
+内核用 `createKeyring(masterKey, masterKeyPrevious)` 建密钥环：新包装一律用 `masterKey`，`masterKeyPrevious` 只用于解包旧数据密钥。`rewrapDataKeys(db, keyring)`（从 `@capybara-hq/kernel` 导出，M0 尚无 CLI 子命令）把仍由旧主密钥包装的组织数据密钥改用当前主密钥重新包装，返回处理条数。顺序不能乱：
+
+1. 滚动发布，让**所有副本**都换上新密钥环：`masterKey` = 新钥，`masterKeyPrevious` = `[旧钥]`。
+2. 确认没有任何副本还只持有旧钥后，再执行 `rewrapDataKeys`（否则旧副本解不开已被新钥重包的数据密钥）。
+3. rewrap 完成后，再一次滚动发布把旧钥从 `masterKeyPrevious` 移除。
