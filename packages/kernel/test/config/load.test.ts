@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ConfigError, loadConfig, selectConfigSource } from "../../src/index.js";
+import { ConfigError, envOverrides, loadConfig, selectConfigSource } from "../../src/index.js";
 
 const MASTER_KEY = Buffer.alloc(32, 1).toString("base64");
 
@@ -74,5 +74,66 @@ describe("loadConfig", () => {
   it("JSON values are parsed", async () => {
     const config = await loadConfig(baseEnv({ CAPYBARA_PLUGINS: '["a","b"]' }));
     expect(config.plugins).toEqual(["a", "b"]);
+  });
+});
+
+describe("envOverrides", () => {
+  it("keeps strings that do not round-trip as numbers", () => {
+    const env = {
+      CAPYBARA_PLUGIN_CONFIG__X__A: "0123",
+      CAPYBARA_PLUGIN_CONFIG__X__B: "1e3",
+      CAPYBARA_PLUGIN_CONFIG__X__C: "12345678901234567890",
+      CAPYBARA_PLUGIN_CONFIG__X__D: "1.0",
+      CAPYBARA_PLUGIN_CONFIG__X__E: "123456",
+      CAPYBARA_PLUGIN_CONFIG__X__F: "true",
+    };
+    expect(envOverrides(env)).toEqual({
+      pluginConfig: {
+        x: {
+          a: "0123",
+          b: "1e3",
+          c: "12345678901234567890",
+          d: "1.0",
+          e: 123456,
+          f: true,
+        },
+      },
+    });
+  });
+
+  it("ignores CONFIG_* and NACOS_* keys", () => {
+    expect(
+      envOverrides({
+        CAPYBARA_CONFIG_SOURCE: "file",
+        CAPYBARA_CONFIG_FILE: "/x",
+        CAPYBARA_NACOS_SERVER: "h",
+        CAPYBARA_HTTP__PORT: "1",
+      }),
+    ).toEqual({ http: { port: 1 } });
+  });
+});
+
+describe("file source errors", () => {
+  it("missing file names the path", async () => {
+    const err = await loadConfig(baseEnv({ CAPYBARA_CONFIG_FILE: "/nonexistent/c.yaml" })).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as Error).message).toContain("/nonexistent/c.yaml");
+  });
+
+  it("malformed YAML does not leak source", async () => {
+    const file = writeYaml("db:\n  url: SUPERSECRET123\n bad: [unclosed\n");
+    const err = await loadConfig(baseEnv({ CAPYBARA_CONFIG_FILE: file })).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as Error).message).toContain(file);
+    expect((err as Error).message).not.toContain("SUPERSECRET123");
+  });
+
+  it("list root is rejected", async () => {
+    const file = writeYaml("- a\n- b\n");
+    await expect(loadConfig(baseEnv({ CAPYBARA_CONFIG_FILE: file }))).rejects.toThrow(
+      /root must be a mapping/,
+    );
   });
 });

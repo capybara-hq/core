@@ -6,11 +6,15 @@ function snakeToCamel(segment: string): string {
 }
 
 function parseValue(raw: string): unknown {
+  let parsed: unknown;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch {
     return raw;
   }
+  if (typeof parsed === "number") return String(parsed) === raw ? parsed : raw;
+  if (typeof parsed === "string") return raw;
+  return parsed;
 }
 
 /** 把 `CAPYBARA_A__B_C=x` 形式的环境变量转成嵌套对象 `{ a: { bC: x } }`。 */

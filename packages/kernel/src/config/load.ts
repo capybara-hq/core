@@ -47,7 +47,8 @@ export function deepMerge(base: unknown, override: unknown): unknown {
 export async function loadConfig(env: NodeJS.ProcessEnv): Promise<KernelConfig> {
   const source = selectConfigSource(env);
   const raw = await source.load();
-  const merged = deepMerge(isPlainObject(raw) ? raw : {}, envOverrides(env));
+  if (!isPlainObject(raw)) throw new ConfigError("config file root must be a mapping");
+  const merged = deepMerge(raw, envOverrides(env));
   const result = KernelConfigSchema.safeParse(merged);
   if (!result.success) {
     const lines = result.error.issues.map(
