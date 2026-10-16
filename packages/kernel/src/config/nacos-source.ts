@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { setTimeout as sleepFor } from "node:timers/promises";
 import { parse, YAMLParseError } from "yaml";
-import { ConfigError, type ConfigSource } from "./load.js";
+import { ConfigError, type ConfigSource } from "./types.js";
 
 /** Nacos 配置来源的参数。 */
 export interface NacosSourceOptions {
@@ -10,10 +11,14 @@ export interface NacosSourceOptions {
   /** 默认 `DEFAULT_GROUP`。 */
   group?: string;
   fetch?: typeof fetch;
+  /** 单次读取配置的超时，默认 10000ms；超时抛 ConfigError（启动快速失败）。 */
+  timeoutMs?: number;
+  /** watch 出错后的退避间隔，默认 1000ms。 */
+  backoffMs?: number;
 }
 
 const LONG_POLL_MS = 30_000;
-const BACKOFF_MS = 1_000;
+const LISTEN_TIMEOUT_MS = LONG_POLL_MS + 10_000;
 
 function normalizeServer(server: string): string {
   const withScheme = /^https?:\/\//i.test(server) ? server : `http://${server}`;
@@ -29,18 +34,21 @@ export function createNacosSource(opts: NacosSourceOptions): ConfigSource {
   const server = normalizeServer(opts.server);
   const group = opts.group ?? "DEFAULT_GROUP";
   const doFetch = opts.fetch ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const backoffMs = opts.backoffMs ?? 1_000;
   const where = `Nacos '${server}' dataId '${opts.dataId}'`;
+  /** 最近一次读到的内容 md5：load() 记录，watch() 据此起步，避免漏掉 load 与 watch 之间的变更。 */
+  let lastMd5: string | undefined;
 
   async function fetchText(signal?: AbortSignal): Promise<string> {
-    const qs = new URLSearchParams({
-      dataId: opts.dataId,
-      group,
-      namespaceId: opts.namespace,
-    });
+    const qs = new URLSearchParams({ dataId: opts.dataId, group, namespaceId: opts.namespace });
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let res: Response;
     try {
-      res = await doFetch(`${server}/nacos/v2/cs/config?${qs}`, signal ? { signal } : {});
+      res = await doFetch(`${server}/nacos/v2/cs/config?${qs}`, { signal: combined });
     } catch {
+      if (timeout.aborted) throw new ConfigError(`${where} timed out after ${timeoutMs}ms`);
       throw new ConfigError(`cannot reach ${where}`);
     }
     if (res.status !== 200) {
@@ -50,6 +58,7 @@ export function createNacosSource(opts: NacosSourceOptions): ConfigSource {
     try {
       body = (await res.json()) as typeof body;
     } catch {
+      if (timeout.aborted) throw new ConfigError(`${where} timed out after ${timeoutMs}ms`);
       throw new ConfigError(`${where} returned a non-JSON response`);
     }
     if (body.code !== 0 || typeof body.data !== "string") {
@@ -71,57 +80,71 @@ export function createNacosSource(opts: NacosSourceOptions): ConfigSource {
     }
   }
 
-  async function listen(lastMd5: string, signal: AbortSignal): Promise<boolean> {
-    const entry = [opts.dataId, group, lastMd5, opts.namespace].join("\u0002");
+  async function listen(md5Sent: string, signal: AbortSignal): Promise<boolean> {
+    const entry = [opts.dataId, group, md5Sent, opts.namespace].join("\u0002");
     const body = new URLSearchParams({ "Listening-Configs": `${entry}\u0001` });
-    const res = await doFetch(`${server}/nacos/v1/cs/configs/listener`, {
-      method: "POST",
-      headers: {
-        "Long-Pulling-Timeout": String(LONG_POLL_MS),
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      body,
-      signal,
-    });
-    if (res.status !== 200) throw new Error(`listener HTTP ${res.status}`);
+    let res: Response;
+    try {
+      res = await doFetch(`${server}/nacos/v1/cs/configs/listener`, {
+        method: "POST",
+        headers: {
+          "Long-Pulling-Timeout": String(LONG_POLL_MS),
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(LISTEN_TIMEOUT_MS)]),
+      });
+    } catch {
+      throw new ConfigError(`cannot reach ${where} (listener)`);
+    }
+    if (res.status !== 200) throw new ConfigError(`${where} listener returned HTTP ${res.status}`);
     return (await res.text()).trim().length > 0;
   }
 
   return {
     async load(): Promise<unknown> {
-      return parseYaml(await fetchText());
+      const text = await fetchText();
+      lastMd5 = md5(text);
+      return parseYaml(text);
     },
 
-    watch(onChange: (raw: unknown) => void): () => void {
+    watch(onChange, onError): () => void {
       const ac = new AbortController();
-      const sleep = (ms: number) =>
-        new Promise<void>((resolve) => {
-          const t = setTimeout(resolve, ms);
-          ac.signal.addEventListener(
-            "abort",
-            () => {
-              clearTimeout(t);
-              resolve();
-            },
-            { once: true },
-          );
-        });
+      const report = (e: unknown): void => {
+        if (ac.signal.aborted) return;
+        const err = e instanceof ConfigError ? e : new ConfigError(`watch failed for ${where}`);
+        try {
+          onError?.(err);
+        } catch {
+          // 错误回调自身的异常不能打断监听循环
+        }
+      };
       void (async () => {
-        let lastMd5: string | undefined;
         while (!ac.signal.aborted) {
           try {
-            if (lastMd5 === undefined) {
-              lastMd5 = md5(await fetchText(ac.signal));
-            }
-            const changed = await listen(lastMd5, ac.signal);
-            if (!changed) continue;
+            if (lastMd5 === undefined) lastMd5 = md5(await fetchText(ac.signal));
+            if (!(await listen(lastMd5, ac.signal))) continue;
             const text = await fetchText(ac.signal);
-            lastMd5 = md5(text);
+            const next = md5(text);
+            if (next === lastMd5) continue;
+            lastMd5 = next;
+            const raw = parseYaml(text);
             if (ac.signal.aborted) return;
-            onChange(parseYaml(text));
-          } catch {
+            try {
+              onChange(raw);
+            } catch (e) {
+              throw new ConfigError(
+                `onChange handler failed for ${where}: ${e instanceof Error ? e.name : "error"}`,
+              );
+            }
+          } catch (e) {
             if (ac.signal.aborted) return;
-            await sleep(BACKOFF_MS);
+            report(e);
+            try {
+              await sleepFor(backoffMs, undefined, { signal: ac.signal });
+            } catch {
+              return;
+            }
           }
         }
       })();

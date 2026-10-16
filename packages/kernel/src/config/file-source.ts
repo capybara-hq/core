@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { parse, YAMLParseError } from "yaml";
-import { ConfigError, type ConfigSource } from "./load.js";
+import { ConfigError, type ConfigSource } from "./types.js";
 
 /** 从 YAML 文件读取配置；未指定路径时返回空对象（纯环境变量配置）。错误信息不含文件内容。 */
 export function fileSource(path: string | undefined): ConfigSource {

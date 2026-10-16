@@ -146,6 +146,118 @@ afterEach(() => {
   for (const c of cancels.splice(0)) c();
 });
 
+describe("nacos source robustness", () => {
+  it("watch delivers a change that landed between load() and watch()", async () => {
+    const s = await stub("http:\n  port: 9200\n");
+    const src = createNacosSource({ server: s.url, namespace: "ns", dataId: "capybara.yaml" });
+    await src.load();
+    s.setContent("http:\n  port: 9300\n");
+    const got = await new Promise<unknown>((resolve) => {
+      cancels.push(src.watch?.(resolve) as () => void);
+    });
+    expect(got).toEqual({ http: { port: 9300 } });
+  });
+
+  it("backoff does not leak abort listeners and cancel stops requests", async () => {
+    const s = await stub("a: 1\n");
+    let listenerCalls = 0;
+    const warnings: string[] = [];
+    const onWarn = (w: Error) => warnings.push(w.name);
+    process.on("warning", onWarn);
+    const src = createNacosSource({
+      server: s.url,
+      namespace: "ns",
+      dataId: "capybara.yaml",
+      backoffMs: 1,
+      fetch: async (input, init) => {
+        if (String(input).includes("/listener")) {
+          listenerCalls++;
+          return new Response("x", { status: 500 });
+        }
+        return fetch(input, init);
+      },
+    });
+    const errors: Error[] = [];
+    await src.load();
+    const cancel = src.watch?.(
+      () => {},
+      (e) => errors.push(e),
+    ) as () => void;
+    cancels.push(cancel);
+    while (listenerCalls < 15) await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setImmediate(r));
+    process.off("warning", onWarn);
+    expect(warnings).not.toContain("MaxListenersExceededWarning");
+    expect(errors[0]).toBeInstanceOf(ConfigError);
+    cancel();
+    await new Promise((r) => setTimeout(r, 20));
+    const n = listenerCalls;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(listenerCalls).toBe(n);
+  });
+
+  it("load times out when nacos never responds", async () => {
+    const hang = createServer(() => {});
+    await new Promise<void>((r) => hang.listen(0, "127.0.0.1", r));
+    const port = (hang.address() as AddressInfo).port;
+    try {
+      const src = createNacosSource({
+        server: `127.0.0.1:${port}`,
+        namespace: "ns",
+        dataId: "capybara.yaml",
+        timeoutMs: 100,
+      });
+      const err = await src.load().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConfigError);
+      expect((err as Error).message).toMatch(/capybara\.yaml.*timed out|timed out.*capybara\.yaml/);
+    } finally {
+      hang.closeAllConnections();
+      await new Promise<void>((r) => hang.close(() => r()));
+    }
+  });
+
+  it("onError fires for invalid yaml pushed during watch, scrubbed", async () => {
+    const s = await stub("a: 1\n");
+    const src = createNacosSource({
+      server: s.url,
+      namespace: "ns",
+      dataId: "capybara.yaml",
+      backoffMs: 20,
+    });
+    await src.load();
+    const err = new Promise<Error>((resolve) => {
+      cancels.push(src.watch?.(() => {}, resolve) as () => void);
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    s.setContent("a: [unclosed TOPSECRET\n");
+    const e = await err;
+    expect(e).toBeInstanceOf(ConfigError);
+    expect(e.message).not.toContain("TOPSECRET");
+  });
+
+  it("onChange exceptions go to onError", async () => {
+    const s = await stub("a: 1\n");
+    const src = createNacosSource({
+      server: s.url,
+      namespace: "ns",
+      dataId: "capybara.yaml",
+      backoffMs: 20,
+    });
+    await src.load();
+    const err = new Promise<Error>((resolve) => {
+      cancels.push(
+        src.watch?.(() => {
+          throw new Error("boom SECRET");
+        }, resolve) as () => void,
+      );
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    s.setContent("a: 2\n");
+    const e = await err;
+    expect(e.message).not.toContain("SECRET");
+  });
+});
+
 describe("loadConfig with nacos", () => {
   it("nacos values apply and env still overrides", async () => {
     const s = await stub("http:\n  port: 9200\nlog:\n  level: debug\n");

@@ -2,20 +2,9 @@ import { envOverrides } from "./env.js";
 import { fileSource } from "./file-source.js";
 import { createNacosSource } from "./nacos-source.js";
 import { type KernelConfig, KernelConfigSchema } from "./schema.js";
+import { ConfigError, type ConfigSource } from "./types.js";
 
-/** 配置来源：`load` 取原始配置，`watch` 可选地订阅变更并返回取消函数。 */
-export interface ConfigSource {
-  load(): Promise<unknown>;
-  watch?(onChange: (raw: unknown) => void): () => void;
-}
-
-/** 配置加载或校验失败。 */
-export class ConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ConfigError";
-  }
-}
+export { ConfigError, type ConfigSource };
 
 /** 按 `CAPYBARA_CONFIG_SOURCE` 选择配置来源，默认 `file`。 */
 export function selectConfigSource(env: NodeJS.ProcessEnv): ConfigSource {
