@@ -111,3 +111,26 @@ describe("真实正例与反例", () => {
     expect(checkPluginState([d]).map((x) => x.rule)).toEqual(["parse-error"]);
   });
 });
+
+describe("绕过形态", () => {
+  it("改名解构、Reflect.get 字符串、简写解构都报 plugin-timer", () => {
+    const f = checkPluginState([fixture("plugin-bypass-state")]);
+    expect(f.map((x) => [x.line, x.rule])).toEqual([
+      [1, "plugin-timer"],
+      [2, "plugin-timer"],
+      [3, "plugin-timer"],
+    ]);
+  });
+
+  it("名叫 test / dist 的子目录不再被跳过；插件根的 test/ 与 *.test.ts 仍跳过", () => {
+    const f = checkPluginState([fixture("plugin-bypass-test-dir")]);
+    const rel = [...new Set(f.map((x) => x.file.split("plugin-bypass-test-dir/")[1]))].sort();
+    expect(rel).toEqual(["src/dist/impl.ts", "src/test/impl.ts"]);
+    expect(f.map((x) => x.rule).sort()).toEqual([
+      "plugin-module-state",
+      "plugin-module-state",
+      "plugin-timer",
+      "plugin-timer",
+    ]);
+  });
+});

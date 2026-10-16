@@ -12,7 +12,7 @@
     "format": "biome check --write .",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "check": "pnpm check:migrations && pnpm check:deps && pnpm check:plugin-state && pnpm check:config-docs",
+    "check": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/all.ts",
     "changeset": "changeset",
     "check:migrations": "tsx tools/checks/src/cli/migrations.ts",
     "check:deps": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/deps.ts",

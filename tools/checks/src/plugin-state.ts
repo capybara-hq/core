@@ -118,14 +118,23 @@ function timerFindings(f: ParsedFile): Finding[] {
           p.type === "MethodDefinition") &&
         key === "key" &&
         !p.computed
-      )
+      ) {
         return;
+      }
       if (p.type.startsWith("TS")) return;
       if (/^(Import|Export)/.test(p.type)) return; // 从 timers 导入的写法由上面的 import 检查报
       add(n);
-    } else if (n.type === "MemberExpression" && n.computed) {
-      const name = stringValue(n.property);
-      if (name !== undefined && TIMERS.has(name)) add(n);
+    } else if (n.type === "ObjectPattern") {
+      // const { setTimeout: st } = globalThis：键名指向定时器，改名后就认不出了。
+      for (const prop of n.properties as Node[]) {
+        const k = prop.type === "Property" ? (prop.key as Node) : undefined;
+        if (k && !prop.computed && k.type === "Identifier" && TIMERS.has(k.name as string)) add(k);
+      }
+    } else if (n.type === "Literal" || n.type === "TemplateLiteral") {
+      // 任何恰好等于定时器名的字符串（Reflect.get(globalThis, "setInterval")、globalThis["setTimeout"]）。
+      // 刻意保守：误报用豁免之外的办法解决——换个写法。
+      const v = stringValue(n);
+      if (v !== undefined && TIMERS.has(v)) add(n);
     } else if (n.type === "MemberExpression" && !n.computed) {
       const prop = n.property as Node;
       if (prop.type === "Identifier" && TIMERS.has(prop.name as string)) add(n);
@@ -139,12 +148,21 @@ function timerFindings(f: ParsedFile): Finding[] {
  * - plugin-timer：setTimeout / setInterval / setImmediate（含 globalThis.x、别名、timers 模块导入）；
  * - plugin-module-state：模块顶层 let / var，或 const 初始化为 new Map/Set/WeakMap/WeakSet 或数组字面量。
  * 豁免：`// capybara:allow-module-state <原因>`（行尾或紧邻上一行，原因必填）。
- * 已知缺口：顶层对象字面量、类静态字段、块内 var 提升、非字面量动态 import。
+ * 定时器识别：标识符引用（含别名赋值）、`x.setTimeout` / `x["setTimeout"]`、解构键
+ * `{ setTimeout: st }`、任何恰好等于定时器名的字符串字面量、timers 模块导入（import/require/动态 import）。
+ * 扫描范围：插件目录下所有源码，node_modules 任何深度都跳过；dist 与 test/tests/__tests__ 只在插件根跳过
+ * （更深处同名目录照常扫描，否则 `src/test/impl.ts` 就能绕过）；*.test.* / *.spec.* 不扫。
+ *
+ * 已知缺口（M0 不做，靠评审与双副本测试兜底）：顶层对象字面量（`const x = {}`）、`Array.from(...)` /
+ * `Object.create(...)` 等工厂调用、`export default new Map()`、IIFE 闭包里的状态、namespace 内的 let、
+ * 类静态可变字段、块内 `var` 提升、`queueMicrotask` / `process.nextTick` 递归循环、
+ * 运行时拼出的计算键（`g["set" + "Timeout"]` 之外的动态拼法）与非字面量动态 import。
  */
 export function checkPluginState(pluginDirs: string[]): Finding[] {
   const findings: Finding[] = [];
   for (const dir of pluginDirs) {
-    for (const file of listSourceFiles(dir)) {
+    for (const { file, isTest } of listSourceFiles(dir)) {
+      if (isTest) continue;
       const parsed = parseFile(file);
       if (isParseError(parsed)) {
         findings.push(parsed);
@@ -152,7 +170,12 @@ export function checkPluginState(pluginDirs: string[]): Finding[] {
       }
       const all = [...moduleStateFindings(parsed), ...timerFindings(parsed)];
       all.sort((a, b) => a.line - b.line);
-      findings.push(...all);
+      const seen = new Set<string>();
+      for (const x of all) {
+        const k = `${x.line}|${x.rule}`;
+        if (!seen.has(k)) findings.push(x);
+        seen.add(k);
+      }
     }
   }
   return findings;

@@ -1,0 +1,20 @@
+{
+  "name": "p",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "kern": "workspace:@capybara-hq/kernel@*",
+    "k2": "npm:@capybara-hq/kernel@0.1.0",
+    "k3": "link:../../../packages/kernel",
+    "ok": "npm:@capybara-hq/plugin-sdk@*",
+    "fine": "link:./vendor"
+  },
+  "optionalDependencies": { "@capybara-hq/kernel": "*" },
+  "bundleDependencies": ["@capybara-hq/kernel"],
+  "imports": {
+    "#k": "@capybara-hq/kernel",
+    "#up": "../../../packages/kernel/src/index.js",
+    "#ok": "./src/ok.js"
+  },
+  "exports": { ".": "./src/index.ts", "./leak": "@capybara-hq/kernel" }
+}

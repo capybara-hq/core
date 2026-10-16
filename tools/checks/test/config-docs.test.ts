@@ -79,3 +79,21 @@ describe("checkConfigDocs", () => {
     ]);
   });
 });
+
+describe("secret 对象节点的后代默认值不打印", () => {
+  it("对象节点标 secret", () => {
+    const s = z.object({
+      creds: z
+        .object({
+          pw: z
+            .string()
+            .default("LEAKY-DEFAULT")
+            .meta(meta({ description: "pw" })),
+        })
+        .meta(meta({ secret: true, description: "creds" })),
+    });
+    const md = renderConfigDocs(s);
+    expect(md).not.toContain("LEAKY-DEFAULT");
+    expect(md).toMatch(/\| `creds.pw` .* \| — \| 否 \| 是 \|/);
+  });
+});

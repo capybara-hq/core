@@ -63,12 +63,22 @@ function unwrap(schema: core.$ZodType): { inner: core.$ZodType; meta: FieldMeta 
 }
 
 /** 列出 schema 的所有叶子字段（对象递归展开；数组、record 等视作叶子）。 */
-export function configFields(schema: core.$ZodType, prefix = ""): ConfigField[] {
-  const { inner, meta } = unwrap(schema);
+export function configFields(
+  schema: core.$ZodType,
+  prefix = "",
+  inheritedSecret = false,
+): ConfigField[] {
+  const { inner, meta: own } = unwrap(schema);
+  const secret = inheritedSecret || own?.secret === true;
+  // 对象节点上标的 secret 对所有后代叶子生效，否则嵌套字段的默认值会被文档/日志漏出。
+  const meta: FieldMeta | undefined =
+    secret && own?.secret !== true
+      ? { ...own, secret: true, description: own?.description ?? "" }
+      : own;
   if (inner._zod.def.type === "object") {
     const shape = (inner._zod.def as unknown as { shape: Record<string, core.$ZodType> }).shape;
     return Object.entries(shape).flatMap(([k, v]) =>
-      configFields(v, prefix ? `${prefix}.${k}` : k),
+      configFields(v, prefix ? `${prefix}.${k}` : k, secret),
     );
   }
   return [{ path: prefix, meta, schema }];

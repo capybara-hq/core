@@ -14,25 +14,38 @@ export interface Node {
 
 const SOURCE_EXT = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
-const SKIP_DIRS = new Set(["node_modules", "dist", "test", "tests", "__tests__"]);
+/** 只在插件根目录下才有特殊含义的目录名（更深处同名目录是普通源码目录，必须扫描）。 */
+const ROOT_TEST_DIRS = new Set(["test", "tests", "__tests__"]);
 
-/** 递归列出目录下的源码文件，跳过 node_modules / dist / test 目录与 *.test.* 文件。结果有序。 */
-export function listSourceFiles(dir: string): string[] {
+export interface SourceFile {
+  file: string;
+  /** 测试文件：插件根的 test/ 目录下的文件，或 *.test.* / *.spec.* 文件。 */
+  isTest: boolean;
+}
+
+/**
+ * 递归列出目录下的源码文件。node_modules 在任何深度都跳过；dist 只在根目录跳过（构建产物），
+ * test / tests / __tests__ 目录只在根目录算测试（标 isTest），更深处同名目录照常当源码扫描，
+ * 否则 `src/test/impl.ts` 再 re-export 就能绕过全部检查。结果有序。
+ */
+export function listSourceFiles(dir: string): SourceFile[] {
   if (!existsSync(dir)) return [];
-  const out: string[] = [];
-  const visit = (d: string) => {
+  const out: SourceFile[] = [];
+  const visit = (d: string, depth: number, inTestRoot: boolean) => {
     for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) =>
       a.name.localeCompare(b.name),
     )) {
       const p = join(d, e.name);
       if (e.isDirectory()) {
-        if (!SKIP_DIRS.has(e.name)) visit(p);
-      } else if (e.isFile() && SOURCE_EXT.test(e.name) && !TEST_FILE.test(e.name)) {
-        out.push(p);
+        if (e.name === "node_modules") continue;
+        if (depth === 0 && e.name === "dist") continue;
+        visit(p, depth + 1, inTestRoot || (depth === 0 && ROOT_TEST_DIRS.has(e.name)));
+      } else if (e.isFile() && SOURCE_EXT.test(e.name)) {
+        out.push({ file: p, isTest: inTestRoot || TEST_FILE.test(e.name) });
       }
     }
   };
-  visit(dir);
+  visit(dir, 0, false);
   return out;
 }
 
@@ -111,9 +124,14 @@ export function walk(
   }
 }
 
-/** 取字符串字面量（或无插值模板字符串）的值；其他表达式返回 undefined。 */
+/** 取字符串字面量、无插值模板字符串、或它们的 `+` 拼接的值；其他表达式返回 undefined。 */
 export function stringValue(n: unknown): string | undefined {
   if (!isNode(n)) return undefined;
+  if (n.type === "BinaryExpression" && n.operator === "+") {
+    const l = stringValue(n.left);
+    const r = stringValue(n.right);
+    return l !== undefined && r !== undefined ? l + r : undefined;
+  }
   if (n.type === "Literal" && typeof n.value === "string") return n.value;
   if (n.type === "TemplateLiteral") {
     const quasis = n.quasis as { value: { cooked: string | null } }[];

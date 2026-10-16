@@ -64,3 +64,50 @@ describe("checkDeps", () => {
     expect(checkDeps([], [sdkSrc])).toEqual([]);
   });
 });
+
+describe("绕过形态", () => {
+  const f = checkDeps([fixture("plugin-bypass-deps")]);
+  const pkg = f.filter((x) => x.file.endsWith("package.json"));
+  const at = (name: string) => f.filter((x) => x.file.endsWith(name));
+
+  it("package.json：别名、optional/bundle 依赖、link 出目录、imports/exports 映射", () => {
+    expect(pkg.map((x) => `${x.rule}|${x.message.split("：")[0]}`).sort()).toEqual(
+      [
+        "plugin-imports-kernel|dependencies 中的 kern",
+        "plugin-imports-kernel|dependencies 中的 k2",
+        "plugin-imports-outside|dependencies 中的 k3",
+        "plugin-imports-kernel|optionalDependencies 中的 @capybara-hq/kernel",
+        "plugin-imports-kernel|bundleDependencies 中的 @capybara-hq/kernel",
+        "plugin-imports-kernel|imports 中的 #k",
+        "plugin-imports-outside|imports 中的 #up",
+        "plugin-imports-kernel|exports 中的 ./leak",
+      ].sort(),
+    );
+    expect(pkg.every((x) => x.line > 1)).toBe(true);
+  });
+
+  it("源码：c.mts 的包名、file: URL、依赖别名、# 子路径（解析 imports 映射）；放行的 #ok", () => {
+    expect(at("c.mts").map((x) => [x.line, x.rule])).toEqual([
+      [1, "plugin-imports-kernel"],
+      [2, "plugin-imports-outside"],
+      [3, "plugin-imports-kernel"],
+      [4, "plugin-imports-kernel"],
+    ]);
+  });
+
+  it("源码：import x = require()、字面量拼接的动态 import", () => {
+    expect(at("c.cts").map((x) => x.line)).toEqual([1]);
+    expect(at("b.cjs").map((x) => x.line)).toEqual([1, 3]);
+  });
+
+  it("test 目录里的 @capybara-hq/testing 放行，kernel 仍报；src 与 dist 子目录不再被跳过", () => {
+    const g = checkDeps([fixture("plugin-bypass-test-dir")]);
+    const rel = g.map((x) => x.file.split("plugin-bypass-test-dir/")[1]).sort();
+    expect(rel).toEqual(["src/dist/impl.ts", "src/test/impl.ts", "test/bad.ts"]);
+  });
+
+  it("sdk：相对路径逃出 plugin-sdk 包目录 -> sdk-imports-internal", () => {
+    const s = checkDeps([], [fixture("sdk-escape")]);
+    expect(s.map((x) => [x.rule, x.line])).toEqual([["sdk-imports-internal", 2]]);
+  });
+});

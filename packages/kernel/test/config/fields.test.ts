@@ -28,6 +28,38 @@ describe("configFields", () => {
   });
 });
 
+describe("secret 沿对象节点向下传播", () => {
+  it("对象节点标 secret -> 所有后代叶子视为 secret", () => {
+    const s = z.object({
+      creds: z
+        .object({
+          user: z
+            .string()
+            .default("u")
+            .meta(meta({ description: "user" })),
+          nested: z.object({
+            pw: z
+              .string()
+              .default("p")
+              .meta(meta({ description: "pw" })),
+          }),
+        })
+        .meta(meta({ secret: true, description: "creds" })),
+      open: z
+        .string()
+        .default("o")
+        .meta(meta({ description: "open" })),
+    });
+    const by = new Map(configFields(s).map((f) => [f.path, f.meta?.secret === true]));
+    expect(by.get("creds.user")).toBe(true);
+    expect(by.get("creds.nested.pw")).toBe(true);
+    expect(by.get("open")).toBe(false);
+    expect(
+      secretValues(s, { creds: { user: "u", nested: { pw: "p" } }, open: "o" }).sort(),
+    ).toEqual(["p", "u"]);
+  });
+});
+
 describe("changedPaths / secretValues", () => {
   const base = KernelConfigSchema.parse({
     db: { url: "postgres://u:pw@h/db" },
