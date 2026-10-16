@@ -11,8 +11,8 @@
     "capybara": "./src/cli.ts"
   },
   "scripts": {
-    "start": "tsx --conditions=source src/cli.ts start",
-    "migrate": "tsx --conditions=source src/cli.ts migrate"
+    "start": "tsx --conditions=@capybara-hq/source src/cli.ts start",
+    "migrate": "tsx --conditions=@capybara-hq/source src/cli.ts migrate"
   },
   "dependencies": {
     "@capybara-hq/kernel": "workspace:*",
