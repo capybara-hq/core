@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createKeyring, createSecrets, rewrapDataKeys } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -72,16 +72,21 @@ describe("ctx.secrets", () => {
     const s = createSecrets(db, createKeyring(k1, []), "ns-b");
     await s.set("orgX", "k", "v");
     await s.set("orgY", "k", "v");
+    const ring = createKeyring(k1, []);
     const rows = await db
       .withSchema("capybara")
       .selectFrom("org_data_keys")
-      .select(["org_id", "wrapped_key"])
+      .select(["org_id", "wrapped_key", "master_key_id"])
       .where("org_id", "in", ["orgX", "orgY"])
       .execute();
     expect(rows).toHaveLength(2);
-    const [r0, r1] = rows;
-    if (!r0 || !r1) throw new Error("expected 2 rows");
-    expect(Buffer.from(r0.wrapped_key).equals(Buffer.from(r1.wrapped_key))).toBe(false);
+    // 比较解包后的明文数据密钥（包装后的字节因随机 IV 总是不同，比它没有意义）
+    const [d0, d1] = rows.map((r) =>
+      ring.unwrap(r.master_key_id, Buffer.from(r.wrapped_key), `org_data_key\0${r.org_id}`),
+    );
+    if (!d0 || !d1) throw new Error("expected 2 rows");
+    expect(d0).toHaveLength(32);
+    expect(d0.equals(d1)).toBe(false);
   });
 
   it("密文被篡改一个字节 → get 抛错", async () => {
@@ -136,16 +141,23 @@ describe("ctx.secrets", () => {
       const ring = createKeyring(k1, []);
       const s1 = createSecrets(db, ring, "ns-race");
       const s2 = createSecrets(db2, ring, "ns-race");
-      await Promise.all([s1.set("raceorg", "a", "from-1"), s2.set("raceorg", "b", "from-2")]);
-      expect(await s2.get("raceorg", "a")).toBe("from-1");
-      expect(await s1.get("raceorg", "b")).toBe("from-2");
+      // 预热 db2 的连接，避免它总因建连慢而落后、竞争实际没发生
+      await sql`select 1`.execute(db2);
+      const orgs = Array.from({ length: 10 }, (_, i) => `raceorg-${i}`);
+      await Promise.all(
+        orgs.flatMap((o) => [s1.set(o, "a", `from-1-${o}`), s2.set(o, "b", `from-2-${o}`)]),
+      );
+      for (const o of orgs) {
+        expect(await s2.get(o, "a")).toBe(`from-1-${o}`);
+        expect(await s1.get(o, "b")).toBe(`from-2-${o}`);
+      }
       const n = await db
         .withSchema("capybara")
         .selectFrom("org_data_keys")
         .select("org_id")
-        .where("org_id", "=", "raceorg")
+        .where("org_id", "in", orgs)
         .execute();
-      expect(n).toHaveLength(1);
+      expect(n).toHaveLength(orgs.length);
     } finally {
       await db2.destroy();
     }
