@@ -1,0 +1,68 @@
+import {
+  CAPABILITY_CARDINALITY,
+  type CapabilityRef,
+  type PluginManifest,
+  parseCapability,
+} from "@capybara-hq/plugin-sdk";
+import semver from "semver";
+
+/** 插件依赖解析失败（信息列出插件名与能力名）。 */
+export class PluginResolveError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PluginResolveError";
+  }
+}
+
+/** 校验 sdk 范围、依赖满足度、单选能力唯一性与无环，返回按 requires 拓扑排序后的列表（同层保持输入顺序）。 */
+export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string): PluginManifest[] {
+  const seen = new Set<string>();
+  for (const m of manifests) {
+    if (seen.has(m.name)) throw new PluginResolveError(`plugin ${m.name}: loaded more than once`);
+    seen.add(m.name);
+    if (!semver.satisfies(sdkVersion, m.sdk)) {
+      throw new PluginResolveError(
+        `plugin ${m.name}: sdk range "${m.sdk}" is not satisfied by SDK_VERSION ${sdkVersion}`,
+      );
+    }
+  }
+
+  const providers = new Map<CapabilityRef, PluginManifest[]>();
+  for (const m of manifests) {
+    for (const cap of m.provides) providers.set(cap, [...(providers.get(cap) ?? []), m]);
+  }
+  for (const [cap, list] of providers) {
+    if (CAPABILITY_CARDINALITY[parseCapability(cap).name] === "single" && list.length > 1) {
+      throw new PluginResolveError(
+        `capability ${cap} is single-provider but provided by: ${list.map((p) => p.name).join(", ")}`,
+      );
+    }
+  }
+  for (const m of manifests) {
+    for (const cap of m.requires ?? []) {
+      if (!providers.has(cap)) {
+        throw new PluginResolveError(
+          `plugin ${m.name}: required capability ${cap} has no provider`,
+        );
+      }
+    }
+  }
+
+  const done = new Set<string>();
+  const visiting: string[] = [];
+  const out: PluginManifest[] = [];
+  const visit = (m: PluginManifest): void => {
+    if (done.has(m.name)) return;
+    if (visiting.includes(m.name)) {
+      const cycle = [...visiting.slice(visiting.indexOf(m.name)), m.name].join(" -> ");
+      throw new PluginResolveError(`dependency cycle: ${cycle}`);
+    }
+    visiting.push(m.name);
+    for (const cap of m.requires ?? []) for (const p of providers.get(cap) ?? []) visit(p);
+    visiting.pop();
+    done.add(m.name);
+    out.push(m);
+  };
+  for (const m of manifests) visit(m);
+  return out;
+}
