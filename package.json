@@ -12,9 +12,13 @@
     "format": "biome check --write .",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "check": "pnpm check:migrations",
+    "check": "pnpm check:migrations && pnpm check:deps && pnpm check:plugin-state && pnpm check:config-docs",
     "changeset": "changeset",
-    "check:migrations": "tsx tools/checks/src/cli/migrations.ts"
+    "check:migrations": "tsx tools/checks/src/cli/migrations.ts",
+    "check:deps": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/deps.ts",
+    "check:plugin-state": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/plugin-state.ts",
+    "check:config-docs": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/config-docs.ts",
+    "gen:config-docs": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/gen-config-docs.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

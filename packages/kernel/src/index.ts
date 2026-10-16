@@ -1,3 +1,4 @@
+export { envName, renderConfigDocs } from "./config/docs.js";
 export { envOverrides } from "./config/env.js";
 export { type ConfigField, changedPaths, configFields, secretValues } from "./config/fields.js";
 export { fileSource } from "./config/file-source.js";

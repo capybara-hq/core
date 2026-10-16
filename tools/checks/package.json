@@ -9,5 +9,12 @@
   },
   "scripts": {
     "build": "tsc -b"
+  },
+  "dependencies": {
+    "oxc-parser": "^0.154.0"
+  },
+  "devDependencies": {
+    "@capybara-hq/kernel": "workspace:*",
+    "zod": "^4.6.7"
   }
 }

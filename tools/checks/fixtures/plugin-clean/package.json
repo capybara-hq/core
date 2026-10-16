@@ -1,0 +1,7 @@
+{
+  "name": "@capybara-hq/fixture-clean",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": { "@capybara-hq/plugin-sdk": "workspace:*", "zod": "^4.6.7" },
+  "devDependencies": { "@capybara-hq/testing": "workspace:*" }
+}

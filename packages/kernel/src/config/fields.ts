@@ -6,6 +6,47 @@ import type { FieldMeta } from "./schema.js";
 export interface ConfigField {
   path: string;
   meta: FieldMeta | undefined;
+  /** 该叶子的原始 schema（含 default / optional 等包装），供生成文档读取类型与默认值。 */
+  schema: core.$ZodType;
+}
+
+/** 剥掉包装后的内层 schema 类型与默认值（无 default 时 hasDefault 为 false）。 */
+export function describeSchema(schema: core.$ZodType): {
+  type: string;
+  hasDefault: boolean;
+  defaultValue: unknown;
+} {
+  let node = schema;
+  let hasDefault = false;
+  let defaultValue: unknown;
+  for (;;) {
+    const def = node._zod.def as unknown as {
+      type: string;
+      innerType?: core.$ZodType;
+      defaultValue?: unknown;
+    };
+    if (def.type === "default" || def.type === "prefault") {
+      if (!hasDefault) {
+        hasDefault = true;
+        defaultValue = def.defaultValue;
+      }
+    }
+    if (!WRAPPERS.has(def.type) || !def.innerType) break;
+    node = def.innerType;
+  }
+  const def = node._zod.def as unknown as {
+    type: string;
+    element?: core.$ZodType;
+    entries?: Record<string, unknown>;
+  };
+  let type = def.type;
+  if (type === "array" && def.element) type = `array<${describeSchema(def.element).type}>`;
+  else if (type === "enum" && def.entries) {
+    type = Object.values(def.entries)
+      .map((v) => JSON.stringify(v))
+      .join(" | ");
+  }
+  return { type, hasDefault, defaultValue };
 }
 
 const WRAPPERS = new Set(["default", "prefault", "optional", "nullable", "readonly", "catch"]);
@@ -30,7 +71,7 @@ export function configFields(schema: core.$ZodType, prefix = ""): ConfigField[] 
       configFields(v, prefix ? `${prefix}.${k}` : k),
     );
   }
-  return [{ path: prefix, meta }];
+  return [{ path: prefix, meta, schema }];
 }
 
 /** 按点路径取值。 */
