@@ -1,5 +1,6 @@
 import { envOverrides } from "./env.js";
 import { fileSource } from "./file-source.js";
+import { createNacosSource } from "./nacos-source.js";
 import { type KernelConfig, KernelConfigSchema } from "./schema.js";
 
 /** 配置来源：`load` 取原始配置，`watch` 可选地订阅变更并返回取消函数。 */
@@ -22,8 +23,18 @@ export function selectConfigSource(env: NodeJS.ProcessEnv): ConfigSource {
   switch (kind) {
     case "file":
       return fileSource(env.CAPYBARA_CONFIG_FILE);
-    case "nacos":
-      throw new ConfigError("config source 'nacos' is not implemented yet");
+    case "nacos": {
+      const need = (name: string): string => {
+        const v = env[name];
+        if (!v) throw new ConfigError(`${name} is required when CAPYBARA_CONFIG_SOURCE=nacos`);
+        return v;
+      };
+      return createNacosSource({
+        server: need("CAPYBARA_NACOS_SERVER"),
+        namespace: need("CAPYBARA_NACOS_NAMESPACE"),
+        dataId: need("CAPYBARA_NACOS_DATA_ID"),
+      });
+    }
     default:
       throw new ConfigError(`unknown config source '${kind}' (expected 'file' or 'nacos')`);
   }
