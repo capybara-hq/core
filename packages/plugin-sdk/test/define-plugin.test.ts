@@ -48,6 +48,10 @@ describe("definePlugin", () => {
   it("rejects requiring what it provides", () => {
     expect(() => definePlugin(valid({ requires: ["channel@1"] }))).toThrow(/channel@1/);
   });
+  it("rejects Object.prototype names as capabilities", () => {
+    expect(() => definePlugin(valid({ provides: ["constructor@1"] }))).toThrow(/constructor/);
+    expect(() => definePlugin(valid({ requires: ["constructor@1"] }))).toThrow(/constructor/);
+  });
   it("rejects unregistered requires", () => {
     expect(() => definePlugin(valid({ requires: ["zzz@1"] }))).toThrow(/zzz/);
   });

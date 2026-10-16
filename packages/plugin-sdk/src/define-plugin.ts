@@ -33,7 +33,7 @@ function checkRefs(label: string, refs: readonly string[], fail: (m: string) => 
     } catch {
       fail(`${label} entry "${ref}" is not a valid capability ref`);
     }
-    if (!(name in CAPABILITY_CARDINALITY)) {
+    if (!Object.hasOwn(CAPABILITY_CARDINALITY, name)) {
       fail(`${label} entry "${ref}" references unregistered capability "${name}"`);
     }
   }

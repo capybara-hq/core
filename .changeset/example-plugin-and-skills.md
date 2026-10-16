@@ -1,5 +1,4 @@
 ---
-"@capybara-hq/plugin-sdk": minor
 "@capybara-hq/kernel": minor
 ---
 
