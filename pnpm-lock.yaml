@@ -106,12 +106,25 @@ importers:
 
   packages/testing:
     dependencies:
+      '@capybara-hq/kernel':
+        specifier: workspace:*
+        version: link:../kernel
       '@testcontainers/postgresql':
         specifier: ^12.2.1
         version: 12.2.1
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
       testcontainers:
         specifier: ^12.2.1
         version: 12.2.1
+    devDependencies:
+      '@capybara-hq/plugin-sdk':
+        specifier: workspace:*
+        version: link:../plugin-sdk
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
 
   tools/checks: {}
 

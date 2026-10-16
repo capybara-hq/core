@@ -24,6 +24,12 @@
   },
   "dependencies": {
     "@testcontainers/postgresql": "^12.2.1",
-    "testcontainers": "^12.2.1"
+    "testcontainers": "^12.2.1",
+    "@capybara-hq/kernel": "workspace:*",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@capybara-hq/plugin-sdk": "workspace:*",
+    "@types/pg": "^8.23.1"
   }
 }
