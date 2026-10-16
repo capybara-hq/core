@@ -15,7 +15,7 @@ description: 新增或修改 SQL 迁移（内核 packages/kernel/src/migrations 
 
 ## 迁移在哪个 schema 里跑
 
-迁移器为每个文件包一层事务，并把 `search_path` 设为该 schema。所以**表名不带 schema 前缀**：
+迁移器为每个文件包一层事务，并执行 `set local search_path to <该 schema>, public`。所以**表名不带 schema 前缀**；注意 `public` 排在后面：在本 schema 里找不到的名字会解析到 `public` 里的同名对象，所以不要依赖 `public` 里的东西，也别让表名与 `public` 里已有对象重名。
 
 ```sql
 CREATE TABLE IF NOT EXISTS events (

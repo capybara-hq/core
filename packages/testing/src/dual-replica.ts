@@ -39,6 +39,8 @@ export interface Harness {
   /** 严格交替发往两个副本：第 1、3、5… 次到 replica 0，第 2、4、6… 次到 replica 1。 */
   request(path: string, init?: RequestInit): Promise<Response>;
   replicas: [ReplicaHandle, ReplicaHandle];
+  /** 本 harness 独占数据库的连接串，测试可直接连上去查表。 */
+  dbUrl: string;
   /** 停两个副本（15s 后 SIGKILL）、删临时库、关自有容器；幂等。 */
   stop(): Promise<void>;
 }
@@ -217,6 +219,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
     let calls = 0;
     return {
       replicas,
+      dbUrl: db.url,
       stop,
       async request(path, init) {
         const i = calls++ % 2;

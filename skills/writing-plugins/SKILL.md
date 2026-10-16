@@ -25,7 +25,7 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 
 | 想做的事 | 别这样 | 这样 |
 |---|---|---|
-| 跨请求共享状态 | 模块顶层 `Map` | `ctx.kv`（Redis，带 TTL）或 `ctx.db` |
+| 跨请求共享状态 | 模块顶层 `Map` | 持久数据 `ctx.db`；临时/会过期的状态 `ctx.kv`（带 TTL） |
 | 延迟 / 周期任务 | `setTimeout` / `setInterval` | `ctx.queue.add(name, data, { delayMs })` |
 | 通知其他副本 | 进程内事件 / 回调表 | `ctx.bus.publish` / `subscribe` |
 | 「谁开谁关」的配对 | 开启方在内存里持有句柄 | 开启方自过期（TTL）+ 关闭方广播 |
@@ -65,15 +65,26 @@ export default definePlugin({
 
 | 项 | 用途 | 要点 |
 |---|---|---|
-| `ctx.kv` | 小块共享状态、计数、去重标记 | `set` / `incr` 必须带 `{ ttlSeconds }`；`incr` 每次只加 1 |
+| `ctx.kv` | **临时、会过期**的状态：限流计数、短缓存、幂等键 | `set` / `incr` 必须带 `{ ttlSeconds }`；`incr` 每次只加 1，没有 `incrBy`。**持久数据（业务计数、账务）不要放 kv**：TTL 一到就没了，且与 db 双写无法保证一致 |
 | `ctx.db` | 持久数据 | Kysely，已切到本插件 schema，写表名**不带** schema 前缀；表由 `migrations/` 建，见 `skills/writing-migrations` |
-| `ctx.queue` | 延迟 / 异步 / 周期任务 | `define(name, handler)` 在 `setup` 里注册；`add(name, data, { delayMs, jobId })`；任务可能在任一副本执行，handler 要幂等；名称与 jobId 不含 `:` |
+| `ctx.queue` | 延迟 / 异步 / 周期任务 | `define(name, handler)` 在 `setup` 里注册；`add(name, data, { delayMs, jobId })`；任务可能在任一副本执行，投递是**至少一次**（失败重试，最多 3 次），handler 必须幂等（见下）；名称与 jobId 不含 `:` |
 | `ctx.lock` | 互斥 | `acquire(key, { ttlMs })` 返回租约或 `null`；长任务要 `renew()`，用完 `release()` |
 | `ctx.bus` | 跨副本广播 | `publish` / `subscribe`，订阅返回取消函数；消息可能丢，别当唯一的结束信号 |
 | `ctx.http.route` | 对外接口 | 实际挂在 `/plugins/<name><path>` |
 | `ctx.provide` | 对外暴露能力实现 | 要与清单 `provides` 一致 |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
 | `ctx.config` / `ctx.log` | 部署配置 / 日志 | 日志里不要打印密钥 |
+
+### 持久计数与幂等的写法（参考 example-counter）
+
+- 持久计数放 `ctx.db`，一次请求里的多步改动包在一个事务里：`ctx.db.transaction().execute(async (trx) => { ... })`。需要「一次加 N」的原子计数用 SQL（`n = n + N`），不要循环 `kv.incr`。
+- kv 的合理用法（带 TTL）：
+
+  ```ts
+  await ctx.kv.set(`seen:${eventId}`, "1", { ttlSeconds: 600 }); // 短期幂等键 / 限流 / 短缓存
+  ```
+
+- 队列 handler 幂等：入队时生成 `jobId`（`crypto.randomUUID()`，不含 `:`）同时放进数据与 `opts.jobId`；表上给 `job_id` 加唯一约束；handler 在一个事务里 `INSERT ... ON CONFLICT (job_id) DO NOTHING RETURNING id`，**只有真的插入了才做业务副作用**，重复投递就什么都不做。
 
 任何「靠某个信号来结束」的持续性副作用都要有最大存活时间（TTL），到点自己了断。
 

@@ -26,7 +26,7 @@ pnpm capybara start       # 监听 :8080（CAPYBARA_HTTP__PORT 可改）
 curl localhost:8080/healthz
 curl -X POST localhost:8080/plugins/example-counter/inc      # {"count":1}
 curl localhost:8080/plugins/example-counter/count            # {"count":1}
-curl -X POST localhost:8080/plugins/example-counter/inc-later  # 约 200ms 后 count 再加 1
+curl -X POST localhost:8080/plugins/example-counter/inc-later  # 返回 {"jobId":"…"}，约 200ms 后 count 再加 1
 ```
 
 用完：`docker compose -f docker/compose.dev.yaml down`（加 `-v` 同时清掉数据卷）。
