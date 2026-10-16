@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { extname } from "node:path";
+import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { startTestPostgres, startTestRedis, type TestContainer } from "./containers.js";
@@ -200,7 +200,8 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       redisUrl,
       masterKey: randomBytes(32).toString("base64"),
       plugins: opts.plugins,
-      resolveFrom: opts.resolveFrom ?? process.cwd(),
+      // 副本进程的 cwd 不是调用方的 cwd，相对路径必须先按调用方 cwd 绝对化再经 IPC 传过去
+      resolveFrom: resolve(opts.resolveFrom ?? process.cwd()),
       pluginConfig: opts.pluginConfig ?? {},
       roles: ["api", "worker", "gateway"],
     };

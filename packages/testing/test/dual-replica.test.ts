@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createDualReplicaHarness, type Harness, runnerArgv } from "../src/dual-replica.js";
@@ -151,10 +151,47 @@ describe("双副本测试工具：进程与解析", () => {
     await expect(h.request("/healthz")).rejects.toThrow(/replica 1 .*SIGKILL/);
   });
 
+  it("相对路径的 resolveFrom 按调用方 cwd 解析（副本进程 cwd 不同）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cap-resolve-rel-"));
+    try {
+      const pkg = join(dir, "node_modules/@capybara-hq/plugin-tmp3");
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(
+        join(pkg, "package.json"),
+        JSON.stringify({
+          name: "@capybara-hq/plugin-tmp3",
+          version: "0.1.0",
+          type: "module",
+          main: "index.js",
+        }),
+      );
+      writeFileSync(
+        join(pkg, "index.js"),
+        `export default {
+  name: "tmp3", version: "0.1.0", sdk: "^0.1.0", provides: [],
+  setup(ctx) { ctx.http.route("GET", "/ok", async () => new Response("ok")); },
+};
+`,
+      );
+      const h = await createDualReplicaHarness({
+        plugins: ["@capybara-hq/plugin-tmp3"],
+        resolveFrom: relative(process.cwd(), dir),
+        pgUrl: pgc.url,
+      });
+      harnesses.push(h);
+      const r = await h.request("/plugins/tmp3/ok");
+      expect(await r.text()).toBe("ok");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("父进程被 SIGKILL 后两个副本自行退出，不留孤儿", async () => {
     const rd = await startTestRedis();
+    let parent: ReturnType<typeof spawn> | undefined;
+    let pids: number[] = [];
     try {
-      const parent = spawn(
+      parent = spawn(
         process.execPath,
         [
           ...runnerArgv("x.ts").slice(0, 3),
@@ -166,17 +203,27 @@ describe("双副本测试工具：进程与解析", () => {
         },
       );
       let out = "";
-      parent.stdout.on("data", (b) => {
+      parent.stdout?.on("data", (b) => {
         out += b;
       });
-      await new Promise((r) => parent.once("exit", r));
-      const pids = JSON.parse(out.trim().split("\n").pop() as string) as number[];
+      const p = parent;
+      await new Promise((r) => p.once("exit", r));
+      pids = JSON.parse(out.trim().split("\n").pop() as string) as number[];
       expect(pids).toHaveLength(2);
       const deadline = Date.now() + 20_000;
       while (pids.some(alive) && Date.now() < deadline)
         await new Promise((r) => setTimeout(r, 200));
       expect(pids.filter(alive)).toEqual([]);
     } finally {
+      // 失败时也不在 CI 留下残留进程
+      for (const pid of [...pids, parent?.pid]) {
+        if (pid === undefined) continue;
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // 已退出
+        }
+      }
       await rd.stop();
     }
   }, 60_000);
