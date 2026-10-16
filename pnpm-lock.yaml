@@ -55,7 +55,21 @@ importers:
         specifier: ^8.23.1
         version: 8.23.1
 
-  packages/plugin-sdk: {}
+  packages/plugin-sdk:
+    dependencies:
+      kysely:
+        specifier: ^0.29.6
+        version: 0.29.6
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/semver':
+        specifier: ^7.8.0
+        version: 7.8.0
 
   packages/testing:
     dependencies:
@@ -665,6 +679,9 @@ packages:
 
   '@types/pg@8.23.1':
     resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
+
+  '@types/semver@7.8.0':
+    resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
 
   '@types/ssh2-streams@0.1.13':
     resolution: {integrity: sha512-faHyY3brO9oLEA0QlcO8N2wT7R0+1sHWZvQ+y3rMLwdY1ZyS1z0W3t65j9PqT4HmQ6ALzNe7RZlNuCNE0wBSWA==}
@@ -2367,6 +2384,8 @@ snapshots:
       '@types/node': 26.6.5
       pg-protocol: 1.16.1
       pg-types: 2.2.0
+
+  '@types/semver@7.8.0': {}
 
   '@types/ssh2-streams@0.1.13':
     dependencies:
