@@ -113,12 +113,14 @@ describe("真实正例与反例", () => {
 });
 
 describe("绕过形态", () => {
-  it("改名解构、Reflect.get 字符串、简写解构都报 plugin-timer", () => {
+  it("改名解构、Reflect.get 字符串、简写解构、字符串字面量拼接的计算键都报 plugin-timer", () => {
     const f = checkPluginState([fixture("plugin-bypass-state")]);
     expect(f.map((x) => [x.line, x.rule])).toEqual([
       [1, "plugin-timer"],
       [2, "plugin-timer"],
       [3, "plugin-timer"],
+      [4, "plugin-timer"],
+      [5, "plugin-timer"],
     ]);
   });
 
