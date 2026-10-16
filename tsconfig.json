@@ -4,6 +4,7 @@
     { "path": "packages/plugin-sdk" },
     { "path": "packages/testing" },
     { "path": "packages/kernel" },
-    { "path": "tools/checks" }
+    { "path": "tools/checks" },
+    { "path": "apps/capybara" }
   ]
 }

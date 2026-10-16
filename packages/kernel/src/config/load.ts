@@ -43,10 +43,8 @@ export function deepMerge(base: unknown, override: unknown): unknown {
   return out;
 }
 
-/** 选来源 → 深合并环境变量覆盖（优先级最高）→ 校验。 */
-export async function loadConfig(env: NodeJS.ProcessEnv): Promise<KernelConfig> {
-  const source = selectConfigSource(env);
-  const raw = await source.load();
+/** 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。 */
+export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfig {
   if (!isPlainObject(raw)) throw new ConfigError("config file root must be a mapping");
   const merged = deepMerge(raw, envOverrides(env));
   const result = KernelConfigSchema.safeParse(merged);
@@ -57,4 +55,9 @@ export async function loadConfig(env: NodeJS.ProcessEnv): Promise<KernelConfig> 
     throw new ConfigError(`invalid configuration:\n${lines.join("\n")}`);
   }
   return result.data;
+}
+
+/** 选来源 → 深合并环境变量覆盖（优先级最高）→ 校验。 */
+export async function loadConfig(env: NodeJS.ProcessEnv): Promise<KernelConfig> {
+  return resolveConfig(await selectConfigSource(env).load(), env);
 }

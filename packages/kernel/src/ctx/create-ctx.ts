@@ -45,9 +45,9 @@ export function createPluginContext(
   const name = manifest.name;
   const routes: Route[] = [];
   const provided = new Map<CapabilityRef, unknown>();
-  const queue = createQueue(deps.redisUrl, name, { runWorkers: deps.runWorkers });
+  const queue = createQueue(deps.redisUrl, name, { runWorkers: deps.runWorkers, log: deps.log });
   const { close: closeQueue, ...queueApi } = queue;
-  const bus = createBus(deps.redis, deps.busSubscriber, name);
+  const bus = createBus(deps.redis, deps.busSubscriber, name, deps.log);
   const unsubs = new Set<() => Promise<void>>();
   const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LOG_LEVELS } from "../log.js";
 
 /** 配置字段的元信息：是否可热更新、是否敏感、说明。 */
 export interface FieldMeta {
@@ -82,7 +83,7 @@ export const KernelConfigSchema = z.object({
   log: z
     .object({
       level: z
-        .string()
+        .enum(LOG_LEVELS)
         .default("info")
         .meta(meta({ hot: true, description: "Log level" })),
     })

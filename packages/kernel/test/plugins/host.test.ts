@@ -231,3 +231,17 @@ describe("createPluginContext 规则", () => {
     await ctx.close();
   });
 });
+
+describe("PluginHost.migrateOnly", () => {
+  it("只跑迁移、不调用 setup；返回每个有迁移的插件", async () => {
+    const r = await PluginHost.migrateOnly([fx("fixture"), fx("throws")], { dbUrl: deps.dbUrl });
+    expect(r.map((x) => x.plugin)).toEqual(["fixture"]);
+    expect(r[0]?.schema).toBe("plugin_fixture");
+  });
+
+  it("依赖解析失败同样报错（不迁移）", async () => {
+    await expect(
+      PluginHost.migrateOnly([fx("fixture"), fx("fixture")], { dbUrl: deps.dbUrl }),
+    ).rejects.toThrow(/more than once/);
+  });
+});

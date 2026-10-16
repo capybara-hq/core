@@ -1,10 +1,10 @@
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import type { Logger, PluginContext } from "@capybara-hq/plugin-sdk";
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 
-/** 本地日志入口：Task 11 的 logger 到位后只需替换这里。 */
-const log = {
-  error: (msg: string, err: unknown) => console.error(`[queue] ${msg}`, err),
+/** 未注入 logger 时的兜底：输出到 stderr。 */
+const consoleLog: Pick<Logger, "error"> = {
+  error: (msg, fields) => console.error(`[queue] ${msg}`, fields ?? ""),
 };
 
 function assertNoColon(what: string, value: string): void {
@@ -22,8 +22,9 @@ function assertNoColon(what: string, value: string): void {
 export function createQueue(
   redisUrl: string,
   namespace: string,
-  opts: { runWorkers: boolean },
+  opts: { runWorkers: boolean; log?: Pick<Logger, "error"> },
 ): PluginContext["queue"] & { close(): Promise<void> } {
+  const log = opts.log ?? consoleLog;
   const connections: Redis[] = [];
   const queues = new Map<string, Queue>();
   const workers = new Map<string, Worker>();
@@ -36,7 +37,7 @@ export function createQueue(
   // BullMQ 要求 Worker 的阻塞连接 maxRetriesPerRequest 为 null；Queue 复用同样的配置。
   const newConn = () => {
     const c = new Redis(redisUrl, { maxRetriesPerRequest: null });
-    c.on("error", (err: Error) => log.error("redis connection error", err));
+    c.on("error", (err: Error) => log.error("queue redis connection error", { err }));
     connections.push(c);
     return c;
   };
@@ -45,7 +46,7 @@ export function createQueue(
     let q = queues.get(name);
     if (!q) {
       q = new Queue(queueName(name), { connection: newConn() });
-      q.on("error", (err) => log.error(`queue ${name} error`, err));
+      q.on("error", (err) => log.error("queue error", { queue: name, err }));
       queues.set(name, q);
     }
     return q;
@@ -65,8 +66,10 @@ export function createQueue(
         },
         { connection: newConn(), concurrency: o?.concurrency ?? 1 },
       );
-      worker.on("error", (err) => log.error(`worker ${name} error`, err));
-      worker.on("failed", (job, err) => log.error(`job ${name}#${job?.id} failed`, err));
+      worker.on("error", (err) => log.error("queue worker error", { queue: name, err }));
+      worker.on("failed", (job, err) =>
+        log.error("queue job failed", { queue: name, jobId: job?.id, err }),
+      );
       workers.set(name, worker);
     },
     async add(name, data, o) {

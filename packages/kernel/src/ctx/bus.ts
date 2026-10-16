@@ -1,4 +1,4 @@
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import type { Logger, PluginContext } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 
 type RawHandler = (message: string) => void;
@@ -9,11 +9,18 @@ export interface BusSubscriber {
   subscribe(channel: string, handler: RawHandler): Promise<() => Promise<void>>;
 }
 
+type ErrorLog = Pick<Logger, "error">;
+
+/** 未注入 logger 时的兜底：输出到 stderr。 */
+const consoleLog: ErrorLog = {
+  error: (msg, fields) => console.error(`[bus] ${msg}`, fields ?? ""),
+};
+
 /** 调用 handler：同步抛错与返回 Promise 的 reject 都被吞掉并记录，保证 handler 间互相隔离。 */
-function invokeIsolated(label: string, fn: () => unknown): void {
+function invokeIsolated(log: ErrorLog, label: string, fn: () => unknown): void {
   Promise.resolve()
     .then(fn)
-    .catch((err) => console.error(`[bus] handler for ${label} threw`, err));
+    .catch((err) => log.error("bus handler threw", { channel: label, err }));
 }
 
 interface ChannelState {
@@ -22,7 +29,10 @@ interface ChannelState {
 }
 
 /** 创建共享订阅者：首次订阅时才惰性打开唯一一条连接，并把频道多路复用到各 handler 集合。 */
-export function createBusSubscriber(subFactory: () => Redis): BusSubscriber & {
+export function createBusSubscriber(
+  subFactory: () => Redis,
+  log: ErrorLog = consoleLog,
+): BusSubscriber & {
   close(): Promise<void>;
 } {
   let conn: Redis | null = null;
@@ -34,10 +44,10 @@ export function createBusSubscriber(subFactory: () => Redis): BusSubscriber & {
     const c = subFactory();
     c.on("message", (channel: string, message: string) => {
       for (const h of [...(channels.get(channel)?.handlers ?? [])]) {
-        invokeIsolated(channel, () => h(message));
+        invokeIsolated(log, channel, () => h(message));
       }
     });
-    c.on("error", (err: Error) => console.error("[bus] subscriber connection error", err));
+    c.on("error", (err: Error) => log.error("bus subscriber connection error", { err }));
     conn = c;
     return c;
   };
@@ -91,6 +101,7 @@ export function createBus(
   pub: Redis,
   subscriber: BusSubscriber,
   namespace: string,
+  log: ErrorLog = consoleLog,
 ): PluginContext["bus"] {
   const ch = (topic: string) => `cap:${namespace}:${topic}`;
   return {
@@ -103,10 +114,10 @@ export function createBus(
         try {
           payload = JSON.parse(message);
         } catch {
-          console.error(`[bus] ignoring malformed message on ${ch(topic)}`);
+          log.error("bus ignoring malformed message", { channel: ch(topic) });
           return;
         }
-        invokeIsolated(ch(topic), () => handler(payload));
+        invokeIsolated(log, ch(topic), () => handler(payload));
       });
     },
   };
