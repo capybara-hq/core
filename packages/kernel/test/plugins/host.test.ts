@@ -164,14 +164,14 @@ describe("PluginHost 加载规则", () => {
     await h.load([fx("subscriber")]);
     const pub = (p: unknown) => redis.publish("cap:subscriber:t", JSON.stringify(p));
     await pub("one");
-    for (let i = 0; i < 100 && (await redis.get("cap:subscriber:got")) === null; i++) {
+    for (let i = 0; i < 100 && (await redis.get("cap:subscriber:kv:got")) === null; i++) {
       await sleep(20);
     }
-    expect(await redis.get("cap:subscriber:got")).toBe('"one"');
+    expect(await redis.get("cap:subscriber:kv:got")).toBe('"one"');
     await h.close();
     await pub("two");
     await sleep(300);
-    expect(await redis.get("cap:subscriber:got")).toBe('"one"');
+    expect(await redis.get("cap:subscriber:kv:got")).toBe('"one"');
   });
 });
 

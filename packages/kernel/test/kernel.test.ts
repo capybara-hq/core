@@ -210,7 +210,7 @@ describe("角色", () => {
     try {
       let done: string | null = null;
       for (let i = 0; i < 50 && done === null; i++) {
-        done = await r.get("cap:jobber:done");
+        done = await r.get("cap:jobber:kv:done");
         if (done === null) await sleep(100);
       }
       expect(done).toBe(JSON.stringify({ n: 1 }));

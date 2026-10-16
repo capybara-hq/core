@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { PluginContext } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
+import { assertNamespace } from "./namespace.js";
 
 const IV_LEN = 12;
 const TAG_LEN = 16;
@@ -104,6 +105,7 @@ export function createSecrets(
   keyring: Keyring,
   namespace: string,
 ): PluginContext["secrets"] {
+  assertNamespace(namespace);
   return {
     async get(orgId, key) {
       const row = await db

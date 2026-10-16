@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PluginContext } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
+import { assertNamespace } from "./namespace.js";
 
 const RENEW = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -18,6 +19,7 @@ return 0
 
 /** 创建带命名空间的 ctx.lock：键为 `cap:<namespace>:lock:<key>`，token 比对保证只操作自己持有的锁。 */
 export function createLock(redis: Redis, namespace: string): PluginContext["lock"] {
+  assertNamespace(namespace);
   return {
     async acquire(key, opts) {
       const ttlMs = opts?.ttlMs;

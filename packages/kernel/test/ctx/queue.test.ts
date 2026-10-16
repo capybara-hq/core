@@ -128,4 +128,28 @@ describe("ctx.queue", () => {
     await expect(q.add("x", {})).rejects.toThrow(/closed/);
     expect(() => q.define("x", async () => {})).toThrow(/closed/);
   });
+
+  it("不同插件的 namespace/name 拼接相同也不串队列（feishu+bot-sync vs feishu-bot+sync）", async () => {
+    const a = mk("feishu");
+    const b = mk("feishu-bot");
+    const gotA: unknown[] = [];
+    const gotB: unknown[] = [];
+    a.define("bot-sync", async (d) => {
+      gotA.push(d);
+    });
+    b.define("sync", async (d) => {
+      gotB.push(d);
+    });
+    await a.add("bot-sync", { from: "a" });
+    await b.add("sync", { from: "b" });
+    await until(() => gotA.length === 1 && gotB.length === 1);
+    await sleep(300);
+    expect(gotA).toEqual([{ from: "a" }]);
+    expect(gotB).toEqual([{ from: "b" }]);
+  });
+
+  it("非法 namespace 抛 TypeError", () => {
+    expect(() => createQueue(box.url, "a.b", { runWorkers: false })).toThrow(TypeError);
+    expect(() => createQueue(box.url, "a:b", { runWorkers: false })).toThrow(TypeError);
+  });
 });

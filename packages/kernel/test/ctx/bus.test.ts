@@ -174,4 +174,10 @@ describe("ctx.bus", () => {
     await a.sub.close();
     await expect(a.bus.subscribe("t", () => {})).rejects.toThrow(/closed/);
   });
+
+  it("非法 namespace 抛 TypeError", () => {
+    const sub = createBusSubscriber(conn);
+    expect(() => createBus(admin, sub, "a:b")).toThrow(TypeError);
+    expect(() => createBus(admin, sub, "")).toThrow(TypeError);
+  });
 });

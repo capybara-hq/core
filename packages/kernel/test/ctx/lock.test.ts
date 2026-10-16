@@ -60,4 +60,9 @@ describe("ctx.lock", () => {
     // biome-ignore lint/suspicious/noExplicitAny: 故意传错误参数
     await expect((lock as any).acquire("r")).rejects.toThrow(/ttlMs/);
   });
+
+  it("非法 namespace 抛 TypeError", () => {
+    expect(() => createLock(redis, "a:b")).toThrow(TypeError);
+    expect(() => createLock(redis, "Bad")).toThrow(TypeError);
+  });
 });

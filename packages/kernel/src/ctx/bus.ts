@@ -1,5 +1,6 @@
 import type { Logger, PluginContext } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
+import { assertNamespace } from "./namespace.js";
 
 type RawHandler = (message: string) => void;
 
@@ -103,6 +104,7 @@ export function createBus(
   namespace: string,
   log: ErrorLog = consoleLog,
 ): PluginContext["bus"] {
+  assertNamespace(namespace);
   const ch = (topic: string) => `cap:${namespace}:${topic}`;
   return {
     async publish(topic, payload) {

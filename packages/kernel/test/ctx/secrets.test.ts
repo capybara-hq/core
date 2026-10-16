@@ -188,3 +188,10 @@ describe("ctx.secrets", () => {
     await expect(rewrapDataKeys(db, createKeyring(k3, []))).rejects.toThrow(/rwunknown/);
   });
 });
+
+describe("createSecrets namespace", () => {
+  it("非法 namespace 抛 TypeError", () => {
+    expect(() => createSecrets(db, createKeyring(k1, []), "a.b")).toThrow(TypeError);
+    expect(() => createSecrets(db, createKeyring(k1, []), "UPPER")).toThrow(TypeError);
+  });
+});
