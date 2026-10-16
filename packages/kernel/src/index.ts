@@ -7,5 +7,6 @@ export { type BusSubscriber, createBus, createBusSubscriber } from "./ctx/bus.js
 export { createKv } from "./ctx/kv.js";
 export { createLock } from "./ctx/lock.js";
 export { createQueue } from "./ctx/queue.js";
+export { createKeyring, createSecrets, type Keyring, rewrapDataKeys } from "./ctx/secrets.js";
 export { type MigrationOwner, migrate } from "./db/migrator.js";
 export { createDb } from "./db/pool.js";
