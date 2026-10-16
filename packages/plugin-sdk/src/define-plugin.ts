@@ -54,6 +54,7 @@ export function definePlugin(m: PluginManifest): PluginManifest {
   if (typeof m.sdk !== "string" || semver.validRange(m.sdk) === null) {
     fail(`field "sdk" must be a valid semver range`);
   }
+  if (typeof m.setup !== "function") fail(`field "setup" must be a function`);
   if (!Array.isArray(m.provides)) fail(`field "provides" must be an array`);
   checkRefs("provides", m.provides, fail);
   if (new Set(m.provides).size !== m.provides.length) {

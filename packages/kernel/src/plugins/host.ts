@@ -1,9 +1,12 @@
-import { dirname, resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   CAPABILITY_CARDINALITY,
   type CapabilityRef,
+  definePlugin,
   type PluginManifest,
+  PluginManifestError,
   parseCapability,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
@@ -28,22 +31,60 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** 插件宿主：解析、校验配置、迁移、setup，并登记插件提供的能力与路由。 */
 export class PluginHost {
   private readonly loaded: Loaded[] = [];
+  private didLoad = false;
+  private readonly resolveFrom: string;
 
+  /**
+   * @param opts.resolveFrom 解析裸包名的目录，默认 `process.cwd()`。绝对路径与 `file:` URL 直接使用；
+   * 裸包名经 `createRequire(<resolveFrom>/noop.js).resolve` 解析，因此插件包的 exports 必须暴露
+   * `default`（或 `require`）条件。
+   */
   constructor(
     private readonly deps: KernelDeps,
     private readonly pluginConfig: Record<string, unknown> = {},
-  ) {}
+    opts: { resolveFrom?: string } = {},
+  ) {
+    this.resolveFrom = opts.resolveFrom ?? process.cwd();
+  }
 
-  /** 导入各插件模块（default 导出）并按依赖顺序初始化。 */
+  /** 把 specifier 解析成模块文件 URL；失败时错误点名 specifier 与 resolveFrom。 */
+  private toFileUrl(spec: string): string {
+    try {
+      if (spec.startsWith("file:")) return spec;
+      if (isAbsolute(spec)) return pathToFileURL(spec).href;
+      const file = createRequire(join(this.resolveFrom, "noop.js")).resolve(spec);
+      return pathToFileURL(file).href;
+    } catch (e) {
+      throw new Error(`cannot resolve plugin "${spec}" from "${this.resolveFrom}": ${errMsg(e)}`, {
+        cause: e,
+      });
+    }
+  }
+
+  /** 导入各插件模块（default 导出）并按依赖顺序初始化；只能调用一次。 */
   async load(specifiers: string[]): Promise<void> {
+    if (this.didLoad) throw new Error("plugin host already loaded; load() may be called once");
+    this.didLoad = true;
     const entries: { manifest: PluginManifest; dir: string }[] = [];
     for (const spec of specifiers) {
-      const mod = (await import(spec)) as { default?: PluginManifest };
-      if (!mod.default) throw new Error(`plugin module "${spec}" has no default export`);
-      entries.push({
-        manifest: mod.default,
-        dir: dirname(fileURLToPath(import.meta.resolve(spec))),
-      });
+      const url = this.toFileUrl(spec);
+      let mod: { default?: unknown };
+      try {
+        mod = (await import(url)) as { default?: unknown };
+      } catch (e) {
+        throw new Error(`cannot import plugin "${spec}" from "${this.resolveFrom}": ${errMsg(e)}`, {
+          cause: e,
+        });
+      }
+      if (typeof mod.default !== "object" || mod.default === null)
+        throw new Error(`plugin module "${spec}" has no default export object`);
+      let manifest: PluginManifest;
+      try {
+        manifest = definePlugin(mod.default as PluginManifest);
+      } catch (e) {
+        throw new PluginManifestError(spec, errMsg(e));
+      }
+      entries.push({ manifest, dir: dirname(fileURLToPath(url)) });
     }
     const dirs = new Map(entries.map((e) => [e.manifest.name, e.dir]));
     const ordered = resolvePlugins(

@@ -72,6 +72,7 @@ export async function migrate(
       if (done.has(f.name)) continue;
       try {
         await client.query("begin");
+        await client.query(`set local search_path to ${ident(schema)}, public`);
         await client.query(f.content);
         await client.query(`insert into ${table} (name, checksum) values ($1, $2)`, [
           f.name,

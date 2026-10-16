@@ -47,11 +47,24 @@ export function createPluginContext(
   const provided = new Map<CapabilityRef, unknown>();
   const queue = createQueue(deps.redisUrl, name, { runWorkers: deps.runWorkers });
   const { close: closeQueue, ...queueApi } = queue;
+  const bus = createBus(deps.redis, deps.busSubscriber, name);
+  const unsubs = new Set<() => Promise<void>>();
+  const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
 
   return {
     kv: createKv(deps.redis, name),
     lock: createLock(deps.redis, name),
-    bus: createBus(deps.redis, deps.busSubscriber, name),
+    bus: {
+      publish: bus.publish,
+      async subscribe(topic, handler) {
+        const un = await bus.subscribe(topic, handler);
+        unsubs.add(un);
+        return async () => {
+          unsubs.delete(un);
+          await un();
+        };
+      },
+    },
     queue: queueApi,
     secrets: createSecrets(deps.db, deps.keyring, name),
     db: deps.db.withSchema(pluginSchemaName(name)),
@@ -79,9 +92,18 @@ export function createPluginContext(
       provided.set(capability, impl);
     },
     config: deploymentConfig,
-    log: deps.log,
+    log: {
+      info: (msg, fields) => deps.log.info(msg, tag(fields)),
+      warn: (msg, fields) => deps.log.warn(msg, tag(fields)),
+      error: (msg, fields) => deps.log.error(msg, tag(fields)),
+    },
     routes,
     provided,
-    close: closeQueue,
+    async close() {
+      const pending = [...unsubs];
+      unsubs.clear();
+      await Promise.allSettled(pending.map((u) => u()));
+      await closeQueue();
+    },
   };
 }

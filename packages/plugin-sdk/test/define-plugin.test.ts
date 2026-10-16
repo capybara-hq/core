@@ -24,6 +24,11 @@ describe("definePlugin", () => {
     const m = valid();
     expect(definePlugin(m)).toBe(m);
   });
+  it("rejects missing setup", () => {
+    // biome-ignore lint/suspicious/noExplicitAny: 构造缺 setup 的畸形清单
+    const bad = { ...valid(), setup: undefined } as any;
+    expect(() => definePlugin(bad)).toThrow(/setup/);
+  });
   it("rejects bad name", () => {
     expect(() => definePlugin(valid({ name: "Bad_Name" }))).toThrow(/name/);
     expect(() => definePlugin(valid({ name: "Bad_Name" }))).toThrow(PluginManifestError);

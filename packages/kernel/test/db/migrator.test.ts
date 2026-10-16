@@ -45,6 +45,15 @@ afterAll(async () => {
 }, 120_000);
 
 describe("migrate", () => {
+  it("unqualified table lands in the owner schema, not public", async () => {
+    const schema = schemaName();
+    const dir = await fixture({ "0001_a.sql": "create table if not exists unq_t (id int);" });
+    const d = db();
+    await migrate(pg.url, { schema, dir });
+    expect(await tableExists(d, schema, "unq_t")).toBe(true);
+    expect(await tableExists(d, "public", "unq_t")).toBe(false);
+  });
+
   it("applies in order", async () => {
     const schema = schemaName();
     const dir = await fixture({
