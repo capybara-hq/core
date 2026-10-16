@@ -1,4 +1,8 @@
 {
   "files": [],
-  "references": [{ "path": "packages/plugin-sdk" }, { "path": "packages/kernel" }]
+  "references": [
+    { "path": "packages/plugin-sdk" },
+    { "path": "packages/testing" },
+    { "path": "packages/kernel" }
+  ]
 }
