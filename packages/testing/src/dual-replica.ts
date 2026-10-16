@@ -7,8 +7,10 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "./contain
 
 /** 双副本测试工具的选项。 */
 export interface DualReplicaOptions {
-  /** 要加载的插件（绝对路径、file URL 或可从 testing 包解析的包名）。 */
+  /** 要加载的插件（绝对路径、file URL，或相对 `resolveFrom` 解析的包名）。 */
   plugins: string[];
+  /** 解析裸包名插件的目录，默认调用方的 `process.cwd()`（与 `createKernel` 的 resolveFrom 同义）。 */
+  resolveFrom?: string;
   /** 部署级插件配置，按插件名索引。 */
   pluginConfig?: Record<string, unknown>;
   /**
@@ -45,11 +47,13 @@ const STOP_TIMEOUT_MS = 15_000;
 const START_TIMEOUT_MS = 60_000;
 const STDERR_TAIL = 4000;
 
-/** 子进程 + 其 stderr 尾部。 */
+/** 子进程 + 其输出尾部 + 退出信息。 */
 interface Runner {
   child: ChildProcess;
-  stderr: () => string;
+  output: () => string;
   exited: Promise<void>;
+  /** 子进程已退出时的描述（含退出码/信号），否则 undefined。 */
+  crashed: string | undefined;
 }
 
 /** 新建随机名数据库，返回 `{ url, drop }`。 */
@@ -78,26 +82,43 @@ const runnerPath = fileURLToPath(
   new URL(`./replica-runner${extname(fileURLToPath(import.meta.url))}`, import.meta.url),
 );
 
-/** 启动一个副本子进程，等它通过 IPC 报告 ready。失败时抛出带 stderr 尾部的错误（不含配置）。 */
+/**
+ * 子进程的 node 参数。`.ts` 的 runner（monorepo / 开发态）需要 tsx 与源码导出条件；
+ * 编译后的 `.js` runner（发布态）直接用 node，不依赖 tsx。
+ */
+export function runnerArgv(runnerPath: string): string[] {
+  return runnerPath.endsWith(".ts")
+    ? ["--import", "tsx", "--conditions=@capybara-hq/source", runnerPath]
+    : [runnerPath];
+}
+
+/** 启动一个副本子进程，等它通过 IPC 报告 ready。失败时抛出带 输出尾部的错误（不含配置）。 */
 async function startReplica(
   config: Record<string, unknown>,
 ): Promise<{ runner: Runner; port: number }> {
-  const child = spawn(
-    process.execPath,
-    ["--import", "tsx", "--conditions=@capybara-hq/source", runnerPath],
-    {
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-      cwd: fileURLToPath(new URL("..", import.meta.url)),
-    },
-  );
+  const child = spawn(process.execPath, runnerArgv(runnerPath), {
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
+  });
   let tail = "";
   const onData = (b: Buffer) => {
     tail = (tail + b.toString()).slice(-STDERR_TAIL);
   };
   child.stderr?.on("data", onData);
   child.stdout?.on("data", onData);
-  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  const runner: Runner = { child, stderr: () => tail, exited };
+  const runner: Runner = {
+    child,
+    output: () => tail,
+    exited: Promise.resolve(),
+    crashed: undefined,
+  };
+  runner.exited = new Promise<void>((resolve) =>
+    child.once("exit", (code, signal) => {
+      runner.crashed = `exited with ${signal ? `signal ${signal}` : `code ${code}`}`;
+      resolve();
+    }),
+  );
+  const exited = runner.exited;
 
   const port = await new Promise<number>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("replica start timed out")), START_TIMEOUT_MS);
@@ -177,6 +198,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       redisUrl,
       masterKey: randomBytes(32).toString("base64"),
       plugins: opts.plugins,
+      resolveFrom: opts.resolveFrom ?? process.cwd(),
       pluginConfig: opts.pluginConfig ?? {},
       roles: ["api", "worker", "gateway"],
     };
@@ -197,7 +219,14 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       replicas,
       stop,
       async request(path, init) {
-        const r = replicas[calls++ % 2] as ReplicaHandle;
+        const i = calls++ % 2;
+        const r = replicas[i] as ReplicaHandle;
+        const dead = (i === 0 ? a : b).runner.crashed;
+        if (dead !== undefined) {
+          throw new Error(
+            `replica ${i} (pid ${r.pid}) ${dead}\n${(i === 0 ? a : b).runner.output()}`,
+          );
+        }
         return await fetch(`http://127.0.0.1:${r.port}${path}`, init);
       },
     };

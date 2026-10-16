@@ -6,6 +6,7 @@ interface RunnerConfig {
   redisUrl: string;
   masterKey: string;
   plugins: string[];
+  resolveFrom: string;
   pluginConfig: Record<string, unknown>;
   roles: string[];
 }
@@ -26,10 +27,23 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     pluginConfig: c.pluginConfig,
     log: { level: "error" },
   });
-  kernel = await createKernel(config);
+  kernel = await createKernel(config, { resolveFrom: c.resolveFrom });
   await kernel.start();
   process.send?.({ type: "ready", port: kernel.port });
 }
+
+let exiting = false;
+
+/** 停内核后退出；内核停机卡住时 10 秒后强制退出。 */
+function shutdown(): void {
+  if (exiting) return;
+  exiting = true;
+  setTimeout(() => process.exit(1), 10_000).unref();
+  (kernel?.stop() ?? Promise.resolve()).finally(() => process.exit(0));
+}
+
+// 父进程（含被 SIGKILL）消失后 IPC 通道断开，副本自行退出，不留孤儿
+process.on("disconnect", shutdown);
 
 process.on("message", (msg: Incoming) => {
   if (msg.type === "start") {
@@ -40,6 +54,6 @@ process.on("message", (msg: Incoming) => {
       );
     });
   } else if (msg.type === "stop") {
-    (kernel?.stop() ?? Promise.resolve()).finally(() => process.exit(0));
+    shutdown();
   }
 });

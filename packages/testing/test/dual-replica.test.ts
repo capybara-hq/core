@@ -1,7 +1,11 @@
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createDualReplicaHarness, type Harness } from "../src/dual-replica.js";
-import { startTestPostgres, type TestContainer } from "../src/index.js";
+import { createDualReplicaHarness, type Harness, runnerArgv } from "../src/dual-replica.js";
+import { startTestPostgres, startTestRedis, type TestContainer } from "../src/index.js";
 
 const fx = (n: string) => fileURLToPath(new URL(`./fixtures/${n}/index.ts`, import.meta.url));
 
@@ -78,4 +82,102 @@ describe("双副本测试工具", () => {
       createDualReplicaHarness({ plugins: ["/nonexistent/plugin.ts"], pgUrl: pgc.url }),
     ).rejects.toThrow(/replica failed to start[\s\S]*cannot import plugin/);
   });
+});
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe("runnerArgv", () => {
+  it(".ts runner 带 tsx 与源码条件；.js runner 直接 node", () => {
+    expect(runnerArgv("/x/replica-runner.ts")).toEqual([
+      "--import",
+      "tsx",
+      "--conditions=@capybara-hq/source",
+      "/x/replica-runner.ts",
+    ]);
+    expect(runnerArgv("/x/replica-runner.js")).toEqual(["/x/replica-runner.js"]);
+  });
+});
+
+describe("双副本测试工具：进程与解析", () => {
+  it("裸包名插件按 resolveFrom 解析，两个副本都可用", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cap-resolve-"));
+    try {
+      const pkg = join(dir, "node_modules/@capybara-hq/plugin-tmp2");
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(
+        join(pkg, "package.json"),
+        JSON.stringify({
+          name: "@capybara-hq/plugin-tmp2",
+          version: "0.1.0",
+          type: "module",
+          main: "index.js",
+        }),
+      );
+      writeFileSync(
+        join(pkg, "index.js"),
+        `export default {
+  name: "tmp2", version: "0.1.0", sdk: "^0.1.0", provides: [],
+  setup(ctx) { ctx.http.route("GET", "/ok", async () => new Response("ok")); },
+};
+`,
+      );
+      const h = await createDualReplicaHarness({
+        plugins: ["@capybara-hq/plugin-tmp2"],
+        resolveFrom: dir,
+        pgUrl: pgc.url,
+      });
+      harnesses.push(h);
+      for (let i = 0; i < 2; i++) {
+        const r = await h.request("/plugins/tmp2/ok");
+        expect(await r.text()).toBe("ok");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("副本崩溃后 request 以副本序号与退出信息 reject", async () => {
+    const h = await harness("good-counter");
+    process.kill(h.replicas[1].pid, "SIGKILL");
+    await new Promise((r) => setTimeout(r, 500));
+    await h.request("/healthz");
+    await expect(h.request("/healthz")).rejects.toThrow(/replica 1 .*SIGKILL/);
+  });
+
+  it("父进程被 SIGKILL 后两个副本自行退出，不留孤儿", async () => {
+    const rd = await startTestRedis();
+    try {
+      const parent = spawn(
+        process.execPath,
+        [
+          ...runnerArgv("x.ts").slice(0, 3),
+          fileURLToPath(new URL("./fixtures/orphan-parent.ts", import.meta.url)),
+        ],
+        {
+          stdio: ["ignore", "pipe", "inherit"],
+          env: { ...process.env, TEST_PG_URL: pgc.url, TEST_REDIS_URL: rd.url },
+        },
+      );
+      let out = "";
+      parent.stdout.on("data", (b) => {
+        out += b;
+      });
+      await new Promise((r) => parent.once("exit", r));
+      const pids = JSON.parse(out.trim().split("\n").pop() as string) as number[];
+      expect(pids).toHaveLength(2);
+      const deadline = Date.now() + 20_000;
+      while (pids.some(alive) && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 200));
+      expect(pids.filter(alive)).toEqual([]);
+    } finally {
+      await rd.stop();
+    }
+  }, 60_000);
 });
