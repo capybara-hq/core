@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type Kysely, sql } from "kysely";
+import pg from "pg";
 
 const FILE_RE = /^\d{4}_[a-z0-9_]+\.sql$/;
 
@@ -11,14 +11,17 @@ export interface MigrationOwner {
   dir: string;
 }
 
+const ident = (s: string) => `"${s.replaceAll('"', '""')}"`;
+const num = (name: string) => Number.parseInt(name.slice(0, 4), 10);
+
 /**
  * 执行目录下尚未应用的 SQL 迁移。
- * 全程在单一专用连接上持有 advisory lock（按 schema 名哈希），保证并发调用只有一个执行；
- * 每个文件在独立事务中执行，已执行文件的 checksum 变化会抛错并点名该文件。
+ * 使用独立的 pg.Client（不走连接池），在该会话上持有 advisory lock（按 schema 名哈希）；
+ * 结束时无论成败都 end() 会话，会话结束即释放锁，不会把持锁连接还给连接池。
+ * 执行前先校验已应用文件的 checksum 与编号顺序；每个文件在独立事务中执行。
  */
 export async function migrate(
-  // biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型
-  db: Kysely<any>,
+  connectionString: string,
   owner: MigrationOwner,
 ): Promise<{ applied: string[] }> {
   const { schema, dir } = owner;
@@ -29,48 +32,61 @@ export async function migrate(
       return { name, content, checksum: createHash("sha256").update(content).digest("hex") };
     }),
   );
-  const table = sql.table(`${schema}._migrations`);
+  const table = `${ident(schema)}._migrations`;
 
-  return db.connection().execute(async (conn) => {
-    const lockKey = sql`hashtext(${`capybara-migrate:${schema}`})`;
-    await sql`select pg_advisory_lock(${lockKey})`.execute(conn);
-    try {
-      await sql`create schema if not exists ${sql.id(schema)}`.execute(conn);
-      await sql`create table if not exists ${table} (
-        name text primary key,
-        checksum text not null,
-        applied_at timestamptz not null default now()
-      )`.execute(conn);
-      const done = new Map(
-        (
-          await sql<{
-            name: string;
-            checksum: string;
-          }>`select name, checksum from ${table}`.execute(conn)
-        ).rows.map((r) => [r.name, r.checksum]),
-      );
-      const applied: string[] = [];
-      for (const f of files) {
-        const prev = done.get(f.name);
-        if (prev !== undefined) {
-          if (prev !== f.checksum) {
-            throw new Error(
-              `Migration ${f.name} was modified after being applied (checksum mismatch)`,
-            );
-          }
-          continue;
-        }
-        await conn.transaction().execute(async (tx) => {
-          await sql.raw(f.content).execute(tx);
-          await sql`insert into ${table} (name, checksum) values (${f.name}, ${f.checksum})`.execute(
-            tx,
-          );
-        });
-        applied.push(f.name);
+  const client = new pg.Client({ connectionString });
+  client.on("error", () => {});
+  await client.connect();
+  try {
+    await client.query("select pg_advisory_lock(hashtext($1))", [`capybara-migrate:${schema}`]);
+    await client.query(`create schema if not exists ${ident(schema)}`);
+    await client.query(`create table if not exists ${table} (
+      name text primary key,
+      checksum text not null,
+      applied_at timestamptz not null default now()
+    )`);
+    const rows = (
+      await client.query<{ name: string; checksum: string }>(`select name, checksum from ${table}`)
+    ).rows;
+    const done = new Map(rows.map((r) => [r.name, r.checksum]));
+
+    for (const f of files) {
+      const prev = done.get(f.name);
+      if (prev !== undefined && prev !== f.checksum) {
+        throw new Error(
+          `Migration ${schema}/${f.name} was modified after being applied (checksum mismatch)`,
+        );
       }
-      return { applied };
-    } finally {
-      await sql`select pg_advisory_unlock(${lockKey})`.execute(conn);
     }
-  });
+    const highest = Math.max(-1, ...rows.map((r) => num(r.name)));
+    for (const f of files) {
+      if (!done.has(f.name) && num(f.name) < highest) {
+        throw new Error(
+          `Migration ${schema}/${f.name} is out of order: a higher-numbered migration (${String(highest).padStart(4, "0")}) is already applied`,
+        );
+      }
+    }
+
+    const applied: string[] = [];
+    for (const f of files) {
+      if (done.has(f.name)) continue;
+      try {
+        await client.query("begin");
+        await client.query(f.content);
+        await client.query(`insert into ${table} (name, checksum) values ($1, $2)`, [
+          f.name,
+          f.checksum,
+        ]);
+        await client.query("commit");
+      } catch (e) {
+        await client.query("rollback").catch(() => {});
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Migration ${schema}/${f.name} failed: ${msg}`, { cause: e });
+      }
+      applied.push(f.name);
+    }
+    return { applied };
+  } finally {
+    await client.end().catch(() => {});
+  }
 }

@@ -54,7 +54,7 @@ describe("migrate", () => {
     });
     const d = db();
     await sql.raw(`create schema ${schema}`).execute(d);
-    const r = await migrate(d, { schema, dir });
+    const r = await migrate(pg.url, { schema, dir });
     expect(r.applied).toEqual(["0001_a.sql", "0002_b.sql"]);
     expect(await tableExists(d, schema, "a")).toBe(true);
     expect(await tableExists(d, schema, "b")).toBe(true);
@@ -65,24 +65,24 @@ describe("migrate", () => {
     const dir = await fixture({ "0001_a.sql": `create table ${schema}.a (id int);` });
     const d = db();
     await sql.raw(`create schema ${schema}`).execute(d);
-    await migrate(d, { schema, dir });
-    expect((await migrate(d, { schema, dir })).applied).toEqual([]);
+    await migrate(pg.url, { schema, dir });
+    expect((await migrate(pg.url, { schema, dir })).applied).toEqual([]);
   });
 
   it("creates a missing schema before _migrations", async () => {
     const schema = schemaName();
     const dir = await fixture({ "0001_a.sql": `create table if not exists ${schema}.a (id int);` });
     const d = db();
-    expect((await migrate(d, { schema, dir })).applied).toEqual(["0001_a.sql"]);
+    expect((await migrate(pg.url, { schema, dir })).applied).toEqual(["0001_a.sql"]);
   });
 
   it("rejects on checksum mismatch", async () => {
     const schema = schemaName();
     const dir = await fixture({ "0001_a.sql": `create table ${schema}.a (id int);` });
     const d = db();
-    await migrate(d, { schema, dir });
+    await migrate(pg.url, { schema, dir });
     await writeFile(join(dir, "0001_a.sql"), `create table ${schema}.a (id int, x int);`);
-    await expect(migrate(d, { schema, dir })).rejects.toThrow(/0001_a\.sql/);
+    await expect(migrate(pg.url, { schema, dir })).rejects.toThrow(/0001_a\.sql/);
   });
 
   it("serializes concurrent migrate calls", async () => {
@@ -91,10 +91,9 @@ describe("migrate", () => {
       "0001_a.sql": `create table ${schema}.a (id int);`,
       "0002_b.sql": `create table ${schema}.b (id int);`,
     });
-    const [d1, d2] = [db(), db()];
     const [r1, r2] = await Promise.all([
-      migrate(d1, { schema, dir }),
-      migrate(d2, { schema, dir }),
+      migrate(pg.url, { schema, dir }),
+      migrate(pg.url, { schema, dir }),
     ]);
     expect([...r1.applied, ...r2.applied].sort()).toEqual(["0001_a.sql", "0002_b.sql"]);
   });
@@ -106,11 +105,55 @@ describe("migrate", () => {
       "0003_bad.sql": `create table ${schema}.c (id int);\nselec nonsense;`,
     });
     const d = db();
-    await expect(migrate(d, { schema, dir })).rejects.toThrow();
+    await expect(migrate(pg.url, { schema, dir })).rejects.toThrow(/0003_bad\.sql/);
     const rows = await sql<{
       name: string;
     }>`select name from ${sql.id(schema, "_migrations")}`.execute(d);
     expect(rows.rows.map((r) => r.name)).toEqual(["0001_a.sql"]);
     expect(await tableExists(d, schema, "c")).toBe(false);
+  });
+
+  it("rejects when an applied file is modified, before applying anything new", async () => {
+    const schema = schemaName();
+    const dir = await fixture({ "0001_a.sql": `create table ${schema}.a (id int);` });
+    const d = db();
+    await migrate(pg.url, { schema, dir });
+    await writeFile(join(dir, "0001_a.sql"), `create table ${schema}.a (id int, x int);`);
+    await writeFile(join(dir, "0002_b.sql"), `create table ${schema}.b (id int);`);
+    await expect(migrate(pg.url, { schema, dir })).rejects.toThrow(/0001_a\.sql/);
+    expect(await tableExists(d, schema, "b")).toBe(false);
+  });
+
+  it("rejects an unapplied file numbered below the highest applied", async () => {
+    const schema = schemaName();
+    const dir = await fixture({ "0002_b.sql": `create table ${schema}.b (id int);` });
+    const d = db();
+    await migrate(pg.url, { schema, dir });
+    await writeFile(join(dir, "0001_a.sql"), `create table ${schema}.a (id int);`);
+    await expect(migrate(pg.url, { schema, dir })).rejects.toThrow(/0001_a\.sql.*out of order/);
+    expect(await tableExists(d, schema, "a")).toBe(false);
+  });
+
+  it("does not leave the advisory lock held after a failure", async () => {
+    const schema = schemaName();
+    const bad = await fixture({ "0001_bad.sql": "selec nonsense;" });
+    await expect(migrate(pg.url, { schema, dir: bad })).rejects.toThrow(/0001_bad\.sql/);
+    const ok = await fixture({ "0002_ok.sql": `create table if not exists ${schema}.a (id int);` });
+    expect((await migrate(pg.url, { schema, dir: ok })).applied).toEqual(["0002_ok.sql"]);
+  });
+});
+
+describe("createDb", () => {
+  it("survives a terminated idle backend and reports it via onError", async () => {
+    const errors: Error[] = [];
+    const d = createDb(pg.url, 2, (e) => errors.push(e));
+    dbs.push(d);
+    const pid = (await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(d)).rows[0]
+      ?.pid;
+    const admin = db();
+    await sql`select pg_terminate_backend(${pid})`.execute(admin);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(errors.length).toBeGreaterThan(0);
+    expect((await sql<{ x: number }>`select 1 as x`.execute(d)).rows[0]?.x).toBe(1);
   });
 });
