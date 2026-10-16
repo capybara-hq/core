@@ -9,23 +9,32 @@ export interface BusSubscriber {
   subscribe(channel: string, handler: RawHandler): Promise<() => Promise<void>>;
 }
 
+/** 调用 handler：同步抛错与返回 Promise 的 reject 都被吞掉并记录，保证 handler 间互相隔离。 */
+function invokeIsolated(label: string, fn: () => unknown): void {
+  Promise.resolve()
+    .then(fn)
+    .catch((err) => console.error(`[bus] handler for ${label} threw`, err));
+}
+
+interface ChannelState {
+  handlers: Set<RawHandler>;
+  ready: Promise<void>;
+}
+
 /** 创建共享订阅者：首次订阅时才惰性打开唯一一条连接，并把频道多路复用到各 handler 集合。 */
 export function createBusSubscriber(subFactory: () => Redis): BusSubscriber & {
   close(): Promise<void>;
 } {
   let conn: Redis | null = null;
-  const handlers = new Map<string, Set<RawHandler>>();
+  let closed = false;
+  const channels = new Map<string, ChannelState>();
 
   const ensure = (): Redis => {
     if (conn) return conn;
     const c = subFactory();
     c.on("message", (channel: string, message: string) => {
-      for (const h of [...(handlers.get(channel) ?? [])]) {
-        try {
-          h(message);
-        } catch (err) {
-          console.error(`[bus] handler for ${channel} threw`, err);
-        }
+      for (const h of [...(channels.get(channel)?.handlers ?? [])]) {
+        invokeIsolated(channel, () => h(message));
       }
     });
     c.on("error", (err: Error) => console.error("[bus] subscriber connection error", err));
@@ -35,30 +44,41 @@ export function createBusSubscriber(subFactory: () => Redis): BusSubscriber & {
 
   return {
     async subscribe(channel, handler) {
+      if (closed) throw new Error("bus subscriber is closed");
       const c = ensure();
-      let set = handlers.get(channel);
-      const first = !set;
-      if (!set) {
-        set = new Set();
-        handlers.set(channel, set);
+      let st = channels.get(channel);
+      if (!st) {
+        const handlers = new Set<RawHandler>();
+        st = { handlers, ready: Promise.resolve() };
+        channels.set(channel, st);
+        const created = st;
+        created.ready = c.subscribe(channel).then(() => undefined);
+        created.ready.catch(() => {
+          if (channels.get(channel) === created) channels.delete(channel);
+        });
       }
-      set.add(handler);
-      if (first) await c.subscribe(channel);
+      st.handlers.add(handler);
+      try {
+        await st.ready;
+      } catch (err) {
+        st.handlers.delete(handler);
+        throw err;
+      }
       let removed = false;
+      const state = st;
       return async () => {
         if (removed) return;
         removed = true;
-        const cur = handlers.get(channel);
-        if (!cur) return;
-        cur.delete(handler);
-        if (cur.size === 0) {
-          handlers.delete(channel);
-          await c.unsubscribe(channel);
+        state.handlers.delete(handler);
+        if (state.handlers.size === 0 && channels.get(channel) === state) {
+          channels.delete(channel);
+          if (!closed) await c.unsubscribe(channel);
         }
       };
     },
     async close() {
-      handlers.clear();
+      closed = true;
+      channels.clear();
       const c = conn;
       conn = null;
       if (c) await c.quit().catch(() => c.disconnect());
@@ -86,11 +106,7 @@ export function createBus(
           console.error(`[bus] ignoring malformed message on ${ch(topic)}`);
           return;
         }
-        try {
-          handler(payload);
-        } catch (err) {
-          console.error(`[bus] handler for ${ch(topic)} threw`, err);
-        }
+        invokeIsolated(ch(topic), () => handler(payload));
       });
     },
   };

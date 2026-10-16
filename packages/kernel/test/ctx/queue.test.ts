@@ -121,4 +121,11 @@ describe("ctx.queue", () => {
     await q.close();
     expect(done).toBe(true);
   });
+
+  it("close 之后 add / define 抛 closed", async () => {
+    const q = createQueue(box.url, "q-closed", { runWorkers: true });
+    await q.close();
+    await expect(q.add("x", {})).rejects.toThrow(/closed/);
+    expect(() => q.define("x", async () => {})).toThrow(/closed/);
+  });
 });

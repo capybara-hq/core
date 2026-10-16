@@ -107,4 +107,71 @@ describe("ctx.bus", () => {
     expect(await numsub(ch)).toBe(0);
     await a.sub.close();
   });
+
+  it("async handler reject 不产生 unhandledRejection 且不影响其他 handler", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => unhandled.push(e);
+    process.on("unhandledRejection", onUnhandled);
+    const a = replica("bus-async");
+    const got: unknown[] = [];
+    await a.bus.subscribe("t", (async () => {
+      throw new Error("async boom");
+    }) as (p: unknown) => void);
+    await a.bus.subscribe("t", (p) => got.push(p));
+    await a.bus.publish("t", 1);
+    await until(() => got.length === 1);
+    await sleep(100);
+    process.off("unhandledRejection", onUnhandled);
+    expect(unhandled).toHaveLength(0);
+    spy.mockRestore();
+    await a.sub.close();
+  });
+
+  it("并发 subscribe 同频道：都等到 SUBSCRIBE 确认，随后立即 publish 都能收到", async () => {
+    const a = replica("bus-conc");
+    const g1: unknown[] = [];
+    const g2: unknown[] = [];
+    await Promise.all([
+      a.bus.subscribe("t", (p) => g1.push(p)),
+      a.bus.subscribe("t", (p) => g2.push(p)),
+    ]);
+    await a.bus.publish("t", 7);
+    await until(() => g1.length === 1 && g2.length === 1);
+    await a.sub.close();
+  });
+
+  it("SUBSCRIBE 失败：subscribe 抛错并回滚，之后同频道可再订阅", async () => {
+    const real = conn();
+    let fail = true;
+    const fake = new Proxy(real, {
+      get(t, prop) {
+        if (prop === "subscribe") {
+          return async (...args: string[]) => {
+            if (fail) {
+              fail = false;
+              throw new Error("subscribe failed");
+            }
+            return t.subscribe(...args);
+          };
+        }
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const sub = createBusSubscriber(() => fake);
+    const bus = createBus(conn(), sub, "bus-fail");
+    await expect(bus.subscribe("t", () => {})).rejects.toThrow(/subscribe failed/);
+    const got: unknown[] = [];
+    await bus.subscribe("t", (p) => got.push(p));
+    await bus.publish("t", 1);
+    await until(() => got.length === 1);
+    await sub.close();
+  });
+
+  it("close 之后 subscribe 抛 closed", async () => {
+    const a = replica("bus-closed");
+    await a.sub.close();
+    await expect(a.bus.subscribe("t", () => {})).rejects.toThrow(/closed/);
+  });
 });
