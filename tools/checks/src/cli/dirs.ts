@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { scanTargetProblem } from "../sentinel.js";
 import { root } from "./report.js";
 
 /** 只扫描 packages/*\/src/migrations 与 plugins/*\/migrations；fixtures 不在扫描范围内。 */
@@ -25,4 +26,12 @@ export function pluginDirs(): string[] {
     .filter((e) => e.isDirectory() && e.name !== "node_modules")
     .map((e) => join(base, e.name))
     .sort();
+}
+
+/** 哨兵：插件目录为空或 plugin-sdk 缺失时直接 exit 1，避免空扫描假绿。 */
+export function requireScanTargets(): void {
+  const problem = scanTargetProblem(pluginDirs(), root);
+  if (problem === undefined) return;
+  console.error(problem);
+  process.exit(1);
 }

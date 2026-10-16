@@ -10,12 +10,11 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 | `packages/kernel` | 内核：配置、db、`ctx`、插件宿主、HTTP |
 | `packages/testing` | 测试容器与双副本工具 |
 | `apps/capybara` | CLI |
-| `plugins/*` | 官方插件 |
+| `plugins/*` | 官方插件（`example-counter` 是参考实现） |
 | `tools/*` | 仓库内部工具与自定义检查 |
 | `docs/` | 设计文档与计划 |
 | `skills/` | 面向 Agent 的技能（`.claude/skills` 软链到此处） |
 
-（部分目录随后续里程碑逐步创建。）
 
 ## 三层与依赖方向
 
@@ -36,10 +35,10 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 
 ## 规则速记
 
-- 迁移：纯 SQL 文件，命名 `NNNN_<snake_desc>.sql`，建删对象必须带 `IF NOT EXISTS` / `IF EXISTS`；内核 schema 为 `capybara`，插件为 `plugin_<name>`（`-` 换 `_`）。详见 `skills/writing-migrations`（计划中，后续添加）。
-- 配置：环境变量前缀 `CAPYBARA_`，嵌套用双下划线（`CAPYBARA_DB__URL` -> `db.url`），环境变量优先级最高；来源由 `CAPYBARA_CONFIG_SOURCE`（`file` / `nacos`）选择。详见 `skills/adding-config`（计划中，后续添加）。
+- 迁移：纯 SQL 文件，命名 `NNNN_<snake_desc>.sql`，建删对象必须带 `IF NOT EXISTS` / `IF EXISTS`；内核 schema 为 `capybara`，插件为 `plugin_<name>`（`-` 换 `_`）。详见 [skills/writing-migrations](skills/writing-migrations/SKILL.md)。
+- 配置：环境变量前缀 `CAPYBARA_`，嵌套用双下划线（`CAPYBARA_DB__URL` -> `db.url`），环境变量优先级最高；来源由 `CAPYBARA_CONFIG_SOURCE`（`file` / `nacos`）选择。详见 [skills/adding-config](skills/adding-config/SKILL.md)。
 - 国际化：给模型看的文案（提示词、工具描述、模型可见的错误）一律英文；界面文案走 i18n。
-- 插件开发：详见 `skills/writing-plugins`（计划中，后续添加）。
+- 插件开发：详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，参考实现 `plugins/example-counter`。
 - **能自动检查的规则以检查为准**：`pnpm check` 会逐步收录各项自定义检查，每道检查都有「违规 fixture 使其失败」的测试。
 
 ## 常用命令

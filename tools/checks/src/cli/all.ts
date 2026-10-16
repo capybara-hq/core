@@ -4,8 +4,10 @@ import { checkDeps } from "../deps.js";
 import { checkMigrations } from "../migrations.js";
 import { checkPluginState } from "../plugin-state.js";
 import type { Finding } from "../source.js";
-import { migrationDirs, pluginDirs } from "./dirs.js";
+import { migrationDirs, pluginDirs, requireScanTargets } from "./dirs.js";
 import { root } from "./report.js";
+
+requireScanTargets();
 
 const checks: { name: string; run: () => Finding[] }[] = [
   { name: "迁移", run: () => checkMigrations(migrationDirs()) },

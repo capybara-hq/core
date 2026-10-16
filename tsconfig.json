@@ -1,10 +1,23 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/plugin-sdk" },
-    { "path": "packages/testing" },
-    { "path": "packages/kernel" },
-    { "path": "tools/checks" },
-    { "path": "apps/capybara" }
+    {
+      "path": "packages/plugin-sdk"
+    },
+    {
+      "path": "packages/testing"
+    },
+    {
+      "path": "packages/kernel"
+    },
+    {
+      "path": "plugins/example-counter"
+    },
+    {
+      "path": "tools/checks"
+    },
+    {
+      "path": "apps/capybara"
+    }
   ]
 }
