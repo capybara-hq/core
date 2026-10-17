@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type {
-  ModelInfo,
-  ModelProvider,
-  ModelRequest,
-  ModelStreamEvent,
+import {
+  ModelError,
+  type ModelInfo,
+  type ModelProvider,
+  type ModelRequest,
+  type ModelStreamEvent,
+  type ModelUsage,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -68,7 +70,12 @@ interface Stub extends ModelProvider {
 }
 
 /** `respond` 返回文本即流式输出该文本（每 4 字符一个增量）；usage 的输入 token 与内核估算一致（校正比例为 1）。 */
-function stub(models: ModelInfo[], respond: (req: ModelRequest) => string): Stub {
+/** `respond` 抛错即该次调用失败；`usage` 可覆盖默认用量（默认整段输入都算未命中缓存）。 */
+function stub(
+  models: ModelInfo[],
+  respond: (req: ModelRequest) => string,
+  usageOf?: (req: ModelRequest, estimate: number) => ModelUsage,
+): Stub {
   const calls: ModelRequest[] = [];
   return {
     calls,
@@ -85,7 +92,7 @@ function stub(models: ModelInfo[], respond: (req: ModelRequest) => string): Stub
         type: "message_complete",
         content: [{ type: "text", text }],
         stopReason: "end_turn",
-        usage: {
+        usage: usageOf?.(req, estimateTokens(req.messages, req.system)) ?? {
           inputTokens: estimateTokens(req.messages, req.system),
           outputTokens: Math.ceil(text.length / 4),
           cacheReadTokens: 0,
@@ -351,6 +358,63 @@ describe("runModelStep", () => {
     expect(deltas.filter((d) => d.kind === "step_reset")).toHaveLength(1);
   });
 
+  it("retryAfterMs 超过上限（10s）→ 跳过同模型重试，直接切兜底", async () => {
+    stubImpl = stub([stubInfo("limited"), stubInfo("ok")], (req) => {
+      if (req.model === "limited") {
+        throw new ModelError("rate_limited", "slow down", { retryAfterMs: 600_000 });
+      }
+      return "from fallback";
+    });
+    await say("hi");
+    const { deltas, sink } = collector();
+    const t0 = Date.now();
+    const r = await step({
+      sink,
+      agent: agentWith({
+        model: { provider: "stub", model: "limited" },
+        fallback: { provider: "stub", model: "ok" },
+      }),
+    });
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(r.content).toEqual([{ type: "text", text: "from fallback" }]);
+    const calls = await ofType("model_call");
+    expect(calls.map((c) => [c.payload.attempt, c.payload.model, c.payload.fallback])).toEqual([
+      [1, "limited", false],
+      [2, "ok", true],
+    ]);
+    expect(deltas.filter((d) => d.kind === "step_reset")).toHaveLength(1);
+  });
+
+  it("retryAfterMs 超过上限且没有兜底 → 立即抛 RunError，不等待", async () => {
+    stubImpl = stub([stubInfo("limited")], () => {
+      throw new ModelError("rate_limited", "slow down", { retryAfterMs: 600_000 });
+    });
+    await say("hi");
+    const t0 = Date.now();
+    const code = await runErrorCode(
+      step({ agent: agentWith({ model: { provider: "stub", model: "limited" } }) }),
+    );
+    expect(code).toBe("model.rate_limited");
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(await ofType("model_call")).toHaveLength(1);
+  });
+
+  it("retryAfterMs 在上限内 → 按建议等待后在同一模型上重试", async () => {
+    let n = 0;
+    stubImpl = stub([stubInfo("flaky")], () => {
+      if (++n === 1) throw new ModelError("overloaded", "busy", { retryAfterMs: 300 });
+      return "second try";
+    });
+    await say("hi");
+    const t0 = Date.now();
+    const r = await step({ agent: agentWith({ model: { provider: "stub", model: "flaky" } }) });
+    const elapsed = Date.now() - t0;
+    expect(r.content).toEqual([{ type: "text", text: "second try" }]);
+    expect(elapsed).toBeGreaterThanOrEqual(280);
+    expect(elapsed).toBeLessThan(900);
+    expect((await ofType("model_call")).map((c) => c.payload.attempt)).toEqual([1, 2]);
+  });
+
   it("模型不存在 → RunError(run.model_unavailable)", async () => {
     await say("hi");
     const code = await runErrorCode(
@@ -504,6 +568,38 @@ describe("runModelStep", () => {
       await step({ agent, step: 2 });
       expect(await ofType("compaction_summary")).toHaveLength(1);
       expect(await ofType("model_call")).toHaveLength(2);
+    });
+
+    it("校正按总输入（未缓存 + 缓存读 + 缓存写）计算：大量缓存命中时仍会触发压缩", async () => {
+      // 供应商把绝大部分输入报为缓存读，inputTokens 只是未缓存部分；三者之和等于真实输入。
+      stubImpl = stub(
+        [stubInfo("cached", { contextWindow: 2000 })],
+        (req) =>
+          req.system.some((x) => x.text.includes(COMPACTION_MARKER))
+            ? `Summary: ${"s".repeat(300)}`
+            : "answer",
+        (_req, estimate) => ({
+          inputTokens: 20,
+          outputTokens: 2,
+          cacheReadTokens: Math.max(0, estimate - 30),
+          cacheWriteTokens: 10,
+        }),
+      );
+      const agent = agentWith({ model: { provider: "stub", model: "cached" } });
+      await say("hi");
+      await step({ agent });
+      expect(await ofType("compaction_summary")).toHaveLength(0);
+
+      for (let i = 0; i < 8; i++) {
+        await say(filler(i));
+        await answer(filler(i));
+      }
+      await say("go");
+      runId = randomUUID();
+      const r = await step({ agent });
+      expect(r.content).toEqual([{ type: "text", text: "answer" }]);
+      expect(await ofType("compaction_summary")).toHaveLength(1);
+      expect(await ofType("compaction_failed")).toHaveLength(0);
     });
 
     it("摘要过短 → 写 compaction_failed（attempt 1），本步仍完成；下一轮因退避跳过；退避期满再失败 attempt 2", async () => {

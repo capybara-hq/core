@@ -120,16 +120,19 @@ describe("model-fake", () => {
     expect(text.split(" ")).toHaveLength(50);
   });
 
-  it("usage is ceil(chars/4); second same prefix reports cacheRead via kv with TTL 300", async () => {
+  it("usage: inputTokens is the uncached part (ceil(chars/4)); cached prefix reported as cacheWrite then cacheRead via kv with TTL 300", async () => {
     const kv = memKv();
     const p = createFakeProvider({ kv, sleep: noSleep });
     const r = req("echo:abcde", { system: [{ text: "x".repeat(40), cache: true }] });
     const u1 = complete(await run(p, r)).usage;
-    expect(u1.inputTokens).toBe(Math.ceil((40 + 10) / 4));
+    expect(u1.inputTokens).toBe(Math.ceil(10 / 4));
     expect(u1.outputTokens).toBe(2);
     expect(u1.cacheReadTokens).toBe(0);
+    expect(u1.cacheWriteTokens).toBe(10);
     const u2 = complete(await run(p, r)).usage;
+    expect(u2.inputTokens).toBe(Math.ceil(10 / 4));
     expect(u2.cacheReadTokens).toBe(10);
+    expect(u2.cacheWriteTokens).toBe(0);
     expect(kv.ttls).toEqual([300]);
   });
 

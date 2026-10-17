@@ -37,6 +37,12 @@ export const WRAP_UP_REMINDER =
 /** 可重试错误在同一模型上重试前的默认等待（供应商未给 retryAfterMs 时）。 */
 const DEFAULT_RETRY_DELAY_MS = 1000;
 
+/**
+ * 供应商建议等待（retryAfterMs）的上限。超过它就不在同一模型上等待重试，直接切兜底（没有兜底则失败），
+ * 避免一次运行被「请 10 分钟后再试」之类的建议长时间挂起。
+ */
+const MAX_RETRY_AFTER_MS = 10_000;
+
 /** 读事件日志的分页大小。 */
 const READ_PAGE = 1000;
 
@@ -289,7 +295,11 @@ function buildRequest(
   return { request, meta, estimate: estimateTokens(request.messages, request.system) };
 }
 
-/** 上一次成功调用的「未校正估算 vs 真实输入 token」：最近的 usage 及其之前最近的 model_call。 */
+/**
+ * 上一次成功调用的「未校正估算 vs 真实输入 token」：最近的 usage 及其之前最近的 model_call。
+ * 真实输入取 `inputTokens + cacheReadTokens + cacheWriteTokens`（`inputTokens` 只是未缓存部分，
+ * 见 plugin-sdk `ModelUsage`）；只用 `inputTokens` 会在大量缓存命中时把估算压到下限，压缩永不触发。
+ */
 function lastActual(events: ConversationEvent[]): { estimate: number; inputTokens: number } | null {
   let usage: (ConversationEvent & { type: "usage" }) | undefined;
   for (const e of events) if (e.type === "usage") usage = e;
@@ -299,7 +309,9 @@ function lastActual(events: ConversationEvent[]): { estimate: number; inputToken
     if (e.seq >= usage.seq) break;
     if (e.type === "model_call") estimate = e.payload.request.estimatedInputTokens;
   }
-  return estimate === undefined ? null : { estimate, inputTokens: usage.payload.inputTokens };
+  if (estimate === undefined) return null;
+  const { inputTokens, cacheReadTokens, cacheWriteTokens } = usage.payload;
+  return { estimate, inputTokens: inputTokens + cacheReadTokens + cacheWriteTokens };
 }
 
 /** 最近一条摘要之后连续失败的压缩次数。 */
@@ -381,7 +393,8 @@ async function maybeCompact(
 
 /**
  * 降级梯子：主模型 → 主模型重试一次（等 `retryAfterMs ?? 1000`，可被中止）→ `agent.fallback`（若有）。
- * 每次尝试写自己的 `model_call`（attempt 从 1 递增）；重试前经 sink 发 `step_reset`。
+ * 建议等待超过 `MAX_RETRY_AFTER_MS` 时跳过同模型重试。
+ * 每次实际尝试写自己的 `model_call`（attempt 从 1 连续递增，跳过的不计）；重试前经 sink 发 `step_reset`。
  * 不可重试的失败或梯子用尽 → `RunError`。
  */
 async function ladder(
@@ -400,8 +413,18 @@ async function ladder(
   if (agent.fallback) rungs.push({ ref: agent.fallback, fallback: true });
 
   let last: Failure | undefined;
-  for (const [i, rung] of rungs.entries()) {
-    const attempt = i + 1;
+  let attempt = 0;
+  for (const rung of rungs) {
+    if (last && !rung.fallback && (last.retryAfterMs ?? 0) > MAX_RETRY_AFTER_MS) {
+      deps.log.warn("model retry skipped: suggested wait exceeds cap", {
+        conversationId,
+        runId,
+        step,
+        retryAfterMs: last.retryAfterMs,
+      });
+      continue;
+    }
+    attempt++;
     if (last) {
       sink({ kind: "step_reset", runId, step });
       streamed.text = "";

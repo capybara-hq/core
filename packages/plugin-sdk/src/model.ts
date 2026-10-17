@@ -56,10 +56,18 @@ export interface ModelRequest {
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
 
+/**
+ * 一次调用的 token 用量。三类输入互不重叠：本次请求的输入总量 =
+ * `inputTokens + cacheReadTokens + cacheWriteTokens`（内核据此校正上下文估算、决定何时压缩）。
+ * 供应商 API 的输入计数若已包含缓存命中 / 写入的 token（如 OpenAI 的 `prompt_tokens`），插件必须先减掉。
+ */
 export interface ModelUsage {
+  /** 未命中缓存、也未写入缓存的输入 token（只是未缓存部分，不是输入总量）。 */
   inputTokens: number;
   outputTokens: number;
+  /** 从提示词缓存读取的输入 token。 */
   cacheReadTokens: number;
+  /** 本次写入提示词缓存的输入 token。 */
   cacheWriteTokens: number;
 }
 

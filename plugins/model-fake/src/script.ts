@@ -198,18 +198,23 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
     ...(m.streamIdleTimeoutMs !== undefined ? { streamIdleTimeoutMs: m.streamIdleTimeoutMs } : {}),
   }));
 
-  /** 系统前缀第二次出现时返回命中的字符数；命中记录在 kv，TTL 300 秒。 */
-  async function cacheUsage(req: ModelRequest): Promise<{ read: number; write: number }> {
-    const prefix = req.system
-      .filter((s) => s.cache)
-      .map((s) => s.text)
-      .join("\n");
-    if (prefix === "") return { read: 0, write: 0 };
+  /**
+   * 可缓存的系统前缀：首次出现计为缓存写，再次出现计为缓存读（命中记录在 kv，TTL 300 秒）。
+   * `cachedChars` 为前缀字符数，从 inputTokens 中扣除（inputTokens 只算未缓存部分）。
+   */
+  async function cacheUsage(
+    req: ModelRequest,
+  ): Promise<{ read: number; write: number; cachedChars: number }> {
+    const cached = req.system.filter((s) => s.cache).map((s) => s.text);
+    const prefix = cached.join("\n");
+    if (prefix === "") return { read: 0, write: 0, cachedChars: 0 };
     const key = `model-fake:prefix:${createHash("sha256").update(prefix).digest("hex")}`;
-    const chars = prefix.length;
-    if ((await opts.kv.get(key)) !== null) return { read: tokens(chars), write: 0 };
-    await opts.kv.set(key, String(chars), { ttlSeconds: CACHE_TTL_SECONDS });
-    return { read: 0, write: tokens(chars) };
+    const cachedChars = cached.reduce((n, t) => n + t.length, 0);
+    if ((await opts.kv.get(key)) !== null) {
+      return { read: tokens(cachedChars), write: 0, cachedChars };
+    }
+    await opts.kv.set(key, String(cachedChars), { ttlSeconds: CACHE_TTL_SECONDS });
+    return { read: 0, write: tokens(cachedChars), cachedChars };
   }
 
   return {
@@ -228,7 +233,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
 
       const cache = await cacheUsage(req);
       const usage = (outChars: number) => ({
-        inputTokens: tokens(inputChars(req)),
+        inputTokens: tokens(inputChars(req) - cache.cachedChars),
         outputTokens: tokens(outChars),
         cacheReadTokens: cache.read,
         cacheWriteTokens: cache.write,
