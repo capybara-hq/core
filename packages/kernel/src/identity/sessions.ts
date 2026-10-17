@@ -220,14 +220,21 @@ export class SessionService {
       .where("revoked_at", "is", null);
     if (exceptSessionId !== undefined) q = q.where("id", "!=", exceptSessionId);
     const rows = await q.returning("id").execute();
-    if (rows.length > 0) {
-      const pipe = this.redis.pipeline();
-      for (const r of rows) pipe.set(revokedKey(r.id), "1", "EX", REVOKED_MARKER_TTL_SECONDS);
-      const results = (await pipe.exec()) ?? [];
-      const failed = results.find(([err]) => err);
-      if (failed) throw failed[0];
-    }
+    await this.markRevoked(rows.map((r) => r.id));
     return rows.length;
+  }
+
+  /**
+   * 给已在 PG 中吊销的会话写 Redis 吊销标记（快速路径）；任一写入失败即抛出。
+   * 鉴权以 PG `revoked_at` 为准，调用方可以把这一步当作尽力而为。
+   */
+  async markRevoked(sessionIds: string[]): Promise<void> {
+    if (sessionIds.length === 0) return;
+    const pipe = this.redis.pipeline();
+    for (const id of sessionIds) pipe.set(revokedKey(id), "1", "EX", REVOKED_MARKER_TTL_SECONDS);
+    const results = (await pipe.exec()) ?? [];
+    const failed = results.find(([err]) => err);
+    if (failed) throw failed[0];
   }
 
   /** 设当前组织；会话已吊销、已过期或不存在 → `auth.session_revoked`。 */

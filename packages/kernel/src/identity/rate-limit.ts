@@ -11,22 +11,32 @@ export const LOGIN_FAIL_LIMIT_PER_IP = 50;
 export const LOGIN_FAIL_LIMIT_PER_LOGIN = 100;
 
 /**
- * 原子地给每个键 INCR，并在首次计数或键没有 TTL 时设 EXPIRE（保证计数键一定带 TTL）；
- * 返回 `[n1, ttl1, n2, ttl2, …]`。
+ * 原子地「先查后增」：ARGV[1] 为窗口秒数，ARGV[i + 1] 为 KEYS[i] 的上限。
+ * 先读全部计数，任一已达上限即拒绝，且**不递增任何键**（被拒绝的尝试不消耗其他计数，
+ * 否则从一个 IP 被拒的请求会继续推高单登录名全局计数，把本人从别的 IP 也锁住）；
+ * 都未达上限才逐个 INCR，并在首次计数或键没有 TTL 时设 EXPIRE（保证计数键一定带 TTL）。
+ * 返回 `{1}`（放行）或 `{0, retryTtl}`（拒绝；retryTtl 为已达上限的键中最大的剩余 TTL）。
  */
 const RESERVE = `
-local out = {}
+local retry = -1
+for i, key in ipairs(KEYS) do
+  local n = tonumber(redis.call('GET', key) or '0')
+  if n >= tonumber(ARGV[i + 1]) then
+    local ttl = redis.call('TTL', key)
+    if ttl > retry then retry = ttl end
+    if retry < 1 then retry = 1 end
+  end
+end
+if retry > 0 then
+  return {0, retry}
+end
 for i, key in ipairs(KEYS) do
   local n = redis.call('INCR', key)
-  local ttl = redis.call('TTL', key)
-  if n == 1 or ttl < 0 then
+  if n == 1 or redis.call('TTL', key) < 0 then
     redis.call('EXPIRE', key, ARGV[1])
-    ttl = tonumber(ARGV[1])
   end
-  out[#out + 1] = n
-  out[#out + 1] = ttl
 end
-return out
+return {1}
 `;
 
 /**
@@ -82,7 +92,7 @@ export const scopedKey = {
  * （上限 `ipLimit`，默认同登录的 50）两个键计数；IP 计数与登录的 IP 额度分开
  * （改密码失败不会挤占同 NAT 下他人的登录额度）。
  *
- * 超限后的那次自增保留（反正已拒绝），窗口到期自然清零。
+ * 被拒绝的尝试不递增任何计数（攻击者在一个维度上被拒后，无法继续推高其他维度的计数），窗口到期自然清零。
  */
 export class LoginRateLimiter {
   constructor(private readonly redis: Redis) {}
@@ -129,14 +139,10 @@ export class LoginRateLimiter {
       keys.length,
       ...keys.map(([k]) => k),
       LOGIN_FAIL_WINDOW_SECONDS,
+      ...keys.map(([, limit]) => limit),
     )) as number[];
-    let retry = 0;
-    keys.forEach(([, limit], i) => {
-      const n = out[i * 2] as number;
-      const ttl = out[i * 2 + 1] as number;
-      if (n > limit) retry = Math.max(retry, clampTtl(ttl));
-    });
-    return retry > 0 ? { allowed: false, retryAfterSeconds: retry } : { allowed: true };
+    if (out[0] === 1) return { allowed: true };
+    return { allowed: false, retryAfterSeconds: clampTtl(out[1] ?? LOGIN_FAIL_WINDOW_SECONDS) };
   }
 }
 

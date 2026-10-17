@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Selectable, Transaction } from "kysely";
+import { type Selectable, sql, type Transaction } from "kysely";
 import type { AccountsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
@@ -112,6 +112,23 @@ async function insertLocal(t: Trx, p: PreparedLocal): Promise<Account> {
     .values({ account_id: id, password_hash: passwordHash })
     .execute();
   return toAccount(row);
+}
+
+/** 在事务内写入（或覆盖）本地密码哈希；账号不存在 → `account.not_found`。 */
+async function writePassword(t: Trx, accountId: string, passwordHash: string): Promise<void> {
+  const exists = await t
+    .selectFrom("accounts")
+    .select("id")
+    .where("id", "=", accountId)
+    .executeTakeFirst();
+  if (!exists) throw new ApiError("account.not_found", "Account not found");
+  await t
+    .insertInto("local_passwords")
+    .values({ account_id: accountId, password_hash: passwordHash })
+    .onConflict((oc) =>
+      oc.column("account_id").doUpdateSet({ password_hash: passwordHash, updated_at: new Date() }),
+    )
+    .execute();
 }
 
 /** 账号服务：本地账号的创建、认证与管理。框架无关，由调用方注入 db。 */
@@ -228,22 +245,39 @@ export class AccountsService {
   async setPassword(accountId: string, password: string): Promise<void> {
     validatePassword(password);
     const passwordHash = await hashPassword(password);
-    await this.db.transaction().execute(async (trx) => {
-      const exists = await trx
-        .selectFrom("accounts")
-        .select("id")
-        .where("id", "=", accountId)
-        .executeTakeFirst();
-      if (!exists) throw new ApiError("account.not_found", "Account not found");
-      await trx
-        .insertInto("local_passwords")
-        .values({ account_id: accountId, password_hash: passwordHash })
-        .onConflict((oc) =>
-          oc
-            .column("account_id")
-            .doUpdateSet({ password_hash: passwordHash, updated_at: new Date() }),
-        )
+    await this.db.transaction().execute((trx) => writePassword(trx, accountId, passwordHash));
+  }
+
+  /**
+   * 用户改密码（R24）：同一个 PG 事务里写新密码、吊销该账号除 `exceptSessionId` 外的全部会话
+   * （`sessions.revoked_at`）与全部个人访问令牌，要么全部生效要么都不生效。scrypt 在 BEGIN 之前算好。
+   * 返回被吊销的会话 id，调用方随后写 Redis 吊销标记（快速路径；鉴权以 PG `revoked_at` 为准，
+   * 标记写失败也不会让这些会话继续可用）。
+   */
+  async changePassword(
+    accountId: string,
+    password: string,
+    exceptSessionId: string,
+  ): Promise<string[]> {
+    const passwordHash = await this.hashNewPassword(password);
+    return this.db.transaction().execute(async (trx) => {
+      await writePassword(trx, accountId, passwordHash);
+      const sessions = await trx
+        .updateTable("sessions")
+        .set({ revoked_at: sql<Date>`now()` })
+        .where("account_id", "=", accountId)
+        .where("revoked_at", "is", null)
+        .where("id", "!=", exceptSessionId)
+        .returning("id")
         .execute();
+      await trx
+        .updateTable("api_tokens")
+        .set({ revoked_at: sql<Date>`now()` })
+        .where("kind", "=", "personal")
+        .where("account_id", "=", accountId)
+        .where("revoked_at", "is", null)
+        .execute();
+      return sessions.map((r) => r.id);
     });
   }
 

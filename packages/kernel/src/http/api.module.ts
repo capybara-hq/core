@@ -30,6 +30,7 @@ import {
   INVITATIONS,
   KERNEL_CONFIG,
   KERNEL_DB,
+  KERNEL_LOG,
   KERNEL_REDIS,
   MEMBERS,
   ORG_PLUGIN_CONFIGS,
@@ -70,6 +71,7 @@ const CONTROLLERS: Type[] = [
  */
 function serviceProviders(deps: ApiDeps): Provider[] {
   return [
+    { provide: KERNEL_LOG, useValue: deps.log },
     { provide: KERNEL_DB, useValue: deps.db },
     { provide: KERNEL_REDIS, useValue: deps.redis },
     { provide: KERNEL_CONFIG, useValue: deps.config },

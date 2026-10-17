@@ -52,6 +52,31 @@ describe("LoginRateLimiter（按登录名 + IP 计数）", () => {
     expect(await rl.reserve("bob", "10.9.9.9")).toEqual({ allowed: true });
   });
 
+  it("被拒绝的尝试不递增任何计数：li 打满后继续 reserve，l 与 ip 不变", async () => {
+    const rl = new LoginRateLimiter(r1);
+    for (let i = 0; i < 10; i++) await rl.reserve("admin", "203.0.113.7");
+    const l = await r1.get(loginFailKey.login("admin"));
+    const ip = await r1.get(loginFailKey.ip("203.0.113.7"));
+    expect([l, ip]).toEqual(["10", "10"]);
+    for (let i = 0; i < 140; i++) {
+      expect((await rl.reserve("admin", "203.0.113.7")).allowed).toBe(false);
+    }
+    expect(await r1.get(loginFailKey.login("admin"))).toBe("10");
+    expect(await r1.get(loginFailKey.ip("203.0.113.7"))).toBe("10");
+    expect(await r1.get(loginFailKey.loginIp("admin", "203.0.113.7"))).toBe("10");
+    // 本人从别的 IP 仍可尝试
+    expect(await rl.reserve("admin", "198.51.100.20")).toEqual({ allowed: true });
+  });
+
+  it("reserveScoped 被拒绝时同样不递增任何计数", async () => {
+    const rl = new LoginRateLimiter(r1);
+    for (let i = 0; i < 10; i++) await rl.reserveScoped("acct", "acc-1", "10.0.0.1", 10);
+    for (let i = 0; i < 20; i++) {
+      expect((await rl.reserveScoped("acct", "acc-1", "10.0.0.1", 10)).allowed).toBe(false);
+    }
+    expect(await r1.get("capk:rl:acct:ip:10.0.0.1")).toBe("10");
+  });
+
   it("登录名按规范化（大小写、空白）计数", async () => {
     const rl = new LoginRateLimiter(r1);
     for (let i = 0; i < 5; i++) await rl.reserve("Alice", "10.0.0.1");

@@ -557,6 +557,15 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     expect((ok.json() as { account: Account }).account.id).toBe(admin.id);
   });
 
+  it("R25：攻击者从一个 IP 对 admin 连错 150 次，admin 从另一个 IP 用正确密码仍能登录", async () => {
+    for (let i = 0; i < 150; i++) {
+      const r = await loginFrom("203.0.113.8", "admin", "wrong password!!");
+      expect([401, 429]).toContain(r.statusCode);
+    }
+    const ok = await loginFrom("198.51.100.21", "admin", PW);
+    expect(ok.statusCode).toBe(200);
+  });
+
   it("login 为 257 字符 → 400 validation_failed", async () => {
     const res = await login(cookieJar(), "a".repeat(257), PW);
     expect(res.statusCode).toBe(400);
@@ -583,6 +592,82 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     expect(after.statusCode).toBe(401);
     expect(errCode(after)).toBe("auth.required");
   });
+
+  it("R24：改密码时 Redis 吊销标记写入失败 → PAT 与其他会话照样失效（PG 同一事务）", async () => {
+    // 受限的 Redis 用户：可读写限流键，吊销标记键只读（写入即 NOPERM），模拟 Redis 标记写入失败
+    await redis.call(
+      "ACL",
+      "SETUSER",
+      "limited",
+      "reset",
+      "on",
+      ">limited-pw",
+      "+@all",
+      "&*",
+      "~capk:login-fail:*",
+      "~capk:rl:*",
+      "%R~capk:revoked-sid:*",
+    );
+    const url = new URL(rd.url);
+    url.username = "limited";
+    url.password = "limited-pw";
+    const kk = await createKernel(
+      KernelConfigSchema.parse({
+        db: { url: pgc.url, poolMax: 3 },
+        redis: { url: url.toString() },
+        masterKey,
+        http: { port: 0 },
+      }),
+      { env: {}, logger: createLogger("error", { write: () => {} }) },
+    );
+    try {
+      await kk.start();
+      const { token } = await new ApiTokenService(db).createPersonal(alice.id, { name: "ci" });
+      const cur = cookieJar();
+      const other = cookieJar();
+      for (const jar of [cur, other]) {
+        const r = await asUser(
+          kk.http,
+          jar,
+        )({ method: "POST", url: "/api/v1/auth/login", payload: { login: "alice", password: PW } });
+        expect(r.statusCode).toBe(200);
+      }
+      // 前提：吊销标记确实写不进去
+      const limited = new Redis(url.toString());
+      try {
+        await expect(limited.set("capk:revoked-sid:probe", "1", "EX", 10)).rejects.toThrow(
+          /NOPERM/,
+        );
+      } finally {
+        limited.disconnect();
+      }
+      const res = await asUser(
+        kk.http,
+        cur,
+      )({
+        method: "PUT",
+        url: "/api/v1/me/password",
+        payload: { currentPassword: PW, newPassword: "another long password" },
+      });
+      expect(res.statusCode).toBe(204);
+      const pat = await kk.http.inject({
+        method: "GET",
+        url: "/api/v1/me",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(pat.statusCode).toBe(401);
+      expect(errCode(pat)).toBe("auth.required");
+      const o = await asUser(kk.http, other)({ method: "GET", url: "/api/v1/me" });
+      expect(errCode(o)).toBe("auth.session_revoked");
+      expect((await asUser(kk.http, cur)({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(
+        200,
+      );
+      expect(await accounts.authenticateLocal("alice", "another long password")).not.toBeNull();
+    } finally {
+      await kk.stop();
+      await redis.call("ACL", "DELUSER", "limited");
+    }
+  }, 60_000);
 
   it("改密码失败 11 次 → 429，但同 IP 的登录不受影响", async () => {
     const jar = cookieJar();

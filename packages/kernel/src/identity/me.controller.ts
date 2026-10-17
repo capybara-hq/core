@@ -1,3 +1,4 @@
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -14,7 +15,7 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { ACCOUNTS, API_TOKENS, ORGS, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
+import { ACCOUNTS, API_TOKENS, KERNEL_LOG, ORGS, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
@@ -55,6 +56,7 @@ export class MeController {
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
     @Inject(RATE_LIMITER) private readonly limiter: LoginRateLimiter,
+    @Inject(KERNEL_LOG) private readonly log: Logger,
   ) {}
 
   @Get()
@@ -98,7 +100,8 @@ export class MeController {
   }
 
   /**
-   * 改密码：核对旧密码；成功后吊销该账号除当前会话外的所有会话，并吊销其全部个人访问令牌（R24）。
+   * 改密码：核对旧密码；成功后吊销该账号除当前会话外的所有会话，并吊销其全部个人访问令牌（R24）——
+   * 三者在同一个 PG 事务里生效，之后再尽力写 Redis 吊销标记。
    * 核对前先占用限流额度（scope `acct`：按账号 id 10 次、按客户端 IP 50 次，与登录的 IP 额度分开），
    * 防止拿到会话的人无限次猜旧密码；超限 → 429 `auth.rate_limited`，核对成功后清零账号计数。
    */
@@ -130,9 +133,17 @@ export class MeController {
       throw new ApiError("auth.invalid_credentials", "Current password is incorrect");
     }
     await this.limiter.succeededScoped("acct", p.account.id, ip);
-    await this.accounts.setPassword(p.account.id, body.newPassword);
-    await this.sessions.revokeAllForAccount(p.account.id, p.sessionId);
-    await this.tokens.revokeAllPersonal(p.account.id);
+    // 新密码、吊销其他会话（PG revoked_at）与个人令牌在同一个 PG 事务里完成
+    const revoked = await this.accounts.changePassword(p.account.id, body.newPassword, p.sessionId);
+    try {
+      await this.sessions.markRevoked(revoked);
+    } catch (err) {
+      // Redis 标记只是快速路径：鉴权每次都查 PG revoked_at，这些会话已经无法使用
+      this.log.warn("failed to write session revocation markers after password change", {
+        accountId: p.account.id,
+        err,
+      });
+    }
   }
 
   @Post("tokens")
