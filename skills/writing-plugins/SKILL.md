@@ -98,6 +98,7 @@ export default definePlugin({
 - 尾斜杠敏感：`/count` 与 `/count/` 是两条路由。
 - 未匹配 → 404 `not_found`；handler 抛错 → 500 `internal`（错误记日志，不回显给客户端）。
 - **插件路由不经内核鉴权**：没有 AuthGuard、不检查 CSRF 头、拿不到调用者身份（M4 再提供）。对外暴露的 webhook 必须自行验签。
+- **内核会话 Cookie 被剥掉**：转交前从 `Cookie` 头删去 `cap_at` / `cap_rt`（其余 Cookie 原样保留；只剩这两个时不带 `Cookie` 头），插件拿不到用户的内核会话。
 - 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
 
 ### 持久计数与幂等的写法（参考 example-counter）

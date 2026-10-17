@@ -36,12 +36,12 @@ export class WidgetsController {
 
 ## 鉴权：默认拒绝
 
-全局 `AuthGuard`（`APP_GUARD`）对**所有**路由默认要求凭据（Bearer API 令牌，或会话 Cookie `cap_at`）；经 Cookie 认证的非安全方法（POST / PUT / PATCH / DELETE）要求 CSRF 头 `X-Capybara-Csrf: 1`，Bearer 不检查。每个请求实时读账号状态，停用账号 403 `auth.account_disabled`。按需叠加装饰器：
+全局 `AuthGuard`（`APP_GUARD`）对**所有**路由默认要求凭据（Bearer API 令牌，或会话 Cookie `cap_at`；会话是否已吊销先看 Redis 标记、再以 PG `sessions.revoked_at` 为准，Redis 丢数据不会让已吊销的会话复活）；经 Cookie 认证的非安全方法（POST / PUT / PATCH / DELETE）要求 CSRF 头 `X-Capybara-Csrf: 1`，Bearer 不检查。每个请求实时读账号状态，停用账号 403 `auth.account_disabled`。按需叠加装饰器：
 
 | 装饰器 | 含义 |
 |---|---|
 | `@Public()` | 不要求凭据（有凭据仍会解析成 principal）。公开路由的非安全方法无论是否带 Cookie 都要求 `X-Capybara-Csrf: 1` |
-| `@SessionOnly()` | 只接受 Web 会话（拒绝 API 令牌），如令牌管理、改密码 |
+| `@SessionOnly()` | 只接受 Web 会话，如令牌管理、改密码：个人令牌 → 403 `auth.session_required`，服务令牌 → 403 `forbidden` |
 | `@EnterpriseAdmin()` | 只允许企业管理员；服务令牌一律 403 |
 | `@AllowService()` | 允许服务令牌（服务 principal 默认被拒） |
 | `@OrgAction(action)` | 组织级路由，见下 |
@@ -62,8 +62,18 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 - 动作与最低角色在 `src/orgs/roles.ts` 的 `ACTION_MIN_ROLE`（guest < member < admin < owner）；新动作在这里登记。
 - `OrgGuard` 每个请求实时从 PG 读组织与角色：组织不存在 / 已删除 / 调用者不是成员 → 一律 404 `org.not_found`（不泄露组织是否存在）；角色不足 → 403 `forbidden`。
 - `@OrgAction` 隐含 `@AllowService()`；`HUMAN_ONLY` 里的动作（除 `org.read`、`org.members.read` 之外的全部）遇到服务令牌返回 403。
-- **依赖角色的写操作要在事务里重读角色**：guard 的判定与写入之间角色可能被改。服务里先 `SELECT … FROM capybara.orgs WHERE id = $1 FOR UPDATE` 锁组织行，再读发起人当前角色（见 `MembersService.changeRole`）。服务只收发起人账号 id，不收调用方传入的角色。
+- **依赖角色的写操作要在事务里重读角色**：guard 的判定与写入之间角色可能被改。服务事务里调 `lockOrgAndAuthorize(trx, orgId, actorAccountId, action)`（`src/orgs/org-lock.ts`）：`SELECT … FROM capybara.orgs WHERE id = $1 AND deleted_at IS NULL FOR UPDATE` 锁组织行，再读发起人当前角色；组织不存在 / 已删除 → 404 `org.not_found`，非成员或角色不足 → 403 `forbidden`，返回 `{ org, role }` 供进一步判断（如令牌 / 邀请角色不得高于发起人）。只需串行化、不看角色时用 `lockOrg` / `tryLockOrg`。服务只收发起人账号 id，不收调用方传入的角色。
 - **企业管理员写操作同理**（`@EnterpriseAdmin` 只是请求开头的判定）：撤销 / 停用账号、新建账号（含企业管理员）、改部署设置都在事务内先调 `lockEnterpriseAdminsAndAuthorize(trx, actorAccountId)`（`src/identity/enterprise-admin.ts`）：取 `pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))` 串行化，并在锁内确认发起人仍是活跃企业管理员，否则 403 `forbidden`。新增企业管理员写操作必须照做。
+
+### 审计与个人令牌
+
+写操作在同一事务里调 `audit(trx, { actorAccountId, actorTokenId?, orgId?, action, target?, detail? })`。请求来自个人令牌时把令牌 id 记进 `actor_token_id`：controller 用 `patTokenId(requireUser(p))`（Web 会话返回 undefined）取值，作为服务方法末尾的可选参数 `actorTokenId` 传下去。`detail` 不得含令牌、密码等机密。
+
+### 现行的凭据行为
+
+- 改密码（`PUT /me/password`，`@SessionOnly`）：核对旧密码前按 `acct:<账号 id>` + 客户端 IP 占用登录限流额度（与登录同窗口、同上限，超限 429 `auth.rate_limited`）；成功后吊销该账号**除当前会话外的所有 Web 会话**，**不吊销个人令牌**（PAT 需用户在 `/me/tokens` 自行吊销）。
+- 停用账号（`PATCH /admin/accounts/:id`）同时吊销其全部会话与个人令牌。
+- 列表接口一律返回信封对象（如 `{ tokens: [...] }`、`{ members: [...] }`），不返回裸数组。
 
 ## 参数校验：`ZodPipe`
 
@@ -80,7 +90,8 @@ async create(@Body(new ZodPipe(Body)) body: z.infer<typeof Body>) {}
 
 - 业务错误抛 `new ApiError(code, message)`（`src/errors.ts`）；新码先登记到 `ERROR_CODES`（码 → HTTP 状态），命名 `<领域>.<snake>`。
 - `message` **一律英文**；界面以 `code` 为 key 走 i18n。不要把密钥、密码哈希、内部异常信息放进 `message` / `details`。
-- 响应信封统一为 `{ error: { code, message, details? } }`，由 `http/error.filter.ts` 生成；Nest 自带的 `HttpException` 按该文件里的状态码表映射成通用码；未知异常一律 500 `internal`，不回显。
+- 响应信封统一为 `{ error: { code, message, details? } }`，由 `http/error.filter.ts` 生成；框架自身的错误（Nest `HttpException`、Fastify 的请求体过大 / 媒体类型不支持等）按该文件里的状态码表映射成通用码：400 `validation_failed`、401 `auth.required`、403 `forbidden`、404 `not_found`、409 `conflict`、413 `payload_too_large`、415 `unsupported_media_type`、429 `rate_limited`，表外一律 `internal`；未知异常一律 500 `internal`，不回显。
+- 5xx 会记日志，路径经 `redactPath` 脱敏（邀请令牌段换成 `:token`，任何 `cap_` 开头的段换成 `:redacted`）；不要在日志字段里另外放原始 URL 或令牌。
 
 ## 多副本：状态放哪里
 
