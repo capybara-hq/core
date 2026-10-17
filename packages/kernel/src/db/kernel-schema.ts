@@ -130,7 +130,36 @@ export interface SecretsTable {
   updated_at: Ts;
 }
 
-/** 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）与 0003_identity.sql。 */
+/** 0005_agents.sql：agent 当前元数据（定义在 agent_versions）。 */
+export interface AgentsTable {
+  id: string;
+  org_id: string;
+  owner_account_id: string;
+  visibility: "private" | "org" | "members";
+  org_role: Generated<"admin" | "member" | "guest">;
+  current_version: number;
+  needs_reassignment: Generated<boolean>;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0005_agents.sql：agent 定义的版本，只追加。 */
+export interface AgentVersionsTable {
+  agent_id: string;
+  version: number;
+  definition: Json;
+  created_by: string;
+  created_at: Ts;
+}
+
+/** 0005_agents.sql：visibility='members' 的 agent 名单。 */
+export interface AgentMembersTable {
+  agent_id: string;
+  account_id: string;
+}
+
+/** 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql 与 0005_agents.sql。 */
 export interface KernelDatabase {
   accounts: AccountsTable;
   identities: IdentitiesTable;
@@ -144,6 +173,9 @@ export interface KernelDatabase {
   plugin_org_configs: PluginOrgConfigsTable;
   audit_events: AuditEventsTable;
   secrets: SecretsTable;
+  agents: AgentsTable;
+  agent_versions: AgentVersionsTable;
+  agent_members: AgentMembersTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

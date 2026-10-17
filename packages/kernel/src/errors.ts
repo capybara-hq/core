@@ -40,6 +40,8 @@ export const ERROR_CODES = {
   "plugin.config_invalid": 400,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
+  "agent.not_found": 404,
+  "agent.model_unavailable": 400,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

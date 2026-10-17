@@ -42,3 +42,9 @@ export const SETUP = Symbol("SETUP");
 
 /** `OrgPluginConfigs` 的注入令牌。 */
 export const ORG_PLUGIN_CONFIGS = Symbol("ORG_PLUGIN_CONFIGS");
+
+/** `ProviderRegistry` 的注入令牌。 */
+export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
+
+/** `AgentsService` 的注入令牌。 */
+export const AGENTS = Symbol("AGENTS");

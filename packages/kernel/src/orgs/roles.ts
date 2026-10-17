@@ -17,7 +17,9 @@ export type OrgAction =
   | "org.members.manage"
   | "org.invitations.manage"
   | "org.tokens.manage"
-  | "org.plugins.manage";
+  | "org.plugins.manage"
+  | "agents.create"
+  | "agents.use";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -30,13 +32,20 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "org.plugins.manage": "admin",
   "org.delete": "owner",
   "org.transfer": "owner",
+  "agents.create": "member",
+  "agents.use": "guest",
 };
 
-/** 只允许 user principal 执行的动作：服务令牌即使角色足够也拒绝（除只读的 org.read、org.members.read 外全部）。 */
+/** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */
+const SERVICE_ALLOWED: ReadonlySet<OrgAction> = new Set<OrgAction>([
+  "org.read",
+  "org.members.read",
+  "agents.use",
+]);
+
+/** 只允许 user principal 执行的动作：服务令牌即使角色足够也拒绝（除 SERVICE_ALLOWED 外全部）。 */
 export const HUMAN_ONLY: ReadonlySet<OrgAction> = new Set<OrgAction>(
-  (Object.keys(ACTION_MIN_ROLE) as OrgAction[]).filter(
-    (a) => a !== "org.read" && a !== "org.members.read",
-  ),
+  (Object.keys(ACTION_MIN_ROLE) as OrgAction[]).filter((a) => !SERVICE_ALLOWED.has(a)),
 );
 
 /** 该角色能否执行该动作。 */

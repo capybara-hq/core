@@ -5,6 +5,9 @@ import type { Redis } from "ioredis";
 import { AdminController } from "../admin/admin.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
 import { SetupService } from "../admin/setup.service.js";
+import { AgentsController } from "../agents/agents.controller.js";
+import { AgentsService } from "../agents/agents.service.js";
+import { ModelsController } from "../agents/models.controller.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -24,8 +27,10 @@ import { OrgsService } from "../orgs/orgs.service.js";
 import type { PluginHost } from "../plugins/host.js";
 import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
 import type { OrgPluginConfigs } from "../plugins/org-config.js";
+import { ProviderRegistry } from "../runtime/providers.js";
 import {
   ACCOUNTS,
+  AGENTS,
   API_TOKENS,
   INVITATIONS,
   KERNEL_CONFIG,
@@ -35,6 +40,7 @@ import {
   MEMBERS,
   ORG_PLUGIN_CONFIGS,
   ORGS,
+  PROVIDER_REGISTRY,
   RATE_LIMITER,
   SESSIONS,
   SETTINGS,
@@ -63,6 +69,8 @@ const CONTROLLERS: Type[] = [
   SetupController,
   AdminController,
   OrgPluginConfigsController,
+  AgentsController,
+  ModelsController,
 ];
 
 /**
@@ -129,6 +137,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       provide: RATE_LIMITER,
       useFactory: (redis: Redis) => new LoginRateLimiter(redis),
       inject: [KERNEL_REDIS],
+    },
+    {
+      provide: PROVIDER_REGISTRY,
+      useFactory: (redis: Redis) => new ProviderRegistry(deps.host, redis),
+      inject: [KERNEL_REDIS],
+    },
+    {
+      provide: AGENTS,
+      useFactory: (db: KernelDb, registry: ProviderRegistry) => new AgentsService(db, registry),
+      inject: [KERNEL_DB, PROVIDER_REGISTRY],
     },
   ];
 }
