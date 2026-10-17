@@ -115,6 +115,45 @@ export class ConversationsService {
   }
 
   /**
+   * 轻量的可见性判定（一条查询，不加载 agent 视图），供长连接（SSE）建立时与定期复核用：
+   * 会话属于该组织且归 viewer 所有、viewer 账号仍为 active、agent 未删除且对 viewer 仍可见
+   * （`visibleTo` 已含「组织未删除、viewer 仍是成员」）。
+   */
+  async isAccessible(
+    orgId: string,
+    conversationId: string,
+    viewerAccountId: string,
+  ): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("conversations")
+      .select("conversations.id")
+      .where("conversations.id", "=", conversationId)
+      .where("conversations.org_id", "=", orgId)
+      .where("conversations.account_id", "=", viewerAccountId)
+      .where((eb) =>
+        eb.and([
+          eb.exists(
+            eb
+              .selectFrom("accounts")
+              .select(sql`1`.as("one"))
+              .where("accounts.id", "=", viewerAccountId)
+              .where("accounts.status", "=", "active"),
+          ),
+          eb.exists(
+            eb
+              .selectFrom("agents")
+              .select(sql`1`.as("one"))
+              .whereRef("agents.id", "=", "conversations.agent_id")
+              .where("agents.deleted_at", "is", null)
+              .where(visibleTo(viewerAccountId)),
+          ),
+        ]),
+      )
+      .executeTakeFirst();
+    return row !== undefined;
+  }
+
+  /**
    * 我的会话，最近更新的在前；只含 agent 仍可用的会话。`after` 为上一页最后一个会话的 id，
    * 从它当前的 (updated_at, id) 之后继续；游标会话已不存在时返回空页。
    */

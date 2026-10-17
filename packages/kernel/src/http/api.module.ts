@@ -31,10 +31,13 @@ import type { PluginHost } from "../plugins/host.js";
 import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
 import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
+import { ConversationStreamController } from "../runtime/stream.controller.js";
+import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
 import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
+  CONVERSATION_STREAMS,
   CONVERSATIONS,
   EVENT_LOG,
   INVITATIONS,
@@ -86,6 +89,7 @@ const CONTROLLERS: Type[] = [
   AgentsController,
   ModelsController,
   ConversationsController,
+  ConversationStreamController,
 ];
 
 /**
@@ -166,6 +170,23 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService) =>
         new ConversationsService(db, eventLog, agents, deps.runs),
       inject: [KERNEL_DB, EVENT_LOG, AGENTS],
+    },
+    {
+      provide: CONVERSATION_STREAMS,
+      useFactory: (
+        eventLog: EventLog,
+        bus: StreamBus,
+        conversations: ConversationsService,
+        config: () => KernelConfig,
+      ) =>
+        new ConversationStreams({
+          eventLog,
+          bus,
+          access: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+          config,
+          log: deps.log,
+        }),
+      inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
     },
   ];
 }

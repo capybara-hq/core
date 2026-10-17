@@ -57,3 +57,6 @@ export const EVENT_LOG = Symbol("EVENT_LOG");
 
 /** `ConversationsService` 的注入令牌。 */
 export const CONVERSATIONS = Symbol("CONVERSATIONS");
+
+/** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
+export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");

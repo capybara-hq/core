@@ -230,6 +230,28 @@ export const KernelConfigSchema = z.object({
               "How often workers check for stalled agent run jobs in milliseconds (BullMQ stalledInterval)",
           }),
         ),
+      sseHeartbeatMs: z
+        .number()
+        .int()
+        .positive()
+        .default(15000)
+        .meta(
+          meta({
+            description:
+              "Interval in milliseconds between heartbeat comments on a conversation event stream (SSE)",
+          }),
+        ),
+      sseRecheckMs: z
+        .number()
+        .int()
+        .positive()
+        .default(60000)
+        .meta(
+          meta({
+            description:
+              "How often an open conversation event stream (SSE) re-checks that the viewer may still access the conversation, in milliseconds; the stream closes when access is lost",
+          }),
+        ),
     })
     .default({
       maxSteps: 50,
@@ -242,6 +264,8 @@ export const KernelConfigSchema = z.object({
       orgConcurrency: 10,
       jobLockMs: 30000,
       stalledIntervalMs: 30000,
+      sseHeartbeatMs: 15000,
+      sseRecheckMs: 60000,
     }),
   log: z
     .object({
