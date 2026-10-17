@@ -137,3 +137,29 @@ describe("file source errors", () => {
     );
   });
 });
+
+describe("envOverrides 插件寻址与冲突", () => {
+  it("plugin name segment maps to kebab", () => {
+    const o = envOverrides({
+      CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__STEP: "2",
+      CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE: "3",
+    }) as { pluginConfig: Record<string, Record<string, unknown>> };
+    expect(o.pluginConfig["example-counter"]?.step).toBe(2);
+    expect(o.pluginConfig["example-counter"]?.poolSize).toBe(3);
+  });
+
+  it("scalar vs nested conflict", () => {
+    const env = { CAPYBARA_DB: "x", CAPYBARA_DB__URL: "postgres://h/d" };
+    expect(() => envOverrides(env)).toThrow(ConfigError);
+    expect(() => envOverrides(env)).toThrow(/CAPYBARA_DB\b/);
+    expect(() => envOverrides(env)).toThrow(/CAPYBARA_DB__URL/);
+  });
+
+  it("empty config source means default", async () => {
+    const file = writeYaml("http: { port: 9000 }\n");
+    const config = await loadConfig(
+      baseEnv({ CAPYBARA_CONFIG_SOURCE: "", CAPYBARA_CONFIG_FILE: file }),
+    );
+    expect(config.http.port).toBe(9000);
+  });
+});

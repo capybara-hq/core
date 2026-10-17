@@ -59,7 +59,7 @@ export default definePlugin({
 
 ## 两级配置
 
-- **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON）。内核启动时按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
+- **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON，或逐字段 `CAPYBARA_PLUGIN_CONFIG__<插件名大写、- 换 _>__<字段>`，如 `CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE=3` 对应 `example-counter` 的 `poolSize`）。标了 `secret` 的部署级字段，其值校验通过后自动加入日志打码集合。内核启动时按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
 - **组织级**（`config.org`）：清单里可声明每个组织各自设置的 schema；M0 内核只接受该声明、尚未提供读写通道，组织级值现阶段由插件自己存在 `ctx.db` 里并用该 schema 校验。敏感字段用 `secret(schema)` 标记（`import { secret } from "@capybara-hq/plugin-sdk"`），不要写进日志。
 - 密钥（API key、token）一律走 `ctx.secrets`（加密存储），不要放进普通配置。
 

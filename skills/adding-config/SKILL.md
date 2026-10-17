@@ -53,7 +53,7 @@ description: 给内核新增或修改配置项（packages/kernel/src/config/sche
 | `pluginConfig` | `CAPYBARA_PLUGIN_CONFIG` |
 | 新增 `upstream.timeoutMs` | `CAPYBARA_UPSTREAM__TIMEOUT_MS` |
 
-值按 JSON 解析（数字、布尔、数组、对象都能传，如 `CAPYBARA_PLUGINS='["a","b"]'`），解析不了则当字符串。环境变量优先级**高于**配置文件 / Nacos。
+值按 JSON 解析（数字、布尔、数组、对象都能传，如 `CAPYBARA_PLUGINS='["a","b"]'`），解析不了则当字符串。环境变量优先级**高于**配置文件 / Nacos。同时设置 `CAPYBARA_X`（标量）与 `CAPYBARA_X__Y`（嵌套）属于冲突，启动时抛 `ConfigError` 并点名两个变量；`CAPYBARA_CONFIG_SOURCE` 为空串按未设置处理。
 
 `CAPYBARA_CONFIG_*` 与 `CAPYBARA_NACOS_*` 是配置来源自身的选择（`CAPYBARA_CONFIG_SOURCE=file|nacos`、`CAPYBARA_CONFIG_FILE`、`CAPYBARA_NACOS_SERVER` / `_NAMESPACE` / `_DATA_ID`），**不会**被当成配置项；新字段不要起 `config` 或 `nacos` 这种会撞前缀的顶层名。
 

@@ -10,6 +10,7 @@ import {
   parseCapability,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
+import { configFields, getPath } from "../config/fields.js";
 import {
   createPluginContext,
   type KernelDeps,
@@ -140,6 +141,7 @@ export class PluginHost {
   /** 已创建、尚未登记（setup 进行中）的 ctx：close() 时立即关闭，不等 setup 返回。 */
   private pending: { close(): Promise<void> } | undefined;
   private readonly resolveFrom: string;
+  private readonly onSecrets: ((values: string[]) => void) | undefined;
 
   /**
    * @param opts.resolveFrom 解析裸包名的目录，默认 `process.cwd()`；相对路径按构造时的 cwd 转为绝对路径。
@@ -150,8 +152,9 @@ export class PluginHost {
   constructor(
     private readonly deps: KernelDeps,
     private readonly pluginConfig: Record<string, unknown> = {},
-    opts: { resolveFrom?: string } = {},
+    opts: { resolveFrom?: string; onSecrets?: (values: string[]) => void } = {},
   ) {
+    this.onSecrets = opts.onSecrets;
     this.resolveFrom = resolvePath(opts.resolveFrom ?? process.cwd());
   }
 
@@ -165,6 +168,15 @@ export class PluginHost {
     if (this.didLoad) throw new Error("plugin host already loaded; load() may be called once");
     this.didLoad = true;
     const { ordered, dirs } = await importPlugins(specifiers, this.resolveFrom);
+
+    const orphans = Object.keys(this.pluginConfig).filter(
+      (k) => !ordered.some((m) => m.name === k),
+    );
+    if (orphans.length > 0) {
+      this.deps.log.warn("pluginConfig has keys for plugins that are not loaded", {
+        keys: orphans,
+      });
+    }
 
     for (const manifest of ordered) {
       const name = manifest.name;
@@ -180,6 +192,17 @@ export class PluginHost {
           throw new Error(`plugin ${name}: invalid deployment config: ${detail}`);
         }
         config = r.data;
+        if (this.onSecrets) {
+          const values: string[] = [];
+          for (const f of configFields(schema)) {
+            if (!f.meta?.secret) continue;
+            const v = getPath(config, f.path);
+            for (const item of Array.isArray(v) ? v : [v]) {
+              if (typeof item === "string" && item !== "") values.push(item);
+            }
+          }
+          if (values.length > 0) this.onSecrets(values);
+        }
       }
       if (this.closed) throw new Error(CLOSED_DURING_LOAD);
       this.migrating = migratePlugin(

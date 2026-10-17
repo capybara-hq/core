@@ -150,11 +150,10 @@ export async function createKernel(
     runWorkers: config.roles.includes("worker"),
     log,
   };
-  const host = new PluginHost(
-    deps,
-    config.pluginConfig,
-    opts.resolveFrom !== undefined ? { resolveFrom: opts.resolveFrom } : {},
-  );
+  const host = new PluginHost(deps, config.pluginConfig, {
+    ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+    onSecrets: (v) => log.addSecrets(v),
+  });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
   const releaseConnections = async (): Promise<void> => {

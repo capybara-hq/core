@@ -11,6 +11,7 @@ import { createBusSubscriber } from "../../src/ctx/bus.js";
 import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { createDb } from "../../src/db/pool.js";
+import { createLogger } from "../../src/log.js";
 import { PluginHost } from "../../src/plugins/host.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -28,9 +29,10 @@ const host = (cfg: Record<string, unknown> = {}, opts?: { resolveFrom?: string }
   return h;
 };
 const logged: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
+const warned: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
 const log = {
   info: (msg: string, fields?: Record<string, unknown>) => logged.push({ msg, fields }),
-  warn() {},
+  warn: (msg: string, fields?: Record<string, unknown>) => warned.push({ msg, fields }),
   error() {},
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -104,6 +106,30 @@ describe("PluginHost", () => {
 
   it("setup 后声明的 provides 未提供：报错并点名", async () => {
     await expect(host().load([fx("noprovide")])).rejects.toThrow(/noprovide.*counter@1/);
+  });
+});
+
+describe("PluginHost 配置加固", () => {
+  it("orphan pluginConfig warns", async () => {
+    warned.length = 0;
+    await host({ ghost: {} }).load([fx("fixture")]);
+    const w = warned.filter((x) => x.msg.includes("not loaded"));
+    expect(w).toHaveLength(1);
+    expect(w[0]?.fields).toEqual({ keys: ["ghost"] });
+  });
+
+  it("plugin deployment secrets are redacted", async () => {
+    const lines: string[] = [];
+    const real = createLogger("info", { write: (l) => lines.push(l) });
+    const h = new PluginHost(
+      { ...deps, log: real },
+      { secretcfg: { token: "s3cr3t-value" } },
+      { onSecrets: (v) => real.addSecrets(v) },
+    );
+    hosts.push(h);
+    await h.load([fx("secretcfg")]);
+    expect(lines.filter((l) => l.includes('"got"'))).toHaveLength(1);
+    expect(lines.join("\n")).not.toContain("s3cr3t-value");
   });
 });
 
