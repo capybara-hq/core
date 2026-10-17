@@ -1,0 +1,9 @@
+{
+  "common": {
+    "submit": "Submit"
+  },
+  "login": {
+    "title": "Sign in",
+    "subtitle": "Welcome back"
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "title": "Capybara",
+    "description": "Enterprise agent platform"
+  },
+  "common": {
+    "appName": "Capybara",
+    "loading": "Loading…",
+    "logout": "Sign out",
+    "language": "Language",
+    "localeName": {
+      "zh": "中文",
+      "en": "English"
+    }
+  },
+  "login": {
+    "title": "Sign in",
+    "loginLabel": "Username",
+    "passwordLabel": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in…"
+  },
+  "setup": {
+    "title": "Setup",
+    "intro": "Create the first enterprise administrator. You will be signed in when it is done.",
+    "loginLabel": "Username",
+    "loginHint": "3–64 characters: letters, digits and . _ @ + -",
+    "passwordLabel": "Password",
+    "passwordHint": "12–256 characters",
+    "displayNameLabel": "Display name",
+    "orgNameLabel": "Organization name (optional)",
+    "setupTokenLabel": "Setup token (only if your deployment configured one)",
+    "submit": "Complete setup",
+    "submitting": "Submitting…",
+    "alreadyDone": "Setup has already been completed.",
+    "goToLogin": "Go to sign in"
+  },
+  "home": {
+    "title": "Workspace",
+    "greeting": "Hello, {name}",
+    "currentOrg": "Current organization",
+    "selectOrg": "Select an organization",
+    "noMemberships": "You are not a member of any organization yet.",
+    "agents": "Agents",
+    "agentsEmpty": "No agents yet."
+  },
+  "errors": {
+    "unknown": "Something went wrong. Please try again later.",
+    "network": "Cannot reach the server. Check your network connection.",
+    "http_error": "The server returned an unexpected response.",
+    "upstream_unavailable": "The backend service is unavailable.",
+    "validation_failed": "Some of the input is invalid.",
+    "rate_limited": "Too many requests. Please try again later.",
+    "forbidden": "You do not have permission to do this.",
+    "auth": {
+      "invalid_credentials": "Invalid username or password",
+      "rate_limited": "Too many attempts. Please try again later.",
+      "account_disabled": "This account has been disabled.",
+      "required": "Please sign in first.",
+      "token_expired": "Your session has expired. Please sign in again.",
+      "session_revoked": "Your session is no longer valid. Please sign in again.",
+      "refresh_invalid": "Your session is no longer valid. Please sign in again.",
+      "refresh_race": "Your session was just updated. Please try again.",
+      "csrf": "The request was rejected. Refresh the page and try again."
+    },
+    "account": {
+      "login_taken": "This username is already taken."
+    },
+    "org": {
+      "not_found": "The organization does not exist or you are no longer a member."
+    },
+    "setup": {
+      "already_completed": "Setup has already been completed.",
+      "token_invalid": "The setup token is missing or invalid."
+    }
+  }
+}

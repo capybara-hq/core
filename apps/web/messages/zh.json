@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "title": "Capybara",
+    "description": "企业级 Agent 平台"
+  },
+  "common": {
+    "appName": "Capybara",
+    "loading": "加载中…",
+    "logout": "退出登录",
+    "language": "语言",
+    "localeName": {
+      "zh": "中文",
+      "en": "English"
+    }
+  },
+  "login": {
+    "title": "登录",
+    "loginLabel": "用户名",
+    "passwordLabel": "密码",
+    "submit": "登录",
+    "submitting": "正在登录…"
+  },
+  "setup": {
+    "title": "初始化",
+    "intro": "创建首个企业管理员账号，完成后将自动登录。",
+    "loginLabel": "用户名",
+    "loginHint": "3–64 个字符：字母、数字及 . _ @ + -",
+    "passwordLabel": "密码",
+    "passwordHint": "12–256 个字符",
+    "displayNameLabel": "显示名称",
+    "orgNameLabel": "组织名称（可选）",
+    "setupTokenLabel": "初始化令牌（部署配置了才需要）",
+    "submit": "完成初始化",
+    "submitting": "正在提交…",
+    "alreadyDone": "系统已完成初始化。",
+    "goToLogin": "前往登录"
+  },
+  "home": {
+    "title": "工作台",
+    "greeting": "你好，{name}",
+    "currentOrg": "当前组织",
+    "selectOrg": "选择组织",
+    "noMemberships": "你还不属于任何组织。",
+    "agents": "Agent",
+    "agentsEmpty": "暂无 Agent。"
+  },
+  "errors": {
+    "unknown": "出错了，请稍后重试。",
+    "network": "无法连接服务器，请检查网络。",
+    "http_error": "服务器返回了异常响应。",
+    "upstream_unavailable": "后端服务暂不可用。",
+    "validation_failed": "输入内容不符合要求。",
+    "rate_limited": "请求过于频繁，请稍后再试。",
+    "forbidden": "没有权限执行此操作。",
+    "auth": {
+      "invalid_credentials": "用户名或密码错误",
+      "rate_limited": "尝试次数过多，请稍后再试。",
+      "account_disabled": "账号已停用。",
+      "required": "请先登录。",
+      "token_expired": "登录已过期，请重新登录。",
+      "session_revoked": "会话已失效，请重新登录。",
+      "refresh_invalid": "登录已失效，请重新登录。",
+      "refresh_race": "登录状态刚刚更新，请重试。",
+      "csrf": "请求被拒绝，请刷新页面后重试。"
+    },
+    "account": {
+      "login_taken": "用户名已被占用。"
+    },
+    "org": {
+      "not_found": "组织不存在或你已不是成员。"
+    },
+    "setup": {
+      "already_completed": "系统已完成初始化。",
+      "token_invalid": "初始化令牌缺失或错误。"
+    }
+  }
+}
