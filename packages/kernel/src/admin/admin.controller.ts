@@ -11,17 +11,16 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
-import type { KernelDb } from "../db/kernel-schema.js";
-import { ACCOUNTS, API_TOKENS, KERNEL_DB, ORGS, SESSIONS, SETTINGS } from "../http/tokens.js";
+import { ACCOUNTS, API_TOKENS, ORGS, SESSIONS, SETTINGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
 import type { ApiTokenService } from "../identity/api-tokens.js";
-import { audit } from "../identity/audit.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
   CurrentPrincipal,
   EnterpriseAdmin,
   type Principal,
+  patTokenId,
   requireUser,
 } from "../identity/principal.js";
 import type { SessionService } from "../identity/sessions.js";
@@ -61,7 +60,6 @@ const SettingsBody = DEPLOYMENT_SETTINGS.pick({ orgCreation: true }).required();
 @EnterpriseAdmin()
 export class AdminController {
   constructor(
-    @Inject(KERNEL_DB) private readonly db: KernelDb,
     @Inject(ACCOUNTS) private readonly accounts: AccountsService,
     @Inject(SESSIONS) private readonly sessions: SessionService,
     @Inject(API_TOKENS) private readonly apiTokens: ApiTokenService,
@@ -89,25 +87,17 @@ export class AdminController {
     @Body(new ZodPipe(CreateAccountBody)) body: z.infer<typeof CreateAccountBody>,
   ): Promise<{ account: Account }> {
     const actor = requireUser(principal);
-    const account = await this.db.transaction().execute(async (trx) => {
-      const a = await this.accounts.createLocal(
-        {
-          login: body.login,
-          password: body.password,
-          displayName: body.displayName,
-          ...(body.email !== undefined && { email: body.email }),
-          ...(body.enterpriseAdmin !== undefined && { enterpriseAdmin: body.enterpriseAdmin }),
-        },
-        trx,
-      );
-      await audit(trx, {
-        actorAccountId: actor.account.id,
-        action: "account.created",
-        target: a.id,
-        detail: { enterpriseAdmin: a.isEnterpriseAdmin },
-      });
-      return a;
-    });
+    const account = await this.accounts.createByAdmin(
+      {
+        login: body.login,
+        password: body.password,
+        displayName: body.displayName,
+        ...(body.email !== undefined && { email: body.email }),
+        ...(body.enterpriseAdmin !== undefined && { enterpriseAdmin: body.enterpriseAdmin }),
+      },
+      actor.account.id,
+      patTokenId(actor),
+    );
     return { account };
   }
 
@@ -124,7 +114,12 @@ export class AdminController {
       ...(body.status !== undefined && { status: body.status }),
       ...(body.isEnterpriseAdmin !== undefined && { isEnterpriseAdmin: body.isEnterpriseAdmin }),
     };
-    const account = await this.accounts.update(accountId, patch, actor.account.id);
+    const account = await this.accounts.update(
+      accountId,
+      patch,
+      actor.account.id,
+      patTokenId(actor),
+    );
     if (body.status === "disabled") {
       // 鉴权每次请求实时读账号状态，停用已立即生效；这里再吊销凭据，重新启用后旧凭据也不复活
       await this.sessions.revokeAllForAccount(accountId);
@@ -150,6 +145,6 @@ export class AdminController {
     @Body(new ZodPipe(SettingsBody)) body: z.infer<typeof SettingsBody>,
   ): Promise<DeploymentSettings> {
     const actor = requireUser(principal);
-    return this.settings.update(body, actor.account.id);
+    return this.settings.update(body, actor.account.id, patTokenId(actor));
   }
 }

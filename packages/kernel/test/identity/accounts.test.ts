@@ -7,6 +7,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
+import { SettingsService } from "../../src/identity/settings.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -107,7 +108,12 @@ describe("AccountsService 本地账号", () => {
   });
 
   it("setPassword 后旧密码失效；账号不存在 → account.not_found", async () => {
-    const a = await svc.createLocal({ login: "alice", password: PW, displayName: "A" });
+    const a = await svc.createLocal({
+      login: "alice",
+      password: PW,
+      displayName: "A",
+      enterpriseAdmin: true,
+    });
     await svc.setPassword(a.id, "another long password");
     expect(await svc.authenticateLocal("alice", PW)).toBeNull();
     expect((await svc.authenticateLocal("alice", "another long password"))?.id).toBe(a.id);
@@ -166,7 +172,8 @@ describe("最后一个企业管理员", () => {
     ]);
     expect(rs.filter((r) => r.status === "fulfilled").length).toBe(1);
     const rej = rs.find((r) => r.status === "rejected") as PromiseRejectedResult;
-    expect((rej.reason as ApiError).code).toBe("account.last_enterprise_admin");
+    // 后执行的一方在锁内复核时已不是企业管理员
+    expect((rej.reason as ApiError).code).toBe("forbidden");
     expect(await svc.countEnterpriseAdmins()).toBe(1);
   });
 
@@ -180,5 +187,134 @@ describe("最后一个企业管理员", () => {
     await svc.update(a.id, { displayName: "Root" }, a.id);
     const ev = await db.selectFrom("audit_events").selectAll().execute();
     expect(ev.some((e) => e.action === "account.updated" && e.target === a.id)).toBe(true);
+  });
+});
+
+describe("企业管理员写操作执行期复核（R5）", () => {
+  const admin = (name: string) =>
+    svc.createLocal({
+      login: `admin-${name}`,
+      password: PW,
+      displayName: name,
+      enterpriseAdmin: true,
+    });
+
+  it("A 撤销 B 后，B 已通过鉴权的调用（建管理员 / 改账号 / 改设置）一律 forbidden", async () => {
+    const a = await admin("a");
+    const b = await admin("b");
+    const c = await admin("c");
+    await svc.update(b.id, { isEnterpriseAdmin: false }, a.id);
+    expect(
+      await codeOf(
+        svc.createByAdmin(
+          { login: "minted", password: PW, displayName: "M", enterpriseAdmin: true },
+          b.id,
+        ),
+      ),
+    ).toBe("forbidden");
+    expect(await codeOf(svc.update(c.id, { isEnterpriseAdmin: false }, b.id))).toBe("forbidden");
+    expect(await codeOf(svc.update(b.id, { isEnterpriseAdmin: true }, b.id))).toBe("forbidden");
+    const settings = new SettingsService(db);
+    expect(await codeOf(settings.update({ orgCreation: "enterprise_admin" }, b.id))).toBe(
+      "forbidden",
+    );
+    expect((await settings.get()).orgCreation).toBe("anyone");
+    expect((await svc.list({ limit: 10 })).map((x) => x.displayName).sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    // 停用的管理员同样被拒
+    await svc.update(c.id, { status: "disabled" }, a.id);
+    expect(await codeOf(settings.update({ orgCreation: "enterprise_admin" }, c.id))).toBe(
+      "forbidden",
+    );
+  });
+
+  it("createByAdmin：活跃企业管理员可建账号（含企业管理员）并写审计", async () => {
+    const a = await admin("a");
+    const m = await svc.createByAdmin(
+      { login: "minted", password: PW, displayName: "M", enterpriseAdmin: true },
+      a.id,
+    );
+    expect(m.isEnterpriseAdmin).toBe(true);
+    const ev = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "account.created")
+      .where("target", "=", m.id)
+      .execute();
+    expect(ev.map((e) => [e.actor_account_id, e.target, e.detail])).toEqual([
+      [a.id, m.id, { enterpriseAdmin: true }],
+    ]);
+  });
+
+  it("撤销进行中（持锁未提交）时被撤销者建管理员：等撤销提交后在锁内复核 → forbidden", async () => {
+    const raw2 = createDb(box.url, 10);
+    const svc2 = new AccountsService(kernelDb(raw2));
+    try {
+      await admin("a");
+      const b = await admin("b");
+      let mint: Promise<unknown> | undefined;
+      let settled = false;
+      await raw.transaction().execute(async (trx) => {
+        // 模拟 AccountsService.update 撤销 B 的事务：已取企业管理员锁、已改行、尚未提交
+        await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))`.execute(
+          trx,
+        );
+        await sql`UPDATE capybara.accounts SET is_enterprise_admin = false WHERE id = ${b.id}`.execute(
+          trx,
+        );
+        mint = svc2
+          .createByAdmin(
+            { login: "minted", password: PW, displayName: "M", enterpriseAdmin: true },
+            b.id,
+          )
+          .finally(() => {
+            settled = true;
+          });
+        mint.catch(() => {});
+        await new Promise((r) => setTimeout(r, 300));
+        expect(settled).toBe(false);
+      });
+      expect(await codeOf(mint as Promise<unknown>)).toBe("forbidden");
+      expect((await svc.list({ limit: 10 })).some((x) => x.displayName === "M")).toBe(false);
+    } finally {
+      await raw2.destroy();
+    }
+  });
+
+  it("撤销与新建管理员在独立连接池上并发：被撤销者不会在撤销之后建出管理员", async () => {
+    const raw2 = createDb(box.url, 10);
+    const svc2 = new AccountsService(kernelDb(raw2));
+    try {
+      const a = await admin("a");
+      for (let i = 0; i < 15; i++) {
+        const b = await admin(`b${i}`);
+        const [demote, mint] = await Promise.allSettled([
+          svc.update(b.id, { isEnterpriseAdmin: false }, a.id),
+          svc2.createByAdmin(
+            { login: `mint-${i}`, password: PW, displayName: `m${i}`, enterpriseAdmin: true },
+            b.id,
+          ),
+        ]);
+        expect(demote.status).toBe("fulfilled");
+        if (mint.status === "rejected") {
+          expect((mint.reason as ApiError).code).toBe("forbidden");
+          continue;
+        }
+        // 建成的管理员只能发生在撤销之前（两者在同一把锁下串行，审计 id 体现执行顺序）
+        const ev = await db
+          .selectFrom("audit_events")
+          .select(["id", "action"])
+          .where("target", "in", [b.id, mint.value.id])
+          .where("action", "in", ["account.updated", "account.created"])
+          .orderBy("id")
+          .execute();
+        expect(ev.map((e) => e.action)).toEqual(["account.created", "account.updated"]);
+      }
+    } finally {
+      await raw2.destroy();
+    }
   });
 });

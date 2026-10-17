@@ -60,3 +60,8 @@ export function requireUser(p: Principal | undefined): UserPrincipal {
   if (p.kind !== "user") throw new ApiError("forbidden", "This endpoint requires a user");
   return p;
 }
+
+/** 个人令牌发起的请求返回令牌 id（供审计 `actor_token_id`），Web 会话返回 undefined。 */
+export function patTokenId(p: UserPrincipal): string | undefined {
+  return p.via === "pat" ? p.tokenId : undefined;
+}

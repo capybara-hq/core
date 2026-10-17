@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { type Selectable, sql, type Transaction } from "kysely";
+import type { Selectable, Transaction } from "kysely";
 import type { AccountsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
+import { lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
 
@@ -36,58 +37,96 @@ function isLoginTaken(e: unknown): boolean {
   );
 }
 
+export interface LocalAccountInput {
+  login: string;
+  password: string;
+  displayName: string;
+  email?: string;
+  enterpriseAdmin?: boolean;
+}
+
+interface PreparedLocal {
+  input: LocalAccountInput;
+  login: string;
+  passwordHash: string;
+}
+
+/** 规范化登录名、校验并哈希密码（不碰数据库，可在事务 / 锁之外先做）。 */
+async function prepareLocal(input: LocalAccountInput): Promise<PreparedLocal> {
+  const login = normalizeLogin(input.login);
+  validatePassword(input.password);
+  return { input, login, passwordHash: await hashPassword(input.password) };
+}
+
+/** 在事务内插入账号、本地身份与密码；登录名已占用 → `account.login_taken`。 */
+async function insertLocal(t: Trx, p: PreparedLocal): Promise<Account> {
+  const { input, login, passwordHash } = p;
+  const id = randomUUID();
+  const row = await t
+    .insertInto("accounts")
+    .values({
+      id,
+      display_name: input.displayName,
+      email: input.email ?? null,
+      is_enterprise_admin: input.enterpriseAdmin ?? false,
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow();
+  try {
+    await t
+      .insertInto("identities")
+      .values({
+        source: "local",
+        external_id: login,
+        account_id: id,
+        email: input.email ?? null,
+      })
+      .execute();
+  } catch (e) {
+    if (isLoginTaken(e)) {
+      throw new ApiError("account.login_taken", "Login is already taken");
+    }
+    throw e;
+  }
+  await t
+    .insertInto("local_passwords")
+    .values({ account_id: id, password_hash: passwordHash })
+    .execute();
+  return toAccount(row);
+}
+
 /** 账号服务：本地账号的创建、认证与管理。框架无关，由调用方注入 db。 */
 export class AccountsService {
   constructor(private readonly db: KernelDb) {}
 
-  async createLocal(
-    input: {
-      login: string;
-      password: string;
-      displayName: string;
-      email?: string;
-      enterpriseAdmin?: boolean;
-    },
-    trx?: Trx,
-  ): Promise<Account> {
-    const login = normalizeLogin(input.login);
-    validatePassword(input.password);
-    const passwordHash = await hashPassword(input.password);
-    const run = async (t: Trx): Promise<Account> => {
-      const id = randomUUID();
-      const row = await t
-        .insertInto("accounts")
-        .values({
-          id,
-          display_name: input.displayName,
-          email: input.email ?? null,
-          is_enterprise_admin: input.enterpriseAdmin ?? false,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      try {
-        await t
-          .insertInto("identities")
-          .values({
-            source: "local",
-            external_id: login,
-            account_id: id,
-            email: input.email ?? null,
-          })
-          .execute();
-      } catch (e) {
-        if (isLoginTaken(e)) {
-          throw new ApiError("account.login_taken", "Login is already taken");
-        }
-        throw e;
-      }
-      await t
-        .insertInto("local_passwords")
-        .values({ account_id: id, password_hash: passwordHash })
-        .execute();
-      return toAccount(row);
-    };
+  async createLocal(input: LocalAccountInput, trx?: Trx): Promise<Account> {
+    const prepared = await prepareLocal(input);
+    const run = (t: Trx) => insertLocal(t, prepared);
     return trx ? run(trx) : this.db.transaction().execute(run);
+  }
+
+  /**
+   * 企业管理员建本地账号（可同时设为企业管理员）：事务内取企业管理员锁并复核发起人仍是活跃企业管理员
+   * （否则 `forbidden`），建号并写审计 `account.created`。密码哈希在取锁之前算好，不在锁内跑 scrypt。
+   */
+  async createByAdmin(
+    input: LocalAccountInput,
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<Account> {
+    const prepared = await prepareLocal(input);
+    return this.db.transaction().execute(async (trx) => {
+      await lockEnterpriseAdminsAndAuthorize(trx, actorAccountId);
+      const a = await insertLocal(trx, prepared);
+      await audit(trx, {
+        actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        action: "account.created",
+        target: a.id,
+        detail: { enterpriseAdmin: a.isEnterpriseAdmin },
+      });
+      return a;
+    });
   }
 
   async authenticateLocal(login: string, password: string): Promise<Account | null> {
@@ -187,15 +226,12 @@ export class AccountsService {
       isEnterpriseAdmin?: boolean;
     },
     actorAccountId: string,
+    actorTokenId?: string,
   ): Promise<Account> {
     return this.db.transaction().execute(async (trx) => {
-      const losesAdmin = patch.isEnterpriseAdmin === false || patch.status === "disabled";
-      // 撤销管理员或停用账号前先串行化，避免两个管理员并发互相撤销后一个都不剩
-      if (losesAdmin) {
-        await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))`.execute(
-          trx,
-        );
-      }
+      // 所有企业管理员写操作在同一把锁下串行，并在锁内复核发起人仍是活跃企业管理员：
+      // 既避免两个管理员并发互相撤销后一个都不剩，也让刚被撤销的管理员的在途请求失效
+      await lockEnterpriseAdminsAndAuthorize(trx, actorAccountId);
       const before = await trx
         .selectFrom("accounts")
         .selectAll()
@@ -224,6 +260,7 @@ export class AccountsService {
       }
       await audit(trx, {
         actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         action: "account.updated",
         target: id,
         detail: patch,
