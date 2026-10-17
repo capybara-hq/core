@@ -29,10 +29,12 @@ const READ_PAGE = 500;
 
 const TERMINAL = new Set(["completed", "failed", "aborted"]);
 
-/** 测试钩子。 */
+/** 测试钩子与参数。 */
 export interface RunHooks {
   /** 终态事件已写入、释放配额与会话锁之前调用（用于构造「运行结束瞬间到达的消息」）。 */
   beforeRelease?(runId: string, conversationId: string): Promise<void>;
+  /** 会话锁 TTL（毫秒），默认 `CONVERSATION_LOCK_TTL_MS`；测试调短以快速触发续租。 */
+  lockTtlMs?: number;
 }
 
 export interface RunWorkerDeps {
@@ -57,6 +59,8 @@ interface ActiveRun {
   shutdown: AbortController;
   /** 停机超出预算：放弃本进程的执行，交给 BullMQ stalled 机制由其他 worker 续跑。 */
   abandoned: boolean;
+  /** 会话锁已丢失（续租发现被他人持有）：按停机处理，不写终态、不释放锁，任务回到队列。 */
+  leaseLost: boolean;
   lease: Lease;
   /** 清除本运行的定时器（截止时间、配额续期）。 */
   stopTimers: () => void;
@@ -149,7 +153,7 @@ export class RunWorker {
     if (this.closing) return requeue(job, token, 0);
     const run = await this.d.db
       .selectFrom("runs")
-      .select(["id", "status", "agent_version", "trigger_account_id", "started_at"])
+      .select(["id", "status", "agent_version", "trigger_account_id", "trigger_seq", "started_at"])
       .where("id", "=", runId)
       .executeTakeFirst();
     if (!run || TERMINAL.has(run.status)) return;
@@ -160,13 +164,18 @@ export class RunWorker {
       .executeTakeFirst();
     if (!conv) return;
 
-    const lease = await this.d.lock.acquire(conversationId, runId, CONVERSATION_LOCK_TTL_MS);
+    const lease = await this.d.lock.acquire(
+      conversationId,
+      runId,
+      this.d.hooks?.lockTtlMs ?? CONVERSATION_LOCK_TTL_MS,
+    );
     if (!lease) return requeue(job, token, LOCK_BUSY_DELAY_MS);
 
     let settle!: () => void;
     const state: ActiveRun = {
       shutdown: new AbortController(),
       abandoned: false,
+      leaseLost: false,
       lease,
       stopTimers: () => {},
       done: new Promise<void>((r) => {
@@ -176,6 +185,11 @@ export class RunWorker {
     this.active.set(runId, state);
     // 停机开始后才登记的运行（close() 的快照之后）：同样在步骤边界停下。
     if (this.closing) state.shutdown.abort();
+    // 锁丢失（R27）：走与停机相同的路径——loop 在下一个步骤边界返回 interrupted，任务回到队列。
+    lease.onLost(() => {
+      state.leaseLost = true;
+      state.shutdown.abort();
+    });
     let entered = false;
     let delayMs: number | null = null;
     let broken = false;
@@ -188,6 +202,7 @@ export class RunWorker {
         const r = await this.execute(run, { id: conversationId, ...conv }, state).catch(
           async (err: unknown): Promise<ExecResult> => {
             if (state.abandoned) return "abandoned";
+            if (state.leaseLost) return "interrupted";
             // 编排自身出错（如写事件失败）：尽力把运行标记为失败，避免会话卡在 running。
             this.d.log.error("run orchestration failed", { conversationId, runId, err });
             await this.finish(conversationId, runId, "failed", null, {
@@ -208,9 +223,12 @@ export class RunWorker {
             .leave(conv.org_id, runId)
             .catch((err) => this.d.log.warn("org quota leave failed", { runId, err }));
         }
-        await lease
-          .release()
-          .catch((err) => this.d.log.warn("conversation lock release failed", { runId, err }));
+        // 锁已丢失时不释放（已不属于本运行；RELEASE 虽比对 runId，这里也不再触碰）。
+        if (!state.leaseLost) {
+          await lease
+            .release()
+            .catch((err) => this.d.log.warn("conversation lock release failed", { runId, err }));
+        }
       }
       this.active.delete(runId);
       settle();
@@ -231,6 +249,7 @@ export class RunWorker {
       status: string;
       agent_version: number;
       trigger_account_id: string;
+      trigger_seq: string;
       started_at: Date | null;
     },
     conv: { id: string; org_id: string; agent_id: string },
@@ -340,6 +359,7 @@ export class RunWorker {
         });
       } catch (e) {
         if (state.abandoned) return "abandoned";
+        if (state.leaseLost) return "interrupted";
         const err =
           e instanceof RunError ? e : new RunError("run.internal", "The run failed unexpectedly");
         if (!(e instanceof RunError)) {
@@ -354,6 +374,8 @@ export class RunWorker {
         return "finished";
       }
       if (state.abandoned) return "abandoned";
+      // 锁在运行中丢失：无论 loop 返回什么都不写终态，任务回到队列由持锁者续跑。
+      if (state.leaseLost) return "interrupted";
 
       // loop 因截止时间停下但按中止返回：按超时收尾。
       if (outcome.kind === "aborted" && abortedBy === undefined && deadlineHit) {
@@ -368,11 +390,14 @@ export class RunWorker {
             payload: { byAccountId: abortedBy ?? null, reason: "user" },
           });
           break;
-        default:
-          await this.finish(conversationId, runId, "completed", outcome.consumedUpToSeq, {
+        default: {
+          // 至少消费到触发消息（如续跑时已过截止时间、loop 一条都没吸收）。
+          const consumed = Math.max(outcome.consumedUpToSeq, Number(run.trigger_seq));
+          await this.finish(conversationId, runId, "completed", consumed, {
             type: "run_finished",
-            payload: { reason: outcome.kind, consumedUpToSeq: outcome.consumedUpToSeq },
+            payload: { reason: outcome.kind, consumedUpToSeq: consumed },
           });
+        }
       }
       return "finished";
     } finally {
@@ -382,8 +407,9 @@ export class RunWorker {
   }
 
   /**
-   * 写终态事件，同一事务内推进 `consumed_seq`（`GREATEST`，不回退）并更新 `runs.status`；
-   * 提交后发布会话通知，然后调用测试钩子。
+   * 写终态事件，同一事务内推进 `consumed_seq` 并更新 `runs.status`；提交后发布会话通知，然后调用测试钩子。
+   * `consumed_seq = GREATEST(consumed_seq, consumed, runs.trigger_seq)`：不回退，且任何终态都至少消费到
+   * 触发该运行的消息——否则结束时的 ensureRun 会对同一条消息无限重试（失败）或卡住会话。
    */
   private async finish(
     conversationId: string,
@@ -398,13 +424,13 @@ export class RunWorker {
         [{ ...event, runId, idemKey: `${event.type}:${runId}` }],
         t,
       );
-      if (consumed !== null) {
-        await t
-          .updateTable("conversations")
-          .set({ consumed_seq: sql`GREATEST(consumed_seq, ${consumed})` })
-          .where("id", "=", conversationId)
-          .execute();
-      }
+      await t
+        .updateTable("conversations")
+        .set({
+          consumed_seq: sql`GREATEST(consumed_seq, ${consumed ?? 0}::bigint, (SELECT r.trigger_seq FROM capybara.runs r WHERE r.id = ${runId}))`,
+        })
+        .where("id", "=", conversationId)
+        .execute();
       await t
         .updateTable("runs")
         .set({ status, finished_at: sql`now()` })

@@ -15,6 +15,21 @@ export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
 const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
 
+/**
+ * 设置的修改（PUT /api/v1/admin/settings 的 body）：只改给出的键。
+ * `runConcurrencyOverrides` 按组织合并：值为正整数 → 设置该组织的上限；值为 null → 删除该组织的覆盖
+ * （回到 `runtime.orgConcurrency`）；未列出的组织保持不变。
+ */
+export const DEPLOYMENT_SETTINGS_PATCH = z
+  .object({
+    orgCreation: z.enum(["anyone", "enterprise_admin"]).optional(),
+    runConcurrencyOverrides: z
+      .record(z.string().min(1), z.number().int().positive().nullable())
+      .optional(),
+  })
+  .strict();
+export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
+
 /** 部署级设置：每个键一行，读时缺省用默认值。 */
 export class SettingsService {
   constructor(
@@ -51,11 +66,11 @@ export class SettingsService {
 
   /** 更新设置：事务内取企业管理员锁并复核发起人仍是活跃企业管理员（否则 `forbidden`）。 */
   async update(
-    patch: Partial<DeploymentSettings>,
+    patch: DeploymentSettingsPatch,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<DeploymentSettings> {
-    const check = DEPLOYMENT_SETTINGS.partial().safeParse(patch);
+    const check = DEPLOYMENT_SETTINGS_PATCH.safeParse(patch);
     if (!check.success) {
       throw new ApiError(
         "validation_failed",
@@ -65,7 +80,18 @@ export class SettingsService {
     }
     await this.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actorAccountId);
-      for (const [key, value] of Object.entries(check.data)) {
+      // 企业管理员锁串行化所有设置修改：在锁内读当前覆盖再合并，不会丢失并发修改。
+      const next: Partial<DeploymentSettings> = {};
+      if (check.data.orgCreation !== undefined) next.orgCreation = check.data.orgCreation;
+      if (check.data.runConcurrencyOverrides !== undefined) {
+        const merged = { ...(await this.get(trx)).runConcurrencyOverrides };
+        for (const [orgId, limit] of Object.entries(check.data.runConcurrencyOverrides)) {
+          if (limit === null) delete merged[orgId];
+          else merged[orgId] = limit;
+        }
+        next.runConcurrencyOverrides = merged;
+      }
+      for (const [key, value] of Object.entries(next)) {
         if (value === undefined) continue;
         const json = JSON.stringify(value);
         await trx

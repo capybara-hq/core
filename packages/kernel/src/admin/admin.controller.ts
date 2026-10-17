@@ -25,7 +25,7 @@ import {
 } from "../identity/principal.js";
 import type { SessionService } from "../identity/sessions.js";
 import {
-  DEPLOYMENT_SETTINGS,
+  DEPLOYMENT_SETTINGS_PATCH,
   type DeploymentSettings,
   type SettingsService,
 } from "../identity/settings.js";
@@ -50,7 +50,10 @@ const UpdateAccountBody = z.object({
   isEnterpriseAdmin: z.boolean().optional(),
 });
 
-const SettingsBody = DEPLOYMENT_SETTINGS.pick({ orgCreation: true }).required();
+/** 至少给出一个键；`runConcurrencyOverrides` 按组织合并，值为 null 删除该组织的覆盖。 */
+const SettingsBody = DEPLOYMENT_SETTINGS_PATCH.refine((b) => Object.keys(b).length > 0, {
+  message: "at least one setting is required",
+});
 
 /**
  * 企业管理员端点（`/api/v1/admin/*`）：只接受企业管理员的 Web 会话或个人令牌；

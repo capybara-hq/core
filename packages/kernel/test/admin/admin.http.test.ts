@@ -11,6 +11,7 @@ import { SettingsService } from "../../src/identity/settings.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
+import { OrgQuota, orgRunLimit } from "../../src/runtime/quota.js";
 import { asUser, cookieJar, setCookies } from "../helpers/http.js";
 
 let pgc: TestContainer;
@@ -424,6 +425,54 @@ describe("企业管理员端点", () => {
       payload: { name: "Y" },
     });
     expect(allowed.statusCode).toBe(201);
+  });
+
+  it("PUT /admin/settings runConcurrencyOverrides：按组织合并，null 删除；配额按覆盖值生效", async () => {
+    const adminReq = await session("admin");
+    const put = async (payload: Record<string, unknown>) =>
+      adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
+    const r1 = await put({ runConcurrencyOverrides: { orgA: 1, orgB: 5 } });
+    expect(r1.statusCode).toBe(200);
+    expect(r1.json()).toEqual({
+      orgCreation: "anyone",
+      runConcurrencyOverrides: { orgA: 1, orgB: 5 },
+    });
+
+    // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
+    const settings = new SettingsService(db);
+    const limit = (org: string) => orgRunLimit(settings, () => k.config, org);
+    expect(await limit("orgA")).toBe(1);
+    expect(await limit("orgC")).toBe(k.config.runtime.orgConcurrency);
+    const quota = new OrgQuota(redis);
+    expect(await quota.tryEnter("orgA", "r1", await limit("orgA"))).toBe(true);
+    expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(false);
+
+    // 合并：只改列出的组织；null 删除覆盖；其他键不受影响
+    const r2 = await put({ runConcurrencyOverrides: { orgA: null, orgC: 2 } });
+    expect(r2.statusCode).toBe(200);
+    expect(r2.json()).toEqual({
+      orgCreation: "anyone",
+      runConcurrencyOverrides: { orgB: 5, orgC: 2 },
+    });
+    expect(await limit("orgA")).toBe(k.config.runtime.orgConcurrency);
+    expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
+
+    // 校验：非正整数 / 未知键 / 空 body → 400
+    for (const payload of [
+      { runConcurrencyOverrides: { orgA: 0 } },
+      { runConcurrencyOverrides: { orgA: 1.5 } },
+      { runConcurrencyOverrides: { orgA: "3" } },
+      { unknown: true },
+      {},
+    ]) {
+      const res = await put(payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+    expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
+      orgCreation: "anyone",
+      runConcurrencyOverrides: { orgB: 5, orgC: 2 },
+    });
   });
 
   it("GET /admin/orgs：全部组织与成员数", async () => {

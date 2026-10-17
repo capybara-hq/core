@@ -32,6 +32,8 @@ export interface Lease {
   release(): Promise<void>;
   /** 只停止续租、不释放：锁在 TTL 后自然过期（停机超出预算、交给其他副本时使用）。 */
   abandon(): void;
+  /** 注册「锁已丢失」回调（续租发现锁不再属于自己时调用一次；已丢失则立即调用）。 */
+  onLost(cb: () => void): void;
 }
 
 /**
@@ -57,6 +59,7 @@ export class ConversationLock {
     const log = this.log;
     let lost = false;
     let timer: NodeJS.Timeout | undefined;
+    const lostCallbacks: (() => void)[] = [];
     const stop = () => {
       clearInterval(timer);
       timer = undefined;
@@ -74,6 +77,7 @@ export class ConversationLock {
           lost = true;
           stop();
           log?.warn("conversation run lock lost", { conversationId, runId });
+          for (const cb of lostCallbacks.splice(0)) cb();
         }
         return r === 1;
       },
@@ -82,6 +86,10 @@ export class ConversationLock {
         await redis.eval(RELEASE, 1, key, runId);
       },
       abandon: stop,
+      onLost(cb) {
+        if (lost) cb();
+        else lostCallbacks.push(cb);
+      },
     };
     timer = setInterval(
       () => {

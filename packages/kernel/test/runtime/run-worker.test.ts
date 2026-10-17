@@ -1,4 +1,5 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -11,10 +12,12 @@ import type { Kernel } from "../../src/kernel.js";
 import type { AgentLoop, LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
 import {
   type ModelStepDeps,
+  RunError,
   runFinalWrapUp,
   runModelStep,
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
+import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
 import type { RunHooks } from "../../src/runtime/run-worker.js";
 import {
   consumedSeq,
@@ -98,10 +101,14 @@ const urls = () => ({ pg: pgc.url, redis: rd.url });
 
 async function worker(
   runtime: Partial<KernelConfig["runtime"]> = {},
-  opts: { hooks?: RunHooks; roles?: ("api" | "worker" | "gateway")[] } = {},
+  opts: {
+    hooks?: RunHooks;
+    roles?: ("api" | "worker" | "gateway")[];
+    loop?: (deps: ModelStepDeps) => AgentLoop;
+  } = {},
 ): Promise<Kernel> {
   const k = await startKernel(runConfig(urls(), { roles: opts.roles ?? ["worker"], runtime }), {
-    loop: sequential,
+    loop: opts.loop ?? sequential,
     ...(opts.hooks && { runHooks: opts.hooks }),
   });
   extra.push(k);
@@ -443,5 +450,92 @@ describe("RunWorker", () => {
     await sleep(300);
     expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
     await waitFor(async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0, 2_000);
+  });
+  it("会话锁在运行中丢失（R27）→ 按停机处理：不写终态、不释放别人的锁，任务回到队列后续跑完成一次", async () => {
+    await worker({ maxSteps: 4 }, { hooks: { lockTtlMs: 300 } });
+    const { orgId, convId } = await setup(LOOPER);
+    await postMessage(req, orgId, convId, "loop:300");
+    await waitForEvent(db, convId, (e) => e.type === "model_call");
+    // 模拟锁过期后被别人取得：覆盖锁键，下一次续租（≤100ms）发现丢失
+    await redis.set(`capk:conv-run:${convId}`, "foreign", "PX", 1500);
+    await sleep(600);
+    // 第 1 步已在步骤边界结束、运行被中断：没有终态，别人的锁原样保留
+    expect(await redis.get(`capk:conv-run:${convId}`)).toBe("foreign");
+    let evs = await eventsOf(db, convId);
+    expect(evs.some((e) => ["run_finished", "run_failed", "run_aborted"].includes(e.type))).toBe(
+      false,
+    );
+    expect(evs.filter((e) => e.type === "assistant_message")).toHaveLength(1);
+    expect((await runsOf(db, convId))[0]?.status).toBe("running");
+    // 别人的锁过期后，回到队列的任务重新领取并续跑完成
+    const [fin] = await waitForTerminal(db, convId, 1, 15_000);
+    expect(fin?.payload).toMatchObject({ reason: "max_steps" });
+    await sleep(300);
+    evs = await eventsOf(db, convId);
+    expect(evs.filter((e) => e.type === "run_started")).toHaveLength(1);
+    expect(evs.filter((e) => e.type === "run_finished")).toHaveLength(1);
+    expect(evs.flatMap((e) => (e.type === "assistant_message" ? [e.payload.step] : []))).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+    expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
+  }, 30_000);
+
+  it("loop 在吸收消息前抛错 → run_failed，consumed_seq 推进到触发消息，之后的新消息正常运行（会话不卡住）", async () => {
+    let throwNext = true;
+    await worker(
+      {},
+      {
+        loop: (deps) => {
+          const inner = new SequentialLoop(deps);
+          return {
+            run: async (ctx) => {
+              if (throwNext) {
+                throwNext = false;
+                throw new RunError("run.test", "boom before absorbing");
+              }
+              return inner.run(ctx);
+            },
+          };
+        },
+      },
+    );
+    const { orgId, convId } = await setup();
+    const first = await postMessage(req, orgId, convId, "echo:first");
+    const [t] = await waitForTerminal(db, convId);
+    expect(t?.type).toBe("run_failed");
+    expect(t?.payload).toMatchObject({ error: { code: "run.test" } });
+    await sleep(300);
+    expect(await consumedSeq(db, convId)).toBe(first);
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed"]);
+
+    const next = await postMessage(req, orgId, convId, "echo:next");
+    const terms = await waitForTerminal(db, convId, 2);
+    expect(terms[1]?.type).toBe("run_finished");
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed", "completed"]);
+    expect(await consumedSeq(db, convId)).toBe(next);
+    const replies = (await eventsOf(db, convId)).filter((e) => e.type === "assistant_message");
+    expect(replies.map(textOf)).toEqual(["next"]);
+  });
+
+  it("同一触发点的任务已存在（属于另一个运行）→ ensureRun 不投递、不留下 queued 行", async () => {
+    const { orgId, convId } = await setup();
+    const conn = new Redis(rd.url, { maxRetriesPerRequest: null });
+    const q = new Queue(RUN_QUEUE_NAME, { connection: conn });
+    try {
+      // 预先放一个同 jobId 的延迟任务（模拟仍在队列中的旧运行任务）
+      await q.add(
+        "run",
+        { runId: "other-run", conversationId: convId },
+        { jobId: runJobId(convId, 1), delay: 60_000 },
+      );
+      await postMessage(req, orgId, convId, "echo:x");
+      expect(await runsOf(db, convId)).toEqual([]);
+      const job = await q.getJob(runJobId(convId, 1));
+      expect(job?.data.runId).toBe("other-run");
+      await job?.remove();
+    } finally {
+      await q.close();
+      conn.disconnect();
+    }
   });
 });

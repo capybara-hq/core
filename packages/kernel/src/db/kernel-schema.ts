@@ -193,6 +193,8 @@ export interface RunsTable {
   status: "queued" | "running" | "completed" | "failed" | "aborted";
   agent_version: number;
   trigger_account_id: string;
+  /** 0008：创建运行时最新 user_message 的 seq（终态时 consumed_seq 至少推进到它）。 */
+  trigger_seq: Int8;
   created_at: Ts;
   started_at: TsNullable;
   finished_at: TsNullable;

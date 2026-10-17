@@ -85,6 +85,18 @@ export class RunQueue {
         .where("status", "in", ACTIVE_RUN_STATUSES)
         .executeTakeFirst();
       if (active) return null;
+      // BullMQ 对重复的 jobId 静默忽略（add 返回的 Job 由调用方数据构造，看不出是否真的入队）：
+      // 先显式查同一触发点的任务；仍存在（例如属于刚结束、尚未从队列移除的运行）就不插入 runs 行。
+      const jobId = runJobId(conversationId, Number(last.seq));
+      const existing = await this.getQueue().getJob(jobId);
+      if (existing) {
+        this.log.warn("run job for this trigger already exists; not enqueuing", {
+          conversationId,
+          jobId,
+          existingRunId: existing.data?.runId,
+        });
+        return null;
+      }
       const agent = await t
         .selectFrom("agents")
         .select("current_version")
@@ -99,29 +111,28 @@ export class RunQueue {
           status: "queued",
           agent_version: agent.current_version,
           trigger_account_id: (last.payload as { authorAccountId: string }).authorAccountId,
+          trigger_seq: Number(last.seq),
         })
         .execute();
-      return { runId, maxUserSeq: Number(last.seq) };
+      return { runId, jobId };
     });
     if (!created) return null;
-    const { runId, maxUserSeq } = created;
+    const { runId, jobId } = created;
     try {
-      const job = await this.getQueue().add(
+      const queue = this.getQueue();
+      await queue.add(
         "run",
         { runId, conversationId },
-        {
-          jobId: runJobId(conversationId, maxUserSeq),
-          attempts: 1,
-          removeOnComplete: true,
-          removeOnFail: true,
-        },
+        { jobId, attempts: 1, removeOnComplete: true, removeOnFail: true },
       );
-      if (job.data.runId !== runId) {
-        // 同一触发点的任务仍在队列里（属于另一个运行）：不重复投递，撤销本次插入。
+      // 从 Redis 读回核对：检查与 add 之间出现了同 jobId 的任务时 add 被静默忽略，撤销本次插入，
+      // 不留下没有任务的 queued 行。读不到说明任务已被领取并移除（只可能是本次投递的），不撤销。
+      const stored = await queue.getJob(jobId);
+      if (stored && stored.data.runId !== runId) {
         this.log.warn("run job already queued for this trigger", {
           conversationId,
           runId,
-          existingRunId: job.data.runId,
+          existingRunId: stored.data.runId,
         });
         await this.deleteQueued(runId);
         return null;
