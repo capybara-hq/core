@@ -170,8 +170,8 @@ export class OrgsController {
   @Get(":orgId/service-tokens")
   @OrgAction("org.tokens.manage")
   @SessionOnly()
-  async listServiceTokens(@CurrentOrg() org: OrgContext): Promise<ApiTokenRecord[]> {
-    return this.tokens.list({ orgId: org.orgId });
+  async listServiceTokens(@CurrentOrg() org: OrgContext): Promise<{ tokens: ApiTokenRecord[] }> {
+    return { tokens: await this.tokens.list({ orgId: org.orgId }) };
   }
 
   @Delete(":orgId/service-tokens/:tokenId")

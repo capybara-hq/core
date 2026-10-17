@@ -120,7 +120,7 @@ describe("个人访问令牌", () => {
     expect(list.statusCode).toBe(200);
     expect(list.body).not.toContain("cap_pat_");
     expect(list.body).not.toContain("token_hash");
-    expect((list.json() as { id: string }[])[0]?.id).toBe(record.id);
+    expect((list.json() as { tokens: { id: string }[] }).tokens[0]?.id).toBe(record.id);
   });
 
   it("PAT 不能管理令牌（403 auth.session_required）", async () => {
@@ -233,7 +233,7 @@ describe("组织服务令牌", () => {
     const list = await req({ method: "GET", url: `/api/v1/orgs/${id}/service-tokens` });
     expect(list.statusCode).toBe(200);
     expect(list.body).not.toContain("cap_svc_");
-    expect((list.json() as unknown[]).length).toBe(2);
+    expect((list.json() as { tokens: unknown[] }).tokens.length).toBe(2);
     const del = await req({
       method: "DELETE",
       url: `/api/v1/orgs/${id}/service-tokens/${a.record.id}`,

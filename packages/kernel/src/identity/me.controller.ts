@@ -109,9 +109,11 @@ export class MeController {
 
   @Get("tokens")
   @SessionOnly()
-  async listTokens(@CurrentPrincipal() principal: Principal): Promise<ApiTokenRecord[]> {
+  async listTokens(
+    @CurrentPrincipal() principal: Principal,
+  ): Promise<{ tokens: ApiTokenRecord[] }> {
     const p = requireUser(principal);
-    return this.tokens.list({ accountId: p.account.id });
+    return { tokens: await this.tokens.list({ accountId: p.account.id }) };
   }
 
   @Delete("tokens/:tokenId")
