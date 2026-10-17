@@ -55,5 +55,5 @@ M2（计划 `2026-10-17-m2-agent-runtime.md`）处理过的条目已移到文末
 | `adding-config` 写明整段 JSON 与逐字段环境变量冲突；补「不冲突」与忽略前缀的测试 | Task 3 | `0ab3589` |
 | 非字符串密钥值不打码、只覆盖部署级、无嵌套密钥测试（数字 ≥ 4 位打码、布尔与短值不打码、组织密钥进有界集合、重叠密钥合并区间） | Task 3 | `0ab3589`、`bbf2e2c`、`84ac442`、`4adad48` |
 | Nacos 鉴权（用户名 / 密码与 accessToken；M0 遗留） | Task 3 | `0ab3589` |
-| 双副本验收未断言每个请求落在哪个副本（新增 `http.replicaId` → `x-capybara-replica` 响应头，`Harness.request` 返回 `replica`） | Task 18 | M2 验收提交（见 `git log --grep "M2 双副本端到端验收"`） |
-| `m0-followups.md` 中 Task 11 那行措辞含糊；「M1 已处理」表的提交列是提交信息而非哈希；AGENTS.md 依赖链段落有未核实的说法（已逐包核对 package.json 并更正） | Task 18 | 同上 |
+| 双副本验收未断言每个请求落在哪个副本（新增 `http.replicaId` → `x-capybara-replica` 响应头，`Harness.request` 返回 `replica`） | Task 18 | `4669cf7` |
+| `m0-followups.md` 中 Task 11 那行措辞含糊；「M1 已处理」表的提交列是提交信息而非哈希；AGENTS.md 依赖链段落有未核实的说法（已逐包核对 package.json 并更正） | Task 18 | `4669cf7` |
