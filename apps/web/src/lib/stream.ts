@@ -11,6 +11,8 @@ export interface StreamDelta {
 export interface StreamHandlers {
   onEvent(e: ConversationEvent): void;
   onDelta(d: StreamDelta): void;
+  /** 连接（含浏览器自动重连）已建立。 */
+  onOpen?(): void;
   /**
    * 流已终止、不会再自动重连：`code` 为服务端 `event: error` 帧的错误码（如会话被吊销）；
    * 没有 `code` 表示连接被浏览器放弃（例如重连时得到非 200 响应）。
@@ -45,6 +47,9 @@ export function openConversationStream(
       return undefined;
     }
   };
+  es.addEventListener("open", () => {
+    if (!closed) handlers.onOpen?.();
+  });
   es.addEventListener("event", (e) => {
     const data = parse(e);
     if (!closed && data !== undefined) handlers.onEvent(data as ConversationEvent);

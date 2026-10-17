@@ -231,6 +231,14 @@ describe("openConversationStream", () => {
     expect(onError).toHaveBeenCalledWith({ code: "auth.session_revoked" });
   });
 
+  it("连接建立（open）时回调 onOpen", () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const onOpen = vi.fn();
+    openConversationStream("o1", "c1", 0, { onEvent: vi.fn(), onDelta: vi.fn(), onOpen });
+    FakeEventSource.instances[0]?.emit("open");
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("连接错误且浏览器已放弃重连（CLOSED）：回调不带错误码；仍在重连时不回调", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const onError = vi.fn();

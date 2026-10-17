@@ -45,9 +45,15 @@ class FakeEventSource {
   close() {
     this.readyState = 2;
   }
-  emit(type: string, data: unknown) {
-    const e = new MessageEvent(type, { data: JSON.stringify(data) });
+  emit(type: string, data?: unknown) {
+    const e =
+      data === undefined ? new Event(type) : new MessageEvent(type, { data: JSON.stringify(data) });
     for (const fn of this.listeners.get(type) ?? []) fn(e);
+  }
+  /** 浏览器放弃重连：readyState → CLOSED 并派发普通 error 事件。 */
+  giveUp() {
+    this.readyState = 2;
+    this.emit("error");
   }
 }
 
@@ -201,5 +207,99 @@ describe("ChatView", () => {
       FakeEventSource.instances[0]?.emit("error", { code: "auth.session_revoked" });
     });
     expect((await screen.findByRole("alert")).textContent).toBe(zh.errors.auth.session_revoked);
+  });
+
+  it("发送失败后重试沿用同一个 clientMessageId；成功后下一条换新 id", async () => {
+    let fail = true;
+    let seq = 2;
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`POST ${BASE}/messages`]: (c) => {
+        if (fail) {
+          fail = false;
+          return json(500, { error: { code: "internal", message: "boom" } });
+        }
+        const body = JSON.parse(String(c.body)) as { text: string };
+        seq += 1;
+        return json(202, { event: userMsg(seq, body.text) });
+      },
+    });
+    renderChat("en");
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    const input = screen.getByLabelText(en.chat.inputLabel);
+    const send = () => user.click(screen.getByRole("button", { name: en.chat.send }));
+    await user.type(input, "first");
+    await send(); // 500：保留输入
+    expect(input).toHaveProperty("value", "first");
+    await send(); // 重试成功
+    await screen.findByText("first");
+    await user.type(input, "second");
+    await send();
+    await screen.findByText("second");
+    const ids = calls
+      .filter((c) => c.method === "POST" && c.url === `${BASE}/messages`)
+      .map((c) => (JSON.parse(String(c.body)) as { clientMessageId: string }).clientMessageId);
+    expect(ids).toHaveLength(3);
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[0]);
+  });
+
+  it("失败后改动文本：视为新消息，换新 clientMessageId", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`POST ${BASE}/messages`]: () => json(500, { error: { code: "internal", message: "x" } }),
+    });
+    renderChat("en");
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    const input = screen.getByLabelText(en.chat.inputLabel);
+    const send = () => user.click(screen.getByRole("button", { name: en.chat.send }));
+    await user.type(input, "abc");
+    await send();
+    await user.type(input, "d");
+    await send();
+    const ids = calls
+      .filter((c) => c.method === "POST")
+      .map((c) => (JSON.parse(String(c.body)) as { clientMessageId: string }).clientMessageId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it("连接被放弃后重开订阅：after 取事件流送达的最后 seq，而非 POST 返回的 seq", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`GET ${BASE}`]: () => json(200, { conversation: { id: "c1" } }),
+      [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "later") }),
+    });
+    renderChat("en");
+    await screen.findByRole("button", { name: en.chat.stop });
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => es.emit("event", ev(3, "model_call", { step: 0, provider: "p", model: "m" })));
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(en.chat.inputLabel), "later");
+    await user.click(screen.getByRole("button", { name: en.chat.send }));
+    await screen.findByText("later");
+    act(() => es.giveUp());
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+    expect(FakeEventSource.instances[1]?.url).toBe(`${BASE}/stream?after=3`);
+  });
+
+  it("每次成功建立连接都清零重开计数：空闲会话多次断线不会显示「连接已断开」", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, { conversation: { id: "c1" } }),
+    });
+    renderChat("en");
+    await screen.findByText("hi");
+    for (let i = 1; i <= 5; i++) {
+      const es = FakeEventSource.instances[i - 1] as FakeEventSource;
+      act(() => {
+        es.emit("open");
+        es.giveUp();
+      });
+      await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(i + 1));
+    }
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

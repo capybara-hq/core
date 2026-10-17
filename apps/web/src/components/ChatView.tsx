@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { ApiClientError } from "../lib/api";
 import { abortRun, getConversation, listAllEvents, postMessage } from "../lib/conversations";
 import { chatItems, initialChatState, openConversationStream, reduceChat } from "../lib/stream";
@@ -13,16 +13,6 @@ import { MessageList } from "./MessageList";
 const MAX_REOPEN = 3;
 
 /**
- * `clientMessageId`：`crypto.randomUUID` 只在安全上下文可用（HTTPS / localhost），
- * 其余情况用 `getRandomValues` 生成同等随机度的 id。
- */
-function newClientMessageId(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
  * 聊天视图：先读完历史事件，再从最后一条 seq 订阅事件流；事件与增量都交给 {@link reduceChat}。
  * 运行中显示「停止」（调用 abort）；输入框始终可用，运行中发送即为插话。
  */
@@ -32,20 +22,27 @@ export function ChatView({ orgId, conversationId }: { orgId: string; conversatio
   const [state, dispatch] = useReducer(reduceChat, initialChatState);
   const [error, setError] = useState<string>();
   const [stopping, setStopping] = useState(false);
-  const lastSeq = useRef(0);
-  lastSeq.current = state.lastSeq;
 
   useEffect(() => {
     let disposed = false;
     let close: (() => void) | undefined;
     let failures = 0;
+    /**
+     * 事件流（及初始历史）送达的最后 seq，重开订阅时作为 `after`。不用 state.lastSeq：
+     * POST 返回的事件会先合入 state，若以它为起点会跳过流尚未送达的中间事件。
+     */
+    let streamSeq = 0;
     const fail = (e: unknown) => {
       if (!disposed) setError(errorMessage(e));
     };
     const open = (after: number) => {
       close = openConversationStream(orgId, conversationId, after, {
-        onEvent: (e) => {
+        // 每次连接成功（含浏览器自动重连）都清零，空闲会话偶发断线不会累计到上限
+        onOpen: () => {
           failures = 0;
+        },
+        onEvent: (e) => {
+          streamSeq = Math.max(streamSeq, e.seq);
           dispatch({ kind: "events", events: [e] });
         },
         onDelta: (d) => dispatch({ kind: "delta", delta: d }),
@@ -55,9 +52,9 @@ export function ChatView({ orgId, conversationId }: { orgId: string; conversatio
           if (code !== undefined) return fail(new ApiClientError(0, code, code));
           if (++failures > MAX_REOPEN) return setError(t("streamLost"));
           // 连接被浏览器放弃（多半是 access token 过期，重连得到 401）：经 apiFetch 刷新会话后
-          // 从已收到的最后一条 seq 重新订阅。
+          // 从事件流送达的最后一条 seq 重新订阅。
           getConversation(orgId, conversationId).then(() => {
-            if (!disposed) open(lastSeq.current);
+            if (!disposed) open(streamSeq);
           }, fail);
         },
       });
@@ -65,7 +62,8 @@ export function ChatView({ orgId, conversationId }: { orgId: string; conversatio
     listAllEvents(orgId, conversationId).then((events) => {
       if (disposed) return;
       dispatch({ kind: "events", events });
-      open(events.at(-1)?.seq ?? 0);
+      streamSeq = events.at(-1)?.seq ?? 0;
+      open(streamSeq);
     }, fail);
     return () => {
       disposed = true;
@@ -74,9 +72,9 @@ export function ChatView({ orgId, conversationId }: { orgId: string; conversatio
   }, [orgId, conversationId, errorMessage, t]);
 
   const onSend = useCallback(
-    async (text: string) => {
+    async (text: string, clientMessageId: string) => {
       try {
-        const { event } = await postMessage(orgId, conversationId, text, newClientMessageId());
+        const { event } = await postMessage(orgId, conversationId, text, clientMessageId);
         dispatch({ kind: "events", events: [event] });
         setError(undefined);
         return true;
