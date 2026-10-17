@@ -198,9 +198,38 @@ export interface RunsTable {
   finished_at: TsNullable;
 }
 
+/** bytea 列：读出为 Buffer，写入可传 Buffer / Uint8Array。 */
+type Bytea = ColumnType<Buffer, Buffer | Uint8Array, Buffer | Uint8Array>;
+
+/** 0007_checkpoints.sql：LangGraph checkpoint（KyselyCheckpointSaver）。 */
+export interface LgCheckpointsTable {
+  thread_id: string;
+  checkpoint_ns: Generated<string>;
+  checkpoint_id: string;
+  parent_checkpoint_id: string | null;
+  checkpoint_type: string;
+  checkpoint: Bytea;
+  metadata_type: string;
+  metadata: Bytea;
+  created_at: Ts;
+}
+
+/** 0007_checkpoints.sql：checkpoint 的 pending writes。 */
+export interface LgCheckpointWritesTable {
+  thread_id: string;
+  checkpoint_ns: Generated<string>;
+  checkpoint_id: string;
+  task_id: string;
+  idx: number;
+  channel: string;
+  value_type: string;
+  value: Bytea;
+  task_path: Generated<string>;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
- * 0005_agents.sql 与 0006_conversations.sql。
+ * 0005_agents.sql、0006_conversations.sql 与 0007_checkpoints.sql。
  */
 export interface KernelDatabase {
   accounts: AccountsTable;
@@ -221,6 +250,8 @@ export interface KernelDatabase {
   conversations: ConversationsTable;
   conversation_events: ConversationEventsTable;
   runs: RunsTable;
+  lg_checkpoints: LgCheckpointsTable;
+  lg_checkpoint_writes: LgCheckpointWritesTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;
