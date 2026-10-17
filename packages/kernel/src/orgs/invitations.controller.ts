@@ -139,13 +139,18 @@ export class InvitationsController {
     let result: { account: Account; orgId: string; role: OrgRole };
     if (principal) {
       result = await this.invitations.accept(token, { accountId: principal.account.id });
+      await this.limiter.succeededScoped("inv", token, meta.ip);
     } else {
       const signup = signupPipe.transform(body);
-      result = await this.invitations.accept(token, { signup });
-    }
-    await this.limiter.succeededScoped("inv", token, meta.ip);
-    if (!principal) {
-      const session = await this.sessions.create(result.account.id, meta);
+      // 新账号、成员关系与会话行在同一事务里写入；Cookie 在提交之后才设置
+      const { extra: session, ...rest } = await this.invitations.accept(
+        token,
+        { signup },
+        (t, account) => this.sessions.create(account.id, meta, t),
+      );
+      if (!session) throw new Error("signup completed without a session");
+      result = rest;
+      await this.limiter.succeededScoped("inv", token, meta.ip);
       setSessionCookies(reply, session, this.config());
     }
     return result;

@@ -87,13 +87,18 @@ export class SetupController {
       }
       await this.limiter.succeededScoped("setup", "token", ip);
     }
-    const result = await this.setup.complete({
-      login: body.login,
-      password: body.password,
-      displayName: body.displayName,
-      orgName: body.orgName,
-    });
-    const session = await this.sessions.create(result.account.id, clientMeta(req));
+    // 会话行与账号 / 组织在同一事务里写入；Cookie 在提交之后才设置
+    const meta = clientMeta(req);
+    const { extra: session, ...result } = await this.setup.complete(
+      {
+        login: body.login,
+        password: body.password,
+        displayName: body.displayName,
+        orgName: body.orgName,
+      },
+      (trx, account) => this.sessions.create(account.id, meta, trx),
+    );
+    if (!session) throw new Error("setup completed without a session");
     setSessionCookies(reply, session, cfg);
     return result;
   }

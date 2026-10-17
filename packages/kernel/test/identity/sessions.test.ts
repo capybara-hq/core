@@ -206,6 +206,25 @@ describe("SessionService refresh", () => {
     );
   });
 
+  it("重放两次轮换之前的 refresh → auth.refresh_invalid；只记上一枚哈希，认不出它属于哪个会话，所以不吊销（现行行为）", async () => {
+    const acc = await account();
+    const svc = replica();
+    const s = await svc.create(acc, {});
+    const r1 = await svc.refresh(s.refreshToken, {});
+    const r2 = await svc.refresh(r1.refreshToken, {});
+    expect(await codeOf(svc.refresh(s.refreshToken, {}))).toBe("auth.refresh_invalid");
+    // 会话未被吊销：最新的 access / refresh 仍可用
+    expect((await svc.verifyAccess(r2.accessToken)).sessionId).toBe(s.sessionId);
+    const row = await db
+      .selectFrom("sessions")
+      .select("revoked_at")
+      .where("id", "=", s.sessionId)
+      .executeTakeFirstOrThrow();
+    expect(row.revoked_at).toBeNull();
+    const r3 = await svc.refresh(r2.refreshToken, {});
+    expect(r3.sessionId).toBe(s.sessionId);
+  });
+
   it("会话已过期 → auth.refresh_invalid；未知 refresh → auth.refresh_invalid", async () => {
     const acc = await account();
     const svc = replica();

@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startTestPostgres } from "@capybara-hq/testing";
@@ -190,6 +191,52 @@ describe("createDb", () => {
       expect(waiting.rows[0]?.n).toBe(0);
     } finally {
       await holder.end();
+    }
+  });
+
+  it("abort while client.connect() is waiting on a black-hole server rejects promptly (does not wait for connectTimeoutMs)", async () => {
+    const dir = await fixture({ "0001_a.sql": "select 1;" });
+    // 接受 TCP 连接但从不回应启动包：pg 的 connect() 会一直等到 connectTimeoutMs
+    const sockets: Socket[] = [];
+    let closed = 0;
+    const server = createServer((s) => {
+      sockets.push(s);
+      s.on("error", () => {});
+      s.on("close", () => closed++);
+      s.resume();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const ac = new AbortController();
+      const t0 = Date.now();
+      const p = migrate(
+        `postgres://u:p@127.0.0.1:${port}/db`,
+        { schema: schemaName(), dir },
+        { signal: ac.signal, connectTimeoutMs: 30_000 },
+      );
+      await new Promise<void>((r) => {
+        const check = () => (sockets.length > 0 ? r() : setTimeout(check, 10));
+        check();
+      });
+      ac.abort();
+      const outcome = await Promise.race([
+        p.then(
+          () => "resolved",
+          (e: Error) => e.message,
+        ),
+        new Promise<string>((r) => setTimeout(() => r("timeout"), 2_000)),
+      ]);
+      expect(outcome).toMatch(/aborted/);
+      expect(Date.now() - t0).toBeLessThan(2_000);
+      // 客户端已主动断开正在建立的连接
+      const until = Date.now() + 1_000;
+      while (closed < sockets.length && Date.now() < until)
+        await new Promise((r) => setTimeout(r, 10));
+      expect(closed).toBe(sockets.length);
+    } finally {
+      for (const s of sockets) s.destroy();
+      await new Promise<void>((r) => server.close(() => r()));
     }
   });
 });

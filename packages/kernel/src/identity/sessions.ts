@@ -53,13 +53,18 @@ export class SessionService {
     this.keys = keyring.deriveKey(ACCESS_KEY_INFO);
   }
 
+  /**
+   * 新建会话。传入 `trx` 时会话行在调用方的事务里写入（如初始化、凭邀请注册：与账号同一事务，
+   * 失败整体回滚）；Cookie 由调用方在提交之后再设置。
+   */
   async create(
     accountId: string,
     meta: { userAgent?: string; ip?: string },
+    trx?: KernelDb,
   ): Promise<IssuedSession> {
     const id = randomUUID();
     const refreshToken = newRefreshToken();
-    const row = await this.db
+    const row = await (trx ?? this.db)
       .insertInto("sessions")
       .values({
         id,

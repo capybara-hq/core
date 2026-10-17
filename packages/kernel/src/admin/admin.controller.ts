@@ -1,3 +1,4 @@
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -11,10 +12,9 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
-import { ACCOUNTS, API_TOKENS, ORGS, SESSIONS, SETTINGS } from "../http/tokens.js";
+import { ACCOUNTS, KERNEL_LOG, ORGS, SESSIONS, SETTINGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
-import type { ApiTokenService } from "../identity/api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
   CurrentPrincipal,
@@ -65,7 +65,7 @@ export class AdminController {
   constructor(
     @Inject(ACCOUNTS) private readonly accounts: AccountsService,
     @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(API_TOKENS) private readonly apiTokens: ApiTokenService,
+    @Inject(KERNEL_LOG) private readonly log: Logger,
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(SETTINGS) private readonly settings: SettingsService,
   ) {}
@@ -121,16 +121,21 @@ export class AdminController {
       ...(body.status !== undefined && { status: body.status }),
       ...(body.isEnterpriseAdmin !== undefined && { isEnterpriseAdmin: body.isEnterpriseAdmin }),
     };
-    const account = await this.accounts.update(
+    // 停用时账号状态、会话与个人令牌的吊销在同一个 PG 事务里完成
+    const { account, revokedSessionIds } = await this.accounts.updateAccount(
       accountId,
       patch,
       actor.account.id,
       patTokenId(actor),
     );
-    if (body.status === "disabled") {
-      // 鉴权每次请求实时读账号状态，停用已立即生效；这里再吊销凭据，重新启用后旧凭据也不复活
-      await this.sessions.revokeAllForAccount(accountId);
-      await this.apiTokens.revokeAllPersonal(accountId);
+    try {
+      await this.sessions.markRevoked(revokedSessionIds);
+    } catch (err) {
+      // Redis 标记只是快速路径：鉴权每次都查 PG revoked_at，这些会话已经无法使用
+      this.log.warn("failed to write session revocation markers after account deactivation", {
+        accountId,
+        err,
+      });
     }
     return { account };
   }

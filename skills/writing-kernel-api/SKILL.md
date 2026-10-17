@@ -83,7 +83,8 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 ### 现行的凭据行为
 
 - 改密码（`PUT /me/password`，`@SessionOnly`）：核对旧密码前占用限流额度（scope `acct`：按账号 id 10 次、按客户端 IP 50 次，与登录额度分开，超限 429 `auth.rate_limited`）；成功后吊销该账号**除当前会话外的所有 Web 会话**，并**吊销其全部个人访问令牌**（R24）；新密码、会话 `revoked_at` 与令牌吊销在同一个 PG 事务内（`AccountsService.changePassword`），Redis 吊销标记随后尽力写入。
-- 停用账号（`PATCH /admin/accounts/:id`）同时吊销其全部会话与个人令牌。
+- 停用账号（`PATCH /admin/accounts/:id`）与吊销其全部会话、个人令牌在同一个 PG 事务内完成（`AccountsService.updateAccount`），Redis 吊销标记在提交后尽力写入（鉴权以 PG `revoked_at` 为准）。
+- 初始化向导与凭邀请注册时，会话行与账号 / 组织 / 成员关系在同一事务内写入（`SessionService.create(accountId, meta, trx)`），Cookie 在提交之后才设置；新增「建账号即登录」的流程照此办理。
 - 列表接口一律返回信封对象（如 `{ tokens: [...] }`、`{ members: [...] }`），不返回裸数组；分页的列表附 `next`（下一页游标，作为 `after` 传回，没有更多时为 null），如 `GET /admin/accounts`。
 
 ## 参数校验：`ZodPipe`

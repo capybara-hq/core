@@ -131,7 +131,15 @@ export function createPluginContext(
     bus: {
       publish: bus.publish,
       async subscribe(topic, handler) {
+        const closedError = () =>
+          new Error(`plugin ${name}: ctx is closed; bus.subscribe is not allowed after close`);
+        if (closing) throw closedError();
         const un = await bus.subscribe(topic, handler);
+        // 订阅期间 ctx 被关闭：close 已清空退订集合，这里自己退订，不留下无人管的订阅
+        if (closing) {
+          await un();
+          throw closedError();
+        }
         unsubs.add(un);
         return async () => {
           unsubs.delete(un);

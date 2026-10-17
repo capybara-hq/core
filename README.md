@@ -117,6 +117,11 @@ export CAPYBARA_PLUGIN_CONFIG='{"openai":{"apiKey":"sk-...","models":[{"id":"gpt
 
 `example-counter` 是写插件的参考实现；写自己的插件见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，配置项清单见 [docs/config.md](docs/config.md)。
 
+## 运维须知
+
+- **初始化向导何时重新开放**：「需要初始化」的判定是「不存在活跃（`status = active`）的企业管理员」，每次实时查 PG。如果有人直接改库把所有企业管理员都停用或撤销了，部署会重新对未认证的 `POST /api/v1/setup` 开放，谁先调用谁就成为新的企业管理员。生产部署请始终设置 `CAPYBARA_AUTH__SETUP_TOKEN`（初始化须带同值的 `setupToken`）；恢复管理员优先用 CLI：`echo "$PW" | pnpm capybara admin create --login <名字> --display-name <显示名>`。
+- **停机时间预算**：收到 SIGTERM / SIGINT 后总共最多 30 秒，按阶段依次等待：中止进行中的内核迁移 2s → HTTP（等监听完成并关闭连接，到点强制断开）10s → 运行（本进程的 agent 运行在下一个步骤边界停下、任务回到队列，超时的由其他副本按 stalled 机制续跑）10s → 插件（含插件队列排空）5s。每个阶段实际等待 `min(阶段预算, 总剩余)`；前面各阶段都用满时，最后只剩约 3 秒给 bus 订阅连接、Redis 与 PG 连接池收尾，这三步共享余下的时间，超时只记 warn、不再等待（PG 连接池的销毁可能在 `stop()` 返回之后才完成）。编排系统的终止宽限期（如 Kubernetes `terminationGracePeriodSeconds`）应不少于 30 秒。
+
 ## 开发
 
 ```bash

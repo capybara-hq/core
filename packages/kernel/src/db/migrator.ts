@@ -23,7 +23,8 @@ const num = (name: string) => Number.parseInt(name.slice(0, 4), 10);
  * `opts.connectTimeoutMs` 为建立连接的超时（不设则 pg 无限等待）。
  * `opts.signal` 中止时结束会话：先从另一条连接 `pg_terminate_backend` 迁移会话的后端（后端阻塞在
  * advisory lock 或长语句上时不会读到客户端的断开，只 end() 会一直占着连接），再 end()；迁移以
- * `aborted` 失败。返回（或抛出）时会话与用于终止的连接都已结束。
+ * `aborted` 失败；中止时若仍在建立连接，直接销毁正在建立的套接字（不等 `connectTimeoutMs`）。
+ * 返回（或抛出）时会话与用于终止的连接都已结束。
  */
 export async function migrate(
   connectionString: string,
@@ -59,17 +60,27 @@ export async function migrate(
   /** 从独立连接终止迁移会话的后端，再结束本地会话。 */
   const terminate = async (): Promise<void> => {
     // pg.Client 在握手时记录后端 pid（BackendKeyData），类型定义未暴露
-    const pid = (client as unknown as { processID: number | null }).processID;
-    if (pid) {
-      const killer = newClient();
-      try {
-        await killer.connect();
-        await killer.query("select pg_terminate_backend($1)", [pid]);
-      } catch {
-        // 尽力而为：终止失败时仍会 end() 本地会话
-      } finally {
-        await killer.end().catch(() => {});
-      }
+    const internals = client as unknown as {
+      processID: number | null;
+      connection?: { stream?: { destroy(): void } };
+    };
+    const pid = internals.processID;
+    if (!pid) {
+      // 还在建立连接（TCP / 启动握手未完成，没有后端可终止）：直接销毁正在建立的套接字，
+      // connect() 随即以连接中断失败，不必等到 connectTimeoutMs。这里不能先调 end()：
+      // pg 在 end() 之后收到断开不会再回调 connect()，connect 会一直挂着。
+      // connect 失败后由 finally 里的 end() 收尾（此时已是空操作）。
+      internals.connection?.stream?.destroy();
+      return;
+    }
+    const killer = newClient();
+    try {
+      await killer.connect();
+      await killer.query("select pg_terminate_backend($1)", [pid]);
+    } catch {
+      // 尽力而为：终止失败时仍会 end() 本地会话
+    } finally {
+      await killer.end().catch(() => {});
     }
     await end();
   };

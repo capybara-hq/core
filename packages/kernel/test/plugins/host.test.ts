@@ -247,6 +247,29 @@ describe("PluginHost 加载规则", () => {
 });
 
 describe("createPluginContext 规则", () => {
+  it("ctx 关闭后 bus.subscribe 以明确错误拒绝，不留下订阅；关闭与订阅并发时订阅方自行退订", async () => {
+    const manifest = definePlugin({
+      name: "late-sub",
+      version: "0.1.0",
+      sdk: "^0.1.0",
+      provides: [],
+      setup() {},
+    });
+    const ctx = createPluginContext(deps, manifest, {});
+    await ctx.close();
+    await expect(ctx.bus.subscribe("t", () => {})).rejects.toThrow(
+      /late-sub: ctx is closed; bus\.subscribe is not allowed after close/,
+    );
+    // 订阅进行中时关闭：订阅完成后立即退订并报错
+    const ctx2 = createPluginContext(deps, manifest, {});
+    const pending = ctx2.bus.subscribe("t2", () => {});
+    const closing = ctx2.close();
+    await expect(pending).rejects.toThrow(/ctx is closed/);
+    await closing;
+    const channels = (await redis.pubsub("CHANNELS", "*late-sub*")) as string[];
+    expect(channels).toEqual([]);
+  });
+
   it("ctx.log 附加 plugin 字段", async () => {
     const ctx = createPluginContext(
       deps,

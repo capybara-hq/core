@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Selectable, sql, type Transaction } from "kysely";
+import { type Selectable, sql, type Transaction, type Updateable } from "kysely";
 import type { AccountsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
@@ -17,6 +17,13 @@ export interface Account {
 }
 
 type Trx = Transaction<KernelDatabase>;
+
+/** 企业管理员可改的账号字段。 */
+export type AccountPatch = {
+  displayName?: string;
+  status?: "active" | "disabled";
+  isEnterpriseAdmin?: boolean;
+};
 
 /** 构造 `Account` 所需的 accounts 列（供跨表查询 select 使用）。 */
 export const ACCOUNT_COLUMNS = [
@@ -283,14 +290,24 @@ export class AccountsService {
 
   async update(
     id: string,
-    patch: {
-      displayName?: string;
-      status?: "active" | "disabled";
-      isEnterpriseAdmin?: boolean;
-    },
+    patch: AccountPatch,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<Account> {
+    return (await this.updateAccount(id, patch, actorAccountId, actorTokenId)).account;
+  }
+
+  /**
+   * 企业管理员改账号。停用（`status: "disabled"`）时在**同一个 PG 事务**里吊销该账号的全部会话
+   * （`sessions.revoked_at`）与个人访问令牌，要么都生效要么都不生效；返回被吊销的会话 id，
+   * 调用方在提交后写 Redis 吊销标记（快速路径，失败只记 warn：鉴权以 PG 为准）。
+   */
+  async updateAccount(
+    id: string,
+    patch: AccountPatch,
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<{ account: Account; revokedSessionIds: string[] }> {
     return this.db.transaction().execute(async (trx) => {
       // 所有企业管理员写操作在同一把锁下串行，并在锁内复核发起人仍是活跃企业管理员：
       // 既避免两个管理员并发互相撤销后一个都不剩，也让刚被撤销的管理员的在途请求失效
@@ -301,15 +318,14 @@ export class AccountsService {
         .where("id", "=", id)
         .executeTakeFirst();
       if (!before) throw new ApiError("account.not_found", "Account not found");
-      const values: Partial<Record<"display_name" | "status" | "is_enterprise_admin", unknown>> =
-        {};
+      const values: Updateable<AccountsTable> = { updated_at: new Date() };
       if (patch.displayName !== undefined) values.display_name = patch.displayName;
       if (patch.status !== undefined) values.status = patch.status;
       if (patch.isEnterpriseAdmin !== undefined)
         values.is_enterprise_admin = patch.isEnterpriseAdmin;
       const row = await trx
         .updateTable("accounts")
-        .set({ ...(values as object), updated_at: new Date() })
+        .set(values)
         .where("id", "=", id)
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -328,7 +344,26 @@ export class AccountsService {
         target: id,
         detail: patch,
       });
-      return toAccount(row);
+      let revokedSessionIds: string[] = [];
+      if (patch.status === "disabled") {
+        // 鉴权每次请求实时读账号状态，停用已立即生效；这里再吊销凭据，重新启用后旧凭据也不复活
+        const sessions = await trx
+          .updateTable("sessions")
+          .set({ revoked_at: sql<Date>`now()` })
+          .where("account_id", "=", id)
+          .where("revoked_at", "is", null)
+          .returning("id")
+          .execute();
+        await trx
+          .updateTable("api_tokens")
+          .set({ revoked_at: sql<Date>`now()` })
+          .where("kind", "=", "personal")
+          .where("account_id", "=", id)
+          .where("revoked_at", "is", null)
+          .execute();
+        revokedSessionIds = sessions.map((r) => r.id);
+      }
+      return { account: toAccount(row), revokedSessionIds };
     });
   }
 

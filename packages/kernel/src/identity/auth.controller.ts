@@ -53,7 +53,16 @@ export class AuthController {
       reply.header("retry-after", String(rl.retryAfterSeconds));
       throw new ApiError("auth.rate_limited", "Too many failed login attempts; try again later");
     }
-    const account = await this.accounts.authenticateLocal(body.login, body.password);
+    let account: Account | null;
+    try {
+      account = await this.accounts.authenticateLocal(body.login, body.password);
+    } catch (e) {
+      // 停用账号的密码是对的（authenticateLocal 先核对密码再看状态）：不算失败尝试，退还占用的额度
+      if (e instanceof ApiError && e.code === "auth.account_disabled") {
+        await this.limiter.succeeded(body.login, meta.ip);
+      }
+      throw e;
+    }
     if (!account) throw new ApiError("auth.invalid_credentials", "Invalid login or password");
     await this.limiter.succeeded(body.login, meta.ip);
     const session = await this.sessions.create(account.id, meta);

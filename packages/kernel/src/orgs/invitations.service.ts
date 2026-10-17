@@ -183,10 +183,11 @@ export class InvitationsService {
    * signup 时先在事务外分类一次（无效令牌不白跑 scrypt），再在 BEGIN 之前算好密码哈希，
    * 事务内只有读写，连接不会在 scrypt 期间处于 idle in transaction。
    */
-  async accept(
+  async accept<T = undefined>(
     token: string,
     who: AcceptAs,
-  ): Promise<{ account: Account; orgId: string; role: OrgRole }> {
+    inTx?: (t: Trx, account: Account) => Promise<T>,
+  ): Promise<{ account: Account; orgId: string; role: OrgRole; extra: T | undefined }> {
     let existing: Account | undefined;
     let passwordHash: string | undefined;
     if ("accountId" in who) {
@@ -222,7 +223,9 @@ export class InvitationsService {
         target: inv.id,
         detail: { role: inv.role, signup: "signup" in who },
       });
-      return { account, orgId: inv.org_id, role: inv.role };
+      // 凭邀请注册时在同一事务里建会话：失败整体回滚，不残留没有会话的新账号
+      const extra = inTx ? await inTx(t, account) : undefined;
+      return { account, orgId: inv.org_id, role: inv.role, extra };
     });
   }
 

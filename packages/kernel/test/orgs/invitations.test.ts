@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { sql } from "kysely";
+import pgLib from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -342,14 +343,40 @@ describe("InvitationsService.accept", () => {
     expect(await roleOf(B.id)).toBe("guest");
   });
 
-  it("并发：两个账号同时接受同一邀请（两个独立连接池）→ 恰好一个成功、一个 invitation.used", async () => {
-    const { token } = await inv.create(org.id, { role: "member" }, A.id);
+  it("并发：两个账号同时接受同一邀请（两个独立连接池）→ 恰好一个成功、一个 invitation.used，且失败方确实打到带条件的 UPDATE", async () => {
+    const { invitation, token } = await inv.create(org.id, { role: "member" }, A.id);
     const before = await count("memberships");
-    const codes = await Promise.all([
-      codeOf(inv.accept(token, { accountId: B.id })),
-      codeOf(inv2.accept(token, { accountId: C.id })),
-    ]);
-    expect(codes.sort()).toEqual([undefined, "invitation.used"].sort());
+    // 另一个连接先持有组织行锁：两个接受请求都在分类通过（邀请仍为 pending）后卡在 tryLockOrg，
+    // 释放后串行拿锁，后到者分类阶段已过，只能由条件 UPDATE（0 行）判为 invitation.used
+    const holder = new pgLib.Client({ connectionString: pg.url });
+    // 观察用的独立连接：事务内的 pg_stat_activity 是事务开始时的快照，不能在 holder 上轮询
+    const watcher = new pgLib.Client({ connectionString: pg.url });
+    await Promise.all([holder.connect(), watcher.connect()]);
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT id FROM capybara.orgs WHERE id = $1 FOR UPDATE", [org.id]);
+      const results = Promise.all([
+        codeOf(inv.accept(token, { accountId: B.id })),
+        codeOf(inv2.accept(token, { accountId: C.id })),
+      ]);
+      const deadline = Date.now() + 4_000;
+      for (;;) {
+        const { rows } = await watcher.query<{ n: string }>(
+          `SELECT count(*) AS n FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock' AND query ILIKE '%"orgs"%for update%'`,
+        );
+        if (Number(rows[0]?.n) >= 2) break;
+        if (Date.now() > deadline) throw new Error("accepts did not both block on the org lock");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      // 两者都已过分类阶段，此时邀请仍未被占用
+      expect(await statusOf(invitation.id)).toBe("pending");
+      await holder.query("COMMIT");
+      const codes = await results;
+      expect(codes.sort()).toEqual([undefined, "invitation.used"].sort());
+    } finally {
+      await Promise.all([holder.end(), watcher.end()]);
+    }
     expect(await count("memberships")).toBe(before + 1);
   });
 

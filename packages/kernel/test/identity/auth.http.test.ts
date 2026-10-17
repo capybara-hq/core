@@ -160,7 +160,12 @@ describe("POST /api/v1/auth/login", () => {
   });
 
   it("停用账号 + 正确密码 → auth.account_disabled", async () => {
-    await accounts.update(alice.id, { status: "disabled" }, admin.id);
+    // 直接改库里的状态（不经停用流程吊销凭据），只验证每请求实时读账号状态
+    await db
+      .updateTable("accounts")
+      .set({ status: "disabled" })
+      .where("id", "=", alice.id)
+      .execute();
     const res = await login(cookieJar());
     expect(res.statusCode).toBe(403);
     expect(errCode(res)).toBe("auth.account_disabled");
@@ -243,7 +248,12 @@ describe("GET /api/v1/me 与 CSRF", () => {
     });
     expect(bad.statusCode).toBe(401);
     expect(errCode(bad)).toBe("auth.required");
-    await accounts.update(alice.id, { status: "disabled" }, admin.id);
+    // 直接改库里的状态（不经停用流程吊销凭据），只验证每请求实时读账号状态
+    await db
+      .updateTable("accounts")
+      .set({ status: "disabled" })
+      .where("id", "=", alice.id)
+      .execute();
     const off = await k.http.inject({
       method: "GET",
       url: "/api/v1/me",
@@ -461,7 +471,12 @@ describe("refresh / logout / 改密码 / 停用", () => {
     const jar = cookieJar();
     await login(jar);
     expect((await asUser(k.http, jar)({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
-    await accounts.update(alice.id, { status: "disabled" }, admin.id);
+    // 直接改库里的状态（不经停用流程吊销凭据），只验证每请求实时读账号状态
+    await db
+      .updateTable("accounts")
+      .set({ status: "disabled" })
+      .where("id", "=", alice.id)
+      .execute();
     const res = await asUser(k.http, jar)({ method: "GET", url: "/api/v1/me" });
     expect(res.statusCode).toBe(403);
     expect(errCode(res)).toBe("auth.account_disabled");
@@ -555,6 +570,25 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     const ok = await loginFrom("198.51.100.20", "admin", PW);
     expect(ok.statusCode).toBe(200);
     expect((ok.json() as { account: Account }).account.id).toBe(admin.id);
+  });
+
+  it("停用账号用正确密码登录 → 403 auth.account_disabled，且退还占用的登录额度（不计为失败尝试）", async () => {
+    await db
+      .updateTable("accounts")
+      .set({ status: "disabled" })
+      .where("id", "=", alice.id)
+      .execute();
+    for (let i = 0; i < 12; i++) {
+      const r = await loginFrom("198.51.100.30", "alice", PW);
+      expect(r.statusCode).toBe(403);
+      expect(errCode(r)).toBe("auth.account_disabled");
+    }
+    expect(await redis.keys("capk:login-fail:li:*")).toEqual([]);
+    expect(await redis.keys("capk:login-fail:l:*")).toEqual([]);
+    expect(await redis.exists("capk:login-fail:ip:198.51.100.30")).toBe(0);
+    // 错误密码仍照常计数
+    expect((await loginFrom("198.51.100.30", "alice", "wrong password!!")).statusCode).toBe(401);
+    expect(await redis.get("capk:login-fail:ip:198.51.100.30")).toBe("1");
   });
 
   it("R25：攻击者从一个 IP 对 admin 连错 150 次，admin 从另一个 IP 用正确密码仍能登录", async () => {

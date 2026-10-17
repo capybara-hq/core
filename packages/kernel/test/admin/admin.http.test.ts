@@ -1,12 +1,13 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { SessionService } from "../../src/identity/sessions.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
@@ -87,6 +88,40 @@ const setupBody = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("初始化向导（配置了 auth.setupToken）", () => {
+  it("会话行与账号 / 组织同一事务：会话写入后失败 → 整体回滚、不设 Cookie，部署仍需初始化，重试成功", async () => {
+    const anon = asUser(k.http, cookieJar());
+    await sql`CREATE OR REPLACE FUNCTION capybara.t18_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected'; END $$`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER t18_fail AFTER INSERT ON capybara.sessions FOR EACH ROW EXECUTE FUNCTION capybara.t18_fail()`.execute(
+      raw,
+    );
+    try {
+      const res = await anon({
+        method: "POST",
+        url: "/api/v1/setup",
+        payload: setupBody({ setupToken: SETUP_TOKEN, orgName: "Acme" }),
+      });
+      expect(res.statusCode).toBe(500);
+      expect(setCookies(res)).toEqual([]);
+    } finally {
+      await sql`DROP TRIGGER IF EXISTS t18_fail ON capybara.sessions`.execute(raw);
+      await sql`DROP FUNCTION IF EXISTS capybara.t18_fail()`.execute(raw);
+    }
+    expect(await db.selectFrom("accounts").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("orgs").select("id").execute()).toEqual([]);
+    expect((await anon({ method: "GET", url: "/api/v1/setup" })).json()).toEqual({
+      needsSetup: true,
+    });
+    const ok = await anon({
+      method: "POST",
+      url: "/api/v1/setup",
+      payload: setupBody({ setupToken: SETUP_TOKEN, orgName: "Acme" }),
+    });
+    expect(ok.statusCode).toBe(201);
+    expect(setCookies(ok).length).toBeGreaterThan(0);
+  });
+
   it("缺 / 错 token → 403 setup.token_invalid 且仍需初始化；正确 token → 201 带会话 Cookie，/me 为企业管理员", async () => {
     const anon = asUser(k.http, cookieJar());
     const status = await anon({ method: "GET", url: "/api/v1/setup" });
@@ -322,8 +357,12 @@ describe("企业管理员端点", () => {
   it("停用账号：鉴权实时读状态，未吊销的 cap_at 与 PAT 均立即 403 auth.account_disabled", async () => {
     const userReq = await session("user");
     const pat = await tokens.createPersonal(user.id, { name: "cli" });
-    // 绕过管理端点直接改状态（不吊销凭据），只验证守卫每请求实时读账号状态
-    await accounts.update(user.id, { status: "disabled" }, admin.id);
+    // 绕过服务直接改库里的状态（不吊销凭据），只验证守卫每请求实时读账号状态
+    await db
+      .updateTable("accounts")
+      .set({ status: "disabled" })
+      .where("id", "=", user.id)
+      .execute();
     const viaCookie = await userReq({ method: "GET", url: "/api/v1/me" });
     expect(viaCookie.statusCode).toBe(403);
     expect(errCode(viaCookie)).toBe("auth.account_disabled");
@@ -373,6 +412,66 @@ describe("企业管理员端点", () => {
     expect(on.statusCode).toBe(200);
     expect((await userReq({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(401);
     expect((await patGet()).statusCode).toBe(401);
+  });
+
+  it("停用与吊销在同一事务：吊销个人令牌失败 → 整体回滚，账号仍 active、会话未吊销", async () => {
+    const adminReq = await session("admin");
+    const userReq = await session("user");
+    await tokens.createPersonal(user.id, { name: "cli" });
+    await sql`CREATE OR REPLACE FUNCTION capybara.t18_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected'; END $$`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER t18_fail BEFORE UPDATE ON capybara.api_tokens FOR EACH ROW EXECUTE FUNCTION capybara.t18_fail()`.execute(
+      raw,
+    );
+    try {
+      const off = await adminReq({
+        method: "PATCH",
+        url: `/api/v1/admin/accounts/${user.id}`,
+        payload: { status: "disabled" },
+      });
+      expect(off.statusCode).toBe(500);
+    } finally {
+      await sql`DROP TRIGGER IF EXISTS t18_fail ON capybara.api_tokens`.execute(raw);
+      await sql`DROP FUNCTION IF EXISTS capybara.t18_fail()`.execute(raw);
+    }
+    const row = await db
+      .selectFrom("accounts")
+      .select("status")
+      .where("id", "=", user.id)
+      .executeTakeFirstOrThrow();
+    expect(row.status).toBe("active");
+    const live = await db
+      .selectFrom("sessions")
+      .select("id")
+      .where("account_id", "=", user.id)
+      .where("revoked_at", "is", null)
+      .execute();
+    expect(live).toHaveLength(1);
+    expect((await userReq({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
+  });
+
+  it("停用后写 Redis 吊销标记失败：请求仍成功，会话已在 PG 吊销、立即失效（标记只是快速路径）", async () => {
+    const adminReq = await session("admin");
+    const userReq = await session("user");
+    const spy = vi
+      .spyOn(SessionService.prototype, "markRevoked")
+      .mockRejectedValueOnce(new Error("redis down"));
+    try {
+      const off = await adminReq({
+        method: "PATCH",
+        url: `/api/v1/admin/accounts/${user.id}`,
+        payload: { status: "disabled" },
+      });
+      expect(off.statusCode).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await redis.keys("capk:revoked-sid:*")).toEqual([]);
+    const viaCookie = await userReq({ method: "GET", url: "/api/v1/me" });
+    expect(viaCookie.statusCode).toBe(401);
+    expect(errCode(viaCookie)).toBe("auth.session_revoked");
   });
 
   it("把唯一企业管理员降级 → 409 account.last_enterprise_admin", async () => {
