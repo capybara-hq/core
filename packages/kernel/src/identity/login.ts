@@ -15,9 +15,12 @@ export function normalizeLogin(raw: string): string {
   return login;
 }
 
-/** 密码长度 12–256（上限防止 scrypt 被超长输入拖慢）。 */
+/** 密码长度上限（防止 scrypt 被超长输入拖慢）。 */
+export const MAX_PASSWORD_LENGTH = 256;
+
+/** 密码长度 12–256。 */
 export function validatePassword(p: string): void {
-  if (p.length < 12 || p.length > 256) {
+  if (p.length < 12 || p.length > MAX_PASSWORD_LENGTH) {
     throw new ApiError("validation_failed", "Password must be 12-256 characters", [
       { path: "password", message: "length must be between 12 and 256" },
     ]);

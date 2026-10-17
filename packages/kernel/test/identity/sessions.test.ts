@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { SignJWT } from "jose";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createKeyring, type Keyring } from "../../src/ctx/secrets.js";
@@ -120,6 +121,27 @@ describe("SessionService access token", () => {
     expect(await codeOf(replica().verifyAccess(`${h}.${p}.AAAA`))).toBe("auth.required");
   });
 
+  it("缺 exp 或 sub 的 token（即使签名正确）→ auth.required", async () => {
+    const acc = await account();
+    const s = await replica().create(acc, {});
+    const keys = ring.deriveKey("access-token/v1");
+    const sign = (jwt: SignJWT) =>
+      jwt.setProtectedHeader({ alg: "HS256", kid: keys.currentId }).sign(keys.current);
+    const noExp = await sign(new SignJWT({ sid: s.sessionId }).setSubject(acc).setIssuedAt());
+    const noSub = await sign(
+      new SignJWT({ sid: s.sessionId }).setIssuedAt().setExpirationTime("10m"),
+    );
+    expect(await codeOf(replica().verifyAccess(noExp))).toBe("auth.required");
+    expect(await codeOf(replica().verifyAccess(noSub))).toBe("auth.required");
+  });
+
+  it("配置较短 TTL 的副本吊销后，标记仍覆盖 schema 上限（3600 + 60）", async () => {
+    const acc = await account();
+    const s = await replica().create(acc, {});
+    await replica(ring, { accessTtlSeconds: 60, refreshTtlDays: 30 }).revoke(s.sessionId);
+    expect(await redis.ttl(`capk:revoked-sid:${s.sessionId}`)).toBeGreaterThan(3600);
+  });
+
   it("revoke 后另一副本 verifyAccess → auth.session_revoked；吊销标记 TTL 合理", async () => {
     const acc = await account();
     const s = await replica().create(acc, {});
@@ -128,8 +150,9 @@ describe("SessionService access token", () => {
       "auth.session_revoked",
     );
     const ttl = await redis2.ttl(`capk:revoked-sid:${s.sessionId}`);
-    expect(ttl).toBeGreaterThan(0);
-    expect(ttl).toBeLessThanOrEqual(OPTS.accessTtlSeconds + 60);
+    // 标记 TTL 固定为 schema 上限 3600 + 60，与本实例配置的 accessTtlSeconds 无关（滚动改配置时不会复活已吊销的 token）
+    expect(ttl).toBeGreaterThan(3600);
+    expect(ttl).toBeLessThanOrEqual(3600 + 60);
     expect(await codeOf(replica().refresh(s.refreshToken, {}))).toBe("auth.refresh_invalid");
   });
 });

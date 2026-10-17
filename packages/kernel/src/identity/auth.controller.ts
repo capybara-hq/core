@@ -1,0 +1,105 @@
+import { Body, Controller, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
+import type { FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
+import type { KernelConfig } from "../config/schema.js";
+import { ApiError } from "../errors.js";
+import { ACCOUNTS, KERNEL_CONFIG, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
+import { ZodPipe } from "../http/zod.pipe.js";
+import type { Account, AccountsService } from "./accounts.js";
+import {
+  ACCESS_COOKIE,
+  clearSessionCookies,
+  REFRESH_COOKIE,
+  setSessionCookies,
+} from "./cookies.js";
+import { Public } from "./principal.js";
+import type { LoginRateLimiter } from "./rate-limit.js";
+import type { SessionService } from "./sessions.js";
+
+const LoginBody = z.object({ login: z.string(), password: z.string() });
+
+/** 会话的客户端信息（记入 sessions 表）。`req.ip` 在 `http.trustProxy` 时取自 X-Forwarded-For。 */
+function clientMeta(req: FastifyRequest): { userAgent?: string; ip: string } {
+  const ua = req.headers["user-agent"];
+  return { ip: req.ip, ...(ua !== undefined && { userAgent: ua }) };
+}
+
+/** 本地登录、刷新与登出（`/api/v1/auth/*`，均为公开路由）。 */
+@Controller("api/v1/auth")
+export class AuthController {
+  constructor(
+    @Inject(ACCOUNTS) private readonly accounts: AccountsService,
+    @Inject(SESSIONS) private readonly sessions: SessionService,
+    @Inject(RATE_LIMITER) private readonly limiter: LoginRateLimiter,
+    @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
+  ) {}
+
+  /** 登录名不存在与密码错误返回同一错误；失败按登录名与 IP 计数限流。 */
+  @Post("login")
+  @Public()
+  @HttpCode(200)
+  async login(
+    @Body(new ZodPipe(LoginBody)) body: z.infer<typeof LoginBody>,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ account: Account }> {
+    const meta = clientMeta(req);
+    const rl = await this.limiter.check(body.login, meta.ip);
+    if (!rl.allowed) {
+      reply.header("retry-after", String(rl.retryAfterSeconds));
+      throw new ApiError("auth.rate_limited", "Too many failed login attempts; try again later");
+    }
+    const account = await this.accounts.authenticateLocal(body.login, body.password);
+    if (!account) {
+      await this.limiter.recordFailure(body.login, meta.ip);
+      throw new ApiError("auth.invalid_credentials", "Invalid login or password");
+    }
+    await this.limiter.clear(body.login);
+    const session = await this.sessions.create(account.id, meta);
+    setSessionCookies(reply, session, this.config());
+    return { account };
+  }
+
+  /**
+   * 用 `cap_rt` 换新的一对 Cookie。失败时清 Cookie；但 `auth.refresh_race` 不清——
+   * 并发的另一个请求刚换到了新 Cookie，这里清掉会覆盖它。
+   */
+  @Post("refresh")
+  @Public()
+  @HttpCode(200)
+  async refresh(
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ account: Account }> {
+    try {
+      const rt = req.cookies[REFRESH_COOKIE];
+      if (!rt) throw new ApiError("auth.refresh_invalid", "Refresh token is missing");
+      const session = await this.sessions.refresh(rt, clientMeta(req));
+      const account = await this.accounts.get(session.accountId);
+      if (!account) throw new ApiError("auth.refresh_invalid", "Refresh token is invalid");
+      setSessionCookies(reply, session, this.config());
+      return { account };
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === "auth.refresh_race")) clearSessionCookies(reply);
+      throw e;
+    }
+  }
+
+  /** 吊销 Cookie 对应的会话（access token 过期也接受，验签失败忽略），总是清 Cookie。 */
+  @Post("logout")
+  @Public()
+  @HttpCode(204)
+  async logout(
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<void> {
+    clearSessionCookies(reply);
+    const at = req.cookies[ACCESS_COOKIE];
+    const rt = req.cookies[REFRESH_COOKIE];
+    if (at) {
+      const sid = await this.sessions.sessionIdFromAccess(at);
+      if (sid !== undefined) await this.sessions.revoke(sid);
+    }
+    if (rt) await this.sessions.revokeByRefresh(rt);
+  }
+}

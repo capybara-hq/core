@@ -23,6 +23,9 @@ function isValidMasterKey(value: string): boolean {
   return Buffer.from(value, "base64").length === 32;
 }
 
+/** access token 寿命上限（秒）；会话吊销标记的 TTL 按它计算，与实例当前配置无关。 */
+export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
+
 const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
@@ -80,8 +83,17 @@ export const KernelConfigSchema = z.object({
         .max(65535)
         .default(8080)
         .meta(meta({ description: "HTTP listen port" })),
+      trustProxy: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Trust X-Forwarded-For for the client IP (login rate limiting, session records); enable only behind a trusted proxy",
+          }),
+        ),
     })
-    .default({ port: 8080 }),
+    .default({ port: 8080, trustProxy: false }),
   roles: z
     .array(z.enum(["api", "worker", "gateway"]))
     .default(["api", "worker", "gateway"])
@@ -92,7 +104,7 @@ export const KernelConfigSchema = z.object({
         .number()
         .int()
         .min(60)
-        .max(3600)
+        .max(ACCESS_TOKEN_TTL_MAX_SECONDS)
         .default(900)
         .meta(meta({ description: "Lifetime of web session access tokens in seconds" })),
       refreshTokenTtlDays: z
@@ -107,8 +119,17 @@ export const KernelConfigSchema = z.object({
               "Absolute lifetime of a web session (refresh token) in days; refreshing does not extend it",
           }),
         ),
+      cookieSecure: z
+        .boolean()
+        .default(true)
+        .meta(
+          meta({
+            description:
+              "Set the Secure attribute on session cookies; set false only for local trials over plain http",
+          }),
+        ),
     })
-    .default({ accessTokenTtlSeconds: 900, refreshTokenTtlDays: 30 }),
+    .default({ accessTokenTtlSeconds: 900, refreshTokenTtlDays: 30, cookieSecure: true }),
   log: z
     .object({
       level: z

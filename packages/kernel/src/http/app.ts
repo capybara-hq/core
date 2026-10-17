@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import type { Logger } from "@capybara-hq/plugin-sdk";
+import fastifyCookie from "@fastify/cookie";
 import { type DynamicModule, Module } from "@nestjs/common";
 import { APP_FILTER, NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
@@ -73,6 +74,8 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
     new FastifyAdapter({ trustProxy: opts.trustProxy ?? false }),
     { logger: new NestLogAdapter(opts.log), abortOnError: false },
   );
+  // Cookie 解析（会话 Cookie）；必须在 init 之前注册
+  await app.register(fastifyCookie);
   const fastify = app.getHttpAdapter().getInstance();
   const routes: { method: string; url: string }[] = [];
   fastify.addHook("onRoute", (r) => {

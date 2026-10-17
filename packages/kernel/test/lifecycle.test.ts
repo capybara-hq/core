@@ -135,6 +135,9 @@ describe("角色与 HTTP", () => {
     const r = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
     expect(r.statusCode).toBe(200);
     expect(r.body).toBe("hello");
+    const me = await k.http.inject({ method: "GET", url: "/api/v1/me" });
+    expect(me.statusCode).toBe(404);
+    expect((me.json() as { error: { code: string } }).error.code).toBe("not_found");
   });
 });
 

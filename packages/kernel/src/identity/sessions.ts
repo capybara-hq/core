@@ -1,13 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Redis } from "ioredis";
-import {
-  compactVerify,
-  type JWSHeaderParameters,
-  errors as joseErrors,
-  jwtVerify,
-  SignJWT,
-} from "jose";
+import { type JWSHeaderParameters, errors as joseErrors, jwtVerify, SignJWT } from "jose";
 import { sql } from "kysely";
+import { ACCESS_TOKEN_TTL_MAX_SECONDS } from "../config/schema.js";
 import type { DerivedKeys, Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -27,6 +22,12 @@ export const REFRESH_RACE_GRACE_MS = 30_000;
 const REFRESH_PREFIX = "cap_rt_";
 const ACCESS_KEY_INFO = "access-token/v1";
 const revokedKey = (sid: string) => `capk:revoked-sid:${sid}`;
+/**
+ * 吊销标记的 TTL：按 schema 允许的 access token 最长寿命 + 60s 计算，而不是本实例配置的寿命——
+ * 滚动修改 `auth.accessTokenTtlSeconds` 时，按旧（更长）寿命签发的 token 不会在标记过期后复活。
+ */
+const REVOKED_MARKER_TTL_SECONDS = ACCESS_TOKEN_TTL_MAX_SECONDS + 60;
+const VERIFY_OPTS = { algorithms: ["HS256"], requiredClaims: ["exp", "sub"] };
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const newRefreshToken = () => REFRESH_PREFIX + randomBytes(32).toString("base64url");
 
@@ -35,7 +36,7 @@ class UnknownKidError extends Error {}
 
 /**
  * Web 会话服务：短期 access token（HS256 JWT，密钥由主密钥环派生）+ PG 中可吊销、一次一换的 refresh token。
- * 吊销会在 Redis 写 `capk:revoked-sid:<sid>`（TTL 覆盖 access token 剩余寿命），使所有副本立即拒绝该会话的 access token。
+ * 吊销会在 Redis 写 `capk:revoked-sid:<sid>`（TTL 覆盖任何配置下 access token 的最长剩余寿命），使所有副本立即拒绝该会话的 access token。
  * 框架无关，由调用方注入依赖。
  */
 export class SessionService {
@@ -137,7 +138,7 @@ export class SessionService {
     let sub: unknown;
     let sid: unknown;
     try {
-      const { payload } = await jwtVerify(accessToken, this.keyFor, { algorithms: ["HS256"] });
+      const { payload } = await jwtVerify(accessToken, this.keyFor, VERIFY_OPTS);
       sub = payload.sub;
       sid = payload.sid;
     } catch (e) {
@@ -155,15 +156,31 @@ export class SessionService {
     return { accountId: sub, sessionId: sid };
   }
 
-  /** 只验签不看过期，供登出使用；签名无效返回 undefined。 */
+  /**
+   * 只验签不看过期，供登出使用：过期的 token 也接受（取 `JWTExpired` 里已验签的 payload）；
+   * 签名无效或缺 sid 返回 undefined。
+   */
   async sessionIdFromAccess(accessToken: string): Promise<string | undefined> {
+    let sid: unknown;
     try {
-      const { payload } = await compactVerify(accessToken, this.keyFor, { algorithms: ["HS256"] });
-      const sid: unknown = JSON.parse(new TextDecoder().decode(payload)).sid;
-      return typeof sid === "string" ? sid : undefined;
-    } catch {
-      return undefined;
+      sid = (await jwtVerify(accessToken, this.keyFor, VERIFY_OPTS)).payload.sid;
+    } catch (e) {
+      // JWTExpired 只会在签名校验通过之后抛出，其 payload 可信
+      if (!(e instanceof joseErrors.JWTExpired)) return undefined;
+      sid = e.payload.sid;
     }
+    return typeof sid === "string" ? sid : undefined;
+  }
+
+  /** 按 refresh token 吊销其当前会话（供登出使用）；无匹配则什么都不做。 */
+  async revokeByRefresh(refreshToken: string): Promise<void> {
+    const row = await this.db
+      .selectFrom("sessions")
+      .select("id")
+      .where("refresh_hash", "=", sha256(refreshToken))
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (row) await this.revoke(row.id);
   }
 
   async revoke(sessionId: string): Promise<void> {
@@ -173,7 +190,7 @@ export class SessionService {
       .where("id", "=", sessionId)
       .where("revoked_at", "is", null)
       .execute();
-    await this.redis.set(revokedKey(sessionId), "1", "EX", this.revokedMarkerTtl());
+    await this.redis.set(revokedKey(sessionId), "1", "EX", REVOKED_MARKER_TTL_SECONDS);
   }
 
   async revokeAllForAccount(accountId: string, exceptSessionId?: string): Promise<number> {
@@ -186,7 +203,7 @@ export class SessionService {
     const rows = await q.returning("id").execute();
     if (rows.length > 0) {
       const pipe = this.redis.pipeline();
-      for (const r of rows) pipe.set(revokedKey(r.id), "1", "EX", this.revokedMarkerTtl());
+      for (const r of rows) pipe.set(revokedKey(r.id), "1", "EX", REVOKED_MARKER_TTL_SECONDS);
       const results = (await pipe.exec()) ?? [];
       const failed = results.find(([err]) => err);
       if (failed) throw failed[0];
@@ -220,10 +237,6 @@ export class SessionService {
     if (!key) throw new UnknownKidError("unknown kid");
     return key;
   };
-
-  private revokedMarkerTtl(): number {
-    return this.opts.accessTtlSeconds + 60;
-  }
 
   private async issue(
     sessionId: string,

@@ -3,7 +3,7 @@ import { type Selectable, sql, type Transaction } from "kysely";
 import type { AccountsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
-import { normalizeLogin, validatePassword } from "./login.js";
+import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
 
 export interface Account {
@@ -91,6 +91,9 @@ export class AccountsService {
   }
 
   async authenticateLocal(login: string, password: string): Promise<Account | null> {
+    // 超长密码不可能正确（validatePassword 上限 256），不跑 scrypt 也不查库，免得被超长输入拖慢；
+    // 只暴露「密码超长」这一事实，正常长度密码下未知登录名与错密码的耗时仍相当
+    if (password.length > MAX_PASSWORD_LENGTH) return null;
     let external: string;
     try {
       external = normalizeLogin(login);
@@ -125,6 +128,17 @@ export class AccountsService {
       throw new ApiError("auth.account_disabled", "Account is disabled");
     }
     return toAccount(row);
+  }
+
+  /** 按账号 id 校验本地密码（改密码时核对旧密码）；没有本地密码、超长或不符 → false。 */
+  async verifyPassword(accountId: string, password: string): Promise<boolean> {
+    if (password.length > MAX_PASSWORD_LENGTH) return false;
+    const row = await this.db
+      .selectFrom("local_passwords")
+      .select("password_hash")
+      .where("account_id", "=", accountId)
+      .executeTakeFirst();
+    return verifyPassword(row?.password_hash ?? DUMMY_PASSWORD_HASH, password);
   }
 
   async get(id: string): Promise<Account | undefined> {

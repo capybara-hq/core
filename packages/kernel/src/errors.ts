@@ -16,6 +16,10 @@ export const ERROR_CODES = {
   "auth.session_revoked": 401,
   "auth.refresh_invalid": 401,
   "auth.refresh_race": 401,
+  "auth.invalid_credentials": 401,
+  "auth.csrf": 403,
+  "auth.rate_limited": 429,
+  "auth.session_required": 403,
   "token.not_found": 404,
 } as const satisfies Record<string, number>;
 

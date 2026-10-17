@@ -85,6 +85,27 @@ describe("AccountsService 本地账号", () => {
     expect(ghost).toBeGreaterThan(real * 0.3);
   });
 
+  it("超过 256 字符的密码直接返回 null，不跑 scrypt", async () => {
+    await svc.createLocal({ login: "alice", password: PW, displayName: "A" });
+    await svc.authenticateLocal("alice", PW); // 预热
+    const t0 = performance.now();
+    await svc.authenticateLocal("alice", PW);
+    const real = performance.now() - t0;
+    const t1 = performance.now();
+    expect(await svc.authenticateLocal("alice", "x".repeat(257))).toBeNull();
+    expect(await svc.authenticateLocal("nobody", "x".repeat(100_000))).toBeNull();
+    const long = performance.now() - t1;
+    expect(long).toBeLessThan(real * 0.5);
+  });
+
+  it("verifyPassword：按账号 id 校验本地密码；错误、超长、账号不存在 → false", async () => {
+    const a = await svc.createLocal({ login: "alice", password: PW, displayName: "A" });
+    expect(await svc.verifyPassword(a.id, PW)).toBe(true);
+    expect(await svc.verifyPassword(a.id, "wrong password!!")).toBe(false);
+    expect(await svc.verifyPassword(a.id, "x".repeat(257))).toBe(false);
+    expect(await svc.verifyPassword("00000000-0000-0000-0000-000000000000", PW)).toBe(false);
+  });
+
   it("setPassword 后旧密码失效；账号不存在 → account.not_found", async () => {
     const a = await svc.createLocal({ login: "alice", password: PW, displayName: "A" });
     await svc.setPassword(a.id, "another long password");

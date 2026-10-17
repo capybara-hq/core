@@ -1,6 +1,7 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, Inject, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
+import { Public } from "../identity/principal.js";
 import { HEALTH_OPTIONS } from "./tokens.js";
 
 /** 一项就绪检查：成功 resolve，失败 reject。 */
@@ -31,8 +32,10 @@ function withTimeout(p: Promise<void>, ms: number): Promise<void> {
  * `GET /healthz`（进程存活，恒 200）与 `GET /readyz`（依赖就绪）。
  * readyz 的 body 只给出每项检查的 `"ok"` / `"error"`，失败原因只进日志（已打码），不进响应——
  * 驱动的错误信息可能带连接串。停机开始后 readyz 立即 503，不再执行检查。
+ * 标为 `@Public()`：挂载内核 API 时全局 AuthGuard 也作用于这里。
  */
 @Controller()
+@Public()
 export class HealthController {
   constructor(@Inject(HEALTH_OPTIONS) private readonly opts: HealthOptions) {}
 

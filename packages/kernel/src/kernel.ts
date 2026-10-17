@@ -7,8 +7,10 @@ import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
 import { createBusSubscriber } from "./ctx/bus.js";
 import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
+import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
+import { ApiModule } from "./http/api.module.js";
 import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
 import { createLogger, type KernelLogger } from "./log.js";
 import { PluginHost } from "./plugins/host.js";
@@ -180,6 +182,15 @@ export async function createKernel(
       },
       serveApi: config.roles.includes("api"),
       servePlugins,
+      apiModule: ApiModule.register({
+        db: kernelDb(db),
+        redis,
+        keyring,
+        config: () => current,
+        log,
+        host,
+      }),
+      trustProxy: config.http.trustProxy,
     });
   } catch (e) {
     await releaseConnections();

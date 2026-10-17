@@ -67,7 +67,7 @@ describe("changedPaths / secretValues", () => {
     masterKey,
   });
   it("列出变化的叶子点路径", () => {
-    const next = { ...base, http: { port: 1 }, log: { level: "debug" } };
+    const next = { ...base, http: { ...base.http, port: 1 }, log: { level: "debug" } };
     expect(changedPaths(KernelConfigSchema, base, next).sort()).toEqual(["http.port", "log.level"]);
   });
   it("收集 secret 字段的值（数组展开）", () => {
