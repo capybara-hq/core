@@ -470,13 +470,20 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
       const resetAt = after.findIndex((d) => d.delta === "step_reset" && d.step === 1);
       expect(resetAt).toBeGreaterThanOrEqual(0);
       expect(after.slice(resetAt + 1).filter((d) => d.delta === "text").length).toBeGreaterThan(0);
-      // 运行结束后该 thread 只剩 1 个 checkpoint
-      const cps = await hdb
-        .selectFrom("lg_checkpoints")
-        .select("checkpoint_id")
-        .where("thread_id", "=", runId)
-        .execute();
-      expect(cps).toHaveLength(1);
+      // 运行到达终态后该 thread 的 checkpoint 全部删除（删除在终态写入之后进行，稍等）
+      const cpsLeft = async () =>
+        (
+          await hdb
+            .selectFrom("lg_checkpoints")
+            .select("checkpoint_id")
+            .where("thread_id", "=", runId)
+            .execute()
+        ).length;
+      const until = Date.now() + 5_000;
+      while ((await cpsLeft()) > 0 && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(await cpsLeft()).toBe(0);
       // 被杀的副本之后的请求直接报错
       await expect(
         (async () => {

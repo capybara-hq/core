@@ -110,6 +110,7 @@ beforeAll(async () => {
           registry: k.runs.registry,
           runs: {
             ensureRun: async () => null,
+            abortIfOrphaned: async () => false,
             requestAbort: async () => {},
           },
         }),

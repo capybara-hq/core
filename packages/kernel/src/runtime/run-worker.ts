@@ -28,6 +28,11 @@ const MAX_STALLED_COUNT = 3;
 const FOLLOW_UP_MIN_WAIT_MS = 250;
 /** 读插话的分页大小。 */
 const READ_PAGE = 500;
+/**
+ * 任务结束后的 ensureRun 失败时的重试间隔（首次之外再试 3 次）。用进程内定时器：这是本进程刚完成的任务的
+ * 后续处理，由 close() 跟踪并限时；全部失败也不会让会话永远卡住——打开 SSE / 读事件时会再次 ensureRun。
+ */
+const ENSURE_RETRY_DELAYS_MS = [200, 1000, 3000] as const;
 
 /** 测试钩子与参数。 */
 export interface RunHooks {
@@ -35,6 +40,8 @@ export interface RunHooks {
   beforeRelease?(runId: string, conversationId: string): Promise<void>;
   /** 会话锁 TTL（毫秒），默认 `runtime.jobLockMs`；测试调短以快速触发续租。 */
   lockTtlMs?: number;
+  /** 任务结束后的每次 ensureRun 尝试之前调用（attempt 从 0 起）；抛错即模拟该次尝试失败。 */
+  beforeEnsureRun?(conversationId: string, attempt: number): Promise<void>;
 }
 
 export interface RunWorkerDeps {
@@ -51,8 +58,8 @@ export interface RunWorkerDeps {
   redisUrl: string;
   /** 按会话取流式增量出口；默认丢弃。 */
   sinkFor?: (conversationId: string) => StreamSink;
-  /** 运行结束后剪枝该运行（thread_id = runId）的 checkpoint，只留最新一个。 */
-  checkpoints?: Pick<KyselyCheckpointSaver, "pruneToLatest">;
+  /** 运行到达终态后删除该运行（thread_id = runId）的 checkpoint thread（只用于续跑，结束后无用）。 */
+  checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">;
   hooks?: RunHooks;
 }
 
@@ -72,7 +79,11 @@ interface ActiveRun {
 /** 处理函数的返回值：`ensure` 表示任务完成后再调用一次 ensureRun。 */
 type ProcessResult = "ensure" | undefined;
 
-/** `broken`：编排自身出错，已尽力标记失败；不再 ensureRun（避免持续性错误造成无限重试）。 */
+/**
+ * `broken`：编排自身出错，已尽力标记失败。之后仍 ensureRun：标记成功时触发消息已被消费，只有更新的消息才起新一轮；
+ * 标记也失败时运行停在 running，而任务此时已完成并移除，ensureRun 的孤儿清理会把它标记为失败——
+ * 每一轮都要有新的用户消息，不会形成无限重试。
+ */
 type ExecResult = "finished" | "interrupted" | "abandoned" | "broken";
 
 const noopSink: StreamSink = () => {};
@@ -100,6 +111,8 @@ export class RunWorker {
   /** 进行中的「任务结束后」处理（完成后的 ensureRun、失败标记）：停机时等它们做完再关闭队列。 */
   private readonly followUps = new Set<Promise<unknown>>();
   private closing = false;
+  /** close() 开始时触发：ensureRun 重试不再等待退避间隔。 */
+  private readonly closingSignal = new AbortController();
 
   constructor(private readonly d: RunWorkerDeps) {}
 
@@ -128,13 +141,7 @@ export class RunWorker {
     this.worker.on("completed", (job, result) => {
       if (result !== "ensure") return;
       const { conversationId, runId } = job.data;
-      this.track(
-        this.d.queue
-          .ensureRun(conversationId)
-          .catch((err) =>
-            this.d.log.error("ensureRun after run failed", { conversationId, runId, err }),
-          ),
-      );
+      this.track(this.ensureAfterRun(conversationId, runId));
     });
     this.worker.on("error", (err) => this.d.log.error("run worker error", { err }));
     this.worker.on("failed", (job, err) => {
@@ -149,6 +156,54 @@ export class RunWorker {
     });
   }
 
+  /**
+   * 任务结束后的 ensureRun，失败按 {@link ENSURE_RETRY_DELAYS_MS} 退避重试；停机开始后不再等待间隔
+   * （剩余的尝试立即进行，close() 以剩余预算为限等待）。全部失败只记日志，不抛出。
+   */
+  private async ensureAfterRun(conversationId: string, runId: string): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.d.hooks?.beforeEnsureRun?.(conversationId, attempt);
+        await this.d.queue.ensureRun(conversationId);
+        return;
+      } catch (err) {
+        const delay = ENSURE_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) {
+          this.d.log.error("ensureRun after run failed; giving up", {
+            conversationId,
+            runId,
+            attempts: attempt + 1,
+            err,
+          });
+          return;
+        }
+        this.d.log.warn("ensureRun after run failed; retrying", {
+          conversationId,
+          runId,
+          attempt,
+          err,
+        });
+        await this.retryDelay(delay);
+      }
+    }
+  }
+
+  /** 等待 ms 毫秒；停机开始时立即返回。 */
+  private retryDelay(ms: number): Promise<void> {
+    const signal = this.closingSignal.signal;
+    if (signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(t);
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      const t = setTimeout(done, ms);
+      t.unref();
+      signal.addEventListener("abort", done, { once: true });
+    });
+  }
+
   /** 登记一个任务结束后的处理，做完自动移除。 */
   private track(p: Promise<unknown>): void {
     this.followUps.add(p);
@@ -158,13 +213,13 @@ export class RunWorker {
   /**
    * BullMQ 判定任务失败（R29）：stalled 次数超过上限（持有者反复崩溃），或处理函数在自己的终态处理之外抛错。
    * 运行若仍未结束：清理死去持有者留下的会话锁，写 `run_failed`（stalled → `run.stalled`，
-   * 其他 → `run.internal`），status 置为 failed，consumed_seq 至少推进到触发消息，然后 ensureRun。
+   * 其他 → `run.internal`），status 置为 failed，consumed_seq 至少推进到触发消息，删除 checkpoint，然后 ensureRun（带重试）。
    */
   private async onJobFailed(data: RunJobData, err: Error): Promise<void> {
     const { runId, conversationId } = data;
     const stalled = /stalled/i.test(err.message);
     await this.d.lock.releaseFor(conversationId, runId);
-    const toSeq = await this.finish(
+    await this.finish(
       conversationId,
       runId,
       "failed",
@@ -182,8 +237,8 @@ export class RunWorker {
       },
       false,
     );
-    if (toSeq !== null) await this.prune(runId);
-    await this.d.queue.ensureRun(conversationId);
+    await this.dropCheckpoints(runId);
+    await this.ensureAfterRun(conversationId, runId);
   }
 
   /**
@@ -197,6 +252,7 @@ export class RunWorker {
     const deadline = Date.now() + Math.max(0, budgetMs);
     this.worker = undefined;
     this.closing = true;
+    this.closingSignal.abort();
     await worker.pause(true).catch((err) => this.d.log.warn("run worker pause failed", { err }));
     for (const a of this.active.values()) a.shutdown.abort();
     const all = Promise.all([...this.active.values()].map((a) => a.done));
@@ -251,7 +307,10 @@ export class RunWorker {
       .executeTakeFirst();
     // 重复投递的任务发现运行已不存在或已结束（例如上一个处理者写完终态后、做后续检查前崩溃）：
     // 仍做一次结束后的 ensureRun，避免那时到达的消息无人处理。
-    if (!run || TERMINAL_STATUSES.has(run.status)) return "ensure";
+    if (!run || TERMINAL_STATUSES.has(run.status)) {
+      await this.dropCheckpoints(runId);
+      return "ensure";
+    }
     const conv = await this.d.db
       .selectFrom("conversations")
       .select(["org_id", "agent_id"])
@@ -288,7 +347,6 @@ export class RunWorker {
     });
     let entered = false;
     let delayMs: number | null = null;
-    let broken = false;
     try {
       const limit = await orgRunLimit(this.d.settings, this.d.config, conv.org_id);
       entered = await this.d.quota.tryEnter(conv.org_id, runId, limit, ORG_QUOTA_LEASE_MS);
@@ -309,7 +367,6 @@ export class RunWorker {
           },
         );
         if (r === "interrupted") delayMs = 0;
-        broken = r === "broken";
       }
     } finally {
       state.stopTimers();
@@ -331,8 +388,8 @@ export class RunWorker {
     }
     if (state.abandoned) return;
     if (delayMs !== null) return requeue(job, token, delayMs);
-    await this.prune(runId);
-    if (broken) return;
+    // 运行已到达终态（broken 时已尽力标记失败）：checkpoint 只用于续跑，删除。
+    await this.dropCheckpoints(runId);
     return "ensure";
   }
 
@@ -516,11 +573,11 @@ export class RunWorker {
     }
   }
 
-  /** 剪枝该运行的 checkpoint（失败只记日志）。 */
-  private async prune(runId: string): Promise<void> {
+  /** 删除已结束运行的 checkpoint thread（失败只记日志）。 */
+  private async dropCheckpoints(runId: string): Promise<void> {
     await this.d.checkpoints
-      ?.pruneToLatest(runId)
-      .catch((err) => this.d.log.warn("checkpoint prune failed", { runId, err }));
+      ?.deleteThread(runId)
+      .catch((err) => this.d.log.warn("checkpoint delete failed", { runId, err }));
   }
 
   /**

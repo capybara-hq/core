@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import { type AgentsService, visibleTo } from "../agents/agents.service.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -25,6 +26,11 @@ const notFound = () => new ApiError("conversation.not_found", "Conversation not 
 export interface RunControl {
   /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
   ensureRun(conversationId: string): Promise<string | null>;
+  /**
+   * 运行是孤儿（会话锁空闲、任务已不存在，没有 worker 会收到中止广播）时直接把它写成 aborted，返回 true；
+   * 否则返回 false。
+   */
+  abortIfOrphaned(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
   /** 请求中止运行（广播到所有副本）。 */
   requestAbort(runId: string, byAccountId: string): Promise<void>;
 }
@@ -78,7 +84,21 @@ export class ConversationsService {
     private readonly eventLog: EventLog,
     private readonly agents: AgentsService,
     private readonly runs?: RunControl,
+    private readonly log?: Pick<Logger, "warn">,
   ) {}
+
+  /**
+   * 不阻塞地调用一次 `ensureRun`（打开 SSE、读事件时）：它幂等，并顺带清理孤儿运行，
+   * 会话不会因为某次运行结束后的投递失败而永远停在「运行中」。失败只记日志。
+   */
+  kickRun(conversationId: string): void {
+    if (!this.runs) return;
+    this.runs
+      .ensureRun(conversationId)
+      .catch((err) =>
+        this.log?.warn("ensureRun on conversation open failed", { conversationId, err }),
+      );
+  }
 
   /** 新建会话；agent 对该账号不可用 → `agent.not_found`。 */
   async create(orgId: string, accountId: string, agentId: string): Promise<ConversationView> {
@@ -193,7 +213,7 @@ export class ConversationsService {
     return (await q.execute()).map(toView);
   }
 
-  /** 读事件（先做 `get` 的可见性判定）。 */
+  /** 读事件（先做 `get` 的可见性判定）；顺带不阻塞地 {@link kickRun}。 */
   async listEvents(
     orgId: string,
     conversationId: string,
@@ -202,6 +222,7 @@ export class ConversationsService {
     limit: number,
   ): Promise<ConversationEvent[]> {
     await this.get(orgId, conversationId, viewerAccountId);
+    this.kickRun(conversationId);
     return this.eventLog.readAfter(conversationId, afterSeq, limit);
   }
 
@@ -236,7 +257,7 @@ export class ConversationsService {
 
   /**
    * 中止会话当前的运行（queued / running）：返回 runId；没有 → `run.not_active`。
-   * 中止经 Redis 广播，运行所在的任意副本都会收到。
+   * 中止经 Redis 广播，运行所在的任意副本都会收到；运行已是孤儿（没有任何 worker 在执行）时直接写终态。
    */
   async abort(orgId: string, conversationId: string, accountId: string): Promise<string> {
     await this.get(orgId, conversationId, accountId);
@@ -248,6 +269,11 @@ export class ConversationsService {
       .orderBy("created_at", "desc")
       .executeTakeFirst();
     if (!run || !this.runs) throw new ApiError("run.not_active", "No active run to abort");
+    // 孤儿运行没有 worker 在听中止广播：直接写成 aborted，之后再看有没有等待中的消息要起新一轮。
+    if (await this.runs.abortIfOrphaned(conversationId, run.id, accountId)) {
+      this.kickRun(conversationId);
+      return run.id;
+    }
     await this.runs.requestAbort(run.id, accountId);
     return run.id;
   }

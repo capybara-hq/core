@@ -21,6 +21,7 @@ import {
 } from "../../src/runtime/model-call.js";
 import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
 import type { RunHooks } from "../../src/runtime/run-worker.js";
+import { asUser, cookieJar } from "../helpers/http.js";
 import {
   consumedSeq,
   createAgent,
@@ -264,6 +265,41 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(evs.filter((e) => e.type === "run_finished")).toHaveLength(2);
     expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "completed"]);
     expect(await consumedSeq(db, convId)).toBe(late);
+  });
+
+  it("任务完成后的 ensureRun 失败一次 → 退避重试，运行结束瞬间到达的消息仍被回复", async () => {
+    const paused = gate();
+    const resume = gate();
+    let first = true;
+    let failures = 0;
+    await worker(
+      {},
+      {
+        hooks: {
+          async beforeRelease() {
+            if (!first) return;
+            first = false;
+            paused.open();
+            await resume.promise;
+          },
+          async beforeEnsureRun() {
+            if (failures > 0) return;
+            failures++;
+            throw new Error("injected ensureRun failure");
+          },
+        },
+      },
+    );
+    const { orgId, convId } = await setup();
+    await postMessage(req, orgId, convId, "echo:first");
+    await paused.promise;
+    const late = await postMessage(req, orgId, convId, "echo:late");
+    resume.open();
+    const terms = await waitForTerminal(db, convId, 2);
+    expect(failures).toBe(1);
+    expect(terms[1]?.payload).toEqual({ reason: "completed", consumedUpToSeq: late });
+    const replies = (await eventsOf(db, convId)).filter((e) => e.type === "assistant_message");
+    expect(replies.map(textOf)).toEqual(["first", "late"]);
   });
 
   it("message at run boundary is processed exactly once：步骤之间到达 → 被本轮吸收，不再另起一轮", async () => {
@@ -727,13 +763,61 @@ async function removeJob(convId: string, seq: number): Promise<void> {
 
 const checkpointsOf = (runId: string) =>
   db.selectFrom("lg_checkpoints").select("checkpoint_id").where("thread_id", "=", runId).execute();
+const writesOf = (runId: string) =>
+  db
+    .selectFrom("lg_checkpoint_writes")
+    .select("checkpoint_id")
+    .where("thread_id", "=", runId)
+    .execute();
+
+/** 给某个运行的 thread 塞一份占位 checkpoint 与 write（模拟运行中途留下的续跑状态）。 */
+async function seedCheckpoint(runId: string): Promise<void> {
+  const bytes = Buffer.from("{}");
+  await db
+    .insertInto("lg_checkpoints")
+    .values({
+      thread_id: runId,
+      checkpoint_ns: "",
+      checkpoint_id: "cp-1",
+      checkpoint_type: "json",
+      checkpoint: bytes,
+      metadata_type: "json",
+      metadata: bytes,
+    })
+    .execute();
+  await db
+    .insertInto("lg_checkpoint_writes")
+    .values({
+      thread_id: runId,
+      checkpoint_ns: "",
+      checkpoint_id: "cp-1",
+      task_id: "t",
+      idx: 0,
+      channel: "c",
+      value_type: "json",
+      value: bytes,
+    })
+    .execute();
+}
+
+/** 把会话唯一的运行做成 running 的孤儿（任务已不存在、会话锁空闲）。 */
+async function orphanRunning(convId: string, triggerSeq: number): Promise<string> {
+  const [run] = await runsOf(db, convId);
+  await removeJob(convId, triggerSeq);
+  await db
+    .updateTable("runs")
+    .set({ status: "running", started_at: sql`now()` })
+    .where("id", "=", run?.id as string)
+    .execute();
+  return run?.id as string;
+}
 
 describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
   beforeAll(() => {
     defaultLoop = langgraph;
   });
 
-  it("不传 loop 的 worker 内核默认用 LangGraphLoop；运行结束后该 thread 的 checkpoint 只剩 1 行", async () => {
+  it("不传 loop 的 worker 内核默认用 LangGraphLoop；运行结束后该 thread 的 checkpoint 全部删除", async () => {
     const k = await startKernel(runConfig(urls(), { roles: ["worker"], runtime: { maxSteps: 3 } }));
     extra.push(k);
     const { orgId, convId } = await setup(LOOPER);
@@ -746,14 +830,8 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     expect(
       evs.some((e) => e.type === "reminder" && e.payload.text === "Tools are not available yet."),
     ).toBe(true);
-    await waitFor(async () => (await checkpointsOf(runId)).length === 1, 3_000, "pruned");
-    const [cp] = await checkpointsOf(runId);
-    const writes = await db
-      .selectFrom("lg_checkpoint_writes")
-      .select("checkpoint_id")
-      .where("thread_id", "=", runId)
-      .execute();
-    expect(writes.every((w) => w.checkpoint_id === cp?.checkpoint_id)).toBe(true);
+    await waitFor(async () => (await checkpointsOf(runId)).length === 0, 3_000, "deleted");
+    expect(await writesOf(runId)).toEqual([]);
   });
 
   it("stalled 次数超限（BullMQ 判定任务失败）→ run_failed run.stalled，status failed，consumed_seq 推进，会话不卡住", async () => {
@@ -825,5 +903,148 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     await waitForTerminal(db, convId, 2);
     const evs = await eventsOf(db, convId);
     expect(evs.filter((e) => e.runId === run?.id && e.type.startsWith("run_"))).toHaveLength(1);
+  });
+  it.each(["stream", "events"] as const)(
+    "running 孤儿时打开会话（%s）→ 触发 ensureRun：孤儿标记 run.orphaned，等待中的消息起新一轮并被回复",
+    async (via) => {
+      {
+        const { orgId, convId } = await setup();
+        const first = await postMessage(req, orgId, convId, "echo:a");
+        // 运行进行中到达的消息：ensureRun 看到已有运行，不投递
+        const second = await postMessage(req, orgId, convId, "echo:b");
+        expect(await runsOf(db, convId)).toHaveLength(1);
+        const orphan = await orphanRunning(convId, first);
+        await seedCheckpoint(orphan);
+        if (via === "stream") {
+          const jar = cookieJar();
+          const r = asUser(api.http, jar);
+          const login = await r({
+            method: "POST",
+            url: "/api/v1/auth/login",
+            payload: { login: "owner", password: PW },
+          });
+          expect(login.statusCode).toBe(200);
+          const ac = new AbortController();
+          const res = await fetch(
+            `http://127.0.0.1:${api.port}/api/v1/orgs/${orgId}/conversations/${convId}/stream`,
+            { headers: { cookie: jar.header() as string }, signal: ac.signal },
+          );
+          expect(res.status).toBe(200);
+          ac.abort();
+        } else {
+          const res = await req({
+            method: "GET",
+            url: `/api/v1/orgs/${orgId}/conversations/${convId}/events`,
+          });
+          expect(res.statusCode).toBe(200);
+        }
+        await waitFor(
+          async () => (await runsOf(db, convId)).map((r) => r.status).join() === "failed,queued",
+          3_000,
+          `orphan swept via ${via}`,
+        );
+        const failed = (await eventsOf(db, convId)).find((e) => e.type === "run_failed");
+        expect(failed?.runId).toBe(orphan);
+        expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
+        expect(await checkpointsOf(orphan)).toEqual([]);
+        expect(await writesOf(orphan)).toEqual([]);
+        await worker();
+        const terms = await waitForTerminal(db, convId, 2);
+        expect(terms[1]?.payload).toMatchObject({ reason: "completed", consumedUpToSeq: second });
+        const replies = (await eventsOf(db, convId)).filter((e) => e.type === "assistant_message");
+        expect(replies.map(textOf)).toEqual(["b"]);
+      }
+    },
+  );
+
+  it("abort 孤儿运行（running、任务不存在、会话锁空闲）→ 直接写 run_aborted，202，运行 aborted，consumed_seq 推进到触发消息", async () => {
+    const { orgId, convId } = await setup();
+    const first = await postMessage(req, orgId, convId, "echo:a");
+    const orphan = await orphanRunning(convId, first);
+    await seedCheckpoint(orphan);
+    const res = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    });
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ runId: orphan });
+    const evs = await eventsOf(db, convId);
+    const aborted = evs.filter((e) => e.type === "run_aborted");
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]?.runId).toBe(orphan);
+    expect(aborted[0]?.payload).toEqual({ byAccountId: ownerId, reason: "user" });
+    expect(await runsOf(db, convId)).toEqual([{ id: orphan, status: "aborted" }]);
+    expect(await consumedSeq(db, convId)).toBe(first);
+    expect(await checkpointsOf(orphan)).toEqual([]);
+    // 再 abort → 没有活跃运行
+    const again = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    });
+    expect(again.statusCode).toBe(409);
+  });
+
+  it("stalled 判失败（onJobFailed）后该运行的 checkpoint 全部删除", async () => {
+    const { orgId, convId } = await setup();
+    const seq = await postMessage(req, orgId, convId, "echo:x");
+    const [run] = await runsOf(db, convId);
+    await seedCheckpoint(run?.id as string);
+    await redis.hset(
+      `bull:${RUN_QUEUE_NAME}:${runJobId(convId, seq)}`,
+      "defa",
+      "job stalled more than allowable limit",
+    );
+    await worker();
+    const [t] = await waitForTerminal(db, convId);
+    expect(t?.payload).toMatchObject({ error: { code: "run.stalled" } });
+    await waitFor(
+      async () => (await checkpointsOf(run?.id as string)).length === 0,
+      3_000,
+      "checkpoints deleted",
+    );
+    expect(await writesOf(run?.id as string)).toEqual([]);
+  });
+
+  it("agent 已软删除的会话：ensureRun 不起运行", async () => {
+    const { agentId, convId } = await setup();
+    await api.runs.eventLog.append(convId, [
+      {
+        type: "user_message",
+        payload: { content: [{ type: "text", text: "echo:x" }], authorAccountId: ownerId },
+      },
+    ]);
+    await db
+      .updateTable("agents")
+      .set({ deleted_at: sql`now()` })
+      .where("id", "=", agentId)
+      .execute();
+    expect(await api.runs.queue.ensureRun(convId)).toBeNull();
+    expect(await runsOf(db, convId)).toEqual([]);
+  });
+
+  it("同一会话至多一个未结束的运行（部分唯一索引）", async () => {
+    const { orgId, convId } = await setup();
+    await postMessage(req, orgId, convId, "echo:x");
+    const insert = () =>
+      db
+        .insertInto("runs")
+        .values({
+          id: `dup-${Math.random()}`,
+          conversation_id: convId,
+          status: "running",
+          agent_version: 1,
+          trigger_account_id: ownerId,
+          trigger_seq: 1,
+        })
+        .execute();
+    await expect(insert()).rejects.toMatchObject({ code: "23505" });
+    // 已结束的运行不受限制
+    await db
+      .updateTable("runs")
+      .set({ status: "failed" })
+      .where("conversation_id", "=", convId)
+      .execute();
+    await insert();
+    await expect(insert()).rejects.toMatchObject({ code: "23505" });
   });
 });

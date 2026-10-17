@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import type { EventLog } from "../conversations/event-log.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock } from "./conversation-lock.js";
 import { finishRunIn } from "./run-finish.js";
 
@@ -30,6 +31,16 @@ export const ACTIVE_RUN_STATUSES = ["queued", "running"] as const;
  */
 const ORPHAN_QUEUED_GRACE_SECONDS = 30;
 
+type KernelTrx = Transaction<KernelDatabase>;
+
+/** 孤儿判定需要的运行字段。 */
+interface ActiveRunRow {
+  id: string;
+  status: string;
+  trigger_seq: string;
+  past_grace: boolean;
+}
+
 /** BullMQ 连接要求 maxRetriesPerRequest 为 null（Worker 的阻塞连接）；Queue 复用同样的配置。 */
 export function bullConnection(redisUrl: string, log: Pick<Logger, "error">): Redis {
   const c = new Redis(redisUrl, { maxRetriesPerRequest: null });
@@ -53,6 +64,8 @@ export class RunQueue {
     private readonly lock: Pick<ConversationLock, "holder">,
     private readonly redisUrl: string,
     private readonly log: Pick<Logger, "error" | "warn">,
+    /** 运行以孤儿结束（标记失败 / 直接中止）后删除它的 checkpoint thread（thread_id = runId）。 */
+    private readonly checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">,
   ) {}
 
   private getQueue(): Queue<RunJobData> {
@@ -72,11 +85,15 @@ export class RunQueue {
    * 孤儿清理（R29，按需进行，没有定时器）：已有的 queued / running 运行若 BullMQ 任务已不存在、
    * 会话锁也无人持有（queued 的还要超过宽限期），说明没有任何 worker 会再执行它——写
    * `run_failed { code: "run.orphaned" }` 把它标记为失败（consumed_seq 推进到它的触发消息），
-   * 再按常规判断是否起新一轮。会话因此不会永远卡在「有运行」。
+   * 再按常规判断是否起新一轮，并删除它的 checkpoint thread。会话因此不会永远卡在「有运行」。
+   * 除了写入消息后，打开 SSE、读事件、运行结束后也会调用它（幂等），孤儿因此在有人查看时就被清理。
+   *
+   * agent 已软删除的会话不起新运行（孤儿清理照常进行）。
    */
   async ensureRun(conversationId: string): Promise<string | null> {
     if ((await this.lock.holder(conversationId)) !== null) return null;
     let orphanSeq: number | null = null;
+    let orphanRunId: string | null = null;
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
         .selectFrom("conversations")
@@ -94,26 +111,11 @@ export class RunQueue {
         .limit(1)
         .executeTakeFirst();
       if (!last || Number(last.seq) <= Number(conv.consumed_seq)) return null;
-      const active = await t
-        .selectFrom("runs")
-        .select([
-          "id",
-          "status",
-          "trigger_seq",
-          sql<boolean>`created_at < now() - make_interval(secs => ${ORPHAN_QUEUED_GRACE_SECONDS})`.as(
-            "past_grace",
-          ),
-        ])
-        .where("conversation_id", "=", conversationId)
-        .where("status", "in", ACTIVE_RUN_STATUSES)
-        .executeTakeFirst();
+      const active = await this.activeRun(t, conversationId);
       if (active) {
-        if (active.status === "queued" && !active.past_grace) return null;
-        const job = await this.getQueue().getJob(
-          runJobId(conversationId, Number(active.trigger_seq)),
-        );
-        if (job) return null;
+        if (!(await this.isOrphan(conversationId, active))) return null;
         this.log.warn("marking orphaned run as failed", { conversationId, runId: active.id });
+        orphanRunId = active.id;
         orphanSeq = await finishRunIn(t, this.eventLog, {
           conversationId,
           runId: active.id,
@@ -145,9 +147,11 @@ export class RunQueue {
       }
       const agent = await t
         .selectFrom("agents")
-        .select("current_version")
+        .select(["current_version", "deleted_at"])
         .where("id", "=", conv.agent_id)
         .executeTakeFirstOrThrow();
+      // agent 已软删除：会话对任何人都不可见，不再为它起运行。
+      if (agent.deleted_at !== null) return null;
       const runId = randomUUID();
       await t
         .insertInto("runs")
@@ -163,6 +167,7 @@ export class RunQueue {
       return { runId, jobId };
     });
     if (orphanSeq !== null) await this.eventLog.notify(conversationId, orphanSeq);
+    if (orphanRunId !== null) await this.dropCheckpoints(orphanRunId);
     if (!created) return null;
     const { runId, jobId } = created;
     try {
@@ -190,6 +195,77 @@ export class RunQueue {
       throw err;
     }
     return runId;
+  }
+
+  /**
+   * 中止一个孤儿运行（`POST .../abort` 用）：运行仍是 queued / running、会话锁无人持有、BullMQ 任务已不存在
+   * （queued 的还要超过宽限期，判定同 {@link ensureRun} 的孤儿清理）时，没有任何 worker 会收到中止广播——
+   * 直接写 `run_aborted`、status 置为 aborted、consumed_seq 至少推进到触发消息，返回 true。
+   * 不是孤儿（有人在执行或即将执行）或运行已结束 → 返回 false，由调用方走广播中止。
+   */
+  async abortIfOrphaned(
+    conversationId: string,
+    runId: string,
+    byAccountId: string | null,
+  ): Promise<boolean> {
+    if ((await this.lock.holder(conversationId)) !== null) return false;
+    const toSeq = await this.db.transaction().execute(async (t) => {
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", conversationId)
+        .forUpdate()
+        .executeTakeFirst();
+      const active = await this.activeRun(t, conversationId);
+      if (!active || active.id !== runId) return null;
+      if (!(await this.isOrphan(conversationId, active))) return null;
+      this.log.warn("aborting orphaned run directly", { conversationId, runId });
+      return finishRunIn(t, this.eventLog, {
+        conversationId,
+        runId,
+        status: "aborted",
+        consumed: null,
+        event: { type: "run_aborted", payload: { byAccountId, reason: "user" } },
+      });
+    });
+    if (toSeq === null) return false;
+    await this.eventLog.notify(conversationId, toSeq);
+    await this.dropCheckpoints(runId);
+    return true;
+  }
+
+  /** 会话当前未结束的运行（调用方已持有会话行锁）。 */
+  private activeRun(t: KernelTrx, conversationId: string): Promise<ActiveRunRow | undefined> {
+    return t
+      .selectFrom("runs")
+      .select([
+        "id",
+        "status",
+        "trigger_seq",
+        sql<boolean>`created_at < now() - make_interval(secs => ${ORPHAN_QUEUED_GRACE_SECONDS})`.as(
+          "past_grace",
+        ),
+      ])
+      .where("conversation_id", "=", conversationId)
+      .where("status", "in", ACTIVE_RUN_STATUSES)
+      .executeTakeFirst();
+  }
+
+  /**
+   * 未结束的运行是否已是孤儿（调用方已确认会话锁无人持有）：queued 且仍在宽限期内 → 否
+   * （任务可能还没投递）；BullMQ 任务仍存在 → 否；否则是。
+   */
+  private async isOrphan(conversationId: string, active: ActiveRunRow): Promise<boolean> {
+    if (active.status === "queued" && !active.past_grace) return false;
+    const job = await this.getQueue().getJob(runJobId(conversationId, Number(active.trigger_seq)));
+    return !job;
+  }
+
+  /** 删除已结束运行的 checkpoint thread（失败只记日志）。 */
+  private async dropCheckpoints(runId: string): Promise<void> {
+    await this.checkpoints
+      ?.deleteThread(runId)
+      .catch((err) => this.log.warn("checkpoint delete failed", { runId, err }));
   }
 
   private async deleteQueued(runId: string): Promise<void> {

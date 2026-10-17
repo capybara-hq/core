@@ -11,8 +11,9 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { ConversationsService } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
-import { API_TOKENS, CONVERSATION_STREAMS, SESSIONS } from "../http/tokens.js";
+import { API_TOKENS, CONVERSATION_STREAMS, CONVERSATIONS, SESSIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
@@ -39,6 +40,7 @@ function parseLastEventId(v: string): number {
 
 /**
  * 会话事件流（SSE）：`GET /api/v1/orgs/:orgId/conversations/:id/stream?after=<seq>`，`agents.use`，只有会话所有者可用。
+ * - 打开时不阻塞地调用一次 ensureRun（`ConversationsService.kickRun`），停在「运行中」的孤儿运行由此被清理；
  * - 先订阅会话频道、再回放 `after`（或优先的 `Last-Event-ID`）之后的事件：`id: <seq>` / `event: event`；
  *   之后收到 `events` 通知就补读新事件（按 seq 去重），收到增量就发 `event: delta`；
  * - 每 `runtime.sseHeartbeatMs` 发 `: ping` 注释；每 `runtime.sseRecheckMs` 复核凭据（会话未吊销 / 令牌仍有效，
@@ -52,6 +54,7 @@ export class ConversationStreamController implements OnModuleDestroy {
     @Inject(CONVERSATION_STREAMS) private readonly streams: ConversationStreams,
     @Inject(SESSIONS) private readonly sessions: SessionService,
     @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
+    @Inject(CONVERSATIONS) private readonly conversations: ConversationsService,
   ) {}
 
   @Get(":id/stream")
@@ -95,6 +98,8 @@ export class ConversationStreamController implements OnModuleDestroy {
       },
     );
     reply.hijack();
+    // 可见性已通过：不阻塞地 ensureRun（清理孤儿运行、投递等待中的消息），见 ConversationsService.kickRun。
+    this.conversations.kickRun(id);
     res.on("close", () => handle.close());
     // 订阅期间客户端已断开：close 事件可能已经错过
     if (res.destroyed || !res.socket || res.socket.destroyed) {

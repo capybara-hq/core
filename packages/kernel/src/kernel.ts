@@ -220,8 +220,8 @@ export async function createKernel(
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
-  const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log);
   const checkpoints = new KyselyCheckpointSaver(kdb);
+  const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
   const loopFactory =
     opts.loop ?? ((d: ModelStepDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
@@ -283,6 +283,7 @@ export async function createKernel(
         registry,
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
+          abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),
           requestAbort: (runId, by) => abort.request(runId, by),
         },
       }),

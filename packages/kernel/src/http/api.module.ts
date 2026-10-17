@@ -168,7 +168,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     {
       provide: CONVERSATIONS,
       useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService) =>
-        new ConversationsService(db, eventLog, agents, deps.runs),
+        new ConversationsService(db, eventLog, agents, deps.runs, deps.log),
       inject: [KERNEL_DB, EVENT_LOG, AGENTS],
     },
     {
