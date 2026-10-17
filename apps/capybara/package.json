@@ -1,0 +1,21 @@
+{
+  "name": "@capybara-hq/capybara",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "capybara": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "tsx --conditions=@capybara-hq/source src/cli.ts start",
+    "migrate": "tsx --conditions=@capybara-hq/source src/cli.ts migrate"
+  },
+  "dependencies": {
+    "@capybara-hq/kernel": "workspace:*",
+    "tsx": "^4.23.15"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@capybara-hq/checks",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "oxc-parser": "^0.154.0"
+  },
+  "devDependencies": {
+    "@capybara-hq/kernel": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

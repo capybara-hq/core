@@ -1,0 +1,16 @@
+{
+  "name": "@capybara-hq/fixture-imports-kernel",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@capybara-hq/kernel": "workspace:*",
+    "@capybara-hq/plugin-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "@capybara-hq/db": "*"
+  },
+  "devDependencies": {
+    "@capybara-hq/testing": "workspace:*",
+    "@capybara-hq/checks": "workspace:*"
+  }
+}

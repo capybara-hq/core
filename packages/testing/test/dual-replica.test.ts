@@ -1,0 +1,230 @@
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { createDualReplicaHarness, type Harness, runnerArgv } from "../src/dual-replica.js";
+import { startTestPostgres, startTestRedis, type TestContainer } from "../src/index.js";
+
+const fx = (n: string) => fileURLToPath(new URL(`./fixtures/${n}/index.ts`, import.meta.url));
+
+let pgc: TestContainer;
+const harnesses: Harness[] = [];
+
+beforeAll(async () => {
+  pgc = await startTestPostgres();
+});
+
+// 每个 harness 用完立刻停：默认自带 Redis 容器，不跨 harness 共用
+afterEach(async () => {
+  await Promise.all(harnesses.splice(0).map((h) => h.stop()));
+});
+
+afterAll(async () => {
+  await pgc?.stop();
+});
+
+async function harness(plugin: string): Promise<Harness> {
+  const h = await createDualReplicaHarness({ plugins: [fx(plugin)], pgUrl: pgc.url });
+  harnesses.push(h);
+  return h;
+}
+
+/** 同一场景：调 inc 4 次后读 count。 */
+async function scenario(h: Harness, name: string): Promise<number> {
+  for (let i = 0; i < 4; i++) {
+    const r = await h.request(`/plugins/${name}/inc`, { method: "POST" });
+    expect(r.status).toBe(200);
+  }
+  const r = await h.request(`/plugins/${name}/count`);
+  return ((await r.json()) as { count: number }).count;
+}
+
+describe("双副本测试工具", () => {
+  it("两个副本是不同进程，请求严格交替：第 1、3、5… 次到 replica 0", async () => {
+    const h = await harness("whoami");
+    const [a, b] = h.replicas;
+    expect(a.pid).not.toBe(b.pid);
+    expect(a.pid).not.toBe(process.pid);
+    const pids: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const r = await h.request("/plugins/whoami/pid");
+      pids.push(((await r.json()) as { pid: number }).pid);
+    }
+    expect(pids).toEqual([a.pid, b.pid, a.pid, b.pid, a.pid, b.pid]);
+  });
+
+  it("good-counter（ctx.kv）：4 次 inc 后 count 为 4", async () => {
+    expect(await scenario(await harness("good-counter"), "good-counter")).toBe(4);
+  });
+
+  it("leaky-counter（模块级 Map）：count 不为 4，每个副本只看到 2 次", async () => {
+    const count = await scenario(await harness("leaky-counter"), "leaky-counter");
+    expect(count).not.toBe(4);
+    expect(count).toBe(2);
+  });
+
+  it("leaky-sibling（状态在兄弟模块）：count 恰为 2", async () => {
+    expect(await scenario(await harness("leaky-sibling"), "leaky-sibling")).toBe(2);
+  });
+
+  it("stop 幂等，且子进程都已退出", async () => {
+    const h = await harness("good-counter");
+    const pids = h.replicas.map((r) => r.pid);
+    await h.stop();
+    await h.stop();
+    for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
+  });
+
+  it("插件启动失败时 start 以 stderr 尾部 reject，且不泄露配置", async () => {
+    await expect(
+      createDualReplicaHarness({ plugins: ["/nonexistent/plugin.ts"], pgUrl: pgc.url }),
+    ).rejects.toThrow(/replica failed to start[\s\S]*cannot import plugin/);
+  });
+});
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe("runnerArgv", () => {
+  it(".ts runner 带 tsx 与源码条件；.js runner 直接 node", () => {
+    expect(runnerArgv("/x/replica-runner.ts")).toEqual([
+      "--import",
+      "tsx",
+      "--conditions=@capybara-hq/source",
+      "/x/replica-runner.ts",
+    ]);
+    expect(runnerArgv("/x/replica-runner.js")).toEqual(["/x/replica-runner.js"]);
+  });
+});
+
+describe("双副本测试工具：进程与解析", () => {
+  it("裸包名插件按 resolveFrom 解析，两个副本都可用", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cap-resolve-"));
+    try {
+      const pkg = join(dir, "node_modules/@capybara-hq/plugin-tmp2");
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(
+        join(pkg, "package.json"),
+        JSON.stringify({
+          name: "@capybara-hq/plugin-tmp2",
+          version: "0.1.0",
+          type: "module",
+          main: "index.js",
+        }),
+      );
+      writeFileSync(
+        join(pkg, "index.js"),
+        `export default {
+  name: "tmp2", version: "0.1.0", sdk: "^0.1.0", provides: [],
+  setup(ctx) { ctx.http.route("GET", "/ok", async () => new Response("ok")); },
+};
+`,
+      );
+      const h = await createDualReplicaHarness({
+        plugins: ["@capybara-hq/plugin-tmp2"],
+        resolveFrom: dir,
+        pgUrl: pgc.url,
+      });
+      harnesses.push(h);
+      for (let i = 0; i < 2; i++) {
+        const r = await h.request("/plugins/tmp2/ok");
+        expect(await r.text()).toBe("ok");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("副本崩溃后 request 以副本序号与退出信息 reject", async () => {
+    const h = await harness("good-counter");
+    process.kill(h.replicas[1].pid, "SIGKILL");
+    await new Promise((r) => setTimeout(r, 500));
+    await h.request("/healthz");
+    await expect(h.request("/healthz")).rejects.toThrow(/replica 1 .*SIGKILL/);
+  });
+
+  it("相对路径的 resolveFrom 按调用方 cwd 解析（副本进程 cwd 不同）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cap-resolve-rel-"));
+    try {
+      const pkg = join(dir, "node_modules/@capybara-hq/plugin-tmp3");
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(
+        join(pkg, "package.json"),
+        JSON.stringify({
+          name: "@capybara-hq/plugin-tmp3",
+          version: "0.1.0",
+          type: "module",
+          main: "index.js",
+        }),
+      );
+      writeFileSync(
+        join(pkg, "index.js"),
+        `export default {
+  name: "tmp3", version: "0.1.0", sdk: "^0.1.0", provides: [],
+  setup(ctx) { ctx.http.route("GET", "/ok", async () => new Response("ok")); },
+};
+`,
+      );
+      const h = await createDualReplicaHarness({
+        plugins: ["@capybara-hq/plugin-tmp3"],
+        resolveFrom: relative(process.cwd(), dir),
+        pgUrl: pgc.url,
+      });
+      harnesses.push(h);
+      const r = await h.request("/plugins/tmp3/ok");
+      expect(await r.text()).toBe("ok");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("父进程被 SIGKILL 后两个副本自行退出，不留孤儿", async () => {
+    const rd = await startTestRedis();
+    let parent: ReturnType<typeof spawn> | undefined;
+    let pids: number[] = [];
+    try {
+      parent = spawn(
+        process.execPath,
+        [
+          ...runnerArgv("x.ts").slice(0, 3),
+          fileURLToPath(new URL("./fixtures/orphan-parent.ts", import.meta.url)),
+        ],
+        {
+          stdio: ["ignore", "pipe", "inherit"],
+          env: { ...process.env, TEST_PG_URL: pgc.url, TEST_REDIS_URL: rd.url },
+        },
+      );
+      let out = "";
+      parent.stdout?.on("data", (b) => {
+        out += b;
+      });
+      const p = parent;
+      await new Promise((r) => p.once("exit", r));
+      pids = JSON.parse(out.trim().split("\n").pop() as string) as number[];
+      expect(pids).toHaveLength(2);
+      const deadline = Date.now() + 20_000;
+      while (pids.some(alive) && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 200));
+      expect(pids.filter(alive)).toEqual([]);
+    } finally {
+      // 失败时也不在 CI 留下残留进程
+      for (const pid of [...pids, parent?.pid]) {
+        if (pid === undefined) continue;
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // 已退出
+        }
+      }
+      await rd.stop();
+    }
+  }, 60_000);
+});

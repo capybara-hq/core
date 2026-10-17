@@ -1,0 +1,6 @@
+{
+  "name": "@capybara-hq/fixture-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": { "@capybara-hq/kernel": "workspace:*", "zod": "^4.6.7" }
+}

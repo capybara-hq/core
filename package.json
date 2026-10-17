@@ -1,0 +1,36 @@
+{
+  "name": "capybara",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.34.3",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "check": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/all.ts",
+    "changeset": "changeset",
+    "check:migrations": "tsx tools/checks/src/cli/migrations.ts",
+    "check:deps": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/deps.ts",
+    "check:plugin-state": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/plugin-state.ts",
+    "check:config-docs": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/config-docs.ts",
+    "gen:config-docs": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/gen-config-docs.ts",
+    "capybara": "tsx --conditions=@capybara-hq/source apps/capybara/src/cli.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@capybara-hq/capybara": "workspace:*",
+    "@capybara-hq/plugin-example-counter": "workspace:*",
+    "@changesets/cli": "^3.0.3",
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
