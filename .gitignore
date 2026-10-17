@@ -2,6 +2,3 @@ node_modules
 dist
 coverage
 *.tsbuildinfo
-
-# 检查用的违规样本里故意有 dist 目录（验证检查不会跳过它），不能被上面的 dist 规则忽略
-!tools/checks/fixtures/**/dist/

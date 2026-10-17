@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { checkDeps } from "../src/deps.js";
+import { bypassFixture } from "./bypass-fixture.js";
 
 const fixture = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
 const testing = (name: string) =>
@@ -101,9 +102,14 @@ describe("绕过形态", () => {
   });
 
   it("test 目录里的 @capybara-hq/testing 放行，kernel 仍报；src 与 dist 子目录不再被跳过", () => {
-    const g = checkDeps([fixture("plugin-bypass-test-dir")]);
-    const rel = g.map((x) => x.file.split("plugin-bypass-test-dir/")[1]).sort();
-    expect(rel).toEqual(["src/dist/impl.ts", "src/test/impl.ts", "test/bad.ts"]);
+    const fx = bypassFixture();
+    try {
+      const g = checkDeps([fx.dir]);
+      const rel = g.map((x) => x.file.split("plugin-bypass-test-dir/")[1]).sort();
+      expect(rel).toEqual(["src/dist/impl.ts", "src/test/impl.ts", "test/bad.ts"]);
+    } finally {
+      fx.cleanup();
+    }
   });
 
   it("sdk：相对路径逃出 plugin-sdk 包目录 -> sdk-imports-internal", () => {

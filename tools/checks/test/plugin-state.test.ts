@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkPluginState } from "../src/plugin-state.js";
+import { bypassFixture } from "./bypass-fixture.js";
 
 const fixture = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
 const testing = (name: string) =>
@@ -125,7 +126,9 @@ describe("绕过形态", () => {
   });
 
   it("名叫 test / dist 的子目录不再被跳过；插件根的 test/ 与 *.test.ts 仍跳过", () => {
-    const f = checkPluginState([fixture("plugin-bypass-test-dir")]);
+    const fx = bypassFixture();
+    tmp.push(fx.dir.replace(/\/plugin-bypass-test-dir$/, ""));
+    const f = checkPluginState([fx.dir]);
     const rel = [...new Set(f.map((x) => x.file.split("plugin-bypass-test-dir/")[1]))].sort();
     expect(rel).toEqual(["src/dist/impl.ts", "src/test/impl.ts"]);
     expect(f.map((x) => x.rule).sort()).toEqual([
