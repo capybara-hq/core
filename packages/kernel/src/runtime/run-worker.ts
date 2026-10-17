@@ -67,6 +67,9 @@ interface ActiveRun {
   done: Promise<void>;
 }
 
+/** 处理函数的返回值：`ensure` 表示任务完成后再调用一次 ensureRun。 */
+type ProcessResult = "ensure" | undefined;
+
 /** `broken`：编排自身出错，已尽力标记失败；不再 ensureRun（避免持续性错误造成无限重试）。 */
 type ExecResult = "finished" | "interrupted" | "abandoned" | "broken";
 
@@ -88,7 +91,7 @@ async function requeue(
  * 运行期间到达但没被吸收的消息（Review Focus 2）。
  */
 export class RunWorker {
-  private worker: Worker<RunJobData> | undefined;
+  private worker: Worker<RunJobData, ProcessResult> | undefined;
   /** 传给 Worker 的连接：BullMQ 不关闭调用方传入的连接，close() 时自己关。 */
   private conn: Redis | undefined;
   private readonly active = new Map<string, ActiveRun>();
@@ -100,14 +103,30 @@ export class RunWorker {
     if (this.worker) return;
     const runtime = this.d.config().runtime;
     this.conn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<RunJobData>(RUN_QUEUE_NAME, (job, token) => this.process(job, token), {
-      // 领取任务的 worker 名记在任务上（BullMQ 的 processedBy），便于排查是哪个副本在执行。
-      name: `${hostname()}-${process.pid}`,
-      connection: this.conn,
-      concurrency: runtime.workerConcurrency,
-      lockDuration: runtime.jobLockMs,
-      stalledInterval: runtime.stalledIntervalMs,
-      maxStalledCount: MAX_STALLED_COUNT,
+    this.worker = new Worker<RunJobData, ProcessResult>(
+      RUN_QUEUE_NAME,
+      (job, token) => this.process(job, token),
+      {
+        // 领取任务的 worker 名记在任务上（BullMQ 的 processedBy），便于排查是哪个副本在执行。
+        name: `${hostname()}-${process.pid}`,
+        connection: this.conn,
+        concurrency: runtime.workerConcurrency,
+        lockDuration: runtime.jobLockMs,
+        stalledInterval: runtime.stalledIntervalMs,
+        maxStalledCount: MAX_STALLED_COUNT,
+      },
+    );
+    // 运行结束后的 ensureRun 放在任务完成（并已从队列移除）之后：若仍有未消费的消息、且最新一条
+    // 正是本运行的触发消息（如超时结束时没吸收它，R34），新任务的 jobId 与本任务相同，
+    // 本任务还在 active 时投递会被判为重复而跳过。
+    this.worker.on("completed", (job, result) => {
+      if (result !== "ensure") return;
+      const { conversationId, runId } = job.data;
+      this.d.queue
+        .ensureRun(conversationId)
+        .catch((err) =>
+          this.d.log.error("ensureRun after run failed", { conversationId, runId, err }),
+        );
     });
     this.worker.on("error", (err) => this.d.log.error("run worker error", { err }));
     this.worker.on("failed", (job, err) => {
@@ -192,7 +211,7 @@ export class RunWorker {
     if (conn) await conn.quit().catch(() => conn.disconnect());
   }
 
-  private async process(job: Job<RunJobData>, token: string | undefined): Promise<void> {
+  private async process(job: Job<RunJobData>, token: string | undefined): Promise<ProcessResult> {
     const { runId, conversationId } = job.data;
     if (this.closing) return requeue(job, token, 0);
     const run = await this.d.db
@@ -282,11 +301,7 @@ export class RunWorker {
     if (delayMs !== null) return requeue(job, token, delayMs);
     await this.prune(runId);
     if (broken) return;
-    try {
-      await this.d.queue.ensureRun(conversationId);
-    } catch (err) {
-      this.d.log.error("ensureRun after run failed", { conversationId, runId, err });
-    }
+    return "ensure";
   }
 
   private async execute(
@@ -438,8 +453,23 @@ export class RunWorker {
             payload: { byAccountId: abortedBy ?? null, reason: "user" },
           });
           break;
+        case "max_duration": {
+          // 超时只消费 loop 实际吸收的消息，不按触发消息兜底（R34）：截止时间可能在第一次吸收之前就已过
+          // （如续跑时已超过 started_at + maxRunSeconds），这些消息没有被回复，留给结束后的 ensureRun 起新一轮。
+          const consumed = Math.max(outcome.consumedUpToSeq, startConsumed);
+          await this.finish(
+            conversationId,
+            runId,
+            "completed",
+            consumed,
+            { type: "run_finished", payload: { reason: outcome.kind, consumedUpToSeq: consumed } },
+            true,
+            false,
+          );
+          break;
+        }
         default: {
-          // 至少消费到触发消息（如续跑时已过截止时间、loop 一条都没吸收）。
+          // completed / max_steps：loop 一定吸收过触发消息；仍按触发消息兜底。
           const consumed = Math.max(outcome.consumedUpToSeq, Number(run.trigger_seq));
           await this.finish(conversationId, runId, "completed", consumed, {
             type: "run_finished",
@@ -472,6 +502,7 @@ export class RunWorker {
     consumed: number | null,
     event: FinishRunArgs["event"],
     hook = true,
+    floorToTrigger = true,
   ): Promise<number | null> {
     const toSeq = await finishRun(this.d.db, this.d.eventLog, {
       conversationId,
@@ -479,6 +510,7 @@ export class RunWorker {
       status,
       consumed,
       event,
+      floorToTrigger,
     });
     if (hook) await this.d.hooks?.beforeRelease?.(runId, conversationId);
     return toSeq;

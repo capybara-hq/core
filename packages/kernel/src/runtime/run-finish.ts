@@ -22,14 +22,20 @@ export interface FinishRunArgs {
   consumed: number | null;
   /** 终态事件（run_finished / run_failed / run_aborted），幂等键为 `<type>:<runId>`。 */
   event: Pick<AppendEvent, "type" | "payload">;
+  /**
+   * consumed_seq 是否至少推进到 `runs.trigger_seq`，默认 true（失败、中止、完成）。
+   * 超时（max_duration）传 false：loop 没吸收的消息没有被回复，必须留给下一轮（R34）。
+   */
+  floorToTrigger?: boolean;
 }
 
 /**
  * 在事务 `t` 内写运行的终态：会话行锁 → 运行仍未结束才写终态事件、推进 `consumed_seq`、更新 `runs.status`。
  * 返回终态事件的 seq；运行已是终态（例如已被其他副本标记失败）→ 返回 null，什么都不写。
  *
- * `consumed_seq = GREATEST(consumed_seq, consumed, runs.trigger_seq)`：不回退，且任何终态都至少消费到
- * 触发该运行的消息——否则结束时的 ensureRun 会对同一条消息无限重试（失败）或卡住会话。
+ * `consumed_seq = GREATEST(consumed_seq, consumed, runs.trigger_seq)`：不回退，且失败 / 中止 / 完成都至少
+ * 消费到触发该运行的消息——否则结束时的 ensureRun 会对同一条消息无限重试（失败）或卡住会话。
+ * 超时（`floorToTrigger: false`）只取 `GREATEST(consumed_seq, consumed)`：没吸收的消息留给下一轮（R34）。
  * 加锁顺序与 `RunQueue.ensureRun` 一致（先会话行、后 runs 行），不会互相死锁。
  * 调用方在提交后对非 null 的返回值调用 `eventLog.notify`。
  */
@@ -59,7 +65,10 @@ export async function finishRunIn(
   await t
     .updateTable("conversations")
     .set({
-      consumed_seq: sql`GREATEST(consumed_seq, ${a.consumed ?? 0}::bigint, (SELECT r.trigger_seq FROM capybara.runs r WHERE r.id = ${a.runId}))`,
+      consumed_seq:
+        a.floorToTrigger === false
+          ? sql`GREATEST(consumed_seq, ${a.consumed ?? 0}::bigint)`
+          : sql`GREATEST(consumed_seq, ${a.consumed ?? 0}::bigint, (SELECT r.trigger_seq FROM capybara.runs r WHERE r.id = ${a.runId}))`,
     })
     .where("id", "=", a.conversationId)
     .execute();

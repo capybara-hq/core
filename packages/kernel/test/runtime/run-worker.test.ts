@@ -588,6 +588,29 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "completed"]);
   });
 
+  it("R34：续跑时已超过截止时间、loop 一条都没吸收 → max_duration 不消费触发消息，新一轮回复它恰好一次", async () => {
+    const { orgId, convId } = await setup();
+    const trigger = await postMessage(req, orgId, convId, "echo:pending");
+    const [stale] = await runsOf(db, convId);
+    // 模拟早已开始、在其他 worker 上被中断的运行：started_at 远早于 maxRunSeconds
+    await db
+      .updateTable("runs")
+      .set({ status: "running", started_at: sql`now() - interval '1 hour'` })
+      .where("id", "=", stale?.id as string)
+      .execute();
+    await worker();
+    const terms = await waitForTerminal(db, convId, 2);
+    expect(terms[0]?.runId).toBe(stale?.id);
+    expect(terms[0]?.payload).toEqual({ reason: "max_duration", consumedUpToSeq: 0 });
+    expect(terms[1]?.payload).toEqual({ reason: "completed", consumedUpToSeq: trigger });
+    await sleep(300);
+    const evs = await eventsOf(db, convId);
+    expect(evs.filter((e) => e.type === "assistant_message").map(textOf)).toEqual(["pending"]);
+    expect(evs.filter((e) => e.type === "model_call" && e.runId === stale?.id)).toEqual([]);
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "completed"]);
+    expect(await consumedSeq(db, convId)).toBe(trigger);
+  });
+
   it("R33：工具步骤进行中到达消息、下一次 prepare 前截止时间已过 → max_duration 且不消费它，新一轮回复它恰好一次", async () => {
     let firstRun: string | null = null;
     let passed = false;
