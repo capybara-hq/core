@@ -4,11 +4,14 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
+import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
+import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { SessionService } from "../../src/identity/sessions.js";
 import type { Kernel } from "../../src/kernel.js";
-import { asUser, cookieJar } from "../helpers/http.js";
+import { asUser, type CookieJar, cookieJar } from "../helpers/http.js";
 import {
   createAgent,
   createConv,
@@ -173,7 +176,10 @@ async function resetDb(): Promise<void> {
 }
 
 /** 登录，返回请求函数与 SSE 用的 cookie 头。 */
-async function login(k: Kernel, name: string): Promise<{ req: Req; cookie: () => string }> {
+async function login(
+  k: Kernel,
+  name: string,
+): Promise<{ req: Req; cookie: () => string; jar: CookieJar }> {
   const jar = cookieJar();
   const req = asUser(k.http, jar);
   const res = await req({
@@ -182,7 +188,7 @@ async function login(k: Kernel, name: string): Promise<{ req: Req; cookie: () =>
     payload: { login: name, password: PW },
   });
   expect(res.statusCode).toBe(200);
-  return { req, cookie: () => jar.header() as string };
+  return { req, cookie: () => jar.header() as string, jar };
 }
 
 async function account(name: string): Promise<string> {
@@ -408,6 +414,114 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
       await api.stop();
       await s.ended;
       expect(Date.now() - t0).toBeLessThan(3_000);
+    } finally {
+      s.close();
+    }
+  });
+});
+
+describe("会话 SSE：凭据复核（R35）", () => {
+  let a: Kernel;
+  let b: Kernel;
+
+  beforeAll(async () => {
+    [a, b] = await Promise.all([
+      startKernel(runConfig(urls(), { roles: ["api", "worker"], runtime: STREAM_RUNTIME })),
+      startKernel(runConfig(urls(), { roles: ["api"], runtime: STREAM_RUNTIME })),
+    ]);
+  }, 60_000);
+  afterAll(async () => {
+    await Promise.all([a?.stop(), b?.stop()]);
+  });
+
+  async function setup() {
+    await resetDb();
+    const ownerId = await account("owner");
+    const owner = await login(a, "owner");
+    const orgId = await createOrg(owner.req);
+    const agentId = await createAgent(owner.req, orgId);
+    const convId = await createConv(owner.req, orgId, agentId);
+    return { ownerId, owner, orgId, convId };
+  }
+
+  const errorsIn = (msgs: SseMessage[]) =>
+    msgs
+      .filter((m) => m.event === "error")
+      .map((m) => JSON.parse(m.data as string) as { code: string });
+
+  async function endsWithin(s: SseClient, ms: number): Promise<void> {
+    await Promise.race([
+      s.ended,
+      sleep(ms).then(() => {
+        throw new Error("stream not closed");
+      }),
+    ]);
+  }
+
+  it("在另一副本登出 → 一个复核周期内收到 event: error（auth.session_revoked），流结束", async () => {
+    const { owner, orgId, convId } = await setup();
+    const s = await openSse(streamUrl(a, orgId, convId), { cookie: owner.cookie() });
+    try {
+      expect(s.status).toBe(200);
+      await sleep(300);
+      expect(s.isEnded()).toBe(false);
+      const out = await asUser(b.http, owner.jar)({ method: "POST", url: "/api/v1/auth/logout" });
+      expect(out.statusCode).toBe(204);
+      await endsWithin(s, 2_000);
+      expect(errorsIn(s.messages)).toEqual([{ code: "auth.session_revoked" }]);
+      expect(s.messages.at(-1)?.event).toBe("error");
+    } finally {
+      s.close();
+    }
+  });
+
+  it("个人令牌被吊销 → 流以 error 帧结束；吊销后的令牌不能再建立流", async () => {
+    const { ownerId, orgId, convId } = await setup();
+    const tokens = new ApiTokenService(db);
+    const { token, record } = await tokens.createPersonal(ownerId, { name: "cli" });
+    const url = streamUrl(b, orgId, convId);
+    const s = await openSse(url, { authorization: `Bearer ${token}` });
+    try {
+      expect(s.status).toBe(200);
+      await sleep(300);
+      expect(s.isEnded()).toBe(false);
+      await tokens.revoke(record.id, { accountId: ownerId });
+      await endsWithin(s, 2_000);
+      expect(errorsIn(s.messages)).toEqual([{ code: "auth.required" }]);
+    } finally {
+      s.close();
+    }
+    const again = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+    expect(again.status).toBe(401);
+  });
+
+  it("access token 到期但会话仍有效 → 流不结束，继续推送", async () => {
+    const { ownerId, owner, orgId, convId } = await setup();
+    // 与内核相同的密钥，签发 access token 只有 2 秒寿命的会话（配置下限是 60 秒，测试直接构造服务）
+    const shortLived = new SessionService(db, redis, createKeyring(Buffer.alloc(32, 7), []), {
+      accessTtlSeconds: 2,
+      refreshTtlDays: 1,
+    });
+    const issued = await shortLived.create(ownerId, {});
+    const cookie = `cap_at=${encodeURIComponent(issued.accessToken)}`;
+    const s = await openSse(streamUrl(a, orgId, convId), { cookie });
+    try {
+      expect(s.status).toBe(200);
+      await sleep(2_600);
+      // 令牌已过期：新请求被拒，但已建立的流仍在
+      const expired = await fetch(streamUrl(a, orgId, convId), { headers: { cookie } });
+      expect(expired.status).toBe(401);
+      expect(((await expired.json()) as { error: { code: string } }).error.code).toBe(
+        "auth.token_expired",
+      );
+      expect(s.isEnded()).toBe(false);
+      expect(errorsIn(s.messages)).toEqual([]);
+      await postMessage(owner.req, orgId, convId, "echo:still here");
+      await s.until((m) => finishedCount(m) === 1, 15_000, "run_finished after expiry");
+      // 会话本身被吊销后照样关闭
+      await shortLived.revoke(issued.sessionId);
+      await endsWithin(s, 2_000);
+      expect(errorsIn(s.messages)).toEqual([{ code: "auth.session_revoked" }]);
     } finally {
       s.close();
     }

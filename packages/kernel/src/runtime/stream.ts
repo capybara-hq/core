@@ -6,7 +6,8 @@ import {
   type EventLog,
 } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import { ApiError } from "../errors.js";
+import { ApiError, type ErrorCode } from "../errors.js";
+import type { CredentialCheck } from "../identity/credential-check.js";
 
 /** 一次 SSE 连接的输出端（由 HTTP 层包装原始响应）。 */
 export interface SseOutput {
@@ -36,6 +37,8 @@ export interface StreamParams {
   viewerAccountId: string;
   /** 只发送 seq 大于它的事件。 */
   afterSeq: number;
+  /** 复核建立连接时使用的凭据（会话未吊销 / 令牌仍有效），与可见性一起在建立时与每次复核时检查。 */
+  credential: CredentialCheck;
 }
 
 /** 一条已订阅、尚未开始输出的流：HTTP 层写完响应头后调用 `begin`。 */
@@ -49,7 +52,23 @@ const PAGE = 500;
 /** 慢客户端的积压上限：超过即关闭流，客户端带 Last-Event-ID 重连补读。 */
 const MAX_BACKLOG_BYTES = 4 * 1024 * 1024;
 
-const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
+/** 授权失败时随错误返回的英文说明（建立连接时作为普通错误响应）。 */
+const DENIAL_MESSAGES: Partial<Record<ErrorCode, string>> = {
+  "conversation.not_found": "Conversation not found",
+  "auth.session_revoked": "Session has been revoked",
+  "auth.required": "Authentication required",
+};
+
+/** 凭据仍有效且会话仍可见返回 null，否则返回错误码（凭据优先）。 */
+async function authorize(d: ConversationStreamsDeps, p: StreamParams): Promise<ErrorCode | null> {
+  const denied = await p.credential();
+  if (denied !== null) return denied;
+  const ok = await d.access(p.orgId, p.conversationId, p.viewerAccountId);
+  return ok ? null : "conversation.not_found";
+}
+
+const errorFrame = (code: ErrorCode): string =>
+  `event: error\ndata: ${JSON.stringify({ code })}\n\n`;
 
 function isBusMessage(m: unknown): m is ConversationBusMessage {
   if (typeof m !== "object" || m === null) return false;
@@ -72,11 +91,12 @@ export class ConversationStreams {
   constructor(private readonly d: ConversationStreamsDeps) {}
 
   /**
-   * 复核可见性并先订阅会话频道（之后再回放，避免遗漏两者之间提交的事件）。
-   * 不可见 → `conversation.not_found`；订阅失败照常抛出。此时尚未写任何响应，调用方可以按普通错误返回。
+   * 复核凭据与可见性，并先订阅会话频道（之后再回放，避免遗漏两者之间提交的事件）。
+   * 凭据失效 → 对应的 `auth.*`；不可见 → `conversation.not_found`；订阅失败照常抛出。此时尚未写任何响应，调用方可以按普通错误返回。
    */
   async open(p: StreamParams, out: SseOutput): Promise<StreamHandle> {
-    if (!(await this.d.access(p.orgId, p.conversationId, p.viewerAccountId))) throw notFound();
+    const denied = await authorize(this.d, p);
+    if (denied !== null) throw new ApiError(denied, DENIAL_MESSAGES[denied] ?? "Access denied");
     const conn = new Connection(this.d, p, out, () => this.active.delete(conn));
     this.active.add(conn);
     try {
@@ -203,6 +223,17 @@ class Connection implements StreamHandle {
     }
   }
 
+  /** 发最后一帧错误并关闭（未发完的排队输出随关闭丢弃）。 */
+  private fail(code: ErrorCode): void {
+    if (this.closed) return;
+    try {
+      this.out.write(errorFrame(code));
+    } catch {
+      // 连接已断开
+    }
+    this.close();
+  }
+
   private write(chunk: string): void {
     if (this.closed) return;
     this.out.write(chunk);
@@ -214,19 +245,22 @@ class Connection implements StreamHandle {
     }
   }
 
-  /** 复核可见性；不再可见或复核失败（按失败关闭处理）→ 关闭流。 */
+  /**
+   * 复核凭据与可见性；失败时先发最后一帧 `event: error`（`data: {"code"}`）再关闭。
+   * 复核本身出错按失败关闭处理（`internal`）。
+   */
   private async recheck(): Promise<void> {
     if (this.closed || this.rechecking) return;
     this.rechecking = true;
     try {
-      const ok = await this.d.access(this.p.orgId, this.p.conversationId, this.p.viewerAccountId);
-      if (!ok) this.close();
+      const denied = await authorize(this.d, this.p);
+      if (denied !== null) this.fail(denied);
     } catch (err) {
       this.d.log.warn("conversation stream access re-check failed; closing", {
         conversationId: this.p.conversationId,
         err,
       });
-      this.close();
+      this.fail("internal");
     } finally {
       this.rechecking = false;
     }
