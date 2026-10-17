@@ -11,6 +11,7 @@ import { createBusSubscriber } from "../../src/ctx/bus.js";
 import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { createDb } from "../../src/db/pool.js";
+import { createLogger } from "../../src/log.js";
 import { PluginHost } from "../../src/plugins/host.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -28,9 +29,10 @@ const host = (cfg: Record<string, unknown> = {}, opts?: { resolveFrom?: string }
   return h;
 };
 const logged: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
+const warned: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
 const log = {
   info: (msg: string, fields?: Record<string, unknown>) => logged.push({ msg, fields }),
-  warn() {},
+  warn: (msg: string, fields?: Record<string, unknown>) => warned.push({ msg, fields }),
   error() {},
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -98,12 +100,52 @@ describe("PluginHost", () => {
     await expect(host().load([fx("badconfig")])).rejects.toThrow(/badconfig.*port/);
   });
 
+  it("secret 不在对象路径叶子上（discriminatedUnion 内）：加载失败，点名插件与路径", async () => {
+    await expect(host().load([fx("secretunion")])).rejects.toThrow(
+      /plugin secretunion: config\.org: secret\(\) at "auth<union#1>\.token"/,
+    );
+  });
+
+  it("secret 不在对象路径叶子上（transform 之后）：加载失败，点名插件与路径", async () => {
+    await expect(host().load([fx("secrettransform")])).rejects.toThrow(
+      /plugin secrettransform: config\.deployment: secret\(\) at "upstream<pipe:in>\.key"/,
+    );
+  });
+
+  it("secret 在对象路径叶子上（含 optional / prefault 包装）：正常加载", async () => {
+    await expect(host().load([fx("orgcfg")])).resolves.toBeUndefined();
+  });
+
   it("setup 抛错：带插件名", async () => {
     await expect(host().load([fx("throws")])).rejects.toThrow(/thrower.*boom/);
   });
 
   it("setup 后声明的 provides 未提供：报错并点名", async () => {
     await expect(host().load([fx("noprovide")])).rejects.toThrow(/noprovide.*counter@1/);
+  });
+});
+
+describe("PluginHost 配置加固", () => {
+  it("orphan pluginConfig warns", async () => {
+    warned.length = 0;
+    await host({ ghost: {} }).load([fx("fixture")]);
+    const w = warned.filter((x) => x.msg.includes("not loaded"));
+    expect(w).toHaveLength(1);
+    expect(w[0]?.fields).toEqual({ keys: ["ghost"] });
+  });
+
+  it("plugin deployment secrets are redacted", async () => {
+    const lines: string[] = [];
+    const real = createLogger("info", { write: (l) => lines.push(l) });
+    const h = new PluginHost(
+      { ...deps, log: real },
+      { secretcfg: { token: "s3cr3t-value" } },
+      { onSecrets: (v) => real.addSecrets(v) },
+    );
+    hosts.push(h);
+    await h.load([fx("secretcfg")]);
+    expect(lines.filter((l) => l.includes('"got"'))).toHaveLength(1);
+    expect(lines.join("\n")).not.toContain("s3cr3t-value");
   });
 });
 

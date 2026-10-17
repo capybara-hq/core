@@ -10,14 +10,19 @@ export interface ConfigField {
   schema: core.$ZodType;
 }
 
-/** 剥掉包装后的内层 schema 类型与默认值（无 default 时 hasDefault 为 false）。 */
+/**
+ * 剥掉包装后的内层 schema 类型与默认值（无 default 时 hasDefault 为 false）；
+ * `optional` 表示包装链上有 optional（可以不填，且没有默认值时值为 undefined）。
+ */
 export function describeSchema(schema: core.$ZodType): {
   type: string;
   hasDefault: boolean;
   defaultValue: unknown;
+  optional: boolean;
 } {
   let node = schema;
   let hasDefault = false;
+  let optional = false;
   let defaultValue: unknown;
   for (;;) {
     const def = node._zod.def as unknown as {
@@ -31,6 +36,7 @@ export function describeSchema(schema: core.$ZodType): {
         defaultValue = def.defaultValue;
       }
     }
+    if (def.type === "optional") optional = true;
     if (!WRAPPERS.has(def.type) || !def.innerType) break;
     node = def.innerType;
   }
@@ -38,15 +44,18 @@ export function describeSchema(schema: core.$ZodType): {
     type: string;
     element?: core.$ZodType;
     entries?: Record<string, unknown>;
+    options?: core.$ZodType[];
   };
   let type = def.type;
   if (type === "array" && def.element) type = `array<${describeSchema(def.element).type}>`;
-  else if (type === "enum" && def.entries) {
+  else if (type === "union" && def.options) {
+    type = def.options.map((o) => describeSchema(o).type).join(" | ");
+  } else if (type === "enum" && def.entries) {
     type = Object.values(def.entries)
       .map((v) => JSON.stringify(v))
       .join(" | ");
   }
-  return { type, hasDefault, defaultValue };
+  return { type, hasDefault, defaultValue, optional };
 }
 
 const WRAPPERS = new Set(["default", "prefault", "optional", "nullable", "readonly", "catch"]);
@@ -117,5 +126,92 @@ export function secretValues(schema: core.$ZodType, config: unknown): string[] {
     const v = getPath(config, f.path);
     for (const item of Array.isArray(v) ? v : [v]) if (typeof item === "string") out.push(item);
   }
+  return out;
+}
+
+const isSecretNode = (node: core.$ZodType): boolean =>
+  (z.globalRegistry.get(node) as FieldMeta | undefined)?.secret === true;
+
+/**
+ * 找出 `configFields` 拆不出来的 secret 标记：secret 只能标在「从根经对象字段（及 default / optional 等包装）
+ * 可达」的节点上。标在 union / intersection / pipe（含 transform）/ lazy / array 元素 / record 值 /
+ * tuple / map / set 等内部的 secret，内核既无法单独加密存储也无法打码，返回其描述路径
+ * （如 `auth<union#1>.token`）。对象路径上的 secret 若未让对应叶子被视为 secret（被外层 meta 遮蔽）同样返回。
+ */
+export function unreachableSecrets(schema: core.$ZodType): string[] {
+  const covered = configFields(schema)
+    .filter((f) => f.meta?.secret)
+    .map((f) => f.path);
+  const isCovered = (p: string) =>
+    covered.some((c) => p === "" || c === p || c.startsWith(`${p}.`));
+  const out: string[] = [];
+  // 只防 lazy 自引用造成的环：同一 schema 实例可能复用在多个位置，每个位置都要检查
+  const stack = new Set<core.$ZodType>();
+  const join = (prefix: string, seg: string) => (prefix ? `${prefix}.${seg}` : seg);
+  const t = (v: unknown) => v as core.$ZodType;
+
+  const walk = (node: core.$ZodType, label: string, onPath: boolean): void => {
+    if (stack.has(node)) return;
+    stack.add(node);
+    try {
+      visit(node, label, onPath);
+    } finally {
+      stack.delete(node);
+    }
+  };
+  const visit = (node: core.$ZodType, label: string, onPath: boolean): void => {
+    if (isSecretNode(node)) {
+      if (onPath && isCovered(label)) return; // 整棵子树都按 secret 处理
+      out.push(label || "<root>");
+      return;
+    }
+    const def = node._zod.def as unknown as Record<string, unknown> & { type: string };
+    switch (def.type) {
+      case "object":
+        for (const [k, v] of Object.entries(def.shape as Record<string, core.$ZodType>)) {
+          walk(v, join(label, k), onPath);
+        }
+        if (def.catchall) walk(t(def.catchall), `${label}<catchall>`, false);
+        return;
+      case "union":
+        (def.options as core.$ZodType[]).forEach((o, i) => {
+          walk(o, `${label}<union#${i}>`, false);
+        });
+        return;
+      case "intersection":
+        walk(t(def.left), `${label}<intersection:left>`, false);
+        walk(t(def.right), `${label}<intersection:right>`, false);
+        return;
+      case "pipe":
+        walk(t(def.in), `${label}<pipe:in>`, false);
+        walk(t(def.out), `${label}<pipe:out>`, false);
+        return;
+      case "lazy":
+        walk((def.getter as () => core.$ZodType)(), `${label}<lazy>`, false);
+        return;
+      case "array":
+        walk(t(def.element), `${label}[]`, false);
+        return;
+      case "set":
+        walk(t(def.valueType), `${label}<set>`, false);
+        return;
+      case "record":
+      case "map":
+        walk(t(def.keyType), `${label}<${def.type}:key>`, false);
+        walk(t(def.valueType), `${label}<${def.type}:value>`, false);
+        return;
+      case "tuple":
+        (def.items as core.$ZodType[]).forEach((o, i) => {
+          walk(o, `${label}[${i}]`, false);
+        });
+        if (def.rest) walk(t(def.rest), `${label}[...]`, false);
+        return;
+      default:
+        // default / optional 等包装沿用 configFields 的对象路径；其余带 innerType 的包装（nonoptional、
+        // promise 等）configFields 视作叶子，其内部的 secret 不可达。
+        if (def.innerType) walk(t(def.innerType), label, onPath && WRAPPERS.has(def.type));
+    }
+  };
+  walk(schema, "", true);
   return out;
 }

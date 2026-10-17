@@ -2,16 +2,9 @@
 
 来源：M0 子代理执行记录中推迟处理的轻微问题，以及最终整分支评审的建议。已在最终修复波次修掉的条目不在此列。
 
-## 建议 M1 处理
+## 仍待处理（原「建议 M1 处理」中未纳入 M1 的）
 
-- 停机分阶段时间预算（HTTP 阶段单独上限，保证队列排空有预算）；start 卡超 30s 后 host.load 晚于 host.close 的泄漏
-- pg Pool 加 connectionTimeoutMillis（PG 黑洞时 start 挂起、readyz 堆积）
-- 插件按依赖拓扑逆序关闭（现为并发关闭）
-- pluginConfig 中没有对应插件的键要告警；带 - 的插件名无法用嵌套环境变量寻址（需文档或映射）；CAPYBARA_DB 与 CAPYBARA_DB__URL 冲突未检测
-- worker-only 角色没有健康端点（K8s 探针）
-- Nacos 鉴权（用户名/密码/accessToken）
-- ctx.db 包一层，阻止插件调用 destroy() 关闭共享连接池
-- PluginHost 对相对路径 resolveFrom 做 path.resolve
+- Nacos 鉴权（用户名/密码/accessToken）——与身份组织无关，单独小任务处理
 
 ## M6（市场）前必须处理
 
@@ -23,10 +16,7 @@
 
 - Task 1: minor (deferred): ci.yml 缺 permissions: contents: read 与 concurrency 组
 - Task 1: minor (deferred): biome.json 的 `recommended` 弃用 info 常驻 lint 输出
-- Task 1: minor (deferred): AGENTS.md 未写明完整依赖链（plugin→sdk、kernel→sdk、testing→kernel）
 - Task 1: minor (deferred): compose.dev.yaml 无 healthcheck
-- Task 2: minor (deferred): CAPYBARA_CONFIG_SOURCE="" 报 unknown source，可视为默认
-- Task 2: minor (deferred): pluginConfig 里含 - 或大写的插件名无法用环境变量寻址（需文档说明）；CAPYBARA_DB 与 CAPYBARA_DB__URL 冲突未检测
 - Task 2: minor (deferred): schema.ts .prefault({} as never) 类型强转，缺注释
 - Task 2: minor (deferred): 无 masterKeyPrevious / roles 测试
 - Task 2: minor (deferred): 带引号的 JSON 字符串值（"hello"）现在保留引号，行为未记录/未测
@@ -48,12 +38,30 @@
 - Task 9: minor (deferred): rewrap 的运维顺序（所有副本先换 keyring 再 rewrap）未写进 JSDoc
 - Task 10: minor (deferred): semver.satisfies 未加 includePrerelease，SDK 预发布版本会拒绝所有插件
 - Task 10: minor (deferred): 插件 requires 自己也 provides 的多选能力时报自环
-- Task 11: minor (deferred): pg Pool 无 connectionTimeoutMillis，PG 黑洞时 start 挂到 TCP 超时、readyz 堆积
-- Task 11: minor (deferred): 停机 30s 共享时限可被 HTTP 阶段耗尽，队列排空无预算；start 卡超 30s 后 host.load 晚于 host.close 会泄漏
-- Task 11: minor (deferred): 测试缺口：启动失败资源释放、stop 等在途任务、30s 上限、api-only 不消费、runStart/runMigrate
-- Task 11: minor (deferred): 非 hot 键变化后每次热更新重复 warn；runStart catch 日志标签误导；pluginConfig 密钥未纳入打码
+- Task 11: minor (deferred): 测试缺口：runStart/runMigrate（启动失败资源释放、stop 等在途任务、30s 上限、api-only 不消费已在 M1 补上）
+- Task 11: minor (deferred): 非 hot 键变化后每次热更新重复 warn；runStart catch 日志标签误导
 - Task 12: minor (deferred): cli.ts 的 env -S shebang 在 busybox/alpine 可能不支持
 - Task 12: minor (deferred): DROP DATABASE WITH (FORCE) 需 PG ≥13，pgUrl 文档应写明
 - Task 13: minor (deferred): .d.ts 的 declare let 误报；docs 逐字节比对在 CRLF 检出下误报
 - Task 13: minor (deferred): workspace:<相对路径> 依赖未拦（未实测）；npm:@capybara-hq/testing 别名可绕进非测试源码；非测试源码 re-export 测试文件可绕 plugin-state；sdk 的 src/dist 不扫
 - Task 14: minor (deferred): 哨兵 CLI 的 exit(1) 路径无测试（只测了 helper）
+
+## M1 已处理
+
+M1 计划（`2026-10-17-m1-identity.md`）「本计划纳入的 M0 遗留事项」表中的条目，均已在 M1 分支处理：
+
+| 遗留事项 | M1 任务 | 提交 |
+|---|---|---|
+| 停机分阶段时间预算；start 卡超 30s 后 host.load 晚于 host.close 的泄漏 | Task 2 | `b3d5c50`、`fcd6a29`、`f016deb` |
+| pg Pool 加 `connectionTimeoutMillis`（新增 `db.connectTimeoutMs`） | Task 2 | `b3d5c50` |
+| 插件按依赖拓扑逆序关闭 | Task 2 | `b3d5c50` |
+| worker-only 角色没有健康端点 | Task 2 | `b3d5c50` |
+| `ctx.db` 包一层，阻止插件调用 `destroy()` | Task 2 | `b3d5c50` |
+| PluginHost 对相对路径 `resolveFrom` 做 `path.resolve` | Task 2 | `b3d5c50` |
+| 测试缺口：启动失败资源释放、stop 等在途任务、api-only 不消费 | Task 2 | `b3d5c50` |
+| pluginConfig 中没有对应插件的键要告警 | Task 3 | `ff8144f` |
+| 带 `-` 的插件名无法用嵌套环境变量寻址 | Task 3 | `ff8144f` |
+| `CAPYBARA_DB` 与 `CAPYBARA_DB__URL` 冲突未检测 | Task 3 | `ff8144f` |
+| `CAPYBARA_CONFIG_SOURCE=""` 视为默认 | Task 3 | `ff8144f` |
+| pluginConfig 密钥未纳入日志打码 | Task 3 | `ff8144f` |
+| AGENTS.md 未写明完整依赖链（M0 Task 1 轻微项，顺手处理） | Task 12 | M1 Task 12 提交（`test: M1 双副本端到端验收，补充内核 API 技能与文档`） |

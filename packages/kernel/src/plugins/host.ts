@@ -10,6 +10,7 @@ import {
   parseCapability,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
+import { configFields, getPath, unreachableSecrets } from "../config/fields.js";
 import {
   createPluginContext,
   type KernelDeps,
@@ -25,6 +26,8 @@ interface Loaded {
   routes: Route[];
   close(): Promise<void>;
 }
+
+const CLOSED_DURING_LOAD = "plugin host closed during load";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -81,17 +84,40 @@ async function migratePlugin(
   dbUrl: string,
   manifest: PluginManifest,
   dir: string,
+  connectTimeoutMs: number | undefined,
+  signal?: AbortSignal,
 ): Promise<{ schema: string; applied: string[] } | undefined> {
   if (!manifest.migrations) return undefined;
   const schema = pluginSchemaName(manifest.name);
   try {
-    const { applied } = await migrate(dbUrl, {
-      schema,
-      dir: resolvePath(dir, manifest.migrations),
-    });
+    const { applied } = await migrate(
+      dbUrl,
+      { schema, dir: resolvePath(dir, manifest.migrations) },
+      {
+        ...(connectTimeoutMs !== undefined && { connectTimeoutMs }),
+        ...(signal && { signal }),
+      },
+    );
     return { schema, applied };
   } catch (e) {
     throw new Error(`plugin ${manifest.name}: migration failed: ${errMsg(e)}`, { cause: e });
+  }
+}
+
+/**
+ * 插件两级配置 schema 中的每个 `secret()` 都必须标在对象路径的字段上（见 `unreachableSecrets`），
+ * 否则内核无法把它单独加密存储 / 打码、会按明文保存与回显——此时拒绝加载并点名插件与路径。
+ */
+function assertSecretsReachable(manifest: PluginManifest): void {
+  for (const level of ["deployment", "org"] as const) {
+    const schema = manifest.config?.[level];
+    if (!schema) continue;
+    const bad = unreachableSecrets(schema);
+    if (bad.length > 0) {
+      throw new Error(
+        `plugin ${manifest.name}: config.${level}: ${bad.map((p) => `secret() at "${p}"`).join(", ")} is not on an object field path; secret() inside union / intersection / transform / pipe / lazy / array / record / tuple is not supported — mark the whole enclosing object field secret instead`,
+      );
+    }
   }
 }
 
@@ -103,12 +129,20 @@ export class PluginHost {
    */
   static async migrateOnly(
     specifiers: string[],
-    opts: { dbUrl: string; resolveFrom?: string },
+    opts: { dbUrl: string; resolveFrom?: string; connectTimeoutMs?: number },
   ): Promise<{ plugin: string; schema: string; applied: string[] }[]> {
-    const { ordered, dirs } = await importPlugins(specifiers, opts.resolveFrom ?? process.cwd());
+    const { ordered, dirs } = await importPlugins(
+      specifiers,
+      resolvePath(opts.resolveFrom ?? process.cwd()),
+    );
     const out: { plugin: string; schema: string; applied: string[] }[] = [];
     for (const manifest of ordered) {
-      const r = await migratePlugin(opts.dbUrl, manifest, dirs.get(manifest.name) as string);
+      const r = await migratePlugin(
+        opts.dbUrl,
+        manifest,
+        dirs.get(manifest.name) as string,
+        opts.connectTimeoutMs,
+      );
       if (r) out.push({ plugin: manifest.name, ...r });
     }
     return out;
@@ -116,26 +150,52 @@ export class PluginHost {
 
   private readonly loaded: Loaded[] = [];
   private didLoad = false;
+  private closed = false;
+  /** close() 时中止进行中的插件迁移。 */
+  private readonly abort = new AbortController();
+  /** 进行中的插件迁移（close() 等它结束，保证迁移连接不比宿主活得久）。 */
+  private migrating: Promise<unknown> | undefined;
+  /** 已创建、尚未登记（setup 进行中）的 ctx：close() 时立即关闭，不等 setup 返回。 */
+  private pending: { close(): Promise<void> } | undefined;
   private readonly resolveFrom: string;
+  private readonly onSecrets: ((values: string[]) => void) | undefined;
 
   /**
-   * @param opts.resolveFrom 解析裸包名的目录，默认 `process.cwd()`。绝对路径与 `file:` URL 直接使用；
+   * @param opts.resolveFrom 解析裸包名的目录，默认 `process.cwd()`；相对路径按构造时的 cwd 转为绝对路径。
+   * 绝对路径与 `file:` URL 的插件 specifier 直接使用；
    * 裸包名经 `createRequire(<resolveFrom>/noop.js).resolve` 解析，因此插件包的 exports 必须暴露
    * `default`（或 `require`）条件。
    */
   constructor(
     private readonly deps: KernelDeps,
     private readonly pluginConfig: Record<string, unknown> = {},
-    opts: { resolveFrom?: string } = {},
+    opts: { resolveFrom?: string; onSecrets?: (values: string[]) => void } = {},
   ) {
-    this.resolveFrom = opts.resolveFrom ?? process.cwd();
+    this.onSecrets = opts.onSecrets;
+    this.resolveFrom = resolvePath(opts.resolveFrom ?? process.cwd());
   }
 
-  /** 导入各插件模块（default 导出）并按依赖顺序初始化；只能调用一次。 */
+  /**
+   * 导入各插件模块（default 导出）并按依赖顺序初始化；只能调用一次。
+   * 加载期间宿主被 `close()` 时：进行中的迁移被中止、setup 中的 ctx 被立即关闭（此后其 queue 的
+   * define / add 抛 `queue is closed`），load() 在下一个检查点抛 `plugin host closed during load`。
+   */
   async load(specifiers: string[]): Promise<void> {
+    if (this.closed) throw new Error(CLOSED_DURING_LOAD);
     if (this.didLoad) throw new Error("plugin host already loaded; load() may be called once");
     this.didLoad = true;
     const { ordered, dirs } = await importPlugins(specifiers, this.resolveFrom);
+
+    const orphans = Object.keys(this.pluginConfig).filter(
+      (k) => !ordered.some((m) => m.name === k),
+    );
+    if (orphans.length > 0) {
+      this.deps.log.warn("pluginConfig has keys for plugins that are not loaded", {
+        keys: orphans,
+      });
+    }
+
+    for (const manifest of ordered) assertSecretsReachable(manifest);
 
     for (const manifest of ordered) {
       const name = manifest.name;
@@ -151,9 +211,37 @@ export class PluginHost {
           throw new Error(`plugin ${name}: invalid deployment config: ${detail}`);
         }
         config = r.data;
+        if (this.onSecrets) {
+          const values: string[] = [];
+          for (const f of configFields(schema)) {
+            if (!f.meta?.secret) continue;
+            const v = getPath(config, f.path);
+            for (const item of Array.isArray(v) ? v : [v]) {
+              if (typeof item === "string" && item !== "") values.push(item);
+            }
+          }
+          if (values.length > 0) this.onSecrets(values);
+        }
       }
-      await migratePlugin(this.deps.dbUrl, manifest, dirs.get(name) as string);
+      if (this.closed) throw new Error(CLOSED_DURING_LOAD);
+      this.migrating = migratePlugin(
+        this.deps.dbUrl,
+        manifest,
+        dirs.get(name) as string,
+        this.deps.connectTimeoutMs,
+        this.abort.signal,
+      );
+      try {
+        await this.migrating;
+      } catch (e) {
+        if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
+        throw e;
+      } finally {
+        this.migrating = undefined;
+      }
+      if (this.closed) throw new Error(CLOSED_DURING_LOAD);
       const ctx = createPluginContext(this.deps, manifest, config);
+      this.pending = ctx;
       try {
         await manifest.setup(ctx);
         for (const cap of manifest.provides) {
@@ -163,7 +251,14 @@ export class PluginHost {
         }
       } catch (e) {
         await ctx.close().catch(() => {});
+        if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
         throw new Error(`plugin ${name}: setup failed: ${errMsg(e)}`, { cause: e });
+      } finally {
+        this.pending = undefined;
+      }
+      if (this.closed) {
+        await ctx.close().catch(() => {});
+        throw new Error(CLOSED_DURING_LOAD);
       }
       this.loaded.push({ manifest, provided: ctx.provided, routes: ctx.routes, close: ctx.close });
     }
@@ -204,13 +299,40 @@ export class PluginHost {
     return out;
   }
 
+  /** 已加载插件的清单（按加载顺序，即依赖拓扑序）。 */
+  manifests(): PluginManifest[] {
+    return this.loaded.map((l) => l.manifest);
+  }
+
   /** 所有插件注册的 HTTP 路由（路径已带 `/plugins/<name>` 前缀）。 */
   routes(): Route[] {
     return this.loaded.flatMap((l) => l.routes);
   }
 
-  /** 关闭所有插件的队列。 */
+  /**
+   * 按加载顺序（拓扑序）逆序串行关闭各插件：依赖方先于被依赖方关闭。
+   * 调用后宿主进入 closed 状态（幂等）。进行中的 `load()`：迁移被中止并等其连接结束，
+   * setup 中的 ctx 被立即关闭（不等 setup 返回），load() 随后在检查点放弃。
+   * 单个插件关闭失败记 error 后继续关闭其余插件。返回时本宿主建立的连接都已关闭。
+   */
   async close(): Promise<void> {
-    await Promise.all(this.loaded.map((l) => l.close()));
+    this.closed = true;
+    this.abort.abort();
+    await this.migrating?.catch(() => {});
+    const pending = this.pending;
+    this.pending = undefined;
+    await pending?.close().catch((e: unknown) => {
+      this.deps.log.error("plugin close failed", { err: e });
+    });
+    while (this.loaded.length > 0) {
+      const l = this.loaded.pop() as Loaded;
+      const plugin = l.manifest.name;
+      try {
+        await l.close();
+        this.deps.log.info("plugin closed", { plugin });
+      } catch (e) {
+        this.deps.log.error("plugin close failed", { plugin, err: e });
+      }
+    }
   }
 }

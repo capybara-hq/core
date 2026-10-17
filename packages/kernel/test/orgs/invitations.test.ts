@@ -1,0 +1,319 @@
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { startTestPostgres } from "@capybara-hq/testing";
+import { sql } from "kysely";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { migrate } from "../../src/db/migrator.js";
+import { createDb } from "../../src/db/pool.js";
+import type { ApiError } from "../../src/errors.js";
+import { type Account, AccountsService } from "../../src/identity/accounts.js";
+import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { SettingsService } from "../../src/identity/settings.js";
+import { InvitationsService } from "../../src/orgs/invitations.service.js";
+import { MembersService } from "../../src/orgs/members.service.js";
+import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
+import type { OrgRole } from "../../src/orgs/roles.js";
+
+let pg: Awaited<ReturnType<typeof startTestPostgres>>;
+let raw: ReturnType<typeof createDb>;
+let raw2: ReturnType<typeof createDb>;
+let db: KernelDb;
+let db2: KernelDb;
+let accounts: AccountsService;
+let orgs: OrgsService;
+let members: MembersService;
+let inv: InvitationsService;
+/** 用另一个连接池构造的 InvitationsService，模拟另一个副本。 */
+let inv2: InvitationsService;
+let A: Account;
+let B: Account;
+let C: Account;
+let org: Org;
+
+const PW = "correct horse battery";
+
+beforeAll(async () => {
+  pg = await startTestPostgres();
+  await migrate(pg.url, {
+    schema: "capybara",
+    dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
+  });
+  raw = createDb(pg.url, 5);
+  raw2 = createDb(pg.url, 5);
+  db = kernelDb(raw);
+  db2 = kernelDb(raw2);
+  accounts = new AccountsService(db);
+  orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
+  members = new MembersService(db);
+  inv = new InvitationsService(db, accounts, members);
+  inv2 = new InvitationsService(db2, new AccountsService(db2), new MembersService(db2));
+}, 120_000);
+afterAll(async () => {
+  await raw.destroy();
+  await raw2.destroy();
+  await pg.stop();
+});
+beforeEach(async () => {
+  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  A = await accounts.createLocal({ login: "usera", password: PW, displayName: "A" });
+  B = await accounts.createLocal({ login: "userb", password: PW, displayName: "B" });
+  C = await accounts.createLocal({ login: "userc", password: PW, displayName: "C" });
+  org = await orgs.create({ name: "Acme", slug: "acme" }, A);
+});
+
+const codeOf = async (p: Promise<unknown>) => {
+  try {
+    await p;
+  } catch (e) {
+    return (e as ApiError).code;
+  }
+  return undefined;
+};
+
+async function roleOf(accountId: string): Promise<OrgRole | undefined> {
+  const r = await db
+    .selectFrom("memberships")
+    .select("role")
+    .where("org_id", "=", org.id)
+    .where("account_id", "=", accountId)
+    .executeTakeFirst();
+  return r?.role;
+}
+
+async function count(table: "accounts" | "memberships"): Promise<number> {
+  const r = await db
+    .selectFrom(table)
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .executeTakeFirstOrThrow();
+  return Number(r.n);
+}
+
+async function statusOf(id: string): Promise<string | undefined> {
+  return (await inv.list(org.id)).find((i) => i.id === id)?.status;
+}
+
+describe("InvitationsService.create / preview / list", () => {
+  it("创建后 preview 返回组织名与角色；库里只存令牌的 SHA-256；审计 org.invitation.created", async () => {
+    const { invitation, token } = await inv.create(org.id, { role: "member" }, A.id);
+    expect(token).toMatch(/^cap_inv_[A-Za-z0-9_-]{43}$/);
+    expect(invitation).toMatchObject({
+      orgId: org.id,
+      role: "member",
+      createdBy: A.id,
+      acceptedAt: null,
+      revokedAt: null,
+    });
+    const hours = (invitation.expiresAt.getTime() - invitation.createdAt.getTime()) / 3_600_000;
+    expect(Math.round(hours)).toBe(168);
+    const row = await db
+      .selectFrom("invitations")
+      .select("token_hash")
+      .where("id", "=", invitation.id)
+      .executeTakeFirstOrThrow();
+    expect(row.token_hash).toBe(createHash("sha256").update(token).digest("hex"));
+    const p = await inv.preview(token);
+    expect(p).toEqual({
+      org: { id: org.id, name: "Acme" },
+      role: "member",
+      expiresAt: invitation.expiresAt,
+    });
+    const ev = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "org.invitation.created")
+      .executeTakeFirstOrThrow();
+    expect(ev).toMatchObject({ org_id: org.id, actor_account_id: A.id, target: invitation.id });
+    expect(JSON.stringify(ev.detail)).not.toContain(token);
+  });
+
+  it("expiresInHours 生效；超出 1–720 → validation_failed", async () => {
+    const { invitation } = await inv.create(org.id, { role: "guest", expiresInHours: 2 }, A.id);
+    const hours = (invitation.expiresAt.getTime() - invitation.createdAt.getTime()) / 3_600_000;
+    expect(Math.round(hours)).toBe(2);
+    expect(await codeOf(inv.create(org.id, { role: "guest", expiresInHours: 0 }, A.id))).toBe(
+      "validation_failed",
+    );
+    expect(await codeOf(inv.create(org.id, { role: "guest", expiresInHours: 721 }, A.id))).toBe(
+      "validation_failed",
+    );
+  });
+
+  it("admin 邀 admin 成功；role=owner 被拒（validation_failed）", async () => {
+    await members.add(org.id, B.id, "admin", A.id);
+    const { invitation } = await inv.create(org.id, { role: "admin" }, B.id);
+    expect(invitation.role).toBe("admin");
+    expect(await codeOf(inv.create(org.id, { role: "owner" as "admin" }, B.id))).toBe(
+      "validation_failed",
+    );
+  });
+
+  it("发起人角色在事务内实时重读：member / 非成员 / 已被降级的 admin → forbidden", async () => {
+    await members.add(org.id, B.id, "member", A.id);
+    expect(await codeOf(inv.create(org.id, { role: "guest" }, B.id))).toBe("forbidden");
+    expect(await codeOf(inv.create(org.id, { role: "guest" }, C.id))).toBe("forbidden");
+    await members.add(org.id, C.id, "admin", A.id);
+    await members.changeRole(org.id, C.id, "member", A.id);
+    expect(await codeOf(inv.create(org.id, { role: "guest" }, C.id))).toBe("forbidden");
+  });
+
+  it("组织已软删除 → org.not_found", async () => {
+    await orgs.softDelete(org.id, A);
+    expect(await codeOf(inv.create(org.id, { role: "guest" }, A.id))).toBe("org.not_found");
+  });
+
+  it("list 给出各状态：pending / accepted / expired / revoked", async () => {
+    const p = await inv.create(org.id, { role: "guest" }, A.id);
+    const a = await inv.create(org.id, { role: "guest" }, A.id);
+    const e = await inv.create(org.id, { role: "guest" }, A.id);
+    const r = await inv.create(org.id, { role: "guest" }, A.id);
+    await inv.accept(a.token, { accountId: B.id });
+    await db
+      .updateTable("invitations")
+      .set({ expires_at: sql<Date>`now() - interval '1 hour'` })
+      .where("id", "=", e.invitation.id)
+      .execute();
+    await inv.revoke(org.id, r.invitation.id, A.id);
+    const list = await inv.list(org.id);
+    const byId = Object.fromEntries(list.map((i) => [i.id, i.status]));
+    expect(byId).toEqual({
+      [p.invitation.id]: "pending",
+      [a.invitation.id]: "accepted",
+      [e.invitation.id]: "expired",
+      [r.invitation.id]: "revoked",
+    });
+    expect(list[0]).not.toHaveProperty("tokenHash");
+  });
+});
+
+describe("InvitationsService.revoke", () => {
+  it("撤销后 preview / accept → invitation.invalid；审计 org.invitation.revoked", async () => {
+    const { invitation, token } = await inv.create(org.id, { role: "member" }, A.id);
+    await inv.revoke(org.id, invitation.id, A.id);
+    expect(await codeOf(inv.preview(token))).toBe("invitation.invalid");
+    expect(await codeOf(inv.accept(token, { accountId: B.id }))).toBe("invitation.invalid");
+    const ev = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "org.invitation.revoked")
+      .executeTakeFirstOrThrow();
+    expect(ev).toMatchObject({ org_id: org.id, actor_account_id: A.id, target: invitation.id });
+  });
+
+  it("不属于该组织 → invitation.invalid；发起人不是 admin → forbidden", async () => {
+    const other = await orgs.create({ name: "Other", slug: "other" }, B);
+    const { invitation } = await inv.create(org.id, { role: "member" }, A.id);
+    expect(await codeOf(inv.revoke(other.id, invitation.id, B.id))).toBe("invitation.invalid");
+    await members.add(org.id, C.id, "member", A.id);
+    expect(await codeOf(inv.revoke(org.id, invitation.id, C.id))).toBe("forbidden");
+    expect(await statusOf(invitation.id)).toBe("pending");
+  });
+});
+
+describe("InvitationsService.accept", () => {
+  it("已登录账号接受 → 成为对应角色的成员，状态 accepted；再接受 → invitation.used", async () => {
+    const { invitation, token } = await inv.create(org.id, { role: "admin" }, A.id);
+    const r = await inv.accept(token, { accountId: B.id });
+    expect(r).toMatchObject({ account: { id: B.id }, orgId: org.id, role: "admin" });
+    expect(await roleOf(B.id)).toBe("admin");
+    expect(await statusOf(invitation.id)).toBe("accepted");
+    const row = await db
+      .selectFrom("invitations")
+      .select("accepted_by")
+      .where("id", "=", invitation.id)
+      .executeTakeFirstOrThrow();
+    expect(row.accepted_by).toBe(B.id);
+    expect(await codeOf(inv.accept(token, { accountId: C.id }))).toBe("invitation.used");
+    expect(await codeOf(inv.preview(token))).toBe("invitation.used");
+    expect(await roleOf(C.id)).toBeUndefined();
+    const ev = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "org.invitation.accepted")
+      .executeTakeFirstOrThrow();
+    expect(ev).toMatchObject({ org_id: org.id, actor_account_id: B.id, target: invitation.id });
+  });
+
+  it("signup 接受 → 新账号可用新密码登录并成为成员", async () => {
+    const { token } = await inv.create(org.id, { role: "member" }, A.id);
+    const r = await inv.accept(token, {
+      signup: { login: "newbie", password: "a brand new pass", displayName: "Newbie" },
+    });
+    expect(r.account.displayName).toBe("Newbie");
+    expect(r.role).toBe("member");
+    const authed = await accounts.authenticateLocal("newbie", "a brand new pass");
+    expect(authed?.id).toBe(r.account.id);
+    expect(await roleOf(r.account.id)).toBe("member");
+  });
+
+  it("signup 登录名已占用 → account.login_taken 且邀请未消耗；换登录名后仍可接受", async () => {
+    const { invitation, token } = await inv.create(org.id, { role: "member" }, A.id);
+    const before = await count("accounts");
+    expect(
+      await codeOf(
+        inv.accept(token, { signup: { login: "userb", password: PW, displayName: "X" } }),
+      ),
+    ).toBe("account.login_taken");
+    expect(await count("accounts")).toBe(before);
+    expect(await statusOf(invitation.id)).toBe("pending");
+    const r = await inv.accept(token, {
+      signup: { login: "userx", password: PW, displayName: "X" },
+    });
+    expect(await roleOf(r.account.id)).toBe("member");
+  });
+
+  it("过期 → invitation.expired；随机令牌 → invitation.invalid", async () => {
+    const { invitation, token } = await inv.create(org.id, { role: "member" }, A.id);
+    await db
+      .updateTable("invitations")
+      .set({ expires_at: sql<Date>`now() - interval '1 second'` })
+      .where("id", "=", invitation.id)
+      .execute();
+    expect(await codeOf(inv.preview(token))).toBe("invitation.expired");
+    expect(await codeOf(inv.accept(token, { accountId: B.id }))).toBe("invitation.expired");
+    expect(await roleOf(B.id)).toBeUndefined();
+    expect(await codeOf(inv.preview("cap_inv_nope"))).toBe("invitation.invalid");
+    expect(await codeOf(inv.accept("cap_inv_nope", { accountId: B.id }))).toBe(
+      "invitation.invalid",
+    );
+  });
+
+  it("组织软删除后 → invitation.invalid", async () => {
+    const { token } = await inv.create(org.id, { role: "member" }, A.id);
+    await orgs.softDelete(org.id, A);
+    expect(await codeOf(inv.preview(token))).toBe("invitation.invalid");
+    expect(await codeOf(inv.accept(token, { accountId: B.id }))).toBe("invitation.invalid");
+  });
+
+  it("已是成员的账号接受 → member.already_exists，邀请仍为 pending", async () => {
+    const { invitation, token } = await inv.create(org.id, { role: "admin" }, A.id);
+    await members.add(org.id, B.id, "guest", A.id);
+    expect(await codeOf(inv.accept(token, { accountId: B.id }))).toBe("member.already_exists");
+    expect(await statusOf(invitation.id)).toBe("pending");
+    expect(await roleOf(B.id)).toBe("guest");
+  });
+
+  it("并发：两个账号同时接受同一邀请（两个独立连接池）→ 恰好一个成功、一个 invitation.used", async () => {
+    const { token } = await inv.create(org.id, { role: "member" }, A.id);
+    const before = await count("memberships");
+    const codes = await Promise.all([
+      codeOf(inv.accept(token, { accountId: B.id })),
+      codeOf(inv2.accept(token, { accountId: C.id })),
+    ]);
+    expect(codes.sort()).toEqual([undefined, "invitation.used"].sort());
+    expect(await count("memberships")).toBe(before + 1);
+  });
+
+  it("并发 signup：恰好一个成功；失败方的账号不残留", async () => {
+    const { token } = await inv.create(org.id, { role: "member" }, A.id);
+    const accBefore = await count("accounts");
+    const memBefore = await count("memberships");
+    const codes = await Promise.all([
+      codeOf(inv.accept(token, { signup: { login: "signup1", password: PW, displayName: "S1" } })),
+      codeOf(inv2.accept(token, { signup: { login: "signup2", password: PW, displayName: "S2" } })),
+    ]);
+    expect(codes.sort()).toEqual([undefined, "invitation.used"].sort());
+    expect(await count("accounts")).toBe(accBefore + 1);
+    expect(await count("memberships")).toBe(memBefore + 1);
+  });
+});

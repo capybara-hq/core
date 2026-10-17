@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { changedPaths, configFields, secretValues } from "../../src/config/fields.js";
+import {
+  changedPaths,
+  configFields,
+  secretValues,
+  unreachableSecrets,
+} from "../../src/config/fields.js";
 import { resolveConfig } from "../../src/config/load.js";
 import { KernelConfigSchema, meta } from "../../src/config/schema.js";
 
@@ -67,7 +72,7 @@ describe("changedPaths / secretValues", () => {
     masterKey,
   });
   it("列出变化的叶子点路径", () => {
-    const next = { ...base, http: { port: 1 }, log: { level: "debug" } };
+    const next = { ...base, http: { ...base.http, port: 1 }, log: { level: "debug" } };
     expect(changedPaths(KernelConfigSchema, base, next).sort()).toEqual(["http.port", "log.level"]);
   });
   it("收集 secret 字段的值（数组展开）", () => {
@@ -90,5 +95,51 @@ describe("resolveConfig", () => {
   it("非法时抛 ConfigError 并列出路径", () => {
     expect(() => resolveConfig({ masterKey: "x" }, {})).toThrow(/masterKey/);
     expect(() => resolveConfig([], {})).toThrow(/mapping/);
+  });
+});
+
+describe("unreachableSecrets", () => {
+  const sec = <T extends z.ZodType>(s: T): T => s.meta({ secret: true }) as T;
+
+  it("对象路径上的 secret（含包装、整对象标 secret）可达", () => {
+    const shared = sec(z.string());
+    const schema = z.object({
+      a: sec(z.string()).optional(),
+      b: z.object({ c: shared.default("x") }).prefault({}),
+      d: sec(z.object({ e: z.string(), f: z.array(z.string()) })),
+      g: sec(z.array(z.string())),
+    });
+    expect(unreachableSecrets(schema)).toEqual([]);
+  });
+
+  it("union / intersection / pipe / lazy / array / record / tuple 内的 secret 不可达", () => {
+    const shared = sec(z.string());
+    const schema = z.object({
+      u: z.union([z.string(), z.object({ k: sec(z.string()) })]),
+      i: z.intersection(z.object({ x: z.string() }), z.object({ k: sec(z.string()) })),
+      p: z.object({ k: sec(z.string()) }).transform((v) => v),
+      l: z.lazy(() => z.object({ k: sec(z.string()) })),
+      a: z.array(z.object({ k: sec(z.string()) })),
+      r: z.record(z.string(), sec(z.string())),
+      t: z.tuple([z.string(), sec(z.string())]),
+      ok: shared,
+      reused: z.array(shared),
+    });
+    expect(unreachableSecrets(schema)).toEqual([
+      "u<union#1>.k",
+      "i<intersection:right>.k",
+      "p<pipe:in>.k",
+      "l<lazy>.k",
+      "a[].k",
+      "r<record:value>",
+      "t[1]",
+      "reused[]",
+    ]);
+  });
+
+  it("lazy 自引用不死循环", () => {
+    type Node = { child?: Node | undefined };
+    const node: z.ZodType<Node> = z.lazy(() => z.object({ child: node.optional() }));
+    expect(unreachableSecrets(z.object({ tree: node }))).toEqual([]);
   });
 });

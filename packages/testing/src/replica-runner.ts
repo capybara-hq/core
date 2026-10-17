@@ -9,15 +9,33 @@ interface RunnerConfig {
   resolveFrom: string;
   pluginConfig: Record<string, unknown>;
   roles: string[];
+  /** 调用方传入的额外配置，深合并在基础配置之上。 */
+  overrides: Record<string, unknown>;
 }
 
 type Incoming = { type: "start"; config: RunnerConfig } | { type: "stop" };
 
 let kernel: Kernel | undefined;
 
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** 深合并：普通对象逐键递归，其余（含数组）由 `over` 整体替换。 */
+function deepMerge(
+  base: Record<string, unknown>,
+  over: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(over)) {
+    const b = out[k];
+    out[k] = isPlainObject(b) && isPlainObject(v) ? deepMerge(b, v) : v;
+  }
+  return out;
+}
+
 /** 启动内核并回报实际监听端口。 */
 async function startKernel(c: RunnerConfig): Promise<void> {
-  const config = KernelConfigSchema.parse({
+  const base = {
     db: { url: c.dbUrl, poolMax: 3 },
     redis: { url: c.redisUrl },
     masterKey: c.masterKey,
@@ -26,7 +44,8 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     plugins: c.plugins,
     pluginConfig: c.pluginConfig,
     log: { level: "error" },
-  });
+  };
+  const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));
   kernel = await createKernel(config, { resolveFrom: c.resolveFrom });
   await kernel.start();
   process.send?.({ type: "ready", port: kernel.port });

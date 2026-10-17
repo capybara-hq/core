@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { sql } from "kysely";
+import pgLib from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -162,5 +163,33 @@ describe("createDb", () => {
     await new Promise((r) => setTimeout(r, 500));
     expect(errors.length).toBeGreaterThan(0);
     expect((await sql<{ x: number }>`select 1 as x`.execute(d)).rows[0]?.x).toBe(1);
+  });
+
+  it("abort during the file-reading phase rejects promptly and leaves no backend", async () => {
+    const schema = schemaName();
+    const dir = await fixture({ "0001_a.sql": "create table if not exists ab_t (id int);" });
+    // 另一条连接持有该 schema 的迁移锁：漏掉中止的迁移会连上并永远阻塞在取锁上
+    const holder = new pgLib.Client({ connectionString: pg.url });
+    await holder.connect();
+    try {
+      await holder.query("select pg_advisory_lock(hashtext($1))", [`capybara-migrate:${schema}`]);
+      const ac = new AbortController();
+      const p = migrate(pg.url, { schema, dir }, { signal: ac.signal });
+      ac.abort(); // 同步中止：此时 migrate 还在读目录、尚未连接
+      const outcome = await Promise.race([
+        p.then(
+          () => "resolved",
+          (e: Error) => e.message,
+        ),
+        new Promise<string>((r) => setTimeout(() => r("timeout"), 2_000)),
+      ]);
+      expect(outcome).toMatch(/aborted/);
+      const waiting = await holder.query<{ n: number }>(
+        "select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted",
+      );
+      expect(waiting.rows[0]?.n).toBe(0);
+    } finally {
+      await holder.end();
+    }
   });
 });

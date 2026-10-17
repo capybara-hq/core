@@ -8,14 +8,17 @@
     "node": ">=24"
   },
   "bin": {
-    "capybara": "./src/cli.ts"
+    "capybara": "./bin/capybara.mjs"
   },
   "scripts": {
-    "start": "tsx --conditions=@capybara-hq/source src/cli.ts start",
-    "migrate": "tsx --conditions=@capybara-hq/source src/cli.ts migrate"
+    "start": "node bin/capybara.mjs start",
+    "migrate": "node bin/capybara.mjs migrate"
   },
   "dependencies": {
     "@capybara-hq/kernel": "workspace:*",
     "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@capybara-hq/testing": "workspace:*"
   }
 }

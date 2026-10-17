@@ -15,6 +15,9 @@
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
   "linter": { "enabled": true, "rules": { "recommended": true } },
-  "javascript": { "formatter": { "quoteStyle": "double" } },
+  "javascript": {
+    "formatter": { "quoteStyle": "double" },
+    "parser": { "unsafeParameterDecoratorsEnabled": true }
+  },
   "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } }
 }

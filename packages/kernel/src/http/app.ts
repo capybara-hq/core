@@ -1,44 +1,116 @@
+import "reflect-metadata";
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { type ErrorHandler, Hono } from "hono";
+import fastifyCookie from "@fastify/cookie";
+import { type DynamicModule, Module } from "@nestjs/common";
+import { APP_FILTER, NestFactory } from "@nestjs/core";
+import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
+import type { InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
+import { ErrorFilter } from "./error.filter.js";
+import { HealthController, type HealthOptions } from "./health.controller.js";
+import { NestLogAdapter } from "./nest-logger.js";
+import {
+  createPluginRouter,
+  type PluginRouter,
+  registerPluginDispatch,
+} from "./plugin-dispatch.js";
+import { HEALTH_OPTIONS, KERNEL_LOG } from "./tokens.js";
 
-const PLUGIN_PREFIX = "/plugins/";
+export type { HealthOptions } from "./health.controller.js";
 
-/** 内核 HTTP 应用：健康检查由调用方挂载；插件路由在插件加载后通过 `mountPlugins` 一次性挂上。 */
-export interface KernelApp {
-  app: Hono;
-  /** 挂载插件路由；路径必须以 `/plugins/` 开头（ctx.http.route 已加 `/plugins/<name>` 前缀）。只能调用一次。 */
+/** 内核 HTTP 的只读视图：进程内注入请求与列出路由（测试与元测试用）。 */
+export interface KernelHttp {
+  inject(opts: InjectOptions): Promise<LightMyRequestResponse>;
+  /** 已注册的全部路由（Fastify onRoute 收集），供元测试遍历。 */
+  routes(): { method: string; url: string }[];
+}
+
+/** 内核 HTTP 应用。 */
+export interface KernelHttpApp extends KernelHttp {
+  /** 挂载插件路由；路径必须以 `/plugins/` 开头。只能调用一次。 */
   mountPlugins(routes: Route[]): void;
+  /** 监听 0.0.0.0，返回实际端口。 */
+  listen(port: number): Promise<number>;
+  close(): Promise<void>;
+  /** 强制断开所有连接（含进行中的请求）；停机时 `close()` 超时后调用。 */
+  closeAllConnections(): void;
+}
+
+export interface CreateHttpAppOptions {
+  log: Logger;
+  health: HealthOptions;
+  /** 是否提供内核 API（`apiModule`）。 */
+  serveApi: boolean;
+  /** 是否转发 `/plugins/*` 到插件路由。 */
+  servePlugins: boolean;
+  apiModule?: DynamicModule;
+  /** 信任哪些代理跳：false、跳数，或受信代理 IP / CIDR 列表（见 `http.trustProxy` 配置）。 */
+  trustProxy?: boolean | number | string[];
 }
 
 /**
- * 创建 Hono 应用。插件路由放在独立的子应用里，由 `/plugins/*` 统一转发：
- * 子应用之外不存在任何插件路径，所以插件无法注册前缀以外的路径；
- * 插件加载前 `/plugins/*` 一律 404。handler 抛错记日志并返回 500（不回显错误信息）。
+ * 把 `http.trustProxy` 配置转成 Fastify 的 trustProxy。布尔与 IP / CIDR 列表原样传入；
+ * 跳数转成 `(addr, hop) => hop < n`：Fastify 5.12 起对 number 一律 fail closed（不信任任何一跳），
+ * 所以由这里实现跳数语义——前提是服务只能经由这 n 层代理访问（配置说明里已写明，并推荐 CIDR 列表）。
  */
-export function createApp(log: Logger): KernelApp {
-  const app = new Hono();
-  let plugins: Hono | undefined;
-  const onError: ErrorHandler = (err, c) => {
-    log.error("http handler failed", { path: c.req.path, err });
-    return c.json({ error: "internal error" }, 500);
+function fastifyTrustProxy(
+  tp: boolean | number | string[],
+): boolean | string[] | ((addr: string, hop: number) => boolean) {
+  return typeof tp === "number" ? (_addr, hop) => hop < tp : tp;
+}
+
+/** 根模块：总是含健康检查；`serveApi` 时 import `apiModule`；全局错误过滤器。 */
+function rootModule(opts: CreateHttpAppOptions): DynamicModule {
+  @Module({})
+  class RootModule {}
+  return {
+    module: RootModule,
+    imports: opts.serveApi && opts.apiModule ? [opts.apiModule] : [],
+    controllers: [HealthController],
+    providers: [
+      { provide: KERNEL_LOG, useValue: opts.log },
+      { provide: HEALTH_OPTIONS, useValue: opts.health },
+      { provide: APP_FILTER, useClass: ErrorFilter },
+    ],
   };
-  app.onError(onError);
-  app.all(`${PLUGIN_PREFIX}*`, (c) => (plugins ? plugins.fetch(c.req.raw) : c.notFound()));
+}
+
+/**
+ * 创建并初始化内核 HTTP 应用（NestJS + Fastify），不连接任何外部资源。
+ * 插件路由不经过 Nest：在 Fastify 的独立作用域里统一转发 `/plugins/*`（见 plugin-dispatch.ts）；
+ * 插件加载前 `/plugins/*` 一律 404。未匹配的内核路由同样返回 404 错误信封。
+ */
+export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelHttpApp> {
+  const app = await NestFactory.create<NestFastifyApplication>(
+    rootModule(opts),
+    new FastifyAdapter({ trustProxy: fastifyTrustProxy(opts.trustProxy ?? false) }),
+    { logger: new NestLogAdapter(opts.log), abortOnError: false },
+  );
+  // Cookie 解析（会话 Cookie）；必须在 init 之前注册
+  await app.register(fastifyCookie);
+  const fastify = app.getHttpAdapter().getInstance();
+  const routes: { method: string; url: string }[] = [];
+  fastify.addHook("onRoute", (r) => {
+    for (const method of [r.method].flat()) routes.push({ method, url: r.url });
+  });
+
+  let router: PluginRouter | undefined;
+  if (opts.servePlugins) await registerPluginDispatch(fastify, () => router, opts.log);
+  await app.init();
 
   return {
-    app,
-    mountPlugins(routes) {
-      if (plugins) throw new Error("plugin routes already mounted");
-      const sub = new Hono();
-      sub.onError(onError);
-      for (const r of routes) {
-        if (!r.path.startsWith(PLUGIN_PREFIX)) {
-          throw new Error(`plugin route ${r.method} ${r.path} is outside ${PLUGIN_PREFIX}`);
-        }
-        sub.on(r.method, r.path, (c) => r.handler(c.req.raw));
-      }
-      plugins = sub;
+    inject: (o) => fastify.inject(o),
+    routes: () => [...routes],
+    mountPlugins(pluginRoutes) {
+      if (router) throw new Error("plugin routes already mounted");
+      router = createPluginRouter(pluginRoutes);
     },
+    async listen(port) {
+      await app.listen(port, "0.0.0.0");
+      const addr = fastify.server.address();
+      return addr && typeof addr === "object" ? addr.port : port;
+    },
+    close: () => app.close(),
+    closeAllConnections: () => fastify.server.closeAllConnections(),
   };
 }

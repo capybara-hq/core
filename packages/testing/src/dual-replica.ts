@@ -23,6 +23,11 @@ export interface DualReplicaOptions {
    * 传入时不做隔离，调用方须保证同一 Redis 不被多个同时存活的 harness 共用。
    */
   redisUrl?: string;
+  /**
+   * 额外的内核配置，深合并进副本配置（如 `{ auth: { cookieSecure: false, setupToken: "…" } }`）。
+   * 与 harness 自身设定的键冲突时以这里为准（数组整体替换）。经 IPC 传给副本，不进 argv / env。
+   */
+  config?: Record<string, unknown>;
 }
 
 /** 一个副本（独立子进程）的句柄。 */
@@ -94,12 +99,28 @@ export function runnerArgv(runnerPath: string): string[] {
     : [runnerPath];
 }
 
+/** 仓库根的 tsconfig.base.json（仅 monorepo 源码态存在）。 */
+const REPO_TSCONFIG = fileURLToPath(new URL("../../../tsconfig.base.json", import.meta.url));
+
+/**
+ * 子进程的环境变量。`.ts` 的 runner 额外设置 `TSX_TSCONFIG_PATH` 指向仓库的 tsconfig.base.json：
+ * tsx 只认子进程 cwd 下（且 include 覆盖到的）tsconfig，否则内核源码丢掉 experimentalDecorators，
+ * Nest 装饰器无法编译。编译后的 `.js` runner 不经 tsx，环境原样传入。
+ */
+export function runnerEnv(
+  runnerPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return runnerPath.endsWith(".ts") ? { ...env, TSX_TSCONFIG_PATH: REPO_TSCONFIG } : env;
+}
+
 /** 启动一个副本子进程，等它通过 IPC 报告 ready。失败时抛出带 输出尾部的错误（不含配置）。 */
 async function startReplica(
   config: Record<string, unknown>,
 ): Promise<{ runner: Runner; port: number }> {
   const child = spawn(process.execPath, runnerArgv(runnerPath), {
     stdio: ["ignore", "pipe", "pipe", "ipc"],
+    env: runnerEnv(runnerPath),
     cwd: fileURLToPath(new URL("..", import.meta.url)),
   });
   let tail = "";
@@ -204,6 +225,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       resolveFrom: resolve(opts.resolveFrom ?? process.cwd()),
       pluginConfig: opts.pluginConfig ?? {},
       roles: ["api", "worker", "gateway"],
+      overrides: opts.config ?? {},
     };
 
     const started = await Promise.allSettled([startReplica(config), startReplica(config)]);

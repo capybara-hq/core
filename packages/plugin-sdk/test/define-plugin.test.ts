@@ -33,6 +33,10 @@ describe("definePlugin", () => {
     expect(() => definePlugin(valid({ name: "Bad_Name" }))).toThrow(/name/);
     expect(() => definePlugin(valid({ name: "Bad_Name" }))).toThrow(PluginManifestError);
   });
+  it("rejects the reserved name kernel", () => {
+    expect(() => definePlugin(valid({ name: "kernel" }))).toThrow(/reserved/);
+    expect(() => definePlugin(valid({ name: "kernel" }))).toThrow(PluginManifestError);
+  });
   it("rejects unregistered capability", () => {
     expect(() => definePlugin(valid({ provides: ["nope@1"] }))).toThrow(/nope/);
   });

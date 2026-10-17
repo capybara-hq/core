@@ -100,12 +100,12 @@ describe("HTTP 健康检查", () => {
   it("/healthz 200；/readyz 200 且标出 pg / redis 正常，且不泄漏连接串", async () => {
     const k = await kernel(cfg());
     await k.start();
-    const h = await k.app.request("/healthz");
-    expect(h.status).toBe(200);
-    expect(await h.json()).toEqual({ ok: true });
-    const r = await k.app.request("/readyz");
-    expect(r.status).toBe(200);
-    const text = await r.text();
+    const h = await k.http.inject({ method: "GET", url: "/healthz" });
+    expect(h.statusCode).toBe(200);
+    expect(h.json()).toEqual({ ok: true });
+    const r = await k.http.inject({ method: "GET", url: "/readyz" });
+    expect(r.statusCode).toBe(200);
+    const text = r.body;
     expect(JSON.parse(text)).toMatchObject({ pg: "ok", redis: "ok" });
     expect(text).not.toContain(pgc.url);
     expect(text).not.toContain("postgres://");
@@ -133,11 +133,11 @@ describe("HTTP 健康检查", () => {
     });
     try {
       await k.start();
-      expect((await k.app.request("/readyz")).status).toBe(200);
+      expect((await k.http.inject({ method: "GET", url: "/readyz" })).statusCode).toBe(200);
       await own.stop();
-      const r = await k.app.request("/readyz");
-      expect(r.status).toBe(503);
-      expect(await r.json()).toMatchObject({ pg: "ok", redis: "error" });
+      const r = await k.http.inject({ method: "GET", url: "/readyz" });
+      expect(r.statusCode).toBe(503);
+      expect(r.json()).toMatchObject({ pg: "ok", redis: "error" });
     } finally {
       await k.stop();
     }
@@ -146,12 +146,13 @@ describe("HTTP 健康检查", () => {
   it("stop() 后 /readyz 立即 503", async () => {
     const k = await kernel(cfg());
     await k.start();
-    expect((await k.app.request("/readyz")).status).toBe(200);
+    expect((await k.http.inject({ method: "GET", url: "/readyz" })).statusCode).toBe(200);
     const stopping = k.stop();
-    const r = await k.app.request("/readyz");
-    expect(r.status).toBe(503);
+    const r = await k.http.inject({ method: "GET", url: "/readyz" });
+    expect(r.statusCode).toBe(503);
     await stopping;
-    expect((await k.app.request("/readyz")).status).toBe(503);
+    // 停机完成后 HTTP 应用已关闭，不再接受请求（进程内注入同样拒绝）
+    await expect(k.http.inject({ method: "GET", url: "/readyz" })).rejects.toThrow();
     await k.stop(); // 幂等
   });
 });
@@ -160,11 +161,13 @@ describe("插件路由", () => {
   it("挂在 /plugins/<name>/* 下，直接访问插件路径 404", async () => {
     const k = await kernel(cfg({ plugins: [fx("fixture")] }));
     await k.start();
-    const r = await k.app.request("/plugins/fixture/hello");
-    expect(r.status).toBe(200);
-    expect(await r.text()).toBe("hello");
-    expect((await k.app.request("/hello")).status).toBe(404);
-    expect((await k.app.request("/plugins/fixture/nope")).status).toBe(404);
+    const r = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toBe("hello");
+    expect((await k.http.inject({ method: "GET", url: "/hello" })).statusCode).toBe(404);
+    expect((await k.http.inject({ method: "GET", url: "/plugins/fixture/nope" })).statusCode).toBe(
+      404,
+    );
   });
 });
 
@@ -200,12 +203,13 @@ describe("配置热更新", () => {
 });
 
 describe("角色", () => {
-  it("roles: [worker] 时不监听端口，但队列 handler 能执行", async () => {
+  it("roles: [worker] 时只暴露健康端点（不转发插件路由），队列 handler 能执行", async () => {
     const port = await freePort();
     const k = await kernel(cfg({ roles: ["worker"], http: { port }, plugins: [fx("jobber")] }));
     await k.start();
-    expect(k.port).toBeUndefined();
-    expect(await canConnect(port)).toBe(false);
+    expect(k.port).toBe(port);
+    expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
+    expect((await fetch(`http://127.0.0.1:${port}/plugins/jobber/x`)).status).toBe(404);
     const r = new Redis(rd.url);
     try {
       let done: string | null = null;

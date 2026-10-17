@@ -8,7 +8,7 @@ export { ConfigError, type ConfigSource };
 
 /** 按 `CAPYBARA_CONFIG_SOURCE` 选择配置来源，默认 `file`。 */
 export function selectConfigSource(env: NodeJS.ProcessEnv): ConfigSource {
-  const kind = env.CAPYBARA_CONFIG_SOURCE ?? "file";
+  const kind = env.CAPYBARA_CONFIG_SOURCE || "file";
   switch (kind) {
     case "file":
       return fileSource(env.CAPYBARA_CONFIG_FILE);

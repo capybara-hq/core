@@ -1,6 +1,6 @@
-#!/usr/bin/env -S tsx --conditions=@capybara-hq/source
 import { createLogger } from "@capybara-hq/kernel";
 import { parseCli, USAGE, UsageError } from "./args.js";
+import { runAdminCreate } from "./commands/admin-create.js";
 import { runMigrate } from "./commands/migrate.js";
 import { runStart } from "./commands/start.js";
 
@@ -30,6 +30,16 @@ async function main(argv: string[]): Promise<number | undefined> {
       return 0;
     case "migrate":
       return runMigrate(log, process.env);
+    case "admin-create":
+      return runAdminCreate(
+        {
+          login: cmd.login,
+          displayName: cmd.displayName,
+          ...(cmd.email !== undefined && { email: cmd.email }),
+        },
+        log,
+        process.env,
+      );
     case "start":
       return runStart(cmd.roles ? { roles: cmd.roles } : {}, log, process.env);
   }

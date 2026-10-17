@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2023"],
     "strict": true,
+    "experimentalDecorators": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,

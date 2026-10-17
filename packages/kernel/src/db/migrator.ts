@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
+import { KERNEL_APPLICATION_NAME } from "./pool.js";
 
 const FILE_RE = /^\d{4}_[a-z0-9_]+\.sql$/;
 
@@ -19,12 +20,19 @@ const num = (name: string) => Number.parseInt(name.slice(0, 4), 10);
  * 使用独立的 pg.Client（不走连接池），在该会话上持有 advisory lock（按 schema 名哈希）；
  * 结束时无论成败都 end() 会话，会话结束即释放锁，不会把持锁连接还给连接池。
  * 执行前先校验已应用文件的 checksum 与编号顺序；每个文件在独立事务中执行。
+ * `opts.connectTimeoutMs` 为建立连接的超时（不设则 pg 无限等待）。
+ * `opts.signal` 中止时结束会话：先从另一条连接 `pg_terminate_backend` 迁移会话的后端（后端阻塞在
+ * advisory lock 或长语句上时不会读到客户端的断开，只 end() 会一直占着连接），再 end()；迁移以
+ * `aborted` 失败。返回（或抛出）时会话与用于终止的连接都已结束。
  */
 export async function migrate(
   connectionString: string,
   owner: MigrationOwner,
+  opts: { connectTimeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<{ applied: string[] }> {
   const { schema, dir } = owner;
+  const { signal } = opts;
+  if (signal?.aborted) throw new Error(`Migration ${schema} aborted`);
   const names = (await readdir(dir)).filter((f) => FILE_RE.test(f)).sort();
   const files = await Promise.all(
     names.map(async (name) => {
@@ -33,11 +41,51 @@ export async function migrate(
     }),
   );
   const table = `${ident(schema)}._migrations`;
+  // 读文件期间可能已中止（AbortSignal 不会对之后才挂上的监听器补发 abort）：连接前再查一次。
+  // 从这里到 client.connect() 之间没有 await，监听器挂上前不会错过中止。
+  if (signal?.aborted) throw new Error(`Migration ${schema} aborted`);
 
-  const client = new pg.Client({ connectionString });
-  client.on("error", () => {});
-  await client.connect();
+  const newClient = () => {
+    const c = new pg.Client({
+      connectionString,
+      application_name: KERNEL_APPLICATION_NAME,
+      ...(opts.connectTimeoutMs !== undefined && {
+        connectionTimeoutMillis: opts.connectTimeoutMs,
+      }),
+    });
+    c.on("error", () => {});
+    return c;
+  };
+  const client = newClient();
+  let ending: Promise<void> | undefined;
+  const end = () => {
+    ending ??= client.end().catch(() => {});
+    return ending;
+  };
+  /** 从独立连接终止迁移会话的后端，再结束本地会话。 */
+  const terminate = async (): Promise<void> => {
+    // pg.Client 在握手时记录后端 pid（BackendKeyData），类型定义未暴露
+    const pid = (client as unknown as { processID: number | null }).processID;
+    if (pid) {
+      const killer = newClient();
+      try {
+        await killer.connect();
+        await killer.query("select pg_terminate_backend($1)", [pid]);
+      } catch {
+        // 尽力而为：终止失败时仍会 end() 本地会话
+      } finally {
+        await killer.end().catch(() => {});
+      }
+    }
+    await end();
+  };
+  let aborting: Promise<void> | undefined;
+  const onAbort = () => {
+    aborting ??= terminate();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    await client.connect();
     await client.query("select pg_advisory_lock(hashtext($1))", [`capybara-migrate:${schema}`]);
     await client.query(`create schema if not exists ${ident(schema)}`);
     await client.query(`create table if not exists ${table} (
@@ -87,7 +135,12 @@ export async function migrate(
       applied.push(f.name);
     }
     return { applied };
+  } catch (e) {
+    if (signal?.aborted) throw new Error(`Migration ${schema} aborted`, { cause: e });
+    throw e;
   } finally {
-    await client.end().catch(() => {});
+    signal?.removeEventListener("abort", onAbort);
+    await aborting;
+    await end();
   }
 }
