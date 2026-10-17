@@ -8,7 +8,7 @@ export interface FakeRequest {
 }
 
 export type FakeResponse =
-  | { status: number; json: unknown }
+  | { status: number; json: unknown; headers?: Record<string, string> }
   | { status: 200; sse: { event?: string; data: string }[]; delayMs?: number }
   | { stall: true };
 
@@ -54,7 +54,7 @@ export async function startFakeModelServer(
         return;
       }
       if ("json" in out) {
-        res.writeHead(out.status, { "content-type": "application/json" });
+        res.writeHead(out.status, { ...out.headers, "content-type": "application/json" });
         res.end(JSON.stringify(out.json));
         return;
       }

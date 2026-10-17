@@ -17,6 +17,9 @@
       "path": "plugins/model-fake"
     },
     {
+      "path": "plugins/anthropic"
+    },
+    {
       "path": "tools/checks"
     },
     {

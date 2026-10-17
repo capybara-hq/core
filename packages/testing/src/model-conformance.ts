@@ -146,8 +146,10 @@ export function describeModelProviderConformance(
 
     it("usage", async () => {
       const { done } = await collect(t.provider, base());
-      expect(done.usage.inputTokens).toBeGreaterThan(0);
-      expect(done.usage.outputTokens).toBeGreaterThan(0);
+      // inputTokens 只是未缓存部分：缓存命中时可能为 0，所以看三类输入之和
+      const u = done.usage;
+      expect(u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens).toBeGreaterThan(0);
+      expect(u.outputTokens).toBeGreaterThan(0);
     });
 
     it("mid-conversation system", async () => {

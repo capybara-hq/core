@@ -53,6 +53,26 @@ curl -s localhost:8080/api/v1/setup                          # {"needsSetup":fal
 
 用完：`docker compose -f docker/compose.dev.yaml down`（加 `-v` 同时清掉数据卷）。
 
+### 模型供应商插件
+
+| 插件 | 说明 |
+|---|---|
+| `@capybara-hq/plugin-model-fake` | 确定性脚本化模型，用于测试与无密钥演示 |
+| `@capybara-hq/plugin-anthropic` | Anthropic（官方 SDK + 原生 Messages API） |
+
+`anthropic` 的部署级配置示例：
+
+```bash
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-anthropic"]'
+export CAPYBARA_PLUGIN_CONFIG='{"anthropic":{"apiKey":"sk-ant-...","models":["claude-opus-5-5","claude-sonnet-5-5","claude-haiku-5-5"],"serverFallbacks":"default"}}'
+# 或逐字段：CAPYBARA_PLUGIN_CONFIG__ANTHROPIC__API_KEY=sk-ant-...
+```
+
+- `apiKey`（必填，密钥字段，日志自动打码）；`baseUrl`（可选，网关或测试夹具地址）。
+- `models`：允许的模型 id，默认 `["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]`；模型信息经 Models API 获取并在 kv 缓存 1 小时。
+- `serverFallbacks`：`default`（默认）时，对 Claude Opus 5.5 / Opus 5 / Fable 5.1 / Sonnet 5.5 开启服务端拒答兜底（beta `server-side-fallback-2026-07-01`，仅 Claude API）；`off` 关闭。
+- SDK 不做重试（`maxRetries: 0`），重试由内核统一处理。
+
 `example-counter` 是写插件的参考实现；写自己的插件见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，配置项清单见 [docs/config.md](docs/config.md)。
 
 ## 开发

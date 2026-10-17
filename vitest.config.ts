@@ -10,5 +10,9 @@ export default defineConfig({
   test: {
     include: ["{packages,apps,plugins,tools}/*/test/**/*.test.ts"],
     hookTimeout: 120_000,
+    // 上面的 "module" 条件会让外部化依赖 @opentelemetry/api（@anthropic-ai/sdk 的依赖）解析到
+    // 无扩展名导入的 esm 构建，Node 原生加载失败；把这两个包交给 Vite 转换。
+    // 生产运行时 Node 不用 "module" 条件，不受影响。
+    server: { deps: { inline: ["@anthropic-ai/sdk", "@opentelemetry/api"] } },
   },
 });

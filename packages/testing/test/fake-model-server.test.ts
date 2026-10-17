@@ -41,6 +41,17 @@ describe("startFakeModelServer", () => {
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ err: 1 });
   });
+  it("json response carries optional extra headers", async () => {
+    const s = await startFakeModelServer(() => ({
+      status: 429,
+      json: { err: 1 },
+      headers: { "retry-after": "7" },
+    }));
+    stop = s.stop;
+    const res = await fetch(`${s.url}/z`, { method: "POST", body: "{}" });
+    expect(res.headers.get("retry-after")).toBe("7");
+    expect(res.headers.get("content-type")).toBe("application/json");
+  });
   it("stall sends headers only", async () => {
     const s = await startFakeModelServer(() => ({ stall: true }));
     stop = s.stop;
