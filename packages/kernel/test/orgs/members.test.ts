@@ -1,0 +1,260 @@
+import { fileURLToPath } from "node:url";
+import { startTestPostgres } from "@capybara-hq/testing";
+import { sql } from "kysely";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { migrate } from "../../src/db/migrator.js";
+import { createDb } from "../../src/db/pool.js";
+import type { ApiError } from "../../src/errors.js";
+import { type Account, AccountsService } from "../../src/identity/accounts.js";
+import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { SettingsService } from "../../src/identity/settings.js";
+import { MembersService } from "../../src/orgs/members.service.js";
+import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
+import type { OrgRole } from "../../src/orgs/roles.js";
+
+let pg: Awaited<ReturnType<typeof startTestPostgres>>;
+let raw: ReturnType<typeof createDb>;
+let raw2: ReturnType<typeof createDb>;
+let db: KernelDb;
+let db2: KernelDb;
+let accounts: AccountsService;
+let orgs: OrgsService;
+let members: MembersService;
+/** 用另一个连接池的 MembersService，模拟另一个副本。 */
+let members2: MembersService;
+let A: Account;
+let B: Account;
+let C: Account;
+let org: Org;
+
+const PW = "correct horse battery";
+
+beforeAll(async () => {
+  pg = await startTestPostgres();
+  await migrate(pg.url, {
+    schema: "capybara",
+    dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
+  });
+  raw = createDb(pg.url, 5);
+  raw2 = createDb(pg.url, 5);
+  db = kernelDb(raw);
+  db2 = kernelDb(raw2);
+  accounts = new AccountsService(db);
+  orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
+  members = new MembersService(db);
+  members2 = new MembersService(db2);
+}, 120_000);
+afterAll(async () => {
+  await raw.destroy();
+  await raw2.destroy();
+  await pg.stop();
+});
+beforeEach(async () => {
+  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  A = await accounts.createLocal({
+    login: "usera",
+    password: PW,
+    displayName: "A",
+    email: "a@x.io",
+  });
+  B = await accounts.createLocal({ login: "userb", password: PW, displayName: "B" });
+  C = await accounts.createLocal({ login: "userc", password: PW, displayName: "C" });
+  org = await orgs.create({ name: "Acme", slug: "acme" }, A);
+});
+
+const codeOf = async (p: Promise<unknown>) => {
+  try {
+    await p;
+  } catch (e) {
+    return (e as ApiError).code;
+  }
+  return undefined;
+};
+
+async function roleOf(accountId: string): Promise<OrgRole | undefined> {
+  const r = await db
+    .selectFrom("memberships")
+    .select("role")
+    .where("org_id", "=", org.id)
+    .where("account_id", "=", accountId)
+    .executeTakeFirst();
+  return r?.role;
+}
+
+async function ownerCount(): Promise<number> {
+  const r = await db
+    .selectFrom("memberships")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("org_id", "=", org.id)
+    .where("role", "=", "owner")
+    .executeTakeFirstOrThrow();
+  return Number(r.n);
+}
+
+const owner = (id: string) => ({ accountId: id, role: "owner" as const });
+const adminActor = (id: string) => ({ accountId: id, role: "admin" as const });
+
+describe("MembersService", () => {
+  it("add / list；重复 add → member.already_exists；写审计 org.member.added", async () => {
+    await members.add(org.id, B.id, "member", A.id);
+    expect(await codeOf(members.add(org.id, B.id, "guest", A.id))).toBe("member.already_exists");
+    const list = await members.list(org.id);
+    expect(list.map((m) => [m.account.id, m.role])).toEqual([
+      [A.id, "owner"],
+      [B.id, "member"],
+    ]);
+    expect(list[0]?.account).toEqual({ id: A.id, displayName: "A", email: "a@x.io" });
+    expect(list[0]?.joinedAt).toBeInstanceOf(Date);
+    const ev = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "org.member.added")
+      .executeTakeFirstOrThrow();
+    expect(ev).toMatchObject({ org_id: org.id, actor_account_id: A.id, target: B.id });
+  });
+
+  it("admin 把 member 升为 admin 成功；审计 detail 含前后角色", async () => {
+    await members.add(org.id, B.id, "admin", A.id);
+    await members.add(org.id, C.id, "member", A.id);
+    await members.changeRole(org.id, C.id, "admin", adminActor(B.id));
+    expect(await roleOf(C.id)).toBe("admin");
+    const ev = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "org.member.role_changed")
+      .executeTakeFirstOrThrow();
+    expect(ev.detail).toEqual({ from: "member", to: "admin" });
+  });
+
+  it("admin 试图升人为 owner → org.owner_required", async () => {
+    await members.add(org.id, B.id, "admin", A.id);
+    await members.add(org.id, C.id, "member", A.id);
+    expect(await codeOf(members.changeRole(org.id, C.id, "owner", adminActor(B.id)))).toBe(
+      "org.owner_required",
+    );
+    expect(await roleOf(C.id)).toBe("member");
+  });
+
+  it("admin 试图改 owner 或移除 owner → org.owner_required", async () => {
+    await members.add(org.id, B.id, "admin", A.id);
+    expect(await codeOf(members.changeRole(org.id, A.id, "member", adminActor(B.id)))).toBe(
+      "org.owner_required",
+    );
+    expect(await codeOf(members.remove(org.id, A.id, adminActor(B.id)))).toBe("org.owner_required");
+    expect(await roleOf(A.id)).toBe("owner");
+  });
+
+  it("目标不是成员 → member.not_found", async () => {
+    expect(await codeOf(members.changeRole(org.id, C.id, "member", owner(A.id)))).toBe(
+      "member.not_found",
+    );
+    expect(await codeOf(members.remove(org.id, C.id, owner(A.id)))).toBe("member.not_found");
+  });
+
+  it("唯一 owner 自降 → org.last_owner；唯一 owner leave → org.last_owner", async () => {
+    expect(await codeOf(members.changeRole(org.id, A.id, "admin", owner(A.id)))).toBe(
+      "org.last_owner",
+    );
+    expect(await codeOf(members.leave(org.id, A.id))).toBe("org.last_owner");
+    expect(await codeOf(members.remove(org.id, A.id, owner(A.id)))).toBe("org.last_owner");
+    expect(await roleOf(A.id)).toBe("owner");
+  });
+
+  it("remove：同一事务置空该账号在此组织的 current_org_id，审计 org.member.removed", async () => {
+    await members.add(org.id, B.id, "member", A.id);
+    await db
+      .insertInto("sessions")
+      .values({
+        id: "s1",
+        account_id: B.id,
+        current_org_id: org.id,
+        refresh_hash: "h",
+        expires_at: new Date(Date.now() + 86_400_000),
+      })
+      .execute();
+    await members.remove(org.id, B.id, owner(A.id));
+    expect(await roleOf(B.id)).toBeUndefined();
+    const s = await db.selectFrom("sessions").select("current_org_id").executeTakeFirstOrThrow();
+    expect(s.current_org_id).toBeNull();
+    const ev = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "org.member.removed")
+      .executeTakeFirstOrThrow();
+    expect(ev.detail).toEqual({ role: "member" });
+  });
+
+  it("leave：非 owner 可离开；审计 org.member.left", async () => {
+    await members.add(org.id, B.id, "member", A.id);
+    await members.leave(org.id, B.id);
+    expect(await roleOf(B.id)).toBeUndefined();
+    expect(await codeOf(members.leave(org.id, B.id))).toBe("member.not_found");
+  });
+
+  it("转让后原 owner 为 admin、新 owner 为 owner；to 不是成员 → member.not_found", async () => {
+    expect(await codeOf(members.transferOwnership(org.id, A.id, C.id))).toBe("member.not_found");
+    await members.add(org.id, B.id, "member", A.id);
+    expect(await codeOf(members.transferOwnership(org.id, B.id, A.id))).toBe("org.owner_required");
+    await members.transferOwnership(org.id, A.id, B.id);
+    expect(await roleOf(A.id)).toBe("admin");
+    expect(await roleOf(B.id)).toBe("owner");
+    const ev = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "org.ownership_transferred")
+      .executeTakeFirstOrThrow();
+    expect(ev.detail).toMatchObject({ from: A.id, to: B.id });
+  });
+
+  it("软删除的组织 → org.not_found", async () => {
+    await orgs.softDelete(org.id, A);
+    expect(await codeOf(members.add(org.id, B.id, "member", A.id))).toBe("org.not_found");
+  });
+
+  it("concurrent demote keeps an owner", async () => {
+    for (let i = 0; i < 5; i++) {
+      await members.add(org.id, B.id, "owner", A.id);
+      const results = await Promise.allSettled([
+        members.changeRole(org.id, B.id, "admin", owner(A.id)),
+        members2.changeRole(org.id, A.id, "admin", owner(B.id)),
+      ]);
+      const ok = results.filter((r) => r.status === "fulfilled");
+      const failed = results.filter((r) => r.status === "rejected");
+      expect(ok.length).toBe(1);
+      expect(failed.length).toBe(1);
+      expect(((failed[0] as PromiseRejectedResult).reason as ApiError).code).toBe("org.last_owner");
+      expect(await ownerCount()).toBe(1);
+      // 复原：剩下的 owner 留下，另一个移出，下一轮重来
+      const survivor = (await roleOf(A.id)) === "owner" ? A : B;
+      const other = survivor === A ? B : A;
+      await members.remove(org.id, other.id, owner(survivor.id));
+      if (survivor !== A) {
+        await members.add(org.id, A.id, "member", B.id);
+        await members.transferOwnership(org.id, B.id, A.id);
+        await members.remove(org.id, B.id, owner(A.id));
+      }
+    }
+  });
+
+  it("concurrent remove keeps an owner", async () => {
+    for (let i = 0; i < 5; i++) {
+      await members.add(org.id, B.id, "owner", A.id);
+      const results = await Promise.allSettled([
+        members.remove(org.id, B.id, owner(A.id)),
+        members2.remove(org.id, A.id, owner(B.id)),
+      ]);
+      const ok = results.filter((r) => r.status === "fulfilled");
+      const failed = results.filter((r) => r.status === "rejected");
+      expect(ok.length).toBe(1);
+      expect(failed.length).toBe(1);
+      expect(((failed[0] as PromiseRejectedResult).reason as ApiError).code).toBe("org.last_owner");
+      expect(await ownerCount()).toBe(1);
+      if ((await roleOf(A.id)) !== "owner") {
+        await members.add(org.id, A.id, "member", B.id);
+        await members.transferOwnership(org.id, B.id, A.id);
+        await members.remove(org.id, B.id, owner(A.id));
+      }
+    }
+  });
+});

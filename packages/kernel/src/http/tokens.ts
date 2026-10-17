@@ -27,3 +27,9 @@ export const SETTINGS = Symbol("SETTINGS");
 
 /** `LoginRateLimiter` 的注入令牌。 */
 export const RATE_LIMITER = Symbol("RATE_LIMITER");
+
+/** `OrgsService` 的注入令牌。 */
+export const ORGS = Symbol("ORGS");
+
+/** `MembersService` 的注入令牌。 */
+export const MEMBERS = Symbol("MEMBERS");

@@ -21,6 +21,13 @@ export const ERROR_CODES = {
   "auth.rate_limited": 429,
   "auth.session_required": 403,
   "token.not_found": 404,
+  "org.not_found": 404,
+  "org.creation_disabled": 403,
+  "org.slug_taken": 409,
+  "org.last_owner": 409,
+  "org.owner_required": 403,
+  "member.not_found": 404,
+  "member.already_exists": 409,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
