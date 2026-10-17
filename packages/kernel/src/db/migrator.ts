@@ -41,6 +41,9 @@ export async function migrate(
     }),
   );
   const table = `${ident(schema)}._migrations`;
+  // 读文件期间可能已中止（AbortSignal 不会对之后才挂上的监听器补发 abort）：连接前再查一次。
+  // 从这里到 client.connect() 之间没有 await，监听器挂上前不会错过中止。
+  if (signal?.aborted) throw new Error(`Migration ${schema} aborted`);
 
   const newClient = () => {
     const c = new pg.Client({

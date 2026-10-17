@@ -26,10 +26,17 @@ export const KERNEL_SCHEMA = "capybara";
 const STOP_TIMEOUT_MS = 30_000;
 
 /**
- * 停机分阶段预算：每阶段实际等待 `min(阶段预算, 总剩余)`。
- * HTTP 阶段卡死（长连接不结束）时，插件阶段（排空进行中的队列任务）仍至少有 15s。
+ * 停机分阶段预算：每阶段实际等待 `min(阶段预算, 总剩余)`，按顺序为
+ * migrate（中止进行中的内核迁移并等其会话结束）2s → listen（等进行中的监听完成）1s →
+ * http 10s → plugins 15s，合计 28s，余下 2s 给 bus / redis / pg 收尾（这三步共享总剩余）。
+ * 因此任一前序阶段卡死时，HTTP 仍有 10s、插件队列仍至少有 15s 排空，总时长不超过 30s。
  */
-export const STOP_BUDGET_MS = { http: 10_000, plugins: 15_000 } as const;
+export const STOP_BUDGET_MS = {
+  migrate: 2_000,
+  listen: 1_000,
+  http: 10_000,
+  plugins: 15_000,
+} as const;
 
 /** 运行中的内核实例。 */
 export interface Kernel {
@@ -249,12 +256,13 @@ export async function createKernel(
       await within(
         "migrate",
         migratePromise.catch(() => {}),
+        STOP_BUDGET_MS.migrate,
       );
     if (listenPromise)
       await within(
         "listen",
         listenPromise.catch(() => {}),
-        STOP_BUDGET_MS.http,
+        STOP_BUDGET_MS.listen,
       );
     unwatch?.();
     unwatch = undefined;
