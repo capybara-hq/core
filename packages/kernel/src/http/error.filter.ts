@@ -31,6 +31,17 @@ function codeForStatus(status: number): ErrorCode {
 }
 
 /**
+ * 记日志用的请求路径：去掉查询串，公开邀请路由 `/api/v1/invitations/<token>` 的令牌段换成 `:token`，
+ * 其他任何以 `cap_` 开头的路径段（内核各类令牌的前缀）换成 `:redacted`，令牌不落日志。
+ */
+export function redactPath(url: string): string {
+  const path = url.split("?")[0] ?? "";
+  return path
+    .replace(/^\/api\/v1\/invitations\/[^/]+/, "/api/v1/invitations/:token")
+    .replace(/\/cap_[^/]*/g, "/:redacted");
+}
+
+/**
  * 全局错误过滤器：一切异常都转成错误信封 `{ error: { code, message, details? } }`。
  * `ApiError` 原样给出；Nest `HttpException`（含路由不存在的 404）按状态码映射；
  * 其他异常一律 500 `internal` 并记日志，不回显错误信息。
@@ -65,6 +76,6 @@ export class ErrorFilter implements ExceptionFilter {
   }
 
   private logFailure(req: FastifyRequest, err: unknown): void {
-    this.log.error("http handler failed", { method: req.method, path: req.url.split("?")[0], err });
+    this.log.error("http handler failed", { method: req.method, path: redactPath(req.url), err });
   }
 }

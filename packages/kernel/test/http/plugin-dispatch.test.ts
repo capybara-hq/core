@@ -58,6 +58,54 @@ describe("插件路由分发", () => {
     expect(body.body).toBe("a=1&b=2");
   });
 
+  it("strips kernel session cookies cap_at / cap_rt before the plugin handler", async () => {
+    const a = await app();
+    a.mountPlugins([
+      route("GET", "/plugins/p/cookie", async (req) =>
+        Response.json({ cookie: req.headers.get("cookie") }),
+      ),
+    ]);
+    const r = await a.inject({
+      method: "GET",
+      url: "/plugins/p/cookie",
+      headers: { cookie: "cap_at=secret-at; theme=dark; cap_rt=secret-rt;x=1" },
+    });
+    expect(r.json()).toEqual({ cookie: "theme=dark; x=1" });
+    const only = await a.inject({
+      method: "GET",
+      url: "/plugins/p/cookie",
+      headers: { cookie: "cap_at=secret-at; cap_rt=secret-rt" },
+    });
+    expect(only.json()).toEqual({ cookie: null });
+    const lookalike = await a.inject({
+      method: "GET",
+      url: "/plugins/p/cookie",
+      headers: { cookie: "cap_atx=1; xcap_rt=2" },
+    });
+    expect(lookalike.json()).toEqual({ cookie: "cap_atx=1; xcap_rt=2" });
+  });
+
+  it("body over 1 MiB is rejected with 413 before the handler", async () => {
+    const a = await app();
+    let called = false;
+    a.mountPlugins([
+      route("POST", "/plugins/p/big", async () => {
+        called = true;
+        return new Response(null, { status: 204 });
+      }),
+    ]);
+    const r = await a.inject({
+      method: "POST",
+      url: "/plugins/p/big",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.alloc(2 * 1024 * 1024),
+    });
+    expect(r.statusCode).toBe(413);
+    expect(called).toBe(false);
+    // 插件作用域不经 Nest 错误过滤器：是 Fastify 原生错误体（writing-plugins 技能写明）
+    expect((r.json() as { code: string }).code).toBe("FST_ERR_CTP_BODY_TOO_LARGE");
+  });
+
   it("binary body arrives intact", async () => {
     const a = await app();
     a.mountPlugins([

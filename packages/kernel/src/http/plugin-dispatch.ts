@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import FindMyWay from "find-my-way";
 import type { Route } from "../ctx/create-ctx.js";
 import { errorBody } from "../errors.js";
+import { ACCESS_COOKIE, REFRESH_COOKIE } from "../identity/cookies.js";
 
 /** 插件路由都在此前缀下（ctx.http.route 已加 `/plugins/<name>` 前缀）。 */
 export const PLUGIN_PREFIX = "/plugins/";
@@ -71,11 +72,33 @@ export async function registerPluginDispatch(
   });
 }
 
-/** Fastify 请求 → Web `Request`：数组头用 `, ` 合并（`set-cookie` 逐条保留）；GET / HEAD 不带 body。 */
+const KERNEL_COOKIES: ReadonlySet<string> = new Set([ACCESS_COOKIE, REFRESH_COOKIE]);
+
+/**
+ * 从 Cookie 头里去掉内核会话 Cookie（`cap_at` / `cap_rt`）：插件 handler 不经内核鉴权，
+ * 拿到这两个 Cookie 就能冒充用户调内核 API。全部去掉后返回 undefined（不传 Cookie 头）。
+ */
+export function stripKernelCookies(cookie: string): string | undefined {
+  const kept = cookie
+    .split(";")
+    .map((p) => p.trim())
+    .filter((p) => p !== "" && !KERNEL_COOKIES.has(p.split("=", 1)[0]?.trim() ?? ""));
+  return kept.length > 0 ? kept.join("; ") : undefined;
+}
+
+/**
+ * Fastify 请求 → Web `Request`：数组头用 `, ` 合并（`set-cookie` 逐条保留）；GET / HEAD 不带 body；
+ * Cookie 头去掉内核会话 Cookie。
+ */
 function toWebRequest(req: FastifyRequest): Request {
   const headers = new Headers();
   for (const [name, value] of Object.entries(req.headers)) {
     if (value === undefined) continue;
+    if (name === "cookie") {
+      const kept = stripKernelCookies(Array.isArray(value) ? value.join("; ") : value);
+      if (kept !== undefined) headers.set(name, kept);
+      continue;
+    }
     if (Array.isArray(value)) {
       if (name === "set-cookie") for (const v of value) headers.append(name, v);
       else headers.set(name, value.join(", "));
