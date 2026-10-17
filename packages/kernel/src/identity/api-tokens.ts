@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
 import type { ApiTokensTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { can, roleAtLeast } from "../orgs/roles.js";
+import { audit } from "./audit.js";
 
 export interface ApiTokenRecord {
   id: string;
@@ -34,7 +36,7 @@ function toRecord(r: Selectable<ApiTokensTable>): ApiTokenRecord {
   };
 }
 
-function validate(input: { name: string; expiresAt?: Date }): void {
+function validate(input: { name: string; expiresAt?: Date | undefined }): void {
   if (input.name.length < 1 || input.name.length > 100) {
     throw new ApiError("validation_failed", "Token name must be 1-100 characters");
   }
@@ -52,7 +54,7 @@ export class ApiTokenService {
 
   async createPersonal(
     accountId: string,
-    input: { name: string; expiresAt?: Date },
+    input: { name: string; expiresAt?: Date | undefined },
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     validate(input);
     return this.insert("personal", {
@@ -71,7 +73,7 @@ export class ApiTokenService {
       name: string;
       role: "admin" | "member" | "guest";
       createdBy: string;
-      expiresAt?: Date;
+      expiresAt?: Date | undefined;
     },
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     validate(input);
@@ -82,6 +84,70 @@ export class ApiTokenService {
       name: input.name,
       created_by: input.createdBy,
       expires_at: input.expiresAt ?? null,
+    });
+  }
+
+  /**
+   * 以账号身份创建服务令牌：在组织行锁内实时重读发起人角色（spec 3.6 R5），
+   * 须具备 `org.tokens.manage` 且令牌角色不高于发起人角色，否则 `forbidden`；同一事务写审计（不含令牌明文）。
+   */
+  async createServiceAs(
+    orgId: string,
+    actorAccountId: string,
+    input: { name: string; role: "admin" | "member" | "guest"; expiresAt?: Date | undefined },
+  ): Promise<{ token: string; record: ApiTokenRecord }> {
+    validate(input);
+    return this.db.transaction().execute(async (t) => {
+      const org = await t
+        .selectFrom("orgs")
+        .select("id")
+        .where("id", "=", orgId)
+        .where("deleted_at", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!org) throw new ApiError("org.not_found", "Organization not found");
+      const m = await t
+        .selectFrom("memberships")
+        .select("role")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", actorAccountId)
+        .executeTakeFirst();
+      if (!m || !can(m.role, "org.tokens.manage") || !roleAtLeast(m.role, input.role)) {
+        throw new ApiError("forbidden", "Insufficient organization role");
+      }
+      const created = await this.insert(
+        "service",
+        {
+          account_id: null,
+          org_id: orgId,
+          role: input.role,
+          name: input.name,
+          created_by: actorAccountId,
+          expires_at: input.expiresAt ?? null,
+        },
+        t,
+      );
+      await audit(t, {
+        actorAccountId,
+        orgId,
+        action: "org.service_token.created",
+        target: created.record.id,
+        detail: { name: input.name, role: input.role },
+      });
+      return created;
+    });
+  }
+
+  /** 吊销组织服务令牌并写审计（同一事务）；不在该组织内 → `token.not_found`。 */
+  async revokeServiceAs(orgId: string, tokenId: string, actorAccountId: string): Promise<void> {
+    await this.db.transaction().execute(async (t) => {
+      await this.revoke(tokenId, { orgId }, t);
+      await audit(t, {
+        actorAccountId,
+        orgId,
+        action: "org.service_token.revoked",
+        target: tokenId,
+      });
     });
   }
 
@@ -131,9 +197,9 @@ export class ApiTokenService {
   }
 
   /** 吊销令牌；令牌不存在、已吊销或不在该 scope 内 → `token.not_found`。 */
-  async revoke(id: string, scope: Scope): Promise<void> {
+  async revoke(id: string, scope: Scope, trx?: Transaction<KernelDatabase>): Promise<void> {
     const r = await this.scoped(
-      this.db.updateTable("api_tokens").set({ revoked_at: sql<Date>`now()` }),
+      (trx ?? this.db).updateTable("api_tokens").set({ revoked_at: sql<Date>`now()` }),
       scope,
     )
       .where("id", "=", id)
@@ -182,9 +248,10 @@ export class ApiTokenService {
       created_by: string;
       expires_at: Date | null;
     },
+    trx?: Transaction<KernelDatabase>,
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     const token = PREFIX[kind] + randomBytes(32).toString("base64url");
-    const row = await this.db
+    const row = await (trx ?? this.db)
       .insertInto("api_tokens")
       .values({ id: randomUUID(), kind, token_hash: sha256(token), ...values })
       .returningAll()

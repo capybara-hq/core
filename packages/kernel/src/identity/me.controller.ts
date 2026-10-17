@@ -1,11 +1,12 @@
-import { Body, Controller, Get, HttpCode, Inject, Put } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { ACCOUNTS, ORGS, SESSIONS } from "../http/tokens.js";
+import { ACCOUNTS, API_TOKENS, ORGS, SESSIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
 import type { Account, AccountsService } from "./accounts.js";
+import type { ApiTokenRecord, ApiTokenService } from "./api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
 import { CurrentPrincipal, type Principal, requireUser, SessionOnly } from "./principal.js";
 import type { SessionService } from "./sessions.js";
@@ -13,6 +14,14 @@ import type { SessionService } from "./sessions.js";
 const ChangePasswordBody = z.object({
   currentPassword: z.string().min(1),
   newPassword: z.string().min(12).max(MAX_PASSWORD_LENGTH),
+});
+
+const TokenBody = z.object({
+  name: z.string().min(1).max(100),
+  expiresAt: z.coerce
+    .date()
+    .refine((d) => d.getTime() > Date.now(), "must be in the future")
+    .optional(),
 });
 
 const CurrentOrgBody = z.object({ orgId: z.string().min(1).nullable() });
@@ -26,6 +35,7 @@ export class MeController {
     @Inject(ACCOUNTS) private readonly accounts: AccountsService,
     @Inject(SESSIONS) private readonly sessions: SessionService,
     @Inject(ORGS) private readonly orgs: OrgsService,
+    @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
   ) {}
 
   @Get()
@@ -85,5 +95,33 @@ export class MeController {
     }
     await this.accounts.setPassword(p.account.id, body.newPassword);
     await this.sessions.revokeAllForAccount(p.account.id, p.sessionId);
+  }
+
+  @Post("tokens")
+  @SessionOnly()
+  async createToken(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodPipe(TokenBody)) body: z.infer<typeof TokenBody>,
+  ): Promise<{ token: string; record: ApiTokenRecord }> {
+    const p = requireUser(principal);
+    return this.tokens.createPersonal(p.account.id, body);
+  }
+
+  @Get("tokens")
+  @SessionOnly()
+  async listTokens(@CurrentPrincipal() principal: Principal): Promise<ApiTokenRecord[]> {
+    const p = requireUser(principal);
+    return this.tokens.list({ accountId: p.account.id });
+  }
+
+  @Delete("tokens/:tokenId")
+  @SessionOnly()
+  @HttpCode(204)
+  async revokeToken(
+    @CurrentPrincipal() principal: Principal,
+    @Param("tokenId") tokenId: string,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.tokens.revoke(tokenId, { accountId: p.account.id });
   }
 }

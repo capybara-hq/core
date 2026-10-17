@@ -11,8 +11,9 @@ import {
 } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { MEMBERS, ORGS } from "../http/tokens.js";
+import { API_TOKENS, MEMBERS, ORGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
+import type { ApiTokenRecord, ApiTokenService } from "../identity/api-tokens.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import type { Member, MembersService } from "./members.service.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
@@ -28,6 +29,14 @@ const UpdateBody = z.object({
   slug: z.string().min(1).max(40).optional(),
 });
 const TransferBody = z.object({ toAccountId: z.string().min(1) });
+const ServiceTokenBody = z.object({
+  name: z.string().min(1).max(100),
+  role: z.enum(["admin", "member", "guest"]),
+  expiresAt: z.coerce
+    .date()
+    .refine((d) => d.getTime() > Date.now(), "must be in the future")
+    .optional(),
+});
 const RoleBody = z.object({ role: z.enum(ORG_ROLES) });
 
 /** 组织与成员（`/api/v1/orgs`）。组织级路由由 `@OrgAction` + OrgGuard 每请求实时鉴权。 */
@@ -36,6 +45,7 @@ export class OrgsController {
   constructor(
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(MEMBERS) private readonly members: MembersService,
+    @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
   ) {}
 
   @Post()
@@ -138,5 +148,34 @@ export class OrgsController {
   ): Promise<void> {
     const p = requireUser(principal);
     await this.members.remove(org.orgId, accountId, p.account.id);
+  }
+
+  @Post(":orgId/service-tokens")
+  @OrgAction("org.tokens.manage")
+  async createServiceToken(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Body(new ZodPipe(ServiceTokenBody)) body: z.infer<typeof ServiceTokenBody>,
+  ): Promise<{ token: string; record: ApiTokenRecord }> {
+    const p = requireUser(principal);
+    return this.tokens.createServiceAs(org.orgId, p.account.id, body);
+  }
+
+  @Get(":orgId/service-tokens")
+  @OrgAction("org.tokens.manage")
+  async listServiceTokens(@CurrentOrg() org: OrgContext): Promise<ApiTokenRecord[]> {
+    return this.tokens.list({ orgId: org.orgId });
+  }
+
+  @Delete(":orgId/service-tokens/:tokenId")
+  @OrgAction("org.tokens.manage")
+  @HttpCode(204)
+  async revokeServiceToken(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("tokenId") tokenId: string,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.tokens.revokeServiceAs(org.orgId, tokenId, p.account.id);
   }
 }
