@@ -50,6 +50,25 @@ describe("createKeyring", () => {
   });
 });
 
+describe("Keyring.deriveKey", () => {
+  it("同 info 稳定、不同 info 不同；轮换后 byId(旧id) 等于旧环的 current", () => {
+    const ring = createKeyring(k1, []);
+    const a = ring.deriveKey("access-token/v1");
+    const b = ring.deriveKey("access-token/v1");
+    expect(a.current).toHaveLength(32);
+    expect(a.current.equals(b.current)).toBe(true);
+    expect(a.currentId).toBe(ring.currentId);
+    expect(a.current.equals(ring.deriveKey("other/v1").current)).toBe(false);
+    expect(a.current.equals(k1)).toBe(false);
+    const oldRing = createKeyring(k2, []);
+    const rotated = createKeyring(k1, [k2]).deriveKey("access-token/v1");
+    const old = oldRing.deriveKey("access-token/v1");
+    expect(rotated.byId(oldRing.currentId)?.equals(old.current)).toBe(true);
+    expect(rotated.byId(ring.currentId)?.equals(a.current)).toBe(true);
+    expect(rotated.byId("0000000000000000")).toBeUndefined();
+  });
+});
+
 describe("ctx.secrets", () => {
   it("set 后 get 取回原文，库里密文不含原文；缺失键返回 null", async () => {
     const s = createSecrets(db, createKeyring(k1, []), "ns-a");

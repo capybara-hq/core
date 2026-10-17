@@ -86,6 +86,29 @@ export const KernelConfigSchema = z.object({
     .array(z.enum(["api", "worker", "gateway"]))
     .default(["api", "worker", "gateway"])
     .meta(meta({ description: "Roles this process runs" })),
+  auth: z
+    .object({
+      accessTokenTtlSeconds: z
+        .number()
+        .int()
+        .min(60)
+        .max(3600)
+        .default(900)
+        .meta(meta({ description: "Lifetime of web session access tokens in seconds" })),
+      refreshTokenTtlDays: z
+        .number()
+        .int()
+        .min(1)
+        .max(365)
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Absolute lifetime of a web session (refresh token) in days; refreshing does not extend it",
+          }),
+        ),
+    })
+    .default({ accessTokenTtlSeconds: 900, refreshTokenTtlDays: 30 }),
   log: z
     .object({
       level: z

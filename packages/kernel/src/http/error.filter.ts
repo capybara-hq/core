@@ -7,18 +7,23 @@ import {
   Inject,
 } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { ApiError, ERROR_CODES, type ErrorCode, errorBody } from "../errors.js";
+import { ApiError, type ErrorCode, errorBody } from "../errors.js";
 import { KERNEL_LOG } from "./tokens.js";
 
-/** 同一状态码有多个错误码时取最先登记的（通用码排在业务码前面）。 */
-const CODE_BY_STATUS = new Map<number, ErrorCode>();
-for (const [code, status] of Object.entries(ERROR_CODES)) {
-  if (!CODE_BY_STATUS.has(status)) CODE_BY_STATUS.set(status, code as ErrorCode);
-}
+/**
+ * Nest `HttpException`（框架自身抛出，如路由不存在、请求体解析失败）的状态码 → 通用错误码。
+ * 显式列出而不是反查 `ERROR_CODES`：同一状态码下有多个业务码，反查会误取到业务码。
+ * 表外的状态一律 `internal`（状态码本身保留）。
+ */
+const GENERIC_CODE_BY_STATUS: ReadonlyMap<number, ErrorCode> = new Map<number, ErrorCode>([
+  [400, "validation_failed"],
+  [401, "auth.required"],
+  [403, "forbidden"],
+  [404, "not_found"],
+]);
 
-/** Nest `HttpException` 的状态码 → 错误码：已登记的状态直接对应，其余 4xx 归 `validation_failed`、5xx 归 `internal`。 */
 function codeForStatus(status: number): ErrorCode {
-  return CODE_BY_STATUS.get(status) ?? (status < 500 ? "validation_failed" : "internal");
+  return GENERIC_CODE_BY_STATUS.get(status) ?? "internal";
 }
 
 /**

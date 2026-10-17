@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import type { PluginContext } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
 import { assertNamespace } from "./namespace.js";
@@ -15,8 +15,23 @@ export interface Keyring {
   /** 用指定 id 的主密钥解包；keyring 中没有该 id 时抛错（仅含 id，不含密钥）。 */
   unwrap(masterKeyId: string, data: Buffer, aad: string): Buffer;
   has(masterKeyId: string): boolean;
+  /**
+   * 为某一用途（`info`）从每把主密钥派生 32 字节子密钥（HKDF-SHA256，info = `capybara:<info>`）。
+   * 子密钥 id 与其主密钥 id 相同；原始主密钥不离开闭包。
+   */
+  deriveKey(info: string): DerivedKeys;
   toJSON(): { currentId: string; previousIds: string[] };
 }
+
+/** 某一用途的派生子密钥集合：current 用于签发，byId 用于按 id（= 主密钥 id）校验。 */
+export interface DerivedKeys {
+  currentId: string;
+  current: Buffer;
+  byId(id: string): Buffer | undefined;
+}
+
+const derive = (key: Buffer, info: string) =>
+  Buffer.from(hkdfSync("sha256", key, Buffer.alloc(0), `capybara:${info}`, KEY_LEN));
 
 const keyId = (key: Buffer) =>
   createHash("sha256").update(key).digest().subarray(0, 8).toString("hex");
@@ -63,6 +78,19 @@ export function createKeyring(current: Buffer, previous: Buffer[]): Keyring {
       return open(key, data, aad);
     },
     has: (id: string) => keys.has(id),
+    deriveKey(info: string): DerivedKeys {
+      const derived = new Map<string, Buffer>();
+      for (const [id, k] of keys) derived.set(id, derive(k, info));
+      const current = derived.get(currentId) as Buffer;
+      return {
+        currentId,
+        current: Buffer.from(current),
+        byId: (id: string) => {
+          const d = derived.get(id);
+          return d && Buffer.from(d);
+        },
+      };
+    },
     toJSON: () => ({ currentId, previousIds: [...keys.keys()].filter((id) => id !== currentId) }),
   };
   Object.defineProperty(ring, "currentId", { value: currentId, enumerable: true });

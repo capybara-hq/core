@@ -11,6 +11,12 @@ export const ERROR_CODES = {
   "account.not_found": 404,
   "account.last_enterprise_admin": 409,
   "auth.account_disabled": 403,
+  "auth.required": 401,
+  "auth.token_expired": 401,
+  "auth.session_revoked": 401,
+  "auth.refresh_invalid": 401,
+  "auth.refresh_race": 401,
+  "token.not_found": 404,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

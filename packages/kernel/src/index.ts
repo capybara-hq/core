@@ -21,7 +21,13 @@ export {
 export { createKv } from "./ctx/kv.js";
 export { createLock } from "./ctx/lock.js";
 export { createQueue } from "./ctx/queue.js";
-export { createKeyring, createSecrets, type Keyring, rewrapDataKeys } from "./ctx/secrets.js";
+export {
+  createKeyring,
+  createSecrets,
+  type DerivedKeys,
+  type Keyring,
+  rewrapDataKeys,
+} from "./ctx/secrets.js";
 export { type KernelDatabase, type KernelDb, kernelDb } from "./db/kernel-schema.js";
 export { type MigrationOwner, migrate } from "./db/migrator.js";
 export { createDb } from "./db/pool.js";
@@ -34,9 +40,15 @@ export {
   type KernelHttpApp,
 } from "./http/app.js";
 export { type Account, AccountsService } from "./identity/accounts.js";
+export { type ApiTokenRecord, ApiTokenService } from "./identity/api-tokens.js";
 export { audit } from "./identity/audit.js";
 export { normalizeLogin, validatePassword } from "./identity/login.js";
 export { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./identity/passwords.js";
+export {
+  type IssuedSession,
+  REFRESH_RACE_GRACE_MS,
+  SessionService,
+} from "./identity/sessions.js";
 export {
   DEPLOYMENT_SETTINGS,
   type DeploymentSettings,
