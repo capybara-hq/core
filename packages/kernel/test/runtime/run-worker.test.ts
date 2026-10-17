@@ -230,7 +230,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(await consumedSeq(db, convId)).toBe(second);
   });
 
-  it("message at run boundary is processed exactly once：run_finished 之后、锁释放之前到达 → finally 的 ensureRun 起新一轮", async () => {
+  it("message at run boundary is processed exactly once：run_finished 之后、锁释放之前到达 → 任务完成后的 ensureRun 起新一轮", async () => {
     const paused = gate();
     const resume = gate();
     let first = true;
@@ -586,6 +586,41 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(terms[0]?.payload).toEqual({ reason: "completed", consumedUpToSeq: first });
     expect(terms[1]?.payload).toEqual({ reason: "completed", consumedUpToSeq: lateSeq });
     expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "completed"]);
+  });
+
+  it("停机期间完成的运行：任务完成后的 ensureRun 在 stop() 返回前完成，待处理的消息由之后的 worker 回复", async () => {
+    const paused = gate();
+    const resume = gate();
+    let first = true;
+    const w = await worker(
+      {},
+      {
+        hooks: {
+          async beforeRelease() {
+            if (!first) return;
+            first = false;
+            paused.open();
+            await resume.promise;
+          },
+        },
+      },
+    );
+    const { orgId, convId } = await setup();
+    await postMessage(req, orgId, convId, "echo:first");
+    await paused.promise;
+    const late = await postMessage(req, orgId, convId, "echo:late");
+    // 运行停在终态写入之后：此时开始停机，再放行让它完成
+    const stopping = w.stop();
+    await sleep(100);
+    resume.open();
+    await stopping;
+    // stop() 返回时，后续的 ensureRun 已经投递了新一轮
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "queued"]);
+    await worker();
+    const terms = await waitForTerminal(db, convId, 2);
+    expect(terms[1]?.payload).toEqual({ reason: "completed", consumedUpToSeq: late });
+    const replies = (await eventsOf(db, convId)).filter((e) => e.type === "assistant_message");
+    expect(replies.map(textOf)).toEqual(["first", "late"]);
   });
 
   it("R34：续跑时已超过截止时间、loop 一条都没吸收 → max_duration 不消费触发消息，新一轮回复它恰好一次", async () => {

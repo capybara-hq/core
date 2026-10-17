@@ -24,6 +24,8 @@ const LOCK_BUSY_DELAY_MS = 1000;
 const QUOTA_FULL_DELAY_MS = 2000;
 /** BullMQ stalled 检测允许的最大次数（超过则任务失败）。 */
 const MAX_STALLED_COUNT = 3;
+/** 停机时等待任务结束后处理（ensureRun 等）的最短时间。 */
+const FOLLOW_UP_MIN_WAIT_MS = 250;
 /** 读插话的分页大小。 */
 const READ_PAGE = 500;
 
@@ -95,6 +97,8 @@ export class RunWorker {
   /** 传给 Worker 的连接：BullMQ 不关闭调用方传入的连接，close() 时自己关。 */
   private conn: Redis | undefined;
   private readonly active = new Map<string, ActiveRun>();
+  /** 进行中的「任务结束后」处理（完成后的 ensureRun、失败标记）：停机时等它们做完再关闭队列。 */
+  private readonly followUps = new Set<Promise<unknown>>();
   private closing = false;
 
   constructor(private readonly d: RunWorkerDeps) {}
@@ -119,24 +123,36 @@ export class RunWorker {
     // 运行结束后的 ensureRun 放在任务完成（并已从队列移除）之后：若仍有未消费的消息、且最新一条
     // 正是本运行的触发消息（如超时结束时没吸收它，R34），新任务的 jobId 与本任务相同，
     // 本任务还在 active 时投递会被判为重复而跳过。
+    // 依赖 BullMQ 的顺序：先把任务移到 completed（removeOnComplete 即删除），再发 "completed" 事件
+    // （由 R34 的测试钉住）。
     this.worker.on("completed", (job, result) => {
       if (result !== "ensure") return;
       const { conversationId, runId } = job.data;
-      this.d.queue
-        .ensureRun(conversationId)
-        .catch((err) =>
-          this.d.log.error("ensureRun after run failed", { conversationId, runId, err }),
-        );
+      this.track(
+        this.d.queue
+          .ensureRun(conversationId)
+          .catch((err) =>
+            this.d.log.error("ensureRun after run failed", { conversationId, runId, err }),
+          ),
+      );
     });
     this.worker.on("error", (err) => this.d.log.error("run worker error", { err }));
     this.worker.on("failed", (job, err) => {
       this.d.log.error("run job failed", { jobId: job?.id, runId: job?.data.runId, err });
       if (job) {
-        this.onJobFailed(job.data, err).catch((e) =>
-          this.d.log.error("cannot mark failed run job", { runId: job.data.runId, err: e }),
+        this.track(
+          this.onJobFailed(job.data, err).catch((e) =>
+            this.d.log.error("cannot mark failed run job", { runId: job.data.runId, err: e }),
+          ),
         );
       }
     });
+  }
+
+  /** 登记一个任务结束后的处理，做完自动移除。 */
+  private track(p: Promise<unknown>): void {
+    this.followUps.add(p);
+    void p.finally(() => this.followUps.delete(p));
   }
 
   /**
@@ -178,6 +194,7 @@ export class RunWorker {
   async close(budgetMs: number): Promise<void> {
     const worker = this.worker;
     if (!worker) return;
+    const deadline = Date.now() + Math.max(0, budgetMs);
     this.worker = undefined;
     this.closing = true;
     await worker.pause(true).catch((err) => this.d.log.warn("run worker pause failed", { err }));
@@ -206,6 +223,19 @@ export class RunWorker {
       }
     }
     await worker.close(!finished);
+    // 关闭期间完成 / 失败的任务登记的后续处理（ensureRun 等）要在调用方关闭运行队列之前做完，
+    // 否则投递半途被打断，待处理的消息无人处理。以剩余预算为限（至少留一点时间）。
+    if (this.followUps.size > 0) {
+      let t: NodeJS.Timeout | undefined;
+      await Promise.race([
+        Promise.allSettled([...this.followUps]),
+        new Promise<void>((resolve) => {
+          t = setTimeout(resolve, Math.max(FOLLOW_UP_MIN_WAIT_MS, deadline - Date.now()));
+          t.unref();
+        }),
+      ]);
+      clearTimeout(t);
+    }
     const conn = this.conn;
     this.conn = undefined;
     if (conn) await conn.quit().catch(() => conn.disconnect());
@@ -219,7 +249,9 @@ export class RunWorker {
       .select(["id", "status", "agent_version", "trigger_account_id", "trigger_seq", "started_at"])
       .where("id", "=", runId)
       .executeTakeFirst();
-    if (!run || TERMINAL_STATUSES.has(run.status)) return;
+    // 重复投递的任务发现运行已不存在或已结束（例如上一个处理者写完终态后、做后续检查前崩溃）：
+    // 仍做一次结束后的 ensureRun，避免那时到达的消息无人处理。
+    if (!run || TERMINAL_STATUSES.has(run.status)) return "ensure";
     const conv = await this.d.db
       .selectFrom("conversations")
       .select(["org_id", "agent_id"])
