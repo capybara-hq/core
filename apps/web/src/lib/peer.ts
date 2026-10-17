@@ -12,6 +12,8 @@
  * 内核应以 `http.trustProxy: 1` 运行在 Web 层之后（只信任一跳，即本服务）。
  */
 
+import { timingSafeEqual } from "node:crypto";
+
 /** server.mjs 打的可信标记请求头（转发给内核前删除）。 */
 export const PEER_TOKEN_HEADER = "x-capybara-peer-token";
 /** 存放本进程随机标记的环境变量（由 server.mjs 启动时生成）。 */
@@ -49,6 +51,14 @@ export function sanitizeIncoming(req: IncomingLike, token: string): void {
 export function trustedPeer(headers: Headers): string | undefined {
   const token = process.env[PEER_TOKEN_ENV];
   if (token === undefined || token === "") return undefined;
-  if (headers.get(PEER_TOKEN_HEADER) !== token) return undefined;
+  if (!sameToken(headers.get(PEER_TOKEN_HEADER), token)) return undefined;
   return headers.get("x-forwarded-for") ?? undefined;
+}
+
+/** 常量时间比较标记（先比字节长度：timingSafeEqual 要求等长，长度本身不是秘密）。 */
+function sameToken(got: string | null, expected: string): boolean {
+  if (got === null) return false;
+  const a = Buffer.from(got, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
 }
