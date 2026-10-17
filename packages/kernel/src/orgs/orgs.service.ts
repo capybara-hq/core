@@ -83,7 +83,8 @@ export class OrgsService {
     actor: Account,
     trx?: Trx,
   ): Promise<Org> {
-    const { orgCreation } = await this.settings.get();
+    // 在调用方事务内读设置：调用方已占着一个连接时再向池要第二个，并发下可能把池耗尽
+    const { orgCreation } = await this.settings.get(trx);
     if (orgCreation === "enterprise_admin" && !actor.isEnterpriseAdmin) {
       throw new ApiError(
         "org.creation_disabled",

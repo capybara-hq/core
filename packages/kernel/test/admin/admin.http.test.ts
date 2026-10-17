@@ -147,6 +147,36 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
     expect(res.statusCode).toBe(403);
     expect(errCode(res)).toBe("auth.csrf");
   });
+
+  it("连接池只有 2 个连接时并发 POST /setup（带 orgName）：一个 201、其余 409，不会耗尽连接池卡死", async () => {
+    const k2 = await createKernel(config({ db: { url: pgc.url, poolMax: 2 } }), {
+      env: {},
+      logger: createLogger("error", { write: () => {} }),
+    });
+    await k2.start();
+    try {
+      const run = Promise.all(
+        [0, 1, 2, 3].map((i) =>
+          asUser(
+            k2.http,
+            cookieJar(),
+          )({
+            method: "POST",
+            url: "/api/v1/setup",
+            payload: setupBody({ login: `root${i}`, orgName: `Acme ${i}` }),
+          }),
+        ),
+      );
+      const timeout = new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error("concurrent setup timed out")), 8000),
+      );
+      const results = await Promise.race([run, timeout]);
+      const codes = results.map((r) => r.statusCode).sort();
+      expect(codes).toEqual([201, 409, 409, 409]);
+    } finally {
+      await k2.stop();
+    }
+  }, 20_000);
 });
 
 describe("企业管理员端点", () => {
