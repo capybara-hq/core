@@ -39,3 +39,6 @@ export const INVITATIONS = Symbol("INVITATIONS");
 
 /** `SetupService` 的注入令牌。 */
 export const SETUP = Symbol("SETUP");
+
+/** `OrgPluginConfigs` 的注入令牌。 */
+export const ORG_PLUGIN_CONFIGS = Symbol("ORG_PLUGIN_CONFIGS");

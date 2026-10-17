@@ -22,6 +22,8 @@ import { MembersService } from "../orgs/members.service.js";
 import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import type { PluginHost } from "../plugins/host.js";
+import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
+import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import {
   ACCOUNTS,
   API_TOKENS,
@@ -30,6 +32,7 @@ import {
   KERNEL_DB,
   KERNEL_REDIS,
   MEMBERS,
+  ORG_PLUGIN_CONFIGS,
   ORGS,
   RATE_LIMITER,
   SESSIONS,
@@ -46,6 +49,8 @@ export interface ApiDeps {
   config: () => KernelConfig;
   log: Logger;
   host: PluginHost;
+  /** 与 `Kernel.orgPluginConfigs` 同一实例。 */
+  orgPluginConfigs: OrgPluginConfigs;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -56,17 +61,19 @@ const CONTROLLERS: Type[] = [
   InvitationsController,
   SetupController,
   AdminController,
+  OrgPluginConfigsController,
 ];
 
 /**
  * 领域服务 provider：领域类保持框架无关（不加装饰器），一律用 `useFactory` 构造。
- * 后续任务往这里追加（ORG_PLUGIN_CONFIGS、PLUGIN_HOST…）。
+ * 后续任务往这里追加。
  */
 function serviceProviders(deps: ApiDeps): Provider[] {
   return [
     { provide: KERNEL_DB, useValue: deps.db },
     { provide: KERNEL_REDIS, useValue: deps.redis },
     { provide: KERNEL_CONFIG, useValue: deps.config },
+    { provide: ORG_PLUGIN_CONFIGS, useValue: deps.orgPluginConfigs },
     {
       provide: ACCOUNTS,
       useFactory: (db: KernelDb) => new AccountsService(db),

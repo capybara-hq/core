@@ -120,7 +120,16 @@ export interface AuditEventsTable {
   detail: Json;
 }
 
-/** 内核 schema（capybara）的表结构，逐列对应 0003_identity.sql。 */
+/** 0002_secrets.sql：加密值（读写走 `createSecrets`，这里只供按键查询是否存在）。 */
+export interface SecretsTable {
+  namespace: string;
+  org_id: string;
+  key: string;
+  ciphertext: Buffer;
+  updated_at: Ts;
+}
+
+/** 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）与 0003_identity.sql。 */
 export interface KernelDatabase {
   accounts: AccountsTable;
   identities: IdentitiesTable;
@@ -133,6 +142,7 @@ export interface KernelDatabase {
   deployment_settings: DeploymentSettingsTable;
   plugin_org_configs: PluginOrgConfigsTable;
   audit_events: AuditEventsTable;
+  secrets: SecretsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

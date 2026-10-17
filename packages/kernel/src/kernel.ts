@@ -15,6 +15,7 @@ import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.j
 import { AccountsService } from "./identity/accounts.js";
 import { createLogger, type KernelLogger } from "./log.js";
 import { PluginHost } from "./plugins/host.js";
+import { OrgPluginConfigs } from "./plugins/org-config.js";
 
 /**
  * 内核迁移目录。src/ 与 dist/ 都在包根下一层，所以统一指向 `<包根>/src/migrations`：
@@ -46,6 +47,8 @@ export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
   readonly http: KernelHttp;
   readonly host: PluginHost;
+  /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
+  readonly orgPluginConfigs: OrgPluginConfigs;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -157,6 +160,7 @@ export async function createKernel(
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
   });
+  const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host);
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
   const releaseConnections = async (): Promise<void> => {
@@ -190,6 +194,7 @@ export async function createKernel(
         config: () => current,
         log,
         host,
+        orgPluginConfigs,
       }),
       trustProxy: config.http.trustProxy,
     });
@@ -306,6 +311,7 @@ export async function createKernel(
   const kernel: Kernel = {
     http: httpApp,
     host,
+    orgPluginConfigs,
     log,
     get config() {
       return current;

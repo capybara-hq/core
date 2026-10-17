@@ -127,12 +127,17 @@ async function loadDek(db: AnyDb, keyring: Keyring, orgId: string, create: boole
   return keyring.unwrap(row.master_key_id, Buffer.from(row.wrapped_key), dekAad(orgId));
 }
 
-/** 实现 ctx.secrets：每组织一把数据密钥（信封加密），值密文绑定 namespace/org/key 位置。 */
-export function createSecrets(
-  db: AnyDb,
-  keyring: Keyring,
-  namespace: string,
-): PluginContext["secrets"] {
+/** 内核视角的 secrets：在 `ctx.secrets` 之上多一个 `delete`（插件契约不暴露）。 */
+export type KernelSecrets = PluginContext["secrets"] & {
+  /** 删除一个值；不存在时无操作。 */
+  delete(orgId: string, key: string): Promise<void>;
+};
+
+/**
+ * 实现 ctx.secrets：每组织一把数据密钥（信封加密），值密文绑定 namespace/org/key 位置。
+ * `db` 可以是 Kysely 事务：此时读写（含首次创建组织数据密钥）都在该事务内。
+ */
+export function createSecrets(db: AnyDb, keyring: Keyring, namespace: string): KernelSecrets {
   assertNamespace(namespace);
   return {
     async get(orgId, key) {
@@ -165,6 +170,15 @@ export function createSecrets(
             updated_at: new Date(),
           }),
         )
+        .execute();
+    },
+    async delete(orgId, key) {
+      await db
+        .withSchema("capybara")
+        .deleteFrom("secrets")
+        .where("namespace", "=", namespace)
+        .where("org_id", "=", orgId)
+        .where("key", "=", key)
         .execute();
     },
   };

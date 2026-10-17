@@ -95,7 +95,8 @@ export function createPluginContext(
       },
     },
     queue: queueApi,
-    secrets: createSecrets(deps.db, deps.keyring, name),
+    // 只暴露插件契约中的 get / set（KernelSecrets 的 delete 仅供内核使用）
+    secrets: (({ get, set }) => ({ get, set }))(createSecrets(deps.db, deps.keyring, name)),
     db: guardDb(deps.db.withSchema(pluginSchemaName(name)), name),
     http: {
       route(method, path, handler) {

@@ -280,6 +280,11 @@ export class PluginHost {
     return out;
   }
 
+  /** 已加载插件的清单（按加载顺序，即依赖拓扑序）。 */
+  manifests(): PluginManifest[] {
+    return this.loaded.map((l) => l.manifest);
+  }
+
   /** 所有插件注册的 HTTP 路由（路径已带 `/plugins/<name>` 前缀）。 */
   routes(): Route[] {
     return this.loaded.flatMap((l) => l.routes);

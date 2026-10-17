@@ -31,6 +31,9 @@ export const ERROR_CODES = {
   "invitation.invalid": 404,
   "invitation.expired": 410,
   "invitation.used": 409,
+  "plugin.not_found": 404,
+  "plugin.no_org_config": 400,
+  "plugin.config_invalid": 400,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
 } as const satisfies Record<string, number>;

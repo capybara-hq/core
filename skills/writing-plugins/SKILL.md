@@ -39,7 +39,7 @@ import { definePlugin } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 export default definePlugin({
-  name: "my-plugin",          // ^[a-z][a-z0-9-]{1,40}$；PG schema 为 plugin_my_plugin
+  name: "my-plugin",          // ^[a-z][a-z0-9-]{1,40}$，保留名 kernel 不可用；PG schema 为 plugin_my_plugin
   version: "0.1.0",           // semver
   sdk: "^0.1.0",              // 兼容的 SDK 版本范围
   provides: ["counter@1"],    // 提供的能力，形如 名称@主版本，须是 SDK 已登记的能力
@@ -60,8 +60,17 @@ export default definePlugin({
 ## 两级配置
 
 - **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON，或逐字段 `CAPYBARA_PLUGIN_CONFIG__<插件名大写、- 换 _>__<字段>`，如 `CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE=3` 对应 `example-counter` 的 `poolSize`）。标了 `secret` 的部署级字段，其值校验通过后自动加入日志打码集合。内核启动时按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
-- **组织级**（`config.org`）：清单里可声明每个组织各自设置的 schema；M0 内核只接受该声明、尚未提供读写通道，组织级值现阶段由插件自己存在 `ctx.db` 里并用该 schema 校验。敏感字段用 `secret(schema)` 标记（`import { secret } from "@capybara-hq/plugin-sdk"`），不要写进日志。
-- 密钥（API key、token）一律走 `ctx.secrets`（加密存储），不要放进普通配置。
+- **组织级**（`config.org`）：每个组织各自的启用状态与配置，由组织 admin 通过内核 API（`GET /api/v1/orgs/:orgId/plugins`、`PUT /api/v1/orgs/:orgId/plugins/:plugin`）设置，内核按该 schema 校验并存储，规则见下一节。
+- 插件自己运行中产生的密钥（如 OAuth 换来的 token）走 `ctx.secrets`（加密存储），不要放进普通配置。
+
+### 组织级配置与 `secret()` 字段的存储与回显
+
+- 敏感字段用 `secret(schema)` 标记（`import { secret } from "@capybara-hq/plugin-sdk"`）。内核用 `configFields` 遍历 `config.org`，`meta.secret` 为真的叶子按点路径（如 `webhook.token`）识别为密钥字段。对象上标 `secret` 对其全部后代叶子生效。
+- **只支持对象嵌套**：数组、record 视作叶子，**数组元素里的 `secret()` 不会被识别**，会和普通字段一起明文存储——密钥不要放进数组。
+- 存储：非密钥部分（校验后的值，含默认值）存 `capybara.plugin_org_configs.config`；每个密钥字段单独加密存 `capybara.secrets`（命名空间 `kernel`、键 `plugin-config:<插件名>:<点路径>`，值为 JSON 编码），与配置行在同一事务内写入。`kernel` 因此是保留插件名。
+- 回显：API 响应的 `config` 永远不含密钥字段，只给 `secrets: [{ path, set }]` 表示是否已设置；审计只记 `{ enabled, changedPaths }`。
+- 更新（`PUT` 的 `config`）：非密钥字段整体替换为传入值；密钥字段**缺省 = 保留原值**、`null` = 清除、其他值 = 新值。合并后的完整对象再用 schema 校验，失败返回 `plugin.config_invalid`，`details` 为 `{ path, message }[]`（不回显值）。只传 `enabled: true` 时也会校验现存配置，不满足 schema 不能启用。
+- 读取：内核 `orgPluginConfigs.get(orgId, plugin)` 解密并校验后返回完整配置。**升级插件时改 org schema 要兼容旧值**（新字段给默认值或 optional）：已存配置不再满足新 schema 时 `get` 直接抛错，需要组织 admin 重新保存配置。
 
 ## ctx 各项何时用
 
