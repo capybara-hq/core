@@ -100,6 +100,22 @@ describe("PluginHost", () => {
     await expect(host().load([fx("badconfig")])).rejects.toThrow(/badconfig.*port/);
   });
 
+  it("secret 不在对象路径叶子上（discriminatedUnion 内）：加载失败，点名插件与路径", async () => {
+    await expect(host().load([fx("secretunion")])).rejects.toThrow(
+      /plugin secretunion: config\.org: secret\(\) at "auth<union#1>\.token"/,
+    );
+  });
+
+  it("secret 不在对象路径叶子上（transform 之后）：加载失败，点名插件与路径", async () => {
+    await expect(host().load([fx("secrettransform")])).rejects.toThrow(
+      /plugin secrettransform: config\.deployment: secret\(\) at "upstream<pipe:in>\.key"/,
+    );
+  });
+
+  it("secret 在对象路径叶子上（含 optional / prefault 包装）：正常加载", async () => {
+    await expect(host().load([fx("orgcfg")])).resolves.toBeUndefined();
+  });
+
   it("setup 抛错：带插件名", async () => {
     await expect(host().load([fx("throws")])).rejects.toThrow(/thrower.*boom/);
   });

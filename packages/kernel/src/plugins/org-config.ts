@@ -101,7 +101,7 @@ function toIssues(error: z.ZodError): ConfigIssue[] {
   }));
 }
 
-/** 插件组织级 schema 中标记 secret 的叶子点路径（只支持对象嵌套）。 */
+/** 插件组织级 schema 中标记 secret 的叶子点路径（对象路径之外的 secret 已在插件加载时拒绝）。 */
 function secretPaths(schema: z.ZodTypeAny): string[] {
   return configFields(schema)
     .filter((f) => f.meta?.secret)

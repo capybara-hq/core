@@ -66,7 +66,7 @@ export default definePlugin({
 ### 组织级配置与 `secret()` 字段的存储与回显
 
 - 敏感字段用 `secret(schema)` 标记（`import { secret } from "@capybara-hq/plugin-sdk"`）。内核用 `configFields` 遍历 `config.org`，`meta.secret` 为真的叶子按点路径（如 `webhook.token`）识别为密钥字段。对象上标 `secret` 对其全部后代叶子生效。
-- **只支持对象嵌套**：数组、record 视作叶子，**数组元素里的 `secret()` 不会被识别**，会和普通字段一起明文存储——密钥不要放进数组。
+- **只支持对象路径**：`secret()` 只能标在从根经对象字段（及 `default` / `prefault` / `optional` / `nullable` / `readonly` / `catch` 包装）可达的节点上。标在 union / discriminatedUnion / intersection / transform / pipe / lazy / 数组元素 / record 值 / tuple 等内部的 `secret()`（`config.org` 与 `config.deployment` 都算）会让**插件加载失败**，错误点名插件与路径（如 `plugin x: config.org: secret() at "auth<union#1>.token" ...`）。需要时把外层整个对象字段（或整个数组字段）标 `secret`，它的值作为一个整体加密存储。
 - 存储：非密钥部分（校验后的值，含默认值）存 `capybara.plugin_org_configs.config`；每个密钥字段单独加密存 `capybara.secrets`（命名空间 `kernel`、键 `plugin-config:<插件名>:<点路径>`，值为 JSON 编码），与配置行在同一事务内写入。`kernel` 因此是保留插件名。
 - 回显：API 响应的 `config` 永远不含密钥字段，只给 `secrets: [{ path, set }]` 表示是否已设置；审计只记 `{ enabled, changedPaths }`。
 - 更新（`PUT` 的 `config`）：非密钥字段整体替换为传入值；密钥字段**缺省 = 保留原值**、`null` = 清除、其他值 = 新值。合并后的完整对象再用 schema 校验，失败返回 `plugin.config_invalid`，`details` 为 `{ path, message }[]`（不回显值）。只传 `enabled: true` 时也会校验现存配置，不满足 schema 不能启用。
