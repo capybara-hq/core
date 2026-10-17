@@ -20,6 +20,10 @@ const GENERIC_CODE_BY_STATUS: ReadonlyMap<number, ErrorCode> = new Map<number, E
   [401, "auth.required"],
   [403, "forbidden"],
   [404, "not_found"],
+  [409, "conflict"],
+  [413, "payload_too_large"],
+  [415, "unsupported_media_type"],
+  [429, "rate_limited"],
 ]);
 
 function codeForStatus(status: number): ErrorCode {

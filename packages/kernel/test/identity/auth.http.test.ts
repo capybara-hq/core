@@ -400,6 +400,27 @@ describe("refresh / logout / 改密码 / 停用", () => {
   });
 });
 
+describe("框架层错误的通用错误码", () => {
+  it("请求体超过上限 → 413 payload_too_large；不支持的 Content-Type → 415 unsupported_media_type", async () => {
+    const big = await k.http.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      headers: { "x-capybara-csrf": "1", "content-type": "application/json" },
+      payload: JSON.stringify({ login: "alice", password: "x".repeat(2 * 1024 * 1024) }),
+    });
+    expect(big.statusCode).toBe(413);
+    expect(errCode(big)).toBe("payload_too_large");
+    const xml = await k.http.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      headers: { "x-capybara-csrf": "1", "content-type": "application/xml" },
+      payload: "<login/>",
+    });
+    expect(xml.statusCode).toBe(415);
+    expect(errCode(xml)).toBe("unsupported_media_type");
+  });
+});
+
 describe("http.trustProxy：客户端 IP", () => {
   const quiet = { env: {}, logger: createLogger("error", { write: () => {} }) };
   const viaProxy = (password: string) => ({

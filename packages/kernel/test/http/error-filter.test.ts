@@ -33,8 +33,11 @@ describe("ErrorFilter 通用错误码", () => {
     [401, "auth.required"],
     [403, "forbidden"],
     [404, "not_found"],
-    [409, "internal"],
-    [413, "internal"],
+    [409, "conflict"],
+    [413, "payload_too_large"],
+    [415, "unsupported_media_type"],
+    [429, "rate_limited"],
+    [418, "internal"],
     [503, "internal"],
   ])("HttpException %i → %s，状态码保留", (status, code) => {
     const r = run(new HttpException("x", status));
