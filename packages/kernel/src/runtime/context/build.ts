@@ -27,6 +27,8 @@ export interface ModelCallMeta {
   systemHash: string;
   /** 被放进请求的 `reminder` 事件 seq。 */
   reminderSeqs: number[];
+  /** 构建时的 `absorbedUpToSeq`（见 {@link BuildModelRequestInput}）；未提供则没有该字段。 */
+  absorbedUpToSeq?: number;
 }
 
 export interface BuildModelRequestInput {
@@ -35,6 +37,16 @@ export interface BuildModelRequestInput {
   agentVersion: number;
   model: ModelInfo;
   step: number;
+  /**
+   * loop 已吸收到的 user_message seq（R31）。提供时：
+   * - seq 大于它的 user_message 不进请求（运行中途到达、尚未被吸收的插话，由后续步骤吸收或触发下一轮）；
+   * - 每条 user_message 放在**吸收它的那次模型调用**的位置：日志里第一个 `request.absorbedUpToSeq`
+   *   不小于它的 `model_call` 之前（没有该字段的旧 model_call 视为吸收了它之前的全部消息），
+   *   本次请求吸收的放在末尾。于是模型看到的历史只追加（插话不会插到已发送的回复之前），
+   *   且请求可由日志 + `model_call` 精确还原。
+   * 不提供时按 seq 原样回放全部 user_message。
+   */
+  absorbedUpToSeq?: number;
 }
 
 type SummaryEvent = ConversationEvent & {
@@ -61,7 +73,8 @@ export function summaryText(summary: string): string {
  * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；
  * - messages：最近一条摘要（若有）作为首条 user 消息，其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放）/ `reminder`
- *   （`role: "system"`，放在它所在的位置）。其他事件不进请求。
+ *   （`role: "system"`，放在它所在的位置）。其他事件不进请求。提供 `absorbedUpToSeq` 时，
+ *   尚未被吸收的 user_message 不进请求，运行中途到达的插话放在吸收它的调用处（见 BuildModelRequestInput）。
  * 只追加：新事件只会在 messages 末尾追加；唯一的前缀变化来自新的压缩摘要。
  * `step` 与 `agentVersion` 不进请求内容（保证缓存前缀稳定），由调用方写入 `model_call` 事件。
  */
@@ -76,17 +89,87 @@ export function buildModelRequest(input: BuildModelRequestInput): {
 
   const messages: ModelMessage[] = [];
   const reminderSeqs: number[] = [];
+  const absorbed = input.absorbedUpToSeq;
+  /** model_call 吸收到的位置；没有该字段的旧事件视为吸收了它之前的全部消息。 */
+  const absorbedBy = (e: ConversationEvent & { type: "model_call" }) =>
+    e.payload.request.absorbedUpToSeq ?? e.seq;
+  /** 每个位置之前最近一次 model_call 的吸收位置（之前没有 model_call 为 undefined）。 */
+  const callBefore: (number | undefined)[] = [];
+  let lastCall: number | undefined;
+  for (const e of events) {
+    callBefore.push(lastCall);
+    if (e.type === "model_call") lastCall = absorbedBy(e);
+  }
+  /**
+   * 第 i 个事件（user_message）的放置方式：
+   * - `inline`：在吸收它的调用（之后第一个 `absorbedBy ≥ seq` 的 model_call，或本次请求）之前，
+   *   没有「由未吸收它的调用生成的回复」→ 按 seq 原位回放（常规情况，与不提供 absorbedUpToSeq 时一致）；
+   * - `deferred`：它之后有非空 assistant_message 是由一次没有吸收它的 model_call 生成的（它在那一步
+   *   进行中到达，那一步的请求里没有它）→ 延后到吸收它的调用的位置；
+   * - `skip`：没有任何调用吸收它（本次请求也没有）→ 不进请求。
+   * 回复的生成调用取它之前最近的 model_call；之前没有 model_call 的回复（旧数据）不算。
+   */
+  const placement = (i: number, seq: number): "inline" | "deferred" | "skip" => {
+    let sawAssistant = false;
+    let call = callBefore[i];
+    for (let k = i + 1; k < events.length; k++) {
+      const e = events[k] as ConversationEvent;
+      if (e.type === "model_call") {
+        if (absorbedBy(e) >= seq) return sawAssistant ? "deferred" : "inline";
+        call = absorbedBy(e);
+      } else if (
+        e.type === "assistant_message" &&
+        e.payload.content.length > 0 &&
+        call !== undefined &&
+        call < seq
+      ) {
+        sawAssistant = true;
+      }
+    }
+    if (absorbed !== undefined && seq > absorbed) return "skip";
+    return sawAssistant ? "deferred" : "inline";
+  };
+  /** 被某次模型调用跳过（运行中途到达）、尚未被吸收的 user_message，按 seq 升序。 */
+  let deferred: (ConversationEvent & { type: "user_message" })[] = [];
+  /**
+   * 把已被吸收（seq ≤ upTo）的延后消息放进 messages：放在末尾连续的 system 提醒之前——那些提醒属于
+   * 吸收它们的这一步（写在该步的 model_call 之前），收尾提醒因此仍在请求末尾。
+   */
+  const flush = (upTo: number) => {
+    const ready = deferred.filter((u) => u.seq <= upTo);
+    if (ready.length === 0) return;
+    deferred = deferred.filter((u) => u.seq > upTo);
+    let at = messages.length;
+    while (at > 0 && messages[at - 1]?.role === "system") at--;
+    messages.splice(
+      at,
+      0,
+      ...ready.map((u): ModelMessage => ({ role: "user", content: asBlocks(u.payload.content) })),
+    );
+  };
   if (summary) {
     messages.push({
       role: "user",
       content: [{ type: "text", text: summaryText(summary.payload.text) }],
     });
   }
-  for (const e of events) {
+  for (const [i, e] of events.entries()) {
     if (e.seq <= after) continue;
     switch (e.type) {
       case "user_message":
-        messages.push({ role: "user", content: asBlocks(e.payload.content) });
+        switch (absorbed === undefined ? "inline" : placement(i, e.seq)) {
+          case "inline":
+            messages.push({ role: "user", content: asBlocks(e.payload.content) });
+            break;
+          case "deferred":
+            deferred.push(e);
+            break;
+          default:
+            break;
+        }
+        break;
+      case "model_call":
+        if (absorbed !== undefined) flush(absorbedBy(e));
         break;
       case "assistant_message":
         // 流出任何内容之前就中止的空消息不回放（供应商不接受空 content）。
@@ -102,6 +185,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         break;
     }
   }
+
+  if (absorbed !== undefined) flush(absorbed);
 
   const system = [{ text: `${BEHAVIOR_RULES}\n\n${agent.instructions}`, cache: true }];
   const request: ModelRequest = {
@@ -121,6 +206,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     summarySeq: summary?.seq ?? null,
     systemHash: hashSystem(system),
     reminderSeqs,
+    ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
   };
   return { request, meta };
 }

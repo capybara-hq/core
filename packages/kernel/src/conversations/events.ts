@@ -93,6 +93,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          * `calibrate` 使用。较早的事件可能没有。
          */
         estimatedInputTokens: count.optional(),
+        /**
+         * 发出请求时 loop 已吸收到的 user_message seq（R31）：seq 更大的 user_message 不进本次请求
+         * （由后续步骤吸收或触发下一轮）。还原请求时据此放置 / 排除用户消息。较早的事件可能没有。
+         */
+        absorbedUpToSeq: seqNo.optional(),
       }),
     }),
   ),

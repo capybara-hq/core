@@ -172,11 +172,34 @@ describe("buildModelRequest", () => {
     log.turn(3);
     log.summary(4, "summary of 1 and 2");
     log.runStarted();
-    log.user("question 4");
+    const q4 = log.user("question 4");
     log.reminder("Wrap up.");
+    log.modelCall(q4.seq);
+    // 第 4 问的模型调用进行中到达的插话：那次调用没有吸收它
+    const late = log.user("arrived mid-step");
     log.assistant([opaqueThinking, { type: "text", text: "answer 4" }]);
-    log.user("question 5");
-    const { request, meta } = build(log);
+    const q5 = log.user("question 5");
+    // 本次请求吸收到 late，question 5 还没被吸收
+    const { request, meta } = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 2,
+      absorbedUpToSeq: late.seq,
+    });
+    expect(meta.absorbedUpToSeq).toBe(late.seq);
+    const texts = request.messages.map((m) =>
+      typeof m.content === "string"
+        ? m.content
+        : m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join(""),
+    );
+    // 插话放在吸收它的这次调用的位置（answer 4 之后），question 5 不在请求里
+    expect(texts.slice(-3)).toEqual(["Wrap up.", "answer 4", "arrived mid-step"]);
+    expect(JSON.stringify(request.messages)).not.toContain("question 5");
+    expect(q5.seq).toBeGreaterThan(late.seq);
+
+    // 还原：按 meta 切片日志（含其中的 model_call），用记录下的 absorbedUpToSeq 重建
     const slice = log.events.filter(
       (e) => (e.seq >= meta.fromSeq && e.seq <= meta.toSeq) || e.seq === meta.summarySeq,
     );
@@ -187,9 +210,64 @@ describe("buildModelRequest", () => {
       agentVersion: 1,
       model: MODEL,
       step: 0,
+      ...(meta.absorbedUpToSeq !== undefined && { absorbedUpToSeq: meta.absorbedUpToSeq }),
     });
     expect(again.request).toEqual(request);
     expect(again.meta).toEqual(meta);
+  });
+
+  it("absorbedUpToSeq: excludes later user messages; history stays append-only across steps", () => {
+    const log = new Log();
+    const q1 = log.user("q1");
+    const step1 = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 1,
+      absorbedUpToSeq: q1.seq,
+    });
+    log.modelCall(q1.seq, 1);
+    const mid = log.user("mid");
+    log.assistant("a1", "tool_use", 1);
+    // 第 1 步的请求在插话之前构建；第 2 步吸收插话
+    const step2 = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 2,
+      absorbedUpToSeq: mid.seq,
+    });
+    expect(step2.request.messages.slice(0, step1.request.messages.length)).toEqual(
+      step1.request.messages,
+    );
+    expect(step2.request.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    // 同一时刻若还没吸收插话（absorbedUpToSeq = q1），插话不进请求
+    const notYet = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 2,
+      absorbedUpToSeq: q1.seq,
+    });
+    expect(JSON.stringify(notYet.request.messages)).not.toContain("mid");
+    // 没有 absorbedUpToSeq 字段的旧 model_call：视为吸收了它之前的全部消息
+    const legacy = new Log();
+    legacy.user("old");
+    legacy.modelCall();
+    legacy.assistant("old answer");
+    legacy.user("new");
+    const r = buildModelRequest({
+      events: legacy.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 1,
+      absorbedUpToSeq: 4,
+    });
+    expect(r.request.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   });
 
   it("meta without a summary covers the whole log", () => {

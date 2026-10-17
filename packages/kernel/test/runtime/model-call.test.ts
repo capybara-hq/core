@@ -47,6 +47,9 @@ let runtimeOverrides: Partial<KernelConfig["runtime"]> = {};
 
 const silent = createLogger("error", { write: () => {} });
 
+/** 这些用例不涉及插话：所有 user_message 都视为已吸收。 */
+const ALL_ABSORBED = 1_000_000_000;
+
 // ---- 测试内的模型供应商桩：精确控制调用次数与返回内容 ----
 
 const stubInfo = (id: string, extra: Partial<ModelInfo> = {}): ModelInfo => ({
@@ -223,6 +226,7 @@ const step = (
     step: over.step ?? 1,
     agent: over.agent ?? agentWith(),
     agentVersion: 1,
+    absorbedUpToSeq: ALL_ABSORBED,
     signal: over.signal ?? new AbortController().signal,
     sink: over.sink ?? (() => {}),
   });
@@ -457,6 +461,7 @@ describe("runModelStep", () => {
           fallback: { provider: "stub", model: "ok" },
         }),
         agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
         signal: new AbortController().signal,
         sink,
       },
@@ -491,6 +496,7 @@ describe("runModelStep", () => {
         step: 1,
         agent: agentWith({ model: { provider: "broken", model: "x" } }),
         agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
         signal: new AbortController().signal,
         sink: () => {},
       },
@@ -665,6 +671,7 @@ describe("runModelStep", () => {
       step: 51,
       agent: agentWith({ model: { provider: "stub", model: "ok" } }),
       agentVersion: 1,
+      absorbedUpToSeq: ALL_ABSORBED,
       signal: new AbortController().signal,
       sink: () => {},
     });

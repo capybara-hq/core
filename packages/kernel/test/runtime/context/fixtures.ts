@@ -93,6 +93,28 @@ export class Log {
     });
   }
 
+  /** 一次模型调用记录；`absorbedUpToSeq` 省略时模拟没有该字段的旧事件。 */
+  modelCall(absorbedUpToSeq?: number, step = 1): ConversationEvent {
+    return this.add({
+      type: "model_call",
+      payload: {
+        step,
+        attempt: 1,
+        provider: "model-fake",
+        model: "fake-1",
+        fallback: false,
+        request: {
+          fromSeq: 1,
+          toSeq: 1,
+          summarySeq: null,
+          systemHash: "x",
+          reminderSeqs: [],
+          ...(absorbedUpToSeq !== undefined && { absorbedUpToSeq }),
+        },
+      },
+    });
+  }
+
   /** 一轮：user + assistant。 */
   turn(n: number): void {
     this.user(`question ${n}`);

@@ -70,6 +70,11 @@ export interface ModelStepInput {
   agentVersion: number;
   signal: AbortSignal;
   sink: StreamSink;
+  /**
+   * 本步开始时 loop 已吸收到的 user_message seq（R31）：seq 更大的 user_message 不进本步请求，
+   * 由后续步骤吸收或触发下一轮；写入 `model_call.request.absorbedUpToSeq`，请求可由日志还原。
+   */
+  absorbedUpToSeq: number;
 }
 
 export interface ModelStepResult {
@@ -288,6 +293,7 @@ function buildRequest(
     agentVersion: input.agentVersion,
     model: info,
     step: input.step,
+    absorbedUpToSeq: input.absorbedUpToSeq,
   });
   request.messages = guardToolPairs(request.messages);
   request.maxOutputTokens = Math.min(info.maxOutputTokens, runtime.maxOutputTokens);

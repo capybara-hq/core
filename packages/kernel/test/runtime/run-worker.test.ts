@@ -62,6 +62,7 @@ class SequentialLoop implements AgentLoop {
       agentVersion: ctx.agentVersion,
       signal: ctx.signal,
       sink: ctx.sink,
+      absorbedUpToSeq: consumed,
     });
     const timedOut = () => Date.now() >= ctx.limits.deadline;
     for (;;) {
@@ -530,6 +531,61 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(await consumedSeq(db, convId)).toBe(next);
     const replies = (await eventsOf(db, convId)).filter((e) => e.type === "assistant_message");
     expect(replies.map(textOf)).toEqual(["next"]);
+  });
+
+  it("R31：吸收之后、构建请求之前到达的消息不进本步请求，由下一轮回复且只回复一次", async () => {
+    let late: number | null = null;
+    let injected = false;
+    let lateDone!: () => void;
+    const lateWritten = new Promise<void>((r) => {
+      lateDone = r;
+    });
+    await worker(
+      {},
+      {
+        loop: (deps) => {
+          const inner = loopFactory(deps);
+          return {
+            run: (ctx) =>
+              inner.run({
+                ...ctx,
+                // 第一次吸收返回之后、runModelStep 读日志之前，插入一条新消息（确定性地复现竞态窗口）
+                pendingUserMessages: async (afterSeq) => {
+                  const r = await ctx.pendingUserMessages(afterSeq);
+                  if (!injected) {
+                    injected = true;
+                    late = await postMessage(req, orgId, convId, "echo:late");
+                    lateDone();
+                  }
+                  return r;
+                },
+              }),
+          };
+        },
+      },
+    );
+    const { orgId, convId } = await setup();
+    const first = await postMessage(req, orgId, convId, "echo:first");
+    await lateWritten;
+    const terms = await waitForTerminal(db, convId, 2);
+    expect(terms.map((t) => t.type)).toEqual(["run_finished", "run_finished"]);
+    await sleep(300);
+    const evs = await eventsOf(db, convId);
+    const lateSeq = late as unknown as number;
+    // 第 1 轮的请求不含插话：absorbedUpToSeq 停在触发消息
+    const calls = evs.filter((e) => e.type === "model_call");
+    expect(
+      calls.map((c) => (c.type === "model_call" ? c.payload.request.absorbedUpToSeq : 0)),
+    ).toEqual([first, lateSeq]);
+    expect((calls[0] as ConversationEvent).seq).toBeGreaterThan(lateSeq);
+    // 每条消息恰好一次回复
+    expect(evs.filter((e) => e.type === "assistant_message").map(textOf)).toEqual([
+      "first",
+      "late",
+    ]);
+    expect(terms[0]?.payload).toEqual({ reason: "completed", consumedUpToSeq: first });
+    expect(terms[1]?.payload).toEqual({ reason: "completed", consumedUpToSeq: lateSeq });
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "completed"]);
   });
 
   it("同一触发点的任务已存在（属于另一个运行）→ ensureRun 不投递、不留下 queued 行", async () => {

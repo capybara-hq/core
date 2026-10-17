@@ -110,7 +110,7 @@ export class LangGraphLoop implements AgentLoop {
 
   private build(ctx: LoopContext) {
     const timedOut = () => Date.now() >= ctx.limits.deadline;
-    const input = (step: number): ModelStepInput => ({
+    const input = (step: number, absorbedUpToSeq: number): ModelStepInput => ({
       conversationId: ctx.conversationId,
       runId: ctx.runId,
       step,
@@ -118,6 +118,7 @@ export class LangGraphLoop implements AgentLoop {
       agentVersion: ctx.agentVersion,
       signal: ctx.signal,
       sink: ctx.sink,
+      absorbedUpToSeq,
     });
     const deps = this.stepDeps;
     const hooks = this.hooks;
@@ -134,7 +135,7 @@ export class LangGraphLoop implements AgentLoop {
     };
 
     const model = async (s: State): Promise<Partial<State>> => {
-      const r = await runModelStep(deps, input(s.step));
+      const r = await runModelStep(deps, input(s.step, s.consumedUpToSeq));
       await hooks.afterModelStep?.(ctx.runId, s.step, r);
       if (r.aborted) {
         return { lastStopReason: "aborted", outcome: timedOut() ? "max_duration" : "aborted" };
@@ -158,7 +159,7 @@ export class LangGraphLoop implements AgentLoop {
     };
 
     const wrapUp = async (s: State): Promise<Partial<State>> => {
-      const r = await runFinalWrapUp(deps, input(s.step));
+      const r = await runFinalWrapUp(deps, input(s.step, s.consumedUpToSeq));
       await hooks.afterModelStep?.(ctx.runId, s.step, r);
       return {
         lastStopReason: r.aborted ? "aborted" : r.stopReason,
