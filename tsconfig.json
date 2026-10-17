@@ -20,6 +20,9 @@
       "path": "plugins/anthropic"
     },
     {
+      "path": "plugins/openai"
+    },
+    {
       "path": "tools/checks"
     },
     {
