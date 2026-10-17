@@ -4,7 +4,7 @@ import { sql } from "kysely";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
-import { createBusSubscriber } from "./ctx/bus.js";
+import { createBus, createBusSubscriber } from "./ctx/bus.js";
 import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
@@ -198,6 +198,7 @@ export async function createKernel(
         log,
         host,
         orgPluginConfigs,
+        bus: createBus(redis, busSubscriber, "kernel", log),
       }),
       trustProxy: config.http.trustProxy,
     });

@@ -57,7 +57,7 @@ function canonical(v: unknown): string {
  * - viewer 为账号：仍是该组织成员（含访客），并且是负责人 / visibility='org' / 在 agent_members 名单中；
  * - viewer 为 null（该组织的服务令牌）：只认 visibility='org'。
  */
-function visibleTo(viewerAccountId: string | null) {
+export function visibleTo(viewerAccountId: string | null) {
   return (eb: ExpressionBuilder<KernelDatabase, "agents">) => {
     const orgLive = eb.exists(
       eb

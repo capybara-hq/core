@@ -42,6 +42,7 @@ export const ERROR_CODES = {
   "setup.token_invalid": 403,
   "agent.not_found": 404,
   "agent.model_unavailable": 400,
+  "conversation.not_found": 404,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

@@ -159,7 +159,49 @@ export interface AgentMembersTable {
   account_id: string;
 }
 
-/** 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql 与 0005_agents.sql。 */
+/** PG bigint：pg 驱动读出为字符串，读取方自行 `Number()`。 */
+type Int8 = ColumnType<string, number | string | undefined, number | string>;
+
+/** 0006_conversations.sql：会话；`last_seq` 为已分配的最大事件序号。 */
+export interface ConversationsTable {
+  id: string;
+  org_id: string;
+  agent_id: string;
+  account_id: string;
+  title: string | null;
+  last_seq: Int8;
+  consumed_seq: Int8;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+/** 0006_conversations.sql：会话事件日志，只追加。 */
+export interface ConversationEventsTable {
+  conversation_id: string;
+  seq: Int8;
+  type: string;
+  run_id: string | null;
+  idem_key: string | null;
+  payload: Json<unknown>;
+  created_at: Ts;
+}
+
+/** 0006_conversations.sql：一次 agent 运行。 */
+export interface RunsTable {
+  id: string;
+  conversation_id: string;
+  status: "queued" | "running" | "completed" | "failed" | "aborted";
+  agent_version: number;
+  trigger_account_id: string;
+  created_at: Ts;
+  started_at: TsNullable;
+  finished_at: TsNullable;
+}
+
+/**
+ * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
+ * 0005_agents.sql 与 0006_conversations.sql。
+ */
 export interface KernelDatabase {
   accounts: AccountsTable;
   identities: IdentitiesTable;
@@ -176,6 +218,9 @@ export interface KernelDatabase {
   agents: AgentsTable;
   agent_versions: AgentVersionsTable;
   agent_members: AgentMembersTable;
+  conversations: ConversationsTable;
+  conversation_events: ConversationEventsTable;
+  runs: RunsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

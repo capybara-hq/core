@@ -104,6 +104,8 @@ beforeAll(async () => {
           log,
           host: k.host,
           orgPluginConfigs: k.orgPluginConfigs,
+          // 探针请求都不带凭据，不会写事件日志
+          bus: { publish: async () => {} },
         }),
       ],
       providers: [{ provide: APP_INTERCEPTOR, useValue: probe }],

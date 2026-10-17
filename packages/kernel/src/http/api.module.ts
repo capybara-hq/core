@@ -9,6 +9,9 @@ import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsService } from "../agents/agents.service.js";
 import { ModelsController } from "../agents/models.controller.js";
 import type { KernelConfig } from "../config/schema.js";
+import { ConversationsController } from "../conversations/conversations.controller.js";
+import { ConversationsService } from "../conversations/conversations.service.js";
+import { type EventBus, EventLog } from "../conversations/event-log.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { AccountsService } from "../identity/accounts.js";
@@ -32,7 +35,10 @@ import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
+  CONVERSATIONS,
+  EVENT_LOG,
   INVITATIONS,
+  KERNEL_BUS,
   KERNEL_CONFIG,
   KERNEL_DB,
   KERNEL_LOG,
@@ -58,6 +64,8 @@ export interface ApiDeps {
   host: PluginHost;
   /** 与 `Kernel.orgPluginConfigs` 同一实例。 */
   orgPluginConfigs: OrgPluginConfigs;
+  /** 内核总线（命名空间 `kernel`，插件名不能取 `kernel`，不会与插件冲突）。 */
+  bus: EventBus;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -71,6 +79,7 @@ const CONTROLLERS: Type[] = [
   OrgPluginConfigsController,
   AgentsController,
   ModelsController,
+  ConversationsController,
 ];
 
 /**
@@ -147,6 +156,18 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       provide: AGENTS,
       useFactory: (db: KernelDb, registry: ProviderRegistry) => new AgentsService(db, registry),
       inject: [KERNEL_DB, PROVIDER_REGISTRY],
+    },
+    { provide: KERNEL_BUS, useValue: deps.bus },
+    {
+      provide: EVENT_LOG,
+      useFactory: (db: KernelDb, bus: EventBus) => new EventLog(db, bus, deps.log),
+      inject: [KERNEL_DB, KERNEL_BUS],
+    },
+    {
+      provide: CONVERSATIONS,
+      useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService) =>
+        new ConversationsService(db, eventLog, agents),
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS],
     },
   ];
 }
