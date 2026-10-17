@@ -1,12 +1,14 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { type Selectable, sql } from "kysely";
-import type { KernelDb, OrgsTable } from "../db/kernel-schema.js";
+import { type Selectable, sql, type Transaction } from "kysely";
+import type { KernelDatabase, KernelDb, OrgsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account } from "../identity/accounts.js";
 import type { ApiTokenService } from "../identity/api-tokens.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
-import type { OrgRole } from "./roles.js";
+import { can, type OrgAction, type OrgRole } from "./roles.js";
+
+type Trx = Transaction<KernelDatabase>;
 
 export type Org = { id: string; slug: string; name: string; createdAt: Date };
 
@@ -146,6 +148,7 @@ export class OrgsService {
     return row && toOrg(row);
   }
 
+  /** 改名 / slug（需 admin，锁内实时判定）。 */
   async update(
     orgId: string,
     patch: { name?: string | undefined; slug?: string | undefined },
@@ -159,14 +162,7 @@ export class OrgsService {
     }
     return slugGuard(
       this.db.transaction().execute(async (trx) => {
-        const before = await trx
-          .selectFrom("orgs")
-          .select(["slug", "name"])
-          .where("id", "=", orgId)
-          .where("deleted_at", "is", null)
-          .forUpdate()
-          .executeTakeFirst();
-        if (!before) throw new ApiError("org.not_found", "Organization not found");
+        const before = await this.lockAndAuthorize(trx, orgId, actor.id, "org.update");
         if (Object.keys(values).length === 0) {
           const row = await trx
             .selectFrom("orgs")
@@ -193,16 +189,45 @@ export class OrgsService {
     );
   }
 
-  /** 软删除：同一事务吊销该组织的服务令牌、清空指向它的会话当前组织。 */
+  /**
+   * 锁住组织行（与成员变更串行化），并在锁内实时重读发起人的角色（spec 3.6 R5）：
+   * 组织不存在或已软删除 → `org.not_found`；发起人不是成员或角色不足 → `forbidden`。
+   */
+  private async lockAndAuthorize(
+    trx: Trx,
+    orgId: string,
+    actorAccountId: string,
+    action: OrgAction,
+  ): Promise<{ slug: string; name: string }> {
+    const org = await trx
+      .selectFrom("orgs")
+      .select(["slug", "name"])
+      .where("id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!org) throw new ApiError("org.not_found", "Organization not found");
+    const m = await trx
+      .selectFrom("memberships")
+      .select("role")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", actorAccountId)
+      .executeTakeFirst();
+    if (!m || !can(m.role, action)) {
+      throw new ApiError("forbidden", "Insufficient organization role");
+    }
+    return org;
+  }
+
+  /** 软删除（需 owner，锁内实时判定）：同一事务吊销该组织的服务令牌、清空指向它的会话当前组织。 */
   async softDelete(orgId: string, actor: Account): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
-      const r = await trx
+      await this.lockAndAuthorize(trx, orgId, actor.id, "org.delete");
+      await trx
         .updateTable("orgs")
         .set({ deleted_at: sql<Date>`now()` })
         .where("id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (r.numUpdatedRows === 0n) throw new ApiError("org.not_found", "Organization not found");
+        .execute();
       await this.apiTokens.revokeAllForOrg(orgId, trx);
       await trx
         .updateTable("sessions")

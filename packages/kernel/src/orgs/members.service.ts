@@ -3,12 +3,9 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
-import type { OrgRole } from "./roles.js";
+import { can, type OrgRole } from "./roles.js";
 
 type Trx = Transaction<KernelDatabase>;
-
-/** 发起成员变更的人：账号与其在该组织中的角色（由 OrgGuard 在请求时实时读出）。 */
-export type MemberActor = { accountId: string; role: OrgRole };
 
 export interface Member {
   account: Pick<Account, "id" | "displayName" | "email">;
@@ -17,7 +14,7 @@ export interface Member {
 }
 
 /**
- * 成员服务。所有写操作在事务内先 `SELECT … FROM orgs WHERE id = $1 FOR UPDATE`，
+ * 成员服务。发起人只传账号 id，角色由服务在组织行锁内实时读取，调用方无法传入过期角色。所有写操作在事务内先 `SELECT … FROM orgs WHERE id = $1 FOR UPDATE`，
  * 把同一组织的成员变更串行化（多副本下两个 owner 并发互相降级也恰好剩一个 owner）。
  * 框架无关，由调用方注入 db。
  */
@@ -77,24 +74,26 @@ export class MembersService {
   /**
    * 改角色：授予或撤销 owner、或改动一个 owner，只有 owner 能做（`org.owner_required`）；
    * admin 只能在 guest / member / admin 之间调整非 owner。操作后 owner 数为 0 → `org.last_owner`。
+   * 发起人的角色在组织行锁内实时重读（spec 3.6 R5）：已不是成员或低于 admin → `forbidden`。
    */
   async changeRole(
     orgId: string,
     targetId: string,
     role: OrgRole,
-    actor: MemberActor,
+    actorAccountId: string,
   ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
       await this.lockOrg(t, orgId);
+      const actorRole = await this.requireManager(t, orgId, actorAccountId);
       const before = await this.requireMember(t, orgId, targetId);
-      if ((role === "owner" || before === "owner") && actor.role !== "owner") {
+      if ((role === "owner" || before === "owner") && actorRole !== "owner") {
         throw new ApiError("org.owner_required", "Only an owner can change owner roles");
       }
       if (before === role) return;
       await this.setRole(t, orgId, targetId, role);
       await this.assertHasOwner(t, orgId);
       await audit(t, {
-        actorAccountId: actor.accountId,
+        actorAccountId,
         orgId,
         action: "org.member.role_changed",
         target: targetId,
@@ -104,16 +103,17 @@ export class MembersService {
   }
 
   /** 移出成员：权限规则同 changeRole；移除最后一个 owner → `org.last_owner`；同一事务清空其会话的当前组织。 */
-  async remove(orgId: string, targetId: string, actor: MemberActor): Promise<void> {
+  async remove(orgId: string, targetId: string, actorAccountId: string): Promise<void> {
     await this.db.transaction().execute(async (t) => {
       await this.lockOrg(t, orgId);
+      const actorRole = await this.requireManager(t, orgId, actorAccountId);
       const before = await this.requireMember(t, orgId, targetId);
-      if (before === "owner" && actor.role !== "owner") {
+      if (before === "owner" && actorRole !== "owner") {
         throw new ApiError("org.owner_required", "Only an owner can remove an owner");
       }
       await this.deleteMember(t, orgId, targetId);
       await audit(t, {
-        actorAccountId: actor.accountId,
+        actorAccountId,
         orgId,
         action: "org.member.removed",
         target: targetId,
@@ -191,6 +191,15 @@ export class MembersService {
       .where("account_id", "=", accountId)
       .executeTakeFirst();
     return r?.role;
+  }
+
+  /** 在锁内实时读发起人的角色；不是成员或低于 admin（`org.members.manage` 的门槛）→ `forbidden`。 */
+  private async requireManager(t: Trx, orgId: string, accountId: string): Promise<OrgRole> {
+    const role = await this.roleIn(t, orgId, accountId);
+    if (!role || !can(role, "org.members.manage")) {
+      throw new ApiError("forbidden", "Insufficient organization role");
+    }
+    return role;
   }
 
   private async requireMember(t: Trx, orgId: string, accountId: string): Promise<OrgRole> {

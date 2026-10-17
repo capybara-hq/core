@@ -124,10 +124,7 @@ export class OrgsController {
     @Body(new ZodPipe(RoleBody)) body: z.infer<typeof RoleBody>,
   ): Promise<{ accountId: string; role: OrgRole }> {
     const p = requireUser(principal);
-    await this.members.changeRole(org.orgId, accountId, body.role, {
-      accountId: p.account.id,
-      role: org.role,
-    });
+    await this.members.changeRole(org.orgId, accountId, body.role, p.account.id);
     return { accountId, role: body.role };
   }
 
@@ -140,6 +137,6 @@ export class OrgsController {
     @Param("accountId") accountId: string,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.members.remove(org.orgId, accountId, { accountId: p.account.id, role: org.role });
+    await this.members.remove(org.orgId, accountId, p.account.id);
   }
 }
