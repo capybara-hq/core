@@ -84,13 +84,37 @@ export type ModelErrorKind =
   | "context_overflow"
   | "aborted";
 
-const RETRYABLE: ReadonlySet<ModelErrorKind> = new Set([
+const ALL_KINDS: ReadonlySet<string> = new Set<ModelErrorKind>([
+  "rate_limited",
+  "overloaded",
+  "server",
+  "timeout",
+  "network",
+  "auth",
+  "invalid_request",
+  "context_overflow",
+  "aborted",
+]);
+
+const RETRYABLE: ReadonlySet<ModelErrorKind> = new Set<ModelErrorKind>([
   "rate_limited",
   "overloaded",
   "server",
   "timeout",
   "network",
 ]);
+
+/** rate_limited / overloaded / server / timeout / network 为 true。 */
+export function isRetryableKind(kind: ModelErrorKind): boolean {
+  return RETRYABLE.has(kind);
+}
+
+/** 鸭子类型判断（不用 instanceof），兼容插件自带另一份 plugin-sdk 副本的情况。 */
+export function isModelError(e: unknown): e is ModelError {
+  if (!(e instanceof Error)) return false;
+  const kind = (e as { kind?: unknown }).kind;
+  return typeof kind === "string" && ALL_KINDS.has(kind);
+}
 
 export class ModelError extends Error {
   readonly kind: ModelErrorKind;
@@ -109,7 +133,7 @@ export class ModelError extends Error {
 
   /** rate_limited / overloaded / server / timeout / network 为 true。 */
   get retryable(): boolean {
-    return RETRYABLE.has(this.kind);
+    return isRetryableKind(this.kind);
   }
 }
 

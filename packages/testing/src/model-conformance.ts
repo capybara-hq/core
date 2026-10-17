@@ -1,6 +1,6 @@
 import {
   type ContentBlock,
-  ModelError,
+  isModelError,
   type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
@@ -11,6 +11,8 @@ export interface ConformanceTarget {
   provider: ModelProvider;
   model: string;
   expect: { thinking: boolean; caching: boolean };
+  /** caching 用例的稳定前缀大小（约 token 数），默认 5000。 */
+  cachePrefixTokens?: number;
   teardown(): Promise<void>;
 }
 
@@ -130,7 +132,12 @@ export function describeModelProviderConformance(
     it("caching", async (ctx) => {
       if (!t.expect.caching) return ctx.skip();
       const req = base({
-        system: [{ text: `Stable prefix. ${"Reference material. ".repeat(600)}`, cache: true }],
+        system: [
+          {
+            text: `Stable prefix. ${"Reference material. ".repeat(Math.ceil((t.cachePrefixTokens ?? 5000) / 4))}`,
+            cache: true,
+          },
+        ],
       });
       await collect(t.provider, req);
       const second = await collect(t.provider, req);
@@ -175,8 +182,8 @@ export function describeModelProviderConformance(
       } catch (e) {
         err = e;
       }
-      expect(err).toBeInstanceOf(ModelError);
-      expect((err as ModelError).kind).toBe("aborted");
+      expect(isModelError(err)).toBe(true);
+      if (isModelError(err)) expect(err.kind).toBe("aborted");
     });
   });
 }

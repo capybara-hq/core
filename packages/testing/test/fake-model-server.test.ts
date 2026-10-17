@@ -26,6 +26,14 @@ describe("startFakeModelServer", () => {
     expect(s.requests[0]?.body).toEqual({ hello: "world" });
     expect(s.requests[0]?.headers["x-test"]).toBe("y");
   });
+  it("answers 500 when routes throws", async () => {
+    const s = await startFakeModelServer(() => {
+      throw new Error("boom");
+    });
+    stop = s.stop;
+    const res = await fetch(`${s.url}/z`, { method: "POST", body: "{}" });
+    expect(res.status).toBe(500);
+  });
   it("returns json with status", async () => {
     const s = await startFakeModelServer(() => ({ status: 429, json: { err: 1 } }));
     stop = s.stop;

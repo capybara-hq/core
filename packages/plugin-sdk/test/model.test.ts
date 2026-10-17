@@ -1,5 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { MODEL_PROVIDER_CAPABILITY, ModelError, type ModelErrorKind } from "../src/index.js";
+import {
+  isModelError,
+  isRetryableKind,
+  MODEL_PROVIDER_CAPABILITY,
+  ModelError,
+  type ModelErrorKind,
+} from "../src/index.js";
+
+describe("isModelError / isRetryableKind", () => {
+  it("duck-types a lookalike from another class", () => {
+    class Other extends Error {
+      kind = "aborted";
+    }
+    expect(isModelError(new Other("x"))).toBe(true);
+    expect(isModelError(new ModelError("auth", "x"))).toBe(true);
+  });
+  it("rejects plain errors and non-errors", () => {
+    expect(isModelError(new Error("x"))).toBe(false);
+    expect(isModelError({ kind: "aborted" })).toBe(false);
+    class Bad extends Error {
+      kind = "nope";
+    }
+    expect(isModelError(new Bad("x"))).toBe(false);
+  });
+  it("isRetryableKind table", () => {
+    for (const k of ["rate_limited", "overloaded", "server", "timeout", "network"] as const)
+      expect(isRetryableKind(k)).toBe(true);
+    for (const k of ["auth", "invalid_request", "context_overflow", "aborted"] as const)
+      expect(isRetryableKind(k)).toBe(false);
+  });
+});
 
 describe("ModelError", () => {
   it.each<[ModelErrorKind, boolean]>([

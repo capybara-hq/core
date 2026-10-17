@@ -40,7 +40,14 @@ export async function startFakeModelServer(
       }
       const fake: FakeRequest = { path: req.url ?? "/", body, headers };
       requests.push(fake);
-      const out = routes(fake);
+      let out: FakeResponse;
+      try {
+        out = routes(fake);
+      } catch (e) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(e) }));
+        return;
+      }
       if ("stall" in out) {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.flushHeaders();

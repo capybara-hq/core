@@ -15,7 +15,9 @@ const usage = (cacheRead: number) => ({
 });
 
 /** 内存中的最小供应商：仅用于证明一致性套件可运行。 */
-function makeProvider(): ModelProvider {
+function makeProvider(
+  mkAbort: () => Error = () => new ModelError("aborted", "aborted"),
+): ModelProvider {
   const seen = new Set<string>();
   return {
     async listModels() {
@@ -25,7 +27,7 @@ function makeProvider(): ModelProvider {
       req: ModelRequest,
       opts: { signal: AbortSignal },
     ): AsyncGenerator<ModelStreamEvent> {
-      const aborted = () => new ModelError("aborted", "aborted");
+      const aborted = mkAbort;
       if (opts.signal.aborted) throw aborted();
       const last = req.messages[req.messages.length - 1];
       const lastText =
@@ -61,5 +63,17 @@ describeModelProviderConformance("in-memory", async () => ({
   provider: makeProvider(),
   model: "m",
   expect: { thinking: true, caching: true },
+  async teardown() {},
+}));
+
+/** 模拟插件自带另一份 plugin-sdk：错误类不同但形状一致。 */
+class ForeignModelError extends Error {
+  readonly kind = "aborted";
+}
+
+describeModelProviderConformance("in-memory (duplicate sdk copy)", async () => ({
+  provider: makeProvider(() => new ForeignModelError("aborted")),
+  model: "m",
+  expect: { thinking: false, caching: false },
   async teardown() {},
 }));
