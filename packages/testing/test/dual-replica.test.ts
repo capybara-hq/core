@@ -1,10 +1,15 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createDualReplicaHarness, type Harness, runnerArgv } from "../src/dual-replica.js";
+import {
+  createDualReplicaHarness,
+  type Harness,
+  runnerArgv,
+  runnerEnv,
+} from "../src/dual-replica.js";
 import { startTestPostgres, startTestRedis, type TestContainer } from "../src/index.js";
 
 const fx = (n: string) => fileURLToPath(new URL(`./fixtures/${n}/index.ts`, import.meta.url));
@@ -102,6 +107,17 @@ describe("runnerArgv", () => {
       "/x/replica-runner.ts",
     ]);
     expect(runnerArgv("/x/replica-runner.js")).toEqual(["/x/replica-runner.js"]);
+  });
+
+  it(".ts runner 的环境指定仓库 tsconfig.base.json；.js runner 环境原样", () => {
+    const env = { A: "1" };
+    const ts = runnerEnv("/x/replica-runner.ts", env);
+    expect(ts.A).toBe("1");
+    expect(ts.TSX_TSCONFIG_PATH).toBe(
+      fileURLToPath(new URL("../../../tsconfig.base.json", import.meta.url)),
+    );
+    expect(existsSync(ts.TSX_TSCONFIG_PATH as string)).toBe(true);
+    expect(runnerEnv("/x/replica-runner.js", env)).toEqual({ A: "1" });
   });
 });
 

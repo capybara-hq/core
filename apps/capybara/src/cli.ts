@@ -1,4 +1,3 @@
-#!/usr/bin/env -S tsx --conditions=@capybara-hq/source
 import { createLogger } from "@capybara-hq/kernel";
 import { parseCli, USAGE, UsageError } from "./args.js";
 import { runMigrate } from "./commands/migrate.js";

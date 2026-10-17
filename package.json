@@ -12,14 +12,14 @@
     "format": "biome check --write .",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "check": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/all.ts",
+    "check": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/all.ts",
     "changeset": "changeset",
-    "check:migrations": "tsx tools/checks/src/cli/migrations.ts",
-    "check:deps": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/deps.ts",
-    "check:plugin-state": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/plugin-state.ts",
-    "check:config-docs": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/config-docs.ts",
-    "gen:config-docs": "tsx --conditions=@capybara-hq/source tools/checks/src/cli/gen-config-docs.ts",
-    "capybara": "tsx --conditions=@capybara-hq/source apps/capybara/src/cli.ts"
+    "check:migrations": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/migrations.ts",
+    "check:deps": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/deps.ts",
+    "check:plugin-state": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/plugin-state.ts",
+    "check:config-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/config-docs.ts",
+    "gen:config-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-config-docs.ts",
+    "capybara": "node apps/capybara/bin/capybara.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

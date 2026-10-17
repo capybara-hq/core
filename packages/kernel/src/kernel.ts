@@ -1,8 +1,4 @@
-import type { Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
-import { createAdaptorServer } from "@hono/node-server";
-import type { Hono } from "hono";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
@@ -13,8 +9,7 @@ import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
-import { createApp } from "./http/app.js";
-import { mountHealth } from "./http/health.js";
+import { createHttpApp, type KernelHttp } from "./http/app.js";
 import { createLogger, type KernelLogger } from "./log.js";
 import { PluginHost } from "./plugins/host.js";
 
@@ -32,7 +27,8 @@ const STOP_TIMEOUT_MS = 30_000;
 
 /** 运行中的内核实例。 */
 export interface Kernel {
-  readonly app: Hono;
+  /** 内核 HTTP：进程内注入请求、列出路由。 */
+  readonly http: KernelHttp;
   readonly host: PluginHost;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
@@ -104,7 +100,7 @@ export async function createKernel(
   let stopRequested = false;
   let stopPromise: Promise<void> | undefined;
   let startPromise: Promise<void> | undefined;
-  let server: Server | undefined;
+  let port: number | undefined;
   let unwatch: (() => void) | undefined;
 
   const redis = new Redis(config.redis.url, { lazyConnect: true });
@@ -132,19 +128,23 @@ export async function createKernel(
     config.pluginConfig,
     opts.resolveFrom !== undefined ? { resolveFrom: opts.resolveFrom } : {},
   );
-  const { app, mountPlugins } = createApp(log);
-  mountHealth(app, {
-    isStopping: () => stopRequested,
+  const httpApp = await createHttpApp({
     log,
-    checks: {
-      pg: async () => {
-        await sql`select 1`.execute(db);
-      },
-      redis: async () => {
-        if (redis.status !== "ready") throw new Error(`redis status ${redis.status}`);
-        await redis.ping();
+    health: {
+      isStopping: () => stopRequested,
+      log,
+      checks: {
+        pg: async () => {
+          await sql`select 1`.execute(db);
+        },
+        redis: async () => {
+          if (redis.status !== "ready") throw new Error(`redis status ${redis.status}`);
+          await redis.ping();
+        },
       },
     },
+    serveApi: config.roles.includes("api"),
+    servePlugins: config.roles.includes("api") || config.roles.includes("gateway"),
   });
 
   /** 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置。 */
@@ -182,19 +182,6 @@ export async function createKernel(
     }
   };
 
-  async function listen(port: number): Promise<Server> {
-    const s = createAdaptorServer({ fetch: app.fetch }) as Server;
-    await new Promise<void>((resolve, reject) => {
-      s.once("error", reject);
-      s.listen(port, () => {
-        s.off("error", reject);
-        resolve();
-      });
-    });
-    s.on("error", (err) => log.error("http server error", { err }));
-    return s;
-  }
-
   async function doStop(): Promise<void> {
     const deadline = Date.now() + STOP_TIMEOUT_MS;
     /** 在剩余时限内等待 p；超时记 warn 并返回 false。 */
@@ -224,12 +211,8 @@ export async function createKernel(
       );
     unwatch?.();
     unwatch = undefined;
-    if (server) {
-      const s = server;
-      const closed = new Promise<void>((resolve) => s.close(() => resolve()));
-      s.closeIdleConnections();
-      if (!(await within("http", closed))) s.closeAllConnections();
-    }
+    if (!(await within("http", httpApp.close()))) httpApp.closeAllConnections();
+    port = undefined;
     await within("plugins", host.close());
     await within("bus", busSubscriber.close());
     if (redis.status === "ready") {
@@ -242,15 +225,14 @@ export async function createKernel(
   }
 
   const kernel: Kernel = {
-    app,
+    http: httpApp,
     host,
     log,
     get config() {
       return current;
     },
     get port() {
-      const addr = server?.address();
-      return addr && typeof addr === "object" ? (addr as AddressInfo).port : undefined;
+      return port;
     },
     async start() {
       if (started) throw new Error("kernel already started; start() may be called once");
@@ -268,14 +250,14 @@ export async function createKernel(
         checkpoint();
         await host.load(config.plugins);
         checkpoint();
-        mountPlugins(host.routes());
+        httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {
           unwatch = opts.source.watch(onConfigChange, (err) =>
             log.error("config watch error", { error: err.message }),
           );
         }
         if (config.roles.includes("api") || config.roles.includes("gateway")) {
-          server = await listen(config.http.port);
+          port = await httpApp.listen(config.http.port);
         }
         checkpoint();
         log.info("kernel started", { roles: config.roles, port: kernel.port });

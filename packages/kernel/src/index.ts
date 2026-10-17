@@ -24,6 +24,14 @@ export { createQueue } from "./ctx/queue.js";
 export { createKeyring, createSecrets, type Keyring, rewrapDataKeys } from "./ctx/secrets.js";
 export { type MigrationOwner, migrate } from "./db/migrator.js";
 export { createDb } from "./db/pool.js";
+export { ApiError, ERROR_CODES, type ErrorCode } from "./errors.js";
+export {
+  type CreateHttpAppOptions,
+  createHttpApp,
+  type HealthOptions,
+  type KernelHttp,
+  type KernelHttpApp,
+} from "./http/app.js";
 export {
   createKernel,
   KERNEL_MIGRATIONS_DIR,
