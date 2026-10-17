@@ -29,6 +29,11 @@ describe("renderConfigDocs", () => {
     expect(row("http.port")).toContain("`8080`");
     expect(row("masterKeyPrevious")).not.toContain("`[]`");
   });
+  it("可选且无默认值的字段标「可选」而不是「必填」", () => {
+    const row = (p: string) => md.split("\n").find((l) => l.startsWith(`| \`${p}\``)) ?? "";
+    expect(row("auth.setupToken")).toMatch(/\| 可选 \| 否 \| 是 \|/);
+    expect(row("db.url")).toMatch(/\| 必填 \| 否 \| 是 \|/);
+  });
   it("密钥的默认值永远不会被打印", () => {
     const s = z.object({
       token: z

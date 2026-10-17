@@ -74,7 +74,15 @@ export class OrgsService {
     private readonly apiTokens: ApiTokenService,
   ) {}
 
-  async create(input: { name: string; slug?: string | undefined }, actor: Account): Promise<Org> {
+  /**
+   * 建组织，创建者为 owner。传入 `trx` 时在调用方的事务内执行（初始化向导与建账号同一事务）；
+   * 此时 slug 冲突同样转成 `org.slug_taken`，但该事务已中止，调用方只能回滚。
+   */
+  async create(
+    input: { name: string; slug?: string | undefined },
+    actor: Account,
+    trx?: Trx,
+  ): Promise<Org> {
     const { orgCreation } = await this.settings.get();
     if (orgCreation === "enterprise_admin" && !actor.isEnterpriseAdmin) {
       throw new ApiError(
@@ -85,27 +93,26 @@ export class OrgsService {
     const name = checkName(input.name);
     const slug = input.slug ?? slugFromName(name);
     checkSlug(slug);
-    return slugGuard(
-      this.db.transaction().execute(async (trx) => {
-        const row = await trx
-          .insertInto("orgs")
-          .values({ id: randomUUID(), slug, name, created_by: actor.id })
-          .returning(["id", "slug", "name", "created_at"])
-          .executeTakeFirstOrThrow();
-        await trx
-          .insertInto("memberships")
-          .values({ org_id: row.id, account_id: actor.id, role: "owner" })
-          .execute();
-        await audit(trx, {
-          actorAccountId: actor.id,
-          orgId: row.id,
-          action: "org.created",
-          target: row.id,
-          detail: { slug, name },
-        });
-        return toOrg(row);
-      }),
-    );
+    const run = async (t: Trx): Promise<Org> => {
+      const row = await t
+        .insertInto("orgs")
+        .values({ id: randomUUID(), slug, name, created_by: actor.id })
+        .returning(["id", "slug", "name", "created_at"])
+        .executeTakeFirstOrThrow();
+      await t
+        .insertInto("memberships")
+        .values({ org_id: row.id, account_id: actor.id, role: "owner" })
+        .execute();
+      await audit(t, {
+        actorAccountId: actor.id,
+        orgId: row.id,
+        action: "org.created",
+        target: row.id,
+        detail: { slug, name },
+      });
+      return toOrg(row);
+    };
+    return slugGuard(trx ? run(trx) : this.db.transaction().execute(run));
   }
 
   /** 账号所属的（未软删除的）组织及其角色，按创建时间升序。 */

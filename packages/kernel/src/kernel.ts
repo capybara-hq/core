@@ -12,6 +12,7 @@ import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
 import { ApiModule } from "./http/api.module.js";
 import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
+import { AccountsService } from "./identity/accounts.js";
 import { createLogger, type KernelLogger } from "./log.js";
 import { PluginHost } from "./plugins/host.js";
 
@@ -232,6 +233,17 @@ export async function createKernel(
     }
   };
 
+  /** 部署尚无活跃企业管理员时提示去初始化；查询失败只记日志，不影响启动。 */
+  async function warnIfSetupPending(): Promise<void> {
+    try {
+      if ((await new AccountsService(kernelDb(db)).countEnterpriseAdmins()) === 0) {
+        log.warn("deployment is not set up; open the setup wizard or run `capybara admin create`");
+      }
+    } catch (e) {
+      log.warn("cannot check whether the deployment is set up", { error: errMsg(e) });
+    }
+  }
+
   async function doStop(): Promise<void> {
     const deadline = Date.now() + STOP_TIMEOUT_MS;
     /** 在 `min(budgetMs, 总剩余)` 内等待 p；超时记 warn 并返回 false。 */
@@ -333,6 +345,7 @@ export async function createKernel(
         port = await listenPromise;
         checkpoint();
         log.info("kernel started", { roles: config.roles, port: kernel.port });
+        await warnIfSetupPending();
       })();
       try {
         await startPromise;

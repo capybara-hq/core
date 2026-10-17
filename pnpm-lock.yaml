@@ -47,6 +47,10 @@ importers:
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
+    devDependencies:
+      '@capybara-hq/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
 
   packages/kernel:
     dependencies:

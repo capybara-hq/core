@@ -19,7 +19,7 @@ import type { SessionService } from "./sessions.js";
 const LoginBody = z.object({ login: z.string(), password: z.string() });
 
 /** 会话的客户端信息（记入 sessions 表）。`req.ip` 在 `http.trustProxy` 时取自 X-Forwarded-For。 */
-function clientMeta(req: FastifyRequest): { userAgent?: string; ip: string } {
+export function clientMeta(req: FastifyRequest): { userAgent?: string; ip: string } {
   const ua = req.headers["user-agent"];
   return { ip: req.ip, ...(ua !== undefined && { userAgent: ua }) };
 }

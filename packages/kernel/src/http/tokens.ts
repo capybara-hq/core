@@ -36,3 +36,6 @@ export const MEMBERS = Symbol("MEMBERS");
 
 /** `InvitationsService` 的注入令牌。 */
 export const INVITATIONS = Symbol("INVITATIONS");
+
+/** `SetupService` 的注入令牌。 */
+export const SETUP = Symbol("SETUP");

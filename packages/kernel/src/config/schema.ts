@@ -128,6 +128,11 @@ export const KernelConfigSchema = z.object({
               "Set the Secure attribute on session cookies; set false only for local trials over plain http",
           }),
         ),
+      setupToken: z
+        .string()
+        .min(1)
+        .optional()
+        .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
     })
     .default({ accessTokenTtlSeconds: 900, refreshTokenTtlDays: 30, cookieSecure: true }),
   log: z

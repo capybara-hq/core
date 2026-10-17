@@ -20,6 +20,29 @@ describe("parseCli", () => {
     expect(parseCli(["start", "-h"])).toEqual({ command: "help" });
   });
 
+  it("admin create", () => {
+    expect(parseCli(["admin", "create", "--login", "root", "--display-name", "Root"])).toEqual({
+      command: "admin-create",
+      login: "root",
+      displayName: "Root",
+    });
+    expect(
+      parseCli(["admin", "create", "--login=root", "--display-name=Root", "--email", "r@x.io"]),
+    ).toEqual({ command: "admin-create", login: "root", displayName: "Root", email: "r@x.io" });
+    expect(() => parseCli(["admin", "create", "--display-name", "R"])).toThrow(/--login/);
+    expect(() => parseCli(["admin", "create", "--login", "r"])).toThrow(/--display-name/);
+    expect(() => parseCli(["admin"])).toThrow(UsageError);
+    expect(() => parseCli(["admin", "delete", "--login", "r"])).toThrow(/unknown admin command/);
+    expect(() =>
+      parseCli(["admin", "create", "--login", "r", "--display-name", "R", "--password", "x"]),
+    ).toThrow(UsageError);
+    expect(() => parseCli(["admin", "create", "--login", "r", "--display-name", "R", "x"])).toThrow(
+      /unexpected argument/,
+    );
+    expect(() => parseCli(["start", "--login", "r"])).toThrow(/only valid for admin create/);
+    expect(() => parseCli(["admin", "create", "--role", "api"])).toThrow(/only valid for start/);
+  });
+
   it("非法输入抛 UsageError", () => {
     expect(() => parseCli(["start", "--role", "db"])).toThrow(UsageError);
     expect(() => parseCli(["start", "--role", ","])).toThrow(/at least one/);

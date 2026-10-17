@@ -2,6 +2,9 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import type { Redis } from "ioredis";
+import { AdminController } from "../admin/admin.controller.js";
+import { SetupController } from "../admin/setup.controller.js";
+import { SetupService } from "../admin/setup.service.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -31,6 +34,7 @@ import {
   RATE_LIMITER,
   SESSIONS,
   SETTINGS,
+  SETUP,
 } from "./tokens.js";
 
 /** 内核 API 的依赖：由 createKernel 传入，ApiModule 据此构造各领域服务。 */
@@ -45,11 +49,18 @@ export interface ApiDeps {
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
-const CONTROLLERS: Type[] = [AuthController, MeController, OrgsController, InvitationsController];
+const CONTROLLERS: Type[] = [
+  AuthController,
+  MeController,
+  OrgsController,
+  InvitationsController,
+  SetupController,
+  AdminController,
+];
 
 /**
  * 领域服务 provider：领域类保持框架无关（不加装饰器），一律用 `useFactory` 构造。
- * 后续任务往这里追加（SETUP、ORG_PLUGIN_CONFIGS、PLUGIN_HOST…）。
+ * 后续任务往这里追加（ORG_PLUGIN_CONFIGS、PLUGIN_HOST…）。
  */
 function serviceProviders(deps: ApiDeps): Provider[] {
   return [
@@ -98,6 +109,12 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       useFactory: (db: KernelDb, accounts: AccountsService, members: MembersService) =>
         new InvitationsService(db, accounts, members),
       inject: [KERNEL_DB, ACCOUNTS, MEMBERS],
+    },
+    {
+      provide: SETUP,
+      useFactory: (db: KernelDb, accounts: AccountsService, orgs: OrgsService) =>
+        new SetupService(db, accounts, orgs),
+      inject: [KERNEL_DB, ACCOUNTS, ORGS],
     },
     {
       provide: RATE_LIMITER,

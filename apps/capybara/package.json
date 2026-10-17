@@ -17,5 +17,8 @@
   "dependencies": {
     "@capybara-hq/kernel": "workspace:*",
     "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@capybara-hq/testing": "workspace:*"
   }
 }

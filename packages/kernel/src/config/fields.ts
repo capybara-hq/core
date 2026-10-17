@@ -10,14 +10,19 @@ export interface ConfigField {
   schema: core.$ZodType;
 }
 
-/** 剥掉包装后的内层 schema 类型与默认值（无 default 时 hasDefault 为 false）。 */
+/**
+ * 剥掉包装后的内层 schema 类型与默认值（无 default 时 hasDefault 为 false）；
+ * `optional` 表示包装链上有 optional（可以不填，且没有默认值时值为 undefined）。
+ */
 export function describeSchema(schema: core.$ZodType): {
   type: string;
   hasDefault: boolean;
   defaultValue: unknown;
+  optional: boolean;
 } {
   let node = schema;
   let hasDefault = false;
+  let optional = false;
   let defaultValue: unknown;
   for (;;) {
     const def = node._zod.def as unknown as {
@@ -31,6 +36,7 @@ export function describeSchema(schema: core.$ZodType): {
         defaultValue = def.defaultValue;
       }
     }
+    if (def.type === "optional") optional = true;
     if (!WRAPPERS.has(def.type) || !def.innerType) break;
     node = def.innerType;
   }
@@ -49,7 +55,7 @@ export function describeSchema(schema: core.$ZodType): {
       .map((v) => JSON.stringify(v))
       .join(" | ");
   }
-  return { type, hasDefault, defaultValue };
+  return { type, hasDefault, defaultValue, optional };
 }
 
 const WRAPPERS = new Set(["default", "prefault", "optional", "nullable", "readonly", "catch"]);

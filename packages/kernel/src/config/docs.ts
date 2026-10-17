@@ -10,10 +10,10 @@ export function envName(path: string): string {
 const cell = (s: string): string => s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 const code = (s: string): string => `\`${cell(s)}\``;
 
-/** 默认值列：无默认 -> 必填；密钥 -> 永不打印（—）。 */
+/** 默认值列：无默认 -> 必填（可选字段为「可选」）；密钥 -> 永不打印（—）。 */
 function defaultCell(secret: boolean, d: ReturnType<typeof describeSchema>): string {
-  if (secret) return d.hasDefault ? "—" : "必填";
-  if (!d.hasDefault) return "必填";
+  if (!d.hasDefault) return d.optional ? "可选" : "必填";
+  if (secret) return "—";
   const v =
     typeof d.defaultValue === "function" ? (d.defaultValue as () => unknown)() : d.defaultValue;
   return code(JSON.stringify(v) ?? "undefined");

@@ -31,6 +31,8 @@ export const ERROR_CODES = {
   "invitation.invalid": 404,
   "invitation.expired": 410,
   "invitation.used": 409,
+  "setup.already_completed": 409,
+  "setup.token_invalid": 403,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
