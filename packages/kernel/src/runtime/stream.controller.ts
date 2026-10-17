@@ -89,6 +89,9 @@ export class ConversationStreamController implements OnModuleDestroy {
         end: () => {
           res.end();
         },
+        abort: () => {
+          res.destroy();
+        },
       },
     );
     reply.hijack();
@@ -96,6 +99,7 @@ export class ConversationStreamController implements OnModuleDestroy {
     // 订阅期间客户端已断开：close 事件可能已经错过
     if (res.destroyed || !res.socket || res.socket.destroyed) {
       handle.close();
+      res.destroy();
       return;
     }
     res.writeHead(200, {

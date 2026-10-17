@@ -23,6 +23,8 @@ export interface KernelHttp {
   inject(opts: InjectOptions): Promise<LightMyRequestResponse>;
   /** 已注册的全部路由（Fastify onRoute 收集），供元测试遍历。 */
   routes(): { method: string; url: string }[];
+  /** 服务端当前打开的 TCP 连接数（测试观察连接是否被释放）。 */
+  connections(): Promise<number>;
 }
 
 /** 内核 HTTP 应用。 */
@@ -101,6 +103,10 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   return {
     inject: (o) => fastify.inject(o),
     routes: () => [...routes],
+    connections: () =>
+      new Promise<number>((resolve, reject) =>
+        fastify.server.getConnections((err, n) => (err ? reject(err) : resolve(n))),
+      ),
     mountPlugins(pluginRoutes) {
       if (router) throw new Error("plugin routes already mounted");
       router = createPluginRouter(pluginRoutes);

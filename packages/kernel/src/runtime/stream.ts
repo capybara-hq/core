@@ -14,7 +14,10 @@ export interface SseOutput {
   write(chunk: string): void;
   /** 已写入但尚未发出的字节数（慢客户端积压）。 */
   backlog(): number;
+  /** 正常结束（发完已缓冲的数据后 FIN）。 */
   end(): void;
+  /** 立即销毁连接并释放已缓冲的数据（慢客户端、内部故障）。 */
+  abort(): void;
 }
 
 /** 流用到的总线：内核 bus（命名空间 `kernel`）。 */
@@ -44,7 +47,11 @@ export interface StreamParams {
 /** 一条已订阅、尚未开始输出的流：HTTP 层写完响应头后调用 `begin`。 */
 export interface StreamHandle {
   begin(): void;
-  close(): void;
+  /**
+   * 关闭流：`end` 正常结束响应，`abort` 销毁连接。`begin()` 之前不碰输出端
+   * （响应还没开始，由 HTTP 层按普通错误返回）。
+   */
+  close(mode?: "end" | "abort"): void;
 }
 
 /** 补读事件的分页大小。 */
@@ -127,6 +134,7 @@ class Connection implements StreamHandle {
   private unsubscribe: (() => Promise<void>) | undefined;
   private timers: NodeJS.Timeout[] = [];
   private rechecking = false;
+  private begun = false;
 
   constructor(
     private readonly d: ConversationStreamsDeps,
@@ -152,6 +160,7 @@ class Connection implements StreamHandle {
 
   begin(): void {
     if (this.closed) return;
+    this.begun = true;
     const { sseHeartbeatMs, sseRecheckMs } = this.d.config().runtime;
     this.timers.push(
       setInterval(() => this.write(": ping\n\n"), sseHeartbeatMs),
@@ -160,7 +169,7 @@ class Connection implements StreamHandle {
     this.openGate();
   }
 
-  close(): void {
+  close(mode: "end" | "abort" = "end"): void {
     if (this.closed) return;
     this.closed = true;
     for (const t of this.timers) clearInterval(t);
@@ -174,10 +183,13 @@ class Connection implements StreamHandle {
         err,
       }),
     );
-    try {
-      this.out.end();
-    } catch {
-      // 连接已断开
+    if (this.begun) {
+      try {
+        if (mode === "abort") this.out.abort();
+        else this.out.end();
+      } catch {
+        // 连接已断开
+      }
     }
     this.onClosed();
   }
@@ -205,7 +217,7 @@ class Connection implements StreamHandle {
           conversationId: this.p.conversationId,
           err,
         });
-        this.close();
+        this.close("abort");
       });
   }
 
@@ -241,7 +253,8 @@ class Connection implements StreamHandle {
       this.d.log.warn("conversation stream client too slow; closing", {
         conversationId: this.p.conversationId,
       });
-      this.close();
+      // end() 会把 FIN 排在未发出的数据之后，零窗口的客户端会一直占着连接与缓冲区：直接销毁
+      this.close("abort");
     }
   }
 

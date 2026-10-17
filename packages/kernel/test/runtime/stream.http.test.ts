@@ -1,8 +1,10 @@
+import { connect } from "node:net";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
+import { conversationTopic } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -23,6 +25,7 @@ import {
   runConfig,
   sleep,
   startKernel,
+  waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -526,4 +529,46 @@ describe("会话 SSE：凭据复核（R35）", () => {
       s.close();
     }
   });
+
+  it("慢客户端（不读数据）积压超限 → 服务端销毁连接，不等客户端", async () => {
+    const { owner, orgId, convId } = await setup();
+    // 独立的 api 副本：除了这条慢连接没有别的连接（其他测试留下的 keep-alive 空闲连接会干扰计数）
+    const c = await startKernel(runConfig(urls(), { roles: ["api"], runtime: STREAM_RUNTIME }));
+    const port = c.port as number;
+    expect(await c.http.connections()).toBe(0);
+    const sock = connect(port, "127.0.0.1");
+    sock.on("error", () => {});
+    try {
+      await new Promise<void>((resolve) => sock.once("connect", () => resolve()));
+      sock.write(
+        `GET /api/v1/orgs/${orgId}/conversations/${convId}/stream HTTP/1.1\r\n` +
+          `Host: 127.0.0.1\r\nCookie: ${owner.cookie()}\r\n\r\n`,
+      );
+      const head = await new Promise<string>((resolve) =>
+        sock.once("data", (d: Buffer) => resolve(d.toString())),
+      );
+      expect(head).toMatch(/^HTTP\/1\.1 200/);
+      sock.pause(); // 之后不再读：TCP 窗口填满后服务端的写入只能积压在进程内
+      expect(await c.http.connections()).toBe(1);
+
+      const channel = `cap:kernel:${conversationTopic(convId)}`;
+      const text = "x".repeat(64 * 1024);
+      const msg = JSON.stringify({ kind: "delta", runId: "r", step: 1, delta: "text", text });
+      for (let i = 0; i < 480; i++) await redis.publish(channel, msg); // ≈30 MiB
+
+      await waitFor(
+        async () => (await c.http.connections()) === 0,
+        10_000,
+        "server to destroy the slow connection",
+      );
+      await waitFor(
+        async () => Number((await redis.pubsub("NUMSUB", channel))[1]) === 0,
+        5_000,
+        "unsubscribe",
+      );
+    } finally {
+      sock.destroy();
+      await c.stop();
+    }
+  }, 30_000);
 });
