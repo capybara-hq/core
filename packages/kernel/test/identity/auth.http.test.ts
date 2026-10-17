@@ -329,6 +329,38 @@ describe("refresh / logout / 改密码 / 停用", () => {
     ).toBe(204);
   });
 
+  it("Redis 被清空后，已登出 / 因改密码被吊销的会话的旧 cap_at 仍 401 auth.session_revoked（以 PG 为准）", async () => {
+    const out = cookieJar();
+    await login(out);
+    const outOld = out.clone();
+    expect(
+      (await asUser(k.http, out)({ method: "POST", url: "/api/v1/auth/logout" })).statusCode,
+    ).toBe(204);
+    const cur = cookieJar();
+    const other = cookieJar();
+    await login(cur);
+    await login(other);
+    expect(
+      (
+        await asUser(
+          k.http,
+          cur,
+        )({
+          method: "PUT",
+          url: "/api/v1/me/password",
+          payload: { currentPassword: PW, newPassword: "another long password" },
+        })
+      ).statusCode,
+    ).toBe(204);
+    await redis.flushall();
+    for (const jar of [outOld, other]) {
+      const me = await asUser(k.http, jar)({ method: "GET", url: "/api/v1/me" });
+      expect(me.statusCode).toBe(401);
+      expect(errCode(me)).toBe("auth.session_revoked");
+    }
+    expect((await asUser(k.http, cur)({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
+  });
+
   it("logout 只带 cap_rt 也吊销会话", async () => {
     const jar = cookieJar();
     await login(jar);
@@ -370,6 +402,42 @@ describe("refresh / logout / 改密码 / 停用", () => {
     expect(errCode(o)).toBe("auth.session_revoked");
     expect((await asUser(k.http, cur)({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
     expect((await login(cookieJar(), "alice", "another long password")).statusCode).toBe(200);
+  });
+
+  it("改密码：旧密码连续错 10 次后 → 429 auth.rate_limited（正确旧密码也被拒），按账号计数", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const change = (currentPassword: string) =>
+      asUser(
+        k.http,
+        jar,
+      )({
+        method: "PUT",
+        url: "/api/v1/me/password",
+        payload: { currentPassword, newPassword: "another long password" },
+      });
+    for (let i = 0; i < 10; i++) {
+      expect(errCode(await change(`wrong password ${i}`))).toBe("auth.invalid_credentials");
+    }
+    const limited = await change(PW);
+    expect(limited.statusCode).toBe(429);
+    expect(errCode(limited)).toBe("auth.rate_limited");
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
+    // 另一个账号不受影响
+    const bob = cookieJar();
+    await login(bob, "admin");
+    expect(
+      (
+        await asUser(
+          k.http,
+          bob,
+        )({
+          method: "PUT",
+          url: "/api/v1/me/password",
+          payload: { currentPassword: PW, newPassword: "another long password" },
+        })
+      ).statusCode,
+    ).toBe(204);
   });
 
   it("改密码：新密码太短 → 400 validation_failed（path newPassword）", async () => {

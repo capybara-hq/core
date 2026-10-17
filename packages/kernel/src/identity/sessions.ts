@@ -36,7 +36,8 @@ class UnknownKidError extends Error {}
 
 /**
  * Web 会话服务：短期 access token（HS256 JWT，密钥由主密钥环派生）+ PG 中可吊销、一次一换的 refresh token。
- * 吊销会在 Redis 写 `capk:revoked-sid:<sid>`（TTL 覆盖任何配置下 access token 的最长剩余寿命），使所有副本立即拒绝该会话的 access token。
+ * 吊销会在 Redis 写 `capk:revoked-sid:<sid>`（TTL 覆盖任何配置下 access token 的最长剩余寿命），使所有副本立即拒绝该会话的 access token；
+ * 验证 access token 时还会读 PG 的 `sessions.revoked_at`，Redis 丢数据也不会让已吊销的会话复活。
  * 框架无关，由调用方注入依赖。
  */
 export class SessionService {
@@ -150,7 +151,17 @@ export class SessionService {
     if (typeof sub !== "string" || typeof sid !== "string") {
       throw new ApiError("auth.required", "Authentication required");
     }
+    // Redis 吊销标记是快速路径；PG 的 revoked_at 才是事实来源——Redis 被清空 / 故障切换丢数据时，
+    // 已登出或因改密码被吊销的会话不能复活（spec 8.1）
     if (await this.redis.exists(revokedKey(sid))) {
+      throw new ApiError("auth.session_revoked", "Session has been revoked");
+    }
+    const row = await this.db
+      .selectFrom("sessions")
+      .select("revoked_at")
+      .where("id", "=", sid)
+      .executeTakeFirst();
+    if (!row || row.revoked_at !== null) {
       throw new ApiError("auth.session_revoked", "Session has been revoked");
     }
     return { accountId: sub, sessionId: sid };

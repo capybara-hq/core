@@ -27,7 +27,8 @@ type Resolved = { principal: Principal; cookie: boolean } | undefined;
 /**
  * 全局守卫（`APP_GUARD`），默认拒绝：
  * 1. `Authorization: Bearer cap_pat_…|cap_svc_…` → API 令牌；个人令牌再实时读账号状态。不做 CSRF 检查。
- * 2. 否则 Cookie `cap_at` → 会话 access token → 实时读账号状态；非安全方法要求 CSRF 头。
+ * 2. 否则 Cookie `cap_at` → 会话 access token（Redis 吊销标记作快速路径，再以 PG `sessions.revoked_at` 为准）
+ *    → 实时读账号状态；非安全方法要求 CSRF 头。
  * 3. 都没有：`@Public` 放行，否则 `auth.required`。`@Public` 路由上凭据无效按无凭据处理（便于登出 / 刷新）。
  * 4. 路由约束：service principal 只能访问 `@AllowService` 路由（否则 `forbidden`）；
  *    `@SessionOnly` 要求 Web 会话：个人令牌 → `auth.session_required`，服务令牌（即使路由经 `@OrgAction`
