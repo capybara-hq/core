@@ -41,11 +41,10 @@ describe("createLogger", () => {
     expect(e.err).toMatchObject({ name: "Error", message: "bad" });
   });
 
-  it("登记的密钥值在字段与错误里都被打码（含同一凭据换了 host 的 URL）", () => {
+  it("登记的密钥值在消息、字段与错误里都被打码（含同一凭据换了 host 的 URL）", () => {
     const { logger, lines } = capture("info");
     logger.addSecrets(["postgres://u:s3cretpw@db:5432/x"]);
-    logger.info("connect failed", {
-      detail: "connect postgres://u:s3cretpw@db:5432/x failed",
+    logger.info("connect postgres://u:s3cretpw@db:5432/x failed", {
       nested: { url: "postgres://u:s3cretpw@db:5432/x" },
       err: new Error("cannot reach postgres://u:s3cretpw@other-host/y"),
     });
@@ -80,13 +79,26 @@ describe("createLogger", () => {
     expect(e.ok).toBe(true);
   });
 
-  it("顶层 ts / level / msg 不打码，其他字段照常打码", () => {
+  it("顶层 level 从不打码；部署方密钥在 msg 与字段里都打码", () => {
     const { logger, lines } = capture("info");
     logger.addSecrets(["info", "hello-secret"]);
-    logger.info("hello-secret info", { detail: "hello-secret", nested: { msg: "hello-secret" } });
+    logger.info("hello-secret here", { detail: "hello-secret", nested: { msg: "hello-secret" } });
     const e = JSON.parse(lines[0] as string);
     expect(e.level).toBe("info");
-    expect(e.msg).toBe("hello-secret info");
+    expect(e.msg).toBe("[REDACTED] here");
+    expect(e.detail).toBe("[REDACTED]");
+    expect(e.nested.msg).toBe("[REDACTED]");
+  });
+
+  it("组织来源密钥不动顶层 msg，同一个值在其他字段里打码", () => {
+    const { logger, lines } = capture("info");
+    logger.addOrgSecrets(["tenant-chosen-value-01"]);
+    logger.info("got tenant-chosen-value-01", {
+      detail: "tenant-chosen-value-01",
+      nested: { msg: "tenant-chosen-value-01" },
+    });
+    const e = JSON.parse(lines[0] as string);
+    expect(e.msg).toBe("got tenant-chosen-value-01");
     expect(e.detail).toBe("[REDACTED]");
     expect(e.nested.msg).toBe("[REDACTED]");
   });
@@ -116,13 +128,14 @@ describe("createLogger", () => {
     const logger = createLogger("info", { write: () => {}, onMatcherBuild: () => builds++ });
     logger.addSecrets(["secret-one"]);
     for (let i = 0; i < 50; i++) logger.info("x", { a: "secret-one", b: "plain" });
-    expect(builds).toBe(1);
+    // 字段匹配器（全部密钥）与 msg 匹配器（部署方密钥）各一次
+    expect(builds).toBe(2);
     logger.addSecrets(["secret-one"]); // 已登记：不变
     logger.info("x", { a: "y" });
-    expect(builds).toBe(1);
-    logger.addOrgSecrets(["org-secret-123456"]);
-    for (let i = 0; i < 50; i++) logger.info("x", { a: "z" });
     expect(builds).toBe(2);
+    logger.addOrgSecrets(["org-secret-123456"]); // 只影响字段匹配器
+    for (let i = 0; i < 50; i++) logger.info("x", { a: "z" });
+    expect(builds).toBe(3);
   });
 
   it("性能：10000 个已登记密钥，1000 行 × 10 个字段在 500ms 内", () => {
