@@ -11,7 +11,7 @@ const ProviderOpaqueSchema = z.object({
 
 /** 内容块（plugin-sdk 的 `ContentBlock`）。 */
 export const ContentBlockSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({ type: z.literal("text"), text: z.string(), opaque: ProviderOpaqueSchema.optional() }),
   z.object({
     type: z.literal("thinking"),
     text: z.string(),

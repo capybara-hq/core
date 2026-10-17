@@ -9,7 +9,13 @@ export interface FakeRequest {
 
 export type FakeResponse =
   | { status: number; json: unknown; headers?: Record<string, string> }
-  | { status: 200; sse: { event?: string; data: string }[]; delayMs?: number }
+  | {
+      status: 200;
+      sse: { event?: string; data: string }[];
+      delayMs?: number;
+      /** 写完全部事件后不结束响应（连接保持打开），用于验证客户端在终止事件后自行停止读取。 */
+      keepOpen?: boolean;
+    }
   | { stall: true };
 
 export interface FakeModelServer {
@@ -62,11 +68,12 @@ export async function startFakeModelServer(
       const payload = out.sse
         .map((e) => `${e.event !== undefined ? `event: ${e.event}\n` : ""}data: ${e.data}\n\n`)
         .join("");
+      const finish = out.keepOpen ? () => res.write(payload) : () => res.end(payload);
       if (out.delayMs) {
-        const t = setTimeout(() => res.end(payload), out.delayMs);
+        const t = setTimeout(finish, out.delayMs);
         res.on("close", () => clearTimeout(t));
       } else {
-        res.end(payload);
+        finish();
       }
     });
   });

@@ -21,7 +21,7 @@ interface ModelProvider {
 
 - `ModelRequest`：`model`、`system`（`{ text, cache }[]`，稳定内容在前，`cache: true` 的块之后打缓存断点）、`messages`（user / assistant / 中途 `system`）、`tools`、`maxOutputTokens`、可选 `effort`（`low` … `max`）。
 - `ModelStreamEvent`：`text_delta`、`thinking_delta`，最后恰好一个 `message_complete { content, stopReason, usage }`。增量拼起来必须等于最终 `content` 里的文本。流被截断（没收到供应商的结束事件）要抛错（一般是 `network`），**不能**拿半截内容发 `message_complete`。
-- `ContentBlock`：`text`、`thinking`、`tool_call`、`tool_result`；`thinking` 与 `tool_call` 可带 `opaque`（见下）。
+- `ContentBlock`：`text`、`thinking`、`tool_call`、`tool_result`；`text`、`thinking` 与 `tool_call` 可带 `opaque`（见下）。
 - `ModelInfo`：`contextWindow`、`maxOutputTokens`、`capabilities`（`tools` / `vision` / `reasoning` / `caching` / `midConversationSystem` / `effort`）、可选 `streamIdleTimeoutMs`。`listModels` 会被内核缓存，失败时内核跳过该供应商并记日志，不影响其他供应商。
 - 判断错误一律用 `isModelError(e)` / `isRetryableKind(kind)`（鸭子类型），不要 `instanceof ModelError`：插件可能带着另一份 plugin-sdk。
 
@@ -39,15 +39,18 @@ interface ModelProvider {
 - **每条消息的映射只取决于它自己与请求模型**，不看后续消息、不按后续消息调整顺序、不合并或拆分已发送的消息。写成纯函数 `buildRequest(req)`，单测「请求 A 的映射结果是请求 A + 若干新消息的映射结果的前缀」。
 - 中途 `system` 消息：供应商有不需要前后文的原生表达就用（openai 在原位置转成 `developer` 输入项，`midConversationSystem: true`）；原生表达有位置规则、需要看后续消息才能决定怎么放的，**不要用**，在原位置转成 user 文本块 `"[system] " + text`，并报 `midConversationSystem: false`。anthropic 就是这样：原生 system 的放置规则需要前瞻（后面跟着被跳过的空回合或失败的步骤时位置会变），会改写已发送的前缀。
 - 供应商私有块（思考、推理项）原样回放，不改写、不重排；不能回放的（见下）整块丢掉。
+- 历史缓存断点不要打在「最后一条消息的最后一个块」上：下一轮断点移到新的末尾块，已发送消息的字节随之改变。anthropic 用请求顶层的自动 `cache_control`（API 自己把断点放在最后一个可缓存的块上，占一个断点名额，system 已用满 4 个时不加）；openai 的缓存本来就是按前缀自动的。
+- 模型不支持的参数不发：anthropic 只对 Models API 报告支持 adaptive 思考的模型发 `thinking`，`effort` 按 `capabilities.effort.supported` 报告（内核只在 `effort: true` 时传 effort）。
 
 ## opaque 回放：只回放给同一供应商、同一模型
 
-`opaque = { provider, model, data }` 是供应商私有数据（Anthropic 思考块及其签名、OpenAI 含 `encrypted_content` 的 reasoning 项、function_call 的输出项 id）。规则：
+`opaque = { provider, model, data }` 是供应商私有数据（Anthropic 思考块及其签名、OpenAI 含 `encrypted_content` 的 reasoning 项、function_call 与 message 的输出项 id）。规则：
 
 - 产出时 `data` 存原生块原样（能直接塞回下一次请求），`provider` 填插件名，`model` 填**下一轮能接受它的那个模型 id**：
   - openai 用**请求的** model id（响应里的 `model` 是带日期的快照名，按它打标签下一轮永远对不上）；
   - anthropic 用响应的 `model`；**服务端拒答兜底**（`fallbacks: "default"`）时消息里出现 `fallback` 块，整条消息的思考 / 工具 opaque 都改打 `fallback.to.model`（真正作答的模型），否则下一轮回放给原模型会因签名校验失败被拒（R39）。
 - 回放时只在 `opaque.provider === 本插件 && opaque.model === req.model && data != null` 时原样放回；否则：思考块整块丢掉，工具调用退化为不带私有字段的普通调用（openai 去掉输出项 id）。agent 切换模型、走 `fallback` 模型时历史里会混有别的模型的块，这是常态。
+- openai 的推理模型要求回放的 reasoning 项**紧跟它产出的输出项**：text 块的 opaque 保存 message 输出项的 `id`（与 `phase`），同一条 assistant 消息里已回放过 reasoning 项时，text 按原 message 项回放（`{ type: "message", id, role: "assistant", status, content: [output_text] }`）；没有回放 reasoning 项时不带 id（单独带 msg_ id 会被拒）。映射只看消息自身，仍然只追加。夹具按这条规则把关，但**真实接口尚未验证**——见下文「发布前必须跑真实接口」。
 
 ## 用量语义（`ModelUsage`）
 
@@ -128,6 +131,7 @@ describe.skipIf(!LIVE_KEY)("live", () => {
 - 插件构造函数要接受 `baseUrl`，夹具模式靠它指向假服务。
 - 一致性套件之外，按上面的错误映射表逐行写用例（429 带 `retry-after`、529、5xx、401/403、400、413、流中途 error 事件、流截断、畸形工具参数、网络失败、中止、停滞流中止），以及请求映射的前缀单测。
 - 真实接口模式：anthropic 设 `CAPYBARA_TEST_ANTHROPIC_API_KEY`（跑 `claude-haiku-5-5`）；openai 设 `CAPYBARA_TEST_OPENAI_API_KEY` 与 `CAPYBARA_TEST_OPENAI_MODEL`。未设置时测试打一行 info 说明已跳过。改了请求映射或升级 SDK 后在本地用真实接口跑一遍。
+- **发布前必须跑真实接口**：CI 没有密钥，夹具只是按文档与已知报错手写的近似。每次发布供应商插件之前，用真实接口把一致性套件跑通（尤其是思考回放：openai reasoning 项 + 带 id 的 message 项、anthropic 签名思考块，以及顶层 `cache_control` 的缓存命中），并在发布说明里写明跑过的模型。
 - `plugins/model-fake` 同样跑这套一致性套件（不需要假服务）；它的脚本语法（`echo:`、`slow:<ms>:`、`stall`、`fail:<kind>`、`tool:<name>:<json>`、`long:<n>`，其余文本回复 `You said: …`）见其源码 `src/script.ts`。
 
 ## 模型或网关补丁只放在插件里，并写明何时可以删除

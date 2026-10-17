@@ -27,7 +27,8 @@ export interface ProviderOpaque {
 }
 
 export type ContentBlock =
-  | { type: "text"; text: string }
+  /** text 的 opaque：供应商需要随文本回放的私有数据（如 OpenAI message 输出项的 id）。 */
+  | { type: "text"; text: string; opaque?: ProviderOpaque }
   | { type: "thinking"; text: string; opaque?: ProviderOpaque }
   | { type: "tool_call"; id: string; name: string; input: unknown; opaque?: ProviderOpaque }
   | { type: "tool_result"; callId: string; content: string; isError: boolean };
