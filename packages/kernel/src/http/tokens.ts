@@ -33,3 +33,6 @@ export const ORGS = Symbol("ORGS");
 
 /** `MembersService` 的注入令牌。 */
 export const MEMBERS = Symbol("MEMBERS");
+
+/** `InvitationsService` 的注入令牌。 */
+export const INVITATIONS = Symbol("INVITATIONS");

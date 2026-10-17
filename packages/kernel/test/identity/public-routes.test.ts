@@ -14,6 +14,8 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/v1/auth/login",
   "POST /api/v1/auth/refresh",
   "POST /api/v1/auth/logout",
+  "GET /api/v1/invitations/:token",
+  "POST /api/v1/invitations/:token/accept",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";

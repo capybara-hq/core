@@ -13,6 +13,8 @@ import { MeController } from "../identity/me.controller.js";
 import { LoginRateLimiter } from "../identity/rate-limit.js";
 import { SessionService } from "../identity/sessions.js";
 import { SettingsService } from "../identity/settings.js";
+import { InvitationsController } from "../orgs/invitations.controller.js";
+import { InvitationsService } from "../orgs/invitations.service.js";
 import { MembersService } from "../orgs/members.service.js";
 import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsService } from "../orgs/orgs.service.js";
@@ -20,6 +22,7 @@ import type { PluginHost } from "../plugins/host.js";
 import {
   ACCOUNTS,
   API_TOKENS,
+  INVITATIONS,
   KERNEL_CONFIG,
   KERNEL_DB,
   KERNEL_REDIS,
@@ -42,11 +45,11 @@ export interface ApiDeps {
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
-const CONTROLLERS: Type[] = [AuthController, MeController, OrgsController];
+const CONTROLLERS: Type[] = [AuthController, MeController, OrgsController, InvitationsController];
 
 /**
  * 领域服务 provider：领域类保持框架无关（不加装饰器），一律用 `useFactory` 构造。
- * 后续任务往这里追加（ORGS、MEMBERS、INVITATIONS、SETUP、ORG_PLUGIN_CONFIGS、PLUGIN_HOST…）。
+ * 后续任务往这里追加（SETUP、ORG_PLUGIN_CONFIGS、PLUGIN_HOST…）。
  */
 function serviceProviders(deps: ApiDeps): Provider[] {
   return [
@@ -89,6 +92,12 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       provide: MEMBERS,
       useFactory: (db: KernelDb) => new MembersService(db),
       inject: [KERNEL_DB],
+    },
+    {
+      provide: INVITATIONS,
+      useFactory: (db: KernelDb, accounts: AccountsService, members: MembersService) =>
+        new InvitationsService(db, accounts, members),
+      inject: [KERNEL_DB, ACCOUNTS, MEMBERS],
     },
     {
       provide: RATE_LIMITER,
