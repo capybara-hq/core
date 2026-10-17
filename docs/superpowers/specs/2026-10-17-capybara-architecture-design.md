@@ -498,11 +498,26 @@ sandbox:
 
 | 形态 | 方式 |
 |---|---|
-| 试用 | `docker compose up`（应用、PG、Redis、对象存储、沙箱代理） |
+| 试用 | `docker compose up` 起全部服务（见下） |
 | 演示 / 小规模生产 | 单台云主机 + compose + gVisor |
 | 大规模生产 | K8s + 官方 Helm chart |
 
-管理后台与网页聊天是一个 **Vite + React 单页应用**，由 `api` 角色提供静态文件；第一版界面支持中文、英文。
+**前后端分开部署**（2026-10-17 调整）。官方 compose 编排一条命令起全部服务：
+
+```
+docker compose up
+├── api        后端镜像，角色 api      ┐
+├── worker     后端镜像，角色 worker   ├─ 后端始终是一个镜像，按角色拆服务
+├── gateway    后端镜像，角色 gateway  ┘
+├── web        前端镜像（Next standalone），代理 /api 到 api
+├── postgres
+├── valkey
+├── 对象存储（S3 兼容）
+└── sandbox-proxy
+```
+
+管理后台与网页聊天是一个 **Next** 应用，独立构建、独立发版；第一版界面支持中文、英文。
+官网 / 文档站若需 SEO，另起仓库，与产品前端分开。
 
 ### 8.5 升级不停机
 
@@ -542,8 +557,12 @@ OpenTelemetry（trace / 指标 / 结构化 JSON 日志）；内置指标：队�
 
 - TypeScript 全栈，依赖使用最新版本。
 - Agent：LangChain / LangGraph（JS）。
-- 后端 HTTP 框架是内核内部的选择（Hono / Fastify / Nest 均可），**插件契约不暴露框架**；在实施计划中确定。
-- 前端：Vite + React SPA。
+- 后端：**NestJS + Fastify 适配器**（2026-10-17 定，与团队现有技术栈一致）。
+  **插件契约不暴露框架**：插件只认 `ctx`，不写 Nest controller、不依赖 Nest 的模块与依赖注入；
+  插件路由经统一入口 `/plugins/:name/*` 分发到插件注册的处理函数。配置、迁移、`ctx`、插件宿主、
+  双副本测试工具与框架无关。选 Nest 看重的是团队熟悉度与内核变大后的结构（模块、校验、守卫、Swagger），
+  不是单进程性能——高并发靠多副本横向扩展与无状态设计。
+- 前端：**Next**（独立 web 服务，standalone 镜像）。
 - 队列：BullMQ；ORM / 迁移工具在实施计划中确定。
 
 ## 11. 待验证事项
