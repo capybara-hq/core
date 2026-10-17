@@ -7,6 +7,10 @@ export const ERROR_CODES = {
   not_found: 404,
   validation_failed: 400,
   forbidden: 403,
+  "account.login_taken": 409,
+  "account.not_found": 404,
+  "account.last_enterprise_admin": 409,
+  "auth.account_disabled": 403,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

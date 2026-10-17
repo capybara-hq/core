@@ -10,9 +10,11 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { ApiError, ERROR_CODES, type ErrorCode, errorBody } from "../errors.js";
 import { KERNEL_LOG } from "./tokens.js";
 
-const CODE_BY_STATUS = new Map<number, ErrorCode>(
-  Object.entries(ERROR_CODES).map(([code, status]) => [status, code as ErrorCode]),
-);
+/** 同一状态码有多个错误码时取最先登记的（通用码排在业务码前面）。 */
+const CODE_BY_STATUS = new Map<number, ErrorCode>();
+for (const [code, status] of Object.entries(ERROR_CODES)) {
+  if (!CODE_BY_STATUS.has(status)) CODE_BY_STATUS.set(status, code as ErrorCode);
+}
 
 /** Nest `HttpException` 的状态码 → 错误码：已登记的状态直接对应，其余 4xx 归 `validation_failed`、5xx 归 `internal`。 */
 function codeForStatus(status: number): ErrorCode {
