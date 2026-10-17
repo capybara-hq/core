@@ -44,7 +44,19 @@ export interface CreateHttpAppOptions {
   /** 是否转发 `/plugins/*` 到插件路由。 */
   servePlugins: boolean;
   apiModule?: DynamicModule;
-  trustProxy?: boolean;
+  /** 信任哪些代理跳：false、跳数，或受信代理 IP / CIDR 列表（见 `http.trustProxy` 配置）。 */
+  trustProxy?: boolean | number | string[];
+}
+
+/**
+ * 把 `http.trustProxy` 配置转成 Fastify 的 trustProxy。布尔与 IP / CIDR 列表原样传入；
+ * 跳数转成 `(addr, hop) => hop < n`：Fastify 5.12 起对 number 一律 fail closed（不信任任何一跳），
+ * 所以由这里实现跳数语义——前提是服务只能经由这 n 层代理访问（配置说明里已写明，并推荐 CIDR 列表）。
+ */
+function fastifyTrustProxy(
+  tp: boolean | number | string[],
+): boolean | string[] | ((addr: string, hop: number) => boolean) {
+  return typeof tp === "number" ? (_addr, hop) => hop < tp : tp;
 }
 
 /** 根模块：总是含健康检查；`serveApi` 时 import `apiModule`；全局错误过滤器。 */
@@ -71,7 +83,7 @@ function rootModule(opts: CreateHttpAppOptions): DynamicModule {
 export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelHttpApp> {
   const app = await NestFactory.create<NestFastifyApplication>(
     rootModule(opts),
-    new FastifyAdapter({ trustProxy: opts.trustProxy ?? false }),
+    new FastifyAdapter({ trustProxy: fastifyTrustProxy(opts.trustProxy ?? false) }),
     { logger: new NestLogAdapter(opts.log), abortOnError: false },
   );
   // Cookie 解析（会话 Cookie）；必须在 init 之前注册

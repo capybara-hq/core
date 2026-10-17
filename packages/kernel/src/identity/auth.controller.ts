@@ -34,7 +34,7 @@ export class AuthController {
     @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
   ) {}
 
-  /** 登录名不存在与密码错误返回同一错误；失败按登录名与 IP 计数限流。 */
+  /** 登录名不存在与密码错误返回同一错误；每次尝试先按登录名与 IP 原子占用限流额度，成功后退还。 */
   @Post("login")
   @Public()
   @HttpCode(200)
@@ -44,17 +44,15 @@ export class AuthController {
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ account: Account }> {
     const meta = clientMeta(req);
-    const rl = await this.limiter.check(body.login, meta.ip);
+    // 校验密码之前先原子地占用一次尝试额度：并发请求也无法绕过上限
+    const rl = await this.limiter.reserve(body.login, meta.ip);
     if (!rl.allowed) {
       reply.header("retry-after", String(rl.retryAfterSeconds));
       throw new ApiError("auth.rate_limited", "Too many failed login attempts; try again later");
     }
     const account = await this.accounts.authenticateLocal(body.login, body.password);
-    if (!account) {
-      await this.limiter.recordFailure(body.login, meta.ip);
-      throw new ApiError("auth.invalid_credentials", "Invalid login or password");
-    }
-    await this.limiter.clear(body.login);
+    if (!account) throw new ApiError("auth.invalid_credentials", "Invalid login or password");
+    await this.limiter.succeeded(body.login, meta.ip);
     const session = await this.sessions.create(account.id, meta);
     setSessionCookies(reply, session, this.config());
     return { account };

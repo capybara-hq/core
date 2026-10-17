@@ -24,12 +24,12 @@ let admin: Account;
 const PW = "correct horse battery";
 const masterKey = Buffer.alloc(32, 7).toString("base64");
 
-const cfg = (): KernelConfig =>
+const cfg = (http: Record<string, unknown> = {}): KernelConfig =>
   KernelConfigSchema.parse({
     db: { url: pgc.url, poolMax: 5 },
     redis: { url: rd.url },
     masterKey,
-    http: { port: 0 },
+    http: { port: 0, ...http },
   });
 
 beforeAll(async () => {
@@ -134,6 +134,22 @@ describe("POST /api/v1/auth/login", () => {
     const ok = await login(cookieJar(), "alice", PW);
     expect(ok.statusCode).toBe(429);
     expect(errCode(ok)).toBe("auth.rate_limited");
+  });
+
+  it("并发 30 次错密码登录同一账号：至多 10 次到达密码校验，至少 20 次 429", async () => {
+    const rs = await Promise.all(
+      Array.from({ length: 30 }, () => login(cookieJar(), "alice", "wrong password!!")),
+    );
+    const codes = rs.map((r) => r.statusCode);
+    expect(codes.filter((c) => c === 401).length).toBeLessThanOrEqual(10);
+    expect(codes.filter((c) => c === 429).length).toBeGreaterThanOrEqual(20);
+    expect(codes.every((c) => c === 401 || c === 429)).toBe(true);
+  });
+
+  it("成功登录不消耗 IP 额度：同一 IP 连续 60 次成功登录都 200", async () => {
+    for (let i = 0; i < 60; i++) {
+      expect((await login(cookieJar(), i % 2 ? "alice" : "admin")).statusCode).toBe(200);
+    }
   });
 
   it("成功登录清掉该登录名的失败计数", async () => {
@@ -381,5 +397,53 @@ describe("refresh / logout / 改密码 / 停用", () => {
     const res = await asUser(k.http, jar)({ method: "GET", url: "/api/v1/me" });
     expect(res.statusCode).toBe(403);
     expect(errCode(res)).toBe("auth.account_disabled");
+  });
+});
+
+describe("http.trustProxy：客户端 IP", () => {
+  const quiet = { env: {}, logger: createLogger("error", { write: () => {} }) };
+  const viaProxy = (password: string) => ({
+    method: "POST" as const,
+    url: "/api/v1/auth/login",
+    payload: { login: "alice", password },
+    remoteAddress: "127.0.0.1",
+    headers: { "x-capybara-csrf": "1", "x-forwarded-for": "1.1.1.1, 2.2.2.2" },
+  });
+
+  /** 用给定 trustProxy 起一个内核，从 127.0.0.1 带 X-Forwarded-For 登录，返回会话记录的 ip。 */
+  async function sessionIp(trustProxy: unknown): Promise<string | null> {
+    const kk = await createKernel(cfg({ trustProxy }), quiet);
+    try {
+      await kk.start();
+      expect((await kk.http.inject(viaProxy(PW))).statusCode).toBe(200);
+      const row = await db
+        .selectFrom("sessions")
+        .select("ip")
+        .where("account_id", "=", alice.id)
+        .executeTakeFirstOrThrow();
+      await db.deleteFrom("sessions").execute();
+      return row.ip;
+    } finally {
+      await kk.stop();
+    }
+  }
+
+  it("跳数 1 → 取最近一跳代理报告的 2.2.2.2；受信代理 CIDR 同理；false → socket 地址", async () => {
+    expect(await sessionIp(1)).toBe("2.2.2.2");
+    expect(await sessionIp(["127.0.0.0/8"])).toBe("2.2.2.2");
+    expect(await sessionIp(false)).toBe("127.0.0.1");
+  });
+
+  it("失败登录的 IP 限流键同样按解析出的客户端 IP", async () => {
+    const kk = await createKernel(cfg({ trustProxy: 1 }), quiet);
+    try {
+      await kk.start();
+      await kk.http.inject(viaProxy("wrong password!!"));
+      expect(await redis.exists("capk:login-fail:ip:2.2.2.2")).toBe(1);
+      expect(await redis.exists("capk:login-fail:ip:127.0.0.1")).toBe(0);
+      expect(await redis.exists("capk:login-fail:ip:1.1.1.1")).toBe(0);
+    } finally {
+      await kk.stop();
+    }
   });
 });

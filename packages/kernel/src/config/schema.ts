@@ -84,12 +84,12 @@ export const KernelConfigSchema = z.object({
         .default(8080)
         .meta(meta({ description: "HTTP listen port" })),
       trustProxy: z
-        .boolean()
+        .union([z.boolean(), z.number().int().min(1), z.array(z.string().min(1)).min(1)])
         .default(false)
         .meta(
           meta({
             description:
-              "Trust X-Forwarded-For for the client IP (login rate limiting, session records); enable only behind a trusted proxy",
+              "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies",
           }),
         ),
     })

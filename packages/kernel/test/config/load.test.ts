@@ -2,7 +2,13 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ConfigError, envOverrides, loadConfig, selectConfigSource } from "../../src/index.js";
+import {
+  ConfigError,
+  envOverrides,
+  loadConfig,
+  resolveConfig,
+  selectConfigSource,
+} from "../../src/index.js";
 
 const MASTER_KEY = Buffer.alloc(32, 1).toString("base64");
 
@@ -161,5 +167,30 @@ describe("envOverrides 插件寻址与冲突", () => {
       baseEnv({ CAPYBARA_CONFIG_SOURCE: "", CAPYBARA_CONFIG_FILE: file }),
     );
     expect(config.http.port).toBe(9000);
+  });
+});
+
+describe("http.trustProxy", () => {
+  const raw = {
+    db: { url: "postgres://h/db" },
+    redis: { url: "redis://h" },
+    masterKey: MASTER_KEY,
+  };
+  const trust = (env: NodeJS.ProcessEnv) => resolveConfig(raw, env).http.trustProxy;
+
+  it("默认 false；环境变量可给布尔、跳数或 CIDR 列表", () => {
+    expect(trust({})).toBe(false);
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: "1" })).toBe(1);
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: "true" })).toBe(true);
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: '["10.0.0.0/8","192.168.1.1"]' })).toEqual([
+      "10.0.0.0/8",
+      "192.168.1.1",
+    ]);
+  });
+
+  it("跳数必须是 ≥ 1 的整数；列表不能为空", () => {
+    for (const v of ["0", "1.5", "[]", '"10.0.0.0/8"']) {
+      expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v })).toThrow(ConfigError);
+    }
   });
 });

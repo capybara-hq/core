@@ -38,10 +38,13 @@ export function describeSchema(schema: core.$ZodType): {
     type: string;
     element?: core.$ZodType;
     entries?: Record<string, unknown>;
+    options?: core.$ZodType[];
   };
   let type = def.type;
   if (type === "array" && def.element) type = `array<${describeSchema(def.element).type}>`;
-  else if (type === "enum" && def.entries) {
+  else if (type === "union" && def.options) {
+    type = def.options.map((o) => describeSchema(o).type).join(" | ");
+  } else if (type === "enum" && def.entries) {
     type = Object.values(def.entries)
       .map((v) => JSON.stringify(v))
       .join(" | ");
