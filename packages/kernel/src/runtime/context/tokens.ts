@@ -1,0 +1,73 @@
+import type { ModelMessage, ModelRequest } from "@capybara-hq/plugin-sdk";
+
+/** 校正比例的上下限：单轮真实值偏差再大，也不让估算失控。 */
+const MIN_RATIO = 0.5;
+const MAX_RATIO = 3;
+
+/** 逐个 UTF-16 码元计数：ASCII 与非 ASCII 分开累加。线性扫描，不做分词。 */
+class CharCounter {
+  ascii = 0;
+  other = 0;
+
+  add(text: string): void {
+    let ascii = 0;
+    const len = text.length;
+    for (let i = 0; i < len; i++) {
+      if (text.charCodeAt(i) < 128) ascii++;
+    }
+    this.ascii += ascii;
+    this.other += len - ascii;
+  }
+
+  tokens(): number {
+    return Math.ceil(this.ascii / 4 + this.other);
+  }
+}
+
+/**
+ * 估算请求的输入 token 数：ASCII 字符数 ÷ 4 + 非 ASCII 字符数 × 1，向上取整。
+ * 故意不用 BPE 分词器：长段中文分词会阻塞事件循环（可靠性清单 A）；偏差由 `calibrate` 按真实用量校正。
+ * 供应商私有数据（opaque）大小未知，不计入。
+ */
+export function estimateTokens(messages: ModelMessage[], system: ModelRequest["system"]): number {
+  const c = new CharCounter();
+  for (const s of system) c.add(s.text);
+  for (const m of messages) {
+    if (m.role === "system") {
+      c.add(m.content);
+      continue;
+    }
+    for (const b of m.content) {
+      switch (b.type) {
+        case "text":
+        case "thinking":
+          c.add(b.text);
+          break;
+        case "tool_call":
+          c.add(b.name);
+          c.add(JSON.stringify(b.input) ?? "");
+          break;
+        case "tool_result":
+          c.add(b.content);
+          break;
+      }
+    }
+  }
+  return c.tokens();
+}
+
+/**
+ * 用上一轮的真实输入 token 数校正估算：乘以 `inputTokens / estimate`，比例夹在 0.5–3。
+ * 没有上一轮（或上一轮估算为 0）时原样返回。
+ */
+export function calibrate(
+  estimate: number,
+  lastActual: { estimate: number; inputTokens: number } | null,
+): number {
+  if (!lastActual || lastActual.estimate <= 0) return estimate;
+  const ratio = Math.min(
+    MAX_RATIO,
+    Math.max(MIN_RATIO, lastActual.inputTokens / lastActual.estimate),
+  );
+  return Math.ceil(estimate * ratio);
+}
