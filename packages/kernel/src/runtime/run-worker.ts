@@ -1,21 +1,21 @@
+import { hostname } from "node:os";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Worker } from "bullmq";
+import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { AppendEvent, EventLog } from "../conversations/event-log.js";
+import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import type { SettingsService } from "../identity/settings.js";
 import type { RunAbort } from "./abort.js";
-import {
-  CONVERSATION_LOCK_TTL_MS,
-  type ConversationLock,
-  type Lease,
-} from "./conversation-lock.js";
+import type { KyselyCheckpointSaver } from "./checkpointer.js";
+import type { ConversationLock, Lease } from "./conversation-lock.js";
 import type { AgentLoop, LoopOutcome } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit } from "./quota.js";
+import { type FinishRunArgs, finishRun, TERMINAL_STATUSES } from "./run-finish.js";
 import { bullConnection, RUN_QUEUE_NAME, type RunJobData, type RunQueue } from "./run-queue.js";
 
 /** 会话锁被占用时任务延后的时间。 */
@@ -27,13 +27,11 @@ const MAX_STALLED_COUNT = 3;
 /** 读插话的分页大小。 */
 const READ_PAGE = 500;
 
-const TERMINAL = new Set(["completed", "failed", "aborted"]);
-
 /** 测试钩子与参数。 */
 export interface RunHooks {
   /** 终态事件已写入、释放配额与会话锁之前调用（用于构造「运行结束瞬间到达的消息」）。 */
   beforeRelease?(runId: string, conversationId: string): Promise<void>;
-  /** 会话锁 TTL（毫秒），默认 `CONVERSATION_LOCK_TTL_MS`；测试调短以快速触发续租。 */
+  /** 会话锁 TTL（毫秒），默认 `runtime.jobLockMs`；测试调短以快速触发续租。 */
   lockTtlMs?: number;
 }
 
@@ -49,8 +47,10 @@ export interface RunWorkerDeps {
   config: () => KernelConfig;
   log: Logger;
   redisUrl: string;
-  /** 流式增量出口；默认丢弃（SSE 推送在后续任务接入）。 */
-  sink?: StreamSink;
+  /** 按会话取流式增量出口；默认丢弃。 */
+  sinkFor?: (conversationId: string) => StreamSink;
+  /** 运行结束后剪枝该运行（thread_id = runId）的 checkpoint，只留最新一个。 */
+  checkpoints?: Pick<KyselyCheckpointSaver, "pruneToLatest">;
   hooks?: RunHooks;
 }
 
@@ -89,6 +89,8 @@ async function requeue(
  */
 export class RunWorker {
   private worker: Worker<RunJobData> | undefined;
+  /** 传给 Worker 的连接：BullMQ 不关闭调用方传入的连接，close() 时自己关。 */
+  private conn: Redis | undefined;
   private readonly active = new Map<string, ActiveRun>();
   private closing = false;
 
@@ -97,17 +99,56 @@ export class RunWorker {
   start(): void {
     if (this.worker) return;
     const runtime = this.d.config().runtime;
+    this.conn = bullConnection(this.d.redisUrl, this.d.log);
     this.worker = new Worker<RunJobData>(RUN_QUEUE_NAME, (job, token) => this.process(job, token), {
-      connection: bullConnection(this.d.redisUrl, this.d.log),
+      // 领取任务的 worker 名记在任务上（BullMQ 的 processedBy），便于排查是哪个副本在执行。
+      name: `${hostname()}-${process.pid}`,
+      connection: this.conn,
       concurrency: runtime.workerConcurrency,
       lockDuration: runtime.jobLockMs,
       stalledInterval: runtime.stalledIntervalMs,
       maxStalledCount: MAX_STALLED_COUNT,
     });
     this.worker.on("error", (err) => this.d.log.error("run worker error", { err }));
-    this.worker.on("failed", (job, err) =>
-      this.d.log.error("run job failed", { jobId: job?.id, runId: job?.data.runId, err }),
+    this.worker.on("failed", (job, err) => {
+      this.d.log.error("run job failed", { jobId: job?.id, runId: job?.data.runId, err });
+      if (job) {
+        this.onJobFailed(job.data, err).catch((e) =>
+          this.d.log.error("cannot mark failed run job", { runId: job.data.runId, err: e }),
+        );
+      }
+    });
+  }
+
+  /**
+   * BullMQ 判定任务失败（R29）：stalled 次数超过上限（持有者反复崩溃），或处理函数在自己的终态处理之外抛错。
+   * 运行若仍未结束：清理死去持有者留下的会话锁，写 `run_failed`（stalled → `run.stalled`，
+   * 其他 → `run.internal`），status 置为 failed，consumed_seq 至少推进到触发消息，然后 ensureRun。
+   */
+  private async onJobFailed(data: RunJobData, err: Error): Promise<void> {
+    const { runId, conversationId } = data;
+    const stalled = /stalled/i.test(err.message);
+    await this.d.lock.releaseFor(conversationId, runId);
+    const toSeq = await this.finish(
+      conversationId,
+      runId,
+      "failed",
+      null,
+      {
+        type: "run_failed",
+        payload: {
+          error: stalled
+            ? {
+                code: "run.stalled",
+                message: "The run was interrupted too many times and will not continue",
+              }
+            : { code: "run.internal", message: "The run failed unexpectedly" },
+        },
+      },
+      false,
     );
+    if (toSeq !== null) await this.prune(runId);
+    await this.d.queue.ensureRun(conversationId);
   }
 
   /**
@@ -146,6 +187,9 @@ export class RunWorker {
       }
     }
     await worker.close(!finished);
+    const conn = this.conn;
+    this.conn = undefined;
+    if (conn) await conn.quit().catch(() => conn.disconnect());
   }
 
   private async process(job: Job<RunJobData>, token: string | undefined): Promise<void> {
@@ -156,7 +200,7 @@ export class RunWorker {
       .select(["id", "status", "agent_version", "trigger_account_id", "trigger_seq", "started_at"])
       .where("id", "=", runId)
       .executeTakeFirst();
-    if (!run || TERMINAL.has(run.status)) return;
+    if (!run || TERMINAL_STATUSES.has(run.status)) return;
     const conv = await this.d.db
       .selectFrom("conversations")
       .select(["org_id", "agent_id"])
@@ -164,10 +208,11 @@ export class RunWorker {
       .executeTakeFirst();
     if (!conv) return;
 
+    // 会话锁 TTL 与任务锁一致：持有者崩溃后，任务被判定 stalled 时会话锁也差不多同时过期。
     const lease = await this.d.lock.acquire(
       conversationId,
       runId,
-      this.d.hooks?.lockTtlMs ?? CONVERSATION_LOCK_TTL_MS,
+      this.d.hooks?.lockTtlMs ?? this.d.config().runtime.jobLockMs,
     );
     if (!lease) return requeue(job, token, LOCK_BUSY_DELAY_MS);
 
@@ -235,6 +280,7 @@ export class RunWorker {
     }
     if (state.abandoned) return;
     if (delayMs !== null) return requeue(job, token, delayMs);
+    await this.prune(runId);
     if (broken) return;
     try {
       await this.d.queue.ensureRun(conversationId);
@@ -331,6 +377,8 @@ export class RunWorker {
       const startConsumed = Number(consumed_seq);
       let absorbed = startConsumed;
       const pendingUserMessages = async (afterSeq: number): Promise<ConversationEvent[]> => {
+        // loop 声明已吸收到 afterSeq（续跑时来自 checkpoint，可能包含之前进程吸收的消息）。
+        absorbed = Math.max(absorbed, afterSeq);
         const out: ConversationEvent[] = [];
         let after = Math.max(afterSeq, startConsumed);
         for (;;) {
@@ -353,7 +401,7 @@ export class RunWorker {
           agentVersion: run.agent_version,
           signal: ac.signal,
           shutdown: state.shutdown.signal,
-          sink: this.d.sink ?? noopSink,
+          sink: this.d.sinkFor?.(conversationId) ?? noopSink,
           pendingUserMessages,
           limits: { maxSteps: runtime.maxSteps, deadline },
         });
@@ -406,39 +454,33 @@ export class RunWorker {
     }
   }
 
+  /** 剪枝该运行的 checkpoint（失败只记日志）。 */
+  private async prune(runId: string): Promise<void> {
+    await this.d.checkpoints
+      ?.pruneToLatest(runId)
+      .catch((err) => this.d.log.warn("checkpoint prune failed", { runId, err }));
+  }
+
   /**
-   * 写终态事件，同一事务内推进 `consumed_seq` 并更新 `runs.status`；提交后发布会话通知，然后调用测试钩子。
-   * `consumed_seq = GREATEST(consumed_seq, consumed, runs.trigger_seq)`：不回退，且任何终态都至少消费到
-   * 触发该运行的消息——否则结束时的 ensureRun 会对同一条消息无限重试（失败）或卡住会话。
+   * 写终态（见 `finishRun`：运行仍未结束才写，同一事务内推进 `consumed_seq` 并更新 `runs.status`），
+   * 提交后发布会话通知，然后调用测试钩子。返回终态事件 seq；运行已是终态 → null。
    */
   private async finish(
     conversationId: string,
     runId: string,
-    status: "completed" | "failed" | "aborted",
+    status: FinishRunArgs["status"],
     consumed: number | null,
-    event: Pick<AppendEvent, "type" | "payload">,
-  ): Promise<void> {
-    const toSeq = await this.d.db.transaction().execute(async (t) => {
-      const [ev] = await this.d.eventLog.append(
-        conversationId,
-        [{ ...event, runId, idemKey: `${event.type}:${runId}` }],
-        t,
-      );
-      await t
-        .updateTable("conversations")
-        .set({
-          consumed_seq: sql`GREATEST(consumed_seq, ${consumed ?? 0}::bigint, (SELECT r.trigger_seq FROM capybara.runs r WHERE r.id = ${runId}))`,
-        })
-        .where("id", "=", conversationId)
-        .execute();
-      await t
-        .updateTable("runs")
-        .set({ status, finished_at: sql`now()` })
-        .where("id", "=", runId)
-        .execute();
-      return (ev as ConversationEvent).seq;
+    event: FinishRunArgs["event"],
+    hook = true,
+  ): Promise<number | null> {
+    const toSeq = await finishRun(this.d.db, this.d.eventLog, {
+      conversationId,
+      runId,
+      status,
+      consumed,
+      event,
     });
-    await this.d.eventLog.notify(conversationId, toSeq);
-    await this.d.hooks?.beforeRelease?.(runId, conversationId);
+    if (hook) await this.d.hooks?.beforeRelease?.(runId, conversationId);
+    return toSeq;
   }
 }

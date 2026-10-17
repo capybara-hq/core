@@ -31,7 +31,7 @@
 | `runtime.keepRecentTurns` | `CAPYBARA_RUNTIME__KEEP_RECENT_TURNS` | `number` | `4` | 否 | 否 | Number of recent user turns kept verbatim when compacting |
 | `runtime.workerConcurrency` | `CAPYBARA_RUNTIME__WORKER_CONCURRENCY` | `number` | `10` | 否 | 否 | Maximum agent runs executed concurrently by one worker process |
 | `runtime.orgConcurrency` | `CAPYBARA_RUNTIME__ORG_CONCURRENCY` | `number` | `10` | 是 | 否 | Maximum agent runs executing concurrently per organization across all replicas |
-| `runtime.jobLockMs` | `CAPYBARA_RUNTIME__JOB_LOCK_MS` | `number` | `30000` | 否 | 否 | Lock duration of an agent run job in milliseconds (BullMQ lockDuration); a run whose worker stops renewing it is considered stalled after this long |
+| `runtime.jobLockMs` | `CAPYBARA_RUNTIME__JOB_LOCK_MS` | `number` | `30000` | 否 | 否 | Lock duration of an agent run job in milliseconds (BullMQ lockDuration), also the TTL of the conversation run lock; a run whose worker stops renewing them is considered stalled after this long and resumes on another worker |
 | `runtime.stalledIntervalMs` | `CAPYBARA_RUNTIME__STALLED_INTERVAL_MS` | `number` | `30000` | 否 | 否 | How often workers check for stalled agent run jobs in milliseconds (BullMQ stalledInterval) |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 

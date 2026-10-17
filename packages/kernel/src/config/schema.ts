@@ -216,7 +216,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Lock duration of an agent run job in milliseconds (BullMQ lockDuration); a run whose worker stops renewing it is considered stalled after this long",
+              "Lock duration of an agent run job in milliseconds (BullMQ lockDuration), also the TTL of the conversation run lock; a run whose worker stops renewing them is considered stalled after this long and resumes on another worker",
           }),
         ),
       stalledIntervalMs: z

@@ -46,6 +46,11 @@ export interface Harness {
   replicas: [ReplicaHandle, ReplicaHandle];
   /** 本 harness 独占数据库的连接串，测试可直接连上去查表。 */
   dbUrl: string;
+  /**
+   * 模拟副本硬崩溃：对该副本子进程发 SIGKILL 并等它退出（不走优雅停机）。之后发往它的请求直接抛错；
+   * 另一个副本照常工作。已退出时是空操作。
+   */
+  kill(index: 0 | 1): Promise<void>;
   /** 停两个副本（15s 后 SIGKILL）、删临时库、关自有容器；幂等。 */
   stop(): Promise<void>;
 }
@@ -244,6 +249,11 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       replicas,
       dbUrl: db.url,
       stop,
+      async kill(index) {
+        const r = (index === 0 ? a : b).runner;
+        if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill("SIGKILL");
+        await r.exited;
+      },
       async request(path, init) {
         const i = calls++ % 2;
         const r = replicas[i] as ReplicaHandle;

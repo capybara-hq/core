@@ -5,7 +5,11 @@ import { sql } from "kysely";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
-import { EventLog } from "./conversations/event-log.js";
+import {
+  type ConversationBusMessage,
+  conversationTopic,
+  EventLog,
+} from "./conversations/event-log.js";
 import { createBus, createBusSubscriber } from "./ctx/bus.js";
 import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
@@ -20,9 +24,11 @@ import { createLogger, type KernelLogger } from "./log.js";
 import { PluginHost } from "./plugins/host.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
 import { RunAbort } from "./runtime/abort.js";
+import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
+import { LangGraphLoop } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
-import type { ModelStepDeps } from "./runtime/model-call.js";
+import type { ModelStepDeps, StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
 import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
@@ -107,8 +113,8 @@ export interface KernelOptions {
   /** 热更新时与来源原始值合并的环境变量，默认 `process.env`。 */
   env?: NodeJS.ProcessEnv;
   /**
-   * 运行使用的 AgentLoop 工厂。不提供时本进程即使含 `worker` 角色也不执行运行（记 warn），
-   * 消息投递出的运行留在队列里，由提供了 loop 的 worker 副本执行。
+   * 运行使用的 AgentLoop 工厂（测试用）。默认是 {@link LangGraphLoop}：checkpoint 存在内核的
+   * `KyselyCheckpointSaver`，worker 崩溃后其他副本从 checkpoint 续跑。
    */
   loop?: (deps: ModelStepDeps) => AgentLoop;
   /** 运行 worker 的测试钩子。 */
@@ -214,7 +220,28 @@ export async function createKernel(
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
-  const runQueue = new RunQueue(kdb, lock, config.redis.url, log);
+  const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log);
+  const checkpoints = new KyselyCheckpointSaver(kdb);
+  const loopFactory =
+    opts.loop ?? ((d: ModelStepDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
+  /**
+   * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
+   * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
+   */
+  const sinkFor =
+    (conversationId: string): StreamSink =>
+    (d) => {
+      const msg: ConversationBusMessage = {
+        kind: "delta",
+        runId: d.runId,
+        step: d.step,
+        delta: d.kind,
+        ...(d.text !== undefined && { text: d.text }),
+      };
+      bus
+        .publish(conversationTopic(conversationId), msg)
+        .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
+    };
   const stepDeps: ModelStepDeps = { db: kdb, eventLog, registry, config: () => current, log };
   const runs: KernelRuns = { eventLog, registry, queue: runQueue, lock, quota, abort, stepDeps };
   let runWorker: RunWorker | undefined;
@@ -416,25 +443,23 @@ export async function createKernel(
         await host.load(config.plugins);
         checkpoint();
         if (config.roles.includes("worker")) {
-          if (opts.loop) {
-            runWorker = new RunWorker({
-              db: kdb,
-              eventLog,
-              lock,
-              quota,
-              abort,
-              queue: runQueue,
-              settings: new SettingsService(kdb, log),
-              loop: opts.loop(stepDeps),
-              config: () => current,
-              log,
-              redisUrl: config.redis.url,
-              ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
-            });
-            runWorker.start();
-          } else {
-            log.warn("no agent loop configured; this worker does not execute agent runs");
-          }
+          runWorker = new RunWorker({
+            db: kdb,
+            eventLog,
+            lock,
+            quota,
+            abort,
+            queue: runQueue,
+            settings: new SettingsService(kdb, log),
+            loop: loopFactory(stepDeps),
+            config: () => current,
+            log,
+            redisUrl: config.redis.url,
+            sinkFor,
+            checkpoints,
+            ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
+          });
+          runWorker.start();
         }
         httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {

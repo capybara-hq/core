@@ -82,6 +82,21 @@ describe("双副本测试工具", () => {
     for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  it("kill(i)：SIGKILL 该副本，之后发往它的请求抛错，另一个副本照常；stop 仍幂等", async () => {
+    const h = await harness("whoami");
+    const [a, b] = h.replicas;
+    await h.kill(0);
+    expect(alive(a.pid)).toBe(false);
+    expect(alive(b.pid)).toBe(true);
+    // 第 1 次请求落到 replica 0（已死）→ 抛错；第 2 次落到 replica 1 → 正常
+    await expect(h.request("/plugins/whoami/pid")).rejects.toThrow(/replica 0 .*signal SIGKILL/);
+    const r = await h.request("/plugins/whoami/pid");
+    expect(((await r.json()) as { pid: number }).pid).toBe(b.pid);
+    await h.kill(0);
+    await h.stop();
+    expect(alive(b.pid)).toBe(false);
+  });
+
   it("插件启动失败时 start 以 stderr 尾部 reject，且不泄露配置", async () => {
     await expect(
       createDualReplicaHarness({ plugins: ["/nonexistent/plugin.ts"], pgUrl: pgc.url }),

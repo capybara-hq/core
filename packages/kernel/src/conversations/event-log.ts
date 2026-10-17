@@ -28,11 +28,21 @@ export interface AppendEvent {
 /** 新事件提交后发布到的总线主题。 */
 export const conversationTopic = (conversationId: string): string => `conv.${conversationId}`;
 
-/** 总线消息：会话日志已推进到 `toSeq`（订阅方据此 `readAfter` 补读，消息本身不携带事件）。 */
-export interface ConversationBusMessage {
-  kind: "events";
-  toSeq: number;
-}
+/**
+ * 会话频道上的总线消息：
+ * - `events`：会话日志已推进到 `toSeq`（订阅方据此 `readAfter` 补读，消息本身不携带事件）；
+ * - `delta`：运行的流式增量（文本 / 思考 / `step_reset`：丢弃该步此前推出的增量），只是草稿，
+ *   最终内容以日志中的 assistant_message 为准。
+ */
+export type ConversationBusMessage =
+  | { kind: "events"; toSeq: number }
+  | {
+      kind: "delta";
+      runId: string;
+      step: number;
+      delta: "text" | "thinking" | "step_reset";
+      text?: string;
+    };
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
 

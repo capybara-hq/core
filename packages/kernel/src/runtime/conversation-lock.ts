@@ -101,6 +101,14 @@ export class ConversationLock {
     return lease;
   }
 
+  /**
+   * 释放某个运行持有的锁（只在仍由该 runId 持有时删除），不需要 Lease：用于 BullMQ 已判定任务失败
+   * （例如持有者崩溃、stalled 次数超限）后清理死去持有者留下的锁，不必等 TTL 过期。
+   */
+  async releaseFor(conversationId: string, runId: string): Promise<void> {
+    await this.redis.eval(RELEASE, 1, lockKey(conversationId), runId);
+  }
+
   /** 当前持有者的 runId；无人持有 → null。 */
   holder(conversationId: string): Promise<string | null> {
     return this.redis.get(lockKey(conversationId));

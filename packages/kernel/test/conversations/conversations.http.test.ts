@@ -33,6 +33,8 @@ beforeAll(async () => {
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0 },
+      // 只测 HTTP 与事件日志：不执行运行（worker 角色会用默认 loop 回复消息、追加事件）
+      roles: ["api"],
       ...MODEL_PLUGINS_CONFIG,
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },

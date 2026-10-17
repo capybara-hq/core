@@ -9,6 +9,8 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
+import { LangGraphLoop } from "../../src/runtime/langgraph-loop.js";
 import type { AgentLoop, LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
 import {
   type ModelStepDeps,
@@ -84,6 +86,11 @@ class SequentialLoop implements AgentLoop {
 }
 
 const sequential = (deps: ModelStepDeps): AgentLoop => new SequentialLoop(deps);
+const langgraph = (deps: ModelStepDeps): AgentLoop =>
+  new LangGraphLoop(new KyselyCheckpointSaver(deps.db), deps);
+
+/** 当前 describe 使用的 loop（同一组场景分别跑 SequentialLoop 与默认的 LangGraphLoop）。 */
+let defaultLoop: (deps: ModelStepDeps) => AgentLoop = sequential;
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -108,7 +115,7 @@ async function worker(
   } = {},
 ): Promise<Kernel> {
   const k = await startKernel(runConfig(urls(), { roles: opts.roles ?? ["worker"], runtime }), {
-    loop: opts.loop ?? sequential,
+    loop: opts.loop ?? defaultLoop,
     ...(opts.hooks && { runHooks: opts.hooks }),
   });
   extra.push(k);
@@ -157,7 +164,15 @@ const textOf = (e: ConversationEvent) =>
     ? e.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")
     : "";
 
-describe("RunWorker", () => {
+const LOOPS: [string, (deps: ModelStepDeps) => AgentLoop][] = [
+  ["SequentialLoop", sequential],
+  ["LangGraphLoop", langgraph],
+];
+
+describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
+  beforeAll(() => {
+    defaultLoop = loopFactory;
+  });
   it("echo:hi → user_message、run_started、model_call、assistant_message、usage、run_finished", async () => {
     await worker();
     const { orgId, convId } = await setup();
@@ -486,7 +501,7 @@ describe("RunWorker", () => {
       {},
       {
         loop: (deps) => {
-          const inner = new SequentialLoop(deps);
+          const inner = loopFactory(deps);
           return {
             run: async (ctx) => {
               if (throwNext) {
@@ -537,5 +552,120 @@ describe("RunWorker", () => {
       await q.close();
       conn.disconnect();
     }
+  });
+});
+
+/** 删除某个触发点的运行任务（模拟任务丢失）。 */
+async function removeJob(convId: string, seq: number): Promise<void> {
+  const conn = new Redis(rd.url, { maxRetriesPerRequest: null });
+  const q = new Queue(RUN_QUEUE_NAME, { connection: conn });
+  try {
+    await (await q.getJob(runJobId(convId, seq)))?.remove();
+  } finally {
+    await q.close();
+    conn.disconnect();
+  }
+}
+
+const checkpointsOf = (runId: string) =>
+  db.selectFrom("lg_checkpoints").select("checkpoint_id").where("thread_id", "=", runId).execute();
+
+describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
+  beforeAll(() => {
+    defaultLoop = langgraph;
+  });
+
+  it("不传 loop 的 worker 内核默认用 LangGraphLoop；运行结束后该 thread 的 checkpoint 只剩 1 行", async () => {
+    const k = await startKernel(runConfig(urls(), { roles: ["worker"], runtime: { maxSteps: 3 } }));
+    extra.push(k);
+    const { orgId, convId } = await setup(LOOPER);
+    await postMessage(req, orgId, convId, "loop:10");
+    const [fin] = await waitForTerminal(db, convId);
+    expect(fin?.payload).toMatchObject({ reason: "max_steps" });
+    const runId = fin?.runId as string;
+    // LangGraphLoop 的 tools 占位节点写了提醒（证明用的是默认 loop）
+    const evs = await eventsOf(db, convId);
+    expect(
+      evs.some((e) => e.type === "reminder" && e.payload.text === "Tools are not available yet."),
+    ).toBe(true);
+    await waitFor(async () => (await checkpointsOf(runId)).length === 1, 3_000, "pruned");
+    const [cp] = await checkpointsOf(runId);
+    const writes = await db
+      .selectFrom("lg_checkpoint_writes")
+      .select("checkpoint_id")
+      .where("thread_id", "=", runId)
+      .execute();
+    expect(writes.every((w) => w.checkpoint_id === cp?.checkpoint_id)).toBe(true);
+  });
+
+  it("stalled 次数超限（BullMQ 判定任务失败）→ run_failed run.stalled，status failed，consumed_seq 推进，会话不卡住", async () => {
+    const { orgId, convId } = await setup();
+    const seq = await postMessage(req, orgId, convId, "echo:x");
+    const [run] = await runsOf(db, convId);
+    // 模拟 stalled 超限：BullMQ 把任务放回等待并记下延迟失败原因，下一个领取它的 worker 直接判失败
+    await redis.hset(
+      `bull:${RUN_QUEUE_NAME}:${runJobId(convId, seq)}`,
+      "defa",
+      "job stalled more than allowable limit",
+    );
+    // 死去的持有者留下的会话锁
+    await redis.set(`capk:conv-run:${convId}`, run?.id as string, "PX", 60_000);
+    await worker();
+    const [t] = await waitForTerminal(db, convId);
+    expect(t?.type).toBe("run_failed");
+    expect(t?.runId).toBe(run?.id);
+    expect(t?.payload).toMatchObject({ error: { code: "run.stalled" } });
+    await waitFor(async () => (await runsOf(db, convId))[0]?.status === "failed", 3_000);
+    expect(await consumedSeq(db, convId)).toBe(seq);
+    // 死去持有者的锁已清理：新消息立即起新一轮并完成
+    await waitFor(async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0, 3_000);
+    const next = await postMessage(req, orgId, convId, "echo:next");
+    const terms = await waitForTerminal(db, convId, 2);
+    expect(terms[1]?.type).toBe("run_finished");
+    expect(await consumedSeq(db, convId)).toBe(next);
+  });
+
+  it("孤儿运行（queued 但任务已不存在、会话锁空闲、超过宽限期）→ ensureRun 标记 run.orphaned 并起新一轮", async () => {
+    const { orgId, convId } = await setup();
+    const first = await postMessage(req, orgId, convId, "echo:lost");
+    const [orphan] = await runsOf(db, convId);
+    await removeJob(convId, first);
+    // 宽限期内（刚创建、任务可能还没投递）不清理
+    await postMessage(req, orgId, convId, "echo:early");
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["queued"]);
+    await db
+      .updateTable("runs")
+      .set({ created_at: sql`now() - interval '1 minute'` })
+      .where("id", "=", orphan?.id as string)
+      .execute();
+    const second = await postMessage(req, orgId, convId, "echo:found");
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed", "queued"]);
+    const failed = (await eventsOf(db, convId)).find((e) => e.type === "run_failed");
+    expect(failed?.runId).toBe(orphan?.id);
+    expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
+    expect(await consumedSeq(db, convId)).toBe(first);
+    await worker();
+    const terms = await waitForTerminal(db, convId, 2);
+    expect(terms[1]?.type).toBe("run_finished");
+    expect(terms[1]?.payload).toMatchObject({ consumedUpToSeq: second });
+    expect(await consumedSeq(db, convId)).toBe(second);
+  });
+
+  it("running 的孤儿（没能写终态、任务已结束）无宽限期即被清理，且只有一条终态事件", async () => {
+    const { orgId, convId } = await setup();
+    const first = await postMessage(req, orgId, convId, "echo:a");
+    const [run] = await runsOf(db, convId);
+    await removeJob(convId, first);
+    await db
+      .updateTable("runs")
+      .set({ status: "running", started_at: sql`now()` })
+      .where("id", "=", run?.id as string)
+      .execute();
+    await postMessage(req, orgId, convId, "echo:b");
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed", "queued"]);
+    await worker();
+    await waitForTerminal(db, convId, 2);
+    const evs = await eventsOf(db, convId);
+    expect(evs.filter((e) => e.runId === run?.id && e.type.startsWith("run_"))).toHaveLength(1);
   });
 });

@@ -219,7 +219,8 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
 
   /**
    * 一轮运行结束后调用：根命名空间（`checkpoint_ns = ''`）下只保留最新一个 checkpoint 及其 writes，
-   * 其余 checkpoint 与它们的 writes 删除。返回删除的 checkpoint 条数。其他命名空间（子图）不动。
+   * 更早的 checkpoint 与它们的 writes 删除。只删 checkpoint_id **小于**最新的（按字节序）：
+   * 读出最新与删除之间并发写入的更新 checkpoint 不会被误删（R20）。返回删除的 checkpoint 条数。其他命名空间（子图）不动。
    * 保留下来的 checkpoint 的 parent_checkpoint_id 原样保留（父 checkpoint 已不存在）。
    */
   async pruneToLatest(threadId: string): Promise<number> {
@@ -237,13 +238,13 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
         .deleteFrom("lg_checkpoint_writes")
         .where("thread_id", "=", threadId)
         .where("checkpoint_ns", "=", "")
-        .where("checkpoint_id", "<>", latest.checkpoint_id)
+        .where(idC, "<", latest.checkpoint_id)
         .execute();
       const res = await trx
         .deleteFrom("lg_checkpoints")
         .where("thread_id", "=", threadId)
         .where("checkpoint_ns", "=", "")
-        .where("checkpoint_id", "<>", latest.checkpoint_id)
+        .where(idC, "<", latest.checkpoint_id)
         .executeTakeFirst();
       return Number(res.numDeletedRows);
     });
