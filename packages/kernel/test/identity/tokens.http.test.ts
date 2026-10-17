@@ -293,6 +293,28 @@ describe("组织服务令牌", () => {
     expect(await tokens.list({ orgId: id })).toHaveLength(0);
   });
 
+  it("PAT（owner 的）不能创建 / 列出 / 吊销服务令牌（403 auth.session_required）", async () => {
+    const req = await session("owner");
+    const id = await createOrg(req);
+    const svc = await makeSvc(req, id);
+    const { token } = await makePat(req);
+    for (const [method, url] of [
+      ["POST", `/api/v1/orgs/${id}/service-tokens`],
+      ["GET", `/api/v1/orgs/${id}/service-tokens`],
+      ["DELETE", `/api/v1/orgs/${id}/service-tokens/${svc.record.id}`],
+    ] as const) {
+      const res = await k.http.inject({
+        method,
+        url,
+        headers: bearer(token),
+        ...(method === "POST" && { payload: { name: "x", role: "member" } }),
+      });
+      expect(res.statusCode).toBe(403);
+      expect(errCode(res)).toBe("auth.session_required");
+    }
+    expect(await tokens.list({ orgId: id })).toHaveLength(1);
+  });
+
   it("审计 created / revoked，detail 不含令牌", async () => {
     const req = await session("owner");
     const id = await createOrg(req);

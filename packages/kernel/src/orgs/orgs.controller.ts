@@ -14,7 +14,12 @@ import { ApiError } from "../errors.js";
 import { API_TOKENS, MEMBERS, ORGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { ApiTokenRecord, ApiTokenService } from "../identity/api-tokens.js";
-import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import {
+  CurrentPrincipal,
+  type Principal,
+  requireUser,
+  SessionOnly,
+} from "../identity/principal.js";
 import type { Member, MembersService } from "./members.service.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
 import type { Org, OrgsService } from "./orgs.service.js";
@@ -152,6 +157,7 @@ export class OrgsController {
 
   @Post(":orgId/service-tokens")
   @OrgAction("org.tokens.manage")
+  @SessionOnly()
   async createServiceToken(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
@@ -163,12 +169,14 @@ export class OrgsController {
 
   @Get(":orgId/service-tokens")
   @OrgAction("org.tokens.manage")
+  @SessionOnly()
   async listServiceTokens(@CurrentOrg() org: OrgContext): Promise<ApiTokenRecord[]> {
     return this.tokens.list({ orgId: org.orgId });
   }
 
   @Delete(":orgId/service-tokens/:tokenId")
   @OrgAction("org.tokens.manage")
+  @SessionOnly()
   @HttpCode(204)
   async revokeServiceToken(
     @CurrentPrincipal() principal: Principal,

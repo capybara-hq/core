@@ -71,6 +71,9 @@ export class AuthGuard implements CanActivate {
     if (p.kind === "service" && !flag(ALLOW_SERVICE_KEY)) {
       throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
     }
+    if (flag(SESSION_ONLY_KEY) && p.kind === "service") {
+      throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
+    }
     if (flag(SESSION_ONLY_KEY) && !(p.kind === "user" && p.via === "session")) {
       throw new ApiError("auth.session_required", "This endpoint requires a web session");
     }
