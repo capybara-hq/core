@@ -588,6 +588,50 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "completed"]);
   });
 
+  it("R33：工具步骤进行中到达消息、下一次 prepare 前截止时间已过 → max_duration 且不消费它，新一轮回复它恰好一次", async () => {
+    let firstRun: string | null = null;
+    let passed = false;
+    await worker(
+      {},
+      {
+        loop: (deps) => {
+          const inner = loopFactory(deps);
+          return {
+            run: (ctx) => {
+              firstRun ??= ctx.runId;
+              const isFirst = ctx.runId === firstRun;
+              const real = ctx.limits.deadline;
+              // 第一轮的截止时间在测试设置 passed 之后视为已过（不触发 run-worker 自己的截止计时器）
+              const limits = {
+                maxSteps: ctx.limits.maxSteps,
+                get deadline() {
+                  return isFirst && passed ? Date.now() - 1 : real;
+                },
+              };
+              return inner.run({ ...ctx, limits });
+            },
+          };
+        },
+      },
+    );
+    const { orgId, convId } = await setup(LOOPER);
+    const first = await postMessage(req, orgId, convId, "loop:400");
+    await waitForEvent(db, convId, (e) => e.type === "model_call");
+    const hello = await postMessage(req, orgId, convId, "hello");
+    passed = true;
+    const terms = await waitForTerminal(db, convId, 2);
+    expect(terms[0]?.payload).toEqual({ reason: "max_duration", consumedUpToSeq: first });
+    expect(terms[1]?.payload).toEqual({ reason: "completed", consumedUpToSeq: hello });
+    await sleep(300);
+    const evs = await eventsOf(db, convId);
+    expect(evs.filter((e) => e.type === "assistant_message").map(textOf)).toEqual([
+      "",
+      "You said: hello",
+    ]);
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "completed"]);
+    expect(await consumedSeq(db, convId)).toBe(hello);
+  });
+
   it("同一触发点的任务已存在（属于另一个运行）→ ensureRun 不投递、不留下 queued 行", async () => {
     const { orgId, convId } = await setup();
     const conn = new Redis(rd.url, { maxRetriesPerRequest: null });

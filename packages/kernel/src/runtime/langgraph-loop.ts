@@ -125,13 +125,12 @@ export class LangGraphLoop implements AgentLoop {
 
     const prepare = async (s: State): Promise<Partial<State>> => {
       if (ctx.shutdown.aborted) throw new LoopInterrupted();
+      // 先查截止时间、再吸收（R33）：超时结束的运行不得消费它没有回复的消息，
+      // 否则 consumed_seq 越过它们、也不会再起新一轮。
+      if (timedOut()) return { outcome: "max_duration" };
       let consumed = s.consumedUpToSeq;
       for (const m of await ctx.pendingUserMessages(consumed)) consumed = Math.max(consumed, m.seq);
-      return {
-        step: s.step + 1,
-        consumedUpToSeq: consumed,
-        outcome: timedOut() ? "max_duration" : null,
-      };
+      return { step: s.step + 1, consumedUpToSeq: consumed, outcome: null };
     };
 
     const model = async (s: State): Promise<Partial<State>> => {

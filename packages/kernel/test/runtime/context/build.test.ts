@@ -270,6 +270,35 @@ describe("buildModelRequest", () => {
     expect(r.request.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   });
 
+  it("absorbedUpToSeq: a mid-step message stays ahead of a later message absorbed by the same call", () => {
+    const log = new Log();
+    const first = log.user("first");
+    log.modelCall(first.seq, 1);
+    log.user("u mid-step");
+    log.assistant("answer", "end_turn", 1);
+    const v = log.user("v after reply");
+    const build5 = (events = log.events) =>
+      buildModelRequest({
+        events,
+        agent: AGENT,
+        agentVersion: 1,
+        model: MODEL,
+        step: 2,
+        absorbedUpToSeq: v.seq,
+      });
+    const { request, meta } = build5();
+    const texts = request.messages.map((m) =>
+      typeof m.content === "string"
+        ? m.content
+        : m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join(""),
+    );
+    expect(texts).toEqual(["first", "answer", "u mid-step", "v after reply"]);
+    // 同一规则由日志还原
+    log.modelCall(v.seq, 2);
+    const slice = log.events.filter((e) => e.seq >= meta.fromSeq && e.seq <= meta.toSeq);
+    expect(build5(slice).request).toEqual(request);
+  });
+
   it("meta without a summary covers the whole log", () => {
     const log = new Log("conv-1", 10);
     log.user("hi");

@@ -132,8 +132,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   /** 被某次模型调用跳过（运行中途到达）、尚未被吸收的 user_message，按 seq 升序。 */
   let deferred: (ConversationEvent & { type: "user_message" })[] = [];
   /**
-   * 把已被吸收（seq ≤ upTo）的延后消息放进 messages：放在末尾连续的 system 提醒之前——那些提醒属于
-   * 吸收它们的这一步（写在该步的 model_call 之前），收尾提醒因此仍在请求末尾。
+   * 把已被吸收（seq ≤ upTo）的延后消息按 seq 顺序放进 messages，插在末尾连续的 system 提醒之前
+   * （若有）。这样某一步自己写在 model_call 之前的提醒（含收尾提醒）仍排在它所跟随的用户消息之后，
+   * 收尾提醒保持在请求末尾。只要求确定性：本次请求与由日志还原时执行的是同一套规则，结果一致。
    */
   const flush = (upTo: number) => {
     const ready = deferred.filter((u) => u.seq <= upTo);
@@ -159,6 +160,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       case "user_message":
         switch (absorbed === undefined ? "inline" : placement(i, e.seq)) {
           case "inline":
+            // seq 更小的延后消息被同一次或更早的调用吸收：先放它们，保持用户消息的发送顺序。
+            flush(e.seq - 1);
             messages.push({ role: "user", content: asBlocks(e.payload.content) });
             break;
           case "deferred":

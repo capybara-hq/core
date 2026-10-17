@@ -326,12 +326,13 @@ describe("LangGraphLoop", () => {
       kind: "aborted",
     });
     runId = randomUUID();
-    const seq2 = await say("again");
+    await say("again");
     expect(
       await new LangGraphLoop(saver, deps).run(
         loopCtx({ limits: { maxSteps: 50, deadline: Date.now() - 1 } }),
       ),
-    ).toEqual({ kind: "max_duration", consumedUpToSeq: seq2 });
+      // 先查截止时间（R33）：超时结束时不吸收任何消息
+    ).toEqual({ kind: "max_duration", consumedUpToSeq: 0 });
     expect(calls).toHaveLength(0);
   });
 });
