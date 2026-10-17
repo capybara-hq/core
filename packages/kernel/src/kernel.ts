@@ -31,13 +31,14 @@ const STOP_TIMEOUT_MS = 30_000;
 
 /**
  * 停机分阶段预算：每阶段实际等待 `min(阶段预算, 总剩余)`，按顺序为
- * migrate（中止进行中的内核迁移并等其会话结束）2s → listen（等进行中的监听完成）1s →
- * http 10s → plugins 15s，合计 28s，余下 2s 给 bus / redis / pg 收尾（这三步共享总剩余）。
- * 因此任一前序阶段卡死时，HTTP 仍有 10s、插件队列仍至少有 15s 排空，总时长不超过 30s。
+ * migrate（中止进行中的内核迁移并等其会话结束）2s → http 10s → plugins 15s，合计 27s，
+ * 余下 3s 给 bus / redis / pg 收尾（这三步共享总剩余）。
+ * http 阶段是一个截止时间：先等进行中的监听完成（否则关闭会与监听交错留下端口），再关闭 HTTP，
+ * 两步共用这 10s；到点仍未关完就强制断开所有连接。
+ * 因此任一前序阶段卡死时，插件队列仍至少有 15s 排空，总时长不超过 30s。
  */
 export const STOP_BUDGET_MS = {
   migrate: 2_000,
-  listen: 1_000,
   http: 10_000,
   plugins: 15_000,
 } as const;
@@ -160,7 +161,9 @@ export async function createKernel(
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
   });
-  const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host);
+  const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
+    onSecrets: (v) => log.addSecrets(v),
+  });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
   const releaseConnections = async (): Promise<void> => {
@@ -285,15 +288,18 @@ export async function createKernel(
         migratePromise.catch(() => {}),
         STOP_BUDGET_MS.migrate,
       );
-    if (listenPromise)
+    unwatch?.();
+    unwatch = undefined;
+    // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
+    const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
+    if (listenPromise) {
       await within(
         "listen",
         listenPromise.catch(() => {}),
-        STOP_BUDGET_MS.listen,
+        STOP_BUDGET_MS.http,
       );
-    unwatch?.();
-    unwatch = undefined;
-    if (!(await within("http", httpApp.close(), STOP_BUDGET_MS.http))) {
+    }
+    if (!(await within("http", httpApp.close(), Math.max(0, httpDeadline - Date.now())))) {
       httpApp.closeAllConnections();
     }
     port = undefined;

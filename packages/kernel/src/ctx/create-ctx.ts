@@ -1,6 +1,12 @@
 import type { CapabilityRef, Logger, PluginContext, PluginManifest } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
-import { Kysely } from "kysely";
+import {
+  Command,
+  ConnectionBuilder,
+  ControlledTransactionBuilder,
+  Kysely,
+  TransactionBuilder,
+} from "kysely";
 import { type BusSubscriber, createBus } from "./bus.js";
 import { createKv } from "./kv.js";
 import { createLock } from "./lock.js";
@@ -35,15 +41,20 @@ export function pluginSchemaName(name: string): string {
 }
 
 /**
- * 包装插件拿到的 Kysely：`destroy` 换成抛错的函数（连接池归内核所有，插件销毁会拖垮整个进程的 DB 访问），
- * 其余属性透传。方法绑定到原对象（Kysely 用私有字段，以 Proxy 作 this 调用会失败）；
- * 返回新 Kysely 实例的方法（如 `withSchema` / `withPlugin`）其结果同样包装。
+ * 包装插件拿到的 Kysely：`destroy`（及 `Symbol.asyncDispose`）换成抛错的函数（连接池归内核所有，插件销毁会拖垮整个进程的 DB 访问），
+ * 其余属性透传。方法绑定到原对象（Kysely 用私有字段，以 Proxy 作 this 调用会失败）。
+ * 递归包裹一切能再拿到 Kysely 的路径，使 `destroy` 在任何路径都被拦截：
+ * - 方法返回的新 Kysely（`withSchema` / `withPlugin` 等）；
+ * - 方法返回的构建器（`transaction()` / `connection()` / `startTransaction()` 及其链式方法、
+ *   受控事务的 `Command`）：其方法收到的回调拿到的 Kysely（`transaction().execute(cb)`、
+ *   `connection().execute(cb)`）与返回的 Promise 结果（`startTransaction().execute()` 得到的受控事务）。
  */
 // biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型
 function guardDb(db: Kysely<any>, plugin: string): Kysely<any> {
   return new Proxy(db, {
     get(target, prop) {
-      if (prop === "destroy") {
+      // `await using` 经 Symbol.asyncDispose 调用 destroy，同样拦截
+      if (prop === "destroy" || prop === Symbol.asyncDispose) {
         return () => {
           throw new Error(
             `plugin ${plugin}: ctx.db.destroy() is not allowed; the kernel owns the connection pool`,
@@ -52,9 +63,43 @@ function guardDb(db: Kysely<any>, plugin: string): Kysely<any> {
       }
       const value: unknown = Reflect.get(target, prop, target);
       if (typeof value !== "function") return value;
+      return (...args: unknown[]) =>
+        guardValue((value as (...a: unknown[]) => unknown).apply(target, args), plugin);
+    },
+  });
+}
+
+/** 能（经回调或返回值）再拿到 Kysely 的构建器类。 */
+const BUILDERS = [ConnectionBuilder, TransactionBuilder, ControlledTransactionBuilder, Command];
+
+const isBuilder = (v: unknown): v is object => BUILDERS.some((B) => v instanceof B);
+
+/** Kysely → guardDb；构建器 → guardBuilder；其余原样返回。 */
+function guardValue(v: unknown, plugin: string): unknown {
+  // biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型
+  if (v instanceof Kysely) return guardDb(v as Kysely<any>, plugin);
+  if (isBuilder(v)) return guardBuilder(v, plugin);
+  return v;
+}
+
+/** 包装构建器：回调参数里的 Kysely、返回值与 Promise 结果都经 guardValue。 */
+function guardBuilder<T extends object>(builder: T, plugin: string): T {
+  return new Proxy(builder, {
+    get(target, prop) {
+      const value: unknown = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
       return (...args: unknown[]) => {
-        const out: unknown = (value as (...a: unknown[]) => unknown).apply(target, args);
-        return out instanceof Kysely ? guardDb(out, plugin) : out;
+        const wrapped = args.map((a) =>
+          typeof a === "function"
+            ? (...cbArgs: unknown[]) =>
+                (a as (...x: unknown[]) => unknown)(...cbArgs.map((c) => guardValue(c, plugin)))
+            : a,
+        );
+        const out = guardValue(
+          (value as (...a: unknown[]) => unknown).apply(target, wrapped),
+          plugin,
+        );
+        return out instanceof Promise ? out.then((r: unknown) => guardValue(r, plugin)) : out;
       };
     },
   });

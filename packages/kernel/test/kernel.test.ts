@@ -164,10 +164,21 @@ describe("插件路由", () => {
     const r = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
     expect(r.statusCode).toBe(200);
     expect(r.body).toBe("hello");
-    expect((await k.http.inject({ method: "GET", url: "/hello" })).statusCode).toBe(404);
-    expect((await k.http.inject({ method: "GET", url: "/plugins/fixture/nope" })).statusCode).toBe(
-      404,
-    );
+    for (const url of ["/hello", "/plugins/fixture/nope"]) {
+      const res = await k.http.inject({ method: "GET", url });
+      expect(res.statusCode, url).toBe(404);
+      expect((res.json() as { error: { code: string } }).error.code, url).toBe("not_found");
+    }
+  });
+});
+
+describe("启动日志", () => {
+  it("Nest 的路由映射等日志降为 debug，不出现在 info 级", async () => {
+    const { logger, lines } = capture("info");
+    const k = await kernel(cfg(), { logger });
+    await k.start();
+    expect(lines.some((l) => l.msg === "kernel started")).toBe(true);
+    expect(lines.filter((l) => String(l.msg).includes("Mapped"))).toEqual([]);
   });
 });
 
@@ -217,7 +228,7 @@ describe("角色", () => {
         done = await r.get("cap:jobber:kv:done");
         if (done === null) await sleep(100);
       }
-      expect(done).toBe(JSON.stringify({ n: 1 }));
+      expect(done).toBe(JSON.stringify({ n: 1, replica: null }));
     } finally {
       r.disconnect();
     }

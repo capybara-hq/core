@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
-import { KERNEL_APPLICATION_NAME } from "./pool.js";
+import { pgConnectOptions } from "./pool.js";
 
 const FILE_RE = /^\d{4}_[a-z0-9_]+\.sql$/;
 
@@ -28,7 +28,7 @@ const num = (name: string) => Number.parseInt(name.slice(0, 4), 10);
 export async function migrate(
   connectionString: string,
   owner: MigrationOwner,
-  opts: { connectTimeoutMs?: number; signal?: AbortSignal } = {},
+  opts: { connectTimeoutMs?: number | undefined; signal?: AbortSignal | undefined } = {},
 ): Promise<{ applied: string[] }> {
   const { schema, dir } = owner;
   const { signal } = opts;
@@ -46,13 +46,7 @@ export async function migrate(
   if (signal?.aborted) throw new Error(`Migration ${schema} aborted`);
 
   const newClient = () => {
-    const c = new pg.Client({
-      connectionString,
-      application_name: KERNEL_APPLICATION_NAME,
-      ...(opts.connectTimeoutMs !== undefined && {
-        connectionTimeoutMillis: opts.connectTimeoutMs,
-      }),
-    });
+    const c = new pg.Client({ connectionString, ...pgConnectOptions(opts) });
     c.on("error", () => {});
     return c;
   };

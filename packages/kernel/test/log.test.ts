@@ -1,4 +1,7 @@
+import { secret } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { secretValues } from "../src/config/fields.js";
 import { createLogger } from "../src/log.js";
 
 function capture(level: string) {
@@ -54,6 +57,44 @@ describe("createLogger", () => {
     logger.addSecrets(["postgres://capybara:capybara@localhost/capybara"]);
     logger.info("migrations applied", { schema: "capybara" });
     expect(JSON.parse(lines[0] as string).schema).toBe("capybara");
+  });
+
+  it("非字符串密钥值（数字、布尔）转成字符串后打码，数字字段同样打码", () => {
+    const { logger, lines } = capture("info");
+    logger.addSecrets([12345678, 98765n]);
+    logger.info("pin 12345678 code 98765", { pin: 12345678, other: 42 });
+    const e = JSON.parse(lines[0] as string);
+    expect(lines[0]).not.toContain("12345678");
+    expect(lines[0]).not.toContain("98765");
+    expect(e.pin).toBe("[REDACTED]");
+    expect(e.other).toBe(42);
+  });
+
+  it("嵌套的组织配置密钥（secret 对象下的 record / 数组 / 数字）被打码", () => {
+    const orgSchema = z.object({
+      appId: z.string(),
+      auth: secret(
+        z.object({
+          headers: z.record(z.string(), z.string()),
+          keys: z.array(z.object({ id: z.string(), pin: z.number() })),
+        }),
+      ),
+    });
+    const cfg = orgSchema.parse({
+      appId: "app-visible",
+      auth: {
+        headers: { "x-api-key": "hdr-secret-value" },
+        keys: [{ id: "key-id-secret", pin: 24681357 }],
+      },
+    });
+    const { logger, lines } = capture("info");
+    logger.addSecrets(secretValues(orgSchema, cfg));
+    logger.info("cfg", { cfg });
+    const line = lines[0] as string;
+    for (const v of ["hdr-secret-value", "key-id-secret", "24681357"]) {
+      expect(line).not.toContain(v);
+    }
+    expect(line).toContain("app-visible");
   });
 
   it("循环引用不抛错", () => {

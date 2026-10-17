@@ -13,6 +13,7 @@ import type { ApiError } from "../../src/errors.js";
 import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SettingsService } from "../../src/identity/settings.js";
+import { createLogger } from "../../src/log.js";
 import { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import { PluginHost } from "../../src/plugins/host.js";
@@ -98,6 +99,31 @@ const codeOf = async (p: Promise<unknown>) => {
 const full = { appId: "app-1", appSecret: SECRET, webhook: { token: TOKEN, path: "/h" } };
 
 describe("OrgPluginConfigs", () => {
+  it("put / get 经手的组织配置密钥（含嵌套字段）登记到日志打码", async () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", { write: (l) => lines.push(l) });
+    const logged = new OrgPluginConfigs(db, keyring, host, {
+      onSecrets: (v) => logger.addSecrets(v),
+    });
+    // 别的副本写入、本副本只读：get 解密时登记
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    await logged.get(org.id, "orgcfg");
+    logger.info(`leak ${SECRET} ${TOKEN}`, { nested: { token: TOKEN } });
+    // 本副本写入：put 时登记新值
+    const SECRET2 = "s3cr3t-org2-value-41d0";
+    const TOKEN2 = "tok-org2-value-c3b8";
+    await logged.put(
+      org2.id,
+      "orgcfg",
+      { config: { appId: "b", appSecret: SECRET2, webhook: { token: TOKEN2 } } },
+      B.id,
+    );
+    logger.info(`leak ${SECRET2} ${TOKEN2}`);
+    const out = lines.join("\n");
+    for (const v of [SECRET, TOKEN, SECRET2, TOKEN2]) expect(out).not.toContain(v);
+    expect(out).toContain("[REDACTED]");
+  });
+
   it("put 完整配置后 get 返回解密后的完整对象；list 不含密钥字段", async () => {
     const view = await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     expect(view).toMatchObject({ plugin: "orgcfg", version: "1.2.3", enabled: true });

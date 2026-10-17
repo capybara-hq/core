@@ -10,7 +10,7 @@ import {
   parseCapability,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
-import { configFields, getPath, unreachableSecrets } from "../config/fields.js";
+import { secretValues, unreachableSecrets } from "../config/fields.js";
 import {
   createPluginContext,
   type KernelDeps,
@@ -93,10 +93,7 @@ async function migratePlugin(
     const { applied } = await migrate(
       dbUrl,
       { schema, dir: resolvePath(dir, manifest.migrations) },
-      {
-        ...(connectTimeoutMs !== undefined && { connectTimeoutMs }),
-        ...(signal && { signal }),
-      },
+      { connectTimeoutMs, signal },
     );
     return { schema, applied };
   } catch (e) {
@@ -125,6 +122,7 @@ function assertSecretsReachable(manifest: PluginManifest): void {
 export class PluginHost {
   /**
    * 只解析插件并按依赖顺序跑迁移，不校验部署配置、不调用 setup、不需要 Redis（供 `capybara migrate`）。
+   * 与 `load()` 一样先检查密钥标记（`assertSecretsReachable`），有问题的插件一个都不迁移。
    * 返回每个声明了迁移的插件及其本次应用的文件。
    */
   static async migrateOnly(
@@ -135,6 +133,7 @@ export class PluginHost {
       specifiers,
       resolvePath(opts.resolveFrom ?? process.cwd()),
     );
+    for (const manifest of ordered) assertSecretsReachable(manifest);
     const out: { plugin: string; schema: string; applied: string[] }[] = [];
     for (const manifest of ordered) {
       const r = await migratePlugin(
@@ -177,6 +176,8 @@ export class PluginHost {
 
   /**
    * 导入各插件模块（default 导出）并按依赖顺序初始化；只能调用一次。
+   * 插件 setup 永不返回时 load()（进而内核 `start()`）永远挂起：内核不给 setup 设超时；
+   * 此时 `close()` / 内核 `stop()` 仍会立即关闭该插件的 ctx 并释放资源。
    * 加载期间宿主被 `close()` 时：进行中的迁移被中止、setup 中的 ctx 被立即关闭（此后其 queue 的
    * define / add 抛 `queue is closed`），load() 在下一个检查点抛 `plugin host closed during load`。
    */
@@ -212,14 +213,7 @@ export class PluginHost {
         }
         config = r.data;
         if (this.onSecrets) {
-          const values: string[] = [];
-          for (const f of configFields(schema)) {
-            if (!f.meta?.secret) continue;
-            const v = getPath(config, f.path);
-            for (const item of Array.isArray(v) ? v : [v]) {
-              if (typeof item === "string" && item !== "") values.push(item);
-            }
-          }
+          const values = secretValues(schema, config);
           if (values.length > 0) this.onSecrets(values);
         }
       }
@@ -250,17 +244,26 @@ export class PluginHost {
           }
         }
       } catch (e) {
-        await ctx.close().catch(() => {});
+        await this.closeQuietly(ctx, name);
         if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
         throw new Error(`plugin ${name}: setup failed: ${errMsg(e)}`, { cause: e });
       } finally {
         this.pending = undefined;
       }
       if (this.closed) {
-        await ctx.close().catch(() => {});
+        await this.closeQuietly(ctx, name);
         throw new Error(CLOSED_DURING_LOAD);
       }
       this.loaded.push({ manifest, provided: ctx.provided, routes: ctx.routes, close: ctx.close });
+    }
+  }
+
+  /** load() 放弃一个插件时关闭其 ctx：失败只记 warn（不掩盖导致放弃的原错误）。 */
+  private async closeQuietly(ctx: { close(): Promise<void> }, plugin: string): Promise<void> {
+    try {
+      await ctx.close();
+    } catch (e) {
+      this.deps.log.warn("plugin context close failed", { plugin, err: e });
     }
   }
 

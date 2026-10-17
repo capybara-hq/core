@@ -55,7 +55,11 @@ description: 给内核新增或修改配置项（packages/kernel/src/config/sche
 
 值按 JSON 解析（数字、布尔、数组、对象都能传，如 `CAPYBARA_PLUGINS='["a","b"]'`），解析不了则当字符串。环境变量优先级**高于**配置文件 / Nacos。同时设置 `CAPYBARA_X`（标量）与 `CAPYBARA_X__Y`（嵌套）属于冲突，启动时抛 `ConfigError` 并点名两个变量；`CAPYBARA_CONFIG_SOURCE` 为空串按未设置处理。
 
-`CAPYBARA_CONFIG_*` 与 `CAPYBARA_NACOS_*` 是配置来源自身的选择（`CAPYBARA_CONFIG_SOURCE=file|nacos`、`CAPYBARA_CONFIG_FILE`、`CAPYBARA_NACOS_SERVER` / `_NAMESPACE` / `_DATA_ID`），**不会**被当成配置项；新字段不要起 `config` 或 `nacos` 这种会撞前缀的顶层名。
+**整段 JSON 与逐字段不能混用**：`CAPYBARA_X` 即使传的是 JSON 对象（如 `CAPYBARA_DB='{"url":"postgres://..."}'`），只要同时设置了 `CAPYBARA_X__Y`（如 `CAPYBARA_DB__POOL_MAX=5`），同样判冲突、启动失败——不会把两者合并。同一段配置只选一种写法。冲突只看「父子路径」：`CAPYBARA_DB__URL` 与 `CAPYBARA_DB__URL_EXTRA`、`CAPYBARA_LOG` 与 `CAPYBARA_LOGGING__X` 都不冲突；被忽略的 `CAPYBARA_CONFIG_*` / `CAPYBARA_NACOS_*` 先剔除、不参与冲突检测。
+
+`CAPYBARA_CONFIG_*` 与 `CAPYBARA_NACOS_*` 是配置来源自身的选择（`CAPYBARA_CONFIG_SOURCE=file|nacos`、`CAPYBARA_CONFIG_FILE`、`CAPYBARA_NACOS_SERVER` / `_NAMESPACE` / `_DATA_ID`，以及 Nacos 鉴权的 `_USERNAME` / `_PASSWORD` / `_ACCESS_TOKEN`），**不会**被当成配置项；新字段不要起 `config` 或 `nacos` 这种会撞前缀的顶层名。
+
+Nacos 开启鉴权时二选一：`CAPYBARA_NACOS_USERNAME` + `CAPYBARA_NACOS_PASSWORD`（启动时 `POST /nacos/v1/auth/login` 换取 accessToken，用到 `tokenTtl` 的 80% 后或请求收到 403 时重新登录），或 `CAPYBARA_NACOS_ACCESS_TOKEN`（直接使用，不登录）。令牌以 `accessToken` 查询参数随读取与监听请求发送。登录失败启动即失败，错误信息含 server、不含密码；两种方式同时设置、或用户名密码不成对，启动报 `ConfigError`。
 
 ## 主密钥轮换
 

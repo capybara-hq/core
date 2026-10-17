@@ -11,6 +11,7 @@ interface JobData {
 /**
  * 定义一个队列 handler 并在 setup 时入队一个任务；handler 执行后写 kv `<key>`（默认 `done`）。
  * 带 `delayMs` 时先写 `<key>.started`，等待后再写 `<key>`，供测试观察「执行中」的任务。
+ * 写入的 JSON 带 `replica`（部署配置 `replica`，缺省为 null），供测试判断任务由哪个副本执行。
  */
 export default definePlugin({
   name: "jobber",
@@ -18,6 +19,7 @@ export default definePlugin({
   sdk: "^0.1.0",
   provides: [],
   async setup(ctx) {
+    const replica = (ctx.config as { replica?: unknown }).replica ?? null;
     ctx.queue.define("job", async (raw) => {
       const data = raw as JobData;
       const key = data.key ?? "done";
@@ -25,7 +27,7 @@ export default definePlugin({
         await ctx.kv.set(`${key}.started`, "1", { ttlSeconds: 60 });
         await new Promise((r) => setTimeout(r, data.delayMs));
       }
-      await ctx.kv.set(key, JSON.stringify(data), { ttlSeconds: 60 });
+      await ctx.kv.set(key, JSON.stringify({ ...data, replica }), { ttlSeconds: 60 });
     });
     await ctx.queue.add("job", { n: 1 }, { jobId: "only-once" });
   },

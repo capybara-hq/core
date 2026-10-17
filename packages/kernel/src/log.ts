@@ -1,4 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
+import { secretScalars } from "./config/fields.js";
 
 /** 日志级别，按严重程度递增。 */
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -12,8 +13,12 @@ export interface KernelLogger extends Logger {
   readonly level: LogLevel;
   /** 修改级别；非法级别抛错且保持原级别。 */
   setLevel(level: string): void;
-  /** 登记密钥值：此后任何日志的消息与字段里出现这些值都替换为 `[REDACTED]`。 */
-  addSecrets(values: string[]): void;
+  /**
+   * 登记密钥值：此后任何日志的消息与字段里出现这些值都替换为 `[REDACTED]`。
+   * 非字符串值（数字、bigint、布尔）转成字符串后登记，数组与对象递归展开其中的标量；
+   * 数值字段的字符串形式等于已登记值时同样打码。
+   */
+  addSecrets(values: readonly unknown[]): void;
 }
 
 const REDACTED = "[REDACTED]";
@@ -71,6 +76,9 @@ export function createLogger(
     const seen = new WeakSet<object>();
     return JSON.stringify(entry, (_key, value: unknown) => {
       if (typeof value === "string") return redact(value);
+      if ((typeof value === "number" || typeof value === "bigint") && secrets.has(String(value))) {
+        return REDACTED;
+      }
       if (value instanceof Error) {
         const e: Record<string, unknown> = {
           name: value.name,
@@ -80,7 +88,7 @@ export function createLogger(
         if (value.cause !== undefined) e.cause = value.cause;
         return e;
       }
-      if (typeof value === "bigint") return value.toString();
+      if (typeof value === "bigint") return redact(value.toString());
       if (typeof value === "object" && value !== null) {
         if (seen.has(value)) return "[Circular]";
         seen.add(value);
@@ -114,7 +122,7 @@ export function createLogger(
       current = parseLevel(l);
     },
     addSecrets(values) {
-      for (const v of values) {
+      for (const v of secretScalars(values)) {
         for (const s of expandSecret(v)) if (s.length >= MIN_SECRET_LEN) secrets.add(s);
       }
     },

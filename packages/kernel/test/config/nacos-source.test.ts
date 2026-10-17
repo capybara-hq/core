@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigError, createNacosSource, loadConfig } from "../../src/index.js";
 
 const MASTER_KEY = Buffer.alloc(32, 1).toString("base64");
@@ -280,5 +280,223 @@ describe("loadConfig with nacos", () => {
     await expect(
       loadConfig({ CAPYBARA_CONFIG_SOURCE: "nacos", CAPYBARA_NACOS_SERVER: "x" }),
     ).rejects.toThrow(/CAPYBARA_NACOS_NAMESPACE/);
+  });
+});
+
+interface AuthStub {
+  url: string;
+  /** 每个请求：方法、路径（不含查询串）与 accessToken 查询参数。 */
+  requests: { method: string; path: string; token: string | null; form?: URLSearchParams }[];
+  logins(): number;
+  /** 作废已签发的令牌：之后带旧令牌的请求返回 403。 */
+  revoke(): void;
+  loginStatus: number;
+  tokenTtl: number;
+  close(): Promise<void>;
+}
+
+/** 开启鉴权的 Nacos 桩：用户名 `nacos`、密码 `p@ss-SECRET-9`，令牌 `tok-<n>`。 */
+async function startAuthStub(content: string): Promise<AuthStub> {
+  const valid = new Set<string>();
+  let issued = 0;
+  const waiting = new Set<ServerResponse>();
+  const state = { loginStatus: 200, tokenTtl: 18_000 };
+  const requests: AuthStub["requests"] = [];
+  const readBody = (req: IncomingMessage) =>
+    new Promise<string>((resolve) => {
+      let body = "";
+      req.on("data", (c) => {
+        body += c;
+      });
+      req.on("end", () => resolve(body));
+    });
+  const server = createServer(async (req, res) => {
+    const u = new URL(req.url ?? "/", "http://stub");
+    const token = u.searchParams.get("accessToken");
+    if (u.pathname === "/nacos/v1/auth/login" && req.method === "POST") {
+      const form = new URLSearchParams(await readBody(req));
+      requests.push({ method: "POST", path: u.pathname, token, form });
+      if (
+        state.loginStatus !== 200 ||
+        form.get("username") !== "nacos" ||
+        form.get("password") !== "p@ss-SECRET-9"
+      ) {
+        res.statusCode = state.loginStatus === 200 ? 403 : state.loginStatus;
+        res.end("unknown user! p@ss-SECRET-9");
+        return;
+      }
+      issued++;
+      const t = `tok-${issued}`;
+      valid.add(t);
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ accessToken: t, tokenTtl: state.tokenTtl, globalAdmin: false }));
+      return;
+    }
+    requests.push({ method: req.method ?? "", path: u.pathname, token });
+    if (token === null || !valid.has(token)) {
+      await readBody(req);
+      res.statusCode = 403;
+      res.end("user not found!");
+      return;
+    }
+    if (u.pathname === "/nacos/v2/cs/config" && req.method === "GET") {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ code: 0, message: "success", data: content }));
+      return;
+    }
+    if (u.pathname === "/nacos/v1/cs/configs/listener" && req.method === "POST") {
+      await readBody(req);
+      waiting.add(res);
+      res.on("close", () => waiting.delete(res));
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const s: AuthStub = {
+    url: `127.0.0.1:${port}`,
+    requests,
+    logins: () => requests.filter((r) => r.path === "/nacos/v1/auth/login").length,
+    revoke: () => valid.clear(),
+    get loginStatus() {
+      return state.loginStatus;
+    },
+    set loginStatus(v) {
+      state.loginStatus = v;
+    },
+    get tokenTtl() {
+      return state.tokenTtl;
+    },
+    set tokenTtl(v) {
+      state.tokenTtl = v;
+    },
+    async close() {
+      for (const res of waiting) res.destroy();
+      server.closeAllConnections();
+      await new Promise<void>((r) => server.close(() => r()));
+    },
+  };
+  stubs.push(s as unknown as Stub);
+  return s;
+}
+
+const AUTH = { username: "nacos", password: "p@ss-SECRET-9" };
+const configReqs = (s: AuthStub) => s.requests.filter((r) => r.path === "/nacos/v2/cs/config");
+
+describe("nacos auth", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("username/password: logs in first, config and listener requests carry accessToken", async () => {
+    const s = await startAuthStub("http:\n  port: 9300\n");
+    const src = createNacosSource({ server: s.url, namespace: "ns", dataId: "d", auth: AUTH });
+    expect(((await src.load()) as { http: { port: number } }).http.port).toBe(9300);
+    expect(s.requests.map((r) => r.path)).toEqual(["/nacos/v1/auth/login", "/nacos/v2/cs/config"]);
+    const login = s.requests[0];
+    expect(login?.form?.get("username")).toBe("nacos");
+    expect(login?.form?.get("password")).toBe("p@ss-SECRET-9");
+    expect(login?.token).toBeNull();
+    expect(configReqs(s)[0]?.token).toBe("tok-1");
+
+    const stop = src.watch?.(() => {}) ?? (() => {});
+    try {
+      const deadline = Date.now() + 5_000;
+      while (!s.requests.some((r) => r.path.endsWith("/listener")) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const listener = s.requests.find((r) => r.path === "/nacos/v1/cs/configs/listener");
+      expect(listener?.token).toBe("tok-1");
+      expect(s.logins()).toBe(1);
+    } finally {
+      stop();
+    }
+  });
+
+  it("403 on a config request re-logs in once and succeeds", async () => {
+    const s = await startAuthStub("a: 1\n");
+    const src = createNacosSource({ server: s.url, namespace: "ns", dataId: "d", auth: AUTH });
+    await src.load();
+    s.revoke();
+    expect(await src.load()).toEqual({ a: 1 });
+    expect(s.logins()).toBe(2);
+    expect(configReqs(s).map((r) => r.token)).toEqual(["tok-1", "tok-1", "tok-2"]);
+  });
+
+  it("login rejected: load() fails fast naming the server, without the password", async () => {
+    const s = await startAuthStub("a: 1\n");
+    s.loginStatus = 403;
+    const src = createNacosSource({ server: s.url, namespace: "ns", dataId: "d", auth: AUTH });
+    const err = await src.load().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as Error).message).toContain(s.url);
+    expect((err as Error).message).toContain("403");
+    expect((err as Error).message).not.toContain("p@ss-SECRET-9");
+    expect(configReqs(s)).toEqual([]);
+  });
+
+  it("static accessToken: never calls the login endpoint", async () => {
+    const s = await startAuthStub("a: 1\n");
+    // 桩只认自己签发的令牌：先登录一次拿到 tok-1，再作为静态令牌使用
+    await createNacosSource({ server: s.url, namespace: "ns", dataId: "d", auth: AUTH }).load();
+    s.requests.length = 0;
+    const src = createNacosSource({
+      server: s.url,
+      namespace: "ns",
+      dataId: "d",
+      auth: { accessToken: "tok-1" },
+    });
+    expect(await src.load()).toEqual({ a: 1 });
+    expect(s.logins()).toBe(0);
+    expect(configReqs(s)[0]?.token).toBe("tok-1");
+  });
+
+  it("renews the token at 80% of tokenTtl", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = new Date("2026-10-17T00:00:00Z").getTime();
+    vi.setSystemTime(t0);
+    const s = await startAuthStub("a: 1\n");
+    s.tokenTtl = 2;
+    const src = createNacosSource({ server: s.url, namespace: "ns", dataId: "d", auth: AUTH });
+    await src.load();
+    expect(s.logins()).toBe(1);
+    vi.setSystemTime(t0 + 1_500);
+    await src.load();
+    expect(s.logins()).toBe(1);
+    vi.setSystemTime(t0 + 1_700);
+    await src.load();
+    expect(s.logins()).toBe(2);
+    expect(configReqs(s).map((r) => r.token)).toEqual(["tok-1", "tok-1", "tok-2"]);
+  });
+
+  it("loadConfig reads CAPYBARA_NACOS_USERNAME / _PASSWORD", async () => {
+    const s = await startAuthStub("http:\n  port: 9400\n");
+    const config = await loadConfig({
+      CAPYBARA_DB__URL: "postgres://u:p@localhost/db",
+      CAPYBARA_REDIS__URL: "redis://localhost:6379",
+      CAPYBARA_MASTER_KEY: MASTER_KEY,
+      CAPYBARA_CONFIG_SOURCE: "nacos",
+      CAPYBARA_NACOS_SERVER: s.url,
+      CAPYBARA_NACOS_NAMESPACE: "ns",
+      CAPYBARA_NACOS_DATA_ID: "d",
+      CAPYBARA_NACOS_USERNAME: "nacos",
+      CAPYBARA_NACOS_PASSWORD: "p@ss-SECRET-9",
+    });
+    expect(config.http.port).toBe(9400);
+    expect(s.logins()).toBe(1);
+  });
+
+  it("CAPYBARA_NACOS_USERNAME without _PASSWORD names the missing variable", async () => {
+    await expect(
+      loadConfig({
+        CAPYBARA_CONFIG_SOURCE: "nacos",
+        CAPYBARA_NACOS_SERVER: "x",
+        CAPYBARA_NACOS_NAMESPACE: "ns",
+        CAPYBARA_NACOS_DATA_ID: "d",
+        CAPYBARA_NACOS_USERNAME: "nacos",
+      }),
+    ).rejects.toThrow(/CAPYBARA_NACOS_PASSWORD/);
   });
 });

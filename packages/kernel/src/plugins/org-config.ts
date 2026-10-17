@@ -1,7 +1,7 @@
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
 import type { core, z } from "zod";
-import { changedPaths, configFields, getPath } from "../config/fields.js";
+import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -119,9 +119,20 @@ export class OrgPluginConfigs {
     private readonly db: KernelDb,
     private readonly keyring: Keyring,
     private readonly host: PluginHost,
-    /** 仅供测试：在读完配置行之后、读密钥之前插入确定性的交错点。 */
-    private readonly hooks: { afterConfigRowRead?: () => Promise<void> } = {},
+    private readonly hooks: {
+      /** 经手（写入或解密读出）的密钥值，含嵌套字段；内核传 `log.addSecrets` 使其在日志中打码。 */
+      onSecrets?: (values: string[]) => void;
+      /** 仅供测试：在读完配置行之后、读密钥之前插入确定性的交错点。 */
+      afterConfigRowRead?: () => Promise<void>;
+    } = {},
   ) {}
+
+  /** 把一份组织配置里的密钥值交给 onSecrets（无回调或无密钥时无操作）。 */
+  private reportSecrets(schema: z.ZodTypeAny, config: unknown): void {
+    if (!this.hooks.onSecrets) return;
+    const values = secretValues(schema, config);
+    if (values.length > 0) this.hooks.onSecrets(values);
+  }
 
   /** `REPEATABLE READ` 只读事务：配置行与密钥来自同一个快照，不会读到跨两次提交的混合状态。 */
   private snapshot<T>(fn: (t: Trx) => Promise<T>): Promise<T> {
@@ -214,6 +225,7 @@ export class OrgPluginConfigs {
           }
           next = r.data as Obj;
         }
+        this.reportSecrets(schema, next);
         if (input.config !== undefined) {
           changed = changedPaths(schema, before, next);
           plain = structuredClone(next);
@@ -318,6 +330,7 @@ export class OrgPluginConfigs {
         `plugin ${plugin}: stored organization config for org ${orgId} is invalid: ${detail}`,
       );
     }
+    this.reportSecrets(schema, r.data);
     return { enabled: true, config: r.data };
   }
 

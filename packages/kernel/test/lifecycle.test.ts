@@ -6,8 +6,10 @@ import { Redis } from "ioredis";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../src/config/schema.js";
+import type { KernelHttpApp } from "../src/http/app.js";
 import { createKernel, type Kernel } from "../src/kernel.js";
 import { createLogger, type KernelLogger } from "../src/log.js";
+import { SLOW_GATES_KEY, type SlowGates } from "./fixtures/plugins/slow/index.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -16,6 +18,14 @@ const masterKey = Buffer.alloc(32, 7).toString("base64");
 const fx = (n: string) =>
   fileURLToPath(new URL(`./fixtures/plugins/${n}/index.ts`, import.meta.url));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 const cfg = (over: Record<string, unknown> = {}): KernelConfig =>
   KernelConfigSchema.parse({
@@ -154,27 +164,32 @@ describe("插件生命周期", () => {
   });
 
   it("stop during slow start does not leak", async () => {
-    const slow = (await import(fx("slow"))) as {
-      entered: { promise: Promise<void> };
-      gate: { resolve: () => void };
-    };
+    // 每次运行新建 deferred，经部署配置的 key 交给 fixture（重跑不会复用已 resolve 的旧 deferred）
+    const entered = deferred();
+    const gate = deferred();
+    const key = `run-${Date.now()}-${Math.random()}`;
+    const g = globalThis as { [SLOW_GATES_KEY]?: Map<string, SlowGates> };
+    g[SLOW_GATES_KEY] ??= new Map();
+    g[SLOW_GATES_KEY].set(key, { entered, gate });
     const r = redisClient();
     try {
       await waitFor(async () => (await clientCount(r)) === 1, 5_000);
       const baseline = await clientCount(r);
-      const k = await kernel(cfg({ plugins: [fx("slow")] }));
+      const k = await kernel(cfg({ plugins: [fx("slow")], pluginConfig: { slow: { key } } }));
       const starting = k.start();
       starting.catch(() => {});
       // 等 setup 卡在 gate 上再停机（此时 slow 的 BullMQ Worker 连接已建立）
-      await slow.entered.promise;
+      await entered.promise;
       await k.stop();
       // setup 仍挂在 gate 上：stop() 返回时 slow 的 BullMQ 连接必须已经关闭（连接关闭在服务端生效有微小延迟，短轮询）
       await waitFor(async () => (await clientCount(r)) === baseline, 1_000, 20);
       expect(await clientCount(r)).toBe(baseline);
-      slow.gate.resolve();
+      gate.resolve();
       await expect(starting).rejects.toThrow(/closed during load/);
       expect(await clientCount(r)).toBe(baseline);
     } finally {
+      gate.resolve();
+      g[SLOW_GATES_KEY]?.delete(key);
       r.disconnect();
     }
   });
@@ -205,6 +220,16 @@ describe("插件生命周期", () => {
     await expect(k.start()).rejects.toThrow(/not allowed/);
   });
 
+  it.each(["transaction", "connection"])(
+    "destroy on the Kysely passed to ctx.db.%s().execute(cb) is blocked",
+    async (via) => {
+      const k = await kernel(
+        cfg({ plugins: [fx("dbdestroy-cb")], pluginConfig: { "dbdestroy-cb": { via } } }),
+      );
+      await expect(k.start()).rejects.toThrow(/setup failed.*not allowed/);
+    },
+  );
+
   it("relative resolveFrom", async () => {
     const k = await kernel(cfg({ plugins: ["./plugins/fixture/index.ts"] }), {
       resolveFrom: "packages/kernel/test/fixtures",
@@ -234,14 +259,27 @@ describe("队列", () => {
   it("api-only does not consume", async () => {
     const r = redisClient();
     try {
-      const api = await kernel(cfg({ roles: ["api"], plugins: [fx("jobber")] }));
+      const api = await kernel(
+        cfg({
+          roles: ["api"],
+          plugins: [fx("jobber")],
+          pluginConfig: { jobber: { replica: "api" } },
+        }),
+      );
       await api.start();
       await enqueueJobber({ key: "apionly" });
-      await sleep(1_000);
-      expect(await r.get("cap:jobber:kv:apionly")).toBeNull();
-      const worker = await kernel(cfg({ roles: ["worker"], plugins: [fx("jobber")] }));
+      // api 副本先起且一直在线：任务只能由后起的 worker 副本执行（handler 记录执行副本）
+      const worker = await kernel(
+        cfg({
+          roles: ["worker"],
+          plugins: [fx("jobber")],
+          pluginConfig: { jobber: { replica: "worker" } },
+        }),
+      );
       await worker.start();
-      expect(await waitFor(() => r.get("cap:jobber:kv:apionly"))).not.toBeNull();
+      const done = await waitFor(() => r.get("cap:jobber:kv:apionly"));
+      expect(done).not.toBeNull();
+      expect(JSON.parse(done as string).replica).toBe("worker");
     } finally {
       r.disconnect();
     }
@@ -276,6 +314,36 @@ describe("超时", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  it("listen 卡住 + 慢 HTTP 连接：等待 listen 与关闭 HTTP 共用 10s 截止时间", async () => {
+    let sock: Socket | undefined;
+    try {
+      const k = await kernel(cfg());
+      const http = k.http as KernelHttpApp;
+      const realListen = http.listen.bind(http);
+      const listened = deferred<number>();
+      // 真正监听后不返回：stop() 时 listen 一直「进行中」
+      http.listen = async (p) => {
+        listened.resolve(await realListen(p));
+        return new Promise<number>(() => {});
+      };
+      const starting = k.start();
+      starting.catch(() => {});
+      const port = await listened.promise;
+      // 发半个请求并保持连接：HTTP 关闭会一直等它
+      sock = connect({ port, host: "127.0.0.1" });
+      sock.on("error", () => {});
+      await new Promise<void>((resolve) => sock?.once("connect", () => resolve()));
+      sock.write("GET /healthz HTTP/1.1\r\nHost: localhost\r\n");
+      const t0 = Date.now();
+      await k.stop();
+      const elapsed = Date.now() - t0;
+      expect(elapsed).toBeLessThanOrEqual(10_500);
+      expect(elapsed).toBeGreaterThanOrEqual(9_500);
+    } finally {
+      sock?.destroy();
+    }
+  }, 20_000);
 
   it("http phase cannot starve queue drain", async () => {
     const r = redisClient();

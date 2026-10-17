@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Route } from "../../src/ctx/create-ctx.js";
 import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
-import { createLogger } from "../../src/log.js";
+import { createLogger, type KernelLogger } from "../../src/log.js";
 
 const apps: KernelHttpApp[] = [];
 
-async function app(): Promise<KernelHttpApp> {
-  const log = createLogger("info", { write: () => {} });
+async function app(
+  log: KernelLogger = createLogger("info", { write: () => {} }),
+): Promise<KernelHttpApp> {
   const a = await createHttpApp({
     log,
     health: {
@@ -102,8 +103,49 @@ describe("插件路由分发", () => {
     });
     expect(r.statusCode).toBe(413);
     expect(called).toBe(false);
-    // 插件作用域不经 Nest 错误过滤器：是 Fastify 原生错误体（writing-plugins 技能写明）
-    expect((r.json() as { code: string }).code).toBe("FST_ERR_CTP_BODY_TOO_LARGE");
+    // 插件作用域的 Fastify 错误同样映射为内核错误信封
+    expect((r.json() as { error: { code: string } }).error.code).toBe("payload_too_large");
+  });
+
+  it("HEAD falls back to the GET route without a body", async () => {
+    const a = await app();
+    a.mountPlugins([route("GET", "/plugins/p/page", async () => new Response("page body"))]);
+    const r = await a.inject({ method: "HEAD", url: "/plugins/p/page" });
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toBe("");
+  });
+
+  it("malformed Host is 400 validation_failed without an error log", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const a = await app(createLogger("debug", { write: (l) => lines.push(JSON.parse(l)) }));
+    let called = false;
+    a.mountPlugins([
+      route("GET", "/plugins/p/x", async () => {
+        called = true;
+        return new Response("x");
+      }),
+    ]);
+    const r = await a.inject({ method: "GET", url: "/plugins/p/x", headers: { host: "a b" } });
+    expect(r.statusCode).toBe(400);
+    expect((r.json() as { error: { code: string } }).error.code).toBe("validation_failed");
+    expect(called).toBe(false);
+    expect(lines.filter((l) => l.level === "error")).toEqual([]);
+  });
+
+  it("plugin handler failure log redacts tokens in the path", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const a = await app(createLogger("info", { write: (l) => lines.push(JSON.parse(l)) }));
+    a.mountPlugins([
+      route("GET", "/plugins/p/hook/:token", async () => {
+        throw new Error("boom");
+      }),
+    ]);
+    const r = await a.inject({ method: "GET", url: "/plugins/p/hook/cap_SECRETtoken?q=cap_x" });
+    expect(r.statusCode).toBe(500);
+    const failed = lines.filter((l) => l.msg === "plugin handler failed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.path).toBe("/plugins/p/hook/:redacted");
+    expect(JSON.stringify(lines)).not.toContain("SECRETtoken");
   });
 
   it("binary body arrives intact", async () => {

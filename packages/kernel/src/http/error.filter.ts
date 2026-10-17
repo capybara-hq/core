@@ -26,7 +26,8 @@ const GENERIC_CODE_BY_STATUS: ReadonlyMap<number, ErrorCode> = new Map<number, E
   [429, "rate_limited"],
 ]);
 
-function codeForStatus(status: number): ErrorCode {
+/** 框架错误的状态码 → 通用错误码（插件分发作用域的 Fastify 错误处理同样使用）。 */
+export function codeForStatus(status: number): ErrorCode {
   return GENERIC_CODE_BY_STATUS.get(status) ?? "internal";
 }
 

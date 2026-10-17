@@ -6,13 +6,33 @@ import { definePlugin, type PluginManifest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createBusSubscriber } from "../../src/ctx/bus.js";
 import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { PluginHost } from "../../src/plugins/host.js";
+
+// closefail 插件的 ctx.close() 失败（先真正关闭，避免泄漏连接），验证宿主记 warn
+vi.mock("../../src/ctx/create-ctx.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../src/ctx/create-ctx.js")>();
+  return {
+    ...real,
+    createPluginContext: (...args: Parameters<typeof real.createPluginContext>) => {
+      const ctx = real.createPluginContext(...args);
+      if (args[1].name !== "closefail") return ctx;
+      const close = ctx.close;
+      return {
+        ...ctx,
+        async close() {
+          await close();
+          throw new Error("close boom");
+        },
+      };
+    },
+  };
+});
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -118,6 +138,15 @@ describe("PluginHost", () => {
 
   it("setup 抛错：带插件名", async () => {
     await expect(host().load([fx("throws")])).rejects.toThrow(/thrower.*boom/);
+  });
+
+  it("setup 失败后 ctx.close() 也失败：记 warn，仍抛 setup 错误", async () => {
+    warned.length = 0;
+    await expect(host().load([fx("closefail")])).rejects.toThrow(/closefail.*setup boom/);
+    const w = warned.filter((x) => x.msg === "plugin context close failed");
+    expect(w).toHaveLength(1);
+    expect(w[0]?.fields?.plugin).toBe("closefail");
+    expect((w[0]?.fields?.err as Error | undefined)?.message).toBe("close boom");
   });
 
   it("setup 后声明的 provides 未提供：报错并点名", async () => {
@@ -279,6 +308,12 @@ describe("PluginHost.migrateOnly", () => {
     const r = await PluginHost.migrateOnly([fx("fixture"), fx("throws")], { dbUrl: deps.dbUrl });
     expect(r.map((x) => x.plugin)).toEqual(["fixture"]);
     expect(r[0]?.schema).toBe("plugin_fixture");
+  });
+
+  it("插件的 secret 不在对象路径叶子上：同样拒绝（不迁移）", async () => {
+    await expect(
+      PluginHost.migrateOnly([fx("fixture2"), fx("secretunion")], { dbUrl: deps.dbUrl }),
+    ).rejects.toThrow(/plugin secretunion: config\.org: secret\(\) at "auth<union#1>\.token"/);
   });
 
   it("依赖解析失败同样报错（不迁移）", async () => {
