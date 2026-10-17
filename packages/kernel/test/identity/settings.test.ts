@@ -48,4 +48,38 @@ describe("SettingsService", () => {
       expect((e as ApiError).code).toBe("validation_failed");
     }
   });
+
+  it("逐键校验：表里非法的 orgCreation 回落默认值并 warn 点名该键；未知的未来键不影响其他键", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    await db
+      .insertInto("deployment_settings")
+      .values([
+        { key: "orgCreation", value: JSON.stringify("nobody") },
+        { key: "futureKey", value: JSON.stringify({ enabled: true }) },
+      ])
+      .execute();
+    const warns: { msg: string; fields?: Record<string, unknown> }[] = [];
+    const log = {
+      info: () => {},
+      error: () => {},
+      warn: (msg: string, fields?: Record<string, unknown>) =>
+        warns.push({ msg, ...(fields && { fields }) }),
+    };
+    const s = new SettingsService(db, log);
+    expect(await s.get()).toEqual({ orgCreation: "anyone" });
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.fields).toMatchObject({ key: "orgCreation" });
+  });
+
+  it("逐键校验：合法的键保留（另一个键非法不会丢掉它）", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "orgCreation", value: JSON.stringify("enterprise_admin") })
+      .execute();
+    const warns: string[] = [];
+    const s = new SettingsService(db, { warn: (msg) => warns.push(msg) });
+    expect((await s.get()).orgCreation).toBe("enterprise_admin");
+    expect(warns).toEqual([]);
+  });
 });

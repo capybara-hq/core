@@ -5,6 +5,9 @@ import type { Account, AccountsService } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
 import type { Org, OrgsService } from "../orgs/orgs.service.js";
 
+const alreadyCompleted = () =>
+  new ApiError("setup.already_completed", "Deployment is already set up");
+
 /** 初始化向导与 CLI 建企业管理员。框架无关，由调用方注入依赖。 */
 export class SetupService {
   constructor(
@@ -28,11 +31,13 @@ export class SetupService {
     displayName: string;
     orgName?: string | undefined;
   }): Promise<{ account: Account; org?: Org }> {
+    // 先做一次廉价的预检查（已初始化的部署不白跑 scrypt），再在 BEGIN 之前算好哈希：
+    // 不在持有咨询锁的事务里跑 scrypt；锁内仍会复核
+    if ((await this.accounts.countEnterpriseAdmins()) > 0) throw alreadyCompleted();
+    const passwordHash = await this.accounts.hashNewPassword(input.password);
     return this.db.transaction().execute(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.setup'))`.execute(trx);
-      if ((await this.accounts.countEnterpriseAdmins(trx)) > 0) {
-        throw new ApiError("setup.already_completed", "Deployment is already set up");
-      }
+      if ((await this.accounts.countEnterpriseAdmins(trx)) > 0) throw alreadyCompleted();
       const account = await this.accounts.createLocal(
         {
           login: input.login,
@@ -41,6 +46,7 @@ export class SetupService {
           enterpriseAdmin: true,
         },
         trx,
+        passwordHash,
       );
       const org =
         input.orgName !== undefined
@@ -63,6 +69,7 @@ export class SetupService {
     displayName: string;
     email?: string | undefined;
   }): Promise<Account> {
+    const passwordHash = await this.accounts.hashNewPassword(input.password);
     return this.db.transaction().execute(async (trx) => {
       const account = await this.accounts.createLocal(
         {
@@ -73,6 +80,7 @@ export class SetupService {
           ...(input.email !== undefined && { email: input.email }),
         },
         trx,
+        passwordHash,
       );
       await audit(trx, {
         action: "account.created",

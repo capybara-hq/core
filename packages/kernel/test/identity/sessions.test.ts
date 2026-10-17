@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { SignJWT } from "jose";
-import { sql } from "kysely";
+import { Kysely, PostgresDialect, sql } from "kysely";
+import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createKeyring, type Keyring } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -12,7 +13,8 @@ import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import { REFRESH_RACE_GRACE_MS, SessionService } from "../../src/identity/sessions.js";
 
-let pg: Awaited<ReturnType<typeof startTestPostgres>>;
+let pgBox: Awaited<ReturnType<typeof startTestPostgres>>;
+let pgUrl: string;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
 let raw: ReturnType<typeof createDb>;
 let raw2: ReturnType<typeof createDb>;
@@ -32,13 +34,14 @@ const replica = (keyring: Keyring = ring, opts = OPTS, which: 1 | 2 = 1) =>
     : new SessionService(db2, redis2, keyring, opts);
 
 beforeAll(async () => {
-  [pg, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  await migrate(pg.url, {
+  [pgBox, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  pgUrl = pgBox.url;
+  await migrate(pgUrl, {
     schema: "capybara",
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
   });
-  raw = createDb(pg.url, 5);
-  raw2 = createDb(pg.url, 5);
+  raw = createDb(pgUrl, 5);
+  raw2 = createDb(pgUrl, 5);
   db = kernelDb(raw);
   db2 = kernelDb(raw2);
   redis = new Redis(rd.url);
@@ -49,7 +52,7 @@ afterAll(async () => {
   redis2.disconnect();
   await raw.destroy();
   await raw2.destroy();
-  await Promise.all([pg.stop(), rd.stop()]);
+  await Promise.all([pgBox.stop(), rd.stop()]);
 });
 beforeEach(async () => {
   await sql`TRUNCATE capybara.accounts CASCADE`.execute(raw);
@@ -79,6 +82,7 @@ describe("SessionService access token", () => {
     expect(await replica(ring, OPTS, 2).verifyAccess(s.accessToken)).toEqual({
       accountId: acc,
       sessionId: s.sessionId,
+      account: expect.objectContaining({ id: acc, displayName: "A", status: "active" }),
     });
     const row = await db
       .selectFrom("sessions")
@@ -264,6 +268,47 @@ describe("SessionService 其他", () => {
     expect((await svc.get(s.sessionId))?.currentOrgId).toBe(orgId);
     await svc.setCurrentOrg(s.sessionId, null);
     expect((await svc.get(s.sessionId))?.currentOrgId).toBeNull();
-    expect(await svc.get("missing")).toBeUndefined();
+    expect(await svc.get(randomUUID())).toBeUndefined();
+  });
+
+  it("get() 不返回已过期（未吊销）的会话", async () => {
+    const acc = await account();
+    const svc = replica();
+    const s = await svc.create(acc, {});
+    await db
+      .updateTable("sessions")
+      .set({ expires_at: new Date(Date.now() - 1000) })
+      .where("id", "=", s.sessionId)
+      .execute();
+    expect(await svc.get(s.sessionId)).toBeUndefined();
+  });
+
+  it("setCurrentOrg 对已吊销 / 不存在的会话抛 auth.session_revoked", async () => {
+    const acc = await account();
+    const svc = replica();
+    const s = await svc.create(acc, {});
+    await svc.revoke(s.sessionId);
+    expect(await codeOf(svc.setCurrentOrg(s.sessionId, null))).toBe("auth.session_revoked");
+    expect(await codeOf(svc.setCurrentOrg(randomUUID(), null))).toBe("auth.session_revoked");
+  });
+
+  it("verifyAccess 每个请求只发一条 SQL（吊销检查与账号读取合并），并返回账号", async () => {
+    const acc = await account();
+    const s = await replica().create(acc, {});
+    let queries = 0;
+    const counted = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: pgUrl, max: 1 }) }),
+      log: (e) => {
+        if (e.level === "query") queries++;
+      },
+    });
+    try {
+      const svc = new SessionService(kernelDb(counted), redis, ring, OPTS);
+      const r = await svc.verifyAccess(s.accessToken);
+      expect(r.account.id).toBe(acc);
+      expect(queries).toBe(1);
+    } finally {
+      await counted.destroy();
+    }
   });
 });

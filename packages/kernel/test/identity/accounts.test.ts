@@ -1,13 +1,21 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
+import { DUMMY_PASSWORD_HASH, verifyPassword } from "../../src/identity/passwords.js";
 import { SettingsService } from "../../src/identity/settings.js";
+
+// 包一层 spy（行为不变），用来断言是否真的跑了 scrypt 校验，而不是靠计时
+vi.mock("../../src/identity/passwords.js", async (importOriginal) => {
+  const m = await importOriginal<typeof import("../../src/identity/passwords.js")>();
+  return { ...m, verifyPassword: vi.fn(m.verifyPassword) };
+});
+const verifySpy = vi.mocked(verifyPassword);
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -74,29 +82,27 @@ describe("AccountsService 本地账号", () => {
     expect(await codeOf(svc.authenticateLocal("alice", PW))).toBe("auth.account_disabled");
   });
 
-  it("不存在的登录名 → null，耗时不小于正确路径的一半（同样跑了 scrypt）", async () => {
+  it("不存在的登录名 → null，同样跑一次 scrypt 校验（防按耗时枚举登录名）", async () => {
     await svc.createLocal({ login: "alice", password: PW, displayName: "A" });
-    await svc.authenticateLocal("alice", PW); // 预热
-    const t0 = performance.now();
-    await svc.authenticateLocal("alice", PW);
-    const real = performance.now() - t0;
-    const t1 = performance.now();
+    verifySpy.mockClear();
     expect(await svc.authenticateLocal("nobody", PW)).toBeNull();
-    const ghost = performance.now() - t1;
-    expect(ghost).toBeGreaterThan(real * 0.3);
+    expect(verifySpy).toHaveBeenCalledTimes(1);
+    expect(verifySpy).toHaveBeenCalledWith(DUMMY_PASSWORD_HASH, PW);
+    verifySpy.mockClear();
+    expect(await svc.authenticateLocal("!!bad login!!", PW)).toBeNull();
+    expect(verifySpy).toHaveBeenCalledTimes(1);
   });
 
-  it("超过 256 字符的密码直接返回 null，不跑 scrypt", async () => {
+  it("超过 256 字符的密码直接返回 null，不调用 verifyPassword（不跑 scrypt）", async () => {
     await svc.createLocal({ login: "alice", password: PW, displayName: "A" });
-    await svc.authenticateLocal("alice", PW); // 预热
-    const t0 = performance.now();
-    await svc.authenticateLocal("alice", PW);
-    const real = performance.now() - t0;
-    const t1 = performance.now();
+    verifySpy.mockClear();
     expect(await svc.authenticateLocal("alice", "x".repeat(257))).toBeNull();
     expect(await svc.authenticateLocal("nobody", "x".repeat(100_000))).toBeNull();
-    const long = performance.now() - t1;
-    expect(long).toBeLessThan(real * 0.5);
+    expect(await svc.verifyPassword("whatever", "x".repeat(257))).toBe(false);
+    expect(verifySpy).not.toHaveBeenCalled();
+    // 256 字符仍会校验
+    expect(await svc.authenticateLocal("alice", "x".repeat(256))).toBeNull();
+    expect(verifySpy).toHaveBeenCalledTimes(1);
   });
 
   it("verifyPassword：按账号 id 校验本地密码；错误、超长、账号不存在 → false", async () => {
@@ -175,6 +181,39 @@ describe("最后一个企业管理员", () => {
     // 后执行的一方在锁内复核时已不是企业管理员
     expect((rej.reason as ApiError).code).toBe("forbidden");
     expect(await svc.countEnterpriseAdmins()).toBe(1);
+  });
+
+  it("停用 vs 降级并发（独立连接池）：活跃企业管理员仍至少一个", async () => {
+    const raw2 = createDb(box.url, 10);
+    const svc2 = new AccountsService(kernelDb(raw2));
+    try {
+      for (let i = 0; i < 10; i++) {
+        await sql`TRUNCATE capybara.accounts CASCADE`.execute(raw);
+        const a = await svc.createLocal({
+          login: `root-a${i}`,
+          password: PW,
+          displayName: "A",
+          enterpriseAdmin: true,
+        });
+        const b = await svc.createLocal({
+          login: `root-b${i}`,
+          password: PW,
+          displayName: "B",
+          enterpriseAdmin: true,
+        });
+        const rs = await Promise.allSettled([
+          svc.update(b.id, { status: "disabled" }, a.id),
+          svc2.update(a.id, { isEnterpriseAdmin: false }, b.id),
+        ]);
+        expect(rs.filter((r) => r.status === "fulfilled").length).toBe(1);
+        for (const r of rs) {
+          if (r.status === "rejected") expect((r.reason as ApiError).code).toBe("forbidden");
+        }
+        expect(await svc.countEnterpriseAdmins()).toBeGreaterThanOrEqual(1);
+      }
+    } finally {
+      await raw2.destroy();
+    }
   });
 
   it("update 写审计", async () => {

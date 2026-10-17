@@ -246,6 +246,36 @@ describe("邀请 HTTP", () => {
     expect(create.statusCode).toBe(403);
   });
 
+  it("公开的接受邀请接口：同 IP 连续 30 次失败 → 429 auth.rate_limited（别的 IP 不受影响）", async () => {
+    const codes: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      const res = await anon({
+        method: "POST",
+        url: `/api/v1/invitations/cap_inv_guess${i}/accept`,
+        payload: { login: `guess${i}`, password: PW, displayName: "G" },
+        remoteAddress: "203.0.113.9",
+      });
+      codes.push(res.statusCode);
+    }
+    expect(codes.slice(0, 20).every((c) => c === 404)).toBe(true);
+    expect(codes.at(-1)).toBe(429);
+    const limited = await anon({
+      method: "POST",
+      url: "/api/v1/invitations/cap_inv_guess/accept",
+      payload: {},
+      remoteAddress: "203.0.113.9",
+    });
+    expect(errCode(limited)).toBe("auth.rate_limited");
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
+    const other = await anon({
+      method: "POST",
+      url: "/api/v1/invitations/cap_inv_guess/accept",
+      payload: { login: "guessx", password: PW, displayName: "G" },
+      remoteAddress: "198.51.100.9",
+    });
+    expect(other.statusCode).toBe(404);
+  });
+
   it("过期 → 410 invitation.expired", async () => {
     const { ownerReq, orgId } = await setup();
     const token = await invite(ownerReq, orgId);

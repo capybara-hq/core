@@ -97,7 +97,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: SETTINGS,
-      useFactory: (db: KernelDb) => new SettingsService(db),
+      useFactory: (db: KernelDb) => new SettingsService(db, deps.log),
       inject: [KERNEL_DB],
     },
     {

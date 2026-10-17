@@ -16,7 +16,7 @@ import { Public } from "./principal.js";
 import type { LoginRateLimiter } from "./rate-limit.js";
 import type { SessionService } from "./sessions.js";
 
-const LoginBody = z.object({ login: z.string(), password: z.string() });
+const LoginBody = z.object({ login: z.string().max(256), password: z.string() });
 
 /** 会话的客户端信息（记入 sessions 表）。`req.ip` 在 `http.trustProxy` 时取自 X-Forwarded-For。 */
 export function clientMeta(req: FastifyRequest): { userAgent?: string; ip: string } {
@@ -34,7 +34,10 @@ export class AuthController {
     @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
   ) {}
 
-  /** 登录名不存在与密码错误返回同一错误；每次尝试先按登录名与 IP 原子占用限流额度，成功后退还。 */
+  /**
+   * 登录名不存在与密码错误返回同一错误；每次尝试先按（登录名, IP）、IP、登录名三个计数原子占用限流额度，
+   * 成功后清零登录名计数并退还 IP 额度（见 LoginRateLimiter）。
+   */
   @Post("login")
   @Public()
   @HttpCode(200)

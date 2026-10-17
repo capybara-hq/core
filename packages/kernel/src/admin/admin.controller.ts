@@ -67,17 +67,21 @@ export class AdminController {
     @Inject(SETTINGS) private readonly settings: SettingsService,
   ) {}
 
-  /** 全部账号，按 id 升序分页（`after` 为上一页最后一个 id）。 */
+  /**
+   * 全部账号，按 id 升序分页：`next` 为下一页的游标（作为 `after` 传回），没有更多时为 null。
+   * 多取一条判断是否还有下一页。
+   */
   @Get("accounts")
   async listAccounts(
     @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
-  ): Promise<{ accounts: Account[] }> {
-    return {
-      accounts: await this.accounts.list({
-        limit: q.limit,
-        ...(q.after !== undefined && { after: q.after }),
-      }),
-    };
+  ): Promise<{ accounts: Account[]; next: string | null }> {
+    const rows = await this.accounts.list({
+      limit: q.limit + 1,
+      ...(q.after !== undefined && { after: q.after }),
+    });
+    const accounts = rows.slice(0, q.limit);
+    const next = rows.length > q.limit ? (accounts.at(-1)?.id ?? null) : null;
+    return { accounts, next };
   }
 
   @Post("accounts")

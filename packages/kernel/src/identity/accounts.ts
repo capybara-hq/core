@@ -18,7 +18,22 @@ export interface Account {
 
 type Trx = Transaction<KernelDatabase>;
 
-function toAccount(r: Selectable<AccountsTable>): Account {
+/** 构造 `Account` 所需的 accounts 列（供跨表查询 select 使用）。 */
+export const ACCOUNT_COLUMNS = [
+  "accounts.id",
+  "accounts.display_name",
+  "accounts.email",
+  "accounts.status",
+  "accounts.is_enterprise_admin",
+  "accounts.created_at",
+] as const;
+
+type AccountRow = Pick<
+  Selectable<AccountsTable>,
+  "id" | "display_name" | "email" | "status" | "is_enterprise_admin" | "created_at"
+>;
+
+export function toAccount(r: AccountRow): Account {
   return {
     id: r.id,
     displayName: r.display_name,
@@ -29,12 +44,10 @@ function toAccount(r: Selectable<AccountsTable>): Account {
   };
 }
 
-/** 仅当违反 identities 主键（登录名已被占用）时为 true。 */
+/** 仅当违反 identities 主键约束（登录名已被占用）时为 true；其他唯一约束冲突照常抛出。 */
 function isLoginTaken(e: unknown): boolean {
-  const err = e as { code?: string; constraint?: string; table?: string };
-  return (
-    err.code === "23505" && (err.constraint === "identities_pkey" || err.table === "identities")
-  );
+  const err = e as { code?: string; constraint?: string };
+  return err.code === "23505" && err.constraint === "identities_pkey";
 }
 
 export interface LocalAccountInput {
@@ -51,11 +64,17 @@ interface PreparedLocal {
   passwordHash: string;
 }
 
-/** 规范化登录名、校验并哈希密码（不碰数据库，可在事务 / 锁之外先做）。 */
-async function prepareLocal(input: LocalAccountInput): Promise<PreparedLocal> {
+/**
+ * 规范化登录名、校验并哈希密码（不碰数据库，可在事务 / 锁之外先做）。
+ * 给了 `passwordHash`（调用方已在事务外算好）时不再跑 scrypt。
+ */
+async function prepareLocal(
+  input: LocalAccountInput,
+  passwordHash?: string,
+): Promise<PreparedLocal> {
   const login = normalizeLogin(input.login);
   validatePassword(input.password);
-  return { input, login, passwordHash: await hashPassword(input.password) };
+  return { input, login, passwordHash: passwordHash ?? (await hashPassword(input.password)) };
 }
 
 /** 在事务内插入账号、本地身份与密码；登录名已占用 → `account.login_taken`。 */
@@ -99,8 +118,18 @@ async function insertLocal(t: Trx, p: PreparedLocal): Promise<Account> {
 export class AccountsService {
   constructor(private readonly db: KernelDb) {}
 
-  async createLocal(input: LocalAccountInput, trx?: Trx): Promise<Account> {
-    const prepared = await prepareLocal(input);
+  /** 校验密码长度并算出哈希（scrypt，较慢）：供需要在事务之外先算好哈希的调用方使用。 */
+  async hashNewPassword(password: string): Promise<string> {
+    validatePassword(password);
+    return hashPassword(password);
+  }
+
+  /**
+   * 建本地账号。传 `trx` 时在调用方的事务内插入；在事务内调用时应先在事务**之外**用 `hashNewPassword`
+   * 算好 `passwordHash` 传进来，避免 scrypt 期间连接处于 idle in transaction。
+   */
+  async createLocal(input: LocalAccountInput, trx?: Trx, passwordHash?: string): Promise<Account> {
+    const prepared = await prepareLocal(input, passwordHash);
     const run = (t: Trx) => insertLocal(t, prepared);
     return trx ? run(trx) : this.db.transaction().execute(run);
   }

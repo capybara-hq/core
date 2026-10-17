@@ -180,20 +180,26 @@ export class InvitationsService {
   /**
    * 接受邀请，单个事务：按 hash 读邀请并分类错误 →（signup 时建账号）→ 锁组织行 → 已是成员则 `member.already_exists`
    * → 条件 UPDATE 占用邀请（0 行则重新分类，并发的后到者得到 `invitation.used`）→ 加入成员。任何一步失败整体回滚。
+   * signup 时先在事务外分类一次（无效令牌不白跑 scrypt），再在 BEGIN 之前算好密码哈希，
+   * 事务内只有读写，连接不会在 scrypt 期间处于 idle in transaction。
    */
   async accept(
     token: string,
     who: AcceptAs,
   ): Promise<{ account: Account; orgId: string; role: OrgRole }> {
     let existing: Account | undefined;
+    let passwordHash: string | undefined;
     if ("accountId" in who) {
       existing = await this.accounts.get(who.accountId);
       if (!existing) throw new ApiError("account.not_found", "Account not found");
+    } else {
+      await this.classify(this.db, token);
+      passwordHash = await this.accounts.hashNewPassword(who.signup.password);
     }
     return this.db.transaction().execute(async (t) => {
       const inv = await this.classify(t, token);
-      // 先建账号（scrypt 较慢）再锁组织行，缩短持锁时间；失败时随事务回滚，不残留账号
-      const account = existing ?? (await this.accounts.createLocal(signupOf(who), t));
+      // 先建账号再锁组织行，缩短持锁时间；失败时随事务回滚，不残留账号
+      const account = existing ?? (await this.accounts.createLocal(signupOf(who), t, passwordHash));
       if (!(await tryLockOrg(t, inv.org_id))) throw invalid();
       const already = await t
         .selectFrom("memberships")

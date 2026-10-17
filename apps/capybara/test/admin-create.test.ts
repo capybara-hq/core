@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createDb, kernelDb } from "@capybara-hq/kernel";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { readPassword } from "../src/commands/admin-create.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const PW = "cli-secret-password-123";
@@ -114,4 +116,46 @@ describe("capybara admin create", () => {
     expect(r.stderr).toContain("Password");
     expect(`${r.stdout}${r.stderr}`).not.toContain("shortpw");
   }, 60_000);
+});
+
+describe("readPassword", () => {
+  /** 收集写入内容的输出流。 */
+  function sink(): PassThrough & { text: () => string } {
+    const out = new PassThrough();
+    let buf = "";
+    out.on("data", (d) => {
+      buf += String(d);
+    });
+    return Object.assign(out, { text: () => buf });
+  }
+
+  it("stdin 是 TTY：提示 Password:、进入 raw 模式且不回显输入", async () => {
+    const input = Object.assign(new PassThrough(), {
+      isTTY: true,
+      setRawMode: vi.fn(),
+    });
+    const out = sink();
+    const p = readPassword(input, out);
+    input.write("s3cret-passw0rd\r");
+    expect(await p).toBe("s3cret-passw0rd");
+    expect(input.setRawMode).toHaveBeenCalledWith(true);
+    expect(out.text()).toContain("Password: ");
+    expect(out.text()).not.toContain("s3cret");
+  });
+
+  it("stdin 不是 TTY：读第一行，不提示", async () => {
+    const input = new PassThrough();
+    const out = sink();
+    const p = readPassword(input, out);
+    input.end("piped-password\nignored\n");
+    expect(await p).toBe("piped-password");
+    expect(out.text()).toBe("");
+  });
+
+  it("TTY 上在回车前结束输入 → undefined", async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode: vi.fn() });
+    const p = readPassword(input, sink());
+    input.end();
+    expect(await p).toBeUndefined();
+  });
 });

@@ -6,6 +6,7 @@ import { ACCESS_TOKEN_TTL_MAX_SECONDS } from "../config/schema.js";
 import type { DerivedKeys, Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ACCOUNT_COLUMNS, type Account, toAccount } from "./accounts.js";
 import { sha256Hex } from "./hash.js";
 
 export interface IssuedSession {
@@ -135,7 +136,14 @@ export class SessionService {
     throw new ApiError("auth.refresh_invalid", "Refresh token is invalid");
   }
 
-  async verifyAccess(accessToken: string): Promise<{ accountId: string; sessionId: string }> {
+  /**
+   * 验证 access token 并读出会话所属账号（不判断账号状态，由调用方决定）。
+   * Redis 吊销标记是快速路径；PG 的 `sessions.revoked_at` 才是事实来源——Redis 被清空 / 故障切换丢数据时，
+   * 已登出或因改密码被吊销的会话不能复活（spec 8.1）。吊销检查与账号读取合并为一条按主键的 JOIN 查询。
+   */
+  async verifyAccess(
+    accessToken: string,
+  ): Promise<{ accountId: string; sessionId: string; account: Account }> {
     let sub: unknown;
     let sid: unknown;
     try {
@@ -151,20 +159,20 @@ export class SessionService {
     if (typeof sub !== "string" || typeof sid !== "string") {
       throw new ApiError("auth.required", "Authentication required");
     }
-    // Redis 吊销标记是快速路径；PG 的 revoked_at 才是事实来源——Redis 被清空 / 故障切换丢数据时，
-    // 已登出或因改密码被吊销的会话不能复活（spec 8.1）
     if (await this.redis.exists(revokedKey(sid))) {
       throw new ApiError("auth.session_revoked", "Session has been revoked");
     }
     const row = await this.db
       .selectFrom("sessions")
-      .select("revoked_at")
-      .where("id", "=", sid)
+      .innerJoin("accounts", "accounts.id", "sessions.account_id")
+      .select(["sessions.revoked_at", ...ACCOUNT_COLUMNS])
+      .where("sessions.id", "=", sid)
       .executeTakeFirst();
     if (!row || row.revoked_at !== null) {
       throw new ApiError("auth.session_revoked", "Session has been revoked");
     }
-    return { accountId: sub, sessionId: sid };
+    if (row.id !== sub) throw new ApiError("auth.required", "Authentication required");
+    return { accountId: sub, sessionId: sid, account: toAccount(row) };
   }
 
   /**
@@ -222,15 +230,21 @@ export class SessionService {
     return rows.length;
   }
 
+  /** 设当前组织；会话已吊销、已过期或不存在 → `auth.session_revoked`。 */
   async setCurrentOrg(sessionId: string, orgId: string | null): Promise<void> {
-    await this.db
+    const r = await this.db
       .updateTable("sessions")
       .set({ current_org_id: orgId })
       .where("id", "=", sessionId)
-      .execute();
+      .where("revoked_at", "is", null)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .executeTakeFirst();
+    if (r.numUpdatedRows === 0n) {
+      throw new ApiError("auth.session_revoked", "Session has been revoked");
+    }
   }
 
-  /** 未吊销的会话；已吊销或不存在返回 undefined。 */
+  /** 有效（未吊销且未过期）的会话；否则返回 undefined。 */
   async get(
     sessionId: string,
   ): Promise<{ id: string; accountId: string; currentOrgId: string | null } | undefined> {
@@ -239,6 +253,7 @@ export class SessionService {
       .select(["id", "account_id", "current_org_id"])
       .where("id", "=", sessionId)
       .where("revoked_at", "is", null)
+      .where("expires_at", ">", sql<Date>`now()`)
       .executeTakeFirst();
     return row && { id: row.id, accountId: row.account_id, currentOrgId: row.current_org_id };
   }

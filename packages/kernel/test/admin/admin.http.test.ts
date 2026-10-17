@@ -138,6 +138,33 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
     expect(errCode(again)).toBe("setup.already_completed");
   });
 
+  it("配置了 setupToken 时，错误令牌 20 次 → 429 auth.rate_limited", async () => {
+    const codes: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      const res = await asUser(
+        k.http,
+        cookieJar(),
+      )({
+        method: "POST",
+        url: "/api/v1/setup",
+        payload: setupBody({ setupToken: `wrong-${i}` }),
+      });
+      codes.push(errCode(res) ?? String(res.statusCode));
+    }
+    expect(codes.slice(0, 10).every((c) => c === "setup.token_invalid")).toBe(true);
+    expect(codes.at(-1)).toBe("auth.rate_limited");
+    // 超限后正确令牌同样被拒（窗口内）
+    const ok = await asUser(
+      k.http,
+      cookieJar(),
+    )({
+      method: "POST",
+      url: "/api/v1/setup",
+      payload: setupBody({ setupToken: SETUP_TOKEN }),
+    });
+    expect(ok.statusCode).toBe(429);
+  });
+
   it("POST /setup 缺 CSRF 头 → 403 auth.csrf", async () => {
     const res = await k.http.inject({
       method: "POST",
@@ -273,6 +300,22 @@ describe("企业管理员端点", () => {
     expect((p2.json() as { accounts: Account[] }).accounts.map((a) => a.id)).toEqual(all.slice(2));
     const bad = await req({ method: "GET", url: "/api/v1/admin/accounts?limit=0" });
     expect(bad.statusCode).toBe(400);
+  });
+
+  it("GET /admin/accounts 返回 next 游标：limit=1 时 next 非空，用它取到下一个账号；最后一页 next 为 null", async () => {
+    const req = await session("admin");
+    const all = [admin.id, user.id].sort();
+    const p1 = await req({ method: "GET", url: "/api/v1/admin/accounts?limit=1" });
+    const b1 = p1.json() as { accounts: Account[]; next: string | null };
+    expect(b1.accounts.map((a) => a.id)).toEqual([all[0]]);
+    expect(b1.next).not.toBeNull();
+    const p2 = await req({
+      method: "GET",
+      url: `/api/v1/admin/accounts?limit=1&after=${b1.next}`,
+    });
+    const b2 = p2.json() as { accounts: Account[]; next: string | null };
+    expect(b2.accounts.map((a) => a.id)).toEqual([all[1]]);
+    expect(b2.next).toBeNull();
   });
 
   it("停用账号：鉴权实时读状态，未吊销的 cap_at 与 PAT 均立即 403 auth.account_disabled", async () => {

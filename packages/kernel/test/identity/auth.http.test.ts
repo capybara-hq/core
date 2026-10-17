@@ -536,3 +536,162 @@ describe("http.trustProxy：客户端 IP", () => {
     }
   });
 });
+
+describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守卫边界", () => {
+  const loginFrom = (remoteAddress: string, loginName: string, password: string) =>
+    k.http.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { login: loginName, password },
+      remoteAddress,
+      headers: { "x-capybara-csrf": "1" },
+    });
+
+  it("R25：攻击者 IP 把 admin 打到 10 次失败后，admin 从另一个 IP 用正确密码仍能登录", async () => {
+    for (let i = 0; i < 10; i++) {
+      expect((await loginFrom("203.0.113.7", "admin", "wrong password!!")).statusCode).toBe(401);
+    }
+    expect((await loginFrom("203.0.113.7", "admin", PW)).statusCode).toBe(429);
+    const ok = await loginFrom("198.51.100.20", "admin", PW);
+    expect(ok.statusCode).toBe(200);
+    expect((ok.json() as { account: Account }).account.id).toBe(admin.id);
+  });
+
+  it("login 为 257 字符 → 400 validation_failed", async () => {
+    const res = await login(cookieJar(), "a".repeat(257), PW);
+    expect(res.statusCode).toBe(400);
+    expect(errCode(res)).toBe("validation_failed");
+  });
+
+  it("R24：改密码后，该账号的个人访问令牌 401 auth.required", async () => {
+    const { token } = await new ApiTokenService(db).createPersonal(alice.id, { name: "ci" });
+    const bearer = { authorization: `Bearer ${token}` };
+    const before = await k.http.inject({ method: "GET", url: "/api/v1/me", headers: bearer });
+    expect(before.statusCode).toBe(200);
+    const jar = cookieJar();
+    await login(jar);
+    const res = await asUser(
+      k.http,
+      jar,
+    )({
+      method: "PUT",
+      url: "/api/v1/me/password",
+      payload: { currentPassword: PW, newPassword: "another long password" },
+    });
+    expect(res.statusCode).toBe(204);
+    const after = await k.http.inject({ method: "GET", url: "/api/v1/me", headers: bearer });
+    expect(after.statusCode).toBe(401);
+    expect(errCode(after)).toBe("auth.required");
+  });
+
+  it("改密码失败 11 次 → 429，但同 IP 的登录不受影响", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const change = (currentPassword: string) =>
+      asUser(
+        k.http,
+        jar,
+      )({
+        method: "PUT",
+        url: "/api/v1/me/password",
+        payload: { currentPassword, newPassword: "another long password" },
+      });
+    for (let i = 0; i < 10; i++) {
+      expect(errCode(await change(`wrong password ${i}`))).toBe("auth.invalid_credentials");
+    }
+    const limited = await change("wrong password x");
+    expect(limited.statusCode).toBe(429);
+    expect(errCode(limited)).toBe("auth.rate_limited");
+    // 改密码的计数不占登录额度：同 IP 仍有完整的 50 次失败登录额度（上面那次成功登录已退还）
+    for (let i = 0; i < 50; i++) {
+      expect((await login(cookieJar(), `nobody${i}`, "wrong password!!")).statusCode).toBe(401);
+    }
+    expect((await login(cookieJar(), "nobody-x", "wrong password!!")).statusCode).toBe(429);
+  });
+
+  it("Bearer 与 Cookie 同时出现时以 Bearer 为准，且仍不检查 CSRF", async () => {
+    const { token } = await new ApiTokenService(db).createPersonal(alice.id, { name: "ci" });
+    const jar = cookieJar();
+    await login(jar, "admin");
+    const cookie = jar.header() as string;
+    const me = await k.http.inject({
+      method: "GET",
+      url: "/api/v1/me",
+      headers: { cookie, authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+    expect(me.json()).toMatchObject({ account: { id: alice.id }, via: "pat" });
+    const created = await k.http.inject({
+      method: "POST",
+      url: "/api/v1/orgs",
+      payload: { name: "Bearer Org", slug: "bearer-org" },
+      headers: { cookie, authorization: `Bearer ${token}` },
+    });
+    expect(created.statusCode).toBe(201);
+    const row = await db
+      .selectFrom("orgs")
+      .select("created_by")
+      .where("slug", "=", "bearer-org")
+      .executeTakeFirstOrThrow();
+    expect(row.created_by).toBe(alice.id);
+  });
+
+  it("清 Cookie 的 set-cookie 带正确的 Path（cap_at 为 /，cap_rt 为 /api/v1/auth）", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const res = await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/logout" });
+    const cs = setCookies(res);
+    const at = cs.find((c) => c.name === "cap_at");
+    const rt = cs.find((c) => c.name === "cap_rt");
+    expect(at?.value).toBe("");
+    expect(rt?.value).toBe("");
+    expect(at?.attrs.path).toBe("/");
+    expect(rt?.attrs.path).toBe("/api/v1/auth");
+  });
+
+  it("PG 断开时访问 @Public 路由并携带 Cookie → 500（不是被当作匿名放行）", async () => {
+    const adminDb = createDb(pgc.url, 1);
+    const url = new URL(pgc.url);
+    url.pathname = "/brk";
+    await sql`DROP DATABASE IF EXISTS brk WITH (FORCE)`.execute(adminDb);
+    await sql`CREATE DATABASE brk`.execute(adminDb);
+    const kk = await createKernel(
+      KernelConfigSchema.parse({
+        db: { url: url.toString(), poolMax: 2 },
+        redis: { url: rd.url },
+        masterKey,
+        http: { port: 0 },
+      }),
+      { env: {}, logger: createLogger("error", { write: () => {} }) },
+    );
+    const brk = createDb(url.toString(), 1);
+    try {
+      await kk.start();
+      await new AccountsService(kernelDb(brk)).createLocal({
+        login: "bob",
+        password: PW,
+        displayName: "Bob",
+      });
+      await brk.destroy();
+      const jar = cookieJar();
+      const res = await asUser(
+        kk.http,
+        jar,
+      )({ method: "POST", url: "/api/v1/auth/login", payload: { login: "bob", password: PW } });
+      expect(res.statusCode).toBe(200);
+      const cookie = jar.header() as string;
+      const up = await kk.http.inject({ method: "GET", url: "/healthz", headers: { cookie } });
+      expect(up.statusCode).toBe(200);
+      await sql`DROP DATABASE brk WITH (FORCE)`.execute(adminDb);
+      const down = await kk.http.inject({ method: "GET", url: "/healthz", headers: { cookie } });
+      expect(down.statusCode).toBe(500);
+      // 不带 Cookie 的公开路由不受影响
+      expect((await kk.http.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
+    } finally {
+      await kk.stop();
+      await brk.destroy().catch(() => {});
+      await sql`DROP DATABASE IF EXISTS brk WITH (FORCE)`.execute(adminDb);
+      await adminDb.destroy();
+    }
+  }, 60_000);
+});

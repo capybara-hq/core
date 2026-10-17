@@ -26,6 +26,9 @@ import { CurrentPrincipal, type Principal, requireUser, SessionOnly } from "./pr
 import type { LoginRateLimiter } from "./rate-limit.js";
 import type { SessionService } from "./sessions.js";
 
+/** 改密码时同一账号在窗口内允许核对旧密码的次数。 */
+const CHANGE_PASSWORD_LIMIT_PER_ACCOUNT = 10;
+
 const ChangePasswordBody = z.object({
   currentPassword: z.string().min(1),
   newPassword: z.string().min(12).max(MAX_PASSWORD_LENGTH),
@@ -95,9 +98,9 @@ export class MeController {
   }
 
   /**
-   * 改密码：核对旧密码；成功后吊销该账号除当前会话外的所有会话（个人令牌不吊销）。
-   * 核对前先占用登录限流额度（键为 `acct:<账号 id>` 与客户端 IP，与登录共用上限与窗口），
-   * 防止拿到会话的人无限次猜旧密码；超限 → 429 `auth.rate_limited`，核对成功后清零。
+   * 改密码：核对旧密码；成功后吊销该账号除当前会话外的所有会话，并吊销其全部个人访问令牌（R24）。
+   * 核对前先占用限流额度（scope `acct`：按账号 id 10 次、按客户端 IP 50 次，与登录的 IP 额度分开），
+   * 防止拿到会话的人无限次猜旧密码；超限 → 429 `auth.rate_limited`，核对成功后清零账号计数。
    */
   @Put("password")
   @SessionOnly()
@@ -112,10 +115,13 @@ export class MeController {
     if (p.via !== "session") {
       throw new ApiError("auth.session_required", "This endpoint requires a web session");
     }
-    // 账号 id 作限流键：登录名不含 `:`，`acct:` 前缀不会与任何真实登录名的计数相撞
-    const rlKey = `acct:${p.account.id}`;
     const { ip } = clientMeta(req);
-    const rl = await this.limiter.reserve(rlKey, ip);
+    const rl = await this.limiter.reserveScoped(
+      "acct",
+      p.account.id,
+      ip,
+      CHANGE_PASSWORD_LIMIT_PER_ACCOUNT,
+    );
     if (!rl.allowed) {
       reply.header("retry-after", String(rl.retryAfterSeconds));
       throw new ApiError("auth.rate_limited", "Too many failed password attempts; try again later");
@@ -123,9 +129,10 @@ export class MeController {
     if (!(await this.accounts.verifyPassword(p.account.id, body.currentPassword))) {
       throw new ApiError("auth.invalid_credentials", "Current password is incorrect");
     }
-    await this.limiter.succeeded(rlKey, ip);
+    await this.limiter.succeededScoped("acct", p.account.id, ip);
     await this.accounts.setPassword(p.account.id, body.newPassword);
     await this.sessions.revokeAllForAccount(p.account.id, p.sessionId);
+    await this.tokens.revokeAllPersonal(p.account.id);
   }
 
   @Post("tokens")
