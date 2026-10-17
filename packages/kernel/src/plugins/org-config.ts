@@ -120,17 +120,20 @@ export class OrgPluginConfigs {
     private readonly keyring: Keyring,
     private readonly host: PluginHost,
     private readonly hooks: {
-      /** 经手（写入或解密读出）的密钥值，含嵌套字段；内核传 `log.addSecrets` 使其在日志中打码。 */
+      /**
+       * 经手（写入或解密读出）的密钥值，含嵌套字段；只在事务提交后调用（回滚的写入不上报）。
+       * 内核传 `log.addOrgSecrets` 使其在日志中打码。
+       */
       onSecrets?: (values: string[]) => void;
       /** 仅供测试：在读完配置行之后、读密钥之前插入确定性的交错点。 */
       afterConfigRowRead?: () => Promise<void>;
     } = {},
   ) {}
 
-  /** 把一份组织配置里的密钥值交给 onSecrets（无回调或无密钥时无操作）。 */
-  private reportSecrets(schema: z.ZodTypeAny, config: unknown): void {
-    if (!this.hooks.onSecrets) return;
-    const values = secretValues(schema, config);
+  /** 把一份组织配置里的密钥值交给 onSecrets（无回调或无密钥时无操作）；调用方须在事务提交后调用。 */
+  private reportSecrets(found: { schema: z.ZodTypeAny; config: unknown } | undefined): void {
+    if (!found || !this.hooks.onSecrets) return;
+    const values = secretValues(found.schema, found.config);
     if (values.length > 0) this.hooks.onSecrets(values);
   }
 
@@ -181,7 +184,8 @@ export class OrgPluginConfigs {
     if (input.config !== undefined && !schema) {
       throw new ApiError("plugin.no_org_config", `Plugin ${plugin} has no organization config`);
     }
-    return this.db.transaction().execute(async (t) => {
+    let seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
+    const view = await this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.plugins.manage");
       const row = await t
         .selectFrom("plugin_org_configs")
@@ -225,7 +229,7 @@ export class OrgPluginConfigs {
           }
           next = r.data as Obj;
         }
-        this.reportSecrets(schema, next);
+        seen = { schema, config: next };
         if (input.config !== undefined) {
           changed = changedPaths(schema, before, next);
           plain = structuredClone(next);
@@ -279,6 +283,9 @@ export class OrgPluginConfigs {
         .executeTakeFirst();
       return this.view(manifest, saved, await this.setSecretKeys(t, orgId));
     });
+    // 事务已提交：回滚的写入不会走到这里
+    this.reportSecrets(seen);
+    return view;
   }
 
   /**
@@ -292,7 +299,7 @@ export class OrgPluginConfigs {
     plugin: string,
   ): Promise<{ enabled: boolean; config: unknown } | undefined> {
     const manifest = this.manifest(plugin);
-    return this.snapshot(async (t) => {
+    const result = await this.snapshot(async (t) => {
       const row = await t
         .selectFrom("plugin_org_configs")
         .select(["enabled", "config"])
@@ -306,6 +313,10 @@ export class OrgPluginConfigs {
       if (!schema || !row.enabled) return { enabled: row.enabled, config: null };
       return this.decode(t, orgId, plugin, schema, row.config ?? {});
     });
+    // 只读快照已结束；config 非 null 意味着插件有 org schema 且已解密
+    const schema = manifest.config?.org;
+    if (schema && result?.config != null) this.reportSecrets({ schema, config: result.config });
+    return result;
   }
 
   private async decode(
@@ -330,7 +341,6 @@ export class OrgPluginConfigs {
         `plugin ${plugin}: stored organization config for org ${orgId} is invalid: ${detail}`,
       );
     }
-    this.reportSecrets(schema, r.data);
     return { enabled: true, config: r.data };
   }
 

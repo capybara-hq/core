@@ -119,12 +119,13 @@ export function changedPaths(schema: core.$ZodType, a: unknown, b: unknown): str
 }
 
 /**
- * 把一个密钥值展开成需要打码的字符串：字符串原样；数字、bigint、布尔转成字符串；
- * 数组与对象（secret 叶子可能是 record / 数组 / 对象）递归展开所有标量。
+ * 把一个密钥值展开成需要打码的字符串：字符串原样；数字、bigint 转成字符串；布尔不收集
+ * （`true` / `false` 不携带秘密，登记只会误伤普通文本）；数组与对象（secret 叶子可能是 record / 数组 / 对象）
+ * 递归展开所有标量。最短长度由 logger 把关。
  */
 export function secretScalars(value: unknown, out: string[] = []): string[] {
   if (typeof value === "string") out.push(value);
-  else if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") {
+  else if (typeof value === "number" || typeof value === "bigint") {
     out.push(String(value));
   } else if (Array.isArray(value)) {
     for (const v of value) secretScalars(v, out);
@@ -134,7 +135,7 @@ export function secretScalars(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
-/** 收集标记为 secret 的字段的值（嵌套的数组 / 对象展开为其中所有标量，非字符串转成字符串），供 logger 打码。 */
+/** 收集标记为 secret 的字段的值（嵌套的数组 / 对象展开为其中所有标量，数字转成字符串，布尔跳过），供 logger 打码。 */
 export function secretValues(schema: core.$ZodType, config: unknown): string[] {
   const out: string[] = [];
   for (const f of configFields(schema)) {

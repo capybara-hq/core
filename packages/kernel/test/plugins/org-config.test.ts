@@ -99,17 +99,23 @@ const codeOf = async (p: Promise<unknown>) => {
 const full = { appId: "app-1", appSecret: SECRET, webhook: { token: TOKEN, path: "/h" } };
 
 describe("OrgPluginConfigs", () => {
-  it("put / get 经手的组织配置密钥（含嵌套字段）登记到日志打码", async () => {
+  /** 接 addOrgSecrets 的 OrgPluginConfigs 与其日志行。 */
+  const loggedSvc = () => {
     const lines: string[] = [];
     const logger = createLogger("info", { write: (l) => lines.push(l) });
     const logged = new OrgPluginConfigs(db, keyring, host, {
-      onSecrets: (v) => logger.addSecrets(v),
+      onSecrets: (v) => logger.addOrgSecrets(v),
     });
+    return { logged, logger, lines };
+  };
+
+  it("put / get 经手的组织配置密钥（含嵌套字段，≥ 12 个字符）在提交后登记到日志打码", async () => {
+    const { logged, logger, lines } = loggedSvc();
     // 别的副本写入、本副本只读：get 解密时登记
     await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     await logged.get(org.id, "orgcfg");
-    logger.info(`leak ${SECRET} ${TOKEN}`, { nested: { token: TOKEN } });
-    // 本副本写入：put 时登记新值
+    logger.info("x", { leak: `${SECRET} ${TOKEN}`, nested: { token: TOKEN } });
+    // 本副本写入：put 提交后登记新值
     const SECRET2 = "s3cr3t-org2-value-41d0";
     const TOKEN2 = "tok-org2-value-c3b8";
     await logged.put(
@@ -118,10 +124,38 @@ describe("OrgPluginConfigs", () => {
       { config: { appId: "b", appSecret: SECRET2, webhook: { token: TOKEN2 } } },
       B.id,
     );
-    logger.info(`leak ${SECRET2} ${TOKEN2}`);
+    logger.info("x", { leak: `${SECRET2} ${TOKEN2}` });
     const out = lines.join("\n");
     for (const v of [SECRET, TOKEN, SECRET2, TOKEN2]) expect(out).not.toContain(v);
     expect(out).toContain("[REDACTED]");
+  });
+
+  it("组织密钥短于 12 个字符不登记（租户不能用短值遮蔽日志）", async () => {
+    const { logged, logger, lines } = loggedSvc();
+    await logged.put(org.id, "orgcfg", { config: { appId: "a", appSecret: "short8ch" } }, A.id);
+    logger.info("x", { text: "short8ch" });
+    expect(JSON.parse(lines[0] as string).text).toBe("short8ch");
+  });
+
+  it("put 回滚时不登记其中的密钥", async () => {
+    const { logged, logger, lines } = loggedSvc();
+    const ROLLED = "rolled-back-secret-7e21";
+    await sql`CREATE OR REPLACE FUNCTION capybara.test_fail_audit() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER test_fail_audit BEFORE INSERT ON capybara.audit_events FOR EACH ROW EXECUTE FUNCTION capybara.test_fail_audit()`.execute(
+      raw,
+    );
+    try {
+      await expect(
+        logged.put(org.id, "orgcfg", { config: { appId: "a", appSecret: ROLLED } }, A.id),
+      ).rejects.toThrow(/audit down/);
+    } finally {
+      await sql`DROP TRIGGER test_fail_audit ON capybara.audit_events`.execute(raw);
+      await sql`DROP FUNCTION capybara.test_fail_audit()`.execute(raw);
+    }
+    logger.info("x", { text: ROLLED });
+    expect(JSON.parse(lines[0] as string).text).toBe(ROLLED);
   });
 
   it("put 完整配置后 get 返回解密后的完整对象；list 不含密钥字段", async () => {

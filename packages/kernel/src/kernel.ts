@@ -162,7 +162,7 @@ export async function createKernel(
     onSecrets: (v) => log.addSecrets(v),
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
-    onSecrets: (v) => log.addSecrets(v),
+    onSecrets: (v) => log.addOrgSecrets(v),
   });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
