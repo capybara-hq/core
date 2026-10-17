@@ -40,8 +40,8 @@ const ORG_SECRET_CAPACITY = 10_000;
 const PREFIX_LEN = MIN_SECRET_LEN;
 
 /**
- * 编译后的打码匹配器：按值的前 `PREFIX_LEN` 个字符分桶，桶内按长度降序。扫描字符串时每个位置只查一次桶，
- * 命中则取最长的匹配替换；开销与字符串长度成正比，与登记的密钥数基本无关。
+ * 编译后的打码匹配器：按值的前 `PREFIX_LEN` 个字符分桶，桶内按长度降序。扫描字符串时每个位置查一次桶、
+ * 记下最长命中的区间，重叠或相邻的区间合并后替换；开销与字符串长度成正比，与登记的密钥数基本无关。
  */
 function compileMatcher(values: Iterable<string>): (s: string) => string {
   const buckets = new Map<string, string[]>();
@@ -55,21 +55,30 @@ function compileMatcher(values: Iterable<string>): (s: string) => string {
   for (const b of buckets.values()) b.sort((a, c) => c.length - a.length);
   return (s) => {
     if (s.length < PREFIX_LEN) return s;
+    // 每个位置都记下最长命中的区间 [i, i + len)，不跳过（否则先开始的密钥会吞掉与之重叠的后一个密钥的开头，
+    // 使后者剩余部分明文输出）；重叠或相邻的区间合并后整段替换为一个 [REDACTED]。
     let out = "";
     let last = 0;
-    let i = 0;
-    while (i <= s.length - PREFIX_LEN) {
+    let runStart = -1;
+    let runEnd = -1;
+    for (let i = 0; i <= s.length - PREFIX_LEN; i++) {
       const b = buckets.get(s.slice(i, i + PREFIX_LEN));
       const hit = b?.find((v) => s.startsWith(v, i));
-      if (hit) {
-        out += s.slice(last, i) + REDACTED;
-        i += hit.length;
-        last = i;
-      } else {
-        i++;
+      if (!hit) continue;
+      const end = i + hit.length;
+      if (runStart >= 0 && i <= runEnd) {
+        if (end > runEnd) runEnd = end;
+        continue;
       }
+      if (runStart >= 0) {
+        out += s.slice(last, runStart) + REDACTED;
+        last = runEnd;
+      }
+      runStart = i;
+      runEnd = end;
     }
-    return last === 0 ? s : out + s.slice(last);
+    if (runStart < 0) return s;
+    return out + s.slice(last, runStart) + REDACTED + s.slice(runEnd);
   };
 }
 

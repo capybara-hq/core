@@ -183,6 +183,32 @@ describe("createLogger", () => {
     expect(line).toContain("app-visible");
   });
 
+  it.each([
+    [["abcdef", "cdefghijklmn"], "abcdefghijklmn"],
+    [["user=admin;", "admin;pw=Sup3rS3cretValue"], "user=admin;pw=Sup3rS3cretValue"],
+    [["k1=aaaa-bb", "bb-cccc-dd", "dd-eeee-ff"], "x k1=aaaa-bb-cccc-dd-eeee-ff y"],
+  ])("重叠的密钥 %j：任何密钥的字符都不残留", (secretList, text) => {
+    const { logger, lines } = capture("info");
+    logger.addSecrets(secretList);
+    logger.info("x", { text, nested: { text } });
+    const e = JSON.parse(lines[0] as string);
+    for (const out of [e.text, e.nested.text] as string[]) {
+      const rest = out.replaceAll("[REDACTED]", "\u0000");
+      for (const sec of secretList) {
+        // 密钥的任一 4 字符片段都不能出现在输出里
+        for (let i = 0; i + 4 <= sec.length; i++) expect(rest).not.toContain(sec.slice(i, i + 4));
+      }
+    }
+    expect(e.text).toBe(text.startsWith("x ") ? "x [REDACTED] y" : "[REDACTED]");
+  });
+
+  it("不重叠的两个密钥分别替换", () => {
+    const { logger, lines } = capture("info");
+    logger.addSecrets(["alpha-secret", "omega-secret"]);
+    logger.info("x", { text: "a alpha-secret b omega-secret c" });
+    expect(JSON.parse(lines[0] as string).text).toBe("a [REDACTED] b [REDACTED] c");
+  });
+
   it("循环引用不抛错", () => {
     const { logger, lines } = capture("info");
     const o: Record<string, unknown> = {};
