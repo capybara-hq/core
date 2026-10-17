@@ -287,6 +287,7 @@ export async function createKernel(
         },
       }),
       trustProxy: config.http.trustProxy,
+      replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
     });
   } catch (e) {
     await releaseConnections();

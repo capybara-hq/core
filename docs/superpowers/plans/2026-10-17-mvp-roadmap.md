@@ -12,11 +12,15 @@ MVP 拆成 7 个里程碑。每个里程碑单独一份详细计划，**前一�
 |---|---|---|---|
 | **M0 地基** | 仓库骨架与工程 harness；配置（文件 / Nacos / 环境变量）；PG 迁移器；`ctx`（kv / lock / bus / queue / secrets / http）；插件宿主；双副本测试工具；第一批自动检查 | 1、2、8.2、8.5、13 | 示例插件在双副本下跑通；CI 全绿；每道检查有「证明会红」的用例 |
 | **M1 身份与组织**（已完成，计划 `2026-10-17-m1-identity.md`，双副本验收 `packages/testing/test/m1-acceptance.test.ts`） | **先把内核 HTTP 层从 Hono 迁到 Nest + Fastify**；账号、外部身份、组织、成员、四种角色、企业管理员；本地账号登录；初始化向导与 `capybara admin create`；会话与令牌；组织级插件配置存储 | 3.1–3.5 | 建企业管理员 → 建组织 → 邀请成员 → 按角色鉴权 |
-| **M2 Agent 运行时** | Agent 定义与版本；会话事件日志；BullMQ 运行链路；LangGraph 默认 loop；流式广播；插话；中止；崩溃续跑；上下文压缩；`anthropic` 与 `openai` 供应商插件 + 一致性测试；最小网页聊天（Next web 服务的第一个页面） | 4、6.1–6.2 | 网页里和 agent 多轮对话，杀掉 worker 后自动续跑 |
+| **M2 Agent 运行时**（已完成，计划 `2026-10-17-m2-agent-runtime.md`，双副本验收 `packages/testing/test/m2-acceptance.test.ts`，网页 e2e `apps/web/e2e`） | Agent 定义与版本；会话事件日志；BullMQ 运行链路；LangGraph 默认 loop；流式广播；插话；中止；崩溃续跑；上下文压缩；`anthropic` 与 `openai` 供应商插件 + 一致性测试；最小网页聊天（Next web 服务的第一个页面） | 4、6.1–6.2 | 网页里和 agent 多轮对话，杀掉 worker 后自动续跑 |
 | **M3 工具与连接器** | 工具运行时与执行管线；工具策略与审批（含三种审批范围、失败即拒绝）；MCP（远程）与 OpenAPI 连接器；认证适配与凭据；`tool_search`；工具定义漂移检测；任务清单工具；工具设计规范检查（描述非空、错误带修正方式） | 5、6.3–6.7、7.3 | agent 调 MCP / OpenAPI 应用，写操作触发审批 |
 | **M4 渠道与生态插件** | `channel@1` / `identity-source@1` / `directory@1` 接口；Slack 插件（登录 + 通讯录 + bot，Socket Mode 选主）；飞书插件（同上，长连接）；审批卡片；渠道身份映射 | 3.2–3.5、9 | 在 Slack / 飞书里对话、点卡片审批 |
 | **M5 沙箱与技能** | `sandbox@1` 接口；Docker 实现（runc / runsc，经 socket 代理）；懒创建与文件系统级休眠；技能格式、`skill_load`；agent 自写技能与 R1–R6 | 3.6、5.6、8.3 | agent 在沙箱里跑技能脚本；共享 agent 改技能进入待审 |
 | **M6 评测、后台与发布** | 轨迹记录与回放评测；轨迹查看器；管理后台（模型 / 插件 / 应用 / 技能 / 成员）；企业目录；docker compose 全量编排（api / worker / gateway / web / 依赖服务）；`gemini` 供应商插件；插件 SDK 公开 API 快照检查；CLA 机器人 | 6.8、7.1–7.2、8.4、13.5 | 完整验收场景 |
+
+## 后续里程碑须知
+
+- **M6 编排 web 镜像**：web 必须经 `apps/web/server.mjs` 启动（`node server.mjs`，即 `pnpm --filter @capybara-hq/web start`）。它丢弃客户端伪造的转发头、把 `x-forwarded-for` 改写为真实对端地址再交给 `/api` 代理；Next 的 `output: "standalone"` 产物自带 `server.js`、不经过它，与此不兼容，镜像不能用 standalone 输出。web 后面的内核设 `http.trustProxy: 1`（只信任 web 这一跳），否则登录限流看到的是 web 主机地址。
 
 ## M0 锁定的技术选型
 

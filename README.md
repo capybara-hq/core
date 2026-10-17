@@ -49,6 +49,31 @@ curl -s localhost:8080/api/v1/setup                          # {"needsSetup":fal
 - 不经 HTTP 也可以用 CLI 建企业管理员（密码只从 stdin 读）：`echo "$PW" | pnpm capybara admin create --login admin --display-name Admin`。
 - 用浏览器在非 localhost 的明文 http 上试用时，设 `CAPYBARA_AUTH__COOKIE_SECURE=false`，否则浏览器不保存会话 Cookie；生产保持默认 `true`。
 
+### 在网页上和 agent 对话（不需要模型密钥）
+
+`@capybara-hq/plugin-model-fake` 是确定性脚本化模型，不调用任何外部接口，适合本地试用与演示。沿用上面的数据库、Redis 与主密钥环境变量，换成加载它，再起网页（Next，`apps/web`）：
+
+```bash
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake"]'   # 提供模型 model-fake / fake-1
+export CAPYBARA_PLUGIN_CONFIG='{}'
+export CAPYBARA_HTTP__TRUST_PROXY=1          # 内核只经网页层访问时，信任这一跳代理（见下）
+export CAPYBARA_AUTH__COOKIE_SECURE=false    # 本地明文 http 试用
+pnpm capybara migrate
+pnpm capybara start                          # 内核 :8080
+```
+
+另开一个终端：
+
+```bash
+pnpm dev:web          # 即 pnpm --filter @capybara-hq/web dev，经 apps/web/server.mjs 启动，监听 :3000
+# 内核不在 http://localhost:8080 时设 CAPYBARA_KERNEL_URL；网页端口用 PORT 改
+```
+
+浏览器打开 <http://localhost:3000>：初始化向导建管理员与组织 → 新建 agent（模型选 `model-fake/fake-1`）→ 对话。`model-fake` 按消息前缀决定回复：`echo:<文本>` 原样回复，`slow:<毫秒>:<文本>` 逐块慢速流出（方便试「停止」与运行中插话），其他文本回复 `You said: …`。
+
+- **网页层后面的内核要设 `http.trustProxy: 1`**（`CAPYBARA_HTTP__TRUST_PROXY=1`）：`server.mjs` 会丢弃客户端伪造的转发头，把 `x-forwarded-for` 改写为真实对端地址再转给内核，内核信任这一跳才能拿到真实客户端 IP（登录限流按 IP 计数）。网页层必须经 `server.mjs` 启动（`pnpm dev:web` / `pnpm --filter @capybara-hq/web start`），直接 `next dev` / `next start` 不做这一步。
+- 内核同时对外直接暴露时不要用跳数，改用受信代理地址列表（如 `CAPYBARA_HTTP__TRUST_PROXY='["10.0.0.0/8"]'`），见 [docs/config.md](docs/config.md)。
+
 接下来可以邀请成员（`POST /api/v1/orgs/:orgId/invitations`）、按角色管理成员（`/api/v1/orgs/:orgId/members`）；内核 API 的写法见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
 
 用完：`docker compose -f docker/compose.dev.yaml down`（加 `-v` 同时清掉数据卷）。
@@ -59,6 +84,9 @@ curl -s localhost:8080/api/v1/setup                          # {"needsSetup":fal
 |---|---|
 | `@capybara-hq/plugin-model-fake` | 确定性脚本化模型，用于测试与无密钥演示 |
 | `@capybara-hq/plugin-anthropic` | Anthropic（官方 SDK + 原生 Messages API） |
+| `@capybara-hq/plugin-openai` | OpenAI（官方 SDK + 原生 Responses API） |
+
+可以同时加载多个，如 `CAPYBARA_PLUGINS='["@capybara-hq/plugin-anthropic","@capybara-hq/plugin-openai"]'`，`CAPYBARA_PLUGIN_CONFIG` 里按插件名分别给配置。
 
 `anthropic` 的部署级配置示例：
 
@@ -72,6 +100,20 @@ export CAPYBARA_PLUGIN_CONFIG='{"anthropic":{"apiKey":"sk-ant-...","models":["cl
 - `models`：允许的模型 id，默认 `["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]`；模型信息经 Models API 获取并在 kv 缓存 1 小时。
 - `serverFallbacks`：`default`（默认）时，对 Claude Opus 5.5 / Opus 5 / Fable 5.1 / Sonnet 5.5 开启服务端拒答兜底（beta `server-side-fallback-2026-07-01`，仅 Claude API）；`off` 关闭。
 - SDK 不做重试（`maxRetries: 0`），重试由内核统一处理。
+
+`openai` 的部署级配置示例（OpenAI 的模型接口不返回上下文窗口等信息，所以模型清单由配置给出）：
+
+```bash
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-openai"]'
+export CAPYBARA_PLUGIN_CONFIG='{"openai":{"apiKey":"sk-...","models":[{"id":"gpt-5.5","contextWindow":400000,"maxOutputTokens":128000,"reasoning":true,"vision":true}]}}'
+```
+
+- `apiKey`（必填，密钥字段）；`baseUrl`、`organization`（可选）。
+- `models`（至少一个）：`id`、`contextWindow`、`maxOutputTokens`、`reasoning`、`vision`，可选 `streamIdleTimeoutMs`（推理模型长时间无输出时的看门狗阈值）。
+- `reasoningSummary`：`auto`（默认）请求推理摘要；未完成组织验证的账号请求摘要会被拒绝，此时设 `off`。
+- 以 `store: false` 调用，推理项以加密内容原样回放；SDK 同样不做重试。
+
+写模型供应商插件见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。
 
 `example-counter` 是写插件的参考实现；写自己的插件见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，配置项清单见 [docs/config.md](docs/config.md)。
 

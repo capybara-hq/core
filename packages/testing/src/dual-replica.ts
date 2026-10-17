@@ -39,10 +39,28 @@ export interface ReplicaHandle {
   pid: number;
 }
 
+/** 副本在响应头里标明自己的序号（runner 把 `http.replicaId` 设为 `"0"` / `"1"`）。 */
+export const REPLICA_HEADER = "x-capybara-replica";
+
+/**
+ * 读响应头 `x-capybara-replica`，得到处理该请求的副本序号；不是 harness 副本发出的响应（没有该头或值不是 0 / 1）
+ * 返回 undefined。直接 `fetch` 某个副本端口（如 SSE）时用它确认落点。
+ */
+export function replicaOf(res: Response): 0 | 1 | undefined {
+  const v = res.headers.get(REPLICA_HEADER);
+  return v === "0" ? 0 : v === "1" ? 1 : undefined;
+}
+
+/** `Harness.request` 的返回值：普通 `Response` 加上处理它的副本序号（取自 `x-capybara-replica` 响应头）。 */
+export type ReplicaResponse = Response & { readonly replica: 0 | 1 };
+
 /** 两个独立进程的内核副本 + 严格交替的请求入口。 */
 export interface Harness {
-  /** 严格交替发往两个副本：第 1、3、5… 次到 replica 0，第 2、4、6… 次到 replica 1。 */
-  request(path: string, init?: RequestInit): Promise<Response>;
+  /**
+   * 严格交替发往两个副本：第 1、3、5… 次到 replica 0，第 2、4、6… 次到 replica 1。
+   * 返回值的 `replica` 取自响应头 `x-capybara-replica`；响应头缺失或与目标不符时抛错。
+   */
+  request(path: string, init?: RequestInit): Promise<ReplicaResponse>;
   replicas: [ReplicaHandle, ReplicaHandle];
   /** 本 harness 独占数据库的连接串，测试可直接连上去查表。 */
   dbUrl: string;
@@ -122,6 +140,7 @@ export function runnerEnv(
 /** 启动一个副本子进程，等它通过 IPC 报告 ready。失败时抛出带 输出尾部的错误（不含配置）。 */
 async function startReplica(
   config: Record<string, unknown>,
+  index: 0 | 1,
 ): Promise<{ runner: Runner; port: number }> {
   const child = spawn(process.execPath, runnerArgv(runnerPath), {
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -162,7 +181,7 @@ async function startReplica(
     });
     child.once("exit", (code) => fail(`runner exited with code ${code}`));
     child.once("error", (e) => fail(e.message));
-    child.send({ type: "start", config });
+    child.send({ type: "start", config: { ...config, replicaId: String(index) } });
   }).catch(async (e) => {
     child.kill("SIGKILL");
     await exited;
@@ -233,7 +252,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       overrides: opts.config ?? {},
     };
 
-    const started = await Promise.allSettled([startReplica(config), startReplica(config)]);
+    const started = await Promise.allSettled([startReplica(config, 0), startReplica(config, 1)]);
     for (const s of started) if (s.status === "fulfilled") runners.push(s.value.runner);
     const failed = started.find((s) => s.status === "rejected");
     if (failed) throw (failed as PromiseRejectedResult).reason;
@@ -263,7 +282,15 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
             `replica ${i} (pid ${r.pid}) ${dead}\n${(i === 0 ? a : b).runner.output()}`,
           );
         }
-        return await fetch(`http://127.0.0.1:${r.port}${path}`, init);
+        const res = await fetch(`http://127.0.0.1:${r.port}${path}`, init);
+        const replica = replicaOf(res);
+        if (replica !== i) {
+          await res.body?.cancel();
+          throw new Error(
+            `response from port ${r.port} has ${REPLICA_HEADER}=${replica}, want ${i}`,
+          );
+        }
+        return Object.assign(res, { replica }) as ReplicaResponse;
       },
     };
   } catch (e) {

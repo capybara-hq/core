@@ -4,7 +4,7 @@
 
 ## 仍待处理（原「建议 M1 处理」中未纳入 M1 的）
 
-- Nacos 鉴权（用户名/密码/accessToken）——与身份组织无关，单独小任务处理
+- ~~Nacos 鉴权（用户名/密码/accessToken）~~——M2 Task 3 已处理（`0ab3589`）
 
 ## M6（市场）前必须处理
 
@@ -38,7 +38,7 @@
 - Task 9: minor (deferred): rewrap 的运维顺序（所有副本先换 keyring 再 rewrap）未写进 JSDoc
 - Task 10: minor (deferred): semver.satisfies 未加 includePrerelease，SDK 预发布版本会拒绝所有插件
 - Task 10: minor (deferred): 插件 requires 自己也 provides 的多选能力时报自环
-- Task 11: minor (deferred): 测试缺口：runStart/runMigrate（启动失败资源释放、stop 等在途任务、30s 上限、api-only 不消费已在 M1 补上）
+- Task 11: minor (deferred): CLI 层 `runStart` / `runMigrate` 的测试缺口。内核层的「启动失败释放资源、stop 等在途任务、api-only 不消费任务」已由 M1 Task 2 在 `packages/kernel/test/lifecycle.test.ts` 补上；CLI 层目前只有「启动中收到 SIGTERM」一条（`apps/capybara/test/start.test.ts`），`runStart` 的启动失败退出码、停机 30s 上限与 `runMigrate` 仍无测试
 - Task 11: minor (deferred): 非 hot 键变化后每次热更新重复 warn；runStart catch 日志标签误导
 - Task 12: minor (deferred): cli.ts 的 env -S shebang 在 busybox/alpine 可能不支持
 - Task 12: minor (deferred): DROP DATABASE WITH (FORCE) 需 PG ≥13，pgUrl 文档应写明
@@ -64,4 +64,4 @@ M1 计划（`2026-10-17-m1-identity.md`）「本计划纳入的 M0 遗留事项�
 | `CAPYBARA_DB` 与 `CAPYBARA_DB__URL` 冲突未检测 | Task 3 | `ff8144f` |
 | `CAPYBARA_CONFIG_SOURCE=""` 视为默认 | Task 3 | `ff8144f` |
 | pluginConfig 密钥未纳入日志打码 | Task 3 | `ff8144f` |
-| AGENTS.md 未写明完整依赖链（M0 Task 1 轻微项，顺手处理） | Task 12 | M1 Task 12 提交（`test: M1 双副本端到端验收，补充内核 API 技能与文档`） |
+| AGENTS.md 未写明完整依赖链（M0 Task 1 轻微项，顺手处理） | Task 12 | `a8cbc6f` |

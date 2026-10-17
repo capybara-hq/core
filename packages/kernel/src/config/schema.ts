@@ -92,6 +92,23 @@ export const KernelConfigSchema = z.object({
               "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies",
           }),
         ),
+      // 环境变量按 JSON 解析，CAPYBARA_HTTP__REPLICA_ID=0 会得到数字，所以也接受非负整数（输出头时转字符串）
+      replicaId: z
+        .union([
+          z
+            .string()
+            .min(1)
+            .max(64)
+            .regex(/^[A-Za-z0-9._-]+$/),
+          z.number().int().nonnegative(),
+        ])
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers)",
+          }),
+        ),
     })
     .default({ port: 8080, trustProxy: false }),
   roles: z

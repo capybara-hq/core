@@ -3,7 +3,10 @@ export {
   createDualReplicaHarness,
   type DualReplicaOptions,
   type Harness,
+  REPLICA_HEADER,
   type ReplicaHandle,
+  type ReplicaResponse,
+  replicaOf,
 } from "./dual-replica.js";
 export {
   type FakeModelServer,

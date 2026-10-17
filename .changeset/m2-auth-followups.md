@@ -1,5 +1,5 @@
 ---
-"@capybara-hq/kernel": patch
+"@capybara-hq/kernel": minor
 "@capybara-hq/capybara": patch
 ---
 

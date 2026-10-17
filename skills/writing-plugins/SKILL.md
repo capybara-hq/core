@@ -5,7 +5,7 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 
 # 写插件
 
-参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。
+参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。模型供应商插件（`model-provider@1`）另见 `skills/writing-model-providers`。
 
 ## 硬约束（先看这个）
 
@@ -27,8 +27,11 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 |---|---|---|
 | 跨请求共享状态 | 模块顶层 `Map` | 持久数据 `ctx.db`；临时/会过期的状态 `ctx.kv`（带 TTL） |
 | 延迟 / 周期任务 | `setTimeout` / `setInterval` | `ctx.queue.add(name, data, { delayMs })` |
+| 单次请求内可中止的等待（退避、流式间隔、超时） | `setTimeout` 包 Promise | `AbortSignal.timeout(ms)`，与调用方的 `signal` 一起监听（见 `plugins/model-fake` 的 `defaultSleep`） |
 | 通知其他副本 | 进程内事件 / 回调表 | `ctx.bus.publish` / `subscribe` |
 | 「谁开谁关」的配对 | 开启方在内存里持有句柄 | 开启方自过期（TTL）+ 关闭方广播 |
+
+`AbortSignal.timeout(ms)` 只用于**本次请求内**、随请求结束而结束的等待：它不在请求之外调度任何工作。凡是「过一会儿 / 每隔一段时间再做某事」的需求，不论多短，都走 `ctx.queue`（`delayMs`），因为到点时处理它的可能是另一个副本，发起的进程也可能已经不在了。
 
 确属只读常量（如正则表、固定查找表）才豁免：在声明**同一行行尾**或**紧邻上一行**写 `// capybara:allow-module-state <原因>`，原因不能为空（空原因仍报 `plugin-module-state`）。
 
@@ -148,7 +151,7 @@ it("交替请求两个副本，结果一致", async () => {
 });
 ```
 
-要点：`config` 选项可把额外的内核配置深合并进两个副本（如 `config: { auth: { cookieSecure: false } }`，经 IPC 传递）；每个 harness 自带一个 Redis 容器，用完 `stop()`；传入 `pgUrl`（管理员连接串）可让多个 harness 复用同一个 PG 容器；队列任务异步执行，断言时轮询等到期望值，不要只 `sleep` 固定时长；测试文件放在插件根的 `test/` 目录（`pnpm test` 会收集）。
+要点：`h.request` 的返回值带 `replica`（0 / 1，取自响应头 `x-capybara-replica`，harness 给每个副本设了 `http.replicaId`）；按 `h.replicas[i].port` 直接 `fetch` 指定副本时用 `replicaOf(res)` 确认落点（如 SSE 长连接）。`h.kill(i)` 对副本 i 发 SIGKILL 模拟硬崩溃（之后经 `h.request` 发往它的请求抛错），用来测「另一个副本接手」。`config` 选项可把额外的内核配置深合并进两个副本（如 `config: { auth: { cookieSecure: false } }`，经 IPC 传递）；每个 harness 自带一个 Redis 容器，用完 `stop()`；传入 `pgUrl`（管理员连接串）可让多个 harness 复用同一个 PG 容器；队列任务异步执行，断言时轮询等到期望值，不要只 `sleep` 固定时长；测试文件放在插件根的 `test/` 目录（`pnpm test` 会收集）。
 
 ## 新插件清单
 

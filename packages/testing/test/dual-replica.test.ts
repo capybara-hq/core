@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   createDualReplicaHarness,
   type Harness,
+  replicaOf,
   runnerArgv,
   runnerEnv,
 } from "../src/dual-replica.js";
@@ -53,11 +54,16 @@ describe("双副本测试工具", () => {
     expect(a.pid).not.toBe(b.pid);
     expect(a.pid).not.toBe(process.pid);
     const pids: number[] = [];
+    const seen: number[] = [];
     for (let i = 0; i < 6; i++) {
       const r = await h.request("/plugins/whoami/pid");
+      seen.push(r.replica);
+      expect(replicaOf(r)).toBe(r.replica);
       pids.push(((await r.json()) as { pid: number }).pid);
     }
     expect(pids).toEqual([a.pid, b.pid, a.pid, b.pid, a.pid, b.pid]);
+    // 响应头 x-capybara-replica 标明落点（runner 设置 http.replicaId）
+    expect(seen).toEqual([0, 1, 0, 1, 0, 1]);
   });
 
   it("good-counter（ctx.kv）：4 次 inc 后 count 为 4", async () => {
