@@ -2,7 +2,12 @@ import { Body, Controller, Get, Inject, Param, Put } from "@nestjs/common";
 import { z } from "zod";
 import { ORG_PLUGIN_CONFIGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
-import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import {
+  CurrentPrincipal,
+  type Principal,
+  patTokenId,
+  requireUser,
+} from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type { OrgPluginConfigs, OrgPluginView } from "./org-config.js";
 
@@ -33,6 +38,8 @@ export class OrgPluginConfigsController {
     @Body(new ZodPipe(PutBody)) body: z.infer<typeof PutBody>,
   ): Promise<{ plugin: OrgPluginView }> {
     const p = requireUser(principal);
-    return { plugin: await this.configs.put(org.orgId, plugin, body, p.account.id) };
+    return {
+      plugin: await this.configs.put(org.orgId, plugin, body, p.account.id, patTokenId(p)),
+    };
   }
 }

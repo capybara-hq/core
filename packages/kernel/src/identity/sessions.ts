@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Redis } from "ioredis";
 import { type JWSHeaderParameters, errors as joseErrors, jwtVerify, SignJWT } from "jose";
 import { sql } from "kysely";
@@ -6,6 +6,7 @@ import { ACCESS_TOKEN_TTL_MAX_SECONDS } from "../config/schema.js";
 import type { DerivedKeys, Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { sha256Hex } from "./hash.js";
 
 export interface IssuedSession {
   sessionId: string;
@@ -28,7 +29,6 @@ const revokedKey = (sid: string) => `capk:revoked-sid:${sid}`;
  */
 const REVOKED_MARKER_TTL_SECONDS = ACCESS_TOKEN_TTL_MAX_SECONDS + 60;
 const VERIFY_OPTS = { algorithms: ["HS256"], requiredClaims: ["exp", "sub"] };
-const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const newRefreshToken = () => REFRESH_PREFIX + randomBytes(32).toString("base64url");
 
 /** 按 JWS 头里的 kid 选派生密钥；找不到时抛出，由调用方映射为 `auth.required`。 */
@@ -62,7 +62,7 @@ export class SessionService {
       .values({
         id,
         account_id: accountId,
-        refresh_hash: sha256(refreshToken),
+        refresh_hash: sha256Hex(refreshToken),
         user_agent: meta.userAgent ?? null,
         ip: meta.ip ?? null,
         expires_at: sql<Date>`now() + make_interval(days => ${this.opts.refreshTtlDays})`,
@@ -76,14 +76,14 @@ export class SessionService {
     refreshToken: string,
     meta: { userAgent?: string; ip?: string },
   ): Promise<IssuedSession> {
-    const oldHash = sha256(refreshToken);
+    const oldHash = sha256Hex(refreshToken);
     const next = newRefreshToken();
     // 原子轮换：并发的两次刷新只有一个能匹配 refresh_hash = old
     const row = await this.db
       .updateTable("sessions")
       .set((eb) => ({
         prev_refresh_hash: eb.ref("refresh_hash"),
-        refresh_hash: sha256(next),
+        refresh_hash: sha256Hex(next),
         rotated_at: sql<Date>`now()`,
         last_used_at: sql<Date>`now()`,
         ...(meta.userAgent !== undefined && { user_agent: meta.userAgent }),
@@ -177,7 +177,7 @@ export class SessionService {
     const row = await this.db
       .selectFrom("sessions")
       .select("id")
-      .where("refresh_hash", "=", sha256(refreshToken))
+      .where("refresh_hash", "=", sha256Hex(refreshToken))
       .where("revoked_at", "is", null)
       .executeTakeFirst();
     if (row) await this.revoke(row.id);

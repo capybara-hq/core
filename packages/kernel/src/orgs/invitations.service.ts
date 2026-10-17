@@ -1,11 +1,13 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
 import type { InvitationsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
+import { sha256Hex } from "../identity/hash.js";
 import type { MembersService } from "./members.service.js";
-import { can, type OrgRole, roleAtLeast } from "./roles.js";
+import { lockOrgAndAuthorize, tryLockOrg } from "./org-lock.js";
+import { type OrgRole, roleAtLeast } from "./roles.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -48,10 +50,6 @@ function toInvitation(r: Selectable<InvitationsTable>): Invitation {
   };
 }
 
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
 const invalid = () => new ApiError("invitation.invalid", "Invitation is invalid");
 const forbidden = () => new ApiError("forbidden", "Insufficient organization role");
 
@@ -71,6 +69,7 @@ export class InvitationsService {
     orgId: string,
     input: { role: InvitableRole; expiresInHours?: number | undefined },
     actorAccountId: string,
+    actorTokenId?: string,
   ): Promise<{ invitation: Invitation; token: string }> {
     if (!(INVITABLE_ROLES as readonly string[]).includes(input.role)) {
       throw new ApiError("validation_failed", "Role cannot be invited");
@@ -84,10 +83,12 @@ export class InvitationsService {
     }
     const token = TOKEN_PREFIX + randomBytes(32).toString("base64url");
     return this.db.transaction().execute(async (t) => {
-      if (!(await this.lockOrg(t, orgId))) {
-        throw new ApiError("org.not_found", "Organization not found");
-      }
-      const actorRole = await this.requireManager(t, orgId, actorAccountId);
+      const { role: actorRole } = await lockOrgAndAuthorize(
+        t,
+        orgId,
+        actorAccountId,
+        "org.invitations.manage",
+      );
       if (!roleAtLeast(actorRole, input.role)) throw forbidden();
       const row = await t
         .insertInto("invitations")
@@ -95,7 +96,7 @@ export class InvitationsService {
           id: randomUUID(),
           org_id: orgId,
           role: input.role,
-          token_hash: hashToken(token),
+          token_hash: sha256Hex(token),
           created_by: actorAccountId,
           expires_at: sql<Date>`now() + make_interval(hours => ${hours})`,
         })
@@ -103,6 +104,7 @@ export class InvitationsService {
         .executeTakeFirstOrThrow();
       await audit(t, {
         actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "org.invitation.created",
         target: row.id,
@@ -134,12 +136,14 @@ export class InvitationsService {
   }
 
   /** 撤销；不属于该组织 → `invitation.invalid`；已接受 → `invitation.used`；已撤销则无操作。 */
-  async revoke(orgId: string, id: string, actorAccountId: string): Promise<void> {
+  async revoke(
+    orgId: string,
+    id: string,
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
-      if (!(await this.lockOrg(t, orgId))) {
-        throw new ApiError("org.not_found", "Organization not found");
-      }
-      await this.requireManager(t, orgId, actorAccountId);
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.invitations.manage");
       const row = await t
         .selectFrom("invitations")
         .selectAll()
@@ -157,6 +161,7 @@ export class InvitationsService {
         .execute();
       await audit(t, {
         actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "org.invitation.revoked",
         target: id,
@@ -189,7 +194,7 @@ export class InvitationsService {
       const inv = await this.classify(t, token);
       // 先建账号（scrypt 较慢）再锁组织行，缩短持锁时间；失败时随事务回滚，不残留账号
       const account = existing ?? (await this.accounts.createLocal(signupOf(who), t));
-      if (!(await this.lockOrg(t, inv.org_id))) throw invalid();
+      if (!(await tryLockOrg(t, inv.org_id))) throw invalid();
       const already = await t
         .selectFrom("memberships")
         .select("role")
@@ -241,36 +246,12 @@ export class InvitationsService {
         "orgs.deleted_at as org_deleted_at",
       ])
       .select(sql<boolean>`invitations.expires_at <= now()`.as("expired"))
-      .where("invitations.token_hash", "=", hashToken(token))
+      .where("invitations.token_hash", "=", sha256Hex(token))
       .executeTakeFirst();
     if (!r || r.revoked_at || r.org_deleted_at) throw invalid();
     if (r.accepted_at) throw new ApiError("invitation.used", "Invitation was already used");
     if (r.expired) throw new ApiError("invitation.expired", "Invitation has expired");
     return r;
-  }
-
-  /** 锁住组织行（与成员服务同一把锁）；组织不存在或已软删除 → false。 */
-  private async lockOrg(t: Trx, orgId: string): Promise<boolean> {
-    const row = await t
-      .selectFrom("orgs")
-      .select("id")
-      .where("id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    return row !== undefined;
-  }
-
-  /** 锁内实时读发起人角色；不是成员或没有 `org.invitations.manage` → `forbidden`。 */
-  private async requireManager(t: Trx, orgId: string, accountId: string): Promise<OrgRole> {
-    const r = await t
-      .selectFrom("memberships")
-      .select("role")
-      .where("org_id", "=", orgId)
-      .where("account_id", "=", accountId)
-      .executeTakeFirst();
-    if (!r || !can(r.role, "org.invitations.manage")) throw forbidden();
-    return r.role;
   }
 }
 

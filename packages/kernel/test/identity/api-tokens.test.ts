@@ -170,4 +170,32 @@ describe("ApiTokenService service", () => {
     expect(await svc.authenticate(token)).toBeNull();
     expect(await svc.authenticate(other.token)).toBeNull();
   });
+
+  it("revokeServiceAs：组织行锁内实时复核发起人角色；组织已删除 → org.not_found", async () => {
+    const owner = await account();
+    const admin = await account();
+    const o = await org(owner);
+    await db
+      .insertInto("memberships")
+      .values([
+        { org_id: o, account_id: owner, role: "owner" },
+        { org_id: o, account_id: admin, role: "admin" },
+      ])
+      .execute();
+    const a = await svc.createServiceAs(o, admin, { name: "a", role: "member" });
+    const b = await svc.createServiceAs(o, admin, { name: "b", role: "member" });
+    await svc.revokeServiceAs(o, a.record.id, admin);
+    expect(await svc.authenticate(a.token)).toBeNull();
+    // admin 被降为 member 后，已过 guard 的吊销请求在锁内被拒
+    await db
+      .updateTable("memberships")
+      .set({ role: "member" })
+      .where("account_id", "=", admin)
+      .execute();
+    expect(await codeOf(svc.revokeServiceAs(o, b.record.id, admin))).toBe("forbidden");
+    expect(await codeOf(svc.revokeServiceAs(o, b.record.id, await account()))).toBe("forbidden");
+    expect(await svc.authenticate(b.token)).not.toBeNull();
+    await db.updateTable("orgs").set({ deleted_at: new Date() }).where("id", "=", o).execute();
+    expect(await codeOf(svc.revokeServiceAs(o, b.record.id, owner))).toBe("org.not_found");
+  });
 });

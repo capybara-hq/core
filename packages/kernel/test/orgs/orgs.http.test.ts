@@ -276,6 +276,34 @@ describe("组织 HTTP", () => {
     expect(res.json()).toMatchObject({ org: { id, name: "New", slug: "acme" } });
   });
 
+  it("个人令牌发起的组织写操作在审计里记 actor_token_id；Web 会话发起的为 null", async () => {
+    const req = await session("owner");
+    const id = await createOrg(req);
+    const { token, record } = await tokens.createPersonal(owner.id, { name: "cli" });
+    const res = await k.http.inject({
+      method: "PATCH",
+      url: `/api/v1/orgs/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: "Via PAT" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(
+      (await req({ method: "PATCH", url: `/api/v1/orgs/${id}`, payload: { name: "Via web" } }))
+        .statusCode,
+    ).toBe(200);
+    const ev = await db
+      .selectFrom("audit_events")
+      .select(["actor_account_id", "actor_token_id", "detail"])
+      .where("org_id", "=", id)
+      .where("action", "=", "org.updated")
+      .orderBy("id")
+      .execute();
+    expect(ev.map((e) => [e.actor_account_id, e.actor_token_id])).toEqual([
+      [owner.id, record.id],
+      [owner.id, null],
+    ]);
+  });
+
   it("不相关的用户不能通过任何组织路由改动别人的组织", async () => {
     const id = await createOrg(await session("owner"));
     const req = await session("other");

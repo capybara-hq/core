@@ -17,6 +17,7 @@ import type { ApiTokenRecord, ApiTokenService } from "../identity/api-tokens.js"
 import {
   CurrentPrincipal,
   type Principal,
+  patTokenId,
   requireUser,
   SessionOnly,
 } from "../identity/principal.js";
@@ -59,7 +60,7 @@ export class OrgsController {
     @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
   ): Promise<{ org: Org; role: "owner" }> {
     const p = requireUser(principal);
-    const org = await this.orgs.create(body, p.account);
+    const org = await this.orgs.create(body, p.account, { actorTokenId: patTokenId(p) });
     return { org, role: "owner" };
   }
 
@@ -87,7 +88,7 @@ export class OrgsController {
     @Body(new ZodPipe(UpdateBody)) body: z.infer<typeof UpdateBody>,
   ): Promise<{ org: Org }> {
     const p = requireUser(principal);
-    return { org: await this.orgs.update(org.orgId, body, p.account) };
+    return { org: await this.orgs.update(org.orgId, body, p.account, patTokenId(p)) };
   }
 
   @Delete(":orgId")
@@ -98,7 +99,7 @@ export class OrgsController {
     @CurrentOrg() org: OrgContext,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.orgs.softDelete(org.orgId, p.account);
+    await this.orgs.softDelete(org.orgId, p.account, patTokenId(p));
   }
 
   @Post(":orgId/transfer")
@@ -110,7 +111,7 @@ export class OrgsController {
     @Body(new ZodPipe(TransferBody)) body: z.infer<typeof TransferBody>,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.members.transferOwnership(org.orgId, p.account.id, body.toAccountId);
+    await this.members.transferOwnership(org.orgId, p.account.id, body.toAccountId, patTokenId(p));
   }
 
   @Post(":orgId/leave")
@@ -121,7 +122,7 @@ export class OrgsController {
     @CurrentOrg() org: OrgContext,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.members.leave(org.orgId, p.account.id);
+    await this.members.leave(org.orgId, p.account.id, patTokenId(p));
   }
 
   @Get(":orgId/members")
@@ -139,7 +140,7 @@ export class OrgsController {
     @Body(new ZodPipe(RoleBody)) body: z.infer<typeof RoleBody>,
   ): Promise<{ accountId: string; role: OrgRole }> {
     const p = requireUser(principal);
-    await this.members.changeRole(org.orgId, accountId, body.role, p.account.id);
+    await this.members.changeRole(org.orgId, accountId, body.role, p.account.id, patTokenId(p));
     return { accountId, role: body.role };
   }
 
@@ -152,7 +153,7 @@ export class OrgsController {
     @Param("accountId") accountId: string,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.members.remove(org.orgId, accountId, p.account.id);
+    await this.members.remove(org.orgId, accountId, p.account.id, patTokenId(p));
   }
 
   @Post(":orgId/service-tokens")

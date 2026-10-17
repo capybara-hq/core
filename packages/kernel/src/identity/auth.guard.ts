@@ -30,7 +30,8 @@ type Resolved = { principal: Principal; cookie: boolean } | undefined;
  * 2. 否则 Cookie `cap_at` → 会话 access token → 实时读账号状态；非安全方法要求 CSRF 头。
  * 3. 都没有：`@Public` 放行，否则 `auth.required`。`@Public` 路由上凭据无效按无凭据处理（便于登出 / 刷新）。
  * 4. 路由约束：service principal 只能访问 `@AllowService` 路由（否则 `forbidden`）；
- *    `@SessionOnly` 要求 Web 会话（`auth.session_required`）；`@EnterpriseAdmin` 要求企业管理员（`forbidden`）。
+ *    `@SessionOnly` 要求 Web 会话：个人令牌 → `auth.session_required`，服务令牌（即使路由经 `@OrgAction`
+ *    隐含 `@AllowService`）→ `forbidden`；`@EnterpriseAdmin` 要求企业管理员（`forbidden`）。
  * 5. `@Public` 路由的非安全方法无论是否带 Cookie 都要求 CSRF 头。
  * 账号状态每个请求都从 PG 实时读取，不在进程内缓存。插件路由 `/plugins/*` 不经过 Nest，不受此守卫约束。
  */

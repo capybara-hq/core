@@ -6,7 +6,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { can } from "../orgs/roles.js";
+import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import type { PluginHost } from "./host.js";
 
 type Trx = Transaction<KernelDatabase>;
@@ -149,6 +149,7 @@ export class OrgPluginConfigs {
     plugin: string,
     input: OrgPluginInput,
     actorAccountId: string,
+    actorTokenId?: string,
   ): Promise<OrgPluginView> {
     const manifest = this.manifest(plugin);
     const schema = manifest.config?.org;
@@ -156,7 +157,7 @@ export class OrgPluginConfigs {
       throw new ApiError("plugin.no_org_config", `Plugin ${plugin} has no organization config`);
     }
     await this.db.transaction().execute(async (t) => {
-      await this.lockAndAuthorize(t, orgId, actorAccountId);
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.plugins.manage");
       const row = await t
         .selectFrom("plugin_org_configs")
         .select(["enabled", "config"])
@@ -230,6 +231,7 @@ export class OrgPluginConfigs {
         .execute();
       await audit(t, {
         actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "org.plugin_config.updated",
         target: plugin,
@@ -320,26 +322,5 @@ export class OrgPluginConfigs {
       .where("key", "like", "plugin-config:%")
       .execute();
     return new Set(rows.map((r) => r.key));
-  }
-
-  /** 锁组织行并在锁内实时读发起人角色；组织不存在 / 已删除 → `org.not_found`，角色不足 → `forbidden`。 */
-  private async lockAndAuthorize(t: Trx, orgId: string, accountId: string): Promise<void> {
-    const org = await t
-      .selectFrom("orgs")
-      .select("id")
-      .where("id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!org) throw new ApiError("org.not_found", "Organization not found");
-    const m = await t
-      .selectFrom("memberships")
-      .select("role")
-      .where("org_id", "=", orgId)
-      .where("account_id", "=", accountId)
-      .executeTakeFirst();
-    if (!m || !can(m.role, "org.plugins.manage")) {
-      throw new ApiError("forbidden", "Insufficient organization role");
-    }
   }
 }

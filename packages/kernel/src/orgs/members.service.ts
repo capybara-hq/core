@@ -3,7 +3,8 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
-import { can, type OrgRole } from "./roles.js";
+import { lockOrg, lockOrgAndAuthorize } from "./org-lock.js";
+import type { OrgRole } from "./roles.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -52,7 +53,7 @@ export class MembersService {
     trx?: Trx,
   ): Promise<void> {
     const run = async (t: Trx): Promise<void> => {
-      await this.lockOrg(t, orgId);
+      await lockOrg(t, orgId);
       if (await this.roleIn(t, orgId, accountId)) {
         throw new ApiError("member.already_exists", "Account is already a member");
       }
@@ -81,10 +82,15 @@ export class MembersService {
     targetId: string,
     role: OrgRole,
     actorAccountId: string,
+    actorTokenId?: string,
   ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
-      await this.lockOrg(t, orgId);
-      const actorRole = await this.requireManager(t, orgId, actorAccountId);
+      const { role: actorRole } = await lockOrgAndAuthorize(
+        t,
+        orgId,
+        actorAccountId,
+        "org.members.manage",
+      );
       const before = await this.requireMember(t, orgId, targetId);
       if ((role === "owner" || before === "owner") && actorRole !== "owner") {
         throw new ApiError("org.owner_required", "Only an owner can change owner roles");
@@ -94,6 +100,7 @@ export class MembersService {
       await this.assertHasOwner(t, orgId);
       await audit(t, {
         actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "org.member.role_changed",
         target: targetId,
@@ -103,10 +110,19 @@ export class MembersService {
   }
 
   /** 移出成员：权限规则同 changeRole；移除最后一个 owner → `org.last_owner`；同一事务清空其会话的当前组织。 */
-  async remove(orgId: string, targetId: string, actorAccountId: string): Promise<void> {
+  async remove(
+    orgId: string,
+    targetId: string,
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
-      await this.lockOrg(t, orgId);
-      const actorRole = await this.requireManager(t, orgId, actorAccountId);
+      const { role: actorRole } = await lockOrgAndAuthorize(
+        t,
+        orgId,
+        actorAccountId,
+        "org.members.manage",
+      );
       const before = await this.requireMember(t, orgId, targetId);
       if (before === "owner" && actorRole !== "owner") {
         throw new ApiError("org.owner_required", "Only an owner can remove an owner");
@@ -114,6 +130,7 @@ export class MembersService {
       await this.deleteMember(t, orgId, targetId);
       await audit(t, {
         actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "org.member.removed",
         target: targetId,
@@ -123,13 +140,14 @@ export class MembersService {
   }
 
   /** 主动离开；最后一个 owner → `org.last_owner`。 */
-  async leave(orgId: string, accountId: string): Promise<void> {
+  async leave(orgId: string, accountId: string, actorTokenId?: string): Promise<void> {
     await this.db.transaction().execute(async (t) => {
-      await this.lockOrg(t, orgId);
+      await lockOrg(t, orgId);
       const before = await this.requireMember(t, orgId, accountId);
       await this.deleteMember(t, orgId, accountId);
       await audit(t, {
         actorAccountId: accountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "org.member.left",
         target: accountId,
@@ -143,12 +161,13 @@ export class MembersService {
     orgId: string,
     fromAccountId: string,
     toAccountId: string,
+    actorTokenId?: string,
   ): Promise<void> {
     if (fromAccountId === toAccountId) {
       throw new ApiError("validation_failed", "Cannot transfer ownership to yourself");
     }
     await this.db.transaction().execute(async (t) => {
-      await this.lockOrg(t, orgId);
+      await lockOrg(t, orgId);
       const fromRole = await this.roleIn(t, orgId, fromAccountId);
       if (fromRole !== "owner") {
         throw new ApiError("org.owner_required", "Only an owner can transfer ownership");
@@ -158,6 +177,7 @@ export class MembersService {
       await this.setRole(t, orgId, fromAccountId, "admin");
       await audit(t, {
         actorAccountId: fromAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "org.ownership_transferred",
         target: toAccountId,
@@ -171,18 +191,6 @@ export class MembersService {
     });
   }
 
-  /** 锁住组织行，串行化同一组织的成员变更；组织不存在或已软删除 → `org.not_found`。 */
-  private async lockOrg(t: Trx, orgId: string): Promise<void> {
-    const row = await t
-      .selectFrom("orgs")
-      .select("id")
-      .where("id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row) throw new ApiError("org.not_found", "Organization not found");
-  }
-
   private async roleIn(t: Trx, orgId: string, accountId: string): Promise<OrgRole | undefined> {
     const r = await t
       .selectFrom("memberships")
@@ -191,15 +199,6 @@ export class MembersService {
       .where("account_id", "=", accountId)
       .executeTakeFirst();
     return r?.role;
-  }
-
-  /** 在锁内实时读发起人的角色；不是成员或低于 admin（`org.members.manage` 的门槛）→ `forbidden`。 */
-  private async requireManager(t: Trx, orgId: string, accountId: string): Promise<OrgRole> {
-    const role = await this.roleIn(t, orgId, accountId);
-    if (!role || !can(role, "org.members.manage")) {
-      throw new ApiError("forbidden", "Insufficient organization role");
-    }
-    return role;
   }
 
   private async requireMember(t: Trx, orgId: string, accountId: string): Promise<OrgRole> {

@@ -1,9 +1,11 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
 import type { ApiTokensTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { can, roleAtLeast } from "../orgs/roles.js";
+import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { roleAtLeast } from "../orgs/roles.js";
 import { audit } from "./audit.js";
+import { sha256Hex } from "./hash.js";
 
 export interface ApiTokenRecord {
   id: string;
@@ -20,7 +22,6 @@ export interface ApiTokenRecord {
 type Scope = { accountId: string } | { orgId: string };
 
 const PREFIX = { personal: "cap_pat_", service: "cap_svc_" } as const;
-const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 function toRecord(r: Selectable<ApiTokensTable>): ApiTokenRecord {
   return {
@@ -98,21 +99,8 @@ export class ApiTokenService {
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     validate(input);
     return this.db.transaction().execute(async (t) => {
-      const org = await t
-        .selectFrom("orgs")
-        .select("id")
-        .where("id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!org) throw new ApiError("org.not_found", "Organization not found");
-      const m = await t
-        .selectFrom("memberships")
-        .select("role")
-        .where("org_id", "=", orgId)
-        .where("account_id", "=", actorAccountId)
-        .executeTakeFirst();
-      if (!m || !can(m.role, "org.tokens.manage") || !roleAtLeast(m.role, input.role)) {
+      const { role } = await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.tokens.manage");
+      if (!roleAtLeast(role, input.role)) {
         throw new ApiError("forbidden", "Insufficient organization role");
       }
       const created = await this.insert(
@@ -138,9 +126,13 @@ export class ApiTokenService {
     });
   }
 
-  /** 吊销组织服务令牌并写审计（同一事务）；不在该组织内 → `token.not_found`。 */
+  /**
+   * 以账号身份吊销组织服务令牌并写审计（同一事务）：同 createServiceAs 在组织行锁内实时复核发起人角色
+   * （组织不存在 / 已删除 → `org.not_found`，无 `org.tokens.manage` → `forbidden`）；不在该组织内 → `token.not_found`。
+   */
   async revokeServiceAs(orgId: string, tokenId: string, actorAccountId: string): Promise<void> {
     await this.db.transaction().execute(async (t) => {
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.tokens.manage");
       await this.revoke(tokenId, { orgId }, t);
       await audit(t, {
         actorAccountId,
@@ -162,7 +154,7 @@ export class ApiTokenService {
     const row = await this.db
       .selectFrom("api_tokens")
       .selectAll()
-      .where("token_hash", "=", sha256(token))
+      .where("token_hash", "=", sha256Hex(token))
       .where("kind", "=", kind)
       .where("revoked_at", "is", null)
       .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", sql<Date>`now()`)]))
@@ -253,7 +245,7 @@ export class ApiTokenService {
     const token = PREFIX[kind] + randomBytes(32).toString("base64url");
     const row = await (trx ?? this.db)
       .insertInto("api_tokens")
-      .values({ id: randomUUID(), kind, token_hash: sha256(token), ...values })
+      .values({ id: randomUUID(), kind, token_hash: sha256Hex(token), ...values })
       .returningAll()
       .executeTakeFirstOrThrow();
     return { token, record: toRecord(row) };

@@ -44,7 +44,7 @@ export class SetupService {
       );
       const org =
         input.orgName !== undefined
-          ? await this.orgs.create({ name: input.orgName }, account, trx)
+          ? await this.orgs.create({ name: input.orgName }, account, { trx })
           : undefined;
       await audit(trx, {
         actorAccountId: account.id,

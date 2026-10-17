@@ -6,7 +6,8 @@ import type { Account } from "../identity/accounts.js";
 import type { ApiTokenService } from "../identity/api-tokens.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
-import { can, type OrgAction, type OrgRole } from "./roles.js";
+import { lockOrgAndAuthorize } from "./org-lock.js";
+import type { OrgRole } from "./roles.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -75,14 +76,15 @@ export class OrgsService {
   ) {}
 
   /**
-   * 建组织，创建者为 owner。传入 `trx` 时在调用方的事务内执行（初始化向导与建账号同一事务）；
+   * 建组织，创建者为 owner。传入 `opts.trx` 时在调用方的事务内执行（初始化向导与建账号同一事务）；
    * 此时 slug 冲突同样转成 `org.slug_taken`，但该事务已中止，调用方只能回滚。
    */
   async create(
     input: { name: string; slug?: string | undefined },
     actor: Account,
-    trx?: Trx,
+    opts: { trx?: Trx | undefined; actorTokenId?: string | undefined } = {},
   ): Promise<Org> {
+    const { trx, actorTokenId } = opts;
     // 在调用方事务内读设置：调用方已占着一个连接时再向池要第二个，并发下可能把池耗尽
     const { orgCreation } = await this.settings.get(trx);
     if (orgCreation === "enterprise_admin" && !actor.isEnterpriseAdmin) {
@@ -106,6 +108,7 @@ export class OrgsService {
         .execute();
       await audit(t, {
         actorAccountId: actor.id,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId: row.id,
         action: "org.created",
         target: row.id,
@@ -161,6 +164,7 @@ export class OrgsService {
     orgId: string,
     patch: { name?: string | undefined; slug?: string | undefined },
     actor: Account,
+    actorTokenId?: string,
   ): Promise<Org> {
     const values: { name?: string; slug?: string } = {};
     if (patch.name !== undefined) values.name = checkName(patch.name);
@@ -170,7 +174,7 @@ export class OrgsService {
     }
     return slugGuard(
       this.db.transaction().execute(async (trx) => {
-        const before = await this.lockAndAuthorize(trx, orgId, actor.id, "org.update");
+        const { org: before } = await lockOrgAndAuthorize(trx, orgId, actor.id, "org.update");
         if (Object.keys(values).length === 0) {
           const row = await trx
             .selectFrom("orgs")
@@ -187,6 +191,7 @@ export class OrgsService {
           .executeTakeFirstOrThrow();
         await audit(trx, {
           actorAccountId: actor.id,
+          ...(actorTokenId !== undefined && { actorTokenId }),
           orgId,
           action: "org.updated",
           target: orgId,
@@ -197,40 +202,10 @@ export class OrgsService {
     );
   }
 
-  /**
-   * 锁住组织行（与成员变更串行化），并在锁内实时重读发起人的角色（spec 3.6 R5）：
-   * 组织不存在或已软删除 → `org.not_found`；发起人不是成员或角色不足 → `forbidden`。
-   */
-  private async lockAndAuthorize(
-    trx: Trx,
-    orgId: string,
-    actorAccountId: string,
-    action: OrgAction,
-  ): Promise<{ slug: string; name: string }> {
-    const org = await trx
-      .selectFrom("orgs")
-      .select(["slug", "name"])
-      .where("id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!org) throw new ApiError("org.not_found", "Organization not found");
-    const m = await trx
-      .selectFrom("memberships")
-      .select("role")
-      .where("org_id", "=", orgId)
-      .where("account_id", "=", actorAccountId)
-      .executeTakeFirst();
-    if (!m || !can(m.role, action)) {
-      throw new ApiError("forbidden", "Insufficient organization role");
-    }
-    return org;
-  }
-
   /** 软删除（需 owner，锁内实时判定）：同一事务吊销该组织的服务令牌、清空指向它的会话当前组织。 */
-  async softDelete(orgId: string, actor: Account): Promise<void> {
+  async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
-      await this.lockAndAuthorize(trx, orgId, actor.id, "org.delete");
+      await lockOrgAndAuthorize(trx, orgId, actor.id, "org.delete");
       await trx
         .updateTable("orgs")
         .set({ deleted_at: sql<Date>`now()` })
@@ -244,6 +219,7 @@ export class OrgsService {
         .execute();
       await audit(trx, {
         actorAccountId: actor.id,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "org.deleted",
         target: orgId,

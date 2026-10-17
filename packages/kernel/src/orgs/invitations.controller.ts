@@ -17,8 +17,15 @@ import { ApiError } from "../errors.js";
 import { INVITATIONS, KERNEL_CONFIG, SESSIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account } from "../identity/accounts.js";
+import { clientMeta } from "../identity/auth.controller.js";
 import { setSessionCookies } from "../identity/cookies.js";
-import { CurrentPrincipal, type Principal, Public, requireUser } from "../identity/principal.js";
+import {
+  CurrentPrincipal,
+  type Principal,
+  Public,
+  patTokenId,
+  requireUser,
+} from "../identity/principal.js";
 import type { SessionService } from "../identity/sessions.js";
 import {
   INVITABLE_ROLES,
@@ -42,12 +49,6 @@ const SignupBody = z.object({
 });
 const signupPipe = new ZodPipe(SignupBody);
 
-/** 会话的客户端信息（记入 sessions 表），与登录一致。 */
-function clientMeta(req: FastifyRequest): { userAgent?: string; ip: string } {
-  const ua = req.headers["user-agent"];
-  return { ip: req.ip, ...(ua !== undefined && { userAgent: ua }) };
-}
-
 /** 组织邀请：组织内管理（`/api/v1/orgs/:orgId/invitations`）与凭令牌预览 / 接受（`/api/v1/invitations/:token`，公开）。 */
 @Controller("api/v1")
 export class InvitationsController {
@@ -66,7 +67,7 @@ export class InvitationsController {
     @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
   ): Promise<{ invitation: Invitation; token: string }> {
     const p = requireUser(principal);
-    return this.invitations.create(org.orgId, body, p.account.id);
+    return this.invitations.create(org.orgId, body, p.account.id, patTokenId(p));
   }
 
   @Get("orgs/:orgId/invitations")
@@ -86,7 +87,7 @@ export class InvitationsController {
     @Param("id") id: string,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.invitations.revoke(org.orgId, id, p.account.id);
+    await this.invitations.revoke(org.orgId, id, p.account.id, patTokenId(p));
   }
 
   /** 公开预览：只给组织 id / 名称、角色与过期时间。 */
