@@ -2,34 +2,19 @@
 
 来源：M1 子代理执行记录中各任务审查推迟处理的轻微问题、最终整分支审查的复审观察，以及 M1 合并后用户对搁置项的裁决（2026-10-17）。已在 M1 最终修复波次中修掉的条目不在此列。
 
-M2（计划 `2026-10-17-m2-agent-runtime.md`）处理过的条目已移到文末「M2 已处理」；下面只剩仍未处理的。
+M2（计划 `2026-10-17-m2-agent-runtime.md`）已处理全部轻微项（用户裁决：M1 轻微项全部在 M2 处理），对应提交见文末「M2 已处理」；只剩「发版前处理」与下面「观察中」的偶发测试失败。
 
 ## 用户裁决：发版前处理（不纳入 M2）
 
 - **R26** changeset 与 SDK 版本范围对齐：plugin-sdk 升 minor 后为 0.2.0，示例插件、`writing-plugins` 模板与测试 fixture 的 `sdk: "^0.1.0"` 需同步；私有包 `@capybara-hq/capybara` 的 changeset 需在 changeset 配置开 `privatePackages.version` 或删除。`SDK_VERSION` 同样在发版时调整。
 
-## 仍待处理（M2 未覆盖）
+## 观察中（偶发测试失败，暂不改动）
 
-### 生命周期
-- ctx 关闭后 `bus.subscribe` 仍会加入已清空的退订集合（无泄漏）。
-- 各阶段都超时的最坏情况下 bus / redis / pg 只剩 2s，pg destroy 可能晚于 `stop()` 返回。
-- `client.connect()` 期间的中止不会主动取消（受 `connectTimeoutMs` 约束）。
+- `packages/testing/test/dual-replica.test.ts`：M1 期间高负载下偶发失败过一次。
+- `packages/kernel/test/runtime/run-worker.test.ts`：M2 Task 16 的一次全量运行中失败过一次。
+- `packages/kernel/test/plugins/org-config.http.test.ts`：M2 Task 3 的一次全量运行中在 beforeAll（容器启动）阶段失败过一次。
 
-### 账号与会话
-- `AccountsService.update` 中 `Partial<Record>` 强转。
-- 重放两次轮换之前的 refresh token 只返回 `refresh_invalid`、不吊销会话（计划规定的分支，仍未测）。
-
-### 鉴权与登录
-- 停用账号用正确密码登录仍消耗登录名额度。
-- `dual-replica.test` 在高负载下偶发失败过一次——持续观察（M2 期间 `run-worker.test.ts`、`org-config.http.test.ts` 也各偶发失败过一次）。
-
-### 组织与邀请
-- 两个已有账号并发接受同一邀请的测试大多在分类阶段失败，没有真正打到带条件的 UPDATE（凭邀请注册的测试覆盖了）。
-- 会话在接受邀请提交后才创建（非原子，可恢复）。
-
-### 初始化与管理
-- 所有企业管理员都经数据库被停用时，部署重新对未认证的初始化开放——需在运维文档说明。
-- 停用账号与吊销凭据不在同一事务；初始化提交后才创建会话。
+再次出现时记录失败输出与当时的负载，再定位修复。
 
 ## M2 已处理
 
@@ -57,3 +42,12 @@ M2（计划 `2026-10-17-m2-agent-runtime.md`）处理过的条目已移到文末
 | Nacos 鉴权（用户名 / 密码与 accessToken；M0 遗留） | Task 3 | `0ab3589` |
 | 双副本验收未断言每个请求落在哪个副本（新增 `http.replicaId` → `x-capybara-replica` 响应头，`Harness.request` 返回 `replica`） | Task 18 | `4669cf7` |
 | `m0-followups.md` 中 Task 11 那行措辞含糊；「M1 已处理」表的提交列是提交信息而非哈希；AGENTS.md 依赖链段落有未核实的说法（已逐包核对 package.json 并更正） | Task 18 | `4669cf7` |
+| `AccountsService.update` 中 `Partial<Record>` 强转（改为 `Updateable<AccountsTable>`） | Task 18 修复轮 1 | `30067b3` |
+| 重放两次轮换之前的 refresh token：补测试，固定现行行为（`refresh_invalid`，不吊销会话） | Task 18 修复轮 1 | `30067b3` |
+| 停用账号用正确密码登录消耗登录额度（改为退还） | Task 18 修复轮 1 | `30067b3` |
+| 停用账号与吊销会话 / 个人令牌不在同一事务（改为同一 PG 事务，Redis 标记提交后尽力写入） | Task 18 修复轮 1 | `30067b3` |
+| 初始化、凭邀请注册在提交后才创建会话（改为同一事务内写会话行，提交后设 Cookie） | Task 18 修复轮 1 | `30067b3` |
+| 两个已有账号并发接受同一邀请的测试没有打到带条件的 UPDATE（改为另一连接持组织行锁，确定性地让后到者走到条件 UPDATE） | Task 18 修复轮 1 | `30067b3` |
+| ctx 关闭后 `bus.subscribe` 仍加入已清空的退订集合（改为明确报错，订阅中途关闭则自行退订） | Task 18 修复轮 1 | `30067b3` |
+| `client.connect()` 期间的中止不主动取消（改为销毁正在建立的套接字） | Task 18 修复轮 1 | `30067b3` |
+| 所有企业管理员被停用后初始化重新开放、停机时 bus / redis / pg 只剩约 3s 且 pg 销毁可能晚于 `stop()` 返回（写入 README「运维须知」） | Task 18 修复轮 1 | `30067b3` |
