@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dynamic, GET, POST } from "../src/app/api/[...path]/route";
+import { PEER_TOKEN_ENV, PEER_TOKEN_HEADER, sanitizeIncoming } from "../src/lib/peer";
 
 type Seen = { method: string; url: string; headers: IncomingMessage["headers"]; body: string };
 
@@ -144,6 +145,163 @@ describe("/api/[...path] 代理", () => {
       expect(await res.json()).toMatchObject({ error: { code: "upstream_unavailable" } });
     } finally {
       process.env.CAPYBARA_KERNEL_URL = saved;
+    }
+  });
+});
+
+describe("请求体大小上限（CAPYBARA_WEB_MAX_BODY_BYTES）", () => {
+  beforeEach(() => {
+    process.env.CAPYBARA_WEB_MAX_BODY_BYTES = "16";
+    handler = (_req, res) => {
+      res.writeHead(200);
+      res.end("{}");
+    };
+  });
+  afterEach(() => {
+    delete process.env.CAPYBARA_WEB_MAX_BODY_BYTES;
+  });
+
+  it("content-length 超限 -> 413 payload_too_large，不读 body、不转发", async () => {
+    let pulled = false;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(c) {
+          pulled = true;
+          c.enqueue(new TextEncoder().encode("x"));
+          c.close();
+        },
+        // highWaterMark 0：只有真正 read() 时才 pull，`pulled` 才能证明 body 没被读。
+      },
+      new CountQueuingStrategy({ highWaterMark: 0 }),
+    );
+    const res = await POST(
+      new Request("http://web.example/api/v1/x", {
+        method: "POST",
+        headers: { "content-length": "1000000" },
+        body,
+        duplex: "half",
+      } as RequestInit),
+    );
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: { code: "payload_too_large" } });
+    expect(seen).toHaveLength(0);
+    expect(pulled).toBe(false);
+  });
+
+  it("无 content-length 的流式 body 读到超限即中止 -> 413，不转发", async () => {
+    let chunks = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        chunks++;
+        if (chunks > 100) return c.close();
+        c.enqueue(new TextEncoder().encode("0123456789"));
+      },
+    });
+    const res = await POST(
+      new Request("http://web.example/api/v1/x", {
+        method: "POST",
+        body,
+        duplex: "half",
+      } as RequestInit),
+    );
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: { code: "payload_too_large" } });
+    expect(seen).toHaveLength(0);
+    expect(chunks).toBeLessThan(10);
+  });
+
+  it("恰好等于上限 -> 正常转发", async () => {
+    const res = await POST(
+      new Request("http://web.example/api/v1/x", { method: "POST", body: "0123456789abcdef" }),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]?.body).toBe("0123456789abcdef");
+  });
+});
+
+describe("请求头清理", () => {
+  beforeEach(() => {
+    handler = (_req, res) => {
+      res.writeHead(200);
+      res.end("{}");
+    };
+  });
+
+  it("Expect: 100-continue 不转发（否则 fetch 报错变 502）", async () => {
+    const res = await POST(
+      new Request("http://web.example/api/v1/x", {
+        method: "POST",
+        headers: { expect: "100-continue" },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]?.headers.expect).toBeUndefined();
+  });
+
+  it("未经自定义服务器（无可信标记）：客户端伪造的转发头全部丢弃，不带 x-forwarded-for", async () => {
+    await GET(
+      new Request("http://web.example/api/v1/me", {
+        headers: {
+          "x-forwarded-for": "1.2.3.4",
+          forwarded: "for=1.2.3.4",
+          "x-forwarded-host": "evil.example",
+          "x-forwarded-proto": "https",
+          "x-forwarded-port": "443",
+          "x-real-ip": "1.2.3.4",
+          [PEER_TOKEN_HEADER]: "forged",
+        },
+      }),
+    );
+    const h = seen[0]?.headers ?? {};
+    for (const k of [
+      "x-forwarded-for",
+      "forwarded",
+      "x-forwarded-host",
+      "x-forwarded-proto",
+      "x-forwarded-port",
+      "x-real-ip",
+      PEER_TOKEN_HEADER,
+    ]) {
+      expect(h[k], k).toBeUndefined();
+    }
+  });
+
+  it("经自定义服务器（server.mjs 的 sanitizeIncoming）：伪造的 x-forwarded-for 被替换为真实对端地址", async () => {
+    const token = "test-peer-token";
+    process.env[PEER_TOKEN_ENV] = token;
+    // 前置服务器模拟 server.mjs：先清理请求头，再交给路由处理器。
+    const front = createServer(async (req, res) => {
+      sanitizeIncoming(req, token);
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (typeof v === "string") headers.set(k, v);
+      }
+      const out = await GET(new Request(`http://web.example${req.url}`, { headers }));
+      res.writeHead(out.status);
+      res.end(await out.text());
+    });
+    await new Promise<void>((r) => front.listen(0, "127.0.0.1", r));
+    try {
+      const { port } = front.address() as AddressInfo;
+      const r = await fetch(`http://127.0.0.1:${port}/api/v1/me`, {
+        headers: {
+          "x-forwarded-for": "1.2.3.4",
+          "x-real-ip": "1.2.3.4",
+          forwarded: "for=1.2.3.4",
+          [PEER_TOKEN_HEADER]: "forged",
+        },
+      });
+      expect(r.status).toBe(200);
+      const h = seen[0]?.headers ?? {};
+      expect(h["x-forwarded-for"]).toMatch(/^(::ffff:)?127\.0\.0\.1$/);
+      expect(h["x-real-ip"]).toBeUndefined();
+      expect(h.forwarded).toBeUndefined();
+      expect(h[PEER_TOKEN_HEADER]).toBeUndefined();
+    } finally {
+      delete process.env[PEER_TOKEN_ENV];
+      front.closeAllConnections();
+      await new Promise<void>((r) => front.close(() => r()));
     }
   });
 });
