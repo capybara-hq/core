@@ -1,2 +1,5 @@
 .next
 next-env.d.ts
+test-results
+playwright-report
+e2e-logs

@@ -107,3 +107,105 @@ small {
   justify-content: space-between;
   gap: 12px;
 }
+
+textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--fg);
+  resize: vertical;
+}
+
+.muted {
+  opacity: 0.7;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.agents,
+.warnings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.warnings li {
+  color: var(--danger);
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.messages {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.message.user {
+  align-self: flex-end;
+  max-width: 85%;
+  background: var(--bg);
+}
+
+.message .author {
+  font-size: 0.8em;
+  opacity: 0.7;
+}
+
+.message .body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message .thinking {
+  font-size: 0.9em;
+  opacity: 0.75;
+  white-space: pre-wrap;
+}
+
+.badge {
+  align-self: flex-start;
+  font-size: 0.8em;
+  padding: 1px 8px;
+  border: 1px solid var(--danger);
+  border-radius: 999px;
+  color: var(--danger);
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.composer textarea {
+  flex: 1;
+}

@@ -2,13 +2,13 @@
 
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "../../i18n/navigation";
+import { Link, useRouter } from "../../i18n/navigation";
 import { ApiClientError } from "../../lib/api";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
 
 /**
- * `/[locale]`：已登录时显示「当前组织」选择与 agent 列表（Task 17 填充）；
+ * `/[locale]`：已登录时显示「当前组织」选择与进入 agent 列表的入口；
  * 未登录（`GET /api/v1/me` 401，refresh 也失败）时跳转到登录页。
  */
 export default function HomePage() {
@@ -91,8 +91,12 @@ export default function HomePage() {
         </p>
       )}
 
-      <h2>{t("home.agents")}</h2>
-      <p>{t("home.agentsEmpty")}</p>
+      {me.currentOrgId !== null && (
+        <>
+          <h2>{t("home.agents")}</h2>
+          <Link href="/agents">{t("home.openAgents")}</Link>
+        </>
+      )}
     </div>
   );
 }

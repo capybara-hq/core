@@ -42,7 +42,7 @@
     "selectOrg": "选择组织",
     "noMemberships": "你还不属于任何组织。",
     "agents": "Agent",
-    "agentsEmpty": "暂无 Agent。"
+    "openAgents": "查看与新建 Agent"
   },
   "errors": {
     "unknown": "出错了，请稍后重试。",
@@ -72,6 +72,64 @@
     "setup": {
       "already_completed": "系统已完成初始化。",
       "token_invalid": "初始化令牌缺失或错误。"
+    },
+    "agent": {
+      "not_found": "Agent 不存在或你无权访问。",
+      "model_unavailable": "所选模型不可用。"
+    },
+    "conversation": {
+      "not_found": "对话不存在或你无权访问。"
+    },
+    "run": {
+      "not_active": "当前没有进行中的回复。"
     }
+  },
+  "agents": {
+    "title": "Agent",
+    "new": "新建 Agent",
+    "empty": "暂无 Agent。",
+    "startChat": "开始对话",
+    "starting": "正在创建对话…",
+    "noOrg": "请先在工作台选择当前组织。",
+    "backHome": "返回工作台",
+    "backToList": "返回 Agent 列表",
+    "modelLine": "模型：{provider} / {model}",
+    "form": {
+      "title": "新建 Agent",
+      "nameLabel": "名称",
+      "instructionsLabel": "指令（系统提示词）",
+      "modelLabel": "模型",
+      "fallbackLabel": "兜底模型（可选）",
+      "fallbackNone": "不使用兜底模型",
+      "visibilityLabel": "可见范围",
+      "visibility": {
+        "private": "仅自己",
+        "org": "组织内所有成员"
+      },
+      "submit": "保存",
+      "submitting": "正在保存…",
+      "noModels": "没有可用的模型，请先安装并配置模型供应商插件。",
+      "warningsTitle": "已保存，但请注意：",
+      "continue": "继续"
+    },
+    "warnings": {
+      "fallback_same_provider": "兜底模型应来自另一家供应商，否则该供应商故障时兜底无效。",
+      "unknown": "保存时出现未识别的提示：{code}"
+    }
+  },
+  "chat": {
+    "title": "对话",
+    "inputLabel": "消息",
+    "placeholder": "输入消息：Enter 发送，Shift+Enter 换行；回复过程中发送即为插话",
+    "send": "发送",
+    "stop": "停止",
+    "stopped": "已停止",
+    "running": "正在回复…",
+    "you": "你",
+    "assistant": "Agent",
+    "thinking": "思考过程",
+    "failed": "本次回复失败（{code}）。",
+    "empty": "发送一条消息开始对话。",
+    "streamLost": "与服务器的实时连接已断开，请刷新页面。"
   }
 }
