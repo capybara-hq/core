@@ -1,6 +1,6 @@
 import type { CapabilityRef, Logger, PluginContext, PluginManifest } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
-import type { Kysely } from "kysely";
+import { Kysely } from "kysely";
 import { type BusSubscriber, createBus } from "./bus.js";
 import { createKv } from "./kv.js";
 import { createLock } from "./lock.js";
@@ -12,6 +12,8 @@ export interface KernelDeps {
   // biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型
   db: Kysely<any>;
   dbUrl: string;
+  /** PG 建立连接的超时（迁移器的独立连接使用）。 */
+  connectTimeoutMs?: number;
   redis: Redis;
   busSubscriber: BusSubscriber;
   redisUrl: string;
@@ -30,6 +32,32 @@ export type Route = {
 /** 插件的 PG schema 名：`plugin_<name>`，name 中的 `-` 换成 `_`。 */
 export function pluginSchemaName(name: string): string {
   return `plugin_${name.replaceAll("-", "_")}`;
+}
+
+/**
+ * 包装插件拿到的 Kysely：`destroy` 换成抛错的函数（连接池归内核所有，插件销毁会拖垮整个进程的 DB 访问），
+ * 其余属性透传。方法绑定到原对象（Kysely 用私有字段，以 Proxy 作 this 调用会失败）；
+ * 返回新 Kysely 实例的方法（如 `withSchema` / `withPlugin`）其结果同样包装。
+ */
+// biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型
+function guardDb(db: Kysely<any>, plugin: string): Kysely<any> {
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === "destroy") {
+        return () => {
+          throw new Error(
+            `plugin ${plugin}: ctx.db.destroy() is not allowed; the kernel owns the connection pool`,
+          );
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        const out: unknown = (value as (...a: unknown[]) => unknown).apply(target, args);
+        return out instanceof Kysely ? guardDb(out, plugin) : out;
+      };
+    },
+  });
 }
 
 /** 为单个插件构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。 */
@@ -67,7 +95,7 @@ export function createPluginContext(
     },
     queue: queueApi,
     secrets: createSecrets(deps.db, deps.keyring, name),
-    db: deps.db.withSchema(pluginSchemaName(name)),
+    db: guardDb(deps.db.withSchema(pluginSchemaName(name)), name),
     http: {
       route(method, path, handler) {
         if (typeof path !== "string" || !path.startsWith("/")) {

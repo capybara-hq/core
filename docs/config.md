@@ -10,6 +10,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `db.url` | `CAPYBARA_DB__URL` | `string` | 必填 | 否 | 是 | PostgreSQL connection URL |
 | `db.poolMax` | `CAPYBARA_DB__POOL_MAX` | `number` | `10` | 否 | 否 | Maximum PostgreSQL pool size |
+| `db.connectTimeoutMs` | `CAPYBARA_DB__CONNECT_TIMEOUT_MS` | `number` | `5000` | 否 | 否 | PostgreSQL connect timeout in milliseconds |
 | `redis.url` | `CAPYBARA_REDIS__URL` | `string` | 必填 | 否 | 是 | Redis connection URL |
 | `masterKey` | `CAPYBARA_MASTER_KEY` | `string` | 必填 | 否 | 是 | Base64 master key (32 bytes) for secret encryption |
 | `masterKeyPrevious` | `CAPYBARA_MASTER_KEY_PREVIOUS` | `array<string>` | — | 否 | 是 | Previous master keys kept during rotation |

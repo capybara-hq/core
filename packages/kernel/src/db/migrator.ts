@@ -19,10 +19,12 @@ const num = (name: string) => Number.parseInt(name.slice(0, 4), 10);
  * 使用独立的 pg.Client（不走连接池），在该会话上持有 advisory lock（按 schema 名哈希）；
  * 结束时无论成败都 end() 会话，会话结束即释放锁，不会把持锁连接还给连接池。
  * 执行前先校验已应用文件的 checksum 与编号顺序；每个文件在独立事务中执行。
+ * `opts.connectTimeoutMs` 为建立连接的超时（不设则 pg 无限等待）。
  */
 export async function migrate(
   connectionString: string,
   owner: MigrationOwner,
+  opts: { connectTimeoutMs?: number } = {},
 ): Promise<{ applied: string[] }> {
   const { schema, dir } = owner;
   const names = (await readdir(dir)).filter((f) => FILE_RE.test(f)).sort();
@@ -34,7 +36,10 @@ export async function migrate(
   );
   const table = `${ident(schema)}._migrations`;
 
-  const client = new pg.Client({ connectionString });
+  const client = new pg.Client({
+    connectionString,
+    ...(opts.connectTimeoutMs !== undefined && { connectionTimeoutMillis: opts.connectTimeoutMs }),
+  });
   client.on("error", () => {});
   await client.connect();
   try {

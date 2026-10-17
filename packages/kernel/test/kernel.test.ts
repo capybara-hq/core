@@ -203,12 +203,13 @@ describe("配置热更新", () => {
 });
 
 describe("角色", () => {
-  it("roles: [worker] 时不监听端口，但队列 handler 能执行", async () => {
+  it("roles: [worker] 时只暴露健康端点（不转发插件路由），队列 handler 能执行", async () => {
     const port = await freePort();
     const k = await kernel(cfg({ roles: ["worker"], http: { port }, plugins: [fx("jobber")] }));
     await k.start();
-    expect(k.port).toBeUndefined();
-    expect(await canConnect(port)).toBe(false);
+    expect(k.port).toBe(port);
+    expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
+    expect((await fetch(`http://127.0.0.1:${port}/plugins/jobber/x`)).status).toBe(404);
     const r = new Redis(rd.url);
     try {
       let done: string | null = null;

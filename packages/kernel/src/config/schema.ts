@@ -40,6 +40,12 @@ export const KernelConfigSchema = z.object({
         .positive()
         .default(10)
         .meta(meta({ description: "Maximum PostgreSQL pool size" })),
+      connectTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .default(5000)
+        .meta(meta({ description: "PostgreSQL connect timeout in milliseconds" })),
     })
     .prefault({} as never),
   redis: z

@@ -26,6 +26,8 @@ interface Loaded {
   close(): Promise<void>;
 }
 
+const CLOSED_DURING_LOAD = "plugin host closed during load";
+
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** 把 specifier 解析成模块文件 URL；失败时错误点名 specifier 与 resolveFrom。 */
@@ -81,14 +83,16 @@ async function migratePlugin(
   dbUrl: string,
   manifest: PluginManifest,
   dir: string,
+  connectTimeoutMs: number | undefined,
 ): Promise<{ schema: string; applied: string[] } | undefined> {
   if (!manifest.migrations) return undefined;
   const schema = pluginSchemaName(manifest.name);
   try {
-    const { applied } = await migrate(dbUrl, {
-      schema,
-      dir: resolvePath(dir, manifest.migrations),
-    });
+    const { applied } = await migrate(
+      dbUrl,
+      { schema, dir: resolvePath(dir, manifest.migrations) },
+      connectTimeoutMs !== undefined ? { connectTimeoutMs } : {},
+    );
     return { schema, applied };
   } catch (e) {
     throw new Error(`plugin ${manifest.name}: migration failed: ${errMsg(e)}`, { cause: e });
@@ -103,12 +107,20 @@ export class PluginHost {
    */
   static async migrateOnly(
     specifiers: string[],
-    opts: { dbUrl: string; resolveFrom?: string },
+    opts: { dbUrl: string; resolveFrom?: string; connectTimeoutMs?: number },
   ): Promise<{ plugin: string; schema: string; applied: string[] }[]> {
-    const { ordered, dirs } = await importPlugins(specifiers, opts.resolveFrom ?? process.cwd());
+    const { ordered, dirs } = await importPlugins(
+      specifiers,
+      resolvePath(opts.resolveFrom ?? process.cwd()),
+    );
     const out: { plugin: string; schema: string; applied: string[] }[] = [];
     for (const manifest of ordered) {
-      const r = await migratePlugin(opts.dbUrl, manifest, dirs.get(manifest.name) as string);
+      const r = await migratePlugin(
+        opts.dbUrl,
+        manifest,
+        dirs.get(manifest.name) as string,
+        opts.connectTimeoutMs,
+      );
       if (r) out.push({ plugin: manifest.name, ...r });
     }
     return out;
@@ -116,10 +128,12 @@ export class PluginHost {
 
   private readonly loaded: Loaded[] = [];
   private didLoad = false;
+  private closed = false;
   private readonly resolveFrom: string;
 
   /**
-   * @param opts.resolveFrom 解析裸包名的目录，默认 `process.cwd()`。绝对路径与 `file:` URL 直接使用；
+   * @param opts.resolveFrom 解析裸包名的目录，默认 `process.cwd()`；相对路径按构造时的 cwd 转为绝对路径。
+   * 绝对路径与 `file:` URL 的插件 specifier 直接使用；
    * 裸包名经 `createRequire(<resolveFrom>/noop.js).resolve` 解析，因此插件包的 exports 必须暴露
    * `default`（或 `require`）条件。
    */
@@ -128,11 +142,16 @@ export class PluginHost {
     private readonly pluginConfig: Record<string, unknown> = {},
     opts: { resolveFrom?: string } = {},
   ) {
-    this.resolveFrom = opts.resolveFrom ?? process.cwd();
+    this.resolveFrom = resolvePath(opts.resolveFrom ?? process.cwd());
   }
 
-  /** 导入各插件模块（default 导出）并按依赖顺序初始化；只能调用一次。 */
+  /**
+   * 导入各插件模块（default 导出）并按依赖顺序初始化；只能调用一次。
+   * 加载期间宿主被 `close()` 时：在下一个插件开始前、或刚完成 setup 的插件登记前抛
+   * `plugin host closed during load`（刚建好的 ctx 先关闭），不会留下未关闭的队列连接。
+   */
   async load(specifiers: string[]): Promise<void> {
+    if (this.closed) throw new Error(CLOSED_DURING_LOAD);
     if (this.didLoad) throw new Error("plugin host already loaded; load() may be called once");
     this.didLoad = true;
     const { ordered, dirs } = await importPlugins(specifiers, this.resolveFrom);
@@ -152,7 +171,13 @@ export class PluginHost {
         }
         config = r.data;
       }
-      await migratePlugin(this.deps.dbUrl, manifest, dirs.get(name) as string);
+      await migratePlugin(
+        this.deps.dbUrl,
+        manifest,
+        dirs.get(name) as string,
+        this.deps.connectTimeoutMs,
+      );
+      if (this.closed) throw new Error(CLOSED_DURING_LOAD);
       const ctx = createPluginContext(this.deps, manifest, config);
       try {
         await manifest.setup(ctx);
@@ -163,7 +188,12 @@ export class PluginHost {
         }
       } catch (e) {
         await ctx.close().catch(() => {});
+        if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
         throw new Error(`plugin ${name}: setup failed: ${errMsg(e)}`, { cause: e });
+      }
+      if (this.closed) {
+        await ctx.close().catch(() => {});
+        throw new Error(CLOSED_DURING_LOAD);
       }
       this.loaded.push({ manifest, provided: ctx.provided, routes: ctx.routes, close: ctx.close });
     }
@@ -209,8 +239,22 @@ export class PluginHost {
     return this.loaded.flatMap((l) => l.routes);
   }
 
-  /** 关闭所有插件的队列。 */
+  /**
+   * 按加载顺序（拓扑序）逆序串行关闭各插件：依赖方先于被依赖方关闭。
+   * 调用后宿主进入 closed 状态（幂等；进行中的 `load()` 会在下一个检查点放弃）。
+   * 单个插件关闭失败记 error 后继续关闭其余插件。
+   */
   async close(): Promise<void> {
-    await Promise.all(this.loaded.map((l) => l.close()));
+    this.closed = true;
+    while (this.loaded.length > 0) {
+      const l = this.loaded.pop() as Loaded;
+      const plugin = l.manifest.name;
+      try {
+        await l.close();
+        this.deps.log.info("plugin closed", { plugin });
+      } catch (e) {
+        this.deps.log.error("plugin close failed", { plugin, err: e });
+      }
+    }
   }
 }

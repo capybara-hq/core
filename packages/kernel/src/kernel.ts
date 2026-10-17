@@ -9,7 +9,7 @@ import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
-import { createHttpApp, type KernelHttp } from "./http/app.js";
+import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
 import { createLogger, type KernelLogger } from "./log.js";
 import { PluginHost } from "./plugins/host.js";
 
@@ -25,6 +25,12 @@ export const KERNEL_SCHEMA = "capybara";
 /** 优雅停机的总时限：超时后强制关闭剩余资源。 */
 const STOP_TIMEOUT_MS = 30_000;
 
+/**
+ * 停机分阶段预算：每阶段实际等待 `min(阶段预算, 总剩余)`。
+ * HTTP 阶段卡死（长连接不结束）时，插件阶段（排空进行中的队列任务）仍至少有 15s。
+ */
+export const STOP_BUDGET_MS = { http: 10_000, plugins: 15_000 } as const;
+
 /** 运行中的内核实例。 */
 export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
@@ -33,7 +39,10 @@ export interface Kernel {
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
-  /** 实际监听的端口；未监听（角色不含 api / gateway，或尚未 start）时为 undefined。 */
+  /**
+   * 实际监听的端口；尚未 start 或已 stop 时为 undefined。
+   * 所有角色都监听：worker-only 只暴露 `/healthz` 与 `/readyz`（供 K8s 探针）。
+   */
   readonly port: number | undefined;
   start(): Promise<void>;
   /** 优雅停机：幂等，总时长不超过 30s。 */
@@ -44,7 +53,7 @@ export interface Kernel {
 export interface KernelOptions {
   /** 配置来源；提供 `watch` 时启用热更新。 */
   source?: ConfigSource;
-  /** 解析插件裸包名的目录，默认 `process.cwd()`。 */
+  /** 解析插件裸包名的目录，默认 `process.cwd()`；相对路径按当前 cwd 解析。 */
   resolveFrom?: string;
   /** 默认按 `config.log.level` 新建 JSON logger。 */
   logger?: KernelLogger;
@@ -71,12 +80,15 @@ export async function migrateAll(
   config: KernelConfig,
   opts: { resolveFrom?: string } = {},
 ): Promise<{ schema: string; plugin?: string; applied: string[] }[]> {
-  const kernel = await migrate(config.db.url, {
-    schema: KERNEL_SCHEMA,
-    dir: KERNEL_MIGRATIONS_DIR,
-  });
+  const connectTimeoutMs = config.db.connectTimeoutMs;
+  const kernel = await migrate(
+    config.db.url,
+    { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
+    { connectTimeoutMs },
+  );
   const plugins = await PluginHost.migrateOnly(config.plugins, {
     dbUrl: config.db.url,
+    connectTimeoutMs,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
   });
   return [{ schema: KERNEL_SCHEMA, applied: kernel.applied }, ...plugins];
@@ -101,13 +113,17 @@ export async function createKernel(
   let stopPromise: Promise<void> | undefined;
   let startPromise: Promise<void> | undefined;
   let port: number | undefined;
+  let listenPromise: Promise<number> | undefined;
   let unwatch: (() => void) | undefined;
 
   const redis = new Redis(config.redis.url, { lazyConnect: true });
   redis.on("error", (err: Error) => log.error("redis connection error", { err }));
   const busSubscriber = createBusSubscriber(() => new Redis(config.redis.url), log);
-  const db = createDb(config.db.url, config.db.poolMax, (err) =>
-    log.error("pg idle client error", { err }),
+  const db = createDb(
+    config.db.url,
+    config.db.poolMax,
+    (err) => log.error("pg idle client error", { err }),
+    { connectTimeoutMs: config.db.connectTimeoutMs },
   );
   const keyring = createKeyring(
     Buffer.from(config.masterKey, "base64"),
@@ -116,6 +132,7 @@ export async function createKernel(
   const deps: KernelDeps = {
     db,
     dbUrl: config.db.url,
+    connectTimeoutMs: config.db.connectTimeoutMs,
     redis,
     busSubscriber,
     redisUrl: config.redis.url,
@@ -128,24 +145,37 @@ export async function createKernel(
     config.pluginConfig,
     opts.resolveFrom !== undefined ? { resolveFrom: opts.resolveFrom } : {},
   );
-  const httpApp = await createHttpApp({
-    log,
-    health: {
-      isStopping: () => stopRequested,
+  const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
+  /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
+  const releaseConnections = async (): Promise<void> => {
+    redis.disconnect();
+    await busSubscriber.close().catch(() => {});
+    await db.destroy().catch(() => {});
+  };
+  let httpApp: KernelHttpApp;
+  try {
+    httpApp = await createHttpApp({
       log,
-      checks: {
-        pg: async () => {
-          await sql`select 1`.execute(db);
-        },
-        redis: async () => {
-          if (redis.status !== "ready") throw new Error(`redis status ${redis.status}`);
-          await redis.ping();
+      health: {
+        isStopping: () => stopRequested,
+        log,
+        checks: {
+          pg: async () => {
+            await sql`select 1`.execute(db);
+          },
+          redis: async () => {
+            if (redis.status !== "ready") throw new Error(`redis status ${redis.status}`);
+            await redis.ping();
+          },
         },
       },
-    },
-    serveApi: config.roles.includes("api"),
-    servePlugins: config.roles.includes("api") || config.roles.includes("gateway"),
-  });
+      serveApi: config.roles.includes("api"),
+      servePlugins,
+    });
+  } catch (e) {
+    await releaseConnections();
+    throw e;
+  }
 
   /** 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置。 */
   const onConfigChange = (raw: unknown): void => {
@@ -184,11 +214,16 @@ export async function createKernel(
 
   async function doStop(): Promise<void> {
     const deadline = Date.now() + STOP_TIMEOUT_MS;
-    /** 在剩余时限内等待 p；超时记 warn 并返回 false。 */
-    const within = async (label: string, p: Promise<unknown>): Promise<boolean> => {
+    /** 在 `min(budgetMs, 总剩余)` 内等待 p；超时记 warn 并返回 false。 */
+    const within = async (
+      label: string,
+      p: Promise<unknown>,
+      budgetMs = Number.POSITIVE_INFINITY,
+    ): Promise<boolean> => {
       let timer: NodeJS.Timeout | undefined;
+      const waitMs = Math.max(0, Math.min(budgetMs, deadline - Date.now()));
       const timeout = new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), Math.max(0, deadline - Date.now()));
+        timer = setTimeout(() => resolve("timeout"), waitMs);
         timer.unref();
       });
       try {
@@ -203,17 +238,21 @@ export async function createKernel(
       }
     };
 
-    // 启动进行中时先等它在下一个检查点退出，避免停机后它才建起 HTTP 监听或插件队列
-    if (startPromise)
+    // 不等待进行中的启动（插件 setup 可能任意慢）：宿主关闭后 load() 会在下一个检查点放弃并关闭刚建好的 ctx，
+    // 其余启动步骤在 checkpoint 处退出。只有正在进行的 listen 要先等完，否则关闭会与监听交错留下端口。
+    if (listenPromise)
       await within(
-        "start",
-        startPromise.catch(() => {}),
+        "listen",
+        listenPromise.catch(() => {}),
+        STOP_BUDGET_MS.http,
       );
     unwatch?.();
     unwatch = undefined;
-    if (!(await within("http", httpApp.close()))) httpApp.closeAllConnections();
+    if (!(await within("http", httpApp.close(), STOP_BUDGET_MS.http))) {
+      httpApp.closeAllConnections();
+    }
     port = undefined;
-    await within("plugins", host.close());
+    await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
     await within("bus", busSubscriber.close());
     if (redis.status === "ready") {
       if (!(await within("redis", redis.quit()))) redis.disconnect();
@@ -246,7 +285,11 @@ export async function createKernel(
         checkpoint();
         await sql`select 1`.execute(db);
         checkpoint();
-        await migrate(config.db.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR });
+        await migrate(
+          config.db.url,
+          { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
+          { connectTimeoutMs: config.db.connectTimeoutMs },
+        );
         checkpoint();
         await host.load(config.plugins);
         checkpoint();
@@ -256,9 +299,9 @@ export async function createKernel(
             log.error("config watch error", { error: err.message }),
           );
         }
-        if (config.roles.includes("api") || config.roles.includes("gateway")) {
-          port = await httpApp.listen(config.http.port);
-        }
+        // 所有角色都监听：worker-only 时 HTTP 应用只有健康端点
+        listenPromise = httpApp.listen(config.http.port);
+        port = await listenPromise;
         checkpoint();
         log.info("kernel started", { roles: config.roles, port: kernel.port });
       })();
