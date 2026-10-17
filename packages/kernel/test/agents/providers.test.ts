@@ -1,3 +1,4 @@
+import type { ModelProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -5,7 +6,7 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { ApiError } from "../../src/errors.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
 import { fakeBCalls, MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -82,5 +83,48 @@ describe("ProviderRegistry", () => {
     expect(await codeOf(registry.resolve({ provider: "model-fake", model: "fake-9" }))).toBe(
       "agent.model_unavailable",
     );
+  });
+
+  describe("供应商 listModels 失败", () => {
+    const broken: ModelProvider = {
+      async listModels() {
+        throw new Error("upstream down");
+      },
+      stream() {
+        throw new Error("unused");
+      },
+    };
+    const warns: { msg: string; fields: unknown }[] = [];
+    const withBroken = () =>
+      new ProviderRegistry(
+        {
+          list: (cap: string) => [...k.host.list(cap), { plugin: "broken", impl: broken }],
+        },
+        redis,
+        {
+          warn: (msg: string, fields?: Record<string, unknown>) => {
+            warns.push({ msg, fields });
+          },
+        },
+      );
+
+    it("list 跳过失败的供应商并记 warn，其余照常列出", async () => {
+      warns.length = 0;
+      const providers = await withBroken().list();
+      expect(providers.map((p) => p.provider)).toEqual(["model-fake", "model-fake-b"]);
+      expect(warns).toHaveLength(1);
+      expect(warns[0]?.msg).toMatch(/listModels failed/);
+    });
+
+    it("resolve 时供应商失败 → ProviderListError（仍是 agent.model_unavailable，带 cause）", async () => {
+      const err = await withBroken()
+        .resolve({ provider: "broken", model: "x" })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ProviderListError);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).code).toBe("agent.model_unavailable");
+      expect((err as ProviderListError).provider).toBe("broken");
+      expect(((err as ProviderListError).cause as Error).message).toBe("upstream down");
+    });
   });
 });

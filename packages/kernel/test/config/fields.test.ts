@@ -19,7 +19,10 @@ describe("configFields", () => {
     expect(byPath.get("http.port")?.hot).toBeFalsy();
     expect(byPath.get("db.url")?.secret).toBe(true);
     expect(byPath.get("masterKeyPrevious")?.secret).toBe(true);
-    expect(fields.filter((f) => f.meta?.hot).map((f) => f.path)).toEqual(["log.level"]);
+    expect(fields.filter((f) => f.meta?.hot).map((f) => f.path)).toEqual([
+      "runtime.orgConcurrency",
+      "log.level",
+    ]);
   });
 
   it("嵌套在 default / optional 里的对象也能展开", () => {

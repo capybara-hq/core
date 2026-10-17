@@ -135,6 +135,90 @@ export const KernelConfigSchema = z.object({
         .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
     })
     .default({ accessTokenTtlSeconds: 900, refreshTokenTtlDays: 30, cookieSecure: true }),
+  runtime: z
+    .object({
+      maxSteps: z
+        .number()
+        .int()
+        .positive()
+        .default(50)
+        .meta(meta({ description: "Maximum model steps per agent run before the final wrap-up" })),
+      maxRunSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(900)
+        .meta(meta({ description: "Maximum wall-clock duration of one agent run in seconds" })),
+      streamIdleMs: z
+        .number()
+        .int()
+        .positive()
+        .default(60000)
+        .meta(
+          meta({
+            description:
+              "Default model stream idle watchdog in milliseconds (a model's own streamIdleTimeoutMs takes precedence)",
+          }),
+        ),
+      maxOutputTokens: z
+        .number()
+        .int()
+        .positive()
+        .default(16000)
+        .meta(
+          meta({
+            description:
+              "Upper bound on output tokens per model call (the model's own limit applies if lower)",
+          }),
+        ),
+      compactionThreshold: z
+        .number()
+        .gt(0)
+        .max(1)
+        .default(0.8)
+        .meta(
+          meta({
+            description:
+              "Compact the conversation when the estimated input reaches this fraction of the context window",
+          }),
+        ),
+      keepRecentTurns: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(4)
+        .meta(meta({ description: "Number of recent user turns kept verbatim when compacting" })),
+      workerConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({ description: "Maximum agent runs executed concurrently by one worker process" }),
+        ),
+      orgConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Maximum agent runs executing concurrently per organization across all replicas",
+          }),
+        ),
+    })
+    .default({
+      maxSteps: 50,
+      maxRunSeconds: 900,
+      streamIdleMs: 60000,
+      maxOutputTokens: 16000,
+      compactionThreshold: 0.8,
+      keepRecentTurns: 4,
+      workerConcurrency: 10,
+      orgConcurrency: 10,
+    }),
   log: z
     .object({
       level: z

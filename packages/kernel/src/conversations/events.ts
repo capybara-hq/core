@@ -1,4 +1,4 @@
-import type { ContentBlock, ModelUsage, StopReason } from "@capybara-hq/plugin-sdk";
+import type { ContentBlock, Effort, ModelUsage, StopReason } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 
@@ -31,6 +31,8 @@ export const ContentBlockSchema = z.discriminatedUnion("type", [
     isError: z.boolean(),
   }),
 ]);
+
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const satisfies readonly Effort[];
 
 const STOP_REASONS = ["end_turn", "tool_use", "max_tokens", "refusal", "other"] as const;
 
@@ -82,6 +84,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         summarySeq: seqNo.nullable(),
         systemHash: z.string(),
         reminderSeqs: z.array(seqNo),
+        /** 本次请求的输出上限（`min(模型上限, runtime.maxOutputTokens)`）。较早的事件可能没有。 */
+        maxOutputTokens: count.optional(),
+        /** 本次请求的推理强度；模型不支持或 agent 未设置为 null。较早的事件可能没有。 */
+        effort: z.enum(EFFORTS).nullable().optional(),
+        /**
+         * 发出请求时的输入 token 估算（未校正）。与随后 `usage.inputTokens` 一起供下一次
+         * `calibrate` 使用。较早的事件可能没有。
+         */
+        estimatedInputTokens: count.optional(),
       }),
     }),
   ),

@@ -149,7 +149,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: PROVIDER_REGISTRY,
-      useFactory: (redis: Redis) => new ProviderRegistry(deps.host, redis),
+      useFactory: (redis: Redis) => new ProviderRegistry(deps.host, redis, deps.log),
       inject: [KERNEL_REDIS],
     },
     {
