@@ -23,6 +23,11 @@ export interface DualReplicaOptions {
    * 传入时不做隔离，调用方须保证同一 Redis 不被多个同时存活的 harness 共用。
    */
   redisUrl?: string;
+  /**
+   * 额外的内核配置，深合并进副本配置（如 `{ auth: { cookieSecure: false, setupToken: "…" } }`）。
+   * 与 harness 自身设定的键冲突时以这里为准（数组整体替换）。经 IPC 传给副本，不进 argv / env。
+   */
+  config?: Record<string, unknown>;
 }
 
 /** 一个副本（独立子进程）的句柄。 */
@@ -220,6 +225,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       resolveFrom: resolve(opts.resolveFrom ?? process.cwd()),
       pluginConfig: opts.pluginConfig ?? {},
       roles: ["api", "worker", "gateway"],
+      overrides: opts.config ?? {},
     };
 
     const started = await Promise.allSettled([startReplica(config), startReplica(config)]);

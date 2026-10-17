@@ -24,6 +24,16 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 插件 -> 只能 import `@capybara-hq/plugin-sdk` 与第三方 npm 包，**不能** import `@capybara-hq/kernel`。
 - 内核 -> 实现 SDK 中声明的接口。
 
+完整的包依赖链（只允许这些方向）：
+
+- `plugins/*` -> `@capybara-hq/plugin-sdk`（测试可额外用 devDependency `@capybara-hq/testing`）
+- `@capybara-hq/kernel` -> `@capybara-hq/plugin-sdk`
+- `@capybara-hq/testing` -> `@capybara-hq/kernel`
+- `@capybara-hq/capybara`（CLI）-> `@capybara-hq/kernel`
+- `@capybara-hq/plugin-sdk` 不依赖任何 `@capybara-hq/*`
+
+除 plugin-sdk 外，各包的测试可以把 `@capybara-hq/testing` 作为 devDependency，只在测试里用（插件与 SDK 的边界由 `pnpm check:deps` 检查；内核与 CLI 暂无自动检查，靠评审）。
+
 包名一律 `@capybara-hq/<name>`。
 
 ## 多副本纪律（生产环境多副本部署）
@@ -39,6 +49,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 配置：环境变量前缀 `CAPYBARA_`，嵌套用双下划线（`CAPYBARA_DB__URL` -> `db.url`），环境变量优先级最高；来源由 `CAPYBARA_CONFIG_SOURCE`（`file` / `nacos`）选择。详见 [skills/adding-config](skills/adding-config/SKILL.md)。
 - 国际化：给模型看的文案（提示词、工具描述、模型可见的错误）一律英文；界面文案走 i18n。
 - 插件开发：详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，参考实现 `plugins/example-counter`。
+- 内核 HTTP 用 NestJS + Fastify：领域类不依赖 Nest，构造参数显式 `@Inject`；插件不依赖 Nest。详见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
 - **能自动检查的规则以检查为准**：`pnpm check` 会逐步收录各项自定义检查，每道检查都有「违规 fixture 使其失败」的测试。
 
 ## 常用命令

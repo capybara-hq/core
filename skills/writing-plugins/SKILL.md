@@ -81,10 +81,24 @@ export default definePlugin({
 | `ctx.queue` | 延迟 / 异步 / 周期任务 | `define(name, handler)` 在 `setup` 里注册；`add(name, data, { delayMs, jobId })`；任务可能在任一副本执行，投递是**至少一次**（失败重试，最多 3 次），handler 必须幂等（见下）；名称与 jobId 不含 `:` |
 | `ctx.lock` | 互斥 | `acquire(key, { ttlMs })` 返回租约或 `null`；长任务要 `renew()`，用完 `release()` |
 | `ctx.bus` | 跨副本广播 | `publish` / `subscribe`，订阅返回取消函数；消息可能丢，别当唯一的结束信号 |
-| `ctx.http.route` | 对外接口 | 实际挂在 `/plugins/<name><path>` |
+| `ctx.http.route` | 对外接口 | 实际挂在 `/plugins/<name><path>`；匹配与 body 语义见下节，不经内核鉴权 |
 | `ctx.provide` | 对外暴露能力实现 | 要与清单 `provides` 一致 |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
 | `ctx.config` / `ctx.log` | 部署配置 / 日志 | 日志里不要打印密钥 |
+
+### 插件路由的匹配语义（`ctx.http.route`）
+
+签名固定：`ctx.http.route(method, path, (req: Request) => Promise<Response>)`，插件**不依赖 Nest**、不写 controller。内核在 Fastify 的独立封装作用域里收下 `/plugins/*`，再转成 Web `Request` 交给你：
+
+- **路径语法与 Fastify 相同**（find-my-way）：`path` 相对插件前缀，如 `route("GET", "/items/:id", …)` 匹配 `/plugins/<name>/items/42`；也支持通配 `*`。匹配只看路径，不含查询串。
+- **handler 只收到 Web `Request`，拿不到解析好的路径参数**：自己从 `new URL(req.url).pathname` 里取（查询串用 `new URL(req.url).searchParams`）。
+- **body 是原始字节**：作用域内不做 JSON / 表单解析，任何 content-type 都原样转交，`await req.text()` / `req.json()` / `req.arrayBuffer()` 自己解析（webhook 验签可直接用原始字节）。GET / HEAD 不带 body。
+- **请求体上限 1 MiB**（Fastify 默认 bodyLimit），超出直接 413（Fastify 原生错误体 `FST_ERR_CTP_BODY_TOO_LARGE`，不是内核错误信封），到不了 handler。
+- **HEAD 不会自动映射到 GET**：只注册了 GET 时 HEAD 请求是 404；需要 HEAD 就显式再注册一条。
+- 尾斜杠敏感：`/count` 与 `/count/` 是两条路由。
+- 未匹配 → 404 `not_found`；handler 抛错 → 500 `internal`（错误记日志，不回显给客户端）。
+- **插件路由不经内核鉴权**：没有 AuthGuard、不检查 CSRF 头、拿不到调用者身份（M4 再提供）。对外暴露的 webhook 必须自行验签。
+- 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
 
 ### 持久计数与幂等的写法（参考 example-counter）
 
@@ -129,7 +143,7 @@ it("交替请求两个副本，结果一致", async () => {
 });
 ```
 
-要点：每个 harness 自带一个 Redis 容器，用完 `stop()`；传入 `pgUrl`（管理员连接串）可让多个 harness 复用同一个 PG 容器；队列任务异步执行，断言时轮询等到期望值，不要只 `sleep` 固定时长；测试文件放在插件根的 `test/` 目录（`pnpm test` 会收集）。
+要点：`config` 选项可把额外的内核配置深合并进两个副本（如 `config: { auth: { cookieSecure: false } }`，经 IPC 传递）；每个 harness 自带一个 Redis 容器，用完 `stop()`；传入 `pgUrl`（管理员连接串）可让多个 harness 复用同一个 PG 容器；队列任务异步执行，断言时轮询等到期望值，不要只 `sleep` 固定时长；测试文件放在插件根的 `test/` 目录（`pnpm test` 会收集）。
 
 ## 新插件清单
 
