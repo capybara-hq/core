@@ -14,6 +14,9 @@
       "path": "plugins/example-counter"
     },
     {
+      "path": "plugins/model-fake"
+    },
+    {
       "path": "tools/checks"
     },
     {
