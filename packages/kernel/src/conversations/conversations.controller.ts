@@ -106,4 +106,17 @@ export class ConversationsController {
       }),
     };
   }
+
+  /** 中止当前运行（会话所有者）：202 `{ runId }`；没有活跃运行 → 409 `run.not_active`。 */
+  @Post(":id/abort")
+  @HttpCode(202)
+  @OrgAction("agents.use")
+  async abort(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<{ runId: string }> {
+    const p = requireUser(principal);
+    return { runId: await this.conversations.abort(org.orgId, id, p.account.id) };
+  }
 }

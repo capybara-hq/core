@@ -1,0 +1,447 @@
+import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
+import { sql } from "kysely";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { KernelConfig } from "../../src/config/schema.js";
+import type { ConversationEvent } from "../../src/conversations/events.js";
+import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { createDb } from "../../src/db/pool.js";
+import { AccountsService } from "../../src/identity/accounts.js";
+import type { Kernel } from "../../src/kernel.js";
+import type { AgentLoop, LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
+import {
+  type ModelStepDeps,
+  runFinalWrapUp,
+  runModelStep,
+  WRAP_UP_REMINDER,
+} from "../../src/runtime/model-call.js";
+import type { RunHooks } from "../../src/runtime/run-worker.js";
+import {
+  consumedSeq,
+  createAgent,
+  createConv,
+  createOrg,
+  eventsOf,
+  gate,
+  PW,
+  postMessage,
+  type Req,
+  runConfig,
+  runsOf,
+  session,
+  sleep,
+  startKernel,
+  waitFor,
+  waitForEvent,
+  waitForTerminal,
+} from "../helpers/runs.js";
+
+/**
+ * 测试用 loop：逐步调用 `runModelStep`，直到 stopReason 不是 `tool_use`（M2 没有工具，tool_use 当作继续）。
+ * 每步开始前吸收插话；超过 maxSteps 调 `runFinalWrapUp`；停机信号在步骤边界返回 `interrupted`。
+ * 续跑（停机后回到队列）时从日志里该 run 已有的 assistant_message 数推出下一步的编号。
+ */
+class SequentialLoop implements AgentLoop {
+  constructor(private readonly deps: ModelStepDeps) {}
+
+  async run(ctx: LoopContext): Promise<LoopOutcome> {
+    const done = await this.deps.eventLog.readAfter(ctx.conversationId, 0, 10_000);
+    let step =
+      done.filter((e) => e.type === "assistant_message" && e.runId === ctx.runId).length + 1;
+    let consumed = 0;
+    const input = () => ({
+      conversationId: ctx.conversationId,
+      runId: ctx.runId,
+      step,
+      agent: ctx.agent,
+      agentVersion: ctx.agentVersion,
+      signal: ctx.signal,
+      sink: ctx.sink,
+    });
+    const timedOut = () => Date.now() >= ctx.limits.deadline;
+    for (;;) {
+      if (ctx.shutdown.aborted) return { kind: "interrupted" };
+      if (timedOut()) return { kind: "max_duration", consumedUpToSeq: consumed };
+      for (const m of await ctx.pendingUserMessages(consumed)) consumed = Math.max(consumed, m.seq);
+      if (step > ctx.limits.maxSteps) {
+        const r = await runFinalWrapUp(this.deps, input());
+        if (r.aborted && !timedOut()) return { kind: "aborted" };
+        return { kind: "max_steps", consumedUpToSeq: consumed };
+      }
+      const r = await runModelStep(this.deps, input());
+      step++;
+      if (r.aborted) {
+        return timedOut()
+          ? { kind: "max_duration", consumedUpToSeq: consumed }
+          : { kind: "aborted" };
+      }
+      if (r.stopReason !== "tool_use") return { kind: "completed", consumedUpToSeq: consumed };
+    }
+  }
+}
+
+const sequential = (deps: ModelStepDeps): AgentLoop => new SequentialLoop(deps);
+
+let pgc: TestContainer;
+let rd: TestContainer;
+let raw: ReturnType<typeof createDb>;
+let db: KernelDb;
+let redis: Redis;
+/** 常驻的 api 内核：处理 HTTP，不执行运行。 */
+let api: Kernel;
+/** 每个测试自己启动的内核，afterEach 停掉。 */
+let extra: Kernel[] = [];
+let ownerId: string;
+let req: Req;
+
+const urls = () => ({ pg: pgc.url, redis: rd.url });
+
+async function worker(
+  runtime: Partial<KernelConfig["runtime"]> = {},
+  opts: { hooks?: RunHooks; roles?: ("api" | "worker" | "gateway")[] } = {},
+): Promise<Kernel> {
+  const k = await startKernel(runConfig(urls(), { roles: opts.roles ?? ["worker"], runtime }), {
+    loop: sequential,
+    ...(opts.hooks && { runHooks: opts.hooks }),
+  });
+  extra.push(k);
+  return k;
+}
+
+beforeAll(async () => {
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  api = await startKernel(runConfig(urls(), { roles: ["api"] }), { loop: sequential });
+  raw = createDb(pgc.url, 5);
+  db = kernelDb(raw);
+  redis = new Redis(rd.url);
+}, 120_000);
+afterAll(async () => {
+  await api?.stop();
+  redis?.disconnect();
+  await raw?.destroy();
+  await Promise.all([pgc?.stop(), rd?.stop()]);
+});
+beforeEach(async () => {
+  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings CASCADE`.execute(
+    raw,
+  );
+  await redis.flushdb();
+  ownerId = (
+    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
+  ).id;
+  req = await session(api, "owner");
+});
+afterEach(async () => {
+  await Promise.all(extra.map((k) => k.stop()));
+  extra = [];
+});
+
+async function setup(model?: { provider: string; model: string }) {
+  const orgId = await createOrg(req);
+  const agentId = await createAgent(req, orgId, model);
+  const convId = await createConv(req, orgId, agentId);
+  return { orgId, agentId, convId };
+}
+
+const LOOPER = { provider: "model-looper", model: "loop-1" };
+const types = (evs: ConversationEvent[]) => evs.map((e) => e.type);
+const textOf = (e: ConversationEvent) =>
+  e.type === "assistant_message"
+    ? e.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")
+    : "";
+
+describe("RunWorker", () => {
+  it("echo:hi → user_message、run_started、model_call、assistant_message、usage、run_finished", async () => {
+    await worker();
+    const { orgId, convId } = await setup();
+    const seq = await postMessage(req, orgId, convId, "echo:hi");
+    await waitForTerminal(db, convId);
+    const evs = await eventsOf(db, convId);
+    expect(types(evs)).toEqual([
+      "user_message",
+      "run_started",
+      "model_call",
+      "assistant_message",
+      "usage",
+      "run_finished",
+    ]);
+    const runId = evs[1]?.runId as string;
+    expect(evs.slice(1).every((e) => e.runId === runId)).toBe(true);
+    expect(evs[1]?.payload).toMatchObject({
+      agentVersion: 1,
+      model: { provider: "model-fake", model: "fake-1" },
+      triggerAccountId: ownerId,
+    });
+    expect(textOf(evs[3] as ConversationEvent)).toBe("hi");
+    expect(evs[5]?.payload).toEqual({ reason: "completed", consumedUpToSeq: seq });
+    expect(await consumedSeq(db, convId)).toBe(seq);
+    expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "completed" }]);
+    // 锁与配额已释放
+    expect(await redis.exists(`capk:conv-run:${convId}`)).toBe(0);
+    expect(await redis.zcard(`capk:org-runs:${orgId}`)).toBe(0);
+  });
+
+  it("同一会话串行：连发两条消息 → 两条都被处理，两轮运行的事件不交错", async () => {
+    await worker();
+    const { orgId, convId } = await setup();
+    await postMessage(req, orgId, convId, "slow:40:abcdefghijklmnopqrst");
+    await waitForEvent(db, convId, (e) => e.type === "run_started");
+    const second = await postMessage(req, orgId, convId, "echo:two");
+    await waitForTerminal(db, convId, 2);
+    const evs = await eventsOf(db, convId);
+    const runs = await runsOf(db, convId);
+    expect(runs.map((r) => r.status)).toEqual(["completed", "completed"]);
+    // 每轮的事件连续：从 run_started 到 run_finished 之间没有别的 run 的事件
+    for (const r of runs) {
+      const seqs = evs.filter((e) => e.runId === r.id).map((e) => e.seq);
+      const lo = Math.min(...seqs);
+      const hi = Math.max(...seqs);
+      const between = evs.filter((e) => e.seq >= lo && e.seq <= hi && e.runId !== null);
+      expect(between.every((e) => e.runId === r.id)).toBe(true);
+    }
+    expect(evs.filter((e) => e.type === "run_started")).toHaveLength(2);
+    expect(evs.filter((e) => e.type === "assistant_message").map(textOf)).toEqual([
+      "abcdefghijklmnopqrst",
+      "two",
+    ]);
+    expect(await consumedSeq(db, convId)).toBe(second);
+  });
+
+  it("message at run boundary is processed exactly once：run_finished 之后、锁释放之前到达 → finally 的 ensureRun 起新一轮", async () => {
+    const paused = gate();
+    const resume = gate();
+    let first = true;
+    await worker(
+      {},
+      {
+        hooks: {
+          async beforeRelease() {
+            if (!first) return;
+            first = false;
+            paused.open();
+            await resume.promise;
+          },
+        },
+      },
+    );
+    const { orgId, convId } = await setup();
+    await postMessage(req, orgId, convId, "echo:first");
+    await paused.promise;
+    // run_finished 已写入、锁仍被持有：这时发来的消息由 finally 中的 ensureRun 处理
+    expect((await eventsOf(db, convId)).some((e) => e.type === "run_finished")).toBe(true);
+    expect(await redis.get(`capk:conv-run:${convId}`)).not.toBeNull();
+    const late = await postMessage(req, orgId, convId, "echo:late");
+    expect((await runsOf(db, convId)).length).toBe(1);
+    resume.open();
+    await waitForTerminal(db, convId, 2);
+    await sleep(500);
+    const evs = await eventsOf(db, convId);
+    const replies = evs.filter((e) => e.type === "assistant_message").map(textOf);
+    expect(replies).toEqual(["first", "late"]);
+    expect(evs.filter((e) => e.type === "run_finished")).toHaveLength(2);
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed", "completed"]);
+    expect(await consumedSeq(db, convId)).toBe(late);
+  });
+
+  it("message at run boundary is processed exactly once：步骤之间到达 → 被本轮吸收，不再另起一轮", async () => {
+    await worker();
+    const { orgId, convId } = await setup(LOOPER);
+    await postMessage(req, orgId, convId, "loop:300");
+    await waitForEvent(db, convId, (e) => e.type === "model_call");
+    const inter = await postMessage(req, orgId, convId, "hello");
+    const [fin] = await waitForTerminal(db, convId);
+    expect(fin?.payload).toEqual({ reason: "completed", consumedUpToSeq: inter });
+    await sleep(500);
+    const evs = await eventsOf(db, convId);
+    expect(evs.filter((e) => e.type === "run_started")).toHaveLength(1);
+    expect(evs.filter((e) => e.type === "assistant_message").map(textOf)).toEqual([
+      "",
+      "You said: hello",
+    ]);
+    // 插话在第 2 步的 model_call 之前
+    const calls = evs.filter((e) => e.type === "model_call");
+    expect(calls).toHaveLength(2);
+    expect((calls[1] as ConversationEvent).seq).toBeGreaterThan(inter);
+    expect(await runsOf(db, convId)).toHaveLength(1);
+    expect(await consumedSeq(db, convId)).toBe(inter);
+  });
+
+  it("组织配额隔离：组织 A limit 1 的 3 个会话依次执行，组织 B 立即开始", async () => {
+    await worker();
+    const orgA = await createOrg(req, "A");
+    const orgB = await createOrg(req, "B");
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "runConcurrencyOverrides", value: JSON.stringify({ [orgA]: 1 }) })
+      .execute();
+    const agentA = await createAgent(req, orgA);
+    const agentB = await createAgent(req, orgB);
+    const convsA = [
+      await createConv(req, orgA, agentA),
+      await createConv(req, orgA, agentA),
+      await createConv(req, orgA, agentA),
+    ];
+    const convB = await createConv(req, orgB, agentB);
+    const text = "slow:100:abcdefghijkl";
+    for (const c of convsA) await postMessage(req, orgA, c, text);
+    const postedB = Date.now();
+    await postMessage(req, orgB, convB, text);
+    const startedB = await waitForEvent(db, convB, (e) => e.type === "run_started", 3_000);
+    expect(startedB.createdAt.getTime() - postedB).toBeLessThan(1_500);
+
+    const spans: [number, number][] = [];
+    for (const c of convsA) {
+      const evs = await waitForTerminal(db, c, 1, 30_000);
+      const all = await eventsOf(db, c);
+      const start = all.find((e) => e.type === "run_started") as ConversationEvent;
+      spans.push([start.createdAt.getTime(), (evs[0] as ConversationEvent).createdAt.getTime()]);
+    }
+    spans.sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < spans.length; i++) {
+      expect((spans[i] as [number, number])[0]).toBeGreaterThanOrEqual(
+        (spans[i - 1] as [number, number])[1],
+      );
+    }
+    // B 在 A 的第二轮开始之前就开始了
+    expect(startedB.createdAt.getTime()).toBeLessThan((spans[1] as [number, number])[0]);
+  }, 40_000);
+
+  it("中止（跨副本）：运行在 worker 实例上，在 api 实例上 abort → 1s 内结束，保存已流出的部分，不再调用模型", async () => {
+    await worker();
+    const { orgId, convId } = await setup();
+    await postMessage(req, orgId, convId, `slow:100:${"abcd".repeat(100)}`);
+    await waitForEvent(db, convId, (e) => e.type === "model_call");
+    await sleep(350);
+    const t0 = Date.now();
+    const res = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    });
+    expect(res.statusCode).toBe(202);
+    const { runId } = res.json() as { runId: string };
+    const aborted = await waitForEvent(db, convId, (e) => e.type === "run_aborted", 2_000);
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect(aborted.runId).toBe(runId);
+    expect(aborted.payload).toEqual({ byAccountId: ownerId, reason: "user" });
+    await sleep(500);
+    const evs = await eventsOf(db, convId);
+    const msg = evs.find((e) => e.type === "assistant_message") as ConversationEvent & {
+      type: "assistant_message";
+    };
+    expect(msg.payload.stopReason).toBe("aborted");
+    expect(textOf(msg).length).toBeGreaterThan(0);
+    expect(textOf(msg).length).toBeLessThan(400);
+    expect(evs.filter((e) => e.type === "model_call" && e.seq > aborted.seq)).toEqual([]);
+    expect(evs.filter((e) => e.type === "model_call")).toHaveLength(1);
+    expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "aborted" }]);
+    expect(await consumedSeq(db, convId)).toBe(1);
+    // 没有活跃运行时再 abort → 409
+    const again = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    });
+    expect(again.statusCode).toBe(409);
+  });
+
+  it("超时：maxRunSeconds 1 + slow:500 长输出 → run_finished reason max_duration", async () => {
+    await worker({ maxRunSeconds: 1 });
+    const { orgId, convId } = await setup();
+    const seq = await postMessage(req, orgId, convId, `slow:500:${"abcd".repeat(20)}`);
+    const [fin] = await waitForTerminal(db, convId, 1, 5_000);
+    expect(fin?.type).toBe("run_finished");
+    expect(fin?.payload).toEqual({ reason: "max_duration", consumedUpToSeq: seq });
+    const evs = await eventsOf(db, convId);
+    const msg = evs.find((e) => e.type === "assistant_message");
+    expect(msg?.payload).toMatchObject({ stopReason: "aborted" });
+    expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
+  });
+
+  it("步数上限：每步都返回工具调用且 maxSteps 3 → runFinalWrapUp，reason max_steps", async () => {
+    await worker({ maxSteps: 3 });
+    const { orgId, convId } = await setup(LOOPER);
+    const seq = await postMessage(req, orgId, convId, "loop:10");
+    const [fin] = await waitForTerminal(db, convId);
+    expect(fin?.payload).toEqual({ reason: "max_steps", consumedUpToSeq: seq });
+    const evs = await eventsOf(db, convId);
+    const msgs = evs.filter((e) => e.type === "assistant_message");
+    expect(msgs.map((m) => m.payload.stopReason)).toEqual([
+      "tool_use",
+      "tool_use",
+      "tool_use",
+      "end_turn",
+    ]);
+    expect(textOf(msgs[3] as ConversationEvent)).toBe("wrapped up");
+    expect(evs.some((e) => e.type === "reminder" && e.payload.text === WRAP_UP_REMINDER)).toBe(
+      true,
+    );
+  });
+
+  it("优雅停机：运行进行中 stop() → 任务回到队列，另一个 worker 续跑完成；只有一条 run_started 与 run_finished", async () => {
+    const w1 = await worker({ maxSteps: 4 });
+    const { orgId, convId } = await setup(LOOPER);
+    await postMessage(req, orgId, convId, "loop:200");
+    await waitForEvent(db, convId, (e) => e.type === "model_call");
+    const t0 = Date.now();
+    await w1.stop();
+    expect(Date.now() - t0).toBeLessThan(3_000);
+    const mid = await eventsOf(db, convId);
+    expect(mid.some((e) => e.type === "run_finished")).toBe(false);
+    expect((await runsOf(db, convId))[0]?.status).toBe("running");
+    expect(await redis.exists(`capk:conv-run:${convId}`)).toBe(0);
+
+    await worker({ maxSteps: 4 });
+    const [fin] = await waitForTerminal(db, convId);
+    expect(fin?.payload).toMatchObject({ reason: "max_steps" });
+    const evs = await eventsOf(db, convId);
+    expect(evs.filter((e) => e.type === "run_started")).toHaveLength(1);
+    expect(evs.filter((e) => e.type === "run_finished")).toHaveLength(1);
+    const steps = evs.flatMap((e) => (e.type === "assistant_message" ? [e.payload.step] : []));
+    expect(steps).toEqual([1, 2, 3, 4, 5]);
+    expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
+  });
+
+  it("api 角色不执行运行：api 内核接收消息，运行由后起的 worker 内核执行", async () => {
+    const { orgId, convId } = await setup();
+    await postMessage(req, orgId, convId, "echo:queued");
+    await sleep(500);
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["queued"]);
+    expect(types(await eventsOf(db, convId))).toEqual(["user_message"]);
+    await worker();
+    const [fin] = await waitForTerminal(db, convId);
+    expect(fin?.type).toBe("run_finished");
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["completed"]);
+  });
+
+  it("运行失败（不可重试的模型错误）→ run_failed，status failed，锁与配额释放", async () => {
+    await worker();
+    const { orgId, convId } = await setup();
+    await postMessage(req, orgId, convId, "fail:auth");
+    const [t] = await waitForTerminal(db, convId);
+    expect(t?.type).toBe("run_failed");
+    expect(t?.payload).toMatchObject({ error: { code: "model.auth" } });
+    // 失败也推进 consumed_seq：不会对同一条消息无限重试
+    await sleep(300);
+    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed"]);
+    expect(await consumedSeq(db, convId)).toBe(1);
+    expect(await redis.exists(`capk:conv-run:${convId}`)).toBe(0);
+    expect(await redis.zcard(`capk:org-runs:${orgId}`)).toBe(0);
+  });
+
+  it("等待中的消息：提交后 ensureRun 只投递一次（重复提交同一 clientMessageId 不起新运行）", async () => {
+    const { orgId, convId } = await setup();
+    for (let i = 0; i < 2; i++) {
+      const res = await req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
+        payload: { text: "echo:x", clientMessageId: "c-1" },
+      });
+      expect(res.statusCode).toBe(202);
+    }
+    expect(await runsOf(db, convId)).toHaveLength(1);
+    await worker();
+    await waitForTerminal(db, convId);
+    await sleep(300);
+    expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
+    await waitFor(async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0, 2_000);
+  });
+});

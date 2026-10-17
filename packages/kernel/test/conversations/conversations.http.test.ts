@@ -311,6 +311,44 @@ describe("Conversation HTTP", () => {
     expect(p2.next).toBeNull();
   });
 
+  it("abort：没有活跃运行 → 409 run.not_active；有排队中的运行 → 202 { runId } 并设置中止标记", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const url = `/api/v1/orgs/${orgId}/conversations/${conv.id}/abort`;
+    const none = await req({ method: "POST", url });
+    expect(none.statusCode).toBe(409);
+    expect(errCode(none)).toBe("run.not_active");
+
+    // 本内核没有注入 loop，不执行运行：消息投递出的运行停在 queued
+    expect((await post(req, orgId, conv.id, { text: "hello" })).statusCode).toBe(202);
+    const res = await req({ method: "POST", url });
+    expect(res.statusCode).toBe(202);
+    const { runId } = res.json() as { runId: string };
+    const run = await kernelDb(raw)
+      .selectFrom("runs")
+      .select(["id", "status"])
+      .where("conversation_id", "=", conv.id)
+      .executeTakeFirstOrThrow();
+    expect(run).toEqual({ id: runId, status: "queued" });
+    expect(await redis.ttl(`capk:run-abort:${runId}`)).toBeGreaterThan(3500);
+  });
+
+  it("abort 别人的会话 → 404 conversation.not_found", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq);
+    const agentId = await createAgent(ownerReq, orgId);
+    const conv = await createConv(ownerReq, orgId, agentId);
+    const other = await memberSession(orgId, "other", "admin");
+    const res = await other.req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv.id}/abort`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(errCode(res)).toBe("conversation.not_found");
+  });
+
   it("校验：text 为空 / 超长 → 400；缺 agentId → 400", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);

@@ -8,6 +8,8 @@ import { lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
 
 export const DEPLOYMENT_SETTINGS = z.object({
   orgCreation: z.enum(["anyone", "enterprise_admin"]).default("anyone"),
+  /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
+  runConcurrencyOverrides: z.record(z.string().min(1), z.number().int().positive()).default({}),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 

@@ -1,9 +1,11 @@
 import { fileURLToPath } from "node:url";
+import type { PluginContext } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
+import { EventLog } from "./conversations/event-log.js";
 import { createBus, createBusSubscriber } from "./ctx/bus.js";
 import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
@@ -13,9 +15,18 @@ import { createDb } from "./db/pool.js";
 import { ApiModule } from "./http/api.module.js";
 import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
 import { AccountsService } from "./identity/accounts.js";
+import { SettingsService } from "./identity/settings.js";
 import { createLogger, type KernelLogger } from "./log.js";
 import { PluginHost } from "./plugins/host.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
+import { RunAbort } from "./runtime/abort.js";
+import { ConversationLock } from "./runtime/conversation-lock.js";
+import type { AgentLoop } from "./runtime/loop.js";
+import type { ModelStepDeps } from "./runtime/model-call.js";
+import { ProviderRegistry } from "./runtime/providers.js";
+import { OrgQuota } from "./runtime/quota.js";
+import { RunQueue } from "./runtime/run-queue.js";
+import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 
 /**
  * 内核迁移目录。src/ 与 dist/ 都在包根下一层，所以统一指向 `<包根>/src/migrations`：
@@ -31,17 +42,35 @@ const STOP_TIMEOUT_MS = 30_000;
 
 /**
  * 停机分阶段预算：每阶段实际等待 `min(阶段预算, 总剩余)`，按顺序为
- * migrate（中止进行中的内核迁移并等其会话结束）2s → http 10s → plugins 15s，合计 27s，
+ * migrate（中止进行中的内核迁移并等其会话结束）2s → http 10s → runs 10s → plugins 5s，合计 27s，
  * 余下 3s 给 bus / redis / pg 收尾（这三步共享总剩余）。
  * http 阶段是一个截止时间：先等进行中的监听完成（否则关闭会与监听交错留下端口），再关闭 HTTP，
  * 两步共用这 10s；到点仍未关完就强制断开所有连接。
- * 因此任一前序阶段卡死时，插件队列仍至少有 15s 排空，总时长不超过 30s。
+ * runs 阶段（从原插件阶段的 15s 中划出 10s）：本进程的运行收到停机信号，在下一个步骤边界停下、
+ * 任务回到队列；超出预算的运行交给 BullMQ stalled 机制由其他 worker 续跑（spec 8.5）。
+ * 因此任一前序阶段卡死时，插件队列仍至少有 5s 排空，总时长不超过 30s。
  */
 export const STOP_BUDGET_MS = {
   migrate: 2_000,
   http: 10_000,
-  plugins: 15_000,
+  runs: 10_000,
+  plugins: 5_000,
 } as const;
+
+/** runs 阶段里留给强制关闭 worker 的余量（预算的其余部分用于等运行到达步骤边界）。 */
+const RUNS_FORCE_CLOSE_MS = 500;
+
+/** 运行编排相关的内核服务（后续任务的 loop / SSE 使用）。 */
+export interface KernelRuns {
+  readonly eventLog: EventLog;
+  readonly registry: ProviderRegistry;
+  readonly queue: RunQueue;
+  readonly lock: ConversationLock;
+  readonly quota: OrgQuota;
+  readonly abort: RunAbort;
+  /** 构造 loop 用的单步模型调用依赖。 */
+  readonly stepDeps: ModelStepDeps;
+}
 
 /** 运行中的内核实例。 */
 export interface Kernel {
@@ -50,6 +79,10 @@ export interface Kernel {
   readonly host: PluginHost;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
   readonly orgPluginConfigs: OrgPluginConfigs;
+  /** 内核总线（命名空间 `kernel`）。 */
+  readonly bus: PluginContext["bus"];
+  /** 运行编排服务。 */
+  readonly runs: KernelRuns;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -73,6 +106,13 @@ export interface KernelOptions {
   logger?: KernelLogger;
   /** 热更新时与来源原始值合并的环境变量，默认 `process.env`。 */
   env?: NodeJS.ProcessEnv;
+  /**
+   * 运行使用的 AgentLoop 工厂。不提供时本进程即使含 `worker` 角色也不执行运行（记 warn），
+   * 消息投递出的运行留在队列里，由提供了 loop 的 worker 副本执行。
+   */
+  loop?: (deps: ModelStepDeps) => AgentLoop;
+  /** 运行 worker 的测试钩子。 */
+  runHooks?: RunHooks;
 }
 
 /**
@@ -167,6 +207,17 @@ export async function createKernel(
     onSecrets: (v) => log.addOrgSecrets(v),
   });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
+  const kdb = kernelDb(db);
+  const bus = createBus(redis, busSubscriber, "kernel", log);
+  const eventLog = new EventLog(kdb, bus, log);
+  const registry = new ProviderRegistry(host, redis, log);
+  const lock = new ConversationLock(redis, log);
+  const quota = new OrgQuota(redis);
+  const abort = new RunAbort(redis, bus);
+  const runQueue = new RunQueue(kdb, lock, config.redis.url, log);
+  const stepDeps: ModelStepDeps = { db: kdb, eventLog, registry, config: () => current, log };
+  const runs: KernelRuns = { eventLog, registry, queue: runQueue, lock, quota, abort, stepDeps };
+  let runWorker: RunWorker | undefined;
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
   const releaseConnections = async (): Promise<void> => {
     redis.disconnect();
@@ -193,14 +244,20 @@ export async function createKernel(
       serveApi: config.roles.includes("api"),
       servePlugins,
       apiModule: ApiModule.register({
-        db: kernelDb(db),
+        db: kdb,
         redis,
         keyring,
         config: () => current,
         log,
         host,
         orgPluginConfigs,
-        bus: createBus(redis, busSubscriber, "kernel", log),
+        bus,
+        eventLog,
+        registry,
+        runs: {
+          ensureRun: (id) => runQueue.ensureRun(id),
+          requestAbort: (runId, by) => abort.request(runId, by),
+        },
       }),
       trustProxy: config.http.trustProxy,
     });
@@ -306,6 +363,13 @@ export async function createKernel(
       httpApp.closeAllConnections();
     }
     port = undefined;
+    // runs 阶段：停止领取运行、让本进程的运行在步骤边界停下并回到队列；再关闭运行队列的生产方连接。
+    const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
+    if (runWorker) {
+      const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
+      await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
+    }
+    await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
     await within("bus", busSubscriber.close());
     if (redis.status === "ready") {
@@ -321,6 +385,8 @@ export async function createKernel(
     http: httpApp,
     host,
     orgPluginConfigs,
+    bus,
+    runs,
     log,
     get config() {
       return current;
@@ -349,6 +415,27 @@ export async function createKernel(
         checkpoint();
         await host.load(config.plugins);
         checkpoint();
+        if (config.roles.includes("worker")) {
+          if (opts.loop) {
+            runWorker = new RunWorker({
+              db: kdb,
+              eventLog,
+              lock,
+              quota,
+              abort,
+              queue: runQueue,
+              settings: new SettingsService(kdb, log),
+              loop: opts.loop(stepDeps),
+              config: () => current,
+              log,
+              redisUrl: config.redis.url,
+              ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
+            });
+            runWorker.start();
+          } else {
+            log.warn("no agent loop configured; this worker does not execute agent runs");
+          }
+        }
         httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {
           unwatch = opts.source.watch(onConfigChange, (err) =>

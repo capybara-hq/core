@@ -208,6 +208,28 @@ export const KernelConfigSchema = z.object({
               "Maximum agent runs executing concurrently per organization across all replicas",
           }),
         ),
+      jobLockMs: z
+        .number()
+        .int()
+        .positive()
+        .default(30000)
+        .meta(
+          meta({
+            description:
+              "Lock duration of an agent run job in milliseconds (BullMQ lockDuration); a run whose worker stops renewing it is considered stalled after this long",
+          }),
+        ),
+      stalledIntervalMs: z
+        .number()
+        .int()
+        .positive()
+        .default(30000)
+        .meta(
+          meta({
+            description:
+              "How often workers check for stalled agent run jobs in milliseconds (BullMQ stalledInterval)",
+          }),
+        ),
     })
     .default({
       maxSteps: 50,
@@ -218,6 +240,8 @@ export const KernelConfigSchema = z.object({
       keepRecentTurns: 4,
       workerConcurrency: 10,
       orgConcurrency: 10,
+      jobLockMs: 30000,
+      stalledIntervalMs: 30000,
     }),
   log: z
     .object({

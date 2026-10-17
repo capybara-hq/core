@@ -10,8 +10,8 @@ import { AgentsService } from "../agents/agents.service.js";
 import { ModelsController } from "../agents/models.controller.js";
 import type { KernelConfig } from "../config/schema.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
-import { ConversationsService } from "../conversations/conversations.service.js";
-import { type EventBus, EventLog } from "../conversations/event-log.js";
+import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
+import type { EventBus, EventLog } from "../conversations/event-log.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { AccountsService } from "../identity/accounts.js";
@@ -30,7 +30,7 @@ import { OrgsService } from "../orgs/orgs.service.js";
 import type { PluginHost } from "../plugins/host.js";
 import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
 import type { OrgPluginConfigs } from "../plugins/org-config.js";
-import { ProviderRegistry } from "../runtime/providers.js";
+import type { ProviderRegistry } from "../runtime/providers.js";
 import {
   ACCOUNTS,
   AGENTS,
@@ -66,6 +66,12 @@ export interface ApiDeps {
   orgPluginConfigs: OrgPluginConfigs;
   /** 内核总线（命名空间 `kernel`，插件名不能取 `kernel`，不会与插件冲突）。 */
   bus: EventBus;
+  /** 会话事件日志（与运行 worker 共用同一实例）。 */
+  eventLog: EventLog;
+  /** 模型供应商注册表（与运行 worker 共用同一实例）。 */
+  registry: ProviderRegistry;
+  /** 运行投递与中止。 */
+  runs: RunControl;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -147,26 +153,18 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       useFactory: (redis: Redis) => new LoginRateLimiter(redis),
       inject: [KERNEL_REDIS],
     },
-    {
-      provide: PROVIDER_REGISTRY,
-      useFactory: (redis: Redis) => new ProviderRegistry(deps.host, redis, deps.log),
-      inject: [KERNEL_REDIS],
-    },
+    { provide: PROVIDER_REGISTRY, useValue: deps.registry },
     {
       provide: AGENTS,
       useFactory: (db: KernelDb, registry: ProviderRegistry) => new AgentsService(db, registry),
       inject: [KERNEL_DB, PROVIDER_REGISTRY],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
-    {
-      provide: EVENT_LOG,
-      useFactory: (db: KernelDb, bus: EventBus) => new EventLog(db, bus, deps.log),
-      inject: [KERNEL_DB, KERNEL_BUS],
-    },
+    { provide: EVENT_LOG, useValue: deps.eventLog },
     {
       provide: CONVERSATIONS,
       useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService) =>
-        new ConversationsService(db, eventLog, agents),
+        new ConversationsService(db, eventLog, agents, deps.runs),
       inject: [KERNEL_DB, EVENT_LOG, AGENTS],
     },
   ];

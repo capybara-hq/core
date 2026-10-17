@@ -106,6 +106,12 @@ beforeAll(async () => {
           orgPluginConfigs: k.orgPluginConfigs,
           // 探针请求都不带凭据，不会写事件日志
           bus: { publish: async () => {} },
+          eventLog: k.runs.eventLog,
+          registry: k.runs.registry,
+          runs: {
+            ensureRun: async () => null,
+            requestAbort: async () => {},
+          },
         }),
       ],
       providers: [{ provide: APP_INTERCEPTOR, useValue: probe }],

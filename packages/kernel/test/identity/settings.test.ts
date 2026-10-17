@@ -66,7 +66,7 @@ describe("SettingsService", () => {
         warns.push({ msg, ...(fields && { fields }) }),
     };
     const s = new SettingsService(db, log);
-    expect(await s.get()).toEqual({ orgCreation: "anyone" });
+    expect(await s.get()).toEqual({ orgCreation: "anyone", runConcurrencyOverrides: {} });
     expect(warns).toHaveLength(1);
     expect(warns[0]?.fields).toMatchObject({ key: "orgCreation" });
   });

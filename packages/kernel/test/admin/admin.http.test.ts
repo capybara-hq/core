@@ -397,6 +397,7 @@ describe("企业管理员端点", () => {
     const userReq = await session("user");
     expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
       orgCreation: "anyone",
+      runConcurrencyOverrides: {},
     });
     const put = await adminReq({
       method: "PUT",
@@ -404,7 +405,10 @@ describe("企业管理员端点", () => {
       payload: { orgCreation: "enterprise_admin" },
     });
     expect(put.statusCode).toBe(200);
-    expect(put.json()).toEqual({ orgCreation: "enterprise_admin" });
+    expect(put.json()).toEqual({
+      orgCreation: "enterprise_admin",
+      runConcurrencyOverrides: {},
+    });
     const bad = await adminReq({
       method: "PUT",
       url: "/api/v1/admin/settings",

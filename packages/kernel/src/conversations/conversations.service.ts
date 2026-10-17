@@ -21,6 +21,14 @@ export interface ConversationView {
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
 
+/** 会话服务用到的运行控制：投递运行（RunQueue）与跨副本中止（RunAbort）。 */
+export interface RunControl {
+  /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
+  ensureRun(conversationId: string): Promise<string | null>;
+  /** 请求中止运行（广播到所有副本）。 */
+  requestAbort(runId: string, byAccountId: string): Promise<void>;
+}
+
 /**
  * 用户消息的幂等键：客户端的 `clientMessageId` 加前缀，与运行流水线自用的幂等键分开，
  * 避免客户端恰好选中内部键而命中别的事件。
@@ -69,6 +77,7 @@ export class ConversationsService {
     private readonly db: KernelDb,
     private readonly eventLog: EventLog,
     private readonly agents: AgentsService,
+    private readonly runs?: RunControl,
   ) {}
 
   /** 新建会话；agent 对该账号不可用 → `agent.not_found`。 */
@@ -158,7 +167,9 @@ export class ConversationsService {
   }
 
   /**
-   * 追加一条用户消息；带 `clientMessageId` 时重复提交返回同一事件。运行的触发在后续任务接入。
+   * 追加一条用户消息；带 `clientMessageId` 时重复提交返回同一事件。写入后调用 `ensureRun`：
+   * 没有进行中的运行时投递一轮；运行中则由当前运行在步骤间隙吸收，或在它结束时再次 `ensureRun`。
+   * 投递失败时抛错（消息已写入；客户端带同一 `clientMessageId` 重试会再次触发投递）。
    */
   async postUserMessage(
     orgId: string,
@@ -180,6 +191,25 @@ export class ConversationsService {
         },
       },
     ]);
+    await this.runs?.ensureRun(conversationId);
     return event as ConversationEvent;
+  }
+
+  /**
+   * 中止会话当前的运行（queued / running）：返回 runId；没有 → `run.not_active`。
+   * 中止经 Redis 广播，运行所在的任意副本都会收到。
+   */
+  async abort(orgId: string, conversationId: string, accountId: string): Promise<string> {
+    await this.get(orgId, conversationId, accountId);
+    const run = await this.db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conversationId)
+      .where("status", "in", ["queued", "running"])
+      .orderBy("created_at", "desc")
+      .executeTakeFirst();
+    if (!run || !this.runs) throw new ApiError("run.not_active", "No active run to abort");
+    await this.runs.requestAbort(run.id, accountId);
+    return run.id;
   }
 }
