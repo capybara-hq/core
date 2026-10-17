@@ -20,7 +20,7 @@ import { ZodPipe } from "../http/zod.pipe.js";
 import type { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
 import type { Account, AccountsService } from "./accounts.js";
-import type { ApiTokenRecord, ApiTokenService } from "./api-tokens.js";
+import { type ApiTokenRecord, type ApiTokenService, FutureIsoDate } from "./api-tokens.js";
 import { clientMeta } from "./auth.controller.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
 import { CurrentPrincipal, type Principal, requireUser, SessionOnly } from "./principal.js";
@@ -37,10 +37,7 @@ const ChangePasswordBody = z.object({
 
 const TokenBody = z.object({
   name: z.string().min(1).max(100),
-  expiresAt: z.coerce
-    .date()
-    .refine((d) => d.getTime() > Date.now(), "must be in the future")
-    .optional(),
+  expiresAt: FutureIsoDate.optional(),
 });
 
 const CurrentOrgBody = z.object({ orgId: z.string().min(1).nullable() });
@@ -90,13 +87,7 @@ export class MeController {
     if (p.via !== "session") {
       throw new ApiError("auth.session_required", "This endpoint requires a web session");
     }
-    if (body.orgId !== null) {
-      const mine = await this.orgs.listForAccount(p.account.id);
-      if (!mine.some((o) => o.id === body.orgId)) {
-        throw new ApiError("org.not_found", "Organization not found");
-      }
-    }
-    await this.sessions.setCurrentOrg(p.sessionId, body.orgId);
+    await this.sessions.switchCurrentOrg(p.sessionId, p.account.id, body.orgId);
   }
 
   /**

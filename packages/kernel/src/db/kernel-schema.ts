@@ -104,7 +104,8 @@ export interface PluginOrgConfigsTable {
   plugin: string;
   org_id: string;
   enabled: Generated<boolean>;
-  config: Json;
+  /** 没有配置时为 null。 */
+  config: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
   updated_by: string | null;
   updated_at: Ts;
 }

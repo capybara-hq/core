@@ -212,6 +212,99 @@ describe("组织 HTTP", () => {
     expect(errCode(get)).toBe("org.not_found");
   });
 
+  it("current-org 与并发移出成员 50 轮：会话的 current_org_id 不指向已移出的组织", async () => {
+    const ownerReq = await session("owner");
+    const id = await createOrg(ownerReq);
+    const { req, acc } = await memberAs(id, "member", "racer");
+    const sess = await db
+      .selectFrom("sessions")
+      .select("id")
+      .where("account_id", "=", acc.id)
+      .executeTakeFirstOrThrow();
+    const poolB = createDb(pgc.url, 3);
+    try {
+      const membersB = new MembersService(kernelDb(poolB));
+      for (let i = 0; i < 50; i++) {
+        await db
+          .deleteFrom("memberships")
+          .where("org_id", "=", id)
+          .where("account_id", "=", acc.id)
+          .execute();
+        await members.add(id, acc.id, "member", owner.id);
+        await db
+          .updateTable("sessions")
+          .set({ current_org_id: null })
+          .where("id", "=", sess.id)
+          .execute();
+        const [, set] = await Promise.all([
+          membersB.remove(id, acc.id, owner.id),
+          req({ method: "PUT", url: "/api/v1/me/current-org", payload: { orgId: id } }),
+        ]);
+        expect([204, 404]).toContain(set.statusCode);
+        const row = await db
+          .selectFrom("sessions")
+          .select("current_org_id")
+          .where("id", "=", sess.id)
+          .executeTakeFirstOrThrow();
+        expect(row.current_org_id).toBeNull();
+      }
+    } finally {
+      await poolB.destroy();
+    }
+  });
+
+  it("服务令牌（member）对另一组织调用 HUMAN_ONLY 路由 → 404 org.not_found", async () => {
+    const ownerReq = await session("owner");
+    const a = await createOrg(ownerReq);
+    const b = await createOrg(ownerReq, "Beta", "beta");
+    const { token } = await tokens.createService(a, {
+      name: "ci",
+      role: "member",
+      createdBy: owner.id,
+    });
+    const res = await k.http.inject({
+      method: "PATCH",
+      url: `/api/v1/orgs/${b}/members/x`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { role: "guest" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(errCode(res)).toBe("org.not_found");
+  });
+
+  it("已软删除组织与不存在组织的 404 响应逐字节相同", async () => {
+    const ownerReq = await session("owner");
+    const id = await createOrg(ownerReq);
+    expect((await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${id}` })).statusCode).toBe(204);
+    const gone = await ownerReq({ method: "GET", url: `/api/v1/orgs/${id}` });
+    const none = await ownerReq({ method: "GET", url: `/api/v1/orgs/${ZERO_UUID}` });
+    expect(gone.statusCode).toBe(404);
+    expect(gone.body).toBe(none.body);
+    expect(gone.headers["content-length"]).toBe(none.headers["content-length"]);
+  });
+
+  it("admin 自降为 member 成功，审计里有记录", async () => {
+    const ownerReq = await session("owner");
+    const id = await createOrg(ownerReq);
+    const { req, acc } = await memberAs(id, "admin", "adam");
+    const res = await req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${id}/members/${acc.id}`,
+      payload: { role: "member" },
+    });
+    expect(res.statusCode).toBe(200);
+    const row = await db
+      .selectFrom("audit_events")
+      .select(["actor_account_id", "target", "detail"])
+      .where("action", "=", "org.member.role_changed")
+      .where("target", "=", acc.id)
+      .executeTakeFirstOrThrow();
+    expect(row.actor_account_id).toBe(acc.id);
+    expect(row.detail).toMatchObject({ from: "admin", to: "member" });
+    const get = await req({ method: "GET", url: `/api/v1/orgs/${id}` });
+    expect(get.json()).toMatchObject({ role: "member" });
+  });
+
   it("leave 与 transfer", async () => {
     const ownerReq = await session("owner");
     const id = await createOrg(ownerReq);

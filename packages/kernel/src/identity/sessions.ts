@@ -251,6 +251,50 @@ export class SessionService {
     }
   }
 
+  /**
+   * 切换当前组织（Web 会话）：同一事务内先 `SELECT … FROM memberships WHERE org_id = $1 AND account_id = $2 FOR SHARE`
+   * 锁住这一条成员关系（且组织未软删除），再写会话——与「移出成员」（DELETE memberships 后清空会话当前组织）互斥，
+   * 不会留下指向已移出组织的 `current_org_id`。非成员或组织已软删除 → `org.not_found`；`null` 清空，不查成员关系。
+   */
+  async switchCurrentOrg(
+    sessionId: string,
+    accountId: string,
+    orgId: string | null,
+  ): Promise<void> {
+    if (orgId === null) return this.setCurrentOrg(sessionId, null);
+    await this.db.transaction().execute(async (t) => {
+      // 加锁顺序与移出成员一致：先组织行、再成员关系行（sessions.current_org_id 的外键检查也会锁组织行，
+      // 若先锁成员关系，会与持有组织行 FOR UPDATE 的移出成员互相等待而死锁）
+      const org = await t
+        .selectFrom("orgs")
+        .select("id")
+        .where("id", "=", orgId)
+        .where("deleted_at", "is", null)
+        .forShare()
+        .executeTakeFirst();
+      const m =
+        org &&
+        (await t
+          .selectFrom("memberships")
+          .select("role")
+          .where("org_id", "=", orgId)
+          .where("account_id", "=", accountId)
+          .forShare()
+          .executeTakeFirst());
+      if (!m) throw new ApiError("org.not_found", "Organization not found");
+      const r = await t
+        .updateTable("sessions")
+        .set({ current_org_id: orgId })
+        .where("id", "=", sessionId)
+        .where("revoked_at", "is", null)
+        .where("expires_at", ">", sql<Date>`now()`)
+        .executeTakeFirst();
+      if (r.numUpdatedRows === 0n) {
+        throw new ApiError("auth.session_revoked", "Session has been revoked");
+      }
+    });
+  }
+
   /** 有效（未吊销且未过期）的会话；否则返回 undefined。 */
   async get(
     sessionId: string,

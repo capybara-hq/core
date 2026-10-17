@@ -71,6 +71,10 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 - `@OrgAction` 隐含 `@AllowService()`；`HUMAN_ONLY` 里的动作（除 `org.read`、`org.members.read` 之外的全部）遇到服务令牌返回 403。
 - **依赖角色的写操作要在事务里重读角色**：guard 的判定与写入之间角色可能被改。服务事务里调 `lockOrgAndAuthorize(trx, orgId, actorAccountId, action)`（`src/orgs/org-lock.ts`）：`SELECT … FROM capybara.orgs WHERE id = $1 AND deleted_at IS NULL FOR UPDATE` 锁组织行，再读发起人当前角色；组织不存在 / 已删除 → 404 `org.not_found`，非成员或角色不足 → 403 `forbidden`，返回 `{ org, role }` 供进一步判断（如令牌 / 邀请角色不得高于发起人）。只需串行化、不看角色时用 `lockOrg` / `tryLockOrg`。服务只收发起人账号 id，不收调用方传入的角色。
 - **企业管理员写操作同理**（`@EnterpriseAdmin` 只是请求开头的判定）：撤销 / 停用账号、新建账号（含企业管理员）、改部署设置都在事务内先调 `lockEnterpriseAdminsAndAuthorize(trx, actorAccountId)`（`src/identity/enterprise-admin.ts`）：取 `pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))` 串行化，并在锁内确认发起人仍是活跃企业管理员，否则 403 `forbidden`。新增企业管理员写操作必须照做。
+- **管理员给自己降级是允许的行为**：`PATCH /orgs/:orgId/members/:self`（admin → member / guest）照常成功并写 `org.member.role_changed` 审计；只有授予 / 撤销 / 改动 owner 才要求发起人是 owner，且任何操作都不能让组织没有 owner（`org.last_owner`）。降级后该账号立刻失去 `org.members.manage`，后续请求由 OrgGuard 实时判定。
+- **依赖「成员关系仍然存在」的写入先锁关系行**：如 `PUT /me/current-org` 在一个事务里先 `FOR SHARE` 组织行、再 `SELECT … FROM memberships WHERE org_id = $1 AND account_id = $2 FOR SHARE`（只查这一条），再写会话；加锁顺序必须与「移出成员」一致（组织行 → 成员关系行），否则会死锁。
+- **令牌过期时间**用 `identity/api-tokens.ts` 导出的共享 schema `FutureIsoDate`（完整 ISO 8601 datetime 字符串且晚于当前时间；数字、`"2099-01-01"` 之类 → 400）。
+- **组织插件配置**（`OrgPluginConfigs`）：`get` / `list` 在 `REPEATABLE READ` 只读事务里读配置行与密钥；`enabled=false` 的插件 `get` 不校验、返回 `{ enabled: false, config: null }`；`put` 同一事务内清掉当前 schema 里已不存在的密钥路径对应的 `capybara.secrets` 行；从未配置时 `config` 列存 NULL。
 
 ### 审计与个人令牌
 

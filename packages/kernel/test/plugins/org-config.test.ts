@@ -26,6 +26,8 @@ let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let host: PluginHost;
 let svc: OrgPluginConfigs;
+let keyring: ReturnType<typeof createKeyring>;
+let deps: KernelDeps;
 let accounts: AccountsService;
 let orgs: OrgsService;
 let members: MembersService;
@@ -51,8 +53,8 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  const keyring = createKeyring(Buffer.alloc(32, 3), []);
-  const deps: KernelDeps = {
+  keyring = createKeyring(Buffer.alloc(32, 3), []);
+  deps = {
     db: raw,
     dbUrl: pg.url,
     redis,
@@ -181,7 +183,7 @@ describe("OrgPluginConfigs", () => {
   });
 
   it("null 清除可选密钥：secrets 行被删除", async () => {
-    await svc.put(org.id, "orgcfg", { config: full }, A.id);
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     await svc.put(org.id, "orgcfg", { config: { appId: "x", webhook: { token: null } } }, A.id);
     expect((await svc.get(org.id, "orgcfg"))?.config).toEqual({
       appId: "x",
@@ -212,12 +214,12 @@ describe("OrgPluginConfigs", () => {
     await svc.put(
       org2.id,
       "orgcfg",
-      { config: { appId: "beta-app", appSecret: "beta-secret" } },
+      { enabled: true, config: { appId: "beta-app", appSecret: "beta-secret" } },
       B.id,
     );
     expect((await svc.get(org.id, "orgcfg"))?.config).toMatchObject({ appSecret: SECRET });
     expect(await svc.get(org2.id, "orgcfg")).toEqual({
-      enabled: false,
+      enabled: true,
       config: { appId: "beta-app", appSecret: "beta-secret", webhook: { path: "/hook" } },
     });
     const other = await accounts.createLocal({ login: "userc", password: PW, displayName: "C" });
@@ -254,7 +256,7 @@ describe("OrgPluginConfigs", () => {
   });
 
   it("插件升级后已存配置不合 schema：get 抛错含插件名、组织 ID 与路径，不含值", async () => {
-    await svc.put(org.id, "orgcfg", { config: full }, A.id);
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     await db
       .updateTable("plugin_org_configs")
       .set({ config: JSON.stringify({ appId: 98765, webhook: { path: "/h" } }) })
@@ -270,6 +272,115 @@ describe("OrgPluginConfigs", () => {
     expect(err?.message).toContain("appId");
     expect(err?.message).not.toContain("98765");
     expect(err?.message).not.toContain(SECRET);
+  });
+
+  it("get 在读完配置行之后、读密钥之前并发提交 put：返回同一次提交的快照", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    const next = { appId: "app-2", appSecret: "second-secret-value", webhook: { path: "/n" } };
+    let fired = false;
+    const hooked = new OrgPluginConfigs(db, keyring, host, {
+      afterConfigRowRead: async () => {
+        if (fired) return;
+        fired = true;
+        await svc.put(org.id, "orgcfg", { config: next }, A.id);
+      },
+    });
+    expect(await hooked.get(org.id, "orgcfg")).toEqual({ enabled: true, config: full });
+    expect(fired).toBe(true);
+    expect(await svc.get(org.id, "orgcfg")).toMatchObject({ config: { appId: "app-2" } });
+  });
+
+  it("list 同样在一致快照里读配置行与密钥", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    let fired = false;
+    const hooked = new OrgPluginConfigs(db, keyring, host, {
+      afterConfigRowRead: async () => {
+        if (fired) return;
+        fired = true;
+        await svc.put(
+          org.id,
+          "orgcfg",
+          { config: { appId: "app-3", appSecret: "x-secret-3" } },
+          A.id,
+        );
+      },
+    });
+    const v = (await hooked.list(org.id)).find((x) => x.plugin === "orgcfg");
+    expect(v?.config).toEqual({ appId: "app-1", webhook: { path: "/h" } });
+    expect(v?.secrets).toEqual([
+      { path: "appSecret", set: true },
+      { path: "webhook.token", set: true },
+    ]);
+  });
+
+  it("schema 删掉 webhook.token 字段后再次 put：capybara.secrets 中对应行被删除", async () => {
+    await svc.put(org.id, "orgcfg", { config: full }, A.id);
+    const count = async (key: string) =>
+      (
+        await db
+          .selectFrom("secrets")
+          .select("key")
+          .where("org_id", "=", org.id)
+          .where("key", "=", key)
+          .execute()
+      ).length;
+    expect(await count("plugin-config:orgcfg:webhook.token")).toBe(1);
+    const slim = new PluginHost(deps, {});
+    await slim.load([fx("orgcfg-slim")]);
+    try {
+      const svc2 = new OrgPluginConfigs(db, keyring, slim);
+      await svc2.put(org.id, "orgcfg", { config: { appId: "app-1", appSecret: SECRET } }, A.id);
+      expect(await count("plugin-config:orgcfg:webhook.token")).toBe(0);
+      expect(await count("plugin-config:orgcfg:appSecret")).toBe(1);
+    } finally {
+      await slim.close();
+    }
+  });
+
+  it("已停用插件存了非法配置：get 返回 { enabled:false, config:null } 且不抛错", async () => {
+    await svc.put(org.id, "orgcfg", { config: full }, A.id);
+    await db
+      .updateTable("plugin_org_configs")
+      .set({ config: JSON.stringify({ appId: 98765 }) })
+      .where("org_id", "=", org.id)
+      .execute();
+    expect(await svc.get(org.id, "orgcfg")).toEqual({ enabled: false, config: null });
+  });
+
+  it("没有记录时只传 enabled:false：config 存 null，list 显示 config:null", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: false }, A.id);
+    const row = await db
+      .selectFrom("plugin_org_configs")
+      .select(["enabled", "config"])
+      .where("org_id", "=", org.id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ enabled: false, config: null });
+    const v = (await svc.list(org.id)).find((x) => x.plugin === "orgcfg");
+    expect(v).toMatchObject({ enabled: false, config: null });
+  });
+
+  it("审计写入失败：密钥与配置都回滚", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    await sql`CREATE OR REPLACE FUNCTION capybara.test_fail_audit() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER test_fail_audit BEFORE INSERT ON capybara.audit_events FOR EACH ROW EXECUTE FUNCTION capybara.test_fail_audit()`.execute(
+      raw,
+    );
+    try {
+      await expect(
+        svc.put(
+          org.id,
+          "orgcfg",
+          { config: { appId: "changed", appSecret: "changed-secret", webhook: { path: "/c" } } },
+          A.id,
+        ),
+      ).rejects.toThrow(/audit down/);
+    } finally {
+      await sql`DROP TRIGGER test_fail_audit ON capybara.audit_events`.execute(raw);
+      await sql`DROP FUNCTION capybara.test_fail_audit()`.execute(raw);
+    }
+    expect(await svc.get(org.id, "orgcfg")).toEqual({ enabled: true, config: full });
   });
 
   it("发起人角色在事务内实时重读：member 或非成员 → forbidden；组织不存在 → org.not_found", async () => {

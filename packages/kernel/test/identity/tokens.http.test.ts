@@ -109,6 +109,25 @@ async function makeSvc(req: Req, orgId: string, role = "member") {
 }
 
 describe("个人访问令牌", () => {
+  it("expiresAt 必须是完整 ISO datetime 字符串（PAT 与服务令牌）", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    for (const url of ["/api/v1/me/tokens", `/api/v1/orgs/${orgId}/service-tokens`]) {
+      const extra = url.includes("service") ? { role: "member" } : {};
+      for (const expiresAt of [1893456000, "2099-01-01"]) {
+        const res = await req({ method: "POST", url, payload: { name: "x", expiresAt, ...extra } });
+        expect(res.statusCode).toBe(400);
+        expect(errCode(res)).toBe("validation_failed");
+      }
+      const ok = await req({
+        method: "POST",
+        url,
+        payload: { name: "x", expiresAt: "2099-01-01T00:00:00Z", ...extra },
+      });
+      expect(ok.statusCode).toBe(201);
+    }
+  });
+
   it("会话创建 PAT：Bearer GET /me → via pat；列表不含明文", async () => {
     const req = await session("owner");
     const { token, record } = await makePat(req);

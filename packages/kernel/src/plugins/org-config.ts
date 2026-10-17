@@ -119,23 +119,37 @@ export class OrgPluginConfigs {
     private readonly db: KernelDb,
     private readonly keyring: Keyring,
     private readonly host: PluginHost,
+    /** 仅供测试：在读完配置行之后、读密钥之前插入确定性的交错点。 */
+    private readonly hooks: { afterConfigRowRead?: () => Promise<void> } = {},
   ) {}
+
+  /** `REPEATABLE READ` 只读事务：配置行与密钥来自同一个快照，不会读到跨两次提交的混合状态。 */
+  private snapshot<T>(fn: (t: Trx) => Promise<T>): Promise<T> {
+    return this.db
+      .transaction()
+      .setIsolationLevel("repeatable read")
+      .setAccessMode("read only")
+      .execute(fn);
+  }
 
   /** 列出所有已加载插件在该组织下的状态（按加载顺序）；无记录时 enabled=false、config=null。 */
   async list(orgId: string): Promise<OrgPluginView[]> {
-    const rows = await this.db
-      .selectFrom("plugin_org_configs")
-      .select(["plugin", "enabled", "config"])
-      .where("org_id", "=", orgId)
-      .execute();
-    const setKeys = await this.setSecretKeys(this.db, orgId);
-    return this.host.manifests().map((m) =>
-      this.view(
-        m,
-        rows.find((r) => r.plugin === m.name),
-        setKeys,
-      ),
-    );
+    return this.snapshot(async (t) => {
+      const rows = await t
+        .selectFrom("plugin_org_configs")
+        .select(["plugin", "enabled", "config"])
+        .where("org_id", "=", orgId)
+        .execute();
+      await this.hooks.afterConfigRowRead?.();
+      const setKeys = await this.setSecretKeys(t, orgId);
+      return this.host.manifests().map((m) =>
+        this.view(
+          m,
+          rows.find((r) => r.plugin === m.name),
+          setKeys,
+        ),
+      );
+    });
   }
 
   /**
@@ -156,7 +170,7 @@ export class OrgPluginConfigs {
     if (input.config !== undefined && !schema) {
       throw new ApiError("plugin.no_org_config", `Plugin ${plugin} has no organization config`);
     }
-    await this.db.transaction().execute(async (t) => {
+    return this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.plugins.manage");
       const row = await t
         .selectFrom("plugin_org_configs")
@@ -165,12 +179,12 @@ export class OrgPluginConfigs {
         .where("org_id", "=", orgId)
         .executeTakeFirst();
       const enabled = input.enabled ?? row?.enabled ?? false;
-      let plain: Obj = row ? (row.config as Obj) : {};
+      let plain: Obj | null = row?.config ?? null;
       let changed: string[] = [];
       if (schema) {
         const secrets = createSecrets(t, this.keyring, SECRETS_NAMESPACE);
         const paths = secretPaths(schema);
-        const before = structuredClone(plain);
+        const before = structuredClone(plain ?? {});
         for (const p of paths) {
           const v = await secrets.get(orgId, secretKey(plugin, p));
           if (v !== null) setDeep(before, p, JSON.parse(v));
@@ -211,19 +225,26 @@ export class OrgPluginConfigs {
           }
         }
       }
+      // 当前 schema 中已不存在的密钥路径：同一事务内清掉遗留的密文行
+      const live = new Set((schema ? secretPaths(schema) : []).map((p) => secretKey(plugin, p)));
+      const prefix = secretKey(plugin, "");
+      const cleanup = createSecrets(t, this.keyring, SECRETS_NAMESPACE);
+      for (const key of await this.setSecretKeys(t, orgId)) {
+        if (key.startsWith(prefix) && !live.has(key)) await cleanup.delete(orgId, key);
+      }
       await t
         .insertInto("plugin_org_configs")
         .values({
           plugin,
           org_id: orgId,
           enabled,
-          config: JSON.stringify(plain),
+          config: plain === null ? null : JSON.stringify(plain),
           updated_by: actorAccountId,
         })
         .onConflict((oc) =>
           oc.columns(["plugin", "org_id"]).doUpdateSet({
             enabled,
-            config: JSON.stringify(plain),
+            config: plain === null ? null : JSON.stringify(plain),
             updated_by: actorAccountId,
             updated_at: new Date(),
           }),
@@ -237,19 +258,21 @@ export class OrgPluginConfigs {
         target: plugin,
         detail: { enabled, changedPaths: changed },
       });
+      // 在同一事务里读回，返回值就是刚提交的状态
+      const saved = await t
+        .selectFrom("plugin_org_configs")
+        .select(["plugin", "enabled", "config"])
+        .where("plugin", "=", plugin)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      return this.view(manifest, saved, await this.setSecretKeys(t, orgId));
     });
-    const row = await this.db
-      .selectFrom("plugin_org_configs")
-      .select(["plugin", "enabled", "config"])
-      .where("plugin", "=", plugin)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    return this.view(manifest, row, await this.setSecretKeys(this.db, orgId));
   }
 
   /**
    * 读取并解密某插件在该组织下的完整配置（供运行时按组织构造插件实例）。
-   * 无记录 → undefined；插件无 `config.org` 时 `config` 为 null。
+   * 无记录 → undefined；插件无 `config.org` 或已停用（`enabled=false`，不校验、不读密钥）时 `config` 为 null。
+   * 配置行与密钥在同一个 `REPEATABLE READ` 只读事务里读取。
    * 已存配置不再满足 schema（如插件升级后）→ 抛 Error，信息含插件名、组织 ID 与出错路径（不含值）。
    */
   async get(
@@ -257,17 +280,31 @@ export class OrgPluginConfigs {
     plugin: string,
   ): Promise<{ enabled: boolean; config: unknown } | undefined> {
     const manifest = this.manifest(plugin);
-    const row = await this.db
-      .selectFrom("plugin_org_configs")
-      .select(["enabled", "config"])
-      .where("plugin", "=", plugin)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    if (!row) return undefined;
-    const schema = manifest.config?.org;
-    if (!schema) return { enabled: row.enabled, config: null };
-    const full = structuredClone(row.config as Obj);
-    const secrets = createSecrets(this.db, this.keyring, SECRETS_NAMESPACE);
+    return this.snapshot(async (t) => {
+      const row = await t
+        .selectFrom("plugin_org_configs")
+        .select(["enabled", "config"])
+        .where("plugin", "=", plugin)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      await this.hooks.afterConfigRowRead?.();
+      if (!row) return undefined;
+      const schema = manifest.config?.org;
+      // 已停用的插件不会被实例化：不校验（可能是升级前存下的旧配置），也不解密密钥
+      if (!schema || !row.enabled) return { enabled: row.enabled, config: null };
+      return this.decode(t, orgId, plugin, schema, row.config ?? {});
+    });
+  }
+
+  private async decode(
+    t: Trx,
+    orgId: string,
+    plugin: string,
+    schema: z.ZodTypeAny,
+    stored: Obj,
+  ): Promise<{ enabled: boolean; config: unknown }> {
+    const full = structuredClone(stored);
+    const secrets = createSecrets(t, this.keyring, SECRETS_NAMESPACE);
     for (const p of secretPaths(schema)) {
       const v = await secrets.get(orgId, secretKey(plugin, p));
       if (v !== null) setDeep(full, p, JSON.parse(v));
@@ -281,7 +318,7 @@ export class OrgPluginConfigs {
         `plugin ${plugin}: stored organization config for org ${orgId} is invalid: ${detail}`,
       );
     }
-    return { enabled: row.enabled, config: r.data };
+    return { enabled: true, config: r.data };
   }
 
   private manifest(plugin: string): PluginManifest {
@@ -292,13 +329,13 @@ export class OrgPluginConfigs {
 
   private view(
     m: PluginManifest,
-    row: { enabled: boolean; config: Obj } | undefined,
+    row: { enabled: boolean; config: Obj | null } | undefined,
     setKeys: ReadonlySet<string>,
   ): OrgPluginView {
     const schema = m.config?.org;
     const paths = schema ? secretPaths(schema) : [];
     let config: Obj | null = null;
-    if (schema && row) {
+    if (schema && row?.config) {
       config = structuredClone(row.config);
       for (const p of paths) deleteDeep(config, p);
     }
