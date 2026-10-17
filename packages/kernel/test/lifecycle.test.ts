@@ -78,6 +78,33 @@ async function pgKernelConnections(): Promise<number> {
   }
 }
 
+/**
+ * 从独立连接持有某 schema 的迁移 advisory lock，使内核迁移阻塞在取锁上；此时 stop()：
+ * stop() 返回后该库不得残留 capybara-kernel 连接（迁移会话已结束），start() reject。
+ */
+async function stopDuringMigration(schema: string, config: KernelConfig): Promise<void> {
+  const holder = new pg.Client({ connectionString: pgc.url });
+  await holder.connect();
+  try {
+    await holder.query("select pg_advisory_lock(hashtext($1))", [`capybara-migrate:${schema}`]);
+    const k = await kernel(config);
+    const starting = k.start();
+    starting.catch(() => {});
+    const waiting = await waitFor(async () => {
+      const r = await holder.query<{ n: number }>(
+        "select count(*)::int as n from pg_stat_activity where application_name = 'capybara-kernel' and wait_event_type = 'Lock'",
+      );
+      return (r.rows[0]?.n ?? 0) > 0;
+    });
+    expect(waiting).toBe(true);
+    await k.stop();
+    expect(await waitFor(async () => (await pgKernelConnections()) === 0, 1_000, 20)).toBe(true);
+    await expect(starting).rejects.toThrow();
+  } finally {
+    await holder.end();
+  }
+}
+
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
 });
@@ -138,15 +165,23 @@ describe("插件生命周期", () => {
       // 等 setup 卡在 gate 上再停机（此时 slow 的 BullMQ Worker 连接已建立）
       await slow.entered.promise;
       await k.stop();
+      // setup 仍挂在 gate 上：stop() 返回时 slow 的 BullMQ 连接必须已经关闭（连接关闭在服务端生效有微小延迟，短轮询）
+      await waitFor(async () => (await clientCount(r)) === baseline, 1_000, 20);
+      expect(await clientCount(r)).toBe(baseline);
       slow.gate.resolve();
       await expect(starting).rejects.toThrow(/closed during load/);
-      const n = await waitFor(async () => (await clientCount(r)) === baseline, 3_000).then(() =>
-        clientCount(r),
-      );
-      expect(n).toBe(baseline);
+      expect(await clientCount(r)).toBe(baseline);
     } finally {
       r.disconnect();
     }
+  });
+
+  it("stop during kernel migration ends the migration session", async () => {
+    await stopDuringMigration("capybara", cfg());
+  });
+
+  it("stop during plugin migration ends the migration session", async () => {
+    await stopDuringMigration("plugin_fixture", cfg({ plugins: [fx("fixture")] }));
   });
 
   it("start failure releases resources", async () => {

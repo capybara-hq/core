@@ -78,6 +78,7 @@ export function createPluginContext(
   const bus = createBus(deps.redis, deps.busSubscriber, name, deps.log);
   const unsubs = new Set<() => Promise<void>>();
   const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
+  let closing: Promise<void> | undefined;
 
   return {
     kv: createKv(deps.redis, name),
@@ -127,11 +128,15 @@ export function createPluginContext(
     },
     routes,
     provided,
-    async close() {
-      const pending = [...unsubs];
-      unsubs.clear();
-      await Promise.allSettled(pending.map((u) => u()));
-      await closeQueue();
+    /** 幂等：重复 / 并发调用共享同一次关闭。 */
+    close() {
+      closing ??= (async () => {
+        const pending = [...unsubs];
+        unsubs.clear();
+        await Promise.allSettled(pending.map((u) => u()));
+        await closeQueue();
+      })();
+      return closing;
     },
   };
 }

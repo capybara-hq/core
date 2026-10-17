@@ -114,6 +114,9 @@ export async function createKernel(
   let startPromise: Promise<void> | undefined;
   let port: number | undefined;
   let listenPromise: Promise<number> | undefined;
+  /** 进行中的内核迁移；stop() 中止它并等其会话结束。 */
+  let migratePromise: Promise<unknown> | undefined;
+  const startAbort = new AbortController();
   let unwatch: (() => void) | undefined;
 
   const redis = new Redis(config.redis.url, { lazyConnect: true });
@@ -238,8 +241,15 @@ export async function createKernel(
       }
     };
 
-    // 不等待进行中的启动（插件 setup 可能任意慢）：宿主关闭后 load() 会在下一个检查点放弃并关闭刚建好的 ctx，
-    // 其余启动步骤在 checkpoint 处退出。只有正在进行的 listen 要先等完，否则关闭会与监听交错留下端口。
+    // 不等待进行中的启动（插件 setup 可能任意慢）：中止进行中的内核迁移并等其会话结束；
+    // 宿主关闭时中止插件迁移、立即关闭 setup 中的 ctx；其余启动步骤在 checkpoint 处退出。
+    // 正在进行的 listen 要先等完，否则关闭会与监听交错留下端口。
+    startAbort.abort();
+    if (migratePromise)
+      await within(
+        "migrate",
+        migratePromise.catch(() => {}),
+      );
     if (listenPromise)
       await within(
         "listen",
@@ -285,11 +295,12 @@ export async function createKernel(
         checkpoint();
         await sql`select 1`.execute(db);
         checkpoint();
-        await migrate(
+        migratePromise = migrate(
           config.db.url,
           { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
-          { connectTimeoutMs: config.db.connectTimeoutMs },
+          { connectTimeoutMs: config.db.connectTimeoutMs, signal: startAbort.signal },
         );
+        await migratePromise;
         checkpoint();
         await host.load(config.plugins);
         checkpoint();

@@ -84,6 +84,7 @@ async function migratePlugin(
   manifest: PluginManifest,
   dir: string,
   connectTimeoutMs: number | undefined,
+  signal?: AbortSignal,
 ): Promise<{ schema: string; applied: string[] } | undefined> {
   if (!manifest.migrations) return undefined;
   const schema = pluginSchemaName(manifest.name);
@@ -91,7 +92,10 @@ async function migratePlugin(
     const { applied } = await migrate(
       dbUrl,
       { schema, dir: resolvePath(dir, manifest.migrations) },
-      connectTimeoutMs !== undefined ? { connectTimeoutMs } : {},
+      {
+        ...(connectTimeoutMs !== undefined && { connectTimeoutMs }),
+        ...(signal && { signal }),
+      },
     );
     return { schema, applied };
   } catch (e) {
@@ -129,6 +133,12 @@ export class PluginHost {
   private readonly loaded: Loaded[] = [];
   private didLoad = false;
   private closed = false;
+  /** close() 时中止进行中的插件迁移。 */
+  private readonly abort = new AbortController();
+  /** 进行中的插件迁移（close() 等它结束，保证迁移连接不比宿主活得久）。 */
+  private migrating: Promise<unknown> | undefined;
+  /** 已创建、尚未登记（setup 进行中）的 ctx：close() 时立即关闭，不等 setup 返回。 */
+  private pending: { close(): Promise<void> } | undefined;
   private readonly resolveFrom: string;
 
   /**
@@ -147,8 +157,8 @@ export class PluginHost {
 
   /**
    * 导入各插件模块（default 导出）并按依赖顺序初始化；只能调用一次。
-   * 加载期间宿主被 `close()` 时：在下一个插件开始前、或刚完成 setup 的插件登记前抛
-   * `plugin host closed during load`（刚建好的 ctx 先关闭），不会留下未关闭的队列连接。
+   * 加载期间宿主被 `close()` 时：进行中的迁移被中止、setup 中的 ctx 被立即关闭（此后其 queue 的
+   * define / add 抛 `queue is closed`），load() 在下一个检查点抛 `plugin host closed during load`。
    */
   async load(specifiers: string[]): Promise<void> {
     if (this.closed) throw new Error(CLOSED_DURING_LOAD);
@@ -171,14 +181,25 @@ export class PluginHost {
         }
         config = r.data;
       }
-      await migratePlugin(
+      if (this.closed) throw new Error(CLOSED_DURING_LOAD);
+      this.migrating = migratePlugin(
         this.deps.dbUrl,
         manifest,
         dirs.get(name) as string,
         this.deps.connectTimeoutMs,
+        this.abort.signal,
       );
+      try {
+        await this.migrating;
+      } catch (e) {
+        if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
+        throw e;
+      } finally {
+        this.migrating = undefined;
+      }
       if (this.closed) throw new Error(CLOSED_DURING_LOAD);
       const ctx = createPluginContext(this.deps, manifest, config);
+      this.pending = ctx;
       try {
         await manifest.setup(ctx);
         for (const cap of manifest.provides) {
@@ -190,6 +211,8 @@ export class PluginHost {
         await ctx.close().catch(() => {});
         if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
         throw new Error(`plugin ${name}: setup failed: ${errMsg(e)}`, { cause: e });
+      } finally {
+        this.pending = undefined;
       }
       if (this.closed) {
         await ctx.close().catch(() => {});
@@ -241,11 +264,19 @@ export class PluginHost {
 
   /**
    * 按加载顺序（拓扑序）逆序串行关闭各插件：依赖方先于被依赖方关闭。
-   * 调用后宿主进入 closed 状态（幂等；进行中的 `load()` 会在下一个检查点放弃）。
-   * 单个插件关闭失败记 error 后继续关闭其余插件。
+   * 调用后宿主进入 closed 状态（幂等）。进行中的 `load()`：迁移被中止并等其连接结束，
+   * setup 中的 ctx 被立即关闭（不等 setup 返回），load() 随后在检查点放弃。
+   * 单个插件关闭失败记 error 后继续关闭其余插件。返回时本宿主建立的连接都已关闭。
    */
   async close(): Promise<void> {
     this.closed = true;
+    this.abort.abort();
+    await this.migrating?.catch(() => {});
+    const pending = this.pending;
+    this.pending = undefined;
+    await pending?.close().catch((e: unknown) => {
+      this.deps.log.error("plugin close failed", { err: e });
+    });
     while (this.loaded.length > 0) {
       const l = this.loaded.pop() as Loaded;
       const plugin = l.manifest.name;
