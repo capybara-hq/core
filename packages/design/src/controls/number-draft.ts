@@ -1,10 +1,10 @@
-import { type ChangeEvent, type FocusEvent, type KeyboardEvent, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, useState } from "react";
 
 /**
  * 数值框的输入草稿：输入过程中不夹取（允许先输入「1」再输入「15」），
  * 在失焦或回车时按 `normalize`（夹取到 [min, max]、按步长小数位取整）提交；
  * 空或非法文本在失焦时恢复为上一次的有效值。
- * 输入中的值若已合法且在范围内，会即时调用 `onLive`，表单不必等失焦才拿到新值。
+ * 输入中的值若已合法且在范围内，会按 `normalize` 取整后即时调用 `onCommit`，表单不必等失焦才拿到新值。
  */
 export function useNumberDraft({
   value,
@@ -49,9 +49,11 @@ export function useNumberDraft({
       const text = e.target.value;
       setDraft(text);
       const n = parse(text);
-      if (n !== undefined && inRange(n) && n !== value) onCommit(n);
+      if (n === undefined || !inRange(n)) return;
+      const next = normalize(n);
+      if (next !== value) onCommit(next);
     },
-    onBlur(_e: FocusEvent<HTMLInputElement>) {
+    onBlur() {
       commit();
     },
     onKeyDown(e: KeyboardEvent<HTMLInputElement>) {

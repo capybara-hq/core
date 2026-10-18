@@ -444,6 +444,35 @@ describe("清理：Button 加载态保持宽度", () => {
 });
 
 describe("清理：数值框草稿与外部值", () => {
+  it("输入中的合法值先按步长小数位取整再回调：step 0.1 输入「15.33」提交 15.3", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    function H() {
+      const [v, setV] = useState(10);
+      return (
+        <Stepper
+          label="t"
+          value={v}
+          min={10}
+          max={20}
+          step={0.1}
+          onChange={(n) => {
+            setV(n);
+            onChange(n);
+          }}
+        />
+      );
+    }
+    zh(<H />);
+    const box = screen.getByRole("spinbutton", { name: "t" }) as HTMLInputElement;
+    await user.clear(box);
+    await user.type(box, "15.33");
+    expect(onChange).not.toHaveBeenCalledWith(15.33);
+    expect(onChange).toHaveBeenLastCalledWith(15.3);
+    await user.tab();
+    expect(box.value).toBe("15.3");
+  });
+
   it("输入后（未失焦）外部把值改掉，数值框显示新值而不是旧草稿", () => {
     function H() {
       const [v, setV] = useState<number | undefined>(undefined);

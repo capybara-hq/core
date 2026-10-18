@@ -264,18 +264,15 @@ describe("DataTable fixes", () => {
 });
 
 describe("清理：行的 aria 状态、行内控件 roving tabindex、默认空文案", () => {
-  it("勾选行 aria-selected=true、未勾选 false；选中行 aria-current=true", () => {
+  it("选中行 aria-current=true；普通 <table> 的行不输出 aria-selected（勾选由行复选框表达）", () => {
     render(<Harness initial={["b"]} activeKey="c" />);
     const [ra, rb, rc] = screen.getAllByRole("row").slice(1);
-    expect(ra?.getAttribute("aria-selected")).toBe("false");
-    expect(rb?.getAttribute("aria-selected")).toBe("true");
     expect(rc?.getAttribute("aria-current")).toBe("true");
     expect(ra?.getAttribute("aria-current")).toBeNull();
-  });
-
-  it("无 selection 时不输出 aria-selected", () => {
-    plain({});
-    expect(screen.getAllByRole("row")[1]?.hasAttribute("aria-selected")).toBe(false);
+    for (const r of [ra, rb, rc]) expect(r?.hasAttribute("aria-selected")).toBe(false);
+    expect((within(rb as HTMLElement).getByRole("checkbox") as HTMLInputElement).checked).toBe(
+      true,
+    );
   });
 
   it("只有 Tab 停靠行的复选框与 ⋯ 在 Tab 顺序里；Tab 不在每行停留", async () => {

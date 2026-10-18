@@ -225,7 +225,6 @@ export function DataTable<T>({
                       className="cb-table-row"
                       data-row-key={key}
                       data-state={states || undefined}
-                      aria-selected={selection ? selected.has(key) : undefined}
                       aria-current={key === activeKey ? "true" : undefined}
                       tabIndex={key === tabKey ? 0 : -1}
                       // 焦点进入行内任意控件（如点击复选框）也让该行成为 Tab 停靠行
