@@ -198,3 +198,40 @@ describe("DataTable sort", () => {
     expect(th.textContent).toContain("▲");
   });
 });
+
+describe("DataTable fixes", () => {
+  it("行重排后保持同一 DOM 节点与焦点", () => {
+    const ui = (rs: Row[]) => (
+      <DesignProvider locale="zh">
+        <DataTable<Row> columns={columns} rows={rs} rowKey={(r) => r.id} label="t" />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui(rows));
+    const before = screen.getByText("Beta").closest("tr") as HTMLElement;
+    before.focus();
+    rerender(ui([rows[2] as Row, rows[1] as Row, rows[0] as Row]));
+    const after = screen.getByText("Beta").closest("tr") as HTMLElement;
+    expect(after).toBe(before);
+    expect(document.activeElement).toBe(before);
+  });
+
+  it("行复选框名称可区分，rowLabel 优先", () => {
+    const sel = { selected: new Set<string>(), onChange: vi.fn() };
+    const { rerender } = plain({ selection: sel });
+    expect(screen.getByRole("checkbox", { name: "选择 Alpha" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "选择 Beta" })).toBeTruthy();
+    rerender(
+      <DesignProvider locale="zh">
+        <DataTable<Row>
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.id}
+          label="t"
+          selection={sel}
+          rowLabel={(r) => `行${r.id}`}
+        />
+      </DesignProvider>,
+    );
+    expect(screen.getByRole("checkbox", { name: "选择 行a" })).toBeTruthy();
+  });
+});

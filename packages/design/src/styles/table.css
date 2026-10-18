@@ -121,41 +121,6 @@
   max-width: 32px;
   overflow: visible;
 }
-/* 行状态优先级：焦点环 > 选中 > 勾选 > 悬停 > 默认 */
-.cb-table-el .cb-table-row {
-  outline: none;
-  cursor: default;
-}
-.cb-table-el .cb-table-row:hover td {
-  background: var(--cb-hover);
-}
-.cb-table-el .cb-table-row:hover .cb-box {
-  border-color: var(--cb-ink);
-}
-.cb-table-el .cb-table-row[data-state~="active"] td {
-  background: var(--cb-accent-tint);
-}
-.cb-table-el .cb-table-row[data-state~="active"] td:first-child {
-  box-shadow: inset 2px 0 0 var(--cb-accent);
-}
-.cb-table-el .cb-table-row:focus-visible td {
-  box-shadow:
-    inset 0 1px 0 var(--cb-accent),
-    inset 0 -1px 0 var(--cb-accent);
-}
-.cb-table-el .cb-table-row:focus-visible td:first-child {
-  box-shadow:
-    inset 1px 1px 0 var(--cb-accent),
-    inset 0 -1px 0 var(--cb-accent);
-}
-.cb-table-el .cb-table-row:focus-visible td:last-child {
-  box-shadow:
-    inset -1px 1px 0 var(--cb-accent),
-    inset 0 -1px 0 var(--cb-accent);
-}
-.cb-table-el .cb-table-row[data-state~="disabled"] td {
-  color: var(--cb-faint);
-}
 /* 表头吸顶；横向滚动时首列吸左 */
 .cb-table-el th.cb-table-check,
 .cb-table-el td.cb-table-check {
@@ -180,11 +145,46 @@
   z-index: 3;
 }
 
+/* 行状态优先级：焦点环 > 选中 > 勾选 > 悬停 > 默认 */
+.cb-table-el .cb-table-row {
+  outline: none;
+  cursor: default;
+}
+.cb-table-el .cb-table-row:hover td {
+  background: var(--cb-hover);
+}
+.cb-table-el .cb-table-row:hover .cb-box {
+  border-color: var(--cb-ink);
+}
+.cb-table-el .cb-table-row[data-state~="active"] td {
+  background: linear-gradient(var(--cb-accent-tint), var(--cb-accent-tint)), var(--cb-bg);
+}
+.cb-table-el .cb-table-row[data-state~="active"] td:first-child {
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+.cb-table-el .cb-table-row:focus-visible td {
+  box-shadow:
+    inset 0 1px 0 var(--cb-accent),
+    inset 0 -1px 0 var(--cb-accent);
+}
+.cb-table-el .cb-table-row:focus-visible td:first-child {
+  box-shadow:
+    inset 1px 1px 0 var(--cb-accent),
+    inset 0 -1px 0 var(--cb-accent);
+}
+.cb-table-el .cb-table-row:focus-visible td:last-child {
+  box-shadow:
+    inset -1px 1px 0 var(--cb-accent),
+    inset 0 -1px 0 var(--cb-accent);
+}
+.cb-table-el .cb-table-row[data-state~="disabled"] td {
+  color: var(--cb-faint);
+}
 .cb-table-menu [data-state="open"],
 .cb-table-menu .cb-btn[aria-expanded="true"] {
   background: var(--cb-line);
 }
-.cb-table-el .cb-table-expand td {
+.cb-table .cb-table-el .cb-table-expand td {
   background: var(--cb-panel);
   padding-left: 32px;
   max-width: none;

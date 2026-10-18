@@ -31,6 +31,7 @@ export type DataTableProps<T> = {
   rowMenu?(row: T): MenuItem[];
   expand?(row: T): ReactNode | null;
   isDisabled?(row: T): boolean;
+  rowLabel?(row: T): string;
   sort?: { key: string; dir: SortDir; onChange(key: string, dir: SortDir): void };
   pagination?: PaginationProps;
   density?: "default" | "compact" | "media";

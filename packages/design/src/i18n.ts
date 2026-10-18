@@ -38,7 +38,7 @@ const zh = {
   "table.retry": "重试",
   "table.loadFailed": "加载失败",
   "table.selectAll": "全选",
-  "table.selectRow": "选择此行",
+  "table.selectRow": "选择 {name}",
   "table.rowActions": "行操作",
   "table.noResults": "没有符合条件的结果",
 };
@@ -83,7 +83,7 @@ const en: Record<DesignKey, string> = {
   "table.retry": "Retry",
   "table.loadFailed": "Failed to load",
   "table.selectAll": "Select all",
-  "table.selectRow": "Select row",
+  "table.selectRow": "Select {name}",
   "table.rowActions": "Row actions",
   "table.noResults": "No matching results",
 };

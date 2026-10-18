@@ -1,4 +1,5 @@
 import {
+  Fragment,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -35,6 +36,7 @@ export function DataTable<T>({
   rowMenu,
   expand,
   isDisabled,
+  rowLabel,
   sort,
   pagination,
   density = "default",
@@ -210,64 +212,69 @@ export function DataTable<T>({
                 ]
                   .filter(Boolean)
                   .join(" ");
+                const first = columns[0]?.cell(row);
+                const rowName = rowLabel?.(row) ?? (typeof first === "string" ? first : key);
                 const extra = expand?.(row);
-                return [
-                  <tr
-                    key={key}
-                    className="cb-table-row"
-                    data-row-key={key}
-                    data-state={states || undefined}
-                    tabIndex={key === tabKey ? 0 : -1}
-                    onFocus={(e) => {
-                      if (e.target === e.currentTarget) setFocusKey(key);
-                    }}
-                    onKeyDown={(e) => onRowKey(e, row, idx)}
-                    onClick={(e) => onRowClick(e, row)}
-                  >
-                    {selection ? (
-                      <td className="cb-table-check" data-no-open="true">
-                        <Checkbox
-                          checked={selected.has(key)}
-                          onChange={() => toggle(key)}
-                          disabled={disabled}
-                          aria-label={t("table.selectRow")}
-                        />
-                      </td>
-                    ) : null}
-                    {columns.map((c) => {
-                      const content = c.cell(row);
-                      return (
-                        <td
-                          key={c.key}
-                          data-align={c.align === "right" ? "right" : undefined}
-                          data-tone={c.tone}
-                        >
-                          <span className="cb-table-cell" title={titleOf(content)}>
-                            {content}
-                          </span>
+                return (
+                  <Fragment key={key}>
+                    <tr
+                      className="cb-table-row"
+                      data-row-key={key}
+                      data-state={states || undefined}
+                      tabIndex={key === tabKey ? 0 : -1}
+                      onFocus={(e) => {
+                        if (e.target === e.currentTarget) setFocusKey(key);
+                      }}
+                      onKeyDown={(e) => onRowKey(e, row, idx)}
+                      onClick={(e) => onRowClick(e, row)}
+                    >
+                      {selection ? (
+                        <td className="cb-table-check" data-no-open="true">
+                          <Checkbox
+                            checked={selected.has(key)}
+                            onChange={() => toggle(key)}
+                            disabled={disabled}
+                            aria-label={t("table.selectRow").replace("{name}", rowName)}
+                          />
                         </td>
-                      );
-                    })}
-                    {rowMenu ? (
-                      <td className="cb-table-menu" data-no-open="true">
-                        <Menu
-                          items={rowMenu(row)}
-                          trigger={<IconButton size={24} label={t("table.rowActions")} icon="⋯" />}
-                        />
-                      </td>
-                    ) : null}
-                  </tr>,
-                  extra ? (
-                    <tr key={`${key}:expand`} className="cb-table-expand">
-                      <td colSpan={colCount}>
-                        <span className="cb-table-guide" aria-hidden="true">
-                          └
-                        </span>
-                        {extra}
-                      </td>
+                      ) : null}
+                      {columns.map((c) => {
+                        const content = c.cell(row);
+                        return (
+                          <td
+                            key={c.key}
+                            data-align={c.align === "right" ? "right" : undefined}
+                            data-tone={c.tone}
+                          >
+                            <span className="cb-table-cell" title={titleOf(content)}>
+                              {content}
+                            </span>
+                          </td>
+                        );
+                      })}
+                      {rowMenu ? (
+                        <td className="cb-table-menu" data-no-open="true">
+                          <Menu
+                            items={rowMenu(row)}
+                            trigger={
+                              <IconButton size={24} label={t("table.rowActions")} icon="⋯" />
+                            }
+                          />
+                        </td>
+                      ) : null}
                     </tr>
-                  ) : null,
-                ];
+                    {extra ? (
+                      <tr className="cb-table-expand">
+                        <td colSpan={colCount}>
+                          <span className="cb-table-guide" aria-hidden="true">
+                            └
+                          </span>
+                          {extra}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
               })}
             </tbody>
           </table>
