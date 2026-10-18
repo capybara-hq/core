@@ -9,7 +9,11 @@ import {
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { checkDeclaredParameters, describeModelProviderConformance } from "../src/index.js";
+import {
+  checkDeclaredParameters,
+  describeModelProviderConformance,
+  thinkingReplayParams,
+} from "../src/index.js";
 
 const usage = (cacheRead: number) => ({
   inputTokens: 10,
@@ -64,7 +68,7 @@ function makeProvider(
         return;
       }
       const content: ContentBlock[] = [];
-      if (question.includes("17 * 23")) content.push({ type: "thinking", text: "17*23=391" });
+      if (question.includes("pencils")) content.push({ type: "thinking", text: "9 * 2 = 18" });
       const key = JSON.stringify(req.system);
       const cacheRead = seen.has(key) ? 5 : 0;
       seen.add(key);
@@ -161,5 +165,39 @@ describe("checkDeclaredParameters", () => {
       ]),
     ]);
     expect(problems.join("\n")).toMatch(/in-memory\.n/);
+  });
+});
+
+describe("thinkingReplayParams", () => {
+  const knob = (key: "effort" | "thinking", values: string[], def?: string): ModelParameter => ({
+    key,
+    standard: key,
+    schema: { type: "string", enum: values },
+    ...(def !== undefined ? { default: def } : {}),
+    label: { zh: key, en: key },
+  });
+  it("takes the highest declared effort tier and thinking summarized (else on), plus other defaults", () => {
+    expect(
+      thinkingReplayParams([
+        knob("effort", ["max", "low", "high"], "high"),
+        knob("thinking", ["on", "summarized"], "on"),
+        {
+          key: "p.style",
+          schema: { type: "string", enum: ["a", "b"] },
+          default: "b",
+          label: { zh: "s", en: "s" },
+        },
+      ]),
+    ).toEqual({ effort: "max", thinking: "summarized", "p.style": "b" });
+    expect(
+      thinkingReplayParams([knob("thinking", ["off", "on"]), knob("effort", ["low", "xhigh"])]),
+    ).toEqual({
+      thinking: "on",
+      effort: "xhigh",
+    });
+  });
+  it("sets nothing that is not declared", () => {
+    expect(thinkingReplayParams([])).toEqual({});
+    expect(thinkingReplayParams([knob("thinking", ["off"])])).toEqual({});
   });
 });

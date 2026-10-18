@@ -18,7 +18,11 @@ import type { PluginHost } from "../plugins/host.js";
 
 /** 供应商模型列表在 Redis 中的缓存时长（秒）。 */
 const MODELS_TTL_SECONDS = 600;
-const modelsKey = (provider: string) => `capk:models:${provider}`;
+/**
+ * 键带供应商的契约主版本：插件从 `@1` 升级到 `@2` 后不会读到 `@1`（经适配）时写入的列表
+ * （两者都是 `@2` 形状，按形状分辨不出来）；旧键按 TTL 自然过期。
+ */
+const modelsKey = (provider: string, major: 1 | 2) => `capk:models:${provider}:v${major}`;
 
 const CAPABILITY = "model-provider";
 
@@ -38,12 +42,14 @@ export class ProviderListError extends ApiError {
   }
 }
 
-/** `@1` 适配层为 `capabilities.effort` 为真的模型补的 effort 旋钮：五档，默认 high。 */
+/**
+ * `@1` 适配层为 `capabilities.effort` 为真的模型补的 effort 旋钮：五档，不给默认值
+ * （各家 API 的默认值不同；给了默认值会让未设置 effort 的 agent 每次都静默发送它）。
+ */
 const V1_EFFORT_KNOB: ModelParameter = {
   key: "effort",
   standard: "effort",
   schema: { type: "string", enum: [...EFFORT_VALUES] },
-  default: "high",
   label: { zh: "思考深度", en: "Effort" },
 };
 
@@ -88,7 +94,7 @@ const isCurrentShape = (models: unknown): models is ModelInfo[] =>
  * 同时支持 `model-provider@1`（经 {@link adaptModelProviderV1} 适配）与 `@2`；
  * 同一插件两者都提供时用 `@2`。`@2` 的 `listModels()` 结果先过 `assertValidDeclarations`，
  * 不合规的供应商不可用（不可重试）。
- * 每个供应商的模型列表（`@2` 形状）缓存在 Redis `capk:models:<provider>`（EX 600），不放进程内存，
+ * 每个供应商的模型列表（`@2` 形状）缓存在 Redis `capk:models:<provider>:v<主版本>`（EX 600），不放进程内存，
  * 多副本共享同一份缓存。
  */
 export class ProviderRegistry {
@@ -121,7 +127,7 @@ export class ProviderRegistry {
   }
 
   private async models(provider: string, major: 1 | 2, impl: ModelProvider): Promise<ModelInfo[]> {
-    const key = modelsKey(provider);
+    const key = modelsKey(provider, major);
     const cached = await this.kv.get(key);
     if (cached !== null) {
       const parsed: unknown = JSON.parse(cached);

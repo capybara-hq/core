@@ -1,13 +1,16 @@
 import {
   assertValidDeclarations,
   type ContentBlock,
+  EFFORT_VALUES,
   isModelError,
   type ModelInfo,
+  type ModelParameter,
   type ModelProvider,
   type ModelProviderV1,
   type ModelRequest,
   type ModelRequestV1,
   type ModelStreamEvent,
+  type ParamValue,
   sanitizeParams,
   validateParams,
 } from "@capybara-hq/plugin-sdk";
@@ -67,6 +70,31 @@ export function checkDeclaredParameters(plugin: string, models: ModelInfo[]): st
   }
   return problems;
 }
+
+const enumOf = (decl: ModelParameter[], key: string): string[] => {
+  const s = decl.find((d) => d.key === key)?.schema;
+  return s?.type === "string" && "enum" in s ? s.enum : [];
+};
+
+/**
+ * thinking replay 用例的 `@2` 参数：按模型的声明取最高一档 effort、thinking 取 `summarized`（否则 `on`），
+ * 未声明的不设置；其余已声明参数补默认值。目的是让思考尽量稳定出现（adaptive 思考在简单问题上会跳过思考）。
+ */
+export function thinkingReplayParams(decl: ModelParameter[]): Record<string, ParamValue> {
+  const want: Record<string, ParamValue> = {};
+  const efforts = enumOf(decl, "effort");
+  const top = [...EFFORT_VALUES].reverse().find((e) => efforts.includes(e));
+  if (top !== undefined) want.effort = top;
+  const thinking = enumOf(decl, "thinking");
+  const mode = ["summarized", "on"].find((m) => thinking.includes(m));
+  if (mode !== undefined) want.thinking = mode;
+  return sanitizeParams(decl, want).value;
+}
+
+/** thinking replay 的提问：需要多步推理的短应用题（简单算式可能让 adaptive 思考直接跳过）。 */
+const THINKING_PROMPT =
+  "A shop sells pencils at 3 for $2. Maria buys 27 pencils and pays with a $50 bill. " +
+  "How much change does she get? Work it out, then answer with just the amount.";
 
 async function collect(
   t: ConformanceTarget,
@@ -157,11 +185,11 @@ export function describeModelProviderConformance(
       expect(second.done.content.some((b) => b.type === "text")).toBe(true);
     });
 
-    /** 思考用例的参数：`@1` 发 `effort: "low"`；`@2` 按该模型的声明取 effort low（若声明）并补默认值。 */
+    /** 思考用例的参数：`@1` 发 `effort: "high"`；`@2` 见 {@link thinkingReplayParams}。 */
     const thinkingOver = async (): Promise<Partial<SuiteRequest>> => {
-      if (t.contract !== 2) return { effort: "low" };
+      if (t.contract !== 2) return { effort: "high" };
       const info = (await t.provider.listModels()).find((m) => m.id === t.model);
-      return { params: sanitizeParams(info?.parameters ?? [], { effort: "low" }).value };
+      return { params: thinkingReplayParams(info?.parameters ?? []) };
     };
 
     it("declares valid parameters", async (ctx) => {
@@ -174,7 +202,7 @@ export function describeModelProviderConformance(
       const over = await thinkingOver();
       const first = base({
         ...over,
-        messages: [{ role: "user", content: [{ type: "text", text: "What is 17 * 23?" }] }],
+        messages: [{ role: "user", content: [{ type: "text", text: THINKING_PROMPT }] }],
       });
       const { done } = await collect(t, first);
       expect(done.content.some((b) => b.type === "thinking")).toBe(true);
@@ -185,7 +213,7 @@ export function describeModelProviderConformance(
           messages: [
             ...first.messages,
             { role: "assistant", content: done.content },
-            { role: "user", content: [{ type: "text", text: "Now add 1." }] },
+            { role: "user", content: [{ type: "text", text: "Now double that amount." }] },
           ],
         }),
       );

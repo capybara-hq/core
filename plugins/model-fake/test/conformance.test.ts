@@ -10,6 +10,8 @@ describeModelProviderConformance("model-fake", async () => {
     },
   };
   return {
+    contract: 2,
+    plugin: "model-fake",
     provider: createFakeProvider({ kv }),
     model: "fake-1",
     expect: { thinking: false, caching: true },

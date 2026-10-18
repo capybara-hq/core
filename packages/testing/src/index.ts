@@ -18,5 +18,6 @@ export {
   type ConformanceTarget,
   checkDeclaredParameters,
   describeModelProviderConformance,
+  thinkingReplayParams,
 } from "./model-conformance.js";
 export { assertPluginSecretsReachable, pluginDeploymentSecretValues } from "./plugin-config.js";

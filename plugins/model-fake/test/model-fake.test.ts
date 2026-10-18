@@ -1,10 +1,12 @@
 import {
   isModelError,
-  type ModelProviderV1,
-  type ModelRequestV1,
+  MODEL_PROVIDER_CAPABILITY_V2,
+  type ModelProvider,
+  type ModelRequest,
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
+import plugin from "../src/index.js";
 import { createFakeProvider, type Kv, type Sleep } from "../src/script.js";
 
 function memKv(): Kv & { store: Map<string, string>; ttls: number[] } {
@@ -21,18 +23,19 @@ function memKv(): Kv & { store: Map<string, string>; ttls: number[] } {
   };
 }
 
-const req = (text: string, over: Partial<ModelRequestV1> = {}): ModelRequestV1 => ({
+const req = (text: string, over: Partial<ModelRequest> = {}): ModelRequest => ({
   model: "fake-1",
   system: [{ text: "sys", cache: true }],
   messages: [{ role: "user", content: [{ type: "text", text }] }],
   tools: [],
   maxOutputTokens: 1024,
+  params: {},
   ...over,
 });
 
 async function run(
-  p: ModelProviderV1,
-  r: ModelRequestV1,
+  p: ModelProvider,
+  r: ModelRequest,
   signal = new AbortController().signal,
 ): Promise<ModelStreamEvent[]> {
   const out: ModelStreamEvent[] = [];
@@ -57,6 +60,42 @@ describe("model-fake", () => {
       reasoning: false,
       caching: true,
     });
+  });
+
+  it("provides model-provider@2", () => {
+    expect(plugin.provides).toEqual([MODEL_PROVIDER_CAPABILITY_V2]);
+  });
+
+  it("declares effort (three tiers) and the vendor parameter model-fake.style; no capabilities.effort", async () => {
+    const [m] = await mk().listModels();
+    expect(m?.capabilities).not.toHaveProperty("effort");
+    expect(m?.parameters).toEqual([
+      {
+        key: "effort",
+        standard: "effort",
+        schema: { type: "string", enum: ["low", "medium", "high"] },
+        label: { zh: "思考深度", en: "Effort" },
+        description: expect.any(Object),
+      },
+      {
+        key: "model-fake.style",
+        schema: { type: "string", enum: ["plain", "shout"] },
+        label: { zh: "回复风格", en: "Reply style" },
+        description: expect.any(Object),
+      },
+    ]);
+  });
+
+  it("model-fake.style: shout upper-cases the reply (deltas and final content); plain leaves it", async () => {
+    const evs = await run(
+      mk(),
+      req("echo:Hello there", { params: { "model-fake.style": "shout" } }),
+    );
+    const deltas = evs.flatMap((e) => (e.type === "text_delta" ? [e.text] : []));
+    expect(deltas.join("")).toBe("HELLO THERE");
+    expect(complete(evs).content).toEqual([{ type: "text", text: "HELLO THERE" }]);
+    const plain = await run(mk(), req("echo:Hello", { params: { "model-fake.style": "plain" } }));
+    expect(complete(plain).content).toEqual([{ type: "text", text: "Hello" }]);
   });
 
   it("echo streams 4-char chunks", async () => {

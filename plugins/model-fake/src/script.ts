@@ -3,9 +3,10 @@ import {
   type ContentBlock,
   ModelError,
   type ModelErrorKind,
-  type ModelInfoV1,
-  type ModelProviderV1,
-  type ModelRequestV1,
+  type ModelInfo,
+  type ModelParameter,
+  type ModelProvider,
+  type ModelRequest,
   type ModelStreamEvent,
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
@@ -30,6 +31,29 @@ const CHUNK_CHARS = 4;
 /** 多块输出时块间默认间隔，保证调用方能在流进行中中止。 */
 const DEFAULT_CHUNK_DELAY_MS = 2;
 const COMPACTION_MARKER = "CAPYBARA_COMPACTION";
+
+/**
+ * 每个模型声明的参数：三档 effort（只记录、不影响输出）与厂商专有参数 `model-fake.style`
+ * （`shout` 时回复转大写），供测试与演示界面使用。都不给默认值：未设置时不进请求参数。
+ */
+const parameters = (): ModelParameter[] => [
+  {
+    key: "effort",
+    standard: "effort",
+    schema: { type: "string", enum: ["low", "medium", "high"] },
+    label: { zh: "思考深度", en: "Effort" },
+    description: {
+      zh: "假模型只记录该值，不影响输出",
+      en: "Recorded only; the fake model's output does not change",
+    },
+  },
+  {
+    key: "model-fake.style",
+    schema: { type: "string", enum: ["plain", "shout"] },
+    label: { zh: "回复风格", en: "Reply style" },
+    description: { zh: "shout 时回复全部转大写", en: "shout upper-cases the whole reply" },
+  },
+];
 function isErrorKind(kind: string): kind is ModelErrorKind {
   const kinds: readonly ModelErrorKind[] = [
     "rate_limited",
@@ -74,7 +98,7 @@ function waitForAbort(signal: AbortSignal): Promise<never> {
   });
 }
 
-function inputChars(req: ModelRequestV1): number {
+function inputChars(req: ModelRequest): number {
   let n = 0;
   for (const s of req.system) n += s.text.length;
   for (const m of req.messages) {
@@ -92,7 +116,7 @@ function inputChars(req: ModelRequestV1): number {
 }
 
 /** 最后一条 user 消息：文本，以及它是否带 tool_result。 */
-function lastUser(req: ModelRequestV1): { text: string; hasToolResult: boolean; result: string } {
+function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; result: string } {
   for (let i = req.messages.length - 1; i >= 0; i--) {
     const m = req.messages[i];
     if (m?.role !== "user") continue;
@@ -117,7 +141,7 @@ type Plan =
   | { kind: "stall" }
   | { kind: "fail"; error: ModelError };
 
-function plan(req: ModelRequestV1): Plan {
+function plan(req: ModelRequest): Plan {
   const { text, hasToolResult, result } = lastUser(req);
   const std = (t: string): Plan => ({
     kind: "text",
@@ -178,11 +202,11 @@ export interface FakeProviderOptions {
   sleep?: Sleep;
 }
 
-export function createFakeProvider(opts: FakeProviderOptions): ModelProviderV1 {
+export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
   const sleep = opts.sleep ?? defaultSleep;
   const configured =
     opts.models !== undefined && opts.models.length > 0 ? opts.models : [{ id: "fake-1" }];
-  const infos: ModelInfoV1[] = configured.map((m) => ({
+  const infos: ModelInfo[] = configured.map((m) => ({
     id: m.id,
     displayName: m.id,
     contextWindow: m.contextWindow ?? 32000,
@@ -193,9 +217,9 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProviderV1 {
       reasoning: false,
       caching: true,
       midConversationSystem: true,
-      effort: false,
     },
     ...(m.streamIdleTimeoutMs !== undefined ? { streamIdleTimeoutMs: m.streamIdleTimeoutMs } : {}),
+    parameters: parameters(),
   }));
 
   /**
@@ -203,7 +227,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProviderV1 {
    * `cachedChars` 为前缀字符数，从 inputTokens 中扣除（inputTokens 只算未缓存部分）。
    */
   async function cacheUsage(
-    req: ModelRequestV1,
+    req: ModelRequest,
   ): Promise<{ read: number; write: number; cachedChars: number }> {
     const cached = req.system.filter((s) => s.cache).map((s) => s.text);
     const prefix = cached.join("\n");
@@ -254,7 +278,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProviderV1 {
         return;
       }
 
-      let text = p.text;
+      let text = req.params["model-fake.style"] === "shout" ? p.text.toUpperCase() : p.text;
       let stopReason: StopReason = "end_turn";
       if (text.length > req.maxOutputTokens * 4) {
         text = text.slice(0, req.maxOutputTokens * 4);

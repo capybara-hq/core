@@ -834,20 +834,24 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     expect(await writesOf(runId)).toEqual([]);
   });
 
-  it("已保存定义里的参数不再合法（直接改库模拟插件升级）→ 运行成功，model_call 记录 droppedParams", async () => {
+  it("已保存定义里的参数部分不再合法（直接改库模拟插件升级）→ 已声明的参数透传到插件，未声明的丢弃并记入 droppedParams", async () => {
     await worker();
     const { orgId, agentId, convId } = await setup();
+    const saved = { effort: "low", "model-fake.style": "shout", "model-fake.removed": true };
     await sql`UPDATE capybara.agent_versions
-      SET definition = jsonb_set(definition, '{modelParams}', '{"effort":"max"}'::jsonb)
+      SET definition = jsonb_set(definition, '{modelParams}', ${JSON.stringify(saved)}::jsonb)
       WHERE agent_id = ${agentId}`.execute(raw);
     await postMessage(req, orgId, convId, "echo:hi");
     const [fin] = await waitForTerminal(db, convId);
     expect(fin?.type).toBe("run_finished");
-    const call = (await eventsOf(db, convId)).find((e) => e.type === "model_call");
+    const evs = await eventsOf(db, convId);
+    const call = evs.find((e) => e.type === "model_call");
     expect(call?.type === "model_call" && call.payload.request).toMatchObject({
-      params: {},
-      droppedParams: ["effort"],
+      params: { effort: "low", "model-fake.style": "shout" },
+      droppedParams: ["model-fake.removed"],
     });
+    // model-fake.style 真的到达插件：shout 让回复转大写
+    expect(evs.filter((e) => e.type === "assistant_message").map(textOf)).toEqual(["HI"]);
   });
 
   it("stalled 次数超限（BullMQ 判定任务失败）→ run_failed run.stalled，status failed，consumed_seq 推进，会话不卡住", async () => {
