@@ -1,4 +1,5 @@
 export * from "./controls/index.js";
+export * from "./display/index.js";
 export type { DesignKey, Locale } from "./i18n.js";
 export { Card, type Gap, Grid, Stack, Text } from "./layout/index.js";
 export { DesignProvider, useDesignT } from "./provider.js";
