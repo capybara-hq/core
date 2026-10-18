@@ -41,6 +41,17 @@ const zh = {
   "table.selectRow": "选择 {name}",
   "table.rowActions": "行操作",
   "table.noResults": "没有符合条件的结果",
+  "shell.nav": "主导航",
+  "shell.search": "搜索或执行命令",
+  "shell.account": "账户",
+  "shell.org": "组织",
+  "shell.unsaved": "{n} 处未保存",
+  "shell.errors": "{n} 处错误",
+  "shell.filter": "筛选",
+  "shell.details": "详情",
+  "shell.metrics": "指标",
+  "shell.anchors": "页内导航",
+  "shell.pending": "待提交改动",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -86,6 +97,17 @@ const en: Record<DesignKey, string> = {
   "table.selectRow": "Select {name}",
   "table.rowActions": "Row actions",
   "table.noResults": "No matching results",
+  "shell.nav": "Main navigation",
+  "shell.search": "Search or run a command",
+  "shell.account": "Account",
+  "shell.org": "Organization",
+  "shell.unsaved": "{n} unsaved",
+  "shell.errors": "{n} errors",
+  "shell.filter": "Filters",
+  "shell.details": "Details",
+  "shell.metrics": "Metrics",
+  "shell.anchors": "On this page",
+  "shell.pending": "Pending changes",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

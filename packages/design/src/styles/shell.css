@@ -1,0 +1,341 @@
+/* App Shell（spec §4）：TopBar 40 · PageHeader 56 · PageTabs 36 · ActionRow 40 · StatusBar 24 */
+
+/* 以链接渲染的按钮（Link 组件不能带 data-*） */
+.cb-btn-link {
+  text-decoration: none;
+}
+.cb-btn-link-primary {
+  background: var(--cb-accent);
+  border-color: var(--cb-accent);
+  color: var(--cb-on-accent);
+  font-weight: 700;
+}
+.cb-btn-link-primary:hover {
+  background: var(--cb-accent-hover);
+  border-color: var(--cb-accent-hover);
+}
+.cb-btn-link-secondary {
+  border-color: var(--cb-accent);
+  color: var(--cb-accent);
+}
+.cb-btn-link-secondary:hover {
+  background: var(--cb-accent-tint);
+}
+.cb-btn-link-default:hover {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-hover);
+}
+.cb-sheet-open {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-color: transparent;
+  color: var(--cb-muted);
+}
+.cb-sheet-open:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+
+.cb-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+}
+.cb-shell-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* TopBar */
+.cb-topbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 16px;
+  height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--cb-line);
+  background: var(--cb-panel);
+}
+.cb-topbar-logo {
+  display: inline-flex;
+  align-items: center;
+}
+.cb-topbar-org,
+.cb-topbar-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--cb-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  line-height: 22px;
+}
+.cb-topbar-btn {
+  cursor: pointer;
+}
+.cb-topbar-btn:hover {
+  background: var(--cb-hover);
+}
+.cb-topbar-nav {
+  display: flex;
+  flex: 1;
+  align-self: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-topbar-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--cb-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.cb-topbar-link:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-topbar-link[aria-current="page"] {
+  color: var(--cb-ink);
+  box-shadow: inset 0 -2px 0 var(--cb-accent);
+}
+.cb-topbar-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 220px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--cb-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.cb-topbar-search:hover {
+  border-color: var(--cb-line-strong);
+}
+.cb-topbar-search-text {
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* PageHeader */
+.cb-pageheader {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 16px;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--cb-line);
+}
+.cb-pageheader:has(+ .cb-pagetabs) {
+  border-bottom: 0;
+}
+.cb-pageheader-left {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.cb-pageheader-parent {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+.cb-pageheader-parent:hover {
+  color: var(--cb-ink);
+}
+.cb-pageheader-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-pageheader-count {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: 13px;
+}
+.cb-pageheader-metrics {
+  display: flex;
+  flex: none;
+}
+.cb-pageheader-metrics > .cb-metric {
+  padding: 0 16px;
+  border-left: 1px solid var(--cb-line);
+}
+.cb-pageheader-metrics > .cb-metric:first-child {
+  border-left: 0;
+}
+.cb-pageheader-metrics-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cb-pageheader-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* PageTabs：下边线收口 */
+.cb-pagetabs {
+  flex: none;
+  height: 36px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--cb-line);
+}
+.cb-pagetabs .cb-tabs {
+  height: 36px;
+  border-bottom: 0;
+}
+.cb-pagetabs .cb-tab {
+  height: 36px;
+}
+
+/* Body：Rail / Content / Inspector 各自独立滚动 */
+.cb-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.cb-body-tools {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--cb-line);
+}
+.cb-body-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.cb-body-rail {
+  flex: none;
+  width: 240px;
+  overflow: auto;
+  border-right: 1px solid var(--cb-line);
+}
+.cb-body-inspector {
+  flex: none;
+  width: 400px;
+  overflow: auto;
+  border-left: 1px solid var(--cb-line);
+}
+.cb-body-content {
+  flex: 1;
+  min-width: 560px;
+  overflow: auto;
+}
+.cb-body[data-layout="centered"] {
+  overflow: auto;
+}
+.cb-body-centered {
+  display: flex;
+  gap: 24px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+.cb-body-content-centered {
+  flex: 1;
+  min-width: 0;
+  max-width: 760px;
+  overflow: visible;
+}
+.cb-body-anchors {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 180px;
+}
+.cb-body-anchor {
+  padding: 4px 8px;
+  color: var(--cb-muted);
+  text-decoration: none;
+}
+.cb-body-anchor:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-body-anchor[data-error="true"] {
+  color: var(--cb-fail);
+}
+
+/* ActionRow：叠在 StatusBar 上方；与 StatusBar 之间的 1px 线由 StatusBar 上边线提供 */
+.cb-actionrow {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 40px;
+  padding: 0 16px;
+  border-top: 1px solid var(--cb-line-strong);
+  background: var(--cb-panel);
+}
+.cb-actionrow-info {
+  display: flex;
+  gap: 8px;
+}
+.cb-actionrow-unsaved {
+  color: var(--cb-warn);
+}
+.cb-actionrow-errors {
+  color: var(--cb-fail);
+}
+.cb-actionrow-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* StatusBar：只有一种形态 */
+.cb-statusbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 24px;
+  padding: 0 16px;
+  border-top: 1px solid var(--cb-line);
+  background: var(--cb-panel);
+  color: var(--cb-muted);
+  font-size: 12px;
+}
+.cb-statusbar-left,
+.cb-statusbar-right {
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+  white-space: nowrap;
+}

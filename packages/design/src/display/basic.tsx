@@ -42,15 +42,13 @@ export function StatusMark({ status, label }: { status: Status; label?: string }
   );
 }
 
-export function Metric({
-  label,
-  value,
-  delta,
-}: {
+export type MetricProps = {
   label: string;
   value: ReactNode;
   delta?: { value: string; direction: "up" | "down" };
-}) {
+};
+
+export function Metric({ label, value, delta }: MetricProps) {
   return (
     <div className="cb-metric">
       <span className="cb-metric-label">{label}</span>

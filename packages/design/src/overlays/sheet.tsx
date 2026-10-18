@@ -1,7 +1,7 @@
 import * as RD from "@radix-ui/react-dialog";
 import { type ReactNode, useState } from "react";
 import { Button, IconButton } from "../controls/index.js";
-import { useDesignT } from "../provider.js";
+import { useDesignLink, useDesignT } from "../provider.js";
 import { Dialog } from "./dialog.js";
 import { useFocusReturn } from "./focus-return.js";
 
@@ -31,6 +31,7 @@ export function Sheet({
   children,
 }: SheetProps) {
   const t = useDesignT();
+  const Link = useDesignLink();
   const focusReturn = useFocusReturn();
   const [confirming, setConfirming] = useState(false);
   const requestClose = () => {
@@ -61,10 +62,8 @@ export function Sheet({
               {meta ? <span className="cb-sheet-meta">{meta}</span> : null}
               <span className="cb-sheet-actions">
                 {openHref ? (
-                  <a
-                    className="cb-btn cb-icon-btn"
-                    data-variant="ghost"
-                    data-size="24"
+                  <Link
+                    className="cb-btn cb-btn-link cb-sheet-open"
                     href={openHref}
                     target="_blank"
                     rel="noreferrer"
@@ -72,7 +71,7 @@ export function Sheet({
                     title={t("overlay.openInNew")}
                   >
                     ↗
-                  </a>
+                  </Link>
                 ) : null}
                 <IconButton label={t("overlay.close")} icon="✕" size={24} onClick={requestClose} />
               </span>

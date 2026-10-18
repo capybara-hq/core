@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useRef } from "react";
+import { useDesignLink } from "../provider.js";
 
 type TabItem = {
   id: string;
@@ -8,17 +9,15 @@ type TabItem = {
   href?: string;
 };
 
-export function Tabs({
-  items,
-  value,
-  onChange,
-  label,
-}: {
+export type TabsProps = {
   items: TabItem[];
   value: string;
   onChange?: (id: string) => void;
   label: string;
-}) {
+};
+
+export function Tabs({ items, value, onChange, label }: TabsProps) {
+  const Link = useDesignLink();
   const ref = useRef<HTMLDivElement>(null);
   const hasLinks = items.some((i) => i.href);
 
@@ -27,18 +26,30 @@ export function Tabs({
       <nav className="cb-tabs" aria-label={label}>
         {items.map((it) => {
           const current = it.id === value;
+          if (it.disabled || !it.href) {
+            return (
+              // biome-ignore lint/a11y/useValidAnchor: 禁用项无 href
+              <a
+                key={it.id}
+                className="cb-tab"
+                aria-disabled={true}
+                data-state={current ? "selected" : "disabled"}
+              >
+                {it.label}
+                {it.count !== undefined ? <span className="cb-tab-count">{it.count}</span> : null}
+              </a>
+            );
+          }
           return (
-            <a
+            <Link
               key={it.id}
               className="cb-tab"
-              href={it.disabled ? undefined : it.href}
+              href={it.href}
               aria-current={current ? "page" : undefined}
-              aria-disabled={it.disabled ? true : undefined}
-              data-state={current ? "selected" : it.disabled ? "disabled" : undefined}
             >
               {it.label}
               {it.count !== undefined ? <span className="cb-tab-count">{it.count}</span> : null}
-            </a>
+            </Link>
           );
         })}
       </nav>
