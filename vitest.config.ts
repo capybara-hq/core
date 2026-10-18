@@ -44,6 +44,7 @@ export default defineConfig({
           name: "web",
           include: ["apps/web/test/**/*.test.tsx"],
           environment: "jsdom",
+          setupFiles: ["apps/web/test/setup.ts"],
           // next-intl 的 ESM 构建 import "next/navigation"（无扩展名），交给 Vite 解析。
           server: { deps: { inline: ["next-intl", "use-intl"] } },
         },

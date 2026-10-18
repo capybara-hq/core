@@ -1,12 +1,15 @@
 "use client";
 
+import { AuthPage } from "@capybara-hq/design";
+import { useTranslations } from "next-intl";
 import { useEffect } from "react";
 import { LoginForm } from "../../../../components/login-form";
 import { useRouter } from "../../../../i18n/navigation";
 import { getSetupStatus } from "../../../../lib/session";
 
-/** `/[locale]/login`：本地登录；系统尚未初始化时转到初始化向导。 */
+/** `/[locale]/login`：本地登录（AuthPage）；系统尚未初始化时转到初始化向导。 */
 export default function LoginPage() {
+  const t = useTranslations("login");
   const router = useRouter();
 
   useEffect(() => {
@@ -18,5 +21,9 @@ export default function LoginPage() {
       .catch(() => {});
   }, [router]);
 
-  return <LoginForm onSuccess={() => router.replace("/")} />;
+  return (
+    <AuthPage title={t("title")} subtitle={t("subtitle")}>
+      <LoginForm onSuccess={() => router.replace("/")} />
+    </AuthPage>
+  );
 }

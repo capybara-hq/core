@@ -1,7 +1,8 @@
 "use client";
 
+import { Field, Input, Segmented, Select, Slider, Switch } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useId } from "react";
+import type { ReactElement } from "react";
 import type { ModelParameter, ParamValue } from "../lib/agents";
 
 type Params = Record<string, ParamValue>;
@@ -18,13 +19,22 @@ function toNumber(raw: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** 滑块步长：整数为 1；否则约百分之一的范围，取一位有效数字（如 0..2 → 0.01）。 */
+function sliderStep(min: number, max: number, integer: boolean): number {
+  if (integer) return 1;
+  const raw = (max - min) / 100;
+  if (!(raw > 0)) return 0.01;
+  return 10 ** Math.floor(Math.log10(raw));
+}
+
 /**
- * 按模型的参数声明渲染参数控件。只有用户改动过的键进入 `value`（未改动的由内核补默认值），
- * 控件在未改动时显示声明的默认值。
- * - 标准旋钮：`effort` / `thinking` 用分段按钮（按声明顺序），`temperature` 用滑块加数字框，
- *   `maxOutputTokens` 用数字框；
- * - 厂商专有参数按 schema：枚举 → 下拉框，布尔 → 开关，上下限齐全的数字 → 滑块，其余 → 输入框。
- * `errors` 以参数键为 key，错误文案显示在对应控件旁。
+ * 按模型的参数声明渲染参数控件（设计系统的 Field + 控件）。只有用户改动过的键进入 `value`
+ * （未改动的由内核补默认值）；改动过的字段在标签行右侧出现「恢复默认」（Field onReset）。
+ * - 标准旋钮：`effort` / `thinking` 用 Segmented（首段「默认」，其余按声明顺序），
+ *   `temperature` 用带数值框的 Slider，`maxOutputTokens` 用数字输入框；
+ * - 厂商专有参数按 schema：枚举 → Select，布尔 → Switch，上下限齐全的数字 → Slider，其余 → Input。
+ * 未设置的滑块不冒充某个取值（拇指居中，数值框以占位显示默认值，spec §6.2）。
+ * `errors` 以参数键为 key，显示为对应 Field 的错误。
  */
 export function ModelParams({
   parameters,
@@ -40,7 +50,6 @@ export function ModelParams({
   errors?: Record<string, string>;
 }) {
   const t = useTranslations("agents.params");
-  const id = useId();
 
   /** 设置一个键；`undefined` 表示回到未设置（不提交）。 */
   const set = (key: string, v: ParamValue | undefined) => {
@@ -50,146 +59,69 @@ export function ModelParams({
     onChange(next);
   };
 
-  return parameters.map((p, i) => {
-    const pid = `${id}-${i}`;
+  return parameters.map((p) => {
     const label = text(p.label, locale);
-    const current = Object.hasOwn(value, p.key) ? value[p.key] : p.default;
     const error = errors[p.key];
-    const describedBy =
-      [p.description && `${pid}-desc`, error !== undefined && `${pid}-err`]
-        .filter(Boolean)
-        .join(" ") || undefined;
-    const aria = {
-      "aria-invalid": error !== undefined ? true : undefined,
-      "aria-describedby": describedBy,
-    } as const;
     const s = p.schema as { type?: unknown; enum?: unknown; minimum?: number; maximum?: number };
     const enumValues = s.type === "string" && Array.isArray(s.enum) ? (s.enum as string[]) : null;
     const isNumber = s.type === "number" || s.type === "integer";
-    const step = s.type === "integer" ? 1 : "any";
-    const segmented = (p.standard === "effort" || p.standard === "thinking") && enumValues !== null;
     /** 用户是否设置过该键（未设置的不提交，由内核补默认值）。 */
     const isSet = Object.hasOwn(value, p.key);
+    const own = isSet ? value[p.key] : undefined;
     const defaultText =
       p.default === undefined ? t("default") : t("defaultValue", { value: String(p.default) });
-    /** 滑块的位置：已设置或有默认值时取该值；都没有时放在中点，不冒充某个具体取值。 */
-    const thumb = (min: number, max: number) =>
-      typeof current === "number" ? current : (min + max) / 2;
-    /** 「恢复默认」按钮：开关与滑块设置过之后显示，点击删除该键。 */
-    const reset = isSet && (
-      <button
-        type="button"
-        className="secondary"
-        aria-label={t("resetLabel", { label })}
-        onClick={() => set(p.key, undefined)}
-      >
-        {t("reset")}
-      </button>
-    );
 
-    let control: ReactNode;
-    if (segmented) {
+    let control: ReactElement<Record<string, unknown>>;
+    if ((p.standard === "effort" || p.standard === "thinking") && enumValues !== null) {
       const knob = p.standard;
+      const optionLabel = (v: string) => (t.has(`${knob}.${v}`) ? t(`${knob}.${v}`) : v);
       control = (
-        <fieldset
-          className="segmented"
-          aria-labelledby={`${pid}-label`}
-          aria-describedby={describedBy}
-        >
-          {/* 首段「默认」：按下表示未设置（参数都是可选的） */}
-          <button
-            type="button"
-            className={isSet ? "secondary" : undefined}
-            aria-pressed={!isSet}
-            aria-invalid={aria["aria-invalid"]}
-            onClick={() => set(p.key, undefined)}
-          >
-            {p.default === undefined
-              ? t("default")
-              : t("defaultValue", {
-                  value: t.has(`${knob}.${p.default}`)
-                    ? t(`${knob}.${p.default}`)
-                    : String(p.default),
-                })}
-          </button>
-          {(enumValues ?? []).map((v) => {
-            const pressed = isSet && value[p.key] === v;
-            return (
-              <button
-                key={v}
-                type="button"
-                className={pressed ? undefined : "secondary"}
-                aria-pressed={pressed}
-                aria-invalid={aria["aria-invalid"]}
-                onClick={() => set(p.key, v)}
-              >
-                {t.has(`${knob}.${v}`) ? t(`${knob}.${v}`) : v}
-              </button>
-            );
-          })}
-        </fieldset>
+        <Segmented
+          label={label}
+          value={typeof own === "string" ? own : ""}
+          onChange={(v) => set(p.key, v === "" ? undefined : v)}
+          options={[
+            // 首段「默认」：选中表示未设置（参数都是可选的）
+            {
+              value: "",
+              label:
+                p.default === undefined
+                  ? t("default")
+                  : t("defaultValue", { value: optionLabel(String(p.default)) }),
+            },
+            ...enumValues.map((v) => ({ value: v, label: optionLabel(v) })),
+          ]}
+        />
       );
     } else if (p.standard === "temperature" && isNumber) {
       const min = s.minimum ?? 0;
       const max = s.maximum ?? 2;
       control = (
-        <div className="row">
-          <input
-            type="range"
-            aria-label={label}
-            min={min}
-            max={max}
-            step={0.01}
-            value={thumb(min, max)}
-            onChange={(e) => set(p.key, toNumber(e.target.value))}
-            {...aria}
-          />
-          <input
-            id={pid}
-            type="number"
-            min={min}
-            max={max}
-            step="any"
-            placeholder={defaultText}
-            value={isSet && typeof value[p.key] === "number" ? Number(value[p.key]) : ""}
-            onChange={(e) => set(p.key, toNumber(e.target.value))}
-            {...aria}
-          />
-          {reset}
-        </div>
+        <Slider
+          label={label}
+          min={min}
+          max={max}
+          step={sliderStep(min, max, s.type === "integer")}
+          value={typeof own === "number" ? own : undefined}
+          placeholder={defaultText}
+          withInput
+          onChange={(n) => set(p.key, n)}
+        />
       );
     } else if (enumValues) {
       control = (
-        <select
-          id={pid}
-          value={typeof value[p.key] === "string" ? String(value[p.key]) : ""}
+        <Select
+          value={typeof own === "string" ? own : ""}
           onChange={(e) => set(p.key, e.target.value === "" ? undefined : e.target.value)}
-          {...aria}
-        >
-          <option value="">{defaultText}</option>
-          {enumValues.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: "", label: defaultText },
+            ...enumValues.map((v) => ({ value: v, label: v })),
+          ]}
+        />
       );
     } else if (s.type === "boolean") {
-      control = (
-        <div className="row">
-          <input
-            id={pid}
-            type="checkbox"
-            role="switch"
-            checked={current === true}
-            aria-checked={current === true}
-            onChange={(e) => set(p.key, e.target.checked)}
-            {...aria}
-          />
-          {!isSet && <span className="muted">{defaultText}</span>}
-          {reset}
-        </div>
-      );
+      const current = isSet ? own : p.default;
+      control = <Switch label={label} checked={current === true} onChange={(v) => set(p.key, v)} />;
     } else if (
       p.standard !== "maxOutputTokens" &&
       isNumber &&
@@ -197,68 +129,53 @@ export function ModelParams({
       s.maximum !== undefined
     ) {
       control = (
-        <div className="row">
-          <input
-            id={pid}
-            type="range"
-            min={s.minimum}
-            max={s.maximum}
-            step={s.type === "integer" ? 1 : (s.maximum - s.minimum) / 100}
-            value={thumb(s.minimum, s.maximum)}
-            onChange={(e) => set(p.key, toNumber(e.target.value))}
-            {...aria}
-          />
-          <output htmlFor={pid}>{isSet ? String(value[p.key]) : defaultText}</output>
-          {reset}
-        </div>
+        <Slider
+          label={label}
+          min={s.minimum}
+          max={s.maximum}
+          step={sliderStep(s.minimum, s.maximum, s.type === "integer")}
+          value={typeof own === "number" ? own : undefined}
+          placeholder={defaultText}
+          withInput
+          onChange={(n) => set(p.key, n)}
+        />
       );
     } else if (isNumber) {
       control = (
-        <input
-          id={pid}
+        <Input
           type="number"
           min={s.minimum}
           max={s.maximum}
-          step={step}
+          step={s.type === "integer" ? 1 : "any"}
           placeholder={p.default === undefined ? undefined : String(p.default)}
-          value={typeof value[p.key] === "number" ? Number(value[p.key]) : ""}
+          value={typeof own === "number" ? own : ""}
           onChange={(e) => set(p.key, toNumber(e.target.value))}
-          {...aria}
         />
       );
     } else {
       // 不带枚举的字符串，以及子集之外的 schema：文本框
       const maxLength = (p.schema as { maxLength?: number }).maxLength;
       control = (
-        <input
-          id={pid}
+        <Input
           type="text"
           maxLength={maxLength}
           placeholder={p.default === undefined ? undefined : String(p.default)}
-          value={typeof value[p.key] === "string" ? String(value[p.key]) : ""}
+          value={typeof own === "string" ? own : ""}
           onChange={(e) => set(p.key, e.target.value === "" ? undefined : e.target.value)}
-          {...aria}
         />
       );
     }
 
-    // 分段按钮由 fieldset 的 aria-labelledby 命名，其余控件用 label[for]（温度滑块另带 aria-label）
     return (
-      <div key={p.key} className="param" data-param={p.key}>
-        {segmented ? (
-          <span id={`${pid}-label`}>{label}</span>
-        ) : (
-          <label id={`${pid}-label`} htmlFor={pid}>
-            {label}
-          </label>
-        )}
-        {control}
-        {p.description && <small id={`${pid}-desc`}>{text(p.description, locale)}</small>}
-        {error !== undefined && (
-          <p id={`${pid}-err`} className="error">
-            {error}
-          </p>
-        )}
+      <div key={p.key} data-param={p.key}>
+        <Field
+          label={label}
+          {...(p.description ? { help: text(p.description, locale) } : {})}
+          {...(error !== undefined ? { error } : {})}
+          {...(isSet ? { onReset: () => set(p.key, undefined) } : {})}
+        >
+          {control}
+        </Field>
       </div>
     );
   });

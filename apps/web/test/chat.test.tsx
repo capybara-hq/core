@@ -1,10 +1,14 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { ChatView } from "../src/components/ChatView";
+import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import { resetNavigation } from "./support/navigation";
+import { renderPage } from "./support/render";
+
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
 
 type Call = { url: string; method: string; body: unknown; headers: Headers };
 
@@ -78,14 +82,11 @@ function stubApi(routes: Record<string, (call: Call) => Response>): Call[] {
 const BASE = "/api/v1/orgs/o1/conversations/c1";
 
 function renderChat(locale: "zh" | "en") {
-  render(
-    <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
-      <ChatView orgId="o1" conversationId="c1" />
-    </NextIntlClientProvider>,
-  );
+  return renderPage(<ChatPage />, { locale });
 }
 
 beforeEach(() => {
+  resetNavigation("/chat/c1");
   vi.stubGlobal("EventSource", FakeEventSource);
 });
 
@@ -95,7 +96,25 @@ afterEach(() => {
   FakeEventSource.instances = [];
 });
 
-describe("ChatView", () => {
+describe("对话页（PlaygroundPage）", () => {
+  it("使用 PlaygroundPage：消息在内容区，inspector 显示 agent、会话 ID、运行状态与「停止」", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`GET ${BASE}`]: () =>
+        json(200, { conversation: { id: "c1", orgId: "o1", agentId: "ag1", lastSeq: 2 } }),
+      "GET /api/v1/orgs/o1/agents": () =>
+        json(200, { agents: [{ id: "ag1", definition: { name: "Echo agent" } }] }),
+    });
+    const { container } = renderChat("en");
+    expect(container.querySelector('[data-template="PlaygroundPage"]')).not.toBeNull();
+    const inspector = screen.getByRole("complementary");
+    expect(await within(inspector).findByText("Echo agent")).toBeTruthy();
+    expect(within(inspector).getByText("c1")).toBeTruthy();
+    expect(await within(inspector).findByText(`● ${en.chat.running}`)).toBeTruthy();
+    expect(within(inspector).getByRole("button", { name: en.chat.stop })).toBeTruthy();
+    expect(screen.getByText("hi").closest("[data-role]")?.getAttribute("data-role")).toBe("user");
+  });
+
   it.each(["zh", "en"] as const)(
     "运行中显示「停止」按钮，点击调用 abort；输入框不禁用（%s）",
     async (locale) => {
@@ -145,9 +164,9 @@ describe("ChatView", () => {
           }),
       });
       renderChat(locale);
-      const message = (await screen.findByText("partial answer")).closest("li");
+      const message = (await screen.findByText("partial answer")).closest("[data-role]");
       expect(message).not.toBeNull();
-      expect(within(message as HTMLElement).getByText(m.chat.stopped)).toBeTruthy();
+      expect(within(message as HTMLElement).getByText(`⊘ ${m.chat.stopped}`)).toBeTruthy();
       expect(screen.queryByRole("button", { name: m.chat.stop })).toBeNull();
     },
   );
@@ -206,7 +225,9 @@ describe("ChatView", () => {
     act(() => {
       FakeEventSource.instances[0]?.emit("error", { code: "auth.session_revoked" });
     });
-    expect((await screen.findByRole("alert")).textContent).toBe(zh.errors.auth.session_revoked);
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      `✗ ${zh.errors.auth.session_revoked}`,
+    );
   });
 
   it("发送失败后重试沿用同一个 clientMessageId；成功后下一条换新 id", async () => {

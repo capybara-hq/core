@@ -7,18 +7,20 @@
     "appName": "Capybara",
     "loading": "加载中…",
     "logout": "退出登录",
-    "language": "语言",
     "localeName": {
       "zh": "中文",
       "en": "English"
-    }
+    },
+    "cancel": "取消",
+    "retry": "重试",
+    "loadFailed": "加载失败"
   },
   "login": {
     "title": "登录",
     "loginLabel": "用户名",
     "passwordLabel": "密码",
     "submit": "登录",
-    "submitting": "正在登录…"
+    "subtitle": "使用账号与密码登录。"
   },
   "setup": {
     "title": "初始化",
@@ -28,21 +30,26 @@
     "passwordLabel": "密码",
     "passwordHint": "12–256 个字符",
     "displayNameLabel": "显示名称",
-    "orgNameLabel": "组织名称（可选）",
-    "setupTokenLabel": "初始化令牌（部署配置了才需要）",
+    "orgNameLabel": "组织名称",
+    "setupTokenLabel": "初始化令牌",
     "submit": "完成初始化",
-    "submitting": "正在提交…",
     "alreadyDone": "系统已完成初始化。",
-    "goToLogin": "前往登录"
+    "goToLogin": "前往登录",
+    "setupTokenHint": "仅当部署配置了初始化令牌时需要。"
   },
   "home": {
     "title": "工作台",
     "greeting": "你好，{name}",
     "currentOrg": "当前组织",
     "selectOrg": "选择组织",
-    "noMemberships": "你还不属于任何组织。",
+    "noMemberships": "还没有加入任何组织",
     "agents": "Agent",
-    "openAgents": "查看与新建 Agent"
+    "openAgents": "查看与新建 Agent",
+    "noMembershipsHint": "请联系组织管理员邀请你加入。",
+    "noCurrentOrg": "请选择当前组织，之后即可查看与新建 Agent。",
+    "role": "角色",
+    "slug": "标识",
+    "orgCard": "组织"
   },
   "errors": {
     "unknown": "出错了，请稍后重试。",
@@ -90,16 +97,14 @@
     "empty": "暂无 Agent。",
     "startChat": "开始对话",
     "starting": "正在创建对话…",
-    "noOrg": "请先在工作台选择当前组织。",
+    "noOrg": "还没有选择当前组织",
     "backHome": "返回工作台",
-    "backToList": "返回 Agent 列表",
-    "modelLine": "模型：{provider} / {model}",
     "form": {
       "title": "新建 Agent",
       "nameLabel": "名称",
       "instructionsLabel": "指令（系统提示词）",
       "modelLabel": "模型",
-      "fallbackLabel": "兜底模型（可选）",
+      "fallbackLabel": "兜底模型",
       "fallbackNone": "不使用兜底模型",
       "visibilityLabel": "可见范围",
       "visibility": {
@@ -107,20 +112,24 @@
         "org": "组织内所有成员"
       },
       "submit": "保存",
-      "submitting": "正在保存…",
       "noModels": "没有可用的模型，请先安装并配置模型供应商插件。",
       "warningsTitle": "已保存，但请注意：",
       "continue": "继续",
       "modelParamsTitle": "模型参数",
-      "fallbackParamsTitle": "兜底模型参数"
+      "fallbackParamsTitle": "兜底模型参数",
+      "basicSection": "基本信息",
+      "basicSectionHint": "名称与可见范围；指令对模型可见。",
+      "modelSection": "模型",
+      "modelSectionHint": "主模型不可用时改用兜底模型。",
+      "paramsSectionHint": "未改动的参数使用模型默认值。",
+      "nameRequired": "请填写名称。",
+      "instructionsHelp": "对模型可见，请用英文书写。"
     },
     "params": {
       "default": "默认",
       "defaultValue": "默认（{value}）",
       "invalid": "该参数的取值无效。",
       "invalidKey": "参数 {key} 无效。",
-      "reset": "恢复默认",
-      "resetLabel": "将{label}恢复默认",
       "effort": {
         "low": "低",
         "medium": "中",
@@ -137,7 +146,13 @@
     "warnings": {
       "fallback_same_provider": "兜底模型应来自另一家供应商，否则该供应商故障时兜底无效。",
       "unknown": "保存时出现未识别的提示：{code}"
-    }
+    },
+    "columns": {
+      "name": "名称",
+      "model": "模型"
+    },
+    "emptyHint": "新建一个 Agent，然后开始对话。",
+    "noOrgHint": "请在工作台或顶栏的组织菜单中选择组织。"
   },
   "chat": {
     "title": "对话",
@@ -152,6 +167,28 @@
     "thinking": "思考过程",
     "failed": "本次回复失败（{code}）。",
     "empty": "发送一条消息开始对话。",
-    "streamLost": "与服务器的实时连接已断开，请刷新页面。"
+    "streamLost": "与服务器的实时连接已断开，请刷新页面。",
+    "idle": "就绪",
+    "agent": "Agent",
+    "conversation": "会话",
+    "status": "状态",
+    "inspectorTitle": "会话信息"
+  },
+  "nav": {
+    "overview": "概览",
+    "agents": "Agents",
+    "goto": "跳转",
+    "actions": "操作"
+  },
+  "shell": {
+    "switchLocale": "切换到 {name}",
+    "themeLight": "切换到浅色主题",
+    "themeDark": "切换到深色主题",
+    "noOrg": "选择组织"
+  },
+  "notFound": {
+    "title": "页面不存在",
+    "description": "链接可能已失效，或该页面已被移除。",
+    "back": "返回概览"
   }
 }

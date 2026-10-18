@@ -1,7 +1,8 @@
 "use client";
 
+import { Button, Stack, Textarea } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { type FormEvent, type KeyboardEvent, useId, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useRef, useState } from "react";
 
 /**
  * `clientMessageId`：`crypto.randomUUID` 只在安全上下文可用（HTTPS / localhost），
@@ -14,7 +15,7 @@ function newClientMessageId(): string {
 }
 
 /**
- * 输入框：Enter 发送、Shift+Enter 换行。运行中不禁用（此时发送即为插话）；
+ * 输入框（PlaygroundPage 的 composer 区）：Enter 发送、Shift+Enter 换行。运行中不禁用（此时发送即为插话）；
  * 只在本条消息提交期间禁用发送按钮，避免重复提交。`onSend` 失败时保留输入内容。
  *
  * 每条待发送的草稿持有一个 `clientMessageId`：发送失败（网络错误、5xx、响应丢失）后重试沿用同一个 id，
@@ -26,7 +27,6 @@ export function Composer({
   onSend: (text: string, clientMessageId: string) => Promise<boolean>;
 }) {
   const t = useTranslations("chat");
-  const id = useId();
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
   /** 当前草稿的 id 及其对应的文本（文本变了就作废）。 */
@@ -61,22 +61,21 @@ export function Composer({
   }
 
   return (
-    <form className="composer" onSubmit={onSubmit}>
-      <label htmlFor={`${id}-input`} className="visually-hidden">
-        {t("inputLabel")}
-      </label>
-      <textarea
-        id={`${id}-input`}
-        name="message"
-        rows={3}
-        placeholder={t("placeholder")}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={onKeyDown}
-      />
-      <button type="submit" disabled={pending || text.trim() === ""}>
-        {t("send")}
-      </button>
+    <form onSubmit={onSubmit}>
+      <Stack direction="row" gap={8} align="end">
+        <Textarea
+          name="message"
+          aria-label={t("inputLabel")}
+          rows={3}
+          placeholder={t("placeholder")}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKeyDown}
+        />
+        <Button type="submit" variant="primary" disabled={pending || text.trim() === ""}>
+          {t("send")}
+        </Button>
+      </Stack>
     </form>
   );
 }

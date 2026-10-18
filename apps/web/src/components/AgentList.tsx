@@ -1,86 +1,109 @@
 "use client";
 
+import { Button, type Column, DataTable, useStatusBar, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
-import { Link, useRouter } from "../i18n/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "../i18n/navigation";
 import { type Agent, listAgents } from "../lib/agents";
+import { ApiClientError } from "../lib/api";
 import { createConversation } from "../lib/conversations";
 import { useErrorMessage } from "../lib/use-error-message";
 
-/** 当前组织中可见的 agent；「开始对话」新建会话并进入聊天页。 */
-export function AgentList({ orgId }: { orgId: string }) {
-  const t = useTranslations("agents");
-  const errorMessage = useErrorMessage();
-  const router = useRouter();
-  const [agents, setAgents] = useState<Agent[]>();
-  const [starting, setStarting] = useState<string>();
-  const [error, setError] = useState<string>();
+type AgentsState =
+  | { kind: "loading" }
+  | { kind: "ready"; agents: Agent[] }
+  | { kind: "error"; code: string };
 
+/** 当前组织中可见的 agent（`GET /orgs/:orgId/agents`）；`reload` 重新读取。 */
+export function useAgents(orgId: string): AgentsState & { reload(): void } {
+  const [state, setState] = useState<AgentsState>({ kind: "loading" });
+  const [nonce, setNonce] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce 只用于触发重新读取
   useEffect(() => {
     let disposed = false;
+    setState({ kind: "loading" });
     listAgents(orgId).then(
       (r) => {
-        if (!disposed) setAgents(r.agents);
+        if (!disposed) setState({ kind: "ready", agents: r.agents });
       },
       (e: unknown) => {
-        if (!disposed) setError(errorMessage(e));
+        if (!disposed)
+          setState({ kind: "error", code: e instanceof ApiClientError ? e.code : "unknown" });
       },
     );
     return () => {
       disposed = true;
     };
-  }, [orgId, errorMessage]);
+  }, [orgId, nonce]);
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  return { ...state, reload };
+}
+
+/**
+ * Agent 列表（DataTable）：列为名称、模型；行菜单「开始对话」新建会话并进入对话页。
+ * 空状态带「新建 Agent」。
+ */
+export function AgentTable({
+  orgId,
+  agents,
+}: {
+  orgId: string;
+  agents: ReturnType<typeof useAgents>;
+}) {
+  const t = useTranslations("agents");
+  const errorMessage = useErrorMessage();
+  const router = useRouter();
+  const toast = useToast();
+  const [starting, setStarting] = useState<string>();
+  useStatusBar(starting === undefined ? null : `· ${t("starting")}`);
 
   async function onStart(agentId: string) {
     setStarting(agentId);
-    setError(undefined);
     try {
       const { conversation } = await createConversation(orgId, agentId);
       router.push(`/chat/${encodeURIComponent(conversation.id)}`);
     } catch (e) {
-      setError(errorMessage(e));
+      toast.error(errorMessage(e));
       setStarting(undefined);
     }
   }
 
+  const columns: Column<Agent>[] = [
+    { key: "name", header: t("columns.name"), cell: (a) => a.definition.name },
+    {
+      key: "model",
+      header: t("columns.model"),
+      tone: "muted",
+      cell: (a) => `${a.definition.model.provider} / ${a.definition.model.model}`,
+    },
+  ];
+
   return (
-    <div className="card wide">
-      <div className="row">
-        <h1>{t("title")}</h1>
-        <Link href="/agents/new">{t("new")}</Link>
-      </div>
-      {error !== undefined && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      {agents !== undefined && agents.length === 0 && <p>{t("empty")}</p>}
-      {agents !== undefined && agents.length > 0 && (
-        <ul className="agents">
-          {agents.map((a) => (
-            <li key={a.id} className="row">
-              <div>
-                <strong>{a.definition.name}</strong>
-                <br />
-                <small>
-                  {t("modelLine", {
-                    provider: a.definition.model.provider,
-                    model: a.definition.model.model,
-                  })}
-                </small>
-              </div>
-              <button
-                type="button"
-                onClick={() => void onStart(a.id)}
-                disabled={starting !== undefined}
-              >
-                {starting === a.id ? t("starting") : t("startChat")}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <Link href="/">{t("backHome")}</Link>
-    </div>
+    <DataTable<Agent>
+      label={t("title")}
+      framed={false}
+      columns={columns}
+      rows={agents.kind === "ready" ? agents.agents : []}
+      rowKey={(a) => a.id}
+      rowLabel={(a) => a.definition.name}
+      state={agents.kind === "ready" ? "ready" : agents.kind}
+      {...(agents.kind === "error" ? { error: { code: agents.code, onRetry: agents.reload } } : {})}
+      empty={{
+        title: t("empty"),
+        hint: t("emptyHint"),
+        action: (
+          <Button variant="primary" onClick={() => router.push("/agents/new")}>
+            {t("new")}
+          </Button>
+        ),
+      }}
+      rowMenu={(a) => [
+        {
+          label: t("startChat"),
+          disabled: starting !== undefined,
+          onSelect: () => void onStart(a.id),
+        },
+      ]}
+    />
   );
 }

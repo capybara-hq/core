@@ -5,6 +5,7 @@ import { checkI18n } from "../i18n.js";
 import { checkMigrations } from "../migrations.js";
 import { checkPluginState } from "../plugin-state.js";
 import type { Finding } from "../source.js";
+import { checkWebUi } from "../web-ui.js";
 import { migrationDirs, pluginDirs, requireScanTargets } from "./dirs.js";
 import { root } from "./report.js";
 
@@ -16,6 +17,10 @@ const checks: { name: string; run: () => Finding[] }[] = [
   { name: "插件状态", run: () => checkPluginState(pluginDirs()) },
   { name: "配置文档", run: () => checkConfigDocs() },
   { name: "界面文案", run: () => checkI18n(join(root, "apps/web/messages")) },
+  {
+    name: "界面规范",
+    run: () => checkWebUi(join(root, "apps/web/src"), join(root, "packages/design/src")),
+  },
 ];
 
 let failed = 0;

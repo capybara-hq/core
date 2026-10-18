@@ -32,9 +32,13 @@ function renderLogin(locale: "zh" | "en", onSuccess = vi.fn()) {
 async function submit(locale: "zh" | "en") {
   const m = locale === "zh" ? zh : en;
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText(m.login.loginLabel), "admin");
+  await user.type(screen.getByRole("textbox", { name: m.login.loginLabel }), "admin");
   await user.type(screen.getByLabelText(m.login.passwordLabel), "s3cret-password");
-  await user.click(screen.getByRole("button", { name: m.login.submit }));
+  const submitButton = screen.getByRole("button", { name: m.login.submit });
+  // 认证页的唯一主操作（spec §5 T10）
+  expect(submitButton.getAttribute("data-variant")).toBe("primary");
+  expect(submitButton.getAttribute("data-size")).toBe("36");
+  await user.click(submitButton);
 }
 
 describe("LoginForm", () => {
@@ -60,7 +64,7 @@ describe("LoginForm", () => {
     );
     const onSuccess = renderLogin(locale);
     await submit(locale);
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", text);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `✗ ${text}`);
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
@@ -68,6 +72,9 @@ describe("LoginForm", () => {
     stubFetch(() => json(500, { error: { code: "something.new", message: "x" } }));
     renderLogin("en");
     await submit("en");
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", en.errors.unknown);
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      `✗ ${en.errors.unknown}`,
+    );
   });
 });

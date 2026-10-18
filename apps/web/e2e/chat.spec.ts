@@ -11,8 +11,22 @@ const LONG_TEXT = "Capybaras are the largest living rodents and very calm swimme
   .trim();
 const SECOND_TEXT = "first answer arrives slowly";
 
-const assistants = (page: Page) => page.locator('li[data-role="assistant"]');
-const users = (page: Page) => page.locator('li[data-role="user"]');
+const assistants = (page: Page) => page.locator('[data-role="assistant"]');
+const users = (page: Page) => page.locator('[data-role="user"]');
+/** 消息正文（MessageList 的 `[data-part="body"]`）。 */
+const BODY = '[data-part="body"]';
+/** DataTable 行菜单的触发按钮名称（设计系统文案 table.rowActions，zh）。 */
+const ROW_ACTIONS = "行操作";
+
+/** 在 Agents 列表里打开某个 agent 的行菜单并点「开始对话」。 */
+async function startChat(page: Page, agentName: string) {
+  await page
+    .getByRole("row")
+    .filter({ hasText: agentName })
+    .getByRole("button", { name: ROW_ACTIONS })
+    .click();
+  await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
+}
 
 async function send(page: Page, text: string) {
   const input = page.getByLabel(zh.chat.inputLabel);
@@ -32,20 +46,26 @@ test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后�
   await page.getByRole("button", { name: zh.setup.submit }).click();
 
   await expect(page).toHaveURL(/\/zh$/);
-  await page.getByLabel(zh.home.currentOrg).selectOption({ label: "Acme" });
+  await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
+  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
   await page.getByRole("link", { name: zh.home.openAgents }).click();
   await expect(page).toHaveURL(/\/zh\/agents$/);
+  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page.getByRole("link", { name: zh.agents.new }).click();
 
-  await page.getByLabel(zh.agents.form.nameLabel).fill("Echo agent");
+  await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   await page
-    .getByLabel(zh.agents.form.modelLabel, { exact: true })
+    .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
+    .fill("Echo agent");
+  await page
+    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/zh\/agents$/);
   await expect(page.getByText("Echo agent")).toBeVisible();
-  await page.getByRole("button", { name: zh.agents.startChat }).click();
+  await startChat(page, "Echo agent");
   await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
+  await expect(page.locator('[data-template="PlaygroundPage"]')).toBeVisible();
 
   // 2. echo → 页面出现回复
   await send(page, "echo:hello capybara");
@@ -54,15 +74,15 @@ test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后�
 
   // 3. slow 长文本：流式草稿逐步出现，运行中点「停止」→「已停止」，部分文本保留
   await send(page, `slow:300:${LONG_TEXT}`);
-  const draft = page.locator('li[data-role="assistant"][data-streaming="true"] .body');
+  const draft = page.locator(`[data-role="assistant"][data-streaming="true"] ${BODY}`);
   await expect(draft).toHaveText(/.{8,}/);
   const early = (await draft.textContent()) ?? "";
   await expect(draft).not.toHaveText(early); // 继续增长：逐步出现
   await page.getByRole("button", { name: zh.chat.stop }).click();
-  const stopped = page.locator('li[data-role="assistant"][data-stop-reason="aborted"]');
+  const stopped = page.locator('[data-role="assistant"][data-stop-reason="aborted"]');
   await expect(stopped).toHaveCount(1);
   await expect(stopped.getByText(zh.chat.stopped)).toBeVisible();
-  const partial = (await stopped.locator(".body").textContent()) ?? "";
+  const partial = (await stopped.locator(BODY).textContent()) ?? "";
   expect(partial.length).toBeGreaterThan(0);
   expect(partial.length).toBeLessThan(LONG_TEXT.length);
   expect(LONG_TEXT.startsWith(partial)).toBe(true);
@@ -76,15 +96,15 @@ test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后�
   await expect(assistants(page).filter({ hasText: SECOND_TEXT })).toHaveCount(1);
   await expect(assistants(page).filter({ hasText: /^.*interject$/ })).toHaveCount(1);
   await expect(page.getByRole("button", { name: zh.chat.stop })).toHaveCount(0);
-  await expect(page.locator('li[data-streaming="true"]')).toHaveCount(0);
+  await expect(page.locator('[data-streaming="true"]')).toHaveCount(0);
 
   const snapshot = async () =>
     page
-      .locator('li[data-role="user"], li[data-role="assistant"]')
-      .evaluateAll((els) =>
-        els.map(
-          (el) => `${el.getAttribute("data-role")}:${el.querySelector(".body")?.textContent}`,
-        ),
+      .locator('[data-role="user"], [data-role="assistant"]')
+      .evaluateAll(
+        (els, body) =>
+          els.map((el) => `${el.getAttribute("data-role")}:${el.querySelector(body)?.textContent}`),
+        BODY,
       );
   const before = await snapshot();
   const firstIdx = before.indexOf(`assistant:${SECOND_TEXT}`);
@@ -113,21 +133,19 @@ test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后�
   // 6. 新建 agent 时按模型声明设置参数：model-fake.style = shout → 回复为大写
   await page.goto("/zh/agents");
   await page.getByRole("link", { name: zh.agents.new }).click();
-  await page.getByLabel(zh.agents.form.nameLabel).fill("Shout agent");
   await page
-    .getByLabel(zh.agents.form.modelLabel, { exact: true })
+    .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
+    .fill("Shout agent");
+  await page
+    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
-  const params = page.getByRole("region", { name: zh.agents.form.modelParamsTitle });
+  const params = page.getByRole("region", { name: zh.agents.form.modelParamsTitle, exact: true });
   // 文案来自插件声明（zh）
   await params.getByRole("combobox", { name: "回复风格" }).selectOption("shout");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/zh\/agents$/);
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: "Shout agent" })
-    .getByRole("button", { name: zh.agents.startChat })
-    .click();
+  await startChat(page, "Shout agent");
   await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
   await send(page, "echo:quiet please");
-  await expect(assistants(page).last().locator(".body")).toHaveText("QUIET PLEASE");
+  await expect(assistants(page).last().locator(BODY)).toHaveText("QUIET PLEASE");
 });

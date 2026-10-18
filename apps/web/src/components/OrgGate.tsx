@@ -1,29 +1,34 @@
 "use client";
 
+import { Button, StatusPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
-import { Link } from "../i18n/navigation";
-import { useCurrentOrg } from "../lib/use-current-org";
+import { useRouter } from "../i18n/navigation";
+import { useSession } from "./shell/session";
 
-/** 需要当前组织的页面外壳：加载中 / 未选组织 / 出错时显示提示，就绪后渲染 `children(orgId)`。 */
+/**
+ * 需要当前组织的页面：会话没有当前组织时显示 StatusPage（未开通），否则渲染 `children(orgId)`。
+ * 会话本身由 (app) 布局加载（未登录已跳转登录页）。
+ */
 export function OrgGate({ children }: { children: (orgId: string) => ReactNode }) {
   const t = useTranslations();
-  const org = useCurrentOrg();
-  if (org.kind === "loading") return <p>{t("common.loading")}</p>;
-  if (org.kind === "error") {
+  const router = useRouter();
+  const { me } = useSession();
+  if (me.currentOrgId === null) {
+    const none = me.memberships.length === 0;
     return (
-      <p role="alert" className="error">
-        {org.message}
-      </p>
+      <StatusPage
+        header={{ title: none ? t("home.noMemberships") : t("agents.noOrg") }}
+        kind="disabled"
+        title={none ? t("home.noMemberships") : t("agents.noOrg")}
+        description={none ? t("home.noMembershipsHint") : t("agents.noOrgHint")}
+        action={
+          <Button variant="primary" onClick={() => router.push("/")}>
+            {t("agents.backHome")}
+          </Button>
+        }
+      />
     );
   }
-  if (org.kind === "none") {
-    return (
-      <div className="card">
-        <p>{t("agents.noOrg")}</p>
-        <Link href="/">{t("agents.backHome")}</Link>
-      </div>
-    );
-  }
-  return children(org.orgId);
+  return children(me.currentOrgId);
 }

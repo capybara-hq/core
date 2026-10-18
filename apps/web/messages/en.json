@@ -7,18 +7,20 @@
     "appName": "Capybara",
     "loading": "Loading…",
     "logout": "Sign out",
-    "language": "Language",
     "localeName": {
       "zh": "中文",
       "en": "English"
-    }
+    },
+    "cancel": "Cancel",
+    "retry": "Retry",
+    "loadFailed": "Failed to load"
   },
   "login": {
     "title": "Sign in",
     "loginLabel": "Username",
     "passwordLabel": "Password",
     "submit": "Sign in",
-    "submitting": "Signing in…"
+    "subtitle": "Sign in with your username and password."
   },
   "setup": {
     "title": "Setup",
@@ -28,21 +30,26 @@
     "passwordLabel": "Password",
     "passwordHint": "12–256 characters",
     "displayNameLabel": "Display name",
-    "orgNameLabel": "Organization name (optional)",
-    "setupTokenLabel": "Setup token (only if your deployment configured one)",
+    "orgNameLabel": "Organization name",
+    "setupTokenLabel": "Setup token",
     "submit": "Complete setup",
-    "submitting": "Submitting…",
     "alreadyDone": "Setup has already been completed.",
-    "goToLogin": "Go to sign in"
+    "goToLogin": "Go to sign in",
+    "setupTokenHint": "Only needed if the deployment configured a setup token."
   },
   "home": {
     "title": "Workspace",
     "greeting": "Hello, {name}",
     "currentOrg": "Current organization",
     "selectOrg": "Select an organization",
-    "noMemberships": "You are not a member of any organization yet.",
+    "noMemberships": "You have not joined any organization yet",
     "agents": "Agents",
-    "openAgents": "View and create agents"
+    "openAgents": "View and create agents",
+    "noMembershipsHint": "Ask an organization admin to invite you.",
+    "noCurrentOrg": "Select a current organization to view and create agents.",
+    "role": "Role",
+    "slug": "Slug",
+    "orgCard": "Organization"
   },
   "errors": {
     "unknown": "Something went wrong. Please try again later.",
@@ -90,16 +97,14 @@
     "empty": "No agents yet.",
     "startChat": "Start chat",
     "starting": "Creating conversation…",
-    "noOrg": "Select a current organization in the workspace first.",
+    "noOrg": "No current organization selected",
     "backHome": "Back to workspace",
-    "backToList": "Back to agents",
-    "modelLine": "Model: {provider} / {model}",
     "form": {
       "title": "New agent",
       "nameLabel": "Name",
       "instructionsLabel": "Instructions (system prompt)",
       "modelLabel": "Model",
-      "fallbackLabel": "Fallback model (optional)",
+      "fallbackLabel": "Fallback model",
       "fallbackNone": "No fallback model",
       "visibilityLabel": "Visibility",
       "visibility": {
@@ -107,20 +112,24 @@
         "org": "Everyone in the organization"
       },
       "submit": "Save",
-      "submitting": "Saving…",
       "noModels": "No models are available. Install and configure a model provider plugin first.",
       "warningsTitle": "Saved, but please note:",
       "continue": "Continue",
       "modelParamsTitle": "Model parameters",
-      "fallbackParamsTitle": "Fallback model parameters"
+      "fallbackParamsTitle": "Fallback model parameters",
+      "basicSection": "Basics",
+      "basicSectionHint": "Name and visibility; the instructions are shown to the model.",
+      "modelSection": "Model",
+      "modelSectionHint": "The fallback model is used when the main model is unavailable.",
+      "paramsSectionHint": "Parameters you leave untouched use the model defaults.",
+      "nameRequired": "Enter a name.",
+      "instructionsHelp": "Shown to the model; write it in English."
     },
     "params": {
       "default": "Default",
       "defaultValue": "Default ({value})",
       "invalid": "This value is invalid.",
       "invalidKey": "Parameter {key} is invalid.",
-      "reset": "Reset",
-      "resetLabel": "Reset {label} to default",
       "effort": {
         "low": "Low",
         "medium": "Medium",
@@ -137,7 +146,13 @@
     "warnings": {
       "fallback_same_provider": "The fallback model should come from a different provider; otherwise it cannot help when that provider fails.",
       "unknown": "Saved with an unrecognized notice: {code}"
-    }
+    },
+    "columns": {
+      "name": "Name",
+      "model": "Model"
+    },
+    "emptyHint": "Create an agent, then start a conversation.",
+    "noOrgHint": "Pick one on the home page or from the organization menu in the top bar."
   },
   "chat": {
     "title": "Chat",
@@ -152,6 +167,28 @@
     "thinking": "Thinking",
     "failed": "This reply failed ({code}).",
     "empty": "Send a message to start the conversation.",
-    "streamLost": "The live connection to the server was lost. Refresh the page."
+    "streamLost": "The live connection to the server was lost. Refresh the page.",
+    "idle": "Idle",
+    "agent": "Agent",
+    "conversation": "Conversation",
+    "status": "Status",
+    "inspectorTitle": "Conversation"
+  },
+  "nav": {
+    "overview": "Overview",
+    "agents": "Agents",
+    "goto": "Go to",
+    "actions": "Actions"
+  },
+  "shell": {
+    "switchLocale": "Switch to {name}",
+    "themeLight": "Switch to light theme",
+    "themeDark": "Switch to dark theme",
+    "noOrg": "Select organization"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "The link may be broken, or the page has been removed.",
+    "back": "Back to overview"
   }
 }
