@@ -11,6 +11,12 @@ export type BodyProps = {
   inspectorTitle?: string;
   onInspectorClose?: () => void;
   anchors?: { id: string; label: string; error?: boolean }[];
+  /** 当前锚点；缺省为第一项，点击锚点后切换。 */
+  activeAnchor?: string;
+  /** Content 内边距 16（详情、概览等卡片式内容）；缺省贴边（列表的 DataTable）。 */
+  contentPadded?: boolean;
+  /** Rail 内容贴边（自带内边距或本身是列表 / 表格时）；缺省内边距 12 16。 */
+  railFlush?: boolean;
   children?: ReactNode;
 };
 
@@ -21,6 +27,9 @@ export function Body({
   inspectorTitle,
   onInspectorClose,
   anchors,
+  activeAnchor,
+  contentPadded,
+  railFlush,
   children,
 }: BodyProps) {
   const t = useDesignT();
@@ -29,6 +38,8 @@ export function Body({
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
+  const [currentAnchor, setCurrentAnchor] = useState<string | undefined>(activeAnchor);
+  const current = currentAnchor ?? anchors?.[0]?.id;
 
   const hasRail = (layout === "rail" || layout === "rail-inspector") && rail != null;
   const hasInspector = (layout === "inspector" || layout === "rail-inspector") && inspector != null;
@@ -46,9 +57,16 @@ export function Body({
                   key={a.id}
                   href={`#${a.id}`}
                   className="cb-body-anchor"
-                  data-error={a.error ? "true" : undefined}
+                  onClick={() => setCurrentAnchor(a.id)}
+                  {...(a.id === current ? { "aria-current": "location" as const } : {})}
                 >
-                  {a.error ? `✗ ${a.label}` : a.label}
+                  {a.label}
+                  {a.error ? (
+                    <span className="cb-body-anchor-error">
+                      <span aria-hidden="true"> ●</span>
+                      <span className="cb-sr-only">{t("shell.anchorError")}</span>
+                    </span>
+                  ) : null}
                 </a>
               ))}
             </nav>
@@ -92,11 +110,13 @@ export function Body({
                   onClick={() => setRailCollapsed(true)}
                 />
               </div>
-              {rail}
+              {railFlush ? rail : <div className="cb-body-rail-inner">{rail}</div>}
             </aside>
           )
         ) : null}
-        <div className="cb-body-content">{children}</div>
+        <div className="cb-body-content" data-padded={contentPadded ? "true" : undefined}>
+          {children}
+        </div>
         {hasInspector && !inspectorInSheet ? (
           <aside className="cb-body-inspector">
             {onInspectorClose ? (
@@ -109,7 +129,7 @@ export function Body({
                 />
               </div>
             ) : null}
-            {inspector}
+            <div className="cb-body-inspector-inner">{inspector}</div>
           </aside>
         ) : null}
       </div>

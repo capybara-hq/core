@@ -12,7 +12,9 @@ export function OverviewPage({
   return (
     <div className="cb-template" data-template="OverviewPage">
       <PageHeader {...header} />
-      <Body layout="single">{children}</Body>
+      <Body layout="single" contentPadded>
+        {children}
+      </Body>
     </div>
   );
 }

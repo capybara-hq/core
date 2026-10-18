@@ -5,6 +5,7 @@ import {
   DataTable,
   Input,
   ListPage,
+  Sparkline,
   Stack,
   StatusMark,
   Text,
@@ -29,7 +30,16 @@ const COLUMNS: Column<AgentRow>[] = [
   },
   { key: "status", header: "状态", cell: () => <StatusMark status="success" label="已发布" /> },
   { key: "model", header: "模型", tone: "muted", cell: (a) => a.model },
-  { key: "runs", header: "24H 运行", align: "right", cell: (a) => a.runs },
+  {
+    key: "runs",
+    header: "24H 运行",
+    cell: (a) => (
+      <Stack direction="row" gap={8} align="center">
+        <Sparkline label={`${a.name} 24 小时运行趋势`} values={a.spark} />
+        <Text>{a.runs}</Text>
+      </Stack>
+    ),
+  },
   {
     key: "rate",
     header: "成功率",
@@ -103,6 +113,7 @@ function ListBody() {
     >
       <DataTable<AgentRow>
         label="Agents"
+        framed={false}
         columns={COLUMNS}
         rows={AGENTS}
         rowKey={(a) => a.name}

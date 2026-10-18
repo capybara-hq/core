@@ -6,7 +6,7 @@ import {
   type Column,
   DataTable,
   DetailPage,
-  Grid,
+  KeyValue,
   Segmented,
   Stack,
   StatusMark,
@@ -47,11 +47,7 @@ export function DetailInspector() {
           <Text variant="small" tone="muted">
             {g.title}
           </Text>
-          <Grid columns={2} gap={4}>
-            {g.rows.map(([k, v]) => (
-              <PropRow key={k} k={k} v={v} />
-            ))}
-          </Grid>
+          <KeyValue rows={g.rows.map(([k, v]) => ({ k, v }))} />
         </Stack>
       ))}
       <Stack gap={4}>
@@ -65,15 +61,6 @@ export function DetailInspector() {
         </Stack>
       </Stack>
     </Stack>
-  );
-}
-
-function PropRow({ k, v }: { k: string; v: string }) {
-  return (
-    <>
-      <Text tone="muted">{k}</Text>
-      <Text truncate>{v}</Text>
-    </>
   );
 }
 
@@ -141,6 +128,7 @@ function DetailBody() {
         >
           <DataTable<RecentRun>
             label="最近运行"
+            framed={false}
             columns={RUN_COLUMNS}
             rows={RECENT_RUNS}
             rowKey={(r) => r.id}

@@ -95,19 +95,30 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             data-kind={it.kind}
             role={it.kind === "error" ? "alert" : undefined}
           >
-            <span className="cb-toast-msg">{it.msg}</span>
-            {it.kind === "error" && it.action ? (
-              <button
-                type="button"
-                className="cb-toast-action"
-                onClick={() => {
-                  it.action?.run();
-                  close(it.id);
-                }}
-              >
-                {it.action.label} →
-              </button>
-            ) : null}
+            <div className="cb-toast-head">
+              <span className="cb-toast-msg">{it.msg}</span>
+              {it.kind === "progress" ? (
+                <span className="cb-toast-count">{`${it.done}/${it.total}`}</span>
+              ) : null}
+              {it.kind === "error" && it.action ? (
+                <button
+                  type="button"
+                  className="cb-toast-action"
+                  onClick={() => {
+                    it.action?.run();
+                    close(it.id);
+                  }}
+                >
+                  {it.action.label} →
+                </button>
+              ) : null}
+              <IconButton
+                label={t("overlay.close")}
+                icon="✕"
+                size={24}
+                onClick={() => close(it.id)}
+              />
+            </div>
             {it.kind === "progress" ? (
               <div
                 className="cb-toast-bar"
@@ -126,12 +137,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 ))}
               </div>
             ) : null}
-            <IconButton
-              label={t("overlay.close")}
-              icon="✕"
-              size={24}
-              onClick={() => close(it.id)}
-            />
           </div>
         ))}
       </div>

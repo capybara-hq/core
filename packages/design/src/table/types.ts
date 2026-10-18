@@ -35,4 +35,6 @@ export type DataTableProps<T> = {
   sort?: { key: string; dir: SortDir; onChange(key: string, dir: SortDir): void };
   pagination?: PaginationProps;
   density?: "default" | "compact" | "media";
+  /** 默认 true：1px 外框。false：无外框，用于嵌入 Card 或贴边铺满内容区。 */
+  framed?: boolean;
 };

@@ -40,6 +40,7 @@ export function DataTable<T>({
   sort,
   pagination,
   density = "default",
+  framed = true,
 }: DataTableProps<T>) {
   const t = useDesignT();
   const bodyRef = useRef<HTMLTableSectionElement>(null);
@@ -130,6 +131,7 @@ export function DataTable<T>({
     <div
       className="cb-table"
       data-density={density}
+      data-framed={framed ? "true" : "false"}
       data-error={kind === "error" ? "true" : undefined}
     >
       {bulk ? (
@@ -266,10 +268,14 @@ export function DataTable<T>({
                     {extra ? (
                       <tr className="cb-table-expand">
                         <td colSpan={colCount}>
-                          <span className="cb-table-guide" aria-hidden="true">
-                            └
-                          </span>
-                          {extra}
+                          {/* 每个直接子元素是一行，CSS 在行首加 └ 引导 */}
+                          <div className="cb-table-expand-body">
+                            {typeof extra === "string" || typeof extra === "number" ? (
+                              <div>{extra}</div>
+                            ) : (
+                              extra
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ) : null}

@@ -139,9 +139,36 @@ describe("DataTable rows", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it("展开行", () => {
-    plain({ expand: (r) => (r.id === "a" ? <span>摘要</span> : null) });
-    expect(screen.getByText("摘要")).toBeTruthy();
+  it("展开行：内容放进缩进容器，引导符由每行 CSS 前缀提供（不再单独渲染一行 └）", () => {
+    const { container } = plain({
+      expand: (r) =>
+        r.id === "a" ? (
+          <>
+            <div>第一行</div>
+            <div>第二行</div>
+          </>
+        ) : null,
+    });
+    const body = container.querySelector(".cb-table-expand-body");
+    expect(body).toBeTruthy();
+    expect(body?.children.length).toBe(2);
+    expect(container.querySelector(".cb-table-guide")).toBeNull();
+    expect(container.textContent).not.toContain("└");
+  });
+
+  it("展开内容为纯文本时包成一行", () => {
+    const { container } = plain({ expand: (r) => (r.id === "a" ? "摘要" : null) });
+    const body = container.querySelector(".cb-table-expand-body");
+    expect(body?.children.length).toBe(1);
+    expect(body?.textContent).toBe("摘要");
+  });
+
+  it("framed 默认 true；framed={false} 去掉外框以嵌入 Card", () => {
+    const { container } = plain({});
+    expect(container.querySelector(".cb-table")?.getAttribute("data-framed")).toBe("true");
+    cleanup();
+    const r = plain({ framed: false });
+    expect(r.container.querySelector(".cb-table")?.getAttribute("data-framed")).toBe("false");
   });
 });
 

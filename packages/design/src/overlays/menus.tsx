@@ -1,15 +1,19 @@
 import * as RM from "@radix-ui/react-dropdown-menu";
 import * as RP from "@radix-ui/react-popover";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { useDesignLink } from "../provider";
 
 export type MenuItem =
-  | {
+  | ({
       label: string;
       shortcut?: string;
-      onSelect(): void;
       danger?: boolean;
       disabled?: boolean;
-    }
+    } & (
+      | { onSelect(): void; href?: undefined }
+      /** 导航项：以 DesignProvider 的 link 渲染。 */
+      | { href: string; onSelect?(): void }
+    ))
   | "separator";
 
 export function Popover({
@@ -36,6 +40,7 @@ export function Popover({
 }
 
 export function Menu({ trigger, items }: { trigger: ReactElement; items: MenuItem[] }) {
+  const Link = useDesignLink();
   const normal = items.filter((i) => i === "separator" || !i.danger);
   const danger = items.filter((i) => i !== "separator" && i.danger);
   const ordered: MenuItem[] = danger.length > 0 ? [...normal, "separator", ...danger] : normal;
@@ -54,10 +59,21 @@ export function Menu({ trigger, items }: { trigger: ReactElement; items: MenuIte
                 className="cb-menu-item"
                 data-danger={item.danger ? "true" : undefined}
                 disabled={item.disabled}
-                onSelect={() => item.onSelect()}
+                onSelect={() => item.onSelect?.()}
+                asChild={item.href !== undefined}
               >
-                <span>{item.label}</span>
-                {item.shortcut ? <span className="cb-menu-shortcut">{item.shortcut}</span> : null}
+                {item.href !== undefined ? (
+                  <Link href={item.href} className="cb-menu-item cb-menu-link">
+                    {item.label}
+                  </Link>
+                ) : (
+                  <>
+                    <span>{item.label}</span>
+                    {item.shortcut ? (
+                      <span className="cb-menu-shortcut">{item.shortcut}</span>
+                    ) : null}
+                  </>
+                )}
               </RM.Item>
             ),
           )}

@@ -119,7 +119,14 @@ export type AgentRow = {
   rate: string;
   owner: string;
   updated: string;
+  /** 24 小时运行的 12 段迷你趋势。 */
+  spark: number[];
 };
+
+/** 确定性的 12 段迷你趋势（每个 Agent 不同）。 */
+function sparkOf(seed: number): number[] {
+  return Array.from({ length: 12 }, (_, i) => 1 + ((seed * 7 + i * 5 + ((i * i + seed) % 3)) % 6));
+}
 
 const agent = (
   name: string,
@@ -129,7 +136,16 @@ const agent = (
   rate: string,
   owner: string,
   updated: string,
-): AgentRow => ({ name, ver, model, runs, rate, owner, updated });
+): AgentRow => ({
+  name,
+  ver,
+  model,
+  runs,
+  rate,
+  owner,
+  updated,
+  spark: sparkOf(name.length + Number(runs)),
+});
 
 export const AGENTS: AgentRow[] = [
   agent("support-triage", "v12", "claude-opus-5-5", "412", "98.1%", "张琳", "2 小时前"),

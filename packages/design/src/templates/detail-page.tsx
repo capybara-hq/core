@@ -24,6 +24,7 @@ export function DetailPage({
       <PageTabs {...tabs} />
       <Body
         layout={inspector != null ? "inspector" : "single"}
+        contentPadded
         inspector={inspector}
         {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
         {...(onInspectorClose ? { onInspectorClose } : {})}

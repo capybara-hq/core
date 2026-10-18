@@ -31,6 +31,8 @@ export function InboxPage({
       <Body
         layout={inspector != null ? "rail-inspector" : "rail"}
         rail={list}
+        railFlush
+        contentPadded
         inspector={inspector}
         {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
         {...(onInspectorClose ? { onInspectorClose } : {})}

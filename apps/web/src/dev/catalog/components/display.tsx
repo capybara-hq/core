@@ -5,14 +5,16 @@ import {
   Card,
   Grid,
   Kbd,
+  KeyValue,
   Logo,
   Metric,
   Skeleton,
+  Sparkline,
   StatusMark,
   Text,
   Tooltip,
 } from "@capybara-hq/design";
-import { RUN_TREND } from "../fixtures";
+import { AGENTS, RUN_TREND } from "../fixtures";
 import { Row, Section } from "../frame";
 
 /** spec §2.4 / §3 / §6.5 / §6.8：状态、徽标、快捷键、提示、指标、Logo、图表与文字。 */
@@ -52,9 +54,28 @@ export function DisplaySection() {
         <Logo scale={3} tone="muted" />
         <Logo scale={2} wordmark />
       </Row>
-      <Row label="柱状图（失败叠加 · 当前时段主色）">
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          柱状图（撑满宽度 · 失败叠加 · 当前时段主色）
+        </Text>
         <BarChart label="运行趋势" series={RUN_TREND} current={RUN_TREND.length - 1} />
+      </Grid>
+      <Row label="迷你趋势（表格内 · 12 根 4px 方柱）">
+        <Sparkline label="24 小时运行趋势" values={AGENTS[0]?.spark ?? []} />
+        <Sparkline label="24 小时运行趋势" values={AGENTS[3]?.spark ?? []} />
       </Row>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          属性列表 KeyValue（键 8ch muted · 值单行省略）
+        </Text>
+        <KeyValue
+          rows={[
+            { k: "ID", v: "agt_41acf09e" },
+            { k: "模型", v: "claude-opus-5-5" },
+            { k: "写", v: "ticket.reply（需审批 > ¥500）· crm.update_order · kb.write" },
+          ]}
+        />
+      </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
           骨架行（加载，不用转圈）

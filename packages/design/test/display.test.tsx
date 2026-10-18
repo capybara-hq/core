@@ -8,11 +8,13 @@ import {
   DesignProvider,
   Dither,
   Kbd,
+  KeyValue,
   Logo,
   Metric,
   Pagination,
   Segmented,
   Skeleton,
+  Sparkline,
   StatusMark,
   Tabs,
   Tooltip,
@@ -250,5 +252,60 @@ describe("Skeleton / BarChart", () => {
       />,
     );
     expect(screen.getByRole("img").getAttribute("aria-label")).toBe("近 12 小时运行");
+  });
+  it("BarChart 撑满容器宽度：width=100%、preserveAspectRatio=none、默认高 120", () => {
+    wrap(<BarChart label="趋势" series={[{ value: 3 }, { value: 5 }]} />);
+    const svg = screen.getByRole("img");
+    expect(svg.getAttribute("width")).toBe("100%");
+    expect(svg.getAttribute("height")).toBe("120");
+    expect(svg.getAttribute("preserveAspectRatio")).toBe("none");
+  });
+  it("BarChart height 可配", () => {
+    wrap(<BarChart label="趋势" height={80} series={[{ value: 3 }]} />);
+    expect(screen.getByRole("img").getAttribute("height")).toBe("80");
+  });
+});
+
+describe("Sparkline", () => {
+  it("12 根 4px 宽方柱，高 14，role=img", () => {
+    const values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    wrap(<Sparkline label="24 小时运行" values={values} />);
+    const svg = screen.getByRole("img", { name: "24 小时运行" });
+    expect(svg.getAttribute("height")).toBe("14");
+    const rects = svg.querySelectorAll("rect");
+    expect(rects.length).toBe(12);
+    for (const r of rects) expect(r.getAttribute("width")).toBe("4");
+    const hs = [...rects].map((r) => Number(r.getAttribute("height")));
+    expect(Math.max(...hs)).toBeLessThanOrEqual(14);
+    expect(hs[11]).toBeGreaterThan(hs[0] ?? 0);
+  });
+  it("超过 12 个值只取最后 12 个", () => {
+    wrap(<Sparkline label="s" values={Array.from({ length: 20 }, (_, i) => i)} />);
+    expect(screen.getByRole("img").querySelectorAll("rect").length).toBe(12);
+  });
+});
+
+describe("KeyValue", () => {
+  it("键 8ch muted、值单行省略并带 title", () => {
+    const { container } = wrap(
+      <KeyValue
+        rows={[
+          { k: "ID", v: "agt_41acf09e" },
+          { k: "模型", v: "claude-opus-5-5" },
+        ]}
+      />,
+    );
+    const dl = container.querySelector("dl.cb-kv");
+    expect(dl).toBeTruthy();
+    const dts = container.querySelectorAll("dt");
+    expect(dts.length).toBe(2);
+    expect((dts[0] as HTMLElement).style.width).toBe("8ch");
+    const dd = screen.getByText("claude-opus-5-5");
+    expect(dd.tagName).toBe("DD");
+    expect(dd.getAttribute("title")).toBe("claude-opus-5-5");
+  });
+  it("keyWidth 可配", () => {
+    const { container } = wrap(<KeyValue keyWidth="12ch" rows={[{ k: "a", v: "b" }]} />);
+    expect((container.querySelector("dt") as HTMLElement).style.width).toBe("12ch");
   });
 });

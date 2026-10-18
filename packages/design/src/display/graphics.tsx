@@ -69,35 +69,35 @@ export function Skeleton({ rows }: { rows: number }) {
   );
 }
 
-const BLOCK = 4;
-const GAP = 1;
-const MAX_ROWS = 12;
+// 柱状图几何（与设计稿一致）：每列 32 个单位宽，柱宽 26、列间 6；方块高 8、块间 2。
+// 横向按 viewBox 拉伸撑满容器（preserveAspectRatio="none"），纵向不缩放。
+const COL = 32;
+const BAR = 26;
+const BLOCK_H = 8;
+const ROW = 10;
 
 export function BarChart({
   series,
   current,
   label,
+  height = 120,
 }: {
   series: { value: number; fail?: number }[];
   current?: number;
   label: string;
+  /** 像素高，默认 120。 */
+  height?: number;
 }) {
   const max = Math.max(1, ...series.map((s) => s.value));
-  const step = BLOCK + GAP;
-  const width = series.length * step - GAP;
-  const height = MAX_ROWS * step - GAP;
+  const maxRows = Math.max(1, Math.floor((height + ROW - BLOCK_H) / ROW));
+  const width = Math.max(series.length * COL - (COL - BAR), 1);
   const blocks: { key: string; x: number; y: number; kind: string }[] = [];
   series.forEach((s, i) => {
-    const total = s.value > 0 ? Math.max(1, Math.round((s.value / max) * MAX_ROWS)) : 0;
-    const fails = Math.min(total, s.fail ? Math.max(1, Math.round((s.fail / max) * MAX_ROWS)) : 0);
+    const total = s.value > 0 ? Math.max(1, Math.round((s.value / max) * maxRows)) : 0;
+    const fails = Math.min(total, s.fail ? Math.max(1, Math.round((s.fail / max) * maxRows)) : 0);
     for (let k = 0; k < total; k++) {
       const kind = k >= total - fails ? "fail" : i === current ? "current" : "normal";
-      blocks.push({
-        key: `${i}-${k}`,
-        x: i * step,
-        y: height - (k + 1) * step + GAP,
-        kind,
-      });
+      blocks.push({ key: `${i}-${k}`, x: i * COL, y: height - BLOCK_H - k * ROW, kind });
     }
   });
   return (
@@ -105,14 +105,54 @@ export function BarChart({
       className="cb-barchart"
       role="img"
       aria-label={label}
-      width={Math.max(width, 0)}
+      width="100%"
       height={height}
-      viewBox={`0 0 ${Math.max(width, 1)} ${height}`}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
       shapeRendering="crispEdges"
     >
       {blocks.map((b) => (
-        <rect key={b.key} x={b.x} y={b.y} width={BLOCK} height={BLOCK} data-kind={b.kind} />
+        <rect key={b.key} x={b.x} y={b.y} width={BAR} height={BLOCK_H} data-kind={b.kind} />
       ))}
+    </svg>
+  );
+}
+
+// 迷你趋势（spec §6.8）：12 根 4px 宽方柱，间距 2，高 14，muted。
+const SPARK_BARS = 12;
+const SPARK_W = 4;
+const SPARK_GAP = 2;
+const SPARK_H = 14;
+
+export function Sparkline({ values, label }: { values: number[]; label: string }) {
+  const vs = values.slice(-SPARK_BARS);
+  const max = Math.max(0, ...vs);
+  const width = SPARK_BARS * (SPARK_W + SPARK_GAP) - SPARK_GAP;
+  const offset = (SPARK_BARS - vs.length) * (SPARK_W + SPARK_GAP);
+  return (
+    <svg
+      className="cb-sparkline"
+      role="img"
+      aria-label={label}
+      width={width}
+      height={SPARK_H}
+      viewBox={`0 0 ${width} ${SPARK_H}`}
+      shapeRendering="crispEdges"
+    >
+      {vs.map((v, i) => {
+        // 高度取 2 的倍数，2–12
+        const h = 2 + Math.round((max > 0 ? Math.max(0, v) / max : 0) * 5) * 2;
+        return (
+          <rect
+            // biome-ignore lint/suspicious/noArrayIndexKey: 固定位置的柱
+            key={i}
+            x={offset + i * (SPARK_W + SPARK_GAP)}
+            y={SPARK_H - h}
+            width={SPARK_W}
+            height={h}
+          />
+        );
+      })}
     </svg>
   );
 }

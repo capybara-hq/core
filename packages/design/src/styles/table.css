@@ -10,13 +10,19 @@
 .cb-table[data-error="true"] {
   border-color: var(--cb-fail);
 }
+.cb-table[data-framed="false"] {
+  border: 0;
+  background: transparent;
+}
+
 .cb-table-toolbar,
 .cb-table-bulk {
   display: flex;
   align-items: center;
   gap: 8px;
+  box-sizing: border-box;
   height: 40px;
-  padding: 0 8px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--cb-line);
 }
 .cb-table-bulk {
@@ -185,14 +191,30 @@
   background: var(--cb-line);
 }
 .cb-table .cb-table-el .cb-table-expand td {
+  height: auto;
+  padding: 8px 8px 12px 32px;
   background: var(--cb-panel);
-  padding-left: 32px;
   max-width: none;
   white-space: normal;
 }
-.cb-table-guide {
+.cb-table-expand-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cb-table-expand-body > * {
+  display: flex;
+  align-items: center;
+}
+.cb-table-expand-body > *::before {
+  content: "└";
+  flex: none;
   margin-right: 8px;
   color: var(--cb-faint);
+}
+/* 分页行：与工具栏同样左右 16 */
+.cb-table > .cb-pagination {
+  padding: 8px 16px;
 }
 
 /* 空状态 */
@@ -221,4 +243,22 @@
 .cb-table-empty-hint {
   color: var(--cb-muted);
   font-size: 12px;
+}
+
+/* 嵌入 Card：贴边，无内衬边距，行底随卡片 */
+.cb-card-body:has(> .cb-table[data-framed="false"]:only-child) {
+  padding: 0;
+}
+.cb-card .cb-table[data-framed="false"] .cb-table-el th,
+.cb-card .cb-table[data-framed="false"] .cb-table-el td {
+  background: var(--cb-panel);
+}
+.cb-card .cb-table[data-framed="false"] .cb-table-el tbody tr:last-child td {
+  border-bottom: 0;
+}
+.cb-card .cb-table[data-framed="false"] .cb-table-el .cb-table-row:hover td {
+  background: var(--cb-hover);
+}
+.cb-card .cb-table[data-framed="false"] .cb-table-el .cb-table-row[data-state~="active"] td {
+  background: linear-gradient(var(--cb-accent-tint), var(--cb-accent-tint)), var(--cb-panel);
 }

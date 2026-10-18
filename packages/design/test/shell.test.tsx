@@ -246,7 +246,7 @@ describe("Body", () => {
     expect(screen.getByText("筛选器内容")).toBeTruthy();
   });
 
-  it("centered：渲染锚点导航，错误项带符号", () => {
+  it("centered：当前锚点 aria-current，含错误的分组后缀 ●（不加 ✗ 前缀）", async () => {
     zh(
       <Body
         layout="centered"
@@ -259,8 +259,116 @@ describe("Body", () => {
       </Body>,
     );
     const nav = screen.getByRole("navigation", { name: "页内导航" });
-    expect(within(nav).getByRole("link", { name: "基础" }).getAttribute("href")).toBe("#basic");
-    expect(within(nav).getByRole("link", { name: /模型/ }).textContent).toContain("✗");
+    const basic = within(nav).getByRole("link", { name: "基础" });
+    expect(basic.getAttribute("href")).toBe("#basic");
+    expect(basic.getAttribute("aria-current")).toBe("location");
+    const model = within(nav).getByRole("link", { name: /模型/ });
+    expect(model.textContent).not.toContain("✗");
+    expect(model.textContent?.startsWith("模型")).toBe(true);
+    const dot = model.querySelector(".cb-body-anchor-error") as HTMLElement;
+    expect(dot.textContent).toContain("●");
+    expect(model.getAttribute("aria-current")).toBeNull();
+    await userEvent.click(model);
+    expect(model.getAttribute("aria-current")).toBe("location");
+    expect(basic.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("centered：activeAnchor 指定当前项", () => {
+    zh(
+      <Body
+        layout="centered"
+        activeAnchor="model"
+        anchors={[
+          { id: "basic", label: "基础" },
+          { id: "model", label: "模型" },
+        ]}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "模型" }).getAttribute("aria-current")).toBe(
+      "location",
+    );
+  });
+
+  it("Rail 内容默认带内边距容器；railFlush 时直接贴边；contentPadded 标记内容区", () => {
+    const { container } = zh(
+      <Body layout="rail" rail={<div>筛选器内容</div>} contentPadded>
+        <div>主内容</div>
+      </Body>,
+    );
+    expect(screen.getByText("筛选器内容").parentElement?.className).toBe("cb-body-rail-inner");
+    expect(container.querySelector(".cb-body-content")?.getAttribute("data-padded")).toBe("true");
+    cleanup();
+    const r = zh(
+      <Body layout="rail" rail={<div>筛选器内容</div>} railFlush>
+        <div>主内容</div>
+      </Body>,
+    );
+    expect(screen.getByText("筛选器内容").parentElement?.className).toBe("cb-body-rail");
+    expect(r.container.querySelector(".cb-body-content")?.getAttribute("data-padded")).toBeNull();
+  });
+
+  it("Inspector 内容放进带内边距的容器", () => {
+    zh(
+      <Body layout="inspector" inspector={<div>检查器内容</div>}>
+        <div>主内容</div>
+      </Body>,
+    );
+    expect(screen.getByText("检查器内容").parentElement?.className).toBe("cb-body-inspector-inner");
+  });
+});
+
+describe("TopBar 窄屏", () => {
+  const wideNav = {
+    ...topBar,
+    nav: [
+      { id: "overview", label: "概览", href: "/" },
+      { id: "agents", label: "Agents", href: "/agents" },
+      { id: "runs", label: "运行记录", href: "/runs" },
+    ],
+  };
+
+  it("≥1280：完整搜索框，导航全部可见", () => {
+    zh(
+      <AppShell topBar={wideNav} status={status}>
+        <div />
+      </AppShell>,
+    );
+    expect(screen.getByRole("button", { name: /搜索或执行命令/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "运行记录" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /更多/ })).toBeNull();
+  });
+
+  it("<1280：搜索收成图标按钮（aria-label 搜索），点击打开命令面板", async () => {
+    stubMedia(1279);
+    zh(
+      <AppShell topBar={wideNav} status={status}>
+        <div />
+      </AppShell>,
+    );
+    expect(screen.queryByRole("button", { name: /搜索或执行命令/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "运行记录" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("<960：只显示当前项，其余收进「更多 ▾」菜单", async () => {
+    stubMedia(1279, 959);
+    zh(
+      <AppShell topBar={wideNav} status={status}>
+        <div />
+      </AppShell>,
+    );
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Agents"]);
+    await userEvent.click(within(nav).getByRole("button", { name: /更多/ }));
+    const menu = screen.getByRole("menu");
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual(["概览", "运行记录"]);
+    expect(items[1]?.getAttribute("href")).toBe("/runs");
   });
 });
 

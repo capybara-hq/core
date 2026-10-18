@@ -35,11 +35,12 @@ const COLUMNS: Column<TableRun>[] = [
 
 const PLAIN_COLUMNS = COLUMNS.filter((c) => c.key !== "note");
 
-export function TraceSummary() {
+/** 链路摘要的各行（不含容器）：展开行里每行由 DataTable 加 └ 引导。 */
+export function TraceLines() {
   return (
-    <Stack gap={4}>
+    <>
       {TRACE_LINES.map((l) => (
-        <Stack key={l.at} direction="row" gap={12}>
+        <Stack key={l.at} direction="row" gap={12} align="center">
           <Text variant="small" tone="muted">
             {l.at}
           </Text>
@@ -56,6 +57,15 @@ export function TraceSummary() {
           )}
         </Stack>
       ))}
+    </>
+  );
+}
+
+/** 链路摘要（卡片内用）：各行纵向排列。 */
+export function TraceSummary() {
+  return (
+    <Stack gap={4}>
+      <TraceLines />
     </Stack>
   );
 }
@@ -98,7 +108,7 @@ export function TableCatalog() {
           activeKey={active}
           onOpen={(r) => setActive(r.id)}
           rowMenu={() => RUN_MENU}
-          expand={(r) => (r.id === TABLE_EXPANDED_KEY ? <TraceSummary /> : null)}
+          expand={(r) => (r.id === TABLE_EXPANDED_KEY ? <TraceLines /> : null)}
           isDisabled={(r) => r.id === TABLE_DISABLED_KEY}
           sort={{ ...sort, onChange: (key, dir) => setSort({ key, dir }) }}
           pagination={{

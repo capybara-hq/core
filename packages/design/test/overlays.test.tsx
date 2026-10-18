@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -276,6 +276,13 @@ describe("Toast", () => {
     );
     act(() => screen.getByRole("button", { name: "prog" }).click());
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
+    // 标题、计数、关闭在同一行（进度条在其后另起一行）
+    const toast = screen.getByText("上传").closest(".cb-toast") as HTMLElement;
+    const head = toast.querySelector(".cb-toast-head") as HTMLElement;
+    expect(head.textContent).toContain("上传");
+    expect(within(head).getByText("1/4")).toBeTruthy();
+    expect(within(head).getByRole("button", { name: "关闭" })).toBeTruthy();
+    expect(head.nextElementSibling?.getAttribute("role")).toBe("progressbar");
   });
 });
 

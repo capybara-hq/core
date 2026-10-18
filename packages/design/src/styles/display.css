@@ -221,6 +221,7 @@
 /* BarChart */
 .cb-barchart {
   display: block;
+  width: 100%;
 }
 .cb-barchart rect {
   fill: var(--cb-line-strong);
@@ -230,6 +231,43 @@
 }
 .cb-barchart rect[data-kind="current"] {
   fill: var(--cb-accent);
+}
+
+/* 迷你趋势：表格内 12 根方柱 */
+.cb-sparkline {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+}
+.cb-sparkline rect {
+  fill: var(--cb-muted);
+}
+
+/* KeyValue：键定宽 muted，值单行省略 */
+.cb-kv {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.cb-kv-row {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+.cb-kv-key {
+  flex: none;
+  overflow: hidden;
+  color: var(--cb-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-kv-value {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: no-preference) {

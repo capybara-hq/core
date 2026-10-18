@@ -41,7 +41,7 @@ export function SettingsPage({
   return (
     <div className="cb-template" data-template="SettingsPage">
       <PageHeader {...header} />
-      <Body layout="rail" rail={rail}>
+      <Body layout="rail" rail={rail} railFlush>
         <div className="cb-settings-content">{children}</div>
       </Body>
       {actionRow ? <ActionRow {...actionRow} /> : null}

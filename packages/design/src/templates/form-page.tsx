@@ -12,11 +12,13 @@ import {
 export function FormPage({
   header,
   anchors,
+  activeAnchor,
   actionRow,
   children,
 }: {
   header: PageHeaderProps;
   anchors: { id: string; label: string; error?: boolean }[];
+  activeAnchor?: string;
   actionRow: ActionRowProps;
   children?: ReactNode;
 }) {
@@ -32,7 +34,11 @@ export function FormPage({
   return (
     <div className="cb-template" data-template="FormPage">
       <PageHeader {...header} />
-      <Body layout="centered" anchors={anchors}>
+      <Body
+        layout="centered"
+        anchors={anchors}
+        {...(activeAnchor !== undefined ? { activeAnchor } : {})}
+      >
         {children}
       </Body>
       <ActionRow {...actionRow} />

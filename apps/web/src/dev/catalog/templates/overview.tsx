@@ -58,6 +58,7 @@ function OverviewBody() {
         <Card title="最近活动">
           <DataTable<RecentRun>
             label="最近活动"
+            framed={false}
             columns={COLUMNS}
             rows={RECENT_RUNS}
             rowKey={(r) => r.id}

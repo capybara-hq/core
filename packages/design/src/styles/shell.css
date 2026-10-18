@@ -90,6 +90,7 @@
   align-self: stretch;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
 }
 .cb-topbar-link {
   display: inline-flex;
@@ -98,6 +99,13 @@
   color: var(--cb-muted);
   text-decoration: none;
   white-space: nowrap;
+}
+.cb-topbar-more {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
 }
 .cb-topbar-link:hover {
   background: var(--cb-hover);
@@ -250,6 +258,22 @@
   min-width: min(560px, 100%);
   overflow: auto;
 }
+.cb-body-content[data-padded="true"] {
+  box-sizing: border-box;
+  padding: 16px;
+}
+.cb-body-rail-inner {
+  padding: 12px 16px;
+}
+.cb-body-rail-head + .cb-body-rail-inner {
+  padding-top: 0;
+}
+.cb-body-inspector-inner {
+  padding: 16px;
+}
+.cb-body-inspector-head + .cb-body-inspector-inner {
+  padding-top: 0;
+}
 .cb-body-rail-head,
 .cb-body-inspector-head {
   display: flex;
@@ -289,7 +313,7 @@
   width: 180px;
 }
 .cb-body-anchor {
-  padding: 4px 8px;
+  padding: 4px 8px 4px 12px;
   color: var(--cb-muted);
   text-decoration: none;
 }
@@ -297,7 +321,12 @@
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
-.cb-body-anchor[data-error="true"] {
+/* 当前项：ink + 主色 2px 左标；含错误的分组后缀 ●（fail） */
+.cb-body-anchor[aria-current="location"] {
+  color: var(--cb-ink);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+.cb-body-anchor-error {
   color: var(--cb-fail);
 }
 
