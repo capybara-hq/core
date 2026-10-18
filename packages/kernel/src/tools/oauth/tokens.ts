@@ -20,6 +20,8 @@ export interface OAuthClientRecord {
   /** RFC 8707 `resource` 参数（MCP 发现所得）。 */
   resource?: string;
   scopes?: string[];
+  /** 授权服务器标识（MCP 发现所得）：回调带 RFC 9207 `iss` 时与它核对。 */
+  issuer?: string;
   /** DCR 返回的注册信息（`registration_access_token` 为密钥）。 */
   registration?: { accessToken?: string; clientUri?: string; issuedAt?: number };
 }
@@ -35,13 +37,20 @@ export interface OAuthTokenRecord {
 
 export type OAuthOwner = { kind: "org" } | { kind: "user"; accountId: string };
 
-/** 令牌端点明确拒绝（4xx + OAuth 错误码，如 `invalid_grant`）：凭据已失效，重试无用。 */
+/** 令牌端点以 400 / 401 + RFC 6749 错误码明确拒绝（如 `invalid_grant`）。 */
 export class OAuthGrantError extends Error {
   constructor(readonly error: string) {
     super(`The authorization server rejected the token request (${error})`);
     this.name = "OAuthGrantError";
   }
 }
+
+/** 这些错误码说明凭据本身已失效（refresh token / 客户端），只有它们才作废令牌。 */
+export const INVALIDATING_ERRORS: ReadonlySet<string> = new Set([
+  "invalid_grant",
+  "invalid_client",
+  "unauthorized_client",
+]);
 
 /** 授权服务器暂时不可用（网络、超时、5xx、畸形响应）：模型可见的英文说明，计入「服务不可用」。 */
 export class OAuthUnavailable extends ToolError {
@@ -69,13 +78,13 @@ const LOCK_POLL_MS = 50;
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** 只把形如 OAuth 错误码的串写进日志 / 错误（不回显对方任意文本）。 */
-const safeCode = (v: unknown, fallback: string): string =>
-  typeof v === "string" && /^[a-z0-9_.-]{1,64}$/i.test(v) ? v : fallback;
+/** RFC 6749 §5.2 形式的错误码（只有这种串才写进日志 / 错误，不回显对方任意文本）。 */
+const OAUTH_ERROR_RE = /^[a-z][a-z0-9_]{0,63}$/;
 
 /**
  * 调令牌端点（RFC 6749 §3.2）：按客户端认证方式带 client_id / secret（Basic 按 §2.3.1 先表单编码）。
- * 4xx → OAuthGrantError（错误码）；网络错误、超时、5xx、3xx、畸形响应 → OAuthUnavailable。
+ * 400 / 401 且正文带可解析的 RFC 6749 `error` 码 → OAuthGrantError；其余（网络错误、超时、429、408、
+ * 403 等其他 4xx、没有错误码的 4xx、5xx、3xx、畸形响应）→ OAuthUnavailable——网关限流或 WAF 拦截不能当成凭据失效。
  */
 export async function tokenRequest(
   client: OAuthClientRecord,
@@ -112,8 +121,9 @@ export async function tokenRequest(
   } catch {
     body = undefined;
   }
-  if (res.status >= 400 && res.status < 500) {
-    throw new OAuthGrantError(safeCode(isObj(body) ? body.error : undefined, `http_${res.status}`));
+  if (res.status === 400 || res.status === 401) {
+    const code = isObj(body) ? body.error : undefined;
+    if (typeof code === "string" && OAUTH_ERROR_RE.test(code)) throw new OAuthGrantError(code);
   }
   if (res.status !== 200 || !isObj(body)) throw new OAuthUnavailable();
   const { access_token, refresh_token, expires_in, token_type, scope } = body;
@@ -238,7 +248,7 @@ export class OAuthTokens {
           const done = replaced(rec);
           if (done !== undefined) return done;
           if (rec === null && auth.type === "oauth_code") throw new OAuthReconnectRequired(owner);
-          return await this.obtain(orgId, appId, auth, owner, rec);
+          return await this.obtain(orgId, appId, auth, owner, rec, key, id);
         } finally {
           await this.redis.eval(RELEASE, 1, key, id).catch((err: unknown) => {
             this.log.warn("oauth refresh lock release failed", { appId, err });
@@ -256,18 +266,34 @@ export class OAuthTokens {
     }
   }
 
-  /** 锁内：向令牌端点要新 token 并写回。 */
+  /**
+   * 锁内：向令牌端点要新 token 并写回。作废前做围栏检查：锁仍归自己、库里的 token 仍是这次用掉的那组——
+   * 锁过期后另一个刷新者若已写入新 token，就直接用它而不是删掉它。
+   */
   private async obtain(
     orgId: string,
     appId: string,
     auth: TokenAuth,
     owner: OAuthOwner,
     rec: OAuthTokenRecord | null,
+    lockKey: string,
+    lockId: string,
   ): Promise<string> {
     const client = await this.store.readClient(orgId, appId);
     if (!client) throw new OAuthReconnectRequired({ kind: "org" });
-    const invalidate = async (reason: string): Promise<never> => {
-      await this.store.deleteTokens(orgId, appId, owner);
+    const invalidate = async (reason: string): Promise<string> => {
+      const current = await this.store.readTokens(orgId, appId, owner);
+      const unchanged =
+        current !== null &&
+        rec !== null &&
+        current.access_token === rec.access_token &&
+        current.refresh_token === rec.refresh_token;
+      if (current !== null && !unchanged) return current.access_token;
+      if (current !== null && (await this.redis.get(lockKey)) !== lockId) {
+        // 锁已不归自己（过期）：不删，交给持锁者；这次按暂时不可用处理
+        throw new OAuthUnavailable();
+      }
+      if (current !== null) await this.store.deleteTokens(orgId, appId, owner);
       this.log.warn("oauth credential invalidated", { appId, owner: owner.kind, reason });
       throw new OAuthReconnectRequired(owner);
     };
@@ -295,7 +321,14 @@ export class OAuthTokens {
         );
       }
     } catch (e) {
-      if (e instanceof OAuthGrantError) return invalidate(e.error);
+      if (e instanceof OAuthGrantError) {
+        if (INVALIDATING_ERRORS.has(e.error)) return invalidate(e.error);
+        // invalid_scope / invalid_request 等：配置问题，凭据保留
+        this.log.warn("oauth token request rejected", { appId, error: e.error });
+        throw new OAuthUnavailable(
+          `Could not obtain an access token: the authorization server rejected the request (${e.error}). Ask an administrator to check the app.`,
+        );
+      }
       if (e instanceof OAuthUnavailable) throw e;
       // URL 校验失败等（配置问题）：按不可用处理，不删凭据
       this.log.warn("oauth token request failed", { appId, err: e });

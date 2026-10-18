@@ -84,6 +84,35 @@ describe("discoverMcp", () => {
   });
 });
 
+describe("discoverMcp 的严格校验", () => {
+  it("授权服务器未声明 S256（不声明或只有 plain）→ discovery_failed", async () => {
+    for (const pkceMethods of [null, ["plain"]]) {
+      const { mcp } = await setup("header", { pkceMethods });
+      const err = await discoverMcp(mcp.url, HTTP).catch((e: unknown) => e);
+      expect(err).toMatchObject({
+        reason: "discovery_failed",
+        message: expect.stringContaining("S256"),
+      });
+    }
+  });
+
+  it("issuer 必须完全相同（多一个结尾斜杠也拒绝）", async () => {
+    const as = await startFakeOAuthServer();
+    stops.push(() => as.stop());
+    const mcp = await startFakeMcpServer({
+      tools: [],
+      verifyBearer: (t) => as.verify(t),
+      protectedResource: { authorizationServers: [`${as.issuer}/`], advertise: "header" },
+    });
+    stops.push(() => mcp.stop());
+    const err = await discoverMcp(mcp.url, HTTP).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      reason: "discovery_failed",
+      message: expect.stringContaining("issuer"),
+    });
+  });
+});
+
 describe("registerClient（DCR）", () => {
   it("注册成功：回调地址、授权码 + refresh 授权类型；返回 client 与端点", async () => {
     const { as, mcp } = await setup("header");
@@ -96,12 +125,21 @@ describe("registerClient（DCR）", () => {
       authorizationEndpoint: `${as.issuer}/authorize`,
       tokenEndpoint: `${as.issuer}/token`,
       resource: mcp.url,
+      issuer: as.issuer,
     });
     expect(as.registrations[0]).toMatchObject({
       redirect_uris: [CALLBACK],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
     });
+  });
+
+  it("指定 client_secret_post → 按此注册", async () => {
+    const { as, mcp } = await setup("header");
+    const meta = await discoverMcp(mcp.url, HTTP);
+    const client = await registerClient(meta, CALLBACK, HTTP, "client_secret_post");
+    expect(client.authMethod).toBe("client_secret_post");
+    expect(as.registrations[0]).toMatchObject({ token_endpoint_auth_method: "client_secret_post" });
   });
 
   it("授权服务器不支持 DCR → dcr_unsupported", async () => {

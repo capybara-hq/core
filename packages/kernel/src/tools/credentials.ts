@@ -40,8 +40,16 @@ export type OAuthAuth =
       tokenUrl?: string | undefined;
       scopes?: string[] | undefined;
       client: "dcr" | "manual";
+      /** 令牌端点的客户端认证方式（有密钥时），默认 client_secret_basic。 */
+      tokenAuthMethod?: "client_secret_basic" | "client_secret_post" | undefined;
     }
-  | { type: "oauth_client"; ownership: "org"; tokenUrl: string; scopes?: string[] | undefined };
+  | {
+      type: "oauth_client";
+      ownership: "org";
+      tokenUrl: string;
+      scopes?: string[] | undefined;
+      tokenAuthMethod?: "client_secret_basic" | "client_secret_post" | undefined;
+    };
 
 export type AppAuth = StaticAuth | OAuthAuth;
 

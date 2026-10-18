@@ -266,7 +266,8 @@ export async function discoverMcp(
         ];
   const meta = await firstJson(asCandidates, http);
   if (!meta) throw failed("The authorization server did not publish its metadata (RFC 8414)");
-  if (typeof meta.issuer !== "string" || trimSlash(meta.issuer) !== trimSlash(issuer)) {
+  // RFC 8414 §3.3：元数据的 issuer 必须与授权服务器标识完全相同
+  if (meta.issuer !== issuer) {
     throw failed("The authorization server metadata issuer does not match the server");
   }
   const authz = meta.authorization_endpoint;
@@ -277,8 +278,11 @@ export async function discoverMcp(
   checkOAuthUrl(authz, http);
   checkOAuthUrl(token, http);
   const pkce = strings(meta.code_challenge_methods_supported);
-  if (pkce && !pkce.includes("S256")) {
-    throw failed("The authorization server does not support PKCE with S256");
+  // MCP 授权规范：授权服务器必须声明支持 S256，未声明即拒绝
+  if (!pkce?.includes("S256")) {
+    throw failed(
+      "The authorization server does not advertise PKCE S256 support (code_challenge_methods_supported)",
+    );
   }
   const reg = meta.registration_endpoint;
   if (reg !== undefined && typeof reg !== "string") {
@@ -320,6 +324,8 @@ export async function registerClient(
   meta: McpAuthMetadata,
   redirectUri: string,
   http: OAuthHttpOptions,
+  /** 管理员指定的客户端认证方式（`tokenAuthMethod`）；不给则按授权服务器声明选择。 */
+  preferred?: TokenAuthMethod,
 ): Promise<OAuthClientRecord> {
   if (!meta.registrationEndpoint) {
     throw new OAuthSetupError(
@@ -328,7 +334,7 @@ export async function registerClient(
     );
   }
   // 优先机密客户端（client_secret_basic / post）；授权服务器两者都不支持时注册为公开客户端（只靠 PKCE）
-  const wanted = pickAuthMethod(meta.authMethods, true);
+  const wanted = preferred ?? pickAuthMethod(meta.authMethods, true);
   let res: OAuthResponse;
   try {
     res = await oauthFetch(
@@ -380,6 +386,7 @@ export async function registerClient(
     authorizationEndpoint: meta.authorizationEndpoint,
     tokenEndpoint: meta.tokenEndpoint,
     resource: meta.resource,
+    issuer: meta.issuer,
     ...(meta.scopes && { scopes: meta.scopes }),
     registration: {
       ...(typeof regToken === "string" && { accessToken: regToken }),

@@ -22,6 +22,8 @@ export interface FakeOAuthServerOptions {
   /** 令牌端点每次响应前等待的毫秒数（放大并发刷新的竞态窗口）。 */
   tokenDelayMs?: number;
   scopesSupported?: string[];
+  /** 元数据里的 `code_challenge_methods_supported`；null = 不声明。默认 `["S256"]`。 */
+  pkceMethods?: string[] | null;
 }
 
 /** 令牌端点收到的一次请求（不含任何密钥）。 */
@@ -30,6 +32,8 @@ export interface FakeTokenRequest {
   clientId: string | undefined;
   resource: string | undefined;
   scope: string | undefined;
+  /** 客户端认证方式：Basic 头、表单里的 client_secret、或只有 client_id。 */
+  clientAuth: "basic" | "post" | "none";
   /** 本次响应的 HTTP 状态。 */
   status: number;
 }
@@ -53,6 +57,10 @@ export interface FakeOAuthServer {
   /** 下一次授权请求以该 OAuth 错误回跳。 */
   denyNext(error: string, description?: string): void;
   setDcr(enabled: boolean): void;
+  /** 接下来 n 次令牌请求直接以该状态与正文响应（模拟限流 429、WAF 403、临时错误等）。 */
+  failTokenRequests(n: number, status: number, body?: unknown): void;
+  /** 下一次授权回跳的 RFC 9207 `iss` 改为该值（默认回跳带真实 issuer）。 */
+  forgeIssNext(iss: string): void;
   stop(): Promise<void>;
 }
 
@@ -110,6 +118,8 @@ export async function startFakeOAuthServer(
   const registrations: Record<string, unknown>[] = [];
   const authorizeRequests: URLSearchParams[] = [];
   let deny: { error: string; description: string | undefined } | undefined;
+  let tokenFailures: { left: number; status: number; body: unknown } | undefined;
+  let forgedIss: string | undefined;
   let issuer = "";
 
   const metadata = () => ({
@@ -119,7 +129,10 @@ export async function startFakeOAuthServer(
     ...(dcr && { registration_endpoint: `${issuer}/register` }),
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token", "client_credentials"],
-    code_challenge_methods_supported: ["S256"],
+    ...(opts.pkceMethods !== null && {
+      code_challenge_methods_supported: opts.pkceMethods ?? ["S256"],
+    }),
+    authorization_response_iss_parameter_supported: true,
     token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
     ...(opts.scopesSupported !== undefined && { scopes_supported: opts.scopesSupported }),
   });
@@ -166,9 +179,19 @@ export async function startFakeOAuthServer(
       clientId: undefined,
       resource: form.get("resource") ?? undefined,
       scope: form.get("scope") ?? undefined,
+      clientAuth: req.headers.authorization?.startsWith("Basic ")
+        ? "basic"
+        : form.has("client_secret")
+          ? "post"
+          : "none",
       status: 200,
     };
     tokenRequests.push(entry);
+    if (tokenFailures && tokenFailures.left > 0) {
+      tokenFailures.left--;
+      entry.status = tokenFailures.status;
+      return json(res, tokenFailures.status, tokenFailures.body ?? { message: "fake failure" });
+    }
     const fail = (status: number, error: string) => {
       entry.status = status;
       json(res, status, { error, error_description: `fake: ${error}` });
@@ -219,6 +242,8 @@ export async function startFakeOAuthServer(
     const back = new URL(redirectUri);
     const state = q.get("state");
     if (state !== null) back.searchParams.set("state", state);
+    back.searchParams.set("iss", forgedIss ?? issuer);
+    forgedIss = undefined;
     const challenge = q.get("code_challenge");
     if (deny) {
       back.searchParams.set("error", deny.error);
@@ -313,6 +338,12 @@ export async function startFakeOAuthServer(
     issuedSecrets: () => [...secrets],
     revokeAccessTokens: () => access.clear(),
     revokeRefreshTokens: () => refresh.clear(),
+    failTokenRequests: (n, status, body) => {
+      tokenFailures = { left: n, status, body };
+    },
+    forgeIssNext: (iss) => {
+      forgedIss = iss;
+    },
     denyNext: (error, description) => {
       deny = { error, description };
     },

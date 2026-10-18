@@ -37,6 +37,8 @@ const HeaderName = z
 const Ownership = z.enum(["org", "personal"]);
 /** OAuth 端点（https 等由服务按部署配置再校验）。 */
 const OAuthUrl = z.url().max(2000);
+/** 令牌端点的客户端认证方式（有客户端密钥时）。 */
+const TokenAuthMethod = z.enum(["client_secret_basic", "client_secret_post"]);
 /** OAuth scope（RFC 6749 §3.3 scope-token）。 */
 const Scopes = z
   .array(
@@ -81,6 +83,7 @@ const AuthSchema = z.discriminatedUnion("type", [
       tokenUrl: OAuthUrl.optional(),
       scopes: Scopes.optional(),
       client: z.enum(["dcr", "manual"]),
+      tokenAuthMethod: TokenAuthMethod.optional(),
     })
     .strict()
     .superRefine((a, ctx) => {
@@ -113,6 +116,7 @@ const AuthSchema = z.discriminatedUnion("type", [
       ownership: z.literal("org"),
       tokenUrl: OAuthUrl,
       scopes: Scopes.optional(),
+      tokenAuthMethod: TokenAuthMethod.optional(),
     })
     .strict(),
 ]);

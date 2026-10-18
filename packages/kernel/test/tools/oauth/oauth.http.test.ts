@@ -600,6 +600,164 @@ describe("刷新", () => {
   }, 60_000);
 });
 
+describe("轮换客户端与其他校验", () => {
+  it("A18：客户端凭据应用 PUT 组织凭据 → 先验证再替换客户端与组织 token；错误密钥 502 且不改动", async () => {
+    const { as, mcp } = await servers({
+      clients: [
+        { clientId: "svc", clientSecret: "svc-secret-0123456789abc" },
+        { clientId: "svc2", clientSecret: "svc2-secret-0123456789abc" },
+      ],
+    });
+    const res = await call({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/apps`,
+      payload: {
+        name: "Svc",
+        slug: "svc",
+        connector: "mcp",
+        endpoint: { url: mcp.url },
+        auth: {
+          type: "oauth_client",
+          ownership: "org",
+          tokenUrl: `${as.issuer}/token`,
+          tokenAuthMethod: "client_secret_post",
+        },
+        credential: { clientId: "svc", clientSecret: "svc-secret-0123456789abc" },
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const appId = (res.json() as { app: AppJson }).app.id;
+    expect(as.tokenRequests.at(-1)).toMatchObject({ clientId: "svc", clientAuth: "post" });
+
+    const bad = await call({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/apps/${appId}/credentials/org`,
+      payload: { clientId: "svc2", clientSecret: "wrong-secret-0123456789" },
+    });
+    expect(bad.statusCode, bad.body).toBe(502);
+    expect(bad.json()).toMatchObject({ error: { code: "app.connect_failed" } });
+
+    const ok = await call({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/apps/${appId}/credentials/org`,
+      payload: { clientId: "svc2", clientSecret: "svc2-secret-0123456789abc" },
+    });
+    expect(ok.statusCode, ok.body).toBe(204);
+    expect(as.tokenRequests.at(-1)).toMatchObject({
+      clientId: "svc2",
+      clientAuth: "post",
+      status: 200,
+    });
+    const audits = await db
+      .selectFrom("audit_events")
+      .select(["action", "detail"])
+      .where("action", "=", "app.credential.set")
+      .execute();
+    expect(audits.map((a) => a.detail)).toEqual([{ type: "oauth_client", ownership: "org" }]);
+
+    // 调用用新客户端换来的 token（缓存已替换，不再取 token）
+    const before = as.tokenRequests.length;
+    const convId = await createConv(req, orgId, await agentFor(appId));
+    const r = await runTool(convId, 1, "svc__whoami");
+    expect(r?.isError).toBe(false);
+    expect(as.tokenRequests.length).toBe(before);
+
+    const missingSecret = await call({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/apps/${appId}/credentials/org`,
+      payload: { clientId: "svc2" },
+    });
+    expect(missingSecret.statusCode).toBe(400);
+  }, 60_000);
+
+  it("A18：手填 client 的授权码应用只替换客户端（成员 token 保留）；DCR 应用不可替换", async () => {
+    const { as, mcp } = await servers({
+      clients: [
+        { clientId: "m1", clientSecret: "m1-secret-0123456789abc" },
+        { clientId: "m2", clientSecret: "m2-secret-0123456789abc" },
+      ],
+    });
+    const res = await call({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/apps`,
+      payload: {
+        name: "Docs",
+        slug: "docs",
+        connector: "mcp",
+        endpoint: { url: mcp.url },
+        auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "manual" },
+        credential: { clientId: "m1", clientSecret: "m1-secret-0123456789abc" },
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const appId = (res.json() as { app: AppJson }).app.id;
+    await connectFully(appId);
+    const put = await call({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/apps/${appId}/credentials/org`,
+      payload: { clientId: "m2", clientSecret: "m2-secret-0123456789abc" },
+    });
+    expect(put.statusCode, put.body).toBe(204);
+    expect((await getApp(appId)).credential.status).toBe("connected");
+    const url = await connect(appId);
+    expect(url.searchParams.get("client_id")).toBe("m2");
+
+    // DCR 注册的客户端不能被替换
+    const other = await servers();
+    const dcr = await call({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/apps`,
+      payload: {
+        name: "Auto",
+        slug: "auto",
+        connector: "mcp",
+        endpoint: { url: other.mcp.url },
+        auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
+      },
+    });
+    expect(dcr.statusCode, dcr.body).toBe(201);
+    const r = await call({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/apps/${(dcr.json() as { app: AppJson }).app.id}/credentials/org`,
+      payload: { clientId: "x", clientSecret: "y" },
+    });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toMatchObject({
+      error: { code: "validation_failed", details: [{ path: "auth.client" }] },
+    });
+    expect(as.tokenRequests.filter((t) => t.clientId === "m2")).toEqual([]);
+  }, 60_000);
+
+  it("RFC 9207：回跳的 iss 与发起时的授权服务器不同 → issuer_mismatch，不换 token", async () => {
+    const { as, mcp } = await servers();
+    const app = await installDcr(mcp);
+    as.forgeIssNext("https://evil.example.com");
+    const back = await callback(await approve(await connect(app.id)));
+    expect(back).toBe(`${PUBLIC_URL}/settings/connections?oauth_error=issuer_mismatch`);
+    expect(as.tokenRequests.filter((r) => r.grantType === "authorization_code")).toEqual([]);
+  });
+
+  it("已停用的应用不能发起连接", async () => {
+    const { mcp } = await servers();
+    const app = await installDcr(mcp);
+    const off = await call({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      payload: { status: "disabled" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    const c = await call({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/apps/${app.id}/connect`,
+      payload: {},
+    });
+    expect(c.statusCode).toBe(400);
+    expect(c.json()).toMatchObject({
+      error: { code: "validation_failed", details: [{ path: "status" }] },
+    });
+  });
+});
+
 describe("http.publicUrl 未配置", () => {
   it("OAuth 应用创建返回 validation_failed（path auth）", async () => {
     const k2 = await createKernel(

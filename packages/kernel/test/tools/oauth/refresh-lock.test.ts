@@ -179,6 +179,60 @@ describe("OAuth 刷新加锁（双副本）", () => {
     expect(await a.status(ORG, "app_lock_2", AUTH, ACCOUNT)).toBe("missing");
   });
 
+  it("429 / 408 / WAF 403 / 没有错误码的 400 / invalid_scope → 暂时不可用，凭据保留", async () => {
+    const as = await startFakeOAuthServer({ clients: [pub] });
+    stops.push(() => as.stop());
+    const a = replica();
+    const t = await seed(a, as, "app_lock_5");
+    const stale = { headers: { Authorization: `Bearer ${t.access_token}` } };
+    const cases: [number, unknown][] = [
+      [429, { error: "slow_down" }],
+      [408, {}],
+      [403, { error: "invalid_grant" }],
+      [400, "<html>bad gateway</html>"],
+      [401, { error: "Not An OAuth Code!" }],
+      [400, { error: "invalid_scope" }],
+    ];
+    for (const [status, body] of cases) {
+      as.failTokenRequests(1, status, body);
+      const err = await a.onUnauthorized(ORG, "app_lock_5", AUTH, ACCOUNT, stale).catch((e) => e);
+      expect(err, `${status} ${JSON.stringify(body)}`).toBeInstanceOf(ToolError);
+      expect((err as ToolError).kind).toBe("unavailable");
+      expect(await a.status(ORG, "app_lock_5", AUTH, ACCOUNT)).toBe("connected");
+    }
+    // 之后授权服务器恢复：照常刷新成功
+    await a.onUnauthorized(ORG, "app_lock_5", AUTH, ACCOUNT, stale);
+    expect(refreshes(as).at(-1)?.status).toBe(200);
+  });
+
+  it("围栏：refresh 被拒期间另一个刷新者已写入新 token → 不删，直接用新的", async () => {
+    const as = await startFakeOAuthServer({ clients: [pub], tokenDelayMs: 400 });
+    stops.push(() => as.stop());
+    const a = replica();
+    const t = await seed(a, as, "app_lock_6");
+    as.revokeRefreshTokens();
+    const stale = { headers: { Authorization: `Bearer ${t.access_token}` } };
+    const fresh = await issueTokens(as);
+    const pending = a.onUnauthorized(ORG, "app_lock_6", AUTH, ACCOUNT, stale);
+    // 模拟锁过期后另一个副本刷新成功并写入（在这次 refresh 请求返回 invalid_grant 之前）
+    await new Promise((r) => setTimeout(r, 150));
+    await a.setOAuthTokens(
+      ORG,
+      "app_lock_6",
+      { kind: "user", accountId: ACCOUNT },
+      {
+        access_token: fresh.access_token,
+        refresh_token: fresh.refresh_token,
+        expires_at: Date.now() + 3_600_000,
+        token_type: "Bearer",
+      },
+    );
+    await pending;
+    expect(refreshes(as).map((r) => r.status)).toEqual([400]);
+    const inj = await a.injection(ORG, "app_lock_6", AUTH, ACCOUNT);
+    expect(inj.headers.Authorization).toBe(`Bearer ${fresh.access_token}`);
+  });
+
   it("授权服务器不可达 → 不可用错误（ToolError unavailable），凭据保留", async () => {
     const as = await startFakeOAuthServer({ clients: [pub] });
     const a = replica();

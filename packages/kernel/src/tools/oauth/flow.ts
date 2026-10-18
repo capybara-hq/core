@@ -69,6 +69,8 @@ interface StateRecord {
   returnTo: string;
   /** 浏览器绑定值的 SHA-256。 */
   binding: string;
+  /** 授权服务器标识（MCP 发现所得），回调带 RFC 9207 `iss` 时核对。 */
+  issuer?: string;
 }
 
 /** 回调失败的原因码（放进回跳 URL 的 `oauth_error`；不回显授权服务器的任何文本）。 */
@@ -78,7 +80,11 @@ export type OAuthCallbackError =
   | "access_denied"
   | "provider_error"
   | "token_exchange_failed"
+  | "issuer_mismatch"
   | "app_unavailable";
+
+/** 首次连接后刷新工具清单最多等这么久再 302（超时则在后台继续，结果照常写入）。 */
+export const FIRST_CONNECT_REFRESH_WAIT_MS = 15_000;
 
 export interface OAuthFlowDeps {
   db: KernelDb;
@@ -124,6 +130,11 @@ export class OAuthFlow {
         { path: "auth", message: "Only OAuth authorization-code apps are connected this way" },
       ]);
     }
+    if (app.status !== "active") {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "status", message: "The app is disabled; ask an administrator to enable it" },
+      ]);
+    }
     const client = await this.deps.credentials.oauthClient(orgId, appId);
     if (!client?.authorizationEndpoint) {
       throw new ApiError(
@@ -142,6 +153,7 @@ export class OAuthFlow {
       redirectUri,
       returnTo: returnTo ?? DEFAULT_RETURN_PATH,
       binding: sha256(binding),
+      ...(client.issuer !== undefined && { issuer: client.issuer }),
     };
     await this.deps.redis.set(stateKey(state), JSON.stringify(rec), "EX", OAUTH_STATE_TTL_SECONDS);
     const url = new URL(client.authorizationEndpoint);
@@ -175,7 +187,12 @@ export class OAuthFlow {
    * 成功则在组织行锁内复核发起人仍是成员（`apps.use`），写个人凭据与审计；应用还没有工具快照时用这个 token 刷新。
    */
   async callback(
-    query: { code?: string | undefined; state?: string | undefined; error?: string | undefined },
+    query: {
+      code?: string | undefined;
+      state?: string | undefined;
+      error?: string | undefined;
+      iss?: string | undefined;
+    },
     binding: string | undefined,
   ): Promise<string> {
     const state = query.state;
@@ -186,6 +203,10 @@ export class OAuthFlow {
     const back = rec.returnTo;
     if (binding === undefined || sha256(binding) !== rec.binding) {
       return this.fail("session_mismatch", back);
+    }
+    // RFC 9207：回跳带 iss 时必须是发起时的授权服务器（防混淆攻击）
+    if (query.iss !== undefined && rec.issuer !== undefined && query.iss !== rec.issuer) {
+      return this.fail("issuer_mismatch", back);
     }
     if (query.error !== undefined) {
       return this.fail(query.error === "access_denied" ? "access_denied" : "provider_error", back);
@@ -256,9 +277,18 @@ export class OAuthFlow {
     }
     if (first) {
       // 首次连接（A16）：刷新失败不影响连接本身，凭据已存好；管理员之后可手动刷新
-      await this.deps.onFirstConnect(orgId, appId, accountId).catch((err: unknown) => {
+      // 最多等 FIRST_CONNECT_REFRESH_WAIT_MS 再回跳（本请求自己的计时器，结束即清除）；超时的刷新在后台继续
+      const refresh = this.deps.onFirstConnect(orgId, appId, accountId).catch((err: unknown) => {
         this.deps.log.warn("oauth first-connect tool refresh failed", { orgId, appId, err });
       });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        refresh,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, FIRST_CONNECT_REFRESH_WAIT_MS);
+        }),
+      ]);
+      clearTimeout(timer);
     }
     return this.redirect(back, ["connected", appId]);
   }

@@ -150,6 +150,41 @@ function connectFailed(e: unknown): ApiError {
   return new ApiError("app.connect_failed", message, [{ reason: "token_failed", message }]);
 }
 
+/**
+ * 解析请求里的 OAuth 客户端 `{ clientId, clientSecret? }`（安装时的 `credential`、轮换时的组织凭据）；
+ * 错误只带路径与英文说明，不回显值。
+ */
+function parseOAuthClient(
+  credential: unknown,
+  requireSecret: boolean,
+  prefix = "credential",
+): z.infer<typeof OAuthClientCredential> {
+  if (credential === undefined || credential === null) {
+    throw fail(
+      prefix,
+      "Provide the OAuth client registered with the authorization server ({ clientId, clientSecret })",
+    );
+  }
+  const r = OAuthClientCredential.safeParse(credential);
+  if (!r.success) {
+    throw new ApiError(
+      "validation_failed",
+      "Invalid credential",
+      r.error.issues.map((i) => ({
+        path: [prefix, ...i.path.map(String)].filter(Boolean).join("."),
+        message: i.message,
+      })),
+    );
+  }
+  if (requireSecret && r.data.clientSecret === undefined) {
+    throw fail(
+      prefix ? `${prefix}.clientSecret` : "clientSecret",
+      "A client secret is required for the client credentials flow",
+    );
+  }
+  return r.data;
+}
+
 /** OAuth 安装准备的结果：要存的客户端，以及（客户端凭据流）安装时取到的组织 token。 */
 interface OAuthSetup {
   client: OAuthClientRecord;
@@ -353,32 +388,7 @@ export class AppsService {
     publicUrl: string,
   ): Promise<OAuthSetup> {
     const http = oauthHttpOptions(this.config());
-    const parseClient = (requireSecret: boolean) => {
-      if (credential === undefined || credential === null) {
-        throw fail(
-          "credential",
-          "Provide the OAuth client registered with the authorization server ({ clientId, clientSecret })",
-        );
-      }
-      const r = OAuthClientCredential.safeParse(credential);
-      if (!r.success) {
-        throw new ApiError(
-          "validation_failed",
-          "Invalid credential",
-          r.error.issues.map((i) => ({
-            path: ["credential", ...i.path.map(String)].join("."),
-            message: i.message,
-          })),
-        );
-      }
-      if (requireSecret && r.data.clientSecret === undefined) {
-        throw fail(
-          "credential.clientSecret",
-          "A client secret is required for the client credentials flow",
-        );
-      }
-      return r.data;
-    };
+    const parseClient = (requireSecret: boolean) => parseOAuthClient(credential, requireSecret);
     const checked = (path: string, url: string) => {
       try {
         checkOAuthUrl(url, http);
@@ -393,7 +403,7 @@ export class AppsService {
       const client: OAuthClientRecord = {
         clientId: manual.clientId,
         ...(manual.clientSecret !== undefined && { clientSecret: manual.clientSecret }),
-        authMethod: "client_secret_basic",
+        authMethod: auth.tokenAuthMethod ?? "client_secret_basic",
         tokenEndpoint: checked("auth.tokenUrl", auth.tokenUrl),
         ...(auth.scopes && { scopes: auth.scopes }),
       };
@@ -450,10 +460,14 @@ export class AppsService {
         client: {
           clientId: manual.clientId,
           ...(manual.clientSecret !== undefined && { clientSecret: manual.clientSecret }),
-          authMethod: pickAuthMethod(meta?.authMethods, manual.clientSecret !== undefined),
+          authMethod:
+            manual.clientSecret === undefined
+              ? "none"
+              : (auth.tokenAuthMethod ?? pickAuthMethod(meta?.authMethods, true)),
           authorizationEndpoint: endpoints.authorizationEndpoint,
           tokenEndpoint: endpoints.tokenEndpoint,
           ...(endpoints.resource !== undefined && { resource: endpoints.resource }),
+          ...(meta && { issuer: meta.issuer }),
           ...(scopes && { scopes }),
         },
       };
@@ -464,6 +478,7 @@ export class AppsService {
         { ...meta, ...(scopes && { scopes }) },
         callbackUrl(publicUrl),
         http,
+        auth.tokenAuthMethod,
       );
       return { client };
     } catch (e) {
@@ -917,6 +932,14 @@ export class AppsService {
     value: unknown,
     actorTokenId?: string,
   ): Promise<void> {
+    if (ownership === "org") {
+      const app = await this.row(this.db, orgId, appId);
+      const auth = app.auth as unknown as AppAuth;
+      if (isOAuth(auth)) {
+        await this.rotateOAuthClient(orgId, appId, actorAccountId, auth, value, actorTokenId);
+        return;
+      }
+    }
     await this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(
         t,
@@ -937,6 +960,72 @@ export class AppsService {
         action: "app.credential.set",
         target: appId,
         detail: { type: auth.type, ownership },
+      });
+    });
+  }
+
+  /**
+   * 轮换 OAuth 客户端（Ruling A18，组织凭据接口，`apps.manage`）：值为 `{ clientId, clientSecret }`。
+   * 客户端凭据应用先用新客户端取一次 token 验证（失败 → 502 `app.connect_failed`，什么都不改），再替换客户端并以
+   * 新 token 替换缓存的组织 token；授权码应用只限手填 client，只替换客户端（成员的 token 保留，之后刷新若得到
+   * invalid_client 会作废）。审计只记类型与归属。
+   */
+  private async rotateOAuthClient(
+    orgId: string,
+    appId: string,
+    actorAccountId: string,
+    auth: OAuthAuth,
+    value: unknown,
+    actorTokenId?: string,
+  ): Promise<void> {
+    if (auth.type === "oauth_code" && auth.client !== "manual") {
+      throw fail(
+        "auth.client",
+        "The OAuth client of this app was registered automatically and cannot be replaced",
+      );
+    }
+    const next = parseOAuthClient(value, auth.type === "oauth_client", "");
+    const current = await this.credentials.oauthClient(orgId, appId);
+    if (!current) {
+      throw new ApiError(
+        "app.connect_failed",
+        "The app has no registered OAuth client; reinstall it",
+      );
+    }
+    const client: OAuthClientRecord = { ...current, clientId: next.clientId };
+    delete client.clientSecret;
+    if (next.clientSecret !== undefined) {
+      client.clientSecret = next.clientSecret;
+      client.authMethod =
+        auth.tokenAuthMethod ??
+        (current.authMethod === "none" ? "client_secret_basic" : current.authMethod);
+    } else {
+      client.authMethod = "none";
+    }
+    let tokens: OAuthTokenRecord | undefined;
+    if (auth.type === "oauth_client") {
+      try {
+        tokens = await tokenRequest(
+          client,
+          { grant_type: "client_credentials", scope: (auth.scopes ?? client.scopes)?.join(" ") },
+          oauthHttpOptions(this.config()),
+        );
+      } catch (e) {
+        throw connectFailed(e);
+      }
+    }
+    await this.db.transaction().execute(async (t) => {
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
+      await this.row(t, orgId, appId, true);
+      await this.credentials.setOAuthClient(orgId, appId, client, t);
+      if (tokens) await this.credentials.setOAuthTokens(orgId, appId, { kind: "org" }, tokens, t);
+      await audit(t, {
+        actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "app.credential.set",
+        target: appId,
+        detail: { type: auth.type, ownership: "org" },
       });
     });
   }

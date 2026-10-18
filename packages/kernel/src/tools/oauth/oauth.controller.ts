@@ -92,7 +92,7 @@ export class OAuthCallbackController {
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const location = await this.flow.callback(
-      { code: one(q.code), state: one(q.state), error: one(q.error) },
+      { code: one(q.code), state: one(q.state), error: one(q.error), iss: one(q.iss) },
       req.cookies[OAUTH_BINDING_COOKIE],
     );
     await reply.header("cache-control", "no-store").redirect(location, 302);
