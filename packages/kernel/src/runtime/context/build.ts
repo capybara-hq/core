@@ -9,6 +9,7 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../../agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
+import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
 
 /**
@@ -39,8 +40,13 @@ export interface ModelCallMeta {
   absorbedUpToSeq?: number;
   /** 请求的模型参数（即 `ModelRequest.params`）。 */
   params: Record<string, ParamValue>;
-  /** 请求带的工具（按 key 排序）及定义指纹；定义本身按指纹存在 `capybara.tool_specs`。 */
+  /**
+   * 请求带的工具（按发送顺序）及定义指纹；定义本身按指纹存在 `capybara.tool_specs`。
+   * 未启用 tool_search 时按 key 排序；启用时见 {@link BuildModelRequestInput.toolSearch}。
+   */
   tools: { key: string; specHash: string }[];
+  /** 启用 tool_search 时 system 第二块目录里的工具（按 key 排序）及定义指纹；未启用没有该字段。 */
+  catalog?: { key: string; specHash: string }[];
   /** 请求的 `toolChoice`（收尾调用为 `"none"`）；未设置则没有该字段。 */
   toolChoice?: "auto" | "none";
 }
@@ -75,6 +81,16 @@ export interface BuildModelRequestInput {
    * （`name` 为模型可见的 key），按 key 排序以保证缓存前缀稳定；key 与指纹记在 `meta.tools`。默认空。
    */
   tools?: RequestTool[];
+  /**
+   * 启用 tool_search（spec 5.5，由 `ToolRegistry.forAgent` 判定）。启用且有工具时：
+   * - `tools` 只放内置工具（含 `tool_search`，按 key 排序）与**已加载**工具的完整定义；
+   *   已加载 = 日志中全部 `tool_result.loadedTools` 的并集（含摘要之前的；不在本步可用工具中的忽略），
+   *   按首次加载顺序追加在内置工具之后——新加载只在末尾追加，已发送的工具顺序不变；
+   * - 其余工具（不论是否已加载）以目录形式放进 system 第二个块（按 key 排序，打缓存断点），
+   *   目录只随可用工具集合变化，不随加载变化，保持 system 前缀稳定。
+   * 默认不启用（全部工具按 key 排序直接放完整定义）。
+   */
+  toolSearch?: boolean;
   /** 本次请求的 `ModelRequest.toolChoice`；只在有工具时生效（没有工具时请求与 meta 都不带）。 */
   toolChoice?: "auto" | "none";
 }
@@ -100,7 +116,8 @@ export function summaryText(summary: string): string {
 
 /**
  * 由会话事件日志 + agent 定义构建模型请求（纯函数，不做 I/O）。
- * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；
+ * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；启用 tool_search 时
+ *   第二个块是工具目录（见 {@link BuildModelRequestInput.toolSearch}）；
  * - messages：最近一条摘要（若有）作为首条 user 消息，其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放）/ `reminder`
  *   （`role: "system"`，放在它所在的位置）；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
@@ -246,9 +263,21 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   if (absorbed !== undefined) flush(absorbed);
 
   const system = [{ text: `${BEHAVIOR_RULES}\n\n${agent.instructions}`, cache: true }];
-  const tools = [...(input.tools ?? [])].sort((a, b) =>
+  const sorted = [...(input.tools ?? [])].sort((a, b) =>
     a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
   );
+  let tools = sorted;
+  let catalog: RequestTool[] | undefined;
+  if (input.toolSearch === true && sorted.length > 0) {
+    const deferred = sorted.filter((t) => !isAlwaysLoaded(t.key));
+    const byKey = new Map(deferred.map((t) => [t.key, t]));
+    const loaded = loadedToolKeys(events).flatMap((k) => byKey.get(k) ?? []);
+    tools = [...sorted.filter((t) => isAlwaysLoaded(t.key)), ...loaded];
+    if (deferred.length > 0) {
+      catalog = deferred;
+      system.push({ text: catalogText(deferred), cache: true });
+    }
+  }
   const request: ModelRequest = {
     model: model.id,
     system,
@@ -278,9 +307,25 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
     params: { ...request.params },
     tools: tools.map((t) => ({ key: t.key, specHash: t.specHash })),
+    ...(catalog !== undefined && {
+      catalog: catalog.map((t) => ({ key: t.key, specHash: t.specHash })),
+    }),
     ...(toolChoice !== undefined && { toolChoice }),
   };
   return { request, meta };
+}
+
+/**
+ * 日志里 `tool_search` 加载过的工具 key（全部 `tool_result.loadedTools` 的并集，按首次出现顺序）。
+ * 不看压缩摘要的边界：加载过的工具在摘要之后仍保持加载（模型可能凭摘要继续使用它们，且已发送的工具列表只追加）。
+ */
+export function loadedToolKeys(events: readonly ConversationEvent[]): string[] {
+  const out = new Set<string>();
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (e.type !== "tool_result") continue;
+    for (const k of e.payload.loadedTools ?? []) out.add(k);
+  }
+  return [...out];
 }
 
 /**

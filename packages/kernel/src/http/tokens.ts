@@ -31,6 +31,9 @@ export const RATE_LIMITER = Symbol("RATE_LIMITER");
 /** `OrgsService` 的注入令牌。 */
 export const ORGS = Symbol("ORGS");
 
+/** `OrgSettingsService`（组织设置）的注入令牌。 */
+export const ORG_SETTINGS = Symbol("ORG_SETTINGS");
+
 /** `MembersService` 的注入令牌。 */
 export const MEMBERS = Symbol("MEMBERS");
 

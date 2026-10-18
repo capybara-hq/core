@@ -3,13 +3,14 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { KernelConfigSchema } from "../../src/config/schema.js";
+import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { Credentials } from "../../src/tools/credentials.js";
 import { canonicalJson, specHash, ToolRegistry } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
@@ -285,5 +286,140 @@ describe("ToolRegistry", () => {
       "docs__write",
     ]);
     expect(r.unavailable).toEqual([]);
+  });
+});
+
+describe("组织设置与 tool_search 启用条件", () => {
+  const baseCfg = KernelConfigSchema.parse({
+    db: { url: "postgres://x/y" },
+    redis: { url: "redis://x" },
+    masterKey: Buffer.alloc(32, 7).toString("base64"),
+  });
+  let thresholds = { searchThresholdTools: 30, searchThresholdTokens: 8000 };
+  const cfg = (): KernelConfig => ({ ...baseCfg, tools: { ...baseCfg.tools, ...thresholds } });
+  const searchRegistry = () =>
+    new ToolRegistry({
+      db,
+      host: k.host,
+      credentials: new Credentials(db, createKeyring(Buffer.alloc(32, 7), []), log),
+      log,
+      builtins: [askUser, toolSearchTool()],
+      config: cfg,
+    });
+  const settingsUrl = () => `/api/v1/orgs/${orgId}/settings`;
+
+  beforeEach(() => {
+    thresholds = { searchThresholdTools: 30, searchThresholdTokens: 8000 };
+  });
+
+  it("GET 默认 toolSearch=on；PATCH 需 org.update，非法值 400，改动写审计", async () => {
+    const got = await req({ method: "GET", url: settingsUrl() });
+    expect(got.statusCode, got.body).toBe(200);
+    expect(got.json()).toEqual({ settings: { toolSearch: "on" } });
+
+    const bad = await req({
+      method: "PATCH",
+      url: settingsUrl(),
+      payload: { toolSearch: "maybe" },
+    });
+    expect(bad.statusCode).toBe(400);
+    const extra = await req({ method: "PATCH", url: settingsUrl(), payload: { other: 1 } });
+    expect(extra.statusCode).toBe(400);
+
+    const off = await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json()).toEqual({ settings: { toolSearch: "off" } });
+    expect((await req({ method: "GET", url: settingsUrl() })).json()).toEqual({
+      settings: { toolSearch: "off" },
+    });
+    const audits = await db
+      .selectFrom("audit_events")
+      .select(["action", "detail"])
+      .where("action", "=", "org.settings_updated")
+      .execute();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.detail).toEqual({
+      before: { toolSearch: "on" },
+      after: { toolSearch: "off" },
+    });
+
+    // 存量 jsonb 里的未知键保留、非法值按默认读
+    await sql`UPDATE capybara.orgs SET settings = '{"toolSearch":"bogus","future":1}'::jsonb
+      WHERE id = ${orgId}`.execute(raw);
+    expect((await req({ method: "GET", url: settingsUrl() })).json()).toEqual({
+      settings: { toolSearch: "on" },
+    });
+    await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
+    const row = await db
+      .selectFrom("orgs")
+      .select("settings")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    expect(row.settings).toEqual({ toolSearch: "off", future: 1 });
+
+    // 成员能读不能改
+    await sql`UPDATE capybara.memberships SET role = 'member' WHERE org_id = ${orgId}`.execute(raw);
+    const denied = await req({
+      method: "PATCH",
+      url: settingsUrl(),
+      payload: { toolSearch: "on" },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect((await req({ method: "GET", url: settingsUrl() })).statusCode).toBe(200);
+  });
+
+  it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 tool_search；组织关闭后全部直接加载", async () => {
+    const appId = await installApp("docs");
+    const def = {
+      tools: [
+        { kind: "builtin" as const, name: "ask_user" },
+        // 定义里显式引用 tool_search 也不重复（由注册表按设置管理）
+        { kind: "builtin" as const, name: "tool_search" },
+        { kind: "app" as const, appId, tools: "all" as const },
+      ],
+    };
+    const r = searchRegistry();
+    // 4 个工具，未超过阈值
+    const below = await r.forAgent(orgId, def);
+    expect(below.toolSearch).toBe(false);
+    expect(below.tools.map((t) => t.key)).toEqual([
+      "ask_user",
+      "docs__drop",
+      "docs__read",
+      "docs__write",
+    ]);
+    expect(below.unavailable).toEqual([]);
+
+    thresholds.searchThresholdTools = 3;
+    const byCount = await r.forAgent(orgId, def);
+    expect(byCount.toolSearch).toBe(true);
+    expect(byCount.tools.map((t) => t.key)).toEqual([
+      "ask_user",
+      "docs__drop",
+      "docs__read",
+      "docs__write",
+      "tool_search",
+    ]);
+    expect(byCount.tools.at(-1)).toMatchObject({
+      source: { kind: "builtin", name: "tool_search" },
+      defaultPolicy: "allow",
+    });
+
+    thresholds = { searchThresholdTools: 30, searchThresholdTokens: 10 };
+    expect((await r.forAgent(orgId, def)).toolSearch).toBe(true);
+
+    const patched = await req({
+      method: "PATCH",
+      url: settingsUrl(),
+      payload: { toolSearch: "off" },
+    });
+    expect(patched.statusCode).toBe(200);
+    const off = await r.forAgent(orgId, def);
+    expect(off.toolSearch).toBe(false);
+    expect(off.tools.map((t) => t.key)).not.toContain("tool_search");
+    expect(off.tools).toHaveLength(4);
+
+    // 没有 config 的注册表（旧调用方）从不启用
+    expect((await registry.forAgent(orgId, def)).toolSearch).toBe(false);
   });
 });

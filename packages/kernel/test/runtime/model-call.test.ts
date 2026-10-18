@@ -34,6 +34,8 @@ import {
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
+import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -924,6 +926,67 @@ describe("runModelStep", () => {
         .execute();
       expect(rows).toHaveLength(1);
       expect(rows[0]?.spec).toMatchObject({ name: "read_tool_output" });
+    });
+
+    it("tool_search 生效：请求只带内置工具，目录进 system 第二块；model_call 记录 catalog，目录里的定义也存进 tool_specs", async () => {
+      const s = stub([toolsModel()], () => "ok");
+      stubImpl = s;
+      const search = toolSearchTool();
+      const mk = (key: string): ResolvedTool => {
+        const spec = {
+          name: key.split("__")[1] as string,
+          description: `Do ${key}.`,
+          inputSchema: { type: "object" },
+        };
+        return {
+          key,
+          source: { kind: "plugin", plugin: "p", name: spec.name },
+          spec,
+          specHash: specHash(spec),
+          defaultPolicy: "allow",
+        };
+      };
+      const searchTool: ResolvedTool = {
+        key: "tool_search",
+        source: { kind: "builtin", name: "tool_search" },
+        spec: search.spec,
+        specHash: specHash(search.spec),
+        defaultPolicy: "allow",
+      };
+      const tools = [mk("p__zeta"), mk("p__alpha"), searchTool];
+      const searchDeps: ModelStepDeps = {
+        ...deps,
+        tools: { forAgent: async () => ({ tools, unavailable: [], toolSearch: true }) },
+      };
+      await say("hi");
+      await runModelStep(searchDeps, {
+        orgId,
+        conversationId,
+        runId,
+        step: 1,
+        agent: withTools(),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+      });
+      const req = s.calls[0] as ModelRequest;
+      expect(req.tools.map((t) => t.name)).toEqual(["tool_search"]);
+      expect(req.system).toHaveLength(2);
+      expect(req.system[1]?.text).toContain("- p__alpha: Do p__alpha.\n- p__zeta: Do p__zeta.");
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["tool_search"]);
+      expect(call?.payload.request.catalog?.map((t) => t.key)).toEqual(["p__alpha", "p__zeta"]);
+      const stored = await db
+        .selectFrom("tool_specs")
+        .select("spec_hash")
+        .where(
+          "spec_hash",
+          "in",
+          tools.map((t) => t.specHash),
+        )
+        .execute();
+      expect(stored).toHaveLength(3);
     });
   });
 });

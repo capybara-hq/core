@@ -38,8 +38,8 @@ export interface OrgsTable {
   slug: string;
   name: string;
   created_by: string | null;
-  /** 0010：组织级设置。 */
-  settings: Generated<Json>;
+  /** 0010：组织级设置（插入可省略，用列默认值 `{}`；写入传 JSON 字符串）。 */
+  settings: Json;
   created_at: Ts;
   deleted_at: TsNullable;
 }

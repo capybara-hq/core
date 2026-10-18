@@ -39,6 +39,7 @@ import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
 import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
+import { toolSearchTool } from "./tools/builtins/tool-search.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolDrift } from "./tools/drift.js";
 import { ToolOutputs } from "./tools/outputs.js";
@@ -253,7 +254,7 @@ export async function createKernel(
   const registry = new ProviderRegistry(host, redis, log);
   const credentials = new Credentials(kdb, keyring, log, { redis, config: () => current });
   const toolOutputs = new ToolOutputs(kdb, () => current);
-  // 内置工具（tool_search 在 Task 19 接入）
+  // 内置工具；tool_search 由注册表按组织设置与阈值自动加入（不进 agent 定义）
   const toolRegistry = new ToolRegistry({
     db: kdb,
     host,
@@ -262,7 +263,9 @@ export async function createKernel(
     builtins: [
       askUserTool({ config: () => current }),
       readToolOutputTool({ outputs: toolOutputs, config: () => current }),
+      toolSearchTool(),
     ],
+    config: () => current,
   });
   // 审批决定 / 输入回答提交后续跑（waits 在下面创建；回调只在运行期间被调用）
   const approvals = new ApprovalsService({

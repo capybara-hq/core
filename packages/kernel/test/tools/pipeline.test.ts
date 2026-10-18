@@ -25,9 +25,10 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
-import { assistantIdemKey } from "../../src/runtime/model-call.js";
+import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
+import { notLoadedText, toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { type AppAuth, CredentialMissing } from "../../src/tools/credentials.js";
 import { ToolOutputs } from "../../src/tools/outputs.js";
 import {
@@ -39,7 +40,12 @@ import {
   type ToolStepContext,
 } from "../../src/tools/pipeline.js";
 import { QuestionsService } from "../../src/tools/questions.service.js";
-import { type ResolvedTool, specHash, type UnavailableTool } from "../../src/tools/registry.js";
+import {
+  type BuiltinHandler,
+  type ResolvedTool,
+  specHash,
+  type UnavailableTool,
+} from "../../src/tools/registry.js";
 import { validateInput } from "../../src/tools/validate.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedApp, seedConversation } from "../helpers/tool-fixtures.js";
@@ -169,6 +175,10 @@ const testConnector: Connector = {
 
 let resolved: ResolvedTool[] = [];
 let unavailable: UnavailableTool[] = [];
+/** forAgent 报告的 tool_search 是否生效。 */
+let toolSearch = false;
+/** 内置工具的处理函数（名字 → 处理函数）。 */
+let builtinHandlers: Record<string, BuiltinHandler> = {};
 let decidePolicy: DecidePolicy | undefined;
 let afterExecute: ((runId: string, callId: string) => Promise<void>) | undefined;
 
@@ -177,10 +187,14 @@ function pipeline(): ToolPipeline {
     db,
     eventLog,
     registry: {
-      forAgent: async () => ({ tools: resolved, unavailable }),
+      forAgent: async () => ({ tools: resolved, unavailable, toolSearch }),
       findConnector: (kind: string) => (kind === "test" ? testConnector : undefined),
       handler: (source) =>
-        source.kind === "plugin" ? handlers[`${source.plugin}__${source.name}`] : undefined,
+        source.kind === "plugin"
+          ? handlers[`${source.plugin}__${source.name}`]
+          : source.kind === "builtin"
+            ? builtinHandlers[source.name]
+            : undefined,
     },
     credentials: {
       async injection(_orgId: string, appId: string, auth: AppAuth) {
@@ -232,6 +246,8 @@ let appId: string;
 
 beforeEach(async () => {
   toolsCfg = {};
+  toolSearch = false;
+  builtinHandlers = {};
   decidePolicy = undefined;
   afterExecute = undefined;
   unavailable = [];
@@ -1026,5 +1042,104 @@ describe("ToolPipeline.runStep", () => {
     const evs = await eventsOf(db, seed.conversationId);
     expect(handlerCalls.echo).toHaveLength(1);
     expect(resultsOf(evs).map((r) => r.content)).toEqual([UNKNOWN_RESULT_TEXT]);
+  });
+});
+
+describe("tool_search 模式", () => {
+  const search = toolSearchTool();
+  const searchTool: ResolvedTool = {
+    key: "tool_search",
+    source: { kind: "builtin", name: "tool_search" },
+    spec: search.spec,
+    specHash: specHash(search.spec),
+    defaultPolicy: "allow",
+  };
+
+  /** 本步的 model_call（模型实际收到的工具；catalog 非空 = 该请求处于 tool_search 模式）。 */
+  async function modelCall(keys: string[], catalog: boolean, attempt = 1): Promise<void> {
+    const sent = resolved.filter((t) => keys.includes(t.key));
+    await eventLog.append(seed.conversationId, [
+      {
+        type: "model_call",
+        runId,
+        idemKey: modelCallIdemKey(runId, 1, attempt),
+        payload: {
+          step: 1,
+          attempt,
+          provider: "stub",
+          model: "s-1",
+          fallback: false,
+          request: {
+            fromSeq: 1,
+            toSeq: 1,
+            summarySeq: null,
+            systemHash: "x",
+            reminderSeqs: [],
+            tools: sent.map((t) => ({ key: t.key, specHash: t.specHash })),
+            ...(catalog && {
+              catalog: resolved
+                .filter((t) => t.source.kind !== "builtin")
+                .map((t) => ({ key: t.key, specHash: t.specHash })),
+            }),
+          },
+        },
+      },
+    ]);
+  }
+
+  beforeEach(() => {
+    toolSearch = true;
+    resolved = [...resolved, searchTool];
+    builtinHandlers = { tool_search: search.run };
+  });
+
+  it("目录里有、但本步请求没加载的工具 → 明确错误（不自动加载），处理函数不被调用", async () => {
+    await modelCall(["tool_search"], true);
+    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "x" } }]);
+    expect(resultsOf(evs)).toEqual([
+      expect.objectContaining({
+        toolKey: "probe__echo",
+        isError: true,
+        content: notLoadedText("probe__echo"),
+      }),
+    ]);
+    expect(handlerCalls.echo).toBeUndefined();
+    expect(startedOf(evs)).toEqual([]);
+  });
+
+  it("按最后一次尝试的 model_call 判断：已加载（在请求的 tools 里）→ 照常执行", async () => {
+    await modelCall(["tool_search"], true, 1);
+    await modelCall(["tool_search", "probe__echo"], true, 2);
+    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "x" } }]);
+    expect(resultsOf(evs)[0]).toMatchObject({ isError: false });
+    expect(handlerCalls.echo).toHaveLength(1);
+  });
+
+  it("请求不在 tool_search 模式（没有 catalog，全部工具已发送）→ 不做加载检查", async () => {
+    await modelCall(["tool_search"], false);
+    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "x" } }]);
+    expect(resultsOf(evs)[0]).toMatchObject({ isError: false });
+  });
+
+  it("tool_search 的结果写 loadedTools（日志是已加载集合的唯一来源）；同一步里调用刚加载的工具仍报未加载", async () => {
+    await modelCall(["tool_search"], true);
+    const evs = await runCalls([
+      { id: "c1", name: "tool_search", input: { query: "echo" } },
+      { id: "c2", name: "probe__echo", input: { text: "x" } },
+    ]);
+    const [r1, r2] = resultsOf(evs);
+    expect(r1).toMatchObject({
+      toolKey: "tool_search",
+      isError: false,
+      loadedTools: ["probe__echo"],
+    });
+    expect(r1?.content).toContain("probe__echo");
+    expect(r2).toMatchObject({ isError: true, content: notLoadedText("probe__echo") });
+  });
+
+  it("没有匹配时不写 loadedTools", async () => {
+    await modelCall(["tool_search"], true);
+    const evs = await runCalls([{ id: "c1", name: "tool_search", input: { query: "zzzz" } }]);
+    expect(resultsOf(evs)[0]).not.toHaveProperty("loadedTools");
   });
 });

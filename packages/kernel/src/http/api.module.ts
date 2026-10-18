@@ -27,6 +27,8 @@ import { InvitationsService } from "../orgs/invitations.service.js";
 import { MembersService } from "../orgs/members.service.js";
 import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsService } from "../orgs/orgs.service.js";
+import { OrgSettingsController } from "../orgs/settings.controller.js";
+import { OrgSettingsService } from "../orgs/settings.service.js";
 import type { PluginHost } from "../plugins/host.js";
 import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
 import type { OrgPluginConfigs } from "../plugins/org-config.js";
@@ -66,6 +68,7 @@ import {
   MEMBERS,
   OAUTH_FLOW,
   ORG_PLUGIN_CONFIGS,
+  ORG_SETTINGS,
   ORGS,
   PROVIDER_REGISTRY,
   QUESTIONS,
@@ -112,6 +115,7 @@ const CONTROLLERS: Type[] = [
   AuthController,
   MeController,
   OrgsController,
+  OrgSettingsController,
   InvitationsController,
   SetupController,
   AdminController,
@@ -170,6 +174,11 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       useFactory: (db: KernelDb, settings: SettingsService, tokens: ApiTokenService) =>
         new OrgsService(db, settings, tokens),
       inject: [KERNEL_DB, SETTINGS, API_TOKENS],
+    },
+    {
+      provide: ORG_SETTINGS,
+      useFactory: (db: KernelDb) => new OrgSettingsService(db),
+      inject: [KERNEL_DB],
     },
     {
       provide: MEMBERS,

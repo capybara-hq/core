@@ -127,10 +127,16 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          */
         absorbedUpToSeq: seqNo.optional(),
         /**
-         * 本次请求带给模型的工具（按 key 排序）及其定义指纹（`ResolvedTool.specHash`）。
+         * 本次请求带给模型的工具（按发送顺序：未启用 tool_search 时按 key 排序；启用时为内置工具按 key 排序，
+         * 其后是已加载工具按首次加载顺序）及其定义指纹（`ResolvedTool.specHash`）。
          * 模型不支持工具时为空数组。较早的事件可能没有。
          */
         tools: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
+        /**
+         * 启用 tool_search 时 system 第二块目录里的工具（按 key 排序）及定义指纹；定义同样存在
+         * `capybara.tool_specs`，目录文本可由它们还原。未启用时不写。
+         */
+        catalog: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
         /**
          * 本次请求的 `toolChoice`：收尾调用为 `"none"`（照常带工具，但不得调用）；普通步骤不写（由模型决定）。
          * 定义本身按 specHash 存在 `capybara.tool_specs`。
@@ -171,6 +177,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       isError: z.boolean(),
       outputId: z.string().optional(),
       contentTypes: z.array(z.string()).optional(),
+      /**
+       * `tool_search` 本次加载的工具 key（没有匹配时不写）。已加载集合 = 会话中全部 tool_result 的
+       * `loadedTools` 并集（含已被摘要覆盖的部分），构建请求时由日志还原，不放进程内存。
+       */
+      loadedTools: z.array(z.string()).optional(),
     }),
   ),
   /**

@@ -58,6 +58,7 @@ type EventBody =
         isError: boolean;
         outputId?: string;
         contentTypes?: string[];
+        loadedTools?: string[];
       };
     }
   | {

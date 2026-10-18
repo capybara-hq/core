@@ -5,7 +5,6 @@ import {
   type InputForm,
   type InputRequired,
   type Logger,
-  type ToolCallContext,
   ToolError,
   validateInputForm,
 } from "@capybara-hq/plugin-sdk";
@@ -17,15 +16,16 @@ import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import type { WaitingFor } from "../runtime/loop.js";
-import { assistantIdemKey } from "../runtime/model-call.js";
+import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
 import type { ApprovalRecord, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
+import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type AppAuth, CredentialMissing, type Credentials } from "./credentials.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, type ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
 import type { QuestionRecord, QuestionsService } from "./questions.service.js";
 import { redactDeep, redactorFor } from "./redact.js";
-import type { ResolvedTool, ToolRegistry, UnavailableTool } from "./registry.js";
+import type { AgentTools, BuiltinCallContext, ResolvedTool, ToolRegistry } from "./registry.js";
 import { runResourceTool } from "./resources.js";
 import { validateInput } from "./validate.js";
 
@@ -194,9 +194,19 @@ const errName = (e: unknown): string =>
 const isInputRequired = (v: unknown): v is InputRequired =>
   typeof v === "object" && v !== null && (v as { kind?: unknown }).kind === "input_required";
 
+/**
+ * 内置工具结果里的 `loadedTools`（见 `BuiltinResult`）：只保留本步可用、非内置的工具 key，去重、保持顺序。
+ */
+function loadedFrom(result: unknown, tools: readonly ResolvedTool[]): string[] {
+  const raw = (result as { loadedTools?: unknown } | null)?.loadedTools;
+  if (!Array.isArray(raw)) return [];
+  const known = new Set(tools.filter((t) => !isAlwaysLoaded(t.key)).map((t) => t.key));
+  return [...new Set(raw.filter((k): k is string => typeof k === "string" && known.has(k)))];
+}
+
 class Stopped extends Error {}
 
-type Resolved = { tools: ResolvedTool[]; unavailable: UnavailableTool[] };
+type Resolved = AgentTools;
 
 /** 审批的等待时长（小时，四舍五入，至少 1）。 */
 const approvalHours = (a: ApprovalRecord): number =>
@@ -323,6 +333,12 @@ export class ToolPipeline {
       const keys = resolved.tools.map((t) => t.key).sort();
       return fail(unknownToolText(call.name, keys, keys.includes("tool_search")));
     }
+    // tool_search 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
+    // 明确错误，不自动加载（spec 5.5 / 6.3）。同一步里先 tool_search 再调用刚加载的工具同样报错。
+    if (resolved.toolSearch === true && !isAlwaysLoaded(tool.key)) {
+      const sent = await this.sentTools(ctx);
+      if (sent !== null && !sent.has(tool.key)) return fail(notLoadedText(tool.key), tool.key);
+    }
 
     let input: unknown;
     try {
@@ -386,7 +402,7 @@ export class ToolPipeline {
       },
     ]);
     const t0 = Date.now();
-    let outcome = await this.execute(tool, input, ctx, call.id, resume);
+    let outcome = await this.execute(tool, input, ctx, call.id, resume, resolved.tools);
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
 
@@ -400,6 +416,11 @@ export class ToolPipeline {
       outcome.kind === "result"
         ? renderResult(outcome.result)
         : { text: outcome.message, contentTypes: [], isError: true };
+    // 内置工具（tool_search）报告的已加载工具：只认本步可用、非内置的 key，写进 tool_result（日志即事实源）
+    const loadedTools =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? loadedFrom(outcome.result, resolved.tools)
+        : [];
     const cfg = this.deps.config().tools;
     const spilled = await spillIfLarge(
       rendered.text,
@@ -437,11 +458,30 @@ export class ToolPipeline {
         isError: rendered.isError,
         ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
         ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
+        ...(loadedTools.length > 0 && { loadedTools }),
       },
       pre,
       durationMs,
     );
     return undefined;
+  }
+
+  /**
+   * 发出本步调用的请求里带了完整定义的工具 key：本步最后一次尝试的 `model_call.request.tools`
+   * （`assistant_message` 来自最后一次尝试）。该请求不在 tool_search 模式（没有 `catalog`，工具全部发送）
+   * 或找不到 model_call 时返回 null（不做加载检查）。已加载集合由此从日志得出，不放进程内存。
+   */
+  private async sentTools(ctx: ToolStepContext): Promise<Set<string> | null> {
+    for (let attempt = MAX_MODEL_ATTEMPTS; attempt >= 1; attempt--) {
+      const e = await this.deps.eventLog.findByIdem(
+        ctx.conversationId,
+        modelCallIdemKey(ctx.runId, ctx.step, attempt),
+      );
+      if (e?.type !== "model_call") continue;
+      const { tools, catalog } = e.payload.request;
+      return catalog === undefined ? null : new Set((tools ?? []).map((t) => t.key));
+    }
+    return null;
   }
 
   /** 审批的非批准结果 → 给模型的说明；仍 pending → null（继续等待）。 */
@@ -508,19 +548,22 @@ export class ToolPipeline {
     ctx: ToolStepContext,
     callId: string,
     resume?: ToolResume,
+    stepTools?: readonly ResolvedTool[],
   ): Promise<ExecOutcome> {
     if (tool.source.kind === "app") {
       return this.executeApp(tool, tool.source, input, ctx);
     }
     const handler = this.deps.registry.handler(tool.source);
     if (!handler) return { kind: "error", message: `Tool ${tool.key} is no longer available.` };
-    const base: Omit<ToolCallContext, "signal"> = {
+    // 插件处理函数只拿到 SDK 的 ToolCallContext；内置工具另外拿到本步解析出的工具（tool_search 用）
+    const base: Omit<BuiltinCallContext, "signal"> = {
       orgId: ctx.orgId,
       accountId: ctx.accountId,
       agentId: ctx.agentId,
       conversationId: ctx.conversationId,
       callId,
       ...(resume !== undefined && { resume }),
+      ...(tool.source.kind === "builtin" && stepTools !== undefined && { tools: stepTools }),
     };
     try {
       const r = await this.bounded(ctx.signal, (signal) => handler(input, { ...base, signal }));

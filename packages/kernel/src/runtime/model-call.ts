@@ -133,14 +133,26 @@ export class RunError extends Error {
 export const assistantIdemKey = (runId: string, step: number): string =>
   `assistant:${runId}:${step}`;
 
+/** 某步第 attempt 次模型调用的 model_call 幂等键（管线据此找到模型实际收到的工具）。 */
+export const modelCallIdemKey = (runId: string, step: number, attempt: number): string =>
+  `model_call:${runId}:${step}:${attempt}`;
+
+/** 一步最多的模型调用尝试次数（主模型、同模型重试、兜底，见 `ladder`）。 */
+export const MAX_MODEL_ATTEMPTS = 3;
+
+/** 本步解析出的工具与是否启用 tool_search（见 `ToolRegistry.forAgent`）。 */
+interface StepTools {
+  list: RequestTool[];
+  toolSearch: boolean;
+}
+
 const idem = {
   assistant: assistantIdemKey,
   usage: (runId: string, step: number) => `usage:${runId}:${step}`,
   reminder: (runId: string, step: number) => `reminder:${runId}:${step}`,
   toolsUnavailable: (runId: string, step: number) => `tools_unavailable:${runId}:${step}`,
   toolsUnsupported: (runId: string, step: number) => `tools_unsupported:${runId}:${step}`,
-  modelCall: (runId: string, step: number, attempt: number) =>
-    `model_call:${runId}:${step}:${attempt}`,
+  modelCall: modelCallIdemKey,
 };
 
 /** 外部 signal 已触发：本步按「中止」收尾。 */
@@ -204,7 +216,7 @@ async function runStep(
     let events = await readAll(deps.eventLog, conversationId);
     // 每步实时解析（应用 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
     const resolved = await deps.tools.forAgent(input.orgId, { tools: input.agent.tools ?? [] });
-    const tools: RequestTool[] = resolved.tools;
+    const tools: StepTools = { list: resolved.tools, toolSearch: resolved.toolSearch === true };
     events = await maybeCompact(deps, input, events, runtime, tools);
 
     const last = lastToolsReminder(events, runId);
@@ -369,7 +381,7 @@ function buildRequest(
   info: ModelInfo,
   params: Record<string, ParamValue>,
   runtime: Runtime,
-  tools: RequestTool[],
+  tools: StepTools,
   wrapUp: boolean,
 ): { request: ModelRequest; meta: ModelCallMeta; estimate: number } {
   const { request, meta } = buildModelRequest({
@@ -380,7 +392,8 @@ function buildRequest(
     step: input.step,
     absorbedUpToSeq: input.absorbedUpToSeq,
     params,
-    tools: info.capabilities.tools ? tools : [],
+    tools: info.capabilities.tools ? tools.list : [],
+    toolSearch: tools.toolSearch,
     ...(wrapUp && { toolChoice: "none" as const }),
   });
   request.messages = guardToolPairs(request.messages);
@@ -435,7 +448,7 @@ async function maybeCompact(
   input: ModelStepInput,
   events: ConversationEvent[],
   runtime: Runtime,
-  tools: RequestTool[],
+  tools: StepTools,
 ): Promise<ConversationEvent[]> {
   if (compactionBackoff(events)) return events;
   let provider: ModelProvider;
@@ -517,7 +530,7 @@ async function ladder(
   input: ModelStepInput,
   events: ConversationEvent[],
   runtime: Runtime,
-  tools: RequestTool[],
+  tools: StepTools,
   wrapUp: boolean,
   streamed: { text: string },
 ): Promise<{ outcome: StreamOutcome; ref: ModelRef }> {
@@ -550,7 +563,7 @@ async function ladder(
     }
     try {
       const { provider, info } = await deps.registry.resolve(rung.ref);
-      if (tools.length > 0 && !info.capabilities.tools) {
+      if (tools.list.length > 0 && !info.capabilities.tools) {
         evs = await appendLocal(deps.eventLog, conversationId, evs, {
           type: "reminder",
           runId,
@@ -576,12 +589,13 @@ async function ladder(
         tools,
         wrapUp,
       );
-      // 请求里的工具定义按指纹存进 tool_specs，与 model_call 同一事务（请求可由日志 + tool_specs 还原）
-      const sent = new Set(meta.tools.map((t) => t.specHash));
+      // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
+      // （请求可由日志 + tool_specs 还原）
+      const sent = new Set([...meta.tools, ...(meta.catalog ?? [])].map((t) => t.specHash));
       const written = await deps.db.transaction().execute(async (t) => {
         await recordToolSpecs(
           t,
-          tools.filter((x) => sent.has(x.specHash)),
+          tools.list.filter((x) => sent.has(x.specHash)),
         );
         return deps.eventLog.append(
           conversationId,

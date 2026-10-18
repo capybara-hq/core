@@ -1,14 +1,19 @@
 import { createHash } from "node:crypto";
 import type {
   Connector,
+  InputRequired,
   Logger,
   ToolAnnotations,
-  ToolHandler,
+  ToolCallContext,
+  ToolResult,
   ToolSpec,
 } from "@capybara-hq/plugin-sdk";
+import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
 import type { PluginHost } from "../plugins/host.js";
+import { estimateTokens } from "../runtime/context/tokens.js";
 import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 
@@ -24,11 +29,28 @@ export interface ToolRefIssue {
   message: string;
 }
 
+/**
+ * 内置工具处理函数的上下文：在 SDK 的 `ToolCallContext` 之上，管线额外传入本步解析出的工具
+ * （`tool_search` 据此搜索）。插件处理函数收到的仍是 `ToolCallContext`。
+ */
+export interface BuiltinCallContext extends ToolCallContext {
+  tools?: readonly ResolvedTool[];
+}
+
+/**
+ * 内置工具的结果：`ToolResult` 之外可带 `loadedTools`（`tool_search` 加载的工具 key，
+ * 管线写进 `tool_result.loadedTools`）。
+ */
+export type BuiltinResult = (ToolResult & { loadedTools?: string[] }) | InputRequired;
+
+/** 内置工具的处理函数（插件的 `ToolHandler` 可直接赋给它）。 */
+export type BuiltinHandler = (input: unknown, ctx: BuiltinCallContext) => Promise<BuiltinResult>;
+
 /** 内核内置工具（`ask_user` 等，Task 10 实现具体工具）；key 就是 `spec.name`。 */
 export interface BuiltinTool {
   spec: ToolSpec;
   defaultPolicy: "allow" | "ask";
-  run: ToolHandler;
+  run: BuiltinHandler;
 }
 
 /**
@@ -96,6 +118,37 @@ export interface ToolRegistryDeps {
   credentials: Credentials;
   log: Logger;
   builtins: BuiltinTool[];
+  /**
+   * 当前配置（`tools.searchThreshold*`）。不提供时从不启用 `tool_search`（只用于不关心它的测试 / 调用方）。
+   */
+  config?: () => KernelConfig;
+}
+
+/** `forAgent` 的结果。 */
+export interface AgentTools {
+  tools: ResolvedTool[];
+  unavailable: UnavailableTool[];
+  /**
+   * 本步是否启用 `tool_search`（spec 5.5）：启用时 `tools` 末尾含 `tool_search`，构建请求时只放内置工具
+   * 与已加载工具的完整定义，其余进目录。缺省视为未启用。
+   */
+  toolSearch?: boolean;
+}
+
+/** 内置 `tool_search` 的名字（由注册表按组织设置与阈值自动加入，不进 agent 定义）。 */
+const TOOL_SEARCH = "tool_search";
+
+/** 工具定义（模型可见三项）的估算 token 数（与请求估算同一口径）。 */
+function estimateToolTokens(tools: readonly ResolvedTool[]): number {
+  return estimateTokens(
+    [],
+    [],
+    tools.map((t) => ({
+      name: t.key,
+      description: t.spec.description,
+      inputSchema: t.spec.inputSchema,
+    })),
+  );
 }
 
 const sourceId = (s: ResolvedTool["source"]): string =>
@@ -140,7 +193,7 @@ export class ToolRegistry {
    * 内置 / 插件工具的处理函数（执行管线用）；应用工具经连接器执行，返回 undefined。
    * 插件已卸载等情况也返回 undefined。
    */
-  handler(source: ResolvedTool["source"]): ToolHandler | undefined {
+  handler(source: ResolvedTool["source"]): BuiltinHandler | undefined {
     if (source.kind === "builtin") {
       return this.deps.builtins.find((b) => b.spec.name === source.name)?.run;
     }
@@ -220,7 +273,39 @@ export class ToolRegistry {
     return { keys: new Set(owner.keys()), issues };
   }
 
-  async forAgent(
+  /**
+   * 解析 agent 引用的工具（见类注释），再判定是否启用 `tool_search`：组织设置 `toolSearch === "on"`，且
+   * 可用工具数 > `tools.searchThresholdTools` 或其定义的估算 token > `tools.searchThresholdTokens`。
+   * 启用时把内置 `tool_search` 追加到末尾。定义里显式引用的 `tool_search` 忽略（由这里按设置管理）。
+   */
+  async forAgent(orgId: string, def: { tools: readonly AgentToolRef[] }): Promise<AgentTools> {
+    const { tools, unavailable } = await this.resolve(orgId, def);
+    const toolSearch = await this.searchActive(orgId, tools);
+    if (toolSearch) {
+      const b = this.deps.builtins.find((x) => x.spec.name === TOOL_SEARCH) as BuiltinTool;
+      tools.push({
+        key: TOOL_SEARCH,
+        source: { kind: "builtin", name: TOOL_SEARCH },
+        spec: b.spec,
+        specHash: specHash(b.spec),
+        defaultPolicy: b.defaultPolicy,
+      });
+    }
+    return { tools, unavailable, toolSearch };
+  }
+
+  /** 是否启用 `tool_search`（见 {@link forAgent}）；先比阈值，超过才读组织设置。 */
+  private async searchActive(orgId: string, tools: readonly ResolvedTool[]): Promise<boolean> {
+    const cfg = this.deps.config?.().tools;
+    if (!cfg || !this.deps.builtins.some((b) => b.spec.name === TOOL_SEARCH)) return false;
+    const over =
+      tools.length > cfg.searchThresholdTools ||
+      estimateToolTokens(tools) > cfg.searchThresholdTokens;
+    if (!over) return false;
+    return (await readOrgSettings(this.deps.db, orgId)).toolSearch === "on";
+  }
+
+  private async resolve(
     orgId: string,
     def: { tools: readonly AgentToolRef[] },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[] }> {
@@ -250,6 +335,7 @@ export class ToolRegistry {
 
     for (const ref of def.tools) {
       if (ref.kind === "builtin") {
+        if (ref.name === TOOL_SEARCH) continue;
         const b = this.deps.builtins.find((x) => x.spec.name === ref.name);
         if (!b) {
           unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });
