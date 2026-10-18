@@ -98,8 +98,10 @@ export interface ChatState {
   finalized: Readonly<Record<string, true>>;
   /** 已到终态（finished / failed / aborted）的运行：之后到达的增量一律忽略。 */
   closedRuns: Readonly<Record<string, true>>;
-  /** `run_started` 之后、终态事件之前。 */
+  /** `run_started` 之后、终态事件之前，且不在等人处理。 */
   running: boolean;
+  /** 运行在等人处理审批或输入请求（不是终态，也不算运行中）。 */
+  waiting: boolean;
 }
 
 export type ChatInput =
@@ -113,6 +115,7 @@ export const initialChatState: ChatState = {
   finalized: {},
   closedRuns: {},
   running: false,
+  waiting: false,
 };
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
@@ -133,13 +136,28 @@ function locate(events: ConversationEvent[], seq: number): { at: number; found: 
   return { at: lo, found: false };
 }
 
-function isRunning(events: ConversationEvent[]): boolean {
+/** 等人处理的开始 / 结束事件（`waiting` 不是终态：处理后运行继续）。 */
+const WAIT_START = new Set<ConversationEvent["type"]>(["approval_requested", "question_asked"]);
+const WAIT_END = new Set<ConversationEvent["type"]>(["approval_decided", "question_answered"]);
+
+function runPhase(events: ConversationEvent[]): { running: boolean; waiting: boolean } {
   let active: string | null = null;
+  let waiting = false;
   for (const e of events) {
-    if (e.type === "run_started") active = e.runId;
-    else if (TERMINAL.has(e.type) && e.runId === active) active = null;
+    if (e.type === "run_started") {
+      active = e.runId;
+      waiting = false;
+    } else if (e.runId === null || e.runId !== active) {
+    } else if (TERMINAL.has(e.type)) {
+      active = null;
+      waiting = false;
+    } else if (WAIT_START.has(e.type)) {
+      waiting = true;
+    } else if (WAIT_END.has(e.type)) {
+      waiting = false;
+    }
   }
-  return active !== null;
+  return { running: active !== null && !waiting, waiting: active !== null && waiting };
 }
 
 function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState {
@@ -168,7 +186,7 @@ function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState
     drafts: drafts.length === state.drafts.length ? state.drafts : drafts,
     finalized,
     closedRuns,
-    running: isRunning(events),
+    ...runPhase(events),
   };
 }
 

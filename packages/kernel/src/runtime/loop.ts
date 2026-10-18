@@ -29,11 +29,23 @@ export interface LoopContext {
   limits: { maxSteps: number; deadline: number };
 }
 
+/**
+ * 运行在等什么人处理：审批（`approvals` 行）或输入请求（`questions` 行，统一承载 `ask_user`、
+ * 插件工具的 `input_required` 与 MCP elicitation）。`expiresAt` 为 ISO 时间。
+ */
+export interface WaitingFor {
+  kind: "approval" | "input";
+  id: string;
+  expiresAt: string;
+}
+
 export type LoopOutcome =
   | { kind: "completed" | "max_steps" | "max_duration"; consumedUpToSeq: number }
   | { kind: "aborted" }
   /** 停机：已在步骤边界保存好进度，任务需要回到队列。 */
-  | { kind: "interrupted" };
+  | { kind: "interrupted" }
+  /** 等待人处理：checkpoint 停在 tools 节点之前，处理后从这里续跑。 */
+  | { kind: "suspended"; waitingFor: WaitingFor };
 
 export interface AgentLoop {
   run(ctx: LoopContext): Promise<LoopOutcome>;

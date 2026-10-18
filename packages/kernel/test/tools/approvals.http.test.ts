@@ -225,6 +225,16 @@ describe("列表与详情的可见性", () => {
     const bad = await initiator.req({ method: "GET", url: `${base()}?status=nope` });
     expect(bad.statusCode).toBe(400);
   });
+
+  it("pending 列表不含已到期（expires_at <= now()）但超时任务尚未处理的审批", async () => {
+    const a = await request();
+    const b = await request();
+    await sql`UPDATE capybara.approvals SET expires_at = now() - interval '1 second'
+      WHERE id = ${b.id}`.execute(raw);
+    expect(ids(await initiator.req({ method: "GET", url: `${base()}?status=pending` }))).toEqual([
+      a.id,
+    ]);
+  });
 });
 
 describe("决定", () => {

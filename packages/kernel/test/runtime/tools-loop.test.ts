@@ -27,9 +27,11 @@ import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
 import { ToolOutputs } from "../../src/tools/outputs.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
+import { QuestionsService } from "../../src/tools/questions.service.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -178,6 +180,8 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
         credentials: { injection: async () => ({ headers: {} }) },
         breaker: new Breaker(redis, () => config),
         outputs: new ToolOutputs(db, () => config),
+        approvals: new ApprovalsService({ db, eventLog, config: () => config, log: silent }),
+        questions: new QuestionsService({ db, eventLog, config: () => config, log: silent }),
         config: () => config,
         log: silent,
         hooks: {

@@ -24,6 +24,7 @@ import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
 import { type AppAuth, CredentialMissing } from "../../src/tools/credentials.js";
 import { ToolOutputs } from "../../src/tools/outputs.js";
@@ -31,12 +32,11 @@ import {
   type DecidePolicy,
   RUN_STOPPED_DURING_TEXT,
   RUN_STOPPED_TEXT,
-  TOOL_APPROVAL_UNAVAILABLE,
-  TOOL_INPUT_UNAVAILABLE,
   ToolPipeline,
   type ToolPipelineDeps,
   type ToolStepContext,
 } from "../../src/tools/pipeline.js";
+import { QuestionsService } from "../../src/tools/questions.service.js";
 import { type ResolvedTool, specHash, type UnavailableTool } from "../../src/tools/registry.js";
 import { validateInput } from "../../src/tools/validate.js";
 import { eventsOf } from "../helpers/runs.js";
@@ -175,6 +175,8 @@ function pipeline(): ToolPipeline {
     },
     breaker,
     outputs,
+    approvals: new ApprovalsService({ db, eventLog, config, log: silent }),
+    questions: new QuestionsService({ db, eventLog, config, log: silent }),
     config,
     log: silent,
     ...(decidePolicy !== undefined && { decidePolicy }),
@@ -297,6 +299,21 @@ async function assistant(calls: Call[], step = 1): Promise<void> {
       payload: { step, content, stopReason: "tool_use" },
     },
   ]);
+}
+
+/** 审批 / 输入请求引用 runs 行：为当前 runId 插一条 running 运行。 */
+async function insertRun(): Promise<void> {
+  await db
+    .insertInto("runs")
+    .values({
+      id: runId,
+      conversation_id: seed.conversationId,
+      status: "running",
+      agent_version: 1,
+      trigger_account_id: seed.accountId,
+      trigger_seq: 0,
+    })
+    .execute();
 }
 
 async function runCalls(calls: Call[], over: Partial<ToolStepContext> = {}) {
@@ -437,22 +454,50 @@ describe("ToolPipeline.runStep", () => {
     expect(resultsOf(evs)[1]?.content).toMatch(/^Output gone not found or expired/);
   });
 
-  it("策略：deny → 拒绝说明；ask → 审批桩（Task 9 前按拒绝）；decidePolicy 可注入", async () => {
-    let evs = await runCalls([
+  it("策略：deny → 拒绝说明；ask → 建审批并暂停（之后的调用留到续跑）；decidePolicy 可注入", async () => {
+    await insertRun();
+    await assistant([
       { id: "c1", name: "probe__banned", input: {} },
-      { id: "c2", name: "probe__gated", input: {} },
+      { id: "c2", name: "probe__gated", input: { a: 1 } },
+      { id: "c3", name: "probe__echo", input: { text: "later" } },
     ]);
+    const out = await pipeline().runStep(stepCtx());
+    let evs = await eventsOf(db, seed.conversationId);
     expect(handlerCalls).toEqual({});
     expect(startedOf(evs)).toEqual([]);
-    const [deny, ask] = resultsOf(evs);
+    const [deny, ...rest] = resultsOf(evs);
+    expect(rest).toEqual([]);
     expect(deny).toMatchObject({
       isError: true,
       content: "Tool probe__banned is denied by policy.",
     });
-    expect(ask).toMatchObject({ isError: true, content: TOOL_APPROVAL_UNAVAILABLE });
-    expect(TOOL_APPROVAL_UNAVAILABLE).toBe(
-      "This tool requires approval, which is not available yet.",
+    const requested = evs.find((e) => e.type === "approval_requested");
+    expect(requested?.payload).toMatchObject({ step: 1, callId: "c2", toolKey: "probe__gated" });
+    const approvalId = (requested?.payload as { approvalId: string } | undefined)?.approvalId;
+    expect(out).toEqual({
+      kind: "suspended",
+      waitingFor: { kind: "approval", id: approvalId, expiresAt: expect.any(String) },
+    });
+    const row = await db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("id", "=", approvalId ?? "")
+      .executeTakeFirstOrThrow();
+    expect(row).toMatchObject({ run_id: runId, call_id: "c2", status: "pending" });
+    // 仍 pending 时再进入：继续等，不重复建审批
+    expect(await pipeline().runStep(stepCtx())).toEqual(out);
+    // 拒绝 → 拒绝说明，之后的调用照常执行
+    await sql`UPDATE capybara.approvals SET status = 'denied' WHERE id = ${approvalId}`.execute(
+      raw,
     );
+    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
+    evs = await eventsOf(db, seed.conversationId);
+    expect(resultsOf(evs).map((r) => [r.callId, r.content])).toEqual([
+      ["c1", "Tool probe__banned is denied by policy."],
+      ["c2", "The user denied this tool call."],
+      ["c3", 'echo {"text":"later"}'],
+    ]);
+    expect(handlerCalls.gated).toBeUndefined();
 
     const seen: string[] = [];
     decidePolicy = async (tool, def, ctx) => {
@@ -478,12 +523,25 @@ describe("ToolPipeline.runStep", () => {
     });
   });
 
-  it("处理函数返回 input_required → 暂不支持的错误结果", async () => {
-    const evs = await runCalls([{ id: "c1", name: "probe__form", input: {} }]);
-    expect(resultsOf(evs)[0]).toMatchObject({ isError: true, content: TOOL_INPUT_UNAVAILABLE });
-    expect(TOOL_INPUT_UNAVAILABLE).toBe(
-      "This tool requested user input, which is not available yet.",
-    );
+  it("处理函数返回 input_required → 建输入请求（写 question_asked）并暂停；已写 tool_call_started、无结果", async () => {
+    await insertRun();
+    await assistant([{ id: "c1", name: "probe__form", input: {} }]);
+    const out = await pipeline().runStep(stepCtx());
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(resultsOf(evs)).toEqual([]);
+    expect(startedOf(evs)).toHaveLength(1);
+    const asked = evs.find((e) => e.type === "question_asked");
+    expect(asked?.payload).toMatchObject({ step: 1, callId: "c1", form: { title: "t" } });
+    expect(out).toMatchObject({
+      kind: "suspended",
+      waitingFor: {
+        kind: "input",
+        id: (asked?.payload as { questionId: string } | undefined)?.questionId,
+      },
+    });
+    // 仍 pending：继续等，处理函数不再被调用
+    expect(await pipeline().runStep(stepCtx())).toEqual(out);
+    expect(handlerCalls.form).toHaveLength(1);
   });
 
   it("处理函数抛出非 ToolError：只给模型错误类名，不回显内部消息", async () => {

@@ -31,6 +31,11 @@ export interface RunControl {
    * 否则返回 false。
    */
   abortIfOrphaned(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
+  /**
+   * 运行在等人处理（waiting）时直接中止：取消等待、写 `run_aborted`、删除 checkpoint，返回 true；
+   * 运行已不是 waiting（例如刚被续跑）→ false。
+   */
+  abortWaiting(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
   /** 请求中止运行（广播到所有副本）。 */
   requestAbort(runId: string, byAccountId: string): Promise<void>;
 }
@@ -256,19 +261,28 @@ export class ConversationsService {
   }
 
   /**
-   * 中止会话当前的运行（queued / running）：返回 runId；没有 → `run.not_active`。
-   * 中止经 Redis 广播，运行所在的任意副本都会收到；运行已是孤儿（没有任何 worker 在执行）时直接写终态。
+   * 中止会话当前的运行（queued / running / waiting）：返回 runId；没有 → `run.not_active`。
+   * 等人处理的运行没有 worker：直接取消等待并写终态。其余经 Redis 广播，运行所在的任意副本都会收到；
+   * 运行已是孤儿（没有任何 worker 在执行）时直接写终态。
    */
   async abort(orgId: string, conversationId: string, accountId: string): Promise<string> {
     await this.get(orgId, conversationId, accountId);
     const run = await this.db
       .selectFrom("runs")
-      .select("id")
+      .select(["id", "status"])
       .where("conversation_id", "=", conversationId)
-      .where("status", "in", ["queued", "running"])
+      .where("status", "in", ["queued", "running", "waiting"])
       .orderBy("created_at", "desc")
       .executeTakeFirst();
     if (!run || !this.runs) throw new ApiError("run.not_active", "No active run to abort");
+    // 等待中：直接结束；没成功（刚被续跑、已回到 queued）则按下面的常规路径中止。
+    if (
+      run.status === "waiting" &&
+      (await this.runs.abortWaiting(conversationId, run.id, accountId))
+    ) {
+      this.kickRun(conversationId);
+      return run.id;
+    }
     // 孤儿运行没有 worker 在听中止广播：直接写成 aborted，之后再看有没有等待中的消息要起新一轮。
     if (await this.runs.abortIfOrphaned(conversationId, run.id, accountId)) {
       this.kickRun(conversationId);

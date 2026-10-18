@@ -114,6 +114,7 @@ beforeAll(async () => {
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,
+            abortWaiting: async () => false,
             requestAbort: async () => {},
           },
         }),

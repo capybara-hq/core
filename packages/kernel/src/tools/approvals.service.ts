@@ -85,8 +85,8 @@ export interface ApprovalsServiceDeps {
   config: () => KernelConfig;
   log: Pick<Logger, "warn">;
   /**
-   * 决定提交之后调用（恰好一次：只有赢得行锁、把 pending 改掉的那次决定会调用）。默认空操作；
-   * Task 9 接入续跑。失败只记日志（决定已生效）。
+   * 决定提交之后调用（恰好一次：只有赢得行锁、把 pending 改掉的那次决定会调用），内核接入续跑。
+   * 默认空操作；失败只记日志（决定已生效，超时任务到点时会再尝试续跑）。
    */
   onDecided?: (approval: ApprovalRecord) => Promise<void>;
 }
@@ -228,6 +228,8 @@ export class ApprovalsService {
         ]),
       );
     if (status !== undefined) q = q.where("approvals.status", "=", status);
+    // 已到期、超时任务尚未处理的审批不再列为待处理（处理它会得到 approval.already_decided）
+    if (status === "pending") q = q.where("approvals.expires_at", ">", sql<Date>`now()`);
     const rows = await q.orderBy("approvals.created_at", "desc").limit(100).execute();
     return this.views(rows.map(toRecord));
   }
@@ -387,6 +389,102 @@ export class ApprovalsService {
       }
     }
     return record;
+  }
+
+  /** 某个工具调用的审批（按 (run_id, call_id) 唯一）；没有则返回 null。 */
+  async forCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
+    const row = await this.deps.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("run_id", "=", runId)
+      .where("call_id", "=", callId)
+      .executeTakeFirst();
+    return row ? toRecord(row) : null;
+  }
+
+  /**
+   * 超时（等待机制的超时任务调用）：仍 pending 且已到期 → 置 expired、写 `approval_decided{expired}`（处理人为 null）。
+   * 与人工决定都锁同一行，恰好一个生效。返回 `expired`（本次生效）/ `not_due`（尚未到期）/
+   * `settled`（已处理、已取消或不存在）。
+   */
+  async expire(id: string): Promise<{
+    outcome: "expired" | "not_due" | "settled";
+    record?: ApprovalRecord;
+  }> {
+    const { db, eventLog } = this.deps;
+    const r = await db.transaction().execute(async (t) => {
+      const locked = await t
+        .selectFrom("approvals")
+        .selectAll()
+        .select(sql<boolean>`expires_at <= now()`.as("expired"))
+        .where("id", "=", id)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!locked) return { outcome: "settled" as const };
+      const before = toRecord(locked);
+      if (before.status !== "pending") return { outcome: "settled" as const, record: before };
+      if (!locked.expired) return { outcome: "not_due" as const, record: before };
+      const updated = await t
+        .updateTable("approvals")
+        .set({ status: "expired", decided_at: sql<Date>`now()` })
+        .where("id", "=", id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const toSeq = await this.decidedEvent(t, before, "expired");
+      return { outcome: "expired" as const, record: toRecord(updated), toSeq };
+    });
+    if ("toSeq" in r && r.toSeq !== undefined && r.record) {
+      await eventLog.notify(r.record.conversationId, r.toSeq);
+    }
+    return r.record ? { outcome: r.outcome, record: r.record } : { outcome: r.outcome };
+  }
+
+  /**
+   * 在事务 `t` 内取消运行的全部 pending 审批（运行在等待中被中止），各写 `approval_decided{cancelled}`
+   * （处理人为 null）。返回被取消的记录；调用方提交后发布事件。
+   */
+  async cancelPendingIn(t: Trx, runId: string): Promise<ApprovalRecord[]> {
+    const rows = await t
+      .selectFrom("approvals")
+      .selectAll()
+      .where("run_id", "=", runId)
+      .where("status", "=", "pending")
+      .orderBy("created_at")
+      .forUpdate()
+      .execute();
+    const out: ApprovalRecord[] = [];
+    for (const row of rows) {
+      const updated = await t
+        .updateTable("approvals")
+        .set({ status: "cancelled", decided_at: sql<Date>`now()` })
+        .where("id", "=", row.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await this.decidedEvent(t, toRecord(row), "cancelled");
+      out.push(toRecord(updated));
+    }
+    return out;
+  }
+
+  /** 系统写的 `approval_decided`（超时 / 取消，处理人为 null），返回事件 seq。 */
+  private async decidedEvent(
+    t: Trx,
+    a: ApprovalRecord,
+    decision: "expired" | "cancelled",
+  ): Promise<number> {
+    const written = await this.deps.eventLog.append(
+      a.conversationId,
+      [
+        {
+          type: "approval_decided",
+          runId: a.runId,
+          idemKey: `approval_decided:${a.id}`,
+          payload: { approvalId: a.id, callId: a.callId, decision, byAccountId: null },
+        },
+      ],
+      t,
+    );
+    return Math.max(...written.map((e) => e.seq));
   }
 
   /** 本人在该组织的「以后都允许」授权。 */

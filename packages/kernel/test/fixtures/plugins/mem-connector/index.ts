@@ -3,6 +3,7 @@ import {
   CONNECTOR_CAPABILITY,
   type Connector,
   definePlugin,
+  type InputForm,
   type PluginContext,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -27,12 +28,22 @@ export interface MemState {
   calls: { server: string; name: string; input: unknown }[];
   /** 插件工具 echo 的调用次数。 */
   echoCalls: number;
+  /** 插件工具 ask 的调用记录（含续跑时的 ctx.resume）。 */
+  askCalls: { input: unknown; resume: unknown }[];
 }
 
 /** 测试专用：状态挂在 globalThis 上，测试与插件共享（同一进程）。 */
 export function memState(): MemState {
   const g = globalThis as { __memConnector?: MemState };
-  g.__memConnector ??= { servers: {}, opened: 0, closed: 0, auths: [], calls: [], echoCalls: 0 };
+  g.__memConnector ??= {
+    servers: {},
+    opened: 0,
+    closed: 0,
+    auths: [],
+    calls: [],
+    echoCalls: 0,
+    askCalls: [],
+  };
   return g.__memConnector;
 }
 
@@ -70,6 +81,19 @@ const connector: Connector = {
   },
 };
 
+/** ask 工具的表单：选一个颜色（必填）。 */
+export const COLOR_FORM: InputForm = {
+  title: "Pick a color",
+  fields: [
+    {
+      key: "color",
+      label: "Color",
+      schema: { type: "string", enum: ["red", "blue"] },
+      required: true,
+    },
+  ],
+};
+
 /** 测试用 connector@1（kind `mem`），同时经 ctx.tools 注册一个插件工具 `echo`。 */
 export default definePlugin({
   name: "mem-connector",
@@ -87,6 +111,33 @@ export default definePlugin({
       async (input) => {
         memState().echoCalls++;
         return { content: [{ type: "text", text: JSON.stringify(input) }] };
+      },
+    );
+    // 请求用户输入：先返回 input_required（state 记轮次），续跑时按 ctx.resume 给结果；
+    // rounds 控制连续请求几轮，bad 返回不合规的表单。
+    ctx.tools.register(
+      {
+        name: "ask",
+        description: "Ask the user to pick a color.",
+        inputSchema: {
+          type: "object",
+          properties: { rounds: { type: "integer" }, bad: { type: "boolean" } },
+        },
+        annotations: { readOnlyHint: true },
+      },
+      async (input, tctx) => {
+        memState().askCalls.push({ input, resume: tctx.resume ?? null });
+        const { rounds = 1, bad = false } = input as { rounds?: number; bad?: boolean };
+        if (bad) return { kind: "input_required", form: { title: "Bad", fields: [] } };
+        const resume = tctx.resume;
+        if (resume && resume.answer === null) {
+          return { content: [{ type: "text", text: "no answer" }] };
+        }
+        const n = (resume?.state as { n?: number } | undefined)?.n ?? 0;
+        if (n < rounds) return { kind: "input_required", form: COLOR_FORM, state: { n: n + 1 } };
+        return {
+          content: [{ type: "text", text: `color=${String(resume?.answer?.color)} after ${n}` }],
+        };
       },
     );
     ctx.tools.register(

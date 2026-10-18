@@ -33,11 +33,13 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import { Waits } from "./runtime/waits.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolOutputs } from "./tools/outputs.js";
 import { ToolPipeline } from "./tools/pipeline.js";
+import { QuestionsService } from "./tools/questions.service.js";
 import { ToolRegistry } from "./tools/registry.js";
 
 /**
@@ -82,6 +84,8 @@ export interface KernelRuns {
   readonly abort: RunAbort;
   /** 构造 loop 用的依赖（单步模型调用 + 工具执行管线）。 */
   readonly stepDeps: LoopDeps;
+  /** 运行等待人处理：续跑、超时、等待中中止。 */
+  readonly waits: Waits;
 }
 
 /** 工具相关的内核服务。 */
@@ -94,6 +98,8 @@ export interface KernelTools {
   readonly pipeline: ToolPipeline;
   /** 工具调用审批与「以后都允许」授权。 */
   readonly approvals: ApprovalsService;
+  /** 工具调用的输入请求（回答后续跑）。 */
+  readonly questions: QuestionsService;
 }
 
 /** 运行中的内核实例。 */
@@ -241,6 +247,25 @@ export async function createKernel(
   // 内置工具在 Task 10 接入
   const toolRegistry = new ToolRegistry({ db: kdb, host, credentials, log, builtins: [] });
   const toolOutputs = new ToolOutputs(kdb, () => current);
+  // 审批决定 / 输入回答提交后续跑（waits 在下面创建；回调只在运行期间被调用）
+  const approvals = new ApprovalsService({
+    db: kdb,
+    eventLog,
+    config: () => current,
+    log,
+    onDecided: async (a) => {
+      await waits.resume(a.runId, a.id);
+    },
+  });
+  const questions = new QuestionsService({
+    db: kdb,
+    eventLog,
+    config: () => current,
+    log,
+    onAnswered: async (q) => {
+      await waits.resume(q.runId, q.id);
+    },
+  });
   const toolPipeline = new ToolPipeline({
     db: kdb,
     eventLog,
@@ -248,23 +273,35 @@ export async function createKernel(
     credentials,
     breaker: new Breaker(redis, () => current),
     outputs: toolOutputs,
+    approvals,
+    questions,
     config: () => current,
     log,
   });
-  // TODO(Task 9)：onDecided 接入续跑
-  const approvals = new ApprovalsService({ db: kdb, eventLog, config: () => current, log });
   const tools: KernelTools = {
     registry: toolRegistry,
     credentials,
     outputs: toolOutputs,
     pipeline: toolPipeline,
     approvals,
+    questions,
   };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
   const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
+  const waits: Waits = new Waits({
+    db: kdb,
+    eventLog,
+    approvals,
+    questions,
+    runQueue,
+    checkpoints,
+    abortRequested: (runId) => abort.requested(runId),
+    redisUrl: config.redis.url,
+    log,
+  });
   const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
@@ -293,7 +330,16 @@ export async function createKernel(
     log,
     toolPipeline,
   };
-  const runs: KernelRuns = { eventLog, registry, queue: runQueue, lock, quota, abort, stepDeps };
+  const runs: KernelRuns = {
+    eventLog,
+    registry,
+    queue: runQueue,
+    lock,
+    quota,
+    abort,
+    stepDeps,
+    waits,
+  };
   let runWorker: RunWorker | undefined;
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
   const releaseConnections = async (): Promise<void> => {
@@ -337,6 +383,7 @@ export async function createKernel(
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
           abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),
+          abortWaiting: (id, runId, by) => waits.abortWaiting(id, runId, by),
           requestAbort: (runId, by) => abort.request(runId, by),
         },
       }),
@@ -451,6 +498,7 @@ export async function createKernel(
       const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
+    await within("waits", waits.close(), Math.max(0, runsDeadline - Date.now()));
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
     await within("bus", busSubscriber.close());
@@ -513,9 +561,11 @@ export async function createKernel(
             redisUrl: config.redis.url,
             sinkFor,
             checkpoints,
+            waits,
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();
+          waits.startWorker();
         }
         httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {

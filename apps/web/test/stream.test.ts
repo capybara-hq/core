@@ -153,6 +153,42 @@ describe("reduceChat", () => {
     expect(s.running).toBe(false);
   });
 
+  it("等人处理（审批 / 输入请求）时为 waiting、不算运行中，也不是终态；处理后回到运行中", () => {
+    let s = apply(initialChatState, [started(1), assistant(2, 0, "")]);
+    s = apply(s, [
+      ev(3, "approval_requested", {
+        step: 0,
+        callId: "c1",
+        approvalId: "a1",
+        toolKey: "x__y",
+        expiresAt: "2026-10-19T00:00:00.000Z",
+      }),
+    ]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    expect(s.closedRuns).toEqual({});
+    s = apply(s, [
+      ev(4, "approval_decided", {
+        approvalId: "a1",
+        callId: "c1",
+        decision: "approved",
+        byAccountId: "u1",
+      }),
+    ]);
+    expect(s).toMatchObject({ running: true, waiting: false });
+    s = apply(s, [
+      ev(5, "question_asked", {
+        step: 1,
+        callId: "c2",
+        questionId: "q1",
+        form: { title: "t", fields: [] },
+        expiresAt: "2026-10-19T00:00:00.000Z",
+      }),
+    ]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    s = apply(s, [finished(6)]);
+    expect(s).toMatchObject({ running: false, waiting: false });
+  });
+
   it("乱序：终态先于 run_started 到达仍判定为未运行", () => {
     const s = apply(initialChatState, [finished(3)], [started(2)]);
     expect(s.running).toBe(false);

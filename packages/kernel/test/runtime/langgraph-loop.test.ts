@@ -33,9 +33,11 @@ import type { LoopContext } from "../../src/runtime/loop.js";
 import type { StreamSink } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
 import { ToolOutputs } from "../../src/tools/outputs.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
+import { QuestionsService } from "../../src/tools/questions.service.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
 
@@ -147,6 +149,8 @@ beforeAll(async () => {
       credentials: { injection: async () => ({ headers: {} }) },
       breaker: new Breaker(redis, config),
       outputs: new ToolOutputs(db, config),
+      approvals: new ApprovalsService({ db, eventLog, config, log: silent }),
+      questions: new QuestionsService({ db, eventLog, config, log: silent }),
       config,
       log: silent,
     }),

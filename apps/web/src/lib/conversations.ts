@@ -11,6 +11,24 @@ export type ContentBlock =
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; callId: string; content: string; isError: boolean };
 
+type FormText = string | { zh: string; en: string };
+
+/** 交互表单（内核输入请求的 `form`，与 plugin-sdk 的 `InputForm` 对应）。 */
+export interface InputForm {
+  title: FormText;
+  fields: {
+    key: string;
+    label: FormText;
+    description?: FormText;
+    schema: Record<string, unknown>;
+    multiSelect?: boolean;
+    allowOther?: boolean;
+    required?: boolean;
+  }[];
+}
+
+export type FormAnswer = Record<string, string | number | boolean | string[]>;
+
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other" | "aborted";
 
 type EventBody =
@@ -64,6 +82,26 @@ type EventBody =
         decision: "approved" | "denied" | "expired" | "cancelled";
         scope?: "once" | "session" | "always";
         byAccountId: string | null;
+      };
+    }
+  | {
+      type: "question_asked";
+      payload: {
+        step: number;
+        callId: string;
+        questionId: string;
+        form: InputForm;
+        expiresAt: string;
+      };
+    }
+  | {
+      type: "question_answered";
+      payload: {
+        questionId: string;
+        callId: string;
+        answer: FormAnswer | null;
+        byAccountId: string | null;
+        outcome: "answered" | "expired" | "cancelled";
       };
     }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }

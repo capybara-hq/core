@@ -12,11 +12,12 @@ import type { SettingsService } from "../identity/settings.js";
 import type { RunAbort } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
-import type { AgentLoop, LoopOutcome } from "./loop.js";
+import type { AgentLoop, LoopOutcome, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit } from "./quota.js";
 import { type FinishRunArgs, finishRun, TERMINAL_STATUSES } from "./run-finish.js";
 import { bullConnection, RUN_QUEUE_NAME, type RunJobData, type RunQueue } from "./run-queue.js";
+import type { Waits } from "./waits.js";
 
 /** 会话锁被占用时任务延后的时间。 */
 const LOCK_BUSY_DELAY_MS = 1000;
@@ -60,6 +61,8 @@ export interface RunWorkerDeps {
   sinkFor?: (conversationId: string) => StreamSink;
   /** 运行到达终态后删除该运行（thread_id = runId）的 checkpoint thread（只用于续跑，结束后无用）。 */
   checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">;
+  /** loop 返回 `suspended` 后把运行置为 waiting（释放会话锁与配额之后）。 */
+  waits: Pick<Waits, "suspend">;
   hooks?: RunHooks;
 }
 
@@ -74,6 +77,8 @@ interface ActiveRun {
   /** 清除本运行的定时器（截止时间、配额续期）。 */
   stopTimers: () => void;
   done: Promise<void>;
+  /** loop 返回 `suspended`：等待对象，以及暂停时是否已收到用户中止。 */
+  suspended?: { waitingFor: WaitingFor; abort?: { byAccountId: string | null } };
 }
 
 /** 处理函数的返回值：`ensure` 表示任务完成后再调用一次 ensureRun。 */
@@ -84,7 +89,7 @@ type ProcessResult = "ensure" | undefined;
  * 标记也失败时运行停在 running，而任务此时已完成并移除，ensureRun 的孤儿清理会把它标记为失败——
  * 每一轮都要有新的用户消息，不会形成无限重试。
  */
-type ExecResult = "finished" | "interrupted" | "abandoned" | "broken";
+type ExecResult = "finished" | "interrupted" | "abandoned" | "broken" | "suspended";
 
 const noopSink: StreamSink = () => {};
 
@@ -219,6 +224,16 @@ export class RunWorker {
     const { runId, conversationId } = data;
     const stalled = /stalled/i.test(err.message);
     await this.d.lock.releaseFor(conversationId, runId);
+    // 运行已进入 waiting（暂停后任务才失败）：它有自己的续跑路径（人工决定 / 超时任务），不标记失败。
+    const cur = await this.d.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", runId)
+      .executeTakeFirst();
+    if (cur?.status === "waiting") {
+      this.d.log.warn("run job failed after the run was suspended; leaving it waiting", { runId });
+      return;
+    }
     await this.finish(
       conversationId,
       runId,
@@ -302,7 +317,15 @@ export class RunWorker {
     if (this.closing) return requeue(job, token, 0);
     const run = await this.d.db
       .selectFrom("runs")
-      .select(["id", "status", "agent_version", "trigger_account_id", "trigger_seq", "started_at"])
+      .select([
+        "id",
+        "status",
+        "agent_version",
+        "trigger_account_id",
+        "trigger_seq",
+        "started_at",
+        "waited_ms",
+      ])
       .where("id", "=", runId)
       .executeTakeFirst();
     // 重复投递的任务发现运行已不存在或已结束（例如上一个处理者写完终态后、做后续检查前崩溃）：
@@ -311,6 +334,8 @@ export class RunWorker {
       await this.dropCheckpoints(runId);
       return "ensure";
     }
+    // 运行在等人处理（例如暂停后本任务被 stalled 机制重新投递）：不执行，续跑由处理 / 超时发起的新任务负责。
+    if (run.status === "waiting") return;
     const conv = await this.d.db
       .selectFrom("conversations")
       .select(["org_id", "agent_id"])
@@ -388,6 +413,17 @@ export class RunWorker {
     }
     if (state.abandoned) return;
     if (delayMs !== null) return requeue(job, token, delayMs);
+    // 暂停：会话锁与配额已释放，checkpoint 保留；置 waiting 并投递超时任务。任务就此完成，不 ensureRun
+    // （等待期间的新消息在续跑后作为插话吸收）。
+    if (state.suspended) {
+      await this.d.waits.suspend(
+        runId,
+        conversationId,
+        state.suspended.waitingFor,
+        state.suspended.abort,
+      );
+      return;
+    }
     // 运行已到达终态（broken 时已尽力标记失败）：checkpoint 只用于续跑，删除。
     await this.dropCheckpoints(runId);
     return "ensure";
@@ -401,6 +437,7 @@ export class RunWorker {
       trigger_account_id: string;
       trigger_seq: string;
       started_at: Date | null;
+      waited_ms: string;
     },
     conv: { id: string; org_id: string; agent_id: string },
     state: ActiveRun,
@@ -438,8 +475,8 @@ export class RunWorker {
         .executeTakeFirstOrThrow();
       startedAt = updated.started_at as Date;
     }
-    // 截止时间以首次开始为准：停机后在其他 worker 续跑也不重新计时。
-    const deadline = startedAt.getTime() + runtime.maxRunSeconds * 1000;
+    // 截止时间以首次开始为准：停机后在其他 worker 续跑也不重新计时；等人处理的时长（waited_ms）不计入。
+    const deadline = startedAt.getTime() + Number(run.waited_ms) + runtime.maxRunSeconds * 1000;
 
     const ac = new AbortController();
     let abortedBy: string | null | undefined;
@@ -539,6 +576,13 @@ export class RunWorker {
       switch (outcome.kind) {
         case "interrupted":
           return "interrupted";
+        case "suspended":
+          // 暂停与用户中止同时发生：仍先置 waiting，再按「等待中中止」取消等待并结束（见 Waits.suspend）。
+          state.suspended = {
+            waitingFor: outcome.waitingFor,
+            ...(abortedBy !== undefined && { abort: { byAccountId: abortedBy } }),
+          };
+          return "suspended";
         case "aborted":
           await this.finish(conversationId, runId, "aborted", absorbed, {
             type: "run_aborted",

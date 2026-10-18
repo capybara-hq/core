@@ -53,7 +53,8 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
 
 /**
  * 执行时的策略判定（spec 3.6 R5：在动作执行那一刻判定）。每次调用都实时读取：
- * - 应用工具的 `app_tools.default_policy` / 状态 / 指纹（应用或工具已停用、删除 → 拒绝）；
+ * - 应用工具的 `app_tools.default_policy` / 状态 / 指纹（应用或工具已不存在、停用、删除、待审核 →
+ *   `{ unavailable: 原因 }`，管线写「工具不可用」的事实说明，而非策略拒绝）；
  * - agent 当前版本的 `toolPolicies`，与运行所用版本取更严者（负责人运行中收紧立即生效；放宽不影响已在跑的运行）；
  * - 授权表（`conversation_tool_grants` / `tool_grants`），`spec_hash` 与当前定义不一致视为无效（D8）；
  * - 工具声明了 `requiredRole`（R1）时，发起人在组织中的当前角色：不是成员 → 拒绝；角色不足 → 按角色升级的审批
@@ -68,17 +69,25 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
     let hashCurrent = true;
     if (tool.source.kind === "app") {
       appId = tool.source.appId;
+      const app = await db
+        .selectFrom("apps")
+        .select(["slug", "status", "deleted_at"])
+        .where("id", "=", tool.source.appId)
+        .where("org_id", "=", ctx.orgId)
+        .executeTakeFirst();
+      // 调用那一刻应用 / 工具已不可用：给事实原因（与注册表的不可用说明一致），不说成「策略拒绝」
+      if (!app) return { unavailable: "App does not exist" };
+      if (app.deleted_at !== null) return { unavailable: `App ${app.slug} was deleted` };
+      if (app.status !== "active") return { unavailable: `App ${app.slug} is disabled` };
       const row = await db
         .selectFrom("app_tools")
-        .innerJoin("apps", "apps.id", "app_tools.app_id")
-        .select(["app_tools.default_policy", "app_tools.spec_hash", "app_tools.status"])
-        .where("app_tools.app_id", "=", tool.source.appId)
-        .where("app_tools.name", "=", tool.source.name)
-        .where("apps.org_id", "=", ctx.orgId)
-        .where("apps.status", "=", "active")
-        .where("apps.deleted_at", "is", null)
+        .select(["default_policy", "spec_hash", "status"])
+        .where("app_id", "=", tool.source.appId)
+        .where("name", "=", tool.source.name)
         .executeTakeFirst();
-      if (row?.status !== "enabled") return "deny";
+      if (!row) return { unavailable: `Tool no longer exists in app ${app.slug}` };
+      if (row.status === "disabled") return { unavailable: "Tool is disabled" };
+      if (row.status !== "enabled") return { unavailable: "Tool is pending review" };
       appDefault = row.default_policy;
       hashCurrent = row.spec_hash === tool.specHash;
     }

@@ -200,6 +200,14 @@ export interface RunsTable {
   created_at: Ts;
   started_at: TsNullable;
   finished_at: TsNullable;
+  /** 0012：进入 waiting 的时刻（续跑时清空）。 */
+  waiting_since: TsNullable;
+  /** 0012：累计等待时长（毫秒），不计入运行时长。 */
+  waited_ms: Int8;
+  /** 0012：续跑任务的 jobId；为空表示按触发消息生成的 jobId。 */
+  job_id: string | null;
+  /** 0012：最近一次（续跑）回到 queued 的时刻。 */
+  queued_at: TsNullable;
 }
 
 /** 0010_tools.sql：已安装的应用（连接器实例）。 */
@@ -287,6 +295,8 @@ export interface QuestionsTable {
   answered_at: TsNullable;
   expires_at: Date | string;
   created_at: Ts;
+  /** 0012：同一调用的第几轮输入请求（从 1 起）。 */
+  attempt: Generated<number>;
 }
 
 /** 0010_tools.sql：超大工具输出的存档。 */

@@ -30,6 +30,17 @@ export class RunAbort {
     await this.bus.publish(RUN_ABORT_TOPIC, msg);
   }
 
+  /**
+   * 是否已请求中止该运行（读标记键）：返回请求人，未请求 → null。
+   * 用于没有订阅者的时刻（运行刚暂停、即将进入 waiting）补查期间到达的中止。
+   */
+  async requested(runId: string): Promise<{ byAccountId: string | null } | null> {
+    const stored = await this.redis.get(abortKey(runId));
+    if (stored === null) return null;
+    const by = (JSON.parse(stored) as { byAccountId?: unknown }).byAccountId;
+    return { byAccountId: typeof by === "string" ? by : null };
+  }
+
   /** 订阅某个运行的中止；`onAbort` 至多调用一次。返回取消订阅函数。 */
   async watch(
     runId: string,

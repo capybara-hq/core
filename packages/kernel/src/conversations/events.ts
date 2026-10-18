@@ -44,6 +44,31 @@ const ModelUsageShape = {
   cacheWriteTokens: count,
 };
 
+/** 双语或纯文本（plugin-sdk `InputForm` 的文案字段）。 */
+const FormTextSchema = z.union([z.string(), z.object({ zh: z.string(), en: z.string() })]);
+
+/** 交互表单（plugin-sdk 的 `InputForm`；字段 schema 已由 `validateInputForm` 校验过，这里只记形状）。 */
+const InputFormSchema = z.object({
+  title: FormTextSchema,
+  fields: z.array(
+    z.object({
+      key: z.string(),
+      label: FormTextSchema,
+      description: FormTextSchema.optional(),
+      schema: z.record(z.string(), z.unknown()),
+      multiSelect: z.boolean().optional(),
+      allowOther: z.boolean().optional(),
+      required: z.boolean().optional(),
+    }),
+  ),
+});
+
+/** 表单答案（plugin-sdk 的 `FormAnswer`）。 */
+const FormAnswerSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
+);
+
 const ev = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
   z.object({ type: z.literal(type), payload });
 
@@ -174,6 +199,31 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       decision: z.enum(["approved", "denied", "expired", "cancelled"]),
       scope: z.enum(["once", "session", "always"]).optional(),
       byAccountId: z.string().nullable(),
+    }),
+  ),
+  /**
+   * 工具调用需要用户输入（`ask_user`、插件工具的 `input_required`、MCP elicitation）：输入请求已建，
+   * run 暂停等待回答。界面据此显示表单卡片（不进模型请求）。
+   */
+  ev(
+    "question_asked",
+    z.object({
+      step: count,
+      callId: z.string(),
+      questionId: z.string(),
+      form: InputFormSchema,
+      expiresAt: z.string(),
+    }),
+  ),
+  /** 输入请求已结束：回答 / 超时 / 取消（后两者 `answer` 与 `byAccountId` 为 null）。 */
+  ev(
+    "question_answered",
+    z.object({
+      questionId: z.string(),
+      callId: z.string(),
+      answer: FormAnswerSchema.nullable(),
+      byAccountId: z.string().nullable(),
+      outcome: z.enum(["answered", "expired", "cancelled"]),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),

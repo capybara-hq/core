@@ -219,9 +219,29 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     expect(await policy(appTool({ defaultPolicy: "allow" }), agentDef, ctx)).toBe("deny");
     await setAppTool("allow");
     expect(await policy(appTool({ defaultPolicy: "deny" }), agentDef, ctx)).toBe("allow");
-    // 工具被停用 / 删除 → 拒绝
+  });
+
+  it("应用 / 工具在调用时已不可用 → unavailable（给事实原因，不按策略拒绝）", async () => {
+    const policy = createDecidePolicy(db);
     await setAppTool("allow", specHash(SPEC), "disabled");
-    expect(await policy(appTool(), agentDef, ctx)).toBe("deny");
+    expect(await policy(appTool(), agentDef, ctx)).toEqual({ unavailable: "Tool is disabled" });
+    await setAppTool("allow", specHash(SPEC), "pending_review");
+    expect(await policy(appTool(), agentDef, ctx)).toEqual({
+      unavailable: "Tool is pending review",
+    });
+    await sql`DELETE FROM capybara.app_tools WHERE app_id = ${appId}`.execute(raw);
+    expect(await policy(appTool(), agentDef, ctx)).toEqual({
+      unavailable: "Tool no longer exists in app docs",
+    });
+    await setAppTool("allow");
+    await sql`UPDATE capybara.apps SET status = 'disabled' WHERE id = ${appId}`.execute(raw);
+    expect(await policy(appTool(), agentDef, ctx)).toEqual({ unavailable: "App docs is disabled" });
+    await sql`UPDATE capybara.apps SET status = 'active', deleted_at = now() WHERE id = ${appId}`.execute(
+      raw,
+    );
+    expect(await policy(appTool(), agentDef, ctx)).toEqual({ unavailable: "App docs was deleted" });
+    await sql`DELETE FROM capybara.apps WHERE id = ${appId}`.execute(raw);
+    expect(await policy(appTool(), agentDef, ctx)).toEqual({ unavailable: "App does not exist" });
   });
 
   it("ask → 指向发起人的审批请求（带 specHash 与来源应用）", async () => {
