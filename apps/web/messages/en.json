@@ -119,6 +119,8 @@
       "defaultValue": "Default ({value})",
       "invalid": "This value is invalid.",
       "invalidKey": "Parameter {key} is invalid.",
+      "reset": "Reset",
+      "resetLabel": "Reset {label} to default",
       "effort": {
         "low": "Low",
         "medium": "Medium",

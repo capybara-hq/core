@@ -68,6 +68,24 @@ export function ModelParams({
     const isNumber = s.type === "number" || s.type === "integer";
     const step = s.type === "integer" ? 1 : "any";
     const segmented = (p.standard === "effort" || p.standard === "thinking") && enumValues !== null;
+    /** 用户是否设置过该键（未设置的不提交，由内核补默认值）。 */
+    const isSet = Object.hasOwn(value, p.key);
+    const defaultText =
+      p.default === undefined ? t("default") : t("defaultValue", { value: String(p.default) });
+    /** 滑块的位置：已设置或有默认值时取该值；都没有时放在中点，不冒充某个具体取值。 */
+    const thumb = (min: number, max: number) =>
+      typeof current === "number" ? current : (min + max) / 2;
+    /** 「恢复默认」按钮：开关与滑块设置过之后显示，点击删除该键。 */
+    const reset = isSet && (
+      <button
+        type="button"
+        className="secondary"
+        aria-label={t("resetLabel", { label })}
+        onClick={() => set(p.key, undefined)}
+      >
+        {t("reset")}
+      </button>
+    );
 
     let control: ReactNode;
     if (segmented) {
@@ -78,17 +96,37 @@ export function ModelParams({
           aria-labelledby={`${pid}-label`}
           aria-describedby={describedBy}
         >
-          {(enumValues ?? []).map((v) => (
-            <button
-              key={v}
-              type="button"
-              className={current === v ? undefined : "secondary"}
-              aria-pressed={current === v}
-              onClick={() => set(p.key, v)}
-            >
-              {t.has(`${knob}.${v}`) ? t(`${knob}.${v}`) : v}
-            </button>
-          ))}
+          {/* 首段「默认」：按下表示未设置（参数都是可选的） */}
+          <button
+            type="button"
+            className={isSet ? "secondary" : undefined}
+            aria-pressed={!isSet}
+            aria-invalid={aria["aria-invalid"]}
+            onClick={() => set(p.key, undefined)}
+          >
+            {p.default === undefined
+              ? t("default")
+              : t("defaultValue", {
+                  value: t.has(`${knob}.${p.default}`)
+                    ? t(`${knob}.${p.default}`)
+                    : String(p.default),
+                })}
+          </button>
+          {(enumValues ?? []).map((v) => {
+            const pressed = isSet && value[p.key] === v;
+            return (
+              <button
+                key={v}
+                type="button"
+                className={pressed ? undefined : "secondary"}
+                aria-pressed={pressed}
+                aria-invalid={aria["aria-invalid"]}
+                onClick={() => set(p.key, v)}
+              >
+                {t.has(`${knob}.${v}`) ? t(`${knob}.${v}`) : v}
+              </button>
+            );
+          })}
         </fieldset>
       );
     } else if (p.standard === "temperature" && isNumber) {
@@ -102,7 +140,7 @@ export function ModelParams({
             min={min}
             max={max}
             step={0.01}
-            value={typeof current === "number" ? current : min}
+            value={thumb(min, max)}
             onChange={(e) => set(p.key, toNumber(e.target.value))}
             {...aria}
           />
@@ -112,10 +150,12 @@ export function ModelParams({
             min={min}
             max={max}
             step="any"
-            value={typeof current === "number" ? current : ""}
+            placeholder={defaultText}
+            value={isSet && typeof value[p.key] === "number" ? Number(value[p.key]) : ""}
             onChange={(e) => set(p.key, toNumber(e.target.value))}
             {...aria}
           />
+          {reset}
         </div>
       );
     } else if (enumValues) {
@@ -126,11 +166,7 @@ export function ModelParams({
           onChange={(e) => set(p.key, e.target.value === "" ? undefined : e.target.value)}
           {...aria}
         >
-          <option value="">
-            {p.default === undefined
-              ? t("default")
-              : t("defaultValue", { value: String(p.default) })}
-          </option>
+          <option value="">{defaultText}</option>
           {enumValues.map((v) => (
             <option key={v} value={v}>
               {v}
@@ -140,15 +176,19 @@ export function ModelParams({
       );
     } else if (s.type === "boolean") {
       control = (
-        <input
-          id={pid}
-          type="checkbox"
-          role="switch"
-          checked={current === true}
-          aria-checked={current === true}
-          onChange={(e) => set(p.key, e.target.checked)}
-          {...aria}
-        />
+        <div className="row">
+          <input
+            id={pid}
+            type="checkbox"
+            role="switch"
+            checked={current === true}
+            aria-checked={current === true}
+            onChange={(e) => set(p.key, e.target.checked)}
+            {...aria}
+          />
+          {!isSet && <span className="muted">{defaultText}</span>}
+          {reset}
+        </div>
       );
     } else if (
       p.standard !== "maxOutputTokens" &&
@@ -164,11 +204,12 @@ export function ModelParams({
             min={s.minimum}
             max={s.maximum}
             step={s.type === "integer" ? 1 : (s.maximum - s.minimum) / 100}
-            value={typeof current === "number" ? current : s.minimum}
+            value={thumb(s.minimum, s.maximum)}
             onChange={(e) => set(p.key, toNumber(e.target.value))}
             {...aria}
           />
-          <output htmlFor={pid}>{typeof current === "number" ? current : t("default")}</output>
+          <output htmlFor={pid}>{isSet ? String(value[p.key]) : defaultText}</output>
+          {reset}
         </div>
       );
     } else if (isNumber) {

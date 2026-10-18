@@ -119,6 +119,8 @@
       "defaultValue": "默认（{value}）",
       "invalid": "该参数的取值无效。",
       "invalidKey": "参数 {key} 无效。",
+      "reset": "恢复默认",
+      "resetLabel": "将{label}恢复默认",
       "effort": {
         "low": "低",
         "medium": "中",

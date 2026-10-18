@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { useState } from "react";
@@ -114,22 +114,33 @@ describe("ModelParams", () => {
         .getAllByRole("button")
         .map((b) => b.textContent),
     ).toEqual([
+      en.agents.params.default,
       en.agents.params.effort.low,
       en.agents.params.effort.medium,
       en.agents.params.effort.high,
     ]);
     expect(screen.getByText("Higher is slower")).toBeTruthy();
     const thinking = screen.getByRole("group", { name: "Thinking" });
-    // 未改动时显示默认值
+    // 未改动时按下的是「默认（开启）」段，而不是某个具体取值
+    const thinkingDefault = en.agents.params.defaultValue.replace(
+      "{value}",
+      en.agents.params.thinking.on,
+    );
+    expect(
+      within(thinking).getByRole("button", { name: thinkingDefault }).getAttribute("aria-pressed"),
+    ).toBe("true");
     expect(
       within(thinking)
         .getByRole("button", { name: en.agents.params.thinking.on })
         .getAttribute("aria-pressed"),
-    ).toBe("true");
-    expect(screen.getByRole("slider", { name: "Temperature" })).toBeTruthy();
-    expect(
-      (screen.getByRole("spinbutton", { name: "Temperature" }) as HTMLInputElement).value,
-    ).toBe("1");
+    ).toBe("false");
+    // 温度未改动：滑块停在默认值，数字框留空并以占位提示默认
+    expect((screen.getByRole("slider", { name: "Temperature" }) as HTMLInputElement).value).toBe(
+      "1",
+    );
+    const tempBox = screen.getByRole("spinbutton", { name: "Temperature" }) as HTMLInputElement;
+    expect(tempBox.value).toBe("");
+    expect(tempBox.placeholder).toBe(en.agents.params.defaultValue.replace("{value}", "1"));
     expect(screen.getByRole("spinbutton", { name: "Max output tokens" })).toBeTruthy();
     expect(screen.queryByRole("slider", { name: "Max output tokens" })).toBeNull();
 
@@ -144,6 +155,68 @@ describe("ModelParams", () => {
     ).toBe("true");
     await user.type(screen.getByRole("spinbutton", { name: "Max output tokens" }), "512");
     expect(onChange).toHaveBeenLastCalledWith({ effort: "high", maxOutputTokens: 512 });
+
+    // 点「默认」段：回到未设置，不再提交该键
+    await user.click(within(effort).getByRole("button", { name: en.agents.params.default }));
+    expect(onChange).toHaveBeenLastCalledWith({ maxOutputTokens: 512 });
+    expect(
+      within(effort)
+        .getByRole("button", { name: en.agents.params.default })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("开关与滑块设置后可「恢复默认」；没有默认值的滑块未设置时停在中点并显示「默认」", async () => {
+    const onChange = vi.fn();
+    render(<Harness parameters={[SEARCH, TOP_K, TEMPERATURE]} locale="zh" onChange={onChange} />);
+    const resetOf = (label: string) =>
+      screen.queryByRole("button", { name: zh.agents.params.resetLabel.replace("{label}", label) });
+    // 未设置：没有恢复按钮
+    expect(resetOf("联网搜索")).toBeNull();
+    expect(resetOf("Top K")).toBeNull();
+    // Top K（1..50，无默认值）：滑块在中点而不是最小值，旁边显示「默认」
+    const topK = screen.getByRole("slider", { name: "Top K" }) as HTMLInputElement;
+    expect(topK.value).not.toBe("1");
+    expect(Number(topK.value)).toBeCloseTo(25.5, -1);
+    expect(within(paramBox(topK)).getByText(zh.agents.params.default)).toBeTruthy();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("switch", { name: "联网搜索" }));
+    expect(onChange).toHaveBeenLastCalledWith({ "model-fake.search": true });
+    await user.click(resetOf("联网搜索") as HTMLElement);
+    expect(onChange).toHaveBeenLastCalledWith({});
+    expect(resetOf("联网搜索")).toBeNull();
+
+    fireEvent.change(topK, { target: { value: "10" } });
+    expect(onChange).toHaveBeenLastCalledWith({ "model-fake.topK": 10 });
+    expect(within(paramBox(topK)).getByText("10")).toBeTruthy();
+    await user.click(resetOf("Top K") as HTMLElement);
+    expect(onChange).toHaveBeenLastCalledWith({});
+    expect(within(paramBox(topK)).getByText(zh.agents.params.default)).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("slider", { name: "温度" }), { target: { value: "0.5" } });
+    expect(onChange).toHaveBeenLastCalledWith({ temperature: 0.5 });
+    await user.click(resetOf("温度") as HTMLElement);
+    expect(onChange).toHaveBeenLastCalledWith({});
+  });
+
+  it("分段按钮组有错误时，aria-invalid 标在按钮上", () => {
+    render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ModelParams
+          parameters={[EFFORT]}
+          value={{}}
+          onChange={vi.fn()}
+          locale="en"
+          errors={{ effort: "bad" }}
+        />
+      </NextIntlClientProvider>,
+    );
+    const group = screen.getByRole("group", { name: "Effort" });
+    expect(group.getAttribute("aria-invalid")).toBeNull();
+    for (const b of within(group).getAllByRole("button")) {
+      expect(b.getAttribute("aria-invalid")).toBe("true");
+    }
   });
 
   it("厂商参数按 schema 渲染：枚举 → 下拉框，布尔 → 开关，带范围的数字 → 滑块，其余 → 文本框", async () => {
