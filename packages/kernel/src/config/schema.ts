@@ -109,6 +109,15 @@ export const KernelConfigSchema = z.object({
               "Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers)",
           }),
         ),
+      publicUrl: z
+        .url()
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Externally reachable base URL of this deployment (used for OAuth callbacks and connection links), e.g. https://capybara.example.com",
+          }),
+        ),
     })
     .default({ port: 8080, trustProxy: false }),
   roles: z
@@ -283,6 +292,123 @@ export const KernelConfigSchema = z.object({
       stalledIntervalMs: 30000,
       sseHeartbeatMs: 15000,
       sseRecheckMs: 60000,
+    }),
+  tools: z
+    .object({
+      timeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .default(60000)
+        .meta(meta({ description: "Timeout of one tool call in milliseconds" })),
+      breakerFailures: z
+        .number()
+        .int()
+        .positive()
+        .default(5)
+        .meta(
+          meta({ description: "Consecutive failures of one app that open its circuit breaker" }),
+        ),
+      breakerOpenSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(60)
+        .meta(
+          meta({
+            description: "Seconds an open circuit breaker rejects calls before allowing a probe",
+          }),
+        ),
+      outputSpillChars: z
+        .number()
+        .int()
+        .positive()
+        .default(50000)
+        .meta(
+          meta({
+            description:
+              "Tool results longer than this many characters are archived and replaced by a preview",
+          }),
+        ),
+      outputPreviewChars: z
+        .number()
+        .int()
+        .positive()
+        .default(2000)
+        .meta(
+          meta({
+            description:
+              "Characters of an archived tool result kept in the conversation as a preview",
+          }),
+        ),
+      outputRetentionDays: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(meta({ description: "Days archived tool outputs are kept before cleanup" })),
+      approvalTimeoutHours: z
+        .number()
+        .int()
+        .positive()
+        .default(24)
+        .meta(
+          meta({
+            description:
+              "Hours a pending approval or question waits before it expires (treated as denied)",
+          }),
+        ),
+      searchThresholdTools: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Switch to on-demand tool search when an agent has more than this many tools",
+          }),
+        ),
+      searchThresholdTokens: z
+        .number()
+        .int()
+        .positive()
+        .default(8000)
+        .meta(
+          meta({
+            description:
+              "Switch to on-demand tool search when tool definitions exceed this many estimated tokens",
+          }),
+        ),
+      driftIntervalHours: z
+        .number()
+        .int()
+        .positive()
+        .default(24)
+        .meta(
+          meta({
+            description: "Hours between checks of connected apps for changed tool definitions",
+          }),
+        ),
+      maxResultReadChars: z
+        .number()
+        .int()
+        .positive()
+        .default(20000)
+        .meta(meta({ description: "Maximum characters returned by one read_tool_output call" })),
+    })
+    .default({
+      timeoutMs: 60000,
+      breakerFailures: 5,
+      breakerOpenSeconds: 60,
+      outputSpillChars: 50000,
+      outputPreviewChars: 2000,
+      outputRetentionDays: 30,
+      approvalTimeoutHours: 24,
+      searchThresholdTools: 30,
+      searchThresholdTokens: 8000,
+      driftIntervalHours: 24,
+      maxResultReadChars: 20000,
     }),
   log: z
     .object({

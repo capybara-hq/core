@@ -44,6 +44,15 @@ export const ERROR_CODES = {
   "agent.model_unavailable": 400,
   "conversation.not_found": 404,
   "run.not_active": 409,
+  "app.not_found": 404,
+  "app.slug_taken": 409,
+  "app.connect_failed": 502,
+  "approval.not_found": 404,
+  "approval.already_decided": 409,
+  "question.not_found": 404,
+  "question.already_answered": 409,
+  "tool_output.not_found": 404,
+  "credential.missing": 409,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

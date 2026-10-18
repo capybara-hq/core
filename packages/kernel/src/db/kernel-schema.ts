@@ -38,6 +38,8 @@ export interface OrgsTable {
   slug: string;
   name: string;
   created_by: string | null;
+  /** 0010：组织级设置。 */
+  settings: Generated<Json>;
   created_at: Ts;
   deleted_at: TsNullable;
 }
@@ -190,7 +192,7 @@ export interface ConversationEventsTable {
 export interface RunsTable {
   id: string;
   conversation_id: string;
-  status: "queued" | "running" | "completed" | "failed" | "aborted";
+  status: "queued" | "running" | "waiting" | "completed" | "failed" | "aborted";
   agent_version: number;
   trigger_account_id: string;
   /** 0008：创建运行时最新 user_message 的 seq（终态时 consumed_seq 至少推进到它）。 */
@@ -198,6 +200,100 @@ export interface RunsTable {
   created_at: Ts;
   started_at: TsNullable;
   finished_at: TsNullable;
+}
+
+/** 0010_tools.sql：已安装的应用（连接器实例）。 */
+export interface AppsTable {
+  id: string;
+  org_id: string;
+  slug: string;
+  name: string;
+  /** 提供连接器的插件名。 */
+  connector: string;
+  endpoint: Generated<Json>;
+  /** `{type, ownership: "org" | "personal", ...非密钥字段}`；凭据在 secrets。 */
+  auth: Generated<Json>;
+  status: Generated<"active" | "disabled">;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0010_tools.sql：应用暴露的工具。 */
+export interface AppToolsTable {
+  app_id: string;
+  name: string;
+  spec: Json<unknown>;
+  spec_hash: string;
+  status: "enabled" | "disabled" | "pending_review";
+  default_policy: "allow" | "ask" | "deny";
+  reviewed_at: TsNullable;
+}
+
+/** 0010_tools.sql：「以后都允许」。 */
+export interface ToolGrantsTable {
+  org_id: string;
+  account_id: string;
+  agent_id: string;
+  tool_key: string;
+  spec_hash: string;
+  created_at: Ts;
+}
+
+/** 0010_tools.sql：「本会话都允许」。 */
+export interface ConversationToolGrantsTable {
+  conversation_id: string;
+  tool_key: string;
+  spec_hash: string;
+}
+
+/** 0010_tools.sql：工具调用审批；requested_for 与 approver_role 至少一个非空。 */
+export interface ApprovalsTable {
+  id: string;
+  org_id: string;
+  conversation_id: string;
+  run_id: string;
+  call_id: string;
+  tool_key: string;
+  input: Generated<Json<unknown>>;
+  requested_for: string | null;
+  approver_role: string | null;
+  status: Generated<"pending" | "approved" | "denied" | "expired" | "cancelled">;
+  scope: "once" | "session" | "always" | null;
+  decided_by: string | null;
+  decided_at: TsNullable;
+  expires_at: Date | string;
+  created_at: Ts;
+}
+
+/** 0010_tools.sql：ask_user 提问。 */
+export interface QuestionsTable {
+  id: string;
+  org_id: string;
+  conversation_id: string;
+  run_id: string;
+  call_id: string;
+  spec: Json<unknown>;
+  status: Generated<"pending" | "answered" | "expired" | "cancelled">;
+  answer: ColumnType<unknown, string | null | undefined, string | null>;
+  answered_by: string | null;
+  answered_at: TsNullable;
+  expires_at: Date | string;
+  created_at: Ts;
+}
+
+/** 0010_tools.sql：超大工具输出的存档。 */
+export interface ToolOutputsTable {
+  id: string;
+  org_id: string;
+  conversation_id: string;
+  call_id: string;
+  size_chars: number;
+  line_count: number;
+  content: string;
+  created_at: Ts;
+  expires_at: Date | string;
 }
 
 /** bytea 列：读出为 Buffer，写入可传 Buffer / Uint8Array。 */
@@ -231,7 +327,7 @@ export interface LgCheckpointWritesTable {
 
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
- * 0005_agents.sql、0006_conversations.sql 与 0007_checkpoints.sql。
+ * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql 与 0010_tools.sql。
  */
 export interface KernelDatabase {
   accounts: AccountsTable;
@@ -254,6 +350,13 @@ export interface KernelDatabase {
   runs: RunsTable;
   lg_checkpoints: LgCheckpointsTable;
   lg_checkpoint_writes: LgCheckpointWritesTable;
+  apps: AppsTable;
+  app_tools: AppToolsTable;
+  tool_grants: ToolGrantsTable;
+  conversation_tool_grants: ConversationToolGrantsTable;
+  approvals: ApprovalsTable;
+  questions: QuestionsTable;
+  tool_outputs: ToolOutputsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;
