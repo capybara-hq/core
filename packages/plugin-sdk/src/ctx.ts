@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 import type { CapabilityRef } from "./capability.js";
+import type { ToolHandler, ToolSpec } from "./tool.js";
 
 /** 日志接口。 */
 export interface Logger {
@@ -51,6 +52,10 @@ export interface PluginContext {
       path: string,
       handler: (req: Request) => Promise<Response>,
     ): void;
+  };
+  tools: {
+    /** 注册一个工具；只能在 `setup` 期间调用，名称不可重复。 */
+    register(spec: ToolSpec, handler: ToolHandler): void;
   };
   provide(capability: CapabilityRef, impl: unknown): void;
   /** 部署级配置，已按插件 schema 校验。 */

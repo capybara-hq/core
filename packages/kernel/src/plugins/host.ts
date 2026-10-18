@@ -10,6 +10,8 @@ import {
   PluginManifestError,
   parseCapability,
   SDK_VERSION,
+  type ToolHandler,
+  type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import type { core } from "zod";
 import {
@@ -23,6 +25,7 @@ import {
   createPluginContext,
   type KernelDeps,
   pluginSchemaName,
+  type RegisteredTool,
   type Route,
 } from "../ctx/create-ctx.js";
 import { migrate } from "../db/migrator.js";
@@ -73,6 +76,7 @@ interface Loaded {
   configHash: string;
   provided: Map<CapabilityRef, unknown>;
   routes: Route[];
+  tools: RegisteredTool[];
   close(): Promise<void>;
 }
 
@@ -298,6 +302,7 @@ export class PluginHost {
       this.pending = ctx;
       try {
         await manifest.setup(ctx);
+        ctx.sealTools();
         for (const cap of manifest.provides) {
           if (!ctx.provided.has(cap)) {
             throw new Error(`declared capability ${cap} was not provided by setup`);
@@ -319,6 +324,7 @@ export class PluginHost {
         configHash: deploymentConfigHash(schema, config),
         provided: ctx.provided,
         routes: ctx.routes,
+        tools: ctx.registeredTools,
         close: ctx.close,
       });
     }
@@ -386,6 +392,13 @@ export class PluginHost {
   /** 所有插件注册的 HTTP 路由（路径已带 `/plugins/<name>` 前缀）。 */
   routes(): Route[] {
     return this.loaded.flatMap((l) => l.routes);
+  }
+
+  /** 所有插件经 `ctx.tools.register` 注册的工具（按加载顺序、注册顺序）。 */
+  tools(): { plugin: string; spec: ToolSpec; handler: ToolHandler }[] {
+    return this.loaded.flatMap((l) =>
+      l.tools.map((t) => ({ plugin: l.manifest.name, spec: t.spec, handler: t.handler })),
+    );
   }
 
   /**

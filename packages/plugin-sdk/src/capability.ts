@@ -14,7 +14,11 @@ export const CAPABILITY_CARDINALITY: Record<string, Cardinality> = {
   "identity-source": "multi",
   directory: "multi",
   counter: "multi",
+  connector: "multi",
 };
+
+/** 连接器能力引用（见 `connector.ts`）。 */
+export const CONNECTOR_CAPABILITY = "connector@1";
 
 /** 解析能力引用；格式不合法时抛错。 */
 export function parseCapability(ref: string): { name: string; major: number } {
