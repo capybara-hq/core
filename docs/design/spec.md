@@ -1,8 +1,8 @@
 # Capybara 设计系统规格（E · 终端）
 
-> 状态：草案 · 2026-10-18
+> 状态：已实现（`packages/design` + `/dev/ui`）· 2026-10-18
 > 视觉参考：设计画布 https://claude.ai/artifact/KsyGe4akVT4KbqUHfHXdXd （"E · 设计系统" 两行，深 / 浅）
-> 基准截图：`docs/design/reference/`（从画布导出）
+> 视觉真值：`/dev/ui` 目录页与入库的截图基准（`apps/web/visual/`，Linux 版）；`docs/design/reference/`（画布导出）暂缺，导出后再补
 
 本文是 Web 界面的**唯一规范**。画布与截图是对本文的图示；两者不一致时以本文为准，并修正画布。
 实现位于 `packages/design`（包名 `@capybara-hq/design`），`apps/web` 只消费它。能自动检查的规则以 `pnpm check` 与截图测试为准（见 §9）。
@@ -176,6 +176,7 @@
 - **StatusBar 只有一种形态**：24 高，底色 `panel`，上边线 `line`，`small` 字号 `muted`。左：`> 用户@组织:路由` · 页面状态（如「已筛选 18 / 24」「自动刷新 15s」）；右：`●` 系统状态 · 版本 · 时区。
 - **ActionRow**：页面存在待提交改动（表单、批量编辑、审批决策、向导）时出现在 StatusBar **上方**，StatusBar 不变。高 40，底色 `panel`，上边线 `line-strong`，与 StatusBar 之间 1px `line`。左：`‖ N 处未保存`（warn）`· N 处错误`（fail）；右：取消（ghost）· 次操作（default）· 主操作（primary，最右）。
 - 页面不得另造悬浮 / 固定的底部按钮条。
+- 页面通过 `useStatusBar(...)` 写入「页面状态」文案（由 AppShell 的 StatusBar 渲染）；StatusBar 与 ActionRow 是 design 组件，页面不直接渲染 StatusBar。
 
 ---
 
@@ -263,15 +264,17 @@
 - Kbd：1px `line` 边 + 2px 下边。
 - Tooltip：`panel` 底 + `line-strong` 边，small，延迟 400ms。
 - 涨跌：`▲8.2%`（ok）/ `▼1.1s`（fail）。
+- KeyValue：键值对列表（Inspector 属性组、详情区块）；键 muted 固定 8ch 宽，值单行省略。
 
 ### 6.6 DataTable
 结构（自上而下，同一外框 1px `line`）：工具栏 / 批量操作栏 → 表头 → 行 → 分页。
 
-- 工具栏：搜索（`/` 聚焦）、已应用筛选（default 按钮样式，带 `✕`）、清除全部、排序、视图切换、列设置。
+- 工具栏：搜索（`/` 聚焦）、已应用筛选（default 按钮样式，带 `✕`）、清除全部、排序、视图切换、列设置。高 40，24 / 28 高的控件在其中垂直居中（上下内边距 6，由居中推得，不是自由间距值），与批量操作栏等高，原位替换时不跳动。
+- 外框：默认 `framed`（1px `line` 外框）；嵌入 Card 或贴边铺满内容区时用 `framed={false}` 去掉外框。
 - 批量操作栏：勾选 ≥1 行时**原位替换**工具栏，高 40，`panel` 底，左「已选 N 项」（700）+ 批量操作（24 高），右「取消选择 Esc」。不得使用主色边框或底色。
 - 表头：small，muted；正在排序的列 `ink` + `▼`/`▲`；可排序列悬停出 `↕` 与 `hover` 底；下边线 `line`。
 - 行：默认高 32（紧凑 28，带缩略图 44），单元格内边距 6 8，行间 1px `line`。
-- 对齐：数字、耗时、金额右对齐；ID、时间左对齐；ID 与时间用 `muted`。超长单行省略，悬停 Tooltip 显示全文。
+- 对齐：数字、耗时、金额右对齐；ID、时间左对齐；ID 与时间用 `muted`。超长单行省略，悬停以原生 `title` 显示全文（每格一个 Tooltip 过重）。
 - 行状态（同时出现时优先级从高到低）：焦点环 > 选中 > 勾选 > 悬停 > 默认。
   - 悬停：`hover` 底；复选框边变 `ink`。
   - 选中（打开详情 / Inspector）：`accent-tint` 底 + 左侧 2px 主色。
@@ -295,13 +298,15 @@
 - **Dialog**：宽 480 / 640，`panel` 底 + `line-strong` 边 + `shadow-2` + `scrim`。头（h2 标题 + 关闭 ✕）/ 体（内边距 16）/ 尾（右对齐：ghost 取消 + 主操作，主操作带 `↵`），头尾 1px `line` 分隔。Esc 关闭；焦点锁定并在关闭后归还。默认焦点：普通对话框在主操作，危险对话框在取消。
 - **危险确认**：外框 `fail`，标题 `fail`；说明后果与可恢复性；需输入对象名称，匹配前确认按钮禁用，匹配后为 danger-solid。
 - **Sheet**：右侧滑出，宽 480 / 720，`panel` 底 + 左边线 `line-strong` + `shadow-sheet`；默认无遮罩（列表仍可操作）。头：名称 + 版本 + 在新页打开 `↗` + 关闭 `✕`；可含 Tabs；尾：操作。存在未保存修改时关闭需二次确认。
+- **链接**：design 包与框架无关，TopBar 导航、PageHeader 父级、Tabs、Sheet 的链接通过 `DesignProvider` 的 `link` 组件渲染（默认 `<a>`）；`apps/web` 传入 next-intl 的 `Link`，以获得客户端导航与语言前缀。页面不要自己拼 `<a href>` 做站内跳转。
 - **Popover / Menu**：`panel` 底 + `line-strong` 边 + `shadow-1`；筛选 Popover 顶部为搜索 `>`，底部「清除 / 应用 ↵」；悬停项 `hover` 底。触发按钮在打开且有值时描边主色。
 - **命令面板（⌘K）**：宽 560，`>` 前缀输入；分组标题 small faint；当前项 `accent-tint` 底 + 左标；底部键位提示。
 - **Toast**：右下角堆叠，`panel` 底 + `line-strong` 边 + `shadow-1`，左侧 2px 状态色（ok / accent / fail）；成功 4s 自动消失；错误需手动关闭并可附「查看 →」；进度型带分段进度条。
 
 ### 6.8 图表
-- 柱状图用离散方块堆叠（像素风），`line-strong` 为常规值，`fail` 叠加失败数，当前时段用主色。
-- 迷你趋势（表格内）：12 根 4px 宽方柱，`muted`。
+- 柱状图用离散方块堆叠（像素风），`line-strong` 为常规值，`fail` 标出失败数，当前时段用主色。
+- 迷你趋势 Sparkline（表格内）：12 根 4px 宽方柱，`muted`。
+- 柱状图的 `fail` 是 `value`（总数）的子集：柱高 = 总数，失败数画在柱顶的块上。
 - 坐标标签 small faint；不画网格线。
 
 ---
@@ -319,11 +324,11 @@
 
 ## 9. 落实与验收（如何保证实现与本规格一致）
 
-1. **包边界**：`apps/web` 只能从 `@capybara-hq/design` 引入 UI 组件与模板；不得直接依赖 Radix、cmdk 等底层 UI 包。
-2. **模板强制**：每个路由的 `page.tsx` 必须渲染 §5 的模板组件之一；Shell 各层只由模板渲染。
-3. **样式归属**：`apps/web/src` 中不得出现 `className` / `style` 属性、`.css` 文件与颜色字面量；页面内的排版只能用 design 包的布局原语（`Stack`、`Cluster`、`Grid`、`Card` 等）。`packages/design` 中颜色字面量只允许出现在 `tokens.css`。
+1. **包边界**：`apps/web` 只能从 `@capybara-hq/design` 引入 UI 组件与模板。导入规则是**黑名单**：`@radix-ui/*`、`cmdk`、CSS-in-JS（`@emotion/*`、`styled-components`、`@stitches/*`、`@vanilla-extract/*`、`styled-jsx`）、组件库（`@mui/*`、`@chakra-ui/*`、`@mantine/*`、`@headlessui/*`、`antd`）、`tailwindcss` / `tailwind-merge`、类名工具（`clsx`、`classnames`、`class-variance-authority`）、图标库（`lucide-react`、`react-icons`）一律不得导入；`.css` 只允许导入 `@capybara-hq/design/styles.css`。黑名单随新增的样式类依赖扩充。
+2. **模板强制**：`apps/web/src/app` 下每个 `page.tsx` 必须渲染从 `@capybara-hq/design` 导入的 §5 模板之一（识别别名与命名空间导入）；Shell 各层只由模板渲染。两处豁免：开发用目录页 `app/[locale]/dev/**`；以及只负责 404 的 page（不含任何 JSX、调用 `next/navigation` 的 `notFound()`，如 `[...rest]/page.tsx`），其页面由同段 `not-found.tsx` 的 StatusPage 渲染。
+3. **样式归属**：`apps/web/src` 中不得出现 `className` / `class` / `style` / `dangerouslySetInnerHTML` 属性（含展开属性与 `createElement` / `jsx` 调用）、`<style>` 元素、`.css` 文件、任何颜色字面量（`#hex`、`rgb()`、`hsl()`、`oklch()`、`color-mix()` 等）；页面内的排版只能用 design 包的布局原语（`Stack`、`Grid`、`Card`、`Text`）。`packages/design` 中颜色字面量只允许出现在 `tokens.css`。
 4. **组件目录页**：`/dev/ui` 用固定假数据渲染每个组件的全部状态与每个模板页，深浅两套。
-5. **截图回归**：Playwright 对目录页截图并与基准比对，差异即失败；基准在固定的 Playwright Docker 镜像中生成（本地与 CI 相同）；更新基准须在 PR 中附差异图并经确认。
+5. **截图回归**：Playwright 对目录页截图并与基准比对，差异即失败；入库基准只含 Linux 版，在固定的 Playwright Docker 镜像中由 `visual-update` 工作流生成（CI `visual` job 用同一镜像）；本地（darwin）截图被 gitignore，仅供本地对照；更新基准须在 PR 中附差异图并经确认。
 6. **首次验收**：对照页左侧为画布基准图、右侧为真实截图，逐张由产品确认后锁定基准。
 7. **评审清单**：每个界面 PR 对照本规格检查模板选用、主色用法、状态编码与 ActionRow 规则。
 

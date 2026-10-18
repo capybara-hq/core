@@ -9,7 +9,9 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 | `packages/plugin-sdk` | 插件 SDK：只含类型与纯函数，不得 import 其他 `@capybara-hq/*` |
 | `packages/kernel` | 内核：配置、db、`ctx`、插件宿主、HTTP |
 | `packages/testing` | 测试容器与双副本工具 |
+| `packages/design` | Web 设计系统：token、组件、页面模板（规格 `docs/design/spec.md`） |
 | `apps/capybara` | CLI |
+| `apps/web` | Web 界面（Next.js），只用 `@capybara-hq/design` 搭页面 |
 | `apps/web` | Next 网页（私有包，经 `/api/*` 代理调内核 HTTP；须经 `server.mjs` 启动） |
 | `plugins/*` | 官方插件（`example-counter` 是参考实现） |
 | `tools/*` | 仓库内部工具与自定义检查 |
@@ -31,6 +33,9 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - `@capybara-hq/kernel` -> `@capybara-hq/plugin-sdk`
 - `@capybara-hq/testing` -> `@capybara-hq/kernel`（`@capybara-hq/plugin-sdk` 为 peerDependency）
 - `@capybara-hq/capybara`（CLI）-> `@capybara-hq/kernel`
+- `@capybara-hq/web` -> `@capybara-hq/design`（经内核 HTTP 访问后端，不 import 内核）
+- `@capybara-hq/checks`（`tools/checks`）的测试可用 devDependency `@capybara-hq/design`（核对模板清单）
+- `@capybara-hq/design` 不依赖任何 `@capybara-hq/*`
 - `@capybara-hq/web` 不依赖任何 `@capybara-hq/*`，只经 HTTP 调内核（属于「外部应用」层）
 - `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档）
 - `@capybara-hq/plugin-sdk` 不依赖任何 `@capybara-hq/*`
@@ -51,6 +56,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 迁移：纯 SQL 文件，命名 `NNNN_<snake_desc>.sql`，建删对象必须带 `IF NOT EXISTS` / `IF EXISTS`；内核 schema 为 `capybara`，插件为 `plugin_<name>`（`-` 换 `_`）。详见 [skills/writing-migrations](skills/writing-migrations/SKILL.md)。
 - 配置：环境变量前缀 `CAPYBARA_`，嵌套用双下划线（`CAPYBARA_DB__URL` -> `db.url`），环境变量优先级最高；来源由 `CAPYBARA_CONFIG_SOURCE`（`file` / `nacos`）选择。详见 [skills/adding-config](skills/adding-config/SKILL.md)。
 - 国际化：给模型看的文案（提示词、工具描述、模型可见的错误）一律英文；界面文案走 i18n。
+- 界面：页面 = 模板 + design 组件，apps/web 不写样式（无 className / style / .css / 颜色字面量），详见 [skills/writing-web-ui](skills/writing-web-ui/SKILL.md)；规则由 `pnpm check:web-ui` 检查。
 - 插件开发：详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，参考实现 `plugins/example-counter`。
 - 内核 HTTP 用 NestJS + Fastify：领域类不依赖 Nest，构造参数显式 `@Inject`；插件不依赖 Nest。详见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
 - 运行时：会话事件日志是唯一事实源，模型看到的一切都进日志（任一次模型请求都能由日志加 agent 版本还原），发给模型的历史只追加。代码在 `packages/kernel/src/runtime`。
