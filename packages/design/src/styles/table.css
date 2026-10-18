@@ -123,9 +123,29 @@
 .cb-table-el th.cb-table-check,
 .cb-table-el td.cb-table-menu,
 .cb-table-el th.cb-table-menu {
-  width: 32px;
-  max-width: 32px;
+  box-sizing: border-box;
+  width: 40px;
+  max-width: 40px;
   overflow: visible;
+}
+/* 内容区左右各 16（与工具栏 / 分页 / PageHeader 对齐） */
+.cb-table-el th.cb-table-check,
+.cb-table-el td.cb-table-check {
+  padding-left: 16px;
+}
+.cb-table-el th.cb-table-menu,
+.cb-table-el td.cb-table-menu {
+  padding-right: 16px;
+}
+.cb-table-el[data-select="true"] tbody .cb-table-row td:nth-child(2),
+.cb-table-el[data-select="true"] thead th:nth-child(2),
+.cb-table-el:not([data-select="true"]) tbody .cb-table-row td:first-child,
+.cb-table-el:not([data-select="true"]) thead th:first-child {
+  padding-left: 16px;
+}
+.cb-table-el tbody .cb-table-row td:last-child:not(.cb-table-menu),
+.cb-table-el thead th:last-child:not(.cb-table-menu) {
+  padding-right: 16px;
 }
 /* 表头吸顶；横向滚动时首列吸左 */
 .cb-table-el th.cb-table-check,
@@ -140,7 +160,7 @@
 .cb-table-el[data-select="true"] tbody td:nth-child(2),
 .cb-table-el[data-select="true"] thead th:nth-child(2) {
   position: sticky;
-  left: 32px;
+  left: 40px;
 }
 .cb-table-el:not([data-select="true"]) tbody td:first-child,
 .cb-table-el:not([data-select="true"]) thead th:first-child {
