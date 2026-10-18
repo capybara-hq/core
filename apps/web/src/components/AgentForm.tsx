@@ -2,6 +2,7 @@
 
 import {
   Card,
+  Checkbox,
   Field,
   FormSection,
   Input,
@@ -14,8 +15,10 @@ import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useState } from "react";
 import {
   type AgentDefinitionInput,
+  type AgentToolRef,
   type AgentVisibility,
   type AgentWarning,
+  BUILTIN_TOOLS,
   createAgent,
   findModel,
   keepDeclared,
@@ -23,8 +26,10 @@ import {
   type ModelParameter,
   type ParamValue,
   type ProviderModels,
+  type TightenedPolicy,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
+import { type AppDetail, type AppSummary, getApp, listApps } from "../lib/apps";
 import type { ModelRef } from "../lib/conversations";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
@@ -87,6 +92,46 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>(NO_FIELD_ERRORS);
   const [otherErrors, setOtherErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<AgentWarning[]>();
+  const [builtins, setBuiltins] = useState<string[]>([...BUILTIN_TOOLS]);
+  const [apps, setApps] = useState<AppSummary[]>();
+  const [selectedApps, setSelectedApps] = useState<string[]>([]);
+  const [appDetails, setAppDetails] = useState<Record<string, AppDetail>>({});
+  const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>({});
+
+  // 可选的应用（读不到时不提供应用工具，内置工具照常可选）
+  useEffect(() => {
+    let disposed = false;
+    listApps(orgId).then(
+      (r) => {
+        if (!disposed) setApps(r.apps.filter((a) => a.status === "active"));
+      },
+      () => {
+        if (!disposed) setApps([]);
+      },
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [orgId]);
+
+  function toggleApp(appId: string, on: boolean) {
+    setSelectedApps((cur) => (on ? [...cur, appId] : cur.filter((id) => id !== appId)));
+    if (on && appDetails[appId] === undefined) {
+      // 应用的工具列表只用于收紧策略：读不到时只是不显示该应用的策略选项
+      getApp(orgId, appId).then(
+        ({ app }) => setAppDetails((d) => ({ ...d, [appId]: app })),
+        () => {},
+      );
+    }
+  }
+
+  /** 当前引用的工具 key（用于策略收紧）：内置工具名 + 已选应用中启用的工具。 */
+  const toolKeys = [
+    ...builtins,
+    ...selectedApps.flatMap((id) =>
+      (appDetails[id]?.tools ?? []).filter((x) => x.status === "enabled").map((x) => x.key),
+    ),
+  ];
 
   useEffect(() => {
     let disposed = false;
@@ -168,6 +213,13 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
     setNameError(trimmed === "");
     if (trimmed === "") return;
     const fb = decode(fallback);
+    const tools: AgentToolRef[] = [
+      ...builtins.map((name) => ({ kind: "builtin" as const, name })),
+      ...selectedApps.map((appId) => ({ kind: "app" as const, appId, tools: "all" as const })),
+    ];
+    const toolPolicies = Object.fromEntries(
+      Object.entries(policies).filter(([k]) => toolKeys.includes(k)),
+    );
     const definition: AgentDefinitionInput = {
       name: trimmed,
       instructions,
@@ -175,6 +227,8 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
       fallback: fb,
       modelParams,
       fallbackParams: fb === null ? {} : fallbackParams,
+      tools,
+      toolPolicies,
     };
     setPending(true);
     setError(undefined);
@@ -218,11 +272,14 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
           Boolean,
         ).length +
         Object.keys(modelParams).length +
-        Object.keys(fallbackParams).length;
+        Object.keys(fallbackParams).length +
+        selectedApps.length +
+        Object.keys(policies).length;
 
   const anchors: AgentFormView["anchors"] = [
     { id: "basic", label: t("form.basicSection"), error: nameError },
     { id: "model", label: t("form.modelSection"), error: noModels },
+    { id: "tools", label: t("form.toolsSection") },
     ...(modelDecl.length > 0
       ? [{ id: "params", label: t("form.modelParamsTitle"), error: paramErrors.modelParams > 0 }]
       : []),
@@ -319,6 +376,81 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
                 options={[{ value: "", label: t("form.fallbackNone") }, ...options]}
               />
             </Field>
+          </FormSection>
+          <FormSection
+            id="tools"
+            title={t("form.toolsSection")}
+            description={t("form.toolsSectionHint")}
+          >
+            {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}
+            <div role="group" aria-label={t("form.builtinLabel")}>
+              <Stack gap={4}>
+                <Text variant="small" tone="muted">
+                  {t("form.builtinLabel")}
+                </Text>
+                {BUILTIN_TOOLS.map((name) => (
+                  <Checkbox
+                    key={name}
+                    label={t(`form.builtin.${name}`)}
+                    checked={builtins.includes(name)}
+                    onChange={(on) =>
+                      setBuiltins((cur) => (on ? [...cur, name] : cur.filter((x) => x !== name)))
+                    }
+                  />
+                ))}
+              </Stack>
+            </div>
+            {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}
+            <div role="group" aria-label={t("form.appsLabel")}>
+              <Stack gap={4}>
+                <Text variant="small" tone="muted">
+                  {t("form.appsLabel")}
+                </Text>
+                {apps !== undefined && apps.length === 0 && (
+                  <Text variant="small" tone="faint">
+                    {t("form.noApps")}
+                  </Text>
+                )}
+                {(apps ?? []).map((a) => (
+                  <Checkbox
+                    key={a.id}
+                    label={t("form.appTools", { name: a.name })}
+                    checked={selectedApps.includes(a.id)}
+                    onChange={(on) => toggleApp(a.id, on)}
+                  />
+                ))}
+              </Stack>
+            </div>
+            {toolKeys.length > 0 && (
+              <Stack gap={4}>
+                <Text variant="small" tone="muted">
+                  {t("form.policiesLabel")}
+                </Text>
+                {toolKeys.map((key) => (
+                  <div key={key} data-policy={key}>
+                    <Field label={key}>
+                      <Select
+                        value={policies[key] ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value as TightenedPolicy | "";
+                          setPolicies((cur) => {
+                            const next = { ...cur };
+                            if (v === "") delete next[key];
+                            else next[key] = v;
+                            return next;
+                          });
+                        }}
+                        options={[
+                          { value: "", label: t("form.policy.default") },
+                          { value: "ask", label: t("form.policy.ask") },
+                          { value: "deny", label: t("form.policy.deny") },
+                        ]}
+                      />
+                    </Field>
+                  </div>
+                ))}
+              </Stack>
+            )}
           </FormSection>
           {modelDecl.length > 0 && (
             <FormSection

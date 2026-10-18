@@ -1,4 +1,11 @@
-import { type ConversationEvent, type ModelRef, type StopReason, streamUrl } from "./conversations";
+import {
+  type ContentBlock,
+  type ConversationEvent,
+  type InputForm,
+  type ModelRef,
+  type StopReason,
+  streamUrl,
+} from "./conversations";
 
 /** SSE `event: delta` 帧：运行的流式增量（只是草稿，最终内容以日志中的 assistant_message 为准）。 */
 export interface StreamDelta {
@@ -230,6 +237,11 @@ export function reduceChat(state: ChatState, input: ChatInput): ChatState {
 // 列表项
 // ---------------------------------------------------------------------------
 
+export type ToolStatus = "pending" | "running" | "done" | "error" | "cancelled";
+
+export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
+export type QuestionOutcome = Extract<ConversationEvent, { type: "question_answered" }>["payload"];
+
 export type ChatItem =
   | { kind: "user"; key: string; text: string }
   | {
@@ -242,6 +254,41 @@ export type ChatItem =
       /** 产出该消息的模型：该步的 `model_call`，没有时取运行的 `run_started`；都没有为 null。 */
       model: ModelRef | null;
     }
+  | {
+      kind: "tool";
+      key: string;
+      callId: string;
+      /** 模型调用的工具名（即工具 key）。 */
+      name: string;
+      input: unknown;
+      /** pending：尚未开始执行（如等审批）；cancelled：运行已结束却没有结果。 */
+      status: ToolStatus;
+      /** 结果正文（超长时内核已截为预览）。 */
+      result: string | null;
+      /** 完整结果的存档 id（结果被截断时有）。 */
+      outputId: string | null;
+    }
+  | {
+      kind: "approval";
+      key: string;
+      approvalId: string;
+      callId: string;
+      toolKey: string;
+      /** 对应工具调用的参数（取自 assistant_message；找不到时为 undefined）。 */
+      input: unknown;
+      expiresAt: string;
+      decided: ApprovalDecision | null;
+    }
+  | {
+      kind: "question";
+      key: string;
+      questionId: string;
+      callId: string;
+      form: InputForm;
+      expiresAt: string;
+      answered: QuestionOutcome | null;
+    }
+  | { kind: "connect"; key: string; callId: string; appId: string; appName: string }
   | { kind: "failed"; key: string; text: string; code: string };
 
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
@@ -250,13 +297,26 @@ const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thi
     .map((b) => b.text ?? "")
     .join("");
 
-/** 把状态展开为消息列表：日志中的消息按 seq，流式草稿排在最后。 */
+type ToolItem = Extract<ChatItem, { kind: "tool" }>;
+
+/**
+ * 把状态展开为列表项：日志中的消息按 seq，流式草稿排在最后。
+ * 工具调用紧跟产出它的 assistant 消息（只有工具调用、没有文字的消息不单独成卡），
+ * 之后的 `tool_call_started` / `tool_result` 更新该项；审批、输入请求、需要连接按事件位置插入，
+ * 处理结果（`approval_decided` / `question_answered`）回填到原项。
+ */
 export function chatItems(state: ChatState): ChatItem[] {
   const items: ChatItem[] = [];
   /** `runId` → 运行的模型；`runId:step` → 该步实际调用的模型（兜底时与运行的模型不同）。 */
   const models = new Map<string, ModelRef>();
   const modelOf = (runId: string | null, step: number): ModelRef | null =>
     runId === null ? null : (models.get(stepKey(runId, step)) ?? models.get(runId) ?? null);
+  const tools = new Map<string, { item: ToolItem; runId: string | null }>();
+  const approvals = new Map<string, number>();
+  const questions = new Map<string, number>();
+  const replace = (i: number, next: ChatItem) => {
+    items[i] = next;
+  };
   for (const e of state.events) {
     const key = `e${e.seq}`;
     if (e.type === "run_started" && e.runId !== null) {
@@ -269,17 +329,94 @@ export function chatItems(state: ChatState): ChatItem[] {
     } else if (e.type === "user_message") {
       items.push({ kind: "user", key, text: joinText(e.payload.content, "text") });
     } else if (e.type === "assistant_message") {
+      const text = joinText(e.payload.content, "text");
+      const thinking = joinText(e.payload.content, "thinking");
+      const calls = e.payload.content.filter(
+        (b): b is Extract<ContentBlock, { type: "tool_call" }> => b.type === "tool_call",
+      );
+      if (text !== "" || thinking !== "" || calls.length === 0) {
+        items.push({
+          kind: "assistant",
+          key,
+          text,
+          thinking,
+          stopReason: e.payload.stopReason,
+          streaming: false,
+          model: modelOf(e.runId, e.payload.step),
+        });
+      }
+      for (const c of calls) {
+        const item: ToolItem = {
+          kind: "tool",
+          key: `${key}:${c.id}`,
+          callId: c.id,
+          name: c.name,
+          input: c.input,
+          status: "pending",
+          result: null,
+          outputId: null,
+        };
+        tools.set(c.id, { item, runId: e.runId });
+        items.push(item);
+      }
+    } else if (e.type === "tool_call_started") {
+      const t = tools.get(e.payload.callId);
+      if (t && t.item.status === "pending") t.item.status = "running";
+    } else if (e.type === "tool_result") {
+      const t = tools.get(e.payload.callId);
+      if (t) {
+        t.item.status = e.payload.isError ? "error" : "done";
+        t.item.result = e.payload.content;
+        t.item.outputId = e.payload.outputId ?? null;
+      }
+    } else if (e.type === "approval_requested") {
+      approvals.set(e.payload.approvalId, items.length);
       items.push({
-        kind: "assistant",
+        kind: "approval",
         key,
-        text: joinText(e.payload.content, "text"),
-        thinking: joinText(e.payload.content, "thinking"),
-        stopReason: e.payload.stopReason,
-        streaming: false,
-        model: modelOf(e.runId, e.payload.step),
+        approvalId: e.payload.approvalId,
+        callId: e.payload.callId,
+        toolKey: e.payload.toolKey,
+        input: tools.get(e.payload.callId)?.item.input,
+        expiresAt: e.payload.expiresAt,
+        decided: null,
+      });
+    } else if (e.type === "approval_decided") {
+      const i = approvals.get(e.payload.approvalId);
+      const prev = i === undefined ? undefined : items[i];
+      if (i !== undefined && prev?.kind === "approval") replace(i, { ...prev, decided: e.payload });
+    } else if (e.type === "question_asked") {
+      questions.set(e.payload.questionId, items.length);
+      items.push({
+        kind: "question",
+        key,
+        questionId: e.payload.questionId,
+        callId: e.payload.callId,
+        form: e.payload.form,
+        expiresAt: e.payload.expiresAt,
+        answered: null,
+      });
+    } else if (e.type === "question_answered") {
+      const i = questions.get(e.payload.questionId);
+      const prev = i === undefined ? undefined : items[i];
+      if (i !== undefined && prev?.kind === "question")
+        replace(i, { ...prev, answered: e.payload });
+    } else if (e.type === "connection_required") {
+      items.push({
+        kind: "connect",
+        key,
+        callId: e.payload.callId,
+        appId: e.payload.appId,
+        appName: e.payload.appName,
       });
     } else if (e.type === "run_failed") {
       items.push({ kind: "failed", key, text: "", code: e.payload.error.code });
+    }
+  }
+  // 运行已到终态却没有结果的调用（中止、失败）：不再显示为进行中
+  for (const { item, runId } of tools.values()) {
+    if (item.result === null && runId !== null && state.closedRuns[runId]) {
+      item.status = "cancelled";
     }
   }
   for (const d of state.drafts) {

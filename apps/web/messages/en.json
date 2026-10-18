@@ -90,6 +90,22 @@
     },
     "run": {
       "not_active": "There is no reply in progress."
+    },
+    "app": {
+      "not_found": "The app does not exist or has been removed.",
+      "slug_taken": "This slug is already used by another app.",
+      "connect_failed": "Could not connect to the app's server. Check the URL and credential."
+    },
+    "approval": {
+      "not_found": "The approval does not exist or you cannot handle it.",
+      "already_decided": "This approval has already been handled or has expired."
+    },
+    "question": {
+      "not_found": "The question does not exist or you cannot answer it.",
+      "already_answered": "This question has already been answered or has expired."
+    },
+    "credential": {
+      "missing": "A credential is required for this app."
     }
   },
   "agents": {
@@ -124,7 +140,23 @@
       "modelSectionHint": "The fallback model is used when the main model is unavailable.",
       "paramsSectionHint": "Parameters you leave untouched use the model defaults.",
       "nameRequired": "Enter a name.",
-      "instructionsHelp": "Shown to the model; write it in English."
+      "instructionsHelp": "Shown to the model; write it in English.",
+      "toolsSection": "Tools",
+      "toolsSectionHint": "Tools the agent may call. A policy can only be tightened: ask for approval, or deny.",
+      "builtinLabel": "Built-in tools",
+      "builtin": {
+        "ask_user": "Ask the user (ask_user)",
+        "read_tool_output": "Read archived tool output (read_tool_output)"
+      },
+      "appsLabel": "Apps",
+      "appTools": "All tools of {name}",
+      "noApps": "No apps are installed.",
+      "policiesLabel": "Policies",
+      "policy": {
+        "default": "Default",
+        "ask": "Ask for approval",
+        "deny": "Deny"
+      }
     },
     "params": {
       "default": "Default",
@@ -173,13 +205,16 @@
     "agent": "Agent",
     "conversation": "Conversation",
     "status": "Status",
-    "inspectorTitle": "Conversation"
+    "inspectorTitle": "Conversation",
+    "waiting": "Waiting for you"
   },
   "nav": {
     "overview": "Overview",
     "agents": "Agents",
     "goto": "Go to",
-    "actions": "Actions"
+    "actions": "Actions",
+    "inbox": "Inbox",
+    "apps": "Apps"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -191,5 +226,259 @@
     "title": "Page not found",
     "description": "The link may be broken, or the page has been removed.",
     "back": "Back to overview"
+  },
+  "tools": {
+    "call": "Tool",
+    "details": "Arguments and result",
+    "input": "Arguments",
+    "result": "Result",
+    "noResult": "No result yet.",
+    "truncated": "Showing the first {n} characters.",
+    "outputId": "Full output archived as {id}.",
+    "status": {
+      "pending": "Waiting",
+      "running": "Running",
+      "done": "Done",
+      "error": "Failed",
+      "cancelled": "Not run"
+    }
+  },
+  "approval": {
+    "title": "Approval required",
+    "waiting": "Waiting",
+    "tool": "Tool",
+    "app": "App",
+    "agent": "Agent",
+    "expires": "Expires",
+    "input": "Arguments",
+    "scopeLabel": "Approval scope",
+    "scope": {
+      "once": "Only this time",
+      "session": "For this conversation",
+      "always": "Always for this agent"
+    },
+    "scopeHint": {
+      "once": "Ask again next time.",
+      "session": "Allow this tool for the rest of this conversation.",
+      "always": "Allow this tool for this agent from now on; revoke it in Settings."
+    },
+    "approve": "Approve",
+    "deny": "Deny",
+    "decision": {
+      "approved": "Approved",
+      "denied": "Denied",
+      "expired": "Expired",
+      "cancelled": "Cancelled"
+    },
+    "decidedBy": "Handled by {who}",
+    "you": "you",
+    "system": "the system",
+    "otherApprover": "Waiting for an approver."
+  },
+  "question": {
+    "title": "Input required",
+    "waiting": "Waiting",
+    "other": "Other",
+    "otherLabel": "{field}: other",
+    "otherPlaceholder": "Describe",
+    "fieldRequired": "This field is required.",
+    "submit": "Submit",
+    "yes": "Yes",
+    "no": "No",
+    "separator": ", ",
+    "outcome": {
+      "answered": "Answered",
+      "expired": "Expired",
+      "cancelled": "Cancelled"
+    },
+    "outcomeHint": {
+      "answered": "Answered.",
+      "expired": "Nobody answered in time.",
+      "cancelled": "The question was cancelled."
+    }
+  },
+  "connect": {
+    "title": "Connection required",
+    "status": "Not connected",
+    "description": "{app} needs your credential before the agent can use it.",
+    "action": "Connect"
+  },
+  "inbox": {
+    "title": "Inbox",
+    "listLabel": "Pending approvals",
+    "empty": "Nothing to approve.",
+    "emptyHint": "Tool calls that need your approval show up here.",
+    "pick": "Select an approval on the left.",
+    "pendingCount": "{n} pending",
+    "inspectorTitle": "Details",
+    "conversation": "Conversation",
+    "requested": "Requested",
+    "openConversation": "Open conversation",
+    "approved": "Approved",
+    "denied": "Denied",
+    "columns": {
+      "request": "Request",
+      "time": "Requested"
+    }
+  },
+  "apps": {
+    "title": "Apps",
+    "new": "Add app",
+    "myConnections": "My connections",
+    "empty": "No apps yet.",
+    "emptyHint": "Connect an MCP server to give agents tools.",
+    "columns": {
+      "name": "Name",
+      "slug": "Slug",
+      "auth": "Authentication",
+      "status": "Status"
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled"
+    },
+    "auth": {
+      "none": "None",
+      "bearer": "Bearer token",
+      "api_key": "API key",
+      "basic": "Username and password",
+      "headers": "Custom headers"
+    },
+    "ownership": {
+      "org": "Shared organization credential",
+      "personal": "Each user's own credential"
+    },
+    "policy": {
+      "allow": "Allow",
+      "ask": "Ask for approval",
+      "deny": "Deny"
+    },
+    "form": {
+      "title": "Add app",
+      "basicSection": "Basics",
+      "basicSectionHint": "The slug prefixes the tool names the model sees.",
+      "nameLabel": "Name",
+      "nameRequired": "Enter a name.",
+      "slugLabel": "Slug",
+      "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name.",
+      "connectionSection": "Connection",
+      "connectionSectionHint": "Only MCP servers (Streamable HTTP) are supported for now.",
+      "urlLabel": "Endpoint URL",
+      "urlHelp": "The MCP endpoint, for example https://example.com/mcp",
+      "urlRequired": "Enter the endpoint URL.",
+      "authSection": "Authentication",
+      "authSectionHint": "Credentials are stored encrypted and never shown again.",
+      "authTypeLabel": "Authentication",
+      "ownershipLabel": "Credential",
+      "ownershipHelp": {
+        "org": "One credential set by an admin is used for everyone.",
+        "personal": "Every member fills in their own credential before using the app."
+      },
+      "keyInLabel": "Send the key in",
+      "keyIn": {
+        "header": "A request header",
+        "query": "A query parameter"
+      },
+      "keyNameLabel": "Header or parameter name",
+      "headerNamesLabel": "Header names",
+      "headerNamesHelp": "One per line.",
+      "credentialHint": {
+        "org": "Organization credential (optional now; you can set it later on the app page).",
+        "personal": "Your own credential (optional now; you can set it later in My connections)."
+      },
+      "tokenLabel": "Token",
+      "usernameLabel": "Username",
+      "passwordLabel": "Password",
+      "headerValueLabel": "Value of {name}",
+      "submit": "Install",
+      "issuesTitle": "Installed, but some tools were disabled:",
+      "continue": "Continue"
+    },
+    "detail": {
+      "tabsLabel": "App sections",
+      "tabs": {
+        "tools": "Tools",
+        "credentials": "Credentials",
+        "settings": "Settings"
+      },
+      "inspectorTitle": "App",
+      "refresh": "Refresh tools",
+      "refreshing": "Refreshing…",
+      "refreshed": "Tool list refreshed.",
+      "retry": "Retry"
+    },
+    "inspector": {
+      "slug": "Slug",
+      "connector": "Connector",
+      "endpoint": "Endpoint",
+      "auth": "Auth",
+      "ownership": "Credential",
+      "credential": "Status"
+    },
+    "tools": {
+      "columns": {
+        "name": "Tool",
+        "policy": "Default policy",
+        "status": "Enabled"
+      },
+      "policyLabel": "Default policy of {tool}",
+      "enabledLabel": "Enable {tool}",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "empty": "This app has no tools."
+    },
+    "credential": {
+      "title": "Credential",
+      "notNeeded": "No credential needed",
+      "connected": "Connected",
+      "missing": "Not set",
+      "orgTitle": "Organization credential",
+      "orgHint": "Enter a new value to replace the stored credential.",
+      "orgReadonly": "Only admins can change the organization credential.",
+      "personalTitle": "Personal credentials",
+      "personalHint": "Each member sets their own credential in My connections.",
+      "openConnections": "Open My connections",
+      "save": "Save credential",
+      "saved": "Credential saved."
+    },
+    "settings": {
+      "title": "General",
+      "activeLabel": "App enabled",
+      "save": "Save",
+      "saved": "Saved.",
+      "dangerTitle": "Danger zone",
+      "delete": "Delete app",
+      "deleteTitle": "Delete {name}?",
+      "deleteHint": "Agents that use this app lose its tools, and stored credentials are removed. This cannot be undone."
+    }
+  },
+  "connections": {
+    "title": "My settings",
+    "nav": {
+      "connections": "Connected apps",
+      "grants": "Remembered approvals"
+    },
+    "empty": "No app needs your own credential.",
+    "emptyHint": "Apps that use personal credentials show up here.",
+    "sectionHint": "Your own credential for this app; other members use theirs.",
+    "connected": "Connected",
+    "missing": "Not connected",
+    "save": "Save",
+    "clear": "Clear",
+    "saved": "Credential for {app} saved.",
+    "cleared": "Credential for {app} cleared.",
+    "grants": {
+      "empty": "No remembered approvals.",
+      "emptyHint": "Choosing “Always for this agent” when approving adds one here.",
+      "columns": {
+        "agent": "Agent",
+        "tool": "Tool",
+        "created": "Since",
+        "actions": "Actions"
+      },
+      "revoke": "Revoke",
+      "revokeLabel": "Revoke {tool} for {agent}",
+      "revoked": "Approval for {tool} revoked."
+    }
   }
 }

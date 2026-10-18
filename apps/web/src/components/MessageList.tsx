@@ -4,17 +4,24 @@ import { Card, Stack, StatusMark, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import type { ModelRef } from "../lib/conversations";
 import type { ChatItem } from "../lib/stream";
+import { ApprovalCard } from "./ApprovalCard";
+import { ConnectCard } from "./ConnectCard";
+import { QuestionCard } from "./QuestionCard";
+import { ToolCallCard } from "./ToolCallCard";
 
 /**
  * 消息列表（PlaygroundPage 的内容区）：用户消息、agent 回复（流式草稿带 `data-streaming`）、失败提示，
  * 每条一张 Card，正文在 `[data-part="body"]`。
  * 思考区按产出该消息的模型的 `capabilities.reasoning` 显示：`reasoningOf` 返回 false 时不显示，
  * 返回 undefined（模型列表未取到或模型已下线）时有思考内容就显示；默认折叠。
+ * 工具调用、审批、输入请求与需要连接各有卡片（`data-role` 为 tool / approval / question / connect）。
  */
 export function MessageList({
+  orgId,
   items,
   reasoningOf = () => undefined,
 }: {
+  orgId: string;
   items: ChatItem[];
   reasoningOf?: (model: ModelRef) => boolean | undefined;
 }) {
@@ -35,6 +42,14 @@ export function MessageList({
               </div>
             );
           }
+          if (item.kind === "tool") return <ToolCallCard key={item.key} item={item} />;
+          if (item.kind === "approval") {
+            return <ApprovalCard key={item.key} orgId={orgId} item={item} />;
+          }
+          if (item.kind === "question") {
+            return <QuestionCard key={item.key} orgId={orgId} item={item} />;
+          }
+          if (item.kind === "connect") return <ConnectCard key={item.key} item={item} />;
           if (item.kind === "failed") {
             return (
               <div key={item.key} data-role="failed">

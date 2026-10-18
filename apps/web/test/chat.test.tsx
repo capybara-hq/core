@@ -419,7 +419,10 @@ describe("对话页切换组织", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
     await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
-    expect(calls.some((c) => c.url.includes("/orgs/o2/"))).toBe(false);
+    // 顶栏的待处理审批数按新组织读取是正常的；会话不能以新组织读取
+    expect(
+      calls.some((c) => c.url.includes("/orgs/o2/") && !c.url.includes("/orgs/o2/approvals")),
+    ).toBe(false);
     expect(screen.queryByText("hi")).toBeNull();
   });
 

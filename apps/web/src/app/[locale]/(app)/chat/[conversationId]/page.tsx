@@ -40,10 +40,16 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
   const chat = useChat(orgId, conversationId);
   const status = chat.running ? (
     <StatusMark status="running" label={t("chat.running")} />
+  ) : chat.waiting ? (
+    <StatusMark status="waiting" label={t("chat.waiting")} />
   ) : (
     <StatusMark status="success" label={t("chat.idle")} />
   );
-  useStatusBar(chat.running ? `· ${t("chat.running")}` : null);
+  useStatusBar(
+    chat.running ? `· ${t("chat.running")}` : chat.waiting ? `· ${t("chat.waiting")}` : null,
+  );
+  // 等人处理时也可以停止（中止运行，未处理的审批 / 输入按拒绝处理）
+  const active = chat.running || chat.waiting;
   return (
     <PlaygroundPage
       header={{
@@ -61,7 +67,7 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
               { k: t("chat.status"), v: status },
             ]}
           />
-          {chat.running && (
+          {active && (
             <Button onClick={chat.stop} disabled={chat.stopping}>
               {t("chat.stop")}
             </Button>
@@ -73,12 +79,12 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
           {chat.error !== undefined && <FormError message={chat.error} />}
           <Composer
             onSend={chat.send}
-            stop={chat.running ? { onStop: chat.stop, stopping: chat.stopping } : undefined}
+            stop={active ? { onStop: chat.stop, stopping: chat.stopping } : undefined}
           />
         </Stack>
       }
     >
-      <MessageList items={chat.items} reasoningOf={chat.reasoningOf} />
+      <MessageList orgId={orgId} items={chat.items} reasoningOf={chat.reasoningOf} />
     </PlaygroundPage>
   );
 }

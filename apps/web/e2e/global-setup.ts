@@ -1,8 +1,10 @@
 /**
  * e2e 全局准备：Testcontainers 起 PostgreSQL 与 Valkey，用 CLI（`capybara migrate` / `start`）
- * 从源码起一个加载 `model-fake` 的内核，再用 server.mjs 起 Web 层（`next dev`）指向它。
- * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL）。
- * 返回的函数是全局清理：停 Web、停内核、停容器、删临时目录。
+ * 从源码起一个加载 `model-fake` 与 `connector-mcp`（允许本机 http）的内核，再用 server.mjs 起 Web 层
+ * （`next dev`）指向它；另起一个假 MCP 服务（带一个 destructive 工具 `delete_item`）供工具 / 审批用例接入。
+ * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL），
+ * 假 MCP 端点写入 `CAPYBARA_E2E_MCP_URL`。
+ * 返回的函数是全局清理：停 Web、停内核、停 MCP 服务、停容器、删临时目录。
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -19,10 +21,29 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const webDir = fileURLToPath(new URL("../", import.meta.url));
 const cli = join(repoRoot, "apps/capybara/bin/capybara.mjs");
 const modelFake = join(repoRoot, "plugins/model-fake/src/index.ts");
+const connectorMcp = join(repoRoot, "plugins/connector-mcp/src/index.ts");
+/**
+ * 假 MCP 服务（测试工具包的源码）：按路径加载，与插件一样不作为 apps/web 的包依赖
+ * （apps/web 只依赖 @capybara-hq/design）。
+ */
+const fakeMcpModule = join(repoRoot, "packages/testing/src/fake-mcp-server.ts");
 /** 子进程日志（gitignore；每次运行覆盖，失败后可查看）。 */
 const logDir = join(webDir, "e2e-logs");
 
 type Cleanup = () => Promise<void>;
+
+/** 用到的 `startFakeMcpServer` 子集（类型在这里声明，不 import 测试工具包）。 */
+type StartFakeMcp = (opts: {
+  tools: {
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+    annotations?: Record<string, unknown>;
+    handler?: (info: { args: Record<string, unknown> }) => {
+      content: { type: "text"; text: string }[];
+    };
+  }[];
+}) => Promise<{ url: string; stop(): Promise<void> }>;
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -120,13 +141,36 @@ export default async function globalSetup(): Promise<Cleanup> {
       await Promise.all([pg.stop(), valkey.stop()]);
     });
 
+    const { startFakeMcpServer } = (await import(fakeMcpModule)) as {
+      startFakeMcpServer: StartFakeMcp;
+    };
+    const mcp = await startFakeMcpServer({
+      tools: [
+        {
+          name: "delete_item",
+          description: "Delete an item by id. This cannot be undone.",
+          inputSchema: {
+            type: "object",
+            properties: { id: { type: "string", description: "Item id" } },
+            required: ["id"],
+          },
+          annotations: { destructiveHint: true },
+          handler: ({ args }) => ({
+            content: [{ type: "text", text: `deleted ${String(args.id)}` }],
+          }),
+        },
+      ],
+    });
+    cleanups.push(() => mcp.stop());
+
     const [kernelPort, webPort] = [await freePort(), await freePort()];
     const configFile = join(dir, "capybara.yaml");
     const config = {
       db: { url: pg.getConnectionUri() },
       redis: { url: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}` },
       masterKey: randomBytes(32).toString("base64"),
-      plugins: [modelFake],
+      plugins: [modelFake, connectorMcp],
+      pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
       http: { port: kernelPort, trustProxy: 1 },
       auth: { cookieSecure: false },
       log: { level: "warn" },
@@ -165,6 +209,7 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`${(e as Error).message}\n${await tail(logs.web)}`);
     });
     process.env.CAPYBARA_E2E_BASE_URL = baseUrl;
+    process.env.CAPYBARA_E2E_MCP_URL = mcp.url;
     console.log(`[e2e] kernel :${kernelPort}, web ${baseUrl}, logs in ${logDir}`);
   } catch (e) {
     await cleanup();

@@ -64,7 +64,7 @@ function apply(state: ChatState, ...inputs: (ConversationEvent[] | StreamDelta)[
   return s;
 }
 
-const texts = (s: ChatState) => chatItems(s).map((i) => `${i.kind}:${i.text}`);
+const texts = (s: ChatState) => chatItems(s).map((i) => `${i.kind}:${"text" in i ? i.text : ""}`);
 
 describe("reduceChat", () => {
   it("事件按 seq 合入：乱序到达也按 seq 排列", () => {

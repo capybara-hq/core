@@ -1,0 +1,457 @@
+"use client";
+
+import {
+  Button,
+  Card,
+  type Column,
+  DangerConfirm,
+  DataTable,
+  DetailPage,
+  Field,
+  Input,
+  KeyValue,
+  Select,
+  Skeleton,
+  Stack,
+  StatusMark,
+  Switch,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
+import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+import {
+  buildCredential,
+  CredentialFields,
+  EMPTY_CREDENTIAL,
+} from "../../../../../components/AppForm";
+import { FormError } from "../../../../../components/form-error";
+import { OrgGate } from "../../../../../components/OrgGate";
+import { useSession } from "../../../../../components/shell/session";
+import { useRouter } from "../../../../../i18n/navigation";
+import { ApiClientError } from "../../../../../lib/api";
+import {
+  type AppDetail,
+  type AppTool,
+  canManageApps,
+  deleteApp,
+  getApp,
+  refreshApp,
+  setOrgCredential,
+  type ToolPolicy,
+  updateApp,
+} from "../../../../../lib/apps";
+import { useErrorMessage } from "../../../../../lib/use-error-message";
+import { useLoad } from "../../../../../lib/use-load";
+
+const TABS = ["tools", "credentials", "settings"] as const;
+type Tab = (typeof TABS)[number];
+const POLICIES = ["allow", "ask", "deny"] as const satisfies readonly ToolPolicy[];
+
+/** `/[locale]/apps/[appId]`：应用详情（DetailPage）：工具（启停、默认策略）、凭据、设置（改名、启停、删除）。 */
+export default function AppDetailPage() {
+  const { appId } = useParams<{ appId: string }>();
+  return <OrgGate>{(orgId) => <AppView orgId={orgId} appId={appId} />}</OrgGate>;
+}
+
+function AppView({ orgId, appId }: { orgId: string; appId: string }) {
+  const t = useTranslations("apps");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const { me } = useSession();
+  const manage = canManageApps(me);
+  const [tab, setTab] = useState<Tab>("tools");
+  const { state, reload, set } = useLoad(
+    () => getApp(orgId, appId).then((r) => r.app),
+    [orgId, appId],
+  );
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function onRefresh() {
+    setRefreshing(true);
+    try {
+      const r = await refreshApp(orgId, appId);
+      set(r.app);
+      toast.success(t("detail.refreshed"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const app = state.kind === "ready" ? state.data : undefined;
+  return (
+    <DetailPage
+      header={{
+        parent: { label: t("title"), href: "/apps" },
+        title: app?.name ?? t("title"),
+        ...(app
+          ? {
+              count: app.slug,
+              status:
+                app.status === "active" ? (
+                  <StatusMark status="success" label={t("status.active")} />
+                ) : (
+                  <StatusMark status="cancelled" label={t("status.disabled")} />
+                ),
+            }
+          : {}),
+        actions:
+          manage && app
+            ? [
+                {
+                  label: refreshing ? t("detail.refreshing") : t("detail.refresh"),
+                  variant: "default",
+                  onSelect: () => void (refreshing ? undefined : onRefresh()),
+                },
+              ]
+            : [],
+      }}
+      tabs={{
+        label: t("detail.tabsLabel"),
+        items: TABS.map((id) => ({
+          id,
+          label: t(`detail.tabs.${id}`),
+          ...(id === "tools" && app ? { count: app.tools.length } : {}),
+        })),
+        value: tab,
+        onChange: (id) => setTab(id as Tab),
+      }}
+      inspectorTitle={t("detail.inspectorTitle")}
+      inspector={app ? <AppInspector app={app} /> : undefined}
+    >
+      {state.kind === "loading" ? (
+        <Skeleton rows={6} />
+      ) : state.kind === "error" ? (
+        <Stack gap={12}>
+          <FormError message={errorMessage(new ApiClientError(0, state.code, state.code))} />
+          <Stack direction="row">
+            <Button onClick={reload}>{t("detail.retry")}</Button>
+          </Stack>
+        </Stack>
+      ) : tab === "tools" ? (
+        <ToolsTab orgId={orgId} app={state.data} manage={manage} onSaved={set} />
+      ) : tab === "credentials" ? (
+        <CredentialsTab orgId={orgId} app={state.data} manage={manage} onSaved={reload} />
+      ) : (
+        <SettingsTab orgId={orgId} app={state.data} manage={manage} onSaved={set} />
+      )}
+    </DetailPage>
+  );
+}
+
+function AppInspector({ app }: { app: AppDetail }) {
+  const t = useTranslations("apps");
+  const ownership = app.auth.type === "none" ? null : app.auth.ownership;
+  return (
+    <KeyValue
+      keyWidth="10ch"
+      rows={[
+        { k: t("inspector.slug"), v: app.slug },
+        { k: t("inspector.connector"), v: app.connector },
+        { k: t("inspector.endpoint"), v: app.endpoint.url ?? "—" },
+        { k: t("inspector.auth"), v: t(`auth.${app.auth.type}`) },
+        ...(ownership ? [{ k: t("inspector.ownership"), v: t(`ownership.${ownership}`) }] : []),
+        {
+          k: t("inspector.credential"),
+          v:
+            app.credential.ownership === null
+              ? t("credential.notNeeded")
+              : t(`credential.${app.credential.status}`),
+        },
+      ]}
+    />
+  );
+}
+
+function ToolsTab({
+  orgId,
+  app,
+  manage,
+  onSaved,
+}: {
+  orgId: string;
+  app: AppDetail;
+  manage: boolean;
+  onSaved(app: AppDetail): void;
+}) {
+  const t = useTranslations("apps");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [busy, setBusy] = useState<string>();
+
+  async function patch(
+    tool: AppTool,
+    change: { status?: AppTool["status"]; defaultPolicy?: ToolPolicy },
+  ) {
+    setBusy(tool.name);
+    try {
+      const { app: next } = await updateApp(orgId, app.id, { tools: { [tool.name]: change } });
+      onSaved(next);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  const columns: Column<AppTool>[] = [
+    {
+      key: "name",
+      header: t("tools.columns.name"),
+      cell: (x) => (
+        <Stack gap={0}>
+          <Text>{x.key}</Text>
+          <Text variant="small" tone="muted" truncate>
+            {x.issue ?? x.description}
+          </Text>
+        </Stack>
+      ),
+    },
+    {
+      key: "policy",
+      header: t("tools.columns.policy"),
+      width: 160,
+      cell: (x) =>
+        manage ? (
+          <Select
+            aria-label={t("tools.policyLabel", { tool: x.key })}
+            value={x.defaultPolicy}
+            disabled={busy !== undefined}
+            onChange={(e) => void patch(x, { defaultPolicy: e.target.value as ToolPolicy })}
+            options={POLICIES.map((p) => ({ value: p, label: t(`policy.${p}`) }))}
+          />
+        ) : (
+          t(`policy.${x.defaultPolicy}`)
+        ),
+    },
+    {
+      key: "status",
+      header: t("tools.columns.status"),
+      width: 120,
+      cell: (x) =>
+        manage ? (
+          <Switch
+            label={t("tools.enabledLabel", { tool: x.key })}
+            checked={x.status === "enabled"}
+            disabled={busy !== undefined || (x.issue !== null && x.status === "disabled")}
+            onChange={(on) => void patch(x, { status: on ? "enabled" : "disabled" })}
+          />
+        ) : x.status === "enabled" ? (
+          <StatusMark status="success" label={t("tools.enabled")} />
+        ) : (
+          <StatusMark status="cancelled" label={t("tools.disabled")} />
+        ),
+    },
+  ];
+
+  return (
+    <DataTable<AppTool>
+      label={t("detail.tabs.tools")}
+      columns={columns}
+      rows={app.tools}
+      rowKey={(x) => x.name}
+      rowLabel={(x) => x.key}
+      empty={{ title: t("tools.empty") }}
+    />
+  );
+}
+
+function CredentialsTab({
+  orgId,
+  app,
+  manage,
+  onSaved,
+}: {
+  orgId: string;
+  app: AppDetail;
+  manage: boolean;
+  onSaved(): void;
+}) {
+  const t = useTranslations("apps");
+  const router = useRouter();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [values, setValues] = useState(EMPTY_CREDENTIAL);
+  const [pending, setPending] = useState(false);
+  const status = (
+    <StatusMark
+      status={app.credential.status === "connected" ? "success" : "waiting"}
+      label={t(`credential.${app.credential.status}`)}
+    />
+  );
+
+  if (app.auth.type === "none") {
+    return (
+      <Card title={t("credential.title")}>
+        <Text tone="muted">{t("credential.notNeeded")}</Text>
+      </Card>
+    );
+  }
+  const auth = app.auth;
+
+  if (auth.ownership === "personal") {
+    return (
+      <Card title={t("credential.personalTitle")} actions={status}>
+        <Stack gap={12}>
+          <Text tone="muted">{t("credential.personalHint")}</Text>
+          <Stack direction="row">
+            <Button onClick={() => router.push("/settings/connections")}>
+              {t("credential.openConnections")}
+            </Button>
+          </Stack>
+        </Stack>
+      </Card>
+    );
+  }
+
+  const names = auth.type === "headers" ? auth.names : [];
+  const credential = buildCredential(auth.type, values, names);
+
+  async function save() {
+    if (credential === undefined) return;
+    setPending(true);
+    try {
+      await setOrgCredential(orgId, app.id, credential);
+      setValues(EMPTY_CREDENTIAL);
+      toast.success(t("credential.saved"));
+      onSaved();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Card title={t("credential.orgTitle")} actions={status}>
+      <Stack gap={12}>
+        <Text tone="muted">{t(manage ? "credential.orgHint" : "credential.orgReadonly")}</Text>
+        {manage && (
+          <>
+            <CredentialFields auth={auth} values={values} onChange={setValues} />
+            <Stack direction="row">
+              <Button
+                variant="primary"
+                loading={pending}
+                disabled={credential === undefined}
+                onClick={() => void save()}
+              >
+                {t("credential.save")}
+              </Button>
+            </Stack>
+          </>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function SettingsTab({
+  orgId,
+  app,
+  manage,
+  onSaved,
+}: {
+  orgId: string;
+  app: AppDetail;
+  manage: boolean;
+  onSaved(app: AppDetail): void;
+}) {
+  const t = useTranslations("apps");
+  const router = useRouter();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [name, setName] = useState(app.name);
+  const [active, setActive] = useState(app.status === "active");
+  const [pending, setPending] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const dirty = name.trim() !== app.name || active !== (app.status === "active");
+
+  async function save() {
+    if (name.trim() === "") return;
+    setPending(true);
+    try {
+      const { app: next } = await updateApp(orgId, app.id, {
+        name: name.trim(),
+        status: active ? "active" : "disabled",
+      });
+      onSaved(next);
+      toast.success(t("settings.saved"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Stack gap={16}>
+      <Card title={t("settings.title")}>
+        <Stack gap={12}>
+          <Field label={t("form.nameLabel")} required>
+            <Input
+              value={name}
+              maxLength={80}
+              disabled={!manage}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          <Stack direction="row" gap={12} align="center">
+            <Switch
+              label={t("settings.activeLabel")}
+              checked={active}
+              disabled={!manage}
+              onChange={setActive}
+            />
+            <Text>{t("settings.activeLabel")}</Text>
+          </Stack>
+          {manage && (
+            <Stack direction="row">
+              <Button
+                variant="primary"
+                loading={pending}
+                disabled={!dirty || name.trim() === ""}
+                onClick={() => void save()}
+              >
+                {t("settings.save")}
+              </Button>
+            </Stack>
+          )}
+        </Stack>
+      </Card>
+      {manage && (
+        <Card tone="danger" title={t("settings.dangerTitle")}>
+          <Stack gap={12}>
+            <Text tone="muted">{t("settings.deleteHint")}</Text>
+            <Stack direction="row">
+              <Button variant="danger" onClick={() => setConfirm(true)}>
+                {t("settings.delete")}
+              </Button>
+            </Stack>
+          </Stack>
+        </Card>
+      )}
+      <DangerConfirm
+        open={confirm}
+        onOpenChange={setConfirm}
+        title={t("settings.deleteTitle", { name: app.name })}
+        description={t("settings.deleteHint")}
+        confirmName={app.name}
+        confirmLabel={t("settings.delete")}
+        onConfirm={async () => {
+          try {
+            await deleteApp(orgId, app.id);
+          } catch (e) {
+            // 对话框保持打开并显示原因（翻译后的文案）
+            throw new Error(errorMessage(e));
+          }
+          setConfirm(false);
+          router.push("/apps");
+        }}
+      />
+    </Stack>
+  );
+}

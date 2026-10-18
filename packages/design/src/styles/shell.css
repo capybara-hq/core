@@ -100,6 +100,10 @@
   text-decoration: none;
   white-space: nowrap;
 }
+.cb-topbar-count {
+  display: inline-flex;
+  margin-left: 6px;
+}
 .cb-topbar-more {
   border: 0;
   border-radius: 0;

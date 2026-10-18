@@ -18,6 +18,10 @@ export function ShellSection() {
     <Section title="系统布局 App Shell" note="每个页面自上而下都是这几层，顺序固定">
       <Grid columns={1} gap={8}>
         <TopBar {...topBar("agents")} />
+        <TopBar
+          {...topBar("approvals")}
+          nav={topBar("approvals").nav.map((n) => (n.id === "approvals" ? { ...n, count: 7 } : n))}
+        />
         <PageHeader
           parent={{ label: "Agents", href: "/dev/ui/templates/list" }}
           title="support-triage"
