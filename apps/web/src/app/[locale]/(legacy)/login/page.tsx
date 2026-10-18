@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { LoginForm } from "../../../components/login-form";
-import { useRouter } from "../../../i18n/navigation";
-import { getSetupStatus } from "../../../lib/session";
+import { LoginForm } from "../../../../components/login-form";
+import { useRouter } from "../../../../i18n/navigation";
+import { getSetupStatus } from "../../../../lib/session";
 
 /** `/[locale]/login`：本地登录；系统尚未初始化时转到初始化向导。 */
 export default function LoginPage() {

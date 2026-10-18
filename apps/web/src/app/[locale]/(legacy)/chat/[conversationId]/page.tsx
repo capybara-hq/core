@@ -2,9 +2,9 @@
 
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { ChatView } from "../../../../components/ChatView";
-import { OrgGate } from "../../../../components/OrgGate";
-import { Link } from "../../../../i18n/navigation";
+import { ChatView } from "../../../../../components/ChatView";
+import { OrgGate } from "../../../../../components/OrgGate";
+import { Link } from "../../../../../i18n/navigation";
 
 /** `/[locale]/chat/[conversationId]`：当前组织下的一个会话。 */
 export default function ChatPage() {

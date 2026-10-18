@@ -2,10 +2,10 @@
 
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import { SetupForm } from "../../../components/setup-form";
-import { Link, useRouter } from "../../../i18n/navigation";
-import { getSetupStatus } from "../../../lib/session";
-import { useErrorMessage } from "../../../lib/use-error-message";
+import { SetupForm } from "../../../../components/setup-form";
+import { Link, useRouter } from "../../../../i18n/navigation";
+import { getSetupStatus } from "../../../../lib/session";
+import { useErrorMessage } from "../../../../lib/use-error-message";
 
 type State =
   | { kind: "loading" }
