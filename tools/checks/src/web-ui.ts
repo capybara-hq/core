@@ -29,9 +29,28 @@ export const WEB_UI_TEMPLATES = [
   "OnboardingPage",
 ] as const;
 
+/** design 包内用：color-mix( 等在 CSS 里合法地引用 token，所以这里只认字面量写法。 */
 const COLOR = /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i;
+/** apps/web 内用：页面里不该有任何颜色函数（color-mix 也不行，颜色只来自 design）。 */
+const WEB_COLOR = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\(/i;
 const ALLOWED_CSS = "@capybara-hq/design/styles.css";
-const FORBIDDEN_PKG = /^(?:@radix-ui\/|cmdk(?:\/|$))/;
+const FORBIDDEN_PKG = new RegExp(
+  `^(?:@radix-ui/|@emotion/|@stitches/|@vanilla-extract/|@mui/|@chakra-ui/|@mantine/|@headlessui/|(?:${[
+    "cmdk",
+    "styled-components",
+    "antd",
+    "tailwindcss",
+    "tailwind-merge",
+    "clsx",
+    "classnames",
+    "class-variance-authority",
+    "styled-jsx",
+    "lucide-react",
+    "react-icons",
+  ].join("|")})(?:/|$))`,
+);
+const CREATE_ELEMENT = new Set(["createElement", "jsx", "jsxs", "jsxDEV"]);
+const DESIGN_PKG = "@capybara-hq/design";
 /** 目录式 catalog 页，不要求使用页面模板。 */
 const TEMPLATE_EXEMPT_PREFIX = ["app", "[locale]", "dev"];
 
@@ -61,11 +80,12 @@ function colorFindings(
   p: ParsedFile,
   rule: string,
   message: (snippet: string) => string,
+  re: RegExp = COLOR,
 ): Finding[] {
   const out: Finding[] = [];
   const hit = (text: string | null | undefined, at: Node) => {
     if (typeof text !== "string") return;
-    const m = COLOR.exec(text);
+    const m = re.exec(text);
     if (m) out.push({ file: p.file, line: p.lineOf(at.start), rule, message: message(m[0]) });
   };
   walk(p.program, (n) => {
@@ -77,14 +97,49 @@ function colorFindings(
   return out;
 }
 
-function elementNames(p: ParsedFile): Set<string> {
-  const names = new Set<string>();
+/** 页面是否用了「从 @capybara-hq/design 导入」的页面模板（解析别名与命名空间导入）。 */
+function usesDesignTemplate(p: ParsedFile): boolean {
+  const named = new Map<string, string>();
+  const namespaces = new Set<string>();
+  walk(p.program, (n) => {
+    if (n.type !== "ImportDeclaration") return;
+    if ((n.source as Node).value !== DESIGN_PKG) return;
+    for (const sp of n.specifiers as Node[]) {
+      const local = (sp.local as Node).name as string;
+      if (sp.type === "ImportSpecifier") {
+        const im = sp.imported as Node;
+        named.set(local, (im.name ?? im.value) as string);
+      } else if (sp.type === "ImportNamespaceSpecifier") namespaces.add(local);
+    }
+  });
+  const templates: readonly string[] = WEB_UI_TEMPLATES;
+  let found = false;
   walk(p.program, (n) => {
     if (n.type !== "JSXOpeningElement") return;
     const name = n.name as Node;
-    if (name.type === "JSXIdentifier") names.add(name.name as string);
+    if (name.type === "JSXIdentifier") {
+      const imported = named.get(name.name as string);
+      if (imported !== undefined && templates.includes(imported)) found = true;
+    } else if (name.type === "JSXMemberExpression") {
+      const obj = name.object as Node;
+      const prop = (name.property as Node).name as string;
+      if (
+        obj.type === "JSXIdentifier" &&
+        namespaces.has(obj.name as string) &&
+        templates.includes(prop)
+      )
+        found = true;
+    }
   });
-  return names;
+  return found;
+}
+
+function propKey(prop: Node): string | undefined {
+  if (prop.type !== "Property") return undefined;
+  const k = prop.key as Node;
+  if (k.type === "Identifier" && !prop.computed) return k.name as string;
+  if (k.type === "Literal" && typeof k.value === "string") return k.value;
+  return undefined;
 }
 
 function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding[] {
@@ -112,26 +167,46 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
     }
   }
 
+  const CLASS_MSG =
+    "页面内不得写 className / class；改用 @capybara-hq/design 的组件或布局原语，页面内不写样式";
+  const STYLE_MSG =
+    "页面内不得写 style / <style> / dangerouslySetInnerHTML；改用 @capybara-hq/design 的组件或布局原语，页面内不写样式";
+  const flag = (rule: string, message: string, at: Node) =>
+    out.push({ file, line: p.lineOf(at.start), rule, message });
+  const checkObject = (obj: unknown) => {
+    const o = obj as Node | undefined;
+    if (o?.type !== "ObjectExpression") return;
+    for (const prop of o.properties as Node[]) {
+      const key = propKey(prop);
+      if (key === "className" || key === "class") flag("web-ui-class-name", CLASS_MSG, prop);
+      else if (key === "style" || key === "dangerouslySetInnerHTML")
+        flag("web-ui-style", STYLE_MSG, prop);
+    }
+  };
+
   walk(p.program, (n) => {
-    if (n.type !== "JSXAttribute") return;
-    const name = n.name as Node;
-    if (name.type !== "JSXIdentifier") return;
-    const line = p.lineOf(n.start);
-    if (name.name === "className") {
-      out.push({
-        file,
-        line,
-        rule: "web-ui-class-name",
-        message:
-          "页面内不得写 className；改用 @capybara-hq/design 的组件或布局原语，页面内不写样式",
-      });
-    } else if (name.name === "style") {
-      out.push({
-        file,
-        line,
-        rule: "web-ui-style",
-        message: "页面内不得写 style；改用 @capybara-hq/design 的组件或布局原语，页面内不写样式",
-      });
+    if (n.type === "JSXAttribute") {
+      const name = n.name as Node;
+      if (name.type !== "JSXIdentifier") return;
+      if (name.name === "className" || name.name === "class")
+        flag("web-ui-class-name", CLASS_MSG, n);
+      else if (name.name === "style" || name.name === "dangerouslySetInnerHTML")
+        flag("web-ui-style", STYLE_MSG, n);
+    } else if (n.type === "JSXSpreadAttribute") {
+      checkObject(n.argument);
+    } else if (n.type === "JSXOpeningElement") {
+      const name = n.name as Node;
+      if (name.type === "JSXIdentifier" && name.name === "style")
+        flag("web-ui-style", STYLE_MSG, n);
+    } else if (n.type === "CallExpression") {
+      const callee = n.callee as Node;
+      const fn =
+        callee.type === "Identifier"
+          ? (callee.name as string)
+          : callee.type === "MemberExpression"
+            ? ((callee.property as Node).name as string | undefined)
+            : undefined;
+      if (fn !== undefined && CREATE_ELEMENT.has(fn)) checkObject((n.arguments as unknown[])[1]);
     }
   });
 
@@ -141,19 +216,19 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
       "web-ui-color",
       (s) =>
         `不得出现颜色字面量「${s}」；颜色只能来自 @capybara-hq/design 的 token，页面内不写颜色`,
+      WEB_COLOR,
     ),
   );
 
   const segs = relative(webSrcDir, file).split(sep);
   const exempt = TEMPLATE_EXEMPT_PREFIX.every((s, i) => segs[i] === s);
-  if (segs[0] === "app" && segs.at(-1) === "page.tsx" && !exempt) {
-    const used = elementNames(p);
-    if (!WEB_UI_TEMPLATES.some((t) => used.has(t))) {
+  if (segs[0] === "app" && /^page\.[jt]sx?$/.test(segs.at(-1) ?? "") && !exempt) {
+    if (!usesDesignTemplate(p)) {
       out.push({
         file,
         line: 1,
         rule: "web-ui-template",
-        message: `page.tsx 必须使用 @capybara-hq/design 的页面模板之一（${WEB_UI_TEMPLATES.join(" / ")}）作为页面骨架`,
+        message: `page 文件必须使用从 @capybara-hq/design 导入的页面模板之一（${WEB_UI_TEMPLATES.join(" / ")}）作为页面骨架`,
       });
     }
   }

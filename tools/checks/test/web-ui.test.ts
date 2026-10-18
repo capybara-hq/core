@@ -62,4 +62,26 @@ describe("checkWebUi", () => {
     expect(f[0]?.file).toMatch(/button\.tsx$/);
     expect(f[0]?.line).toBe(1);
   });
+
+  const one = (name: string, rule: string, line?: number) => {
+    const f = run(name);
+    expect(f.map((x) => x.rule)).toEqual([rule]);
+    if (line !== undefined) expect(f[0]?.line).toBe(line);
+  };
+
+  it("dev 目录豁免模板规则，其他规则仍生效", () => {
+    expect(run("dev-exempt")).toEqual([]);
+  });
+  it("{...{ className }} 展开 -> web-ui-class-name", () =>
+    one("spread-class", "web-ui-class-name", 6));
+  it("createElement 的 style -> web-ui-style", () =>
+    one("create-element-style", "web-ui-style", 7));
+  it("JSX class 属性 -> web-ui-class-name", () => one("class-attr", "web-ui-class-name", 6));
+  it("<style> 元素 -> web-ui-style", () => one("style-element", "web-ui-style", 6));
+  it("别名导入的模板通过", () => expect(run("aliased-template")).toEqual([]));
+  it("本地同名组件不算模板", () => one("local-template", "web-ui-template"));
+  it("styled-components 导入 -> web-ui-import", () => one("styled-import", "web-ui-import", 1));
+  it("require 的 .css -> web-ui-import", () => one("require-css", "web-ui-import", 3));
+  it("大写十六进制 -> web-ui-color", () => one("uppercase-hex", "web-ui-color", 3));
+  it("模板字面量里的颜色函数 -> web-ui-color", () => one("template-color", "web-ui-color", 3));
 });
