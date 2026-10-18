@@ -257,7 +257,8 @@ export interface ApprovalsTable {
   run_id: string;
   call_id: string;
   tool_key: string;
-  input: Generated<Json<unknown>>;
+  /** jsonb 带默认值：Json 的插入类型本身已可省略。 */
+  input: Json<unknown>;
   requested_for: string | null;
   approver_role: string | null;
   status: Generated<"pending" | "approved" | "denied" | "expired" | "cancelled">;
@@ -266,6 +267,10 @@ export interface ApprovalsTable {
   decided_at: TsNullable;
   expires_at: Date | string;
   created_at: Ts;
+  /** 0011：所批准的工具定义指纹（写授权用）。 */
+  spec_hash: string | null;
+  /** 0011：应用工具的来源应用。 */
+  app_id: string | null;
 }
 
 /** 0010_tools.sql：ask_user 提问。 */
@@ -328,7 +333,7 @@ export interface LgCheckpointWritesTable {
 
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
- * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql 与 0010_tools.sql。
+ * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql 与 0011_approvals_spec.sql。
  */
 export interface KernelDatabase {
   accounts: AccountsTable;

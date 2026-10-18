@@ -110,6 +110,7 @@ beforeAll(async () => {
           registry: k.runs.registry,
           credentials: k.tools.credentials,
           toolRegistry: k.tools.registry,
+          approvals: k.tools.approvals,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

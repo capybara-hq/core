@@ -33,6 +33,7 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolOutputs } from "./tools/outputs.js";
@@ -91,6 +92,8 @@ export interface KernelTools {
   readonly outputs: ToolOutputs;
   /** 工具执行管线（tools 节点使用）。 */
   readonly pipeline: ToolPipeline;
+  /** 工具调用审批与「以后都允许」授权。 */
+  readonly approvals: ApprovalsService;
 }
 
 /** 运行中的内核实例。 */
@@ -248,11 +251,14 @@ export async function createKernel(
     config: () => current,
     log,
   });
+  // TODO(Task 9)：onDecided 接入续跑
+  const approvals = new ApprovalsService({ db: kdb, eventLog, config: () => current, log });
   const tools: KernelTools = {
     registry: toolRegistry,
     credentials,
     outputs: toolOutputs,
     pipeline: toolPipeline,
+    approvals,
   };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
@@ -327,6 +333,7 @@ export async function createKernel(
         registry,
         credentials,
         toolRegistry,
+        approvals,
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
           abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),

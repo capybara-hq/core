@@ -11,11 +11,13 @@ import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import { assistantIdemKey } from "../runtime/model-call.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
 import { type AppAuth, CredentialMissing, type Credentials } from "./credentials.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, type ToolOutputs } from "./outputs.js";
+import { createDecidePolicy } from "./policy.js";
 import type { ResolvedTool, ToolRegistry, UnavailableTool } from "./registry.js";
 import { validateInput } from "./validate.js";
 
@@ -46,11 +48,19 @@ const personalMissingText = (appName: string) =>
 const orgMissingText = (appName: string) =>
   `${appName} has no organization credential configured; ask an organization admin to set it up.`;
 
-// ---- 策略（Task 8 实现，这里只定接口与桩） ----
+// ---- 策略（判定见 policy.ts） ----
 
-/** 需要人审批的请求（Task 8 / 9 扩充字段）。 */
+/** 需要人审批的请求（`ApprovalsService.request` 据此建审批记录）。 */
 export interface AskRequest {
   toolKey: string;
+  /** 所批准的工具定义指纹（「本会话 / 以后都允许」授权按它匹配）。 */
+  specHash: string;
+  /** 应用工具的来源应用；插件 / 内置工具为 null。 */
+  appId: string | null;
+  /** 指定处理人（发起人本人）；按角色升级时为 null。 */
+  requestedFor: string | null;
+  /** 按角色升级（R1）时所需的角色；否则为 null。 */
+  approverRole: OrgRole | null;
 }
 
 export type PolicyDecision = "allow" | "deny" | { ask: AskRequest };
@@ -71,13 +81,6 @@ export type DecidePolicy = (
   ctx: PolicyContext,
 ) => Promise<PolicyDecision>;
 
-/**
- * 桩：直接用工具的默认策略（`ask` 原样返回，由 tools 节点按拒绝处理）。
- * TODO(Task 8)：换成真正的判定（agent 收紧、R3 清单、记住的授权）；TODO(Task 9)：`ask` 接入暂停与审批。
- */
-export const defaultDecidePolicy: DecidePolicy = async (tool) =>
-  tool.defaultPolicy === "ask" ? { ask: { toolKey: tool.key } } : tool.defaultPolicy;
-
 // ---- 管线 ----
 
 /** 测试钩子。 */
@@ -95,7 +98,7 @@ export interface ToolPipelineDeps {
   outputs: Pick<ToolOutputs, "save" | "load">;
   config: () => KernelConfig;
   log: Logger;
-  /** 默认 {@link defaultDecidePolicy}。 */
+  /** 默认 {@link createDecidePolicy}（执行时实时读取策略与授权）。 */
   decidePolicy?: DecidePolicy;
   hooks?: ToolPipelineHooks;
 }
@@ -154,7 +157,7 @@ export class ToolPipeline {
   private readonly decide: DecidePolicy;
 
   constructor(private readonly deps: ToolPipelineDeps) {
-    this.decide = deps.decidePolicy ?? defaultDecidePolicy;
+    this.decide = deps.decidePolicy ?? createDecidePolicy(deps.db);
   }
 
   /**

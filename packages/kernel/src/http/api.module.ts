@@ -33,6 +33,8 @@ import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
+import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
+import type { ApprovalsService } from "../tools/approvals.service.js";
 import { AppsController } from "../tools/apps.controller.js";
 import { AppsService } from "../tools/apps.service.js";
 import type { Credentials } from "../tools/credentials.js";
@@ -41,6 +43,7 @@ import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
+  APPROVALS,
   APPS,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
@@ -86,6 +89,8 @@ export interface ApiDeps {
   credentials: Credentials;
   /** 工具注册表（与 `Kernel.tools.registry` 同一实例）。 */
   toolRegistry: ToolRegistry;
+  /** 工具调用审批（与 `Kernel.tools.approvals` 同一实例）。 */
+  approvals: ApprovalsService;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -102,6 +107,8 @@ const CONTROLLERS: Type[] = [
   ConversationsController,
   ConversationStreamController,
   AppsController,
+  ApprovalsController,
+  ToolGrantsController,
 ];
 
 /**
@@ -203,6 +210,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     { provide: CREDENTIALS, useValue: deps.credentials },
     { provide: TOOL_REGISTRY, useValue: deps.toolRegistry },
+    { provide: APPROVALS, useValue: deps.approvals },
     {
       provide: APPS,
       useFactory: (

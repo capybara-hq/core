@@ -151,6 +151,31 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "connection_required",
     z.object({ step: count, callId: z.string(), appId: z.string(), appName: z.string() }),
   ),
+  /**
+   * 工具调用需要人审批（策略为 `ask`）：审批记录已建，run 暂停等待处理。界面据此显示审批卡片
+   * （不进模型请求；该调用的结果在审批处理后写入）。
+   */
+  ev(
+    "approval_requested",
+    z.object({
+      step: count,
+      callId: z.string(),
+      approvalId: z.string(),
+      toolKey: z.string(),
+      expiresAt: z.string(),
+    }),
+  ),
+  /** 审批已处理（批准 / 拒绝 / 超时 / 取消）；`scope` 只在批准时出现，`byAccountId` 为处理人（超时 / 取消为 null）。 */
+  ev(
+    "approval_decided",
+    z.object({
+      approvalId: z.string(),
+      callId: z.string(),
+      decision: z.enum(["approved", "denied", "expired", "cancelled"]),
+      scope: z.enum(["once", "session", "always"]).optional(),
+      byAccountId: z.string().nullable(),
+    }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(

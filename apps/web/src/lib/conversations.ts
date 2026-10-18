@@ -46,6 +46,26 @@ type EventBody =
       type: "connection_required";
       payload: { step: number; callId: string; appId: string; appName: string };
     }
+  | {
+      type: "approval_requested";
+      payload: {
+        step: number;
+        callId: string;
+        approvalId: string;
+        toolKey: string;
+        expiresAt: string;
+      };
+    }
+  | {
+      type: "approval_decided";
+      payload: {
+        approvalId: string;
+        callId: string;
+        decision: "approved" | "denied" | "expired" | "cancelled";
+        scope?: "once" | "session" | "always";
+        byAccountId: string | null;
+      };
+    }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }

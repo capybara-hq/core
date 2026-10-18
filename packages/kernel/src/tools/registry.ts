@@ -7,6 +7,7 @@ import type {
   ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import type { KernelDb } from "../db/kernel-schema.js";
+import type { OrgRole } from "../orgs/roles.js";
 import type { PluginHost } from "../plugins/host.js";
 import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
@@ -53,6 +54,11 @@ export interface ResolvedTool {
   /** sha256(canonical spec) 前 16 位。 */
   specHash: string;
   defaultPolicy: ToolPolicy;
+  /**
+   * 执行所需的最低组织角色（spec 3.6 R1）。发起人当前角色不足时转为按角色升级的审批
+   * （推给持有该角色的人）。M3 的内置与应用工具都不设。
+   */
+  requiredRole?: OrgRole;
 }
 
 /** 不可用的引用：`ref` 尽量写成模型认识的工具 key（`docs__search`、`docs__*`），否则 `app:<id>`。 */

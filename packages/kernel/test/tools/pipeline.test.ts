@@ -111,6 +111,15 @@ function appTool(slug: string, appId: string, name: string): ResolvedTool {
   };
 }
 
+/** 应用工具的快照行（执行时策略判定会实时重读 app_tools）。 */
+async function seedAppTool(id: string, name: string): Promise<void> {
+  const spec = pluginSpec(name);
+  await sql`INSERT INTO capybara.app_tools (app_id, name, spec, spec_hash, status, default_policy)
+    VALUES (${id}, ${name}, ${JSON.stringify(spec)}::jsonb, ${specHash(spec)}, 'enabled', 'allow')`.execute(
+    raw,
+  );
+}
+
 /** 插件处理函数调用记录（工具名 → 调用参数列表）。 */
 let handlerCalls: Record<string, unknown[]> = {};
 let handlers: Record<string, ToolHandler> = {};
@@ -260,6 +269,7 @@ beforeEach(async () => {
     pluginTool("throws"),
     appTool("docs", appId, "read"),
   ];
+  await seedAppTool(appId, "read");
 });
 
 const stepCtx = (over: Partial<ToolStepContext> = {}): ToolStepContext => ({
@@ -453,6 +463,19 @@ describe("ToolPipeline.runStep", () => {
     evs = await runCalls([{ id: "c3", name: "probe__gated", input: {} }]);
     expect(seen).toEqual([`probe__gated|Helper|${seed.accountId}|${runId}`]);
     expect(handlerCalls.gated).toHaveLength(1);
+
+    // 默认判定为执行时实时读取（createDecidePolicy）：管理员把应用工具改为 deny 立即生效
+    decidePolicy = undefined;
+    await sql`UPDATE capybara.app_tools SET default_policy = 'deny' WHERE app_id = ${appId}`.execute(
+      raw,
+    );
+    runId = randomUUID();
+    evs = await runCalls([{ id: "c4", name: "docs__read", input: {} }]);
+    expect(conn.calls).toBe(0);
+    expect(resultsOf(evs).find((r) => r.callId === "c4")).toMatchObject({
+      isError: true,
+      content: "Tool docs__read is denied by policy.",
+    });
   });
 
   it("处理函数返回 input_required → 暂不支持的错误结果", async () => {
@@ -543,6 +566,7 @@ describe("ToolPipeline.runStep", () => {
       name: "Private Docs",
       auth: { type: "bearer", ownership: "personal" },
     });
+    await seedAppTool(priv, "read");
     resolved = [appTool("priv", priv, "read")];
     const evs = await runCalls([{ id: "c1", name: "priv__read", input: {} }]);
     const cr = evs.filter((e) => e.type === "connection_required");
@@ -564,6 +588,7 @@ describe("ToolPipeline.runStep", () => {
       name: "Org Docs",
       auth: { type: "bearer", ownership: "org" },
     });
+    await seedAppTool(orgApp, "read");
     resolved = [appTool("orgc", orgApp, "read")];
     const evs = await runCalls([{ id: "c1", name: "orgc__read", input: {} }]);
     expect(evs.some((e) => e.type === "connection_required")).toBe(false);
