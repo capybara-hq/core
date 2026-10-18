@@ -33,6 +33,7 @@ export default defineConfig({
           name: "design",
           include: ["packages/design/test/**/*.test.{ts,tsx}"],
           environment: "jsdom",
+          setupFiles: ["packages/design/test/setup.ts"],
         },
       },
       // jsdom 环境：apps/web 的组件 / 浏览器端测试（*.test.tsx）。

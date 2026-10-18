@@ -18,6 +18,20 @@ const zh = {
   "pagination.next": "下一页",
   "pagination.perPage": "每页",
   "pagination.label": "分页",
+  "overlay.close": "关闭",
+  "overlay.cancel": "取消",
+  "overlay.openInNew": "在新页打开",
+  "overlay.discardTitle": "放弃未保存的修改？",
+  "overlay.discard": "放弃",
+  "overlay.keepEditing": "继续编辑",
+  "overlay.typeToConfirm": "请输入以下名称以确认",
+  "palette.title": "命令面板",
+  "palette.placeholder": "输入命令或搜索",
+  "palette.empty": "无匹配项",
+  "palette.hintMove": "选择",
+  "palette.hintRun": "执行",
+  "palette.hintClose": "关闭",
+  "toast.progress": "进度",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -40,6 +54,20 @@ const en: Record<DesignKey, string> = {
   "pagination.next": "Next",
   "pagination.perPage": "Per page",
   "pagination.label": "Pagination",
+  "overlay.close": "Close",
+  "overlay.cancel": "Cancel",
+  "overlay.openInNew": "Open in new page",
+  "overlay.discardTitle": "Discard unsaved changes?",
+  "overlay.discard": "Discard",
+  "overlay.keepEditing": "Keep editing",
+  "overlay.typeToConfirm": "Type the following name to confirm",
+  "palette.title": "Command palette",
+  "palette.placeholder": "Type a command or search",
+  "palette.empty": "No matches",
+  "palette.hintMove": "Select",
+  "palette.hintRun": "Run",
+  "palette.hintClose": "Close",
+  "toast.progress": "Progress",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };
