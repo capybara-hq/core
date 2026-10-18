@@ -3,6 +3,7 @@ import { type ReactNode, useState } from "react";
 import { Button, IconButton } from "../controls/index.js";
 import { useDesignT } from "../provider.js";
 import { Dialog } from "./dialog.js";
+import { useFocusReturn } from "./focus-return.js";
 
 export type SheetProps = {
   open: boolean;
@@ -30,6 +31,7 @@ export function Sheet({
   children,
 }: SheetProps) {
   const t = useDesignT();
+  const focusReturn = useFocusReturn();
   const [confirming, setConfirming] = useState(false);
   const requestClose = () => {
     if (dirty) setConfirming(true);
@@ -50,6 +52,8 @@ export function Sheet({
             className="cb-sheet"
             data-width={width}
             aria-describedby={undefined}
+            onOpenAutoFocus={focusReturn.capture}
+            onCloseAutoFocus={focusReturn.restore}
             onInteractOutside={(e) => e.preventDefault()}
           >
             <div className="cb-sheet-head">

@@ -1,8 +1,9 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Button, IconButton } from "../controls/index.js";
 import { Input } from "../controls/inputs.js";
 import { useDesignT } from "../provider.js";
+import { useFocusReturn } from "./focus-return.js";
 
 export type DialogProps = {
   open: boolean;
@@ -27,7 +28,7 @@ export function Dialog({
 }: DialogProps) {
   const t = useDesignT();
   const footerRef = useRef<HTMLDivElement>(null);
-  const returnTo = useRef<HTMLElement | null>(null);
+  const focusReturn = useFocusReturn();
   return (
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <RD.Portal>
@@ -37,18 +38,9 @@ export function Dialog({
           data-size={size}
           data-danger={danger ? "true" : undefined}
           aria-describedby={undefined}
-          onCloseAutoFocus={(e) => {
-            // 触发按钮常在 Dialog 之外受控打开，Radix 不认识它，所以自己归还焦点。
-            const el = returnTo.current;
-            returnTo.current = null;
-            if (el?.isConnected) {
-              e.preventDefault();
-              el.focus();
-            }
-          }}
+          onCloseAutoFocus={focusReturn.restore}
           onOpenAutoFocus={(e) => {
-            returnTo.current =
-              document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            focusReturn.capture();
             const buttons = Array.from(
               footerRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled)") ?? [],
             );
@@ -103,14 +95,14 @@ export function DangerConfirm({
   const inputId = useId();
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!open) setTyped("");
+  }, [open]);
   const matched = typed === confirmName;
   return (
     <Dialog
       open={open}
-      onOpenChange={(o) => {
-        if (!o) setTyped("");
-        onOpenChange(o);
-      }}
+      onOpenChange={onOpenChange}
       title={title}
       danger
       initialFocus="cancel"

@@ -103,6 +103,70 @@ describe("DangerConfirm", () => {
   });
 });
 
+describe("DangerConfirm reset", () => {
+  it("取消后重开，确认按钮重新禁用", async () => {
+    const user = userEvent.setup();
+    function H() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            re
+          </button>
+          <DangerConfirm
+            open={open}
+            onOpenChange={setOpen}
+            title="删除"
+            description="x"
+            confirmName="abc"
+            confirmLabel="确认删除"
+            onConfirm={() => {}}
+          />
+        </>
+      );
+    }
+    zh(<H />);
+    await user.type(screen.getByRole("textbox"), "abc");
+    expect((screen.getByRole("button", { name: "确认删除" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    act(() => screen.getByRole("button", { name: "re", hidden: true }).click());
+    expect((screen.getByRole("button", { name: "确认删除" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+});
+
+describe("焦点归还", () => {
+  function H({ kind }: { kind: "palette" | "sheet" }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          go
+        </button>
+        {kind === "palette" ? (
+          <CommandPalette open={open} onOpenChange={setOpen} groups={[]} />
+        ) : (
+          <Sheet open={open} onOpenChange={setOpen} title="S">
+            x
+          </Sheet>
+        )}
+      </>
+    );
+  }
+  it.each(["palette", "sheet"] as const)("%s 关闭后焦点回到触发按钮", async (kind) => {
+    const user = userEvent.setup();
+    zh(<H kind={kind} />);
+    const go = screen.getByRole("button", { name: "go" });
+    await user.click(go);
+    expect(document.activeElement).not.toBe(go);
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(go);
+  });
+});
+
 describe("Sheet", () => {
   it("dirty 时关闭先确认", async () => {
     const user = userEvent.setup();

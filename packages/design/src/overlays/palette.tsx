@@ -2,6 +2,7 @@ import * as RD from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { Kbd } from "../display/index.js";
 import { useDesignT } from "../provider.js";
+import { useFocusReturn } from "./focus-return.js";
 
 export type CommandGroup = {
   label: string;
@@ -18,13 +19,19 @@ export function CommandPalette({
   groups: CommandGroup[];
 }) {
   const t = useDesignT();
+  const focusReturn = useFocusReturn();
   return (
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <RD.Portal>
         <RD.Overlay className="cb-scrim" />
-        <RD.Content className="cb-palette" aria-describedby={undefined}>
+        <RD.Content
+          className="cb-palette"
+          aria-describedby={undefined}
+          onOpenAutoFocus={focusReturn.capture}
+          onCloseAutoFocus={focusReturn.restore}
+        >
           <RD.Title className="cb-sr-only">{t("palette.title")}</RD.Title>
-          <Command className="cb-palette-cmd" loop>
+          <Command className="cb-palette-cmd" label={t("palette.title")} loop>
             <div className="cb-palette-input">
               <span aria-hidden="true">&gt;</span>
               <Command.Input placeholder={t("palette.placeholder")} />
@@ -36,7 +43,8 @@ export function CommandPalette({
                   {g.items.map((it) => (
                     <Command.Item
                       key={it.id}
-                      value={it.label}
+                      value={it.id}
+                      keywords={[it.label]}
                       className="cb-palette-item"
                       onSelect={() => {
                         it.onSelect();
