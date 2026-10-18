@@ -2,11 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { definePlugin, type PluginManifest } from "@capybara-hq/plugin-sdk";
+import { definePlugin, type PluginManifest, secret } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { createBusSubscriber } from "../../src/ctx/bus.js";
 import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
@@ -111,12 +112,47 @@ describe("PluginHost", () => {
     expect(ea?.configHash).not.toBe(eb?.configHash);
   });
 
-  it("deploymentConfigHash：与键顺序无关、值变化即变化、不含明文", () => {
-    const h1 = deploymentConfigHash({ a: 1, b: { x: "s3cr3t", y: [1, 2] } });
-    expect(deploymentConfigHash({ b: { y: [1, 2], x: "s3cr3t" }, a: 1 })).toBe(h1);
-    expect(deploymentConfigHash({ a: 1, b: { x: "s3cr3t2", y: [1, 2] } })).not.toBe(h1);
+  it("deploymentConfigHash：先遮蔽 secret 字段——只差密钥时摘要相同，非密钥变化才变化；与键顺序无关", () => {
+    const schema = z.object({
+      a: z.number(),
+      b: z.object({ y: z.array(z.number()), x: secret(z.string()) }),
+      keys: secret(z.record(z.string(), z.string())).default({}),
+      opt: z.object({ tok: secret(z.string()).optional() }).optional(),
+    });
+    const base = { a: 1, b: { x: "s3cr3t", y: [1, 2] }, keys: { ep: "sk-1" } };
+    const h1 = deploymentConfigHash(schema, base);
     expect(h1).toMatch(/^[0-9a-f]{16}$/);
-    expect(h1).not.toContain("s3cr3t");
+    // 键顺序无关
+    expect(
+      deploymentConfigHash(schema, { keys: { ep: "sk-1" }, b: { y: [1, 2], x: "s3cr3t" }, a: 1 }),
+    ).toBe(h1);
+    // 只差 secret（含 record 形态的密钥）：摘要相同，轮换密钥不改变缓存键
+    expect(deploymentConfigHash(schema, { ...base, b: { x: "other", y: [1, 2] } })).toBe(h1);
+    expect(deploymentConfigHash(schema, { ...base, keys: { ep: "sk-2" } })).toBe(h1);
+    expect(deploymentConfigHash(schema, { ...base, opt: { tok: "t1" } })).toBe(
+      deploymentConfigHash(schema, { ...base, opt: { tok: "t2" } }),
+    );
+    // 非 secret 变化：摘要变化
+    expect(deploymentConfigHash(schema, { ...base, a: 2 })).not.toBe(h1);
+    expect(deploymentConfigHash(schema, { ...base, b: { x: "s3cr3t", y: [1] } })).not.toBe(h1);
+    // 不修改传入的配置
+    expect(base.b.x).toBe("s3cr3t");
+    // 没有部署配置 schema（无法得知哪些是密钥）：不按配置区分
+    expect(deploymentConfigHash(undefined, { token: "a" })).toBe(
+      deploymentConfigHash(undefined, { token: "b" }),
+    );
+  });
+
+  it("list 的 configHash 不随 secret 字段变化", async () => {
+    const a = host({ secretcfg: { token: "token-one-123" } });
+    await a.load([fx("secretcfg")]);
+    const b = host({ secretcfg: { token: "token-two-456" } });
+    await b.load([fx("secretcfg")]);
+    expect(a.manifests()[0]?.name).toBe("secretcfg");
+    const ha = (a as unknown as { loaded: { configHash: string }[] }).loaded[0]?.configHash;
+    const hb = (b as unknown as { loaded: { configHash: string }[] }).loaded[0]?.configHash;
+    expect(ha).toMatch(/^[0-9a-f]{16}$/);
+    expect(ha).toBe(hb);
   });
 
   it("配置缺省时使用 schema 默认值", async () => {
