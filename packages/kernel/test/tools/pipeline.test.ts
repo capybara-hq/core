@@ -175,6 +175,8 @@ const testConnector: Connector = {
 
 let resolved: ResolvedTool[] = [];
 let unavailable: UnavailableTool[] = [];
+/** `tools: "all"` 应用里未启用的工具（不提醒，只在被调用时给原因）。 */
+let hidden: UnavailableTool[] = [];
 /** forAgent 报告的 tool_search 是否生效。 */
 let toolSearch = false;
 /** 内置工具的处理函数（名字 → 处理函数）。 */
@@ -187,7 +189,7 @@ function pipeline(): ToolPipeline {
     db,
     eventLog,
     registry: {
-      forAgent: async () => ({ tools: resolved, unavailable, toolSearch }),
+      forAgent: async () => ({ tools: resolved, unavailable, hidden, toolSearch }),
       findConnector: (kind: string) => (kind === "test" ? testConnector : undefined),
       handler: (source) =>
         source.kind === "plugin"
@@ -251,6 +253,7 @@ beforeEach(async () => {
   decidePolicy = undefined;
   afterExecute = undefined;
   unavailable = [];
+  hidden = [];
   handlerCalls = {};
   toolsChanged = [];
   lastOpen = undefined;
@@ -444,6 +447,114 @@ describe("validateInput", () => {
       const opts = { untrusted: true };
       expect(validateInput("app__x", spec, { x_a: "s" }, opts)).toBeNull();
       expect(validateInput("app__x", spec, { x_a: 1 }, opts)).toContain("/x_a must be string");
+    });
+
+    describe("剥离只在正向位置放宽：否定 / 条件 / unevaluated* 位置被剥 → 跳过校验并按缓存键 warn 一次", () => {
+      // JSON Schema 的 then 关键字（避开 lint 的 thenable 检查）
+      const THEN = "then";
+      const NEG = "constraints stripped under not/oneOf/if/then/else";
+      const UNEV = "constraints stripped in a schema using unevaluatedProperties/unevaluatedItems";
+      const cases: [string, Record<string, unknown>, unknown, string][] = [
+        [
+          "not",
+          { type: "object", properties: { q: { type: "string", not: { pattern: "^a" } } } },
+          { q: "b" },
+          NEG,
+        ],
+        [
+          "oneOf",
+          {
+            type: "object",
+            properties: {
+              q: { oneOf: [{ type: "string", format: "email" }, { type: "string" }] },
+            },
+          },
+          { q: "plain" },
+          NEG,
+        ],
+        [
+          "if",
+          {
+            type: "object",
+            if: { properties: { q: { pattern: "^a" } } },
+            [THEN]: { required: ["x"] },
+            else: { required: ["y"] },
+          },
+          { q: "b", y: 1 },
+          NEG,
+        ],
+        [
+          "then",
+          {
+            type: "object",
+            if: { required: ["k"] },
+            [THEN]: { properties: { q: { pattern: "^a" } } },
+          },
+          { k: 1, q: "a" },
+          NEG,
+        ],
+        [
+          "else",
+          {
+            type: "object",
+            if: { required: ["k"] },
+            else: { properties: { q: { format: "email" } } },
+          },
+          { q: "x" },
+          NEG,
+        ],
+        [
+          "unevaluatedProperties",
+          {
+            type: "object",
+            patternProperties: { "^x_": { type: "string" } },
+            unevaluatedProperties: false,
+          },
+          { x_a: "s" },
+          UNEV,
+        ],
+        [
+          "unevaluatedItems",
+          {
+            type: "array",
+            prefixItems: [{ type: "string", pattern: "^a" }],
+            unevaluatedItems: false,
+          },
+          ["a"],
+          UNEV,
+        ],
+      ];
+      for (const [name, schema, input, reason] of cases) {
+        it(name, () => {
+          const spec = pluginSpec(`neg_${name}`, schema);
+          const w = warns();
+          const opts = { untrusted: true, log: w.log };
+          // 即便参数明显不合 schema 的其余约束也不拦（整个 schema 不校验）
+          expect(validateInput(`app__neg_${name}`, spec, input, opts)).toBeNull();
+          expect(validateInput(`app__neg_${name}`, spec, 42, opts)).toBeNull();
+          expect(w.lines).toEqual([
+            {
+              msg: "tool input schema not validated",
+              meta: { toolKey: `app__neg_${name}`, reason },
+            },
+          ]);
+        });
+      }
+
+      it("否定位置没有可剥的约束 → 照常校验；anyOf 里剥离属于正向位置", () => {
+        const spec = pluginSpec("pos", {
+          type: "object",
+          properties: {
+            a: { not: { type: "number" } },
+            b: { anyOf: [{ type: "string", pattern: "^a" }, { type: "boolean" }] },
+          },
+        });
+        const w = warns();
+        const opts = { untrusted: true, log: w.log };
+        expect(validateInput("app__pos", spec, { a: "s", b: "zzz" }, opts)).toBeNull();
+        expect(validateInput("app__pos", spec, { a: 1 }, opts)).toContain("/a must NOT be valid");
+        expect(w.lines).toEqual([]);
+      });
     });
 
     it("schema 超过 64 KB 或嵌套超过 32 层 → 跳过校验并记一次 warn（只含 toolKey 与原因）", () => {
@@ -652,6 +763,16 @@ describe("ToolPipeline.runStep", () => {
     unavailable = [{ ref: "docs__write", reason: "Tool is disabled" }];
     const evs = await runCalls([{ id: "c1", name: "docs__write", input: {} }]);
     expect(resultsOf(evs)[0]?.content).toBe('Tool "docs__write" is unavailable: Tool is disabled.');
+  });
+
+  it("tools: all 的应用里待复核 / 停用的工具（hidden）：被调用时给事实原因而不是「未知」", async () => {
+    hidden = [{ ref: "docs__drop", reason: "Tool is pending review" }];
+    const evs = await runCalls([{ id: "c1", name: "docs__drop", input: {} }]);
+    expect(resultsOf(evs)[0]).toMatchObject({
+      toolKey: "docs__drop",
+      isError: true,
+      content: 'Tool "docs__drop" is unavailable: Tool is pending review.',
+    });
   });
 
   it("$output 引用在校验前替换为存档全文；引用不存在 → 错误结果、不执行", async () => {
@@ -1230,6 +1351,14 @@ describe("tool_search 模式", () => {
     });
     expect(r1?.content).toContain("probe__echo");
     expect(r2).toMatchObject({ isError: true, content: notLoadedText("probe__echo") });
+  });
+
+  it("未知工具：只列内置工具与本步请求里发送的工具，再提示用 tool_search 加载其他工具", async () => {
+    await modelCall(["tool_search", "probe__echo"], true);
+    const evs = await runCalls([{ id: "c1", name: "nope", input: {} }]);
+    expect(resultsOf(evs)[0]?.content).toBe(
+      'Unknown tool "nope". Available tools: probe__echo, tool_search. Use tool_search to load other tools.',
+    );
   });
 
   it("没有匹配时不写 loadedTools", async () => {

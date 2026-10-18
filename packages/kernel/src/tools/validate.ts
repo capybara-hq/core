@@ -27,28 +27,48 @@ const SCHEMA_MAPS = new Set(["properties", "$defs", "definitions", "dependentSch
 /** 值是数据而不是 schema 的关键字：原样保留。 */
 const LITERALS = new Set(["enum", "const", "default", "examples", "required"]);
 
+/** 子 schema 处于否定 / 条件位置的关键字：在其中剥离约束不一定放宽，可能反而收紧（拒掉合法调用）。 */
+const NON_POSITIVE = new Set(["not", "oneOf", "if", "then", "else"]);
+
+/** 剥离过程的记录：是否剥过、是否在否定 / 条件位置剥过、schema 是否用了 unevaluated*。 */
+interface SanitizeState {
+  stripped: boolean;
+  strippedNonPositive: boolean;
+  unevaluated: boolean;
+}
+
 /**
  * 不受信任的 schema 去掉 Ajv 中有风险或不可控的部分：
  * - `pattern`（正则可能灾难性回溯，拖住事件循环）、`format`（未知格式 / 昂贵校验）直接去掉；
  * - `patternProperties` 去掉，并按 additionalProperties 语义放宽：原本 `additionalProperties: false` 时
  *   额外属性须符合其中某个模式的 schema，原本是 schema 时与之取 anyOf，原本缺省 / true 时不变。
- * 去掉的约束只会让校验更宽松（交给工具自己校验），不会误拦合法调用。
+ * 只在正向位置去掉约束才是放宽；在 `not` / `oneOf` / `if` / `then` / `else` 之下，或 schema 用了
+ * `unevaluatedProperties` / `unevaluatedItems`（剥 patternProperties 会改变「已评估」集合）时，
+ * 剥离可能收紧，调用方据 {@link SanitizeState} 放弃校验。
  */
-function sanitize(node: unknown): unknown {
-  if (Array.isArray(node)) return node.map(sanitize);
+function sanitize(node: unknown, state: SanitizeState, nonPositive = false): unknown {
+  if (Array.isArray(node)) return node.map((x) => sanitize(x, state, nonPositive));
   if (node === null || typeof node !== "object") return node;
   const src = node as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(src)) {
-    if (k === "pattern" || k === "format" || k === "patternProperties") continue;
+    if (k === "pattern" || k === "format" || k === "patternProperties") {
+      state.stripped = true;
+      if (nonPositive) state.strippedNonPositive = true;
+      continue;
+    }
+    if (k === "unevaluatedProperties" || k === "unevaluatedItems") state.unevaluated = true;
+    const childNeg = nonPositive || NON_POSITIVE.has(k);
     if (LITERALS.has(k)) out[k] = v;
     else if (SCHEMA_MAPS.has(k) && v !== null && typeof v === "object" && !Array.isArray(v)) {
-      out[k] = Object.fromEntries(Object.entries(v).map(([name, sub]) => [name, sanitize(sub)]));
-    } else out[k] = sanitize(v);
+      out[k] = Object.fromEntries(
+        Object.entries(v).map(([name, sub]) => [name, sanitize(sub, state, childNeg)]),
+      );
+    } else out[k] = sanitize(v, state, childNeg);
   }
   const pp = src.patternProperties;
   if (pp !== null && typeof pp === "object" && !Array.isArray(pp)) {
-    const subs = Object.values(pp).map(sanitize);
+    const subs = Object.values(pp).map((x) => sanitize(x, state, nonPositive));
     const ap = src.additionalProperties;
     if (subs.length > 0 && ap === false) out.additionalProperties = { anyOf: subs };
     else if (subs.length > 0 && ap !== undefined && ap !== true) {
@@ -56,6 +76,23 @@ function sanitize(node: unknown): unknown {
     }
   }
   return out;
+}
+
+/** 剥离后的 schema；剥离不能保证只放宽时返回跳过原因。 */
+function sanitizeOrSkip(
+  schema: Record<string, unknown>,
+): { schema: Record<string, unknown> } | { skip: string } {
+  const state: SanitizeState = { stripped: false, strippedNonPositive: false, unevaluated: false };
+  const out = sanitize(schema, state) as Record<string, unknown>;
+  if (state.strippedNonPositive) {
+    return { skip: "constraints stripped under not/oneOf/if/then/else" };
+  }
+  if (state.stripped && state.unevaluated) {
+    return {
+      skip: "constraints stripped in a schema using unevaluatedProperties/unevaluatedItems",
+    };
+  }
+  return { schema: out };
 }
 
 /** 嵌套层数（对象 / 数组），超过 `limit` 即停止计算并返回 `limit + 1`。 */
@@ -94,7 +131,8 @@ function remember(key: string, fn: ValidateFunction | null): ValidateFunction | 
 
 /**
  * 编译工具的 inputSchema；去掉 `$schema`（MCP 服务常声明 draft-07，Ajv 2020 实例不认它的元 schema）。
- * 不受信任的先查大小 / 层数（超限 → null，记一次 warn），再 {@link sanitize}。
+ * 不受信任的先查大小 / 层数（超限 → null，记一次 warn），再 {@link sanitize}
+ * （剥离不能保证只放宽 → null，记一次 warn）。
  * 定义本身无法编译 → null（不拦截调用，交给工具自己校验），按缓存键只 warn 一次（缓存命中不再记）。
  */
 function compile(
@@ -113,7 +151,15 @@ function compile(
       return remember(raw, null);
     }
   }
-  const target = untrusted ? (sanitize(rest) as Record<string, unknown>) : rest;
+  let target = rest;
+  if (untrusted) {
+    const r = sanitizeOrSkip(rest);
+    if ("skip" in r) {
+      log?.warn("tool input schema not validated", { toolKey, reason: r.skip });
+      return remember(raw, null);
+    }
+    target = r.schema;
+  }
   let fn: ValidateFunction | null;
   try {
     fn = newAjv().compile(target);

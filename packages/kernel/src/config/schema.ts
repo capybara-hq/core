@@ -115,7 +115,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Externally reachable base URL of this deployment (used for OAuth callbacks and connection links), e.g. https://capybara.example.com",
+              "Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth apps: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com",
           }),
         ),
     })

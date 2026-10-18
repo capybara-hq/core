@@ -129,6 +129,11 @@ export interface AgentTools {
   tools: ResolvedTool[];
   unavailable: UnavailableTool[];
   /**
+   * `tools: "all"` 引用的应用里未启用的工具（待复核 / 停用 / 已消失）及事实原因。不进 `unavailable`
+   * （那会让每步都写「工具不可用」提醒），只在模型点名调用时用来给事实说明（spec 6.3）。缺省视为空。
+   */
+  hidden?: UnavailableTool[];
+  /**
    * 本步是否启用 `tool_search`（spec 5.5）：启用时 `tools` 末尾含 `tool_search`，构建请求时只放内置工具
    * 与已加载工具的完整定义，其余进目录。缺省视为未启用。
    */
@@ -279,7 +284,7 @@ export class ToolRegistry {
    * 启用时把内置 `tool_search` 追加到末尾。定义里显式引用的 `tool_search` 忽略（由这里按设置管理）。
    */
   async forAgent(orgId: string, def: { tools: readonly AgentToolRef[] }): Promise<AgentTools> {
-    const { tools, unavailable } = await this.resolve(orgId, def);
+    const { tools, unavailable, hidden } = await this.resolve(orgId, def);
     const toolSearch = await this.searchActive(orgId, tools);
     if (toolSearch) {
       const b = this.deps.builtins.find((x) => x.spec.name === TOOL_SEARCH) as BuiltinTool;
@@ -291,7 +296,7 @@ export class ToolRegistry {
         defaultPolicy: b.defaultPolicy,
       });
     }
-    return { tools, unavailable, toolSearch };
+    return { tools, unavailable, hidden, toolSearch };
   }
 
   /** 是否启用 `tool_search`（见 {@link forAgent}）；先比阈值，超过才读组织设置。 */
@@ -308,9 +313,10 @@ export class ToolRegistry {
   private async resolve(
     orgId: string,
     def: { tools: readonly AgentToolRef[] },
-  ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[] }> {
+  ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
     const tools: ResolvedTool[] = [];
     const unavailable: UnavailableTool[] = [];
+    const hidden: UnavailableTool[] = [];
     const seen = new Map<string, string>();
     const add = (t: ResolvedTool) => {
       const id = sourceId(t.source);
@@ -398,24 +404,26 @@ export class ToolRegistry {
         }
         const wanted =
           ref.tools === "all"
-            ? app.tools.filter((t) => t.status === "enabled")
+            ? app.tools
             : ref.tools.map(
                 (name) =>
                   app.tools.find((t) => t.name === name) ?? { name, missing: true as const },
               );
+        // 「all」里未启用的工具不算 agent 点名要的，不进 unavailable（不提醒），只记进 hidden 备查
+        const notEnabled = ref.tools === "all" ? hidden : unavailable;
         for (const t of wanted) {
           const key = toolKey(app.slug, t.name);
           // 远端已不再提供（漂移检测置停用并标记，见 drift.ts）：与「没有这一行」同一个事实
           if ("missing" in t || t.gone) {
-            unavailable.push({ ref: key, reason: `Tool no longer exists in app ${app.slug}` });
+            notEnabled.push({ ref: key, reason: `Tool no longer exists in app ${app.slug}` });
             continue;
           }
           if (t.status === "disabled") {
-            unavailable.push({ ref: key, reason: "Tool is disabled" });
+            notEnabled.push({ ref: key, reason: "Tool is disabled" });
             continue;
           }
           if (t.status === "pending_review") {
-            unavailable.push({ ref: key, reason: "Tool is pending review" });
+            notEnabled.push({ ref: key, reason: "Tool is pending review" });
             continue;
           }
           const issue = toolKeyIssue(key);
@@ -438,7 +446,7 @@ export class ToolRegistry {
         }
       }
     }
-    return { tools, unavailable };
+    return { tools, unavailable, hidden };
   }
 
   private async enabledPlugins(orgId: string): Promise<Set<string>> {

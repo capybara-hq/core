@@ -646,7 +646,7 @@ describe("应用 HTTP", () => {
     expect(await countRows("apps")).toBe(0);
   });
 
-  it("端点的固定头值与 URL query 只对 apps.manage 可见：其他人只看到不带 query 的 URL 与头名", async () => {
+  it("端点的固定头值与 URL query 只对 apps.manage 可见：其他人只看到 URL 的源（路径打码）与头名", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const { app } = await createApp(req, orgId, {
@@ -677,12 +677,12 @@ describe("应用 HTTP", () => {
     }
     expect((one.json() as { app: { endpoint: unknown } }).app.endpoint).toEqual({
       server: "open",
-      url: "https://h.example/mcp",
+      url: "https://h.example/…",
       headerNames: ["X-Tenant"],
     });
     expect((list.json() as { apps: { endpoint: unknown }[] }).apps[0]?.endpoint).toEqual({
       server: "open",
-      url: "https://h.example/mcp",
+      url: "https://h.example/…",
       headerNames: ["X-Tenant"],
     });
   });

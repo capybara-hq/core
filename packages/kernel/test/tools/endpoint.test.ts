@@ -19,17 +19,21 @@ describe("应用端点的通用处理", () => {
     expect(endpointCredentialIssues({ specUrl: "https://api.example.com/o.json?v=2" })).toEqual([]);
   });
 
-  it("给非管理员看的端点：URL 字段去掉 query 与用户信息，其余字段原样", () => {
+  it("给非管理员看的端点：URL 字段只留源（路径打码为「/…」，去掉 query 与用户信息），其余字段原样", () => {
     expect(
       publicEndpoint({
-        specUrl: "https://api.example.com/openapi.json?tenant=1#x",
+        specUrl: "https://u:p@api.example.com/tenants/acme/openapi.json?tenant=1#x",
         baseUrl: "https://api.example.com/v1?tenant=1",
+        url: "https://mcp.example.com/",
+        tokenUrl: "https://auth.example.com",
         operations: ["listPets"],
         headers: { "X-Tenant": "1" },
       }),
     ).toEqual({
-      specUrl: "https://api.example.com/openapi.json",
-      baseUrl: "https://api.example.com/v1",
+      specUrl: "https://api.example.com/…",
+      baseUrl: "https://api.example.com/…",
+      url: "https://mcp.example.com",
+      tokenUrl: "https://auth.example.com",
       operations: ["listPets"],
       headerNames: ["X-Tenant"],
     });

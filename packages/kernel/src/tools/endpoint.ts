@@ -75,8 +75,9 @@ export function endpointCredentialIssues(endpoint: unknown): { path: string; mes
 }
 
 /**
- * 给没有 `apps.manage` 的人看的端点：URL 字段（`url` / `*Url`）去掉 query、fragment 与用户信息，`headers` 只留头名（`headerNames`）。
- * 固定头值与 query 可能含租户号等管理员不想公开的信息。
+ * 给没有 `apps.manage` 的人看的端点：URL 字段（`url` / `*Url`）只留源（scheme + host + port），有路径时打码为
+ * `<origin>/…`（去掉路径、query、fragment 与用户信息）；`headers` 只留头名（`headerNames`）。
+ * 路径、固定头值与 query 可能含租户号等管理员不想公开的信息。
  */
 export function publicEndpoint(endpoint: unknown): unknown {
   if (!isObj(endpoint)) return endpoint;
@@ -89,7 +90,7 @@ export function publicEndpoint(endpoint: unknown): unknown {
     }
     try {
       const u = new URL(value);
-      out[field] = `${u.origin}${u.pathname}`;
+      out[field] = u.pathname === "/" || u.pathname === "" ? u.origin : `${u.origin}/…`;
     } catch {
       // 不是合法 URL：不展示
     }

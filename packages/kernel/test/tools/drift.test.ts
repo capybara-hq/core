@@ -413,6 +413,99 @@ describe("复核", () => {
     expect(tools.map((t) => t.key).sort()).toEqual(["docs__delete_doc", "docs__list_docs"]);
   });
 
+  it("变化后的定义不合规：不采用（存 pending 并停用），approve 被拒；修好后与上次复核的定义对比", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const app = await createApp(req, orgId);
+    const reviewedHash = toolsByName(app).search?.specHash;
+    const tools = docsTools();
+    (tools[0] as ServerTool).inputSchema = [] as never;
+    const r1 = await k.tools.drift.check(orgId, app.id, "schedule");
+    expect(r1).toMatchObject({ changes: { changed: ["search"] } });
+    let t = toolsByName(await getApp(req, orgId, app.id)).search;
+    expect(t).toMatchObject({
+      status: "disabled",
+      specHash: reviewedHash,
+      description: "Search documents.",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+      issue: "Tool inputSchema must be an object",
+    });
+    expect(t?.pending).toMatchObject({ inputSchema: [] });
+    const bad = await review(req, orgId, app.id, "search", "approve");
+    expect(bad.statusCode).toBe(400);
+
+    // 修好的定义到来：对比的「当前」仍是上次复核通过的定义，而不是那份不合规的
+    (tools[0] as ServerTool).inputSchema = {
+      type: "object",
+      properties: { q: { type: "string" }, n: { type: "integer" } },
+    };
+    (tools[0] as ServerTool).description = "Search documents, now paged.";
+    const r2 = await k.tools.drift.check(orgId, app.id, "schedule");
+    expect(r2).toMatchObject({ changes: { changed: ["search"] } });
+    t = toolsByName(await getApp(req, orgId, app.id)).search;
+    expect(t).toMatchObject({
+      status: "pending_review",
+      specHash: reviewedHash,
+      description: "Search documents.",
+      pending: { description: "Search documents, now paged." },
+    });
+
+    // 不合规的待复核定义可以拒绝：清掉，保留上次复核的定义
+    (tools[0] as ServerTool).inputSchema = [] as never;
+    await k.tools.drift.check(orgId, app.id, "schedule");
+    const rej = await review(req, orgId, app.id, "search", "reject");
+    expect(rej.statusCode, rej.body).toBe(200);
+    expect(toolsByName((rej.json() as { app: AppJson }).app).search).toMatchObject({
+      status: "disabled",
+      specHash: reviewedHash,
+      pending: null,
+    });
+  });
+
+  it("从未复核过的工具：拒绝不记 reviewed_at；PATCH 不能启用；定义再变直接替换（无 pending）；之后仍可批准", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const app = await createApp(req, orgId);
+    driftServer();
+    await k.tools.drift.check(orgId, app.id, "schedule");
+
+    const rej = await review(req, orgId, app.id, "list_docs", "reject");
+    expect(rej.statusCode, rej.body).toBe(200);
+    expect(toolsByName((rej.json() as { app: AppJson }).app).list_docs).toMatchObject({
+      status: "disabled",
+      reviewedAt: null,
+    });
+    const enable = await req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      payload: { tools: { list_docs: { status: "enabled" } } },
+    });
+    expect(enable.statusCode).toBe(400);
+    expect(enable.body).toContain("never been reviewed");
+    expect(toolsByName(await getApp(req, orgId, app.id)).list_docs?.status).toBe("disabled");
+
+    // 新工具的定义又变了：直接替换当前定义，仍待复核，不产生 pending（没有复核过的旧定义可比）
+    const list = docsTools().find((x) => x.name === "list_docs") as ServerTool;
+    list.description = "List docs (v2).";
+    const r = await k.tools.drift.check(orgId, app.id, "schedule");
+    expect(r).toMatchObject({ changes: { changed: ["list_docs"] } });
+    const t = toolsByName(await getApp(req, orgId, app.id)).list_docs;
+    expect(t).toMatchObject({
+      status: "pending_review",
+      description: "List docs (v2).",
+      pending: null,
+      reviewedAt: null,
+    });
+
+    // 再拒绝一次后，复核接口仍可批准（从未复核过的工具始终可复核）
+    await review(req, orgId, app.id, "list_docs", "reject");
+    const ok = await review(req, orgId, app.id, "list_docs", "approve");
+    expect(ok.statusCode, ok.body).toBe(200);
+    const approved = toolsByName((ok.json() as { app: AppJson }).app).list_docs;
+    expect(approved).toMatchObject({ status: "enabled", description: "List docs (v2)." });
+    expect(approved?.reviewedAt).not.toBeNull();
+  });
+
   it("不在待复核状态 → 409 app.tool_not_pending；不存在 → 404；member → 403；动作不合法 → 400", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);

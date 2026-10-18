@@ -784,7 +784,15 @@ export class AppsService {
       const app = await this.row(t, orgId, appId, true);
       const current = await t
         .selectFrom("app_tools")
-        .select(["name", "spec", "status", "default_policy", "missing_since", "pending_spec_hash"])
+        .select([
+          "name",
+          "spec",
+          "status",
+          "default_policy",
+          "missing_since",
+          "pending_spec_hash",
+          "reviewed_at",
+        ])
         .where("app_id", "=", appId)
         .forUpdate()
         .execute();
@@ -809,6 +817,14 @@ export class AppsService {
           }
           if (c.missing_since !== null) {
             problems.push({ path, message: "The app no longer provides this tool" });
+            continue;
+          }
+          // 从未复核过的工具（如被拒绝的新工具）：启用等于跳过复核，只能经复核接口批准
+          if (c.reviewed_at === null) {
+            problems.push({
+              path,
+              message: `Tool has never been reviewed; approve it with POST /apps/${appId}/tools/${name}/review`,
+            });
             continue;
           }
           const issue = toolIssue(app.slug, c.spec as ToolSpec);
@@ -857,8 +873,6 @@ export class AppsService {
           .updateTable("app_tools")
           .set({
             ...(change.status !== undefined && { status: change.status }),
-            // 启用即视为已复核（待复核的工具在上面已拒绝，只能走复核接口）
-            ...(change.status === "enabled" && { reviewed_at: sql`now()` }),
             ...(change.defaultPolicy !== undefined && {
               default_policy: change.defaultPolicy,
               policy_source: "admin" as const,
@@ -964,8 +978,8 @@ export class AppsService {
   /**
    * 复核一个待复核的工具（`apps.manage`，spec 7.3）。`approve`：采用待复核的新定义（若有）并启用，
    * `reviewed_at` 记为现在；默认策略按新定义的注解重新推导，除非管理员设过（`policy_source = admin`）且来源没变。
-   * `reject`：停用，丢弃待复核的新定义、保留旧定义。工具不存在 → 404 `app.tool_not_found`；
-   * 不在待复核状态 → 409 `app.tool_not_pending`；新定义不合规（如 key 不合法）不能通过 → `validation_failed`。
+   * `reject`：停用，丢弃待复核的新定义、保留旧定义；从未复核过的工具被拒后 `reviewed_at` 仍为空（仍可再批准）。
+   * 工具不存在 → 404 `app.tool_not_found`；不可复核（已复核且无待复核定义，或已消失）→ 409 `app.tool_not_pending`；新定义不合规（如 key 不合法）不能通过 → `validation_failed`。
    * 采用新定义即换了指纹：旧的「以后都允许」/「本会话都允许」授权按指纹比对自然失效（D8）。审计 `app.tool_reviewed`。
    */
   async reviewTool(
@@ -989,13 +1003,20 @@ export class AppsService {
           "pending_spec",
           "pending_spec_hash",
           "pending_source",
+          "reviewed_at",
+          "missing_since",
         ])
         .where("app_id", "=", appId)
         .where("name", "=", name)
         .forUpdate()
         .executeTakeFirst();
       if (!tool) throw new ApiError("app.tool_not_found", "Tool not found in this app");
-      if (tool.status !== "pending_review" && tool.pending_spec_hash === null) {
+      // 可复核：待复核、有待复核的新定义，或从未复核过（如被拒绝的新工具，仍可再批准）；已消失的不可复核
+      const reviewable =
+        tool.status === "pending_review" ||
+        tool.pending_spec_hash !== null ||
+        tool.reviewed_at === null;
+      if (!reviewable || tool.missing_since !== null) {
         throw new ApiError("app.tool_not_pending", "Tool is not pending review");
       }
       const next = (tool.pending_spec ?? tool.spec) as ToolSpec;
@@ -1025,7 +1046,10 @@ export class AppsService {
           pending_spec: null,
           pending_spec_hash: null,
           pending_source: null,
-          reviewed_at: sql<Date>`now()`,
+          // 拒绝从未复核过的工具不算「复核通过过」：reviewed_at 保持为空（之后不能经 PATCH 启用）
+          ...((action === "approve" || tool.reviewed_at !== null) && {
+            reviewed_at: sql<Date>`now()`,
+          }),
         })
         .where("app_id", "=", appId)
         .where("name", "=", name)

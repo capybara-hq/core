@@ -381,9 +381,17 @@ export class ToolPipeline {
 
     const tool = resolved.tools.find((t) => t.key === call.name);
     if (!tool) {
-      const why = resolved.unavailable.find((u) => u.ref === call.name);
+      const why =
+        resolved.unavailable.find((u) => u.ref === call.name) ??
+        resolved.hidden?.find((u) => u.ref === call.name);
       if (why) return fail(unavailableText(call.name, why.reason));
-      const keys = resolved.tools.map((t) => t.key).sort();
+      let keys = resolved.tools.map((t) => t.key);
+      // tool_search 模式：目录可能很大，只列内置工具与发出本次调用的请求里带了定义的工具
+      if (resolved.toolSearch === true) {
+        const sent = await this.sentTools(ctx);
+        if (sent !== null) keys = keys.filter((k) => isAlwaysLoaded(k) || sent.has(k));
+      }
+      keys.sort();
       return fail(unknownToolText(call.name, keys, keys.includes("tool_search")));
     }
     // tool_search 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →

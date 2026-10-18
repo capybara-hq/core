@@ -56,7 +56,7 @@ interface ConnectorSession {
 - **401 → `onUnauthorized()` 一次，用新的 `auth()` 重试一次**；仍 401 抛 `ToolError("Authentication failed for this app; ask the user to reconnect it.")`。不要循环；其他错误也不要在插件里重试，重试与熔断由内核管。
 - **不跟随重定向**（`fetch(…, { redirect: "manual" })`，3xx 一律报错）：跟随会把请求体与注入的凭据头带到别的源。取远端描述文档（OpenAPI 的 `specUrl`）也不带凭据、也不跟随重定向。
 - 非 https（本机 loopback 例外）的任何出站地址一律拒绝，包括文档里声明的 server 地址。
-- 远端内容不受信任：远端描述里的 `inputSchema` 由内核在校验前清洗（去掉 `pattern` / `patternProperties` / `format`，超过 64 KB 或嵌套超过 32 层的不校验，每个 schema 独立的 Ajv 实例）；连接器自己也限制响应体大小与读取时长（openapi：文档 2 MB / 30 秒，响应正文 5 MB）。
+- 远端内容不受信任：远端描述里的 `inputSchema` 由内核在校验前清洗（去掉 `pattern` / `patternProperties` / `format`；这些约束出现在 `not` / `oneOf` / `if` / `then` / `else` 之下或 schema 用了 `unevaluatedProperties` / `unevaluatedItems` 时，去掉不一定是放宽，整份不校验；超过 64 KB 或嵌套超过 32 层的不校验，每个 schema 独立的 Ajv 实例）；连接器自己也限制响应体大小与读取时长（openapi：文档 2 MB / 30 秒，响应正文 5 MB）。
 
 ## `ToolError`、`kind` 与熔断
 
@@ -82,6 +82,11 @@ interface ConnectorSession {
 ## `onToolsChanged`
 
 远端报告工具清单变了（MCP `notifications/tools/list_changed`）→ 调用 `args.onToolsChanged?.()`：不等待、出错只记 warn、不影响本次调用，可能多次调用。内核据此投递一次该应用的漂移检查（维护队列，jobId `drift-<appId>-<分钟桶>` 去重）。连接器不要自己重新拉清单。
+
+**已知限制（漂移检查与个人凭据）**：
+
+- 个人凭据型应用（静态个人凭据或 `oauth_code`）的后台漂移检查没有发起人，内核依次尝试最近写入凭据的至多 3 位现任成员的凭据（Ruling A19），所以每次检查用的凭据可能不同，在最近活跃的成员之间轮换。
+- 因此，按用户返回不同工具集合的服务（工具清单取决于是谁登录）会让工具在「已消失」与「待复核」之间来回翻转：这次用 A 的凭据看不到某工具 → 记为消失并停用；下次用 B 的凭据又看到 → 按新增进入待复核。这类服务建议改用组织凭据，或让服务端对所有成员返回同一份工具清单。
 
 ## `onElicit`：远端在调用途中向用户要输入
 

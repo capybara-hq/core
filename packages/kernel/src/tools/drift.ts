@@ -23,7 +23,9 @@ import { recordToolSpecs } from "./specs.js";
  *
  * 与上次快照比对：新增 → 插入 `pending_review`；定义（spec_hash 或来源）变化 → `pending_review`，新定义存
  * `pending_spec`，旧定义留在 `spec` 供对比，复核通过才采用；消失 → `disabled` 并记 `missing_since`（行保留，
- * 又出现时按新增处理）。定义不合规（key 不合法等）的工具只能停用：新增 / 变化时直接采用新定义并停用。
+ * 又出现时按新增处理）。定义不合规（key 不合法等）的工具只能停用：新增时直接停用；复核过的工具变成不合规
+ * 定义时新定义同样只进 `pending_spec`（停用，approve 被拒），`spec` 始终是上次复核通过的定义。
+ * 从未复核过的工具（`reviewed_at` 为空）没有可比的旧定义：定义再变时直接替换 `spec`（仍待复核），不产生 pending。
  * 应用从未拍过快照（`tools_synced_at` 为空且没有工具行，即 OAuth 授权码应用安装时不 listTools，A16）时，
  * 首个快照按安装处理（直接启用）。
  *
@@ -138,7 +140,10 @@ export function snapshot(
     const spec: ToolSpec = {
       name,
       description: typeof s.description === "string" ? s.description : "",
-      inputSchema: isObj(s.inputSchema) ? s.inputSchema : {},
+      // 不是对象的 inputSchema 原样保留（缺省记 null）：存库后 toolIssue 仍能认出不合规，复核时拒绝批准
+      inputSchema: isObj(s.inputSchema)
+        ? s.inputSchema
+        : ((s.inputSchema ?? null) as unknown as Record<string, unknown>),
       ...(isObj(s.annotations) && { annotations: s.annotations as ToolAnnotations }),
       // 连接器的不透明数据（Ruling A21）：进快照与指纹，调用时交回连接器；不发给模型
       ...(isObj(s.connectorData) && { connectorData: s.connectorData }),
@@ -296,6 +301,7 @@ export class ToolDrift {
         "pending_source",
         "missing_since",
         "policy_source",
+        "reviewed_at",
       ])
       .where("app_id", "=", app.id)
       .forUpdate()
@@ -335,8 +341,9 @@ export class ToolDrift {
       const c = before.get(r.name);
       if (!c) continue;
       const sameAsReviewed = r.specHash === c.spec_hash && r.source === c.source;
-      // 新定义直接成为当前定义（工具随之停用，不经复核）：管理员设的默认策略只在同一来源时保留
-      const adopt = {
+      // 从未复核过的工具（新增后待复核 / 被拒的新工具 / 一开始就不合规的）：没有复核过的定义可比，
+      // 新定义直接替换当前定义（仍待复核或停用），不产生 pending；管理员设的默认策略只在同一来源时保留
+      const replace = {
         spec: JSON.stringify(r.spec),
         spec_hash: r.specHash,
         source: r.source,
@@ -348,6 +355,8 @@ export class ToolDrift {
           policy_source: "derived" as const,
         }),
       };
+      // 复核过的工具：新定义（含不合规的）只进 pending，`spec` 始终是上次复核通过的定义（复核对比的基准）；
+      // 不合规的新定义只能停用（approve 会因不合规被拒，reject 清掉）
       const pending = sameAsReviewed
         ? { pending_spec: null, pending_spec_hash: null, pending_source: null }
         : {
@@ -355,18 +364,18 @@ export class ToolDrift {
             pending_spec_hash: r.specHash,
             pending_source: r.source,
           };
+      const next = c.reviewed_at === null ? replace : pending;
+      const status = r.issue ? "disabled" : "pending_review";
       let set: Record<string, unknown>;
       if (c.missing_since !== null) {
         // 消失后又出现：按新增处理（待复核）
-        set = r.issue
-          ? { ...adopt, status: "disabled", missing_since: null }
-          : { ...pending, status: "pending_review", missing_since: null };
+        set = { ...next, status, missing_since: null };
         added.push(r.name);
       } else {
         const latestHash = c.pending_spec_hash ?? c.spec_hash;
         const latestSource = c.pending_source ?? c.source;
         if (r.specHash === latestHash && r.source === latestSource) continue;
-        set = r.issue ? { ...adopt, status: "disabled" } : { ...pending, status: "pending_review" };
+        set = { ...next, status };
         changed.push(r.name);
       }
       await t

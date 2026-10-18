@@ -185,7 +185,7 @@ curl -s -X POST localhost:8080/api/v1/orgs/$ORG/apps/preview -b cookies.txt \
 | `oauth_code`（个人） | 授权码 + PKCE：每位成员点「连接」跳转授权服务器登录；`discovery: "mcp"` 自动发现授权服务器，`client: "dcr"` 安装时自动注册客户端 | 授权服务器不支持 DCR 时改用 `client: "manual"`，安装时给 `credential: {clientId, clientSecret?}`；也可 `discovery: "manual"` 并给 `authorizationUrl` / `tokenUrl` |
 | `oauth_client`（组织） | 客户端凭据流：组织共用一个 OAuth 客户端换令牌，安装时先验证 | `credential: {clientId, clientSecret}`，轮换用 `PUT .../credentials/org` |
 
-- **OAuth 需要 `http.publicUrl`**（`CAPYBARA_HTTP__PUBLIC_URL`，内核的外部可达地址，如 `https://capybara.example.com`），回调地址是 `<publicUrl>/api/v1/oauth/callback`，须登记到授权服务器。没配时安装 OAuth 应用会被拒绝。令牌在过期前由内核自动刷新，刷新被拒则凭据作废，成员会在对话里看到「需要连接」卡片。
+- **OAuth 需要 `http.publicUrl`**（`CAPYBARA_HTTP__PUBLIC_URL`）：填**网页（`apps/web`）的外部可达源**，如 `https://capybara.example.com`，而不是内核自己的地址。回调地址是 `<publicUrl>/api/v1/oauth/callback`，须登记到授权服务器；它经网页的 `/api` 代理转给内核——发起连接时的绑定 cookie 也是经这个代理设在网页源上的，回调完成后再跳回 `<publicUrl>` 下的网页页面，所以三者必须同源。没配时安装 OAuth 应用会被拒绝。令牌在过期前由内核自动刷新，刷新被拒则凭据作废，成员会在对话里看到「需要连接」卡片。
 - 凭据不进事件日志、模型上下文与审计；工具结果与错误里出现的凭据值会被内核打码。端点的固定头与 URL query 里不能放凭据。
 
 **审批与收件箱**：策略（`allow` / `ask` / `deny`）默认按工具注解推导（只读 → `allow`，其余 → `ask`），管理员可逐工具改，agent 还可以把某个工具收紧。`ask` 的调用在对话里出审批卡片，也汇总在网页的「收件箱」（`/inbox`）；批准时可选「仅这次 / 本会话 / 以后都允许」，「以后都允许」的授权在「设置 → 授权」里查看与撤销，工具定义一变即失效。审批超过 `tools.approvalTimeoutHours`（默认 24）按拒绝处理；agent 自己不能审批。远端工具在调用途中向用户要输入（MCP elicitation）时，对话里出输入卡片。API：`/api/v1/orgs/:orgId/approvals`、`/questions`、`/me/tool-grants`。

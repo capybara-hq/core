@@ -140,10 +140,11 @@ async (input, call) => {
 应用工具（连接器）的定义来自远端，可能被改（spec 7.3 防 rug-pull / 工具投毒）。内核（`packages/kernel/src/tools/drift.ts`）每 `tools.driftIntervalHours` 小时、收到连接器的 `onToolsChanged`、管理员 `POST .../apps/:appId/refresh` 时重新 `listTools` 并与快照比对：
 
 - 新增的工具 → `pending_review`；
-- **任何 spec 变化**（描述、`inputSchema`、注解、`connectorData`，即 `spec_hash` 或来源变了；`connectorData` 计入哈希）→ `pending_review`，新定义存 `pending_spec`、旧定义保留供对比；管理员停用过的工具变了也一样；
+- **任何 spec 变化**（描述、`inputSchema`、注解、`connectorData`，即 `spec_hash` 或来源变了；`connectorData` 计入哈希）→ `pending_review`，新定义存 `pending_spec`、旧定义保留供对比；管理员停用过的工具变了也一样；变成不合规的定义同样只进 `pending_spec`（工具停用，approve 被拒，reject 清掉），`spec` 始终是上次复核通过的定义；
+- 从未复核过的工具（`reviewed_at` 为空：新增待复核、被拒的新工具）没有可比的旧定义，再变时直接替换 `spec`（仍待复核）；
 - 消失 → `disabled` 并标记 `missing`（又出现按新增处理）。
 
-`pending_review` / 停用的工具不进 `forAgent`（模型看到「unavailable」说明）。管理员 `POST .../apps/:appId/tools/:name/review {action: "approve" | "reject"}`：approve 采用新定义并启用，reject 停用并保留旧定义；待复核的工具不能经 PATCH 启用。授权按 `spec_hash` 比对，采用新定义后旧的「记住的授权」自然失效。
+`pending_review` / 停用的工具不进 `forAgent`：点名引用的进 `unavailable`（每步提醒模型），`tools: "all"` 引用的进 `hidden`（不提醒，模型调用时给事实原因）。管理员 `POST .../apps/:appId/tools/:name/review {action: "approve" | "reject"}`：approve 采用新定义并启用并记 `reviewed_at`，reject 停用并保留旧定义（从未复核过的工具被拒后 `reviewed_at` 仍为空，之后仍可 approve）；待复核或从未复核过的工具不能经 PATCH 启用。授权按 `spec_hash` 比对，采用新定义后旧的「记住的授权」自然失效。
 
 **默认策略与 `policy_source`**：应用工具的默认策略（`app_tools.default_policy`）由注解推导（`policySource: "derived"`），管理员改过则为 `"admin"`。approve 或刷新采用新定义时，`derived` 的按新注解重新推导（注解变严格——如 `readOnlyHint` 变成 destructive——也会跟着变成 ask，不会沿用旧的 allow）；`admin` 的保留，除非工具的来源（`source`）变了。插件 / 内置工具没有这一层：用 `defaultPolicy` 或注解（见上）。
 

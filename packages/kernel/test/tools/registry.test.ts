@@ -216,13 +216,18 @@ describe("ToolRegistry", () => {
       .where("name", "=", "read")
       .execute();
 
-    // all：只取启用的工具，停用 / 待复核的不报
+    // all：只取启用的工具；停用 / 待复核的不进 unavailable（不触发每步的不可用提醒），
+    // 而是进 hidden，模型点名调用时给事实原因（spec 6.3）
     const all = await registry.forAgent(orgId, {
       tools: [{ kind: "app", appId, tools: "all" }],
     });
     expect(all.tools.map((t) => t.key)).toEqual(["docs__read"]);
     expect(all.tools[0]?.defaultPolicy).toBe("deny");
     expect(all.unavailable).toEqual([]);
+    expect(all.hidden).toEqual([
+      { ref: "docs__drop", reason: "Tool is pending review" },
+      { ref: "docs__write", reason: "Tool is disabled" },
+    ]);
 
     // 点名：逐个报原因
     const named = await registry.forAgent(orgId, {
