@@ -30,6 +30,7 @@
     "@capybara-hq/plugin-example-counter": "workspace:*",
     "@capybara-hq/plugin-model-fake": "workspace:*",
     "@capybara-hq/plugin-openai": "workspace:*",
+    "@capybara-hq/plugin-openai-compatible": "workspace:*",
     "@changesets/cli": "^3.0.3",
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.3",

@@ -26,6 +26,9 @@ importers:
       '@capybara-hq/plugin-openai':
         specifier: workspace:*
         version: link:plugins/openai
+      '@capybara-hq/plugin-openai-compatible':
+        specifier: workspace:*
+        version: link:plugins/openai-compatible
       '@changesets/cli':
         specifier: ^3.0.3
         version: 3.0.3
@@ -282,6 +285,22 @@ importers:
         version: link:../../packages/testing
 
   plugins/openai:
+    dependencies:
+      '@capybara-hq/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      openai:
+        specifier: ^7.36.0
+        version: 7.36.0(undici@8.12.2)(zod@4.6.7)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@capybara-hq/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
+
+  plugins/openai-compatible:
     dependencies:
       '@capybara-hq/plugin-sdk':
         specifier: workspace:*
