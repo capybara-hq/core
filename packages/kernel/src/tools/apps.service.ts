@@ -32,7 +32,7 @@ import {
   type ToolIssue,
   toolIssue,
 } from "./drift.js";
-import { endpointCredentialIssues } from "./endpoint.js";
+import { endpointCredentialIssues, endpointView } from "./endpoint.js";
 import { deriveSlug, isValidSlug, SLUG_RULE, toolKey } from "./naming.js";
 import {
   checkOAuthUrl,
@@ -666,7 +666,8 @@ export class AppsService {
       slug: r.slug,
       name: r.name,
       connector: r.connector,
-      endpoint: r.endpoint,
+      // 大段文本（如 OpenAPI 文档）不回显全文，见 endpoint.ts
+      endpoint: endpointView(r.endpoint),
       auth: r.auth as unknown as AppAuth,
       status: r.status,
       createdBy: r.created_by,

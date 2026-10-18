@@ -253,6 +253,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     model: model.id,
     system,
     messages,
+    // 只取模型可见的三项：connectorData 等连接器数据不发给模型
     tools: tools.map(
       (t): ToolDefinition => ({
         name: t.key,

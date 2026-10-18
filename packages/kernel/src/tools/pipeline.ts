@@ -636,7 +636,8 @@ export class ToolPipeline {
         const session = await opened;
         return source.resources
           ? runResourceTool(session, source.name, input)
-          : session.callTool(source.name, input, signal);
+          : // 交回已复核的定义（app_tools.spec，含 connectorData）：连接器按它路由，远端变化须先经漂移复核
+            session.callTool(source.name, input, signal, { spec: tool.spec });
       });
       if (r === "aborted") return { kind: "error", message: RUN_STOPPED_DURING_TEXT };
       if (r === "timeout") {

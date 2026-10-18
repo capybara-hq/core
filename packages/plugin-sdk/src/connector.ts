@@ -10,7 +10,16 @@ export interface AuthInjection {
 /** 连接器与远端服务的一次会话。 */
 export interface ConnectorSession {
   listTools(): Promise<ToolSpec[]>;
-  callTool(name: string, input: unknown, signal: AbortSignal): Promise<ToolResult>;
+  /**
+   * `ctx.spec`：内核快照里该工具已复核的定义（`app_tools.spec`，绝不是待复核的新定义），含 listTools 时给出的
+   * `connectorData`。连接器应按它路由调用，而不是重新读取远端描述（远端变化须先经漂移复核）。旧内核不传，须判空。
+   */
+  callTool(
+    name: string,
+    input: unknown,
+    signal: AbortSignal,
+    ctx?: { spec: ToolSpec },
+  ): Promise<ToolResult>;
   listResources?(): Promise<
     { uri: string; name: string; description?: string; mimeType?: string }[]
   >;

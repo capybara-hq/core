@@ -16,6 +16,12 @@ export interface ToolSpec {
   annotations?: ToolAnnotations;
   /** 仅插件 / 内置工具可声明；缺省按注解推导。 */
   defaultPolicy?: "allow" | "ask";
+  /**
+   * 仅连接器工具：连接器自己的不透明数据（如 OpenAPI 的方法、路径模板、参数位置、服务器地址），可 JSON 序列化。
+   * 内核把它与定义一起存进快照并计入指纹（变了即漂移、需复核），调用时经 `callTool` 的 `ctx.spec` 原样交回；
+   * 绝不发给模型。
+   */
+  connectorData?: Record<string, unknown>;
 }
 
 export type ToolContent =

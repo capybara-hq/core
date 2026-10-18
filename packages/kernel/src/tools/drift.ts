@@ -105,7 +105,7 @@ export function connectFailedMessage(e: unknown, redact: (s: string) => string):
 }
 
 /**
- * 把连接器返回的工具清单整理成快照：只保留 `name / description / inputSchema / annotations`
+ * 把连接器返回的工具清单整理成快照：只保留 `name / description / inputSchema / annotations / connectorData`
  * （应用工具不得自带 `defaultPolicy`），同名的后者丢弃；key 超长 / 含非法字符或定义不合规的工具
  * 照样入库但只能停用，并给出原因——一个坏工具不挡住整个应用。名字不是非空字符串的无法入库，只报原因。
  */
@@ -140,6 +140,8 @@ export function snapshot(
       description: typeof s.description === "string" ? s.description : "",
       inputSchema: isObj(s.inputSchema) ? s.inputSchema : {},
       ...(isObj(s.annotations) && { annotations: s.annotations as ToolAnnotations }),
+      // 连接器的不透明数据（Ruling A21）：进快照与指纹，调用时交回连接器；不发给模型
+      ...(isObj(s.connectorData) && { connectorData: s.connectorData }),
     };
     let issue = toolKeyIssue(toolKey(slug, name));
     if (!issue && !isObj(s.inputSchema)) issue = "Tool inputSchema must be an object";

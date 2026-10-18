@@ -131,7 +131,14 @@ const record = (name: string, input: unknown) => {
 
 /** test 连接器：行为由 connCall 决定；记录打开 / 关闭 / 调用次数与收到的 signal。 */
 let connCall: (name: string, input: unknown, signal: AbortSignal) => Promise<ToolResult>;
-const conn = { opened: 0, closed: 0, calls: 0, signals: [] as AbortSignal[] };
+const conn = {
+  opened: 0,
+  closed: 0,
+  calls: 0,
+  signals: [] as AbortSignal[],
+  /** 每次 callTool 收到的第 4 个参数（内核传已复核的定义）。 */
+  ctxs: [] as unknown[],
+};
 /** 最近一次 open 的参数（测试里由 connCall 调用 onToolsChanged）。 */
 let lastOpen: ConnectorOpenArgs | undefined;
 /** 管线收到的「工具清单变了」通知（orgId, appId）。 */
@@ -146,9 +153,10 @@ const testConnector: Connector = {
       async listTools() {
         return [];
       },
-      async callTool(name, input, signal) {
+      async callTool(name, input, signal, ctx) {
         conn.calls++;
         conn.signals.push(signal);
+        conn.ctxs.push(ctx);
         await args.auth();
         return connCall(name, input, signal);
       },
@@ -230,7 +238,7 @@ beforeEach(async () => {
   handlerCalls = {};
   toolsChanged = [];
   lastOpen = undefined;
-  Object.assign(conn, { opened: 0, closed: 0, calls: 0, signals: [] });
+  Object.assign(conn, { opened: 0, closed: 0, calls: 0, signals: [], ctxs: [] });
   connCall = async (name) => ({ content: [{ type: "text", text: `called ${name}` }] });
   await redis.flushdb();
   await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
@@ -759,6 +767,11 @@ describe("ToolPipeline.runStep", () => {
     const evs = await runCalls([{ id: "c1", name: "docs__read", input: {} }]);
     expect(resultsOf(evs).map((r) => r.content)).toEqual(["called read"]);
     expect(toolsChanged).toEqual([[seed.orgId, appId]]);
+  });
+
+  it("应用工具调用把已复核的定义（app_tools.spec）作为 ctx.spec 传给连接器", async () => {
+    await runCalls([{ id: "c1", name: "docs__read", input: {} }]);
+    expect(conn.ctxs).toEqual([{ spec: pluginSpec("read") }]);
   });
 
   it("应用工具正常调用：每次调用打开并关闭会话", async () => {

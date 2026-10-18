@@ -1,5 +1,10 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { endpointCredentialIssues, publicEndpoint } from "../../src/tools/endpoint.js";
+import {
+  endpointCredentialIssues,
+  endpointView,
+  publicEndpoint,
+} from "../../src/tools/endpoint.js";
 
 describe("应用端点的通用处理", () => {
   it("`url` 与 `*Url` 字段都检查凭据样式的 query 与用户信息", () => {
@@ -27,6 +32,18 @@ describe("应用端点的通用处理", () => {
       baseUrl: "https://api.example.com/v1",
       operations: ["listPets"],
       headerNames: ["X-Tenant"],
+    });
+  });
+
+  it("应用视图不回显 `*Text` 字段全文，只给字节数与 sha256（所有人）", () => {
+    const text = "openapi: 3.1.0\ninfo: { title: é }";
+    expect(endpointView({ specText: text, baseUrl: "https://api.example.com" })).toEqual({
+      baseUrl: "https://api.example.com",
+      specTextBytes: Buffer.byteLength(text, "utf8"),
+      specTextSha256: createHash("sha256").update(text).digest("hex"),
+    });
+    expect(endpointView({ url: "https://x.example.com" })).toEqual({
+      url: "https://x.example.com",
     });
   });
 });

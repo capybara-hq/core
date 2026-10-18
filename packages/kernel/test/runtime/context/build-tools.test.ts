@@ -74,6 +74,25 @@ describe("buildModelRequest 工具", () => {
     expect(tools.map((t) => t.key)).toEqual(["zeta__b", "ask_user", "docs__search", "Docs__a"]);
   });
 
+  it("连接器的 connectorData 不发给模型（只进指纹与存档）", () => {
+    const log = new Log();
+    log.user("hi");
+    const t: RequestTool = {
+      key: "pets__get",
+      spec: { ...spec("get"), connectorData: { method: "get", path: "/pets/{id}" } },
+      specHash: "h",
+    };
+    const { request } = build(log.events, [t]);
+    expect(request.tools).toEqual([
+      {
+        name: "pets__get",
+        description: "Tool get.",
+        inputSchema: { type: "object", properties: { q: { type: "string" } } },
+      },
+    ]);
+    expect(JSON.stringify(request)).not.toContain("/pets/{id}");
+  });
+
   it("tool_result 事件还原为紧随 assistant 的一条 user 消息，同一步的结果按调用顺序合并", () => {
     const log = new Log();
     log.user("find both");
