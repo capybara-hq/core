@@ -229,7 +229,7 @@ describe("model-provider@1 / @2", () => {
     const entries = k.host.list("model-provider");
     expect(entries.map((e) => [e.plugin, e.capability])).toEqual([
       ["model-fake", "model-provider@1"],
-      ["model-fake-b", "model-provider@1"],
+      ["model-fake-b", "model-provider@2"],
     ]);
   });
 

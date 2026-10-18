@@ -24,16 +24,55 @@ describe("buildModelRequest", () => {
     expect(request.maxOutputTokens).toBe(MODEL.maxOutputTokens);
     expect(request.messages).toEqual([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
     expect(request.effort).toBeUndefined();
+    expect(request.params).toEqual({});
   });
 
-  it("passes effort only when set and supported by the model", () => {
+  it("passes the given params through unchanged and records them in meta; never reads agent params", () => {
     const log = new Log();
     log.user("hi");
-    const agent = { ...AGENT, effort: "high" as const };
-    const input = { events: log.events, agent, agentVersion: 1, step: 0 };
-    expect(buildModelRequest({ ...input, model: MODEL }).request.effort).toBe("high");
-    const noEffort = { ...MODEL, capabilities: { ...MODEL.capabilities, effort: false } };
-    expect(buildModelRequest({ ...input, model: noEffort }).request.effort).toBeUndefined();
+    // agent 自己的 modelParams 不影响构建：参数由 runModelStep sanitize 后注入
+    const agent = { ...AGENT, modelParams: { effort: "max" } };
+    const input = { events: log.events, agent, agentVersion: 1, step: 0, model: MODEL };
+    const params = { effort: "high", "model-fake.style": "shout" };
+    const { request, meta } = buildModelRequest({ ...input, params });
+    expect(request.params).toEqual(params);
+    expect(request.effort).toBeUndefined();
+    expect(meta.params).toEqual(params);
+    expect(request.params).not.toBe(params);
+    expect(buildModelRequest(input).request.params).toEqual({});
+  });
+
+  it("is reconstructible with params: rebuilding from model_call.request.params gives the same request", () => {
+    const log = new Log();
+    const q1 = log.user("q1");
+    const params = { effort: "low", "model-fake.style": "plain" };
+    const original = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 1,
+      absorbedUpToSeq: q1.seq,
+      params,
+    });
+    // runModelStep 把 meta 写进 model_call.request
+    const call = log.modelCall(q1.seq, 1, original.meta.params);
+    expect(call.type === "model_call" && call.payload.request.params).toEqual(params);
+    const recorded = call.type === "model_call" ? call.payload.request : undefined;
+    const slice = log.events.filter(
+      (e) => recorded && e.seq >= recorded.fromSeq && e.seq <= recorded.toSeq,
+    );
+    const again = buildModelRequest({
+      events: slice,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 1,
+      ...(recorded?.absorbedUpToSeq !== undefined && { absorbedUpToSeq: recorded.absorbedUpToSeq }),
+      ...(recorded?.params !== undefined && { params: recorded.params }),
+    });
+    expect(again.request).toEqual(original.request);
+    expect(again.meta).toEqual(original.meta);
   });
 
   it("is deterministic: same events and definition give deep-equal requests and hashes", () => {

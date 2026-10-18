@@ -834,6 +834,22 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     expect(await writesOf(runId)).toEqual([]);
   });
 
+  it("已保存定义里的参数不再合法（直接改库模拟插件升级）→ 运行成功，model_call 记录 droppedParams", async () => {
+    await worker();
+    const { orgId, agentId, convId } = await setup();
+    await sql`UPDATE capybara.agent_versions
+      SET definition = jsonb_set(definition, '{modelParams}', '{"effort":"max"}'::jsonb)
+      WHERE agent_id = ${agentId}`.execute(raw);
+    await postMessage(req, orgId, convId, "echo:hi");
+    const [fin] = await waitForTerminal(db, convId);
+    expect(fin?.type).toBe("run_finished");
+    const call = (await eventsOf(db, convId)).find((e) => e.type === "model_call");
+    expect(call?.type === "model_call" && call.payload.request).toMatchObject({
+      params: {},
+      droppedParams: ["effort"],
+    });
+  });
+
   it("stalled 次数超限（BullMQ 判定任务失败）→ run_failed run.stalled，status failed，consumed_seq 推进，会话不卡住", async () => {
     const { orgId, convId } = await setup();
     const seq = await postMessage(req, orgId, convId, "echo:x");

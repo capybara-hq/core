@@ -1,4 +1,4 @@
-import type { ContentBlock, Effort, ModelUsage, StopReason } from "@capybara-hq/plugin-sdk";
+import type { ContentBlock, ModelUsage, StopReason } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 
@@ -31,8 +31,6 @@ export const ContentBlockSchema = z.discriminatedUnion("type", [
     isError: z.boolean(),
   }),
 ]);
-
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const satisfies readonly Effort[];
 
 const STOP_REASONS = ["end_turn", "tool_use", "max_tokens", "refusal", "other"] as const;
 
@@ -84,10 +82,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         summarySeq: seqNo.nullable(),
         systemHash: z.string(),
         reminderSeqs: z.array(seqNo),
-        /** 本次请求的输出上限（`min(模型上限, runtime.maxOutputTokens)`）。较早的事件可能没有。 */
+        /** 本次请求的输出上限（`min(模型上限, maxOutputTokens 旋钮 ?? runtime.maxOutputTokens)`）。较早的事件可能没有。 */
         maxOutputTokens: count.optional(),
-        /** 本次请求的推理强度；模型不支持或 agent 未设置为 null。较早的事件可能没有。 */
-        effort: z.enum(EFFORTS).nullable().optional(),
+        /**
+         * 本次请求的模型参数（`ModelRequest.params`）：agent 保存的参数按该模型声明 sanitize 后的结果
+         * （已补默认值）。主模型尝试来自 `modelParams`，兜底尝试来自 `fallbackParams`。较早的事件可能没有。
+         */
+        params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+        /** sanitize 时丢弃的参数键（未声明或值不再合法，如插件升级后）；没有丢弃时不写。 */
+        droppedParams: z.array(z.string()).optional(),
         /**
          * 发出请求时的输入 token 估算（未校正）。与随后 `usage.inputTokens` 一起供下一次
          * `calibrate` 使用。较早的事件可能没有。

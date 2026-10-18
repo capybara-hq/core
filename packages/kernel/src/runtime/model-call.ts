@@ -9,7 +9,9 @@ import {
   type ModelRequest,
   type ModelStreamEvent,
   type ModelUsage,
+  type ParamValue,
   type StopReason,
+  sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -274,8 +276,22 @@ async function appendLocal(
 }
 
 /**
- * 由事件构建模型请求：`buildModelRequest` → `guardToolPairs`，输出上限取
- * `min(模型上限, runtime.maxOutputTokens)`。
+ * 某次尝试的模型参数：主模型尝试用 `agent.modelParams`，兜底尝试用 `agent.fallbackParams`，
+ * 按该模型的声明宽松处理（丢弃未声明 / 不再合法的项并补默认值，见 `sanitizeParams`）。
+ * 较早保存的定义可能没有这两个字段，按空处理。
+ */
+function attemptParams(
+  agent: AgentDefinition,
+  info: ModelInfo,
+  fallback: boolean,
+): { value: Record<string, ParamValue>; dropped: string[] } {
+  const saved = (fallback ? agent.fallbackParams : agent.modelParams) ?? {};
+  return sanitizeParams(info.parameters, saved);
+}
+
+/**
+ * 由事件构建模型请求：`buildModelRequest`（注入 `params`）→ `guardToolPairs`。输出上限：
+ * 参数里有 `maxOutputTokens` 旋钮时取 `min(模型上限, 旋钮)`，否则 `min(模型上限, runtime.maxOutputTokens)`。
  *
  * 调用方不变式：不得在「已记录 tool_call、尚未记录其 tool_result」之间构建请求——
  * 否则配对守卫会给进行中的调用补上 unknown 结果并发给模型。运行循环在工具结果落日志后才进入下一步。
@@ -284,6 +300,7 @@ function buildRequest(
   events: ConversationEvent[],
   input: ModelStepInput,
   info: ModelInfo,
+  params: Record<string, ParamValue>,
   runtime: Runtime,
   wrapUp: boolean,
 ): { request: ModelRequest; meta: ModelCallMeta; estimate: number } {
@@ -294,9 +311,14 @@ function buildRequest(
     model: info,
     step: input.step,
     absorbedUpToSeq: input.absorbedUpToSeq,
+    params,
   });
   request.messages = guardToolPairs(request.messages);
-  request.maxOutputTokens = Math.min(info.maxOutputTokens, runtime.maxOutputTokens);
+  const knob = params.maxOutputTokens;
+  request.maxOutputTokens = Math.min(
+    info.maxOutputTokens,
+    typeof knob === "number" ? knob : runtime.maxOutputTokens,
+  );
   if (wrapUp) request.tools = [];
   return { request, meta, estimate: estimateTokens(request.messages, request.system) };
 }
@@ -350,7 +372,14 @@ async function maybeCompact(
     deps.log.warn("compaction skipped: model unavailable", { model: input.agent.model, err });
     return events;
   }
-  const { request } = buildRequest(events, input, info, runtime, false);
+  const { request } = buildRequest(
+    events,
+    input,
+    info,
+    attemptParams(input.agent, info, false).value,
+    runtime,
+    false,
+  );
   const estimate = calibrate(estimateTokens(request.messages, request.system), lastActual(events));
   if (!shouldCompact(estimate, info, runtime.compactionThreshold)) return events;
   const plan = compactionPlan(events, runtime.keepRecentTurns);
@@ -438,7 +467,15 @@ async function ladder(
     }
     try {
       const { provider, info } = await deps.registry.resolve(rung.ref);
-      const { request, meta, estimate } = buildRequest(events, input, info, runtime, wrapUp);
+      const params = attemptParams(agent, info, rung.fallback);
+      const { request, meta, estimate } = buildRequest(
+        events,
+        input,
+        info,
+        params.value,
+        runtime,
+        wrapUp,
+      );
       await deps.eventLog.append(conversationId, [
         {
           type: "model_call",
@@ -453,7 +490,7 @@ async function ladder(
             request: {
               ...meta,
               maxOutputTokens: request.maxOutputTokens,
-              effort: request.effort ?? null,
+              ...(params.dropped.length > 0 && { droppedParams: params.dropped }),
               estimatedInputTokens: estimate,
             },
           },

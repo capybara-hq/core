@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import type { ContentBlock, ModelInfo, ModelMessage, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type {
+  ContentBlock,
+  ModelInfo,
+  ModelMessage,
+  ModelRequest,
+  ParamValue,
+} from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../../agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 
@@ -29,6 +35,8 @@ export interface ModelCallMeta {
   reminderSeqs: number[];
   /** 构建时的 `absorbedUpToSeq`（见 {@link BuildModelRequestInput}）；未提供则没有该字段。 */
   absorbedUpToSeq?: number;
+  /** 请求的模型参数（即 `ModelRequest.params`）。 */
+  params: Record<string, ParamValue>;
 }
 
 export interface BuildModelRequestInput {
@@ -47,6 +55,12 @@ export interface BuildModelRequestInput {
    * 不提供时按 seq 原样回放全部 user_message。
    */
   absorbedUpToSeq?: number;
+  /**
+   * 本次请求的模型参数，原样放进 `ModelRequest.params`（不读 agent 定义里的参数）：
+   * 由 `runModelStep` 按所用模型的声明 sanitize 后传入，并记在 `model_call.request.params`；
+   * 还原时传入记录下的值。默认空。
+   */
+  params?: Record<string, ParamValue>;
 }
 
 type SummaryEvent = ConversationEvent & {
@@ -198,10 +212,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     messages,
     tools: [],
     maxOutputTokens: model.maxOutputTokens,
-    // model-provider@2 参数：目前恒为空（effort 仍经已弃用的 req.effort 传给 @1 插件）
-    params: {},
+    params: { ...input.params },
   };
-  if (agent.effort && model.capabilities.effort) request.effort = agent.effort;
 
   const first = events[0];
   const last = events.at(-1);
@@ -212,6 +224,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     systemHash: hashSystem(system),
     reminderSeqs,
     ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
+    params: { ...request.params },
   };
   return { request, meta };
 }

@@ -99,7 +99,8 @@ const agent: AgentDefinition = {
   instructions: "Be helpful.",
   model: { provider: "stub", model: "s-1" },
   fallback: null,
-  effort: null,
+  modelParams: {},
+  fallbackParams: {},
   tools: [],
 };
 

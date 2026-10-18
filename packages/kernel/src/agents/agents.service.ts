@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -39,6 +40,16 @@ export type AgentVersionSummary = Omit<AgentVersion, "definition">;
 export type AgentWarning = "fallback_same_provider";
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
+
+/** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`。 */
+function paramIssues(
+  field: "modelParams" | "fallbackParams",
+  decl: ModelParameter[],
+  params: Record<string, unknown>,
+): { path: string; message: string }[] {
+  const r = validateParams(decl, params);
+  return r.ok ? [] : r.issues.map((i) => ({ path: `${field}.${i.key}`, message: i.message }));
+}
 
 /** 键排序后的 JSON：jsonb 不保留键顺序，比较定义是否变化时用。 */
 function canonical(v: unknown): string {
@@ -106,11 +117,21 @@ export class AgentsService {
     private readonly registry: ProviderRegistry,
   ) {}
 
-  /** 校验主模型与兜底都可解析，返回提示。 */
+  /**
+   * 校验主模型与兜底都可解析，并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
+   * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
+   */
   private async checkModels(def: AgentDefinition): Promise<AgentWarning[]> {
-    await this.registry.resolve(def.model);
+    const main = await this.registry.resolve(def.model);
+    const fallback = def.fallback === null ? null : await this.registry.resolve(def.fallback);
+    const details = [
+      ...paramIssues("modelParams", main.info.parameters, def.modelParams),
+      ...paramIssues("fallbackParams", fallback?.info.parameters ?? [], def.fallbackParams),
+    ];
+    if (details.length > 0) {
+      throw new ApiError("validation_failed", "Invalid model parameters", details);
+    }
     if (def.fallback === null) return [];
-    await this.registry.resolve(def.fallback);
     return def.fallback.provider === def.model.provider ? ["fallback_same_provider"] : [];
   }
 

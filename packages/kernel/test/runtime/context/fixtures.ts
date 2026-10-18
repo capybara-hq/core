@@ -27,7 +27,8 @@ export const AGENT: AgentDefinition = {
   instructions: "You help with accounting questions.",
   model: { provider: "model-fake", model: "fake-1" },
   fallback: null,
-  effort: null,
+  modelParams: {},
+  fallbackParams: {},
   tools: [],
 };
 
@@ -95,7 +96,11 @@ export class Log {
   }
 
   /** 一次模型调用记录；`absorbedUpToSeq` 省略时模拟没有该字段的旧事件。 */
-  modelCall(absorbedUpToSeq?: number, step = 1): ConversationEvent {
+  modelCall(
+    absorbedUpToSeq?: number,
+    step = 1,
+    params?: Record<string, string | number | boolean>,
+  ): ConversationEvent {
     return this.add({
       type: "model_call",
       payload: {
@@ -111,6 +116,7 @@ export class Log {
           systemHash: "x",
           reminderSeqs: [],
           ...(absorbedUpToSeq !== undefined && { absorbedUpToSeq }),
+          ...(params !== undefined && { params }),
         },
       },
     });

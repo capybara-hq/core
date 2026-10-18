@@ -136,7 +136,13 @@ describe("Agent HTTP", () => {
     };
     expect(created.warnings).toEqual(["fallback_same_provider"]);
     expect(created.agent).toMatchObject({ currentVersion: 1, visibility: "org", memberIds: null });
-    expect(created.agent.definition).toMatchObject({ avatarUrl: null, effort: null, tools: [] });
+    expect(created.agent.definition).toMatchObject({
+      avatarUrl: null,
+      modelParams: {},
+      fallbackParams: {},
+      tools: [],
+    });
+    expect(created.agent.definition).not.toHaveProperty("effort");
     const id = created.agent.id;
 
     const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents` });
@@ -199,6 +205,25 @@ describe("Agent HTTP", () => {
     });
     expect(invalid.statusCode).toBe(400);
     expect(errCode(invalid)).toBe("validation_failed");
+  });
+
+  it("未知模型参数 → 400 validation_failed，details 点名 modelParams.<key>", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const res = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: { ...definition, modelParams: { "x.unknown": 1 } },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    const body = res.json() as { error: { code: string; details: unknown[] } };
+    expect(body.error.code).toBe("validation_failed");
+    expect(body.error.details).toEqual([
+      { path: "modelParams.x.unknown", message: 'unknown parameter "x.unknown"' },
+    ]);
   });
 
   it("非负责人的 member PATCH 别人的 agent → 403 forbidden；admin 可以", async () => {

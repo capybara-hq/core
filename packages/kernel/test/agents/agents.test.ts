@@ -110,23 +110,35 @@ describe("AgentDefinitionSchema", () => {
       instructions: "",
       model: { provider: "model-fake", model: "fake-1" },
       fallback: null,
-      effort: null,
+      modelParams: {},
+      fallbackParams: {},
       tools: [],
     });
   });
-  it("拒绝空名、超长名、非法 effort、非空 tools", () => {
+  it("拒绝空名、超长名、非标量参数值、非空 tools；不再有 effort 字段", () => {
     const base = { model: { provider: "p", model: "m" } };
     expect(AgentDefinitionSchema.safeParse({ ...base, name: "" }).success).toBe(false);
     expect(AgentDefinitionSchema.safeParse({ ...base, name: "x".repeat(81) }).success).toBe(false);
-    expect(AgentDefinitionSchema.safeParse({ ...base, name: "a", effort: "huge" }).success).toBe(
-      false,
-    );
+    expect(
+      AgentDefinitionSchema.safeParse({ ...base, name: "a", modelParams: { effort: ["x"] } })
+        .success,
+    ).toBe(false);
+    expect(
+      AgentDefinitionSchema.safeParse({ ...base, name: "a", fallbackParams: { x: null } }).success,
+    ).toBe(false);
     expect(AgentDefinitionSchema.safeParse({ ...base, name: "a", tools: ["x"] }).success).toBe(
       false,
     );
-    expect(AgentDefinitionSchema.safeParse({ ...base, name: "a", effort: "xhigh" }).success).toBe(
-      true,
-    );
+    const ok = AgentDefinitionSchema.safeParse({
+      ...base,
+      name: "a",
+      effort: "xhigh",
+      modelParams: { effort: "low", "p.n": 1, "p.b": true },
+    });
+    expect(ok.success).toBe(true);
+    // 旧的 effort 字段已删除：未知键被丢弃
+    expect(ok.data).not.toHaveProperty("effort");
+    expect(ok.data?.modelParams).toEqual({ effort: "low", "p.n": 1, "p.b": true });
   });
 });
 
@@ -226,6 +238,71 @@ describe("AgentsService 版本", () => {
         }),
       ),
     ).toBe("agent.model_unavailable");
+  });
+
+  it("模型参数：主模型与兜底各按自己的声明严格校验（Review Focus 1）", async () => {
+    const { orgId, owner } = await orgWith({});
+    const details = async (p: Promise<unknown>) => {
+      try {
+        await p;
+      } catch (e) {
+        if (e instanceof ApiError) return { code: e.code, details: e.details };
+        throw e;
+      }
+      throw new Error("expected ApiError");
+    };
+    // model-fake 不声明 effort=max（档位集合不同）；model-fake-b 声明五档
+    const bad = await details(
+      agents.create(orgId, owner.id, {
+        definition: def({
+          modelParams: { effort: "max" },
+          fallback: { provider: "model-fake-b", model: "b-1" },
+          fallbackParams: { effort: "max" },
+        }),
+        visibility: "private",
+      }),
+    );
+    expect(bad.code).toBe("validation_failed");
+    expect(bad.details).toEqual([{ path: "modelParams.effort", message: expect.any(String) }]);
+
+    // 同一个值放在兜底参数里合法：兜底只按兜底模型的声明校验
+    const { agent } = await agents.create(orgId, owner.id, {
+      definition: def({
+        fallback: { provider: "model-fake-b", model: "b-1" },
+        fallbackParams: { effort: "max", "model-fake-b.mode": "fancy" },
+      }),
+      visibility: "private",
+    });
+    expect(agent.definition.fallbackParams).toEqual({
+      effort: "max",
+      "model-fake-b.mode": "fancy",
+    });
+
+    // 兜底参数不合法 / 未知键 → 逐键点名；update 同样校验，且不产生新版本
+    const badFallback = await details(
+      agents.update(orgId, agent.id, owner.id, {
+        definition: def({
+          fallback: { provider: "model-fake-b", model: "b-1" },
+          fallbackParams: { effort: "huge", "model-fake-b.nope": 1 },
+        }),
+      }),
+    );
+    expect(badFallback.code).toBe("validation_failed");
+    expect(badFallback.details).toEqual([
+      { path: "fallbackParams.effort", message: expect.stringContaining("must be one of") },
+      { path: "fallbackParams.model-fake-b.nope", message: expect.stringContaining("unknown") },
+    ]);
+    // 没有兜底模型时 fallbackParams 必须为空
+    const orphan = await details(
+      agents.update(orgId, agent.id, owner.id, {
+        definition: def({ fallbackParams: { effort: "low" } }),
+      }),
+    );
+    expect(orphan.code).toBe("validation_failed");
+    expect(orphan.details).toEqual([
+      { path: "fallbackParams.effort", message: expect.any(String) },
+    ]);
+    expect((await agents.get(orgId, agent.id, owner.id)).currentVersion).toBe(1);
   });
 
   it("访客不能创建；memberIds 必须是组织成员", async () => {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   ModelError,
   type ModelInfo,
+  type ModelParameter,
   type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
@@ -193,7 +194,8 @@ const agentWith = (over: Partial<AgentDefinition> = {}): AgentDefinition => ({
   instructions: "Be helpful.",
   model: { provider: "model-fake", model: "fake-1" },
   fallback: null,
-  effort: null,
+  modelParams: {},
+  fallbackParams: {},
   tools: [],
   ...over,
 });
@@ -278,8 +280,10 @@ describe("runModelStep", () => {
       provider: "model-fake",
       model: "fake-1",
       fallback: false,
-      request: { maxOutputTokens: 4096, effort: null, summarySeq: null, reminderSeqs: [] },
+      request: { maxOutputTokens: 4096, params: {}, summarySeq: null, reminderSeqs: [] },
     });
+    expect(calls[0]?.payload.request).not.toHaveProperty("droppedParams");
+    expect(calls[0]?.payload.request).not.toHaveProperty("effort");
     expect(calls[0]?.payload.request.estimatedInputTokens).toBeGreaterThan(0);
     const msgs = await ofType("assistant_message");
     expect(msgs).toHaveLength(1);
@@ -296,6 +300,138 @@ describe("runModelStep", () => {
     await step();
     const [call] = await ofType("model_call");
     expect(call?.payload.request.maxOutputTokens).toBe(1000);
+  });
+
+  describe("模型参数", () => {
+    const EFFORT_LH: ModelParameter = {
+      key: "effort",
+      standard: "effort",
+      schema: { type: "string", enum: ["low", "high"] },
+      default: "low",
+      label: { zh: "思考深度", en: "Effort" },
+    };
+    const MAX_OUT: ModelParameter = {
+      key: "maxOutputTokens",
+      standard: "maxOutputTokens",
+      schema: { type: "integer", minimum: 1, maximum: 100_000 },
+      label: { zh: "输出上限", en: "Max output tokens" },
+    };
+    const STYLE: ModelParameter = {
+      key: "stub.style",
+      schema: { type: "string", enum: ["plain", "shout"] },
+      default: "plain",
+      label: { zh: "风格", en: "Style" },
+    };
+
+    it("参数经 sanitize 后进 ModelRequest.params，并记录在 model_call.request.params", async () => {
+      const s = stub([stubInfo("p", { parameters: [EFFORT_LH, STYLE] })], () => "ok");
+      stubImpl = s;
+      await say("hi");
+      await step({
+        agent: agentWith({
+          model: { provider: "stub", model: "p" },
+          modelParams: { effort: "high" },
+        }),
+      });
+      expect(s.calls[0]?.params).toEqual({ effort: "high", "stub.style": "plain" });
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request.params).toEqual({ effort: "high", "stub.style": "plain" });
+      expect(call?.payload.request).not.toHaveProperty("droppedParams");
+    });
+
+    it("已保存的参数不再合法（插件升级）→ 丢弃并用默认值，droppedParams 记录键，运行成功（Review Focus 2）", async () => {
+      const s = stub([stubInfo("p", { parameters: [EFFORT_LH, STYLE] })], () => "still fine");
+      stubImpl = s;
+      await say("hi");
+      const r = await step({
+        agent: agentWith({
+          model: { provider: "stub", model: "p" },
+          // effort 的值域变窄（max 不再合法），stub.removed 已被移除
+          modelParams: { effort: "max", "stub.removed": true, "stub.style": "shout" },
+        }),
+      });
+      expect(r.content).toEqual([{ type: "text", text: "still fine" }]);
+      expect(s.calls[0]?.params).toEqual({ effort: "low", "stub.style": "shout" });
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request.params).toEqual({ effort: "low", "stub.style": "shout" });
+      expect(call?.payload.request.droppedParams).toEqual(["effort", "stub.removed"]);
+    });
+
+    it("兜底尝试使用兜底模型自己的 fallbackParams（经 sanitize），不沿用主模型参数", async () => {
+      const s = stub(
+        [
+          stubInfo("main", { parameters: [EFFORT_LH] }),
+          stubInfo("fb", { parameters: [EFFORT_LH, STYLE] }),
+        ],
+        (req) => {
+          if (req.model === "main") throw new ModelError("server", "down");
+          return "from fallback";
+        },
+      );
+      stubImpl = s;
+      await say("hi");
+      const r = await step({
+        agent: agentWith({
+          model: { provider: "stub", model: "main" },
+          modelParams: { effort: "high" },
+          fallback: { provider: "stub", model: "fb" },
+          fallbackParams: { "stub.style": "shout", "stub.gone": 1 },
+        }),
+      });
+      expect(r.content).toEqual([{ type: "text", text: "from fallback" }]);
+      const calls = await ofType("model_call");
+      expect(calls.map((c) => [c.payload.model, c.payload.request.params])).toEqual([
+        ["main", { effort: "high" }],
+        ["main", { effort: "high" }],
+        ["fb", { effort: "low", "stub.style": "shout" }],
+      ]);
+      expect(calls[2]?.payload.request.droppedParams).toEqual(["stub.gone"]);
+      expect(calls[0]?.payload.request).not.toHaveProperty("droppedParams");
+      expect(s.calls.map((c) => c.params)).toEqual([
+        { effort: "high" },
+        { effort: "high" },
+        { effort: "low", "stub.style": "shout" },
+      ]);
+    });
+
+    it("maxOutputTokens 旋钮覆盖 runtime.maxOutputTokens，但不超过模型上限", async () => {
+      const s = stub([stubInfo("p", { parameters: [MAX_OUT] })], () => "ok");
+      stubImpl = s;
+      runtimeOverrides = { maxOutputTokens: 1000 };
+      await say("hi");
+      await step({
+        agent: agentWith({
+          model: { provider: "stub", model: "p" },
+          modelParams: { maxOutputTokens: 2000 },
+        }),
+      });
+      await step({
+        step: 2,
+        agent: agentWith({
+          model: { provider: "stub", model: "p" },
+          modelParams: { maxOutputTokens: 9000 },
+        }),
+      });
+      await step({ step: 3, agent: agentWith({ model: { provider: "stub", model: "p" } }) });
+      expect(s.calls.map((c) => c.maxOutputTokens)).toEqual([2000, 4096, 1000]);
+      const calls = await ofType("model_call");
+      expect(calls.map((c) => c.payload.request.maxOutputTokens)).toEqual([2000, 4096, 1000]);
+    });
+
+    it("较早保存的定义没有 modelParams / fallbackParams 字段 → 按空参数处理", async () => {
+      const s = stub([stubInfo("p", { parameters: [EFFORT_LH] })], () => "ok");
+      stubImpl = s;
+      await say("hi");
+      const {
+        modelParams: _m,
+        fallbackParams: _f,
+        ...legacy
+      } = agentWith({
+        model: { provider: "stub", model: "p" },
+      });
+      await step({ agent: legacy as AgentDefinition });
+      expect(s.calls[0]?.params).toEqual({ effort: "low" });
+    });
   });
 
   it("同一 (run, step) 调用两次 → 第二次 reused，供应商只被调用一次", async () => {
