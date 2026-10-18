@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { ToolAnnotations, ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  type AuthHint,
+  type AuthInjection,
+  type ConnectorOperation,
+  type ToolAnnotations,
+  ToolError,
+  type ToolSpec,
+} from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
@@ -113,6 +120,45 @@ export interface CreateAppInput {
   auth: AppAuth;
   credential?: unknown;
 }
+
+export interface PreviewAppInput {
+  name?: string | undefined;
+  slug?: string | undefined;
+  connector: string;
+  endpoint: unknown;
+  auth?: AppAuth | undefined;
+  credential?: unknown;
+}
+
+/** 预览里的一个工具：与安装后的工具视图同形的子集（`issue` 非空 = 安装后只能停用）。 */
+export interface ToolPreview {
+  name: string;
+  key: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  annotations: ToolAnnotations | null;
+  defaultPolicy: ToolPolicy;
+  issue: string | null;
+  source: ToolSource;
+}
+
+/**
+ * 应用预览（Ruling A20）：`tools` 为 null 表示没有列工具（没给认证方式、需要凭据但没给、OAuth 授权码流）；
+ * `authHints` / `operations` 来自连接器的 `inspect`（不实现时为空 / 缺省）。
+ */
+export interface AppPreview {
+  tools: ToolPreview[] | null;
+  /** 列工具时被停用 / 跳过的工具及原因（与安装时的 issues 相同；同名工具只保留第一个）。 */
+  issues: ToolIssue[];
+  authHints: AuthHint[];
+  operations?: ConnectorOperation[];
+}
+
+/** 预览时没给 slug、也推导不出时，拼 key 用的占位 slug。 */
+const PREVIEW_SLUG = "app";
+
+/** 预览里 inspect 失败的说明里带上的 ToolError 消息最多字符数。 */
+const MAX_INSPECT_DETAIL = 500;
 
 export interface UpdateAppInput {
   name?: string | undefined;
@@ -479,6 +525,104 @@ export class AppsService {
       });
       return { app: await this.detail(t, orgId, id, actorAccountId), issues };
     });
+  }
+
+  /**
+   * 预览应用（Ruling A20，安装向导用）：校验连接器、端点（含凭据样式检查）与凭据形状后，用 `connector.inspect`
+   * 读端点描述（认证提示、操作清单），能认证（静态凭据 / 客户端凭据流取到的 token）或 auth none 时再列工具并按
+   * slug 拼 key、推导默认策略与问题。什么都不写（不落库、不审计）；OAuth 授权码流不列工具（不做动态注册）。
+   * 外连失败一律 502 `app.connect_failed`，说明里只有连接器给的英文说明（按注入的凭据打码）或错误类名。
+   */
+  async preview(orgId: string, input: PreviewAppInput): Promise<AppPreview> {
+    const endpoint = this.parseEndpoint(input.connector, input.endpoint);
+    const connector = this.registry.findConnector(input.connector);
+    if (!connector) throw fail("connector", `Unknown connector "${input.connector}"`);
+    let slug = PREVIEW_SLUG;
+    if (input.slug !== undefined) {
+      if (!isValidSlug(input.slug)) throw fail("slug", SLUG_RULE);
+      slug = input.slug;
+    } else if (input.name !== undefined) {
+      slug = deriveSlug(input.name) ?? PREVIEW_SLUG;
+    }
+
+    // 先校验凭据形状，再做任何外连
+    const auth = input.auth;
+    const credential = input.credential ?? undefined;
+    let inject: (() => Promise<AuthInjection>) | undefined;
+    let oauthClient = false;
+    if (auth === undefined) {
+      if (credential !== undefined && credential !== null) {
+        throw fail("credential", "Provide auth together with credential");
+      }
+    } else if (auth.type === "none") {
+      if (credential !== undefined && credential !== null) {
+        throw fail("credential", "Auth type none takes no credential");
+      }
+      inject = async () => ({ headers: {} });
+    } else if (!isOAuth(auth)) {
+      if (credential !== undefined && credential !== null) {
+        // 预览按「安装者自己的凭据」校验归属：组织型是组织凭据，个人型是自己的
+        const owner: CredentialOwner =
+          auth.ownership === "org" ? { kind: "org" } : { kind: "user", accountId: "preview" };
+        this.credentials.validate(auth, owner, credential);
+        const secret = credential;
+        inject = async () => this.credentials.injectionFor("preview", auth, secret);
+      }
+    } else if (auth.type === "oauth_client" && credential !== undefined && credential !== null) {
+      oauthClient = true;
+    }
+
+    const timeoutMs = this.config().tools.timeoutMs;
+    let inspection: Awaited<ReturnType<NonNullable<typeof connector.inspect>>> | undefined;
+    if (connector.inspect) {
+      try {
+        inspection = await connector.inspect({ endpoint, signal: AbortSignal.timeout(timeoutMs) });
+      } catch (e) {
+        const message =
+          e instanceof ToolError
+            ? `Could not read the app description: ${e.message.slice(0, MAX_INSPECT_DETAIL)}`
+            : `Could not read the app description (${e instanceof Error ? e.name : "Error"})`;
+        throw new ApiError("app.connect_failed", message);
+      }
+    }
+
+    if (oauthClient && auth?.type === "oauth_client") {
+      const oauth = await this.prepareOAuth(
+        auth,
+        endpoint,
+        credential,
+        this.config().http.publicUrl ?? "",
+      );
+      const token = oauth.tokens?.access_token;
+      if (token) inject = async () => this.credentials.injectionFor("preview", auth, { token });
+    }
+
+    let tools: ToolPreview[] | null = null;
+    let issues: ToolIssue[] = [];
+    if (inject) {
+      const listed = await this.drift.listTools(input.connector, endpoint, inject, {
+        orgId,
+        preview: true,
+      });
+      const snap = snapshot(slug, listed.specs, listed.resources);
+      issues = snap.issues;
+      tools = snap.rows.map((r) => ({
+        name: r.name,
+        key: toolKey(slug, r.name),
+        description: r.spec.description,
+        inputSchema: r.spec.inputSchema,
+        annotations: r.spec.annotations ?? null,
+        defaultPolicy: policyFromAnnotations(r.spec.annotations),
+        issue: r.issue,
+        source: r.source,
+      }));
+    }
+    return {
+      tools,
+      issues,
+      authHints: inspection?.authHints ?? [],
+      ...(inspection?.operations !== undefined && { operations: inspection.operations }),
+    };
   }
 
   private async insertTools(t: Trx, appId: string, rows: SnapshotRow[]): Promise<void> {

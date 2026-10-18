@@ -34,9 +34,43 @@ export interface ConnectorOpenArgs {
   onToolsChanged?: () => void;
 }
 
+/**
+ * 远端描述里声明的一种认证方式，映射到内核应用认证（AppAuth）的形状，供安装向导预填。
+ * `scheme` 是远端描述里的名字（如 OpenAPI `securitySchemes` 的键），`description` 原样给出（可能缺省）。
+ * 只列内核支持的方式；其余（cookie 里的 API key、OpenID Connect、implicit / password 流等）不出现。
+ */
+export type AuthHint = { scheme: string; description?: string } & (
+  | { type: "bearer" }
+  | { type: "basic" }
+  | { type: "api_key"; in: "header" | "query"; name: string }
+  | { type: "oauth_client"; tokenUrl: string; scopes: string[] }
+  | { type: "oauth_code"; authorizationUrl: string; tokenUrl: string; scopes: string[] }
+);
+
+/** 远端描述里的一个操作（如 OpenAPI operation），供安装向导勾选。 */
+export interface ConnectorOperation {
+  /** 端点配置里勾选用的 id（如 OpenAPI 的 operationId）。 */
+  id: string;
+  /** 大写 HTTP 方法。 */
+  method: string;
+  path: string;
+  summary?: string;
+}
+
+/** `Connector.inspect` 的结果。 */
+export interface ConnectorInspection {
+  authHints: AuthHint[];
+  operations?: ConnectorOperation[];
+}
+
 /** `connector@1`：插件实现、内核调用。 */
 export interface Connector {
   kind: string;
   endpointSchema: ZodTypeAny;
   open(args: ConnectorOpenArgs): Promise<ConnectorSession>;
+  /**
+   * 可选：不带凭据读取端点的描述（安装向导的预览用），返回声明的认证方式与可选的操作清单。
+   * `endpoint` 已按 endpointSchema 校验。失败抛 ToolError（消息英文、不含凭据）。旧连接器不实现，内核须判空。
+   */
+  inspect?(args: { endpoint: unknown; signal: AbortSignal }): Promise<ConnectorInspection>;
 }

@@ -54,6 +54,7 @@ describe("tool-design", () => {
       checkToolDesign([
         `${root}packages/kernel/src/tools/builtins`,
         `${root}plugins/connector-mcp`,
+        `${root}plugins/connector-openapi`,
         `${root}plugins/todo`,
       ]),
     ).toEqual([]);

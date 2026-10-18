@@ -1,4 +1,10 @@
-import type { AuthInjection, Logger, ToolAnnotations, ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  type AuthInjection,
+  type Logger,
+  type ToolAnnotations,
+  ToolError,
+  type ToolSpec,
+} from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
@@ -83,6 +89,20 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 
 const errName = (e: unknown): string =>
   e instanceof Error && typeof e.name === "string" && e.name !== "" ? e.name : "Error";
+
+/** 连接失败说明里带上的 ToolError 消息最多字符数。 */
+const MAX_FAILURE_DETAIL = 500;
+
+/**
+ * 连接 / 列工具失败的说明：ToolError 的消息是连接器写给人看的英文说明（如「Swagger 2.0 不支持」），
+ * 按本次注入的凭据打码、截断后带上；其他错误只给错误类名（详情进日志）。
+ */
+export function connectFailedMessage(e: unknown, redact: (s: string) => string): string {
+  if (e instanceof ToolError) {
+    return `Could not list tools from the app: ${redact(e.message).slice(0, MAX_FAILURE_DETAIL)}`;
+  }
+  return `Could not list tools from the app (${errName(e)})`;
+}
 
 /**
  * 把连接器返回的工具清单整理成快照：只保留 `name / description / inputSchema / annotations`
@@ -247,7 +267,7 @@ export class ToolDrift {
       if (e instanceof CredentialMissing) throw e;
       // 日志经 logger 打码（凭据值已在构造注入时登记）
       this.d.log.warn("app listTools failed", { ...logCtx, connector, err: e });
-      throw new ApiError("app.connect_failed", `Could not list tools from the app (${errName(e)})`);
+      throw new ApiError("app.connect_failed", connectFailedMessage(e, redactorFor(injected)));
     } finally {
       await session?.close().catch((e: unknown) => {
         this.d.log.warn("connector session close failed", { ...logCtx, connector, err: e });

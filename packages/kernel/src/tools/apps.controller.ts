@@ -21,7 +21,7 @@ import {
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { can } from "../orgs/roles.js";
-import type { AppDetail, AppSummary, AppsService, ToolIssue } from "./apps.service.js";
+import type { AppDetail, AppPreview, AppSummary, AppsService, ToolIssue } from "./apps.service.js";
 import { publicEndpoint } from "./endpoint.js";
 
 /** 没有 `apps.manage` 的读者只看到端点的公开部分（URL 不带 query、只有头名，见 endpoint.ts）。 */
@@ -137,6 +137,18 @@ const CreateBody = z
   })
   .strict();
 
+/** 预览（Ruling A20）：与创建相同的连接器 / 端点 / 认证 / 凭据，认证可缺省（只读端点描述，不列工具）。 */
+const PreviewBody = z
+  .object({
+    name: z.string().trim().min(1).max(80).optional(),
+    slug: z.string().max(24).optional(),
+    connector: z.string().min(1).max(100),
+    endpoint: z.record(z.string(), z.unknown()),
+    auth: AuthSchema.optional(),
+    credential: CredentialValue.optional(),
+  })
+  .strict();
+
 const ToolPatch = z
   .object({
     status: z.enum(["enabled", "disabled"]).optional(),
@@ -181,6 +193,22 @@ export class AppsController {
   ): Promise<{ app: AppDetail; issues: ToolIssue[] }> {
     const p = requireUser(principal);
     return this.apps.create(org.orgId, p.account.id, body, patTokenId(p));
+  }
+
+  /**
+   * 预览（安装向导）：读端点描述（认证提示、操作清单）并在能认证时列出工具，什么都不写。
+   * 创建与预览的请求体可带最大 2 MB 的 OpenAPI 文档，路由级 bodyLimit 见 http/app.ts。
+   */
+  @Post("preview")
+  @HttpCode(200)
+  @OrgAction("apps.manage")
+  async preview(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Body(new ZodPipe(PreviewBody)) body: z.infer<typeof PreviewBody>,
+  ): Promise<AppPreview> {
+    requireUser(principal);
+    return this.apps.preview(org.orgId, body);
   }
 
   @Get(":appId")

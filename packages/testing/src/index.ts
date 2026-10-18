@@ -33,6 +33,14 @@ export {
   startFakeOAuthServer,
 } from "./fake-oauth-server.js";
 export {
+  defaultFakeOpenApiSpec,
+  type FakeOpenApiRequest,
+  type FakeOpenApiServer,
+  type FakeOpenApiServerOptions,
+  type FakePet,
+  startFakeOpenApiServer,
+} from "./fake-openapi-server.js";
+export {
   type ConformanceTarget,
   checkDeclaredParameters,
   describeModelProviderConformance,
