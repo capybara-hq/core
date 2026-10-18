@@ -10,6 +10,8 @@ const notFound = vi.hoisted(() =>
   }),
 );
 vi.mock("next/navigation", () => ({ notFound }));
+const connection = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("next/server", () => ({ connection }));
 
 // jsdom 缺少 Radix / cmdk 依赖的若干浏览器 API。
 beforeAll(() => {
@@ -35,6 +37,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllEnvs();
   notFound.mockClear();
+  connection.mockClear();
 });
 
 function renderRoute(route: string) {
@@ -112,6 +115,22 @@ describe("/dev/ui 生产门禁", () => {
     const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["components"]) })).resolves.toBeTruthy();
     expect(notFound).not.toHaveBeenCalled();
+  });
+
+  it("门禁在请求时判断：先 await connection() 再读环境变量（不会被预渲染固化）", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CAPYBARA_DEV_UI", "");
+    const order: string[] = [];
+    connection.mockImplementationOnce(async () => {
+      order.push("connection");
+    });
+    notFound.mockImplementationOnce(() => {
+      order.push("notFound");
+      throw new Error("NEXT_NOT_FOUND");
+    });
+    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    await expect(Page({ params: params(["components"]) })).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(order).toEqual(["connection", "notFound"]);
   });
 
   it("未知路由 notFound", async () => {
