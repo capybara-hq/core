@@ -38,6 +38,11 @@ import type { ApprovalsService } from "../tools/approvals.service.js";
 import { AppsController } from "../tools/apps.controller.js";
 import { AppsService } from "../tools/apps.service.js";
 import type { Credentials } from "../tools/credentials.js";
+import { OAuthFlow } from "../tools/oauth/flow.js";
+import {
+  OAuthCallbackController,
+  OAuthConnectController,
+} from "../tools/oauth/oauth.controller.js";
 import { QuestionsController } from "../tools/questions.controller.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -58,6 +63,7 @@ import {
   KERNEL_LOG,
   KERNEL_REDIS,
   MEMBERS,
+  OAUTH_FLOW,
   ORG_PLUGIN_CONFIGS,
   ORGS,
   PROVIDER_REGISTRY,
@@ -115,6 +121,8 @@ const CONTROLLERS: Type[] = [
   ApprovalsController,
   ToolGrantsController,
   QuestionsController,
+  OAuthConnectController,
+  OAuthCallbackController,
 ];
 
 /**
@@ -227,6 +235,27 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         config: () => KernelConfig,
       ) => new AppsService(db, registry, deps.host, credentials, config, deps.log),
       inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG],
+    },
+    {
+      provide: OAUTH_FLOW,
+      useFactory: (
+        db: KernelDb,
+        redis: Redis,
+        credentials: Credentials,
+        config: () => KernelConfig,
+        apps: AppsService,
+      ) =>
+        new OAuthFlow({
+          db,
+          redis,
+          credentials,
+          config,
+          log: deps.log,
+          onFirstConnect: async (orgId, appId, accountId) => {
+            await apps.refresh(orgId, appId, accountId, undefined, { trigger: "first_connect" });
+          },
+        }),
+      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, APPS],
     },
   ];
 }

@@ -25,6 +25,13 @@ export {
   startFakeModelServer,
 } from "./fake-model-server.js";
 export {
+  type FakeOAuthClient,
+  type FakeOAuthServer,
+  type FakeOAuthServerOptions,
+  type FakeTokenRequest,
+  startFakeOAuthServer,
+} from "./fake-oauth-server.js";
+export {
   type ConformanceTarget,
   checkDeclaredParameters,
   describeModelProviderConformance,

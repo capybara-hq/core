@@ -248,7 +248,7 @@ export async function createKernel(
   const bus = createBus(redis, busSubscriber, "kernel", log);
   const eventLog = new EventLog(kdb, bus, log);
   const registry = new ProviderRegistry(host, redis, log);
-  const credentials = new Credentials(kdb, keyring, log);
+  const credentials = new Credentials(kdb, keyring, log, { redis, config: () => current });
   const toolOutputs = new ToolOutputs(kdb, () => current);
   // 内置工具（tool_search 在 Task 19 接入）
   const toolRegistry = new ToolRegistry({

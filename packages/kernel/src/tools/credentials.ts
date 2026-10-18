@@ -1,10 +1,20 @@
 import type { AuthInjection } from "@capybara-hq/plugin-sdk";
+import type { Redis } from "ioredis";
 import type { Transaction } from "kysely";
 import { z } from "zod";
+import type { KernelConfig } from "../config/schema.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { KernelLogger } from "../log.js";
+import { oauthHttpOptions } from "./oauth/discovery.js";
+import {
+  type OAuthClientRecord,
+  OAuthReconnectRequired,
+  type OAuthStore,
+  type OAuthTokenRecord,
+  OAuthTokens,
+} from "./oauth/tokens.js";
 import { injectionSecrets } from "./redact.js";
 
 export type Ownership = "org" | "personal";
@@ -17,8 +27,26 @@ export type StaticAuth =
   | { type: "basic"; ownership: Ownership }
   | { type: "headers"; ownership: Ownership; names: string[] };
 
-/** 本任务只有静态认证；OAuth 在 Task 15 并入。 */
-export type AppAuth = StaticAuth;
+/**
+ * OAuth 认证方式。授权码流为个人凭据（每个成员自己连接），`discovery: "mcp"` 时端点经 MCP OAuth 发现得到，
+ * `client: "dcr"` 时安装时动态注册客户端（只能配合 MCP 发现）；客户端凭据流为组织凭据。
+ */
+export type OAuthAuth =
+  | {
+      type: "oauth_code";
+      ownership: "personal";
+      discovery: "mcp" | "manual";
+      authorizationUrl?: string | undefined;
+      tokenUrl?: string | undefined;
+      scopes?: string[] | undefined;
+      client: "dcr" | "manual";
+    }
+  | { type: "oauth_client"; ownership: "org"; tokenUrl: string; scopes?: string[] | undefined };
+
+export type AppAuth = StaticAuth | OAuthAuth;
+
+export const isOAuth = (auth: AppAuth): auth is OAuthAuth =>
+  auth.type === "oauth_code" || auth.type === "oauth_client";
 
 /** 静态凭据的存储形态（JSON 序列化后信封加密）。 */
 export type StaticSecret =
@@ -59,6 +87,15 @@ const userKey = (appId: string, accountId: string) => {
 };
 const keyOf = (appId: string, owner: CredentialOwner) =>
   owner.kind === "org" ? orgKey(appId) : userKey(appId, owner.accountId);
+/** OAuth 客户端（组织级，按应用一条）。 */
+const clientKey = (appId: string) => {
+  NO_COLON("appId", appId);
+  return `credentials:app:${appId}:client`;
+};
+const ownerOf = (auth: AppAuth, accountId: string): CredentialOwner =>
+  auth.type !== "none" && auth.ownership === "personal"
+    ? { kind: "user", accountId }
+    : { kind: "org" };
 
 const nonEmpty = z.string().min(1);
 const secretSchemas = {
@@ -66,13 +103,101 @@ const secretSchemas = {
   basic: z.strictObject({ username: nonEmpty, password: nonEmpty }),
 };
 
-/** 应用凭据：信封加密存入 capybara.secrets，解密后只在构造注入头时出现。 */
+/** OAuth 刷新所需的依赖（锁在 Redis，往返限时与本机 http 放行取自配置）。 */
+export interface CredentialsOAuthDeps {
+  redis: Redis;
+  config: () => KernelConfig;
+}
+
+/**
+ * 应用凭据：信封加密存入 capybara.secrets，解密后只在构造注入头时出现。OAuth 应用的 token 也存在这里
+ * （个人 / 组织键，同静态凭据），OAuth 客户端存组织级的 `:client` 键；刷新见 oauth/tokens.ts。
+ */
 export class Credentials {
+  private readonly tokens: OAuthTokens | undefined;
+
   constructor(
     private readonly db: KernelDb,
     private readonly keyring: Keyring,
     private readonly log: KernelLogger,
-  ) {}
+    oauth?: CredentialsOAuthDeps,
+  ) {
+    if (oauth) {
+      const store: OAuthStore = {
+        readClient: (orgId, appId) => this.oauthClient(orgId, appId),
+        readTokens: (orgId, appId, owner) => this.oauthTokens(orgId, appId, owner),
+        writeTokens: (orgId, appId, owner, rec) => this.setOAuthTokens(orgId, appId, owner, rec),
+        deleteTokens: (orgId, appId, owner) => this.clear(orgId, appId, owner),
+      };
+      this.tokens = new OAuthTokens(
+        store,
+        oauth.redis,
+        () => oauthHttpOptions(oauth.config()),
+        log,
+      );
+    }
+  }
+
+  private oauth(): OAuthTokens {
+    if (!this.tokens) throw new Error("credentials: OAuth is not configured");
+    return this.tokens;
+  }
+
+  /** 读一条 JSON 凭据；不存在 / 解不开 → null（日志不带内容）。 */
+  private async readJson(orgId: string, key: string, appId: string): Promise<unknown> {
+    const raw = await this.secrets().get(orgId, key);
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      this.log.warn("credential payload is corrupted", { appId });
+      return null;
+    }
+  }
+
+  /** OAuth 客户端与令牌里的密钥值登记日志打码（logger 只收 ≥ 12 的值）。 */
+  private registerSecrets(values: (string | undefined)[]): void {
+    this.log.addOrgSecrets(values.filter((v): v is string => typeof v === "string" && v !== ""));
+  }
+
+  async oauthClient(orgId: string, appId: string): Promise<OAuthClientRecord | null> {
+    const v = (await this.readJson(orgId, clientKey(appId), appId)) as OAuthClientRecord | null;
+    if (v === null || typeof v !== "object" || typeof v.clientId !== "string") return null;
+    this.registerSecrets([v.clientSecret, v.registration?.accessToken]);
+    return v;
+  }
+
+  async setOAuthClient(
+    orgId: string,
+    appId: string,
+    client: OAuthClientRecord,
+    trx?: Transaction<KernelDatabase>,
+  ): Promise<void> {
+    this.registerSecrets([client.clientSecret, client.registration?.accessToken]);
+    await this.secrets(trx).set(orgId, clientKey(appId), JSON.stringify(client));
+  }
+
+  async oauthTokens(
+    orgId: string,
+    appId: string,
+    owner: CredentialOwner,
+  ): Promise<OAuthTokenRecord | null> {
+    const v = (await this.readJson(orgId, keyOf(appId, owner), appId)) as OAuthTokenRecord | null;
+    if (v === null || typeof v !== "object" || typeof v.access_token !== "string") return null;
+    this.registerSecrets([v.access_token, v.refresh_token]);
+    return v;
+  }
+
+  async setOAuthTokens(
+    orgId: string,
+    appId: string,
+    owner: CredentialOwner,
+    rec: OAuthTokenRecord,
+    trx?: Transaction<KernelDatabase>,
+  ): Promise<void> {
+    this.registerSecrets([rec.access_token, rec.refresh_token]);
+    await this.secrets(trx).set(orgId, keyOf(appId, owner), JSON.stringify(rec));
+  }
 
   private secrets(db: KernelDb | Transaction<KernelDatabase> = this.db) {
     return createSecrets(db, this.keyring, NAMESPACE);
@@ -87,6 +212,15 @@ export class Credentials {
       new ApiError("validation_failed", "Invalid credential", issues);
     if (auth.type === "none")
       throw fail([{ path: "", message: "Auth type none takes no credential" }]);
+    if (isOAuth(auth)) {
+      throw fail([
+        {
+          path: "",
+          message:
+            "OAuth apps get their tokens through the connect flow; credentials cannot be set directly",
+        },
+      ]);
+    }
     const want = auth.ownership === "org" ? "org" : "user";
     if (owner.kind !== want) {
       throw fail([
@@ -164,7 +298,13 @@ export class Credentials {
     trx?: Transaction<KernelDatabase>,
   ): Promise<"connected" | "missing"> {
     if (auth.type === "none") return "connected";
-    const key = auth.ownership === "personal" ? userKey(appId, accountId) : orgKey(appId);
+    // 客户端凭据流：有客户端即可按需取 token
+    const key =
+      auth.type === "oauth_client"
+        ? clientKey(appId)
+        : auth.ownership === "personal"
+          ? userKey(appId, accountId)
+          : orgKey(appId);
     const row = await (trx ?? this.db)
       .selectFrom("secrets")
       .select("key")
@@ -183,8 +323,13 @@ export class Credentials {
     accountId: string,
   ): Promise<AuthInjection> {
     if (auth.type === "none") return { headers: {} };
-    const owner: CredentialOwner =
-      auth.ownership === "personal" ? { kind: "user", accountId } : { kind: "org" };
+    const owner = ownerOf(auth, accountId);
+    if (isOAuth(auth)) {
+      const token = await this.oauthCall(appId, auth, () =>
+        this.oauth().accessToken(orgId, appId, auth, owner),
+      );
+      return this.injectionFor(appId, auth, { token });
+    }
     const missing = () => new CredentialMissing(appId, auth.ownership);
     const raw = await this.secrets().get(orgId, keyOf(appId, owner));
     if (raw === null) throw missing();
@@ -200,6 +345,37 @@ export class Credentials {
   }
 
   /**
+   * 连接器收到 401 时调用（`stale` 为那次请求注入的鉴权）：OAuth 应用在刷新锁内强制刷新，之后的 `injection()`
+   * 返回新 token；refresh 被拒 → 凭据删除并抛 CredentialMissing。静态凭据无事可做。
+   */
+  async onUnauthorized(
+    orgId: string,
+    appId: string,
+    auth: AppAuth,
+    accountId: string,
+    stale?: AuthInjection,
+  ): Promise<void> {
+    if (!isOAuth(auth)) return;
+    const header = stale?.headers.Authorization;
+    const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
+    await this.oauthCall(appId, auth, () =>
+      this.oauth().forceRefresh(orgId, appId, auth, ownerOf(auth, accountId), token),
+    );
+  }
+
+  /** 「需要重新连接」→ CredentialMissing（个人凭据由管线转成 connection_required）。 */
+  private async oauthCall<T>(appId: string, auth: OAuthAuth, work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (e) {
+      if (e instanceof OAuthReconnectRequired) {
+        throw new CredentialMissing(appId, e.owner.kind === "user" ? "personal" : auth.ownership);
+      }
+      throw e;
+    }
+  }
+
+  /**
    * 由凭据值构造注入（不读库）；值登记日志打码。应用创建时用请求里带的、尚未落库的凭据连接。
    * 值缺字段 → CredentialMissing。
    */
@@ -212,6 +388,12 @@ export class Credentials {
 
   private build(appId: string, auth: AppAuth, secret: StaticSecret): AuthInjection {
     if (auth.type === "none") return { headers: {} };
+    if (isOAuth(auth)) {
+      const token = (secret as { token?: unknown }).token;
+      if (typeof token !== "string" || token === "")
+        throw new CredentialMissing(appId, auth.ownership);
+      return { headers: { Authorization: `Bearer ${token}` } };
+    }
     const missing = () => new CredentialMissing(appId, auth.ownership);
     if (typeof secret !== "object" || secret === null) throw missing();
     const value = secret as Partial<{

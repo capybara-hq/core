@@ -75,3 +75,6 @@ export const APPROVALS = Symbol("APPROVALS");
 
 /** `QuestionsService`（工具调用的输入请求）的注入令牌。 */
 export const QUESTIONS = Symbol("QUESTIONS");
+
+/** `OAuthFlow`（OAuth 授权码连接流程）的注入令牌。 */
+export const OAUTH_FLOW = Symbol("OAUTH_FLOW");

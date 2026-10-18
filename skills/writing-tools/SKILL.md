@@ -148,10 +148,12 @@ interface ConnectorSession {
 - 远端的 `inputSchema` 不受信任：内核校验参数前去掉 `pattern` / `patternProperties`（按 additionalProperties 语义放宽）/ `format`，超过 64 KB 或嵌套超过 32 层的 schema 不校验（记 warn），每个 schema 用独立的 Ajv 实例（`$id` 不互相冲突）。工具定义按指纹存进 `capybara.tool_specs`（安装 / 刷新与每次模型请求时），刷新改了定义后早先的请求仍可还原。
 - 端点配置对组织成员可见：固定头与 URL query 里不能放凭据（`x-api-key`、`api-key`、`x-auth-token`、`authorization` 各变体、`*-token`、`*-secret` 等头，`key` / `api_key` / `token` / `access_token` / `secret` 等 query 参数，URL 用户信息），内核在安装时一律 400 拒绝并提示改用凭据设置；没有 `apps.manage` 的人读应用时只看到不带 query 的 URL 与头名（`headerNames`）。
 - 尊重 `signal`（`open` 的与 `callTool` 的），超时由内核的 `tools.timeoutMs` 决定，SDK 自带的请求超时设得足够长、不要抢在内核前面。
+- **OAuth 全在内核**（`packages/kernel/src/tools/oauth/`），连接器照上面两条做即可：`auth()` 返回的 Bearer 由内核在过期前 60 秒刷新；`onUnauthorized()` 在 Redis 锁 `capk:oauth-refresh:<orgId>:<appId>:<owner>` 内强制刷新（别的副本已刷新则直接用新 token，不并发刷新），refresh 被拒 → 凭据删除、调用得到「需要连接」。认证方式 `oauth_code`（个人，`discovery: "mcp"` 走 RFC 9728 → RFC 8414 发现，`client: "dcr"` 安装时 RFC 7591 注册，不支持 DCR → 502 `app.connect_failed` 带 `dcr_unsupported`，改用 `client: "manual"` + `credential: { clientId, clientSecret? }`）与 `oauth_client`（组织，客户端凭据流）；都要求配置 `http.publicUrl`。授权码应用安装时不 listTools，首个成员经 `POST /orgs/:orgId/apps/:appId/connect` → 授权服务器 → `GET /api/v1/oauth/callback` 连接后用其 token 刷新工具清单。
 - 应用级熔断（连续失败 `tools.breakerFailures` 次后打开 `tools.breakerOpenSeconds` 秒）在内核，连接器只需如实抛错 / 返回。**只有远端不可用才计数**：超时、连接 / 传输错误（非 `ToolError` 的异常，或 `ToolError` 带 `kind: "unavailable"`，如 HTTP 5xx、连不上）；`kind: "error"` 的 `ToolError`（JSON-RPC 业务错误、401 重试后仍失败、重定向、4xx）与 `isError` 结果一样说明远端可达，清零计数。
 
 ## 测试
 
 - 插件单测：直接调用处理函数（构造 `ToolCallContext`），见 `plugins/todo/test/todo.test.ts`；多副本读写一致用 `createDualReplicaHarness`。
 - 连接器：`@capybara-hq/testing` 的 `startFakeMcpServer({ tools, resources?, requireBearer?, unauthorizedTimes?, intercept? })` 可模拟慢、报错、401、回显凭据、超大输出、重定向。
+- OAuth：`startFakeOAuthServer({ dcr?, metadata?, accessTokenTtl?, clients?, tokenDelayMs? })`（自动批准的授权端点、PKCE 校验、refresh 轮换、client_credentials、DCR 开关、`revokeAccessTokens` / `revokeRefreshTokens`），配合 `startFakeMcpServer({ verifyBearer: (t) => as.verify(t), protectedResource: { authorizationServers: [as.issuer], advertise: "header" | "well-known" } })`；内核需 `tools.oauthAllowInsecureLoopback: true` 与 `http.publicUrl`。见 `packages/kernel/test/tools/oauth/`。
 - 内核端到端：model-fake 的 `tool:<key>:<json>` 指令让模型调用指定工具（如 `tool:todo__write:{"todos":[]}`），见 `packages/kernel/test/tools/mcp-e2e.test.ts` 与双副本验收 `packages/kernel/test/tools/m3-segment1.dual.test.ts`（审批跨副本、审批超时、杀 worker 后结果未知、插件启用前后）。

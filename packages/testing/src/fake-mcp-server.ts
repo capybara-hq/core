@@ -69,6 +69,18 @@ export interface FakeMcpServerOptions {
   resources?: FakeMcpResource[];
   /** 要求 `Authorization: Bearer <token>`，不符 → HTTP 401。 */
   requireBearer?: string;
+  /** 自定义 bearer 校验（如交给假授权服务器的 `verify`）：返回 false → HTTP 401。与 `requireBearer` 二选一。 */
+  verifyBearer?: (token: string) => boolean;
+  /**
+   * OAuth 受保护资源（RFC 9728）：401 响应带 `WWW-Authenticate: Bearer`。`advertise: "header"` 时元数据放在非标准
+   * 路径、只经 `resource_metadata` 参数告知；`"well-known"` 时元数据只在
+   * `/.well-known/oauth-protected-resource/mcp`，401 不带该参数。
+   */
+  protectedResource?: {
+    authorizationServers: string[];
+    scopesSupported?: string[];
+    advertise: "header" | "well-known";
+  };
   /** 前 n 个 HTTP 请求无条件返回 401（模拟凭据过期后刷新）。 */
   unauthorizedTimes?: number;
   /** 每次工具调用（在处理函数之前）调用。 */
@@ -108,13 +120,24 @@ const readBody = (req: IncomingMessage): Promise<string> =>
     req.on("error", reject);
   });
 
-const send = (res: ServerResponse, status: number, body: string, location?: string) => {
+const send = (
+  res: ServerResponse,
+  status: number,
+  body: string,
+  location?: string,
+  extra: Record<string, string> = {},
+) => {
   res.writeHead(status, {
     "content-type": "text/plain",
     ...(location !== undefined && { location }),
+    ...extra,
   });
   res.end(body);
 };
+
+/** 受保护资源元数据的两个位置（见 `FakeMcpServerOptions.protectedResource`）。 */
+const PRM_HEADER_PATH = "/meta/resource.json";
+const PRM_WELL_KNOWN_PATH = "/.well-known/oauth-protected-resource/mcp";
 
 /**
  * 本地假 MCP 服务（Streamable HTTP，无状态模式，JSON 响应）：每个 HTTP 请求新建一个 SDK `Server` 处理，
@@ -194,7 +217,44 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
     return server;
   };
 
+  let base = "";
+  const prm = opts.protectedResource;
+  const unauthorized = (res: ServerResponse) => {
+    const challenge =
+      prm?.advertise === "header"
+        ? `Bearer resource_metadata="${base}${PRM_HEADER_PATH}"`
+        : prm
+          ? `Bearer realm="fake-mcp"`
+          : undefined;
+    send(
+      res,
+      401,
+      "Unauthorized",
+      undefined,
+      challenge === undefined ? {} : { "www-authenticate": challenge },
+    );
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
+    const path = new URL(req.url ?? "/", base).pathname;
+    if (prm && req.method === "GET") {
+      const at = prm.advertise === "header" ? PRM_HEADER_PATH : PRM_WELL_KNOWN_PATH;
+      if (path === at) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            resource: `${base}/mcp`,
+            authorization_servers: prm.authorizationServers,
+            bearer_methods_supported: ["header"],
+            ...(prm.scopesSupported !== undefined && { scopes_supported: prm.scopesSupported }),
+          }),
+        );
+        return;
+      }
+      if (path.startsWith("/.well-known/") || path === PRM_HEADER_PATH) {
+        return send(res, 404, "Not Found");
+      }
+    }
     const headers = headersOf(req);
     const raw = req.method === "POST" ? await readBody(req) : "";
     let body: unknown;
@@ -212,13 +272,17 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
 
     if (rejected < (opts.unauthorizedTimes ?? 0)) {
       rejected++;
-      return send(res, 401, "Unauthorized");
+      return unauthorized(res);
     }
     if (
       opts.requireBearer !== undefined &&
       headers.authorization !== `Bearer ${opts.requireBearer}`
     ) {
-      return send(res, 401, "Unauthorized");
+      return unauthorized(res);
+    }
+    if (opts.verifyBearer) {
+      const m = /^Bearer (.+)$/.exec(headers.authorization ?? "");
+      if (!m || !opts.verifyBearer(m[1] as string)) return unauthorized(res);
     }
     const over = opts.intercept?.({ ...entry, body });
     if (over) return send(res, over.status, over.body, over.location);
@@ -244,8 +308,9 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
   });
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
   const { port } = http.address() as AddressInfo;
+  base = `http://127.0.0.1:${port}`;
   return {
-    url: `http://127.0.0.1:${port}/mcp`,
+    url: `${base}/mcp`,
     calls,
     requests,
     stop: () =>

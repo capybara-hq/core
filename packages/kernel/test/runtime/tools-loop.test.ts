@@ -177,7 +177,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
         db,
         eventLog,
         registry,
-        credentials: { injection: async () => ({ headers: {} }) },
+        credentials: { injection: async () => ({ headers: {} }), onUnauthorized: async () => {} },
         breaker: new Breaker(redis, () => config),
         outputs: new ToolOutputs(db, () => config),
         approvals: new ApprovalsService({ db, eventLog, config: () => config, log: silent }),

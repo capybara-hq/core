@@ -23,6 +23,7 @@ describe("tools 配置段", () => {
       searchThresholdTokens: 8000,
       driftIntervalHours: 24,
       maxResultReadChars: 20000,
+      oauthAllowInsecureLoopback: false,
     });
     expect(c.http.publicUrl).toBeUndefined();
   });

@@ -396,6 +396,15 @@ export const KernelConfigSchema = z.object({
         .positive()
         .default(20000)
         .meta(meta({ description: "Maximum characters returned by one read_tool_output call" })),
+      oauthAllowInsecureLoopback: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Allow OAuth discovery, registration and token endpoints over plain http on loopback hosts (development and tests only; production requires https)",
+          }),
+        ),
     })
     .default({
       timeoutMs: 60000,
@@ -409,6 +418,7 @@ export const KernelConfigSchema = z.object({
       searchThresholdTokens: 8000,
       driftIntervalHours: 24,
       maxResultReadChars: 20000,
+      oauthAllowInsecureLoopback: false,
     }),
   log: z
     .object({

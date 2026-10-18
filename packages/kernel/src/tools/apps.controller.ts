@@ -35,6 +35,18 @@ const HeaderName = z
   .max(100)
   .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/, "Invalid header name");
 const Ownership = z.enum(["org", "personal"]);
+/** OAuth 端点（https 等由服务按部署配置再校验）。 */
+const OAuthUrl = z.url().max(2000);
+/** OAuth scope（RFC 6749 §3.3 scope-token）。 */
+const Scopes = z
+  .array(
+    z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[\x21\x23-\x5B\x5D-\x7E]+$/, "Invalid scope"),
+  )
+  .max(50);
 
 /** 认证方式：只有类型与非密钥字段；凭据值走 `credential` / 凭据接口。 */
 const AuthSchema = z.discriminatedUnion("type", [
@@ -58,6 +70,49 @@ const AuthSchema = z.discriminatedUnion("type", [
       type: z.literal("headers"),
       ownership: Ownership,
       names: z.array(HeaderName).min(1).max(20),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("oauth_code"),
+      ownership: z.literal("personal"),
+      discovery: z.enum(["mcp", "manual"]),
+      authorizationUrl: OAuthUrl.optional(),
+      tokenUrl: OAuthUrl.optional(),
+      scopes: Scopes.optional(),
+      client: z.enum(["dcr", "manual"]),
+    })
+    .strict()
+    .superRefine((a, ctx) => {
+      if (a.discovery === "manual") {
+        for (const k of ["authorizationUrl", "tokenUrl"] as const) {
+          if (a[k] === undefined)
+            ctx.addIssue({ code: "custom", path: [k], message: "Required with discovery manual" });
+        }
+      } else {
+        for (const k of ["authorizationUrl", "tokenUrl"] as const) {
+          if (a[k] !== undefined)
+            ctx.addIssue({
+              code: "custom",
+              path: [k],
+              message: "Endpoints are discovered with discovery mcp; omit this field",
+            });
+        }
+      }
+      if (a.client === "dcr" && a.discovery !== "mcp") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["client"],
+          message: "Dynamic client registration requires discovery mcp",
+        });
+      }
+    }),
+  z
+    .object({
+      type: z.literal("oauth_client"),
+      ownership: z.literal("org"),
+      tokenUrl: OAuthUrl,
+      scopes: Scopes.optional(),
     })
     .strict(),
 ]);

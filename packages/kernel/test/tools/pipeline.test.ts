@@ -173,6 +173,7 @@ function pipeline(): ToolPipeline {
         if (auth.type === "none") return { headers: {} };
         throw new CredentialMissing(appId, auth.ownership);
       },
+      async onUnauthorized() {},
     },
     breaker,
     outputs,

@@ -146,7 +146,7 @@ beforeAll(async () => {
       db,
       eventLog,
       registry: noTools,
-      credentials: { injection: async () => ({ headers: {} }) },
+      credentials: { injection: async () => ({ headers: {} }), onUnauthorized: async () => {} },
       breaker: new Breaker(redis, config),
       outputs: new ToolOutputs(db, config),
       approvals: new ApprovalsService({ db, eventLog, config, log: silent }),

@@ -116,7 +116,7 @@ export interface ToolPipelineDeps {
   db: KernelDb;
   eventLog: EventLog;
   registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">;
-  credentials: Pick<Credentials, "injection">;
+  credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   breaker: Pick<Breaker, "check" | "failure" | "success">;
   outputs: Pick<ToolOutputs, "save" | "load">;
   /** 策略为 `ask` 时建审批；续跑时读该调用的审批结果。 */
@@ -601,6 +601,8 @@ export class ToolPipeline {
       await getAuth();
     } catch (e) {
       if (e instanceof CredentialMissing) return missing(e);
+      // 取 token 时授权服务器暂时不可用（OAuth）：给模型可执行的说明，不让整轮失败
+      if (e instanceof ToolError) return { kind: "error", message: e.message };
       throw e;
     }
 
@@ -610,9 +612,12 @@ export class ToolPipeline {
         opened = connector.open({
           endpoint: app.endpoint,
           auth: getAuth,
-          // 刷新凭据在 Task 15（OAuth）接入；这里只丢弃本次调用缓存的注入，下次请求重新读取。
+          // OAuth：在刷新锁内强制刷新（别的副本已刷新则直接用新 token）；之后丢弃本次调用缓存的注入，
+          // 连接器重试时重新读取。refresh 被拒 → CredentialMissing，经连接器原样抛出，下面转成「需要连接」。
           onUnauthorized: async () => {
+            const stale = injected.at(-1);
             injection = undefined;
+            await credentials.onUnauthorized(orgId, appId, auth, ctx.accountId, stale);
           },
           signal,
         });

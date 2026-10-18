@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AuthInjection, Logger, ToolAnnotations, ToolSpec } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
+import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -12,10 +13,29 @@ import {
   CredentialMissing,
   type CredentialOwner,
   type Credentials,
+  isOAuth,
+  type OAuthAuth,
   type StaticSecret,
 } from "./credentials.js";
 import { endpointCredentialIssues } from "./endpoint.js";
 import { deriveSlug, isValidSlug, SLUG_RULE, toolKey, toolKeyIssue } from "./naming.js";
+import {
+  checkOAuthUrl,
+  discoverMcp,
+  type McpAuthMetadata,
+  OAuthSetupError,
+  oauthHttpOptions,
+  pickAuthMethod,
+  registerClient,
+} from "./oauth/discovery.js";
+import { callbackUrl, publicUrlRequired } from "./oauth/flow.js";
+import {
+  type OAuthClientRecord,
+  OAuthGrantError,
+  type OAuthTokenRecord,
+  OAuthUnavailable,
+  tokenRequest,
+} from "./oauth/tokens.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import { policyFromAnnotations, specHash, type ToolPolicy, type ToolRegistry } from "./registry.js";
 import { resourceToolSpecs } from "./resources.js";
@@ -107,6 +127,34 @@ const errName = (e: unknown): string =>
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** OAuth 应用在安装时可带的客户端（手填 client / 客户端凭据流）。 */
+const OAuthClientCredential = z.strictObject({
+  clientId: z.string().min(1).max(500),
+  clientSecret: z.string().min(1).max(4000).optional(),
+});
+
+/** 发现 / 注册 / 取 token 的失败 → 502 `app.connect_failed`，details 带原因码（向导据 `dcr_unsupported` 改为手填 client）。 */
+function connectFailed(e: unknown): ApiError {
+  if (e instanceof OAuthSetupError) {
+    return new ApiError("app.connect_failed", e.message, [
+      { reason: e.reason, message: e.message },
+    ]);
+  }
+  if (e instanceof OAuthGrantError) {
+    const message = `The authorization server rejected the client credentials (${e.error})`;
+    return new ApiError("app.connect_failed", message, [{ reason: "token_failed", message }]);
+  }
+  const message =
+    e instanceof OAuthUnavailable ? e.message : "Could not complete OAuth setup with the app";
+  return new ApiError("app.connect_failed", message, [{ reason: "token_failed", message }]);
+}
+
+/** OAuth 安装准备的结果：要存的客户端，以及（客户端凭据流）安装时取到的组织 token。 */
+interface OAuthSetup {
+  client: OAuthClientRecord;
+  tokens?: OAuthTokenRecord;
+}
 
 /** 无注解 = 既没有 readOnlyHint 也没有 destructiveHint。 */
 const unannotated = (a: ToolAnnotations | undefined) =>
@@ -234,6 +282,8 @@ export class AppsService {
     endpoint: unknown,
     auth: () => Promise<AuthInjection>,
     logCtx: Record<string, unknown>,
+    /** 收到 401：OAuth 应用在刷新锁内刷新（参数为最后一次注入的鉴权）。 */
+    onUnauthorized: (last: AuthInjection | undefined) => Promise<void> = async () => {},
   ): Promise<{ specs: unknown; resources: boolean }> {
     const c = this.registry.connector(connector);
     const signal = AbortSignal.timeout(this.config().tools.timeoutMs);
@@ -245,7 +295,12 @@ export class AppsService {
     };
     let session: Awaited<ReturnType<typeof c.open>> | undefined;
     try {
-      session = await c.open({ endpoint, auth: tracked, onUnauthorized: async () => {}, signal });
+      session = await c.open({
+        endpoint,
+        auth: tracked,
+        onUnauthorized: () => onUnauthorized(injected.at(-1)),
+        signal,
+      });
       const specs = await session.listTools();
       return {
         specs: redactDeep(specs, redactorFor(injected)),
@@ -287,8 +342,140 @@ export class AppsService {
   }
 
   /**
+   * OAuth 应用安装前的准备（A16）：授权码流按 `discovery` 取端点（MCP 发现或手填）、按 `client` 动态注册或用请求里
+   * 手填的 client（不做首次 listTools）；客户端凭据流用请求里的 client 取一次组织 token。
+   * 外连失败一律 502 `app.connect_failed`（details 带原因码），什么都不写。
+   */
+  private async prepareOAuth(
+    auth: OAuthAuth,
+    endpoint: unknown,
+    credential: unknown,
+    publicUrl: string,
+  ): Promise<OAuthSetup> {
+    const http = oauthHttpOptions(this.config());
+    const parseClient = (requireSecret: boolean) => {
+      if (credential === undefined || credential === null) {
+        throw fail(
+          "credential",
+          "Provide the OAuth client registered with the authorization server ({ clientId, clientSecret })",
+        );
+      }
+      const r = OAuthClientCredential.safeParse(credential);
+      if (!r.success) {
+        throw new ApiError(
+          "validation_failed",
+          "Invalid credential",
+          r.error.issues.map((i) => ({
+            path: ["credential", ...i.path.map(String)].join("."),
+            message: i.message,
+          })),
+        );
+      }
+      if (requireSecret && r.data.clientSecret === undefined) {
+        throw fail(
+          "credential.clientSecret",
+          "A client secret is required for the client credentials flow",
+        );
+      }
+      return r.data;
+    };
+    const checked = (path: string, url: string) => {
+      try {
+        checkOAuthUrl(url, http);
+      } catch (e) {
+        throw fail(path, e instanceof Error ? e.message : "Invalid URL");
+      }
+      return url;
+    };
+
+    if (auth.type === "oauth_client") {
+      const manual = parseClient(true);
+      const client: OAuthClientRecord = {
+        clientId: manual.clientId,
+        ...(manual.clientSecret !== undefined && { clientSecret: manual.clientSecret }),
+        authMethod: "client_secret_basic",
+        tokenEndpoint: checked("auth.tokenUrl", auth.tokenUrl),
+        ...(auth.scopes && { scopes: auth.scopes }),
+      };
+      try {
+        const tokens = await tokenRequest(
+          client,
+          { grant_type: "client_credentials", scope: auth.scopes?.join(" ") },
+          http,
+        );
+        return { client, tokens };
+      } catch (e) {
+        throw connectFailed(e);
+      }
+    }
+
+    const manual = auth.client === "manual" ? parseClient(false) : undefined;
+    if (!manual && credential !== undefined && credential !== null) {
+      throw fail(
+        "credential",
+        "With client dcr the client is registered automatically; omit credential or use client manual",
+      );
+    }
+    let meta: McpAuthMetadata | undefined;
+    let endpoints: {
+      authorizationEndpoint: string;
+      tokenEndpoint: string;
+      resource?: string;
+      scopes?: string[];
+    };
+    if (auth.discovery === "mcp") {
+      const url = isObj(endpoint) && typeof endpoint.url === "string" ? endpoint.url : undefined;
+      if (url === undefined)
+        throw fail("endpoint.url", "MCP OAuth discovery needs an endpoint URL");
+      try {
+        meta = await discoverMcp(url, http);
+      } catch (e) {
+        throw connectFailed(e);
+      }
+      endpoints = {
+        authorizationEndpoint: meta.authorizationEndpoint,
+        tokenEndpoint: meta.tokenEndpoint,
+        resource: meta.resource,
+        ...(meta.scopes && { scopes: meta.scopes }),
+      };
+    } else {
+      endpoints = {
+        authorizationEndpoint: checked("auth.authorizationUrl", auth.authorizationUrl ?? ""),
+        tokenEndpoint: checked("auth.tokenUrl", auth.tokenUrl ?? ""),
+      };
+    }
+    const scopes = auth.scopes ?? endpoints.scopes;
+    if (manual) {
+      return {
+        client: {
+          clientId: manual.clientId,
+          ...(manual.clientSecret !== undefined && { clientSecret: manual.clientSecret }),
+          authMethod: pickAuthMethod(meta?.authMethods, manual.clientSecret !== undefined),
+          authorizationEndpoint: endpoints.authorizationEndpoint,
+          tokenEndpoint: endpoints.tokenEndpoint,
+          ...(endpoints.resource !== undefined && { resource: endpoints.resource }),
+          ...(scopes && { scopes }),
+        },
+      };
+    }
+    if (!meta) throw fail("auth.client", "Dynamic client registration requires discovery mcp");
+    try {
+      const client = await registerClient(
+        { ...meta, ...(scopes && { scopes }) },
+        callbackUrl(publicUrl),
+        http,
+      );
+      return { client };
+    } catch (e) {
+      throw connectFailed(e);
+    }
+  }
+
+  /**
    * 安装应用（A4）：校验 → 用请求里的凭据（尚未落库）连接并 listTools → 一个事务内写应用、工具快照、
    * 凭据与审计。连接失败时什么都不写。组织凭据型应用的 `credential` 是组织凭据，个人型是创建者自己的。
+   * OAuth（A16，要求 `http.publicUrl`）：授权码应用不做首次 listTools（首个成员连接后刷新），只存客户端；
+   * 客户端凭据应用用安装时取到的组织 token listTools，存客户端与 token。
    */
   async create(
     orgId: string,
@@ -305,7 +492,9 @@ export class AppsService {
     const auth = input.auth;
     let owner: CredentialOwner | undefined;
     let secret: StaticSecret | undefined;
-    if (input.credential !== undefined && input.credential !== null) {
+    const publicUrl = this.config().http.publicUrl;
+    if (isOAuth(auth) && !publicUrl) throw publicUrlRequired();
+    if (!isOAuth(auth) && input.credential !== undefined && input.credential !== null) {
       if (auth.type === "none") throw fail("credential", "Auth type none takes no credential");
       owner =
         auth.ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
@@ -316,17 +505,27 @@ export class AppsService {
     if (await this.slugTaken(this.db, orgId, slug)) {
       throw new ApiError("app.slug_taken", "App slug is already taken");
     }
-    const { specs, resources } = await this.listTools(
-      input.connector,
-      endpoint,
-      async () => {
-        if (auth.type === "none") return { headers: {} };
-        if (!secret) throw new CredentialMissing(id, auth.ownership);
-        return this.credentials.injectionFor(id, auth, secret);
-      },
-      { orgId, slug },
-    );
-    const { rows, issues } = snapshot(slug, specs, resources);
+    const oauth = isOAuth(auth)
+      ? await this.prepareOAuth(auth, endpoint, input.credential, publicUrl as string)
+      : undefined;
+    let rows: SnapshotRow[] = [];
+    let issues: ToolIssue[] = [];
+    if (auth.type !== "oauth_code") {
+      const listed = await this.listTools(
+        input.connector,
+        endpoint,
+        async () => {
+          if (auth.type === "none") return { headers: {} };
+          if (oauth?.tokens) {
+            return this.credentials.injectionFor(id, auth, { token: oauth.tokens.access_token });
+          }
+          if (!secret) throw new CredentialMissing(id, auth.ownership);
+          return this.credentials.injectionFor(id, auth, secret);
+        },
+        { orgId, slug },
+      );
+      ({ rows, issues } = snapshot(slug, listed.specs, listed.resources));
+    }
 
     return this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
@@ -348,6 +547,12 @@ export class AppsService {
         .execute();
       await this.insertTools(t, id, rows);
       if (secret && owner) await this.credentials.setStatic(orgId, id, auth, owner, secret, t);
+      if (oauth) {
+        await this.credentials.setOAuthClient(orgId, id, oauth.client, t);
+        if (oauth.tokens) {
+          await this.credentials.setOAuthTokens(orgId, id, { kind: "org" }, oauth.tokens, t);
+        }
+      }
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
@@ -359,7 +564,7 @@ export class AppsService {
           connector: input.connector,
           auth: { type: auth.type, ...(auth.type !== "none" && { ownership: auth.ownership }) },
           tools: rows.length,
-          credentialProvided: secret !== undefined,
+          credentialProvided: secret !== undefined || oauth !== undefined,
         },
       });
       return { app: await this.detail(t, orgId, id, actorAccountId), issues };
@@ -605,13 +810,16 @@ export class AppsService {
   /**
    * 重新 listTools 并直接覆盖快照（第一段；第二段改走漂移检测）：已有工具更新定义、保留管理员设的启停与默认策略
    * （key 变得不合法的强制停用），新工具按注解推导默认值并启用，消失的工具删除。
-   * 组织凭据型应用用组织凭据，个人型用发起人自己的凭据（缺 → `credential.missing`）。
+   * 组织凭据型应用用组织凭据，个人型用发起人自己的凭据（缺 → `credential.missing`）。OAuth 应用收到 401 时
+   * 在刷新锁内刷新 token 后重试一次。`trigger: "first_connect"`：OAuth 授权码应用首个成员连接后由连接流程调用
+   * （A16），只要求 `apps.use`。
    */
   async refresh(
     orgId: string,
     appId: string,
     actorAccountId: string,
     actorTokenId?: string,
+    opts: { trigger?: "first_connect" } = {},
   ): Promise<{
     app: AppDetail;
     issues: ToolIssue[];
@@ -624,11 +832,17 @@ export class AppsService {
       app.endpoint,
       () => this.credentials.injection(orgId, appId, auth, actorAccountId),
       { orgId, appId },
+      (last) => this.credentials.onUnauthorized(orgId, appId, auth, actorAccountId, last),
     );
     const { rows, issues } = snapshot(app.slug, specs, resources);
 
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
+      await lockOrgAndAuthorize(
+        t,
+        orgId,
+        actorAccountId,
+        opts.trigger === "first_connect" ? "apps.use" : "apps.manage",
+      );
       await this.row(t, orgId, appId, true);
       const current = await t
         .selectFrom("app_tools")
@@ -685,7 +899,7 @@ export class AppsService {
         orgId,
         action: "app.tools_refreshed",
         target: appId,
-        detail: changes,
+        detail: { ...changes, ...(opts.trigger && { trigger: opts.trigger }) },
       });
       return { app: await this.detail(t, orgId, appId, actorAccountId), issues, changes };
     });
