@@ -371,6 +371,9 @@ importers:
         specifier: ^0.154.0
         version: 0.154.0
     devDependencies:
+      '@capybara-hq/design':
+        specifier: workspace:*
+        version: link:../../packages/design
       '@capybara-hq/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
