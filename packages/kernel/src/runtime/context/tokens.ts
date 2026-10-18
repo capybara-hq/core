@@ -27,11 +27,20 @@ class CharCounter {
 /**
  * 估算请求的输入 token 数：ASCII 字符数 ÷ 4 + 非 ASCII 字符数 × 1，向上取整。
  * 故意不用 BPE 分词器：长段中文分词会阻塞事件循环（可靠性清单 A）；偏差由 `calibrate` 按真实用量校正。
- * 供应商私有数据（opaque）大小未知，不计入。
+ * 工具定义（名字、描述、inputSchema 的 JSON）计入。供应商私有数据（opaque）大小未知，不计入。
  */
-export function estimateTokens(messages: ModelMessage[], system: ModelRequest["system"]): number {
+export function estimateTokens(
+  messages: ModelMessage[],
+  system: ModelRequest["system"],
+  tools: ModelRequest["tools"] = [],
+): number {
   const c = new CharCounter();
   for (const s of system) c.add(s.text);
+  for (const t of tools) {
+    c.add(t.name);
+    c.add(t.description);
+    c.add(JSON.stringify(t.inputSchema) ?? "");
+  }
   for (const m of messages) {
     if (m.role === "system") {
       c.add(m.content);

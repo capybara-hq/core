@@ -102,6 +102,7 @@ const agent: AgentDefinition = {
   modelParams: {},
   fallbackParams: {},
   tools: [],
+  toolPolicies: {},
 };
 
 beforeAll(async () => {
@@ -127,6 +128,7 @@ beforeAll(async () => {
       { list: () => [{ plugin: "stub", capability: "model-provider@2", impl: stubProvider }] },
       redis,
     ),
+    tools: { forAgent: async () => ({ tools: [], unavailable: [] }) },
     config: () => ({ ...base, runtime: { ...base.runtime, ...runtimeOverrides } }),
     log: silent,
   };
@@ -143,6 +145,7 @@ afterAll(async () => {
 let conversationId: string;
 let accountId: string;
 let runId: string;
+let orgId: string;
 
 beforeEach(async () => {
   calls.length = 0;
@@ -152,7 +155,7 @@ beforeEach(async () => {
     raw,
   );
   accountId = randomUUID();
-  const orgId = randomUUID();
+  orgId = randomUUID();
   const agentId = randomUUID();
   conversationId = randomUUID();
   runId = randomUUID();
@@ -185,6 +188,7 @@ function loopCtx(
   deltas: Delta[] = [],
 ): LoopContext & { deltas: Delta[] } {
   return {
+    orgId,
     conversationId,
     runId,
     agent,

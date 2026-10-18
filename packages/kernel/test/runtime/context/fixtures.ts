@@ -30,6 +30,7 @@ export const AGENT: AgentDefinition = {
   modelParams: {},
   fallbackParams: {},
   tools: [],
+  toolPolicies: {},
 };
 
 /** 按顺序构造事件：seq 从给定值递增，createdAt 固定。 */

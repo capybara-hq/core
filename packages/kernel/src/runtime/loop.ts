@@ -4,6 +4,8 @@ import type { StreamSink } from "./model-call.js";
 
 /** 一次运行交给 loop 的上下文（spec 4.4）。 */
 export interface LoopContext {
+  /** 会话所属组织。 */
+  orgId: string;
   conversationId: string;
   runId: string;
   agent: AgentDefinition;

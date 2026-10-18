@@ -140,7 +140,12 @@ describe("Agent HTTP", () => {
       avatarUrl: null,
       modelParams: {},
       fallbackParams: {},
-      tools: [],
+      // 创建时未给 tools → 默认工具（Ruling P7）
+      tools: [
+        { kind: "builtin", name: "ask_user" },
+        { kind: "builtin", name: "read_tool_output" },
+      ],
+      toolPolicies: {},
     });
     expect(created.agent.definition).not.toHaveProperty("effort");
     const id = created.agent.id;

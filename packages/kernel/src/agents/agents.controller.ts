@@ -26,13 +26,18 @@ import {
   type AgentView,
   type AgentWarning,
 } from "./agents.service.js";
-import { AgentDefinitionSchema } from "./definition.js";
+import { AgentDefinitionSchema, AgentToolRef, DEFAULT_AGENT_TOOLS } from "./definition.js";
 
 const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
 
+/** 创建时未给 `tools` → 默认工具（Ruling P7）；修改请求不注入默认值，版本里总是存显式的 tools。 */
+const CreateDefinition = AgentDefinitionSchema.extend({
+  tools: z.array(AgentToolRef).default(() => structuredClone(DEFAULT_AGENT_TOOLS)),
+});
+
 const CreateBody = z
   .object({
-    definition: AgentDefinitionSchema,
+    definition: CreateDefinition,
     visibility: z.enum(AGENT_VISIBILITIES),
     memberIds: MemberIds.optional(),
   })

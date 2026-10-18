@@ -256,7 +256,14 @@ export async function createKernel(
         .publish(conversationTopic(conversationId), msg)
         .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
     };
-  const stepDeps: ModelStepDeps = { db: kdb, eventLog, registry, config: () => current, log };
+  const stepDeps: ModelStepDeps = {
+    db: kdb,
+    eventLog,
+    registry,
+    tools: toolRegistry,
+    config: () => current,
+    log,
+  };
   const runs: KernelRuns = { eventLog, registry, queue: runQueue, lock, quota, abort, stepDeps };
   let runWorker: RunWorker | undefined;
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */

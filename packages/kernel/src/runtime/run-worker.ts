@@ -499,6 +499,7 @@ export class RunWorker {
       let outcome: LoopOutcome;
       try {
         outcome = await this.d.loop.run({
+          orgId: conv.org_id,
           conversationId,
           runId,
           agent,

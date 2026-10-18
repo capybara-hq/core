@@ -80,6 +80,8 @@ function transcriptLine(e: ConversationEvent): string | null {
     }
     case "reminder":
       return `System reminder: ${e.payload.text}`;
+    case "tool_result":
+      return `Tool result ${e.payload.toolKey}${e.payload.isError ? " (error)" : ""}: ${e.payload.content}`;
     default:
       return null;
   }

@@ -51,7 +51,7 @@ beforeAll(async () => {
   accounts = new AccountsService(db);
   members = new MembersService(db);
   orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
-  agents = new AgentsService(db, new ProviderRegistry(k.host, redis));
+  agents = new AgentsService(db, new ProviderRegistry(k.host, redis), k.tools.registry);
 }, 120_000);
 afterAll(async () => {
   await k?.stop();
@@ -113,6 +113,7 @@ describe("AgentDefinitionSchema", () => {
       modelParams: {},
       fallbackParams: {},
       tools: [],
+      toolPolicies: {},
     });
   });
   it("拒绝空名、超长名、非标量参数值、非空 tools；不再有 effort 字段", () => {

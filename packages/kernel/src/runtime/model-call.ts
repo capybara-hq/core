@@ -19,7 +19,13 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { buildModelRequest, type ModelCallMeta } from "./context/build.js";
+import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
+import {
+  buildModelRequest,
+  latestSummary,
+  type ModelCallMeta,
+  type RequestTool,
+} from "./context/build.js";
 import {
   acceptSummary,
   buildCompactionRequest,
@@ -35,6 +41,14 @@ import { ProviderListError, type ProviderRegistry } from "./providers.js";
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
 export const WRAP_UP_REMINDER =
   "Step limit reached. Do not call tools. Summarize what you found and what remains for the user.";
+
+/** 不可用工具提醒的前缀（模型可见，英文）。 */
+export const TOOLS_UNAVAILABLE_PREFIX = "The following tools are unavailable in this run: ";
+
+/** 不可用工具提醒：`The following tools are unavailable in this run: <ref> (<reason>), ...`。 */
+export function toolsUnavailableReminder(unavailable: readonly UnavailableTool[]): string {
+  return `${TOOLS_UNAVAILABLE_PREFIX}${unavailable.map((u) => `${u.ref} (${u.reason})`).join(", ")}`;
+}
 
 /** 可重试错误在同一模型上重试前的默认等待（供应商未给 retryAfterMs 时）。 */
 const DEFAULT_RETRY_DELAY_MS = 1000;
@@ -60,11 +74,15 @@ export interface ModelStepDeps {
   db: KernelDb;
   eventLog: EventLog;
   registry: ProviderRegistry;
+  /** 工具注册表：每步开始时解析 agent 引用的工具（状态可能在步骤之间变化）。 */
+  tools: Pick<ToolRegistry, "forAgent">;
   config: () => KernelConfig;
   log: Logger;
 }
 
 export interface ModelStepInput {
+  /** 会话所属组织（解析工具用）。 */
+  orgId: string;
   conversationId: string;
   runId: string;
   step: number;
@@ -107,6 +125,7 @@ const idem = {
   assistant: (runId: string, step: number) => `assistant:${runId}:${step}`,
   usage: (runId: string, step: number) => `usage:${runId}:${step}`,
   reminder: (runId: string, step: number) => `reminder:${runId}:${step}`,
+  toolsUnavailable: (runId: string, step: number) => `tools_unavailable:${runId}:${step}`,
   modelCall: (runId: string, step: number, attempt: number) =>
     `model_call:${runId}:${step}:${attempt}`,
 };
@@ -169,7 +188,25 @@ async function runStep(
   try {
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
-    events = await maybeCompact(deps, input, events, runtime);
+    // 收尾调用不带工具；其余每步实时解析（应用 / 插件状态可能在步骤之间变化），解析结果记在 model_call。
+    const resolved = wrapUp
+      ? { tools: [], unavailable: [] }
+      : await deps.tools.forAgent(input.orgId, { tools: input.agent.tools ?? [] });
+    const tools: RequestTool[] = resolved.tools;
+    events = await maybeCompact(deps, input, events, runtime, tools);
+
+    if (resolved.unavailable.length > 0) {
+      const text = toolsUnavailableReminder(resolved.unavailable);
+      // 本 run 里模型仍能看到的上一条同类提醒内容相同 → 不重复写（避免每步追加同样的提醒）。
+      if (lastToolsReminder(events, runId) !== text) {
+        events = await appendLocal(deps.eventLog, conversationId, events, {
+          type: "reminder",
+          runId,
+          idemKey: idem.toolsUnavailable(runId, step),
+          payload: { step, text },
+        });
+      }
+    }
 
     const reminder = wrapUp ? WRAP_UP_REMINDER : turnLimitReminder(step, runtime.maxSteps);
     if (reminder !== null) {
@@ -181,7 +218,7 @@ async function runStep(
       });
     }
 
-    const { outcome, ref } = await ladder(deps, input, events, runtime, wrapUp, streamed);
+    const { outcome, ref } = await ladder(deps, input, events, runtime, tools, wrapUp, streamed);
     // assistant_message 与 usage 同一次 append = 同一事务。
     await deps.eventLog.append(conversationId, [
       {
@@ -250,6 +287,23 @@ async function findExisting(
   };
 }
 
+/** 本 run 中、最近摘要之后的最后一条不可用工具提醒的文本；没有则 null。 */
+function lastToolsReminder(events: ConversationEvent[], runId: string): string | null {
+  const floor = latestSummary(events)?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
+  let text: string | null = null;
+  for (const e of events) {
+    if (
+      e.seq > floor &&
+      e.type === "reminder" &&
+      e.runId === runId &&
+      e.payload.text.startsWith(TOOLS_UNAVAILABLE_PREFIX)
+    ) {
+      text = e.payload.text;
+    }
+  }
+  return text;
+}
+
 /** 读会话的全部事件（读到当前 last_seq），按 seq 升序。 */
 async function readAll(eventLog: EventLog, conversationId: string): Promise<ConversationEvent[]> {
   const out: ConversationEvent[] = [];
@@ -290,7 +344,7 @@ function attemptParams(
 }
 
 /**
- * 由事件构建模型请求：`buildModelRequest`（注入 `params`）→ `guardToolPairs`。输出上限：
+ * 由事件构建模型请求：`buildModelRequest`（注入 `params` 与本步工具；收尾调用不带工具）→ `guardToolPairs`。输出上限：
  * 参数里有 `maxOutputTokens` 旋钮时取 `min(模型上限, 旋钮)`，否则 `min(模型上限, runtime.maxOutputTokens)`。
  *
  * 调用方不变式：不得在「已记录 tool_call、尚未记录其 tool_result」之间构建请求——
@@ -302,6 +356,7 @@ function buildRequest(
   info: ModelInfo,
   params: Record<string, ParamValue>,
   runtime: Runtime,
+  tools: RequestTool[],
   wrapUp: boolean,
 ): { request: ModelRequest; meta: ModelCallMeta; estimate: number } {
   const { request, meta } = buildModelRequest({
@@ -312,6 +367,7 @@ function buildRequest(
     step: input.step,
     absorbedUpToSeq: input.absorbedUpToSeq,
     params,
+    tools: wrapUp ? [] : tools,
   });
   request.messages = guardToolPairs(request.messages);
   const knob = params.maxOutputTokens;
@@ -319,8 +375,11 @@ function buildRequest(
     info.maxOutputTokens,
     typeof knob === "number" ? knob : runtime.maxOutputTokens,
   );
-  if (wrapUp) request.tools = [];
-  return { request, meta, estimate: estimateTokens(request.messages, request.system) };
+  return {
+    request,
+    meta,
+    estimate: estimateTokens(request.messages, request.system, request.tools),
+  };
 }
 
 /**
@@ -362,6 +421,7 @@ async function maybeCompact(
   input: ModelStepInput,
   events: ConversationEvent[],
   runtime: Runtime,
+  tools: RequestTool[],
 ): Promise<ConversationEvent[]> {
   if (compactionBackoff(events)) return events;
   let provider: ModelProvider;
@@ -378,9 +438,13 @@ async function maybeCompact(
     info,
     attemptParams(input.agent, info, false).value,
     runtime,
+    tools,
     false,
   );
-  const estimate = calibrate(estimateTokens(request.messages, request.system), lastActual(events));
+  const estimate = calibrate(
+    estimateTokens(request.messages, request.system, request.tools),
+    lastActual(events),
+  );
   if (!shouldCompact(estimate, info, runtime.compactionThreshold)) return events;
   const plan = compactionPlan(events, runtime.keepRecentTurns);
   if (!plan) return events;
@@ -437,6 +501,7 @@ async function ladder(
   input: ModelStepInput,
   events: ConversationEvent[],
   runtime: Runtime,
+  tools: RequestTool[],
   wrapUp: boolean,
   streamed: { text: string },
 ): Promise<{ outcome: StreamOutcome; ref: ModelRef }> {
@@ -474,6 +539,7 @@ async function ladder(
         info,
         params.value,
         runtime,
+        tools,
         wrapUp,
       );
       await deps.eventLog.append(conversationId, [

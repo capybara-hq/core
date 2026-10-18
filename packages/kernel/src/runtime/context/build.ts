@@ -5,9 +5,11 @@ import type {
   ModelMessage,
   ModelRequest,
   ParamValue,
+  ToolDefinition,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../../agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
+import type { ResolvedTool } from "../../tools/registry.js";
 
 /**
  * 平台行为规范（模型可见，英文）。短而通用（spec 6 原则 5）；不放时间戳、会话 ID 等会变化的内容，
@@ -37,7 +39,12 @@ export interface ModelCallMeta {
   absorbedUpToSeq?: number;
   /** 请求的模型参数（即 `ModelRequest.params`）。 */
   params: Record<string, ParamValue>;
+  /** 请求带的工具（按 key 排序）及定义指纹。 */
+  tools: { key: string; specHash: string }[];
 }
+
+/** 构建请求用到的工具信息（`ResolvedTool` 的子集）。 */
+export type RequestTool = Pick<ResolvedTool, "key" | "spec" | "specHash">;
 
 export interface BuildModelRequestInput {
   events: ConversationEvent[];
@@ -61,6 +68,11 @@ export interface BuildModelRequestInput {
    * 还原时传入记录下的值。默认空。
    */
   params?: Record<string, ParamValue>;
+  /**
+   * 本步可用的工具（由 `ToolRegistry.forAgent` 在步骤开始时解析）。映射为 `ToolDefinition`
+   * （`name` 为模型可见的 key），按 key 排序以保证缓存前缀稳定；key 与指纹记在 `meta.tools`。默认空。
+   */
+  tools?: RequestTool[];
 }
 
 type SummaryEvent = ConversationEvent & {
@@ -87,7 +99,9 @@ export function summaryText(summary: string): string {
  * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；
  * - messages：最近一条摘要（若有）作为首条 user 消息，其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放）/ `reminder`
- *   （`role: "system"`，放在它所在的位置）。其他事件不进请求。提供 `absorbedUpToSeq` 时，
+ *   （`role: "system"`，放在它所在的位置）；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
+ *   （同一步的多个结果合并，按该 assistant 消息里 tool_call 的顺序；找不到对应调用的结果不进请求）。
+ *   其他事件不进请求。提供 `absorbedUpToSeq` 时，
  *   尚未被吸收的 user_message 不进请求，运行中途到达的插话放在吸收它的调用处（见 BuildModelRequestInput）。
  * 只追加：新事件只会在 messages 末尾追加；唯一的前缀变化来自新的压缩摘要。
  * `step` 与 `agentVersion` 不进请求内容（保证缓存前缀稳定），由调用方写入 `model_call` 事件。
@@ -162,6 +176,14 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       ...ready.map((u): ModelMessage => ({ role: "user", content: asBlocks(u.payload.content) })),
     );
   };
+  /** (runId, callId) → 该调用的 tool_result 事件（同一调用只取第一个）。 */
+  const results = new Map<string, EventPayload<"tool_result">>();
+  const resultKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
+  for (const e of events) {
+    if (e.seq <= after || e.type !== "tool_result") continue;
+    const k = resultKey(e.runId, e.payload.callId);
+    if (!results.has(k)) results.set(k, e.payload);
+  }
   if (summary) {
     messages.push({
       role: "user",
@@ -192,6 +214,20 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         // 流出任何内容之前就中止的空消息不回放（供应商不接受空 content）。
         if (e.payload.content.length > 0) {
           messages.push({ role: "assistant", content: asBlocks(e.payload.content) });
+          const blocks: ContentBlock[] = [];
+          for (const b of e.payload.content) {
+            if (b.type !== "tool_call") continue;
+            const r = results.get(resultKey(e.runId, b.id));
+            if (r) {
+              blocks.push({
+                type: "tool_result",
+                callId: r.callId,
+                content: r.content,
+                isError: r.isError,
+              });
+            }
+          }
+          if (blocks.length > 0) messages.push({ role: "user", content: blocks });
         }
         break;
       case "reminder":
@@ -206,11 +242,20 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   if (absorbed !== undefined) flush(absorbed);
 
   const system = [{ text: `${BEHAVIOR_RULES}\n\n${agent.instructions}`, cache: true }];
+  const tools = [...(input.tools ?? [])].sort((a, b) =>
+    a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
+  );
   const request: ModelRequest = {
     model: model.id,
     system,
     messages,
-    tools: [],
+    tools: tools.map(
+      (t): ToolDefinition => ({
+        name: t.key,
+        description: t.spec.description,
+        inputSchema: t.spec.inputSchema,
+      }),
+    ),
     maxOutputTokens: model.maxOutputTokens,
     params: { ...input.params },
   };
@@ -225,6 +270,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     reminderSeqs,
     ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
     params: { ...request.params },
+    tools: tools.map((t) => ({ key: t.key, specHash: t.specHash })),
   };
   return { request, meta };
 }

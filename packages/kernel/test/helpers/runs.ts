@@ -94,7 +94,8 @@ export async function createAgent(
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
     payload: {
-      definition: { name: "Helper", instructions: "Be helpful.", model },
+      // 显式不带工具：运行编排测试只看 M2 行为（默认的内置工具在 Task 10 实现前会触发不可用提醒）
+      definition: { name: "Helper", instructions: "Be helpful.", model, tools: [] },
       visibility: "org",
     },
   });

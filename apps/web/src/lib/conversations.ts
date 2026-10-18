@@ -26,6 +26,22 @@ type EventBody =
     }
   | { type: "usage"; payload: { step: number } }
   | { type: "reminder"; payload: { step: number; text: string } }
+  | {
+      type: "tool_call_started";
+      payload: { step: number; callId: string; toolKey: string; specHash: string };
+    }
+  | {
+      type: "tool_result";
+      payload: {
+        step: number;
+        callId: string;
+        toolKey: string;
+        content: string;
+        isError: boolean;
+        outputId?: string;
+        contentTypes?: string[];
+      };
+    }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }

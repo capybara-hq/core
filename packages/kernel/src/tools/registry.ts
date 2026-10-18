@@ -11,6 +11,18 @@ import type { PluginHost } from "../plugins/host.js";
 import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 
+/**
+ * 内核内置工具的名字（Task 10 / Task 19 实现）。保存 agent 时内置工具引用按这份清单校验，
+ * 不依赖当前是否已注册，避免实现落地顺序影响已保存的定义；运行时未注册的照常报不可用。
+ */
+export const BUILTIN_TOOL_NAMES = ["ask_user", "read_tool_output", "tool_search"] as const;
+
+/** 保存 agent 时引用校验的问题（`path` 为 `tools.<i>`）。 */
+export interface ToolRefIssue {
+  path: string;
+  message: string;
+}
+
 /** 内核内置工具（`ask_user` 等，Task 10 实现具体工具）；key 就是 `spec.name`。 */
 export interface BuiltinTool {
   spec: ToolSpec;
@@ -120,6 +132,69 @@ export class ToolRegistry {
   /** 已安装连接器的 kind 列表（去重，按加载顺序）。 */
   connectorKinds(): string[] {
     return [...new Set(this.deps.host.list("connector").map((e) => (e.impl as Connector).kind))];
+  }
+
+  /**
+   * 保存 agent 时校验工具引用（只看「存在」，停用 / 待复核 / 插件未启用等运行时状态不拒绝，由 `forAgent` 报不可用）：
+   * - 内置：名字在 {@link BUILTIN_TOOL_NAMES} 中；
+   * - 插件：插件已加载且注册了该工具，key 合法；
+   * - 应用：应用属于本组织且未删除；点名的工具必须在应用的工具快照中。
+   * 不同来源拼出同一个 key 也报出来（不截断、不猜）。
+   * 返回 `keys`：这些引用可能产生的全部工具 key（`"all"` 含应用当前所有工具，不论状态），供校验 `toolPolicies`。
+   */
+  async checkRefs(
+    orgId: string,
+    refs: readonly AgentToolRef[],
+  ): Promise<{ keys: Set<string>; issues: ToolRefIssue[] }> {
+    const issues: ToolRefIssue[] = [];
+    const owner = new Map<string, string>();
+    const pluginTools = this.deps.host.tools();
+    const appIds = [...new Set(refs.flatMap((r) => (r.kind === "app" ? [r.appId] : [])))];
+    const apps = await this.loadApps(orgId, appIds);
+    const claim = (path: string, key: string, source: string) => {
+      const prev = owner.get(key);
+      if (prev === undefined) owner.set(key, source);
+      else if (prev !== source) {
+        issues.push({ path, message: `Tool key "${key}" is already used by another tool` });
+      }
+    };
+    refs.forEach((ref, i) => {
+      const path = `tools.${i}`;
+      if (ref.kind === "builtin") {
+        if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(ref.name)) {
+          issues.push({ path, message: `Built-in tool "${ref.name}" does not exist` });
+          return;
+        }
+        claim(path, ref.name, `builtin:${ref.name}`);
+      } else if (ref.kind === "plugin") {
+        const key = toolKey(ref.plugin, ref.name);
+        if (!pluginTools.some((x) => x.plugin === ref.plugin && x.spec.name === ref.name)) {
+          issues.push({ path, message: `Plugin tool "${key}" does not exist` });
+          return;
+        }
+        const issue = toolKeyIssue(key);
+        if (issue) {
+          issues.push({ path, message: issue });
+          return;
+        }
+        claim(path, key, `plugin:${ref.plugin}:${ref.name}`);
+      } else {
+        const app = apps.get(ref.appId);
+        if (!app || app.deleted) {
+          issues.push({ path, message: `App "${ref.appId}" does not exist` });
+          return;
+        }
+        const names = ref.tools === "all" ? app.tools.map((t) => t.name) : [...new Set(ref.tools)];
+        for (const name of names) {
+          if (!app.tools.some((t) => t.name === name)) {
+            issues.push({ path, message: `Tool "${name}" does not exist in app ${app.slug}` });
+            continue;
+          }
+          claim(path, toolKey(app.slug, name), `app:${app.id}:${name}`);
+        }
+      }
+    });
+    return { keys: new Set(owner.keys()), issues };
   }
 
   async forAgent(

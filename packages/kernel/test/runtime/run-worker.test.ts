@@ -56,6 +56,7 @@ class SequentialLoop implements AgentLoop {
       done.filter((e) => e.type === "assistant_message" && e.runId === ctx.runId).length + 1;
     let consumed = 0;
     const input = () => ({
+      orgId: ctx.orgId,
       conversationId: ctx.conversationId,
       runId: ctx.runId,
       step,

@@ -172,8 +172,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: PROVIDER_REGISTRY, useValue: deps.registry },
     {
       provide: AGENTS,
-      useFactory: (db: KernelDb, registry: ProviderRegistry) => new AgentsService(db, registry),
-      inject: [KERNEL_DB, PROVIDER_REGISTRY],
+      useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry) =>
+        new AgentsService(db, registry, tools),
+      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },

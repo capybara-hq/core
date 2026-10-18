@@ -101,6 +101,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          * （由后续步骤吸收或触发下一轮）。还原请求时据此放置 / 排除用户消息。较早的事件可能没有。
          */
         absorbedUpToSeq: seqNo.optional(),
+        /**
+         * 本次请求带给模型的工具（按 key 排序）及其定义指纹（`ResolvedTool.specHash`）。
+         * 收尾调用不带工具，为空数组。较早的事件可能没有。
+         */
+        tools: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
       }),
     }),
   ),
@@ -117,6 +122,27 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({ step: count, provider: z.string(), model: z.string(), ...ModelUsageShape }),
   ),
   ev("reminder", z.object({ step: count, text: z.string() })),
+  /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
+  ev(
+    "tool_call_started",
+    z.object({ step: count, callId: z.string(), toolKey: z.string(), specHash: z.string() }),
+  ),
+  /**
+   * 工具调用的结果（模型看到的文本）。构建请求时还原为紧随该步 assistant 消息的 user 消息中的
+   * `tool_result` 块。`outputId`：超长结果转存后的存档 id；`contentTypes`：结果里出现的内容类型。
+   */
+  ev(
+    "tool_result",
+    z.object({
+      step: count,
+      callId: z.string(),
+      toolKey: z.string(),
+      content: z.string(),
+      isError: z.boolean(),
+      outputId: z.string().optional(),
+      contentTypes: z.array(z.string()).optional(),
+    }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(
@@ -160,6 +186,13 @@ type StripOpt<T> = T extends unknown ? { [K in keyof T]: Exclude<T[K], undefined
 const _blocks: Same<StripOpt<z.infer<typeof ContentBlockSchema>>, StripOpt<ContentBlock>> = true;
 const _stop: Same<(typeof STOP_REASONS)[number], StopReason> = true;
 const _usage: Same<z.infer<z.ZodObject<typeof ModelUsageShape>>, ModelUsage> = true;
+// tool_result 事件与内容块中的 tool_result 共享 callId / content / isError 的形状。
+type ToolResultBlock = Extract<ContentBlock, { type: "tool_result" }>;
+const _toolResult: Same<
+  Pick<EventPayload<"tool_result">, "callId" | "content" | "isError">,
+  Omit<ToolResultBlock, "type">
+> = true;
+void _toolResult;
 void _blocks;
 void _stop;
 void _usage;

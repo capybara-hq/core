@@ -10,7 +10,7 @@ import {
   runModelStep,
 } from "./model-call.js";
 
-/** M2 没有工具：模型请求工具时写入的提醒（模型可见，英文）。 */
+/** 执行管线（Task 7）接入前的桩：模型请求工具时写入的提醒（模型可见，英文）。 */
 export const TOOLS_UNAVAILABLE_REMINDER = "Tools are not available yet.";
 
 /** 测试钩子。 */
@@ -111,6 +111,7 @@ export class LangGraphLoop implements AgentLoop {
   private build(ctx: LoopContext) {
     const timedOut = () => Date.now() >= ctx.limits.deadline;
     const input = (step: number, absorbedUpToSeq: number): ModelStepInput => ({
+      orgId: ctx.orgId,
       conversationId: ctx.conversationId,
       runId: ctx.runId,
       step,
@@ -150,7 +151,8 @@ export class LangGraphLoop implements AgentLoop {
         {
           type: "reminder",
           runId: ctx.runId,
-          idemKey: `tools_unavailable:${ctx.runId}:${s.step}`,
+          // 不用 `tools_unavailable:`：那是步骤开始时「不可用工具」提醒的幂等键（model-call）。
+          idemKey: `tools_stub:${ctx.runId}:${s.step}`,
           payload: { step: s.step, text: TOOLS_UNAVAILABLE_REMINDER },
         },
       ]);

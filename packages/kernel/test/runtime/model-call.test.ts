@@ -151,6 +151,7 @@ beforeAll(async () => {
     eventLog,
     registry,
     config: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
+    tools: k.tools.registry,
     log: silent,
   };
 }, 120_000);
@@ -166,6 +167,7 @@ afterAll(async () => {
 let conversationId: string;
 let accountId: string;
 let runId: string;
+let orgId: string;
 
 beforeEach(async () => {
   await redis.flushdb();
@@ -173,7 +175,7 @@ beforeEach(async () => {
   stubImpl = stub([stubInfo("ok")], () => "ok");
   await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(raw);
   accountId = randomUUID();
-  const orgId = randomUUID();
+  orgId = randomUUID();
   const agentId = randomUUID();
   conversationId = randomUUID();
   runId = randomUUID();
@@ -197,6 +199,7 @@ const agentWith = (over: Partial<AgentDefinition> = {}): AgentDefinition => ({
   modelParams: {},
   fallbackParams: {},
   tools: [],
+  toolPolicies: {},
   ...over,
 });
 
@@ -230,6 +233,7 @@ const step = (
   over: { step?: number; agent?: AgentDefinition; signal?: AbortSignal; sink?: StreamSink } = {},
 ) =>
   runModelStep(deps, {
+    orgId,
     conversationId,
     runId,
     step: over.step ?? 1,
@@ -596,6 +600,7 @@ describe("runModelStep", () => {
     const r = await runModelStep(
       { ...deps, registry },
       {
+        orgId,
         conversationId,
         runId,
         step: 1,
@@ -639,6 +644,7 @@ describe("runModelStep", () => {
     const p = runModelStep(
       { ...deps, registry },
       {
+        orgId,
         conversationId,
         runId,
         step: 1,
@@ -814,6 +820,7 @@ describe("runModelStep", () => {
     stubImpl = s;
     await say("hi");
     const r = await runFinalWrapUp(deps, {
+      orgId,
       conversationId,
       runId,
       step: 51,
