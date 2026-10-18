@@ -42,3 +42,21 @@ export const SETUP = Symbol("SETUP");
 
 /** `OrgPluginConfigs` 的注入令牌。 */
 export const ORG_PLUGIN_CONFIGS = Symbol("ORG_PLUGIN_CONFIGS");
+
+/** `ProviderRegistry` 的注入令牌。 */
+export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
+
+/** `AgentsService` 的注入令牌。 */
+export const AGENTS = Symbol("AGENTS");
+
+/** 内核总线（`createBus(..., "kernel")`，`PluginContext["bus"]`）的注入令牌。 */
+export const KERNEL_BUS = Symbol("KERNEL_BUS");
+
+/** `EventLog` 的注入令牌。 */
+export const EVENT_LOG = Symbol("EVENT_LOG");
+
+/** `ConversationsService` 的注入令牌。 */
+export const CONVERSATIONS = Symbol("CONVERSATIONS");
+
+/** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
+export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");

@@ -3,16 +3,20 @@ import { HttpException } from "@nestjs/common";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/errors.js";
 import { ErrorFilter, redactPath } from "../../src/http/error.filter.js";
-import { createLogger } from "../../src/log.js";
 
-function run(exception: unknown): { status: number; body: { error: { code: string } } } {
-  const out = { status: 0, body: undefined as unknown as { error: { code: string } } };
+type Body = { error: { code: string; message: string; details?: unknown[] } };
+
+function run(
+  exception: unknown,
+  errors: { msg: string; fields?: Record<string, unknown> | undefined }[] = [],
+): { status: number; body: Body } {
+  const out = { status: 0, body: undefined as unknown as Body };
   const reply = {
     code(s: number) {
       out.status = s;
       return reply;
     },
-    send(b: { error: { code: string } }) {
+    send(b: Body) {
       out.body = b;
       return reply;
     },
@@ -23,7 +27,12 @@ function run(exception: unknown): { status: number; body: { error: { code: strin
       getRequest: () => ({ method: "GET", url: "/x" }),
     }),
   } as unknown as ArgumentsHost;
-  new ErrorFilter(createLogger("info", { write: () => {} })).catch(exception, host);
+  const log = {
+    info() {},
+    warn() {},
+    error: (msg: string, fields?: Record<string, unknown>) => errors.push({ msg, fields }),
+  };
+  new ErrorFilter(log).catch(exception, host);
   return out;
 }
 
@@ -43,6 +52,36 @@ describe("ErrorFilter 通用错误码", () => {
     const r = run(new HttpException("x", status));
     expect(r.status).toBe(status);
     expect(r.body.error.code).toBe(code);
+  });
+
+  it("ApiError 带 details 时原样返回，4xx 不记 error", () => {
+    const errors: { msg: string }[] = [];
+    const details = [{ path: "name", message: "too short" }];
+    const r = run(new ApiError("validation_failed", "Invalid body", details), errors);
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({
+      error: { code: "validation_failed", message: "Invalid body", details },
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it("Nest HttpException(503) → internal，保留 503，记 error 且不回显信息", () => {
+    const errors: { msg: string }[] = [];
+    const r = run(new HttpException("upstream secret-detail", 503), errors);
+    expect(r.status).toBe(503);
+    expect(r.body.error.code).toBe("internal");
+    expect(r.body.error.message).not.toContain("secret-detail");
+    expect(errors.map((e) => e.msg)).toEqual(["http handler failed"]);
+  });
+
+  it("未知异常 → 500 internal，记 error 且不回显信息", () => {
+    const errors: { msg: string; fields?: Record<string, unknown> | undefined }[] = [];
+    const r = run(new TypeError("secret-detail"), errors);
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ error: { code: "internal", message: "Internal error" } });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.msg).toBe("http handler failed");
+    expect(errors[0]?.fields?.err).toBeInstanceOf(TypeError);
   });
 
   it("ApiError 保留自己的错误码", () => {

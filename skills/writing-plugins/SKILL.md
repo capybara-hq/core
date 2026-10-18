@@ -5,7 +5,7 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 
 # 写插件
 
-参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。
+参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。模型供应商插件（`model-provider@1`）另见 `skills/writing-model-providers`。
 
 ## 硬约束（先看这个）
 
@@ -27,8 +27,11 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 |---|---|---|
 | 跨请求共享状态 | 模块顶层 `Map` | 持久数据 `ctx.db`；临时/会过期的状态 `ctx.kv`（带 TTL） |
 | 延迟 / 周期任务 | `setTimeout` / `setInterval` | `ctx.queue.add(name, data, { delayMs })` |
+| 单次请求内可中止的等待（退避、流式间隔、超时） | `setTimeout` 包 Promise | `AbortSignal.timeout(ms)`，与调用方的 `signal` 一起监听（见 `plugins/model-fake` 的 `defaultSleep`） |
 | 通知其他副本 | 进程内事件 / 回调表 | `ctx.bus.publish` / `subscribe` |
 | 「谁开谁关」的配对 | 开启方在内存里持有句柄 | 开启方自过期（TTL）+ 关闭方广播 |
+
+`AbortSignal.timeout(ms)` 只用于**本次请求内**、随请求结束而结束的等待：它不在请求之外调度任何工作。凡是「过一会儿 / 每隔一段时间再做某事」的需求，不论多短，都走 `ctx.queue`（`delayMs`），因为到点时处理它的可能是另一个副本，发起的进程也可能已经不在了。
 
 确属只读常量（如正则表、固定查找表）才豁免：在声明**同一行行尾**或**紧邻上一行**写 `// capybara:allow-module-state <原因>`，原因不能为空（空原因仍报 `plugin-module-state`）。
 
@@ -55,11 +58,13 @@ export default definePlugin({
 
 `definePlugin` 在加载时校验清单，不合法直接抛错。
 
+**`setup` 必须返回**：插件按依赖顺序串行 setup，内核不给 setup 设超时。setup 永不 resolve（如等待一个永远不来的外部连接、`await` 一个没人 resolve 的 Promise）时，内核 `start()` 会**永远挂起**、HTTP 不监听、后续插件不加载；此时停机（`stop()`）仍会立即关闭该插件的 ctx 并释放连接。需要等外部依赖就绪时，在 setup 里自己设超时并抛错，或把等待挪到队列任务里。
+
 `sdk` 范围由内核按 `SDK_VERSION`（等于 `@capybara-hq/plugin-sdk` 的 package 版本，有测试钉住）校验。0.x 阶段 `^0.1.0` 只匹配 `0.1.x`：**SDK 升 minor（如 0.2.0）时，仓库内所有插件的 `sdk` 范围都要同步改**，否则内核拒绝加载。
 
 ## 两级配置
 
-- **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON，或逐字段 `CAPYBARA_PLUGIN_CONFIG__<插件名大写、- 换 _>__<字段>`，如 `CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE=3` 对应 `example-counter` 的 `poolSize`）。标了 `secret` 的部署级字段，其值校验通过后自动加入日志打码集合。内核启动时按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
+- **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON，或逐字段 `CAPYBARA_PLUGIN_CONFIG__<插件名大写、- 换 _>__<字段>`，如 `CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE=3` 对应 `example-counter` 的 `poolSize`）。标了 `secret` 的部署级字段，其值校验通过后自动加入日志打码集合（嵌套的数组 / 对象展开为其中所有标量；数字转成字符串后打码，布尔不打码；短于 4 个字符的值不打码）。打码只是兜底，**不要主动把密钥写进日志**。内核启动时按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
 - **组织级**（`config.org`）：每个组织各自的启用状态与配置，由组织 admin 通过内核 API（`GET /api/v1/orgs/:orgId/plugins`、`PUT /api/v1/orgs/:orgId/plugins/:plugin`）设置，内核按该 schema 校验并存储，规则见下一节。
 - 插件自己运行中产生的密钥（如 OAuth 换来的 token）走 `ctx.secrets`（加密存储），不要放进普通配置。
 
@@ -70,6 +75,7 @@ export default definePlugin({
 - 存储：非密钥部分（校验后的值，含默认值）存 `capybara.plugin_org_configs.config`；每个密钥字段单独加密存 `capybara.secrets`（命名空间 `kernel`、键 `plugin-config:<插件名>:<点路径>`，值为 JSON 编码），与配置行在同一事务内写入。`kernel` 因此是保留插件名。
 - 回显：API 响应的 `config` 永远不含密钥字段，只给 `secrets: [{ path, set }]` 表示是否已设置；审计只记 `{ enabled, changedPaths }`。
 - 更新（`PUT` 的 `config`）：非密钥字段整体替换为传入值；密钥字段**缺省 = 保留原值**、`null` = 清除、其他值 = 新值。合并后的完整对象再用 schema 校验，失败返回 `plugin.config_invalid`，`details` 为 `{ path, message }[]`（不回显值）。只传 `enabled: true` 时也会校验现存配置，不满足 schema 不能启用。
+- 打码：组织级配置的密钥值在写入（`PUT`，事务提交后）与解密读取时由该副本加入单独的有界打码集合（最多 10000 个，满了淘汰最早的）；来源是组织管理员，只登记长度 ≥ 12 的值，且只在日志字段里打码、不动日志消息，防止租户遮蔽其他租户的日志。
 - 读取：内核 `orgPluginConfigs.get(orgId, plugin)` 解密并校验后返回完整配置。**升级插件时改 org schema 要兼容旧值**（新字段给默认值或 optional）：已存配置不再满足新 schema 时 `get` 直接抛错，需要组织 admin 重新保存配置。
 
 ## ctx 各项何时用
@@ -93,10 +99,11 @@ export default definePlugin({
 - **路径语法与 Fastify 相同**（find-my-way）：`path` 相对插件前缀，如 `route("GET", "/items/:id", …)` 匹配 `/plugins/<name>/items/42`；也支持通配 `*`。匹配只看路径，不含查询串。
 - **handler 只收到 Web `Request`，拿不到解析好的路径参数**：自己从 `new URL(req.url).pathname` 里取（查询串用 `new URL(req.url).searchParams`）。
 - **body 是原始字节**：作用域内不做 JSON / 表单解析，任何 content-type 都原样转交，`await req.text()` / `req.json()` / `req.arrayBuffer()` 自己解析（webhook 验签可直接用原始字节）。GET / HEAD 不带 body。
-- **请求体上限 1 MiB**（Fastify 默认 bodyLimit），超出直接 413（Fastify 原生错误体 `FST_ERR_CTP_BODY_TOO_LARGE`，不是内核错误信封），到不了 handler。
-- **HEAD 不会自动映射到 GET**：只注册了 GET 时 HEAD 请求是 404；需要 HEAD 就显式再注册一条。
+- **请求体上限 1 MiB**（Fastify 默认 bodyLimit），超出直接 413 `payload_too_large`（内核错误信封），到不了 handler。作用域内 Fastify 自身的其他 4xx 同样按内核通用错误码表映射（如 415 `unsupported_media_type`、400 `validation_failed`）。
+- **HEAD 按 GET 处理**：没有专门的 HEAD 路由时，HEAD 请求交给同路径的 GET handler（`req.method` 仍是 `"HEAD"`），响应只回状态与头、不带 body。
+- 请求无法转成 Web `Request`（如畸形 `Host` 头）→ 400 `validation_failed`，到不了 handler。
 - 尾斜杠敏感：`/count` 与 `/count/` 是两条路由。
-- 未匹配 → 404 `not_found`；handler 抛错 → 500 `internal`（错误记日志，不回显给客户端）。
+- 未匹配 → 404 `not_found`；handler 抛错 → 500 `internal`（错误记日志，日志里的路径经脱敏：以 `cap_` 开头的路径段换成 `:redacted`；不回显给客户端）。
 - **插件路由不经内核鉴权**：没有 AuthGuard、不检查 CSRF 头、拿不到调用者身份（M4 再提供）。对外暴露的 webhook 必须自行验签。
 - **内核会话 Cookie 被剥掉**：转交前从 `Cookie` 头删去 `cap_at` / `cap_rt`（其余 Cookie 原样保留；只剩这两个时不带 `Cookie` 头），插件拿不到用户的内核会话。
 - 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
@@ -144,7 +151,7 @@ it("交替请求两个副本，结果一致", async () => {
 });
 ```
 
-要点：`config` 选项可把额外的内核配置深合并进两个副本（如 `config: { auth: { cookieSecure: false } }`，经 IPC 传递）；每个 harness 自带一个 Redis 容器，用完 `stop()`；传入 `pgUrl`（管理员连接串）可让多个 harness 复用同一个 PG 容器；队列任务异步执行，断言时轮询等到期望值，不要只 `sleep` 固定时长；测试文件放在插件根的 `test/` 目录（`pnpm test` 会收集）。
+要点：`h.request` 的返回值带 `replica`（0 / 1，取自响应头 `x-capybara-replica`，harness 给每个副本设了 `http.replicaId`）；按 `h.replicas[i].port` 直接 `fetch` 指定副本时用 `replicaOf(res)` 确认落点（如 SSE 长连接）。`h.kill(i)` 对副本 i 发 SIGKILL 模拟硬崩溃（之后经 `h.request` 发往它的请求抛错），用来测「另一个副本接手」。`config` 选项可把额外的内核配置深合并进两个副本（如 `config: { auth: { cookieSecure: false } }`，经 IPC 传递）；每个 harness 自带一个 Redis 容器，用完 `stop()`；传入 `pgUrl`（管理员连接串）可让多个 harness 复用同一个 PG 容器；队列任务异步执行，断言时轮询等到期望值，不要只 `sleep` 固定时长；测试文件放在插件根的 `test/` 目录（`pnpm test` 会收集）。
 
 ## 新插件清单
 

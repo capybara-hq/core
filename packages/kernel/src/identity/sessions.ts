@@ -6,6 +6,7 @@ import { ACCESS_TOKEN_TTL_MAX_SECONDS } from "../config/schema.js";
 import type { DerivedKeys, Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ACCOUNT_COLUMNS, type Account, toAccount } from "./accounts.js";
 import { sha256Hex } from "./hash.js";
 
 export interface IssuedSession {
@@ -52,13 +53,18 @@ export class SessionService {
     this.keys = keyring.deriveKey(ACCESS_KEY_INFO);
   }
 
+  /**
+   * 新建会话。传入 `trx` 时会话行在调用方的事务里写入（如初始化、凭邀请注册：与账号同一事务，
+   * 失败整体回滚）；Cookie 由调用方在提交之后再设置。
+   */
   async create(
     accountId: string,
     meta: { userAgent?: string; ip?: string },
+    trx?: KernelDb,
   ): Promise<IssuedSession> {
     const id = randomUUID();
     const refreshToken = newRefreshToken();
-    const row = await this.db
+    const row = await (trx ?? this.db)
       .insertInto("sessions")
       .values({
         id,
@@ -135,7 +141,14 @@ export class SessionService {
     throw new ApiError("auth.refresh_invalid", "Refresh token is invalid");
   }
 
-  async verifyAccess(accessToken: string): Promise<{ accountId: string; sessionId: string }> {
+  /**
+   * 验证 access token 并读出会话所属账号（不判断账号状态，由调用方决定）。
+   * Redis 吊销标记是快速路径；PG 的 `sessions.revoked_at` 才是事实来源——Redis 被清空 / 故障切换丢数据时，
+   * 已登出或因改密码被吊销的会话不能复活（spec 8.1）。吊销检查与账号读取合并为一条按主键的 JOIN 查询。
+   */
+  async verifyAccess(
+    accessToken: string,
+  ): Promise<{ accountId: string; sessionId: string; account: Account }> {
     let sub: unknown;
     let sid: unknown;
     try {
@@ -151,20 +164,20 @@ export class SessionService {
     if (typeof sub !== "string" || typeof sid !== "string") {
       throw new ApiError("auth.required", "Authentication required");
     }
-    // Redis 吊销标记是快速路径；PG 的 revoked_at 才是事实来源——Redis 被清空 / 故障切换丢数据时，
-    // 已登出或因改密码被吊销的会话不能复活（spec 8.1）
     if (await this.redis.exists(revokedKey(sid))) {
       throw new ApiError("auth.session_revoked", "Session has been revoked");
     }
     const row = await this.db
       .selectFrom("sessions")
-      .select("revoked_at")
-      .where("id", "=", sid)
+      .innerJoin("accounts", "accounts.id", "sessions.account_id")
+      .select(["sessions.revoked_at", ...ACCOUNT_COLUMNS])
+      .where("sessions.id", "=", sid)
       .executeTakeFirst();
     if (!row || row.revoked_at !== null) {
       throw new ApiError("auth.session_revoked", "Session has been revoked");
     }
-    return { accountId: sub, sessionId: sid };
+    if (row.id !== sub) throw new ApiError("auth.required", "Authentication required");
+    return { accountId: sub, sessionId: sid, account: toAccount(row) };
   }
 
   /**
@@ -212,25 +225,82 @@ export class SessionService {
       .where("revoked_at", "is", null);
     if (exceptSessionId !== undefined) q = q.where("id", "!=", exceptSessionId);
     const rows = await q.returning("id").execute();
-    if (rows.length > 0) {
-      const pipe = this.redis.pipeline();
-      for (const r of rows) pipe.set(revokedKey(r.id), "1", "EX", REVOKED_MARKER_TTL_SECONDS);
-      const results = (await pipe.exec()) ?? [];
-      const failed = results.find(([err]) => err);
-      if (failed) throw failed[0];
-    }
+    await this.markRevoked(rows.map((r) => r.id));
     return rows.length;
   }
 
+  /**
+   * 给已在 PG 中吊销的会话写 Redis 吊销标记（快速路径）；任一写入失败即抛出。
+   * 鉴权以 PG `revoked_at` 为准，调用方可以把这一步当作尽力而为。
+   */
+  async markRevoked(sessionIds: string[]): Promise<void> {
+    if (sessionIds.length === 0) return;
+    const pipe = this.redis.pipeline();
+    for (const id of sessionIds) pipe.set(revokedKey(id), "1", "EX", REVOKED_MARKER_TTL_SECONDS);
+    const results = (await pipe.exec()) ?? [];
+    const failed = results.find(([err]) => err);
+    if (failed) throw failed[0];
+  }
+
+  /** 设当前组织；会话已吊销、已过期或不存在 → `auth.session_revoked`。 */
   async setCurrentOrg(sessionId: string, orgId: string | null): Promise<void> {
-    await this.db
+    const r = await this.db
       .updateTable("sessions")
       .set({ current_org_id: orgId })
       .where("id", "=", sessionId)
-      .execute();
+      .where("revoked_at", "is", null)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .executeTakeFirst();
+    if (r.numUpdatedRows === 0n) {
+      throw new ApiError("auth.session_revoked", "Session has been revoked");
+    }
   }
 
-  /** 未吊销的会话；已吊销或不存在返回 undefined。 */
+  /**
+   * 切换当前组织（Web 会话）：同一事务内先 `SELECT … FROM memberships WHERE org_id = $1 AND account_id = $2 FOR SHARE`
+   * 锁住这一条成员关系（且组织未软删除），再写会话——与「移出成员」（DELETE memberships 后清空会话当前组织）互斥，
+   * 不会留下指向已移出组织的 `current_org_id`。非成员或组织已软删除 → `org.not_found`；`null` 清空，不查成员关系。
+   */
+  async switchCurrentOrg(
+    sessionId: string,
+    accountId: string,
+    orgId: string | null,
+  ): Promise<void> {
+    if (orgId === null) return this.setCurrentOrg(sessionId, null);
+    await this.db.transaction().execute(async (t) => {
+      // 加锁顺序与移出成员一致：先组织行、再成员关系行（sessions.current_org_id 的外键检查也会锁组织行，
+      // 若先锁成员关系，会与持有组织行 FOR UPDATE 的移出成员互相等待而死锁）
+      const org = await t
+        .selectFrom("orgs")
+        .select("id")
+        .where("id", "=", orgId)
+        .where("deleted_at", "is", null)
+        .forShare()
+        .executeTakeFirst();
+      const m =
+        org &&
+        (await t
+          .selectFrom("memberships")
+          .select("role")
+          .where("org_id", "=", orgId)
+          .where("account_id", "=", accountId)
+          .forShare()
+          .executeTakeFirst());
+      if (!m) throw new ApiError("org.not_found", "Organization not found");
+      const r = await t
+        .updateTable("sessions")
+        .set({ current_org_id: orgId })
+        .where("id", "=", sessionId)
+        .where("revoked_at", "is", null)
+        .where("expires_at", ">", sql<Date>`now()`)
+        .executeTakeFirst();
+      if (r.numUpdatedRows === 0n) {
+        throw new ApiError("auth.session_revoked", "Session has been revoked");
+      }
+    });
+  }
+
+  /** 有效（未吊销且未过期）的会话；否则返回 undefined。 */
   async get(
     sessionId: string,
   ): Promise<{ id: string; accountId: string; currentOrgId: string | null } | undefined> {
@@ -239,6 +309,7 @@ export class SessionService {
       .select(["id", "account_id", "current_org_id"])
       .where("id", "=", sessionId)
       .where("revoked_at", "is", null)
+      .where("expires_at", ">", sql<Date>`now()`)
       .executeTakeFirst();
     return row && { id: row.id, accountId: row.account_id, currentOrgId: row.current_org_id };
   }

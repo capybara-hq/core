@@ -23,6 +23,8 @@ export interface KernelHttp {
   inject(opts: InjectOptions): Promise<LightMyRequestResponse>;
   /** 已注册的全部路由（Fastify onRoute 收集），供元测试遍历。 */
   routes(): { method: string; url: string }[];
+  /** 服务端当前打开的 TCP 连接数（测试观察连接是否被释放）。 */
+  connections(): Promise<number>;
 }
 
 /** 内核 HTTP 应用。 */
@@ -46,6 +48,8 @@ export interface CreateHttpAppOptions {
   apiModule?: DynamicModule;
   /** 信任哪些代理跳：false、跳数，或受信代理 IP / CIDR 列表（见 `http.trustProxy` 配置）。 */
   trustProxy?: boolean | number | string[];
+  /** 副本标识（`http.replicaId`）：设置时每个响应带 `x-capybara-replica` 头。 */
+  replicaId?: string | undefined;
 }
 
 /**
@@ -89,6 +93,13 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   // Cookie 解析（会话 Cookie）；必须在 init 之前注册
   await app.register(fastifyCookie);
   const fastify = app.getHttpAdapter().getInstance();
+  const replicaId = opts.replicaId;
+  if (replicaId !== undefined) {
+    // 直接设在原始响应上：hijack 后自己 writeHead 的 SSE 流也会带上（writeHead 合并已 setHeader 的头）
+    fastify.addHook("onRequest", async (_req, reply) => {
+      reply.raw.setHeader("x-capybara-replica", replicaId);
+    });
+  }
   const routes: { method: string; url: string }[] = [];
   fastify.addHook("onRoute", (r) => {
     for (const method of [r.method].flat()) routes.push({ method, url: r.url });
@@ -101,6 +112,10 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   return {
     inject: (o) => fastify.inject(o),
     routes: () => [...routes],
+    connections: () =>
+      new Promise<number>((resolve, reject) =>
+        fastify.server.getConnections((err, n) => (err ? reject(err) : resolve(n))),
+      ),
     mountPlugins(pluginRoutes) {
       if (router) throw new Error("plugin routes already mounted");
       router = createPluginRouter(pluginRoutes);

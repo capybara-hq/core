@@ -13,6 +13,7 @@ import type { ApiError } from "../../src/errors.js";
 import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SettingsService } from "../../src/identity/settings.js";
+import { createLogger } from "../../src/log.js";
 import { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import { PluginHost } from "../../src/plugins/host.js";
@@ -26,6 +27,8 @@ let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let host: PluginHost;
 let svc: OrgPluginConfigs;
+let keyring: ReturnType<typeof createKeyring>;
+let deps: KernelDeps;
 let accounts: AccountsService;
 let orgs: OrgsService;
 let members: MembersService;
@@ -51,8 +54,8 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
-  const keyring = createKeyring(Buffer.alloc(32, 3), []);
-  const deps: KernelDeps = {
+  keyring = createKeyring(Buffer.alloc(32, 3), []);
+  deps = {
     db: raw,
     dbUrl: pg.url,
     redis,
@@ -96,6 +99,65 @@ const codeOf = async (p: Promise<unknown>) => {
 const full = { appId: "app-1", appSecret: SECRET, webhook: { token: TOKEN, path: "/h" } };
 
 describe("OrgPluginConfigs", () => {
+  /** 接 addOrgSecrets 的 OrgPluginConfigs 与其日志行。 */
+  const loggedSvc = () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", { write: (l) => lines.push(l) });
+    const logged = new OrgPluginConfigs(db, keyring, host, {
+      onSecrets: (v) => logger.addOrgSecrets(v),
+    });
+    return { logged, logger, lines };
+  };
+
+  it("put / get 经手的组织配置密钥（含嵌套字段，≥ 12 个字符）在提交后登记到日志打码", async () => {
+    const { logged, logger, lines } = loggedSvc();
+    // 别的副本写入、本副本只读：get 解密时登记
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    await logged.get(org.id, "orgcfg");
+    logger.info("x", { leak: `${SECRET} ${TOKEN}`, nested: { token: TOKEN } });
+    // 本副本写入：put 提交后登记新值
+    const SECRET2 = "s3cr3t-org2-value-41d0";
+    const TOKEN2 = "tok-org2-value-c3b8";
+    await logged.put(
+      org2.id,
+      "orgcfg",
+      { config: { appId: "b", appSecret: SECRET2, webhook: { token: TOKEN2 } } },
+      B.id,
+    );
+    logger.info("x", { leak: `${SECRET2} ${TOKEN2}` });
+    const out = lines.join("\n");
+    for (const v of [SECRET, TOKEN, SECRET2, TOKEN2]) expect(out).not.toContain(v);
+    expect(out).toContain("[REDACTED]");
+  });
+
+  it("组织密钥短于 12 个字符不登记（租户不能用短值遮蔽日志）", async () => {
+    const { logged, logger, lines } = loggedSvc();
+    await logged.put(org.id, "orgcfg", { config: { appId: "a", appSecret: "short8ch" } }, A.id);
+    logger.info("x", { text: "short8ch" });
+    expect(JSON.parse(lines[0] as string).text).toBe("short8ch");
+  });
+
+  it("put 回滚时不登记其中的密钥", async () => {
+    const { logged, logger, lines } = loggedSvc();
+    const ROLLED = "rolled-back-secret-7e21";
+    await sql`CREATE OR REPLACE FUNCTION capybara.test_fail_audit() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER test_fail_audit BEFORE INSERT ON capybara.audit_events FOR EACH ROW EXECUTE FUNCTION capybara.test_fail_audit()`.execute(
+      raw,
+    );
+    try {
+      await expect(
+        logged.put(org.id, "orgcfg", { config: { appId: "a", appSecret: ROLLED } }, A.id),
+      ).rejects.toThrow(/audit down/);
+    } finally {
+      await sql`DROP TRIGGER test_fail_audit ON capybara.audit_events`.execute(raw);
+      await sql`DROP FUNCTION capybara.test_fail_audit()`.execute(raw);
+    }
+    logger.info("x", { text: ROLLED });
+    expect(JSON.parse(lines[0] as string).text).toBe(ROLLED);
+  });
+
   it("put 完整配置后 get 返回解密后的完整对象；list 不含密钥字段", async () => {
     const view = await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     expect(view).toMatchObject({ plugin: "orgcfg", version: "1.2.3", enabled: true });
@@ -181,7 +243,7 @@ describe("OrgPluginConfigs", () => {
   });
 
   it("null 清除可选密钥：secrets 行被删除", async () => {
-    await svc.put(org.id, "orgcfg", { config: full }, A.id);
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     await svc.put(org.id, "orgcfg", { config: { appId: "x", webhook: { token: null } } }, A.id);
     expect((await svc.get(org.id, "orgcfg"))?.config).toEqual({
       appId: "x",
@@ -212,12 +274,12 @@ describe("OrgPluginConfigs", () => {
     await svc.put(
       org2.id,
       "orgcfg",
-      { config: { appId: "beta-app", appSecret: "beta-secret" } },
+      { enabled: true, config: { appId: "beta-app", appSecret: "beta-secret" } },
       B.id,
     );
     expect((await svc.get(org.id, "orgcfg"))?.config).toMatchObject({ appSecret: SECRET });
     expect(await svc.get(org2.id, "orgcfg")).toEqual({
-      enabled: false,
+      enabled: true,
       config: { appId: "beta-app", appSecret: "beta-secret", webhook: { path: "/hook" } },
     });
     const other = await accounts.createLocal({ login: "userc", password: PW, displayName: "C" });
@@ -254,7 +316,7 @@ describe("OrgPluginConfigs", () => {
   });
 
   it("插件升级后已存配置不合 schema：get 抛错含插件名、组织 ID 与路径，不含值", async () => {
-    await svc.put(org.id, "orgcfg", { config: full }, A.id);
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     await db
       .updateTable("plugin_org_configs")
       .set({ config: JSON.stringify({ appId: 98765, webhook: { path: "/h" } }) })
@@ -270,6 +332,115 @@ describe("OrgPluginConfigs", () => {
     expect(err?.message).toContain("appId");
     expect(err?.message).not.toContain("98765");
     expect(err?.message).not.toContain(SECRET);
+  });
+
+  it("get 在读完配置行之后、读密钥之前并发提交 put：返回同一次提交的快照", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    const next = { appId: "app-2", appSecret: "second-secret-value", webhook: { path: "/n" } };
+    let fired = false;
+    const hooked = new OrgPluginConfigs(db, keyring, host, {
+      afterConfigRowRead: async () => {
+        if (fired) return;
+        fired = true;
+        await svc.put(org.id, "orgcfg", { config: next }, A.id);
+      },
+    });
+    expect(await hooked.get(org.id, "orgcfg")).toEqual({ enabled: true, config: full });
+    expect(fired).toBe(true);
+    expect(await svc.get(org.id, "orgcfg")).toMatchObject({ config: { appId: "app-2" } });
+  });
+
+  it("list 同样在一致快照里读配置行与密钥", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    let fired = false;
+    const hooked = new OrgPluginConfigs(db, keyring, host, {
+      afterConfigRowRead: async () => {
+        if (fired) return;
+        fired = true;
+        await svc.put(
+          org.id,
+          "orgcfg",
+          { config: { appId: "app-3", appSecret: "x-secret-3" } },
+          A.id,
+        );
+      },
+    });
+    const v = (await hooked.list(org.id)).find((x) => x.plugin === "orgcfg");
+    expect(v?.config).toEqual({ appId: "app-1", webhook: { path: "/h" } });
+    expect(v?.secrets).toEqual([
+      { path: "appSecret", set: true },
+      { path: "webhook.token", set: true },
+    ]);
+  });
+
+  it("schema 删掉 webhook.token 字段后再次 put：capybara.secrets 中对应行被删除", async () => {
+    await svc.put(org.id, "orgcfg", { config: full }, A.id);
+    const count = async (key: string) =>
+      (
+        await db
+          .selectFrom("secrets")
+          .select("key")
+          .where("org_id", "=", org.id)
+          .where("key", "=", key)
+          .execute()
+      ).length;
+    expect(await count("plugin-config:orgcfg:webhook.token")).toBe(1);
+    const slim = new PluginHost(deps, {});
+    await slim.load([fx("orgcfg-slim")]);
+    try {
+      const svc2 = new OrgPluginConfigs(db, keyring, slim);
+      await svc2.put(org.id, "orgcfg", { config: { appId: "app-1", appSecret: SECRET } }, A.id);
+      expect(await count("plugin-config:orgcfg:webhook.token")).toBe(0);
+      expect(await count("plugin-config:orgcfg:appSecret")).toBe(1);
+    } finally {
+      await slim.close();
+    }
+  });
+
+  it("已停用插件存了非法配置：get 返回 { enabled:false, config:null } 且不抛错", async () => {
+    await svc.put(org.id, "orgcfg", { config: full }, A.id);
+    await db
+      .updateTable("plugin_org_configs")
+      .set({ config: JSON.stringify({ appId: 98765 }) })
+      .where("org_id", "=", org.id)
+      .execute();
+    expect(await svc.get(org.id, "orgcfg")).toEqual({ enabled: false, config: null });
+  });
+
+  it("没有记录时只传 enabled:false：config 存 null，list 显示 config:null", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: false }, A.id);
+    const row = await db
+      .selectFrom("plugin_org_configs")
+      .select(["enabled", "config"])
+      .where("org_id", "=", org.id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ enabled: false, config: null });
+    const v = (await svc.list(org.id)).find((x) => x.plugin === "orgcfg");
+    expect(v).toMatchObject({ enabled: false, config: null });
+  });
+
+  it("审计写入失败：密钥与配置都回滚", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    await sql`CREATE OR REPLACE FUNCTION capybara.test_fail_audit() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER test_fail_audit BEFORE INSERT ON capybara.audit_events FOR EACH ROW EXECUTE FUNCTION capybara.test_fail_audit()`.execute(
+      raw,
+    );
+    try {
+      await expect(
+        svc.put(
+          org.id,
+          "orgcfg",
+          { config: { appId: "changed", appSecret: "changed-secret", webhook: { path: "/c" } } },
+          A.id,
+        ),
+      ).rejects.toThrow(/audit down/);
+    } finally {
+      await sql`DROP TRIGGER test_fail_audit ON capybara.audit_events`.execute(raw);
+      await sql`DROP FUNCTION capybara.test_fail_audit()`.execute(raw);
+    }
+    expect(await svc.get(org.id, "orgcfg")).toEqual({ enabled: true, config: full });
   });
 
   it("发起人角色在事务内实时重读：member 或非成员 → forbidden；组织不存在 → org.not_found", async () => {

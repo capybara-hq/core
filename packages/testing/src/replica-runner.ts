@@ -9,6 +9,8 @@ interface RunnerConfig {
   resolveFrom: string;
   pluginConfig: Record<string, unknown>;
   roles: string[];
+  /** 副本序号（"0" / "1"），设为 `http.replicaId`，响应头 `x-capybara-replica` 据此标明落点。 */
+  replicaId: string;
   /** 调用方传入的额外配置，深合并在基础配置之上。 */
   overrides: Record<string, unknown>;
 }
@@ -39,7 +41,7 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     db: { url: c.dbUrl, poolMax: 3 },
     redis: { url: c.redisUrl },
     masterKey: c.masterKey,
-    http: { port: 0 },
+    http: { port: 0, replicaId: c.replicaId },
     roles: c.roles,
     plugins: c.plugins,
     pluginConfig: c.pluginConfig,

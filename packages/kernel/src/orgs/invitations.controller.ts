@@ -14,7 +14,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import { INVITATIONS, KERNEL_CONFIG, SESSIONS } from "../http/tokens.js";
+import { INVITATIONS, KERNEL_CONFIG, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account } from "../identity/accounts.js";
 import { clientMeta } from "../identity/auth.controller.js";
@@ -26,6 +26,7 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import type { LoginRateLimiter } from "../identity/rate-limit.js";
 import type { SessionService } from "../identity/sessions.js";
 import {
   INVITABLE_ROLES,
@@ -49,6 +50,10 @@ const SignupBody = z.object({
 });
 const signupPipe = new ZodPipe(SignupBody);
 
+/** 接受邀请的限流（scope `inv`）：同一令牌 10 次、同一客户端 IP 20 次 / 900s。 */
+const ACCEPT_LIMIT_PER_TOKEN = 10;
+const ACCEPT_LIMIT_PER_IP = 20;
+
 /** 组织邀请：组织内管理（`/api/v1/orgs/:orgId/invitations`）与凭令牌预览 / 接受（`/api/v1/invitations/:token`，公开）。 */
 @Controller("api/v1")
 export class InvitationsController {
@@ -56,6 +61,7 @@ export class InvitationsController {
     @Inject(INVITATIONS) private readonly invitations: InvitationsService,
     @Inject(SESSIONS) private readonly sessions: SessionService,
     @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
+    @Inject(RATE_LIMITER) private readonly limiter: LoginRateLimiter,
   ) {}
 
   /** 令牌只在此返回一次。 */
@@ -102,6 +108,8 @@ export class InvitationsController {
   /**
    * 接受邀请：已登录的 user principal 直接加入（body 可为空）；未登录则 body 必须是
    * `{ login, password, displayName }`，注册成功后创建会话并设 Cookie；service principal → `forbidden`。
+   * 每次尝试先占用限流额度（scope `inv`：按令牌与客户端 IP），防止猜令牌、探测登录名与用 scrypt 拖垮服务；
+   * 超限 → 429 `auth.rate_limited`，成功后退还。
    */
   @Post("invitations/:token/accept")
   @Public()
@@ -116,11 +124,35 @@ export class InvitationsController {
     if (principal?.kind === "service") {
       throw new ApiError("forbidden", "Service tokens cannot accept invitations");
     }
-    if (principal) return this.invitations.accept(token, { accountId: principal.account.id });
-    const signup = signupPipe.transform(body);
-    const result = await this.invitations.accept(token, { signup });
-    const session = await this.sessions.create(result.account.id, clientMeta(req));
-    setSessionCookies(reply, session, this.config());
+    const meta = clientMeta(req);
+    const rl = await this.limiter.reserveScoped(
+      "inv",
+      token,
+      meta.ip,
+      ACCEPT_LIMIT_PER_TOKEN,
+      ACCEPT_LIMIT_PER_IP,
+    );
+    if (!rl.allowed) {
+      reply.header("retry-after", String(rl.retryAfterSeconds));
+      throw new ApiError("auth.rate_limited", "Too many invitation attempts; try again later");
+    }
+    let result: { account: Account; orgId: string; role: OrgRole };
+    if (principal) {
+      result = await this.invitations.accept(token, { accountId: principal.account.id });
+      await this.limiter.succeededScoped("inv", token, meta.ip);
+    } else {
+      const signup = signupPipe.transform(body);
+      // 新账号、成员关系与会话行在同一事务里写入；Cookie 在提交之后才设置
+      const { extra: session, ...rest } = await this.invitations.accept(
+        token,
+        { signup },
+        (t, account) => this.sessions.create(account.id, meta, t),
+      );
+      if (!session) throw new Error("signup completed without a session");
+      result = rest;
+      await this.limiter.succeededScoped("inv", token, meta.ip);
+      setSessionCookies(reply, session, this.config());
+    }
     return result;
   }
 }

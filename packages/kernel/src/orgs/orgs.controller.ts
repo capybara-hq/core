@@ -13,7 +13,11 @@ import { z } from "zod";
 import { ApiError } from "../errors.js";
 import { API_TOKENS, MEMBERS, ORGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
-import type { ApiTokenRecord, ApiTokenService } from "../identity/api-tokens.js";
+import {
+  type ApiTokenRecord,
+  type ApiTokenService,
+  FutureIsoDate,
+} from "../identity/api-tokens.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -38,10 +42,7 @@ const TransferBody = z.object({ toAccountId: z.string().min(1) });
 const ServiceTokenBody = z.object({
   name: z.string().min(1).max(100),
   role: z.enum(["admin", "member", "guest"]),
-  expiresAt: z.coerce
-    .date()
-    .refine((d) => d.getTime() > Date.now(), "must be in the future")
-    .optional(),
+  expiresAt: FutureIsoDate.optional(),
 });
 const RoleBody = z.object({ role: z.enum(ORG_ROLES) });
 

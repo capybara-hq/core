@@ -92,6 +92,23 @@ export const KernelConfigSchema = z.object({
               "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies",
           }),
         ),
+      // 环境变量按 JSON 解析，CAPYBARA_HTTP__REPLICA_ID=0 会得到数字，所以也接受非负整数（输出头时转字符串）
+      replicaId: z
+        .union([
+          z
+            .string()
+            .min(1)
+            .max(64)
+            .regex(/^[A-Za-z0-9._-]+$/),
+          z.number().int().nonnegative(),
+        ])
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers)",
+          }),
+        ),
     })
     .default({ port: 8080, trustProxy: false }),
   roles: z
@@ -135,6 +152,138 @@ export const KernelConfigSchema = z.object({
         .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
     })
     .default({ accessTokenTtlSeconds: 900, refreshTokenTtlDays: 30, cookieSecure: true }),
+  runtime: z
+    .object({
+      maxSteps: z
+        .number()
+        .int()
+        .positive()
+        .default(50)
+        .meta(meta({ description: "Maximum model steps per agent run before the final wrap-up" })),
+      maxRunSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(900)
+        .meta(meta({ description: "Maximum wall-clock duration of one agent run in seconds" })),
+      streamIdleMs: z
+        .number()
+        .int()
+        .positive()
+        .default(60000)
+        .meta(
+          meta({
+            description:
+              "Default model stream idle watchdog in milliseconds (a model's own streamIdleTimeoutMs takes precedence)",
+          }),
+        ),
+      maxOutputTokens: z
+        .number()
+        .int()
+        .positive()
+        .default(16000)
+        .meta(
+          meta({
+            description:
+              "Default output-token limit per model call when the agent does not set maxOutputTokens (an agent's maxOutputTokens overrides it; either is capped by the model's own maximum)",
+          }),
+        ),
+      compactionThreshold: z
+        .number()
+        .gt(0)
+        .max(1)
+        .default(0.8)
+        .meta(
+          meta({
+            description:
+              "Compact the conversation when the estimated input reaches this fraction of the context window",
+          }),
+        ),
+      keepRecentTurns: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(4)
+        .meta(meta({ description: "Number of recent user turns kept verbatim when compacting" })),
+      workerConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({ description: "Maximum agent runs executed concurrently by one worker process" }),
+        ),
+      orgConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Maximum agent runs executing concurrently per organization across all replicas",
+          }),
+        ),
+      jobLockMs: z
+        .number()
+        .int()
+        .positive()
+        .default(30000)
+        .meta(
+          meta({
+            description:
+              "Lock duration of an agent run job in milliseconds (BullMQ lockDuration), also the TTL of the conversation run lock; a run whose worker stops renewing them is considered stalled after this long and resumes on another worker",
+          }),
+        ),
+      stalledIntervalMs: z
+        .number()
+        .int()
+        .positive()
+        .default(30000)
+        .meta(
+          meta({
+            description:
+              "How often workers check for stalled agent run jobs in milliseconds (BullMQ stalledInterval)",
+          }),
+        ),
+      sseHeartbeatMs: z
+        .number()
+        .int()
+        .positive()
+        .default(15000)
+        .meta(
+          meta({
+            description:
+              "Interval in milliseconds between heartbeat comments on a conversation event stream (SSE)",
+          }),
+        ),
+      sseRecheckMs: z
+        .number()
+        .int()
+        .positive()
+        .default(60000)
+        .meta(
+          meta({
+            description:
+              "How often an open conversation event stream (SSE) re-checks that the viewer may still access the conversation, in milliseconds; the stream closes when access is lost",
+          }),
+        ),
+    })
+    .default({
+      maxSteps: 50,
+      maxRunSeconds: 900,
+      streamIdleMs: 60000,
+      maxOutputTokens: 16000,
+      compactionThreshold: 0.8,
+      keepRecentTurns: 4,
+      workerConcurrency: 10,
+      orgConcurrency: 10,
+      jobLockMs: 30000,
+      stalledIntervalMs: 30000,
+      sseHeartbeatMs: 15000,
+      sseRecheckMs: 60000,
+    }),
   log: z
     .object({
       level: z

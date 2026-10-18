@@ -2,17 +2,38 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { definePlugin, type PluginManifest } from "@capybara-hq/plugin-sdk";
+import { definePlugin, type PluginManifest, secret } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { createBusSubscriber } from "../../src/ctx/bus.js";
 import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
-import { PluginHost } from "../../src/plugins/host.js";
+import { deploymentConfigHash, PluginHost } from "../../src/plugins/host.js";
+
+// closefail 插件的 ctx.close() 失败（先真正关闭，避免泄漏连接），验证宿主记 warn
+vi.mock("../../src/ctx/create-ctx.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../src/ctx/create-ctx.js")>();
+  return {
+    ...real,
+    createPluginContext: (...args: Parameters<typeof real.createPluginContext>) => {
+      const ctx = real.createPluginContext(...args);
+      if (args[1].name !== "closefail") return ctx;
+      const close = ctx.close;
+      return {
+        ...ctx,
+        async close() {
+          await close();
+          throw new Error("close boom");
+        },
+      };
+    },
+  };
+});
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -79,6 +100,61 @@ describe("PluginHost", () => {
     expect(h.routes().map((x) => `${x.method} ${x.path}`)).toEqual(["GET /plugins/fixture/hello"]);
   });
 
+  it("list 带出插件版本与部署配置摘要（16 位十六进制，不含配置明文）", async () => {
+    const a = host({ fixture: { greeting: "yo" } });
+    await a.load([fx("fixture")]);
+    const b = host({ fixture: { greeting: "hey" } });
+    await b.load([fx("fixture")]);
+    const [ea] = a.list("counter");
+    const [eb] = b.list("counter");
+    expect(ea?.version).toBe(a.manifests()[0]?.version);
+    expect(ea?.configHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(ea?.configHash).not.toBe(eb?.configHash);
+  });
+
+  it("deploymentConfigHash：先遮蔽 secret 字段——只差密钥时摘要相同，非密钥变化才变化；与键顺序无关", () => {
+    const schema = z.object({
+      a: z.number(),
+      b: z.object({ y: z.array(z.number()), x: secret(z.string()) }),
+      keys: secret(z.record(z.string(), z.string())).default({}),
+      opt: z.object({ tok: secret(z.string()).optional() }).optional(),
+    });
+    const base = { a: 1, b: { x: "s3cr3t", y: [1, 2] }, keys: { ep: "sk-1" } };
+    const h1 = deploymentConfigHash(schema, base);
+    expect(h1).toMatch(/^[0-9a-f]{16}$/);
+    // 键顺序无关
+    expect(
+      deploymentConfigHash(schema, { keys: { ep: "sk-1" }, b: { y: [1, 2], x: "s3cr3t" }, a: 1 }),
+    ).toBe(h1);
+    // 只差 secret（含 record 形态的密钥）：摘要相同，轮换密钥不改变缓存键
+    expect(deploymentConfigHash(schema, { ...base, b: { x: "other", y: [1, 2] } })).toBe(h1);
+    expect(deploymentConfigHash(schema, { ...base, keys: { ep: "sk-2" } })).toBe(h1);
+    expect(deploymentConfigHash(schema, { ...base, opt: { tok: "t1" } })).toBe(
+      deploymentConfigHash(schema, { ...base, opt: { tok: "t2" } }),
+    );
+    // 非 secret 变化：摘要变化
+    expect(deploymentConfigHash(schema, { ...base, a: 2 })).not.toBe(h1);
+    expect(deploymentConfigHash(schema, { ...base, b: { x: "s3cr3t", y: [1] } })).not.toBe(h1);
+    // 不修改传入的配置
+    expect(base.b.x).toBe("s3cr3t");
+    // 没有部署配置 schema（无法得知哪些是密钥）：不按配置区分
+    expect(deploymentConfigHash(undefined, { token: "a" })).toBe(
+      deploymentConfigHash(undefined, { token: "b" }),
+    );
+  });
+
+  it("list 的 configHash 不随 secret 字段变化", async () => {
+    const a = host({ secretcfg: { token: "token-one-123" } });
+    await a.load([fx("secretcfg")]);
+    const b = host({ secretcfg: { token: "token-two-456" } });
+    await b.load([fx("secretcfg")]);
+    expect(a.manifests()[0]?.name).toBe("secretcfg");
+    const ha = (a as unknown as { loaded: { configHash: string }[] }).loaded[0]?.configHash;
+    const hb = (b as unknown as { loaded: { configHash: string }[] }).loaded[0]?.configHash;
+    expect(ha).toMatch(/^[0-9a-f]{16}$/);
+    expect(ha).toBe(hb);
+  });
+
   it("配置缺省时使用 schema 默认值", async () => {
     const h = host();
     await h.load([fx("fixture")]);
@@ -118,6 +194,15 @@ describe("PluginHost", () => {
 
   it("setup 抛错：带插件名", async () => {
     await expect(host().load([fx("throws")])).rejects.toThrow(/thrower.*boom/);
+  });
+
+  it("setup 失败后 ctx.close() 也失败：记 warn，仍抛 setup 错误", async () => {
+    warned.length = 0;
+    await expect(host().load([fx("closefail")])).rejects.toThrow(/closefail.*setup boom/);
+    const w = warned.filter((x) => x.msg === "plugin context close failed");
+    expect(w).toHaveLength(1);
+    expect(w[0]?.fields?.plugin).toBe("closefail");
+    expect((w[0]?.fields?.err as Error | undefined)?.message).toBe("close boom");
   });
 
   it("setup 后声明的 provides 未提供：报错并点名", async () => {
@@ -218,6 +303,29 @@ describe("PluginHost 加载规则", () => {
 });
 
 describe("createPluginContext 规则", () => {
+  it("ctx 关闭后 bus.subscribe 以明确错误拒绝，不留下订阅；关闭与订阅并发时订阅方自行退订", async () => {
+    const manifest = definePlugin({
+      name: "late-sub",
+      version: "0.1.0",
+      sdk: "^0.1.0",
+      provides: [],
+      setup() {},
+    });
+    const ctx = createPluginContext(deps, manifest, {});
+    await ctx.close();
+    await expect(ctx.bus.subscribe("t", () => {})).rejects.toThrow(
+      /late-sub: ctx is closed; bus\.subscribe is not allowed after close/,
+    );
+    // 订阅进行中时关闭：订阅完成后立即退订并报错
+    const ctx2 = createPluginContext(deps, manifest, {});
+    const pending = ctx2.bus.subscribe("t2", () => {});
+    const closing = ctx2.close();
+    await expect(pending).rejects.toThrow(/ctx is closed/);
+    await closing;
+    const channels = (await redis.pubsub("CHANNELS", "*late-sub*")) as string[];
+    expect(channels).toEqual([]);
+  });
+
   it("ctx.log 附加 plugin 字段", async () => {
     const ctx = createPluginContext(
       deps,
@@ -279,6 +387,12 @@ describe("PluginHost.migrateOnly", () => {
     const r = await PluginHost.migrateOnly([fx("fixture"), fx("throws")], { dbUrl: deps.dbUrl });
     expect(r.map((x) => x.plugin)).toEqual(["fixture"]);
     expect(r[0]?.schema).toBe("plugin_fixture");
+  });
+
+  it("插件的 secret 不在对象路径叶子上：同样拒绝（不迁移）", async () => {
+    await expect(
+      PluginHost.migrateOnly([fx("fixture2"), fx("secretunion")], { dbUrl: deps.dbUrl }),
+    ).rejects.toThrow(/plugin secretunion: config\.org: secret\(\) at "auth<union#1>\.token"/);
   });
 
   it("依赖解析失败同样报错（不迁移）", async () => {

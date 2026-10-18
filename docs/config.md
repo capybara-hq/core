@@ -18,9 +18,34 @@
 | `pluginConfig` | `CAPYBARA_PLUGIN_CONFIG` | `record` | `{}` | 否 | 否 | Deployment-level config keyed by plugin name |
 | `http.port` | `CAPYBARA_HTTP__PORT` | `number` | `8080` | 否 | 否 | HTTP listen port |
 | `http.trustProxy` | `CAPYBARA_HTTP__TRUST_PROXY` | `boolean \| number \| array<string>` | `false` | 否 | 否 | Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies |
+| `http.replicaId` | `CAPYBARA_HTTP__REPLICA_ID` | `string \| number` | 可选 | 否 | 否 | Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers) |
 | `roles` | `CAPYBARA_ROLES` | `array<"api" \| "worker" \| "gateway">` | `["api","worker","gateway"]` | 否 | 否 | Roles this process runs |
 | `auth.accessTokenTtlSeconds` | `CAPYBARA_AUTH__ACCESS_TOKEN_TTL_SECONDS` | `number` | `900` | 否 | 否 | Lifetime of web session access tokens in seconds |
 | `auth.refreshTokenTtlDays` | `CAPYBARA_AUTH__REFRESH_TOKEN_TTL_DAYS` | `number` | `30` | 否 | 否 | Absolute lifetime of a web session (refresh token) in days; refreshing does not extend it |
 | `auth.cookieSecure` | `CAPYBARA_AUTH__COOKIE_SECURE` | `boolean` | `true` | 否 | 否 | Set the Secure attribute on session cookies; set false only for local trials over plain http |
 | `auth.setupToken` | `CAPYBARA_AUTH__SETUP_TOKEN` | `string` | 可选 | 否 | 是 | If set, the setup wizard requires this token |
+| `runtime.maxSteps` | `CAPYBARA_RUNTIME__MAX_STEPS` | `number` | `50` | 否 | 否 | Maximum model steps per agent run before the final wrap-up |
+| `runtime.maxRunSeconds` | `CAPYBARA_RUNTIME__MAX_RUN_SECONDS` | `number` | `900` | 否 | 否 | Maximum wall-clock duration of one agent run in seconds |
+| `runtime.streamIdleMs` | `CAPYBARA_RUNTIME__STREAM_IDLE_MS` | `number` | `60000` | 否 | 否 | Default model stream idle watchdog in milliseconds (a model's own streamIdleTimeoutMs takes precedence) |
+| `runtime.maxOutputTokens` | `CAPYBARA_RUNTIME__MAX_OUTPUT_TOKENS` | `number` | `16000` | 否 | 否 | Default output-token limit per model call when the agent does not set maxOutputTokens (an agent's maxOutputTokens overrides it; either is capped by the model's own maximum) |
+| `runtime.compactionThreshold` | `CAPYBARA_RUNTIME__COMPACTION_THRESHOLD` | `number` | `0.8` | 否 | 否 | Compact the conversation when the estimated input reaches this fraction of the context window |
+| `runtime.keepRecentTurns` | `CAPYBARA_RUNTIME__KEEP_RECENT_TURNS` | `number` | `4` | 否 | 否 | Number of recent user turns kept verbatim when compacting |
+| `runtime.workerConcurrency` | `CAPYBARA_RUNTIME__WORKER_CONCURRENCY` | `number` | `10` | 否 | 否 | Maximum agent runs executed concurrently by one worker process |
+| `runtime.orgConcurrency` | `CAPYBARA_RUNTIME__ORG_CONCURRENCY` | `number` | `10` | 是 | 否 | Maximum agent runs executing concurrently per organization across all replicas |
+| `runtime.jobLockMs` | `CAPYBARA_RUNTIME__JOB_LOCK_MS` | `number` | `30000` | 否 | 否 | Lock duration of an agent run job in milliseconds (BullMQ lockDuration), also the TTL of the conversation run lock; a run whose worker stops renewing them is considered stalled after this long and resumes on another worker |
+| `runtime.stalledIntervalMs` | `CAPYBARA_RUNTIME__STALLED_INTERVAL_MS` | `number` | `30000` | 否 | 否 | How often workers check for stalled agent run jobs in milliseconds (BullMQ stalledInterval) |
+| `runtime.sseHeartbeatMs` | `CAPYBARA_RUNTIME__SSE_HEARTBEAT_MS` | `number` | `15000` | 否 | 否 | Interval in milliseconds between heartbeat comments on a conversation event stream (SSE) |
+| `runtime.sseRecheckMs` | `CAPYBARA_RUNTIME__SSE_RECHECK_MS` | `number` | `60000` | 否 | 否 | How often an open conversation event stream (SSE) re-checks that the viewer may still access the conversation, in milliseconds; the stream closes when access is lost |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
+
+## Nacos 配置来源
+
+`CAPYBARA_CONFIG_SOURCE=nacos` 时由下列环境变量指定 Nacos（它们不是配置项，不能写进配置文件）：
+
+| 环境变量 | 说明 |
+| --- | --- |
+| `CAPYBARA_NACOS_SERVER` | Nacos 地址（如 `nacos:8848`，缺省协议为 http），必填 |
+| `CAPYBARA_NACOS_NAMESPACE` | 命名空间 ID，必填 |
+| `CAPYBARA_NACOS_DATA_ID` | 配置的 dataId（YAML），必填；分组固定为 `DEFAULT_GROUP` |
+| `CAPYBARA_NACOS_USERNAME` / `CAPYBARA_NACOS_PASSWORD` | Nacos 开启鉴权时的用户名与密码：登录换取 accessToken，用到 `tokenTtl` 的 80% 或收到 403 时重新登录；须成对设置 |
+| `CAPYBARA_NACOS_ACCESS_TOKEN` | 直接使用的 accessToken（不调用登录接口）；不能与用户名密码同时设置 |

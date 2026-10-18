@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
+import { z } from "zod";
 import type { ApiTokensTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
@@ -18,6 +19,12 @@ export interface ApiTokenRecord {
   lastUsedAt: Date | null;
   expiresAt: Date | null;
 }
+
+/** 令牌过期时间：完整 ISO 8601 datetime 字符串（`2099-01-01T00:00:00Z`），必须晚于当前时间；解析为 `Date`。 */
+export const FutureIsoDate = z.iso
+  .datetime()
+  .refine((s) => new Date(s).getTime() > Date.now(), "must be in the future")
+  .transform((s) => new Date(s));
 
 type Scope = { accountId: string } | { orgId: string };
 
@@ -58,7 +65,7 @@ export class ApiTokenService {
     input: { name: string; expiresAt?: Date | undefined },
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     validate(input);
-    return this.insert("personal", {
+    return this.insertToken(this.db, "personal", {
       account_id: accountId,
       org_id: null,
       role: null,
@@ -78,7 +85,7 @@ export class ApiTokenService {
     },
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     validate(input);
-    return this.insert("service", {
+    return this.insertToken(this.db, "service", {
       account_id: null,
       org_id: orgId,
       role: input.role,
@@ -103,18 +110,14 @@ export class ApiTokenService {
       if (!roleAtLeast(role, input.role)) {
         throw new ApiError("forbidden", "Insufficient organization role");
       }
-      const created = await this.insert(
-        "service",
-        {
-          account_id: null,
-          org_id: orgId,
-          role: input.role,
-          name: input.name,
-          created_by: actorAccountId,
-          expires_at: input.expiresAt ?? null,
-        },
-        t,
-      );
+      const created = await this.insertToken(t, "service", {
+        account_id: null,
+        org_id: orgId,
+        role: input.role,
+        name: input.name,
+        created_by: actorAccountId,
+        expires_at: input.expiresAt ?? null,
+      });
       await audit(t, {
         actorAccountId,
         orgId,
@@ -230,7 +233,8 @@ export class ApiTokenService {
       : q.where("kind", "=", "service").where("org_id", "=", scope.orgId);
   }
 
-  private async insert(
+  private async insertToken(
+    db: KernelDb | Transaction<KernelDatabase>,
     kind: "personal" | "service",
     values: {
       account_id: string | null;
@@ -240,10 +244,9 @@ export class ApiTokenService {
       created_by: string;
       expires_at: Date | null;
     },
-    trx?: Transaction<KernelDatabase>,
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     const token = PREFIX[kind] + randomBytes(32).toString("base64url");
-    const row = await (trx ?? this.db)
+    const row = await db
       .insertInto("api_tokens")
       .values({ id: randomUUID(), kind, token_hash: sha256Hex(token), ...values })
       .returningAll()

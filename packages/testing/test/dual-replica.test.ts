@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   createDualReplicaHarness,
   type Harness,
+  replicaOf,
   runnerArgv,
   runnerEnv,
 } from "../src/dual-replica.js";
@@ -53,11 +54,16 @@ describe("双副本测试工具", () => {
     expect(a.pid).not.toBe(b.pid);
     expect(a.pid).not.toBe(process.pid);
     const pids: number[] = [];
+    const seen: number[] = [];
     for (let i = 0; i < 6; i++) {
       const r = await h.request("/plugins/whoami/pid");
+      seen.push(r.replica);
+      expect(replicaOf(r)).toBe(r.replica);
       pids.push(((await r.json()) as { pid: number }).pid);
     }
     expect(pids).toEqual([a.pid, b.pid, a.pid, b.pid, a.pid, b.pid]);
+    // 响应头 x-capybara-replica 标明落点（runner 设置 http.replicaId）
+    expect(seen).toEqual([0, 1, 0, 1, 0, 1]);
   });
 
   it("good-counter（ctx.kv）：4 次 inc 后 count 为 4", async () => {
@@ -80,6 +86,21 @@ describe("双副本测试工具", () => {
     await h.stop();
     await h.stop();
     for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
+  });
+
+  it("kill(i)：SIGKILL 该副本，之后发往它的请求抛错，另一个副本照常；stop 仍幂等", async () => {
+    const h = await harness("whoami");
+    const [a, b] = h.replicas;
+    await h.kill(0);
+    expect(alive(a.pid)).toBe(false);
+    expect(alive(b.pid)).toBe(true);
+    // 第 1 次请求落到 replica 0（已死）→ 抛错；第 2 次落到 replica 1 → 正常
+    await expect(h.request("/plugins/whoami/pid")).rejects.toThrow(/replica 0 .*signal SIGKILL/);
+    const r = await h.request("/plugins/whoami/pid");
+    expect(((await r.json()) as { pid: number }).pid).toBe(b.pid);
+    await h.kill(0);
+    await h.stop();
+    expect(alive(b.pid)).toBe(false);
   });
 
   it("插件启动失败时 start 以 stderr 尾部 reject，且不泄露配置", async () => {

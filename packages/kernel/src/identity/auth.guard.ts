@@ -27,9 +27,10 @@ type Resolved = { principal: Principal; cookie: boolean } | undefined;
 /**
  * 全局守卫（`APP_GUARD`），默认拒绝：
  * 1. `Authorization: Bearer cap_pat_…|cap_svc_…` → API 令牌；个人令牌再实时读账号状态。不做 CSRF 检查。
- * 2. 否则 Cookie `cap_at` → 会话 access token（Redis 吊销标记作快速路径，再以 PG `sessions.revoked_at` 为准）
- *    → 实时读账号状态；非安全方法要求 CSRF 头。
- * 3. 都没有：`@Public` 放行，否则 `auth.required`。`@Public` 路由上凭据无效按无凭据处理（便于登出 / 刷新）。
+ * 2. 否则 Cookie `cap_at` → 会话 access token（Redis 吊销标记作快速路径，再以 PG `sessions.revoked_at` 为准，
+ *    与账号读取合并为一条查询）→ 实时判断账号状态；非安全方法要求 CSRF 头。
+ * 3. 都没有：`@Public` 放行，否则 `auth.required`。`@Public` 路由上凭据无效（`ApiError`）按无凭据处理
+ *    （便于登出 / 刷新）；PG / Redis 故障等其他异常照常抛出。
  * 4. 路由约束：service principal 只能访问 `@AllowService` 路由（否则 `forbidden`）；
  *    `@SessionOnly` 要求 Web 会话：个人令牌 → `auth.session_required`，服务令牌（即使路由经 `@OrgAction`
  *    隐含 `@AllowService`）→ `forbidden`；`@EnterpriseAdmin` 要求企业管理员（`forbidden`）。
@@ -58,7 +59,9 @@ export class AuthGuard implements CanActivate {
     try {
       resolved = await this.resolve(req);
     } catch (e) {
-      if (!isPublic) throw e;
+      // 公开路由上只把「凭据无效」（ApiError）视同未携带；PG / Redis 故障等照常抛出（500），
+      // 否则故障期间带着有效 Cookie 的请求会被当作匿名放行
+      if (!isPublic || !(e instanceof ApiError)) throw e;
       resolved = undefined;
     }
     if (!resolved) {
@@ -113,9 +116,12 @@ export class AuthGuard implements CanActivate {
     }
     const at = req.cookies[ACCESS_COOKIE];
     if (at) {
-      const { accountId, sessionId } = await this.sessions.verifyAccess(at);
-      const account = await this.activeAccount(accountId);
-      return { principal: { kind: "user", account, via: "session", sessionId }, cookie: true };
+      // 一条查询同时完成吊销检查与账号读取
+      const { account, sessionId } = await this.sessions.verifyAccess(at);
+      return {
+        principal: { kind: "user", account: requireActive(account), via: "session", sessionId },
+        cookie: true,
+      };
     }
     return undefined;
   }
@@ -123,9 +129,13 @@ export class AuthGuard implements CanActivate {
   private async activeAccount(id: string): Promise<Account> {
     const account = await this.accounts.get(id);
     if (!account) throw new ApiError("auth.required", "Authentication required");
-    if (account.status !== "active") {
-      throw new ApiError("auth.account_disabled", "Account is disabled");
-    }
-    return account;
+    return requireActive(account);
   }
+}
+
+function requireActive(account: Account): Account {
+  if (account.status !== "active") {
+    throw new ApiError("auth.account_disabled", "Account is disabled");
+  }
+  return account;
 }

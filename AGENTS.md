@@ -10,6 +10,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 | `packages/kernel` | 内核：配置、db、`ctx`、插件宿主、HTTP |
 | `packages/testing` | 测试容器与双副本工具 |
 | `apps/capybara` | CLI |
+| `apps/web` | Next 网页（私有包，经 `/api/*` 代理调内核 HTTP；须经 `server.mjs` 启动） |
 | `plugins/*` | 官方插件（`example-counter` 是参考实现） |
 | `tools/*` | 仓库内部工具与自定义检查 |
 | `docs/` | 设计文档与计划 |
@@ -28,11 +29,13 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 
 - `plugins/*` -> `@capybara-hq/plugin-sdk`（测试可额外用 devDependency `@capybara-hq/testing`）
 - `@capybara-hq/kernel` -> `@capybara-hq/plugin-sdk`
-- `@capybara-hq/testing` -> `@capybara-hq/kernel`
+- `@capybara-hq/testing` -> `@capybara-hq/kernel`（`@capybara-hq/plugin-sdk` 为 peerDependency）
 - `@capybara-hq/capybara`（CLI）-> `@capybara-hq/kernel`
+- `@capybara-hq/web` 不依赖任何 `@capybara-hq/*`，只经 HTTP 调内核（属于「外部应用」层）
+- `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档）
 - `@capybara-hq/plugin-sdk` 不依赖任何 `@capybara-hq/*`
 
-除 plugin-sdk 外，各包的测试可以把 `@capybara-hq/testing` 作为 devDependency，只在测试里用（插件与 SDK 的边界由 `pnpm check:deps` 检查；内核与 CLI 暂无自动检查，靠评审）。
+内核、CLI 与插件的测试把 `@capybara-hq/testing` 作为 devDependency，只在测试里用。`pnpm check:deps` 只检查插件与 SDK 的边界；内核、CLI、web 的依赖方向暂无自动检查，靠评审。
 
 包名一律 `@capybara-hq/<name>`。
 
@@ -50,6 +53,8 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 国际化：给模型看的文案（提示词、工具描述、模型可见的错误）一律英文；界面文案走 i18n。
 - 插件开发：详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，参考实现 `plugins/example-counter`。
 - 内核 HTTP 用 NestJS + Fastify：领域类不依赖 Nest，构造参数显式 `@Inject`；插件不依赖 Nest。详见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
+- 运行时：会话事件日志是唯一事实源，模型看到的一切都进日志（任一次模型请求都能由日志加 agent 版本还原），发给模型的历史只追加。代码在 `packages/kernel/src/runtime`。
+- 模型供应商插件：详见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。
 - **能自动检查的规则以检查为准**：`pnpm check` 会逐步收录各项自定义检查，每道检查都有「违规 fixture 使其失败」的测试。
 
 ## 常用命令

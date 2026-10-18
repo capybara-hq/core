@@ -104,6 +104,50 @@ async function invite(req: Req, orgId: string, role = "member"): Promise<string>
 const anon = (opts: Parameters<Req>[0]) => asUser(k.http, cookieJar())(opts);
 
 describe("邀请 HTTP", () => {
+  it("凭邀请注册：会话行与账号 / 成员关系同一事务，会话写入后失败 → 整体回滚，不设 Cookie，邀请仍可用", async () => {
+    const { ownerReq, orgId } = await setup();
+    const token = await invite(ownerReq, orgId);
+    const signup = { login: "newbie", password: PW, displayName: "Newbie" };
+    await sql`CREATE OR REPLACE FUNCTION capybara.t18_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected'; END $$`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER t18_fail AFTER INSERT ON capybara.sessions FOR EACH ROW EXECUTE FUNCTION capybara.t18_fail()`.execute(
+      raw,
+    );
+    try {
+      const res = await anon({
+        method: "POST",
+        url: `/api/v1/invitations/${token}/accept`,
+        payload: signup,
+      });
+      expect(res.statusCode).toBe(500);
+      expect(setCookies(res)).toEqual([]);
+    } finally {
+      await sql`DROP TRIGGER IF EXISTS t18_fail ON capybara.sessions`.execute(raw);
+      await sql`DROP FUNCTION IF EXISTS capybara.t18_fail()`.execute(raw);
+    }
+    expect(
+      await db
+        .selectFrom("identities")
+        .select("account_id")
+        .where("external_id", "=", "newbie")
+        .execute(),
+    ).toEqual([]);
+    expect(
+      await db.selectFrom("memberships").select("account_id").where("org_id", "=", orgId).execute(),
+    ).toHaveLength(1);
+    const inv = await db.selectFrom("invitations").select("accepted_at").executeTakeFirstOrThrow();
+    expect(inv.accepted_at).toBeNull();
+    // 同一邀请重试成功
+    const ok = await anon({
+      method: "POST",
+      url: `/api/v1/invitations/${token}/accept`,
+      payload: signup,
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(setCookies(ok).length).toBeGreaterThan(0);
+  });
+
   it("owner 创建 → 201 { invitation, token }；GET 列出（不含令牌）；DELETE → 204", async () => {
     const { ownerReq, orgId } = await setup();
     const res = await ownerReq({
@@ -244,6 +288,36 @@ describe("邀请 HTTP", () => {
       payload: { role: "guest" },
     });
     expect(create.statusCode).toBe(403);
+  });
+
+  it("公开的接受邀请接口：同 IP 连续 30 次失败 → 429 auth.rate_limited（别的 IP 不受影响）", async () => {
+    const codes: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      const res = await anon({
+        method: "POST",
+        url: `/api/v1/invitations/cap_inv_guess${i}/accept`,
+        payload: { login: `guess${i}`, password: PW, displayName: "G" },
+        remoteAddress: "203.0.113.9",
+      });
+      codes.push(res.statusCode);
+    }
+    expect(codes.slice(0, 20).every((c) => c === 404)).toBe(true);
+    expect(codes.at(-1)).toBe(429);
+    const limited = await anon({
+      method: "POST",
+      url: "/api/v1/invitations/cap_inv_guess/accept",
+      payload: {},
+      remoteAddress: "203.0.113.9",
+    });
+    expect(errCode(limited)).toBe("auth.rate_limited");
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
+    const other = await anon({
+      method: "POST",
+      url: "/api/v1/invitations/cap_inv_guess/accept",
+      payload: { login: "guessx", password: PW, displayName: "G" },
+      remoteAddress: "198.51.100.9",
+    });
+    expect(other.statusCode).toBe(404);
   });
 
   it("过期 → 410 invitation.expired", async () => {

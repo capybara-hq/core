@@ -14,6 +14,18 @@
       "path": "plugins/example-counter"
     },
     {
+      "path": "plugins/model-fake"
+    },
+    {
+      "path": "plugins/anthropic"
+    },
+    {
+      "path": "plugins/openai"
+    },
+    {
+      "path": "plugins/openai-compatible"
+    },
+    {
       "path": "tools/checks"
     },
     {

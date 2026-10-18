@@ -1,16 +1,18 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { SessionService } from "../../src/identity/sessions.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
+import { OrgQuota, orgRunLimit } from "../../src/runtime/quota.js";
 import { asUser, cookieJar, setCookies } from "../helpers/http.js";
 
 let pgc: TestContainer;
@@ -86,6 +88,40 @@ const setupBody = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("初始化向导（配置了 auth.setupToken）", () => {
+  it("会话行与账号 / 组织同一事务：会话写入后失败 → 整体回滚、不设 Cookie，部署仍需初始化，重试成功", async () => {
+    const anon = asUser(k.http, cookieJar());
+    await sql`CREATE OR REPLACE FUNCTION capybara.t18_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected'; END $$`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER t18_fail AFTER INSERT ON capybara.sessions FOR EACH ROW EXECUTE FUNCTION capybara.t18_fail()`.execute(
+      raw,
+    );
+    try {
+      const res = await anon({
+        method: "POST",
+        url: "/api/v1/setup",
+        payload: setupBody({ setupToken: SETUP_TOKEN, orgName: "Acme" }),
+      });
+      expect(res.statusCode).toBe(500);
+      expect(setCookies(res)).toEqual([]);
+    } finally {
+      await sql`DROP TRIGGER IF EXISTS t18_fail ON capybara.sessions`.execute(raw);
+      await sql`DROP FUNCTION IF EXISTS capybara.t18_fail()`.execute(raw);
+    }
+    expect(await db.selectFrom("accounts").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("orgs").select("id").execute()).toEqual([]);
+    expect((await anon({ method: "GET", url: "/api/v1/setup" })).json()).toEqual({
+      needsSetup: true,
+    });
+    const ok = await anon({
+      method: "POST",
+      url: "/api/v1/setup",
+      payload: setupBody({ setupToken: SETUP_TOKEN, orgName: "Acme" }),
+    });
+    expect(ok.statusCode).toBe(201);
+    expect(setCookies(ok).length).toBeGreaterThan(0);
+  });
+
   it("缺 / 错 token → 403 setup.token_invalid 且仍需初始化；正确 token → 201 带会话 Cookie，/me 为企业管理员", async () => {
     const anon = asUser(k.http, cookieJar());
     const status = await anon({ method: "GET", url: "/api/v1/setup" });
@@ -136,6 +172,33 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
     });
     expect(again.statusCode).toBe(409);
     expect(errCode(again)).toBe("setup.already_completed");
+  });
+
+  it("配置了 setupToken 时，错误令牌 20 次 → 429 auth.rate_limited", async () => {
+    const codes: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      const res = await asUser(
+        k.http,
+        cookieJar(),
+      )({
+        method: "POST",
+        url: "/api/v1/setup",
+        payload: setupBody({ setupToken: `wrong-${i}` }),
+      });
+      codes.push(errCode(res) ?? String(res.statusCode));
+    }
+    expect(codes.slice(0, 10).every((c) => c === "setup.token_invalid")).toBe(true);
+    expect(codes.at(-1)).toBe("auth.rate_limited");
+    // 超限后正确令牌同样被拒（窗口内）
+    const ok = await asUser(
+      k.http,
+      cookieJar(),
+    )({
+      method: "POST",
+      url: "/api/v1/setup",
+      payload: setupBody({ setupToken: SETUP_TOKEN }),
+    });
+    expect(ok.statusCode).toBe(429);
   });
 
   it("POST /setup 缺 CSRF 头 → 403 auth.csrf", async () => {
@@ -275,11 +338,31 @@ describe("企业管理员端点", () => {
     expect(bad.statusCode).toBe(400);
   });
 
+  it("GET /admin/accounts 返回 next 游标：limit=1 时 next 非空，用它取到下一个账号；最后一页 next 为 null", async () => {
+    const req = await session("admin");
+    const all = [admin.id, user.id].sort();
+    const p1 = await req({ method: "GET", url: "/api/v1/admin/accounts?limit=1" });
+    const b1 = p1.json() as { accounts: Account[]; next: string | null };
+    expect(b1.accounts.map((a) => a.id)).toEqual([all[0]]);
+    expect(b1.next).not.toBeNull();
+    const p2 = await req({
+      method: "GET",
+      url: `/api/v1/admin/accounts?limit=1&after=${b1.next}`,
+    });
+    const b2 = p2.json() as { accounts: Account[]; next: string | null };
+    expect(b2.accounts.map((a) => a.id)).toEqual([all[1]]);
+    expect(b2.next).toBeNull();
+  });
+
   it("停用账号：鉴权实时读状态，未吊销的 cap_at 与 PAT 均立即 403 auth.account_disabled", async () => {
     const userReq = await session("user");
     const pat = await tokens.createPersonal(user.id, { name: "cli" });
-    // 绕过管理端点直接改状态（不吊销凭据），只验证守卫每请求实时读账号状态
-    await accounts.update(user.id, { status: "disabled" }, admin.id);
+    // 绕过服务直接改库里的状态（不吊销凭据），只验证守卫每请求实时读账号状态
+    await db
+      .updateTable("accounts")
+      .set({ status: "disabled" })
+      .where("id", "=", user.id)
+      .execute();
     const viaCookie = await userReq({ method: "GET", url: "/api/v1/me" });
     expect(viaCookie.statusCode).toBe(403);
     expect(errCode(viaCookie)).toBe("auth.account_disabled");
@@ -331,6 +414,66 @@ describe("企业管理员端点", () => {
     expect((await patGet()).statusCode).toBe(401);
   });
 
+  it("停用与吊销在同一事务：吊销个人令牌失败 → 整体回滚，账号仍 active、会话未吊销", async () => {
+    const adminReq = await session("admin");
+    const userReq = await session("user");
+    await tokens.createPersonal(user.id, { name: "cli" });
+    await sql`CREATE OR REPLACE FUNCTION capybara.t18_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected'; END $$`.execute(
+      raw,
+    );
+    await sql`CREATE TRIGGER t18_fail BEFORE UPDATE ON capybara.api_tokens FOR EACH ROW EXECUTE FUNCTION capybara.t18_fail()`.execute(
+      raw,
+    );
+    try {
+      const off = await adminReq({
+        method: "PATCH",
+        url: `/api/v1/admin/accounts/${user.id}`,
+        payload: { status: "disabled" },
+      });
+      expect(off.statusCode).toBe(500);
+    } finally {
+      await sql`DROP TRIGGER IF EXISTS t18_fail ON capybara.api_tokens`.execute(raw);
+      await sql`DROP FUNCTION IF EXISTS capybara.t18_fail()`.execute(raw);
+    }
+    const row = await db
+      .selectFrom("accounts")
+      .select("status")
+      .where("id", "=", user.id)
+      .executeTakeFirstOrThrow();
+    expect(row.status).toBe("active");
+    const live = await db
+      .selectFrom("sessions")
+      .select("id")
+      .where("account_id", "=", user.id)
+      .where("revoked_at", "is", null)
+      .execute();
+    expect(live).toHaveLength(1);
+    expect((await userReq({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
+  });
+
+  it("停用后写 Redis 吊销标记失败：请求仍成功，会话已在 PG 吊销、立即失效（标记只是快速路径）", async () => {
+    const adminReq = await session("admin");
+    const userReq = await session("user");
+    const spy = vi
+      .spyOn(SessionService.prototype, "markRevoked")
+      .mockRejectedValueOnce(new Error("redis down"));
+    try {
+      const off = await adminReq({
+        method: "PATCH",
+        url: `/api/v1/admin/accounts/${user.id}`,
+        payload: { status: "disabled" },
+      });
+      expect(off.statusCode).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await redis.keys("capk:revoked-sid:*")).toEqual([]);
+    const viaCookie = await userReq({ method: "GET", url: "/api/v1/me" });
+    expect(viaCookie.statusCode).toBe(401);
+    expect(errCode(viaCookie)).toBe("auth.session_revoked");
+  });
+
   it("把唯一企业管理员降级 → 409 account.last_enterprise_admin", async () => {
     const req = await session("admin");
     const res = await req({
@@ -354,6 +497,7 @@ describe("企业管理员端点", () => {
     const userReq = await session("user");
     expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
       orgCreation: "anyone",
+      runConcurrencyOverrides: {},
     });
     const put = await adminReq({
       method: "PUT",
@@ -361,7 +505,10 @@ describe("企业管理员端点", () => {
       payload: { orgCreation: "enterprise_admin" },
     });
     expect(put.statusCode).toBe(200);
-    expect(put.json()).toEqual({ orgCreation: "enterprise_admin" });
+    expect(put.json()).toEqual({
+      orgCreation: "enterprise_admin",
+      runConcurrencyOverrides: {},
+    });
     const bad = await adminReq({
       method: "PUT",
       url: "/api/v1/admin/settings",
@@ -377,6 +524,54 @@ describe("企业管理员端点", () => {
       payload: { name: "Y" },
     });
     expect(allowed.statusCode).toBe(201);
+  });
+
+  it("PUT /admin/settings runConcurrencyOverrides：按组织合并，null 删除；配额按覆盖值生效", async () => {
+    const adminReq = await session("admin");
+    const put = async (payload: Record<string, unknown>) =>
+      adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
+    const r1 = await put({ runConcurrencyOverrides: { orgA: 1, orgB: 5 } });
+    expect(r1.statusCode).toBe(200);
+    expect(r1.json()).toEqual({
+      orgCreation: "anyone",
+      runConcurrencyOverrides: { orgA: 1, orgB: 5 },
+    });
+
+    // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
+    const settings = new SettingsService(db);
+    const limit = (org: string) => orgRunLimit(settings, () => k.config, org);
+    expect(await limit("orgA")).toBe(1);
+    expect(await limit("orgC")).toBe(k.config.runtime.orgConcurrency);
+    const quota = new OrgQuota(redis);
+    expect(await quota.tryEnter("orgA", "r1", await limit("orgA"))).toBe(true);
+    expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(false);
+
+    // 合并：只改列出的组织；null 删除覆盖；其他键不受影响
+    const r2 = await put({ runConcurrencyOverrides: { orgA: null, orgC: 2 } });
+    expect(r2.statusCode).toBe(200);
+    expect(r2.json()).toEqual({
+      orgCreation: "anyone",
+      runConcurrencyOverrides: { orgB: 5, orgC: 2 },
+    });
+    expect(await limit("orgA")).toBe(k.config.runtime.orgConcurrency);
+    expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
+
+    // 校验：非正整数 / 未知键 / 空 body → 400
+    for (const payload of [
+      { runConcurrencyOverrides: { orgA: 0 } },
+      { runConcurrencyOverrides: { orgA: 1.5 } },
+      { runConcurrencyOverrides: { orgA: "3" } },
+      { unknown: true },
+      {},
+    ]) {
+      const res = await put(payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+    expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
+      orgCreation: "anyone",
+      runConcurrencyOverrides: { orgB: 5, orgC: 2 },
+    });
   });
 
   it("GET /admin/orgs：全部组织与成员数", async () => {

@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import pgLib from "pg";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -14,6 +15,19 @@ import { InvitationsService } from "../../src/orgs/invitations.service.js";
 import { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
+
+/** 可让 hashPassword 人为变慢（毫秒），使「scrypt 是否在事务内执行」在任何机器上都能被观察到。 */
+const hashDelay = vi.hoisted(() => ({ ms: 0 }));
+vi.mock("../../src/identity/passwords.js", async (importOriginal) => {
+  const m = await importOriginal<typeof import("../../src/identity/passwords.js")>();
+  return {
+    ...m,
+    hashPassword: async (plain: string) => {
+      if (hashDelay.ms > 0) await new Promise((r) => setTimeout(r, hashDelay.ms));
+      return m.hashPassword(plain);
+    },
+  };
+});
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -246,6 +260,42 @@ describe("InvitationsService.accept", () => {
     expect(await roleOf(r.account.id)).toBe("member");
   });
 
+  it("signup 期间事务不会因 scrypt 处于 idle in transaction 超过 50ms（哈希在 BEGIN 之前算）", async () => {
+    const watcher = createDb(pg.url, 1);
+    // 本机 scrypt 可能快于 50ms：人为再加 150ms，哈希若在事务内执行必然被观察到
+    hashDelay.ms = 150;
+    try {
+      for (let i = 0; i < 3; i++) {
+        const { token } = await inv.create(org.id, { role: "member" }, A.id);
+        let done = false;
+        let worst = 0;
+        const poll = (async () => {
+          while (!done) {
+            const r = await sql<{ s: number | null }>`
+              SELECT max(extract(epoch FROM clock_timestamp() - state_change))::float8 AS s
+              FROM pg_stat_activity
+              WHERE state = 'idle in transaction' AND datname = current_database()`.execute(
+              watcher,
+            );
+            worst = Math.max(worst, Number(r.rows[0]?.s ?? 0));
+          }
+        })();
+        try {
+          await inv.accept(token, {
+            signup: { login: `idle${i}`, password: PW, displayName: "Idle" },
+          });
+        } finally {
+          done = true;
+          await poll;
+        }
+        expect(worst).toBeLessThan(0.05);
+      }
+    } finally {
+      hashDelay.ms = 0;
+      await watcher.destroy();
+    }
+  });
+
   it("signup 登录名已占用 → account.login_taken 且邀请未消耗；换登录名后仍可接受", async () => {
     const { invitation, token } = await inv.create(org.id, { role: "member" }, A.id);
     const before = await count("accounts");
@@ -293,14 +343,40 @@ describe("InvitationsService.accept", () => {
     expect(await roleOf(B.id)).toBe("guest");
   });
 
-  it("并发：两个账号同时接受同一邀请（两个独立连接池）→ 恰好一个成功、一个 invitation.used", async () => {
-    const { token } = await inv.create(org.id, { role: "member" }, A.id);
+  it("并发：两个账号同时接受同一邀请（两个独立连接池）→ 恰好一个成功、一个 invitation.used，且失败方确实打到带条件的 UPDATE", async () => {
+    const { invitation, token } = await inv.create(org.id, { role: "member" }, A.id);
     const before = await count("memberships");
-    const codes = await Promise.all([
-      codeOf(inv.accept(token, { accountId: B.id })),
-      codeOf(inv2.accept(token, { accountId: C.id })),
-    ]);
-    expect(codes.sort()).toEqual([undefined, "invitation.used"].sort());
+    // 另一个连接先持有组织行锁：两个接受请求都在分类通过（邀请仍为 pending）后卡在 tryLockOrg，
+    // 释放后串行拿锁，后到者分类阶段已过，只能由条件 UPDATE（0 行）判为 invitation.used
+    const holder = new pgLib.Client({ connectionString: pg.url });
+    // 观察用的独立连接：事务内的 pg_stat_activity 是事务开始时的快照，不能在 holder 上轮询
+    const watcher = new pgLib.Client({ connectionString: pg.url });
+    await Promise.all([holder.connect(), watcher.connect()]);
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT id FROM capybara.orgs WHERE id = $1 FOR UPDATE", [org.id]);
+      const results = Promise.all([
+        codeOf(inv.accept(token, { accountId: B.id })),
+        codeOf(inv2.accept(token, { accountId: C.id })),
+      ]);
+      const deadline = Date.now() + 4_000;
+      for (;;) {
+        const { rows } = await watcher.query<{ n: string }>(
+          `SELECT count(*) AS n FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock' AND query ILIKE '%"orgs"%for update%'`,
+        );
+        if (Number(rows[0]?.n) >= 2) break;
+        if (Date.now() > deadline) throw new Error("accepts did not both block on the org lock");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      // 两者都已过分类阶段，此时邀请仍未被占用
+      expect(await statusOf(invitation.id)).toBe("pending");
+      await holder.query("COMMIT");
+      const codes = await results;
+      expect(codes.sort()).toEqual([undefined, "invitation.used"].sort());
+    } finally {
+      await Promise.all([holder.end(), watcher.end()]);
+    }
     expect(await count("memberships")).toBe(before + 1);
   });
 

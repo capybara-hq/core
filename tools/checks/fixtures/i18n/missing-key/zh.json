@@ -1,0 +1,9 @@
+{
+  "common": {
+    "submit": "提交",
+    "cancel": "取消"
+  },
+  "login": {
+    "title": "登录"
+  }
+}

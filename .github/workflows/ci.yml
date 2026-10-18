@@ -28,3 +28,42 @@ jobs:
           pnpm exec commitlint
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @capybara-hq/web build
+
+  e2e:
+    runs-on: ubuntu-latest
+    # spec 13.4：≤ 10 分钟。本地实测 e2e 本身约 10s（含 Testcontainers 启动），CI 另需依赖安装、
+    # Playwright Chromium 安装与镜像拉取（合计约 3–4 分钟），10 分钟留有余量。
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 安装 Playwright Chromium
+        run: pnpm --filter @capybara-hq/web exec playwright install --with-deps chromium
+      - name: 端到端测试（Testcontainers 起 PG / Valkey，内核 + model-fake，Web 层）
+        run: pnpm --filter @capybara-hq/web e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+            apps/web/e2e-logs
+          retention-days: 7

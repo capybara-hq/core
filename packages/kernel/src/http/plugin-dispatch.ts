@@ -1,16 +1,17 @@
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import FindMyWay from "find-my-way";
 import type { Route } from "../ctx/create-ctx.js";
 import { errorBody } from "../errors.js";
 import { ACCESS_COOKIE, REFRESH_COOKIE } from "../identity/cookies.js";
+import { codeForStatus, redactPath } from "./error.filter.js";
 
 /** 插件路由都在此前缀下（ctx.http.route 已加 `/plugins/<name>` 前缀）。 */
 export const PLUGIN_PREFIX = "/plugins/";
 
-/** 插件路由表：按方法与路径（不含查询串）找到插件 handler。 */
+/** 插件路由表：按方法与路径（不含查询串）找到插件 handler；HEAD 没有专门路由时按 GET 匹配。 */
 export interface PluginRouter {
   find(method: string, path: string): Route["handler"] | undefined;
 }
@@ -26,8 +27,13 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
   }
   return {
     find(method, path) {
-      const found = router.find(method as FindMyWay.HTTPMethod, path);
-      return (found?.store as { handler: Route["handler"] } | undefined)?.handler;
+      const lookup = (m: string) =>
+        (
+          router.find(m as FindMyWay.HTTPMethod, path)?.store as
+            | { handler: Route["handler"] }
+            | undefined
+        )?.handler;
+      return lookup(method) ?? (method === "HEAD" ? lookup("GET") : undefined);
     },
   };
 }
@@ -35,7 +41,11 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
 /**
  * 在独立的封装作用域里注册 `/plugins/*`，转成 Web `Request` 交给插件 handler：
  * 作用域内移除默认解析器、所有 content-type 一律按原始 Buffer 收下，插件拿到的 body 与客户端发出的字节一致。
- * 未挂载或无匹配 → 404 `not_found`；handler 抛错记日志并返回 500 `internal`（不回显错误信息）。
+ * - 未挂载或无匹配 → 404 `not_found`；HEAD 没有专门路由时按 GET 处理，响应不带 body。
+ * - 无法构造 `Request`（如畸形 Host）→ 400 `validation_failed`，不记 error。
+ * - handler 抛错记日志（路径经 `redactPath` 脱敏）并返回 500 `internal`（不回显错误信息）。
+ * - Fastify 自身的错误（请求体超过 1 MiB 等）由作用域的错误处理器映射为错误信封：4xx 按通用错误码表
+ *   （413 `payload_too_large`、415 `unsupported_media_type` 等），5xx 记日志并返回 `internal`。
  * 必须在 Nest `app.init()` 之前调用。
  */
 export async function registerPluginDispatch(
@@ -49,11 +59,17 @@ export async function registerPluginDispatch(
     if (!pluginHandler) {
       return reply.code(404).send(errorBody("not_found", `Route ${req.method} ${path} not found`));
     }
+    let webReq: Request;
+    try {
+      webReq = toWebRequest(req);
+    } catch {
+      return reply.code(400).send(errorBody("validation_failed", "Malformed request"));
+    }
     let res: Response;
     try {
-      res = await pluginHandler(toWebRequest(req));
+      res = await pluginHandler(webReq);
     } catch (err) {
-      log.error("plugin handler failed", { path, err });
+      log.error("plugin handler failed", { method: req.method, path: redactPath(path), err });
       return reply.code(500).send(errorBody("internal", "Internal error"));
     }
     reply.code(res.status);
@@ -62,12 +78,24 @@ export async function registerPluginDispatch(
     }
     for (const cookie of res.headers.getSetCookie()) reply.header("set-cookie", cookie);
     if (res.body === null) return reply.send();
+    if (req.method === "HEAD") {
+      await res.body.cancel().catch(() => {});
+      return reply.send();
+    }
     return reply.send(Readable.fromWeb(res.body as NodeReadableStream<Uint8Array>));
   };
 
   await fastify.register(async (scope) => {
     scope.removeAllContentTypeParsers();
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
+    scope.setErrorHandler((err: FastifyError, req, reply) => {
+      const status = typeof err.statusCode === "number" ? err.statusCode : 500;
+      if (status >= 400 && status < 500) {
+        return reply.code(status).send(errorBody(codeForStatus(status), err.message));
+      }
+      log.error("plugin request failed", { method: req.method, path: redactPath(req.url), err });
+      return reply.code(status >= 500 ? status : 500).send(errorBody("internal", "Internal error"));
+    });
     scope.all(`${PLUGIN_PREFIX}*`, handler);
   });
 }

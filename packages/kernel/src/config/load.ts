@@ -1,10 +1,38 @@
 import { envOverrides } from "./env.js";
 import { fileSource } from "./file-source.js";
-import { createNacosSource } from "./nacos-source.js";
+import { createNacosSource, type NacosSourceOptions } from "./nacos-source.js";
 import { type KernelConfig, KernelConfigSchema } from "./schema.js";
 import { ConfigError, type ConfigSource } from "./types.js";
 
 export { ConfigError, type ConfigSource };
+
+/**
+ * Nacos 鉴权凭据：`CAPYBARA_NACOS_ACCESS_TOKEN`（静态令牌），或 `CAPYBARA_NACOS_USERNAME` +
+ * `CAPYBARA_NACOS_PASSWORD`（登录换取令牌）；都不设则不鉴权。令牌与用户名不能同时设置，用户名与密码必须成对。
+ */
+function nacosAuth(env: NodeJS.ProcessEnv): Pick<NacosSourceOptions, "auth"> {
+  const token = env.CAPYBARA_NACOS_ACCESS_TOKEN;
+  const username = env.CAPYBARA_NACOS_USERNAME;
+  const password = env.CAPYBARA_NACOS_PASSWORD;
+  if (token) {
+    if (username || password) {
+      throw new ConfigError(
+        "set either CAPYBARA_NACOS_ACCESS_TOKEN or CAPYBARA_NACOS_USERNAME / CAPYBARA_NACOS_PASSWORD, not both",
+      );
+    }
+    return { auth: { accessToken: token } };
+  }
+  if (!username && !password) return {};
+  if (!username)
+    throw new ConfigError(
+      "CAPYBARA_NACOS_USERNAME is required when CAPYBARA_NACOS_PASSWORD is set",
+    );
+  if (!password)
+    throw new ConfigError(
+      "CAPYBARA_NACOS_PASSWORD is required when CAPYBARA_NACOS_USERNAME is set",
+    );
+  return { auth: { username, password } };
+}
 
 /** 按 `CAPYBARA_CONFIG_SOURCE` 选择配置来源，默认 `file`。 */
 export function selectConfigSource(env: NodeJS.ProcessEnv): ConfigSource {
@@ -18,11 +46,10 @@ export function selectConfigSource(env: NodeJS.ProcessEnv): ConfigSource {
         if (!v) throw new ConfigError(`${name} is required when CAPYBARA_CONFIG_SOURCE=nacos`);
         return v;
       };
-      return createNacosSource({
-        server: need("CAPYBARA_NACOS_SERVER"),
-        namespace: need("CAPYBARA_NACOS_NAMESPACE"),
-        dataId: need("CAPYBARA_NACOS_DATA_ID"),
-      });
+      const server = need("CAPYBARA_NACOS_SERVER");
+      const namespace = need("CAPYBARA_NACOS_NAMESPACE");
+      const dataId = need("CAPYBARA_NACOS_DATA_ID");
+      return createNacosSource({ server, namespace, dataId, ...nacosAuth(env) });
     }
     default:
       throw new ConfigError(`unknown config source '${kind}' (expected 'file' or 'nacos')`);

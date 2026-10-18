@@ -40,14 +40,21 @@ export class WidgetsController {
 
 | 装饰器 | 含义 |
 |---|---|
-| `@Public()` | 不要求凭据（有凭据仍会解析成 principal）。公开路由的非安全方法无论是否带 Cookie 都要求 `X-Capybara-Csrf: 1` |
+| `@Public()` | 不要求凭据（有凭据仍会解析成 principal；凭据无效即 `ApiError` 时按未携带处理，PG / Redis 故障等其他异常照常 500）。公开路由的非安全方法无论是否带 Cookie 都要求 `X-Capybara-Csrf: 1` |
 | `@SessionOnly()` | 只接受 Web 会话，如令牌管理、改密码：个人令牌 → 403 `auth.session_required`，服务令牌 → 403 `forbidden` |
 | `@EnterpriseAdmin()` | 只允许企业管理员；服务令牌一律 403 |
 | `@AllowService()` | 允许服务令牌（服务 principal 默认被拒） |
 | `@OrgAction(action)` | 组织级路由，见下 |
 | `@CurrentPrincipal()` | 参数装饰器，取 principal；需要人类用户时调 `requireUser(p)` |
 
-**加 `@Public()` 路由必须同时更新 `packages/kernel/test/identity/public-routes.test.ts` 的 `PUBLIC_ROUTES` 清单**，否则元测试失败。这道测试枚举全部路由、不带凭据逐一请求，保证没有路由意外公开。公开路由必须是真的无需登录的入口（登录、刷新、邀请、初始化），而且要考虑限流与枚举攻击。
+**加 `@Public()` 路由必须同时更新 `packages/kernel/test/identity/public-routes.test.ts` 的 `PUBLIC_ROUTES` 清单**，否则元测试失败。这道测试枚举全部路由、不带凭据逐一请求，保证没有路由意外公开；它还挂了一个探针 `APP_INTERCEPTOR`，清单外的路由只要 handler 被执行（守卫没拒绝）就判失败——handler 里自己补抛 `auth.required` 掩盖不了误标的 `@Public()`。公开路由必须是真的无需登录的入口（登录、刷新、邀请、初始化），而且要考虑限流与枚举攻击。
+
+### 凭据尝试限流（`RATE_LIMITER`）
+
+`LoginRateLimiter`（`src/identity/rate-limit.ts`），计数在 Redis、窗口 900s，校验凭据**之前**先原子占用一次额度，成功后退还：
+
+- 登录 `reserve(login, ip)` / `succeeded(login, ip)`：（登录名, IP）10 次、IP 50 次、单登录名跨 IP 100 次，任一已达上限即 429 `auth.rate_limited`（带 `Retry-After`），且被拒绝的尝试**不递增任何计数**（Lua 先查后增）。攻击者从自己的 IP 打满某登录名，不影响本人从别的 IP 登录。
+- 其他核对凭据的接口用 `reserveScoped(scope, key, ip, limit, ipLimit = 50)` / `succeededScoped(scope, key, ip)`，键为 `capk:rl:<scope>:…`，与登录的 IP 额度分开。现有 scope：`acct`（改密码，按账号 id 10 次）、`setup`（初始化令牌，全部署 100 次、单 IP 10 次）、`inv`（接受邀请，按令牌 10 次、单 IP 20 次）。新增核对凭据 / 令牌的公开入口照此接入。
 
 ### `@OrgAction` 与 `HUMAN_ONLY`
 
@@ -61,9 +68,13 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 
 - 动作与最低角色在 `src/orgs/roles.ts` 的 `ACTION_MIN_ROLE`（guest < member < admin < owner）；新动作在这里登记。
 - `OrgGuard` 每个请求实时从 PG 读组织与角色：组织不存在 / 已删除 / 调用者不是成员 → 一律 404 `org.not_found`（不泄露组织是否存在）；角色不足 → 403 `forbidden`。
-- `@OrgAction` 隐含 `@AllowService()`；`HUMAN_ONLY` 里的动作（除 `org.read`、`org.members.read` 之外的全部）遇到服务令牌返回 403。
+- `@OrgAction` 隐含 `@AllowService()`；`HUMAN_ONLY` 里的动作（除 `org.read`、`org.members.read`、`agents.use` 之外的全部）遇到服务令牌返回 403。
 - **依赖角色的写操作要在事务里重读角色**：guard 的判定与写入之间角色可能被改。服务事务里调 `lockOrgAndAuthorize(trx, orgId, actorAccountId, action)`（`src/orgs/org-lock.ts`）：`SELECT … FROM capybara.orgs WHERE id = $1 AND deleted_at IS NULL FOR UPDATE` 锁组织行，再读发起人当前角色；组织不存在 / 已删除 → 404 `org.not_found`，非成员或角色不足 → 403 `forbidden`，返回 `{ org, role }` 供进一步判断（如令牌 / 邀请角色不得高于发起人）。只需串行化、不看角色时用 `lockOrg` / `tryLockOrg`。服务只收发起人账号 id，不收调用方传入的角色。
 - **企业管理员写操作同理**（`@EnterpriseAdmin` 只是请求开头的判定）：撤销 / 停用账号、新建账号（含企业管理员）、改部署设置都在事务内先调 `lockEnterpriseAdminsAndAuthorize(trx, actorAccountId)`（`src/identity/enterprise-admin.ts`）：取 `pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))` 串行化，并在锁内确认发起人仍是活跃企业管理员，否则 403 `forbidden`。新增企业管理员写操作必须照做。
+- **管理员给自己降级是允许的行为**：`PATCH /orgs/:orgId/members/:self`（admin → member / guest）照常成功并写 `org.member.role_changed` 审计；只有授予 / 撤销 / 改动 owner 才要求发起人是 owner，且任何操作都不能让组织没有 owner（`org.last_owner`）。降级后该账号立刻失去 `org.members.manage`，后续请求由 OrgGuard 实时判定。
+- **依赖「成员关系仍然存在」的写入先锁关系行**：如 `PUT /me/current-org` 在一个事务里先 `FOR SHARE` 组织行、再 `SELECT … FROM memberships WHERE org_id = $1 AND account_id = $2 FOR SHARE`（只查这一条），再写会话；加锁顺序必须与「移出成员」一致（组织行 → 成员关系行），否则会死锁。
+- **令牌过期时间**用 `identity/api-tokens.ts` 导出的共享 schema `FutureIsoDate`（完整 ISO 8601 datetime 字符串且晚于当前时间；数字、`"2099-01-01"` 之类 → 400）。
+- **组织插件配置**（`OrgPluginConfigs`）：`get` / `list` 在 `REPEATABLE READ` 只读事务里读配置行与密钥；`enabled=false` 的插件 `get` 不校验、返回 `{ enabled: false, config: null }`；`put` 同一事务内清掉当前 schema 里已不存在的密钥路径对应的 `capybara.secrets` 行；从未配置时 `config` 列存 NULL。
 
 ### 审计与个人令牌
 
@@ -71,9 +82,10 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 
 ### 现行的凭据行为
 
-- 改密码（`PUT /me/password`，`@SessionOnly`）：核对旧密码前按 `acct:<账号 id>` + 客户端 IP 占用登录限流额度（与登录同窗口、同上限，超限 429 `auth.rate_limited`）；成功后吊销该账号**除当前会话外的所有 Web 会话**，**不吊销个人令牌**（PAT 需用户在 `/me/tokens` 自行吊销）。
-- 停用账号（`PATCH /admin/accounts/:id`）同时吊销其全部会话与个人令牌。
-- 列表接口一律返回信封对象（如 `{ tokens: [...] }`、`{ members: [...] }`），不返回裸数组。
+- 改密码（`PUT /me/password`，`@SessionOnly`）：核对旧密码前占用限流额度（scope `acct`：按账号 id 10 次、按客户端 IP 50 次，与登录额度分开，超限 429 `auth.rate_limited`）；成功后吊销该账号**除当前会话外的所有 Web 会话**，并**吊销其全部个人访问令牌**（R24）；新密码、会话 `revoked_at` 与令牌吊销在同一个 PG 事务内（`AccountsService.changePassword`），Redis 吊销标记随后尽力写入。
+- 停用账号（`PATCH /admin/accounts/:id`）与吊销其全部会话、个人令牌在同一个 PG 事务内完成（`AccountsService.updateAccount`），Redis 吊销标记在提交后尽力写入（鉴权以 PG `revoked_at` 为准）。
+- 初始化向导与凭邀请注册时，会话行与账号 / 组织 / 成员关系在同一事务内写入（`SessionService.create(accountId, meta, trx)`），Cookie 在提交之后才设置；新增「建账号即登录」的流程照此办理。
+- 列表接口一律返回信封对象（如 `{ tokens: [...] }`、`{ members: [...] }`），不返回裸数组；分页的列表附 `next`（下一页游标，作为 `after` 传回，没有更多时为 null），如 `GET /admin/accounts`。
 
 ## 参数校验：`ZodPipe`
 

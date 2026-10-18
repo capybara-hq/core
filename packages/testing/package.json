@@ -30,6 +30,11 @@
   },
   "devDependencies": {
     "@capybara-hq/plugin-sdk": "workspace:*",
-    "@types/pg": "^8.23.1"
+    "@types/pg": "^8.23.1",
+    "ioredis": "^6.0.0"
+  },
+  "peerDependencies": {
+    "@capybara-hq/plugin-sdk": "workspace:*",
+    "vitest": "^5.0.5"
   }
 }

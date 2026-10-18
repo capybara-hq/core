@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,7 +11,14 @@ import {
   parseCapability,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
-import { configFields, getPath, unreachableSecrets } from "../config/fields.js";
+import type { core } from "zod";
+import {
+  configFields,
+  getPath,
+  secretValues,
+  setPath,
+  unreachableSecrets,
+} from "../config/fields.js";
 import {
   createPluginContext,
   type KernelDeps,
@@ -20,11 +28,63 @@ import {
 import { migrate } from "../db/migrator.js";
 import { resolvePlugins } from "./resolve.js";
 
+/** 键排序后的 JSON（对象键顺序不影响结果）；undefined 字段与 JSON.stringify 一样省略。 */
+const canonicalJson = (v: unknown): string => {
+  if (Array.isArray(v))
+    return `[${v.map((x) => (x === undefined ? "null" : canonicalJson(x))).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const entries = Object.entries(v as Record<string, unknown>)
+      .filter(([, x]) => x !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+};
+
+/** 遮蔽 secret 字段后参与摘要的固定占位值。 */
+const SECRET_PLACEHOLDER = "<secret>";
+
+/**
+ * 插件部署配置（校验后）中非密钥部分的摘要：先把 schema 里所有 secret 叶子（`configFields` 可达路径，
+ * 加载时 `assertSecretsReachable` 已保证密钥都在这些路径上）换成固定占位值，再取 sha256(键排序 JSON) 前 16 位十六进制。
+ * 给需要「配置变了就失效」的缓存键用（如模型列表）。密钥不参与摘要：不加盐的短摘要写进 Redis 键名后，
+ * 低熵密钥可被离线猜测、泄露的密钥可被确认；代价是轮换密钥不会让缓存失效（缓存内容本来就不该依赖密钥）。
+ * 没有部署配置 schema 时无从得知哪些是密钥，摘要不按配置区分。同一份配置在各副本上得到同一摘要。
+ * 函数自己按 schema 遮蔽，调用方不必（也不能忘记）先打码。
+ */
+export function deploymentConfigHash(schema: core.$ZodType | undefined, config: unknown): string {
+  let redacted: unknown = null;
+  if (schema) {
+    redacted = structuredClone(config);
+    if (redacted !== null && typeof redacted === "object") {
+      for (const f of configFields(schema)) {
+        if (f.meta?.secret && getPath(redacted, f.path) !== undefined) {
+          setPath(redacted as Record<string, unknown>, f.path, SECRET_PLACEHOLDER);
+        }
+      }
+    }
+  }
+  return createHash("sha256").update(canonicalJson(redacted)).digest("hex").slice(0, 16);
+}
+
 interface Loaded {
   manifest: PluginManifest;
+  /** 部署配置摘要，见 {@link deploymentConfigHash}。 */
+  configHash: string;
   provided: Map<CapabilityRef, unknown>;
   routes: Route[];
   close(): Promise<void>;
+}
+
+/** {@link PluginHost.list} 的一项。 */
+export interface PluginCapabilityEntry {
+  plugin: string;
+  capability: CapabilityRef;
+  impl: unknown;
+  /** 插件清单的 version。 */
+  version: string;
+  /** 部署配置摘要，见 {@link deploymentConfigHash}。 */
+  configHash: string;
 }
 
 const CLOSED_DURING_LOAD = "plugin host closed during load";
@@ -93,10 +153,7 @@ async function migratePlugin(
     const { applied } = await migrate(
       dbUrl,
       { schema, dir: resolvePath(dir, manifest.migrations) },
-      {
-        ...(connectTimeoutMs !== undefined && { connectTimeoutMs }),
-        ...(signal && { signal }),
-      },
+      { connectTimeoutMs, signal },
     );
     return { schema, applied };
   } catch (e) {
@@ -108,7 +165,7 @@ async function migratePlugin(
  * 插件两级配置 schema 中的每个 `secret()` 都必须标在对象路径的字段上（见 `unreachableSecrets`），
  * 否则内核无法把它单独加密存储 / 打码、会按明文保存与回显——此时拒绝加载并点名插件与路径。
  */
-function assertSecretsReachable(manifest: PluginManifest): void {
+export function assertSecretsReachable(manifest: PluginManifest): void {
   for (const level of ["deployment", "org"] as const) {
     const schema = manifest.config?.[level];
     if (!schema) continue;
@@ -125,6 +182,7 @@ function assertSecretsReachable(manifest: PluginManifest): void {
 export class PluginHost {
   /**
    * 只解析插件并按依赖顺序跑迁移，不校验部署配置、不调用 setup、不需要 Redis（供 `capybara migrate`）。
+   * 与 `load()` 一样先检查密钥标记（`assertSecretsReachable`），有问题的插件一个都不迁移。
    * 返回每个声明了迁移的插件及其本次应用的文件。
    */
   static async migrateOnly(
@@ -135,6 +193,7 @@ export class PluginHost {
       specifiers,
       resolvePath(opts.resolveFrom ?? process.cwd()),
     );
+    for (const manifest of ordered) assertSecretsReachable(manifest);
     const out: { plugin: string; schema: string; applied: string[] }[] = [];
     for (const manifest of ordered) {
       const r = await migratePlugin(
@@ -177,6 +236,8 @@ export class PluginHost {
 
   /**
    * 导入各插件模块（default 导出）并按依赖顺序初始化；只能调用一次。
+   * 插件 setup 永不返回时 load()（进而内核 `start()`）永远挂起：内核不给 setup 设超时；
+   * 此时 `close()` / 内核 `stop()` 仍会立即关闭该插件的 ctx 并释放资源。
    * 加载期间宿主被 `close()` 时：进行中的迁移被中止、setup 中的 ctx 被立即关闭（此后其 queue 的
    * define / add 抛 `queue is closed`），load() 在下一个检查点抛 `plugin host closed during load`。
    */
@@ -212,14 +273,7 @@ export class PluginHost {
         }
         config = r.data;
         if (this.onSecrets) {
-          const values: string[] = [];
-          for (const f of configFields(schema)) {
-            if (!f.meta?.secret) continue;
-            const v = getPath(config, f.path);
-            for (const item of Array.isArray(v) ? v : [v]) {
-              if (typeof item === "string" && item !== "") values.push(item);
-            }
-          }
+          const values = secretValues(schema, config);
           if (values.length > 0) this.onSecrets(values);
         }
       }
@@ -250,17 +304,32 @@ export class PluginHost {
           }
         }
       } catch (e) {
-        await ctx.close().catch(() => {});
+        await this.closeQuietly(ctx, name);
         if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
         throw new Error(`plugin ${name}: setup failed: ${errMsg(e)}`, { cause: e });
       } finally {
         this.pending = undefined;
       }
       if (this.closed) {
-        await ctx.close().catch(() => {});
+        await this.closeQuietly(ctx, name);
         throw new Error(CLOSED_DURING_LOAD);
       }
-      this.loaded.push({ manifest, provided: ctx.provided, routes: ctx.routes, close: ctx.close });
+      this.loaded.push({
+        manifest,
+        configHash: deploymentConfigHash(schema, config),
+        provided: ctx.provided,
+        routes: ctx.routes,
+        close: ctx.close,
+      });
+    }
+  }
+
+  /** load() 放弃一个插件时关闭其 ctx：失败只记 warn（不掩盖导致放弃的原错误）。 */
+  private async closeQuietly(ctx: { close(): Promise<void> }, plugin: string): Promise<void> {
+    try {
+      await ctx.close();
+    } catch (e) {
+      this.deps.log.warn("plugin context close failed", { plugin, err: e });
     }
   }
 
@@ -286,13 +355,23 @@ export class PluginHost {
     return (chosen as Loaded).provided.get(capability) as T;
   }
 
-  /** 列出提供某能力（任意主版本）的所有插件及实现。 */
-  list(capabilityName: string): { plugin: string; impl: unknown }[] {
-    const out: { plugin: string; impl: unknown }[] = [];
+  /**
+   * 列出提供某能力（任意主版本）的所有插件及实现；`capability` 为完整引用（含主版本），
+   * 同一插件提供多个主版本时各占一项，由调用方按主版本选择。
+   * 每项带插件版本与部署配置摘要（{@link deploymentConfigHash}），供调用方做「插件升级 / 改配置即失效」的缓存键。
+   */
+  list(capabilityName: string): PluginCapabilityEntry[] {
+    const out: PluginCapabilityEntry[] = [];
     for (const l of this.loaded) {
       for (const [cap, impl] of l.provided) {
         if (parseCapability(cap).name === capabilityName) {
-          out.push({ plugin: l.manifest.name, impl });
+          out.push({
+            plugin: l.manifest.name,
+            capability: cap,
+            impl,
+            version: l.manifest.version,
+            configHash: l.configHash,
+          });
         }
       }
     }

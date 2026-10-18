@@ -1,3 +1,4 @@
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -11,10 +12,9 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
-import { ACCOUNTS, API_TOKENS, ORGS, SESSIONS, SETTINGS } from "../http/tokens.js";
+import { ACCOUNTS, KERNEL_LOG, ORGS, SESSIONS, SETTINGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
-import type { ApiTokenService } from "../identity/api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
   CurrentPrincipal,
@@ -25,7 +25,7 @@ import {
 } from "../identity/principal.js";
 import type { SessionService } from "../identity/sessions.js";
 import {
-  DEPLOYMENT_SETTINGS,
+  DEPLOYMENT_SETTINGS_PATCH,
   type DeploymentSettings,
   type SettingsService,
 } from "../identity/settings.js";
@@ -50,7 +50,10 @@ const UpdateAccountBody = z.object({
   isEnterpriseAdmin: z.boolean().optional(),
 });
 
-const SettingsBody = DEPLOYMENT_SETTINGS.pick({ orgCreation: true }).required();
+/** 至少给出一个键；`runConcurrencyOverrides` 按组织合并，值为 null 删除该组织的覆盖。 */
+const SettingsBody = DEPLOYMENT_SETTINGS_PATCH.refine((b) => Object.keys(b).length > 0, {
+  message: "at least one setting is required",
+});
 
 /**
  * 企业管理员端点（`/api/v1/admin/*`）：只接受企业管理员的 Web 会话或个人令牌；
@@ -62,22 +65,26 @@ export class AdminController {
   constructor(
     @Inject(ACCOUNTS) private readonly accounts: AccountsService,
     @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(API_TOKENS) private readonly apiTokens: ApiTokenService,
+    @Inject(KERNEL_LOG) private readonly log: Logger,
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(SETTINGS) private readonly settings: SettingsService,
   ) {}
 
-  /** 全部账号，按 id 升序分页（`after` 为上一页最后一个 id）。 */
+  /**
+   * 全部账号，按 id 升序分页：`next` 为下一页的游标（作为 `after` 传回），没有更多时为 null。
+   * 多取一条判断是否还有下一页。
+   */
   @Get("accounts")
   async listAccounts(
     @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
-  ): Promise<{ accounts: Account[] }> {
-    return {
-      accounts: await this.accounts.list({
-        limit: q.limit,
-        ...(q.after !== undefined && { after: q.after }),
-      }),
-    };
+  ): Promise<{ accounts: Account[]; next: string | null }> {
+    const rows = await this.accounts.list({
+      limit: q.limit + 1,
+      ...(q.after !== undefined && { after: q.after }),
+    });
+    const accounts = rows.slice(0, q.limit);
+    const next = rows.length > q.limit ? (accounts.at(-1)?.id ?? null) : null;
+    return { accounts, next };
   }
 
   @Post("accounts")
@@ -114,16 +121,21 @@ export class AdminController {
       ...(body.status !== undefined && { status: body.status }),
       ...(body.isEnterpriseAdmin !== undefined && { isEnterpriseAdmin: body.isEnterpriseAdmin }),
     };
-    const account = await this.accounts.update(
+    // 停用时账号状态、会话与个人令牌的吊销在同一个 PG 事务里完成
+    const { account, revokedSessionIds } = await this.accounts.updateAccount(
       accountId,
       patch,
       actor.account.id,
       patTokenId(actor),
     );
-    if (body.status === "disabled") {
-      // 鉴权每次请求实时读账号状态，停用已立即生效；这里再吊销凭据，重新启用后旧凭据也不复活
-      await this.sessions.revokeAllForAccount(accountId);
-      await this.apiTokens.revokeAllPersonal(accountId);
+    try {
+      await this.sessions.markRevoked(revokedSessionIds);
+    } catch (err) {
+      // Redis 标记只是快速路径：鉴权每次都查 PG revoked_at，这些会话已经无法使用
+      this.log.warn("failed to write session revocation markers after account deactivation", {
+        accountId,
+        err,
+      });
     }
     return { account };
   }
