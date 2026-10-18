@@ -3,9 +3,9 @@ import {
   type ContentBlock,
   ModelError,
   type ModelErrorKind,
-  type ModelInfo,
-  type ModelProvider,
-  type ModelRequest,
+  type ModelInfoV1,
+  type ModelProviderV1,
+  type ModelRequestV1,
   type ModelStreamEvent,
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
@@ -74,7 +74,7 @@ function waitForAbort(signal: AbortSignal): Promise<never> {
   });
 }
 
-function inputChars(req: ModelRequest): number {
+function inputChars(req: ModelRequestV1): number {
   let n = 0;
   for (const s of req.system) n += s.text.length;
   for (const m of req.messages) {
@@ -92,7 +92,7 @@ function inputChars(req: ModelRequest): number {
 }
 
 /** 最后一条 user 消息：文本，以及它是否带 tool_result。 */
-function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; result: string } {
+function lastUser(req: ModelRequestV1): { text: string; hasToolResult: boolean; result: string } {
   for (let i = req.messages.length - 1; i >= 0; i--) {
     const m = req.messages[i];
     if (m?.role !== "user") continue;
@@ -117,7 +117,7 @@ type Plan =
   | { kind: "stall" }
   | { kind: "fail"; error: ModelError };
 
-function plan(req: ModelRequest): Plan {
+function plan(req: ModelRequestV1): Plan {
   const { text, hasToolResult, result } = lastUser(req);
   const std = (t: string): Plan => ({
     kind: "text",
@@ -178,11 +178,11 @@ export interface FakeProviderOptions {
   sleep?: Sleep;
 }
 
-export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
+export function createFakeProvider(opts: FakeProviderOptions): ModelProviderV1 {
   const sleep = opts.sleep ?? defaultSleep;
   const configured =
     opts.models !== undefined && opts.models.length > 0 ? opts.models : [{ id: "fake-1" }];
-  const infos: ModelInfo[] = configured.map((m) => ({
+  const infos: ModelInfoV1[] = configured.map((m) => ({
     id: m.id,
     displayName: m.id,
     contextWindow: m.contextWindow ?? 32000,
@@ -203,7 +203,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
    * `cachedChars` 为前缀字符数，从 inputTokens 中扣除（inputTokens 只算未缓存部分）。
    */
   async function cacheUsage(
-    req: ModelRequest,
+    req: ModelRequestV1,
   ): Promise<{ read: number; write: number; cachedChars: number }> {
     const cached = req.system.filter((s) => s.cache).map((s) => s.text);
     const prefix = cached.join("\n");

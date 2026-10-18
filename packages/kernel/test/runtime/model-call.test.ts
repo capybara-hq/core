@@ -6,6 +6,7 @@ import {
   type ModelRequest,
   type ModelStreamEvent,
   type ModelUsage,
+  MODEL_PROVIDER_CAPABILITY_V2 as V2,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -65,6 +66,7 @@ const stubInfo = (id: string, extra: Partial<ModelInfo> = {}): ModelInfo => ({
     midConversationSystem: true,
     effort: false,
   },
+  parameters: [],
   ...extra,
 });
 
@@ -135,7 +137,12 @@ beforeAll(async () => {
   sub = createBusSubscriber(() => new Redis(rd.url));
   eventLog = new EventLog(db, createBus(redis, sub, "kernel"));
   const registry = new ProviderRegistry(
-    { list: (cap: string) => [...k.host.list(cap), { plugin: "stub", impl: stubImpl }] },
+    {
+      list: (cap: string) => [
+        ...k.host.list(cap),
+        { plugin: "stub", capability: V2, impl: stubImpl },
+      ],
+    },
     redis,
   );
   deps = {
@@ -442,8 +449,8 @@ describe("runModelStep", () => {
       {
         list: (cap: string) => [
           ...k.host.list(cap),
-          { plugin: "flaky", impl: flaky },
-          { plugin: "stub", impl: stubImpl },
+          { plugin: "flaky", capability: V2, impl: flaky },
+          { plugin: "stub", capability: V2, impl: stubImpl },
         ],
       },
       redis,
@@ -484,7 +491,12 @@ describe("runModelStep", () => {
       },
     };
     const registry = new ProviderRegistry(
-      { list: (cap: string) => [...k.host.list(cap), { plugin: "broken", impl: broken }] },
+      {
+        list: (cap: string) => [
+          ...k.host.list(cap),
+          { plugin: "broken", capability: V2, impl: broken },
+        ],
+      },
       redis,
     );
     await say("hi");

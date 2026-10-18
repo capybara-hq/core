@@ -1,11 +1,15 @@
 import {
   type ContentBlock,
   ModelError,
+  type ModelInfo,
+  type ModelParameter,
   type ModelProvider,
-  type ModelRequest,
+  type ModelProviderV1,
+  type ModelRequestV1,
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
-import { describeModelProviderConformance } from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { checkDeclaredParameters, describeModelProviderConformance } from "../src/index.js";
 
 const usage = (cacheRead: number) => ({
   inputTokens: 10,
@@ -17,14 +21,31 @@ const usage = (cacheRead: number) => ({
 /** 内存中的最小供应商：仅用于证明一致性套件可运行。 */
 function makeProvider(
   mkAbort: () => Error = () => new ModelError("aborted", "aborted"),
-): ModelProvider {
+  parameters: ModelParameter[] = [],
+): ModelProvider & ModelProviderV1 {
   const seen = new Set<string>();
   return {
     async listModels() {
-      return [];
+      return [
+        {
+          id: "m",
+          displayName: "m",
+          contextWindow: 8000,
+          maxOutputTokens: 1000,
+          capabilities: {
+            tools: true,
+            vision: false,
+            reasoning: true,
+            caching: true,
+            midConversationSystem: true,
+            effort: false,
+          },
+          parameters,
+        },
+      ];
     },
     async *stream(
-      req: ModelRequest,
+      req: ModelRequestV1,
       opts: { signal: AbortSignal },
     ): AsyncGenerator<ModelStreamEvent> {
       const aborted = mkAbort;
@@ -77,3 +98,68 @@ describeModelProviderConformance("in-memory (duplicate sdk copy)", async () => (
   expect: { thinking: false, caching: false },
   async teardown() {},
 }));
+
+const PARAMS: ModelParameter[] = [
+  {
+    key: "effort",
+    standard: "effort",
+    schema: { type: "string", enum: ["low", "high"] },
+    default: "high",
+    label: { zh: "思考深度", en: "Effort" },
+  },
+  {
+    key: "in-memory.style",
+    schema: { type: "string", enum: ["plain", "shout"] },
+    default: "plain",
+    label: { zh: "风格", en: "Style" },
+  },
+];
+
+describeModelProviderConformance("in-memory @2", async () => ({
+  contract: 2,
+  plugin: "in-memory",
+  provider: makeProvider(undefined, PARAMS),
+  model: "m",
+  expect: { thinking: true, caching: true },
+  async teardown() {},
+}));
+
+describe("checkDeclaredParameters", () => {
+  const model = (parameters: ModelParameter[]): ModelInfo => ({
+    id: "x",
+    displayName: "x",
+    contextWindow: 1,
+    maxOutputTokens: 1,
+    capabilities: {
+      tools: false,
+      vision: false,
+      reasoning: false,
+      caching: false,
+      midConversationSystem: false,
+    },
+    parameters,
+  });
+  it("valid declarations → no problems", () => {
+    expect(checkDeclaredParameters("in-memory", [model(PARAMS), model([])])).toEqual([]);
+  });
+  it("key without the plugin prefix is reported with the model id", () => {
+    const problems = checkDeclaredParameters("in-memory", [
+      model([{ key: "style", schema: { type: "boolean" }, label: { zh: "风格", en: "Style" } }]),
+    ]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/^x: .*"style"/);
+  });
+  it("default that fails validateParams is reported", () => {
+    const problems = checkDeclaredParameters("in-memory", [
+      model([
+        {
+          key: "in-memory.n",
+          schema: { type: "integer", minimum: 1 },
+          default: 0,
+          label: { zh: "数量", en: "Count" },
+        },
+      ]),
+    ]);
+    expect(problems.join("\n")).toMatch(/in-memory\.n/);
+  });
+});

@@ -62,6 +62,7 @@ const stubInfo: ModelInfo = {
     midConversationSystem: true,
     effort: false,
   },
+  parameters: [],
 };
 
 /** 测试内的供应商桩：记录每次 stream 调用；`script` 决定每次调用返回的文本与 stopReason。 */
@@ -121,7 +122,10 @@ beforeAll(async () => {
   deps = {
     db,
     eventLog,
-    registry: new ProviderRegistry({ list: () => [{ plugin: "stub", impl: stubProvider }] }, redis),
+    registry: new ProviderRegistry(
+      { list: () => [{ plugin: "stub", capability: "model-provider@2", impl: stubProvider }] },
+      redis,
+    ),
     config: () => ({ ...base, runtime: { ...base.runtime, ...runtimeOverrides } }),
     log: silent,
   };

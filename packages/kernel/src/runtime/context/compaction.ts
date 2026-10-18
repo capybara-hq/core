@@ -119,6 +119,7 @@ export function buildCompactionRequest(transcript: string, model: string): Model
     ],
     tools: [],
     maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+    params: {},
   };
 }
 

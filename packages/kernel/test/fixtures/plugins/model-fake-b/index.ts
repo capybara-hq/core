@@ -1,11 +1,11 @@
 import {
   definePlugin,
   MODEL_PROVIDER_CAPABILITY,
-  type ModelInfo,
-  type ModelProvider,
+  type ModelInfoV1,
+  type ModelProviderV1,
 } from "@capybara-hq/plugin-sdk";
 
-const info = (id: string): ModelInfo => ({
+const info = (id: string): ModelInfoV1 => ({
   id,
   displayName: id,
   contextWindow: 8_000,
@@ -21,7 +21,7 @@ const info = (id: string): ModelInfo => ({
 });
 
 /** 第二个模型供应商（测试用）：两个静态模型；`listModelsCalls` 统计 listModels 被调用的次数。 */
-export interface FakeBProvider extends ModelProvider {
+export interface FakeBProvider extends ModelProviderV1 {
   listModelsCalls: number;
 }
 

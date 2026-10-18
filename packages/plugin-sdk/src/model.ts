@@ -1,6 +1,9 @@
-/** model-provider@1：与供应商无关的模型契约；原生协议留在各供应商插件内部。 */
-
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+/**
+ * 与供应商无关的模型契约；原生协议留在各供应商插件内部。
+ * 当前契约为 `model-provider@2`（`ModelProvider` / `ModelInfo` / `ModelRequest`，参数由插件按模型声明，
+ * 见 `model-params.ts`）；旧契约 `model-provider@1`（`ModelProviderV1` 等）由内核经适配层继续支持。
+ */
+import type { Effort, ModelParameter, ParamValue } from "./model-params.js";
 
 export interface ModelInfo {
   id: string;
@@ -13,11 +16,22 @@ export interface ModelInfo {
     reasoning: boolean;
     caching: boolean;
     midConversationSystem: boolean;
-    effort: boolean;
+    /**
+     * @deprecated `model-provider@1` 用：是否支持 `ModelRequestV1.effort`。`@2` 插件不填，改在
+     * `parameters` 中声明 `effort` 旋钮；内核的 `@1` 适配层据此推导 `parameters`。
+     */
+    effort?: boolean;
   };
   /** 流空闲看门狗阈值；推理类模型应更长。未给时内核用配置默认值。 */
   streamIdleTimeoutMs?: number;
+  /** 该模型支持的参数（`@2` 必填，可为空数组；须通过 `assertValidDeclarations`）。 */
+  parameters: ModelParameter[];
 }
+
+/** `model-provider@1` 的模型信息：没有 `parameters`，effort 支持由 `capabilities.effort` 表示。 */
+export type ModelInfoV1 = Omit<ModelInfo, "parameters" | "capabilities"> & {
+  capabilities: Omit<ModelInfo["capabilities"], "effort"> & { effort: boolean };
+};
 
 /** 供应商私有数据：只回放给同一供应商（如 Anthropic 思考块签名、OpenAI 加密推理项）。 */
 export interface ProviderOpaque {
@@ -52,8 +66,14 @@ export interface ModelRequest {
   messages: ModelMessage[];
   tools: ToolDefinition[]; // M2 恒为 []
   maxOutputTokens: number;
+  /** `@2`：本次调用的参数（已按该模型的 `parameters` 处理过），由插件映射到原生请求。 */
+  params: Record<string, ParamValue>;
+  /** @deprecated `model-provider@1` 用；`@2` 插件读 `params.effort`。 */
   effort?: Effort;
 }
+
+/** `model-provider@1` 的请求：没有 `params`。 */
+export type ModelRequestV1 = Omit<ModelRequest, "params">;
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
 
@@ -146,10 +166,20 @@ export class ModelError extends Error {
   }
 }
 
+/** `model-provider@2` 的实现。 */
 export interface ModelProvider {
+  /** 每个模型的 `parameters` 须通过 `assertValidDeclarations`，否则内核不使用该供应商。 */
   listModels(): Promise<ModelInfo[]>;
   /** 事件序列必须以且仅以一个 message_complete 结束；出错抛 ModelError。 */
   stream(req: ModelRequest, opts: { signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
 }
 
+/** `model-provider@1` 的实现（旧契约，内核经适配层接入：effort 由 `capabilities.effort` 推导）。 */
+export interface ModelProviderV1 {
+  listModels(): Promise<ModelInfoV1[]>;
+  /** 事件序列必须以且仅以一个 message_complete 结束；出错抛 ModelError。 */
+  stream(req: ModelRequestV1, opts: { signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
+}
+
 export const MODEL_PROVIDER_CAPABILITY = "model-provider@1";
+export const MODEL_PROVIDER_CAPABILITY_V2 = "model-provider@2";

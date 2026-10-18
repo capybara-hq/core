@@ -18,6 +18,7 @@ export const MODEL: ModelInfo = {
     midConversationSystem: true,
     effort: true,
   },
+  parameters: [],
 };
 
 export const AGENT: AgentDefinition = {

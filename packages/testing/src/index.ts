@@ -16,5 +16,6 @@ export {
 } from "./fake-model-server.js";
 export {
   type ConformanceTarget,
+  checkDeclaredParameters,
   describeModelProviderConformance,
 } from "./model-conformance.js";

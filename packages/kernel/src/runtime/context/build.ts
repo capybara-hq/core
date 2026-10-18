@@ -198,6 +198,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     messages,
     tools: [],
     maxOutputTokens: model.maxOutputTokens,
+    // model-provider@2 参数：目前恒为空（effort 仍经已弃用的 req.effort 传给 @1 插件）
+    params: {},
   };
   if (agent.effort && model.capabilities.effort) request.effort = agent.effort;
 

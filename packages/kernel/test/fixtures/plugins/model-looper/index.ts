@@ -3,8 +3,8 @@ import {
   definePlugin,
   MODEL_PROVIDER_CAPABILITY,
   ModelError,
-  type ModelProvider,
-  type ModelRequest,
+  type ModelProviderV1,
+  type ModelRequestV1,
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
 
@@ -15,7 +15,7 @@ import {
  * - 请求末尾是收尾提醒（`Step limit reached`）→ 文本 `wrapped up`；
  * - 其他文本 → `You said: <text>`（流式，每 4 字符一块）。
  */
-function lastUserText(req: ModelRequest): string {
+function lastUserText(req: ModelRequestV1): string {
   for (let i = req.messages.length - 1; i >= 0; i--) {
     const m = req.messages[i];
     if (m?.role !== "user") continue;
@@ -48,7 +48,7 @@ export default definePlugin({
   sdk: "^0.1.0",
   provides: [MODEL_PROVIDER_CAPABILITY],
   setup(ctx) {
-    const provider: ModelProvider = {
+    const provider: ModelProviderV1 = {
       async listModels() {
         return [
           {

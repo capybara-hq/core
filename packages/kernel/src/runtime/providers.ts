@@ -1,4 +1,16 @@
-import type { Logger, ModelInfo, ModelProvider } from "@capybara-hq/plugin-sdk";
+import {
+  assertValidDeclarations,
+  EFFORT_VALUES,
+  type Effort,
+  type Logger,
+  type ModelInfo,
+  type ModelInfoV1,
+  type ModelParameter,
+  type ModelProvider,
+  type ModelProviderV1,
+  type ModelRequestV1,
+  parseCapability,
+} from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { ModelRef } from "../agents/definition.js";
 import { ApiError } from "../errors.js";
@@ -8,10 +20,12 @@ import type { PluginHost } from "../plugins/host.js";
 const MODELS_TTL_SECONDS = 600;
 const modelsKey = (provider: string) => `capk:models:${provider}`;
 
+const CAPABILITY = "model-provider";
+
 /**
  * 供应商的 `listModels()` 失败（上游不可用等）。仍是 `agent.model_unavailable`，HTTP 调用方照常
  * 得到该错误码；运行时（`runModelStep`）据此类型把它当作可重试的失败交给降级梯子，
- * 与「供应商未安装 / 模型不存在」（不可重试）区分开。
+ * 与「供应商未安装 / 模型不存在 / 参数声明不合规」（不可重试）区分开。
  */
 export class ProviderListError extends ApiError {
   constructor(
@@ -24,9 +38,57 @@ export class ProviderListError extends ApiError {
   }
 }
 
+/** `@1` 适配层为 `capabilities.effort` 为真的模型补的 effort 旋钮：五档，默认 high。 */
+const V1_EFFORT_KNOB: ModelParameter = {
+  key: "effort",
+  standard: "effort",
+  schema: { type: "string", enum: [...EFFORT_VALUES] },
+  default: "high",
+  label: { zh: "思考深度", en: "Effort" },
+};
+
+/**
+ * 把 `model-provider@1` 实现包成 `@2`：
+ * - `listModels`：`parameters` 由 `capabilities.effort` 推导（为真时只有 effort 旋钮，否则为空）；
+ * - `stream`：`params.effort` 映射为 `req.effort`，其余参数丢弃（`@1` 没有对应字段）；
+ *   没有 `params.effort` 时保留请求自带的 `effort`。
+ */
+export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
+  return {
+    async listModels() {
+      const models = await impl.listModels();
+      return models.map(
+        (m: ModelInfoV1): ModelInfo => ({
+          ...m,
+          parameters: m.capabilities.effort ? [structuredClone(V1_EFFORT_KNOB)] : [],
+        }),
+      );
+    },
+    stream(req, opts) {
+      const { params, ...rest } = req;
+      const out: ModelRequestV1 = rest;
+      const effort = params?.effort;
+      if (typeof effort === "string" && (EFFORT_VALUES as readonly string[]).includes(effort)) {
+        out.effort = effort as Effort;
+      }
+      return impl.stream(out, opts);
+    },
+  };
+}
+
+/** 缓存里的条目必须是 `@2` 形状（旧版本内核写入的 `@1` 原始结果没有 `parameters`，视为未命中）。 */
+const isCurrentShape = (models: unknown): models is ModelInfo[] =>
+  Array.isArray(models) &&
+  models.every(
+    (m) => typeof m === "object" && m !== null && Array.isArray((m as ModelInfo).parameters),
+  );
+
 /**
  * 模型供应商注册表：供应商即提供 `model-provider` 能力的插件（以插件名为供应商名）。
- * 每个供应商的 `listModels()` 结果缓存在 Redis `capk:models:<provider>`（EX 600），不放进程内存，
+ * 同时支持 `model-provider@1`（经 {@link adaptModelProviderV1} 适配）与 `@2`；
+ * 同一插件两者都提供时用 `@2`。`@2` 的 `listModels()` 结果先过 `assertValidDeclarations`，
+ * 不合规的供应商不可用（不可重试）。
+ * 每个供应商的模型列表（`@2` 形状）缓存在 Redis `capk:models:<provider>`（EX 600），不放进程内存，
  * 多副本共享同一份缓存。
  */
 export class ProviderRegistry {
@@ -36,30 +98,63 @@ export class ProviderRegistry {
     private readonly log?: Pick<Logger, "warn">,
   ) {}
 
-  private providers(): { plugin: string; impl: ModelProvider }[] {
-    return this.host
-      .list("model-provider")
-      .map((p) => ({ plugin: p.plugin, impl: p.impl as ModelProvider }));
+  /** 每个插件取一个实现（`@2` 优先），按插件首次出现的顺序；不支持的主版本记 warn 后忽略。 */
+  private providers(): { plugin: string; major: 1 | 2; impl: ModelProvider }[] {
+    const chosen = new Map<string, { major: 1 | 2; impl: unknown }>();
+    for (const p of this.host.list(CAPABILITY)) {
+      const { major } = parseCapability(p.capability);
+      if (major !== 1 && major !== 2) {
+        this.log?.warn("unsupported model-provider major version; ignored", {
+          provider: p.plugin,
+          capability: p.capability,
+        });
+        continue;
+      }
+      const prev = chosen.get(p.plugin);
+      if (!prev || major > prev.major) chosen.set(p.plugin, { major, impl: p.impl });
+    }
+    return [...chosen].map(([plugin, { major, impl }]) => ({
+      plugin,
+      major,
+      impl: major === 2 ? (impl as ModelProvider) : adaptModelProviderV1(impl as ModelProviderV1),
+    }));
   }
 
-  private async models(provider: string, impl: ModelProvider): Promise<ModelInfo[]> {
+  private async models(provider: string, major: 1 | 2, impl: ModelProvider): Promise<ModelInfo[]> {
     const key = modelsKey(provider);
     const cached = await this.kv.get(key);
-    if (cached !== null) return JSON.parse(cached) as ModelInfo[];
+    if (cached !== null) {
+      const parsed: unknown = JSON.parse(cached);
+      if (isCurrentShape(parsed)) return parsed;
+    }
     let models: ModelInfo[];
     try {
       models = await impl.listModels();
     } catch (err) {
       throw new ProviderListError(provider, err);
     }
+    if (major === 2) {
+      try {
+        for (const m of models) assertValidDeclarations(provider, m.parameters);
+      } catch (err) {
+        const e = new ApiError(
+          "agent.model_unavailable",
+          `Model provider ${provider} declared invalid model parameters`,
+        );
+        e.cause = err;
+        throw e;
+      }
+    }
     await this.kv.set(key, JSON.stringify(models), "EX", MODELS_TTL_SECONDS);
     return models;
   }
 
-  /** 每个已安装供应商及其模型（按插件加载顺序）；列模型失败的供应商跳过并记 warn。 */
+  /** 每个已安装供应商及其模型（按插件加载顺序）；列模型失败或声明不合规的供应商跳过并记 warn。 */
   async list(): Promise<{ provider: string; models: ModelInfo[] }[]> {
     const providers = this.providers();
-    const settled = await Promise.allSettled(providers.map((p) => this.models(p.plugin, p.impl)));
+    const settled = await Promise.allSettled(
+      providers.map((p) => this.models(p.plugin, p.major, p.impl)),
+    );
     const out: { provider: string; models: ModelInfo[] }[] = [];
     settled.forEach((r, i) => {
       const provider = (providers[i] as { plugin: string }).plugin;
@@ -70,12 +165,14 @@ export class ProviderRegistry {
   }
 
   /**
-   * 解析模型引用；供应商未安装或模型不存在 → `agent.model_unavailable`；
+   * 解析模型引用，返回 `@2` 形状的供应商实现（`@1` 已适配）与模型信息。
+   * 供应商未安装、模型不存在或参数声明不合规 → `agent.model_unavailable`；
    * 供应商 `listModels()` 失败 → `ProviderListError`（同一错误码，运行时视为可重试）。
    */
   async resolve(ref: ModelRef): Promise<{ provider: ModelProvider; info: ModelInfo }> {
     const p = this.providers().find((x) => x.plugin === ref.provider);
-    const info = p && (await this.models(p.plugin, p.impl)).find((m) => m.id === ref.model);
+    const info =
+      p && (await this.models(p.plugin, p.major, p.impl)).find((m) => m.id === ref.model);
     if (!p || !info) {
       throw new ApiError(
         "agent.model_unavailable",

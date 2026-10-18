@@ -289,13 +289,16 @@ export class PluginHost {
     return (chosen as Loaded).provided.get(capability) as T;
   }
 
-  /** 列出提供某能力（任意主版本）的所有插件及实现。 */
-  list(capabilityName: string): { plugin: string; impl: unknown }[] {
-    const out: { plugin: string; impl: unknown }[] = [];
+  /**
+   * 列出提供某能力（任意主版本）的所有插件及实现；`capability` 为完整引用（含主版本），
+   * 同一插件提供多个主版本时各占一项，由调用方按主版本选择。
+   */
+  list(capabilityName: string): { plugin: string; capability: CapabilityRef; impl: unknown }[] {
+    const out: { plugin: string; capability: CapabilityRef; impl: unknown }[] = [];
     for (const l of this.loaded) {
       for (const [cap, impl] of l.provided) {
         if (parseCapability(cap).name === capabilityName) {
-          out.push({ plugin: l.manifest.name, impl });
+          out.push({ plugin: l.manifest.name, capability: cap, impl });
         }
       }
     }

@@ -1,4 +1,14 @@
-import type { ModelProvider } from "@capybara-hq/plugin-sdk";
+import {
+  assertValidDeclarations,
+  type CapabilityRef,
+  type ModelInfoV1,
+  type ModelParameter,
+  type ModelProvider,
+  type ModelProviderV1,
+  type ModelRequest,
+  type ModelRequestV1,
+  type ModelStreamEvent,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -98,7 +108,10 @@ describe("ProviderRegistry", () => {
     const withBroken = () =>
       new ProviderRegistry(
         {
-          list: (cap: string) => [...k.host.list(cap), { plugin: "broken", impl: broken }],
+          list: (cap: string) => [
+            ...k.host.list(cap),
+            { plugin: "broken", capability: "model-provider@2" as const, impl: broken },
+          ],
         },
         redis,
         {
@@ -126,5 +139,201 @@ describe("ProviderRegistry", () => {
       expect((err as ProviderListError).provider).toBe("broken");
       expect(((err as ProviderListError).cause as Error).message).toBe("upstream down");
     });
+  });
+});
+
+describe("model-provider@1 / @2", () => {
+  const v1Info = (id: string, effort: boolean): ModelInfoV1 => ({
+    id,
+    displayName: id,
+    contextWindow: 8_000,
+    maxOutputTokens: 1_000,
+    capabilities: {
+      tools: false,
+      vision: false,
+      reasoning: effort,
+      caching: false,
+      midConversationSystem: false,
+      effort,
+    },
+  });
+  const done: ModelStreamEvent = {
+    type: "message_complete",
+    content: [{ type: "text", text: "ok" }],
+    stopReason: "end_turn",
+    usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  };
+  const v1 = (models: ModelInfoV1[]) => {
+    const seen: ModelRequestV1[] = [];
+    const impl: ModelProviderV1 = {
+      async listModels() {
+        return models;
+      },
+      async *stream(req) {
+        seen.push(req);
+        yield done;
+      },
+    };
+    return { impl, seen };
+  };
+  const v2Params: ModelParameter[] = [
+    {
+      key: "effort",
+      standard: "effort",
+      schema: { type: "string", enum: ["low", "high"] },
+      default: "low",
+      label: { zh: "思考深度", en: "Effort" },
+    },
+    { key: "p2.style", schema: { type: "boolean" }, label: { zh: "风格", en: "Style" } },
+  ];
+  const v2 = (parameters: ModelParameter[] = v2Params) => {
+    const seen: ModelRequest[] = [];
+    let calls = 0;
+    const impl: ModelProvider = {
+      async listModels() {
+        calls++;
+        const { capabilities, ...rest } = v1Info("v2-model", false);
+        const { effort: _deprecated, ...caps } = capabilities;
+        return [{ ...rest, capabilities: caps, parameters }];
+      },
+      async *stream(req) {
+        seen.push(req);
+        yield done;
+      },
+    };
+    return { impl, seen, calls: () => calls };
+  };
+  const reg = (
+    entries: { plugin: string; capability: CapabilityRef; impl: unknown }[],
+    warns: unknown[] = [],
+  ) =>
+    new ProviderRegistry({ list: () => entries }, redis, {
+      warn: (msg: string) => {
+        warns.push(msg);
+      },
+    });
+  const req = (params: ModelRequest["params"]): ModelRequest => ({
+    model: "m",
+    system: [],
+    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    tools: [],
+    maxOutputTokens: 100,
+    params,
+  });
+  const signal = () => ({ signal: new AbortController().signal });
+  const drain = async (it: AsyncIterable<ModelStreamEvent>) => {
+    for await (const _ of it);
+  };
+
+  it("PluginHost.list 带出能力引用（含主版本）", () => {
+    const entries = k.host.list("model-provider");
+    expect(entries.map((e) => [e.plugin, e.capability])).toEqual([
+      ["model-fake", "model-provider@1"],
+      ["model-fake-b", "model-provider@1"],
+    ]);
+  });
+
+  it("@1 适配：capabilities.effort 为真 → parameters 含五档 effort（默认 high），否则为空", async () => {
+    const { impl } = v1([v1Info("e", true), v1Info("n", false)]);
+    const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
+    const [entry] = await r.list();
+    const [e, n] = entry?.models ?? [];
+    expect(e?.parameters).toEqual([
+      {
+        key: "effort",
+        standard: "effort",
+        schema: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"] },
+        default: "high",
+        label: { zh: "思考深度", en: "Effort" },
+      },
+    ]);
+    expect(n?.parameters).toEqual([]);
+    expect(() => assertValidDeclarations("old", e?.parameters ?? [])).not.toThrow();
+    const resolved = await r.resolve({ provider: "old", model: "e" });
+    expect(resolved.info.parameters).toEqual(e?.parameters);
+  });
+
+  it("@1 适配：stream 把 params.effort 映射为 req.effort，其余参数丢弃", async () => {
+    const { impl, seen } = v1([v1Info("e", true)]);
+    const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
+    const { provider } = await r.resolve({ provider: "old", model: "e" });
+    await drain(provider.stream(req({ effort: "low", "old.x": 1 }), signal()));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.effort).toBe("low");
+    expect(seen[0]).not.toHaveProperty("params");
+    // 没有 params.effort 时保留请求自带的 effort（Task 20 之前内核仍直接设置 req.effort）
+    await drain(provider.stream({ ...req({}), effort: "max" }, signal()));
+    expect(seen[1]?.effort).toBe("max");
+    expect(seen[1]).not.toHaveProperty("params");
+  });
+
+  it("@2：模型信息与请求原样透传", async () => {
+    const p = v2();
+    const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
+    const { provider, info } = await r.resolve({ provider: "p2", model: "v2-model" });
+    expect(info.parameters).toEqual(v2Params);
+    const sent = req({ effort: "high", "p2.style": true });
+    await drain(provider.stream(sent, signal()));
+    expect(p.seen).toEqual([sent]);
+  });
+
+  it("同一插件同时提供 @1 与 @2 时用 @2", async () => {
+    const old = v1([v1Info("legacy", true)]);
+    const p = v2();
+    const r = reg([
+      { plugin: "p2", capability: "model-provider@1", impl: old.impl },
+      { plugin: "p2", capability: "model-provider@2", impl: p.impl },
+    ]);
+    const providers = await r.list();
+    expect(providers.map((x) => [x.provider, x.models.map((m) => m.id)])).toEqual([
+      ["p2", ["v2-model"]],
+    ]);
+    const { provider } = await r.resolve({ provider: "p2", model: "v2-model" });
+    await drain(provider.stream(req({}), signal()));
+    expect(p.seen).toHaveLength(1);
+    expect(old.seen).toHaveLength(0);
+  });
+
+  it("@2 声明不合规：list 跳过并记 warn；resolve → agent.model_unavailable（不可重试）；不写缓存", async () => {
+    const bad = v2([
+      { key: "style", schema: { type: "boolean" }, label: { zh: "风格", en: "Style" } },
+    ]);
+    const warns: unknown[] = [];
+    const r = reg(
+      [
+        { plugin: "p2", capability: "model-provider@2", impl: bad.impl },
+        { plugin: "old", capability: "model-provider@1", impl: v1([v1Info("b", false)]).impl },
+      ],
+      warns,
+    );
+    expect((await r.list()).map((x) => x.provider)).toEqual(["old"]);
+    expect(warns).toHaveLength(1);
+    const err = await r.resolve({ provider: "p2", model: "v2-model" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(ProviderListError);
+    expect((err as ApiError).code).toBe("agent.model_unavailable");
+    expect(((err as ApiError).cause as Error).message).toMatch(/"style"/);
+    expect(await redis.exists("capk:models:p2")).toBe(0);
+  });
+
+  it("缓存中缺少 parameters 的旧条目视为未命中，重新列模型", async () => {
+    await redis.set("capk:models:p2", JSON.stringify([{ id: "stale" }]), "EX", 600);
+    const p = v2();
+    const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
+    const [entry] = await r.list();
+    expect(entry?.models.map((m) => m.id)).toEqual(["v2-model"]);
+    expect(p.calls()).toBe(1);
+    await r.list();
+    expect(p.calls()).toBe(1);
+  });
+
+  it("不支持的主版本被忽略并记 warn", async () => {
+    const warns: unknown[] = [];
+    const r = reg([{ plugin: "future", capability: "model-provider@3", impl: v2().impl }], warns);
+    expect(await r.list()).toEqual([]);
+    expect(warns.length).toBeGreaterThan(0);
+    expect(await codeOf(r.resolve({ provider: "future", model: "v2-model" }))).toBe(
+      "agent.model_unavailable",
+    );
   });
 });

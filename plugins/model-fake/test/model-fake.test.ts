@@ -1,7 +1,7 @@
 import {
   isModelError,
-  type ModelProvider,
-  type ModelRequest,
+  type ModelProviderV1,
+  type ModelRequestV1,
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
@@ -21,7 +21,7 @@ function memKv(): Kv & { store: Map<string, string>; ttls: number[] } {
   };
 }
 
-const req = (text: string, over: Partial<ModelRequest> = {}): ModelRequest => ({
+const req = (text: string, over: Partial<ModelRequestV1> = {}): ModelRequestV1 => ({
   model: "fake-1",
   system: [{ text: "sys", cache: true }],
   messages: [{ role: "user", content: [{ type: "text", text }] }],
@@ -31,8 +31,8 @@ const req = (text: string, over: Partial<ModelRequest> = {}): ModelRequest => ({
 });
 
 async function run(
-  p: ModelProvider,
-  r: ModelRequest,
+  p: ModelProviderV1,
+  r: ModelRequestV1,
   signal = new AbortController().signal,
 ): Promise<ModelStreamEvent[]> {
   const out: ModelStreamEvent[] = [];

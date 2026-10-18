@@ -3,4 +3,5 @@ export * from "./capability.js";
 export * from "./ctx.js";
 export * from "./define-plugin.js";
 export * from "./model.js";
+export * from "./model-params.js";
 export * from "./secret.js";
