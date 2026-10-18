@@ -1,7 +1,17 @@
 "use client";
 
+import {
+  Card,
+  Field,
+  FormSection,
+  Input,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+} from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useState } from "react";
 import {
   type AgentDefinitionInput,
   type AgentVisibility,
@@ -17,9 +27,13 @@ import {
 import { ApiClientError } from "../lib/api";
 import type { ModelRef } from "../lib/conversations";
 import { useErrorMessage } from "../lib/use-error-message";
+import { FormError } from "./form-error";
 import { ModelParams } from "./ModelParams";
 
 const VISIBILITIES = ["private", "org"] as const satisfies readonly AgentVisibility[];
+const NAME_MAX = 80;
+/** 在这些单行输入框里按 Enter 即保存（表单没有原生提交按钮，含数字框时浏览器也不做隐式提交）。 */
+const ENTER_SUBMITS = new Set(["text", "search", "email", "url", "tel", "password", "number"]);
 
 type Params = Record<string, ParamValue>;
 type ParamField = "modelParams" | "fallbackParams";
@@ -34,23 +48,42 @@ function decode(v: string): ModelRef | null {
   return i <= 0 ? null : { provider: v.slice(0, i), model: v.slice(i + 1) };
 }
 
+/** {@link useAgentForm} 的结果：页面把它们放进 FormPage（锚点、分组、ActionRow）。 */
+export type AgentFormView = {
+  anchors: { id: string; label: string; error?: boolean }[];
+  /** 表单分组（FormSection），作为 FormPage 的 children。 */
+  sections: ReactNode;
+  /** ActionRow：未保存改动数与错误数。 */
+  unsaved: number;
+  errors: number;
+  /** 保存成功但有警告：主操作改为「继续」（调用 onDone），不再重复创建。 */
+  saved: boolean;
+  submit(): void;
+  pending: boolean;
+  canSubmit: boolean;
+};
+
 /**
- * 新建 agent：模型下拉框来自 `GET /models`，兜底模型可选；主模型与兜底模型各有一个参数区，
- * 按所选模型的声明渲染（换模型时丢弃新模型没有声明的键）。保存成功且没有警告时调用 `onDone`；
- * 有警告（如 `fallback_same_provider`）时先显示警告，由用户点「继续」再调用 `onDone`。
+ * 新建 agent 的表单状态与分组：模型下拉框来自 `GET /models`，兜底模型可选；主模型与兜底模型
+ * 各有一个参数分组，按所选模型的声明渲染（换模型时丢弃新模型没有声明的键）。保存成功且没有
+ * 警告时调用 `onDone`；有警告（如 `fallback_same_provider`）时在表单顶部以 danger 卡片列出，
+ * 由用户点「继续」再调用 `onDone`。
  */
-export function AgentForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
+export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
   const t = useTranslations("agents");
   const locale = useLocale();
   const errorMessage = useErrorMessage();
-  const id = useId();
   const [providers, setProviders] = useState<ProviderModels[]>();
+  const [name, setName] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [visibility, setVisibility] = useState<AgentVisibility>("private");
   const [model, setModel] = useState("");
   const [fallback, setFallback] = useState("");
   const [modelParams, setModelParams] = useState<Params>({});
   const [fallbackParams, setFallbackParams] = useState<Params>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const [nameError, setNameError] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>(NO_FIELD_ERRORS);
   const [otherErrors, setOtherErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<AgentWarning[]>();
@@ -118,22 +151,31 @@ export function AgentForm({ orgId, onDone }: { orgId: string; onDone: () => void
     setOtherErrors(others);
   }
 
-  async function onSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
-    const str = (name: string) => String(data.get(name) ?? "");
+  const options = (providers ?? []).flatMap((p) =>
+    p.models.map((m) => ({
+      value: encode({ provider: p.provider, model: m.id }),
+      label: `${p.provider} / ${m.displayName || m.id}`,
+    })),
+  );
+  const noModels = providers !== undefined && options.length === 0;
+  const canSubmit = !pending && providers !== undefined && !noModels;
+
+  async function save() {
+    if (!canSubmit || warnings !== undefined) return;
     const main = decode(model);
     if (main === null) return;
+    const trimmed = name.trim();
+    setNameError(trimmed === "");
+    if (trimmed === "") return;
     const fb = decode(fallback);
     const definition: AgentDefinitionInput = {
-      name: str("name").trim(),
-      instructions: str("instructions"),
+      name: trimmed,
+      instructions,
       model: main,
       fallback: fb,
       modelParams,
       fallbackParams: fb === null ? {} : fallbackParams,
     };
-    const visibility = str("visibility") as AgentVisibility;
     setPending(true);
     setError(undefined);
     setFieldErrors(NO_FIELD_ERRORS);
@@ -150,110 +192,177 @@ export function AgentForm({ orgId, onDone }: { orgId: string; onDone: () => void
     }
   }
 
-  if (warnings !== undefined) {
-    return (
-      <div className="card" role="status">
-        <p>{t("form.warningsTitle")}</p>
-        <ul className="warnings">
-          {warnings.map((w) => (
-            <li key={w}>
-              {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
-            </li>
-          ))}
-        </ul>
-        <button type="button" onClick={onDone}>
-          {t("form.continue")}
-        </button>
-      </div>
-    );
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    void save();
   }
 
-  const options = (providers ?? []).flatMap((p) =>
-    p.models.map((m) => {
-      const value = encode({ provider: p.provider, model: m.id });
-      return (
-        <option key={value} value={value}>
-          {`${p.provider} / ${m.displayName || m.id}`}
-        </option>
-      );
-    }),
-  );
-  const noModels = providers !== undefined && options.length === 0;
+  function onKeyDown(e: KeyboardEvent<HTMLFormElement>) {
+    const el = e.target;
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    if (!(el instanceof HTMLInputElement) || !ENTER_SUBMITS.has(el.type)) return;
+    e.preventDefault();
+    void save();
+  }
 
-  return (
-    <form className="card" onSubmit={onSubmit}>
-      <h1>{t("form.title")}</h1>
-      <label htmlFor={`${id}-name`}>{t("form.nameLabel")}</label>
-      <input id={`${id}-name`} name="name" required maxLength={80} />
-      <label htmlFor={`${id}-instructions`}>{t("form.instructionsLabel")}</label>
-      <textarea id={`${id}-instructions`} name="instructions" rows={4} maxLength={100_000} />
-      <label htmlFor={`${id}-model`}>{t("form.modelLabel")}</label>
-      <select
-        id={`${id}-model`}
-        name="model"
-        required
-        disabled={providers === undefined}
-        value={model}
-        onChange={(e) => onModelChange(e.target.value)}
-      >
-        {options}
-      </select>
-      {modelDecl.length > 0 && (
-        <section className="params" aria-labelledby={`${id}-model-params`}>
-          <h2 id={`${id}-model-params`}>{t("form.modelParamsTitle")}</h2>
-          <ModelParams
-            parameters={modelDecl}
-            value={modelParams}
-            onChange={setModelParams}
-            locale={locale}
-            errors={fieldErrors.modelParams}
-          />
-        </section>
-      )}
-      <label htmlFor={`${id}-fallback`}>{t("form.fallbackLabel")}</label>
-      <select
-        id={`${id}-fallback`}
-        name="fallback"
-        value={fallback}
-        onChange={(e) => onFallbackChange(e.target.value)}
-      >
-        <option value="">{t("form.fallbackNone")}</option>
-        {options}
-      </select>
-      {fallbackDecl.length > 0 && (
-        <section className="params" aria-labelledby={`${id}-fallback-params`}>
-          <h2 id={`${id}-fallback-params`}>{t("form.fallbackParamsTitle")}</h2>
-          <ModelParams
-            parameters={fallbackDecl}
-            value={fallbackParams}
-            onChange={setFallbackParams}
-            locale={locale}
-            errors={fieldErrors.fallbackParams}
-          />
-        </section>
-      )}
-      <label htmlFor={`${id}-visibility`}>{t("form.visibilityLabel")}</label>
-      <select id={`${id}-visibility`} name="visibility" defaultValue="private">
-        {VISIBILITIES.map((v) => (
-          <option key={v} value={v}>
-            {t(`form.visibility.${v}`)}
-          </option>
-        ))}
-      </select>
-      {noModels && <p className="error">{t("form.noModels")}</p>}
-      {error !== undefined && (
-        <div role="alert">
-          <p className="error">{error}</p>
-          {otherErrors.map((m) => (
-            <p key={m} className="error">
-              {m}
-            </p>
-          ))}
+  const paramErrors = {
+    modelParams: Object.keys(fieldErrors.modelParams).length,
+    fallbackParams: Object.keys(fieldErrors.fallbackParams).length,
+  };
+  const errors =
+    (nameError ? 1 : 0) + paramErrors.modelParams + paramErrors.fallbackParams + otherErrors.length;
+  const unsaved =
+    warnings !== undefined
+      ? 0
+      : [name.trim() !== "", instructions !== "", visibility !== "private", fallback !== ""].filter(
+          Boolean,
+        ).length +
+        Object.keys(modelParams).length +
+        Object.keys(fallbackParams).length;
+
+  const anchors: AgentFormView["anchors"] = [
+    { id: "basic", label: t("form.basicSection"), error: nameError },
+    { id: "model", label: t("form.modelSection"), error: noModels },
+    ...(modelDecl.length > 0
+      ? [{ id: "params", label: t("form.modelParamsTitle"), error: paramErrors.modelParams > 0 }]
+      : []),
+    ...(fallbackDecl.length > 0
+      ? [
+          {
+            id: "fallback-params",
+            label: t("form.fallbackParamsTitle"),
+            error: paramErrors.fallbackParams > 0,
+          },
+        ]
+      : []),
+  ];
+
+  const sections = (
+    <form onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
+      <Stack gap={16}>
+        {warnings !== undefined && (
+          <Card tone="danger" title={t("form.warningsTitle")}>
+            <Stack gap={4}>
+              {warnings.map((w) => (
+                <Text key={w} tone="warn">
+                  {`‖ ${t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}`}
+                </Text>
+              ))}
+            </Stack>
+          </Card>
+        )}
+        {error !== undefined && <FormError message={error} extra={otherErrors} />}
+        <div>
+          <FormSection
+            id="basic"
+            title={t("form.basicSection")}
+            description={t("form.basicSectionHint")}
+          >
+            <Field
+              label={t("form.nameLabel")}
+              required
+              count={{ value: name.length, max: NAME_MAX }}
+              {...(nameError ? { error: t("form.nameRequired") } : {})}
+            >
+              <Input
+                name="name"
+                maxLength={NAME_MAX}
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (e.target.value.trim() !== "") setNameError(false);
+                }}
+              />
+            </Field>
+            <Field label={t("form.instructionsLabel")} optional help={t("form.instructionsHelp")}>
+              <Textarea
+                code
+                name="instructions"
+                rows={6}
+                maxLength={100_000}
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+              />
+            </Field>
+            <Field label={t("form.visibilityLabel")}>
+              <Select
+                name="visibility"
+                value={visibility}
+                onChange={(e) => setVisibility(e.target.value as AgentVisibility)}
+                options={VISIBILITIES.map((v) => ({ value: v, label: t(`form.visibility.${v}`) }))}
+              />
+            </Field>
+          </FormSection>
+          <FormSection
+            id="model"
+            title={t("form.modelSection")}
+            description={t("form.modelSectionHint")}
+          >
+            <Field
+              label={t("form.modelLabel")}
+              required
+              {...(noModels ? { error: t("form.noModels") } : {})}
+            >
+              <Select
+                name="model"
+                disabled={providers === undefined}
+                value={model}
+                onChange={(e) => onModelChange(e.target.value)}
+                options={options}
+              />
+            </Field>
+            <Field label={t("form.fallbackLabel")} optional>
+              <Select
+                name="fallback"
+                value={fallback}
+                onChange={(e) => onFallbackChange(e.target.value)}
+                options={[{ value: "", label: t("form.fallbackNone") }, ...options]}
+              />
+            </Field>
+          </FormSection>
+          {modelDecl.length > 0 && (
+            <FormSection
+              id="params"
+              title={t("form.modelParamsTitle")}
+              description={t("form.paramsSectionHint")}
+            >
+              <ModelParams
+                parameters={modelDecl}
+                value={modelParams}
+                onChange={setModelParams}
+                locale={locale}
+                errors={fieldErrors.modelParams}
+              />
+            </FormSection>
+          )}
+          {fallbackDecl.length > 0 && (
+            <FormSection
+              id="fallback-params"
+              title={t("form.fallbackParamsTitle")}
+              description={t("form.paramsSectionHint")}
+            >
+              <ModelParams
+                parameters={fallbackDecl}
+                value={fallbackParams}
+                onChange={setFallbackParams}
+                locale={locale}
+                errors={fieldErrors.fallbackParams}
+              />
+            </FormSection>
+          )}
         </div>
-      )}
-      <button type="submit" disabled={pending || providers === undefined || noModels}>
-        {pending ? t("form.submitting") : t("form.submit")}
-      </button>
+      </Stack>
     </form>
   );
+
+  return {
+    anchors,
+    sections,
+    unsaved,
+    errors,
+    saved: warnings !== undefined,
+    submit: () => void save(),
+    pending,
+    canSubmit,
+  };
 }

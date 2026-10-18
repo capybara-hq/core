@@ -9,7 +9,16 @@ const monorepoRoot = new URL("../..", import.meta.url).pathname;
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  turbopack: { root: monorepoRoot },
+  transpilePackages: ["@capybara-hq/design"],
+  turbopack: {
+    root: monorepoRoot,
+    // 内部包按 "@capybara-hq/source" 条件直接编译源码（与 vitest / tsc 一致）；Turbopack 不支持自定义导出条件，用别名指到源码入口。
+    resolveAlias: {
+      "@capybara-hq/design/styles.css": "../../packages/design/src/styles/index.css",
+      "@capybara-hq/design/theme": "../../packages/design/src/theme.ts",
+      "@capybara-hq/design": "../../packages/design/src/index.ts",
+    },
+  },
   outputFileTracingRoot: monorepoRoot,
 };
 

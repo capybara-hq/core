@@ -1,10 +1,17 @@
+import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { ChatView } from "../src/components/ChatView";
+import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import { AppFrame } from "../src/components/shell/AppFrame";
+import { Link, resetNavigation, router } from "./support/navigation";
+import { ME, renderPage } from "./support/render";
+
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
 
 type Call = { url: string; method: string; body: unknown; headers: Headers };
 
@@ -78,14 +85,11 @@ function stubApi(routes: Record<string, (call: Call) => Response>): Call[] {
 const BASE = "/api/v1/orgs/o1/conversations/c1";
 
 function renderChat(locale: "zh" | "en") {
-  render(
-    <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
-      <ChatView orgId="o1" conversationId="c1" />
-    </NextIntlClientProvider>,
-  );
+  return renderPage(<ChatPage />, { locale });
 }
 
 beforeEach(() => {
+  resetNavigation("/chat/c1");
   vi.stubGlobal("EventSource", FakeEventSource);
 });
 
@@ -95,7 +99,28 @@ afterEach(() => {
   FakeEventSource.instances = [];
 });
 
-describe("ChatView", () => {
+describe("对话页（PlaygroundPage）", () => {
+  it("使用 PlaygroundPage：消息在内容区，inspector 显示 agent、会话 ID、运行状态与「停止」", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`GET ${BASE}`]: () =>
+        json(200, { conversation: { id: "c1", orgId: "o1", agentId: "ag1", lastSeq: 2 } }),
+      "GET /api/v1/orgs/o1/agents": () =>
+        json(200, { agents: [{ id: "ag1", definition: { name: "Echo agent" } }] }),
+    });
+    const { container } = renderChat("en");
+    expect(container.querySelector('[data-template="PlaygroundPage"]')).not.toBeNull();
+    const inspector = screen.getByRole("complementary");
+    expect(await within(inspector).findByText("Echo agent")).toBeTruthy();
+    expect(within(inspector).getByText("c1")).toBeTruthy();
+    expect(await within(inspector).findByText(`● ${en.chat.running}`)).toBeTruthy();
+    expect(within(inspector).getByRole("button", { name: en.chat.stop })).toBeTruthy();
+    // 输入框旁也有「停止」：任何宽度下一次点击即可停止（inspector 在窄屏收进 Sheet）
+    const composer = screen.getByLabelText(en.chat.inputLabel).closest("form") as HTMLElement;
+    expect(within(composer).getByRole("button", { name: en.chat.stop })).toBeTruthy();
+    expect(screen.getByText("hi").closest("[data-role]")?.getAttribute("data-role")).toBe("user");
+  });
+
   it.each(["zh", "en"] as const)(
     "运行中显示「停止」按钮，点击调用 abort；输入框不禁用（%s）",
     async (locale) => {
@@ -105,12 +130,12 @@ describe("ChatView", () => {
         [`POST ${BASE}/abort`]: () => json(202, { runId: "r1" }),
       });
       renderChat(locale);
-      const stop = await screen.findByRole("button", { name: m.chat.stop });
+      const [stop] = await screen.findAllByRole("button", { name: m.chat.stop });
       // 历史加载完后从最后一条 seq 开始订阅
       expect(FakeEventSource.instances[0]?.url).toBe(`${BASE}/stream?after=2`);
       expect(screen.getByLabelText(m.chat.inputLabel)).toHaveProperty("disabled", false);
 
-      await userEvent.setup().click(stop);
+      await userEvent.setup().click(stop as HTMLElement);
       const abort = calls.find((c) => c.method === "POST" && c.url === `${BASE}/abort`);
       expect(abort?.headers.get("x-capybara-csrf")).toBe("1");
 
@@ -121,7 +146,7 @@ describe("ChatView", () => {
           ev(3, "run_aborted", { byAccountId: "a1", reason: "user" }),
         );
       });
-      expect(screen.queryByRole("button", { name: m.chat.stop })).toBeNull();
+      expect(screen.queryAllByRole("button", { name: m.chat.stop })).toHaveLength(0);
     },
   );
 
@@ -145,10 +170,10 @@ describe("ChatView", () => {
           }),
       });
       renderChat(locale);
-      const message = (await screen.findByText("partial answer")).closest("li");
+      const message = (await screen.findByText("partial answer")).closest("[data-role]");
       expect(message).not.toBeNull();
-      expect(within(message as HTMLElement).getByText(m.chat.stopped)).toBeTruthy();
-      expect(screen.queryByRole("button", { name: m.chat.stop })).toBeNull();
+      expect(within(message as HTMLElement).getByText(`⊘ ${m.chat.stopped}`)).toBeTruthy();
+      expect(screen.queryAllByRole("button", { name: m.chat.stop })).toHaveLength(0);
     },
   );
 
@@ -157,7 +182,7 @@ describe("ChatView", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
     });
     renderChat("en");
-    await screen.findByRole("button", { name: en.chat.stop });
+    await screen.findAllByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
     act(() => {
       es.emit("delta", { runId: "r1", step: 0, delta: "text", text: "hel" });
@@ -187,7 +212,7 @@ describe("ChatView", () => {
       },
     });
     renderChat("en");
-    await screen.findByRole("button", { name: en.chat.stop });
+    await screen.findAllByRole("button", { name: en.chat.stop });
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(en.chat.inputLabel), "echo:interject");
     await user.click(screen.getByRole("button", { name: en.chat.send }));
@@ -206,7 +231,9 @@ describe("ChatView", () => {
     act(() => {
       FakeEventSource.instances[0]?.emit("error", { code: "auth.session_revoked" });
     });
-    expect((await screen.findByRole("alert")).textContent).toBe(zh.errors.auth.session_revoked);
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      `✗ ${zh.errors.auth.session_revoked}`,
+    );
   });
 
   it("发送失败后重试沿用同一个 clientMessageId；成功后下一条换新 id", async () => {
@@ -273,7 +300,7 @@ describe("ChatView", () => {
       [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "later") }),
     });
     renderChat("en");
-    await screen.findByRole("button", { name: en.chat.stop });
+    await screen.findAllByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
     act(() => es.emit("event", ev(3, "model_call", { step: 0, provider: "p", model: "m" })));
     const user = userEvent.setup();
@@ -351,5 +378,67 @@ describe("ChatView", () => {
       await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(i + 1));
     }
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("对话页切换组织", () => {
+  function renderInFrame() {
+    return render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <DesignProvider locale="en" link={Link as LinkComponent}>
+          <ToastProvider>
+            <AppFrame version="v0">
+              <ChatPage />
+            </AppFrame>
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
+  }
+  const twoOrgs = (currentOrgId: string) => ({
+    ...ME,
+    currentOrgId,
+    memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
+  });
+
+  it("切到其他组织：跳回 /agents，且不以新组织 + 旧会话读取", async () => {
+    let current = "o1";
+    const calls = stubApi({
+      "GET /api/v1/me": () => json(200, twoOrgs(current)),
+      "PUT /api/v1/me/current-org": () => {
+        current = "o2";
+        return new Response(null, { status: 204 });
+      },
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, { conversation: { id: "c1" } }),
+    });
+    renderInFrame();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
+    expect(calls.some((c) => c.url.includes("/orgs/o2/"))).toBe(false);
+    expect(screen.queryByText("hi")).toBeNull();
+  });
+
+  it("切换后刷新会话失败：以 toast 提示错误", async () => {
+    let meCalls = 0;
+    stubApi({
+      "GET /api/v1/me": () =>
+        ++meCalls === 1
+          ? json(200, twoOrgs("o1"))
+          : json(500, { error: { code: "http_error", message: "boom" } }),
+      "PUT /api/v1/me/current-org": () => new Response(null, { status: 204 }),
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, { conversation: { id: "c1" } }),
+    });
+    renderInFrame();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    expect(await screen.findByText(en.errors.http_error)).toBeTruthy();
   });
 });

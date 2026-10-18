@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import { findModel, listModels, type ProviderModels } from "../lib/agents";
+import { findModel, listAgents, listModels, type ProviderModels } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
 import {
   abortRun,
@@ -11,25 +11,60 @@ import {
   type ModelRef,
   postMessage,
 } from "../lib/conversations";
-import { chatItems, initialChatState, openConversationStream, reduceChat } from "../lib/stream";
+import {
+  type ChatItem,
+  chatItems,
+  initialChatState,
+  openConversationStream,
+  reduceChat,
+} from "../lib/stream";
 import { useErrorMessage } from "../lib/use-error-message";
-import { Composer } from "./Composer";
-import { MessageList } from "./MessageList";
 
 /** 连接被浏览器放弃后，连续重开订阅的次数上限（期间收到任何事件即清零）。 */
 const MAX_REOPEN = 3;
 
+/** {@link useChat} 的结果：页面把消息、输入框与运行状态放进 PlaygroundPage。 */
+export type ChatView = {
+  items: ChatItem[];
+  /** 产出消息的模型是否支持思考（决定是否显示思考区）。 */
+  reasoningOf(m: ModelRef): boolean | undefined;
+  /** `run_started` 之后、终态事件之前。 */
+  running: boolean;
+  stopping: boolean;
+  stop(): void;
+  send(text: string, clientMessageId: string): Promise<boolean>;
+  error: string | undefined;
+  /** 会话所属 agent 的名称（取不到时为 undefined）。 */
+  agentName: string | undefined;
+};
+
 /**
- * 聊天视图：先读完历史事件，再从最后一条 seq 订阅事件流；事件与增量都交给 {@link reduceChat}。
- * 运行中显示「停止」（调用 abort）；输入框始终可用，运行中发送即为插话。
+ * 对话状态：先读完历史事件，再从最后一条 seq 订阅事件流；事件与增量都交给 {@link reduceChat}。
+ * `stop` 调用 abort；`send` 始终可用，运行中发送即为插话。
  */
-export function ChatView({ orgId, conversationId }: { orgId: string; conversationId: string }) {
+export function useChat(orgId: string, conversationId: string): ChatView {
   const t = useTranslations("chat");
   const errorMessage = useErrorMessage();
   const [state, dispatch] = useReducer(reduceChat, initialChatState);
   const [error, setError] = useState<string>();
   const [stopping, setStopping] = useState(false);
   const [providers, setProviders] = useState<ProviderModels[]>();
+  const [agentName, setAgentName] = useState<string>();
+
+  // inspector 里的 agent 名称：会话 → agentId → agent 列表；取不到时忽略
+  useEffect(() => {
+    let disposed = false;
+    getConversation(orgId, conversationId)
+      .then(async ({ conversation }) => {
+        const { agents } = await listAgents(orgId);
+        const agent = agents.find((a) => a.id === conversation.agentId);
+        if (!disposed && agent) setAgentName(agent.definition.name);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, [orgId, conversationId]);
 
   // 模型列表只用于决定是否显示思考区：取不到时忽略（有思考内容就显示）
   useEffect(() => {
@@ -114,7 +149,7 @@ export function ChatView({ orgId, conversationId }: { orgId: string; conversatio
     [orgId, conversationId, errorMessage],
   );
 
-  async function onStop() {
+  const stop = useCallback(async () => {
     setStopping(true);
     try {
       await abortRun(orgId, conversationId);
@@ -124,27 +159,18 @@ export function ChatView({ orgId, conversationId }: { orgId: string; conversatio
     } finally {
       setStopping(false);
     }
-  }
+  }, [orgId, conversationId, errorMessage]);
 
   const items = useMemo(() => chatItems(state), [state]);
 
-  return (
-    <div className="chat">
-      <MessageList items={items} reasoningOf={reasoningOf} />
-      {state.running && (
-        <div className="row status">
-          <span className="muted">{t("running")}</span>
-          <button type="button" className="secondary" onClick={onStop} disabled={stopping}>
-            {t("stop")}
-          </button>
-        </div>
-      )}
-      {error !== undefined && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      <Composer onSend={onSend} />
-    </div>
-  );
+  return {
+    items,
+    reasoningOf,
+    running: state.running,
+    stopping,
+    stop: () => void stop(),
+    send: onSend,
+    error,
+    agentName,
+  };
 }

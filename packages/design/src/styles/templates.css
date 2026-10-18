@@ -1,0 +1,225 @@
+/* 页面模板：根节点占满 AppShell 内容区，Body 自行滚动 */
+.cb-template {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* FormSection：组间 1px line 上边线，上下内边距 20 */
+.cb-form-section {
+  padding: 20px 0;
+  border-top: 1px solid var(--cb-line);
+}
+.cb-form-section:first-child {
+  border-top: 0;
+}
+.cb-form-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cb-form-section-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Settings：二级导航 + 居中内容 */
+.cb-settings-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+.cb-settings-nav-item {
+  padding: 4px 8px;
+  border-left: 2px solid transparent;
+  color: var(--cb-muted);
+  text-decoration: none;
+}
+.cb-settings-nav-item:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-settings-nav-item[data-current="true"] {
+  border-left-color: var(--cb-accent);
+  color: var(--cb-ink);
+}
+.cb-settings-content {
+  box-sizing: border-box;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+/* Playground */
+.cb-playground {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.cb-playground-thread {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+.cb-playground-composer {
+  flex: none;
+  padding: 12px 16px;
+  border-top: 1px solid var(--cb-line);
+}
+
+/* Trace：上瀑布、下详情 */
+.cb-trace {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.cb-trace-waterfall {
+  flex: 1;
+  min-height: 240px;
+  overflow: auto;
+  border-bottom: 1px solid var(--cb-line);
+}
+.cb-trace-detail {
+  flex: none;
+  padding: 16px;
+}
+
+/* Wizard 步骤条 */
+.cb-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+}
+.cb-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cb-faint);
+}
+.cb-step[data-state="current"] {
+  color: var(--cb-ink);
+  font-weight: 700;
+}
+.cb-step[data-state="done"] {
+  color: var(--cb-muted);
+}
+.cb-step-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--cb-line-strong);
+}
+.cb-step[data-state="current"] .cb-step-mark {
+  border-color: var(--cb-accent);
+  color: var(--cb-accent);
+}
+.cb-step[data-state="done"] .cb-step-mark {
+  color: var(--cb-ok);
+}
+
+/* Auth：无 Shell，居中卡片 + 两侧 Dither */
+.cb-auth {
+  position: relative;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-between;
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--cb-bg);
+}
+.cb-auth-side {
+  flex: none;
+  width: 96px;
+  overflow: hidden;
+}
+.cb-auth-side[data-side="right"] {
+  display: flex;
+  justify-content: flex-end;
+}
+.cb-auth-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  min-width: 0;
+  padding: 24px 16px;
+}
+.cb-auth-card {
+  box-sizing: border-box;
+  width: min(400px, 100%);
+}
+.cb-auth-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.cb-auth-footer {
+  color: var(--cb-muted);
+}
+@media (max-width: 639px) {
+  .cb-auth-side {
+    display: none;
+  }
+}
+
+/* StatusPage */
+.cb-status-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 64px 16px;
+  text-align: center;
+}
+.cb-status-page-action {
+  margin-top: 12px;
+}
+
+/* Onboarding 清单 */
+.cb-checklist {
+  box-sizing: border-box;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 32px 16px;
+  list-style: none;
+}
+.cb-checklist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--cb-line);
+}
+.cb-checklist-item:first-child {
+  border-top: 0;
+}
+.cb-checklist-mark {
+  flex: none;
+  color: var(--cb-faint);
+}
+.cb-checklist-item[data-state="done"] .cb-checklist-mark {
+  color: var(--cb-ok);
+}
+.cb-checklist-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-checklist-action {
+  flex: none;
+}
