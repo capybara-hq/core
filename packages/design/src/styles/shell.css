@@ -247,8 +247,19 @@
 }
 .cb-body-content {
   flex: 1;
-  min-width: 560px;
+  min-width: min(560px, 100%);
   overflow: auto;
+}
+.cb-body-rail-head,
+.cb-body-inspector-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 8px;
+}
+.cb-body-rail-collapsed {
+  flex: none;
+  padding: 4px;
+  border-right: 1px solid var(--cb-line);
 }
 .cb-body[data-layout="centered"] {
   overflow: auto;
@@ -338,4 +349,10 @@
   gap: 16px;
   min-width: 0;
   white-space: nowrap;
+}
+
+@media (max-width: 959px) {
+  .cb-body-anchors {
+    display: none;
+  }
 }

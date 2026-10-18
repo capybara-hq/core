@@ -12,7 +12,9 @@ export function StatusBar({ context, version, system, pageStatus }: StatusBarPro
     <footer className="cb-statusbar">
       <span className="cb-statusbar-left">
         <span className="cb-statusbar-ctx">{`> ${context}`}</span>
-        {pageStatus ? <span className="cb-statusbar-page">{pageStatus}</span> : null}
+        {pageStatus != null && pageStatus !== false ? (
+          <span className="cb-statusbar-page">{pageStatus}</span>
+        ) : null}
       </span>
       <span className="cb-statusbar-right">
         {system ? <span>{system}</span> : null}

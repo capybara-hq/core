@@ -52,8 +52,12 @@ export function PageHeader(p: PageHeaderProps) {
         <h1 className="cb-pageheader-title" title={p.title}>
           {p.title}
         </h1>
-        {p.count ? <span className="cb-pageheader-count">{p.count}</span> : null}
-        {p.status ? <span className="cb-pageheader-count">{p.status}</span> : null}
+        {p.count != null && p.count !== false ? (
+          <span className="cb-pageheader-count">{p.count}</span>
+        ) : null}
+        {p.status != null && p.status !== false ? (
+          <span className="cb-pageheader-count">{p.status}</span>
+        ) : null}
       </div>
       {metrics.length > 0 ? (
         narrow ? (

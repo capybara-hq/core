@@ -12,6 +12,7 @@ import {
   PageHeader,
   type PageHeaderProps,
   PageTabs,
+  StatusBar,
   useStatusBar,
 } from "../src/index.js";
 
@@ -260,5 +261,49 @@ describe("Body", () => {
     const nav = screen.getByRole("navigation", { name: "页内导航" });
     expect(within(nav).getByRole("link", { name: "基础" }).getAttribute("href")).toBe("#basic");
     expect(within(nav).getByRole("link", { name: /模型/ }).textContent).toContain("✗");
+  });
+});
+
+describe("Body 折叠与关闭、数值 0", () => {
+  it("Rail 可折叠：收起筛选 / 展开筛选", async () => {
+    zh(
+      <Body layout="rail" rail={<div>筛选器内容</div>}>
+        <div>主内容</div>
+      </Body>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "收起筛选" }));
+    expect(screen.queryByText("筛选器内容")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "展开筛选" }));
+    expect(screen.getByText("筛选器内容")).toBeTruthy();
+  });
+
+  it("Inspector 传入 onInspectorClose 时可关闭", async () => {
+    const onClose = vi.fn();
+    zh(
+      <Body layout="inspector" inspector={<div>检查器内容</div>} onInspectorClose={onClose}>
+        <div>主内容</div>
+      </Body>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("未传 onInspectorClose 时没有关闭按钮", () => {
+    zh(
+      <Body layout="inspector" inspector={<div>检查器内容</div>}>
+        <div>主内容</div>
+      </Body>,
+    );
+    expect(screen.queryByRole("button", { name: "关闭" })).toBeNull();
+  });
+
+  it("PageHeader count=0 渲染 0", () => {
+    zh(<PageHeader title="Agents" count={0} />);
+    expect(screen.getByText("0")).toBeTruthy();
+  });
+
+  it("StatusBar pageStatus=0 渲染 0", () => {
+    zh(<StatusBar context="a" version="v1" pageStatus={0} />);
+    expect(screen.getByText("0")).toBeTruthy();
   });
 });
