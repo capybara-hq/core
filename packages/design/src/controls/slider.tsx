@@ -11,6 +11,7 @@ export function Slider({
   onChange,
   label,
   withInput,
+  placeholder,
   disabled,
   ...a11y
 }: ControlA11y & {
@@ -22,6 +23,8 @@ export function Slider({
   onChange: (n: number) => void;
   label: string;
   withInput?: boolean;
+  /** 数值框的占位文字（如「默认（1）」）；未设置值时数值框留空并显示它。 */
+  placeholder?: string;
 }) {
   const decimals = (String(step).split(".")[1] ?? "").length;
   const commit = (n: number) => onChange(Number(Math.min(max, Math.max(min, n)).toFixed(decimals)));
@@ -100,6 +103,7 @@ export function Slider({
           min={min}
           max={max}
           step={step}
+          placeholder={placeholder}
           value={value ?? ""}
           onChange={(e) => {
             const n = Number(e.target.value);

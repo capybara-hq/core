@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useRef } from "react";
+import type { ControlA11y } from "../controls/a11y";
 import { useDesignLink } from "../provider";
 
 type TabItem = {
@@ -101,7 +102,8 @@ export function Segmented({
   value,
   onChange,
   label,
-}: {
+  ...a11y
+}: ControlA11y & {
   options: { value: string; label: string }[];
   value: string;
   onChange: (v: string) => void;
@@ -120,7 +122,14 @@ export function Segmented({
     ref.current?.querySelector<HTMLElement>(`[data-value="${CSS.escape(next.value)}"]`)?.focus();
   };
   return (
-    <div className="cb-segmented" role="radiogroup" aria-label={label} ref={ref} onKeyDown={onKey}>
+    <div
+      {...a11y}
+      className="cb-segmented"
+      role="radiogroup"
+      aria-label={label}
+      ref={ref}
+      onKeyDown={onKey}
+    >
       {options.map((o) => {
         const selected = o.value === value;
         return (

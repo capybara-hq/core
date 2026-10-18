@@ -20,6 +20,11 @@ describe("布局原语", () => {
     expect(el.getAttribute("data-tone")).toBe("muted");
   });
 
+  it("Text pre 保留换行与空白（data-pre）", () => {
+    render(<Text pre>{"第一行\n第二行"}</Text>);
+    expect(screen.getByText(/第一行/).getAttribute("data-pre")).toBe("true");
+  });
+
   it("Stack / Grid / Card 暴露属性", () => {
     render(
       <Stack gap={12} direction="row">

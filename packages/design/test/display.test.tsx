@@ -169,6 +169,23 @@ describe("Segmented", () => {
     await userEvent.click(screen.getByRole("radio", { name: "B" }));
     expect(onChange).toHaveBeenCalledWith("b");
   });
+  it("接受 id / aria-describedby / aria-invalid（Field 转发）", () => {
+    wrap(
+      <Segmented
+        id="seg"
+        aria-describedby="seg-help"
+        aria-invalid
+        label="视图"
+        value="a"
+        onChange={() => {}}
+        options={[{ value: "a", label: "A" }]}
+      />,
+    );
+    const g = screen.getByRole("radiogroup", { name: "视图" });
+    expect(g.id).toBe("seg");
+    expect(g.getAttribute("aria-describedby")).toBe("seg-help");
+    expect(g.getAttribute("aria-invalid")).toBe("true");
+  });
 });
 
 describe("Badge / Kbd / Metric", () => {

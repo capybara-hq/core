@@ -157,6 +157,10 @@
 .cb-text[data-tone="warn"] {
   color: var(--cb-warn);
 }
+.cb-text[data-pre="true"] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .cb-text[data-truncate="true"] {
   display: block;
   overflow: hidden;

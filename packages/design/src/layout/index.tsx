@@ -76,12 +76,15 @@ export function Text({
   tone = "ink",
   as,
   truncate,
+  pre,
   children,
 }: {
   variant?: "h1" | "h2" | "body" | "small" | "micro";
   tone?: "ink" | "muted" | "faint" | "accent" | "ok" | "fail" | "warn";
   as?: ElementType;
   truncate?: boolean;
+  /** 保留换行与连续空白（消息正文、日志等多行文本），超长单词折行。 */
+  pre?: boolean;
   children?: ReactNode;
 }) {
   const Tag: ElementType = as ?? (variant === "h1" ? "h1" : variant === "h2" ? "h2" : "span");
@@ -95,6 +98,7 @@ export function Text({
       data-variant={variant}
       data-tone={tone}
       data-truncate={truncate ? "true" : undefined}
+      data-pre={pre ? "true" : undefined}
       title={title}
     >
       {children}

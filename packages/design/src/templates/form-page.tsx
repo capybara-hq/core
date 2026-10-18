@@ -59,7 +59,7 @@ export function FormSection({
   children?: ReactNode;
 }) {
   return (
-    <section id={id} className="cb-form-section">
+    <section id={id} className="cb-form-section" aria-label={title}>
       <Grid columns="form" gap={24}>
         <div className="cb-form-section-head">
           <Text variant="h2">{title}</Text>

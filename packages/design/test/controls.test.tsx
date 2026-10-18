@@ -160,6 +160,23 @@ describe("Slider", () => {
     });
     expect(onChange).toHaveBeenCalledWith(0.7);
   });
+  it("withInput 的 placeholder：未设置时数值框留空并显示占位", () => {
+    zh(
+      <Slider
+        label="温度"
+        min={0}
+        max={2}
+        step={0.01}
+        value={undefined}
+        placeholder="默认（1）"
+        onChange={() => {}}
+        withInput
+      />,
+    );
+    const box = screen.getByRole("spinbutton", { name: "温度" }) as HTMLInputElement;
+    expect(box.value).toBe("");
+    expect(box.placeholder).toBe("默认（1）");
+  });
 });
 afterEach(cleanup);
 

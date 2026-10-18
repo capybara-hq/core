@@ -162,6 +162,8 @@ describe("FormPage", () => {
     expect(screen.getByRole("heading", { level: 2, name: "基础信息" })).toBeTruthy();
     expect(screen.getByText("名称与描述")).toBeTruthy();
     expect(document.querySelector('.cb-grid[data-columns="form"]')).toBeTruthy();
+    // 分组以标题命名为 region，便于辅助技术与测试按分组定位
+    expect(screen.getByRole("region", { name: "基础信息" }).id).toBe("basic");
   });
 
   it("始终渲染 ActionRow", () => {
