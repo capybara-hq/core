@@ -1,4 +1,4 @@
-import { Tabs, type TabsProps } from "../display/index.js";
+import { Tabs, type TabsProps } from "../display/index";
 
 export function PageTabs(p: TabsProps) {
   return (

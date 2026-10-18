@@ -1,12 +1,12 @@
 import { type ReactNode, useEffect } from "react";
-import { Grid, Text } from "../layout/index.js";
+import { Grid, Text } from "../layout/index";
 import {
   ActionRow,
   type ActionRowProps,
   Body,
   PageHeader,
   type PageHeaderProps,
-} from "../shell/index.js";
+} from "../shell/index";
 
 /** T4 表单：Centered + 始终存在的 ActionRow；有未保存改动时拦截离开页面。 */
 export function FormPage({

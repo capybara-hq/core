@@ -8,8 +8,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { IconButton } from "../controls/index.js";
-import { useDesignT } from "../provider.js";
+import { IconButton } from "../controls/index";
+import { useDesignT } from "../provider";
 
 type ToastItem =
   | { id: number; kind: "success"; msg: string }

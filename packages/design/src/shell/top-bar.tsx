@@ -1,6 +1,6 @@
-import { Kbd, Logo } from "../display/index.js";
-import { type CommandGroup, Menu, type MenuItem } from "../overlays/index.js";
-import { useDesignLink, useDesignT } from "../provider.js";
+import { Kbd, Logo } from "../display/index";
+import { type CommandGroup, Menu, type MenuItem } from "../overlays/index";
+import { useDesignLink, useDesignT } from "../provider";
 
 export type TopBarProps = {
   nav: { id: string; label: string; href: string }[];

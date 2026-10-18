@@ -12,7 +12,7 @@ import {
   Sheet,
   ToastProvider,
   useToast,
-} from "../src/index.js";
+} from "../src/index";
 
 afterEach(() => {
   cleanup();

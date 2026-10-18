@@ -1,5 +1,5 @@
 import { type ComponentType, createContext, type ReactNode, useContext } from "react";
-import { type DesignKey, type Locale, messages } from "./i18n.js";
+import { type DesignKey, type Locale, messages } from "./i18n";
 
 /** 框架无关的链接组件；apps/web 可传入 next-intl 的 Link。 */
 export type LinkComponent = ComponentType<{

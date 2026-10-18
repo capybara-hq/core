@@ -1,8 +1,8 @@
-import { Button } from "../controls/button.js";
-import { Skeleton } from "../display/graphics.js";
-import { Logo } from "../display/logo.js";
-import { useDesignT } from "../provider.js";
-import type { DataTableProps } from "./types.js";
+import { Button } from "../controls/button";
+import { Skeleton } from "../display/graphics";
+import { Logo } from "../display/logo";
+import { useDesignT } from "../provider";
+import type { DataTableProps } from "./types";
 
 export function EmptyArea<T>({
   kind,

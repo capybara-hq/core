@@ -1,9 +1,9 @@
 import * as RD from "@radix-ui/react-dialog";
 import { type ReactNode, useState } from "react";
-import { Button, IconButton } from "../controls/index.js";
-import { useDesignLink, useDesignT } from "../provider.js";
-import { Dialog } from "./dialog.js";
-import { useFocusReturn } from "./focus-return.js";
+import { Button, IconButton } from "../controls/index";
+import { useDesignLink, useDesignT } from "../provider";
+import { Dialog } from "./dialog";
+import { useFocusReturn } from "./focus-return";
 
 export type SheetProps = {
   open: boolean;

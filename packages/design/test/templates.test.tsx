@@ -2,7 +2,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as design from "../src/index.js";
+import * as design from "../src/index";
 import {
   AuthPage,
   DesignProvider,
@@ -19,7 +19,7 @@ import {
   StatusPage,
   TracePage,
   WizardPage,
-} from "../src/index.js";
+} from "../src/index";
 
 afterEach(() => {
   cleanup();

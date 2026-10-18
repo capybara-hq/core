@@ -1,9 +1,9 @@
 import * as RD from "@radix-ui/react-dialog";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { Button, IconButton } from "../controls/index.js";
-import { Input } from "../controls/inputs.js";
-import { useDesignT } from "../provider.js";
-import { useFocusReturn } from "./focus-return.js";
+import { Button, IconButton } from "../controls/index";
+import { Input } from "../controls/inputs";
+import { useDesignT } from "../provider";
+import { useFocusReturn } from "./focus-return";
 
 export type DialogProps = {
   open: boolean;

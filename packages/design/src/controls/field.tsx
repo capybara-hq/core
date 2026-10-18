@@ -1,5 +1,5 @@
 import { cloneElement, type ReactElement, useId } from "react";
-import { useDesignT } from "../provider.js";
+import { useDesignT } from "../provider";
 
 export function Field({
   label,

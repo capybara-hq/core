@@ -5,7 +5,7 @@ import {
   Body,
   PageHeader,
   type PageHeaderProps,
-} from "../shell/index.js";
+} from "../shell/index";
 
 /** T6 收件箱：Rail（列表）+ Content (+ Inspector)；决策时出现 ActionRow。 */
 export function InboxPage({

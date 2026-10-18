@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type Column, DataTable, DesignProvider } from "../src/index.js";
+import { type Column, DataTable, DesignProvider } from "../src/index";
 
 afterEach(cleanup);
 

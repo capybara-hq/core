@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index.js";
+import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
 
 /** T1 概览：Single。 */
 export function OverviewPage({

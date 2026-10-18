@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import { Text } from "../layout/index.js";
-import { useDesignT } from "../provider.js";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index.js";
+import { Text } from "../layout/index";
+import { useDesignT } from "../provider";
+import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
 
 /** T12 首次使用：Single 居中清单。 */
 export function OnboardingPage({

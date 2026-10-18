@@ -16,7 +16,7 @@ import {
   Stepper,
   Switch,
   Textarea,
-} from "../src/index.js";
+} from "../src/index";
 
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 

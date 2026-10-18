@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
-import { useDesignLink } from "../provider.js";
+import { useDesignLink } from "../provider";
 import {
   ActionRow,
   type ActionRowProps,
   Body,
   PageHeader,
   type PageHeaderProps,
-} from "../shell/index.js";
+} from "../shell/index";
 
 /** T5 设置：Rail（二级导航）+ 居中内容；有改动时出现 ActionRow。 */
 export function SettingsPage({

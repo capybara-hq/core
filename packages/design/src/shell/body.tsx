@@ -1,8 +1,8 @@
 import { type ReactNode, useState } from "react";
-import { Button, IconButton } from "../controls/index.js";
-import { Sheet } from "../overlays/index.js";
-import { useDesignT } from "../provider.js";
-import { useMediaQuery } from "./use-media-query.js";
+import { Button, IconButton } from "../controls/index";
+import { Sheet } from "../overlays/index";
+import { useDesignT } from "../provider";
+import { useMediaQuery } from "./use-media-query";
 
 export type BodyProps = {
   layout: "single" | "rail" | "inspector" | "rail-inspector" | "centered";

@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { Card, Grid, Stack, Text } from "../src/index.js";
+import { Card, Grid, Stack, Text } from "../src/index";
 
 describe("布局原语", () => {
   it("Text truncate 的 title 等于其文本", () => {

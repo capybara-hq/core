@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useId, useRef } from "react";
-import type { ControlA11y } from "./a11y.js";
+import type { ControlA11y } from "./a11y";
 
 export function Checkbox({
   checked,

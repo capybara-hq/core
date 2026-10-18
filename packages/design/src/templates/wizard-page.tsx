@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
-import { useDesignT } from "../provider.js";
+import { useDesignT } from "../provider";
 import {
   ActionRow,
   type ActionRowProps,
   Body,
   PageHeader,
   type PageHeaderProps,
-} from "../shell/index.js";
+} from "../shell/index";
 
 /** T9 向导：Centered + 步骤条 + 始终存在的 ActionRow。 */
 export function WizardPage({

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { Dither, Logo } from "../display/index.js";
-import { Card, Text } from "../layout/index.js";
+import { Dither, Logo } from "../display/index";
+import { Card, Text } from "../layout/index";
 
 /** T10 认证：无 Shell，居中卡片宽 400 + 两侧抖动点阵（Dither 仅此处使用）。 */
 export function AuthPage({

@@ -1,6 +1,6 @@
-import { Button } from "../controls/button.js";
-import { Select } from "../controls/inputs.js";
-import { useDesignT } from "../provider.js";
+import { Button } from "../controls/button";
+import { Select } from "../controls/inputs";
+import { useDesignT } from "../provider";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index.js";
+import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
 
 /** T8 链路查看器：Single，上为 Span 瀑布，下为 Span 详情。 */
 export function TracePage({

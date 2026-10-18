@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { CommandPalette } from "../overlays/index.js";
-import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar.js";
-import { TopBar, type TopBarProps } from "./top-bar.js";
+import { CommandPalette } from "../overlays/index";
+import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
+import { TopBar, type TopBarProps } from "./top-bar";
 
 export function AppShell({
   topBar,

@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useRef } from "react";
-import { useDesignLink } from "../provider.js";
+import { useDesignLink } from "../provider";
 
 type TabItem = {
   id: string;

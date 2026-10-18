@@ -5,8 +5,8 @@ import {
   type TextareaHTMLAttributes,
   useState,
 } from "react";
-import { useDesignT } from "../provider.js";
-import type { ControlA11y } from "./a11y.js";
+import { useDesignT } from "../provider";
+import type { ControlA11y } from "./a11y";
 
 export function Input({
   prefix,

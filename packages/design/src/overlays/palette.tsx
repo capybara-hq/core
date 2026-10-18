@@ -1,8 +1,8 @@
 import * as RD from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import { Kbd } from "../display/index.js";
-import { useDesignT } from "../provider.js";
-import { useFocusReturn } from "./focus-return.js";
+import { Kbd } from "../display/index";
+import { useDesignT } from "../provider";
+import { useFocusReturn } from "./focus-return";
 
 export type CommandGroup = {
   label: string;

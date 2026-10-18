@@ -5,7 +5,7 @@ import {
   Body,
   PageHeader,
   type PageHeaderProps,
-} from "../shell/index.js";
+} from "../shell/index";
 
 /** T2 列表：Rail + Content；无 rail 时退化为 Single。 */
 export function ListPage({

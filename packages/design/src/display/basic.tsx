@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import type { DesignKey } from "../i18n.js";
-import { useDesignT } from "../provider.js";
+import type { DesignKey } from "../i18n";
+import { useDesignT } from "../provider";
 
 export function Badge({
   tone = "default",

@@ -1,6 +1,6 @@
-export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic.js";
-export { BarChart, Dither, Skeleton } from "./graphics.js";
-export { CAPYBARA_BITMAP, Logo } from "./logo.js";
-export { Pagination, type PaginationProps } from "./pagination.js";
-export { Segmented, Tabs, type TabsProps } from "./tabs.js";
-export { Tooltip } from "./tooltip.js";
+export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
+export { BarChart, Dither, Skeleton } from "./graphics";
+export { CAPYBARA_BITMAP, Logo } from "./logo";
+export { Pagination, type PaginationProps } from "./pagination";
+export { Segmented, Tabs, type TabsProps } from "./tabs";
+export { Tooltip } from "./tooltip";

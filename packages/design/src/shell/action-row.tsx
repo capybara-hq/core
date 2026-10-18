@@ -1,5 +1,5 @@
-import { Button } from "../controls/index.js";
-import { useDesignT } from "../provider.js";
+import { Button } from "../controls/index";
+import { useDesignT } from "../provider";
 
 export type ButtonSpec = {
   label: string;

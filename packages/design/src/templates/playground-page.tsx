@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index.js";
+import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
 
 /** T7 调试台：Content（对话 + 输入区）+ Inspector（实时链路）。 */
 export function PlaygroundPage({

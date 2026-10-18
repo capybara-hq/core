@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type PointerEvent, useRef } from "react";
-import type { ControlA11y } from "./a11y.js";
+import type { ControlA11y } from "./a11y";
 
 const CELLS = 20;
 

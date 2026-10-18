@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyTheme, parseTheme, THEME_COOKIE } from "../src/index.js";
+import { applyTheme, parseTheme, THEME_COOKIE } from "../src/index";
 
 describe("theme", () => {
   it("parseTheme", () => {

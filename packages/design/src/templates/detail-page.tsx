@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import type { TabsProps } from "../display/index.js";
-import { Body, PageHeader, type PageHeaderProps, PageTabs } from "../shell/index.js";
+import type { TabsProps } from "../display/index";
+import { Body, PageHeader, type PageHeaderProps, PageTabs } from "../shell/index";
 
 /** T3 详情：PageTabs + Content + Inspector。 */
 export function DetailPage({

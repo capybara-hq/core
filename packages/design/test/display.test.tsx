@@ -16,7 +16,7 @@ import {
   StatusMark,
   Tabs,
   Tooltip,
-} from "../src/index.js";
+} from "../src/index";
 
 afterEach(cleanup);
 

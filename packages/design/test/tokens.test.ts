@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { TOKEN_NAMES } from "../src/index.js";
+import { TOKEN_NAMES } from "../src/index";
 
 const css = readFileSync(resolve(import.meta.dirname, "../src/styles/tokens.css"), "utf8");
 

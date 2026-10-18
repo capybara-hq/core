@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import type { PaginationProps } from "../display/pagination.js";
-import type { MenuItem } from "../overlays/menus.js";
+import type { PaginationProps } from "../display/pagination";
+import type { MenuItem } from "../overlays/menus";
 
 export type Column<T> = {
   key: string;

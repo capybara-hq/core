@@ -7,13 +7,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { Button, IconButton } from "../controls/button.js";
-import { Checkbox } from "../controls/toggles.js";
-import { Pagination } from "../display/pagination.js";
-import { Menu } from "../overlays/menus.js";
-import { useDesignT } from "../provider.js";
-import { EmptyArea } from "./empty.js";
-import type { DataTableProps } from "./types.js";
+import { Button, IconButton } from "../controls/button";
+import { Checkbox } from "../controls/toggles";
+import { Pagination } from "../display/pagination";
+import { Menu } from "../overlays/menus";
+import { useDesignT } from "../provider";
+import { EmptyArea } from "./empty";
+import type { DataTableProps } from "./types";
 
 function titleOf(node: ReactNode): string | undefined {
   return typeof node === "string" || typeof node === "number" ? String(node) : undefined;

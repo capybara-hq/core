@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { DesignProvider, useDesignT } from "../src/index.js";
+import { DesignProvider, useDesignT } from "../src/index";
 
 function Probe() {
   const t = useDesignT();

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import { Logo } from "../display/index.js";
-import { Text } from "../layout/index.js";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index.js";
+import { Logo } from "../display/index";
+import { Text } from "../layout/index";
+import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
 
 const CODE = { "404": "404", "403": "403", maintenance: "503", disabled: "—" } as const;
 

@@ -1,8 +1,8 @@
-import { Button, IconButton } from "../controls/index.js";
-import { Metric, type MetricProps } from "../display/index.js";
-import { Menu, type MenuItem, Popover } from "../overlays/index.js";
-import { useDesignLink, useDesignT } from "../provider.js";
-import { useMediaQuery } from "./use-media-query.js";
+import { Button, IconButton } from "../controls/index";
+import { Metric, type MetricProps } from "../display/index";
+import { Menu, type MenuItem, Popover } from "../overlays/index";
+import { useDesignLink, useDesignT } from "../provider";
+import { useMediaQuery } from "./use-media-query";
 
 export type HeaderAction =
   | {
