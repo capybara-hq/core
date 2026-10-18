@@ -110,7 +110,27 @@
       "submitting": "Saving…",
       "noModels": "No models are available. Install and configure a model provider plugin first.",
       "warningsTitle": "Saved, but please note:",
-      "continue": "Continue"
+      "continue": "Continue",
+      "modelParamsTitle": "Model parameters",
+      "fallbackParamsTitle": "Fallback model parameters"
+    },
+    "params": {
+      "default": "Default",
+      "defaultValue": "Default ({value})",
+      "invalid": "This value is invalid.",
+      "invalidKey": "Parameter {key} is invalid.",
+      "effort": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "Extra high",
+        "max": "Max"
+      },
+      "thinking": {
+        "off": "Off",
+        "on": "On",
+        "summarized": "Summarized"
+      }
     },
     "warnings": {
       "fallback_same_provider": "The fallback model should come from a different provider; otherwise it cannot help when that provider fails.",

@@ -2,8 +2,15 @@
 
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { findModel, listModels, type ProviderModels } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
-import { abortRun, getConversation, listAllEvents, postMessage } from "../lib/conversations";
+import {
+  abortRun,
+  getConversation,
+  listAllEvents,
+  type ModelRef,
+  postMessage,
+} from "../lib/conversations";
 import { chatItems, initialChatState, openConversationStream, reduceChat } from "../lib/stream";
 import { useErrorMessage } from "../lib/use-error-message";
 import { Composer } from "./Composer";
@@ -22,6 +29,27 @@ export function ChatView({ orgId, conversationId }: { orgId: string; conversatio
   const [state, dispatch] = useReducer(reduceChat, initialChatState);
   const [error, setError] = useState<string>();
   const [stopping, setStopping] = useState(false);
+  const [providers, setProviders] = useState<ProviderModels[]>();
+
+  // 模型列表只用于决定是否显示思考区：取不到时忽略（有思考内容就显示）
+  useEffect(() => {
+    let disposed = false;
+    listModels(orgId).then(
+      (r) => {
+        if (!disposed) setProviders(r.providers);
+      },
+      () => {},
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [orgId]);
+
+  const reasoningOf = useCallback(
+    (m: ModelRef) =>
+      providers === undefined ? undefined : findModel(providers, m)?.capabilities.reasoning,
+    [providers],
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -102,7 +130,7 @@ export function ChatView({ orgId, conversationId }: { orgId: string; conversatio
 
   return (
     <div className="chat">
-      <MessageList items={items} />
+      <MessageList items={items} reasoningOf={reasoningOf} />
       {state.running && (
         <div className="row status">
           <span className="muted">{t("running")}</span>

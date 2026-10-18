@@ -1,4 +1,4 @@
-import { type ConversationEvent, type StopReason, streamUrl } from "./conversations";
+import { type ConversationEvent, type ModelRef, type StopReason, streamUrl } from "./conversations";
 
 /** SSE `event: delta` 帧：运行的流式增量（只是草稿，最终内容以日志中的 assistant_message 为准）。 */
 export interface StreamDelta {
@@ -221,6 +221,8 @@ export type ChatItem =
       thinking: string;
       stopReason: StopReason | null;
       streaming: boolean;
+      /** 产出该消息的模型：该步的 `model_call`，没有时取运行的 `run_started`；都没有为 null。 */
+      model: ModelRef | null;
     }
   | { kind: "failed"; key: string; text: string; code: string };
 
@@ -233,9 +235,20 @@ const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thi
 /** 把状态展开为消息列表：日志中的消息按 seq，流式草稿排在最后。 */
 export function chatItems(state: ChatState): ChatItem[] {
   const items: ChatItem[] = [];
+  /** `runId` → 运行的模型；`runId:step` → 该步实际调用的模型（兜底时与运行的模型不同）。 */
+  const models = new Map<string, ModelRef>();
+  const modelOf = (runId: string | null, step: number): ModelRef | null =>
+    runId === null ? null : (models.get(stepKey(runId, step)) ?? models.get(runId) ?? null);
   for (const e of state.events) {
     const key = `e${e.seq}`;
-    if (e.type === "user_message") {
+    if (e.type === "run_started" && e.runId !== null) {
+      models.set(e.runId, e.payload.model);
+    } else if (e.type === "model_call" && e.runId !== null) {
+      models.set(stepKey(e.runId, e.payload.step), {
+        provider: e.payload.provider,
+        model: e.payload.model,
+      });
+    } else if (e.type === "user_message") {
       items.push({ kind: "user", key, text: joinText(e.payload.content, "text") });
     } else if (e.type === "assistant_message") {
       items.push({
@@ -245,6 +258,7 @@ export function chatItems(state: ChatState): ChatItem[] {
         thinking: joinText(e.payload.content, "thinking"),
         stopReason: e.payload.stopReason,
         streaming: false,
+        model: modelOf(e.runId, e.payload.step),
       });
     } else if (e.type === "run_failed") {
       items.push({ kind: "failed", key, text: "", code: e.payload.error.code });
@@ -259,6 +273,7 @@ export function chatItems(state: ChatState): ChatItem[] {
       thinking: d.thinking,
       stopReason: null,
       streaming: true,
+      model: modelOf(d.runId, d.step),
     });
   }
   return items;

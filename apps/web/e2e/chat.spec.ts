@@ -109,4 +109,25 @@ test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后�
     `assistant:${SECOND_TEXT}`,
     "assistant:interject",
   ]);
+
+  // 6. 新建 agent 时按模型声明设置参数：model-fake.style = shout → 回复为大写
+  await page.goto("/zh/agents");
+  await page.getByRole("link", { name: zh.agents.new }).click();
+  await page.getByLabel(zh.agents.form.nameLabel).fill("Shout agent");
+  await page
+    .getByLabel(zh.agents.form.modelLabel, { exact: true })
+    .selectOption("model-fake/fake-1");
+  const params = page.getByRole("region", { name: zh.agents.form.modelParamsTitle });
+  // 文案来自插件声明（zh）
+  await params.getByRole("combobox", { name: "回复风格" }).selectOption("shout");
+  await page.getByRole("button", { name: zh.agents.form.submit }).click();
+  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await page
+    .getByRole("listitem")
+    .filter({ hasText: "Shout agent" })
+    .getByRole("button", { name: zh.agents.startChat })
+    .click();
+  await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
+  await send(page, "echo:quiet please");
+  await expect(assistants(page).last().locator(".body")).toHaveText("QUIET PLEASE");
 });

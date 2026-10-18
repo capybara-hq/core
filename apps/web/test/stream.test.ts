@@ -171,6 +171,22 @@ describe("reduceChat", () => {
     expect(items[1]).toMatchObject({ kind: "failed", code: "model.failed" });
   });
 
+  it("assistant 项带产出它的模型：取该步的 model_call，没有时取 run_started 的模型", () => {
+    const call = (seq: number, step: number, provider: string, model: string) =>
+      ev(seq, "model_call", { step, provider, model });
+    const s = apply(
+      initialChatState,
+      [started(1), call(2, 0, "p", "m"), assistant(3, 0, "a"), call(4, 1, "fb", "x")],
+      delta("draft", 1),
+      [started(5, "r2"), assistant(6, 0, "no call", "end_turn", "r2")],
+    );
+    expect(chatItems(s).map((i) => (i.kind === "assistant" ? i.model : null))).toEqual([
+      { provider: "p", model: "m" },
+      { provider: "p", model: "m" },
+      { provider: "fb", model: "x" },
+    ]);
+  });
+
   it("没有变化时返回同一个 state 引用", () => {
     const s = apply(initialChatState, [user(1, "q")]);
     expect(reduceChat(s, { kind: "events", events: [user(1, "q")] })).toBe(s);

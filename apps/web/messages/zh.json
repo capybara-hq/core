@@ -110,7 +110,27 @@
       "submitting": "正在保存…",
       "noModels": "没有可用的模型，请先安装并配置模型供应商插件。",
       "warningsTitle": "已保存，但请注意：",
-      "continue": "继续"
+      "continue": "继续",
+      "modelParamsTitle": "模型参数",
+      "fallbackParamsTitle": "兜底模型参数"
+    },
+    "params": {
+      "default": "默认",
+      "defaultValue": "默认（{value}）",
+      "invalid": "该参数的取值无效。",
+      "invalidKey": "参数 {key} 无效。",
+      "effort": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "xhigh": "很高",
+        "max": "最高"
+      },
+      "thinking": {
+        "off": "关闭",
+        "on": "开启",
+        "summarized": "摘要"
+      }
     },
     "warnings": {
       "fallback_same_provider": "兜底模型应来自另一家供应商，否则该供应商故障时兜底无效。",

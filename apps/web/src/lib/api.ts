@@ -17,12 +17,22 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  */
 const REFRESHABLE = new Set(["auth.token_expired", "auth.required"]);
 
-/** API 调用失败。`code` 为内核错误码，或客户端自己的 `network` / `http_error`。 */
+/** 错误信封中的逐项细节（如 `validation_failed` 的 `{ path, message }`）。 */
+export interface ApiErrorDetail {
+  path: string;
+  message: string;
+}
+
+/**
+ * API 调用失败。`code` 为内核错误码，或客户端自己的 `network` / `http_error`；
+ * `details` 为错误信封里形如 `{ path, message }` 的细节（没有时为空数组）。
+ */
 export class ApiClientError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details: ApiErrorDetail[] = [],
   ) {
     super(message);
     this.name = "ApiClientError";
@@ -43,13 +53,32 @@ async function send(path: string, init: RequestInit): Promise<Response> {
   }
 }
 
+/** 只取形如 `{ path: string, message: string }` 的细节，其余忽略。 */
+function toDetails(raw: unknown): ApiErrorDetail[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (d): d is ApiErrorDetail =>
+      typeof d === "object" &&
+      d !== null &&
+      typeof (d as ApiErrorDetail).path === "string" &&
+      typeof (d as ApiErrorDetail).message === "string",
+  );
+}
+
 async function toError(res: Response): Promise<ApiClientError> {
   const text = await res.text().catch(() => "");
   try {
-    const body = JSON.parse(text) as { error?: { code?: unknown; message?: unknown } };
-    const { code, message } = body.error ?? {};
+    const body = JSON.parse(text) as {
+      error?: { code?: unknown; message?: unknown; details?: unknown };
+    };
+    const { code, message, details } = body.error ?? {};
     if (typeof code === "string") {
-      return new ApiClientError(res.status, code, typeof message === "string" ? message : code);
+      return new ApiClientError(
+        res.status,
+        code,
+        typeof message === "string" ? message : code,
+        toDetails(details),
+      );
     }
   } catch {
     // 非 JSON（例如网关的 HTML 错误页），落到下面的通用错误。

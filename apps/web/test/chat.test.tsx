@@ -285,6 +285,56 @@ describe("ChatView", () => {
     expect(FakeEventSource.instances[1]?.url).toBe(`${BASE}/stream?after=3`);
   });
 
+  it.each([
+    ["reasoning 为 true：显示思考区", true, true],
+    ["reasoning 为 false：不显示思考区", false, false],
+    ["模型列表取不到：有思考内容就显示", undefined, true],
+  ] as const)("思考区按模型的 capabilities.reasoning 显示（%s）", async (_, reasoning, shown) => {
+    stubApi({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hi"),
+            runStarted(2),
+            ev(3, "assistant_message", {
+              step: 0,
+              content: [
+                { type: "thinking", text: "deep thought" },
+                { type: "text", text: "answer" },
+              ],
+              stopReason: "end_turn",
+            }),
+            ev(4, "run_finished", { reason: "completed", consumedUpToSeq: 3 }),
+          ],
+        }),
+      ...(reasoning !== undefined && {
+        "GET /api/v1/orgs/o1/models": () =>
+          json(200, {
+            providers: [
+              {
+                provider: "model-fake",
+                models: [
+                  {
+                    id: "fake-1",
+                    displayName: "Fake 1",
+                    capabilities: { reasoning },
+                    parameters: [],
+                  },
+                ],
+              },
+            ],
+          }),
+      }),
+    });
+    renderChat("en");
+    await screen.findByText("answer");
+    if (shown) {
+      expect(await screen.findByText(en.chat.thinking)).toBeTruthy();
+    } else {
+      await vi.waitFor(() => expect(screen.queryByText(en.chat.thinking)).toBeNull());
+    }
+  });
+
   it("每次成功建立连接都清零重开计数：空闲会话多次断线不会显示「连接已断开」", async () => {
     stubApi({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),

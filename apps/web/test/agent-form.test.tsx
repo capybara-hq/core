@@ -9,10 +9,23 @@ import { AgentForm } from "../src/components/AgentForm";
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+const CAPS = {
+  tools: true,
+  vision: false,
+  reasoning: false,
+  caching: false,
+  midConversationSystem: false,
+};
 const MODELS = {
   providers: [
-    { provider: "model-fake", models: [{ id: "fake-1", displayName: "Fake 1" }] },
-    { provider: "other", models: [{ id: "o-1", displayName: "O 1" }] },
+    {
+      provider: "model-fake",
+      models: [{ id: "fake-1", displayName: "Fake 1", capabilities: CAPS, parameters: [] }],
+    },
+    {
+      provider: "other",
+      models: [{ id: "o-1", displayName: "O 1", capabilities: CAPS, parameters: [] }],
+    },
   ],
 };
 
@@ -62,6 +75,8 @@ describe("AgentForm", () => {
         instructions: "",
         model: { provider: "model-fake", model: "fake-1" },
         fallback: null,
+        modelParams: {},
+        fallbackParams: {},
       },
       visibility: "private",
     });
