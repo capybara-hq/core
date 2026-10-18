@@ -18,6 +18,7 @@
     "check:migrations": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/migrations.ts",
     "check:deps": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/deps.ts",
     "check:plugin-state": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/plugin-state.ts",
+    "check:tool-design": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/tool-design.ts",
     "check:config-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/config-docs.ts",
     "check:i18n": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/i18n.ts",
     "check:web-ui": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/web-ui.ts",

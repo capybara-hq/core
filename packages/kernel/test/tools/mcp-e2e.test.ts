@@ -353,13 +353,15 @@ describe("connector-mcp 端到端", () => {
 
     const rpc = await runTool(convId, 3, "docs__rpc_error", {});
     expect(rpc).toMatchObject({
-      content: "The app returned an error: bad token [REDACTED]",
+      content:
+        "The app returned an error: bad token [REDACTED] (check the arguments and retry, or ask the user if it keeps failing).",
       isError: true,
     });
 
     const gw = await runTool(convId, 4, "docs__gateway", {});
     expect(gw).toMatchObject({
-      content: "The app's server responded with HTTP 502.",
+      content:
+        "The app's server responded with HTTP 502. Retry later, or ask an administrator to check the app.",
       isError: true,
     });
     const failLog = logLines.find((l) => l.includes("MCP request failed"));

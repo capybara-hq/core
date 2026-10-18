@@ -78,7 +78,7 @@ export function readPage(
   const first = lines[offset] as string;
   if (charOffset > 0 && charOffset >= first.length) {
     throw new ToolError(
-      `charOffset ${charOffset} is past the end of line ${offset} (${first.length} characters).`,
+      `charOffset ${charOffset} is past the end of line ${offset} (${first.length} characters). Use a charOffset below ${first.length}.`,
     );
   }
   const end = Math.min(total, offset + limit);

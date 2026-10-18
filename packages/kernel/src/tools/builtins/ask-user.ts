@@ -148,7 +148,7 @@ export function askUserTool(deps: { config: () => KernelConfig }): BuiltinTool {
         const labels = q.options.map((o) => o.label);
         if (new Set(labels).size !== labels.length) {
           throw new ToolError(
-            `Option labels must be unique within a question; "${q.question}" has duplicates.`,
+            `Option labels must be unique within a question; "${q.question}" has duplicates. Provide distinct labels.`,
           );
         }
       }

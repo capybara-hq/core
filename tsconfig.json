@@ -29,6 +29,9 @@
       "path": "plugins/connector-mcp"
     },
     {
+      "path": "plugins/todo"
+    },
+    {
       "path": "tools/checks"
     },
     {
