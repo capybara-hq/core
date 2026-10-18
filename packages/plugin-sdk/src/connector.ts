@@ -80,8 +80,8 @@ export interface ConnectorOpenArgs {
    *
    * 内核不能在等用户回答期间保持远端调用（运行会暂停、worker 释放、会话关闭）：需要问用户时，内核**中止本次调用**
    * （经 `callTool` 的 signal）并让运行进入等待；用户回答后内核重新发起同一调用，远端再次发起同样的 elicitation 时
-   * 由本回调立即用用户的答案答复。所以连接器只需「收到就调用、拿到就回」，不要自己缓存或重试；本回调可能永不 resolve
-   * （调用已被中止），连接器不要依赖它结束。
+   * 由本回调立即用用户的答案答复。所以连接器只需「收到就调用、拿到就回」，不要自己缓存或重试；需要问用户时本回调
+   * 以错误拒绝（调用已被中止），连接器让该错误原样结束本次调用即可。
    */
   onElicit?: (request: ElicitationRequest) => Promise<ElicitationResponse>;
 }

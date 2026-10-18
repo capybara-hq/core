@@ -16,10 +16,11 @@ import { specHash } from "./registry.js";
  * 所以采用「可续的连接器调用」：
  *
  * 1. 调用途中远端发起 elicitation → 连接器调用 `onElicit` → 本会话（{@link ElicitationSession}）把请求映射成
- *    `InputForm`，记下待问的表单与 state，并**中止本次调用**（`onSuspend`，经 `callTool` 的 signal）；管线据此
+ *    `InputForm`，记下待问的表单与 state，并**中止本次调用**（`onSuspend`，经 `callTool` 的 signal），`onElicit` 以
+ *    {@link ElicitationSuspended} 拒绝；管线据此
  *    把这次执行当作 `input_required`（写 `question_asked`、运行进入等待）。
  * 2. 用户回答（或超时 / 取消）后，管线照常用同一 input 再次调用该工具，带 `ctx.resume = { state, answer }`；
- *    远端再次发起**同样的** elicitation（按指纹匹配：表单模式看 `requestedSchema`，URL 模式看地址的 origin + path）
+ *    远端再次发起**同样的** elicitation（按指纹匹配：表单模式看 `requestedSchema` 与文案，URL 模式看地址的 origin + path 与文案）
  *    时，本会话立即用用户的答案答复，远端继续执行。一次调用里有多个 elicitation 时，state 带上之前的全部答复，
  *    每次续跑整条重放；最多 3 轮（管线的输入轮次上限）。
  *
@@ -31,6 +32,14 @@ import { specHash } from "./registry.js";
  * 超出 InputForm 子集的表单（嵌套对象、`minLength > 1`、`minItems > 1` 等）不展示：立即答复 `decline`，并在工具
  * 结果末尾附一条给模型的英文说明。
  */
+
+/** 本次调用为问用户而被中止（`onElicit` 以它拒绝；管线按 pending 的输入请求处理，不当作失败）。 */
+export class ElicitationSuspended extends Error {
+  constructor() {
+    super("The call was suspended to ask the user for input");
+    this.name = "ElicitationSuspended";
+  }
+}
 
 /** 不能展示的 elicitation 被拒绝时附在工具结果后的说明（模型可见，英文）。 */
 export const UNSUPPORTED_ELICITATION_NOTE =
@@ -188,7 +197,11 @@ export function elicitationForm(
 
 /** 指纹：表单模式按 requestedSchema，URL 模式按地址的 origin + path（query 常带一次性 state）。 */
 function fingerprint(req: ElicitationRequest): string {
-  if (req.mode === "form") return specHash({ mode: "form", schema: req.requestedSchema });
+  // 文案也计入：同一 schema 换了说明（问的是另一件事）要重新问用户
+  const message = specHash(req.message);
+  if (req.mode === "form") {
+    return specHash({ mode: "form", schema: req.requestedSchema, message });
+  }
   let target = req.url;
   try {
     const u = new URL(req.url);
@@ -196,7 +209,7 @@ function fingerprint(req: ElicitationRequest): string {
   } catch {
     // 原样
   }
-  return specHash({ mode: "url", target });
+  return specHash({ mode: "url", target, message });
 }
 
 /** 用户答案 → 给远端的答复。 */
@@ -291,7 +304,7 @@ export class ElicitationSession {
       };
       this.opts.onSuspend();
     }
-    // 调用已被中止：永不答复（会话随后关闭）
-    return new Promise<ElicitationResponse>(() => {});
+    // 调用已被中止：以错误结束（不让连接器等一个永不答复的 promise，如 -32042 路径里的 await），会话随后关闭
+    throw new ElicitationSuspended();
   };
 }

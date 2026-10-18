@@ -509,6 +509,27 @@ describe("QuestionCard（通用 InputForm 渲染器）", () => {
     },
   );
 
+  it("url 不是 http(s)（如 javascript:）→ 不显示链接也不能打开", () => {
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    renderPage(
+      <QuestionCard
+        orgId="o1"
+        item={{
+          ...item(),
+          form: {
+            title: "Bad",
+            url: "javascript:alert(1)",
+            fields: [{ key: "completed", label: "Done", schema: { type: "boolean" } }],
+          },
+        }}
+      />,
+      { locale: "en" },
+    );
+    expect(screen.queryByText("javascript:alert(1)")).toBeNull();
+    expect(screen.queryByRole("button", { name: en.question.openLink })).toBeNull();
+  });
+
   it("buildAnswer：多选里的「其他」换成文本；选了「其他」没写文本算未填", () => {
     const draft = initialDraft(FORM);
     expect(draft.values).toEqual({ regions: [], notify: false });

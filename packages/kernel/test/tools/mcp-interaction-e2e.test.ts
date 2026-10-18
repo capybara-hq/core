@@ -174,7 +174,8 @@ beforeAll(async () => {
         plugins: [MODEL_FAKE, CONNECTOR_MCP],
         pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
         roles: ["api", "worker"],
-        tools: { timeoutMs: 5_000 },
+        // 足够长：断言「为问用户而中止」立即结束，而不是等满工具超时
+        tools: { timeoutMs: 30_000 },
       },
     ),
     { env: {}, logger },
@@ -337,7 +338,10 @@ describe("MCP elicitation", () => {
   it("-32042（URL elicitation required）：转成 URL 卡片；用户确认后重新调用成功", async () => {
     const agentId = await agentFor(await installApp());
     const convId = await createConv(req, orgId, agentId);
+    const t0 = Date.now();
     const q = await askedBy(convId, "forms__pay");
+    // -32042 路径里连接器 await onElicit：问用户时必须立即结束，不能等满 tools.timeoutMs（30s）
+    expect(Date.now() - t0).toBeLessThan(5_000);
     expect(q.payload.form).toMatchObject({
       title: "Connect your bank",
       url: "https://bank.example.com/connect",
@@ -479,5 +483,27 @@ describe("prompts 与 resources", () => {
       payload: { text: "x", attachments: Array.from({ length: 6 }, () => ({ appId, uri: "a" })) },
     });
     expect(tooMany.statusCode, tooMany.body).toBe(400);
+  }, 60_000);
+
+  it("管理员停用了 read_resource 工具（Ruling A23）：资源不列出，附件被拒", async () => {
+    const appId = await installApp();
+    const off = await call({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/apps/${appId}`,
+      payload: { tools: { read_resource: { status: "disabled" } } },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    const list = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/resources` });
+    expect(list.json()).toEqual({ resources: [], unavailable: [] });
+    const agentId = await agentFor(appId);
+    const convId = await createConv(req, orgId, agentId);
+    const res = await call({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
+      payload: { text: "read", attachments: [{ appId, uri: "docs://handbook" }] },
+    });
+    expect(res.statusCode, res.body).toBe(409);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("app.resources_disabled");
+    expect(ofType(await eventsOf(db, convId), "user_message")).toEqual([]);
   }, 60_000);
 });

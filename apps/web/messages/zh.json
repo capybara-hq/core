@@ -96,7 +96,8 @@
       "slug_taken": "该 slug 已被其他应用使用。",
       "connect_failed": "无法连接应用的服务，请检查 URL 与凭据。",
       "tool_not_found": "该应用没有这个工具。",
-      "tool_not_pending": "该工具不在待复核状态。"
+      "tool_not_pending": "该工具不在待复核状态。",
+      "resources_disabled": "该应用已关闭读取资源。"
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",

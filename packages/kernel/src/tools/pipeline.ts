@@ -698,35 +698,40 @@ export class ToolPipeline {
 
     let opened: Promise<ConnectorSession> | undefined;
     try {
-      const r = await this.bounded(ctx.signal, async (signal) => {
-        opened = connector.open({
-          endpoint: app.endpoint,
-          auth: getAuth,
-          // OAuth：在刷新锁内强制刷新（别的副本已刷新则直接用新 token）；之后丢弃本次调用缓存的注入，
-          // 连接器重试时重新读取。refresh 被拒 → CredentialMissing，经连接器原样抛出，下面转成「需要连接」。
-          onUnauthorized: async () => {
-            const stale = injected.at(-1);
-            injection = undefined;
-            await credentials.onUnauthorized(orgId, appId, auth, ctx.accountId, stale);
-          },
-          signal,
-          onElicit: elicit.handle,
-          onToolsChanged: () => {
-            try {
-              this.deps.onToolsChanged?.(orgId, appId);
-            } catch (err) {
-              this.deps.log.warn("tools changed notification failed", { orgId, appId, err });
-            }
-          },
-        });
-        const session = await opened;
-        return source.resources
-          ? runResourceTool(session, source.name, input)
-          : // 交回已复核的定义（app_tools.spec，含 connectorData）：连接器按它路由，远端变化须先经漂移复核
-            session.callTool(source.name, input, AbortSignal.any([signal, suspend.signal]), {
-              spec: tool.spec,
-            });
-      });
+      // suspend 也参与竞速：为问用户中止时立即结束，不等连接器自己收尾
+      const r = await this.bounded(
+        ctx.signal,
+        async (signal) => {
+          opened = connector.open({
+            endpoint: app.endpoint,
+            auth: getAuth,
+            // OAuth：在刷新锁内强制刷新（别的副本已刷新则直接用新 token）；之后丢弃本次调用缓存的注入，
+            // 连接器重试时重新读取。refresh 被拒 → CredentialMissing，经连接器原样抛出，下面转成「需要连接」。
+            onUnauthorized: async () => {
+              const stale = injected.at(-1);
+              injection = undefined;
+              await credentials.onUnauthorized(orgId, appId, auth, ctx.accountId, stale);
+            },
+            signal,
+            onElicit: elicit.handle,
+            onToolsChanged: () => {
+              try {
+                this.deps.onToolsChanged?.(orgId, appId);
+              } catch (err) {
+                this.deps.log.warn("tools changed notification failed", { orgId, appId, err });
+              }
+            },
+          });
+          const session = await opened;
+          return source.resources
+            ? runResourceTool(session, source.name, input)
+            : // 交回已复核的定义（app_tools.spec，含 connectorData）：连接器按它路由，远端变化须先经漂移复核
+              session.callTool(source.name, input, AbortSignal.any([signal, suspend.signal]), {
+                spec: tool.spec,
+              });
+        },
+        suspend.signal,
+      );
       if (r === "aborted") return { kind: "error", message: RUN_STOPPED_DURING_TEXT };
       const ask = await asked();
       if (ask) return ask;
@@ -767,6 +772,8 @@ export class ToolPipeline {
   private async bounded<T>(
     runSignal: AbortSignal,
     work: (signal: AbortSignal) => Promise<T>,
+    /** 额外参与竞速的信号（不传给 work）：中止时以 `Stopped` 抛出，由调用方判断原因。 */
+    interrupt?: AbortSignal,
   ): Promise<{ value: T } | "timeout" | "aborted"> {
     if (runSignal.aborted) return "aborted";
     const timeout = new AbortController();
@@ -774,9 +781,10 @@ export class ToolPipeline {
     const timer = setTimeout(() => timeout.abort(), this.deps.config().tools.timeoutMs);
     const signal = AbortSignal.any([runSignal, timeout.signal]);
     let onAbort: () => void = () => {};
+    const race = interrupt ? AbortSignal.any([signal, interrupt]) : signal;
     const stopped = new Promise<never>((_, reject) => {
       onAbort = () => reject(new Stopped());
-      signal.addEventListener("abort", onAbort, { once: true });
+      race.addEventListener("abort", onAbort, { once: true });
     });
     stopped.catch(() => {});
     try {
@@ -788,7 +796,7 @@ export class ToolPipeline {
       throw e;
     } finally {
       clearTimeout(timer);
-      signal.removeEventListener("abort", onAbort);
+      race.removeEventListener("abort", onAbort);
     }
   }
 

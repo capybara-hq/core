@@ -3,6 +3,7 @@ import { validateAnswer } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
   ElicitationSession,
+  ElicitationSuspended,
   elicitationForm,
   UNSUPPORTED_ELICITATION_NOTE,
 } from "../../src/tools/elicitation.js";
@@ -156,23 +157,18 @@ describe("ElicitationSession", () => {
     required: ["name"],
   };
 
-  it("首次：记下待问的表单、中止调用，答复永不 resolve", async () => {
+  it("首次：记下待问的表单、中止调用，答复以 ElicitationSuspended 拒绝（连接器不会一直等）", async () => {
     let aborted = 0;
     const s = new ElicitationSession({ onSuspend: () => aborted++ });
-    let settled = false;
-    void s.handle(form(schema)).then(() => {
-      settled = true;
-    });
-    await new Promise((r) => setTimeout(r, 10));
+    await expect(s.handle(form(schema))).rejects.toBeInstanceOf(ElicitationSuspended);
     expect(aborted).toBe(1);
-    expect(settled).toBe(false);
     expect(s.pending?.form.fields.map((f) => f.key)).toEqual(["name"]);
     expect(s.pending?.state).toMatchObject({ elicitation: { answers: [] } });
   });
 
   it("续跑：同样的 requestedSchema → 用答案立即 accept；答案只用一次", async () => {
     const first = new ElicitationSession({ onSuspend: () => {} });
-    void first.handle(form(schema, "Who are you?"));
+    first.handle(form(schema, "Who are you?")).catch(() => {});
     const state = first.pending?.state;
 
     const s = new ElicitationSession({
@@ -181,8 +177,7 @@ describe("ElicitationSession", () => {
         throw new Error("should not suspend");
       },
     });
-    // message 不同不影响匹配（只按 requestedSchema）
-    await expect(s.handle(form(schema, "Who are you, again?"))).resolves.toEqual({
+    await expect(s.handle(form(schema, "Who are you?"))).resolves.toEqual({
       action: "accept",
       content: { name: "Ada" },
     });
@@ -194,8 +189,8 @@ describe("ElicitationSession", () => {
       resume: { state, answer: { name: "Ada" } },
       onSuspend: () => suspended++,
     });
-    await s2.handle(form(schema));
-    void s2.handle(form(schema));
+    await s2.handle(form(schema, "Who are you?"));
+    s2.handle(form(schema, "Who are you?")).catch(() => {});
     await new Promise((r) => setTimeout(r, 10));
     expect(suspended).toBe(1);
     expect(s2.pending?.state).toMatchObject({
@@ -203,9 +198,24 @@ describe("ElicitationSession", () => {
     });
   });
 
+  it("续跑时同一 schema 但文案变了（问的是另一件事）→ 不匹配，重新询问", async () => {
+    const first = new ElicitationSession({ onSuspend: () => {} });
+    first.handle(form(schema, "Your name?")).catch(() => {});
+    let suspended = 0;
+    const s = new ElicitationSession({
+      resume: { state: first.pending?.state, answer: { name: "Ada" } },
+      onSuspend: () => suspended++,
+    });
+    await expect(s.handle(form(schema, "Your manager's name?"))).rejects.toBeInstanceOf(
+      ElicitationSuspended,
+    );
+    expect(suspended).toBe(1);
+    expect(s.pending?.form.title).toBe("Your manager's name?");
+  });
+
   it("续跑时 answer 为 null（超时 / 取消）→ cancel", async () => {
     const first = new ElicitationSession({ onSuspend: () => {} });
-    void first.handle(form(schema));
+    first.handle(form(schema)).catch(() => {});
     const s = new ElicitationSession({
       resume: { state: first.pending?.state, answer: null },
       onSuspend: () => {},
@@ -215,20 +225,20 @@ describe("ElicitationSession", () => {
 
   it("续跑时远端换了 schema → 不匹配，重新询问", async () => {
     const first = new ElicitationSession({ onSuspend: () => {} });
-    void first.handle(form(schema));
+    first.handle(form(schema)).catch(() => {});
     let suspended = 0;
     const s = new ElicitationSession({
       resume: { state: first.pending?.state, answer: { name: "Ada" } },
       onSuspend: () => suspended++,
     });
-    void s.handle(form({ type: "object", properties: { age: { type: "integer" } } }));
+    s.handle(form({ type: "object", properties: { age: { type: "integer" } } })).catch(() => {});
     await new Promise((r) => setTimeout(r, 10));
     expect(suspended).toBe(1);
   });
 
   it("url：已完成 → accept；未勾选 → decline；地址只按 origin + path 匹配", async () => {
     const first = new ElicitationSession({ onSuspend: () => {} });
-    void first.handle(URL_REQ);
+    first.handle(URL_REQ).catch(() => {});
     const state = first.pending?.state;
     const again = { ...URL_REQ, url: "https://bank.example.com/connect?state=xyz" };
     const yes = new ElicitationSession({

@@ -101,6 +101,10 @@ export function Composer({
   const [rendering, setRendering] = useState(false);
   /** 当前草稿的 id 及其对应的内容（变了就作废）。 */
   const draft = useRef<{ key: string; id: string } | undefined>(undefined);
+  /**
+   * 打开面板的触发字符及其位置：关闭面板而没有选中任何条目时把它放回原处（用户可以发以 `/` 或 `@` 开头的普通消息）。
+   */
+  const trigger = useRef<{ char: string; pos: number; picked: boolean } | null>(null);
 
   async function submit() {
     const value = text.trim();
@@ -132,7 +136,8 @@ export function Composer({
     }
   }
 
-  function openPalette(which: Exclude<Palette, null>) {
+  function openPalette(which: Exclude<Palette, null>, pos: number) {
+    trigger.current = { char: which === "prompts" ? "/" : "@", pos, picked: false };
     setPalette(which);
     // 每次打开都重新读取（凭据与应用可能已变化）
     if (which === "prompts") {
@@ -153,14 +158,14 @@ export function Composer({
     const caret = e.target.selectionStart ?? next.length;
     // 空输入框里键入 `/` → 斜杠命令
     if (text === "" && next === "/") {
-      openPalette("prompts");
+      openPalette("prompts", 0);
       return;
     }
     // 开头或空白后键入 `@` → 资源引用（`@` 本身不留在文本里）
     const typed = next.length === text.length + 1 && next[caret - 1] === "@";
     if (typed && (caret === 1 || /\s/.test(next[caret - 2] ?? ""))) {
       setText(next.slice(0, caret - 1) + next.slice(caret));
-      openPalette("resources");
+      openPalette("resources", caret - 1);
       return;
     }
     setText(next);
@@ -200,6 +205,10 @@ export function Composer({
     ]);
   }
 
+  const picked = () => {
+    if (trigger.current) trigger.current.picked = true;
+  };
+
   /** 不可用的应用：单独一组，选中时说明原因。 */
   const unavailableGroup = (list: AppUnavailable[] | undefined): CommandGroup[] =>
     list && list.length > 0
@@ -233,7 +242,10 @@ export function Composer({
             items: g.items.map((p) => ({
               id: `prompt:${p.appId}:${p.name}`,
               label: `${promptCommand(p)}${p.description ? ` — ${p.description}` : ""}`,
-              onSelect: () => pickPrompt(p),
+              onSelect: () => {
+                picked();
+                pickPrompt(p);
+              },
             })),
           })),
           ...unavailableGroup(prompts?.unavailable),
@@ -245,7 +257,10 @@ export function Composer({
               items: g.items.map((r) => ({
                 id: `resource:${r.appId}:${r.uri}`,
                 label: `${r.name} · ${r.uri}`,
-                onSelect: () => attach(r),
+                onSelect: () => {
+                  picked();
+                  attach(r);
+                },
               })),
             })),
             ...unavailableGroup(resources?.unavailable),
@@ -303,7 +318,14 @@ export function Composer({
       <CommandPalette
         open={palette !== null}
         onOpenChange={(open) => {
-          if (!open) setPalette(null);
+          if (open) return;
+          setPalette(null);
+          const tr = trigger.current;
+          trigger.current = null;
+          // 没有选中任何条目：把触发字符放回去
+          if (tr && !tr.picked) {
+            setText((cur) => cur.slice(0, tr.pos) + tr.char + cur.slice(tr.pos));
+          }
         }}
         groups={groups}
       />

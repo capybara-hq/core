@@ -513,6 +513,32 @@ describe("输入框：/ 斜杠命令与 @ 资源引用（MCP prompts / resources
     );
   });
 
+  it("不选任何条目就关闭面板：键入的 / 或 @ 留在输入框里（可以发以它们开头的普通消息）", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${APPS}/prompts`]: () => json(200, PROMPTS),
+      [`GET ${APPS}/resources`]: () => json(200, RESOURCES),
+    });
+    renderChat("en");
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    const input = screen.getByLabelText(en.chat.inputLabel);
+    await user.type(input, "/");
+    await screen.findByRole("option", { name: "/docs:hello" });
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("option")).toBeNull());
+    expect(input).toHaveProperty("value", "/");
+    await user.type(input, "path");
+    expect(input).toHaveProperty("value", "/path");
+
+    await user.clear(input);
+    await user.type(input, "mail @");
+    await screen.findByRole("option", { name: "Handbook · docs://handbook" });
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("option")).toBeNull());
+    expect(input).toHaveProperty("value", "mail @");
+  });
+
   it("键入 @ → 面板列出资源；选中后作为附件随消息发送，可移除；消息里显示附件", async () => {
     const calls = stubApi({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),

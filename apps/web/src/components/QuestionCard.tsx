@@ -201,6 +201,17 @@ export function InputFormFields({
  * 输入请求卡片：标题为表单标题，内容为 {@link InputFormFields}，「提交」调用回答接口；
  * 已回答的显示每个字段的答案，过期 / 取消的显示状态。
  */
+/** 只认 http(s) 绝对地址（内核已校验，这里再防一层：`javascript:` 等一律不显示链接）。 */
+export function safeLink(url: string | undefined): string | undefined {
+  if (url === undefined) return undefined;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionItem }) {
   const t = useTranslations("question");
   const locale = useLocale();
@@ -212,6 +223,7 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   const [error, setError] = useState<string>();
   const [submitted, setSubmitted] = useState<Record<string, unknown> | null>(null);
   const done = item.answered ?? null;
+  const link = safeLink(item.form.url);
   const answer = done?.answer ?? submitted;
 
   async function submit() {
@@ -267,14 +279,12 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
         ) : (
           <Stack gap={12}>
             {error !== undefined && <FormError message={error} />}
-            {item.form.url !== undefined && (
+            {link !== undefined && (
               // 外部页面（MCP URL 模式）：完整地址可见，用户自己决定是否打开（新窗口、不带 opener）
               <Stack gap={8}>
-                <KeyValue keyWidth="12ch" rows={[{ k: t("link"), v: item.form.url }]} />
+                <KeyValue keyWidth="12ch" rows={[{ k: t("link"), v: link }]} />
                 <Stack direction="row" gap={8}>
-                  <Button
-                    onClick={() => window.open(item.form.url, "_blank", "noopener,noreferrer")}
-                  >
+                  <Button onClick={() => window.open(link, "_blank", "noopener,noreferrer")}>
                     {t("openLink")}
                   </Button>
                 </Stack>

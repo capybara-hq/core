@@ -14,6 +14,7 @@ import { type AppAuth, CredentialMissing, type Credentials } from "./credentials
 import { renderResult } from "./outputs.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import type { ToolRegistry } from "./registry.js";
+import { READ_RESOURCE } from "./resources.js";
 
 /**
  * 用户直接使用应用内容（D4，仿 Claude Code）：`/` 斜杠命令（MCP prompts）与 `@` 资源引用。
@@ -34,6 +35,8 @@ const MAX_PROMPT_CHARS = 100_000;
 export const MAX_ATTACHMENT_CHARS = 50_000;
 /** 一条消息最多附件数。 */
 export const MAX_ATTACHMENTS = 5;
+/** 解析一条消息全部附件的总时限上限（毫秒；取它与 `tools.timeoutMs` 的较小值，附件并行读取）。 */
+const ATTACHMENTS_TIMEOUT_MS = 30_000;
 /** 错误说明里带的上游错误消息最多字符数。 */
 const MAX_DETAIL = 500;
 
@@ -122,6 +125,23 @@ export class AppContent {
   }
 
   /**
+   * 读取资源受管理员对该应用 `read_resource` 工具（`source = 'resources'`）的启停约束（Ruling A23）：
+   * 返回其中该工具为 enabled 的应用 id。
+   */
+  private async resourcesEnabled(appIds: string[]): Promise<Set<string>> {
+    if (appIds.length === 0) return new Set();
+    const rows = await this.d.db
+      .selectFrom("app_tools")
+      .select("app_id")
+      .where("app_id", "in", appIds)
+      .where("source", "=", "resources")
+      .where("name", "=", READ_RESOURCE)
+      .where("status", "=", "enabled")
+      .execute();
+    return new Set(rows.map((r) => r.app_id));
+  }
+
+  /**
    * 以 `accountId` 的凭据打开应用会话执行 `work`，结果按本次注入的凭据打码，会话无论成败都关闭。
    * 缺凭据 → `credential.missing`；熔断打开、连接 / 远端失败 → 502 `app.connect_failed`（消息打码、限长）。
    * `work` 返回 undefined 表示该连接器不支持这项能力。
@@ -189,8 +209,10 @@ export class AppContent {
     orgId: string,
     accountId: string,
     work: (s: ConnectorSession, app: AppRow) => Promise<T[] | undefined>,
+    only?: (apps: AppRow[]) => Promise<AppRow[]>,
   ): Promise<{ items: T[]; unavailable: AppUnavailable[] }> {
-    const apps = await this.activeApps(orgId);
+    const all = await this.activeApps(orgId);
+    const apps = only ? await only(all) : all;
     const timeoutMs = Math.min(this.d.config().tools.timeoutMs, LIST_TIMEOUT_MS);
     const results = await Promise.all(
       apps.map(async (app) => {
@@ -274,52 +296,79 @@ export class AppContent {
     query?: string,
   ): Promise<{ resources: AppResourceView[]; unavailable: AppUnavailable[] }> {
     const q = query?.trim().toLowerCase() ?? "";
-    const { items, unavailable } = await this.acrossApps(orgId, accountId, async (s, app) => {
-      if (!s.listResources) return undefined;
-      return (await s.listResources())
-        .filter(
-          (r) =>
-            q === "" ||
-            [r.name, r.uri, r.description ?? ""].some((v) => v.toLowerCase().includes(q)),
-        )
-        .map(
-          (r): AppResourceView => ({
-            appId: app.id,
-            appSlug: app.slug,
-            appName: app.name,
-            uri: r.uri,
-            name: r.name,
-            ...(r.description !== undefined && { description: r.description }),
-            ...(r.mimeType !== undefined && { mimeType: r.mimeType }),
-          }),
-        );
-    });
+    const { items, unavailable } = await this.acrossApps(
+      orgId,
+      accountId,
+      async (s, app) => {
+        if (!s.listResources) return undefined;
+        return (await s.listResources())
+          .filter(
+            (r) =>
+              q === "" ||
+              [r.name, r.uri, r.description ?? ""].some((v) => v.toLowerCase().includes(q)),
+          )
+          .map(
+            (r): AppResourceView => ({
+              appId: app.id,
+              appSlug: app.slug,
+              appName: app.name,
+              uri: r.uri,
+              name: r.name,
+              ...(r.description !== undefined && { description: r.description }),
+              ...(r.mimeType !== undefined && { mimeType: r.mimeType }),
+            }),
+          );
+      },
+      // 管理员停用了读取资源的应用不列出（也不打开会话）
+      async (apps) => {
+        const enabled = await this.resourcesEnabled(apps.map((a) => a.id));
+        return apps.filter((a) => enabled.has(a.id));
+      },
+    );
     return { resources: items.slice(0, MAX_RESOURCES), unavailable };
   }
 
   /**
-   * 解析消息附件：按顺序以发送者的凭据读取每个资源（打码、每个限 {@link MAX_ATTACHMENT_CHARS} 字符），返回要追加在
-   * 用户消息后的文本块与元数据。名称取资源清单里的 name（读不到清单时用 URI）。任一附件失败整条消息失败（不写入）。
+   * 解析消息附件：以发送者的凭据**并行**读取每个资源（打码、每个限 {@link MAX_ATTACHMENT_CHARS} 字符；总时限
+   * min(`tools.timeoutMs`, 30s)），按请求顺序返回要追加在用户消息后的文本块与元数据。名称取资源清单里的 name
+   * （读不到清单时用 URI）。应用的 `read_resource` 工具被管理员停用 → 409 `app.resources_disabled`。
+   * 任一附件失败整条消息失败（不写入）。
    */
   async resolveAttachments(
     orgId: string,
     accountId: string,
     refs: { appId: string; uri: string }[],
   ): Promise<{ blocks: { type: "text"; text: string }[]; attachments: AttachmentMeta[] }> {
+    const apps = new Map<string, AppRow>();
+    for (const id of new Set(refs.map((r) => r.appId))) apps.set(id, await this.app(orgId, id));
+    const enabled = await this.resourcesEnabled([...apps.keys()]);
+    for (const id of apps.keys()) {
+      if (!enabled.has(id)) {
+        throw new ApiError(
+          "app.resources_disabled",
+          "Reading resources is turned off for this app",
+        );
+      }
+    }
+    const timeoutMs = Math.min(this.d.config().tools.timeoutMs, ATTACHMENTS_TIMEOUT_MS);
+    const read = await Promise.all(
+      refs.map(async (ref) => {
+        const app = apps.get(ref.appId) as AppRow;
+        const got = await this.withSession(orgId, app, accountId, timeoutMs, async (s) => {
+          if (!s.readResource) return undefined;
+          const listed = s.listResources
+            ? (await s.listResources().catch(() => [])).find((r) => r.uri === ref.uri)
+            : undefined;
+          const result: ToolResult = await s.readResource(ref.uri);
+          return { name: listed?.name ?? ref.uri, text: renderResult(result).text };
+        });
+        if (!got) throw new ApiError("app.not_found", "This app does not provide resources");
+        return { app, ref, got };
+      }),
+    );
     const blocks: { type: "text"; text: string }[] = [];
     const attachments: AttachmentMeta[] = [];
-    const timeoutMs = this.d.config().tools.timeoutMs;
-    for (const ref of refs) {
-      const app = await this.app(orgId, ref.appId);
-      const got = await this.withSession(orgId, app, accountId, timeoutMs, async (s) => {
-        if (!s.readResource) return undefined;
-        const listed = s.listResources
-          ? (await s.listResources().catch(() => [])).find((r) => r.uri === ref.uri)
-          : undefined;
-        const result: ToolResult = await s.readResource(ref.uri);
-        return { name: listed?.name ?? ref.uri, text: renderResult(result).text };
-      });
-      if (!got) throw new ApiError("app.not_found", "This app does not provide resources");
+    for (const { app, ref, got } of read) {
       let body = got.text;
       if (body.length > MAX_ATTACHMENT_CHARS) {
         body = `${body.slice(0, MAX_ATTACHMENT_CHARS)}\n[Attachment truncated: showing the first ${MAX_ATTACHMENT_CHARS} of ${got.text.length} characters.]`;
