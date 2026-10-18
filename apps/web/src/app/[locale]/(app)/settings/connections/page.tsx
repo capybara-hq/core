@@ -28,6 +28,7 @@ import {
   listApps,
   setMyCredential,
 } from "../../../../../lib/apps";
+import { useStartConnect } from "../../../../../lib/connect";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
@@ -87,11 +88,57 @@ function AppConnection({
   const errorMessage = useErrorMessage();
   const [values, setValues] = useState(EMPTY_CREDENTIAL);
   const [pending, setPending] = useState<"save" | "clear">();
+  const { start, starting } = useStartConnect(orgId);
   const auth = app.auth;
-  if (auth.type === "none") return null;
+  if (auth.type === "none" || auth.type === "oauth_client") return null;
+  const connected = app.credential.status === "connected";
+
+  if (auth.type === "oauth_code") {
+    // OAuth：没有可填的凭据，只有授权（连接 / 重新连接）与断开
+    async function disconnect() {
+      setPending("clear");
+      try {
+        await clearMyCredential(orgId, app.id);
+        toast.success(t("cleared", { app: app.name }));
+        onChanged();
+      } catch (e) {
+        toast.error(errorMessage(e));
+      } finally {
+        setPending(undefined);
+      }
+    }
+    return (
+      <FormSection id={`app-${app.id}`} title={app.name} description={t("oauthHint")}>
+        <StatusMark
+          status={connected ? "success" : "waiting"}
+          label={connected ? t("connected") : t("missing")}
+        />
+        <Stack direction="row" gap={8}>
+          <Button
+            variant="secondary"
+            loading={starting}
+            disabled={pending !== undefined}
+            onClick={() => void start(app.id)}
+          >
+            {connected ? t("reconnect") : t("oauthConnect")}
+          </Button>
+          {connected && (
+            <Button
+              variant="danger"
+              loading={pending === "clear"}
+              disabled={starting || pending !== undefined}
+              onClick={() => void disconnect()}
+            >
+              {t("disconnect")}
+            </Button>
+          )}
+        </Stack>
+      </FormSection>
+    );
+  }
+
   const names = auth.type === "headers" ? auth.names : [];
   const credential = buildCredential(auth.type, values, names);
-  const connected = app.credential.status === "connected";
 
   async function run(kind: "save" | "clear") {
     setPending(kind);

@@ -846,7 +846,7 @@ describe("ToolPipeline.runStep", () => {
     expect(resultsOf(evs)[0]).toMatchObject({
       isError: true,
       content:
-        "The user has not connected Private Docs. A connect card was shown; ask the user to connect it, then retry.",
+        "The user has not connected Private Docs. A connect card was shown; ask the user to connect, then retry.",
     });
     expect((await breaker.check(seed.orgId, priv)).open).toBe(false);
     expect(await redis.exists(`capk:breaker:${seed.orgId}:${priv}`)).toBe(0);

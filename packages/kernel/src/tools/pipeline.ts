@@ -63,7 +63,7 @@ const invalidFormText = (key: string, problems: string[]) =>
 const stateTooLargeText = (key: string) =>
   `Tool ${key} returned input state larger than ${MAX_INPUT_STATE_BYTES / 1024} KB.`;
 const personalMissingText = (appName: string) =>
-  `The user has not connected ${appName}. A connect card was shown; ask the user to connect it, then retry.`;
+  `The user has not connected ${appName}. A connect card was shown; ask the user to connect, then retry.`;
 const orgMissingText = (appName: string) =>
   `${appName} has no organization credential configured; ask an organization admin to set it up.`;
 

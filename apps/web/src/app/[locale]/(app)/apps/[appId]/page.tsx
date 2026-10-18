@@ -310,6 +310,15 @@ function CredentialsTab({
   }
   const auth = app.auth;
 
+  if (auth.type === "oauth_client") {
+    // 客户端凭据流：组织凭据由客户端密钥换取，不在界面手填
+    return (
+      <Card title={t("credential.orgTitle")} actions={status}>
+        <Text tone="muted">{t("credential.oauthOrgHint")}</Text>
+      </Card>
+    );
+  }
+
   if (auth.ownership === "personal") {
     return (
       <Card title={t("credential.personalTitle")} actions={status}>

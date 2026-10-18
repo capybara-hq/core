@@ -302,7 +302,20 @@
     "status": "未连接",
     "description": "agent 使用 {app} 前，需要先填写你的凭据。",
     "action": "连接",
-    "ended": "这次运行时 {app} 尚未连接。请在「我的连接」中填写凭据后再试。"
+    "ended": "这次运行时 {app} 尚未连接。请在「我的连接」中填写凭据后再试。",
+    "result": {
+      "connected": "应用已连接，请让智能体重试。",
+      "unknown": "无法连接该应用，请重试。",
+      "error": {
+        "state_invalid": "连接请求已过期，请重试。",
+        "session_mismatch": "必须在发起连接的同一浏览器中完成授权。",
+        "access_denied": "授权被拒绝，应用未连接。",
+        "provider_error": "应用的登录服务报告了问题，请重试。",
+        "token_exchange_failed": "无法完成应用登录，请重试。",
+        "issuer_mismatch": "登录响应并非来自预期的服务。",
+        "app_unavailable": "该应用当前无法连接。"
+      }
+    }
   },
   "inbox": {
     "title": "收件箱",
@@ -439,7 +452,8 @@
       "personalHint": "每位成员在「我的连接」中设置自己的凭据。",
       "openConnections": "打开我的连接",
       "save": "保存凭据",
-      "saved": "凭据已保存。"
+      "saved": "凭据已保存。",
+      "oauthOrgHint": "此应用通过 OAuth 客户端登录，组织令牌自动获取。"
     },
     "settings": {
       "title": "常规",
@@ -479,6 +493,10 @@
       "revoke": "撤销",
       "revokeLabel": "撤销 {agent} 的 {tool} 授权",
       "revoked": "已撤销 {tool} 的授权。"
-    }
+    },
+    "reconnect": "重新连接",
+    "oauthConnect": "连接",
+    "disconnect": "断开连接",
+    "oauthHint": "用你自己的账号登录此应用；其他成员各用各的。"
   }
 }

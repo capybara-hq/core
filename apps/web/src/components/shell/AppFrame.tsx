@@ -23,6 +23,7 @@ import {
 import { usePathname, useRouter } from "../../i18n/navigation";
 import { routing } from "../../i18n/routing";
 import { ApiClientError } from "../../lib/api";
+import { useConnectResultToast } from "../../lib/connect";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { activeNavOf, routeLabel, useNav, usePendingApprovals } from "./nav";
@@ -65,6 +66,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const [error, setError] = useState<string>();
   const [theme, setTheme] = useState<Theme>("dark");
   const timeZone = useTimeZoneLabel();
+  useConnectResultToast();
 
   useEffect(() => {
     setTheme(parseTheme(document.documentElement.dataset.theme));

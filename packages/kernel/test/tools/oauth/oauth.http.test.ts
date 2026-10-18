@@ -562,7 +562,7 @@ describe("刷新", () => {
     expect(r).toMatchObject({
       isError: true,
       content:
-        "The user has not connected Docs. A connect card was shown; ask the user to connect it, then retry.",
+        "The user has not connected Docs. A connect card was shown; ask the user to connect, then retry.",
     });
     const evs = await eventsOf(db, convId);
     expect(ofType(evs, "connection_required").map((e) => e.payload)).toMatchObject([

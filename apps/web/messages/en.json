@@ -302,7 +302,20 @@
     "status": "Not connected",
     "description": "{app} needs your credential before the agent can use it.",
     "action": "Connect",
-    "ended": "{app} was not connected when this ran. Set your credential in My connections, then ask again."
+    "ended": "{app} was not connected when this ran. Set your credential in My connections, then ask again.",
+    "result": {
+      "connected": "App connected. Ask the agent to try again.",
+      "unknown": "Could not connect the app. Please try again.",
+      "error": {
+        "state_invalid": "The connection request expired. Please try again.",
+        "session_mismatch": "The connection must be completed in the same browser that started it.",
+        "access_denied": "Access was denied, so the app was not connected.",
+        "provider_error": "The app's sign-in service reported a problem. Please try again.",
+        "token_exchange_failed": "Could not finish signing in to the app. Please try again.",
+        "issuer_mismatch": "The sign-in response did not come from the expected service.",
+        "app_unavailable": "This app is not available for connecting."
+      }
+    }
   },
   "inbox": {
     "title": "Inbox",
@@ -439,7 +452,8 @@
       "personalHint": "Each member sets their own credential in My connections.",
       "openConnections": "Open My connections",
       "save": "Save credential",
-      "saved": "Credential saved."
+      "saved": "Credential saved.",
+      "oauthOrgHint": "This app signs in with an OAuth client; the organization token is obtained automatically."
     },
     "settings": {
       "title": "General",
@@ -479,6 +493,10 @@
       "revoke": "Revoke",
       "revokeLabel": "Revoke {tool} for {agent}",
       "revoked": "Approval for {tool} revoked."
-    }
+    },
+    "reconnect": "Reconnect",
+    "oauthConnect": "Connect",
+    "disconnect": "Disconnect",
+    "oauthHint": "Sign in to this app with your own account; other members use theirs."
   }
 }

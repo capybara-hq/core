@@ -13,9 +13,13 @@ export type AppAuth =
   | { type: "bearer"; ownership: Ownership }
   | { type: "api_key"; ownership: Ownership; in: "header" | "query"; name: string }
   | { type: "basic"; ownership: Ownership }
-  | { type: "headers"; ownership: Ownership; names: string[] };
+  | { type: "headers"; ownership: Ownership; names: string[] }
+  // OAuth：授权码流为个人凭据（经「连接」授权，不填 token），客户端凭据流为组织凭据
+  | { type: "oauth_code"; ownership: "personal" }
+  | { type: "oauth_client"; ownership: "org" };
 
-export type AuthType = AppAuth["type"];
+/** 能在界面里手填凭据值的认证方式（不含 none 与 OAuth）。 */
+export type AuthType = Exclude<AppAuth["type"], "oauth_code" | "oauth_client">;
 
 /** 凭据值（形状按认证方式）。 */
 export type CredentialValue =
@@ -125,6 +129,13 @@ export const setMyCredential = (orgId: string, appId: string, value: CredentialV
   apiFetch<void>(`${one(orgId, appId)}/credentials/me`, {
     method: "PUT",
     body: JSON.stringify(value),
+  });
+
+/** 发起 OAuth 连接：返回授权服务器的授权地址（随后整页跳转过去）；`returnTo` 为授权结束后回到的站内路径。 */
+export const connectApp = (orgId: string, appId: string, returnTo: string) =>
+  apiFetch<{ authorizationUrl: string }>(`${one(orgId, appId)}/connect`, {
+    method: "POST",
+    body: JSON.stringify({ returnTo }),
   });
 
 export const clearMyCredential = (orgId: string, appId: string) =>

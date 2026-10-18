@@ -49,7 +49,8 @@ export function MessageList({
           if (item.kind === "question") {
             return <QuestionCard key={item.key} orgId={orgId} item={item} />;
           }
-          if (item.kind === "connect") return <ConnectCard key={item.key} item={item} />;
+          if (item.kind === "connect")
+            return <ConnectCard key={item.key} orgId={orgId} item={item} />;
           if (item.kind === "failed") {
             return (
               <div key={item.key} data-role="failed">

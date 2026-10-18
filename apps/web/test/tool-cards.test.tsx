@@ -477,10 +477,11 @@ describe("QuestionCard（通用 InputForm 渲染器）", () => {
 });
 
 describe("ConnectCard", () => {
-  it.each(LOCALES)("显示应用名，「连接」跳到个人连接页（%s）", async (locale) => {
+  it.each(LOCALES)("静态凭据应用：「连接」跳到个人连接页填 token（%s）", async (locale) => {
     const m = msgs[locale];
     renderPage(
       <ConnectCard
+        orgId="o1"
         item={{
           kind: "connect",
           key: "e7",
@@ -492,17 +493,26 @@ describe("ConnectCard", () => {
       />,
       { locale },
     );
+    stubApi({
+      "GET /api/v1/orgs/o1/apps/app2": () =>
+        json(200, {
+          app: { id: "app2", auth: { type: "bearer", ownership: "personal" } },
+        }),
+    });
     expect(screen.getByText(m.connect.description.replace("{app}", "GitHub"))).toBeTruthy();
     const connect = screen.getByRole("button", { name: m.connect.action });
     expect(connect.getAttribute("data-variant")).not.toBe("primary");
     await userEvent.setup().click(connect);
-    expect(router.push).toHaveBeenCalledWith("/settings/connections#app-app2");
+    await vi.waitFor(() =>
+      expect(router.push).toHaveBeenCalledWith("/settings/connections#app-app2"),
+    );
   });
 
   it.each(LOCALES)("所在运行已结束：只显示说明，没有「连接」与待处理状态（%s）", (locale) => {
     const m = msgs[locale];
     renderPage(
       <ConnectCard
+        orgId="o1"
         item={{
           kind: "connect",
           key: "e7",
