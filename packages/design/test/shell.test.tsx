@@ -410,6 +410,13 @@ describe("Body 折叠与关闭、数值 0", () => {
     expect(screen.getByText("0")).toBeTruthy();
   });
 
+  it("StatusBar context 为空时不渲染 `>` 上下文（会话加载前）", () => {
+    zh(<StatusBar context="" version="v1" />);
+    expect(document.querySelector(".cb-statusbar-ctx")).toBeNull();
+    expect(screen.queryByText(/^>/)).toBeNull();
+    expect(screen.getByText("v1")).toBeTruthy();
+  });
+
   it("StatusBar pageStatus=0 渲染 0", () => {
     zh(<StatusBar context="a" version="v1" pageStatus={0} />);
     expect(screen.getByText("0")).toBeTruthy();

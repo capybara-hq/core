@@ -134,6 +134,32 @@ function usesDesignTemplate(p: ParsedFile): boolean {
   return found;
 }
 
+/**
+ * 只负责 404 的 page（如 `[...rest]/page.tsx`）：不含任何 JSX，且调用了从 `next/navigation`
+ * 导入的 `notFound()`。这类页面不渲染骨架（由同段的 not-found.tsx 渲染模板），豁免模板规则。
+ */
+function isNotFoundOnlyPage(p: ParsedFile): boolean {
+  const locals = new Set<string>();
+  let hasJsx = false;
+  walk(p.program, (n) => {
+    if (n.type === "JSXElement" || n.type === "JSXFragment") hasJsx = true;
+    if (n.type !== "ImportDeclaration" || (n.source as Node).value !== "next/navigation") return;
+    for (const sp of n.specifiers as Node[]) {
+      if (sp.type !== "ImportSpecifier") continue;
+      const im = sp.imported as Node;
+      if ((im.name ?? im.value) === "notFound") locals.add((sp.local as Node).name as string);
+    }
+  });
+  if (hasJsx || locals.size === 0) return false;
+  let calls = false;
+  walk(p.program, (n) => {
+    if (n.type !== "CallExpression") return;
+    const callee = n.callee as Node;
+    if (callee.type === "Identifier" && locals.has(callee.name as string)) calls = true;
+  });
+  return calls;
+}
+
 function propKey(prop: Node): string | undefined {
   if (prop.type !== "Property") return undefined;
   const k = prop.key as Node;
@@ -223,7 +249,7 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
   const segs = relative(webSrcDir, file).split(sep);
   const exempt = TEMPLATE_EXEMPT_PREFIX.every((s, i) => segs[i] === s);
   if (segs[0] === "app" && /^page\.[jt]sx?$/.test(segs.at(-1) ?? "") && !exempt) {
-    if (!usesDesignTemplate(p)) {
+    if (!usesDesignTemplate(p) && !isNotFoundOnlyPage(p)) {
       out.push({
         file,
         line: 1,

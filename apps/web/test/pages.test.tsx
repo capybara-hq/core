@@ -2,9 +2,11 @@ import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import CatchAllPage from "../src/app/[locale]/(app)/[...rest]/page";
 import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
 import AgentsPage from "../src/app/[locale]/(app)/agents/page";
 import NotFound from "../src/app/[locale]/(app)/not-found";
@@ -12,10 +14,17 @@ import HomePage from "../src/app/[locale]/(app)/page";
 import LoginPage from "../src/app/[locale]/(auth)/login/page";
 import SetupPage from "../src/app/[locale]/(auth)/setup/page";
 import { AppFrame } from "../src/components/shell/AppFrame";
+import { RequireSession } from "../src/components/shell/session";
 import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+const notFound = vi.hoisted(() =>
+  vi.fn(() => {
+    throw new Error("NEXT_NOT_FOUND");
+  }),
+);
+vi.mock("next/navigation", () => ({ notFound }));
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -58,6 +67,15 @@ describe("(app) 页面模板", () => {
     expect(screen.getByRole("link", { name: zh.home.openAgents }).getAttribute("href")).toBe(
       "/agents",
     );
+  });
+
+  it("概览页：选回「选择组织」清除当前组织（switchOrg(null)）", async () => {
+    const switchOrg = vi.fn(async () => {});
+    renderPage(<HomePage />, { session: { switchOrg } });
+    const select = screen.getByRole("combobox", { name: en.home.currentOrg });
+    expect(within(select).getByRole("option", { name: en.home.selectOrg })).toBeTruthy();
+    await userEvent.selectOptions(select, "");
+    expect(switchOrg).toHaveBeenCalledWith(null);
   });
 
   it("概览页：切换当前组织调用 switchOrg", async () => {
@@ -120,7 +138,11 @@ describe("(app) 页面模板", () => {
     stubApi({ "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }) });
     renderPage(<AgentsPage />);
     expect(await screen.findByText(en.agents.empty)).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: en.agents.new }));
+    const emptyCreate = screen.getByRole("button", { name: en.agents.new });
+    // 一个视图只有一个主操作（spec §6.1）：页头的「新建 Agent」是主操作，空状态里的用 default
+    expect(emptyCreate.getAttribute("data-variant")).toBe("default");
+    expect(screen.getByRole("link", { name: en.agents.new })).toBeTruthy();
+    await userEvent.click(emptyCreate);
     expect(router.push).toHaveBeenCalledWith("/agents/new");
   });
 
@@ -128,6 +150,11 @@ describe("(app) 页面模板", () => {
     renderPage(<NewAgentPage />, { me: { ...ME, currentOrgId: null } });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("disabled");
     expect(screen.getByRole("heading", { level: 2, name: en.agents.noOrg })).toBeTruthy();
+  });
+
+  it("(app)/[...rest] 未匹配的路径调用 notFound()（由 (app)/not-found 渲染 404）", () => {
+    expect(() => renderToString(<CatchAllPage />)).toThrow("NEXT_NOT_FOUND");
+    expect(notFound).toHaveBeenCalled();
   });
 
   it("not-found：StatusPage 404", () => {
@@ -143,6 +170,16 @@ describe("(auth) 页面模板", () => {
     renderPage(<LoginPage />, { locale: "zh" });
     expect(template("AuthPage")).not.toBeNull();
     expect(screen.getByRole("heading", { level: 1, name: zh.login.title })).toBeTruthy();
+    // 认证页也能切换语言：两种语言各一个链接，指向当前路径
+    for (const name of [zh.common.localeName.zh, zh.common.localeName.en]) {
+      expect(screen.getByRole("link", { name }).getAttribute("href")).toBe("/");
+    }
+    expect(
+      screen.getByRole("link", { name: zh.common.localeName.zh }).getAttribute("aria-current"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("navigation", { name: zh.common.language }).getAttribute("aria-label"),
+    ).toBe(zh.common.language);
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/setup"));
   });
 
@@ -150,6 +187,7 @@ describe("(auth) 页面模板", () => {
     stubApi({ "GET /api/v1/setup": () => json(200, { needsSetup: false }) });
     renderPage(<SetupPage />, { locale: "zh" });
     expect(template("AuthPage")).not.toBeNull();
+    expect(screen.getByRole("link", { name: zh.common.localeName.en })).toBeTruthy();
     expect(await screen.findByText(zh.setup.alreadyDone)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: zh.setup.goToLogin }));
     expect(router.push).toHaveBeenCalledWith("/login");
@@ -185,7 +223,9 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
         <DesignProvider locale={locale} link={Link as LinkComponent}>
           <ToastProvider>
             <AppFrame version="v9.9.9">
-              <p>page body</p>
+              <RequireSession>
+                <p>page body</p>
+              </RequireSession>
             </AppFrame>
           </ToastProvider>
         </DesignProvider>
@@ -242,6 +282,51 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     await user.click(screen.getByRole("button", { name: "账户" }));
     await user.click(await screen.findByRole("menuitem", { name: zh.common.logout }));
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
+  });
+
+  it("会话加载中：内容区显示加载中，状态栏不显示 `>` 上下文", () => {
+    stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
+    renderFrame();
+    expect(screen.getAllByText(zh.common.loading).length).toBeGreaterThan(0);
+    expect(within(screen.getByRole("main")).getByText(zh.common.loading)).toBeTruthy();
+    const statusBar = screen.getByRole("contentinfo");
+    expect(statusBar.textContent).not.toContain(">");
+    expect(statusBar.textContent).toContain("v9.9.9");
+  });
+
+  it("服务端渲染不含时区（避免与浏览器时区不同导致的水合不一致）", () => {
+    stubApi({ "GET /api/v1/me": () => json(200, ME) });
+    const html = renderToString(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <DesignProvider locale="zh" link={Link as LinkComponent}>
+          <ToastProvider>
+            <AppFrame version="v9.9.9">
+              <RequireSession>
+                <p>page body</p>
+              </RequireSession>
+            </AppFrame>
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
+    expect(html).toContain("v9.9.9");
+    expect(html).not.toContain("UTC");
+  });
+
+  it("不需要会话的内容（404）在服务端渲染时即输出，无需等待 /me", () => {
+    const html = renderToString(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <DesignProvider locale="zh" link={Link as LinkComponent}>
+          <ToastProvider>
+            <AppFrame version="v9.9.9">
+              <NotFound />
+            </AppFrame>
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
+    expect(html).toContain('data-template="StatusPage"');
+    expect(html).toContain('data-kind="404"');
   });
 
   it("未登录（401）时跳转到登录页", async () => {

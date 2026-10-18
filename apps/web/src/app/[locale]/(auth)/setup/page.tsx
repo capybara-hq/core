@@ -4,6 +4,7 @@ import { AuthPage, Button, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { FormError } from "../../../../components/form-error";
+import { LocaleLinks } from "../../../../components/locale-links";
 import { SetupForm } from "../../../../components/setup-form";
 import { useRouter } from "../../../../i18n/navigation";
 import { getSetupStatus } from "../../../../lib/session";
@@ -42,7 +43,7 @@ export default function SetupPage() {
   } else body = <SetupForm onSuccess={() => router.replace("/")} />;
 
   return (
-    <AuthPage title={t("setup.title")} subtitle={t("setup.intro")}>
+    <AuthPage title={t("setup.title")} subtitle={t("setup.intro")} footer={<LocaleLinks />}>
       {body}
     </AuthPage>
   );

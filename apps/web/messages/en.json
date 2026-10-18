@@ -13,7 +13,8 @@
     },
     "cancel": "Cancel",
     "retry": "Retry",
-    "loadFailed": "Failed to load"
+    "loadFailed": "Failed to load",
+    "language": "Language"
   },
   "login": {
     "title": "Sign in",

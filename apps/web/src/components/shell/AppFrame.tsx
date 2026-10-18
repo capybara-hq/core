@@ -12,7 +12,14 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { usePathname, useRouter } from "../../i18n/navigation";
 import { routing } from "../../i18n/routing";
 import { ApiClientError } from "../../lib/api";
@@ -28,6 +35,16 @@ function timeZoneLabel(): string {
   const h = Math.floor(Math.abs(offset) / 60);
   const m = Math.abs(offset) % 60;
   return `UTC${sign}${h}${m === 0 ? "" : `:${String(m).padStart(2, "0")}`}`;
+}
+
+const noSubscribe = () => () => {};
+
+/**
+ * 浏览器时区：服务端与水合时的首次渲染为空串（服务器时区与用户的不同，避免水合不一致），
+ * 水合后取浏览器的值。
+ */
+function useTimeZoneLabel(): string {
+  return useSyncExternalStore(noSubscribe, timeZoneLabel, () => "");
 }
 
 /**
@@ -46,6 +63,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const [me, setMe] = useState<Me>();
   const [error, setError] = useState<string>();
   const [theme, setTheme] = useState<Theme>("dark");
+  const timeZone = useTimeZoneLabel();
 
   useEffect(() => {
     setTheme(parseTheme(document.documentElement.dataset.theme));
@@ -66,7 +84,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   }, [load]);
 
   const switchOrg = useCallback(
-    async (orgId: string) => {
+    async (orgId: string | null) => {
       try {
         await setCurrentOrg(orgId);
         await load();
@@ -135,15 +153,14 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const who =
     me === undefined ? "" : `${me.account.displayName}${currentOrg ? `@${currentOrg.name}` : ""}`;
   const status = {
-    context: `${who}:${routeLabel(pathname)}`,
-    version: `${version} · ${timeZoneLabel()}`,
+    // 会话加载前不显示上下文路径（避免出现 `> :~`）
+    context: me === undefined ? "" : `${who}:${routeLabel(pathname)}`,
+    version: timeZone === "" ? version : `${version} · ${timeZone}`,
   };
 
-  let body: ReactNode = null;
-  if (session !== undefined) {
-    body = <SessionContext.Provider value={session}>{children}</SessionContext.Provider>;
-  } else if (error !== undefined) {
-    body = (
+  // 会话由页面内的 RequireSession 等待；不需要会话的内容（如 404）在服务端即可渲染。
+  const body: ReactNode =
+    error !== undefined && session === undefined ? (
       <StatusPage
         header={{ title: t("common.loadFailed") }}
         kind="maintenance"
@@ -155,8 +172,9 @@ export function AppFrame({ version, children }: { version: string; children: Rea
           </Button>
         }
       />
+    ) : (
+      <SessionContext.Provider value={session ?? null}>{children}</SessionContext.Provider>
     );
-  }
 
   return (
     <AppShell topBar={topBar} status={status}>

@@ -58,7 +58,10 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
       composer={
         <Stack gap={8}>
           {chat.error !== undefined && <FormError message={chat.error} />}
-          <Composer onSend={chat.send} />
+          <Composer
+            onSend={chat.send}
+            stop={chat.running ? { onStop: chat.stop, stopping: chat.stopping } : undefined}
+          />
         </Stack>
       }
     >

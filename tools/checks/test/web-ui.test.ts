@@ -84,4 +84,10 @@ describe("checkWebUi", () => {
   it("require 的 .css -> web-ui-import", () => one("require-css", "web-ui-import", 3));
   it("大写十六进制 -> web-ui-color", () => one("uppercase-hex", "web-ui-color", 3));
   it("模板字面量里的颜色函数 -> web-ui-color", () => one("template-color", "web-ui-color", 3));
+  it("只调用 next/navigation 的 notFound()、不含 JSX 的 page 豁免模板规则", () =>
+    expect(run("not-found-only")).toEqual([]));
+  it("调用 notFound() 但含 JSX 且无模板 -> web-ui-template", () =>
+    one("not-found-with-jsx", "web-ui-template"));
+  it("本地定义的 notFound 不算豁免 -> web-ui-template", () =>
+    one("not-found-local", "web-ui-template"));
 });

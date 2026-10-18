@@ -23,8 +23,11 @@ function newClientMessageId(): string {
  */
 export function Composer({
   onSend,
+  stop,
 }: {
   onSend: (text: string, clientMessageId: string) => Promise<boolean>;
+  /** 运行中时传入：输入框旁显示「停止」（任何宽度一次点击即可停止）。 */
+  stop?: { onStop(): void; stopping: boolean } | undefined;
 }) {
   const t = useTranslations("chat");
   const [text, setText] = useState("");
@@ -72,6 +75,11 @@ export function Composer({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
         />
+        {stop && (
+          <Button onClick={stop.onStop} disabled={stop.stopping}>
+            {t("stop")}
+          </Button>
+        )}
         <Button type="submit" variant="primary" disabled={pending || text.trim() === ""}>
           {t("send")}
         </Button>

@@ -3,6 +3,7 @@
 import { AuthPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useEffect } from "react";
+import { LocaleLinks } from "../../../../components/locale-links";
 import { LoginForm } from "../../../../components/login-form";
 import { useRouter } from "../../../../i18n/navigation";
 import { getSetupStatus } from "../../../../lib/session";
@@ -22,7 +23,7 @@ export default function LoginPage() {
   }, [router]);
 
   return (
-    <AuthPage title={t("title")} subtitle={t("subtitle")}>
+    <AuthPage title={t("title")} subtitle={t("subtitle")} footer={<LocaleLinks />}>
       <LoginForm onSuccess={() => router.replace("/")} />
     </AuthPage>
   );

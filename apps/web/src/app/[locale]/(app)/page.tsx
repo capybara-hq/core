@@ -11,13 +11,21 @@ import {
   Text,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useSession } from "../../../components/shell/session";
+import { RequireSession, useSession } from "../../../components/shell/session";
 
 /**
  * `/[locale]`：概览——问候、当前组织（可切换）与进入 Agents 的入口；
  * 不属于任何组织时显示 StatusPage（未开通）。未登录由 (app) 布局跳转登录页。
  */
 export default function HomePage() {
+  return (
+    <RequireSession>
+      <Home />
+    </RequireSession>
+  );
+}
+
+function Home() {
   const t = useTranslations("home");
   const { me, switchOrg } = useSession();
 
@@ -34,7 +42,8 @@ export default function HomePage() {
 
   const current = me.memberships.find((m) => m.orgId === me.currentOrgId);
   const options = [
-    ...(current === undefined ? [{ value: "", label: t("selectOrg") }] : []),
+    // 首项「选择组织」：选回它即清除当前组织（与旧版行为一致）
+    { value: "", label: t("selectOrg") },
     ...me.memberships.map((m) => ({ value: m.orgId, label: m.name })),
   ];
   return (
@@ -53,9 +62,7 @@ export default function HomePage() {
             <Select
               options={options}
               value={me.currentOrgId ?? ""}
-              onChange={(e) => {
-                if (e.target.value !== "") void switchOrg(e.target.value);
-              }}
+              onChange={(e) => void switchOrg(e.target.value === "" ? null : e.target.value)}
             />
           </Field>
           {current === undefined ? (

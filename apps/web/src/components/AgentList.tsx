@@ -91,11 +91,7 @@ export function AgentTable({
       empty={{
         title: t("empty"),
         hint: t("emptyHint"),
-        action: (
-          <Button variant="primary" onClick={() => router.push("/agents/new")}>
-            {t("new")}
-          </Button>
-        ),
+        action: <Button onClick={() => router.push("/agents/new")}>{t("new")}</Button>,
       }}
       rowMenu={(a) => [
         {

@@ -13,7 +13,8 @@
     },
     "cancel": "取消",
     "retry": "重试",
-    "loadFailed": "加载失败"
+    "loadFailed": "加载失败",
+    "language": "语言"
   },
   "login": {
     "title": "登录",

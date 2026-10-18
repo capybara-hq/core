@@ -112,6 +112,9 @@ describe("对话页（PlaygroundPage）", () => {
     expect(within(inspector).getByText("c1")).toBeTruthy();
     expect(await within(inspector).findByText(`● ${en.chat.running}`)).toBeTruthy();
     expect(within(inspector).getByRole("button", { name: en.chat.stop })).toBeTruthy();
+    // 输入框旁也有「停止」：任何宽度下一次点击即可停止（inspector 在窄屏收进 Sheet）
+    const composer = screen.getByLabelText(en.chat.inputLabel).closest("form") as HTMLElement;
+    expect(within(composer).getByRole("button", { name: en.chat.stop })).toBeTruthy();
     expect(screen.getByText("hi").closest("[data-role]")?.getAttribute("data-role")).toBe("user");
   });
 
@@ -124,12 +127,12 @@ describe("对话页（PlaygroundPage）", () => {
         [`POST ${BASE}/abort`]: () => json(202, { runId: "r1" }),
       });
       renderChat(locale);
-      const stop = await screen.findByRole("button", { name: m.chat.stop });
+      const [stop] = await screen.findAllByRole("button", { name: m.chat.stop });
       // 历史加载完后从最后一条 seq 开始订阅
       expect(FakeEventSource.instances[0]?.url).toBe(`${BASE}/stream?after=2`);
       expect(screen.getByLabelText(m.chat.inputLabel)).toHaveProperty("disabled", false);
 
-      await userEvent.setup().click(stop);
+      await userEvent.setup().click(stop as HTMLElement);
       const abort = calls.find((c) => c.method === "POST" && c.url === `${BASE}/abort`);
       expect(abort?.headers.get("x-capybara-csrf")).toBe("1");
 
@@ -140,7 +143,7 @@ describe("对话页（PlaygroundPage）", () => {
           ev(3, "run_aborted", { byAccountId: "a1", reason: "user" }),
         );
       });
-      expect(screen.queryByRole("button", { name: m.chat.stop })).toBeNull();
+      expect(screen.queryAllByRole("button", { name: m.chat.stop })).toHaveLength(0);
     },
   );
 
@@ -167,7 +170,7 @@ describe("对话页（PlaygroundPage）", () => {
       const message = (await screen.findByText("partial answer")).closest("[data-role]");
       expect(message).not.toBeNull();
       expect(within(message as HTMLElement).getByText(`⊘ ${m.chat.stopped}`)).toBeTruthy();
-      expect(screen.queryByRole("button", { name: m.chat.stop })).toBeNull();
+      expect(screen.queryAllByRole("button", { name: m.chat.stop })).toHaveLength(0);
     },
   );
 
@@ -176,7 +179,7 @@ describe("对话页（PlaygroundPage）", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
     });
     renderChat("en");
-    await screen.findByRole("button", { name: en.chat.stop });
+    await screen.findAllByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
     act(() => {
       es.emit("delta", { runId: "r1", step: 0, delta: "text", text: "hel" });
@@ -206,7 +209,7 @@ describe("对话页（PlaygroundPage）", () => {
       },
     });
     renderChat("en");
-    await screen.findByRole("button", { name: en.chat.stop });
+    await screen.findAllByRole("button", { name: en.chat.stop });
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(en.chat.inputLabel), "echo:interject");
     await user.click(screen.getByRole("button", { name: en.chat.send }));
@@ -294,7 +297,7 @@ describe("对话页（PlaygroundPage）", () => {
       [`POST ${BASE}/messages`]: () => json(202, { event: userMsg(9, "later") }),
     });
     renderChat("en");
-    await screen.findByRole("button", { name: en.chat.stop });
+    await screen.findAllByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
     act(() => es.emit("event", ev(3, "model_call", { step: 0, provider: "p", model: "m" })));
     const user = userEvent.setup();

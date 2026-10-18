@@ -39,6 +39,8 @@ test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后�
   // 1. 初始化向导（同时建组织）→ 选当前组织 → 新建 agent（model-fake / fake-1）
   await page.goto("/zh");
   await expect(page).toHaveURL(/\/zh\/setup$/);
+  // 认证页也能切换语言
+  await expect(page.getByRole("link", { name: zh.common.localeName.en })).toBeVisible();
   await page.getByLabel(zh.setup.loginLabel).fill("admin");
   await page.getByLabel(zh.setup.passwordLabel).fill("correct-horse-battery");
   await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");
@@ -78,7 +80,12 @@ test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后�
   await expect(draft).toHaveText(/.{8,}/);
   const early = (await draft.textContent()) ?? "";
   await expect(draft).not.toHaveText(early); // 继续增长：逐步出现
-  await page.getByRole("button", { name: zh.chat.stop }).click();
+  // 运行中输入框旁与 inspector 各有一个「停止」：点输入框旁的
+  await page
+    .locator("form")
+    .filter({ has: page.getByLabel(zh.chat.inputLabel) })
+    .getByRole("button", { name: zh.chat.stop })
+    .click();
   const stopped = page.locator('[data-role="assistant"][data-stop-reason="aborted"]');
   await expect(stopped).toHaveCount(1);
   await expect(stopped.getByText(zh.chat.stopped)).toBeVisible();
@@ -148,4 +155,11 @@ test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后�
   await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
   await send(page, "echo:quiet please");
   await expect(assistants(page).last().locator(BODY)).toHaveText("QUIET PLEASE");
+
+  // 7. 未匹配的路径：HTTP 404，App Shell 内的 StatusPage 404
+  const missing = await page.goto("/zh/nope");
+  expect(missing?.status()).toBe(404);
+  await expect(page.locator('[data-template="StatusPage"][data-kind="404"]')).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
+  await expect(page.getByText(zh.notFound.title).first()).toBeVisible();
 });
