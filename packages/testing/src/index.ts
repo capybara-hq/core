@@ -10,6 +10,7 @@ export {
 } from "./dual-replica.js";
 export {
   type FakeMcpCallInfo,
+  type FakeMcpHandlerContext,
   type FakeMcpRequest,
   type FakeMcpResource,
   FakeMcpRpcError,

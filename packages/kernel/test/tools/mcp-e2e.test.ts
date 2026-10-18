@@ -281,11 +281,15 @@ describe("connector-mcp 端到端", () => {
       });
       expect(r2.statusCode, r2.body).toBe(200);
       const after = r2.json() as {
-        app: { tools: { name: string }[] };
+        app: { tools: { name: string; status: string; missing: boolean }[] };
         changes: { removed: string[] };
       };
       expect(after.changes.removed).toEqual(["read_resource"]);
-      expect(after.app.tools.map((t) => t.name)).toEqual(["list_resources"]);
+      // 消失的工具停用并标记（漂移检测，Task 17），不删除
+      expect(after.app.tools.map((t) => [t.name, t.status, t.missing])).toEqual([
+        ["list_resources", "enabled", false],
+        ["read_resource", "disabled", true],
+      ]);
     } finally {
       await srv.stop();
     }
@@ -321,14 +325,29 @@ describe("connector-mcp 端到端", () => {
         url: `/api/v1/orgs/${orgId}/apps/${app.id}/refresh`,
       });
       expect(r2.statusCode, r2.body).toBe(200);
-      const after = r2.json() as { app: { tools: Tool[] }; changes: { changed: string[] } };
+      type Pending = Tool & { status: string; pending: { source: string } | null };
+      const after = r2.json() as { app: { tools: Pending[] }; changes: { changed: string[] } };
       expect(after.changes.changed).toEqual(["list_resources"]);
+      // 换了来源也是定义变化：待复核（Task 17），复核通过后才采用连接器的工具
       expect(after.app.tools.find((t) => t.name === "list_resources")).toMatchObject({
+        source: "resources",
+        status: "pending_review",
+        pending: { source: "connector" },
+      });
+      const approved = await call({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/apps/${app.id}/tools/list_resources/review`,
+        payload: { action: "approve" },
+      });
+      expect(approved.statusCode, approved.body).toBe(200);
+      const reviewed = (approved.json() as { app: { tools: Pending[] } }).app;
+      expect(reviewed.tools.find((t) => t.name === "list_resources")).toMatchObject({
         source: "connector",
+        status: "enabled",
         defaultPolicy: "ask",
       });
       // 未换来源的 read_resource 不受影响
-      expect(after.app.tools.find((t) => t.name === "read_resource")).toMatchObject({
+      expect(reviewed.tools.find((t) => t.name === "read_resource")).toMatchObject({
         source: "resources",
         defaultPolicy: "allow",
       });
@@ -498,15 +517,17 @@ describe("connector-mcp 端到端", () => {
       (opts.tools[0] as { description: string }).description = "Look up v2";
       const r2 = await call({ method: "POST", url: `/api/v1/orgs/${orgId}/apps/${appId}/refresh` });
       expect(r2.statusCode, r2.body).toBe(200);
-      const after = (r2.json() as { app: { tools: { name: string; specHash: string }[] } }).app;
-      const newHash = after.tools.find((t) => t.name === "lookup")?.specHash as string;
+      type T = { name: string; specHash: string; pending: { specHash: string } | null };
+      const after = (r2.json() as { app: { tools: T[] } }).app;
+      // 变化的定义待复核（Task 17）：新定义的指纹在 pending 里
+      const newHash = after.tools.find((t) => t.name === "lookup")?.pending?.specHash as string;
       expect(newHash).not.toBe(oldHash);
 
       expect(await loadToolSpec(db, oldHash)).toMatchObject({
         name: "lookup",
         description: "Look up v1",
       });
-      // 安装 / 刷新时也写入：新定义在任何模型请求之前就可按指纹取回
+      // 安装 / 刷新（含待复核的新定义）时也写入：新定义在任何模型请求之前就可按指纹取回
       expect(await loadToolSpec(db, newHash)).toMatchObject({ description: "Look up v2" });
     } finally {
       await srv.stop();

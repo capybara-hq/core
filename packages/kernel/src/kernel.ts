@@ -40,6 +40,7 @@ import { Breaker } from "./tools/breaker.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
 import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
 import { Credentials } from "./tools/credentials.js";
+import { ToolDrift } from "./tools/drift.js";
 import { ToolOutputs } from "./tools/outputs.js";
 import { ToolPipeline } from "./tools/pipeline.js";
 import { QuestionsService } from "./tools/questions.service.js";
@@ -105,6 +106,8 @@ export interface KernelTools {
   readonly approvals: ApprovalsService;
   /** 工具调用的输入请求（回答后续跑）。 */
   readonly questions: QuestionsService;
+  /** 工具定义漂移检测（周期扫描、list_changed、手动刷新）。 */
+  readonly drift: ToolDrift;
 }
 
 /** 运行中的内核实例。 */
@@ -280,6 +283,16 @@ export async function createKernel(
       await waits.resume(q.runId, q.id);
     },
   });
+  const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
+  // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
+  const toolDrift = new ToolDrift({
+    db: kdb,
+    registry: toolRegistry,
+    credentials,
+    config: () => current,
+    log,
+    maintenance,
+  });
   const toolPipeline = new ToolPipeline({
     db: kdb,
     eventLog,
@@ -291,6 +304,9 @@ export async function createKernel(
     questions,
     config: () => current,
     log,
+    onToolsChanged: (orgId, appId) => {
+      void toolDrift.onToolsChanged(orgId, appId);
+    },
   });
   const tools: KernelTools = {
     registry: toolRegistry,
@@ -299,13 +315,13 @@ export async function createKernel(
     pipeline: toolPipeline,
     approvals,
     questions,
+    drift: toolDrift,
   };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
   const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
-  const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
   const waits: Waits = new Waits({
     db: kdb,
     eventLog,
@@ -397,6 +413,7 @@ export async function createKernel(
         toolRegistry,
         approvals,
         questions,
+        drift: toolDrift,
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
           abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),

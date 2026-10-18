@@ -6,8 +6,8 @@ import type { KernelDb } from "../db/kernel-schema.js";
 import { bullConnection } from "./run-queue.js";
 
 /**
- * 内核维护队列（不含 `:`）：等待超时任务（`wait-timeout`，见 waits.ts）与周期性维护（输出存档清理；
- * 后续的审批超时兜底扫描、漂移检测也放这里）。整个队列只有一个 Worker（只在 `worker` 角色上启动），
+ * 内核维护队列（不含 `:`）：等待超时任务（`wait-timeout`，见 waits.ts）与周期性维护（输出存档清理、
+ * 工具漂移检测（见 tools/drift.ts）；后续的审批超时兜底扫描也放这里）。整个队列只有一个 Worker（只在 `worker` 角色上启动），
  * 按任务名分派给登记的处理函数。
  * 与运行队列分开：运行 worker 的处理函数、stalled / 失败处理都按「一个任务 = 一次运行」设计；
  * 维护任务短、无会话锁与配额。
@@ -22,6 +22,13 @@ export const OUTPUT_CLEANUP_BATCH = 1000;
 
 /** 维护任务的处理函数（`token` 供 `moveToDelayed` 等使用）。 */
 export type MaintenanceHandler = (job: Job, token: string | undefined) => Promise<void>;
+
+/** 由其他模块登记的周期任务（如漂移检测）：scheduler id 与任务名不含 `:`，周期在登记时读取。 */
+export interface MaintenanceSchedule {
+  id: string;
+  name: string;
+  everyMs: () => number;
+}
 
 /**
  * 删除已过期（`expires_at < now()`）的输出存档，每批 `batch` 行，直到删完；返回删除的总行数。
@@ -70,6 +77,7 @@ export class Maintenance {
   private workerConn: Redis | undefined;
   private closed = false;
   private readonly handlers = new Map<string, MaintenanceHandler>();
+  private readonly schedules: MaintenanceSchedule[] = [];
 
   constructor(private readonly d: MaintenanceDeps) {
     this.handle(OUTPUT_CLEANUP_JOB, async () => {
@@ -81,6 +89,11 @@ export class Maintenance {
   /** 登记某个任务名的处理函数（构造期调用；Worker 启动前后都可）。 */
   handle(name: string, fn: MaintenanceHandler): void {
     this.handlers.set(name, fn);
+  }
+
+  /** 登记一个周期任务（构造期调用；`ensureSchedules` 时一并 upsert）。 */
+  schedule(s: MaintenanceSchedule): void {
+    this.schedules.push(s);
   }
 
   /** 投递一个维护任务。 */
@@ -99,6 +112,13 @@ export class Maintenance {
         opts: { removeOnComplete: true, removeOnFail: 100 },
       },
     );
+    for (const s of this.schedules) {
+      await this.getQueue().upsertJobScheduler(
+        s.id,
+        { every: s.everyMs() },
+        { name: s.name, data: {}, opts: { removeOnComplete: true, removeOnFail: 100 } },
+      );
+    }
   }
 
   /** 启动维护队列的 Worker（只在含 `worker` 角色的进程）。 */

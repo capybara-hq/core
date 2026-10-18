@@ -1,6 +1,6 @@
 import type { AuthInjection } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
-import type { Transaction } from "kysely";
+import { sql, type Transaction } from "kysely";
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
@@ -295,6 +295,23 @@ export class Credentials {
       .where("org_id", "=", orgId)
       .where("key", "like", `${prefix}%`)
       .execute();
+  }
+
+  /**
+   * 持有该应用个人凭据的**现任成员**（不解密），按凭据最近写入时间倒序（保存静态凭据、OAuth 连接与刷新 token
+   * 都会更新写入时间），最多 `limit` 个。漂移检查用它挑个人凭据型应用的凭据。
+   */
+  async personalHolders(orgId: string, appId: string, limit: number): Promise<string[]> {
+    const prefix = userKey(appId, "x").slice(0, -1);
+    const rows = await sql<{ account_id: string }>`
+      SELECT m.account_id FROM capybara.secrets s
+      JOIN capybara.memberships m
+        ON m.org_id = s.org_id AND m.account_id = substr(s.key, ${prefix.length + 1})
+      WHERE s.namespace = ${NAMESPACE} AND s.org_id = ${orgId}
+        AND left(s.key, ${prefix.length}) = ${prefix}
+      ORDER BY s.updated_at DESC, m.account_id
+      LIMIT ${limit}`.execute(this.db);
+    return rows.rows.map((r) => r.account_id);
   }
 
   /** 只看与 auth.ownership 对应的那一条凭据是否存在（不解密）；none 恒为 connected。 */

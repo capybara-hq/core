@@ -319,7 +319,8 @@ export class ToolRegistry {
               );
         for (const t of wanted) {
           const key = toolKey(app.slug, t.name);
-          if ("missing" in t) {
+          // 远端已不再提供（漂移检测置停用并标记，见 drift.ts）：与「没有这一行」同一个事实
+          if ("missing" in t || t.gone) {
             unavailable.push({ ref: key, reason: `Tool no longer exists in app ${app.slug}` });
             continue;
           }
@@ -383,6 +384,8 @@ export class ToolRegistry {
           status: "enabled" | "disabled" | "pending_review";
           defaultPolicy: ToolPolicy;
           source: "connector" | "resources";
+          /** 远端已不再提供（`missing_since` 非空）。 */
+          gone: boolean;
         }[];
       }
     >
@@ -402,7 +405,16 @@ export class ToolRegistry {
         ? []
         : await this.deps.db
             .selectFrom("app_tools")
-            .select(["app_id", "name", "spec", "spec_hash", "status", "default_policy", "source"])
+            .select([
+              "app_id",
+              "name",
+              "spec",
+              "spec_hash",
+              "status",
+              "default_policy",
+              "source",
+              "missing_since",
+            ])
             .where("app_id", "in", live)
             .orderBy("name")
             .execute();
@@ -422,6 +434,7 @@ export class ToolRegistry {
             status: t.status,
             defaultPolicy: t.default_policy,
             source: t.source,
+            gone: t.missing_since !== null,
           })),
       });
     }

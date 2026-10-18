@@ -83,11 +83,13 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       if (app.status !== "active") return { unavailable: `App ${app.slug} is disabled` };
       const row = await db
         .selectFrom("app_tools")
-        .select(["default_policy", "spec_hash", "status"])
+        .select(["default_policy", "spec_hash", "status", "missing_since"])
         .where("app_id", "=", tool.source.appId)
         .where("name", "=", tool.source.name)
         .executeTakeFirst();
-      if (!row) return { unavailable: `Tool no longer exists in app ${app.slug}` };
+      if (!row || row.missing_since !== null) {
+        return { unavailable: `Tool no longer exists in app ${app.slug}` };
+      }
       if (row.status === "disabled") return { unavailable: "Tool is disabled" };
       if (row.status !== "enabled") return { unavailable: "Tool is pending review" };
       appDefault = row.default_policy;

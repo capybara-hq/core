@@ -38,6 +38,7 @@ import type { ApprovalsService } from "../tools/approvals.service.js";
 import { AppsController } from "../tools/apps.controller.js";
 import { AppsService } from "../tools/apps.service.js";
 import type { Credentials } from "../tools/credentials.js";
+import type { ToolDrift } from "../tools/drift.js";
 import { OAuthFlow } from "../tools/oauth/flow.js";
 import {
   OAuthCallbackController,
@@ -102,6 +103,8 @@ export interface ApiDeps {
   approvals: ApprovalsService;
   /** 工具调用的输入请求（与 `Kernel.tools.questions` 同一实例）。 */
   questions: QuestionsService;
+  /** 工具定义漂移检测（与 `Kernel.tools.drift` 同一实例；手动刷新走同一套比对）。 */
+  drift: ToolDrift;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -233,7 +236,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         registry: ToolRegistry,
         credentials: Credentials,
         config: () => KernelConfig,
-      ) => new AppsService(db, registry, deps.host, credentials, config, deps.log),
+      ) => new AppsService(db, registry, deps.host, credentials, config, deps.drift),
       inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG],
     },
     {

@@ -41,8 +41,18 @@ export interface FakeMcpTool {
   /**
    * 返回工具结果。可模拟慢（await 一段时间）、报错（返回 `isError: true`，或抛 `McpError` 得到 JSON-RPC 错误）、
    * 回显请求头（`info.headers`）、超大输出。缺省返回 `ok`。
+   * `ctx.notifyToolsChanged()` 在本次调用的响应流里发 `notifications/tools/list_changed`（需 `sseResponses`）。
    */
-  handler?: (info: FakeMcpCallInfo) => CallToolResult | Promise<CallToolResult>;
+  handler?: (
+    info: FakeMcpCallInfo,
+    ctx: FakeMcpHandlerContext,
+  ) => CallToolResult | Promise<CallToolResult>;
+}
+
+/** 工具处理函数的第二个参数。 */
+export interface FakeMcpHandlerContext {
+  /** 发一条 `notifications/tools/list_changed`（与本次调用关联，经响应的 SSE 流送达）。 */
+  notifyToolsChanged(): Promise<void>;
 }
 
 export interface FakeMcpResource {
@@ -92,6 +102,10 @@ export interface FakeMcpServerOptions {
   intercept?: (
     req: FakeMcpRequest & { body: unknown },
   ) => { status: number; body: string; location?: string } | undefined;
+  /**
+   * 以 SSE 流响应 POST（缺省为 JSON 响应）。只有 SSE 响应能在调用途中带上服务端通知（如 list_changed）。
+   */
+  sseResponses?: boolean;
 }
 
 export interface FakeMcpServer {
@@ -140,7 +154,7 @@ const PRM_HEADER_PATH = "/meta/resource.json";
 const PRM_WELL_KNOWN_PATH = "/.well-known/oauth-protected-resource/mcp";
 
 /**
- * 本地假 MCP 服务（Streamable HTTP，无状态模式，JSON 响应）：每个 HTTP 请求新建一个 SDK `Server` 处理，
+ * 本地假 MCP 服务（Streamable HTTP，无状态模式，缺省 JSON 响应，`sseResponses` 时 SSE）：每个 HTTP 请求新建一个 SDK `Server` 处理，
  * 监听 127.0.0.1 随机端口。GET（独立 SSE 流）与 DELETE（结束会话）返回 405，客户端按规范忽略。
  */
 export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<FakeMcpServer> {
@@ -151,7 +165,12 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
   const mcpServer = (headers: Record<string, string>): Server => {
     const server = new Server(
       { name: "fake-mcp", version: "1.0.0" },
-      { capabilities: { tools: {}, ...(opts.resources !== undefined && { resources: {} }) } },
+      {
+        capabilities: {
+          tools: { listChanged: true },
+          ...(opts.resources !== undefined && { resources: {} }),
+        },
+      },
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: opts.tools.map((t) => ({
@@ -165,7 +184,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
         ...(t._meta !== undefined && { _meta: t._meta }),
       })),
     }));
-    server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
       const tool = opts.tools.find((t) => t.name === req.params.name);
       if (!tool) throw new McpError(ErrorCode.InvalidParams, `Unknown tool ${req.params.name}`);
       const info: FakeMcpCallInfo = {
@@ -177,7 +196,10 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
       opts.onCall?.(info);
       if (!tool.handler) return { content: [{ type: "text", text: "ok" }] };
       try {
-        return await tool.handler(info);
+        return await tool.handler(info, {
+          notifyToolsChanged: () =>
+            extra.sendNotification({ method: "notifications/tools/list_changed" }),
+        });
       } catch (e) {
         if (e instanceof FakeMcpRpcError) throw new McpError(e.code, e.message);
         throw e;
@@ -290,7 +312,9 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
 
     const server = mcpServer(headers);
     // 不给 sessionIdGenerator = 无状态模式
-    const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
+    const transport = new StreamableHTTPServerTransport({
+      enableJsonResponse: opts.sseResponses !== true,
+    });
     res.on("close", () => {
       void transport.close();
       void server.close();

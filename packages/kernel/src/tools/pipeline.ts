@@ -128,6 +128,11 @@ export interface ToolPipelineDeps {
   /** 默认 {@link createDecidePolicy}（执行时实时读取策略与授权）。 */
   decidePolicy?: DecidePolicy;
   hooks?: ToolPipelineHooks;
+  /**
+   * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该应用的漂移检查。
+   * 不等待、不抛错（实现自己吞掉错误）。
+   */
+  onToolsChanged?: (orgId: string, appId: string) => void;
 }
 
 /** tools 节点处理一步工具调用所需的上下文。 */
@@ -620,6 +625,13 @@ export class ToolPipeline {
             await credentials.onUnauthorized(orgId, appId, auth, ctx.accountId, stale);
           },
           signal,
+          onToolsChanged: () => {
+            try {
+              this.deps.onToolsChanged?.(orgId, appId);
+            } catch (err) {
+              this.deps.log.warn("tools changed notification failed", { orgId, appId, err });
+            }
+          },
         });
         const session = await opened;
         return source.resources

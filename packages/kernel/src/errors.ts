@@ -47,6 +47,8 @@ export const ERROR_CODES = {
   "app.not_found": 404,
   "app.slug_taken": 409,
   "app.connect_failed": 502,
+  "app.tool_not_found": 404,
+  "app.tool_not_pending": 409,
   "approval.not_found": 404,
   "approval.already_decided": 409,
   "question.not_found": 404,

@@ -94,7 +94,9 @@
     "app": {
       "not_found": "The app does not exist or has been removed.",
       "slug_taken": "This slug is already used by another app.",
-      "connect_failed": "Could not connect to the app's server. Check the URL and credential."
+      "connect_failed": "Could not connect to the app's server. Check the URL and credential.",
+      "tool_not_found": "The tool does not exist in this app.",
+      "tool_not_pending": "The tool is not waiting for review."
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",

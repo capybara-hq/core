@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   type Connector,
+  type ConnectorOpenArgs,
   type ContentBlock,
   type ToolCallContext,
   ToolError,
@@ -131,11 +132,16 @@ const record = (name: string, input: unknown) => {
 /** test 连接器：行为由 connCall 决定；记录打开 / 关闭 / 调用次数与收到的 signal。 */
 let connCall: (name: string, input: unknown, signal: AbortSignal) => Promise<ToolResult>;
 const conn = { opened: 0, closed: 0, calls: 0, signals: [] as AbortSignal[] };
+/** 最近一次 open 的参数（测试里由 connCall 调用 onToolsChanged）。 */
+let lastOpen: ConnectorOpenArgs | undefined;
+/** 管线收到的「工具清单变了」通知（orgId, appId）。 */
+let toolsChanged: [string, string][] = [];
 const testConnector: Connector = {
   kind: "test",
   endpointSchema: z.object({}),
   async open(args) {
     conn.opened++;
+    lastOpen = args;
     return {
       async listTools() {
         return [];
@@ -181,6 +187,9 @@ function pipeline(): ToolPipeline {
     questions: new QuestionsService({ db, eventLog, config, log: silent }),
     config,
     log: silent,
+    onToolsChanged: (orgId, appId) => {
+      toolsChanged.push([orgId, appId]);
+    },
     ...(decidePolicy !== undefined && { decidePolicy }),
     hooks: { ...(afterExecute !== undefined && { afterExecute }) },
   };
@@ -219,6 +228,8 @@ beforeEach(async () => {
   afterExecute = undefined;
   unavailable = [];
   handlerCalls = {};
+  toolsChanged = [];
+  lastOpen = undefined;
   Object.assign(conn, { opened: 0, closed: 0, calls: 0, signals: [] });
   connCall = async (name) => ({ content: [{ type: "text", text: `called ${name}` }] });
   await redis.flushdb();
@@ -738,6 +749,16 @@ describe("ToolPipeline.runStep", () => {
     expect(resultsOf(evs)[0]?.content).toMatch(/^Tool docs__read timed out after 0.15s/);
     expect(conn.signals[0]?.aborted).toBe(true);
     expect(conn).toMatchObject({ opened: 1, closed: 1 });
+  });
+
+  it("连接器在调用途中报告工具清单变化 → 通知内核（orgId, appId），结果照常", async () => {
+    connCall = async (name) => {
+      lastOpen?.onToolsChanged?.();
+      return { content: [{ type: "text", text: `called ${name}` }] };
+    };
+    const evs = await runCalls([{ id: "c1", name: "docs__read", input: {} }]);
+    expect(resultsOf(evs).map((r) => r.content)).toEqual(["called read"]);
+    expect(toolsChanged).toEqual([[seed.orgId, appId]]);
   });
 
   it("应用工具正常调用：每次调用打开并关闭会话", async () => {

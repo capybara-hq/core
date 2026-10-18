@@ -227,6 +227,8 @@ export interface AppsTable {
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
+  /** 0015：最近一次成功拿到工具清单的时间；为空 = 从未拍过快照（首个快照按安装处理）。 */
+  tools_synced_at: TsNullable;
 }
 
 /** 0010_tools.sql：应用暴露的工具。 */
@@ -240,6 +242,14 @@ export interface AppToolsTable {
   reviewed_at: TsNullable;
   /** 0013：工具来源（`resources` = 内核为支持 resources 的应用补上的两个工具）。 */
   source: Generated<"connector" | "resources">;
+  /** 0015：变化后待复核的新定义（复核前 spec / spec_hash / source 仍是旧的）。 */
+  pending_spec: ColumnType<unknown, string | null | undefined, string | null>;
+  pending_spec_hash: string | null;
+  pending_source: "connector" | "resources" | null;
+  /** 0015：默认策略的来历（admin = 管理员设定，复核通过后保留；derived = 按注解重新推导）。 */
+  policy_source: Generated<"derived" | "admin">;
+  /** 0015：远端不再提供该工具的时间（工具停用，行保留）。 */
+  missing_since: TsNullable;
 }
 
 /** 0010_tools.sql：「以后都允许」。 */

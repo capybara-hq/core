@@ -113,6 +113,7 @@ beforeAll(async () => {
           toolRegistry: k.tools.registry,
           approvals: k.tools.approvals,
           questions: k.tools.questions,
+          drift: k.tools.drift,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

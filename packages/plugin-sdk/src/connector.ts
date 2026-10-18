@@ -27,6 +27,11 @@ export interface ConnectorOpenArgs {
   /** 收到 401 时调用一次；内核刷新凭据后，插件重试一次。 */
   onUnauthorized: () => Promise<void>;
   signal: AbortSignal;
+  /**
+   * 会话期间远端报告工具清单变了（如 MCP `notifications/tools/list_changed`）时调用，可能多次；内核据此安排一次
+   * 漂移检查（新的 / 变了的工具在管理员复核前不可用）。可选：旧内核不提供，连接器须判空。不要等待它、不要因它抛错。
+   */
+  onToolsChanged?: () => void;
 }
 
 /** `connector@1`：插件实现、内核调用。 */

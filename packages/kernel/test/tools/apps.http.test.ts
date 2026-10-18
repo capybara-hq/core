@@ -482,7 +482,7 @@ describe("应用 HTTP", () => {
     ).toHaveLength(2);
   });
 
-  it("refresh：重新 listTools 直接覆盖（保留管理员的启停与策略）", async () => {
+  it("refresh：走漂移检测（新增 / 变化 → 待复核，旧定义保留；消失 → 停用）", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const { app } = await createApp(req, orgId);
@@ -512,13 +512,14 @@ describe("应用 HTTP", () => {
       changed: ["search"],
     });
     const byName = Object.fromEntries(body.app.tools.map((t) => [t.name, t]));
+    // 变化：待复核，当前定义仍是旧的（新定义在 pending 里）
     expect(byName.search).toMatchObject({
-      status: "disabled",
-      description: "Search documents, v2.",
+      status: "pending_review",
+      description: "Search documents.",
     });
-    expect(byName.search?.specHash).not.toBe(app.tools.find((t) => t.name === "search")?.specHash);
-    expect(byName.list_docs).toMatchObject({ status: "enabled", defaultPolicy: "allow" });
-    expect(byName.create_doc).toBeUndefined();
+    expect(byName.search?.specHash).toBe(app.tools.find((t) => t.name === "search")?.specHash);
+    expect(byName.list_docs).toMatchObject({ status: "pending_review", defaultPolicy: "allow" });
+    expect(byName.create_doc).toMatchObject({ status: "disabled" });
     expect(memState().closed).toBe(memState().opened);
 
     const member = await memberSession(orgId, "mem", "member");

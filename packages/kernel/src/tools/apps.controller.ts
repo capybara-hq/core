@@ -144,6 +144,8 @@ const ToolPatch = z
   })
   .strict();
 
+const ReviewBody = z.object({ action: z.enum(["approve", "reject"]) }).strict();
+
 const UpdateBody = z
   .object({
     name: z.string().trim().min(1).max(80).optional(),
@@ -230,6 +232,30 @@ export class AppsController {
   }> {
     const p = requireUser(principal);
     return this.apps.refresh(org.orgId, appId, p.account.id, patTokenId(p));
+  }
+
+  /** 复核待复核的工具（漂移检测，spec 7.3）：approve 采用新定义并启用，reject 停用并保留旧定义。 */
+  @Post(":appId/tools/:name/review")
+  @HttpCode(200)
+  @OrgAction("apps.manage")
+  async review(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("appId") appId: string,
+    @Param("name") name: string,
+    @Body(new ZodPipe(ReviewBody)) body: z.infer<typeof ReviewBody>,
+  ): Promise<{ app: AppDetail }> {
+    const p = requireUser(principal);
+    return {
+      app: await this.apps.reviewTool(
+        org.orgId,
+        appId,
+        name,
+        body.action,
+        p.account.id,
+        patTokenId(p),
+      ),
+    };
   }
 
   @Put(":appId/credentials/org")

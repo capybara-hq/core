@@ -148,6 +148,38 @@ describe("0010_tools", () => {
     expect(r.rows.map((x) => x.spec)).toEqual([{ name: "a" }]);
   });
 
+  it("0015 漂移：app_tools 待复核定义 / 策略来历 / 消失时间，apps.tools_synced_at", async () => {
+    await sql`insert into capybara.apps (id, org_id, slug, name, connector, created_by)
+      values ('app15', 'o1', 'a15', 'A', 'mcp', 'a1')`.execute(db);
+    await sql`insert into capybara.app_tools (app_id, name, spec, spec_hash, status, default_policy)
+      values ('app15', 't', '{}', 'h', 'enabled', 'allow')`.execute(db);
+    const r = await sql<{
+      policy_source: string;
+      pending_spec: unknown;
+      missing_since: unknown;
+    }>`select policy_source, pending_spec, missing_since from capybara.app_tools
+      where app_id = 'app15'`.execute(db);
+    expect(r.rows[0]).toEqual({
+      policy_source: "derived",
+      pending_spec: null,
+      missing_since: null,
+    });
+    await rejects(
+      sql`update capybara.app_tools set policy_source = 'other' where app_id = 'app15'`.execute(db),
+      /check/,
+    );
+    await rejects(
+      sql`update capybara.app_tools set pending_source = 'other' where app_id = 'app15'`.execute(
+        db,
+      ),
+      /check/,
+    );
+    const a = await sql<{
+      tools_synced_at: unknown;
+    }>`select tools_synced_at from capybara.apps where id = 'app15'`.execute(db);
+    expect(a.rows[0]?.tools_synced_at).toBeNull();
+  });
+
   it("questions：(run_id, call_id) 唯一，状态受限", async () => {
     const ins = (id: string, call: string, status = "pending") =>
       sql`insert into capybara.questions (id, org_id, conversation_id, run_id, call_id, spec, status, expires_at)

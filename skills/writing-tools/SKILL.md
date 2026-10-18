@@ -127,7 +127,7 @@ async (input, call) => {
 interface Connector {
   kind: string;                 // 存进 apps.connector，如 "mcp"
   endpointSchema: ZodTypeAny;   // 应用 endpoint 的校验（内核安装时调用）
-  open(args: { endpoint; auth(): Promise<AuthInjection>; onUnauthorized(): Promise<void>; signal }): Promise<ConnectorSession>;
+  open(args: { endpoint; auth(): Promise<AuthInjection>; onUnauthorized(): Promise<void>; signal; onToolsChanged?(): void }): Promise<ConnectorSession>;
 }
 interface ConnectorSession {
   listTools(): Promise<ToolSpec[]>;
@@ -149,11 +149,13 @@ interface ConnectorSession {
 - 端点配置对组织成员可见：固定头与 URL query 里不能放凭据（`x-api-key`、`api-key`、`x-auth-token`、`authorization` 各变体、`*-token`、`*-secret` 等头，`key` / `api_key` / `token` / `access_token` / `secret` 等 query 参数，URL 用户信息），内核在安装时一律 400 拒绝并提示改用凭据设置；没有 `apps.manage` 的人读应用时只看到不带 query 的 URL 与头名（`headerNames`）。
 - 尊重 `signal`（`open` 的与 `callTool` 的），超时由内核的 `tools.timeoutMs` 决定，SDK 自带的请求超时设得足够长、不要抢在内核前面。
 - **OAuth 全在内核**（`packages/kernel/src/tools/oauth/`），连接器照上面两条做即可：`auth()` 返回的 Bearer 由内核在过期前 60 秒刷新；`onUnauthorized()` 在 Redis 锁 `capk:oauth-refresh:<orgId>:<appId>:<owner>` 内强制刷新（别的副本已刷新则直接用新 token，不并发刷新），refresh 被拒 → 凭据删除、调用得到「需要连接」。认证方式 `oauth_code`（个人，`discovery: "mcp"` 走 RFC 9728 → RFC 8414 发现，`client: "dcr"` 安装时 RFC 7591 注册，不支持 DCR → 502 `app.connect_failed` 带 `dcr_unsupported`，改用 `client: "manual"` + `credential: { clientId, clientSecret? }`）与 `oauth_client`（组织，客户端凭据流）；都要求配置 `http.publicUrl`，可选 `tokenAuthMethod`（`client_secret_basic` 默认 / `client_secret_post`）。只有令牌端点以 400/401 返回 `invalid_grant` / `invalid_client` / `unauthorized_client` 才作废令牌，429、其他 4xx、没有错误码的响应一律按暂时不可用处理、凭据保留。轮换客户端密钥：`PUT .../credentials/org` 传 `{ clientId, clientSecret }`（客户端凭据应用先验证再替换；手填 client 的授权码应用只替换客户端）。授权码应用安装时不 listTools，首个成员经 `POST /orgs/:orgId/apps/:appId/connect` → 授权服务器 → `GET /api/v1/oauth/callback` 连接后用其 token 刷新工具清单。
+- **远端报告工具清单变了**（MCP `notifications/tools/list_changed`）→ 调用 `args.onToolsChanged?.()`（可选回调，旧内核不提供，须判空；不等待、出错只记 warn、不影响本次调用）。内核据此投递一次该应用的漂移检查（维护队列，jobId `drift-<appId>-<分钟桶>` 去重）。连接器不要自己重新拉清单。
+- **漂移检测在内核**（`packages/kernel/src/tools/drift.ts`，spec 7.3 防 rug-pull / 工具投毒）：每 `tools.driftIntervalHours` 小时（维护队列 job scheduler `drift-scan-interval`）、收到 list_changed、管理员 `POST .../apps/:appId/refresh` 时重新 listTools 并比对快照——新增工具 `pending_review`；定义（spec_hash 或来源）变了 → `pending_review`，新定义存 `pending_spec`、旧定义保留供对比；消失 → `disabled` 并标记 `missing`（又出现按新增处理）。待复核 / 停用的工具不进 `forAgent`。管理员 `POST .../apps/:appId/tools/:name/review {action: "approve" | "reject"}` 复核：approve 采用新定义并启用，默认策略按新注解重新推导（管理员设过的保留，`policySource: "admin"`），reject 停用并保留旧定义。授权按指纹比对，采用新定义后旧授权自然失效。后台检查的凭据：组织凭据；个人凭据型应用依次试至多 3 个现任成员的个人凭据（按凭据最近写入时间倒序），没有则跳过并记日志。审计 `app.tools_drifted`（只有计数）/ `app.tool_reviewed`。
 - 应用级熔断（连续失败 `tools.breakerFailures` 次后打开 `tools.breakerOpenSeconds` 秒）在内核，连接器只需如实抛错 / 返回。**只有远端不可用才计数**：超时、连接 / 传输错误（非 `ToolError` 的异常，或 `ToolError` 带 `kind: "unavailable"`，如 HTTP 5xx、连不上）；`kind: "error"` 的 `ToolError`（JSON-RPC 业务错误、401 重试后仍失败、重定向、4xx）与 `isError` 结果一样说明远端可达，清零计数。
 
 ## 测试
 
 - 插件单测：直接调用处理函数（构造 `ToolCallContext`），见 `plugins/todo/test/todo.test.ts`；多副本读写一致用 `createDualReplicaHarness`。
-- 连接器：`@capybara-hq/testing` 的 `startFakeMcpServer({ tools, resources?, requireBearer?, unauthorizedTimes?, intercept? })` 可模拟慢、报错、401、回显凭据、超大输出、重定向。
+- 连接器：`@capybara-hq/testing` 的 `startFakeMcpServer({ tools, resources?, requireBearer?, unauthorizedTimes?, intercept?, sseResponses? })` 可模拟慢、报错、401、回显凭据、超大输出、重定向；`sseResponses: true` 时工具处理函数可调第二个参数的 `ctx.notifyToolsChanged()` 在调用途中发 list_changed（`tools` 数组每个请求重新读取，测试里改它即模拟漂移）。漂移检测见 `packages/kernel/test/tools/drift.test.ts`。
 - OAuth：`startFakeOAuthServer({ dcr?, metadata?, accessTokenTtl?, clients?, tokenDelayMs? })`（自动批准的授权端点、PKCE 校验、refresh 轮换、client_credentials、DCR 开关、`revokeAccessTokens` / `revokeRefreshTokens`），配合 `startFakeMcpServer({ verifyBearer: (t) => as.verify(t), protectedResource: { authorizationServers: [as.issuer], advertise: "header" | "well-known" } })`；内核需 `tools.oauthAllowInsecureLoopback: true` 与 `http.publicUrl`。见 `packages/kernel/test/tools/oauth/`。
 - 内核端到端：model-fake 的 `tool:<key>:<json>` 指令让模型调用指定工具（如 `tool:todo__write:{"todos":[]}`），见 `packages/kernel/test/tools/mcp-e2e.test.ts` 与双副本验收 `packages/kernel/test/tools/m3-segment1.dual.test.ts`（审批跨副本、审批超时、杀 worker 后结果未知、插件启用前后）。

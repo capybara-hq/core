@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AuthInjection, Logger, ToolAnnotations, ToolSpec } from "@capybara-hq/plugin-sdk";
+import type { ToolAnnotations, ToolSpec } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
@@ -17,8 +17,16 @@ import {
   type OAuthAuth,
   type StaticSecret,
 } from "./credentials.js";
+import {
+  type DriftChanges,
+  type SnapshotRow,
+  snapshot,
+  type ToolDrift,
+  type ToolIssue,
+  toolIssue,
+} from "./drift.js";
 import { endpointCredentialIssues } from "./endpoint.js";
-import { deriveSlug, isValidSlug, SLUG_RULE, toolKey, toolKeyIssue } from "./naming.js";
+import { deriveSlug, isValidSlug, SLUG_RULE, toolKey } from "./naming.js";
 import {
   checkOAuthUrl,
   discoverMcp,
@@ -36,12 +44,13 @@ import {
   OAuthUnavailable,
   tokenRequest,
 } from "./oauth/tokens.js";
-import { redactDeep, redactorFor } from "./redact.js";
-import { policyFromAnnotations, specHash, type ToolPolicy, type ToolRegistry } from "./registry.js";
-import { resourceToolSpecs } from "./resources.js";
+import { policyFromAnnotations, type ToolPolicy, type ToolRegistry } from "./registry.js";
 import { recordToolSpecs } from "./specs.js";
 
 type Trx = Transaction<KernelDatabase>;
+
+export type { ToolIssue } from "./drift.js";
+
 type ToolStatus = "enabled" | "disabled" | "pending_review";
 type ToolSource = "connector" | "resources";
 
@@ -58,6 +67,22 @@ export interface AppToolView {
   issue: string | null;
   /** `resources`：内核为支持 resources 的应用补上的工具（见 resources.ts）。 */
   source: ToolSource;
+  /** 默认策略的来历：`derived` 按注解推导（定义变化复核通过后重新推导），`admin` 管理员设定（保留）。 */
+  policySource: "derived" | "admin";
+  /** 远端已不再提供该工具（随之停用；又出现时待复核）。 */
+  missing: boolean;
+  reviewedAt: Date | null;
+  /**
+   * 定义变化后待复核的新定义（漂移检测，Task 17）；上面的 description / inputSchema / annotations / specHash /
+   * source 是当前（上次复核通过的）定义，供对比。新增的待复核工具没有旧定义，此处为 null。
+   */
+  pending: {
+    description: string;
+    inputSchema: Record<string, unknown>;
+    annotations: ToolAnnotations | null;
+    specHash: string;
+    source: ToolSource;
+  } | null;
 }
 
 /** 列表项：不含工具与凭据（`auth` 只有类型与非密钥字段）。 */
@@ -78,12 +103,6 @@ export interface AppDetail extends AppSummary {
   tools: AppToolView[];
   /** 当前用户视角的凭据状态；`ownership` 为 null 表示无需凭据（auth none）。 */
   credential: { ownership: "org" | "personal" | null; status: "connected" | "missing" };
-}
-
-/** 快照中被停用 / 跳过的工具及英文原因。 */
-export interface ToolIssue {
-  name: string;
-  reason: string;
 }
 
 export interface CreateAppInput {
@@ -108,22 +127,10 @@ export interface UpdateAppInput {
   allowUnannotated?: boolean | undefined;
 }
 
-interface SnapshotRow {
-  name: string;
-  spec: ToolSpec;
-  specHash: string;
-  /** key 不合法 / 定义不合规时为原因，此时工具只能停用。 */
-  issue: string | null;
-  source: ToolSource;
-}
-
 const notFound = () => new ApiError("app.not_found", "App not found");
 
 const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
-
-const errName = (e: unknown): string =>
-  e instanceof Error && typeof e.name === "string" && e.name !== "" ? e.name : "Error";
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -196,74 +203,6 @@ const unannotated = (a: ToolAnnotations | undefined) =>
   a?.readOnlyHint === undefined && a?.destructiveHint === undefined;
 
 /**
- * 把连接器返回的工具清单整理成快照：只保留 `name / description / inputSchema / annotations`
- * （应用工具不得自带 `defaultPolicy`），同名的后者丢弃；key 超长 / 含非法字符或定义不合规的工具
- * 照样入库但只能停用，并给出原因——一个坏工具不挡住整个应用。名字不是非空字符串的无法入库，只报原因。
- */
-function snapshot(
-  slug: string,
-  specs: unknown,
-  resources: boolean,
-): { rows: SnapshotRow[]; issues: ToolIssue[] } {
-  const rows: SnapshotRow[] = [];
-  const issues: ToolIssue[] = [];
-  if (!Array.isArray(specs)) {
-    throw new ApiError("app.connect_failed", "The app returned an invalid tool list");
-  }
-  const seen = new Set<string>();
-  for (const raw of specs) {
-    const s = isObj(raw) ? raw : {};
-    const name = s.name;
-    if (typeof name !== "string" || name === "" || name.length > 200) {
-      issues.push({
-        name: typeof name === "string" ? name.slice(0, 200) : String(name),
-        reason: "Tool name must be a non-empty string of at most 200 characters",
-      });
-      continue;
-    }
-    if (seen.has(name)) {
-      issues.push({ name, reason: "Duplicate tool name; only the first one is kept" });
-      continue;
-    }
-    seen.add(name);
-    const spec: ToolSpec = {
-      name,
-      description: typeof s.description === "string" ? s.description : "",
-      inputSchema: isObj(s.inputSchema) ? s.inputSchema : {},
-      ...(isObj(s.annotations) && { annotations: s.annotations as ToolAnnotations }),
-    };
-    let issue = toolKeyIssue(toolKey(slug, name));
-    if (!issue && !isObj(s.inputSchema)) issue = "Tool inputSchema must be an object";
-    if (issue) issues.push({ name, reason: issue });
-    rows.push({ name, spec, specHash: specHash(spec), issue, source: "connector" });
-  }
-  // 应用支持 resources：补上 list_resources / read_resource；连接器自己的同名工具优先
-  if (resources) {
-    for (const spec of resourceToolSpecs()) {
-      if (seen.has(spec.name)) {
-        issues.push({
-          name: spec.name,
-          reason: `The app has its own tool named ${spec.name}; the built-in resource tool is not added`,
-        });
-        continue;
-      }
-      const issue = toolKeyIssue(toolKey(slug, spec.name));
-      if (issue) issues.push({ name: spec.name, reason: issue });
-      rows.push({ name: spec.name, spec, specHash: specHash(spec), issue, source: "resources" });
-    }
-  }
-  return { rows, issues };
-}
-
-/** 工具当前不能启用的原因（视图与启用校验共用）。 */
-function toolIssue(slug: string, spec: ToolSpec): string | null {
-  const keyIssue = toolKeyIssue(toolKey(slug, spec.name));
-  if (keyIssue) return keyIssue;
-  if (!isObj(spec.inputSchema)) return "Tool inputSchema must be an object";
-  return null;
-}
-
-/**
  * 应用（已安装的连接器实例）与其工具快照、凭据。写操作都在组织行锁内复核发起人权限并写审计
  * （detail 只有凭据类型与归属，没有值）。连接器会话按操作打开、用完即关，不在进程内缓存。
  */
@@ -274,7 +213,7 @@ export class AppsService {
     private readonly host: PluginHost,
     private readonly credentials: Credentials,
     private readonly config: () => KernelConfig,
-    private readonly log: Logger,
+    private readonly drift: ToolDrift,
   ) {}
 
   /**
@@ -305,52 +244,6 @@ export class AppsService {
     if (leaks.length > 0)
       throw new ApiError("validation_failed", "Request validation failed", leaks);
     return r.data;
-  }
-
-  /**
-   * 打开一次会话拉工具清单，无论成败都关闭会话；会话带 `listResources` 即视为支持 resources。
-   * 清单里回显的凭据按本次注入的值打码（见 redact.ts）。凭据缺失原样抛 `credential.missing`；
-   * 其余失败一律 502 `app.connect_failed`，消息只带上游错误的类名（不带消息，消息里可能回显凭据）。
-   */
-  private async listTools(
-    connector: string,
-    endpoint: unknown,
-    auth: () => Promise<AuthInjection>,
-    logCtx: Record<string, unknown>,
-    /** 收到 401：OAuth 应用在刷新锁内刷新（参数为最后一次注入的鉴权）。 */
-    onUnauthorized: (last: AuthInjection | undefined) => Promise<void> = async () => {},
-  ): Promise<{ specs: unknown; resources: boolean }> {
-    const c = this.registry.connector(connector);
-    const signal = AbortSignal.timeout(this.config().tools.timeoutMs);
-    const injected: AuthInjection[] = [];
-    const tracked = async () => {
-      const inj = await auth();
-      injected.push(inj);
-      return inj;
-    };
-    let session: Awaited<ReturnType<typeof c.open>> | undefined;
-    try {
-      session = await c.open({
-        endpoint,
-        auth: tracked,
-        onUnauthorized: () => onUnauthorized(injected.at(-1)),
-        signal,
-      });
-      const specs = await session.listTools();
-      return {
-        specs: redactDeep(specs, redactorFor(injected)),
-        resources: typeof session.listResources === "function",
-      };
-    } catch (e) {
-      if (e instanceof CredentialMissing) throw e;
-      // 日志经 logger 打码（凭据值已在构造注入时登记）
-      this.log.warn("app listTools failed", { ...logCtx, connector, err: e });
-      throw new ApiError("app.connect_failed", `Could not list tools from the app (${errName(e)})`);
-    } finally {
-      await session?.close().catch((e: unknown) => {
-        this.log.warn("connector session close failed", { ...logCtx, connector, err: e });
-      });
-    }
   }
 
   private async slugTaken(db: KernelDb | Trx, orgId: string, slug: string): Promise<boolean> {
@@ -526,7 +419,7 @@ export class AppsService {
     let rows: SnapshotRow[] = [];
     let issues: ToolIssue[] = [];
     if (auth.type !== "oauth_code") {
-      const listed = await this.listTools(
+      const listed = await this.drift.listTools(
         input.connector,
         endpoint,
         async () => {
@@ -558,6 +451,8 @@ export class AppsService {
           endpoint: JSON.stringify(endpoint),
           auth: JSON.stringify(auth),
           created_by: actorAccountId,
+          // 授权码应用安装时不拍快照（A16）：留空，首个快照按安装处理
+          ...(auth.type !== "oauth_code" && { tools_synced_at: sql<Date>`now()` }),
         })
         .execute();
       await this.insertTools(t, id, rows);
@@ -600,6 +495,8 @@ export class AppsService {
           status: r.issue ? ("disabled" as const) : ("enabled" as const),
           default_policy: policyFromAnnotations(r.spec.annotations),
           source: r.source,
+          // 安装即复核
+          ...(!r.issue && { reviewed_at: sql<Date>`now()` }),
         })),
       )
       .execute();
@@ -643,7 +540,20 @@ export class AppsService {
     const r = await this.row(db, orgId, appId);
     const tools = await db
       .selectFrom("app_tools")
-      .select(["name", "spec", "spec_hash", "status", "default_policy", "source"])
+      .select([
+        "name",
+        "spec",
+        "spec_hash",
+        "status",
+        "default_policy",
+        "source",
+        "policy_source",
+        "missing_since",
+        "reviewed_at",
+        "pending_spec",
+        "pending_spec_hash",
+        "pending_source",
+      ])
       .where("app_id", "=", appId)
       .orderBy("name")
       .execute();
@@ -660,6 +570,7 @@ export class AppsService {
       ...s,
       tools: tools.map((t) => {
         const spec = t.spec as ToolSpec;
+        const next = t.pending_spec as ToolSpec | null;
         return {
           name: t.name,
           key: toolKey(r.slug, t.name),
@@ -669,8 +580,21 @@ export class AppsService {
           status: t.status,
           defaultPolicy: t.default_policy,
           specHash: t.spec_hash,
-          issue: toolIssue(r.slug, spec),
+          issue: toolIssue(r.slug, next ?? spec),
           source: t.source,
+          policySource: t.policy_source,
+          missing: t.missing_since !== null,
+          reviewedAt: t.reviewed_at,
+          pending:
+            next && t.pending_spec_hash !== null
+              ? {
+                  description: next.description,
+                  inputSchema: next.inputSchema,
+                  annotations: next.annotations ?? null,
+                  specHash: t.pending_spec_hash,
+                  source: t.pending_source ?? t.source,
+                }
+              : null,
         };
       }),
       credential: { ownership: auth.type === "none" ? null : auth.ownership, status },
@@ -707,7 +631,7 @@ export class AppsService {
       const app = await this.row(t, orgId, appId, true);
       const current = await t
         .selectFrom("app_tools")
-        .select(["name", "spec", "status", "default_policy"])
+        .select(["name", "spec", "status", "default_policy", "missing_since", "pending_spec_hash"])
         .where("app_id", "=", appId)
         .forUpdate()
         .execute();
@@ -721,8 +645,21 @@ export class AppsService {
           continue;
         }
         if (change.status === "enabled") {
+          const path = `tools.${name}.status`;
+          // 待复核（新增或定义变了）的工具只能经复核接口启用：这里启用会绕过复核、或把旧定义暴露给模型
+          if (c.status === "pending_review" || c.pending_spec_hash !== null) {
+            problems.push({
+              path,
+              message: `Tool is pending review; approve it with POST /apps/${appId}/tools/${name}/review`,
+            });
+            continue;
+          }
+          if (c.missing_since !== null) {
+            problems.push({ path, message: "The app no longer provides this tool" });
+            continue;
+          }
           const issue = toolIssue(app.slug, c.spec as ToolSpec);
-          if (issue) problems.push({ path: `tools.${name}.status`, message: issue });
+          if (issue) problems.push({ path, message: issue });
         }
       }
       if (problems.length > 0) {
@@ -755,7 +692,7 @@ export class AppsService {
         if (allowed.length > 0) {
           await t
             .updateTable("app_tools")
-            .set({ default_policy: "allow" })
+            .set({ default_policy: "allow", policy_source: "admin" })
             .where("app_id", "=", appId)
             .where("name", "in", allowed)
             .execute();
@@ -767,9 +704,12 @@ export class AppsService {
           .updateTable("app_tools")
           .set({
             ...(change.status !== undefined && { status: change.status }),
-            // 启用即视为已复核（第二段的漂移复核沿用这一字段）
+            // 启用即视为已复核（待复核的工具在上面已拒绝，只能走复核接口）
             ...(change.status === "enabled" && { reviewed_at: sql`now()` }),
-            ...(change.defaultPolicy !== undefined && { default_policy: change.defaultPolicy }),
+            ...(change.defaultPolicy !== undefined && {
+              default_policy: change.defaultPolicy,
+              policy_source: "admin" as const,
+            }),
           })
           .where("app_id", "=", appId)
           .where("name", "=", name)
@@ -823,11 +763,11 @@ export class AppsService {
   }
 
   /**
-   * 重新 listTools 并直接覆盖快照（第一段；第二段改走漂移检测）：已有工具更新定义、保留管理员设的启停与默认策略
-   * （key 变得不合法的强制停用），新工具按注解推导默认值并启用，消失的工具删除。
+   * 重新 listTools 并按漂移检测的规则比对写入（见 drift.ts）：新增 / 定义变化的工具待复核（旧定义保留供对比），
+   * 消失的工具停用；应用从未拍过快照时首个快照直接启用。
    * 组织凭据型应用用组织凭据，个人型用发起人自己的凭据（缺 → `credential.missing`）。OAuth 应用收到 401 时
    * 在刷新锁内刷新 token 后重试一次。`trigger: "first_connect"`：OAuth 授权码应用首个成员连接后由连接流程调用
-   * （A16），只要求 `apps.use`。
+   * （A16），只要求 `apps.use`。审计 `app.tools_refreshed`（变化的工具名，不含定义）。
    */
   async refresh(
     orgId: string,
@@ -835,14 +775,10 @@ export class AppsService {
     actorAccountId: string,
     actorTokenId?: string,
     opts: { trigger?: "first_connect" } = {},
-  ): Promise<{
-    app: AppDetail;
-    issues: ToolIssue[];
-    changes: { added: string[]; removed: string[]; changed: string[] };
-  }> {
+  ): Promise<{ app: AppDetail; issues: ToolIssue[]; changes: DriftChanges }> {
     const app = await this.row(this.db, orgId, appId);
     const auth = app.auth as unknown as AppAuth;
-    const { specs, resources } = await this.listTools(
+    const { specs, resources } = await this.drift.listTools(
       app.connector,
       app.endpoint,
       () => this.credentials.injection(orgId, appId, auth, actorAccountId),
@@ -858,56 +794,8 @@ export class AppsService {
         actorAccountId,
         opts.trigger === "first_connect" ? "apps.use" : "apps.manage",
       );
-      await this.row(t, orgId, appId, true);
-      const current = await t
-        .selectFrom("app_tools")
-        .select(["name", "spec_hash", "source"])
-        .where("app_id", "=", appId)
-        .forUpdate()
-        .execute();
-      const before = new Map(current.map((c) => [c.name, c]));
-      const next = new Set(rows.map((r) => r.name));
-      const added = rows.filter((r) => !before.has(r.name));
-      const changed = rows.filter((r) => {
-        const b = before.get(r.name);
-        return b !== undefined && (b.spec_hash !== r.specHash || b.source !== r.source);
-      });
-      const removed = current.filter((c) => !next.has(c.name)).map((c) => c.name);
-
-      await this.insertTools(t, appId, added);
-      // 定义快照只增不改：旧定义留在 tool_specs，早先请求用过的仍可按指纹取回
-      await recordToolSpecs(t, changed);
-      for (const r of changed) {
-        await t
-          .updateTable("app_tools")
-          .set({
-            spec: JSON.stringify(r.spec),
-            spec_hash: r.specHash,
-            source: r.source,
-            // 来源变了（内核的 resources 工具 ↔ 连接器同名工具）就是另一个工具：管理员为旧工具设的默认策略不沿用，
-            // 按新定义的注解重新推导（否则连接器的无注解工具会继承 resources 工具的 allow）
-            ...(before.get(r.name)?.source !== r.source && {
-              default_policy: policyFromAnnotations(r.spec.annotations),
-            }),
-            ...(r.issue && { status: "disabled" as const }),
-          })
-          .where("app_id", "=", appId)
-          .where("name", "=", r.name)
-          .execute();
-      }
-      if (removed.length > 0) {
-        await t
-          .deleteFrom("app_tools")
-          .where("app_id", "=", appId)
-          .where("name", "in", removed)
-          .execute();
-      }
-      await t.updateTable("apps").set({ updated_at: sql`now()` }).where("id", "=", appId).execute();
-      const changes = {
-        added: added.map((r) => r.name).sort(),
-        removed: removed.sort(),
-        changed: changed.map((r) => r.name).sort(),
-      };
+      const locked = await this.row(t, orgId, appId, true);
+      const changes = await this.drift.apply(t, locked, rows);
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
@@ -917,6 +805,87 @@ export class AppsService {
         detail: { ...changes, ...(opts.trigger && { trigger: opts.trigger }) },
       });
       return { app: await this.detail(t, orgId, appId, actorAccountId), issues, changes };
+    });
+  }
+
+  /**
+   * 复核一个待复核的工具（`apps.manage`，spec 7.3）。`approve`：采用待复核的新定义（若有）并启用，
+   * `reviewed_at` 记为现在；默认策略按新定义的注解重新推导，除非管理员设过（`policy_source = admin`）且来源没变。
+   * `reject`：停用，丢弃待复核的新定义、保留旧定义。工具不存在 → 404 `app.tool_not_found`；
+   * 不在待复核状态 → 409 `app.tool_not_pending`；新定义不合规（如 key 不合法）不能通过 → `validation_failed`。
+   * 采用新定义即换了指纹：旧的「以后都允许」/「本会话都允许」授权按指纹比对自然失效（D8）。审计 `app.tool_reviewed`。
+   */
+  async reviewTool(
+    orgId: string,
+    appId: string,
+    name: string,
+    action: "approve" | "reject",
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<AppDetail> {
+    return this.db.transaction().execute(async (t) => {
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
+      const app = await this.row(t, orgId, appId, true);
+      const tool = await t
+        .selectFrom("app_tools")
+        .select([
+          "status",
+          "source",
+          "spec",
+          "policy_source",
+          "pending_spec",
+          "pending_spec_hash",
+          "pending_source",
+        ])
+        .where("app_id", "=", appId)
+        .where("name", "=", name)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!tool) throw new ApiError("app.tool_not_found", "Tool not found in this app");
+      if (tool.status !== "pending_review" && tool.pending_spec_hash === null) {
+        throw new ApiError("app.tool_not_pending", "Tool is not pending review");
+      }
+      const next = (tool.pending_spec ?? tool.spec) as ToolSpec;
+      const nextSource = tool.pending_source ?? tool.source;
+      if (action === "approve") {
+        const issue = toolIssue(app.slug, next);
+        if (issue) throw fail("action", issue);
+      }
+      const rederive = tool.policy_source === "derived" || nextSource !== tool.source;
+      await t
+        .updateTable("app_tools")
+        .set({
+          ...(action === "approve"
+            ? {
+                status: "enabled" as const,
+                ...(tool.pending_spec_hash !== null && {
+                  spec: JSON.stringify(next),
+                  spec_hash: tool.pending_spec_hash,
+                  source: nextSource,
+                }),
+                ...(rederive && {
+                  default_policy: policyFromAnnotations(next.annotations),
+                  policy_source: "derived" as const,
+                }),
+              }
+            : { status: "disabled" as const }),
+          pending_spec: null,
+          pending_spec_hash: null,
+          pending_source: null,
+          reviewed_at: sql<Date>`now()`,
+        })
+        .where("app_id", "=", appId)
+        .where("name", "=", name)
+        .execute();
+      await audit(t, {
+        actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "app.tool_reviewed",
+        target: appId,
+        detail: { tool: name, action },
+      });
+      return this.detail(t, orgId, appId, actorAccountId);
     });
   }
 
