@@ -140,3 +140,50 @@ export const connectApp = (orgId: string, appId: string, returnTo: string) =>
 
 export const clearMyCredential = (orgId: string, appId: string) =>
   apiFetch<void>(`${one(orgId, appId)}/credentials/me`, { method: "DELETE" });
+
+/** 应用提供的提示模板（`/应用:提示名` 斜杠命令）。 */
+export interface AppPrompt {
+  appId: string;
+  appSlug: string;
+  appName: string;
+  name: string;
+  title?: string;
+  description?: string;
+  arguments: { name: string; description?: string; required?: boolean }[];
+}
+
+/** 应用提供的资源（`@` 引用）。 */
+export interface AppResource {
+  appId: string;
+  appSlug: string;
+  appName: string;
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+/** 列表时不可用的应用：当前用户未连接个人凭据，或连接失败。 */
+export interface AppUnavailable {
+  appId: string;
+  appName: string;
+  reason: "not_connected" | "failed";
+}
+
+export const listAppPrompts = (orgId: string) =>
+  apiFetch<{ prompts: AppPrompt[]; unavailable: AppUnavailable[] }>(`${base(orgId)}/prompts`);
+
+/** 按参数渲染提示模板为文本（放进输入框，由用户发送）。 */
+export const renderAppPrompt = (
+  orgId: string,
+  appId: string,
+  name: string,
+  args: Record<string, string>,
+) =>
+  apiFetch<{ text: string }>(`${one(orgId, appId)}/prompts/${encodeURIComponent(name)}`, {
+    method: "POST",
+    body: JSON.stringify({ arguments: args }),
+  });
+
+export const listAppResources = (orgId: string) =>
+  apiFetch<{ resources: AppResource[]; unavailable: AppUnavailable[] }>(`${base(orgId)}/resources`);

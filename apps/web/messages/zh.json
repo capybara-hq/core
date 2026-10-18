@@ -208,7 +208,20 @@
     "conversation": "会话",
     "status": "状态",
     "inspectorTitle": "会话信息",
-    "waiting": "等你处理"
+    "waiting": "等你处理",
+    "attachments": "附件",
+    "removeAttachment": "移除 {name}",
+    "attachLimit": "每条消息最多 {max} 个附件。",
+    "insertPrompt": "插入",
+    "unavailableApps": "不可用的应用",
+    "appUnavailable": {
+      "not_connected": "未连接",
+      "failed": "不可用"
+    },
+    "appUnavailableHint": {
+      "not_connected": "你还没有连接 {app}。请先在「应用」页连接，再重试。",
+      "failed": "暂时无法访问 {app}，请稍后重试。"
+    }
   },
   "nav": {
     "overview": "概览",
@@ -297,7 +310,9 @@
       "answered": "已回答。",
       "expired": "未在期限内回答。",
       "cancelled": "该问题已取消。"
-    }
+    },
+    "link": "链接",
+    "openLink": "打开链接"
   },
   "connect": {
     "title": "需要连接应用",

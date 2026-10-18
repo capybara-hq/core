@@ -114,3 +114,74 @@ test("MCP 应用 → agent 引用 → destructive 工具触发审批 → 批准 
   await page.locator('[data-role="tool"]').getByText(zh.tools.details).click();
   await expect(page.getByRole("textbox", { name: zh.tools.result })).toHaveValue("deleted x1");
 });
+
+test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；elicitation 表单回答后工具继续", async ({
+  page,
+}) => {
+  const mcpUrl = process.env.CAPYBARA_E2E_MCP_URL as string;
+  await signIn(page);
+
+  // 安装应用（slug docs）并新建引用它的 agent
+  await page.goto("/zh/apps/new");
+  await page.getByRole("textbox", { name: zh.apps.form.nameLabel, exact: true }).fill("Docs");
+  await page.getByRole("textbox", { name: new RegExp(`^${zh.apps.form.slugLabel}`) }).fill("docs");
+  await page.getByRole("textbox", { name: zh.apps.form.urlLabel }).fill(mcpUrl);
+  await page.getByRole("button", { name: zh.apps.form.submit }).click();
+  await expect(page).toHaveURL(/\/zh\/apps\/[^/]+$/);
+  await page.goto("/zh/agents/new");
+  await page
+    .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
+    .fill("Docs agent");
+  await page
+    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
+    .selectOption("model-fake/fake-1");
+  await page
+    .getByRole("checkbox", { name: zh.agents.form.appTools.replace("{name}", "Docs") })
+    .check();
+  await page.getByRole("button", { name: zh.agents.form.submit }).click();
+  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await page
+    .getByRole("row")
+    .filter({ hasText: "Docs agent" })
+    .getByRole("button", { name: ROW_ACTIONS })
+    .click();
+  await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
+  await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
+  const input = page.getByLabel(zh.chat.inputLabel);
+
+  // 1. `/` → 面板 → /docs:summarize → 填参数 → 渲染结果进入输入框（不自动发送）
+  await input.press("/");
+  await page.getByRole("option", { name: "/docs:summarize — Summarize a topic" }).click();
+  const dialog = page.getByRole("dialog", { name: "/docs:summarize" });
+  await dialog.getByLabel(/topic/).fill("cats");
+  await dialog.getByRole("button", { name: zh.chat.insertPrompt }).click();
+  await expect(input).toHaveValue("Summarize cats");
+  await input.fill("");
+
+  // 2. `@` → 资源 → 附件条目 → 发送：消息显示附件，模型收到资源正文（model-fake 的 echo 原样回显）
+  await input.pressSequentially("echo:got ");
+  await input.press("@");
+  // 同一个假服务也被上一个用例装成了 Fixture：按应用分组取 Docs 的那条
+  await page
+    .getByRole("group", { name: "Docs" })
+    .getByRole("option", { name: "Handbook · docs://handbook" })
+    .click();
+  await expect(page.getByRole("group", { name: zh.chat.attachments })).toContainText("@Handbook");
+  await input.press("Enter");
+  await expect(page.locator('[data-role="user"]').last()).toContainText("@Handbook · Docs");
+  await expect(page.locator('[data-role="assistant"] [data-part="body"]').last()).toContainText(
+    "# Handbook",
+  );
+
+  // 3. elicitation：工具调用途中请用户填表 → 回答后工具重新发起并拿到答案
+  await input.fill("tool:docs__signup:{}");
+  await input.press("Enter");
+  const question = page.locator('[data-role="question"]');
+  await expect(question).toHaveCount(1);
+  await expect(question.getByText("Sign up")).toBeVisible();
+  await question.getByRole("textbox").fill("Ada");
+  await question.getByRole("button", { name: zh.question.submit }).click();
+  await expect(page.locator('[data-role="assistant"] [data-part="body"]').last()).toHaveText(
+    /welcome Ada/,
+  );
+});

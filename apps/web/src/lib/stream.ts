@@ -2,6 +2,7 @@ import {
   type ContentBlock,
   type ConversationEvent,
   type InputForm,
+  type MessageAttachment,
   type ModelRef,
   type StopReason,
   streamUrl,
@@ -243,7 +244,7 @@ export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_deci
 export type QuestionOutcome = Extract<ConversationEvent, { type: "question_answered" }>["payload"];
 
 export type ChatItem =
-  | { kind: "user"; key: string; text: string }
+  | { kind: "user"; key: string; text: string; attachments: MessageAttachment[] }
   | {
       kind: "assistant";
       key: string;
@@ -337,7 +338,13 @@ export function chatItems(state: ChatState): ChatItem[] {
         model: e.payload.model,
       });
     } else if (e.type === "user_message") {
-      items.push({ kind: "user", key, text: joinText(e.payload.content, "text") });
+      // 带附件时只显示用户输入的文本（content[0]），附件正文不展开
+      const attachments = e.payload.attachments ?? [];
+      const text =
+        attachments.length > 0
+          ? joinText(e.payload.content.slice(0, 1), "text")
+          : joinText(e.payload.content, "text");
+      items.push({ kind: "user", key, text, attachments });
     } else if (e.type === "assistant_message") {
       const text = joinText(e.payload.content, "text");
       const thinking = joinText(e.payload.content, "thinking");

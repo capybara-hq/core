@@ -208,7 +208,20 @@
     "conversation": "Conversation",
     "status": "Status",
     "inspectorTitle": "Conversation",
-    "waiting": "Waiting for you"
+    "waiting": "Waiting for you",
+    "attachments": "Attachments",
+    "removeAttachment": "Remove {name}",
+    "attachLimit": "At most {max} attachments per message.",
+    "insertPrompt": "Insert",
+    "unavailableApps": "Unavailable apps",
+    "appUnavailable": {
+      "not_connected": "not connected",
+      "failed": "unavailable"
+    },
+    "appUnavailableHint": {
+      "not_connected": "You have not connected {app}. Connect it on the Apps page, then try again.",
+      "failed": "Could not reach {app}. Try again later."
+    }
   },
   "nav": {
     "overview": "Overview",
@@ -297,7 +310,9 @@
       "answered": "Answered.",
       "expired": "Nobody answered in time.",
       "cancelled": "The question was cancelled."
-    }
+    },
+    "link": "Link",
+    "openLink": "Open link"
   },
   "connect": {
     "title": "Connection required",

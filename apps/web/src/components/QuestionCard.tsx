@@ -267,6 +267,19 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
         ) : (
           <Stack gap={12}>
             {error !== undefined && <FormError message={error} />}
+            {item.form.url !== undefined && (
+              // 外部页面（MCP URL 模式）：完整地址可见，用户自己决定是否打开（新窗口、不带 opener）
+              <Stack gap={8}>
+                <KeyValue keyWidth="12ch" rows={[{ k: t("link"), v: item.form.url }]} />
+                <Stack direction="row" gap={8}>
+                  <Button
+                    onClick={() => window.open(item.form.url, "_blank", "noopener,noreferrer")}
+                  >
+                    {t("openLink")}
+                  </Button>
+                </Stack>
+              </Stack>
+            )}
             <InputFormFields
               form={item.form}
               draft={draft}

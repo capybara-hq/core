@@ -137,9 +137,19 @@ export function useChat(orgId: string, conversationId: string): ChatView {
   }, [orgId, conversationId, errorMessage, t]);
 
   const onSend = useCallback(
-    async (text: string, clientMessageId: string) => {
+    async (
+      text: string,
+      clientMessageId: string,
+      attachments: { appId: string; uri: string }[] = [],
+    ) => {
       try {
-        const { event } = await postMessage(orgId, conversationId, text, clientMessageId);
+        const { event } = await postMessage(
+          orgId,
+          conversationId,
+          text,
+          clientMessageId,
+          attachments.map((a) => ({ appId: a.appId, uri: a.uri })),
+        );
         dispatch({ kind: "events", events: [event] });
         setError(undefined);
         return true;

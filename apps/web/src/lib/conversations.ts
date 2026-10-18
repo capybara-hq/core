@@ -13,9 +13,19 @@ export type ContentBlock =
 
 type FormText = string | { zh: string; en: string };
 
+/** 用户消息附带的资源（内核读取正文，这里只有元数据）。 */
+export interface MessageAttachment {
+  appId: string;
+  appName: string;
+  uri: string;
+  name: string;
+}
+
 /** 交互表单（内核输入请求的 `form`，与 plugin-sdk 的 `InputForm` 对应）。 */
 export interface InputForm {
   title: FormText;
+  /** 需要用户在浏览器里打开的外部页面（MCP URL 模式的 elicitation）。 */
+  url?: string;
   fields: {
     key: string;
     label: FormText;
@@ -34,7 +44,13 @@ export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "o
 type EventBody =
   | {
       type: "user_message";
-      payload: { content: ContentBlock[]; authorAccountId: string; clientMessageId?: string };
+      payload: {
+        content: ContentBlock[];
+        /** `@` 资源引用的附件：第 i 个附件的正文是 `content[i + 1]`。 */
+        attachments?: MessageAttachment[];
+        authorAccountId: string;
+        clientMessageId?: string;
+      };
     }
   | { type: "run_started"; payload: { agentVersion: number; model: ModelRef } }
   | { type: "model_call"; payload: { step: number; provider: string; model: string } }
@@ -171,11 +187,24 @@ export async function listAllEvents(
   }
 }
 
-/** 发送用户消息（运行中发送即插话）：202 `{ event }`。 */
-export const postMessage = (orgId: string, id: string, text: string, clientMessageId: string) =>
+/**
+ * 发送用户消息（运行中发送即插话）：202 `{ event }`。`attachments`（`@` 资源引用）由内核以当前用户的凭据读取，
+ * 作为附加文本块写入同一条消息。
+ */
+export const postMessage = (
+  orgId: string,
+  id: string,
+  text: string,
+  clientMessageId: string,
+  attachments: { appId: string; uri: string }[] = [],
+) =>
   apiFetch<{ event: ConversationEvent }>(`${one(orgId, id)}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text, clientMessageId }),
+    body: JSON.stringify({
+      text,
+      clientMessageId,
+      ...(attachments.length > 0 && { attachments }),
+    }),
   });
 
 /** 中止当前运行：202 `{ runId }`；没有活跃运行时内核返回 409 `run.not_active`。 */

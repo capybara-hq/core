@@ -445,3 +445,124 @@ describe("对话页切换组织", () => {
     expect(await screen.findByText(en.errors.http_error)).toBeTruthy();
   });
 });
+
+describe("输入框：/ 斜杠命令与 @ 资源引用（MCP prompts / resources）", () => {
+  const APPS = "/api/v1/orgs/o1/apps";
+  const PROMPTS = {
+    prompts: [
+      {
+        appId: "a1",
+        appSlug: "docs",
+        appName: "Docs",
+        name: "summarize",
+        description: "Summarize a topic",
+        arguments: [{ name: "topic", description: "What to summarize", required: true }],
+      },
+      { appId: "a1", appSlug: "docs", appName: "Docs", name: "hello", arguments: [] },
+    ],
+    unavailable: [{ appId: "a2", appName: "Mail", reason: "not_connected" }],
+  };
+  const RESOURCES = {
+    resources: [
+      { appId: "a1", appSlug: "docs", appName: "Docs", uri: "docs://handbook", name: "Handbook" },
+    ],
+    unavailable: [],
+  };
+
+  it("空输入框键入 / → 面板列出 /应用:提示名；有参数时弹对话框，渲染结果放进输入框", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${APPS}/prompts`]: () => json(200, PROMPTS),
+      [`POST ${APPS}/a1/prompts/summarize`]: () => json(200, { text: "Summarize cats please" }),
+      [`POST ${APPS}/a1/prompts/hello`]: () => json(200, { text: "Hello there" }),
+    });
+    renderChat("en");
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    const input = screen.getByLabelText(en.chat.inputLabel);
+    await user.type(input, "/");
+    expect(input).toHaveProperty("value", "");
+    const option = await screen.findByRole("option", {
+      name: "/docs:summarize — Summarize a topic",
+    });
+    // 未连接的应用单独一组
+    expect(
+      screen.getByRole("option", { name: `Mail · ${en.chat.appUnavailable.not_connected}` }),
+    ).toBeTruthy();
+    await user.click(option);
+    const dialog = await screen.findByRole("dialog", { name: "/docs:summarize" });
+    const insert = within(dialog).getByRole("button", { name: en.chat.insertPrompt });
+    expect(insert).toHaveProperty("disabled", true);
+    await user.type(within(dialog).getByLabelText(/topic/), "cats");
+    await user.click(insert);
+    await vi.waitFor(() =>
+      expect(screen.getByLabelText(en.chat.inputLabel)).toHaveProperty(
+        "value",
+        "Summarize cats please",
+      ),
+    );
+    const post = calls.find((c) => c.url === `${APPS}/a1/prompts/summarize`);
+    expect(JSON.parse(String(post?.body))).toEqual({ arguments: { topic: "cats" } });
+
+    // 无参数的提示：选中即渲染
+    await user.clear(screen.getByLabelText(en.chat.inputLabel));
+    await user.type(screen.getByLabelText(en.chat.inputLabel), "/");
+    await user.click(await screen.findByRole("option", { name: "/docs:hello" }));
+    await vi.waitFor(() =>
+      expect(screen.getByLabelText(en.chat.inputLabel)).toHaveProperty("value", "Hello there"),
+    );
+  });
+
+  it("键入 @ → 面板列出资源；选中后作为附件随消息发送，可移除；消息里显示附件", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${APPS}/resources`]: () => json(200, RESOURCES),
+      [`POST ${BASE}/messages`]: (c) => {
+        const body = JSON.parse(String(c.body)) as { text: string };
+        return json(202, {
+          event: ev(
+            2,
+            "user_message",
+            {
+              content: [
+                { type: "text", text: body.text },
+                { type: "text", text: "Attached resource …" },
+              ],
+              attachments: [
+                { appId: "a1", appName: "Docs", uri: "docs://handbook", name: "Handbook" },
+              ],
+              authorAccountId: "a1",
+            },
+            null,
+          ),
+        });
+      },
+    });
+    renderChat("zh");
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    const input = screen.getByLabelText(zh.chat.inputLabel);
+    await user.type(input, "read @");
+    expect(input).toHaveProperty("value", "read ");
+    await user.click(await screen.findByRole("option", { name: "Handbook · docs://handbook" }));
+    const group = await screen.findByRole("group", { name: zh.chat.attachments });
+    expect(within(group).getByText("@Handbook")).toBeTruthy();
+
+    // 移除再加回
+    await user.click(within(group).getByRole("button", { name: "移除 Handbook" }));
+    expect(screen.queryByRole("group", { name: zh.chat.attachments })).toBeNull();
+    await user.type(screen.getByLabelText(zh.chat.inputLabel), " @");
+    await user.click(await screen.findByRole("option", { name: "Handbook · docs://handbook" }));
+
+    await user.click(screen.getByRole("button", { name: zh.chat.send }));
+    const post = calls.find((c) => c.method === "POST" && c.url === `${BASE}/messages`);
+    expect(JSON.parse(String(post?.body))).toMatchObject({
+      text: "read",
+      attachments: [{ appId: "a1", uri: "docs://handbook" }],
+    });
+    // 发送成功：输入框的附件清空；消息里只显示用户文本与附件条目
+    expect(await screen.findByText("@Handbook · Docs")).toBeTruthy();
+    expect(screen.queryByText("Attached resource …")).toBeNull();
+    expect(screen.queryByText("@Handbook")).toBeNull();
+  });
+});

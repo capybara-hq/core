@@ -78,6 +78,7 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
         <Stack gap={8}>
           {chat.error !== undefined && <FormError message={chat.error} />}
           <Composer
+            orgId={orgId}
             onSend={chat.send}
             stop={active ? { onStop: chat.stop, stopping: chat.stopping } : undefined}
           />

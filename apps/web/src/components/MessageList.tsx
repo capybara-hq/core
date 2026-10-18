@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, Stack, StatusMark, Text } from "@capybara-hq/design";
+import { Badge, Card, Stack, StatusMark, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import type { ModelRef } from "../lib/conversations";
 import type { ChatItem } from "../lib/stream";
@@ -35,9 +35,21 @@ export function MessageList({
             return (
               <div key={item.key} data-role="user">
                 <Card title={t("you")}>
-                  <div data-part="body">
-                    <Text pre>{item.text}</Text>
-                  </div>
+                  <Stack gap={8}>
+                    <div data-part="body">
+                      <Text pre>{item.text}</Text>
+                    </div>
+                    {item.attachments.length > 0 && (
+                      // biome-ignore lint/a11y/useSemanticElements: 附件条目分组；apps/web 不能写样式，用 role=group
+                      <div role="group" aria-label={t("attachments")}>
+                        <Stack direction="row" gap={8} wrap>
+                          {item.attachments.map((a) => (
+                            <Badge key={`${a.appId}:${a.uri}`}>{`@${a.name} · ${a.appName}`}</Badge>
+                          ))}
+                        </Stack>
+                      </div>
+                    )}
+                  </Stack>
                 </Card>
               </div>
             );

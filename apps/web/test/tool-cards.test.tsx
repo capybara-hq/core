@@ -463,6 +463,52 @@ describe("QuestionCard（通用 InputForm 渲染器）", () => {
     expect(screen.queryByRole("button", { name: m.question.submit })).toBeNull();
   });
 
+  it.each(LOCALES)(
+    "URL 模式（MCP elicitation）：显示完整链接与「打开链接」（新窗口、noopener），确认「已完成」后提交（%s）",
+    async (locale) => {
+      const m = msgs[locale];
+      const calls = stubApi({
+        "POST /api/v1/orgs/o1/questions/q1/answer": () =>
+          json(200, { question: { id: "q1", status: "answered" } }),
+      });
+      const open = vi.fn();
+      vi.stubGlobal("open", open);
+      const url = "https://auth.example.com/connect?state=abc";
+      renderPage(
+        <QuestionCard
+          orgId="o1"
+          item={{
+            ...item(),
+            form: {
+              title: "Connect your account",
+              url,
+              fields: [
+                {
+                  key: "completed",
+                  label: { en: "I have completed this step", zh: "我已完成这一步" },
+                  schema: { type: "boolean" },
+                  required: true,
+                },
+              ],
+            },
+          }}
+        />,
+        { locale },
+      );
+      expect(screen.getByText(url)).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: m.question.openLink }));
+      expect(open).toHaveBeenCalledWith(url, "_blank", "noopener,noreferrer");
+      await user.click(
+        screen.getByRole("switch", {
+          name: locale === "zh" ? "我已完成这一步" : "I have completed this step",
+        }),
+      );
+      await user.click(screen.getByRole("button", { name: m.question.submit }));
+      expect(bodyOf(calls[0])).toEqual({ answer: { completed: true } });
+    },
+  );
+
   it("buildAnswer：多选里的「其他」换成文本；选了「其他」没写文本算未填", () => {
     const draft = initialDraft(FORM);
     expect(draft.values).toEqual({ regions: [], notify: false });
