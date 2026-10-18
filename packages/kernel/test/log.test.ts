@@ -153,7 +153,8 @@ describe("createLogger", () => {
     logger.info("warmup", fields);
     const t0 = performance.now();
     for (let i = 0; i < 1_000; i++) logger.info("line", fields);
-    expect(performance.now() - t0).toBeLessThan(500);
+    // CI 机器负载高时放宽；逐个密钥扫描的退化在秒级以上，2000ms 仍能抓到
+    expect(performance.now() - t0).toBeLessThan(process.env.CI ? 2_000 : 500);
   });
 
   it("嵌套的组织配置密钥（secret 对象下的 record / 数组 / 数字）被打码", () => {

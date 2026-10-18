@@ -9,6 +9,8 @@ export default defineConfig({
   ssr: { resolve: { conditions } },
   test: {
     hookTimeout: 120_000,
+    // CI 机器负载高：起子进程的双副本测试、每次都算密码哈希的登录测试在 5s 默认值附近超时（非回归），CI 上放宽。
+    testTimeout: process.env.CI ? 30_000 : 5_000,
     // 上面的 "module" 条件会让外部化依赖 @opentelemetry/api（@anthropic-ai/sdk 的依赖）解析到
     // 无扩展名导入的 esm 构建，Node 原生加载失败；把这两个包交给 Vite 转换。
     // 生产运行时 Node 不用 "module" 条件，不受影响。
