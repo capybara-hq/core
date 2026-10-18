@@ -1,5 +1,6 @@
 import { type KeyboardEvent, type PointerEvent, useRef } from "react";
 import type { ControlA11y } from "./a11y";
+import { stepDecimals } from "./step";
 
 const CELLS = 20;
 
@@ -26,7 +27,7 @@ export function Slider({
   /** 数值框的占位文字（如「默认（1）」）；未设置值时数值框留空并显示它。 */
   placeholder?: string;
 }) {
-  const decimals = (String(step).split(".")[1] ?? "").length;
+  const decimals = stepDecimals(step);
   const commit = (n: number) => onChange(Number(Math.min(max, Math.max(min, n)).toFixed(decimals)));
   const dragging = useRef(false);
   const fromPointer = (e: PointerEvent<HTMLDivElement>) => {

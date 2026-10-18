@@ -300,3 +300,64 @@ describe("PAGE_TEMPLATES", () => {
     }
   });
 });
+
+describe("PlaygroundPage 跟随最新消息", () => {
+  /** jsdom 不做布局：用内容行数模拟 scrollHeight（每行 40px），视口高 100px。 */
+  function mockLayout() {
+    const tops = new WeakMap<Element, number>();
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+      return this.querySelectorAll("p").length * 40;
+    });
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(100);
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) {
+      return tops.get(this) ?? 0;
+    });
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
+      this: Element,
+      v: number,
+    ) {
+      tops.set(this, Math.max(0, Math.min(v, this.scrollHeight - this.clientHeight)));
+    });
+  }
+  const page = (n: number) => (
+    <DesignProvider locale="zh">
+      <PlaygroundPage header={header} composer={<div>c</div>} inspector={<div>i</div>}>
+        {Array.from({ length: n }, (_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: 静态用例
+          <p key={i}>消息 {i}</p>
+        ))}
+      </PlaygroundPage>
+    </DesignProvider>
+  );
+  const thread = () => document.querySelector(".cb-playground-thread") as HTMLElement;
+  const scrollTo = (el: HTMLElement, top: number) => {
+    el.scrollTop = top;
+    el.dispatchEvent(new Event("scroll"));
+  };
+
+  it("挂载时滚到底部，内容增长时继续跟随", async () => {
+    mockLayout();
+    const r = render(page(10));
+    expect(thread().scrollTop).toBe(300);
+    r.rerender(page(12));
+    await vi.waitFor(() => expect(thread().scrollTop).toBe(380));
+  });
+
+  it("在底部 48px 以内仍跟随；上翻后停止跟随，回到底部恢复", async () => {
+    mockLayout();
+    const r = render(page(10));
+    const el = thread();
+    scrollTo(el, 260); // 距底 40px：仍算在底部
+    r.rerender(page(11));
+    await vi.waitFor(() => expect(el.scrollTop).toBe(340));
+
+    scrollTo(el, 100); // 上翻
+    r.rerender(page(13));
+    await new Promise((res) => setTimeout(res, 0));
+    expect(el.scrollTop).toBe(100);
+
+    scrollTo(el, 420); // 回到底部
+    r.rerender(page(14));
+    await vi.waitFor(() => expect(el.scrollTop).toBe(460));
+  });
+});

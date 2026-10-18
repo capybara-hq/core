@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useDesignT } from "../provider";
 import type { ControlA11y } from "./a11y";
+import { stepDecimals } from "./step";
 
 export function Input({
   prefix,
@@ -112,7 +113,7 @@ export function Stepper({
   const t = useDesignT();
   const clamp = (n: number) =>
     Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, n));
-  const decimals = (String(step).split(".")[1] ?? "").length;
+  const decimals = stepDecimals(step);
   const bump = (d: number) => onChange(clamp(Number((value + d * step).toFixed(decimals))));
   return (
     <div className="cb-stepper" data-state={disabled ? "disabled" : undefined}>

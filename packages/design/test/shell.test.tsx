@@ -317,6 +317,59 @@ describe("Body", () => {
   });
 });
 
+describe("TopBar 组织与账户按钮", () => {
+  it("可访问名称包含可见的组织名与用户名（WCAG 2.5.3）", () => {
+    zh(
+      <AppShell
+        topBar={{ ...topBar, org: { name: "Acme", menu: [{ label: "Beta", onSelect: () => {} }] } }}
+        status={status}
+      >
+        <div />
+      </AppShell>,
+    );
+    expect(screen.getByRole("button", { name: "组织: Acme" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "账户: grant" })).toBeTruthy();
+  });
+
+  it("用户菜单为空（会话加载中）时不渲染可点击的下拉", () => {
+    zh(
+      <AppShell topBar={{ ...topBar, user: { name: "加载中…", menu: [] } }} status={status}>
+        <div />
+      </AppShell>,
+    );
+    expect(screen.queryByRole("button", { name: /账户/ })).toBeNull();
+    expect(within(screen.getByRole("banner")).getByText("加载中…")).toBeTruthy();
+  });
+});
+
+describe("useMediaQuery", () => {
+  it("同一 query 重渲染不重新订阅", () => {
+    const add = vi.fn();
+    const remove = vi.fn();
+    window.matchMedia = ((q: string) => ({
+      matches: false,
+      media: q,
+      addEventListener: add,
+      removeEventListener: remove,
+    })) as unknown as typeof window.matchMedia;
+    const r = zh(
+      <AppShell topBar={topBar} status={status}>
+        <div />
+      </AppShell>,
+    );
+    const subscribed = add.mock.calls.length;
+    r.rerender(
+      <DesignProvider locale="zh">
+        <AppShell topBar={{ ...topBar }} status={{ ...status }}>
+          <div />
+        </AppShell>
+      </DesignProvider>,
+    );
+    expect(add.mock.calls.length).toBe(subscribed);
+    expect(remove).not.toHaveBeenCalled();
+  });
+});
+
 describe("TopBar 窄屏", () => {
   const wideNav = {
     ...topBar,

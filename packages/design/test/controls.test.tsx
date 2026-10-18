@@ -146,6 +146,18 @@ describe("Slider", () => {
     fireEvent.keyDown(s, { key: "PageUp" });
     expect(onChange).toHaveBeenLastCalledWith(1);
   });
+  it("极小步长（指数写法 1e-8）按键不被取整为 0", () => {
+    const onChange = vi.fn();
+    zh(<Slider label="eps" min={0} max={1e-6} step={1e-8} value={0} onChange={onChange} />);
+    fireEvent.keyDown(screen.getByRole("slider", { name: "eps" }), { key: "ArrowRight" });
+    expect(onChange).toHaveBeenCalledWith(1e-8);
+  });
+  it("Stepper 极小步长不被取整", async () => {
+    const onChange = vi.fn();
+    zh(<Stepper label="eps" value={0} step={1e-7} onChange={onChange} />);
+    await userEvent.click(screen.getByRole("button", { name: "增加" }));
+    expect(onChange).toHaveBeenCalledWith(1e-7);
+  });
   it("未设置值时无 aria-valuenow", () => {
     zh(<Slider label="温度" min={0} max={1} step={0.1} value={undefined} onChange={() => {}} />);
     expect(screen.getByRole("slider").hasAttribute("aria-valuenow")).toBe(false);

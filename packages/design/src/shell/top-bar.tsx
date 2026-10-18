@@ -8,6 +8,7 @@ export type TopBarProps = {
   nav: { id: string; label: string; href: string }[];
   activeNav: string;
   org: { name: string; menu?: MenuItem[] } | null;
+  /** 名称旁的 ▾ 由 TopBar 渲染；`menu` 为空时只显示名称、不可点击。 */
   user: { name: string; menu: MenuItem[] };
   commands: CommandGroup[];
 };
@@ -36,8 +37,12 @@ export function TopBar({
           <Menu
             items={org.menu}
             trigger={
-              <button type="button" className="cb-topbar-btn" aria-label={t("shell.org")}>
-                {org.name} ▾
+              <button
+                type="button"
+                className="cb-topbar-btn"
+                aria-label={`${t("shell.org")}: ${org.name}`}
+              >
+                {org.name} <span aria-hidden="true">▾</span>
               </button>
             }
           />
@@ -82,14 +87,23 @@ export function TopBar({
           <Kbd>⌘K</Kbd>
         </button>
       )}
-      <Menu
-        items={user.menu}
-        trigger={
-          <button type="button" className="cb-topbar-btn" aria-label={t("shell.account")}>
-            {user.name}
-          </button>
-        }
-      />
+      {user.menu.length > 0 ? (
+        <Menu
+          items={user.menu}
+          trigger={
+            <button
+              type="button"
+              className="cb-topbar-btn"
+              aria-label={`${t("shell.account")}: ${user.name}`}
+            >
+              {user.name} <span aria-hidden="true">▾</span>
+            </button>
+          }
+        />
+      ) : (
+        // 菜单为空（如会话加载中）时不渲染可点击的空下拉
+        <span className="cb-topbar-org">{user.name}</span>
+      )}
     </header>
   );
 }
