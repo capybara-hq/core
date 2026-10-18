@@ -11,6 +11,7 @@ export {
 export {
   type FakeMcpCallInfo,
   type FakeMcpHandlerContext,
+  type FakeMcpPrompt,
   type FakeMcpRequest,
   type FakeMcpResource,
   FakeMcpRpcError,

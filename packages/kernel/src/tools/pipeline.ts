@@ -21,6 +21,7 @@ import type { ApprovalRecord, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type AppAuth, CredentialMissing, type Credentials } from "./credentials.js";
+import { ElicitationSession } from "./elicitation.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, type ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
 import type { QuestionRecord, QuestionsService } from "./questions.service.js";
@@ -205,6 +206,17 @@ function loadedFrom(result: unknown, tools: readonly ResolvedTool[]): string[] {
 }
 
 class Stopped extends Error {}
+
+/** 在工具结果末尾附上说明（如被拒绝的 elicitation）；结果不是 `{ content: [] }` 形状时原样返回。 */
+function withNotes(result: unknown, notes: readonly string[]): unknown {
+  if (notes.length === 0) return result;
+  const content = (result as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return result;
+  return {
+    ...(result as object),
+    content: [...content, ...notes.map((text) => ({ type: "text", text }))],
+  };
+}
 
 type Resolved = AgentTools;
 
@@ -551,7 +563,7 @@ export class ToolPipeline {
     stepTools?: readonly ResolvedTool[],
   ): Promise<ExecOutcome> {
     if (tool.source.kind === "app") {
-      return this.executeApp(tool, tool.source, input, ctx);
+      return this.executeApp(tool, tool.source, input, ctx, resume);
     }
     const handler = this.deps.registry.handler(tool.source);
     if (!handler) return { kind: "error", message: `Tool ${tool.key} is no longer available.` };
@@ -588,6 +600,7 @@ export class ToolPipeline {
     source: Extract<ResolvedTool["source"], { kind: "app" }>,
     input: unknown,
     ctx: ToolStepContext,
+    resume?: ToolResume,
   ): Promise<ExecOutcome> {
     const { db, registry, breaker, credentials, config } = this.deps;
     const { orgId } = ctx;
@@ -628,12 +641,41 @@ export class ToolPipeline {
       });
       return injection;
     };
-    // 远端可能把收到的凭据回显在结果 / 错误里：写入事件之前按本次注入的值打码（见 redact.ts）
+    // 远端在调用途中向用户要输入（MCP elicitation，见 elicitation.ts）：需要问用户时中止本次调用、按 input_required
+    // 处理；续跑时用 ctx.resume 的答案答复远端再次发起的同一请求。resources 工具不续跑，一律拒绝。
+    const suspend = new AbortController();
+    const elicit = new ElicitationSession({
+      resume,
+      onSuspend: () => suspend.abort(),
+      declineAll: source.resources === true,
+    });
+    // 远端可能把收到的凭据回显在结果 / 错误 / elicitation 表单里：写入事件之前按本次注入的值打码（见 redact.ts）
     const clean = (o: ExecOutcome): ExecOutcome => {
       const redact = redactorFor(injected);
-      if (o.kind === "result") return { kind: "result", result: redactDeep(o.result, redact) };
-      if (o.kind === "error") return { kind: "error", message: redact(o.message) };
+      if (o.kind === "result") {
+        return { kind: "result", result: redactDeep(withNotes(o.result, elicit.notes), redact) };
+      }
+      if (o.kind === "error") {
+        return { kind: "error", message: redact([o.message, ...elicit.notes].join(" ")) };
+      }
+      if (o.kind === "input_required") {
+        return {
+          kind: "input_required",
+          form: redactDeep(o.form, redact) as InputForm,
+          state: redactDeep(o.state, redact),
+        };
+      }
       return o;
+    };
+    /** 本次执行要问用户（elicitation）：服务可达，算成功；返回打码后的输入请求。 */
+    const asked = async (): Promise<ExecOutcome | undefined> => {
+      if (!elicit.pending) return undefined;
+      await breaker.success(orgId, appId);
+      return clean({
+        kind: "input_required",
+        form: elicit.pending.form,
+        state: elicit.pending.state,
+      });
     };
     const missing = (e: CredentialMissing): ExecOutcome =>
       e.ownership === "personal"
@@ -668,6 +710,7 @@ export class ToolPipeline {
             await credentials.onUnauthorized(orgId, appId, auth, ctx.accountId, stale);
           },
           signal,
+          onElicit: elicit.handle,
           onToolsChanged: () => {
             try {
               this.deps.onToolsChanged?.(orgId, appId);
@@ -680,9 +723,13 @@ export class ToolPipeline {
         return source.resources
           ? runResourceTool(session, source.name, input)
           : // 交回已复核的定义（app_tools.spec，含 connectorData）：连接器按它路由，远端变化须先经漂移复核
-            session.callTool(source.name, input, signal, { spec: tool.spec });
+            session.callTool(source.name, input, AbortSignal.any([signal, suspend.signal]), {
+              spec: tool.spec,
+            });
       });
       if (r === "aborted") return { kind: "error", message: RUN_STOPPED_DURING_TEXT };
+      const ask = await asked();
+      if (ask) return ask;
       if (r === "timeout") {
         await breaker.failure(orgId, appId);
         return { kind: "error", message: timeoutText(tool.key, config().tools.timeoutMs) };
@@ -691,6 +738,9 @@ export class ToolPipeline {
       await breaker.success(orgId, appId);
       return clean({ kind: "result", result: r.value });
     } catch (e) {
+      // 为问用户而中止了调用：中止引起的错误不是失败
+      const ask = await asked();
+      if (ask) return ask;
       if (e instanceof CredentialMissing) return missing(e);
       // 熔断只计远端不可用（连接 / 传输错误、HTTP 5xx：连接器抛 kind = unavailable 的 ToolError 或原始错误）。
       // 其余 ToolError（JSON-RPC 业务错误、鉴权失败、重定向等）说明服务可达，与 isError 结果一样算成功。

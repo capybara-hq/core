@@ -1,5 +1,5 @@
 import type { ZodTypeAny } from "zod";
-import type { ToolResult, ToolSpec } from "./tool.js";
+import type { FormAnswer, ToolContent, ToolResult, ToolSpec } from "./tool.js";
 
 /** 注入到出站请求的鉴权信息。 */
 export interface AuthInjection {
@@ -24,8 +24,41 @@ export interface ConnectorSession {
     { uri: string; name: string; description?: string; mimeType?: string }[]
   >;
   readResource?(uri: string): Promise<ToolResult>;
+  /** 可选：远端提供的提示模板（如 MCP prompts）。不支持时不实现，内核须判空。 */
+  listPrompts?(): Promise<PromptInfo[]>;
+  /** 可选：按参数渲染一个提示模板，返回消息（如 MCP `prompts/get`）。失败抛 ToolError（英文、不含凭据）。 */
+  getPrompt?(name: string, args: Record<string, string>): Promise<RenderedPrompt>;
   close(): Promise<void>;
 }
+
+/** 远端提示模板（`/应用:提示名` 斜杠命令）。 */
+export interface PromptInfo {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments: { name: string; description?: string; required?: boolean }[];
+}
+
+/** 渲染后的提示：按顺序的消息，内容块同工具结果（非文本给类型说明）。 */
+export interface RenderedPrompt {
+  description?: string;
+  messages: { role: "user" | "assistant"; content: ToolContent[] }[];
+}
+
+/**
+ * 远端在一次调用中途向用户要输入（MCP `elicitation/create`）：
+ * - `form`：`requestedSchema` 是远端给的扁平 JSON Schema（object + 原始类型属性），由内核映射成交互表单；
+ * - `url`：请用户在浏览器里打开 `url` 完成某步（授权、付款、填敏感信息），完成与否由用户确认。
+ */
+export type ElicitationRequest =
+  | { mode: "form"; message: string; requestedSchema: Record<string, unknown> }
+  | { mode: "url"; message: string; url: string; elicitationId: string };
+
+/** 对 elicitation 的答复（与 MCP `ElicitResult` 对应）：接受（带表单内容）/ 拒绝 / 取消。 */
+export type ElicitationResponse =
+  | { action: "accept"; content?: FormAnswer }
+  | { action: "decline" }
+  | { action: "cancel" };
 
 /** 内核打开会话时传给连接器的参数。 */
 export interface ConnectorOpenArgs {
@@ -41,6 +74,16 @@ export interface ConnectorOpenArgs {
    * 漂移检查（新的 / 变了的工具在管理员复核前不可用）。可选：旧内核不提供，连接器须判空。不要等待它、不要因它抛错。
    */
   onToolsChanged?: () => void;
+  /**
+   * 远端在调用中途向用户要输入（MCP `elicitation/create`、URL 模式的 `-32042` 错误）时调用，返回答复后连接器原样
+   * 回给远端。可选：内核不提供时连接器不声明 elicitation 能力（远端便不会发起）。
+   *
+   * 内核不能在等用户回答期间保持远端调用（运行会暂停、worker 释放、会话关闭）：需要问用户时，内核**中止本次调用**
+   * （经 `callTool` 的 signal）并让运行进入等待；用户回答后内核重新发起同一调用，远端再次发起同样的 elicitation 时
+   * 由本回调立即用用户的答案答复。所以连接器只需「收到就调用、拿到就回」，不要自己缓存或重试；本回调可能永不 resolve
+   * （调用已被中止），连接器不要依赖它结束。
+   */
+  onElicit?: (request: ElicitationRequest) => Promise<ElicitationResponse>;
 }
 
 /**

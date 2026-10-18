@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -5,7 +6,13 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import {
   CallToolRequestSchema,
   type CallToolResult,
+  type ElicitRequestFormParams,
+  type ElicitRequestURLParams,
+  type ElicitResult,
   ErrorCode,
+  GetPromptRequestSchema,
+  type GetPromptResult,
+  ListPromptsRequestSchema,
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   McpError,
@@ -17,6 +24,8 @@ export class FakeMcpRpcError extends Error {
   constructor(
     readonly code: number,
     message: string,
+    /** JSON-RPC 错误的 `data`（如 `-32042` URL elicitation 的 `{ elicitations: [...] }`）。 */
+    readonly data?: unknown,
   ) {
     super(message);
     this.name = "FakeMcpRpcError";
@@ -53,6 +62,24 @@ export interface FakeMcpTool {
 export interface FakeMcpHandlerContext {
   /** 发一条 `notifications/tools/list_changed`（与本次调用关联，经响应的 SSE 流送达）。 */
   notifyToolsChanged(): Promise<void>;
+  /**
+   * 向客户端发 `elicitation/create`（经本次调用的 SSE 流）并等待答复（需 `sessions`）。客户端没有声明
+   * elicitation 能力时抛错（SDK 的能力检查）。每次调用记入 `FakeMcpServer.elicitations`。
+   */
+  elicit(params: ElicitRequestFormParams | ElicitRequestURLParams): Promise<ElicitResult>;
+}
+
+/** 提示模板（prompts 能力）。 */
+export interface FakeMcpPrompt {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments?: { name: string; description?: string; required?: boolean }[];
+  /** 渲染：返回消息（缺省一条 user 文本 `prompt <name> <args JSON>`）。可抛 `FakeMcpRpcError`。 */
+  render?: (
+    args: Record<string, string>,
+    headers: Record<string, string>,
+  ) => GetPromptResult["messages"];
 }
 
 export interface FakeMcpResource {
@@ -77,6 +104,13 @@ export interface FakeMcpServerOptions {
   tools: FakeMcpTool[];
   /** 给出时声明 resources 能力（空数组也算支持）。 */
   resources?: FakeMcpResource[];
+  /** 给出时声明 prompts 能力（空数组也算支持）。 */
+  prompts?: FakeMcpPrompt[];
+  /**
+   * 有状态模式（`Mcp-Session-Id`，SSE 响应）：同一会话的请求由同一个 SDK `Server` 处理，服务端发起的请求
+   * （elicitation）的答复才能送回发起它的调用。缺省无状态。
+   */
+  sessions?: boolean;
   /** 要求 `Authorization: Bearer <token>`，不符 → HTTP 401。 */
   requireBearer?: string;
   /** 自定义 bearer 校验（如交给假授权服务器的 `verify`）：返回 false → HTTP 401。与 `requireBearer` 二选一。 */
@@ -115,6 +149,11 @@ export interface FakeMcpServer {
   calls: FakeMcpCallInfo[];
   /** 全部 HTTP 请求（含被 401 拒绝的）。 */
   requests: FakeMcpRequest[];
+  /** 服务发起的 elicitation 与客户端的答复（答复前中止 / 会话关闭时 `result` 为 `"error"`）。 */
+  elicitations: {
+    params: ElicitRequestFormParams | ElicitRequestURLParams;
+    result?: ElicitResult | "error";
+  }[];
   stop(): Promise<void>;
 }
 
@@ -160,6 +199,9 @@ const PRM_WELL_KNOWN_PATH = "/.well-known/oauth-protected-resource/mcp";
 export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<FakeMcpServer> {
   const calls: FakeMcpCallInfo[] = [];
   const requests: FakeMcpRequest[] = [];
+  const elicitations: FakeMcpServer["elicitations"] = [];
+  /** 有状态模式下的会话（按 `Mcp-Session-Id`）。 */
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
   let rejected = 0;
 
   const mcpServer = (headers: Record<string, string>): Server => {
@@ -169,6 +211,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
         capabilities: {
           tools: { listChanged: true },
           ...(opts.resources !== undefined && { resources: {} }),
+          ...(opts.prompts !== undefined && { prompts: {} }),
         },
       },
     );
@@ -199,12 +242,60 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
         return await tool.handler(info, {
           notifyToolsChanged: () =>
             extra.sendNotification({ method: "notifications/tools/list_changed" }),
+          elicit: async (params) => {
+            const entry: FakeMcpServer["elicitations"][number] = { params };
+            elicitations.push(entry);
+            try {
+              entry.result = await server.elicitInput(params, {
+                relatedRequestId: extra.requestId,
+              });
+              return entry.result;
+            } catch (e) {
+              entry.result = "error";
+              throw e;
+            }
+          },
         });
       } catch (e) {
-        if (e instanceof FakeMcpRpcError) throw new McpError(e.code, e.message);
+        if (e instanceof FakeMcpRpcError) throw new McpError(e.code, e.message, e.data);
         throw e;
       }
     });
+    if (opts.prompts !== undefined) {
+      const prompts = opts.prompts;
+      server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+        prompts: prompts.map((p) => ({
+          name: p.name,
+          ...(p.title !== undefined && { title: p.title }),
+          ...(p.description !== undefined && { description: p.description }),
+          ...(p.arguments !== undefined && { arguments: p.arguments }),
+        })),
+      }));
+      server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+        const p = prompts.find((x) => x.name === req.params.name);
+        if (!p) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt ${req.params.name}`);
+        const args = (req.params.arguments ?? {}) as Record<string, string>;
+        try {
+          return {
+            ...(p.description !== undefined && { description: p.description }),
+            messages: p.render
+              ? p.render(args, headers)
+              : [
+                  {
+                    role: "user" as const,
+                    content: {
+                      type: "text" as const,
+                      text: `prompt ${p.name} ${JSON.stringify(args)}`,
+                    },
+                  },
+                ],
+          };
+        } catch (e) {
+          if (e instanceof FakeMcpRpcError) throw new McpError(e.code, e.message, e.data);
+          throw e;
+        }
+      });
+    }
     if (opts.resources !== undefined) {
       const resources = opts.resources;
       server.setRequestHandler(ListResourcesRequestSchema, async () => ({
@@ -308,6 +399,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
     }
     const over = opts.intercept?.({ ...entry, body });
     if (over) return send(res, over.status, over.body, over.location);
+    if (opts.sessions) return handleSession(req, res, headers, body);
     if (req.method !== "POST") return send(res, 405, "Method Not Allowed");
 
     const server = mcpServer(headers);
@@ -320,6 +412,36 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
       void server.close();
     });
     // exactOptionalPropertyTypes 下 SDK 自身的 Transport 类型不兼容（onclose 可为 undefined），按 SDK 文档用法转型
+    await server.connect(transport as unknown as Parameters<Server["connect"]>[0]);
+    await transport.handleRequest(req, res, body);
+  };
+
+  /** 有状态模式：按 `Mcp-Session-Id` 路由到会话的 transport；initialize 新建会话。 */
+  const handleSession = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    headers: Record<string, string>,
+    body: unknown,
+  ) => {
+    const sid = headers["mcp-session-id"];
+    const existing = sid === undefined ? undefined : sessions.get(sid);
+    if (existing) {
+      await existing.handleRequest(req, res, body);
+      return;
+    }
+    if (sid !== undefined) return send(res, 404, "Session not found");
+    if (req.method !== "POST") return send(res, 405, "Method Not Allowed");
+    const server = mcpServer(headers);
+    const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (id) => {
+        sessions.set(id, transport);
+      },
+    });
+    transport.onclose = () => {
+      if (transport.sessionId) sessions.delete(transport.sessionId);
+      void server.close();
+    };
     await server.connect(transport as unknown as Parameters<Server["connect"]>[0]);
     await transport.handleRequest(req, res, body);
   };
@@ -337,8 +459,11 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
     url: `${base}/mcp`,
     calls,
     requests,
+    elicitations,
     stop: () =>
       new Promise<void>((resolve, reject) => {
+        for (const t of sessions.values()) void t.close();
+        sessions.clear();
         http.closeAllConnections();
         http.close((err) => (err ? reject(err) : resolve()));
       }),

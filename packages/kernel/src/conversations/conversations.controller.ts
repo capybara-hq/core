@@ -4,6 +4,7 @@ import { CONVERSATIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { MAX_ATTACHMENTS } from "../tools/app-content.js";
 import type { ConversationsService, ConversationView } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
 
@@ -23,6 +24,11 @@ const MessageBody = z
   .object({
     text: z.string().min(1).max(100_000),
     clientMessageId: z.string().min(1).max(200).optional(),
+    /** `@` 资源引用：内核以发送者的凭据读取并作为附加文本块写入（见 ConversationsService.postUserMessage）。 */
+    attachments: z
+      .array(z.object({ appId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
+      .max(MAX_ATTACHMENTS)
+      .optional(),
   })
   .strict();
 
@@ -103,6 +109,7 @@ export class ConversationsController {
       event: await this.conversations.postUserMessage(org.orgId, id, p.account.id, {
         text: body.text,
         ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
+        ...(body.attachments !== undefined && { attachments: body.attachments }),
       }),
     };
   }

@@ -73,6 +73,9 @@ export const TOOL_REGISTRY = Symbol("TOOL_REGISTRY");
 /** `AppsService` 的注入令牌。 */
 export const APPS = Symbol("APPS");
 
+/** `AppContent`（应用的 prompts / resources，供斜杠命令与 @ 引用）的注入令牌。 */
+export const APP_CONTENT = Symbol("APP_CONTENT");
+
 /** `ApprovalsService`（工具调用审批与授权）的注入令牌。 */
 export const APPROVALS = Symbol("APPROVALS");
 

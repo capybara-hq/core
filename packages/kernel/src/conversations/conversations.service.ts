@@ -40,6 +40,22 @@ export interface RunControl {
   requestAbort(runId: string, byAccountId: string): Promise<void>;
 }
 
+/** 消息附件引用（应用 + 资源 URI）。 */
+export interface AttachmentRef {
+  appId: string;
+  uri: string;
+}
+
+/** 附件解析：以发送者的凭据读取资源，返回追加在消息后的文本块与元数据（见 tools/app-content.ts）。 */
+export type ResolveAttachments = (
+  orgId: string,
+  accountId: string,
+  refs: AttachmentRef[],
+) => Promise<{
+  blocks: { type: "text"; text: string }[];
+  attachments: { appId: string; appName: string; uri: string; name: string }[];
+}>;
+
 /**
  * 用户消息的幂等键：客户端的 `clientMessageId` 加前缀，与运行流水线自用的幂等键分开，
  * 避免客户端恰好选中内部键而命中别的事件。
@@ -90,6 +106,7 @@ export class ConversationsService {
     private readonly agents: AgentsService,
     private readonly runs?: RunControl,
     private readonly log?: Pick<Logger, "warn">,
+    private readonly resolveAttachments?: ResolveAttachments,
   ) {}
 
   /**
@@ -235,14 +252,38 @@ export class ConversationsService {
    * 追加一条用户消息；带 `clientMessageId` 时重复提交返回同一事件。写入后调用 `ensureRun`：
    * 没有进行中的运行时投递一轮；运行中则由当前运行在步骤间隙吸收，或在它结束时再次 `ensureRun`。
    * 投递失败时抛错（消息已写入；客户端带同一 `clientMessageId` 重试会再次触发投递）。
+   *
+   * `attachments`（`@` 资源引用）：内核以发送者的凭据读取资源（打码、限长），作为用户文本之后的额外文本块写入同一条
+   * user_message，并在 `payload.attachments` 记录元数据（第 i 个附件对应 `content[i + 1]`）。读取失败整条不写。
+   * 带 `clientMessageId` 的重复提交直接返回已写入的事件，不再读取。
    */
   async postUserMessage(
     orgId: string,
     conversationId: string,
     accountId: string,
-    input: { text: string; clientMessageId?: string },
+    input: { text: string; clientMessageId?: string; attachments?: AttachmentRef[] },
   ): Promise<ConversationEvent> {
     await this.get(orgId, conversationId, accountId);
+    const refs = input.attachments ?? [];
+    let extra: Awaited<ReturnType<ResolveAttachments>> = { blocks: [], attachments: [] };
+    if (refs.length > 0) {
+      if (input.clientMessageId !== undefined) {
+        const existing = await this.eventLog.findByIdem(
+          conversationId,
+          userMessageIdemKey(input.clientMessageId),
+        );
+        if (existing) {
+          await this.runs?.ensureRun(conversationId);
+          return existing;
+        }
+      }
+      if (!this.resolveAttachments) {
+        throw new ApiError("validation_failed", "Request validation failed", [
+          { path: "attachments", message: "Attachments are not supported" },
+        ]);
+      }
+      extra = await this.resolveAttachments(orgId, accountId, refs);
+    }
     const [event] = await this.eventLog.append(conversationId, [
       {
         type: "user_message",
@@ -250,7 +291,8 @@ export class ConversationsService {
           idemKey: userMessageIdemKey(input.clientMessageId),
         }),
         payload: {
-          content: [{ type: "text", text: input.text }],
+          content: [{ type: "text", text: input.text }, ...extra.blocks],
+          ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
           authorAccountId: accountId,
           ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
         },

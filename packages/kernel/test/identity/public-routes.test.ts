@@ -114,6 +114,7 @@ beforeAll(async () => {
           approvals: k.tools.approvals,
           questions: k.tools.questions,
           drift: k.tools.drift,
+          appContent: k.tools.appContent,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

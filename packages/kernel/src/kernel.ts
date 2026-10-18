@@ -35,6 +35,7 @@ import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
+import { AppContent } from "./tools/app-content.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
@@ -109,6 +110,8 @@ export interface KernelTools {
   readonly questions: QuestionsService;
   /** 工具定义漂移检测（周期扫描、list_changed、手动刷新）。 */
   readonly drift: ToolDrift;
+  /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
+  readonly appContent: AppContent;
 }
 
 /** 运行中的内核实例。 */
@@ -296,12 +299,22 @@ export async function createKernel(
     log,
     maintenance,
   });
+  const breaker = new Breaker(redis, () => current);
+  // 用户直接使用应用内容（斜杠命令 / @ 资源引用）
+  const appContent = new AppContent({
+    db: kdb,
+    registry: toolRegistry,
+    credentials,
+    breaker,
+    config: () => current,
+    log,
+  });
   const toolPipeline = new ToolPipeline({
     db: kdb,
     eventLog,
     registry: toolRegistry,
     credentials,
-    breaker: new Breaker(redis, () => current),
+    breaker,
     outputs: toolOutputs,
     approvals,
     questions,
@@ -319,6 +332,7 @@ export async function createKernel(
     approvals,
     questions,
     drift: toolDrift,
+    appContent,
   };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
@@ -417,6 +431,7 @@ export async function createKernel(
         approvals,
         questions,
         drift: toolDrift,
+        appContent,
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
           abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),

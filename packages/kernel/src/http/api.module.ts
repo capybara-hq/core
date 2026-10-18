@@ -35,6 +35,8 @@ import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
+import { AppContentController } from "../tools/app-content.controller.js";
+import type { AppContent } from "../tools/app-content.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
 import { AppsController } from "../tools/apps.controller.js";
@@ -53,6 +55,7 @@ import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
+  APP_CONTENT,
   APPROVALS,
   APPS,
   CONVERSATION_STREAMS,
@@ -108,6 +111,8 @@ export interface ApiDeps {
   questions: QuestionsService;
   /** 工具定义漂移检测（与 `Kernel.tools.drift` 同一实例；手动刷新走同一套比对）。 */
   drift: ToolDrift;
+  /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
+  appContent: AppContent;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -124,6 +129,7 @@ const CONTROLLERS: Type[] = [
   ModelsController,
   ConversationsController,
   ConversationStreamController,
+  AppContentController,
   AppsController,
   ApprovalsController,
   ToolGrantsController,
@@ -211,11 +217,19 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },
+    { provide: APP_CONTENT, useValue: deps.appContent },
     {
       provide: CONVERSATIONS,
-      useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService) =>
-        new ConversationsService(db, eventLog, agents, deps.runs, deps.log),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS],
+      useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService, content: AppContent) =>
+        new ConversationsService(
+          db,
+          eventLog,
+          agents,
+          deps.runs,
+          deps.log,
+          (orgId, accountId, refs) => content.resolveAttachments(orgId, accountId, refs),
+        ),
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT],
     },
     {
       provide: CONVERSATION_STREAMS,

@@ -50,6 +50,8 @@ const FormTextSchema = z.union([z.string(), z.object({ zh: z.string(), en: z.str
 /** 交互表单（plugin-sdk 的 `InputForm`；字段 schema 已由 `validateInputForm` 校验过，这里只记形状）。 */
 const InputFormSchema = z.object({
   title: FormTextSchema,
+  /** 需要用户在浏览器里打开的外部页面（MCP URL 模式的 elicitation）。较早的事件没有。 */
+  url: z.string().optional(),
   fields: z.array(
     z.object({
       key: z.string(),
@@ -81,6 +83,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "user_message",
     z.object({
       content: z.array(ContentBlockSchema),
+      /**
+       * `@` 资源引用的附件元数据：第 i 个附件的正文是 `content[i + 1]`（`content[0]` 是用户输入的文本）。
+       * 界面据此把附件显示为条目而不是正文。较早的事件没有。
+       */
+      attachments: z
+        .array(
+          z.object({ appId: z.string(), appName: z.string(), uri: z.string(), name: z.string() }),
+        )
+        .optional(),
       authorAccountId: z.string(),
       clientMessageId: z.string().optional(),
     }),

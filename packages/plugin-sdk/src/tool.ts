@@ -40,6 +40,11 @@ type Text = { zh: string; en: string } | string;
 export interface InputForm {
   /** 插件可给双语；内核内置工具给英文（模型生成的问题原样展示）。 */
   title: Text;
+  /**
+   * 可选：需要用户在浏览器里打开的外部页面（如 MCP URL 模式的 elicitation：去对方页面授权 / 付款 / 填敏感信息）。
+   * 界面把它显示为链接（完整地址可见）；只接受 http(s) 绝对地址、≤ 2000 字符。
+   */
+  url?: string;
   fields: {
     key: string;
     label: Text;
@@ -151,6 +156,18 @@ function schemaProblems(schema: unknown): string[] {
   return out;
 }
 
+const MAX_FORM_URL = 2000;
+
+function isHttpUrl(v: unknown): boolean {
+  if (typeof v !== "string" || v.length > MAX_FORM_URL) return false;
+  try {
+    const u = new URL(v);
+    return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 const isEnum = (s: ParamSchema): s is Extract<ParamSchema, { enum: string[] }> =>
   s.type === "string" && "enum" in s;
 
@@ -159,6 +176,8 @@ export function validateInputForm(form: InputForm): string[] {
   const out: string[] = [];
   if (!form || !Array.isArray(form.fields)) return ["form.fields must be an array"];
   if (form.fields.length === 0) out.push("form must have at least one field");
+  if (form.url !== undefined && !isHttpUrl(form.url))
+    out.push("url must be an absolute http(s) URL of at most 2000 characters");
   const seen = new Set<string>();
   for (const f of form.fields) {
     const at = `field ${JSON.stringify(f?.key)}`;

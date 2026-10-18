@@ -79,6 +79,19 @@ describe("validateInputForm", () => {
     expect(probs).toMatch(/unsupported schema keyword "pattern"/);
     expect(probs).toMatch(/duplicate key/);
   });
+  it("url：只接受 https / http 绝对地址，≤ 2000 字符", () => {
+    const fields = [{ key: "done", label: "Done", schema: { type: "boolean" as const } }];
+    expect(validateInputForm({ title: "T", url: "https://example.com/auth?x=1", fields })).toEqual(
+      [],
+    );
+    expect(validateInputForm({ title: "T", url: "javascript:alert(1)", fields }).join()).toMatch(
+      /url must be an absolute http\(s\) URL/,
+    );
+    expect(validateInputForm({ title: "T", url: "not a url", fields }).join()).toMatch(/url/);
+    expect(
+      validateInputForm({ title: "T", url: `https://e.com/${"a".repeat(2000)}`, fields }).join(),
+    ).toMatch(/url/);
+  });
   it("multiSelect / allowOther 只能用于枚举", () => {
     const p = validateInputForm(
       form([{ key: "a", label: "A", schema: { type: "boolean" }, multiSelect: true }]),
