@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 
 export function Checkbox({
   checked,
@@ -48,7 +48,7 @@ export function RadioGroup({
   variant?: "plain" | "card";
   label: string;
 }) {
-  const name = useRef(`cb-radio-${Math.random().toString(36).slice(2)}`).current;
+  const name = useId();
   return (
     <div className="cb-radios" role="radiogroup" aria-label={label} data-variant={variant}>
       {options.map((o) => (
