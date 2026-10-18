@@ -108,6 +108,8 @@ beforeAll(async () => {
           bus: { publish: async () => {} },
           eventLog: k.runs.eventLog,
           registry: k.runs.registry,
+          credentials: k.tools.credentials,
+          toolRegistry: k.tools.registry,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

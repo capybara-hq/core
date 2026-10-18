@@ -33,6 +33,8 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import { Credentials } from "./tools/credentials.js";
+import { ToolRegistry } from "./tools/registry.js";
 
 /**
  * 内核迁移目录。src/ 与 dist/ 都在包根下一层，所以统一指向 `<包根>/src/migrations`：
@@ -78,6 +80,12 @@ export interface KernelRuns {
   readonly stepDeps: ModelStepDeps;
 }
 
+/** 工具相关的内核服务（后续任务的执行管线使用）。 */
+export interface KernelTools {
+  readonly registry: ToolRegistry;
+  readonly credentials: Credentials;
+}
+
 /** 运行中的内核实例。 */
 export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
@@ -89,6 +97,8 @@ export interface Kernel {
   readonly bus: PluginContext["bus"];
   /** 运行编排服务。 */
   readonly runs: KernelRuns;
+  /** 工具注册表与应用凭据。 */
+  readonly tools: KernelTools;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -217,6 +227,10 @@ export async function createKernel(
   const bus = createBus(redis, busSubscriber, "kernel", log);
   const eventLog = new EventLog(kdb, bus, log);
   const registry = new ProviderRegistry(host, redis, log);
+  const credentials = new Credentials(kdb, keyring, log);
+  // 内置工具在 Task 10 接入
+  const toolRegistry = new ToolRegistry({ db: kdb, host, credentials, log, builtins: [] });
+  const tools: KernelTools = { registry: toolRegistry, credentials };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
@@ -281,6 +295,8 @@ export async function createKernel(
         bus,
         eventLog,
         registry,
+        credentials,
+        toolRegistry,
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
           abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),
@@ -416,6 +432,7 @@ export async function createKernel(
     orgPluginConfigs,
     bus,
     runs,
+    tools,
     log,
     get config() {
       return current;

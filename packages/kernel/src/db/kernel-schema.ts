@@ -208,11 +208,12 @@ export interface AppsTable {
   org_id: string;
   slug: string;
   name: string;
-  /** 提供连接器的插件名。 */
+  /** 连接器 kind（`Connector.kind`，如 `mcp`），由 `ToolRegistry.connector(kind)` 查找实现。 */
   connector: string;
-  endpoint: Generated<Json>;
+  /** jsonb 带默认值：Json 的插入类型本身已可省略，不再包 Generated（嵌套会让插入类型失配）。 */
+  endpoint: Json<unknown>;
   /** `{type, ownership: "org" | "personal", ...非密钥字段}`；凭据在 secrets。 */
-  auth: Generated<Json>;
+  auth: Json<unknown>;
   status: Generated<"active" | "disabled">;
   created_by: string;
   created_at: Ts;

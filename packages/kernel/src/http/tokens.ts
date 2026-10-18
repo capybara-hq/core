@@ -60,3 +60,12 @@ export const CONVERSATIONS = Symbol("CONVERSATIONS");
 
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
+
+/** 应用凭据（`Credentials`）的注入令牌。 */
+export const CREDENTIALS = Symbol("CREDENTIALS");
+
+/** `ToolRegistry` 的注入令牌。 */
+export const TOOL_REGISTRY = Symbol("TOOL_REGISTRY");
+
+/** `AppsService` 的注入令牌。 */
+export const APPS = Symbol("APPS");

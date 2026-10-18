@@ -33,12 +33,18 @@ import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
+import { AppsController } from "../tools/apps.controller.js";
+import { AppsService } from "../tools/apps.service.js";
+import type { Credentials } from "../tools/credentials.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
+  APPS,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
+  CREDENTIALS,
   EVENT_LOG,
   INVITATIONS,
   KERNEL_BUS,
@@ -54,6 +60,7 @@ import {
   SESSIONS,
   SETTINGS,
   SETUP,
+  TOOL_REGISTRY,
 } from "./tokens.js";
 
 /** 内核 API 的依赖：由 createKernel 传入，ApiModule 据此构造各领域服务。 */
@@ -75,6 +82,10 @@ export interface ApiDeps {
   registry: ProviderRegistry;
   /** 运行投递与中止。 */
   runs: RunControl;
+  /** 应用凭据（与 `Kernel.tools.credentials` 同一实例）。 */
+  credentials: Credentials;
+  /** 工具注册表（与 `Kernel.tools.registry` 同一实例）。 */
+  toolRegistry: ToolRegistry;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -90,6 +101,7 @@ const CONTROLLERS: Type[] = [
   ModelsController,
   ConversationsController,
   ConversationStreamController,
+  AppsController,
 ];
 
 /**
@@ -187,6 +199,18 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           log: deps.log,
         }),
       inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
+    },
+    { provide: CREDENTIALS, useValue: deps.credentials },
+    { provide: TOOL_REGISTRY, useValue: deps.toolRegistry },
+    {
+      provide: APPS,
+      useFactory: (
+        db: KernelDb,
+        registry: ToolRegistry,
+        credentials: Credentials,
+        config: () => KernelConfig,
+      ) => new AppsService(db, registry, deps.host, credentials, config, deps.log),
+      inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG],
     },
   ];
 }

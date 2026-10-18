@@ -1,7 +1,8 @@
 import type { AuthInjection } from "@capybara-hq/plugin-sdk";
+import type { Transaction } from "kysely";
 import { z } from "zod";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { KernelLogger } from "../log.js";
 
@@ -72,12 +73,15 @@ export class Credentials {
     private readonly log: KernelLogger,
   ) {}
 
-  private secrets() {
-    return createSecrets(this.db, this.keyring, NAMESPACE);
+  private secrets(db: KernelDb | Transaction<KernelDatabase> = this.db) {
+    return createSecrets(db, this.keyring, NAMESPACE);
   }
 
-  /** 按认证方式校验凭据形状；错误只含路径与英文说明，不回显值。 */
-  private validate(auth: AppAuth, owner: CredentialOwner, value: unknown): void {
+  /**
+   * 按认证方式校验凭据形状与归属；错误（`validation_failed`）只含路径与英文说明，不回显值。
+   * 应用创建时先用它校验、再拿内存中的值连接，连上之后才落库。
+   */
+  validate(auth: AppAuth, owner: CredentialOwner, value: unknown): asserts value is StaticSecret {
     const fail = (issues: { path: string; message: string }[]) =>
       new ApiError("validation_failed", "Invalid credential", issues);
     if (auth.type === "none")
@@ -123,13 +127,31 @@ export class Credentials {
     auth: AppAuth,
     owner: CredentialOwner,
     value: StaticSecret,
+    /** 传入时在调用方事务内写入（与应用行 / 审计同生共死）。 */
+    trx?: Transaction<KernelDatabase>,
   ): Promise<void> {
     this.validate(auth, owner, value);
-    await this.secrets().set(orgId, keyOf(appId, owner), JSON.stringify(value));
+    await this.secrets(trx).set(orgId, keyOf(appId, owner), JSON.stringify(value));
   }
 
-  async clear(orgId: string, appId: string, owner: CredentialOwner): Promise<void> {
-    await this.secrets().delete(orgId, keyOf(appId, owner));
+  async clear(
+    orgId: string,
+    appId: string,
+    owner: CredentialOwner,
+    trx?: Transaction<KernelDatabase>,
+  ): Promise<void> {
+    await this.secrets(trx).delete(orgId, keyOf(appId, owner));
+  }
+
+  /** 删除某应用的全部凭据（组织凭据与所有成员的个人凭据），应用删除时调用。 */
+  async clearApp(orgId: string, appId: string, trx?: Transaction<KernelDatabase>): Promise<void> {
+    const prefix = orgKey(appId).slice(0, -"org".length);
+    await (trx ?? this.db)
+      .deleteFrom("secrets")
+      .where("namespace", "=", NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where("key", "like", `${prefix}%`)
+      .execute();
   }
 
   /** 只看与 auth.ownership 对应的那一条凭据是否存在（不解密）；none 恒为 connected。 */
@@ -138,10 +160,11 @@ export class Credentials {
     appId: string,
     auth: AppAuth,
     accountId: string,
+    trx?: Transaction<KernelDatabase>,
   ): Promise<"connected" | "missing"> {
     if (auth.type === "none") return "connected";
     const key = auth.ownership === "personal" ? userKey(appId, accountId) : orgKey(appId);
-    const row = await this.db
+    const row = await (trx ?? this.db)
       .selectFrom("secrets")
       .select("key")
       .where("namespace", "=", NAMESPACE)
@@ -164,12 +187,7 @@ export class Credentials {
     const missing = () => new CredentialMissing(appId, auth.ownership);
     const raw = await this.secrets().get(orgId, keyOf(appId, owner));
     if (raw === null) throw missing();
-    let value: Partial<{
-      token: string;
-      username: string;
-      password: string;
-      headers: Record<string, string>;
-    }>;
+    let value: StaticSecret;
     try {
       value = JSON.parse(raw);
     } catch {
@@ -177,7 +195,23 @@ export class Credentials {
       this.log.warn("credential payload is corrupted", { appId });
       throw missing();
     }
+    return this.injectionFor(appId, auth, value);
+  }
 
+  /**
+   * 由凭据值构造注入（不读库）；值登记日志打码。应用创建时用请求里带的、尚未落库的凭据连接。
+   * 值缺字段 → CredentialMissing。
+   */
+  injectionFor(appId: string, auth: AppAuth, secret: StaticSecret): AuthInjection {
+    if (auth.type === "none") return { headers: {} };
+    const missing = () => new CredentialMissing(appId, auth.ownership);
+    if (typeof secret !== "object" || secret === null) throw missing();
+    const value = secret as Partial<{
+      token: string;
+      username: string;
+      password: string;
+      headers: Record<string, string>;
+    }>;
     switch (auth.type) {
       case "bearer": {
         if (!value.token) throw missing();
