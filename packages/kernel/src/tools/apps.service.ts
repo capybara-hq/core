@@ -15,10 +15,13 @@ import {
   type StaticSecret,
 } from "./credentials.js";
 import { deriveSlug, isValidSlug, SLUG_RULE, toolKey, toolKeyIssue } from "./naming.js";
+import { redactDeep, redactorFor } from "./redact.js";
 import { policyFromAnnotations, specHash, type ToolPolicy, type ToolRegistry } from "./registry.js";
+import { resourceToolSpecs } from "./resources.js";
 
 type Trx = Transaction<KernelDatabase>;
 type ToolStatus = "enabled" | "disabled" | "pending_review";
+type ToolSource = "connector" | "resources";
 
 /** 应用工具视图；`issue` 非空表示该工具不能启用的原因（如 key 超长）。 */
 export interface AppToolView {
@@ -31,6 +34,8 @@ export interface AppToolView {
   defaultPolicy: ToolPolicy;
   specHash: string;
   issue: string | null;
+  /** `resources`：内核为支持 resources 的应用补上的工具（见 resources.ts）。 */
+  source: ToolSource;
 }
 
 /** 列表项：不含工具与凭据（`auth` 只有类型与非密钥字段）。 */
@@ -87,6 +92,7 @@ interface SnapshotRow {
   specHash: string;
   /** key 不合法 / 定义不合规时为原因，此时工具只能停用。 */
   issue: string | null;
+  source: ToolSource;
 }
 
 const notFound = () => new ApiError("app.not_found", "App not found");
@@ -109,7 +115,11 @@ const unannotated = (a: ToolAnnotations | undefined) =>
  * （应用工具不得自带 `defaultPolicy`），同名的后者丢弃；key 超长 / 含非法字符或定义不合规的工具
  * 照样入库但只能停用，并给出原因——一个坏工具不挡住整个应用。名字不是非空字符串的无法入库，只报原因。
  */
-function snapshot(slug: string, specs: unknown): { rows: SnapshotRow[]; issues: ToolIssue[] } {
+function snapshot(
+  slug: string,
+  specs: unknown,
+  resources: boolean,
+): { rows: SnapshotRow[]; issues: ToolIssue[] } {
   const rows: SnapshotRow[] = [];
   const issues: ToolIssue[] = [];
   if (!Array.isArray(specs)) {
@@ -140,7 +150,22 @@ function snapshot(slug: string, specs: unknown): { rows: SnapshotRow[]; issues: 
     let issue = toolKeyIssue(toolKey(slug, name));
     if (!issue && !isObj(s.inputSchema)) issue = "Tool inputSchema must be an object";
     if (issue) issues.push({ name, reason: issue });
-    rows.push({ name, spec, specHash: specHash(spec), issue });
+    rows.push({ name, spec, specHash: specHash(spec), issue, source: "connector" });
+  }
+  // 应用支持 resources：补上 list_resources / read_resource；连接器自己的同名工具优先
+  if (resources) {
+    for (const spec of resourceToolSpecs()) {
+      if (seen.has(spec.name)) {
+        issues.push({
+          name: spec.name,
+          reason: `The app has its own tool named ${spec.name}; the built-in resource tool is not added`,
+        });
+        continue;
+      }
+      const issue = toolKeyIssue(toolKey(slug, spec.name));
+      if (issue) issues.push({ name: spec.name, reason: issue });
+      rows.push({ name: spec.name, spec, specHash: specHash(spec), issue, source: "resources" });
+    }
   }
   return { rows, issues };
 }
@@ -192,7 +217,8 @@ export class AppsService {
   }
 
   /**
-   * 打开一次会话拉工具清单，无论成败都关闭会话。凭据缺失原样抛 `credential.missing`；
+   * 打开一次会话拉工具清单，无论成败都关闭会话；会话带 `listResources` 即视为支持 resources。
+   * 清单里回显的凭据按本次注入的值打码（见 redact.ts）。凭据缺失原样抛 `credential.missing`；
    * 其余失败一律 502 `app.connect_failed`，消息只带上游错误的类名（不带消息，消息里可能回显凭据）。
    */
   private async listTools(
@@ -200,13 +226,23 @@ export class AppsService {
     endpoint: unknown,
     auth: () => Promise<AuthInjection>,
     logCtx: Record<string, unknown>,
-  ): Promise<unknown> {
+  ): Promise<{ specs: unknown; resources: boolean }> {
     const c = this.registry.connector(connector);
     const signal = AbortSignal.timeout(this.config().tools.timeoutMs);
+    const injected: AuthInjection[] = [];
+    const tracked = async () => {
+      const inj = await auth();
+      injected.push(inj);
+      return inj;
+    };
     let session: Awaited<ReturnType<typeof c.open>> | undefined;
     try {
-      session = await c.open({ endpoint, auth, onUnauthorized: async () => {}, signal });
-      return await session.listTools();
+      session = await c.open({ endpoint, auth: tracked, onUnauthorized: async () => {}, signal });
+      const specs = await session.listTools();
+      return {
+        specs: redactDeep(specs, redactorFor(injected)),
+        resources: typeof session.listResources === "function",
+      };
     } catch (e) {
       if (e instanceof CredentialMissing) throw e;
       // 日志经 logger 打码（凭据值已在构造注入时登记）
@@ -272,7 +308,7 @@ export class AppsService {
     if (await this.slugTaken(this.db, orgId, slug)) {
       throw new ApiError("app.slug_taken", "App slug is already taken");
     }
-    const specs = await this.listTools(
+    const { specs, resources } = await this.listTools(
       input.connector,
       endpoint,
       async () => {
@@ -282,7 +318,7 @@ export class AppsService {
       },
       { orgId, slug },
     );
-    const { rows, issues } = snapshot(slug, specs);
+    const { rows, issues } = snapshot(slug, specs, resources);
 
     return this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
@@ -334,6 +370,7 @@ export class AppsService {
           spec_hash: r.specHash,
           status: r.issue ? ("disabled" as const) : ("enabled" as const),
           default_policy: policyFromAnnotations(r.spec.annotations),
+          source: r.source,
         })),
       )
       .execute();
@@ -377,7 +414,7 @@ export class AppsService {
     const r = await this.row(db, orgId, appId);
     const tools = await db
       .selectFrom("app_tools")
-      .select(["name", "spec", "spec_hash", "status", "default_policy"])
+      .select(["name", "spec", "spec_hash", "status", "default_policy", "source"])
       .where("app_id", "=", appId)
       .orderBy("name")
       .execute();
@@ -404,6 +441,7 @@ export class AppsService {
           defaultPolicy: t.default_policy,
           specHash: t.spec_hash,
           issue: toolIssue(r.slug, spec),
+          source: t.source,
         };
       }),
       credential: { ownership: auth.type === "none" ? null : auth.ownership, status },
@@ -569,27 +607,30 @@ export class AppsService {
   }> {
     const app = await this.row(this.db, orgId, appId);
     const auth = app.auth as unknown as AppAuth;
-    const specs = await this.listTools(
+    const { specs, resources } = await this.listTools(
       app.connector,
       app.endpoint,
       () => this.credentials.injection(orgId, appId, auth, actorAccountId),
       { orgId, appId },
     );
-    const { rows, issues } = snapshot(app.slug, specs);
+    const { rows, issues } = snapshot(app.slug, specs, resources);
 
     return this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
       await this.row(t, orgId, appId, true);
       const current = await t
         .selectFrom("app_tools")
-        .select(["name", "spec_hash"])
+        .select(["name", "spec_hash", "source"])
         .where("app_id", "=", appId)
         .forUpdate()
         .execute();
-      const before = new Map(current.map((c) => [c.name, c.spec_hash]));
+      const before = new Map(current.map((c) => [c.name, c]));
       const next = new Set(rows.map((r) => r.name));
       const added = rows.filter((r) => !before.has(r.name));
-      const changed = rows.filter((r) => before.has(r.name) && before.get(r.name) !== r.specHash);
+      const changed = rows.filter((r) => {
+        const b = before.get(r.name);
+        return b !== undefined && (b.spec_hash !== r.specHash || b.source !== r.source);
+      });
       const removed = current.filter((c) => !next.has(c.name)).map((c) => c.name);
 
       await this.insertTools(t, appId, added);
@@ -599,6 +640,7 @@ export class AppsService {
           .set({
             spec: JSON.stringify(r.spec),
             spec_hash: r.specHash,
+            source: r.source,
             ...(r.issue && { status: "disabled" as const }),
           })
           .where("app_id", "=", appId)

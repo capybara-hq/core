@@ -26,6 +26,9 @@
       "path": "plugins/openai-compatible"
     },
     {
+      "path": "plugins/connector-mcp"
+    },
+    {
       "path": "tools/checks"
     },
     {

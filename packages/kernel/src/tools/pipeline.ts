@@ -24,7 +24,9 @@ import { type AppAuth, CredentialMissing, type Credentials } from "./credentials
 import { renderResult, resolveOutputRefs, spillIfLarge, type ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
 import type { QuestionRecord, QuestionsService } from "./questions.service.js";
+import { redactDeep, redactorFor } from "./redact.js";
 import type { ResolvedTool, ToolRegistry, UnavailableTool } from "./registry.js";
+import { runResourceTool } from "./resources.js";
 import { validateInput } from "./validate.js";
 
 // ---- 模型可见文案（英文） ----
@@ -527,7 +529,7 @@ export class ToolPipeline {
 
   private async executeApp(
     tool: ResolvedTool,
-    source: { kind: "app"; appId: string; name: string },
+    source: Extract<ResolvedTool["source"], { kind: "app" }>,
     input: unknown,
     ctx: ToolStepContext,
   ): Promise<ExecOutcome> {
@@ -561,9 +563,21 @@ export class ToolPipeline {
 
     const auth = app.auth as AppAuth;
     let injection: Promise<AuthInjection> | undefined;
+    /** 本次调用实际注入过的凭据（含 401 后重新读取的），结果打码用。 */
+    const injected: AuthInjection[] = [];
     const getAuth = () => {
-      injection ??= credentials.injection(orgId, appId, auth, ctx.accountId);
+      injection ??= credentials.injection(orgId, appId, auth, ctx.accountId).then((inj) => {
+        injected.push(inj);
+        return inj;
+      });
       return injection;
+    };
+    // 远端可能把收到的凭据回显在结果 / 错误里：写入事件之前按本次注入的值打码（见 redact.ts）
+    const clean = (o: ExecOutcome): ExecOutcome => {
+      const redact = redactorFor(injected);
+      if (o.kind === "result") return { kind: "result", result: redactDeep(o.result, redact) };
+      if (o.kind === "error") return { kind: "error", message: redact(o.message) };
+      return o;
     };
     const missing = (e: CredentialMissing): ExecOutcome =>
       e.ownership === "personal"
@@ -595,7 +609,9 @@ export class ToolPipeline {
           signal,
         });
         const session = await opened;
-        return session.callTool(source.name, input, signal);
+        return source.resources
+          ? runResourceTool(session, source.name, input)
+          : session.callTool(source.name, input, signal);
       });
       if (r === "aborted") return { kind: "error", message: RUN_STOPPED_DURING_TEXT };
       if (r === "timeout") {
@@ -604,11 +620,11 @@ export class ToolPipeline {
       }
       // 工具自己报告的错误（isError）说明服务可用，也算成功。
       await breaker.success(orgId, appId);
-      return { kind: "result", result: r.value };
+      return clean({ kind: "result", result: r.value });
     } catch (e) {
       if (e instanceof CredentialMissing) return missing(e);
       await breaker.failure(orgId, appId);
-      return this.thrown(tool.key, e);
+      return clean(this.thrown(tool.key, e));
     } finally {
       if (opened) await this.closeSession(opened, tool.key);
     }

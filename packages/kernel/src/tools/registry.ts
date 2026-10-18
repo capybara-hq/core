@@ -48,7 +48,8 @@ export interface ResolvedTool {
   source:
     | { kind: "builtin"; name: string }
     | { kind: "plugin"; plugin: string; name: string }
-    | { kind: "app"; appId: string; name: string };
+    /** `resources`：内核补上的 list_resources / read_resource（见 resources.ts），执行时路由到会话的 resources 方法。 */
+    | { kind: "app"; appId: string; name: string; resources?: true };
   /** 存储 / 注册时的定义（`name` 为来源内的原名，description 与 inputSchema 原样）；模型可见名用 `key`。 */
   spec: ToolSpec;
   /** sha256(canonical spec) 前 16 位。 */
@@ -337,7 +338,12 @@ export class ToolRegistry {
           }
           add({
             key,
-            source: { kind: "app", appId: app.id, name: t.name },
+            source: {
+              kind: "app",
+              appId: app.id,
+              name: t.name,
+              ...(t.source === "resources" && { resources: true as const }),
+            },
             spec: t.spec,
             specHash: t.specHash,
             defaultPolicy: t.defaultPolicy,
@@ -376,6 +382,7 @@ export class ToolRegistry {
           specHash: string;
           status: "enabled" | "disabled" | "pending_review";
           defaultPolicy: ToolPolicy;
+          source: "connector" | "resources";
         }[];
       }
     >
@@ -395,7 +402,7 @@ export class ToolRegistry {
         ? []
         : await this.deps.db
             .selectFrom("app_tools")
-            .select(["app_id", "name", "spec", "spec_hash", "status", "default_policy"])
+            .select(["app_id", "name", "spec", "spec_hash", "status", "default_policy", "source"])
             .where("app_id", "in", live)
             .orderBy("name")
             .execute();
@@ -414,6 +421,7 @@ export class ToolRegistry {
             specHash: t.spec_hash,
             status: t.status,
             defaultPolicy: t.default_policy,
+            source: t.source,
           })),
       });
     }

@@ -238,6 +238,8 @@ export interface AppToolsTable {
   status: "enabled" | "disabled" | "pending_review";
   default_policy: "allow" | "ask" | "deny";
   reviewed_at: TsNullable;
+  /** 0013：工具来源（`resources` = 内核为支持 resources 的应用补上的两个工具）。 */
+  source: Generated<"connector" | "resources">;
 }
 
 /** 0010_tools.sql：「以后都允许」。 */

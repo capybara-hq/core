@@ -82,6 +82,18 @@ function compileMatcher(values: Iterable<string>): (s: string) => string {
   };
 }
 
+/**
+ * 用与 logger 相同的匹配器打码任意文本（工具结果等不经过日志的内容用）：登记规则同 `addOrgSecrets`——
+ * 只取长度 ≥ 12 的值（Ruling A2），URL 形式的值另登记 `user:password@` 片段。没有可用的值时原样返回。
+ */
+export function createRedactor(values: readonly unknown[]): (s: string) => string {
+  const set = new Set<string>();
+  for (const v of secretScalars(values)) {
+    for (const s of expandSecret(v)) if (s.length >= MIN_ORG_SECRET_LEN) set.add(s);
+  }
+  return compileMatcher(set);
+}
+
 function isLevel(v: string): v is LogLevel {
   return (LEVELS as readonly string[]).includes(v);
 }

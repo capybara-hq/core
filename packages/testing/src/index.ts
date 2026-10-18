@@ -9,6 +9,16 @@ export {
   replicaOf,
 } from "./dual-replica.js";
 export {
+  type FakeMcpCallInfo,
+  type FakeMcpRequest,
+  type FakeMcpResource,
+  FakeMcpRpcError,
+  type FakeMcpServer,
+  type FakeMcpServerOptions,
+  type FakeMcpTool,
+  startFakeMcpServer,
+} from "./fake-mcp-server.js";
+export {
   type FakeModelServer,
   type FakeRequest,
   type FakeResponse,
