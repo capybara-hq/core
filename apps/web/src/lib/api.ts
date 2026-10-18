@@ -21,6 +21,8 @@ const REFRESHABLE = new Set(["auth.token_expired", "auth.required"]);
 export interface ApiErrorDetail {
   path: string;
   message: string;
+  /** 原因码（如 `app.connect_failed` 的 `dcr_unsupported`）。 */
+  reason?: string;
 }
 
 /**
@@ -53,16 +55,21 @@ async function send(path: string, init: RequestInit): Promise<Response> {
   }
 }
 
-/** 只取形如 `{ path: string, message: string }` 的细节，其余忽略。 */
+/** 只取带 `message` 字符串的细节（`path` 缺省为空串，保留字符串 `reason`），其余忽略。 */
 function toDetails(raw: unknown): ApiErrorDetail[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (d): d is ApiErrorDetail =>
-      typeof d === "object" &&
-      d !== null &&
-      typeof (d as ApiErrorDetail).path === "string" &&
-      typeof (d as ApiErrorDetail).message === "string",
-  );
+  return raw.flatMap((d): ApiErrorDetail[] => {
+    if (typeof d !== "object" || d === null) return [];
+    const { path, message, reason } = d as Record<string, unknown>;
+    if (typeof message !== "string") return [];
+    return [
+      {
+        path: typeof path === "string" ? path : "",
+        message,
+        ...(typeof reason === "string" ? { reason } : {}),
+      },
+    ];
+  });
 }
 
 async function toError(res: Response): Promise<ApiClientError> {

@@ -93,7 +93,8 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         // 会话属于原组织：先回到列表，再换会话（对话页也不会以新组织 + 旧会话渲染，见 chat 页）
         if (pathname.startsWith("/chat")) router.push("/agents");
         // 应用详情同理：应用属于原组织
-        else if (pathname.startsWith("/apps/") && pathname !== "/apps/new") router.push("/apps");
+        else if (pathname.startsWith("/apps/") && pathname !== "/apps/install")
+          router.push("/apps");
         // 这里直接读 /me 而不走 load：刷新失败要以 toast 告知，而不是被 load 吞掉
         setMe(await getMe());
         setError(undefined);

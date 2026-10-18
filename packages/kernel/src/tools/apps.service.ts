@@ -68,6 +68,11 @@ export interface AppToolView {
   description: string;
   inputSchema: Record<string, unknown>;
   annotations: ToolAnnotations | null;
+  /**
+   * 连接器的不透明路由数据（Ruling A21，如 OpenAPI 的方法 / 路径 / 服务器地址），供复核对比；没有时为 null。
+   * 只给 `apps.manage`（读者视图里置 null，见 apps.controller.ts）。
+   */
+  connectorData: Record<string, unknown> | null;
   status: ToolStatus;
   defaultPolicy: ToolPolicy;
   specHash: string;
@@ -87,6 +92,7 @@ export interface AppToolView {
     description: string;
     inputSchema: Record<string, unknown>;
     annotations: ToolAnnotations | null;
+    connectorData: Record<string, unknown> | null;
     specHash: string;
     source: ToolSource;
   } | null;
@@ -722,6 +728,7 @@ export class AppsService {
           description: spec.description,
           inputSchema: spec.inputSchema,
           annotations: spec.annotations ?? null,
+          connectorData: spec.connectorData ?? null,
           status: t.status,
           defaultPolicy: t.default_policy,
           specHash: t.spec_hash,
@@ -736,6 +743,7 @@ export class AppsService {
                   description: next.description,
                   inputSchema: next.inputSchema,
                   annotations: next.annotations ?? null,
+                  connectorData: next.connectorData ?? null,
                   specHash: t.pending_spec_hash,
                   source: t.pending_source ?? t.source,
                 }

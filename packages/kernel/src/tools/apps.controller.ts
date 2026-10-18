@@ -24,9 +24,22 @@ import { can } from "../orgs/roles.js";
 import type { AppDetail, AppPreview, AppSummary, AppsService, ToolIssue } from "./apps.service.js";
 import { publicEndpoint } from "./endpoint.js";
 
-/** 没有 `apps.manage` 的读者只看到端点的公开部分（URL 不带 query、只有头名，见 endpoint.ts）。 */
-const forViewer = <T extends AppSummary>(org: OrgContext, app: T): T =>
-  can(org.role, "apps.manage") ? app : { ...app, endpoint: publicEndpoint(app.endpoint) };
+/**
+ * 没有 `apps.manage` 的读者只看到端点的公开部分（URL 不带 query、只有头名，见 endpoint.ts），
+ * 也看不到工具的连接器数据（可能含服务器地址）。
+ */
+function forViewer<T extends AppSummary>(org: OrgContext, app: T): T {
+  if (can(org.role, "apps.manage")) return app;
+  const view: T = { ...app, endpoint: publicEndpoint(app.endpoint) };
+  if ("tools" in view) {
+    (view as unknown as AppDetail).tools = (view as unknown as AppDetail).tools.map((t) => ({
+      ...t,
+      connectorData: null,
+      pending: t.pending && { ...t.pending, connectorData: null },
+    }));
+  }
+  return view;
+}
 
 /** HTTP 头名（RFC 9110 token）。 */
 const HeaderName = z

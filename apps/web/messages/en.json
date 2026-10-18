@@ -374,7 +374,9 @@
       "bearer": "Bearer token",
       "api_key": "API key",
       "basic": "Username and password",
-      "headers": "Custom headers"
+      "headers": "Custom headers",
+      "oauth_code": "OAuth authorization code (each user signs in)",
+      "oauth_client": "OAuth client credentials"
     },
     "ownership": {
       "org": "Shared organization credential",
@@ -386,20 +388,13 @@
       "deny": "Deny"
     },
     "form": {
-      "title": "Add app",
-      "basicSection": "Basics",
-      "basicSectionHint": "The slug prefixes the tool names the model sees.",
       "nameLabel": "Name",
       "nameRequired": "Enter a name.",
       "slugLabel": "Slug",
       "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name.",
-      "connectionSection": "Connection",
-      "connectionSectionHint": "Only MCP servers (Streamable HTTP) are supported for now.",
       "urlLabel": "Endpoint URL",
       "urlHelp": "The MCP endpoint, for example https://example.com/mcp",
       "urlRequired": "Enter the endpoint URL.",
-      "authSection": "Authentication",
-      "authSectionHint": "Credentials are stored encrypted and never shown again.",
       "authTypeLabel": "Authentication",
       "ownershipLabel": "Credential",
       "ownershipHelp": {
@@ -421,15 +416,13 @@
       "tokenLabel": "Token",
       "usernameLabel": "Username",
       "passwordLabel": "Password",
-      "headerValueLabel": "Value of {name}",
-      "submit": "Install",
-      "issuesTitle": "Installed, but some tools were disabled:",
-      "continue": "Continue"
+      "headerValueLabel": "Value of {name}"
     },
     "detail": {
       "tabsLabel": "App sections",
       "tabs": {
         "tools": "Tools",
+        "review": "Review",
         "credentials": "Credentials",
         "settings": "Settings"
       },
@@ -456,7 +449,9 @@
       "enabledLabel": "Enable {tool}",
       "enabled": "Enabled",
       "disabled": "Disabled",
-      "empty": "This app has no tools."
+      "empty": "This app has no tools.",
+      "missing": "No longer provided by the server",
+      "pendingReview": "Pending review"
     },
     "credential": {
       "title": "Credential",
@@ -471,7 +466,13 @@
       "openConnections": "Open My connections",
       "save": "Save credential",
       "saved": "Credential saved.",
-      "oauthOrgHint": "This app signs in with an OAuth client; the organization token is obtained automatically."
+      "oauthOrgHint": "This app signs in with an OAuth client; the organization token is obtained automatically.",
+      "clientTitle": "OAuth client",
+      "clientDcr": "This app's client was registered automatically and cannot be replaced; reinstall the app to change it.",
+      "rotate": "Replace client",
+      "rotated": "OAuth client replaced.",
+      "rotateVerified": "The new client is verified by obtaining a token first; nothing changes if that fails.",
+      "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect."
     },
     "settings": {
       "title": "General",
@@ -482,13 +483,136 @@
       "delete": "Delete app",
       "deleteTitle": "Delete {name}?",
       "deleteHint": "Agents that use this app lose its tools, and stored credentials are removed. This cannot be undone."
+    },
+    "oauth": {
+      "clientIdLabel": "Client ID",
+      "clientSecretLabel": "Client secret",
+      "clientSecretHelp": "Leave empty for a public client.",
+      "discoveryLabel": "Authorization endpoints",
+      "discovery": {
+        "mcp": "Discover from the MCP server",
+        "manual": "Enter manually"
+      },
+      "authorizationUrlLabel": "Authorization URL",
+      "tokenUrlLabel": "Token URL",
+      "scopesLabel": "Scopes",
+      "scopesHelp": "Space separated; leave empty for the server default.",
+      "clientLabel": "Client",
+      "client": {
+        "dcr": "Register automatically (dynamic client registration)",
+        "manual": "Enter a registered client"
+      },
+      "tokenAuthMethodLabel": "Token endpoint authentication",
+      "tokenAuthMethod": {
+        "auto": "Automatic",
+        "client_secret_basic": "client_secret_basic (HTTP Basic)",
+        "client_secret_post": "client_secret_post (form parameters)"
+      }
+    },
+    "wizard": {
+      "title": "Install app",
+      "steps": {
+        "type": "Type",
+        "endpoint": "Endpoint",
+        "auth": "Authentication",
+        "tools": "Tools",
+        "done": "Done"
+      },
+      "next": "Next",
+      "previous": "Previous",
+      "install": "Install",
+      "openApp": "Open app",
+      "typeTitle": "Choose the endpoint type",
+      "connector": {
+        "mcp": "MCP server",
+        "openapi": "OpenAPI document"
+      },
+      "connectorHint": {
+        "mcp": "A Streamable HTTP MCP endpoint; the server provides the tools.",
+        "openapi": "An HTTP API described by an OpenAPI 3.x document; each operation becomes a tool."
+      },
+      "endpointTitle": "Endpoint and document",
+      "specSourceLabel": "Document source",
+      "specSource": {
+        "url": "Document URL",
+        "file": "Upload a file"
+      },
+      "specUrlLabel": "Document URL",
+      "specUrlHelp": "Where the OpenAPI document (JSON or YAML) lives; it is read without credentials.",
+      "specUrlRequired": "Enter the document URL.",
+      "specFileLabel": "Document file",
+      "specFileHelp": "JSON or YAML, up to 2 MB.",
+      "specFileChosen": "Selected {name}",
+      "specFileRequired": "Choose a document file.",
+      "specTooLarge": "The document is larger than 2 MB.",
+      "baseUrlLabel": "API base URL",
+      "baseUrlHelp": "Leave empty to use the servers in the document.",
+      "required": "Required.",
+      "authTitle": "Authentication",
+      "hintLabel": "Declared in the document",
+      "hintHelp": "Pick one to fill in the settings below.",
+      "hintCustom": "Custom",
+      "oauthCodeHint": "Each member signs in with their own account (personal credential). The kernel needs http.publicUrl configured for the callback URL.",
+      "oauthClientHint": "One shared OAuth client obtains tokens for the organization; the client is verified when you install.",
+      "noticeTitle": "Needs your attention",
+      "dcrUnsupported": "The authorization server does not support automatic client registration. Register a client with the provider and enter its client ID and secret below.",
+      "publicUrlRequired": "OAuth apps need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask your deployment admin to set it, or use another authentication method.",
+      "operationsHint": "Choose the operations agents may use. Default policies follow the HTTP method; you can change them on the app page later.",
+      "operationsLabel": "Operations",
+      "noOperations": "The document has no operations.",
+      "selectOperation": "Select at least one operation.",
+      "columns": {
+        "operation": "Operation"
+      },
+      "toolsTitle": "Tools",
+      "toolsHint": "These tools come with the app. Default policies follow the tool annotations; you can change them on the app page later.",
+      "toolsAfterInstall": "The tools are listed when the app is installed.",
+      "toolsAfterConnect": "OAuth authorization-code apps list their tools after the first member connects.",
+      "annotation": {
+        "readOnly": "Read-only",
+        "destructive": "Destructive",
+        "none": "No annotation"
+      },
+      "issuesTitle": "These tools will be disabled:",
+      "doneTitle": "{name} is installed",
+      "doneTools": "{count, plural, one {# tool} other {# tools}}.",
+      "doneOAuthCode": "Each member must connect their own account before agents can use this app on their behalf.",
+      "connectNow": "Connect my account",
+      "credentialRequired": "Enter the credential; it is used to list the tools when installing.",
+      "credentialHint": {
+        "org": "Organization credential: shared by everyone and used to list the tools when installing.",
+        "personal": "Your own credential: used to list the tools when installing; other members set theirs in My connections later."
+      }
+    },
+    "review": {
+      "title": "Review",
+      "empty": "No tools are waiting for review.",
+      "hint": "The server changed these tools' definitions (or added new tools). They cannot be called until reviewed.",
+      "changed": "{field} changed",
+      "current": "current",
+      "new": "new",
+      "changedTool": "Definition changed",
+      "newTool": "New tool",
+      "description": "Description",
+      "inputSchema": "Parameters (inputSchema)",
+      "annotations": "Annotations",
+      "connectorData": "Routing data",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approveLabel": "Approve {tool}",
+      "rejectLabel": "Reject {tool}",
+      "approved": "Approved {tool}.",
+      "rejected": "Rejected {tool}; the tool is disabled.",
+      "missingTitle": "No longer provided",
+      "missingHint": "These tools are disabled; if the server provides them again they go to review."
     }
   },
   "connections": {
     "title": "My settings",
     "nav": {
       "connections": "Connected apps",
-      "grants": "Remembered approvals"
+      "grants": "Remembered approvals",
+      "organization": "Organization"
     },
     "empty": "No app needs your own credential.",
     "emptyHint": "Apps that use personal credentials show up here.",
@@ -516,5 +640,19 @@
     "oauthConnect": "Connect",
     "disconnect": "Disconnect",
     "oauthHint": "Sign in to this app with your own account; other members use theirs."
+  },
+  "orgSettings": {
+    "title": "Organization settings",
+    "save": "Save",
+    "saved": "Organization settings saved.",
+    "readonly": "Only admins can change organization settings.",
+    "toolSearch": {
+      "title": "Tool search",
+      "description": "When an agent has many tools, the model gets a tool catalog and loads definitions on demand with tool_search.",
+      "on": "On",
+      "onHint": "Switch to the catalog + tool_search above the threshold (recommended).",
+      "off": "Off",
+      "offHint": "Always send every tool definition to the model."
+    }
   }
 }

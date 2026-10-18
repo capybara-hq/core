@@ -19,7 +19,7 @@ import {
 } from "../../../../../components/AppForm";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
-import { usePersonalSettingsNav } from "../../../../../components/settings-nav";
+import { useSettingsNav } from "../../../../../components/settings-nav";
 import { ApiClientError } from "../../../../../lib/api";
 import {
   type AppDetail,
@@ -50,7 +50,7 @@ async function personalApps(orgId: string): Promise<AppDetail[]> {
 function Connections({ orgId }: { orgId: string }) {
   const t = useTranslations("connections");
   const errorMessage = useErrorMessage();
-  const nav = usePersonalSettingsNav();
+  const nav = useSettingsNav();
   const { state, reload } = useLoad(() => personalApps(orgId), [orgId]);
   return (
     <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="connections">

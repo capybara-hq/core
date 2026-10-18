@@ -48,7 +48,9 @@ function Apps({ orgId }: { orgId: string }) {
         title: t("title"),
         count: state.kind === "ready" ? String(state.data.length) : undefined,
         actions: [
-          ...(manage ? [{ label: t("new"), variant: "primary" as const, href: "/apps/new" }] : []),
+          ...(manage
+            ? [{ label: t("new"), variant: "primary" as const, href: "/apps/install" }]
+            : []),
           { label: t("myConnections"), variant: "default" as const, href: "/settings/connections" },
         ],
       }}
@@ -67,7 +69,7 @@ function Apps({ orgId }: { orgId: string }) {
           title: t("empty"),
           hint: t("emptyHint"),
           ...(manage
-            ? { action: <Button onClick={() => router.push("/apps/new")}>{t("new")}</Button> }
+            ? { action: <Button onClick={() => router.push("/apps/install")}>{t("new")}</Button> }
             : {}),
         }}
       />

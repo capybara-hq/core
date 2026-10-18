@@ -1,11 +1,13 @@
 /**
  * e2e 全局准备：Testcontainers 起 PostgreSQL 与 Valkey，用 CLI（`capybara migrate` / `start`）
- * 从源码起一个加载 `model-fake` 与 `connector-mcp`（允许本机 http）的内核，再用 server.mjs 起 Web 层
+ * 从源码起一个加载 `model-fake`、`connector-mcp` 与 `connector-openapi`（都允许本机 http）的内核，再用 server.mjs 起 Web 层
  * （`next dev`）指向它；另起一个假 MCP 服务（有状态会话；destructive 工具 `delete_item`、会发起 elicitation 的 `signup`、
- * 提示模板 `summarize` 与资源 `docs://handbook`）供工具 / 审批 / 斜杠命令 / 资源引用用例接入。
+ * 提示模板 `summarize` 与资源 `docs://handbook`）供工具 / 审批 / 斜杠命令 / 资源引用用例接入；再起一个假 OpenAPI 服务
+ * （宠物 CRUD，要求请求头 API key）供安装向导用例接入。
  * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL），
- * 假 MCP 端点写入 `CAPYBARA_E2E_MCP_URL`。
- * 返回的函数是全局清理：停 Web、停内核、停 MCP 服务、停容器、删临时目录。
+ * 假 MCP 端点写入 `CAPYBARA_E2E_MCP_URL`，假 OpenAPI 文档地址与 API key 写入 `CAPYBARA_E2E_OPENAPI_SPEC_URL` /
+ * `CAPYBARA_E2E_OPENAPI_KEY`。
+ * 返回的函数是全局清理：停 Web、停内核、停假服务、停容器、删临时目录。
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -23,11 +25,20 @@ const webDir = fileURLToPath(new URL("../", import.meta.url));
 const cli = join(repoRoot, "apps/capybara/bin/capybara.mjs");
 const modelFake = join(repoRoot, "plugins/model-fake/src/index.ts");
 const connectorMcp = join(repoRoot, "plugins/connector-mcp/src/index.ts");
+const connectorOpenApi = join(repoRoot, "plugins/connector-openapi/src/index.ts");
 /**
  * 假 MCP 服务（测试工具包的源码）：按路径加载，与插件一样不作为 apps/web 的包依赖
  * （apps/web 只依赖 @capybara-hq/design）。
  */
 const fakeMcpModule = join(repoRoot, "packages/testing/src/fake-mcp-server.ts");
+const fakeOpenApiModule = join(repoRoot, "packages/testing/src/fake-openapi-server.ts");
+/** 假 OpenAPI 服务要求的 API key（e2e 用例在安装向导里填写）。 */
+const OPENAPI_KEY = "e2e-openapi-key-7f3a";
+
+/** 用到的 `startFakeOpenApiServer` 子集。 */
+type StartFakeOpenApi = (opts: {
+  apiKey?: string;
+}) => Promise<{ specUrl: string; stop(): Promise<void> }>;
 /** 子进程日志（gitignore；每次运行覆盖，失败后可查看）。 */
 const logDir = join(webDir, "e2e-logs");
 
@@ -223,14 +234,23 @@ export default async function globalSetup(): Promise<Cleanup> {
     });
     cleanups.push(() => mcp.stop());
 
+    const { startFakeOpenApiServer } = (await import(fakeOpenApiModule)) as {
+      startFakeOpenApiServer: StartFakeOpenApi;
+    };
+    const openapi = await startFakeOpenApiServer({ apiKey: OPENAPI_KEY });
+    cleanups.push(() => openapi.stop());
+
     const [kernelPort, webPort] = [await freePort(), await freePort()];
     const configFile = join(dir, "capybara.yaml");
     const config = {
       db: { url: pg.getConnectionUri() },
       redis: { url: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}` },
       masterKey: randomBytes(32).toString("base64"),
-      plugins: [modelFake, connectorMcp],
-      pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+      plugins: [modelFake, connectorMcp, connectorOpenApi],
+      pluginConfig: {
+        "connector-mcp": { allowInsecureLoopback: true },
+        "connector-openapi": { allowInsecureLoopback: true },
+      },
       http: { port: kernelPort, trustProxy: 1 },
       auth: { cookieSecure: false },
       log: { level: "warn" },
@@ -270,6 +290,8 @@ export default async function globalSetup(): Promise<Cleanup> {
     });
     process.env.CAPYBARA_E2E_BASE_URL = baseUrl;
     process.env.CAPYBARA_E2E_MCP_URL = mcp.url;
+    process.env.CAPYBARA_E2E_OPENAPI_SPEC_URL = openapi.specUrl;
+    process.env.CAPYBARA_E2E_OPENAPI_KEY = OPENAPI_KEY;
     console.log(`[e2e] kernel :${kernelPort}, web ${baseUrl}, logs in ${logDir}`);
   } catch (e) {
     await cleanup();

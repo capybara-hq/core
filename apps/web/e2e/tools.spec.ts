@@ -36,6 +36,53 @@ async function signIn(page: Page) {
   await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
 }
 
+/** 安装向导的 ActionRow（主操作 / 上一步都在这里）。 */
+const actionRow = (page: Page) => page.getByRole("region", { name: "待提交改动" });
+
+/** 用安装向导装一个无需认证的 MCP 应用，完成后打开应用详情。 */
+async function installMcp(page: Page, name: string, slug: string, url: string) {
+  const w = zh.apps.wizard;
+  if (!/\/apps\/install$/.test(page.url())) await page.goto("/zh/apps/install");
+  await expect(page.locator('[data-template="WizardPage"]')).toBeVisible();
+  await actionRow(page).getByRole("button", { name: w.next }).click();
+  await page.getByRole("textbox", { name: zh.apps.form.nameLabel, exact: true }).fill(name);
+  await page.getByRole("textbox", { name: new RegExp(`^${zh.apps.form.slugLabel}`) }).fill(slug);
+  await page.getByRole("textbox", { name: zh.apps.form.urlLabel }).fill(url);
+  await actionRow(page).getByRole("button", { name: w.next }).click();
+  await expect(
+    page.getByRole("combobox", { name: zh.apps.form.authTypeLabel, exact: true }),
+  ).toHaveValue("none");
+  await actionRow(page).getByRole("button", { name: w.next }).click();
+  await expect(page.getByRole("table", { name: w.toolsTitle })).toBeVisible();
+  await actionRow(page).getByRole("button", { name: w.install }).click();
+  await expect(page.getByText(w.doneTitle.replace("{name}", name))).toBeVisible();
+  await actionRow(page).getByRole("button", { name: w.openApp }).click();
+  await expect(page).toHaveURL(/\/zh\/apps\/[^/]+$/);
+  await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
+}
+
+/** 新建引用某应用全部工具的 agent（model-fake），从列表开始对话，返回输入框。 */
+async function chatWithAgent(page: Page, agentName: string, appName: string) {
+  await page.goto("/zh/agents/new");
+  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(agentName);
+  await page
+    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
+    .selectOption("model-fake/fake-1");
+  await page
+    .getByRole("checkbox", { name: zh.agents.form.appTools.replace("{name}", appName) })
+    .check();
+  await page.getByRole("button", { name: zh.agents.form.submit }).click();
+  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await page
+    .getByRole("row")
+    .filter({ hasText: agentName })
+    .getByRole("button", { name: ROW_ACTIONS })
+    .click();
+  await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
+  await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
+  return page.getByLabel(zh.chat.inputLabel);
+}
+
 test("MCP 应用 → agent 引用 → destructive 工具触发审批 → 批准 → 回复含工具结果", async ({
   page,
 }) => {
@@ -50,15 +97,8 @@ test("MCP 应用 → agent 引用 → destructive 工具触发审批 → 批准 
     .click();
   await expect(page).toHaveURL(/\/zh\/apps$/);
   await page.getByRole("link", { name: zh.apps.new }).click();
-  await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
-  await page.getByRole("textbox", { name: zh.apps.form.nameLabel, exact: true }).fill("Fixture");
-  await page
-    .getByRole("textbox", { name: new RegExp(`^${zh.apps.form.slugLabel}`) })
-    .fill("fixture");
-  await page.getByRole("textbox", { name: zh.apps.form.urlLabel }).fill(mcpUrl as string);
-  await page.getByRole("button", { name: zh.apps.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/apps\/[^/]+$/);
-  await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
+  await expect(page).toHaveURL(/\/zh\/apps\/install$/);
+  await installMcp(page, "Fixture", "fixture", mcpUrl as string);
   const policy = page.getByRole("combobox", {
     name: zh.apps.tools.policyLabel.replace("{tool}", "fixture__delete_item"),
   });
@@ -122,32 +162,8 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   await signIn(page);
 
   // 安装应用（slug docs）并新建引用它的 agent
-  await page.goto("/zh/apps/new");
-  await page.getByRole("textbox", { name: zh.apps.form.nameLabel, exact: true }).fill("Docs");
-  await page.getByRole("textbox", { name: new RegExp(`^${zh.apps.form.slugLabel}`) }).fill("docs");
-  await page.getByRole("textbox", { name: zh.apps.form.urlLabel }).fill(mcpUrl);
-  await page.getByRole("button", { name: zh.apps.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/apps\/[^/]+$/);
-  await page.goto("/zh/agents/new");
-  await page
-    .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
-    .fill("Docs agent");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
-  await page
-    .getByRole("checkbox", { name: zh.agents.form.appTools.replace("{name}", "Docs") })
-    .check();
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
-  await page
-    .getByRole("row")
-    .filter({ hasText: "Docs agent" })
-    .getByRole("button", { name: ROW_ACTIONS })
-    .click();
-  await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
-  await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
-  const input = page.getByLabel(zh.chat.inputLabel);
+  await installMcp(page, "Docs", "docs", mcpUrl);
+  const input = await chatWithAgent(page, "Docs agent", "Docs");
 
   // 1. `/` → 面板 → /docs:summarize → 填参数 → 渲染结果进入输入框（不自动发送）
   await input.press("/");
@@ -183,5 +199,71 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   await question.getByRole("button", { name: zh.question.submit }).click();
   await expect(page.locator('[data-role="assistant"] [data-part="body"]').last()).toHaveText(
     /welcome Ada/,
+  );
+});
+
+test("OpenAPI 应用经安装向导接入（文档认证提示预填 API key、勾选操作）→ agent 调 POST 操作 → 审批 → 批准 → 回复含结果", async ({
+  page,
+}) => {
+  const specUrl = process.env.CAPYBARA_E2E_OPENAPI_SPEC_URL as string;
+  const apiKey = process.env.CAPYBARA_E2E_OPENAPI_KEY as string;
+  expect(specUrl, "global-setup 应写入 CAPYBARA_E2E_OPENAPI_SPEC_URL").toBeTruthy();
+  const w = zh.apps.wizard;
+  await signIn(page);
+
+  // 1. 类型：OpenAPI；端点：文档 URL
+  await page.goto("/zh/apps/install");
+  await page.getByRole("radio", { name: new RegExp(w.connector.openapi) }).check();
+  await actionRow(page).getByRole("button", { name: w.next }).click();
+  await page.getByRole("textbox", { name: zh.apps.form.nameLabel, exact: true }).fill("Pets");
+  await page.getByRole("textbox", { name: new RegExp(`^${zh.apps.form.slugLabel}`) }).fill("pets");
+  await page.getByRole("textbox", { name: w.specUrlLabel }).fill(specUrl);
+  await actionRow(page).getByRole("button", { name: w.next }).click();
+
+  // 2. 认证：按文档的 securitySchemes 预填 API key（请求头 X-API-Key），填入 key
+  await expect(
+    page.getByRole("combobox", { name: zh.apps.form.authTypeLabel, exact: true }),
+  ).toHaveValue("api_key");
+  await expect(page.getByRole("textbox", { name: zh.apps.form.keyNameLabel })).toHaveValue(
+    "X-API-Key",
+  );
+  await page.getByLabel(zh.apps.form.tokenLabel).fill(apiKey);
+  await actionRow(page).getByRole("button", { name: w.next }).click();
+
+  // 3. 工具：操作清单与按方法推导的默认策略；取消两个测试用操作
+  const ops = page.getByRole("table", { name: w.operationsLabel });
+  await expect(ops).toBeVisible();
+  await expect(
+    ops.getByRole("row").filter({ hasText: "POST /pets" }).getByText(zh.apps.policy.ask),
+  ).toBeVisible();
+  await expect(
+    ops.getByRole("row").filter({ hasText: "List pets" }).getByText(zh.apps.policy.allow),
+  ).toBeVisible();
+  for (const label of ["GET /boom", "GET /moved"]) {
+    await ops.getByRole("checkbox", { name: `选择 ${label}` }).uncheck();
+  }
+  await actionRow(page).getByRole("button", { name: w.install }).click();
+  await expect(page.getByText(w.doneTitle.replace("{name}", "Pets"))).toBeVisible();
+  await actionRow(page).getByRole("button", { name: w.openApp }).click();
+  await expect(page).toHaveURL(/\/zh\/apps\/[^/]+$/);
+  await expect(
+    page.getByRole("combobox", {
+      name: zh.apps.tools.policyLabel.replace("{tool}", "pets__createPet"),
+    }),
+  ).toHaveValue("ask");
+  await expect(page.getByText("pets__boom")).toHaveCount(0);
+
+  // 4. agent 调 POST 操作 → 审批 → 批准 → 回复含接口返回
+  const input = await chatWithAgent(page, "Pets agent", "Pets");
+  await input.fill('tool:pets__createPet:{"body":{"name":"Rex"}}');
+  await input.press("Enter");
+  const approval = page.locator('[data-role="approval"]');
+  await expect(approval).toHaveCount(1);
+  await expect(approval.getByText("Pets")).toBeVisible();
+  await approval.getByRole("button", { name: zh.approval.approve }).click();
+  await expect(approval.getByText(zh.approval.decision.approved)).toBeVisible();
+  await expect(page.locator('[data-role="tool"]')).toHaveAttribute("data-status", "done");
+  await expect(page.locator('[data-role="assistant"] [data-part="body"]').last()).toHaveText(
+    /"name":\s*"Rex"/,
   );
 });

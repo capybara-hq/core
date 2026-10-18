@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { formatTime } from "../../../../../components/ApprovalCard";
 import { OrgGate } from "../../../../../components/OrgGate";
-import { usePersonalSettingsNav } from "../../../../../components/settings-nav";
+import { useSettingsNav } from "../../../../../components/settings-nav";
 import { listToolGrants, revokeToolGrant, type ToolGrant } from "../../../../../lib/approvals";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
@@ -22,7 +22,7 @@ function Grants({ orgId }: { orgId: string }) {
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const nav = usePersonalSettingsNav();
+  const nav = useSettingsNav();
   const { state, reload } = useLoad(() => listToolGrants(orgId).then((r) => r.grants), [orgId]);
   const [revoking, setRevoking] = useState<string>();
 

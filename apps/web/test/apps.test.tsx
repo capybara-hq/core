@@ -7,7 +7,6 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
 import AppDetailPage from "../src/app/[locale]/(app)/apps/[appId]/page";
-import NewAppPage from "../src/app/[locale]/(app)/apps/new/page";
 import AppsPage from "../src/app/[locale]/(app)/apps/page";
 import ConnectionsPage from "../src/app/[locale]/(app)/settings/connections/page";
 import { AppFrame } from "../src/components/shell/AppFrame";
@@ -62,9 +61,6 @@ const detail = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const pendingRow = (locale: "zh" | "en") =>
-  screen.getByRole("region", { name: locale === "zh" ? "待提交改动" : "Pending changes" });
-
 beforeEach(() => resetNavigation("/apps"));
 afterEach(() => {
   cleanup();
@@ -80,7 +76,9 @@ describe("应用列表（ListPage）", () => {
     const table = await screen.findByRole("table", { name: m.apps.title });
     expect(within(table).getByText("Fixture")).toBeTruthy();
     expect(within(table).getByText(m.apps.auth.none)).toBeTruthy();
-    expect(screen.getByRole("link", { name: m.apps.new }).getAttribute("href")).toBe("/apps/new");
+    expect(screen.getByRole("link", { name: m.apps.new }).getAttribute("href")).toBe(
+      "/apps/install",
+    );
     await userEvent.setup().click(within(table).getByText("Fixture"));
     expect(router.push).toHaveBeenCalledWith("/apps/app1");
   });
@@ -91,113 +89,6 @@ describe("应用列表（ListPage）", () => {
     expect(await screen.findByText(en.apps.empty)).toBeTruthy();
     expect(screen.queryByRole("link", { name: en.apps.new })).toBeNull();
     expect(screen.queryByRole("button", { name: en.apps.new })).toBeNull();
-  });
-});
-
-describe("添加应用（FormPage）", () => {
-  it.each(LOCALES)(
-    "MCP + Bearer（组织凭据）：提交认证方式与凭据，成功进入详情（%s）",
-    async (locale) => {
-      const m = msgs[locale];
-      const calls = stubApi({
-        "POST /api/v1/orgs/o1/apps": () => json(201, { app: detail(), issues: [] }),
-      });
-      const { container } = renderPage(<NewAppPage />, { locale });
-      expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
-      const user = userEvent.setup();
-      // 必填校验
-      await user.click(
-        within(pendingRow(locale)).getByRole("button", { name: m.apps.form.submit }),
-      );
-      expect(screen.getByText(`✗ ${m.apps.form.nameRequired}`)).toBeTruthy();
-      expect(screen.getByText(`✗ ${m.apps.form.urlRequired}`)).toBeTruthy();
-      expect(calls).toHaveLength(0);
-
-      await user.type(screen.getByRole("textbox", { name: m.apps.form.nameLabel }), "Fixture");
-      await user.type(
-        screen.getByRole("textbox", { name: new RegExp(`^${m.apps.form.slugLabel}`) }),
-        "fx",
-      );
-      await user.type(
-        screen.getByRole("textbox", { name: m.apps.form.urlLabel }),
-        "https://mcp.example.com/mcp",
-      );
-      await user.selectOptions(
-        screen.getByRole("combobox", { name: m.apps.form.authTypeLabel }),
-        "bearer",
-      );
-      await user.type(screen.getByLabelText(m.apps.form.tokenLabel), "s3cret");
-      await user.click(
-        within(pendingRow(locale)).getByRole("button", { name: m.apps.form.submit }),
-      );
-      expect(bodyOf(calls[0])).toEqual({
-        name: "Fixture",
-        slug: "fx",
-        connector: "mcp",
-        endpoint: { url: "https://mcp.example.com/mcp" },
-        auth: { type: "bearer", ownership: "org" },
-        credential: { token: "s3cret" },
-      });
-      expect(router.push).toHaveBeenCalledWith("/apps/app1");
-    },
-  );
-
-  it("自定义请求头 + 个人凭据；有工具被停用时列出原因，点「继续」进入详情", async () => {
-    const calls = stubApi({
-      "POST /api/v1/orgs/o1/apps": () =>
-        json(201, {
-          app: detail(),
-          issues: [{ name: "bad tool", reason: "Tool name is invalid" }],
-        }),
-    });
-    renderPage(<NewAppPage />);
-    const user = userEvent.setup();
-    await user.type(screen.getByRole("textbox", { name: en.apps.form.nameLabel }), "Hdr");
-    await user.type(
-      screen.getByRole("textbox", { name: en.apps.form.urlLabel }),
-      "https://x.test/mcp",
-    );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: en.apps.form.authTypeLabel }),
-      "headers",
-    );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: en.apps.form.ownershipLabel }),
-      "personal",
-    );
-    await user.type(
-      screen.getByRole("textbox", { name: en.apps.form.headerNamesLabel }),
-      "X-Team{Enter}X-Key",
-    );
-    await user.type(
-      screen.getByLabelText(en.apps.form.headerValueLabel.replace("{name}", "X-Key")),
-      "k1",
-    );
-    await user.click(within(pendingRow("en")).getByRole("button", { name: en.apps.form.submit }));
-    expect(bodyOf(calls[0])).toMatchObject({
-      auth: { type: "headers", ownership: "personal", names: ["X-Team", "X-Key"] },
-      credential: { headers: { "X-Team": "", "X-Key": "k1" } },
-    });
-    expect(await screen.findByText("‖ bad tool: Tool name is invalid")).toBeTruthy();
-    expect(router.push).not.toHaveBeenCalled();
-    await user.click(within(pendingRow("en")).getByRole("button", { name: en.apps.form.continue }));
-    expect(router.push).toHaveBeenCalledWith("/apps/app1");
-  });
-
-  it("连接失败：显示翻译后的错误", async () => {
-    stubApi({
-      "POST /api/v1/orgs/o1/apps": () =>
-        json(502, { error: { code: "app.connect_failed", message: "x" } }),
-    });
-    renderPage(<NewAppPage />, { locale: "zh" });
-    const user = userEvent.setup();
-    await user.type(screen.getByRole("textbox", { name: zh.apps.form.nameLabel }), "Fixture");
-    await user.type(
-      screen.getByRole("textbox", { name: zh.apps.form.urlLabel }),
-      "https://x.test/mcp",
-    );
-    await user.click(within(pendingRow("zh")).getByRole("button", { name: zh.apps.form.submit }));
-    expect((await screen.findByRole("alert")).textContent).toContain(zh.errors.app.connect_failed);
   });
 });
 
@@ -228,6 +119,7 @@ describe("应用详情（DetailPage）", () => {
         .map((x) => x.textContent),
     ).toEqual([
       `${m.apps.detail.tabs.tools}2`,
+      m.apps.detail.tabs.review,
       m.apps.detail.tabs.credentials,
       m.apps.detail.tabs.settings,
     ]);
@@ -309,6 +201,209 @@ describe("应用详情（DetailPage）", () => {
     await userEvent.setup().click(screen.getByRole("tab", { name: en.apps.detail.tabs.settings }));
     expect(screen.queryByRole("button", { name: en.apps.settings.delete })).toBeNull();
   });
+});
+
+describe("应用详情：复核页签（漂移检测）", () => {
+  const changed = tool("getPet", {
+    key: "fixture__getPet",
+    status: "pending_review",
+    description: "Get a pet",
+    inputSchema: { type: "object", properties: { id: { type: "integer" } } },
+    annotations: { readOnlyHint: true },
+    connectorData: { method: "get", path: "/pets/{petId}" },
+    reviewedAt: T,
+    pending: {
+      description: "Get a pet (v2)",
+      inputSchema: { type: "object", properties: { id: { type: "string" } } },
+      annotations: { readOnlyHint: true },
+      connectorData: { method: "get", path: "/animals/{petId}" },
+      specHash: "h2",
+    },
+  });
+  const added = tool("newOne", {
+    key: "fixture__newOne",
+    status: "pending_review",
+    description: "Brand new",
+    connectorData: null,
+    reviewedAt: null,
+    pending: null,
+  });
+  const gone = tool("oldOne", { key: "fixture__oldOne", status: "disabled", missing: true });
+
+  it.each(LOCALES)(
+    "列出新旧定义（描述、inputSchema、注解、路由数据）；批准 / 拒绝 → POST review（%s）",
+    async (locale) => {
+      const m = msgs[locale];
+      const r = m.apps.review;
+      let tools = [changed, added, gone, tool("search")];
+      const calls = stubApi({
+        "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: detail({ tools }) }),
+        "POST /api/v1/orgs/o1/apps/app1/tools/getPet/review": () => {
+          tools = tools.map((x) =>
+            x.name === "getPet" ? { ...x, status: "enabled", pending: null } : x,
+          );
+          return json(200, { app: detail({ tools }) });
+        },
+        "POST /api/v1/orgs/o1/apps/app1/tools/newOne/review": () =>
+          json(409, { error: { code: "app.tool_not_pending", message: "x" } }),
+      });
+      renderPage(<AppDetailPage />, { locale });
+      const user = userEvent.setup();
+      // 工具页签：待复核的工具显示状态而不是开关；不再提供的工具标注出来
+      expect(await screen.findAllByText(`‖ ${m.apps.tools.pendingReview}`)).toHaveLength(2);
+      expect(screen.getByText(m.apps.tools.missing)).toBeTruthy();
+      expect(
+        screen.getByRole("switch", {
+          name: m.apps.tools.enabledLabel.replace("{tool}", "fixture__oldOne"),
+        }),
+      ).toHaveProperty("disabled", true);
+      await user.click(screen.getByRole("tab", { name: `${m.apps.detail.tabs.review}2` }));
+
+      const card = screen.getByRole("region", { name: "fixture__getPet" });
+      expect(within(card).getByText(`‖ ${r.changedTool}`)).toBeTruthy();
+      const field = (label: string, side: "current" | "new") =>
+        within(card).getByRole("textbox", { name: `${label} · ${r[side]}` }) as HTMLTextAreaElement;
+      expect(field(r.description, "current").value).toBe("Get a pet");
+      expect(field(r.description, "new").value).toBe("Get a pet (v2)");
+      expect(field(r.inputSchema, "current").value).toContain('"type": "integer"');
+      expect(field(r.inputSchema, "new").value).toContain('"type": "string"');
+      expect(field(r.inputSchema, "new").readOnly).toBe(true);
+      expect(field(r.connectorData, "current").value).toContain("/pets/{petId}");
+      expect(field(r.connectorData, "new").value).toContain("/animals/{petId}");
+      // 有变化的项标出来，注解没变不标
+      expect(within(card).getByText(r.changed.replace("{field}", r.connectorData))).toBeTruthy();
+      expect(within(card).queryByText(r.changed.replace("{field}", r.annotations))).toBeNull();
+
+      // 新工具：只有新定义
+      const fresh = screen.getByRole("region", { name: "fixture__newOne" });
+      expect(within(fresh).getByText(`‖ ${r.newTool}`)).toBeTruthy();
+      expect(
+        (
+          within(fresh).getByRole("textbox", {
+            name: `${r.description} · ${r.new}`,
+          }) as HTMLTextAreaElement
+        ).value,
+      ).toBe("Brand new");
+      expect(
+        within(fresh).queryByRole("textbox", { name: `${r.description} · ${r.current}` }),
+      ).toBeNull();
+
+      // 不再提供的工具
+      expect(screen.getByText("‖ fixture__oldOne")).toBeTruthy();
+
+      await user.click(
+        within(card).getByRole("button", {
+          name: r.approveLabel.replace("{tool}", "fixture__getPet"),
+        }),
+      );
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/tools/getPet/review")))).toEqual({
+        action: "approve",
+      });
+      await vi.waitFor(() =>
+        expect(screen.queryByRole("region", { name: "fixture__getPet" })).toBeNull(),
+      );
+      await user.click(
+        screen.getByRole("button", { name: r.rejectLabel.replace("{tool}", "fixture__newOne") }),
+      );
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/tools/newOne/review")))).toEqual({
+        action: "reject",
+      });
+      expect(await screen.findByText(m.errors.app.tool_not_pending)).toBeTruthy();
+    },
+  );
+
+  it("普通成员：只看对比，没有批准 / 拒绝；没有待复核时显示空状态", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: detail({ tools: [added] }) }),
+    });
+    renderPage(<AppDetailPage />, { me: MEMBER });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: `${en.apps.detail.tabs.review}1` }));
+    expect(screen.getByRole("region", { name: "fixture__newOne" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.apps.review.approve })).toBeNull();
+    cleanup();
+    stubApi({ "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: detail() }) });
+    renderPage(<AppDetailPage />);
+    await user.click(await screen.findByRole("tab", { name: en.apps.detail.tabs.review }));
+    expect(screen.getByText(en.apps.review.empty)).toBeTruthy();
+  });
+});
+
+describe("应用详情：OAuth 客户端轮换", () => {
+  it.each(LOCALES)(
+    "客户端凭据流：填 client id 与密钥（密码框）→ PUT credentials/org；成功后清空（%s）",
+    async (locale) => {
+      const m = msgs[locale];
+      const calls = stubApi({
+        "GET /api/v1/orgs/o1/apps/app1": () =>
+          json(200, {
+            app: detail({
+              auth: { type: "oauth_client", ownership: "org", tokenUrl: "https://a/token" },
+              credential: { ownership: "org", status: "connected" },
+            }),
+          }),
+        "PUT /api/v1/orgs/o1/apps/app1/credentials/org": () => noContent(),
+      });
+      renderPage(<AppDetailPage />, { locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("tab", { name: m.apps.detail.tabs.credentials }));
+      expect(screen.getByText(m.apps.credential.rotateVerified)).toBeTruthy();
+      const rotate = screen.getByRole("button", { name: m.apps.credential.rotate });
+      expect(rotate).toHaveProperty("disabled", true);
+      await user.type(screen.getByRole("textbox", { name: m.apps.oauth.clientIdLabel }), "cid2");
+      // 客户端凭据流必须带密钥
+      expect(rotate).toHaveProperty("disabled", true);
+      const secret = screen.getByLabelText(new RegExp(`^${m.apps.oauth.clientSecretLabel}`));
+      expect(secret.getAttribute("type")).toBe("password");
+      await user.type(secret, "sec2");
+      await user.click(rotate);
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+        clientId: "cid2",
+        clientSecret: "sec2",
+      });
+      await vi.waitFor(() => expect(secret).toHaveProperty("value", ""));
+    },
+  );
+
+  it.each(LOCALES)(
+    "授权码流（手填客户端）：提示新客户端不验证、填错会让所有成员重连；自动注册的客户端不能替换（%s）",
+    async (locale) => {
+      const m = msgs[locale];
+      const code = (client: "manual" | "dcr") => ({
+        type: "oauth_code",
+        ownership: "personal",
+        discovery: "mcp",
+        client,
+      });
+      let client: "manual" | "dcr" = "manual";
+      const calls = stubApi({
+        "GET /api/v1/orgs/o1/apps/app1": () =>
+          json(200, {
+            app: detail({
+              auth: code(client),
+              credential: { ownership: "personal", status: "missing" },
+            }),
+          }),
+        "PUT /api/v1/orgs/o1/apps/app1/credentials/org": () => noContent(),
+      });
+      const { container } = renderPage(<AppDetailPage />, { locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("tab", { name: m.apps.detail.tabs.credentials }));
+      expect(screen.getByText(m.apps.credential.rotateUnverified)).toBeTruthy();
+      expect(screen.getByText(m.apps.credential.personalHint)).toBeTruthy();
+      expect(container.querySelectorAll('[data-variant="primary"]').length).toBeLessThanOrEqual(1);
+      await user.type(screen.getByRole("textbox", { name: m.apps.oauth.clientIdLabel }), "pub");
+      await user.click(screen.getByRole("button", { name: m.apps.credential.rotate }));
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ clientId: "pub" });
+
+      cleanup();
+      client = "dcr";
+      renderPage(<AppDetailPage />, { locale });
+      await user.click(await screen.findByRole("tab", { name: m.apps.detail.tabs.credentials }));
+      expect(screen.getByText(m.apps.credential.clientDcr)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: m.apps.credential.rotate })).toBeNull();
+    },
+  );
 });
 
 describe("个人连接（SettingsPage）", () => {

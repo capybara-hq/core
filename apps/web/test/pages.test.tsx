@@ -410,11 +410,13 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
 });
 
 describe("activeNavOf", () => {
-  it("应用只高亮 /apps*、/settings/connections、/settings/grants；其他 /settings 不高亮", () => {
+  it("应用只高亮 /apps*、/settings/connections、/settings/grants、/settings/organization；其他 /settings 不高亮", () => {
     expect(activeNavOf("/apps")).toBe("apps");
     expect(activeNavOf("/apps/x")).toBe("apps");
     expect(activeNavOf("/settings/connections")).toBe("apps");
     expect(activeNavOf("/settings/grants")).toBe("apps");
+    expect(activeNavOf("/settings/organization")).toBe("apps");
+    expect(activeNavOf("/apps/install")).toBe("apps");
     expect(activeNavOf("/settings/org")).toBe("");
     expect(activeNavOf("/settings")).toBe("");
     expect(activeNavOf("/appsx")).toBe("");

@@ -17,8 +17,8 @@ const NAV = [
 /** 待处理审批数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
 const PENDING_POLL_MS = 30_000;
 
-/** 归在「应用」下的个人设置页（已连接的应用、已记住的授权）。 */
-const APP_SETTINGS = ["/settings/connections", "/settings/grants"];
+/** 归在「应用」下的设置页（已连接的应用、已记住的授权、组织设置），与设置页的二级导航一致。 */
+const APP_SETTINGS = ["/settings/connections", "/settings/grants", "/settings/organization"];
 
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -96,7 +96,7 @@ export function useNav(pending = 0): Pick<TopBarProps, "nav" | "commands"> {
       label: t("nav.actions"),
       items: [
         { id: "new-agent", label: t("agents.new"), onSelect: () => router.push("/agents/new") },
-        { id: "new-app", label: t("apps.new"), onSelect: () => router.push("/apps/new") },
+        { id: "new-app", label: t("apps.new"), onSelect: () => router.push("/apps/install") },
       ],
     },
   ];

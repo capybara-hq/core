@@ -7,37 +7,87 @@ import { apiFetch } from "./api";
 
 export type Ownership = "org" | "personal";
 
-/** 静态认证方式：只有类型与非密钥字段，凭据值走 `credential` / 凭据接口。 */
+/** 令牌端点的客户端认证方式（有客户端密钥时）。 */
+export type TokenAuthMethod = "client_secret_basic" | "client_secret_post";
+
+/** 授权码流（个人凭据，经「连接」授权）：端点经 MCP 发现或手填，客户端自动注册（DCR）或手填。 */
+export interface OAuthCodeAuth {
+  type: "oauth_code";
+  ownership: "personal";
+  discovery: "mcp" | "manual";
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  scopes?: string[];
+  client: "dcr" | "manual";
+  tokenAuthMethod?: TokenAuthMethod;
+}
+
+/** 客户端凭据流（组织凭据，安装时用客户端换取 token）。 */
+export interface OAuthClientAuth {
+  type: "oauth_client";
+  ownership: "org";
+  tokenUrl: string;
+  scopes?: string[];
+  tokenAuthMethod?: TokenAuthMethod;
+}
+
+/** 认证方式：只有类型与非密钥字段，凭据值走 `credential` / 凭据接口。 */
 export type AppAuth =
   | { type: "none" }
   | { type: "bearer"; ownership: Ownership }
   | { type: "api_key"; ownership: Ownership; in: "header" | "query"; name: string }
   | { type: "basic"; ownership: Ownership }
   | { type: "headers"; ownership: Ownership; names: string[] }
-  // OAuth：授权码流为个人凭据（经「连接」授权，不填 token），客户端凭据流为组织凭据
-  | { type: "oauth_code"; ownership: "personal" }
-  | { type: "oauth_client"; ownership: "org" };
+  | OAuthCodeAuth
+  | OAuthClientAuth;
 
 /** 能在界面里手填凭据值的认证方式（不含 none 与 OAuth）。 */
 export type AuthType = Exclude<AppAuth["type"], "oauth_code" | "oauth_client">;
+
+/** OAuth 客户端（安装时手填 / 轮换组织客户端）。 */
+export interface OAuthClientValue {
+  clientId: string;
+  clientSecret?: string;
+}
 
 /** 凭据值（形状按认证方式）。 */
 export type CredentialValue =
   | { token: string }
   | { username: string; password: string }
-  | { headers: Record<string, string> };
+  | { headers: Record<string, string> }
+  | OAuthClientValue;
 
 export type ToolPolicy = "allow" | "ask" | "deny";
 
-export interface AppTool {
+export interface ToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+  requiresUserInteraction?: boolean;
+}
+
+/** 一份工具定义（复核对比的一侧）。 */
+export interface ToolDefinition {
+  description: string;
+  inputSchema: Record<string, unknown>;
+  annotations: ToolAnnotations | null;
+  /** 连接器的路由数据（如 OpenAPI 的方法 / 路径 / 服务器）；读者视图里为 null。 */
+  connectorData: Record<string, unknown> | null;
+}
+
+export interface AppTool extends ToolDefinition {
   name: string;
   key: string;
-  description: string;
-  annotations: { readOnlyHint?: boolean; destructiveHint?: boolean } | null;
-  status: "enabled" | "disabled";
+  status: "enabled" | "disabled" | "pending_review";
   defaultPolicy: ToolPolicy;
   /** 定义不合规时的英文原因（此时工具只能停用）。 */
   issue: string | null;
+  /** 远端已不再提供该工具（随之停用）。 */
+  missing?: boolean;
+  reviewedAt?: string | null;
+  /** 定义变化后待复核的新定义；新增的待复核工具也有（此时没有复核过的旧定义，`reviewedAt` 为 null）。 */
+  pending?: (ToolDefinition & { specHash: string }) | null;
 }
 
 export interface AppSummary {
@@ -63,12 +113,64 @@ export interface ToolIssue {
   reason: string;
 }
 
+/** 连接器：MCP（Streamable HTTP）或 OpenAPI 文档。 */
+export type ConnectorKind = "mcp" | "openapi";
+
+/** MCP：端点 URL；OpenAPI：文档 URL 或文档正文（二选一）、可选 baseUrl 与勾选的操作。 */
+export type AppEndpoint =
+  | { url: string; headers?: Record<string, string> }
+  | { specUrl?: string; specText?: string; baseUrl?: string; operations?: string[] };
+
 export interface CreateAppInput {
   name: string;
   slug?: string;
   connector: string;
-  endpoint: { url: string; headers?: Record<string, string> };
+  endpoint: AppEndpoint;
   auth: AppAuth;
+  credential?: CredentialValue;
+}
+
+/** 远端描述里声明的认证方式（向导据此预填）。 */
+export type AuthHint = { scheme: string; description?: string } & (
+  | { type: "bearer" }
+  | { type: "basic" }
+  | { type: "api_key"; in: "header" | "query"; name: string }
+  | { type: "oauth_client"; tokenUrl: string; scopes: string[] }
+  | { type: "oauth_code"; authorizationUrl: string; tokenUrl: string; scopes: string[] }
+);
+
+/** 远端描述里的一个操作（OpenAPI operation）。 */
+export interface ConnectorOperation {
+  id: string;
+  method: string;
+  path: string;
+  summary?: string;
+}
+
+/** 预览里的一个工具（与安装后的工具同形的子集）。 */
+export interface ToolPreview {
+  name: string;
+  key: string;
+  description: string;
+  annotations: ToolAnnotations | null;
+  defaultPolicy: ToolPolicy;
+  issue: string | null;
+}
+
+/** 预览（不落库）：`tools` 为 null 表示没有列工具（未给认证、缺凭据、OAuth 授权码流）。 */
+export interface AppPreview {
+  tools: ToolPreview[] | null;
+  issues: ToolIssue[];
+  authHints: AuthHint[];
+  operations?: ConnectorOperation[];
+}
+
+export interface PreviewAppInput {
+  name?: string;
+  slug?: string;
+  connector: string;
+  endpoint: AppEndpoint;
+  auth?: AppAuth;
   credential?: CredentialValue;
 }
 
@@ -95,6 +197,24 @@ const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/apps`
 const one = (orgId: string, appId: string) => `${base(orgId)}/${encodeURIComponent(appId)}`;
 
 export const listApps = (orgId: string) => apiFetch<{ apps: AppSummary[] }>(base(orgId));
+
+export const previewApp = (orgId: string, input: PreviewAppInput) =>
+  apiFetch<AppPreview>(`${base(orgId)}/preview`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+
+/** 复核待复核的工具：approve 采用新定义并启用，reject 停用并保留旧定义。 */
+export const reviewTool = (
+  orgId: string,
+  appId: string,
+  name: string,
+  action: "approve" | "reject",
+) =>
+  apiFetch<{ app: AppDetail }>(`${one(orgId, appId)}/tools/${encodeURIComponent(name)}/review`, {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
 
 export const getApp = (orgId: string, appId: string) =>
   apiFetch<{ app: AppDetail }>(one(orgId, appId));
