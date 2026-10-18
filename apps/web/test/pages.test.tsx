@@ -134,6 +134,45 @@ describe("(app) 页面模板", () => {
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ agentId: "ag1" });
   });
 
+  const oneAgent = () =>
+    json(200, {
+      agents: [
+        { id: "ag1", definition: { name: "Echo agent", model: { provider: "p", model: "m" } } },
+      ],
+    });
+
+  it("Agents 页：点击行即开始对话；创建期间该行置灰并显示进度，重复点击不再创建", async () => {
+    let resolve: (r: Response) => void = () => {};
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/agents": oneAgent,
+      "POST /api/v1/orgs/o1/conversations": () =>
+        new Promise<Response>((r) => {
+          resolve = r;
+        }) as unknown as Response,
+    });
+    renderPage(<AgentsPage />, { locale: "zh" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByText("Echo agent"));
+    const row = await screen.findByText(`Echo agent · ${zh.agents.starting}`);
+    expect(row.closest("tr")?.getAttribute("data-state")).toContain("disabled");
+    await user.click(row);
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    resolve(json(201, { conversation: { id: "c2" } }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat/c2"));
+  });
+
+  it("Agents 页：行获得焦点后按 Enter 开始对话", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/agents": oneAgent,
+      "POST /api/v1/orgs/o1/conversations": () => json(201, { conversation: { id: "c3" } }),
+    });
+    renderPage(<AgentsPage />, { locale: "zh" });
+    const cell = await screen.findByText("Echo agent");
+    cell.closest("tr")?.focus();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat/c3"));
+  });
+
   it("Agents 页：空状态带「新建 Agent」", async () => {
     stubApi({ "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }) });
     renderPage(<AgentsPage />);
@@ -264,13 +303,13 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     await screen.findByText("page body");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "组织" }));
+    await user.click(screen.getByRole("button", { name: "组织: Acme" }));
     await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
     await vi.waitFor(() =>
       expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ orgId: "o2" }),
     );
 
-    await user.click(screen.getByRole("button", { name: "账户" }));
+    await user.click(screen.getByRole("button", { name: `账户: ${ME.account.displayName}` }));
     expect(
       await screen.findByRole("menuitem", {
         name: zh.shell.switchLocale.replace("{name}", zh.common.localeName.en),
@@ -279,7 +318,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     await user.click(screen.getByRole("menuitem", { name: zh.shell.themeLight }));
     expect(document.documentElement.dataset.theme).toBe("light");
 
-    await user.click(screen.getByRole("button", { name: "账户" }));
+    await user.click(screen.getByRole("button", { name: `账户: ${ME.account.displayName}` }));
     await user.click(await screen.findByRole("menuitem", { name: zh.common.logout }));
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
   });
@@ -292,6 +331,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const statusBar = screen.getByRole("contentinfo");
     expect(statusBar.textContent).not.toContain(">");
     expect(statusBar.textContent).toContain("v9.9.9");
+    // 用户菜单在会话就绪前不可点击（不渲染空下拉）
+    expect(screen.queryByRole("button", { name: /账户/ })).toBeNull();
   });
 
   it("服务端渲染不含时区（避免与浏览器时区不同导致的水合不一致）", () => {

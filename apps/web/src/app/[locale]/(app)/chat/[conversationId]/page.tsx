@@ -10,6 +10,7 @@ import {
 } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { useState } from "react";
 import { useChat } from "../../../../../components/ChatView";
 import { Composer } from "../../../../../components/Composer";
 import { FormError } from "../../../../../components/form-error";
@@ -19,7 +20,19 @@ import { OrgGate } from "../../../../../components/OrgGate";
 /** `/[locale]/chat/[conversationId]`：当前组织下的一个会话（PlaygroundPage）。 */
 export default function ChatPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
-  return <OrgGate>{(orgId) => <Chat orgId={orgId} conversationId={conversationId} />}</OrgGate>;
+  return (
+    <OrgGate>{(orgId) => <ChatInOrg orgId={orgId} conversationId={conversationId} />}</OrgGate>
+  );
+}
+
+/**
+ * 会话属于打开它时的当前组织：切换组织后（AppFrame 正在跳回列表）不再以新组织 + 旧会话渲染 Chat，
+ * 免得用新组织去读旧会话。
+ */
+function ChatInOrg({ orgId, conversationId }: { orgId: string; conversationId: string }) {
+  const [openedIn] = useState(orgId);
+  if (orgId !== openedIn) return null;
+  return <Chat orgId={orgId} conversationId={conversationId} />;
 }
 
 function Chat({ orgId, conversationId }: { orgId: string; conversationId: string }) {

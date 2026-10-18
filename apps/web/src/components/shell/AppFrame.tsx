@@ -87,14 +87,17 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     async (orgId: string | null) => {
       try {
         await setCurrentOrg(orgId);
-        await load();
-        // 会话属于原组织：换组织后回到列表
+        // 会话属于原组织：先回到列表，再换会话（对话页也不会以新组织 + 旧会话渲染，见 chat 页）
         if (pathname.startsWith("/chat")) router.push("/agents");
+        // 这里直接读 /me 而不走 load：刷新失败要以 toast 告知，而不是被 load 吞掉
+        setMe(await getMe());
+        setError(undefined);
       } catch (e) {
-        toast.error(errorMessage(e));
+        if (e instanceof ApiClientError && e.status === 401) router.replace("/login");
+        else toast.error(errorMessage(e));
       }
     },
-    [load, pathname, router, toast, errorMessage],
+    [pathname, router, toast, errorMessage],
   );
 
   const session = useMemo<Session | undefined>(
@@ -145,7 +148,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
             })),
           },
     user: {
-      name: me === undefined ? t("common.loading") : `${me.account.displayName} ▾`,
+      name: me === undefined ? t("common.loading") : me.account.displayName,
       menu: me === undefined ? [] : userMenu,
     },
     commands,

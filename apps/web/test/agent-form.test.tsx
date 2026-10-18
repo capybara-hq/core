@@ -32,13 +32,13 @@ const MODELS = {
   ],
 };
 
-function stub(warnings: string[]) {
+function stub(warnings: string[], models: unknown = MODELS) {
   const posts: unknown[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/v1/orgs/o1/models") return json(200, MODELS);
+      if (url === "/api/v1/orgs/o1/models") return json(200, models);
       if (url === "/api/v1/orgs/o1/agents" && init?.method === "POST") {
         posts.push(JSON.parse(String(init.body)));
         return json(201, { agent: { id: "ag1" }, warnings });
@@ -96,6 +96,43 @@ describe("新建 Agent 页（FormPage）", () => {
     });
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.push).toHaveBeenCalledWith("/agents");
+  });
+
+  it("在名称框按 Enter 即保存（只提交一次）；在指令多行框按 Enter 只换行", async () => {
+    // 带数字参数框：表单里有多个单行输入框，浏览器不会做隐式提交
+    const temperature = {
+      key: "temperature",
+      standard: "temperature",
+      schema: { type: "number", minimum: 0, maximum: 2 },
+      label: { zh: "温度", en: "Temperature" },
+    };
+    const posts = stub([], {
+      providers: [
+        {
+          provider: "model-fake",
+          models: [
+            { id: "fake-1", displayName: "Fake 1", capabilities: CAPS, parameters: [temperature] },
+          ],
+        },
+      ],
+    });
+    renderPage(<NewAgentPage />);
+    const user = userEvent.setup();
+    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
+    await user.type(
+      screen.getByRole("textbox", { name: startsWith(en.agents.form.instructionsLabel) }),
+      "a{Enter}b",
+    );
+    expect(posts).toHaveLength(0);
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo{Enter}");
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
+    expect(posts).toHaveLength(1);
+    expect(
+      (posts[0] as { definition: { name: string; instructions: string } }).definition,
+    ).toMatchObject({
+      name: "Echo",
+      instructions: "a\nb",
+    });
   });
 
   it("名称为空时不提交，名称字段显示错误", async () => {

@@ -282,6 +282,21 @@ describe("ModelParams", () => {
     expect(onChange).toHaveBeenLastCalledWith({ "model-fake.search": true });
   });
 
+  it("极小范围的数字参数：步长不被指数写法误判，按键得到非零的小数", () => {
+    const onChange = vi.fn();
+    const EPS: ModelParameter = {
+      key: "model-fake.eps",
+      schema: { type: "number", minimum: 0, maximum: 1e-6 },
+      label: { zh: "精度", en: "Epsilon" },
+    };
+    render(<Harness parameters={[EPS]} locale="en" onChange={onChange} />);
+    const box = screen.getByRole("spinbutton", { name: "Epsilon" }) as HTMLInputElement;
+    expect(box.step).toBe("1e-8");
+    fireEvent.change(box, { target: { value: "0" } });
+    fireEvent.keyDown(screen.getByRole("slider", { name: "Epsilon" }), { key: "ArrowRight" });
+    expect(onChange).toHaveBeenLastCalledWith({ "model-fake.eps": 1e-8 });
+  });
+
   it("没有声明参数时不渲染任何内容", () => {
     const { container } = render(<Harness parameters={[]} locale="en" onChange={vi.fn()} />);
     expect(container.textContent).toBe("");

@@ -46,7 +46,7 @@ export function topBar(activeNav: string): TopBarProps {
       ],
     },
     user: {
-      name: "grant ▾",
+      name: "grant",
       menu: [
         { label: "个人设置", onSelect: noop },
         { label: "退出登录", onSelect: noop },

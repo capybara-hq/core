@@ -40,8 +40,8 @@ export function useAgents(orgId: string): AgentsState & { reload(): void } {
 }
 
 /**
- * Agent 列表（DataTable）：列为名称、模型；行菜单「开始对话」新建会话并进入对话页。
- * 空状态带「新建 Agent」。
+ * Agent 列表（DataTable）：列为名称、模型；点击行 / 回车或行菜单「开始对话」新建会话并进入对话页，
+ * 创建期间该行置灰、名称后显示进度，其余行不再响应。空状态带「新建 Agent」。
  */
 export function AgentTable({
   orgId,
@@ -58,6 +58,7 @@ export function AgentTable({
   useStatusBar(starting === undefined ? null : `· ${t("starting")}`);
 
   async function onStart(agentId: string) {
+    if (starting !== undefined) return;
     setStarting(agentId);
     try {
       const { conversation } = await createConversation(orgId, agentId);
@@ -69,7 +70,12 @@ export function AgentTable({
   }
 
   const columns: Column<Agent>[] = [
-    { key: "name", header: t("columns.name"), cell: (a) => a.definition.name },
+    {
+      key: "name",
+      header: t("columns.name"),
+      cell: (a) =>
+        a.id === starting ? `${a.definition.name} · ${t("starting")}` : a.definition.name,
+    },
     {
       key: "model",
       header: t("columns.model"),
@@ -86,6 +92,8 @@ export function AgentTable({
       rows={agents.kind === "ready" ? agents.agents : []}
       rowKey={(a) => a.id}
       rowLabel={(a) => a.definition.name}
+      onOpen={(a) => void onStart(a.id)}
+      isDisabled={(a) => a.id === starting}
       state={agents.kind === "ready" ? "ready" : agents.kind}
       {...(agents.kind === "error" ? { error: { code: agents.code, onRetry: agents.reload } } : {})}
       empty={{

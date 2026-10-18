@@ -11,7 +11,7 @@ import {
   Textarea,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useState } from "react";
 import {
   type AgentDefinitionInput,
   type AgentVisibility,
@@ -32,6 +32,8 @@ import { ModelParams } from "./ModelParams";
 
 const VISIBILITIES = ["private", "org"] as const satisfies readonly AgentVisibility[];
 const NAME_MAX = 80;
+/** 在这些单行输入框里按 Enter 即保存（表单没有原生提交按钮，含数字框时浏览器也不做隐式提交）。 */
+const ENTER_SUBMITS = new Set(["text", "search", "email", "url", "tel", "password", "number"]);
 
 type Params = Record<string, ParamValue>;
 type ParamField = "modelParams" | "fallbackParams";
@@ -195,6 +197,14 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
     void save();
   }
 
+  function onKeyDown(e: KeyboardEvent<HTMLFormElement>) {
+    const el = e.target;
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    if (!(el instanceof HTMLInputElement) || !ENTER_SUBMITS.has(el.type)) return;
+    e.preventDefault();
+    void save();
+  }
+
   const paramErrors = {
     modelParams: Object.keys(fieldErrors.modelParams).length,
     fallbackParams: Object.keys(fieldErrors.fallbackParams).length,
@@ -228,7 +238,7 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
   ];
 
   const sections = (
-    <form onSubmit={onSubmit} noValidate>
+    <form onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
       <Stack gap={16}>
         {warnings !== undefined && (
           <Card tone="danger" title={t("form.warningsTitle")}>

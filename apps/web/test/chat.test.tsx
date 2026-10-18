@@ -1,11 +1,14 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
-import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { AppFrame } from "../src/components/shell/AppFrame";
+import { Link, resetNavigation, router } from "./support/navigation";
+import { ME, renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -375,5 +378,67 @@ describe("对话页（PlaygroundPage）", () => {
       await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(i + 1));
     }
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("对话页切换组织", () => {
+  function renderInFrame() {
+    return render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <DesignProvider locale="en" link={Link as LinkComponent}>
+          <ToastProvider>
+            <AppFrame version="v0">
+              <ChatPage />
+            </AppFrame>
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
+  }
+  const twoOrgs = (currentOrgId: string) => ({
+    ...ME,
+    currentOrgId,
+    memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
+  });
+
+  it("切到其他组织：跳回 /agents，且不以新组织 + 旧会话读取", async () => {
+    let current = "o1";
+    const calls = stubApi({
+      "GET /api/v1/me": () => json(200, twoOrgs(current)),
+      "PUT /api/v1/me/current-org": () => {
+        current = "o2";
+        return new Response(null, { status: 204 });
+      },
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, { conversation: { id: "c1" } }),
+    });
+    renderInFrame();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
+    expect(calls.some((c) => c.url.includes("/orgs/o2/"))).toBe(false);
+    expect(screen.queryByText("hi")).toBeNull();
+  });
+
+  it("切换后刷新会话失败：以 toast 提示错误", async () => {
+    let meCalls = 0;
+    stubApi({
+      "GET /api/v1/me": () =>
+        ++meCalls === 1
+          ? json(200, twoOrgs("o1"))
+          : json(500, { error: { code: "http_error", message: "boom" } }),
+      "PUT /api/v1/me/current-org": () => new Response(null, { status: 204 }),
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, { conversation: { id: "c1" } }),
+    });
+    renderInFrame();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    expect(await screen.findByText(en.errors.http_error)).toBeTruthy();
   });
 });

@@ -19,12 +19,18 @@ function toNumber(raw: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** 滑块步长：整数为 1；否则约百分之一的范围，取一位有效数字（如 0..2 → 0.01）。 */
+/**
+ * 滑块步长：整数为 1；否则约百分之一的范围，取 10 的整数次幂（如 0..2 → 0.01）。
+ * 小数位数按 `ceil(-log10(raw))` 推出并限制在 0..10，再由 toFixed 得到不含浮点误差的步长
+ * （极小的范围如 0..1e-6 得到 1e-8，而不是被指数写法误判为整数步长）。
+ */
 function sliderStep(min: number, max: number, integer: boolean): number {
   if (integer) return 1;
   const raw = (max - min) / 100;
-  if (!(raw > 0)) return 0.01;
-  return 10 ** Math.floor(Math.log10(raw));
+  if (!(raw > 0) || !Number.isFinite(raw)) return 0.01;
+  if (raw >= 1) return 10 ** Math.floor(Math.log10(raw));
+  const decimals = Math.min(10, Math.max(0, Math.ceil(-Math.log10(raw) - 1e-9)));
+  return Number((10 ** -decimals).toFixed(decimals));
 }
 
 /**
