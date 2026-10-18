@@ -82,11 +82,27 @@ pnpm dev:web          # 即 pnpm --filter @capybara-hq/web dev，经 apps/web/se
 
 | 插件 | 说明 |
 |---|---|
+| `@capybara-hq/plugin-openai-compatible` | **默认发行版自带**。OpenAI 兼容的 Chat Completions 服务（DeepSeek、Qwen、vLLM 等），按端点配置、方言预设差异 |
 | `@capybara-hq/plugin-model-fake` | 确定性脚本化模型，用于测试与无密钥演示 |
-| `@capybara-hq/plugin-anthropic` | Anthropic（官方 SDK + 原生 Messages API） |
-| `@capybara-hq/plugin-openai` | OpenAI（官方 SDK + 原生 Responses API） |
+| `@capybara-hq/plugin-anthropic` | Anthropic（官方 SDK + 原生 Messages API），**按需安装** |
+| `@capybara-hq/plugin-openai` | OpenAI（官方 SDK + 原生 Responses API），**按需安装** |
 
-可以同时加载多个，如 `CAPYBARA_PLUGINS='["@capybara-hq/plugin-anthropic","@capybara-hq/plugin-openai"]'`，`CAPYBARA_PLUGIN_CONFIG` 里按插件名分别给配置。
+可以同时加载多个，如 `CAPYBARA_PLUGINS='["@capybara-hq/plugin-openai-compatible","@capybara-hq/plugin-anthropic"]'`，`CAPYBARA_PLUGIN_CONFIG` 里按插件名分别给配置。`anthropic` 与 `openai` 不在默认发行版里：自建部署时先安装对应的包（如 `pnpm add @capybara-hq/plugin-anthropic`），再把它加进 `CAPYBARA_PLUGINS`。
+
+每个模型在插件里声明自己支持的参数（`effort`、`thinking`、`temperature`、`maxOutputTokens` 等标准旋钮，以及 `<插件名>.<名称>` 形式的厂商参数）；网页的 agent 表单按声明渲染，agent 版本保存时按声明校验。
+
+`openai-compatible` 接 DeepSeek 的部署级配置示例（默认示例）：
+
+```bash
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-openai-compatible"]'
+export CAPYBARA_PLUGIN_CONFIG='{"openai-compatible":{"endpoints":[{"name":"deepseek","baseUrl":"https://api.deepseek.com","dialect":"deepseek","models":[{"id":"deepseek-flash","contextWindow":128000,"maxOutputTokens":8192,"reasoning":true}]}],"apiKeys":{"deepseek":"sk-..."}}}'
+```
+
+- `endpoints`（至少一个）：`name`（端点名，不含 `/`）、`baseUrl`、`dialect`（`generic` / `deepseek` / `qwen`）、`models`（至少一个：`id`、`contextWindow`、`maxOutputTokens`，可选 `reasoning`、`vision`、`caching`、`streamIdleTimeoutMs`）；可选 `midConversationSystem`（覆盖方言默认）。对外模型 id 为 `<端点名>/<模型 id>`，如 `deepseek/deepseek-flash`。上例的 `contextWindow` / `maxOutputTokens` 只是占位，请按所用模型的官方文档填写。
+- `apiKeys`：端点名 → 密钥，是**顶层**的密钥字段（密钥不能放进 `endpoints[]` 数组元素里）；键必须是已配置的端点名，无密钥的端点（如内网 vLLM）不填。
+- 方言：`deepseek` 提供 `thinking`（`on|off`，默认 `on`）与 `effort`（`low|high|max`，默认 `high`），思考内容经 `reasoning_content` 读取并按 DeepSeek 的规则回传；`qwen` 提供 `thinking`（映射为 `enable_thinking`）；`generic` 只提供 `temperature` 与 `maxOutputTokens`。所有方言都声明 `temperature` 与 `maxOutputTokens`；思考相关参数只对配置了 `reasoning: true` 的模型声明。
+- 当前 DeepSeek 模型为 `deepseek-flash` 与 `deepseek-v4-pro`，`deepseek-reasoner` 已下线。
+- SDK 不做重试，重试由内核统一处理。
 
 `anthropic` 的部署级配置示例：
 
@@ -112,6 +128,8 @@ export CAPYBARA_PLUGIN_CONFIG='{"openai":{"apiKey":"sk-...","models":[{"id":"gpt
 - `models`（至少一个）：`id`、`contextWindow`、`maxOutputTokens`、`reasoning`、`vision`，可选 `streamIdleTimeoutMs`（推理模型长时间无输出时的看门狗阈值）、`effortLevels`（该模型接受的 effort 档位，取自 `low|medium|high|xhigh|max`，按给定顺序声明；未给时为 `low|medium|high`，所有推理模型都接受；档位因模型而异，例如 gpt-5-nano 不接受 `max`）。
 - `reasoningSummary`：`auto`（默认）请求推理摘要，agent 可用 thinking 参数关闭；未完成组织验证的账号请求摘要会被拒绝，此时设 `off`，模型也不再声明 thinking 参数。
 - 以 `store: false` 调用，推理项以加密内容原样回放；SDK 同样不做重试。
+
+真实接口的一致性测试默认跳过，设了环境变量才跑：anthropic 用 `CAPYBARA_TEST_ANTHROPIC_API_KEY`；openai 用 `CAPYBARA_TEST_OPENAI_API_KEY` 与 `CAPYBARA_TEST_OPENAI_MODEL`；openai-compatible 用 `CAPYBARA_TEST_OAICOMPAT_BASE_URL` / `_API_KEY` / `_MODEL` / `_DIALECT`（四个都设才跑）。
 
 写模型供应商插件见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。
 
