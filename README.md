@@ -109,8 +109,8 @@ export CAPYBARA_PLUGIN_CONFIG='{"openai":{"apiKey":"sk-...","models":[{"id":"gpt
 ```
 
 - `apiKey`（必填，密钥字段）；`baseUrl`、`organization`（可选）。
-- `models`（至少一个）：`id`、`contextWindow`、`maxOutputTokens`、`reasoning`、`vision`，可选 `streamIdleTimeoutMs`（推理模型长时间无输出时的看门狗阈值）。
-- `reasoningSummary`：`auto`（默认）请求推理摘要；未完成组织验证的账号请求摘要会被拒绝，此时设 `off`。
+- `models`（至少一个）：`id`、`contextWindow`、`maxOutputTokens`、`reasoning`、`vision`，可选 `streamIdleTimeoutMs`（推理模型长时间无输出时的看门狗阈值）、`effortLevels`（该模型接受的 effort 档位，取自 `low|medium|high|xhigh|max`，按给定顺序声明；未给时为 `low|medium|high`，所有推理模型都接受；档位因模型而异，例如 gpt-5-nano 不接受 `max`）。
+- `reasoningSummary`：`auto`（默认）请求推理摘要，agent 可用 thinking 参数关闭；未完成组织验证的账号请求摘要会被拒绝，此时设 `off`，模型也不再声明 thinking 参数。
 - 以 `store: false` 调用，推理项以加密内容原样回放；SDK 同样不做重试。
 
 写模型供应商插件见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。

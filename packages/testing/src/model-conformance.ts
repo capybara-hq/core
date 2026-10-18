@@ -199,7 +199,8 @@ export function describeModelProviderConformance(
 
     it("thinking replay", async (ctx) => {
       if (!t.expect.thinking) return ctx.skip();
-      const over = await thinkingOver();
+      // 最高一档 effort 下推理 token 也计入输出上限：1024 不够（gpt-5-nano 第二轮会 max_tokens），放宽
+      const over = { ...(await thinkingOver()), maxOutputTokens: 8192 };
       const first = base({
         ...over,
         messages: [{ role: "user", content: [{ type: "text", text: THINKING_PROMPT }] }],
