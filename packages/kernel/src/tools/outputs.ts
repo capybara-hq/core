@@ -66,6 +66,10 @@ export class ToolOutputs {
   }
 }
 
+/** 存档不存在 / 过期 / 不属于本组织（模型可见，英文；不区分三者，不泄露别的组织的存档是否存在）。 */
+export const outputNotFoundText = (id: string): string =>
+  `Output ${id} not found or expired. Run the tool that produced it again to get a new output id.`;
+
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -94,11 +98,7 @@ export async function resolveOutputRefs(
       let text = cache.get(id);
       if (text === undefined) {
         const loaded = await load(id);
-        if (loaded === null) {
-          throw new ToolError(
-            `Output ${id} not found or expired. Run the tool that produced it again to get a new output id.`,
-          );
-        }
+        if (loaded === null) throw new ToolError(outputNotFoundText(id));
         text = loaded;
         cache.set(id, text);
       }

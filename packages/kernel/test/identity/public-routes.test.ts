@@ -111,6 +111,7 @@ beforeAll(async () => {
           credentials: k.tools.credentials,
           toolRegistry: k.tools.registry,
           approvals: k.tools.approvals,
+          questions: k.tools.questions,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

@@ -28,6 +28,7 @@ import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
 import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
+import { Maintenance } from "./runtime/maintenance.js";
 import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
 import { OrgQuota } from "./runtime/quota.js";
@@ -36,6 +37,8 @@ import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
+import { askUserTool } from "./tools/builtins/ask-user.js";
+import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolOutputs } from "./tools/outputs.js";
 import { ToolPipeline } from "./tools/pipeline.js";
@@ -86,6 +89,8 @@ export interface KernelRuns {
   readonly stepDeps: LoopDeps;
   /** 运行等待人处理：续跑、超时、等待中中止。 */
   readonly waits: Waits;
+  /** 内核维护队列（等待超时、输出存档清理等）。 */
+  readonly maintenance: Maintenance;
 }
 
 /** 工具相关的内核服务。 */
@@ -244,9 +249,18 @@ export async function createKernel(
   const eventLog = new EventLog(kdb, bus, log);
   const registry = new ProviderRegistry(host, redis, log);
   const credentials = new Credentials(kdb, keyring, log);
-  // 内置工具在 Task 10 接入
-  const toolRegistry = new ToolRegistry({ db: kdb, host, credentials, log, builtins: [] });
   const toolOutputs = new ToolOutputs(kdb, () => current);
+  // 内置工具（tool_search 在 Task 19 接入）
+  const toolRegistry = new ToolRegistry({
+    db: kdb,
+    host,
+    credentials,
+    log,
+    builtins: [
+      askUserTool({ config: () => current }),
+      readToolOutputTool({ outputs: toolOutputs, config: () => current }),
+    ],
+  });
   // 审批决定 / 输入回答提交后续跑（waits 在下面创建；回调只在运行期间被调用）
   const approvals = new ApprovalsService({
     db: kdb,
@@ -291,6 +305,7 @@ export async function createKernel(
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
   const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
+  const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
   const waits: Waits = new Waits({
     db: kdb,
     eventLog,
@@ -299,7 +314,7 @@ export async function createKernel(
     runQueue,
     checkpoints,
     abortRequested: (runId) => abort.requested(runId),
-    redisUrl: config.redis.url,
+    maintenance,
     log,
   });
   const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
@@ -339,6 +354,7 @@ export async function createKernel(
     abort,
     stepDeps,
     waits,
+    maintenance,
   };
   let runWorker: RunWorker | undefined;
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
@@ -380,6 +396,7 @@ export async function createKernel(
         credentials,
         toolRegistry,
         approvals,
+        questions,
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
           abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),
@@ -498,7 +515,7 @@ export async function createKernel(
       const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
-    await within("waits", waits.close(), Math.max(0, runsDeadline - Date.now()));
+    await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
     await within("bus", busSubscriber.close());
@@ -565,7 +582,15 @@ export async function createKernel(
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();
-          waits.startWorker();
+          // 维护队列：周期任务的 scheduler（幂等，多副本重复登记无害）与唯一的 Worker。
+          // 登记失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再登记。
+          try {
+            await maintenance.ensureSchedules();
+          } catch (err) {
+            log.error("cannot register maintenance job schedulers", { err });
+          }
+          checkpoint();
+          maintenance.startWorker();
         }
         httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {

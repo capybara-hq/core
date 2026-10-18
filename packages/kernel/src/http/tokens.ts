@@ -72,3 +72,6 @@ export const APPS = Symbol("APPS");
 
 /** `ApprovalsService`（工具调用审批与授权）的注入令牌。 */
 export const APPROVALS = Symbol("APPROVALS");
+
+/** `QuestionsService`（工具调用的输入请求）的注入令牌。 */
+export const QUESTIONS = Symbol("QUESTIONS");

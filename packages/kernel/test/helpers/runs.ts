@@ -94,7 +94,8 @@ export async function createAgent(
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
     payload: {
-      // 显式不带工具：运行编排测试只看 M2 行为（默认的内置工具在 Task 10 实现前会触发不可用提醒）
+      // 显式不带工具：运行编排测试只看 M2 行为（model-fake 在请求带工具、消息不是脚本指令时会调用第一个工具，
+      // 默认的内置工具 ask_user 会让普通消息变成提问）。带默认内置工具的 agent 见 test/tools/ask-user.test.ts。
       definition: { name: "Helper", instructions: "Be helpful.", model, tools: [] },
       visibility: "org",
     },

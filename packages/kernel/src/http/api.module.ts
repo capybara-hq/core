@@ -38,6 +38,8 @@ import type { ApprovalsService } from "../tools/approvals.service.js";
 import { AppsController } from "../tools/apps.controller.js";
 import { AppsService } from "../tools/apps.service.js";
 import type { Credentials } from "../tools/credentials.js";
+import { QuestionsController } from "../tools/questions.controller.js";
+import type { QuestionsService } from "../tools/questions.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import {
   ACCOUNTS,
@@ -59,6 +61,7 @@ import {
   ORG_PLUGIN_CONFIGS,
   ORGS,
   PROVIDER_REGISTRY,
+  QUESTIONS,
   RATE_LIMITER,
   SESSIONS,
   SETTINGS,
@@ -91,6 +94,8 @@ export interface ApiDeps {
   toolRegistry: ToolRegistry;
   /** 工具调用审批（与 `Kernel.tools.approvals` 同一实例）。 */
   approvals: ApprovalsService;
+  /** 工具调用的输入请求（与 `Kernel.tools.questions` 同一实例）。 */
+  questions: QuestionsService;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -109,6 +114,7 @@ const CONTROLLERS: Type[] = [
   AppsController,
   ApprovalsController,
   ToolGrantsController,
+  QuestionsController,
 ];
 
 /**
@@ -211,6 +217,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: CREDENTIALS, useValue: deps.credentials },
     { provide: TOOL_REGISTRY, useValue: deps.toolRegistry },
     { provide: APPROVALS, useValue: deps.approvals },
+    { provide: QUESTIONS, useValue: deps.questions },
     {
       provide: APPS,
       useFactory: (

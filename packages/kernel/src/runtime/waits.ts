@@ -1,6 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { DelayedError, type Job, Queue, Worker } from "bullmq";
-import type { Redis } from "ioredis";
+import { DelayedError, type Job } from "bullmq";
 import { sql, type Transaction } from "kysely";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
@@ -13,18 +12,15 @@ import {
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { WaitingFor } from "./loop.js";
+import { MAINTENANCE_QUEUE_NAME, type Maintenance } from "./maintenance.js";
 import { assistantIdemKey } from "./model-call.js";
 import { finishRunIn } from "./run-finish.js";
-import { bullConnection, type RunQueue } from "./run-queue.js";
+import type { RunQueue } from "./run-queue.js";
 
 type KernelTrx = Transaction<KernelDatabase>;
 
-/**
- * 内核维护队列（不含 `:`）：目前只有等待超时任务（`wait-timeout`）；Task 10 的周期性维护也放这里。
- * 与运行队列分开：运行 worker 的处理函数、stalled / 失败处理都按「一个任务 = 一次运行」设计，混入别的任务类型
- * 会让这些路径都要分支；维护任务短、无会话锁与配额，单独一个 Worker 更直接。
- */
-export const MAINTENANCE_QUEUE_NAME = "cap-kernel-maintenance";
+/** 等待超时任务所在的内核维护队列（见 maintenance.ts）。 */
+export { MAINTENANCE_QUEUE_NAME };
 
 /** 等待超时任务的名字与 jobId（每个审批 / 输入请求一个，重复投递被 BullMQ 忽略）。 */
 export const WAIT_TIMEOUT_JOB = "wait-timeout";
@@ -57,7 +53,8 @@ export interface WaitsDeps {
    * 置 waiting 之后补查一次。
    */
   abortRequested?: (runId: string) => Promise<{ byAccountId: string | null } | null>;
-  redisUrl: string;
+  /** 内核维护队列：超时任务投递到这里，处理函数在构造时登记（Worker 由它在 worker 角色上启动）。 */
+  maintenance: Pick<Maintenance, "add" | "handle">;
   log: Pick<Logger, "error" | "warn">;
 }
 
@@ -70,24 +67,10 @@ export interface WaitsDeps {
  * 暂停后的复查都可能调用它，谁先谁后都只有一次续跑。
  */
 export class Waits {
-  private queue: Queue<WaitTimeoutData> | undefined;
-  private queueConn: Redis | undefined;
-  private worker: Worker<WaitTimeoutData> | undefined;
-  private workerConn: Redis | undefined;
-  private closed = false;
-
-  constructor(private readonly d: WaitsDeps) {}
-
-  private getQueue(): Queue<WaitTimeoutData> {
-    if (this.closed) throw new Error("waits are closed");
-    if (!this.queue) {
-      this.queueConn = bullConnection(this.d.redisUrl, this.d.log);
-      this.queue = new Queue<WaitTimeoutData>(MAINTENANCE_QUEUE_NAME, {
-        connection: this.queueConn,
-      });
-      this.queue.on("error", (err) => this.d.log.error("maintenance queue error", { err }));
-    }
-    return this.queue;
+  constructor(private readonly d: WaitsDeps) {
+    d.maintenance.handle(WAIT_TIMEOUT_JOB, (job, token) =>
+      this.process(job as Job<WaitTimeoutData>, token),
+    );
   }
 
   /**
@@ -264,41 +247,7 @@ export class Waits {
     return true;
   }
 
-  /** 启动超时任务的 worker（只在含 `worker` 角色的进程）。 */
-  startWorker(): void {
-    if (this.worker || this.closed) return;
-    this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<WaitTimeoutData>(
-      MAINTENANCE_QUEUE_NAME,
-      (job, token) => this.process(job, token),
-      { connection: this.workerConn, concurrency: 5 },
-    );
-    this.worker.on("error", (err) => this.d.log.error("maintenance worker error", { err }));
-    this.worker.on("failed", (job, err) =>
-      this.d.log.error("maintenance job failed", { jobId: job?.id, err }),
-    );
-  }
-
-  async close(): Promise<void> {
-    this.closed = true;
-    const w = this.worker;
-    const q = this.queue;
-    this.worker = undefined;
-    this.queue = undefined;
-    await w?.close().catch(() => {});
-    await q?.close().catch(() => {});
-    for (const c of [this.workerConn, this.queueConn]) {
-      if (c) await c.quit().catch(() => c.disconnect());
-    }
-    this.workerConn = undefined;
-    this.queueConn = undefined;
-  }
-
   private async process(job: Job<WaitTimeoutData>, token: string | undefined): Promise<void> {
-    if (job.name !== WAIT_TIMEOUT_JOB) {
-      this.d.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });
-      return;
-    }
     const r = await this.expire(job.data.kind, job.data.id);
     if (r.notDueUntil !== undefined) {
       await job.moveToDelayed(r.notDueUntil, token);
@@ -309,7 +258,7 @@ export class Waits {
   /** 投递超时任务（延迟到 expiresAt）。失败只记日志：人工处理仍可续跑，只是不会自动超时。 */
   private async scheduleTimeout(w: WaitingFor): Promise<void> {
     try {
-      await this.getQueue().add(
+      await this.d.maintenance.add(
         WAIT_TIMEOUT_JOB,
         { kind: w.kind, id: w.id },
         {

@@ -72,6 +72,13 @@ export interface QuestionsServiceDeps {
 }
 
 const notFound = () => new ApiError("question.not_found", "Question not found");
+const notInitiator = () =>
+  new ApiError("forbidden", "Only the user who started the run can answer this question");
+
+/** 网页读取输入请求的视图（不含插件 state：那是工具内部的续跑数据）。 */
+export type QuestionView = Omit<QuestionRecord, "state">;
+
+const toView = ({ state: _state, ...rest }: QuestionRecord): QuestionView => rest;
 const iso = (v: Date | string): string => new Date(v).toISOString();
 
 function toRecord(r: Selectable<QuestionsTable>): QuestionRecord {
@@ -102,7 +109,7 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
 /**
  * 输入请求：新建（tools 节点）、回答（只有对话发起人）、超时与取消（等待机制）。
  * 状态全部在 PG：回答 / 超时 / 取消都在事务里 `SELECT … FOR UPDATE` 该行，多副本并发时恰好一个生效，
- * 只有生效的那次写 `question_answered`。HTTP 接口在 Task 10 接入。
+ * 只有生效的那次写 `question_answered`。HTTP 接口见 questions.controller.ts。
  */
 export class QuestionsService {
   constructor(private readonly deps: QuestionsServiceDeps) {}
@@ -169,6 +176,24 @@ export class QuestionsService {
     return record;
   }
 
+  /**
+   * 读一条输入请求（网页展示表单用）：只有该运行的发起人（其他人 → 403 `forbidden`）；
+   * 不属于该组织 / 不存在 → `question.not_found`。
+   */
+  async get(orgId: string, questionId: string, accountId: string): Promise<QuestionView> {
+    const row = await this.deps.db
+      .selectFrom("questions")
+      .innerJoin("runs", "runs.id", "questions.run_id")
+      .selectAll("questions")
+      .select("runs.trigger_account_id")
+      .where("questions.id", "=", questionId)
+      .where("questions.org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    if (row.trigger_account_id !== accountId) throw notInitiator();
+    return toView(toRecord(row));
+  }
+
   /** 某个调用的全部输入请求（按轮次升序）。 */
   async forCall(runId: string, callId: string): Promise<QuestionRecord[]> {
     const rows = await this.deps.db
@@ -182,7 +207,7 @@ export class QuestionsService {
   }
 
   /**
-   * 回答：只有该运行的发起人（其他人一律 `question.not_found`，不泄露存在）；非 pending 或已到期 →
+   * 回答：只有该运行的发起人（其他人 → 403 `forbidden`；传 `orgId` 时别的组织的输入请求 → `question.not_found`）；非 pending 或已到期 →
    * `question.already_answered`；答案不符合表单（`validateAnswer`）→ `validation_failed`。
    * 同一事务写状态与 `question_answered`（幂等键 `question_answered:<id>`）；提交后发布事件并调用 `onAnswered`（续跑）。
    * 传 `orgId` 时还要求输入请求属于该组织（HTTP 接口用）。
@@ -208,7 +233,7 @@ export class QuestionsService {
         .select("trigger_account_id")
         .where("id", "=", locked.run_id)
         .executeTakeFirst();
-      if (run?.trigger_account_id !== accountId) throw notFound();
+      if (run?.trigger_account_id !== accountId) throw notInitiator();
       const before = toRecord(locked);
       if (before.status !== "pending") {
         throw new ApiError("question.already_answered", "Question has already been answered");

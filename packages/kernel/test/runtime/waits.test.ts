@@ -467,7 +467,7 @@ describe("输入请求等待", () => {
     });
     expect(memState().askCalls).toHaveLength(1);
 
-    // 校验：不合规的答案 → validation_failed；非发起人 → not_found
+    // 校验：不合规的答案 → validation_failed；非发起人 → forbidden
     await expect(k.tools.questions.answer(qid, ownerId, { color: "green" })).rejects.toMatchObject({
       code: "validation_failed",
     });
@@ -478,7 +478,7 @@ describe("输入请求等待", () => {
     });
     await new MembersService(db).add(orgId, other.id, "member", ownerId);
     await expect(k.tools.questions.answer(qid, other.id, { color: "red" })).rejects.toMatchObject({
-      code: "question.not_found",
+      code: "forbidden",
     });
 
     await k.tools.questions.answer(qid, ownerId, { color: "red" });
