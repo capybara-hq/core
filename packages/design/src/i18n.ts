@@ -52,10 +52,12 @@ const zh = {
   "shell.metrics": "指标",
   "shell.anchors": "页内导航",
   "shell.pending": "待提交改动",
-  "shell.railCollapse": "收起筛选",
-  "shell.railExpand": "展开筛选",
+  "shell.railCollapse": "收起侧栏",
+  "shell.railExpand": "展开侧栏",
   "shell.inspectorClose": "关闭",
   "shell.steps": "步骤",
+  "template.done": "已完成",
+  "template.todo": "待办",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -112,10 +114,12 @@ const en: Record<DesignKey, string> = {
   "shell.metrics": "Metrics",
   "shell.anchors": "On this page",
   "shell.pending": "Pending changes",
-  "shell.railCollapse": "Collapse filters",
-  "shell.railExpand": "Expand filters",
+  "shell.railCollapse": "Collapse sidebar",
+  "shell.railExpand": "Expand sidebar",
   "shell.inspectorClose": "Close",
   "shell.steps": "Steps",
+  "template.done": "Done",
+  "template.todo": "To do",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

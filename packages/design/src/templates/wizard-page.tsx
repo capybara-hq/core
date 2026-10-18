@@ -32,7 +32,8 @@ export function WizardPage({
             const state = i < current ? "done" : i === current ? "current" : "todo";
             return (
               <li
-                key={label}
+                // biome-ignore lint/suspicious/noArrayIndexKey: 静态步骤列表，标签可能重复，需带序号
+                key={`${i}-${label}`}
                 className="cb-step"
                 data-step={i + 1}
                 data-state={state}

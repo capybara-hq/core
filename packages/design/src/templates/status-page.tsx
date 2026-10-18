@@ -25,7 +25,9 @@ export function StatusPage({
       <Body layout="single">
         <div className="cb-status-page">
           <Logo scale={3} tone="muted" />
-          <span className="cb-status-page-code">{CODE[kind]}</span>
+          <Text variant="h1" tone="faint" as="p">
+            {CODE[kind]}
+          </Text>
           <Text variant="h2">{title}</Text>
           <Text tone="muted">{description}</Text>
           {action ? <div className="cb-status-page-action">{action}</div> : null}

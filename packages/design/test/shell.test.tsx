@@ -271,9 +271,9 @@ describe("Body 折叠与关闭、数值 0", () => {
         <div>主内容</div>
       </Body>,
     );
-    await userEvent.click(screen.getByRole("button", { name: "收起筛选" }));
+    await userEvent.click(screen.getByRole("button", { name: "收起侧栏" }));
     expect(screen.queryByText("筛选器内容")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "展开筛选" }));
+    await userEvent.click(screen.getByRole("button", { name: "展开侧栏" }));
     expect(screen.getByText("筛选器内容")).toBeTruthy();
   });
 

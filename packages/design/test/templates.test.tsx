@@ -270,6 +270,8 @@ describe("其他模板行为", () => {
     const items = document.querySelectorAll("[data-step]");
     expect(Array.from(items).map((i) => i.getAttribute("data-state"))).toEqual(["done", "todo"]);
     expect(screen.getByRole("button", { name: "开始" })).toBeTruthy();
+    expect(screen.getByText("已完成")).toBeTruthy();
+    expect(screen.getByText("待办")).toBeTruthy();
   });
 
   it("StatusPage 渲染标题、说明、操作与 kind", () => {

@@ -184,11 +184,6 @@
   padding: 64px 16px;
   text-align: center;
 }
-.cb-status-page-code {
-  color: var(--cb-faint);
-  font-size: 32px;
-  font-weight: 700;
-}
 .cb-status-page-action {
   margin-top: 12px;
 }
