@@ -19,3 +19,4 @@ export {
   checkDeclaredParameters,
   describeModelProviderConformance,
 } from "./model-conformance.js";
+export { assertPluginSecretsReachable, pluginDeploymentSecretValues } from "./plugin-config.js";

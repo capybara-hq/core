@@ -66,6 +66,6 @@ export {
 } from "./kernel.js";
 export { createLogger, type KernelLogger, LOG_LEVELS, type LogLevel } from "./log.js";
 export { type Org, OrgsService } from "./orgs/orgs.service.js";
-export { PluginHost } from "./plugins/host.js";
+export { assertSecretsReachable, PluginHost } from "./plugins/host.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";

@@ -105,7 +105,7 @@ async function migratePlugin(
  * 插件两级配置 schema 中的每个 `secret()` 都必须标在对象路径的字段上（见 `unreachableSecrets`），
  * 否则内核无法把它单独加密存储 / 打码、会按明文保存与回显——此时拒绝加载并点名插件与路径。
  */
-function assertSecretsReachable(manifest: PluginManifest): void {
+export function assertSecretsReachable(manifest: PluginManifest): void {
   for (const level of ["deployment", "org"] as const) {
     const schema = manifest.config?.[level];
     if (!schema) continue;
