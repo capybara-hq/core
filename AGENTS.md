@@ -11,8 +11,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 | `packages/testing` | 测试容器与双副本工具 |
 | `packages/design` | Web 设计系统：token、组件、页面模板（规格 `docs/design/spec.md`） |
 | `apps/capybara` | CLI |
-| `apps/web` | Web 界面（Next.js），只用 `@capybara-hq/design` 搭页面 |
-| `apps/web` | Next 网页（私有包，经 `/api/*` 代理调内核 HTTP；须经 `server.mjs` 启动） |
+| `apps/web` | Next 网页（私有包，经 `/api/*` 代理调内核 HTTP；须经 `server.mjs` 启动），只用 `@capybara-hq/design` 搭页面 |
 | `plugins/*` | 官方插件（`example-counter` 是参考实现） |
 | `tools/*` | 仓库内部工具与自定义检查 |
 | `docs/` | 设计文档与计划 |
@@ -33,11 +32,9 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - `@capybara-hq/kernel` -> `@capybara-hq/plugin-sdk`
 - `@capybara-hq/testing` -> `@capybara-hq/kernel`（`@capybara-hq/plugin-sdk` 为 peerDependency）
 - `@capybara-hq/capybara`（CLI）-> `@capybara-hq/kernel`
-- `@capybara-hq/web` -> `@capybara-hq/design`（经内核 HTTP 访问后端，不 import 内核）
-- `@capybara-hq/checks`（`tools/checks`）的测试可用 devDependency `@capybara-hq/design`（核对模板清单）
 - `@capybara-hq/design` 不依赖任何 `@capybara-hq/*`
-- `@capybara-hq/web` 不依赖任何 `@capybara-hq/*`，只经 HTTP 调内核（属于「外部应用」层）
-- `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档）
+- `@capybara-hq/web` 只依赖 `@capybara-hq/design`，不依赖内核等其他包，只经 HTTP 调内核（属于「外部应用」层）
+- `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档）；`tools/checks` -> `@capybara-hq/design`（devDependency，仅测试用，核对模板清单）
 - `@capybara-hq/plugin-sdk` 不依赖任何 `@capybara-hq/*`
 
 内核、CLI 与插件的测试把 `@capybara-hq/testing` 作为 devDependency，只在测试里用。`pnpm check:deps` 只检查插件与 SDK 的边界；内核、CLI、web 的依赖方向暂无自动检查，靠评审。
