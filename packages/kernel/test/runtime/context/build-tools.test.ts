@@ -201,6 +201,57 @@ describe("estimateTokens 计入工具定义", () => {
   });
 });
 
+describe("压缩边界不切开工具调用与结果", () => {
+  it("工具运行期间的插话不作为边界：结果与其调用同在原文里，不被当成孤立结果丢弃", () => {
+    const log = new Log();
+    log.user("q1");
+    log.assistant("a1");
+    log.user("q2");
+    log.modelCall(3, 1);
+    log.assistant(
+      [{ type: "tool_call", id: "c1", name: "docs__search", input: {} }],
+      "tool_use",
+      1,
+    );
+    const interjection = log.user("also check X");
+    result(log, "c1", "the real output");
+    log.modelCall(interjection.seq, 2);
+    log.assistant("final", "end_turn", 2);
+
+    // 只保留最近 1 轮：朴素边界会落在插话上（切开 c1 与其结果），应退到 q2
+    const plan = compactionPlan(log.events, 1);
+    expect(plan).not.toBeNull();
+    expect(plan?.transcript).toContain("User: q1");
+    expect(plan?.transcript).not.toContain("q2");
+    log.summary(plan?.coversUpToSeq as number, "summary of q1");
+
+    const { request } = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 3,
+      absorbedUpToSeq: interjection.seq,
+    });
+    const results = request.messages.flatMap((m) =>
+      m.role === "system" ? [] : m.content.filter((b) => b.type === "tool_result"),
+    );
+    expect(results).toEqual([
+      { type: "tool_result", callId: "c1", content: "the real output", isError: false },
+    ]);
+    expect(guardToolPairs(request.messages)).toEqual(request.messages);
+  });
+
+  it("插话之前没有可退的轮次：不压缩这段（返回 null）", () => {
+    const log = new Log();
+    log.user("q1");
+    log.assistant([{ type: "tool_call", id: "c1", name: "t", input: {} }], "tool_use", 1);
+    log.user("interjection");
+    result(log, "c1", "out");
+    expect(compactionPlan(log.events, 1)).toBeNull();
+  });
+});
+
 describe("压缩记录包含工具结果", () => {
   it("tool_result 事件进入对话记录", () => {
     const log = new Log();

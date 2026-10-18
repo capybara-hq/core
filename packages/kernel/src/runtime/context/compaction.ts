@@ -52,6 +52,7 @@ export function compactionPlan(
   if (keepRecentTurns <= 0) boundary = candidate.length;
   else if (userIdx.length < keepRecentTurns) boundary = 0;
   else boundary = userIdx[userIdx.length - keepRecentTurns] as number;
+  boundary = keepToolPairs(candidate, userIdx, boundary);
 
   const lines: string[] = [];
   for (const e of candidate.slice(0, boundary)) {
@@ -66,6 +67,46 @@ export function compactionPlan(
 
   const parts = prev ? [`[Earlier summary]\n${prev.payload.text}`, ...lines] : lines;
   return { coversUpToSeq, transcript: parts.join("\n\n") };
+}
+
+/**
+ * 边界不得切开工具调用与其结果：工具运行期间到达的插话（user_message）记在 assistant 的 tool_call 与
+ * tool_result 之间，若它成了边界，assistant 进摘要而结果留在原文，构建请求时结果因找不到调用被丢弃。
+ * 做法：边界之前仍「未结束」（结果在边界之后）的调用存在时，把边界退到最早那条未结束 assistant 之前的
+ * 最近一个 user_message（没有则 0，即不压缩这段），重复直到没有被切开的调用。结果从未写入的调用不算
+ * （它们由配对守卫补 unknown，与边界无关）。
+ */
+function keepToolPairs(
+  candidate: ConversationEvent[],
+  userIdx: number[],
+  boundary: number,
+): number {
+  const key = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
+  const resultAt = new Map<string, number>();
+  candidate.forEach((e, i) => {
+    if (e.type !== "tool_result") return;
+    const k = key(e.runId, e.payload.callId);
+    if (!resultAt.has(k)) resultAt.set(k, i);
+  });
+  for (;;) {
+    let earliestOpen = -1;
+    for (let i = 0; i < boundary && earliestOpen < 0; i++) {
+      const e = candidate[i] as ConversationEvent;
+      if (e.type !== "assistant_message") continue;
+      for (const b of e.payload.content) {
+        if (b.type !== "tool_call") continue;
+        const at = resultAt.get(key(e.runId, b.id));
+        if (at !== undefined && at >= boundary) {
+          earliestOpen = i;
+          break;
+        }
+      }
+    }
+    if (earliestOpen < 0) return boundary;
+    let next = 0;
+    for (const u of userIdx) if (u < earliestOpen) next = u;
+    boundary = next;
+  }
 }
 
 function transcriptLine(e: ConversationEvent): string | null {

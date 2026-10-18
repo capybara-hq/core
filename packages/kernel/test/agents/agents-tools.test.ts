@@ -16,7 +16,11 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { runModelStep, TOOLS_UNAVAILABLE_PREFIX } from "../../src/runtime/model-call.js";
+import {
+  runModelStep,
+  TOOLS_AVAILABLE_AGAIN,
+  TOOLS_UNAVAILABLE_PREFIX,
+} from "../../src/runtime/model-call.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
@@ -348,5 +352,30 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     await step(agent.definition, convId, runId, 2);
     expect(await ofType(convId, "reminder")).toHaveLength(1);
     expect(await ofType(convId, "assistant_message")).toHaveLength(2);
+  });
+
+  it("同一 run 内不可用工具全部恢复：写一条「已恢复」提醒，之后不重复", async () => {
+    const res = await createAgent({
+      tools: [{ kind: "plugin", plugin: "tools-probe", name: "echo" }],
+    });
+    const { agent } = res.json() as AgentRes;
+    const convId = await conversation(agent.id, "hello");
+    const runId = randomUUID();
+    await step(agent.definition, convId, runId, 1);
+    const enable = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/plugins/tools-probe`,
+      payload: { enabled: true },
+    });
+    expect(enable.statusCode, enable.body).toBe(200);
+    await step(agent.definition, convId, runId, 2);
+    await step(agent.definition, convId, runId, 3);
+    const texts = (await ofType(convId, "reminder")).map((e) => e.payload.text);
+    expect(texts).toEqual([
+      `${TOOLS_UNAVAILABLE_PREFIX}tools-probe__echo (Plugin tools-probe is not enabled in this organization)`,
+      TOOLS_AVAILABLE_AGAIN,
+    ]);
+    const calls = await ofType(convId, "model_call");
+    expect(calls.at(-1)?.payload.request.tools?.map((t) => t.key)).toEqual(["tools-probe__echo"]);
   });
 });

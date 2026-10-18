@@ -45,6 +45,9 @@ export const WRAP_UP_REMINDER =
 /** 不可用工具提醒的前缀（模型可见，英文）。 */
 export const TOOLS_UNAVAILABLE_PREFIX = "The following tools are unavailable in this run: ";
 
+/** 本 run 中此前有工具不可用、现在全部恢复时的提醒（模型可见，英文）。 */
+export const TOOLS_AVAILABLE_AGAIN = "All previously unavailable tools are available again.";
+
 /** 不可用工具提醒：`The following tools are unavailable in this run: <ref> (<reason>), ...`。 */
 export function toolsUnavailableReminder(unavailable: readonly UnavailableTool[]): string {
   return `${TOOLS_UNAVAILABLE_PREFIX}${unavailable.map((u) => `${u.ref} (${u.reason})`).join(", ")}`;
@@ -195,10 +198,18 @@ async function runStep(
     const tools: RequestTool[] = resolved.tools;
     events = await maybeCompact(deps, input, events, runtime, tools);
 
-    if (resolved.unavailable.length > 0) {
-      const text = toolsUnavailableReminder(resolved.unavailable);
+    const last = lastToolsReminder(events, runId);
+    // 有不可用工具 → 列出；此前列过、现在全部恢复 → 说明已恢复，避免过时的「不可用」成为最后一句
+    // （收尾调用本就不带工具，不写）。
+    const text =
+      resolved.unavailable.length > 0
+        ? toolsUnavailableReminder(resolved.unavailable)
+        : last !== null && !wrapUp
+          ? TOOLS_AVAILABLE_AGAIN
+          : null;
+    if (text !== null) {
       // 本 run 里模型仍能看到的上一条同类提醒内容相同 → 不重复写（避免每步追加同样的提醒）。
-      if (lastToolsReminder(events, runId) !== text) {
+      if (last !== text) {
         events = await appendLocal(deps.eventLog, conversationId, events, {
           type: "reminder",
           runId,
@@ -287,7 +298,7 @@ async function findExisting(
   };
 }
 
-/** 本 run 中、最近摘要之后的最后一条不可用工具提醒的文本；没有则 null。 */
+/** 本 run 中、最近摘要之后的最后一条工具可用性提醒（不可用 / 已恢复）的文本；没有则 null。 */
 function lastToolsReminder(events: ConversationEvent[], runId: string): string | null {
   const floor = latestSummary(events)?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
   let text: string | null = null;
@@ -296,7 +307,8 @@ function lastToolsReminder(events: ConversationEvent[], runId: string): string |
       e.seq > floor &&
       e.type === "reminder" &&
       e.runId === runId &&
-      e.payload.text.startsWith(TOOLS_UNAVAILABLE_PREFIX)
+      (e.payload.text.startsWith(TOOLS_UNAVAILABLE_PREFIX) ||
+        e.payload.text === TOOLS_AVAILABLE_AGAIN)
     ) {
       text = e.payload.text;
     }
