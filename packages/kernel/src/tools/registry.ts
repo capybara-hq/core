@@ -129,6 +129,22 @@ export class ToolRegistry {
     return c;
   }
 
+  /**
+   * 内置 / 插件工具的处理函数（执行管线用）；应用工具经连接器执行，返回 undefined。
+   * 插件已卸载等情况也返回 undefined。
+   */
+  handler(source: ResolvedTool["source"]): ToolHandler | undefined {
+    if (source.kind === "builtin") {
+      return this.deps.builtins.find((b) => b.spec.name === source.name)?.run;
+    }
+    if (source.kind === "plugin") {
+      return this.deps.host
+        .tools()
+        .find((t) => t.plugin === source.plugin && t.spec.name === source.name)?.handler;
+    }
+    return undefined;
+  }
+
   /** 已安装连接器的 kind 列表（去重，按加载顺序）。 */
   connectorKinds(): string[] {
     return [...new Set(this.deps.host.list("connector").map((e) => (e.impl as Connector).kind))];

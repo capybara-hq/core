@@ -8,6 +8,10 @@ export interface LoopContext {
   orgId: string;
   conversationId: string;
   runId: string;
+  /** 会话的 agent（工具调用上下文、策略判定用）。 */
+  agentId: string;
+  /** 发起本次运行的人（对话发起人）：工具调用用其个人凭据，审计记为 actor。 */
+  triggerAccountId: string;
   agent: AgentDefinition;
   agentVersion: number;
   /** 用户中止或到达 deadline 时触发：进行中的模型调用立即停下。 */

@@ -26,14 +26,17 @@ import { OrgPluginConfigs } from "./plugins/org-config.js";
 import { RunAbort } from "./runtime/abort.js";
 import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
-import { LangGraphLoop } from "./runtime/langgraph-loop.js";
+import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
-import type { ModelStepDeps, StreamSink } from "./runtime/model-call.js";
+import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
 import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import { Breaker } from "./tools/breaker.js";
 import { Credentials } from "./tools/credentials.js";
+import { ToolOutputs } from "./tools/outputs.js";
+import { ToolPipeline } from "./tools/pipeline.js";
 import { ToolRegistry } from "./tools/registry.js";
 
 /**
@@ -76,14 +79,18 @@ export interface KernelRuns {
   readonly lock: ConversationLock;
   readonly quota: OrgQuota;
   readonly abort: RunAbort;
-  /** 构造 loop 用的单步模型调用依赖。 */
-  readonly stepDeps: ModelStepDeps;
+  /** 构造 loop 用的依赖（单步模型调用 + 工具执行管线）。 */
+  readonly stepDeps: LoopDeps;
 }
 
-/** 工具相关的内核服务（后续任务的执行管线使用）。 */
+/** 工具相关的内核服务。 */
 export interface KernelTools {
   readonly registry: ToolRegistry;
   readonly credentials: Credentials;
+  /** 输出存档（超大工具结果）。 */
+  readonly outputs: ToolOutputs;
+  /** 工具执行管线（tools 节点使用）。 */
+  readonly pipeline: ToolPipeline;
 }
 
 /** 运行中的内核实例。 */
@@ -126,7 +133,7 @@ export interface KernelOptions {
    * 运行使用的 AgentLoop 工厂（测试用）。默认是 {@link LangGraphLoop}：checkpoint 存在内核的
    * `KyselyCheckpointSaver`，worker 崩溃后其他副本从 checkpoint 续跑。
    */
-  loop?: (deps: ModelStepDeps) => AgentLoop;
+  loop?: (deps: LoopDeps) => AgentLoop;
   /** 运行 worker 的测试钩子。 */
   runHooks?: RunHooks;
 }
@@ -230,14 +237,29 @@ export async function createKernel(
   const credentials = new Credentials(kdb, keyring, log);
   // 内置工具在 Task 10 接入
   const toolRegistry = new ToolRegistry({ db: kdb, host, credentials, log, builtins: [] });
-  const tools: KernelTools = { registry: toolRegistry, credentials };
+  const toolOutputs = new ToolOutputs(kdb, () => current);
+  const toolPipeline = new ToolPipeline({
+    db: kdb,
+    eventLog,
+    registry: toolRegistry,
+    credentials,
+    breaker: new Breaker(redis, () => current),
+    outputs: toolOutputs,
+    config: () => current,
+    log,
+  });
+  const tools: KernelTools = {
+    registry: toolRegistry,
+    credentials,
+    outputs: toolOutputs,
+    pipeline: toolPipeline,
+  };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
   const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
-  const loopFactory =
-    opts.loop ?? ((d: ModelStepDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
+  const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
    * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
@@ -256,13 +278,14 @@ export async function createKernel(
         .publish(conversationTopic(conversationId), msg)
         .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
     };
-  const stepDeps: ModelStepDeps = {
+  const stepDeps: LoopDeps = {
     db: kdb,
     eventLog,
     registry,
     tools: toolRegistry,
     config: () => current,
     log,
+    toolPipeline,
   };
   const runs: KernelRuns = { eventLog, registry, queue: runQueue, lock, quota, abort, stepDeps };
   let runWorker: RunWorker | undefined;

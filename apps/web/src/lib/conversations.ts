@@ -42,6 +42,10 @@ type EventBody =
         contentTypes?: string[];
       };
     }
+  | {
+      type: "connection_required";
+      payload: { step: number; callId: string; appId: string; appName: string };
+    }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }

@@ -1,5 +1,6 @@
 import type { StopReason } from "@capybara-hq/plugin-sdk";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import type { ToolPipeline } from "../tools/pipeline.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { AgentLoop, LoopContext, LoopOutcome } from "./loop.js";
 import {
@@ -10,8 +11,10 @@ import {
   runModelStep,
 } from "./model-call.js";
 
-/** 执行管线（Task 7）接入前的桩：模型请求工具时写入的提醒（模型可见，英文）。 */
-export const TOOLS_UNAVAILABLE_REMINDER = "Tools are not available yet.";
+/** loop 的依赖：单步模型调用依赖 + 工具执行管线（tools 节点）。 */
+export interface LoopDeps extends ModelStepDeps {
+  toolPipeline: Pick<ToolPipeline, "runStep">;
+}
 
 /** 测试钩子。 */
 export interface LangGraphLoopHooks {
@@ -68,12 +71,13 @@ class LoopInterrupted extends Error {
  * 模型中止或正常结束 → 结束。`durability: "sync"`：每个节点的 checkpoint 在下一个节点开始前落库。
  *
  * 幂等：`runModelStep` / `runFinalWrapUp` 按 (runId, step) 幂等，续跑重新执行 model 节点时若回复已在日志里，
- * 直接复用（不再调用模型）；tools 节点写的提醒按 (runId, step) 带幂等键。
+ * 直接复用（不再调用模型）；tools 节点按 (runId, callId) 幂等：已有结果的调用跳过，「有开始无结果」的
+ * 调用记为结果未知、不再执行（spec 4.3）。
  */
 export class LangGraphLoop implements AgentLoop {
   constructor(
     private readonly saver: KyselyCheckpointSaver,
-    private readonly stepDeps: ModelStepDeps,
+    private readonly stepDeps: LoopDeps,
     private readonly hooks: LangGraphLoopHooks = {},
   ) {}
 
@@ -146,16 +150,18 @@ export class LangGraphLoop implements AgentLoop {
       };
     };
 
+    // 本步的全部工具调用都写下结果后才回到 prepare（不在「已记录调用、未记录结果」之间构建请求）。
     const tools = async (s: State): Promise<Partial<State>> => {
-      await deps.eventLog.append(ctx.conversationId, [
-        {
-          type: "reminder",
-          runId: ctx.runId,
-          // 不用 `tools_unavailable:`：那是步骤开始时「不可用工具」提醒的幂等键（model-call）。
-          idemKey: `tools_stub:${ctx.runId}:${s.step}`,
-          payload: { step: s.step, text: TOOLS_UNAVAILABLE_REMINDER },
-        },
-      ]);
+      await deps.toolPipeline.runStep({
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        step: s.step,
+        agentId: ctx.agentId,
+        agent: ctx.agent,
+        accountId: ctx.triggerAccountId,
+        signal: ctx.signal,
+      });
       return {};
     };
 

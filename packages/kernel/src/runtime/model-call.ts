@@ -124,8 +124,12 @@ export class RunError extends Error {
 }
 
 /** 幂等键。`usage` 与 `assistant_message` 同批写入，带键保证重放时不重复记账。 */
+/** 某步 assistant_message 的幂等键（tools 节点据此找到本步的工具调用）。 */
+export const assistantIdemKey = (runId: string, step: number): string =>
+  `assistant:${runId}:${step}`;
+
 const idem = {
-  assistant: (runId: string, step: number) => `assistant:${runId}:${step}`,
+  assistant: assistantIdemKey,
   usage: (runId: string, step: number) => `usage:${runId}:${step}`,
   reminder: (runId: string, step: number) => `reminder:${runId}:${step}`,
   toolsUnavailable: (runId: string, step: number) => `tools_unavailable:${runId}:${step}`,

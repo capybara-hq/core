@@ -143,6 +143,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       contentTypes: z.array(z.string()).optional(),
     }),
   ),
+  /**
+   * 工具调用时发现发起人尚未连接个人凭据的应用：界面据此显示连接卡片（不进模型请求；模型看到的是
+   * 同一调用的 tool_result 错误说明）。组织凭据缺失不写此事件。
+   */
+  ev(
+    "connection_required",
+    z.object({ step: count, callId: z.string(), appId: z.string(), appName: z.string() }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(

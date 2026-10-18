@@ -502,6 +502,8 @@ export class RunWorker {
           orgId: conv.org_id,
           conversationId,
           runId,
+          agentId: conv.agent_id,
+          triggerAccountId: run.trigger_account_id,
           agent,
           agentVersion: run.agent_version,
           signal: ac.signal,

@@ -23,12 +23,16 @@ export interface MemState {
   closed: number;
   /** 每次会话拿到的鉴权注入（测试断言用）。 */
   auths: AuthInjection[];
+  /** callTool 调用记录（工具执行管线测试用）。 */
+  calls: { server: string; name: string; input: unknown }[];
+  /** 插件工具 echo 的调用次数。 */
+  echoCalls: number;
 }
 
 /** 测试专用：状态挂在 globalThis 上，测试与插件共享（同一进程）。 */
 export function memState(): MemState {
   const g = globalThis as { __memConnector?: MemState };
-  g.__memConnector ??= { servers: {}, opened: 0, closed: 0, auths: [] };
+  g.__memConnector ??= { servers: {}, opened: 0, closed: 0, auths: [], calls: [], echoCalls: 0 };
   return g.__memConnector;
 }
 
@@ -55,7 +59,8 @@ const connector: Connector = {
         if (s.fail) throw s.fail;
         return structuredClone(s.tools);
       },
-      async callTool(name) {
+      async callTool(name, input) {
+        st.calls.push({ server, name, input });
         return { content: [{ type: "text", text: `called ${name}` }] };
       },
       async close() {
@@ -79,7 +84,10 @@ export default definePlugin({
         inputSchema: { type: "object", properties: { text: { type: "string" } } },
         annotations: { readOnlyHint: true },
       },
-      async (input) => ({ content: [{ type: "text", text: JSON.stringify(input) }] }),
+      async (input) => {
+        memState().echoCalls++;
+        return { content: [{ type: "text", text: JSON.stringify(input) }] };
+      },
     );
     ctx.tools.register(
       {

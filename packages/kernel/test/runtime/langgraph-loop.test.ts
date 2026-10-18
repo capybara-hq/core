@@ -28,11 +28,14 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createLogger } from "../../src/log.js";
 import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
-import { LangGraphLoop, TOOLS_UNAVAILABLE_REMINDER } from "../../src/runtime/langgraph-loop.js";
+import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext } from "../../src/runtime/loop.js";
-import type { ModelStepDeps, StreamSink } from "../../src/runtime/model-call.js";
+import type { StreamSink } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
+import { Breaker } from "../../src/tools/breaker.js";
+import { ToolOutputs } from "../../src/tools/outputs.js";
+import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
 
@@ -43,7 +46,7 @@ let db: KernelDb;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let eventLog: EventLog;
-let deps: ModelStepDeps;
+let deps: LoopDeps;
 let saver: KyselyCheckpointSaver;
 let runtimeOverrides: Partial<KernelConfig["runtime"]> = {};
 
@@ -121,6 +124,12 @@ beforeAll(async () => {
     redis: { url: rd.url },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
+  const config = () => ({ ...base, runtime: { ...base.runtime, ...runtimeOverrides } });
+  const noTools = {
+    forAgent: async () => ({ tools: [], unavailable: [] }),
+    findConnector: () => undefined,
+    handler: () => undefined,
+  };
   deps = {
     db,
     eventLog,
@@ -128,9 +137,19 @@ beforeAll(async () => {
       { list: () => [{ plugin: "stub", capability: "model-provider@2", impl: stubProvider }] },
       redis,
     ),
-    tools: { forAgent: async () => ({ tools: [], unavailable: [] }) },
-    config: () => ({ ...base, runtime: { ...base.runtime, ...runtimeOverrides } }),
+    tools: noTools,
+    config,
     log: silent,
+    toolPipeline: new ToolPipeline({
+      db,
+      eventLog,
+      registry: noTools,
+      credentials: { injection: async () => ({ headers: {} }) },
+      breaker: new Breaker(redis, config),
+      outputs: new ToolOutputs(db, config),
+      config,
+      log: silent,
+    }),
   };
   saver = new KyselyCheckpointSaver(db);
 }, 120_000);
@@ -191,6 +210,8 @@ function loopCtx(
     orgId,
     conversationId,
     runId,
+    agentId: randomUUID(),
+    triggerAccountId: accountId,
     agent,
     agentVersion: 1,
     signal: new AbortController().signal,
@@ -238,7 +259,7 @@ describe("LangGraphLoop", () => {
     });
   });
 
-  it("tool_use → tools 占位节点写提醒后回到 prepare；到 maxSteps 后 wrapUp → max_steps", async () => {
+  it("tool_use → tools 节点给每个调用写结果（未知工具）后回到 prepare；到 maxSteps 后 wrapUp → max_steps", async () => {
     script = (n) =>
       n <= 2 ? { text: "", stopReason: "tool_use" } : { text: "done", stopReason: "end_turn" };
     const seq = await say("go");
@@ -255,10 +276,13 @@ describe("LangGraphLoop", () => {
       [2, "tool_use"],
       [3, "end_turn"],
     ]);
-    const toolReminders = evs.filter(
-      (e) => e.type === "reminder" && e.payload.text === TOOLS_UNAVAILABLE_REMINDER,
+    const toolResults = evs.flatMap((e) =>
+      e.type === "tool_result" ? [[e.payload.step, e.payload.content, e.payload.isError]] : [],
     );
-    expect(toolReminders.map((e) => (e.type === "reminder" ? e.payload.step : 0))).toEqual([1, 2]);
+    expect(toolResults).toEqual([
+      [1, 'Unknown tool "noop". Available tools: (none).', true],
+      [2, 'Unknown tool "noop". Available tools: (none).', true],
+    ]);
     // wrap-up 请求没有工具
     expect(calls[2]?.tools).toEqual([]);
   });
