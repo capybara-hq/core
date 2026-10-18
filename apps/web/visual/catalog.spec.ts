@@ -37,7 +37,15 @@ async function prepare(page: Page, route: string) {
   if (route === "overlays/toast") {
     await expect(page.getByRole("alert").filter({ hasText: "终止失败" })).toBeVisible();
     // 成功 Toast 4s 后自动消失：把假时钟停在当前时刻，截图期间不再触发计时器。
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1));
+    // 假时钟在读时间与暂停之间仍在走，机器慢时目标时刻可能已过去，失败就重读再试。
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await page.clock.pauseAt(await page.evaluate(() => Date.now() + 50));
+        break;
+      } catch (e) {
+        if (attempt >= 5) throw e;
+      }
+    }
   }
 }
 
@@ -78,21 +86,30 @@ for (const theme of THEMES) {
     test("交互：Tooltip 打开", async ({ page }) => {
       await open(page, "components", theme);
       const trigger = page.getByRole("button", { name: /提示 Tooltip/ });
-      await trigger.hover();
       // role=tooltip 是 Radix 给读屏的隐藏副本，可见的提示框是 .cb-tooltip
       const tip = page.locator(".cb-tooltip");
-      await expect(tip).toBeVisible();
+      // 机器繁忙时首次悬停可能早于水合完成而丢失：移开再悬停，直到提示框出现
+      await expect(async () => {
+        await page.mouse.move(0, 0);
+        await trigger.hover();
+        await expect(tip).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 20_000 });
+      // 出现动画（淡入 + 4px 位移）结束后再量位置，否则提示框还在移动
+      await tip.evaluate((el) =>
+        Promise.all(el.getAnimations({ subtree: true }).map((x) => x.finished)),
+      );
       // 浮层在 Portal 中：裁剪到触发按钮与提示框的并集（外扩 8）
       const a = await trigger.boundingBox();
       const b = await tip.boundingBox();
       if (!a || !b) throw new Error("tooltip 或触发按钮不可见");
-      const x = Math.min(a.x, b.x) - 8;
-      const y = Math.min(a.y, b.y) - 8;
+      // 取整到整像素，否则小数坐标会让裁剪尺寸在 68 / 69 之间跳动
+      const x = Math.floor(Math.min(a.x, b.x) - 8);
+      const y = Math.floor(Math.min(a.y, b.y) - 8);
       const clip = {
         x,
         y,
-        width: Math.max(a.x + a.width, b.x + b.width) + 8 - x,
-        height: Math.max(a.y + a.height, b.y + b.height) + 8 - y,
+        width: Math.ceil(Math.max(a.x + a.width, b.x + b.width) + 8) - x,
+        height: Math.ceil(Math.max(a.y + a.height, b.y + b.height) + 8) - y,
       };
       await expect(page).toHaveScreenshot(shotName("tooltip-open", theme), { clip });
     });
