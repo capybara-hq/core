@@ -31,21 +31,25 @@ CREATE TABLE IF NOT EXISTS capybara.app_tools (
 );
 
 -- 「以后都允许」：按 (账号, agent, 工具) 记住，spec_hash 变化后失效。
+-- app_id：应用工具的来源应用（插件 / 内置工具为空）；授权只对同一个应用有效——删除后用同一 slug
+-- 重新安装的应用 id 不同，不继承旧授权。应用是软删除，不用外键级联（删除应用时由代码清掉其授权）。
 CREATE TABLE IF NOT EXISTS capybara.tool_grants (
   org_id text NOT NULL REFERENCES capybara.orgs(id) ON DELETE CASCADE,
   account_id text NOT NULL REFERENCES capybara.accounts(id) ON DELETE CASCADE,
   agent_id text NOT NULL REFERENCES capybara.agents(id) ON DELETE CASCADE,
   tool_key text NOT NULL,
   spec_hash text NOT NULL,
+  app_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (org_id, account_id, agent_id, tool_key)
 );
 
--- 「本会话都允许」。
+-- 「本会话都允许」；app_id 同上。
 CREATE TABLE IF NOT EXISTS capybara.conversation_tool_grants (
   conversation_id text NOT NULL REFERENCES capybara.conversations(id) ON DELETE CASCADE,
   tool_key text NOT NULL,
   spec_hash text NOT NULL,
+  app_id text,
   PRIMARY KEY (conversation_id, tool_key)
 );
 
@@ -58,7 +62,9 @@ CREATE TABLE IF NOT EXISTS capybara.approvals (
   call_id text NOT NULL,
   tool_key text NOT NULL,
   input jsonb NOT NULL DEFAULT '{}'::jsonb,
-  requested_for text REFERENCES capybara.accounts(id) ON DELETE SET NULL,
+  -- 指定处理人的账号被删除时审批一并删除：SET NULL 会让只指定了处理人的行违反 approvals_target_chk，
+  -- 删除账号失败；这类审批只有那个人能处理，人不在了审批也没有意义（等待中的运行由超时收尾）。
+  requested_for text REFERENCES capybara.accounts(id) ON DELETE CASCADE,
   approver_role text,
   status text NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'approved', 'denied', 'expired', 'cancelled')),

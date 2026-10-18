@@ -34,6 +34,12 @@ describe("ToolError", () => {
     expect(e).toBeInstanceOf(Error);
     expect(e.message).toBe("Upstream is down; retry later.");
   });
+  it("kind 缺省为 error；可标记为 unavailable（服务不可达 / 超时 / 5xx，计入熔断）", () => {
+    expect(new ToolError("x").kind).toBe("error");
+    const e = new ToolError("Server returned HTTP 503.", { kind: "unavailable" });
+    expect(e.kind).toBe("unavailable");
+    expect(e.message).toBe("Server returned HTTP 503.");
+  });
 });
 
 describe("validateToolSpec", () => {
@@ -105,5 +111,18 @@ describe("validateAnswer", () => {
   });
   it("未知字段被报告", () => {
     expect(validateAnswer(f, { pick: "a", zzz: true }).join()).toMatch(/unknown field "zzz"/);
+  });
+  it("只认答案自身的键：继承的属性（toString / constructor）不算已回答", () => {
+    const g = form([
+      { key: "toString", label: "T", schema: { type: "string", maxLength: 10 }, required: true },
+      { key: "constructor", label: "C", schema: { type: "string", maxLength: 10 } },
+    ]);
+    const p = validateAnswer(g, {});
+    expect(p).toEqual(['field "toString": is required']);
+  });
+  it("多选不接受重复项", () => {
+    expect(validateAnswer(f, { pick: "a", many: ["x", "x"] }).join()).toMatch(
+      /"many": duplicate value "x"/,
+    );
   });
 });

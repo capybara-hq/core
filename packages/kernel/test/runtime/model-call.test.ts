@@ -30,6 +30,7 @@ import {
   runFinalWrapUp,
   runModelStep,
   type StreamSink,
+  TOOLS_UNSUPPORTED_REMINDER,
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
@@ -840,5 +841,89 @@ describe("runModelStep", () => {
     );
     const reminders = await ofType("reminder");
     expect(reminders.map((x) => x.payload.text)).toEqual([WRAP_UP_REMINDER]);
+    // 没有工具时也不发 toolChoice
+    expect(req.toolChoice).toBeUndefined();
+  });
+
+  describe("工具与 toolChoice", () => {
+    const toolsModel = () =>
+      stubInfo("tooly", { capabilities: { ...stubInfo("x").capabilities, tools: true } });
+    const withTools = () =>
+      agentWith({
+        model: { provider: "stub", model: "tooly" },
+        tools: [{ kind: "builtin", name: "read_tool_output" }],
+      });
+    const wrapUp = (agent: AgentDefinition) =>
+      runFinalWrapUp(deps, {
+        orgId,
+        conversationId,
+        runId,
+        step: 51,
+        agent,
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+      });
+
+    it("收尾调用照常带工具（历史里的工具调用需要声明工具），toolChoice 为 none，记在 model_call", async () => {
+      const s = stub([toolsModel()], () => "summary");
+      stubImpl = s;
+      await say("hi");
+      await wrapUp(withTools());
+      const req = s.calls[0] as ModelRequest;
+      expect(req.tools.map((t) => t.name)).toEqual(["read_tool_output"]);
+      expect(req.toolChoice).toBe("none");
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request.toolChoice).toBe("none");
+      expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["read_tool_output"]);
+      expect(req.messages.at(-1)).toEqual({ role: "system", content: WRAP_UP_REMINDER });
+    });
+
+    it("普通步骤不发 toolChoice（由模型决定），model_call 也不记", async () => {
+      const s = stub([toolsModel()], () => "ok");
+      stubImpl = s;
+      await say("hi");
+      await step({ agent: withTools() });
+      const req = s.calls[0] as ModelRequest;
+      expect(req.tools.map((t) => t.name)).toEqual(["read_tool_output"]);
+      expect(req.toolChoice).toBeUndefined();
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request).not.toHaveProperty("toolChoice");
+    });
+
+    it("模型不支持工具（capabilities.tools = false）→ 不发工具与 toolChoice，并写提醒说明本次没有工具", async () => {
+      const s = stub([stubInfo("plain")], () => "ok");
+      stubImpl = s;
+      await say("hi");
+      await wrapUp({ ...withTools(), model: { provider: "stub", model: "plain" } });
+      const req = s.calls[0] as ModelRequest;
+      expect(req.tools).toEqual([]);
+      expect(req.toolChoice).toBeUndefined();
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request.tools).toEqual([]);
+      expect(call?.payload.request).not.toHaveProperty("toolChoice");
+      const texts = (await ofType("reminder")).map((r) => r.payload.text);
+      expect(texts).toContain(TOOLS_UNSUPPORTED_REMINDER);
+      expect(req.messages).toContainEqual({ role: "system", content: TOOLS_UNSUPPORTED_REMINDER });
+      // 收尾提醒仍在末尾
+      expect(req.messages.at(-1)).toEqual({ role: "system", content: WRAP_UP_REMINDER });
+    });
+
+    it("model_call 里的每个工具定义按指纹存进 capybara.tool_specs（内容寻址，可还原请求）", async () => {
+      stubImpl = stub([toolsModel()], () => "ok");
+      await say("hi");
+      await step({ agent: withTools() });
+      await step({ step: 2, agent: withTools() });
+      const [call] = await ofType("model_call");
+      const hash = call?.payload.request.tools?.[0]?.specHash as string;
+      const rows = await db
+        .selectFrom("tool_specs")
+        .selectAll()
+        .where("spec_hash", "=", hash)
+        .execute();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.spec).toMatchObject({ name: "read_tool_output" });
+    });
   });
 });

@@ -282,6 +282,9 @@ describe("model-provider@1 / @2", () => {
     await drain(provider.stream({ ...req({}), effort: "max" }, signal()));
     expect(seen[1]?.effort).toBe("max");
     expect(seen[1]).not.toHaveProperty("params");
+    // @1 没有 toolChoice：不传给旧插件
+    await drain(provider.stream({ ...req({}), toolChoice: "none" }, signal()));
+    expect(seen[2]).not.toHaveProperty("toolChoice");
   });
 
   it("@2：模型信息与请求原样透传", async () => {

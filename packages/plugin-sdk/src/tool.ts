@@ -73,11 +73,21 @@ export type ToolHandler = (
   ctx: ToolCallContext,
 ) => Promise<ToolResult | InputRequired>;
 
+/**
+ * 工具错误的类别：
+ * - `error`（缺省）：远端可用、但这次调用失败（参数不对、业务错误、鉴权失败等），不计入应用熔断；
+ * - `unavailable`：远端不可用（连接 / 传输错误、超时、HTTP 5xx），计入应用熔断（连接器用它告诉内核）。
+ */
+export type ToolErrorKind = "error" | "unavailable";
+
 /** 工具执行失败：message 给模型看，须为英文且可操作。 */
 export class ToolError extends Error {
-  constructor(message: string) {
+  readonly kind: ToolErrorKind;
+
+  constructor(message: string, opts?: { kind?: ToolErrorKind }) {
     super(message);
     this.name = "ToolError";
+    this.kind = opts?.kind ?? "error";
   }
 }
 
@@ -169,7 +179,8 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[] {
     if (!byKey.has(k)) out.push(`unknown field ${JSON.stringify(k)}`);
   for (const f of form.fields) {
     const at = `field ${JSON.stringify(f.key)}`;
-    const v = answer[f.key];
+    // 只认答案自身的键：`toString` / `constructor` 等继承属性不算已回答
+    const v = Object.hasOwn(answer, f.key) ? answer[f.key] : undefined;
     if (v === undefined) {
       if (f.required) out.push(`${at}: is required`);
       continue;
@@ -180,7 +191,13 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[] {
         continue;
       }
       if (f.required && v.length === 0) out.push(`${at}: is required`);
+      const seen = new Set<string>();
       for (const item of v) {
+        if (seen.has(item)) {
+          out.push(`${at}: duplicate value ${JSON.stringify(item)}`);
+          continue;
+        }
+        seen.add(item);
         const why = otherOrValue(f, item);
         if (why) out.push(`${at}: ${why}`);
       }

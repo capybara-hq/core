@@ -53,7 +53,14 @@ class UnauthorizedError extends Error {
 
 const connector: Connector = {
   kind: "mem",
-  endpointSchema: z.object({ server: z.string().min(1) }).strict(),
+  // url / headers 只为测试内核对端点的通用处理（凭据样式的头 / query 拒绝、对非管理员隐藏），连接时不用
+  endpointSchema: z
+    .object({
+      server: z.string().min(1),
+      url: z.string().optional(),
+      headers: z.record(z.string(), z.string()).optional(),
+    })
+    .strict(),
   async open(args) {
     const st = memState();
     const { server } = args.endpoint as { server: string };

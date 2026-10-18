@@ -160,4 +160,15 @@ describe("read_tool_output", () => {
       /Output nope not found or expired/,
     );
   });
+
+  it("只能读本会话的存档：同组织别的会话 → not found", async () => {
+    const id = await save("conversation scoped");
+    const sibling = `sib-${seed.conversationId}`;
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${sibling}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
+    await expect(
+      tool().run({ id }, { ...ctxFor(seed.orgId), conversationId: sibling }),
+    ).rejects.toThrow(`Output ${id} not found or expired`);
+    expect(await read({ id })).toContain("conversation scoped");
+  });
 });

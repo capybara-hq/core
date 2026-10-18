@@ -88,7 +88,7 @@ export default definePlugin({
 ## 结果、`ToolError` 与失败
 
 - 返回 `{ content: ToolContent[], isError? }`。`text` 原样拼接；`image` / `resource_link` 给模型的是类型说明（不丢弃）。`isError: true` 表示「工具执行了但结果是错误」，内容照样给模型。
-- 抛 `ToolError(message)`：message **原样**给模型（所以必须英文、可执行）。
+- 抛 `ToolError(message)`：message **原样**给模型（所以必须英文、可执行）。可选第二个参数 `{ kind: "unavailable" }` 表示远端不可用（连不上、HTTP 5xx），只对连接器有意义：计入应用熔断；缺省 `kind: "error"`（参数错误、业务错误、鉴权失败等）说明远端可达，不计入熔断。
 - 抛其他错误：模型只看到 `Tool <key> failed (<ErrorName>). The operation may not have completed; check before retrying or try another approach.`，错误详情进日志（经打码）。不要依赖异常消息传话。
 - 超时：`Tool <key> timed out after <n>s. The operation may or may not have completed; verify before retrying.`
 - **有副作用不盲目重跑**（spec 4.3）：内核在执行前写 `tool_call_started`。进程在执行中崩溃，续跑时这次调用的结果写为 `Result unknown: the call was interrupted before a result was recorded. Verify the outcome before retrying.`，**不会再调用你的处理函数**。所以处理函数无需为「被内核重放」做幂等，但模型可能看到「结果未知」后自己重试 —— 有条件的话让写操作天然幂等（如 todo 的整表覆盖）。
@@ -98,6 +98,7 @@ export default definePlugin({
 - 渲染后的结果超过 `tools.outputSpillChars`（默认 50000 字符）时，全文存进输出存档（`tool_outputs`，保留 `tools.outputRetentionDays` 天），模型只见前 `tools.outputPreviewChars`（默认 2000）字符与说明：`[Output truncated: … Full output id: <id>. Use read_tool_output to page through it, or pass {"$output":"<id>"} as a tool argument.]`。
 - 模型用内置工具 `read_tool_output {id, offset?, limit?, charOffset?}` 按行分页读存档（每次不超过 `tools.maxResultReadChars`）。
 - 参数里任意位置的 `{"$output": "<id>"}`（对象恰好只有这一个键）在校验前被替换为该存档全文，所以大结果可以直接传给下一个工具，不经模型上下文。处理函数看到的就是替换后的值。
+- 存档**只属于产生它的会话**：`read_tool_output` 与 `$output` 只能读同一会话（且同一组织）的存档，别的会话的 id 一律按「not found or expired」处理（会话之间可见范围不同，不能借 id 跨会话读结果）。
 - 因此插件**不要自己截断**大结果或自造分页；返回完整文本即可。真正无界的数据（整库导出）在工具层面设上限或分页参数，并在描述里写明。
 
 ## 需要用户输入：`InputRequired` 与续跑
@@ -144,8 +145,10 @@ interface ConnectorSession {
 - **不跟随重定向**（`fetch(…, { redirect: "manual" })`，3xx 一律报错）：跟随会把请求体与注入的凭据头带到别的源。端点 URL 只接受 https（connector-mcp 的部署配置 `allowInsecureLoopback` 只在开发 / 测试打开本机 http）；端点固定头禁止 `Authorization` / `Cookie` 等凭据头（凭据走应用认证设置、加密存储）。
 - **打码**：内核在写事件 / 存档之前，用本次调用实际注入的凭据值给应用工具的结果与错误打码（`[REDACTED]`），日志也有打码；但连接器仍不得主动把凭据写进错误消息或日志。上游 HTTP 错误给模型只说状态码，正文截断后记 warn 日志。
 - 映射远端工具清单时保留 `annotations`（内核据此推导默认策略），缺描述用 title / name 兜底并 warn；远端 JSON-RPC 错误 → `ToolError` 带服务说明。
+- 远端的 `inputSchema` 不受信任：内核校验参数前去掉 `pattern` / `patternProperties`（按 additionalProperties 语义放宽）/ `format`，超过 64 KB 或嵌套超过 32 层的 schema 不校验（记 warn），每个 schema 用独立的 Ajv 实例（`$id` 不互相冲突）。工具定义按指纹存进 `capybara.tool_specs`（安装 / 刷新与每次模型请求时），刷新改了定义后早先的请求仍可还原。
+- 端点配置对组织成员可见：固定头与 URL query 里不能放凭据（`x-api-key`、`api-key`、`x-auth-token`、`authorization` 各变体、`*-token`、`*-secret` 等头，`key` / `api_key` / `token` / `access_token` / `secret` 等 query 参数，URL 用户信息），内核在安装时一律 400 拒绝并提示改用凭据设置；没有 `apps.manage` 的人读应用时只看到不带 query 的 URL 与头名（`headerNames`）。
 - 尊重 `signal`（`open` 的与 `callTool` 的），超时由内核的 `tools.timeoutMs` 决定，SDK 自带的请求超时设得足够长、不要抢在内核前面。
-- 应用级熔断（连续失败 `tools.breakerFailures` 次后打开 `tools.breakerOpenSeconds` 秒）在内核，连接器只需如实抛错 / 返回。
+- 应用级熔断（连续失败 `tools.breakerFailures` 次后打开 `tools.breakerOpenSeconds` 秒）在内核，连接器只需如实抛错 / 返回。**只有远端不可用才计数**：超时、连接 / 传输错误（非 `ToolError` 的异常，或 `ToolError` 带 `kind: "unavailable"`，如 HTTP 5xx、连不上）；`kind: "error"` 的 `ToolError`（JSON-RPC 业务错误、401 重试后仍失败、重定向、4xx）与 `isError` 结果一样说明远端可达，清零计数。
 
 ## 测试
 

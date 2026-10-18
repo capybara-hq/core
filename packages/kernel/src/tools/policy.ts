@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
@@ -56,7 +57,8 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
  * - 应用工具的 `app_tools.default_policy` / 状态 / 指纹（应用或工具已不存在、停用、删除、待审核 →
  *   `{ unavailable: 原因 }`，管线写「工具不可用」的事实说明，而非策略拒绝）；
  * - agent 当前版本的 `toolPolicies`，与运行所用版本取更严者（负责人运行中收紧立即生效；放宽不影响已在跑的运行）；
- * - 授权表（`conversation_tool_grants` / `tool_grants`），`spec_hash` 与当前定义不一致视为无效（D8）；
+ * - 授权表（`conversation_tool_grants` / `tool_grants`），`spec_hash` 与当前定义不一致视为无效（D8），
+ *   `app_id` 与工具的来源应用不一致也无效（删除后用同一 slug 重新安装的应用不继承旧授权）；
  * - 工具声明了 `requiredRole`（R1）时，发起人在组织中的当前角色：不是成员 → 拒绝；角色不足 → 按角色升级的审批
  *   （`approverRole` = 所需角色、`requestedFor` = null），此时记住的授权不放行。
  *
@@ -135,7 +137,7 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
     const pre = decide(input);
     if (pre === "deny") return "deny";
     if (pre === "ask" && !fixedAsk && escalateTo === null && hashCurrent) {
-      input.grant = await findGrant(db, tool, ctx);
+      input.grant = await findGrant(db, tool, appId, ctx);
     }
     const result = decide(input);
     if (result === "allow" && escalateTo === null) return "allow";
@@ -150,17 +152,23 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
   };
 }
 
-/** 与当前定义指纹一致的授权：本会话优先，其次「以后都允许」。 */
+/**
+ * 与当前定义指纹、来源应用都一致的授权：本会话优先，其次「以后都允许」。
+ * `appId` 为工具的来源应用（插件 / 内置工具为 null，只匹配 app_id 为空的授权）。
+ */
 async function findGrant(
   db: KernelDb,
   tool: ResolvedTool,
+  appId: string | null,
   ctx: { orgId: string; accountId: string; agentId: string; conversationId: string },
 ): Promise<"session" | "always" | null> {
+  const sameApp = sql<boolean>`app_id IS NOT DISTINCT FROM ${appId}`;
   const session = await db
     .selectFrom("conversation_tool_grants")
     .select("spec_hash")
     .where("conversation_id", "=", ctx.conversationId)
     .where("tool_key", "=", tool.key)
+    .where(sameApp)
     .executeTakeFirst();
   if (session?.spec_hash === tool.specHash) return "session";
   const always = await db
@@ -170,6 +178,7 @@ async function findGrant(
     .where("account_id", "=", ctx.accountId)
     .where("agent_id", "=", ctx.agentId)
     .where("tool_key", "=", tool.key)
+    .where(sameApp)
     .executeTakeFirst();
   return always?.spec_hash === tool.specHash ? "always" : null;
 }

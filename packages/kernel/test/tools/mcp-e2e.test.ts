@@ -16,6 +16,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { loadToolSpec } from "../../src/tools/specs.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -458,5 +459,57 @@ describe("connector-mcp 端到端", () => {
       { toolKey: "docs__delete_doc", content: "deleted 42", isError: false },
     ]);
     expect(mcp.calls.filter((c) => c.name === "delete_doc").length).toBe(before + 1);
+  }, 60_000);
+
+  it("刷新改了工具定义之后，早先 model_call 用过的定义仍可按指纹取回（请求可还原）", async () => {
+    const opts: FakeMcpServerOptions = {
+      tools: [
+        {
+          name: "lookup",
+          description: "Look up v1",
+          annotations: { readOnlyHint: true },
+          handler: () => ({ content: [{ type: "text", text: "found" }] }),
+        },
+      ],
+    };
+    const srv = await startFakeMcpServer(opts);
+    try {
+      const res = await call({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/apps`,
+        payload: {
+          name: "Kb",
+          slug: "kb",
+          connector: "mcp",
+          endpoint: { url: srv.url },
+          auth: { type: "none" },
+        },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const appId = (res.json() as { app: { id: string } }).app.id;
+      const agentId = await agentFor(appId);
+      const convId = await createConv(req, orgId, agentId);
+      await runTool(convId, 1, "kb__lookup", {});
+      const firstCall = ofType(await eventsOf(db, convId), "model_call")[0];
+      const used = firstCall?.payload.request.tools?.find((t) => t.key === "kb__lookup");
+      expect(used).toBeDefined();
+      const oldHash = used?.specHash as string;
+
+      (opts.tools[0] as { description: string }).description = "Look up v2";
+      const r2 = await call({ method: "POST", url: `/api/v1/orgs/${orgId}/apps/${appId}/refresh` });
+      expect(r2.statusCode, r2.body).toBe(200);
+      const after = (r2.json() as { app: { tools: { name: string; specHash: string }[] } }).app;
+      const newHash = after.tools.find((t) => t.name === "lookup")?.specHash as string;
+      expect(newHash).not.toBe(oldHash);
+
+      expect(await loadToolSpec(db, oldHash)).toMatchObject({
+        name: "lookup",
+        description: "Look up v1",
+      });
+      // 安装 / 刷新时也写入：新定义在任何模型请求之前就可按指纹取回
+      expect(await loadToolSpec(db, newHash)).toMatchObject({ description: "Look up v2" });
+    } finally {
+      await srv.stop();
+    }
   }, 60_000);
 });

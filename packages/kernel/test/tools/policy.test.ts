@@ -280,14 +280,14 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     await setAppTool("ask");
     const policy = createDecidePolicy(db);
     const hash = specHash(SPEC);
-    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
-      VALUES (${seed.conversationId}, 'docs__create_doc', ${hash})`.execute(raw);
+    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, app_id)
+      VALUES (${seed.conversationId}, 'docs__create_doc', ${hash}, ${appId})`.execute(raw);
     expect(await policy(appTool(), agentDef, ctx)).toBe("allow");
     await sql`UPDATE capybara.conversation_tool_grants SET spec_hash = 'stale'`.execute(raw);
     expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: {} });
 
-    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
-      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash})`.execute(
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash}, ${appId})`.execute(
       raw,
     );
     expect(await policy(appTool(), agentDef, ctx)).toBe("allow");
@@ -300,6 +300,37 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     // 授权不越过 deny
     await setAppTool("deny");
     expect(await policy(appTool(), agentDef, ctx)).toBe("deny");
+  });
+
+  it("授权绑定应用：删除后用同一 slug 重新安装的应用（新 id）不继承旧授权", async () => {
+    await setAppTool("ask");
+    const policy = createDecidePolicy(db);
+    const hash = specHash(SPEC);
+    // 旧应用（同 slug、同工具 key、同定义）留下的授权
+    const oldApp = randomUUID();
+    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, app_id)
+      VALUES (${seed.conversationId}, 'docs__create_doc', ${hash}, ${oldApp})`.execute(raw);
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash}, ${oldApp})`.execute(
+      raw,
+    );
+    expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: { appId } });
+    // 插件工具的授权 app_id 为空，空对空才匹配
+    const tool = pluginTool(
+      { name: "p", description: "P.", inputSchema: { type: "object" } },
+      {
+        defaultPolicy: "ask",
+      },
+    );
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, ${tool.key}, ${tool.specHash}, ${appId})`.execute(
+      raw,
+    );
+    expect(await policy(tool, agentDef, ctx)).toMatchObject({ ask: {} });
+    await sql`UPDATE capybara.tool_grants SET app_id = NULL WHERE tool_key = ${tool.key}`.execute(
+      raw,
+    );
+    expect(await policy(tool, agentDef, ctx)).toBe("allow");
   });
 
   it("requiresUserInteraction 的插件工具至少 ask，授权不放行", async () => {

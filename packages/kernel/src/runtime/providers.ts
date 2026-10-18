@@ -94,7 +94,8 @@ export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
       );
     },
     stream(req, opts) {
-      const { params, ...rest } = req;
+      // `@1` 没有 toolChoice：不传（旧插件按自己的默认处理）
+      const { params, toolChoice: _toolChoice, ...rest } = req;
       const out: ModelRequestV1 = rest;
       const effort = params?.effort;
       if (typeof effort === "string" && (EFFORT_VALUES as readonly string[]).includes(effort)) {

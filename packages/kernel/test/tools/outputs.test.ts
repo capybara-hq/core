@@ -50,11 +50,22 @@ beforeEach(async () => {
   other = await seedConversation(raw);
 });
 
+const mineScope = () => ({ orgId: seed.orgId, conversationId: seed.conversationId });
+const otherScope = () => ({ orgId: other.orgId, conversationId: other.conversationId });
+
 const save = (orgId: string, conversationId: string, content: string) =>
   outputs.save({ orgId, conversationId, callId: "c1", content });
 
+/** 与 seed 同组织、同 agent 的另一个会话。 */
+async function siblingConversation(): Promise<string> {
+  const id = `sib-${seed.conversationId}`;
+  await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+    VALUES (${id}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
+  return id;
+}
+
 describe("ToolOutputs", () => {
-  it("save 记录字符数、行数与到期时间（outputRetentionDays）；load 只读本组织、未过期的", async () => {
+  it("save 记录字符数、行数与到期时间（outputRetentionDays）；load 只读本组织本会话、未过期的", async () => {
     const out = await save(seed.orgId, seed.conversationId, "a\nb\nc");
     expect(out).toMatchObject({ sizeChars: 5, lineCount: 3 });
     const row = await db
@@ -65,14 +76,21 @@ describe("ToolOutputs", () => {
     const days = (new Date(row.expires_at).getTime() - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(29.9);
     expect(days).toBeLessThan(30.1);
-    expect(await outputs.load(seed.orgId, out.id)).toBe("a\nb\nc");
-    expect(await outputs.load(other.orgId, out.id)).toBeNull();
+    expect(await outputs.load(mineScope(), out.id)).toBe("a\nb\nc");
+    expect(await outputs.load(otherScope(), out.id)).toBeNull();
+    // 同组织的另一个会话也读不到（存档只属于产生它的会话）
+    const sibling = await siblingConversation();
+    expect(await outputs.load({ orgId: seed.orgId, conversationId: sibling }, out.id)).toBeNull();
+    // 组织不符时即使会话 id 对也读不到
+    expect(
+      await outputs.load({ orgId: other.orgId, conversationId: seed.conversationId }, out.id),
+    ).toBeNull();
     await db
       .updateTable("tool_outputs")
       .set({ expires_at: new Date(Date.now() - 1000) })
       .where("id", "=", out.id)
       .execute();
-    expect(await outputs.load(seed.orgId, out.id)).toBeNull();
+    expect(await outputs.load(mineScope(), out.id)).toBeNull();
   });
 
   it("countLines", () => {
@@ -86,7 +104,7 @@ describe("resolveOutputRefs", () => {
   it("任意位置（嵌套对象、数组）的 {$output} 替换为存档全文；多一个键的对象原样保留", async () => {
     const a = await save(seed.orgId, seed.conversationId, "FULL-A");
     const b = await save(seed.orgId, seed.conversationId, "FULL-B");
-    const load = (id: string) => outputs.load(seed.orgId, id);
+    const load = (id: string) => outputs.load(mineScope(), id);
     const input = {
       top: { $output: a.id },
       nested: { list: [1, { $output: b.id }, { deep: [{ $output: a.id }] }] },
@@ -106,7 +124,7 @@ describe("resolveOutputRefs", () => {
 
   it("不存在 / 跨组织 / 过期 → ToolError，消息点名 id；id 不是字符串 → ToolError", async () => {
     const mine = await save(seed.orgId, seed.conversationId, "secret");
-    const loadOther = (id: string) => outputs.load(other.orgId, id);
+    const loadOther = (id: string) => outputs.load(otherScope(), id);
     await expect(resolveOutputRefs({ x: { $output: mine.id } }, loadOther)).rejects.toThrow(
       ToolError,
     );
@@ -114,10 +132,10 @@ describe("resolveOutputRefs", () => {
       `Output ${mine.id} not found or expired`,
     );
     await expect(
-      resolveOutputRefs({ $output: "nope" }, (id) => outputs.load(seed.orgId, id)),
+      resolveOutputRefs({ $output: "nope" }, (id) => outputs.load(mineScope(), id)),
     ).rejects.toThrow("Output nope not found or expired");
     await expect(
-      resolveOutputRefs({ $output: 42 }, (id) => outputs.load(seed.orgId, id)),
+      resolveOutputRefs({ $output: 42 }, (id) => outputs.load(mineScope(), id)),
     ).rejects.toThrow(ToolError);
   });
 });
@@ -165,6 +183,6 @@ describe("spillIfLarge", () => {
       `01234\n…\n[Output truncated: ${big.length} chars, 3 lines. Full output id: ${id}. ` +
         `Use read_tool_output to page through it, or pass {"$output":"${id}"} as a tool argument.]`,
     );
-    expect(await outputs.load(seed.orgId, id)).toBe(big);
+    expect(await outputs.load(mineScope(), id)).toBe(big);
   });
 });

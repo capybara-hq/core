@@ -275,10 +275,15 @@ export class ToolPipeline {
       idem.started(ctx.runId, call.id, attempt),
     );
     if (started?.type === "tool_call_started") {
-      await this.writeResult(ctx, call.id, started.payload.toolKey, {
-        content: UNKNOWN_RESULT_TEXT,
-        isError: true,
-      });
+      // 确实开始执行过：照样审计 tool.called（耗时未知）
+      await this.writeResult(
+        ctx,
+        call.id,
+        started.payload.toolKey,
+        { content: UNKNOWN_RESULT_TEXT, isError: true },
+        [],
+        null,
+      );
       return undefined;
     }
     if (ctx.signal.aborted) {
@@ -316,12 +321,18 @@ export class ToolPipeline {
 
     let input: unknown;
     try {
-      input = await resolveOutputRefs(call.input, (id) => this.deps.outputs.load(ctx.orgId, id));
+      input = await resolveOutputRefs(call.input, (id) =>
+        this.deps.outputs.load({ orgId: ctx.orgId, conversationId: ctx.conversationId }, id),
+      );
     } catch (e) {
       if (e instanceof ToolError) return fail(e.message, tool.key);
       throw e;
     }
-    const invalid = validateInput(tool.key, tool.spec, input);
+    // 应用工具的 schema 来自连接器（不受信任）：去掉有风险的关键字并限制大小 / 层数
+    const invalid = validateInput(tool.key, tool.spec, input, {
+      untrusted: tool.source.kind === "app",
+      log: this.deps.log,
+    });
     if (invalid !== null) return fail(invalid, tool.key);
 
     const decision = await this.decide(tool, ctx.agent, {
@@ -339,10 +350,7 @@ export class ToolPipeline {
     // （不写 tool_call_started：此时尚未开始执行）。
     let approval = await this.deps.approvals.forCall(ctx.runId, call.id);
     // 批准的是旧定义（等待期间工具定义变了）：原批准不适用于当前定义，策略仍需审批时按新定义重新审批。
-    const stale =
-      approval?.status === "approved" &&
-      approval.specHash !== null &&
-      approval.specHash !== tool.specHash;
+    const stale = approval?.status === "approved" && approval.specHash !== tool.specHash;
     if ((!approval || stale) && decision !== "allow") {
       approval = await this.deps.approvals.request({
         attempt: (approval?.attempt ?? 0) + 1,
@@ -623,7 +631,10 @@ export class ToolPipeline {
       return clean({ kind: "result", result: r.value });
     } catch (e) {
       if (e instanceof CredentialMissing) return missing(e);
-      await breaker.failure(orgId, appId);
+      // 熔断只计远端不可用（连接 / 传输错误、HTTP 5xx：连接器抛 kind = unavailable 的 ToolError 或原始错误）。
+      // 其余 ToolError（JSON-RPC 业务错误、鉴权失败、重定向等）说明服务可达，与 isError 结果一样算成功。
+      if (e instanceof ToolError && e.kind !== "unavailable") await breaker.success(orgId, appId);
+      else await breaker.failure(orgId, appId);
       return clean(this.thrown(tool.key, e));
     } finally {
       if (opened) await this.closeSession(opened, tool.key);
@@ -689,8 +700,9 @@ export class ToolPipeline {
   }
 
   /**
-   * 管线第 6 阶段：写 `tool_result`（与 `connection_required` 同批）。传入 `durationMs`（即工具实际执行过）时
-   * 在同一事务里写审计 `tool.called`（detail 只有 toolKey、是否出错、耗时；不含参数与结果）。
+   * 管线第 6 阶段：写 `tool_result`（与 `connection_required` 同批）。传入 `durationMs`（即工具实际执行过；
+   * null = 执行过但耗时未知，如续跑时「有开始无结果」的调用）时在同一事务里写审计 `tool.called`
+   * （detail 只有 toolKey、是否出错、耗时；不含参数与结果）。
    */
   private async writeResult(
     ctx: ToolStepContext,
@@ -698,7 +710,7 @@ export class ToolPipeline {
     toolKey: string,
     r: { content: string; isError: boolean; outputId?: string; contentTypes?: string[] },
     pre: AppendEvent[] = [],
-    durationMs?: number,
+    durationMs?: number | null,
   ): Promise<void> {
     const events: AppendEvent[] = [
       ...pre,

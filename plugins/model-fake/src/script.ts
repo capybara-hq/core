@@ -141,7 +141,20 @@ type Plan =
   | { kind: "stall" }
   | { kind: "fail"; error: ModelError };
 
+/**
+ * `toolChoice: "none"`：不得调用工具——工具调用计划改为说明文本（脚本指令）或按无工具回复（默认的「调用第一个工具」）。
+ */
 function plan(req: ModelRequest): Plan {
+  const p = scripted(req);
+  if (p.kind !== "tool" || req.toolChoice !== "none") return p;
+  const { text } = lastUser(req);
+  const t = text.startsWith("tool:")
+    ? `Tool calls are disabled; would call ${p.name}.`
+    : `You said: ${text}`;
+  return { kind: "text", text: t, chunk: CHUNK_CHARS, delayMs: DEFAULT_CHUNK_DELAY_MS };
+}
+
+function scripted(req: ModelRequest): Plan {
   const { text, hasToolResult, result } = lastUser(req);
   const std = (t: string): Plan => ({
     kind: "text",
@@ -212,7 +225,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
     contextWindow: m.contextWindow ?? 32000,
     maxOutputTokens: 4096,
     capabilities: {
-      tools: false,
+      tools: true,
       vision: false,
       reasoning: false,
       caching: true,

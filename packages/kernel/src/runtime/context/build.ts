@@ -39,8 +39,10 @@ export interface ModelCallMeta {
   absorbedUpToSeq?: number;
   /** 请求的模型参数（即 `ModelRequest.params`）。 */
   params: Record<string, ParamValue>;
-  /** 请求带的工具（按 key 排序）及定义指纹。 */
+  /** 请求带的工具（按 key 排序）及定义指纹；定义本身按指纹存在 `capybara.tool_specs`。 */
   tools: { key: string; specHash: string }[];
+  /** 请求的 `toolChoice`（收尾调用为 `"none"`）；未设置则没有该字段。 */
+  toolChoice?: "auto" | "none";
 }
 
 /** 构建请求用到的工具信息（`ResolvedTool` 的子集）。 */
@@ -73,6 +75,8 @@ export interface BuildModelRequestInput {
    * （`name` 为模型可见的 key），按 key 排序以保证缓存前缀稳定；key 与指纹记在 `meta.tools`。默认空。
    */
   tools?: RequestTool[];
+  /** 本次请求的 `ModelRequest.toolChoice`；只在有工具时生效（没有工具时请求与 meta 都不带）。 */
+  toolChoice?: "auto" | "none";
 }
 
 type SummaryEvent = ConversationEvent & {
@@ -259,6 +263,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     maxOutputTokens: model.maxOutputTokens,
     params: { ...input.params },
   };
+  const toolChoice = tools.length > 0 ? input.toolChoice : undefined;
+  if (toolChoice !== undefined) request.toolChoice = toolChoice;
 
   const first = events[0];
   const last = events.at(-1);
@@ -271,6 +277,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
     params: { ...request.params },
     tools: tools.map((t) => ({ key: t.key, specHash: t.specHash })),
+    ...(toolChoice !== undefined && { toolChoice }),
   };
   return { request, meta };
 }

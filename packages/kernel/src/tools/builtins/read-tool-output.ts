@@ -108,7 +108,7 @@ export function readPage(
   return [parts.join("\n"), ...(cut === null ? [] : [cut]), footer].join("\n");
 }
 
-/** 内置工具 `read_tool_output`：读本组织未过期的输出存档（只读、默认 allow）。 */
+/** 内置工具 `read_tool_output`：读本会话未过期的输出存档（只读、默认 allow）。 */
 export function readToolOutputTool(deps: {
   outputs: Pick<ToolOutputs, "load">;
   config: () => KernelConfig;
@@ -118,7 +118,10 @@ export function readToolOutputTool(deps: {
     defaultPolicy: "allow",
     async run(input, ctx) {
       const { id, offset = 0, limit = DEFAULT_LIMIT, charOffset = 0 } = input as ReadInput;
-      const content = await deps.outputs.load(ctx.orgId, id);
+      const content = await deps.outputs.load(
+        { orgId: ctx.orgId, conversationId: ctx.conversationId },
+        id,
+      );
       if (content === null) throw new ToolError(outputNotFoundText(id));
       const cfg = deps.config().tools;
       const budget = Math.max(

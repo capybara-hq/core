@@ -23,7 +23,7 @@ export interface ApprovalRecord {
   /** 同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
   attempt: number;
   toolKey: string;
-  specHash: string | null;
+  specHash: string;
   appId: string | null;
   input: unknown;
   requestedFor: string | null;
@@ -320,20 +320,25 @@ export class ApprovalsService {
         .where("id", "=", id)
         .returningAll()
         .executeTakeFirstOrThrow();
+      // 授权绑定所批准的定义指纹与来源应用（同 slug 重新安装的应用 id 不同，不继承）
       const hash = before.specHash;
-      if (scope === "session" && hash !== null) {
+      const appId = before.appId;
+      if (scope === "session") {
         await t
           .insertInto("conversation_tool_grants")
           .values({
             conversation_id: before.conversationId,
             tool_key: before.toolKey,
             spec_hash: hash,
+            app_id: appId,
           })
           .onConflict((oc) =>
-            oc.columns(["conversation_id", "tool_key"]).doUpdateSet({ spec_hash: hash }),
+            oc
+              .columns(["conversation_id", "tool_key"])
+              .doUpdateSet({ spec_hash: hash, app_id: appId }),
           )
           .execute();
-      } else if (scope === "always" && hash !== null && before.requestedFor !== null) {
+      } else if (scope === "always" && before.requestedFor !== null) {
         await t
           .insertInto("tool_grants")
           .values({
@@ -342,11 +347,12 @@ export class ApprovalsService {
             agent_id: ctx.agent_id,
             tool_key: before.toolKey,
             spec_hash: hash,
+            app_id: appId,
           })
           .onConflict((oc) =>
             oc
               .columns(["org_id", "account_id", "agent_id", "tool_key"])
-              .doUpdateSet({ spec_hash: hash, created_at: sql<Date>`now()` }),
+              .doUpdateSet({ spec_hash: hash, app_id: appId, created_at: sql<Date>`now()` }),
           )
           .execute();
       }

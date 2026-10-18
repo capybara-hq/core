@@ -319,7 +319,9 @@ export function chatItems(state: ChatState): ChatItem[] {
   const models = new Map<string, ModelRef>();
   const modelOf = (runId: string | null, step: number): ModelRef | null =>
     runId === null ? null : (models.get(stepKey(runId, step)) ?? models.get(runId) ?? null);
+  /** (runId, callId) → 工具项：不同运行可能复用同一个 callId（与内核按 (runId, callId) 配对一致）。 */
   const tools = new Map<string, { item: ToolItem; runId: string | null }>();
+  const toolKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
   const approvals = new Map<string, number>();
   const questions = new Map<string, number>();
   const replace = (i: number, next: ChatItem) => {
@@ -364,14 +366,14 @@ export function chatItems(state: ChatState): ChatItem[] {
           result: null,
           outputId: null,
         };
-        tools.set(c.id, { item, runId: e.runId });
+        tools.set(toolKey(e.runId, c.id), { item, runId: e.runId });
         items.push(item);
       }
     } else if (e.type === "tool_call_started") {
-      const t = tools.get(e.payload.callId);
+      const t = tools.get(toolKey(e.runId, e.payload.callId));
       if (t && t.item.status === "pending") t.item.status = "running";
     } else if (e.type === "tool_result") {
-      const t = tools.get(e.payload.callId);
+      const t = tools.get(toolKey(e.runId, e.payload.callId));
       if (t) {
         t.item.status = e.payload.isError ? "error" : "done";
         t.item.result = e.payload.content;
@@ -385,7 +387,7 @@ export function chatItems(state: ChatState): ChatItem[] {
         approvalId: e.payload.approvalId,
         callId: e.payload.callId,
         toolKey: e.payload.toolKey,
-        input: tools.get(e.payload.callId)?.item.input,
+        input: tools.get(toolKey(e.runId, e.payload.callId))?.item.input,
         expiresAt: e.payload.expiresAt,
         decided: null,
       });

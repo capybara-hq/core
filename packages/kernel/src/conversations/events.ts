@@ -128,9 +128,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         absorbedUpToSeq: seqNo.optional(),
         /**
          * 本次请求带给模型的工具（按 key 排序）及其定义指纹（`ResolvedTool.specHash`）。
-         * 收尾调用不带工具，为空数组。较早的事件可能没有。
+         * 模型不支持工具时为空数组。较早的事件可能没有。
          */
         tools: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
+        /**
+         * 本次请求的 `toolChoice`：收尾调用为 `"none"`（照常带工具，但不得调用）；普通步骤不写（由模型决定）。
+         * 定义本身按 specHash 存在 `capybara.tool_specs`。
+         */
+        toolChoice: z.enum(["auto", "none"]).optional(),
       }),
     }),
   ),

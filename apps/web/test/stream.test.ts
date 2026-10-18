@@ -223,6 +223,46 @@ describe("reduceChat", () => {
     ]);
   });
 
+  it("工具项按 (runId, callId) 对应：不同运行复用同一个 callId 时结果与状态不串", () => {
+    const call = (seq: number, runId: string, input: unknown) =>
+      ev(
+        seq,
+        "assistant_message",
+        {
+          step: 0,
+          content: [{ type: "tool_call", id: "call_1", name: "docs__search", input }],
+          stopReason: "tool_use",
+        },
+        runId,
+      );
+    const s = apply(initialChatState, [
+      started(1),
+      call(2, RUN, { q: "first" }),
+      aborted(3),
+      started(4, "r2"),
+      call(5, "r2", { q: "second" }),
+      ev(
+        6,
+        "tool_call_started",
+        { step: 0, callId: "call_1", toolKey: "docs__search", specHash: "h" },
+        "r2",
+      ),
+      ev(
+        7,
+        "approval_requested",
+        { step: 0, callId: "call_1", approvalId: "ap1", toolKey: "docs__search", expiresAt: "x" },
+        "r2",
+      ),
+    ]);
+    const tools = chatItems(s).filter((i) => i.kind === "tool");
+    expect(tools.map((t) => (t.kind === "tool" ? [t.input, t.status] : null))).toEqual([
+      [{ q: "first" }, "cancelled"],
+      [{ q: "second" }, "running"],
+    ]);
+    const approval = chatItems(s).find((i) => i.kind === "approval");
+    expect(approval).toMatchObject({ input: { q: "second" } });
+  });
+
   it("没有变化时返回同一个 state 引用", () => {
     const s = apply(initialChatState, [user(1, "q")]);
     expect(reduceChat(s, { kind: "events", events: [user(1, "q")] })).toBe(s);

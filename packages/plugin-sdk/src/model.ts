@@ -64,7 +64,13 @@ export interface ModelRequest {
   /** 稳定内容在前；cache 为 true 的块之后打缓存断点（由插件按原生协议实现）。 */
   system: { text: string; cache: boolean }[];
   messages: ModelMessage[];
-  tools: ToolDefinition[]; // M2 恒为 []
+  tools: ToolDefinition[];
+  /**
+   * `@2`：模型可否调用工具。`"none"` = 本次只能回复文本、不得调用工具（`tools` 仍照常带上：历史里有工具调用时
+   * 部分供应商要求请求声明工具，且保持缓存前缀稳定）；缺省或 `"auto"` = 由模型决定。
+   * 插件映射到原生字段（如 Anthropic `tool_choice: {type: "none"}`）；`tools` 为空时插件不发送该字段。
+   */
+  toolChoice?: "auto" | "none";
   maxOutputTokens: number;
   /** `@2`：本次调用的参数（已按该模型的 `parameters` 处理过），由插件映射到原生请求。 */
   params: Record<string, ParamValue>;
@@ -72,8 +78,8 @@ export interface ModelRequest {
   effort?: Effort;
 }
 
-/** `model-provider@1` 的请求：没有 `params`。 */
-export type ModelRequestV1 = Omit<ModelRequest, "params">;
+/** `model-provider@1` 的请求：没有 `params` 与 `toolChoice`。 */
+export type ModelRequestV1 = Omit<ModelRequest, "params" | "toolChoice">;
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
 

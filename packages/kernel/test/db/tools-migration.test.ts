@@ -105,8 +105,8 @@ describe("0010_tools", () => {
       scope: string | null = null,
     ) =>
       sql`insert into capybara.approvals
-        (id, org_id, conversation_id, run_id, call_id, tool_key, input, requested_for, approver_role, status, scope, expires_at)
-        values (${id}, 'o1', 'c1', 'r3', ${call}, 'crm__x', '{}', ${who}, ${role}, ${status}, ${scope}, now())`.execute(
+        (id, org_id, conversation_id, run_id, call_id, tool_key, spec_hash, input, requested_for, approver_role, status, scope, expires_at)
+        values (${id}, 'o1', 'c1', 'r3', ${call}, 'crm__x', 'h', '{}', ${who}, ${role}, ${status}, ${scope}, now())`.execute(
         db,
       );
     await ins("ap1", "k1", "a1", null);
@@ -116,6 +116,36 @@ describe("0010_tools", () => {
     await rejects(ins("ap5", "k5", "a1", null, "weird"), /check/);
     await rejects(ins("ap6", "k6", "a1", null, "approved", "forever"), /check/);
     await ins("ap7", "k7", "a1", null, "approved", "always");
+    // 0011：spec_hash 必填
+    await rejects(
+      sql`insert into capybara.approvals (id, org_id, conversation_id, run_id, call_id, tool_key, requested_for, expires_at)
+        values ('ap8', 'o1', 'c1', 'r3', 'k8', 'crm__x', 'a1', now())`.execute(db),
+      /null value|not-null/,
+    );
+  });
+
+  it("approvals.requested_for：指定处理人的账号删除时审批一并删除（不违反 approvals_target_chk）", async () => {
+    await sql`insert into capybara.accounts (id, display_name) values ('a9', 'Z')`.execute(db);
+    await sql`insert into capybara.approvals
+      (id, org_id, conversation_id, run_id, call_id, tool_key, spec_hash, requested_for, expires_at)
+      values ('ap9', 'o1', 'c1', 'r3', 'k9', 'crm__x', 'h', 'a9', now())`.execute(db);
+    await sql`delete from capybara.accounts where id = 'a9'`.execute(db);
+    const r = await sql<{
+      n: number;
+    }>`select count(*)::int as n from capybara.approvals where id = 'ap9'`.execute(db);
+    expect(r.rows[0]?.n).toBe(0);
+  });
+
+  it("0014 tool_specs：按指纹内容寻址", async () => {
+    await sql`insert into capybara.tool_specs (spec_hash, spec) values ('h1', '{"name":"a"}')`.execute(
+      db,
+    );
+    await sql`insert into capybara.tool_specs (spec_hash, spec) values ('h1', '{"name":"b"}')
+      on conflict (spec_hash) do nothing`.execute(db);
+    const r = await sql<{
+      spec: unknown;
+    }>`select spec from capybara.tool_specs where spec_hash = 'h1'`.execute(db);
+    expect(r.rows.map((x) => x.spec)).toEqual([{ name: "a" }]);
   });
 
   it("questions：(run_id, call_id) 唯一，状态受限", async () => {
@@ -130,8 +160,8 @@ describe("0010_tools", () => {
   it("tool_outputs 与授权表可写", async () => {
     await sql`insert into capybara.tool_outputs (id, org_id, conversation_id, call_id, size_chars, line_count, content, expires_at)
       values ('to1', 'o1', 'c1', 'k1', 3, 1, 'abc', now())`.execute(db);
-    await sql`insert into capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
-      values ('o1', 'a1', 'ag1', 'crm__x', 'h')`.execute(db);
+    await sql`insert into capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
+      values ('o1', 'a1', 'ag1', 'crm__x', 'h', 'app1')`.execute(db);
     await sql`insert into capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
       values ('c1', 'crm__x', 'h')`.execute(db);
     await rejects(

@@ -14,10 +14,12 @@ import {
   type Credentials,
   type StaticSecret,
 } from "./credentials.js";
+import { endpointCredentialIssues } from "./endpoint.js";
 import { deriveSlug, isValidSlug, SLUG_RULE, toolKey, toolKeyIssue } from "./naming.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import { policyFromAnnotations, specHash, type ToolPolicy, type ToolRegistry } from "./registry.js";
 import { resourceToolSpecs } from "./resources.js";
+import { recordToolSpecs } from "./specs.js";
 
 type Trx = Transaction<KernelDatabase>;
 type ToolStatus = "enabled" | "disabled" | "pending_review";
@@ -192,7 +194,10 @@ export class AppsService {
     private readonly log: Logger,
   ) {}
 
-  /** 校验连接器存在、端点按其 schema 合法；返回解析后的端点。 */
+  /**
+   * 校验连接器存在、端点按其 schema 合法、不含凭据样式的头 / query 参数 / URL 用户信息（端点对成员可见，
+   * 凭据须走认证设置）；返回解析后的端点。
+   */
   private parseEndpoint(connector: string, endpoint: unknown): unknown {
     const c = this.registry.findConnector(connector);
     if (!c) {
@@ -213,6 +218,9 @@ export class AppsService {
         })),
       );
     }
+    const leaks = endpointCredentialIssues(r.data);
+    if (leaks.length > 0)
+      throw new ApiError("validation_failed", "Request validation failed", leaks);
     return r.data;
   }
 
@@ -360,6 +368,7 @@ export class AppsService {
 
   private async insertTools(t: Trx, appId: string, rows: SnapshotRow[]): Promise<void> {
     if (rows.length === 0) return;
+    await recordToolSpecs(t, rows);
     await t
       .insertInto("app_tools")
       .values(
@@ -579,6 +588,9 @@ export class AppsService {
         .where("id", "=", appId)
         .execute();
       await this.credentials.clearApp(orgId, appId, t);
+      // 授权绑定应用 id（软删除不触发外键级联）：一并删掉，不留给任何后来的应用
+      await t.deleteFrom("tool_grants").where("app_id", "=", appId).execute();
+      await t.deleteFrom("conversation_tool_grants").where("app_id", "=", appId).execute();
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
@@ -634,6 +646,8 @@ export class AppsService {
       const removed = current.filter((c) => !next.has(c.name)).map((c) => c.name);
 
       await this.insertTools(t, appId, added);
+      // 定义快照只增不改：旧定义留在 tool_specs，早先请求用过的仍可按指纹取回
+      await recordToolSpecs(t, changed);
       for (const r of changed) {
         await t
           .updateTable("app_tools")

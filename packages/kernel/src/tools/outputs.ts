@@ -17,9 +17,15 @@ export interface SavedOutput {
   lineCount: number;
 }
 
+/** 读存档的范围：只能读产生它的那个会话（且组织一致）的存档。 */
+export interface OutputScope {
+  orgId: string;
+  conversationId: string;
+}
+
 /**
  * 输出存档（spec 5.4）：超大工具结果的全文存进 `capybara.tool_outputs`，保留 `tools.outputRetentionDays` 天。
- * 只能按组织读取，过期即视为不存在（清理由维护任务负责）。
+ * 只能在产生它的会话里读取（同组织别的会话也不行：会话之间可见范围不同），过期即视为不存在（清理由维护任务负责）。
  */
 export class ToolOutputs {
   constructor(
@@ -53,20 +59,21 @@ export class ToolOutputs {
     return { id, sizeChars, lineCount };
   }
 
-  /** 读本组织未过期的存档全文；不存在 / 过期 / 属于别的组织 → null。 */
-  async load(orgId: string, id: string): Promise<string | null> {
+  /** 读本会话未过期的存档全文；不存在 / 过期 / 属于别的会话或组织 → null。 */
+  async load(scope: OutputScope, id: string): Promise<string | null> {
     const row = await this.db
       .selectFrom("tool_outputs")
       .select("content")
       .where("id", "=", id)
-      .where("org_id", "=", orgId)
+      .where("org_id", "=", scope.orgId)
+      .where("conversation_id", "=", scope.conversationId)
       .where("expires_at", ">", sql<Date>`now()`)
       .executeTakeFirst();
     return row?.content ?? null;
   }
 }
 
-/** 存档不存在 / 过期 / 不属于本组织（模型可见，英文；不区分三者，不泄露别的组织的存档是否存在）。 */
+/** 存档不存在 / 过期 / 不属于本会话（模型可见，英文；不区分几种情况，不泄露别处的存档是否存在）。 */
 export const outputNotFoundText = (id: string): string =>
   `Output ${id} not found or expired. Run the tool that produced it again to get a new output id.`;
 
@@ -75,7 +82,7 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
 
 /**
  * 管线第 1 阶段：把参数中任意位置的 `{"$output": "<id>"}`（对象恰好只有这一个键）替换为该存档全文。
- * 不存在 / 过期 / 不属于本组织 → `ToolError`（给模型看的英文）。不修改传入的对象。
+ * 不存在 / 过期 / 不属于本会话 → `ToolError`（给模型看的英文）。不修改传入的对象。
  */
 export async function resolveOutputRefs(
   input: unknown,

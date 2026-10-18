@@ -272,7 +272,12 @@ describe("决定", () => {
     });
     const grants = await db.selectFrom("conversation_tool_grants").selectAll().execute();
     expect(grants).toEqual([
-      { conversation_id: conversationId, tool_key: "docs__create_doc", spec_hash: "hash-1" },
+      {
+        conversation_id: conversationId,
+        tool_key: "docs__create_doc",
+        spec_hash: "hash-1",
+        app_id: appId,
+      },
     ]);
     const evs = (await eventsOf(db, conversationId)).filter((e) => e.type === "approval_decided");
     expect(evs).toHaveLength(1);
@@ -331,7 +336,9 @@ describe("决定", () => {
       method: "DELETE",
       url: `/api/v1/orgs/${orgId}/me/tool-grants/${agentId}/docs__create_doc`,
     });
-    expect(await db.selectFrom("tool_grants").selectAll().execute()).toHaveLength(1);
+    expect(await db.selectFrom("tool_grants").selectAll().execute()).toMatchObject([
+      { tool_key: "docs__create_doc", spec_hash: "hash-1", app_id: appId },
+    ]);
 
     const del = await initiator.reqB({
       method: "DELETE",

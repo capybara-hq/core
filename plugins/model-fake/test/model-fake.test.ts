@@ -55,7 +55,7 @@ describe("model-fake", () => {
     const [m] = await mk().listModels();
     expect(m).toMatchObject({ id: "fake-1", contextWindow: 32000 });
     expect(m?.capabilities).toMatchObject({
-      tools: false,
+      tools: true,
       vision: false,
       reasoning: false,
       caching: true,
@@ -151,6 +151,26 @@ describe("model-fake", () => {
       name: "get_weather",
       input: { city: "Paris" },
     });
+  });
+
+  it("toolChoice none: never emits a tool call (tool directive and default tool call become text)", async () => {
+    const tools = [{ name: "get_weather", description: "d", inputSchema: { type: "object" } }];
+    const directive = complete(
+      await run(mk(), req('tool:get_weather:{"city":"Paris"}', { tools, toolChoice: "none" })),
+    );
+    expect(directive.stopReason).toBe("end_turn");
+    expect(directive.content.every((b) => b.type === "text")).toBe(true);
+    const plain = complete(await run(mk(), req("hello", { tools, toolChoice: "none" })));
+    expect(plain.stopReason).toBe("end_turn");
+    expect(plain.content).toEqual([{ type: "text", text: "You said: hello" }]);
+    // auto / 缺省时照常调用第一个工具
+    const auto = complete(await run(mk(), req("hello", { tools, toolChoice: "auto" })));
+    expect(auto.stopReason).toBe("tool_use");
+  });
+
+  it("declares tool support", async () => {
+    const [m] = await mk().listModels();
+    expect(m?.capabilities.tools).toBe(true);
   });
 
   it("long:<n> outputs n words", async () => {

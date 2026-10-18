@@ -20,7 +20,13 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { can } from "../orgs/roles.js";
 import type { AppDetail, AppSummary, AppsService, ToolIssue } from "./apps.service.js";
+import { publicEndpoint } from "./endpoint.js";
+
+/** 没有 `apps.manage` 的读者只看到端点的公开部分（URL 不带 query、只有头名，见 endpoint.ts）。 */
+const forViewer = <T extends AppSummary>(org: OrgContext, app: T): T =>
+  can(org.role, "apps.manage") ? app : { ...app, endpoint: publicEndpoint(app.endpoint) };
 
 /** HTTP 头名（RFC 9110 token）。 */
 const HeaderName = z
@@ -102,7 +108,7 @@ export class AppsController {
   @Get()
   @OrgAction("apps.use")
   async list(@CurrentOrg() org: OrgContext): Promise<{ apps: AppSummary[] }> {
-    return { apps: await this.apps.list(org.orgId) };
+    return { apps: (await this.apps.list(org.orgId)).map((a) => forViewer(org, a)) };
   }
 
   @Post()
@@ -124,7 +130,7 @@ export class AppsController {
     @Param("appId") appId: string,
   ): Promise<{ app: AppDetail }> {
     const p = requireUser(principal);
-    return { app: await this.apps.get(org.orgId, appId, p.account.id) };
+    return { app: forViewer(org, await this.apps.get(org.orgId, appId, p.account.id)) };
   }
 
   @Patch(":appId")

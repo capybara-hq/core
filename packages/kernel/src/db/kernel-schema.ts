@@ -249,6 +249,8 @@ export interface ToolGrantsTable {
   agent_id: string;
   tool_key: string;
   spec_hash: string;
+  /** 应用工具的来源应用（插件 / 内置工具为 null）；授权只对同一个应用有效。 */
+  app_id: string | null;
   created_at: Ts;
 }
 
@@ -257,6 +259,8 @@ export interface ConversationToolGrantsTable {
   conversation_id: string;
   tool_key: string;
   spec_hash: string;
+  /** 同 `ToolGrantsTable.app_id`。 */
+  app_id: string | null;
 }
 
 /** 0010_tools.sql：工具调用审批；requested_for 与 approver_role 至少一个非空。 */
@@ -278,7 +282,7 @@ export interface ApprovalsTable {
   expires_at: Date | string;
   created_at: Ts;
   /** 0011：所批准的工具定义指纹（写授权用）。 */
-  spec_hash: string | null;
+  spec_hash: string;
   /** 0011：应用工具的来源应用。 */
   app_id: string | null;
   /** 0012：同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
@@ -314,6 +318,13 @@ export interface ToolOutputsTable {
   content: string;
   created_at: Ts;
   expires_at: Date | string;
+}
+
+/** 0014_tool_specs.sql：工具定义快照（内容寻址，只增不改）。 */
+export interface ToolSpecsTable {
+  spec_hash: string;
+  spec: Json<unknown>;
+  created_at: Ts;
 }
 
 /** bytea 列：读出为 Buffer，写入可传 Buffer / Uint8Array。 */
@@ -377,6 +388,7 @@ export interface KernelDatabase {
   approvals: ApprovalsTable;
   questions: QuestionsTable;
   tool_outputs: ToolOutputsTable;
+  tool_specs: ToolSpecsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

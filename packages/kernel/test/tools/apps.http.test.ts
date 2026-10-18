@@ -166,6 +166,18 @@ const countRows = async (table: "apps" | "app_tools" | "secrets" | "audit_events
     ).rows[0]?.n,
   );
 
+/** 给该应用的工具写一条「以后都允许」与一条「本会话都允许」授权（需要 agent 与会话）。 */
+async function seedGrants(orgId: string, appId: string): Promise<void> {
+  await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+    VALUES ('ag-g', ${orgId}, ${owner.id}, 'org', 1)`.execute(raw);
+  await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+    VALUES ('cv-g', ${orgId}, 'ag-g', ${owner.id})`.execute(raw);
+  await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
+    VALUES (${orgId}, ${owner.id}, 'ag-g', 'docs__create_doc', 'h', ${appId})`.execute(raw);
+  await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, app_id)
+    VALUES ('cv-g', 'docs__create_doc', 'h', ${appId})`.execute(raw);
+}
+
 describe("应用 HTTP", () => {
   it("未登录 → 401", async () => {
     const ownerReq = await session("owner");
@@ -601,6 +613,79 @@ describe("应用 HTTP", () => {
     expect(JSON.stringify(auditRows)).not.toMatch(/token-/);
   });
 
+  it("端点里不能放凭据样式的头 / query 参数 → 400，提示改用凭据设置", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const cases: [Record<string, unknown>, string][] = [
+      [{ server: "open", headers: { "X-Api-Key": "k" } }, "endpoint.headers.X-Api-Key"],
+      [{ server: "open", headers: { "api-key": "k" } }, "endpoint.headers.api-key"],
+      [{ server: "open", headers: { "X-Auth-Token": "k" } }, "endpoint.headers.X-Auth-Token"],
+      [{ server: "open", headers: { "X-Client-Secret": "k" } }, "endpoint.headers.X-Client-Secret"],
+      [
+        { server: "open", headers: { "Proxy-Authorization": "k" } },
+        "endpoint.headers.Proxy-Authorization",
+      ],
+      [{ server: "open", url: "https://h.example/mcp?api_key=k" }, "endpoint.url"],
+      [{ server: "open", url: "https://h.example/mcp?Token=k" }, "endpoint.url"],
+      [{ server: "open", url: "https://h.example/mcp?access_token=k" }, "endpoint.url"],
+      [{ server: "open", url: "https://user:pw@h.example/mcp" }, "endpoint.url"],
+    ];
+    for (const [endpoint, path] of cases) {
+      const res = await req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/apps`,
+        payload: { name: "Open", connector: "mem", endpoint, auth: { type: "none" } },
+      });
+      expect(res.statusCode, JSON.stringify(endpoint)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+      const details = (res.json() as { error: { details: { path: string; message: string }[] } })
+        .error.details;
+      expect(details).toEqual([{ path, message: expect.stringContaining("credential settings") }]);
+    }
+    expect(await countRows("apps")).toBe(0);
+  });
+
+  it("端点的固定头值与 URL query 只对 apps.manage 可见：其他人只看到不带 query 的 URL 与头名", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const { app } = await createApp(req, orgId, {
+      name: "Open",
+      endpoint: {
+        server: "open",
+        url: "https://h.example/mcp?tenant=acme-hidden",
+        headers: { "X-Tenant": "acme-hidden" },
+      },
+      auth: { type: "none" },
+      credential: undefined,
+    });
+    expect(app).toMatchObject({
+      endpoint: {
+        url: "https://h.example/mcp?tenant=acme-hidden",
+        headers: { "X-Tenant": "acme-hidden" },
+      },
+    });
+    const ownerOne = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/${app.id}` });
+    expect(ownerOne.body).toContain("acme-hidden");
+
+    const guest = await memberSession(orgId, "gst", "guest");
+    const one = await guest.req({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/${app.id}` });
+    const list = await guest.req({ method: "GET", url: `/api/v1/orgs/${orgId}/apps` });
+    for (const res of [one, list]) {
+      expect(res.statusCode).toBe(200);
+      expect(res.body).not.toContain("acme-hidden");
+    }
+    expect((one.json() as { app: { endpoint: unknown } }).app.endpoint).toEqual({
+      server: "open",
+      url: "https://h.example/mcp",
+      headerNames: ["X-Tenant"],
+    });
+    expect((list.json() as { apps: { endpoint: unknown }[] }).apps[0]?.endpoint).toEqual({
+      server: "open",
+      url: "https://h.example/mcp",
+      headerNames: ["X-Tenant"],
+    });
+  });
+
   it("DELETE：软删后 404 app.not_found，凭据一并清除，slug 可复用", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
@@ -610,6 +695,7 @@ describe("应用 HTTP", () => {
       (await member.req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/apps/${app.id}` }))
         .statusCode,
     ).toBe(403);
+    await seedGrants(orgId, app.id);
     const del = await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/apps/${app.id}` });
     expect(del.statusCode).toBe(204);
     const get = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/${app.id}` });
@@ -621,6 +707,9 @@ describe("应用 HTTP", () => {
       .where("key", "like", `credentials:app:${app.id}:%`)
       .execute();
     expect(secrets).toEqual([]);
+    // 绑定该应用的授权一并删除（同 slug 重新安装的应用不继承）
+    expect(await db.selectFrom("tool_grants").selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom("conversation_tool_grants").selectAll().execute()).toEqual([]);
     await createApp(req, orgId);
     // 另一个组织看不到本组织的应用
     const other = await createOrg(req, "Other");

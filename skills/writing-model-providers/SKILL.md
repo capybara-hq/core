@@ -19,7 +19,8 @@ interface ModelProvider {
 }
 ```
 
-- `ModelRequest`：`model`、`system`（`{ text, cache }[]`，稳定内容在前，`cache: true` 的块之后打缓存断点）、`messages`（user / assistant / 中途 `system`）、`tools`、`maxOutputTokens`、`params`（本次调用的参数，见下节；内核已按该模型的声明处理过：丢弃未声明 / 不合法的项、补上默认值）。
+- `ModelRequest`：`model`、`system`（`{ text, cache }[]`，稳定内容在前，`cache: true` 的块之后打缓存断点）、`messages`（user / assistant / 中途 `system`）、`tools`、可选 `toolChoice`（`"auto"` / `"none"`）、`maxOutputTokens`、`params`（本次调用的参数，见下节；内核已按该模型的声明处理过：丢弃未声明 / 不合法的项、补上默认值）。
+- `toolChoice: "none"`：内核在步数上限的收尾调用里照常带上 `tools`（历史里有工具调用时部分供应商要求声明工具，也保持缓存前缀稳定），但模型不得调用工具。插件映射到原生字段（anthropic `tool_choice: {type: "none"}`、OpenAI Responses / Chat Completions `tool_choice: "none"`），`"auto"` / 缺省不发送，`tools` 为空时也不发送；做不到的供应商须保证不产出 `tool_call`（如 model-fake）。`capabilities.tools` 为 false 的模型，内核不发工具也不发 `toolChoice`，并写一条提醒告诉模型本次没有工具——所以真能调用工具的模型必须声明 `tools: true`。
 - `ModelStreamEvent`：`text_delta`、`thinking_delta`，最后恰好一个 `message_complete { content, stopReason, usage }`。增量拼起来必须等于最终 `content` 里的文本。流被截断（没收到供应商的结束事件）要抛错（一般是 `network`），**不能**拿半截内容发 `message_complete`。
 - `ContentBlock`：`text`、`thinking`、`tool_call`、`tool_result`；`text`、`thinking` 与 `tool_call` 可带 `opaque`（见下）。
 - `ModelInfo`：`contextWindow`、`maxOutputTokens`、`capabilities`（`tools` / `vision` / `reasoning` / `caching` / `midConversationSystem`；`effort` 已弃用，仅 `@1` 用）、可选 `streamIdleTimeoutMs`、必填 `parameters`（该模型支持的参数声明，可为空数组）。`listModels` 会被内核缓存，失败时内核跳过该供应商并记日志，不影响其他供应商。
@@ -186,7 +187,7 @@ describe.skipIf(!LIVE_KEY)("live", () => {
 1. 补的是什么问题（哪个模型 / 网关、什么现象）；
 2. **何时可以删除**（供应商修复后、某模型下线后、SDK 某版本之后）。
 
-例：anthropic 不设 `tool_choice`（`any` / `tool` 在当前模型上会 400，模型支持后可去掉）；思考块用 `display: "summarized"`（当前模型默认 `omitted` 不返回思考文本）。只写「workaround」而不写删除条件的补丁会永远留下来。
+例：anthropic 只发 `tool_choice: {type: "none"}`，不发 `any` / `tool`（在当前模型上会 400，模型支持后可去掉）；思考块用 `display: "summarized"`（当前模型默认 `omitted` 不返回思考文本）。只写「workaround」而不写删除条件的补丁会永远留下来。
 
 ## 新供应商插件清单
 

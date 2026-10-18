@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type {
-  Connector,
-  ContentBlock,
-  ToolCallContext,
-  ToolHandler,
-  ToolResult,
-  ToolSpec,
+import {
+  type Connector,
+  type ContentBlock,
+  type ToolCallContext,
+  ToolError,
+  type ToolHandler,
+  type ToolResult,
+  type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -359,6 +360,106 @@ describe("validateInput", () => {
     expect(validateInput("x", spec, { a: "s" })).toBeNull();
     expect(validateInput("x", spec, { a: 1 })).toContain("/a must be string");
   });
+
+  describe("应用工具（连接器来源，不受信任）的 schema", () => {
+    const warns = () => {
+      const lines: { msg: string; meta: unknown }[] = [];
+      return {
+        lines,
+        log: {
+          warn: (msg: string, meta?: unknown) => {
+            lines.push({ msg, meta });
+          },
+        },
+      };
+    };
+
+    it("编译前去掉 pattern / format（防灾难性回溯与未知格式），同名属性不受影响", () => {
+      const spec = pluginSpec("x", {
+        type: "object",
+        properties: {
+          q: { type: "string", pattern: "^(a+)+$" },
+          mail: { type: "string", format: "email" },
+          pattern: { type: "string" },
+        },
+        required: ["pattern"],
+      });
+      const w = warns();
+      const opts = { untrusted: true, log: w.log };
+      expect(
+        validateInput("app__x", spec, { pattern: "p", q: "b", mail: "nope" }, opts),
+      ).toBeNull();
+      expect(validateInput("app__x", spec, { q: "b" }, opts)).toContain(
+        "must have required property 'pattern'",
+      );
+      // 受信任（插件 / 内置）的 schema 照常校验 pattern
+      expect(validateInput("p__x", spec, { pattern: "p", q: "b" })).toContain(
+        "/q must match pattern",
+      );
+    });
+
+    it("patternProperties 按 additionalProperties 语义放宽：额外属性须符合其中某个 schema", () => {
+      const spec = pluginSpec("x", {
+        type: "object",
+        patternProperties: { "^x_": { type: "string" } },
+        additionalProperties: false,
+      });
+      const opts = { untrusted: true };
+      expect(validateInput("app__x", spec, { x_a: "s" }, opts)).toBeNull();
+      expect(validateInput("app__x", spec, { x_a: 1 }, opts)).toContain("/x_a must be string");
+    });
+
+    it("schema 超过 64 KB 或嵌套超过 32 层 → 跳过校验并记一次 warn（只含 toolKey 与原因）", () => {
+      const big = pluginSpec("big", {
+        type: "object",
+        description: "d".repeat(70_000),
+        properties: { a: { type: "string" } },
+      });
+      let deep: Record<string, unknown> = { type: "string" };
+      for (let i = 0; i < 40; i++) deep = { type: "object", properties: { n: deep } };
+      const deepSpec = pluginSpec("deep", deep);
+      const w = warns();
+      const opts = { untrusted: true, log: w.log };
+      expect(validateInput("app__big", big, { a: 1 }, opts)).toBeNull();
+      expect(validateInput("app__big", big, { a: 2 }, opts)).toBeNull();
+      expect(validateInput("app__deep", deepSpec, { n: 1 }, opts)).toBeNull();
+      expect(w.lines).toEqual([
+        {
+          msg: "tool input schema not validated",
+          meta: { toolKey: "app__big", reason: "schema larger than 65536 bytes" },
+        },
+        {
+          msg: "tool input schema not validated",
+          meta: { toolKey: "app__deep", reason: "schema nested deeper than 32 levels" },
+        },
+      ]);
+    });
+
+    it("schema 无法编译 → 不拦截，按缓存键只 warn 一次", () => {
+      const spec = pluginSpec("bad", { type: "object", properties: { a: { $ref: "#/nope" } } });
+      const w = warns();
+      expect(validateInput("p__bad", spec, { a: 1 }, { log: w.log })).toBeNull();
+      expect(validateInput("p__bad", spec, { a: 1 }, { log: w.log })).toBeNull();
+      expect(w.lines).toHaveLength(1);
+      expect(w.lines[0]?.msg).toBe("tool input schema failed to compile; validation skipped");
+      expect(w.lines[0]?.meta).toMatchObject({ toolKey: "p__bad" });
+    });
+
+    it("不同工具的 schema 用同一个 $id 不互相影响", () => {
+      const a = pluginSpec("a", {
+        $id: "https://example.com/same.json",
+        type: "object",
+        required: ["a"],
+      });
+      const b = pluginSpec("b", {
+        $id: "https://example.com/same.json",
+        type: "object",
+        required: ["b"],
+      });
+      expect(validateInput("p__a", a, {})).toContain("must have required property 'a'");
+      expect(validateInput("p__b", b, {})).toContain("must have required property 'b'");
+    });
+  });
 });
 
 describe("ToolPipeline.runStep", () => {
@@ -452,6 +553,22 @@ describe("ToolPipeline.runStep", () => {
     evs = await runCalls([{ id: "c2", name: "probe__echo", input: { text: { $output: "gone" } } }]);
     expect(handlerCalls.echo).toHaveLength(1);
     expect(resultsOf(evs)[1]?.content).toMatch(/^Output gone not found or expired/);
+    // 同组织别的会话的存档不能引用
+    const sibling = `sib-${seed.conversationId}`;
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${sibling}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
+    const foreign = await outputs.save({
+      orgId: seed.orgId,
+      conversationId: sibling,
+      callId: "x",
+      content: "OTHER CONVERSATION",
+    });
+    runId = randomUUID();
+    evs = await runCalls([
+      { id: "c3", name: "probe__echo", input: { text: { $output: foreign.id } } },
+    ]);
+    expect(handlerCalls.echo).toHaveLength(1);
+    expect(resultsOf(evs)[2]?.content).toMatch(/not found or expired/);
   });
 
   it("策略：deny → 拒绝说明；ask → 建审批并暂停（之后的调用留到续跑）；decidePolicy 可注入", async () => {
@@ -652,6 +769,54 @@ describe("ToolPipeline.runStep", () => {
     });
   });
 
+  it("熔断只计远端不可用：5 次 ToolError（JSON-RPC 错误、鉴权失败等）不打开，第 6 次照常调用", async () => {
+    connCall = async () => {
+      throw new ToolError("The app returned an error: bad arguments.");
+    };
+    const calls = Array.from({ length: 6 }, (_, i) => ({
+      id: `c${i}`,
+      name: "docs__read",
+      input: {},
+    }));
+    const evs = await runCalls(calls);
+    expect(conn.calls).toBe(6);
+    expect(
+      resultsOf(evs).every((r) => r.content === "The app returned an error: bad arguments."),
+    ).toBe(true);
+    expect((await breaker.check(seed.orgId, appId)).open).toBe(false);
+  });
+
+  it("熔断：5 次 ToolError(kind unavailable)（HTTP 5xx 等）→ 打开", async () => {
+    connCall = async () => {
+      throw new ToolError("The app's server responded with HTTP 502.", { kind: "unavailable" });
+    };
+    const calls = Array.from({ length: 6 }, (_, i) => ({
+      id: `c${i}`,
+      name: "docs__read",
+      input: {},
+    }));
+    const evs = await runCalls(calls);
+    expect(conn.calls).toBe(5);
+    expect(resultsOf(evs)[5]?.content).toMatch(
+      /^Tool temporarily unavailable: Docs failed 5 times/,
+    );
+  });
+
+  it("熔断：5 次超时 → 打开", async () => {
+    toolsCfg = { timeoutMs: 50 };
+    connCall = () => new Promise<ToolResult>(() => {});
+    const calls = Array.from({ length: 6 }, (_, i) => ({
+      id: `c${i}`,
+      name: "docs__read",
+      input: {},
+    }));
+    const evs = await runCalls(calls);
+    expect(conn.calls).toBe(5);
+    expect(resultsOf(evs)[5]?.content).toMatch(
+      /^Tool temporarily unavailable: Docs failed 5 times/,
+    );
+  });
+
   it("工具自己报告的 isError 结果不计入熔断", async () => {
     connCall = async () => ({ content: [{ type: "text", text: "bad input" }], isError: true });
     const calls = Array.from({ length: 6 }, (_, i) => ({
@@ -709,7 +874,12 @@ describe("ToolPipeline.runStep", () => {
     expect(
       r?.content.startsWith(`${"x".repeat(10)}\n…\n[Output truncated: 300 chars, 1 lines.`),
     ).toBe(true);
-    expect(await outputs.load(seed.orgId, r?.outputId as string)).toBe("x".repeat(300));
+    expect(
+      await outputs.load(
+        { orgId: seed.orgId, conversationId: seed.conversationId },
+        r?.outputId as string,
+      ),
+    ).toBe("x".repeat(300));
     const row = await db
       .selectFrom("tool_outputs")
       .selectAll()
@@ -760,6 +930,17 @@ describe("ToolPipeline.runStep", () => {
       ["c3", 'echo {"text":"3"}', false],
     ]);
     expect(startedOf(evs).map((s) => s.callId)).toEqual(["c1", "c2", "c3"]);
+    // 结果未知的调用也审计（确实开始执行过）：isError true、durationMs null
+    const audits = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "tool.called")
+      .orderBy("id")
+      .execute();
+    expect(audits.map((a) => a.detail)).toEqual([
+      { toolKey: "probe__echo", isError: true, durationMs: null },
+      { toolKey: "probe__echo", isError: false, durationMs: expect.any(Number) },
+    ]);
   });
 
   it("run 已中止：剩余调用不执行，写明 run 已停止", async () => {
