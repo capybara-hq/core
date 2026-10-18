@@ -67,3 +67,27 @@ jobs:
             apps/web/test-results
             apps/web/e2e-logs
           retention-days: 7
+
+  visual:
+    runs-on: ubuntu-latest
+    # 基准截图只在此镜像中生成与比对（版本与 apps/web 的 @playwright/test 一致，升级时同步修改）。
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 截图回归（/dev/ui 目录页）
+        run: pnpm --filter @capybara-hq/web visual
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: visual-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 7

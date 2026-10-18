@@ -1,0 +1,45 @@
+name: 更新截图基准
+
+# 手动触发：在与 CI 相同的 Playwright 镜像中重新生成 /dev/ui 截图基准，并提交回指定分支。
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 要更新基准的分支
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 重新生成截图基准
+        run: pnpm --filter @capybara-hq/web visual:update
+      - name: 提交并推送
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "Grant"
+          git config user.email "284885069@qq.com"
+          git add apps/web/visual
+          if git diff --cached --quiet; then
+            echo "截图基准无变化"
+            exit 0
+          fi
+          git commit -m "test(web): 更新截图基准"
+          git push origin "HEAD:refs/heads/$BRANCH"

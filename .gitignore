@@ -2,3 +2,6 @@ node_modules
 dist
 coverage
 *.tsbuildinfo
+# 截图基准只入库 Docker 镜像（Linux）生成的版本
+apps/web/visual/**/*-darwin.png
+apps/web/visual/**/*-win32.png
