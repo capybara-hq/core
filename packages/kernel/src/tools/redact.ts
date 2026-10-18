@@ -4,13 +4,29 @@ import { createRedactor } from "../log.js";
 /**
  * 工具结果打码（Review Focus 3）：远端服务可能把收到的凭据回显在结果或错误里，而工具结果会进事件日志、
  * 工具输出存档并发给模型。管线在写入之前，用「本次调用实际注入的凭据」打码——值是精确已知的（不依赖进程内
- * logger 的打码集合，多副本下同样成立），匹配器与 logger 共用（`createRedactor`，只取长度 ≥ 12 的值，Ruling A2）。
+ * logger 的打码集合，多副本下同样成立），匹配器与 logger 共用（`createRedactor`）。
+ *
+ * 下限（Ruling A12）：按调用打码只用这一次调用自己的凭据，不存在「租户用短值遮蔽别人」的问题，所以下限取
+ * {@link RESULT_REDACT_MIN} = 6（短 API key 也遮住）；logger 的组织来源集合仍是 12（Ruling A2）。
  */
+
+/** 按调用打码工具结果的最短值长度。 */
+export const RESULT_REDACT_MIN = 6;
 
 const SCHEME = /^(?:Bearer|Basic|Token)\s+(.+)$/i;
 
-/** 一次注入里可能被回显的凭据值：头 / query 的值，`<scheme> <token>` 里的 token，Basic 解码后的串与密码。 */
+/**
+ * 一次注入里可能被回显的凭据值：头 / query 的值，`<scheme> <token>` 里的 token，Basic 解码后的串与密码，
+ * 以及它们的 `encodeURIComponent` 形式（query 参数、URL 里的回显是百分号编码的）。
+ */
 export function injectionSecrets(inj: AuthInjection): string[] {
+  const raw = rawSecrets(inj);
+  const out = new Set(raw);
+  for (const v of raw) out.add(encodeURIComponent(v));
+  return [...out];
+}
+
+function rawSecrets(inj: AuthInjection): string[] {
   const out: string[] = [];
   for (const v of [...Object.values(inj.headers), ...Object.values(inj.query ?? {})]) {
     out.push(v);
@@ -42,5 +58,5 @@ export function redactDeep(value: unknown, redact: (s: string) => string): unkno
 
 /** 由若干次注入构造打码函数。 */
 export function redactorFor(injections: readonly AuthInjection[]): (s: string) => string {
-  return createRedactor(injections.flatMap(injectionSecrets));
+  return createRedactor(injections.flatMap(injectionSecrets), RESULT_REDACT_MIN);
 }

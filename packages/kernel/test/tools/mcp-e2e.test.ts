@@ -141,6 +141,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         plugins: [MODEL_FAKE, CONNECTOR_MCP],
+        // 假服务在 127.0.0.1 上跑 http：测试打开本机 http（默认关闭）
+        pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
         roles: ["api", "worker"],
         tools: { timeoutMs: 2_000 },
       },
@@ -288,6 +290,52 @@ describe("connector-mcp 端到端", () => {
     }
   });
 
+  it("刷新时 resources 工具被连接器同名工具取代 → 来源改为 connector，默认策略按注解重新推导", async () => {
+    const opts: FakeMcpServerOptions = { tools: [], resources: [] };
+    const srv = await startFakeMcpServer(opts);
+    try {
+      const res = await call({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/apps`,
+        payload: {
+          name: "Notes",
+          slug: "notes",
+          connector: "mcp",
+          endpoint: { url: srv.url },
+          auth: { type: "none" },
+        },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      type Tool = { name: string; source: string; defaultPolicy: string };
+      const app = (res.json() as { app: { id: string; tools: Tool[] } }).app;
+      expect(app.tools.find((t) => t.name === "list_resources")).toMatchObject({
+        source: "resources",
+        defaultPolicy: "allow",
+      });
+
+      // 服务新增了自己的 list_resources（无注解）
+      opts.tools.push({ name: "list_resources", description: "Server's own listing" });
+      const r2 = await call({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/apps/${app.id}/refresh`,
+      });
+      expect(r2.statusCode, r2.body).toBe(200);
+      const after = r2.json() as { app: { tools: Tool[] }; changes: { changed: string[] } };
+      expect(after.changes.changed).toEqual(["list_resources"]);
+      expect(after.app.tools.find((t) => t.name === "list_resources")).toMatchObject({
+        source: "connector",
+        defaultPolicy: "ask",
+      });
+      // 未换来源的 read_resource 不受影响
+      expect(after.app.tools.find((t) => t.name === "read_resource")).toMatchObject({
+        source: "resources",
+        defaultPolicy: "allow",
+      });
+    } finally {
+      await srv.stop();
+    }
+  });
+
   it("只读工具直接执行；resources；超时；Review Focus 3：凭据回显处处打码", async () => {
     const { appId } = await installApp();
     const agentId = await agentFor(appId);
@@ -315,7 +363,7 @@ describe("connector-mcp 端到端", () => {
       isError: true,
     });
     const failLog = logLines.find((l) => l.includes("MCP request failed"));
-    expect(failLog).toContain("gateway saw Bearer [REDACTED]");
+    expect(failLog).toContain("gateway saw [REDACTED]");
 
     const huge = await runTool(convId, 5, "docs__huge", {});
     expect(huge.outputId).toEqual(expect.any(String));

@@ -74,12 +74,12 @@ export interface FakeMcpServerOptions {
   /** 每次工具调用（在处理函数之前）调用。 */
   onCall?: (info: FakeMcpCallInfo) => void;
   /**
-   * 在 MCP 处理之前拦截 HTTP 请求：返回 `{ status, body }` 时直接以该状态与正文响应（模拟网关报错、
-   * 正文回显请求头等），返回 undefined 时正常处理。
+   * 在 MCP 处理之前拦截 HTTP 请求：返回 `{ status, body, location? }` 时直接以该状态与正文响应（模拟网关报错、
+   * 正文回显请求头、重定向等），返回 undefined 时正常处理。
    */
   intercept?: (
     req: FakeMcpRequest & { body: unknown },
-  ) => { status: number; body: string } | undefined;
+  ) => { status: number; body: string; location?: string } | undefined;
 }
 
 export interface FakeMcpServer {
@@ -108,8 +108,11 @@ const readBody = (req: IncomingMessage): Promise<string> =>
     req.on("error", reject);
   });
 
-const send = (res: ServerResponse, status: number, body: string) => {
-  res.writeHead(status, { "content-type": "text/plain" });
+const send = (res: ServerResponse, status: number, body: string, location?: string) => {
+  res.writeHead(status, {
+    "content-type": "text/plain",
+    ...(location !== undefined && { location }),
+  });
   res.end(body);
 };
 
@@ -218,7 +221,7 @@ export async function startFakeMcpServer(opts: FakeMcpServerOptions): Promise<Fa
       return send(res, 401, "Unauthorized");
     }
     const over = opts.intercept?.({ ...entry, body });
-    if (over) return send(res, over.status, over.body);
+    if (over) return send(res, over.status, over.body, over.location);
     if (req.method !== "POST") return send(res, 405, "Method Not Allowed");
 
     const server = mcpServer(headers);

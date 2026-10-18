@@ -5,6 +5,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { KernelLogger } from "../log.js";
+import { injectionSecrets } from "./redact.js";
 
 export type Ownership = "org" | "personal";
 
@@ -203,6 +204,13 @@ export class Credentials {
    * 值缺字段 → CredentialMissing。
    */
   injectionFor(appId: string, auth: AppAuth, secret: StaticSecret): AuthInjection {
+    const inj = this.build(appId, auth, secret);
+    // 与工具结果打码同一套展开（含 scheme 后的 token、Basic 解码串、百分号编码形式）；logger 只收 ≥ 12 的值
+    this.log.addOrgSecrets(injectionSecrets(inj));
+    return inj;
+  }
+
+  private build(appId: string, auth: AppAuth, secret: StaticSecret): AuthInjection {
     if (auth.type === "none") return { headers: {} };
     const missing = () => new CredentialMissing(appId, auth.ownership);
     if (typeof secret !== "object" || secret === null) throw missing();
@@ -215,12 +223,10 @@ export class Credentials {
     switch (auth.type) {
       case "bearer": {
         if (!value.token) throw missing();
-        this.log.addOrgSecrets([value.token]);
         return { headers: { Authorization: `Bearer ${value.token}` } };
       }
       case "api_key": {
         if (!value.token) throw missing();
-        this.log.addOrgSecrets([value.token]);
         return auth.in === "header"
           ? { headers: { [auth.name]: value.token } }
           : { headers: {}, query: { [auth.name]: value.token } };
@@ -228,8 +234,6 @@ export class Credentials {
       case "basic": {
         if (value.username === undefined || value.password === undefined) throw missing();
         const encoded = Buffer.from(`${value.username}:${value.password}`).toString("base64");
-        // 密码、拼接串与 base64 都可能出现在日志里
-        this.log.addOrgSecrets([value.password, `${value.username}:${value.password}`, encoded]);
         return { headers: { Authorization: `Basic ${encoded}` } };
       }
       case "headers": {
@@ -239,7 +243,6 @@ export class Credentials {
           if (v === undefined) throw missing();
           headers[name] = v;
         }
-        this.log.addOrgSecrets(Object.values(headers));
         return { headers };
       }
     }

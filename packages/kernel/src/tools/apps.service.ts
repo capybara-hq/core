@@ -641,6 +641,11 @@ export class AppsService {
             spec: JSON.stringify(r.spec),
             spec_hash: r.specHash,
             source: r.source,
+            // 来源变了（内核的 resources 工具 ↔ 连接器同名工具）就是另一个工具：管理员为旧工具设的默认策略不沿用，
+            // 按新定义的注解重新推导（否则连接器的无注解工具会继承 resources 工具的 allow）
+            ...(before.get(r.name)?.source !== r.source && {
+              default_policy: policyFromAnnotations(r.spec.annotations),
+            }),
             ...(r.issue && { status: "disabled" as const }),
           })
           .where("app_id", "=", appId)
