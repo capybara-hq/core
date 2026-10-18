@@ -6,5 +6,6 @@ export * from "./overlays/index.js";
 export { DesignProvider, type LinkComponent, useDesignLink, useDesignT } from "./provider.js";
 export * from "./shell/index.js";
 export * from "./table/index.js";
+export * from "./templates/index.js";
 export { applyTheme, parseTheme, THEME_COOKIE, type Theme } from "./theme.js";
 export { TOKEN_NAMES, type TokenName } from "./tokens.js";
