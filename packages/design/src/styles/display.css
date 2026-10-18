@@ -24,7 +24,8 @@
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
-.cb-tab[data-state="selected"] {
+.cb-tab[data-state="selected"],
+.cb-tab[aria-current="page"] {
   color: var(--cb-ink);
   box-shadow: inset 0 -2px 0 var(--cb-accent);
 }
