@@ -60,14 +60,14 @@ interface ModelParameter {
 
 ## `@1` 兼容
 
-旧契约 `model-provider@1`（`ModelProviderV1` / `ModelInfoV1` / `ModelRequestV1`，`capabilities.effort` + `req.effort`）仍可用：内核经适配层由 `capabilities.effort` 推导 `effort` 旋钮（五档，不带默认值），并把 `params.effort` 映射为 `req.effort`。同一插件两者都提供时用 `@2`。新插件一律写 `@2`，`capabilities.effort` 已弃用。内核的模型列表缓存键带契约主版本，插件升级后不会读到旧契约写入的列表。
+旧契约 `model-provider@1`（`ModelProviderV1` / `ModelInfoV1` / `ModelRequestV1`，`capabilities.effort` + `req.effort`）仍可用：内核经适配层由 `capabilities.effort` 推导 `effort` 旋钮（五档，不带默认值），并把 `params.effort` 映射为 `req.effort`。同一插件两者都提供时用 `@2`。新插件一律写 `@2`，`capabilities.effort` 已弃用。内核的模型列表缓存键带契约主版本、插件版本与部署配置摘要，插件升级或改部署配置后各副本立即按新声明校验，不会读到旧列表。
 
 ## 方言预设（OpenAI 兼容接口）
 
 `plugins/openai-compatible` 用官方 `openai` SDK 的 `chat.completions` 接各家 Chat Completions 兼容服务。这类服务的差异（思考字段、用量字段、回放规则）收在 `src/dialects.ts` 的方言里：一个方言是纯数据加无状态的映射函数（`parameters(model)` 声明参数、`applyParams` 写请求体扩展字段、`readDelta` 读思考增量、`replayAssistant` 决定思考如何回放、`usage` 换算用量）。写法要点：
 
 - 每个字段都按供应商官方文档核实，注释里写明出处与核实时间；查不到的字段不实现。
-- 方言只看消息自身与请求级设定（模型、是否带工具、参数），不看其他消息——保持「只追加」。
+- 方言只看消息自身与请求级设定（模型及其部署属性、是否带工具、参数），不看其他消息——保持「只追加」（见下节）。
 - 新增方言：在 `dialects.ts` 加一个 `Dialect`，登记进 `DIALECTS` 与配置里的 `dialect` 枚举，补夹具与错误映射用例。
 - 对外模型 id 为 `<端点名>/<模型 id>`；密钥放顶层 `apiKeys`（端点名 → 密钥）——内核只认对象字段路径上的 `secret()`，放进 `endpoints[]` 数组元素里的密钥会导致插件被拒绝加载。
 
@@ -80,7 +80,8 @@ interface ModelParameter {
 
 内核保证「发给模型的历史只追加」：较早请求的消息序列是较晚请求的前缀（这也是提示词缓存能命中的前提）。插件的映射必须保住这一点：
 
-- **每条消息的映射只取决于它自己与请求模型**，不看后续消息、不按后续消息调整顺序、不合并或拆分已发送的消息。写成纯函数 `buildRequest(req)`，单测「请求 A 的映射结果是请求 A + 若干新消息的映射结果的前缀」。
+- **每条消息的映射只取决于它自己与请求级设定**（请求模型及其属性、请求的 `tools` 与 `params`），**不看其他消息**：不看后续消息、不按后续消息调整顺序、不合并或拆分已发送的消息。写成纯函数 `buildRequest(req)`，单测「请求 A 的映射结果是请求 A + 若干新消息（请求级设定不变）的映射结果的前缀」。例：DeepSeek 方言在带 tools 且未关闭思考的请求里给没有本模型思考的历史回合补空 `reasoning_content`——取决于请求级的 tools / thinking，不取决于其他消息。
+  - 代价：请求级设定在两次请求之间变化（如这一轮起带上 tools、或切换 thinking）时，较早回合的序列化随之改变，供应商的前缀缓存在变化点之前失效、多计一次输入费用；内核看到的历史仍然只追加，正确性不受影响。M3 接入工具后，tools 集合在会话中途变化时要留意这一点。
 - 中途 `system` 消息：供应商有不需要前后文的原生表达就用（openai 在原位置转成 `developer` 输入项，`midConversationSystem: true`）；原生表达有位置规则、需要看后续消息才能决定怎么放的，**不要用**，在原位置转成 user 文本块 `"[system] " + text`，并报 `midConversationSystem: false`。anthropic 就是这样：原生 system 的放置规则需要前瞻（后面跟着被跳过的空回合或失败的步骤时位置会变），会改写已发送的前缀。
 - 供应商私有块（思考、推理项）原样回放，不改写、不重排；不能回放的（见下）整块丢掉。
 - 历史缓存断点不要打在「最后一条消息的最后一个块」上：下一轮断点移到新的末尾块，已发送消息的字节随之改变。anthropic 用请求顶层的自动 `cache_control`（API 自己把断点放在最后一个可缓存的块上，占一个断点名额，system 已用满 4 个时不加）；openai 的缓存本来就是按前缀自动的。

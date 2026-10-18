@@ -12,7 +12,7 @@ import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.j
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
-import { PluginHost } from "../../src/plugins/host.js";
+import { deploymentConfigHash, PluginHost } from "../../src/plugins/host.js";
 
 // closefail 插件的 ctx.close() 失败（先真正关闭，避免泄漏连接），验证宿主记 warn
 vi.mock("../../src/ctx/create-ctx.js", async (importOriginal) => {
@@ -97,6 +97,26 @@ describe("PluginHost", () => {
         .sort(),
     ).toEqual(["fixture", "fixture-two"]);
     expect(h.routes().map((x) => `${x.method} ${x.path}`)).toEqual(["GET /plugins/fixture/hello"]);
+  });
+
+  it("list 带出插件版本与部署配置摘要（16 位十六进制，不含配置明文）", async () => {
+    const a = host({ fixture: { greeting: "yo" } });
+    await a.load([fx("fixture")]);
+    const b = host({ fixture: { greeting: "hey" } });
+    await b.load([fx("fixture")]);
+    const [ea] = a.list("counter");
+    const [eb] = b.list("counter");
+    expect(ea?.version).toBe(a.manifests()[0]?.version);
+    expect(ea?.configHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(ea?.configHash).not.toBe(eb?.configHash);
+  });
+
+  it("deploymentConfigHash：与键顺序无关、值变化即变化、不含明文", () => {
+    const h1 = deploymentConfigHash({ a: 1, b: { x: "s3cr3t", y: [1, 2] } });
+    expect(deploymentConfigHash({ b: { y: [1, 2], x: "s3cr3t" }, a: 1 })).toBe(h1);
+    expect(deploymentConfigHash({ a: 1, b: { x: "s3cr3t2", y: [1, 2] } })).not.toBe(h1);
+    expect(h1).toMatch(/^[0-9a-f]{16}$/);
+    expect(h1).not.toContain("s3cr3t");
   });
 
   it("配置缺省时使用 schema 默认值", async () => {

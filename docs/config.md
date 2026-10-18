@@ -27,7 +27,7 @@
 | `runtime.maxSteps` | `CAPYBARA_RUNTIME__MAX_STEPS` | `number` | `50` | 否 | 否 | Maximum model steps per agent run before the final wrap-up |
 | `runtime.maxRunSeconds` | `CAPYBARA_RUNTIME__MAX_RUN_SECONDS` | `number` | `900` | 否 | 否 | Maximum wall-clock duration of one agent run in seconds |
 | `runtime.streamIdleMs` | `CAPYBARA_RUNTIME__STREAM_IDLE_MS` | `number` | `60000` | 否 | 否 | Default model stream idle watchdog in milliseconds (a model's own streamIdleTimeoutMs takes precedence) |
-| `runtime.maxOutputTokens` | `CAPYBARA_RUNTIME__MAX_OUTPUT_TOKENS` | `number` | `16000` | 否 | 否 | Upper bound on output tokens per model call (the model's own limit applies if lower) |
+| `runtime.maxOutputTokens` | `CAPYBARA_RUNTIME__MAX_OUTPUT_TOKENS` | `number` | `16000` | 否 | 否 | Default output-token limit per model call when the agent does not set maxOutputTokens (an agent's maxOutputTokens overrides it; either is capped by the model's own maximum) |
 | `runtime.compactionThreshold` | `CAPYBARA_RUNTIME__COMPACTION_THRESHOLD` | `number` | `0.8` | 否 | 否 | Compact the conversation when the estimated input reaches this fraction of the context window |
 | `runtime.keepRecentTurns` | `CAPYBARA_RUNTIME__KEEP_RECENT_TURNS` | `number` | `4` | 否 | 否 | Number of recent user turns kept verbatim when compacting |
 | `runtime.workerConcurrency` | `CAPYBARA_RUNTIME__WORKER_CONCURRENCY` | `number` | `10` | 否 | 否 | Maximum agent runs executed concurrently by one worker process |

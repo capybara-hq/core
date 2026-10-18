@@ -185,7 +185,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Upper bound on output tokens per model call (the model's own limit applies if lower)",
+              "Default output-token limit per model call when the agent does not set maxOutputTokens (an agent's maxOutputTokens overrides it; either is capped by the model's own maximum)",
           }),
         ),
       compactionThreshold: z

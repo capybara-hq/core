@@ -74,10 +74,22 @@ describe("ProviderRegistry", () => {
     await registry.list();
     await registry.list();
     expect(fakeBCalls(k.host) - before).toBe(1);
-    const ttl = await redis.ttl("capk:models:model-fake-b:v2");
+    const [keyB] = await redis.keys("capk:models:model-fake-b:v2:*");
+    const [keyA] = await redis.keys("capk:models:model-fake:v2:*");
+    const ttl = await redis.ttl(keyB as string);
     expect(ttl).toBeGreaterThan(590);
     expect(ttl).toBeLessThanOrEqual(600);
-    expect(await redis.ttl("capk:models:model-fake:v2")).toBeGreaterThan(590);
+    expect(await redis.ttl(keyA as string)).toBeGreaterThan(590);
+  });
+
+  it("缓存键带插件版本与部署配置摘要（capk:models:<provider>:v<主版本>:<版本>:<摘要>），不含配置明文", async () => {
+    await registry.list();
+    const entry = k.host.list("model-provider").find((p) => p.plugin === "model-fake-b");
+    expect(entry?.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(entry?.configHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(await redis.keys("capk:models:model-fake-b:*")).toEqual([
+      `capk:models:model-fake-b:v2:${entry?.version}:${entry?.configHash}`,
+    ]);
   });
 
   it("resolve 返回供应商实现与模型信息", async () => {
@@ -204,7 +216,13 @@ describe("model-provider@1 / @2", () => {
     return { impl, seen, calls: () => calls };
   };
   const reg = (
-    entries: { plugin: string; capability: CapabilityRef; impl: unknown }[],
+    entries: {
+      plugin: string;
+      capability: CapabilityRef;
+      impl: unknown;
+      version?: string;
+      configHash?: string;
+    }[],
     warns: unknown[] = [],
   ) =>
     new ProviderRegistry({ list: () => entries }, redis, {
@@ -312,11 +330,11 @@ describe("model-provider@1 / @2", () => {
     expect(err).not.toBeInstanceOf(ProviderListError);
     expect((err as ApiError).code).toBe("agent.model_unavailable");
     expect(((err as ApiError).cause as Error).message).toMatch(/"style"/);
-    expect(await redis.exists("capk:models:p2:v2")).toBe(0);
+    expect(await redis.exists("capk:models:p2:v2:-:-")).toBe(0);
   });
 
   it("缓存中缺少 parameters 的旧条目视为未命中，重新列模型", async () => {
-    await redis.set("capk:models:p2:v2", JSON.stringify([{ id: "stale" }]), "EX", 600);
+    await redis.set("capk:models:p2:v2:-:-", JSON.stringify([{ id: "stale" }]), "EX", 600);
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
     const [entry] = await r.list();
@@ -332,12 +350,26 @@ describe("model-provider@1 / @2", () => {
     ]);
     const [before] = await old.list();
     expect(before?.models[0]?.parameters.map((d) => d.key)).toEqual(["effort"]);
-    expect(await redis.exists("capk:models:p2:v1")).toBe(1);
+    expect(await redis.exists("capk:models:p2:v1:-:-")).toBe(1);
     const p = v2();
     const upgraded = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
     const [after] = await upgraded.list();
     expect(after?.models[0]?.parameters).toEqual(v2Params);
     expect(p.calls()).toBe(1);
+  });
+
+  it("插件版本或部署配置变化 → 缓存未命中，重新列模型（升级后不按旧声明校验）", async () => {
+    const p = v2();
+    const at = (version: string, configHash: string) =>
+      reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl, version, configHash }]);
+    await at("1.0.0", "aaaa").list();
+    expect(p.calls()).toBe(1);
+    await at("1.0.0", "aaaa").list();
+    expect(p.calls()).toBe(1);
+    await at("1.1.0", "aaaa").list();
+    expect(p.calls()).toBe(2);
+    await at("1.1.0", "bbbb").list();
+    expect(p.calls()).toBe(3);
   });
 
   it("不支持的主版本被忽略并记 warn", async () => {

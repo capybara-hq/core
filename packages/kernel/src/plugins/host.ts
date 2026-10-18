@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,11 +21,45 @@ import {
 import { migrate } from "../db/migrator.js";
 import { resolvePlugins } from "./resolve.js";
 
+/** 键排序后的 JSON（对象键顺序不影响结果）；undefined 字段与 JSON.stringify 一样省略。 */
+const canonicalJson = (v: unknown): string => {
+  if (Array.isArray(v))
+    return `[${v.map((x) => (x === undefined ? "null" : canonicalJson(x))).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const entries = Object.entries(v as Record<string, unknown>)
+      .filter(([, x]) => x !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+};
+
+/**
+ * 插件部署配置（校验后）的摘要：sha256(键排序 JSON) 取前 16 位十六进制。
+ * 给需要「配置变了就失效」的缓存键用（如模型列表）；只放摘要，配置里的 secret 不进键。
+ * 同一份配置在各副本上得到同一摘要。
+ */
+export const deploymentConfigHash = (config: unknown): string =>
+  createHash("sha256").update(canonicalJson(config)).digest("hex").slice(0, 16);
+
 interface Loaded {
   manifest: PluginManifest;
+  /** 部署配置摘要，见 {@link deploymentConfigHash}。 */
+  configHash: string;
   provided: Map<CapabilityRef, unknown>;
   routes: Route[];
   close(): Promise<void>;
+}
+
+/** {@link PluginHost.list} 的一项。 */
+export interface PluginCapabilityEntry {
+  plugin: string;
+  capability: CapabilityRef;
+  impl: unknown;
+  /** 插件清单的 version。 */
+  version: string;
+  /** 部署配置摘要，见 {@link deploymentConfigHash}。 */
+  configHash: string;
 }
 
 const CLOSED_DURING_LOAD = "plugin host closed during load";
@@ -254,7 +289,13 @@ export class PluginHost {
         await this.closeQuietly(ctx, name);
         throw new Error(CLOSED_DURING_LOAD);
       }
-      this.loaded.push({ manifest, provided: ctx.provided, routes: ctx.routes, close: ctx.close });
+      this.loaded.push({
+        manifest,
+        configHash: deploymentConfigHash(config),
+        provided: ctx.provided,
+        routes: ctx.routes,
+        close: ctx.close,
+      });
     }
   }
 
@@ -292,13 +333,20 @@ export class PluginHost {
   /**
    * 列出提供某能力（任意主版本）的所有插件及实现；`capability` 为完整引用（含主版本），
    * 同一插件提供多个主版本时各占一项，由调用方按主版本选择。
+   * 每项带插件版本与部署配置摘要（{@link deploymentConfigHash}），供调用方做「插件升级 / 改配置即失效」的缓存键。
    */
-  list(capabilityName: string): { plugin: string; capability: CapabilityRef; impl: unknown }[] {
-    const out: { plugin: string; capability: CapabilityRef; impl: unknown }[] = [];
+  list(capabilityName: string): PluginCapabilityEntry[] {
+    const out: PluginCapabilityEntry[] = [];
     for (const l of this.loaded) {
       for (const [cap, impl] of l.provided) {
         if (parseCapability(cap).name === capabilityName) {
-          out.push({ plugin: l.manifest.name, capability: cap, impl });
+          out.push({
+            plugin: l.manifest.name,
+            capability: cap,
+            impl,
+            version: l.manifest.version,
+            configHash: l.configHash,
+          });
         }
       }
     }
