@@ -262,3 +262,99 @@ describe("DataTable fixes", () => {
     expect(screen.getByRole("checkbox", { name: "选择 行a" })).toBeTruthy();
   });
 });
+
+describe("清理：行的 aria 状态、行内控件 roving tabindex、默认空文案", () => {
+  it("勾选行 aria-selected=true、未勾选 false；选中行 aria-current=true", () => {
+    render(<Harness initial={["b"]} activeKey="c" />);
+    const [ra, rb, rc] = screen.getAllByRole("row").slice(1);
+    expect(ra?.getAttribute("aria-selected")).toBe("false");
+    expect(rb?.getAttribute("aria-selected")).toBe("true");
+    expect(rc?.getAttribute("aria-current")).toBe("true");
+    expect(ra?.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("无 selection 时不输出 aria-selected", () => {
+    plain({});
+    expect(screen.getAllByRole("row")[1]?.hasAttribute("aria-selected")).toBe(false);
+  });
+
+  it("只有 Tab 停靠行的复选框与 ⋯ 在 Tab 顺序里；Tab 不在每行停留", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <Harness rowMenu={() => [{ label: "复制", onSelect() {} }]} />
+        <button type="button">表格之后</button>
+      </>,
+    );
+    const rows = screen.getAllByRole("row").slice(1);
+    const boxes = rows.map((r) => within(r).getByRole("checkbox") as HTMLInputElement);
+    const menus = rows.map((r) => within(r).getByRole("button", { name: "行操作" }));
+    expect(boxes.map((b) => b.tabIndex)).toEqual([0, -1, -1]);
+    expect(menus.map((b) => b.tabIndex)).toEqual([0, -1, -1]);
+    // 全选 → 第一行 → 行复选框 → 行菜单 → 表格之后
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("checkbox", { name: "全选" }));
+    await user.tab();
+    expect(document.activeElement).toBe(rows[0]);
+    await user.tab();
+    expect(document.activeElement).toBe(boxes[0]);
+    await user.tab();
+    expect(document.activeElement).toBe(menus[0]);
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "表格之后" }));
+  });
+
+  it("焦点移到另一行（含点击其复选框）后，该行的控件进入 Tab 顺序", async () => {
+    const user = userEvent.setup();
+    render(<Harness rowMenu={() => [{ label: "复制", onSelect() {} }]} />);
+    const rows = screen.getAllByRole("row").slice(1);
+    rows[0]?.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(rows[1]);
+    const box = (r?: HTMLElement) =>
+      within(r as HTMLElement).getByRole("checkbox") as HTMLInputElement;
+    expect(box(rows[1]).tabIndex).toBe(0);
+    expect(box(rows[0]).tabIndex).toBe(-1);
+    await user.click(box(rows[2]));
+    expect(box(rows[2]).tabIndex).toBe(0);
+    expect(rows[2]?.tabIndex).toBe(0);
+  });
+
+  it("rows=[] 且未给 empty / noResults：显示默认「暂无数据」", () => {
+    plain({ rows: [] });
+    expect(screen.getByText("暂无数据")).toBeTruthy();
+  });
+
+  it("英文默认文案 No data", () => {
+    render(
+      <DesignProvider locale="en">
+        <DataTable<Row> columns={columns} rows={[]} rowKey={(r) => r.id} label="t" />
+      </DesignProvider>,
+    );
+    expect(screen.getByText("No data")).toBeTruthy();
+  });
+});
+
+describe("清理：卡片内无框表格的行状态底色", () => {
+  it("卡片内每个带底色的行状态都按有框表格的层叠方式重写（悬停、选中、展开、批量栏）", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    const card = css.slice(css.indexOf("/* 嵌入 Card"));
+    const scope = '.cb-card .cb-table[data-framed="false"]';
+    const rule = (sel: string) => {
+      const at = card.indexOf(`${scope} ${sel}`);
+      expect(at, sel).toBeGreaterThan(-1);
+      return card.slice(card.indexOf("{", at), card.indexOf("}", at));
+    };
+    expect(rule(".cb-table-el td")).toContain("var(--cb-panel)");
+    expect(rule(".cb-table-el .cb-table-row:hover td")).toContain("var(--cb-hover)");
+    expect(rule('.cb-table-el .cb-table-row[data-state~="active"] td')).toContain(
+      "linear-gradient(var(--cb-accent-tint), var(--cb-accent-tint)), var(--cb-panel)",
+    );
+    expect(rule(".cb-table-el .cb-table-expand td")).toContain("var(--cb-hover)");
+    expect(rule(".cb-table-bulk")).toContain("var(--cb-hover)");
+    // 勾选 / 禁用在有框表格里没有底色，卡片里也不应单独加
+    expect(card).not.toMatch(/data-state~="(checked|disabled)"/);
+  });
+});

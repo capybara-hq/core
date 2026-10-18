@@ -61,7 +61,7 @@ export function EmptyArea<T>({
   return (
     <div className="cb-table-empty" data-empty="empty">
       <Logo tone="muted" />
-      <div className="cb-table-empty-title">{empty?.title}</div>
+      <div className="cb-table-empty-title">{empty?.title ?? t("table.noData")}</div>
       {empty?.hint ? <div className="cb-table-empty-hint">{empty.hint}</div> : null}
       {empty?.action}
     </div>

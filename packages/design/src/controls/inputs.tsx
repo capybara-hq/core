@@ -3,10 +3,12 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
+  useRef,
   useState,
 } from "react";
 import { useDesignT } from "../provider";
 import type { ControlA11y } from "./a11y";
+import { useNumberDraft } from "./number-draft";
 import { stepDecimals } from "./step";
 
 export function Input({
@@ -40,21 +42,27 @@ function lineCount(v: unknown): number {
 export function Textarea({
   code,
   onChange,
+  onScroll,
   ...rest
 }: TextareaHTMLAttributes<HTMLTextAreaElement> & { code?: boolean }) {
   const [lines, setLines] = useState(() => lineCount(rest.value ?? rest.defaultValue));
   const shown = code && rest.value !== undefined ? lineCount(rest.value) : lines;
+  const gutterLines = useRef<HTMLDivElement>(null);
   return (
     <div
       className="cb-textarea"
       data-state={rest.disabled ? "disabled" : rest["aria-invalid"] ? "error" : undefined}
     >
       {code ? (
+        // 行号栏不撑高输入框：占位元素只决定栏宽，行号绝对定位并随 textarea 的 scrollTop 平移
         <div className="cb-textarea-gutter" data-code="true" aria-hidden="true">
-          {Array.from({ length: shown }, (_, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: 行号按位置稳定
-            <span key={i}>{i + 1}</span>
-          ))}
+          <span className="cb-textarea-gutter-size">{shown}</span>
+          <div className="cb-textarea-gutter-lines" ref={gutterLines}>
+            {Array.from({ length: shown }, (_, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: 行号按位置稳定
+              <span key={i}>{i + 1}</span>
+            ))}
+          </div>
         </div>
       ) : null}
       <textarea
@@ -63,6 +71,12 @@ export function Textarea({
         onChange={(e) => {
           setLines(lineCount(e.target.value));
           onChange?.(e);
+        }}
+        onScroll={(e) => {
+          if (gutterLines.current) {
+            gutterLines.current.style.transform = `translateY(${-e.currentTarget.scrollTop}px)`;
+          }
+          onScroll?.(e);
         }}
       />
     </div>
@@ -115,6 +129,13 @@ export function Stepper({
     Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, n));
   const decimals = stepDecimals(step);
   const bump = (d: number) => onChange(clamp(Number((value + d * step).toFixed(decimals))));
+  const draft = useNumberDraft({
+    value,
+    min,
+    max,
+    normalize: (n) => clamp(Number(n.toFixed(decimals))),
+    onCommit: onChange,
+  });
   return (
     <div className="cb-stepper" data-state={disabled ? "disabled" : undefined}>
       <button
@@ -131,14 +152,10 @@ export function Stepper({
         type="number"
         aria-label={label}
         disabled={disabled}
-        value={value}
         min={min}
         max={max}
         step={step}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (e.target.value !== "" && Number.isFinite(n)) onChange(clamp(n));
-        }}
+        {...draft}
       />
       <button
         type="button"

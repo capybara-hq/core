@@ -109,6 +109,10 @@
   gap: 8px;
   margin-top: 16px;
 }
+.cb-dialog-error {
+  margin-top: 12px;
+  color: var(--cb-fail);
+}
 .cb-dialog-confirm code {
   color: var(--cb-ink);
   font-family: inherit;
@@ -168,7 +172,9 @@
 .cb-menu {
   padding: 4px 0;
 }
-[data-active="true"]:is(.cb-btn, button) {
+/* 悬停时也保持（与按钮变体的 :hover 规则同优先级，本文件在后） */
+[data-cb-trigger][data-active="true"],
+[data-cb-trigger][data-active="true"]:hover:not(:disabled) {
   border-color: var(--cb-accent);
 }
 .cb-menu-item {
@@ -186,7 +192,12 @@
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
 }
-[data-state="open"]:is(.cb-btn, button) {
+/* 打开态只作用于 Menu / Popover 的触发按钮；实心填充（primary / danger-solid）保持原色；悬停时也保持。 */
+[data-cb-trigger][data-state="open"]:not([data-variant="primary"], [data-variant="danger-solid"]),
+[data-cb-trigger][data-state="open"]:not(
+  [data-variant="primary"],
+  [data-variant="danger-solid"]
+):hover {
   background: var(--cb-line);
 }
 .cb-menu-link {
@@ -218,14 +229,23 @@
   z-index: var(--cb-z-toast);
   display: flex;
   flex-direction: column;
-  gap: 8px;
   width: min(360px, calc(100vw - 32px));
   pointer-events: auto;
 }
-.cb-toast {
+.cb-toast-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
+}
+.cb-toast-group:not(:empty) + .cb-toast-group:not(:empty) {
+  margin-top: 8px;
+}
+.cb-toast {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 4px;
   padding: 8px 8px 8px 16px;
   background: var(--cb-panel);
   color: var(--cb-ink);
@@ -244,9 +264,15 @@
 }
 .cb-toast-head {
   display: flex;
+  grid-column: 1;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+.cb-toast-close {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
 }
 .cb-toast-msg {
   flex: 1;
@@ -266,8 +292,8 @@
 }
 .cb-toast-bar {
   display: flex;
+  grid-column: 1;
   gap: 4px;
-  margin-right: 32px;
   padding-bottom: 4px;
 }
 .cb-toast-bar span {

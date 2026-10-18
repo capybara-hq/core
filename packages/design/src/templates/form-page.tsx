@@ -27,6 +27,8 @@ export function FormPage({
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
+      // 旧版 Chrome / Safari 只认 returnValue
+      e.returnValue = "";
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);

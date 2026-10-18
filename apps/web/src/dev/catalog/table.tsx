@@ -1,5 +1,6 @@
 import {
   Button,
+  Card,
   type Column,
   DataTable,
   Input,
@@ -73,6 +74,7 @@ export function TraceSummary() {
 /** `/dev/ui/table`：spec §6.6 行状态、批量栏、行内菜单、展开、排序、分页与四种空状态。 */
 export function TableCatalog() {
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set(TABLE_CHECKED));
+  const [cardChecked, setCardChecked] = useState<ReadonlySet<string>>(new Set(TABLE_CHECKED));
   const [active, setActive] = useState(TABLE_SELECTED_KEY);
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" }>({
     key: "at",
@@ -120,6 +122,29 @@ export function TableCatalog() {
             onPageSize: setPageSize,
           }}
         />
+      </Section>
+      <Section
+        title="嵌入卡片（framed={false}）"
+        note="同样的勾选 / 选中 / 展开 / 禁用行状态；行底随卡片 panel，选中淡底与展开行叠在其上"
+      >
+        <Card title="最近运行">
+          <DataTable<TableRun>
+            label="运行记录（卡片内）"
+            framed={false}
+            density="compact"
+            columns={PLAIN_COLUMNS}
+            rows={TABLE_RUNS}
+            rowKey={(r) => r.id}
+            rowLabel={(r) => r.id}
+            selection={{ selected: cardChecked, onChange: setCardChecked }}
+            bulkActions={() => <Button size={24}>导出</Button>}
+            activeKey={active}
+            onOpen={(r) => setActive(r.id)}
+            rowMenu={() => RUN_MENU}
+            expand={(r) => (r.id === TABLE_EXPANDED_KEY ? <TraceLines /> : null)}
+            isDisabled={(r) => r.id === TABLE_DISABLED_KEY}
+          />
+        </Card>
       </Section>
       <Section title="工具栏与紧凑行" note="搜索、已应用筛选、清除全部、排序；行高 28">
         <DataTable<TableRun>

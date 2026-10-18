@@ -217,16 +217,19 @@ export function DataTable<T>({
                 const first = columns[0]?.cell(row);
                 const rowName = rowLabel?.(row) ?? (typeof first === "string" ? first : key);
                 const extra = expand?.(row);
+                // 行内控件随行做 roving tabindex：只有 Tab 停靠行的复选框 / ⋯ 在 Tab 顺序里
+                const inTabRow = key === tabKey ? 0 : -1;
                 return (
                   <Fragment key={key}>
                     <tr
                       className="cb-table-row"
                       data-row-key={key}
                       data-state={states || undefined}
+                      aria-selected={selection ? selected.has(key) : undefined}
+                      aria-current={key === activeKey ? "true" : undefined}
                       tabIndex={key === tabKey ? 0 : -1}
-                      onFocus={(e) => {
-                        if (e.target === e.currentTarget) setFocusKey(key);
-                      }}
+                      // 焦点进入行内任意控件（如点击复选框）也让该行成为 Tab 停靠行
+                      onFocus={() => setFocusKey(key)}
                       onKeyDown={(e) => onRowKey(e, row, idx)}
                       onClick={(e) => onRowClick(e, row)}
                     >
@@ -236,6 +239,7 @@ export function DataTable<T>({
                             checked={selected.has(key)}
                             onChange={() => toggle(key)}
                             disabled={disabled}
+                            tabIndex={inTabRow}
                             aria-label={t("table.selectRow").replace("{name}", rowName)}
                           />
                         </td>
@@ -259,7 +263,12 @@ export function DataTable<T>({
                           <Menu
                             items={rowMenu(row)}
                             trigger={
-                              <IconButton size={24} label={t("table.rowActions")} icon="⋯" />
+                              <IconButton
+                                size={24}
+                                label={t("table.rowActions")}
+                                icon="⋯"
+                                tabIndex={inTabRow}
+                              />
                             }
                           />
                         </td>

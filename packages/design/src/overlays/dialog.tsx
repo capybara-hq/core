@@ -13,6 +13,8 @@ export type DialogProps = {
   footer: ReactNode;
   initialFocus?: "primary" | "cancel" | undefined;
   danger?: boolean;
+  /** 描述正文的元素 id，作为对话框的 aria-describedby。 */
+  describedBy?: string | undefined;
   children?: ReactNode;
 };
 
@@ -24,6 +26,7 @@ export function Dialog({
   footer,
   initialFocus = "primary",
   danger,
+  describedBy,
   children,
 }: DialogProps) {
   const t = useDesignT();
@@ -37,7 +40,7 @@ export function Dialog({
           className="cb-dialog"
           data-size={size}
           data-danger={danger ? "true" : undefined}
-          aria-describedby={undefined}
+          aria-describedby={describedBy}
           onCloseAutoFocus={focusReturn.restore}
           onOpenAutoFocus={(e) => {
             focusReturn.capture();
@@ -93,10 +96,18 @@ export function DangerConfirm({
 }: DangerConfirmProps) {
   const t = useDesignT();
   const inputId = useId();
+  const descId = useId();
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // 每次开 / 关递增：关闭后才结束的 onConfirm 不再改动下一次打开的状态
+  const session = useRef(0);
   useEffect(() => {
-    if (!open) setTyped("");
+    session.current += 1;
+    if (open) return;
+    setTyped("");
+    setBusy(false);
+    setError(null);
   }, [open]);
   const matched = typed === confirmName;
   return (
@@ -106,6 +117,7 @@ export function DangerConfirm({
       title={title}
       danger
       initialFocus="cancel"
+      describedBy={descId}
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
@@ -116,11 +128,20 @@ export function DangerConfirm({
             disabled={!matched}
             loading={busy}
             onClick={async () => {
+              const current = session.current;
               setBusy(true);
+              setError(null);
               try {
                 await onConfirm();
+              } catch (err) {
+                // 失败时保持对话框打开，在正文下方显示原因，用户可重试或取消
+                if (session.current === current) {
+                  setError(
+                    err instanceof Error && err.message ? err.message : t("overlay.actionFailed"),
+                  );
+                }
               } finally {
-                setBusy(false);
+                if (session.current === current) setBusy(false);
               }
             }}
           >
@@ -129,7 +150,9 @@ export function DangerConfirm({
         </>
       }
     >
-      <div className="cb-dialog-desc">{description}</div>
+      <div className="cb-dialog-desc" id={descId}>
+        {description}
+      </div>
       <div className="cb-dialog-confirm">
         <label htmlFor={inputId}>
           {t("overlay.typeToConfirm")} <code>{confirmName}</code>
@@ -141,6 +164,11 @@ export function DangerConfirm({
           autoComplete="off"
         />
       </div>
+      {error ? (
+        <div className="cb-dialog-error" role="alert">
+          {`✗ ${error}`}
+        </div>
+      ) : null}
     </Dialog>
   );
 }

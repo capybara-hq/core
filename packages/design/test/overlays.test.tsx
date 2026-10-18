@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
@@ -276,13 +278,38 @@ describe("Toast", () => {
     );
     act(() => screen.getByRole("button", { name: "prog" }).click());
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
-    // 标题、计数、关闭在同一行（进度条在其后另起一行）
+    // 两列网格：标题行（标题 + 计数）与关闭按钮同在第一行，进度条在第二行左列，
+    // 宽度由网格列决定，不再用写死的右外边距让出关闭按钮
     const toast = screen.getByText("上传").closest(".cb-toast") as HTMLElement;
     const head = toast.querySelector(".cb-toast-head") as HTMLElement;
     expect(head.textContent).toContain("上传");
     expect(within(head).getByText("1/4")).toBeTruthy();
-    expect(within(head).getByRole("button", { name: "关闭" })).toBeTruthy();
-    expect(head.nextElementSibling?.getAttribute("role")).toBe("progressbar");
+    const close = head.nextElementSibling as HTMLElement;
+    expect(close.className).toBe("cb-toast-close");
+    expect(within(close).getByRole("button", { name: "关闭" })).toBeTruthy();
+    expect(close.nextElementSibling?.getAttribute("role")).toBe("progressbar");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/overlays.css"), "utf8");
+    const bar = css.match(/\.cb-toast-bar \{([^}]*)\}/)?.[1] ?? "";
+    expect(bar).toContain("grid-column: 1");
+    expect(bar).not.toMatch(/margin/);
+    act(() => screen.getByRole("button", { name: "关闭" }).click());
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+  it("error（role=alert）不在 aria-live 区域内；success 在 role=status 区域内", () => {
+    zh(
+      <ToastProvider>
+        <T />
+      </ToastProvider>,
+    );
+    act(() => screen.getByRole("button", { name: "ok" }).click());
+    act(() => screen.getByRole("button", { name: "err" }).click());
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("失败了");
+    expect(alert.parentElement?.closest("[aria-live], [role=status], [role=alert]")).toBeNull();
+    const ok = screen.getByText("已保存").closest(".cb-toast") as HTMLElement;
+    const live = ok.closest("[aria-live]");
+    expect(live?.getAttribute("role")).toBe("status");
+    expect(live?.contains(alert)).toBe(false);
   });
 });
 
@@ -312,5 +339,117 @@ describe("CommandPalette", () => {
     await user.keyboard("{Enter}");
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).not.toHaveBeenCalled();
+  });
+});
+
+describe("清理：DangerConfirm 失败、关闭与描述", () => {
+  function H({ onConfirm }: { onConfirm(): Promise<void> }) {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          re
+        </button>
+        <DangerConfirm
+          open={open}
+          onOpenChange={setOpen}
+          title="删除 Agent"
+          description="不可恢复"
+          confirmName="abc"
+          confirmLabel="确认删除"
+          onConfirm={onConfirm}
+        />
+      </>
+    );
+  }
+
+  it("描述通过 aria-describedby 关联到对话框", () => {
+    zh(<H onConfirm={async () => {}} />);
+    const dlg = screen.getByRole("dialog");
+    const id = dlg.getAttribute("aria-describedby");
+    expect(id).toBeTruthy();
+    expect(document.getElementById(id as string)?.textContent).toBe("不可恢复");
+  });
+
+  it("onConfirm 拒绝：对话框保持打开、停止加载、显示错误", async () => {
+    const user = userEvent.setup();
+    zh(<H onConfirm={() => Promise.reject(new Error("E_CONFLICT · 仍有运行中的任务"))} />);
+    await user.type(screen.getByRole("textbox"), "abc");
+    const confirm = screen.getByRole("button", { name: "确认删除" }) as HTMLButtonElement;
+    await user.click(confirm);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("✗ E_CONFLICT · 仍有运行中的任务");
+    expect(confirm.getAttribute("aria-busy")).toBeNull();
+    expect(confirm.disabled).toBe(false);
+  });
+
+  it("非 Error 的拒绝显示通用文案", async () => {
+    const user = userEvent.setup();
+    zh(<H onConfirm={() => Promise.reject("x")} />);
+    await user.type(screen.getByRole("textbox"), "abc");
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+    expect(screen.getByRole("alert").textContent).toBe("✗ 操作失败，请重试");
+  });
+
+  it("处理中关闭再打开：busy 与错误已重置", async () => {
+    const user = userEvent.setup();
+    let reject: (e: Error) => void = () => {};
+    zh(
+      <H
+        onConfirm={() =>
+          new Promise<void>((_, rej) => {
+            reject = rej;
+          })
+        }
+      />,
+    );
+    await user.type(screen.getByRole("textbox"), "abc");
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+    expect(screen.getByRole("button", { name: "确认删除" }).getAttribute("aria-busy")).toBe("true");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    act(() => screen.getByRole("button", { name: "re", hidden: true }).click());
+    const confirm = screen.getByRole("button", { name: "确认删除" });
+    expect(confirm.getAttribute("aria-busy")).toBeNull();
+    await act(async () => reject(new Error("迟到的失败")));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("清理：Menu 禁用的导航项", () => {
+  it("href + disabled 不渲染链接、aria-disabled，选中不跳转", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    zh(
+      <Menu
+        trigger={<button type="button">更多</button>}
+        items={[
+          { label: "设置", href: "/settings", disabled: true, onSelect },
+          { label: "文档", href: "/docs" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    const menu = await screen.findByRole("menu");
+    const disabled = within(menu).getByRole("menuitem", { name: "设置" });
+    expect(disabled.getAttribute("aria-disabled")).toBe("true");
+    expect(disabled.tagName).not.toBe("A");
+    expect(disabled.querySelector("a")).toBeNull();
+    await user.click(disabled);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(within(menu).getByRole("menuitem", { name: "文档" }).getAttribute("href")).toBe("/docs");
+  });
+
+  it("Menu / Popover 的触发按钮带 data-cb-trigger；打开态底色只作用于它们且不覆盖实心变体", async () => {
+    const user = userEvent.setup();
+    zh(<Menu trigger={<Button>更多</Button>} items={[{ label: "复制", onSelect() {} }]} />);
+    const trigger = screen.getByRole("button", { name: "更多" });
+    expect(trigger.getAttribute("data-cb-trigger")).toBe("menu");
+    await user.click(trigger);
+    expect(trigger.getAttribute("data-state")).toBe("open");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/overlays.css"), "utf8");
+    expect(css).not.toMatch(/\[data-state="open"\]:is\(/);
+    expect(css).toMatch(
+      /\[data-cb-trigger\]\[data-state="open"\]:not\(\[data-variant="primary"\], \[data-variant="danger-solid"\]\)/,
+    );
   });
 });

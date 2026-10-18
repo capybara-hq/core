@@ -475,3 +475,33 @@ describe("Body 折叠与关闭、数值 0", () => {
     expect(screen.getByText("0")).toBeTruthy();
   });
 });
+
+describe("清理：PageHeader 链接操作", () => {
+  it("href 操作与按钮一样显示快捷键提示", () => {
+    zh(
+      <PageHeader
+        title="t"
+        actions={[
+          { label: "编辑", variant: "default", href: "/edit", shortcut: "E" },
+          { label: "保存", variant: "primary", shortcut: "⌘S", onSelect() {} },
+        ]}
+      />,
+    );
+    const link = screen.getByRole("link", { name: /编辑/ });
+    expect(link.getAttribute("href")).toBe("/edit");
+    const linkHint = link.querySelector(".cb-btn-shortcut");
+    expect(linkHint?.textContent).toBe("E");
+    const button = screen.getByRole("button", { name: /保存/ });
+    expect(button.querySelector(".cb-btn-shortcut")?.textContent).toBe("⌘S");
+  });
+
+  it("类型上 href 与 onSelect 互斥", () => {
+    const ok: HeaderAction[] = [
+      { label: "a", variant: "default", href: "/a" },
+      { label: "b", variant: "default", onSelect() {} },
+    ];
+    // @ts-expect-error href 与 onSelect 不能同时给
+    const bad: HeaderAction = { label: "c", variant: "default", href: "/c", onSelect() {} };
+    expect(ok.length + (bad ? 1 : 0)).toBe(3);
+  });
+});

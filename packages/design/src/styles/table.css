@@ -265,13 +265,21 @@
   font-size: 12px;
 }
 
-/* 嵌入 Card：贴边，无内衬边距，行底随卡片 */
+/* 嵌入 Card：贴边，无内衬边距，行底随卡片（panel）。
+   单元格底色规则的优先级高于通用行状态规则，所以每个带底色的行状态都要在这里按同样的
+   层叠方式重写一遍（与有框表格一一对应）：悬停 = hover；选中 = 主色淡底叠在 panel 上；
+   勾选 / 禁用只改复选框与文字色，行底仍是 panel；展开行与批量栏在卡片里叠一层 hover，
+   以与普通行区分（有框表格里它们是叠在 bg 上的 panel）。 */
 .cb-card-body:has(> .cb-table[data-framed="false"]:only-child) {
   padding: 0;
 }
 .cb-card .cb-table[data-framed="false"] .cb-table-el th,
 .cb-card .cb-table[data-framed="false"] .cb-table-el td {
   background: var(--cb-panel);
+}
+.cb-card .cb-table[data-framed="false"] .cb-table-el .cb-table-expand td,
+.cb-card .cb-table[data-framed="false"] .cb-table-bulk {
+  background: var(--cb-hover);
 }
 .cb-card .cb-table[data-framed="false"] .cb-table-el tbody tr:last-child td {
   border-bottom: 0;

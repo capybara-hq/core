@@ -58,8 +58,10 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
   }
 
   const enabled = items.filter((i) => !i.disabled);
+  // value 不对应任何可用页签时，第一个可用页签可被 Tab 聚焦（否则整个页签栏不可达）
+  const focusId = enabled.some((i) => i.id === value) ? value : enabled[0]?.id;
   const onKey = (e: KeyboardEvent) => {
-    const idx = enabled.findIndex((i) => i.id === value);
+    const idx = enabled.findIndex((i) => i.id === focusId);
     let next: TabItem | undefined;
     if (e.key === "ArrowRight") next = enabled[(idx + 1) % enabled.length];
     else if (e.key === "ArrowLeft") next = enabled[(idx - 1 + enabled.length) % enabled.length];
@@ -83,7 +85,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             className="cb-tab"
             data-id={it.id}
             aria-selected={selected}
-            tabIndex={selected ? 0 : -1}
+            tabIndex={it.id === focusId ? 0 : -1}
             disabled={it.disabled}
             data-state={selected ? "selected" : undefined}
             onClick={() => onChange?.(it.id)}

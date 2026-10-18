@@ -11,7 +11,7 @@ export function ButtonsSection() {
     >
       <Row label="变体 \ 状态">
         <Text variant="small" tone="muted">
-          默认 · 禁用 · 加载中（悬停 / 按下 / 焦点见交互截图）
+          默认 · 禁用 · 加载中（等宽；悬停 / 按下 / 焦点 / Tooltip 见交互截图）
         </Text>
       </Row>
       {BUTTON_VARIANTS.map((v) => (
@@ -20,8 +20,9 @@ export function ButtonsSection() {
           <Button variant={v.variant} disabled>
             {v.label}
           </Button>
+          {/* 同一文案：加载态与默认态等宽（spec §6.1 保持宽度） */}
           <Button variant={v.variant} loading>
-            处理中
+            {v.label}
           </Button>
         </Row>
       ))}

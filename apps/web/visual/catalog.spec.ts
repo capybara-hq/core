@@ -65,6 +65,38 @@ for (const theme of THEMES) {
       await expect(button).toHaveScreenshot(shotName("hover-primary-button", theme));
     });
 
+    test("交互：按下主按钮", async ({ page }) => {
+      await open(page, "components", theme);
+      const button = page.getByRole("button", { name: "新建 Agent" }).first();
+      await button.hover();
+      // 只按下不松开，定格 :active 态
+      await page.mouse.down();
+      await expect(button).toHaveScreenshot(shotName("pressed-primary-button", theme));
+      await page.mouse.up();
+    });
+
+    test("交互：Tooltip 打开", async ({ page }) => {
+      await open(page, "components", theme);
+      const trigger = page.getByRole("button", { name: /提示 Tooltip/ });
+      await trigger.hover();
+      // role=tooltip 是 Radix 给读屏的隐藏副本，可见的提示框是 .cb-tooltip
+      const tip = page.locator(".cb-tooltip");
+      await expect(tip).toBeVisible();
+      // 浮层在 Portal 中：裁剪到触发按钮与提示框的并集（外扩 8）
+      const a = await trigger.boundingBox();
+      const b = await tip.boundingBox();
+      if (!a || !b) throw new Error("tooltip 或触发按钮不可见");
+      const x = Math.min(a.x, b.x) - 8;
+      const y = Math.min(a.y, b.y) - 8;
+      const clip = {
+        x,
+        y,
+        width: Math.max(a.x + a.width, b.x + b.width) + 8 - x,
+        height: Math.max(a.y + a.height, b.y + b.height) + 8 - y,
+      };
+      await expect(page).toHaveScreenshot(shotName("tooltip-open", theme), { clip });
+    });
+
     test("交互：键盘聚焦输入框", async ({ page }) => {
       await open(page, "components", theme);
       const input = page.getByLabel("Agent 名称").first();

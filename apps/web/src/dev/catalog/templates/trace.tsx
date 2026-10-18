@@ -98,6 +98,7 @@ function TraceBody() {
         <DataTable<Span>
           label="Span 瀑布"
           density="compact"
+          framed={false}
           columns={COLUMNS}
           rows={SPANS}
           rowKey={(s) => s.id}
@@ -113,14 +114,14 @@ function TraceBody() {
               code
               aria-label="输入"
               readOnly
-              rows={3}
+              rows={4}
               value={'{\n  "query": "退款政策",\n  "top_k": 5\n}'}
             />
             <Textarea
               code
               aria-label="输出"
               readOnly
-              rows={3}
+              rows={4}
               value={'{\n  "hits": 3,\n  "best": "policy/refund.md#L12"\n}'}
             />
           </Grid>

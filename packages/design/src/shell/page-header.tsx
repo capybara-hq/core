@@ -4,14 +4,16 @@ import { Menu, type MenuItem, Popover } from "../overlays/index";
 import { useDesignLink, useDesignT } from "../provider";
 import { useMediaQuery } from "./use-media-query";
 
+type HeaderButton = {
+  label: string;
+  variant: "primary" | "secondary" | "default";
+  shortcut?: string;
+};
+
+/** 按钮（onSelect）与链接（href）互斥；`⋯` 菜单单独一种。 */
 export type HeaderAction =
-  | {
-      label: string;
-      variant: "primary" | "secondary" | "default";
-      onSelect?(): void;
-      href?: string;
-      shortcut?: string;
-    }
+  | (HeaderButton & { onSelect?(): void; href?: undefined })
+  | (HeaderButton & { href: string; onSelect?: undefined })
   | { menu: MenuItem[]; label: string };
 
 export type PageHeaderProps = {
@@ -87,14 +89,18 @@ export function PageHeader(p: PageHeaderProps) {
               />
             );
           }
-          if (a.href) {
+          if (a.href !== undefined) {
             return (
               <Link
                 key={a.label}
                 href={a.href}
                 className={`cb-btn cb-btn-link cb-btn-link-${a.variant}`}
               >
-                {a.label}
+                {/* 与 Button 相同的内容结构，快捷键提示一致 */}
+                <span className="cb-btn-body">
+                  {a.label}
+                  {a.shortcut ? <span className="cb-btn-shortcut">{a.shortcut}</span> : null}
+                </span>
               </Link>
             );
           }

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
@@ -302,5 +303,164 @@ describe("修复轮 1", () => {
       </Button>,
     );
     expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("清理：数值框输入中不夹取", () => {
+  function StepperHarness({ onChange }: { onChange(n: number): void }) {
+    const [v, setV] = useState(10);
+    return (
+      <Stepper
+        label="次数"
+        value={v}
+        min={10}
+        max={20}
+        onChange={(n) => {
+          setV(n);
+          onChange(n);
+        }}
+      />
+    );
+  }
+  function SliderHarness() {
+    const [v, setV] = useState<number | undefined>(12);
+    return <Slider label="温度" min={10} max={20} step={0.5} value={v} onChange={setV} withInput />;
+  }
+
+  it("Stepper min=10：输入「15」最终为 15（中间的「1」不被夹成 10）", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    zh(<StepperHarness onChange={onChange} />);
+    const box = screen.getByRole("spinbutton", { name: "次数" }) as HTMLInputElement;
+    await user.clear(box);
+    await user.type(box, "15");
+    expect(box.value).toBe("15");
+    await user.tab();
+    expect(box.value).toBe("15");
+    expect(onChange).toHaveBeenLastCalledWith(15);
+    expect(onChange).not.toHaveBeenCalledWith(10);
+  });
+
+  it("Stepper 超出范围在失焦时夹取；回车同样提交", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    zh(<StepperHarness onChange={onChange} />);
+    const box = screen.getByRole("spinbutton", { name: "次数" }) as HTMLInputElement;
+    await user.clear(box);
+    await user.type(box, "99");
+    expect(box.value).toBe("99");
+    expect(onChange).not.toHaveBeenCalled();
+    await user.keyboard("{Enter}");
+    expect(onChange).toHaveBeenLastCalledWith(20);
+    expect(box.value).toBe("20");
+  });
+
+  it("Stepper 清空后失焦恢复为上一次有效值", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    zh(<StepperHarness onChange={onChange} />);
+    const box = screen.getByRole("spinbutton", { name: "次数" }) as HTMLInputElement;
+    await user.clear(box);
+    expect(box.value).toBe("");
+    await user.tab();
+    expect(box.value).toBe("10");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("Slider withInput：输入「15」得 15；失焦按步长小数位取整、越界夹取、非法恢复", async () => {
+    const user = userEvent.setup();
+    zh(<SliderHarness />);
+    const box = screen.getByRole("spinbutton", { name: "温度" }) as HTMLInputElement;
+    const slider = screen.getByRole("slider", { name: "温度" });
+    await user.clear(box);
+    await user.type(box, "15");
+    await user.tab();
+    expect(slider.getAttribute("aria-valuenow")).toBe("15");
+    await user.clear(box);
+    await user.type(box, "25");
+    expect(slider.getAttribute("aria-valuenow")).toBe("15");
+    await user.tab();
+    expect(slider.getAttribute("aria-valuenow")).toBe("20");
+    expect(box.value).toBe("20");
+    await user.clear(box);
+    await user.type(box, "15.33");
+    await user.tab();
+    expect(box.value).toBe("15.3");
+    await user.clear(box);
+    await user.type(box, "abc");
+    await user.tab();
+    expect(box.value).toBe("15.3");
+  });
+});
+
+describe("清理：Textarea code 行号随滚动", () => {
+  it("textarea 滚动时行号栏同步平移，且仍透传 onScroll", () => {
+    const onScroll = vi.fn();
+    const value = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
+    zh(<Textarea code aria-label="代码" value={value} readOnly rows={3} onScroll={onScroll} />);
+    const ta = screen.getByRole("textbox", { name: "代码" });
+    const lines = document.querySelector(".cb-textarea-gutter-lines") as HTMLElement;
+    expect(lines.children).toHaveLength(30);
+    ta.scrollTop = 120;
+    fireEvent.scroll(ta);
+    expect(lines.style.transform).toBe("translateY(-120px)");
+    expect(onScroll).toHaveBeenCalledTimes(1);
+    ta.scrollTop = 0;
+    fireEvent.scroll(ta);
+    expect(lines.style.transform).toBe("translateY(0px)");
+  });
+  it("行号栏不参与撑高：行号绝对定位，宽度由最大行号占位决定", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/controls.css"), "utf8");
+    expect(css).toMatch(/\.cb-textarea-gutter-lines \{[^}]*position: absolute;/);
+    expect(css).toMatch(/\.cb-textarea-gutter \{[^}]*overflow: hidden;/);
+    zh(<Textarea code aria-label="代码" defaultValue={"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk"} />);
+    expect(document.querySelector(".cb-textarea-gutter-size")?.textContent).toBe("11");
+  });
+});
+
+describe("清理：Button 加载态保持宽度", () => {
+  it("⠿ 在内容容器内且绝对定位（不占流内宽度），内容整体平移居中", () => {
+    zh(
+      <>
+        <Button>保存</Button>
+        <Button loading>保存</Button>
+      </>,
+    );
+    const [idle, busy] = screen.getAllByRole("button");
+    const idleBody = idle?.querySelector(":scope > .cb-btn-body");
+    const busyBody = busy?.querySelector(":scope > .cb-btn-body");
+    expect(idleBody?.textContent).toBe("保存");
+    expect(busyBody?.firstElementChild?.className).toBe("cb-btn-spin");
+    // 两者流内子节点相同（⠿ 不在流内），宽度由 CSS 保证一致
+    expect(busy?.children).toHaveLength(1);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/controls.css"), "utf8");
+    expect(css).toMatch(/\.cb-btn-spin \{[^}]*position: absolute;/);
+    expect(css).toMatch(/\.cb-btn\[data-state="loading"\] \.cb-btn-body \{[^}]*transform:/);
+  });
+  it("作为 Radix 触发器时保留传入的 data-state", () => {
+    zh(<Button {...({ "data-state": "open" } as object)}>更多</Button>);
+    expect(screen.getByRole("button").getAttribute("data-state")).toBe("open");
+  });
+});
+
+describe("清理：数值框草稿与外部值", () => {
+  it("输入后（未失焦）外部把值改掉，数值框显示新值而不是旧草稿", () => {
+    function H() {
+      const [v, setV] = useState<number | undefined>(undefined);
+      return (
+        <>
+          <Slider label="k" min={1} max={50} value={v} onChange={setV} withInput />
+          <button type="button" onClick={() => setV(undefined)}>
+            重置
+          </button>
+        </>
+      );
+    }
+    zh(<H />);
+    const box = screen.getByRole("spinbutton", { name: "k" }) as HTMLInputElement;
+    fireEvent.change(box, { target: { value: "10" } });
+    expect(box.value).toBe("10");
+    act(() => screen.getByRole("button", { name: "重置" }).click());
+    expect(box.value).toBe("");
   });
 });

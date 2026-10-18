@@ -291,8 +291,25 @@
 .cb-btn[data-state="loading"] {
   cursor: progress;
 }
+.cb-btn-body {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+/* ⠿ 不占文档流：宽 8 + 间距 4 落在左内边距里，内容整体右移 6 使「⠿ 文案」居中。 */
+.cb-btn[data-state="loading"] .cb-btn-body {
+  transform: translateX(6px);
+}
 .cb-btn-spin {
-  display: inline-block;
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 4px);
+  width: 8px;
+  margin-top: -8px;
+  line-height: 16px;
+  text-align: center;
   animation: cb-spin 1s steps(8) infinite;
 }
 .cb-btn-shortcut {
@@ -446,14 +463,30 @@
   white-space: pre;
 }
 .cb-textarea-gutter {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  padding: 4px 8px;
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  padding: 0 8px;
   border-right: 1px solid var(--cb-line);
   color: var(--cb-faint);
   line-height: 20px;
   user-select: none;
+}
+/* 只用来撑出栏宽（最大行号的位数），不占高度 */
+.cb-textarea-gutter-size {
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+.cb-textarea-gutter-lines {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 4px 0;
 }
 
 .cb-stepper {

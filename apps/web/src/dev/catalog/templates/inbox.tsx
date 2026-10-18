@@ -50,6 +50,7 @@ function InboxBody() {
         <DataTable<Approval>
           label="审批队列"
           density="compact"
+          framed={false}
           columns={COLUMNS}
           rows={QUEUE}
           rowKey={(a) => a.id}

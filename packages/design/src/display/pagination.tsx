@@ -27,7 +27,7 @@ export type PaginationProps = {
 };
 
 export function Pagination({
-  page,
+  page: requested,
   pageSize,
   total,
   pageSizes,
@@ -36,6 +36,8 @@ export function Pagination({
 }: PaginationProps) {
   const t = useDesignT();
   const last = Math.max(1, Math.ceil(total / pageSize));
+  // 显示时把页码夹到 [1, last]（总数变少、筛选后上层页码可能越界）
+  const page = Math.min(last, Math.max(1, Math.floor(requested) || 1));
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(total, page * pageSize);
   const range = total === 0 ? `0 / 0` : `${fmt(from)}–${fmt(to)} / ${fmt(total)}`;

@@ -326,3 +326,57 @@ describe("KeyValue", () => {
     expect((container.querySelector("dt") as HTMLElement).style.width).toBe("12ch");
   });
 });
+
+describe("清理：Pagination 页码越界、Tabs 无匹配值", () => {
+  it("page 大于末页时按末页显示（范围、aria-current、下一页禁用）", () => {
+    wrap(<Pagination page={99} pageSize={50} total={120} onPage={() => {}} />);
+    expect(screen.getByText("101–120 / 120")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "3" }).getAttribute("aria-current")).toBe("page");
+    expect((screen.getByRole("button", { name: /下一页/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+  it("page 小于 1 时按第 1 页显示", () => {
+    const onPage = vi.fn();
+    wrap(<Pagination page={0} pageSize={50} total={120} onPage={onPage} />);
+    expect(screen.getByText("1–50 / 120")).toBeTruthy();
+    expect((screen.getByRole("button", { name: /上一页/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+  it("value 不匹配任何可用页签：第一个可用页签 tabIndex=0，可 Tab 进入并用方向键移动", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    wrap(
+      <Tabs
+        label="分区"
+        value="gone"
+        onChange={onChange}
+        items={[
+          { id: "a", label: "A", disabled: true },
+          { id: "b", label: "B" },
+          { id: "c", label: "C" },
+        ]}
+      />,
+    );
+    const tabs = screen.getAllByRole("tab") as HTMLButtonElement[];
+    expect(tabs.map((t) => t.tabIndex)).toEqual([-1, 0, -1]);
+    await user.tab();
+    expect(document.activeElement).toBe(tabs[1]);
+    await user.keyboard("{ArrowRight}");
+    expect(onChange).toHaveBeenCalledWith("c");
+  });
+  it("value 指向禁用页签时同样回落到第一个可用页签", () => {
+    wrap(
+      <Tabs
+        label="分区"
+        value="a"
+        items={[
+          { id: "a", label: "A", disabled: true },
+          { id: "b", label: "B" },
+        ]}
+      />,
+    );
+    expect((screen.getByRole("tab", { name: "B" }) as HTMLButtonElement).tabIndex).toBe(0);
+  });
+});

@@ -28,7 +28,10 @@ export function Popover({
   return (
     <RP.Root>
       <RP.Trigger asChild>
-        {cloneElement(trigger, { "data-active": active ? "true" : undefined })}
+        {cloneElement(trigger, {
+          "data-active": active ? "true" : undefined,
+          "data-cb-trigger": "popover",
+        })}
       </RP.Trigger>
       <RP.Portal>
         <RP.Content className="cb-popover" sideOffset={4} align="start">
@@ -39,14 +42,20 @@ export function Popover({
   );
 }
 
-export function Menu({ trigger, items }: { trigger: ReactElement; items: MenuItem[] }) {
+export function Menu({
+  trigger,
+  items,
+}: {
+  trigger: ReactElement<Record<string, unknown>>;
+  items: MenuItem[];
+}) {
   const Link = useDesignLink();
   const normal = items.filter((i) => i === "separator" || !i.danger);
   const danger = items.filter((i) => i !== "separator" && i.danger);
   const ordered: MenuItem[] = danger.length > 0 ? [...normal, "separator", ...danger] : normal;
   return (
     <RM.Root>
-      <RM.Trigger asChild>{trigger}</RM.Trigger>
+      <RM.Trigger asChild>{cloneElement(trigger, { "data-cb-trigger": "menu" })}</RM.Trigger>
       <RM.Portal>
         <RM.Content className="cb-menu" sideOffset={4} align="start">
           {ordered.map((item, i) =>
@@ -60,9 +69,10 @@ export function Menu({ trigger, items }: { trigger: ReactElement; items: MenuIte
                 data-danger={item.danger ? "true" : undefined}
                 disabled={item.disabled}
                 onSelect={() => item.onSelect?.()}
-                asChild={item.href !== undefined}
+                // 禁用的导航项不渲染链接（否则原生 <a> 仍会跳转），由 Radix 标 aria-disabled
+                asChild={item.href !== undefined && !item.disabled}
               >
-                {item.href !== undefined ? (
+                {item.href !== undefined && !item.disabled ? (
                   <Link href={item.href} className="cb-menu-item cb-menu-link">
                     {item.label}
                   </Link>

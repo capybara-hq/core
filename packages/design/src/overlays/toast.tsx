@@ -84,61 +84,67 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [close],
   );
 
+  const renderToast = (it: ToastItem) => (
+    <div
+      key={it.id}
+      className="cb-toast"
+      data-kind={it.kind}
+      role={it.kind === "error" ? "alert" : undefined}
+    >
+      {/* 两列网格：左列为标题行与进度条，右列为关闭按钮；进度条因此与标题行同宽。 */}
+      <div className="cb-toast-head">
+        <span className="cb-toast-msg">{it.msg}</span>
+        {it.kind === "progress" ? (
+          <span className="cb-toast-count">{`${it.done}/${it.total}`}</span>
+        ) : null}
+        {it.kind === "error" && it.action ? (
+          <button
+            type="button"
+            className="cb-toast-action"
+            onClick={() => {
+              it.action?.run();
+              close(it.id);
+            }}
+          >
+            {it.action.label} →
+          </button>
+        ) : null}
+      </div>
+      <span className="cb-toast-close">
+        <IconButton label={t("overlay.close")} icon="✕" size={24} onClick={() => close(it.id)} />
+      </span>
+      {it.kind === "progress" ? (
+        <div
+          className="cb-toast-bar"
+          role="progressbar"
+          aria-label={t("toast.progress")}
+          aria-valuemin={0}
+          aria-valuemax={it.total}
+          aria-valuenow={it.done}
+        >
+          {Array.from({ length: SEGMENTS }, (_, i) => (
+            <span
+              // biome-ignore lint/suspicious/noArrayIndexKey: 固定段数
+              key={i}
+              data-on={i < Math.round((it.done / it.total) * SEGMENTS) ? "true" : undefined}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="cb-toast-region" role="status" aria-live="polite">
-        {items.map((it) => (
-          <div
-            key={it.id}
-            className="cb-toast"
-            data-kind={it.kind}
-            role={it.kind === "error" ? "alert" : undefined}
-          >
-            <div className="cb-toast-head">
-              <span className="cb-toast-msg">{it.msg}</span>
-              {it.kind === "progress" ? (
-                <span className="cb-toast-count">{`${it.done}/${it.total}`}</span>
-              ) : null}
-              {it.kind === "error" && it.action ? (
-                <button
-                  type="button"
-                  className="cb-toast-action"
-                  onClick={() => {
-                    it.action?.run();
-                    close(it.id);
-                  }}
-                >
-                  {it.action.label} →
-                </button>
-              ) : null}
-              <IconButton
-                label={t("overlay.close")}
-                icon="✕"
-                size={24}
-                onClick={() => close(it.id)}
-              />
-            </div>
-            {it.kind === "progress" ? (
-              <div
-                className="cb-toast-bar"
-                role="progressbar"
-                aria-label={t("toast.progress")}
-                aria-valuemin={0}
-                aria-valuemax={it.total}
-                aria-valuenow={it.done}
-              >
-                {Array.from({ length: SEGMENTS }, (_, i) => (
-                  <span
-                    // biome-ignore lint/suspicious/noArrayIndexKey: 固定段数
-                    key={i}
-                    data-on={i < Math.round((it.done / it.total) * SEGMENTS) ? "true" : undefined}
-                  />
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ))}
+      {/* 两个分组：错误以 role=alert 自行播报，不能再嵌在 aria-live 区域里（否则读两遍）。 */}
+      <div className="cb-toast-region">
+        <div className="cb-toast-group" data-group="alert">
+          {items.filter((it) => it.kind === "error").map(renderToast)}
+        </div>
+        <div className="cb-toast-group" data-group="status" role="status" aria-live="polite">
+          {items.filter((it) => it.kind !== "error").map(renderToast)}
+        </div>
       </div>
     </ToastContext.Provider>
   );

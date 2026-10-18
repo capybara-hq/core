@@ -26,17 +26,21 @@ export function Button({
       className="cb-btn"
       data-variant={variant}
       data-size={size}
-      data-state={loading ? "loading" : undefined}
+      // 作为 Menu / Popover 触发器时 Radix 会传入 data-state（open / closed），不能被覆盖掉
+      data-state={loading ? "loading" : (rest as { "data-state"?: string })["data-state"]}
       disabled={disabled || loading}
       aria-busy={loading ? true : undefined}
     >
-      {loading ? (
-        <span className="cb-btn-spin" aria-hidden="true">
-          ⠿
-        </span>
-      ) : null}
-      {children}
-      {shortcut ? <span className="cb-btn-shortcut">{shortcut}</span> : null}
+      {/* 加载时 ⠿ 绝对定位在内容左侧、内容整体右移半个 ⠿ 宽：按钮宽度不变（spec §6.1 保持宽度）。 */}
+      <span className="cb-btn-body">
+        {loading ? (
+          <span className="cb-btn-spin" aria-hidden="true">
+            ⠿
+          </span>
+        ) : null}
+        {children}
+        {shortcut ? <span className="cb-btn-shortcut">{shortcut}</span> : null}
+      </span>
     </button>
   );
 }

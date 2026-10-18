@@ -1,5 +1,6 @@
 import { type KeyboardEvent, type PointerEvent, useRef } from "react";
 import type { ControlA11y } from "./a11y";
+import { useNumberDraft } from "./number-draft";
 import { stepDecimals } from "./step";
 
 const CELLS = 20;
@@ -28,7 +29,9 @@ export function Slider({
   placeholder?: string;
 }) {
   const decimals = stepDecimals(step);
-  const commit = (n: number) => onChange(Number(Math.min(max, Math.max(min, n)).toFixed(decimals)));
+  const normalize = (n: number) => Number(Math.min(max, Math.max(min, n)).toFixed(decimals));
+  const commit = (n: number) => onChange(normalize(n));
+  const draft = useNumberDraft({ value, min, max, normalize, onCommit: onChange });
   const dragging = useRef(false);
   const fromPointer = (e: PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -105,11 +108,7 @@ export function Slider({
           max={max}
           step={step}
           placeholder={placeholder}
-          value={value ?? ""}
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            if (e.target.value !== "" && Number.isFinite(n)) commit(n);
-          }}
+          {...draft}
         />
       ) : null}
     </div>

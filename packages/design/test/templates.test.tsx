@@ -142,6 +142,21 @@ describe("FormPage", () => {
     expect(remove.mock.calls.some((c) => c[0] === "beforeunload")).toBe(true);
   });
 
+  it("beforeunload：preventDefault 且 returnValue 设为空串（兼容旧浏览器）", () => {
+    const add = vi.spyOn(window, "addEventListener");
+    zh(
+      <FormPage header={header} anchors={[]} actionRow={{ ...row, unsaved: 2 }}>
+        x
+      </FormPage>,
+    );
+    const call = add.mock.calls.find((c) => c[0] === "beforeunload");
+    const handler = call?.[1] as (e: BeforeUnloadEvent) => void;
+    const e = { preventDefault: vi.fn(), returnValue: undefined as unknown };
+    handler(e as unknown as BeforeUnloadEvent);
+    expect(e.preventDefault).toHaveBeenCalled();
+    expect(e.returnValue).toBe("");
+  });
+
   it("unsaved=0 不注册 beforeunload", () => {
     const add = vi.spyOn(window, "addEventListener");
     zh(

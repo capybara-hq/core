@@ -6,12 +6,15 @@ export function Checkbox({
   onChange,
   label,
   disabled,
+  tabIndex,
   ...a11y
 }: ControlA11y & {
   checked: boolean | "indeterminate";
   onChange: (next: boolean) => void;
   label?: ReactNode;
   disabled?: boolean;
+  /** DataTable 行内复选框用：不在当前行时移出 Tab 顺序。 */
+  tabIndex?: number;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const mixed = checked === "indeterminate";
@@ -25,6 +28,7 @@ export function Checkbox({
         {...a11y}
         ref={ref}
         type="checkbox"
+        tabIndex={tabIndex}
         checked={checked === true}
         aria-checked={mixed ? "mixed" : checked}
         disabled={disabled}
