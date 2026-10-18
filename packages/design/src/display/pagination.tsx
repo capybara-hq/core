@@ -17,6 +17,15 @@ function pageList(page: number, last: number): (number | "…")[] {
   return out;
 }
 
+export type PaginationProps = {
+  page: number;
+  pageSize: number;
+  total: number;
+  pageSizes?: number[];
+  onPage: (p: number) => void;
+  onPageSize?: (s: number) => void;
+};
+
 export function Pagination({
   page,
   pageSize,
@@ -24,14 +33,7 @@ export function Pagination({
   pageSizes,
   onPage,
   onPageSize,
-}: {
-  page: number;
-  pageSize: number;
-  total: number;
-  pageSizes?: number[];
-  onPage: (p: number) => void;
-  onPageSize?: (s: number) => void;
-}) {
+}: PaginationProps) {
   const t = useDesignT();
   const last = Math.max(1, Math.ceil(total / pageSize));
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;

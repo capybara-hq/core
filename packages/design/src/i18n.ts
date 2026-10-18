@@ -32,6 +32,15 @@ const zh = {
   "palette.hintRun": "执行",
   "palette.hintClose": "关闭",
   "toast.progress": "进度",
+  "table.selected": "已选 {n} 项",
+  "table.clearSelection": "取消选择",
+  "table.clearFilters": "清除筛选",
+  "table.retry": "重试",
+  "table.loadFailed": "加载失败",
+  "table.selectAll": "全选",
+  "table.selectRow": "选择此行",
+  "table.rowActions": "行操作",
+  "table.noResults": "没有符合条件的结果",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -68,6 +77,15 @@ const en: Record<DesignKey, string> = {
   "palette.hintRun": "Run",
   "palette.hintClose": "Close",
   "toast.progress": "Progress",
+  "table.selected": "{n} selected",
+  "table.clearSelection": "Clear selection",
+  "table.clearFilters": "Clear filters",
+  "table.retry": "Retry",
+  "table.loadFailed": "Failed to load",
+  "table.selectAll": "Select all",
+  "table.selectRow": "Select row",
+  "table.rowActions": "Row actions",
+  "table.noResults": "No matching results",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };
