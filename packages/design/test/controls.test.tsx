@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -89,7 +91,7 @@ describe("其他输入", () => {
     );
     expect(document.querySelector("[data-code]")?.textContent).toContain("3");
     expect(screen.getByRole("option", { name: "X 模型" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "+" }));
+    await userEvent.click(screen.getByRole("button", { name: "增加" }));
     expect(onChange).toHaveBeenCalledWith(3);
   });
 });
@@ -160,3 +162,116 @@ describe("Slider", () => {
   });
 });
 afterEach(cleanup);
+
+describe("修复轮 1", () => {
+  it("Field 把 id / 描述 / invalid 转发到 Slider、Stepper、Checkbox、Switch、RadioGroup", () => {
+    zh(
+      <>
+        <Field label="温度" error="太高">
+          <Slider min={0} max={1} step={0.1} value={0.3} onChange={() => {}} label="温度" />
+        </Field>
+        <Field label="次数" error="太多">
+          <Stepper value={1} onChange={() => {}} label="次数" />
+        </Field>
+        <Field label="同意" error="必选">
+          <Checkbox checked={false} onChange={() => {}} />
+        </Field>
+        <Field label="开关" error="不可">
+          <Switch checked={false} onChange={() => {}} label="开关" />
+        </Field>
+        <Field label="模式" error="错误">
+          <RadioGroup
+            value="a"
+            onChange={() => {}}
+            label="模式"
+            options={[{ value: "a", label: "A" }]}
+          />
+        </Field>
+      </>,
+    );
+    const s = screen.getByRole("slider");
+    expect(s.getAttribute("aria-invalid")).toBe("true");
+    expect(s.getAttribute("aria-describedby")?.split(" ")).toContain(screen.getByText("✗ 太高").id);
+    expect(screen.getByLabelText("温度", { selector: "[role=slider]" })).toBe(s);
+    for (const [role, msg] of [
+      ["spinbutton", "✗ 太多"],
+      ["checkbox", "✗ 必选"],
+      ["switch", "✗ 不可"],
+      ["radiogroup", "✗ 错误"],
+    ] as const) {
+      const el = screen.getByRole(role);
+      expect(el.getAttribute("aria-invalid")).toBe("true");
+      expect(el.getAttribute("aria-describedby")?.split(" ")).toContain(screen.getByText(msg).id);
+    }
+    expect(screen.getByLabelText("同意")).toBe(screen.getByRole("checkbox"));
+  });
+
+  it("Slider 指针按下按位置取最近步长", () => {
+    const onChange = vi.fn();
+    zh(<Slider label="温度" min={0} max={1} step={0.1} value={0.3} onChange={onChange} />);
+    const s = screen.getByRole("slider");
+    s.getBoundingClientRect = () => ({
+      left: 100,
+      width: 200,
+      top: 0,
+      right: 300,
+      bottom: 16,
+      height: 16,
+      x: 100,
+      y: 0,
+      toJSON() {},
+    });
+    fireEvent.pointerDown(s, { clientX: 220, pointerId: 1 });
+    expect(onChange).toHaveBeenLastCalledWith(0.6);
+    fireEvent.pointerMove(s, { clientX: 300, pointerId: 1 });
+    expect(onChange).toHaveBeenLastCalledWith(1);
+    fireEvent.pointerUp(s, { pointerId: 1 });
+    onChange.mockClear();
+    fireEvent.pointerMove(s, { clientX: 100, pointerId: 1 });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("disabled：Switch / RadioGroup / Slider / Stepper 不响应", async () => {
+    const onChange = vi.fn();
+    zh(
+      <>
+        <Switch checked={false} onChange={onChange} label="s" disabled />
+        <RadioGroup
+          value="a"
+          onChange={onChange}
+          label="r"
+          disabled
+          options={[
+            { value: "a", label: "A" },
+            { value: "b", label: "B" },
+          ]}
+        />
+        <Slider label="sl" min={0} max={1} step={0.1} value={0.3} onChange={onChange} disabled />
+        <Stepper label="st" value={1} onChange={onChange} disabled />
+      </>,
+    );
+    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(screen.getByRole("radio", { name: "B" }));
+    const sl = screen.getByRole("slider");
+    fireEvent.keyDown(sl, { key: "ArrowRight" });
+    fireEvent.pointerDown(sl, { clientX: 10 });
+    await userEvent.click(screen.getByRole("button", { name: "增加" }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
+    expect(sl.getAttribute("aria-disabled")).toBe("true");
+    expect((screen.getByRole("button", { name: "减少" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("按钮 hover / active 规则都带 :not(:disabled)，禁用态优先", () => {
+    const css = readFileSync(resolve(__dirname, "../src/styles/controls.css"), "utf8");
+    const rules = css.match(/^\.cb-btn\[data-variant[^{]*:(hover|active)[^{]*\{/gm) ?? [];
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) expect(r).toContain(":not(:disabled)");
+    zh(
+      <Button variant="primary" disabled>
+        x
+      </Button>,
+    );
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
+  });
+});

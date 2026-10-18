@@ -1,4 +1,5 @@
-import type { KeyboardEvent } from "react";
+import { type KeyboardEvent, type PointerEvent, useRef } from "react";
+import type { ControlA11y } from "./a11y.js";
 
 const CELLS = 20;
 
@@ -10,7 +11,10 @@ export function Slider({
   onChange,
   label,
   withInput,
-}: {
+  disabled,
+  ...a11y
+}: ControlA11y & {
+  disabled?: boolean;
   value: number | undefined;
   min: number;
   max: number;
@@ -21,7 +25,28 @@ export function Slider({
 }) {
   const decimals = (String(step).split(".")[1] ?? "").length;
   const commit = (n: number) => onChange(Number(Math.min(max, Math.max(min, n)).toFixed(decimals)));
+  const dragging = useRef(false);
+  const fromPointer = (e: PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const snapped = min + Math.round((ratio * (max - min)) / step) * step;
+    commit(snapped);
+  };
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    dragging.current = true;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    fromPointer(e);
+  };
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    if (dragging.current && !disabled) fromPointer(e);
+  };
+  const onPointerUp = () => {
+    dragging.current = false;
+  };
   const onKeyDown = (e: KeyboardEvent) => {
+    if (disabled) return;
     const from = value ?? (min + max) / 2;
     const delta: Record<string, number> = {
       ArrowRight: step,
@@ -42,14 +67,20 @@ export function Slider({
   return (
     <div className="cb-slider-wrap" data-with-input={withInput ? "true" : undefined}>
       <div
+        {...a11y}
         className="cb-slider"
         role="slider"
-        tabIndex={0}
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled ? true : undefined}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         aria-label={label}
         aria-valuemin={min}
         aria-valuemax={max}
         aria-valuenow={value}
-        data-state={value === undefined ? "unset" : "set"}
+        data-state={disabled ? "disabled" : value === undefined ? "unset" : "set"}
         onKeyDown={onKeyDown}
       >
         <div className="cb-slider-track" aria-hidden="true">
@@ -65,6 +96,7 @@ export function Slider({
           className="cb-slider-input"
           type="number"
           aria-label={label}
+          disabled={disabled}
           min={min}
           max={max}
           step={step}

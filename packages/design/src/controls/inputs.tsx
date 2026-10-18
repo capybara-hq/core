@@ -5,6 +5,8 @@ import {
   type TextareaHTMLAttributes,
   useState,
 } from "react";
+import { useDesignT } from "../provider.js";
+import type { ControlA11y } from "./a11y.js";
 
 export function Input({
   prefix,
@@ -96,7 +98,10 @@ export function Stepper({
   step = 1,
   onChange,
   label,
-}: {
+  disabled,
+  ...a11y
+}: ControlA11y & {
+  disabled?: boolean;
   value: number;
   min?: number;
   max?: number;
@@ -104,23 +109,27 @@ export function Stepper({
   onChange: (n: number) => void;
   label: string;
 }) {
+  const t = useDesignT();
   const clamp = (n: number) =>
     Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, n));
   const decimals = (String(step).split(".")[1] ?? "").length;
   const bump = (d: number) => onChange(clamp(Number((value + d * step).toFixed(decimals))));
   return (
-    <div className="cb-stepper">
+    <div className="cb-stepper" data-state={disabled ? "disabled" : undefined}>
       <button
         type="button"
         className="cb-stepper-btn"
+        aria-label={t("stepper.decrease")}
         onClick={() => bump(-1)}
-        disabled={min !== undefined && value <= min}
+        disabled={disabled || (min !== undefined && value <= min)}
       >
         −
       </button>
       <input
+        {...a11y}
         type="number"
         aria-label={label}
+        disabled={disabled}
         value={value}
         min={min}
         max={max}
@@ -133,8 +142,9 @@ export function Stepper({
       <button
         type="button"
         className="cb-stepper-btn"
+        aria-label={t("stepper.increase")}
         onClick={() => bump(1)}
-        disabled={max !== undefined && value >= max}
+        disabled={disabled || (max !== undefined && value >= max)}
       >
         +
       </button>

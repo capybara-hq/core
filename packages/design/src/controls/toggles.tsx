@@ -1,11 +1,13 @@
 import { type ReactNode, useEffect, useId, useRef } from "react";
+import type { ControlA11y } from "./a11y.js";
 
 export function Checkbox({
   checked,
   onChange,
   label,
   disabled,
-}: {
+  ...a11y
+}: ControlA11y & {
   checked: boolean | "indeterminate";
   onChange: (next: boolean) => void;
   label?: ReactNode;
@@ -20,6 +22,7 @@ export function Checkbox({
   return (
     <label className="cb-check" data-state={state} data-disabled={disabled ? "true" : undefined}>
       <input
+        {...a11y}
         ref={ref}
         type="checkbox"
         checked={checked === true}
@@ -41,7 +44,10 @@ export function RadioGroup({
   options,
   variant = "plain",
   label,
-}: {
+  disabled,
+  ...a11y
+}: ControlA11y & {
+  disabled?: boolean;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: ReactNode; description?: ReactNode }[];
@@ -50,19 +56,28 @@ export function RadioGroup({
 }) {
   const name = useId();
   return (
-    <div className="cb-radios" role="radiogroup" aria-label={label} data-variant={variant}>
+    <div
+      {...a11y}
+      className="cb-radios"
+      role="radiogroup"
+      aria-label={label}
+      aria-disabled={disabled ? true : undefined}
+      data-variant={variant}
+    >
       {options.map((o) => (
         <label
           key={o.value}
           className="cb-radio"
           data-variant={variant}
           data-state={o.value === value ? "checked" : "unchecked"}
+          data-disabled={disabled ? "true" : undefined}
         >
           <input
             type="radio"
             name={name}
             value={o.value}
             checked={o.value === value}
+            disabled={disabled}
             onChange={() => onChange(o.value)}
           />
           <span className="cb-box" aria-hidden="true" />
@@ -80,15 +95,20 @@ export function Switch({
   checked,
   onChange,
   label,
-}: {
+  disabled,
+  ...a11y
+}: ControlA11y & {
+  disabled?: boolean;
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
 }) {
   return (
     <button
+      {...a11y}
       type="button"
       role="switch"
+      disabled={disabled}
       aria-checked={checked}
       aria-label={label}
       className="cb-switch"
