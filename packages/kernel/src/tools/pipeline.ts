@@ -191,6 +191,13 @@ class Stopped extends Error {}
 
 type Resolved = { tools: ResolvedTool[]; unavailable: UnavailableTool[] };
 
+/** 审批的等待时长（小时，四舍五入，至少 1）。 */
+const approvalHours = (a: ApprovalRecord): number =>
+  Math.max(
+    1,
+    Math.round((new Date(a.expiresAt).getTime() - new Date(a.createdAt).getTime()) / 3_600_000),
+  );
+
 const approvalWait = (a: ApprovalRecord): WaitingFor => ({
   kind: "approval",
   id: a.id,
@@ -329,8 +336,14 @@ export class ToolPipeline {
     // 该调用已有审批（续跑）→ 按审批结果；没有且策略为 ask → 建审批并等待
     // （不写 tool_call_started：此时尚未开始执行）。
     let approval = await this.deps.approvals.forCall(ctx.runId, call.id);
-    if (!approval && decision !== "allow") {
+    // 批准的是旧定义（等待期间工具定义变了）：原批准不适用于当前定义，策略仍需审批时按新定义重新审批。
+    const stale =
+      approval?.status === "approved" &&
+      approval.specHash !== null &&
+      approval.specHash !== tool.specHash;
+    if ((!approval || stale) && decision !== "allow") {
       approval = await this.deps.approvals.request({
+        attempt: (approval?.attempt ?? 0) + 1,
         orgId: ctx.orgId,
         conversationId: ctx.conversationId,
         runId: ctx.runId,
@@ -422,7 +435,8 @@ export class ToolPipeline {
       case "denied":
         return APPROVAL_DENIED_TEXT;
       case "expired":
-        return approvalExpiredText(this.deps.config().tools.approvalTimeoutHours);
+        // 按该审批实际的等待时长（创建到到期），不读当前配置（配置可热更新）
+        return approvalExpiredText(approvalHours(a));
       case "cancelled":
         return APPROVAL_CANCELLED_TEXT;
       default:

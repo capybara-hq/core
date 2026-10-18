@@ -181,7 +181,9 @@ async function checkpointCount(runId: string): Promise<number> {
 /** 让超时任务立即执行（把审批 / 输入请求的 expires_at 改到现在，再提前延迟任务）。 */
 async function fireTimeout(table: "approvals" | "questions", id: string): Promise<void> {
   if (table === "approvals") {
-    await sql`UPDATE capybara.approvals SET expires_at = now() WHERE id = ${id}`.execute(raw);
+    // 创建时间同时前移 24h：超时说明里的小时数按审批实际的等待时长计算
+    await sql`UPDATE capybara.approvals SET expires_at = now(), created_at = now() - interval '24 hours'
+      WHERE id = ${id}`.execute(raw);
   } else {
     await sql`UPDATE capybara.questions SET expires_at = now() WHERE id = ${id}`.execute(raw);
   }
@@ -337,6 +339,75 @@ describe("审批等待", () => {
     await fireTimeout("approvals", id);
     await sleep(500);
     expect(ofType(await eventsOf(db, convId), "approval_decided")).toHaveLength(1);
+    expect(memState().echoCalls).toBe(0);
+  });
+
+  it("丢失唤醒：决定在置 waiting 之前提交（其续跑因运行仍是 running 而落空），suspend 复查后续跑，工具只执行一次", async () => {
+    const convId = await createConv(req, orgId, agentId);
+    const { runId, event } = await startAndWait(convId, ECHO, "approval_requested");
+    const id = approvalIdOf(event);
+    // 构造「worker 刚暂停、尚未置 waiting」的时刻：运行退回 running
+    await sql`UPDATE capybara.runs SET status = 'running', waiting_since = NULL WHERE id = ${runId}`.execute(
+      raw,
+    );
+    expect((await decide(id, "approve")).statusCode).toBe(200);
+    await sleep(200);
+    // 决定的续跑落空：运行仍是 running，没有续跑
+    expect(await runStatus(runId)).toBe("running");
+    expect(memState().echoCalls).toBe(0);
+    await k.runs.waits.suspend(runId, convId, {
+      kind: "approval",
+      id,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    await waitForTerminal(db, convId, 1);
+    const evs = await eventsOf(db, convId);
+    expect(memState().echoCalls).toBe(1);
+    expect(ofType(evs, "run_finished").map((e) => e.runId)).toEqual([runId]);
+    expect(resultsOf(evs)).toMatchObject([{ content: '{"text":"hi"}', isError: false }]);
+  });
+
+  it("丢失唤醒（输入请求）：回答在置 waiting 之前提交，suspend 复查后续跑", async () => {
+    const convId = await createConv(req, orgId, agentId);
+    const { runId, event } = await startAndWait(
+      convId,
+      'tool:mem-connector__ask:{"rounds":1}',
+      "question_asked",
+    );
+    const qid = questionIdOf(event);
+    await sql`UPDATE capybara.runs SET status = 'running', waiting_since = NULL WHERE id = ${runId}`.execute(
+      raw,
+    );
+    await k.tools.questions.answer(qid, ownerId, { color: "blue" });
+    await sleep(200);
+    expect(await runStatus(runId)).toBe("running");
+    expect(memState().askCalls).toHaveLength(1);
+    await k.runs.waits.suspend(runId, convId, {
+      kind: "input",
+      id: qid,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    await waitForTerminal(db, convId, 1);
+    expect(memState().askCalls).toHaveLength(2);
+    expect(resultsOf(await eventsOf(db, convId))).toMatchObject([
+      { content: "color=blue after 1", isError: false },
+    ]);
+  });
+
+  it("决定已提交、续跑尚未发生时中止：已决定的调用也写取消说明（不留给配对守卫补「结果未知」）", async () => {
+    const convId = await createConv(req, orgId, agentId);
+    const { runId, event } = await startAndWait(convId, ECHO, "approval_requested");
+    // 只提交决定、不续跑（模拟决定提交与续跑之间的窗口）
+    await sql`UPDATE capybara.approvals SET status = 'approved', decided_at = now()
+      WHERE id = ${approvalIdOf(event)}`.execute(raw);
+    const res = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    });
+    expect(res.statusCode).toBe(202);
+    expect(await runStatus(runId)).toBe("aborted");
+    const evs = await eventsOf(db, convId);
+    expect(resultsOf(evs)).toMatchObject([{ content: APPROVAL_CANCELLED_TEXT, isError: true }]);
     expect(memState().echoCalls).toBe(0);
   });
 

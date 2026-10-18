@@ -20,6 +20,8 @@ export interface ApprovalRecord {
   conversationId: string;
   runId: string;
   callId: string;
+  /** 同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
+  attempt: number;
   toolKey: string;
   specHash: string | null;
   appId: string | null;
@@ -61,6 +63,8 @@ export interface ApprovalRequestInput {
   /** 指定处理人；与 `approverRole` 至少一个非空。 */
   requestedFor: string | null;
   approverRole: OrgRole | null;
+  /** 同一调用的第几次审批，缺省 1（等待期间工具定义变化、原批准不再适用时递增）。 */
+  attempt?: number;
 }
 
 export interface DecisionInput {
@@ -103,6 +107,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     conversationId: r.conversation_id,
     runId: r.run_id,
     callId: r.call_id,
+    attempt: r.attempt,
     toolKey: r.tool_key,
     specHash: r.spec_hash,
     appId: r.app_id,
@@ -148,7 +153,7 @@ export class ApprovalsService {
 
   /**
    * 新建 pending 审批（`expires_at` = 现在 + `tools.approvalTimeoutHours`）并写 `approval_requested`，同一事务。
-   * 按 (run_id, call_id) 幂等：已存在则返回已有记录（不覆盖），事件按 `approval_requested:<approvalId>` 幂等。
+   * 按 (run_id, call_id, attempt) 幂等：已存在则返回已有记录（不覆盖），事件按 `approval_requested:<approvalId>` 幂等。
    */
   async request(input: ApprovalRequestInput): Promise<ApprovalRecord> {
     if (input.requestedFor === null && input.approverRole === null) {
@@ -165,6 +170,7 @@ export class ApprovalsService {
           conversation_id: input.conversationId,
           run_id: input.runId,
           call_id: input.callId,
+          attempt: input.attempt ?? 1,
           tool_key: input.toolKey,
           spec_hash: input.specHash,
           app_id: input.appId,
@@ -175,13 +181,14 @@ export class ApprovalsService {
           decided_by: null,
           expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
         })
-        .onConflict((oc) => oc.columns(["run_id", "call_id"]).doNothing())
+        .onConflict((oc) => oc.columns(["run_id", "call_id", "attempt"]).doNothing())
         .execute();
       const row = await t
         .selectFrom("approvals")
         .selectAll()
         .where("run_id", "=", input.runId)
         .where("call_id", "=", input.callId)
+        .where("attempt", "=", input.attempt ?? 1)
         .executeTakeFirstOrThrow();
       const rec = toRecord(row);
       const written = await eventLog.append(
@@ -391,13 +398,15 @@ export class ApprovalsService {
     return record;
   }
 
-  /** 某个工具调用的审批（按 (run_id, call_id) 唯一）；没有则返回 null。 */
+  /** 某个工具调用最近一次的审批（attempt 最大者）；没有则返回 null。 */
   async forCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.deps.db
       .selectFrom("approvals")
       .selectAll()
       .where("run_id", "=", runId)
       .where("call_id", "=", callId)
+      .orderBy("attempt", "desc")
+      .limit(1)
       .executeTakeFirst();
     return row ? toRecord(row) : null;
   }

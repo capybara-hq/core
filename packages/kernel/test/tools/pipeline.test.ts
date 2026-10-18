@@ -523,6 +523,52 @@ describe("ToolPipeline.runStep", () => {
     });
   });
 
+  it("批准后等待期间工具定义变了：不执行，按新定义重新审批（attempt 2）并继续等待；再批准后执行", async () => {
+    await insertRun();
+    await assistant([{ id: "c1", name: "probe__gated", input: {} }]);
+    const first = await pipeline().runStep(stepCtx());
+    expect(first.kind).toBe("suspended");
+    const id1 = first.kind === "suspended" ? first.waitingFor.id : "";
+    await sql`UPDATE capybara.approvals SET status = 'approved' WHERE id = ${id1}`.execute(raw);
+    // 定义变化：描述不同 → specHash 不同
+    const changed = pluginTool("gated", "ask", {
+      type: "object",
+      properties: { x: { type: "string" } },
+    });
+    resolved = resolved.map((t) => (t.key === "probe__gated" ? changed : t));
+    const second = await pipeline().runStep(stepCtx());
+    expect(handlerCalls.gated).toBeUndefined();
+    expect(second.kind).toBe("suspended");
+    const id2 = second.kind === "suspended" ? second.waitingFor.id : "";
+    expect(id2).not.toBe(id1);
+    const row = await db
+      .selectFrom("approvals")
+      .select(["attempt", "spec_hash", "status"])
+      .where("id", "=", id2)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ attempt: 2, spec_hash: changed.specHash, status: "pending" });
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(evs.filter((e) => e.type === "approval_requested")).toHaveLength(2);
+    expect(startedOf(evs)).toEqual([]);
+    await sql`UPDATE capybara.approvals SET status = 'approved' WHERE id = ${id2}`.execute(raw);
+    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
+    expect(handlerCalls.gated).toHaveLength(1);
+  });
+
+  it("审批超时说明的小时数按该审批的等待时长（创建到到期）计算，不读当前配置", async () => {
+    await insertRun();
+    await assistant([{ id: "c1", name: "probe__gated", input: {} }]);
+    const first = await pipeline().runStep(stepCtx());
+    const id = first.kind === "suspended" ? first.waitingFor.id : "";
+    await sql`UPDATE capybara.approvals SET status = 'expired',
+      created_at = now() - interval '6 hours', expires_at = now() - interval '20 minutes'
+      WHERE id = ${id}`.execute(raw);
+    toolsCfg = { approvalTimeoutHours: 48 };
+    await pipeline().runStep(stepCtx());
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(resultsOf(evs)[0]?.content).toBe("Approval timed out after 6h; treated as denied.");
+  });
+
   it("处理函数返回 input_required → 建输入请求（写 question_asked）并暂停；已写 tool_call_started、无结果", async () => {
     await insertRun();
     await assistant([{ id: "c1", name: "probe__form", input: {} }]);

@@ -218,18 +218,33 @@ export class Waits {
         .forUpdate()
         .executeTakeFirst();
       if (run?.status !== "waiting") return null;
-      const approvals = await this.d.approvals.cancelPendingIn(t, runId);
-      const questions = await this.d.questions.cancelPendingIn(t, runId);
+      await this.d.approvals.cancelPendingIn(t, runId);
+      await this.d.questions.cancelPendingIn(t, runId);
+      // 本运行全部审批 / 输入请求涉及的调用（不只刚取消的）：决定已提交、续跑尚未发生时被中止的调用同样没有结果，
+      // 一并写取消说明（已有结果的按幂等键命中、不重复）。同一调用先审批后输入，后者覆盖前者。
       const cancelled = new Map<string, { toolKey: string; text: string }>();
       const steps = new Set<number>();
+      const approvals = await t
+        .selectFrom("approvals")
+        .select(["id", "call_id", "tool_key"])
+        .where("run_id", "=", runId)
+        .orderBy("created_at")
+        .execute();
       for (const a of approvals) {
-        cancelled.set(a.callId, { toolKey: a.toolKey, text: APPROVAL_CANCELLED_TEXT });
+        cancelled.set(a.call_id, { toolKey: a.tool_key, text: APPROVAL_CANCELLED_TEXT });
         const step = await this.approvalStep(t, conversationId, a.id);
         if (step !== null) steps.add(step);
       }
+      const questions = await t
+        .selectFrom("questions")
+        .select(["call_id", "spec"])
+        .where("run_id", "=", runId)
+        .orderBy("created_at")
+        .execute();
       for (const q of questions) {
-        cancelled.set(q.callId, { toolKey: q.toolKey, text: INPUT_CANCELLED_TEXT });
-        steps.add(q.step);
+        const spec = q.spec as { toolKey?: string; step?: number };
+        cancelled.set(q.call_id, { toolKey: spec.toolKey ?? "", text: INPUT_CANCELLED_TEXT });
+        if (typeof spec.step === "number") steps.add(spec.step);
       }
       const results = await this.stoppedResults(t, conversationId, runId, [...steps], cancelled);
       if (results.length > 0) await this.d.eventLog.append(conversationId, results, t);

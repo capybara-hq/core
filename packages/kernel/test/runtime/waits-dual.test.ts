@@ -174,14 +174,15 @@ describe("双副本续跑", () => {
     const jar = cookieJar();
     const reqA = await login(ka, jar);
     await setup(reqA);
-    // 三轮分别在到期前、到期后、到期附近动作：人工决定与超时各至少赢一次
+    // 三轮分别在到期前、到期后（各留 800ms 余量，不依赖测试进程与 PG 时钟的细微差异）、到期附近动作：
+    // 人工决定与超时各至少赢一次
     const outcomes: string[] = [];
-    for (const waitMs of [100, 200, 150]) {
+    for (const waitMs of [200, 1_800, 1_000]) {
       const convId = await createConv(reqA, orgId, agentId);
       const { runId, id } = await waitingApproval(reqA, convId);
       const job = await waitFor(() => maint.getJob(waitTimeoutJobId(id)), 5_000, "timeout job");
-      // 到期时刻设在 150ms 之后，两边在到期前后同时动作
-      await sql`UPDATE capybara.approvals SET expires_at = now() + interval '150 milliseconds'
+      // 到期时刻设在 1s 之后（按 PG 时钟），两边在到期前后同时动作
+      await sql`UPDATE capybara.approvals SET expires_at = now() + interval '1 second'
         WHERE id = ${id}`.execute(raw);
       await sleep(waitMs);
       const [decision] = await Promise.all([
@@ -196,7 +197,8 @@ describe("双副本续跑", () => {
       ]);
       expect([200, 409]).toContain(decision.statusCode);
       await waitForTerminal(db, convId, 1);
-      await sleep(300);
+      // 到期前提前执行的超时任务会重新延迟到到期时刻：等它也跑完再核对
+      await sleep(1_200);
       const evs = await eventsOf(db, convId);
       const decided = ofType(evs, "approval_decided");
       expect(decided).toHaveLength(1);

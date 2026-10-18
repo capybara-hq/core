@@ -279,6 +279,8 @@ export interface ApprovalsTable {
   spec_hash: string | null;
   /** 0011：应用工具的来源应用。 */
   app_id: string | null;
+  /** 0012：同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
+  attempt: Generated<number>;
 }
 
 /** 0010_tools.sql：ask_user 提问。 */

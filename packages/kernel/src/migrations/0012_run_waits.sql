@@ -15,3 +15,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS questions_run_call_attempt_uniq
   ON questions (run_id, call_id, attempt);
 -- 0010 的 (run_id, call_id) 唯一约束改由上面的唯一索引取代（questions 表在本版本新建，尚无代码依赖旧约束）。
 ALTER TABLE questions DROP CONSTRAINT IF EXISTS questions_run_call_uniq;
+
+-- 同一工具调用可能需要再次审批（等待期间工具定义变了，原批准不再适用）：每次审批一行，按 attempt 区分。
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS attempt integer NOT NULL DEFAULT 1;
+CREATE UNIQUE INDEX IF NOT EXISTS approvals_run_call_attempt_uniq
+  ON approvals (run_id, call_id, attempt);
+-- 0010 的 (run_id, call_id) 唯一约束改由上面的唯一索引取代（approvals 表在本版本新建，尚无代码依赖旧约束）。
+ALTER TABLE approvals DROP CONSTRAINT IF EXISTS approvals_run_call_uniq;
