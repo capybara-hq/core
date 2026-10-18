@@ -1,4 +1,5 @@
 import type { AuthInjection } from "@capybara-hq/plugin-sdk";
+import { z } from "zod";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -42,10 +43,26 @@ export class CredentialMissing extends ApiError {
  */
 const NAMESPACE = "kernel";
 
-const orgKey = (appId: string) => `credentials:app:${appId}:org`;
-const userKey = (appId: string, accountId: string) => `credentials:app:${appId}:user:${accountId}`;
+const NO_COLON = (label: string, v: string) => {
+  if (v.length === 0 || v.includes(":")) throw new Error(`credentials: invalid ${label}`);
+};
+const orgKey = (appId: string) => {
+  NO_COLON("appId", appId);
+  return `credentials:app:${appId}:org`;
+};
+const userKey = (appId: string, accountId: string) => {
+  NO_COLON("appId", appId);
+  NO_COLON("accountId", accountId);
+  return `credentials:app:${appId}:user:${accountId}`;
+};
 const keyOf = (appId: string, owner: CredentialOwner) =>
   owner.kind === "org" ? orgKey(appId) : userKey(appId, owner.accountId);
+
+const nonEmpty = z.string().min(1);
+const secretSchemas = {
+  token: z.strictObject({ token: nonEmpty }),
+  basic: z.strictObject({ username: nonEmpty, password: nonEmpty }),
+};
 
 /** 应用凭据：信封加密存入 capybara.secrets，解密后只在构造注入头时出现。 */
 export class Credentials {
@@ -59,12 +76,55 @@ export class Credentials {
     return createSecrets(this.db, this.keyring, NAMESPACE);
   }
 
+  /** 按认证方式校验凭据形状；错误只含路径与英文说明，不回显值。 */
+  private validate(auth: AppAuth, owner: CredentialOwner, value: unknown): void {
+    const fail = (issues: { path: string; message: string }[]) =>
+      new ApiError("validation_failed", "Invalid credential", issues);
+    if (auth.type === "none")
+      throw fail([{ path: "", message: "Auth type none takes no credential" }]);
+    const want = auth.ownership === "org" ? "org" : "user";
+    if (owner.kind !== want) {
+      throw fail([
+        {
+          path: "owner",
+          message: `Credential owner must be ${want} for ${auth.ownership} ownership`,
+        },
+      ]);
+    }
+    let schema: z.ZodType;
+    if (auth.type === "bearer" || auth.type === "api_key") schema = secretSchemas.token;
+    else if (auth.type === "basic") schema = secretSchemas.basic;
+    else {
+      const names = auth.names;
+      schema = z.strictObject({ headers: z.record(z.string(), nonEmpty) }).superRefine((v, ctx) => {
+        for (const n of names) {
+          if (!(n in v.headers))
+            ctx.addIssue({
+              code: "custom",
+              path: ["headers", n],
+              message: "Required header is missing",
+            });
+        }
+        for (const n of Object.keys(v.headers)) {
+          if (!names.includes(n))
+            ctx.addIssue({ code: "custom", path: ["headers", n], message: "Unexpected header" });
+        }
+      });
+    }
+    const r = schema.safeParse(value);
+    if (!r.success) {
+      throw fail(r.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })));
+    }
+  }
+
   async setStatic(
     orgId: string,
     appId: string,
+    auth: AppAuth,
     owner: CredentialOwner,
     value: StaticSecret,
   ): Promise<void> {
+    this.validate(auth, owner, value);
     await this.secrets().set(orgId, keyOf(appId, owner), JSON.stringify(value));
   }
 
@@ -72,12 +132,23 @@ export class Credentials {
     await this.secrets().delete(orgId, keyOf(appId, owner));
   }
 
-  /** 该账号对此应用是否已有凭据（个人凭据或组织凭据任一存在即为 connected）。 */
-  async status(orgId: string, appId: string, accountId: string): Promise<"connected" | "missing"> {
-    const s = this.secrets();
-    const hit =
-      (await s.get(orgId, userKey(appId, accountId))) ?? (await s.get(orgId, orgKey(appId)));
-    return hit === null ? "missing" : "connected";
+  /** 只看与 auth.ownership 对应的那一条凭据是否存在（不解密）；none 恒为 connected。 */
+  async status(
+    orgId: string,
+    appId: string,
+    auth: AppAuth,
+    accountId: string,
+  ): Promise<"connected" | "missing"> {
+    if (auth.type === "none") return "connected";
+    const key = auth.ownership === "personal" ? userKey(appId, accountId) : orgKey(appId);
+    const row = await this.db
+      .selectFrom("secrets")
+      .select("key")
+      .where("namespace", "=", NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where("key", "=", key)
+      .executeTakeFirst();
+    return row ? "connected" : "missing";
   }
 
   /** 返回本次请求要注入的头 / 查询参数；缺凭据抛 CredentialMissing。 */
@@ -93,12 +164,19 @@ export class Credentials {
     const missing = () => new CredentialMissing(appId, auth.ownership);
     const raw = await this.secrets().get(orgId, keyOf(appId, owner));
     if (raw === null) throw missing();
-    const value = JSON.parse(raw) as Partial<{
+    let value: Partial<{
       token: string;
       username: string;
       password: string;
       headers: Record<string, string>;
     }>;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      // 密文解开后不是合法 JSON：按缺失处理，日志不带内容
+      this.log.warn("credential payload is corrupted", { appId });
+      throw missing();
+    }
 
     switch (auth.type) {
       case "bearer": {
