@@ -1,0 +1,59 @@
+/* biome-ignore-all format: token 值须与 spec 逐字一致（大写十六进制、rgba 写法），不让格式化器改写 */
+/* 颜色字面量只允许出现在本文件（spec §2）。深色为默认，值见 docs/design/spec.md §2.1 / §2.5。 */
+
+:root {
+  --cb-font: "Sarasa Mono SC", ui-monospace, monospace;
+  --cb-z-sheet: 40;
+  --cb-z-dialog: 50;
+  --cb-z-popover: 60;
+  --cb-z-toast: 70;
+  --cb-motion: 120ms;
+}
+
+:root[data-theme="dark"] {
+  --cb-bg: #0A0A0A;
+  --cb-panel: #121211;
+  --cb-hover: #161614;
+  --cb-line: #262624;
+  --cb-line-strong: #3A3A37;
+  --cb-ink: #E6E6E3;
+  --cb-muted: #8E8E89;
+  --cb-faint: #5A5A56;
+  --cb-accent: #FF6A13;
+  --cb-accent-hover: #FF8240;
+  --cb-accent-press: #E85A08;
+  --cb-on-accent: #0A0A0A;
+  --cb-accent-tint: color-mix(in srgb, var(--cb-accent) 12%, transparent);
+  --cb-ok: #3FD483;
+  --cb-fail: #FF5C52;
+  --cb-warn: #F2C14B;
+  --cb-scrim: rgba(0,0,0,.60);
+  --cb-shadow-1: 0 8px 24px rgba(0,0,0,.40);
+  --cb-shadow-2: 0 16px 48px rgba(0,0,0,.50);
+  --cb-shadow-sheet: -16px 0 40px rgba(0,0,0,.40);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --cb-bg: #F6F6F3;
+  --cb-panel: #FFFFFF;
+  --cb-hover: #ECECE7;
+  --cb-line: #D6D6D0;
+  --cb-line-strong: #B5B5AE;
+  --cb-ink: #0A0A0A;
+  --cb-muted: #5E5E5A;
+  --cb-faint: #9A9A94;
+  --cb-accent: #CC4609;
+  --cb-accent-hover: #B83F08;
+  --cb-accent-press: #A33707;
+  --cb-on-accent: #FFFFFF;
+  --cb-accent-tint: color-mix(in srgb, var(--cb-accent) 12%, transparent);
+  --cb-ok: #16803F;
+  --cb-fail: #C8302A;
+  --cb-warn: #8F6500;
+  --cb-scrim: rgba(10,10,10,.25);
+  --cb-shadow-1: 0 2px 8px rgba(10,10,10,.08);
+  --cb-shadow-2: 0 8px 24px rgba(10,10,10,.12);
+  --cb-shadow-sheet: -4px 0 16px rgba(10,10,10,.08);
+  color-scheme: light;
+}

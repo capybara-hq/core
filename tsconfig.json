@@ -30,6 +30,9 @@
     },
     {
       "path": "apps/capybara"
+    },
+    {
+      "path": "packages/design"
     }
   ]
 }

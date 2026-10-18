@@ -9,6 +9,7 @@ const monorepoRoot = new URL("../..", import.meta.url).pathname;
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  transpilePackages: ["@capybara-hq/design"],
   turbopack: { root: monorepoRoot },
   outputFileTracingRoot: monorepoRoot,
 };

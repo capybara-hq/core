@@ -19,7 +19,21 @@ export default defineConfig({
       // Node 环境：所有包的 *.test.ts（含 apps/web 的代理路由测试）。
       {
         extends: true,
-        test: { name: "node", include: ["{packages,apps,plugins,tools}/*/test/**/*.test.ts"] },
+        test: {
+          name: "node",
+          include: ["{packages,apps,plugins,tools}/*/test/**/*.test.ts"],
+          exclude: ["packages/design/**", "**/node_modules/**"],
+        },
+      },
+      // jsdom 环境：设计系统包 @capybara-hq/design 的测试。
+      {
+        extends: true,
+        oxc: { jsx: { runtime: "automatic" } },
+        test: {
+          name: "design",
+          include: ["packages/design/test/**/*.test.{ts,tsx}"],
+          environment: "jsdom",
+        },
       },
       // jsdom 环境：apps/web 的组件 / 浏览器端测试（*.test.tsx）。
       {
