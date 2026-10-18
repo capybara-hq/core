@@ -135,6 +135,74 @@ export CAPYBARA_PLUGIN_CONFIG='{"openai":{"apiKey":"sk-...","models":[{"id":"gpt
 
 `example-counter` 是写插件的参考实现；写自己的插件见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，配置项清单见 [docs/config.md](docs/config.md)。
 
+### 工具与应用（MCP / OpenAPI）
+
+agent 经「工具」做事。工具有三个来源：内置（`ask_user`、`read_tool_output`，工具多时自动加入 `tool_search`）、插件（如 `@capybara-hq/plugin-todo` 的任务清单工具）、**应用**（把远端 MCP 服务或 OpenAPI 描述的 HTTP API 接进组织）。写操作默认触发审批，确认前 run 暂停，不占会话锁。
+
+加载连接器插件（部署级，不需要按组织启用）：
+
+```bash
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-connector-mcp","@capybara-hq/plugin-connector-openapi","@capybara-hq/plugin-todo"]'
+# 生产只接受 https 端点；本机联调才打开 allowInsecureLoopback（明文 http 的 127.0.0.1 / localhost / [::1]）
+export CAPYBARA_PLUGIN_CONFIG='{"connector-mcp":{"allowInsecureLoopback":true},"connector-openapi":{"allowInsecureLoopback":true}}'
+```
+
+**网页向导**（组织管理员）：登录后打开「应用」→「安装」（`/apps/install`）：选端点类型（MCP 服务 / OpenAPI 文档）→ 填端点（OpenAPI 可给文档 URL 或上传 JSON / YAML，最大 2 MB；`baseUrl` 可覆盖文档里的 servers）→ 选认证（OpenAPI 会按文档声明的 `securitySchemes` 预填，并列出操作供勾选）→ 预览工具与默认策略 → 安装。安装后的应用详情页可调整每个工具的启停与默认策略，并复核漂移（见下）。在 agent 表单里选上该应用的工具，agent 才会用到它。
+
+**API**（用管理员的会话 Cookie 或令牌；写请求带 `X-Capybara-Csrf: 1`）：
+
+```bash
+# 安装一个 MCP 应用（静态 Bearer，组织共用一个凭据）
+curl -s -X POST localhost:8080/api/v1/orgs/$ORG/apps -b cookies.txt \
+  -H 'Content-Type: application/json' -H 'X-Capybara-Csrf: 1' \
+  -d '{"name":"Docs","slug":"docs","connector":"mcp",
+       "endpoint":{"url":"https://mcp.example.com/mcp"},
+       "auth":{"type":"bearer","ownership":"org"},
+       "credential":{"token":"<token>"}}'
+
+# 安装一个 OpenAPI 应用（API key 放 header；operations 缺省 = 全部操作）
+curl -s -X POST localhost:8080/api/v1/orgs/$ORG/apps -b cookies.txt \
+  -H 'Content-Type: application/json' -H 'X-Capybara-Csrf: 1' \
+  -d '{"name":"Petstore","slug":"pets","connector":"openapi",
+       "endpoint":{"specUrl":"https://api.example.com/openapi.json","operations":["listPets","getPet"]},
+       "auth":{"type":"api_key","ownership":"org","in":"header","name":"X-Api-Key"},
+       "credential":{"token":"<key>"}}'
+
+# 预览（什么都不写）：返回文档声明的认证方式、操作清单和工具预览
+curl -s -X POST localhost:8080/api/v1/orgs/$ORG/apps/preview -b cookies.txt \
+  -H 'Content-Type: application/json' -H 'X-Capybara-Csrf: 1' \
+  -d '{"connector":"openapi","endpoint":{"specUrl":"https://api.example.com/openapi.json"}}'
+```
+
+应用工具在模型面前的名字是 `<slug>__<工具名>`（如 `docs__search`）。agent 定义里按引用选工具：`"tools":[{"kind":"app","appId":"<id>","tools":"all"}]`（`"all"` = 该应用当前所有启用的工具，也可给工具名数组）。
+
+**认证方式**（`auth.type`；`ownership` 为 `org` 时全组织共用一个凭据，为 `personal` 时每位成员各自连接，在「设置 → 个人连接」里填写或授权）：
+
+| `auth.type` | 说明 | 凭据 |
+|---|---|---|
+| `none` | 无需认证 | — |
+| `bearer` / `basic` / `api_key{in,name}` / `headers{names}` | 静态凭据，加密存储，只在请求时注入 | `credential`：`{token}` / `{username,password}` / `{headers:{…}}`；安装后用 `PUT .../apps/:appId/credentials/org` 轮换（个人凭据用 `.../credentials/me`） |
+| `oauth_code`（个人） | 授权码 + PKCE：每位成员点「连接」跳转授权服务器登录；`discovery: "mcp"` 自动发现授权服务器，`client: "dcr"` 安装时自动注册客户端 | 授权服务器不支持 DCR 时改用 `client: "manual"`，安装时给 `credential: {clientId, clientSecret?}`；也可 `discovery: "manual"` 并给 `authorizationUrl` / `tokenUrl` |
+| `oauth_client`（组织） | 客户端凭据流：组织共用一个 OAuth 客户端换令牌，安装时先验证 | `credential: {clientId, clientSecret}`，轮换用 `PUT .../credentials/org` |
+
+- **OAuth 需要 `http.publicUrl`**（`CAPYBARA_HTTP__PUBLIC_URL`，内核的外部可达地址，如 `https://capybara.example.com`），回调地址是 `<publicUrl>/api/v1/oauth/callback`，须登记到授权服务器。没配时安装 OAuth 应用会被拒绝。令牌在过期前由内核自动刷新，刷新被拒则凭据作废，成员会在对话里看到「需要连接」卡片。
+- 凭据不进事件日志、模型上下文与审计；工具结果与错误里出现的凭据值会被内核打码。端点的固定头与 URL query 里不能放凭据。
+
+**审批与收件箱**：策略（`allow` / `ask` / `deny`）默认按工具注解推导（只读 → `allow`，其余 → `ask`），管理员可逐工具改，agent 还可以把某个工具收紧。`ask` 的调用在对话里出审批卡片，也汇总在网页的「收件箱」（`/inbox`）；批准时可选「仅这次 / 本会话 / 以后都允许」，「以后都允许」的授权在「设置 → 授权」里查看与撤销，工具定义一变即失效。审批超过 `tools.approvalTimeoutHours`（默认 24）按拒绝处理；agent 自己不能审批。远端工具在调用途中向用户要输入（MCP elicitation）时，对话里出输入卡片。API：`/api/v1/orgs/:orgId/approvals`、`/questions`、`/me/tool-grants`。
+
+**工具定义漂移**：内核每 `tools.driftIntervalHours` 小时（默认 24）、收到远端的 `list_changed` 通知、管理员点「刷新」时重新读取应用的工具清单。新增或定义有任何变化的工具先进入「待复核」，复核（批准 / 拒绝）前模型用不到，防止远端偷偷改工具描述。
+
+**`tool_search`**：agent 可用工具超过 `tools.searchThresholdTools`（30）个或估算超过 `tools.searchThresholdTokens`（8000）token 时，不再把全部定义塞进每次请求，而是给一份工具目录，模型用 `tool_search` 按关键词加载需要的。组织管理员可在「设置 → 组织」关闭（`PATCH /api/v1/orgs/:orgId/settings {"toolSearch":"off"}`）。
+
+**插件工具要先在组织启用**：插件工具（如 `todo__write`）只在启用了该插件的组织可用（应用不需要）。组织管理员：
+
+```bash
+curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
+  -H 'Content-Type: application/json' -H 'X-Capybara-Csrf: 1' -d '{"enabled":true}'
+```
+
+写工具见 [skills/writing-tools](skills/writing-tools/SKILL.md)，写连接器见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，相关配置（`tools.*`、`http.publicUrl`）见 [docs/config.md](docs/config.md)。
+
 ## 运维须知
 
 - **初始化向导何时重新开放**：「需要初始化」的判定是「不存在活跃（`status = active`）的企业管理员」，每次实时查 PG。如果有人直接改库把所有企业管理员都停用或撤销了，部署会重新对未认证的 `POST /api/v1/setup` 开放，谁先调用谁就成为新的企业管理员。生产部署请始终设置 `CAPYBARA_AUTH__SETUP_TOKEN`（初始化须带同值的 `setupToken`）；恢复管理员优先用 CLI：`echo "$PW" | pnpm capybara admin create --login <名字> --display-name <显示名>`。

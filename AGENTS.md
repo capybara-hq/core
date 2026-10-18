@@ -58,7 +58,8 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 内核 HTTP 用 NestJS + Fastify：领域类不依赖 Nest，构造参数显式 `@Inject`；插件不依赖 Nest。详见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
 - 运行时：会话事件日志是唯一事实源，模型看到的一切都进日志（任一次模型请求都能由日志加 agent 版本还原），发给模型的历史只追加。代码在 `packages/kernel/src/runtime`。
 - 模型供应商插件：详见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。
-- 工具与连接器（`ctx.tools`、`connector@1`、描述与错误文案、默认策略、输出存档）：详见 [skills/writing-tools](skills/writing-tools/SKILL.md)，参考实现 `plugins/todo`、`plugins/connector-mcp`。
+- 工具（`ctx.tools`、描述与错误文案、默认策略、输出存档、`tool_search`、漂移复核）：详见 [skills/writing-tools](skills/writing-tools/SKILL.md)，参考实现 `plugins/todo`。
+- 连接器（`connector@1`：MCP / OpenAPI 等远端服务接成应用）：详见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，参考实现 `plugins/connector-mcp`、`plugins/connector-openapi`。
 - **能自动检查的规则以检查为准**：`pnpm check` 会逐步收录各项自定义检查，每道检查都有「违规 fixture 使其失败」的测试。
 
 ## 常用命令
