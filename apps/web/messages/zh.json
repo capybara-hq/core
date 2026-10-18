@@ -301,7 +301,8 @@
     "title": "需要连接应用",
     "status": "未连接",
     "description": "agent 使用 {app} 前，需要先填写你的凭据。",
-    "action": "连接"
+    "action": "连接",
+    "ended": "这次运行时 {app} 尚未连接。请在「我的连接」中填写凭据后再试。"
   },
   "inbox": {
     "title": "收件箱",
@@ -403,7 +404,6 @@
       },
       "inspectorTitle": "应用",
       "refresh": "刷新工具",
-      "refreshing": "刷新中…",
       "refreshed": "工具列表已刷新。",
       "retry": "重试"
     },

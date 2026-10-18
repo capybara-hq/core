@@ -92,7 +92,8 @@ describe("收件箱（InboxPage）", () => {
         return json(200, { approval: { ...approval("b"), status: "approved", scope: "always" } });
       },
     });
-    const { container } = renderPage(<InboxRoute />, { locale });
+    const refreshPending = vi.fn();
+    const { container } = renderPage(<InboxRoute />, { locale, session: { refreshPending } });
     const user = userEvent.setup();
     const table = await screen.findByRole("table", { name: m.inbox.listLabel });
     await user.click(within(table).getByText("Fixture · tool_b"));
@@ -109,6 +110,8 @@ describe("收件箱（InboxPage）", () => {
     await vi.waitFor(() => expect(screen.queryByText("Fixture · tool_b")).toBeNull());
     expect(calls.filter((c) => c.url.endsWith("status=pending"))).toHaveLength(2);
     expect(await screen.findByText(m.inbox.approved)).toBeTruthy();
+    // 顶栏的待处理数立即重读，不等 30 秒轮询
+    expect(refreshPending).toHaveBeenCalledTimes(1);
   });
 
   it("已被别人处理：toast 显示 approval.already_decided 的文案并重读", async () => {

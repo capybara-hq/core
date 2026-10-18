@@ -301,7 +301,8 @@
     "title": "Connection required",
     "status": "Not connected",
     "description": "{app} needs your credential before the agent can use it.",
-    "action": "Connect"
+    "action": "Connect",
+    "ended": "{app} was not connected when this ran. Set your credential in My connections, then ask again."
   },
   "inbox": {
     "title": "Inbox",
@@ -403,7 +404,6 @@
       },
       "inspectorTitle": "App",
       "refresh": "Refresh tools",
-      "refreshing": "Refreshing…",
       "refreshed": "Tool list refreshed.",
       "retry": "Retry"
     },

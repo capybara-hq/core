@@ -342,7 +342,8 @@ describe("TopBar 组织与账户按钮", () => {
         <div />
       </AppShell>,
     );
-    const inbox = screen.getByRole("link", { name: /收件箱/ });
+    // 可访问名称带上待处理数（不是「收件箱3」）
+    const inbox = screen.getByRole("link", { name: "收件箱，3 项待处理" });
     const badge = inbox.querySelector('.cb-badge[data-tone="count"]');
     expect(badge?.textContent).toBe("3");
     expect(screen.getByRole("link", { name: "应用" }).querySelector(".cb-badge")).toBeNull();

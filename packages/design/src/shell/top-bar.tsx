@@ -58,6 +58,13 @@ export function TopBar({
             href={n.href}
             className="cb-topbar-link"
             {...(n.id === activeNav ? { "aria-current": "page" as const } : {})}
+            {...(n.count
+              ? {
+                  "aria-label": t("shell.navCount")
+                    .replace("{label}", n.label)
+                    .replace("{n}", String(n.count)),
+                }
+              : {})}
           >
             {n.label}
             {n.count ? (

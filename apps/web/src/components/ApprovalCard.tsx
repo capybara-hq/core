@@ -116,6 +116,7 @@ export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
  * 提交审批决定：成功返回处理后的结果；已被处理（`approval.already_decided`）等错误以 toast 告知并返回 null。
  */
 export function useDecide(orgId: string) {
+  const session = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [pending, setPending] = useState<"approve" | "deny">();
@@ -133,9 +134,11 @@ export function useDecide(orgId: string) {
         return null;
       } finally {
         setPending(undefined);
+        // 顶栏的待处理数立即更新（失败多半是已被处理，同样要更新）
+        session.refreshPending?.();
       }
     },
-    [orgId, toast, errorMessage],
+    [orgId, toast, errorMessage, session],
   );
   return { decide, pending };
 }
@@ -215,8 +218,9 @@ export function ApprovalCard({ orgId, item }: { orgId: string; item: ApprovalIte
                 disabled={pending !== undefined}
               />
               <Stack direction="row" gap={8}>
+                {/* 对话里唯一的主操作是输入框的「发送」：卡片按钮用次级样式 */}
                 <Button
-                  variant="primary"
+                  variant="secondary"
                   loading={pending === "approve"}
                   disabled={pending !== undefined}
                   onClick={() => void onDecide("approve")}

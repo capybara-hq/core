@@ -14,6 +14,7 @@ import HomePage from "../src/app/[locale]/(app)/page";
 import LoginPage from "../src/app/[locale]/(auth)/login/page";
 import SetupPage from "../src/app/[locale]/(auth)/setup/page";
 import { AppFrame } from "../src/components/shell/AppFrame";
+import { activeNavOf } from "../src/components/shell/nav";
 import { RequireSession } from "../src/components/shell/session";
 import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
@@ -306,7 +307,11 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
         name: locale === "zh" ? "主导航" : "Main navigation",
       });
       await vi.waitFor(() =>
-        expect(within(nav).getByRole("link", { name: `${m.nav.inbox}2` })).toBeTruthy(),
+        expect(
+          within(nav).getByRole("link", {
+            name: locale === "zh" ? `${m.nav.inbox}，2 项待处理` : `${m.nav.inbox}, 2 pending`,
+          }),
+        ).toBeTruthy(),
       );
       expect(within(nav).getByRole("link", { name: m.nav.apps })).toBeTruthy();
     },
@@ -401,5 +406,19 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
     expect(screen.queryByText("page body")).toBeNull();
+  });
+});
+
+describe("activeNavOf", () => {
+  it("应用只高亮 /apps*、/settings/connections、/settings/grants；其他 /settings 不高亮", () => {
+    expect(activeNavOf("/apps")).toBe("apps");
+    expect(activeNavOf("/apps/x")).toBe("apps");
+    expect(activeNavOf("/settings/connections")).toBe("apps");
+    expect(activeNavOf("/settings/grants")).toBe("apps");
+    expect(activeNavOf("/settings/org")).toBe("");
+    expect(activeNavOf("/settings")).toBe("");
+    expect(activeNavOf("/appsx")).toBe("");
+    expect(activeNavOf("/inbox")).toBe("inbox");
+    expect(activeNavOf("/chat/c1")).toBe("agents");
   });
 });

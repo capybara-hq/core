@@ -1,5 +1,7 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
+import { act, cleanup, render, renderHook, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
@@ -8,9 +10,11 @@ import AppDetailPage from "../src/app/[locale]/(app)/apps/[appId]/page";
 import NewAppPage from "../src/app/[locale]/(app)/apps/new/page";
 import AppsPage from "../src/app/[locale]/(app)/apps/page";
 import ConnectionsPage from "../src/app/[locale]/(app)/settings/connections/page";
+import { AppFrame } from "../src/components/shell/AppFrame";
 import type { Me } from "../src/lib/session";
+import { useLoad } from "../src/lib/use-load";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
-import { resetNavigation, router } from "./support/navigation";
+import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -268,6 +272,10 @@ describe("应用详情（DetailPage）", () => {
       const put = calls.find((c) => c.method === "PUT");
       expect(bodyOf(put)).toEqual({ token: "tok" });
       expect(calls.filter((c) => c.method === "GET")).toHaveLength(2);
+      // 保存成功后清空输入框（凭据值不留在页面上）
+      await vi.waitFor(() =>
+        expect(screen.getByLabelText(m.apps.form.tokenLabel)).toHaveProperty("value", ""),
+      );
     },
   );
 
@@ -332,6 +340,10 @@ describe("个人连接（SettingsPage）", () => {
       const { container } = renderPage(<ConnectionsPage />, { locale });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
       const section = await screen.findByRole("region", { name: "Fixture" });
+      // 每个应用一个分组：页面上没有多个主操作
+      expect(
+        container.querySelectorAll('[data-variant="primary"], .cb-btn-link-primary').length,
+      ).toBeLessThanOrEqual(1);
       expect(screen.queryByText("Org app")).toBeNull();
       expect(within(section).getByText(`‖ ${m.connections.missing}`)).toBeTruthy();
       const user = userEvent.setup();
@@ -342,6 +354,13 @@ describe("个人连接（SettingsPage）", () => {
         username: "me",
         password: "pw",
       });
+      await vi.waitFor(() =>
+        expect(within(section).getByLabelText(m.apps.form.passwordLabel)).toHaveProperty(
+          "value",
+          "",
+        ),
+      );
+      expect(within(section).getByLabelText(m.apps.form.usernameLabel)).toHaveProperty("value", "");
       const clear = await screen.findByRole("button", { name: m.connections.clear });
       await user.click(clear);
       expect(calls.some((c) => c.method === "DELETE")).toBe(true);
@@ -405,5 +424,106 @@ describe("新建 agent：工具选择与策略收紧", () => {
         toolPolicies: { fixture__delete_item: "deny" },
       },
     });
+  });
+});
+
+describe("应用详情的工具栏刷新", () => {
+  it("刷新期间按钮为加载中且不可再点；完成后用返回的应用替换", async () => {
+    let resolve: (r: Response) => void = () => {};
+    const refreshed = new Promise<Response>((r) => {
+      resolve = r;
+    });
+    const calls: { method: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const method = (init?.method ?? "GET").toUpperCase();
+        calls.push({ method });
+        if (method === "POST" && String(input) === "/api/v1/orgs/o1/apps/app1/refresh") {
+          return refreshed;
+        }
+        if (String(input) === "/api/v1/orgs/o1/apps/app1") return json(200, { app: detail() });
+        throw new Error(`unexpected ${method} ${String(input)}`);
+      }),
+    );
+    renderPage(<AppDetailPage />);
+    const button = await screen.findByRole("button", { name: en.apps.detail.refresh });
+    await userEvent.setup().click(button);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button).toHaveProperty("disabled", true);
+    await act(async () =>
+      resolve(json(200, { app: detail({ tools: [tool("search")] }), issues: [], changes: {} })),
+    );
+    await vi.waitFor(() => expect(button.getAttribute("aria-busy")).toBeNull());
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(screen.queryByText("fixture__delete_item")).toBeNull();
+  });
+});
+
+describe("useLoad", () => {
+  it("依赖变化（切换组织）立即回到加载中，不显示上一组依赖的数据；reload 保留旧数据", async () => {
+    const pending = new Map<string, (v: string) => void>();
+    const load = (org: string) =>
+      new Promise<string>((r) => {
+        pending.set(org, r);
+      });
+    const { result, rerender } = renderHook(({ org }) => useLoad(() => load(org), [org]), {
+      initialProps: { org: "o1" },
+    });
+    expect(result.current.state).toEqual({ kind: "loading" });
+    await act(async () => pending.get("o1")?.("data of o1"));
+    expect(result.current.state).toEqual({ kind: "ready", data: "data of o1" });
+
+    rerender({ org: "o2" });
+    // 同一次渲染里就不再给出 o1 的数据
+    expect(result.current.state).toEqual({ kind: "loading" });
+    await act(async () => pending.get("o2")?.("data of o2"));
+    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2" });
+
+    act(() => result.current.reload());
+    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2" });
+    await act(async () => pending.get("o2")?.("data of o2 v2"));
+    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2 v2" });
+  });
+});
+
+describe("应用详情切换组织", () => {
+  it("切到其他组织：跳回 /apps，且不以新组织读取旧应用", async () => {
+    resetNavigation("/apps/app1");
+    let current = "o1";
+    const me = () => ({
+      ...ME,
+      currentOrgId: current,
+      memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "owner" }],
+    });
+    const calls = stubApi({
+      "GET /api/v1/me": () => json(200, me()),
+      "PUT /api/v1/me/current-org": () => {
+        current = "o2";
+        return noContent();
+      },
+      "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: detail() }),
+      "GET /api/v1/orgs/o1/approvals": () => json(200, { approvals: [] }),
+      "GET /api/v1/orgs/o2/approvals": () => json(200, { approvals: [] }),
+    });
+    render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <DesignProvider locale="en" link={Link as LinkComponent}>
+          <ToastProvider>
+            <AppFrame version="v0">
+              <AppDetailPage />
+            </AppFrame>
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
+    expect(await screen.findByRole("heading", { name: "Fixture" })).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/apps"));
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
+    expect(screen.queryByRole("heading", { name: "Fixture" })).toBeNull();
+    expect(calls.some((c) => c.url.includes("/orgs/o2/apps"))).toBe(false);
   });
 });

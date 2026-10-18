@@ -275,7 +275,8 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
               disabled={pending}
             />
             <Stack direction="row" gap={8}>
-              <Button variant="primary" loading={pending} onClick={() => void submit()}>
+              {/* 对话里唯一的主操作是输入框的「发送」 */}
+              <Button variant="secondary" loading={pending} onClick={() => void submit()}>
                 {t("submit")}
               </Button>
             </Stack>

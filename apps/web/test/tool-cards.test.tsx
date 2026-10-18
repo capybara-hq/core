@@ -162,7 +162,7 @@ describe("chatItems：工具调用、审批、输入请求、需要连接", () =
     expect(items.map((i) => i.kind)).toEqual(["tool", "question", "tool", "connect"]);
     expect(items[1]).toMatchObject({ answered: { outcome: "answered", answer: { c: true } } });
     expect(items[0]).toMatchObject({ status: "cancelled" });
-    expect(items[3]).toMatchObject({ appId: "app2", appName: "GitHub" });
+    expect(items[3]).toMatchObject({ appId: "app2", appName: "GitHub", closed: true });
   });
 
   it("approval_requested / question_asked 使运行进入 waiting（不是 running），处理后恢复", () => {
@@ -481,13 +481,42 @@ describe("ConnectCard", () => {
     const m = msgs[locale];
     renderPage(
       <ConnectCard
-        item={{ kind: "connect", key: "e7", callId: "c", appId: "app2", appName: "GitHub" }}
+        item={{
+          kind: "connect",
+          key: "e7",
+          callId: "c",
+          appId: "app2",
+          appName: "GitHub",
+          closed: false,
+        }}
       />,
       { locale },
     );
     expect(screen.getByText(m.connect.description.replace("{app}", "GitHub"))).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole("button", { name: m.connect.action }));
+    const connect = screen.getByRole("button", { name: m.connect.action });
+    expect(connect.getAttribute("data-variant")).not.toBe("primary");
+    await userEvent.setup().click(connect);
     expect(router.push).toHaveBeenCalledWith("/settings/connections#app-app2");
+  });
+
+  it.each(LOCALES)("所在运行已结束：只显示说明，没有「连接」与待处理状态（%s）", (locale) => {
+    const m = msgs[locale];
+    renderPage(
+      <ConnectCard
+        item={{
+          kind: "connect",
+          key: "e7",
+          callId: "c",
+          appId: "app2",
+          appName: "GitHub",
+          closed: true,
+        }}
+      />,
+      { locale },
+    );
+    expect(screen.getByText(m.connect.ended.replace("{app}", "GitHub"))).toBeTruthy();
+    expect(screen.queryByRole("button", { name: m.connect.action })).toBeNull();
+    expect(screen.queryByText(`‖ ${m.connect.status}`)).toBeNull();
   });
 });
 
@@ -563,6 +592,58 @@ describe("对话页里的工具与审批", () => {
       });
       expect(within(log).getByText(`✓ ${m.approval.decision.approved}`)).toBeTruthy();
       expect(within(inspector).getByText(`● ${m.chat.running}`)).toBeTruthy();
+    },
+  );
+
+  it.each(LOCALES)(
+    "审批、输入请求、需要连接同时待处理时，整个视图只有一个主操作（输入框的「发送」）（%s）",
+    async (locale) => {
+      const m = msgs[locale];
+      vi.stubGlobal("EventSource", FakeEventSource);
+      FakeEventSource.instances = [];
+      const form: InputForm = {
+        title: "Pick",
+        fields: [{ key: "c", label: "C", schema: { type: "boolean" } }],
+      };
+      stubApi({
+        "GET /api/v1/orgs/o1/conversations/c1/events": () =>
+          json(200, {
+            events: [
+              ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
+              toolCall(3, "call_1", "fixture__delete_item", { id: "x1" }),
+              ev(4, "approval_requested", {
+                step: 0,
+                callId: "call_1",
+                approvalId: "ap1",
+                toolKey: "fixture__delete_item",
+                expiresAt: EXPIRES,
+              }),
+              ev(5, "question_asked", {
+                step: 0,
+                callId: "call_2",
+                questionId: "q1",
+                form,
+                expiresAt: EXPIRES,
+              }),
+              ev(6, "connection_required", {
+                step: 0,
+                callId: "call_3",
+                appId: "app2",
+                appName: "GitHub",
+              }),
+            ],
+          }),
+        "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL }),
+      });
+      const { container } = renderPage(<ChatPage />, { locale });
+      const log = await screen.findByRole("log");
+      await within(log).findByRole("button", { name: m.approval.approve });
+      expect(within(log).getByRole("button", { name: m.question.submit })).toBeTruthy();
+      expect(within(log).getByRole("button", { name: m.connect.action })).toBeTruthy();
+      const primaries = container.querySelectorAll(
+        '[data-variant="primary"], .cb-btn-link-primary',
+      );
+      expect([...primaries].map((el) => el.textContent)).toEqual([m.chat.send]);
     },
   );
 });

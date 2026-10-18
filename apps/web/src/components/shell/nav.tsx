@@ -2,7 +2,7 @@
 
 import type { CommandGroup, TopBarProps } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { listApprovals } from "../../lib/approvals";
 
@@ -17,21 +17,31 @@ const NAV = [
 /** 待处理审批数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
 const PENDING_POLL_MS = 30_000;
 
-/** 当前路由属于哪个一级导航项（对话页归在 Agents 下，个人连接页归在应用下）。 */
+/** 归在「应用」下的个人设置页（已连接的应用、已记住的授权）。 */
+const APP_SETTINGS = ["/settings/connections", "/settings/grants"];
+
+const under = (pathname: string, prefix: string) =>
+  pathname === prefix || pathname.startsWith(`${prefix}/`);
+
+/** 当前路由属于哪个一级导航项（对话页归在 Agents 下，个人连接 / 授权页归在应用下）。 */
 export function activeNavOf(pathname: string): string {
-  if (pathname.startsWith("/agents") || pathname.startsWith("/chat")) return "agents";
-  if (pathname.startsWith("/inbox")) return "inbox";
-  if (pathname.startsWith("/apps") || pathname.startsWith("/settings")) return "apps";
+  if (under(pathname, "/agents") || under(pathname, "/chat")) return "agents";
+  if (under(pathname, "/inbox")) return "inbox";
+  if (under(pathname, "/apps") || APP_SETTINGS.some((p) => under(pathname, p))) return "apps";
   return pathname === "/" ? "overview" : "";
 }
 
 /**
- * 当前用户待处理的审批数（`GET /approvals?status=pending`）：组织或路由变化时、以及每 30 秒重读；
- * 没有当前组织或读取失败时为 0。
+ * 当前用户待处理的审批数（`GET /approvals?status=pending`）：组织或路由变化时、每 30 秒、以及调用
+ * `refresh()` 时重读；没有当前组织或读取失败时为 0。
  */
-export function usePendingApprovals(orgId: string | null, pathname: string): number {
+export function usePendingApprovals(
+  orgId: string | null,
+  pathname: string,
+): { count: number; refresh(): void } {
   const [count, setCount] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname 只用于触发重读（处理审批后回到别的页面）
+  const [nonce, setNonce] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname 与 nonce 只用于触发重读
   useEffect(() => {
     if (orgId === null) {
       setCount(0);
@@ -53,8 +63,9 @@ export function usePendingApprovals(orgId: string | null, pathname: string): num
       disposed = true;
       clearInterval(timer);
     };
-  }, [orgId, pathname]);
-  return count;
+  }, [orgId, pathname, nonce]);
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
+  return { count, refresh };
 }
 
 /** StatusBar 上下文路径里的路由段：去掉开头的 `/`，首页记为 `~`。 */

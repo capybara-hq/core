@@ -52,7 +52,17 @@ const POLICIES = ["allow", "ask", "deny"] as const satisfies readonly ToolPolicy
 /** `/[locale]/apps/[appId]`：应用详情（DetailPage）：工具（启停、默认策略）、凭据、设置（改名、启停、删除）。 */
 export default function AppDetailPage() {
   const { appId } = useParams<{ appId: string }>();
-  return <OrgGate>{(orgId) => <AppView orgId={orgId} appId={appId} />}</OrgGate>;
+  return <OrgGate>{(orgId) => <AppInOrg orgId={orgId} appId={appId} />}</OrgGate>;
+}
+
+/**
+ * 应用属于打开它时的当前组织：切换组织后（AppFrame 正在跳回列表）不再以新组织 + 旧应用 id 渲染，
+ * 免得用新组织去读旧应用、或显示上一组织的数据。
+ */
+function AppInOrg({ orgId, appId }: { orgId: string; appId: string }) {
+  const [openedIn] = useState(orgId);
+  if (orgId !== openedIn) return null;
+  return <AppView orgId={orgId} appId={appId} />;
 }
 
 function AppView({ orgId, appId }: { orgId: string; appId: string }) {
@@ -98,16 +108,6 @@ function AppView({ orgId, appId }: { orgId: string; appId: string }) {
                 ),
             }
           : {}),
-        actions:
-          manage && app
-            ? [
-                {
-                  label: refreshing ? t("detail.refreshing") : t("detail.refresh"),
-                  variant: "default",
-                  onSelect: () => void (refreshing ? undefined : onRefresh()),
-                },
-              ]
-            : [],
       }}
       tabs={{
         label: t("detail.tabsLabel"),
@@ -132,7 +132,13 @@ function AppView({ orgId, appId }: { orgId: string; appId: string }) {
           </Stack>
         </Stack>
       ) : tab === "tools" ? (
-        <ToolsTab orgId={orgId} app={state.data} manage={manage} onSaved={set} />
+        <ToolsTab
+          orgId={orgId}
+          app={state.data}
+          manage={manage}
+          onSaved={set}
+          refresh={{ onRefresh: () => void onRefresh(), refreshing }}
+        />
       ) : tab === "credentials" ? (
         <CredentialsTab orgId={orgId} app={state.data} manage={manage} onSaved={reload} />
       ) : (
@@ -166,16 +172,19 @@ function AppInspector({ app }: { app: AppDetail }) {
   );
 }
 
+/** 工具页签；「刷新工具」放在表格工具栏（PageHeader 的按钮没有加载态），刷新期间为加载中且不可再点。 */
 function ToolsTab({
   orgId,
   app,
   manage,
   onSaved,
+  refresh,
 }: {
   orgId: string;
   app: AppDetail;
   manage: boolean;
   onSaved(app: AppDetail): void;
+  refresh: { onRefresh(): void; refreshing: boolean };
 }) {
   const t = useTranslations("apps");
   const toast = useToast();
@@ -250,6 +259,15 @@ function ToolsTab({
   return (
     <DataTable<AppTool>
       label={t("detail.tabs.tools")}
+      {...(manage
+        ? {
+            toolbar: (
+              <Button size={24} loading={refresh.refreshing} onClick={refresh.onRefresh}>
+                {t("detail.refresh")}
+              </Button>
+            ),
+          }
+        : {})}
       columns={columns}
       rows={app.tools}
       rowKey={(x) => x.name}

@@ -120,8 +120,9 @@ function AppConnection({
       />
       <CredentialFields auth={auth} values={values} onChange={setValues} />
       <Stack direction="row" gap={8}>
+        {/* 每个应用一个分组：保存按钮用次级样式，页面不出现多个主操作 */}
         <Button
-          variant="primary"
+          variant="secondary"
           loading={pending === "save"}
           disabled={credential === undefined || pending !== undefined}
           onClick={() => void run("save")}

@@ -12,6 +12,8 @@ export type Session = {
   reload(): Promise<void>;
   /** 切换当前组织（`null` 清除）并刷新会话。 */
   switchOrg(orgId: string | null): Promise<void>;
+  /** 立即重读顶栏的待处理审批数（处理审批之后调用）。 */
+  refreshPending?(): void;
 };
 
 /** `null`：会话尚未加载（服务端渲染与首次读取 `/me` 期间）。 */

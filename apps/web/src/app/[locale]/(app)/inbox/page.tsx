@@ -56,6 +56,7 @@ function Inbox({ orgId }: { orgId: string }) {
     if (!active) return;
     const r = await decide(active.id, decision, scope);
     // 已被别人处理等错误也重读列表：那条审批不再待处理
+    // 顶栏待处理数的刷新由 useDecide 负责
     if (r) toast.success(decision === "approve" ? t("approved") : t("denied"));
     setActiveId(undefined);
     reload();

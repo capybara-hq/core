@@ -288,7 +288,15 @@ export type ChatItem =
       expiresAt: string;
       answered: QuestionOutcome | null;
     }
-  | { kind: "connect"; key: string; callId: string; appId: string; appName: string }
+  | {
+      kind: "connect";
+      key: string;
+      callId: string;
+      appId: string;
+      appName: string;
+      /** 所在运行已到终态（历史里的卡片不再提供「连接」）。 */
+      closed: boolean;
+    }
   | { kind: "failed"; key: string; text: string; code: string };
 
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
@@ -408,6 +416,7 @@ export function chatItems(state: ChatState): ChatItem[] {
         callId: e.payload.callId,
         appId: e.payload.appId,
         appName: e.payload.appName,
+        closed: e.runId !== null && state.closedRuns[e.runId] === true,
       });
     } else if (e.type === "run_failed") {
       items.push({ kind: "failed", key, text: "", code: e.payload.error.code });
