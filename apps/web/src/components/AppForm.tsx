@@ -22,7 +22,8 @@ export function buildCredential(
     return values.token === "" ? undefined : { token: values.token };
   }
   if (type === "basic") {
-    return values.username === "" && values.password === ""
+    // Basic 认证用户名与密码缺一不可
+    return values.username === "" || values.password === ""
       ? undefined
       : { username: values.username, password: values.password };
   }

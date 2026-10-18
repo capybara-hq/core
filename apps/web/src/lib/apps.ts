@@ -86,7 +86,10 @@ export interface AppTool extends ToolDefinition {
   /** 远端已不再提供该工具（随之停用）。 */
   missing?: boolean;
   reviewedAt?: string | null;
-  /** 定义变化后待复核的新定义；新增的待复核工具也有（此时没有复核过的旧定义，`reviewedAt` 为 null）。 */
+  /**
+   * 定义变化后待复核的新定义（顶层字段是上次复核通过的定义，供对比）。从未复核过的工具（新增待复核、被拒的新工具，
+   * `reviewedAt` 为 null）没有旧定义：此处为 null，待复核的定义就在顶层字段里。
+   */
   pending?: (ToolDefinition & { specHash: string }) | null;
 }
 

@@ -332,6 +332,9 @@ export function useAppWizard(orgId: string): AppWizardView {
       if (!authTouched && res.authHints[0] !== undefined) {
         applyHint(res.authHints[0]);
         setHintChoice("0");
+      } else if (authTouched) {
+        // 改过认证后重新预览：提示列表可能变了，原来的选择会指向过时 / 别的提示；保留已填认证，选择回到「自定义」
+        setHintChoice("custom");
       }
       setSelectedOps(new Set((res.operations ?? []).map((o) => o.id)));
       setNotice(undefined);
@@ -376,6 +379,9 @@ export function useAppWizard(orgId: string): AppWizardView {
           auth: auth(),
           ...(cred !== undefined ? { credential: cred } : {}),
         });
+        // 安装成功即丢弃浏览器里的凭据与客户端密钥（完成一步用不到，不留在内存状态里）
+        setCredential(EMPTY_CREDENTIAL);
+        setClient(EMPTY_OAUTH_CLIENT);
         setInstalled(res);
         setStep(DONE);
       } catch (e) {

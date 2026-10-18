@@ -277,6 +277,84 @@ describe("安装向导（WizardPage）", () => {
     },
   );
 
+  it("Basic 认证：用户名与密码都要填，只填用户名不发预览请求", async () => {
+    const m = msgs.en;
+    const w = m.apps.wizard;
+    const calls = stubApi({
+      [PREVIEW]: () => json(200, { tools: [previewTool("search")], issues: [], authHints: [] }),
+    });
+    renderPage(<InstallAppPage />, { locale: "en" });
+    const user = userEvent.setup();
+    await clickAction(user, "en", w.next);
+    await user.type(screen.getByRole("textbox", { name: m.apps.form.nameLabel }), "Fixture");
+    await user.type(
+      screen.getByRole("textbox", { name: m.apps.form.urlLabel }),
+      "https://mcp.example.com/mcp",
+    );
+    await clickAction(user, "en", w.next);
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: m.apps.form.authTypeLabel }),
+      "basic",
+    );
+    await user.type(screen.getByLabelText(m.apps.form.usernameLabel), "alice");
+    await clickAction(user, "en", w.next);
+    expect(screen.getByText(`✗ ${w.credentialRequired}`)).toBeTruthy();
+    expect(previews(calls)).toHaveLength(1);
+    await user.type(screen.getByLabelText(m.apps.form.passwordLabel), "pw");
+    await clickAction(user, "en", w.next);
+    await screen.findByRole("table", { name: w.toolsTitle });
+    expect(previews(calls)[1]).toMatchObject({ credential: { username: "alice", password: "pw" } });
+  });
+
+  it("改过认证后重新预览端点得到新的认证提示：提示选择回到「自定义」，不指向过时的提示", async () => {
+    const m = msgs.en;
+    const w = m.apps.wizard;
+    let round = 0;
+    stubApi({
+      [PREVIEW]: () => {
+        round++;
+        return json(200, {
+          tools: null,
+          issues: [],
+          authHints:
+            round === 1
+              ? [
+                  { scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" },
+                  { scheme: "bearerAuth", type: "bearer" },
+                ]
+              : [{ scheme: "other", type: "api_key", in: "query", name: "key" }],
+          operations: OPERATIONS,
+        });
+      },
+    });
+    renderPage(<InstallAppPage />, { locale: "en" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: new RegExp(w.connector.openapi) }));
+    await clickAction(user, "en", w.next);
+    await user.type(screen.getByRole("textbox", { name: m.apps.form.nameLabel }), "Pets");
+    await user.type(
+      screen.getByRole("textbox", { name: w.specUrlLabel }),
+      "https://api.example.com/openapi.json",
+    );
+    await clickAction(user, "en", w.next);
+    const hint = await screen.findByRole("combobox", { name: w.hintLabel });
+    await user.selectOptions(hint, "1");
+    expect(screen.getByRole("combobox", { name: m.apps.form.authTypeLabel })).toHaveProperty(
+      "value",
+      "bearer",
+    );
+    await clickAction(user, "en", w.previous);
+    await clickAction(user, "en", w.next);
+    const again = await screen.findByRole("combobox", { name: w.hintLabel });
+    await vi.waitFor(() => expect(round).toBe(2));
+    expect(again).toHaveProperty("value", "custom");
+    // 管理员选过的认证方式保留
+    expect(screen.getByRole("combobox", { name: m.apps.form.authTypeLabel })).toHaveProperty(
+      "value",
+      "bearer",
+    );
+  });
+
   it("OpenAPI 上传文档：超过 2 MB 报错；选择文件后以 specText 预览；一个操作都不选时不能安装", async () => {
     const w = en.apps.wizard;
     const calls = stubApi({

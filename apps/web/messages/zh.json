@@ -451,7 +451,8 @@
       "disabled": "已停用",
       "empty": "该应用没有工具。",
       "missing": "服务已不再提供此工具",
-      "pendingReview": "待复核"
+      "pendingReview": "待复核",
+      "neverReviewed": "从未复核：在「复核」页签批准后才能启用"
     },
     "credential": {
       "title": "凭据",
@@ -593,6 +594,7 @@
       "new": "新",
       "changedTool": "定义有变化",
       "newTool": "新工具",
+      "rejectedNewTool": "已拒绝的新工具",
       "description": "描述",
       "inputSchema": "参数（inputSchema）",
       "annotations": "注解",

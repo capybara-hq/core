@@ -451,7 +451,8 @@
       "disabled": "Disabled",
       "empty": "This app has no tools.",
       "missing": "No longer provided by the server",
-      "pendingReview": "Pending review"
+      "pendingReview": "Pending review",
+      "neverReviewed": "Never reviewed: approve it on the Review tab to enable it"
     },
     "credential": {
       "title": "Credential",
@@ -593,6 +594,7 @@
       "new": "new",
       "changedTool": "Definition changed",
       "newTool": "New tool",
+      "rejectedNewTool": "Rejected new tool",
       "description": "Description",
       "inputSchema": "Parameters (inputSchema)",
       "annotations": "Annotations",

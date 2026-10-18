@@ -230,6 +230,10 @@ function ToolsTab({
             <Text variant="small" tone="warn">
               {t("tools.missing")}
             </Text>
+          ) : neverReviewedDisabled(x) ? (
+            <Text variant="small" tone="warn">
+              {t("tools.neverReviewed")}
+            </Text>
           ) : (
             <Text variant="small" tone="muted" truncate>
               {x.issue ?? x.description}
@@ -268,7 +272,8 @@ function ToolsTab({
             checked={x.status === "enabled"}
             disabled={
               busy !== undefined ||
-              (x.status === "disabled" && (x.issue !== null || x.missing === true))
+              (x.status === "disabled" &&
+                (x.issue !== null || x.missing === true || x.reviewedAt === null))
             }
             onChange={(on) => void patch(x, { status: on ? "enabled" : "disabled" })}
           />
@@ -527,6 +532,17 @@ function SettingsTab({
   );
 }
 
+/** 从未复核过、已停用的工具（被拒的新工具）：不能在工具页签启用，只能在复核页签批准。 */
+const neverReviewedDisabled = (x: AppTool) =>
+  x.status === "disabled" && x.reviewedAt === null && x.missing !== true && x.issue === null;
+
+/**
+ * 复核页签列出的工具：待复核的、有待复核新定义的（含不合规而停用的，只能拒绝），以及被拒的新工具（仍可批准）。
+ */
+const reviewable = (x: AppTool) =>
+  x.missing !== true &&
+  (x.status === "pending_review" || (x.pending ?? null) !== null || neverReviewedDisabled(x));
+
 /** 待复核的工具数（漂移检测）。 */
 const reviewCount = (app: AppDetail) =>
   app.tools.filter((x) => x.status === "pending_review").length;
@@ -625,6 +641,7 @@ function DiffRow({
 /**
  * 复核页签（漂移检测）：待复核的工具逐个列出新旧定义（描述、inputSchema、注解、连接器路由数据），
  * 管理员批准（采用新定义并启用）或拒绝（停用、保留旧定义）；远端已不再提供的工具单独列出。
+ * 从未复核过的工具（`reviewedAt` 为 null）没有复核过的旧定义：按「新工具」显示完整定义，不做对比。
  */
 function ReviewTab({
   orgId,
@@ -641,7 +658,7 @@ function ReviewTab({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState<string>();
-  const pendingTools = app.tools.filter((x) => x.status === "pending_review");
+  const pendingTools = app.tools.filter(reviewable);
   const missing = app.tools.filter((x) => x.missing === true);
 
   async function decide(tool: AppTool, action: "approve" | "reject") {
@@ -669,21 +686,32 @@ function ReviewTab({
         <Text tone="muted">{t("review.hint")}</Text>
       )}
       {pendingTools.map((tool) => {
-        // 有新定义 → 对比当前（已复核）与新定义；没有 → 新出现的工具，新定义就在顶层字段里
+        // 复核过且有新定义 → 对比当前（上次复核通过的）与新定义；从未复核过 → 新工具，只显示完整定义
+        const fresh = tool.reviewedAt === null;
         const next: ToolDefinition = tool.pending ?? tool;
-        const before: ToolDefinition | undefined = tool.pending ? tool : undefined;
+        const before: ToolDefinition | undefined = !fresh && tool.pending ? tool : undefined;
+        const rejectedNew = neverReviewedDisabled(tool) && (tool.pending ?? null) === null;
         return (
           <section key={tool.name} aria-label={tool.key}>
             <Card
               title={tool.key}
               actions={
                 <StatusMark
-                  status="waiting"
-                  label={before ? t("review.changedTool") : t("review.newTool")}
+                  status={rejectedNew ? "cancelled" : "waiting"}
+                  label={
+                    rejectedNew
+                      ? t("review.rejectedNewTool")
+                      : before
+                        ? t("review.changedTool")
+                        : t("review.newTool")
+                  }
                 />
               }
             >
               <Stack gap={12}>
+                {tool.issue !== null && (
+                  <Text variant="small" tone="fail">{`✗ ${tool.issue}`}</Text>
+                )}
                 <DiffRow
                   label={t("review.description")}
                   before={before?.description}
@@ -710,20 +738,22 @@ function ReviewTab({
                   <Stack direction="row" gap={8}>
                     <Button
                       loading={busy === tool.name}
-                      disabled={busy !== undefined}
+                      disabled={busy !== undefined || tool.issue !== null}
                       aria-label={t("review.approveLabel", { tool: tool.key })}
                       onClick={() => void decide(tool, "approve")}
                     >
                       {t("review.approve")}
                     </Button>
-                    <Button
-                      variant="danger"
-                      disabled={busy !== undefined}
-                      aria-label={t("review.rejectLabel", { tool: tool.key })}
-                      onClick={() => void decide(tool, "reject")}
-                    >
-                      {t("review.reject")}
-                    </Button>
+                    {!rejectedNew && (
+                      <Button
+                        variant="danger"
+                        disabled={busy !== undefined}
+                        aria-label={t("review.rejectLabel", { tool: tool.key })}
+                        onClick={() => void decide(tool, "reject")}
+                      >
+                        {t("review.reject")}
+                      </Button>
+                    )}
                   </Stack>
                 )}
               </Stack>

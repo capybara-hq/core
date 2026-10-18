@@ -312,6 +312,99 @@ describe("应用详情：复核页签（漂移检测）", () => {
     },
   );
 
+  it.each(LOCALES)(
+    "从未复核过的工具按新工具显示完整定义（不对比）；被拒的新工具仍可批准、不能在工具页签启用；不合规的新定义只能拒绝（%s）",
+    async (locale) => {
+      const m = msgs[locale];
+      const r = m.apps.review;
+      const legacy = tool("fresh", {
+        key: "fixture__fresh",
+        status: "pending_review",
+        description: "Fresh v1",
+        reviewedAt: null,
+        pending: {
+          description: "Fresh v2",
+          inputSchema: {},
+          annotations: null,
+          connectorData: null,
+          specHash: "h3",
+        },
+      });
+      const rejected = tool("nope", {
+        key: "fixture__nope",
+        status: "disabled",
+        description: "Rejected once",
+        reviewedAt: null,
+        pending: null,
+      });
+      const broken = tool("broken", {
+        key: "fixture__broken",
+        status: "disabled",
+        reviewedAt: T,
+        issue: "Tool inputSchema must be an object",
+        pending: {
+          description: "Broken",
+          inputSchema: [],
+          annotations: null,
+          connectorData: null,
+          specHash: "h4",
+        },
+      });
+      stubApi({
+        "GET /api/v1/orgs/o1/apps/app1": () =>
+          json(200, { app: detail({ tools: [legacy, rejected, broken] }) }),
+      });
+      renderPage(<AppDetailPage />, { locale });
+      const user = userEvent.setup();
+      expect(await screen.findByText(m.apps.tools.neverReviewed)).toBeTruthy();
+      expect(
+        screen.getByRole("switch", {
+          name: m.apps.tools.enabledLabel.replace("{tool}", "fixture__nope"),
+        }),
+      ).toHaveProperty("disabled", true);
+      await user.click(screen.getByRole("tab", { name: `${m.apps.detail.tabs.review}1` }));
+
+      const fresh = screen.getByRole("region", { name: "fixture__fresh" });
+      expect(within(fresh).getByText(`‖ ${r.newTool}`)).toBeTruthy();
+      expect(
+        (
+          within(fresh).getByRole("textbox", {
+            name: `${r.description} · ${r.new}`,
+          }) as HTMLTextAreaElement
+        ).value,
+      ).toBe("Fresh v2");
+      expect(
+        within(fresh).queryByRole("textbox", { name: `${r.description} · ${r.current}` }),
+      ).toBeNull();
+
+      const rej = screen.getByRole("region", { name: "fixture__nope" });
+      expect(within(rej).getByText(new RegExp(`${r.rejectedNewTool}$`))).toBeTruthy();
+      expect(
+        within(rej).getByRole("button", {
+          name: r.approveLabel.replace("{tool}", "fixture__nope"),
+        }),
+      ).toBeTruthy();
+      expect(
+        within(rej).queryByRole("button", {
+          name: r.rejectLabel.replace("{tool}", "fixture__nope"),
+        }),
+      ).toBeNull();
+
+      const bad = screen.getByRole("region", { name: "fixture__broken" });
+      expect(within(bad).getByText("✗ Tool inputSchema must be an object")).toBeTruthy();
+      expect(
+        within(bad).getByRole("button", {
+          name: r.approveLabel.replace("{tool}", "fixture__broken"),
+        }),
+      ).toHaveProperty("disabled", true);
+      expect(
+        within(bad).getByRole("button", {
+          name: r.rejectLabel.replace("{tool}", "fixture__broken"),
+        }),
+      ).toHaveProperty("disabled", false);
+    },
+  );
+
   it("普通成员：只看对比，没有批准 / 拒绝；没有待复核时显示空状态", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: detail({ tools: [added] }) }),
