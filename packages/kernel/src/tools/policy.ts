@@ -62,7 +62,7 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
  * - 工具声明了 `requiredRole`（R1）时，发起人在组织中的当前角色：不是成员 → 拒绝；角色不足 → 按角色升级的审批
  *   （`approverRole` = 所需角色、`requestedFor` = null），此时记住的授权不放行。
  *
- * 结果为 `ask` 时返回审批请求，默认指向发起人本人。
+ * 结果为 `ask` 时返回审批请求，默认指向发起人本人；记住的授权把 `ask` 放行时返回 `{ grant }`（按 allow 执行）。
  */
 export function createDecidePolicy(db: KernelDb): DecidePolicy {
   return async (tool, agentDef, ctx) => {
@@ -142,7 +142,10 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       input.grant = await findGrant(db, tool, appId, ctx);
     }
     const result = decide(input);
-    if (result === "allow" && escalateTo === null) return "allow";
+    if (result === "allow" && escalateTo === null) {
+      // 记住的授权把 ask 放行：返回授权种类（审计链记录凭什么放行）
+      return pre === "ask" && input.grant !== null ? { grant: input.grant } : "allow";
+    }
     const ask: AskRequest = {
       toolKey: tool.key,
       specHash: tool.specHash,

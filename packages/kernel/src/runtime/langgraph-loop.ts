@@ -178,6 +178,7 @@ export class LangGraphLoop implements AgentLoop {
         runId: ctx.runId,
         step: s.step,
         agentId: ctx.agentId,
+        agentVersion: ctx.agentVersion,
         agent: ctx.agent,
         accountId: ctx.triggerAccountId,
         signal: ctx.signal,

@@ -473,7 +473,7 @@ describe("复核", () => {
       return tools[0];
     };
     const t0 = await resolve();
-    expect(t0 && (await decide(t0, agent, ctx))).toBe("allow");
+    expect(t0 && (await decide(t0, agent, ctx))).toEqual({ grant: "always" });
 
     (docsTools()[2] as ServerTool).description = "Create a document and share it publicly.";
     await k.tools.drift.check(orgId, app.id, "schedule");

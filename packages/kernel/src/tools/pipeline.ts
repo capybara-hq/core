@@ -17,7 +17,7 @@ import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import type { WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
-import type { ApprovalRecord, ApprovalsService } from "./approvals.service.js";
+import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type AppAuth, CredentialMissing, type Credentials } from "./credentials.js";
@@ -87,7 +87,13 @@ export interface AskRequest {
  * `unavailable`：调用那一刻工具已不可用（应用 / 工具不存在、停用、删除、待审核），值为事实原因；
  * 管线写「工具不可用」说明，而不是「策略拒绝」。
  */
-export type PolicyDecision = "allow" | "deny" | { ask: AskRequest } | { unavailable: string };
+export type PolicyDecision =
+  | "allow"
+  | "deny"
+  | { ask: AskRequest }
+  | { unavailable: string }
+  /** 记住的授权把 `ask` 放行（按 allow 执行，审计记授权种类）。 */
+  | { grant: "session" | "always" };
 
 export interface PolicyContext {
   orgId: string;
@@ -143,6 +149,8 @@ export interface ToolStepContext {
   runId: string;
   step: number;
   agentId: string;
+  /** 运行所用的 agent 版本（审计链记录）。 */
+  agentVersion: number;
   agent: AgentDefinition;
   /** 对话发起人（取个人凭据、审计 actor）。 */
   accountId: string;
@@ -168,6 +176,28 @@ export type ExecOutcome =
   | { kind: "connection_required"; appId: string; appName: string; message: string };
 
 type ToolCall = { id: string; name: string; input: unknown };
+
+/**
+ * 审计链（spec 3.6 R6）里「凭什么放行」：在审批下执行（审批 id、批准人、范围）、记住的授权放行、或策略本身放行。
+ * 续跑时「有开始无结果」的调用若没有已批准的审批，当时的放行依据已无从得知，不记（不猜）。
+ */
+type Authorization =
+  | { approvalId: string; approvedByAccountId: string | null; scope: ApprovalScope | null }
+  | { grant: "session" | "always" }
+  | { policy: "allow" };
+
+/** `tool.called` 审计的附加信息：传入即表示工具确实执行过（durationMs 为 null = 耗时未知）。 */
+interface CallAudit {
+  durationMs: number | null;
+  appId: string | null;
+  authorization?: Authorization;
+}
+
+const approvalAuthorization = (a: ApprovalRecord): Authorization => ({
+  approvalId: a.id,
+  approvedByAccountId: a.decidedBy,
+  scope: a.scope,
+});
 
 /**
  * 幂等键（brief 约定）。同一调用因请求用户输入而被再次调用时，第 n（≥ 2）次调用的开始事件带轮次后缀。
@@ -302,14 +332,25 @@ export class ToolPipeline {
       idem.started(ctx.runId, call.id, attempt),
     );
     if (started?.type === "tool_call_started") {
-      // 确实开始执行过：照样审计 tool.called（耗时未知）
+      // 确实开始执行过：照样审计 tool.called（耗时未知）；放行依据只认批准了所执行定义的审批记录
+      const key = started.payload.toolKey;
+      const approval = await this.deps.approvals.forCall(ctx.runId, call.id);
+      const approved =
+        approval?.status === "approved" && approval.specHash === started.payload.specHash
+          ? approval
+          : null;
+      const source = approved ? null : (await resolve()).tools.find((t) => t.key === key)?.source;
       await this.writeResult(
         ctx,
         call.id,
-        started.payload.toolKey,
+        key,
         { content: UNKNOWN_RESULT_TEXT, isError: true },
         [],
-        null,
+        {
+          durationMs: null,
+          appId: approved ? approved.appId : source?.kind === "app" ? source.appId : null,
+          ...(approved && { authorization: approvalAuthorization(approved) }),
+        },
       );
       return undefined;
     }
@@ -384,7 +425,7 @@ export class ToolPipeline {
     let approval = await this.deps.approvals.forCall(ctx.runId, call.id);
     // 批准的是旧定义（等待期间工具定义变了）：原批准不适用于当前定义，策略仍需审批时按新定义重新审批。
     const stale = approval?.status === "approved" && approval.specHash !== tool.specHash;
-    if ((!approval || stale) && decision !== "allow") {
+    if ((!approval || stale) && typeof decision === "object" && "ask" in decision) {
       approval = await this.deps.approvals.request({
         attempt: (approval?.attempt ?? 0) + 1,
         orgId: ctx.orgId,
@@ -404,6 +445,13 @@ export class ToolPipeline {
       const refused = this.refusalText(approval);
       return refused === null ? approvalWait(approval) : fail(refused, tool.key);
     }
+    // 走到这里即放行：在（与当前定义一致的）审批下执行，否则是授权或策略放行
+    const authorization: Authorization =
+      approval?.status === "approved" && approval.specHash === tool.specHash
+        ? approvalAuthorization(approval)
+        : typeof decision === "object" && "grant" in decision
+          ? { grant: decision.grant }
+          : { policy: "allow" };
 
     await this.deps.eventLog.append(ctx.conversationId, [
       {
@@ -473,7 +521,11 @@ export class ToolPipeline {
         ...(loadedTools.length > 0 && { loadedTools }),
       },
       pre,
-      durationMs,
+      {
+        durationMs,
+        appId: tool.source.kind === "app" ? tool.source.appId : null,
+        authorization,
+      },
     );
     return undefined;
   }
@@ -819,9 +871,10 @@ export class ToolPipeline {
   }
 
   /**
-   * 管线第 6 阶段：写 `tool_result`（与 `connection_required` 同批）。传入 `durationMs`（即工具实际执行过；
-   * null = 执行过但耗时未知，如续跑时「有开始无结果」的调用）时在同一事务里写审计 `tool.called`
-   * （detail 只有 toolKey、是否出错、耗时；不含参数与结果）。
+   * 管线第 6 阶段：写 `tool_result`（与 `connection_required` 同批）。传入 `callAudit`（即工具实际执行过；
+   * 耗时 null = 执行过但耗时未知，如续跑时「有开始无结果」的调用）时在同一事务里写审计 `tool.called`。
+   * 审计链（R6）：actor = 发起人 → agent（id + 版本）→ 会话 / 运行 / 调用 / 工具（应用工具带 appId）→
+   * 放行依据（审批人 / 授权 / 策略）。不含参数、结果与凭据。
    */
   private async writeResult(
     ctx: ToolStepContext,
@@ -829,7 +882,7 @@ export class ToolPipeline {
     toolKey: string,
     r: { content: string; isError: boolean; outputId?: string; contentTypes?: string[] },
     pre: AppendEvent[] = [],
-    durationMs?: number | null,
+    callAudit?: CallAudit,
   ): Promise<void> {
     const events: AppendEvent[] = [
       ...pre,
@@ -840,7 +893,7 @@ export class ToolPipeline {
         payload: { step: ctx.step, callId, toolKey, ...r },
       },
     ];
-    if (durationMs === undefined) {
+    if (callAudit === undefined) {
       await this.deps.eventLog.append(ctx.conversationId, events);
       return;
     }
@@ -851,7 +904,18 @@ export class ToolPipeline {
         orgId: ctx.orgId,
         action: "tool.called",
         target: ctx.conversationId,
-        detail: { toolKey, isError: r.isError, durationMs },
+        detail: {
+          toolKey,
+          isError: r.isError,
+          durationMs: callAudit.durationMs,
+          agentId: ctx.agentId,
+          agentVersion: ctx.agentVersion,
+          conversationId: ctx.conversationId,
+          runId: ctx.runId,
+          callId,
+          ...(callAudit.appId !== null && { appId: callAudit.appId }),
+          ...callAudit.authorization,
+        },
       });
       return out;
     });

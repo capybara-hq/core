@@ -282,7 +282,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     const hash = specHash(SPEC);
     await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, app_id)
       VALUES (${seed.conversationId}, 'docs__create_doc', ${hash}, ${appId})`.execute(raw);
-    expect(await policy(appTool(), agentDef, ctx)).toBe("allow");
+    expect(await policy(appTool(), agentDef, ctx)).toEqual({ grant: "session" });
     await sql`UPDATE capybara.conversation_tool_grants SET spec_hash = 'stale'`.execute(raw);
     expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: {} });
 
@@ -290,7 +290,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
       VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash}, ${appId})`.execute(
       raw,
     );
-    expect(await policy(appTool(), agentDef, ctx)).toBe("allow");
+    expect(await policy(appTool(), agentDef, ctx)).toEqual({ grant: "always" });
     // 应用刷新后定义指纹变化：旧授权不再生效
     const spec2 = { ...SPEC, description: "Create v2." };
     await setAppTool("ask", specHash(spec2));
@@ -330,7 +330,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     await sql`UPDATE capybara.tool_grants SET app_id = NULL WHERE tool_key = ${tool.key}`.execute(
       raw,
     );
-    expect(await policy(tool, agentDef, ctx)).toBe("allow");
+    expect(await policy(tool, agentDef, ctx)).toEqual({ grant: "always" });
   });
 
   it("requiresUserInteraction 的插件工具至少 ask，授权不放行", async () => {

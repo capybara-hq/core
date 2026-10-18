@@ -317,6 +317,7 @@ const stepCtx = (over: Partial<ToolStepContext> = {}): ToolStepContext => ({
   runId,
   step: 1,
   agentId: seed.agentId,
+  agentVersion: 3,
   agent,
   accountId: seed.accountId,
   signal: new AbortController().signal,
@@ -524,9 +525,89 @@ describe("ToolPipeline.runStep", () => {
       org_id: seed.orgId,
       actor_account_id: seed.accountId,
     });
-    const detail = audits[0]?.detail as Record<string, unknown>;
-    expect(Object.keys(detail).sort()).toEqual(["durationMs", "isError", "toolKey"]);
-    expect(detail).toMatchObject({ toolKey: "probe__echo", isError: false });
+    // R6 审计链：谁（actor = 发起人）→ 经哪个 agent（id + 版本）→ 做了什么（工具、调用）→ 凭什么放行
+    expect(audits[0]?.detail).toEqual({
+      toolKey: "probe__echo",
+      isError: false,
+      durationMs: expect.any(Number),
+      agentId: seed.agentId,
+      agentVersion: 3,
+      conversationId: seed.conversationId,
+      runId,
+      callId: "c1",
+      policy: "allow",
+    });
+    expect(JSON.stringify(audits)).not.toContain("secret-arg");
+  });
+
+  it("审计链：审批放行记审批 id / 批准人 / 范围；记住的授权记 grant；应用工具记 appId", async () => {
+    await insertRun();
+    await assistant([{ id: "c1", name: "probe__gated", input: { k: "secret-arg" } }]);
+    const first = await pipeline().runStep(stepCtx());
+    const approvalId = first.kind === "suspended" ? first.waitingFor.id : "";
+    await sql`UPDATE capybara.approvals SET status = 'approved', scope = 'once',
+      decided_by = ${seed.accountId}, decided_at = now() WHERE id = ${approvalId}`.execute(raw);
+    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
+
+    // 记住的授权（本会话）放行
+    const gated = resolved.find((t) => t.key === "probe__gated") as ResolvedTool;
+    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
+      VALUES (${seed.conversationId}, 'probe__gated', ${gated.specHash})`.execute(raw);
+    const firstRun = runId;
+    runId = randomUUID();
+    await runCalls([{ id: "c2", name: "probe__gated", input: {} }]);
+    const secondRun = runId;
+    runId = randomUUID();
+    await runCalls([{ id: "c3", name: "docs__read", input: {} }]);
+
+    const audits = await db
+      .selectFrom("audit_events")
+      .select(["actor_account_id", "detail"])
+      .where("action", "=", "tool.called")
+      .orderBy("id")
+      .execute();
+    const chain = {
+      agentId: seed.agentId,
+      agentVersion: 3,
+      conversationId: seed.conversationId,
+      isError: false,
+      durationMs: expect.any(Number),
+    };
+    expect(audits).toEqual([
+      {
+        actor_account_id: seed.accountId,
+        detail: {
+          ...chain,
+          toolKey: "probe__gated",
+          runId: firstRun,
+          callId: "c1",
+          approvalId,
+          approvedByAccountId: seed.accountId,
+          scope: "once",
+        },
+      },
+      {
+        actor_account_id: seed.accountId,
+        detail: {
+          ...chain,
+          toolKey: "probe__gated",
+          runId: secondRun,
+          callId: "c2",
+          grant: "session",
+        },
+      },
+      {
+        actor_account_id: seed.accountId,
+        detail: {
+          ...chain,
+          toolKey: "docs__read",
+          runId,
+          callId: "c3",
+          appId,
+          policy: "allow",
+        },
+      },
+    ]);
     expect(JSON.stringify(audits)).not.toContain("secret-arg");
   });
 
@@ -988,9 +1069,23 @@ describe("ToolPipeline.runStep", () => {
       .where("action", "=", "tool.called")
       .orderBy("id")
       .execute();
+    // 结果未知的调用当时凭什么放行已无从得知（没有审批记录），只记链路，不猜
+    const chain = {
+      agentId: seed.agentId,
+      agentVersion: 3,
+      conversationId: seed.conversationId,
+      runId,
+    };
     expect(audits.map((a) => a.detail)).toEqual([
-      { toolKey: "probe__echo", isError: true, durationMs: null },
-      { toolKey: "probe__echo", isError: false, durationMs: expect.any(Number) },
+      { ...chain, callId: "c2", toolKey: "probe__echo", isError: true, durationMs: null },
+      {
+        ...chain,
+        callId: "c3",
+        toolKey: "probe__echo",
+        isError: false,
+        durationMs: expect.any(Number),
+        policy: "allow",
+      },
     ]);
   });
 

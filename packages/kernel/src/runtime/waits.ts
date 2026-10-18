@@ -30,6 +30,28 @@ export const waitTimeoutJobId = (waitId: string): string => `wait-timeout-${wait
 export const resumeJobId = (conversationId: string, waitId: string): string =>
   `run-${conversationId}-resume-${waitId}`;
 
+/**
+ * 等待兜底扫描（Task 22）：任务名、job scheduler id（不含 `:`）、周期、宽限期与每类每次最多处理的条数。
+ * 宽限期：waiting 超过它、等待却已全部处理的运行才视为「续跑丢失」，避免与正常续跑（暂停后的复查等）竞争。
+ */
+export const WAIT_SWEEP_JOB = "wait-sweep";
+export const WAIT_SWEEP_SCHEDULER_ID = "wait-sweep-every-10m";
+export const WAIT_SWEEP_EVERY_MS = 600_000;
+export const WAIT_SWEEP_GRACE_MS = 60_000;
+export const WAIT_SWEEP_BATCH = 500;
+
+/** 一次扫描（本副本）实际生效的修复数。 */
+export interface WaitSweepResult {
+  /** 过期仍 pending、被本次扫描按超时处理的审批 / 输入请求。 */
+  expired: number;
+  /** 等待已全部处理、被本次扫描续跑的 waiting 运行。 */
+  resumed: number;
+  /** 运行已终态、被本次扫描取消的审批 / 输入请求。 */
+  cancelled: number;
+}
+
+const TERMINAL_RUN_STATUSES = ["completed", "failed", "aborted"] as const;
+
 /** 等待超时任务的数据。 */
 export interface WaitTimeoutData {
   kind: WaitingFor["kind"];
@@ -54,7 +76,7 @@ export interface WaitsDeps {
    */
   abortRequested?: (runId: string) => Promise<{ byAccountId: string | null } | null>;
   /** 内核维护队列：超时任务投递到这里，处理函数在构造时登记（Worker 由它在 worker 角色上启动）。 */
-  maintenance: Pick<Maintenance, "add" | "handle">;
+  maintenance: Pick<Maintenance, "add" | "handle" | "schedule">;
   log: Pick<Logger, "error" | "warn">;
 }
 
@@ -71,6 +93,28 @@ export class Waits {
     d.maintenance.handle(WAIT_TIMEOUT_JOB, (job, token) =>
       this.process(job as Job<WaitTimeoutData>, token),
     );
+    d.maintenance.schedule({
+      id: WAIT_SWEEP_SCHEDULER_ID,
+      name: WAIT_SWEEP_JOB,
+      everyMs: () => WAIT_SWEEP_EVERY_MS,
+    });
+    d.maintenance.handle(WAIT_SWEEP_JOB, async () => {
+      await this.sweep();
+    });
+  }
+
+  /**
+   * 兜底扫描（维护队列每 10 分钟一次，防延迟任务 / 续跑丢失）。每项修复都复用常规路径，与并发的超时任务、
+   * 人工决定、其他副本的扫描竞争时由行锁与条件更新保证只生效一次；每项生效的修复记一行 warn（只含 id）。
+   * 顺序：先取消终态运行的等待（这些不该再按超时处理），再处理过期的等待，最后续跑「续跑丢失」的运行。
+   * 单项失败只记日志，不影响其他项。
+   */
+  async sweep(): Promise<WaitSweepResult> {
+    const out: WaitSweepResult = { expired: 0, resumed: 0, cancelled: 0 };
+    out.cancelled = await this.sweepFinishedRuns();
+    out.expired = await this.sweepOverdue();
+    out.resumed = await this.sweepStuckRuns();
+    return out;
   }
 
   /**
@@ -245,6 +289,207 @@ export class Waits {
       ?.deleteThread(runId)
       .catch((err) => this.d.log.warn("checkpoint delete failed", { runId, err }));
     return true;
+  }
+
+  /** 扫描 3：运行已终态（如暂停途中失败）仍 pending 的审批 / 输入请求 → 取消（写决定 / 回答事件）。 */
+  private async sweepFinishedRuns(): Promise<number> {
+    const { db } = this.d;
+    const runs = await db
+      .selectFrom("runs")
+      .select(["id", "conversation_id"])
+      .where("status", "in", TERMINAL_RUN_STATUSES)
+      .where(({ or, exists, selectFrom }) =>
+        or([
+          exists(
+            selectFrom("approvals")
+              .select(sql`1`.as("one"))
+              .whereRef("approvals.run_id", "=", "runs.id")
+              .where("approvals.status", "=", "pending"),
+          ),
+          exists(
+            selectFrom("questions")
+              .select(sql`1`.as("one"))
+              .whereRef("questions.run_id", "=", "runs.id")
+              .where("questions.status", "=", "pending"),
+          ),
+        ]),
+      )
+      .limit(WAIT_SWEEP_BATCH)
+      .execute();
+    let total = 0;
+    for (const run of runs) {
+      try {
+        const n = await this.cancelWaitsOfFinished(run.conversation_id, run.id);
+        if (n > 0) {
+          total += n;
+          this.d.log.warn("wait sweep: cancelled waits of finished run", {
+            runId: run.id,
+            conversationId: run.conversation_id,
+            count: n,
+          });
+        }
+      } catch (err) {
+        this.d.log.error("wait sweep: cannot cancel waits of finished run", { runId: run.id, err });
+      }
+    }
+    return total;
+  }
+
+  /**
+   * 同一事务里锁会话行与运行行（与 {@link abortWaiting} 同序），运行仍是终态时取消其 pending 等待；
+   * 提交后发布事件。返回取消的条数（并发的另一副本拿到锁时已无 pending → 0）。
+   */
+  private async cancelWaitsOfFinished(conversationId: string, runId: string): Promise<number> {
+    const r = await this.d.db.transaction().execute(async (t) => {
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", conversationId)
+        .forUpdate()
+        .executeTakeFirst();
+      const run = await t
+        .selectFrom("runs")
+        .select("status")
+        .where("id", "=", runId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!run || !(TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)) return 0;
+      const a = await this.d.approvals.cancelPendingIn(t, runId);
+      const q = await this.d.questions.cancelPendingIn(t, runId);
+      return a.length + q.length;
+    });
+    if (r > 0) {
+      const last = await this.d.db
+        .selectFrom("conversation_events")
+        .select(sql<string>`max(seq)`.as("seq"))
+        .where("conversation_id", "=", conversationId)
+        .executeTakeFirst();
+      if (last?.seq != null) await this.d.eventLog.notify(conversationId, Number(last.seq));
+    }
+    return r;
+  }
+
+  /** 扫描 1：`expires_at < now()` 仍 pending 的审批 / 输入请求 → 与超时任务同一路径（置 expired、写事件、续跑）。 */
+  private async sweepOverdue(): Promise<number> {
+    const { db } = this.d;
+    const approvals = await db
+      .selectFrom("approvals")
+      .select(["id", "run_id"])
+      .where("status", "=", "pending")
+      .where("expires_at", "<", sql<Date>`now()`)
+      .orderBy("expires_at")
+      .limit(WAIT_SWEEP_BATCH)
+      .execute();
+    const questions = await db
+      .selectFrom("questions")
+      .select(["id", "run_id"])
+      .where("status", "=", "pending")
+      .where("expires_at", "<", sql<Date>`now()`)
+      .orderBy("expires_at")
+      .limit(WAIT_SWEEP_BATCH)
+      .execute();
+    const due: { kind: WaitingFor["kind"]; id: string; runId: string }[] = [
+      ...approvals.map((a) => ({ kind: "approval" as const, id: a.id, runId: a.run_id })),
+      ...questions.map((q) => ({ kind: "input" as const, id: q.id, runId: q.run_id })),
+    ];
+    let total = 0;
+    for (const w of due) {
+      try {
+        const r =
+          w.kind === "approval"
+            ? await this.d.approvals.expire(w.id)
+            : await this.d.questions.expire(w.id);
+        if (r.outcome !== "expired") continue;
+        total++;
+        this.d.log.warn("wait sweep: expired overdue wait", {
+          kind: w.kind,
+          id: w.id,
+          runId: w.runId,
+        });
+        if (r.record) await this.resume(r.record.runId, w.id);
+      } catch (err) {
+        this.d.log.error("wait sweep: cannot expire overdue wait", { kind: w.kind, id: w.id, err });
+      }
+    }
+    return total;
+  }
+
+  /**
+   * 扫描 2：waiting 超过宽限期、却已没有 pending 等待的运行（决定提交后进程崩溃、续跑投递失败回滚等）→
+   * {@link resume}（条件更新 `waiting → queued` + 投递）。续跑任务的 jobId 用该运行最近一次等待的 id
+   * （与人工决定 / 超时任务一致，已投递过的同一续跑被 BullMQ 去重）。
+   */
+  private async sweepStuckRuns(): Promise<number> {
+    const runs = await this.d.db
+      .selectFrom("runs")
+      .select(["id", "conversation_id"])
+      .where("status", "=", "waiting")
+      .where(
+        "waiting_since",
+        "<",
+        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("approvals")
+              .select(sql`1`.as("one"))
+              .whereRef("approvals.run_id", "=", "runs.id")
+              .where("approvals.status", "=", "pending"),
+          ),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("questions")
+              .select(sql`1`.as("one"))
+              .whereRef("questions.run_id", "=", "runs.id")
+              .where("questions.status", "=", "pending"),
+          ),
+        ),
+      )
+      .limit(WAIT_SWEEP_BATCH)
+      .execute();
+    let total = 0;
+    for (const run of runs) {
+      try {
+        const waitId = (await this.lastWaitId(run.id)) ?? run.id;
+        if (!(await this.resume(run.id, waitId))) continue;
+        total++;
+        this.d.log.warn("wait sweep: resumed stuck waiting run", {
+          runId: run.id,
+          conversationId: run.conversation_id,
+          waitId,
+        });
+      } catch (err) {
+        this.d.log.error("wait sweep: cannot resume stuck waiting run", { runId: run.id, err });
+      }
+    }
+    return total;
+  }
+
+  /** 运行最近一次的审批 / 输入请求 id（按创建时间）。 */
+  private async lastWaitId(runId: string): Promise<string | null> {
+    const row = await this.d.db
+      .selectFrom(
+        this.d.db
+          .selectFrom("approvals")
+          .select(["id", "created_at"])
+          .where("run_id", "=", runId)
+          .unionAll(
+            this.d.db
+              .selectFrom("questions")
+              .select(["id", "created_at"])
+              .where("run_id", "=", runId),
+          )
+          .as("w"),
+      )
+      .select("w.id")
+      .orderBy("w.created_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return row?.id ?? null;
   }
 
   private async process(job: Job<WaitTimeoutData>, token: string | undefined): Promise<void> {

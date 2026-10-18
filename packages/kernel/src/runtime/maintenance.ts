@@ -7,7 +7,7 @@ import { bullConnection } from "./run-queue.js";
 
 /**
  * 内核维护队列（不含 `:`）：等待超时任务（`wait-timeout`，见 waits.ts）与周期性维护（输出存档清理、
- * 工具漂移检测（见 tools/drift.ts）；后续的审批超时兜底扫描也放这里）。整个队列只有一个 Worker（只在 `worker` 角色上启动），
+ * 工具漂移检测（见 tools/drift.ts）、等待兜底扫描（`wait-sweep`，见 waits.ts））。整个队列只有一个 Worker（只在 `worker` 角色上启动），
  * 按任务名分派给登记的处理函数。
  * 与运行队列分开：运行 worker 的处理函数、stalled / 失败处理都按「一个任务 = 一次运行」设计；
  * 维护任务短、无会话锁与配额。
