@@ -131,6 +131,21 @@ describe("渠道长连接选主（单进程）", () => {
     expect(im.active(steady)).toHaveLength(1);
   }, 30_000);
 
+  it("交还等待 connect 退出期间照常续租：租约不会在别的副本眼里提前过期", async () => {
+    const id = await newConnection("settle", { lingerMs: 4000 });
+    const off = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/channels/${id}`,
+      payload: { status: "disabled" },
+    });
+    expect(off.statusCode).toBe(200);
+    await waitFor(async () => im.active(id).length === 0, 5_000, "stream closed");
+    // 插件还要 ~4s 才返回：超过一个 TTL 之后租约仍在（被续着），返回后才释放
+    await sleep(TTL * 1.5);
+    expect(await redis.exists(channelLeaseKey(id))).toBe(1);
+    await waitFor(async () => (await redis.exists(channelLeaseKey(id))) === 0, 10_000, "released");
+  }, 30_000);
+
   it("组织停用插件 → 长连接断开；重新启用后连上", async () => {
     const id = await newConnection("plugin-toggle");
     const off = await owner({

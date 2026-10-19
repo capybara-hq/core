@@ -552,4 +552,34 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
     expect(await sweeper.sweep()).toBe(1);
     expect(aborted.slice(6)).toEqual([formerRuns[0]]);
   });
+
+  it("广播中止失败 → 不记标记，下一轮扫描重试", async () => {
+    await db.transaction().execute(async (t) => {
+      await t
+        .deleteFrom("memberships")
+        .where("org_id", "=", f.orgId)
+        .where("account_id", "=", f.leaver.id)
+        .execute();
+    });
+    let calls = 0;
+    const sweeper = new Offboarding({
+      credentials: k.tools.credentials,
+      approvals: k.tools.approvals,
+      questions: k.tools.questions,
+      db,
+      redis,
+      runs: {
+        abortWaiting: async () => false,
+        abortIfOrphaned: async () => false,
+        requestAbort: async () => {
+          calls++;
+          throw new Error("redis down");
+        },
+      },
+    });
+    expect(await sweeper.sweep()).toBe(1);
+    expect(await redis.exists(`capk:offboard-abort:${f.runId}`)).toBe(0);
+    expect(await sweeper.sweep()).toBe(1);
+    expect(calls).toBe(2);
+  });
 });

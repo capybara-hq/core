@@ -19,7 +19,9 @@ export const channelLeaseKey = (connectionId: string) => `capk:channel-lease:${c
 const MAX_BACKOFF_MS = 300_000;
 /** 连续失败计数的保留时长（秒）。 */
 const FAILS_TTL_SECONDS = 3600;
-/** 中止后等插件 `connect` 返回的上限；超时则不主动释放租约，让它自然过期。 */
+/**
+ * 中止后等插件 `connect` 返回的上限：等待期间照常续租；超时则停止续租、不主动释放，让租约在一个 TTL 后自然过期。
+ */
 const SETTLE_MS = 5_000;
 /** `last_error` 的最大长度。 */
 const MAX_ERROR_CHARS = 1000;
@@ -80,6 +82,10 @@ export class ChannelSupervisor {
   private readonly held = new Map<string, Held>();
   /** 已取得租约、正在读配置准备 `connect` 的连接；值为期间是否收到了重连广播。 */
   private readonly connecting = new Map<string, { reconnect: boolean }>();
+  /** 正在交还（已中止、等 `connect` 返回）的连接 → 租约 token：等待期间照常续租，交还完成才释放。 */
+  private readonly settling = new Map<string, string>();
+  /** 进行中的交还（`stop()` 要等它们全部结束）。 */
+  private readonly releasing = new Set<Promise<void>>();
   private readonly loops: {
     timer?: NodeJS.Timeout | undefined;
     running?: Promise<void> | undefined;
@@ -94,7 +100,7 @@ export class ChannelSupervisor {
       const m = payload as { connectionId?: unknown; reconnect?: unknown } | null;
       const id = m?.connectionId;
       if (m?.reconnect !== true || typeof id !== "string") return;
-      if (this.held.has(id)) void this.release(id);
+      if (this.held.has(id)) this.releaseInBackground(id);
       else {
         const c = this.connecting.get(id);
         if (c) c.reconnect = true;
@@ -143,6 +149,14 @@ export class ChannelSupervisor {
         await this.afterRenew(id, h, ok, ttl);
       }),
     );
+    // 交还中的连接：插件还没退出，租约不能在别的副本眼里过期（否则两边同时在线）；续不上就算了（已不是自己的）
+    await Promise.all(
+      [...this.settling].map(([id, token]) =>
+        this.deps.redis.eval(RENEW, 1, channelLeaseKey(id), token, ttl).catch((err: unknown) => {
+          this.deps.log.warn("channel lease renew failed", { connectionId: id, err });
+        }),
+      ),
+    );
   }
 
   private async afterRenew(id: string, h: Held, ok: boolean, ttl: number): Promise<void> {
@@ -183,7 +197,7 @@ export class ChannelSupervisor {
     const live = new Set(
       (await this.runnable().where("channel_connections.id", "in", ids).execute()).map((r) => r.id),
     );
-    for (const id of ids) if (!live.has(id)) void this.release(id);
+    for (const id of ids) if (!live.has(id)) this.releaseInBackground(id);
   }
 
   private async scan(): Promise<void> {
@@ -252,7 +266,7 @@ export class ChannelSupervisor {
       }
     })();
     // 读配置期间收到了重连广播（配置可能已在读取之后改过）：立即交还，下一轮按新配置重连
-    if (pending.reconnect) void this.release(id);
+    if (pending.reconnect) this.releaseInBackground(id);
   }
 
   /** 记录失败：`last_error`、连续失败计数与退避标记（都跨副本可见）。 */
@@ -285,10 +299,16 @@ export class ChannelSupervisor {
   }
 
   /** 主动交还：中止，等 `connect` 返回（至多 SETTLE_MS）后释放租约；超时则让租约自然过期，避免两边同时在线。 */
+  private releaseInBackground(id: string): void {
+    const p = this.release(id).finally(() => this.releasing.delete(p));
+    this.releasing.add(p);
+  }
+
   private async release(id: string): Promise<void> {
     const h = this.held.get(id);
     if (!h) return;
     this.held.delete(id);
+    this.settling.set(id, h.token);
     h.abort.abort();
     let timer: NodeJS.Timeout | undefined;
     const settled = await Promise.race([
@@ -299,6 +319,7 @@ export class ChannelSupervisor {
       }),
     ]);
     clearTimeout(timer);
+    if (this.settling.get(id) === h.token) this.settling.delete(id);
     if (settled) await this.releaseLease(id, h.token);
     else
       this.deps.log.warn("channel connect did not stop in time; lease left to expire", {
@@ -322,5 +343,7 @@ export class ChannelSupervisor {
     await this.unsubscribe?.().catch(() => {});
     this.unsubscribe = undefined;
     await Promise.all([...this.held.keys()].map((id) => this.release(id)));
+    // 别处发起、仍在进行的交还（bus 广播、复核）也要等完，租约才都释放了
+    await Promise.all([...this.releasing]);
   }
 }

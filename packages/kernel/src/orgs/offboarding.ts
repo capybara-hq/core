@@ -262,11 +262,12 @@ export class Offboarding {
         return;
       }
       if (await ctl.abortIfOrphaned(run.conversationId, run.runId, null)) return;
-      // 广播中止的运行要等所在副本到达步骤边界才真正结束：先记标记，扫描在其有效期内不再重复广播
+      await ctl.requestAbort(run.runId, null);
+      // 广播中止的运行要等所在副本到达步骤边界才真正结束：广播成功后记标记，扫描在其有效期内不再重复广播
+      // （广播失败不记，下一轮扫描重试）
       await this.deps.redis
         ?.set(offboardAbortKey(run.runId), "1", "EX", OFFBOARD_ABORT_MARK_TTL_SECONDS)
         .catch((err: unknown) => this.deps.log?.warn("offboarding: cannot mark abort", { err }));
-      await ctl.requestAbort(run.runId, null);
     } catch (err) {
       this.deps.log?.warn("offboarding: cannot stop run", { runId: run.runId, err });
     }
