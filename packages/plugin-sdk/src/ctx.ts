@@ -57,10 +57,18 @@ export interface PluginContext {
     /** 注册一个工具；只能在 `setup` 期间调用，名称不可重复。 */
     register(spec: ToolSpec, handler: ToolHandler): void;
   };
-  /** 取用其他插件提供的能力；orgScoped 能力传 orgId 时校验该组织已启用，否则抛 CapabilityUnavailableError。 */
+  /**
+   * 取用其他插件提供的能力：只能取清单 `requires` / `optional` 中声明的、非 brokered 的能力。
+   * 不传 orgId 是部署级视角，同步返回；传 orgId 时返回 Promise——orgScoped 能力（如 `channel`、`directory`）
+   * 按该组织的启用状态过滤（每次查询、不缓存），`get` 的提供方在该组织未启用时 reject `CapabilityUnavailableError`。
+   * 提供方不存在时 `get` 抛 `CapabilityUnavailableError`，`list` 返回空列表。
+   */
   capabilities: {
-    get<T>(ref: CapabilityRef, provider?: string, opts?: { orgId?: string }): T;
-    list<T>(ref: CapabilityRef, opts?: { orgId?: string }): { plugin: string; impl: T }[];
+    /** 单选能力可不传 provider；多选能力必须传。 */
+    get<T>(ref: CapabilityRef, provider?: string): T;
+    get<T>(ref: CapabilityRef, provider: string | undefined, opts: { orgId: string }): Promise<T>;
+    list<T>(ref: CapabilityRef): { plugin: string; impl: T }[];
+    list<T>(ref: CapabilityRef, opts: { orgId: string }): Promise<{ plugin: string; impl: T }[]>;
   };
   provide(capability: CapabilityRef, impl: unknown): void;
   /** 部署级配置，已按插件 schema 校验。 */

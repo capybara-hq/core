@@ -6,8 +6,8 @@ export interface PluginPermissions {
   http?: { method: "GET" | "POST" | "PUT" | "DELETE"; path: string; public?: boolean }[];
   /** ctx.tools.register 的工具名。 */
   tools?: string[];
-  /** 预留（M6），只校验名字。 */
-  hooks?: string[];
+  /** 预留（M6），只校验挂载点名（见 {@link HOOK_MOUNT_POINTS}）。 */
+  hooks?: HookMountPoint[];
   /** 预留：模型用途，键须为 `<插件名>.<名称>`。 */
   models?: { purpose: string; kind: "chat" | "embedding"; label: { zh: string; en: string } }[];
   /** 预留（M5）。 */
@@ -15,6 +15,23 @@ export interface PluginPermissions {
   /** 访问的域名，只展示不拦截。 */
   network?: string[];
 }
+
+/** hook 挂载点（封闭列表，见总设计 2.4）。 */
+export const HOOK_MOUNT_POINTS = [
+  "session.start",
+  "session.end",
+  "agent.preStep",
+  "model.request",
+  "model.response",
+  "tool.preExecute",
+  "tool.postExecute",
+  "usage.report",
+] as const;
+
+/** hook 挂载点名。 */
+export type HookMountPoint = (typeof HOOK_MOUNT_POINTS)[number];
+
+const HOOKS: ReadonlySet<string> = new Set(HOOK_MOUNT_POINTS);
 
 /** 访问了清单里没有声明的平台能力。 */
 export class PluginPermissionError extends Error {
@@ -67,7 +84,15 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
     }
   }
   if (p.tools !== undefined) strList("permissions.tools", p.tools, errs);
-  if (p.hooks !== undefined) strList("permissions.hooks", p.hooks, errs);
+  if (p.hooks !== undefined) {
+    for (const h of strList("permissions.hooks", p.hooks, errs)) {
+      if (!HOOKS.has(h)) {
+        errs.push(
+          `permissions.hooks has unknown hook "${h}" (allowed: ${HOOK_MOUNT_POINTS.join(", ")})`,
+        );
+      }
+    }
+  }
   if (p.network !== undefined) {
     for (const d of strList("permissions.network", p.network, errs)) {
       if (!DOMAIN_RE.test(d)) errs.push(`permissions.network entry "${d}" is not a valid domain`);

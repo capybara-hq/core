@@ -14,7 +14,10 @@ export class PluginResolveError extends Error {
   }
 }
 
-/** 校验 sdk 范围、依赖满足度、单选能力唯一性与无环，返回按 requires 拓扑排序后的列表（同层保持输入顺序）。 */
+/**
+ * 校验 sdk 范围、依赖满足度、单选能力唯一性与无环，返回按依赖拓扑排序后的列表（同层保持输入顺序）。
+ * `requires` 缺提供方报错；`optional` 缺提供方不报错，但存在的提供方与 `requires` 一样参与排序与环检测。
+ */
 export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string): PluginManifest[] {
   const seen = new Set<string>();
   for (const m of manifests) {
@@ -58,7 +61,9 @@ export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string):
       throw new PluginResolveError(`dependency cycle: ${cycle}`);
     }
     visiting.push(m.name);
-    for (const cap of m.requires ?? []) for (const p of providers.get(cap) ?? []) visit(p);
+    for (const cap of [...(m.requires ?? []), ...(m.optional ?? [])]) {
+      for (const p of providers.get(cap) ?? []) visit(p);
+    }
     visiting.pop();
     done.add(m.name);
     out.push(m);

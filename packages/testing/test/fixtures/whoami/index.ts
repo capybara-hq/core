@@ -6,6 +6,7 @@ export default definePlugin({
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: [],
+  permissions: { http: [{ method: "GET", path: "/pid" }] },
   setup(ctx) {
     ctx.http.route("GET", "/pid", async () => Response.json({ pid: process.pid }));
   },

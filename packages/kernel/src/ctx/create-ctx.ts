@@ -1,9 +1,12 @@
 import {
+  CAPABILITIES,
   type CapabilityRef,
+  CapabilityUnavailableError,
   type Logger,
   type PluginContext,
   type PluginManifest,
   PluginPermissionError,
+  parseCapability,
   type ToolHandler,
   type ToolSpec,
   validateToolSpec,
@@ -16,6 +19,8 @@ import {
   Kysely,
   TransactionBuilder,
 } from "kysely";
+import { kernelDb } from "../db/kernel-schema.js";
+import { audit } from "../identity/audit.js";
 import { type BusSubscriber, createBus } from "./bus.js";
 import { createKv } from "./kv.js";
 import { createLock } from "./lock.js";
@@ -46,6 +51,53 @@ export type Route = {
 
 /** 插件经 `ctx.tools.register` 注册的工具。 */
 export type RegisteredTool = { spec: ToolSpec; handler: ToolHandler };
+
+/** 插件经 `ctx.capabilities` 取用其他插件能力时，内核注入的访问接口。 */
+export interface CapabilityAccess {
+  /** 已加载（setup 完成）的提供方，按加载顺序；按完整引用（含主版本）精确匹配。 */
+  providers(ref: CapabilityRef): { plugin: string; impl: unknown }[];
+  /** 在该组织启用的插件名（`plugin_org_configs.enabled`）；每次查询，不缓存。 */
+  enabledPlugins(orgId: string): Promise<Set<string>>;
+}
+
+/** 查询在该组织启用的插件名（`plugin_org_configs.enabled = true`），不缓存。 */
+// biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型
+export async function queryEnabledPlugins(db: Kysely<any>, orgId: string): Promise<Set<string>> {
+  const rows = await kernelDb(db)
+    .selectFrom("plugin_org_configs")
+    .select("plugin")
+    .where("org_id", "=", orgId)
+    .where("enabled", "=", true)
+    .execute();
+  return new Set(rows.map((r) => r.plugin));
+}
+
+/** 越权审计去重键的 TTL：同一插件同一项在此期间只记一次。 */
+const DENIAL_DEDUPE_TTL_SECONDS = 30 * 24 * 3600;
+
+/**
+ * 记一条 `plugin.permission_denied` 审计；按 (插件, 项) 经 Redis `SET NX EX` 去重（跨副本只记一次）。
+ * 写审计失败时撤销去重键（下次越权再试）并记 warn，不向插件抛出（插件已收到 PluginPermissionError）。
+ */
+async function recordDenial(deps: KernelDeps, plugin: string, item: string): Promise<void> {
+  const key = `capk:plugin-permission-denied:${plugin}:${item}`;
+  try {
+    const first = await deps.redis.set(key, "1", "EX", DENIAL_DEDUPE_TTL_SECONDS, "NX");
+    if (first !== "OK") return;
+    try {
+      await audit(kernelDb(deps.db), {
+        action: "plugin.permission_denied",
+        target: plugin,
+        detail: { plugin, item },
+      });
+    } catch (e) {
+      await deps.redis.del(key).catch(() => {});
+      throw e;
+    }
+  } catch (e) {
+    deps.log.warn("plugin permission denial audit failed", { plugin, item, err: e });
+  }
+}
 
 /** 插件的 PG schema 名：`plugin_<name>`，name 中的 `-` 换成 `_`。 */
 export function pluginSchemaName(name: string): string {
@@ -117,11 +169,25 @@ function guardBuilder<T extends object>(builder: T, plugin: string): T {
   });
 }
 
-/** 为单个插件构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。 */
+/** 未注入能力访问时（单独构造 ctx 的测试等）：没有任何提供方，组织启用照常查库。 */
+const noProviders = (deps: KernelDeps): CapabilityAccess => ({
+  providers: () => [],
+  enabledPlugins: (orgId) => queryEnabledPlugins(deps.db, orgId),
+});
+
+/**
+ * 为单个插件按权限清单构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。
+ * - 自动授予：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`；
+ * - `secrets` 仅当 `permissions.secrets`；`http.route` 只允许 `permissions.http` 声明的 method + path；
+ *   `tools.register` 只允许 `permissions.tools` 声明的名字；
+ * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
+ * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
+ */
 export function createPluginContext(
   deps: KernelDeps,
   manifest: PluginManifest,
   deploymentConfig: unknown,
+  capabilityAccess: CapabilityAccess = noProviders(deps),
 ): PluginContext & {
   routes: Route[];
   provided: Map<CapabilityRef, unknown>;
@@ -142,19 +208,101 @@ export function createPluginContext(
   const unsubs = new Set<() => Promise<void>>();
   const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
   let closing: Promise<void> | undefined;
+  const perms = manifest.permissions ?? {};
+  /** 进行中的越权审计写入（close 时等待，保证不比 ctx 活得久）。 */
+  const audits = new Set<Promise<void>>();
+  const deny = (item: string): never => {
+    const p: Promise<void> = recordDenial(deps, name, item).finally(() => audits.delete(p));
+    audits.add(p);
+    throw new PluginPermissionError(name, item);
+  };
+  // 只暴露插件契约中的 get / set（KernelSecrets 的 delete 仅供内核使用）
+  const secretsApi = perms.secrets
+    ? (({ get, set }) => ({ get, set }))(createSecrets(deps.db, deps.keyring, name))
+    : undefined;
+  const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
+  const declaredTools = new Set(perms.tools ?? []);
+  const declaredCaps = new Set<CapabilityRef>([
+    ...(manifest.requires ?? []),
+    ...(manifest.optional ?? []),
+  ]);
+
+  type Entry = { plugin: string; impl: unknown };
+  /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
+  const checkCapability = (ref: CapabilityRef) => {
+    const capName = parseCapability(ref).name;
+    const info = Object.hasOwn(CAPABILITIES, capName) ? CAPABILITIES[capName] : undefined;
+    if (info?.brokered) {
+      throw new Error(
+        `plugin ${name}: capability ${ref} is brokered and can only be used through the platform API`,
+      );
+    }
+    if (!info || !declaredCaps.has(ref)) return deny(`requires/optional ${ref}`);
+    return info;
+  };
+  /** 部署级视角选出提供方：指定 provider 时按名找；单选能力取唯一提供方；多选能力必须指定。 */
+  const pick = (ref: CapabilityRef, provider: string | undefined) => {
+    const info = checkCapability(ref);
+    const providers = capabilityAccess.providers(ref);
+    if (provider !== undefined) {
+      const chosen = providers.find((p) => p.plugin === provider);
+      if (!chosen) {
+        throw new CapabilityUnavailableError(
+          `capability ${ref} is not provided by plugin ${provider}`,
+        );
+      }
+      return { info, chosen };
+    }
+    if (info.cardinality === "multi") {
+      // 多选能力即使只有一个提供者也要显式指定，避免新增提供者后行为悄悄变化
+      throw new Error(
+        `plugin ${name}: capability ${ref} is multi-provider; specify a provider name (available: ${providers.map((p) => p.plugin).join(", ") || "none"})`,
+      );
+    }
+    const chosen = providers[0];
+    if (!chosen) throw new CapabilityUnavailableError(`capability ${ref} has no provider`);
+    return { info, chosen };
+  };
+  /** 组织视角过滤提供方：orgScoped 能力只留该组织已启用的（每次查询，不缓存）。 */
+  const forOrg = async (orgScoped: boolean, orgId: string, entries: Entry[]) => {
+    if (!orgScoped || entries.length === 0) return entries;
+    const enabled = await capabilityAccess.enabledPlugins(orgId);
+    return entries.filter((e) => enabled.has(e.plugin));
+  };
+  const listAll = (ref: CapabilityRef) => {
+    const info = checkCapability(ref);
+    return { info, entries: capabilityAccess.providers(ref).map((p) => ({ ...p })) };
+  };
+
+  // 不传 orgId：同步返回；传 orgId：返回 Promise，所有错误都以 reject 交出
+  const capabilities = {
+    get(ref: CapabilityRef, provider?: string, opts?: { orgId?: string }): unknown {
+      const orgId = opts?.orgId;
+      if (orgId === undefined) return pick(ref, provider).chosen.impl;
+      return (async () => {
+        const { info, chosen } = pick(ref, provider);
+        if ((await forOrg(info.orgScoped, orgId, [chosen])).length === 0) {
+          throw new CapabilityUnavailableError(
+            `capability ${ref} provider ${chosen.plugin} is not enabled in organization ${orgId}`,
+          );
+        }
+        return chosen.impl;
+      })();
+    },
+    list(ref: CapabilityRef, opts?: { orgId?: string }): unknown {
+      const orgId = opts?.orgId;
+      if (orgId === undefined) return listAll(ref).entries;
+      return (async () => {
+        const { info, entries } = listAll(ref);
+        return forOrg(info.orgScoped, orgId, entries);
+      })();
+    },
+  } as PluginContext["capabilities"];
 
   return {
     kv: createKv(deps.redis, name),
     lock: createLock(deps.redis, name),
-    // TODO(Task 3): 内核实现 capabilities；目前一律拒绝。
-    capabilities: {
-      get() {
-        throw new PluginPermissionError(name, "capabilities");
-      },
-      list() {
-        throw new PluginPermissionError(name, "capabilities");
-      },
-    },
+    capabilities,
     bus: {
       publish: bus.publish,
       async subscribe(topic, handler) {
@@ -175,14 +323,16 @@ export function createPluginContext(
       },
     },
     queue: queueApi,
-    // 只暴露插件契约中的 get / set（KernelSecrets 的 delete 仅供内核使用）
-    secrets: (({ get, set }) => ({ get, set }))(createSecrets(deps.db, deps.keyring, name)),
+    get secrets() {
+      return secretsApi ?? deny("permissions.secrets");
+    },
     db: guardDb(deps.db.withSchema(pluginSchemaName(name)), name),
     http: {
       route(method, path, handler) {
         if (typeof path !== "string" || !path.startsWith("/")) {
           throw new Error(`plugin ${name}: route path "${path}" must start with "/"`);
         }
+        if (!declaredRoutes.has(`${method} ${path}`)) deny(`permissions.http ${method} ${path}`);
         const full = `/plugins/${name}${path}`;
         if (routes.some((r) => r.method === method && r.path === full)) {
           throw new Error(`plugin ${name}: duplicate route ${method} ${path}`);
@@ -201,6 +351,7 @@ export function createPluginContext(
         if (problems.length > 0) {
           throw new Error(`plugin ${name}: invalid tool spec: ${problems.join("; ")}`);
         }
+        if (!declaredTools.has(spec.name)) deny(`permissions.tools ${spec.name}`);
         if (typeof handler !== "function") {
           throw new Error(`plugin ${name}: tool "${spec.name}" handler must be a function`);
         }
@@ -240,6 +391,7 @@ export function createPluginContext(
         unsubs.clear();
         await Promise.allSettled(pending.map((u) => u()));
         await closeQueue();
+        await Promise.allSettled([...audits]);
       })();
       return closing;
     },

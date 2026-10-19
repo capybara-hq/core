@@ -47,7 +47,7 @@ describe("validatePermissions", () => {
           { method: "GET", path: "/events" },
         ],
         tools: ["a"],
-        hooks: ["x"],
+        hooks: ["session.start", "tool.preExecute"],
         models: [{ purpose: "slack.summary", kind: "chat", label: { zh: "摘要", en: "Summary" } }],
         storage: true,
         network: ["slack.com", "api.slack.com"],
@@ -102,5 +102,32 @@ describe("validatePermissions", () => {
     expect(validatePermissions("p", { storage: 1 })).not.toEqual([]);
     expect(validatePermissions("p", { tools: ["a", "a"] }).join()).toMatch(/duplicate/);
     expect(validatePermissions("p", { tools: [1] })).not.toEqual([]);
+  });
+  it("accepts only the closed list of hook mount points", () => {
+    const all = [
+      "session.start",
+      "session.end",
+      "agent.preStep",
+      "model.request",
+      "model.response",
+      "tool.preExecute",
+      "tool.postExecute",
+      "usage.report",
+    ];
+    expect(validatePermissions("p", { hooks: all })).toEqual([]);
+    expect(validatePermissions("p", { hooks: ["x"] }).join()).toMatch(/hook "x"/);
+    expect(validatePermissions("p", { hooks: ["session.Start"] })).not.toEqual([]);
+  });
+  it("rejects non-boolean http.public", () => {
+    expect(
+      validatePermissions("p", { http: [{ method: "POST", path: "/x", public: "yes" }] }),
+    ).not.toEqual([]);
+  });
+  it("rejects a model purpose with an empty suffix", () => {
+    expect(
+      validatePermissions("slack", {
+        models: [{ purpose: "slack.", kind: "chat", label: { zh: "a", en: "b" } }],
+      }).join(),
+    ).toMatch(/slack\./);
   });
 });

@@ -8,6 +8,7 @@ export default definePlugin({
   provides: ["counter@1"],
   config: { deployment: z.object({ greeting: z.string().default("hi") }) },
   migrations: "./migrations",
+  permissions: { http: [{ method: "GET", path: "/hello" }] },
   async setup(ctx) {
     await ctx.db.insertInto("items").values({ label: "seed" }).execute();
     ctx.http.route("GET", "/hello", async () => new Response("hello"));

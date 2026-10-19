@@ -23,14 +23,13 @@ vi.mock("../../src/ctx/create-ctx.js", async (importOriginal) => {
     createPluginContext: (...args: Parameters<typeof real.createPluginContext>) => {
       const ctx = real.createPluginContext(...args);
       if (args[1].name !== "closefail") return ctx;
+      // 不能展开 ctx：未声明的成员（如 secrets）是访问即抛错的 getter
       const close = ctx.close;
-      return {
-        ...ctx,
-        async close() {
-          await close();
-          throw new Error("close boom");
-        },
+      ctx.close = async () => {
+        await close();
+        throw new Error("close boom");
       };
+      return ctx;
     },
   };
 });
@@ -363,7 +362,18 @@ describe("createPluginContext 规则", () => {
   });
 
   it("http.route：路径必须以 / 开头、拒绝重复、带前缀", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createPluginContext(
+      deps,
+      mf({
+        permissions: {
+          http: [
+            { method: "GET", path: "/a" },
+            { method: "POST", path: "/a" },
+          ],
+        },
+      }),
+      {},
+    );
     const h = async () => new Response("ok");
     expect(() => ctx.http.route("GET", "x", h)).toThrow(/start with/);
     ctx.http.route("GET", "/a", h);

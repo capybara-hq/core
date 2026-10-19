@@ -6,6 +6,12 @@ export default definePlugin({
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: [],
+  permissions: {
+    http: [
+      { method: "POST", path: "/inc" },
+      { method: "GET", path: "/count" },
+    ],
+  },
   setup(ctx) {
     ctx.http.route("POST", "/inc", async () =>
       Response.json({ count: await ctx.kv.incr("n", { ttlSeconds: 3600 }) }),

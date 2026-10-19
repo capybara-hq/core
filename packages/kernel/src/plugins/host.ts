@@ -22,9 +22,11 @@ import {
   unreachableSecrets,
 } from "../config/fields.js";
 import {
+  type CapabilityAccess,
   createPluginContext,
   type KernelDeps,
   pluginSchemaName,
+  queryEnabledPlugins,
   type RegisteredTool,
   type Route,
 } from "../ctx/create-ctx.js";
@@ -298,7 +300,7 @@ export class PluginHost {
         this.migrating = undefined;
       }
       if (this.closed) throw new Error(CLOSED_DURING_LOAD);
-      const ctx = createPluginContext(this.deps, manifest, config);
+      const ctx = createPluginContext(this.deps, manifest, config, this.capabilityAccess);
       this.pending = ctx;
       try {
         await manifest.setup(ctx);
@@ -329,6 +331,18 @@ export class PluginHost {
       });
     }
   }
+
+  /**
+   * 插件 `ctx.capabilities` 的取用接口：只看已完成 setup 的插件（依赖按拓扑序加载，被依赖方先就绪）；
+   * 组织启用每次查 `plugin_org_configs`，不缓存。
+   */
+  private readonly capabilityAccess: CapabilityAccess = {
+    providers: (ref) =>
+      this.loaded.flatMap((l) =>
+        l.provided.has(ref) ? [{ plugin: l.manifest.name, impl: l.provided.get(ref) }] : [],
+      ),
+    enabledPlugins: (orgId) => queryEnabledPlugins(this.deps.db, orgId),
+  };
 
   /** load() 放弃一个插件时关闭其 ctx：失败只记 warn（不掩盖导致放弃的原错误）。 */
   private async closeQuietly(ctx: { close(): Promise<void> }, plugin: string): Promise<void> {

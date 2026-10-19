@@ -47,6 +47,10 @@ export default definePlugin({
   sdk: "^0.1.0",              // 兼容的 SDK 版本范围
   provides: ["counter@1"],    // 提供的能力，形如 名称@主版本，须是 SDK 已登记的能力
   requires: [],               // 依赖的其他插件能力（可选；不能与 provides 重复）
+  optional: [],               // 可选依赖：缺提供方也能加载，取用时 list 为空
+  permissions: {              // 权限清单：未声明即禁止，见下
+    http: [{ method: "POST", path: "/inc" }],
+  },
   config: {
     deployment: z.object({ step: z.number().int().positive().default(1) }), // 部署级
     // org: z.object({...}),                                                // 组织级
@@ -57,6 +61,13 @@ export default definePlugin({
 ```
 
 `definePlugin` 在加载时校验清单，不合法直接抛错。
+
+**权限清单（`permissions`）**：内核按清单构造 `ctx`，未声明的平台能力访问抛 `PluginPermissionError`（消息写明要在清单哪一项声明）并记审计 `plugin.permission_denied`。
+
+- 自动授予、无需声明：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`。
+- `secrets: true` 才能用 `ctx.secrets`；`http: [{ method, path, public? }]` 列出每条 `ctx.http.route`；`tools: [...]` 列出每个 `ctx.tools.register` 的工具名。
+- `network: [...]` 写会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写。`hooks` / `models` / `storage` 是预留项。
+- `ctx.capabilities.get / list` 只能取 `requires` / `optional` 里的直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器等）只能经平台能力用。多选能力 `get` 必须给提供方名；传 `{ orgId }` 时返回 Promise，并按该组织是否启用提供方过滤（未启用抛 `CapabilityUnavailableError`）。
 
 **`setup` 必须返回**：插件按依赖顺序串行 setup，内核不给 setup 设超时。setup 永不 resolve（如等待一个永远不来的外部连接、`await` 一个没人 resolve 的 Promise）时，内核 `start()` 会**永远挂起**、HTTP 不监听、后续插件不加载；此时停机（`stop()`）仍会立即关闭该插件的 ctx 并释放连接。需要等外部依赖就绪时，在 setup 里自己设超时并抛错，或把等待挪到队列任务里。
 
