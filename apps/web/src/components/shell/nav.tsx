@@ -6,19 +6,29 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { listApprovals } from "../../lib/approvals";
 
-/** 一级导航：只列已存在的路由（spec §4.1 的其余项上线后再加）。 */
+/**
+ * 一级导航：只列已存在的路由（spec §4.1 的其余项上线后再加）。`admin` 项只对当前组织的管理员显示
+ * （只是界面上的隐藏，最终由内核判定权限）。
+ */
 const NAV = [
-  { id: "overview", key: "overview", href: "/" },
-  { id: "agents", key: "agents", href: "/agents" },
-  { id: "inbox", key: "inbox", href: "/inbox" },
-  { id: "apps", key: "apps", href: "/apps" },
+  { id: "overview", key: "overview", href: "/", admin: false },
+  { id: "agents", key: "agents", href: "/agents", admin: false },
+  { id: "inbox", key: "inbox", href: "/inbox", admin: false },
+  { id: "apps", key: "apps", href: "/apps", admin: false },
+  { id: "channels", key: "channels", href: "/channels", admin: true },
 ] as const;
 
 /** 待处理审批数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
 const PENDING_POLL_MS = 30_000;
 
-/** 归在「应用」下的设置页（已连接的应用、已记住的授权、组织设置），与设置页的二级导航一致。 */
-const APP_SETTINGS = ["/settings/connections", "/settings/grants", "/settings/organization"];
+/** 归在「应用」下的设置页，与设置页的二级导航一致。 */
+const APP_SETTINGS = [
+  "/settings/connections",
+  "/settings/grants",
+  "/settings/identities",
+  "/settings/organization",
+  "/settings/plugins",
+];
 
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -27,6 +37,7 @@ const under = (pathname: string, prefix: string) =>
 export function activeNavOf(pathname: string): string {
   if (under(pathname, "/agents") || under(pathname, "/chat")) return "agents";
   if (under(pathname, "/inbox")) return "inbox";
+  if (under(pathname, "/channels")) return "channels";
   if (under(pathname, "/apps") || APP_SETTINGS.some((p) => under(pathname, p))) return "apps";
   return pathname === "/" ? "overview" : "";
 }
@@ -74,10 +85,10 @@ export function routeLabel(pathname: string): string {
   return p === "" ? "~" : p;
 }
 
-export function useNav(pending = 0): Pick<TopBarProps, "nav" | "commands"> {
+export function useNav(pending = 0, admin = false): Pick<TopBarProps, "nav" | "commands"> {
   const t = useTranslations();
   const router = useRouter();
-  const nav = NAV.map((n) => ({
+  const nav = NAV.filter((n) => admin || !n.admin).map((n) => ({
     id: n.id,
     label: t(`nav.${n.key}`),
     href: n.href,

@@ -21,7 +21,22 @@
     "loginLabel": "Username",
     "passwordLabel": "Password",
     "submit": "Sign in",
-    "subtitle": "Sign in with your username and password."
+    "subtitle": "Sign in with your username and password.",
+    "or": "Or sign in with",
+    "sso": "Sign in with {name}",
+    "ssoError": {
+      "sso": {
+        "unavailable": "This sign-in method is not available right now. Contact an administrator.",
+        "state_invalid": "The sign-in request expired or was already used. Please try again.",
+        "session_mismatch": "The sign-in was started in a different browser. Please start again here.",
+        "access_denied": "Sign-in was cancelled or access was denied.",
+        "provider_error": "The identity provider returned an error. Please try again later."
+      },
+      "auth": {
+        "account_disabled": "This account has been disabled."
+      },
+      "unknown": "Sign-in failed. Please try again."
+    }
   },
   "setup": {
     "title": "Setup",
@@ -109,6 +124,26 @@
     },
     "credential": {
       "missing": "A credential is required for this app."
+    },
+    "plugin": {
+      "not_found": "The plugin is not installed.",
+      "not_enabled": "The plugin is not enabled for this organization. Enable it under Settings → Plugins.",
+      "config_invalid": "The config is invalid:",
+      "no_org_config": "This plugin has no organization config.",
+      "dependency_missing": "Enable the plugins it depends on first.",
+      "has_dependents": "Other enabled plugins depend on this plugin."
+    },
+    "channel": {
+      "not_found": "The channel does not exist or has been deleted.",
+      "verify_failed": "The platform rejected the bot credentials. Check them and try again."
+    },
+    "identity": {
+      "taken": "This IM account is already linked to another Capybara account.",
+      "not_found": "The identity does not exist or is already unlinked.",
+      "last_login_method": "This is your only way to sign in. Set a password before unlinking it."
+    },
+    "bind": {
+      "invalid": "This link is invalid or has expired."
     }
   },
   "agents": {
@@ -230,7 +265,8 @@
     "goto": "Go to",
     "actions": "Actions",
     "inbox": "Inbox",
-    "apps": "Apps"
+    "apps": "Apps",
+    "channels": "Channels"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -614,7 +650,9 @@
     "nav": {
       "connections": "Connected apps",
       "grants": "Remembered approvals",
-      "organization": "Organization"
+      "organization": "Organization",
+      "identities": "IM identities",
+      "plugins": "Plugins"
     },
     "empty": "No app needs your own credential.",
     "emptyHint": "Apps that use personal credentials show up here.",
@@ -655,6 +693,193 @@
       "onHint": "Switch to the catalog + tool_search above the threshold (recommended).",
       "off": "Off",
       "offHint": "Always send every tool definition to the model."
+    },
+    "locale": {
+      "title": "IM language",
+      "description": "Language of the fixed messages the bot sends in IM (link prompts, errors). Model replies are not translated.",
+      "label": "IM language"
     }
+  },
+  "schemaForm": {
+    "none": "—",
+    "jsonHint": "Enter a JSON value.",
+    "secretSet": "•••••••• (set)",
+    "secretWillClear": "Will be cleared when saved",
+    "replace": "Replace",
+    "replaceLabel": "Replace {field}",
+    "clear": "Clear",
+    "clearLabel": "Clear {field}",
+    "cancelReplace": "Keep current",
+    "cancelReplaceLabel": "Keep current {field}",
+    "undoClear": "Undo",
+    "undoClearLabel": "Keep {field}",
+    "errors": {
+      "required": "Required",
+      "number": "Enter a number",
+      "integer": "Enter a whole number",
+      "json": "Invalid JSON"
+    }
+  },
+  "channels": {
+    "title": "Channels",
+    "new": "New channel",
+    "empty": "No channel connections yet",
+    "emptyHint": "Connect an IM bot (such as Slack or Lark) to an agent so people can chat with it in IM.",
+    "columns": {
+      "name": "Name",
+      "plugin": "Plugin",
+      "agent": "Agent",
+      "policy": "Unlinked users",
+      "status": "Status"
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled",
+      "error": "Error"
+    },
+    "policy": {
+      "bind": "Ask to link",
+      "anonymous": "Anonymous guests"
+    },
+    "policyHint": {
+      "bind": "People who have not linked their Capybara account get a link prompt in a direct message (recommended).",
+      "anonymous": "People who have not linked chat as anonymous guests. Only agents visible to the whole organization can be used, and no personal credentials."
+    },
+    "form": {
+      "title": "New channel",
+      "pluginSection": "Platform",
+      "pluginHint": "Channel plugins enabled for this organization.",
+      "pluginLabel": "Plugin",
+      "pluginPlaceholder": "Choose a plugin",
+      "noPlugins": "No channel plugin is enabled for this organization.",
+      "openPlugins": "Open plugins",
+      "nameLabel": "Name",
+      "nameRequired": "Enter a name",
+      "configSection": "Bot credentials",
+      "configHint": "Fields come from the plugin. The credentials are verified with the platform when you save.",
+      "pickPluginFirst": "Choose a plugin first.",
+      "agentSection": "Agent",
+      "agentSectionHint": "The agent that answers messages sent to this bot.",
+      "agentLabel": "Agent",
+      "agentHint": "Replies come from this agent.",
+      "agentPlaceholder": "Choose an agent",
+      "noAgents": "No agents yet. Create an agent first.",
+      "policySection": "Unlinked users",
+      "policySectionHint": "What happens when someone who has not linked their account messages the bot.",
+      "policyLabel": "Unlinked users",
+      "submit": "Create channel"
+    },
+    "inspector": {
+      "plugin": "Plugin",
+      "tenant": "Tenant",
+      "bot": "Bot",
+      "agent": "Agent",
+      "policy": "Unlinked",
+      "created": "Created"
+    },
+    "detail": {
+      "tabsLabel": "Channel sections",
+      "tabs": {
+        "overview": "Overview",
+        "credentials": "Credentials",
+        "settings": "Settings"
+      },
+      "inspectorTitle": "Details",
+      "retry": "Retry",
+      "statusTitle": "Status",
+      "lastError": "Last error",
+      "noError": "No recent errors.",
+      "enable": "Enable",
+      "disable": "Disable",
+      "enableHint": "The bot is offline. Enable it to reconnect.",
+      "disableHint": "Disabling disconnects the bot; messages sent meanwhile are not answered.",
+      "enabledToast": "Channel enabled.",
+      "disabledToast": "Channel disabled.",
+      "credentialsTitle": "Credentials and config",
+      "credentialsHint": "Secrets you leave alone are kept. Replace a secret to rotate it; the new credentials are verified with the platform before they are saved.",
+      "schemaUnavailable": "The channel plugin is not available, so its config cannot be edited. Check that the plugin is installed and enabled.",
+      "saveCredentials": "Save credentials",
+      "credentialsSaved": "Credentials saved.",
+      "settingsTitle": "Settings",
+      "save": "Save",
+      "saved": "Channel saved.",
+      "dangerTitle": "Danger zone",
+      "delete": "Delete channel",
+      "deleteTitle": "Delete {name}?",
+      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in Capybara."
+    }
+  },
+  "plugins": {
+    "title": "Plugins",
+    "empty": "No plugins are installed.",
+    "version": "Version {version}",
+    "enableLabel": "Enable {plugin}",
+    "enabled": "Enabled for this organization",
+    "disabled": "Not enabled",
+    "enabledToast": "{plugin} enabled.",
+    "disabledToast": "{plugin} disabled.",
+    "dependencyMissing": "Enable a plugin that provides these capabilities first:",
+    "hasDependents": "These enabled plugins depend on it and will stop working:",
+    "forceDisable": "Disable anyway",
+    "permissions": "Permissions",
+    "permissionsLabel": "Permissions of {plugin}",
+    "sensitive": "Sensitive",
+    "category": {
+      "provides": "Provides",
+      "requires": "Requires",
+      "optional": "Optional dependencies",
+      "config": "Config fields",
+      "tables": "Database tables",
+      "secrets": "Secrets",
+      "storage": "Object storage",
+      "http": "HTTP routes",
+      "publicRoutes": "Public routes (no sign-in)",
+      "tools": "Agent tools",
+      "hooks": "Hooks",
+      "models": "Models",
+      "network": "Network access"
+    },
+    "configTitle": "Organization config",
+    "save": "Save config",
+    "saveLabel": "Save config of {plugin}",
+    "configSaved": "Config of {plugin} saved.",
+    "sync": "Sync now",
+    "syncLabel": "Sync directory of {plugin} now",
+    "syncHint": "Directory sync adds and removes organization members from the platform's directory.",
+    "syncStarted": "Directory sync started."
+  },
+  "identities": {
+    "title": "IM identities",
+    "hint": "IM and sign-in accounts linked to your Capybara account. Messages from a linked IM account act as you.",
+    "empty": "No linked identities",
+    "emptyHint": "Message a Capybara bot in IM and follow its link, or sign in with a third-party account.",
+    "columns": {
+      "name": "Name",
+      "source": "Source",
+      "tenant": "Tenant",
+      "externalId": "Account ID",
+      "linkedAt": "Linked"
+    },
+    "unlink": "Unlink",
+    "unlinkTitle": "Unlink {name}?",
+    "unlinkHint": "Messages from this IM account will no longer act as you, and you can no longer sign in with it.",
+    "unlinked": "{name} unlinked."
+  },
+  "bind": {
+    "title": "Link IM account",
+    "subtitle": "An IM account is asking to link to your Capybara account.",
+    "loading": "Loading…",
+    "source": "Source",
+    "tenant": "Tenant",
+    "externalId": "Account ID",
+    "email": "Email",
+    "warning": "Only confirm if you just requested this from IM yourself; this links that IM account to your Capybara account, and its messages will act as you.",
+    "confirm": "Link account",
+    "cancel": "Cancel",
+    "doneTitle": "Account linked",
+    "doneHint": "Go back to IM and continue the chat.",
+    "invalidTitle": "Link expired",
+    "invalidHint": "Send the bot a new message in IM to get a fresh link.",
+    "goHome": "Go to Capybara"
   }
 }

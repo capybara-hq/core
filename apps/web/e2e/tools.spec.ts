@@ -30,7 +30,7 @@ async function signIn(page: Page) {
   } else {
     await page.getByLabel(zh.login.loginLabel).fill(LOGIN);
     await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
-    await page.getByRole("button", { name: zh.login.submit }).click();
+    await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
   }
   await expect(page).toHaveURL(/\/zh$/);
   await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });

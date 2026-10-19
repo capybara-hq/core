@@ -1,6 +1,6 @@
 /**
  * e2e 全局准备：Testcontainers 起 PostgreSQL 与 Valkey，用 CLI（`capybara migrate` / `start`）
- * 从源码起一个加载 `model-fake`、`connector-mcp` 与 `connector-openapi`（都允许本机 http）的内核，再用 server.mjs 起 Web 层
+ * 从源码起一个加载 `model-fake`、`connector-mcp`、`connector-openapi`（都允许本机 http）与假 IM 测试插件 `fake-im` 的内核，再用 server.mjs 起 Web 层
  * （`next dev`）指向它；另起一个假 MCP 服务（有状态会话；destructive 工具 `delete_item`、会发起 elicitation 的 `signup`、
  * 提示模板 `summarize` 与资源 `docs://handbook`）供工具 / 审批 / 斜杠命令 / 资源引用用例接入；再起一个假 OpenAPI 服务
  * （宠物 CRUD，要求请求头 API key）供安装向导用例接入。
@@ -26,6 +26,12 @@ const cli = join(repoRoot, "apps/capybara/bin/capybara.mjs");
 const modelFake = join(repoRoot, "plugins/model-fake/src/index.ts");
 const connectorMcp = join(repoRoot, "plugins/connector-mcp/src/index.ts");
 const connectorOpenApi = join(repoRoot, "plugins/connector-openapi/src/index.ts");
+/**
+ * 假 IM 测试插件（内核测试夹具：channel@1 + identity-source@1 + directory@1），按路径加载。
+ * 渠道连接的平台地址写在连接配置里（im-channels.spec 在 worker 里自起假 IM 平台）；部署级的 platformUrl
+ * 只用于第三方登录，e2e 不走那条路，给一个占位地址。
+ */
+const fakeIm = join(repoRoot, "packages/kernel/test/fixtures/plugins/fake-im/index.ts");
 /**
  * 假 MCP 服务（测试工具包的源码）：按路径加载，与插件一样不作为 apps/web 的包依赖
  * （apps/web 只依赖 @capybara-hq/design）。
@@ -246,15 +252,23 @@ export default async function globalSetup(): Promise<Cleanup> {
       db: { url: pg.getConnectionUri() },
       redis: { url: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}` },
       masterKey: randomBytes(32).toString("base64"),
-      plugins: [modelFake, connectorMcp, connectorOpenApi],
+      plugins: [modelFake, connectorMcp, connectorOpenApi, fakeIm],
       pluginConfig: {
         "connector-mcp": { allowInsecureLoopback: true },
         "connector-openapi": { allowInsecureLoopback: true },
+        "fake-im": {
+          platformUrl: "http://127.0.0.1:9",
+          clientId: "e2e-login",
+          clientSecret: "e2e-login-secret",
+        },
       },
       // e2e 自动批准插件权限（生产默认关闭）
       pluginPermissions: { autoApprove: true },
-      http: { port: kernelPort, trustProxy: 1 },
-      auth: { cookieSecure: false },
+      // publicUrl：机器人发的绑定链接指向 Web 层（`<publicUrl>/bind/<token>`）
+      http: { port: kernelPort, trustProxy: 1, publicUrl: `http://localhost:${webPort}` },
+      auth: { cookieSecure: false, loginSources: ["fake-im"] },
+      // 渠道长连接的扫描加快，建连接后很快连上
+      channels: { leaseTtlMs: 3000, scanIntervalMs: 500 },
       log: { level: "warn" },
     };
     // YAML 是 JSON 的超集
