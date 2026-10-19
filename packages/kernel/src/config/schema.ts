@@ -74,6 +74,19 @@ export const KernelConfigSchema = z.object({
     .record(z.string(), z.unknown())
     .default({})
     .meta(meta({ description: "Deployment-level config keyed by plugin name" })),
+  pluginPermissions: z
+    .object({
+      autoApprove: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Approve plugin permissions automatically at startup (development and trials only). When false, a plugin that is new or whose upgrade asks for more permissions is not loaded until an admin runs `capybara plugins approve <name>`",
+          }),
+        ),
+    })
+    .default({ autoApprove: false }),
   http: z
     .object({
       port: z

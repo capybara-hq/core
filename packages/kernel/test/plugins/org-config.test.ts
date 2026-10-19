@@ -65,7 +65,7 @@ beforeAll(async () => {
     runWorkers: false,
     log: silent,
   };
-  host = new PluginHost(deps, {});
+  host = new PluginHost(deps, {}, { autoApprove: true });
   await host.load([fx("fixture"), fx("orgcfg")]);
   svc = new OrgPluginConfigs(db, keyring, host);
   accounts = new AccountsService(db);
@@ -385,7 +385,7 @@ describe("OrgPluginConfigs", () => {
           .execute()
       ).length;
     expect(await count("plugin-config:orgcfg:webhook.token")).toBe(1);
-    const slim = new PluginHost(deps, {});
+    const slim = new PluginHost(deps, {}, { autoApprove: true });
     await slim.load([fx("orgcfg-slim")]);
     try {
       const svc2 = new OrgPluginConfigs(db, keyring, slim);

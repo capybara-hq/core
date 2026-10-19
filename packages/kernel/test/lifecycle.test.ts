@@ -33,6 +33,7 @@ const cfg = (over: Record<string, unknown> = {}): KernelConfig =>
     redis: { url: rd.url },
     masterKey,
     http: { port: 0 },
+    pluginPermissions: { autoApprove: true },
     ...over,
   });
 

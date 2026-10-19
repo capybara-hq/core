@@ -21,6 +21,7 @@ import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.j
 import { AccountsService } from "./identity/accounts.js";
 import { SettingsService } from "./identity/settings.js";
 import { createLogger, type KernelLogger } from "./log.js";
+import type { PendingPlugin } from "./plugins/approvals.js";
 import { PluginHost } from "./plugins/host.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
 import { RunAbort } from "./runtime/abort.js";
@@ -175,10 +176,13 @@ const HOT_PATHS = configFields(KernelConfigSchema)
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。 */
+/**
+ * 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。
+ * 权限待批准的插件不迁移（`pluginPermissions.autoApprove` 时除外），经 `opts.onPending` 报告。
+ */
 export async function migrateAll(
   config: KernelConfig,
-  opts: { resolveFrom?: string } = {},
+  opts: { resolveFrom?: string; onPending?: (pending: PendingPlugin[]) => void } = {},
 ): Promise<{ schema: string; plugin?: string; applied: string[] }[]> {
   const connectTimeoutMs = config.db.connectTimeoutMs;
   const kernel = await migrate(
@@ -189,7 +193,9 @@ export async function migrateAll(
   const plugins = await PluginHost.migrateOnly(config.plugins, {
     dbUrl: config.db.url,
     connectTimeoutMs,
+    autoApprove: config.pluginPermissions.autoApprove,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+    ...(opts.onPending !== undefined && { onPending: opts.onPending }),
   });
   return [{ schema: KERNEL_SCHEMA, applied: kernel.applied }, ...plugins];
 }
@@ -246,6 +252,7 @@ export async function createKernel(
   const host = new PluginHost(deps, config.pluginConfig, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
+    autoApprove: config.pluginPermissions.autoApprove,
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),

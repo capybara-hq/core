@@ -65,6 +65,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         plugins: [MODEL_FAKE, CONNECTOR_MCP],
+        pluginPermissions: { autoApprove: true },
         pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
         roles: ["api", "worker"],
         http: { port: 0, publicUrl: PUBLIC_URL },
@@ -765,6 +766,7 @@ describe("http.publicUrl 未配置", () => {
         { pg: pgc.url, redis: rd.url },
         {
           plugins: [MODEL_FAKE, CONNECTOR_MCP],
+          pluginPermissions: { autoApprove: true },
           pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
           roles: ["api"],
           tools: { oauthAllowInsecureLoopback: true },

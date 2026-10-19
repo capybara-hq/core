@@ -251,6 +251,8 @@ export default async function globalSetup(): Promise<Cleanup> {
         "connector-mcp": { allowInsecureLoopback: true },
         "connector-openapi": { allowInsecureLoopback: true },
       },
+      // e2e 自动批准插件权限（生产默认关闭）
+      pluginPermissions: { autoApprove: true },
       http: { port: kernelPort, trustProxy: 1 },
       auth: { cookieSecure: false },
       log: { level: "warn" },

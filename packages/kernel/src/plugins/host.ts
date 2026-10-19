@@ -30,7 +30,16 @@ import {
   type RegisteredTool,
   type Route,
 } from "../ctx/create-ctx.js";
+import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
+import { createDb } from "../db/pool.js";
+import {
+  type ApprovalDecision,
+  type PendingPlugin,
+  PluginApprovals,
+  planApprovals,
+} from "./approvals.js";
+import { computePermissionSet, type PermissionSet } from "./permission-set.js";
 import { resolvePlugins } from "./resolve.js";
 
 /** 键排序后的 JSON（对象键顺序不影响结果）；undefined 字段与 JSON.stringify 一样省略。 */
@@ -145,6 +154,42 @@ async function importPlugins(
   return { ordered, dirs };
 }
 
+/** {@link PluginHost.inspect} 的一项。 */
+export interface InspectedPlugin {
+  manifest: PluginManifest;
+  /** 插件模块所在目录（`migrations` 相对它解析）。 */
+  dir: string;
+  /** 规范化的权限集合，见 {@link computePermissionSet}。 */
+  permissions: PermissionSet;
+}
+
+/** 计算各插件的权限集合（按插件名索引）。 */
+async function permissionSets(
+  ordered: PluginManifest[],
+  dirs: Map<string, string>,
+): Promise<Map<string, PermissionSet>> {
+  const sets = new Map<string, PermissionSet>();
+  for (const m of ordered) {
+    sets.set(m.name, await computePermissionSet(m, dirs.get(m.name) as string));
+  }
+  return sets;
+}
+
+/** 待批准插件的 warn 日志：点名插件、原因与新增项（依赖原因写明阻塞的能力与提供方）。 */
+function warnPending(log: KernelDeps["log"], p: PendingPlugin): void {
+  if (p.reason === "dependency") {
+    log.warn(
+      "plugin not loaded: a required capability is only provided by plugins awaiting permission approval",
+      { plugin: p.plugin, version: p.version, blockedBy: p.blockedBy },
+    );
+    return;
+  }
+  log.warn(
+    "plugin not loaded: permissions awaiting approval (run `capybara plugins review`, then `capybara plugins approve <name>` and restart)",
+    { plugin: p.plugin, version: p.version, reason: p.reason, added: p.added, removed: p.removed },
+  );
+}
+
 /** 跑单个插件的迁移（若声明了 migrations）；返回已应用的文件，无迁移时返回 undefined。 */
 async function migratePlugin(
   dbUrl: string,
@@ -190,18 +235,41 @@ export class PluginHost {
    * 只解析插件并按依赖顺序跑迁移，不校验部署配置、不调用 setup、不需要 Redis（供 `capybara migrate`）。
    * 与 `load()` 一样先检查密钥标记（`assertSecretsReachable`），有问题的插件一个都不迁移。
    * 返回每个声明了迁移的插件及其本次应用的文件。
+   * 与 `load()` 同一道权限快照闸门：待批准的插件（及只能由它满足 `requires` 的插件）不迁移，经 `onPending` 报告；
+   * 需要内核迁移已执行（读 `plugin_permission_snapshots`）。`autoApprove` 时全部迁移、不写快照（快照由 `load()` 写）。
    */
   static async migrateOnly(
     specifiers: string[],
-    opts: { dbUrl: string; resolveFrom?: string; connectTimeoutMs?: number },
+    opts: {
+      dbUrl: string;
+      resolveFrom?: string;
+      connectTimeoutMs?: number;
+      autoApprove?: boolean;
+      onPending?: (pending: PendingPlugin[]) => void;
+    },
   ): Promise<{ plugin: string; schema: string; applied: string[] }[]> {
     const { ordered, dirs } = await importPlugins(
       specifiers,
       resolvePath(opts.resolveFrom ?? process.cwd()),
     );
     for (const manifest of ordered) assertSecretsReachable(manifest);
+    let toMigrate = ordered;
+    if (!opts.autoApprove && ordered.length > 0) {
+      const sets = await permissionSets(ordered, dirs);
+      const raw = createDb(opts.dbUrl, 1, () => {}, { connectTimeoutMs: opts.connectTimeoutMs });
+      let decisions: ApprovalDecision[];
+      try {
+        decisions = planApprovals(ordered, sets, await new PluginApprovals(kernelDb(raw)).all());
+      } finally {
+        await raw.destroy();
+      }
+      const pending = decisions.flatMap((d) => (d.action === "pending" ? [d.pending] : []));
+      if (pending.length > 0) opts.onPending?.(pending);
+      const skip = new Set(pending.map((p) => p.plugin));
+      toMigrate = ordered.filter((m) => !skip.has(m.name));
+    }
     const out: { plugin: string; schema: string; applied: string[] }[] = [];
-    for (const manifest of ordered) {
+    for (const manifest of toMigrate) {
       const r = await migratePlugin(
         opts.dbUrl,
         manifest,
@@ -213,7 +281,30 @@ export class PluginHost {
     return out;
   }
 
+  /**
+   * 只导入、校验并按依赖排序插件，计算各自的权限集合；不迁移、不调用 setup、不连数据库与 Redis
+   * （供 `capybara plugins review / approve`）。返回依赖拓扑序。
+   */
+  static async inspect(
+    specifiers: string[],
+    opts: { resolveFrom?: string } = {},
+  ): Promise<InspectedPlugin[]> {
+    const { ordered, dirs } = await importPlugins(
+      specifiers,
+      resolvePath(opts.resolveFrom ?? process.cwd()),
+    );
+    for (const manifest of ordered) assertSecretsReachable(manifest);
+    const sets = await permissionSets(ordered, dirs);
+    return ordered.map((manifest) => ({
+      manifest,
+      dir: dirs.get(manifest.name) as string,
+      permissions: sets.get(manifest.name) as PermissionSet,
+    }));
+  }
+
   private readonly loaded: Loaded[] = [];
+  /** 本次因权限待批准（或依赖待批准插件）而未加载的插件。 */
+  private readonly pendingPlugins: PendingPlugin[] = [];
   private didLoad = false;
   private closed = false;
   /** close() 时中止进行中的插件迁移。 */
@@ -221,22 +312,30 @@ export class PluginHost {
   /** 进行中的插件迁移（close() 等它结束，保证迁移连接不比宿主活得久）。 */
   private migrating: Promise<unknown> | undefined;
   /** 已创建、尚未登记（setup 进行中）的 ctx：close() 时立即关闭，不等 setup 返回。 */
-  private pending: { close(): Promise<void> } | undefined;
+  private settingUp: { close(): Promise<void> } | undefined;
   private readonly resolveFrom: string;
   private readonly onSecrets: ((values: string[]) => void) | undefined;
+  private readonly autoApprove: boolean;
 
   /**
    * @param opts.resolveFrom 解析裸包名的目录，默认 `process.cwd()`；相对路径按构造时的 cwd 转为绝对路径。
    * 绝对路径与 `file:` URL 的插件 specifier 直接使用；
    * 裸包名经 `createRequire(<resolveFrom>/noop.js).resolve` 解析，因此插件包的 exports 必须暴露
    * `default`（或 `require`）条件。
+   * @param opts.autoApprove 自动批准插件权限（配置 `pluginPermissions.autoApprove`，仅开发与试用）：
+   * 需要批准的插件以 source auto 写快照后照常加载。默认 false：待批准的插件不加载（见 {@link pending}）。
    */
   constructor(
     private readonly deps: KernelDeps,
     private readonly pluginConfig: Record<string, unknown> = {},
-    opts: { resolveFrom?: string; onSecrets?: (values: string[]) => void } = {},
+    opts: {
+      resolveFrom?: string;
+      onSecrets?: (values: string[]) => void;
+      autoApprove?: boolean;
+    } = {},
   ) {
     this.onSecrets = opts.onSecrets;
+    this.autoApprove = opts.autoApprove === true;
     this.resolveFrom = resolvePath(opts.resolveFrom ?? process.cwd());
   }
 
@@ -264,11 +363,38 @@ export class PluginHost {
 
     for (const manifest of ordered) assertSecretsReachable(manifest);
 
+    const sets = await permissionSets(ordered, dirs);
+    const approvals = new PluginApprovals(kernelDb(this.deps.db));
+    if (this.autoApprove) {
+      this.deps.log.warn(
+        "pluginPermissions.autoApprove is ON: plugin permissions are approved automatically without review; never enable this in production",
+      );
+    }
+    const decisions = new Map(
+      planApprovals(ordered, sets, ordered.length > 0 ? await approvals.all() : new Map(), {
+        autoApprove: this.autoApprove,
+      }).map((d) => [d.plugin, d]),
+    );
+
     for (const manifest of ordered) {
       const name = manifest.name;
       const raw = this.pluginConfig[name] ?? {};
       let config: unknown = raw;
       const schema = manifest.config?.deployment;
+      const decision = decisions.get(name) as ApprovalDecision;
+      if (decision.action === "pending") {
+        // 待批准：不校验配置、不迁移、不 setup；配置合法时仍登记其中的密钥，避免日志泄露
+        if (schema && this.onSecrets) {
+          const r = schema.safeParse(raw);
+          if (r.success) {
+            const values = secretValues(schema, r.data);
+            if (values.length > 0) this.onSecrets(values);
+          }
+        }
+        this.pendingPlugins.push(decision.pending);
+        warnPending(this.deps.log, decision.pending);
+        continue;
+      }
       if (schema) {
         const r = schema.safeParse(raw);
         if (!r.success) {
@@ -281,6 +407,21 @@ export class PluginHost {
         if (this.onSecrets) {
           const values = secretValues(schema, config);
           if (values.length > 0) this.onSecrets(values);
+        }
+      }
+      if (decision.changed) {
+        if (decision.autoApprove) {
+          await approvals.approve(name, manifest.version, sets.get(name) as PermissionSet, {
+            source: "auto",
+          });
+          this.deps.log.warn("plugin permissions auto-approved (pluginPermissions.autoApprove)", {
+            plugin: name,
+            version: manifest.version,
+            added: decision.added,
+          });
+        } else {
+          // 权限变少或不变（版本变了）：直接加载，快照跟上当前清单
+          await approvals.refresh(name, manifest.version, sets.get(name) as PermissionSet);
         }
       }
       if (this.closed) throw new Error(CLOSED_DURING_LOAD);
@@ -301,7 +442,7 @@ export class PluginHost {
       }
       if (this.closed) throw new Error(CLOSED_DURING_LOAD);
       const ctx = createPluginContext(this.deps, manifest, config, this.capabilityAccess);
-      this.pending = ctx;
+      this.settingUp = ctx;
       try {
         await manifest.setup(ctx);
         ctx.sealTools();
@@ -315,7 +456,7 @@ export class PluginHost {
         if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
         throw new Error(`plugin ${name}: setup failed: ${errMsg(e)}`, { cause: e });
       } finally {
-        this.pending = undefined;
+        this.settingUp = undefined;
       }
       if (this.closed) {
         await this.closeQuietly(ctx, name);
@@ -398,6 +539,11 @@ export class PluginHost {
     return out;
   }
 
+  /** 本次未加载、等待批准权限的插件（含因 `requires` 只能由它们满足而未加载的插件），按依赖拓扑序。 */
+  pending(): PendingPlugin[] {
+    return structuredClone(this.pendingPlugins);
+  }
+
   /** 已加载插件的清单（按加载顺序，即依赖拓扑序）。 */
   manifests(): PluginManifest[] {
     return this.loaded.map((l) => l.manifest);
@@ -425,9 +571,9 @@ export class PluginHost {
     this.closed = true;
     this.abort.abort();
     await this.migrating?.catch(() => {});
-    const pending = this.pending;
-    this.pending = undefined;
-    await pending?.close().catch((e: unknown) => {
+    const settingUp = this.settingUp;
+    this.settingUp = undefined;
+    await settingUp?.close().catch((e: unknown) => {
       this.deps.log.error("plugin close failed", { err: e });
     });
     while (this.loaded.length > 0) {

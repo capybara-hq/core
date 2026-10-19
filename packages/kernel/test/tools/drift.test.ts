@@ -55,6 +55,7 @@ const kernelConfig = () =>
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     http: { port: 0 },
     plugins: [MEM_CONNECTOR],
+    pluginPermissions: { autoApprove: true },
   });
 
 beforeAll(async () => {

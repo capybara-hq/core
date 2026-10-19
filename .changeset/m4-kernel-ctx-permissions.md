@@ -1,6 +1,6 @@
 ---
 "@capybara-hq/kernel": minor
-"@capybara-hq/plugin-sdk": patch
+"@capybara-hq/plugin-sdk": minor
 "@capybara-hq/plugin-example-counter": patch
 "@capybara-hq/plugin-todo": patch
 "@capybara-hq/plugin-anthropic": patch

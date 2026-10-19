@@ -175,6 +175,17 @@ const noProviders = (deps: KernelDeps): CapabilityAccess => ({
   enabledPlugins: (orgId) => queryEnabledPlugins(deps.db, orgId),
 });
 
+/** 内核视角的插件 ctx：插件契约之外还带宿主要用的登记信息与关闭方法。 */
+export type KernelPluginContext = PluginContext & {
+  routes: Route[];
+  provided: Map<CapabilityRef, unknown>;
+  /** 已注册的工具（按注册顺序）。 */
+  registeredTools: RegisteredTool[];
+  /** setup 结束后调用：此后 `tools.register` 抛错。 */
+  sealTools(): void;
+  close(): Promise<void>;
+};
+
 /**
  * 为单个插件按权限清单构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。
  * - 自动授予：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`；
@@ -188,15 +199,7 @@ export function createPluginContext(
   manifest: PluginManifest,
   deploymentConfig: unknown,
   capabilityAccess: CapabilityAccess = noProviders(deps),
-): PluginContext & {
-  routes: Route[];
-  provided: Map<CapabilityRef, unknown>;
-  /** 已注册的工具（按注册顺序）。 */
-  registeredTools: RegisteredTool[];
-  /** setup 结束后调用：此后 `tools.register` 抛错。 */
-  sealTools(): void;
-  close(): Promise<void>;
-} {
+): KernelPluginContext {
   const name = manifest.name;
   const routes: Route[] = [];
   const provided = new Map<CapabilityRef, unknown>();
@@ -299,7 +302,7 @@ export function createPluginContext(
     },
   } as PluginContext["capabilities"];
 
-  return {
+  const ctx: Omit<KernelPluginContext, "secrets"> = {
     kv: createKv(deps.redis, name),
     lock: createLock(deps.redis, name),
     capabilities,
@@ -323,9 +326,6 @@ export function createPluginContext(
       },
     },
     queue: queueApi,
-    get secrets() {
-      return secretsApi ?? deny("permissions.secrets");
-    },
     db: guardDb(deps.db.withSchema(pluginSchemaName(name)), name),
     http: {
       route(method, path, handler) {
@@ -396,4 +396,12 @@ export function createPluginContext(
       return closing;
     },
   };
+  // 声明了 secrets 时是普通属性；未声明时是不可枚举的抛错 getter——展开 / 打印 ctx 不会触发越权与审计
+  if (secretsApi) return Object.assign(ctx, { secrets: secretsApi });
+  Object.defineProperty(ctx, "secrets", {
+    get: () => deny("permissions.secrets"),
+    enumerable: false,
+    configurable: false,
+  });
+  return ctx as KernelPluginContext;
 }

@@ -68,6 +68,7 @@ export default definePlugin({
 - `secrets: true` 才能用 `ctx.secrets`；`http: [{ method, path, public? }]` 列出每条 `ctx.http.route`；`tools: [...]` 列出每个 `ctx.tools.register` 的工具名。
 - `network: [...]` 写会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写。`hooks` / `models` / `storage` 是预留项。
 - `ctx.capabilities.get / list` 只能取 `requires` / `optional` 里的直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器等）只能经平台能力用。多选能力 `get` 必须给提供方名；传 `{ orgId }` 时返回 Promise，并按该组织是否启用提供方过滤（未启用抛 `CapabilityUnavailableError`）。
+- **批准**：内核在 PG 记已批准的权限快照（上面各项，加上 provides / requires / optional、配置字段与迁移里 `CREATE TABLE` 的表名）。插件首次出现、或升级后比快照多出任何一项时不加载，`requires` 它的插件同样不加载，管理员用 `capybara plugins review` / `capybara plugins approve <name>` 批准后重启生效；权限变少或不变直接加载。所以**发版时多要的每一项都会让部署方停下来批准**，别顺手多声明。开发与测试用 `pluginPermissions.autoApprove: true`（双副本 harness 默认开启）。
 
 **`setup` 必须返回**：插件按依赖顺序串行 setup，内核不给 setup 设超时。setup 永不 resolve（如等待一个永远不来的外部连接、`await` 一个没人 resolve 的 Promise）时，内核 `start()` 会**永远挂起**、HTTP 不监听、后续插件不加载；此时停机（`stop()`）仍会立即关闭该插件的 ctx 并释放连接。需要等外部依赖就绪时，在 setup 里自己设超时并抛错，或把等待挪到队列任务里。
 

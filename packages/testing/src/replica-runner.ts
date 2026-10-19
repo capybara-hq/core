@@ -45,6 +45,8 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     roles: c.roles,
     plugins: c.plugins,
     pluginConfig: c.pluginConfig,
+    // 测试默认自动批准插件权限（生产默认关闭）；调用方可经 config 覆盖为 false 验证待批准行为
+    pluginPermissions: { autoApprove: true },
     log: { level: "error" },
   };
   const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));

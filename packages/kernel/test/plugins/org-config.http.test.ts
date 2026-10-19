@@ -40,6 +40,7 @@ beforeAll(async () => {
       http: { port: 0 },
       log: { level: "debug" },
       plugins: [fx("fixture"), fx("orgcfg")],
+      pluginPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("debug", { write: (l) => lines.push(l) }) },
   );

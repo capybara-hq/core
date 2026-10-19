@@ -15,9 +15,18 @@ export CAPYBARA_REDIS__URL=redis://localhost:6379
 export CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)
 export CAPYBARA_PLUGINS='["@capybara-hq/plugin-example-counter"]'
 export CAPYBARA_PLUGIN_CONFIG='{"example-counter":{"step":1}}'   # 可选，step 默认 1
+export CAPYBARA_PLUGIN_PERMISSIONS__AUTO_APPROVE=true   # 仅本地试用：自动批准插件权限（生产保持关闭）
 
 pnpm capybara migrate     # 迁移内核与插件 schema
 pnpm capybara start       # 监听 :8080（CAPYBARA_HTTP__PORT 可改）
+```
+
+插件权限：插件首次出现、或升级后清单比已批准的权限多出任何一项时**不加载**（启动日志有 warn），依赖它的插件同样不加载；
+权限变少或不变直接加载。生产不要开 `autoApprove`，改用 CLI 审阅并批准（直连 PG），批准后重启内核生效：
+
+```bash
+pnpm capybara plugins review                    # 列出待批准插件与新增的权限项
+pnpm capybara plugins approve example-counter   # 终端确认后写入快照并记审计；--yes 跳过确认
 ```
 
 另开一个终端验证：

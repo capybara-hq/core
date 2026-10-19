@@ -22,6 +22,7 @@ const raw = (over: Record<string, unknown> = {}, redisUrl = rd.url): Record<stri
   redis: { url: redisUrl },
   masterKey,
   http: { port: 0 },
+  pluginPermissions: { autoApprove: true },
   ...over,
 });
 const cfg = (over: Record<string, unknown> = {}, redisUrl?: string): KernelConfig =>
@@ -244,6 +245,24 @@ describe("角色", () => {
     await k.stop();
     expect(k.port).toBeUndefined();
     expect(await canConnect(port)).toBe(false);
+  });
+});
+
+describe("插件权限待批准（autoApprove 关闭）", () => {
+  it("内核照常启动；待批准插件不加载、路由不挂载，host.pending() 列出；migrateAll 跳过并报告", async () => {
+    const pending: string[] = [];
+    const r = await migrateAll(
+      cfg({ plugins: [fx("perm-a")], pluginPermissions: { autoApprove: false } }),
+      { onPending: (p) => pending.push(...p.map((x) => x.plugin)) },
+    );
+    expect(r.map((x) => x.schema)).toEqual(["capybara"]);
+    expect(pending).toEqual(["perm-a"]);
+    const k = await kernel(
+      cfg({ plugins: [fx("perm-a")], pluginPermissions: { autoApprove: false } }),
+    );
+    await k.start();
+    expect(k.host.manifests()).toEqual([]);
+    expect(k.host.pending().map((p) => [p.plugin, p.reason])).toEqual([["perm-a", "new"]]);
   });
 });
 

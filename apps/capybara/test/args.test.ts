@@ -43,6 +43,37 @@ describe("parseCli", () => {
     expect(() => parseCli(["admin", "create", "--role", "api"])).toThrow(/only valid for start/);
   });
 
+  it("plugins review / approve", () => {
+    expect(parseCli(["plugins", "review"])).toEqual({ command: "plugins-review" });
+    expect(parseCli(["plugins", "approve", "todo"])).toEqual({
+      command: "plugins-approve",
+      name: "todo",
+      yes: false,
+    });
+    expect(parseCli(["plugins", "approve", "todo", "--yes"])).toEqual({
+      command: "plugins-approve",
+      name: "todo",
+      yes: true,
+    });
+    expect(parseCli(["plugins", "approve", "-y", "todo"])).toMatchObject({ yes: true });
+    expect(() => parseCli(["plugins"])).toThrow(/missing plugins command/);
+    expect(() => parseCli(["plugins", "remove", "x"])).toThrow(/unknown plugins command/);
+    expect(() => parseCli(["plugins", "approve"])).toThrow(/plugin name/);
+    expect(() => parseCli(["plugins", "approve", "a", "b"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["plugins", "review", "x"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["plugins", "review", "--yes"])).toThrow(
+      /only valid for plugins approve/,
+    );
+    expect(() => parseCli(["plugins", "review", "--role", "api"])).toThrow(/only valid for start/);
+    expect(() => parseCli(["plugins", "approve", "a", "--login", "r"])).toThrow(
+      /only valid for admin create/,
+    );
+    expect(() => parseCli(["start", "--yes"])).toThrow(/only valid for plugins approve/);
+    expect(() =>
+      parseCli(["admin", "create", "--login", "r", "--display-name", "R", "--yes"]),
+    ).toThrow(/only valid for plugins approve/);
+  });
+
   it("非法输入抛 UsageError", () => {
     expect(() => parseCli(["start", "--role", "db"])).toThrow(UsageError);
     expect(() => parseCli(["start", "--role", ","])).toThrow(/at least one/);

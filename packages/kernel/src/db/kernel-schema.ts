@@ -123,6 +123,17 @@ export interface AuditEventsTable {
   detail: Json;
 }
 
+/** 0016_plugin_permissions.sql：插件已批准的权限快照。 */
+export interface PluginPermissionSnapshotsTable {
+  plugin: string;
+  version: string;
+  /** 规范化的权限集合（见 plugins/permission-set.ts）。 */
+  permissions: Json<unknown>;
+  approved_by: string | null;
+  approved_at: Ts;
+  source: "cli" | "auto";
+}
+
 /** 0002_secrets.sql：加密值（读写走 `createSecrets`，这里只供按键查询是否存在）。 */
 export interface SecretsTable {
   namespace: string;
@@ -368,7 +379,7 @@ export interface LgCheckpointWritesTable {
 
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
- * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql 与 0011_approvals_spec.sql。
+ * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql 与 0016_plugin_permissions.sql。
  */
 export interface KernelDatabase {
   accounts: AccountsTable;
@@ -399,6 +410,7 @@ export interface KernelDatabase {
   questions: QuestionsTable;
   tool_outputs: ToolOutputsTable;
   tool_specs: ToolSpecsTable;
+  plugin_permission_snapshots: PluginPermissionSnapshotsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

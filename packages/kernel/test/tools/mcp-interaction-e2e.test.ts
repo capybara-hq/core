@@ -172,6 +172,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         plugins: [MODEL_FAKE, CONNECTOR_MCP],
+        pluginPermissions: { autoApprove: true },
         pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
         roles: ["api", "worker"],
         // 足够长：断言「为问用户而中止」立即结束，而不是等满工具超时

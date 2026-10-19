@@ -94,9 +94,21 @@ describe("ctx 按权限清单构造", () => {
     expect(await redis.ttl(keys[0] as string)).toBeGreaterThan(0);
   });
 
-  it("声明了 secrets：可用", async () => {
+  it("未声明 secrets：展开 / 列举 / 打印 ctx 不触发越权（getter 不可枚举）", async () => {
+    const ctx = createPluginContext(deps, mf(), {});
+    expect(() => ({ ...ctx })).not.toThrow();
+    expect(Object.keys(ctx)).not.toContain("secrets");
+    expect(() => JSON.stringify(Object.fromEntries(Object.entries(ctx)))).not.toThrow();
+    expect("secrets" in ctx).toBe(true);
+    await ctx.close();
+    expect(await denials()).toEqual([]);
+  });
+
+  it("声明了 secrets：可用，且是普通可枚举属性", async () => {
     const ctx = createPluginContext(deps, mf({ permissions: { secrets: true } }), {});
     expect(typeof ctx.secrets.get).toBe("function");
+    expect(Object.keys(ctx)).toContain("secrets");
+    expect(typeof { ...ctx }.secrets.get).toBe("function");
     await ctx.close();
     expect(await denials()).toEqual([]);
   });

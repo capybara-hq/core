@@ -49,6 +49,7 @@ export function runConfig(
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     http: { port: 0 },
     plugins: [MODEL_FAKE, MODEL_LOOPER],
+    pluginPermissions: { autoApprove: true },
     runtime: { jobLockMs: 2000, stalledIntervalMs: 1000, ...runtime },
     ...rest,
   });

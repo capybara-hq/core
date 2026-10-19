@@ -12,7 +12,14 @@ export async function runMigrate(log: KernelLogger, env: NodeJS.ProcessEnv): Pro
     const config = await loadConfig(env);
     log.addSecrets(secretValues(KernelConfigSchema, config));
     log.setLevel(config.log.level);
-    const results = await migrateAll(config);
+    const results = await migrateAll(config, {
+      onPending: (pending) => {
+        log.warn(
+          "plugins awaiting permission approval were not migrated; run `capybara plugins review`",
+          { plugins: pending.map((p) => p.plugin) },
+        );
+      },
+    });
     for (const r of results) {
       log.info("migrations applied", { schema: r.schema, applied: r.applied });
     }

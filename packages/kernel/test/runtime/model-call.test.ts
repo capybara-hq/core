@@ -122,6 +122,7 @@ beforeAll(async () => {
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     http: { port: 0 },
     plugins: [MODEL_FAKE],
+    pluginPermissions: { autoApprove: true },
     pluginConfig: {
       "model-fake": {
         models: [

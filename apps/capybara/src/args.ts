@@ -9,6 +9,8 @@ export type Command =
   | { command: "start"; roles?: Role[] }
   | { command: "migrate" }
   | { command: "admin-create"; login: string; displayName: string; email?: string }
+  | { command: "plugins-review" }
+  | { command: "plugins-approve"; name: string; yes: boolean }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -18,6 +20,11 @@ export const USAGE = `Usage:
                                                Create an enterprise admin; reads the password
                                                (one line) from stdin, e.g.
                                                echo "$PW" | capybara admin create ...
+  capybara plugins review                      List plugins awaiting permission approval and
+                                               the permissions they add
+  capybara plugins approve <name> [--yes]      Approve a plugin's current permissions (asks for
+                                               confirmation unless --yes); restart the kernel
+                                               to apply
   capybara help                                Show this help`;
 
 /** 命令行参数错误。 */
@@ -40,6 +47,33 @@ export function parseCli(argv: string[]): Command {
   const v = parsed.values;
   if (command === undefined || command === "help" || v.help) {
     return { command: "help" };
+  }
+  if (command !== "plugins" && v.yes !== undefined) {
+    throw new UsageError("--yes is only valid for plugins approve");
+  }
+  if (command === "plugins") {
+    const [sub, ...args] = rest;
+    if (sub === undefined) {
+      throw new UsageError('missing plugins command (expected "review" or "approve")');
+    }
+    if (sub !== "review" && sub !== "approve") {
+      throw new UsageError(`unknown plugins command "${sub}"`);
+    }
+    if (v.role !== undefined) throw new UsageError("--role is only valid for start");
+    for (const opt of ["login", "display-name", "email"] as const) {
+      if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for admin create`);
+    }
+    if (sub === "review") {
+      if (v.yes !== undefined) throw new UsageError("--yes is only valid for plugins approve");
+      if (args.length > 0) throw new UsageError(`unexpected argument "${args[0]}"`);
+      return { command: "plugins-review" };
+    }
+    const [name, ...extra] = args;
+    if (name === undefined || name.trim() === "") {
+      throw new UsageError("plugins approve needs a plugin name");
+    }
+    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+    return { command: "plugins-approve", name, yes: v.yes === true };
   }
   if (command === "admin") {
     const [sub, ...extra] = rest;
@@ -95,6 +129,7 @@ function parse(argv: string[]) {
       login: { type: "string" },
       "display-name": { type: "string" },
       email: { type: "string" },
+      yes: { type: "boolean", short: "y" },
       help: { type: "boolean", short: "h" },
     },
   });

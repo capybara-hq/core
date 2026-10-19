@@ -169,7 +169,7 @@ describe("ctx.capabilities（单元）", () => {
 
 describe("ctx.capabilities（经 PluginHost）", () => {
   it("依赖按拓扑序加载，setup 内可取用被依赖方；optional 缺失时 list 为空；按组织启用取用", async () => {
-    const h = new PluginHost(deps);
+    const h = new PluginHost(deps, {}, { autoApprove: true });
     hosts.push(h);
     await h.load([fx("cap-consumer"), fx("cap-chan-a"), fx("cap-chan-b")]);
     expect(h.manifests().map((m) => m.name)).toEqual(["cap-chan-a", "cap-chan-b", "cap-consumer"]);
