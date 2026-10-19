@@ -53,7 +53,12 @@ describe("startFakeChannelServer", () => {
     im.failNext("/send", 429, 1, 50);
     const r = await post(`${im.url}/send`, msg());
     expect(r.status).toBe(429);
-    expect(await r.json()).toEqual({ retryAfterMs: 50 });
+    expect(await r.json()).toEqual({ retryAfterMs: 50, reason: null });
+    // 不可重试的失败可带原因（测试插件据此设 ChannelSendError.reason）
+    im.failNext("/send", 403, 1, undefined, "target_gone");
+    const gone = await post(`${im.url}/send`, msg());
+    expect(gone.status).toBe(403);
+    expect(await gone.json()).toEqual({ retryAfterMs: null, reason: "target_gone" });
     const { messageId } = (await (await post(`${im.url}/send`, msg())).json()) as {
       messageId: string;
     };

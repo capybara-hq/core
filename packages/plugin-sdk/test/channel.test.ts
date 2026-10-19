@@ -16,4 +16,13 @@ describe("ChannelSendError", () => {
     expect(isChannelSendError(new Error("plain"))).toBe(false);
     expect(isChannelSendError({ name: "ChannelSendError", retryable: true })).toBe(false);
   });
+
+  it("不可重试失败可带原因（auth / target_gone / rejected / too_large）；不给就没有", () => {
+    const e = new ChannelSendError("bot removed from chat", {
+      retryable: false,
+      reason: "target_gone",
+    });
+    expect(e.reason).toBe("target_gone");
+    expect(new ChannelSendError("x", { retryable: false }).reason).toBeUndefined();
+  });
 });

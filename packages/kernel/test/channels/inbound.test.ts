@@ -9,8 +9,11 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { Queue } from "bullmq";
+import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -24,6 +27,7 @@ import {
   type Req,
   runConfig,
   session,
+  sleep,
   startKernel,
   waitFor,
 } from "../helpers/runs.js";
@@ -42,6 +46,7 @@ let ownerId: string;
 let orgId: string;
 let agentId: string;
 let connId: string;
+let queue: Queue;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -59,6 +64,7 @@ beforeAll(async () => {
   );
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
+  queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
   const accounts = new AccountsService(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   const outsider = await accounts.createLocal({ login: "out", password: PW, displayName: "Out" });
@@ -70,6 +76,7 @@ beforeAll(async () => {
     ["u-owner", ownerId],
     ["u-out", outsider.id],
     ["u-race", ownerId],
+    ["u-retry", ownerId],
   ] as const) {
     await sql`INSERT INTO capybara.identities (source, external_id, account_id)
       VALUES (${SOURCE}, ${ext}, ${acct})`.execute(raw);
@@ -96,6 +103,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  await queue?.close();
   await k?.stop();
   await im?.stop();
   await raw?.destroy();
@@ -136,7 +144,14 @@ const sentAfter = async (
     `reply to ${chatId}`,
   );
 
-/** 推送一条消息，等它被处理完：它之后再推一条哨兵（未绑定私聊 → 必回绑定卡片）并等哨兵的回复。 */
+/** 该消息的入站任务（Ruling A21：onEvent 只入队，worker 处理）已处理完。 */
+const processed = async (messageId: string) =>
+  (await queue.getJobState(inboundJobId(connId, messageId))) === "completed";
+
+/**
+ * 推送一条消息，等它被处理完：它之后再推一条哨兵（未绑定私聊 → 必回绑定卡片）并等哨兵的回复——插件逐条调用
+ * onEvent，哨兵入队时前一条（含平台重投）的 onEvent 已返回；入站任务并发处理，所以还要等前一条的任务处理完。
+ */
 let sentinel = 0;
 async function pushAndSettle(e: Parameters<FakeChannelServer["push"]>[1]): Promise<void> {
   expect(im.push(connId, e)).toBe(1);
@@ -148,6 +163,8 @@ async function pushAndSettle(e: Parameters<FakeChannelServer["push"]>[1]): Promi
     10_000,
     "sentinel reply",
   );
+  const id = (e as { messageId: string }).messageId;
+  await waitFor(() => processed(id), 10_000, `inbound job ${id}`);
 }
 
 describe("渠道入站", () => {
@@ -160,6 +177,8 @@ describe("渠道入站", () => {
     expect(card?.kind).toBe("bind");
     expect(card && "url" in card && card.url).toMatch(/^https:\/\/cap\.example\/bind\/cap_bind_/);
     expect(s?.message.text).toMatch(/link your Capybara account/);
+    // Ruling A22：组织语言随发送交给插件
+    expect(s?.locale).toBe("en");
     expect(await threads()).toEqual([]);
   });
 
@@ -224,6 +243,7 @@ describe("渠道入站", () => {
       (x) => x.message.cards === undefined && x.message.text === "已开始新对话",
     );
     expect(s?.message.text).toBe("已开始新对话");
+    expect(s?.locale).toBe("zh");
     await pushAndSettle(dm("m3", "u-owner", "fresh start"));
     const dmRows = (await threads()).filter((r) => r.thread_key === "dm:u-owner");
     expect(dmRows).toHaveLength(2);
@@ -344,6 +364,116 @@ describe("渠道入站", () => {
       url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
       payload: { visibility: "org" },
     });
+  });
+});
+
+describe("入站持久化（Ruling A21）", () => {
+  it("处理中途失败（用户消息已写入之后）→ 入站任务由队列重试，消息只写一次、投递目标补上", async () => {
+    // 注入一次失败：话题 dm-u-retry 的第一次投递目标写入抛错（序列不随事务回滚，只失败一次）
+    await sql.raw(`CREATE SEQUENCE IF NOT EXISTS public.w2_inbound_fail`).execute(raw);
+    await sql
+      .raw(
+        `CREATE OR REPLACE FUNCTION public.w2_inbound_fail() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.target->>'chatId' = 'dm-u-retry' AND nextval('public.w2_inbound_fail') = 1 THEN
+            RAISE EXCEPTION 'injected failure';
+          END IF;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql`,
+      )
+      .execute(raw);
+    await sql
+      .raw(
+        `CREATE TRIGGER w2_inbound_fail BEFORE INSERT ON capybara.channel_deliveries
+        FOR EACH ROW EXECUTE FUNCTION public.w2_inbound_fail()`,
+      )
+      .execute(raw);
+    try {
+      expect(im.push(connId, dm("retry-1", "u-retry", "please retry"))).toBe(1);
+      const conv = await waitFor(
+        async () =>
+          (
+            await sql<{ conversation_id: string }>`SELECT d.conversation_id
+              FROM capybara.channel_deliveries d WHERE d.target->>'chatId' = 'dm-u-retry'`.execute(
+              raw,
+            )
+          ).rows[0]?.conversation_id,
+        20_000,
+        "delivery target after retry",
+      );
+      const tries = await sql<{ last_value: string }>`SELECT last_value
+        FROM public.w2_inbound_fail`.execute(raw);
+      expect(Number(tries.rows[0]?.last_value)).toBeGreaterThanOrEqual(2);
+      await waitFor(() => processed("retry-1"), 10_000, "retry job completed");
+      const msgs = await userMessages(conv);
+      expect(msgs.map((m) => (m.payload as { clientMessageId?: string }).clientMessageId)).toEqual([
+        `${connId}:retry-1`,
+      ]);
+      expect((await threads()).filter((r) => r.chat_id === "dm-u-retry")).toHaveLength(1);
+    } finally {
+      await sql
+        .raw(`DROP TRIGGER IF EXISTS w2_inbound_fail ON capybara.channel_deliveries`)
+        .execute(raw);
+    }
+  }, 40_000);
+
+  it("onEvent 只去重并入队：平台重投同一条消息只排一个任务、只写一次", async () => {
+    await k.channels.inbound.onEvent(connId, dm("enq-1", "u-race", "hello"));
+    await k.channels.inbound.onEvent(connId, dm("enq-1", "u-race", "hello"));
+    await waitFor(() => processed("enq-1"), 10_000, "job completed");
+    await sleep(300);
+    const r = await sql`SELECT 1 FROM capybara.conversation_events
+      WHERE payload->>'clientMessageId' = ${`${connId}:enq-1`}`.execute(raw);
+    expect(r.rows).toHaveLength(1);
+  });
+});
+
+describe("发言人资料与外部租户（Ruling A22）", () => {
+  const setPolicy = async (unboundPolicy: "bind" | "anonymous") => {
+    const p = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/channels/${connId}`,
+      payload: { unboundPolicy },
+    });
+    expect(p.statusCode).toBe(200);
+  };
+  const bindTokenOf = (s: FakeChannelSent | undefined) => {
+    const card = s?.message.cards?.[0];
+    const url = card && "url" in card ? String(card.url) : "";
+    return url.slice(url.indexOf("/bind/") + "/bind/".length);
+  };
+
+  it("绑定确认页显示平台给的显示名；没有显示名时回落到 externalId", async () => {
+    await setPolicy("bind");
+    let n = im.sent.length;
+    im.push(connId, dm("dn-1", "u-named", "hi", "t1", { displayName: "Named Person" }));
+    const named = await sentAfter(n, "dm-u-named");
+    const peek = await owner({ method: "GET", url: `/api/v1/bind/${bindTokenOf(named)}` });
+    expect(peek.statusCode, peek.body).toBe(200);
+    expect((peek.json() as { binding: { displayName: string } }).binding.displayName).toBe(
+      "Named Person",
+    );
+    n = im.sent.length;
+    im.push(connId, dm("dn-2", "u-plain", "hi"));
+    const plain = await sentAfter(n, "dm-u-plain");
+    const peek2 = await owner({ method: "GET", url: `/api/v1/bind/${bindTokenOf(plain)}` });
+    expect((peek2.json() as { binding: { displayName: string } }).binding.displayName).toBe(
+      "u-plain",
+    );
+  });
+
+  it("匿名策略下，租户与连接不同的发言人（外部联系人）只能绑定，不按匿名访客处理", async () => {
+    await setPolicy("anonymous");
+    try {
+      const n = im.sent.length;
+      im.push(connId, dm("ext-1", "u-ext", "hi", "t2"));
+      const s = await sentAfter(n, "dm-u-ext");
+      expect(s?.message.cards?.[0]?.kind).toBe("bind");
+      await waitFor(() => processed("ext-1"), 10_000, "ext job");
+      expect((await threads()).filter((r) => r.chat_id === "dm-u-ext")).toEqual([]);
+    } finally {
+      await setPolicy("bind");
+    }
   });
 });
 

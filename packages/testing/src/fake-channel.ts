@@ -47,6 +47,8 @@ export interface FakeChannelSent {
   pid: number;
   /** 内核给的幂等键（`ChannelSendArgs.idempotencyKey`）。 */
   idempotencyKey?: string;
+  /** 内核给的组织语言（`ChannelSendArgs.locale`）。 */
+  locale?: "zh" | "en";
   at: number;
 }
 
@@ -105,10 +107,16 @@ export interface FakeChannelServer {
   /** 平台用户（OAuth 登录用），按 externalId 索引。 */
   users: Map<string, FakeChannelUser>;
   /**
-   * 让接下来 `count` 次 `/send`（或 `/update`）返回该状态码（不记录）；`retryAfterMs` 放进响应体，
-   * 测试插件据此抛可重试的 `ChannelSendError`。
+   * 让接下来 `count` 次 `/send`（或 `/update`）返回该状态码（不记录）；`retryAfterMs` 与 `reason` 放进响应体，
+   * 测试插件据此抛 `ChannelSendError`（429 / 5xx 可重试，带等待时长；其他不可重试，带失败原因）。
    */
-  failNext(path: "/send" | "/update", status: number, count?: number, retryAfterMs?: number): void;
+  failNext(
+    path: "/send" | "/update",
+    status: number,
+    count?: number,
+    retryAfterMs?: number,
+    reason?: "auth" | "target_gone" | "rejected" | "too_large",
+  ): void;
   /** 让 /connect 返回该状态码（null 恢复正常）。 */
   failConnect(status: number | null): void;
   /** 该渠道连接当前在线的长连接。 */
@@ -158,7 +166,13 @@ export async function startFakeChannelServer(
     { user: FakeChannelUser; nonce: string; clientId: string; challenge: string | null }
   >();
   const byKey = new Map<string, string>();
-  const failures: { path: string; status: number; left: number; retryAfterMs?: number }[] = [];
+  const failures: {
+    path: string;
+    status: number;
+    left: number;
+    retryAfterMs?: number;
+    reason?: string;
+  }[] = [];
   const live = new Map<FakeChannelStream, ServerResponse>();
   const peaks = new Map<string, number>();
   let failStatus: number | null = null;
@@ -201,7 +215,7 @@ export async function startFakeChannelServer(
     const f = failures.find((x) => x.path === path && x.left > 0);
     if (f) {
       f.left--;
-      json(res, f.status, { retryAfterMs: f.retryAfterMs ?? null });
+      json(res, f.status, { retryAfterMs: f.retryAfterMs ?? null, reason: f.reason ?? null });
       return;
     }
     const b = JSON.parse(body) as Omit<FakeChannelSent, "messageId" | "pid" | "at"> & {
@@ -339,12 +353,13 @@ export async function startFakeChannelServer(
     duplicateSends,
     posts,
     users,
-    failNext(path, status, count = 1, retryAfterMs) {
+    failNext(path, status, count = 1, retryAfterMs, reason) {
       failures.push({
         path,
         status,
         left: count,
         ...(retryAfterMs !== undefined && { retryAfterMs }),
+        ...(reason !== undefined && { reason }),
       });
     },
     failConnect(status) {
@@ -388,18 +403,32 @@ export async function startFakeChannelServer(
   };
 }
 
-/** 私聊文本消息（chat id 为 `dm-<externalId>`）。 */
+/** 平台上的发言人资料（`InboundSender` 的可选字段）。 */
+export interface FakeSenderProfile {
+  displayName?: string;
+  avatarUrl?: string;
+}
+
+const senderOf = (externalId: string, tenantId: string, profile: FakeSenderProfile = {}) => ({
+  externalId,
+  tenantId,
+  ...(profile.displayName !== undefined && { displayName: profile.displayName }),
+  ...(profile.avatarUrl !== undefined && { avatarUrl: profile.avatarUrl }),
+});
+
+/** 私聊文本消息（chat id 为 `dm-<externalId>`）；`profile` 给了就带上发言人的显示名 / 头像。 */
 export function fakeDm(
   messageId: string,
   externalId: string,
   text: string,
   tenantId = "t1",
+  profile?: FakeSenderProfile,
 ): InboundEvent {
   return {
     type: "message",
     messageId,
     target: { chatId: `dm-${externalId}`, chatType: "dm" },
-    sender: { externalId, tenantId },
+    sender: senderOf(externalId, tenantId, profile),
     text,
     mentionsBot: false,
   };
@@ -410,7 +439,12 @@ export function fakeGroupMessage(
   messageId: string,
   externalId: string,
   text: string,
-  opts: { chatId?: string; threadId?: string; mentionsBot?: boolean; tenantId?: string } = {},
+  opts: {
+    chatId?: string;
+    threadId?: string;
+    mentionsBot?: boolean;
+    tenantId?: string;
+  } & FakeSenderProfile = {},
 ): InboundEvent {
   return {
     type: "message",
@@ -420,7 +454,7 @@ export function fakeGroupMessage(
       chatType: "group",
       ...(opts.threadId !== undefined && { threadId: opts.threadId }),
     },
-    sender: { externalId, tenantId: opts.tenantId ?? "t1" },
+    sender: senderOf(externalId, opts.tenantId ?? "t1", opts),
     text,
     mentionsBot: opts.mentionsBot ?? true,
   };
@@ -433,8 +467,15 @@ export function fakeCardAction(
   action: CardAction,
   target: ChannelTarget,
   tenantId = "t1",
+  profile?: FakeSenderProfile,
 ): InboundEvent {
-  return { type: "card_action", messageId, target, sender: { externalId, tenantId }, action };
+  return {
+    type: "card_action",
+    messageId,
+    target,
+    sender: senderOf(externalId, tenantId, profile),
+    action,
+  };
 }
 
 /** 通讯录成员（租户 t1；邮箱缺省 `<id>@corp.example`、已验证）。 */

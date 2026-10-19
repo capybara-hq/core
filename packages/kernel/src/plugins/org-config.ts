@@ -145,6 +145,11 @@ export class OrgPluginConfigs {
        * 内核传 `log.addOrgSecrets` 使其在日志中打码。
        */
       onSecrets?: (values: string[]) => void;
+      /**
+       * 写入提交之后调用（`enabled` 为写入后的启用状态）。内核传：停用时给该组织该插件的渠道连接广播
+       * `channel.changed`，持有长连接的副本立即断开。
+       */
+      afterPut?: (orgId: string, plugin: string, enabled: boolean) => Promise<void>;
       /** 仅供测试：在读完配置行之后、读密钥之前插入确定性的交错点。 */
       afterConfigRowRead?: () => Promise<void>;
     } = {},
@@ -309,6 +314,7 @@ export class OrgPluginConfigs {
     });
     // 事务已提交：回滚的写入不会走到这里
     this.reportSecrets(seen);
+    await this.hooks.afterPut?.(orgId, plugin, view.enabled);
     return view;
   }
 

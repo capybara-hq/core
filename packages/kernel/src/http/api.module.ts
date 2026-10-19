@@ -202,7 +202,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     {
       provide: ORGS,
       useFactory: (db: KernelDb, settings: SettingsService, tokens: ApiTokenService) =>
-        new OrgsService(db, settings, tokens),
+        new OrgsService(db, settings, tokens, {
+          afterDelete: (orgId) => deps.channels.notifyOrgChanged(orgId),
+        }),
       inject: [KERNEL_DB, SETTINGS, API_TOKENS],
     },
     {

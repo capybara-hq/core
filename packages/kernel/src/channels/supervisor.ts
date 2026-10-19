@@ -57,6 +57,8 @@ export interface ChannelSupervisorDeps {
   redis: Redis;
   bus: PluginContext["bus"];
   connections: Pick<ChannelConnections, "runtime">;
+  /** 本进程已加载、提供 `channel@1` 的插件名（内核传 `host.list("channel")`）。 */
+  localPlugins: () => string[];
   onEvent(connectionId: string, e: InboundEvent): Promise<void>;
   config: () => Pick<KernelConfig, "channels">;
   log: Pick<Logger, "warn" | "error">;
@@ -75,7 +77,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * 或扫描时复核发现）→ 中止、等 `connect` 返回后释放租约，下一轮任一副本按新配置重连；取得租约到 `connect` 开始之间
  * 收到的重连广播会被记下，开始后立即交还。
  * `connect` 抛错或提前返回 → 记 `last_error`，在 Redis 写退避标记（指数退避，上限 5 分钟），释放租约后由任一副本重试。
- * 停机时中止全部长连接并释放租约。持有的长连接、租约 token 与定时器都是「本进程持有的资源」，
+ * 停机时中止全部长连接并释放租约，并等进行中的 `onEvent`（入队）结束。持有的长连接、租约 token 与定时器都是「本进程持有的资源」，
  * 跨副本的状态（租约、退避、失败计数）都在 Redis。
  */
 export class ChannelSupervisor {
@@ -86,6 +88,8 @@ export class ChannelSupervisor {
   private readonly settling = new Map<string, string>();
   /** 进行中的交还（`stop()` 要等它们全部结束）。 */
   private readonly releasing = new Set<Promise<void>>();
+  /** 进行中的 `onEvent`（去重 + 入队，很快）：`stop()` 等它们结束，插件才不会在内核关闭队列之后才拿到结果。 */
+  private readonly inflight = new Set<Promise<void>>();
   private readonly loops: {
     timer?: NodeJS.Timeout | undefined;
     running?: Promise<void> | undefined;
@@ -172,10 +176,14 @@ export class ChannelSupervisor {
     }
   }
 
-  /** 可以持有的连接：active、未删除、插件在该组织启用（组织停用插件时持有方据此断开）。 */
-  private runnable() {
+  /**
+   * 可以持有的连接：active、未删除、所属组织未删除、插件在该组织启用（组织停用插件 / 删除组织时持有方据此断开），
+   * 且插件在本进程已加载——滚动升级期间还没有该插件的副本根本不考虑它（不取租约、不记失败），留给有插件的副本。
+   */
+  private runnable(plugins: string[]) {
     return this.deps.db
       .selectFrom("channel_connections")
+      .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
       .innerJoin("plugin_org_configs", (j) =>
         j
           .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin")
@@ -184,7 +192,9 @@ export class ChannelSupervisor {
       .select("channel_connections.id")
       .where("plugin_org_configs.enabled", "=", true)
       .where("channel_connections.status", "=", "active")
-      .where("channel_connections.deleted_at", "is", null);
+      .where("channel_connections.deleted_at", "is", null)
+      .where("orgs.deleted_at", "is", null)
+      .where("channel_connections.plugin", "in", plugins);
   }
 
   /**
@@ -194,14 +204,21 @@ export class ChannelSupervisor {
   private async recheckHeld(): Promise<void> {
     const ids = [...this.held.keys()];
     if (ids.length === 0) return;
+    const plugins = this.deps.localPlugins();
     const live = new Set(
-      (await this.runnable().where("channel_connections.id", "in", ids).execute()).map((r) => r.id),
+      plugins.length === 0
+        ? []
+        : (await this.runnable(plugins).where("channel_connections.id", "in", ids).execute()).map(
+            (r) => r.id,
+          ),
     );
     for (const id of ids) if (!live.has(id)) this.releaseInBackground(id);
   }
 
   private async scan(): Promise<void> {
-    const rows = await this.runnable().execute();
+    const plugins = this.deps.localPlugins();
+    if (plugins.length === 0) return;
+    const rows = await this.runnable(plugins).execute();
     for (const { id } of rows) {
       if (this.stopped) return;
       if (this.held.has(id)) continue;
@@ -250,7 +267,7 @@ export class ChannelSupervisor {
         await rt.channel.connect({
           connectionId: id,
           config: rt.config,
-          onEvent: (e) => this.deps.onEvent(id, e),
+          onEvent: (e) => this.track(this.deps.onEvent(id, e)),
           signal: abort.signal,
         });
         if (!abort.signal.aborted) throw new Error("connect returned before it was aborted");
@@ -267,6 +284,17 @@ export class ChannelSupervisor {
     })();
     // 读配置期间收到了重连广播（配置可能已在读取之后改过）：立即交还，下一轮按新配置重连
     if (pending.reconnect) this.releaseInBackground(id);
+  }
+
+  /** 记下进行中的 `onEvent`，原样返回（结果与异常都交给插件）。 */
+  private track(p: Promise<void>): Promise<void> {
+    const t: Promise<void> = p.then(
+      () => {},
+      () => {},
+    );
+    this.inflight.add(t);
+    void t.then(() => this.inflight.delete(t));
+    return p;
   }
 
   /** 记录失败：`last_error`、连续失败计数与退避标记（都跨副本可见）。 */
@@ -346,5 +374,7 @@ export class ChannelSupervisor {
     await Promise.all([...this.held.keys()].map((id) => this.release(id)));
     // 别处发起、仍在进行的交还（bus 广播、复核）也要等完，租约才都释放了
     await Promise.all([...this.releasing]);
+    // 插件交来的事件已在入队途中：等它们结束（之后内核才关闭队列）
+    await Promise.all([...this.inflight]);
   }
 }

@@ -1,4 +1,11 @@
-import type { ChannelCard, ChannelTarget, InboundEvent, Logger } from "@capybara-hq/plugin-sdk";
+import { randomUUID } from "node:crypto";
+import type {
+  ChannelCard,
+  ChannelTarget,
+  InboundEvent,
+  InboundSender,
+  Logger,
+} from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { ConversationsService } from "../conversations/conversations.service.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -10,6 +17,7 @@ import type { ApprovalsService } from "../tools/approvals.service.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import { ChannelCardActions } from "./actions.js";
 import type { ChannelConnectionRow, ChannelConnections } from "./connections.service.js";
+import { inboundJobId } from "./outbound.js";
 import { type ChannelLocale, type ChannelPhrase, phrase } from "./phrases.js";
 import {
   archiveThread,
@@ -38,6 +46,11 @@ export interface ChannelOutboundScheduler {
   enqueue(conversationId: string): Promise<void>;
 }
 
+/** 入站任务的投递接口（实现见 outbound.ts：同一队列 `cap-kernel-channels` 的 `inbound` 任务）。 */
+export interface ChannelInboundQueue {
+  enqueueInbound(connectionId: string, event: InboundEvent, jobId: string): Promise<void>;
+}
+
 export interface ChannelInboundDeps {
   db: KernelDb;
   redis: Redis;
@@ -47,6 +60,8 @@ export interface ChannelInboundDeps {
   binding: Pick<IdentityBinding, "createBindToken">;
   directorySync: DirectorySyncScheduler;
   outbound: ChannelOutboundScheduler;
+  /** 入站任务队列（`onEvent` 只去重并入队，处理在 worker 上执行 {@link ChannelInbound.handle}）。 */
+  queue: ChannelInboundQueue;
   /** 卡片操作：审批决定与提问回答（授权由这两个服务按点击者映射到的账号判定）。 */
   approvals: Pick<ApprovalsService, "decide">;
   questions: Pick<QuestionsService, "answer">;
@@ -56,17 +71,23 @@ export interface ChannelInboundDeps {
 type MessageEvent = Extract<InboundEvent, { type: "message" }>;
 
 /**
- * 渠道入站（插件 `connect` 的 `onEvent`）：
- * 1. 消息按 `capk:channel-msg:<连接>:<消息>` `SET NX` 24 小时去重（处理失败则删掉，平台重投时重试；
- *    写用户消息另带 `clientMessageId = "<连接>:<消息>"`，重试不会重复写）；
- * 2. 群聊未 @ 机器人 → 忽略；
- * 3. 发言人按 `<插件>:<租户>` + externalId 纯查找账号（不建账号、不合并），且须是连接所属组织的活跃成员；
+ * 渠道入站（Ruling A21：持久化处理）。
+ * - `onEvent`（插件 `connect` 的回调，必须快）：消息按 `capk:channel-msg:<连接>:<消息>` `SET NX` 24 小时去重，
+ *   再排一个入站任务（`inbound-<连接>-<消息 id 哈希>`）后返回；入队失败删掉去重键并抛错（插件不确认，平台重投）。
+ *   卡片操作直接入队（任务 id 随机），`directory_changed` 只是投递一个通讯录同步任务，就地完成。
+ *   返回即「内核已持久接收」：插件此后才向平台确认。
+ * - `handle`（worker 上执行入站任务）：失败抛错由 BullMQ 指数退避重试（共 5 次）；写用户消息带
+ *   `clientMessageId = "<连接>:<消息>"`，重试不会重复写。步骤：
+ * 1. 连接停用、所属组织已删除或插件在该组织停用 → 什么都不做；群聊未 @ 机器人 → 忽略；
+ * 2. 发言人按 `<插件>:<租户>` + externalId 纯查找账号（不建账号、不合并），且须是连接所属组织的活跃成员；
  *    否则按连接的未绑定策略：`bind` → 私聊回绑定卡片（群里只提示去私聊，绑定链接不能发在群里）、
- *    已绑定但非成员回提示；`anonymous` → 仅当绑定的 agent 全组织可见时用该组织的匿名访客，否则回提示。
- *    识别不出发言人时绝不借用连接创建者或任何人的身份；
- * 4. 私聊 `/new` → 归档当前对话行并回「已开始新对话」；
- * 5. 按话题找或建会话，写用户消息，记下投递目标并投递出站任务（Task 11）。
+ *    已绑定但非成员回提示；`anonymous` → 仅当绑定的 agent 全组织可见、且发言人与连接同一租户时用该组织的
+ *    匿名访客（外部租户的人只能绑定），否则回提示。识别不出发言人时绝不借用连接创建者或任何人的身份；
+ * 3. 私聊 `/new` → 归档当前对话行并回「已开始新对话」；
+ * 4. 按话题找或建会话，写用户消息，记下投递目标并投递出站任务（Task 11）。
  * `directory_changed` → 投递通讯录同步（Task 12）；`card_action` 见 actions.ts。
+ * 边界（已接受）：同一 chat 的连续消息由不同任务并发处理，极少数情况下写入顺序可能与平台顺序不同；
+ * 处理在写入用户消息之后失败而重试时，固定话术 / 卡片回复可能再发一次。
  */
 export class ChannelInbound {
   private readonly actions: ChannelCardActions;
@@ -82,36 +103,56 @@ export class ChannelInbound {
     });
   }
 
+  /**
+   * 插件 `onEvent`：去重并入队后返回（见类注释）。返回后插件才向平台确认；抛错时插件不确认。
+   */
+  async onEvent(connectionId: string, e: InboundEvent): Promise<void> {
+    if (e.type === "directory_changed") return this.handle(connectionId, e);
+    if (e.type === "card_action") {
+      await this.deps.queue.enqueueInbound(
+        connectionId,
+        e,
+        `inbound-${connectionId}-a${randomUUID()}`,
+      );
+      return;
+    }
+    const key = messageDedupeKey(connectionId, e.messageId);
+    const fresh = await this.deps.redis.set(key, "1", "EX", MESSAGE_DEDUPE_TTL_SECONDS, "NX");
+    if (fresh !== "OK") return;
+    try {
+      await this.deps.queue.enqueueInbound(
+        connectionId,
+        e,
+        inboundJobId(connectionId, e.messageId),
+      );
+    } catch (err) {
+      // 没能持久接收：删掉去重键，让平台重投时再试
+      await this.deps.redis.del(key).catch(() => {});
+      throw err;
+    }
+  }
+
+  /** 入站任务的处理（worker 上执行；失败抛错由队列重试）。 */
   async handle(connectionId: string, e: InboundEvent): Promise<void> {
     if (e.type === "directory_changed") {
       const row = await this.deps.connections.row(connectionId);
-      if (row?.status === "active") await this.deps.directorySync.enqueue(row.orgId, row.plugin);
+      if (row?.status === "active" && row.pluginEnabled) {
+        await this.deps.directorySync.enqueue(row.orgId, row.plugin);
+      }
       return;
     }
     if (e.type === "card_action") {
       await this.actions.handle(connectionId, e);
       return;
     }
-    // 边界情况（已接受）：
-    // - 同一条消息的重投在首次处理仍在进行时到达：SET NX 已占住，重投被丢弃；若首次处理随后失败并删掉键，
-    //   这条消息就只能等平台下一次重投（平台不再重投则丢失）。
-    // - 首次处理在写入用户消息之后失败（如回复发送或 ensureRun 失败）：键被删掉，重投会再走一遍；
-    //   用户消息靠 clientMessageId 幂等不会重复，但固定话术 / 卡片回复可能再发一次。
-    const key = messageDedupeKey(connectionId, e.messageId);
-    const fresh = await this.deps.redis.set(key, "1", "EX", MESSAGE_DEDUPE_TTL_SECONDS, "NX");
-    if (fresh !== "OK") return;
-    try {
-      await this.message(connectionId, e);
-    } catch (err) {
-      await this.deps.redis.del(key).catch(() => {});
-      throw err;
-    }
+    await this.message(connectionId, e);
   }
 
   private async message(connectionId: string, e: MessageEvent): Promise<void> {
     const { db, connections } = this.deps;
     const row = await connections.row(connectionId);
-    if (row?.status !== "active") return;
+    // 连接停用、组织已删除或插件在该组织停用（停用广播与长连接断开之间仍可能有事件到达）：什么都不做
+    if (row?.status !== "active" || !row.pluginEnabled) return;
     const isGroup = e.target.chatType === "group";
     if (isGroup && !e.mentionsBot) return;
     const threadKey = threadKeyOf(e.target, e.sender.externalId, e.messageId);
@@ -207,7 +248,7 @@ export class ChannelInbound {
   async resolveSpeaker(
     connectionId: string,
     row: ChannelConnectionRow,
-    sender: { externalId: string; tenantId: string },
+    sender: InboundSender,
     isGroup: boolean,
     locale: ChannelLocale,
     reply: (key: ChannelPhrase, cards?: ChannelCard[]) => Promise<void>,
@@ -218,7 +259,9 @@ export class ChannelInbound {
     if (bound !== undefined && (await this.isActiveMember(row.orgId, bound))) {
       return { accountId: bound, threadAccount: bound };
     }
-    if (row.unboundPolicy === "anonymous") {
+    // 外部租户的人（外部联系人、共享频道里的其他企业，或连接还没有租户）只能绑定，不按匿名访客处理
+    const external = row.tenantId === null || sender.tenantId !== row.tenantId;
+    if (row.unboundPolicy === "anonymous" && !external) {
       if (!(await this.agentVisibleToOrg(row.orgId, row.agentId))) {
         await reply("anonymousNotAllowed");
         return undefined;
@@ -242,7 +285,8 @@ export class ChannelInbound {
           externalId: sender.externalId,
           tenantId: sender.tenantId,
           emailVerified: false,
-          displayName: sender.externalId,
+          // 绑定确认页显示平台给的显示名（没有时用 externalId）
+          displayName: sender.displayName?.trim() || sender.externalId,
         },
       });
     } catch (err) {

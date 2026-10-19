@@ -73,6 +73,10 @@ export class OrgsService {
     private readonly db: KernelDb,
     private readonly settings: SettingsService,
     private readonly apiTokens: ApiTokenService,
+    private readonly hooks: {
+      /** 软删除提交之后（内核传：给该组织的渠道连接广播 `channel.changed`，长连接立即断开）。 */
+      afterDelete?: (orgId: string) => Promise<void>;
+    } = {},
   ) {}
 
   /**
@@ -202,7 +206,10 @@ export class OrgsService {
     );
   }
 
-  /** 软删除（需 owner，锁内实时判定）：同一事务吊销该组织的服务令牌、清空指向它的会话当前组织。 */
+  /**
+   * 软删除（需 owner，锁内实时判定）：同一事务吊销该组织的服务令牌、清空指向它的会话当前组织；
+   * 提交后调用 `afterDelete`（渠道连接随组织失效：运行时读连接行时 join 组织过滤已删除的）。
+   */
   async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
       await lockOrgAndAuthorize(trx, orgId, actor.id, "org.delete");
@@ -225,5 +232,6 @@ export class OrgsService {
         target: orgId,
       });
     });
+    await this.hooks.afterDelete?.(orgId);
   }
 }

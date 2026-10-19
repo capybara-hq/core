@@ -1,4 +1,9 @@
-import type { ChannelCard, ChannelTarget, InboundEvent } from "@capybara-hq/plugin-sdk";
+import type {
+  ChannelCard,
+  ChannelTarget,
+  InboundEvent,
+  InboundSender,
+} from "@capybara-hq/plugin-sdk";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
@@ -15,7 +20,7 @@ type CardActionEvent = Extract<InboundEvent, { type: "card_action" }>;
 export type SpeakerResolver = (
   connectionId: string,
   row: ChannelConnectionRow,
-  sender: { externalId: string; tenantId: string },
+  sender: InboundSender,
   isGroup: boolean,
   locale: ChannelLocale,
   reply: (key: ChannelPhrase, cards?: ChannelCard[]) => Promise<void>,
@@ -52,7 +57,8 @@ export class ChannelCardActions {
   async handle(connectionId: string, e: CardActionEvent): Promise<void> {
     const { connections } = this.deps;
     const row = await connections.row(connectionId);
-    if (row?.status !== "active") return;
+    // 连接停用、组织已删除或插件在该组织停用（停用广播与长连接断开之间仍可能有事件到达）：什么都不做
+    if (row?.status !== "active" || !row.pluginEnabled) return;
     const { locale } = await readOrgSettings(this.deps.db, row.orgId);
     const reply = async (key: ChannelPhrase, cards?: ChannelCard[]) => {
       await connections.send(connectionId, e.target, {

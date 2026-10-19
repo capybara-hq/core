@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   type ChannelTarget,
   type FormAnswer,
+  type InboundEvent,
   type InputForm,
   isChannelSendError,
   type Logger,
@@ -37,7 +38,7 @@ import type { ChannelConnections, ChannelOutboundSession } from "./connections.s
 import type { ChannelOutboundScheduler } from "./inbound.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
 
-/** 渠道出站投递队列（不含 `:`），只在 worker 角色上消费。 */
+/** 渠道队列（出站投递与入站任务，不含 `:`），只在 worker 角色上消费。 */
 export const CHANNEL_QUEUE_NAME = "cap-kernel-channels";
 /** 投递任务名。 */
 export const DELIVER_JOB = "deliver";
@@ -88,12 +89,16 @@ export function closingText(
 /** 按会话互斥的投递锁（Redis 键前缀；值为 `<job id>.<随机>`，TTL = `runtime.jobLockMs`）。 */
 export const DELIVER_LOCK_PREFIX = "capk:channel-deliver:";
 
-/** 草稿更新的最小间隔（毫秒）。 */
+/** 草稿更新的最小间隔（毫秒）；渠道声明了更大的 `features.minEditIntervalMs` 时取后者。 */
 export const DRAFT_INTERVAL_MS = 1000;
 /** 没有新消息时多久复核一次（是否该结束、是否有待刷新的草稿）。 */
 const IDLE_POLL_MS = 500;
 /** 投递锁丢失 / 被自己上一次（已崩溃的）尝试占着时，任务推迟多久再试。 */
 const LOCK_BUSY_DELAY_MS = 1000;
+/** 本副本没有加载连接的插件时，任务推迟多久再试（滚动升级期间由有插件的副本接手）。 */
+const PLUGIN_PENDING_DELAY_MS = 5000;
+/** 插件一直没有在任何副本上加载：任务排进队列这么久之后放弃（之后的新事件会再排任务）。 */
+const PLUGIN_PENDING_MAX_MS = 3_600_000;
 /** 可重试失败（限流、5xx、网络、超时）的总尝试次数。 */
 export const DELIVER_ATTEMPTS = 8;
 /** 同一事件不可重试地失败这么多次后跳过它（Ruling A14）。 */
@@ -109,6 +114,27 @@ const MAX_ERROR_CHARS = 1000;
 interface DeliverJobData {
   conversationId: string;
 }
+
+/** 入站任务（Ruling A21）：插件 `onEvent` 收到的事件，原样排进队列由 worker 处理。 */
+interface InboundJobData {
+  connectionId: string;
+  event: InboundEvent;
+}
+
+type ChannelJobData = DeliverJobData | InboundJobData;
+
+/** 入站任务名。 */
+export const INBOUND_JOB = "inbound";
+/** 入站任务的总尝试次数（处理失败由 BullMQ 指数退避重试：1s、2s、4s、8s）。 */
+export const INBOUND_ATTEMPTS = 5;
+const INBOUND_BACKOFF_MS = 1000;
+
+/**
+ * 入站消息的任务 id（不含 `:`）：`inbound-<连接>-<sha256(消息 id) 的 base64url 前 22 位>`。同一条消息只排一个任务
+ * （已完成的任务保留一段时间，期间重复入队被 BullMQ 忽略）。
+ */
+export const inboundJobId = (connectionId: string, messageId: string) =>
+  `inbound-${connectionId}-${createHash("sha256").update(messageId).digest("base64url").slice(0, 22)}`;
 
 /** 可重试的投递失败：带已打码的说明与平台建议的等待时长，供退避策略与最后一次失败时记录。 */
 class RetryableDeliveryError extends Error {
@@ -128,6 +154,10 @@ class DeliveryLostError extends Error {
 }
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** 编辑草稿被平台不可重试地拒绝（凭据失效、目标已不存在除外：那两种改发新消息同样会失败）。 */
+const editRejected = (e: unknown): boolean =>
+  isChannelSendError(e) && !e.retryable && e.reason !== "auth" && e.reason !== "target_gone";
 
 function isBusMessage(m: unknown): m is ConversationBusMessage {
   if (typeof m !== "object" || m === null) return false;
@@ -155,6 +185,8 @@ export interface ChannelOutboundDeps {
   questions: Pick<QuestionsService, "forCall">;
   config: () => KernelConfig;
   log: Pick<Logger, "error" | "warn" | "info">;
+  /** 入站任务的处理（worker 上执行 `ChannelInbound.handle`）；失败抛错由 BullMQ 重试。 */
+  inbound?: (connectionId: string, e: InboundEvent) => Promise<void>;
 }
 
 /**
@@ -167,12 +199,14 @@ export interface ChannelOutboundDeps {
  *   锁被自己上一次（已崩溃的）尝试占着 → 推迟重试，等锁过期。
  *   崩溃后 BullMQ stalled 机制把任务交给其他副本，从 `last_seq` 续投；每投递一个事件就在同一事务里推进 `last_seq`
  *   并记下 IM 消息 id（草稿 id、卡片消息 id），已投递的不会重发。
+ * 同一队列还承载入站任务（`inbound`，Ruling A21）：由 `enqueueInbound` 排入，worker 调用 `deps.inbound` 处理，
+ * 失败按 BullMQ 指数退避重试。
  * 状态全部在 PG / Redis；进程内只有本任务自己的订阅、草稿节流时刻与等待定时器（本进程持有的资源）。
  */
 export class ChannelOutbound implements ChannelOutboundScheduler {
-  private queue: Queue<DeliverJobData> | undefined;
+  private queue: Queue<ChannelJobData> | undefined;
   private queueConn: Redis | undefined;
-  private worker: Worker<DeliverJobData> | undefined;
+  private worker: Worker<ChannelJobData> | undefined;
   private workerConn: Redis | undefined;
   private closed = false;
   /** 停机：进行中的任务在下一个检查点交还队列（由其他副本续投）。 */
@@ -208,12 +242,30 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     );
   }
 
+  /**
+   * 排一个入站任务（Ruling A21，同一队列 `cap-kernel-channels`）：处理失败按 {@link INBOUND_ATTEMPTS} 次指数退避重试。
+   * 已关闭时抛错（调用方据此让插件不确认、由平台重投）。
+   */
+  async enqueueInbound(connectionId: string, event: InboundEvent, jobId: string): Promise<void> {
+    await this.getQueue().add(
+      INBOUND_JOB,
+      { connectionId, event },
+      {
+        jobId,
+        attempts: INBOUND_ATTEMPTS,
+        backoff: { type: "exponential", delay: INBOUND_BACKOFF_MS },
+        removeOnComplete: { age: 3600, count: 1000 },
+        removeOnFail: { age: 86_400 },
+      },
+    );
+  }
+
   /** 启动 Worker（只在含 `worker` 角色的进程）。任务锁与 stalled 检测沿用运行队列的配置。 */
   startWorker(): void {
     if (this.worker || this.closed) return;
     const { jobLockMs, stalledIntervalMs } = this.d.config().runtime;
     this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<DeliverJobData>(
+    this.worker = new Worker<ChannelJobData>(
       CHANNEL_QUEUE_NAME,
       (job, token) => this.process(job, token),
       {
@@ -248,11 +300,11 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     this.queueConn = undefined;
   }
 
-  private getQueue(): Queue<DeliverJobData> {
+  private getQueue(): Queue<ChannelJobData> {
     if (this.closed) throw new Error("channel outbound queue is closed");
     if (!this.queue) {
       this.queueConn = bullConnection(this.d.redisUrl, this.d.log);
-      this.queue = new Queue<DeliverJobData>(CHANNEL_QUEUE_NAME, { connection: this.queueConn });
+      this.queue = new Queue<ChannelJobData>(CHANNEL_QUEUE_NAME, { connection: this.queueConn });
       this.queue.on("error", (err) => this.d.log.error("channel outbound queue error", { err }));
     }
     return this.queue;
@@ -263,9 +315,32 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     throw new DelayedError();
   }
 
-  private async process(job: Job<DeliverJobData>, token: string | undefined): Promise<void> {
-    const { conversationId } = job.data;
+  private async process(job: Job<ChannelJobData>, token: string | undefined): Promise<void> {
     if (this.stopping.signal.aborted) return this.requeue(job, token, 0);
+    if (job.name === INBOUND_JOB) return this.processInbound(job as Job<InboundJobData>);
+    return this.deliver(job as Job<DeliverJobData>, token);
+  }
+
+  /** 入站任务：失败抛出由 BullMQ 重试；最后一次也失败时记错误日志（消息丢失，平台已确认过）。 */
+  private async processInbound(job: Job<InboundJobData>): Promise<void> {
+    const { connectionId, event } = job.data;
+    if (!this.d.inbound) throw new Error("channel inbound handler is not configured");
+    try {
+      await this.d.inbound(connectionId, event);
+    } catch (err) {
+      if (job.attemptsMade + 1 >= (job.opts.attempts ?? 1)) {
+        this.d.log.error("channel inbound event dropped after retries", {
+          connectionId,
+          type: event.type,
+          err,
+        });
+      }
+      throw err;
+    }
+  }
+
+  private async deliver(job: Job<DeliverJobData>, token: string | undefined): Promise<void> {
+    const { conversationId } = job.data;
     const owner = `${job.id ?? "job"}.`;
     const acquire = () =>
       this.lock.acquire(
@@ -311,6 +386,14 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
         return;
       case "stopped":
         return;
+      case "pending":
+        if (Date.now() - job.timestamp > PLUGIN_PENDING_MAX_MS) {
+          this.d.log.warn("channel delivery dropped: plugin not loaded on any replica in time", {
+            conversationId,
+          });
+          return;
+        }
+        return this.requeue(job, token, PLUGIN_PENDING_DELAY_MS);
     }
   }
 
@@ -340,7 +423,8 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
 
 /**
  * 一次任务的结果：`done` 正常结束（`seen` 为处理到的 seq，供结束后复核；没有可投递的地方时不带）；
- * `stopped` 不可重试失败、本会话本轮停止（不复核，否则会立刻重试同一个事件）；`lost` 锁丢失；`shutdown` 停机。
+ * `stopped` 不可重试失败、本会话本轮停止（不复核，否则会立刻重试同一个事件）；`lost` 锁丢失；`shutdown` 停机；
+ * `pending` 本副本没有加载连接的插件（推迟重试）。
  * `error` 需要记到连接 `last_error` 的失败说明。
  */
 type DeliveryOutcome = (
@@ -348,6 +432,7 @@ type DeliveryOutcome = (
   | { kind: "stopped" }
   | { kind: "lost" }
   | { kind: "shutdown" }
+  | { kind: "pending" }
 ) & { error?: { connectionId: string; message: string } };
 
 /** 一个步骤正在流式输出的文本（只在从头收到时才发草稿）。 */
@@ -379,6 +464,8 @@ class Delivery {
   private lastDraftAt = 0;
   private streaming: StreamingText | undefined;
   private dirty = false;
+  /** 平台不可重试地拒绝了对草稿的编辑：不再编辑它，定稿改发新消息（Ruling A22）。 */
+  private draftBroken = false;
   /** 已定稿的步骤：之后到达的增量丢弃。 */
   private readonly finalized = new Set<string>();
 
@@ -415,7 +502,9 @@ class Delivery {
       try {
         this.session = await this.d.connections.outbound(row.connection_id);
       } catch (err) {
-        // 连接已删除 / 插件未启用或已卸载 / 配置不再合法：没有可投递的地方
+        // 插件在本副本未加载（滚动升级期间新插件只在部分副本上）：推迟重试，留给有插件的副本
+        if (err instanceof ApiError && err.code === "plugin.not_found") return { kind: "pending" };
+        // 连接已删除 / 插件在该组织停用 / 配置不再合法：没有可投递的地方
         if (err instanceof ApiError) {
           this.d.log.warn("channel delivery skipped", {
             conversationId: this.conversationId,
@@ -436,7 +525,18 @@ class Delivery {
     } catch (err) {
       if (err instanceof DeliveryLostError) return { kind: "lost" };
       if (isChannelSendError(err) && !err.retryable) {
-        const error = { connectionId: row.connection_id, message: this.redact(errMsg(err)) };
+        const message = this.redact(errMsg(err));
+        // Ruling A22：机器人被移出群 / 会话不存在 → 停止本轮，不计毒事件（不是连接的问题，不记 last_error）
+        if (err.reason === "target_gone") {
+          this.d.log.warn("channel delivery target is gone", {
+            conversationId: this.conversationId,
+            error: message,
+          });
+          return { kind: "stopped" };
+        }
+        const error = { connectionId: row.connection_id, message };
+        // 凭据失效：记 last_error、停止本轮，不计毒事件（换好凭据后之后的事件照常续投）
+        if (err.reason === "auth") return { kind: "stopped", error };
         if (this.handling !== undefined && (await this.countFailure(this.handling))) {
           return { kind: "done", seen: this.seen, error };
         }
@@ -755,7 +855,7 @@ class Delivery {
     this.streaming = undefined;
     this.dirty = false;
     const text = closingText(this.draftText, how, this.locale);
-    if (text !== undefined && this.s.features.edit) {
+    if (text !== undefined && this.s.features.edit && !this.draftBroken) {
       await this.s.update(this.target, this.draftId, { text }, this.key(seq, `-close-${how}`));
     }
     return true;
@@ -826,8 +926,21 @@ class Delivery {
       if (useDraft) await this.closeDraft(seq, "none");
       return;
     }
-    if (useDraft) await this.s.update(this.target, this.draftId as string, { text }, this.key(seq));
-    else await this.send({ text }, this.key(seq));
+    if (useDraft && !this.draftBroken) {
+      try {
+        await this.s.update(this.target, this.draftId as string, { text }, this.key(seq));
+      } catch (err) {
+        if (!editRejected(err)) throw err;
+        // 编辑草稿被拒（消息太旧不能再改、内容被拒等）：把完整文本作为新消息发出，不计毒事件
+        this.d.log.warn("channel draft edit rejected; sending the final text as a new message", {
+          conversationId: this.conversationId,
+          error: this.redact(errMsg(err)),
+        });
+        await this.send({ text }, this.key(seq));
+      }
+    } else {
+      await this.send({ text }, this.key(seq));
+    }
     await this.advance(seq, { draft: null });
   }
 
@@ -854,7 +967,9 @@ class Delivery {
     this.dirty = true;
   }
 
-  /** 首次有文本时发草稿（先把消息 id 写进 PG 再继续），之后至多每秒更新一次。 */
+  /**
+   * 首次有文本时发草稿（先把消息 id 写进 PG 再继续），之后至多每 `max(1s, features.minEditIntervalMs)` 更新一次。
+   */
   private async flushDraft(): Promise<void> {
     const cur = this.streaming;
     if (!cur?.complete || !this.dirty || cur.text.trim() === "") return;
@@ -875,8 +990,18 @@ class Delivery {
       this.draftId = messageId;
       this.draftKey = cur.key;
     } else {
-      if (now - this.lastDraftAt < DRAFT_INTERVAL_MS) return;
-      await this.s.update(this.target, this.draftId, { text: cur.text });
+      if (this.draftBroken) return;
+      const interval = Math.max(DRAFT_INTERVAL_MS, this.s.features.minEditIntervalMs ?? 0);
+      if (now - this.lastDraftAt < interval) return;
+      try {
+        await this.s.update(this.target, this.draftId, { text: cur.text });
+      } catch (err) {
+        if (!editRejected(err)) throw err;
+        // 中途编辑被拒：不再编辑草稿，定稿时改发新消息
+        this.draftBroken = true;
+        this.dirty = false;
+        return;
+      }
       this.draftKey = cur.key;
     }
     this.draftText = cur.text;

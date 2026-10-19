@@ -94,11 +94,10 @@ export class ChannelConnectionsController {
     @CurrentOrg() org: OrgContext,
     @Param("connectionId") id: string,
     @Body(new ZodPipe(PatchBody)) body: z.infer<typeof PatchBody>,
-  ): Promise<{ channel: ChannelConnectionView }> {
+  ): Promise<{ channel: ChannelConnectionView; verifySkipped: boolean }> {
     const p = requireUser(principal);
-    return {
-      channel: await this.channels.update(org.orgId, id, body, p.account.id, patTokenId(p)),
-    };
+    // verifySkipped：插件在该组织停用时轮换凭据不调用插件校验（重新启用后按新凭据连接）
+    return this.channels.update(org.orgId, id, body, p.account.id, patTokenId(p));
   }
 
   @Delete(":connectionId")

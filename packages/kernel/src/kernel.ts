@@ -1,5 +1,9 @@
 import { fileURLToPath } from "node:url";
-import { DIRECTORY_CAPABILITY, type PluginContext } from "@capybara-hq/plugin-sdk";
+import {
+  CHANNEL_CAPABILITY,
+  DIRECTORY_CAPABILITY,
+  type PluginContext,
+} from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
@@ -148,9 +152,9 @@ export interface KernelIdentity {
 export interface KernelChannels {
   /** 组织的渠道连接（CRUD、运行时配置、出站会话 `outbound` / `send`）。 */
   readonly connections: ChannelConnections;
-  /** 出站投递（队列 `cap-kernel-channels`；worker 角色消费）。 */
+  /** 出站投递与入站任务（队列 `cap-kernel-channels`；worker 角色消费）。 */
   readonly outbound: ChannelOutbound;
-  /** 入站事件处理（插件 `connect` 的 `onEvent`）。 */
+  /** 入站事件：`onEvent`（插件 `connect` 的回调，去重并入队）与 `handle`（worker 上处理入站任务）。 */
   readonly inbound: ChannelInbound;
 }
 
@@ -302,6 +306,10 @@ export async function createKernel(
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),
+    // 组织停用插件：该插件的渠道连接立即断开（扫描复核只是兜底）
+    afterPut: async (orgId, plugin, enabled) => {
+      if (!enabled) await channelConnections.notifyOrgChanged(orgId, plugin);
+    },
   });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   const kdb = kernelDb(db);
@@ -486,6 +494,8 @@ export async function createKernel(
     questions,
     config: () => current,
     log,
+    // 入站任务（Ruling A21）在同一队列的 worker 上处理
+    inbound: (id, e) => channels.inbound.handle(id, e),
   });
   /** 会话有 IM 投递目标时排一个出站任务（审批 / 回答 / 运行开始后）；失败只记日志。 */
   function enqueueOutbound(conversationId: string): void {
@@ -511,6 +521,7 @@ export async function createKernel(
       binding: identity.binding,
       directorySync: identity.directory,
       outbound: channelOutbound,
+      queue: channelOutbound,
       approvals,
       questions,
       log,
@@ -823,7 +834,12 @@ export async function createKernel(
             redis,
             bus,
             connections: channelConnections,
-            onEvent: (id, e) => channels.inbound.handle(id, e),
+            localPlugins: () =>
+              host
+                .list("channel")
+                .filter((e) => e.capability === CHANNEL_CAPABILITY)
+                .map((e) => e.plugin),
+            onEvent: (id, e) => channels.inbound.onEvent(id, e),
             config: () => current,
             log,
           });

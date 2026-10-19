@@ -18,6 +18,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { createRedactor } from "../log.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
 import { configToJsonSchema, type JsonSchema } from "../plugins/config-json-schema.js";
 import type { PluginHost } from "../plugins/host.js";
 import { toIssues } from "../plugins/org-config.js";
@@ -71,6 +72,8 @@ export interface ChannelConnectionRow {
   unboundPolicy: UnboundPolicy;
   status: ChannelStatus;
   tenantId: string | null;
+  /** 插件此刻在该组织启用。 */
+  pluginEnabled: boolean;
 }
 
 export interface CreateChannelInput {
@@ -378,21 +381,26 @@ export class ChannelConnections {
     return this.view(row, new Set(Object.keys(secrets)));
   }
 
-  /** 修改名称、agent、未绑定策略、启停，或轮换凭据（新配置同样先 `verify`，失败什么都不改）。 */
+  /**
+   * 修改名称、agent、未绑定策略、启停，或轮换凭据（新配置同样先 `verify`，失败什么都不改）。
+   * 插件在该组织停用时仍可轮换凭据，此时不 verify，返回 `verifySkipped: true`。
+   */
   async update(
     orgId: string,
     id: string,
     patch: UpdateChannelInput,
     actorAccountId: string,
     actorTokenId?: string,
-  ): Promise<ChannelConnectionView> {
+  ): Promise<{ channel: ChannelConnectionView; verifySkipped: boolean }> {
     const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
     if (!current) throw notFound();
     let rotated: { schema: z.ZodTypeAny; full: Obj; plain: Obj; secrets: Obj } | undefined;
     let verified: { botUserId: string; tenantId: string } | undefined;
+    let verifySkipped = false;
     if (patch.config !== undefined) {
       const channel = this.channel(current.plugin);
-      await this.assertEnabled(orgId, current.plugin);
+      // 插件在该组织停用时也允许轮换（泄露的密钥要能立刻换掉），但不调用插件 verify：重新启用后长连接按新凭据连接
+      const enabled = (await queryEnabledPlugins(this.deps.db, orgId)).has(current.plugin);
       const schema = channel.connectionSchema;
       const before = await this.readSecrets(orgId, id);
       const next = structuredClone(patch.config);
@@ -402,7 +410,8 @@ export class ChannelConnections {
         else if (v === undefined && before[p] !== undefined) setDeep(next, p, before[p]);
       }
       const full = this.parse(current.plugin, schema, next);
-      verified = await this.verify(channel, full);
+      if (enabled) verified = await this.verify(channel, full);
+      else verifySkipped = true;
       rotated = { schema, full, ...split(schema, full) };
     }
     if (patch.agentId !== undefined) await this.assertAgent(this.deps.db, orgId, patch.agentId);
@@ -424,11 +433,9 @@ export class ChannelConnections {
           ...(patch.agentId !== undefined && { agent_id: patch.agentId }),
           ...(patch.unboundPolicy !== undefined && { unbound_policy: patch.unboundPolicy }),
           ...(patch.status !== undefined && { status: patch.status }),
-          ...(rotated && {
-            config: JSON.stringify(rotated.plain),
-            bot_user_id: verified?.botUserId ?? null,
-            tenant_id: verified?.tenantId ?? null,
-          }),
+          ...(rotated && { config: JSON.stringify(rotated.plain) }),
+          // 跳过了 verify：机器人 id 与租户保留原值（重新启用后插件按新凭据连接，入站以连接行的租户判断外部人员）
+          ...(verified && { bot_user_id: verified.botUserId, tenant_id: verified.tenantId }),
           ...((rotated || patch.status === "active") && { last_error: null }),
           updated_at: sql<Date>`now()`,
         })
@@ -463,7 +470,7 @@ export class ChannelConnections {
         .catch((err: unknown) => this.deps.log.warn("cannot clear channel backoff", { err }));
     }
     await this.changed(id, rotated !== undefined || patch.status !== undefined);
-    return this.viewOf(row);
+    return { channel: await this.viewOf(row), verifySkipped };
   }
 
   /** 删除（软删除，同一事务删掉密钥）；持有长连接的副本收到广播后断开。 */
@@ -507,13 +514,30 @@ export class ChannelConnections {
     }
   }
 
-  /** 运行时读连接行（未删除）；不存在返回 undefined。 */
+  /**
+   * 运行时读连接行：连接未删除且所属组织未删除（组织软删除后它的机器人什么都不做）；不存在返回 undefined。
+   * `pluginEnabled` 为插件此刻是否在该组织启用（入站与卡片操作每次都实时复核）。
+   */
   async row(id: string): Promise<ChannelConnectionRow | undefined> {
     const r = await this.deps.db
-      .selectFrom("channel_connections")
-      .select(["id", "org_id", "plugin", "agent_id", "unbound_policy", "status", "tenant_id"])
-      .where("id", "=", id)
-      .where("deleted_at", "is", null)
+      .selectFrom("channel_connections as c")
+      .innerJoin("orgs", "orgs.id", "c.org_id")
+      .leftJoin("plugin_org_configs as p", (j) =>
+        j.onRef("p.plugin", "=", "c.plugin").onRef("p.org_id", "=", "c.org_id"),
+      )
+      .select([
+        "c.id",
+        "c.org_id",
+        "c.plugin",
+        "c.agent_id",
+        "c.unbound_policy",
+        "c.status",
+        "c.tenant_id",
+        "p.enabled",
+      ])
+      .where("c.id", "=", id)
+      .where("c.deleted_at", "is", null)
+      .where("orgs.deleted_at", "is", null)
       .executeTakeFirst();
     return (
       r && {
@@ -524,8 +548,30 @@ export class ChannelConnections {
         unboundPolicy: r.unbound_policy,
         status: r.status,
         tenantId: r.tenant_id,
+        pluginEnabled: r.enabled === true,
       }
     );
+  }
+
+  /**
+   * 组织被删除 / 停用了某插件之后：给该组织（该插件）的每个连接广播 `channel.changed { reconnect: true }`，
+   * 持有长连接的副本立即断开（扫描复核只是兜底）。只广播，失败只记日志。
+   */
+  async notifyOrgChanged(orgId: string, plugin?: string): Promise<void> {
+    let q = this.deps.db
+      .selectFrom("channel_connections")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null);
+    if (plugin !== undefined) q = q.where("plugin", "=", plugin);
+    let rows: { id: string }[];
+    try {
+      rows = await q.execute();
+    } catch (err) {
+      this.deps.log.warn("cannot list channel connections to notify", { orgId, err });
+      return;
+    }
+    for (const r of rows) await this.changed(r.id, true);
   }
 
   /**
@@ -558,6 +604,8 @@ export class ChannelConnections {
    */
   async outbound(connectionId: string): Promise<ChannelOutboundSession> {
     const { row, channel, config } = await this.runtime(connectionId);
+    // 组织语言随每次发送 / 更新交给插件（Ruling A22）；本次会话内不变
+    const { locale } = await readOrgSettings(this.deps.db, row.orgId);
     return {
       row,
       features: channel.features,
@@ -568,6 +616,7 @@ export class ChannelConnections {
           target,
           message,
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
+          locale,
           ...(idempotencyKey !== undefined && { idempotencyKey }),
         }),
       update: (target, messageId, message, idempotencyKey) =>
@@ -577,6 +626,7 @@ export class ChannelConnections {
           message,
           messageId,
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
+          locale,
           ...(idempotencyKey !== undefined && { idempotencyKey }),
         }),
     };

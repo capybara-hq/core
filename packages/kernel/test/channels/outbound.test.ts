@@ -44,6 +44,9 @@ const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts"
 const CHAN_NOEDIT = fileURLToPath(
   new URL("../fixtures/plugins/chan-noedit/index.ts", import.meta.url),
 );
+const CHAN_SLOWEDIT = fileURLToPath(
+  new URL("../fixtures/plugins/chan-slowedit/index.ts", import.meta.url),
+);
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
 );
@@ -65,6 +68,7 @@ let connId: string;
 let noEditId: string;
 let failId: string;
 let anonId: string;
+let slowId: string;
 let redis: Redis;
 /** 出站投递任务空闲多久结束（测试缩短到 1s）。 */
 const IDLE_MS = 1000;
@@ -76,7 +80,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, CHAN_MINI, CHAN_NOEDIT, MEM_CONNECTOR],
+        plugins: [MODEL_FAKE, CHAN_MINI, CHAN_NOEDIT, CHAN_SLOWEDIT, MEM_CONNECTOR],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 2000, deliveryIdleMs: IDLE_MS },
@@ -98,7 +102,7 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   await testMembers(db).add(orgId, member.id, "member", ownerId);
-  for (const plugin of ["chan-mini", "chan-noedit", "mem-connector"]) {
+  for (const plugin of ["chan-mini", "chan-noedit", "chan-slowedit", "mem-connector"]) {
     const en = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/plugins/${plugin}`,
@@ -129,6 +133,7 @@ beforeAll(async () => {
     ["chan-mini:t1", "u-owner", ownerId],
     ["chan-mini:t1", "u-member", member.id],
     ["chan-noedit:t1", "u-owner", ownerId],
+    ["chan-slowedit:t1", "u-owner", ownerId],
   ] as const) {
     await sql`INSERT INTO capybara.identities (source, external_id, account_id)
       VALUES (${source}, ${ext}, ${acct})`.execute(raw);
@@ -174,6 +179,7 @@ beforeAll(async () => {
   noEditId = await mk("chan-noedit", "cli_noedit");
   failId = await mk("chan-mini", "cli_fail", flakyId);
   anonId = await mk("chan-mini", "cli_anon", agentId, "anonymous");
+  slowId = await mk("chan-slowedit", "cli_slow");
 }, 120_000);
 
 afterAll(async () => {
@@ -247,6 +253,24 @@ async function settled(conversationId: string): Promise<void> {
   );
 }
 
+async function failCountOf(conversationId: string): Promise<number> {
+  const r = await db
+    .selectFrom("channel_deliveries")
+    .select("fail_count")
+    .where("conversation_id", "=", conversationId)
+    .executeTakeFirst();
+  return Number(r?.fail_count ?? 0);
+}
+
+async function lastError(connectionId: string): Promise<string | null> {
+  const r = await db
+    .selectFrom("channel_connections")
+    .select("last_error")
+    .where("id", "=", connectionId)
+    .executeTakeFirstOrThrow();
+  return r.last_error;
+}
+
 async function approvalStatus(id: string): Promise<string> {
   const r = await db
     .selectFrom("approvals")
@@ -280,6 +304,26 @@ describe("出站投递：流式回复", { timeout: 40_000 }, () => {
     }
     for (const u of ups.slice(0, -1)) expect(LONG.startsWith(u.message.text)).toBe(true);
     expect((await delivery(conv))?.draft_message_id).toBeNull();
+  });
+
+  it("Ruling A22：features.minEditIntervalMs 放慢草稿更新（间隔取 max(1000, minEditIntervalMs)）", async () => {
+    const chat = "dm-u-owner";
+    im.push(slowId, dm("se1", "u-owner", `slow:200:${LONG}`));
+    const conv = await convOf(slowId, chat);
+    await settled(conv);
+    const msgs = sentTo("cli_slow", chat);
+    expect(msgs).toHaveLength(1);
+    const draft = msgs[0] as FakeChannelSent;
+    const ups = updatesOf(draft.messageId);
+    expect(ups.at(-1)?.message.text).toBe(LONG);
+    expect(ups.length).toBeGreaterThanOrEqual(2);
+    const times = [draft.at, ...ups.slice(0, -1).map((u) => u.at)];
+    for (let i = 1; i < times.length; i++) {
+      expect((times[i] as number) - (times[i - 1] as number)).toBeGreaterThanOrEqual(2450);
+    }
+    // 组织语言（Ruling A22）随每次发送 / 更新交给插件
+    expect(draft.locale).toBe("en");
+    expect(ups.every((u) => u.locale === "en")).toBe(true);
   });
 
   it("features.edit = false 的渠道不发草稿、不更新，只在定稿时发一条完整消息", async () => {
@@ -742,12 +786,28 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     expect(c.last_error).toBeNull();
   });
 
-  it("N4：卡在定稿（更新草稿）上的毒事件被跳过前，先尽力收尾草稿（失败说明）", async () => {
+  it("Ruling A22：定稿时编辑草稿被平台拒绝 → 改发一条完整的新消息，不计毒事件、不记 last_error", async () => {
+    const chat = "grp-edit-rejected";
+    // 草稿只发一次、流式 < 1s 不会有中间更新：第一次更新就是定稿
+    im.failNext("/update", 400, 1);
+    im.push(connId, group("er1", "u-owner", "slow:50:Draft then rejected", { chatId: chat }));
+    const conv = await convOf(connId, chat);
+    await settled(conv);
+    const msgs = sentTo("cli_out", chat);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[1]?.message.text).toBe("Draft then rejected");
+    expect(updatesOf(msgs[0]?.messageId as string)).toEqual([]);
+    expect(await failCountOf(conv)).toBe(0);
+    expect(await lastError(connId)).toBeNull();
+  });
+
+  it("N4：草稿编辑与改发的新消息都被拒绝 → 同一事件第 3 次失败时跳过，跳过前尽力收尾草稿（失败说明）", async () => {
     const chat = "grp-poison-draft";
     im.push(connId, group("pd1", "u-owner", "slow:50:Poisoned draft text", { chatId: chat }));
     const draft = await waitFor(async () => sentTo("cli_out", chat)[0], 10_000, "draft");
-    // 之后的 3 次更新（定稿）都被平台拒绝；第 4 次（收尾草稿）放行
+    // 之后 3 次定稿（编辑草稿 + 改发新消息）都被平台拒绝；第 4 次编辑（收尾草稿）与提示放行
     im.failNext("/update", 400, 3);
+    im.failNext("/send", 400, 3);
     const conv = await convOf(connId, chat);
     const notice = () =>
       sentTo("cli_out", chat).some((s) => s.message.text.startsWith("A request is waiting"));
@@ -768,11 +828,65 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       "draft closed before the skip",
     );
     await settled(conv);
+    expect(sentTo("cli_out", chat).some((s) => s.message.text === "Poisoned draft text")).toBe(
+      false,
+    );
     await db
       .updateTable("channel_connections")
       .set({ last_error: null })
       .where("id", "=", connId)
       .execute();
+  });
+
+  it("Ruling A22：reason = auth → 记连接 last_error、停止本轮，不计毒事件（连续失败也不跳过）；凭据恢复后照常投递", async () => {
+    const chat = "grp-auth";
+    im.failNext("/send", 403, 3, undefined, "auth");
+    im.push(noEditId, group("au1", "u-owner", "echo:after auth", { chatId: chat }));
+    const conv = await convOf(noEditId, chat);
+    const err = await waitFor(() => lastError(noEditId), 15_000, "last_error");
+    expect(err).toMatch(/403/);
+    const delivered = () => sentTo("cli_noedit", chat).some((s) => s.message.text === "after auth");
+    // 每条新消息触发一次续投；按毒事件计数的话第 3 次失败就会跳过它
+    let n = 2;
+    while (!delivered() && n <= 6) {
+      await sleep(800);
+      if (delivered()) break;
+      im.push(
+        noEditId,
+        group(`au${n}`, "u-owner", `echo:auth more ${n}`, { chatId: chat, threadId: "au1" }),
+      );
+      n++;
+    }
+    await waitFor(async () => delivered(), 15_000, "delivered after the credentials recovered");
+    await settled(conv);
+    expect(
+      sentTo("cli_noedit", chat).some((s) => s.message.text.startsWith("A request is waiting")),
+    ).toBe(false);
+    expect(await failCountOf(conv)).toBe(0);
+    await db
+      .updateTable("channel_connections")
+      .set({ last_error: null })
+      .where("id", "=", noEditId)
+      .execute();
+  });
+
+  it("Ruling A22：reason = target_gone（机器人被移出群）→ 停止本轮，不计毒事件、不记 last_error", async () => {
+    const chat = "grp-gone";
+    im.failNext("/send", 403, 1, undefined, "target_gone");
+    im.push(noEditId, group("tg1", "u-owner", "echo:bot was removed", { chatId: chat }));
+    const conv = await convOf(noEditId, chat);
+    // 同一运行之后的事件触发新任务重投（平台这次放行）：恰好投递一次
+    await waitFor(
+      async () => sentTo("cli_noedit", chat).some((s) => s.message.text === "bot was removed"),
+      15_000,
+      "delivered on a later job",
+    );
+    await settled(conv);
+    expect(
+      sentTo("cli_noedit", chat).filter((s) => s.message.text === "bot was removed"),
+    ).toHaveLength(1);
+    expect(await failCountOf(conv)).toBe(0);
+    expect(await lastError(noEditId)).toBeNull();
   });
 
   it("不可重试 → 记连接 last_error，停止本轮；会话后续事件触发续投，消息恰好投递一次", async () => {

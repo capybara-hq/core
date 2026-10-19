@@ -17,6 +17,7 @@ export {
   type FakeChannelStream,
   type FakeChannelUser,
   type FakeDirectoryBook,
+  type FakeSenderProfile,
   fakeCardAction,
   fakeDirectoryMember,
   fakeDm,
