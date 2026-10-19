@@ -26,13 +26,27 @@ import { OrgPluginConfigs } from "./plugins/org-config.js";
 import { RunAbort } from "./runtime/abort.js";
 import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
-import { LangGraphLoop } from "./runtime/langgraph-loop.js";
+import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
-import type { ModelStepDeps, StreamSink } from "./runtime/model-call.js";
+import { Maintenance } from "./runtime/maintenance.js";
+import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
 import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import { Waits } from "./runtime/waits.js";
+import { AppContent } from "./tools/app-content.js";
+import { ApprovalsService } from "./tools/approvals.service.js";
+import { Breaker } from "./tools/breaker.js";
+import { askUserTool } from "./tools/builtins/ask-user.js";
+import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
+import { toolSearchTool } from "./tools/builtins/tool-search.js";
+import { Credentials } from "./tools/credentials.js";
+import { ToolDrift } from "./tools/drift.js";
+import { ToolOutputs } from "./tools/outputs.js";
+import { ToolPipeline } from "./tools/pipeline.js";
+import { QuestionsService } from "./tools/questions.service.js";
+import { ToolRegistry } from "./tools/registry.js";
 
 /**
  * 内核迁移目录。src/ 与 dist/ 都在包根下一层，所以统一指向 `<包根>/src/migrations`：
@@ -74,8 +88,30 @@ export interface KernelRuns {
   readonly lock: ConversationLock;
   readonly quota: OrgQuota;
   readonly abort: RunAbort;
-  /** 构造 loop 用的单步模型调用依赖。 */
-  readonly stepDeps: ModelStepDeps;
+  /** 构造 loop 用的依赖（单步模型调用 + 工具执行管线）。 */
+  readonly stepDeps: LoopDeps;
+  /** 运行等待人处理：续跑、超时、等待中中止。 */
+  readonly waits: Waits;
+  /** 内核维护队列（等待超时、输出存档清理等）。 */
+  readonly maintenance: Maintenance;
+}
+
+/** 工具相关的内核服务。 */
+export interface KernelTools {
+  readonly registry: ToolRegistry;
+  readonly credentials: Credentials;
+  /** 输出存档（超大工具结果）。 */
+  readonly outputs: ToolOutputs;
+  /** 工具执行管线（tools 节点使用）。 */
+  readonly pipeline: ToolPipeline;
+  /** 工具调用审批与「以后都允许」授权。 */
+  readonly approvals: ApprovalsService;
+  /** 工具调用的输入请求（回答后续跑）。 */
+  readonly questions: QuestionsService;
+  /** 工具定义漂移检测（周期扫描、list_changed、手动刷新）。 */
+  readonly drift: ToolDrift;
+  /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
+  readonly appContent: AppContent;
 }
 
 /** 运行中的内核实例。 */
@@ -89,6 +125,8 @@ export interface Kernel {
   readonly bus: PluginContext["bus"];
   /** 运行编排服务。 */
   readonly runs: KernelRuns;
+  /** 工具注册表与应用凭据。 */
+  readonly tools: KernelTools;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -116,7 +154,7 @@ export interface KernelOptions {
    * 运行使用的 AgentLoop 工厂（测试用）。默认是 {@link LangGraphLoop}：checkpoint 存在内核的
    * `KyselyCheckpointSaver`，worker 崩溃后其他副本从 checkpoint 续跑。
    */
-  loop?: (deps: ModelStepDeps) => AgentLoop;
+  loop?: (deps: LoopDeps) => AgentLoop;
   /** 运行 worker 的测试钩子。 */
   runHooks?: RunHooks;
 }
@@ -217,13 +255,102 @@ export async function createKernel(
   const bus = createBus(redis, busSubscriber, "kernel", log);
   const eventLog = new EventLog(kdb, bus, log);
   const registry = new ProviderRegistry(host, redis, log);
+  const credentials = new Credentials(kdb, keyring, log, { redis, config: () => current });
+  const toolOutputs = new ToolOutputs(kdb, () => current);
+  // 内置工具；tool_search 由注册表按组织设置与阈值自动加入（不进 agent 定义）
+  const toolRegistry = new ToolRegistry({
+    db: kdb,
+    host,
+    credentials,
+    log,
+    builtins: [
+      askUserTool({ config: () => current }),
+      readToolOutputTool({ outputs: toolOutputs, config: () => current }),
+      toolSearchTool(),
+    ],
+    config: () => current,
+  });
+  // 审批决定 / 输入回答提交后续跑（waits 在下面创建；回调只在运行期间被调用）
+  const approvals = new ApprovalsService({
+    db: kdb,
+    eventLog,
+    config: () => current,
+    log,
+    onDecided: async (a) => {
+      await waits.resume(a.runId, a.id);
+    },
+  });
+  const questions = new QuestionsService({
+    db: kdb,
+    eventLog,
+    config: () => current,
+    log,
+    onAnswered: async (q) => {
+      await waits.resume(q.runId, q.id);
+    },
+  });
+  const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
+  // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
+  const toolDrift = new ToolDrift({
+    db: kdb,
+    registry: toolRegistry,
+    credentials,
+    config: () => current,
+    log,
+    maintenance,
+  });
+  const breaker = new Breaker(redis, () => current);
+  // 用户直接使用应用内容（斜杠命令 / @ 资源引用）
+  const appContent = new AppContent({
+    db: kdb,
+    registry: toolRegistry,
+    credentials,
+    breaker,
+    config: () => current,
+    log,
+  });
+  const toolPipeline = new ToolPipeline({
+    db: kdb,
+    eventLog,
+    registry: toolRegistry,
+    credentials,
+    breaker,
+    outputs: toolOutputs,
+    approvals,
+    questions,
+    config: () => current,
+    log,
+    onToolsChanged: (orgId, appId) => {
+      void toolDrift.onToolsChanged(orgId, appId);
+    },
+  });
+  const tools: KernelTools = {
+    registry: toolRegistry,
+    credentials,
+    outputs: toolOutputs,
+    pipeline: toolPipeline,
+    approvals,
+    questions,
+    drift: toolDrift,
+    appContent,
+  };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
   const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
-  const loopFactory =
-    opts.loop ?? ((d: ModelStepDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
+  const waits: Waits = new Waits({
+    db: kdb,
+    eventLog,
+    approvals,
+    questions,
+    runQueue,
+    checkpoints,
+    abortRequested: (runId) => abort.requested(runId),
+    maintenance,
+    log,
+  });
+  const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
    * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
@@ -242,8 +369,26 @@ export async function createKernel(
         .publish(conversationTopic(conversationId), msg)
         .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
     };
-  const stepDeps: ModelStepDeps = { db: kdb, eventLog, registry, config: () => current, log };
-  const runs: KernelRuns = { eventLog, registry, queue: runQueue, lock, quota, abort, stepDeps };
+  const stepDeps: LoopDeps = {
+    db: kdb,
+    eventLog,
+    registry,
+    tools: toolRegistry,
+    config: () => current,
+    log,
+    toolPipeline,
+  };
+  const runs: KernelRuns = {
+    eventLog,
+    registry,
+    queue: runQueue,
+    lock,
+    quota,
+    abort,
+    stepDeps,
+    waits,
+    maintenance,
+  };
   let runWorker: RunWorker | undefined;
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
   const releaseConnections = async (): Promise<void> => {
@@ -281,9 +426,16 @@ export async function createKernel(
         bus,
         eventLog,
         registry,
+        credentials,
+        toolRegistry,
+        approvals,
+        questions,
+        drift: toolDrift,
+        appContent,
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
           abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),
+          abortWaiting: (id, runId, by) => waits.abortWaiting(id, runId, by),
           requestAbort: (runId, by) => abort.request(runId, by),
         },
       }),
@@ -398,6 +550,7 @@ export async function createKernel(
       const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
+    await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
     await within("bus", busSubscriber.close());
@@ -416,6 +569,7 @@ export async function createKernel(
     orgPluginConfigs,
     bus,
     runs,
+    tools,
     log,
     get config() {
       return current;
@@ -459,9 +613,19 @@ export async function createKernel(
             redisUrl: config.redis.url,
             sinkFor,
             checkpoints,
+            waits,
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();
+          // 维护队列：周期任务的 scheduler（幂等，多副本重复登记无害）与唯一的 Worker。
+          // 登记失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再登记。
+          try {
+            await maintenance.ensureSchedules();
+          } catch (err) {
+            log.error("cannot register maintenance job schedulers", { err });
+          }
+          checkpoint();
+          maintenance.startWorker();
         }
         httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {

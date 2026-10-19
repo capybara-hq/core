@@ -82,6 +82,23 @@ function compileMatcher(values: Iterable<string>): (s: string) => string {
   };
 }
 
+/**
+ * 用与 logger 相同的匹配器打码任意文本（工具结果等不经过日志的内容用）：展开规则同 `addOrgSecrets`
+ * （URL 形式的值另登记 `user:password@` 片段），只取长度 ≥ `minLength` 的值（默认 12，同组织来源密钥；
+ * 不得小于匹配器的分桶前缀长度 4）。没有可用的值时原样返回。
+ */
+export function createRedactor(
+  values: readonly unknown[],
+  minLength: number = MIN_ORG_SECRET_LEN,
+): (s: string) => string {
+  const min = Math.max(minLength, PREFIX_LEN);
+  const set = new Set<string>();
+  for (const v of secretScalars(values)) {
+    for (const s of expandSecret(v)) if (s.length >= min) set.add(s);
+  }
+  return compileMatcher(set);
+}
+
 function isLevel(v: string): v is LogLevel {
   return (LEVELS as readonly string[]).includes(v);
 }

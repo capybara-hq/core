@@ -23,9 +23,10 @@ import {
 import { usePathname, useRouter } from "../../i18n/navigation";
 import { routing } from "../../i18n/routing";
 import { ApiClientError } from "../../lib/api";
+import { useConnectResultToast } from "../../lib/connect";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
-import { activeNavOf, routeLabel, useNav } from "./nav";
+import { activeNavOf, routeLabel, useNav, usePendingApprovals } from "./nav";
 import { type Session, SessionContext } from "./session";
 
 /** 本地时区，如 `UTC+8`、`UTC-3:30`（StatusBar 右侧，spec §4.4）。 */
@@ -59,11 +60,13 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const pathname = usePathname();
   const errorMessage = useErrorMessage();
   const toast = useToast();
-  const { nav, commands } = useNav();
   const [me, setMe] = useState<Me>();
+  const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
+  const { nav, commands } = useNav(pending.count);
   const [error, setError] = useState<string>();
   const [theme, setTheme] = useState<Theme>("dark");
   const timeZone = useTimeZoneLabel();
+  useConnectResultToast();
 
   useEffect(() => {
     setTheme(parseTheme(document.documentElement.dataset.theme));
@@ -89,6 +92,9 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         await setCurrentOrg(orgId);
         // 会话属于原组织：先回到列表，再换会话（对话页也不会以新组织 + 旧会话渲染，见 chat 页）
         if (pathname.startsWith("/chat")) router.push("/agents");
+        // 应用详情同理：应用属于原组织
+        else if (pathname.startsWith("/apps/") && pathname !== "/apps/install")
+          router.push("/apps");
         // 这里直接读 /me 而不走 load：刷新失败要以 toast 告知，而不是被 load 吞掉
         setMe(await getMe());
         setError(undefined);
@@ -101,8 +107,11 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   );
 
   const session = useMemo<Session | undefined>(
-    () => (me === undefined ? undefined : { me, reload: load, switchOrg }),
-    [me, load, switchOrg],
+    () =>
+      me === undefined
+        ? undefined
+        : { me, reload: load, switchOrg, refreshPending: pending.refresh },
+    [me, load, switchOrg, pending.refresh],
   );
 
   async function onLogout() {

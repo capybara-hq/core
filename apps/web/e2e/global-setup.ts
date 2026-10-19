@@ -1,8 +1,13 @@
 /**
  * e2e 全局准备：Testcontainers 起 PostgreSQL 与 Valkey，用 CLI（`capybara migrate` / `start`）
- * 从源码起一个加载 `model-fake` 的内核，再用 server.mjs 起 Web 层（`next dev`）指向它。
- * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL）。
- * 返回的函数是全局清理：停 Web、停内核、停容器、删临时目录。
+ * 从源码起一个加载 `model-fake`、`connector-mcp` 与 `connector-openapi`（都允许本机 http）的内核，再用 server.mjs 起 Web 层
+ * （`next dev`）指向它；另起一个假 MCP 服务（有状态会话；destructive 工具 `delete_item`、会发起 elicitation 的 `signup`、
+ * 提示模板 `summarize` 与资源 `docs://handbook`）供工具 / 审批 / 斜杠命令 / 资源引用用例接入；再起一个假 OpenAPI 服务
+ * （宠物 CRUD，要求请求头 API key）供安装向导用例接入。
+ * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL），
+ * 假 MCP 端点写入 `CAPYBARA_E2E_MCP_URL`，假 OpenAPI 文档地址与 API key 写入 `CAPYBARA_E2E_OPENAPI_SPEC_URL` /
+ * `CAPYBARA_E2E_OPENAPI_KEY`。
+ * 返回的函数是全局清理：停 Web、停内核、停假服务、停容器、删临时目录。
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -19,10 +24,56 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const webDir = fileURLToPath(new URL("../", import.meta.url));
 const cli = join(repoRoot, "apps/capybara/bin/capybara.mjs");
 const modelFake = join(repoRoot, "plugins/model-fake/src/index.ts");
+const connectorMcp = join(repoRoot, "plugins/connector-mcp/src/index.ts");
+const connectorOpenApi = join(repoRoot, "plugins/connector-openapi/src/index.ts");
+/**
+ * 假 MCP 服务（测试工具包的源码）：按路径加载，与插件一样不作为 apps/web 的包依赖
+ * （apps/web 只依赖 @capybara-hq/design）。
+ */
+const fakeMcpModule = join(repoRoot, "packages/testing/src/fake-mcp-server.ts");
+const fakeOpenApiModule = join(repoRoot, "packages/testing/src/fake-openapi-server.ts");
+/** 假 OpenAPI 服务要求的 API key（e2e 用例在安装向导里填写）。 */
+const OPENAPI_KEY = "e2e-openapi-key-7f3a";
+
+/** 用到的 `startFakeOpenApiServer` 子集。 */
+type StartFakeOpenApi = (opts: {
+  apiKey?: string;
+}) => Promise<{ specUrl: string; stop(): Promise<void> }>;
 /** 子进程日志（gitignore；每次运行覆盖，失败后可查看）。 */
 const logDir = join(webDir, "e2e-logs");
 
 type Cleanup = () => Promise<void>;
+
+/** 用到的 `startFakeMcpServer` 子集（类型在这里声明，不 import 测试工具包）。 */
+type StartFakeMcp = (opts: {
+  sessions?: boolean;
+  tools: {
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+    annotations?: Record<string, unknown>;
+    handler?: (
+      info: { args: Record<string, unknown> },
+      ctx: {
+        elicit(params: {
+          message: string;
+          requestedSchema: Record<string, unknown>;
+        }): Promise<{ action: string; content?: Record<string, unknown> }>;
+      },
+    ) =>
+      | { content: { type: "text"; text: string }[] }
+      | Promise<{ content: { type: "text"; text: string }[] }>;
+  }[];
+  prompts?: {
+    name: string;
+    description?: string;
+    arguments?: { name: string; description?: string; required?: boolean }[];
+    render?: (
+      args: Record<string, string>,
+    ) => { role: "user"; content: { type: "text"; text: string } }[];
+  }[];
+  resources?: { uri: string; name: string; mimeType?: string; text?: string }[];
+}) => Promise<{ url: string; stop(): Promise<void> }>;
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -120,13 +171,86 @@ export default async function globalSetup(): Promise<Cleanup> {
       await Promise.all([pg.stop(), valkey.stop()]);
     });
 
+    const { startFakeMcpServer } = (await import(fakeMcpModule)) as {
+      startFakeMcpServer: StartFakeMcp;
+    };
+    const mcp = await startFakeMcpServer({
+      // 有状态会话：elicitation 的答复要送回发起它的调用
+      sessions: true,
+      tools: [
+        {
+          name: "delete_item",
+          description: "Delete an item by id. This cannot be undone.",
+          inputSchema: {
+            type: "object",
+            properties: { id: { type: "string", description: "Item id" } },
+            required: ["id"],
+          },
+          annotations: { destructiveHint: true },
+          handler: ({ args }) => ({
+            content: [{ type: "text", text: `deleted ${String(args.id)}` }],
+          }),
+        },
+        {
+          name: "signup",
+          description: "Sign the user up; asks for their name.",
+          annotations: { readOnlyHint: true },
+          handler: async (_info, ctx) => {
+            const r = await ctx.elicit({
+              message: "Sign up",
+              requestedSchema: {
+                type: "object",
+                properties: { name: { type: "string", title: "Name" } },
+                required: ["name"],
+              },
+            });
+            return {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    r.action === "accept"
+                      ? `welcome ${String(r.content?.name)}`
+                      : `signup ${r.action}`,
+                },
+              ],
+            };
+          },
+        },
+      ],
+      prompts: [
+        {
+          name: "summarize",
+          description: "Summarize a topic",
+          arguments: [{ name: "topic", description: "What to summarize", required: true }],
+          render: (args) => [
+            { role: "user", content: { type: "text", text: `Summarize ${args.topic}` } },
+          ],
+        },
+      ],
+      resources: [
+        { uri: "docs://handbook", name: "Handbook", mimeType: "text/markdown", text: "# Handbook" },
+      ],
+    });
+    cleanups.push(() => mcp.stop());
+
+    const { startFakeOpenApiServer } = (await import(fakeOpenApiModule)) as {
+      startFakeOpenApiServer: StartFakeOpenApi;
+    };
+    const openapi = await startFakeOpenApiServer({ apiKey: OPENAPI_KEY });
+    cleanups.push(() => openapi.stop());
+
     const [kernelPort, webPort] = [await freePort(), await freePort()];
     const configFile = join(dir, "capybara.yaml");
     const config = {
       db: { url: pg.getConnectionUri() },
       redis: { url: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}` },
       masterKey: randomBytes(32).toString("base64"),
-      plugins: [modelFake],
+      plugins: [modelFake, connectorMcp, connectorOpenApi],
+      pluginConfig: {
+        "connector-mcp": { allowInsecureLoopback: true },
+        "connector-openapi": { allowInsecureLoopback: true },
+      },
       http: { port: kernelPort, trustProxy: 1 },
       auth: { cookieSecure: false },
       log: { level: "warn" },
@@ -165,6 +289,9 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`${(e as Error).message}\n${await tail(logs.web)}`);
     });
     process.env.CAPYBARA_E2E_BASE_URL = baseUrl;
+    process.env.CAPYBARA_E2E_MCP_URL = mcp.url;
+    process.env.CAPYBARA_E2E_OPENAPI_SPEC_URL = openapi.specUrl;
+    process.env.CAPYBARA_E2E_OPENAPI_KEY = OPENAPI_KEY;
     console.log(`[e2e] kernel :${kernelPort}, web ${baseUrl}, logs in ${logDir}`);
   } catch (e) {
     await cleanup();

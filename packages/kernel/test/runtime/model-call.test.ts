@@ -30,9 +30,12 @@ import {
   runFinalWrapUp,
   runModelStep,
   type StreamSink,
+  TOOLS_UNSUPPORTED_REMINDER,
   WRAP_UP_REMINDER,
 } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
+import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -151,6 +154,7 @@ beforeAll(async () => {
     eventLog,
     registry,
     config: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
+    tools: k.tools.registry,
     log: silent,
   };
 }, 120_000);
@@ -166,6 +170,7 @@ afterAll(async () => {
 let conversationId: string;
 let accountId: string;
 let runId: string;
+let orgId: string;
 
 beforeEach(async () => {
   await redis.flushdb();
@@ -173,7 +178,7 @@ beforeEach(async () => {
   stubImpl = stub([stubInfo("ok")], () => "ok");
   await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(raw);
   accountId = randomUUID();
-  const orgId = randomUUID();
+  orgId = randomUUID();
   const agentId = randomUUID();
   conversationId = randomUUID();
   runId = randomUUID();
@@ -197,6 +202,7 @@ const agentWith = (over: Partial<AgentDefinition> = {}): AgentDefinition => ({
   modelParams: {},
   fallbackParams: {},
   tools: [],
+  toolPolicies: {},
   ...over,
 });
 
@@ -230,6 +236,7 @@ const step = (
   over: { step?: number; agent?: AgentDefinition; signal?: AbortSignal; sink?: StreamSink } = {},
 ) =>
   runModelStep(deps, {
+    orgId,
     conversationId,
     runId,
     step: over.step ?? 1,
@@ -596,6 +603,7 @@ describe("runModelStep", () => {
     const r = await runModelStep(
       { ...deps, registry },
       {
+        orgId,
         conversationId,
         runId,
         step: 1,
@@ -639,6 +647,7 @@ describe("runModelStep", () => {
     const p = runModelStep(
       { ...deps, registry },
       {
+        orgId,
         conversationId,
         runId,
         step: 1,
@@ -814,6 +823,7 @@ describe("runModelStep", () => {
     stubImpl = s;
     await say("hi");
     const r = await runFinalWrapUp(deps, {
+      orgId,
       conversationId,
       runId,
       step: 51,
@@ -833,5 +843,150 @@ describe("runModelStep", () => {
     );
     const reminders = await ofType("reminder");
     expect(reminders.map((x) => x.payload.text)).toEqual([WRAP_UP_REMINDER]);
+    // 没有工具时也不发 toolChoice
+    expect(req.toolChoice).toBeUndefined();
+  });
+
+  describe("工具与 toolChoice", () => {
+    const toolsModel = () =>
+      stubInfo("tooly", { capabilities: { ...stubInfo("x").capabilities, tools: true } });
+    const withTools = () =>
+      agentWith({
+        model: { provider: "stub", model: "tooly" },
+        tools: [{ kind: "builtin", name: "read_tool_output" }],
+      });
+    const wrapUp = (agent: AgentDefinition) =>
+      runFinalWrapUp(deps, {
+        orgId,
+        conversationId,
+        runId,
+        step: 51,
+        agent,
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+      });
+
+    it("收尾调用照常带工具（历史里的工具调用需要声明工具），toolChoice 为 none，记在 model_call", async () => {
+      const s = stub([toolsModel()], () => "summary");
+      stubImpl = s;
+      await say("hi");
+      await wrapUp(withTools());
+      const req = s.calls[0] as ModelRequest;
+      expect(req.tools.map((t) => t.name)).toEqual(["read_tool_output"]);
+      expect(req.toolChoice).toBe("none");
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request.toolChoice).toBe("none");
+      expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["read_tool_output"]);
+      expect(req.messages.at(-1)).toEqual({ role: "system", content: WRAP_UP_REMINDER });
+    });
+
+    it("普通步骤不发 toolChoice（由模型决定），model_call 也不记", async () => {
+      const s = stub([toolsModel()], () => "ok");
+      stubImpl = s;
+      await say("hi");
+      await step({ agent: withTools() });
+      const req = s.calls[0] as ModelRequest;
+      expect(req.tools.map((t) => t.name)).toEqual(["read_tool_output"]);
+      expect(req.toolChoice).toBeUndefined();
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request).not.toHaveProperty("toolChoice");
+    });
+
+    it("模型不支持工具（capabilities.tools = false）→ 不发工具与 toolChoice，并写提醒说明本次没有工具", async () => {
+      const s = stub([stubInfo("plain")], () => "ok");
+      stubImpl = s;
+      await say("hi");
+      await wrapUp({ ...withTools(), model: { provider: "stub", model: "plain" } });
+      const req = s.calls[0] as ModelRequest;
+      expect(req.tools).toEqual([]);
+      expect(req.toolChoice).toBeUndefined();
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request.tools).toEqual([]);
+      expect(call?.payload.request).not.toHaveProperty("toolChoice");
+      const texts = (await ofType("reminder")).map((r) => r.payload.text);
+      expect(texts).toContain(TOOLS_UNSUPPORTED_REMINDER);
+      expect(req.messages).toContainEqual({ role: "system", content: TOOLS_UNSUPPORTED_REMINDER });
+      // 收尾提醒仍在末尾
+      expect(req.messages.at(-1)).toEqual({ role: "system", content: WRAP_UP_REMINDER });
+    });
+
+    it("model_call 里的每个工具定义按指纹存进 capybara.tool_specs（内容寻址，可还原请求）", async () => {
+      stubImpl = stub([toolsModel()], () => "ok");
+      await say("hi");
+      await step({ agent: withTools() });
+      await step({ step: 2, agent: withTools() });
+      const [call] = await ofType("model_call");
+      const hash = call?.payload.request.tools?.[0]?.specHash as string;
+      const rows = await db
+        .selectFrom("tool_specs")
+        .selectAll()
+        .where("spec_hash", "=", hash)
+        .execute();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.spec).toMatchObject({ name: "read_tool_output" });
+    });
+
+    it("tool_search 生效：请求只带内置工具，目录进 system 第二块；model_call 记录 catalog，目录里的定义也存进 tool_specs", async () => {
+      const s = stub([toolsModel()], () => "ok");
+      stubImpl = s;
+      const search = toolSearchTool();
+      const mk = (key: string): ResolvedTool => {
+        const spec = {
+          name: key.split("__")[1] as string,
+          description: `Do ${key}.`,
+          inputSchema: { type: "object" },
+        };
+        return {
+          key,
+          source: { kind: "plugin", plugin: "p", name: spec.name },
+          spec,
+          specHash: specHash(spec),
+          defaultPolicy: "allow",
+        };
+      };
+      const searchTool: ResolvedTool = {
+        key: "tool_search",
+        source: { kind: "builtin", name: "tool_search" },
+        spec: search.spec,
+        specHash: specHash(search.spec),
+        defaultPolicy: "allow",
+      };
+      const tools = [mk("p__zeta"), mk("p__alpha"), searchTool];
+      const searchDeps: ModelStepDeps = {
+        ...deps,
+        tools: { forAgent: async () => ({ tools, unavailable: [], toolSearch: true }) },
+      };
+      await say("hi");
+      await runModelStep(searchDeps, {
+        orgId,
+        conversationId,
+        runId,
+        step: 1,
+        agent: withTools(),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+      });
+      const req = s.calls[0] as ModelRequest;
+      expect(req.tools.map((t) => t.name)).toEqual(["tool_search"]);
+      expect(req.system).toHaveLength(2);
+      expect(req.system[1]?.text).toContain("- p__alpha: Do p__alpha.\n- p__zeta: Do p__zeta.");
+      const [call] = await ofType("model_call");
+      expect(call?.payload.request.tools?.map((t) => t.key)).toEqual(["tool_search"]);
+      expect(call?.payload.request.catalog?.map((t) => t.key)).toEqual(["p__alpha", "p__zeta"]);
+      const stored = await db
+        .selectFrom("tool_specs")
+        .select("spec_hash")
+        .where(
+          "spec_hash",
+          "in",
+          tools.map((t) => t.specHash),
+        )
+        .execute();
+      expect(stored).toHaveLength(3);
+    });
   });
 });

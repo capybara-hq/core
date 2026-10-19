@@ -9,11 +9,38 @@ export {
   replicaOf,
 } from "./dual-replica.js";
 export {
+  type FakeMcpCallInfo,
+  type FakeMcpHandlerContext,
+  type FakeMcpPrompt,
+  type FakeMcpRequest,
+  type FakeMcpResource,
+  FakeMcpRpcError,
+  type FakeMcpServer,
+  type FakeMcpServerOptions,
+  type FakeMcpTool,
+  startFakeMcpServer,
+} from "./fake-mcp-server.js";
+export {
   type FakeModelServer,
   type FakeRequest,
   type FakeResponse,
   startFakeModelServer,
 } from "./fake-model-server.js";
+export {
+  type FakeOAuthClient,
+  type FakeOAuthServer,
+  type FakeOAuthServerOptions,
+  type FakeTokenRequest,
+  startFakeOAuthServer,
+} from "./fake-oauth-server.js";
+export {
+  defaultFakeOpenApiSpec,
+  type FakeOpenApiRequest,
+  type FakeOpenApiServer,
+  type FakeOpenApiServerOptions,
+  type FakePet,
+  startFakeOpenApiServer,
+} from "./fake-openapi-server.js";
 export {
   type ConformanceTarget,
   checkDeclaredParameters,

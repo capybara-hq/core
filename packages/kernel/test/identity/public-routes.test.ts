@@ -32,6 +32,7 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/v1/invitations/:token/accept",
   "GET /api/v1/setup",
   "POST /api/v1/setup",
+  "GET /api/v1/oauth/callback",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
@@ -108,9 +109,16 @@ beforeAll(async () => {
           bus: { publish: async () => {} },
           eventLog: k.runs.eventLog,
           registry: k.runs.registry,
+          credentials: k.tools.credentials,
+          toolRegistry: k.tools.registry,
+          approvals: k.tools.approvals,
+          questions: k.tools.questions,
+          drift: k.tools.drift,
+          appContent: k.tools.appContent,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,
+            abortWaiting: async () => false,
             requestAbort: async () => {},
           },
         }),

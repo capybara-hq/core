@@ -90,6 +90,25 @@
     },
     "run": {
       "not_active": "当前没有进行中的回复。"
+    },
+    "app": {
+      "not_found": "应用不存在或已被删除。",
+      "slug_taken": "该 slug 已被其他应用使用。",
+      "connect_failed": "无法连接应用的服务，请检查 URL 与凭据。",
+      "tool_not_found": "该应用没有这个工具。",
+      "tool_not_pending": "该工具不在待复核状态。",
+      "resources_disabled": "该应用已关闭读取资源。"
+    },
+    "approval": {
+      "not_found": "审批不存在，或你无权处理。",
+      "already_decided": "该审批已被处理或已过期。"
+    },
+    "question": {
+      "not_found": "该问题不存在，或你无权回答。",
+      "already_answered": "该问题已被回答或已过期。"
+    },
+    "credential": {
+      "missing": "使用该应用需要凭据。"
     }
   },
   "agents": {
@@ -124,7 +143,23 @@
       "modelSectionHint": "主模型不可用时改用兜底模型。",
       "paramsSectionHint": "未改动的参数使用模型默认值。",
       "nameRequired": "请填写名称。",
-      "instructionsHelp": "对模型可见，请用英文书写。"
+      "instructionsHelp": "对模型可见，请用英文书写。",
+      "toolsSection": "工具",
+      "toolsSectionHint": "agent 可以调用的工具。策略只能收紧：改为需审批，或禁止。",
+      "builtinLabel": "内置工具",
+      "builtin": {
+        "ask_user": "向用户提问（ask_user）",
+        "read_tool_output": "读取存档的工具结果（read_tool_output）"
+      },
+      "appsLabel": "应用",
+      "appTools": "{name} 的全部工具",
+      "noApps": "还没有安装应用。",
+      "policiesLabel": "策略",
+      "policy": {
+        "default": "默认",
+        "ask": "需审批",
+        "deny": "禁止"
+      }
     },
     "params": {
       "default": "默认",
@@ -173,13 +208,29 @@
     "agent": "Agent",
     "conversation": "会话",
     "status": "状态",
-    "inspectorTitle": "会话信息"
+    "inspectorTitle": "会话信息",
+    "waiting": "等你处理",
+    "attachments": "附件",
+    "removeAttachment": "移除 {name}",
+    "attachLimit": "每条消息最多 {max} 个附件。",
+    "insertPrompt": "插入",
+    "unavailableApps": "不可用的应用",
+    "appUnavailable": {
+      "not_connected": "未连接",
+      "failed": "不可用"
+    },
+    "appUnavailableHint": {
+      "not_connected": "你还没有连接 {app}。请先在「应用」页连接，再重试。",
+      "failed": "暂时无法访问 {app}，请稍后重试。"
+    }
   },
   "nav": {
     "overview": "概览",
     "agents": "Agents",
     "goto": "跳转",
-    "actions": "操作"
+    "actions": "操作",
+    "inbox": "收件箱",
+    "apps": "应用"
   },
   "shell": {
     "switchLocale": "切换到 {name}",
@@ -191,5 +242,419 @@
     "title": "页面不存在",
     "description": "链接可能已失效，或该页面已被移除。",
     "back": "返回概览"
+  },
+  "tools": {
+    "call": "工具",
+    "details": "参数与结果",
+    "input": "参数",
+    "result": "结果",
+    "noResult": "尚无结果。",
+    "truncated": "仅显示前 {n} 个字符。",
+    "outputId": "完整结果已存档：{id}。",
+    "status": {
+      "pending": "等待中",
+      "running": "执行中",
+      "done": "已完成",
+      "error": "失败",
+      "cancelled": "未执行"
+    }
+  },
+  "approval": {
+    "title": "需要审批",
+    "waiting": "待处理",
+    "tool": "工具",
+    "app": "应用",
+    "agent": "Agent",
+    "expires": "过期时间",
+    "input": "参数",
+    "scopeLabel": "批准范围",
+    "scope": {
+      "once": "仅本次",
+      "session": "本会话内",
+      "always": "以后都允许"
+    },
+    "scopeHint": {
+      "once": "下次调用仍需审批。",
+      "session": "本会话之后的调用不再询问。",
+      "always": "该 agent 以后调用这个工具都不再询问；可在设置中撤销。"
+    },
+    "approve": "批准",
+    "deny": "拒绝",
+    "decision": {
+      "approved": "已批准",
+      "denied": "已拒绝",
+      "expired": "已过期",
+      "cancelled": "已取消"
+    },
+    "decidedBy": "处理人：{who}",
+    "you": "你",
+    "system": "系统",
+    "otherApprover": "等待审批人处理。"
+  },
+  "question": {
+    "title": "需要你的输入",
+    "waiting": "待回答",
+    "other": "其他",
+    "otherLabel": "{field}：其他",
+    "otherPlaceholder": "请填写",
+    "fieldRequired": "此项为必填。",
+    "submit": "提交",
+    "yes": "是",
+    "no": "否",
+    "separator": "、",
+    "outcome": {
+      "answered": "已回答",
+      "expired": "已过期",
+      "cancelled": "已取消"
+    },
+    "outcomeHint": {
+      "answered": "已回答。",
+      "expired": "未在期限内回答。",
+      "cancelled": "该问题已取消。"
+    },
+    "link": "链接",
+    "openLink": "打开链接"
+  },
+  "connect": {
+    "title": "需要连接应用",
+    "status": "未连接",
+    "description": "agent 使用 {app} 前，需要先填写你的凭据。",
+    "action": "连接",
+    "ended": "这次运行时 {app} 尚未连接。请在「我的连接」中填写凭据后再试。",
+    "result": {
+      "connected": "应用已连接，请让智能体重试。",
+      "unknown": "无法连接该应用，请重试。",
+      "error": {
+        "state_invalid": "连接请求已过期，请重试。",
+        "session_mismatch": "必须在发起连接的同一浏览器中完成授权。",
+        "access_denied": "授权被拒绝，应用未连接。",
+        "provider_error": "应用的登录服务报告了问题，请重试。",
+        "token_exchange_failed": "无法完成应用登录，请重试。",
+        "issuer_mismatch": "登录响应并非来自预期的服务。",
+        "app_unavailable": "该应用当前无法连接。"
+      }
+    }
+  },
+  "inbox": {
+    "title": "收件箱",
+    "listLabel": "待审批",
+    "empty": "没有待处理的审批。",
+    "emptyHint": "需要你批准的工具调用会出现在这里。",
+    "pick": "在左侧选择一条审批。",
+    "pendingCount": "{n} 项待处理",
+    "inspectorTitle": "详情",
+    "conversation": "会话",
+    "requested": "发起时间",
+    "openConversation": "打开会话",
+    "approved": "已批准",
+    "denied": "已拒绝",
+    "columns": {
+      "request": "请求",
+      "time": "时间"
+    }
+  },
+  "apps": {
+    "title": "应用",
+    "new": "添加应用",
+    "myConnections": "我的连接",
+    "empty": "还没有应用。",
+    "emptyHint": "接入一个 MCP 服务，为 agent 提供工具。",
+    "columns": {
+      "name": "名称",
+      "slug": "Slug",
+      "auth": "认证方式",
+      "status": "状态"
+    },
+    "status": {
+      "active": "启用",
+      "disabled": "已停用"
+    },
+    "auth": {
+      "none": "无需认证",
+      "bearer": "Bearer 令牌",
+      "api_key": "API Key",
+      "basic": "用户名与密码",
+      "headers": "自定义请求头",
+      "oauth_code": "OAuth 授权码（每人登录）",
+      "oauth_client": "OAuth 客户端凭据"
+    },
+    "ownership": {
+      "org": "组织共用凭据",
+      "personal": "每人各自的凭据"
+    },
+    "policy": {
+      "allow": "允许",
+      "ask": "需审批",
+      "deny": "禁止"
+    },
+    "form": {
+      "nameLabel": "名称",
+      "nameRequired": "请填写名称。",
+      "slugLabel": "Slug",
+      "slugHelp": "小写字母、数字与下划线，最长 24 位；留空则由名称推导。",
+      "urlLabel": "端点 URL",
+      "urlHelp": "MCP 端点，例如 https://example.com/mcp",
+      "urlRequired": "请填写端点 URL。",
+      "authTypeLabel": "认证方式",
+      "ownershipLabel": "凭据归属",
+      "ownershipHelp": {
+        "org": "由管理员设置一份，所有人共用。",
+        "personal": "每位成员使用前各自填写自己的凭据。"
+      },
+      "keyInLabel": "Key 的位置",
+      "keyIn": {
+        "header": "请求头",
+        "query": "查询参数"
+      },
+      "keyNameLabel": "请求头或参数名",
+      "headerNamesLabel": "请求头名称",
+      "headerNamesHelp": "每行一个。",
+      "credentialHint": {
+        "org": "组织凭据（现在可不填，之后在应用详情页设置）。",
+        "personal": "你自己的凭据（现在可不填，之后在「我的连接」中设置）。"
+      },
+      "tokenLabel": "令牌",
+      "usernameLabel": "用户名",
+      "passwordLabel": "密码",
+      "headerValueLabel": "{name} 的值"
+    },
+    "detail": {
+      "tabsLabel": "应用页内导航",
+      "tabs": {
+        "tools": "工具",
+        "review": "复核",
+        "credentials": "凭据",
+        "settings": "设置"
+      },
+      "inspectorTitle": "应用",
+      "refresh": "刷新工具",
+      "refreshed": "工具列表已刷新。",
+      "retry": "重试"
+    },
+    "inspector": {
+      "slug": "Slug",
+      "connector": "连接器",
+      "endpoint": "端点",
+      "auth": "认证",
+      "ownership": "凭据归属",
+      "credential": "凭据状态"
+    },
+    "tools": {
+      "columns": {
+        "name": "工具",
+        "policy": "默认策略",
+        "status": "启用"
+      },
+      "policyLabel": "{tool} 的默认策略",
+      "enabledLabel": "启用 {tool}",
+      "enabled": "启用",
+      "disabled": "已停用",
+      "empty": "该应用没有工具。",
+      "missing": "服务已不再提供此工具",
+      "pendingReview": "待复核",
+      "neverReviewed": "从未复核：在「复核」页签批准后才能启用"
+    },
+    "credential": {
+      "title": "凭据",
+      "notNeeded": "无需凭据",
+      "connected": "已连接",
+      "missing": "未设置",
+      "orgTitle": "组织凭据",
+      "orgHint": "填写新值以替换已保存的凭据。",
+      "orgReadonly": "只有管理员可以修改组织凭据。",
+      "personalTitle": "个人凭据",
+      "personalHint": "每位成员在「我的连接」中设置自己的凭据。",
+      "openConnections": "打开我的连接",
+      "save": "保存凭据",
+      "saved": "凭据已保存。",
+      "oauthOrgHint": "此应用通过 OAuth 客户端登录，组织令牌自动获取。",
+      "clientTitle": "OAuth 客户端",
+      "clientDcr": "此应用的客户端是自动注册的，不能替换；需要更换时请重新安装。",
+      "rotate": "替换客户端",
+      "rotated": "OAuth 客户端已替换。",
+      "rotateVerified": "新客户端会先换取一次令牌验证，验证失败则不做任何修改。",
+      "rotateUnverified": "新客户端不会被验证；如果填错，所有成员都需要重新连接。"
+    },
+    "settings": {
+      "title": "常规",
+      "activeLabel": "启用应用",
+      "save": "保存",
+      "saved": "已保存。",
+      "dangerTitle": "危险操作",
+      "delete": "删除应用",
+      "deleteTitle": "删除 {name}？",
+      "deleteHint": "使用该应用的 agent 将失去它的工具，已保存的凭据也会删除。此操作不可撤销。"
+    },
+    "oauth": {
+      "clientIdLabel": "Client ID",
+      "clientSecretLabel": "Client secret",
+      "clientSecretHelp": "公共客户端可不填。",
+      "discoveryLabel": "授权端点",
+      "discovery": {
+        "mcp": "从 MCP 服务自动发现",
+        "manual": "手动填写"
+      },
+      "authorizationUrlLabel": "授权地址",
+      "tokenUrlLabel": "令牌地址",
+      "scopesLabel": "Scope",
+      "scopesHelp": "以空格分隔；留空使用服务端默认值。",
+      "clientLabel": "客户端",
+      "client": {
+        "dcr": "自动注册（动态客户端注册）",
+        "manual": "手动填写已注册的客户端"
+      },
+      "tokenAuthMethodLabel": "令牌端点认证方式",
+      "tokenAuthMethod": {
+        "auto": "自动",
+        "client_secret_basic": "client_secret_basic（HTTP Basic）",
+        "client_secret_post": "client_secret_post（表单参数）"
+      }
+    },
+    "wizard": {
+      "title": "安装应用",
+      "steps": {
+        "type": "类型",
+        "endpoint": "端点",
+        "auth": "认证",
+        "tools": "工具",
+        "done": "完成"
+      },
+      "next": "下一步",
+      "previous": "上一步",
+      "install": "安装",
+      "openApp": "打开应用",
+      "typeTitle": "选择端点类型",
+      "connector": {
+        "mcp": "MCP 服务",
+        "openapi": "OpenAPI 文档"
+      },
+      "connectorHint": {
+        "mcp": "Streamable HTTP 的 MCP 端点，工具由服务提供。",
+        "openapi": "OpenAPI 3.x 文档描述的 HTTP API，每个操作成为一个工具。"
+      },
+      "endpointTitle": "端点与文档",
+      "specSourceLabel": "文档来源",
+      "specSource": {
+        "url": "文档 URL",
+        "file": "上传文件"
+      },
+      "specUrlLabel": "文档 URL",
+      "specUrlHelp": "OpenAPI 文档（JSON 或 YAML）的地址，不带凭据读取。",
+      "specUrlRequired": "请填写文档 URL。",
+      "specFileLabel": "文档文件",
+      "specFileHelp": "JSON 或 YAML，最大 2 MB。",
+      "specFileChosen": "已选择 {name}",
+      "specFileRequired": "请选择文档文件。",
+      "specTooLarge": "文档超过 2 MB。",
+      "baseUrlLabel": "API 基址",
+      "baseUrlHelp": "留空则使用文档里的 servers。",
+      "required": "必填。",
+      "authTitle": "认证",
+      "hintLabel": "文档声明的认证方式",
+      "hintHelp": "选择一项以预填下面的设置。",
+      "hintCustom": "自定义",
+      "oauthCodeHint": "每位成员用自己的账号登录授权（个人凭据）。需要内核配置 http.publicUrl 作为回调地址。",
+      "oauthClientHint": "用一个组织共用的 OAuth 客户端换取令牌；安装时会先验证客户端。",
+      "noticeTitle": "需要调整",
+      "dcrUnsupported": "授权服务器不支持自动注册客户端。请在服务方注册一个客户端，并在下面填写 Client ID 与 Client secret。",
+      "publicUrlRequired": "OAuth 应用需要内核配置 http.publicUrl（用于生成 OAuth 回调地址）。请联系部署管理员配置后再安装，或改用其他认证方式。",
+      "operationsHint": "勾选要提供给 agent 的操作；默认策略按 HTTP 方法推导，安装后可在应用详情中调整。",
+      "operationsLabel": "操作",
+      "noOperations": "文档里没有操作。",
+      "selectOperation": "至少勾选一个操作。",
+      "columns": {
+        "operation": "操作"
+      },
+      "toolsTitle": "工具",
+      "toolsHint": "以下工具将随应用安装；默认策略按工具注解推导，安装后可在应用详情中调整。",
+      "toolsAfterInstall": "安装时列出工具。",
+      "toolsAfterConnect": "OAuth 授权码应用在第一位成员连接后列出工具。",
+      "annotation": {
+        "readOnly": "只读",
+        "destructive": "有破坏性",
+        "none": "没有注解"
+      },
+      "issuesTitle": "以下工具将被停用：",
+      "doneTitle": "已安装 {name}",
+      "doneTools": "共 {count} 个工具。",
+      "doneOAuthCode": "每位成员需要先连接自己的账号，agent 才能代表他们调用此应用。",
+      "connectNow": "连接我的账号",
+      "credentialRequired": "请填写凭据，安装时要用它列出工具。",
+      "credentialHint": {
+        "org": "组织凭据：所有人共用，安装时用它列出工具。",
+        "personal": "你自己的凭据：安装时用它列出工具；其他成员之后在「我的连接」中各自填写。"
+      }
+    },
+    "review": {
+      "title": "复核",
+      "empty": "没有待复核的工具。",
+      "hint": "这些工具的定义在服务端发生了变化（或是新出现的工具），复核前不可调用。",
+      "changed": "{field}有变化",
+      "current": "当前",
+      "new": "新",
+      "changedTool": "定义有变化",
+      "newTool": "新工具",
+      "rejectedNewTool": "已拒绝的新工具",
+      "description": "描述",
+      "inputSchema": "参数（inputSchema）",
+      "annotations": "注解",
+      "connectorData": "路由数据",
+      "approve": "批准",
+      "reject": "拒绝",
+      "approveLabel": "批准 {tool}",
+      "rejectLabel": "拒绝 {tool}",
+      "approved": "已批准 {tool}。",
+      "rejected": "已拒绝 {tool}，工具已停用。",
+      "missingTitle": "服务已不再提供",
+      "missingHint": "这些工具已停用；服务再次提供时会进入复核。"
+    }
+  },
+  "connections": {
+    "title": "个人设置",
+    "nav": {
+      "connections": "已连接的应用",
+      "grants": "已记住的授权",
+      "organization": "组织设置"
+    },
+    "empty": "没有需要你个人凭据的应用。",
+    "emptyHint": "使用个人凭据的应用会出现在这里。",
+    "sectionHint": "你在该应用上的个人凭据，其他成员使用各自的凭据。",
+    "connected": "已连接",
+    "missing": "未连接",
+    "save": "保存",
+    "clear": "清除",
+    "saved": "{app} 的凭据已保存。",
+    "cleared": "{app} 的凭据已清除。",
+    "grants": {
+      "empty": "没有已记住的授权。",
+      "emptyHint": "审批时选择「以后都允许」会在这里留下一条。",
+      "columns": {
+        "agent": "Agent",
+        "tool": "工具",
+        "created": "授权时间",
+        "actions": "操作"
+      },
+      "revoke": "撤销",
+      "revokeLabel": "撤销 {agent} 的 {tool} 授权",
+      "revoked": "已撤销 {tool} 的授权。"
+    },
+    "reconnect": "重新连接",
+    "oauthConnect": "连接",
+    "disconnect": "断开连接",
+    "oauthHint": "用你自己的账号登录此应用；其他成员各用各的。"
+  },
+  "orgSettings": {
+    "title": "组织设置",
+    "save": "保存",
+    "saved": "组织设置已保存。",
+    "readonly": "只有管理员可以修改组织设置。",
+    "toolSearch": {
+      "title": "工具搜索",
+      "description": "agent 可用的工具很多时，只给模型一份工具目录，由模型用 tool_search 按需加载工具定义。",
+      "on": "开启",
+      "onHint": "工具超过阈值时改用目录 + tool_search（推荐）。",
+      "off": "关闭",
+      "offHint": "总是把全部工具定义发给模型。"
+    }
   }
 }

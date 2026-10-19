@@ -22,12 +22,12 @@ export interface RunJobData {
 export const runJobId = (conversationId: string, maxUserSeq: number): string =>
   `run-${conversationId}-${maxUserSeq}`;
 
-/** 未结束的运行状态。 */
-export const ACTIVE_RUN_STATUSES = ["queued", "running"] as const;
+/** 未结束的运行状态（waiting：等人处理审批 / 输入请求，没有任务、不占会话锁与配额）。 */
+export const ACTIVE_RUN_STATUSES = ["queued", "running", "waiting"] as const;
 
 /**
- * queued 运行的宽限期（秒）：`ensureRun` 先提交 runs 行、再投递任务，两步之间任务暂时不存在；
- * 只有创建超过这么久仍没有任务的 queued 行才视为孤儿。
+ * queued 运行的宽限期（秒）：`ensureRun` / 续跑先提交 runs 行、再投递任务，两步之间任务暂时不存在；
+ * 只有进入 queued 超过这么久（`COALESCE(queued_at, created_at)`）仍没有任务的 queued 行才视为孤儿。
  */
 const ORPHAN_QUEUED_GRACE_SECONDS = 30;
 
@@ -38,6 +38,8 @@ interface ActiveRunRow {
   id: string;
   status: string;
   trigger_seq: string;
+  /** 续跑任务的 jobId；为空表示按触发消息生成的 jobId。 */
+  job_id: string | null;
   past_grace: boolean;
 }
 
@@ -80,7 +82,7 @@ export class RunQueue {
 
   /**
    * 有未消费的用户消息（最新 user_message 的 seq > `consumed_seq`）、会话锁无人持有、
-   * 且没有 queued / running 的运行时：插入 `runs`（queued）并投递任务，返回 runId；否则返回 null。
+   * 且没有 queued / running / waiting 的运行时：插入 `runs`（queued）并投递任务，返回 runId；否则返回 null。
    *
    * 孤儿清理（R29，按需进行，没有定时器）：已有的 queued / running 运行若 BullMQ 任务已不存在、
    * 会话锁也无人持有（queued 的还要超过宽限期），说明没有任何 worker 会再执行它——写
@@ -197,6 +199,16 @@ export class RunQueue {
     return runId;
   }
 
+  /** 投递一个运行任务（续跑用，jobId 由调用方给出；选项与 `ensureRun` 投递的一致）。 */
+  async enqueue(data: RunJobData, jobId: string): Promise<void> {
+    await this.getQueue().add("run", data, {
+      jobId,
+      attempts: 1,
+      removeOnComplete: true,
+      removeOnFail: true,
+    });
+  }
+
   /**
    * 中止一个孤儿运行（`POST .../abort` 用）：运行仍是 queued / running、会话锁无人持有、BullMQ 任务已不存在
    * （queued 的还要超过宽限期，判定同 {@link ensureRun} 的孤儿清理）时，没有任何 worker 会收到中止广播——
@@ -242,7 +254,8 @@ export class RunQueue {
         "id",
         "status",
         "trigger_seq",
-        sql<boolean>`created_at < now() - make_interval(secs => ${ORPHAN_QUEUED_GRACE_SECONDS})`.as(
+        "job_id",
+        sql<boolean>`COALESCE(queued_at, created_at) < now() - make_interval(secs => ${ORPHAN_QUEUED_GRACE_SECONDS})`.as(
           "past_grace",
         ),
       ])
@@ -252,12 +265,15 @@ export class RunQueue {
   }
 
   /**
-   * 未结束的运行是否已是孤儿（调用方已确认会话锁无人持有）：queued 且仍在宽限期内 → 否
-   * （任务可能还没投递）；BullMQ 任务仍存在 → 否；否则是。
+   * 未结束的运行是否已是孤儿（调用方已确认会话锁无人持有）：waiting → 否（等人处理，本来就没有任务，
+   * 由人工决定或超时任务续跑）；queued 且仍在宽限期内 → 否（任务可能还没投递）；BullMQ 任务（续跑任务按
+   * `runs.job_id`）仍存在 → 否；否则是。
    */
   private async isOrphan(conversationId: string, active: ActiveRunRow): Promise<boolean> {
+    if (active.status === "waiting") return false;
     if (active.status === "queued" && !active.past_grace) return false;
-    const job = await this.getQueue().getJob(runJobId(conversationId, Number(active.trigger_seq)));
+    const jobId = active.job_id ?? runJobId(conversationId, Number(active.trigger_seq));
+    const job = await this.getQueue().getJob(jobId);
     return !job;
   }
 

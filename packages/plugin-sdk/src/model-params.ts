@@ -58,7 +58,7 @@ const isStandardKnob = (k: string): k is StandardKnob =>
 const VENDOR_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 /** 值不满足 schema 时返回英文原因，满足时返回 undefined。 */
-function checkValue(schema: ParamSchema, v: unknown): string | undefined {
+export function checkParamValue(schema: ParamSchema, v: unknown): string | undefined {
   switch (schema.type) {
     case "boolean":
       return typeof v === "boolean" ? undefined : "must be a boolean";
@@ -106,7 +106,7 @@ export function validateParams(
       issues.push({ key, message: `unknown parameter "${key}"` });
       continue;
     }
-    const why = checkValue(d.schema, v);
+    const why = checkParamValue(d.schema, v);
     if (why) issues.push({ key, message: `parameter "${key}" ${why}` });
     else value[key] = v as ParamValue;
   }
@@ -127,7 +127,7 @@ export function sanitizeParams(
   for (const [key, v] of Object.entries(params)) {
     if (v === undefined) continue;
     const d = byKey.get(key);
-    if (!d || checkValue(d.schema, v) !== undefined) dropped.push(key);
+    if (!d || checkParamValue(d.schema, v) !== undefined) dropped.push(key);
     else value[key] = v as ParamValue;
   }
   for (const d of decl) {
@@ -232,7 +232,7 @@ function declarationProblems(plugin: string, d: ModelParameter): string[] {
   if (out.length === 0) {
     if (isStandardKnob(d.key)) out.push(...knobProblems(d.key, d.schema));
     if (d.default !== undefined) {
-      const why = checkValue(d.schema, d.default);
+      const why = checkParamValue(d.schema, d.default);
       if (why) out.push(`default ${why}`);
     }
   }

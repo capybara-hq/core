@@ -28,8 +28,10 @@ export type ChatView = {
   items: ChatItem[];
   /** 产出消息的模型是否支持思考（决定是否显示思考区）。 */
   reasoningOf(m: ModelRef): boolean | undefined;
-  /** `run_started` 之后、终态事件之前。 */
+  /** `run_started` 之后、终态事件之前，且不在等人处理。 */
   running: boolean;
+  /** 运行在等审批或输入（不是终态；处理后继续）。 */
+  waiting: boolean;
   stopping: boolean;
   stop(): void;
   send(text: string, clientMessageId: string): Promise<boolean>;
@@ -135,9 +137,19 @@ export function useChat(orgId: string, conversationId: string): ChatView {
   }, [orgId, conversationId, errorMessage, t]);
 
   const onSend = useCallback(
-    async (text: string, clientMessageId: string) => {
+    async (
+      text: string,
+      clientMessageId: string,
+      attachments: { appId: string; uri: string }[] = [],
+    ) => {
       try {
-        const { event } = await postMessage(orgId, conversationId, text, clientMessageId);
+        const { event } = await postMessage(
+          orgId,
+          conversationId,
+          text,
+          clientMessageId,
+          attachments.map((a) => ({ appId: a.appId, uri: a.uri })),
+        );
         dispatch({ kind: "events", events: [event] });
         setError(undefined);
         return true;
@@ -167,6 +179,7 @@ export function useChat(orgId: string, conversationId: string): ChatView {
     items,
     reasoningOf,
     running: state.running,
+    waiting: state.waiting,
     stopping,
     stop: () => void stop(),
     send: onSend,

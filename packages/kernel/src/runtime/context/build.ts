@@ -5,9 +5,12 @@ import type {
   ModelMessage,
   ModelRequest,
   ParamValue,
+  ToolDefinition,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../../agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
+import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
+import type { ResolvedTool } from "../../tools/registry.js";
 
 /**
  * 平台行为规范（模型可见，英文）。短而通用（spec 6 原则 5）；不放时间戳、会话 ID 等会变化的内容，
@@ -37,7 +40,19 @@ export interface ModelCallMeta {
   absorbedUpToSeq?: number;
   /** 请求的模型参数（即 `ModelRequest.params`）。 */
   params: Record<string, ParamValue>;
+  /**
+   * 请求带的工具（按发送顺序）及定义指纹；定义本身按指纹存在 `capybara.tool_specs`。
+   * 未启用 tool_search 时按 key 排序；启用时见 {@link BuildModelRequestInput.toolSearch}。
+   */
+  tools: { key: string; specHash: string }[];
+  /** 启用 tool_search 时 system 第二块目录里的工具（按 key 排序）及定义指纹；未启用没有该字段。 */
+  catalog?: { key: string; specHash: string }[];
+  /** 请求的 `toolChoice`（收尾调用为 `"none"`）；未设置则没有该字段。 */
+  toolChoice?: "auto" | "none";
 }
+
+/** 构建请求用到的工具信息（`ResolvedTool` 的子集）。 */
+export type RequestTool = Pick<ResolvedTool, "key" | "spec" | "specHash">;
 
 export interface BuildModelRequestInput {
   events: ConversationEvent[];
@@ -61,6 +76,23 @@ export interface BuildModelRequestInput {
    * 还原时传入记录下的值。默认空。
    */
   params?: Record<string, ParamValue>;
+  /**
+   * 本步可用的工具（由 `ToolRegistry.forAgent` 在步骤开始时解析）。映射为 `ToolDefinition`
+   * （`name` 为模型可见的 key），按 key 排序以保证缓存前缀稳定；key 与指纹记在 `meta.tools`。默认空。
+   */
+  tools?: RequestTool[];
+  /**
+   * 启用 tool_search（spec 5.5，由 `ToolRegistry.forAgent` 判定）。启用且有工具时：
+   * - `tools` 只放内置工具（含 `tool_search`，按 key 排序）与**已加载**工具的完整定义；
+   *   已加载 = 日志中全部 `tool_result.loadedTools` 的并集（含摘要之前的；不在本步可用工具中的忽略），
+   *   按首次加载顺序追加在内置工具之后——新加载只在末尾追加，已发送的工具顺序不变；
+   * - 其余工具（不论是否已加载）以目录形式放进 system 第二个块（按 key 排序，打缓存断点），
+   *   目录只随可用工具集合变化，不随加载变化，保持 system 前缀稳定。
+   * 默认不启用（全部工具按 key 排序直接放完整定义）。
+   */
+  toolSearch?: boolean;
+  /** 本次请求的 `ModelRequest.toolChoice`；只在有工具时生效（没有工具时请求与 meta 都不带）。 */
+  toolChoice?: "auto" | "none";
 }
 
 type SummaryEvent = ConversationEvent & {
@@ -84,10 +116,13 @@ export function summaryText(summary: string): string {
 
 /**
  * 由会话事件日志 + agent 定义构建模型请求（纯函数，不做 I/O）。
- * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；
+ * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；启用 tool_search 时
+ *   第二个块是工具目录（见 {@link BuildModelRequestInput.toolSearch}）；
  * - messages：最近一条摘要（若有）作为首条 user 消息，其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放）/ `reminder`
- *   （`role: "system"`，放在它所在的位置）。其他事件不进请求。提供 `absorbedUpToSeq` 时，
+ *   （`role: "system"`，放在它所在的位置）；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
+ *   （同一步的多个结果合并，按该 assistant 消息里 tool_call 的顺序；找不到对应调用的结果不进请求）。
+ *   其他事件不进请求。提供 `absorbedUpToSeq` 时，
  *   尚未被吸收的 user_message 不进请求，运行中途到达的插话放在吸收它的调用处（见 BuildModelRequestInput）。
  * 只追加：新事件只会在 messages 末尾追加；唯一的前缀变化来自新的压缩摘要。
  * `step` 与 `agentVersion` 不进请求内容（保证缓存前缀稳定），由调用方写入 `model_call` 事件。
@@ -162,6 +197,14 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       ...ready.map((u): ModelMessage => ({ role: "user", content: asBlocks(u.payload.content) })),
     );
   };
+  /** (runId, callId) → 该调用的 tool_result 事件（同一调用只取第一个）。 */
+  const results = new Map<string, EventPayload<"tool_result">>();
+  const resultKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
+  for (const e of events) {
+    if (e.seq <= after || e.type !== "tool_result") continue;
+    const k = resultKey(e.runId, e.payload.callId);
+    if (!results.has(k)) results.set(k, e.payload);
+  }
   if (summary) {
     messages.push({
       role: "user",
@@ -192,6 +235,20 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         // 流出任何内容之前就中止的空消息不回放（供应商不接受空 content）。
         if (e.payload.content.length > 0) {
           messages.push({ role: "assistant", content: asBlocks(e.payload.content) });
+          const blocks: ContentBlock[] = [];
+          for (const b of e.payload.content) {
+            if (b.type !== "tool_call") continue;
+            const r = results.get(resultKey(e.runId, b.id));
+            if (r) {
+              blocks.push({
+                type: "tool_result",
+                callId: r.callId,
+                content: r.content,
+                isError: r.isError,
+              });
+            }
+          }
+          if (blocks.length > 0) messages.push({ role: "user", content: blocks });
         }
         break;
       case "reminder":
@@ -206,14 +263,38 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   if (absorbed !== undefined) flush(absorbed);
 
   const system = [{ text: `${BEHAVIOR_RULES}\n\n${agent.instructions}`, cache: true }];
+  const sorted = [...(input.tools ?? [])].sort((a, b) =>
+    a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
+  );
+  let tools = sorted;
+  let catalog: RequestTool[] | undefined;
+  if (input.toolSearch === true && sorted.length > 0) {
+    const deferred = sorted.filter((t) => !isAlwaysLoaded(t.key));
+    const byKey = new Map(deferred.map((t) => [t.key, t]));
+    const loaded = loadedToolKeys(events).flatMap((k) => byKey.get(k) ?? []);
+    tools = [...sorted.filter((t) => isAlwaysLoaded(t.key)), ...loaded];
+    if (deferred.length > 0) {
+      catalog = deferred;
+      system.push({ text: catalogText(deferred), cache: true });
+    }
+  }
   const request: ModelRequest = {
     model: model.id,
     system,
     messages,
-    tools: [],
+    // 只取模型可见的三项：connectorData 等连接器数据不发给模型
+    tools: tools.map(
+      (t): ToolDefinition => ({
+        name: t.key,
+        description: t.spec.description,
+        inputSchema: t.spec.inputSchema,
+      }),
+    ),
     maxOutputTokens: model.maxOutputTokens,
     params: { ...input.params },
   };
+  const toolChoice = tools.length > 0 ? input.toolChoice : undefined;
+  if (toolChoice !== undefined) request.toolChoice = toolChoice;
 
   const first = events[0];
   const last = events.at(-1);
@@ -225,8 +306,26 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     reminderSeqs,
     ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
     params: { ...request.params },
+    tools: tools.map((t) => ({ key: t.key, specHash: t.specHash })),
+    ...(catalog !== undefined && {
+      catalog: catalog.map((t) => ({ key: t.key, specHash: t.specHash })),
+    }),
+    ...(toolChoice !== undefined && { toolChoice }),
   };
   return { request, meta };
+}
+
+/**
+ * 日志里 `tool_search` 加载过的工具 key（全部 `tool_result.loadedTools` 的并集，按首次出现顺序）。
+ * 不看压缩摘要的边界：加载过的工具在摘要之后仍保持加载（模型可能凭摘要继续使用它们，且已发送的工具列表只追加）。
+ */
+export function loadedToolKeys(events: readonly ConversationEvent[]): string[] {
+  const out = new Set<string>();
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (e.type !== "tool_result") continue;
+    for (const k of e.payload.loadedTools ?? []) out.add(k);
+  }
+  return [...out];
 }
 
 /**

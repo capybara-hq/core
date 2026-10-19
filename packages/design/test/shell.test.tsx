@@ -331,6 +331,40 @@ describe("TopBar 组织与账户按钮", () => {
     expect(screen.getByRole("button", { name: "账户: grant" })).toBeTruthy();
   });
 
+  it("导航项的 count > 0 时在名称后显示计数 Badge，0 不显示；窄屏收进「更多」时写进菜单文案", async () => {
+    const nav = [
+      ...topBar.nav,
+      { id: "inbox", label: "收件箱", href: "/inbox", count: 3 },
+      { id: "apps", label: "应用", href: "/apps", count: 0 },
+    ];
+    zh(
+      <AppShell topBar={{ ...topBar, nav }} status={status}>
+        <div />
+      </AppShell>,
+    );
+    // 可访问名称带上待处理数（不是「收件箱3」）
+    const inbox = screen.getByRole("link", { name: "收件箱，3 项待处理" });
+    const badge = inbox.querySelector('.cb-badge[data-tone="count"]');
+    expect(badge?.textContent).toBe("3");
+    expect(screen.getByRole("link", { name: "应用" }).querySelector(".cb-badge")).toBeNull();
+    cleanup();
+
+    stubMedia(959, 1279);
+    zh(
+      <AppShell
+        topBar={{
+          ...topBar,
+          nav: [...nav.slice(0, 2), { id: "inbox", label: "收件箱", href: "/inbox", count: 120 }],
+        }}
+        status={status}
+      >
+        <div />
+      </AppShell>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /更多/ }));
+    expect(await screen.findByRole("menuitem", { name: "收件箱 (99+)" })).toBeTruthy();
+  });
+
   it("用户菜单为空（会话加载中）时不渲染可点击的下拉", () => {
     zh(
       <AppShell topBar={{ ...topBar, user: { name: "加载中…", menu: [] } }} status={status}>

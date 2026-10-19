@@ -10,7 +10,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
-import { LangGraphLoop } from "../../src/runtime/langgraph-loop.js";
+import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { AgentLoop, LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
 import {
   type ModelStepDeps,
@@ -56,6 +56,7 @@ class SequentialLoop implements AgentLoop {
       done.filter((e) => e.type === "assistant_message" && e.runId === ctx.runId).length + 1;
     let consumed = 0;
     const input = () => ({
+      orgId: ctx.orgId,
       conversationId: ctx.conversationId,
       runId: ctx.runId,
       step,
@@ -88,11 +89,11 @@ class SequentialLoop implements AgentLoop {
 }
 
 const sequential = (deps: ModelStepDeps): AgentLoop => new SequentialLoop(deps);
-const langgraph = (deps: ModelStepDeps): AgentLoop =>
+const langgraph = (deps: LoopDeps): AgentLoop =>
   new LangGraphLoop(new KyselyCheckpointSaver(deps.db), deps);
 
 /** 当前 describe 使用的 loop（同一组场景分别跑 SequentialLoop 与默认的 LangGraphLoop）。 */
-let defaultLoop: (deps: ModelStepDeps) => AgentLoop = sequential;
+let defaultLoop: (deps: LoopDeps) => AgentLoop = sequential;
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -113,7 +114,7 @@ async function worker(
   opts: {
     hooks?: RunHooks;
     roles?: ("api" | "worker" | "gateway")[];
-    loop?: (deps: ModelStepDeps) => AgentLoop;
+    loop?: (deps: LoopDeps) => AgentLoop;
   } = {},
 ): Promise<Kernel> {
   const k = await startKernel(runConfig(urls(), { roles: opts.roles ?? ["worker"], runtime }), {
@@ -166,7 +167,7 @@ const textOf = (e: ConversationEvent) =>
     ? e.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")
     : "";
 
-const LOOPS: [string, (deps: ModelStepDeps) => AgentLoop][] = [
+const LOOPS: [string, (deps: LoopDeps) => AgentLoop][] = [
   ["SequentialLoop", sequential],
   ["LangGraphLoop", langgraph],
 ];
@@ -825,11 +826,9 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     const [fin] = await waitForTerminal(db, convId);
     expect(fin?.payload).toMatchObject({ reason: "max_steps" });
     const runId = fin?.runId as string;
-    // LangGraphLoop 的 tools 占位节点写了提醒（证明用的是默认 loop）
+    // LangGraphLoop 的 tools 节点给工具调用写了结果（证明用的是默认 loop；SequentialLoop 不执行工具）
     const evs = await eventsOf(db, convId);
-    expect(
-      evs.some((e) => e.type === "reminder" && e.payload.text === "Tools are not available yet."),
-    ).toBe(true);
+    expect(evs.some((e) => e.type === "tool_result")).toBe(true);
     await waitFor(async () => (await checkpointsOf(runId)).length === 0, 3_000, "deleted");
     expect(await writesOf(runId)).toEqual([]);
   });

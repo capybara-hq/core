@@ -23,10 +23,11 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@testcontainers/postgresql": "^12.2.1",
-    "testcontainers": "^12.2.1",
     "@capybara-hq/kernel": "workspace:*",
-    "pg": "^8.23.1"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@testcontainers/postgresql": "^12.2.1",
+    "pg": "^8.23.1",
+    "testcontainers": "^12.2.1"
   },
   "devDependencies": {
     "@capybara-hq/plugin-sdk": "workspace:*",

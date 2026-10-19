@@ -1,11 +1,12 @@
 import { IconButton } from "../controls/index";
-import { Kbd, Logo } from "../display/index";
+import { Badge, Kbd, Logo } from "../display/index";
 import { type CommandGroup, Menu, type MenuItem } from "../overlays/index";
 import { useDesignLink, useDesignT } from "../provider";
 import { useMediaQuery } from "./use-media-query";
 
 export type TopBarProps = {
-  nav: { id: string; label: string; href: string }[];
+  /** `count`：待处理数等（>0 时在名称后以计数 Badge 显示，0 / 缺省不显示）。 */
+  nav: { id: string; label: string; href: string; count?: number }[];
   activeNav: string;
   org: { name: string; menu?: MenuItem[] } | null;
   /** 名称旁的 ▾ 由 TopBar 渲染；`menu` 为空时只显示名称、不可点击。 */
@@ -57,13 +58,28 @@ export function TopBar({
             href={n.href}
             className="cb-topbar-link"
             {...(n.id === activeNav ? { "aria-current": "page" as const } : {})}
+            {...(n.count
+              ? {
+                  "aria-label": t("shell.navCount")
+                    .replace("{label}", n.label)
+                    .replace("{n}", String(n.count)),
+                }
+              : {})}
           >
             {n.label}
+            {n.count ? (
+              <span className="cb-topbar-count">
+                <Badge tone="count">{n.count > 99 ? "99+" : n.count}</Badge>
+              </span>
+            ) : null}
           </Link>
         ))}
         {overflow.length > 0 ? (
           <Menu
-            items={overflow.map((n) => ({ label: n.label, href: n.href }))}
+            items={overflow.map((n) => ({
+              label: n.count ? `${n.label} (${n.count > 99 ? "99+" : n.count})` : n.label,
+              href: n.href,
+            }))}
             trigger={
               <button type="button" className="cb-topbar-link cb-topbar-more">
                 {t("shell.more")} ▾

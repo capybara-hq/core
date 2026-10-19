@@ -28,6 +28,11 @@ export function pluginDirs(): string[] {
     .sort();
 }
 
+/** 工具设计检查的范围：内核内置工具目录 + 全部插件（fixtures 不在范围内）。 */
+export function toolDesignDirs(plugins: string[]): string[] {
+  return [join(root, "packages/kernel/src/tools/builtins"), ...plugins];
+}
+
 /** 哨兵：插件目录为空或 plugin-sdk 缺失时直接 exit 1，避免空扫描假绿。 */
 export function requireScanTargets(): void {
   const problem = scanTargetProblem(pluginDirs(), root);

@@ -90,6 +90,25 @@
     },
     "run": {
       "not_active": "There is no reply in progress."
+    },
+    "app": {
+      "not_found": "The app does not exist or has been removed.",
+      "slug_taken": "This slug is already used by another app.",
+      "connect_failed": "Could not connect to the app's server. Check the URL and credential.",
+      "tool_not_found": "The tool does not exist in this app.",
+      "tool_not_pending": "The tool is not waiting for review.",
+      "resources_disabled": "Reading resources is turned off for this app."
+    },
+    "approval": {
+      "not_found": "The approval does not exist or you cannot handle it.",
+      "already_decided": "This approval has already been handled or has expired."
+    },
+    "question": {
+      "not_found": "The question does not exist or you cannot answer it.",
+      "already_answered": "This question has already been answered or has expired."
+    },
+    "credential": {
+      "missing": "A credential is required for this app."
     }
   },
   "agents": {
@@ -124,7 +143,23 @@
       "modelSectionHint": "The fallback model is used when the main model is unavailable.",
       "paramsSectionHint": "Parameters you leave untouched use the model defaults.",
       "nameRequired": "Enter a name.",
-      "instructionsHelp": "Shown to the model; write it in English."
+      "instructionsHelp": "Shown to the model; write it in English.",
+      "toolsSection": "Tools",
+      "toolsSectionHint": "Tools the agent may call. A policy can only be tightened: ask for approval, or deny.",
+      "builtinLabel": "Built-in tools",
+      "builtin": {
+        "ask_user": "Ask the user (ask_user)",
+        "read_tool_output": "Read archived tool output (read_tool_output)"
+      },
+      "appsLabel": "Apps",
+      "appTools": "All tools of {name}",
+      "noApps": "No apps are installed.",
+      "policiesLabel": "Policies",
+      "policy": {
+        "default": "Default",
+        "ask": "Ask for approval",
+        "deny": "Deny"
+      }
     },
     "params": {
       "default": "Default",
@@ -173,13 +208,29 @@
     "agent": "Agent",
     "conversation": "Conversation",
     "status": "Status",
-    "inspectorTitle": "Conversation"
+    "inspectorTitle": "Conversation",
+    "waiting": "Waiting for you",
+    "attachments": "Attachments",
+    "removeAttachment": "Remove {name}",
+    "attachLimit": "At most {max} attachments per message.",
+    "insertPrompt": "Insert",
+    "unavailableApps": "Unavailable apps",
+    "appUnavailable": {
+      "not_connected": "not connected",
+      "failed": "unavailable"
+    },
+    "appUnavailableHint": {
+      "not_connected": "You have not connected {app}. Connect it on the Apps page, then try again.",
+      "failed": "Could not reach {app}. Try again later."
+    }
   },
   "nav": {
     "overview": "Overview",
     "agents": "Agents",
     "goto": "Go to",
-    "actions": "Actions"
+    "actions": "Actions",
+    "inbox": "Inbox",
+    "apps": "Apps"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -191,5 +242,419 @@
     "title": "Page not found",
     "description": "The link may be broken, or the page has been removed.",
     "back": "Back to overview"
+  },
+  "tools": {
+    "call": "Tool",
+    "details": "Arguments and result",
+    "input": "Arguments",
+    "result": "Result",
+    "noResult": "No result yet.",
+    "truncated": "Showing the first {n} characters.",
+    "outputId": "Full output archived as {id}.",
+    "status": {
+      "pending": "Waiting",
+      "running": "Running",
+      "done": "Done",
+      "error": "Failed",
+      "cancelled": "Not run"
+    }
+  },
+  "approval": {
+    "title": "Approval required",
+    "waiting": "Waiting",
+    "tool": "Tool",
+    "app": "App",
+    "agent": "Agent",
+    "expires": "Expires",
+    "input": "Arguments",
+    "scopeLabel": "Approval scope",
+    "scope": {
+      "once": "Only this time",
+      "session": "For this conversation",
+      "always": "Always for this agent"
+    },
+    "scopeHint": {
+      "once": "Ask again next time.",
+      "session": "Allow this tool for the rest of this conversation.",
+      "always": "Allow this tool for this agent from now on; revoke it in Settings."
+    },
+    "approve": "Approve",
+    "deny": "Deny",
+    "decision": {
+      "approved": "Approved",
+      "denied": "Denied",
+      "expired": "Expired",
+      "cancelled": "Cancelled"
+    },
+    "decidedBy": "Handled by {who}",
+    "you": "you",
+    "system": "the system",
+    "otherApprover": "Waiting for an approver."
+  },
+  "question": {
+    "title": "Input required",
+    "waiting": "Waiting",
+    "other": "Other",
+    "otherLabel": "{field}: other",
+    "otherPlaceholder": "Describe",
+    "fieldRequired": "This field is required.",
+    "submit": "Submit",
+    "yes": "Yes",
+    "no": "No",
+    "separator": ", ",
+    "outcome": {
+      "answered": "Answered",
+      "expired": "Expired",
+      "cancelled": "Cancelled"
+    },
+    "outcomeHint": {
+      "answered": "Answered.",
+      "expired": "Nobody answered in time.",
+      "cancelled": "The question was cancelled."
+    },
+    "link": "Link",
+    "openLink": "Open link"
+  },
+  "connect": {
+    "title": "Connection required",
+    "status": "Not connected",
+    "description": "{app} needs your credential before the agent can use it.",
+    "action": "Connect",
+    "ended": "{app} was not connected when this ran. Set your credential in My connections, then ask again.",
+    "result": {
+      "connected": "App connected. Ask the agent to try again.",
+      "unknown": "Could not connect the app. Please try again.",
+      "error": {
+        "state_invalid": "The connection request expired. Please try again.",
+        "session_mismatch": "The connection must be completed in the same browser that started it.",
+        "access_denied": "Access was denied, so the app was not connected.",
+        "provider_error": "The app's sign-in service reported a problem. Please try again.",
+        "token_exchange_failed": "Could not finish signing in to the app. Please try again.",
+        "issuer_mismatch": "The sign-in response did not come from the expected service.",
+        "app_unavailable": "This app is not available for connecting."
+      }
+    }
+  },
+  "inbox": {
+    "title": "Inbox",
+    "listLabel": "Pending approvals",
+    "empty": "Nothing to approve.",
+    "emptyHint": "Tool calls that need your approval show up here.",
+    "pick": "Select an approval on the left.",
+    "pendingCount": "{n} pending",
+    "inspectorTitle": "Details",
+    "conversation": "Conversation",
+    "requested": "Requested",
+    "openConversation": "Open conversation",
+    "approved": "Approved",
+    "denied": "Denied",
+    "columns": {
+      "request": "Request",
+      "time": "Requested"
+    }
+  },
+  "apps": {
+    "title": "Apps",
+    "new": "Add app",
+    "myConnections": "My connections",
+    "empty": "No apps yet.",
+    "emptyHint": "Connect an MCP server to give agents tools.",
+    "columns": {
+      "name": "Name",
+      "slug": "Slug",
+      "auth": "Authentication",
+      "status": "Status"
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled"
+    },
+    "auth": {
+      "none": "None",
+      "bearer": "Bearer token",
+      "api_key": "API key",
+      "basic": "Username and password",
+      "headers": "Custom headers",
+      "oauth_code": "OAuth authorization code (each user signs in)",
+      "oauth_client": "OAuth client credentials"
+    },
+    "ownership": {
+      "org": "Shared organization credential",
+      "personal": "Each user's own credential"
+    },
+    "policy": {
+      "allow": "Allow",
+      "ask": "Ask for approval",
+      "deny": "Deny"
+    },
+    "form": {
+      "nameLabel": "Name",
+      "nameRequired": "Enter a name.",
+      "slugLabel": "Slug",
+      "slugHelp": "Lowercase letters, digits and underscores, up to 24 characters. Leave empty to derive it from the name.",
+      "urlLabel": "Endpoint URL",
+      "urlHelp": "The MCP endpoint, for example https://example.com/mcp",
+      "urlRequired": "Enter the endpoint URL.",
+      "authTypeLabel": "Authentication",
+      "ownershipLabel": "Credential",
+      "ownershipHelp": {
+        "org": "One credential set by an admin is used for everyone.",
+        "personal": "Every member fills in their own credential before using the app."
+      },
+      "keyInLabel": "Send the key in",
+      "keyIn": {
+        "header": "A request header",
+        "query": "A query parameter"
+      },
+      "keyNameLabel": "Header or parameter name",
+      "headerNamesLabel": "Header names",
+      "headerNamesHelp": "One per line.",
+      "credentialHint": {
+        "org": "Organization credential (optional now; you can set it later on the app page).",
+        "personal": "Your own credential (optional now; you can set it later in My connections)."
+      },
+      "tokenLabel": "Token",
+      "usernameLabel": "Username",
+      "passwordLabel": "Password",
+      "headerValueLabel": "Value of {name}"
+    },
+    "detail": {
+      "tabsLabel": "App sections",
+      "tabs": {
+        "tools": "Tools",
+        "review": "Review",
+        "credentials": "Credentials",
+        "settings": "Settings"
+      },
+      "inspectorTitle": "App",
+      "refresh": "Refresh tools",
+      "refreshed": "Tool list refreshed.",
+      "retry": "Retry"
+    },
+    "inspector": {
+      "slug": "Slug",
+      "connector": "Connector",
+      "endpoint": "Endpoint",
+      "auth": "Auth",
+      "ownership": "Credential",
+      "credential": "Status"
+    },
+    "tools": {
+      "columns": {
+        "name": "Tool",
+        "policy": "Default policy",
+        "status": "Enabled"
+      },
+      "policyLabel": "Default policy of {tool}",
+      "enabledLabel": "Enable {tool}",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "empty": "This app has no tools.",
+      "missing": "No longer provided by the server",
+      "pendingReview": "Pending review",
+      "neverReviewed": "Never reviewed: approve it on the Review tab to enable it"
+    },
+    "credential": {
+      "title": "Credential",
+      "notNeeded": "No credential needed",
+      "connected": "Connected",
+      "missing": "Not set",
+      "orgTitle": "Organization credential",
+      "orgHint": "Enter a new value to replace the stored credential.",
+      "orgReadonly": "Only admins can change the organization credential.",
+      "personalTitle": "Personal credentials",
+      "personalHint": "Each member sets their own credential in My connections.",
+      "openConnections": "Open My connections",
+      "save": "Save credential",
+      "saved": "Credential saved.",
+      "oauthOrgHint": "This app signs in with an OAuth client; the organization token is obtained automatically.",
+      "clientTitle": "OAuth client",
+      "clientDcr": "This app's client was registered automatically and cannot be replaced; reinstall the app to change it.",
+      "rotate": "Replace client",
+      "rotated": "OAuth client replaced.",
+      "rotateVerified": "The new client is verified by obtaining a token first; nothing changes if that fails.",
+      "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect."
+    },
+    "settings": {
+      "title": "General",
+      "activeLabel": "App enabled",
+      "save": "Save",
+      "saved": "Saved.",
+      "dangerTitle": "Danger zone",
+      "delete": "Delete app",
+      "deleteTitle": "Delete {name}?",
+      "deleteHint": "Agents that use this app lose its tools, and stored credentials are removed. This cannot be undone."
+    },
+    "oauth": {
+      "clientIdLabel": "Client ID",
+      "clientSecretLabel": "Client secret",
+      "clientSecretHelp": "Leave empty for a public client.",
+      "discoveryLabel": "Authorization endpoints",
+      "discovery": {
+        "mcp": "Discover from the MCP server",
+        "manual": "Enter manually"
+      },
+      "authorizationUrlLabel": "Authorization URL",
+      "tokenUrlLabel": "Token URL",
+      "scopesLabel": "Scopes",
+      "scopesHelp": "Space separated; leave empty for the server default.",
+      "clientLabel": "Client",
+      "client": {
+        "dcr": "Register automatically (dynamic client registration)",
+        "manual": "Enter a registered client"
+      },
+      "tokenAuthMethodLabel": "Token endpoint authentication",
+      "tokenAuthMethod": {
+        "auto": "Automatic",
+        "client_secret_basic": "client_secret_basic (HTTP Basic)",
+        "client_secret_post": "client_secret_post (form parameters)"
+      }
+    },
+    "wizard": {
+      "title": "Install app",
+      "steps": {
+        "type": "Type",
+        "endpoint": "Endpoint",
+        "auth": "Authentication",
+        "tools": "Tools",
+        "done": "Done"
+      },
+      "next": "Next",
+      "previous": "Previous",
+      "install": "Install",
+      "openApp": "Open app",
+      "typeTitle": "Choose the endpoint type",
+      "connector": {
+        "mcp": "MCP server",
+        "openapi": "OpenAPI document"
+      },
+      "connectorHint": {
+        "mcp": "A Streamable HTTP MCP endpoint; the server provides the tools.",
+        "openapi": "An HTTP API described by an OpenAPI 3.x document; each operation becomes a tool."
+      },
+      "endpointTitle": "Endpoint and document",
+      "specSourceLabel": "Document source",
+      "specSource": {
+        "url": "Document URL",
+        "file": "Upload a file"
+      },
+      "specUrlLabel": "Document URL",
+      "specUrlHelp": "Where the OpenAPI document (JSON or YAML) lives; it is read without credentials.",
+      "specUrlRequired": "Enter the document URL.",
+      "specFileLabel": "Document file",
+      "specFileHelp": "JSON or YAML, up to 2 MB.",
+      "specFileChosen": "Selected {name}",
+      "specFileRequired": "Choose a document file.",
+      "specTooLarge": "The document is larger than 2 MB.",
+      "baseUrlLabel": "API base URL",
+      "baseUrlHelp": "Leave empty to use the servers in the document.",
+      "required": "Required.",
+      "authTitle": "Authentication",
+      "hintLabel": "Declared in the document",
+      "hintHelp": "Pick one to fill in the settings below.",
+      "hintCustom": "Custom",
+      "oauthCodeHint": "Each member signs in with their own account (personal credential). The kernel needs http.publicUrl configured for the callback URL.",
+      "oauthClientHint": "One shared OAuth client obtains tokens for the organization; the client is verified when you install.",
+      "noticeTitle": "Needs your attention",
+      "dcrUnsupported": "The authorization server does not support automatic client registration. Register a client with the provider and enter its client ID and secret below.",
+      "publicUrlRequired": "OAuth apps need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask your deployment admin to set it, or use another authentication method.",
+      "operationsHint": "Choose the operations agents may use. Default policies follow the HTTP method; you can change them on the app page later.",
+      "operationsLabel": "Operations",
+      "noOperations": "The document has no operations.",
+      "selectOperation": "Select at least one operation.",
+      "columns": {
+        "operation": "Operation"
+      },
+      "toolsTitle": "Tools",
+      "toolsHint": "These tools come with the app. Default policies follow the tool annotations; you can change them on the app page later.",
+      "toolsAfterInstall": "The tools are listed when the app is installed.",
+      "toolsAfterConnect": "OAuth authorization-code apps list their tools after the first member connects.",
+      "annotation": {
+        "readOnly": "Read-only",
+        "destructive": "Destructive",
+        "none": "No annotation"
+      },
+      "issuesTitle": "These tools will be disabled:",
+      "doneTitle": "{name} is installed",
+      "doneTools": "{count, plural, one {# tool} other {# tools}}.",
+      "doneOAuthCode": "Each member must connect their own account before agents can use this app on their behalf.",
+      "connectNow": "Connect my account",
+      "credentialRequired": "Enter the credential; it is used to list the tools when installing.",
+      "credentialHint": {
+        "org": "Organization credential: shared by everyone and used to list the tools when installing.",
+        "personal": "Your own credential: used to list the tools when installing; other members set theirs in My connections later."
+      }
+    },
+    "review": {
+      "title": "Review",
+      "empty": "No tools are waiting for review.",
+      "hint": "The server changed these tools' definitions (or added new tools). They cannot be called until reviewed.",
+      "changed": "{field} changed",
+      "current": "current",
+      "new": "new",
+      "changedTool": "Definition changed",
+      "newTool": "New tool",
+      "rejectedNewTool": "Rejected new tool",
+      "description": "Description",
+      "inputSchema": "Parameters (inputSchema)",
+      "annotations": "Annotations",
+      "connectorData": "Routing data",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approveLabel": "Approve {tool}",
+      "rejectLabel": "Reject {tool}",
+      "approved": "Approved {tool}.",
+      "rejected": "Rejected {tool}; the tool is disabled.",
+      "missingTitle": "No longer provided",
+      "missingHint": "These tools are disabled; if the server provides them again they go to review."
+    }
+  },
+  "connections": {
+    "title": "My settings",
+    "nav": {
+      "connections": "Connected apps",
+      "grants": "Remembered approvals",
+      "organization": "Organization"
+    },
+    "empty": "No app needs your own credential.",
+    "emptyHint": "Apps that use personal credentials show up here.",
+    "sectionHint": "Your own credential for this app; other members use theirs.",
+    "connected": "Connected",
+    "missing": "Not connected",
+    "save": "Save",
+    "clear": "Clear",
+    "saved": "Credential for {app} saved.",
+    "cleared": "Credential for {app} cleared.",
+    "grants": {
+      "empty": "No remembered approvals.",
+      "emptyHint": "Choosing “Always for this agent” when approving adds one here.",
+      "columns": {
+        "agent": "Agent",
+        "tool": "Tool",
+        "created": "Since",
+        "actions": "Actions"
+      },
+      "revoke": "Revoke",
+      "revokeLabel": "Revoke {tool} for {agent}",
+      "revoked": "Approval for {tool} revoked."
+    },
+    "reconnect": "Reconnect",
+    "oauthConnect": "Connect",
+    "disconnect": "Disconnect",
+    "oauthHint": "Sign in to this app with your own account; other members use theirs."
+  },
+  "orgSettings": {
+    "title": "Organization settings",
+    "save": "Save",
+    "saved": "Organization settings saved.",
+    "readonly": "Only admins can change organization settings.",
+    "toolSearch": {
+      "title": "Tool search",
+      "description": "When an agent has many tools, the model gets a tool catalog and loads definitions on demand with tool_search.",
+      "on": "On",
+      "onHint": "Switch to the catalog + tool_search above the threshold (recommended).",
+      "off": "Off",
+      "offHint": "Always send every tool definition to the model."
+    }
   }
 }

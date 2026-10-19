@@ -5,6 +5,21 @@ import type { ModelRef } from "./conversations";
 
 export type AgentVisibility = "private" | "org" | "members";
 
+/**
+ * agent 引用的工具（与内核 `AgentToolRef` 对应）：内置工具按名字；插件工具按插件名 + 工具名；
+ * 应用工具按应用 id，`tools: "all"` 为该应用当前所有启用的工具。
+ */
+export type AgentToolRef =
+  | { kind: "builtin"; name: string }
+  | { kind: "plugin"; plugin: string; name: string }
+  | { kind: "app"; appId: string; tools: "all" | string[] };
+
+/** 收紧后的策略（只能收紧：`ask` / `deny`）。 */
+export type TightenedPolicy = "ask" | "deny";
+
+/** 网页可选的内置工具（内核没有列出内置工具的接口；`tool_search` 由内核按组织设置自动加入）。 */
+export const BUILTIN_TOOLS = ["ask_user", "read_tool_output"] as const;
+
 export interface AgentDefinitionInput {
   name: string;
   instructions: string;
@@ -14,6 +29,10 @@ export interface AgentDefinitionInput {
   modelParams?: Record<string, ParamValue>;
   /** 兜底模型的参数；没有兜底模型时必须为空。 */
   fallbackParams?: Record<string, ParamValue>;
+  /** 引用的工具；创建时不给则由内核填默认（ask_user、read_tool_output）。 */
+  tools?: AgentToolRef[];
+  /** 按工具 key 收紧策略。 */
+  toolPolicies?: Record<string, TightenedPolicy>;
 }
 
 export interface Agent {

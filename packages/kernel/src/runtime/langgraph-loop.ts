@@ -1,7 +1,8 @@
 import type { StopReason } from "@capybara-hq/plugin-sdk";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import type { ToolPipeline } from "../tools/pipeline.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
-import type { AgentLoop, LoopContext, LoopOutcome } from "./loop.js";
+import type { AgentLoop, LoopContext, LoopOutcome, WaitingFor } from "./loop.js";
 import {
   type ModelStepDeps,
   type ModelStepInput,
@@ -10,8 +11,10 @@ import {
   runModelStep,
 } from "./model-call.js";
 
-/** M2 没有工具：模型请求工具时写入的提醒（模型可见，英文）。 */
-export const TOOLS_UNAVAILABLE_REMINDER = "Tools are not available yet.";
+/** loop 的依赖：单步模型调用依赖 + 工具执行管线（tools 节点）。 */
+export interface LoopDeps extends ModelStepDeps {
+  toolPipeline: Pick<ToolPipeline, "runStep">;
+}
 
 /** 测试钩子。 */
 export interface LangGraphLoopHooks {
@@ -22,7 +25,7 @@ export interface LangGraphLoopHooks {
   afterModelStep?(runId: string, step: number, result: ModelStepResult): Promise<void>;
 }
 
-type EndKind = Exclude<LoopOutcome["kind"], "interrupted">;
+type EndKind = Exclude<LoopOutcome["kind"], "interrupted" | "suspended">;
 
 /**
  * 图状态：只记录进度，消息每步从事件日志重建（runModelStep 自己读日志），checkpoint 很小。
@@ -61,6 +64,21 @@ class LoopInterrupted extends Error {
 }
 
 /**
+ * tools 节点在某个调用需要等人处理（审批 / 输入请求）时抛出：与 {@link LoopInterrupted} 相同的机制——
+ * 本次 invoke 以它结束，checkpoint 停在 tools 之前，处理后 `invoke(null)` 重新执行 tools 节点
+ * （按 (runId, callId) 幂等：已有结果的调用跳过，读到审批 / 输入结果的调用继续）。
+ *
+ * 不用 `interrupt()`：续跑由另一个副本的新任务发起，读到的结果都在 PG（审批 / 输入请求表）里，
+ * 不需要经 `Command({ resume })` 传值；用普通异常与停机共用一条已验证的续跑路径。
+ */
+class LoopSuspended extends Error {
+  constructor(readonly waitingFor: WaitingFor) {
+    super("agent loop suspended waiting for a human");
+    this.name = "LoopSuspended";
+  }
+}
+
+/**
  * 默认 AgentLoop：LangGraph 状态图，checkpoint 存在内核的 `KyselyCheckpointSaver`（thread_id = runId），
  * worker 崩溃后由其他副本从最近的 checkpoint 续跑（spec 4.4、Review Focus 1）。
  *
@@ -68,12 +86,16 @@ class LoopInterrupted extends Error {
  * 模型中止或正常结束 → 结束。`durability: "sync"`：每个节点的 checkpoint 在下一个节点开始前落库。
  *
  * 幂等：`runModelStep` / `runFinalWrapUp` 按 (runId, step) 幂等，续跑重新执行 model 节点时若回复已在日志里，
- * 直接复用（不再调用模型）；tools 节点写的提醒按 (runId, step) 带幂等键。
+ * 直接复用（不再调用模型）；tools 节点按 (runId, callId) 幂等：已有结果的调用跳过，「有开始无结果」的
+ * 调用记为结果未知、不再执行（spec 4.3）。
+ *
+ * 等人处理（Task 9）：tools 节点遇到需要审批 / 用户输入的调用时抛 {@link LoopSuspended}，run 返回 `suspended`；
+ * worker 把运行置为 waiting、释放会话锁与配额，处理后新任务从同一 checkpoint 续跑 tools 节点。
  */
 export class LangGraphLoop implements AgentLoop {
   constructor(
     private readonly saver: KyselyCheckpointSaver,
-    private readonly stepDeps: ModelStepDeps,
+    private readonly stepDeps: LoopDeps,
     private readonly hooks: LangGraphLoopHooks = {},
   ) {}
 
@@ -100,6 +122,7 @@ export class LangGraphLoop implements AgentLoop {
       }
     } catch (e) {
       if (e instanceof LoopInterrupted) return { kind: "interrupted" };
+      if (e instanceof LoopSuspended) return { kind: "suspended", waitingFor: e.waitingFor };
       throw e;
     }
     const outcome = final.outcome ?? "completed";
@@ -111,6 +134,7 @@ export class LangGraphLoop implements AgentLoop {
   private build(ctx: LoopContext) {
     const timedOut = () => Date.now() >= ctx.limits.deadline;
     const input = (step: number, absorbedUpToSeq: number): ModelStepInput => ({
+      orgId: ctx.orgId,
       conversationId: ctx.conversationId,
       runId: ctx.runId,
       step,
@@ -145,15 +169,21 @@ export class LangGraphLoop implements AgentLoop {
       };
     };
 
+    // 本步的全部工具调用都写下结果后才回到 prepare（不在「已记录调用、未记录结果」之间构建请求）。
+    // 某个调用需要等人处理时抛 LoopSuspended（该调用之后的调用留到续跑时处理）。
     const tools = async (s: State): Promise<Partial<State>> => {
-      await deps.eventLog.append(ctx.conversationId, [
-        {
-          type: "reminder",
-          runId: ctx.runId,
-          idemKey: `tools_unavailable:${ctx.runId}:${s.step}`,
-          payload: { step: s.step, text: TOOLS_UNAVAILABLE_REMINDER },
-        },
-      ]);
+      const r = await deps.toolPipeline.runStep({
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        step: s.step,
+        agentId: ctx.agentId,
+        agentVersion: ctx.agentVersion,
+        agent: ctx.agent,
+        accountId: ctx.triggerAccountId,
+        signal: ctx.signal,
+      });
+      if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
       return {};
     };
 

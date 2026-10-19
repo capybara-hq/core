@@ -14,6 +14,7 @@ import HomePage from "../src/app/[locale]/(app)/page";
 import LoginPage from "../src/app/[locale]/(auth)/login/page";
 import SetupPage from "../src/app/[locale]/(auth)/setup/page";
 import { AppFrame } from "../src/components/shell/AppFrame";
+import { activeNavOf } from "../src/components/shell/nav";
 import { RequireSession } from "../src/components/shell/session";
 import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
@@ -282,6 +283,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
       [zh.nav.overview, "/"],
       [zh.nav.agents, "/agents"],
+      [zh.nav.inbox, "/inbox"],
+      [zh.nav.apps, "/apps"],
     ]);
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
@@ -289,6 +292,30 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getByText("> Grant@Acme:agents/new")).toBeTruthy();
     expect(screen.getByText(/^v9\.9\.9/)).toBeTruthy();
   });
+
+  it.each(["zh", "en"] as const)(
+    "顶栏「收件箱」带待处理审批数 Badge（当前组织的 pending 审批）（%s）",
+    async (locale) => {
+      const m = locale === "zh" ? zh : en;
+      resetNavigation("/");
+      stubApi({
+        "GET /api/v1/me": () => json(200, ME),
+        "GET /api/v1/orgs/o1/approvals": () => json(200, { approvals: [{ id: "x" }, { id: "y" }] }),
+      });
+      renderFrame(locale);
+      const nav = await screen.findByRole("navigation", {
+        name: locale === "zh" ? "主导航" : "Main navigation",
+      });
+      await vi.waitFor(() =>
+        expect(
+          within(nav).getByRole("link", {
+            name: locale === "zh" ? `${m.nav.inbox}，2 项待处理` : `${m.nav.inbox}, 2 pending`,
+          }),
+        ).toBeTruthy(),
+      );
+      expect(within(nav).getByRole("link", { name: m.nav.apps })).toBeTruthy();
+    },
+  );
 
   it("组织菜单切换当前组织；用户菜单含语言、主题与退出登录", async () => {
     const me = {
@@ -379,5 +406,21 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
     expect(screen.queryByText("page body")).toBeNull();
+  });
+});
+
+describe("activeNavOf", () => {
+  it("应用只高亮 /apps*、/settings/connections、/settings/grants、/settings/organization；其他 /settings 不高亮", () => {
+    expect(activeNavOf("/apps")).toBe("apps");
+    expect(activeNavOf("/apps/x")).toBe("apps");
+    expect(activeNavOf("/settings/connections")).toBe("apps");
+    expect(activeNavOf("/settings/grants")).toBe("apps");
+    expect(activeNavOf("/settings/organization")).toBe("apps");
+    expect(activeNavOf("/apps/install")).toBe("apps");
+    expect(activeNavOf("/settings/org")).toBe("");
+    expect(activeNavOf("/settings")).toBe("");
+    expect(activeNavOf("/appsx")).toBe("");
+    expect(activeNavOf("/inbox")).toBe("inbox");
+    expect(activeNavOf("/chat/c1")).toBe("agents");
   });
 });

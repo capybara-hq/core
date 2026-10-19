@@ -64,7 +64,7 @@ function apply(state: ChatState, ...inputs: (ConversationEvent[] | StreamDelta)[
   return s;
 }
 
-const texts = (s: ChatState) => chatItems(s).map((i) => `${i.kind}:${i.text}`);
+const texts = (s: ChatState) => chatItems(s).map((i) => `${i.kind}:${"text" in i ? i.text : ""}`);
 
 describe("reduceChat", () => {
   it("事件按 seq 合入：乱序到达也按 seq 排列", () => {
@@ -153,6 +153,42 @@ describe("reduceChat", () => {
     expect(s.running).toBe(false);
   });
 
+  it("等人处理（审批 / 输入请求）时为 waiting、不算运行中，也不是终态；处理后回到运行中", () => {
+    let s = apply(initialChatState, [started(1), assistant(2, 0, "")]);
+    s = apply(s, [
+      ev(3, "approval_requested", {
+        step: 0,
+        callId: "c1",
+        approvalId: "a1",
+        toolKey: "x__y",
+        expiresAt: "2026-10-19T00:00:00.000Z",
+      }),
+    ]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    expect(s.closedRuns).toEqual({});
+    s = apply(s, [
+      ev(4, "approval_decided", {
+        approvalId: "a1",
+        callId: "c1",
+        decision: "approved",
+        byAccountId: "u1",
+      }),
+    ]);
+    expect(s).toMatchObject({ running: true, waiting: false });
+    s = apply(s, [
+      ev(5, "question_asked", {
+        step: 1,
+        callId: "c2",
+        questionId: "q1",
+        form: { title: "t", fields: [] },
+        expiresAt: "2026-10-19T00:00:00.000Z",
+      }),
+    ]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    s = apply(s, [finished(6)]);
+    expect(s).toMatchObject({ running: false, waiting: false });
+  });
+
   it("乱序：终态先于 run_started 到达仍判定为未运行", () => {
     const s = apply(initialChatState, [finished(3)], [started(2)]);
     expect(s.running).toBe(false);
@@ -185,6 +221,46 @@ describe("reduceChat", () => {
       { provider: "p", model: "m" },
       { provider: "fb", model: "x" },
     ]);
+  });
+
+  it("工具项按 (runId, callId) 对应：不同运行复用同一个 callId 时结果与状态不串", () => {
+    const call = (seq: number, runId: string, input: unknown) =>
+      ev(
+        seq,
+        "assistant_message",
+        {
+          step: 0,
+          content: [{ type: "tool_call", id: "call_1", name: "docs__search", input }],
+          stopReason: "tool_use",
+        },
+        runId,
+      );
+    const s = apply(initialChatState, [
+      started(1),
+      call(2, RUN, { q: "first" }),
+      aborted(3),
+      started(4, "r2"),
+      call(5, "r2", { q: "second" }),
+      ev(
+        6,
+        "tool_call_started",
+        { step: 0, callId: "call_1", toolKey: "docs__search", specHash: "h" },
+        "r2",
+      ),
+      ev(
+        7,
+        "approval_requested",
+        { step: 0, callId: "call_1", approvalId: "ap1", toolKey: "docs__search", expiresAt: "x" },
+        "r2",
+      ),
+    ]);
+    const tools = chatItems(s).filter((i) => i.kind === "tool");
+    expect(tools.map((t) => (t.kind === "tool" ? [t.input, t.status] : null))).toEqual([
+      [{ q: "first" }, "cancelled"],
+      [{ q: "second" }, "running"],
+    ]);
+    const approval = chatItems(s).find((i) => i.kind === "approval");
+    expect(approval).toMatchObject({ input: { q: "second" } });
   });
 
   it("没有变化时返回同一个 state 引用", () => {

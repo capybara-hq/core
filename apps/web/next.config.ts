@@ -20,6 +20,10 @@ const nextConfig: NextConfig = {
     },
   },
   outputFileTracingRoot: monorepoRoot,
+  // 第一段的安装表单已由向导取代（否则 /apps/new 会落到应用详情的动态路由）
+  redirects: async () => [
+    { source: "/:locale(zh|en)/apps/new", destination: "/:locale/apps/install", permanent: false },
+  ],
 };
 
 export default withNextIntl(nextConfig);

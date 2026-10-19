@@ -11,12 +11,46 @@ export type ContentBlock =
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; callId: string; content: string; isError: boolean };
 
+type FormText = string | { zh: string; en: string };
+
+/** 用户消息附带的资源（内核读取正文，这里只有元数据）。 */
+export interface MessageAttachment {
+  appId: string;
+  appName: string;
+  uri: string;
+  name: string;
+}
+
+/** 交互表单（内核输入请求的 `form`，与 plugin-sdk 的 `InputForm` 对应）。 */
+export interface InputForm {
+  title: FormText;
+  /** 需要用户在浏览器里打开的外部页面（MCP URL 模式的 elicitation）。 */
+  url?: string;
+  fields: {
+    key: string;
+    label: FormText;
+    description?: FormText;
+    schema: Record<string, unknown>;
+    multiSelect?: boolean;
+    allowOther?: boolean;
+    required?: boolean;
+  }[];
+}
+
+export type FormAnswer = Record<string, string | number | boolean | string[]>;
+
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other" | "aborted";
 
 type EventBody =
   | {
       type: "user_message";
-      payload: { content: ContentBlock[]; authorAccountId: string; clientMessageId?: string };
+      payload: {
+        content: ContentBlock[];
+        /** `@` 资源引用的附件：第 i 个附件的正文是 `content[i + 1]`。 */
+        attachments?: MessageAttachment[];
+        authorAccountId: string;
+        clientMessageId?: string;
+      };
     }
   | { type: "run_started"; payload: { agentVersion: number; model: ModelRef } }
   | { type: "model_call"; payload: { step: number; provider: string; model: string } }
@@ -26,6 +60,67 @@ type EventBody =
     }
   | { type: "usage"; payload: { step: number } }
   | { type: "reminder"; payload: { step: number; text: string } }
+  | {
+      type: "tool_call_started";
+      payload: { step: number; callId: string; toolKey: string; specHash: string };
+    }
+  | {
+      type: "tool_result";
+      payload: {
+        step: number;
+        callId: string;
+        toolKey: string;
+        content: string;
+        isError: boolean;
+        outputId?: string;
+        contentTypes?: string[];
+        loadedTools?: string[];
+      };
+    }
+  | {
+      type: "connection_required";
+      payload: { step: number; callId: string; appId: string; appName: string };
+    }
+  | {
+      type: "approval_requested";
+      payload: {
+        step: number;
+        callId: string;
+        approvalId: string;
+        toolKey: string;
+        expiresAt: string;
+      };
+    }
+  | {
+      type: "approval_decided";
+      payload: {
+        approvalId: string;
+        callId: string;
+        decision: "approved" | "denied" | "expired" | "cancelled";
+        scope?: "once" | "session" | "always";
+        byAccountId: string | null;
+      };
+    }
+  | {
+      type: "question_asked";
+      payload: {
+        step: number;
+        callId: string;
+        questionId: string;
+        form: InputForm;
+        expiresAt: string;
+      };
+    }
+  | {
+      type: "question_answered";
+      payload: {
+        questionId: string;
+        callId: string;
+        answer: FormAnswer | null;
+        byAccountId: string | null;
+        outcome: "answered" | "expired" | "cancelled";
+      };
+    }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }
@@ -92,11 +187,24 @@ export async function listAllEvents(
   }
 }
 
-/** 发送用户消息（运行中发送即插话）：202 `{ event }`。 */
-export const postMessage = (orgId: string, id: string, text: string, clientMessageId: string) =>
+/**
+ * 发送用户消息（运行中发送即插话）：202 `{ event }`。`attachments`（`@` 资源引用）由内核以当前用户的凭据读取，
+ * 作为附加文本块写入同一条消息。
+ */
+export const postMessage = (
+  orgId: string,
+  id: string,
+  text: string,
+  clientMessageId: string,
+  attachments: { appId: string; uri: string }[] = [],
+) =>
   apiFetch<{ event: ConversationEvent }>(`${one(orgId, id)}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text, clientMessageId }),
+    body: JSON.stringify({
+      text,
+      clientMessageId,
+      ...(attachments.length > 0 && { attachments }),
+    }),
   });
 
 /** 中止当前运行：202 `{ runId }`；没有活跃运行时内核返回 409 `run.not_active`。 */

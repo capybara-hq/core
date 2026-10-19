@@ -31,9 +31,30 @@ export interface RunControl {
    * 否则返回 false。
    */
   abortIfOrphaned(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
+  /**
+   * 运行在等人处理（waiting）时直接中止：取消等待、写 `run_aborted`、删除 checkpoint，返回 true；
+   * 运行已不是 waiting（例如刚被续跑）→ false。
+   */
+  abortWaiting(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
   /** 请求中止运行（广播到所有副本）。 */
   requestAbort(runId: string, byAccountId: string): Promise<void>;
 }
+
+/** 消息附件引用（应用 + 资源 URI）。 */
+export interface AttachmentRef {
+  appId: string;
+  uri: string;
+}
+
+/** 附件解析：以发送者的凭据读取资源，返回追加在消息后的文本块与元数据（见 tools/app-content.ts）。 */
+export type ResolveAttachments = (
+  orgId: string,
+  accountId: string,
+  refs: AttachmentRef[],
+) => Promise<{
+  blocks: { type: "text"; text: string }[];
+  attachments: { appId: string; appName: string; uri: string; name: string }[];
+}>;
 
 /**
  * 用户消息的幂等键：客户端的 `clientMessageId` 加前缀，与运行流水线自用的幂等键分开，
@@ -85,6 +106,7 @@ export class ConversationsService {
     private readonly agents: AgentsService,
     private readonly runs?: RunControl,
     private readonly log?: Pick<Logger, "warn">,
+    private readonly resolveAttachments?: ResolveAttachments,
   ) {}
 
   /**
@@ -230,14 +252,38 @@ export class ConversationsService {
    * 追加一条用户消息；带 `clientMessageId` 时重复提交返回同一事件。写入后调用 `ensureRun`：
    * 没有进行中的运行时投递一轮；运行中则由当前运行在步骤间隙吸收，或在它结束时再次 `ensureRun`。
    * 投递失败时抛错（消息已写入；客户端带同一 `clientMessageId` 重试会再次触发投递）。
+   *
+   * `attachments`（`@` 资源引用）：内核以发送者的凭据读取资源（打码、限长），作为用户文本之后的额外文本块写入同一条
+   * user_message，并在 `payload.attachments` 记录元数据（第 i 个附件对应 `content[i + 1]`）。读取失败整条不写。
+   * 带 `clientMessageId` 的重复提交直接返回已写入的事件，不再读取。
    */
   async postUserMessage(
     orgId: string,
     conversationId: string,
     accountId: string,
-    input: { text: string; clientMessageId?: string },
+    input: { text: string; clientMessageId?: string; attachments?: AttachmentRef[] },
   ): Promise<ConversationEvent> {
     await this.get(orgId, conversationId, accountId);
+    const refs = input.attachments ?? [];
+    let extra: Awaited<ReturnType<ResolveAttachments>> = { blocks: [], attachments: [] };
+    if (refs.length > 0) {
+      if (input.clientMessageId !== undefined) {
+        const existing = await this.eventLog.findByIdem(
+          conversationId,
+          userMessageIdemKey(input.clientMessageId),
+        );
+        if (existing) {
+          await this.runs?.ensureRun(conversationId);
+          return existing;
+        }
+      }
+      if (!this.resolveAttachments) {
+        throw new ApiError("validation_failed", "Request validation failed", [
+          { path: "attachments", message: "Attachments are not supported" },
+        ]);
+      }
+      extra = await this.resolveAttachments(orgId, accountId, refs);
+    }
     const [event] = await this.eventLog.append(conversationId, [
       {
         type: "user_message",
@@ -245,7 +291,8 @@ export class ConversationsService {
           idemKey: userMessageIdemKey(input.clientMessageId),
         }),
         payload: {
-          content: [{ type: "text", text: input.text }],
+          content: [{ type: "text", text: input.text }, ...extra.blocks],
+          ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
           authorAccountId: accountId,
           ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
         },
@@ -256,19 +303,28 @@ export class ConversationsService {
   }
 
   /**
-   * 中止会话当前的运行（queued / running）：返回 runId；没有 → `run.not_active`。
-   * 中止经 Redis 广播，运行所在的任意副本都会收到；运行已是孤儿（没有任何 worker 在执行）时直接写终态。
+   * 中止会话当前的运行（queued / running / waiting）：返回 runId；没有 → `run.not_active`。
+   * 等人处理的运行没有 worker：直接取消等待并写终态。其余经 Redis 广播，运行所在的任意副本都会收到；
+   * 运行已是孤儿（没有任何 worker 在执行）时直接写终态。
    */
   async abort(orgId: string, conversationId: string, accountId: string): Promise<string> {
     await this.get(orgId, conversationId, accountId);
     const run = await this.db
       .selectFrom("runs")
-      .select("id")
+      .select(["id", "status"])
       .where("conversation_id", "=", conversationId)
-      .where("status", "in", ["queued", "running"])
+      .where("status", "in", ["queued", "running", "waiting"])
       .orderBy("created_at", "desc")
       .executeTakeFirst();
     if (!run || !this.runs) throw new ApiError("run.not_active", "No active run to abort");
+    // 等待中：直接结束；没成功（刚被续跑、已回到 queued）则按下面的常规路径中止。
+    if (
+      run.status === "waiting" &&
+      (await this.runs.abortWaiting(conversationId, run.id, accountId))
+    ) {
+      this.kickRun(conversationId);
+      return run.id;
+    }
     // 孤儿运行没有 worker 在听中止广播：直接写成 aborted，之后再看有没有等待中的消息要起新一轮。
     if (await this.runs.abortIfOrphaned(conversationId, run.id, accountId)) {
       this.kickRun(conversationId);

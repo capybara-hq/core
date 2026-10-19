@@ -7,6 +7,7 @@ import { audit } from "../identity/audit.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import type { AgentDefinition } from "./definition.js";
 
 type Trx = Transaction<KernelDatabase>;
@@ -115,7 +116,29 @@ export class AgentsService {
   constructor(
     private readonly db: KernelDb,
     private readonly registry: ProviderRegistry,
+    private readonly tools: Pick<ToolRegistry, "checkRefs">,
   ) {}
+
+  /**
+   * 校验工具引用与工具策略：引用的内置 / 插件 / 应用工具必须存在（见 `ToolRegistry.checkRefs`）；
+   * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
+   * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
+   */
+  private async checkTools(orgId: string, def: AgentDefinition): Promise<void> {
+    const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
+    const details = [...issues];
+    for (const key of Object.keys(def.toolPolicies)) {
+      if (!keys.has(key)) {
+        details.push({
+          path: `toolPolicies.${key}`,
+          message: `"${key}" is not a tool of this agent`,
+        });
+      }
+    }
+    if (details.length > 0) {
+      throw new ApiError("validation_failed", "Invalid tool references", details);
+    }
+  }
 
   /**
    * 校验主模型与兜底都可解析，并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
@@ -231,6 +254,7 @@ export class AgentsService {
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
     const warnings = await this.checkModels(input.definition);
+    await this.checkTools(orgId, input.definition);
     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
     }
@@ -321,6 +345,7 @@ export class AgentsService {
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
+    if (patch.definition) await this.checkTools(orgId, patch.definition);
     const agent = await this.db.transaction().execute(async (t) => {
       const before = await this.lockForWrite(t, orgId, agentId, actorAccountId);
       const visibility = patch.visibility ?? before.visibility;

@@ -4,8 +4,14 @@ import type { StreamSink } from "./model-call.js";
 
 /** 一次运行交给 loop 的上下文（spec 4.4）。 */
 export interface LoopContext {
+  /** 会话所属组织。 */
+  orgId: string;
   conversationId: string;
   runId: string;
+  /** 会话的 agent（工具调用上下文、策略判定用）。 */
+  agentId: string;
+  /** 发起本次运行的人（对话发起人）：工具调用用其个人凭据，审计记为 actor。 */
+  triggerAccountId: string;
   agent: AgentDefinition;
   agentVersion: number;
   /** 用户中止或到达 deadline 时触发：进行中的模型调用立即停下。 */
@@ -23,11 +29,23 @@ export interface LoopContext {
   limits: { maxSteps: number; deadline: number };
 }
 
+/**
+ * 运行在等什么人处理：审批（`approvals` 行）或输入请求（`questions` 行，统一承载 `ask_user`、
+ * 插件工具的 `input_required` 与 MCP elicitation）。`expiresAt` 为 ISO 时间。
+ */
+export interface WaitingFor {
+  kind: "approval" | "input";
+  id: string;
+  expiresAt: string;
+}
+
 export type LoopOutcome =
   | { kind: "completed" | "max_steps" | "max_duration"; consumedUpToSeq: number }
   | { kind: "aborted" }
   /** 停机：已在步骤边界保存好进度，任务需要回到队列。 */
-  | { kind: "interrupted" };
+  | { kind: "interrupted" }
+  /** 等待人处理：checkpoint 停在 tools 节点之前，处理后从这里续跑。 */
+  | { kind: "suspended"; waitingFor: WaitingFor };
 
 export interface AgentLoop {
   run(ctx: LoopContext): Promise<LoopOutcome>;

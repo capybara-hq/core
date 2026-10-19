@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { dynamic, GET, POST } from "../src/app/api/[...path]/route";
+import { dynamic, GET, PATCH, POST } from "../src/app/api/[...path]/route";
 import { PEER_TOKEN_ENV, PEER_TOKEN_HEADER, sanitizeIncoming } from "../src/lib/peer";
 
 type Seen = { method: string; url: string; headers: IncomingMessage["headers"]; body: string };
@@ -216,6 +216,47 @@ describe("请求体大小上限（CAPYBARA_WEB_MAX_BODY_BYTES）", () => {
     );
     expect(res.status).toBe(200);
     expect(seen[0]?.body).toBe("0123456789abcdef");
+  });
+});
+
+describe("安装 / 预览应用的请求体上限（可带 2 MB 的 OpenAPI 文档）", () => {
+  beforeEach(() => {
+    handler = (_req, res) => {
+      res.writeHead(200);
+      res.end("{}");
+    };
+  });
+
+  it("POST .../apps 与 .../apps/preview 放宽到 6 MiB；其他路由仍为默认 1 MiB", async () => {
+    const big = "x".repeat(2_500_000);
+    for (const path of ["/api/v1/orgs/o1/apps", "/api/v1/orgs/o1/apps/preview"]) {
+      const res = await POST(
+        new Request(`http://web.example${path}`, { method: "POST", body: big }),
+      );
+      expect(res.status, path).toBe(200);
+    }
+    expect(seen.map((r) => r.body?.length)).toEqual([2_500_000, 2_500_000]);
+    for (const path of [
+      "/api/v1/x",
+      "/api/v1/orgs/o1/apps/a1/refresh",
+      "/api/v1/orgs/o1/apps/x/y",
+    ]) {
+      const res = await POST(
+        new Request(`http://web.example${path}`, { method: "POST", body: big }),
+      );
+      expect(res.status, path).toBe(413);
+    }
+    const patch = await PATCH(
+      new Request("http://web.example/api/v1/orgs/o1/apps", { method: "PATCH", body: big }),
+    );
+    expect(patch.status).toBe(413);
+    const huge = await POST(
+      new Request("http://web.example/api/v1/orgs/o1/apps", {
+        method: "POST",
+        body: "x".repeat(6 * 1024 * 1024 + 1),
+      }),
+    );
+    expect(huge.status).toBe(413);
   });
 });
 

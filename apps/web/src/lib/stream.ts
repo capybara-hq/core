@@ -1,4 +1,12 @@
-import { type ConversationEvent, type ModelRef, type StopReason, streamUrl } from "./conversations";
+import {
+  type ContentBlock,
+  type ConversationEvent,
+  type InputForm,
+  type MessageAttachment,
+  type ModelRef,
+  type StopReason,
+  streamUrl,
+} from "./conversations";
 
 /** SSE `event: delta` 帧：运行的流式增量（只是草稿，最终内容以日志中的 assistant_message 为准）。 */
 export interface StreamDelta {
@@ -98,8 +106,10 @@ export interface ChatState {
   finalized: Readonly<Record<string, true>>;
   /** 已到终态（finished / failed / aborted）的运行：之后到达的增量一律忽略。 */
   closedRuns: Readonly<Record<string, true>>;
-  /** `run_started` 之后、终态事件之前。 */
+  /** `run_started` 之后、终态事件之前，且不在等人处理。 */
   running: boolean;
+  /** 运行在等人处理审批或输入请求（不是终态，也不算运行中）。 */
+  waiting: boolean;
 }
 
 export type ChatInput =
@@ -113,6 +123,7 @@ export const initialChatState: ChatState = {
   finalized: {},
   closedRuns: {},
   running: false,
+  waiting: false,
 };
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
@@ -133,13 +144,28 @@ function locate(events: ConversationEvent[], seq: number): { at: number; found: 
   return { at: lo, found: false };
 }
 
-function isRunning(events: ConversationEvent[]): boolean {
+/** 等人处理的开始 / 结束事件（`waiting` 不是终态：处理后运行继续）。 */
+const WAIT_START = new Set<ConversationEvent["type"]>(["approval_requested", "question_asked"]);
+const WAIT_END = new Set<ConversationEvent["type"]>(["approval_decided", "question_answered"]);
+
+function runPhase(events: ConversationEvent[]): { running: boolean; waiting: boolean } {
   let active: string | null = null;
+  let waiting = false;
   for (const e of events) {
-    if (e.type === "run_started") active = e.runId;
-    else if (TERMINAL.has(e.type) && e.runId === active) active = null;
+    if (e.type === "run_started") {
+      active = e.runId;
+      waiting = false;
+    } else if (e.runId === null || e.runId !== active) {
+    } else if (TERMINAL.has(e.type)) {
+      active = null;
+      waiting = false;
+    } else if (WAIT_START.has(e.type)) {
+      waiting = true;
+    } else if (WAIT_END.has(e.type)) {
+      waiting = false;
+    }
   }
-  return active !== null;
+  return { running: active !== null && !waiting, waiting: active !== null && waiting };
 }
 
 function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState {
@@ -168,7 +194,7 @@ function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState
     drafts: drafts.length === state.drafts.length ? state.drafts : drafts,
     finalized,
     closedRuns,
-    running: isRunning(events),
+    ...runPhase(events),
   };
 }
 
@@ -212,8 +238,13 @@ export function reduceChat(state: ChatState, input: ChatInput): ChatState {
 // 列表项
 // ---------------------------------------------------------------------------
 
+export type ToolStatus = "pending" | "running" | "done" | "error" | "cancelled";
+
+export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
+export type QuestionOutcome = Extract<ConversationEvent, { type: "question_answered" }>["payload"];
+
 export type ChatItem =
-  | { kind: "user"; key: string; text: string }
+  | { kind: "user"; key: string; text: string; attachments: MessageAttachment[] }
   | {
       kind: "assistant";
       key: string;
@@ -224,6 +255,49 @@ export type ChatItem =
       /** 产出该消息的模型：该步的 `model_call`，没有时取运行的 `run_started`；都没有为 null。 */
       model: ModelRef | null;
     }
+  | {
+      kind: "tool";
+      key: string;
+      callId: string;
+      /** 模型调用的工具名（即工具 key）。 */
+      name: string;
+      input: unknown;
+      /** pending：尚未开始执行（如等审批）；cancelled：运行已结束却没有结果。 */
+      status: ToolStatus;
+      /** 结果正文（超长时内核已截为预览）。 */
+      result: string | null;
+      /** 完整结果的存档 id（结果被截断时有）。 */
+      outputId: string | null;
+    }
+  | {
+      kind: "approval";
+      key: string;
+      approvalId: string;
+      callId: string;
+      toolKey: string;
+      /** 对应工具调用的参数（取自 assistant_message；找不到时为 undefined）。 */
+      input: unknown;
+      expiresAt: string;
+      decided: ApprovalDecision | null;
+    }
+  | {
+      kind: "question";
+      key: string;
+      questionId: string;
+      callId: string;
+      form: InputForm;
+      expiresAt: string;
+      answered: QuestionOutcome | null;
+    }
+  | {
+      kind: "connect";
+      key: string;
+      callId: string;
+      appId: string;
+      appName: string;
+      /** 所在运行已到终态（历史里的卡片不再提供「连接」）。 */
+      closed: boolean;
+    }
   | { kind: "failed"; key: string; text: string; code: string };
 
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
@@ -232,13 +306,28 @@ const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thi
     .map((b) => b.text ?? "")
     .join("");
 
-/** 把状态展开为消息列表：日志中的消息按 seq，流式草稿排在最后。 */
+type ToolItem = Extract<ChatItem, { kind: "tool" }>;
+
+/**
+ * 把状态展开为列表项：日志中的消息按 seq，流式草稿排在最后。
+ * 工具调用紧跟产出它的 assistant 消息（只有工具调用、没有文字的消息不单独成卡），
+ * 之后的 `tool_call_started` / `tool_result` 更新该项；审批、输入请求、需要连接按事件位置插入，
+ * 处理结果（`approval_decided` / `question_answered`）回填到原项。
+ */
 export function chatItems(state: ChatState): ChatItem[] {
   const items: ChatItem[] = [];
   /** `runId` → 运行的模型；`runId:step` → 该步实际调用的模型（兜底时与运行的模型不同）。 */
   const models = new Map<string, ModelRef>();
   const modelOf = (runId: string | null, step: number): ModelRef | null =>
     runId === null ? null : (models.get(stepKey(runId, step)) ?? models.get(runId) ?? null);
+  /** (runId, callId) → 工具项：不同运行可能复用同一个 callId（与内核按 (runId, callId) 配对一致）。 */
+  const tools = new Map<string, { item: ToolItem; runId: string | null }>();
+  const toolKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
+  const approvals = new Map<string, number>();
+  const questions = new Map<string, number>();
+  const replace = (i: number, next: ChatItem) => {
+    items[i] = next;
+  };
   for (const e of state.events) {
     const key = `e${e.seq}`;
     if (e.type === "run_started" && e.runId !== null) {
@@ -249,19 +338,103 @@ export function chatItems(state: ChatState): ChatItem[] {
         model: e.payload.model,
       });
     } else if (e.type === "user_message") {
-      items.push({ kind: "user", key, text: joinText(e.payload.content, "text") });
+      // 带附件时只显示用户输入的文本（content[0]），附件正文不展开
+      const attachments = e.payload.attachments ?? [];
+      const text =
+        attachments.length > 0
+          ? joinText(e.payload.content.slice(0, 1), "text")
+          : joinText(e.payload.content, "text");
+      items.push({ kind: "user", key, text, attachments });
     } else if (e.type === "assistant_message") {
+      const text = joinText(e.payload.content, "text");
+      const thinking = joinText(e.payload.content, "thinking");
+      const calls = e.payload.content.filter(
+        (b): b is Extract<ContentBlock, { type: "tool_call" }> => b.type === "tool_call",
+      );
+      if (text !== "" || thinking !== "" || calls.length === 0) {
+        items.push({
+          kind: "assistant",
+          key,
+          text,
+          thinking,
+          stopReason: e.payload.stopReason,
+          streaming: false,
+          model: modelOf(e.runId, e.payload.step),
+        });
+      }
+      for (const c of calls) {
+        const item: ToolItem = {
+          kind: "tool",
+          key: `${key}:${c.id}`,
+          callId: c.id,
+          name: c.name,
+          input: c.input,
+          status: "pending",
+          result: null,
+          outputId: null,
+        };
+        tools.set(toolKey(e.runId, c.id), { item, runId: e.runId });
+        items.push(item);
+      }
+    } else if (e.type === "tool_call_started") {
+      const t = tools.get(toolKey(e.runId, e.payload.callId));
+      if (t && t.item.status === "pending") t.item.status = "running";
+    } else if (e.type === "tool_result") {
+      const t = tools.get(toolKey(e.runId, e.payload.callId));
+      if (t) {
+        t.item.status = e.payload.isError ? "error" : "done";
+        t.item.result = e.payload.content;
+        t.item.outputId = e.payload.outputId ?? null;
+      }
+    } else if (e.type === "approval_requested") {
+      approvals.set(e.payload.approvalId, items.length);
       items.push({
-        kind: "assistant",
+        kind: "approval",
         key,
-        text: joinText(e.payload.content, "text"),
-        thinking: joinText(e.payload.content, "thinking"),
-        stopReason: e.payload.stopReason,
-        streaming: false,
-        model: modelOf(e.runId, e.payload.step),
+        approvalId: e.payload.approvalId,
+        callId: e.payload.callId,
+        toolKey: e.payload.toolKey,
+        input: tools.get(toolKey(e.runId, e.payload.callId))?.item.input,
+        expiresAt: e.payload.expiresAt,
+        decided: null,
+      });
+    } else if (e.type === "approval_decided") {
+      const i = approvals.get(e.payload.approvalId);
+      const prev = i === undefined ? undefined : items[i];
+      if (i !== undefined && prev?.kind === "approval") replace(i, { ...prev, decided: e.payload });
+    } else if (e.type === "question_asked") {
+      questions.set(e.payload.questionId, items.length);
+      items.push({
+        kind: "question",
+        key,
+        questionId: e.payload.questionId,
+        callId: e.payload.callId,
+        form: e.payload.form,
+        expiresAt: e.payload.expiresAt,
+        answered: null,
+      });
+    } else if (e.type === "question_answered") {
+      const i = questions.get(e.payload.questionId);
+      const prev = i === undefined ? undefined : items[i];
+      if (i !== undefined && prev?.kind === "question")
+        replace(i, { ...prev, answered: e.payload });
+    } else if (e.type === "connection_required") {
+      items.push({
+        kind: "connect",
+        key,
+        callId: e.payload.callId,
+        appId: e.payload.appId,
+        appName: e.payload.appName,
+        closed: e.runId !== null && state.closedRuns[e.runId] === true,
       });
     } else if (e.type === "run_failed") {
       items.push({ kind: "failed", key, text: "", code: e.payload.error.code });
+    }
+  }
+  // 运行已到终态却没有结果的调用（中止、失败）：不再显示为进行中
+  for (const { item, runId } of tools.values()) {
+    if (item.result === null && runId !== null && state.closedRuns[runId]) {
+      item.status = "cancelled";
     }
   }
   for (const d of state.drafts) {

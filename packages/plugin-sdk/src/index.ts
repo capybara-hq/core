@@ -1,7 +1,9 @@
 export const SDK_VERSION = "0.1.0";
 export * from "./capability.js";
+export * from "./connector.js";
 export * from "./ctx.js";
 export * from "./define-plugin.js";
 export * from "./model.js";
 export * from "./model-params.js";
 export * from "./secret.js";
+export * from "./tool.js";

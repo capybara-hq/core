@@ -31,6 +31,9 @@ export const RATE_LIMITER = Symbol("RATE_LIMITER");
 /** `OrgsService` 的注入令牌。 */
 export const ORGS = Symbol("ORGS");
 
+/** `OrgSettingsService`（组织设置）的注入令牌。 */
+export const ORG_SETTINGS = Symbol("ORG_SETTINGS");
+
 /** `MembersService` 的注入令牌。 */
 export const MEMBERS = Symbol("MEMBERS");
 
@@ -60,3 +63,24 @@ export const CONVERSATIONS = Symbol("CONVERSATIONS");
 
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
+
+/** 应用凭据（`Credentials`）的注入令牌。 */
+export const CREDENTIALS = Symbol("CREDENTIALS");
+
+/** `ToolRegistry` 的注入令牌。 */
+export const TOOL_REGISTRY = Symbol("TOOL_REGISTRY");
+
+/** `AppsService` 的注入令牌。 */
+export const APPS = Symbol("APPS");
+
+/** `AppContent`（应用的 prompts / resources，供斜杠命令与 @ 引用）的注入令牌。 */
+export const APP_CONTENT = Symbol("APP_CONTENT");
+
+/** `ApprovalsService`（工具调用审批与授权）的注入令牌。 */
+export const APPROVALS = Symbol("APPROVALS");
+
+/** `QuestionsService`（工具调用的输入请求）的注入令牌。 */
+export const QUESTIONS = Symbol("QUESTIONS");
+
+/** `OAuthFlow`（OAuth 授权码连接流程）的注入令牌。 */
+export const OAUTH_FLOW = Symbol("OAUTH_FLOW");

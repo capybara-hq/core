@@ -38,6 +38,8 @@ export interface OrgsTable {
   slug: string;
   name: string;
   created_by: string | null;
+  /** 0010：组织级设置（插入可省略，用列默认值 `{}`；写入传 JSON 字符串）。 */
+  settings: Json;
   created_at: Ts;
   deleted_at: TsNullable;
 }
@@ -190,7 +192,7 @@ export interface ConversationEventsTable {
 export interface RunsTable {
   id: string;
   conversation_id: string;
-  status: "queued" | "running" | "completed" | "failed" | "aborted";
+  status: "queued" | "running" | "waiting" | "completed" | "failed" | "aborted";
   agent_version: number;
   trigger_account_id: string;
   /** 0008：创建运行时最新 user_message 的 seq（终态时 consumed_seq 至少推进到它）。 */
@@ -198,6 +200,141 @@ export interface RunsTable {
   created_at: Ts;
   started_at: TsNullable;
   finished_at: TsNullable;
+  /** 0012：进入 waiting 的时刻（续跑时清空）。 */
+  waiting_since: TsNullable;
+  /** 0012：累计等待时长（毫秒），不计入运行时长。 */
+  waited_ms: Int8;
+  /** 0012：续跑任务的 jobId；为空表示按触发消息生成的 jobId。 */
+  job_id: string | null;
+  /** 0012：最近一次（续跑）回到 queued 的时刻。 */
+  queued_at: TsNullable;
+}
+
+/** 0010_tools.sql：已安装的应用（连接器实例）。 */
+export interface AppsTable {
+  id: string;
+  org_id: string;
+  slug: string;
+  name: string;
+  /** 连接器 kind（`Connector.kind`，如 `mcp`），由 `ToolRegistry.connector(kind)` 查找实现。 */
+  connector: string;
+  /** jsonb 带默认值：Json 的插入类型本身已可省略，不再包 Generated（嵌套会让插入类型失配）。 */
+  endpoint: Json<unknown>;
+  /** `{type, ownership: "org" | "personal", ...非密钥字段}`；凭据在 secrets。 */
+  auth: Json<unknown>;
+  status: Generated<"active" | "disabled">;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+  /** 0015：最近一次成功拿到工具清单的时间；为空 = 从未拍过快照（首个快照按安装处理）。 */
+  tools_synced_at: TsNullable;
+}
+
+/** 0010_tools.sql：应用暴露的工具。 */
+export interface AppToolsTable {
+  app_id: string;
+  name: string;
+  spec: Json<unknown>;
+  spec_hash: string;
+  status: "enabled" | "disabled" | "pending_review";
+  default_policy: "allow" | "ask" | "deny";
+  reviewed_at: TsNullable;
+  /** 0013：工具来源（`resources` = 内核为支持 resources 的应用补上的两个工具）。 */
+  source: Generated<"connector" | "resources">;
+  /** 0015：变化后待复核的新定义（复核前 spec / spec_hash / source 仍是旧的）。 */
+  pending_spec: ColumnType<unknown, string | null | undefined, string | null>;
+  pending_spec_hash: string | null;
+  pending_source: "connector" | "resources" | null;
+  /** 0015：默认策略的来历（admin = 管理员设定，复核通过后保留；derived = 按注解重新推导）。 */
+  policy_source: Generated<"derived" | "admin">;
+  /** 0015：远端不再提供该工具的时间（工具停用，行保留）。 */
+  missing_since: TsNullable;
+}
+
+/** 0010_tools.sql：「以后都允许」。 */
+export interface ToolGrantsTable {
+  org_id: string;
+  account_id: string;
+  agent_id: string;
+  tool_key: string;
+  spec_hash: string;
+  /** 应用工具的来源应用（插件 / 内置工具为 null）；授权只对同一个应用有效。 */
+  app_id: string | null;
+  created_at: Ts;
+}
+
+/** 0010_tools.sql：「本会话都允许」。 */
+export interface ConversationToolGrantsTable {
+  conversation_id: string;
+  tool_key: string;
+  spec_hash: string;
+  /** 同 `ToolGrantsTable.app_id`。 */
+  app_id: string | null;
+}
+
+/** 0010_tools.sql：工具调用审批；requested_for 与 approver_role 至少一个非空。 */
+export interface ApprovalsTable {
+  id: string;
+  org_id: string;
+  conversation_id: string;
+  run_id: string;
+  call_id: string;
+  tool_key: string;
+  /** jsonb 带默认值：Json 的插入类型本身已可省略。 */
+  input: Json<unknown>;
+  requested_for: string | null;
+  approver_role: string | null;
+  status: Generated<"pending" | "approved" | "denied" | "expired" | "cancelled">;
+  scope: "once" | "session" | "always" | null;
+  decided_by: string | null;
+  decided_at: TsNullable;
+  expires_at: Date | string;
+  created_at: Ts;
+  /** 0011：所批准的工具定义指纹（写授权用）。 */
+  spec_hash: string;
+  /** 0011：应用工具的来源应用。 */
+  app_id: string | null;
+  /** 0012：同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
+  attempt: Generated<number>;
+}
+
+/** 0010_tools.sql：ask_user 提问。 */
+export interface QuestionsTable {
+  id: string;
+  org_id: string;
+  conversation_id: string;
+  run_id: string;
+  call_id: string;
+  spec: Json<unknown>;
+  status: Generated<"pending" | "answered" | "expired" | "cancelled">;
+  answer: ColumnType<unknown, string | null | undefined, string | null>;
+  answered_by: string | null;
+  answered_at: TsNullable;
+  expires_at: Date | string;
+  created_at: Ts;
+  /** 0012：同一调用的第几轮输入请求（从 1 起）。 */
+  attempt: Generated<number>;
+}
+
+/** 0010_tools.sql：超大工具输出的存档。 */
+export interface ToolOutputsTable {
+  id: string;
+  org_id: string;
+  conversation_id: string;
+  call_id: string;
+  size_chars: number;
+  line_count: number;
+  content: string;
+  created_at: Ts;
+  expires_at: Date | string;
+}
+
+/** 0014_tool_specs.sql：工具定义快照（内容寻址，只增不改）。 */
+export interface ToolSpecsTable {
+  spec_hash: string;
+  spec: Json<unknown>;
+  created_at: Ts;
 }
 
 /** bytea 列：读出为 Buffer，写入可传 Buffer / Uint8Array。 */
@@ -231,7 +368,7 @@ export interface LgCheckpointWritesTable {
 
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
- * 0005_agents.sql、0006_conversations.sql 与 0007_checkpoints.sql。
+ * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql 与 0011_approvals_spec.sql。
  */
 export interface KernelDatabase {
   accounts: AccountsTable;
@@ -254,6 +391,14 @@ export interface KernelDatabase {
   runs: RunsTable;
   lg_checkpoints: LgCheckpointsTable;
   lg_checkpoint_writes: LgCheckpointWritesTable;
+  apps: AppsTable;
+  app_tools: AppToolsTable;
+  tool_grants: ToolGrantsTable;
+  conversation_tool_grants: ConversationToolGrantsTable;
+  approvals: ApprovalsTable;
+  questions: QuestionsTable;
+  tool_outputs: ToolOutputsTable;
+  tool_specs: ToolSpecsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

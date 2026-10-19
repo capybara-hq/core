@@ -1,4 +1,12 @@
-import type { CapabilityRef, Logger, PluginContext, PluginManifest } from "@capybara-hq/plugin-sdk";
+import {
+  type CapabilityRef,
+  type Logger,
+  type PluginContext,
+  type PluginManifest,
+  type ToolHandler,
+  type ToolSpec,
+  validateToolSpec,
+} from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import {
   Command,
@@ -34,6 +42,9 @@ export type Route = {
   path: string;
   handler: (req: Request) => Promise<Response>;
 };
+
+/** 插件经 `ctx.tools.register` 注册的工具。 */
+export type RegisteredTool = { spec: ToolSpec; handler: ToolHandler };
 
 /** 插件的 PG schema 名：`plugin_<name>`，name 中的 `-` 换成 `_`。 */
 export function pluginSchemaName(name: string): string {
@@ -113,11 +124,17 @@ export function createPluginContext(
 ): PluginContext & {
   routes: Route[];
   provided: Map<CapabilityRef, unknown>;
+  /** 已注册的工具（按注册顺序）。 */
+  registeredTools: RegisteredTool[];
+  /** setup 结束后调用：此后 `tools.register` 抛错。 */
+  sealTools(): void;
   close(): Promise<void>;
 } {
   const name = manifest.name;
   const routes: Route[] = [];
   const provided = new Map<CapabilityRef, unknown>();
+  const registeredTools: RegisteredTool[] = [];
+  let toolsSealed = false;
   const queue = createQueue(deps.redisUrl, name, { runWorkers: deps.runWorkers, log: deps.log });
   const { close: closeQueue, ...queueApi } = queue;
   const bus = createBus(deps.redis, deps.busSubscriber, name, deps.log);
@@ -163,6 +180,26 @@ export function createPluginContext(
         routes.push({ method, path: full, handler });
       },
     },
+    tools: {
+      register(spec, handler) {
+        if (toolsSealed) {
+          throw new Error(
+            `plugin ${name}: tools.register is only allowed during setup; setup has completed`,
+          );
+        }
+        const problems = validateToolSpec(spec);
+        if (problems.length > 0) {
+          throw new Error(`plugin ${name}: invalid tool spec: ${problems.join("; ")}`);
+        }
+        if (typeof handler !== "function") {
+          throw new Error(`plugin ${name}: tool "${spec.name}" handler must be a function`);
+        }
+        if (registeredTools.some((t) => t.spec.name === spec.name)) {
+          throw new Error(`plugin ${name}: duplicate tool "${spec.name}"`);
+        }
+        registeredTools.push({ spec, handler });
+      },
+    },
     provide(capability, impl) {
       if (!manifest.provides.includes(capability)) {
         throw new Error(
@@ -182,6 +219,10 @@ export function createPluginContext(
     },
     routes,
     provided,
+    registeredTools,
+    sealTools() {
+      toolsSealed = true;
+    },
     /** 幂等：重复 / 并发调用共享同一次关闭。 */
     close() {
       closing ??= (async () => {

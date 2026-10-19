@@ -27,18 +27,40 @@ import { InvitationsService } from "../orgs/invitations.service.js";
 import { MembersService } from "../orgs/members.service.js";
 import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsService } from "../orgs/orgs.service.js";
+import { OrgSettingsController } from "../orgs/settings.controller.js";
+import { OrgSettingsService } from "../orgs/settings.service.js";
 import type { PluginHost } from "../plugins/host.js";
 import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
 import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
+import { AppContentController } from "../tools/app-content.controller.js";
+import type { AppContent } from "../tools/app-content.js";
+import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
+import type { ApprovalsService } from "../tools/approvals.service.js";
+import { AppsController } from "../tools/apps.controller.js";
+import { AppsService } from "../tools/apps.service.js";
+import type { Credentials } from "../tools/credentials.js";
+import type { ToolDrift } from "../tools/drift.js";
+import { OAuthFlow } from "../tools/oauth/flow.js";
+import {
+  OAuthCallbackController,
+  OAuthConnectController,
+} from "../tools/oauth/oauth.controller.js";
+import { QuestionsController } from "../tools/questions.controller.js";
+import type { QuestionsService } from "../tools/questions.service.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
+  APP_CONTENT,
+  APPROVALS,
+  APPS,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
+  CREDENTIALS,
   EVENT_LOG,
   INVITATIONS,
   KERNEL_BUS,
@@ -47,13 +69,17 @@ import {
   KERNEL_LOG,
   KERNEL_REDIS,
   MEMBERS,
+  OAUTH_FLOW,
   ORG_PLUGIN_CONFIGS,
+  ORG_SETTINGS,
   ORGS,
   PROVIDER_REGISTRY,
+  QUESTIONS,
   RATE_LIMITER,
   SESSIONS,
   SETTINGS,
   SETUP,
+  TOOL_REGISTRY,
 } from "./tokens.js";
 
 /** 内核 API 的依赖：由 createKernel 传入，ApiModule 据此构造各领域服务。 */
@@ -75,6 +101,18 @@ export interface ApiDeps {
   registry: ProviderRegistry;
   /** 运行投递与中止。 */
   runs: RunControl;
+  /** 应用凭据（与 `Kernel.tools.credentials` 同一实例）。 */
+  credentials: Credentials;
+  /** 工具注册表（与 `Kernel.tools.registry` 同一实例）。 */
+  toolRegistry: ToolRegistry;
+  /** 工具调用审批（与 `Kernel.tools.approvals` 同一实例）。 */
+  approvals: ApprovalsService;
+  /** 工具调用的输入请求（与 `Kernel.tools.questions` 同一实例）。 */
+  questions: QuestionsService;
+  /** 工具定义漂移检测（与 `Kernel.tools.drift` 同一实例；手动刷新走同一套比对）。 */
+  drift: ToolDrift;
+  /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
+  appContent: AppContent;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -82,6 +120,7 @@ const CONTROLLERS: Type[] = [
   AuthController,
   MeController,
   OrgsController,
+  OrgSettingsController,
   InvitationsController,
   SetupController,
   AdminController,
@@ -90,6 +129,13 @@ const CONTROLLERS: Type[] = [
   ModelsController,
   ConversationsController,
   ConversationStreamController,
+  AppContentController,
+  AppsController,
+  ApprovalsController,
+  ToolGrantsController,
+  QuestionsController,
+  OAuthConnectController,
+  OAuthCallbackController,
 ];
 
 /**
@@ -136,6 +182,11 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [KERNEL_DB, SETTINGS, API_TOKENS],
     },
     {
+      provide: ORG_SETTINGS,
+      useFactory: (db: KernelDb) => new OrgSettingsService(db),
+      inject: [KERNEL_DB],
+    },
+    {
       provide: MEMBERS,
       useFactory: (db: KernelDb) => new MembersService(db),
       inject: [KERNEL_DB],
@@ -160,16 +211,25 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: PROVIDER_REGISTRY, useValue: deps.registry },
     {
       provide: AGENTS,
-      useFactory: (db: KernelDb, registry: ProviderRegistry) => new AgentsService(db, registry),
-      inject: [KERNEL_DB, PROVIDER_REGISTRY],
+      useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry) =>
+        new AgentsService(db, registry, tools),
+      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },
+    { provide: APP_CONTENT, useValue: deps.appContent },
     {
       provide: CONVERSATIONS,
-      useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService) =>
-        new ConversationsService(db, eventLog, agents, deps.runs, deps.log),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS],
+      useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService, content: AppContent) =>
+        new ConversationsService(
+          db,
+          eventLog,
+          agents,
+          deps.runs,
+          deps.log,
+          (orgId, accountId, refs) => content.resolveAttachments(orgId, accountId, refs),
+        ),
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT],
     },
     {
       provide: CONVERSATION_STREAMS,
@@ -187,6 +247,41 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           log: deps.log,
         }),
       inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
+    },
+    { provide: CREDENTIALS, useValue: deps.credentials },
+    { provide: TOOL_REGISTRY, useValue: deps.toolRegistry },
+    { provide: APPROVALS, useValue: deps.approvals },
+    { provide: QUESTIONS, useValue: deps.questions },
+    {
+      provide: APPS,
+      useFactory: (
+        db: KernelDb,
+        registry: ToolRegistry,
+        credentials: Credentials,
+        config: () => KernelConfig,
+      ) => new AppsService(db, registry, deps.host, credentials, config, deps.drift),
+      inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG],
+    },
+    {
+      provide: OAUTH_FLOW,
+      useFactory: (
+        db: KernelDb,
+        redis: Redis,
+        credentials: Credentials,
+        config: () => KernelConfig,
+        apps: AppsService,
+      ) =>
+        new OAuthFlow({
+          db,
+          redis,
+          credentials,
+          config,
+          log: deps.log,
+          onFirstConnect: async (orgId, appId, accountId) => {
+            await apps.refresh(orgId, appId, accountId, undefined, { trigger: "first_connect" });
+          },
+        }),
+      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, APPS],
     },
   ];
 }
