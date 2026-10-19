@@ -4,7 +4,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
 import { ChannelConnections } from "./channels/connections.service.js";
-import { ChannelInbound, NOOP_DIRECTORY_SYNC } from "./channels/inbound.js";
+import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
 import { ChannelSupervisor } from "./channels/supervisor.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
@@ -31,6 +31,7 @@ import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { createLogger, type KernelLogger } from "./log.js";
+import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
 import { PluginHost } from "./plugins/host.js";
@@ -139,6 +140,8 @@ export interface KernelIdentity {
   readonly sso: SsoFlow;
   /** 成员离职处理（移出、离开、通讯录同步共用）。 */
   readonly offboarding: Offboarding;
+  /** 通讯录同步（`directory@1`：每小时扫描、手动、`directory_changed` 提示）。 */
+  readonly directory: DirectorySync;
 }
 
 /** 渠道运行时（连接、入站、出站投递）。 */
@@ -404,31 +407,43 @@ export async function createKernel(
     log,
   });
   const external = new ExternalIdentities(kdb, () => current);
+  const offboarding = new Offboarding({
+    credentials,
+    approvals,
+    questions,
+    // 只用来写吊销标记（Redis 快速路径）；会话签发仍在 HTTP 层
+    sessions: new SessionService(kdb, redis, keyring, {
+      accessTtlSeconds: config.auth.accessTokenTtlSeconds,
+      refreshTtlDays: config.auth.refreshTokenTtlDays,
+    }),
+    eventLog,
+    runs: {
+      abortWaiting: async (c, runId, by) => {
+        const r = await waits.abortWaiting(c, runId, by);
+        enqueueOutbound(c);
+        return r;
+      },
+      abortIfOrphaned: (c, runId, by) => runQueue.abortIfOrphaned(c, runId, by),
+      requestAbort: (runId, by) => abort.request(runId, by),
+    },
+    db: kdb,
+    redis,
+    maintenance,
+    log,
+  });
   const identity: KernelIdentity = {
     external,
     binding: new IdentityBinding({ redis, config: () => current, external }),
     sso: new SsoFlow({ redis, config: () => current, host, external, log }),
-    offboarding: new Offboarding({
-      credentials,
-      approvals,
-      questions,
-      // 只用来写吊销标记（Redis 快速路径）；会话签发仍在 HTTP 层
-      sessions: new SessionService(kdb, redis, keyring, {
-        accessTtlSeconds: config.auth.accessTokenTtlSeconds,
-        refreshTtlDays: config.auth.refreshTokenTtlDays,
-      }),
-      eventLog,
-      runs: {
-        abortWaiting: async (c, runId, by) => {
-          const r = await waits.abortWaiting(c, runId, by);
-          enqueueOutbound(c);
-          return r;
-        },
-        abortIfOrphaned: (c, runId, by) => runQueue.abortIfOrphaned(c, runId, by),
-        requestAbort: (runId, by) => abort.request(runId, by),
-      },
+    offboarding,
+    // 通讯录同步：登记每小时扫描与同步任务（worker 角色执行）；手动与 directory_changed 也经它投递
+    directory: new DirectorySync({
       db: kdb,
       redis,
+      host,
+      orgPluginConfigs,
+      external,
+      offboarding,
       maintenance,
       log,
     }),
@@ -488,7 +503,7 @@ export async function createKernel(
       ),
       external,
       binding: identity.binding,
-      directorySync: NOOP_DIRECTORY_SYNC,
+      directorySync: identity.directory,
       outbound: channelOutbound,
       approvals,
       questions,

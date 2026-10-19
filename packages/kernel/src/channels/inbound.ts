@@ -27,18 +27,16 @@ export const MESSAGE_DEDUPE_TTL_SECONDS = 86_400;
 export const messageDedupeKey = (connectionId: string, messageId: string) =>
   `capk:channel-msg:${connectionId}:${messageId}`;
 
-/** 通讯录同步的投递接口（Task 12 实现：按 (组织, 插件) 每分钟去重的队列任务）。 */
+/** 通讯录同步的投递接口（实现见 orgs/directory-sync.ts：按 (组织, 插件) 每分钟去重的维护队列任务）。 */
 export interface DirectorySyncScheduler {
-  enqueue(orgId: string, plugin: string): Promise<void>;
+  /** 返回值（如 job id）不使用。 */
+  enqueue(orgId: string, plugin: string): Promise<unknown>;
 }
 
 /** 出站投递的投递接口（实现见 outbound.ts：把会话的新事件按 `channel_deliveries.last_seq` 续投到 IM）。 */
 export interface ChannelOutboundScheduler {
   enqueue(conversationId: string): Promise<void>;
 }
-
-/** Task 12 之前的占位：什么都不做。 */
-export const NOOP_DIRECTORY_SYNC: DirectorySyncScheduler = { enqueue: async () => {} };
 
 export interface ChannelInboundDeps {
   db: KernelDb;

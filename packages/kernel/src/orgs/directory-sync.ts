@@ -1,0 +1,510 @@
+import { randomUUID } from "node:crypto";
+import {
+  DIRECTORY_CAPABILITY,
+  type Directory,
+  type DirectoryMember,
+  type ExternalIdentity,
+  type Logger,
+} from "@capybara-hq/plugin-sdk";
+import type { Redis } from "ioredis";
+import type { KernelDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
+import { audit } from "../identity/audit.js";
+import type { ExternalIdentities } from "../identity/external.js";
+import type { PluginHost } from "../plugins/host.js";
+import type { OrgPluginConfigs } from "../plugins/org-config.js";
+import { ConversationLock } from "../runtime/conversation-lock.js";
+import type { Maintenance } from "../runtime/maintenance.js";
+import type { Offboarding } from "./offboarding.js";
+import { lockOrgAndAuthorize, tryLockOrg } from "./org-lock.js";
+
+/** 每小时扫描：维护队列任务名、job scheduler id（不含 `:`）与周期。 */
+export const DIRECTORY_SCAN_JOB = "directory-scan";
+export const DIRECTORY_SCAN_SCHEDULER_ID = "directory-scan-hourly";
+export const DIRECTORY_SCAN_EVERY_MS = 3_600_000;
+/** 一次 (组织, 插件) 同步的维护任务名。 */
+export const DIRECTORY_SYNC_JOB = "directory-sync";
+/** 同步锁的 Redis 键前缀（键为 `<前缀><orgId>:<plugin>`，带 TTL、持有期间续租）。 */
+export const DIRECTORY_SYNC_LOCK_PREFIX = "capk:directory-sync:";
+/** 单页 `listMembers` 的时限。 */
+export const DIRECTORY_PAGE_TIMEOUT_MS = 60_000;
+/** 一轮同步最多翻的页数：防止插件反复返回游标让任务无限长（超出按中途失败处理）。 */
+export const DIRECTORY_MAX_PAGES = 10_000;
+
+/** 触发来源：每小时扫描、入站 `directory_changed` 提示、管理员手动。 */
+export type DirectorySyncTrigger = "schedule" | "changed" | "manual";
+
+/** 完成的 job id 保留时长（秒）：保留期内同一 id 的重复投递被 BullMQ 去重。 */
+const KEEP_COMPLETED_SECONDS: Record<DirectorySyncTrigger, number> = {
+  schedule: 7_200,
+  changed: 120,
+  manual: 3_600,
+};
+const KEEP_FAILED = { age: 86_400 };
+
+/** 不同步的原因（陈旧任务、插件已停用 / 配置不再有效、组织已删除、另一同步在跑）。 */
+export type DirectorySkipReason =
+  | "plugin_unavailable"
+  | "org_not_found"
+  | "not_enabled"
+  | "config_invalid"
+  | "locked";
+
+export type DirectorySyncResult =
+  | { status: "skipped"; reason: DirectorySkipReason }
+  | {
+      status: "synced";
+      /** 新加入的成员关系数。 */
+      added: number;
+      /** 离职处理（撤销成员关系）的人数。 */
+      removed: number;
+      /** 是该组织最后一个 owner、因而跳过的人数。 */
+      skippedLastOwner: number;
+      /** 处理失败的成员数（资料不合规、加入或离职事务失败）。 */
+      failed: number;
+      /** 通讯录返回的成员总数（含离职的）。 */
+      total: number;
+      /** 分页没有完整走完或有成员处理失败：只加人，不移除任何人。 */
+      partial: boolean;
+    };
+
+/** 一个 (组织, 插件) 投递目标。 */
+export interface DirectorySyncTarget {
+  orgId: string;
+  plugin: string;
+  jobId: string;
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** UTC 小时桶，如 `2026102014`（不含 `:`）。 */
+export function hourBucket(d: Date = new Date()): string {
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}`;
+}
+
+/** UTC 分钟桶，如 `202610201405`。 */
+export function minuteBucket(d: Date = new Date()): string {
+  return `${hourBucket(d)}${pad(d.getUTCMinutes())}`;
+}
+
+/**
+ * 同步任务的 job id（不含 `:`）：扫描按小时桶（`directory-sync-<org>-<plugin>-<小时桶>`）、
+ * `directory_changed` 按分钟桶去重；手动触发每次唯一，不会被同一小时的扫描任务吞掉。
+ */
+export function directorySyncJobId(
+  orgId: string,
+  plugin: string,
+  trigger: DirectorySyncTrigger,
+  now: Date = new Date(),
+): string {
+  const base = `directory-sync-${orgId}-${plugin}`;
+  switch (trigger) {
+    case "schedule":
+      return `${base}-${hourBucket(now)}`;
+    case "changed":
+      return `${base}-changed-${minuteBucket(now)}`;
+    case "manual":
+      return `${base}-manual-${randomUUID()}`;
+  }
+}
+
+interface SyncJobData {
+  orgId: string;
+  plugin: string;
+  trigger: DirectorySyncTrigger;
+  requestedBy?: string;
+  requestedByToken?: string;
+}
+
+export interface DirectorySyncDeps {
+  db: KernelDb;
+  redis: Redis;
+  host: Pick<PluginHost, "list">;
+  orgPluginConfigs: Pick<OrgPluginConfigs, "get">;
+  external: Pick<ExternalIdentities, "resolve">;
+  offboarding: Pick<Offboarding, "offboard" | "afterCommit">;
+  /** 给了就登记每小时扫描与同步任务（worker 角色执行）；不给时只能直接调用 `sync`。 */
+  maintenance?: Pick<Maintenance, "add" | "handle" | "schedule">;
+  log: Pick<Logger, "warn" | "info">;
+}
+
+/** 组织已删除（同步途中）：停止本轮。 */
+class OrgGone extends Error {}
+
+type Eligible =
+  | { ok: true; directory: Directory; orgConfig: unknown }
+  | { ok: false; reason: Exclude<DirectorySkipReason, "locked"> };
+
+/**
+ * 通讯录同步（`directory@1`）：把企业通讯录同步为组织成员。框架无关。
+ *
+ * - 维护队列每小时 `directory-scan`：给每个「插件提供 `directory@1`、在该组织启用、组织级配置满足 schema」的
+ *   (组织, 插件) 投递一次同步（job id 按小时桶去重，多副本重复扫描只跑一次）；手动与 `directory_changed` 也投递同步。
+ * - 同一 (组织, 插件) 同时只跑一个同步（Redis 锁 `capk:directory-sync:<org>:<plugin>`，持有期间续租）；
+ *   锁被占时本任务直接结束——在跑的那一轮读的就是最新通讯录，漏掉的变化由下一次扫描补上。
+ * - 分页 `listMembers`：在职成员按 `<插件>:<租户>` + externalId 解析外部身份（不合并既有账号、不登录、不建会话），
+ *   不是成员就加入（角色 member，`memberships.source = "directory:<插件>"`），每人一个短事务。
+ * - **整轮分页成功走完、且没有成员处理失败**之后，才对「离职（active = false）或不再出现、且 source 为该通讯录」的
+ *   成员逐个走离职处理（每人一个事务：组织行锁 → 成员关系行锁 → `Offboarding.offboard`）；中途失败只加人不删人。
+ *   手动 / 邀请加入的成员（source 为空）永远不被同步移除；账号本身不停用。最后一个 owner 跳过并计数。
+ * - 审计 `org.directory.synced`（计数、是否不完整）。任务执行时再核对插件与配置：已停用的插件的陈旧任务什么都不做。
+ */
+export class DirectorySync {
+  private readonly lock: ConversationLock;
+
+  constructor(private readonly d: DirectorySyncDeps) {
+    this.lock = new ConversationLock(d.redis, d.log, DIRECTORY_SYNC_LOCK_PREFIX);
+    const m = d.maintenance;
+    if (m) {
+      m.schedule({
+        id: DIRECTORY_SCAN_SCHEDULER_ID,
+        name: DIRECTORY_SCAN_JOB,
+        everyMs: () => DIRECTORY_SCAN_EVERY_MS,
+      });
+      m.handle(DIRECTORY_SCAN_JOB, async () => {
+        const targets = await this.scan();
+        if (targets.length > 0) d.log.info("directory syncs enqueued", { count: targets.length });
+      });
+      m.handle(DIRECTORY_SYNC_JOB, async (job) => {
+        const data = job.data as SyncJobData;
+        const r = await this.sync(data.orgId, data.plugin, data);
+        if (r.status === "skipped") {
+          d.log.info("directory sync skipped", {
+            orgId: data.orgId,
+            plugin: data.plugin,
+            reason: r.reason,
+          });
+        }
+      });
+    }
+  }
+
+  /** 插件提供的 `directory@1`；未加载或不提供时 undefined。 */
+  private provider(plugin: string): Directory | undefined {
+    return this.d.host
+      .list("directory")
+      .find((e) => e.plugin === plugin && e.capability === DIRECTORY_CAPABILITY)?.impl as
+      | Directory
+      | undefined;
+  }
+
+  /** 组织存在、插件提供通讯录、在该组织启用且组织级配置满足 schema（复用 `OrgPluginConfigs.get` 的校验）。 */
+  private async eligible(orgId: string, plugin: string): Promise<Eligible> {
+    const directory = this.provider(plugin);
+    if (!directory) return { ok: false, reason: "plugin_unavailable" };
+    const org = await this.d.db
+      .selectFrom("orgs")
+      .select("id")
+      .where("id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!org) return { ok: false, reason: "org_not_found" };
+    let cfg: { enabled: boolean; config: unknown } | undefined;
+    try {
+      cfg = await this.d.orgPluginConfigs.get(orgId, plugin);
+    } catch (err) {
+      this.d.log.warn("directory sync: stored organization config is invalid", {
+        orgId,
+        plugin,
+        err,
+      });
+      return { ok: false, reason: "config_invalid" };
+    }
+    if (!cfg?.enabled) return { ok: false, reason: "not_enabled" };
+    return { ok: true, directory, orgConfig: cfg.config };
+  }
+
+  /**
+   * 投递一次同步（默认按 `directory_changed` 的分钟桶去重）；返回 job id。
+   * 入站 `directory_changed` 经 {@link DirectorySyncScheduler} 调用这里。
+   */
+  async enqueue(
+    orgId: string,
+    plugin: string,
+    trigger: DirectorySyncTrigger = "changed",
+    requestedBy?: { accountId: string; tokenId?: string | undefined },
+    now: Date = new Date(),
+  ): Promise<string> {
+    const m = this.d.maintenance;
+    if (!m) throw new Error("directory sync: maintenance queue is not available");
+    const jobId = directorySyncJobId(orgId, plugin, trigger, now);
+    if (jobId.includes(":")) throw new Error("directory sync: job id must not contain ':'");
+    const data: SyncJobData = {
+      orgId,
+      plugin,
+      trigger,
+      ...(requestedBy !== undefined && { requestedBy: requestedBy.accountId }),
+      ...(requestedBy?.tokenId !== undefined && { requestedByToken: requestedBy.tokenId }),
+    };
+    await m.add(DIRECTORY_SYNC_JOB, data, {
+      jobId,
+      removeOnComplete: { age: KEEP_COMPLETED_SECONDS[trigger] },
+      removeOnFail: KEEP_FAILED,
+    });
+    return jobId;
+  }
+
+  /**
+   * 管理员手动触发：组织行锁内实时复核 `org.members.manage`，再核对插件可同步
+   * （不提供通讯录 → `plugin.not_found`，未启用 → `plugin.not_enabled`，配置不再有效 → `plugin.config_invalid`），
+   * 投递一个唯一 id 的同步任务。
+   */
+  async request(
+    orgId: string,
+    plugin: string,
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<{ jobId: string }> {
+    await this.d.db
+      .transaction()
+      .execute((t) => lockOrgAndAuthorize(t, orgId, actorAccountId, "org.members.manage"));
+    const e = await this.eligible(orgId, plugin);
+    if (!e.ok) {
+      switch (e.reason) {
+        case "plugin_unavailable":
+          throw new ApiError("plugin.not_found", `Plugin ${plugin} does not provide a directory`);
+        case "org_not_found":
+          throw new ApiError("org.not_found", "Organization not found");
+        case "not_enabled":
+          throw new ApiError(
+            "plugin.not_enabled",
+            `Plugin ${plugin} is not enabled for this organization`,
+          );
+        case "config_invalid":
+          throw new ApiError(
+            "plugin.config_invalid",
+            `Invalid organization config for plugin ${plugin}`,
+          );
+      }
+    }
+    const jobId = await this.enqueue(orgId, plugin, "manual", {
+      accountId: actorAccountId,
+      tokenId: actorTokenId,
+    });
+    return { jobId };
+  }
+
+  /**
+   * 每小时扫描：给每个可同步的 (组织, 插件) 投递一次同步（job id 按小时桶），返回投递的目标。
+   * 已存配置不再满足 schema 的跳过（记 warn）；单个投递失败记 warn、继续其他目标。
+   */
+  async scan(now: Date = new Date()): Promise<DirectorySyncTarget[]> {
+    const plugins = this.d.host
+      .list("directory")
+      .filter((e) => e.capability === DIRECTORY_CAPABILITY)
+      .map((e) => e.plugin);
+    if (plugins.length === 0) return [];
+    const rows = await this.d.db
+      .selectFrom("plugin_org_configs")
+      .innerJoin("orgs", "orgs.id", "plugin_org_configs.org_id")
+      .select(["plugin_org_configs.org_id", "plugin_org_configs.plugin"])
+      .where("plugin_org_configs.enabled", "=", true)
+      .where("orgs.deleted_at", "is", null)
+      .where("plugin_org_configs.plugin", "in", plugins)
+      .orderBy("plugin_org_configs.org_id")
+      .orderBy("plugin_org_configs.plugin")
+      .execute();
+    const out: DirectorySyncTarget[] = [];
+    for (const r of rows) {
+      const e = await this.eligible(r.org_id, r.plugin);
+      if (!e.ok) continue;
+      try {
+        const jobId = await this.enqueue(r.org_id, r.plugin, "schedule", undefined, now);
+        out.push({ orgId: r.org_id, plugin: r.plugin, jobId });
+      } catch (err) {
+        this.d.log.warn("cannot enqueue directory sync", {
+          orgId: r.org_id,
+          plugin: r.plugin,
+          err,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** 执行一轮同步（维护任务的处理函数；测试可直接调用）。 */
+  async sync(
+    orgId: string,
+    plugin: string,
+    opts: {
+      trigger?: DirectorySyncTrigger;
+      requestedBy?: string | undefined;
+      requestedByToken?: string | undefined;
+    } = {},
+  ): Promise<DirectorySyncResult> {
+    const e = await this.eligible(orgId, plugin);
+    if (!e.ok) return { status: "skipped", reason: e.reason };
+    const lease = await this.lock.acquire(`${orgId}:${plugin}`, randomUUID());
+    if (!lease) return { status: "skipped", reason: "locked" };
+    const abort = new AbortController();
+    // 锁丢了（续租失败、过期后被他人取得）：停止本轮，不再移除任何人
+    lease.onLost(() => abort.abort(new Error("directory sync lock lost")));
+    try {
+      return await this.run(orgId, plugin, e.directory, e.orgConfig, abort.signal, opts);
+    } finally {
+      await lease.release().catch(() => {});
+    }
+  }
+
+  private async run(
+    orgId: string,
+    plugin: string,
+    directory: Directory,
+    orgConfig: unknown,
+    signal: AbortSignal,
+    opts: {
+      trigger?: DirectorySyncTrigger;
+      requestedBy?: string | undefined;
+      requestedByToken?: string | undefined;
+    },
+  ): Promise<DirectorySyncResult> {
+    const source = `directory:${plugin}`;
+    const counts = { added: 0, removed: 0, skippedLastOwner: 0, failed: 0, total: 0 };
+    /** 本轮仍在职的账号（只在本次任务内使用）。 */
+    const seen = new Set<string>();
+    let listed = false;
+    try {
+      let cursor: string | undefined;
+      for (let page = 0; ; page++) {
+        if (page >= DIRECTORY_MAX_PAGES) {
+          throw new Error(`directory returned more than ${DIRECTORY_MAX_PAGES} pages`);
+        }
+        signal.throwIfAborted();
+        const r = await directory.listMembers({
+          orgConfig,
+          ...(cursor !== undefined && { cursor }),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(DIRECTORY_PAGE_TIMEOUT_MS)]),
+        });
+        signal.throwIfAborted();
+        if (!Array.isArray(r?.members)) throw new Error("directory returned no members array");
+        for (const m of r.members) {
+          counts.total++;
+          // 离职的人在整轮完成后统一处理（只处理由本通讯录加入的）
+          if (m?.active !== true) continue;
+          try {
+            const { accountId, added } = await this.addMember(orgId, plugin, source, m);
+            seen.add(accountId);
+            if (added) counts.added++;
+          } catch (err) {
+            if (err instanceof OrgGone) throw err;
+            counts.failed++;
+            this.d.log.warn("directory sync: cannot add member", { orgId, plugin, err });
+          }
+        }
+        const next = r.next;
+        if (typeof next !== "string" || next === "") break;
+        if (next === cursor) throw new Error("directory returned the same cursor twice");
+        cursor = next;
+      }
+      listed = true;
+    } catch (err) {
+      this.d.log.warn("directory sync stopped before listing all members", { orgId, plugin, err });
+    }
+
+    let partial = !listed || counts.failed > 0;
+    if (!partial) {
+      const candidates = await this.d.db
+        .selectFrom("memberships")
+        .select("account_id")
+        .where("org_id", "=", orgId)
+        .where("source", "=", source)
+        .orderBy("account_id")
+        .execute();
+      for (const c of candidates) {
+        if (seen.has(c.account_id)) continue;
+        if (signal.aborted) {
+          partial = true;
+          break;
+        }
+        const outcome = await this.offboardOne(orgId, plugin, source, c.account_id);
+        if (outcome === "removed") counts.removed++;
+        else if (outcome === "last_owner") counts.skippedLastOwner++;
+        else if (outcome === "failed") counts.failed++;
+      }
+    }
+
+    await audit(this.d.db, {
+      ...(opts.requestedBy !== undefined && { actorAccountId: opts.requestedBy }),
+      ...(opts.requestedByToken !== undefined && { actorTokenId: opts.requestedByToken }),
+      orgId,
+      action: "org.directory.synced",
+      target: plugin,
+      detail: { plugin, trigger: opts.trigger ?? "manual", ...counts, partial },
+    });
+    return { status: "synced", ...counts, partial };
+  }
+
+  /**
+   * 一个在职成员：解析外部身份（不合并、不登录），不是成员就以 member 加入（source = 本通讯录）。
+   * 组织行锁内完成（与移出成员同一把锁），组织已删除 → {@link OrgGone}。
+   */
+  private async addMember(
+    orgId: string,
+    plugin: string,
+    source: string,
+    m: DirectoryMember,
+  ): Promise<{ accountId: string; added: boolean }> {
+    const tenantId = typeof m.tenantId === "string" ? m.tenantId : "";
+    const identity: ExternalIdentity = {
+      source: `${plugin}:${tenantId}`,
+      externalId: m.externalId,
+      tenantId,
+      ...(typeof m.email === "string" && { email: m.email }),
+      emailVerified: m.emailVerified === true,
+      displayName: m.displayName,
+    };
+    return this.d.db.transaction().execute(async (t) => {
+      if (!(await tryLockOrg(t, orgId))) throw new OrgGone("organization deleted during sync");
+      const { accountId } = await this.d.external.resolve(identity, t);
+      const inserted = await t
+        .insertInto("memberships")
+        .values({ org_id: orgId, account_id: accountId, role: "member", source })
+        .onConflict((oc) => oc.columns(["org_id", "account_id"]).doNothing())
+        .returning("account_id")
+        .executeTakeFirst();
+      if (inserted) {
+        await audit(t, {
+          orgId,
+          action: "org.member.added",
+          target: accountId,
+          detail: { role: "member", source },
+        });
+      }
+      return { accountId, added: inserted !== undefined };
+    });
+  }
+
+  /**
+   * 一个离职者：独立事务内先锁组织行、再锁其成员关系行（与 `switchCurrentOrg` / 移出成员同一顺序），
+   * 确认仍是本通讯录加入的，再走 `Offboarding.offboard`（吊销会话与令牌、删个人凭据、转交 agent 都在这个事务里）。
+   * 最后一个 owner → 回滚并返回 `last_owner`；期间已被移除或不再是本通讯录加入的 → `gone`。
+   */
+  private async offboardOne(
+    orgId: string,
+    plugin: string,
+    source: string,
+    accountId: string,
+  ): Promise<"removed" | "last_owner" | "gone" | "failed"> {
+    try {
+      const result = await this.d.db.transaction().execute(async (t) => {
+        if (!(await tryLockOrg(t, orgId))) return undefined;
+        const row = await t
+          .selectFrom("memberships")
+          .select("source")
+          .where("org_id", "=", orgId)
+          .where("account_id", "=", accountId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (row?.source !== source) return undefined;
+        return this.d.offboarding.offboard(t, orgId, accountId, "directory");
+      });
+      if (!result) return "gone";
+      await this.d.offboarding.afterCommit(result);
+      return "removed";
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "org.last_owner") return "last_owner";
+      this.d.log.warn("directory sync: cannot offboard member", { orgId, plugin, accountId, err });
+      return "failed";
+    }
+  }
+}

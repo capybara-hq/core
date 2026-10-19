@@ -30,6 +30,7 @@ import {
   SsoController,
 } from "../identity/sso.controller.js";
 import type { KernelIdentity } from "../kernel.js";
+import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
 import { InvitationsService } from "../orgs/invitations.service.js";
 import { MembersService } from "../orgs/members.service.js";
@@ -70,6 +71,7 @@ import {
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
+  DIRECTORY_SYNC,
   EVENT_LOG,
   EXTERNAL_IDENTITIES,
   IDENTITY_BINDING,
@@ -157,6 +159,7 @@ const CONTROLLERS: Type[] = [
   BindController,
   MeIdentitiesController,
   ChannelConnectionsController,
+  DirectorySyncController,
 ];
 
 /**
@@ -275,6 +278,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: SSO_FLOW, useValue: deps.identity.sso },
     { provide: OFFBOARDING, useValue: deps.identity.offboarding },
     { provide: CHANNEL_CONNECTIONS, useValue: deps.channels },
+    { provide: DIRECTORY_SYNC, useValue: deps.identity.directory },
     { provide: TOOL_REGISTRY, useValue: deps.toolRegistry },
     { provide: APPROVALS, useValue: deps.approvals },
     { provide: QUESTIONS, useValue: deps.questions },

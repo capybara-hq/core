@@ -99,3 +99,6 @@ export const OFFBOARDING = Symbol("OFFBOARDING");
 
 /** `ChannelConnections`（组织的渠道连接）的注入令牌。 */
 export const CHANNEL_CONNECTIONS = Symbol("CHANNEL_CONNECTIONS");
+
+/** `DirectorySync`（通讯录同步）的注入令牌。 */
+export const DIRECTORY_SYNC = Symbol("DIRECTORY_SYNC");
