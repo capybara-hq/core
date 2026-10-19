@@ -124,7 +124,8 @@ export async function runPluginsReview(
 /**
  * `capybara plugins approve <name>`：展示插件当前的完整权限（新增项标 `+`、减少项标 `-`），
  * 终端确认（`--yes` 跳过）后写入快照（source cli）并记审计 `plugin.permissions_approved`（无 actor）。
- * 内核在启动时读快照，批准后需重启内核生效。退出码：0 成功或无需批准 / 1 失败或未确认。
+ * 内核在启动时读快照，批准后需重启内核生效。
+ * 退出码：0 成功或无需批准 / 1 失败、未确认，或自身已批准但被待批准的依赖阻塞（输出阻塞的提供方）。
  */
 export async function runPluginsApprove(
   opts: { name: string; yes: boolean },
@@ -148,6 +149,20 @@ export async function runPluginsApprove(
       const snap = snapshots.get(name);
       const { added, removed } = diffPermissions(snap?.permissions, target.permissions);
       if (snap && added.length === 0) {
+        // 自身已批准但被依赖阻塞：点名阻塞它的提供方，退出码 1（批准它本身无济于事）
+        const decision = planApprovals(
+          plugins.map((p) => p.manifest),
+          new Map(plugins.map((p) => [p.manifest.name, p.permissions])),
+          snapshots,
+        ).find((d) => d.plugin === name);
+        if (decision?.action === "pending" && decision.pending.reason === "dependency") {
+          const why = (decision.pending.blockedBy ?? [])
+            .map((b) => `${b.capability} (provided only by ${b.providers.join(", ")})`)
+            .join("; ");
+          return fail(
+            `${name} ${version} is already approved but is not loaded because it requires ${why}, which await approval; approve those plugins instead`,
+          );
+        }
         io.stdout.write(
           `${name} ${version} has no new permissions to approve (the kernel loads it and updates the snapshot when permissions shrink).\n`,
         );

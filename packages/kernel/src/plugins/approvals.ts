@@ -1,5 +1,6 @@
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
+import semver from "semver";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import { diffPermissions, type PermissionSet, permissionKeys } from "./permission-set.js";
@@ -46,7 +47,7 @@ export type ApprovalDecision =
 /**
  * 按依赖拓扑序（`ordered`）比对快照，决定每个插件加载还是待批准：
  * - 无快照或比快照多出任何一项 → 待批准（`autoApprove` 时改为加载，由调用方写快照）；
- * - 权限变少或不变 → 加载，`changed` 表示快照需要更新（权限或版本变了）；
+ * - 权限变少或不变 → 加载，`changed` 表示快照需要更新（权限或版本变了）；版本比快照旧时照常加载但不更新快照；
  * - 某个 `requires` 能力的提供方全都不加载 → 同样不加载（reason dependency）；`optional` 不受影响。
  */
 export function planApprovals(
@@ -101,10 +102,13 @@ export function planApprovals(
       continue;
     }
     // 权限集合由清单规范化得到，键相同即集合相同（jsonb 会重排对象键，不能比 JSON 文本）
+    // 比快照版本旧（滚动升级中重启的旧副本、或有意回滚）：照常加载但不缩减快照，
+    // 否则旧副本会把新版本已批准的权限写没，之后的新副本又变成待批准
     const changed =
       !snap ||
-      snap.version !== m.version ||
-      permissionKeys(snap.permissions).join("\n") !== permissionKeys(set).join("\n");
+      (!isOlder(m.version, snap.version) &&
+        (snap.version !== m.version ||
+          permissionKeys(snap.permissions).join("\n") !== permissionKeys(set).join("\n")));
     out.push({
       plugin: m.name,
       action: "load",
@@ -116,6 +120,10 @@ export function planApprovals(
   }
   return out;
 }
+
+/** `version` 是否比 `than` 旧（任一方不是合法 semver 时视为不旧）。 */
+const isOlder = (version: string, than: string) =>
+  semver.valid(version) !== null && semver.valid(than) !== null && semver.lt(version, than);
 
 /** 读写权限快照（直连 PG；内核启动与 CLI 共用）。 */
 export class PluginApprovals {
@@ -188,13 +196,27 @@ export class PluginApprovals {
 
   /**
    * 权限变少或不变（已批准）时更新快照的权限集合与版本；批准人、批准时间与来源保持不变。
-   * 只在快照仍存在时更新（不新建：没有快照的插件必须先批准）。
+   * 在事务内锁行后重新核对（多副本并发启动时以库里的当前快照为准）：快照不存在、`version` 比快照旧、
+   * 或当前集合相对快照有新增时不更新。返回是否更新。
    */
-  async refresh(plugin: string, version: string, permissions: PermissionSet): Promise<void> {
-    await this.db
-      .updateTable("plugin_permission_snapshots")
-      .set({ version, permissions: JSON.stringify(permissions) })
-      .where("plugin", "=", plugin)
-      .execute();
+  async refresh(plugin: string, version: string, permissions: PermissionSet): Promise<boolean> {
+    return this.db.transaction().execute(async (trx) => {
+      const row = await trx
+        .selectFrom("plugin_permission_snapshots")
+        .select(["version", "permissions"])
+        .where("plugin", "=", plugin)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!row || isOlder(version, row.version)) return false;
+      if (diffPermissions(row.permissions as PermissionSet, permissions).added.length > 0) {
+        return false;
+      }
+      await trx
+        .updateTable("plugin_permission_snapshots")
+        .set({ version, permissions: JSON.stringify(permissions) })
+        .where("plugin", "=", plugin)
+        .execute();
+      return true;
+    });
   }
 }

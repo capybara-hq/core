@@ -158,6 +158,36 @@ describe("PluginHost.load 的权限快照闸门", () => {
     expect(JSON.stringify(snap?.permissions)).not.toContain("a.example.com");
   });
 
+  it("升级版本、权限完全相同 → 不需批准直接加载，快照版本跟上", async () => {
+    await approve(fx("perm-a"));
+    const h = host();
+    await h.load([fx("perm-a-same")]);
+    expect(h.manifests().map((m) => m.version)).toEqual(["0.1.1"]);
+    expect(h.pending()).toEqual([]);
+    const snap = await snapshot("perm-a");
+    expect(snap?.version).toBe("0.1.1");
+    expect(snap?.source).toBe("cli");
+  });
+
+  it("滚动升级中旧版本副本重启（权限是快照子集）→ 照常加载但不缩减快照，新版本之后仍直接加载", async () => {
+    await approve(fx("perm-a-more"));
+    const old = host();
+    await old.load([fx("perm-a")]);
+    expect(old.manifests().map((m) => m.version)).toEqual(["0.1.0"]);
+    expect(old.pending()).toEqual([]);
+    const snap = await snapshot("perm-a");
+    expect(snap?.version).toBe("0.2.0");
+    expect(JSON.stringify(snap?.permissions)).toContain("b.example.com");
+    // 并发场景下的兜底：直接调用 refresh 也不会用旧版本覆盖
+    const [v1] = await PluginHost.inspect([fx("perm-a")]);
+    expect(await approvals().refresh("perm-a", "0.1.0", v1?.permissions as never)).toBe(false);
+    expect((await snapshot("perm-a"))?.version).toBe("0.2.0");
+    const next = host();
+    await next.load([fx("perm-a-more")]);
+    expect(next.manifests().map((m) => m.version)).toEqual(["0.2.0"]);
+    expect(next.pending()).toEqual([]);
+  });
+
   it("autoApprove：自动写快照（source auto）并加载，启动日志醒目提示", async () => {
     const h = host({ autoApprove: true });
     await h.load([fx("perm-a"), fx("perm-dep")]);

@@ -38,7 +38,7 @@ export interface PermissionSet {
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sortedUnique = (xs: readonly string[] | undefined) => [...new Set(xs ?? [])].sort(cmp);
 
-const IDENT = String.raw`(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)`;
+const IDENT = '(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)';
 const CREATE_TABLE_RE = new RegExp(
   String.raw`\bcreate\s+(?:(?:global|local)\s+)?(?:(?:temp|temporary|unlogged)\s+)?table\s+(?:if\s+not\s+exists\s+)?(${IDENT}(?:\s*\.\s*${IDENT})?)`,
   "gi",
@@ -55,6 +55,13 @@ const stripComments = (sql: string) =>
 /**
  * 解析 SQL 中 `CREATE [TEMP|UNLOGGED] TABLE [IF NOT EXISTS] [schema.]name` 的表名（按出现顺序，不去重）；
  * 其他语句忽略。schema 等于 `ownSchema` 时去掉前缀（与不带前缀等价），其他 schema 保留 `schema.name`。
+ *
+ * 已知局限（够用即可，不是 SQL 解析器）：
+ * - 只看 `CREATE TABLE`：`ALTER TABLE ... RENAME TO` 改名后的新表名不会出现；视图 / 物化视图、
+ *   序列、函数等其他建对象语句不计入；
+ * - 不带引号的标识符只识别 ASCII（字母、数字、`_`、`$`），不带引号的非 ASCII 表名会被截断或漏掉；
+ * - 去注释不理会字符串字面量与 `$$` 块：字符串里的 `--` / `/*` 会被当作注释，字符串里的
+ *   `CREATE TABLE x` 文本会被误计。
  */
 export function parseCreatedTables(sql: string, ownSchema: string): string[] {
   const out: string[] = [];

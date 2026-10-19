@@ -22,7 +22,7 @@ pnpm capybara start       # 监听 :8080（CAPYBARA_HTTP__PORT 可改）
 ```
 
 插件权限：插件首次出现、或升级后清单比已批准的权限多出任何一项时**不加载**（启动日志有 warn），依赖它的插件同样不加载；
-权限变少或不变直接加载。生产不要开 `autoApprove`，改用 CLI 审阅并批准（直连 PG），批准后重启内核生效：
+权限变少或不变直接加载。生产不要开 `autoApprove`，改用 CLI 审阅并批准（直连 PG，会先执行内核迁移），批准后重启内核生效：
 
 ```bash
 pnpm capybara plugins review                    # 列出待批准插件与新增的权限项

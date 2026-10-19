@@ -9,6 +9,13 @@ const TODO = fileURLToPath(new URL("../../../plugins/todo/src/index.ts", import.
 const COUNTER = fileURLToPath(
   new URL("../../../plugins/example-counter/src/index.ts", import.meta.url),
 );
+/** 内核测试夹具：perm-dep 必需依赖只由 perm-a 提供的 counter@1。 */
+const kernelFixture = (n: string) =>
+  fileURLToPath(
+    new URL(`../../../packages/kernel/test/fixtures/plugins/${n}/index.ts`, import.meta.url),
+  );
+const PERM_A = kernelFixture("perm-a");
+const PERM_DEP = kernelFixture("perm-dep");
 
 let pg: TestContainer;
 
@@ -20,7 +27,7 @@ afterAll(async () => {
 });
 
 /** 测试库的环境变量：剥掉父进程的 CAPYBARA_*，Redis 给不可达地址（plugins 命令不应连接它）。 */
-function testEnv(): NodeJS.ProcessEnv {
+function testEnv(plugins: string[] = [TODO, COUNTER]): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (!k.startsWith("CAPYBARA_")) env[k] = v;
@@ -30,7 +37,7 @@ function testEnv(): NodeJS.ProcessEnv {
     CAPYBARA_DB__URL: pg.url,
     CAPYBARA_REDIS__URL: "redis://127.0.0.1:1",
     CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
-    CAPYBARA_PLUGINS: JSON.stringify([TODO, COUNTER]),
+    CAPYBARA_PLUGINS: JSON.stringify(plugins),
   };
 }
 
@@ -38,11 +45,12 @@ function testEnv(): NodeJS.ProcessEnv {
 function run(
   args: string[],
   stdin = "",
+  plugins?: string[],
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("pnpm", ["--silent", "capybara", ...args], {
       cwd: REPO_ROOT,
-      env: testEnv(),
+      env: testEnv(plugins),
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -142,5 +150,17 @@ describe("capybara plugins review / approve", () => {
     const unknown = await run(["plugins", "approve", "nope", "--yes"]);
     expect(unknown.code).toBe(1);
     expect(unknown.stderr).toContain("nope");
+  }, 60_000);
+
+  it("自身已批准、只被待批准的依赖阻塞 → 点名阻塞的提供方，退出码 1", async () => {
+    const plugins = [PERM_A, PERM_DEP];
+    const first = await run(["plugins", "approve", "perm-dep", "--yes"], "", plugins);
+    expect(first.code, first.stderr).toBe(0);
+    const review = await run(["plugins", "review"], "", plugins);
+    expect(review.stdout).toContain("perm-dep 0.1.0: not loaded: requires counter@1");
+    const again = await run(["plugins", "approve", "perm-dep", "--yes"], "", plugins);
+    expect(again.code).toBe(1);
+    expect(again.stderr).toContain("counter@1 (provided only by perm-a)");
+    expect(again.stdout).not.toMatch(/no new permissions/i);
   }, 60_000);
 });

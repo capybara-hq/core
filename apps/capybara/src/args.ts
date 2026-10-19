@@ -21,7 +21,8 @@ export const USAGE = `Usage:
                                                (one line) from stdin, e.g.
                                                echo "$PW" | capybara admin create ...
   capybara plugins review                      List plugins awaiting permission approval and
-                                               the permissions they add
+                                               the permissions they add (runs kernel
+                                               migrations first; connects to PostgreSQL only)
   capybara plugins approve <name> [--yes]      Approve a plugin's current permissions (asks for
                                                confirmation unless --yes); restart the kernel
                                                to apply

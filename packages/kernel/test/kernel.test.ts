@@ -257,12 +257,25 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
     );
     expect(r.map((x) => x.schema)).toEqual(["capybara"]);
     expect(pending).toEqual(["perm-a"]);
+    // fixture 可能已被本文件其他用例自动批准：删掉其快照，使它同样待批准（它有 GET /hello 路由）
+    const c = new pg.Client({ connectionString: pgc.url });
+    await c.connect();
+    try {
+      await c.query("DELETE FROM capybara.plugin_permission_snapshots WHERE plugin = 'fixture'");
+    } finally {
+      await c.end();
+    }
     const k = await kernel(
-      cfg({ plugins: [fx("perm-a")], pluginPermissions: { autoApprove: false } }),
+      cfg({ plugins: [fx("perm-a"), fx("fixture")], pluginPermissions: { autoApprove: false } }),
     );
     await k.start();
     expect(k.host.manifests()).toEqual([]);
-    expect(k.host.pending().map((p) => [p.plugin, p.reason])).toEqual([["perm-a", "new"]]);
+    expect(k.host.pending().map((p) => [p.plugin, p.reason])).toEqual([
+      ["perm-a", "new"],
+      ["fixture", "new"],
+    ]);
+    const res = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
+    expect(res.statusCode).toBe(404);
   });
 });
 
