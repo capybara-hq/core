@@ -166,7 +166,7 @@ describe("OrgPluginConfigs", () => {
     const list = await svc.list(org.id);
     expect(list.map((v) => v.plugin)).toEqual(["fixture", "orgcfg"]);
     const fixture = list.find((v) => v.plugin === "fixture");
-    expect(fixture).toEqual({
+    expect(fixture).toMatchObject({
       plugin: "fixture",
       version: "0.1.0",
       enabled: false,

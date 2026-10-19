@@ -107,7 +107,7 @@ describe("组织插件配置 HTTP", () => {
       payload: body,
     });
     expect(put.statusCode).toBe(200);
-    expect(put.json()).toEqual({
+    expect(put.json()).toMatchObject({
       plugin: {
         plugin: "orgcfg",
         version: "1.2.3",

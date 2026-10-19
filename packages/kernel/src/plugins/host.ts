@@ -83,6 +83,8 @@ export function deploymentConfigHash(schema: core.$ZodType | undefined, config: 
 
 interface Loaded {
   manifest: PluginManifest;
+  /** 加载时计算的权限集合（清单不可变，进程内只读）。 */
+  permissions: PermissionSet;
   /** 部署配置摘要，见 {@link deploymentConfigHash}。 */
   configHash: string;
   provided: Map<CapabilityRef, unknown>;
@@ -464,6 +466,7 @@ export class PluginHost {
       }
       this.loaded.push({
         manifest,
+        permissions: sets.get(name) as PermissionSet,
         configHash: deploymentConfigHash(schema, config),
         provided: ctx.provided,
         routes: ctx.routes,
@@ -547,6 +550,11 @@ export class PluginHost {
   /** 已加载插件的清单（按加载顺序，即依赖拓扑序）。 */
   manifests(): PluginManifest[] {
     return this.loaded.map((l) => l.manifest);
+  }
+
+  /** 已加载插件的权限集合（加载时计算，清单不可变）；未加载返回 undefined。 */
+  permissionSet(plugin: string): PermissionSet | undefined {
+    return this.loaded.find((l) => l.manifest.name === plugin)?.permissions;
   }
 
   /** 所有插件注册的 HTTP 路由（路径已带 `/plugins/<name>` 前缀）。 */
