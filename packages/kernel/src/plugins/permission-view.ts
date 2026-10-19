@@ -16,10 +16,16 @@ export interface PermissionGroup {
     | "hooks"
     | "models"
     | "network";
-  /** 敏感类别：密钥、公开路由、工具、hook。 */
+  /** 敏感类别：密钥、公开路由、工具、hook；「提供」一组含 {@link SENSITIVE_CAPABILITIES} 时也算。 */
   sensitive: boolean;
   items: string[];
 }
+
+/**
+ * 敏感的能力：`directory@1` 能把人加进组织（并为其建账号、建身份）、`identity-source@1` 决定谁能登录成哪个账号。
+ * 插件提供其中任何一个时，「提供」一组标为敏感。
+ */
+export const SENSITIVE_CAPABILITIES: readonly string[] = ["directory@1", "identity-source@1"];
 
 /** 把权限集合整理成分组清单（固定顺序，空组省略）。纯函数。 */
 export function permissionGroups(set: PermissionSet): PermissionGroup[] {
@@ -32,7 +38,11 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
   );
   const secretItems = [...(p.secrets ? ["secret store"] : []), ...secretFields];
   const groups: PermissionGroup[] = [
-    { category: "provides", sensitive: false, items: set.provides },
+    {
+      category: "provides",
+      sensitive: set.provides.some((c) => SENSITIVE_CAPABILITIES.includes(c)),
+      items: set.provides,
+    },
     { category: "requires", sensitive: false, items: set.requires },
     { category: "optional", sensitive: false, items: set.optional },
     { category: "config", sensitive: false, items: configFields },

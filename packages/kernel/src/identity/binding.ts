@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
+import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExternalIdentities } from "./external.js";
 
@@ -45,11 +46,13 @@ const view = (r: BindRecord): PendingBinding => ({
 
 /**
  * IM 里识别不出的人：内核发一个一次性绑定链接，本人登录网页后确认，把该 IM 身份绑到当前账号。
- * 令牌 `cap_bind_<32 字节>`，Redis `capk:bind:<sha256>` 15 分钟、单次有效（确认时 GETDEL）。框架无关。
+ * 令牌 `cap_bind_<32 字节>`，Redis `capk:bind:<sha256>` 15 分钟、单次有效（确认时 GETDEL）。
+ * 查看与确认时都复核发出链接的渠道连接仍可用（存在、未删除、其插件仍在该组织启用），否则 `bind.invalid`。框架无关。
  */
 export class IdentityBinding {
   constructor(
     private readonly deps: {
+      db: KernelDb;
       redis: Redis;
       config: () => KernelConfig;
       external: ExternalIdentities;
@@ -74,11 +77,14 @@ export class IdentityBinding {
     if (!TOKEN_RE.test(token)) throw invalid();
     const raw = await this.deps.redis.get(tokenKey(token));
     if (raw === null) throw invalid();
-    return view(JSON.parse(raw) as BindRecord);
+    const rec = JSON.parse(raw) as BindRecord;
+    if (!(await this.connectionUsable(rec.connectionId))) throw invalid();
+    return view(rec);
   }
 
   /**
-   * 把令牌里的身份绑到 `accountId`：先 GETDEL 消耗令牌（并发确认只有一个拿到），再绑定；
+   * 把令牌里的身份绑到 `accountId`：先 GETDEL 消耗令牌（并发确认只有一个拿到），复核渠道连接仍可用
+   * （否则 `bind.invalid`：连接删除或插件停用后，旧链接不能再绑定），再绑定；
    * 已绑定他人 → `identity.taken`（令牌同样作废，需在 IM 里重新获取）。
    */
   async bind(token: string, accountId: string): Promise<PendingBinding> {
@@ -86,7 +92,25 @@ export class IdentityBinding {
     const raw = await this.deps.redis.getdel(tokenKey(token));
     if (raw === null) throw invalid();
     const rec = JSON.parse(raw) as BindRecord;
+    if (!(await this.connectionUsable(rec.connectionId))) throw invalid();
     await this.deps.external.link(accountId, rec.identity);
     return view(rec);
+  }
+
+  /** 渠道连接存在、未软删除，且其插件在连接所属组织启用。 */
+  private async connectionUsable(connectionId: string): Promise<boolean> {
+    const row = await this.deps.db
+      .selectFrom("channel_connections")
+      .innerJoin("plugin_org_configs", (j) =>
+        j
+          .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id")
+          .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin"),
+      )
+      .select("channel_connections.id")
+      .where("channel_connections.id", "=", connectionId)
+      .where("channel_connections.deleted_at", "is", null)
+      .where("plugin_org_configs.enabled", "=", true)
+      .executeTakeFirst();
+    return row !== undefined;
   }
 }

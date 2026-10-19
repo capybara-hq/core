@@ -25,7 +25,12 @@ export interface IdentitiesTable {
   email_verified: Generated<boolean>;
   profile: Json;
   created_at: Ts;
+  /** 0019：身份行如何建立（Ruling A18）；null 为旧行，按 `sso` 处理。 */
+  linked_via: ColumnType<LinkedVia | null, LinkedVia | null | undefined, LinkedVia | null>;
 }
+
+/** 身份行的建立方式：IM 绑定链接、第三方登录、通讯录同步、本地登录名。 */
+export type LinkedVia = "bind" | "sso" | "directory" | "local";
 
 export interface LocalPasswordsTable {
   account_id: string;
@@ -440,9 +445,18 @@ export interface OrgAnonymousAccountsTable {
   created_at: Ts;
 }
 
+/** 0019：通讯录排除（Ruling A20）——手动移出 / 离开的通讯录成员，同步不再加回。 */
+export interface DirectoryExclusionsTable {
+  org_id: string;
+  account_id: string;
+  plugin: string;
+  created_at: Ts;
+  created_by: string | null;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
- * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql 与 0018_channels.sql。
+ * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
  */
 export interface KernelDatabase {
   accounts: AccountsTable;
@@ -479,6 +493,7 @@ export interface KernelDatabase {
   channel_deliveries: ChannelDeliveriesTable;
   channel_card_messages: ChannelCardMessagesTable;
   org_anonymous_accounts: OrgAnonymousAccountsTable;
+  directory_exclusions: DirectoryExclusionsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

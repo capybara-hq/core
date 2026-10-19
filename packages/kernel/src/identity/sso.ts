@@ -9,7 +9,7 @@ import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
 import type { PluginHost } from "../plugins/host.js";
 import { isSafeReturnPath } from "../tools/oauth/flow.js";
-import { type ExternalIdentities, identityPlugin } from "./external.js";
+import { type ExternalIdentities, IdentityNotVerified } from "./external.js";
 
 /** state 的有效期（秒）。 */
 export const SSO_STATE_TTL_SECONDS = 600;
@@ -32,6 +32,7 @@ export type SsoLoginError =
   | "sso.session_mismatch"
   | "sso.access_denied"
   | "sso.provider_error"
+  | "sso.identity_not_verified"
   | "auth.account_disabled";
 
 const stateKey = (state: string) => `capk:sso-state:${state}`;
@@ -53,6 +54,8 @@ interface StateRecord {
   returnTo: string;
   /** 浏览器绑定值的 SHA-256。 */
   binding: string;
+  /** PKCE verifier（43 字符 base64url）；授权地址上的 challenge 为其 SHA-256。 */
+  codeVerifier: string;
 }
 
 /** 一个有效的浏览器绑定值（复用请求里已有的，否则新生成）。 */
@@ -80,8 +83,12 @@ export type SsoCallbackResult =
 
 /**
  * 第三方登录（`identity-source@1`）：发起时生成 state（32 字节随机串，Redis `capk:sso-state:<state>` 10 分钟、
- * 单次有效，内含插件名、nonce、redirect_uri、回跳页面与浏览器绑定值的哈希），回调时先取后删 state、核对绑定 Cookie，
- * 再交给插件换取外部身份并解析到账号。会话由 controller 在成功后创建。状态全部在 Redis，没有进程内状态。
+ * 单次有效，内含插件名、nonce、PKCE verifier、redirect_uri、回跳页面与浏览器绑定值的哈希），授权地址带 PKCE
+ * challenge（S256）；回调时先取后删 state、核对绑定 Cookie，再交给插件（连同 verifier）换取外部身份并解析到账号。
+ * 会话由 controller 在成功后创建。状态全部在 Redis，没有进程内状态。
+ *
+ * 已登录的用户也可以发起（「登录状态下绑定」）：回调请求带着同一账号的 Web 会话时，经 IM 绑定链接建立的身份
+ * 由此证明本人控制该外部身份，升级为可登录（Ruling A18，见 `ExternalIdentities.resolve`）。
  */
 export class SsoFlow {
   constructor(private readonly deps: SsoFlowDeps) {}
@@ -133,6 +140,7 @@ export class SsoFlow {
     if (!src || !this.deps.config().http.publicUrl) return this.loginError("sso.unavailable");
     const state = b64url();
     const nonce = b64url();
+    const codeVerifier = b64url();
     const redirectUri = this.redirectUri(plugin);
     let url: string;
     try {
@@ -141,6 +149,8 @@ export class SsoFlow {
         redirectUri,
         state,
         nonce,
+        codeChallenge: sha256(codeVerifier),
+        codeChallengeMethod: "S256",
       });
       const proto = new URL(url).protocol;
       if (proto !== "https:" && proto !== "http:") throw new Error("authorize URL must be http(s)");
@@ -154,6 +164,7 @@ export class SsoFlow {
       redirectUri,
       returnTo: safeReturnTo(returnTo),
       binding: sha256(binding),
+      codeVerifier,
     };
     await this.deps.redis.set(stateKey(state), JSON.stringify(rec), "EX", SSO_STATE_TTL_SECONDS);
     return url;
@@ -161,13 +172,17 @@ export class SsoFlow {
 
   /**
    * 处理身份源的回跳。state 先取后删（无论成败都不能再用）；state 属于别的插件 → `sso.state_invalid`；
-   * 绑定 Cookie 不符 → `sso.session_mismatch`；身份源报错只映射为原因码；插件交回的身份源键必须属于它自己
-   * （`<插件名>:…`），否则按 `sso.provider_error` 拒绝。成功则解析到账号（不判断账号状态，由调用方处理）。
+   * 绑定 Cookie 不符 → `sso.session_mismatch`；身份源报错只映射为原因码；插件交回的身份源键必须由内核推导得出
+   * （`${插件名}:${identity.tenantId}`，Ruling A19），否则按 `sso.provider_error` 拒绝。
+   * 身份行经 IM 绑定建立（或由不受信任租户的通讯录建立）且 `sessionAccountId` 不是其账号 → `sso.identity_not_verified`
+   * （Ruling A18）。成功则解析到账号（不判断账号状态，由调用方处理）。
+   * `sessionAccountId`：回调请求已带着的 Web 会话的账号（未登录时省略）。
    */
   async callback(
     plugin: string,
     query: Record<string, string>,
     binding: string | undefined,
+    sessionAccountId?: string,
   ): Promise<SsoCallbackResult> {
     const state = query.state;
     if (state === undefined || !STATE_RE.test(state))
@@ -195,21 +210,37 @@ export class SsoFlow {
         query,
         nonce: rec.nonce,
         signal: AbortSignal.timeout(SSO_CALLBACK_TIMEOUT_MS),
+        codeVerifier: rec.codeVerifier,
       });
     } catch (err) {
       this.deps.log.warn("identity source callback failed", { plugin, err });
       return { ok: false, error: "sso.provider_error" };
     }
-    if (typeof identity?.source !== "string" || identityPlugin(identity.source) !== plugin) {
-      this.deps.log.warn("identity source returned a source key of another plugin", { plugin });
+    // 身份源键由内核推导（Ruling A19）：插件只能为自己、为它报出的租户声明身份
+    if (
+      typeof identity?.tenantId !== "string" ||
+      identity.source !== `${plugin}:${identity.tenantId}`
+    ) {
+      this.deps.log.warn("identity source returned a source key that does not match its tenant", {
+        plugin,
+      });
       return { ok: false, error: "sso.provider_error" };
     }
     let accountId: string;
     try {
       // 只有登录路径允许按已验证邮箱合并（Ruling A9）
-      accountId = (await this.deps.external.resolve(identity, undefined, { allowMerge: true }))
-        .accountId;
+      accountId = (
+        await this.deps.external.resolve(identity, undefined, {
+          allowMerge: true,
+          linkedVia: "sso",
+          login: sessionAccountId === undefined ? {} : { sessionAccountId },
+        })
+      ).accountId;
     } catch (err) {
+      if (err instanceof IdentityNotVerified) {
+        this.deps.log.warn("sign-in with an unverified linked identity refused", { plugin });
+        return { ok: false, error: "sso.identity_not_verified" };
+      }
       if (!(err instanceof ApiError)) throw err;
       this.deps.log.warn("external identity rejected", { plugin, err });
       return { ok: false, error: "sso.provider_error" };

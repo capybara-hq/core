@@ -39,11 +39,12 @@ describe("登录错误码", () => {
   it("parseLoginError：已知码原样、未知码 → unknown、没有 → null", () => {
     expect(parseLoginError("?error=sso.access_denied")).toBe("sso.access_denied");
     expect(parseLoginError("?error=auth.account_disabled")).toBe("auth.account_disabled");
+    expect(parseLoginError("?error=sso.identity_not_verified")).toBe("sso.identity_not_verified");
     expect(parseLoginError("?error=<script>")).toBe("unknown");
     expect(parseLoginError("?x=1")).toBeNull();
   });
 
-  it("六个回跳错误码都有 zh / en 文案（不回显服务器文本）", () => {
+  it("每个回跳错误码都有 zh / en 文案（不回显服务器文本）", () => {
     for (const m of [zh, en]) {
       for (const code of LOGIN_ERROR_CODES) {
         const [ns, key] = code.split(".") as [string, string];

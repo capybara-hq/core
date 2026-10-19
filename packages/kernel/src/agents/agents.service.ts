@@ -4,6 +4,7 @@ import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
@@ -435,7 +436,8 @@ export class AgentsService {
 
   /**
    * 重新指派负责人（`agents.manage`，admin）：在组织行锁内授权；agent 不存在 / 已删除 → `agent.not_found`；
-   * 新负责人不是该组织成员 → `member.not_found`。清除 `needs_reassignment`，审计 `agent.owner_changed`。
+   * 新负责人不是该组织成员 → `member.not_found`；是匿名访客 → `member.anonymous_guest`。
+   * 清除 `needs_reassignment`，审计 `agent.owner_changed`。
    */
   async reassignOwner(
     orgId: string,
@@ -462,6 +464,7 @@ export class AgentsService {
         .where("account_id", "=", newOwnerId)
         .executeTakeFirst();
       if (!member) throw new ApiError("member.not_found", "Member not found");
+      await rejectAnonymousGuest(t, newOwnerId);
       await t
         .updateTable("agents")
         .set({ owner_account_id: newOwnerId, needs_reassignment: false, updated_at: sql`now()` })

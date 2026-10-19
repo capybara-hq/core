@@ -433,7 +433,7 @@ export async function createKernel(
   });
   const identity: KernelIdentity = {
     external,
-    binding: new IdentityBinding({ redis, config: () => current, external }),
+    binding: new IdentityBinding({ db: kdb, redis, config: () => current, external }),
     sso: new SsoFlow({ redis, config: () => current, host, external, log }),
     offboarding,
     // 通讯录同步：登记每小时扫描与同步任务（worker 角色执行）；手动与 directory_changed 也经它投递

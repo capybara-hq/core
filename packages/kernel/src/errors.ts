@@ -32,6 +32,7 @@ export const ERROR_CODES = {
   "org.owner_required": 403,
   "member.not_found": 404,
   "member.already_exists": 409,
+  "member.anonymous_guest": 409,
   "invitation.invalid": 404,
   "invitation.expired": 410,
   "invitation.used": 409,

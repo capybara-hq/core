@@ -30,7 +30,8 @@
         "state_invalid": "登录请求已过期或已使用，请重试。",
         "session_mismatch": "登录是在另一个浏览器里发起的，请在这里重新开始。",
         "access_denied": "登录已取消或授权被拒绝。",
-        "provider_error": "身份提供方返回错误，请稍后再试。"
+        "provider_error": "身份提供方返回错误，请稍后再试。",
+        "identity_not_verified": "这个账号是通过 IM 绑定链接关联的，还不能直接用它登录。请先用其他方式登录，再在登录状态下用它登录一次完成验证。"
       },
       "auth": {
         "account_disabled": "该账号已被停用。"
@@ -144,6 +145,9 @@
     },
     "bind": {
       "invalid": "绑定链接无效或已过期。"
+    },
+    "member": {
+      "anonymous_guest": "匿名访客不能被授予角色、所有权或 agent，也不能被邀请或移出。"
     }
   },
   "agents": {

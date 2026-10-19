@@ -33,7 +33,8 @@ import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
  *  6. 另一位已绑定成员 bob（不是审批人）点批准 → 被拒并收到说明，审批仍 pending、工具未执行
  *  7. 发起人 alice 点批准 → 卡片更新为 approved，续跑执行工具并把最终回复投到话题里
  *  8. SIGKILL 持有长连接的副本 → 另一副本接管；平台重投旧消息不重复写入，之后的消息照常回复，整个过程没有重复消息
- *  9. 经 fake-im 身份源登录（SSO 发起 → 平台授权 → 回调带浏览器绑定 Cookie）：alice 回到同一账号；carol 得到新账号
+ *  9. 经 fake-im 身份源登录（SSO 发起 → 平台授权（PKCE）→ 回调带浏览器绑定 Cookie）：alice 的 IM 身份是经绑定链接
+ *     建立的，未登录时不能直接登录（Ruling A18）；alice 在已登录状态下完成一次后升级，之后回到同一账号；carol 得到新账号
  * 10. 平台推 directory_changed → 同步把 carol 加入组织；通讯录移除 carol（1 人，低于大批移除阈值，Ruling A17）→
  *     离职处理：成员关系删除、会话吊销，之后在 IM 里也不再被当作成员
  *
@@ -432,11 +433,12 @@ describe("M4 第一段验收（双副本）", () => {
       emailVerified: true,
       displayName: "Carol",
     });
-    const sso = async (externalId: string) => {
-      const jar: Jar = new Map();
+    /** 走一次 SSO 到回调；返回回调的 302 目标。`jar` 给了就带着它（已登录的会话）。 */
+    const ssoTo = async (externalId: string, jar: Jar) => {
       const start = await call(jar, "GET", "/api/v1/auth/sso/fake-im/start?returnTo=%2Fchat");
       expect(start.status).toBe(302);
       expect(start.location.startsWith(`${im.url}/oauth/authorize?`)).toBe(true);
+      expect(new URL(start.location).searchParams.get("code_challenge_method")).toBe("S256");
       expect(jar.has("cap_sso")).toBe(true);
       // 平台上「登录」为 externalId，平台带授权码 302 回内核的回调地址
       const authz = await fetch(`${start.location}&as=${externalId}`, { redirect: "manual" });
@@ -445,13 +447,21 @@ describe("M4 第一段验收（双副本）", () => {
       expect(back.origin + back.pathname).toBe(`${PUBLIC}/api/v1/auth/sso/fake-im/callback`);
       const cb = await call(jar, "GET", back.pathname + back.search);
       expect(cb.status).toBe(302);
-      expect(cb.location).toBe(`${PUBLIC}/chat`);
       expect(jar.has("cap_sso")).toBe(false);
+      return cb.location;
+    };
+    const sso = async (externalId: string, jar: Jar = new Map()) => {
+      expect(await ssoTo(externalId, jar)).toBe(`${PUBLIC}/chat`);
       const me = await call(jar, "GET", "/api/v1/me");
       expect(me.status).toBe(200);
       return { jar, accountId: (me.json.account as { id: string }).id };
     };
-    // alice 的 IM 身份已绑定：登录得到同一个账号（同一个 fake-im:t1 键）
+    // alice 的 IM 身份经绑定链接建立：未登录时不能直接登录（Ruling A18）
+    const anon: Jar = new Map();
+    expect(await ssoTo("u-alice", anon)).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(anon.has("cap_at")).toBe(false);
+    // alice 在已登录状态下完成一次：证明控制该 IM 身份，升级；之后未登录也登录到同一个账号（同一个 fake-im:t1 键）
+    expect((await sso("u-alice", aliceJar)).accountId).toBe(aliceId);
     expect((await sso("u-alice")).accountId).toBe(aliceId);
     // carol 第一次出现：新账号，身份行与渠道、通讯录同键；还不是组织成员
     const carol = await sso("u-carol");
@@ -521,7 +531,18 @@ describe("M4 第一段验收（双副本）", () => {
       "not-a-member reply",
     );
     expect(notMember.message.text).toMatch(/not a member/);
-    expect(await userMsgIds((await threadConv("dm-u-carol")) as string)).toEqual([`${connId}:c-1`]);
+    // 离职时她的 IM 话题行已归档（重新加入后开始新的对话）；旧会话里只有离职前的那条消息
+    expect(await threadConv("dm-u-carol")).toBeUndefined();
+    const archivedConv = (
+      await db
+        .selectFrom("channel_threads")
+        .select("conversation_id")
+        .where("connection_id", "=", connId)
+        .where("chat_id", "=", "dm-u-carol")
+        .where("archived_at", "is not", null)
+        .executeTakeFirstOrThrow()
+    ).conversation_id;
+    expect(await userMsgIds(archivedConv)).toEqual([`${connId}:c-1`]);
 
     // ---- 全程：没有任何发送需要靠平台的幂等键去重；所有消息都由本连接的应用发出 ----
     expect(im.duplicateSends).toEqual([]);

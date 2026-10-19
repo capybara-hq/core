@@ -61,6 +61,8 @@ export const OFFBOARD_ABORT_MARK_TTL_SECONDS = 1800;
 export const offboardAbortKey = (runId: string) => `capk:offboard-abort:${runId}`;
 
 const ACTIVE = ["queued", "running", "waiting"] as const;
+/** 通讯录同步加入的成员关系的 `source` 前缀（`directory:<插件名>`）。 */
+const DIRECTORY_SOURCE_PREFIX = "directory:";
 
 export interface OffboardingDeps {
   credentials: Pick<Credentials, "clearAccount">;
@@ -111,7 +113,11 @@ export class Offboarding {
    * 3. 删除其在该组织所有应用上的个人凭据；
    * 4. 取消其作为处理人的 pending 审批与提问（写 cancelled 事件），记下此人在该组织进行中的运行（提交后中止）；
    * 5. 其负责的该组织 agent 转给组织所有者（最早加入的 owner）并置 `needs_reassignment = true`；
-   * 6. 审计 `org.member.offboarded`。
+   * 6. 归档其在该组织各渠道连接上的 IM 话题行（重新加入后在 IM 里开始新的对话，不接着旧会话），
+   *    删除其在该组织的「以后都允许」工具授权（`tool_grants`）；
+   * 7. 成员关系由通讯录同步加入（`source = "directory:<插件>"`）而这次是手动移出或本人离开（不是同步判定离职）时，
+   *    写通讯录排除（Ruling A20）：同步不再把此人加回，直到有人手动重新加入（{@link MembersService.add} 删除排除）；
+   * 8. 审计 `org.member.offboarded`。
    */
   async offboard(
     t: Trx,
@@ -124,7 +130,7 @@ export class Offboarding {
       .deleteFrom("memberships")
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
-      .returning("role")
+      .returning(["role", "source"])
       .executeTakeFirst();
     if (!deleted) throw new ApiError("member.not_found", "Member not found");
     const owner = await t
@@ -196,6 +202,38 @@ export class Offboarding {
       .returning("id")
       .execute();
 
+    const threads = await t
+      .updateTable("channel_threads")
+      .set({ archived_at: sql<Date>`now()` })
+      .where("account_id", "=", accountId)
+      .where("archived_at", "is", null)
+      .where("connection_id", "in", (eb) =>
+        eb.selectFrom("channel_connections").select("id").where("org_id", "=", orgId),
+      )
+      .executeTakeFirst();
+    const grants = await t
+      .deleteFrom("tool_grants")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .executeTakeFirst();
+
+    const directoryPlugin = deleted.source?.startsWith(DIRECTORY_SOURCE_PREFIX)
+      ? deleted.source.slice(DIRECTORY_SOURCE_PREFIX.length)
+      : undefined;
+    const exclude = directoryPlugin !== undefined && reason !== "directory";
+    if (exclude) {
+      await t
+        .insertInto("directory_exclusions")
+        .values({
+          org_id: orgId,
+          account_id: accountId,
+          plugin: directoryPlugin,
+          created_by: actor.actorAccountId ?? null,
+        })
+        .onConflict((oc) => oc.columns(["org_id", "account_id", "plugin"]).doNothing())
+        .execute();
+    }
+
     await audit(t, {
       ...(actor.actorAccountId !== undefined && { actorAccountId: actor.actorAccountId }),
       ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),
@@ -213,6 +251,9 @@ export class Offboarding {
         runsToStop: runs.length,
         agentsReassigned: agents.map((a) => a.id),
         newOwner: agents.length > 0 ? owner.account_id : null,
+        channelThreadsArchived: Number(threads.numUpdatedRows),
+        toolGrantsDeleted: Number(grants.numDeletedRows),
+        ...(exclude && { directoryExcluded: directoryPlugin }),
       },
     });
     return {

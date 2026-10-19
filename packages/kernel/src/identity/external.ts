@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb, LinkedVia } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
 
@@ -13,6 +13,32 @@ const SOURCE_RE = /^([a-z0-9][a-z0-9._-]{0,213}):(\S{1,256})$/;
 const MAX_EXTERNAL_ID = 256;
 const MAX_DISPLAY_NAME = 200;
 const MAX_EMAIL = 320;
+
+export type { LinkedVia };
+
+/**
+ * 第三方登录拒绝了这个身份（Ruling A18）：身份行经 IM 绑定链接建立（或由不受信任租户的通讯录建立），
+ * 而请求没有带着同一账号的会话。登录页原因码 `sso.identity_not_verified`。
+ */
+export class IdentityNotVerified extends Error {
+  constructor() {
+    super("external identity is not verified for sign-in");
+    this.name = "IdentityNotVerified";
+  }
+}
+
+/** {@link ExternalIdentities.resolve} 的选项。 */
+export interface ResolveOptions {
+  /** 只有第三方登录路径传 true（Ruling A9）。 */
+  allowMerge?: boolean;
+  /** 新建身份行时记下的建立方式：第三方登录 `sso`，通讯录同步 `directory`。已有的行不改。 */
+  linkedVia: "sso" | "directory";
+  /**
+   * 第三方登录路径：已有的身份行须可用于登录（见 {@link ExternalIdentities.resolve}）。
+   * `sessionAccountId` 为请求已带着的 Web 会话的账号（没有会话时省略）。
+   */
+  login?: { sessionAccountId?: string };
+}
 
 /** 账号已绑定的一个外部身份（不含本地登录名）。 */
 export interface LinkedIdentity {
@@ -39,6 +65,10 @@ function normalize(identity: ExternalIdentity): ExternalIdentity {
   const m = SOURCE_RE.exec(identity.source);
   if (!m || m[1] === "local") {
     throw invalid('source must be "<plugin>:<tenant>"');
+  }
+  // 身份源键的租户必须就是身份的租户（Ruling A19）：信任按租户判断，不能让键与租户各说各的
+  if (identity.tenantId !== m[2]) {
+    throw invalid("source tenant must equal tenantId");
   }
   if (
     typeof identity.externalId !== "string" ||
@@ -99,8 +129,14 @@ export class ExternalIdentities {
   }
 
   /**
-   * 解析外部身份到账号。已绑定 → 该账号（顺带刷新身份行上的邮箱与资料）；未绑定 → 合并或新建（见类说明）。
+   * 解析外部身份到账号。已绑定 → 该账号（顺带刷新身份行上的邮箱与资料）；未绑定 → 合并或新建（见类说明），
+   * 新身份行记 `linked_via = opts.linkedVia`（合并也是 `sso`）。
    * 合并只在 `opts.allowMerge` 时考虑（Ruling A9：只有第三方登录路径传 true；渠道入站、通讯录不传）。
+   * 第三方登录（`opts.login`，Ruling A18）：已有的身份行若经 IM 绑定建立（`bind`），或由不受信任租户的通讯录建立
+   * （`directory` 且身份源不在 `auth.trustedIdentitySources`），只证明了某个网页登录者点过绑定链接 / 管理员配置的
+   * 通讯录这么说，不证明登录者控制该外部身份——此时只有请求已带着**同一账号**的会话（本人在已登录状态下完成第三方登录，
+   * 证明自己控制该身份）才放行，并把行升级为 `sso`（审计 `identity.verified`）；否则抛 {@link IdentityNotVerified}。
+   * 旧行（`linked_via` 为 null）按 `sso` 处理。
    * 新建账号的 `email_verified` 只在身份源受信任且身份邮箱已验证时为 true——不受信任的身份源可以声称任意邮箱
    * 「已验证」，不能让它建出的账号成为日后受信任登录的合并目标。
    * 合并写审计 `identity.linked`，新建写 `account.created`。不判断账号状态，由调用方决定（如登录拒绝停用账号）。
@@ -109,20 +145,21 @@ export class ExternalIdentities {
    */
   async resolve(
     identity: ExternalIdentity,
-    trx?: Trx,
-    opts: { allowMerge?: boolean } = {},
+    trx: Trx | undefined,
+    opts: ResolveOptions,
   ): Promise<{ accountId: string; created: boolean }> {
     const id = normalize(identity);
     const run = async (t: Trx) => {
       await this.lockIdentity(t, id);
-      const existing = await this.findAccount(id.source, id.externalId, t);
+      const existing = await this.findRow(t, id);
       if (existing !== undefined) {
+        if (opts.login !== undefined) await this.allowLogin(t, id, existing, opts.login);
         await this.refreshIdentity(t, id);
-        return { accountId: existing, created: false };
+        return { accountId: existing.accountId, created: false };
       }
       const merged = opts.allowMerge === true ? await this.mergeTarget(t, id) : undefined;
       if (merged !== undefined) {
-        if (!(await this.insertIdentity(t, merged, id))) {
+        if (!(await this.insertIdentity(t, merged, id, "sso"))) {
           return { accountId: await this.mustFind(t, id), created: false };
         }
         await audit(t, {
@@ -143,7 +180,7 @@ export class ExternalIdentities {
           email_verified: id.emailVerified && this.trusted(id.source),
         })
         .execute();
-      if (!(await this.insertIdentity(t, accountId, id))) {
+      if (!(await this.insertIdentity(t, accountId, id, opts.linkedVia))) {
         // 不走咨询锁的写入方抢先插入了同一身份：撤销刚建的账号，回读
         await t.deleteFrom("accounts").where("id", "=", accountId).execute();
         return { accountId: await this.mustFind(t, id), created: false };
@@ -166,8 +203,47 @@ export class ExternalIdentities {
     );
   }
 
+  /** 身份源键（`<插件名>:<租户 id>`）是否在 `auth.trustedIdentitySources` 中：按完整键比较，信任按租户（Ruling A19）。 */
   private trusted(source: string): boolean {
-    return this.config().auth.trustedIdentitySources.includes(identityPlugin(source));
+    return this.config().auth.trustedIdentitySources.includes(source);
+  }
+
+  private async findRow(
+    t: Trx,
+    id: ExternalIdentity,
+  ): Promise<{ accountId: string; linkedVia: LinkedVia | null } | undefined> {
+    const row = await t
+      .selectFrom("identities")
+      .select(["account_id", "linked_via"])
+      .where("source", "=", id.source)
+      .where("external_id", "=", id.externalId)
+      .executeTakeFirst();
+    return row && { accountId: row.account_id, linkedVia: row.linked_via };
+  }
+
+  /** 第三方登录能否用这一行（见 {@link resolve}）；能但需升级时把行改为 `sso`。 */
+  private async allowLogin(
+    t: Trx,
+    id: ExternalIdentity,
+    row: { accountId: string; linkedVia: LinkedVia | null },
+    login: { sessionAccountId?: string },
+  ): Promise<void> {
+    const via = row.linkedVia ?? "sso";
+    const verified = via === "sso" || (via === "directory" && this.trusted(id.source));
+    if (verified) return;
+    if (login.sessionAccountId !== row.accountId) throw new IdentityNotVerified();
+    await t
+      .updateTable("identities")
+      .set({ linked_via: "sso" })
+      .where("source", "=", id.source)
+      .where("external_id", "=", id.externalId)
+      .execute();
+    await audit(t, {
+      actorAccountId: row.accountId,
+      action: "identity.verified",
+      target: row.accountId,
+      detail: { source: id.source, externalId: id.externalId, from: via },
+    });
   }
 
   private async mustFind(t: Trx, id: ExternalIdentity): Promise<string> {
@@ -186,7 +262,7 @@ export class ExternalIdentities {
   }
 
   /**
-   * 可合并的既有账号：身份源的插件名在 `auth.trustedIdentitySources` 中、身份邮箱已验证，
+   * 可合并的既有账号：身份源键在 `auth.trustedIdentitySources` 中、身份邮箱已验证，
    * 且恰好有一个邮箱已验证、邮箱相同（不区分大小写）的账号；否则 undefined（多个候选时不猜，新建）。
    */
   private async mergeTarget(t: Trx, id: ExternalIdentity): Promise<string | undefined> {
@@ -202,7 +278,12 @@ export class ExternalIdentities {
   }
 
   /** 插入身份行；已存在（主键冲突）时什么都不做并返回 false。 */
-  private async insertIdentity(t: Trx, accountId: string, id: ExternalIdentity): Promise<boolean> {
+  private async insertIdentity(
+    t: Trx,
+    accountId: string,
+    id: ExternalIdentity,
+    linkedVia: LinkedVia,
+  ): Promise<boolean> {
     const row = await t
       .insertInto("identities")
       .values({
@@ -212,6 +293,7 @@ export class ExternalIdentities {
         email: id.email ?? null,
         email_verified: id.emailVerified,
         profile: profileOf(id),
+        linked_via: linkedVia,
       })
       .onConflict((oc) => oc.columns(["source", "external_id"]).doNothing())
       .returning("account_id")
@@ -220,8 +302,9 @@ export class ExternalIdentities {
   }
 
   /**
-   * 把外部身份绑定到账号（IM 里点绑定链接等）：已绑定本人 → 刷新资料，幂等；已绑定他人 → `409 identity.taken`。
-   * 与 `resolve` 取同一把咨询锁。新绑定写审计 `identity.linked`。
+   * 把外部身份绑定到账号（IM 里点绑定链接等）：已绑定本人 → 刷新资料，幂等（不改 `linked_via`）；
+   * 已绑定他人 → `409 identity.taken`。新行记 `linked_via = bind`：这样绑定的身份只能在 IM 里代表此人，
+   * 不能直接用于第三方登录（Ruling A18）。与 `resolve` 取同一把咨询锁。新绑定写审计 `identity.linked`。
    */
   async link(accountId: string, identity: ExternalIdentity, trx?: Trx): Promise<void> {
     const id = normalize(identity);
@@ -233,7 +316,7 @@ export class ExternalIdentities {
         await this.refreshIdentity(t, id);
         return;
       }
-      if (!(await this.insertIdentity(t, accountId, id))) {
+      if (!(await this.insertIdentity(t, accountId, id, "bind"))) {
         if ((await this.mustFind(t, id)) !== accountId) throw taken();
         return;
       }

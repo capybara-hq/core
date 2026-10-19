@@ -18,6 +18,7 @@ export const LOGIN_ERROR_CODES = [
   "sso.session_mismatch",
   "sso.access_denied",
   "sso.provider_error",
+  "sso.identity_not_verified",
   "auth.account_disabled",
 ] as const;
 export type LoginErrorCode = (typeof LOGIN_ERROR_CODES)[number] | "unknown";

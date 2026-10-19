@@ -159,8 +159,11 @@ type Eligible =
  * - Ruling A17：非手动触发的一轮，计划移除数超过 `max(5, 20% × 现有通讯录成员数)`，或列表里没有在职成员而已有
  *   通讯录成员时，当作不完整、不移除任何人，审计 `org.directory.removal_blocked`；手动触发不受此限。
  * - 分页 `listMembers`：在职成员按 `<插件>:<租户>` + externalId 解析外部身份（不合并既有账号、不登录、不建会话），
- *   不是成员就加入（角色 member，`memberships.source = "directory:<插件>"`），每人一个短事务。
- * - **整轮分页成功走完、且没有成员处理失败**之后，才对「离职（active = false）或不再出现、且 source 为该通讯录」的
+ *   不是成员就加入（角色 member，`memberships.source = "directory:<插件>"`），每人一个短事务；新身份行记
+ *   `linked_via = directory`。被管理员手动移出（或本人离开）而记下通讯录排除的人不加回（Ruling A20），
+ *   直到有人手动重新加入。
+ * - **整轮分页成功走完、且没有成员处理失败**、并且移除前再次复核插件仍可同步（仍启用、配置仍有效；中途被停用或
+ *   配置变得无效则本轮按不完整处理）之后，才对「离职（active = false）或不再出现、且 source 为该通讯录」的
  *   成员逐个走离职处理（每人一个事务：组织行锁 → 成员关系行锁 → `Offboarding.offboard`）；中途失败只加人不删人。
  *   手动 / 邀请加入的成员（source 为空）永远不被同步移除；账号本身不停用。最后一个 owner 跳过并计数。
  * - 审计 `org.directory.synced`（计数、是否不完整）。任务执行时再核对插件与配置：已停用的插件的陈旧任务什么都不做。
@@ -454,6 +457,18 @@ export class DirectorySync {
     let partial = !listed || counts.failed > 0;
     let removalBlocked = false;
     if (!partial) {
+      // 移除前复核：同步途中插件可能已被停用、组织级配置可能已变得无效，此时列表不再可信，不移除任何人
+      const still = await this.eligible(orgId, plugin);
+      if (!still.ok) {
+        partial = true;
+        this.d.log.warn("directory sync: plugin no longer eligible before removals", {
+          orgId,
+          plugin,
+          reason: still.reason,
+        });
+      }
+    }
+    if (!partial) {
       const existing = await this.d.db
         .selectFrom("memberships")
         .select("account_id")
@@ -517,8 +532,9 @@ export class DirectorySync {
   }
 
   /**
-   * 一个在职成员：解析外部身份（不合并、不登录），不是成员就以 member 加入（source = 本通讯录）。
-   * 组织行锁内完成（与移出成员同一把锁），组织已删除 → {@link OrgGone}。
+   * 一个在职成员：解析外部身份（不合并、不登录，新身份行 `linked_via = directory`），不是成员就以 member 加入
+   * （source = 本通讯录）；此人在该组织有本通讯录的排除（被手动移出 / 本人离开过）时不加入。
+   * 组织行锁内完成（与移出成员同一把锁、与移出时写排除串行），组织已删除 → {@link OrgGone}。
    */
   private async addMember(
     orgId: string,
@@ -537,7 +553,15 @@ export class DirectorySync {
     };
     return this.d.db.transaction().execute(async (t) => {
       if (!(await tryLockOrg(t, orgId))) throw new OrgGone("organization deleted during sync");
-      const { accountId } = await this.d.external.resolve(identity, t);
+      const { accountId } = await this.d.external.resolve(identity, t, { linkedVia: "directory" });
+      const excluded = await t
+        .selectFrom("directory_exclusions")
+        .select("account_id")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", accountId)
+        .where("plugin", "=", plugin)
+        .executeTakeFirst();
+      if (excluded) return { accountId, added: false };
       const inserted = await t
         .insertInto("memberships")
         .values({ org_id: orgId, account_id: accountId, role: "member", source })

@@ -23,6 +23,12 @@ function isValidMasterKey(value: string): boolean {
   return Buffer.from(value, "base64").length === 32;
 }
 
+/**
+ * 受信任身份源的一项：完整的身份源键 `<插件名>:<租户 id>`（Ruling A19，信任按租户）。
+ * 插件名同清单规则（不能是 `local`），租户 id 非空、不含空白；与 identity/external.ts 的身份源键规则一致。
+ */
+const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
+
 /** access token 寿命上限（秒）；会话吊销标记的 TTL 按它计算，与实例当前配置无关。 */
 export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 
@@ -184,14 +190,22 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       trustedIdentitySources: z
-        .array(z.string().min(1).max(214))
+        .array(
+          z
+            .string()
+            .max(471)
+            .refine((v) => TRUSTED_SOURCE_RE.test(v), {
+              message:
+                'Each entry must be a full identity source key "<plugin>:<tenantId>" (for example "lark:tenant_1"); plugin-only entries are not allowed, trust is per tenant',
+            }),
+        )
         .max(50)
         .default([])
         .meta(
           meta({
             hot: true,
             description:
-              "Plugin names whose external identities are trusted for email-based account merging on third-party sign-in: when the identity's email and an existing account's email are both verified and equal, the identity is linked to that account instead of creating a new one (only accounts created through a trusted source, or verified locally, count as verified). Only list a plugin configured for a single tenant (workspace / app) that your enterprise controls; otherwise anyone in another tenant could claim your users' emails",
+              'Identity source keys "<plugin>:<tenantId>" (one tenant each, e.g. "lark:tenant_1") whose external identities are trusted: on third-party sign-in, when the identity\'s email and an existing account\'s email are both verified and equal, the identity is linked to that account instead of creating a new one; accounts created through a trusted source count as email-verified; and members added by directory sync from a trusted source can sign in with that source directly. Only list tenants (workspaces / apps) that your enterprise controls; otherwise anyone in that tenant could claim your users\' emails. Plugin-only entries are rejected',
           }),
         ),
     })

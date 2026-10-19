@@ -585,3 +585,220 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
     expect(calls).toBe(2);
   });
 });
+
+describe("修复波 W1：离职补漏", () => {
+  /** f.orgId（及另一组织）里的一个渠道连接，返回连接 id。 */
+  async function connection(orgId: string, agentId: string): Promise<string> {
+    const id = randomUUID();
+    await sql`INSERT INTO capybara.channel_connections (id, org_id, plugin, name, agent_id, created_by)
+      VALUES (${id}, ${orgId}, 'fake-im', 'bot', ${agentId}, ${f.owner.id})`.execute(raw);
+    return id;
+  }
+
+  async function thread(connectionId: string, accountId: string, key: string): Promise<string> {
+    const id = randomUUID();
+    await sql`INSERT INTO capybara.channel_threads
+        (id, connection_id, chat_id, thread_key, account_id, conversation_id)
+      VALUES (${id}, ${connectionId}, 'chat-1', ${key}, ${accountId}, ${f.conversationId})`.execute(
+      raw,
+    );
+    return id;
+  }
+
+  const archived = async (id: string) =>
+    (
+      await db
+        .selectFrom("channel_threads")
+        .select("archived_at")
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow()
+    ).archived_at !== null;
+
+  it("归档离职者在该组织各连接上的 IM 话题行；别人的、别的组织的不动", async () => {
+    const conn = await connection(f.orgId, f.agentId);
+    const otherConn = await connection(f.otherOrgId, f.otherOrgAgentId);
+    const mine = await thread(conn, f.leaver.id, "dm:u-leaver");
+    const mineGroup = await thread(conn, f.leaver.id, "topic-1");
+    const bystanders = await thread(conn, f.bystander.id, "dm:u-b");
+    const otherOrg = await thread(otherConn, f.leaver.id, "dm:u-leaver");
+    const res = await f.ownerReq({
+      method: "DELETE",
+      url: `/api/v1/orgs/${f.orgId}/members/${f.leaver.id}`,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(await archived(mine)).toBe(true);
+    expect(await archived(mineGroup)).toBe(true);
+    expect(await archived(bystanders)).toBe(false);
+    expect(await archived(otherOrg)).toBe(false);
+  });
+
+  it("删除离职者在该组织的「以后都允许」工具授权；别的组织的、别人的不动", async () => {
+    const grant = (orgId: string, accountId: string, agentId: string) =>
+      sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
+        VALUES (${orgId}, ${accountId}, ${agentId}, 'docs__create_doc', 'h')`.execute(raw);
+    await grant(f.orgId, f.leaver.id, f.agentId);
+    await grant(f.orgId, f.bystander.id, f.agentId);
+    await grant(f.otherOrgId, f.leaver.id, f.otherOrgAgentId);
+    const res = await f.leaverReq({ method: "POST", url: `/api/v1/orgs/${f.orgId}/leave` });
+    expect(res.statusCode).toBe(204);
+    const rows = await db
+      .selectFrom("tool_grants")
+      .select(["org_id", "account_id"])
+      .orderBy("org_id")
+      .execute();
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { org_id: f.orgId, account_id: f.bystander.id },
+        { org_id: f.otherOrgId, account_id: f.leaver.id },
+      ]),
+    );
+  });
+
+  it("事务回滚时话题行与工具授权都不变", async () => {
+    const conn = await connection(f.orgId, f.agentId);
+    const t1 = await thread(conn, f.leaver.id, "dm:u-leaver");
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
+      VALUES (${f.orgId}, ${f.leaver.id}, ${f.agentId}, 'docs__create_doc', 'h')`.execute(raw);
+    await expect(
+      db.transaction().execute(async (t) => {
+        await k.identity.offboarding.offboard(t, f.orgId, f.leaver.id, "removed");
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(await archived(t1)).toBe(false);
+    expect(await db.selectFrom("tool_grants").select("account_id").execute()).toHaveLength(1);
+  });
+});
+
+describe("修复波 W1：通讯录排除（Ruling A20）", () => {
+  const exclusions = async (orgId: string) =>
+    db
+      .selectFrom("directory_exclusions")
+      .select(["account_id", "plugin", "created_by"])
+      .where("org_id", "=", orgId)
+      .execute();
+
+  const fromDirectory = (accountId: string) =>
+    sql`UPDATE capybara.memberships SET source = 'directory:fake-im'
+      WHERE org_id = ${f.orgId} AND account_id = ${accountId}`.execute(raw);
+
+  it("移出通讯录加入的成员 → 同一事务写排除（created_by = 发起人）；本人离开同样写；手动成员不写", async () => {
+    await fromDirectory(f.leaver.id);
+    await members.remove(f.orgId, f.leaver.id, f.owner.id);
+    await fromDirectory(f.bystander.id);
+    await members.leave(f.orgId, f.bystander.id);
+    expect(await exclusions(f.orgId)).toEqual(
+      expect.arrayContaining([
+        { account_id: f.leaver.id, plugin: "fake-im", created_by: f.owner.id },
+        { account_id: f.bystander.id, plugin: "fake-im", created_by: f.bystander.id },
+      ]),
+    );
+    expect(await exclusions(f.orgId)).toHaveLength(2);
+    // 手动加入的成员（source 为空）被移出：不写排除
+    expect(await exclusions(f.otherOrgId)).toEqual([]);
+    await members.remove(f.otherOrgId, f.leaver.id, f.owner.id);
+    expect(await exclusions(f.otherOrgId)).toEqual([]);
+  });
+
+  it("通讯录同步自己判定离职（reason = directory）不写排除", async () => {
+    await fromDirectory(f.leaver.id);
+    await db
+      .transaction()
+      .execute((t) => k.identity.offboarding.offboard(t, f.orgId, f.leaver.id, "directory"));
+    expect(await exclusions(f.orgId)).toEqual([]);
+  });
+
+  it("离职事务回滚 → 排除也不写", async () => {
+    await fromDirectory(f.leaver.id);
+    await expect(
+      db.transaction().execute(async (t) => {
+        await k.identity.offboarding.offboard(t, f.orgId, f.leaver.id, "removed", {
+          actorAccountId: f.owner.id,
+        });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(await exclusions(f.orgId)).toEqual([]);
+  });
+
+  it("手动重新加入（members.add，如接受邀请）清除排除", async () => {
+    await fromDirectory(f.leaver.id);
+    await members.remove(f.orgId, f.leaver.id, f.owner.id);
+    expect(await exclusions(f.orgId)).toHaveLength(1);
+    await members.add(f.orgId, f.leaver.id, "member", f.owner.id);
+    expect(await exclusions(f.orgId)).toEqual([]);
+  });
+});
+
+describe("修复波 W1：匿名访客保护", () => {
+  let guestId: string;
+  beforeEach(async () => {
+    guestId = await ensureAnonymousGuest(db, f.orgId);
+  });
+
+  it("不能改角色、不能被授予 owner", async () => {
+    for (const role of ["member", "admin", "owner"] as const) {
+      const res = await f.ownerReq({
+        method: "PATCH",
+        url: `/api/v1/orgs/${f.orgId}/members/${guestId}`,
+        payload: { role },
+      });
+      expect(res.statusCode, role).toBe(409);
+      expect(errCode(res)).toBe("member.anonymous_guest");
+    }
+    expect(
+      (
+        await db
+          .selectFrom("memberships")
+          .select("role")
+          .where("org_id", "=", f.orgId)
+          .where("account_id", "=", guestId)
+          .executeTakeFirstOrThrow()
+      ).role,
+    ).toBe("guest");
+  });
+
+  it("不能接受所有权转让", async () => {
+    const res = await f.ownerReq({
+      method: "POST",
+      url: `/api/v1/orgs/${f.orgId}/transfer`,
+      payload: { toAccountId: guestId },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("member.anonymous_guest");
+  });
+
+  it("不能被指派为 agent 负责人", async () => {
+    const res = await f.ownerReq({
+      method: "POST",
+      url: `/api/v1/orgs/${f.orgId}/agents/${f.agentId}/owner`,
+      payload: { accountId: guestId },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("member.anonymous_guest");
+    expect((await agentRow(f.agentId)).owner_account_id).toBe(f.leaver.id);
+  });
+
+  it("不能被移出；成员列表把它标为匿名访客", async () => {
+    const res = await f.ownerReq({
+      method: "DELETE",
+      url: `/api/v1/orgs/${f.orgId}/members/${guestId}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("member.anonymous_guest");
+    expect(await isMember(f.orgId, guestId)).toBe(true);
+    const list = await f.ownerReq({ method: "GET", url: `/api/v1/orgs/${f.orgId}/members` });
+    const rows = (list.json() as { members: { account: { id: string }; anonymous: boolean }[] })
+      .members;
+    expect(rows.find((m) => m.account.id === guestId)?.anonymous).toBe(true);
+    expect(rows.find((m) => m.account.id === f.owner.id)?.anonymous).toBe(false);
+  });
+
+  it("不能被加入别的组织（members.add / 接受邀请）", async () => {
+    expect(await codeOf(members.add(f.otherOrgId, guestId, "member", f.owner.id))).toBe(
+      "member.anonymous_guest",
+    );
+    expect(await isMember(f.otherOrgId, guestId)).toBe(false);
+  });
+});

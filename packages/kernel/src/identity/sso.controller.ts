@@ -68,7 +68,7 @@ export class SsoController {
 
   /**
    * 发起登录：302 到身份源的授权地址，并写浏览器绑定 Cookie `cap_sso`（HttpOnly、SameSite=Lax——身份源回跳是
-   * 跨站顶级 GET 导航，Lax 会带上；Path 只到 `/api/v1/auth/sso`）。
+   * 跨站顶级 GET 导航，Lax 会带上；Path 只到 `/api/v1/auth/sso`）。已登录的用户同样可以发起（见 callback）。
    */
   @Get("sso/:plugin/start")
   @Public()
@@ -97,16 +97,26 @@ export class SsoController {
   /**
    * 身份源回跳：核对 state 与绑定 Cookie → 插件换取外部身份 → 解析到账号 → 建会话、写会话 Cookie → 302 回网页
    * （`http.publicUrl` + returnTo）。账号已停用 → 登录页 `auth.account_disabled`，不建会话。
+   * 请求已带着 Web 会话时（已登录的用户发起，「登录状态下绑定」），把会话的账号交给 `SsoFlow.callback`：
+   * 经 IM 绑定建立的同一账号的身份由此升级为可登录（Ruling A18）。
    */
   @Get("sso/:plugin/callback")
   @Public()
   async callback(
     @Param("plugin") plugin: string,
     @Query() q: Record<string, unknown>,
+    @CurrentPrincipal() principal: Principal | undefined,
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
-    const r = await this.flow.callback(plugin, stringQuery(q), req.cookies[SSO_BINDING_COOKIE]);
+    const sessionAccountId =
+      principal?.kind === "user" && principal.via === "session" ? principal.account.id : undefined;
+    const r = await this.flow.callback(
+      plugin,
+      stringQuery(q),
+      req.cookies[SSO_BINDING_COOKIE],
+      sessionAccountId,
+    );
     let location: string;
     if (!r.ok) {
       location = this.flow.loginError(r.error);

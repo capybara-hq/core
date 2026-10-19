@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type FakeChannelServer,
@@ -103,6 +104,41 @@ describe("startFakeChannelServer", () => {
     expect(new URL(denied.headers.get("location") ?? "").searchParams.get("error")).toBe(
       "access_denied",
     );
+  });
+
+  it("OAuth PKCE：授权时带 code_challenge 的，换 token 须带对应的 codeVerifier", async () => {
+    im = await startFakeChannelServer();
+    im.users.set("u1", { externalId: "u1", tenantId: "t1", displayName: "U1" });
+    const verifier = "v".repeat(43);
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const codeFor = async () => {
+      const q = new URLSearchParams({
+        client_id: "cid",
+        redirect_uri: "https://cap.example/cb",
+        state: "s1",
+        nonce: "n1",
+        as: "u1",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      });
+      const authz = await fetch(`${im?.url}/oauth/authorize?${q}`, { redirect: "manual" });
+      return new URL(authz.headers.get("location") ?? "").searchParams.get("code");
+    };
+    const base = { clientId: "cid", clientSecret: "x" };
+    const missing = await post(`${im.url}/oauth/token`, { ...base, code: await codeFor() });
+    expect(missing.status).toBe(400);
+    const wrong = await post(`${im.url}/oauth/token`, {
+      ...base,
+      code: await codeFor(),
+      codeVerifier: "w".repeat(43),
+    });
+    expect(wrong.status).toBe(400);
+    const ok = await post(`${im.url}/oauth/token`, {
+      ...base,
+      code: await codeFor(),
+      codeVerifier: verifier,
+    });
+    expect(ok.status).toBe(200);
   });
 
   it("通讯录分页；failOnPage 让该页 500", async () => {

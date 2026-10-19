@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type {
@@ -17,7 +17,8 @@ import type {
  *   记下机器人发出 / 更新的消息（含卡片），`/send` 按 `idempotencyKey` 去重（同一应用、同一键只发一次，
  *   重复的请求原样返回第一次的 messageId，并记进 `duplicateSends`）。
  * - **登录（OAuth）**：`GET /oauth/authorize` 以 `as=<externalId>` 指定「在平台上登录的人」，签发一次性授权码并
- *   302 回 `redirect_uri`；`POST /oauth/token` 用授权码换该用户资料与发起时的 nonce。
+ *   302 回 `redirect_uri`；`POST /oauth/token` 用授权码换该用户资料与发起时的 nonce。授权时带了 PKCE
+ *   `code_challenge`（S256）的，换 token 必须带对应的 `codeVerifier`，否则 `invalid_grant`。
  * - **通讯录**：`GET /d/<key>/members?cursor=<n>` 按页返回 {@link FakeChannelServer.book} 的成员，可让某页失败、让第一页挂起。
  * - **其他写操作**：`POST /posts` 记下插件工具发的「公告」（`posts`），供断言工具确实执行（且只执行一次）。
  *
@@ -152,7 +153,10 @@ export async function startFakeChannelServer(
   const posts: FakeChannelPost[] = [];
   const users = new Map<string, FakeChannelUser>();
   const books = new Map<string, FakeDirectoryBook>();
-  const codes = new Map<string, { user: FakeChannelUser; nonce: string; clientId: string }>();
+  const codes = new Map<
+    string,
+    { user: FakeChannelUser; nonce: string; clientId: string; challenge: string | null }
+  >();
   const byKey = new Map<string, string>();
   const failures: { path: string; status: number; left: number; retryAfterMs?: number }[] = [];
   const live = new Map<FakeChannelStream, ServerResponse>();
@@ -234,6 +238,7 @@ export async function startFakeChannelServer(
         user,
         nonce: u.searchParams.get("nonce") ?? "",
         clientId: u.searchParams.get("client_id") ?? "",
+        challenge: u.searchParams.get("code_challenge"),
       });
       back.searchParams.set("code", code);
     }
@@ -245,10 +250,19 @@ export async function startFakeChannelServer(
       code?: string;
       clientId?: string;
       clientSecret?: string;
+      codeVerifier?: string;
     };
     const c = b.code === undefined ? undefined : codes.get(b.code);
     if (b.code !== undefined) codes.delete(b.code);
     if (c === undefined || c.clientId !== b.clientId) {
+      json(res, 400, { error: "invalid_grant" });
+      return;
+    }
+    if (
+      c.challenge !== null &&
+      (b.codeVerifier === undefined ||
+        createHash("sha256").update(b.codeVerifier).digest("base64url") !== c.challenge)
+    ) {
       json(res, 400, { error: "invalid_grant" });
       return;
     }

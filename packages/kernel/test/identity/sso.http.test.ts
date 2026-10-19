@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -75,7 +76,30 @@ async function start(jar: CookieJar, returnTo?: string) {
     loc,
     state: loc.searchParams.get("state") ?? "",
     nonce: loc.searchParams.get("nonce") ?? "",
+    challenge: loc.searchParams.get("code_challenge") ?? "",
   };
+}
+
+let connSeq = 0;
+/**
+ * 一个真实的渠道连接（绑定确认时会复核连接仍在、插件仍在该组织启用）：组织、agent、连接与插件的组织级启用行。
+ * 插件名用 fake-idp（只要求在组织启用，不要求提供 channel@1）。
+ */
+async function newConnection(id = `conn-${++connSeq}`): Promise<string> {
+  const ownerId = (
+    await accounts.createLocal({ login: `cowner-${id}`, password: PW, displayName: "CO" })
+  ).id;
+  const orgId = `org-${id}`;
+  const agentId = `agent-${id}`;
+  await sql`INSERT INTO capybara.orgs (id, slug, name, created_by)
+    VALUES (${orgId}, ${orgId}, ${orgId}, ${ownerId})`.execute(raw);
+  await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+    VALUES (${agentId}, ${orgId}, ${ownerId}, 'org', 1)`.execute(raw);
+  await sql`INSERT INTO capybara.channel_connections (id, org_id, plugin, name, agent_id, created_by)
+    VALUES (${id}, ${orgId}, 'fake-idp', ${id}, ${agentId}, ${ownerId})`.execute(raw);
+  await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled)
+    VALUES ('fake-idp', ${orgId}, true)`.execute(raw);
+  return id;
 }
 
 async function callback(jar: CookieJar, query: Record<string, string>) {
@@ -90,13 +114,15 @@ async function callback(jar: CookieJar, query: Record<string, string>) {
   return res;
 }
 
-/** 完整走一次登录；返回回跳地址与 Cookie 罐。 */
-async function sso(code: Omit<FakeIdpCode, "nonce">, returnTo?: string) {
-  const jar = cookieJar();
+/**
+ * 完整走一次登录；返回回跳地址与 Cookie 罐。授权码带上发起时的 PKCE challenge：假身份源回调时核对内核交来的
+ * codeVerifier。`jar` 给了就在该 Cookie 罐（如已登录的会话）里走。
+ */
+async function sso(code: Omit<FakeIdpCode, "nonce">, returnTo?: string, jar = cookieJar()) {
   const s = await start(jar, returnTo);
   const res = await callback(jar, {
     state: s.state,
-    code: fakeIdpCode({ ...code, nonce: s.nonce }),
+    code: fakeIdpCode({ ...code, nonce: s.nonce, challenge: s.challenge }),
   });
   return { jar, res, location: String(res.headers.location), state: s.state, nonce: s.nonce };
 }
@@ -282,7 +308,7 @@ describe("IM 身份绑定", () => {
 
   it("令牌 15 分钟、单次有效；需登录；绑定到当前账号", async () => {
     const url = await k.identity.binding.createBindToken({
-      connectionId: "conn-1",
+      connectionId: await newConnection("conn-1"),
       identity: imIdentity(),
     });
     const token = tokenOf(url);
@@ -335,11 +361,17 @@ describe("IM 身份绑定", () => {
     const alice = await localSession("alice");
     const bob = await localSession("bob");
     const t1 = tokenOf(
-      await k.identity.binding.createBindToken({ connectionId: "c", identity: imIdentity() }),
+      await k.identity.binding.createBindToken({
+        connectionId: await newConnection(),
+        identity: imIdentity(),
+      }),
     );
     expect((await alice.req({ method: "POST", url: `/api/v1/bind/${t1}` })).statusCode).toBe(200);
     const t2 = tokenOf(
-      await k.identity.binding.createBindToken({ connectionId: "c", identity: imIdentity() }),
+      await k.identity.binding.createBindToken({
+        connectionId: await newConnection(),
+        identity: imIdentity(),
+      }),
     );
     const res = await bob.req({ method: "POST", url: `/api/v1/bind/${t2}` });
     expect(res.statusCode).toBe(409);
@@ -390,7 +422,7 @@ describe("修复轮 1", () => {
       ).statusCode,
     ).toBe(200);
     const url = await k.identity.binding.createBindToken({
-      connectionId: "c",
+      connectionId: await newConnection(),
       identity: {
         source: "fake-idp:t1",
         externalId: "im-csrf",
@@ -416,5 +448,147 @@ describe("修复轮 1", () => {
     expect(res.statusCode).toBe(409);
     expect(errCode(res)).toBe("identity.last_login_method");
     expect(await k.identity.external.findAccount("fake-idp:t1", "u-last")).not.toBeUndefined();
+  });
+});
+
+describe("修复波 W1", () => {
+  /** 本地账号登录后的 Cookie 罐。 */
+  async function loggedIn(login: string) {
+    const account = await accounts.createLocal({ login, password: PW, displayName: login });
+    const jar = cookieJar();
+    const res = await asUser(
+      k.http,
+      jar,
+    )({ method: "POST", url: "/api/v1/auth/login", payload: { login, password: PW } });
+    expect(res.statusCode).toBe(200);
+    return { account, jar, req: asUser(k.http, jar) };
+  }
+
+  const bindTo = async (req: ReturnType<typeof asUser>, externalId: string) => {
+    const url = await k.identity.binding.createBindToken({
+      connectionId: await newConnection(),
+      identity: {
+        source: "fake-idp:t1",
+        externalId,
+        tenantId: "t1",
+        emailVerified: false,
+        displayName: externalId,
+      },
+    });
+    const token = url.slice(`${PUBLIC}/bind/`.length);
+    const res = await req({ method: "POST", url: `/api/v1/bind/${token}` });
+    expect(res.statusCode, res.body).toBe(200);
+  };
+
+  const linkedVia = async (externalId: string) =>
+    (
+      await db
+        .selectFrom("identities")
+        .select("linked_via")
+        .where("source", "=", "fake-idp:t1")
+        .where("external_id", "=", externalId)
+        .executeTakeFirst()
+    )?.linked_via;
+
+  it("Ruling A18：IM 绑定的身份不能直接第三方登录（sso.identity_not_verified），也不建会话", async () => {
+    const bob = await loggedIn("bob");
+    await bindTo(bob.req, "im-x");
+    expect(await linkedVia("im-x")).toBe("bind");
+    // 攻击者：在 IM 里拿到绑定链接骗 bob 确认后，用同一个 IM 身份登录网页
+    const attacker = await sso({ sub: "im-x" });
+    expect(attacker.location).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(attacker.jar.get("cap_at")).toBeUndefined();
+    // 已登录的是另一个账号：同样拒绝，身份行不变
+    const carol = await loggedIn("carol");
+    const other = await sso({ sub: "im-x" }, "/chat", carol.jar);
+    expect(other.location).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(await linkedVia("im-x")).toBe("bind");
+    expect(await me(carol.jar)).toBe(carol.account.id);
+  });
+
+  it("本人已登录时完成同一身份的第三方登录 → 升级为 sso，之后可以直接登录", async () => {
+    const bob = await loggedIn("bob");
+    await bindTo(bob.req, "im-y");
+    const proved = await sso({ sub: "im-y" }, "/settings/identities", bob.jar);
+    expect(proved.location).toBe(`${PUBLIC}/settings/identities`);
+    expect(await me(proved.jar)).toBe(bob.account.id);
+    expect(await linkedVia("im-y")).toBe("sso");
+    const later = await sso({ sub: "im-y" });
+    expect(later.location).toBe(`${PUBLIC}/`);
+    expect(await me(later.jar)).toBe(bob.account.id);
+  });
+
+  it("Ruling A19：身份源键与租户不一致 → sso.provider_error，不写身份", async () => {
+    const r = await sso({ sub: "u-mismatch", source: "fake-idp:t2" });
+    expect(r.location).toBe(`${PUBLIC}/login?error=sso.provider_error`);
+    expect(r.jar.get("cap_at")).toBeUndefined();
+    expect(
+      await db
+        .selectFrom("identities")
+        .select("source")
+        .where("external_id", "=", "u-mismatch")
+        .execute(),
+    ).toEqual([]);
+  });
+
+  it("PKCE：发起时生成 codeVerifier 存进 state，授权地址带 S256 challenge，回调把 verifier 交给插件", async () => {
+    const jar = cookieJar();
+    const s = await start(jar);
+    expect(s.loc.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(s.challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const rec = JSON.parse((await redis.get(`capk:sso-state:${s.state}`)) ?? "{}") as {
+      codeVerifier?: string;
+    };
+    expect(rec.codeVerifier).toMatch(/^[A-Za-z0-9_-]{43,128}$/);
+    expect(
+      createHash("sha256")
+        .update(rec.codeVerifier ?? "")
+        .digest("base64url"),
+    ).toBe(s.challenge);
+    // 授权码绑定的是另一个 challenge（被截获的授权码在别处兑换）→ 插件核对失败
+    const res = await callback(jar, {
+      state: s.state,
+      code: fakeIdpCode({ sub: "u-pkce", nonce: s.nonce, challenge: "x".repeat(43) }),
+    });
+    expect(res.headers.location).toBe(`${PUBLIC}/login?error=sso.provider_error`);
+    // 带对 challenge：成功
+    const ok = await sso({ sub: "u-pkce" });
+    expect(ok.location).toBe(`${PUBLIC}/`);
+  });
+
+  it("绑定确认时复核连接：连接已删除 / 不存在 / 插件在该组织停用 → bind.invalid，不绑定", async () => {
+    const bob = await loggedIn("bob");
+    const mk = async (externalId: string) => {
+      const connectionId = await newConnection();
+      const url = await k.identity.binding.createBindToken({
+        connectionId,
+        identity: {
+          source: "fake-idp:t1",
+          externalId,
+          tenantId: "t1",
+          emailVerified: false,
+          displayName: externalId,
+        },
+      });
+      return { connectionId, token: url.slice(`${PUBLIC}/bind/`.length) };
+    };
+    const deleted = await mk("im-del");
+    await sql`UPDATE capybara.channel_connections SET deleted_at = now()
+      WHERE id = ${deleted.connectionId}`.execute(raw);
+    const gone = await mk("im-gone");
+    await sql`DELETE FROM capybara.channel_connections WHERE id = ${gone.connectionId}`.execute(
+      raw,
+    );
+    const disabled = await mk("im-off");
+    await sql`UPDATE capybara.plugin_org_configs SET enabled = false
+      WHERE org_id = ${`org-${disabled.connectionId}`}`.execute(raw);
+    for (const t of [deleted, gone, disabled]) {
+      const res = await bob.req({ method: "POST", url: `/api/v1/bind/${t.token}` });
+      expect(res.statusCode).toBe(404);
+      expect(errCode(res)).toBe("bind.invalid");
+    }
+    for (const ext of ["im-del", "im-gone", "im-off"]) {
+      expect(await k.identity.external.findAccount("fake-idp:t1", ext)).toBeUndefined();
+    }
   });
 });

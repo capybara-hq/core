@@ -30,7 +30,8 @@
         "state_invalid": "The sign-in request expired or was already used. Please try again.",
         "session_mismatch": "The sign-in was started in a different browser. Please start again here.",
         "access_denied": "Sign-in was cancelled or access was denied.",
-        "provider_error": "The identity provider returned an error. Please try again later."
+        "provider_error": "The identity provider returned an error. Please try again later.",
+        "identity_not_verified": "This account was linked through an IM binding link and cannot be used to sign in yet. Sign in another way first, then sign in with it once while signed in to verify it."
       },
       "auth": {
         "account_disabled": "This account has been disabled."
@@ -144,6 +145,9 @@
     },
     "bind": {
       "invalid": "This link is invalid or has expired."
+    },
+    "member": {
+      "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed."
     }
   },
   "agents": {

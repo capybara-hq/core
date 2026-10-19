@@ -737,3 +737,126 @@ describe("通讯录同步", () => {
     expect(await audits(ok.orgId, "org.directory.synced")).toHaveLength(1);
   });
 });
+
+describe("修复波 W1", () => {
+  it("通讯录建的身份行记 linked_via = directory", async () => {
+    const { orgId, book } = await setupOrg();
+    book.members = [person("lv-1")];
+    expect(await sync(orgId)).toMatchObject({ added: 1 });
+    const row = await db
+      .selectFrom("identities")
+      .select("linked_via")
+      .where("source", "=", SOURCE)
+      .where("external_id", "=", "lv-1")
+      .executeTakeFirstOrThrow();
+    expect(row.linked_via).toBe("directory");
+  });
+
+  it("Ruling A20：管理员手动移出通讯录成员后，下一轮同步不再加回；手动重新加入（接受邀请）清除排除", async () => {
+    const { orgId, book } = await setupOrg();
+    const ex = await accounts.createLocal({ login: "ex-1", password: PW, displayName: "Ex" });
+    await linkIdentity(ex.id, "u-ex");
+    book.members = [person("u-ex"), person("u-stay")];
+    expect(await sync(orgId)).toMatchObject({ added: 2 });
+    expect(await memberOf(orgId, "u-ex")).toMatchObject({ source: DIR_SOURCE });
+
+    const del = await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${orgId}/members/${ex.id}` });
+    expect(del.statusCode).toBe(204);
+    const excl = await db
+      .selectFrom("directory_exclusions")
+      .select(["account_id", "plugin", "created_by"])
+      .where("org_id", "=", orgId)
+      .execute();
+    expect(excl).toEqual([{ account_id: ex.id, plugin: "dir-mini", created_by: owner.id }]);
+
+    // 仍在通讯录里在职：同步跳过被排除的人（不算失败，不影响移除阶段）
+    expect(await sync(orgId)).toMatchObject({ added: 0, removed: 0, failed: 0, partial: false });
+    expect(await memberOf(orgId, "u-ex")).toBeUndefined();
+    expect(await memberOf(orgId, "u-stay")).toBeDefined();
+
+    // 管理员重新邀请，本人接受：手动成员（source 为空），排除被清除
+    const inv = await ownerReq({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/invitations`,
+      payload: { role: "member" },
+    });
+    expect(inv.statusCode, inv.body).toBe(201);
+    const exReq = await session(k, "ex-1");
+    const acc = await exReq({
+      method: "POST",
+      url: `/api/v1/invitations/${(inv.json() as { token: string }).token}/accept`,
+      payload: {},
+    });
+    expect(acc.statusCode, acc.body).toBe(200);
+    expect(
+      await db
+        .selectFrom("directory_exclusions")
+        .select("account_id")
+        .where("org_id", "=", orgId)
+        .execute(),
+    ).toEqual([]);
+    expect(await memberOf(orgId, "u-ex")).toMatchObject({ source: null });
+    expect(await sync(orgId)).toMatchObject({ added: 0, removed: 0 });
+    expect(await memberOf(orgId, "u-ex")).toMatchObject({ source: null });
+  });
+
+  it("移除阶段前复核可同步性：插件中途停用 → 本轮不完整、不移除任何人", async () => {
+    const { orgId, book } = await setupOrg();
+    book.members = [person("rc-1"), person("rc-2")];
+    expect(await sync(orgId)).toMatchObject({ added: 2 });
+    book.members = [person("rc-1")];
+    let calls = 0;
+    const ds = new DirectorySync({
+      db,
+      redis,
+      host: k.host,
+      orgPluginConfigs: {
+        // 第一次（开始时）照常；之后（移除阶段前的复核）返回已停用
+        get: async (o, p) => {
+          calls++;
+          const cfg = await k.orgPluginConfigs.get(o, p);
+          return calls === 1 || cfg === undefined ? cfg : { ...cfg, enabled: false };
+        },
+      },
+      external: k.identity.external,
+      offboarding: k.identity.offboarding,
+      log: k.log,
+    });
+    const r = await ds.sync(orgId, "dir-mini", { trigger: "manual" });
+    expect(r).toMatchObject({ status: "synced", removed: 0, partial: true });
+    expect(calls).toBe(2);
+    expect(await memberOf(orgId, "rc-2")).toMatchObject({ source: DIR_SOURCE });
+    expect((await audits(orgId, "org.directory.synced")).at(-1)?.detail).toMatchObject({
+      removed: 0,
+      partial: true,
+    });
+  });
+
+  it("移除阶段前复核可同步性：组织级配置中途变得无效 → 不移除任何人", async () => {
+    const { orgId, book } = await setupOrg();
+    book.members = [person("ci-1"), person("ci-2")];
+    expect(await sync(orgId)).toMatchObject({ added: 2 });
+    book.members = [person("ci-1")];
+    let calls = 0;
+    const ds = new DirectorySync({
+      db,
+      redis,
+      host: k.host,
+      orgPluginConfigs: {
+        get: async (o, p) => {
+          calls++;
+          if (calls > 1) throw new Error("stored config no longer matches the schema");
+          return k.orgPluginConfigs.get(o, p);
+        },
+      },
+      external: k.identity.external,
+      offboarding: k.identity.offboarding,
+      log: k.log,
+    });
+    expect(await ds.sync(orgId, "dir-mini", { trigger: "manual" })).toMatchObject({
+      removed: 0,
+      partial: true,
+    });
+    expect(await memberOf(orgId, "ci-2")).toBeDefined();
+  });
+});
