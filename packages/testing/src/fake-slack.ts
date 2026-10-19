@@ -50,9 +50,13 @@ export interface FakeSlackAck {
   at: number;
 }
 
-/** 让接下来的调用失败：`error` 为平台错误（HTTP 200 + `ok: false`），`status` 为 HTTP 状态码。 */
+/**
+ * 让接下来的调用失败：`error` 为平台错误（HTTP 200 + `ok: false`），`status` 为 HTTP 状态码；`body` 给了就以
+ * HTTP 200 原样返回它（模拟成功但字段缺失的响应）。
+ */
 export interface FakeSlackFailure {
   error?: string;
+  body?: Record<string, unknown>;
   status?: number;
   /** 429 时的 `Retry-After`（秒）。 */
   retryAfter?: number;
@@ -89,6 +93,10 @@ export interface FakeSlackServer {
   /** 同时打开的 WebSocket 数峰值。 */
   maxConcurrentSockets(): number;
   failNext(method: string, failure: FakeSlackFailure, count?: number): void;
+  /** 之后该方法的每次调用先等 `ms` 毫秒再响应（0 取消）。 */
+  delay(method: string, ms: number): void;
+  /** 接下来 `count` 条 Socket Mode 连接在发出 hello 后立即被关闭（不发 disconnect 消息）。 */
+  dropNextConnections(count: number): void;
   /** 推一个原始信封给最近打开的一条连接，返回 envelope_id；没有打开的连接时抛错。 */
   push(envelope: { type: string; payload: unknown; envelope_id?: string }): string;
   /** 推一个 Events API 事件（`events_api` 信封，外层 `event_callback` 带 team_id / event_id）。 */
@@ -153,6 +161,8 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
   const failures: { method: string; failure: FakeSlackFailure; left: number }[] = [];
   const sockets: WebSocket[] = [];
   const ackWaiters = new Map<string, ((a: FakeSlackAck) => void)[]>();
+  const delays = new Map<string, number>();
+  let dropLeft = 0;
   let opened = 0;
   let peak = 0;
   let seq = 0;
@@ -174,10 +184,13 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
     const auth = String(req.headers.authorization ?? "");
     const token = auth.startsWith("Bearer ") ? auth.slice(7) : (str(body.token) ?? "");
     calls.push({ method, token, body });
+    const wait = delays.get(method) ?? 0;
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     const f = failures.find((x) => x.method === method && x.left > 0);
     if (f) {
       f.left--;
       const { status, error, retryAfter } = f.failure;
+      if (f.failure.body !== undefined) return reply(res, f.failure.body);
       if (status !== undefined && status !== 200) {
         const headers = retryAfter !== undefined ? { "retry-after": String(retryAfter) } : {};
         return reply(res, { ok: false, error: error ?? "ratelimited" }, status, headers);
@@ -318,6 +331,10 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
           connection_info: { app_id: "A0001" },
         }),
       );
+      if (dropLeft > 0) {
+        dropLeft--;
+        ws.close(1011);
+      }
     });
   });
 
@@ -350,6 +367,12 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
     maxConcurrentSockets: () => peak,
     failNext(method, failure, count = 1) {
       failures.push({ method, failure, left: count });
+    },
+    delay(method, ms) {
+      delays.set(method, ms);
+    },
+    dropNextConnections(count) {
+      dropLeft = count;
     },
     push,
     pushEvent(event, o = {}) {

@@ -3,8 +3,8 @@ import type { CardAction, OutboundMessage } from "./cards.js";
 
 /**
  * 消息的投递目标。群聊里的 `threadId` 是话题**根消息的 `messageId`**（内核用它把同一话题归到一个会话，
- * 回复也投到这个话题）：Slack 为根消息的 `ts`（即回复的 `thread_ts`）；飞书为根消息的 `message_id`
- * （`root_id`，`om_…`），**不是** `thread_id`（`omt_…`）。私聊不带。
+ * 回复也投到这个话题）：Slack 为插件所定义的根消息 `messageId`（如 `<频道>:<ts>`，ts 即回复的
+ * `thread_ts`）；飞书为根消息的 `message_id`（`root_id`，`om_…`），**不是** `thread_id`（`omt_…`）。私聊不带。
  */
 export interface ChannelTarget {
   chatId: string;
