@@ -4,7 +4,8 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
 import { ChannelConnections } from "./channels/connections.service.js";
-import { ChannelInbound, NOOP_DIRECTORY_SYNC, NOOP_OUTBOUND } from "./channels/inbound.js";
+import { ChannelInbound, NOOP_DIRECTORY_SYNC } from "./channels/inbound.js";
+import { ChannelOutbound } from "./channels/outbound.js";
 import { ChannelSupervisor } from "./channels/supervisor.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
@@ -140,10 +141,12 @@ export interface KernelIdentity {
   readonly offboarding: Offboarding;
 }
 
-/** 渠道运行时（连接、入站；出站投递见 Task 11）。 */
+/** 渠道运行时（连接、入站、出站投递）。 */
 export interface KernelChannels {
-  /** 组织的渠道连接（CRUD、运行时配置、最小出站接缝 `send`）。 */
+  /** 组织的渠道连接（CRUD、运行时配置、出站会话 `outbound` / `send`）。 */
   readonly connections: ChannelConnections;
+  /** 出站投递（队列 `cap-kernel-channels`；worker 角色消费）。 */
+  readonly outbound: ChannelOutbound;
   /** 入站事件处理（插件 `connect` 的 `onEvent`）。 */
   readonly inbound: ChannelInbound;
 }
@@ -325,6 +328,7 @@ export async function createKernel(
     log,
     onDecided: async (a) => {
       await waits.resume(a.runId, a.id);
+      enqueueOutbound(a.conversationId);
     },
   });
   const questions = new QuestionsService({
@@ -334,6 +338,7 @@ export async function createKernel(
     log,
     onAnswered: async (q) => {
       await waits.resume(q.runId, q.id);
+      enqueueOutbound(q.conversationId);
     },
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
@@ -413,7 +418,11 @@ export async function createKernel(
       }),
       eventLog,
       runs: {
-        abortWaiting: (c, runId, by) => waits.abortWaiting(c, runId, by),
+        abortWaiting: async (c, runId, by) => {
+          const r = await waits.abortWaiting(c, runId, by);
+          enqueueOutbound(c);
+          return r;
+        },
         abortIfOrphaned: (c, runId, by) => runQueue.abortIfOrphaned(c, runId, by),
         requestAbort: (runId, by) => abort.request(runId, by),
       },
@@ -427,7 +436,12 @@ export async function createKernel(
     ensureRun: (id: string) => runQueue.ensureRun(id),
     abortIfOrphaned: (id: string, runId: string, by: string) =>
       runQueue.abortIfOrphaned(id, runId, by),
-    abortWaiting: (id: string, runId: string, by: string) => waits.abortWaiting(id, runId, by),
+    // 等待中被中止：审批 / 提问卡片变为已取消，排一个出站任务去更新
+    abortWaiting: async (id: string, runId: string, by: string) => {
+      const r = await waits.abortWaiting(id, runId, by);
+      enqueueOutbound(id);
+      return r;
+    },
     requestAbort: (runId: string, by: string) => abort.request(runId, by),
   };
   const channelConnections = new ChannelConnections({
@@ -439,8 +453,27 @@ export async function createKernel(
     log,
     onSecrets: (v) => log.addOrgSecrets(v),
   });
+  const channelOutbound = new ChannelOutbound({
+    db: kdb,
+    redis,
+    redisUrl: config.redis.url,
+    bus,
+    eventLog,
+    connections: channelConnections,
+    approvals,
+    questions,
+    config: () => current,
+    log,
+  });
+  /** 会话有 IM 投递目标时排一个出站任务（审批 / 回答 / 运行开始后）；失败只记日志。 */
+  function enqueueOutbound(conversationId: string): void {
+    channelOutbound
+      .enqueue(conversationId)
+      .catch((err) => log.warn("cannot enqueue channel delivery", { conversationId, err }));
+  }
   const channels: KernelChannels = {
     connections: channelConnections,
+    outbound: channelOutbound,
     inbound: new ChannelInbound({
       db: kdb,
       redis,
@@ -455,7 +488,9 @@ export async function createKernel(
       external,
       binding: identity.binding,
       directorySync: NOOP_DIRECTORY_SYNC,
-      outbound: NOOP_OUTBOUND,
+      outbound: channelOutbound,
+      approvals,
+      questions,
       log,
     }),
   };
@@ -465,20 +500,28 @@ export async function createKernel(
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
    * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
    */
-  const sinkFor =
-    (conversationId: string): StreamSink =>
-    (d) => {
+  const sinkFor = (conversationId: string): StreamSink => {
+    // 本次运行执行中推出的文本字符数（按步，step_reset 清零）：本进程正在执行的这次运行自己的计数
+    let at = { runId: "", step: -1, chars: 0 };
+    return (d) => {
+      if (at.runId !== d.runId || at.step !== d.step || d.kind === "step_reset") {
+        at = { runId: d.runId, step: d.step, chars: 0 };
+      }
+      const offset = at.chars;
+      if (d.kind === "text") at.chars += d.text?.length ?? 0;
       const msg: ConversationBusMessage = {
         kind: "delta",
         runId: d.runId,
         step: d.step,
         delta: d.kind,
         ...(d.text !== undefined && { text: d.text }),
+        ...(d.kind === "text" && { offset }),
       };
       bus
         .publish(conversationTopic(conversationId), msg)
         .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
     };
+  };
   const stepDeps: LoopDeps = {
     db: kdb,
     eventLog,
@@ -668,6 +711,12 @@ export async function createKernel(
       );
     }
     await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
+    // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
+    await within(
+      "channel-outbound",
+      channelOutbound.close(),
+      Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
+    );
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
     await within("bus", busSubscriber.close());
@@ -733,6 +782,7 @@ export async function createKernel(
             sinkFor,
             checkpoints,
             waits,
+            onRunStart: enqueueOutbound,
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();
@@ -757,6 +807,7 @@ export async function createKernel(
           });
           await channelSupervisor.start();
           checkpoint();
+          channelOutbound.startWorker();
         }
         httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {

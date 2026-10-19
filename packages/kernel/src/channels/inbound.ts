@@ -6,8 +6,11 @@ import { ApiError } from "../errors.js";
 import type { IdentityBinding } from "../identity/binding.js";
 import type { ExternalIdentities } from "../identity/external.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import type { ChannelConnections } from "./connections.service.js";
-import { type ChannelPhrase, phrase } from "./phrases.js";
+import type { ApprovalsService } from "../tools/approvals.service.js";
+import type { QuestionsService } from "../tools/questions.service.js";
+import { ChannelCardActions } from "./actions.js";
+import type { ChannelConnectionRow, ChannelConnections } from "./connections.service.js";
+import { type ChannelLocale, type ChannelPhrase, phrase } from "./phrases.js";
 import {
   archiveThread,
   ensureAnonymousGuest,
@@ -29,15 +32,13 @@ export interface DirectorySyncScheduler {
   enqueue(orgId: string, plugin: string): Promise<void>;
 }
 
-/** 出站投递的投递接口（Task 11 实现：把会话的新事件按 `channel_deliveries.last_seq` 续投到 IM）。 */
+/** 出站投递的投递接口（实现见 outbound.ts：把会话的新事件按 `channel_deliveries.last_seq` 续投到 IM）。 */
 export interface ChannelOutboundScheduler {
   enqueue(conversationId: string): Promise<void>;
 }
 
 /** Task 12 之前的占位：什么都不做。 */
 export const NOOP_DIRECTORY_SYNC: DirectorySyncScheduler = { enqueue: async () => {} };
-/** Task 11 之前的占位：什么都不做。 */
-export const NOOP_OUTBOUND: ChannelOutboundScheduler = { enqueue: async () => {} };
 
 export interface ChannelInboundDeps {
   db: KernelDb;
@@ -48,6 +49,9 @@ export interface ChannelInboundDeps {
   binding: Pick<IdentityBinding, "createBindToken">;
   directorySync: DirectorySyncScheduler;
   outbound: ChannelOutboundScheduler;
+  /** 卡片操作：审批决定与提问回答（授权由这两个服务按点击者映射到的账号判定）。 */
+  approvals: Pick<ApprovalsService, "decide">;
+  questions: Pick<QuestionsService, "answer">;
   log: Pick<Logger, "warn">;
 }
 
@@ -64,10 +68,21 @@ type MessageEvent = Extract<InboundEvent, { type: "message" }>;
  *    识别不出发言人时绝不借用连接创建者或任何人的身份；
  * 4. 私聊 `/new` → 归档当前对话行并回「已开始新对话」；
  * 5. 按话题找或建会话，写用户消息，记下投递目标并投递出站任务（Task 11）。
- * `directory_changed` → 投递通讯录同步（Task 12）；`card_action` 由 Task 11 处理。
+ * `directory_changed` → 投递通讯录同步（Task 12）；`card_action` 见 actions.ts。
  */
 export class ChannelInbound {
-  constructor(private readonly deps: ChannelInboundDeps) {}
+  private readonly actions: ChannelCardActions;
+
+  constructor(private readonly deps: ChannelInboundDeps) {
+    this.actions = new ChannelCardActions({
+      db: deps.db,
+      connections: deps.connections,
+      approvals: deps.approvals,
+      questions: deps.questions,
+      outbound: deps.outbound,
+      resolveSpeaker: (...args) => this.resolveSpeaker(...args),
+    });
+  }
 
   async handle(connectionId: string, e: InboundEvent): Promise<void> {
     if (e.type === "directory_changed") {
@@ -75,7 +90,10 @@ export class ChannelInbound {
       if (row?.status === "active") await this.deps.directorySync.enqueue(row.orgId, row.plugin);
       return;
     }
-    if (e.type === "card_action") return; // Task 11
+    if (e.type === "card_action") {
+      await this.actions.handle(connectionId, e);
+      return;
+    }
     // 边界情况（已接受）：
     // - 同一条消息的重投在首次处理仍在进行时到达：SET NX 已占住，重投被丢弃；若首次处理随后失败并删掉键，
     //   这条消息就只能等平台下一次重投（平台不再重投则丢失）。
@@ -109,47 +127,9 @@ export class ChannelInbound {
       });
     };
 
-    const source = `${row.plugin}:${e.sender.tenantId}`;
-    const bound = await this.deps.external.findAccount(source, e.sender.externalId);
-    let accountId: string;
-    let threadAccount: string | null;
-    if (bound !== undefined && (await this.isActiveMember(row.orgId, bound))) {
-      accountId = bound;
-      threadAccount = bound;
-    } else if (row.unboundPolicy === "anonymous") {
-      if (!(await this.agentVisibleToOrg(row.orgId, row.agentId))) {
-        await reply("anonymousNotAllowed");
-        return;
-      }
-      accountId = await ensureAnonymousGuest(db, row.orgId);
-      threadAccount = null;
-    } else if (bound !== undefined) {
-      await reply("notMember");
-      return;
-    } else if (isGroup) {
-      await reply("bindInDm");
-      return;
-    } else {
-      let url: string;
-      try {
-        url = await this.deps.binding.createBindToken({
-          connectionId,
-          identity: {
-            source,
-            externalId: e.sender.externalId,
-            tenantId: e.sender.tenantId,
-            emailVerified: false,
-            displayName: e.sender.externalId,
-          },
-        });
-      } catch (err) {
-        this.deps.log.warn("cannot create channel bind link", { connectionId, err });
-        await reply("bindUnavailable");
-        return;
-      }
-      await reply("bindPrompt", [{ kind: "bind", url, text: phrase("bindPrompt", locale) }]);
-      return;
-    }
+    const speaker = await this.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
+    if (speaker === undefined) return;
+    const { accountId, threadAccount } = speaker;
 
     const k: ThreadKey = {
       connectionId,
@@ -219,6 +199,61 @@ export class ChannelInbound {
       )
       .execute();
     await this.deps.outbound.enqueue(conversationId);
+  }
+
+  /**
+   * 第 3 步：发言人（或卡片点击者）→ 账号。按 `<插件>:<租户>` + externalId 纯查找，且须是该组织的活跃成员；
+   * 否则按连接的未绑定策略回复（绑定卡片只发在私聊里）并返回 undefined。
+   * `threadAccount` 为话题行记的账号（匿名访客为 null）。
+   */
+  async resolveSpeaker(
+    connectionId: string,
+    row: ChannelConnectionRow,
+    sender: { externalId: string; tenantId: string },
+    isGroup: boolean,
+    locale: ChannelLocale,
+    reply: (key: ChannelPhrase, cards?: ChannelCard[]) => Promise<void>,
+  ): Promise<{ accountId: string; threadAccount: string | null } | undefined> {
+    const { db } = this.deps;
+    const source = `${row.plugin}:${sender.tenantId}`;
+    const bound = await this.deps.external.findAccount(source, sender.externalId);
+    if (bound !== undefined && (await this.isActiveMember(row.orgId, bound))) {
+      return { accountId: bound, threadAccount: bound };
+    }
+    if (row.unboundPolicy === "anonymous") {
+      if (!(await this.agentVisibleToOrg(row.orgId, row.agentId))) {
+        await reply("anonymousNotAllowed");
+        return undefined;
+      }
+      return { accountId: await ensureAnonymousGuest(db, row.orgId), threadAccount: null };
+    }
+    if (bound !== undefined) {
+      await reply("notMember");
+      return undefined;
+    }
+    if (isGroup) {
+      await reply("bindInDm");
+      return undefined;
+    }
+    let url: string;
+    try {
+      url = await this.deps.binding.createBindToken({
+        connectionId,
+        identity: {
+          source,
+          externalId: sender.externalId,
+          tenantId: sender.tenantId,
+          emailVerified: false,
+          displayName: sender.externalId,
+        },
+      });
+    } catch (err) {
+      this.deps.log.warn("cannot create channel bind link", { connectionId, err });
+      await reply("bindUnavailable");
+      return undefined;
+    }
+    await reply("bindPrompt", [{ kind: "bind", url, text: phrase("bindPrompt", locale) }]);
+    return undefined;
   }
 
   /** 账号是该组织成员且账号未停用。 */

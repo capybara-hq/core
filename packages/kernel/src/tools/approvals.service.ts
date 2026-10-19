@@ -404,6 +404,21 @@ export class ApprovalsService {
     return record;
   }
 
+  /**
+   * 详情，不做处理人校验（内核内部用：渠道出站投递组装 IM 审批卡片）；不存在返回 null。
+   * 不得直接回给请求方——HTTP 接口用 {@link get}。
+   */
+  async describe(id: string): Promise<ApprovalView | null> {
+    const row = await this.deps.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) return null;
+    const [view] = await this.views([toRecord(row)]);
+    return view ?? null;
+  }
+
   /** 某个工具调用最近一次的审批（attempt 最大者）；没有则返回 null。 */
   async forCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.deps.db

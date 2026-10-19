@@ -38,6 +38,34 @@ export const CHANNEL_PHRASES = {
     zh: "你无权使用此助手，请联系管理员。",
     en: "You don't have access to this assistant. Please contact an administrator.",
   },
+  /** 卡片操作：点击者不是审批人 / 不是提问的发起人（或请求不在该组织）。 */
+  cannotHandle: { zh: "你不能处理这条请求。", en: "You can't handle this request." },
+  /** 卡片操作：请求已被处理、已过期或已取消。 */
+  alreadyHandled: {
+    zh: "这条请求已经处理过了。",
+    en: "This request has already been handled.",
+  },
+  /** 卡片操作：回答不符合表单，或审批范围不允许。 */
+  invalidAction: {
+    zh: "无法完成这个操作，请到网页上处理。",
+    en: "That action isn't valid here. Please handle it on the web.",
+  },
+  /** 审批卡片的标题与随附文本。 */
+  approvalTitle: { zh: "需要你的批准", en: "Approval required" },
+  /** 提问卡片的随附文本。 */
+  questionTitle: { zh: "需要你的回答", en: "Your input is needed" },
+  /** 连接卡片的随附文本。 */
+  connectTitle: { zh: "需要先连接一个应用", en: "An app needs to be connected first" },
+  /** 部署未配置 http.publicUrl，无法给出网页链接与卡片时的退回文本。 */
+  handleOnWeb: {
+    zh: "有一条请求需要你到 Capybara 网页上处理。",
+    en: "A request is waiting for you in Capybara on the web.",
+  },
+  /** 运行失败。 */
+  runFailed: {
+    zh: "抱歉，出错了，请稍后再试。",
+    en: "Sorry, something went wrong. Please try again later.",
+  },
 } as const satisfies Record<string, Record<ChannelLocale, string>>;
 
 export type ChannelPhrase = keyof typeof CHANNEL_PHRASES;

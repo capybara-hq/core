@@ -63,6 +63,8 @@ export interface RunWorkerDeps {
   checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">;
   /** loop 返回 `suspended` 后把运行置为 waiting（释放会话锁与配额之后）。 */
   waits: Pick<Waits, "suspend">;
+  /** 取得会话锁与配额、开始执行运行时调用（同步、不等待；渠道出站投递用它排投递任务）。 */
+  onRunStart?: (conversationId: string) => void;
   hooks?: RunHooks;
 }
 
@@ -378,6 +380,12 @@ export class RunWorker {
       if (!entered) {
         delayMs = QUOTA_FULL_DELAY_MS;
       } else {
+        // 运行开始执行（含续跑、stalled 后接手）：通知旁路（渠道出站投递据此把输出投到 IM），失败不影响运行
+        try {
+          this.d.onRunStart?.(conversationId);
+        } catch (err) {
+          this.d.log.warn("onRunStart hook failed", { conversationId, err });
+        }
         const r = await this.execute(run, { id: conversationId, ...conv }, state).catch(
           async (err: unknown): Promise<ExecResult> => {
             if (state.abandoned) return "abandoned";

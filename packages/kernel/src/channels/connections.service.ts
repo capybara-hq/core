@@ -16,6 +16,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { createRedactor } from "../log.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { configToJsonSchema, type JsonSchema } from "../plugins/config-json-schema.js";
 import type { PluginHost } from "../plugins/host.js";
@@ -552,20 +553,49 @@ export class ChannelConnections {
   }
 
   /**
-   * 经连接的插件直接发一条消息（Task 10 的最小出站接缝：入站处理回绑定卡片、固定话术）。
-   * Task 11 的出站投递在此之上加按事件序号续投、草稿编辑与卡片更新。
+   * 出站会话：解密一次连接配置，之后经插件发 / 改消息（每次调用 15s 超时）。出站投递任务在一次任务内复用它；
+   * `redact` 按该连接的密钥打码（插件异常信息写进 `last_error` 前使用）。
    */
+  async outbound(connectionId: string): Promise<ChannelOutboundSession> {
+    const { row, channel, config } = await this.runtime(connectionId);
+    return {
+      row,
+      features: channel.features,
+      redact: createRedactor(secretValues(channel.connectionSchema, config), 4),
+      send: (target, message) =>
+        channel.send({
+          config,
+          target,
+          message,
+          signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
+        }),
+      update: (target, messageId, message) =>
+        channel.update({
+          config,
+          target,
+          message,
+          messageId,
+          signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
+        }),
+    };
+  }
+
+  /** 经连接的插件直接发一条消息（入站处理回绑定卡片、固定话术，卡片操作回说明）。 */
   async send(
     connectionId: string,
     target: ChannelTarget,
     message: OutboundMessage,
   ): Promise<{ messageId: string }> {
-    const { channel, config } = await this.runtime(connectionId);
-    return channel.send({
-      config,
-      target,
-      message,
-      signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
-    });
+    return (await this.outbound(connectionId)).send(target, message);
   }
+}
+
+/** {@link ChannelConnections.outbound} 的返回值。 */
+export interface ChannelOutboundSession {
+  row: ChannelConnectionRow;
+  features: Channel["features"];
+  redact: (s: string) => string;
+  send(target: ChannelTarget, message: OutboundMessage): Promise<{ messageId: string }>;
+  /** 只在 `features.edit` 为 true 时调用。 */
+  update(target: ChannelTarget, messageId: string, message: OutboundMessage): Promise<void>;
 }

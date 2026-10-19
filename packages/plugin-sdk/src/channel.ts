@@ -54,7 +54,37 @@ export interface Channel {
   }): Promise<{ botUserId: string; botName: string; tenantId: string }>;
   /** 长连接循环：signal 中止时返回；断线自行重连。 */
   connect(args: ChannelConnectArgs): Promise<void>;
+  /** 失败时抛 {@link ChannelSendError} 说明能否重试；其他异常内核按可重试处理（次数有限）。 */
   send(args: ChannelSendArgs): Promise<{ messageId: string }>;
-  /** features.edit 为 false 的渠道不会被调用。 */
+  /** features.edit 为 false 的渠道不会被调用。失败语义同 send。 */
   update(args: ChannelSendArgs & { messageId: string }): Promise<void>;
+}
+
+/**
+ * 渠道发送 / 更新消息失败的分类：`retryable` 为 true（限流、平台 5xx、网络）时内核退避后重试，
+ * `retryAfterMs` 为平台给出的建议等待时长；为 false（消息被拒、机器人被移出群、凭据失效等）时内核
+ * 记下连接的 `last_error` 并停止该会话本轮的投递。消息里不要带凭据。
+ */
+export class ChannelSendError extends Error {
+  readonly retryable: boolean;
+  readonly retryAfterMs?: number;
+
+  constructor(
+    message: string,
+    opts: { retryable: boolean; retryAfterMs?: number; cause?: unknown },
+  ) {
+    super(message, "cause" in opts ? { cause: opts.cause } : undefined);
+    this.name = "ChannelSendError";
+    this.retryable = opts.retryable;
+    if (opts.retryAfterMs !== undefined) this.retryAfterMs = opts.retryAfterMs;
+  }
+}
+
+/** 鸭子类型判断（不用 instanceof），兼容插件自带另一份 plugin-sdk 副本的情况。 */
+export function isChannelSendError(e: unknown): e is ChannelSendError {
+  return (
+    e instanceof Error &&
+    e.name === "ChannelSendError" &&
+    typeof (e as { retryable?: unknown }).retryable === "boolean"
+  );
 }

@@ -55,3 +55,17 @@ CREATE TABLE IF NOT EXISTS capybara.org_anonymous_accounts (
   account_id text NOT NULL UNIQUE REFERENCES capybara.accounts(id) ON DELETE CASCADE,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- 出站投递发出的审批 / 提问卡片对应的 IM 消息（Task 11）：approval_decided / question_answered 到达时据此更新卡片，
+-- 崩溃后由其他副本续投时同样能找到。每个 (会话, 连接, 卡片) 只记一条。
+CREATE TABLE IF NOT EXISTS capybara.channel_card_messages (
+  conversation_id text NOT NULL REFERENCES capybara.conversations(id) ON DELETE CASCADE,
+  connection_id text NOT NULL REFERENCES capybara.channel_connections(id) ON DELETE CASCADE,
+  card_kind text NOT NULL CHECK (card_kind IN ('approval', 'question')),
+  card_id text NOT NULL,
+  message_id text NOT NULL,
+  target jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (conversation_id, connection_id, card_kind, card_id)
+);
+CREATE INDEX IF NOT EXISTS channel_card_messages_connection_idx
+  ON capybara.channel_card_messages (connection_id);

@@ -420,6 +420,17 @@ export interface ChannelDeliveriesTable {
   updated_at: Ts;
 }
 
+/** 0018_channels.sql：出站投递发出的审批 / 提问卡片对应的 IM 消息（Task 11，用于更新卡片状态）。 */
+export interface ChannelCardMessagesTable {
+  conversation_id: string;
+  connection_id: string;
+  card_kind: "approval" | "question";
+  card_id: string;
+  message_id: string;
+  target: Json<unknown>;
+  created_at: Ts;
+}
+
 /** 0018_channels.sql：每个组织一个的匿名访客账号。 */
 export interface OrgAnonymousAccountsTable {
   org_id: string;
@@ -464,6 +475,7 @@ export interface KernelDatabase {
   channel_connections: ChannelConnectionsTable;
   channel_threads: ChannelThreadsTable;
   channel_deliveries: ChannelDeliveriesTable;
+  channel_card_messages: ChannelCardMessagesTable;
   org_anonymous_accounts: OrgAnonymousAccountsTable;
 }
 
