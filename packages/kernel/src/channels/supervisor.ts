@@ -298,12 +298,13 @@ export class ChannelSupervisor {
     h.abort.abort();
   }
 
-  /** 主动交还：中止，等 `connect` 返回（至多 SETTLE_MS）后释放租约；超时则让租约自然过期，避免两边同时在线。 */
+  /** 后台交还，记入 `releasing` 供 `stop()` 等待。 */
   private releaseInBackground(id: string): void {
     const p = this.release(id).finally(() => this.releasing.delete(p));
     this.releasing.add(p);
   }
 
+  /** 主动交还：中止，等 `connect` 返回（至多 SETTLE_MS）后释放租约；超时则让租约自然过期，避免两边同时在线。 */
   private async release(id: string): Promise<void> {
     const h = this.held.get(id);
     if (!h) return;
