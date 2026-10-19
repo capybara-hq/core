@@ -45,7 +45,7 @@ let connId: string;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  im = await startFakeChannelServer();
+  im = await startFakeChannelServer({ dedupeSends: false });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },

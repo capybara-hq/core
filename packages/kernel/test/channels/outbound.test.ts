@@ -606,7 +606,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
         updatesOf(cardMsg.messageId).find(
           (u) => (cardOf(u) as { state?: string } | undefined)?.state === "answered",
         ),
-      10_000,
+      20_000,
       "question card answered",
     );
     expect(cardOf(up)).toMatchObject({

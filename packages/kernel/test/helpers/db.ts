@@ -27,7 +27,9 @@ export async function truncateTables<DB>(db: Kysely<DB>, tables: string): Promis
       });
       return;
     } catch (e) {
-      if (!LOCK_CONFLICTS.has(codeOf(e) ?? "") || attempt >= ATTEMPTS) throw e;
+      const code = codeOf(e) ?? "";
+      if (!LOCK_CONFLICTS.has(code) || attempt >= ATTEMPTS) throw e;
+      console.warn(`truncateTables: ${code} on attempt ${attempt}/${ATTEMPTS}, retrying`);
       await new Promise((r) => setTimeout(r, 50 * attempt + Math.floor(Math.random() * 50)));
     }
   }
