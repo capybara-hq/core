@@ -14,6 +14,7 @@ import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { Credentials } from "../../src/tools/credentials.js";
 import { canonicalJson, specHash, ToolRegistry } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 
 const MEM_CONNECTOR = fileURLToPath(
@@ -75,7 +76,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
   await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   memState().servers = {

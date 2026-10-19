@@ -1,6 +1,16 @@
 import { fileURLToPath } from "node:url";
 import type { ChannelCard, ChannelTarget } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeCardAction as cardAction,
+  fakeDm as dm,
+  type FakeChannelSent,
+  type FakeChannelServer,
+  fakeGroupMessage as group,
+  startFakeChannelServer,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -11,14 +21,6 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
-import {
-  cardAction,
-  dm,
-  type FakeIm,
-  type FakeImSent,
-  group,
-  startFakeIm,
-} from "../helpers/fake-im.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -54,7 +56,7 @@ let rd: TestContainer;
 let k: Kernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelDb;
-let im: FakeIm;
+let im: FakeChannelServer;
 let owner: Req;
 let ownerId: string;
 let orgId: string;
@@ -69,7 +71,7 @@ const IDLE_MS = 1000;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  im = await startFakeIm();
+  im = await startFakeChannelServer({ dedupeSends: false });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -182,13 +184,14 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-const chatOf = (s: FakeImSent) => s.target.chatId;
+const chatOf = (s: FakeChannelSent) => s.target.chatId;
 const sentTo = (app: string, chatId: string) =>
   im.sent.filter((s) => s.appId === app && chatOf(s) === chatId);
 const updatesOf = (messageId: string) => im.updated.filter((u) => u.messageId === messageId);
-const cardOf = (s: FakeImSent | undefined) => s?.message.cards?.[0];
+const cardOf = (s: FakeChannelSent | undefined) => s?.message.cards?.[0];
 /** 消息最终显示的文本：有更新取最后一次更新，否则为发出时的文本。 */
-const finalText = (s: FakeImSent) => updatesOf(s.messageId).at(-1)?.message.text ?? s.message.text;
+const finalText = (s: FakeChannelSent) =>
+  updatesOf(s.messageId).at(-1)?.message.text ?? s.message.text;
 
 /** 话题行 → 会话 id。 */
 async function convOf(conn: string, chatId: string): Promise<string> {
@@ -264,7 +267,7 @@ describe("出站投递：流式回复", { timeout: 40_000 }, () => {
     const msgs = sentTo("cli_out", chat);
     // 只发了一条消息（草稿），其余都是更新
     expect(msgs).toHaveLength(1);
-    const draft = msgs[0] as FakeImSent;
+    const draft = msgs[0] as FakeChannelSent;
     expect(LONG.startsWith(draft.message.text)).toBe(true);
     expect(draft.message.text.length).toBeLessThan(LONG.length);
     const ups = updatesOf(draft.messageId);

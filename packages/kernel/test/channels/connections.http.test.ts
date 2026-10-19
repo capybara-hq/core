@@ -1,11 +1,16 @@
 import { fileURLToPath } from "node:url";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  type FakeChannelServer,
+  startFakeChannelServer,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { type FakeIm, startFakeIm } from "../helpers/fake-im.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -27,7 +32,7 @@ let rd: TestContainer;
 let k: Kernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelDb;
-let im: FakeIm;
+let im: FakeChannelServer;
 let owner: Req;
 let member: Req;
 let orgId: string;
@@ -38,7 +43,7 @@ const errCode = (res: { json(): unknown }) =>
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  im = await startFakeIm();
+  im = await startFakeChannelServer();
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },

@@ -1,7 +1,10 @@
 import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
+  fakeDm as dm,
+  type FakeChannelServer,
   type Harness,
+  startFakeChannelServer,
   startTestPostgres,
   startTestRedis,
   type TestContainer,
@@ -12,7 +15,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
-import { dm, type FakeIm, startFakeIm } from "../helpers/fake-im.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
 
@@ -29,13 +31,13 @@ const SCAN_MS = 300;
 
 let pgc: TestContainer;
 let rdc: TestContainer;
-let im: FakeIm;
+let im: FakeChannelServer;
 let h: Harness | undefined;
 const cleanups: (() => Promise<unknown> | unknown)[] = [];
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  im = await startFakeIm();
+  im = await startFakeChannelServer();
 }, 120_000);
 
 afterEach(async () => {

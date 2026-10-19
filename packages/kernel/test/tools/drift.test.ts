@@ -22,6 +22,7 @@ import {
 } from "../../src/tools/drift.js";
 import { createDecidePolicy } from "../../src/tools/policy.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { testMembers } from "../helpers/members.js";
 import { waitFor } from "../helpers/runs.js";
@@ -78,7 +79,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   const st = memState();
   st.servers = {

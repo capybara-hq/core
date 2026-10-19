@@ -14,6 +14,7 @@ import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { Offboarding } from "../../src/orgs/offboarding.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { testMembers } from "../helpers/members.js";
 
@@ -124,8 +125,9 @@ const personal = (accountId: string) => ({ kind: "user" as const, accountId });
 const AUTH = { type: "bearer", ownership: "personal" } as never;
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events, capybara.secrets CASCADE`.execute(
+  await truncateTables(
     raw,
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.secrets",
   );
   await redis.flushdb();
   const owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });

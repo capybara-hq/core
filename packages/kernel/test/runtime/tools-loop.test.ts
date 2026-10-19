@@ -10,7 +10,6 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
@@ -34,6 +33,7 @@ import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { QuestionsService } from "../../src/tools/questions.service.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -212,8 +212,9 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
     calls.length = 0;
     invoked = [];
     crashOn = null;
-    await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.lg_checkpoints, capybara.lg_checkpoint_writes CASCADE`.execute(
+    await truncateTables(
       raw,
+      "capybara.accounts, capybara.orgs, capybara.lg_checkpoints, capybara.lg_checkpoint_writes",
     );
     seed = await seedConversation(raw);
     runId = randomUUID();
@@ -312,9 +313,7 @@ describe("端到端：model-fake 脚本工具调用 → 应用工具与插件工
   beforeEach(async () => {
     const { AccountsService } = await import("../../src/identity/accounts.js");
     const raw = createDb(pgc.url, 2);
-    await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(
-      raw,
-    );
+    await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
     await new AccountsService(kernelDb(raw)).createLocal({
       login: "owner",
       password: "correct horse battery",

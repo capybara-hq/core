@@ -15,6 +15,7 @@ import { InvitationsService } from "../../src/orgs/invitations.service.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
+import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
 
 /** 可让 hashPassword 人为变慢（毫秒），使「scrypt 是否在事务内执行」在任何机器上都能被观察到。 */
@@ -70,7 +71,7 @@ afterAll(async () => {
   await pg.stop();
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   A = await accounts.createLocal({ login: "usera", password: PW, displayName: "A" });
   B = await accounts.createLocal({ login: "userb", password: PW, displayName: "B" });
   C = await accounts.createLocal({ login: "userc", password: PW, displayName: "C" });

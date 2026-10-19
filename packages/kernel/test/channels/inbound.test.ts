@@ -1,12 +1,20 @@
 import { fileURLToPath } from "node:url";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeDm as dm,
+  type FakeChannelSent,
+  type FakeChannelServer,
+  fakeGroupMessage as group,
+  startFakeChannelServer,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { dm, type FakeIm, type FakeImSent, group, startFakeIm } from "../helpers/fake-im.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -28,7 +36,7 @@ let rd: TestContainer;
 let k: Kernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelDb;
-let im: FakeIm;
+let im: FakeChannelServer;
 let owner: Req;
 let ownerId: string;
 let orgId: string;
@@ -37,7 +45,7 @@ let connId: string;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  im = await startFakeIm();
+  im = await startFakeChannelServer();
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -120,7 +128,7 @@ const userMessages = async (conversationId: string) =>
 const sentAfter = async (
   n: number,
   chatId: string,
-  pred: (s: FakeImSent) => boolean = () => true,
+  pred: (s: FakeChannelSent) => boolean = () => true,
 ) =>
   waitFor(
     async () => im.sent.slice(n).find((s) => s.target.chatId === chatId && pred(s)),
@@ -130,7 +138,7 @@ const sentAfter = async (
 
 /** 推送一条消息，等它被处理完：它之后再推一条哨兵（未绑定私聊 → 必回绑定卡片）并等哨兵的回复。 */
 let sentinel = 0;
-async function pushAndSettle(e: Parameters<FakeIm["push"]>[1]): Promise<void> {
+async function pushAndSettle(e: Parameters<FakeChannelServer["push"]>[1]): Promise<void> {
   expect(im.push(connId, e)).toBe(1);
   const before = im.sent.length;
   sentinel++;
@@ -340,7 +348,7 @@ describe("渠道入站", () => {
 });
 
 /** 匿名策略下没有「必回」的哨兵：等该消息出现在某个对话里。 */
-async function pushAndSettleAnon(e: Parameters<FakeIm["push"]>[1]): Promise<void> {
+async function pushAndSettleAnon(e: Parameters<FakeChannelServer["push"]>[1]): Promise<void> {
   expect(im.push(connId, e)).toBe(1);
   const id = (e as { messageId: string }).messageId;
   await waitFor(

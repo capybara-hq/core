@@ -13,6 +13,7 @@ import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgQuota, orgRunLimit } from "../../src/runtime/quota.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar, setCookies } from "../helpers/http.js";
 
 let pgc: TestContainer;
@@ -58,8 +59,9 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.deployment_settings, capybara.audit_events CASCADE`.execute(
+  await truncateTables(
     raw,
+    "capybara.accounts, capybara.orgs, capybara.deployment_settings, capybara.audit_events",
   );
   await redis.flushdb();
 });

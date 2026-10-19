@@ -12,6 +12,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import { REFRESH_RACE_GRACE_MS, SessionService } from "../../src/identity/sessions.js";
+import { truncateTables } from "../helpers/db.js";
 
 let pgBox: Awaited<ReturnType<typeof startTestPostgres>>;
 let pgUrl: string;
@@ -55,7 +56,7 @@ afterAll(async () => {
   await Promise.all([pgBox.stop(), rd.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts");
 });
 
 async function account(): Promise<string> {

@@ -9,6 +9,21 @@ export {
   replicaOf,
 } from "./dual-replica.js";
 export {
+  FAKE_CHANNEL_BAD_SECRET,
+  type FakeChannelPost,
+  type FakeChannelSent,
+  type FakeChannelServer,
+  type FakeChannelServerOptions,
+  type FakeChannelStream,
+  type FakeChannelUser,
+  type FakeDirectoryBook,
+  fakeCardAction,
+  fakeDirectoryMember,
+  fakeDm,
+  fakeGroupMessage,
+  startFakeChannelServer,
+} from "./fake-channel.js";
+export {
   type FakeMcpCallInfo,
   type FakeMcpHandlerContext,
   type FakeMcpPrompt,

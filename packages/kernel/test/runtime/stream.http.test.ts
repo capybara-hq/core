@@ -1,7 +1,6 @@
 import { connect } from "node:net";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { conversationTopic } from "../../src/conversations/event-log.js";
@@ -13,6 +12,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SessionService } from "../../src/identity/sessions.js";
 import type { Kernel } from "../../src/kernel.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar } from "../helpers/http.js";
 import {
   createAgent,
@@ -172,8 +172,9 @@ afterAll(async () => {
 });
 
 async function resetDb(): Promise<void> {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings CASCADE`.execute(
+  await truncateTables(
     raw,
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings",
   );
   await redis.flushdb();
 }

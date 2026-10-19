@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -12,6 +11,7 @@ import { SettingsService } from "../../src/identity/settings.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
+import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -52,7 +52,7 @@ afterAll(async () => {
   await pg.stop();
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   A = await accounts.createLocal({
     login: "usera",
     password: PW,

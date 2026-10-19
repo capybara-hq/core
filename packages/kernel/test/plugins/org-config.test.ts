@@ -18,6 +18,7 @@ import type { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import { PluginHost } from "../../src/plugins/host.js";
 import { OrgPluginConfigs } from "../../src/plugins/org-config.js";
+import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -81,7 +82,7 @@ afterAll(async () => {
   await Promise.all([pg?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   A = await accounts.createLocal({ login: "usera", password: PW, displayName: "A" });
   B = await accounts.createLocal({ login: "userb", password: PW, displayName: "B" });
   org = await orgs.create({ name: "Acme", slug: "acme" }, A);

@@ -1,5 +1,11 @@
 import { fileURLToPath } from "node:url";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  type FakeChannelServer,
+  startFakeChannelServer,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -9,7 +15,6 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { type FakeIm, startFakeIm } from "../helpers/fake-im.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -34,7 +39,7 @@ const SCAN = 100;
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let im: FakeIm;
+let im: FakeChannelServer;
 let a: Kernel;
 let b: Kernel | undefined;
 let raw: ReturnType<typeof createDb>;
@@ -56,7 +61,7 @@ const cfg = (leaseTtlMs = TTL, scanIntervalMs = SCAN) =>
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  im = await startFakeIm();
+  im = await startFakeChannelServer();
   a = await startKernel(cfg());
   raw = createDb(pgc.url, 3);
   redis = new Redis(rd.url);

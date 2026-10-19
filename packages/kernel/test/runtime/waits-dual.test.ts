@@ -12,6 +12,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -92,7 +93,7 @@ let agentId: string;
 
 beforeEach(async () => {
   for (const k of kernels.splice(0)) await k.stop();
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   memState().echoCalls = 0;
 });

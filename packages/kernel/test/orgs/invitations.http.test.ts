@@ -11,6 +11,7 @@ import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar, setCookies } from "../helpers/http.js";
 import { testMembers } from "../helpers/members.js";
 
@@ -53,7 +54,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs");
   await redis.flushdb();
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
 });

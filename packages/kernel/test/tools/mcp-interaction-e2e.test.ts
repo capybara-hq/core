@@ -7,7 +7,6 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -16,6 +15,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { UNSUPPORTED_ELICITATION_NOTE } from "../../src/tools/elicitation.js";
+import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -194,7 +194,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   req = await session(k, "owner");
   orgId = await createOrg(req);

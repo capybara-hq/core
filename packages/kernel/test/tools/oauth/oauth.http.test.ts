@@ -10,7 +10,6 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
@@ -18,6 +17,7 @@ import { createDb } from "../../../src/db/pool.js";
 import { AccountsService } from "../../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../../src/kernel.js";
 import { createLogger } from "../../../src/log.js";
+import { truncateTables } from "../../helpers/db.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
@@ -89,7 +89,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   req = await session(k, "owner");
   const org = await call({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });

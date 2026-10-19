@@ -14,6 +14,7 @@ import {
   spillIfLarge,
   ToolOutputs,
 } from "../../src/tools/outputs.js";
+import { truncateTables } from "../helpers/db.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 let pgc: TestContainer;
@@ -45,7 +46,7 @@ afterAll(async () => {
   await pgc?.stop();
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs");
   seed = await seedConversation(raw);
   other = await seedConversation(raw);
 });

@@ -1,7 +1,10 @@
 import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
+  type FakeChannelServer,
   type Harness,
+  fakeDirectoryMember as person,
+  startFakeChannelServer,
   startTestPostgres,
   startTestRedis,
   type TestContainer,
@@ -13,7 +16,6 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
-import { type FakeDirectory, person, startFakeDirectory } from "../helpers/fake-directory.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
 
@@ -26,14 +28,14 @@ const DIR_MINI = fileURLToPath(new URL("../fixtures/plugins/dir-mini/index.ts", 
 
 let pgc: TestContainer;
 let rdc: TestContainer;
-let fd: FakeDirectory;
+let fd: FakeChannelServer;
 let h: Harness | undefined;
 let raw: ReturnType<typeof createDb> | undefined;
 let queue: Queue | undefined;
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  fd = await startFakeDirectory();
+  fd = await startFakeChannelServer();
 }, 120_000);
 
 afterAll(async () => {

@@ -22,6 +22,7 @@ import {
   R3_FIXED_ASK_TOOL_KEYS,
 } from "../../src/tools/policy.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
+import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedApp, seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -187,7 +188,7 @@ async function setMember(accountId: string, role: string) {
 }
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   seed = await seedConversation(raw);
   appId = await seedApp(raw, seed.orgId, seed.accountId, { slug: "docs", name: "Docs" });
   await setMember(seed.accountId, "member");

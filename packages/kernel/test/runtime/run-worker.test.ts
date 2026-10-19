@@ -21,6 +21,7 @@ import {
 } from "../../src/runtime/model-call.js";
 import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
 import type { RunHooks } from "../../src/runtime/run-worker.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import {
   consumedSeq,
@@ -139,8 +140,9 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings CASCADE`.execute(
+  await truncateTables(
     raw,
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings",
   );
   await redis.flushdb();
   ownerId = (

@@ -11,6 +11,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { type FakeIdpCode, fakeIdpCode } from "../fixtures/plugins/fake-idp/index.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar, setCookies } from "../helpers/http.js";
 
 const FAKE_IDP = fileURLToPath(new URL("../fixtures/plugins/fake-idp/index.ts", import.meta.url));
@@ -53,7 +54,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
 });
 

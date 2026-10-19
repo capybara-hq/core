@@ -16,6 +16,7 @@ import {
   OUTPUT_CLEANUP_JOB,
   OUTPUT_CLEANUP_SCHEDULER_ID,
 } from "../../src/runtime/maintenance.js";
+import { truncateTables } from "../helpers/db.js";
 import { waitFor } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -46,7 +47,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs");
   await probe.obliterate({ force: true });
   seed = await seedConversation(raw);
 });

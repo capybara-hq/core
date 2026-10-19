@@ -16,6 +16,7 @@ import {
   type ApprovalRequestInput,
   ApprovalsService,
 } from "../../src/tools/approvals.service.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { testMembers } from "../helpers/members.js";
 import { eventsOf } from "../helpers/runs.js";
@@ -125,7 +126,7 @@ function request(over: Partial<ApprovalRequestInput> = {}): Promise<ApprovalReco
 }
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   const o = await login("owner");

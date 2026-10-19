@@ -9,6 +9,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { ExternalIdentities } from "../../src/identity/external.js";
+import { truncateTables } from "../helpers/db.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -36,7 +37,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   trusted = [];
-  await sql`TRUNCATE capybara.accounts, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.audit_events");
 });
 
 const PW = "correct horse battery";

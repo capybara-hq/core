@@ -19,6 +19,7 @@ import {
   TOO_MANY_INPUT_REQUESTS_TEXT,
 } from "../../src/tools/pipeline.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -90,7 +91,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   const owner = await new AccountsService(db).createLocal({
     login: "owner",
     password: PW,

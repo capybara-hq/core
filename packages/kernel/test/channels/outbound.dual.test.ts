@@ -1,7 +1,12 @@
 import { fileURLToPath } from "node:url";
 import {
+  fakeCardAction as cardAction,
   createDualReplicaHarness,
+  fakeDm as dm,
+  type FakeChannelSent,
+  type FakeChannelServer,
   type Harness,
+  startFakeChannelServer,
   startTestPostgres,
   startTestRedis,
   type TestContainer,
@@ -12,7 +17,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
-import { cardAction, dm, type FakeIm, type FakeImSent, startFakeIm } from "../helpers/fake-im.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
 
@@ -32,13 +36,13 @@ const LONG =
 
 let pgc: TestContainer;
 let rdc: TestContainer;
-let im: FakeIm;
+let im: FakeChannelServer;
 let h: Harness | undefined;
 const cleanups: (() => Promise<unknown> | unknown)[] = [];
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  im = await startFakeIm();
+  im = await startFakeChannelServer({ dedupeSends: false });
 }, 120_000);
 
 afterEach(async () => {
@@ -53,9 +57,9 @@ afterAll(async () => {
 });
 
 type Json = Record<string, unknown>;
-const cardOf = (s: FakeImSent | undefined) => s?.message.cards?.[0] as Json | undefined;
+const cardOf = (s: FakeChannelSent | undefined) => s?.message.cards?.[0] as Json | undefined;
 /** 消息最终显示的文本：有更新取最后一次更新，否则为发出时的文本。 */
-const finalText = (s: FakeImSent) =>
+const finalText = (s: FakeChannelSent) =>
   im.updated.filter((u) => u.messageId === s.messageId).at(-1)?.message.text ?? s.message.text;
 
 describe("渠道出站投递（双副本）", () => {

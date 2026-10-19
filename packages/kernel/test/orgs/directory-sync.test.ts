@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  type FakeChannelServer,
+  fakeDirectoryMember as person,
+  startFakeChannelServer,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -21,7 +28,6 @@ import {
 } from "../../src/orgs/directory-sync.js";
 import { ConversationLock } from "../../src/runtime/conversation-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
-import { type FakeDirectory, person, startFakeDirectory } from "../helpers/fake-directory.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createOrg,
@@ -48,7 +54,7 @@ let k: Kernel;
 let raw: ReturnType<typeof createDb>;
 let db: KernelDb;
 let redis: Redis;
-let fd: FakeDirectory;
+let fd: FakeChannelServer;
 let accounts: AccountsService;
 let owner: Account;
 let ownerReq: Req;
@@ -56,7 +62,7 @@ let queue: Queue;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  fd = await startFakeDirectory();
+  fd = await startFakeChannelServer();
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -85,7 +91,7 @@ afterAll(async () => {
 
 let orgSeq = 0;
 /** 新建组织并启用 dir-mini（组织配置指向一份新的假通讯录）。 */
-async function setupOrg(): Promise<{ orgId: string; book: ReturnType<FakeDirectory["book"]> }> {
+async function setupOrg(): Promise<{ orgId: string; book: ReturnType<FakeChannelServer["book"]> }> {
   orgSeq++;
   const orgId = await createOrg(ownerReq, `Dir ${orgSeq}`);
   const book = fd.book(`o${orgSeq}`);
