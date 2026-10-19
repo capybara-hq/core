@@ -42,4 +42,24 @@ describe("configToJsonSchema", () => {
   it("不带 $schema 键（嵌入 API 响应）", () => {
     expect(configToJsonSchema(z.object({}))).not.toHaveProperty("$schema");
   });
+
+  it("密钥字段不输出 default / enum / const（两种 default 写法与 optional 包装）", () => {
+    const js = configToJsonSchema(
+      z.object({
+        a: secret(z.string()).default("S3CRET"),
+        b: secret(z.string().default("S4")),
+        c: secret(z.string()).optional().default("S5"),
+        d: secret(z.enum(["S6", "S7"])),
+        e: z.string().default("plain"),
+      }),
+    ) as unknown as Props;
+    for (const k of ["a", "b", "c", "d"]) {
+      expect(js.properties[k]?.["x-secret"]).toBe(true);
+      for (const w of ["default", "examples", "const", "enum"]) {
+        expect(js.properties[k]).not.toHaveProperty(w);
+      }
+    }
+    expect(JSON.stringify(js)).not.toMatch(/S3CRET|S4|S5|S6|S7/);
+    expect(js.properties.e?.default).toBe("plain");
+  });
 });

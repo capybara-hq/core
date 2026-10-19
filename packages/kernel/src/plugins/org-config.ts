@@ -380,38 +380,31 @@ export class OrgPluginConfigs {
     return new Set(rows.map((r) => r.plugin).filter((n) => loaded.has(n)));
   }
 
-  /** 按组织启用的能力名（`requires` / `provides` 引用去掉主版本后在 CAPABILITIES 中 orgScoped）。 */
-  private orgScopedNames(refs: readonly string[]): Map<string, string[]> {
-    const out = new Map<string, string[]>();
-    for (const ref of refs) {
-      const { name } = parseCapability(ref);
-      if (!CAPABILITIES[name]?.orgScoped) continue;
-      out.set(name, [...(out.get(name) ?? []), ref]);
-    }
-    return out;
+  /** 引用是否为按组织启用的能力。 */
+  private isOrgScoped(ref: string): boolean {
+    return CAPABILITIES[parseCapability(ref).name]?.orgScoped === true;
   }
 
-  /** 启用前：A `requires` 的每个 orgScoped 能力，该组织须至少有一个已启用的提供方。 */
+  /** 该组织内（已启用、已加载、非 `except`）提供完整引用（含主版本）的插件。 */
+  private enabledProviders(enabled: ReadonlySet<string>, ref: string, except: string): string[] {
+    return this.host
+      .manifests()
+      .filter((m) => m.name !== except && enabled.has(m.name) && m.provides.includes(ref as never))
+      .map((m) => m.name);
+  }
+
+  /** 启用前：A `requires` 的每个 orgScoped 能力（按主版本），该组织须至少有一个已启用的提供方。 */
   private async assertDependenciesEnabled(
     t: Trx,
     orgId: string,
     manifest: PluginManifest,
   ): Promise<void> {
-    const needed = this.orgScopedNames(manifest.requires ?? []);
-    if (needed.size === 0) return;
+    const needed = (manifest.requires ?? []).filter((r) => this.isOrgScoped(r));
+    if (needed.length === 0) return;
     const enabled = await this.enabledSet(t, orgId);
-    const missing: string[] = [];
-    for (const [name, refs] of needed) {
-      const ok = this.host
-        .manifests()
-        .some(
-          (m) =>
-            m.name !== manifest.name &&
-            enabled.has(m.name) &&
-            m.provides.some((p) => parseCapability(p).name === name),
-        );
-      if (!ok) missing.push(...refs);
-    }
+    const missing = needed.filter(
+      (r) => this.enabledProviders(enabled, r, manifest.name).length === 0,
+    );
     if (missing.length > 0) {
       throw new ApiError(
         "plugin.dependency_missing",
@@ -421,40 +414,32 @@ export class OrgPluginConfigs {
     }
   }
 
-  /** 停用前：若停用后某个已启用的插件所 requires 的 orgScoped 能力再无已启用的提供方，拒绝。 */
+  /** 停用前：若停用后某个已启用的插件所 requires 的 orgScoped 能力（按主版本）再无已启用的提供方，拒绝。 */
   private async assertNoEnabledDependents(
     t: Trx,
     orgId: string,
     manifest: PluginManifest,
   ): Promise<void> {
-    const provided = this.orgScopedNames(manifest.provides);
-    if (provided.size === 0) return;
+    const provided = manifest.provides.filter((r) => this.isOrgScoped(r));
+    if (provided.length === 0) return;
     const enabled = await this.enabledSet(t, orgId);
     if (!enabled.has(manifest.name)) return;
-    const all = this.host.manifests();
-    const dependents: { plugin: string; capability: string }[] = [];
-    for (const [name, refs] of provided) {
-      const otherProvider = all.some(
-        (m) =>
-          m.name !== manifest.name &&
-          enabled.has(m.name) &&
-          m.provides.some((p) => parseCapability(p).name === name),
-      );
-      if (otherProvider) continue;
-      for (const m of all) {
+    const dependents = new Map<string, { plugin: string; capability: string }>();
+    for (const ref of provided) {
+      if (this.enabledProviders(enabled, ref, manifest.name).length > 0) continue;
+      for (const m of this.host.manifests()) {
         if (m.name === manifest.name || !enabled.has(m.name)) continue;
-        for (const r of m.requires ?? []) {
-          if (parseCapability(r).name === name) {
-            dependents.push({ plugin: m.name, capability: refs[0] as string });
-          }
+        if ((m.requires ?? []).includes(ref as never)) {
+          dependents.set(`${m.name}\0${ref}`, { plugin: m.name, capability: ref });
         }
       }
     }
-    if (dependents.length > 0) {
+    if (dependents.size > 0) {
+      const list = [...dependents.values()];
       throw new ApiError(
         "plugin.has_dependents",
-        `Plugin ${manifest.name} is required by enabled plugins in this organization: ${[...new Set(dependents.map((d) => d.plugin))].join(", ")} (pass force to disable anyway)`,
-        dependents,
+        `Plugin ${manifest.name} is required by enabled plugins in this organization: ${[...new Set(list.map((d) => d.plugin))].join(", ")} (pass force to disable anyway)`,
+        list,
       );
     }
   }

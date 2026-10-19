@@ -30,7 +30,14 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0 },
       log: { level: "error" },
-      plugins: [fx("cap-chan-a"), fx("cap-chan-b"), fx("cap-consumer"), fx("orgcfg")],
+      plugins: [
+        fx("cap-chan-a"),
+        fx("cap-chan-b"),
+        fx("cap-consumer"),
+        fx("orgcfg"),
+        fx("cap-chan-v2"),
+        fx("cap-consumer-v2"),
+      ],
       pluginPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
@@ -122,6 +129,34 @@ describe("组织启用插件：依赖校验", () => {
     await put("cap-chan-a", { enabled: true });
     expect((await put("cap-chan-a", { enabled: false })).statusCode).toBe(200);
     expect((await put("cap-chan-a", { force: "yes" })).statusCode).toBe(400);
+  });
+});
+
+describe("依赖按主版本匹配与未加载提供方", () => {
+  it("requires channel@2 不能由 channel@1 的提供方满足，停用只看同主版本的依赖方", async () => {
+    const { put } = await setup();
+    await put("cap-chan-a", { enabled: true });
+    const r = await put("cap-consumer-v2", { enabled: true });
+    expect(r.statusCode).toBe(409);
+    expect((r.json() as Err).error?.details).toEqual([{ capability: "channel@2" }]);
+    expect((await put("cap-chan-v2", { enabled: true })).statusCode).toBe(200);
+    expect((await put("cap-consumer-v2", { enabled: true })).statusCode).toBe(200);
+    // 停用 channel@1 提供方不受 channel@2 依赖方影响
+    expect((await put("cap-chan-a", { enabled: false })).statusCode).toBe(200);
+    const d = await put("cap-chan-v2", { enabled: false });
+    expect(d.statusCode).toBe(409);
+    expect((d.json() as Err).error?.details).toEqual([
+      { plugin: "cap-consumer-v2", capability: "channel@2" },
+    ]);
+  });
+
+  it("未加载（如待批准）的提供方即使留有已启用记录也算缺席", async () => {
+    const { put, orgId } = await setup();
+    await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled)
+      VALUES ('pending-chan', ${orgId}, true)`.execute(raw);
+    const res = await put("cap-consumer", { enabled: true });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as Err).error?.code).toBe("plugin.dependency_missing");
   });
 });
 

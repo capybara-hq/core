@@ -39,5 +39,23 @@ export function configToJsonSchema(schema: z.ZodType): JsonSchema {
     },
   }) as JsonSchema;
   delete out.$schema;
+  scrubSecrets(out);
   return out;
+}
+
+/** 会泄露取值的关键字：密钥字段一律不输出。 */
+const VALUE_KEYWORDS = ["default", "examples", "const", "enum"];
+
+/** 递归清掉密钥节点（`x-secret`）上会暴露取值的关键字；无环（输出为纯 JSON 树）。 */
+function scrubSecrets(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const n of node) scrubSecrets(n);
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  const o = node as JsonSchema;
+  if (o["x-secret"] === true) for (const k of VALUE_KEYWORDS) delete o[k];
+  for (const [k, v] of Object.entries(o)) {
+    if (!VALUE_KEYWORDS.includes(k)) scrubSecrets(v);
+  }
 }
