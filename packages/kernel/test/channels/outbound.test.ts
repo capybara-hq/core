@@ -5,7 +5,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CHANNEL_QUEUE_NAME } from "../../src/channels/outbound.js";
+import { CHANNEL_QUEUE_NAME, idempotencyKey } from "../../src/channels/outbound.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -287,9 +287,10 @@ describe("出站投递：流式回复", { timeout: 40_000 }, () => {
     const msgs = sentTo("cli_noedit", chat);
     expect(msgs.map((m) => m.message.text)).toEqual([LONG]);
     expect(im.updated.filter((u) => u.appId === "cli_noedit")).toEqual([]);
-    // Ruling A15：普通消息的幂等键 = "<会话>-<事件 seq>"
+    // Ruling A15：普通消息的幂等键由 "<会话>-<事件 seq>" 稳定哈希而来，32 个 [A-Za-z0-9_-] 字符
     const final = (await eventsOf(db, conv)).filter((e) => e.type === "assistant_message").at(-1);
-    expect(msgs[0]?.idempotencyKey).toBe(`${conv}-${final?.seq}`);
+    expect(msgs[0]?.idempotencyKey).toBe(idempotencyKey(`${conv}-${final?.seq}`));
+    expect(msgs[0]?.idempotencyKey).toMatch(/^[A-Za-z0-9_-]{32}$/);
   });
 
   it("I1：流式中途运行失败 → 草稿收尾为「已有文本 + 失败说明」并清除；下一条回复是新消息，不改旧草稿", async () => {
@@ -736,6 +737,39 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       .where("id", "=", connId)
       .executeTakeFirstOrThrow();
     expect(c.last_error).toBeNull();
+  });
+
+  it("N4：卡在定稿（更新草稿）上的毒事件被跳过前，先尽力收尾草稿（失败说明）", async () => {
+    const chat = "grp-poison-draft";
+    im.push(connId, group("pd1", "u-owner", "slow:50:Poisoned draft text", { chatId: chat }));
+    const draft = await waitFor(async () => sentTo("cli_out", chat)[0], 10_000, "draft");
+    // 之后的 3 次更新（定稿）都被平台拒绝；第 4 次（收尾草稿）放行
+    im.failNext("/update", 400, 3);
+    const conv = await convOf(connId, chat);
+    const notice = () =>
+      sentTo("cli_out", chat).some((s) => s.message.text.startsWith("A request is waiting"));
+    let n = 2;
+    while (!notice() && n <= 5) {
+      await sleep(1500);
+      if (notice()) break;
+      im.push(
+        connId,
+        group(`pd${n}`, "u-owner", `echo:more ${n}`, { chatId: chat, threadId: "pd1" }),
+      );
+      n++;
+    }
+    await waitFor(async () => notice(), 15_000, "skip notice");
+    await waitFor(
+      async () => finalText(draft).includes("Sorry, something went wrong"),
+      10_000,
+      "draft closed before the skip",
+    );
+    await settled(conv);
+    await db
+      .updateTable("channel_connections")
+      .set({ last_error: null })
+      .where("id", "=", connId)
+      .execute();
   });
 
   it("不可重试 → 记连接 last_error，停止本轮；会话后续事件触发续投，消息恰好投递一次", async () => {

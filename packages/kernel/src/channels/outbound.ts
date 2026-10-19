@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   type ChannelTarget,
   type FormAnswer,
@@ -44,6 +44,47 @@ export const DELIVER_JOB = "deliver";
 /** 投递任务 id（不含 `:`）：同一会话、同一日志位置只排一个任务。 */
 export const deliverJobId = (conversationId: string, seq: number) =>
   `deliver-${conversationId}-${seq}`;
+/**
+ * 结束后复核排的任务 id：每次唯一（带随机后缀，不含 `:`）。不能复用 `deliver-<会话>-<seq>`——同 id 的任务
+ * 可能正因锁被占而即将直接结束，BullMQ 会把新任务去重进它，于是没人投递。
+ */
+export const followUpJobId = (conversationId: string, seq: number) =>
+  `deliver-${conversationId}-${seq}-f${randomUUID().slice(0, 8)}`;
+
+/**
+ * 发给插件的幂等键（Ruling A15）：把逻辑键（如 `<会话>-<seq>`）做 sha256，取 base64url 的前 32 个字符——
+ * 稳定、只含 `[A-Za-z0-9_-]`，满足常见平台的长度限制。
+ */
+export function idempotencyKey(raw: string): string {
+  return createHash("sha256").update(raw).digest("base64url").slice(0, 32);
+}
+
+/**
+ * 投递锁被占时怎么办：读不到持有者（刚被释放）→ 再取一次；是自己上一次（已崩溃、被 stalled 重新投递）的尝试 →
+ * 推迟重试等它过期；别的任务 → 直接结束（它会读到新事件，结束时还会复核）。
+ */
+export function busyLockAction(holder: string | null, owner: string): "retry" | "requeue" | "drop" {
+  if (holder === null) return "retry";
+  return holder.startsWith(owner) ? "requeue" : "drop";
+}
+
+/** 草稿收尾的方式：运行失败加失败说明、中止加「已停止」，其余不改草稿内容。 */
+export type DraftClosing = "failed" | "stopped" | "none";
+
+/**
+ * 收尾草稿时写入的文本：`failed` / `stopped` 为「已有文本 + 空行 + 说明」（不知道已有文本时只有说明）；
+ * `none` 返回 undefined（保留草稿原样，只清掉草稿 id）。
+ */
+export function closingText(
+  prior: string | undefined,
+  how: DraftClosing,
+  locale: ChannelLocale,
+): string | undefined {
+  if (how === "none") return undefined;
+  const marker = phrase(how === "failed" ? "runFailed" : "runStopped", locale);
+  return prior?.trim() ? `${prior}\n\n${marker}` : marker;
+}
+
 /** 按会话互斥的投递锁（Redis 键前缀；值为 `<job id>.<随机>`，TTL = `runtime.jobLockMs`）。 */
 export const DELIVER_LOCK_PREFIX = "capk:channel-deliver:";
 
@@ -143,7 +184,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
   }
 
   /** 会话有 IM 投递目标时投递一个出站任务（同一日志位置重复调用只排一个）；已关闭时什么都不做。 */
-  async enqueue(conversationId: string): Promise<void> {
+  async enqueue(conversationId: string, opts: { followUp?: boolean } = {}): Promise<void> {
     if (this.closed) return;
     const row = await this.d.db
       .selectFrom("channel_deliveries")
@@ -156,7 +197,9 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       DELIVER_JOB,
       { conversationId },
       {
-        jobId: deliverJobId(conversationId, Number(row.last_seq)),
+        jobId: opts.followUp
+          ? followUpJobId(conversationId, Number(row.last_seq))
+          : deliverJobId(conversationId, Number(row.last_seq)),
         attempts: DELIVER_ATTEMPTS,
         backoff: { type: "deliver" },
         removeOnComplete: true,
@@ -224,17 +267,20 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     const { conversationId } = job.data;
     if (this.stopping.signal.aborted) return this.requeue(job, token, 0);
     const owner = `${job.id ?? "job"}.`;
-    const lease = await this.lock.acquire(
-      conversationId,
-      `${owner}${randomUUID()}`,
-      this.d.config().runtime.jobLockMs,
-    );
+    const acquire = () =>
+      this.lock.acquire(
+        conversationId,
+        `${owner}${randomUUID()}`,
+        this.d.config().runtime.jobLockMs,
+      );
+    let lease = await acquire();
     if (!lease) {
-      // 自己上一次尝试（已崩溃、被 stalled 机制重新投递）留下的锁：等它过期
-      const holder = await this.lock.holder(conversationId);
-      if (holder?.startsWith(owner)) return this.requeue(job, token, LOCK_BUSY_DELAY_MS);
-      // 另一个活着的任务在投递：它会读到新事件，结束时还会复核一次
-      return;
+      const action = busyLockAction(await this.lock.holder(conversationId), owner);
+      if (action === "requeue") return this.requeue(job, token, LOCK_BUSY_DELAY_MS);
+      if (action === "drop") return;
+      lease = await acquire();
+      // 再次被占：取到锁的那个任务会投递
+      if (!lease) return;
     }
     let outcome: DeliveryOutcome;
     try {
@@ -275,7 +321,8 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       .select("last_seq")
       .where("id", "=", conversationId)
       .executeTakeFirst();
-    if (conv && Number(conv.last_seq) > seen) await this.enqueue(conversationId);
+    if (conv && Number(conv.last_seq) > seen)
+      await this.enqueue(conversationId, { followUp: true });
   }
 
   /** 不可重试（或重试用尽）的发送失败：记连接 `last_error`（已打码）。 */
@@ -346,9 +393,9 @@ class Delivery {
     return this.session as ChannelOutboundSession;
   }
 
-  /** 普通消息的幂等键（Ruling A15）。 */
+  /** 普通消息的幂等键（Ruling A15）：`<会话>-<seq>[后缀]` 的稳定哈希。 */
   private key(seq: number, suffix = ""): string {
-    return `${this.conversationId}-${seq}${suffix}`;
+    return idempotencyKey(`${this.conversationId}-${seq}${suffix}`);
   }
 
   async run(): Promise<DeliveryOutcome> {
@@ -432,6 +479,12 @@ class Delivery {
       conversationId: this.conversationId,
       seq,
     });
+    // 尽力收尾挂着的草稿（同运行失败），再提示去网页查看；两者失败都不影响跳过
+    try {
+      await this.markDraft(seq, "failed");
+    } catch (err) {
+      this.d.log.warn("cannot close channel draft before skipping", { err: errMsg(err) });
+    }
     try {
       await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq, "-skipped"));
     } catch (err) {
@@ -653,7 +706,7 @@ class Delivery {
         await this.replaceCard(
           at,
           cardMessage(card.title, card),
-          `${this.conversationId}-approval-${card.id}-${card.state}`,
+          idempotencyKey(`${this.conversationId}-approval-${card.id}-${card.state}`),
         );
         return this.advance(e.seq);
       }
@@ -674,37 +727,43 @@ class Delivery {
         await this.replaceCard(
           at,
           cardMessage(phrase("questionTitle", this.locale), card),
-          `${this.conversationId}-question-${card.id}-${card.state}`,
+          idempotencyKey(`${this.conversationId}-question-${card.id}-${card.state}`),
         );
         return this.advance(e.seq);
       }
       case "run_failed":
         // 有草稿：收尾为「已有文本 + 失败说明」；没有草稿：单发一句
-        if (await this.closeDraft(e.seq)) return;
+        if (await this.closeDraft(e.seq, "failed")) return;
         await this.send({ text: phrase("runFailed", this.locale) }, this.key(e.seq));
         return this.advance(e.seq);
-      case "run_finished":
       case "run_aborted":
-        // 运行结束时还挂着的草稿（没有等到定稿）：收尾，避免下一次回复去编辑它
-        await this.closeDraft(e.seq);
+        // 中止时还挂着的草稿：加「已停止」并清掉，避免下一次回复去编辑它
+        await this.closeDraft(e.seq, "stopped");
+        return;
+      case "run_finished":
+        // 正常结束却还挂着草稿（没有等到定稿）：草稿原样保留，只清掉 id
+        await this.closeDraft(e.seq, "none");
         return;
       default:
         return;
     }
   }
 
-  /**
-   * 收尾挂着的草稿：改成「已有文本 + 失败说明」（不知道已有文本时只放说明），清掉草稿 id。没有草稿返回 false。
-   */
-  private async closeDraft(seq: number): Promise<boolean> {
+  /** 按 {@link closingText} 改写挂着的草稿消息（`none` 不改）；不推进进度。没有草稿返回 false。 */
+  private async markDraft(seq: number, how: DraftClosing): Promise<boolean> {
     if (this.draftId === null) return false;
     this.streaming = undefined;
     this.dirty = false;
-    if (this.s.features.edit) {
-      const marker = phrase("runFailed", this.locale);
-      const prior = this.draftText?.trim() ? `${this.draftText}\n\n` : "";
-      await this.s.update(this.target, this.draftId, { text: `${prior}${marker}` }, this.key(seq));
+    const text = closingText(this.draftText, how, this.locale);
+    if (text !== undefined && this.s.features.edit) {
+      await this.s.update(this.target, this.draftId, { text }, this.key(seq, `-close-${how}`));
     }
+    return true;
+  }
+
+  /** 收尾挂着的草稿（见 {@link markDraft}）并清掉草稿 id。没有草稿返回 false。 */
+  private async closeDraft(seq: number, how: DraftClosing): Promise<boolean> {
+    if (!(await this.markDraft(seq, how))) return false;
     await this.advance(seq, { draft: null });
     return true;
   }
@@ -763,8 +822,8 @@ class Delivery {
       this.s.features.edit &&
       (this.draftKey === undefined || this.draftKey === key);
     if (text.trim() === "") {
-      // 草稿已发出、定稿却没有文本（如重试后不再输出文本）：收尾草稿消息本身，而不只是清掉 id
-      if (useDraft) await this.closeDraft(seq);
+      // 草稿已发出、定稿却没有文本（如重试后这一步只调用工具）：草稿原样保留、不加说明，只清掉 id
+      if (useDraft) await this.closeDraft(seq, "none");
       return;
     }
     if (useDraft) await this.s.update(this.target, this.draftId as string, { text }, this.key(seq));
@@ -804,7 +863,7 @@ class Delivery {
     if (this.draftId === null) {
       const { messageId } = await this.send(
         { text: cur.text },
-        `${this.conversationId}-draft-${cur.key.replace(":", "-")}`,
+        idempotencyKey(`${this.conversationId}-draft-${cur.key}`),
       );
       const r = await this.d.db
         .updateTable("channel_deliveries")

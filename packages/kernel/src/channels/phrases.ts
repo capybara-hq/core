@@ -61,6 +61,8 @@ export const CHANNEL_PHRASES = {
     zh: "有一条请求需要你到 Capybara 网页上处理。",
     en: "A request is waiting for you in Capybara on the web.",
   },
+  /** 运行被中止（收尾挂着的草稿时附在已有文本之后）。 */
+  runStopped: { zh: "已停止。", en: "Stopped." },
   /** 运行失败。 */
   runFailed: {
     zh: "抱歉，出错了，请稍后再试。",
