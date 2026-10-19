@@ -9,9 +9,10 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { testMembers } from "../helpers/members.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -44,7 +45,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   tokens = new ApiTokenService(db);
 }, 120_000);
 afterAll(async () => {
@@ -228,7 +229,7 @@ describe("组织 HTTP", () => {
       .executeTakeFirstOrThrow();
     const poolB = createDb(pgc.url, 3);
     try {
-      const membersB = new MembersService(kernelDb(poolB));
+      const membersB = testMembers(kernelDb(poolB));
       for (let i = 0; i < 50; i++) {
         await db
           .deleteFrom("memberships")

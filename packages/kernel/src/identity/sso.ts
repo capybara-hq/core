@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   IDENTITY_SOURCE_CAPABILITY,
   type IdentitySource,
@@ -39,6 +39,12 @@ const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
 const BINDING_RE = /^[A-Za-z0-9_-]{43}$/;
 const b64url = (n = 32) => randomBytes(n).toString("base64url");
 const sha256 = (s: string) => createHash("sha256").update(s).digest("base64url");
+/** 常量时间比较两个 base64url 哈希（长度不同直接不等）。 */
+function sameHash(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
 
 interface StateRecord {
   plugin: string;
@@ -99,6 +105,12 @@ export class SsoFlow {
   private redirectUri(plugin: string): string {
     const base = (this.deps.config().http.publicUrl ?? "").replace(/\/+$/, "");
     return `${base}/api/v1/auth/sso/${encodeURIComponent(plugin)}/callback`;
+  }
+
+  /** 绑定 Cookie 是否加 Secure：`auth.cookieSecure`，或 `http.publicUrl` 是 https（浏览器经 https 访问）。 */
+  cookieSecure(): boolean {
+    const cfg = this.deps.config();
+    return cfg.auth.cookieSecure || (cfg.http.publicUrl ?? "").startsWith("https:");
   }
 
   /** 网页地址：`http.publicUrl` + 站内路径（未配置 publicUrl 时为相对地址）。 */
@@ -164,7 +176,7 @@ export class SsoFlow {
     if (raw === null) return { ok: false, error: "sso.state_invalid" };
     const rec = JSON.parse(raw) as StateRecord;
     if (rec.plugin !== plugin) return { ok: false, error: "sso.state_invalid" };
-    if (binding === undefined || sha256(binding) !== rec.binding) {
+    if (binding === undefined || !sameHash(sha256(binding), rec.binding)) {
       return { ok: false, error: "sso.session_mismatch" };
     }
     if (query.error !== undefined) {
@@ -194,7 +206,9 @@ export class SsoFlow {
     }
     let accountId: string;
     try {
-      accountId = (await this.deps.external.resolve(identity)).accountId;
+      // 只有登录路径允许按已验证邮箱合并（Ruling A9）
+      accountId = (await this.deps.external.resolve(identity, undefined, { allowMerge: true }))
+        .accountId;
     } catch (err) {
       if (!(err instanceof ApiError)) throw err;
       this.deps.log.warn("external identity rejected", { plugin, err });

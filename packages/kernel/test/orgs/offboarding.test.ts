@@ -11,9 +11,10 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { Offboarding } from "../../src/orgs/offboarding.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { testMembers } from "../helpers/members.js";
 
 const PW = "correct horse battery";
 
@@ -44,7 +45,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   tokens = new ApiTokenService(db);
 }, 120_000);
 afterAll(async () => {
@@ -94,6 +95,8 @@ interface Fixture {
   roleApprovalId: string;
   questionId: string;
   conversationId: string;
+  runId: string;
+  otherRunId: string;
   bystander: Account;
 }
 
@@ -182,7 +185,7 @@ beforeEach(async () => {
     requestedFor: leaver.id,
     approverRole: null,
   });
-  // 按角色升级的审批不是「其作为 requested_for」的，不取消
+  // 按角色升级的审批不是「其作为 requested_for」的：事务内不取消，随运行中止才取消
   const roleApproval = await k.tools.approvals.request({
     ...base,
     callId: "c2",
@@ -201,6 +204,13 @@ beforeEach(async () => {
     state: null,
   });
   await sql`UPDATE capybara.runs SET status = 'waiting' WHERE id = ${runId}`.execute(raw);
+  // 此人在另一组织里等待中的运行：离职处理不碰
+  const otherConversationId = randomUUID();
+  const otherRunId = randomUUID();
+  await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+    VALUES (${otherConversationId}, ${otherOrgId}, ${otherOrgAgentId}, ${leaver.id})`.execute(raw);
+  await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
+    VALUES (${otherRunId}, ${otherConversationId}, 'waiting', 1, ${leaver.id}, 0)`.execute(raw);
   f = {
     owner,
     ownerReq,
@@ -218,6 +228,8 @@ beforeEach(async () => {
     roleApprovalId: roleApproval.id,
     questionId: question.id,
     conversationId,
+    runId,
+    otherRunId,
     bystander,
   };
 });
@@ -275,9 +287,9 @@ async function expectOffboarded(reason: "removed" | "left") {
       `other:credentials:app:${f.otherAppId}:user:${f.leaver.id}`,
     ].sort(),
   );
-  // 审批 / 提问取消并写入 cancelled 事件；按角色升级的审批不动
+  // 审批 / 提问取消并写入 cancelled 事件；同一运行被中止，按角色升级的审批随之取消
   expect(await status("approvals", f.approvalId)).toBe("cancelled");
-  expect(await status("approvals", f.roleApprovalId)).toBe("pending");
+  expect(await status("approvals", f.roleApprovalId)).toBe("cancelled");
   expect(await status("questions", f.questionId)).toBe("cancelled");
   const events = await db
     .selectFrom("conversation_events")
@@ -297,7 +309,7 @@ async function expectOffboarded(reason: "removed" | "left") {
       }),
     ]),
   );
-  expect(events).toHaveLength(2);
+  expect(events).toHaveLength(3);
   // 该组织的 agent 转给所有者并标记待重新指派；别的组织的不动
   expect(await agentRow(f.agentId)).toEqual({
     owner_account_id: f.owner.id,
@@ -438,5 +450,43 @@ describe("agent 重新指派", () => {
     });
     expect(missing.statusCode).toBe(404);
     expect(errCode(missing)).toBe("agent.not_found");
+  });
+});
+
+const runStatus = async (id: string) =>
+  (await db.selectFrom("runs").select("status").where("id", "=", id).executeTakeFirstOrThrow())
+    .status;
+
+describe("修复轮 1：离职中止此人在该组织进行中的运行", () => {
+  it("移除成员后：该组织里等待中的运行被中止（写 run_aborted），别的组织的运行不动", async () => {
+    const res = await f.ownerReq({
+      method: "DELETE",
+      url: `/api/v1/orgs/${f.orgId}/members/${f.leaver.id}`,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(await runStatus(f.runId)).toBe("aborted");
+    expect(await runStatus(f.otherRunId)).toBe("waiting");
+    const ev = await db
+      .selectFrom("conversation_events")
+      .select("type")
+      .where("conversation_id", "=", f.conversationId)
+      .where("type", "=", "run_aborted")
+      .execute();
+    expect(ev).toHaveLength(1);
+  });
+
+  it("提交后的中止没做成（如进程崩溃）→ 兜底扫描中止该运行", async () => {
+    await db
+      .transaction()
+      .execute((t) => k.identity.offboarding.offboard(t, f.orgId, f.leaver.id, "directory"));
+    expect(await runStatus(f.runId)).toBe("waiting");
+    // 事务内只取消其作为处理人的审批
+    expect(await status("approvals", f.approvalId)).toBe("cancelled");
+    expect(await status("approvals", f.roleApprovalId)).toBe("pending");
+    const n = await k.identity.offboarding.sweep();
+    expect(n).toBe(1);
+    expect(await runStatus(f.runId)).toBe("aborted");
+    expect(await runStatus(f.otherRunId)).toBe("waiting");
+    expect(await k.identity.offboarding.sweep()).toBe(0);
   });
 });

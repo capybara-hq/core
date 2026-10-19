@@ -3,8 +3,7 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
-import { clearAccountCredentials } from "../tools/credentials.js";
-import { Offboarding, type OffboardResult } from "./offboarding.js";
+import type { Offboarding, OffboardResult } from "./offboarding.js";
 import { lockOrg, lockOrgAndAuthorize } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
 
@@ -22,27 +21,11 @@ export interface Member {
  * 框架无关，由调用方注入 db。
  */
 export class MembersService {
-  private readonly offboarding: Offboarding;
-
-  /**
-   * `offboarding` 缺省时用只依赖 db 的离职处理（不取消审批 / 提问、不写事件，仅供测试与 CLI）；
-   * HTTP 层传入接好审批、提问与事件日志的实例。
-   */
+  /** `offboarding`：移出与离开走的离职处理（内核用 `Kernel.identity.offboarding`）。 */
   constructor(
     private readonly db: KernelDb,
-    offboarding?: Offboarding,
-  ) {
-    const noWaits = { cancelPendingFor: async () => ({ records: [], seqs: new Map() }) };
-    this.offboarding =
-      offboarding ??
-      new Offboarding({
-        credentials: {
-          clearAccount: (orgId, accountId, t) => clearAccountCredentials(t ?? db, orgId, accountId),
-        },
-        approvals: noWaits,
-        questions: noWaits,
-      });
-  }
+    private readonly offboarding: Offboarding,
+  ) {}
 
   async list(orgId: string): Promise<Member[]> {
     const rows = await this.db

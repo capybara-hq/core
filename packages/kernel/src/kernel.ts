@@ -394,7 +394,13 @@ export async function createKernel(
         refreshTtlDays: config.auth.refreshTokenTtlDays,
       }),
       eventLog,
-      resume: (runId, waitId) => waits.resume(runId, waitId),
+      runs: {
+        abortWaiting: (c, runId, by) => waits.abortWaiting(c, runId, by),
+        abortIfOrphaned: (c, runId, by) => runQueue.abortIfOrphaned(c, runId, by),
+        requestAbort: (runId, by) => abort.request(runId, by),
+      },
+      db: kdb,
+      maintenance,
       log,
     }),
   };

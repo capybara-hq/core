@@ -355,3 +355,65 @@ describe("IM 身份绑定", () => {
     }
   });
 });
+
+describe("修复轮 1", () => {
+  it("绑定 Cookie：SameSite=Lax、publicUrl 为 https 时 Secure、Max-Age=600", async () => {
+    const s = await start(cookieJar());
+    const c = setCookies(s.res).find((x) => x.name === "cap_sso");
+    expect(c?.attrs.samesite).toBe("Lax");
+    expect(c?.attrs.secure).toBe(true);
+    expect(c?.attrs["max-age"]).toBe("600");
+  });
+
+  it("returnTo 的各种绕过写法都落在 publicUrl 下", async () => {
+    for (const bad of ["/\\evil.example", "\\\\evil", "/%2F%2Fevil.example", "%2F%2Fevil"]) {
+      const r = await sso({ sub: "u-rt" }, bad);
+      const u = new URL(r.location);
+      expect(u.origin).toBe(PUBLIC);
+      expect(r.location.startsWith(`${PUBLIC}/`)).toBe(true);
+      expect(r.location.startsWith(`${PUBLIC}//`)).toBe(false);
+    }
+  });
+
+  it("POST /bind/:token 不带 CSRF 头 → 拒绝，令牌不被消耗", async () => {
+    await accounts.createLocal({ login: "carol", password: PW, displayName: "carol" });
+    const jar = cookieJar();
+    const req = asUser(k.http, jar);
+    expect(
+      (
+        await req({
+          method: "POST",
+          url: "/api/v1/auth/login",
+          payload: { login: "carol", password: PW },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const url = await k.identity.binding.createBindToken({
+      connectionId: "c",
+      identity: {
+        source: "fake-idp:t1",
+        externalId: "im-csrf",
+        tenantId: "t1",
+        emailVerified: false,
+        displayName: "X",
+      },
+    });
+    const token = url.slice(`${PUBLIC}/bind/`.length);
+    const res = await req({ method: "POST", url: `/api/v1/bind/${token}`, csrf: false });
+    expect(res.statusCode).toBe(403);
+    expect(errCode(res)).toBe("auth.csrf");
+    expect((await req({ method: "GET", url: `/api/v1/bind/${token}` })).statusCode).toBe(200);
+  });
+
+  it("没有本地密码的账号不能解除最后一个登录方式 → 409 identity.last_login_method", async () => {
+    const a = await sso({ sub: "u-last" });
+    const req = asUser(k.http, a.jar);
+    const res = await req({
+      method: "DELETE",
+      url: `/api/v1/me/identities/${encodeURIComponent("fake-idp:t1")}/u-last`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("identity.last_login_method");
+    expect(await k.identity.external.findAccount("fake-idp:t1", "u-last")).not.toBeUndefined();
+  });
+});

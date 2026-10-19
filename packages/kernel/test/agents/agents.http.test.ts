@@ -9,8 +9,9 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { testMembers } from "../helpers/members.js";
 import { fakeBCalls, MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -43,7 +44,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   tokens = new ApiTokenService(db);
 }, 120_000);
 afterAll(async () => {

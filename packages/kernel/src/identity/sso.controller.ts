@@ -88,7 +88,7 @@ export class SsoController {
       path: SSO_COOKIE_PATH,
       httpOnly: true,
       sameSite: "lax",
-      secure: this.config().auth.cookieSecure,
+      secure: this.flow.cookieSecure(),
       maxAge: SSO_STATE_TTL_SECONDS,
     });
     await reply.header("cache-control", "no-store").redirect(location, 302);

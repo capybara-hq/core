@@ -13,10 +13,11 @@ import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -49,7 +50,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
   agents = new AgentsService(db, new ProviderRegistry(k.host, redis), k.tools.registry);
 }, 120_000);

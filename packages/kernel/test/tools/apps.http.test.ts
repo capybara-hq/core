@@ -10,9 +10,10 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { testMembers } from "../helpers/members.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -50,7 +51,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   tokens = new ApiTokenService(db);
 }, 120_000);
 afterAll(async () => {

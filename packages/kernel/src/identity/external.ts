@@ -74,12 +74,6 @@ const profileOf = (i: ExternalIdentity) =>
     ...(i.avatarUrl !== undefined && { avatarUrl: i.avatarUrl }),
   });
 
-/** 仅当违反 identities 主键约束（身份已被占用）时为 true。 */
-function isIdentityTaken(e: unknown): boolean {
-  const err = e as { code?: string; constraint?: string };
-  return err.code === "23505" && err.constraint === "identities_pkey";
-}
-
 /**
  * 外部身份：按 `(source, externalId)` 映射到账号（登录、渠道入站、通讯录共用同一个键）。
  * 首次出现时按「受信任的身份源 + 两侧邮箱均已验证」合并到既有账号，否则新建账号（不建组织）。
@@ -106,35 +100,31 @@ export class ExternalIdentities {
 
   /**
    * 解析外部身份到账号。已绑定 → 该账号（顺带刷新身份行上的邮箱与资料）；未绑定 → 合并或新建（见类说明）。
+   * 合并只在 `opts.allowMerge` 时考虑（Ruling A9：只有第三方登录路径传 true；渠道入站、通讯录不传）。
+   * 新建账号的 `email_verified` 只在身份源受信任且身份邮箱已验证时为 true——不受信任的身份源可以声称任意邮箱
+   * 「已验证」，不能让它建出的账号成为日后受信任登录的合并目标。
    * 合并写审计 `identity.linked`，新建写 `account.created`。不判断账号状态，由调用方决定（如登录拒绝停用账号）。
-   * 传 `trx` 时在调用方事务内执行。
+   * 传 `trx` 时在调用方事务内执行；与 `link` 取同一把咨询锁，兜底用 `ON CONFLICT DO NOTHING` 后回读，
+   * 不抛唯一约束冲突、不中止调用方事务。
    */
   async resolve(
     identity: ExternalIdentity,
     trx?: Trx,
+    opts: { allowMerge?: boolean } = {},
   ): Promise<{ accountId: string; created: boolean }> {
     const id = normalize(identity);
     const run = async (t: Trx) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.identity:${id.source}:${id.externalId}`}))`.execute(
-        t,
-      );
+      await this.lockIdentity(t, id);
       const existing = await this.findAccount(id.source, id.externalId, t);
       if (existing !== undefined) {
-        await t
-          .updateTable("identities")
-          .set({
-            email: id.email ?? null,
-            email_verified: id.emailVerified,
-            profile: profileOf(id),
-          })
-          .where("source", "=", id.source)
-          .where("external_id", "=", id.externalId)
-          .execute();
+        await this.refreshIdentity(t, id);
         return { accountId: existing, created: false };
       }
-      const merged = await this.mergeTarget(t, id);
+      const merged = opts.allowMerge === true ? await this.mergeTarget(t, id) : undefined;
       if (merged !== undefined) {
-        await this.insertIdentity(t, merged, id);
+        if (!(await this.insertIdentity(t, merged, id))) {
+          return { accountId: await this.mustFind(t, id), created: false };
+        }
         await audit(t, {
           actorAccountId: merged,
           action: "identity.linked",
@@ -150,10 +140,14 @@ export class ExternalIdentities {
           id: accountId,
           display_name: id.displayName,
           email: id.email ?? null,
-          email_verified: id.emailVerified,
+          email_verified: id.emailVerified && this.trusted(id.source),
         })
         .execute();
-      await this.insertIdentity(t, accountId, id);
+      if (!(await this.insertIdentity(t, accountId, id))) {
+        // 不走咨询锁的写入方抢先插入了同一身份：撤销刚建的账号，回读
+        await t.deleteFrom("accounts").where("id", "=", accountId).execute();
+        return { accountId: await this.mustFind(t, id), created: false };
+      }
       await audit(t, {
         actorAccountId: accountId,
         action: "account.created",
@@ -165,14 +159,38 @@ export class ExternalIdentities {
     return trx ? run(trx) : this.db.transaction().execute(run);
   }
 
+  /** 同一身份的 resolve / link 串行化（事务级咨询锁）。 */
+  private async lockIdentity(t: Trx, id: ExternalIdentity): Promise<void> {
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.identity:${id.source}:${id.externalId}`}))`.execute(
+      t,
+    );
+  }
+
+  private trusted(source: string): boolean {
+    return this.config().auth.trustedIdentitySources.includes(identityPlugin(source));
+  }
+
+  private async mustFind(t: Trx, id: ExternalIdentity): Promise<string> {
+    const owner = await this.findAccount(id.source, id.externalId, t);
+    if (owner === undefined) throw new Error("identity vanished after a conflicting insert");
+    return owner;
+  }
+
+  private async refreshIdentity(t: Trx, id: ExternalIdentity): Promise<void> {
+    await t
+      .updateTable("identities")
+      .set({ email: id.email ?? null, email_verified: id.emailVerified, profile: profileOf(id) })
+      .where("source", "=", id.source)
+      .where("external_id", "=", id.externalId)
+      .execute();
+  }
+
   /**
    * 可合并的既有账号：身份源的插件名在 `auth.trustedIdentitySources` 中、身份邮箱已验证，
    * 且恰好有一个邮箱已验证、邮箱相同（不区分大小写）的账号；否则 undefined（多个候选时不猜，新建）。
    */
   private async mergeTarget(t: Trx, id: ExternalIdentity): Promise<string | undefined> {
-    if (!id.emailVerified || id.email === undefined) return undefined;
-    const trusted = this.config().auth.trustedIdentitySources;
-    if (!trusted.includes(identityPlugin(id.source))) return undefined;
+    if (!id.emailVerified || id.email === undefined || !this.trusted(id.source)) return undefined;
     const rows = await t
       .selectFrom("accounts")
       .select("id")
@@ -183,8 +201,9 @@ export class ExternalIdentities {
     return rows.length === 1 ? rows[0]?.id : undefined;
   }
 
-  private async insertIdentity(t: Trx, accountId: string, id: ExternalIdentity): Promise<void> {
-    await t
+  /** 插入身份行；已存在（主键冲突）时什么都不做并返回 false。 */
+  private async insertIdentity(t: Trx, accountId: string, id: ExternalIdentity): Promise<boolean> {
+    const row = await t
       .insertInto("identities")
       .values({
         source: id.source,
@@ -194,36 +213,29 @@ export class ExternalIdentities {
         email_verified: id.emailVerified,
         profile: profileOf(id),
       })
-      .execute();
+      .onConflict((oc) => oc.columns(["source", "external_id"]).doNothing())
+      .returning("account_id")
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   /**
    * 把外部身份绑定到账号（IM 里点绑定链接等）：已绑定本人 → 刷新资料，幂等；已绑定他人 → `409 identity.taken`。
-   * 新绑定写审计 `identity.linked`。
+   * 与 `resolve` 取同一把咨询锁。新绑定写审计 `identity.linked`。
    */
   async link(accountId: string, identity: ExternalIdentity, trx?: Trx): Promise<void> {
     const id = normalize(identity);
     const run = async (t: Trx) => {
+      await this.lockIdentity(t, id);
       const owner = await this.findAccount(id.source, id.externalId, t);
       if (owner !== undefined && owner !== accountId) throw taken();
       if (owner === accountId) {
-        await t
-          .updateTable("identities")
-          .set({
-            email: id.email ?? null,
-            email_verified: id.emailVerified,
-            profile: profileOf(id),
-          })
-          .where("source", "=", id.source)
-          .where("external_id", "=", id.externalId)
-          .execute();
+        await this.refreshIdentity(t, id);
         return;
       }
-      try {
-        await this.insertIdentity(t, accountId, id);
-      } catch (e) {
-        if (isIdentityTaken(e)) throw taken();
-        throw e;
+      if (!(await this.insertIdentity(t, accountId, id))) {
+        if ((await this.mustFind(t, id)) !== accountId) throw taken();
+        return;
       }
       await audit(t, {
         actorAccountId: accountId,
@@ -235,7 +247,10 @@ export class ExternalIdentities {
     return trx ? run(trx) : this.db.transaction().execute(run);
   }
 
-  /** 解除本人的一个外部身份（本地登录名不可解除）；不存在或不属于本人 → `identity.not_found`。审计 `identity.unlinked`。 */
+  /**
+   * 解除本人的一个外部身份（本地登录名不可解除）；不存在或不属于本人 → `identity.not_found`；
+   * 账号没有本地密码且这是最后一个外部身份 → `409 identity.last_login_method`。审计 `identity.unlinked`。
+   */
   async unlink(accountId: string, source: string, externalId: string): Promise<void> {
     if (source === "local") throw notFound();
     await this.db.transaction().execute(async (t) => {
@@ -246,6 +261,26 @@ export class ExternalIdentities {
         .where("account_id", "=", accountId)
         .executeTakeFirst();
       if (r.numDeletedRows === 0n) throw notFound();
+      // 没有本地密码时至少还要剩一个外部身份，否则此人再也登录不了（锁账号行，串行化并发解除）
+      await t.selectFrom("accounts").select("id").where("id", "=", accountId).forUpdate().execute();
+      const password = await t
+        .selectFrom("local_passwords")
+        .select("account_id")
+        .where("account_id", "=", accountId)
+        .executeTakeFirst();
+      const others = await t
+        .selectFrom("identities")
+        .select("source")
+        .where("account_id", "=", accountId)
+        .where("source", "!=", "local")
+        .limit(1)
+        .execute();
+      if (!password && others.length === 0) {
+        throw new ApiError(
+          "identity.last_login_method",
+          "Cannot unlink the last sign-in method of an account without a password",
+        );
+      }
       await audit(t, {
         actorAccountId: accountId,
         action: "identity.unlinked",

@@ -11,7 +11,7 @@ import { createDb } from "../../src/db/pool.js";
 import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import {
   DRIFT_APP_JOB,
@@ -23,6 +23,7 @@ import {
 import { createDecidePolicy } from "../../src/tools/policy.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { testMembers } from "../helpers/members.js";
 import { waitFor } from "../helpers/runs.js";
 
 /**
@@ -67,7 +68,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   probe = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
 }, 120_000);
 afterAll(async () => {
   await k?.stop();

@@ -14,10 +14,11 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import { PluginHost } from "../../src/plugins/host.js";
 import { OrgPluginConfigs } from "../../src/plugins/org-config.js";
+import { testMembers } from "../helpers/members.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -70,7 +71,7 @@ beforeAll(async () => {
   svc = new OrgPluginConfigs(db, keyring, host);
   accounts = new AccountsService(db);
   orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
-  members = new MembersService(db);
+  members = testMembers(db);
 }, 120_000);
 afterAll(async () => {
   await host?.close();

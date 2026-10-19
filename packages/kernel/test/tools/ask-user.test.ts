@@ -14,11 +14,11 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { MembersService } from "../../src/orgs/members.service.js";
 import { TOOLS_UNAVAILABLE_PREFIX } from "../../src/runtime/model-call.js";
 import { askUserTool } from "../../src/tools/builtins/ask-user.js";
 import { validateInput } from "../../src/tools/validate.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -347,7 +347,7 @@ describe("ask_user 端到端", () => {
       password: PW,
       displayName: "X",
     });
-    await new MembersService(db).add(orgId, other.id, "member", ownerId);
+    await testMembers(db).add(orgId, other.id, "member", ownerId);
     const reqOther = await session(kb, "other");
     const res = await answer(reqOther, questionId, { answer: { q0: "Postgres" } });
     expect(res.statusCode, res.body).toBe(403);

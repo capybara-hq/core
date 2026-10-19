@@ -60,6 +60,7 @@ export const ERROR_CODES = {
   "credential.missing": 409,
   "identity.taken": 409,
   "identity.not_found": 404,
+  "identity.last_login_method": 409,
   "bind.invalid": 404,
 } as const satisfies Record<string, number>;
 

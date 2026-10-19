@@ -191,7 +191,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Plugin names whose external identities are trusted to merge into an existing account: when the identity's email and the account's email are both verified and equal, the identity is linked to that account instead of creating a new one",
+              "Plugin names whose external identities are trusted for email-based account merging on third-party sign-in: when the identity's email and an existing account's email are both verified and equal, the identity is linked to that account instead of creating a new one (only accounts created through a trusted source, or verified locally, count as verified). Only list a plugin configured for a single tenant (workspace / app) that your enterprise controls; otherwise anyone in another tenant could claim your users' emails",
           }),
         ),
     })

@@ -49,6 +49,8 @@ const codeOf = async (p: Promise<unknown>) => {
   return undefined;
 };
 
+const MERGE = { allowMerge: true };
+
 const ident = (over: Partial<ExternalIdentity> = {}): ExternalIdentity => ({
   source: "lark:t1",
   externalId: "ou_1",
@@ -108,7 +110,7 @@ describe("ExternalIdentities.resolve", () => {
   it("身份源受信任 + 两侧邮箱都已验证 → 合并到同邮箱账号并审计 identity.linked", async () => {
     const a = await local("alice", "Alice@Example.com", true);
     trusted = ["lark"];
-    const r = await svc.resolve(ident());
+    const r = await svc.resolve(ident(), undefined, MERGE);
     expect(r).toEqual({ accountId: a.id, created: false });
     const audits = await db
       .selectFrom("audit_events")
@@ -123,7 +125,7 @@ describe("ExternalIdentities.resolve", () => {
   it("身份源未受信任 → 新建账号（即使邮箱都已验证）", async () => {
     const a = await local("alice", "alice@example.com", true);
     trusted = ["slack"];
-    const r = await svc.resolve(ident());
+    const r = await svc.resolve(ident(), undefined, MERGE);
     expect(r.created).toBe(true);
     expect(r.accountId).not.toBe(a.id);
   });
@@ -131,11 +133,15 @@ describe("ExternalIdentities.resolve", () => {
   it("受信任但身份邮箱未验证 / 本地账号邮箱未验证 → 新建", async () => {
     trusted = ["lark"];
     const a = await local("alice", "alice@example.com", true);
-    const r1 = await svc.resolve(ident({ emailVerified: false }));
+    const r1 = await svc.resolve(ident({ emailVerified: false }), undefined, MERGE);
     expect(r1.created).toBe(true);
     expect(r1.accountId).not.toBe(a.id);
     const b = await local("bob", "bob@example.com", false);
-    const r2 = await svc.resolve(ident({ externalId: "ou_2", email: "bob@example.com" }));
+    const r2 = await svc.resolve(
+      ident({ externalId: "ou_2", email: "bob@example.com" }),
+      undefined,
+      MERGE,
+    );
     expect(r2.created).toBe(true);
     expect(r2.accountId).not.toBe(b.id);
   });
@@ -170,5 +176,66 @@ describe("ExternalIdentities.link / unlink / listForAccount", () => {
     await svc.unlink(a.id, "lark:t1", "ou_1");
     expect(await svc.findAccount("lark:t1", "ou_1")).toBeUndefined();
     expect(await codeOf(svc.unlink(a.id, "local", "alice"))).toBe("identity.not_found");
+  });
+});
+
+describe("修复轮 1：合并只在登录路径、不受信任来源不标记邮箱已验证、resolve / link 竞态", () => {
+  it("不受信任来源声称已验证的邮箱：新账号不算邮箱已验证；之后受信任来源同邮箱登录 → 另建账号", async () => {
+    trusted = ["lark"];
+    const evil = await svc.resolve(
+      ident({ source: "slack:t9", externalId: "U_evil", email: "victim@corp.example" }),
+      undefined,
+      MERGE,
+    );
+    expect(evil.created).toBe(true);
+    const row = await db
+      .selectFrom("accounts")
+      .select("email_verified")
+      .where("id", "=", evil.accountId)
+      .executeTakeFirstOrThrow();
+    expect(row.email_verified).toBe(false);
+    const victim = await svc.resolve(
+      ident({ externalId: "ou_victim", email: "victim@corp.example" }),
+      undefined,
+      MERGE,
+    );
+    expect(victim.created).toBe(true);
+    expect(victim.accountId).not.toBe(evil.accountId);
+  });
+
+  it("受信任来源新建的账号邮箱算已验证", async () => {
+    trusted = ["lark"];
+    const r = await svc.resolve(ident(), undefined, MERGE);
+    const row = await db
+      .selectFrom("accounts")
+      .select("email_verified")
+      .where("id", "=", r.accountId)
+      .executeTakeFirstOrThrow();
+    expect(row.email_verified).toBe(true);
+  });
+
+  it("不传 allowMerge（如渠道入站）→ 即使受信任且两侧已验证也不合并", async () => {
+    const a = await local("alice", "alice@example.com", true);
+    trusted = ["lark"];
+    const r = await svc.resolve(ident());
+    expect(r.created).toBe(true);
+    expect(r.accountId).not.toBe(a.id);
+  });
+
+  it("resolve 与 link 并发：不抛 500，结果一致", async () => {
+    for (let i = 0; i < 20; i++) {
+      const b = await local(`bob${i}`, `bob${i}@example.com`, false);
+      const id = ident({ externalId: `race-${i}` });
+      const [r, l] = await Promise.allSettled([svc.resolve(id), svc.link(b.id, id)]);
+      expect(r.status).toBe("fulfilled");
+      const owner = await svc.findAccount("lark:t1", `race-${i}`);
+      if (l.status === "fulfilled") {
+        expect(owner).toBe(b.id);
+        expect(r.status === "fulfilled" && r.value.accountId).toBe(b.id);
+      } else {
+        expect((l.reason as ApiError).code).toBe("identity.taken");
+        expect(r.status === "fulfilled" && r.value.accountId).toBe(owner);
+      }
+    }
   });
 });
