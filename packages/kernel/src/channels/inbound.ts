@@ -76,6 +76,11 @@ export class ChannelInbound {
       return;
     }
     if (e.type === "card_action") return; // Task 11
+    // 边界情况（已接受）：
+    // - 同一条消息的重投在首次处理仍在进行时到达：SET NX 已占住，重投被丢弃；若首次处理随后失败并删掉键，
+    //   这条消息就只能等平台下一次重投（平台不再重投则丢失）。
+    // - 首次处理在写入用户消息之后失败（如回复发送或 ensureRun 失败）：键被删掉，重投会再走一遍；
+    //   用户消息靠 clientMessageId 幂等不会重复，但固定话术 / 卡片回复可能再发一次。
     const key = messageDedupeKey(connectionId, e.messageId);
     const fresh = await this.deps.redis.set(key, "1", "EX", MESSAGE_DEDUPE_TTL_SECONDS, "NX");
     if (fresh !== "OK") return;

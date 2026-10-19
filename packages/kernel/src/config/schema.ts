@@ -497,6 +497,11 @@ export const KernelConfigSchema = z.object({
           }),
         ),
     })
+    // 续租周期必须明显短于 TTL：至少能在租约过期前续两次，偶尔一次 Redis 抖动不至于丢租约
+    .refine((c) => c.scanIntervalMs <= c.leaseTtlMs / 2, {
+      message: "channels.scanIntervalMs must be at most half of channels.leaseTtlMs",
+      path: ["scanIntervalMs"],
+    })
     .default({ leaseTtlMs: 30000, scanIntervalMs: 10000, retryBaseMs: 5000 }),
   log: z
     .object({

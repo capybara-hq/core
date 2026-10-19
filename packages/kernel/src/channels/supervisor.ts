@@ -63,19 +63,27 @@ export interface ChannelSupervisorDeps {
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 渠道长连接选主（只在 worker 角色运行）：每个副本每 `channels.scanIntervalMs`（默认 10s）一轮——
- * 先为本进程持有的连接续租（`capk:channel-lease:<id>`，TTL `channels.leaseTtlMs` 默认 30s）并复核连接仍为 active，
- * 再扫描无人持有的 active 连接，`SET NX PX` 取到租约的副本调用插件 `connect`（传 `signal`）。
- * 续租失败（租约已丢）→ 立即中止，不释放（已不是自己的）；连接被停用 / 删除 / 改配置（内核 bus `channel.changed`，
- * 或续租时复核发现）→ 中止、等 `connect` 返回后释放租约，下一轮任一副本按新配置重连。
+ * 渠道长连接选主（只在 worker 角色运行）。每个副本两个各自独立的循环，周期都是 `channels.scanIntervalMs`（默认 10s）：
+ * - 续租循环：为本进程持有的连接续租（`capk:channel-lease:<id>`，TTL `channels.leaseTtlMs` 默认 30s）。
+ *   它不做任何可能慢的事（不等交还、不查库），一个插件迟迟不退出不会拖慢其他连接的续租。
+ * - 扫描循环：复核持有的连接仍为 active、未删除且插件在该组织启用（不满足就交还，交还不阻塞本轮），
+ *   再扫描无人持有的这类连接，`SET NX PX` 取到租约的副本调用插件 `connect`（传 `signal`）。
+ * 续租失败（租约已丢）→ 立即中止，不释放（已不是自己的）；Redis 出错时，自上次续租成功起满 `TTL - 扫描周期`
+ * 仍续不上就按丢失处理（赶在租约可能被别的副本拿走之前断开）。连接被停用 / 删除 / 改配置（内核 bus `channel.changed`，
+ * 或扫描时复核发现）→ 中止、等 `connect` 返回后释放租约，下一轮任一副本按新配置重连；取得租约到 `connect` 开始之间
+ * 收到的重连广播会被记下，开始后立即交还。
  * `connect` 抛错或提前返回 → 记 `last_error`，在 Redis 写退避标记（指数退避，上限 5 分钟），释放租约后由任一副本重试。
  * 停机时中止全部长连接并释放租约。持有的长连接、租约 token 与定时器都是「本进程持有的资源」，
  * 跨副本的状态（租约、退避、失败计数）都在 Redis。
  */
 export class ChannelSupervisor {
   private readonly held = new Map<string, Held>();
-  private timer: NodeJS.Timeout | undefined;
-  private ticking: Promise<void> | undefined;
+  /** 已取得租约、正在读配置准备 `connect` 的连接；值为期间是否收到了重连广播。 */
+  private readonly connecting = new Map<string, { reconnect: boolean }>();
+  private readonly loops: {
+    timer?: NodeJS.Timeout | undefined;
+    running?: Promise<void> | undefined;
+  }[] = [];
   private stopped = false;
   private unsubscribe: (() => Promise<void>) | undefined;
 
@@ -85,82 +93,101 @@ export class ChannelSupervisor {
     this.unsubscribe = await this.deps.bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
       const m = payload as { connectionId?: unknown; reconnect?: unknown } | null;
       const id = m?.connectionId;
-      if (m?.reconnect === true && typeof id === "string" && this.held.has(id)) {
-        void this.release(id);
+      if (m?.reconnect !== true || typeof id !== "string") return;
+      if (this.held.has(id)) void this.release(id);
+      else {
+        const c = this.connecting.get(id);
+        if (c) c.reconnect = true;
       }
     });
-    this.schedule(0);
+    this.loop("renew", () => this.renewAll());
+    this.loop("scan", async () => {
+      await this.recheckHeld();
+      if (!this.stopped) await this.scan();
+    });
   }
 
-  private schedule(ms: number): void {
-    if (this.stopped) return;
-    this.timer = setTimeout(() => {
-      this.ticking = this.tick()
-        .catch((err) => this.deps.log.error("channel supervisor tick failed", { err }))
-        .finally(() => {
-          this.ticking = undefined;
-          this.schedule(this.deps.config().channels.scanIntervalMs);
-        });
-    }, ms);
-    this.timer.unref?.();
-  }
-
-  private async tick(): Promise<void> {
-    await this.renewAll();
-    await this.recheckHeld();
-    if (!this.stopped) await this.scan();
+  /** 周期循环：上一轮结束后隔 `scanIntervalMs` 再跑下一轮；首轮立即执行。 */
+  private loop(name: string, fn: () => Promise<void>): void {
+    const st: { timer?: NodeJS.Timeout | undefined; running?: Promise<void> | undefined } = {};
+    this.loops.push(st);
+    const run = (ms: number) => {
+      if (this.stopped) return;
+      st.timer = setTimeout(() => {
+        st.running = fn()
+          .catch((err) => this.deps.log.error(`channel supervisor ${name} failed`, { err }))
+          .finally(() => {
+            st.running = undefined;
+            run(this.deps.config().channels.scanIntervalMs);
+          });
+      }, ms);
+      st.timer.unref?.();
+    };
+    run(0);
   }
 
   private async renewAll(): Promise<void> {
-    const ttl = this.deps.config().channels.leaseTtlMs;
-    for (const [id, h] of [...this.held]) {
-      let ok: boolean;
-      try {
-        ok = Number(await this.deps.redis.eval(RENEW, 1, channelLeaseKey(id), h.token, ttl)) === 1;
-      } catch (err) {
-        // Redis 暂时不可用：超过一个 TTL 都没续上，租约可能已被别的副本拿走，按丢失处理
-        this.deps.log.warn("channel lease renew failed", { connectionId: id, err });
-        ok = Date.now() - h.renewedAt < ttl;
-        if (ok) continue;
-      }
-      if (!ok) {
-        this.deps.log.warn("channel lease lost; disconnecting", { connectionId: id });
-        this.drop(id, h);
-        continue;
-      }
-      h.renewedAt = Date.now();
-      if (!h.stable && Date.now() - h.startedAt >= ttl) {
-        h.stable = true;
-        await this.deps.redis.del(channelFailsKey(id)).catch(() => {});
-      }
+    const { leaseTtlMs: ttl, scanIntervalMs } = this.deps.config().channels;
+    await Promise.all(
+      [...this.held].map(async ([id, h]) => {
+        let ok: boolean;
+        try {
+          ok =
+            Number(await this.deps.redis.eval(RENEW, 1, channelLeaseKey(id), h.token, ttl)) === 1;
+        } catch (err) {
+          // Redis 暂时不可用：再等一轮就可能超过 TTL（租约在别的副本眼里已过期），提前按丢失处理
+          this.deps.log.warn("channel lease renew failed", { connectionId: id, err });
+          ok = Date.now() - h.renewedAt < ttl - scanIntervalMs;
+          if (ok) return;
+        }
+        await this.afterRenew(id, h, ok, ttl);
+      }),
+    );
+  }
+
+  private async afterRenew(id: string, h: Held, ok: boolean, ttl: number): Promise<void> {
+    if (!ok) {
+      this.deps.log.warn("channel lease lost; disconnecting", { connectionId: id });
+      this.drop(id, h);
+      return;
+    }
+    h.renewedAt = Date.now();
+    if (!h.stable && Date.now() - h.startedAt >= ttl) {
+      h.stable = true;
+      await this.deps.redis.del(channelFailsKey(id)).catch(() => {});
     }
   }
 
-  /** 持有的连接仍须是 active 且未删除（bus 广播是尽力而为，这里兜底）。 */
+  /** 可以持有的连接：active、未删除、插件在该组织启用（组织停用插件时持有方据此断开）。 */
+  private runnable() {
+    return this.deps.db
+      .selectFrom("channel_connections")
+      .innerJoin("plugin_org_configs", (j) =>
+        j
+          .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin")
+          .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id"),
+      )
+      .select("channel_connections.id")
+      .where("plugin_org_configs.enabled", "=", true)
+      .where("channel_connections.status", "=", "active")
+      .where("channel_connections.deleted_at", "is", null);
+  }
+
+  /**
+   * 持有的连接仍须可持有（bus 广播是尽力而为，这里兜底）。交还不等待：交还要等插件 `connect` 返回（至多 SETTLE_MS），
+   * 不能让一个迟迟不退出的插件拖住扫描。
+   */
   private async recheckHeld(): Promise<void> {
     const ids = [...this.held.keys()];
     if (ids.length === 0) return;
     const live = new Set(
-      (
-        await this.deps.db
-          .selectFrom("channel_connections")
-          .select("id")
-          .where("id", "in", ids)
-          .where("status", "=", "active")
-          .where("deleted_at", "is", null)
-          .execute()
-      ).map((r) => r.id),
+      (await this.runnable().where("channel_connections.id", "in", ids).execute()).map((r) => r.id),
     );
-    for (const id of ids) if (!live.has(id)) await this.release(id);
+    for (const id of ids) if (!live.has(id)) void this.release(id);
   }
 
   private async scan(): Promise<void> {
-    const rows = await this.deps.db
-      .selectFrom("channel_connections")
-      .select("id")
-      .where("status", "=", "active")
-      .where("deleted_at", "is", null)
-      .execute();
+    const rows = await this.runnable().execute();
     for (const { id } of rows) {
       if (this.stopped) return;
       if (this.held.has(id)) continue;
@@ -179,10 +206,13 @@ export class ChannelSupervisor {
 
   /** 已取得租约：读配置并在后台跑插件的 `connect`。 */
   private async connect(id: string, token: string): Promise<void> {
+    const pending = { reconnect: false };
+    this.connecting.set(id, pending);
     let rt: Awaited<ReturnType<ChannelConnections["runtime"]>>;
     try {
       rt = await this.deps.connections.runtime(id);
     } catch (err) {
+      this.connecting.delete(id);
       await this.failed(id, err);
       await this.releaseLease(id, token);
       return;
@@ -200,6 +230,7 @@ export class ChannelSupervisor {
       stable: false,
     };
     this.held.set(id, h);
+    this.connecting.delete(id);
     h.done = (async () => {
       try {
         await rt.channel.connect({
@@ -220,6 +251,8 @@ export class ChannelSupervisor {
         }
       }
     })();
+    // 读配置期间收到了重连广播（配置可能已在读取之后改过）：立即交还，下一轮按新配置重连
+    if (pending.reconnect) void this.release(id);
   }
 
   /** 记录失败：`last_error`、连续失败计数与退避标记（都跨副本可见）。 */
@@ -284,8 +317,8 @@ export class ChannelSupervisor {
   /** 停机：停止扫描，中止全部长连接并释放租约。幂等。 */
   async stop(): Promise<void> {
     this.stopped = true;
-    clearTimeout(this.timer);
-    await this.ticking?.catch(() => {});
+    for (const st of this.loops) clearTimeout(st.timer);
+    await Promise.all(this.loops.map((st) => st.running?.catch(() => {})));
     await this.unsubscribe?.().catch(() => {});
     this.unsubscribe = undefined;
     await Promise.all([...this.held.keys()].map((id) => this.release(id)));

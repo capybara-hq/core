@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS capybara.channel_threads (
 CREATE UNIQUE INDEX IF NOT EXISTS channel_threads_live_uq
   ON capybara.channel_threads (connection_id, chat_id, thread_key, coalesce(account_id::text, ''))
   WHERE archived_at IS NULL;
+CREATE INDEX IF NOT EXISTS channel_threads_conversation_idx
+  ON capybara.channel_threads (conversation_id);
 -- 会话的 IM 投递目标与已投递到的事件序号（Task 11 的出站投递按 last_seq 续投）。
 CREATE TABLE IF NOT EXISTS capybara.channel_deliveries (
   conversation_id text PRIMARY KEY REFERENCES capybara.conversations(id) ON DELETE CASCADE,
@@ -45,6 +47,8 @@ CREATE TABLE IF NOT EXISTS capybara.channel_deliveries (
   draft_message_id text,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS channel_deliveries_connection_idx
+  ON capybara.channel_deliveries (connection_id);
 -- 每个组织一个匿名访客账号（无登录方式，组织角色 guest），渠道连接开启匿名策略时首次使用才创建。
 CREATE TABLE IF NOT EXISTS capybara.org_anonymous_accounts (
   org_id text PRIMARY KEY REFERENCES capybara.orgs(id) ON DELETE CASCADE,

@@ -13,6 +13,10 @@ const Conn = z.object({
   appId: z.string().min(1),
   tenant: z.string().min(1).default("t1"),
   appSecret: secret(z.string().min(1)),
+  /** 可选密钥（测试 PATCH 的密钥字段语义）。 */
+  webhookToken: secret(z.string().min(1).optional()),
+  /** 被中止后拖这么久才返回（模拟不及时退出的插件）。 */
+  lingerMs: z.number().int().nonnegative().default(0),
 });
 type ConnConfig = z.infer<typeof Conn>;
 
@@ -58,7 +62,10 @@ const channel: Channel = {
           }
         }
       } catch (e) {
-        if (signal.aborted) return;
+        if (signal.aborted) {
+          if (c.lingerMs > 0) await new Promise((r) => setTimeout(r, c.lingerMs));
+          return;
+        }
         throw e;
       }
       // 平台关闭了连接：稍后重连

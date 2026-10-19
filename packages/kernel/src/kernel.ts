@@ -88,6 +88,9 @@ export const STOP_BUDGET_MS = {
   plugins: 5_000,
 } as const;
 
+/** 停机时留给渠道长连接交还租约的最少时间（与 runs 阶段并行开始，runs 用尽预算时仍保底）。 */
+const CHANNELS_STOP_MIN_MS = 2_000;
+
 /** runs 阶段里留给强制关闭 worker 的余量（预算的其余部分用于等运行到达步骤边界）。 */
 const RUNS_FORCE_CLOSE_MS = 500;
 
@@ -415,6 +418,7 @@ export async function createKernel(
         requestAbort: (runId, by) => abort.request(runId, by),
       },
       db: kdb,
+      redis,
       maintenance,
       log,
     }),
@@ -656,7 +660,12 @@ export async function createKernel(
       await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
     if (channelsStopped) {
-      await within("channels", channelsStopped, Math.max(0, runsDeadline - Date.now()));
+      // 至少留 2s 交还租约：否则其他副本要等租约过期（默认 30s）才能接管
+      await within(
+        "channels",
+        channelsStopped,
+        Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
+      );
     }
     await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));

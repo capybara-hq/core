@@ -527,6 +527,7 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
       approvals: k.tools.approvals,
       questions: k.tools.questions,
       db,
+      redis,
       sweepBatch: 2,
       runs: {
         abortWaiting: async () => false,
@@ -542,5 +543,13 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
     expect(aborted).toEqual([...formerRuns, f.runId]);
     expect(aborted).not.toContain(memberRun);
     expect(aborted).not.toContain(anonRun);
+    // 已请求中止、还在进行中的运行带着标记：下一轮不再重复广播
+    expect(await redis.exists(`capk:offboard-abort:${f.runId}`)).toBe(1);
+    expect(await sweeper.sweep()).toBe(0);
+    expect(aborted).toHaveLength(6);
+    // 标记过期后（真没停下来）再处理
+    await redis.del(`capk:offboard-abort:${formerRuns[0]}`);
+    expect(await sweeper.sweep()).toBe(1);
+    expect(aborted.slice(6)).toEqual([formerRuns[0]]);
   });
 });

@@ -61,6 +61,7 @@ beforeAll(async () => {
   for (const [ext, acct] of [
     ["u-owner", ownerId],
     ["u-out", outsider.id],
+    ["u-race", ownerId],
   ] as const) {
     await sql`INSERT INTO capybara.identities (source, external_id, account_id)
       VALUES (${SOURCE}, ${ext}, ${acct})`.execute(raw);
@@ -217,6 +218,38 @@ describe("渠道入站", () => {
       url: `/api/v1/orgs/${orgId}/settings`,
       payload: { locale: "en" },
     });
+  });
+
+  it("群里未绑定的人 @ 机器人 → 只回「请私聊绑定」，群里不发卡片、不出现链接", async () => {
+    const n = im.sent.length;
+    im.push(connId, group("g-unbound", "u-grp-stranger", "@bot hi", { chatId: "grp-2" }));
+    const s = await sentAfter(n);
+    expect(s?.target).toEqual({ chatId: "grp-2", chatType: "group", threadId: "g-unbound" });
+    expect(s?.message.text).toMatch(/direct message/);
+    expect(s?.message.cards ?? []).toEqual([]);
+    expect(JSON.stringify(s)).not.toMatch(/https?:\/\//);
+    expect((await threads()).filter((r) => r.chat_id === "grp-2")).toEqual([]);
+  });
+
+  it("同一话题的首条消息并发到达 → 只有一条话题行，没有遗留的空会话", async () => {
+    const convCount = async () =>
+      (
+        await db
+          .selectFrom("conversations")
+          .select("id")
+          .where("account_id", "=", ownerId)
+          .execute()
+      ).length;
+    const before = await convCount();
+    await Promise.all(
+      ["race-1", "race-2", "race-3"].map((m) =>
+        k.channels.inbound.handle(connId, dm(m, "u-race", `hello ${m}`)),
+      ),
+    );
+    const rows = (await threads()).filter((r) => r.chat_id === "dm-u-race");
+    expect(rows).toHaveLength(1);
+    expect(await convCount()).toBe(before + 1);
+    expect(await userMessages(rows[0]?.conversation_id as string)).toHaveLength(3);
   });
 
   it("已绑定但不是成员（bind 策略）→ 回提示，不借用任何人的身份", async () => {

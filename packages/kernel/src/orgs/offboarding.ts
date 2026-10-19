@@ -1,4 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
+import type { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
 import type { EventLog } from "../conversations/event-log.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
@@ -54,6 +55,10 @@ export const OFFBOARD_SWEEP_EVERY_MS = 600_000;
 export const OFFBOARD_SWEEP_BATCH = 500;
 /** 一次兜底扫描最多翻的页数（每页 {@link OFFBOARD_SWEEP_BATCH} 条），防止单次任务无限长。 */
 export const OFFBOARD_SWEEP_MAX_PAGES = 20;
+/** 已经广播中止的运行的标记保留时长（秒），长于扫描周期：期间扫描不再重复广播。 */
+export const OFFBOARD_ABORT_MARK_TTL_SECONDS = 1800;
+/** 「已请求中止」标记（Redis 键）。 */
+export const offboardAbortKey = (runId: string) => `capk:offboard-abort:${runId}`;
 
 const ACTIVE = ["queued", "running", "waiting"] as const;
 
@@ -72,6 +77,8 @@ export interface OffboardingDeps {
   /** 给了就登记兜底扫描（每 10 分钟，worker 角色执行）。 */
   maintenance?: Pick<Maintenance, "handle" | "schedule">;
   log?: Pick<Logger, "warn">;
+  /** 记「已请求中止」标记（提交后的中止与兜底扫描都写；扫描跳过仍带标记的运行）。 */
+  redis?: Pick<Redis, "set" | "exists">;
   /** 兜底扫描每页条数（默认 {@link OFFBOARD_SWEEP_BATCH}，测试用）。 */
   sweepBatch?: number;
 }
@@ -255,6 +262,10 @@ export class Offboarding {
         return;
       }
       if (await ctl.abortIfOrphaned(run.conversationId, run.runId, null)) return;
+      // 广播中止的运行要等所在副本到达步骤边界才真正结束：先记标记，扫描在其有效期内不再重复广播
+      await this.deps.redis
+        ?.set(offboardAbortKey(run.runId), "1", "EX", OFFBOARD_ABORT_MARK_TTL_SECONDS)
+        .catch((err: unknown) => this.deps.log?.warn("offboarding: cannot mark abort", { err }));
       await ctl.requestAbort(run.runId, null);
     } catch (err) {
       this.deps.log?.warn("offboarding: cannot stop run", { runId: run.runId, err });
@@ -265,7 +276,8 @@ export class Offboarding {
    * 兜底扫描（维护队列每 10 分钟）：进行中、且发起人已不是该会话所属组织成员的运行 → 中止
    * （提交后的中止没做成时，如进程崩溃）。按 `(runs.created_at, runs.id)` 键集分页翻完（每页 500 条，
    * 至多 20 页）：经广播中止、尚未真正结束的运行仍是进行中，若只取前 500 条，超过 500 条卡住的运行会
-   * 一直占满这一页，后面的永远轮不到。返回本次处理的运行数（广播中止的运行在真正结束前，下一轮仍会再处理）。
+   * 一直占满这一页，后面的永远轮不到。已广播中止、仍带 `capk:offboard-abort:<runId>` 标记（30 分钟）的运行跳过，
+   * 不每轮重复广播；标记过期仍未结束的再处理一次。返回本次处理（未跳过）的运行数。
    * 现任成员（含匿名访客这样的 guest 成员）发起的运行不受影响。
    */
   async sweep(): Promise<number> {
@@ -303,6 +315,8 @@ export class Offboarding {
         .limit(batch)
         .execute();
       for (const r of rows) {
+        if (await this.recentlyAborted(r.id)) continue;
+        total++;
         this.deps.log?.warn("offboard sweep: stopping run of a former member", { runId: r.id });
         await this.stopRun({
           conversationId: r.conversation_id,
@@ -310,11 +324,18 @@ export class Offboarding {
           status: r.status as InFlightRun["status"],
         });
       }
-      total += rows.length;
       const last = rows[rows.length - 1];
       if (rows.length < batch || !last) break;
       after = { createdAt: last.created_at_text, id: last.id };
     }
     return total;
+  }
+
+  private async recentlyAborted(runId: string): Promise<boolean> {
+    try {
+      return (await this.deps.redis?.exists(offboardAbortKey(runId))) === 1;
+    } catch {
+      return false;
+    }
   }
 }

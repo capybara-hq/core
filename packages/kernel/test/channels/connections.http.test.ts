@@ -152,8 +152,11 @@ describe("渠道连接 HTTP", () => {
       status: "active",
       botUserId: "bot-cli_1",
       tenantId: "t1",
-      config: { platformUrl: im.url, appId: "cli_1", tenant: "t1" },
-      secrets: [{ path: "appSecret", set: true }],
+      config: { platformUrl: im.url, appId: "cli_1", tenant: "t1", lingerMs: 0 },
+      secrets: [
+        { path: "appSecret", set: true },
+        { path: "webhookToken", set: false },
+      ],
     });
     const id = ch.id as string;
     // 非密钥列不含密钥；密钥在 secrets（命名空间 kernel）
@@ -262,6 +265,68 @@ describe("渠道连接 HTTP", () => {
     im.failConnect(null);
     await waitFor(async () => im.active(id).length === 1, 10_000, "reconnected after backoff");
     expect(im.maxConcurrent(id)).toBe(1);
+    expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
+  }, 30_000);
+
+  it("PATCH 的密钥字段：缺省 = 保留原值，null = 清除（必填密钥清除 → 400）", async () => {
+    const res = await owner({
+      method: "POST",
+      url: base(),
+      payload: body({
+        name: "Secrets",
+        config: {
+          platformUrl: im.url,
+          appId: "cli_3",
+          appSecret: SECRET,
+          webhookToken: "hook-token-5566aa",
+        },
+      }),
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const id = (res.json() as { channel: { id: string } }).channel.id;
+    const secretsOf = async () =>
+      (
+        (await owner({ method: "GET", url: `${base()}/${id}` })).json() as {
+          channel: { secrets: { path: string; set: boolean }[] };
+        }
+      ).channel.secrets;
+    // 只改非密钥字段：两个密钥都保留
+    const keep = await owner({
+      method: "PATCH",
+      url: `${base()}/${id}`,
+      payload: { config: { platformUrl: im.url, appId: "cli_3b" } },
+    });
+    expect(keep.statusCode, keep.body).toBe(200);
+    expect(await secretsOf()).toEqual([
+      { path: "appSecret", set: true },
+      { path: "webhookToken", set: true },
+    ]);
+    const rt = await k.channels.connections.runtime(id);
+    expect(rt.config).toMatchObject({
+      appId: "cli_3b",
+      appSecret: SECRET,
+      webhookToken: "hook-token-5566aa",
+    });
+    // null 清除可选密钥
+    const clear = await owner({
+      method: "PATCH",
+      url: `${base()}/${id}`,
+      payload: { config: { platformUrl: im.url, appId: "cli_3b", webhookToken: null } },
+    });
+    expect(clear.statusCode, clear.body).toBe(200);
+    expect(await secretsOf()).toEqual([
+      { path: "appSecret", set: true },
+      { path: "webhookToken", set: false },
+    ]);
+    // 必填密钥不能清除
+    const bad = await owner({
+      method: "PATCH",
+      url: `${base()}/${id}`,
+      payload: { config: { platformUrl: im.url, appId: "cli_3b", appSecret: null } },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(errCode(bad)).toBe("plugin.config_invalid");
+    expect((await k.channels.connections.runtime(id)).config).toMatchObject({ appSecret: SECRET });
     expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
   }, 30_000);
 
