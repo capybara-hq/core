@@ -58,6 +58,20 @@ export {
   startFakeOpenApiServer,
 } from "./fake-openapi-server.js";
 export {
+  type FakeSlackAck,
+  type FakeSlackCall,
+  type FakeSlackFailure,
+  type FakeSlackMessage,
+  type FakeSlackOptions,
+  type FakeSlackServer,
+  type FakeSlackUser,
+  findSlackButton,
+  slackBlockAction,
+  slackDmEvent,
+  slackMentionEvent,
+  startFakeSlack,
+} from "./fake-slack.js";
+export {
   type ConformanceTarget,
   checkDeclaredParameters,
   describeModelProviderConformance,
