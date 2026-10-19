@@ -362,7 +362,8 @@ describe("应用详情：复核页签（漂移检测）", () => {
           name: m.apps.tools.enabledLabel.replace("{tool}", "fixture__nope"),
         }),
       ).toHaveProperty("disabled", true);
-      await user.click(screen.getByRole("tab", { name: `${m.apps.detail.tabs.review}1` }));
+      // 页签计数：待复核的，加上带待复核新定义而停用的（不合规的 broken），让管理员注意到
+      await user.click(screen.getByRole("tab", { name: `${m.apps.detail.tabs.review}2` }));
 
       const fresh = screen.getByRole("region", { name: "fixture__fresh" });
       expect(within(fresh).getByText(`‖ ${r.newTool}`)).toBeTruthy();

@@ -433,6 +433,16 @@ describe("复核", () => {
     expect(t?.pending).toMatchObject({ inputSchema: [] });
     const bad = await review(req, orgId, app.id, "search", "approve");
     expect(bad.statusCode).toBe(400);
+    // 当前定义（上次复核通过的）本身合规，但待复核的新定义未处理：PATCH 不能绕过复核直接启用
+    const enable = await req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      payload: { tools: { search: { status: "enabled" } } },
+    });
+    expect(enable.statusCode, enable.body).toBe(400);
+    expect((enable.json() as { error: { code: string } }).error.code).toBe("validation_failed");
+    expect(enable.body).toContain(`/apps/${app.id}/tools/search/review`);
+    expect(toolsByName(await getApp(req, orgId, app.id)).search?.status).toBe("disabled");
 
     // 修好的定义到来：对比的「当前」仍是上次复核通过的定义，而不是那份不合规的
     (tools[0] as ServerTool).inputSchema = {
@@ -527,6 +537,26 @@ describe("复核", () => {
     await members.add(orgId, m.id, "member", owner.id);
     const memberReq = await session("mem");
     expect((await review(memberReq, orgId, app.id, "search", "approve")).statusCode).toBe(403);
+    // 已消失的工具不可复核：已复核过的（create_doc），以及从未复核过的新工具消失后（list_docs）
+    const reviewGone = await review(req, orgId, app.id, "create_doc", "approve");
+    expect(reviewGone.statusCode).toBe(409);
+    expect((reviewGone.json() as { error: { code: string } }).error.code).toBe(
+      "app.tool_not_pending",
+    );
+    memState().servers.docs = {
+      ...memState().servers.docs,
+      tools: docsTools().filter((x) => x.name !== "list_docs") as never,
+    };
+    await k.tools.drift.check(orgId, app.id, "schedule");
+    expect(toolsByName(await getApp(req, orgId, app.id)).list_docs).toMatchObject({
+      missing: true,
+      reviewedAt: null,
+    });
+    const reviewGoneNew = await review(req, orgId, app.id, "list_docs", "approve");
+    expect(reviewGoneNew.statusCode).toBe(409);
+    expect((reviewGoneNew.json() as { error: { code: string } }).error.code).toBe(
+      "app.tool_not_pending",
+    );
     // 已消失的工具不能启用
     const enableGone = await req({
       method: "PATCH",

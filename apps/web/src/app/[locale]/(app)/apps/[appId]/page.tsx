@@ -273,7 +273,10 @@ function ToolsTab({
             disabled={
               busy !== undefined ||
               (x.status === "disabled" &&
-                (x.issue !== null || x.missing === true || x.reviewedAt === null))
+                (x.issue !== null ||
+                  x.missing === true ||
+                  x.reviewedAt === null ||
+                  (x.pending ?? null) !== null))
             }
             onChange={(on) => void patch(x, { status: on ? "enabled" : "disabled" })}
           />
@@ -543,9 +546,16 @@ const reviewable = (x: AppTool) =>
   x.missing !== true &&
   (x.status === "pending_review" || (x.pending ?? null) !== null || neverReviewedDisabled(x));
 
-/** 待复核的工具数（漂移检测）。 */
+/**
+ * 页签计数（漂移检测）：待复核的工具，加上带待复核新定义而停用的（如新定义不合规），
+ * 后者不能在工具页签启用、只能在复核页签处理，要让管理员注意到。
+ */
 const reviewCount = (app: AppDetail) =>
-  app.tools.filter((x) => x.status === "pending_review").length;
+  app.tools.filter(
+    (x) =>
+      x.status === "pending_review" ||
+      (x.status === "disabled" && x.missing !== true && (x.pending ?? null) !== null),
+  ).length;
 
 /**
  * OAuth 客户端轮换（Ruling A18，`PUT credentials/org`）：客户端凭据流在内核先用新客户端取 token 验证；
