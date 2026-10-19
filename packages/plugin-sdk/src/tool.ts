@@ -1,4 +1,5 @@
 import { checkParamValue, type ParamSchema } from "./model-params.js";
+import { isHttpUrl } from "./url.js";
 
 /** 工具注解（与 MCP 对齐的提示，用于推导默认策略）。 */
 export interface ToolAnnotations {
@@ -154,18 +155,6 @@ function schemaProblems(schema: unknown): string[] {
   if (typeof s.minimum === "number" && typeof s.maximum === "number" && s.minimum > s.maximum)
     out.push("minimum must be <= maximum");
   return out;
-}
-
-const MAX_FORM_URL = 2000;
-
-function isHttpUrl(v: unknown): boolean {
-  if (typeof v !== "string" || v.length > MAX_FORM_URL) return false;
-  try {
-    const u = new URL(v);
-    return u.protocol === "https:" || u.protocol === "http:";
-  } catch {
-    return false;
-  }
 }
 
 const isEnum = (s: ParamSchema): s is Extract<ParamSchema, { enum: string[] }> =>

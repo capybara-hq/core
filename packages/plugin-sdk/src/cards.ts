@@ -1,4 +1,5 @@
 import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
+import { isHttpUrl } from "./url.js";
 
 /**
  * 渠道中立的 IM 卡片：由内核定义与产出，渠道插件按各自 IM 的原生格式渲染；
@@ -17,6 +18,8 @@ export type ChannelCard =
       expiresAt: string;
       state: "pending" | "approved" | "denied" | "expired" | "cancelled";
       decidedBy?: string;
+      /** 可决定该审批的会话网页链接。 */
+      webUrl: string;
     }
   | {
       kind: "question";
@@ -68,16 +71,6 @@ const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d
 
 const list = (xs: readonly string[]) => xs.map((x) => JSON.stringify(x)).join(", ");
 
-function isHttpUrl(v: unknown): boolean {
-  if (typeof v !== "string") return false;
-  try {
-    const u = new URL(v);
-    return u.protocol === "https:" || u.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
 /** 校验卡片结构，返回问题列表（空 = 合法）。 */
 export function validateChannelCard(card: unknown): string[] {
   if (typeof card !== "object" || card === null || Array.isArray(card))
@@ -95,7 +88,8 @@ export function validateChannelCard(card: unknown): string[] {
       out.push(`${k} must be one of ${list(xs)}`);
   };
   const url = (k: string) => {
-    if (!isHttpUrl(c[k])) out.push(`${k} must be an absolute http(s) URL`);
+    if (!isHttpUrl(c[k]))
+      out.push(`${k} must be an absolute http(s) URL of at most 2000 characters`);
   };
 
   switch (c.kind) {
@@ -119,6 +113,7 @@ export function validateChannelCard(card: unknown): string[] {
         out.push("expiresAt must be an ISO 8601 timestamp");
       oneOf("state", APPROVAL_STATES);
       optNonEmpty("decidedBy");
+      url("webUrl");
       return out;
     }
     case "question": {
@@ -127,6 +122,7 @@ export function validateChannelCard(card: unknown): string[] {
       url("webUrl");
       if (c.answerSummary !== undefined && typeof c.answerSummary !== "string")
         out.push("answerSummary must be a string");
+      // 不能在 IM 内作答的表单（见 questionRenderableInline）同样合法：渠道只渲染网页链接。
       for (const p of validateInputForm(c.form as InputForm)) out.push(`form: ${p}`);
       return out;
     }
@@ -157,7 +153,7 @@ const TEXT = {
     status: "Status",
     expires: "Expires",
     answer: "Answer",
-    approveOnWeb: "Cards are not supported here. Please approve or deny on the web.",
+    approveOnWeb: "Cards are not supported here. Approve or deny on the web",
     answerOnWeb: "Answer on the web",
     details: "Details",
     connectLink: "Connect",
@@ -186,7 +182,7 @@ const TEXT = {
     status: "状态",
     expires: "过期时间",
     answer: "回答",
-    approveOnWeb: "此处不支持卡片，请到网页上批准或拒绝。",
+    approveOnWeb: "此处不支持卡片，请到网页上批准或拒绝",
     answerOnWeb: "到网页上回答",
     details: "详情",
     connectLink: "连接",
@@ -220,7 +216,9 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
         line(t.input, card.inputPreview),
         line(t.status, card.decidedBy ? `${state} (${card.decidedBy})` : state),
       ];
-      if (card.state === "pending") lines.push(line(t.expires, card.expiresAt), t.approveOnWeb);
+      if (card.state === "pending")
+        lines.push(line(t.expires, card.expiresAt), line(t.approveOnWeb, card.webUrl));
+      else lines.push(line(t.details, card.webUrl));
       return lines.join("\n");
     }
     case "question": {

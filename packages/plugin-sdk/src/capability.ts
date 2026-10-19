@@ -41,6 +41,15 @@ export const CAPABILITY_CARDINALITY: Record<string, Cardinality> = Object.fromEn
 /** 连接器能力引用（见 `connector.ts`）。 */
 export const CONNECTOR_CAPABILITY = "connector@1";
 
+/** IM 渠道能力引用（见 `channel.ts`）。 */
+export const CHANNEL_CAPABILITY = "channel@1";
+
+/** 外部登录身份来源能力引用（见 `identity.ts`）。 */
+export const IDENTITY_SOURCE_CAPABILITY = "identity-source@1";
+
+/** 通讯录能力引用（见 `directory.ts`）。 */
+export const DIRECTORY_CAPABILITY = "directory@1";
+
 /** 解析能力引用；格式不合法时抛错。 */
 export function parseCapability(ref: string): { name: string; major: number } {
   const m = /^([a-z][a-z0-9-]*)@(\d+)$/.exec(ref);

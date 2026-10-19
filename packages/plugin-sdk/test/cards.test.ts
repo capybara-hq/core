@@ -68,6 +68,7 @@ const approval: Extract<ChannelCard, { kind: "approval" }> = {
   scopes: ["once", "session", "always"],
   expiresAt: "2026-10-19T12:00:00.000Z",
   state: "pending",
+  webUrl: "https://capy.example.com/c/1",
 };
 
 const question: Extract<ChannelCard, { kind: "question" }> = {
@@ -141,6 +142,10 @@ describe("validateChannelCard", () => {
       "expiresAt must be an ISO 8601 timestamp",
     ]);
     expect(validateChannelCard({ ...approval, expiresAt: "2026-13-40T99:00:00Z" }).length).toBe(1);
+    expect(validateChannelCard({ ...approval, webUrl: "ftp://x" })).toEqual([
+      "webUrl must be an absolute http(s) URL of at most 2000 characters",
+    ]);
+    expect(validateChannelCard({ ...approval, webUrl: undefined }).length).toBe(1);
     expect(validateChannelCard({ ...approval, state: "answered" })).toEqual([
       'state must be one of "pending", "approved", "denied", "expired", "cancelled"',
     ]);
@@ -152,7 +157,7 @@ describe("validateChannelCard", () => {
       'state must be one of "pending", "answered", "expired", "cancelled"',
     ]);
     expect(validateChannelCard({ ...question, webUrl: "javascript:alert(1)" })).toEqual([
-      "webUrl must be an absolute http(s) URL",
+      "webUrl must be an absolute http(s) URL of at most 2000 characters",
     ]);
     expect(validateChannelCard({ ...question, answerSummary: 1 })).toEqual([
       "answerSummary must be a string",
@@ -163,6 +168,12 @@ describe("validateChannelCard", () => {
     expect(validateChannelCard({ ...question, form: undefined })).toEqual([
       "form: form.fields must be an array",
     ]);
+    expect(validateChannelCard({ ...question, form: null })).toEqual([
+      "form: form.fields must be an array",
+    ]);
+    expect(validateChannelCard({ ...question, form: "x" })).toEqual([
+      "form: form.fields must be an array",
+    ]);
   });
 
   it("connect / bind：必填字符串与 url", () => {
@@ -170,11 +181,20 @@ describe("validateChannelCard", () => {
       "appName must be a non-empty string",
     ]);
     expect(validateChannelCard({ ...connect, url: "ftp://x" })).toEqual([
-      "url must be an absolute http(s) URL",
+      "url must be an absolute http(s) URL of at most 2000 characters",
     ]);
     expect(validateChannelCard({ ...bind, text: "" })).toEqual(["text must be a non-empty string"]);
     expect(validateChannelCard({ ...bind, url: "not a url" })).toEqual([
-      "url must be an absolute http(s) URL",
+      "url must be an absolute http(s) URL of at most 2000 characters",
+    ]);
+  });
+
+  it("卡片 url 上限 2000 字符", () => {
+    const base = "https://capy.example.com/";
+    const at = (n: number) => base + "a".repeat(n - base.length);
+    expect(validateChannelCard({ ...connect, url: at(2000) })).toEqual([]);
+    expect(validateChannelCard({ ...connect, url: at(2001) })).toEqual([
+      "url must be an absolute http(s) URL of at most 2000 characters",
     ]);
   });
 });
@@ -189,7 +209,7 @@ describe("renderCardAsText", () => {
         'Input: {"title":"bug"}',
         "Status: Pending",
         "Expires: 2026-10-19T12:00:00.000Z",
-        "Cards are not supported here. Please approve or deny on the web.",
+        "Cards are not supported here. Approve or deny on the web: https://capy.example.com/c/1",
       ].join("\n"),
     );
     expect(renderCardAsText(approval, "zh")).toBe(
@@ -200,12 +220,12 @@ describe("renderCardAsText", () => {
         '输入：{"title":"bug"}',
         "状态：待审批",
         "过期时间：2026-10-19T12:00:00.000Z",
-        "此处不支持卡片，请到网页上批准或拒绝。",
+        "此处不支持卡片，请到网页上批准或拒绝：https://capy.example.com/c/1",
       ].join("\n"),
     );
   });
 
-  it("approval 已决定：无网页提示，带决定人，无应用名时只给工具名", () => {
+  it("approval 已决定：给详情链接，带决定人，无应用名时只给工具名", () => {
     const { appName: _a, ...noApp } = approval;
     const c: ChannelCard = { ...noApp, state: "approved", decidedBy: "bob" };
     expect(renderCardAsText(c, "en")).toBe(
@@ -215,6 +235,7 @@ describe("renderCardAsText", () => {
         "Agent: Helper",
         'Input: {"title":"bug"}',
         "Status: Approved (bob)",
+        "Details: https://capy.example.com/c/1",
       ].join("\n"),
     );
     expect(renderCardAsText({ ...noApp, state: "denied" }, "zh")).toBe(
@@ -224,6 +245,7 @@ describe("renderCardAsText", () => {
         "Agent：Helper",
         '输入：{"title":"bug"}',
         "状态：已拒绝",
+        "详情：https://capy.example.com/c/1",
       ].join("\n"),
     );
   });
@@ -278,6 +300,51 @@ describe("renderCardAsText", () => {
     const want = "Bind your account first.\nhttps://capy.example.com/bind?t=x";
     expect(renderCardAsText(bind, "en")).toBe(want);
     expect(renderCardAsText(bind, "zh")).toBe(want);
+  });
+
+  it("expired / cancelled 的精确文本", () => {
+    const head = (zh: boolean) =>
+      zh
+        ? [
+            "【审批】Create issue",
+            "工具：GitHub / create_issue",
+            "Agent：Helper",
+            '输入：{"title":"bug"}',
+          ]
+        : [
+            "[Approval] Create issue",
+            "Tool: GitHub / create_issue",
+            "Agent: Helper",
+            'Input: {"title":"bug"}',
+          ];
+    const cases = [
+      ["expired", "en", "Status: Expired"],
+      ["cancelled", "en", "Status: Cancelled"],
+      ["expired", "zh", "状态：已过期"],
+      ["cancelled", "zh", "状态：已取消"],
+    ] as const;
+    for (const [state, locale, status] of cases) {
+      const zh = locale === "zh";
+      expect(renderCardAsText({ ...approval, state }, locale)).toBe(
+        [
+          ...head(zh),
+          status,
+          zh ? "详情：https://capy.example.com/c/1" : "Details: https://capy.example.com/c/1",
+        ].join("\n"),
+      );
+    }
+    expect(renderCardAsText({ ...question, state: "expired" }, "en")).toBe(
+      "[Question] Pick env\nStatus: Expired\nDetails: https://capy.example.com/c/1?q=q_1",
+    );
+    expect(renderCardAsText({ ...question, state: "cancelled" }, "en")).toBe(
+      "[Question] Pick env\nStatus: Cancelled\nDetails: https://capy.example.com/c/1?q=q_1",
+    );
+    expect(renderCardAsText({ ...question, state: "expired" }, "zh")).toBe(
+      "【提问】选择环境\n状态：已过期\n详情：https://capy.example.com/c/1?q=q_1",
+    );
+    expect(renderCardAsText({ ...question, state: "cancelled" }, "zh")).toBe(
+      "【提问】选择环境\n状态：已取消\n详情：https://capy.example.com/c/1?q=q_1",
+    );
   });
 
   it("各状态文案齐全", () => {

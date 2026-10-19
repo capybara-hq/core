@@ -1,9 +1,6 @@
 import type { ZodTypeAny } from "zod";
 import type { CardAction, OutboundMessage } from "./cards.js";
 
-/** `channel@1`：IM 渠道（机器人收发消息、渲染卡片）。 */
-export const CHANNEL_CAPABILITY = "channel@1" as const;
-
 /** 消息的投递目标。 */
 export interface ChannelTarget {
   chatId: string;
