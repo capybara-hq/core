@@ -205,7 +205,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              'Identity source keys "<plugin>:<tenantId>" (one tenant each, e.g. "lark:tenant_1") whose external identities are trusted: on third-party sign-in, when the identity\'s email and an existing account\'s email are both verified and equal, the identity is linked to that account instead of creating a new one; accounts created through a trusted source count as email-verified; and members added by directory sync from a trusted source can sign in with that source directly. Only list tenants (workspaces / apps) that your enterprise controls; otherwise anyone in that tenant could claim your users\' emails. Plugin-only entries are rejected',
+              'Identity source keys "<plugin>:<tenantId>" (one tenant each, e.g. "lark:tenant_1") whose external identities are trusted: on third-party sign-in, when the identity\'s email and an existing account\'s email are both verified and equal, the identity is linked to that account instead of creating a new one; and accounts created through a trusted source count as email-verified. Only list tenants (workspaces / apps) that your enterprise controls; otherwise anyone in that tenant could claim your users\' emails. Plugin-only entries are rejected',
           }),
         ),
     })

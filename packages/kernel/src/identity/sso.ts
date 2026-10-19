@@ -174,7 +174,7 @@ export class SsoFlow {
    * 处理身份源的回跳。state 先取后删（无论成败都不能再用）；state 属于别的插件 → `sso.state_invalid`；
    * 绑定 Cookie 不符 → `sso.session_mismatch`；身份源报错只映射为原因码；插件交回的身份源键必须由内核推导得出
    * （`${插件名}:${identity.tenantId}`，Ruling A19），否则按 `sso.provider_error` 拒绝。
-   * 身份行经 IM 绑定建立（或由不受信任租户的通讯录建立）且 `sessionAccountId` 不是其账号 → `sso.identity_not_verified`
+   * 身份行经 IM 绑定建立且 `sessionAccountId` 不是其账号 → `sso.identity_not_verified`
    * （Ruling A18）。成功则解析到账号（不判断账号状态，由调用方处理）。
    * `sessionAccountId`：回调请求已带着的 Web 会话的账号（未登录时省略）。
    */

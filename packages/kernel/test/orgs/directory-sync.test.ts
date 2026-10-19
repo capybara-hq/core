@@ -800,6 +800,51 @@ describe("修复波 W1", () => {
     expect(await memberOf(orgId, "u-ex")).toMatchObject({ source: null });
   });
 
+  it("Ruling A24：手动重新加入后再被移出 → 仍写排除（按该组织启用的通讯录插件），同步不再加回", async () => {
+    const { orgId, book } = await setupOrg();
+    const re = await accounts.createLocal({ login: "re-1", password: PW, displayName: "Re" });
+    await linkIdentity(re.id, "u-re");
+    book.members = [person("u-re")];
+    // 先是手动成员（source 为空），从未由通讯录加入
+    await addManual(orgId, re.id);
+    expect(await sync(orgId)).toMatchObject({ added: 0 });
+    expect(await memberOf(orgId, "u-re")).toMatchObject({ source: null });
+
+    const excl = async () =>
+      db
+        .selectFrom("directory_exclusions")
+        .select(["account_id", "plugin", "created_by"])
+        .where("org_id", "=", orgId)
+        .execute();
+    const del = await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${orgId}/members/${re.id}` });
+    expect(del.statusCode).toBe(204);
+    expect(await excl()).toEqual([{ account_id: re.id, plugin: "dir-mini", created_by: owner.id }]);
+    // 仍在通讯录里在职：不被同步加回
+    expect(await sync(orgId)).toMatchObject({ added: 0, failed: 0, partial: false });
+    expect(await memberOf(orgId, "u-re")).toBeUndefined();
+
+    // 本人离开同样写排除：手动重新加入（清除排除）后离开
+    await k.identity.directory.sync(orgId, "dir-mini");
+    const inv = await ownerReq({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/invitations`,
+      payload: { role: "member" },
+    });
+    const reReq = await session(k, "re-1");
+    const acc = await reReq({
+      method: "POST",
+      url: `/api/v1/invitations/${(inv.json() as { token: string }).token}/accept`,
+      payload: {},
+    });
+    expect(acc.statusCode, acc.body).toBe(200);
+    expect(await excl()).toEqual([]);
+    const left = await reReq({ method: "POST", url: `/api/v1/orgs/${orgId}/leave` });
+    expect(left.statusCode).toBe(204);
+    expect(await excl()).toEqual([{ account_id: re.id, plugin: "dir-mini", created_by: re.id }]);
+    expect(await sync(orgId)).toMatchObject({ added: 0 });
+    expect(await memberOf(orgId, "u-re")).toBeUndefined();
+  });
+
   it("移除阶段前复核可同步性：插件中途停用 → 本轮不完整、不移除任何人", async () => {
     const { orgId, book } = await setupOrg();
     book.members = [person("rc-1"), person("rc-2")];

@@ -306,16 +306,22 @@ describe("修复波 W1：身份来源（linked_via）与租户级信任", () => 
     expect(await login()).toEqual({ accountId: a.id, created: false });
   });
 
-  it("登录路径：通讯录建的身份只有在该租户受信任时才能直接登录", async () => {
+  it("Ruling A23：通讯录建的身份无论租户是否受信任都能直接登录（身份源登录本身就是证明）", async () => {
     const r = await svc.resolve(ident(), undefined, { linkedVia: "directory" });
     const login = () => svc.resolve(ident(), undefined, { ...MERGE, login: {} });
-    await expect(login()).rejects.toBeInstanceOf(IdentityNotVerified);
-    trusted = ["lark:t2"];
-    await expect(login()).rejects.toBeInstanceOf(IdentityNotVerified);
+    trusted = [];
+    expect(await login()).toEqual({ accountId: r.accountId, created: false });
     trusted = ["lark:t1"];
     expect(await login()).toEqual({ accountId: r.accountId, created: false });
-    // 通讯录身份直接登录不改其来源
+    // 通讯录身份直接登录不改其来源，也不写 identity.verified
     expect(await linkedVia("lark:t1", "ou_1")).toBe("directory");
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select("id")
+        .where("action", "=", "identity.verified")
+        .execute(),
+    ).toEqual([]);
   });
 
   it("旧行（linked_via 为 null）按 sso 处理", async () => {

@@ -17,8 +17,8 @@ const MAX_EMAIL = 320;
 export type { LinkedVia };
 
 /**
- * 第三方登录拒绝了这个身份（Ruling A18）：身份行经 IM 绑定链接建立（或由不受信任租户的通讯录建立），
- * 而请求没有带着同一账号的会话。登录页原因码 `sso.identity_not_verified`。
+ * 第三方登录拒绝了这个身份（Ruling A18）：身份行经 IM 绑定链接建立，而请求没有带着同一账号的会话。
+ * 登录页原因码 `sso.identity_not_verified`。
  */
 export class IdentityNotVerified extends Error {
   constructor() {
@@ -132,11 +132,11 @@ export class ExternalIdentities {
    * 解析外部身份到账号。已绑定 → 该账号（顺带刷新身份行上的邮箱与资料）；未绑定 → 合并或新建（见类说明），
    * 新身份行记 `linked_via = opts.linkedVia`（合并也是 `sso`）。
    * 合并只在 `opts.allowMerge` 时考虑（Ruling A9：只有第三方登录路径传 true；渠道入站、通讯录不传）。
-   * 第三方登录（`opts.login`，Ruling A18）：已有的身份行若经 IM 绑定建立（`bind`），或由不受信任租户的通讯录建立
-   * （`directory` 且身份源不在 `auth.trustedIdentitySources`），只证明了某个网页登录者点过绑定链接 / 管理员配置的
-   * 通讯录这么说，不证明登录者控制该外部身份——此时只有请求已带着**同一账号**的会话（本人在已登录状态下完成第三方登录，
+   * 第三方登录（`opts.login`，Ruling A18 / A23）：已有的身份行若经 IM 绑定建立（`bind`），只证明了某个网页登录者
+   * 点过绑定链接，不证明他控制该外部身份——此时只有请求已带着**同一账号**的会话（本人在已登录状态下完成第三方登录，
    * 证明自己控制该身份）才放行，并把行升级为 `sso`（审计 `identity.verified`）；否则抛 {@link IdentityNotVerified}。
-   * 旧行（`linked_via` 为 null）按 `sso` 处理。
+   * 通讯录建立的行（`directory`）不论租户是否受信任都可直接登录：身份源登录本身就证明登录者控制该身份，
+   * 而通讯录身份总是指向为它新建的账号（信任只影响合并与 `email_verified`）。旧行（`linked_via` 为 null）按 `sso` 处理。
    * 新建账号的 `email_verified` 只在身份源受信任且身份邮箱已验证时为 true——不受信任的身份源可以声称任意邮箱
    * 「已验证」，不能让它建出的账号成为日后受信任登录的合并目标。
    * 合并写审计 `identity.linked`，新建写 `account.created`。不判断账号状态，由调用方决定（如登录拒绝停用账号）。
@@ -221,7 +221,7 @@ export class ExternalIdentities {
     return row && { accountId: row.account_id, linkedVia: row.linked_via };
   }
 
-  /** 第三方登录能否用这一行（见 {@link resolve}）；能但需升级时把行改为 `sso`。 */
+  /** 第三方登录能否用这一行（见 {@link resolve}）：只有 `bind` 行需要同一账号的会话，放行时把行改为 `sso`。 */
   private async allowLogin(
     t: Trx,
     id: ExternalIdentity,
@@ -229,8 +229,7 @@ export class ExternalIdentities {
     login: { sessionAccountId?: string },
   ): Promise<void> {
     const via = row.linkedVia ?? "sso";
-    const verified = via === "sso" || (via === "directory" && this.trusted(id.source));
-    if (verified) return;
+    if (via !== "bind") return;
     if (login.sessionAccountId !== row.accountId) throw new IdentityNotVerified();
     await t
       .updateTable("identities")

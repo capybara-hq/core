@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import { DIRECTORY_CAPABILITY, type PluginContext } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
@@ -411,6 +411,12 @@ export async function createKernel(
     credentials,
     approvals,
     questions,
+    // Ruling A24：手动移出 / 离开时对该组织启用的每个通讯录插件写排除
+    directoryPlugins: () =>
+      host
+        .list("directory")
+        .filter((e) => e.capability === DIRECTORY_CAPABILITY)
+        .map((e) => e.plugin),
     // 只用来写吊销标记（Redis 快速路径）；会话签发仍在 HTTP 层
     sessions: new SessionService(kdb, redis, keyring, {
       accessTtlSeconds: config.auth.accessTokenTtlSeconds,

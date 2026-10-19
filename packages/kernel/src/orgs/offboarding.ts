@@ -81,6 +81,11 @@ export interface OffboardingDeps {
   log?: Pick<Logger, "warn">;
   /** 记「已请求中止」标记（提交后的中止与兜底扫描都写；扫描跳过仍带标记的运行）。 */
   redis?: Pick<Redis, "set" | "exists">;
+  /**
+   * 已加载、提供 `directory@1` 的插件名（Ruling A24：手动移出 / 离开时对其中在该组织启用的每一个写通讯录排除）。
+   * 不给时只按成员关系自身的 `directory:<插件>` 来源写。
+   */
+  directoryPlugins?: () => string[];
   /** 兜底扫描每页条数（默认 {@link OFFBOARD_SWEEP_BATCH}，测试用）。 */
   sweepBatch?: number;
 }
@@ -115,8 +120,9 @@ export class Offboarding {
    * 5. 其负责的该组织 agent 转给组织所有者（最早加入的 owner）并置 `needs_reassignment = true`；
    * 6. 归档其在该组织各渠道连接上的 IM 话题行（重新加入后在 IM 里开始新的对话，不接着旧会话），
    *    删除其在该组织的「以后都允许」工具授权（`tool_grants`）；
-   * 7. 成员关系由通讯录同步加入（`source = "directory:<插件>"`）而这次是手动移出或本人离开（不是同步判定离职）时，
-   *    写通讯录排除（Ruling A20）：同步不再把此人加回，直到有人手动重新加入（{@link MembersService.add} 删除排除）；
+   * 7. 手动移出或本人离开（不是同步判定离职）时写通讯录排除（Ruling A20 / A24）：对该组织启用的每个通讯录插件，
+   *    以及成员关系自身的 `directory:<插件>` 来源，不论此人当初是不是由通讯录加入（手动重新加入后再被移出也不会被同步加回）；
+   *    同步不再把此人加回，直到有人手动重新加入（{@link MembersService.add} 删除排除）；
    * 8. 审计 `org.member.offboarded`。
    */
   async offboard(
@@ -217,19 +223,19 @@ export class Offboarding {
       .where("account_id", "=", accountId)
       .executeTakeFirst();
 
-    const directoryPlugin = deleted.source?.startsWith(DIRECTORY_SOURCE_PREFIX)
-      ? deleted.source.slice(DIRECTORY_SOURCE_PREFIX.length)
-      : undefined;
-    const exclude = directoryPlugin !== undefined && reason !== "directory";
-    if (exclude) {
+    const excluded =
+      reason === "directory" ? [] : await this.exclusionPlugins(t, orgId, deleted.source);
+    if (excluded.length > 0) {
       await t
         .insertInto("directory_exclusions")
-        .values({
-          org_id: orgId,
-          account_id: accountId,
-          plugin: directoryPlugin,
-          created_by: actor.actorAccountId ?? null,
-        })
+        .values(
+          excluded.map((plugin) => ({
+            org_id: orgId,
+            account_id: accountId,
+            plugin,
+            created_by: actor.actorAccountId ?? null,
+          })),
+        )
         .onConflict((oc) => oc.columns(["org_id", "account_id", "plugin"]).doNothing())
         .execute();
     }
@@ -253,7 +259,7 @@ export class Offboarding {
         newOwner: agents.length > 0 ? owner.account_id : null,
         channelThreadsArchived: Number(threads.numUpdatedRows),
         toolGrantsDeleted: Number(grants.numDeletedRows),
-        ...(exclude && { directoryExcluded: directoryPlugin }),
+        ...(excluded.length > 0 && { directoryExcluded: excluded }),
       },
     });
     return {
@@ -267,6 +273,26 @@ export class Offboarding {
       })),
       newOwnerId: agents.length > 0 ? owner.account_id : null,
     };
+  }
+
+  /** 要写排除的通讯录插件：该组织启用的已加载通讯录插件 ∪ 成员关系自身的 `directory:<插件>` 来源，去重排序。 */
+  private async exclusionPlugins(t: Trx, orgId: string, source: string | null): Promise<string[]> {
+    const out = new Set<string>();
+    if (source?.startsWith(DIRECTORY_SOURCE_PREFIX)) {
+      out.add(source.slice(DIRECTORY_SOURCE_PREFIX.length));
+    }
+    const loaded = this.deps.directoryPlugins?.() ?? [];
+    if (loaded.length > 0) {
+      const rows = await t
+        .selectFrom("plugin_org_configs")
+        .select("plugin")
+        .where("org_id", "=", orgId)
+        .where("enabled", "=", true)
+        .where("plugin", "in", loaded)
+        .execute();
+      for (const r of rows) out.add(r.plugin);
+    }
+    return [...out].sort();
   }
 
   /** 提交之后：写会话吊销标记、发布 cancelled 事件、中止此人在该组织进行中的运行。每步失败只记 warn。 */
