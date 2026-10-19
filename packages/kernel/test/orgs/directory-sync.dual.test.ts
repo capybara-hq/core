@@ -18,8 +18,8 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
 
 /**
- * 双副本：两个副本几乎同时各收到一次手动同步（两个不同的 job id），同一 (组织, 插件) 只跑一轮同步——
- * 后到的任务在锁被占时直接结束；整轮完成后成员只加入一次、审计只有一条。
+ * 双副本：两个副本几乎同时各收到一次手动同步（两个不同的 job id），同一 (组织, 插件) 同时只跑一轮同步——
+ * 后到的任务在锁被占时记下脏标记后结束；持有者跑完后取走标记补一轮（changed），成员只加入一次。
  */
 
 const DIR_MINI = fileURLToPath(new URL("../fixtures/plugins/dir-mini/index.ts", import.meta.url));
@@ -47,7 +47,7 @@ afterAll(async () => {
 type Json = Record<string, unknown>;
 
 describe("通讯录同步（双副本）", () => {
-  it("两个副本同时触发：只跑一轮同步", async () => {
+  it("两个副本同时触发：同时只跑一轮，被锁挡掉的那次在持有者跑完后补一轮", async () => {
     h = await createDualReplicaHarness({
       plugins: [MODEL_FAKE, DIR_MINI],
       pgUrl: pgc.url,
@@ -132,16 +132,28 @@ describe("通讯录同步（双副本）", () => {
       15_000,
       "both jobs completed",
     );
-    await sleep(300);
-    expect(book.starts()).toBe(1);
-    const synced = await db
-      .selectFrom("audit_events")
-      .select("detail")
-      .where("org_id", "=", orgId)
-      .where("action", "=", "org.directory.synced")
-      .execute();
-    expect(synced).toHaveLength(1);
-    expect(synced[0]?.detail).toMatchObject({ added: 2, partial: false });
+    // 被锁挡掉的那次记了脏标记：持有者跑完后补一轮（changed），而且只补一轮
+    const syncedRows = () =>
+      db
+        .selectFrom("audit_events")
+        .select("detail")
+        .where("org_id", "=", orgId)
+        .where("action", "=", "org.directory.synced")
+        .orderBy("id")
+        .execute();
+    const synced = await waitFor(
+      async () => {
+        const rows = await syncedRows();
+        return rows.length === 2 ? rows : undefined;
+      },
+      15_000,
+      "rerun after lock contention",
+    );
+    expect(synced[0]?.detail).toMatchObject({ trigger: "manual", added: 2, partial: false });
+    expect(synced[1]?.detail).toMatchObject({ trigger: "changed", added: 0, partial: false });
+    await sleep(500);
+    expect(book.starts()).toBe(2);
+    expect(await syncedRows()).toHaveLength(2);
     const rows = await db
       .selectFrom("memberships")
       .select("source")
@@ -149,5 +161,5 @@ describe("通讯录同步（双副本）", () => {
       .where("source", "=", "directory:dir-mini")
       .execute();
     expect(rows).toHaveLength(2);
-  });
+  }, 90_000);
 });

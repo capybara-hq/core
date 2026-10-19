@@ -26,6 +26,17 @@ export const DIRECTORY_SCAN_EVERY_MS = 3_600_000;
 export const DIRECTORY_SYNC_JOB = "directory-sync";
 /** 同步锁的 Redis 键前缀（键为 `<前缀><orgId>:<plugin>`，带 TTL、持有期间续租）。 */
 export const DIRECTORY_SYNC_LOCK_PREFIX = "capk:directory-sync:";
+/** 脏标记的保留时长（秒）：锁被占时记下，持有者跑完后取走并补一轮。 */
+export const DIRECTORY_SYNC_DIRTY_TTL_SECONDS = 3_600;
+/** 脏标记（Redis 键）：同步进行中又有同步请求被锁挡掉。 */
+export const directorySyncDirtyKey = (orgId: string, plugin: string) =>
+  `capk:directory-sync-dirty:${orgId}:${plugin}`;
+/**
+ * Ruling A17 大批移除保护（非手动触发）：计划移除数超过 `max(下限, 比例 × 现有通讯录成员数)`，
+ * 或列表里一个在职成员都没有而已有通讯录成员时，本轮当作不完整、不移除任何人。
+ */
+export const DIRECTORY_REMOVAL_GUARD_MIN = 5;
+export const DIRECTORY_REMOVAL_GUARD_RATIO = 0.2;
 /** 单页 `listMembers` 的时限。 */
 export const DIRECTORY_PAGE_TIMEOUT_MS = 60_000;
 /** 一轮同步最多翻的页数：防止插件反复返回游标让任务无限长（超出按中途失败处理）。 */
@@ -64,8 +75,10 @@ export type DirectorySyncResult =
       failed: number;
       /** 通讯录返回的成员总数（含离职的）。 */
       total: number;
-      /** 分页没有完整走完或有成员处理失败：只加人，不移除任何人。 */
+      /** 分页没有完整走完、有成员处理失败或被大批移除保护拦下：只加人，不移除任何人。 */
       partial: boolean;
+      /** 被大批移除保护（Ruling A17）拦下。 */
+      removalBlocked: boolean;
     };
 
 /** 一个 (组织, 插件) 投递目标。 */
@@ -141,7 +154,10 @@ type Eligible =
  * - 维护队列每小时 `directory-scan`：给每个「插件提供 `directory@1`、在该组织启用、组织级配置满足 schema」的
  *   (组织, 插件) 投递一次同步（job id 按小时桶去重，多副本重复扫描只跑一次）；手动与 `directory_changed` 也投递同步。
  * - 同一 (组织, 插件) 同时只跑一个同步（Redis 锁 `capk:directory-sync:<org>:<plugin>`，持有期间续租）；
- *   锁被占时本任务直接结束——在跑的那一轮读的就是最新通讯录，漏掉的变化由下一次扫描补上。
+ *   锁被占时本任务记下脏标记 `capk:directory-sync-dirty:<org>:<plugin>`（1 小时）后结束；持有者释放锁后 GETDEL
+ *   取走标记，有就投递一次 changed 同步（在跑的那一轮可能已经读过变化之前的页）。
+ * - Ruling A17：非手动触发的一轮，计划移除数超过 `max(5, 20% × 现有通讯录成员数)`，或列表里没有在职成员而已有
+ *   通讯录成员时，当作不完整、不移除任何人，审计 `org.directory.removal_blocked`；手动触发不受此限。
  * - 分页 `listMembers`：在职成员按 `<插件>:<租户>` + externalId 解析外部身份（不合并既有账号、不登录、不建会话），
  *   不是成员就加入（角色 member，`memberships.source = "directory:<插件>"`），每人一个短事务。
  * - **整轮分页成功走完、且没有成员处理失败**之后，才对「离职（active = false）或不再出现、且 source 为该通讯录」的
@@ -225,9 +241,19 @@ export class DirectorySync {
     requestedBy?: { accountId: string; tokenId?: string | undefined },
     now: Date = new Date(),
   ): Promise<string> {
+    const jobId = directorySyncJobId(orgId, plugin, trigger, now);
+    return this.addJob(orgId, plugin, trigger, jobId, requestedBy);
+  }
+
+  private async addJob(
+    orgId: string,
+    plugin: string,
+    trigger: DirectorySyncTrigger,
+    jobId: string,
+    requestedBy?: { accountId: string; tokenId?: string | undefined },
+  ): Promise<string> {
     const m = this.d.maintenance;
     if (!m) throw new Error("directory sync: maintenance queue is not available");
-    const jobId = directorySyncJobId(orgId, plugin, trigger, now);
     if (jobId.includes(":")) throw new Error("directory sync: job id must not contain ':'");
     const data: SyncJobData = {
       orgId,
@@ -334,8 +360,13 @@ export class DirectorySync {
   ): Promise<DirectorySyncResult> {
     const e = await this.eligible(orgId, plugin);
     if (!e.ok) return { status: "skipped", reason: e.reason };
+    const dirtyKey = directorySyncDirtyKey(orgId, plugin);
     const lease = await this.lock.acquire(`${orgId}:${plugin}`, randomUUID());
-    if (!lease) return { status: "skipped", reason: "locked" };
+    if (!lease) {
+      // 在跑的那一轮可能已经读过变化之前的页：记下脏标记，由持有者跑完后补一轮
+      await this.d.redis.set(dirtyKey, "1", "EX", DIRECTORY_SYNC_DIRTY_TTL_SECONDS);
+      return { status: "skipped", reason: "locked" };
+    }
     const abort = new AbortController();
     // 锁丢了（续租失败、过期后被他人取得）：停止本轮，不再移除任何人
     lease.onLost(() => abort.abort(new Error("directory sync lock lost")));
@@ -343,6 +374,21 @@ export class DirectorySync {
       return await this.run(orgId, plugin, e.directory, e.orgConfig, abort.signal, opts);
     } finally {
       await lease.release().catch(() => {});
+      await this.rerunIfDirty(orgId, plugin, dirtyKey);
+    }
+  }
+
+  /**
+   * 释放锁之后取走脏标记（GETDEL，只有一个副本取得到）；有标记就投递一次 changed 同步。
+   * job id 每次唯一（`…-rerun-<uuid>`）：不能被刚刚被挡掉的同一分钟的 changed 任务 id 吞掉。失败只记 warn。
+   */
+  private async rerunIfDirty(orgId: string, plugin: string, dirtyKey: string): Promise<void> {
+    try {
+      if ((await this.d.redis.getdel(dirtyKey)) === null) return;
+      const jobId = `directory-sync-${orgId}-${plugin}-rerun-${randomUUID()}`;
+      await this.addJob(orgId, plugin, "changed", jobId);
+    } catch (err) {
+      this.d.log.warn("directory sync: cannot enqueue follow-up sync", { orgId, plugin, err });
     }
   }
 
@@ -362,6 +408,8 @@ export class DirectorySync {
     const counts = { added: 0, removed: 0, skippedLastOwner: 0, failed: 0, total: 0 };
     /** 本轮仍在职的账号（只在本次任务内使用）。 */
     const seen = new Set<string>();
+    /** 列表里在职（active = true）的成员数（含处理失败的）。 */
+    let active = 0;
     let listed = false;
     try {
       let cursor: string | undefined;
@@ -381,6 +429,7 @@ export class DirectorySync {
           counts.total++;
           // 离职的人在整轮完成后统一处理（只处理由本通讯录加入的）
           if (m?.active !== true) continue;
+          active++;
           try {
             const { accountId, added } = await this.addMember(orgId, plugin, source, m);
             seen.add(accountId);
@@ -401,17 +450,50 @@ export class DirectorySync {
       this.d.log.warn("directory sync stopped before listing all members", { orgId, plugin, err });
     }
 
+    const trigger = opts.trigger ?? "manual";
     let partial = !listed || counts.failed > 0;
+    let removalBlocked = false;
     if (!partial) {
-      const candidates = await this.d.db
+      const existing = await this.d.db
         .selectFrom("memberships")
         .select("account_id")
         .where("org_id", "=", orgId)
         .where("source", "=", source)
         .orderBy("account_id")
         .execute();
-      for (const c of candidates) {
-        if (seen.has(c.account_id)) continue;
+      const planned = existing.filter((c) => !seen.has(c.account_id));
+      // Ruling A17：非手动触发的一轮要移除太多人（或通讯录忽然一个在职的人都没有）时，多半是插件或平台出错，先不删
+      const threshold = Math.max(
+        DIRECTORY_REMOVAL_GUARD_MIN,
+        Math.floor(DIRECTORY_REMOVAL_GUARD_RATIO * existing.length),
+      );
+      if (
+        trigger !== "manual" &&
+        (planned.length > threshold || (active === 0 && existing.length > 0))
+      ) {
+        partial = true;
+        removalBlocked = true;
+        this.d.log.warn("directory sync: mass removal blocked", {
+          orgId,
+          plugin,
+          planned: planned.length,
+          existing: existing.length,
+        });
+        await audit(this.d.db, {
+          orgId,
+          action: "org.directory.removal_blocked",
+          target: plugin,
+          detail: {
+            plugin,
+            trigger,
+            planned: planned.length,
+            existing: existing.length,
+            active,
+            threshold,
+          },
+        });
+      }
+      for (const c of removalBlocked ? [] : planned) {
         if (signal.aborted) {
           partial = true;
           break;
@@ -429,9 +511,9 @@ export class DirectorySync {
       orgId,
       action: "org.directory.synced",
       target: plugin,
-      detail: { plugin, trigger: opts.trigger ?? "manual", ...counts, partial },
+      detail: { plugin, trigger, ...counts, partial, removalBlocked },
     });
-    return { status: "synced", ...counts, partial };
+    return { status: "synced", ...counts, partial, removalBlocked };
   }
 
   /**

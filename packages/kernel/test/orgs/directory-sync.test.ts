@@ -5,6 +5,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ensureAnonymousGuest } from "../../src/channels/threads.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { type Account, AccountsService } from "../../src/identity/accounts.js";
@@ -13,6 +14,7 @@ import type { Kernel } from "../../src/kernel.js";
 import {
   DIRECTORY_SYNC_LOCK_PREFIX,
   DirectorySync,
+  directorySyncDirtyKey,
   directorySyncJobId,
   hourBucket,
   minuteBucket,
@@ -153,6 +155,8 @@ describe("通讯录同步", () => {
     const dave = await accounts.createLocal({ login: "dave1", password: PW, displayName: "Dave" });
     await linkIdentity(dave.id, "u-dave");
     await addManual(orgId, dave.id);
+    // T10 的匿名访客（source = "anonymous"）：同步永远不碰
+    const guestId = await ensureAnonymousGuest(db, orgId);
 
     book.members = [person("u-alice"), person("u-bob"), person("u-carol"), person("u-dave")];
     const r1 = await sync(orgId);
@@ -164,6 +168,7 @@ describe("通讯录同步", () => {
       failed: 0,
       total: 4,
       partial: false,
+      removalBlocked: false,
     });
     for (const ext of ["u-alice", "u-bob", "u-carol"]) {
       expect(await memberOf(orgId, ext)).toMatchObject({ role: "member", source: DIR_SOURCE });
@@ -220,6 +225,7 @@ describe("通讯录同步", () => {
     expect(ids).toContain(owner.id);
     expect(ids).not.toContain(bobId);
     expect(ids).not.toContain(carolId);
+    expect(after.find((m) => m.account_id === guestId)).toMatchObject({ source: "anonymous" });
     // 账号不被停用，只失去成员关系
     const statuses = await db
       .selectFrom("accounts")
@@ -481,7 +487,7 @@ describe("通讯录同步", () => {
     expect(await audits(orgId, "org.directory.synced")).toEqual([]);
   });
 
-  it("同一 (组织, 插件) 已有同步在跑（锁被占）：本次直接结束", async () => {
+  it("同一 (组织, 插件) 已有同步在跑（锁被占）：本次结束并记下脏标记；持有者跑完后补一轮", async () => {
     const { orgId, book } = await setupOrg();
     book.members = [person("l-1")];
     const lock = new ConversationLock(redis, undefined, DIRECTORY_SYNC_LOCK_PREFIX);
@@ -489,8 +495,93 @@ describe("通讯录同步", () => {
     expect(lease).not.toBeNull();
     expect(await sync(orgId)).toEqual({ status: "skipped", reason: "locked" });
     expect(book.requests).toEqual([]);
+    const dirty = directorySyncDirtyKey(orgId, "dir-mini");
+    expect(await redis.get(dirty)).toBe("1");
+    const ttl = await redis.ttl(dirty);
+    expect(ttl).toBeGreaterThan(3500);
+    expect(ttl).toBeLessThanOrEqual(3600);
     await lease?.release();
+    // 这一轮跑完时取走脏标记，投递一次 changed 同步（worker 执行）
     expect(await sync(orgId)).toMatchObject({ status: "synced", added: 1 });
+    expect(await redis.get(dirty)).toBeNull();
+    await waitFor(async () => book.starts() === 2, 15_000, "rerun after dirty flag");
+    const synced = await waitFor(
+      async () => {
+        const rows = await audits(orgId, "org.directory.synced");
+        return rows.length === 2 ? rows : undefined;
+      },
+      15_000,
+      "rerun audit",
+    );
+    expect(synced[1]?.detail).toMatchObject({ trigger: "changed", added: 0 });
+  });
+
+  describe("Ruling A17：大批移除保护（非手动触发）", () => {
+    const blocked = (orgId: string) => audits(orgId, "org.directory.removal_blocked");
+
+    it("计划移除数超过 max(5, 20%)：本轮当作不完整，不移除任何人并审计；手动触发不受限", async () => {
+      const { orgId, book } = await setupOrg();
+      const all = Array.from({ length: 10 }, (_, i) => person(`g-${i}`));
+      book.members = all;
+      expect(await sync(orgId)).toMatchObject({ added: 10 });
+      book.members = all.slice(0, 4); // 计划移除 6 > max(5, 2)
+      const r = await k.identity.directory.sync(orgId, "dir-mini", { trigger: "schedule" });
+      expect(r).toMatchObject({ removed: 0, partial: true, removalBlocked: true });
+      expect((await membersOf(orgId)).filter((m) => m.source === DIR_SOURCE)).toHaveLength(10);
+      const b = await blocked(orgId);
+      expect(b).toHaveLength(1);
+      expect(b[0]?.target).toBe("dir-mini");
+      expect(b[0]?.detail).toMatchObject({
+        plugin: "dir-mini",
+        trigger: "schedule",
+        planned: 6,
+        existing: 10,
+        active: 4,
+        threshold: 5,
+      });
+      expect((await audits(orgId, "org.directory.synced")).at(-1)?.detail).toMatchObject({
+        partial: true,
+        removed: 0,
+      });
+      // changed 同样受限
+      expect(
+        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "changed" }),
+      ).toMatchObject({ removed: 0, removalBlocked: true });
+      // 手动触发：照常移除
+      expect(
+        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "manual" }),
+      ).toMatchObject({ removed: 6, partial: false, removalBlocked: false });
+    });
+
+    it("恰好等于阈值：照常移除", async () => {
+      const { orgId, book } = await setupOrg();
+      const all = Array.from({ length: 10 }, (_, i) => person(`e-${i}`));
+      book.members = all;
+      expect(await sync(orgId)).toMatchObject({ added: 10 });
+      book.members = all.slice(0, 5); // 计划移除 5 = max(5, 2)
+      expect(
+        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "schedule" }),
+      ).toMatchObject({ removed: 5, partial: false, removalBlocked: false });
+      expect(await blocked(orgId)).toEqual([]);
+    });
+
+    it("列表里一个在职的人都没有、而已有通讯录成员：不移除", async () => {
+      const { orgId, book } = await setupOrg();
+      book.members = [person("z-1"), person("z-2")];
+      expect(await sync(orgId)).toMatchObject({ added: 2 });
+      book.members = [person("z-1", { active: false })];
+      expect(
+        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "schedule" }),
+      ).toMatchObject({ removed: 0, partial: true, removalBlocked: true });
+      book.members = [];
+      expect(
+        await k.identity.directory.sync(orgId, "dir-mini", { trigger: "changed" }),
+      ).toMatchObject({ removed: 0, partial: true, removalBlocked: true });
+      const b = await blocked(orgId);
+      expect(b).toHaveLength(2);
+      expect(b[1]?.detail).toMatchObject({ planned: 2, existing: 2, active: 0 });
+      expect((await membersOf(orgId)).filter((m) => m.source === DIR_SOURCE)).toHaveLength(2);
+    });
   });
 
   it("任务 id：小时桶 / 分钟桶不含 ':'", () => {
