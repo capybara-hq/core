@@ -3,6 +3,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { ensureAnonymousGuest } from "../../src/channels/threads.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -488,5 +489,58 @@ describe("修复轮 1：离职中止此人在该组织进行中的运行", () =>
     expect(await runStatus(f.runId)).toBe("aborted");
     expect(await runStatus(f.otherRunId)).toBe("waiting");
     expect(await k.identity.offboarding.sweep()).toBe(0);
+  });
+});
+
+describe("兜底扫描：按创建时间分页、不碰现任成员的运行", () => {
+  /** 在 f.orgId 里给 accountId 建一个会话与一个 running 的运行。 */
+  async function runOf(accountId: string, createdAt: string): Promise<string> {
+    const conv = randomUUID();
+    const run = randomUUID();
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${conv}, ${f.orgId}, ${f.agentId}, ${accountId})`.execute(raw);
+    await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq, created_at)
+      VALUES (${run}, ${conv}, 'running', 1, ${accountId}, 0, ${createdAt}::timestamptz)`.execute(
+      raw,
+    );
+    return run;
+  }
+
+  it("现任成员（含匿名访客 guest 成员）的运行不被中止；超过一批的前成员运行全部处理", async () => {
+    const anon = await ensureAnonymousGuest(db, f.orgId);
+    const memberRun = await runOf(f.bystander.id, "2026-01-01T00:00:00Z");
+    const anonRun = await runOf(anon, "2026-01-01T00:00:01Z");
+    const formerRuns: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      formerRuns.push(await runOf(f.leaver.id, `2026-01-02T00:00:0${i}Z`));
+    }
+    await db.transaction().execute(async (t) => {
+      await t
+        .deleteFrom("memberships")
+        .where("org_id", "=", f.orgId)
+        .where("account_id", "=", f.leaver.id)
+        .execute();
+    });
+    const aborted: string[] = [];
+    const sweeper = new Offboarding({
+      credentials: k.tools.credentials,
+      approvals: k.tools.approvals,
+      questions: k.tools.questions,
+      db,
+      sweepBatch: 2,
+      runs: {
+        abortWaiting: async () => false,
+        abortIfOrphaned: async () => false,
+        requestAbort: async (runId) => {
+          aborted.push(runId);
+        },
+      },
+    });
+    const n = await sweeper.sweep();
+    // 前成员：fixture 里等待中的运行 + 5 个 running，分 2 条一批全部处理，按创建时间先后
+    expect(n).toBe(6);
+    expect(aborted).toEqual([...formerRuns, f.runId]);
+    expect(aborted).not.toContain(memberRun);
+    expect(aborted).not.toContain(anonRun);
   });
 });

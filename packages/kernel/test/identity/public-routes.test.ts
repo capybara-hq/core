@@ -119,6 +119,7 @@ beforeAll(async () => {
           drift: k.tools.drift,
           appContent: k.tools.appContent,
           identity: k.identity,
+          channels: k.channels.connections,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

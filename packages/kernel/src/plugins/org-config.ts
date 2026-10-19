@@ -114,7 +114,7 @@ function issueMessage(i: core.$ZodIssue): string {
   }
 }
 
-function toIssues(error: z.ZodError): ConfigIssue[] {
+export function toIssues(error: z.ZodError): ConfigIssue[] {
   return error.issues.map((i) => ({
     path: i.path.map(String).join("."),
     message: issueMessage(i),

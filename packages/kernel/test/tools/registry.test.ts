@@ -321,7 +321,7 @@ describe("组织设置与 tool_search 启用条件", () => {
   it("GET 默认 toolSearch=on；PATCH 需 org.update，非法值 400，改动写审计", async () => {
     const got = await req({ method: "GET", url: settingsUrl() });
     expect(got.statusCode, got.body).toBe(200);
-    expect(got.json()).toEqual({ settings: { toolSearch: "on" } });
+    expect(got.json()).toEqual({ settings: { toolSearch: "on", locale: "en" } });
 
     const bad = await req({
       method: "PATCH",
@@ -334,9 +334,9 @@ describe("组织设置与 tool_search 启用条件", () => {
 
     const off = await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
     expect(off.statusCode, off.body).toBe(200);
-    expect(off.json()).toEqual({ settings: { toolSearch: "off" } });
+    expect(off.json()).toEqual({ settings: { toolSearch: "off", locale: "en" } });
     expect((await req({ method: "GET", url: settingsUrl() })).json()).toEqual({
-      settings: { toolSearch: "off" },
+      settings: { toolSearch: "off", locale: "en" },
     });
     const audits = await db
       .selectFrom("audit_events")
@@ -345,15 +345,15 @@ describe("组织设置与 tool_search 启用条件", () => {
       .execute();
     expect(audits).toHaveLength(1);
     expect(audits[0]?.detail).toEqual({
-      before: { toolSearch: "on" },
-      after: { toolSearch: "off" },
+      before: { toolSearch: "on", locale: "en" },
+      after: { toolSearch: "off", locale: "en" },
     });
 
     // 存量 jsonb 里的未知键保留、非法值按默认读
     await sql`UPDATE capybara.orgs SET settings = '{"toolSearch":"bogus","future":1}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
     expect((await req({ method: "GET", url: settingsUrl() })).json()).toEqual({
-      settings: { toolSearch: "on" },
+      settings: { toolSearch: "on", locale: "en" },
     });
     await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
     const row = await db
@@ -361,7 +361,7 @@ describe("组织设置与 tool_search 启用条件", () => {
       .select("settings")
       .where("id", "=", orgId)
       .executeTakeFirstOrThrow();
-    expect(row.settings).toEqual({ toolSearch: "off", future: 1 });
+    expect(row.settings).toEqual({ toolSearch: "off", locale: "en", future: 1 });
 
     // 成员能读不能改
     await sql`UPDATE capybara.memberships SET role = 'member' WHERE org_id = ${orgId}`.execute(raw);

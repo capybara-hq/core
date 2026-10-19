@@ -52,6 +52,8 @@ export const OFFBOARD_SWEEP_JOB = "offboard-sweep";
 export const OFFBOARD_SWEEP_SCHEDULER_ID = "offboard-sweep-every-10m";
 export const OFFBOARD_SWEEP_EVERY_MS = 600_000;
 export const OFFBOARD_SWEEP_BATCH = 500;
+/** 一次兜底扫描最多翻的页数（每页 {@link OFFBOARD_SWEEP_BATCH} 条），防止单次任务无限长。 */
+export const OFFBOARD_SWEEP_MAX_PAGES = 20;
 
 const ACTIVE = ["queued", "running", "waiting"] as const;
 
@@ -70,6 +72,8 @@ export interface OffboardingDeps {
   /** 给了就登记兜底扫描（每 10 分钟，worker 角色执行）。 */
   maintenance?: Pick<Maintenance, "handle" | "schedule">;
   log?: Pick<Logger, "warn">;
+  /** 兜底扫描每页条数（默认 {@link OFFBOARD_SWEEP_BATCH}，测试用）。 */
+  sweepBatch?: number;
 }
 
 /**
@@ -259,36 +263,58 @@ export class Offboarding {
 
   /**
    * 兜底扫描（维护队列每 10 分钟）：进行中、且发起人已不是该会话所属组织成员的运行 → 中止
-   * （提交后的中止没做成时，如进程崩溃）。返回本次处理的运行数（经广播中止的运行在真正结束前，下一轮仍会再处理）。
+   * （提交后的中止没做成时，如进程崩溃）。按 `(runs.created_at, runs.id)` 键集分页翻完（每页 500 条，
+   * 至多 20 页）：经广播中止、尚未真正结束的运行仍是进行中，若只取前 500 条，超过 500 条卡住的运行会
+   * 一直占满这一页，后面的永远轮不到。返回本次处理的运行数（广播中止的运行在真正结束前，下一轮仍会再处理）。
+   * 现任成员（含匿名访客这样的 guest 成员）发起的运行不受影响。
    */
   async sweep(): Promise<number> {
     const { db } = this.deps;
     if (!db || !this.deps.runs) return 0;
-    const rows = await db
-      .selectFrom("runs")
-      .innerJoin("conversations", "conversations.id", "runs.conversation_id")
-      .select(["runs.id", "runs.conversation_id", "runs.status"])
-      .where("runs.status", "in", ACTIVE)
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("memberships")
-              .select(sql`1`.as("one"))
-              .whereRef("memberships.org_id", "=", "conversations.org_id")
-              .whereRef("memberships.account_id", "=", "runs.trigger_account_id"),
+    const batch = this.deps.sweepBatch ?? OFFBOARD_SWEEP_BATCH;
+    // 游标的时间用文本保存完整的微秒精度（JS Date 只有毫秒，会让同一行再被取到）
+    let after: { createdAt: string; id: string } | undefined;
+    let total = 0;
+    for (let page = 0; page < OFFBOARD_SWEEP_MAX_PAGES; page++) {
+      const cursor = after;
+      const rows = await db
+        .selectFrom("runs")
+        .innerJoin("conversations", "conversations.id", "runs.conversation_id")
+        .select(["runs.id", "runs.conversation_id", "runs.status"])
+        .select(sql<string>`runs.created_at::text`.as("created_at_text"))
+        .where("runs.status", "in", ACTIVE)
+        .where(({ not, exists, selectFrom }) =>
+          not(
+            exists(
+              selectFrom("memberships")
+                .select(sql`1`.as("one"))
+                .whereRef("memberships.org_id", "=", "conversations.org_id")
+                .whereRef("memberships.account_id", "=", "runs.trigger_account_id"),
+            ),
           ),
-        ),
-      )
-      .limit(OFFBOARD_SWEEP_BATCH)
-      .execute();
-    for (const r of rows) {
-      this.deps.log?.warn("offboard sweep: stopping run of a former member", { runId: r.id });
-      await this.stopRun({
-        conversationId: r.conversation_id,
-        runId: r.id,
-        status: r.status as InFlightRun["status"],
-      });
+        )
+        .$if(cursor !== undefined, (q) =>
+          q.where(
+            sql<boolean>`(runs.created_at, runs.id) > (${cursor?.createdAt}::timestamptz, ${cursor?.id})`,
+          ),
+        )
+        .orderBy("runs.created_at")
+        .orderBy("runs.id")
+        .limit(batch)
+        .execute();
+      for (const r of rows) {
+        this.deps.log?.warn("offboard sweep: stopping run of a former member", { runId: r.id });
+        await this.stopRun({
+          conversationId: r.conversation_id,
+          runId: r.id,
+          status: r.status as InFlightRun["status"],
+        });
+      }
+      total += rows.length;
+      const last = rows[rows.length - 1];
+      if (rows.length < batch || !last) break;
+      after = { createdAt: last.created_at_text, id: last.id };
     }
-    return rows.length;
+    return total;
   }
 }

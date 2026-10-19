@@ -2,9 +2,14 @@ import { fileURLToPath } from "node:url";
 import type { PluginContext } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
+import { AgentsService } from "./agents/agents.service.js";
+import { ChannelConnections } from "./channels/connections.service.js";
+import { ChannelInbound, NOOP_DIRECTORY_SYNC, NOOP_OUTBOUND } from "./channels/inbound.js";
+import { ChannelSupervisor } from "./channels/supervisor.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
+import { ConversationsService } from "./conversations/conversations.service.js";
 import {
   type ConversationBusMessage,
   conversationTopic,
@@ -132,6 +137,14 @@ export interface KernelIdentity {
   readonly offboarding: Offboarding;
 }
 
+/** 渠道运行时（连接、入站；出站投递见 Task 11）。 */
+export interface KernelChannels {
+  /** 组织的渠道连接（CRUD、运行时配置、最小出站接缝 `send`）。 */
+  readonly connections: ChannelConnections;
+  /** 入站事件处理（插件 `connect` 的 `onEvent`）。 */
+  readonly inbound: ChannelInbound;
+}
+
 /** 运行中的内核实例。 */
 export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
@@ -147,6 +160,8 @@ export interface Kernel {
   readonly tools: KernelTools;
   /** 外部身份、绑定、第三方登录与离职处理。 */
   readonly identity: KernelIdentity;
+  /** 渠道连接与入站。 */
+  readonly channels: KernelChannels;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -404,6 +419,43 @@ export async function createKernel(
       log,
     }),
   };
+  const runControl = {
+    ensureRun: (id: string) => runQueue.ensureRun(id),
+    abortIfOrphaned: (id: string, runId: string, by: string) =>
+      runQueue.abortIfOrphaned(id, runId, by),
+    abortWaiting: (id: string, runId: string, by: string) => waits.abortWaiting(id, runId, by),
+    requestAbort: (runId: string, by: string) => abort.request(runId, by),
+  };
+  const channelConnections = new ChannelConnections({
+    db: kdb,
+    keyring,
+    host,
+    bus,
+    redis,
+    log,
+    onSecrets: (v) => log.addOrgSecrets(v),
+  });
+  const channels: KernelChannels = {
+    connections: channelConnections,
+    inbound: new ChannelInbound({
+      db: kdb,
+      redis,
+      connections: channelConnections,
+      conversations: new ConversationsService(
+        kdb,
+        eventLog,
+        new AgentsService(kdb, registry, toolRegistry),
+        runControl,
+        log,
+      ),
+      external,
+      binding: identity.binding,
+      directorySync: NOOP_DIRECTORY_SYNC,
+      outbound: NOOP_OUTBOUND,
+      log,
+    }),
+  };
+  let channelSupervisor: ChannelSupervisor | undefined;
   const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
@@ -487,12 +539,8 @@ export async function createKernel(
         drift: toolDrift,
         appContent,
         identity,
-        runs: {
-          ensureRun: (id) => runQueue.ensureRun(id),
-          abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),
-          abortWaiting: (id, runId, by) => waits.abortWaiting(id, runId, by),
-          requestAbort: (runId, by) => abort.request(runId, by),
-        },
+        channels: channelConnections,
+        runs: runControl,
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
@@ -600,10 +648,15 @@ export async function createKernel(
     }
     port = undefined;
     // runs 阶段：停止领取运行、让本进程的运行在步骤边界停下并回到队列；再关闭运行队列的生产方连接。
+    // 渠道长连接与之并行停止（中止 connect、释放租约），必须在插件关闭之前。
     const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
+    const channelsStopped = channelSupervisor?.stop();
     if (runWorker) {
       const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
+    }
+    if (channelsStopped) {
+      await within("channels", channelsStopped, Math.max(0, runsDeadline - Date.now()));
     }
     await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
@@ -626,6 +679,7 @@ export async function createKernel(
     runs,
     tools,
     identity,
+    channels,
     log,
     get config() {
       return current;
@@ -682,6 +736,18 @@ export async function createKernel(
           }
           checkpoint();
           maintenance.startWorker();
+          // 渠道长连接选主：每个 worker 副本都参与，同一连接只有取得租约的一个副本连接
+          channelSupervisor = new ChannelSupervisor({
+            db: kdb,
+            redis,
+            bus,
+            connections: channelConnections,
+            onEvent: (id, e) => channels.inbound.handle(id, e),
+            config: () => current,
+            log,
+          });
+          await channelSupervisor.start();
+          checkpoint();
         }
         httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {

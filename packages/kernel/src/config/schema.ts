@@ -461,6 +461,43 @@ export const KernelConfigSchema = z.object({
       maxResultReadChars: 20000,
       oauthAllowInsecureLoopback: false,
     }),
+  channels: z
+    .object({
+      leaseTtlMs: z
+        .number()
+        .int()
+        .positive()
+        .default(30000)
+        .meta(
+          meta({
+            description:
+              "TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long",
+          }),
+        ),
+      scanIntervalMs: z
+        .number()
+        .int()
+        .positive()
+        .default(10000)
+        .meta(
+          meta({
+            description:
+              "How often each worker replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds",
+          }),
+        ),
+      retryBaseMs: z
+        .number()
+        .int()
+        .positive()
+        .default(5000)
+        .meta(
+          meta({
+            description:
+              "First retry delay after a channel long connection fails, in milliseconds; doubles on each consecutive failure up to 5 minutes",
+          }),
+        ),
+    })
+    .default({ leaseTtlMs: 30000, scanIntervalMs: 10000, retryBaseMs: 5000 }),
   log: z
     .object({
       level: z

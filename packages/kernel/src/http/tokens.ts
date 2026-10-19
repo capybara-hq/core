@@ -96,3 +96,6 @@ export const SSO_FLOW = Symbol("SSO_FLOW");
 
 /** `Offboarding`（成员离职处理）的注入令牌。 */
 export const OFFBOARDING = Symbol("OFFBOARDING");
+
+/** `ChannelConnections`（组织的渠道连接）的注入令牌。 */
+export const CHANNEL_CONNECTIONS = Symbol("CHANNEL_CONNECTIONS");

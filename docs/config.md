@@ -52,6 +52,9 @@
 | `tools.driftIntervalHours` | `CAPYBARA_TOOLS__DRIFT_INTERVAL_HOURS` | `number` | `24` | 否 | 否 | Hours between checks of connected apps for changed tool definitions |
 | `tools.maxResultReadChars` | `CAPYBARA_TOOLS__MAX_RESULT_READ_CHARS` | `number` | `20000` | 否 | 否 | Maximum characters returned by one read_tool_output call |
 | `tools.oauthAllowInsecureLoopback` | `CAPYBARA_TOOLS__OAUTH_ALLOW_INSECURE_LOOPBACK` | `boolean` | `false` | 否 | 否 | Allow OAuth discovery, registration and token endpoints over plain http on loopback hosts (development and tests only; production requires https) |
+| `channels.leaseTtlMs` | `CAPYBARA_CHANNELS__LEASE_TTL_MS` | `number` | `30000` | 否 | 否 | TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long |
+| `channels.scanIntervalMs` | `CAPYBARA_CHANNELS__SCAN_INTERVAL_MS` | `number` | `10000` | 否 | 否 | How often each worker replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds |
+| `channels.retryBaseMs` | `CAPYBARA_CHANNELS__RETRY_BASE_MS` | `number` | `5000` | 否 | 否 | First retry delay after a channel long connection fails, in milliseconds; doubles on each consecutive failure up to 5 minutes |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

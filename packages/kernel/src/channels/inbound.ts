@@ -1,0 +1,244 @@
+import type { ChannelCard, ChannelTarget, InboundEvent, Logger } from "@capybara-hq/plugin-sdk";
+import type { Redis } from "ioredis";
+import type { ConversationsService } from "../conversations/conversations.service.js";
+import type { KernelDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
+import type { IdentityBinding } from "../identity/binding.js";
+import type { ExternalIdentities } from "../identity/external.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
+import type { ChannelConnections } from "./connections.service.js";
+import { type ChannelPhrase, phrase } from "./phrases.js";
+import {
+  archiveThread,
+  ensureAnonymousGuest,
+  findThread,
+  insertThread,
+  type ThreadKey,
+  threadKeyOf,
+} from "./threads.js";
+
+/** 入站消息去重键的保留时长（秒）：平台在这段时间内重投同一条消息只处理一次。 */
+export const MESSAGE_DEDUPE_TTL_SECONDS = 86_400;
+
+/** 入站消息去重键（Redis 键，不是队列名 / job id，可以含 `:`）。 */
+export const messageDedupeKey = (connectionId: string, messageId: string) =>
+  `capk:channel-msg:${connectionId}:${messageId}`;
+
+/** 通讯录同步的投递接口（Task 12 实现：按 (组织, 插件) 每分钟去重的队列任务）。 */
+export interface DirectorySyncScheduler {
+  enqueue(orgId: string, plugin: string): Promise<void>;
+}
+
+/** 出站投递的投递接口（Task 11 实现：把会话的新事件按 `channel_deliveries.last_seq` 续投到 IM）。 */
+export interface ChannelOutboundScheduler {
+  enqueue(conversationId: string): Promise<void>;
+}
+
+/** Task 12 之前的占位：什么都不做。 */
+export const NOOP_DIRECTORY_SYNC: DirectorySyncScheduler = { enqueue: async () => {} };
+/** Task 11 之前的占位：什么都不做。 */
+export const NOOP_OUTBOUND: ChannelOutboundScheduler = { enqueue: async () => {} };
+
+export interface ChannelInboundDeps {
+  db: KernelDb;
+  redis: Redis;
+  connections: Pick<ChannelConnections, "row" | "send">;
+  conversations: Pick<ConversationsService, "create" | "postUserMessage">;
+  external: Pick<ExternalIdentities, "findAccount">;
+  binding: Pick<IdentityBinding, "createBindToken">;
+  directorySync: DirectorySyncScheduler;
+  outbound: ChannelOutboundScheduler;
+  log: Pick<Logger, "warn">;
+}
+
+type MessageEvent = Extract<InboundEvent, { type: "message" }>;
+
+/**
+ * 渠道入站（插件 `connect` 的 `onEvent`）：
+ * 1. 消息按 `capk:channel-msg:<连接>:<消息>` `SET NX` 24 小时去重（处理失败则删掉，平台重投时重试；
+ *    写用户消息另带 `clientMessageId = "<连接>:<消息>"`，重试不会重复写）；
+ * 2. 群聊未 @ 机器人 → 忽略；
+ * 3. 发言人按 `<插件>:<租户>` + externalId 纯查找账号（不建账号、不合并），且须是连接所属组织的活跃成员；
+ *    否则按连接的未绑定策略：`bind` → 私聊回绑定卡片（群里只提示去私聊，绑定链接不能发在群里）、
+ *    已绑定但非成员回提示；`anonymous` → 仅当绑定的 agent 全组织可见时用该组织的匿名访客，否则回提示。
+ *    识别不出发言人时绝不借用连接创建者或任何人的身份；
+ * 4. 私聊 `/new` → 归档当前对话行并回「已开始新对话」；
+ * 5. 按话题找或建会话，写用户消息，记下投递目标并投递出站任务（Task 11）。
+ * `directory_changed` → 投递通讯录同步（Task 12）；`card_action` 由 Task 11 处理。
+ */
+export class ChannelInbound {
+  constructor(private readonly deps: ChannelInboundDeps) {}
+
+  async handle(connectionId: string, e: InboundEvent): Promise<void> {
+    if (e.type === "directory_changed") {
+      const row = await this.deps.connections.row(connectionId);
+      if (row?.status === "active") await this.deps.directorySync.enqueue(row.orgId, row.plugin);
+      return;
+    }
+    if (e.type === "card_action") return; // Task 11
+    const key = messageDedupeKey(connectionId, e.messageId);
+    const fresh = await this.deps.redis.set(key, "1", "EX", MESSAGE_DEDUPE_TTL_SECONDS, "NX");
+    if (fresh !== "OK") return;
+    try {
+      await this.message(connectionId, e);
+    } catch (err) {
+      await this.deps.redis.del(key).catch(() => {});
+      throw err;
+    }
+  }
+
+  private async message(connectionId: string, e: MessageEvent): Promise<void> {
+    const { db, connections } = this.deps;
+    const row = await connections.row(connectionId);
+    if (row?.status !== "active") return;
+    const isGroup = e.target.chatType === "group";
+    if (isGroup && !e.mentionsBot) return;
+    const threadKey = threadKeyOf(e.target, e.sender.externalId, e.messageId);
+    // 群里回在话题里（新话题以这条消息为根）
+    const replyTarget: ChannelTarget = isGroup ? { ...e.target, threadId: threadKey } : e.target;
+    const { locale } = await readOrgSettings(db, row.orgId);
+    const reply = async (key: ChannelPhrase, cards?: ChannelCard[]) => {
+      await connections.send(connectionId, replyTarget, {
+        text: phrase(key, locale),
+        ...(cards !== undefined && { cards }),
+      });
+    };
+
+    const source = `${row.plugin}:${e.sender.tenantId}`;
+    const bound = await this.deps.external.findAccount(source, e.sender.externalId);
+    let accountId: string;
+    let threadAccount: string | null;
+    if (bound !== undefined && (await this.isActiveMember(row.orgId, bound))) {
+      accountId = bound;
+      threadAccount = bound;
+    } else if (row.unboundPolicy === "anonymous") {
+      if (!(await this.agentVisibleToOrg(row.orgId, row.agentId))) {
+        await reply("anonymousNotAllowed");
+        return;
+      }
+      accountId = await ensureAnonymousGuest(db, row.orgId);
+      threadAccount = null;
+    } else if (bound !== undefined) {
+      await reply("notMember");
+      return;
+    } else if (isGroup) {
+      await reply("bindInDm");
+      return;
+    } else {
+      let url: string;
+      try {
+        url = await this.deps.binding.createBindToken({
+          connectionId,
+          identity: {
+            source,
+            externalId: e.sender.externalId,
+            tenantId: e.sender.tenantId,
+            emailVerified: false,
+            displayName: e.sender.externalId,
+          },
+        });
+      } catch (err) {
+        this.deps.log.warn("cannot create channel bind link", { connectionId, err });
+        await reply("bindUnavailable");
+        return;
+      }
+      await reply("bindPrompt", [{ kind: "bind", url, text: phrase("bindPrompt", locale) }]);
+      return;
+    }
+
+    const k: ThreadKey = {
+      connectionId,
+      chatId: e.target.chatId,
+      threadKey,
+      accountId: threadAccount,
+    };
+    if (!isGroup && e.text.trim().toLowerCase() === "/new") {
+      await archiveThread(db, k);
+      await reply("newConversation");
+      return;
+    }
+
+    let conversationId = await findThread(db, k);
+    if (conversationId === undefined) {
+      let created: string;
+      try {
+        created = (await this.deps.conversations.create(row.orgId, accountId, row.agentId)).id;
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "agent.not_found") {
+          await reply("agentUnavailable");
+          return;
+        }
+        throw err;
+      }
+      conversationId = await insertThread(db, k, created);
+      if (conversationId !== created) {
+        // 同一话题的另一条消息抢先建好了：删掉刚建、还没有任何事件的空会话
+        await db
+          .deleteFrom("conversations")
+          .where("id", "=", created)
+          .where("last_seq", "=", "0")
+          .execute();
+      }
+    }
+    let seq: number;
+    try {
+      const event = await this.deps.conversations.postUserMessage(
+        row.orgId,
+        conversationId,
+        accountId,
+        { text: e.text, clientMessageId: `${connectionId}:${e.messageId}` },
+      );
+      seq = event.seq;
+    } catch (err) {
+      // agent 已对此人不可用（改了可见范围 / 已删除）：会话按不存在处理
+      if (err instanceof ApiError && err.code === "conversation.not_found") {
+        await reply("agentUnavailable");
+        return;
+      }
+      throw err;
+    }
+    await db
+      .insertInto("channel_deliveries")
+      .values({
+        conversation_id: conversationId,
+        connection_id: connectionId,
+        target: JSON.stringify(replyTarget),
+        last_seq: seq,
+      })
+      .onConflict((oc) =>
+        oc.column("conversation_id").doUpdateSet({
+          connection_id: connectionId,
+          target: JSON.stringify(replyTarget),
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    await this.deps.outbound.enqueue(conversationId);
+  }
+
+  /** 账号是该组织成员且账号未停用。 */
+  private async isActiveMember(orgId: string, accountId: string): Promise<boolean> {
+    const r = await this.deps.db
+      .selectFrom("memberships")
+      .innerJoin("accounts", "accounts.id", "memberships.account_id")
+      .select("memberships.role")
+      .where("memberships.org_id", "=", orgId)
+      .where("memberships.account_id", "=", accountId)
+      .where("accounts.status", "=", "active")
+      .executeTakeFirst();
+    return r !== undefined;
+  }
+
+  /** 连接绑定的 agent 未删除且可见范围为「全组织」（匿名访客只能用这种 agent）。 */
+  private async agentVisibleToOrg(orgId: string, agentId: string): Promise<boolean> {
+    const r = await this.deps.db
+      .selectFrom("agents")
+      .select("id")
+      .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
+      .where("visibility", "=", "org")
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    return r !== undefined;
+  }
+}

@@ -23,7 +23,8 @@ export type OrgAction =
   | "agents.manage"
   | "apps.manage"
   | "apps.use"
-  | "approvals.decide";
+  | "approvals.decide"
+  | "channels.manage";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -46,6 +47,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "apps.use": "guest",
   // 能否处理某条审批另由 requested_for / approver_role 判定；审批只能由人处理（服务令牌 / agent 不可）
   "approvals.decide": "guest",
+  // 渠道连接（bot 凭据、绑定的 agent、未绑定用户策略）
+  "channels.manage": "admin",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

@@ -40,6 +40,7 @@ export const ERROR_CODES = {
   "plugin.config_invalid": 400,
   "plugin.dependency_missing": 409,
   "plugin.has_dependents": 409,
+  "plugin.not_enabled": 409,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
   "agent.not_found": 404,
@@ -62,6 +63,8 @@ export const ERROR_CODES = {
   "identity.not_found": 404,
   "identity.last_login_method": 409,
   "bind.invalid": 404,
+  "channel.not_found": 404,
+  "channel.verify_failed": 502,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

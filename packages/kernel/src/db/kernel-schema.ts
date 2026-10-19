@@ -379,9 +379,57 @@ export interface LgCheckpointWritesTable {
   task_path: Generated<string>;
 }
 
+/** 0018_channels.sql：组织的渠道连接（非密钥配置；密钥在 secrets `channels:<id>:config`）。 */
+export interface ChannelConnectionsTable {
+  id: string;
+  org_id: string;
+  plugin: string;
+  name: string;
+  agent_id: string;
+  config: Json;
+  unbound_policy: Generated<"bind" | "anonymous">;
+  status: Generated<"active" | "disabled" | "error">;
+  last_error: string | null;
+  bot_user_id: string | null;
+  tenant_id: string | null;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0018_channels.sql：IM 话题 ↔ 会话（未归档的行在 (连接, chat, thread_key, 账号) 上唯一）。 */
+export interface ChannelThreadsTable {
+  id: string;
+  connection_id: string;
+  chat_id: string;
+  thread_key: string;
+  account_id: string | null;
+  conversation_id: string;
+  created_at: Ts;
+  archived_at: TsNullable;
+}
+
+/** 0018_channels.sql：会话的 IM 投递目标与已投递到的事件序号（Task 11）。 */
+export interface ChannelDeliveriesTable {
+  conversation_id: string;
+  connection_id: string;
+  target: Json<unknown>;
+  last_seq: Int8;
+  draft_message_id: string | null;
+  updated_at: Ts;
+}
+
+/** 0018_channels.sql：每个组织一个的匿名访客账号。 */
+export interface OrgAnonymousAccountsTable {
+  org_id: string;
+  account_id: string;
+  created_at: Ts;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
- * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql 与 0016_plugin_permissions.sql。
+ * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql 与 0018_channels.sql。
  */
 export interface KernelDatabase {
   accounts: AccountsTable;
@@ -413,6 +461,10 @@ export interface KernelDatabase {
   tool_outputs: ToolOutputsTable;
   tool_specs: ToolSpecsTable;
   plugin_permission_snapshots: PluginPermissionSnapshotsTable;
+  channel_connections: ChannelConnectionsTable;
+  channel_threads: ChannelThreadsTable;
+  channel_deliveries: ChannelDeliveriesTable;
+  org_anonymous_accounts: OrgAnonymousAccountsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

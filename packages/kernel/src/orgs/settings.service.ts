@@ -8,16 +8,21 @@ import { lockOrgAndAuthorize } from "./org-lock.js";
  * 组织设置（`capybara.orgs.settings` jsonb）。读取宽松：缺失或非法的字段按默认值，未知键保留不动
  * （更新时与存量合并），新版本加字段不需要迁移。
  * - `toolSearch`：工具超过阈值时是否改用目录 + `tool_search`（D11，默认 on）。
+ * - `locale`：组织默认语言（`zh` / `en`，默认 en），机器人在 IM 里说的固定话术按它选择。
  */
 export const OrgSettingsSchema = z.object({
   toolSearch: z.enum(["on", "off"]).default("on").catch("on"),
+  locale: z.enum(["zh", "en"]).default("en").catch("en"),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
 
 /** PATCH 体：只改给出的字段；未知字段 → 400。 */
 export const OrgSettingsPatchSchema = z
-  .object({ toolSearch: z.enum(["on", "off"]).optional() })
+  .object({
+    toolSearch: z.enum(["on", "off"]).optional(),
+    locale: z.enum(["zh", "en"]).optional(),
+  })
   .strict();
 
 export type OrgSettingsPatch = z.infer<typeof OrgSettingsPatchSchema>;
