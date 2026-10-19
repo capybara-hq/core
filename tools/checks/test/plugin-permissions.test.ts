@@ -57,6 +57,37 @@ describe("动态值与豁免", () => {
   });
 });
 
+describe("豁免注释只放行「无法静态确认」", () => {
+  it("明确违规（secrets / http / tools / capability / storage / models）带豁免注释仍报", () => {
+    const f = checkPluginPermissions([fixture("plugin-perm-marker")]);
+    expect(f.map((x) => x.line)).toEqual(flagged("plugin-perm-marker"));
+    expect(f.map((x) => x.rule)).toEqual([
+      "perm-secrets",
+      "perm-http",
+      "perm-tools",
+      "perm-capability",
+      "perm-reserved",
+      "perm-reserved",
+    ]);
+    expect(f.some((x) => x.message.includes("Cannot statically"))).toBe(false);
+  });
+});
+
+describe("解构、计算成员与参数默认值", () => {
+  it("解构 ctx / 计算成员 / 解构参数报无法静态确认（带原因的豁免不报）；默认值参数照常跟踪", () => {
+    const f = checkPluginPermissions([fixture("plugin-perm-destructure")]);
+    expect(f.map((x) => x.line)).toEqual(flagged("plugin-perm-destructure"));
+    expect(f.map((x) => x.rule)).toEqual([
+      "perm-reserved",
+      "perm-reserved",
+      "perm-reserved",
+      "perm-secrets",
+    ]);
+    expect(f[0]?.message).toContain("Cannot statically confirm");
+    expect(f[3]?.message).toContain("permissions.secrets");
+  });
+});
+
 describe("正例与解析失败", () => {
   it("clean fixture（别名、传给同文件函数的 ctx、同文件 const）通过", () => {
     expect(checkPluginPermissions([fixture("plugin-perm-clean")])).toEqual([]);

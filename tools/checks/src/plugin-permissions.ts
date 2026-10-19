@@ -164,24 +164,25 @@ interface Scope {
 
 function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Finding[] {
   const out: Finding[] = [];
+  /** 明确的违规：豁免注释不起作用。 */
   const add = (at: Node, rule: string, message: string): void => {
+    out.push({ file: f.file, line: f.lineOf(at.start), rule, message });
+  };
+  /** 「无法静态确认」：只有这类可以用豁免注释放行（原因必填）。 */
+  const dynamic = (at: Node, rule: string, what: string): void => {
     const marker = findMarker(f, at);
     if (marker?.reason) return;
-    out.push({
-      file: f.file,
-      line: f.lineOf(at.start),
-      rule,
-      message: marker ? `// ${MARKER} must be followed by a reason (not empty)` : message,
-    });
-  };
-  const dynamic = (at: Node, rule: string, what: string): void =>
     add(
       at,
       rule,
-      `Cannot statically confirm ${what}. Use a string literal (or a same-file const), or add // ${MARKER} <reason>`,
+      marker
+        ? `// ${MARKER} must be followed by a reason (not empty)`
+        : `Cannot statically confirm ${what}. Use a string literal (or a same-file const), or add // ${MARKER} <reason>`,
     );
+  };
 
-  const first = (m.setup?.params as Node[] | undefined)?.[0];
+  let first = (m.setup?.params as Node[] | undefined)?.[0];
+  if (first?.type === "AssignmentPattern") first = first.left as Node;
   if (!m.setup || !first) return out;
   const queue: Scope[] = [];
   const seen = new Set<string>();
