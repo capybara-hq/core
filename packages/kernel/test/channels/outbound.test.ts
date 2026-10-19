@@ -719,6 +719,66 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
   });
 });
 
+describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeout: 40_000 }, () => {
+  it("平台用同一 eventId 重投卡片点击 → 只处理一次（不回「已处理」）", async () => {
+    const chat = "grp-evt";
+    im.push(connId, group("ev1", "u-owner", ECHO, { chatId: chat }));
+    const cardMsg = await waitFor(
+      async () => sentTo("cli_out", chat).find((s) => cardOf(s)?.kind === "approval"),
+      15_000,
+      "approval card",
+    );
+    const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    const n = im.sent.length;
+    const tap = {
+      ...cardAction(
+        "ev1-card",
+        "u-owner",
+        { cardKind: "approval", cardId: approvalId, action: "approve", scope: "once" },
+        cardMsg.target,
+      ),
+      eventId: "evt-dup-1",
+    } as const;
+    im.push(connId, tap);
+    im.push(connId, tap);
+    await waitFor(async () => (await approvalStatus(approvalId)) === "approved", 10_000, "ok");
+    await settled(await convOf(connId, chat));
+    await sleep(500);
+    expect(
+      im.sent.slice(n).filter((s) => s.message.text === "This request has already been handled."),
+    ).toEqual([]);
+  });
+
+  it("群里的卡片点击不带 threadId → 按发卡片时记下的话题判断（匿名访客照常处理自己话题里的卡片）", async () => {
+    const chat = "grp-anon-nothread";
+    im.push(anonId, group("nt1", "u-anon-c", ECHO, { chatId: chat }));
+    const cardMsg = await waitFor(
+      async () =>
+        im.sent.find(
+          (s) => s.appId === "cli_anon" && chatOf(s) === chat && cardOf(s)?.kind === "approval",
+        ),
+      15_000,
+      "anonymous approval card",
+    );
+    const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    const n = im.sent.length;
+    im.push(
+      anonId,
+      cardAction(
+        cardMsg.messageId,
+        "u-anon-c",
+        { cardKind: "approval", cardId: approvalId, action: "approve" },
+        { chatId: chat, chatType: "group" },
+      ),
+    );
+    await waitFor(async () => (await approvalStatus(approvalId)) === "approved", 10_000, "ok");
+    expect(
+      im.sent.slice(n).filter((s) => s.message.text === "You can't handle this request."),
+    ).toEqual([]);
+    await settled(await convOf(anonId, chat));
+  });
+});
+
 describe("出站投递：发送失败", { timeout: 40_000 }, () => {
   it("Ruling A14：同一事件不可重试地失败 3 次 → 跳过它并提示去网页查看，之后的回复照常投递", async () => {
     const chat = "grp-poison";
@@ -799,6 +859,46 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     expect(updatesOf(msgs[0]?.messageId as string)).toEqual([]);
     expect(await failCountOf(conv)).toBe(0);
     expect(await lastError(connId)).toBeNull();
+  });
+
+  it("流式中途编辑草稿被拒 → 不再编辑它，定稿时改发一条完整的新消息（不计毒事件）", async () => {
+    const chat = "grp-mid-rejected";
+    // 草稿之后的第一次编辑（流式中途，约 1s 后）被拒
+    im.failNext("/update", 400, 1);
+    im.push(connId, group("mr1", "u-owner", `slow:150:${LONG}`, { chatId: chat }));
+    const conv = await convOf(connId, chat);
+    await settled(conv);
+    const msgs = sentTo("cli_out", chat);
+    expect(msgs).toHaveLength(2);
+    expect(LONG.startsWith(msgs[0]?.message.text as string)).toBe(true);
+    expect(updatesOf(msgs[0]?.messageId as string)).toEqual([]);
+    expect(msgs[1]?.message.text).toBe(LONG);
+    expect(await failCountOf(conv)).toBe(0);
+    expect(await lastError(connId)).toBeNull();
+  });
+
+  it("草稿已不能编辑时运行失败 → 失败说明作为新消息发出（不静默跳过）", async () => {
+    const chat = "grp-broken-fail";
+    // 草稿之后的第一次编辑（流式中途）被拒；随后模型报错、运行失败（没有 assistant_message）
+    im.failNext("/update", 400, 1);
+    im.push(
+      connId,
+      group("bf1", "u-owner", "slowfail:400:abcdefghijklmnopqrstuvwx", { chatId: chat }),
+    );
+    const conv = await convOf(connId, chat);
+    await waitForEvent(db, conv, (e) => e.type === "run_failed", 15_000, "run_failed");
+    await waitFor(
+      async () =>
+        sentTo("cli_out", chat).some((s) =>
+          s.message.text.startsWith("Sorry, something went wrong"),
+        ),
+      15_000,
+      "failure marker as a new message",
+    );
+    await settled(conv);
+    const msgs = sentTo("cli_out", chat);
+    expect(msgs).toHaveLength(2);
+    expect(updatesOf(msgs[0]?.messageId as string)).toEqual([]);
   });
 
   it("N4：草稿编辑与改发的新消息都被拒绝 → 同一事件第 3 次失败时跳过，跳过前尽力收尾草稿（失败说明）", async () => {

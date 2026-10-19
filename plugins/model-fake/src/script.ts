@@ -136,7 +136,7 @@ function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; re
 }
 
 type Plan =
-  | { kind: "text"; text: string; chunk: number; delayMs: number }
+  | { kind: "text"; text: string; chunk: number; delayMs: number; failAfter?: ModelError }
   | { kind: "tool"; name: string; input: unknown }
   | { kind: "stall" }
   | { kind: "fail"; error: ModelError };
@@ -170,6 +170,16 @@ function scripted(req: ModelRequest): Plan {
   const slow = /^slow:(\d+):([\s\S]*)$/.exec(text);
   if (slow) {
     return { kind: "text", text: slow[2] as string, chunk: CHUNK_CHARS, delayMs: Number(slow[1]) };
+  }
+  const slowFail = /^slowfail:(\d+):([\s\S]*)$/.exec(text);
+  if (slowFail) {
+    return {
+      kind: "text",
+      text: slowFail[2] as string,
+      chunk: CHUNK_CHARS,
+      delayMs: Number(slowFail[1]),
+      failAfter: new ModelError("invalid_request", "Scripted failure after streaming"),
+    };
   }
   if (text === "stall") return { kind: "stall" };
   if (text.startsWith("fail:")) {
@@ -301,6 +311,11 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
         if (i > 0 && p.delayMs > 0) await sleep(p.delayMs, signal);
         if (signal.aborted) throw abortError();
         yield { type: "text_delta", text: text.slice(i, i + p.chunk) };
+      }
+      if (p.failAfter) {
+        // slowfail：输出完文本后再停一下，然后失败（不产生 message_complete）
+        if (p.delayMs > 0) await sleep(p.delayMs, signal);
+        throw p.failAfter;
       }
       if (signal.aborted) throw abortError();
       yield {

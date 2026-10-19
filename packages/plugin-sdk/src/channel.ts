@@ -1,7 +1,11 @@
 import type { ZodTypeAny } from "zod";
 import type { CardAction, OutboundMessage } from "./cards.js";
 
-/** 消息的投递目标。 */
+/**
+ * 消息的投递目标。群聊里的 `threadId` 是话题**根消息的 `messageId`**（内核用它把同一话题归到一个会话，
+ * 回复也投到这个话题）：Slack 为根消息的 `ts`（即回复的 `thread_ts`）；飞书为根消息的 `message_id`
+ * （`root_id`，`om_…`），**不是** `thread_id`（`omt_…`）。私聊不带。
+ */
 export interface ChannelTarget {
   chatId: string;
   threadId?: string;
@@ -9,9 +13,10 @@ export interface ChannelTarget {
 }
 
 /**
- * 入站事件的发言人 / 点击者。`displayName`、`avatarUrl` 为平台上的显示名与头像（拿得到就带）：内核把显示名
- * 用在绑定确认页（没有时回落到 externalId）。`tenantId` 与连接的租户不同的人（外部联系人、共享频道里的
- * 其他企业）内核只允许绑定，不按匿名访客处理。
+ * 入站事件的发言人 / 点击者。`tenantId` 为发言人所属企业：Slack 为 team id（Enterprise Grid 下是 team，
+ * 不是 enterprise），飞书为 `tenant_key`；与连接的租户（`verify` 返回的 `tenantId`，同一口径）不同的人
+ * （外部联系人、共享频道里的其他企业）内核只允许绑定，不按匿名访客处理。`displayName`、`avatarUrl` 为平台上的
+ * 显示名与头像（拿得到就带）：内核把显示名用在绑定确认页（没有时回落到 externalId）。
  */
 export interface InboundSender {
   externalId: string;
@@ -22,11 +27,13 @@ export interface InboundSender {
 
 /**
  * 渠道交给内核的入站事件。插件的约定：
+ * - `message.messageId` 在本连接内唯一（内核按它去重）；
  * - M4 只处理文本：附件、图片、文件等忽略（消息只有附件时不发事件）；
  * - 用户编辑、撤回 / 删除消息不发事件（忽略）；
  * - `text` 里去掉 @ 机器人的部分（`mentionsBot` 另行说明是否 @ 了机器人）；
- * - `card_action`：`messageId` 为卡片所在消息的 id；群聊里必须带 `target.threadId`（卡片所在话题），
- *   内核据此判断匿名访客能否处理该卡片，缺了按不能处理。
+ * - `card_action`：`messageId` 为卡片所在消息的 id（同一张卡片的多次点击相同）；`eventId` 为平台给这次点击的
+ *   唯一 id（拿得到就带，本连接内唯一：内核按它去重平台重投）；群聊里 `target.threadId` 拿得到就带，
+ *   拿不到时内核取发出该卡片时记下的话题。
  */
 export type InboundEvent =
   | {
@@ -41,6 +48,8 @@ export type InboundEvent =
       type: "card_action";
       target: ChannelTarget;
       messageId: string;
+      /** 平台给这次点击的唯一 id（如飞书回调的 event_id、Slack 的 trigger / action 时间戳组合）。 */
+      eventId?: string;
       sender: InboundSender;
       action: CardAction;
     }
@@ -53,8 +62,10 @@ export interface ChannelConnectArgs {
   config: unknown;
   /**
    * 把入站事件交给内核。内核只做去重并把事件持久地排进队列（很快，不在这里处理消息），resolve 即表示内核已经
-   * 可靠地收下了这条事件：插件**在它 resolve 之后**才向平台确认（ack）；reject 时**不要**确认，让平台重投
-   * （内核按消息 id 去重，重投不会重复处理）；插件自己不必重试 `onEvent`。
+   * 可靠地收下了这条事件：插件**在它 resolve 之后**才向平台确认（ack）；reject 时**不要**确认，让平台重投；
+   * 插件自己不必重试 `onEvent`。去重范围：`message` 按 `messageId`、带 `eventId` 的 `card_action` 按 `eventId`
+   * （各保留 24 小时）——重投只处理一次；不带 `eventId` 的 `card_action` 不去重（每次都处理，重复的审批 /
+   * 回答由内核回「已处理」）；`directory_changed` 不去重（同步任务本身按分钟合并）。
    */
   onEvent(e: InboundEvent): Promise<void>;
   signal: AbortSignal;
@@ -96,7 +107,11 @@ export interface Channel {
   connect(args: ChannelConnectArgs): Promise<void>;
   /** 失败时抛 {@link ChannelSendError} 说明能否重试；其他异常内核按可重试处理（次数有限）。 */
   send(args: ChannelSendArgs): Promise<{ messageId: string }>;
-  /** features.edit 为 false 的渠道不会被调用。失败语义同 send。 */
+  /**
+   * features.edit 为 false 的渠道不会被调用。失败语义同 send。新文本超过平台单条上限、无法改成一条时
+   * 抛不可重试的 {@link ChannelSendError}（`reason: "too_large"`）：内核改为把完整文本作为新消息 `send`
+   * （由插件拆分）。
+   */
   update(args: ChannelSendArgs & { messageId: string }): Promise<void>;
 }
 

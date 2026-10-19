@@ -17,7 +17,7 @@ import type { ApprovalsService } from "../tools/approvals.service.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import { ChannelCardActions } from "./actions.js";
 import type { ChannelConnectionRow, ChannelConnections } from "./connections.service.js";
-import { inboundJobId } from "./outbound.js";
+import { idempotencyKey, inboundJobId } from "./outbound.js";
 import { type ChannelLocale, type ChannelPhrase, phrase } from "./phrases.js";
 import {
   archiveThread,
@@ -34,6 +34,10 @@ export const MESSAGE_DEDUPE_TTL_SECONDS = 86_400;
 /** 入站消息去重键（Redis 键，不是队列名 / job id，可以含 `:`）。 */
 export const messageDedupeKey = (connectionId: string, messageId: string) =>
   `capk:channel-msg:${connectionId}:${messageId}`;
+
+/** 带平台事件 id 的卡片点击的去重键（Ruling A26，Redis 键，可以含 `:`）。 */
+export const actionDedupeKey = (connectionId: string, eventId: string) =>
+  `capk:channel-act:${connectionId}:${eventId}`;
 
 /** 通讯录同步的投递接口（实现见 orgs/directory-sync.ts：按 (组织, 插件) 每分钟去重的维护队列任务）。 */
 export interface DirectorySyncScheduler {
@@ -74,10 +78,12 @@ type MessageEvent = Extract<InboundEvent, { type: "message" }>;
  * 渠道入站（Ruling A21：持久化处理）。
  * - `onEvent`（插件 `connect` 的回调，必须快）：消息按 `capk:channel-msg:<连接>:<消息>` `SET NX` 24 小时去重，
  *   再排一个入站任务（`inbound-<连接>-<消息 id 哈希>`）后返回；入队失败删掉去重键并抛错（插件不确认，平台重投）。
- *   卡片操作直接入队（任务 id 随机），`directory_changed` 只是投递一个通讯录同步任务，就地完成。
+ *   带 `eventId` 的卡片操作同样按 `capk:channel-act:<连接>:<eventId>` 去重（任务 id 由 eventId 哈希，Ruling A26），
+ *   不带的直接入队（任务 id 随机）；`directory_changed` 只是投递一个通讯录同步任务，就地完成。
  *   返回即「内核已持久接收」：插件此后才向平台确认。
- * - `handle`（worker 上执行入站任务）：失败抛错由 BullMQ 指数退避重试（共 5 次）；写用户消息带
- *   `clientMessageId = "<连接>:<消息>"`，重试不会重复写。步骤：
+ * - `handle`（worker 上执行入站任务）：失败抛错由 BullMQ 指数退避重试（共 5 次；插件在本副本未加载时推迟、
+ *   回复报 auth / target_gone 时不重试）；写用户消息带 `clientMessageId = "<连接>:<消息>"`，回复带由
+ *   `<连接>-<消息 id>-reply` 哈希的幂等键，重试不会重复写 / 重复回复。步骤：
  * 1. 连接停用、所属组织已删除或插件在该组织停用 → 什么都不做；群聊未 @ 机器人 → 忽略；
  * 2. 发言人按 `<插件>:<租户>` + externalId 纯查找账号（不建账号、不合并），且须是连接所属组织的活跃成员；
  *    否则按连接的未绑定策略：`bind` → 私聊回绑定卡片（群里只提示去私聊，绑定链接不能发在群里）、
@@ -109,24 +115,42 @@ export class ChannelInbound {
   async onEvent(connectionId: string, e: InboundEvent): Promise<void> {
     if (e.type === "directory_changed") return this.handle(connectionId, e);
     if (e.type === "card_action") {
-      await this.deps.queue.enqueueInbound(
+      if (e.eventId === undefined) {
+        // 平台没给事件 id：无法识别重投，每次都处理（重复的审批 / 回答由服务回「已处理」）
+        await this.deps.queue.enqueueInbound(
+          connectionId,
+          e,
+          `inbound-${connectionId}-a${randomUUID()}`,
+        );
+        return;
+      }
+      return this.dedupeAndEnqueue(
         connectionId,
         e,
-        `inbound-${connectionId}-a${randomUUID()}`,
+        actionDedupeKey(connectionId, e.eventId),
+        inboundJobId(connectionId, `act:${e.eventId}`),
       );
-      return;
     }
-    const key = messageDedupeKey(connectionId, e.messageId);
+    return this.dedupeAndEnqueue(
+      connectionId,
+      e,
+      messageDedupeKey(connectionId, e.messageId),
+      inboundJobId(connectionId, e.messageId),
+    );
+  }
+
+  /** `SET NX` 24 小时去重后入队；入队失败删掉去重键并抛错（插件不确认，平台重投时再试）。 */
+  private async dedupeAndEnqueue(
+    connectionId: string,
+    e: InboundEvent,
+    key: string,
+    jobId: string,
+  ): Promise<void> {
     const fresh = await this.deps.redis.set(key, "1", "EX", MESSAGE_DEDUPE_TTL_SECONDS, "NX");
     if (fresh !== "OK") return;
     try {
-      await this.deps.queue.enqueueInbound(
-        connectionId,
-        e,
-        inboundJobId(connectionId, e.messageId),
-      );
+      await this.deps.queue.enqueueInbound(connectionId, e, jobId);
     } catch (err) {
-      // 没能持久接收：删掉去重键，让平台重投时再试
       await this.deps.redis.del(key).catch(() => {});
       throw err;
     }
@@ -159,11 +183,15 @@ export class ChannelInbound {
     // 群里回在话题里（新话题以这条消息为根）
     const replyTarget: ChannelTarget = isGroup ? { ...e.target, threadId: threadKey } : e.target;
     const { locale } = await readOrgSettings(db, row.orgId);
+    // 回复带幂等键：任务重试时平台不会重复显示（一条消息至多一句回复）
+    const replyKey = idempotencyKey(`${connectionId}-${e.messageId}-reply`);
     const reply = async (key: ChannelPhrase, cards?: ChannelCard[]) => {
-      await connections.send(connectionId, replyTarget, {
-        text: phrase(key, locale),
-        ...(cards !== undefined && { cards }),
-      });
+      await connections.send(
+        connectionId,
+        replyTarget,
+        { text: phrase(key, locale), ...(cards !== undefined && { cards }) },
+        replyKey,
+      );
     };
 
     const speaker = await this.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);

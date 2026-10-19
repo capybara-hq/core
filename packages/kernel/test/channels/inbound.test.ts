@@ -13,7 +13,13 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js";
+import {
+  CHANNEL_QUEUE_NAME,
+  DELIVER_PRIORITY,
+  INBOUND_PRIORITY,
+  idempotencyKey,
+  inboundJobId,
+} from "../../src/channels/outbound.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -179,6 +185,8 @@ describe("渠道入站", () => {
     expect(s?.message.text).toMatch(/link your Capybara account/);
     // Ruling A22：组织语言随发送交给插件
     expect(s?.locale).toBe("en");
+    // 入站回复带幂等键（任务重试不重复回复）：由 "<连接>-<消息 id>-reply" 哈希而来
+    expect(s?.idempotencyKey).toBe(idempotencyKey(`${connId}-m-unbound-reply`));
     expect(await threads()).toEqual([]);
   });
 
@@ -416,6 +424,34 @@ describe("入站持久化（Ruling A21）", () => {
         .execute(raw);
     }
   }, 40_000);
+
+  it("回复时插件报不可重试的 target_gone → 入站任务直接失败，不重试", async () => {
+    // 未绑定策略为 bind：未绑定的私聊必回绑定卡片（前面的用例可能留下了 anonymous）
+    const p = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/channels/${connId}`,
+      payload: { unboundPolicy: "bind" },
+    });
+    expect(p.statusCode).toBe(200);
+    im.failNext("/send", 403, 1, undefined, "target_gone");
+    expect(im.push(connId, dm("gone-1", "u-gone", "hi"))).toBe(1);
+    await waitFor(
+      async () => (await queue.getJobState(inboundJobId(connId, "gone-1"))) === "failed",
+      8_000,
+      "job failed without retry",
+    );
+    const job = await queue.getJob(inboundJobId(connId, "gone-1"));
+    expect(job?.attemptsMade).toBe(1);
+    await sleep(1500);
+    expect(im.sent.filter((x) => x.target.chatId === "dm-u-gone")).toEqual([]);
+  }, 15_000);
+
+  it("入站任务的优先级高于出站投递任务", async () => {
+    await waitFor(() => processed("m1"), 10_000, "m1 processed");
+    const job = await queue.getJob(inboundJobId(connId, "m1"));
+    expect(job?.opts.priority).toBe(INBOUND_PRIORITY);
+    expect(INBOUND_PRIORITY).toBeLessThan(DELIVER_PRIORITY);
+  });
 
   it("onEvent 只去重并入队：平台重投同一条消息只排一个任务、只写一次", async () => {
     await k.channels.inbound.onEvent(connId, dm("enq-1", "u-race", "hello"));

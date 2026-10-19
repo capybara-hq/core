@@ -482,6 +482,7 @@ export async function createKernel(
     redis,
     log,
     onSecrets: (v) => log.addOrgSecrets(v),
+    onResume: (id) => channelOutbound.resumeConnection(id),
   });
   const channelOutbound = new ChannelOutbound({
     db: kdb,

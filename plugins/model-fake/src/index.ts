@@ -17,7 +17,7 @@ const DeploymentConfig = z.object({
 
 /**
  * 确定性脚本化模型供应商，用于运行时测试、e2e 与无密钥演示。
- * 行为由最后一条 user 消息的英文前缀指令决定（echo / slow / stall / fail / tool / long）。
+ * 行为由最后一条 user 消息的英文前缀指令决定（echo / slow / slowfail / stall / fail / tool / long）。
  * 提供 model-provider@2：声明三档 effort 与 `model-fake.style`（`shout` 时回复转大写）。
  * 无进程内状态：缓存命中记录放 ctx.kv（TTL 300 秒）。
  */

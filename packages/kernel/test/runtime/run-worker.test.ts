@@ -203,7 +203,17 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(evs[5]?.payload).toEqual({ reason: "completed", consumedUpToSeq: seq });
     expect(await consumedSeq(db, convId)).toBe(seq);
     expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "completed" }]);
-    // 锁与配额已释放
+    // 锁与配额已释放（终态事件写入后才释放，负载高时稍晚一点：等到释放再断言）
+    await waitFor(
+      async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0,
+      5_000,
+      "conversation lock released",
+    );
+    await waitFor(
+      async () => (await redis.zcard(`capk:org-runs:${orgId}`)) === 0,
+      5_000,
+      "org run quota released",
+    );
     expect(await redis.exists(`capk:conv-run:${convId}`)).toBe(0);
     expect(await redis.zcard(`capk:org-runs:${orgId}`)).toBe(0);
   });

@@ -8,10 +8,12 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { channelBackoffKey } from "../../src/channels/connections.service.js";
+import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js";
 import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -53,6 +55,7 @@ let db: KernelDb;
 let redis: Redis;
 let owner: Req;
 let ownerId: string;
+let queue: Queue;
 
 const cfg = (plugins: string[], scanIntervalMs = SCAN, leaseTtlMs = TTL) =>
   runConfig(
@@ -61,7 +64,7 @@ const cfg = (plugins: string[], scanIntervalMs = SCAN, leaseTtlMs = TTL) =>
       plugins,
       http: { port: 0, publicUrl: "https://cap.example" },
       auth: { cookieSecure: false },
-      channels: { leaseTtlMs, scanIntervalMs, retryBaseMs: 100 },
+      channels: { leaseTtlMs, scanIntervalMs, retryBaseMs: 100, deliveryIdleMs: 500 },
     },
   );
 
@@ -72,6 +75,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
+  queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
   ownerId = (
     await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
   ).id;
@@ -79,6 +83,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  await queue?.close();
   await a?.stop();
   await im?.stop();
   redis?.disconnect();
@@ -232,6 +237,39 @@ describe("渠道连接生命周期", () => {
     expect((again.json() as { error: { code: string } }).error.code).toBe("channel.verify_failed");
   }, 60_000);
 
+  it("重新启用连接 → 补投停用期间落下的会话（不必等下一条消息）", async () => {
+    const { orgId, connId } = await setup("resume");
+    await sql`INSERT INTO capybara.identities (source, external_id, account_id, linked_via)
+      VALUES ('chan-mini:t1', 'u-resume', ${ownerId}, 'sso')`.execute(raw);
+    const toChat = () => im.sent.filter((s) => s.target.chatId === "dm-u-resume");
+    im.push(connId, dm("res-1", "u-resume", "hello"));
+    await waitFor(async () => toChat().length >= 1, 15_000, "first reply");
+    const conv = (
+      await sql<{ conversation_id: string }>`SELECT conversation_id FROM capybara.channel_threads
+        WHERE connection_id = ${connId}`.execute(raw)
+    ).rows[0]?.conversation_id as string;
+    const patch = (payload: Record<string, unknown>) =>
+      owner({ method: "PATCH", url: `/api/v1/orgs/${orgId}/channels/${connId}`, payload });
+    expect((await patch({ status: "disabled" })).statusCode).toBe(200);
+    // 进行中的投递任务（停用前开始的）空闲后结束；之后的任务看到连接已停用就不投递
+    await waitFor(
+      async () => (await redis.get(`capk:channel-deliver:${conv}`)) === null,
+      10_000,
+      "delivery job exited",
+    );
+    const before = toChat().length;
+    await postMessage(owner, orgId, conv, "while disabled");
+    await waitFor(
+      async () => (await eventsOf(db, conv)).filter((e) => e.type === "run_finished").length >= 2,
+      15_000,
+      "second run finished",
+    );
+    await sleep(1000);
+    expect(toChat().length).toBe(before);
+    expect((await patch({ status: "active" })).statusCode).toBe(200);
+    await waitFor(async () => toChat().length > before, 10_000, "backlog delivered");
+  }, 60_000);
+
   it("滚动升级：没有加载该插件的副本不取租约、不写 last_error / 退避，出站任务推迟重试；有插件的副本接管并补投", async () => {
     const { orgId, connId } = await setup("rolling");
     await sql`INSERT INTO capybara.identities (source, external_id, account_id, linked_via)
@@ -271,12 +309,23 @@ describe("渠道连接生命周期", () => {
       );
       await sleep(1000);
       expect(toRoll().length).toBe(before);
+      // b 上处理需要回复的入站任务：插件不在本副本 → 推迟重试，不消耗重试次数
+      await b.channels.inbound.onEvent(connId, dm("roll-bind", "u-roll-new", "hi"));
+      await sleep(2500);
+      const job = await queue.getJob(inboundJobId(connId, "roll-bind"));
+      expect(await job?.getState()).toBe("delayed");
+      expect(job?.attemptsMade).toBe(0);
       // 有插件的副本回来：照常接管长连接，并补投 b 上没投出去的回复
       a = await startKernel(cfg([MODEL_FAKE, CHAN_MINI], 100, 2000));
       owner = await session(a, "owner");
       await b.stop();
       await waitFor(async () => im.active(connId).length === 1, 10_000, "taken over by a");
       await waitFor(async () => toRoll().length > before, 20_000, "pending reply delivered");
+      await waitFor(
+        async () => im.sent.some((x) => x.target.chatId === "dm-u-roll-new"),
+        20_000,
+        "pending inbound reply delivered",
+      );
     } finally {
       await b.stop();
     }

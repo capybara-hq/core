@@ -11,6 +11,7 @@ import type { ApprovalsService } from "../tools/approvals.service.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ChannelConnectionRow, ChannelConnections } from "./connections.service.js";
 import type { ChannelOutboundScheduler } from "./inbound.js";
+import { idempotencyKey } from "./outbound.js";
 import { type ChannelLocale, type ChannelPhrase, phrase } from "./phrases.js";
 import { findThread, threadKeyOf } from "./threads.js";
 
@@ -60,15 +61,6 @@ export class ChannelCardActions {
     // 连接停用、组织已删除或插件在该组织停用（停用广播与长连接断开之间仍可能有事件到达）：什么都不做
     if (row?.status !== "active" || !row.pluginEnabled) return;
     const { locale } = await readOrgSettings(this.deps.db, row.orgId);
-    const reply = async (key: ChannelPhrase, cards?: ChannelCard[]) => {
-      await connections.send(connectionId, e.target, {
-        text: phrase(key, locale),
-        ...(cards !== undefined && { cards }),
-      });
-    };
-    const isGroup = e.target.chatType === "group";
-    const who = await this.deps.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
-    if (who === undefined) return;
     const a = e.action;
     // Ruling A13：卡片必须是本连接发在这个 chat 里的（防止伪造卡片 id 去处理别处的请求）
     const card = await this.deps.db
@@ -78,6 +70,29 @@ export class ChannelCardActions {
       .where("card_kind", "=", a.cardKind)
       .where("card_id", "=", a.cardId)
       .executeTakeFirst();
+    const cardTarget = card?.target as ChannelTarget | undefined;
+    // Ruling A26：群里的点击拿不到话题时，取发出该卡片时记下的话题（只在同一个 chat 里才借用）
+    const target: ChannelTarget =
+      e.target.chatType === "group" &&
+      e.target.threadId === undefined &&
+      cardTarget?.chatId === e.target.chatId &&
+      cardTarget.threadId !== undefined
+        ? { ...e.target, threadId: cardTarget.threadId }
+        : e.target;
+    // 有平台事件 id 时回复带幂等键（任务重试不重复回复）；没有时同一张卡片的不同点击无法区分，不带
+    const key =
+      e.eventId !== undefined ? idempotencyKey(`${connectionId}-${e.eventId}-reply`) : undefined;
+    const reply = async (k: ChannelPhrase, cards?: ChannelCard[]) => {
+      await connections.send(
+        connectionId,
+        target,
+        { text: phrase(k, locale), ...(cards !== undefined && { cards }) },
+        key,
+      );
+    };
+    const isGroup = e.target.chatType === "group";
+    const who = await this.deps.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
+    if (who === undefined) return;
     if (!card || (card.target as ChannelTarget).chatId !== e.target.chatId) {
       await reply("cannotHandle");
       return;
@@ -88,7 +103,7 @@ export class ChannelCardActions {
       const own = await findThread(this.deps.db, {
         connectionId,
         chatId: e.target.chatId,
-        threadKey: threadKeyOf(e.target, e.sender.externalId, e.messageId),
+        threadKey: threadKeyOf(target, e.sender.externalId, e.messageId),
         accountId: null,
       });
       if (own !== card.conversation_id) {

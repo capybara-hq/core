@@ -161,6 +161,8 @@ export interface ChannelConnectionsDeps {
   bus: PluginContext["bus"];
   redis: Redis;
   log: Pick<Logger, "warn">;
+  /** 连接重新可投递（轮换凭据 / 重新启用）后调用；内核传出站的 `resumeConnection`（补投落下的会话）。 */
+  onResume?: (connectionId: string) => Promise<void>;
   /** 经手（写入或解密读出）的密钥值；内核传 `log.addOrgSecrets` 使其在日志中打码。 */
   onSecrets?: (values: string[]) => void;
 }
@@ -470,6 +472,11 @@ export class ChannelConnections {
         .catch((err: unknown) => this.deps.log.warn("cannot clear channel backoff", { err }));
     }
     await this.changed(id, rotated !== undefined || patch.status !== undefined);
+    if ((rotated || patch.status === "active") && row.status === "active") {
+      await this.deps
+        .onResume?.(id)
+        .catch((err: unknown) => this.deps.log.warn("cannot resume channel deliveries", { err }));
+    }
     return { channel: await this.viewOf(row), verifySkipped };
   }
 
@@ -632,13 +639,14 @@ export class ChannelConnections {
     };
   }
 
-  /** 经连接的插件直接发一条消息（入站处理回绑定卡片、固定话术，卡片操作回说明）。 */
+  /** 经连接的插件直接发一条消息（入站处理回绑定卡片、固定话术，卡片操作回说明）；`idempotencyKey` 原样交给插件。 */
   async send(
     connectionId: string,
     target: ChannelTarget,
     message: OutboundMessage,
+    idempotencyKey?: string,
   ): Promise<{ messageId: string }> {
-    return (await this.outbound(connectionId)).send(target, message);
+    return (await this.outbound(connectionId)).send(target, message, idempotencyKey);
   }
 }
 

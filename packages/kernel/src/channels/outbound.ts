@@ -8,7 +8,7 @@ import {
   type Logger,
   type OutboundMessage,
 } from "@capybara-hq/plugin-sdk";
-import { DelayedError, type Job, Queue, Worker } from "bullmq";
+import { DelayedError, type Job, Queue, UnrecoverableError, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
@@ -125,6 +125,12 @@ type ChannelJobData = DeliverJobData | InboundJobData;
 
 /** 入站任务名。 */
 export const INBOUND_JOB = "inbound";
+/**
+ * BullMQ 优先级（数字越小越先）：入站任务先于出站投递任务——投递任务可能占着并发槽等输出，
+ * 用户发来的消息不能排在它们后面。
+ */
+export const INBOUND_PRIORITY = 1;
+export const DELIVER_PRIORITY = 10;
 /** 入站任务的总尝试次数（处理失败由 BullMQ 指数退避重试：1s、2s、4s、8s）。 */
 export const INBOUND_ATTEMPTS = 5;
 const INBOUND_BACKOFF_MS = 1000;
@@ -236,6 +242,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
           : deliverJobId(conversationId, Number(row.last_seq)),
         attempts: DELIVER_ATTEMPTS,
         backoff: { type: "deliver" },
+        priority: DELIVER_PRIORITY,
         removeOnComplete: true,
         removeOnFail: true,
       },
@@ -253,11 +260,27 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       {
         jobId,
         attempts: INBOUND_ATTEMPTS,
+        priority: INBOUND_PRIORITY,
         backoff: { type: "exponential", delay: INBOUND_BACKOFF_MS },
         removeOnComplete: { age: 3600, count: 1000 },
         removeOnFail: { age: 86_400 },
       },
     );
+  }
+
+  /**
+   * 连接重新可投递（轮换了凭据 / 重新启用）：给该连接投递进度落后于会话日志的会话各排一个出站任务，
+   * 补投停用或凭据失效期间落下的内容（不必等下一条消息）。
+   */
+  async resumeConnection(connectionId: string): Promise<void> {
+    const rows = await this.d.db
+      .selectFrom("channel_deliveries")
+      .innerJoin("conversations", "conversations.id", "channel_deliveries.conversation_id")
+      .select("channel_deliveries.conversation_id")
+      .where("channel_deliveries.connection_id", "=", connectionId)
+      .whereRef("channel_deliveries.last_seq", "<", "conversations.last_seq")
+      .execute();
+    for (const r of rows) await this.enqueue(r.conversation_id, { followUp: true });
   }
 
   /** 启动 Worker（只在含 `worker` 角色的进程）。任务锁与 stalled 检测沿用运行队列的配置。 */
@@ -317,17 +340,46 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
 
   private async process(job: Job<ChannelJobData>, token: string | undefined): Promise<void> {
     if (this.stopping.signal.aborted) return this.requeue(job, token, 0);
-    if (job.name === INBOUND_JOB) return this.processInbound(job as Job<InboundJobData>);
+    if (job.name === INBOUND_JOB) return this.processInbound(job as Job<InboundJobData>, token);
     return this.deliver(job as Job<DeliverJobData>, token);
   }
 
-  /** 入站任务：失败抛出由 BullMQ 重试；最后一次也失败时记错误日志（消息丢失，平台已确认过）。 */
-  private async processInbound(job: Job<InboundJobData>): Promise<void> {
+  /** 本副本没有加载连接的插件：推迟重试（不消耗重试次数），排队超过上限才放弃。 */
+  private async pluginPending(job: Job, token: string | undefined, what: string): Promise<void> {
+    if (Date.now() - job.timestamp > PLUGIN_PENDING_MAX_MS) {
+      this.d.log.warn(`channel ${what} dropped: plugin not loaded on any replica in time`, {
+        jobId: job.id,
+      });
+      return;
+    }
+    return this.requeue(job, token, PLUGIN_PENDING_DELAY_MS);
+  }
+
+  /**
+   * 入站任务：失败抛出由 BullMQ 重试；插件在本副本未加载 → 推迟重试（同出站）；回复时插件报凭据失效 /
+   * 目标已不存在 → 不重试（`UnrecoverableError`）。最后一次也失败时记错误日志（消息丢失，平台已确认过）。
+   */
+  private async processInbound(job: Job<InboundJobData>, token: string | undefined): Promise<void> {
     const { connectionId, event } = job.data;
     if (!this.d.inbound) throw new Error("channel inbound handler is not configured");
     try {
       await this.d.inbound(connectionId, event);
     } catch (err) {
+      if (err instanceof ApiError && err.code === "plugin.not_found") {
+        return this.pluginPending(job, token, "inbound event");
+      }
+      if (
+        isChannelSendError(err) &&
+        !err.retryable &&
+        (err.reason === "auth" || err.reason === "target_gone")
+      ) {
+        this.d.log.warn("channel inbound reply failed permanently", {
+          connectionId,
+          type: event.type,
+          reason: err.reason,
+        });
+        throw new UnrecoverableError(`inbound reply failed: ${err.reason}`);
+      }
       if (job.attemptsMade + 1 >= (job.opts.attempts ?? 1)) {
         this.d.log.error("channel inbound event dropped after retries", {
           connectionId,
@@ -387,13 +439,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       case "stopped":
         return;
       case "pending":
-        if (Date.now() - job.timestamp > PLUGIN_PENDING_MAX_MS) {
-          this.d.log.warn("channel delivery dropped: plugin not loaded on any replica in time", {
-            conversationId,
-          });
-          return;
-        }
-        return this.requeue(job, token, PLUGIN_PENDING_DELAY_MS);
+        return this.pluginPending(job, token, "delivery");
     }
   }
 
@@ -855,8 +901,14 @@ class Delivery {
     this.streaming = undefined;
     this.dirty = false;
     const text = closingText(this.draftText, how, this.locale);
-    if (text !== undefined && this.s.features.edit && !this.draftBroken) {
-      await this.s.update(this.target, this.draftId, { text }, this.key(seq, `-close-${how}`));
+    if (text !== undefined && this.s.features.edit) {
+      if (this.draftBroken) {
+        // 草稿已不能编辑：说明作为新消息发出，不静默丢掉
+        const marker = phrase(how === "failed" ? "runFailed" : "runStopped", this.locale);
+        await this.send({ text: marker }, this.key(seq, `-close-${how}`));
+      } else {
+        await this.s.update(this.target, this.draftId, { text }, this.key(seq, `-close-${how}`));
+      }
     }
     return true;
   }
