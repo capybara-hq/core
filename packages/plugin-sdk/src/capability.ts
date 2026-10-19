@@ -4,18 +4,39 @@ export type CapabilityRef = `${string}@${number}`;
 /** 能力基数：single 同时只能有一个提供者，multi 可有多个。 */
 export type Cardinality = "single" | "multi";
 
-/** 已登记的能力及其基数。 */
-export const CAPABILITY_CARDINALITY: Record<string, Cardinality> = {
-  sandbox: "single",
-  "config-source": "single",
-  "secret-store": "single",
-  channel: "multi",
-  "model-provider": "multi",
-  "identity-source": "multi",
-  directory: "multi",
-  counter: "multi",
-  connector: "multi",
+/** 能力登记信息。 */
+export interface CapabilityInfo {
+  cardinality: Cardinality;
+  /** 经平台能力层代理使用（插件不得 requires，只能经 ctx 平台能力取用）。 */
+  brokered: boolean;
+  /** 按组织启用（取用时可传 orgId 校验该组织已启用）。 */
+  orgScoped: boolean;
+}
+
+const info = (cardinality: Cardinality, brokered = false, orgScoped = false): CapabilityInfo => ({
+  cardinality,
+  brokered,
+  orgScoped,
+});
+
+/** 已登记的能力。 */
+export const CAPABILITIES: Record<string, CapabilityInfo> = {
+  sandbox: info("single", true),
+  "config-source": info("single"),
+  "secret-store": info("single", true),
+  "object-store": info("single", true), // 预留（M5）
+  channel: info("multi", false, true),
+  "model-provider": info("multi", true),
+  "identity-source": info("multi"),
+  directory: info("multi", false, true),
+  counter: info("multi"),
+  connector: info("multi", true),
 };
+
+/** 已登记能力的基数（由 CAPABILITIES 派生的兼容导出）。 */
+export const CAPABILITY_CARDINALITY: Record<string, Cardinality> = Object.fromEntries(
+  Object.entries(CAPABILITIES).map(([k, v]) => [k, v.cardinality]),
+);
 
 /** 连接器能力引用（见 `connector.ts`）。 */
 export const CONNECTOR_CAPABILITY = "connector@1";

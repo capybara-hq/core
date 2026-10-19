@@ -3,6 +3,7 @@ import {
   type Logger,
   type PluginContext,
   type PluginManifest,
+  PluginPermissionError,
   type ToolHandler,
   type ToolSpec,
   validateToolSpec,
@@ -145,6 +146,15 @@ export function createPluginContext(
   return {
     kv: createKv(deps.redis, name),
     lock: createLock(deps.redis, name),
+    // TODO(Task 3): 内核实现 capabilities；目前一律拒绝。
+    capabilities: {
+      get() {
+        throw new PluginPermissionError(name, "capabilities");
+      },
+      list() {
+        throw new PluginPermissionError(name, "capabilities");
+      },
+    },
     bus: {
       publish: bus.publish,
       async subscribe(topic, handler) {

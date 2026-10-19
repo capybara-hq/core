@@ -57,6 +57,11 @@ export interface PluginContext {
     /** 注册一个工具；只能在 `setup` 期间调用，名称不可重复。 */
     register(spec: ToolSpec, handler: ToolHandler): void;
   };
+  /** 取用其他插件提供的能力；orgScoped 能力传 orgId 时校验该组织已启用，否则抛 CapabilityUnavailableError。 */
+  capabilities: {
+    get<T>(ref: CapabilityRef, provider?: string, opts?: { orgId?: string }): T;
+    list<T>(ref: CapabilityRef, opts?: { orgId?: string }): { plugin: string; impl: T }[];
+  };
   provide(capability: CapabilityRef, impl: unknown): void;
   /** 部署级配置，已按插件 schema 校验。 */
   config: unknown;

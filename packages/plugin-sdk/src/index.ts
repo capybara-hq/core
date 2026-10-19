@@ -5,5 +5,6 @@ export * from "./ctx.js";
 export * from "./define-plugin.js";
 export * from "./model.js";
 export * from "./model-params.js";
+export * from "./permissions.js";
 export * from "./secret.js";
 export * from "./tool.js";

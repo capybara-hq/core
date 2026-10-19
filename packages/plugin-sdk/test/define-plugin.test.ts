@@ -59,6 +59,30 @@ describe("definePlugin", () => {
   it("rejects unregistered requires", () => {
     expect(() => definePlugin(valid({ requires: ["zzz@1"] }))).toThrow(/zzz/);
   });
+  it("accepts valid optional", () => {
+    expect(() => definePlugin(valid({ optional: ["counter@1"] }))).not.toThrow();
+  });
+  it("rejects optional overlapping requires / provides, or unregistered", () => {
+    expect(() => definePlugin(valid({ optional: ["channel@1"] }))).toThrow(/optional/);
+    expect(() => definePlugin(valid({ requires: ["counter@1"], optional: ["counter@1"] }))).toThrow(
+      /optional/,
+    );
+    expect(() => definePlugin(valid({ optional: ["zzz@1"] }))).toThrow(/zzz/);
+  });
+  it("rejects brokered capabilities in requires / optional", () => {
+    expect(() => definePlugin(valid({ requires: ["model-provider@2"] }))).toThrow(/brokered/);
+    expect(() => definePlugin(valid({ optional: ["sandbox@1"] }))).toThrow(/brokered/);
+  });
+  it("validates permissions", () => {
+    expect(() => definePlugin(valid({ permissions: { secrets: true } }))).not.toThrow();
+    expect(() =>
+      // biome-ignore lint/suspicious/noExplicitAny: 构造未知键
+      definePlugin(valid({ permissions: { bogus: 1 } as any })),
+    ).toThrow(/bogus/);
+    expect(() => definePlugin(valid({ permissions: { network: ["nodot"] } }))).toThrow(
+      PluginManifestError,
+    );
+  });
   it("names the plugin in errors", () => {
     expect(() => definePlugin(valid({ name: "Bad_Name" }))).toThrow(/Bad_Name/);
     expect(() => definePlugin(valid({ name: undefined as never }))).toThrow(/<unnamed>/);
