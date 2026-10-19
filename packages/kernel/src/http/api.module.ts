@@ -22,6 +22,12 @@ import { MeController } from "../identity/me.controller.js";
 import { LoginRateLimiter } from "../identity/rate-limit.js";
 import { SessionService } from "../identity/sessions.js";
 import { SettingsService } from "../identity/settings.js";
+import {
+  BindController,
+  MeIdentitiesController,
+  SsoController,
+} from "../identity/sso.controller.js";
+import type { KernelIdentity } from "../kernel.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
 import { InvitationsService } from "../orgs/invitations.service.js";
 import { MembersService } from "../orgs/members.service.js";
@@ -62,6 +68,8 @@ import {
   CONVERSATIONS,
   CREDENTIALS,
   EVENT_LOG,
+  EXTERNAL_IDENTITIES,
+  IDENTITY_BINDING,
   INVITATIONS,
   KERNEL_BUS,
   KERNEL_CONFIG,
@@ -70,6 +78,7 @@ import {
   KERNEL_REDIS,
   MEMBERS,
   OAUTH_FLOW,
+  OFFBOARDING,
   ORG_PLUGIN_CONFIGS,
   ORG_SETTINGS,
   ORGS,
@@ -79,6 +88,7 @@ import {
   SESSIONS,
   SETTINGS,
   SETUP,
+  SSO_FLOW,
   TOOL_REGISTRY,
 } from "./tokens.js";
 
@@ -113,6 +123,8 @@ export interface ApiDeps {
   drift: ToolDrift;
   /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
   appContent: AppContent;
+  /** 外部身份、绑定、第三方登录与离职处理（与 `Kernel.identity` 同一组实例）。 */
+  identity: KernelIdentity;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -136,6 +148,9 @@ const CONTROLLERS: Type[] = [
   QuestionsController,
   OAuthConnectController,
   OAuthCallbackController,
+  SsoController,
+  BindController,
+  MeIdentitiesController,
 ];
 
 /**
@@ -188,7 +203,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: MEMBERS,
-      useFactory: (db: KernelDb) => new MembersService(db),
+      useFactory: (db: KernelDb) => new MembersService(db, deps.identity.offboarding),
       inject: [KERNEL_DB],
     },
     {
@@ -249,6 +264,10 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
     },
     { provide: CREDENTIALS, useValue: deps.credentials },
+    { provide: EXTERNAL_IDENTITIES, useValue: deps.identity.external },
+    { provide: IDENTITY_BINDING, useValue: deps.identity.binding },
+    { provide: SSO_FLOW, useValue: deps.identity.sso },
+    { provide: OFFBOARDING, useValue: deps.identity.offboarding },
     { provide: TOOL_REGISTRY, useValue: deps.toolRegistry },
     { provide: APPROVALS, useValue: deps.approvals },
     { provide: QUESTIONS, useValue: deps.questions },

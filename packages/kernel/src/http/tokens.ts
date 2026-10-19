@@ -84,3 +84,15 @@ export const QUESTIONS = Symbol("QUESTIONS");
 
 /** `OAuthFlow`（OAuth 授权码连接流程）的注入令牌。 */
 export const OAUTH_FLOW = Symbol("OAUTH_FLOW");
+
+/** `ExternalIdentities`（外部身份 ↔ 账号）的注入令牌。 */
+export const EXTERNAL_IDENTITIES = Symbol("EXTERNAL_IDENTITIES");
+
+/** `IdentityBinding`（IM 身份的一次性绑定链接）的注入令牌。 */
+export const IDENTITY_BINDING = Symbol("IDENTITY_BINDING");
+
+/** `SsoFlow`（第三方登录）的注入令牌。 */
+export const SSO_FLOW = Symbol("SSO_FLOW");
+
+/** `Offboarding`（成员离职处理）的注入令牌。 */
+export const OFFBOARDING = Symbol("OFFBOARDING");

@@ -26,6 +26,8 @@
 | `auth.refreshTokenTtlDays` | `CAPYBARA_AUTH__REFRESH_TOKEN_TTL_DAYS` | `number` | `30` | 否 | 否 | Absolute lifetime of a web session (refresh token) in days; refreshing does not extend it |
 | `auth.cookieSecure` | `CAPYBARA_AUTH__COOKIE_SECURE` | `boolean` | `true` | 否 | 否 | Set the Secure attribute on session cookies; set false only for local trials over plain http |
 | `auth.setupToken` | `CAPYBARA_AUTH__SETUP_TOKEN` | `string` | 可选 | 否 | 是 | If set, the setup wizard requires this token |
+| `auth.loginSources` | `CAPYBARA_AUTH__LOGIN_SOURCES` | `array<string>` | `[]` | 是 | 否 | Plugin names (providing identity-source@1) offered as third-party sign-in on the login page, in this order; the sign-in callback URL is <http.publicUrl>/api/v1/auth/sso/<plugin>/callback |
+| `auth.trustedIdentitySources` | `CAPYBARA_AUTH__TRUSTED_IDENTITY_SOURCES` | `array<string>` | `[]` | 是 | 否 | Plugin names whose external identities are trusted to merge into an existing account: when the identity's email and the account's email are both verified and equal, the identity is linked to that account instead of creating a new one |
 | `runtime.maxSteps` | `CAPYBARA_RUNTIME__MAX_STEPS` | `number` | `50` | 否 | 否 | Maximum model steps per agent run before the final wrap-up |
 | `runtime.maxRunSeconds` | `CAPYBARA_RUNTIME__MAX_RUN_SECONDS` | `number` | `900` | 否 | 否 | Maximum wall-clock duration of one agent run in seconds |
 | `runtime.streamIdleMs` | `CAPYBARA_RUNTIME__STREAM_IDLE_MS` | `number` | `60000` | 否 | 否 | Default model stream idle watchdog in milliseconds (a model's own streamIdleTimeoutMs takes precedence) |

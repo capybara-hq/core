@@ -262,9 +262,9 @@ describe("Agent HTTP", () => {
       url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
       payload: { visibility: "private" },
     });
-    // 请求开头的 OrgGuard 已判定非成员（404 不泄露组织）；锁内复核的 403 由服务层测试覆盖
-    expect(res.statusCode).toBe(404);
-    expect(errCode(res)).toBe("org.not_found");
+    // 移出走离职处理，其会话已被吊销；锁内复核的 403 由服务层测试覆盖
+    expect(res.statusCode).toBe(401);
+    expect(errCode(res)).toBe("auth.session_revoked");
   });
 
   it("访客 POST → 403；访客可 GET 列表与模型", async () => {

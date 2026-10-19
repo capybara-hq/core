@@ -87,6 +87,8 @@ interface Loaded {
   permissions: PermissionSet;
   /** 部署配置摘要，见 {@link deploymentConfigHash}。 */
   configHash: string;
+  /** 已按清单 schema 校验的部署配置（含密钥；只交给该插件自己的能力调用）。 */
+  config: unknown;
   provided: Map<CapabilityRef, unknown>;
   routes: Route[];
   tools: RegisteredTool[];
@@ -468,6 +470,7 @@ export class PluginHost {
         manifest,
         permissions: sets.get(name) as PermissionSet,
         configHash: deploymentConfigHash(schema, config),
+        config,
         provided: ctx.provided,
         routes: ctx.routes,
         tools: ctx.registeredTools,
@@ -540,6 +543,14 @@ export class PluginHost {
       }
     }
     return out;
+  }
+
+  /**
+   * 已加载插件的部署配置（已按清单 schema 校验，含密钥），供内核调用该插件的能力时作为 `config` 传回
+   * （如 `identity-source@1` 的登录配置）；未加载返回 undefined。不得回显到响应或日志。
+   */
+  deploymentConfig(plugin: string): unknown {
+    return this.loaded.find((l) => l.manifest.name === plugin)?.config;
   }
 
   /** 本次未加载、等待批准权限的插件（含因 `requires` 只能由它们满足而未加载的插件），按依赖拓扑序。 */

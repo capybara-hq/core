@@ -19,8 +19,13 @@ import { createDb } from "./db/pool.js";
 import { ApiModule } from "./http/api.module.js";
 import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
 import { AccountsService } from "./identity/accounts.js";
+import { IdentityBinding } from "./identity/binding.js";
+import { ExternalIdentities } from "./identity/external.js";
+import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
+import { SsoFlow } from "./identity/sso.js";
 import { createLogger, type KernelLogger } from "./log.js";
+import { Offboarding } from "./orgs/offboarding.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
 import { PluginHost } from "./plugins/host.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
@@ -115,6 +120,18 @@ export interface KernelTools {
   readonly appContent: AppContent;
 }
 
+/** 外部身份相关的内核服务（渠道运行时、通讯录同步与 HTTP 共用）。 */
+export interface KernelIdentity {
+  /** 外部身份 ↔ 账号（登录、渠道入站、通讯录共用 `(source, externalId)` 键）。 */
+  readonly external: ExternalIdentities;
+  /** IM 身份的一次性绑定链接。 */
+  readonly binding: IdentityBinding;
+  /** 第三方登录（`identity-source@1`）。 */
+  readonly sso: SsoFlow;
+  /** 成员离职处理（移出、离开、通讯录同步共用）。 */
+  readonly offboarding: Offboarding;
+}
+
 /** 运行中的内核实例。 */
 export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
@@ -128,6 +145,8 @@ export interface Kernel {
   readonly runs: KernelRuns;
   /** 工具注册表与应用凭据。 */
   readonly tools: KernelTools;
+  /** 外部身份、绑定、第三方登录与离职处理。 */
+  readonly identity: KernelIdentity;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -168,6 +187,9 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "log.level": (k, v) => k.log.setLevel(String(v)),
   // 并发上限由运行时在每次取额度时经 `config()` 读取当前值，替换配置即生效，无需额外动作。
   "runtime.orgConcurrency": () => {},
+  // 登录方式与受信任的身份源在每次请求时经 `config()` 读取，替换配置即生效。
+  "auth.loginSources": () => {},
+  "auth.trustedIdentitySources": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
@@ -357,6 +379,25 @@ export async function createKernel(
     maintenance,
     log,
   });
+  const external = new ExternalIdentities(kdb, () => current);
+  const identity: KernelIdentity = {
+    external,
+    binding: new IdentityBinding({ redis, config: () => current, external }),
+    sso: new SsoFlow({ redis, config: () => current, host, external, log }),
+    offboarding: new Offboarding({
+      credentials,
+      approvals,
+      questions,
+      // 只用来写吊销标记（Redis 快速路径）；会话签发仍在 HTTP 层
+      sessions: new SessionService(kdb, redis, keyring, {
+        accessTtlSeconds: config.auth.accessTokenTtlSeconds,
+        refreshTtlDays: config.auth.refreshTokenTtlDays,
+      }),
+      eventLog,
+      resume: (runId, waitId) => waits.resume(runId, waitId),
+      log,
+    }),
+  };
   const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
@@ -439,6 +480,7 @@ export async function createKernel(
         questions,
         drift: toolDrift,
         appContent,
+        identity,
         runs: {
           ensureRun: (id) => runQueue.ensureRun(id),
           abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),
@@ -577,6 +619,7 @@ export async function createKernel(
     bus,
     runs,
     tools,
+    identity,
     log,
     get config() {
       return current;

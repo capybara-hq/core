@@ -50,6 +50,8 @@ export interface MembershipsTable {
   role: "owner" | "admin" | "member" | "guest";
   created_at: Ts;
   updated_at: Ts;
+  /** 0017：成员关系来源；null = 手动 / 邀请，`"directory:<插件名>"` = 通讯录同步加入。 */
+  source: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface InvitationsTable {

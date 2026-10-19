@@ -172,8 +172,36 @@ export const KernelConfigSchema = z.object({
         .min(1)
         .optional()
         .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
+      loginSources: z
+        .array(z.string().min(1).max(214))
+        .max(50)
+        .default([])
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Plugin names (providing identity-source@1) offered as third-party sign-in on the login page, in this order; the sign-in callback URL is <http.publicUrl>/api/v1/auth/sso/<plugin>/callback",
+          }),
+        ),
+      trustedIdentitySources: z
+        .array(z.string().min(1).max(214))
+        .max(50)
+        .default([])
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Plugin names whose external identities are trusted to merge into an existing account: when the identity's email and the account's email are both verified and equal, the identity is linked to that account instead of creating a new one",
+          }),
+        ),
     })
-    .default({ accessTokenTtlSeconds: 900, refreshTokenTtlDays: 30, cookieSecure: true }),
+    .default({
+      accessTokenTtlSeconds: 900,
+      refreshTokenTtlDays: 30,
+      cookieSecure: true,
+      loginSources: [],
+      trustedIdentitySources: [],
+    }),
   runtime: z
     .object({
       maxSteps: z

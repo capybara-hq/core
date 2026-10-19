@@ -27,6 +27,7 @@ const EXPECTED: Record<OrgAction, OrgRole[]> = {
   "org.transfer": [O],
   "agents.create": [M, A, O],
   "agents.use": [G, M, A, O],
+  "agents.manage": [A, O],
   "apps.manage": [A, O],
   "apps.use": [G, M, A, O],
   "approvals.decide": [G, M, A, O],
@@ -43,7 +44,7 @@ describe("roles", () => {
     expect(roleAtLeast("guest", "member")).toBe(false);
   });
 
-  it("ACTION_MIN_ROLE 覆盖全部 14 个动作", () => {
+  it("ACTION_MIN_ROLE 覆盖全部 15 个动作", () => {
     expect(Object.keys(ACTION_MIN_ROLE).sort()).toEqual(Object.keys(EXPECTED).sort());
   });
 
@@ -52,8 +53,8 @@ describe("roles", () => {
       (action) => [role, action, EXPECTED[action].includes(role)] as const,
     ),
   );
-  it("真值表共 4×14 = 56 个组合", () => {
-    expect(cases.length).toBe(56);
+  it("真值表共 4×15 = 60 个组合", () => {
+    expect(cases.length).toBe(60);
   });
   it.each(cases)("can(%s, %s) = %s", (role, action, allowed) => {
     expect(can(role, action)).toBe(allowed);

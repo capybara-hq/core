@@ -20,6 +20,7 @@ export type OrgAction =
   | "org.plugins.manage"
   | "agents.create"
   | "agents.use"
+  | "agents.manage"
   | "apps.manage"
   | "apps.use"
   | "approvals.decide";
@@ -37,6 +38,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "org.transfer": "owner",
   "agents.create": "member",
   "agents.use": "guest",
+  // 管理他人的 agent（如离职后重新指派负责人）
+  "agents.manage": "admin",
   // 安装 / 配置应用与审阅工具
   "apps.manage": "admin",
   // 读取本人可见的应用、连接自己的凭据（凭据属于具体的人，服务令牌不可用）

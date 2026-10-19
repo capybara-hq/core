@@ -204,12 +204,17 @@ describe("组织 HTTP", () => {
     expect((await req({ method: "GET", url: `/api/v1/orgs/${id}` })).statusCode).toBe(200);
     const rm = await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${id}/members/${acc.id}` });
     expect(rm.statusCode).toBe(204);
-    expect((await req({ method: "GET", url: "/api/v1/me" })).json()).toMatchObject({
-      currentOrgId: null,
-    });
+    const sessions = await db
+      .selectFrom("sessions")
+      .select(["current_org_id", "revoked_at"])
+      .where("account_id", "=", acc.id)
+      .execute();
+    expect(sessions.map((s) => s.current_org_id)).toEqual([null]);
+    // 移出走离职处理：该账号的会话一并吊销（账号级，按保守处理）
+    expect(sessions[0]?.revoked_at).not.toBeNull();
     const get = await req({ method: "GET", url: `/api/v1/orgs/${id}` });
-    expect(get.statusCode).toBe(404);
-    expect(errCode(get)).toBe("org.not_found");
+    expect(get.statusCode).toBe(401);
+    expect(errCode(get)).toBe("auth.session_revoked");
   });
 
   it("current-org 与并发移出成员 50 轮：会话的 current_org_id 不指向已移出的组织", async () => {
@@ -231,16 +236,18 @@ describe("组织 HTTP", () => {
           .where("account_id", "=", acc.id)
           .execute();
         await members.add(id, acc.id, "member", owner.id);
+        // 移出会吊销该账号的会话（离职处理）；每轮复活会话，只考察 current_org_id 的竞态
         await db
           .updateTable("sessions")
-          .set({ current_org_id: null })
+          .set({ current_org_id: null, revoked_at: null })
           .where("id", "=", sess.id)
           .execute();
         const [, set] = await Promise.all([
           membersB.remove(id, acc.id, owner.id),
           req({ method: "PUT", url: "/api/v1/me/current-org", payload: { orgId: id } }),
         ]);
-        expect([204, 404]).toContain(set.statusCode);
+        // 204：先切换后移出；404：移出已提交、成员关系不在；401：移出已提交、会话已吊销
+        expect([204, 401, 404]).toContain(set.statusCode);
         const row = await db
           .selectFrom("sessions")
           .select("current_org_id")

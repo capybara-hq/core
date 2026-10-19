@@ -24,6 +24,8 @@ export interface AgentView {
   currentVersion: number;
   definition: AgentDefinition;
   memberIds: string[] | null;
+  /** 负责人离职后被转给组织所有者、等待管理员重新指派。 */
+  needsReassignment: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -207,6 +209,7 @@ export class AgentsService {
         "agents.owner_account_id",
         "agents.visibility",
         "agents.current_version",
+        "agents.needs_reassignment",
         "agents.created_at",
         "agents.updated_at",
         "agent_versions.definition",
@@ -235,6 +238,7 @@ export class AgentsService {
             r.visibility === "members"
               ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)
               : null,
+          needsReassignment: r.needs_reassignment,
           createdAt: r.created_at,
           updatedAt: r.updated_at,
         },
@@ -426,6 +430,56 @@ export class AgentsService {
         action: "agent.deleted",
         target: agentId,
       });
+    });
+  }
+
+  /**
+   * 重新指派负责人（`agents.manage`，admin）：在组织行锁内授权；agent 不存在 / 已删除 → `agent.not_found`；
+   * 新负责人不是该组织成员 → `member.not_found`。清除 `needs_reassignment`，审计 `agent.owner_changed`。
+   */
+  async reassignOwner(
+    orgId: string,
+    agentId: string,
+    newOwnerId: string,
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<AgentView> {
+    return this.db.transaction().execute(async (t) => {
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.manage");
+      const agent = await t
+        .selectFrom("agents")
+        .select(["owner_account_id", "needs_reassignment"])
+        .where("id", "=", agentId)
+        .where("org_id", "=", orgId)
+        .where("deleted_at", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!agent) throw notFound();
+      const member = await t
+        .selectFrom("memberships")
+        .select("role")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", newOwnerId)
+        .executeTakeFirst();
+      if (!member) throw new ApiError("member.not_found", "Member not found");
+      await t
+        .updateTable("agents")
+        .set({ owner_account_id: newOwnerId, needs_reassignment: false, updated_at: sql`now()` })
+        .where("id", "=", agentId)
+        .execute();
+      await audit(t, {
+        actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "agent.owner_changed",
+        target: agentId,
+        detail: {
+          from: agent.owner_account_id,
+          to: newOwnerId,
+          neededReassignment: agent.needs_reassignment,
+        },
+      });
+      return this.view(t, agentId);
     });
   }
 

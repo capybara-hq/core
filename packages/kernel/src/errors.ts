@@ -58,6 +58,9 @@ export const ERROR_CODES = {
   "question.already_answered": 409,
   "tool_output.not_found": 404,
   "credential.missing": 409,
+  "identity.taken": 409,
+  "identity.not_found": 404,
+  "bind.invalid": 404,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

@@ -20,6 +20,8 @@ describe("configFields", () => {
     expect(byPath.get("db.url")?.secret).toBe(true);
     expect(byPath.get("masterKeyPrevious")?.secret).toBe(true);
     expect(fields.filter((f) => f.meta?.hot).map((f) => f.path)).toEqual([
+      "auth.loginSources",
+      "auth.trustedIdentitySources",
       "runtime.orgConcurrency",
       "log.level",
     ]);

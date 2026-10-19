@@ -3,6 +3,8 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
+import { clearAccountCredentials } from "../tools/credentials.js";
+import { Offboarding, type OffboardResult } from "./offboarding.js";
 import { lockOrg, lockOrgAndAuthorize } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
 
@@ -20,7 +22,27 @@ export interface Member {
  * 框架无关，由调用方注入 db。
  */
 export class MembersService {
-  constructor(private readonly db: KernelDb) {}
+  private readonly offboarding: Offboarding;
+
+  /**
+   * `offboarding` 缺省时用只依赖 db 的离职处理（不取消审批 / 提问、不写事件，仅供测试与 CLI）；
+   * HTTP 层传入接好审批、提问与事件日志的实例。
+   */
+  constructor(
+    private readonly db: KernelDb,
+    offboarding?: Offboarding,
+  ) {
+    const noWaits = { cancelPendingFor: async () => ({ records: [], seqs: new Map() }) };
+    this.offboarding =
+      offboarding ??
+      new Offboarding({
+        credentials: {
+          clearAccount: (orgId, accountId, t) => clearAccountCredentials(t ?? db, orgId, accountId),
+        },
+        approvals: noWaits,
+        questions: noWaits,
+      });
+  }
 
   async list(orgId: string): Promise<Member[]> {
     const rows = await this.db
@@ -109,14 +131,17 @@ export class MembersService {
     });
   }
 
-  /** 移出成员：权限规则同 changeRole；移除最后一个 owner → `org.last_owner`；同一事务清空其会话的当前组织。 */
+  /**
+   * 移出成员：权限规则同 changeRole（移除 owner 须发起人是 owner）；移除最后一个 owner → `org.last_owner`。
+   * 走离职处理（{@link Offboarding.offboard}，原因 `removed`），与之同一事务；提交后写吊销标记、发布事件。
+   */
   async remove(
     orgId: string,
     targetId: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.db.transaction().execute(async (t) => {
+    const r = await this.db.transaction().execute(async (t) => {
       const { role: actorRole } = await lockOrgAndAuthorize(
         t,
         orgId,
@@ -127,33 +152,40 @@ export class MembersService {
       if (before === "owner" && actorRole !== "owner") {
         throw new ApiError("org.owner_required", "Only an owner can remove an owner");
       }
-      await this.deleteMember(t, orgId, targetId);
+      const actor = { actorAccountId, ...(actorTokenId !== undefined && { actorTokenId }) };
+      const res = await this.offboarding.offboard(t, orgId, targetId, "removed", actor);
       await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
+        ...actor,
         orgId,
         action: "org.member.removed",
         target: targetId,
         detail: { role: before },
       });
+      return res;
     });
+    await this.offboarding.afterCommit(r);
   }
 
-  /** 主动离开；最后一个 owner → `org.last_owner`。 */
+  /** 主动离开：走离职处理（原因 `left`）；最后一个 owner → `org.last_owner`。 */
   async leave(orgId: string, accountId: string, actorTokenId?: string): Promise<void> {
-    await this.db.transaction().execute(async (t) => {
+    const r: OffboardResult = await this.db.transaction().execute(async (t) => {
       await lockOrg(t, orgId);
       const before = await this.requireMember(t, orgId, accountId);
-      await this.deleteMember(t, orgId, accountId);
-      await audit(t, {
+      const actor = {
         actorAccountId: accountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
+      };
+      const res = await this.offboarding.offboard(t, orgId, accountId, "left", actor);
+      await audit(t, {
+        ...actor,
         orgId,
         action: "org.member.left",
         target: accountId,
         detail: { role: before },
       });
+      return res;
     });
+    await this.offboarding.afterCommit(r);
   }
 
   /** 转让所有权：from 必须是 owner（`org.owner_required`）；to 必须是成员（`member.not_found`）；to → owner、from → admin。 */
@@ -213,22 +245,6 @@ export class MembersService {
       .set({ role, updated_at: new Date() })
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
-      .execute();
-  }
-
-  /** 删除成员关系、检查仍有 owner、清空该账号指向此组织的会话当前组织。 */
-  private async deleteMember(t: Trx, orgId: string, accountId: string): Promise<void> {
-    await t
-      .deleteFrom("memberships")
-      .where("org_id", "=", orgId)
-      .where("account_id", "=", accountId)
-      .execute();
-    await this.assertHasOwner(t, orgId);
-    await t
-      .updateTable("sessions")
-      .set({ current_org_id: null })
-      .where("account_id", "=", accountId)
-      .where("current_org_id", "=", orgId)
       .execute();
   }
 
