@@ -16,7 +16,7 @@ import { useState } from "react";
 import { FormError } from "../../../../../components/form-error";
 import { useSettingsNav } from "../../../../../components/settings-nav";
 import { RequireSession } from "../../../../../components/shell/session";
-import { ssoStartUrl } from "../../../../../lib/auth-sources";
+import { listAuthSources, ssoStartUrl } from "../../../../../lib/auth-sources";
 import { navigateBrowser } from "../../../../../lib/browser";
 import {
   type LinkedIdentity,
@@ -30,7 +30,8 @@ import { useLoad } from "../../../../../lib/use-load";
 /**
  * `/[locale]/settings/identities`：本人已绑定的外部身份（IM 账号、第三方登录）（SettingsPage）：列表与解绑。
  * 不属于某个组织，只要已登录。账号没有密码时解绑最后一个登录方式会被拒（`identity.last_login_method`）。
- * 经 IM 绑定链接建立的身份（`linkedVia: "bind"`）标为未验证，行菜单提供「验证」：整页跳到该插件的第三方登录，
+ * 经 IM 绑定链接建立的身份（`linkedVia: "bind"`）标为未验证；该插件是可用的登录方式（`GET /auth/sources`）时
+ * 行菜单提供「验证」：整页跳到该插件的第三方登录，
  * 本人在登录状态下完成一次后身份升级为可登录，回到本页。
  */
 export default function IdentitiesPage() {
@@ -51,6 +52,18 @@ function Identities() {
   const errorMessage = useErrorMessage();
   const nav = useSettingsNav();
   const { state, reload } = useLoad(() => listIdentities().then((r) => r.identities), []);
+  // 「验证」只对可用的登录方式提供（插件在 `auth.loginSources` 中且已加载）；读不到时都不提供
+  const sources = useLoad(
+    () =>
+      listAuthSources()
+        .then((r) => new Set(r.sources.map((x) => x.plugin)))
+        .catch(() => new Set<string>()),
+    [],
+  ).state;
+  const canVerify = (x: LinkedIdentity) =>
+    x.linkedVia === "bind" &&
+    sources.kind === "ready" &&
+    sources.data.has(splitSource(x.source).plugin);
   const [target, setTarget] = useState<LinkedIdentity>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -126,7 +139,7 @@ function Identities() {
           {...(state.kind === "error" ? { error: { code: state.code, onRetry: reload } } : {})}
           empty={{ title: t("empty"), hint: t("emptyHint") }}
           rowMenu={(x) => [
-            ...(x.linkedVia === "bind"
+            ...(canVerify(x)
               ? [
                   {
                     label: t("verify"),

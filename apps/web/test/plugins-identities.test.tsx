@@ -273,7 +273,11 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
     async (locale) => {
       const m = msgs[locale].identities;
       navigateBrowser.mockReset();
-      stubApi({ "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY, BOUND] }) });
+      stubApi({
+        "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY, BOUND] }),
+        "GET /api/v1/auth/sources": () =>
+          json(200, { sources: [{ plugin: "fake-im", label: { zh: "假 IM", en: "Fake IM" } }] }),
+      });
       renderPage(<IdentitiesPage />, { locale });
       const bound = await screen.findByRole("row", { name: /Bound Bob/ });
       expect(within(bound).getByText(m.unverified)).toBeTruthy();
@@ -292,6 +296,20 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
       );
     },
   );
+
+  it("该插件不是可用的登录方式（不在 GET /auth/sources 里）→ 仍标「未验证」，但不提供「验证」", async () => {
+    stubApi({
+      "GET /api/v1/me/identities": () => json(200, { identities: [BOUND] }),
+      "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+    });
+    renderPage(<IdentitiesPage />);
+    const bound = await screen.findByRole("row", { name: /Bound Bob/ });
+    expect(within(bound).getByText(en.identities.unverified)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(bound).getByRole("button", { name: "Row actions" }));
+    expect(await screen.findByRole("menuitem", { name: en.identities.unlink })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: en.identities.verify })).toBeNull();
+  });
 
   it("最后一个登录方式（identity.last_login_method）：对话框里显示原因", async () => {
     stubApi({
