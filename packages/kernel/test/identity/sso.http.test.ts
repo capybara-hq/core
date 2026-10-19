@@ -518,6 +518,35 @@ describe("修复波 W1", () => {
     expect(await me(later.jar)).toBe(bob.account.id);
   });
 
+  it("W2：升级意图在发起时绑定——未登录时发起、回调时才带着本人会话 → 不升级", async () => {
+    const bob = await loggedIn("bob");
+    await bindTo(bob.req, "im-z");
+    // 同一个浏览器：先（未登录）发起，再登录 bob，然后完成回调
+    const jar = cookieJar();
+    const s = await start(jar, "/settings/identities");
+    const login = await asUser(
+      k.http,
+      jar,
+    )({ method: "POST", url: "/api/v1/auth/login", payload: { login: "bob", password: PW } });
+    expect(login.statusCode).toBe(200);
+    const res = await callback(jar, {
+      state: s.state,
+      code: fakeIdpCode({ sub: "im-z", nonce: s.nonce, challenge: s.challenge }),
+    });
+    expect(String(res.headers.location)).toBe(`${PUBLIC}/login?error=sso.identity_not_verified`);
+    expect(await linkedVia("im-z")).toBe("bind");
+  });
+
+  it("W2：GET /me/identities 带 linkedVia（网页据此对 bind 身份显示「验证」）", async () => {
+    const bob = await loggedIn("bob");
+    await bindTo(bob.req, "im-v");
+    const list = await bob.req({ method: "GET", url: "/api/v1/me/identities" });
+    expect(list.statusCode).toBe(200);
+    const ids = (list.json() as { identities: { externalId: string; linkedVia: string | null }[] })
+      .identities;
+    expect(ids.find((i) => i.externalId === "im-v")?.linkedVia).toBe("bind");
+  });
+
   it("Ruling A19：身份源键与租户不一致 → sso.provider_error，不写身份", async () => {
     const r = await sso({ sub: "u-mismatch", source: "fake-idp:t2" });
     expect(r.location).toBe(`${PUBLIC}/login?error=sso.provider_error`);

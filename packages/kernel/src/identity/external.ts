@@ -48,6 +48,11 @@ export interface LinkedIdentity {
   emailVerified: boolean;
   displayName: string | null;
   avatarUrl: string | null;
+  /**
+   * 身份行是怎么建立的（Ruling A18）：`bind` 只能在 IM 里代表本人，要用于第三方登录须本人登录后完成一次该身份的
+   * 第三方登录（网页据此显示「验证」）；null 为 0019 之前的旧行（按 sso 处理）。
+   */
+  linkedVia: "bind" | "sso" | "directory" | "local" | null;
   createdAt: Date;
 }
 
@@ -376,7 +381,15 @@ export class ExternalIdentities {
   async listForAccount(accountId: string): Promise<LinkedIdentity[]> {
     const rows = await this.db
       .selectFrom("identities")
-      .select(["source", "external_id", "email", "email_verified", "profile", "created_at"])
+      .select([
+        "source",
+        "external_id",
+        "email",
+        "email_verified",
+        "profile",
+        "linked_via",
+        "created_at",
+      ])
       .where("account_id", "=", accountId)
       .where("source", "!=", "local")
       .orderBy("created_at")
@@ -392,6 +405,7 @@ export class ExternalIdentities {
         emailVerified: r.email_verified,
         displayName: typeof p.displayName === "string" ? p.displayName : null,
         avatarUrl: typeof p.avatarUrl === "string" ? p.avatarUrl : null,
+        linkedVia: r.linked_via,
         createdAt: r.created_at,
       };
     });

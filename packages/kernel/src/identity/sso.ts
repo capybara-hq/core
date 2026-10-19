@@ -56,6 +56,11 @@ interface StateRecord {
   binding: string;
   /** PKCE verifier（43 字符 base64url）；授权地址上的 challenge 为其 SHA-256。 */
   codeVerifier: string;
+  /**
+   * 发起时已登录的 Web 会话账号（未登录时没有）：回调时会话账号与它相同，才把经 IM 绑定建立的身份升级为 sso
+   * ——升级的意图在发起时就确定，不能由回调时碰巧带着的会话决定。
+   */
+  sessionAccountId?: string;
 }
 
 /** 一个有效的浏览器绑定值（复用请求里已有的，否则新生成）。 */
@@ -133,9 +138,14 @@ export class SsoFlow {
 
   /**
    * 发起登录，返回 302 目标：插件的授权地址；插件未启用、未配置 `http.publicUrl` 或插件出错 → 登录页 `sso.unavailable`。
-   * `binding` 为本浏览器的绑定值（由 controller 写入 Cookie）。
+   * `binding` 为本浏览器的绑定值（由 controller 写入 Cookie）；`sessionAccountId` 为发起请求带着的 Web 会话账号。
    */
-  async start(plugin: string, returnTo: string | undefined, binding: string): Promise<string> {
+  async start(
+    plugin: string,
+    returnTo: string | undefined,
+    binding: string,
+    sessionAccountId?: string,
+  ): Promise<string> {
     const src = this.provider(plugin);
     if (!src || !this.deps.config().http.publicUrl) return this.loginError("sso.unavailable");
     const state = b64url();
@@ -165,6 +175,7 @@ export class SsoFlow {
       returnTo: safeReturnTo(returnTo),
       binding: sha256(binding),
       codeVerifier,
+      ...(sessionAccountId !== undefined && { sessionAccountId }),
     };
     await this.deps.redis.set(stateKey(state), JSON.stringify(rec), "EX", SSO_STATE_TTL_SECONDS);
     return url;
@@ -174,7 +185,7 @@ export class SsoFlow {
    * 处理身份源的回跳。state 先取后删（无论成败都不能再用）；state 属于别的插件 → `sso.state_invalid`；
    * 绑定 Cookie 不符 → `sso.session_mismatch`；身份源报错只映射为原因码；插件交回的身份源键必须由内核推导得出
    * （`${插件名}:${identity.tenantId}`，Ruling A19），否则按 `sso.provider_error` 拒绝。
-   * 身份行经 IM 绑定建立且 `sessionAccountId` 不是其账号 → `sso.identity_not_verified`
+   * 身份行经 IM 绑定建立、且发起与回调时不是同一个已登录的本人账号 → `sso.identity_not_verified`
    * （Ruling A18）。成功则解析到账号（不判断账号状态，由调用方处理）。
    * `sessionAccountId`：回调请求已带着的 Web 会话的账号（未登录时省略）。
    */
@@ -226,6 +237,11 @@ export class SsoFlow {
       });
       return { ok: false, error: "sso.provider_error" };
     }
+    // 升级 bind 身份：发起与回调时是同一个已登录账号才算本人在登录状态下证明了对该身份的控制
+    const provedBy =
+      rec.sessionAccountId !== undefined && rec.sessionAccountId === sessionAccountId
+        ? sessionAccountId
+        : undefined;
     let accountId: string;
     try {
       // 只有登录路径允许按已验证邮箱合并（Ruling A9）
@@ -233,7 +249,7 @@ export class SsoFlow {
         await this.deps.external.resolve(identity, undefined, {
           allowMerge: true,
           linkedVia: "sso",
-          login: sessionAccountId === undefined ? {} : { sessionAccountId },
+          login: provedBy === undefined ? {} : { sessionAccountId: provedBy },
         })
       ).accountId;
     } catch (err) {

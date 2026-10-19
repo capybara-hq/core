@@ -683,7 +683,7 @@ describe("修复波 W1：通讯录排除（Ruling A20）", () => {
     sql`UPDATE capybara.memberships SET source = 'directory:fake-im'
       WHERE org_id = ${f.orgId} AND account_id = ${accountId}`.execute(raw);
 
-  it("移出通讯录加入的成员 → 同一事务写排除（created_by = 发起人）；本人离开同样写；手动成员不写", async () => {
+  it("移出通讯录加入的成员 → 同一事务写排除（created_by = 发起人）；本人离开同样写；没有启用通讯录插件的组织不写", async () => {
     await fromDirectory(f.leaver.id);
     await members.remove(f.orgId, f.leaver.id, f.owner.id);
     await fromDirectory(f.bystander.id);
@@ -695,7 +695,7 @@ describe("修复波 W1：通讯录排除（Ruling A20）", () => {
       ]),
     );
     expect(await exclusions(f.orgId)).toHaveLength(2);
-    // 手动加入的成员（source 为空）被移出：不写排除
+    // 另一个组织没有启用 fake-im（Ruling A24：只为启用的通讯录插件写排除）：移出不写排除
     expect(await exclusions(f.otherOrgId)).toEqual([]);
     await members.remove(f.otherOrgId, f.leaver.id, f.owner.id);
     expect(await exclusions(f.otherOrgId)).toEqual([]);

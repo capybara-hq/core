@@ -75,14 +75,17 @@ export class SsoController {
   async start(
     @Param("plugin") plugin: string,
     @Query("returnTo") returnTo: unknown,
+    @CurrentPrincipal() principal: Principal | undefined,
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const binding = ssoBrowserBinding(req.cookies[SSO_BINDING_COOKIE]);
+    // 发起时的会话账号记进 state：回调时同一账号才升级经 IM 绑定的身份（见 callback）
     const location = await this.flow.start(
       plugin,
       typeof returnTo === "string" ? returnTo : undefined,
       binding,
+      sessionAccount(principal),
     );
     reply.setCookie(SSO_BINDING_COOKIE, binding, {
       path: SSO_COOKIE_PATH,
@@ -98,7 +101,7 @@ export class SsoController {
    * 身份源回跳：核对 state 与绑定 Cookie → 插件换取外部身份 → 解析到账号 → 建会话、写会话 Cookie → 302 回网页
    * （`http.publicUrl` + returnTo）。账号已停用 → 登录页 `auth.account_disabled`，不建会话。
    * 请求已带着 Web 会话时（已登录的用户发起，「登录状态下绑定」），把会话的账号交给 `SsoFlow.callback`：
-   * 经 IM 绑定建立的同一账号的身份由此升级为可登录（Ruling A18）。
+   * 与发起时记下的会话账号相同，经 IM 绑定建立的同一账号的身份才由此升级为可登录（Ruling A18）。
    */
   @Get("sso/:plugin/callback")
   @Public()
@@ -109,13 +112,11 @@ export class SsoController {
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
-    const sessionAccountId =
-      principal?.kind === "user" && principal.via === "session" ? principal.account.id : undefined;
     const r = await this.flow.callback(
       plugin,
       stringQuery(q),
       req.cookies[SSO_BINDING_COOKIE],
-      sessionAccountId,
+      sessionAccount(principal),
     );
     let location: string;
     if (!r.ok) {
@@ -139,6 +140,13 @@ export class SsoController {
  * IM 身份绑定确认（`/api/v1/bind/:token`，需 Web 会话）：GET 查看待绑定的身份，POST 绑到当前账号。
  * 令牌单次有效；身份已绑定他人 → 409 `identity.taken`。
  */
+/** 请求带着的 Web 会话的账号（PAT / 未登录时 undefined）。 */
+function sessionAccount(principal: Principal | undefined): string | undefined {
+  return principal?.kind === "user" && principal.via === "session"
+    ? principal.account.id
+    : undefined;
+}
+
 @Controller("api/v1/bind")
 export class BindController {
   constructor(@Inject(IDENTITY_BINDING) private readonly binding: IdentityBinding) {}
