@@ -417,6 +417,8 @@ export interface ChannelDeliveriesTable {
   target: Json<unknown>;
   last_seq: Int8;
   draft_message_id: string | null;
+  fail_seq: ColumnType<string | null, number | string | null | undefined, number | string | null>;
+  fail_count: Generated<number>;
   updated_at: Ts;
 }
 

@@ -562,20 +562,22 @@ export class ChannelConnections {
       row,
       features: channel.features,
       redact: createRedactor(secretValues(channel.connectionSchema, config), 4),
-      send: (target, message) =>
+      send: (target, message, idempotencyKey) =>
         channel.send({
           config,
           target,
           message,
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
+          ...(idempotencyKey !== undefined && { idempotencyKey }),
         }),
-      update: (target, messageId, message) =>
+      update: (target, messageId, message, idempotencyKey) =>
         channel.update({
           config,
           target,
           message,
           messageId,
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
+          ...(idempotencyKey !== undefined && { idempotencyKey }),
         }),
     };
   }
@@ -595,7 +597,17 @@ export interface ChannelOutboundSession {
   row: ChannelConnectionRow;
   features: Channel["features"];
   redact: (s: string) => string;
-  send(target: ChannelTarget, message: OutboundMessage): Promise<{ messageId: string }>;
+  /** `idempotencyKey` 原样交给插件（见 `ChannelSendArgs.idempotencyKey`）。 */
+  send(
+    target: ChannelTarget,
+    message: OutboundMessage,
+    idempotencyKey?: string,
+  ): Promise<{ messageId: string }>;
   /** 只在 `features.edit` 为 true 时调用。 */
-  update(target: ChannelTarget, messageId: string, message: OutboundMessage): Promise<void>;
+  update(
+    target: ChannelTarget,
+    messageId: string,
+    message: OutboundMessage,
+    idempotencyKey?: string,
+  ): Promise<void>;
 }

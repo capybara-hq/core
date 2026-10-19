@@ -87,6 +87,11 @@ export class EventLog {
     private readonly db: KernelDb,
     private readonly bus: EventBus,
     private readonly log?: Pick<Logger, "warn">,
+    /**
+     * 每次发布「日志已推进」之后调用（同步、不等待）：内核用它给有 IM 投递目标的会话排出站任务。
+     * 钩子自己负责吞掉错误。
+     */
+    private readonly onNotify?: (conversationId: string, toSeq: number) => void,
   ) {}
 
   /**
@@ -114,6 +119,11 @@ export class EventLog {
       await this.bus.publish(conversationTopic(conversationId), msg);
     } catch (err) {
       this.log?.warn("conversation event notify failed", { conversationId, toSeq, err });
+    }
+    try {
+      this.onNotify?.(conversationId, toSeq);
+    } catch (err) {
+      this.log?.warn("conversation event notify hook failed", { conversationId, err });
     }
   }
 

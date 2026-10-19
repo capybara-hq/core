@@ -95,14 +95,15 @@ export const makeChannel = (features: Channel["features"]): Channel => ({
       await new Promise((r) => setTimeout(r, 50));
     }
   },
-  async send({ config, target, message, signal }) {
+  async send({ config, target, message, signal, idempotencyKey }) {
     const c = config as ConnConfig;
-    const res = await post(c, "/send", { appId: c.appId, target, message }, signal);
+    const res = await post(c, "/send", { appId: c.appId, target, message, idempotencyKey }, signal);
     return (await res.json()) as { messageId: string };
   },
-  async update({ config, target, message, messageId, signal }) {
+  async update({ config, target, message, messageId, signal, idempotencyKey }) {
     const c = config as ConnConfig;
-    const res = await post(c, "/update", { appId: c.appId, target, message, messageId }, signal);
+    const body = { appId: c.appId, target, message, messageId, idempotencyKey };
+    const res = await post(c, "/update", body, signal);
     await res.body?.cancel();
   },
 });

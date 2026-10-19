@@ -55,6 +55,8 @@
 | `channels.leaseTtlMs` | `CAPYBARA_CHANNELS__LEASE_TTL_MS` | `number` | `30000` | 否 | 否 | TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long |
 | `channels.scanIntervalMs` | `CAPYBARA_CHANNELS__SCAN_INTERVAL_MS` | `number` | `10000` | 否 | 否 | How often each worker replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds |
 | `channels.retryBaseMs` | `CAPYBARA_CHANNELS__RETRY_BASE_MS` | `number` | `5000` | 否 | 否 | First retry delay after a channel long connection fails, in milliseconds; doubles on each consecutive failure up to 5 minutes |
+| `channels.deliveryConcurrency` | `CAPYBARA_CHANNELS__DELIVERY_CONCURRENCY` | `number` | `100` | 否 | 否 | How many channel outbound delivery jobs one worker replica runs at the same time (each job follows one conversation while its run streams output) |
+| `channels.deliveryIdleMs` | `CAPYBARA_CHANNELS__DELIVERY_IDLE_MS` | `number` | `15000` | 否 | 否 | A channel delivery job that has caught up ends after this many milliseconds without new conversation output; the next event of the conversation starts a new job |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

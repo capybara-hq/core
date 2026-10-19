@@ -6,7 +6,7 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { dm, type FakeIm, group, startFakeIm } from "../helpers/fake-im.js";
+import { dm, type FakeIm, type FakeImSent, group, startFakeIm } from "../helpers/fake-im.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -113,11 +113,20 @@ const threads = async (): Promise<ThreadRow[]> =>
 const userMessages = async (conversationId: string) =>
   (await eventsOf(db, conversationId)).filter((e) => e.type === "user_message");
 
-/** 推送并等到机器人回复第 n 条消息（从 0 计）。 */
-const sentAfter = async (n: number) => {
-  await waitFor(async () => im.sent.length > n, 10_000, `reply #${n}`);
-  return im.sent[n];
-};
+/**
+ * 等到机器人在第 n 条（从 0 计）之后发往 `chatId` 的第一条消息。按 chat 过滤：出站投递会把此前对话的模型回复
+ * 异步投到别的 chat，不能假设下一条就是要等的那条。`pred` 进一步筛选（同一 chat 里也可能有迟到的模型回复）。
+ */
+const sentAfter = async (
+  n: number,
+  chatId: string,
+  pred: (s: FakeImSent) => boolean = () => true,
+) =>
+  waitFor(
+    async () => im.sent.slice(n).find((s) => s.target.chatId === chatId && pred(s)),
+    10_000,
+    `reply to ${chatId}`,
+  );
 
 /** 推送一条消息，等它被处理完：它之后再推一条哨兵（未绑定私聊 → 必回绑定卡片）并等哨兵的回复。 */
 let sentinel = 0;
@@ -137,7 +146,7 @@ describe("渠道入站", () => {
   it("未绑定的私聊 → 回绑定卡片（英文缺省），不建对话", async () => {
     const n = im.sent.length;
     im.push(connId, dm("m-unbound", "u-stranger", "hello"));
-    const s = await sentAfter(n);
+    const s = await sentAfter(n, "dm-u-stranger");
     expect(s?.target).toEqual({ chatId: "dm-u-stranger", chatType: "dm" });
     const card = s?.message.cards?.[0];
     expect(card?.kind).toBe("bind");
@@ -201,7 +210,11 @@ describe("渠道入站", () => {
     const old = (await threads()).find((r) => r.thread_key === "dm:u-owner" && !r.archived_at);
     const n = im.sent.length;
     im.push(connId, dm("m-new", "u-owner", "/new"));
-    const s = await sentAfter(n);
+    const s = await sentAfter(
+      n,
+      "dm-u-owner",
+      (x) => x.message.cards === undefined && x.message.text === "已开始新对话",
+    );
     expect(s?.message.text).toBe("已开始新对话");
     await pushAndSettle(dm("m3", "u-owner", "fresh start"));
     const dmRows = (await threads()).filter((r) => r.thread_key === "dm:u-owner");
@@ -223,7 +236,7 @@ describe("渠道入站", () => {
   it("群里未绑定的人 @ 机器人 → 只回「请私聊绑定」，群里不发卡片、不出现链接", async () => {
     const n = im.sent.length;
     im.push(connId, group("g-unbound", "u-grp-stranger", "@bot hi", { chatId: "grp-2" }));
-    const s = await sentAfter(n);
+    const s = await sentAfter(n, "grp-2");
     expect(s?.target).toEqual({ chatId: "grp-2", chatType: "group", threadId: "g-unbound" });
     expect(s?.message.text).toMatch(/direct message/);
     expect(s?.message.cards ?? []).toEqual([]);
@@ -255,7 +268,7 @@ describe("渠道入站", () => {
   it("已绑定但不是成员（bind 策略）→ 回提示，不借用任何人的身份", async () => {
     const n = im.sent.length;
     im.push(connId, dm("m-out", "u-out", "let me in"));
-    const s = await sentAfter(n);
+    const s = await sentAfter(n, "dm-u-out");
     expect(s?.message.text).toMatch(/not a member/);
     expect(s?.message.cards ?? []).toEqual([]);
     expect((await threads()).filter((r) => r.chat_id === "dm-u-out")).toEqual([]);
@@ -315,7 +328,7 @@ describe("渠道入站", () => {
     expect(priv.statusCode, priv.body).toBe(200);
     const n = im.sent.length;
     im.push(connId, dm("a3", "anon-3", "hi"));
-    const s = await sentAfter(n);
+    const s = await sentAfter(n, "dm-anon-3");
     expect(s?.message.text).toMatch(/anonymous/i);
     expect((await threads()).filter((r) => r.chat_id === "dm-anon-3")).toEqual([]);
     await owner({

@@ -496,13 +496,41 @@ export const KernelConfigSchema = z.object({
               "First retry delay after a channel long connection fails, in milliseconds; doubles on each consecutive failure up to 5 minutes",
           }),
         ),
+      deliveryConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(100)
+        .meta(
+          meta({
+            description:
+              "How many channel outbound delivery jobs one worker replica runs at the same time (each job follows one conversation while its run streams output)",
+          }),
+        ),
+      deliveryIdleMs: z
+        .number()
+        .int()
+        .positive()
+        .default(15000)
+        .meta(
+          meta({
+            description:
+              "A channel delivery job that has caught up ends after this many milliseconds without new conversation output; the next event of the conversation starts a new job",
+          }),
+        ),
     })
     // 续租周期必须明显短于 TTL：至少能在租约过期前续两次，偶尔一次 Redis 抖动不至于丢租约
     .refine((c) => c.scanIntervalMs <= c.leaseTtlMs / 2, {
       message: "channels.scanIntervalMs must be at most half of channels.leaseTtlMs",
       path: ["scanIntervalMs"],
     })
-    .default({ leaseTtlMs: 30000, scanIntervalMs: 10000, retryBaseMs: 5000 }),
+    .default({
+      leaseTtlMs: 30000,
+      scanIntervalMs: 10000,
+      retryBaseMs: 5000,
+      deliveryConcurrency: 100,
+      deliveryIdleMs: 15000,
+    }),
   log: z
     .object({
       level: z

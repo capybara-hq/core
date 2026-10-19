@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS capybara.channel_deliveries (
   target jsonb NOT NULL,
   last_seq bigint NOT NULL DEFAULT 0,
   draft_message_id text,
+  -- 不可重试的发送失败落在哪个事件、连续失败几次（同一事件失败 3 次即跳过，见 channels/outbound.ts）
+  fail_seq bigint,
+  fail_count integer NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS channel_deliveries_connection_idx

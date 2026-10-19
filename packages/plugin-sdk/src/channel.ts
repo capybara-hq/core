@@ -41,6 +41,12 @@ export interface ChannelSendArgs {
   target: ChannelTarget;
   message: OutboundMessage;
   signal: AbortSignal;
+  /**
+   * 幂等键（可选）：内核对同一条逻辑消息的重试（崩溃后其他副本续投、可重试失败后重发）传同一个键——
+   * 普通消息为 `"<会话 id>-<事件 seq>"`，卡片状态更新为每张卡片每个状态一个固定键。平台支持幂等发送
+   * （如飞书的 `uuid`）时插件应透传它，以免重复消息；不支持的平台忽略即可。
+   */
+  idempotencyKey?: string;
 }
 
 /** 渠道实现（bot 用渠道连接配置）。 */

@@ -1,4 +1,4 @@
-import type { ChannelCard, InboundEvent } from "@capybara-hq/plugin-sdk";
+import type { ChannelCard, ChannelTarget, InboundEvent } from "@capybara-hq/plugin-sdk";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
@@ -7,6 +7,7 @@ import type { QuestionsService } from "../tools/questions.service.js";
 import type { ChannelConnectionRow, ChannelConnections } from "./connections.service.js";
 import type { ChannelOutboundScheduler } from "./inbound.js";
 import { type ChannelLocale, type ChannelPhrase, phrase } from "./phrases.js";
+import { findThread, threadKeyOf } from "./threads.js";
 
 type CardActionEvent = Extract<InboundEvent, { type: "card_action" }>;
 
@@ -63,12 +64,39 @@ export class ChannelCardActions {
     const who = await this.deps.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
     if (who === undefined) return;
     const a = e.action;
+    // Ruling A13：卡片必须是本连接发在这个 chat 里的（防止伪造卡片 id 去处理别处的请求）
+    const card = await this.deps.db
+      .selectFrom("channel_card_messages")
+      .select(["conversation_id", "target"])
+      .where("connection_id", "=", connectionId)
+      .where("card_kind", "=", a.cardKind)
+      .where("card_id", "=", a.cardId)
+      .executeTakeFirst();
+    if (!card || (card.target as ChannelTarget).chatId !== e.target.chatId) {
+      await reply("cannotHandle");
+      return;
+    }
+    // 匿名访客共用一个账号：只能处理自己话题里的卡片，且不能留下「本会话 / 以后都允许」的授权
+    const anonymous = who.threadAccount === null;
+    if (anonymous) {
+      const own = await findThread(this.deps.db, {
+        connectionId,
+        chatId: e.target.chatId,
+        threadKey: threadKeyOf(e.target, e.sender.externalId, e.messageId),
+        accountId: null,
+      });
+      if (own !== card.conversation_id) {
+        await reply("cannotHandle");
+        return;
+      }
+    }
     let conversationId: string;
     try {
       if (a.cardKind === "approval" && (a.action === "approve" || a.action === "deny")) {
+        const scope = anonymous ? "once" : a.scope;
         const r = await this.deps.approvals.decide(row.orgId, a.cardId, who.accountId, {
           decision: a.action,
-          ...(a.scope !== undefined && { scope: a.scope }),
+          ...(scope !== undefined && { scope }),
         });
         conversationId = r.conversationId;
       } else if (a.cardKind === "question" && a.action === "answer") {

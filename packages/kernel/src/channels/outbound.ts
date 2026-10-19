@@ -9,6 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
+import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import {
   type ConversationBusMessage,
@@ -43,17 +44,19 @@ export const DELIVER_JOB = "deliver";
 /** 投递任务 id（不含 `:`）：同一会话、同一日志位置只排一个任务。 */
 export const deliverJobId = (conversationId: string, seq: number) =>
   `deliver-${conversationId}-${seq}`;
-/** 按会话互斥的投递锁（Redis 键前缀；值为任务实例 token，TTL = `runtime.jobLockMs`）。 */
+/** 按会话互斥的投递锁（Redis 键前缀；值为 `<job id>.<随机>`，TTL = `runtime.jobLockMs`）。 */
 export const DELIVER_LOCK_PREFIX = "capk:channel-deliver:";
 
 /** 草稿更新的最小间隔（毫秒）。 */
 export const DRAFT_INTERVAL_MS = 1000;
 /** 没有新消息时多久复核一次（是否该结束、是否有待刷新的草稿）。 */
 const IDLE_POLL_MS = 500;
-/** 投递锁被他人持有时，任务推迟多久再试。 */
+/** 投递锁丢失 / 被自己上一次（已崩溃的）尝试占着时，任务推迟多久再试。 */
 const LOCK_BUSY_DELAY_MS = 1000;
 /** 可重试失败（限流、5xx、网络、超时）的总尝试次数。 */
 export const DELIVER_ATTEMPTS = 8;
+/** 同一事件不可重试地失败这么多次后跳过它（Ruling A14）。 */
+export const POISON_FAILURES = 3;
 /** 退避：未给出建议等待时长时 `min(上限, 基数 · 2^(n-1))`。 */
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 60_000;
@@ -61,8 +64,6 @@ const BACKOFF_MAX_MS = 60_000;
 const PAGE = 200;
 /** `last_error` 的最大长度（同渠道选主）。 */
 const MAX_ERROR_CHARS = 1000;
-/** 同时处理的投递任务数（任务大部分时间在等事件）。 */
-const CONCURRENCY = 20;
 
 interface DeliverJobData {
   conversationId: string;
@@ -80,7 +81,7 @@ class RetryableDeliveryError extends Error {
   }
 }
 
-/** 投递进度被别人推进了（投递锁丢失后另一实例接手）：本实例立刻停止。 */
+/** 投递进度被别人推进了（投递锁丢失后另一实例接手）：本实例立刻停止并交还任务。 */
 class DeliveryLostError extends Error {
   override name = "DeliveryLostError";
 }
@@ -117,10 +118,14 @@ export interface ChannelOutboundDeps {
 
 /**
  * 渠道出站投递：把会话日志里 `channel_deliveries.last_seq` 之后的内容按序投到 IM。
- * - 生产方（任意角色）：`enqueue(conversationId)` 投递 `deliver-<会话>-<当前 seq>` 任务（会话没有投递目标时什么都不做）；
- * - Worker（只在 worker 角色）：每个任务先取按会话互斥的投递锁（被占则推迟重试），订阅 `conv.<id>` 后补读日志，
- *   直到运行进入 waiting / 终态且日志读完才结束。崩溃后 BullMQ stalled 机制把任务交给其他副本，从 `last_seq` 续投；
- *   每投递一个事件就在同一事务里推进 `last_seq` 并记下 IM 消息 id（草稿 id、卡片消息 id），已投递的不会重发。
+ * - 生产方（任意角色）：`enqueue(conversationId)` 投递 `deliver-<会话>-<当前 seq>` 任务（会话没有投递目标时什么都不做）。
+ *   内核在会话每次追加事件后都调用它（事件日志的 notify 钩子），运行开始时也调用。
+ * - Worker（只在 worker 角色）：每个任务先取按会话互斥的投递锁，订阅 `conv.<id>` 后补读日志；运行进入 waiting /
+ *   终态且日志读完，或追上后 `channels.deliveryIdleMs` 内没有新的总线消息，任务就结束（不长期占并发槽）。
+ *   锁被别的任务持有 → 本任务直接结束：持有者会读到新事件，且它结束时（释放锁之后）复核日志是否有新内容，有就再排一个任务；
+ *   锁被自己上一次（已崩溃的）尝试占着 → 推迟重试，等锁过期。
+ *   崩溃后 BullMQ stalled 机制把任务交给其他副本，从 `last_seq` 续投；每投递一个事件就在同一事务里推进 `last_seq`
+ *   并记下 IM 消息 id（草稿 id、卡片消息 id），已投递的不会重发。
  * 状态全部在 PG / Redis；进程内只有本任务自己的订阅、草稿节流时刻与等待定时器（本进程持有的资源）。
  */
 export class ChannelOutbound implements ChannelOutboundScheduler {
@@ -137,15 +142,16 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     this.lock = new ConversationLock(d.redis, d.log, DELIVER_LOCK_PREFIX);
   }
 
-  /** 会话有 IM 投递目标时投递一个出站任务（同一日志位置重复调用只排一个）。 */
+  /** 会话有 IM 投递目标时投递一个出站任务（同一日志位置重复调用只排一个）；已关闭时什么都不做。 */
   async enqueue(conversationId: string): Promise<void> {
+    if (this.closed) return;
     const row = await this.d.db
       .selectFrom("channel_deliveries")
       .innerJoin("conversations", "conversations.id", "channel_deliveries.conversation_id")
       .select("conversations.last_seq")
       .where("channel_deliveries.conversation_id", "=", conversationId)
       .executeTakeFirst();
-    if (!row) return;
+    if (!row || this.closed) return;
     await this.getQueue().add(
       DELIVER_JOB,
       { conversationId },
@@ -169,7 +175,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       (job, token) => this.process(job, token),
       {
         connection: this.workerConn,
-        concurrency: CONCURRENCY,
+        concurrency: this.d.config().channels.deliveryConcurrency,
         lockDuration: jobLockMs,
         stalledInterval: stalledIntervalMs,
         maxStalledCount: 3,
@@ -217,12 +223,19 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
   private async process(job: Job<DeliverJobData>, token: string | undefined): Promise<void> {
     const { conversationId } = job.data;
     if (this.stopping.signal.aborted) return this.requeue(job, token, 0);
+    const owner = `${job.id ?? "job"}.`;
     const lease = await this.lock.acquire(
       conversationId,
-      `${job.id ?? "job"}.${randomUUID()}`,
+      `${owner}${randomUUID()}`,
       this.d.config().runtime.jobLockMs,
     );
-    if (!lease) return this.requeue(job, token, LOCK_BUSY_DELAY_MS);
+    if (!lease) {
+      // 自己上一次尝试（已崩溃、被 stalled 机制重新投递）留下的锁：等它过期
+      const holder = await this.lock.holder(conversationId);
+      if (holder?.startsWith(owner)) return this.requeue(job, token, LOCK_BUSY_DELAY_MS);
+      // 另一个活着的任务在投递：它会读到新事件，结束时还会复核一次
+      return;
+    }
     let outcome: DeliveryOutcome;
     try {
       outcome = await new Delivery(this.d, conversationId, lease, this.stopping.signal).run();
@@ -239,14 +252,36 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
           this.d.log.warn("cannot release channel delivery lock", { conversationId, err }),
         );
     }
-    if (outcome.kind === "shutdown") return this.requeue(job, token, 0);
-    if (outcome.kind === "failed") await this.recordError(outcome.connectionId, outcome.message);
+    if (outcome.error) await this.recordError(outcome.error.connectionId, outcome.error.message);
+    switch (outcome.kind) {
+      case "shutdown":
+        return this.requeue(job, token, 0);
+      case "lost":
+        // 锁丢失 / 进度被别人推进：交还任务稍后再试（不当作完成，以免最后一段输出无人投递）
+        return this.requeue(job, token, LOCK_BUSY_DELAY_MS);
+      case "done":
+        // 释放锁之后再复核：期间到达、因锁被占而直接结束的任务的事件由这里补上
+        if (outcome.seen !== undefined) await this.followUp(conversationId, outcome.seen);
+        return;
+      case "stopped":
+        return;
+    }
   }
 
-  /** 不可重试（或重试用尽）的发送失败：记连接 `last_error`（已打码），本会话本轮投递停止。 */
+  /** 日志比本任务处理到的更新时再排一个任务。 */
+  private async followUp(conversationId: string, seen: number): Promise<void> {
+    const conv = await this.d.db
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", conversationId)
+      .executeTakeFirst();
+    if (conv && Number(conv.last_seq) > seen) await this.enqueue(conversationId);
+  }
+
+  /** 不可重试（或重试用尽）的发送失败：记连接 `last_error`（已打码）。 */
   private async recordError(connectionId: string, message: string): Promise<void> {
     const text = `delivery failed: ${message}`.slice(0, MAX_ERROR_CHARS);
-    this.d.log.warn("channel delivery stopped", { connectionId, error: text });
+    this.d.log.warn("channel delivery failed", { connectionId, error: text });
     await this.d.db
       .updateTable("channel_connections")
       .set({ last_error: text })
@@ -256,10 +291,17 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
   }
 }
 
-type DeliveryOutcome =
-  | { kind: "done" }
+/**
+ * 一次任务的结果：`done` 正常结束（`seen` 为处理到的 seq，供结束后复核；没有可投递的地方时不带）；
+ * `stopped` 不可重试失败、本会话本轮停止（不复核，否则会立刻重试同一个事件）；`lost` 锁丢失；`shutdown` 停机。
+ * `error` 需要记到连接 `last_error` 的失败说明。
+ */
+type DeliveryOutcome = (
+  | { kind: "done"; seen?: number }
+  | { kind: "stopped" }
+  | { kind: "lost" }
   | { kind: "shutdown" }
-  | { kind: "failed"; connectionId: string; message: string };
+) & { error?: { connectionId: string; message: string } };
 
 /** 一个步骤正在流式输出的文本（只在从头收到时才发草稿）。 */
 interface StreamingText {
@@ -273,16 +315,20 @@ interface StreamingText {
 class Delivery {
   private readonly inbox: ConversationBusMessage[] = [];
   private wake: (() => void) | undefined;
-  private session!: ChannelOutboundSession;
+  private session: ChannelOutboundSession | undefined;
   private target!: ChannelTarget;
   private locale: ChannelLocale = "en";
   private base: string | undefined;
   /** 已处理到的事件 seq（内存）与已写入 PG 的 seq。 */
   private seen = 0;
   private persisted = 0;
+  /** 正在投递的事件（不可重试失败按它计数）。 */
+  private handling: number | undefined;
   /** 当前草稿消息 id（PG 里的 `draft_message_id`）与它所属的步骤（从 PG 读出的草稿不知道步骤）。 */
   private draftId: string | null = null;
   private draftKey: string | undefined;
+  /** 草稿当前显示的文本（从 PG 读出的草稿不知道）。 */
+  private draftText: string | undefined;
   private lastDraftAt = 0;
   private streaming: StreamingText | undefined;
   private dirty = false;
@@ -295,6 +341,15 @@ class Delivery {
     private readonly lease: Lease,
     private readonly stopping: AbortSignal,
   ) {}
+
+  private get s(): ChannelOutboundSession {
+    return this.session as ChannelOutboundSession;
+  }
+
+  /** 普通消息的幂等键（Ruling A15）。 */
+  private key(seq: number, suffix = ""): string {
+    return `${this.conversationId}-${seq}${suffix}`;
+  }
 
   async run(): Promise<DeliveryOutcome> {
     const row = await this.d.db
@@ -323,22 +378,22 @@ class Delivery {
         }
         throw err;
       }
-      if (this.session.row.status !== "active") return { kind: "done" };
+      if (this.s.row.status !== "active") return { kind: "done" };
       this.target = row.target as ChannelTarget;
       this.seen = Number(row.last_seq);
       this.persisted = this.seen;
       this.draftId = row.draft_message_id;
-      this.locale = (await readOrgSettings(this.d.db, this.session.row.orgId)).locale;
+      this.locale = (await readOrgSettings(this.d.db, this.s.row.orgId)).locale;
       this.base = webBase(this.d.config().http.publicUrl);
       return await this.loop();
     } catch (err) {
-      if (err instanceof DeliveryLostError) return { kind: "done" };
+      if (err instanceof DeliveryLostError) return { kind: "lost" };
       if (isChannelSendError(err) && !err.retryable) {
-        return {
-          kind: "failed",
-          connectionId: row.connection_id,
-          message: this.redact(errMsg(err)),
-        };
+        const error = { connectionId: row.connection_id, message: this.redact(errMsg(err)) };
+        if (this.handling !== undefined && (await this.countFailure(this.handling))) {
+          return { kind: "done", seen: this.seen, error };
+        }
+        return { kind: "stopped", error };
       }
       if (this.session === undefined) throw err;
       throw new RetryableDeliveryError(
@@ -357,17 +412,49 @@ class Delivery {
     return this.session ? this.session.redact(s) : s;
   }
 
+  /**
+   * 记一次不可重试的失败（按事件 seq 计数，Ruling A14）。同一事件失败满 {@link POISON_FAILURES} 次：
+   * 跳过它（推进 `last_seq` 越过它、清掉草稿），尽力发一句「请到网页上查看」，返回 true。
+   */
+  private async countFailure(seq: number): Promise<boolean> {
+    const r = await this.d.db
+      .updateTable("channel_deliveries")
+      .set({
+        fail_count: sql<number>`CASE WHEN fail_seq = ${seq} THEN fail_count + 1 ELSE 1 END`,
+        fail_seq: seq,
+      })
+      .where("conversation_id", "=", this.conversationId)
+      .where("last_seq", "=", String(this.persisted))
+      .returning("fail_count")
+      .executeTakeFirst();
+    if (!r || r.fail_count < POISON_FAILURES) return false;
+    this.d.log.warn("channel delivery skipped an event that keeps failing", {
+      conversationId: this.conversationId,
+      seq,
+    });
+    try {
+      await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq, "-skipped"));
+    } catch (err) {
+      this.d.log.warn("cannot send channel skip notice", { err: errMsg(err) });
+    }
+    await this.advance(seq, { draft: null });
+    this.seen = seq;
+    return true;
+  }
+
   private async loop(): Promise<DeliveryOutcome> {
+    const idleMs = this.d.config().channels.deliveryIdleMs;
+    let lastMessageAt = Date.now();
     let needCatchUp = true;
     for (;;) {
-      if (this.lease.lost) return { kind: "done" };
+      if (this.lease.lost) return { kind: "lost" };
       if (this.stopping.aborted) return { kind: "shutdown" };
       if (needCatchUp) {
         await this.catchUp();
         needCatchUp = false;
       }
       while (this.inbox.length > 0) {
-        if (this.lease.lost) return { kind: "done" };
+        if (this.lease.lost) return { kind: "lost" };
         const m = this.inbox.shift() as ConversationBusMessage;
         if (m.kind === "events") {
           if (m.toSeq > this.seen) await this.catchUp();
@@ -376,13 +463,18 @@ class Delivery {
         }
       }
       await this.flushDraft();
-      const woke = await this.waitWake(IDLE_POLL_MS);
-      if (woke) continue;
+      if (await this.waitWake(IDLE_POLL_MS)) {
+        lastMessageAt = Date.now();
+        continue;
+      }
       needCatchUp = true;
-      if (await this.idle()) {
+      const quiet = Date.now() - lastMessageAt >= idleMs;
+      if (quiet || (await this.idle())) {
         await this.catchUp();
         needCatchUp = false;
-        if (this.inbox.length === 0 && (await this.idle())) return { kind: "done" };
+        if (this.inbox.length > 0) continue;
+        // 运行进入 waiting / 终态且读完；或已追上、长时间没有新输出（之后的事件会排新任务）
+        if (quiet || (await this.idle())) return { kind: "done", seen: this.seen };
       }
     }
   }
@@ -427,7 +519,9 @@ class Delivery {
       for (const e of evs) {
         if (e.seq <= this.seen) continue;
         if (this.lease.lost) throw new DeliveryLostError();
+        this.handling = e.seq;
         await this.handle(e);
+        this.handling = undefined;
         this.seen = e.seq;
       }
       if (evs.length < PAGE) break;
@@ -436,7 +530,7 @@ class Delivery {
   }
 
   /**
-   * 推进 `last_seq`（同一事务记下草稿 / 卡片消息 id）。以「仍是我上次写入的值」为条件：
+   * 推进 `last_seq`（同一事务记下草稿 / 卡片消息 id，清零失败计数）。以「仍是我上次写入的值」为条件：
    * 被别人推进过（投递锁丢失后另一实例接手）就停止，不再重复发送。
    */
   private async advance(
@@ -451,6 +545,8 @@ class Delivery {
         .updateTable("channel_deliveries")
         .set({
           last_seq: String(seq),
+          fail_seq: null,
+          fail_count: 0,
           ...(opts.draft !== undefined && { draft_message_id: opts.draft }),
           updated_at: new Date(),
         })
@@ -459,21 +555,21 @@ class Delivery {
         .executeTakeFirst();
       if (r.numUpdatedRows === 0n) throw new DeliveryLostError();
       if (opts.card) {
+        const messageId = opts.card.messageId;
         await t
           .insertInto("channel_card_messages")
           .values({
             conversation_id: this.conversationId,
-            connection_id: this.session.row.id,
+            connection_id: this.s.row.id,
             card_kind: opts.card.kind,
             card_id: opts.card.id,
-            message_id: opts.card.messageId,
+            message_id: messageId,
             target: JSON.stringify(this.target),
           })
           .onConflict((oc) =>
-            oc.columns(["conversation_id", "connection_id", "card_kind", "card_id"]).doUpdateSet({
-              message_id: opts.card?.messageId as string,
-              target: JSON.stringify(this.target),
-            }),
+            oc
+              .columns(["conversation_id", "connection_id", "card_kind", "card_id"])
+              .doUpdateSet({ message_id: messageId, target: JSON.stringify(this.target) }),
           )
           .execute();
       }
@@ -481,12 +577,15 @@ class Delivery {
     this.persisted = seq;
     if (opts.draft !== undefined) {
       this.draftId = opts.draft;
-      if (opts.draft === null) this.draftKey = undefined;
+      if (opts.draft === null) {
+        this.draftKey = undefined;
+        this.draftText = undefined;
+      }
     }
   }
 
-  private send(message: OutboundMessage): Promise<{ messageId: string }> {
-    return this.session.send(this.target, message);
+  private send(message: OutboundMessage, idempotencyKey: string): Promise<{ messageId: string }> {
+    return this.s.send(this.target, message, idempotencyKey);
   }
 
   private async handle(e: ConversationEvent): Promise<void> {
@@ -495,17 +594,23 @@ class Delivery {
         return this.finalize(e.runId, e.payload.step, e.payload.content, e.seq);
       case "approval_requested": {
         if (this.base === undefined) {
-          await this.send({ text: phrase("handleOnWeb", this.locale) });
+          await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(e.seq));
           return this.advance(e.seq);
         }
-        const card = await approvalCard(this.d, e.payload.approvalId, this.base, this.locale);
+        const card = await approvalCard(
+          this.d,
+          e.payload.approvalId,
+          this.base,
+          this.locale,
+          this.s.redact,
+        );
         if (!card) return;
-        const { messageId } = await this.send(cardMessage(card.title, card));
+        const { messageId } = await this.send(cardMessage(card.title, card), this.key(e.seq));
         return this.advance(e.seq, { card: { kind: "approval", id: card.id, messageId } });
       }
       case "question_asked": {
         if (this.base === undefined) {
-          await this.send({ text: phrase("handleOnWeb", this.locale) });
+          await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(e.seq));
           return this.advance(e.seq);
         }
         const card = questionCard(
@@ -516,6 +621,7 @@ class Delivery {
         );
         const { messageId } = await this.send(
           cardMessage(phrase("questionTitle", this.locale), card),
+          this.key(e.seq),
         );
         return this.advance(e.seq, { card: { kind: "question", id: card.id, messageId } });
       }
@@ -529,15 +635,26 @@ class Delivery {
                 appName: e.payload.appName,
                 url: connectUrl(this.base, e.payload.appId),
               }),
+          this.key(e.seq),
         );
         return this.advance(e.seq);
       }
       case "approval_decided": {
         const at = await this.cardMessageOf("approval", e.payload.approvalId);
         if (!at || this.base === undefined) return;
-        const card = await approvalCard(this.d, e.payload.approvalId, this.base, this.locale);
+        const card = await approvalCard(
+          this.d,
+          e.payload.approvalId,
+          this.base,
+          this.locale,
+          this.s.redact,
+        );
         if (!card) return;
-        await this.replaceCard(at, cardMessage(card.title, card));
+        await this.replaceCard(
+          at,
+          cardMessage(card.title, card),
+          `${this.conversationId}-approval-${card.id}-${card.state}`,
+        );
         return this.advance(e.seq);
       }
       case "question_answered": {
@@ -554,15 +671,42 @@ class Delivery {
           conversationUrl(this.base, this.conversationId),
           e.payload.answer as FormAnswer | null,
         );
-        await this.replaceCard(at, cardMessage(phrase("questionTitle", this.locale), card));
+        await this.replaceCard(
+          at,
+          cardMessage(phrase("questionTitle", this.locale), card),
+          `${this.conversationId}-question-${card.id}-${card.state}`,
+        );
         return this.advance(e.seq);
       }
       case "run_failed":
-        await this.send({ text: phrase("runFailed", this.locale) });
+        // 有草稿：收尾为「已有文本 + 失败说明」；没有草稿：单发一句
+        if (await this.closeDraft(e.seq)) return;
+        await this.send({ text: phrase("runFailed", this.locale) }, this.key(e.seq));
         return this.advance(e.seq);
+      case "run_finished":
+      case "run_aborted":
+        // 运行结束时还挂着的草稿（没有等到定稿）：收尾，避免下一次回复去编辑它
+        await this.closeDraft(e.seq);
+        return;
       default:
         return;
     }
+  }
+
+  /**
+   * 收尾挂着的草稿：改成「已有文本 + 失败说明」（不知道已有文本时只放说明），清掉草稿 id。没有草稿返回 false。
+   */
+  private async closeDraft(seq: number): Promise<boolean> {
+    if (this.draftId === null) return false;
+    this.streaming = undefined;
+    this.dirty = false;
+    if (this.s.features.edit) {
+      const marker = phrase("runFailed", this.locale);
+      const prior = this.draftText?.trim() ? `${this.draftText}\n\n` : "";
+      await this.s.update(this.target, this.draftId, { text: `${prior}${marker}` }, this.key(seq));
+    }
+    await this.advance(seq, { draft: null });
+    return true;
   }
 
   /** 已发出的卡片消息；不是本连接发的（或在投递目标建立之前）返回 undefined。 */
@@ -574,20 +718,27 @@ class Delivery {
       .selectFrom("channel_card_messages")
       .select(["message_id", "target"])
       .where("conversation_id", "=", this.conversationId)
-      .where("connection_id", "=", this.session.row.id)
+      .where("connection_id", "=", this.s.row.id)
       .where("card_kind", "=", kind)
       .where("card_id", "=", id)
       .executeTakeFirst();
     return r && { messageId: r.message_id, target: r.target as ChannelTarget };
   }
 
-  /** 更新卡片状态；不能编辑的渠道另发一条带新状态的卡片。 */
+  /**
+   * 更新卡片状态。不能编辑已发消息的渠道（`features.edit` 为 false）另发一条带新状态的卡片——
+   * 旧卡片上的按钮仍然在，之后再点由 `decide` / `answer` 回「已处理」，不会重复生效。
+   */
   private async replaceCard(
     at: { messageId: string; target: ChannelTarget },
     message: OutboundMessage,
+    idempotencyKey: string,
   ): Promise<void> {
-    if (this.session.features.edit) await this.session.update(at.target, at.messageId, message);
-    else await this.session.send(at.target, message);
+    if (this.s.features.edit) {
+      await this.s.update(at.target, at.messageId, message, idempotencyKey);
+    } else {
+      await this.s.send(at.target, message, idempotencyKey);
+    }
   }
 
   /** `assistant_message`：以完整文本定稿（更新草稿或新发）；不发送 thinking。 */
@@ -609,20 +760,21 @@ class Delivery {
       .join("");
     const useDraft =
       this.draftId !== null &&
-      this.session.features.edit &&
+      this.s.features.edit &&
       (this.draftKey === undefined || this.draftKey === key);
     if (text.trim() === "") {
-      if (useDraft) await this.advance(seq, { draft: null });
+      // 草稿已发出、定稿却没有文本（如重试后不再输出文本）：收尾草稿消息本身，而不只是清掉 id
+      if (useDraft) await this.closeDraft(seq);
       return;
     }
-    if (useDraft) await this.session.update(this.target, this.draftId as string, { text });
-    else await this.send({ text });
+    if (useDraft) await this.s.update(this.target, this.draftId as string, { text }, this.key(seq));
+    else await this.send({ text }, this.key(seq));
     await this.advance(seq, { draft: null });
   }
 
   /** 流式增量：只累积本步从头收到的文本（`offset` 对得上），增量本身不进日志、不推进进度。 */
   private onDelta(m: Extract<ConversationBusMessage, { kind: "delta" }>): void {
-    if (!this.session.features.edit) return;
+    if (!this.s.features.edit) return;
     const key = `${m.runId}:${m.step}`;
     if (this.finalized.has(key)) return;
     if (m.delta === "step_reset") {
@@ -631,13 +783,13 @@ class Delivery {
       return;
     }
     if (m.delta !== "text" || m.text === undefined) return;
-    const s = this.streaming?.key === key ? this.streaming : undefined;
+    const cur = this.streaming?.key === key ? this.streaming : undefined;
     if (m.offset === 0) {
       this.streaming = { key, text: m.text, complete: true };
-    } else if (s?.complete && m.offset === s.text.length) {
-      s.text += m.text;
+    } else if (cur?.complete && m.offset === cur.text.length) {
+      cur.text += m.text;
     } else {
-      this.streaming = { key, text: s?.text ?? "", complete: false };
+      this.streaming = { key, text: cur?.text ?? "", complete: false };
       return;
     }
     this.dirty = true;
@@ -645,12 +797,15 @@ class Delivery {
 
   /** 首次有文本时发草稿（先把消息 id 写进 PG 再继续），之后至多每秒更新一次。 */
   private async flushDraft(): Promise<void> {
-    const s = this.streaming;
-    if (!s?.complete || !this.dirty || s.text.trim() === "") return;
-    if (this.draftId !== null && this.draftKey !== undefined && this.draftKey !== s.key) return;
+    const cur = this.streaming;
+    if (!cur?.complete || !this.dirty || cur.text.trim() === "") return;
+    if (this.draftId !== null && this.draftKey !== undefined && this.draftKey !== cur.key) return;
     const now = Date.now();
     if (this.draftId === null) {
-      const { messageId } = await this.send({ text: s.text });
+      const { messageId } = await this.send(
+        { text: cur.text },
+        `${this.conversationId}-draft-${cur.key.replace(":", "-")}`,
+      );
       const r = await this.d.db
         .updateTable("channel_deliveries")
         .set({ draft_message_id: messageId, updated_at: new Date() })
@@ -659,12 +814,13 @@ class Delivery {
         .executeTakeFirst();
       if (r.numUpdatedRows === 0n) throw new DeliveryLostError();
       this.draftId = messageId;
-      this.draftKey = s.key;
+      this.draftKey = cur.key;
     } else {
       if (now - this.lastDraftAt < DRAFT_INTERVAL_MS) return;
-      await this.session.update(this.target, this.draftId, { text: s.text });
-      this.draftKey = s.key;
+      await this.s.update(this.target, this.draftId, { text: cur.text });
+      this.draftKey = cur.key;
     }
+    this.draftText = cur.text;
     this.lastDraftAt = now;
     this.dirty = false;
   }

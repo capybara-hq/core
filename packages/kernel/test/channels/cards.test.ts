@@ -25,6 +25,28 @@ describe("IM 卡片内容", () => {
       client_secret: "***",
       access_token: "***",
     });
+    // 只按整词匹配：max_tokens / token_count / keyboard 不是凭据
+    expect(
+      maskSecrets({
+        max_tokens: 5,
+        token_count: 2,
+        keyboard: "k",
+        refreshToken: "r",
+        "x-api-key": "a",
+      }),
+    ).toEqual({
+      max_tokens: 5,
+      token_count: 2,
+      keyboard: "k",
+      refreshToken: "***",
+      "x-api-key": "***",
+    });
+    // 按值打码（连接的密钥值）
+    expect(
+      inputPreview({ note: "pre app-secret-1234567 post" }, (s) =>
+        s.replaceAll("app-secret-1234567", "[REDACTED]"),
+      ),
+    ).toBe('{"note":"pre [REDACTED] post"}');
     const long = inputPreview({ text: "x".repeat(2000) });
     expect(long).toHaveLength(INPUT_PREVIEW_MAX);
     expect(long.endsWith("…")).toBe(true);

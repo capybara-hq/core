@@ -12,3 +12,8 @@
 IM 卡片按钮（`card_action`）按点击者映射到的账号调用 `ApprovalsService.decide` / `QuestionsService.answer`，
 无权者收到一句说明、未绑定者收到绑定提示（群里只提示去私聊）。运行开始、审批 / 回答、等待中中止后都会排出站任务。
 流式增量的总线消息新增 `offset`（本步已推出的文本字符数）。
+
+投递任务追上后 `channels.deliveryIdleMs`（默认 15000）内没有新输出即结束，会话之后的每次日志推进都会再排任务；
+新配置 `channels.deliveryConcurrency`（默认 100）。运行失败 / 结束时挂着的草稿收尾为「已有文本 + 失败说明」；
+卡片操作要求卡片由本连接发在同一 chat，匿名访客只能处理自己话题里的卡片且只能「仅此一次」；同一事件不可重试地失败
+3 次后跳过并提示去网页查看（`channel_deliveries` 新增 `fail_seq` / `fail_count`）；发送时带幂等键。

@@ -1,8 +1,11 @@
 import { fileURLToPath } from "node:url";
 import type { ChannelCard, ChannelTarget } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Queue } from "bullmq";
+import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CHANNEL_QUEUE_NAME } from "../../src/channels/outbound.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -42,7 +45,8 @@ const CHAN_NOEDIT = fileURLToPath(
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
 );
-const ECHO = 'tool:mem-connector__echo:{"text":"hi","apiKey":"sk-live-0123456789abcdef"}';
+const ECHO =
+  'tool:mem-connector__echo:{"text":"hi","apiKey":"sk-live-0123456789abcdef","max_tokens":42,"note":"app-secret-1234567"}';
 const ASK = "tool:mem-connector__ask:{}";
 
 let pgc: TestContainer;
@@ -57,6 +61,11 @@ let orgId: string;
 let agentId: string;
 let connId: string;
 let noEditId: string;
+let failId: string;
+let anonId: string;
+let redis: Redis;
+/** 出站投递任务空闲多久结束（测试缩短到 1s）。 */
+const IDLE_MS = 1000;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -68,12 +77,19 @@ beforeAll(async () => {
         plugins: [MODEL_FAKE, CHAN_MINI, CHAN_NOEDIT, MEM_CONNECTOR],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
-        channels: { scanIntervalMs: 100, leaseTtlMs: 2000 },
+        channels: { scanIntervalMs: 100, leaseTtlMs: 2000, deliveryIdleMs: IDLE_MS },
+        // fake-idle：流式输出停顿 400ms 即判超时（构造流式中途失败的运行）
+        pluginConfig: {
+          "model-fake": {
+            models: [{ id: "fake-1" }, { id: "fake-idle", streamIdleTimeoutMs: 400 }],
+          },
+        },
       },
     ),
   );
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
+  redis = new Redis(rd.url);
   const accounts = new AccountsService(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   const member = await accounts.createLocal({ login: "mem", password: PW, displayName: "Mem" });
@@ -115,14 +131,35 @@ beforeAll(async () => {
     await sql`INSERT INTO capybara.identities (source, external_id, account_id)
       VALUES (${source}, ${ext}, ${acct})`.execute(raw);
   }
-  const mk = async (plugin: string, appId: string) => {
+  const flaky = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/agents`,
+    payload: {
+      definition: {
+        name: "Flaky",
+        instructions: "Be helpful.",
+        model: { provider: "model-fake", model: "fake-idle" },
+        tools: [],
+      },
+      visibility: "org",
+    },
+  });
+  expect(flaky.statusCode, flaky.body).toBe(201);
+  const flakyId = (flaky.json() as { agent: { id: string } }).agent.id;
+  const mk = async (
+    plugin: string,
+    appId: string,
+    agent = agentId,
+    unboundPolicy: "bind" | "anonymous" = "bind",
+  ) => {
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/channels`,
       payload: {
         plugin,
         name: plugin,
-        agentId,
+        agentId: agent,
+        unboundPolicy,
         config: { platformUrl: im.url, appId, appSecret: "app-secret-1234567" },
       },
     });
@@ -133,9 +170,12 @@ beforeAll(async () => {
   };
   connId = await mk("chan-mini", "cli_out");
   noEditId = await mk("chan-noedit", "cli_noedit");
+  failId = await mk("chan-mini", "cli_fail", flakyId);
+  anonId = await mk("chan-mini", "cli_anon", agentId, "anonymous");
 }, 120_000);
 
 afterAll(async () => {
+  redis?.disconnect();
   await k?.stop();
   await im?.stop();
   await raw?.destroy();
@@ -247,6 +287,83 @@ describe("出站投递：流式回复", { timeout: 40_000 }, () => {
     const msgs = sentTo("cli_noedit", chat);
     expect(msgs.map((m) => m.message.text)).toEqual([LONG]);
     expect(im.updated.filter((u) => u.appId === "cli_noedit")).toEqual([]);
+    // Ruling A15：普通消息的幂等键 = "<会话>-<事件 seq>"
+    const final = (await eventsOf(db, conv)).filter((e) => e.type === "assistant_message").at(-1);
+    expect(msgs[0]?.idempotencyKey).toBe(`${conv}-${final?.seq}`);
+  });
+
+  it("I1：流式中途运行失败 → 草稿收尾为「已有文本 + 失败说明」并清除；下一条回复是新消息，不改旧草稿", async () => {
+    const chat = "dm-u-owner";
+    im.push(failId, dm("f1", "u-owner", "slow:2000:Partial answer that never finishes"));
+    const conv = await convOf(failId, chat);
+    await waitForEvent(db, conv, (e) => e.type === "run_failed", 15_000, "run_failed");
+    const draft = await waitFor(async () => sentTo("cli_fail", chat)[0], 10_000, "draft");
+    await waitFor(
+      async () => finalText(draft).includes("Sorry, something went wrong"),
+      10_000,
+      "draft closed with the failure marker",
+    );
+    // 已有文本（本任务从头收到时）+ 失败说明；中途接手、不知道已有文本时只有说明
+    expect(finalText(draft)).toMatch(/(^Part[\s\S]*\n\n|^)Sorry, something went wrong/);
+    await settled(conv);
+    const updatesBefore = updatesOf(draft.messageId).length;
+    im.push(failId, dm("f2", "u-owner", "echo:next reply"));
+    await waitFor(
+      async () => sentTo("cli_fail", chat).some((s) => finalText(s) === "next reply"),
+      15_000,
+      "next reply as a new message",
+    );
+    await settled(conv);
+    expect(updatesOf(draft.messageId)).toHaveLength(updatesBefore);
+    expect(sentTo("cli_fail", chat).filter((s) => s.message.text.startsWith("Sorry"))).toEqual([]);
+  });
+
+  it("I2：投递锁丢失 → 任务推迟后重试（不是直接结束），回复照常定稿", async () => {
+    const chat = "grp-lease";
+    const q = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
+    try {
+      im.push(connId, group("l1", "u-owner", `slow:100:${LONG}`, { chatId: chat }));
+      const conv = await convOf(connId, chat);
+      const draft = await waitFor(async () => sentTo("cli_out", chat)[0], 10_000, "draft");
+      // 别人抢走了投递锁
+      await redis.set(`capk:channel-deliver:${conv}`, "intruder", "PX", 1500);
+      await waitFor(
+        async () =>
+          (await q.getJobs(["delayed", "waiting", "active"])).some(
+            (j) => (j.data as { conversationId?: string }).conversationId === conv,
+          ),
+        5_000,
+        "requeued delivery job",
+      );
+      await waitFor(async () => finalText(draft) === LONG, 20_000, "final text");
+      await settled(conv);
+      expect(sentTo("cli_out", chat)).toHaveLength(1);
+    } finally {
+      await q.close();
+    }
+  });
+
+  it("I3：追上后空闲即结束（不占并发槽）；之后的输出由下一个事件触发的新任务投递", async () => {
+    const chat = "grp-idle";
+    im.push(connId, group("i1", "u-owner", "slow:2500:abcdefgh", { chatId: chat }));
+    const conv = await convOf(connId, chat);
+    const draft = await waitFor(async () => sentTo("cli_out", chat)[0], 10_000, "draft");
+    expect(draft.message.text).toBe("abcd");
+    // 第二块要 2.5s 后才来：空闲 1s 后任务结束、释放投递锁
+    await waitFor(
+      async () => (await redis.get(`capk:channel-deliver:${conv}`)) === null,
+      2_200,
+      "idle delivery job exited",
+    );
+    const runs = await db
+      .selectFrom("runs")
+      .select("status")
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(runs.map((r) => r.status)).toContain("running");
+    await waitFor(async () => finalText(draft) === "abcdefgh", 15_000, "final text");
+    await settled(conv);
+    expect(sentTo("cli_out", chat)).toHaveLength(1);
   });
 });
 
@@ -282,6 +399,9 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     });
     expect(card.inputPreview).toContain('"text":"hi"');
     expect(card.inputPreview).not.toContain("sk-live-0123456789abcdef");
+    // 按值打码（连接的密钥）；max_tokens 这类键不误伤
+    expect(card.inputPreview).not.toContain("app-secret-1234567");
+    expect(card.inputPreview).toContain('"max_tokens":42');
     expect(card.inputPreview.length).toBeLessThanOrEqual(500);
     // 卡片消息 id 与 last_seq 在发送之后的同一事务里写入
     const rows = await waitFor(
@@ -406,6 +526,22 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     expect(hint.message.text).not.toMatch(/https?:/);
     expect(hint.message.text).toMatch(/direct message/);
 
+    // Ruling A13：伪造的卡片——审批人本人，但这张卡片并没有发在这个会话里 → 不处理
+    const forged: ChannelTarget = { chatId: "grp-forge", chatType: "group", threadId: "x" };
+    const n4 = im.sent.length;
+    im.push(
+      connId,
+      cardAction(
+        "a2-f",
+        "u-owner",
+        { cardKind: "approval", cardId: approvalId, action: "approve" },
+        forged,
+      ),
+    );
+    const refused = await waitFor(async () => im.sent.slice(n4)[0], 10_000, "forged refusal");
+    expect(refused.target).toEqual(forged);
+    expect(refused.message.text).toBe("You can't handle this request.");
+
     await sleep(300);
     expect(await approvalStatus(approvalId)).toBe("pending");
     expect(updatesOf(cardMsg.messageId)).toHaveLength(updatesBefore);
@@ -484,9 +620,107 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     );
     await settled(conv);
   });
+
+  it("Ruling A13：匿名访客只能处理自己话题里的卡片，且范围强制为仅此一次", async () => {
+    const chat = "grp-anon";
+    im.push(anonId, group("an1", "u-anon-a", ECHO, { chatId: chat }));
+    const cardMsg = await waitFor(
+      async () =>
+        im.sent.find(
+          (s) => s.appId === "cli_anon" && chatOf(s) === chat && cardOf(s)?.kind === "approval",
+        ),
+      15_000,
+      "anonymous approval card",
+    );
+    const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    expect(cardMsg.target).toEqual({ chatId: chat, chatType: "group", threadId: "an1" });
+    // 另一个匿名访客（同一个共享访客账号）在别的话题里点了这张卡片
+    const other: ChannelTarget = { chatId: chat, chatType: "group", threadId: "an-b" };
+    const n = im.sent.length;
+    im.push(
+      anonId,
+      cardAction(
+        "an-b",
+        "u-anon-b",
+        { cardKind: "approval", cardId: approvalId, action: "approve" },
+        other,
+      ),
+    );
+    const refused = await waitFor(async () => im.sent.slice(n)[0], 10_000, "refusal");
+    expect(refused.message.text).toBe("You can't handle this request.");
+    await sleep(300);
+    expect(await approvalStatus(approvalId)).toBe("pending");
+    // 发起的匿名访客在自己的话题里批准「以后都允许」→ 只按仅此一次生效
+    im.push(
+      anonId,
+      cardAction(
+        "an-a",
+        "u-anon-a",
+        { cardKind: "approval", cardId: approvalId, action: "approve", scope: "always" },
+        cardMsg.target,
+      ),
+    );
+    await waitFor(async () => (await approvalStatus(approvalId)) === "approved", 10_000, "ok");
+    const a = await db
+      .selectFrom("approvals")
+      .select("scope")
+      .where("id", "=", approvalId)
+      .executeTakeFirstOrThrow();
+    expect(a.scope).toBe("once");
+    await settled(await convOf(anonId, chat));
+  });
 });
 
 describe("出站投递：发送失败", { timeout: 40_000 }, () => {
+  it("Ruling A14：同一事件不可重试地失败 3 次 → 跳过它并提示去网页查看，之后的回复照常投递", async () => {
+    const chat = "grp-poison";
+    im.failNext("/send", 400, 3);
+    const failCount = async (c: string) =>
+      Number(
+        (
+          await db
+            .selectFrom("channel_deliveries")
+            .select("fail_count")
+            .where("conversation_id", "=", c)
+            .executeTakeFirst()
+        )?.fail_count ?? 0,
+      );
+    im.push(noEditId, group("p1", "u-owner", "echo:poison one", { chatId: chat }));
+    const conv = await convOf(noEditId, chat);
+    const phraseSent = () =>
+      sentTo("cli_noedit", chat).some((s) => s.message.text.startsWith("A request is waiting"));
+    // 每条新消息都会触发一次续投（重试卡住的事件），直到第 3 次失败后跳过
+    let i = 2;
+    while (!phraseSent() && i <= 5) {
+      await waitFor(async () => (await failCount(conv)) >= i - 1 || phraseSent(), 15_000, "fail");
+      if (phraseSent()) break;
+      im.push(
+        noEditId,
+        group(`p${i}`, "u-owner", `echo:reply ${i}`, { chatId: chat, threadId: "p1" }),
+      );
+      i++;
+      await sleep(300);
+    }
+    await waitFor(async () => phraseSent(), 15_000, "skip notice");
+    im.push(
+      noEditId,
+      group("p-after", "u-owner", "echo:after skip", { chatId: chat, threadId: "p1" }),
+    );
+    await waitFor(
+      async () => sentTo("cli_noedit", chat).some((s) => s.message.text === "after skip"),
+      15_000,
+      "later reply delivered",
+    );
+    await settled(conv);
+    expect(sentTo("cli_noedit", chat).some((s) => s.message.text === "poison one")).toBe(false);
+    expect(await failCount(conv)).toBe(0);
+    await db
+      .updateTable("channel_connections")
+      .set({ last_error: null })
+      .where("id", "=", noEditId)
+      .execute();
+  });
+
   it("限流（可重试）→ BullMQ 退避后重试，恰好投递一次", async () => {
     const chat = "grp-rl";
     im.failNext("/send", 429, 2, 100);
@@ -504,10 +738,10 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     expect(c.last_error).toBeNull();
   });
 
-  it("不可重试 → 记连接 last_error，停止该会话本轮投递", async () => {
+  it("不可重试 → 记连接 last_error，停止本轮；会话后续事件触发续投，消息恰好投递一次", async () => {
     const chat = "grp-fatal";
     im.failNext("/send", 400, 1);
-    im.push(connId, group("f1", "u-owner", "echo:never delivered", { chatId: chat }));
+    im.push(connId, group("f1", "u-owner", "echo:delivered later", { chatId: chat }));
     const conv = await convOf(connId, chat);
     const err = await waitFor(
       async () =>
@@ -522,9 +756,16 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
       "last_error",
     );
     expect(err).toMatch(/400/);
-    await sleep(500);
-    expect(sentTo("cli_out", chat).filter((s) => finalText(s) === "never delivered")).toEqual([]);
-    expect(Number((await delivery(conv))?.last_seq)).toBeLessThan(await lastSeq(conv));
+    // 不需要等下一条消息：同一运行之后写入的事件就会触发新任务从 last_seq 续投
+    await waitFor(
+      async () => sentTo("cli_out", chat).some((s) => finalText(s) === "delivered later"),
+      15_000,
+      "delivered on a later job",
+    );
+    await settled(conv);
+    expect(sentTo("cli_out", chat).filter((s) => finalText(s) === "delivered later")).toHaveLength(
+      1,
+    );
     await db
       .updateTable("channel_connections")
       .set({ last_error: null })

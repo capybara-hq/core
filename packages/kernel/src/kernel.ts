@@ -303,7 +303,8 @@ export async function createKernel(
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   const kdb = kernelDb(db);
   const bus = createBus(redis, busSubscriber, "kernel", log);
-  const eventLog = new EventLog(kdb, bus, log);
+  // 每次日志推进后给有 IM 投递目标的会话排出站任务（任务追上后空闲即结束，之后的事件靠这里续上）
+  const eventLog = new EventLog(kdb, bus, log, (conversationId) => enqueueOutbound(conversationId));
   const registry = new ProviderRegistry(host, redis, log);
   const credentials = new Credentials(kdb, keyring, log, { redis, config: () => current });
   const toolOutputs = new ToolOutputs(kdb, () => current);

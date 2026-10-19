@@ -24,6 +24,8 @@ export interface FakeImSent {
   messageId: string;
   /** 发出请求的进程 pid（请求头 `x-pid`）。 */
   pid: number;
+  /** 内核给的幂等键（`ChannelSendArgs.idempotencyKey`）。 */
+  idempotencyKey?: string;
   at: number;
 }
 
