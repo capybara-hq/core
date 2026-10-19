@@ -1,3 +1,4 @@
+import { createSign, generateKeyPairSync, type KeyObject, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -13,6 +14,15 @@ import { type WebSocket, WebSocketServer } from "ws";
  * - **Socket Mode**：`apps.connections.open` 返回 `ws://…/link?ticket=<n>`；连上后先发 `hello`，测试用
  *   {@link FakeSlackServer.push}（或 `pushEvent` / `pushInteractive`）推信封，记下客户端回的确认（`acks`）。
  *
+ * - **Sign in with Slack（OpenID Connect）**：`GET /openid/connect/authorize`（测试在授权地址后加 `&as=<user id>`
+ *   表示以该用户登录，302 回 `redirect_uri?code=…&state=…`；`client_id` 不符或用户不存在 → `error=access_denied`）、
+ *   `openid.connect.token`（`client_id` / `client_secret` / `code` / `redirect_uri`，授权码单次有效，成功返回
+ *   access token 与 RS256 签名的 `id_token`，`iss` = `https://slack.com`）、`openid.connect.userInfo`（Bearer
+ *   access token）、`GET /openid/connect/keys`（JWKS）。{@link FakeSlackServer.tamperNextIdToken} 篡改下一个
+ *   ID token 的声明或改用陌生密钥签名。
+ * - **通讯录**：`users.list`（按 `limit` 分页，游标 `response_metadata.next_cursor`；总在最前面带上 Slackbot
+ *   `USLACKBOT`，与 Slack 一样它的 `is_bot` 为 false）。
+ *
  * 记录：`messages`（发出的消息）、`updates`（对已发消息的更新）、`calls`（每次 Web API 调用）。
  */
 
@@ -24,6 +34,12 @@ export interface FakeSlackUser {
   displayName?: string;
   image72?: string;
   isBot?: boolean;
+  /** 资料邮箱（`users.list` 的 `profile.email`、OIDC 的 `email`）。 */
+  email?: string;
+  /** OIDC 的 `email_verified`（默认 false）。 */
+  emailVerified?: boolean;
+  /** 已停用（`users.list` 的 `deleted`）。 */
+  deleted?: boolean;
 }
 
 /** 机器人发出（或更新）的一条消息。 */
@@ -69,6 +85,9 @@ export interface FakeSlackOptions {
   botName?: string;
   botToken?: string;
   appToken?: string;
+  /** Sign in with Slack 的 OAuth 客户端。 */
+  clientId?: string;
+  clientSecret?: string;
 }
 
 export interface FakeSlackServer {
@@ -81,6 +100,8 @@ export interface FakeSlackServer {
   botId: string;
   botToken: string;
   appToken: string;
+  clientId: string;
+  clientSecret: string;
   messages: FakeSlackMessage[];
   updates: FakeSlackMessage[];
   calls: FakeSlackCall[];
@@ -109,6 +130,10 @@ export interface FakeSlackServer {
   acked(envelopeId: string): boolean;
   /** 发 `disconnect` 并关闭所有连接（模拟 Slack 回收连接）。 */
   disconnectAll(reason?: string): void;
+  /**
+   * 篡改下一个签发的 ID token：`claims` 覆盖（或新增）声明；`foreignKey` 时用不在 JWKS 里的密钥签名。
+   */
+  tamperNextIdToken(claims: Record<string, unknown>, opts?: { foreignKey?: boolean }): void;
   /** 消息最终显示的文本（有更新取最后一次）。 */
   finalText(m: FakeSlackMessage): string;
   /** 消息最终的 blocks（有更新取最后一次）。 */
@@ -153,6 +178,16 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
   const botName = opts.botName ?? "capybara";
   const botToken = opts.botToken ?? "xoxb-fake-bot-token";
   const appToken = opts.appToken ?? "xapp-fake-app-token";
+  const clientId = opts.clientId ?? "cli-fake-slack";
+  const clientSecret = opts.clientSecret ?? "fake-slack-client-secret";
+  const signing = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const foreign = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const kid = "fake-slack-key-1";
+  /** 未兑换的授权码 → 登录信息。 */
+  const codes = new Map<string, { userId: string; nonce: string; redirectUri: string }>();
+  /** access token → user id。 */
+  const accessTokens = new Map<string, string>();
+  let tamper: { claims: Record<string, unknown>; foreignKey: boolean } | undefined;
   const messages: FakeSlackMessage[] = [];
   const updates: FakeSlackMessage[] = [];
   const calls: FakeSlackCall[] = [];
@@ -196,6 +231,12 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
         return reply(res, { ok: false, error: error ?? "ratelimited" }, status, headers);
       }
       return reply(res, { ok: false, error: error ?? "internal_error" });
+    }
+    if (method === "openid.connect.token") return oidcToken(res, body);
+    if (method === "openid.connect.userInfo") {
+      const u = users.get(accessTokens.get(token) ?? "");
+      if (!u) return reply(res, { ok: false, error: "invalid_auth" });
+      return reply(res, { ok: true, ...profileClaims(u) });
     }
     const expected = method === "apps.connections.open" ? appToken : botToken;
     if (token !== expected) return reply(res, { ok: false, error: "invalid_auth" });
@@ -275,9 +316,122 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
         });
         return reply(res, { ok: true, channel, ts, text });
       }
+      case "users.list": {
+        const limit = Math.max(1, Math.min(1000, Number(body.limit ?? 100) || 100));
+        const offset = str(body.cursor)
+          ? Number(Buffer.from(str(body.cursor) as string, "base64url").toString())
+          : 0;
+        if (!Number.isInteger(offset) || offset < 0)
+          return reply(res, { ok: false, error: "invalid_cursor" });
+        const all = [
+          {
+            id: "USLACKBOT",
+            team_id: teamId,
+            name: "slackbot",
+            deleted: false,
+            is_bot: false,
+            is_app_user: false,
+            real_name: "Slackbot",
+            profile: { real_name: "Slackbot", display_name: "Slackbot" },
+          },
+          ...[...users.values()].map((u) => ({
+            id: u.id,
+            team_id: u.teamId,
+            name: u.name,
+            deleted: u.deleted ?? false,
+            is_bot: u.isBot ?? false,
+            is_app_user: false,
+            real_name: u.realName ?? u.name,
+            profile: {
+              real_name: u.realName ?? u.name,
+              display_name: u.displayName ?? "",
+              ...(u.email !== undefined && { email: u.email }),
+              ...(u.image72 !== undefined && { image_72: u.image72 }),
+            },
+          })),
+        ];
+        const page = all.slice(offset, offset + limit);
+        const end = offset + limit;
+        const next = end < all.length ? Buffer.from(String(end)).toString("base64url") : "";
+        return reply(res, {
+          ok: true,
+          members: page,
+          cache_ts: Math.floor(Date.now() / 1000),
+          response_metadata: { next_cursor: next },
+        });
+      }
       default:
         return reply(res, { ok: false, error: "unknown_method" });
     }
+  };
+
+  /** OIDC 的用户资料声明（userInfo 与 ID token 共用）。 */
+  const profileClaims = (u: FakeSlackUser) => ({
+    sub: u.id,
+    "https://slack.com/user_id": u.id,
+    "https://slack.com/team_id": u.teamId,
+    name: u.realName ?? u.name,
+    given_name: (u.realName ?? u.name).split(" ")[0],
+    ...(u.email !== undefined && { email: u.email, email_verified: u.emailVerified ?? false }),
+    ...(u.image72 !== undefined && { picture: u.image72 }),
+    locale: "en-US",
+  });
+
+  const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
+  const signJwt = (claims: Record<string, unknown>, key: KeyObject) => {
+    const input = `${b64({ alg: "RS256", typ: "JWT", kid })}.${b64(claims)}`;
+    const sig = createSign("RSA-SHA256").update(input).sign(key).toString("base64url");
+    return `${input}.${sig}`;
+  };
+
+  const oidcToken = (res: ServerResponse, body: Record<string, unknown>) => {
+    if (str(body.client_id) !== clientId)
+      return reply(res, { ok: false, error: "invalid_client_id" });
+    if (str(body.client_secret) !== clientSecret)
+      return reply(res, { ok: false, error: "bad_client_secret" });
+    const code = str(body.code) ?? "";
+    const c = codes.get(code);
+    if (!c) return reply(res, { ok: false, error: "invalid_code" });
+    codes.delete(code);
+    if (str(body.redirect_uri) !== c.redirectUri)
+      return reply(res, { ok: false, error: "bad_redirect_uri" });
+    const u = users.get(c.userId);
+    if (!u) return reply(res, { ok: false, error: "invalid_code" });
+    const access = `xoxp-oidc-${randomUUID()}`;
+    accessTokens.set(access, u.id);
+    const now = Math.floor(Date.now() / 1000);
+    const t = tamper;
+    tamper = undefined;
+    const claims = {
+      iss: "https://slack.com",
+      aud: clientId,
+      exp: now + 300,
+      iat: now,
+      auth_time: now,
+      nonce: c.nonce,
+      ...profileClaims(u),
+      ...t?.claims,
+    };
+    const idToken = signJwt(claims, t?.foreignKey ? foreign.privateKey : signing.privateKey);
+    return reply(res, { ok: true, access_token: access, token_type: "Bearer", id_token: idToken });
+  };
+
+  const authorize = (res: ServerResponse, u: URL) => {
+    const q = u.searchParams;
+    const redirectUri = q.get("redirect_uri");
+    if (!redirectUri) return reply(res, { error: "missing redirect_uri" }, 400);
+    const back = new URL(redirectUri);
+    const state = q.get("state");
+    if (state !== null) back.searchParams.set("state", state);
+    const user = users.get(q.get("as") ?? "");
+    if (q.get("client_id") !== clientId || q.get("response_type") !== "code" || !user) {
+      back.searchParams.set("error", "access_denied");
+    } else {
+      const code = `code-${randomUUID()}`;
+      codes.set(code, { userId: user.id, nonce: q.get("nonce") ?? "", redirectUri });
+      back.searchParams.set("code", code);
+    }
+    res.writeHead(302, { location: back.toString() }).end();
   };
 
   const server = createServer((req, res) => {
@@ -285,6 +439,12 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
       const u = new URL(req.url ?? "/", "http://x");
       const m = /^\/api\/([A-Za-z.]+)$/.exec(u.pathname);
       if (m && req.method === "POST") return api(req, res, m[1] as string);
+      if (u.pathname === "/openid/connect/authorize" && req.method === "GET")
+        return authorize(res, u);
+      if (u.pathname === "/openid/connect/keys" && req.method === "GET") {
+        const jwk = signing.publicKey.export({ format: "jwk" });
+        return reply(res, { keys: [{ ...jwk, kid, alg: "RS256", use: "sig" }] });
+      }
       res.writeHead(404).end();
     })().catch(() => {
       if (!res.headersSent) res.writeHead(500);
@@ -357,6 +517,8 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
     botId,
     botToken,
     appToken,
+    clientId,
+    clientSecret,
     messages,
     updates,
     calls,
@@ -414,6 +576,9 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
         ws.send(JSON.stringify({ type: "disconnect", reason }));
         ws.close(1000);
       }
+    },
+    tamperNextIdToken(claims, o = {}) {
+      tamper = { claims, foreignKey: o.foreignKey ?? false };
     },
     finalText(m) {
       return updates.filter((u) => u.channel === m.channel && u.ts === m.ts).at(-1)?.text ?? m.text;

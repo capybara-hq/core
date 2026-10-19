@@ -426,6 +426,9 @@ importers:
       '@slack/web-api':
         specifier: ^8.2.0
         version: 8.2.0
+      jose:
+        specifier: ^6.2.12
+        version: 6.2.12
       undici:
         specifier: ^8.12.3
         version: 8.12.3
