@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import {
   fakeCardAction as cardAction,
   fakeDm as dm,
+  type FakeChannelSent,
   type FakeChannelServer,
   startFakeChannelServer,
   startTestPostgres,
@@ -268,6 +269,54 @@ describe("渠道连接生命周期", () => {
     expect(toChat().length).toBe(before);
     expect((await patch({ status: "active" })).statusCode).toBe(200);
     await waitFor(async () => toChat().length > before, 10_000, "backlog delivered");
+  }, 60_000);
+
+  it("投递中轮换凭据 → 进行中的投递任务结束并由新任务接着投，之后的发送 / 编辑都用新凭据", async () => {
+    const { orgId, connId } = await setup("midrot");
+    await sql`INSERT INTO capybara.identities (source, external_id, account_id, linked_via)
+      VALUES ('chan-mini:t1', 'u-midrot', ${ownerId}, 'sso')`.execute(raw);
+    const text = "Rotating credentials while this long reply is still streaming to IM. ".repeat(2);
+    const ofChat = (xs: FakeChannelSent[]) => xs.filter((x) => x.target.chatId === "dm-u-midrot");
+    im.push(connId, dm("mr-1", "u-midrot", `slow:300:${text}`));
+    await waitFor(async () => ofChat(im.sent).length >= 1, 15_000, "draft");
+    const res = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/channels/${connId}`,
+      payload: { config: { platformUrl: im.url, appId: "app-midrot-new" } },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const rotatedAt = Date.now();
+    await waitFor(
+      async () => [...ofChat(im.sent), ...ofChat(im.updated)].some((x) => x.message.text === text),
+      30_000,
+      "final text",
+    );
+    // 轮换后留一个轮询周期给进行中的那次调用
+    const after = [...ofChat(im.sent), ...ofChat(im.updated)].filter((x) => x.at > rotatedAt + 700);
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.every((x) => x.appId === "app-midrot-new")).toBe(true);
+  }, 60_000);
+
+  it("投递中停用连接 → 进行中的投递任务不再发送 / 编辑", async () => {
+    const { orgId, connId } = await setup("middis");
+    await sql`INSERT INTO capybara.identities (source, external_id, account_id, linked_via)
+      VALUES ('chan-mini:t1', 'u-middis', ${ownerId}, 'sso')`.execute(raw);
+    const text = "Disabling the connection while this long reply is still streaming. ".repeat(2);
+    const count = () =>
+      [...im.sent, ...im.updated].filter((x) => x.target.chatId === "dm-u-middis").length;
+    im.push(connId, dm("md-1", "u-middis", `slow:300:${text}`));
+    await waitFor(async () => count() >= 1, 15_000, "draft");
+    const res = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/channels/${connId}`,
+      payload: { status: "disabled" },
+    });
+    expect(res.statusCode).toBe(200);
+    // 留一个轮询周期给进行中的那次调用，之后不应再有任何发送 / 编辑
+    await sleep(1000);
+    const snapshot = count();
+    await sleep(4000);
+    expect(count()).toBe(snapshot);
   }, 60_000);
 
   it("滚动升级：没有加载该插件的副本不取租约、不写 last_error / 退避，出站任务推迟重试；有插件的副本接管并补投", async () => {

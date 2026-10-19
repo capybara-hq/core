@@ -438,6 +438,10 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
         return;
       case "stopped":
         return;
+      case "changed":
+        // 连接改过（轮换凭据等）：释放锁之后排新任务，用新的出站会话从 last_seq 接着投
+        await this.enqueue(conversationId, { followUp: true });
+        return;
       case "pending":
         return this.pluginPending(job, token, "delivery");
     }
@@ -470,7 +474,8 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
 /**
  * 一次任务的结果：`done` 正常结束（`seen` 为处理到的 seq，供结束后复核；没有可投递的地方时不带）；
  * `stopped` 不可重试失败、本会话本轮停止（不复核，否则会立刻重试同一个事件）；`lost` 锁丢失；`shutdown` 停机；
- * `pending` 本副本没有加载连接的插件（推迟重试）。
+ * `pending` 本副本没有加载连接的插件（推迟重试）；`changed` 连接在投递中被改过（排新任务接着投）。
+ * 投递中连接被停用 / 删除按 `done`（不带 seen，不复核）结束。
  * `error` 需要记到连接 `last_error` 的失败说明。
  */
 type DeliveryOutcome = (
@@ -479,6 +484,7 @@ type DeliveryOutcome = (
   | { kind: "lost" }
   | { kind: "shutdown" }
   | { kind: "pending" }
+  | { kind: "changed" }
 ) & { error?: { connectionId: string; message: string } };
 
 /** 一个步骤正在流式输出的文本（只在从头收到时才发草稿）。 */
@@ -510,6 +516,9 @@ class Delivery {
   private lastDraftAt = 0;
   private streaming: StreamingText | undefined;
   private dirty = false;
+  /** 任务开始时连接的 `updated_at`（毫秒）与上次复核连接的时刻。 */
+  private version = 0;
+  private checkedAt = 0;
   /** 平台不可重试地拒绝了对草稿的编辑：不再编辑它，定稿改发新消息（Ruling A22）。 */
   private draftBroken = false;
   /** 已定稿的步骤：之后到达的增量丢弃。 */
@@ -561,6 +570,9 @@ class Delivery {
         throw err;
       }
       if (this.s.row.status !== "active") return { kind: "done" };
+      const version = await this.connectionVersion();
+      if (version === undefined) return { kind: "done" };
+      this.version = version;
       this.target = row.target as ChannelTarget;
       this.seen = Number(row.last_seq);
       this.persisted = this.seen;
@@ -641,13 +653,40 @@ class Delivery {
     return true;
   }
 
+  /** 连接的 `updated_at`（毫秒）；连接已停用 / 删除时为 undefined。 */
+  private async connectionVersion(): Promise<number | undefined> {
+    const r = await this.d.db
+      .selectFrom("channel_connections")
+      .select(["status", "updated_at"])
+      .where("id", "=", this.s.row.id)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    return r?.status === "active" ? r.updated_at.getTime() : undefined;
+  }
+
+  /**
+   * 至多每 {@link IDLE_POLL_MS} 复核一次连接：停用 / 删除 → `done`（不复核、不再投递）；改过（轮换凭据等，
+   * `updated_at` 变了）→ `changed`（释放锁后排新任务，用新的出站会话接着投）；没变返回 undefined。
+   */
+  private async recheckConnection(): Promise<DeliveryOutcome | undefined> {
+    if (Date.now() - this.checkedAt < IDLE_POLL_MS) return undefined;
+    this.checkedAt = Date.now();
+    const v = await this.connectionVersion();
+    if (v === undefined) return { kind: "done" };
+    if (v !== this.version) return { kind: "changed" };
+    return undefined;
+  }
+
   private async loop(): Promise<DeliveryOutcome> {
     const idleMs = this.d.config().channels.deliveryIdleMs;
     let lastMessageAt = Date.now();
     let needCatchUp = true;
+    this.checkedAt = Date.now();
     for (;;) {
       if (this.lease.lost) return { kind: "lost" };
       if (this.stopping.aborted) return { kind: "shutdown" };
+      const changed = await this.recheckConnection();
+      if (changed) return changed;
       if (needCatchUp) {
         await this.catchUp();
         needCatchUp = false;
