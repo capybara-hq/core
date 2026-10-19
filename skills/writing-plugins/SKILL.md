@@ -14,6 +14,7 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 | 只能 import `@capybara-hq/plugin-sdk`、`zod`、其他第三方 npm 包；**不能** import `@capybara-hq/kernel` 或插件目录之外的文件。测试里可以用 devDependency `@capybara-hq/testing` | `pnpm check:deps` | `plugin-imports-kernel`、`plugin-imports-outside` |
 | 不得使用 `setTimeout` / `setInterval` / `setImmediate` / `node:timers` | `pnpm check:plugin-state` | `plugin-timer` |
 | 模块顶层不得有 `let` / `var` / `new Map/Set/WeakMap/WeakSet` / 数组字面量 | `pnpm check:plugin-state` | `plugin-module-state` |
+| `setup(ctx)` 里用到的 `ctx.secrets` / `ctx.http.route` / `ctx.tools.register` / `ctx.capabilities` 必须在清单里声明；`ctx.storage` / `ctx.models` 尚未提供 | `pnpm check:plugin-permissions` | `perm-secrets`、`perm-http`、`perm-tools`、`perm-capability`、`perm-reserved` |
 | `ctx.kv` 写入必须带 `ttlSeconds`（类型层强制） | `pnpm typecheck` | — |
 | 队列名、job id 不含 `:`（BullMQ 限制） | 运行时：`ctx.queue.define` / `add` 直接抛 `TypeError` | — |
 
@@ -65,10 +66,32 @@ export default definePlugin({
 **权限清单（`permissions`）**：内核按清单构造 `ctx`，未声明的平台能力访问抛 `PluginPermissionError`（消息写明要在清单哪一项声明）并记审计 `plugin.permission_denied`。
 
 - 自动授予、无需声明：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`。
-- `secrets: true` 才能用 `ctx.secrets`；`http: [{ method, path, public? }]` 列出每条 `ctx.http.route`；`tools: [...]` 列出每个 `ctx.tools.register` 的工具名。
-- `network: [...]` 写会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写。`hooks` / `models` / `storage` 是预留项。
-- `ctx.capabilities.get / list` 只能取 `requires` / `optional` 里的直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器等）只能经平台能力用。多选能力 `get` 必须给提供方名；传 `{ orgId }` 时返回 Promise，并按该组织是否启用提供方过滤（未启用抛 `CapabilityUnavailableError`）。
-- **批准**：内核在 PG 记已批准的权限快照（上面各项，加上 provides / requires / optional、配置字段与迁移里 `CREATE TABLE` 的表名）。插件首次出现、或升级后比快照多出任何一项时不加载，`requires` 它的插件同样不加载，管理员用 `capybara plugins review` / `capybara plugins approve <name>` 批准后重启生效；权限变少或不变直接加载。所以**发版时多要的每一项都会让部署方停下来批准**，别顺手多声明。比快照版本旧的插件（滚动升级中重启的旧副本、或有意回滚）只要权限不超出快照就照常加载，但**快照保留较新版本的内容不缩减**；回滚后旧版本多出的项仍需批准。开发与测试用 `pluginPermissions.autoApprove: true`（双副本 harness 默认开启）。
+各项（都是治理信息，部署方批准时会看到）：
+
+| 项 | 写法 | 说明 |
+|---|---|---|
+| `secrets` | `secrets: true` | 才能用 `ctx.secrets` |
+| `http` | `[{ method, path, public? }]` | 每条 `ctx.http.route` 都要列出，`method` 为 GET / POST / PUT / DELETE，`path` 以 `/` 开头；`public: true` 表示免登录，会高亮展示 |
+| `tools` | `["write"]` | 每个 `ctx.tools.register` 的工具名（本地名，不含 `<插件名>__` 前缀）；工具能看到会话内容，会高亮展示 |
+| `network` | `["api.example.com"]` | 会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写 |
+| `hooks` / `models` / `storage` | — | 预留项（M4 尚未提供 `ctx.storage` / `ctx.models`，用了 `check:plugin-permissions` 报 `perm-reserved`） |
+
+**能力取用（`requires` / `optional`）**：`ctx.capabilities.get / list(ref)` 只能取 `requires` / `optional`（或自己 `provides`）里声明的 ref，别的 ref 报 `perm-capability`。只能取直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器等）只能经平台能力用。`requires` 的提供方缺失则本插件不加载；`optional` 缺失照常加载，取用时 `list` 为空、`get` 抛 `CapabilityUnavailableError`。多选能力 `get` 必须给提供方名。
+
+**`orgScoped` 能力与组织变体**：能力登记为 `orgScoped`（如 `channel`、`directory`）表示是否可用取决于组织是否启用了提供方插件。不传 `orgId` 是部署级视角、同步返回，不按组织过滤；传 `{ orgId }` 是 async 变体，返回 Promise 并按该组织的启用状态过滤（每次查询、不缓存）：
+
+```ts
+// 部署级（setup 里）：同步
+const providers = ctx.capabilities.list<Directory>("directory@1");
+// 某个组织的视角（调用现场）：async，该组织未启用提供方时 get 会 reject CapabilityUnavailableError
+const dir = await ctx.capabilities.get<Directory>("directory@1", "lark", { orgId });
+const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId });
+```
+
+**调用上下文原则**：`setup(ctx)` 拿到的是**部署级**上下文，看不到任何组织、账号、会话。内核调用插件实现时把本次的上下文放进调用参数，内容由扩展点决定：工具执行带组织、账号、agent、会话（`ToolCallContext`）；渠道入站带组织、渠道、外部身份；登录（`identity-source`）带认证请求与外部身份、不含会话；队列任务只有你入队时写进 job 数据的内容（通常带 `orgId`，内核校验插件在该组织已启用）。所以**不要把组织 / 会话 / 身份存进模块变量或 ctx 的闭包里跨调用传递**，从本次调用的参数里取；需要跨调用保存的会话相关数据写自己的 `ctx.db`。
+
+**静态检查（`pnpm check:plugin-permissions`）**：扫描 `definePlugin({...})` 里 `setup` 的 `ctx` 参数（含本地别名，以及按位置传给**同文件**函数的 ctx，如 `mount(ctx)`），把 `ctx.secrets`、`ctx.http.route(method, path)`、`ctx.tools.register({ name })`、`ctx.capabilities.get|list(ref)`、`ctx.storage`、`ctx.models` 与清单比对，用了未声明的就失败。路由路径、工具名、能力 ref 须写成字符串字面量（或指向同文件 const），动态的值报「Cannot statically confirm」；确属运行时才知道的（且已评审）在该行行尾或紧邻上一行写 `// capybara:allow-dynamic-permission <原因>`，原因不能为空。ctx 传给其他文件的函数时检查跟不过去（靠运行时 `PluginPermissionError` 兜底），所以把用平台能力的代码放在 `setup` 同文件里。
+- **批准**：内核在 PG 记已批准的权限快照（上面各项，加上 provides / requires / optional、配置字段与迁移里 `CREATE TABLE` 的表名）。插件首次出现、或升级后比快照多出任何一项时不加载，`requires` 它的插件同样不加载，管理员用 `capybara plugins review` / `capybara plugins approve <name>` 批准后重启生效；权限变少或不变直接加载。所以**发版时多要的每一项都会让部署方停下来批准**，别顺手多声明。比快照版本旧的插件（滚动升级中重启的旧副本、或有意回滚）只要权限不超出快照就照常加载，但**快照保留较新版本的内容不缩减**；回滚后旧版本多出的项仍需批准。开发与测试用配置项 `pluginPermissions.autoApprove: true`（环境变量推导规则见 `skills/adding-config`，双副本 harness 默认开启）：启动时自动批准新增或升级多要的权限，仅限开发与试用，生产别开。
 
 **`setup` 必须返回**：插件按依赖顺序串行 setup，内核不给 setup 设超时。setup 永不 resolve（如等待一个永远不来的外部连接、`await` 一个没人 resolve 的 Promise）时，内核 `start()` 会**永远挂起**、HTTP 不监听、后续插件不加载；此时停机（`stop()`）仍会立即关闭该插件的 ctx 并释放连接。需要等外部依赖就绪时，在 setup 里自己设超时并抛错，或把等待挪到队列任务里。
 
