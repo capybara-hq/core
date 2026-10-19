@@ -867,7 +867,9 @@
     "unlink": "Unlink",
     "unlinkTitle": "Unlink {name}?",
     "unlinkHint": "Messages from this IM account will no longer act as you, and you can no longer sign in with it.",
-    "unlinked": "{name} unlinked."
+    "unlinked": "{name} unlinked.",
+    "unverified": "Not verified",
+    "verify": "Verify (sign in with this account)"
   },
   "bind": {
     "title": "Link IM account",

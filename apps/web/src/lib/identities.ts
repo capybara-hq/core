@@ -8,6 +8,11 @@ export interface LinkedIdentity {
   emailVerified: boolean;
   displayName: string | null;
   avatarUrl: string | null;
+  /**
+   * 身份行是怎么建立的：`bind`（IM 里点绑定链接确认）只能在 IM 里代表本人，要用它登录须先在登录状态下
+   * 完成一次该身份的第三方登录（「验证」）；null 为旧行。
+   */
+  linkedVia?: "bind" | "sso" | "directory" | "local" | null;
   createdAt: string;
 }
 

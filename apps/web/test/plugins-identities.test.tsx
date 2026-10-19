@@ -12,6 +12,8 @@ import { resetNavigation } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+const navigateBrowser = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 
 const msgs = { zh, en } as const;
 const BASE = "/api/v1/orgs/o1";
@@ -224,7 +226,17 @@ const IDENTITY = {
   emailVerified: true,
   displayName: "Alice Wong",
   avatarUrl: null,
+  linkedVia: "sso",
   createdAt: "2026-10-01T00:00:00Z",
+};
+
+/** 经 IM 绑定链接建立、还不能用来登录的身份（Ruling A18）。 */
+const BOUND = {
+  ...IDENTITY,
+  externalId: "u-bound",
+  email: null,
+  displayName: "Bound Bob",
+  linkedVia: "bind",
 };
 
 describe("已绑定的 IM 身份（SettingsPage）", () => {
@@ -255,6 +267,31 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
     expect(await screen.findByText(m.empty)).toBeTruthy();
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
   });
+
+  it.each(["zh", "en"] as const)(
+    "经 IM 绑定的身份标为「未验证」并提供「验证」：整页跳到该插件的第三方登录，回到本页（%s）",
+    async (locale) => {
+      const m = msgs[locale].identities;
+      navigateBrowser.mockReset();
+      stubApi({ "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY, BOUND] }) });
+      renderPage(<IdentitiesPage />, { locale });
+      const bound = await screen.findByRole("row", { name: /Bound Bob/ });
+      expect(within(bound).getByText(m.unverified)).toBeTruthy();
+      const verified = screen.getByRole("row", { name: /Alice Wong/ });
+      expect(within(verified).queryByText(m.unverified)).toBeNull();
+      const user = userEvent.setup();
+      const rowActions = locale === "zh" ? "行操作" : "Row actions";
+      // 已能登录的身份没有「验证」
+      await user.click(within(verified).getByRole("button", { name: rowActions }));
+      expect(screen.queryByRole("menuitem", { name: m.verify })).toBeNull();
+      await user.keyboard("{Escape}");
+      await user.click(within(bound).getByRole("button", { name: rowActions }));
+      await user.click(await screen.findByRole("menuitem", { name: m.verify }));
+      expect(navigateBrowser).toHaveBeenCalledWith(
+        "/api/v1/auth/sso/fake-im/start?returnTo=%2Fsettings%2Fidentities",
+      );
+    },
+  );
 
   it("最后一个登录方式（identity.last_login_method）：对话框里显示原因", async () => {
     stubApi({

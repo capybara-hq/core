@@ -867,7 +867,9 @@
     "unlink": "解绑",
     "unlinkTitle": "解绑 {name}？",
     "unlinkHint": "解绑后，这个 IM 账号发来的消息不再以你的身份处理，也不能再用它登录。",
-    "unlinked": "已解绑 {name}。"
+    "unlinked": "已解绑 {name}。",
+    "unverified": "未验证",
+    "verify": "验证（用该账号登录一次）"
   },
   "bind": {
     "title": "绑定 IM 账号",
