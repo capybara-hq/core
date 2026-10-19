@@ -46,16 +46,28 @@ export function configToJsonSchema(schema: z.ZodType): JsonSchema {
 /** 会泄露取值的关键字：密钥字段一律不输出。 */
 const VALUE_KEYWORDS = ["default", "examples", "const", "enum"];
 
-/** 递归清掉密钥节点（`x-secret`）上会暴露取值的关键字；无环（输出为纯 JSON 树）。 */
-function scrubSecrets(node: unknown): void {
+/** 值为「名字 -> 子 schema」映射的关键字：其键是用户字段名，不是关键字。 */
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+
+/**
+ * 递归清掉密钥节点及其所有后代上会暴露取值的关键字（`inSecret` 随递归下传）；无环（输出为纯 JSON 树）。
+ * 只有 schema 关键字 default / examples / const / enum 的值被当作数据跳过；
+ * `properties` 等映射里的键是字段名，名为 default / enum 的字段照常遍历。
+ */
+function scrubSecrets(node: unknown, inSecret = false): void {
   if (Array.isArray(node)) {
-    for (const n of node) scrubSecrets(n);
+    for (const n of node) scrubSecrets(n, inSecret);
     return;
   }
   if (typeof node !== "object" || node === null) return;
   const o = node as JsonSchema;
-  if (o["x-secret"] === true) for (const k of VALUE_KEYWORDS) delete o[k];
+  const secret = inSecret || o["x-secret"] === true;
+  if (secret) for (const k of VALUE_KEYWORDS) delete o[k];
   for (const [k, v] of Object.entries(o)) {
-    if (!VALUE_KEYWORDS.includes(k)) scrubSecrets(v);
+    if (SCHEMA_MAPS.has(k) && typeof v === "object" && v !== null) {
+      for (const child of Object.values(v)) scrubSecrets(child, secret);
+    } else if (!VALUE_KEYWORDS.includes(k)) {
+      scrubSecrets(v, secret);
+    }
   }
 }
