@@ -20,4 +20,12 @@ describe("ImageBlock（插件视图里的图片）", () => {
     expect(img.getAttribute("loading")).toBe("lazy");
     expect(img.className).toBe("cb-image");
   });
+
+  it.each(["javascript:alert(1)", "data:image/svg+xml,<svg/>", "/relative.png", "not a url"])(
+    "不是 http(s) 绝对地址时什么都不渲染：%s",
+    (src) => {
+      const { container } = render(<ImageBlock src={src} alt="x" />);
+      expect(container.querySelector("img")).toBeNull();
+    },
+  );
 });

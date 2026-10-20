@@ -618,6 +618,7 @@ export async function createKernel(
         approvals,
         questions,
         drift: toolDrift,
+        outputs: toolOutputs,
         appContent,
         identity,
         channels: channelConnections,

@@ -51,13 +51,25 @@ const ROW_STATUS: Record<ToolItem["status"], ToolCallStatus> = {
  * 结果已存档（内核截断）时给出存档 id。外层带 `data-call-id` 与 `data-status`；`data-role` 在对话流里为
  * `tool`，在运行标签里（`full`）为 `run-call`。
  */
-export function ToolCallCard({ item, full = false }: { item: ToolItem; full?: boolean }) {
+export function ToolCallCard({
+  item,
+  full = false,
+  archived,
+  onShowAll,
+}: {
+  item: ToolItem;
+  full?: boolean;
+  /** 从存档取到的全文（运行标签）：有它时 OUT 显示全文、不再标为截断（`complete` 为 false 时仍标截断）。 */
+  archived?: { text: string; complete: boolean };
+  /** 结果已存档时「查看全部输出」：交给调用方取全文。 */
+  onShowAll?(): void;
+}) {
   const t = useTranslations("tools");
   const locale = useLocale();
-  const result = item.result;
+  const result = archived?.text ?? item.result;
   const cut = !full && result !== null && result.length > RESULT_PREVIEW_CHARS;
   const output = result === null ? undefined : cut ? result.slice(0, RESULT_PREVIEW_CHARS) : result;
-  const truncated = cut || item.outputId !== null;
+  const truncated = cut || (archived === undefined ? item.outputId !== null : !archived.complete);
   return (
     <div
       data-role={full ? "run-call" : "tool"}
@@ -71,6 +83,7 @@ export function ToolCallCard({ item, full = false }: { item: ToolItem; full?: bo
         input={formatInput(item.input)}
         {...(output !== undefined && { output })}
         outputTruncated={truncated}
+        {...(onShowAll !== undefined && archived === undefined && { onShowAll })}
         labels={{
           running: t(`status.${item.status === "pending" ? "pending" : "running"}`),
           error: t("status.error"),

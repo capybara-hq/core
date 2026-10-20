@@ -35,10 +35,11 @@ const TASKS = [
   { text: "发到 #product", status: "pending" as const },
 ];
 
-/** 固定的占位图（无颜色字面量：矩形取默认填充）。 */
-const SAMPLE_IMAGE = `data:image/svg+xml,${encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="80"><rect width="320" height="80"/></svg>',
-)}`;
+/**
+ * 示例图片地址：ImageBlock 只渲染 http(s)。example.com 返回的不是图片，目录页里固定显示为加载失败的图片（alt），
+ * 截图稳定、不依赖外网内容。
+ */
+const SAMPLE_IMAGE = "https://example.com/capybara-chart.png";
 
 const PANEL_TABS = [
   { id: "run", label: "运行", alert: true },
@@ -164,7 +165,7 @@ export function ChatSection() {
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
-          图片 ImageBlock · 宽度不超出容器
+          图片 ImageBlock · 只渲染 http(s)，宽度不超出容器
         </Text>
         <ImageBlock src={SAMPLE_IMAGE} alt="示例图片" />
       </Grid>

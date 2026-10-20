@@ -262,6 +262,27 @@ describe("ApprovalCard", () => {
       decided,
     }) as Extract<ChatItem, { kind: "approval" }>;
 
+  it("待处理的审批卡片强调色描边（tone=accent），已处理的恢复默认边框", async () => {
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL }) });
+    const pending = renderPage(<ApprovalCard orgId="o1" item={item()} />);
+    await screen.findByText("Fixture");
+    expect(pending.container.querySelector(".cb-card")?.getAttribute("data-tone")).toBe("accent");
+    cleanup();
+    const decided = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({
+          approvalId: "ap1",
+          callId: "call_1",
+          decision: "approved",
+          scope: "once",
+          byAccountId: "a1",
+        })}
+      />,
+    );
+    expect(decided.container.querySelector(".cb-card")?.getAttribute("data-tone")).toBe("default");
+  });
+
   it.each(LOCALES)(
     "工具名、应用、参数、三种范围；选「本会话内」批准 → POST decision（%s）",
     async (locale) => {

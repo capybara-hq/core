@@ -131,11 +131,17 @@ export function parseUiRefresh(data: unknown): UiRefresh | undefined {
 
 /**
  * 打开组织级刷新流（组织页面视图用）：收到 `event: ui` 交给 `onUi`；断线由浏览器自动重连，
- * 每次重连成功后调用 `onReconnect`（期间可能漏掉刷新，调用方重取一次）。返回关闭函数。
+ * 每次重连成功后调用 `onReconnect`（期间可能漏掉刷新，调用方重取一次）。
+ * 流终止、不会再重连时调用 `onError`：`code` 为服务端 `event: error` 帧的错误码（如会话被吊销），
+ * 没有 `code` 表示浏览器放弃了重连。返回关闭函数。
  */
 export function openUiStream(
   orgId: string,
-  handlers: { onUi(r: UiRefresh): void; onReconnect?(): void },
+  handlers: {
+    onUi(r: UiRefresh): void;
+    onReconnect?(): void;
+    onError?(e: { code?: string }): void;
+  },
 ): () => void {
   const es = new EventSource(uiStreamUrl(orgId));
   let closed = false;
@@ -154,8 +160,30 @@ export function openUiStream(
       // 非 JSON：忽略
     }
   });
-  return () => {
+  const close = () => {
     closed = true;
     es.close();
   };
+  // 「error」既是服务端错误帧（MessageEvent，带 data），也是 EventSource 自身的连接错误（普通 Event）
+  es.addEventListener("error", (e) => {
+    if (closed) return;
+    if (e instanceof MessageEvent && typeof e.data === "string") {
+      let code: string | undefined;
+      try {
+        const d = JSON.parse(e.data) as { code?: unknown };
+        if (typeof d.code === "string") code = d.code;
+      } catch {
+        // 非 JSON：按没有错误码处理
+      }
+      close();
+      handlers.onError?.(code === undefined ? {} : { code });
+      return;
+    }
+    // 仍在 CONNECTING：浏览器会自动重连
+    if (es.readyState === 2) {
+      close();
+      handlers.onError?.({});
+    }
+  });
+  return close;
 }

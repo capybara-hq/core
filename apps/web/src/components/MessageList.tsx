@@ -41,8 +41,9 @@ function groupItems(items: ChatItem[]): Group[] {
   return groups;
 }
 
+/** 等待中（如等审批，尚未开始执行）用空心标记：主色的 running 只给真正在执行的调用。 */
 const TOOL_MARK: Record<ToolItem["status"], TimelineMark> = {
-  pending: "running",
+  pending: "hollow",
   running: "running",
   done: "dot",
   error: "error",

@@ -258,7 +258,11 @@ export type ChatItem =
       key: string;
       text: string;
       thinking: string;
-      /** 该步从发出模型请求到消息落定的秒数（思考行的「思考了 N 秒」）；流式草稿与缺少 model_call 时为 null。 */
+      /**
+       * 思考行「思考了 N 秒」的秒数。**是近似值**：日志里没有思考结束的时间，这里取整步的耗时
+       * （该步 model_call 到 assistant_message），包含了输出正文与工具调用参数的时间。
+       * 流式草稿与缺少 model_call 时为 null。
+       */
       thinkingSeconds: number | null;
       stopReason: StopReason | null;
       streaming: boolean;

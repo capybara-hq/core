@@ -102,7 +102,8 @@
       "model_unavailable": "所选模型不可用。"
     },
     "conversation": {
-      "not_found": "对话不存在或你无权访问。"
+      "not_found": "对话不存在或你无权访问。",
+      "output_not_found": "完整输出已过期或不存在。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。"
@@ -254,9 +255,6 @@
     "empty": "发送一条消息开始对话。",
     "streamLost": "与服务器的实时连接已断开，请刷新页面。",
     "idle": "就绪",
-    "agent": "Agent",
-    "conversation": "会话",
-    "status": "状态",
     "inspectorTitle": "会话信息",
     "waiting": "等你处理",
     "attachments": "附件",
@@ -294,7 +292,11 @@
     "apps": "用到的应用",
     "none": "无",
     "compactions": "压缩记录",
-    "compactionCovers": "压缩到第 {seq} 条事件"
+    "compactionCovers": "压缩到第 {seq} 条事件",
+    "contributionsFailed": "插件面板加载失败，插件标签暂不可用。"
+  },
+  "pluginPage": {
+    "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
   },
   "nav": {
     "overview": "概览",
@@ -317,12 +319,6 @@
     "back": "返回概览"
   },
   "tools": {
-    "call": "工具",
-    "details": "参数与结果",
-    "input": "参数",
-    "result": "结果",
-    "noResult": "尚无结果。",
-    "truncated": "仅显示前 {n} 个字符。",
     "outputId": "完整结果已存档：{id}。",
     "status": {
       "pending": "等待中",

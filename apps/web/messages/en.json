@@ -102,7 +102,8 @@
       "model_unavailable": "The selected model is unavailable."
     },
     "conversation": {
-      "not_found": "The conversation does not exist or you cannot access it."
+      "not_found": "The conversation does not exist or you cannot access it.",
+      "output_not_found": "The full output has expired or doesn't exist."
     },
     "run": {
       "not_active": "There is no reply in progress."
@@ -254,9 +255,6 @@
     "empty": "Send a message to start the conversation.",
     "streamLost": "The live connection to the server was lost. Refresh the page.",
     "idle": "Idle",
-    "agent": "Agent",
-    "conversation": "Conversation",
-    "status": "Status",
     "inspectorTitle": "Conversation",
     "waiting": "Waiting for you",
     "attachments": "Attachments",
@@ -294,7 +292,11 @@
     "apps": "Apps used",
     "none": "None",
     "compactions": "Compactions",
-    "compactionCovers": "Compacted up to event #{seq}"
+    "compactionCovers": "Compacted up to event #{seq}",
+    "contributionsFailed": "Couldn't load plugin panels; plugin tabs are unavailable."
+  },
+  "pluginPage": {
+    "liveLost": "Live updates stopped. Reload the page for the latest content."
   },
   "nav": {
     "overview": "Overview",
@@ -317,12 +319,6 @@
     "back": "Back to overview"
   },
   "tools": {
-    "call": "Tool",
-    "details": "Arguments and result",
-    "input": "Arguments",
-    "result": "Result",
-    "noResult": "No result yet.",
-    "truncated": "Showing the first {n} characters.",
     "outputId": "Full output archived as {id}.",
     "status": {
       "pending": "Waiting",

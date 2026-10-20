@@ -27,10 +27,22 @@ export interface ViewTarget {
   id: string;
 }
 
+/** 一个视图的取数进度：每个视图同时至多一个请求在途。 */
+interface Run {
+  /** 当前要取的版本（组织 / 会话 / 语言 / 刷新计数 / 重试计数）。 */
+  want: string;
+  /** 最近一次发出的请求对应的版本。 */
+  sent: string;
+  inflight: boolean;
+  /** 发请求用的参数（随最新一次渲染更新）。 */
+  args: { orgId: string; plugin: string; id: string; conversationId?: string; locale: UiLocale };
+}
+
 /**
  * 取一组插件视图，各自独立：一个失败（慢、抛错、非法视图）只影响它自己的状态（审查重点 1）。
  * `versions` 里 `插件/贡献` 或 `*` 的计数变了就重取对应视图；`retry(key)` 回到加载中再取一次；
  * `setView` 用动作返回的视图直接替换。
+ * 刷新合并：每个视图同时至多一个请求在途；在途期间又来的刷新（不论几次）只在它完成后补取一次。
  */
 export function usePluginViews(
   orgId: string,
@@ -45,8 +57,7 @@ export function usePluginViews(
   const versions = opts.versions ?? NO_VERSIONS;
   const [states, setStates] = useState<Record<string, ViewState>>({});
   const [retries, setRetries] = useState<Record<string, number>>({});
-  /** 每个视图最近一次取数的标识：只有最新那次的结果能写回（旧请求晚到时丢弃）。 */
-  const tokens = useRef<Record<string, string>>({});
+  const runs = useRef<Record<string, Run>>({});
   const live = useRef(true);
   const targetsKey = targets.map((t) => uiKey(t.plugin, t.id)).join("\n");
 
@@ -54,15 +65,38 @@ export function usePluginViews(
     live.current = true;
     return () => {
       live.current = false;
-      tokens.current = {};
+      runs.current = {};
     };
+  }, []);
+
+  const start = useCallback((key: string, run: Run) => {
+    run.inflight = true;
+    run.sent = run.want;
+    const { orgId: org, plugin, id, conversationId: conv, locale: lang } = run.args;
+    const write = (next: ViewState) => {
+      // 发出后又有更新的版本：这次的结果已过时，等补取的那次
+      if (live.current && run.sent === run.want) setStates((s) => ({ ...s, [key]: next }));
+    };
+    getUiView(org, plugin, id, {
+      ...(conv !== undefined && { conversationId: conv }),
+      locale: lang,
+    })
+      .then(
+        ({ view }) => write({ kind: "ready", view }),
+        (e: unknown) =>
+          write({ kind: "error", code: e instanceof ApiClientError ? e.code : "unknown" }),
+      )
+      .finally(() => {
+        run.inflight = false;
+        if (live.current && runs.current[key] === run && run.sent !== run.want) start(key, run);
+      });
   }, []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: targets 以 targetsKey 表示
   useEffect(() => {
     for (const tg of targets) {
       const key = uiKey(tg.plugin, tg.id);
-      const token = [
+      const want = [
         orgId,
         conversationId ?? "",
         locale,
@@ -70,23 +104,25 @@ export function usePluginViews(
         versions[key] ?? 0,
         retries[key] ?? 0,
       ].join("|");
-      if (tokens.current[key] === token) continue;
-      tokens.current[key] = token;
-      const current = () => live.current && tokens.current[key] === token;
-      getUiView(orgId, tg.plugin, tg.id, {
-        ...(conversationId !== undefined && { conversationId }),
+      const args = {
+        orgId,
+        plugin: tg.plugin,
+        id: tg.id,
         locale,
-      }).then(
-        ({ view }) => {
-          if (current()) setStates((s) => ({ ...s, [key]: { kind: "ready", view } }));
-        },
-        (e: unknown) => {
-          const code = e instanceof ApiClientError ? e.code : "unknown";
-          if (current()) setStates((s) => ({ ...s, [key]: { kind: "error", code } }));
-        },
-      );
+        ...(conversationId !== undefined && { conversationId }),
+      };
+      let run = runs.current[key];
+      if (run === undefined) {
+        run = { want, sent: "", inflight: false, args };
+        runs.current[key] = run;
+      }
+      run.want = want;
+      run.args = args;
+      // 在途：完成后由 finally 补取（多次刷新只补一次）
+      if (run.inflight || run.sent === want) continue;
+      start(key, run);
     }
-  }, [targetsKey, orgId, conversationId, locale, versions, retries]);
+  }, [targetsKey, orgId, conversationId, locale, versions, retries, start]);
 
   const retry = useCallback((key: string) => {
     setStates((s) => ({ ...s, [key]: { kind: "loading" } }));

@@ -290,8 +290,22 @@ export type ImageBlockProps = {
   alt: string;
 };
 
-/** 图片（插件视图）：宽度不超出容器、按比例缩放；不带 referrer、懒加载。地址由调用方校验。 */
+/** 只认 http(s) 绝对地址。 */
+function isHttpUrl(src: string): boolean {
+  try {
+    const u = new URL(src);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 图片（插件视图）：宽度不超出容器、按比例缩放；不带 referrer、懒加载。
+ * 只渲染 http(s) 绝对地址，其他（`javascript:`、`data:`、相对路径）什么都不渲染。
+ */
 export function ImageBlock({ src, alt }: ImageBlockProps) {
+  if (!isHttpUrl(src)) return null;
   return (
     <img className="cb-image" src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" />
   );

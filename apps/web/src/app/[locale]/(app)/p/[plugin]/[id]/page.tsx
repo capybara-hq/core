@@ -46,13 +46,17 @@ function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string;
   const bump = useCallback((key: string) => {
     setVersions((v) => ({ ...v, [key]: (v[key] ?? 0) + 1 }));
   }, []);
+  // 组织流终止（会话吊销、浏览器放弃重连）：内容照常显示，提示实时刷新已断开
+  const [liveLost, setLiveLost] = useState(false);
   useEffect(() => {
     if (!isView) return;
+    setLiveLost(false);
     return openUiStream(orgId, {
       onUi: (r) => {
         if (r.plugin === plugin && r.contribution === id) bump(uiKey(plugin, id));
       },
       onReconnect: () => bump("*"),
+      onError: () => setLiveLost(true),
     });
   }, [orgId, plugin, id, isView, bump]);
 
@@ -92,7 +96,14 @@ function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string;
       header={{ title }}
       tabs={{ label: title, items: [{ id: "view", label: title }], value: "view" }}
     >
-      {body}
+      <Stack gap={12}>
+        {liveLost && (
+          <Text variant="small" tone="warn">
+            {t("pluginPage.liveLost")}
+          </Text>
+        )}
+        {body}
+      </Stack>
     </DetailPage>
   );
 }

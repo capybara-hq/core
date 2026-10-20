@@ -265,6 +265,7 @@ describe("Conversation HTTP", () => {
       ["GET", `${base}/${conv.id}`, undefined],
       ["GET", `${base}/${conv.id}/events`, undefined],
       ["POST", `${base}/${conv.id}/messages`, { text: "hi" }],
+      ["GET", `${base}/${conv.id}/outputs/00000000-0000-4000-8000-000000000000`, undefined],
     ] as const) {
       const res = await k.http.inject({ method, url, headers, ...(payload && { payload }) });
       expect(res.statusCode, `${method} ${url}`).toBe(403);
@@ -368,5 +369,86 @@ describe("Conversation HTTP", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("工具输出存档（GET .../conversations/:id/outputs/:outputId）", () => {
+  const outputsUrl = (orgId: string, convId: string, outputId: string, q = "") =>
+    `/api/v1/orgs/${orgId}/conversations/${convId}/outputs/${outputId}${q}`;
+  type OutputJson = {
+    output: { id: string; text: string; offset: number; totalChars: number; next: number | null };
+  };
+
+  it("自己的会话：200 全文；按字符分页（offset / limit，next 为下一页起点）", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const content = Array.from({ length: 50 }, (_, i) => `line ${i}`).join("\n");
+    const saved = await k.tools.outputs.save({
+      orgId,
+      conversationId: conv.id,
+      callId: "call_1",
+      content,
+    });
+    const all = await req({ method: "GET", url: outputsUrl(orgId, conv.id, saved.id) });
+    expect(all.statusCode).toBe(200);
+    expect((all.json() as OutputJson).output).toEqual({
+      id: saved.id,
+      text: content,
+      offset: 0,
+      totalChars: content.length,
+      next: null,
+    });
+    const page = await req({
+      method: "GET",
+      url: outputsUrl(orgId, conv.id, saved.id, "?offset=5&limit=10"),
+    });
+    expect(page.statusCode).toBe(200);
+    expect((page.json() as OutputJson).output).toMatchObject({
+      text: content.slice(5, 15),
+      offset: 5,
+      next: 15,
+    });
+    const bad = await req({
+      method: "GET",
+      url: outputsUrl(orgId, conv.id, saved.id, "?limit=0"),
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it("别人的会话 → 404 conversation.not_found；别的会话的存档 → 404 conversation.output_not_found", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq);
+    const agentId = await createAgent(ownerReq, orgId);
+    const conv = await createConv(ownerReq, orgId, agentId);
+    const otherConv = await createConv(ownerReq, orgId, agentId);
+    const saved = await k.tools.outputs.save({
+      orgId,
+      conversationId: conv.id,
+      callId: "call_1",
+      content: "secret output",
+    });
+    const other = await memberSession(orgId, "other", "admin");
+    const theirs = await other.req({ method: "GET", url: outputsUrl(orgId, conv.id, saved.id) });
+    expect(theirs.statusCode).toBe(404);
+    expect(errCode(theirs)).toBe("conversation.not_found");
+    expect(theirs.body).not.toContain("secret output");
+
+    const elsewhere = await ownerReq({
+      method: "GET",
+      url: outputsUrl(orgId, otherConv.id, saved.id),
+    });
+    expect(elsewhere.statusCode).toBe(404);
+    expect(errCode(elsewhere)).toBe("conversation.output_not_found");
+
+    // id 不是 UUID：一律 404，不打到数据库
+    for (const url of [
+      outputsUrl(orgId, conv.id, "not-a-uuid"),
+      outputsUrl(orgId, "not-a-uuid", saved.id),
+    ]) {
+      const res = await ownerReq({ method: "GET", url });
+      expect(res.statusCode).toBe(404);
+    }
   });
 });

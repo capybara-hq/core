@@ -1,12 +1,17 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query } from "@nestjs/common";
 import { z } from "zod";
-import { CONVERSATIONS } from "../http/tokens.js";
+import { CONVERSATION_OUTPUTS, CONVERSATIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { MAX_ATTACHMENTS } from "../tools/app-content.js";
 import type { ConversationsService, ConversationView } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
+import {
+  type ConversationOutputs,
+  OUTPUT_PAGE_MAX_CHARS,
+  type OutputPage,
+} from "./outputs-read.js";
 
 const CreateBody = z.object({ agentId: z.string().min(1).max(100) }).strict();
 
@@ -18,6 +23,11 @@ const ListQuery = z.object({
 const EventsQuery = z.object({
   after: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(500).default(500),
+});
+
+const OutputQuery = z.object({
+  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(OUTPUT_PAGE_MAX_CHARS).default(OUTPUT_PAGE_MAX_CHARS),
 });
 
 const MessageBody = z
@@ -38,7 +48,10 @@ const MessageBody = z
  */
 @Controller("api/v1/orgs/:orgId/conversations")
 export class ConversationsController {
-  constructor(@Inject(CONVERSATIONS) private readonly conversations: ConversationsService) {}
+  constructor(
+    @Inject(CONVERSATIONS) private readonly conversations: ConversationsService,
+    @Inject(CONVERSATION_OUTPUTS) private readonly outputs: ConversationOutputs,
+  ) {}
 
   @Post()
   @OrgAction("agents.use")
@@ -93,6 +106,23 @@ export class ConversationsController {
     return {
       events: await this.conversations.listEvents(org.orgId, id, p.account.id, q.after, q.limit),
     };
+  }
+
+  /**
+   * 工具输出存档（内核截断并转存的大结果）的全文，按字符分页（`offset` / `limit`，`next` 为下一页起点）。
+   * 会话可见性与会话流相同，不可见 → `conversation.not_found`；存档不属于该会话或已过期 → `conversation.output_not_found`。
+   */
+  @Get(":id/outputs/:outputId")
+  @OrgAction("agents.use")
+  async output(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("outputId") outputId: string,
+    @Query(new ZodPipe(OutputQuery)) q: z.infer<typeof OutputQuery>,
+  ): Promise<{ output: OutputPage }> {
+    const p = requireUser(principal);
+    return { output: await this.outputs.read(org.orgId, id, p.account.id, outputId, q) };
   }
 
   @Post(":id/messages")

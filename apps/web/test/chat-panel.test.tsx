@@ -281,9 +281,35 @@ describe("对话页右侧标签面板", () => {
     expect(ctx.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("运行标签列出工具调用，点开显示完整 IN / OUT；存档的输出给出存档 id", async () => {
+  it("运行标签列出工具调用，点开显示完整 IN / OUT；存档的输出经存档接口取全文", async () => {
     const long = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n");
-    stubApi({
+    const OUT_ID = "0b6f7c1e-1111-4222-8333-444455556666";
+    const full = `${long}\nline 31 (only in the archive)`;
+    const calls = stubApi({
+      [`GET ${BASE}/outputs/${OUT_ID}`]: (c) => {
+        // 按页取：第一页到 next，再取第二页
+        const offset = Number(new URL(c.url, "http://x").searchParams.get("offset") ?? "0");
+        const half = 50;
+        return offset === 0
+          ? json(200, {
+              output: {
+                id: OUT_ID,
+                text: full.slice(0, half),
+                offset: 0,
+                totalChars: full.length,
+                next: half,
+              },
+            })
+          : json(200, {
+              output: {
+                id: OUT_ID,
+                text: full.slice(half),
+                offset: half,
+                totalChars: full.length,
+                next: null,
+              },
+            });
+      },
       [`GET ${BASE}/events`]: () =>
         json(200, {
           events: [
@@ -296,7 +322,7 @@ describe("对话页右侧标签面板", () => {
               toolKey: "fixture__search",
               specHash: "h",
             }),
-            toolResult(5, "call_1", "fixture__search", long, { outputId: "out_9" }),
+            toolResult(5, "call_1", "fixture__search", long, { outputId: OUT_ID }),
           ],
         }),
       [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
@@ -309,7 +335,16 @@ describe("对话页右侧标签面板", () => {
     await user.click(row);
     expect(within(panel).getByText("IN")).toBeTruthy();
     expect(within(panel).getByText(/"q": "capybara"/)).toBeTruthy();
-    expect(within(panel).getByText(en.tools.outputId.replace("{id}", "out_9"))).toBeTruthy();
+    expect(within(panel).getByText(en.tools.outputId.replace("{id}", OUT_ID))).toBeTruthy();
+    await user.click(within(panel).getByRole("button", { name: "View full output" }));
+    // OUT 超过 12 行默认折叠：展开全部后能看到只在存档里的最后一行
+    await user.click(await within(panel).findByRole("button", { name: /Expand all \(31 lines\)/ }));
+    expect(within(panel).getByText(/line 31 \(only in the archive\)/)).toBeTruthy();
+    const pages = calls.filter((c) => c.url.startsWith(`${BASE}/outputs/${OUT_ID}`));
+    expect(pages.map((c) => new URL(c.url, "http://x").searchParams.get("offset") ?? "0")).toEqual([
+      "0",
+      "50",
+    ]);
     // 时间线里对应的那一行保持折叠
     const log = screen.getByRole("log");
     expect(within(log).getByRole("button", { name: /fixture__search/ }).ariaExpanded).toBe("false");
@@ -384,6 +419,74 @@ describe("对话页右侧标签面板", () => {
   });
 });
 
+describe("对话页右侧标签面板：刷新合并、标签回退与错误提示", () => {
+  it("同一视图请求在途时连续收到 8 次 event: ui：最多再发 2 次 GET（在途一次 + 补取一次）（I1）", async () => {
+    let n = 0;
+    const pending: (() => void)[] = [];
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [TASKS] }),
+      [`GET ${UI}/views/todo/tasks`]: (() => {
+        n += 1;
+        const view = tasksView(n - 1, 9);
+        if (n === 1) return json(200, { view });
+        return new Promise<Response>((resolve) => {
+          pending.push(() => resolve(json(200, { view })));
+        });
+      }) as unknown as () => Response,
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    await vi.waitFor(() => expect(tabNamed("Tasks").textContent).toContain("0/9"));
+    const viewGets = () => calls.filter((c) => c.url.includes("/ui/views/todo/tasks")).length;
+    expect(viewGets()).toBe(1);
+    for (let i = 0; i < 8; i++) {
+      act(() => convStream().emit("ui", { plugin: "todo", contribution: "tasks" }));
+    }
+    await vi.waitFor(() => expect(viewGets()).toBe(2));
+    // 在途的那次完成后，只补取一次
+    await act(async () => pending.shift()?.());
+    await vi.waitFor(() => expect(viewGets()).toBe(3));
+    await act(async () => pending.shift()?.());
+    await vi.waitFor(() => expect(tabNamed("Tasks").textContent).toContain("2/9"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(viewGets()).toBe(3);
+  });
+
+  it("记住的标签不在了（插件被停用等）：回退到「运行」，而不是第一个插件标签（M2）", async () => {
+    localStorage.setItem("cap.chat.panelTab", "view:gone/x");
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [TASKS] }),
+      [`GET ${UI}/views/todo/tasks`]: () => json(200, { view: tasksView(0, 1) }),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    await within(panelOf()).findByRole("tab", { name: /Tasks/ });
+    await vi.waitFor(() =>
+      expect(tabNamed(en.chatPanel.run).getAttribute("aria-selected")).toBe("true"),
+    );
+    expect(tabNamed("Tasks").getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("贡献列表读取失败：面板给出提示与「重试」，重试成功后出现插件标签（M7）", async () => {
+    let fail = true;
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${UI}/contributions`]: () =>
+        fail
+          ? json(500, { error: { code: "internal", message: "x" } })
+          : json(200, { items: [TASKS] }),
+      [`GET ${UI}/views/todo/tasks`]: () => json(200, { view: tasksView(0, 1) }),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    const panel = panelOf();
+    expect(await within(panel).findByText(en.chatPanel.contributionsFailed)).toBeTruthy();
+    fail = false;
+    await userEvent.setup().click(within(panel).getByRole("button", { name: en.common.retry }));
+    expect(await within(panel).findByRole("tab", { name: /Tasks/ })).toBeTruthy();
+    expect(within(panel).queryByText(en.chatPanel.contributionsFailed)).toBeNull();
+  });
+});
+
 describe("对话时间线", () => {
   it.each(["zh", "en"] as const)(
     "工具调用行：标题取 display.summary[locale]，没有时退回「工具名 + 输入前几个字段」（%s）",
@@ -418,6 +521,9 @@ describe("对话时间线", () => {
         .closest('[data-role="tool"]') as HTMLElement;
       expect(within(del).getByText("id: x1 · reason: cleanup")).toBeTruthy();
       expect(del.getAttribute("data-status")).toBe("pending");
+      // 等待中（尚未开始执行）的调用用空心标记，不用表示进行中的主色标记
+      expect(del.closest("li")?.getAttribute("data-mark")).toBe("hollow");
+      expect(todo.closest("li")?.getAttribute("data-mark")).toBe("dot");
       // 默认折叠：展开后才有 IN / OUT
       expect(within(todo).queryByText("IN")).toBeNull();
       await userEvent.setup().click(within(todo).getByRole("button"));
@@ -504,6 +610,59 @@ describe("插件页面 /p/<plugin>/<id>", () => {
     n = 2;
     act(() => stream?.emit("ui", { plugin: "board", contribution: "overview" }));
     expect(await screen.findByRole("heading", { name: "Cards 2" })).toBeTruthy();
+  });
+
+  it("连续 8 次组织流 ui：最多 2 次重取（I1）；卸载时关闭组织流（M1）", async () => {
+    params.current = { plugin: "board", id: "overview" };
+    let n = 0;
+    const pending: (() => void)[] = [];
+    const calls = stubApi({
+      [`GET ${UI}/contributions`]: () => json(200, { items: [BOARD_PAGE] }),
+      [`GET ${UI}/views/board/overview`]: (() => {
+        n += 1;
+        const view = { blocks: [{ type: "heading", text: `Cards ${n}` }] };
+        if (n === 1) return json(200, { view });
+        return new Promise<Response>((resolve) => {
+          pending.push(() => resolve(json(200, { view })));
+        });
+      }) as unknown as () => Response,
+    });
+    const { unmount } = renderPage(<PluginPage />, { locale: "en" });
+    await screen.findByRole("heading", { name: "Cards 1" });
+    const stream = FakeEventSource.instances.find(
+      (s) => s.url === `${UI}/stream`,
+    ) as FakeEventSource;
+    for (let i = 0; i < 8; i++) {
+      act(() => stream.emit("ui", { plugin: "board", contribution: "overview" }));
+    }
+    const gets = () => calls.filter((c) => c.url.includes("/views/board/overview")).length;
+    await vi.waitFor(() => expect(gets()).toBe(2));
+    await act(async () => pending.shift()?.());
+    await vi.waitFor(() => expect(gets()).toBe(3));
+    await act(async () => pending.shift()?.());
+    expect(await screen.findByRole("heading", { name: "Cards 3" })).toBeTruthy();
+    expect(gets()).toBe(3);
+    expect(stream.readyState).toBe(1);
+    unmount();
+    expect(stream.readyState).toBe(2);
+  });
+
+  it("组织流出错（如会话被吊销）：页面提示实时刷新已断开（M7）", async () => {
+    params.current = { plugin: "board", id: "overview" };
+    stubApi({
+      [`GET ${UI}/contributions`]: () => json(200, { items: [BOARD_PAGE] }),
+      [`GET ${UI}/views/board/overview`]: () =>
+        json(200, { view: { blocks: [{ type: "heading", text: "Cards" }] } }),
+    });
+    renderPage(<PluginPage />, { locale: "en" });
+    await screen.findByRole("heading", { name: "Cards" });
+    const stream = FakeEventSource.instances.find(
+      (s) => s.url === `${UI}/stream`,
+    ) as FakeEventSource;
+    act(() => stream.emit("error", { code: "auth.session_revoked" }));
+    expect(await screen.findByText(en.pluginPage.liveLost)).toBeTruthy();
+    // 内容仍在
+    expect(screen.getByRole("heading", { name: "Cards" })).toBeTruthy();
   });
 
   it("取数失败显示错误与「重试」", async () => {

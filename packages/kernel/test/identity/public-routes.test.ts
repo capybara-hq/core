@@ -117,6 +117,7 @@ beforeAll(async () => {
           approvals: k.tools.approvals,
           questions: k.tools.questions,
           drift: k.tools.drift,
+          outputs: k.tools.outputs,
           appContent: k.tools.appContent,
           identity: k.identity,
           channels: k.channels.connections,

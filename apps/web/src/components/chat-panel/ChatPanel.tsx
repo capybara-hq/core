@@ -1,6 +1,6 @@
 "use client";
 
-import { Stack, type TabItem, Tabs } from "@capybara-hq/design";
+import { Button, Stack, type TabItem, Tabs, Text } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatItem } from "../../lib/stream";
@@ -52,6 +52,7 @@ export function ChatPanel({
   header: ReactNode;
 }) {
   const t = useTranslations("chatPanel");
+  const tc = useTranslations("common");
   const locale = uiLocale(useLocale());
   const contributions = useLoad(() => listUiContributions(orgId), [orgId]);
   const targets = useMemo(
@@ -96,14 +97,21 @@ export function ChatPanel({
   // 挂载后再读本地存储：服务端渲染与水合时都没有它
   const [preferred, setPreferred] = useState<string>();
   useEffect(() => setPreferred(readTab()), []);
-  const current = items.some((i) => i.id === preferred) ? (preferred as string) : items[0]?.id;
+  // 记住的标签不在了（插件停用、贡献撤下）时回到「运行」；从没选过时取第一个标签
+  const current =
+    preferred === undefined
+      ? items[0]?.id
+      : items.some((i) => i.id === preferred)
+        ? preferred
+        : "run";
   const select = useCallback((id: string) => {
     setPreferred(id);
     writeTab(id);
   }, []);
 
   let content: ReactNode = null;
-  if (current === "run") content = <RunTab tools={tools} />;
+  if (current === "run")
+    content = <RunTab orgId={orgId} conversationId={conversationId} tools={tools} />;
   else if (current === "context") {
     content = (
       <ContextTab
@@ -133,6 +141,17 @@ export function ChatPanel({
   return (
     <Stack gap={12}>
       {header}
+      {contributions.state.kind === "error" && (
+        // 插件标签读不到：只提示，不影响运行 / 上下文标签与对话
+        <Stack direction="row" gap={8} align="center" justify="between">
+          <Text variant="small" tone="warn">
+            {t("contributionsFailed")}
+          </Text>
+          <Button variant="ghost" onClick={contributions.reload}>
+            {tc("retry")}
+          </Button>
+        </Stack>
+      )}
       <Tabs label={t("label")} items={items} value={current ?? ""} onChange={select} />
       <div role="tabpanel" aria-label={label}>
         {content}

@@ -14,6 +14,7 @@ import type { KernelConfig } from "../config/schema.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
+import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -58,6 +59,7 @@ import {
   OAuthCallbackController,
   OAuthConnectController,
 } from "../tools/oauth/oauth.controller.js";
+import type { ToolOutputs } from "../tools/outputs.js";
 import { QuestionsController } from "../tools/questions.controller.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -72,6 +74,7 @@ import {
   APPROVALS,
   APPS,
   CHANNEL_CONNECTIONS,
+  CONVERSATION_OUTPUTS,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
@@ -132,6 +135,8 @@ export interface ApiDeps {
   questions: QuestionsService;
   /** 工具定义漂移检测（与 `Kernel.tools.drift` 同一实例；手动刷新走同一套比对）。 */
   drift: ToolDrift;
+  /** 工具输出存档（与 `Kernel.tools.outputs` 同一实例；网页的运行标签读全文）。 */
+  outputs: ToolOutputs;
   /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
   appContent: AppContent;
   /** 外部身份、绑定、第三方登录与离职处理（与 `Kernel.identity` 同一组实例）。 */
@@ -263,6 +268,15 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           (orgId, accountId, refs) => content.resolveAttachments(orgId, accountId, refs),
         ),
       inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT],
+    },
+    {
+      provide: CONVERSATION_OUTPUTS,
+      useFactory: (conversations: ConversationsService) =>
+        new ConversationOutputs({
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+          load: (scope, id) => deps.outputs.load(scope, id),
+        }),
+      inject: [CONVERSATIONS],
     },
     {
       provide: CONVERSATION_STREAMS,
