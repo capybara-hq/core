@@ -83,6 +83,8 @@ export type DirectorySyncResult =
       partial: boolean;
       /** 被大批移除保护（Ruling A17）拦下。 */
       removalBlocked: boolean;
+      /** 本轮持锁期间来过通讯录变更（Ruling A32）：不移除，由随后的补跑移除。 */
+      partialReason?: "changed_during_sync";
     };
 
 /** 一个 (组织, 插件) 投递目标。 */
@@ -159,7 +161,8 @@ type Eligible =
  *   (组织, 插件) 投递一次同步（job id 按小时桶去重，多副本重复扫描只跑一次）；手动与 `directory_changed` 也投递同步。
  * - 同一 (组织, 插件) 同时只跑一个同步（Redis 锁 `capk:directory-sync:<org>:<plugin>`，持有期间续租）；
  *   锁被占时本任务记下脏标记 `capk:directory-sync-dirty:<org>:<plugin>`（1 小时）后结束；持有者释放锁后 GETDEL
- *   取走标记，有就投递一次 changed 同步（在跑的那一轮可能已经读过变化之前的页）。
+ *   取走标记，有就投递一次 changed 同步（在跑的那一轮可能已经读过变化之前的页）。Ruling A32：移除阶段前 GET
+ *   （不取走）脏标记，有就本轮按不完整处理、不移除任何人（审计 `partialReason = changed_during_sync`），移除留给补跑。
  * - Ruling A17：非手动触发的一轮，计划移除数超过 `max(5, 20% × 现有通讯录成员数)`，或列表里没有在职成员而已有
  *   通讯录成员时，当作不完整、不移除任何人，审计 `org.directory.removal_blocked`；手动触发不受此限。
  * - 分页 `listMembers`：在职成员按 `<插件>:<租户>` + externalId 解析外部身份（不合并既有账号、不登录、不建会话），
@@ -503,6 +506,26 @@ export class DirectorySync {
         }
       }
     }
+    // Ruling A32：本轮持锁期间来过变更（另一任务因锁被占记下了脏标记）——已读过的页可能早于变更，列表不再可信，
+    // 本轮不移除任何人；结束时 rerunIfDirty 取走标记补跑一轮，由那一轮移除。这里只 GET，不能取走标记。
+    let partialReason: "changed_during_sync" | undefined;
+    if (!partial) {
+      let dirty: string | null;
+      try {
+        dirty = await this.d.redis.get(directorySyncDirtyKey(orgId, plugin));
+      } catch (err) {
+        this.d.log.warn("directory sync: cannot read the dirty flag; skipping removals", {
+          orgId,
+          plugin,
+          err,
+        });
+        dirty = "1";
+      }
+      if (dirty !== null) {
+        partial = true;
+        partialReason = "changed_during_sync";
+      }
+    }
     if (!partial) {
       const existing = await this.d.db
         .selectFrom("memberships")
@@ -561,9 +584,22 @@ export class DirectorySync {
       orgId,
       action: "org.directory.synced",
       target: plugin,
-      detail: { plugin, trigger, ...counts, partial, removalBlocked },
+      detail: {
+        plugin,
+        trigger,
+        ...counts,
+        partial,
+        removalBlocked,
+        ...(partialReason !== undefined && { partialReason }),
+      },
     });
-    return { status: "synced", ...counts, partial, removalBlocked };
+    return {
+      status: "synced",
+      ...counts,
+      partial,
+      removalBlocked,
+      ...(partialReason !== undefined && { partialReason }),
+    };
   }
 
   /**

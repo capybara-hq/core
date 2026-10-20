@@ -151,7 +151,13 @@ describe("通讯录同步（双副本）", () => {
       15_000,
       "rerun after lock contention",
     );
-    expect(synced[0]?.detail).toMatchObject({ trigger: "manual", added: 2, partial: false });
+    // Ruling A32：持锁期间来过变更（脏标记）→ 第一轮只加人、按不完整审计，移除留给补跑
+    expect(synced[0]?.detail).toMatchObject({
+      trigger: "manual",
+      added: 2,
+      partial: true,
+      partialReason: "changed_during_sync",
+    });
     expect(synced[1]?.detail).toMatchObject({ trigger: "changed", added: 0, partial: false });
     await sleep(500);
     expect(book.starts()).toBe(2);

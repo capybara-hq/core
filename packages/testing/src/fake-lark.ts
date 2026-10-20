@@ -164,7 +164,13 @@ export interface FakeLarkServer {
   connectionsOpened(): number;
   openSockets(): number;
   maxConcurrentSockets(): number;
-  failNext(api: FakeLarkApi, failure: FakeLarkFailure, count?: number): void;
+  /** 接下来 `count` 次（先放过 `skip` 次正常调用）该接口返回 `failure`。 */
+  failNext(api: FakeLarkApi, failure: FakeLarkFailure, count?: number, skip?: number): void;
+  /**
+   * 模拟应用的通讯录权限范围不是「全部成员」：对根部门（`0`）的子部门列表与直属用户列表回 HTTP 400
+   * `40004`（无部门权限）。
+   */
+  rejectRootDepartment(reject: boolean): void;
   /** 之后该接口的每次调用先等 `ms` 毫秒再响应（0 取消）。 */
   delay(api: FakeLarkApi, ms: number): void;
   /** 接下来 `count` 条 WebSocket 连接在建立后立即被关闭。 */
@@ -292,7 +298,13 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
   const known = new Map<string, { chatId: string; rootId?: string }>();
   const byUuid = new Map<string, string>();
   const tokens = new Set<string>();
-  const failures: { api: FakeLarkApi; failure: FakeLarkFailure; left: number }[] = [];
+  const failures: {
+    api: FakeLarkApi;
+    failure: FakeLarkFailure;
+    left: number;
+    skip: number;
+  }[] = [];
+  let rootRejected = false;
   const delays = new Map<FakeLarkApi, number>();
   const sockets: WebSocket[] = [];
   const ackWaiters = new Map<string, ((a: FakeLarkAck) => void)[]>();
@@ -375,7 +387,11 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     if (name === "endpoint") endpoint++;
     const wait = delays.get(name) ?? 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    const f = failures.find((x) => x.api === name && x.left > 0);
+    let f = failures.find((x) => x.api === name && x.left > 0);
+    if (f && f.skip > 0) {
+      f.skip--;
+      f = undefined;
+    }
     if (f) {
       f.left--;
       const { status = name === "endpoint" ? 200 : 400, code, msg, retryAfter } = f.failure;
@@ -556,6 +572,7 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
       }
       case "departments": {
         const id = decodeURIComponent(dept$?.[1] ?? "");
+        if (rootRejected && id === "0") return fail(res, 40004, "no dept authority");
         const deep = u.searchParams.get("fetch_child") === "true";
         const under = (p: string): FakeLarkDepartment[] =>
           departments
@@ -570,6 +587,7 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
       case "find_by_department": {
         const id = u.searchParams.get("department_id");
         if (id === null || id === "") return fail(res, 99992402, "department_id is required");
+        if (rootRejected && id === "0") return fail(res, 40004, "no dept authority");
         const all = [...users.values()].filter((x) => x.departments?.includes(id));
         return page(res, u, all, (x) => ({
           open_id: x.openId,
@@ -646,7 +664,7 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
       access_token: t,
       expires_in: 7200,
       token_type: "Bearer",
-      scope: "contact:user.email:readonly",
+      scope: "",
     });
   }
 
@@ -831,8 +849,11 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     connectionsOpened: () => opened,
     openSockets: () => sockets.length,
     maxConcurrentSockets: () => peak,
-    failNext(api, failure, count = 1) {
-      failures.push({ api, failure, left: count });
+    failNext(api, failure, count = 1, skip = 0) {
+      failures.push({ api, failure, left: count, skip });
+    },
+    rejectRootDepartment(reject) {
+      rootRejected = reject;
     },
     delay(api, ms) {
       delays.set(api, ms);

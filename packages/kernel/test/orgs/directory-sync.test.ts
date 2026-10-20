@@ -878,6 +878,61 @@ describe("修复波 W1", () => {
     });
   });
 
+  it("Ruling A32：同步途中来了 directory_changed（脏标记）→ 本轮不移除、审计不完整原因；补跑那一轮移除", async () => {
+    const { orgId, book } = await setupOrg();
+    book.members = [person("dc-1"), person("dc-2")];
+    expect(await sync(orgId)).toMatchObject({ added: 2 });
+    book.members = [person("dc-1")];
+    const dirty = directorySyncDirtyKey(orgId, "dir-mini");
+    let calls = 0;
+    let midSync: unknown;
+    const ds = new DirectorySync({
+      db,
+      redis,
+      host: k.host,
+      orgPluginConfigs: {
+        // 第二次（移除阶段前的复核）时：通讯录变更事件到达，另一个同步任务因锁被占而记下脏标记
+        get: async (o, p) => {
+          calls++;
+          if (calls === 2) {
+            midSync = await k.identity.directory.sync(o, p, { trigger: "changed" });
+          }
+          return k.orgPluginConfigs.get(o, p);
+        },
+      },
+      external: k.identity.external,
+      offboarding: k.identity.offboarding,
+      log: k.log,
+      // 补跑任务投到真实的维护队列，由内核的 worker 执行（不在这里注册处理函数）
+      maintenance: {
+        add: async (name, data, o) => {
+          await queue.add(name, data, o);
+        },
+        handle: () => {},
+        schedule: () => {},
+      },
+    });
+    const r = await ds.sync(orgId, "dir-mini", { trigger: "changed" });
+    expect(midSync).toEqual({ status: "skipped", reason: "locked" });
+    expect(r).toMatchObject({ status: "synced", removed: 0, partial: true });
+    expect(await memberOf(orgId, "dc-2")).toMatchObject({ source: DIR_SOURCE });
+    expect((await audits(orgId, "org.directory.synced")).at(-1)?.detail).toMatchObject({
+      removed: 0,
+      partial: true,
+      partialReason: "changed_during_sync",
+    });
+    // 本轮结束时取走脏标记、投递补跑；补跑（worker）的那一轮移除 dc-2
+    expect(await redis.get(dirty)).toBeNull();
+    await waitFor(
+      async () => ((await memberOf(orgId, "dc-2")) === undefined ? true : undefined),
+      15_000,
+      "rerun removes dc-2",
+    );
+    const last = (await audits(orgId, "org.directory.synced")).at(-1)?.detail;
+    expect(last).toMatchObject({ trigger: "changed", removed: 1, partial: false });
+    expect(await memberOf(orgId, "dc-1")).toMatchObject({ source: DIR_SOURCE });
+  }, 30_000);
+
   it("移除阶段前复核可同步性：组织级配置中途变得无效 → 不移除任何人", async () => {
     const { orgId, book } = await setupOrg();
     book.members = [person("ci-1"), person("ci-2")];
