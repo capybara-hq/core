@@ -814,6 +814,37 @@ describe("嵌入应用（第二档）", () => {
     expect(container.querySelector("iframe")).toBe(frame);
   });
 
+  it("10 秒内重新挂载超过 3 次（嵌入页反复整页跳转）：停下来显示错误与「重试」，重试后重新打开", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [EMBED] }),
+      [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    const panel = panelOf();
+    let prev: HTMLIFrameElement | undefined;
+    // 第 1 次挂载 + 3 次重新挂载，每个 iframe 都 load 两次（第二次 = 导航走了）
+    for (let i = 0; i < 4; i++) {
+      const f = await vi.waitFor(() => {
+        const el = within(panel).getByTitle("Live") as HTMLIFrameElement;
+        if (el === prev) throw new Error("not remounted yet");
+        return el;
+      });
+      prev = f;
+      act(() => {
+        f.dispatchEvent(new Event("load"));
+      });
+      act(() => {
+        f.dispatchEvent(new Event("load"));
+      });
+    }
+    expect(await within(panel).findByText(`✗ ${en.ui.embedRemountLimit}`)).toBeTruthy();
+    expect(within(panel).queryByTitle("Live")).toBeNull();
+    await userEvent.setup().click(within(panel).getByRole("button", { name: en.common.retry }));
+    const again = await within(panel).findByTitle("Live");
+    expect(again.getAttribute("sandbox")).toBe("allow-scripts allow-forms");
+  });
+
   it("取令牌失败：只在这个标签显示错误与「重试」，重试后打开", async () => {
     let fail = true;
     stubApi({

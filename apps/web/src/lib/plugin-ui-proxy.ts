@@ -10,7 +10,9 @@
  *   （不转发 Basic 与 `cap_pat_` / `cap_svc_` 等内核 API 令牌，插件拿不到它们）；
  * - 响应头也走白名单（{@link ALLOW_RESPONSE}）：Set-Cookie、Clear-Site-Data、NEL / Report-To、HSTS、
  *   Accept-CH、Link 等会影响整个 Web 源的头一律不透传；3xx 的 Location 只保留仍在本插件
- *   `/plugin-ui/<plugin>/` 下的；插件没给 Cache-Control 时为 `no-store`；
+ *   `/plugin-ui/<plugin>/` 下的；
+ * - 缓存只能是私有的（{@link cacheControlFor}）：转发了令牌的请求一律 `no-store`；其余去掉 `public` /
+ *   `s-maxage` 等共享缓存指令并改成 `private`，插件没给时为 `no-store`——共享缓存不会把一个人的数据给另一个人；
  * - 每个响应都加安全头（{@link SECURITY_HEADERS}）；
  * - 响应体以流透传（SSE 可用），请求体上限同 `/api`。
  */
@@ -127,6 +129,25 @@ export function kernelPathOf(pathname: string): string | undefined {
   return `/plugins/${plugin}/ui/${segments.join("/")}`;
 }
 
+/** 只对共享缓存（CDN、反向代理）生效的指令，以及 `private` 本身（统一重新加在最前面）。 */
+const SHARED_CACHE_DIRECTIVES = new Set(["public", "private", "s-maxage", "proxy-revalidate"]);
+
+/**
+ * 回给浏览器的 Cache-Control：带令牌的请求（数据按调用者身份返回）一律 `no-store`；
+ * 否则插件没给时 `no-store`，给了就去掉共享缓存指令、改成 `private`（如 `public, max-age=60` → `private, max-age=60`）。
+ */
+export function cacheControlFor(upstream: string | null, authorized: boolean): string {
+  if (authorized || upstream === null) return "no-store";
+  const kept = upstream
+    .split(",")
+    .map((d) => d.trim())
+    .filter(
+      (d) =>
+        d !== "" && !SHARED_CACHE_DIRECTIVES.has(d.split("=", 1)[0]?.trim().toLowerCase() ?? ""),
+    );
+  return ["private", ...kept].join(", ");
+}
+
 /** 3xx 的 Location 是否仍在本插件的 `/plugin-ui/<plugin>/` 下（相对路径、站外、规范化后会变的一律不算）。 */
 function locationInPlugin(location: string, plugin: string): boolean {
   if (!location.startsWith(`${PREFIX}${plugin}/`) || location.includes("//")) return false;
@@ -162,8 +183,8 @@ export async function proxyPluginUi(req: Request): Promise<Response> {
   });
   const auth = req.headers.get("authorization");
   const bearer = auth === null ? undefined : EMBED_BEARER.exec(auth)?.[1];
-  if (bearer !== undefined && !bearer.startsWith("cap_"))
-    headers.set("authorization", auth as string);
+  const authorized = bearer !== undefined && !bearer.startsWith("cap_");
+  if (authorized) headers.set("authorization", auth as string);
   const peer = trustedPeer(req.headers);
   if (peer !== undefined) headers.set("x-forwarded-for", peer);
 
@@ -190,7 +211,7 @@ export async function proxyPluginUi(req: Request): Promise<Response> {
   upstream.headers.forEach((value, key) => {
     if (ALLOW_RESPONSE.has(key)) out.set(key, value);
   });
-  if (!out.has("cache-control")) out.set("cache-control", "no-store");
+  out.set("cache-control", cacheControlFor(upstream.headers.get("cache-control"), authorized));
   const location = upstream.headers.get("location");
   const plugin = path.split("/")[2] as string;
   if (

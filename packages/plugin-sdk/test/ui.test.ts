@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   definePlugin,
@@ -14,6 +15,14 @@ import {
   validateUiContributions,
   validateUiView,
 } from "../src/index.js";
+
+/** navigate 路径的共享测试向量（与 apps/web/test/embed-bridge.test.tsx 共用）。 */
+const NAV_VECTORS = JSON.parse(
+  readFileSync(
+    new URL("../../../tools/fixtures/embed-navigate-vectors.json", import.meta.url),
+    "utf8",
+  ),
+) as { accept: string[]; reject: string[] };
 
 const view = (...blocks: unknown[]): unknown => ({ blocks });
 const ok = (...blocks: unknown[]) => expect(validateUiView(view(...blocks))).toEqual([]);
@@ -250,26 +259,13 @@ describe("parseEmbedChildMessage", () => {
     expect(parseEmbedChildMessage(null)).toBeNull();
     expect(parseEmbedChildMessage("toast")).toBeNull();
   });
-  it("拒绝站外跳转", () => {
-    for (const path of [
-      "//evil",
-      "https://x",
-      "/\\evil",
-      "evil",
-      "",
-      "javascript:alert(1)",
-      "/a\nb",
-      "/..//x",
-      "/%2e%2e//x",
-      "/.//x",
-      "/a/../b",
-      "/a/%2E%2e/b",
-      "/a/./b",
-      "/a/%2e/b",
-      "/a//b",
-      "/a/..",
-      "/a?x=//y",
-    ]) {
+  it("navigate：共享向量里的 accept 原样放行、reject 一律拒绝（站外、//、. / .. 段、编码的 / \\ 与控制字符）", () => {
+    for (const path of NAV_VECTORS.accept) {
+      expect(parseEmbedChildMessage(msg({ type: "navigate", path })), path).toEqual(
+        msg({ type: "navigate", path }),
+      );
+    }
+    for (const path of NAV_VECTORS.reject) {
       expect(parseEmbedChildMessage(msg({ type: "navigate", path })), path).toBeNull();
     }
   });

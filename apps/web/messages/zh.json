@@ -275,7 +275,8 @@
   },
   "ui": {
     "dangerDescription": "这个操作由插件执行，可能无法撤销。",
-    "embedRefreshFailed": "插件页面的凭据续期失败，正在重试；页面可能暂时无法读写。"
+    "embedRefreshFailed": "插件页面的凭据续期失败，正在重试；页面可能暂时无法读写。",
+    "embedRemountLimit": "插件页面在加载后反复跳转离开，已停止加载。可以重试，或联系插件提供方。"
   },
   "chatPanel": {
     "label": "对话面板",

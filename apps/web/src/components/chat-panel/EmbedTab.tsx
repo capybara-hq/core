@@ -17,7 +17,13 @@ import { FormError } from "../form-error";
 type EmbedState =
   | { kind: "loading" }
   | { kind: "ready"; src: string }
-  | { kind: "error"; e: unknown };
+  | { kind: "error"; e: unknown }
+  /** 嵌入页反复导航离开、重新挂载太多次：停下来，等用户点「重试」。 */
+  | { kind: "remountLimit" };
+
+/** 在 {@link REMOUNT_WINDOW_MS} 内最多重新挂载几次 iframe；再多就停下来显示错误。 */
+export const MAX_REMOUNTS = 3;
+export const REMOUNT_WINDOW_MS = 10_000;
 
 /**
  * 嵌入应用（第二档）：取嵌入令牌，在 design 的 `EmbedFrame`（沙箱 iframe）里打开插件页面，
@@ -57,9 +63,10 @@ export function EmbedTab({
   });
 
   useEffect(() => {
-    // attempt：「重试」时重建
+    // attempt：「重试」时重建（重新挂载的计数也清零）
     void attempt;
     let src: string | undefined;
+    let remounts: number[] = [];
     const b = createEmbedBridge({
       post: (m) => frame.current?.contentWindow?.postMessage(m, "*"),
       frameWindow: () => frame.current?.contentWindow,
@@ -78,7 +85,17 @@ export function EmbedTab({
       onNavigate: (path) => latest.current.router.push(path),
       onToast: (text) => latest.current.toast.success(text),
       onTokenError: () => setRefreshFailed(true),
-      onNavigatedAway: () => setFrameKey((n) => n + 1),
+      onNavigatedAway: () => {
+        const now = Date.now();
+        remounts = remounts.filter((at) => now - at < REMOUNT_WINDOW_MS);
+        if (remounts.length >= MAX_REMOUNTS) {
+          // 嵌入页每次加载都立刻跳走：不再无限重挂（每次都会请求插件页面）
+          setState({ kind: "remountLimit" });
+          return;
+        }
+        remounts.push(now);
+        setFrameKey((n) => n + 1);
+      },
     });
     bridge.current = b;
     setState({ kind: "loading" });
@@ -118,10 +135,12 @@ export function EmbedTab({
   }, []);
 
   if (state.kind === "loading") return <Skeleton rows={4} />;
-  if (state.kind === "error") {
+  if (state.kind === "error" || state.kind === "remountLimit") {
     return (
       <Stack gap={8}>
-        <FormError message={errorMessage(state.e)} />
+        <FormError
+          message={state.kind === "error" ? errorMessage(state.e) : t("ui.embedRemountLimit")}
+        />
         <Stack direction="row" gap={8}>
           <Button onClick={() => setAttempt((n) => n + 1)}>{t("common.retry")}</Button>
         </Stack>

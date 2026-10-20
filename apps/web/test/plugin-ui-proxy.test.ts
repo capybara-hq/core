@@ -286,7 +286,7 @@ describe("/plugin-ui 代理（修复第 1 轮）", () => {
       expect(res.headers.get(h), h).toBeNull();
     }
     expect(res.headers.get("content-type")).toBe("text/html");
-    expect(res.headers.get("cache-control")).toBe("max-age=60");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=60");
     expect(res.headers.get("etag")).toBe('"v1"');
     expect(res.headers.get("last-modified")).toBe("Wed, 21 Oct 2026 07:28:00 GMT");
     expect(res.headers.get("vary")).toBe("Accept");
@@ -336,6 +336,46 @@ describe("/plugin-ui 代理（修复第 1 轮）", () => {
         new Request(url("/plugin-ui/example-board/cards"), { headers: { authorization: auth } }),
       );
       expect(seen[0]?.headers.authorization, auth).toBe(forwarded ? auth : undefined);
+    }
+  });
+});
+
+describe("/plugin-ui 代理（修复第 2 轮）：缓存策略只能是私有的", () => {
+  const withCache = (cc: string) => {
+    handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "text/html", "cache-control": cc });
+      res.end("<p>data</p>");
+    };
+  };
+
+  it("没带令牌：public 改成 private（text/html，public, max-age=60）", async () => {
+    withCache("public, max-age=60");
+    const res = await GET(new Request(url("/plugin-ui/example-board/board")));
+    expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+  });
+
+  it("没带令牌：去掉 s-maxage 与 public / proxy-revalidate 等共享缓存指令", async () => {
+    withCache("public, s-maxage=600, max-age=60, proxy-revalidate");
+    const res = await GET(new Request(url("/plugin-ui/example-board/board")));
+    expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+    withCache("S-MaxAge=600");
+    const only = await GET(new Request(url("/plugin-ui/example-board/board")));
+    expect(only.headers.get("cache-control")).toBe("private");
+    withCache("private, no-cache");
+    const kept = await GET(new Request(url("/plugin-ui/example-board/board")));
+    expect(kept.headers.get("cache-control")).toBe("private, no-cache");
+  });
+
+  it("转发了 Authorization（带令牌的数据请求）：一律 no-store", async () => {
+    for (const cc of ["public, max-age=60", "public, s-maxage=600", "private, max-age=60"]) {
+      withCache(cc);
+      const res = await GET(
+        new Request(url("/plugin-ui/example-board/cards"), {
+          headers: { authorization: "Bearer eyJwIjoxfQ.c2ln" },
+        }),
+      );
+      expect(seen.at(-1)?.headers.authorization).toBe("Bearer eyJwIjoxfQ.c2ln");
+      expect(res.headers.get("cache-control"), cc).toBe("no-store");
     }
   });
 });

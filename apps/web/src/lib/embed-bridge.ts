@@ -53,17 +53,23 @@ export const EMBED_MAX_HEIGHT = 4000;
 const NAV_MAX = 2000;
 const RESIZE_MAX = 10000;
 const TOAST_MAX = 500;
+// capybara:embed-nav-begin（这一段在 packages/plugin-sdk/src/ui.ts 与 apps/web/src/lib/embed-bridge.ts 里逐字相同，有测试核对）
+// 控制字符与反斜杠：浏览器会把 `/\host` 当成 `//host`，也会剥掉路径里的换行 / 制表符
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
 const NAV_BAD = /[\u0000-\u001f\u007f\\]/;
+/** 路径部分里编码的 `/`、`\` 与控制字符（任意大小写）：解码后会改变路径结构。 */
+const NAV_BAD_ENCODED = /%(?:2f|5c|[01][0-9a-f]|7f)/i;
 
 /**
- * 站内路径：以单个 `/` 开头，任何位置都没有 `//`，没有控制字符与反斜杠，路径部分没有 `.` / `..` 段
- * （含任意大小写的 `%2e` 编码），且按 URL 规范化后与原文完全相同、不以 `//` 开头——
- * 规范化不会把它变成别的路径，交给站内路由时不会跳到站外或上层目录。
+ * 站内路径：以单个 `/` 开头，任何位置都没有 `//`，没有控制字符与反斜杠；路径部分没有 `.` / `..` 段
+ * （含任意大小写的 `%2e` 编码），也没有编码的 `/`（`%2f`）、`\`（`%5c`）与控制字符（`%00`–`%1f`、`%7f`）；
+ * 且按 URL 规范化后与原文完全相同、不以 `//` 开头——规范化不会把它变成别的路径，
+ * 交给站内路由时不会跳到站外或上层目录。
  */
 function isInSitePath(p: string): boolean {
   if (!p.startsWith("/") || p.includes("//") || NAV_BAD.test(p)) return false;
   const path = p.split(/[?#]/, 1)[0] ?? "";
+  if (NAV_BAD_ENCODED.test(path)) return false;
   for (const seg of path.split("/")) {
     const s = seg.toLowerCase().replaceAll("%2e", ".");
     if (s === "." || s === "..") return false;
@@ -76,6 +82,7 @@ function isInSitePath(p: string): boolean {
   }
   return u.pathname + u.search + u.hash === p && !u.pathname.startsWith("//");
 }
+// capybara:embed-nav-end
 /** 设计 token 的数量与单值长度上限（只发名称与值，不发页面内容）。 */
 const TOKENS_MAX = 300;
 const TOKEN_VALUE_MAX = 200;

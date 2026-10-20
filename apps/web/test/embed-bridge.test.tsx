@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createEmbedBridge,
@@ -7,6 +9,25 @@ import {
   parseEmbedChildMessage,
   readDesignTokens,
 } from "../src/lib/embed-bridge";
+
+/**
+ * 仓库根目录下的文件（jsdom 环境里 `import.meta.url` 不是 file: 地址；vitest 在仓库根运行）。
+ */
+const repoFile = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
+
+/** navigate 路径的共享测试向量（与 packages/plugin-sdk/test/ui.test.ts 共用）。 */
+const NAV_VECTORS = JSON.parse(repoFile("tools/fixtures/embed-navigate-vectors.json")) as {
+  accept: string[];
+  reject: string[];
+};
+
+/** 两份 `isInSitePath`（SDK 与网页的照抄）在标记之间的源码。 */
+const navBlock = (rel: string): string => {
+  const src = repoFile(rel);
+  const m = /\/\/ capybara:embed-nav-begin[^\n]*\n([\s\S]*?)\/\/ capybara:embed-nav-end/.exec(src);
+  if (!m) throw new Error(`embed-nav markers not found in ${rel}`);
+  return m[1] as string;
+};
 
 /**
  * 外层页面与嵌入 iframe 的消息桥（审查重点 4）：只认这个 iframe 发来的、协议正确的消息；
@@ -85,28 +106,15 @@ function setup(over: Partial<EmbedBridgeOptions> = {}) {
 const child = (m: Record<string, unknown>) => ({ protocol: EMBED_PROTOCOL, ...m });
 
 describe("parseEmbedChildMessage（与 SDK 同一规则）", () => {
-  it("navigate 只认单个 / 开头的站内路径", () => {
-    for (const bad of [
-      "https://x",
-      "//x",
-      "/\\x",
-      "javascript:alert(1)",
-      "x",
-      "",
-      "/a\nb",
-      "/a\tb",
-      `/${"a".repeat(2001)}`,
-      "/..//x",
-      "/%2e%2e//x",
-      "/.//x",
-      "/a/../b",
-      "/a/%2E%2e/b",
-      "/a/./b",
-      "/a/%2e/b",
-      "/a//b",
-      "/a/..",
-      "/a?x=//y",
-    ]) {
+  it("navigate：共享向量里的 accept 原样放行、reject 一律拒绝；超长路径拒绝", () => {
+    for (const path of NAV_VECTORS.accept) {
+      expect(parseEmbedChildMessage(child({ type: "navigate", path })), path).toEqual({
+        protocol: EMBED_PROTOCOL,
+        type: "navigate",
+        path,
+      });
+    }
+    for (const bad of [...NAV_VECTORS.reject, `/${"a".repeat(2001)}`]) {
       expect(parseEmbedChildMessage(child({ type: "navigate", path: bad })), bad).toBeNull();
     }
     expect(parseEmbedChildMessage(child({ type: "navigate", path: "/chat/c2" }))).toEqual({
@@ -322,6 +330,15 @@ describe("createEmbedBridge：续期时钟与 iframe 导航（修复第 1 轮）
     await clock.advance(240_000);
     await flush();
     expect(posted.map((m) => m.type)).toEqual(["init"]);
+  });
+});
+
+describe("isInSitePath 两份照抄保持一致", () => {
+  it("SDK 与网页里 capybara:embed-nav-begin / end 之间的源码逐字相同", () => {
+    const sdk = navBlock("packages/plugin-sdk/src/ui.ts");
+    const web = navBlock("apps/web/src/lib/embed-bridge.ts");
+    expect(sdk).toContain("function isInSitePath");
+    expect(web).toBe(sdk);
   });
 });
 

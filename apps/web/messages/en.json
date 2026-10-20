@@ -275,7 +275,8 @@
   },
   "ui": {
     "dangerDescription": "The plugin performs this action. It may not be reversible.",
-    "embedRefreshFailed": "Could not renew the plugin page's credentials. Retrying; the page may not load or save data for now."
+    "embedRefreshFailed": "Could not renew the plugin page's credentials. Retrying; the page may not load or save data for now.",
+    "embedRemountLimit": "The plugin page kept navigating away after loading, so it was stopped. Retry, or contact the plugin provider."
   },
   "chatPanel": {
     "label": "Conversation panel",
