@@ -29,6 +29,7 @@ export {
   type FakeLarkApi,
   type FakeLarkButton,
   type FakeLarkCall,
+  type FakeLarkDepartment,
   type FakeLarkFailure,
   type FakeLarkMessage,
   type FakeLarkOptions,

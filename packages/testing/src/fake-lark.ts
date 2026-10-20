@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import protobuf from "protobufjs";
@@ -20,6 +20,19 @@ import { type RawData, type WebSocket, WebSocketServer } from "ws";
  *   推事件帧（`method = 1`，头 `type = event`、`message_id`、`sum = 1`、`seq = 0`），记下客户端回的响应帧
  *   （`acks`：`code` 200 / 500 与解码后的 `data`）；客户端的 ping 回 pong。
  *
+ * - **网页登录（OAuth 2.0 授权码 + PKCE）**：授权页 `GET /open-apis/authen/v1/authorize`（真实 Lark 在
+ *   `accounts.larksuite.com`；测试在授权地址后加 `&as=<open_id>` 表示以该用户同意授权，302 回
+ *   `redirect_uri?code=…&state=…`；`client_id` 不符或用户不存在 → `error=access_denied`）、换 token
+ *   `POST /open-apis/authen/v2/oauth/token`（授权码单次有效：未知 → `20003`、用过 → `20065`；`client_secret` 不符 →
+ *   `20002`；`redirect_uri` 必须与授权时完全相同，否则 `20071`；带了 `code_challenge` 的授权码必须给对
+ *   `code_verifier`，否则 `20049`；错误均为 HTTP 400 + `{code, error, error_description}`）、用户信息
+ *   `GET /open-apis/authen/v1/user_info`（Bearer user_access_token；`open_id`、`union_id`、`tenant_key`、`name`、
+ *   `en_name`、`avatar_*`、`email`、`enterprise_email`）。
+ * - **通讯录**：`GET /open-apis/contact/v3/departments/:id/children`（`fetch_child=true` 时递归；`page_size` 最大 50，
+ *   `page_token` / `has_more`）、`GET /open-apis/contact/v3/users/find_by_department`（部门直属用户，根部门为 `0`；
+ *   `page_size` 最大 50；`status` 为 `is_frozen` / `is_resigned` / `is_activated` / `is_exited` / `is_unjoin`，
+ *   {@link FakeLarkServer.hideUserStatus} 模拟没有开通状态字段所需的权限）。
+ *
  * 记录：`messages`（发出的消息，卡片已解析）、`updates`（对已发消息的更新）、`calls`（每次 OpenAPI 调用）。
  */
 
@@ -27,6 +40,29 @@ export interface FakeLarkUser {
   openId: string;
   name: string;
   avatar72?: string;
+  enName?: string;
+  /** 用户所在租户（默认本服务的 `tenantKey`；`user_info` 的 `tenant_key`）。 */
+  tenantKey?: string;
+  email?: string;
+  enterpriseEmail?: string;
+  /** 直属部门（`open_department_id`，根部门为 `"0"`）；不给则不出现在通讯录列表里。 */
+  departments?: string[];
+  /** 通讯录 `status`（缺省：已激活，其他均为 false）。 */
+  status?: {
+    isFrozen?: boolean;
+    isResigned?: boolean;
+    isActivated?: boolean;
+    isExited?: boolean;
+    isUnjoin?: boolean;
+  };
+}
+
+/** 通讯录部门。 */
+export interface FakeLarkDepartment {
+  openDepartmentId: string;
+  name: string;
+  /** 上级部门（根部门为 `"0"`）。 */
+  parent: string;
 }
 
 /** 机器人发出（或更新后）的一条消息。 */
@@ -77,9 +113,14 @@ export interface FakeLarkOptions {
   tenantKey?: string;
   botOpenId?: string;
   botName?: string;
+  /** 同一租户里的其他自建应用（只能取 tenant token、查企业信息；测试「登录 / 机器人不是同一个应用」）。 */
+  extraApps?: { appId: string; appSecret: string }[];
 }
 
-/** 接口名：`token`、`bot`、`tenant`、`create`、`reply`、`patch`、`user`、`endpoint`。 */
+/**
+ * 接口名：`token`、`bot`、`tenant`、`create`、`reply`、`patch`、`user`、`endpoint`、`oauth_token`、`user_info`、
+ * `departments`、`find_by_department`。
+ */
 export type FakeLarkApi =
   | "token"
   | "bot"
@@ -88,7 +129,11 @@ export type FakeLarkApi =
   | "reply"
   | "patch"
   | "user"
-  | "endpoint";
+  | "endpoint"
+  | "oauth_token"
+  | "user_info"
+  | "departments"
+  | "find_by_department";
 
 export interface FakeLarkServer {
   /** 开放平台根地址（插件的 `apiUrl` / SDK 的 `domain`）。 */
@@ -103,6 +148,12 @@ export interface FakeLarkServer {
   calls: FakeLarkCall[];
   acks: FakeLarkAck[];
   users: Map<string, FakeLarkUser>;
+  /** 通讯录部门（按插入顺序列出）。 */
+  departments: FakeLarkDepartment[];
+  /** 已签发的 user_access_token 数。 */
+  userTokensIssued(): number;
+  /** 通讯录列表里不带 `status`（模拟没有开通状态字段所需的权限）。 */
+  hideUserStatus(hide: boolean): void;
   /** 已签发的 tenant token 数。 */
   tokensIssued(): number;
   /** 吊销所有已签发的 token（之后的调用回 99991663）。 */
@@ -224,6 +275,20 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
   const calls: FakeLarkCall[] = [];
   const acks: FakeLarkAck[] = [];
   const users = new Map<string, FakeLarkUser>();
+  const departments: FakeLarkDepartment[] = [];
+  const codes = new Map<
+    string,
+    {
+      openId: string;
+      redirectUri: string;
+      challenge?: string;
+      method: string;
+      used: boolean;
+    }
+  >();
+  const userTokens = new Map<string, string>();
+  let userIssued = 0;
+  let statusHidden = false;
   const known = new Map<string, { chatId: string; rootId?: string }>();
   const byUuid = new Map<string, string>();
   const tokens = new Set<string>();
@@ -282,7 +347,11 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     const method = req.method ?? "GET";
     const reply$ = /^\/open-apis\/im\/v1\/messages\/([^/]+)\/reply$/.exec(path);
     const msg$ = /^\/open-apis\/im\/v1\/messages\/([^/]+)$/.exec(path);
-    const user$ = /^\/open-apis\/contact\/v3\/users\/([^/]+)$/.exec(path);
+    const user$ =
+      path === "/open-apis/contact/v3/users/find_by_department"
+        ? null
+        : /^\/open-apis\/contact\/v3\/users\/([^/]+)$/.exec(path);
+    const dept$ = /^\/open-apis\/contact\/v3\/departments\/([^/]+)\/children$/.exec(path);
     let name: FakeLarkApi | undefined;
     if (path === "/open-apis/auth/v3/tenant_access_token/internal" && method === "POST")
       name = "token";
@@ -293,6 +362,11 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     else if (msg$ && method === "PATCH") name = "patch";
     else if (user$ && method === "GET") name = "user";
     else if (path === "/callback/ws/endpoint" && method === "POST") name = "endpoint";
+    else if (path === "/open-apis/authen/v2/oauth/token" && method === "POST") name = "oauth_token";
+    else if (path === "/open-apis/authen/v1/user_info" && method === "GET") name = "user_info";
+    else if (dept$ && method === "GET") name = "departments";
+    else if (path === "/open-apis/contact/v3/users/find_by_department" && method === "GET")
+      name = "find_by_department";
     if (name === undefined) return fail(res, 404, "not found", 404);
 
     const auth = String(req.headers.authorization ?? "");
@@ -317,12 +391,38 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     }
 
     if (name === "token") {
-      if (str(body.app_id) !== appId) return reply(res, { code: 10014, msg: "app id not exists" });
-      if (str(body.app_secret) !== appSecret)
+      const app = [{ appId, appSecret }, ...(opts.extraApps ?? [])].find(
+        (a) => a.appId === str(body.app_id),
+      );
+      if (!app) return reply(res, { code: 10014, msg: "app id not exists" });
+      if (str(body.app_secret) !== app.appSecret)
         return reply(res, { code: 10015, msg: "wrong app secret" });
       const t = `t-fake-${++issued}-${hex(4)}`;
       tokens.add(t);
       return reply(res, { code: 0, msg: "ok", tenant_access_token: t, expire: 7200 });
+    }
+    if (name === "oauth_token") return oauthToken(res, body);
+    if (name === "user_info") {
+      const openId = userTokens.get(token);
+      const usr = openId !== undefined ? users.get(openId) : undefined;
+      if (!usr) return fail(res, 20005, "The user access token passed is invalid", 401);
+      return reply(res, {
+        code: 0,
+        msg: "success",
+        data: {
+          name: usr.name,
+          ...(usr.enName !== undefined && { en_name: usr.enName }),
+          ...(usr.avatar72 !== undefined && {
+            avatar_url: usr.avatar72,
+            avatar_thumb: usr.avatar72,
+          }),
+          open_id: usr.openId,
+          union_id: `on_${usr.openId}`,
+          ...(usr.email !== undefined && { email: usr.email }),
+          ...(usr.enterpriseEmail !== undefined && { enterprise_email: usr.enterpriseEmail }),
+          tenant_key: usr.tenantKey ?? tenantKey,
+        },
+      });
     }
     if (name === "endpoint") {
       if (str(body.AppID) !== appId || str(body.AppSecret) !== appSecret) {
@@ -454,14 +554,133 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
         updates.push({ ...orig, card: content.card, at: Date.now() });
         return reply(res, { code: 0, msg: "ok", data: {} });
       }
+      case "departments": {
+        const id = decodeURIComponent(dept$?.[1] ?? "");
+        const deep = u.searchParams.get("fetch_child") === "true";
+        const under = (p: string): FakeLarkDepartment[] =>
+          departments
+            .filter((d) => d.parent === p)
+            .flatMap((d) => (deep ? [d, ...under(d.openDepartmentId)] : [d]));
+        return page(res, u, under(id), (d) => ({
+          name: d.name,
+          parent_department_id: d.parent,
+          open_department_id: d.openDepartmentId,
+        }));
+      }
+      case "find_by_department": {
+        const id = u.searchParams.get("department_id");
+        if (id === null || id === "") return fail(res, 99992402, "department_id is required");
+        const all = [...users.values()].filter((x) => x.departments?.includes(id));
+        return page(res, u, all, (x) => ({
+          open_id: x.openId,
+          union_id: `on_${x.openId}`,
+          name: x.name,
+          ...(x.enName !== undefined && { en_name: x.enName }),
+          ...(x.email !== undefined && { email: x.email }),
+          ...(x.enterpriseEmail !== undefined && { enterprise_email: x.enterpriseEmail }),
+          ...(!statusHidden && {
+            status: {
+              is_frozen: x.status?.isFrozen === true,
+              is_resigned: x.status?.isResigned === true,
+              is_activated: x.status?.isActivated !== false,
+              is_exited: x.status?.isExited === true,
+              is_unjoin: x.status?.isUnjoin === true,
+            },
+          }),
+          department_ids: x.departments ?? [],
+        }));
+      }
       default:
         return fail(res, 404, "not found", 404);
     }
   };
 
+  /** 通讯录分页：`page_size`（默认 10，最大 50）+ 不透明的 `page_token`（偏移量的 base64url）。 */
+  function page<T>(res: ServerResponse, u: URL, all: T[], map: (x: T) => Record<string, unknown>) {
+    const size = Number(u.searchParams.get("page_size") ?? "10");
+    if (!Number.isInteger(size) || size < 1 || size > 50) return fail(res, 99992402, "page_size");
+    const tok = u.searchParams.get("page_token");
+    const offset = tok ? Number(Buffer.from(tok, "base64url").toString()) : 0;
+    if (!Number.isInteger(offset) || offset < 0) return fail(res, 99992402, "page_token");
+    const more = offset + size < all.length;
+    return reply(res, {
+      code: 0,
+      msg: "success",
+      data: {
+        has_more: more,
+        ...(more && { page_token: Buffer.from(String(offset + size)).toString("base64url") }),
+        items: all.slice(offset, offset + size).map(map),
+      },
+    });
+  }
+
+  /** OAuth 错误：HTTP 400 + `{code, error, error_description}`（与 Lark v2 token 接口一致）。 */
+  const oauthFail = (res: ServerResponse, code: number, error: string, description: string) =>
+    reply(res, { code, error, error_description: description }, 400);
+
+  function oauthToken(res: ServerResponse, body: Record<string, unknown>) {
+    if (body.grant_type !== "authorization_code")
+      return oauthFail(res, 20036, "unsupported_grant_type", "grant_type");
+    if (str(body.client_id) !== appId || str(body.client_secret) !== appSecret)
+      return oauthFail(res, 20002, "invalid_client", "The client secret is invalid.");
+    const rec = codes.get(str(body.code) ?? "");
+    if (!rec) return oauthFail(res, 20003, "invalid_grant", "The authorization code is not found.");
+    if (rec.used)
+      return oauthFail(res, 20065, "invalid_grant", "The authorization code has been used.");
+    rec.used = true;
+    if (str(body.redirect_uri) !== rec.redirectUri)
+      return oauthFail(res, 20071, "invalid_grant", "The provided redirect URI does not match.");
+    if (rec.challenge !== undefined) {
+      const verifier = str(body.code_verifier) ?? "";
+      const expected =
+        rec.method === "S256"
+          ? createHash("sha256").update(verifier).digest("base64url")
+          : verifier;
+      if (verifier === "" || expected !== rec.challenge)
+        return oauthFail(res, 20049, "invalid_grant", "PKCE code challenge failed.");
+    }
+    const t = `u-fake-${++userIssued}-${hex(6)}`;
+    userTokens.set(t, rec.openId);
+    return reply(res, {
+      code: 0,
+      access_token: t,
+      expires_in: 7200,
+      token_type: "Bearer",
+      scope: "contact:user.email:readonly",
+    });
+  }
+
+  /** 授权页：`&as=<open_id>` 表示该用户同意授权。 */
+  function authorize(res: ServerResponse, u: URL) {
+    const redirect = u.searchParams.get("redirect_uri");
+    if (!redirect) return fail(res, 20001, "redirect_uri is required");
+    const back = new URL(redirect);
+    const state = u.searchParams.get("state");
+    if (state !== null) back.searchParams.set("state", state);
+    const as = u.searchParams.get("as") ?? "";
+    if (u.searchParams.get("client_id") !== appId || !users.has(as)) {
+      back.searchParams.set("error", "access_denied");
+    } else {
+      const code = hex(24);
+      const challenge = u.searchParams.get("code_challenge");
+      codes.set(code, {
+        openId: as,
+        redirectUri: redirect,
+        ...(challenge !== null && { challenge }),
+        method: u.searchParams.get("code_challenge_method") ?? "plain",
+        used: false,
+      });
+      back.searchParams.set("code", code);
+    }
+    res.writeHead(302, { location: back.toString() });
+    res.end();
+  }
+
   const server = createServer((req, res) => {
     void (async () => {
       const u = new URL(req.url ?? "/", "http://x");
+      if (u.pathname === "/open-apis/authen/v1/authorize" && req.method === "GET")
+        return authorize(res, u);
       return api(req, res, u);
     })().catch(() => {
       if (!res.headersSent) res.writeHead(500);
@@ -601,6 +820,11 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     calls,
     acks,
     users,
+    departments,
+    userTokensIssued: () => userIssued,
+    hideUserStatus(hide) {
+      statusHidden = hide;
+    },
     tokensIssued: () => issued,
     revokeTokens: () => tokens.clear(),
     endpointCalls: () => endpoint,
