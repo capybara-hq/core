@@ -39,6 +39,23 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.cb-tab-badge {
+  padding: 0 4px;
+  border: 1px solid var(--cb-line);
+  color: var(--cb-muted);
+  font-size: 12px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.cb-tab[data-state="selected"] .cb-tab-badge {
+  border-color: var(--cb-line-strong);
+  color: var(--cb-ink);
+}
+.cb-tab-alert {
+  color: var(--cb-accent);
+  font-size: 8px;
+  line-height: 1;
+}
 
 /* Segmented：相邻共边，选中描边主色 */
 .cb-segmented {
@@ -284,4 +301,293 @@
     opacity: 1;
     transform: none;
   }
+}
+
+/* 对话时间线（spec §6.9）：1px 竖线串起各步，左侧方形标记 */
+.cb-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-timeline-item {
+  position: relative;
+  min-width: 0;
+  padding-left: 20px;
+}
+.cb-timeline-item::before {
+  position: absolute;
+  top: 0;
+  bottom: -4px;
+  left: 3px;
+  width: 1px;
+  background: var(--cb-line-strong);
+  content: "";
+}
+.cb-timeline-item:first-child::before {
+  top: 10px;
+}
+.cb-timeline-item:last-child::before {
+  bottom: auto;
+  height: 10px;
+}
+.cb-timeline-item:only-child::before {
+  display: none;
+}
+.cb-timeline-mark {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--cb-muted);
+  background: var(--cb-muted);
+}
+.cb-timeline-item[data-mark="hollow"] .cb-timeline-mark {
+  border-color: var(--cb-faint);
+  background: var(--cb-bg);
+}
+.cb-timeline-item[data-mark="running"] .cb-timeline-mark {
+  border-color: var(--cb-accent);
+  background: var(--cb-accent);
+}
+.cb-timeline-item[data-mark="error"] .cb-timeline-mark {
+  border-color: var(--cb-fail);
+  background: var(--cb-fail);
+}
+.cb-timeline-body {
+  min-width: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cb-timeline-item[data-mark="running"] .cb-timeline-mark {
+    animation: cb-timeline-blink 1s steps(2, jump-none) infinite;
+  }
+}
+@keyframes cb-timeline-blink {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+
+/* 可展开的一行（思考、工具调用）与行内文字按钮 */
+.cb-row-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cb-row-toggle:hover {
+  background: var(--cb-hover);
+}
+.cb-row-caret {
+  flex: none;
+  margin-left: auto;
+  color: var(--cb-faint);
+}
+.cb-row-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.cb-row-link:hover {
+  color: var(--cb-ink);
+}
+
+/* 思考行 */
+.cb-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-thinking-title {
+  color: var(--cb-muted);
+}
+.cb-thinking-text {
+  padding-left: 8px;
+  border-left: 1px solid var(--cb-line);
+  color: var(--cb-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 工具调用行：工具名 + 一句说明 + 状态；展开为 IN / OUT */
+.cb-toolcall {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-toolcall-name {
+  flex: none;
+  font-weight: 700;
+}
+.cb-toolcall-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-toolcall-status {
+  flex: none;
+  font-size: 12px;
+}
+.cb-toolcall[data-status="error"] .cb-toolcall-name {
+  color: var(--cb-fail);
+}
+.cb-toolcall[data-status="cancelled"] .cb-toolcall-name {
+  color: var(--cb-muted);
+}
+.cb-toolcall-detail {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cb-line);
+}
+.cb-toolcall-truncated {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--cb-line);
+  color: var(--cb-faint);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* IN / OUT 块：等宽、左侧标签列，超长折叠 */
+.cb-io {
+  display: flex;
+  min-width: 0;
+  background: var(--cb-panel);
+}
+.cb-io-label {
+  flex: none;
+  width: 5ch;
+  padding: 4px 8px;
+  border-right: 1px solid var(--cb-line);
+  color: var(--cb-faint);
+  font-size: 11px;
+  line-height: 20px;
+  font-weight: 700;
+}
+.cb-io-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 8px;
+}
+.cb-io-text {
+  margin: 0;
+  color: var(--cb-ink);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cb-io[data-label="OUT"] .cb-io-text {
+  color: var(--cb-muted);
+}
+.cb-toolcall[data-status="error"] .cb-io[data-label="OUT"] .cb-io-text {
+  color: var(--cb-fail);
+}
+.cb-toolcall-detail > .cb-io + .cb-io {
+  border-top: 1px solid var(--cb-line);
+}
+
+/* 任务清单：进行中主色高亮，已完成划线 faint */
+.cb-tasklist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-tasklist-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 4px;
+  color: var(--cb-ink);
+}
+.cb-tasklist-glyph {
+  flex: none;
+  width: 2ch;
+  color: var(--cb-faint);
+}
+.cb-tasklist-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cb-tasklist-item[data-status="in_progress"] {
+  background: var(--cb-accent-tint);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+  font-weight: 700;
+}
+.cb-tasklist-item[data-status="in_progress"] .cb-tasklist-glyph {
+  color: var(--cb-accent);
+}
+.cb-tasklist-item[data-status="completed"] {
+  color: var(--cb-faint);
+}
+.cb-tasklist-item[data-status="completed"] .cb-tasklist-glyph {
+  color: var(--cb-ok);
+}
+
+/* 代码块 */
+.cb-code {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--cb-line);
+  background: var(--cb-panel);
+}
+.cb-code-lang {
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--cb-line);
+  color: var(--cb-faint);
+  font-size: 11px;
+  line-height: 16px;
+}
+.cb-code-pre {
+  margin: 0;
+  padding: 8px;
+  overflow-x: auto;
+  color: var(--cb-ink);
+  font: inherit;
+  white-space: pre;
+}
+
+/* 插件嵌入页：宽度撑满，高度由属性给定 */
+.cb-embed {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--cb-line);
+  background: var(--cb-panel);
 }

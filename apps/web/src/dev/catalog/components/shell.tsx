@@ -22,6 +22,15 @@ export function ShellSection() {
           {...topBar("approvals")}
           nav={topBar("approvals").nav.map((n) => (n.id === "approvals" ? { ...n, count: 7 } : n))}
         />
+        <TopBar
+          {...topBar("agents")}
+          extensions={{
+            items: [
+              { label: "需求看板", href: "/dev/ui/components" },
+              { label: "工作流", href: "/dev/ui/components" },
+            ],
+          }}
+        />
         <PageHeader
           parent={{ label: "Agents", href: "/dev/ui/templates/list" }}
           title="support-triage"

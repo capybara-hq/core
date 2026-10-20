@@ -105,6 +105,7 @@ import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design
 | `web-ui-import` | 导入黑名单包：`@radix-ui/*`、`cmdk`、`@emotion/*`、`@stitches/*`、`@vanilla-extract/*`、`@mui/*`、`@chakra-ui/*`、`@mantine/*`、`@headlessui/*`、`styled-components`、`antd`、`tailwindcss`、`tailwind-merge`、`clsx`、`classnames`、`class-variance-authority`、`styled-jsx`、`lucide-react`、`react-icons`；导入除 `@capybara-hq/design/styles.css` 之外的 `.css` | 用 design 导出的组件；缺就先在 design 包里补 |
 | `web-ui-class-name` | `className` / `class` 属性（含 `{...{ className }}` 展开、`createElement` / `jsx` 的 props 对象） | 用 design 组件或 `Stack` / `Grid` / `Card` / `Text` |
 | `web-ui-style` | `style` / `dangerouslySetInnerHTML` 属性、`<style>` 元素（同样包括展开与 `createElement`） | 同上；需要新样式时加到 design 包 |
+| `web-ui-iframe` | `<iframe>` 元素、`createElement("iframe")` | 用 `EmbedFrame`（sandbox 固定 `allow-scripts allow-forms`，只转发本 iframe 的 `message`） |
 | `web-ui-color` | 任何颜色写法：`#hex`、`rgb()` / `rgba()`、`hsl()` / `hsla()`、`hwb()`、`lab()` / `lch()` / `oklab()` / `oklch()`、`color()`、`color-mix()` | 颜色只来自 design token |
 | `web-ui-css-file` | `apps/web/src` 下出现 `.css` 文件 | 样式写进 `packages/design` |
 | `web-ui-template` | `src/app/**/page.tsx` 没有渲染「从 `@capybara-hq/design` 导入」的 12 个模板之一 | 选 §5 的模板作为骨架 |
