@@ -181,6 +181,8 @@ interface Directory {
 - **双副本内核验收**（`packages/kernel/test/channels/*.dual.test.ts`）：`createDualReplicaHarness({ plugins: [MODEL_FAKE, <插件入口路径>], pluginConfig: { <插件>: { apiUrl: fake.apiUrl, … } } })`，插件按源码路径加载。要证明：只有一条长连接；杀掉持有者后另一副本接管；同一条消息重投只处理一次；流式回复、审批卡片点击、卡片更新、最终回复都只投一次。参考 `slack.dual.test.ts`、`lark.dual.test.ts`、`supervisor.dual.test.ts`。
 - **三处同一身份行**：`slack-identity.dual.test.ts`、`lark-identity.dual.test.ts` 的流程——网页登录（走假授权页、回调）→ 通讯录同步把同一个人加入组织（不另建身份、不另建账号）→ 同一个人私聊机器人被识别为该账号（不发绑定卡片）。新平台必须有这条用例，它能抓住租户口径、id 种类、应用不一致这类错误。
 - 测试插件写法照抄 fake-im（`packages/kernel/test/fixtures/plugins/fake-im`）；第一段验收 `m4-segment1.dual.test.ts` 用它跑通了全部内核行为。
+- 第二段验收 `m4-segment2-slack.dual.test.ts` / `m4-segment2-lark.dual.test.ts` 用真实插件把同一流程各跑一遍。真实插件不带 `x-pid`，要找出持有长连接的副本时用假平台的 `socketPeerPorts()` 加 `test/helpers/port-owner.ts`（按本地端口查进程）。
+- 真实平台：`plugins/<name>/test/live/*.live.test.ts` 只在 `CAPYBARA_TEST_LIVE_TOOLS=1` 且平台变量齐全时运行（只跑不需要人操作的检查）；人工部分见 `docs/superpowers/plans/m4-live-acceptance-checklist.md`。
 
 ## 新渠道插件清单
 

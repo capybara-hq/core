@@ -164,6 +164,11 @@ export interface FakeLarkServer {
   connectionsOpened(): number;
   openSockets(): number;
   maxConcurrentSockets(): number;
+  /**
+   * 当前打开的长连接各自的对端（客户端）TCP 端口，按打开顺序。双副本测试据此（经操作系统查端口属于哪个进程）
+   * 找出持有长连接的副本——真实插件不带 `x-pid` 之类的标记。
+   */
+  socketPeerPorts(): number[];
   /** 接下来 `count` 次（先放过 `skip` 次正常调用）该接口返回 `failure`。 */
   failNext(api: FakeLarkApi, failure: FakeLarkFailure, count?: number, skip?: number): void;
   /**
@@ -307,6 +312,7 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
   let rootRejected = false;
   const delays = new Map<FakeLarkApi, number>();
   const sockets: WebSocket[] = [];
+  const peerPorts = new WeakMap<WebSocket, number>();
   const ackWaiters = new Map<string, ((a: FakeLarkAck) => void)[]>();
   let issued = 0;
   let endpoint = 0;
@@ -744,6 +750,7 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     wss.handleUpgrade(req, socket, head, (ws) => {
       opened++;
       sockets.push(ws);
+      if (req.socket.remotePort !== undefined) peerPorts.set(ws, req.socket.remotePort);
       peak = Math.max(peak, sockets.length);
       ws.on("close", () => {
         const i = sockets.indexOf(ws);
@@ -849,6 +856,11 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     connectionsOpened: () => opened,
     openSockets: () => sockets.length,
     maxConcurrentSockets: () => peak,
+    socketPeerPorts: () =>
+      sockets.flatMap((ws) => {
+        const port = peerPorts.get(ws);
+        return port === undefined ? [] : [port];
+      }),
     failNext(api, failure, count = 1, skip = 0) {
       failures.push({ api, failure, left: count, skip });
     },
