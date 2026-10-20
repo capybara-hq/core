@@ -88,7 +88,7 @@ await ctx.ui.invalidate({ orgId, conversationId, contribution: "tasks" }).catch(
   | `validation_failed` | 400 | 对话视图缺 `conversationId`、组织页面带了它、动作请求体超限 |
 
 - 动作请求体：`actionId` 1–200 字符；`payload` 按 JSON 的 UTF-8 字节数 ≤ `UI_LIMITS.payloadBytes`；表单 `answer` 的键数与多选长度 ≤ `UI_LIMITS.tableRows`，单个文本 ≤ `UI_LIMITS.textChars`。返回 `{ view }` 时网页直接替换视图（badge 一起更新），`{ toast }` 时弹出 `toast[locale]`。
-- **`invalidate({ orgId, conversationId?, contribution })`**：`contribution` 是清单 `ui` 里的 id（view 或 embed 都行），`conversationId` 必须是会话 UUID。带对话就发到会话主题，对话 SSE 收到 `event: ui` `{"plugin","contribution"}`；不带就发到组织主题，组织级 SSE `GET /api/v1/orgs/:orgId/ui/stream` 收到。经 Redis bus 跨副本，不需要插件自己做什么。它只是「去重新取」的提示，鉴权在取视图时做；刷新失败不该影响业务写入，所以 `.catch(() => {})`。
+- **`invalidate({ orgId, conversationId?, contribution })`**：`contribution` 是清单 `ui` 里的 id（view 或 embed 都行），`conversationId` 必须是会话 UUID。带对话就发到会话主题，对话 SSE 收到 `event: ui` `{"plugin","contribution"}`；不带就发到组织主题，组织级 SSE `GET /api/v1/orgs/:orgId/ui/stream` 收到。经 Redis bus 跨副本，不需要插件自己做什么。内核先用一条查询核对目标：本插件在 `orgId` 启用、带对话时对话属于 `orgId`；不满足就静默丢弃（只记 debug 日志，不抛错）。它只是「去重新取」的提示，鉴权在取视图时做；刷新失败不该影响业务写入，所以 `.catch(() => {})`。
 - **网页的刷新合并**：每个视图同时至多一个请求在途，在途期间来的刷新不论几次，只在它完成后补取一次；重取期间保留旧视图，不闪回加载中；事件流断线重连后所有视图重取一次（断线期间可能漏帧）。所以 invalidate 可以放心地每次写入都调，不用自己节流。
 
 ## 第一档：`UiView` 的积木与上限

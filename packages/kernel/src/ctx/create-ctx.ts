@@ -50,7 +50,8 @@ export interface KernelDeps {
   redisUrl: string;
   keyring: Keyring;
   runWorkers: boolean;
-  log: Logger;
+  /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
+  log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
 }
 
 /** 插件 HTTP 路由；`path` 已含 `/plugins/<name>` 前缀。 */
@@ -109,6 +110,34 @@ async function currentEmbedRole(
     .where("accounts.status", "=", "active")
     .executeTakeFirst();
   return row?.role;
+}
+
+/** `ui.invalidate` 目标的一条查询：插件在该组织启用，且（带对话时）对话属于该组织。 */
+async function invalidateTargetOk(
+  db: KernelDeps["db"],
+  plugin: string,
+  orgId: string,
+  conversationId: string | undefined,
+): Promise<boolean> {
+  const k = kernelDb(db);
+  let q = k
+    .selectFrom("plugin_org_configs")
+    .select("plugin_org_configs.plugin")
+    .where("plugin_org_configs.plugin", "=", plugin)
+    .where("plugin_org_configs.org_id", "=", orgId)
+    .where("plugin_org_configs.enabled", "=", true);
+  if (conversationId !== undefined) {
+    q = q.where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom("conversations")
+          .select("conversations.id")
+          .where("conversations.id", "=", conversationId)
+          .whereRef("conversations.org_id", "=", "plugin_org_configs.org_id"),
+      ),
+    );
+  }
+  return (await q.executeTakeFirst()) !== undefined;
 }
 
 /** 越权审计去重键的 TTL：同一插件同一项在此期间只记一次。 */
@@ -420,8 +449,22 @@ export function createPluginContext(
       action(id, handler) {
         uiReg.action(id, handler);
       },
+      // 目标先核对（一条查询）：插件在 orgId 启用；带对话时对话属于 orgId。不满足就只记 debug、不发
+      // （插件拿着过期或别的组织的 id 调用不是错误，但不能借它往别的组织的流里发刷新）
       async invalidate(target) {
         const t = uiReg.target(target);
+        if (!(await invalidateTargetOk(deps.db, name, t.orgId, t.conversationId))) {
+          deps.log.debug?.(
+            "plugin ui invalidate ignored: plugin not enabled or conversation not in org",
+            {
+              plugin: name,
+              orgId: t.orgId,
+              ...(t.conversationId !== undefined && { conversationId: t.conversationId }),
+              contribution: t.contribution,
+            },
+          );
+          return;
+        }
         const msg: UiBusMessage = { kind: "ui", plugin: name, contribution: t.contribution };
         await kernelBus.publish(
           t.conversationId !== undefined

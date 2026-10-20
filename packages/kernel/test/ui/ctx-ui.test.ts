@@ -104,15 +104,19 @@ describe("ctx.ui 注册", () => {
 
 describe("ctx.ui.invalidate", () => {
   it("带 conversationId → 内核主题 conv.<id>；不带 → org-ui.<orgId>；消息为 {kind:'ui', plugin, contribution}", async () => {
+    const c = await seed();
+    const conv = await conversation(c);
     const kernelBus = createBus(redis, sub, "kernel", quiet);
     const got: { topic: string; m: unknown }[] = [];
-    const un1 = await kernelBus.subscribe(conversationTopic(CONV), (m) =>
+    const un1 = await kernelBus.subscribe(conversationTopic(conv), (m) =>
       got.push({ topic: "conv", m }),
     );
-    const un2 = await kernelBus.subscribe(orgUiTopic("o-1"), (m) => got.push({ topic: "org", m }));
+    const un2 = await kernelBus.subscribe(orgUiTopic(c.orgId), (m) =>
+      got.push({ topic: "org", m }),
+    );
     const ctx = createPluginContext(deps, mf(), {});
-    await ctx.ui.invalidate({ orgId: "o-1", conversationId: CONV, contribution: "tasks" });
-    await ctx.ui.invalidate({ orgId: "o-1", contribution: "board" });
+    await ctx.ui.invalidate({ orgId: c.orgId, conversationId: conv, contribution: "tasks" });
+    await ctx.ui.invalidate({ orgId: c.orgId, contribution: "board" });
     await waitFor(async () => got.length === 2, 5000, "two ui messages");
     expect(got).toEqual([
       { topic: "conv", m: { kind: "ui", plugin: "ui-test", contribution: "tasks" } },
@@ -121,6 +125,37 @@ describe("ctx.ui.invalidate", () => {
     expect(orgUiTopic("o-1")).toBe("org-ui.o-1");
     await un1();
     await un2();
+    await ctx.close();
+  });
+
+  it("插件未在该组织启用、对话不属于该组织或不存在 → 不发刷新（只记 debug），不抛错", async () => {
+    const c = await seed();
+    const conv = await conversation(c);
+    const off = await seed("member", false);
+    const offConv = await conversation(off);
+    const debug: string[] = [];
+    const log = { ...quiet, debug: (msg: string) => debug.push(msg) };
+    const kernelBus = createBus(redis, sub, "kernel", quiet);
+    const got: unknown[] = [];
+    const uns = await Promise.all(
+      [conversationTopic(conv), conversationTopic(offConv), orgUiTopic(off.orgId)].map((t) =>
+        kernelBus.subscribe(t, (m) => got.push({ t, m })),
+      ),
+    );
+    const ctx = createPluginContext({ ...deps, log }, mf(), {});
+    await ctx.ui.invalidate({ orgId: off.orgId, contribution: "board" });
+    await ctx.ui.invalidate({ orgId: off.orgId, conversationId: offConv, contribution: "tasks" });
+    // 别的组织的对话、不存在的对话
+    await ctx.ui.invalidate({ orgId: c.orgId, conversationId: offConv, contribution: "tasks" });
+    await ctx.ui.invalidate({ orgId: c.orgId, conversationId: CONV, contribution: "tasks" });
+    expect(debug).toHaveLength(4);
+    // 之后一条合法的刷新照常到达，且是唯一一条
+    await ctx.ui.invalidate({ orgId: c.orgId, conversationId: conv, contribution: "tasks" });
+    await waitFor(async () => got.length >= 1, 5000, "valid ui message");
+    expect(got).toEqual([
+      { t: conversationTopic(conv), m: expect.objectContaining({ kind: "ui" }) },
+    ]);
+    for (const un of uns) await un();
     await ctx.close();
   });
 
@@ -138,8 +173,8 @@ describe("ctx.ui.invalidate", () => {
     await ctx.close();
   });
 
-  /** 真实的组织、账号、成员关系与启用记录（verifyEmbedToken 一条查询核对它们）。 */
-  const seed = async (role: "owner" | "admin" | "member" | "guest" = "member") => {
+  /** 真实的组织、账号、成员关系与启用记录（invalidate / verifyEmbedToken 各用一条查询核对它们）。 */
+  const seed = async (role: "owner" | "admin" | "member" | "guest" = "member", enabled = true) => {
     const n = randomUUID();
     const orgId = `o-${n}`;
     const accountId = `a-${n}`;
@@ -152,8 +187,17 @@ describe("ctx.ui.invalidate", () => {
     await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
       VALUES (${orgId}, ${accountId}, ${role})`.execute(deps.db);
     await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled)
-      VALUES ('ui-test', ${orgId}, true)`.execute(deps.db);
+      VALUES ('ui-test', ${orgId}, ${enabled})`.execute(deps.db);
     return { orgId, accountId };
+  };
+  /** 该组织里的一个对话（连带一个 agent）。 */
+  const conversation = async (c: { orgId: string; accountId: string }) => {
+    const id = randomUUID();
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES (${`ag-${id}`}, ${c.orgId}, ${c.accountId}, 'org', 1)`.execute(deps.db);
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${id}, ${c.orgId}, ${`ag-${id}`}, ${c.accountId})`.execute(deps.db);
+    return id;
   };
   const issue = (
     c: { orgId: string; accountId: string },
