@@ -22,8 +22,10 @@ import {
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import type { OrgRole } from "../orgs/roles.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import {
+  canUsePlace,
   orgUiTopic,
   PluginUiRegistration,
   type UiActionHandler,
@@ -79,6 +81,34 @@ export async function queryEnabledPlugins(db: Kysely<any>, orgId: string): Promi
     .where("enabled", "=", true)
     .execute();
   return new Set(rows.map((r) => r.plugin));
+}
+
+/**
+ * 嵌入令牌校验时的一条查询：插件在该组织启用、组织未删除、账号 active、仍是成员；返回此刻的角色，不满足返回 undefined。
+ */
+async function currentEmbedRole(
+  db: KernelDeps["db"],
+  plugin: string,
+  orgId: string,
+  accountId: string,
+): Promise<OrgRole | undefined> {
+  const row = await kernelDb(db)
+    .selectFrom("memberships")
+    .innerJoin("orgs", "orgs.id", "memberships.org_id")
+    .innerJoin("accounts", "accounts.id", "memberships.account_id")
+    .innerJoin("plugin_org_configs", (j) =>
+      j
+        .onRef("plugin_org_configs.org_id", "=", "memberships.org_id")
+        .on("plugin_org_configs.plugin", "=", plugin)
+        .on("plugin_org_configs.enabled", "=", true),
+    )
+    .select("memberships.role")
+    .where("memberships.org_id", "=", orgId)
+    .where("memberships.account_id", "=", accountId)
+    .where("orgs.deleted_at", "is", null)
+    .where("accounts.status", "=", "active")
+    .executeTakeFirst();
+  return row?.role;
 }
 
 /** 越权审计去重键的 TTL：同一插件同一项在此期间只记一次。 */
@@ -205,7 +235,8 @@ export type KernelPluginContext = PluginContext & {
  * - `secrets` 仅当 `permissions.secrets`；`http.route` 只允许 `permissions.http` 声明的 method + path；
  *   `tools.register` 只允许 `permissions.tools` 声明的名字；`ui.view` / `ui.action` 只允许 `permissions.ui.views`
  *   声明的 id（只在 setup 期间）；`ui.invalidate` 经内核 bus（命名空间 `kernel`）发刷新，跨副本；
- *   `ui.verifyEmbedToken` 校验内核签发的嵌入令牌，`claims.plugin` 必须是本插件、且插件仍在该组织启用；
+ *   `ui.verifyEmbedToken` 校验内核签发的嵌入令牌，`claims.plugin` 必须是本插件、插件仍在该组织启用、
+ *   调用者仍是该组织的 active 成员（组织未删除），返回此刻的角色；
  * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
  * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
  */
@@ -249,6 +280,7 @@ export function createPluginContext(
 
   const uiReg = new PluginUiRegistration(manifest, deny);
   const embedTokens = new EmbedTokens(deps.keyring);
+  const uiPlaces = new Map((manifest.ui ?? []).map((c) => [c.id, c.place]));
 
   type Entry = { plugin: string; impl: unknown };
   /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
@@ -398,12 +430,16 @@ export function createPluginContext(
           msg,
         );
       },
-      // 只认签给本插件、未过期、未篡改的令牌（见 ui/embed-token.ts），且本插件此刻仍在该组织启用
-      // （每次查 PG、不缓存：组织停用插件后，已签出的令牌立即失效）；其余一律 null
+      // 只认签给本插件、未过期、未篡改的令牌（见 ui/embed-token.ts）；再用一条查询核对此刻：本插件仍在该组织
+      // 启用、组织未删除、账号 active 且仍是成员（每次查 PG、不缓存：停用插件、离职、停用账号后已签出的令牌立即失效）。
+      // 返回的 role 是此刻的角色；组织页面的令牌在调用者已降为 guest 时失效（A38）。其余一律 null
       async verifyEmbedToken(token) {
         const claims = embedTokens.verify(token, name);
         if (claims === null) return null;
-        return (await capabilityAccess.enabledPlugins(claims.orgId)).has(name) ? claims : null;
+        const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
+        if (role === undefined) return null;
+        if (!canUsePlace(uiPlaces.get(claims.contribution) ?? "page", role)) return null;
+        return { ...claims, role };
       },
     },
     provide(capability, impl) {

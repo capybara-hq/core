@@ -5,8 +5,7 @@ import { ApiError, type ErrorCode } from "../errors.js";
 import type { CredentialCheck } from "../identity/credential-check.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import type { SseOutput, StreamBus, StreamHandle } from "../runtime/stream.js";
-import { isUiBusMessage, orgUiTopic, uiFrame } from "./registry.js";
-import { PAGE_MIN_ROLE } from "./views.js";
+import { isUiBusMessage, orgUiTopic, PAGE_MIN_ROLE, uiFrame } from "./registry.js";
 
 export interface OrgUiStreamsDeps {
   bus: StreamBus;

@@ -139,7 +139,7 @@ return {
 
 - 网页调 `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（对话嵌入带 `{ conversationId }`）拿 `{ token, src, expiresAt, expiresIn }`；`src` 是 `/plugin-ui/<插件>/<path 去掉开头的 /ui/>`，如 `/plugin-ui/example-board/board`。签发时内核已核对插件已启用、贡献是 embed、调用者能访问这个对话。
 - 令牌是 `base64url(声明).base64url(HMAC)`，**无状态**（不落库、不进 Redis），各副本用同一主密钥校验；有效期 300 秒（`EMBED_TOKEN_TTL_SECONDS`，容许 30 秒时钟偏差），主密钥轮换后上一把签的令牌在过期前仍有效。声明是 `EmbedClaims`：`plugin`、`orgId`、`accountId`、`role`、`conversationId?`、`contribution`、`exp`（`role` 签发时写入并在校验时核对是四种角色之一）。
-- 插件**每个数据路由先 `await ctx.ui.verifyEmbedToken(token)`**，返回 null 就 401。它只认签给**本插件**的令牌（签给别的插件的一律 null），并且每次都查 PG 确认本插件此刻仍在 `claims.orgId` 启用（Ruling A37，不缓存）：组织停用插件后，已签出的令牌立即失效，重新启用后未过期的又能用。组织、账号、对话只从返回的声明里取，不信请求里的任何参数。对话令牌要按 `conversationId` 限定数据范围；组织令牌（没有对话）别让它看到对话里的数据（example-board 的 `scoped()`）。
+- 插件**每个数据路由先 `await ctx.ui.verifyEmbedToken(token)`**，返回 null 就 401。它只认签给**本插件**的令牌（签给别的插件的一律 null），并且每次用一条 PG 查询确认本插件此刻仍在 `claims.orgId` 启用、组织未删除、账号 active 且仍是该组织成员（Ruling A37，不缓存）：组织停用插件、成员离职或账号停用后，已签出的令牌立即失效，重新启用后未过期的又能用。返回的 `role` 是校验时刻的角色；组织页面的令牌在调用者被降为 guest 后也返回 null。组织、账号、对话只从返回的声明里取，不信请求里的任何参数。对话令牌要按 `conversationId` 限定数据范围；组织令牌（没有对话）别让它看到对话里的数据（example-board 的 `scoped()`）。
 - **内核 `/api` 不认嵌入令牌**：鉴权守卫只把 Bearer 当 API 令牌（`cap_pat_` / `cap_svc_`）查，嵌入令牌一律 401 `auth.required`。令牌泄露的最坏结果是在 300 秒内以该用户身份调用**这个插件**的数据路由。
 
 ### `/plugin-ui` 同源代理

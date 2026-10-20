@@ -2,12 +2,21 @@ import type {
   PluginManifest,
   UiActionArgs,
   UiActionResult,
+  UiContribution,
   UiRenderArgs,
   UiView,
 } from "@capybara-hq/plugin-sdk";
+import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 
 /** 会话 id 的格式（UUID）。 */
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 组织页面（`place: "page"`）所需的最低角色（A38）：guest 只用对话位置的贡献。 */
+export const PAGE_MIN_ROLE: OrgRole = "member";
+
+/** 该角色能否使用这个位置的贡献。 */
+export const canUsePlace = (place: UiContribution["place"], role: OrgRole): boolean =>
+  place !== "page" || roleAtLeast(role, PAGE_MIN_ROLE);
 
 /** 插件视图的 render 函数（`ctx.ui.view` 注册）。 */
 export type UiRender = (args: UiRenderArgs) => Promise<UiView>;

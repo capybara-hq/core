@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { definePlugin, type PluginManifest, PluginPermissionError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { conversationTopic } from "../../src/conversations/event-log.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
@@ -136,55 +138,100 @@ describe("ctx.ui.invalidate", () => {
     await ctx.close();
   });
 
-  it("verifyEmbedToken：同一主密钥签给本插件的令牌通过；签给别的插件、别的主密钥、乱写的一律 null", async () => {
-    const ctx = createPluginContext(
-      deps,
-      mf(),
-      {},
-      {
-        providers: () => [],
-        enabledPlugins: async (orgId) => new Set(orgId === "o1" ? ["ui-test"] : []),
-      },
+  /** 真实的组织、账号、成员关系与启用记录（verifyEmbedToken 一条查询核对它们）。 */
+  const seed = async (role: "owner" | "admin" | "member" | "guest" = "member") => {
+    const n = randomUUID();
+    const orgId = `o-${n}`;
+    const accountId = `a-${n}`;
+    await sql`INSERT INTO capybara.accounts (id, display_name) VALUES (${accountId}, 'a')`.execute(
+      deps.db,
     );
-    const claims = { orgId: "o1", accountId: "a1", contribution: "board", role: "member" as const };
-    const mine = new EmbedTokens(deps.keyring).issue({ plugin: "ui-test", ...claims }).token;
-    expect(await ctx.ui.verifyEmbedToken(mine)).toEqual(
-      expect.objectContaining({ plugin: "ui-test", orgId: "o1", accountId: "a1" }),
+    await sql`INSERT INTO capybara.orgs (id, slug, name) VALUES (${orgId}, ${orgId}, 'o')`.execute(
+      deps.db,
     );
-    const theirs = new EmbedTokens(deps.keyring).issue({ plugin: "other", ...claims }).token;
-    expect(await ctx.ui.verifyEmbedToken(theirs)).toBeNull();
-    const foreign = new EmbedTokens(createKeyring(Buffer.alloc(32, 9), [])).issue({
-      plugin: "ui-test",
-      ...claims,
+    await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
+      VALUES (${orgId}, ${accountId}, ${role})`.execute(deps.db);
+    await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled)
+      VALUES ('ui-test', ${orgId}, true)`.execute(deps.db);
+    return { orgId, accountId };
+  };
+  const issue = (
+    c: { orgId: string; accountId: string },
+    over: { plugin?: string; contribution?: string; role?: "member" | "guest" } = {},
+    ring = deps.keyring,
+  ) =>
+    new EmbedTokens(ring).issue({
+      plugin: over.plugin ?? "ui-test",
+      orgId: c.orgId,
+      accountId: c.accountId,
+      contribution: over.contribution ?? "board",
+      role: over.role ?? "member",
     }).token;
+
+  it("verifyEmbedToken：同一主密钥签给本插件的令牌通过；签给别的插件、别的主密钥、乱写的一律 null", async () => {
+    const ctx = createPluginContext(deps, mf(), {});
+    const c = await seed();
+    expect(await ctx.ui.verifyEmbedToken(issue(c))).toEqual(
+      expect.objectContaining({ plugin: "ui-test", ...c, role: "member" }),
+    );
+    expect(await ctx.ui.verifyEmbedToken(issue(c, { plugin: "other" }))).toBeNull();
+    const foreign = issue(c, {}, createKeyring(Buffer.alloc(32, 9), []));
     expect(await ctx.ui.verifyEmbedToken(foreign)).toBeNull();
     expect(await ctx.ui.verifyEmbedToken("x")).toBeNull();
     await ctx.close();
   });
 
   it("verifyEmbedToken：插件此刻未在令牌的组织启用 → null（每次都查，不缓存）", async () => {
-    let enabled = true;
-    const ctx = createPluginContext(
-      deps,
-      mf(),
-      {},
-      {
-        providers: () => [],
-        enabledPlugins: async () => new Set(enabled ? ["ui-test"] : []),
-      },
-    );
-    const token = new EmbedTokens(deps.keyring).issue({
-      plugin: "ui-test",
-      orgId: "o1",
-      accountId: "a1",
-      contribution: "board",
-      role: "member",
-    }).token;
+    const ctx = createPluginContext(deps, mf(), {});
+    const c = await seed();
+    const token = issue(c);
+    const setEnabled = (on: boolean) =>
+      sql`UPDATE capybara.plugin_org_configs SET enabled = ${on} WHERE org_id = ${c.orgId}`.execute(
+        deps.db,
+      );
     expect(await ctx.ui.verifyEmbedToken(token)).not.toBeNull();
-    enabled = false;
+    await setEnabled(false);
     expect(await ctx.ui.verifyEmbedToken(token)).toBeNull();
-    enabled = true;
+    await setEnabled(true);
     expect(await ctx.ui.verifyEmbedToken(token)).not.toBeNull();
+    await ctx.close();
+  });
+
+  it("verifyEmbedToken：已离开组织、账号停用、组织已删除 → null", async () => {
+    const ctx = createPluginContext(deps, mf(), {});
+    const offboarded = await seed();
+    const t1 = issue(offboarded);
+    expect(await ctx.ui.verifyEmbedToken(t1)).not.toBeNull();
+    await sql`DELETE FROM capybara.memberships WHERE org_id = ${offboarded.orgId}`.execute(deps.db);
+    expect(await ctx.ui.verifyEmbedToken(t1)).toBeNull();
+
+    const disabled = await seed();
+    const t2 = issue(disabled);
+    await sql`UPDATE capybara.accounts SET status = 'disabled' WHERE id = ${disabled.accountId}`.execute(
+      deps.db,
+    );
+    expect(await ctx.ui.verifyEmbedToken(t2)).toBeNull();
+
+    const deleted = await seed();
+    const t3 = issue(deleted);
+    await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${deleted.orgId}`.execute(
+      deps.db,
+    );
+    expect(await ctx.ui.verifyEmbedToken(t3)).toBeNull();
+    await ctx.close();
+  });
+
+  it("verifyEmbedToken：返回当前角色；被降为 guest 后组织页面的令牌失效，对话位置的照常", async () => {
+    const ctx = createPluginContext(deps, mf(), {});
+    const c = await seed("admin");
+    const page = issue(c);
+    const conv = issue(c, { contribution: "tasks" });
+    expect(await ctx.ui.verifyEmbedToken(page)).toMatchObject({ role: "admin" });
+    await sql`UPDATE capybara.memberships SET role = 'guest' WHERE org_id = ${c.orgId}`.execute(
+      deps.db,
+    );
+    expect(await ctx.ui.verifyEmbedToken(page)).toBeNull();
+    expect(await ctx.ui.verifyEmbedToken(conv)).toMatchObject({ role: "guest" });
     await ctx.close();
   });
 });

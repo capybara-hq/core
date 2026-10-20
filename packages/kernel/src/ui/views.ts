@@ -7,9 +7,9 @@ import {
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
-import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import type { OrgRole } from "../orgs/roles.js";
 import type { LoadedUiContribution, PluginHost } from "../plugins/host.js";
-import { UUID_RE } from "./registry.js";
+import { canUsePlace, UUID_RE } from "./registry.js";
 
 /** 插件 render / action 的时限（spec §4.2：慢的插件只让那个标签失败）。 */
 export const UI_CALL_TIMEOUT_MS = 5_000;
@@ -61,13 +61,6 @@ const TOAST_MAX = 500;
 const MAX_LOGGED_PROBLEMS = 10;
 
 const notFound = () => new ApiError("ui.not_found", "UI contribution not found");
-
-/** 组织页面（`place: "page"`）所需的最低角色（A38）：guest 只用对话位置的贡献。 */
-export const PAGE_MIN_ROLE: OrgRole = "member";
-
-/** 该角色能否使用这个位置的贡献。 */
-export const canUsePlace = (place: UiContribution["place"], role: OrgRole): boolean =>
-  place !== "page" || roleAtLeast(role, PAGE_MIN_ROLE);
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
