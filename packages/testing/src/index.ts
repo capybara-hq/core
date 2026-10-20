@@ -25,6 +25,21 @@ export {
   startFakeChannelServer,
 } from "./fake-channel.js";
 export {
+  type FakeLarkAck,
+  type FakeLarkApi,
+  type FakeLarkButton,
+  type FakeLarkCall,
+  type FakeLarkFailure,
+  type FakeLarkMessage,
+  type FakeLarkOptions,
+  type FakeLarkServer,
+  type FakeLarkUser,
+  findLarkButton,
+  larkCardAction,
+  larkMessageEvent,
+  startFakeLark,
+} from "./fake-lark.js";
+export {
   type FakeMcpCallInfo,
   type FakeMcpHandlerContext,
   type FakeMcpPrompt,
