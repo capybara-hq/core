@@ -348,7 +348,7 @@ describe("超时", () => {
   }, 20_000);
 
   it("停机先中止进行中的插件请求：插件 SSE 收到 req.signal 中止，不占满 10s 的 http 预算", async () => {
-    const g = globalThis as Record<string, number | undefined>;
+    const g = globalThis as unknown as Record<string, number | undefined>;
     g[SSE_HOLD_KEY] = 0;
     const k = await kernel(cfg({ plugins: [fx("sse-hold")] }));
     await k.start();

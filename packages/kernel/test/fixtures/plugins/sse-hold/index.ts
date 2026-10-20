@@ -16,7 +16,7 @@ export default definePlugin({
         start(controller) {
           controller.enqueue(new TextEncoder().encode(": open\n\n"));
           req.signal.addEventListener("abort", () => {
-            const g = globalThis as Record<string, number | undefined>;
+            const g = globalThis as unknown as Record<string, number | undefined>;
             g[SSE_HOLD_KEY] = (g[SSE_HOLD_KEY] ?? 0) + 1;
             controller.close();
           });
