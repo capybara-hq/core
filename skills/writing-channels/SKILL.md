@@ -77,7 +77,7 @@ interface Channel {
 - `locale`（`"zh" | "en"`，组织设置的 IM 语言）：插件自己渲染的固定词（按钮、降级文本）按它选。
 - `idempotencyKey`（可选）：不超过 40 个 `[A-Za-z0-9_-]` 字符（内核实际给 32 个），同一条逻辑消息的每次重试都相同。平台支持幂等发送时透传（Lark `uuid`；拆成多条时第 i 条用 `<key>-<i>`），不支持的忽略（Slack）。
 - `features.cards` 为 false 的渠道，内核先把每张卡片按 `renderCardAsText(card, locale)` 退回为文本、以空行分隔拼在正文之后，交给插件的消息不带 `cards`（Ruling A33，`packages/kernel/src/channels/features.ts`）。退回文本是 **Markdown**（与 `message.text` 一样由插件转换成原生富文本），模型可控的字段（审批标题、输入预览、提问标题、回答摘要）放在行内代码 / 围栏代码块里，不会变成链接；插件的转换器必须让代码内容按原样显示。声明 `cards: true` 的插件收到 `message.cards`，自己渲染原生卡片；某张卡片渲染不了（如按钮回传值超限）时插件自己退回链接或文本。
-- `features.threads` 为 false 的渠道（平台没有话题），内核交给插件的目标不带 `threadId`，回复直接发在 chat 里。入站事件也不要带 `threadId`，此时群里每条 @ 消息各开一个对话。
+- `features.threads` 为 false 的渠道（平台没有话题），内核交给插件的目标不带 `threadId`，回复直接发在 chat 里。入站事件一般也不带 `threadId`（平台本来就没有话题可填）；不带时群里每条 @ 消息各开一个对话。
 - `features.edit` 为 false 时不发流式草稿，只在定稿时发一条（见上）。
 
 ### 失败分类（`ChannelSendError`）

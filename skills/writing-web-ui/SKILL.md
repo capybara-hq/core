@@ -113,6 +113,8 @@ import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design
 
 `web-ui-template` 的两处豁免：`app/[locale]/dev/**`（开发用目录页，其余规则照常检查）；以及只负责 404 的 page —— 不含任何 JSX、调用从 `next/navigation` 导入的 `notFound()`（如 `(app)/[...rest]/page.tsx`），页面由同段 `not-found.tsx` 的 `StatusPage` 渲染。不要借这个豁免写别的页面。
 
+`web-ui-iframe` 是静态检查，只认得字面量：`<iframe>` 与 `createElement("iframe")`。动态标签（`const Tag = "iframe"; <Tag />`、`createElement(tag)`、`document.createElement` 拼出的名字）它看不出来，但规则照样适用——不要这样绕过，评审时按违规处理。
+
 测试文件（`*.test.*`）不受检查。包导入规则是黑名单：引入新的样式 / UI 类依赖时，要把它加进 `FORBIDDEN_PKG`。
 
 ## 新增组件或模板
