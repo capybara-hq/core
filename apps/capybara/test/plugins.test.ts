@@ -16,6 +16,9 @@ const kernelFixture = (n: string) =>
   );
 const PERM_A = kernelFixture("perm-a");
 const PERM_DEP = kernelFixture("perm-dep");
+const UI_A = kernelFixture("ui-a");
+const UI_A_VIEW = kernelFixture("ui-a-view");
+const UI_A_EMBED = kernelFixture("ui-a-embed");
 
 let pg: TestContainer;
 
@@ -163,4 +166,27 @@ describe("capybara plugins review / approve", () => {
     expect(again.stderr).toContain("counter@1 (provided only by perm-a)");
     expect(again.stdout).not.toMatch(/no new permissions/i);
   }, 60_000);
+
+  it("敏感项标 (sensitive)：review 与 approve 列表；只多出 view 不需要批准", async () => {
+    // 新插件（无快照）：全部为新增，工具 / embed 标敏感，view 与普通路由不标
+    const review = await run(["plugins", "review"], "", [UI_A_EMBED]);
+    expect(review.code, review.stderr).toBe(0);
+    const lines = review.stdout.split("\n");
+    expect(lines).toContain("  + ui.embed:board  (sensitive)");
+    expect(lines).toContain("  + ui.view:tasks");
+    expect(lines).toContain("  + permissions.http:GET /ui/board");
+    const listing = await run(["plugins", "approve", "ui-a"], "n\n", [UI_A_EMBED]);
+    expect(listing.code).toBe(1);
+    expect(listing.stdout.split("\n")).toContain("  + ui.embed:board  (sensitive)");
+    expect(listing.stdout.split("\n")).toContain("  + ui.view:tasks");
+
+    // 批准 0.1.0 后升级到只多出 view 的 0.2.0：无需批准
+    const base = await run(["plugins", "approve", "ui-a", "--yes"], "", [UI_A]);
+    expect(base.code, base.stderr).toBe(0);
+    const viewOnly = await run(["plugins", "review"], "", [UI_A_VIEW]);
+    expect(viewOnly.stdout).toMatch(/no plugins await/i);
+    const approveView = await run(["plugins", "approve", "ui-a", "--yes"], "", [UI_A_VIEW]);
+    expect(approveView.code).toBe(0);
+    expect(approveView.stdout).toMatch(/no new permissions/i);
+  }, 120_000);
 });

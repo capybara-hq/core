@@ -8,6 +8,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
 import type { LoadedUiContribution, PluginHost } from "../plugins/host.js";
+import { UUID_RE } from "./registry.js";
 
 /** 插件 render / action 的时限（spec §4.2：慢的插件只让那个标签失败）。 */
 export const UI_CALL_TIMEOUT_MS = 5_000;
@@ -42,7 +43,6 @@ export interface UiTarget {
   locale: "zh" | "en";
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TOAST_MAX = 500;
 const MAX_LOGGED_PROBLEMS = 10;
 
@@ -70,7 +70,9 @@ function actionResultProblems(r: unknown): string[] {
  * 插件视图（第一档：渲染 schema）：列出贡献、调用插件 `render` / `action`。
  * - 只认在该组织已启用、且已在本副本加载的插件（启用状态每次查库）；
  * - 对话视图要求调用者能访问这个对话（与 SSE 流一致），访问不了与不存在一样返回 404 `ui.not_found`；
- * - 调用带 5 秒时限与中止信号：抛错 502 `ui.render_failed`、超时 504 `ui.timeout`、返回非法视图 502
+ * - 组织页面视图不接受 `conversationId`（带了 400，与对话视图缺它一致）；
+ * - 调用带 5 秒时限与中止信号：render 抛错 502 `ui.render_failed`、action 抛错 502 `ui.action_failed`、
+ *   超时 504 `ui.timeout`、返回非法视图 502
  *   `ui.invalid_view`，都记告警日志、不写对话日志（这些不是模型可见的内容）。
  * 不依赖 Nest；不保存跨请求状态。
  */
@@ -141,7 +143,15 @@ export class UiViews {
       );
     if (!entry || !(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
     const base = { orgId: t.orgId, accountId: t.accountId, locale: t.locale };
-    if (entry.contribution.place !== "conversation") return { entry, args: base };
+    if (entry.contribution.place !== "conversation") {
+      if (t.conversationId !== undefined) {
+        throw new ApiError(
+          "validation_failed",
+          "conversationId is not allowed for an organization page view",
+        );
+      }
+      return { entry, args: base };
+    }
     const conversationId = t.conversationId;
     if (conversationId === undefined) {
       throw new ApiError("validation_failed", "conversationId is required for a conversation view");
@@ -155,7 +165,7 @@ export class UiViews {
     return { entry, args: { ...base, conversationId } };
   }
 
-  /** 带时限调用插件：超时中止信号并 504；抛错 502（不回显插件的异常信息）。 */
+  /** 带时限调用插件：超时中止信号并 504；抛错 502（render / action 各一个码，不回显插件的异常信息）。 */
   private async call<T>(
     t: UiTarget,
     what: "render" | "action",
@@ -188,7 +198,10 @@ export class UiViews {
     } catch (e) {
       if (e instanceof ApiError) throw e;
       this.d.log.warn(`plugin ui ${what} failed`, { ...fields, err: e });
-      throw new ApiError("ui.render_failed", `Plugin ${t.plugin} failed to ${what} ${t.id}`);
+      throw new ApiError(
+        what === "render" ? "ui.render_failed" : "ui.action_failed",
+        `Plugin ${t.plugin} failed to ${what} ${t.id}`,
+      );
     } finally {
       clearTimeout(timer);
     }

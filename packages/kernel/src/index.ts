@@ -81,5 +81,6 @@ export {
   type PermissionSet,
   permissionKeys,
 } from "./plugins/permission-set.js";
+export { isSensitivePermissionKey } from "./plugins/permission-view.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";

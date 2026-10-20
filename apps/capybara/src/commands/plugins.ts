@@ -3,6 +3,7 @@ import {
   createDb,
   diffPermissions,
   type InspectedPlugin,
+  isSensitivePermissionKey,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
   type KernelConfig,
@@ -70,6 +71,9 @@ async function withReview<T>(
   }
 }
 
+/** 权限键加敏感标记（与组织启用页的敏感分组同一套规则，spec §5.4）。 */
+const mark = (k: string): string => (isSensitivePermissionKey(k) ? `${k}  (sensitive)` : k);
+
 /** 一个待批准插件的说明行（含新增 / 减少的权限项）。 */
 function describePending(p: PendingPlugin): string[] {
   if (p.reason === "dependency") {
@@ -82,7 +86,7 @@ function describePending(p: PendingPlugin): string[] {
     p.reason === "new"
       ? `${p.plugin} ${p.version}: awaiting approval (new plugin)`
       : `${p.plugin} ${p.version}: awaiting approval (permissions added since the approved snapshot)`;
-  return [head, ...p.added.map((k) => `  + ${k}`), ...p.removed.map((k) => `  - ${k}`)];
+  return [head, ...p.added.map((k) => `  + ${mark(k)}`), ...p.removed.map((k) => `  - ${k}`)];
 }
 
 /**
@@ -173,7 +177,9 @@ export async function runPluginsApprove(
       const isNew = new Set(added);
       const lines = [
         `${name} ${version} ${snap ? `(approved: ${snap.version})` : "(not approved yet)"} requests:`,
-        ...permissionKeys(target.permissions).map((k) => `  ${isNew.has(k) ? "+" : " "} ${k}`),
+        ...permissionKeys(target.permissions).map(
+          (k) => `  ${isNew.has(k) ? "+" : " "} ${mark(k)}`,
+        ),
         ...removed.map((k) => `  - ${k}`),
       ];
       if (permissionKeys(target.permissions).length === 0) lines.push("  (no permissions)");

@@ -6,6 +6,9 @@ import type {
   UiView,
 } from "@capybara-hq/plugin-sdk";
 
+/** 会话 id 的格式（UUID）。 */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** 插件视图的 render 函数（`ctx.ui.view` 注册）。 */
 export type UiRender = (args: UiRenderArgs) => Promise<UiView>;
 /** 插件视图的动作处理函数（`ctx.ui.action` 注册）。 */
@@ -75,8 +78,11 @@ export class PluginUiRegistration {
     const x = (typeof t === "object" && t !== null ? t : {}) as Record<string, unknown>;
     const id = (v: unknown) => typeof v === "string" && v !== "" && v.length <= 200;
     if (!id(x.orgId)) throw new Error(`plugin ${name}: ui.invalidate needs a non-empty orgId`);
-    if (x.conversationId !== undefined && !id(x.conversationId)) {
-      throw new Error(`plugin ${name}: ui.invalidate conversationId must be a non-empty string`);
+    if (
+      x.conversationId !== undefined &&
+      (typeof x.conversationId !== "string" || !UUID_RE.test(x.conversationId))
+    ) {
+      throw new Error(`plugin ${name}: ui.invalidate conversationId must be a UUID`);
     }
     if (typeof x.contribution !== "string" || !this.contributions.has(x.contribution)) {
       throw new Error(

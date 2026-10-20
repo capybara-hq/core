@@ -137,6 +137,13 @@
     "directory": {
       "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first."
     },
+    "ui": {
+      "not_found": "This panel is not available. The plugin may be disabled or you cannot access this conversation.",
+      "render_failed": "The plugin failed to load this panel. Try again.",
+      "action_failed": "The plugin failed to perform this action. Try again.",
+      "invalid_view": "The plugin returned content that cannot be displayed. Try again later.",
+      "timeout": "The plugin did not respond in time. Try again."
+    },
     "channel": {
       "not_found": "The channel does not exist or has been deleted.",
       "verify_failed": "The platform rejected the bot credentials. Check them and try again."

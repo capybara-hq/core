@@ -72,6 +72,7 @@ const mf = (over: Partial<PluginManifest> = {}) =>
   });
 
 const view = async () => ({ blocks: [] });
+const CONV = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 const action = async () => ({ toast: { zh: "好", en: "OK" } });
 
 describe("ctx.ui 注册", () => {
@@ -102,12 +103,12 @@ describe("ctx.ui.invalidate", () => {
   it("带 conversationId → 内核主题 conv.<id>；不带 → org-ui.<orgId>；消息为 {kind:'ui', plugin, contribution}", async () => {
     const kernelBus = createBus(redis, sub, "kernel", quiet);
     const got: { topic: string; m: unknown }[] = [];
-    const un1 = await kernelBus.subscribe(conversationTopic("c-1"), (m) =>
+    const un1 = await kernelBus.subscribe(conversationTopic(CONV), (m) =>
       got.push({ topic: "conv", m }),
     );
     const un2 = await kernelBus.subscribe(orgUiTopic("o-1"), (m) => got.push({ topic: "org", m }));
     const ctx = createPluginContext(deps, mf(), {});
-    await ctx.ui.invalidate({ orgId: "o-1", conversationId: "c-1", contribution: "tasks" });
+    await ctx.ui.invalidate({ orgId: "o-1", conversationId: CONV, contribution: "tasks" });
     await ctx.ui.invalidate({ orgId: "o-1", contribution: "board" });
     await waitFor(async () => got.length === 2, 5000, "two ui messages");
     expect(got).toEqual([
@@ -120,7 +121,7 @@ describe("ctx.ui.invalidate", () => {
     await ctx.close();
   });
 
-  it("清单里没有的贡献、缺 orgId → 抛错", async () => {
+  it("清单里没有的贡献、缺 orgId、conversationId 不是 UUID → 抛错", async () => {
     const ctx = createPluginContext(deps, mf(), {});
     await expect(ctx.ui.invalidate({ orgId: "o", contribution: "nope" })).rejects.toThrow(
       /not a ui contribution/,
@@ -128,6 +129,9 @@ describe("ctx.ui.invalidate", () => {
     await expect(ctx.ui.invalidate({ orgId: "", contribution: "tasks" } as never)).rejects.toThrow(
       /orgId/,
     );
+    await expect(
+      ctx.ui.invalidate({ orgId: "o", conversationId: "c-1", contribution: "tasks" }),
+    ).rejects.toThrow(/conversationId must be a UUID/);
     await ctx.close();
   });
 

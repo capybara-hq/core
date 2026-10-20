@@ -1,4 +1,4 @@
-import type { UiActionResult, UiView } from "@capybara-hq/plugin-sdk";
+import { UI_LIMITS, type UiActionResult, type UiView } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -34,15 +34,31 @@ const ViewQuery = z.object({
   locale: Locale,
 });
 
-/** 表单答案（plugin-sdk 的 `FormAnswer`）。 */
-const FormAnswerSchema = z.record(
-  z.string().max(100),
-  z.union([z.string().max(10_000), z.number(), z.boolean(), z.array(z.string().max(10_000))]),
-);
+/**
+ * 表单答案（plugin-sdk 的 `FormAnswer`）。SDK 的 InputForm 没有单独的字段数 / 选项数上限，
+ * 这里沿用视图的上限：键数与多选数组长度 ≤ `UI_LIMITS.tableRows`，单个文本 ≤ `UI_LIMITS.textChars`。
+ */
+const AnswerText = z.string().max(UI_LIMITS.textChars);
+const FormAnswerSchema = z
+  .record(
+    z.string().max(100),
+    z.union([AnswerText, z.number(), z.boolean(), z.array(AnswerText).max(UI_LIMITS.tableRows)]),
+  )
+  .refine((a) => Object.keys(a).length <= UI_LIMITS.tableRows, {
+    message: `answer must have at most ${UI_LIMITS.tableRows} fields`,
+  });
+
+/** 按钮 payload 的 JSON 序列化后 UTF-8 字节数（与 `validateUiView` 对按钮 payload 的上限一致）。 */
+const payloadBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v) ?? "", "utf8");
 
 const ActionBody = z.object({
   actionId: z.string().min(1).max(200),
-  payload: z.unknown().optional(),
+  payload: z
+    .unknown()
+    .optional()
+    .refine((v) => v === undefined || payloadBytes(v) <= UI_LIMITS.payloadBytes, {
+      message: `payload must be at most ${UI_LIMITS.payloadBytes} bytes as JSON`,
+    }),
   answer: FormAnswerSchema.optional(),
   conversationId: z.string().min(1).max(100).optional(),
   locale: Locale,

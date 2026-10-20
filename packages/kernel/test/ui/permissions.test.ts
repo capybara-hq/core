@@ -17,7 +17,7 @@ import {
   type PermissionSet,
   permissionKeys,
 } from "../../src/plugins/permission-set.js";
-import { permissionGroups } from "../../src/plugins/permission-view.js";
+import { isSensitivePermissionKey, permissionGroups } from "../../src/plugins/permission-view.js";
 
 /**
  * 界面权限（spec §4.1、审查重点 5）：`ui.view:*` 记入快照但不卡加载（升级时自动补进快照，不写审计、记日志）；
@@ -92,6 +92,60 @@ describe("permissionKeys / permissionGroups 的 ui 项", () => {
       sensitive: true,
       items: ["view:tasks", "embed:board"],
     });
+  });
+});
+
+describe("isSensitivePermissionKey：与 permissionGroups 同一套敏感类别", () => {
+  it("密钥、公开路由、工具、hook、敏感能力、embed 为敏感；其余不是", () => {
+    const sensitive = [
+      "permissions.secrets",
+      "config.org.secret:apiKey",
+      "config.deployment.secret:<root>",
+      "permissions.http.public:POST /events",
+      "permissions.tools:write",
+      "permissions.hooks:run.completed",
+      "provides:channel@1",
+      "provides:directory@1",
+      "provides:identity-source@1",
+      "ui.embed:board",
+    ];
+    const plain = [
+      "provides:counter@1",
+      "requires:channel@1",
+      "config.org:region",
+      "table:todos",
+      "permissions.http:GET /a",
+      "permissions.network:a.example.com",
+      "permissions.models:x (chat)",
+      "permissions.storage",
+      "ui.view:tasks",
+    ];
+    for (const k of sensitive) expect(isSensitivePermissionKey(k), k).toBe(true);
+    for (const k of plain) expect(isSensitivePermissionKey(k), k).toBe(false);
+  });
+
+  it("与 permissionGroups 一致：敏感分组里的每一项对应的键都敏感", async () => {
+    const set = await computePermissionSet(
+      manifest({
+        secrets: true,
+        tools: ["write"],
+        http: [
+          { method: "GET", path: "/ui/x" },
+          { method: "POST", path: "/hook", public: true },
+        ],
+        network: ["a.example.com"],
+        ui: { views: ["tasks"], embeds: ["board"] },
+      }),
+      "/tmp",
+    );
+    const keys = permissionKeys(set);
+    const flagged = keys.filter(isSensitivePermissionKey).sort();
+    expect(flagged).toEqual([
+      "permissions.http.public:POST /hook",
+      "permissions.secrets",
+      "permissions.tools:write",
+      "ui.embed:board",
+    ]);
   });
 });
 
@@ -231,6 +285,18 @@ describe("PluginHost.load：插件升级多出 view / embed（审查重点 5）"
     expect(await auditRows()).toEqual([]);
     const merged = logs.find((l) => l.level === "info" && l.fields?.plugin === "ui-a");
     expect(merged?.fields).toMatchObject({ version: "0.2.0", merged: ["ui.view:tasks"] });
+  });
+
+  it("快照已补上 view 之后，旧版本副本（0.1.0）重启照常加载，快照不变", async () => {
+    await host().load([fx("ui-a-view")]);
+    await Promise.all(hosts.splice(0).map((h) => h.close()));
+    const old = host();
+    await old.load([fx("ui-a")]);
+    expect(old.manifests().map((m) => m.version)).toEqual(["0.1.0"]);
+    expect(old.pending()).toEqual([]);
+    const snap = await snapshot();
+    expect(snap?.version).toBe("0.2.0");
+    expect(permissionKeys(snap?.permissions as PermissionSet)).toContain("ui.view:tasks");
   });
 
   it("多出 embed → 待批准、不加载，快照不变", async () => {

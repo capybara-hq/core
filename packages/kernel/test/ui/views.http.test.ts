@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { UI_LIMITS } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +11,7 @@ import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
+import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import type { UiProbeState } from "../fixtures/plugins/ui-probe/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -316,14 +318,41 @@ describe("插件视图接口", () => {
     expect(ok.statusCode).toBe(200);
   });
 
-  it("组织页面视图：成员可取，不带对话", async () => {
+  it("组织页面视图：成员可取，不带对话；带 conversationId → 400 validation_failed", async () => {
     await enable(owner, orgId, "ui-probe");
     const r = await other({ method: "GET", url: `${ui}/views/ui-probe/orgpage` });
     expect(r.statusCode, r.body).toBe(200);
     expect(probe().lastRender).toEqual({ orgId, accountId: expect.any(String), locale: "en" });
+    const withConv = await owner({
+      method: "GET",
+      url: `${ui}/views/ui-probe/orgpage?conversationId=${convId}`,
+    });
+    expect(withConv.statusCode).toBe(400);
+    expect(errCode(withConv)).toBe("validation_failed");
   });
 
-  it("执行动作：toast / 新视图；非法结果 502 ui.invalid_view；抛错 502 ui.render_failed；插件收到身份与 payload / answer", async () => {
+  it("动作请求体上限：payload 超过 UI_LIMITS.payloadBytes、answer 键过多或数组过长 → 400", async () => {
+    await enable(owner, orgId, "ui-probe");
+    const post = (payload: Record<string, unknown>) =>
+      owner({
+        method: "POST",
+        url: `${ui}/actions/ui-probe/panel`,
+        payload: { actionId: "toast", conversationId: convId, ...payload },
+      });
+    const big = await post({ payload: { s: "x".repeat(UI_LIMITS.payloadBytes) } });
+    expect(big.statusCode).toBe(400);
+    expect(errCode(big)).toBe("validation_failed");
+    const fits = await post({ payload: { s: "x".repeat(UI_LIMITS.payloadBytes - 20) } });
+    expect(fits.statusCode, fits.body).toBe(200);
+    const manyKeys = Object.fromEntries(
+      Array.from({ length: UI_LIMITS.tableRows + 1 }, (_, i) => [`k${i}`, "v"]),
+    );
+    expect((await post({ answer: manyKeys })).statusCode).toBe(400);
+    const longArray = { q0: Array.from({ length: UI_LIMITS.tableRows + 1 }, (_, i) => `v${i}`) };
+    expect((await post({ answer: longArray })).statusCode).toBe(400);
+  });
+
+  it("执行动作：toast / 新视图；非法结果 502 ui.invalid_view；抛错 502 ui.action_failed；插件收到身份与 payload / answer", async () => {
     await enable(owner, orgId, "ui-probe");
     const act = (actionId: string, extra: Record<string, unknown> = {}) =>
       owner({
@@ -353,7 +382,8 @@ describe("插件视图接口", () => {
     expect(errCode(bad)).toBe("ui.invalid_view");
     const boom = await act("boom");
     expect(boom.statusCode).toBe(502);
-    expect(errCode(boom)).toBe("ui.render_failed");
+    expect(errCode(boom)).toBe("ui.action_failed");
+    expect(boom.body).not.toContain("exploded");
     // 没有 action 处理函数的视图 → 404
     const none = await owner({
       method: "POST",
@@ -481,6 +511,11 @@ describe("工具显示摘要", () => {
     expect(json).toContain("Todo list updated (3 items)");
     expect(json).not.toContain("Updated task list");
     expect(json).not.toContain("更新任务清单");
+    // 压缩记录（把全部内容转成纯文本给模型做摘要）里也没有摘要
+    const plan = compactionPlan(events, 0);
+    expect(plan?.transcript).toContain("Todo list updated (3 items)");
+    expect(plan?.transcript).not.toContain("Updated task list");
+    expect(plan?.transcript).not.toContain("更新任务清单");
     // 本次运行实际发出的第二次模型请求的回复里也看不到摘要（model-fake 回显它看到的工具结果）
     const assistant = events.filter((e) => e.type === "assistant_message");
     expect(JSON.stringify(assistant)).not.toContain("Updated task list");
