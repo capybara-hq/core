@@ -52,6 +52,7 @@ describe("validateUiView：每种块一个合法、一个非法用例", () => {
       ],
     });
     bad(/status/, { type: "checklist", items: [{ text: "a", status: "done" }] });
+    bad(/text/, { type: "checklist", items: [{ text: "", status: "pending" }] });
   });
   it("keyValue", () => {
     ok({ type: "keyValue", items: [{ label: "Owner", value: "Ann" }] });
@@ -115,6 +116,43 @@ describe("validateUiView：每种块一个合法、一个非法用例", () => {
       submitLabel: "Save",
     });
     bad(/submitLabel/, { type: "form", form: FORM, actionId: "pick" });
+  });
+});
+
+describe("validateUiView：actionId 在整个视图内唯一", () => {
+  it("按钮之间、按钮与表单之间、跨块重复都报错", () => {
+    ok(
+      {
+        type: "actions",
+        buttons: [
+          { actionId: "a", label: "A" },
+          { actionId: "b", label: "B" },
+        ],
+      },
+      { type: "form", form: FORM, actionId: "c", submitLabel: "Save" },
+    );
+    bad(/duplicate actionId "a"/, {
+      type: "actions",
+      buttons: [
+        { actionId: "a", label: "A" },
+        { actionId: "a", label: "B" },
+      ],
+    });
+    bad(
+      /duplicate actionId "a"/,
+      { type: "actions", buttons: [{ actionId: "a", label: "A" }] },
+      { type: "actions", buttons: [{ actionId: "a", label: "B" }] },
+    );
+    bad(
+      /duplicate actionId "pick"/,
+      { type: "actions", buttons: [{ actionId: "pick", label: "A" }] },
+      { type: "form", form: FORM, actionId: "pick", submitLabel: "Save" },
+    );
+    bad(
+      /duplicate actionId "pick"/,
+      { type: "form", form: FORM, actionId: "pick", submitLabel: "Save" },
+      { type: "form", form: FORM, actionId: "pick", submitLabel: "Again" },
+    );
   });
 });
 
@@ -225,8 +263,9 @@ describe("parseEmbedChildMessage", () => {
       expect(parseEmbedChildMessage(msg({ type: "navigate", path }))).toBeNull();
     }
   });
-  it("拒绝负数 / NaN / 无穷高度", () => {
-    for (const height of [-1, Number.NaN, Number.POSITIVE_INFINITY, "100"]) {
+  it("拒绝负数 / NaN / 无穷 / 超过 10000 的高度", () => {
+    expect(parseEmbedChildMessage(msg({ type: "resize", height: 10000 }))).not.toBeNull();
+    for (const height of [-1, Number.NaN, Number.POSITIVE_INFINITY, "100", 10001]) {
       expect(parseEmbedChildMessage(msg({ type: "resize", height }))).toBeNull();
     }
   });

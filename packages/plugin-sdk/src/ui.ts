@@ -32,7 +32,15 @@ export type UiBlock =
       items: { text: string; status: "pending" | "in_progress" | "completed" }[];
     }
   | { type: "keyValue"; items: { label: string; value: string }[] }
-  | { type: "table"; columns: { key: string; label: string }[]; rows: Record<string, string>[] }
+  | {
+      type: "table";
+      columns: { key: string; label: string }[];
+      /**
+       * 每行按列 key 取单元格，可以缺列。渲染时用 `Object.hasOwn(row, key)` 判断单元格是否存在，
+       * 不要用 `row[key]` 或 `in`：列 key 可能是 `constructor` / `toString` 之类，会取到原型链上的值。
+       */
+      rows: Record<string, string>[];
+    }
   | { type: "code"; language?: string; text: string }
   | { type: "image"; url: string; alt: string }
   | { type: "chart"; kind: "bar" | "line"; series: { label: string; value: number }[] }
@@ -97,6 +105,7 @@ function jsonBytes(v: unknown): number | undefined {
 /**
  * 校验插件返回的视图，返回问题列表（空 = 合法）。链接与图片只允许 http(s) 绝对地址；
  * Markdown 的检查是纵深防御，网页渲染时仍须只认 http(s) 链接、不渲染原生 HTML。
+ * 按钮与表单的 `actionId` 在整个视图内唯一（动作回调靠它区分来源）。
  */
 export function validateUiView(v: unknown): string[] {
   if (!isObj(v)) return ["view must be an object"];
@@ -108,6 +117,13 @@ export function validateUiView(v: unknown): string[] {
       return;
     }
     chars += s.length;
+  };
+  const actionIds = new Set<string>();
+  const actionId = (at: string, id: unknown): void => {
+    text(at, id, true);
+    if (typeof id !== "string" || id === "") return;
+    if (actionIds.has(id)) out.push(`${at} is a duplicate actionId "${id}" in this view`);
+    actionIds.add(id);
   };
   const list = (at: string, xs: unknown, max: number): unknown[] => {
     if (!Array.isArray(xs)) {
@@ -151,7 +167,7 @@ export function validateUiView(v: unknown): string[] {
             out.push(`${iat} must be an object`);
             return;
           }
-          text(`${iat}.text`, it.text);
+          text(`${iat}.text`, it.text, true);
           if (!(CHECK_STATUSES as readonly unknown[]).includes(it.status))
             out.push(`${iat}.status must be one of ${CHECK_STATUSES.join(", ")}`);
         });
@@ -227,7 +243,7 @@ export function validateUiView(v: unknown): string[] {
             out.push(`${bat} must be an object`);
             return;
           }
-          text(`${bat}.actionId`, btn.actionId, true);
+          actionId(`${bat}.actionId`, btn.actionId);
           text(`${bat}.label`, btn.label, true);
           if (btn.danger !== undefined && typeof btn.danger !== "boolean")
             out.push(`${bat}.danger must be a boolean`);
@@ -247,7 +263,7 @@ export function validateUiView(v: unknown): string[] {
             out.push(`${at}.form: ${p}`);
           chars += jsonBytes(b.form) === undefined ? 0 : JSON.stringify(b.form).length;
         }
-        text(`${at}.actionId`, b.actionId, true);
+        actionId(`${at}.actionId`, b.actionId);
         text(`${at}.submitLabel`, b.submitLabel, true);
         return;
       }
@@ -314,12 +330,14 @@ export type EmbedParentMessage =
 
 /** iframe 发给外层页面的消息。 */
 export type EmbedChildMessage =
+  /** 高度为 CSS 像素，0–10000。 */
   | { protocol: typeof EMBED_PROTOCOL; type: "resize"; height: number }
   /** 只允许以单个 `/` 开头的站内路径。 */
   | { protocol: typeof EMBED_PROTOCOL; type: "navigate"; path: string }
   | { protocol: typeof EMBED_PROTOCOL; type: "toast"; text: string };
 
 const NAV_MAX = 2000;
+const RESIZE_MAX = 10000;
 const TOAST_MAX = 500;
 // 控制字符与反斜杠：浏览器会把 `/\host` 当成 `//host`，也会剥掉路径里的换行 / 制表符
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
@@ -334,7 +352,10 @@ export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null {
   const protocol = EMBED_PROTOCOL;
   switch (m.type) {
     case "resize":
-      return typeof m.height === "number" && Number.isFinite(m.height) && m.height >= 0
+      return typeof m.height === "number" &&
+        Number.isFinite(m.height) &&
+        m.height >= 0 &&
+        m.height <= RESIZE_MAX
         ? { protocol, type: "resize", height: m.height }
         : null;
     case "navigate": {
