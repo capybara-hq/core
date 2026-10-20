@@ -353,6 +353,54 @@ describe("对话页右侧标签面板", () => {
     expect(within(log).getByRole("button", { name: /fixture__search/ }).ariaExpanded).toBe("false");
   });
 
+  it("「查看全部输出」：在途时连点只取一次、按钮显示读取中；切到别的标签再回来不重取，全文还在", async () => {
+    const OUT_ID = "0b6f7c1e-1111-4222-8333-444455556677";
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = stubApi({
+      [`GET ${BASE}/outputs/${OUT_ID}`]: (() =>
+        gate.then(() =>
+          json(200, {
+            output: { id: OUT_ID, text: "ARCHIVED FULL", offset: 0, totalChars: 13, next: null },
+          }),
+        )) as never,
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "go"),
+            runStarted(2),
+            toolCall(3, "call_1", "fixture__search", { q: "x" }),
+            toolResult(4, "call_1", "fixture__search", "preview", { outputId: OUT_ID }),
+          ],
+        }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    const panel = panelOf();
+    const user = userEvent.setup();
+    await user.click(await within(panel).findByRole("button", { name: /fixture__search/ }));
+    const showAll = within(panel).getByRole("button", { name: "View full output" });
+    await user.click(showAll);
+    const loading = within(panel).getByRole("button", { name: en.chatPanel.loadingOutput });
+    await user.click(loading);
+    await user.click(loading);
+    const fetched = () => calls.filter((c) => c.url.startsWith(`${BASE}/outputs/${OUT_ID}`));
+    expect(fetched()).toHaveLength(1);
+    await act(async () => {
+      release();
+      await gate;
+    });
+    expect(await within(panel).findByText("ARCHIVED FULL")).toBeTruthy();
+
+    await user.click(tabNamed(en.chatPanel.context));
+    await user.click(tabNamed(en.chatPanel.run));
+    await user.click(await within(panel).findByRole("button", { name: /fixture__search/ }));
+    expect(within(panel).getByText("ARCHIVED FULL")).toBeTruthy();
+    expect(fetched()).toHaveLength(1);
+  });
+
   it("上下文标签：最近一次 usage 对模型上下文窗口、agent / 模型、用到的应用、压缩记录", async () => {
     stubApi({
       [`GET ${BASE}/events`]: () =>
@@ -450,6 +498,38 @@ describe("对话页右侧标签面板：刷新合并、标签回退与错误提�
     await act(async () => pending.shift()?.());
     await vi.waitFor(() => expect(viewGets()).toBe(3));
     await act(async () => pending.shift()?.());
+    await vi.waitFor(() => expect(tabNamed("Tasks").textContent).toContain("2/9"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(viewGets()).toBe(3);
+  });
+
+  it("在途的请求失败、期间又收到 event: ui：仍补取一次，补取成功后显示新视图", async () => {
+    let n = 0;
+    const pending: ((ok: boolean) => void)[] = [];
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [TASKS] }),
+      [`GET ${UI}/views/todo/tasks`]: (() => {
+        n += 1;
+        const view = tasksView(n - 1, 9);
+        if (n === 1) return json(200, { view });
+        return new Promise<Response>((resolve) => {
+          pending.push((ok) =>
+            resolve(ok ? json(200, { view }) : json(502, { error: { code: "ui.render_failed" } })),
+          );
+        });
+      }) as unknown as () => Response,
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    await vi.waitFor(() => expect(tabNamed("Tasks").textContent).toContain("0/9"));
+    const viewGets = () => calls.filter((c) => c.url.includes("/ui/views/todo/tasks")).length;
+    act(() => convStream().emit("ui", { plugin: "todo", contribution: "tasks" }));
+    await vi.waitFor(() => expect(viewGets()).toBe(2));
+    act(() => convStream().emit("ui", { plugin: "todo", contribution: "tasks" }));
+    // 在途的那次失败：补取照常发出
+    await act(async () => pending.shift()?.(false));
+    await vi.waitFor(() => expect(viewGets()).toBe(3));
+    await act(async () => pending.shift()?.(true));
     await vi.waitFor(() => expect(tabNamed("Tasks").textContent).toContain("2/9"));
     await new Promise((r) => setTimeout(r, 20));
     expect(viewGets()).toBe(3);

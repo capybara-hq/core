@@ -10,7 +10,7 @@ import type { ChatView } from "../ChatView";
 import { ContextTab } from "./ContextTab";
 import { EmbedTab } from "./EmbedTab";
 import { PluginViewTab, usePluginViews, useUiAction } from "./PluginViewTab";
-import { RunTab } from "./RunTab";
+import { RunTab, useArchivedOutputs } from "./RunTab";
 
 /** 最后选中的标签（只是个人便利，存在浏览器本地；读写失败时忽略）。 */
 export const PANEL_TAB_KEY = "cap.chat.panelTab";
@@ -71,6 +71,8 @@ export function ChatPanel({
     versions: chat.uiVersions,
   });
   const runAction = useUiAction(orgId, { conversationId, locale, onView: views.setView });
+  // 运行标签取到的存档全文放在面板这一层：切到别的标签再回来不丢、不重取
+  const outputs = useArchivedOutputs(orgId, conversationId);
 
   const tools = useMemo(
     () => chat.items.filter((i): i is ToolItem => i.kind === "tool"),
@@ -111,8 +113,7 @@ export function ChatPanel({
   }, []);
 
   let content: ReactNode = null;
-  if (current === "run")
-    content = <RunTab orgId={orgId} conversationId={conversationId} tools={tools} />;
+  if (current === "run") content = <RunTab tools={tools} outputs={outputs} />;
   else if (current === "context") {
     content = (
       <ContextTab

@@ -295,6 +295,7 @@
     "none": "None",
     "compactions": "Compactions",
     "compactionCovers": "Compacted up to event #{seq}",
+    "loadingOutput": "Loading full output…",
     "contributionsFailed": "Couldn't load plugin panels; plugin tabs are unavailable."
   },
   "pluginPage": {

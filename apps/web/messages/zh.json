@@ -295,6 +295,7 @@
     "none": "无",
     "compactions": "压缩记录",
     "compactionCovers": "压缩到第 {seq} 条事件",
+    "loadingOutput": "正在读取全部输出…",
     "contributionsFailed": "插件面板加载失败，插件标签暂不可用。"
   },
   "pluginPage": {

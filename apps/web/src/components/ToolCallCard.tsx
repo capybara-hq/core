@@ -56,6 +56,7 @@ export function ToolCallCard({
   full = false,
   archived,
   onShowAll,
+  showAllLabel,
 }: {
   item: ToolItem;
   full?: boolean;
@@ -63,6 +64,8 @@ export function ToolCallCard({
   archived?: { text: string; complete: boolean };
   /** 结果已存档时「查看全部输出」：交给调用方取全文。 */
   onShowAll?(): void;
+  /** 「查看全部输出」按钮的文案（如读取中）；不给时用设计系统的默认文案。 */
+  showAllLabel?: string;
 }) {
   const t = useTranslations("tools");
   const locale = useLocale();
@@ -89,6 +92,7 @@ export function ToolCallCard({
           error: t("status.error"),
           cancelled: t("status.cancelled"),
           ...(item.outputId !== null && { truncated: t("outputId", { id: item.outputId }) }),
+          ...(showAllLabel !== undefined && { showAll: showAllLabel }),
         }}
       />
     </div>
