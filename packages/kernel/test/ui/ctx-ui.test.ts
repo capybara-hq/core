@@ -137,7 +137,15 @@ describe("ctx.ui.invalidate", () => {
   });
 
   it("verifyEmbedToken：同一主密钥签给本插件的令牌通过；签给别的插件、别的主密钥、乱写的一律 null", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createPluginContext(
+      deps,
+      mf(),
+      {},
+      {
+        providers: () => [],
+        enabledPlugins: async (orgId) => new Set(orgId === "o1" ? ["ui-test"] : []),
+      },
+    );
     const claims = { orgId: "o1", accountId: "a1", contribution: "board" };
     const mine = new EmbedTokens(deps.keyring).issue({ plugin: "ui-test", ...claims }).token;
     expect(await ctx.ui.verifyEmbedToken(mine)).toEqual(
@@ -151,6 +159,31 @@ describe("ctx.ui.invalidate", () => {
     }).token;
     expect(await ctx.ui.verifyEmbedToken(foreign)).toBeNull();
     expect(await ctx.ui.verifyEmbedToken("x")).toBeNull();
+    await ctx.close();
+  });
+
+  it("verifyEmbedToken：插件此刻未在令牌的组织启用 → null（每次都查，不缓存）", async () => {
+    let enabled = true;
+    const ctx = createPluginContext(
+      deps,
+      mf(),
+      {},
+      {
+        providers: () => [],
+        enabledPlugins: async () => new Set(enabled ? ["ui-test"] : []),
+      },
+    );
+    const token = new EmbedTokens(deps.keyring).issue({
+      plugin: "ui-test",
+      orgId: "o1",
+      accountId: "a1",
+      contribution: "board",
+    }).token;
+    expect(await ctx.ui.verifyEmbedToken(token)).not.toBeNull();
+    enabled = false;
+    expect(await ctx.ui.verifyEmbedToken(token)).toBeNull();
+    enabled = true;
+    expect(await ctx.ui.verifyEmbedToken(token)).not.toBeNull();
     await ctx.close();
   });
 });

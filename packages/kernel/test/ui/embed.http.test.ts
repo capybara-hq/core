@@ -76,7 +76,7 @@ const enable = async (req: Req, orgId: string, plugin: string) => {
   expect(r.statusCode, r.body).toBe(200);
 };
 
-type Issued = { token: string; src: string; expiresAt: string };
+type Issued = { token: string; src: string; expiresAt: string; expiresIn: number };
 
 describe("嵌入令牌", () => {
   let owner: Req;
@@ -189,6 +189,7 @@ describe("嵌入令牌", () => {
     expect(r.statusCode, r.body).toBe(200);
     const body = r.json() as Issued;
     expect(body.src).toBe("/plugin-ui/example-board/board");
+    expect(body.expiresIn).toBe(300);
     const ttl = Date.parse(body.expiresAt) - Date.now();
     expect(ttl).toBeGreaterThan(290_000);
     expect(ttl).toBeLessThanOrEqual(300_000);
@@ -283,7 +284,7 @@ describe("嵌入令牌", () => {
     expect(js.headers["content-type"]).toMatch(/^text\/javascript/);
   });
 
-  it("对话嵌入的令牌只看得到、只改得了这个对话的卡片", async () => {
+  it("对话嵌入的令牌只看得到、只改得了这个对话的卡片；组织页面看不到、改不了对话里的卡片", async () => {
     await enable(owner, orgId, "example-board");
     const { token: orgToken } = (await issue(owner, "example-board", "board")).json() as Issued;
     const { token: convToken } = (
@@ -300,9 +301,29 @@ describe("嵌入令牌", () => {
     const all = (await asPlugin("GET", "/ui/cards", orgToken)).json() as {
       cards: { title: string }[];
     };
-    expect(all.cards.map((c) => c.title).sort()).toEqual(["In conversation", "Org wide"]);
+    expect(all.cards.map((c) => c.title)).toEqual(["Org wide"]);
     expect(
       (await asPlugin("POST", `/ui/cards/${orgCard}`, convToken, { status: "done" })).statusCode,
     ).toBe(404);
+    const convCard = (a.json() as { card: { id: string } }).card.id;
+    expect(
+      (await asPlugin("POST", `/ui/cards/${convCard}`, orgToken, { status: "done" })).statusCode,
+    ).toBe(404);
+  });
+
+  it("插件在组织停用后，已签出的令牌立即失效（verifyEmbedToken 每次查启用状态）", async () => {
+    await enable(owner, orgId, "example-board");
+    const { token } = (await issue(owner, "example-board", "board")).json() as Issued;
+    expect((await asPlugin("GET", "/ui/cards", token)).statusCode).toBe(200);
+    const off = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/plugins/example-board`,
+      payload: { enabled: false },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    expect((await asPlugin("GET", "/ui/cards", token)).statusCode).toBe(401);
+    expect((await asPlugin("GET", "/ui/events", token)).statusCode).toBe(401);
+    await enable(owner, orgId, "example-board");
+    expect((await asPlugin("GET", "/ui/cards", token)).statusCode).toBe(200);
   });
 });

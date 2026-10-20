@@ -332,7 +332,7 @@ export type EmbedParentMessage =
 export type EmbedChildMessage =
   /** 高度为 CSS 像素，0–10000。 */
   | { protocol: typeof EMBED_PROTOCOL; type: "resize"; height: number }
-  /** 只允许以单个 `/` 开头的站内路径。 */
+  /** 只允许站内路径：单个 `/` 开头、没有 `//`、没有 `.` / `..` 段（含 `%2e` 编码）、规范化后不变。 */
   | { protocol: typeof EMBED_PROTOCOL; type: "navigate"; path: string }
   | { protocol: typeof EMBED_PROTOCOL; type: "toast"; text: string };
 
@@ -342,6 +342,27 @@ const TOAST_MAX = 500;
 // 控制字符与反斜杠：浏览器会把 `/\host` 当成 `//host`，也会剥掉路径里的换行 / 制表符
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
 const NAV_BAD = /[\u0000-\u001f\u007f\\]/;
+
+/**
+ * 站内路径：以单个 `/` 开头，任何位置都没有 `//`，没有控制字符与反斜杠，路径部分没有 `.` / `..` 段
+ * （含任意大小写的 `%2e` 编码），且按 URL 规范化后与原文完全相同、不以 `//` 开头——
+ * 规范化不会把它变成别的路径，交给站内路由时不会跳到站外或上层目录。
+ */
+function isInSitePath(p: string): boolean {
+  if (!p.startsWith("/") || p.includes("//") || NAV_BAD.test(p)) return false;
+  const path = p.split(/[?#]/, 1)[0] ?? "";
+  for (const seg of path.split("/")) {
+    const s = seg.toLowerCase().replaceAll("%2e", ".");
+    if (s === "." || s === "..") return false;
+  }
+  let u: URL;
+  try {
+    u = new URL(p, "http://x");
+  } catch {
+    return false;
+  }
+  return u.pathname + u.search + u.hash === p && !u.pathname.startsWith("//");
+}
 
 /**
  * 解析 iframe 发来的消息：协议、类型、字段都对才返回（只留已知字段的新对象），否则返回 null。
@@ -361,7 +382,7 @@ export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null {
     case "navigate": {
       const p = m.path;
       if (typeof p !== "string" || p.length > NAV_MAX) return null;
-      if (!p.startsWith("/") || p.startsWith("//") || NAV_BAD.test(p)) return null;
+      if (!isInSitePath(p)) return null;
       return { protocol, type: "navigate", path: p };
     }
     case "toast":

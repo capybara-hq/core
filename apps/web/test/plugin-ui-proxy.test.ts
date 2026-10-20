@@ -85,7 +85,7 @@ describe("/plugin-ui/[...path] 代理", () => {
       new Request(url("/plugin-ui/example-board/cards?x=1"), {
         headers: {
           cookie: "cap_at=secret; other=1",
-          authorization: "Bearer emb.tok",
+          authorization: "Bearer emb.tok-1_x",
           accept: "application/json",
           "x-capybara-csrf": "1",
           "x-custom": "nope",
@@ -99,7 +99,7 @@ describe("/plugin-ui/[...path] 代理", () => {
     expect(s.method).toBe("GET");
     expect(s.url).toBe("/plugins/example-board/ui/cards?x=1");
     expect(s.headers.cookie).toBeUndefined();
-    expect(s.headers.authorization).toBe("Bearer emb.tok");
+    expect(s.headers.authorization).toBe("Bearer emb.tok-1_x");
     expect(s.headers.accept).toBe("application/json");
     expect(s.headers["x-capybara-csrf"]).toBeUndefined();
     expect(s.headers["x-custom"]).toBeUndefined();
@@ -110,7 +110,7 @@ describe("/plugin-ui/[...path] 代理", () => {
     const res = await POST(
       new Request(url("/plugin-ui/example-board/cards/abc"), {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer t" },
+        headers: { "content-type": "application/json", authorization: "Bearer a.b" },
         body: '{"status":"done"}',
       }),
     );
@@ -247,6 +247,95 @@ describe("/plugin-ui/[...path] 代理", () => {
       expectSecurityHeaders(res);
     } finally {
       process.env.CAPYBARA_KERNEL_URL = saved;
+    }
+  });
+});
+
+describe("/plugin-ui 代理（修复第 1 轮）", () => {
+  it("响应头白名单：危险头（Clear-Site-Data、NEL、Report-To、HSTS、Accept-CH、Set-Cookie 等）不透传", async () => {
+    handler = (_req, res) => {
+      res.setHeader("set-cookie", ["a=1"]);
+      res.setHeader("clear-site-data", '"*"');
+      res.setHeader("nel", '{"report_to":"x","max_age":1}');
+      res.setHeader("report-to", '{"group":"x"}');
+      res.setHeader("reporting-endpoints", 'x="https://other.example"');
+      res.setHeader("strict-transport-security", "max-age=63072000");
+      res.setHeader("accept-ch", "Sec-CH-UA");
+      res.setHeader("x-custom", "1");
+      res.setHeader("link", "<https://other.example>; rel=preload");
+      res.setHeader("etag", '"v1"');
+      res.setHeader("last-modified", "Wed, 21 Oct 2026 07:28:00 GMT");
+      res.setHeader("vary", "Accept");
+      res.setHeader("content-language", "en");
+      res.writeHead(200, { "content-type": "text/html", "cache-control": "max-age=60" });
+      res.end("<p>x</p>");
+    };
+    const res = await GET(new Request(url("/plugin-ui/example-board/board")));
+    for (const h of [
+      "set-cookie",
+      "clear-site-data",
+      "nel",
+      "report-to",
+      "reporting-endpoints",
+      "strict-transport-security",
+      "accept-ch",
+      "x-custom",
+      "link",
+      "content-encoding",
+    ]) {
+      expect(res.headers.get(h), h).toBeNull();
+    }
+    expect(res.headers.get("content-type")).toBe("text/html");
+    expect(res.headers.get("cache-control")).toBe("max-age=60");
+    expect(res.headers.get("etag")).toBe('"v1"');
+    expect(res.headers.get("last-modified")).toBe("Wed, 21 Oct 2026 07:28:00 GMT");
+    expect(res.headers.get("vary")).toBe("Accept");
+    expect(res.headers.get("content-language")).toBe("en");
+    expectSecurityHeaders(res);
+  });
+
+  it("插件没给 Cache-Control 时默认 no-store", async () => {
+    const res = await GET(new Request(url("/plugin-ui/example-board/board")));
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("3xx 的 Location：留在 /plugin-ui/<plugin>/ 下的保留，其他一律去掉", async () => {
+    for (const [loc, keep] of [
+      ["/plugin-ui/example-board/other", true],
+      ["https://other.example/x", false],
+      ["//other.example/x", false],
+      ["/api/v1/me", false],
+      ["/plugin-ui/todo/x", false],
+      ["/plugin-ui/example-board/../../api", false],
+      ["other", false],
+    ] as const) {
+      handler = (_req, res) => {
+        res.writeHead(302, { location: loc });
+        res.end();
+      };
+      const res = await GET(new Request(url("/plugin-ui/example-board/board")));
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location"), loc).toBe(keep ? loc : null);
+    }
+  });
+
+  it("Authorization 只转发嵌入令牌形状的 Bearer；Basic、cap_pat_ / cap_svc_ 令牌不转发", async () => {
+    for (const [auth, forwarded] of [
+      ["Bearer eyJwbHVnaW4iOiJ4In0.c2lnbmF0dXJl", true],
+      ["Basic YWRtaW46cHc=", false],
+      ["Bearer cap_pat_abcdef", false],
+      ["Bearer cap_svc_abcdef", false],
+      ["Bearer cap_pat_abc.def", false],
+      ["Bearer nodot", false],
+      ["Bearer a.b.c", false],
+      ["Bearer a.b extra", false],
+      ["bearer a.b", false],
+    ] as const) {
+      seen = [];
+      await GET(
+        new Request(url("/plugin-ui/example-board/cards"), { headers: { authorization: auth } }),
+      );
+      expect(seen[0]?.headers.authorization, auth).toBe(forwarded ? auth : undefined);
     }
   });
 });

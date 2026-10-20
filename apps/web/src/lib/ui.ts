@@ -21,11 +21,15 @@ export interface UiContributionItem {
   path?: string;
 }
 
-/** 嵌入令牌（`POST .../ui/embeds/:plugin/:id/token`）：`src` 是同源代理下的页面地址。 */
+/**
+ * 嵌入令牌（`POST .../ui/embeds/:plugin/:id/token`）：`src` 是同源代理下的页面地址；
+ * `expiresIn` 是有效期秒数（续期按本地收到的时刻计算，不比较本机时钟与 `expiresAt`）。
+ */
 export interface EmbedToken {
   token: string;
   src: string;
   expiresAt: string;
+  expiresIn: number;
 }
 
 export type UiBlock =

@@ -162,17 +162,19 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 - **插件路由不经内核鉴权**：没有 AuthGuard、不检查 CSRF 头、拿不到调用者身份（尚未提供；清单的 `public` 目前只是声明，Ruling A2）。对外暴露的 webhook 必须自行验签。
 - **内核会话 Cookie 被剥掉**：转交前从 `Cookie` 头删去 `cap_at` / `cap_rt`（其余 Cookie 原样保留；只剩这两个时不带 `Cookie` 头），插件拿不到用户的内核会话。
 - 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
-- `req.signal` 在客户端断开（响应连接关闭）时中止：长连接（SSE）的 handler 用它退订、收尾。
+- `req.signal` 只在响应写完之前客户端断开时中止（正常写完不会中止）：长连接（SSE）的 handler 用它退订、收尾。
 
 ### 嵌入应用（kind embed，参考 example-board）
 
 插件自己的页面放进网页的沙箱 iframe（`allow-scripts allow-forms`，不透明源）。参考 `plugins/example-board`。
 
 - 清单：`ui` 里 `{ id, title, place, kind: "embed", path: "/ui/..." }`，id 列进 `permissions.ui.embeds`（敏感项、要批准），页面与数据路由都声明在 `permissions.http`，路径以 `/ui/` 开头。
-- 网页经同源代理 `/plugin-ui/<插件>/<rest>` 访问 `/plugins/<插件>/ui/<rest>`：只放行 GET / POST、只到 `/ui/` 下，不转发 Cookie，去掉 `Set-Cookie`，统一加 CSP（`sandbox allow-scripts allow-forms`、`frame-ancestors 'self'`、资源与 `connect-src` 只限本源、允许内联脚本 / 样式）。页面里用**相对地址**（如 `fetch("cards")`、`<script src="board.js">`）；外部资源会被 CSP 拦下。
-- 身份：外层页面在 iframe 加载后发 `init`（`EMBED_PROTOCOL` 消息，带嵌入令牌、语言、主题、`--cb-*` 设计 token、组织 / 对话），过期前 60 秒发 `token` 续期，主题切换发 `theme`。页面请求带 `Authorization: Bearer <令牌>`，**每个数据路由先 `await ctx.ui.verifyEmbedToken(token)`**，返回 null 就 401；组织、账号、对话只从返回的声明里取（对话嵌入的 `conversationId` 内核已核对调用者能访问）。令牌 300 秒有效、只认签给本插件的，内核 `/api` 不认它。
+- 网页经同源代理 `/plugin-ui/<插件>/<rest>` 访问 `/plugins/<插件>/ui/<rest>`：只放行 GET / POST、只到 `/ui/` 下，不转发 Cookie，`Authorization` 只转发嵌入令牌形状的 Bearer；统一加 CSP（`sandbox allow-scripts allow-forms`、`frame-ancestors 'self'`、资源与 `connect-src` 只限本源、允许内联脚本 / 样式）。页面里用**相对地址**（如 `fetch("cards")`、`<script src="board.js">`）；外部资源会被 CSP 拦下。
+- 响应头只透传白名单：`content-type`、`cache-control`（没给时代理补 `no-store`）、`etag`、`last-modified`、`expires`、`vary`、`content-language`、`x-accel-buffering`、`retry-after`；`Set-Cookie` 等其他头都会被丢掉。重定向的 `Location` 只保留仍在 `/plugin-ui/<插件>/` 下的。
+- **多页面用 History API，不要整页跳转。** 外层只在 iframe 第一次 `load` 时发 `init`；iframe 再次 `load`（整页导航、表单提交跳转、`location` 赋值）就被视为离开了插件页面：外层不再给它发任何消息，并在原 `src` 上重新挂载 iframe。页内切换视图用 `history.pushState` 与前端路由。
+- 身份：外层页面在 iframe 第一次加载后发 `init`（`EMBED_PROTOCOL` 消息，带嵌入令牌、语言、主题、`--cb-*` 设计 token、组织 / 对话），过期前 60 秒发 `token` 续期，主题切换发 `theme`。页面请求带 `Authorization: Bearer <令牌>`，**每个数据路由先 `await ctx.ui.verifyEmbedToken(token)`**，返回 null 就 401；组织、账号、对话只从返回的声明里取（对话嵌入的 `conversationId` 内核已核对调用者能访问）。令牌 300 秒有效、只认签给本插件的，插件在该组织停用后立即失效（`verifyEmbedToken` 每次查启用状态），内核 `/api` 不认它。
 - 静态页面与脚本不含数据时可以不验令牌（iframe 导航带不了 Authorization 头）；数据一律验。
-- 发给外层：`resize`（高度）、`navigate`（只能是站内路径，如 `/chat/<id>`）、`toast`（纯文本），用 `window.parent.postMessage(msg, "*")`。
+- 发给外层：`resize`（高度）、`navigate`（只能是站内路径，如 `/chat/<id>`：单个 `/` 开头，不含 `//`、`.` / `..` 段，规范化后不变）、`toast`（纯文本），用 `window.parent.postMessage(msg, "*")`。
 - 实时刷新：自己开 SSE 路由（EventSource 带不了头，页面用 `fetch` 读流），**按请求** `ctx.bus.subscribe`，在 `req.signal` 中止（客户端断开）或 `ReadableStream` 的 `cancel` 里退订；流在令牌 `exp` 时结束，页面用续期的令牌重连。心跳用 `AbortSignal.timeout` 的单次请求内等待，不用定时器。
 
 ### 持久计数与幂等的写法（参考 example-counter）

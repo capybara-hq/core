@@ -135,6 +135,55 @@ describe("嵌入应用（双副本）", () => {
     expect(stream.headers.get("content-type")).toMatch(/^text\/event-stream/);
     await stream.until((m) => m.some((x) => x.event === "ready"), 10_000, "ready frame");
 
+    // 对话里的卡片变化不推给组织页面的流（组织页面不含对话卡片）
+    const ag = await at(0, "POST", `${base}/agents`, {
+      definition: {
+        name: "Helper",
+        instructions: "Be helpful.",
+        model: { provider: "model-fake", model: "fake-1" },
+        tools: [],
+      },
+      visibility: "org",
+    });
+    expect(ag.status, JSON.stringify(ag.json)).toBe(201);
+    const conv = await at(1, "POST", `${base}/conversations`, {
+      agentId: (ag.json.agent as { id: string }).id,
+    });
+    const convId = (conv.json.conversation as { id: string }).id;
+    const convIssued = await at(1, "POST", `${base}/ui/embeds/example-board/board-conv/token`, {
+      conversationId: convId,
+    });
+    expect(convIssued.status, JSON.stringify(convIssued.json)).toBe(200);
+    const convToken = convIssued.json.token as string;
+    const convCard = await at(
+      0,
+      "POST",
+      "/plugins/example-board/ui/cards",
+      { title: "Conv" },
+      {
+        bearer: convToken,
+      },
+    );
+    expect(convCard.status).toBe(201);
+    const convCardId = (convCard.json.card as { id: string }).id;
+    const convStream = await sse(0, convToken);
+    await convStream.until((m) => m.some((x) => x.event === "ready"), 10_000, "conv ready");
+    const convMoved = await at(
+      1,
+      "POST",
+      `/plugins/example-board/ui/cards/${convCardId}`,
+      {
+        status: "doing",
+      },
+      { bearer: convToken },
+    );
+    expect(convMoved.status).toBe(200);
+    await convStream.until(
+      (m) => m.some((x) => x.event === "cards" && (x.data ?? "").includes(convCardId)),
+      10_000,
+      "conv cards frame",
+    );
+
     // 副本 0 改状态 → 副本 1 的流收到 cards 帧
     const moved = await at(
       0,
@@ -151,8 +200,13 @@ describe("嵌入应用（双副本）", () => {
       10_000,
       "cards frame",
     );
-    const frame = stream.messages.find((x) => x.event === "cards");
-    expect(JSON.parse(frame?.data ?? "{}")).toEqual({ cardId, status: "done" });
+    const frames = stream.messages.filter((x) => x.event === "cards");
+    expect(frames.map((f) => JSON.parse(f.data ?? "{}"))).toEqual([{ cardId, status: "done" }]);
+    // 对话流也看不到组织卡片的变化
+    expect(
+      convStream.messages.filter((x) => x.event === "cards").map((f) => JSON.parse(f.data ?? "{}")),
+    ).toEqual([{ cardId: convCardId, status: "doing" }]);
+    convStream.close();
 
     // 客户端断开 → 插件退订（按请求订阅，不留共享状态）
     const redis = new Redis(rdc.url);

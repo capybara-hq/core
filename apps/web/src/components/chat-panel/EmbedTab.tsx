@@ -46,6 +46,8 @@ export function EmbedTab({
   const [height, setHeight] = useState<number>();
   const [attempt, setAttempt] = useState(0);
   const [refreshFailed, setRefreshFailed] = useState(false);
+  /** iframe 导航离开插件页面后加 1：在原 src 上重新挂载一个新的 iframe。 */
+  const [frameKey, setFrameKey] = useState(0);
   const frame = useRef<HTMLIFrameElement | null>(null);
   const bridge = useRef<EmbedBridge | null>(null);
   // 回调用最新的 router / toast，但不因它们变化而重建消息桥（重建会换令牌、重载 iframe）
@@ -76,6 +78,7 @@ export function EmbedTab({
       onNavigate: (path) => latest.current.router.push(path),
       onToast: (text) => latest.current.toast.success(text),
       onTokenError: () => setRefreshFailed(true),
+      onNavigatedAway: () => setFrameKey((n) => n + 1),
     });
     bridge.current = b;
     setState({ kind: "loading" });
@@ -97,10 +100,18 @@ export function EmbedTab({
     };
   }, [orgId, plugin, id, conversationId, locale, attempt]);
 
-  // iframe 每次加载（含其内部导航）都重新发 init
+  // 每个 iframe 元素只在第一次 load 收到 init；再次 load（导航走了）由消息桥通知重新挂载。
+  // 换上新元素时让消息桥回到「等第一次 load」；旧元素的 load 不再理会。
+  // 开发模式的 StrictMode 会对同一个元素再调一次 ref（先 null 再 el）：每个元素只接一次 load、只 reset 一次
+  const wired = useRef(new WeakSet<HTMLIFrameElement>());
   const setFrame = useCallback((el: HTMLIFrameElement | null) => {
     frame.current = el;
-    el?.addEventListener("load", () => bridge.current?.loaded());
+    if (el === null || wired.current.has(el)) return;
+    wired.current.add(el);
+    bridge.current?.frameReset();
+    el.addEventListener("load", () => {
+      if (frame.current === el) bridge.current?.loaded();
+    });
   }, []);
   const onMessage = useCallback((e: MessageEvent) => {
     bridge.current?.receive({ source: e.source, data: e.data });
@@ -125,6 +136,7 @@ export function EmbedTab({
         </Text>
       )}
       <EmbedFrame
+        key={frameKey}
         src={state.src}
         title={title}
         {...(height !== undefined && { height })}

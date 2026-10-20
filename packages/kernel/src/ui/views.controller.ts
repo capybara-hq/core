@@ -21,7 +21,7 @@ import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import type { SessionService } from "../identity/sessions.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { EmbedTokens } from "./embed-token.js";
+import { EMBED_TOKEN_TTL_SECONDS, type EmbedTokens } from "./embed-token.js";
 import type { OrgUiStreams } from "./ui-stream.js";
 import type { UiContributionItem, UiViews } from "./views.js";
 
@@ -82,7 +82,8 @@ const embedSrc = (plugin: string, path: string) =>
  *   → `{ toast }` | `{ view }`；
  * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`）；
  * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（`{ conversationId? }`）
- *   → `{ token, src: "/plugin-ui/<plugin>/<path 去掉 /ui/>", expiresAt }`：嵌入令牌（300 秒，见 `embed-token.ts`）。
+ *   → `{ token, src: "/plugin-ui/<plugin>/<path 去掉 /ui/>", expiresAt, expiresIn }`：嵌入令牌
+ *   （300 秒，`expiresIn` 为秒数，见 `embed-token.ts`）。
  *   插件须在组织启用、贡献须是 embed；对话嵌入要求能访问该对话（否则 404）。令牌只给插件路由用，
  *   内核鉴权守卫不认它（它不是 API 令牌）。
  * 对话视图的刷新走现有的会话流 `/conversations/:id/stream`。
@@ -165,7 +166,7 @@ export class UiController implements OnModuleDestroy {
     @Param("plugin", new ZodPipe(Id)) plugin: string,
     @Param("id", new ZodPipe(Id)) id: string,
     @Body(new ZodPipe(EmbedTokenBody)) body: z.infer<typeof EmbedTokenBody>,
-  ): Promise<{ token: string; src: string; expiresAt: string }> {
+  ): Promise<{ token: string; src: string; expiresAt: string; expiresIn: number }> {
     const p = requireUser(principal);
     const target = await this.views.embed({
       orgId: org.orgId,
@@ -181,7 +182,13 @@ export class UiController implements OnModuleDestroy {
       ...(target.conversationId !== undefined && { conversationId: target.conversationId }),
       contribution: target.contribution,
     });
-    return { token, src: embedSrc(target.plugin, target.path), expiresAt: expiresAt.toISOString() };
+    return {
+      token,
+      src: embedSrc(target.plugin, target.path),
+      expiresAt: expiresAt.toISOString(),
+      // 网页按收到的时刻加上它安排续期，不比较浏览器时钟与 expiresAt
+      expiresIn: EMBED_TOKEN_TTL_SECONDS,
+    };
   }
 
   /** 组织级刷新流：与会话流一样用 `reply.hijack()` 直接写原始响应；心跳与复核间隔同 `runtime.sse*`。 */

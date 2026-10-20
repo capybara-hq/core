@@ -43,7 +43,7 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
  * 作用域内移除默认解析器、所有 content-type 一律按原始 Buffer 收下，插件拿到的 body 与客户端发出的字节一致。
  * - 未挂载或无匹配 → 404 `not_found`；HEAD 没有专门路由时按 GET 处理，响应不带 body。
  * - 无法构造 `Request`（如畸形 Host）→ 400 `validation_failed`，不记 error。
- * - `req.signal` 在客户端断开（响应连接关闭）时中止，长连接 handler 用它退订；
+ * - `req.signal` 只在响应写完之前客户端断开时中止（正常完成不中止），长连接 handler 用它退订；
  * - handler 抛错记日志（路径经 `redactPath` 脱敏）并返回 500 `internal`（不回显错误信息）。
  * - Fastify 自身的错误（请求体超过 1 MiB 等）由作用域的错误处理器映射为错误信封：4xx 按通用错误码表
  *   （413 `payload_too_large`、415 `unsupported_media_type` 等），5xx 记日志并返回 `internal`。
@@ -60,9 +60,12 @@ export async function registerPluginDispatch(
     if (!pluginHandler) {
       return reply.code(404).send(errorBody("not_found", `Route ${req.method} ${path} not found`));
     }
-    // 客户端断开（响应连接关闭）时中止 `req.signal`：长连接（SSE）的 handler 据此退订、收尾
+    // 只在响应写完之前连接就关了（客户端断开）时中止 `req.signal`：长连接（SSE）的 handler 据此退订、收尾。
+    // 正常写完后的 close 不中止（writableFinished 为 true）。
     const ac = new AbortController();
-    reply.raw.once("close", () => ac.abort());
+    reply.raw.once("close", () => {
+      if (!reply.raw.writableFinished) ac.abort();
+    });
     let webReq: Request;
     try {
       webReq = toWebRequest(req, ac.signal);
@@ -120,7 +123,7 @@ export function stripKernelCookies(cookie: string): string | undefined {
 
 /**
  * Fastify 请求 → Web `Request`：数组头用 `, ` 合并（`set-cookie` 逐条保留）；GET / HEAD 不带 body；
- * Cookie 头去掉内核会话 Cookie；`signal` 在客户端断开时中止。
+ * Cookie 头去掉内核会话 Cookie；`signal` 在响应写完之前客户端断开时中止。
  */
 function toWebRequest(req: FastifyRequest, signal: AbortSignal): Request {
   const headers = new Headers();

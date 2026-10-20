@@ -61,7 +61,7 @@ function setup(over: Partial<EmbedBridgeOptions> = {}) {
   let n = 0;
   const fetchToken = vi.fn(async () => {
     n += 1;
-    return { token: `tok-${n}`, expiresAt: new Date(clock.now() + 300_000).toISOString() };
+    return { token: `tok-${n}`, expiresIn: 300 };
   });
   const opts: EmbedBridgeOptions = {
     post: (m) => posted.push(m),
@@ -74,8 +74,8 @@ function setup(over: Partial<EmbedBridgeOptions> = {}) {
     onNavigate: vi.fn(),
     onToast: vi.fn(),
     onTokenError: vi.fn(),
+    onNavigatedAway: vi.fn(),
     timers: clock.timers,
-    now: clock.now,
     ...over,
   };
   const bridge = createEmbedBridge(opts);
@@ -96,6 +96,16 @@ describe("parseEmbedChildMessage（与 SDK 同一规则）", () => {
       "/a\nb",
       "/a\tb",
       `/${"a".repeat(2001)}`,
+      "/..//x",
+      "/%2e%2e//x",
+      "/.//x",
+      "/a/../b",
+      "/a/%2E%2e/b",
+      "/a/./b",
+      "/a/%2e/b",
+      "/a//b",
+      "/a/..",
+      "/a?x=//y",
     ]) {
       expect(parseEmbedChildMessage(child({ type: "navigate", path: bad })), bad).toBeNull();
     }
@@ -248,6 +258,70 @@ describe("createEmbedBridge", () => {
     await clock.advance(240_000);
     await flush();
     expect(posted).toEqual([]);
+  });
+});
+
+describe("createEmbedBridge：续期时钟与 iframe 导航（修复第 1 轮）", () => {
+  it("续期按本地收到令牌的时刻 + expiresIn 计算，不看本机时钟与服务端 expiresAt 的差（时钟偏差）", async () => {
+    // 本机时钟比服务端慢 1 小时：若按 expiresAt - Date.now() 算，会等 1 小时才续期（令牌早已过期）
+    const clock = fakeClock();
+    const fetchToken = vi.fn(async () => ({
+      token: "t",
+      expiresIn: 300,
+      expiresAt: new Date(clock.now() + 3_600_000 + 300_000).toISOString(),
+    }));
+    const { bridge } = setup({ fetchToken, timers: clock.timers });
+    await bridge.start();
+    await clock.advance(240_000);
+    await flush();
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("本机时钟比服务端快：同样在收到后 240 秒续期，不会立刻续期", async () => {
+    const clock = fakeClock();
+    const fetchToken = vi.fn(async () => ({
+      token: "t",
+      expiresIn: 300,
+      expiresAt: new Date(clock.now() - 3_600_000).toISOString(),
+    }));
+    const { bridge } = setup({ fetchToken, timers: clock.timers });
+    await bridge.start();
+    await clock.advance(239_000);
+    await flush();
+    expect(fetchToken).toHaveBeenCalledTimes(1);
+    await clock.advance(1_000);
+    await flush();
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("续期间隔至少 30 秒（有效期很短或异常时也不会连续请求）", async () => {
+    const clock = fakeClock();
+    for (const expiresIn of [0, 10, 60, -5, Number.NaN]) {
+      const fetchToken = vi.fn(async () => ({ token: "t", expiresIn }));
+      const { bridge } = setup({ fetchToken, timers: clock.timers });
+      await bridge.start();
+      await clock.advance(29_999);
+      await flush();
+      expect(fetchToken, String(expiresIn)).toHaveBeenCalledTimes(1);
+      await clock.advance(1);
+      await flush();
+      expect(fetchToken, String(expiresIn)).toHaveBeenCalledTimes(2);
+      bridge.dispose();
+    }
+  });
+
+  it("每个 src 只在第一次 load 发 init；之后再 load 说明 iframe 导航走了：不再发 token / theme，通知重新挂载", async () => {
+    const { bridge, clock, posted, opts } = setup();
+    await bridge.start();
+    bridge.loaded();
+    expect(posted.map((m) => m.type)).toEqual(["init"]);
+    bridge.loaded();
+    expect(posted.map((m) => m.type)).toEqual(["init"]);
+    expect(opts.onNavigatedAway).toHaveBeenCalledTimes(1);
+    bridge.themeChanged();
+    await clock.advance(240_000);
+    await flush();
+    expect(posted.map((m) => m.type)).toEqual(["init"]);
   });
 });
 

@@ -6,8 +6,12 @@
  * - 只放行 GET / POST（HEAD 由 Next 按 GET 处理），外加 CORS 预检 OPTIONS；
  * - 路径只能落在插件的 `/ui/` 下：插件名按清单规则校验，路径段不得为空、`.` / `..`，解码后不得含 `/`、`\`
  *   或控制字符（防止经编码绕到 `/ui/` 之外）；未声明的路由由内核的插件路由表返回 404；
- * - 请求头走白名单（不转发 Cookie、CSRF 头等）；响应去掉 Set-Cookie；
- * - 每个响应都加安全头（{@link SECURITY_HEADERS}），覆盖插件自己给的同名头；
+ * - 请求头走白名单（不转发 Cookie、CSRF 头等）；`Authorization` 只转发嵌入令牌形状的 Bearer
+ *   （不转发 Basic 与 `cap_pat_` / `cap_svc_` 等内核 API 令牌，插件拿不到它们）；
+ * - 响应头也走白名单（{@link ALLOW_RESPONSE}）：Set-Cookie、Clear-Site-Data、NEL / Report-To、HSTS、
+ *   Accept-CH、Link 等会影响整个 Web 源的头一律不透传；3xx 的 Location 只保留仍在本插件
+ *   `/plugin-ui/<plugin>/` 下的；插件没给 Cache-Control 时为 `no-store`；
+ * - 每个响应都加安全头（{@link SECURITY_HEADERS}）；
  * - 响应体以流透传（SSE 可用），请求体上限同 `/api`。
  */
 
@@ -26,8 +30,15 @@ const BAD_SEGMENT = /[\u0000-\u001f\u007f/\\]/;
  *   页面也是不透明源，拿不到 Web 源的 Cookie / 存储，也不能以 Web 源的身份调 `/api`；
  * - `frame-ancestors 'self'`：只能被我们自己的网页嵌入；
  * - 资源只来自本源（即经本代理的插件路由）；允许内联脚本 / 样式，插件页面可以是单个 HTML；
- * - `connect-src 'self'`：只能连本源（插件经代理的路由）。本源的 `/api` 对它无用：请求来自不透明源，
- *   SameSite 的会话 Cookie 不会带上、响应没有 CORS 头读不到，嵌入令牌也不被内核 `/api` 接受；
+ * - `connect-src 'self'` 与 `form-action 'self'`：只能连 / 提交到本源。'self' 是整个 Web 源，也包括 `/api`，
+ *   CSP 的源表达式不能只写路径（要写绝对源，而代理拿到的 Host 在反向代理后面不可靠），所以没有收窄到
+ *   `/plugin-ui/<plugin>/`。`/api` 对嵌入页仍然无用：
+ *   1. 页面是不透明源（sandbox），它发的请求（fetch 与 iframe 内的表单导航）都是跨站请求，
+ *      `SameSite=Lax` 的会话 Cookie `cap_at` 不会带上（Lax 只在顶层 GET 导航时带，沙箱又不给 top-navigation）；
+ *   2. 内核对 Cookie 认证的非安全方法还要求 `X-Capybara-Csrf` 头，跨源请求带这个头要预检，`/api` 不应答 CORS；
+ *   3. `/api` 的响应没有 CORS 头，不透明源读不到；
+ *   4. 嵌入令牌当 Bearer 调 `/api` 一律 401（内核鉴权守卫只认 API 令牌）；
+ *   本代理也不会把 `cap_pat_` / `cap_svc_` 令牌转给插件；
  * - 不允许插件页再嵌 iframe、起 worker、加载插件对象，`base-uri 'none'` 防止改写相对地址。
  */
 export const EMBED_CSP = [
@@ -64,11 +75,10 @@ const PREFLIGHT_HEADERS: Readonly<Record<string, string>> = {
   "access-control-max-age": "600",
 };
 
-/** 转发给内核的请求头（白名单）。 */
+/** 转发给内核的请求头（白名单；`authorization` 另行按 {@link EMBED_BEARER} 判断）。 */
 const FORWARD_REQUEST = new Set([
   "accept",
   "accept-language",
-  "authorization",
   "cache-control",
   "content-type",
   "if-modified-since",
@@ -76,25 +86,26 @@ const FORWARD_REQUEST = new Set([
   "last-event-id",
 ]);
 
-/** 不回传的响应头：逐跳头、Set-Cookie，以及由代理统一设置的安全 / CORS 头。 */
-const DROP_RESPONSE = new Set([
-  "connection",
-  "keep-alive",
-  "transfer-encoding",
-  "upgrade",
-  "trailer",
-  "set-cookie",
-  "content-security-policy",
-  "content-security-policy-report-only",
-  "x-frame-options",
-  "x-content-type-options",
-  "referrer-policy",
-  "access-control-allow-origin",
-  "access-control-allow-credentials",
-  "access-control-allow-methods",
-  "access-control-allow-headers",
-  "access-control-expose-headers",
-  "access-control-max-age",
+/**
+ * 嵌入令牌形状的 Bearer：`base64url.base64url`（见内核 `ui/embed-token.ts`）。内核 API 令牌（`cap_` 开头）、
+ * Basic 等其他凭据都不转发，插件路由拿不到它们。
+ */
+const EMBED_BEARER = /^Bearer ([A-Za-z0-9_-]{1,2048}\.[A-Za-z0-9_-]{1,128})$/;
+
+/**
+ * 回传给浏览器的响应头（白名单）。不含 content-encoding（fetch 已解压，body 是明文）、content-length
+ * （流式透传）与 Location（3xx 时单独核对）。安全 / CORS 头由代理统一设置。
+ */
+const ALLOW_RESPONSE = new Set([
+  "content-type",
+  "cache-control",
+  "etag",
+  "last-modified",
+  "expires",
+  "vary",
+  "content-language",
+  "x-accel-buffering",
+  "retry-after",
 ]);
 
 /** 把 `/plugin-ui/<plugin>/<rest>` 解析成内核路径 `/plugins/<plugin>/ui/<rest>`；不合规返回 undefined。 */
@@ -114,6 +125,19 @@ export function kernelPathOf(pathname: string): string | undefined {
     if (decoded === "." || decoded === ".." || BAD_SEGMENT.test(decoded)) return undefined;
   }
   return `/plugins/${plugin}/ui/${segments.join("/")}`;
+}
+
+/** 3xx 的 Location 是否仍在本插件的 `/plugin-ui/<plugin>/` 下（相对路径、站外、规范化后会变的一律不算）。 */
+function locationInPlugin(location: string, plugin: string): boolean {
+  if (!location.startsWith(`${PREFIX}${plugin}/`) || location.includes("//")) return false;
+  let u: URL;
+  try {
+    u = new URL(location, "http://x");
+  } catch {
+    return false;
+  }
+  if (u.pathname + u.search + u.hash !== location) return false;
+  return kernelPathOf(u.pathname)?.startsWith(`/plugins/${plugin}/ui/`) === true;
 }
 
 function withSecurity(headers: Headers): Headers {
@@ -136,6 +160,10 @@ export async function proxyPluginUi(req: Request): Promise<Response> {
   req.headers.forEach((value, key) => {
     if (FORWARD_REQUEST.has(key)) headers.set(key, value);
   });
+  const auth = req.headers.get("authorization");
+  const bearer = auth === null ? undefined : EMBED_BEARER.exec(auth)?.[1];
+  if (bearer !== undefined && !bearer.startsWith("cap_"))
+    headers.set("authorization", auth as string);
   const peer = trustedPeer(req.headers);
   if (peer !== undefined) headers.set("x-forwarded-for", peer);
 
@@ -160,8 +188,19 @@ export async function proxyPluginUi(req: Request): Promise<Response> {
 
   const out = new Headers();
   upstream.headers.forEach((value, key) => {
-    if (!DROP_RESPONSE.has(key)) out.set(key, value);
+    if (ALLOW_RESPONSE.has(key)) out.set(key, value);
   });
+  if (!out.has("cache-control")) out.set("cache-control", "no-store");
+  const location = upstream.headers.get("location");
+  const plugin = path.split("/")[2] as string;
+  if (
+    upstream.status >= 300 &&
+    upstream.status < 400 &&
+    location !== null &&
+    locationInPlugin(location, plugin)
+  ) {
+    out.set("location", location);
+  }
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

@@ -2,11 +2,13 @@ import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
 import PluginPage from "../src/app/[locale]/(app)/p/[plugin]/[id]/page";
+import { EmbedTab } from "../src/components/chat-panel/EmbedTab";
 import { AppFrame } from "../src/components/shell/AppFrame";
 import { RequireSession } from "../src/components/shell/session";
 import type { UiView } from "../src/lib/ui";
@@ -682,7 +684,12 @@ describe("插件页面 /p/<plugin>/<id>", () => {
 
 describe("嵌入应用（第二档）", () => {
   const issued = (src: string) =>
-    json(200, { token: "tok-1", src, expiresAt: new Date(Date.now() + 300_000).toISOString() });
+    json(200, {
+      token: "tok-1",
+      src,
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      expiresIn: 300,
+    });
 
   it("对话标签：取令牌（带 conversationId），沙箱 iframe 打开同源代理地址；加载后发 init，处理 navigate / toast / resize", async () => {
     const calls = stubApi({
@@ -735,6 +742,76 @@ describe("嵌入应用（第二档）", () => {
     expect(await screen.findByText("Card added")).toBeTruthy();
     fromFrame({ protocol: "capybara-embed/1", type: "resize", height: 640 });
     await vi.waitFor(() => expect(frame.getAttribute("height")).toBe("640"));
+  });
+
+  it("iframe 第二次 load（嵌入页导航走了）：不再给它发消息，在原 src 上重新挂载 iframe 后再发 init", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [EMBED] }),
+      [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    const first = (await within(panelOf()).findByTitle("Live")) as HTMLIFrameElement;
+    const sent1: unknown[] = [];
+    vi.spyOn(first.contentWindow as Window, "postMessage").mockImplementation((m: unknown) => {
+      sent1.push(m);
+    });
+    act(() => {
+      first.dispatchEvent(new Event("load"));
+    });
+    expect(sent1).toHaveLength(1);
+    act(() => {
+      first.dispatchEvent(new Event("load"));
+    });
+    expect(sent1).toHaveLength(1);
+    const second = await vi.waitFor(() => {
+      const f = within(panelOf()).getByTitle("Live") as HTMLIFrameElement;
+      if (f === first) throw new Error("not remounted yet");
+      return f;
+    });
+    expect(second.getAttribute("src")).toBe("/plugin-ui/board/live");
+    expect(second.getAttribute("sandbox")).toBe("allow-scripts allow-forms");
+    const sent2: unknown[] = [];
+    vi.spyOn(second.contentWindow as Window, "postMessage").mockImplementation((m: unknown) => {
+      sent2.push(m);
+    });
+    act(() => {
+      second.dispatchEvent(new Event("load"));
+    });
+    expect(sent2).toEqual([expect.objectContaining({ type: "init" })]);
+  });
+
+  it("StrictMode 下（开发模式会重复挂 ref）：第一次 load 仍只发一次 init，不会误判为导航走了", async () => {
+    stubApi({
+      [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
+      [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
+    });
+    const { container } = render(
+      <StrictMode>
+        <NextIntlClientProvider locale="en" messages={en}>
+          <DesignProvider locale="en" link={Link as LinkComponent}>
+            <ToastProvider>
+              <EmbedTab orgId="o1" plugin="board" id="live" title="Live" />
+            </ToastProvider>
+          </DesignProvider>
+        </NextIntlClientProvider>
+      </StrictMode>,
+    );
+    const frame = await vi.waitFor(() => {
+      const f = container.querySelector("iframe");
+      if (!f) throw new Error("no iframe yet");
+      return f;
+    });
+    const sent: unknown[] = [];
+    vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation((m: unknown) => {
+      sent.push(m);
+    });
+    act(() => {
+      frame.dispatchEvent(new Event("load"));
+    });
+    expect(sent).toEqual([expect.objectContaining({ type: "init" })]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.querySelector("iframe")).toBe(frame);
   });
 
   it("取令牌失败：只在这个标签显示错误与「重试」，重试后打开", async () => {

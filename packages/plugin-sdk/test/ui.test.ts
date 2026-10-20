@@ -259,8 +259,18 @@ describe("parseEmbedChildMessage", () => {
       "",
       "javascript:alert(1)",
       "/a\nb",
+      "/..//x",
+      "/%2e%2e//x",
+      "/.//x",
+      "/a/../b",
+      "/a/%2E%2e/b",
+      "/a/./b",
+      "/a/%2e/b",
+      "/a//b",
+      "/a/..",
+      "/a?x=//y",
     ]) {
-      expect(parseEmbedChildMessage(msg({ type: "navigate", path }))).toBeNull();
+      expect(parseEmbedChildMessage(msg({ type: "navigate", path })), path).toBeNull();
     }
   });
   it("拒绝负数 / NaN / 无穷 / 超过 10000 的高度", () => {
