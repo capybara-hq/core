@@ -10,6 +10,7 @@ import type { KernelHttpApp } from "../src/http/app.js";
 import { createKernel, type Kernel } from "../src/kernel.js";
 import { createLogger, type KernelLogger } from "../src/log.js";
 import { SLOW_GATES_KEY, type SlowGates } from "./fixtures/plugins/slow/index.js";
+import { SSE_HOLD_KEY } from "./fixtures/plugins/sse-hold/index.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -344,6 +345,22 @@ describe("超时", () => {
     } finally {
       sock?.destroy();
     }
+  }, 20_000);
+
+  it("停机先中止进行中的插件请求：插件 SSE 收到 req.signal 中止，不占满 10s 的 http 预算", async () => {
+    const g = globalThis as Record<string, number | undefined>;
+    g[SSE_HOLD_KEY] = 0;
+    const k = await kernel(cfg({ plugins: [fx("sse-hold")] }));
+    await k.start();
+    const res = await fetch(`http://127.0.0.1:${k.port}/plugins/sse-hold/hold`);
+    expect(res.status).toBe(200);
+    const reader = res.body?.getReader();
+    await reader?.read();
+    const t0 = Date.now();
+    await k.stop();
+    expect(Date.now() - t0).toBeLessThan(3_000);
+    expect(g[SSE_HOLD_KEY]).toBe(1);
+    await reader?.cancel().catch(() => {});
   }, 20_000);
 
   it("http phase cannot starve queue drain", async () => {

@@ -708,6 +708,8 @@ export async function createKernel(
     // 宿主关闭时中止插件迁移、立即关闭 setup 中的 ctx；其余启动步骤在 checkpoint 处退出。
     // 正在进行的 listen 要先等完，否则关闭会与监听交错留下端口。
     startAbort.abort();
+    // 先中止进行中的插件请求（SSE 等长连接据 req.signal 收尾），否则它们会占满 http 阶段的预算
+    httpApp.abortPluginRequests();
     if (migratePromise)
       await within(
         "migrate",

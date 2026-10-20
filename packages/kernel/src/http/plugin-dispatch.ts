@@ -47,13 +47,17 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
  * - handler 抛错记日志（路径经 `redactPath` 脱敏）并返回 500 `internal`（不回显错误信息）。
  * - Fastify 自身的错误（请求体超过 1 MiB 等）由作用域的错误处理器映射为错误信封：4xx 按通用错误码表
  *   （413 `payload_too_large`、415 `unsupported_media_type` 等），5xx 记日志并返回 `internal`。
+ * - 停机：返回的 `abortAll()` 中止所有进行中请求的 `req.signal`（插件的 SSE 等长连接据此收尾，不占用 http
+ *   停机预算），此后到达的请求的 `req.signal` 一开始就是中止的。进行中的 AbortController 只在请求期间持有。
  * 必须在 Nest `app.init()` 之前调用。
  */
 export async function registerPluginDispatch(
   fastify: FastifyInstance,
   getRouter: () => PluginRouter | undefined,
   log: Logger,
-): Promise<void> {
+): Promise<{ abortAll(): void }> {
+  const inFlight = new Set<AbortController>();
+  let stopping = false;
   const handler = async (req: FastifyRequest, reply: FastifyReply) => {
     const path = req.url.split("?")[0] as string;
     const pluginHandler = getRouter()?.find(req.method, path);
@@ -63,7 +67,10 @@ export async function registerPluginDispatch(
     // 只在响应写完之前连接就关了（客户端断开）时中止 `req.signal`：长连接（SSE）的 handler 据此退订、收尾。
     // 正常写完后的 close 不中止（writableFinished 为 true）。
     const ac = new AbortController();
+    inFlight.add(ac);
+    if (stopping) ac.abort();
     reply.raw.once("close", () => {
+      inFlight.delete(ac);
       if (!reply.raw.writableFinished) ac.abort();
     });
     let webReq: Request;
@@ -105,6 +112,12 @@ export async function registerPluginDispatch(
     });
     scope.all(`${PLUGIN_PREFIX}*`, handler);
   });
+  return {
+    abortAll() {
+      stopping = true;
+      for (const ac of [...inFlight]) ac.abort();
+    },
+  };
 }
 
 const KERNEL_COOKIES: ReadonlySet<string> = new Set([ACCESS_COOKIE, REFRESH_COOKIE]);

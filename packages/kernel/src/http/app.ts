@@ -34,6 +34,8 @@ export interface KernelHttpApp extends KernelHttp {
   /** 监听 0.0.0.0，返回实际端口。 */
   listen(port: number): Promise<number>;
   close(): Promise<void>;
+  /** 中止进行中（及此后到达）的插件请求的 `req.signal`：停机开始时调用，插件长连接据此收尾。 */
+  abortPluginRequests(): void;
   /** 强制断开所有连接（含进行中的请求）；停机时 `close()` 超时后调用。 */
   closeAllConnections(): void;
 }
@@ -114,7 +116,9 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   });
 
   let router: PluginRouter | undefined;
-  if (opts.servePlugins) await registerPluginDispatch(fastify, () => router, opts.log);
+  const dispatch = opts.servePlugins
+    ? await registerPluginDispatch(fastify, () => router, opts.log)
+    : undefined;
   await app.init();
 
   return {
@@ -133,7 +137,11 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
       const addr = fastify.server.address();
       return addr && typeof addr === "object" ? addr.port : port;
     },
-    close: () => app.close(),
+    close: () => {
+      dispatch?.abortAll();
+      return app.close();
+    },
+    abortPluginRequests: () => dispatch?.abortAll(),
     closeAllConnections: () => fastify.server.closeAllConnections(),
   };
 }
