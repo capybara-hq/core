@@ -13,5 +13,7 @@ export default definePlugin({
     void ctx.storage; // FLAG // capybara:allow-dynamic-permission not exemptible
     // capybara:allow-dynamic-permission not exemptible
     void ctx.models; // FLAG
+    // capybara:allow-dynamic-permission not exemptible
+    ctx.ui.view("v", async () => ({ blocks: [] })); // FLAG
   },
 });

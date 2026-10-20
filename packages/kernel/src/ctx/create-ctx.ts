@@ -361,6 +361,17 @@ export function createPluginContext(
         registeredTools.push({ spec, handler });
       },
     },
+    // TODO(M4 T24)：真正的界面贡献运行时——按 permissions.ui 登记 view / action（只在 setup 期间）、
+    // invalidate 经 bus 发 conv.<id> / 组织主题的 ui 消息、verifyEmbedToken 校验内核签发的嵌入令牌。
+    // 这里只是让 ctx 满足 SDK 类型的占位：登记丢弃、invalidate 什么也不做、令牌一律不认。
+    ui: {
+      view() {},
+      action() {},
+      async invalidate() {},
+      async verifyEmbedToken() {
+        return null;
+      },
+    },
     provide(capability, impl) {
       if (!manifest.provides.includes(capability)) {
         throw new Error(

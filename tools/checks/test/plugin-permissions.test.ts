@@ -22,6 +22,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     ["plugin-perm-tools", "perm-tools", 2],
     ["plugin-perm-capability", "perm-capability", 2],
     ["plugin-perm-reserved", "perm-reserved", 2],
+    ["plugin-perm-ui", "perm-ui", 5],
   ];
   for (const [dir, rule, count] of cases) {
     it(`${rule}`, () => {
@@ -38,6 +39,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     expect(msg("plugin-perm-http")).toContain("permissions.http");
     expect(msg("plugin-perm-tools")).toContain("permissions.tools");
     expect(msg("plugin-perm-capability")).toContain("requires or optional");
+    expect(msg("plugin-perm-ui")).toContain("permissions.ui.views");
   });
 });
 
@@ -58,7 +60,7 @@ describe("动态值与豁免", () => {
 });
 
 describe("豁免注释只放行「无法静态确认」", () => {
-  it("明确违规（secrets / http / tools / capability / storage / models）带豁免注释仍报", () => {
+  it("明确违规（secrets / http / tools / capability / storage / models / ui）带豁免注释仍报", () => {
     const f = checkPluginPermissions([fixture("plugin-perm-marker")]);
     expect(f.map((x) => x.line)).toEqual(flagged("plugin-perm-marker"));
     expect(f.map((x) => x.rule)).toEqual([
@@ -68,8 +70,18 @@ describe("豁免注释只放行「无法静态确认」", () => {
       "perm-capability",
       "perm-reserved",
       "perm-reserved",
+      "perm-ui",
     ]);
     expect(f.some((x) => x.message.includes("Cannot statically"))).toBe(false);
+  });
+});
+
+describe("perm-ui 的动态 id 与别名", () => {
+  it("动态 id 与 ctx.ui 别名报无法静态确认，带原因的豁免不报", () => {
+    const f = checkPluginPermissions([fixture("plugin-perm-ui")]);
+    const unconfirmed = f.filter((x) => x.message.includes("Cannot statically confirm"));
+    expect(unconfirmed.length).toBe(2);
+    expect(f.filter((x) => x.message.includes("is not declared")).length).toBe(3);
   });
 });
 

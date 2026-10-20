@@ -2,7 +2,12 @@ import semver from "semver";
 import type { z } from "zod";
 import { CAPABILITIES, type CapabilityRef, parseCapability } from "./capability.js";
 import type { PluginContext } from "./ctx.js";
-import { type PluginPermissions, validatePermissions } from "./permissions.js";
+import {
+  type PluginPermissions,
+  validatePermissions,
+  validateUiContributions,
+} from "./permissions.js";
+import type { UiContribution } from "./ui.js";
 
 /** 插件清单。 */
 export interface PluginManifest {
@@ -15,6 +20,8 @@ export interface PluginManifest {
   optional?: CapabilityRef[];
   /** 权限清单（治理而非沙箱）。 */
   permissions?: PluginPermissions;
+  /** 界面贡献：对话页标签与组织页面；id 须同时列在 `permissions.ui` 里。 */
+  ui?: UiContribution[];
   config?: { deployment?: z.ZodTypeAny; org?: z.ZodTypeAny };
   migrations?: string;
   setup(ctx: PluginContext): void | Promise<void>;
@@ -95,5 +102,7 @@ export function definePlugin(m: PluginManifest): PluginManifest {
     const errs = validatePermissions(plugin, m.permissions);
     if (errs.length > 0) fail(`invalid permissions: ${errs.join("; ")}`);
   }
+  const uiErrs = validateUiContributions(m.ui, m.permissions);
+  if (uiErrs.length > 0) fail(`invalid ui: ${uiErrs.join("; ")}`);
   return m;
 }

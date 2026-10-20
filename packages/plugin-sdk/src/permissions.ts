@@ -1,3 +1,5 @@
+import type { UiContribution } from "./ui.js";
+
 /** 插件权限清单：治理而非沙箱，未声明的平台能力访问抛 PluginPermissionError。 */
 export interface PluginPermissions {
   /** ctx.secrets */
@@ -14,6 +16,11 @@ export interface PluginPermissions {
   storage?: boolean;
   /** 访问的域名，只展示不拦截。 */
   network?: string[];
+  /**
+   * 界面贡献的 id（与清单 `ui` 一一对应）：`views` 记入快照但不卡加载；
+   * `embeds` 卡加载、需批准，并标为敏感项。
+   */
+  ui?: { views?: string[]; embeds?: string[] };
 }
 
 /** hook 挂载点（封闭列表，见总设计 2.4）。 */
@@ -49,7 +56,7 @@ export class CapabilityUnavailableError extends Error {
   }
 }
 
-const KEYS = new Set(["secrets", "http", "tools", "hooks", "models", "storage", "network"]);
+const KEYS = new Set(["secrets", "http", "tools", "hooks", "models", "storage", "network", "ui"]);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 
@@ -122,6 +129,21 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
       }
     }
   }
+  if (p.ui !== undefined) {
+    if (!isObj(p.ui)) errs.push("permissions.ui must be an object");
+    else {
+      for (const k of Object.keys(p.ui)) {
+        if (k !== "views" && k !== "embeds") errs.push(`unknown permissions.ui key "${k}"`);
+      }
+      const views =
+        p.ui.views === undefined ? [] : strList("permissions.ui.views", p.ui.views, errs);
+      const embeds =
+        p.ui.embeds === undefined ? [] : strList("permissions.ui.embeds", p.ui.embeds, errs);
+      for (const id of views) {
+        if (embeds.includes(id)) errs.push(`permissions.ui id "${id}" is in both views and embeds`);
+      }
+    }
+  }
   if (p.models !== undefined) {
     if (!Array.isArray(p.models)) errs.push("permissions.models must be an array");
     else {
@@ -148,6 +170,88 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
           errs.push(`permissions.models has duplicate purpose "${m.purpose}"`);
         seen.add(m.purpose);
       }
+    }
+  }
+  return errs;
+}
+
+const UI_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
+const UI_TITLE_MAX = 100;
+const UI_PLACES: readonly unknown[] = ["conversation", "page"];
+const UI_EMBED_PREFIX = "/ui/";
+
+/**
+ * 校验清单 `ui` 并与权限清单交叉核对，返回错误列表（空表示合法）：
+ * 每个贡献的 id 恰好出现在 `permissions.ui.views`（kind view）或 `permissions.ui.embeds`（kind embed）里，
+ * `permissions.ui` 里也不能有清单 `ui` 没有的 id；embed 的 path 以 `/ui/` 开头并在 `permissions.http` 中声明为 GET。
+ * 假定 `permissions` 已经过 {@link validatePermissions}。
+ */
+export function validateUiContributions(ui: unknown, permissions: unknown): string[] {
+  const perms = isObj(permissions) ? permissions : {};
+  const pui = isObj(perms.ui) ? perms.ui : {};
+  const listed = (k: "views" | "embeds"): string[] =>
+    Array.isArray(pui[k])
+      ? (pui[k] as unknown[]).filter((x): x is string => typeof x === "string")
+      : [];
+  const views = listed("views");
+  const embeds = listed("embeds");
+  const gets = new Set(
+    (Array.isArray(perms.http) ? perms.http : [])
+      .filter((r): r is Record<string, unknown> => isObj(r) && r.method === "GET")
+      .map((r) => r.path),
+  );
+  const errs: string[] = [];
+  const contributions: unknown[] = [];
+  if (ui !== undefined) {
+    if (!Array.isArray(ui)) errs.push("ui must be an array");
+    else contributions.push(...ui);
+  }
+  const seen = new Map<string, UiContribution["kind"]>();
+  contributions.forEach((c, i) => {
+    const at = `ui[${i}]`;
+    if (!isObj(c)) {
+      errs.push(`${at} must be an object`);
+      return;
+    }
+    if (typeof c.id !== "string" || !UI_ID_RE.test(c.id)) {
+      errs.push(`${at}.id must match ${UI_ID_RE}`);
+      return;
+    }
+    const id = c.id;
+    const title = isObj(c.title) ? c.title : undefined;
+    if (
+      !title ||
+      [title.zh, title.en].some((t) => typeof t !== "string" || t === "" || t.length > UI_TITLE_MAX)
+    )
+      errs.push(`ui "${id}" title needs non-empty zh and en of at most ${UI_TITLE_MAX} characters`);
+    if (!UI_PLACES.includes(c.place)) errs.push(`ui "${id}" place must be conversation or page`);
+    if (c.kind !== "view" && c.kind !== "embed") {
+      errs.push(`ui "${id}" kind must be view or embed`);
+      return;
+    }
+    if (seen.has(id)) errs.push(`ui has duplicate id "${id}"`);
+    seen.set(id, c.kind);
+    if (c.kind === "view") {
+      if (c.path !== undefined) errs.push(`ui "${id}" path is only allowed for kind embed`);
+      if (!views.includes(id))
+        errs.push(`ui "${id}" (view) must be listed in permissions.ui.views`);
+      return;
+    }
+    if (!embeds.includes(id))
+      errs.push(`ui "${id}" (embed) must be listed in permissions.ui.embeds`);
+    if (typeof c.path !== "string" || !c.path.startsWith(UI_EMBED_PREFIX)) {
+      errs.push(`ui "${id}" (embed) path must start with "${UI_EMBED_PREFIX}"`);
+    } else if (!gets.has(c.path)) {
+      errs.push(`ui "${id}" (embed) path must be declared in permissions.http as "GET ${c.path}"`);
+    }
+  });
+  for (const [k, kind, ids] of [
+    ["views", "view", views],
+    ["embeds", "embed", embeds],
+  ] as const) {
+    for (const id of ids) {
+      if (seen.get(id) !== kind)
+        errs.push(`permissions.ui.${k} entry "${id}" has no matching ${kind} contribution in ui`);
     }
   }
   return errs;

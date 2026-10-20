@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 import type { CapabilityRef } from "./capability.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
+import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
 
 /** 日志接口。 */
 export interface Logger {
@@ -69,6 +70,23 @@ export interface PluginContext {
     get<T>(ref: CapabilityRef, provider: string | undefined, opts: { orgId: string }): Promise<T>;
     list<T>(ref: CapabilityRef): { plugin: string; impl: T }[];
     list<T>(ref: CapabilityRef, opts: { orgId: string }): Promise<{ plugin: string; impl: T }[]>;
+  };
+  /**
+   * 界面贡献的运行时（清单 `ui` + `permissions.ui`）：
+   * - `view` / `action`：只能在 `setup` 期间注册，id 是清单里 kind view 的贡献 id；
+   *   `action` 收到视图里按钮或表单提交（`args.actionId` 区分是哪一个）；
+   * - `invalidate`：告诉内核「这个贡献变了」，打开着它的网页会重新取视图（经 bus，跨副本）；
+   * - `verifyEmbedToken`：校验 embed 页面拿到的嵌入令牌，只认签给本插件、未过期的，否则返回 null。
+   */
+  ui: {
+    view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
+    action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
+    invalidate(target: {
+      orgId: string;
+      conversationId?: string;
+      contribution: string;
+    }): Promise<void>;
+    verifyEmbedToken(token: string): Promise<EmbedClaims | null>;
   };
   provide(capability: CapabilityRef, impl: unknown): void;
   /** 部署级配置，已按插件 schema 校验。 */

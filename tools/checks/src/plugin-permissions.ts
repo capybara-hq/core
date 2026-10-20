@@ -99,6 +99,8 @@ interface Manifest {
   secrets: boolean;
   http: Set<string>;
   tools: Set<string>;
+  /** permissions.ui.views：ctx.ui.view / action 只能用这些 id。 */
+  uiViews: Set<string>;
   caps: Set<string>;
   storage: boolean;
   models: boolean;
@@ -120,6 +122,7 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     secrets: false,
     http: new Set(),
     tools: new Set(),
+    uiViews: new Set(),
     caps: new Set(),
     storage: false,
     models: false,
@@ -136,6 +139,13 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     m.storage = !!prop(pe, "storage");
     m.models = !!prop(pe, "models");
     for (const t of strings(prop(pe, "tools")?.value as Node | undefined, decls)) m.tools.add(t);
+    const ui = prop(pe, "ui");
+    const ue = ui ? resolve(ui.value as Node, decls) : undefined;
+    if (ue?.type === "ObjectExpression") {
+      for (const v of strings(prop(ue, "views")?.value as Node | undefined, decls)) {
+        m.uiViews.add(v);
+      }
+    }
     const http = prop(pe, "http");
     const arr = http ? resolve(http.value as Node, decls) : undefined;
     if (arr?.type === "ArrayExpression") {
@@ -258,6 +268,16 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
               `Tool "${name}" is not declared; add it to permissions.tools in the plugin manifest`,
             );
           }
+        } else if (area === "ui" && (method === "view" || method === "action")) {
+          const id = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
+          if (id === undefined) return dynamic(n, "perm-ui", `the ctx.ui.${method} id`);
+          if (!m.uiViews.has(id)) {
+            add(
+              n,
+              "perm-ui",
+              `UI view "${id}" is not declared; add it to permissions.ui.views (and ui) in the plugin manifest`,
+            );
+          }
         } else if (area === "capabilities" && (method === "get" || method === "list")) {
           const ref = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
           if (ref === undefined) return dynamic(n, "perm-capability", "the capability ref");
@@ -285,17 +305,33 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
             "perm-reserved",
             `ctx.${name} is reserved and not provided in this release; remove the access`,
           );
-        } else if (name === "http" || name === "tools" || name === "capabilities") {
-          // 只有 ctx.http.route / ctx.tools.register / ctx.capabilities.get|list 能被确认，其余写法无法确认
+        } else if (
+          name === "http" ||
+          name === "tools" ||
+          name === "capabilities" ||
+          name === "ui"
+        ) {
+          // 只有 ctx.http.route / ctx.tools.register / ctx.capabilities.get|list /
+          // ctx.ui.view|action|invalidate|verifyEmbedToken 能被确认，其余写法无法确认
           const rule =
-            name === "http" ? "perm-http" : name === "tools" ? "perm-tools" : "perm-capability";
+            name === "http"
+              ? "perm-http"
+              : name === "tools"
+                ? "perm-tools"
+                : name === "ui"
+                  ? "perm-ui"
+                  : "perm-capability";
           const outer = parent;
           const ok =
             outer?.type === "MemberExpression" &&
             outer.object === n &&
             ((name === "http" && memberName(outer) === "route") ||
               (name === "tools" && memberName(outer) === "register") ||
-              (name === "capabilities" && ["get", "list"].includes(memberName(outer) ?? "")));
+              (name === "capabilities" && ["get", "list"].includes(memberName(outer) ?? "")) ||
+              (name === "ui" &&
+                ["view", "action", "invalidate", "verifyEmbedToken"].includes(
+                  memberName(outer) ?? "",
+                )));
           if (!ok) unconfirmed(rule, `how ctx.${name} is used`);
         }
       }
@@ -325,8 +361,9 @@ function scanFile(f: ParsedFile): Finding[] {
  * - perm-http：ctx.http.route(method, path) 不在 permissions.http 里；
  * - perm-tools：ctx.tools.register({ name }) 的名字不在 permissions.tools 里；
  * - perm-capability：ctx.capabilities.get|list(ref) 的 ref 不在 requires / optional / provides 里；
+ * - perm-ui：ctx.ui.view|action(id) 的 id 不在 permissions.ui.views 里；
  * - perm-reserved：用了尚未提供的 ctx.storage / ctx.models。
- * 路由路径、工具名、能力 ref 须是字符串字面量或本文件的 const；动态的写法报「无法静态确认」，
+ * 路由路径、工具名、能力 ref、界面 id 须是字符串字面量或本文件的 const；动态的写法报「无法静态确认」，
  * 豁免：`// capybara:allow-dynamic-permission <原因>`（行尾或紧邻上一行，原因必填）。
  * ctx 会跟踪本地别名，以及按位置传给同文件函数的参数。
  * 已知缺口（靠评审与运行时 PluginPermissionError 兜底）：传给其他文件 / 方法的 ctx、闭包外的重新赋值、
