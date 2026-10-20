@@ -540,8 +540,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     expect(reply.message.text).toBe("You can't handle this request.");
     expect(reply.message.cards).toBeUndefined();
 
-    // 未绑定的人在私聊里点卡片 → 绑定卡片
-    const dmTarget: ChannelTarget = { chatId: "dm-u-ghost", chatType: "dm" };
+    // 未绑定的人在卡片所在的私聊里点卡片 → 绑定卡片（会话类型取发卡片时记下的）
     const n2 = im.sent.length;
     im.push(
       connId,
@@ -549,30 +548,41 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
         "a2-g",
         "u-ghost",
         { cardKind: "approval", cardId: approvalId, action: "approve" },
-        dmTarget,
+        { chatId: target.chatId, chatType: "group" },
       ),
     );
     const bind = await waitFor(async () => im.sent.slice(n2)[0], 10_000, "bind prompt");
-    expect(bind.target).toEqual(dmTarget);
+    expect(bind.target).toEqual(target);
     expect(cardOf(bind)?.kind).toBe("bind");
 
-    // 未绑定的人在群里点卡片 → 只提示去私聊，不含链接
-    const grpTarget: ChannelTarget = { chatId: "grp-9", chatType: "group", threadId: "t9" };
-    const n3 = im.sent.length;
-    im.push(
-      connId,
-      cardAction(
-        "a2-h",
-        "u-ghost",
-        { cardKind: "approval", cardId: approvalId, action: "deny" },
-        grpTarget,
-      ),
-    );
-    const hint = await waitFor(async () => im.sent.slice(n3)[0], 10_000, "dm hint");
-    expect(hint.target).toEqual(grpTarget);
-    expect(hint.message.cards).toBeUndefined();
-    expect(hint.message.text).not.toMatch(/https?:/);
-    expect(hint.message.text).toMatch(/direct message/);
+    // 私聊卡片的 id 在群里被点（转发 / 重放）：不解析发言人、不发绑定链接，只回「不能处理」（按群处理）
+    // ——插件给的会话类型只是参考，声称是私聊也一样
+    for (const [id, claimed] of [
+      ["a2-h", { chatId: "grp-9", chatType: "group", threadId: "t9" }],
+      ["a2-i", { chatId: "grp-9", chatType: "dm" }],
+    ] as const) {
+      const n3 = im.sent.length;
+      im.push(
+        connId,
+        cardAction(
+          id,
+          "u-ghost",
+          { cardKind: "approval", cardId: approvalId, action: "deny" },
+          claimed,
+        ),
+      );
+      const refusal = await waitFor(async () => im.sent.slice(n3)[0], 10_000, "cross-chat refusal");
+      expect(refusal.target).toEqual(
+        "threadId" in claimed
+          ? { chatId: "grp-9", chatType: "group", threadId: "t9" }
+          : { chatId: "grp-9", chatType: "group" },
+      );
+      expect(refusal.message.cards).toBeUndefined();
+      expect(refusal.message.text).toBe("You can't handle this request.");
+      expect(JSON.stringify(refusal.message)).not.toMatch(/https?:|bind/);
+      await sleep(200);
+      expect(im.sent.slice(n3)).toHaveLength(1);
+    }
 
     // Ruling A13：伪造的卡片——审批人本人，但这张卡片并没有发在这个会话里 → 不处理
     const forged: ChannelTarget = { chatId: "grp-forge", chatType: "group", threadId: "x" };
@@ -729,6 +739,22 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
       "approval card",
     );
     const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    // 未绑定的人在卡片所在的群里点卡片，插件声称是私聊 → 仍按记下的群处理：只提示去私聊，不含链接
+    const n0 = im.sent.length;
+    im.push(
+      connId,
+      cardAction(
+        "ev1-ghost",
+        "u-ghost",
+        { cardKind: "approval", cardId: approvalId, action: "approve" },
+        { chatId: chat, chatType: "dm" },
+      ),
+    );
+    const hint = await waitFor(async () => im.sent.slice(n0)[0], 10_000, "dm hint");
+    expect(hint.target).toEqual(cardMsg.target);
+    expect(hint.message.cards).toBeUndefined();
+    expect(hint.message.text).not.toMatch(/https?:/);
+    expect(hint.message.text).toMatch(/direct message/);
     const n = im.sent.length;
     const tap = {
       ...cardAction(

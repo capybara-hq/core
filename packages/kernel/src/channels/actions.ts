@@ -51,6 +51,8 @@ const REPLY_FOR: Partial<Record<ErrorCode, ChannelPhrase>> = {
  * 再以该账号调用 `ApprovalsService.decide` / `QuestionsService.answer`——授权完全由它们判定：
  * 不是审批人 / 不是提问发起人 / 不在该组织 → 回一句「你不能处理这条请求」，卡片不变。
  * 成功后卡片由出站投递按 `approval_decided` / `question_answered` 更新；这里再投递一个出站任务，让续跑的输出接着投到 IM。
+ * 先核对卡片确实发在点击所在的 chat（否则只回「不能处理」，不解析发言人、不发绑定链接），再按记下的卡片目标
+ * （会话类型、chat、话题）解析发言人与回复——事件里的 `chatType` 只是插件的参考值。
  */
 export class ChannelCardActions {
   constructor(private readonly deps: ChannelCardActionsDeps) {}
@@ -71,39 +73,58 @@ export class ChannelCardActions {
       .where("card_id", "=", a.cardId)
       .executeTakeFirst();
     const cardTarget = card?.target as ChannelTarget | undefined;
-    // Ruling A26：群里的点击拿不到话题时，取发出该卡片时记下的话题（只在同一个 chat 里才借用）
-    const target: ChannelTarget =
-      e.target.chatType === "group" &&
-      e.target.threadId === undefined &&
-      cardTarget?.chatId === e.target.chatId &&
-      cardTarget.threadId !== undefined
-        ? { ...e.target, threadId: cardTarget.threadId }
-        : e.target;
     // 有平台事件 id 时回复带幂等键（任务重试不重复回复）；没有时同一张卡片的不同点击无法区分，不带
     const key =
       e.eventId !== undefined ? idempotencyKey(`${connectionId}-${e.eventId}-reply`) : undefined;
-    const reply = async (k: ChannelPhrase, cards?: ChannelCard[]) => {
-      await connections.send(
-        connectionId,
-        target,
-        { text: phrase(k, locale), ...(cards !== undefined && { cards }) },
-        key,
-      );
-    };
-    const isGroup = e.target.chatType === "group";
-    const who = await this.deps.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
-    if (who === undefined) return;
-    if (!card || (card.target as ChannelTarget).chatId !== e.target.chatId) {
-      await reply("cannotHandle");
+    const replyTo =
+      (t: ChannelTarget) =>
+      async (k: ChannelPhrase, cards?: ChannelCard[]): Promise<void> => {
+        await connections.send(
+          connectionId,
+          t,
+          { text: phrase(k, locale), ...(cards !== undefined && { cards }) },
+          key,
+        );
+      };
+    // Ruling A13：卡片必须是本连接发在这个 chat 里的（防止伪造卡片 id 去处理别处的请求）。在解析发言人之前判断：
+    // 卡片 id 被转发 / 重放到别的会话时，绝不在那里发绑定链接或绑定任何人——只回一句「不能处理」，并按群处理
+    // （插件给的会话类型只是参考，不可信）。
+    if (!card || !cardTarget || cardTarget.chatId !== e.target.chatId) {
+      await replyTo({
+        chatId: e.target.chatId,
+        chatType: "group",
+        ...(e.target.threadId !== undefined && { threadId: e.target.threadId }),
+      })("cannotHandle");
       return;
     }
+    // 会话类型、chat 与话题取发出该卡片时记下的目标（Ruling A26：点击拿不到话题时同样用记下的话题）
+    const threadId = cardTarget.threadId ?? e.target.threadId;
+    const target: ChannelTarget =
+      cardTarget.chatType === "group"
+        ? {
+            chatId: cardTarget.chatId,
+            chatType: "group",
+            ...(threadId !== undefined && { threadId }),
+          }
+        : { chatId: cardTarget.chatId, chatType: "dm" };
+    const reply = replyTo(target);
+    const isGroup = target.chatType === "group";
+    const who = await this.deps.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
+    if (who === undefined) return;
     // 匿名访客共用一个账号：只能处理自己话题里的卡片，且不能留下「本会话 / 以后都允许」的授权
     const anonymous = who.threadAccount === null;
     if (anonymous) {
       const own = await findThread(this.deps.db, {
         connectionId,
         chatId: e.target.chatId,
-        threadKey: threadKeyOf(target, e.sender.externalId, e.messageId),
+        // 点击带了话题就按它判断（更严格），否则用卡片记下的话题
+        threadKey: threadKeyOf(
+          isGroup && e.target.threadId !== undefined
+            ? { ...target, threadId: e.target.threadId }
+            : target,
+          e.sender.externalId,
+          e.messageId,
+        ),
         accountId: null,
       });
       if (own !== card.conversation_id) {
