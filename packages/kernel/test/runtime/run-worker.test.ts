@@ -977,6 +977,14 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
         const failed = (await eventsOf(db, convId)).find((e) => e.type === "run_failed");
         expect(failed?.runId).toBe(orphan);
         expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
+        // 孤儿的检查点在收尾时异步清理：等清理完成再断言
+        await waitFor(
+          async () =>
+            ((await checkpointsOf(orphan)).length === 0 && (await writesOf(orphan)).length === 0) ||
+            undefined,
+          5_000,
+          `orphan checkpoints cleaned via ${via}`,
+        );
         expect(await checkpointsOf(orphan)).toEqual([]);
         expect(await writesOf(orphan)).toEqual([]);
         await worker();

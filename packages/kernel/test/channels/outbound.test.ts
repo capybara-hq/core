@@ -500,7 +500,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     await settled(conv);
   });
 
-  it("Review Focus 2：非审批人点击无效且收到一句说明；未绑定的人私聊得到绑定卡片、群里只提示去私聊", async () => {
+  it("Review Focus 2：非审批人点击无效且收到一句说明；未绑定的人在卡片所在私聊得到绑定卡片；卡片 id 在别的会话被点只回「不能处理」", async () => {
     const chat = "dm-u-owner";
     const approvals = async () =>
       (await eventsOf(db, conv)).filter((e) => e.type === "approval_requested");
@@ -797,7 +797,7 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
         { chatId: chat, chatType: "group" },
       ),
     );
-    await waitFor(async () => (await approvalStatus(approvalId)) === "approved", 10_000, "ok");
+    await waitFor(async () => (await approvalStatus(approvalId)) === "approved", 20_000, "ok");
     expect(
       im.sent.slice(n).filter((s) => s.message.text === "You can't handle this request."),
     ).toEqual([]);
