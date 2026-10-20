@@ -53,12 +53,16 @@ const KEEP_COMPLETED_SECONDS: Record<DirectorySyncTrigger, number> = {
 };
 const KEEP_FAILED = { age: 86_400 };
 
-/** 不同步的原因（陈旧任务、插件已停用 / 配置不再有效、组织已删除、另一同步在跑）。 */
+/**
+ * 不同步的原因（陈旧任务、插件已停用 / 配置不再有效、组织已删除、另一同步在跑；`not_configured`：插件的
+ * `Directory.configured` 说这份组织配置没配好通讯录，Ruling A28，静默跳过）。
+ */
 export type DirectorySkipReason =
   | "plugin_unavailable"
   | "org_not_found"
   | "not_enabled"
   | "config_invalid"
+  | "not_configured"
   | "locked";
 
 export type DirectorySyncResult =
@@ -166,6 +170,9 @@ type Eligible =
  *   配置变得无效则本轮按不完整处理）之后，才对「离职（active = false）或不再出现、且 source 为该通讯录」的
  *   成员逐个走离职处理（每人一个事务：组织行锁 → 成员关系行锁 → `Offboarding.offboard`）；中途失败只加人不删人。
  *   手动 / 邀请加入的成员（source 为空）永远不被同步移除；账号本身不停用。最后一个 owner 跳过并计数。
+ * - Ruling A28：插件实现了 `Directory.configured` 且对该组织配置返回 false（通讯录未配置，组织只用插件的别的
+ *   能力）时，扫描、`directory_changed` 与执行时的复核都静默跳过（不投递、不审计、不记警告），手动触发 409
+ *   `directory.not_configured`。
  * - 审计 `org.directory.synced`（计数、是否不完整）。任务执行时再核对插件与配置：已停用的插件的陈旧任务什么都不做。
  */
 export class DirectorySync {
@@ -187,7 +194,8 @@ export class DirectorySync {
       m.handle(DIRECTORY_SYNC_JOB, async (job) => {
         const data = job.data as SyncJobData;
         const r = await this.sync(data.orgId, data.plugin, data);
-        if (r.status === "skipped") {
+        // 通讯录未配置（Ruling A28）静默跳过
+        if (r.status === "skipped" && r.reason !== "not_configured") {
           d.log.info("directory sync skipped", {
             orgId: data.orgId,
             plugin: data.plugin,
@@ -230,22 +238,32 @@ export class DirectorySync {
       return { ok: false, reason: "config_invalid" };
     }
     if (!cfg?.enabled) return { ok: false, reason: "not_enabled" };
+    // Ruling A28：插件说通讯录没配好（组织只用它的别的能力）→ 不同步；插件实现出错按未配置处理
+    if (directory.configured !== undefined) {
+      let configured = false;
+      try {
+        configured = directory.configured(cfg.config) === true;
+      } catch {
+        configured = false;
+      }
+      if (!configured) return { ok: false, reason: "not_configured" };
+    }
     return { ok: true, directory, orgConfig: cfg.config };
   }
 
   /**
-   * 投递一次同步（默认按 `directory_changed` 的分钟桶去重）；返回 job id。
-   * 入站 `directory_changed` 经 {@link DirectorySyncScheduler} 调用这里。
+   * 投递一次 `directory_changed` 同步（按分钟桶去重）；返回 job id。入站 `directory_changed` 经
+   * {@link DirectorySyncScheduler} 调用这里。通讯录未配置（`Directory.configured` 返回 false，Ruling A28）时
+   * 静默不投递，返回 undefined；其他不可同步的情况照常投递，由任务执行时跳过。
    */
   async enqueue(
     orgId: string,
     plugin: string,
-    trigger: DirectorySyncTrigger = "changed",
-    requestedBy?: { accountId: string; tokenId?: string | undefined },
     now: Date = new Date(),
-  ): Promise<string> {
-    const jobId = directorySyncJobId(orgId, plugin, trigger, now);
-    return this.addJob(orgId, plugin, trigger, jobId, requestedBy);
+  ): Promise<string | undefined> {
+    const e = await this.eligible(orgId, plugin);
+    if (!e.ok && e.reason === "not_configured") return undefined;
+    return this.addJob(orgId, plugin, "changed", directorySyncJobId(orgId, plugin, "changed", now));
   }
 
   private async addJob(
@@ -275,7 +293,8 @@ export class DirectorySync {
 
   /**
    * 管理员手动触发：组织行锁内实时复核 `org.members.manage`，再核对插件可同步
-   * （不提供通讯录 → `plugin.not_found`，未启用 → `plugin.not_enabled`，配置不再有效 → `plugin.config_invalid`），
+   * （不提供通讯录 → `plugin.not_found`，未启用 → `plugin.not_enabled`，配置不再有效 → `plugin.config_invalid`，
+   * 插件说通讯录未配置 → `directory.not_configured`，Ruling A28），
    * 投递一个唯一 id 的同步任务。
    */
   async request(
@@ -304,12 +323,20 @@ export class DirectorySync {
             "plugin.config_invalid",
             `Invalid organization config for plugin ${plugin}`,
           );
+        case "not_configured":
+          throw new ApiError(
+            "directory.not_configured",
+            `The directory of plugin ${plugin} is not configured for this organization`,
+          );
       }
     }
-    const jobId = await this.enqueue(orgId, plugin, "manual", {
-      accountId: actorAccountId,
-      tokenId: actorTokenId,
-    });
+    const jobId = await this.addJob(
+      orgId,
+      plugin,
+      "manual",
+      directorySyncJobId(orgId, plugin, "manual"),
+      { accountId: actorAccountId, tokenId: actorTokenId },
+    );
     return { jobId };
   }
 
@@ -338,7 +365,12 @@ export class DirectorySync {
       const e = await this.eligible(r.org_id, r.plugin);
       if (!e.ok) continue;
       try {
-        const jobId = await this.enqueue(r.org_id, r.plugin, "schedule", undefined, now);
+        const jobId = await this.addJob(
+          r.org_id,
+          r.plugin,
+          "schedule",
+          directorySyncJobId(r.org_id, r.plugin, "schedule", now),
+        );
         out.push({ orgId: r.org_id, plugin: r.plugin, jobId });
       } catch (err) {
         this.d.log.warn("cannot enqueue directory sync", {
@@ -461,11 +493,14 @@ export class DirectorySync {
       const still = await this.eligible(orgId, plugin);
       if (!still.ok) {
         partial = true;
-        this.d.log.warn("directory sync: plugin no longer eligible before removals", {
-          orgId,
-          plugin,
-          reason: still.reason,
-        });
+        // 途中通讯录配置被清空（Ruling A28）：照样不移除，但不记警告
+        if (still.reason !== "not_configured") {
+          this.d.log.warn("directory sync: plugin no longer eligible before removals", {
+            orgId,
+            plugin,
+            reason: still.reason,
+          });
+        }
       }
     }
     if (!partial) {

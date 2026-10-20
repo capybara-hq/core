@@ -134,6 +134,9 @@
       "dependency_missing": "Enable the plugins it depends on first.",
       "has_dependents": "Other enabled plugins depend on this plugin."
     },
+    "directory": {
+      "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first."
+    },
     "channel": {
       "not_found": "The channel does not exist or has been deleted.",
       "verify_failed": "The platform rejected the bot credentials. Check them and try again."

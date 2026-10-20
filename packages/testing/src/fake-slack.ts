@@ -40,6 +40,10 @@ export interface FakeSlackUser {
   emailVerified?: boolean;
   /** 已停用（`users.list` 的 `deleted`）。 */
   deleted?: boolean;
+  /** 多频道访客（`is_restricted`）。 */
+  isRestricted?: boolean;
+  /** 单频道访客（`is_ultra_restricted`）。 */
+  isUltraRestricted?: boolean;
 }
 
 /** 机器人发出（或更新）的一条消息。 */
@@ -131,9 +135,13 @@ export interface FakeSlackServer {
   /** 发 `disconnect` 并关闭所有连接（模拟 Slack 回收连接）。 */
   disconnectAll(reason?: string): void;
   /**
-   * 篡改下一个签发的 ID token：`claims` 覆盖（或新增）声明；`foreignKey` 时用不在 JWKS 里的密钥签名。
+   * 篡改下一个签发的 ID token：`claims` 覆盖（或新增）声明，值为 undefined 即去掉该声明；`foreignKey` 时用
+   * 不在 JWKS 里的密钥签名；`kid` 改写头部的 key id。
    */
-  tamperNextIdToken(claims: Record<string, unknown>, opts?: { foreignKey?: boolean }): void;
+  tamperNextIdToken(
+    claims: Record<string, unknown>,
+    opts?: { foreignKey?: boolean; kid?: string },
+  ): void;
   /** 消息最终显示的文本（有更新取最后一次）。 */
   finalText(m: FakeSlackMessage): string;
   /** 消息最终的 blocks（有更新取最后一次）。 */
@@ -187,7 +195,7 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
   const codes = new Map<string, { userId: string; nonce: string; redirectUri: string }>();
   /** access token → user id。 */
   const accessTokens = new Map<string, string>();
-  let tamper: { claims: Record<string, unknown>; foreignKey: boolean } | undefined;
+  let tamper: { claims: Record<string, unknown>; foreignKey: boolean; kid?: string } | undefined;
   const messages: FakeSlackMessage[] = [];
   const updates: FakeSlackMessage[] = [];
   const calls: FakeSlackCall[] = [];
@@ -341,6 +349,8 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
             deleted: u.deleted ?? false,
             is_bot: u.isBot ?? false,
             is_app_user: false,
+            is_restricted: u.isRestricted ?? false,
+            is_ultra_restricted: u.isUltraRestricted ?? false,
             real_name: u.realName ?? u.name,
             profile: {
               real_name: u.realName ?? u.name,
@@ -378,8 +388,8 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
   });
 
   const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
-  const signJwt = (claims: Record<string, unknown>, key: KeyObject) => {
-    const input = `${b64({ alg: "RS256", typ: "JWT", kid })}.${b64(claims)}`;
+  const signJwt = (claims: Record<string, unknown>, key: KeyObject, keyId = kid) => {
+    const input = `${b64({ alg: "RS256", typ: "JWT", kid: keyId })}.${b64(claims)}`;
     const sig = createSign("RSA-SHA256").update(input).sign(key).toString("base64url");
     return `${input}.${sig}`;
   };
@@ -412,7 +422,11 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
       ...profileClaims(u),
       ...t?.claims,
     };
-    const idToken = signJwt(claims, t?.foreignKey ? foreign.privateKey : signing.privateKey);
+    const idToken = signJwt(
+      claims,
+      t?.foreignKey ? foreign.privateKey : signing.privateKey,
+      t?.kid ?? kid,
+    );
     return reply(res, { ok: true, access_token: access, token_type: "Bearer", id_token: idToken });
   };
 
@@ -578,7 +592,11 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
       }
     },
     tamperNextIdToken(claims, o = {}) {
-      tamper = { claims, foreignKey: o.foreignKey ?? false };
+      tamper = {
+        claims,
+        foreignKey: o.foreignKey ?? false,
+        ...(o.kid !== undefined && { kid: o.kid }),
+      };
     },
     finalText(m) {
       return updates.filter((u) => u.channel === m.channel && u.ts === m.ts).at(-1)?.text ?? m.text;

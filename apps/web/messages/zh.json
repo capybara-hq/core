@@ -134,6 +134,9 @@
       "dependency_missing": "请先启用它依赖的插件。",
       "has_dependents": "还有其他已启用的插件依赖它。"
     },
+    "directory": {
+      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
+    },
     "channel": {
       "not_found": "渠道不存在或已删除。",
       "verify_failed": "平台拒绝了机器人凭据，请检查后重试。"

@@ -42,6 +42,7 @@ export const ERROR_CODES = {
   "plugin.dependency_missing": 409,
   "plugin.has_dependents": 409,
   "plugin.not_enabled": 409,
+  "directory.not_configured": 409,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
   "agent.not_found": 404,

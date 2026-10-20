@@ -45,6 +45,7 @@ import {
  */
 
 const DIR_MINI = fileURLToPath(new URL("../fixtures/plugins/dir-mini/index.ts", import.meta.url));
+const DIR_OPT = fileURLToPath(new URL("../fixtures/plugins/dir-opt/index.ts", import.meta.url));
 const SOURCE = "dir-mini:t1";
 const DIR_SOURCE = "directory:dir-mini";
 
@@ -66,7 +67,7 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { plugins: [MODEL_FAKE, DIR_MINI], auth: { cookieSecure: false } },
+      { plugins: [MODEL_FAKE, DIR_MINI, DIR_OPT], auth: { cookieSecure: false } },
     ),
   );
   raw = createDb(pgc.url, 5);
@@ -903,5 +904,56 @@ describe("修复波 W1", () => {
       partial: true,
     });
     expect(await memberOf(orgId, "ci-2")).toBeDefined();
+  });
+});
+
+describe("Ruling A28：directory.configured", () => {
+  const enableOpt = async (orgId: string, config: Record<string, unknown>) => {
+    const res = await ownerReq({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/plugins/dir-opt`,
+      payload: { enabled: true, config },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+  };
+
+  it("未配置的通讯录：扫描不投递、同步静默跳过、changed 不投递任务、无审计", async () => {
+    const orgId = await createOrg(ownerReq, "Opt unconfigured");
+    await enableOpt(orgId, {});
+    const targets = await k.identity.directory.scan();
+    expect(targets.filter((t) => t.orgId === orgId)).toEqual([]);
+    expect(await k.identity.directory.sync(orgId, "dir-opt")).toEqual({
+      status: "skipped",
+      reason: "not_configured",
+    });
+    expect(await k.identity.directory.enqueue(orgId, "dir-opt")).toBeUndefined();
+    expect(
+      await queue.getJob(directorySyncJobId(orgId, "dir-opt", "changed", new Date())),
+    ).toBeUndefined();
+    expect(await audits(orgId, "org.directory.synced")).toEqual([]);
+    expect(await audits(orgId, "org.directory.removal_blocked")).toEqual([]);
+  });
+
+  it("未配置时手动同步 409 directory.not_configured；配置后照常扫描与同步", async () => {
+    const orgId = await createOrg(ownerReq, "Opt manual");
+    await enableOpt(orgId, {});
+    const res = await ownerReq({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/plugins/dir-opt/directory/sync`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("directory.not_configured");
+    const book = fd.book(`opt-${orgId}`);
+    book.members = [person("opt-1")];
+    await enableOpt(orgId, { url: book.url });
+    const targets = await k.identity.directory.scan();
+    expect(targets.filter((t) => t.orgId === orgId).map((t) => t.plugin)).toEqual(["dir-opt"]);
+    // 扫描投递的任务在 worker 上同步
+    const synced = await waitFor(
+      async () => (await audits(orgId, "org.directory.synced"))[0],
+      15_000,
+      "scheduled sync of the configured directory",
+    );
+    expect(synced.detail).toMatchObject({ trigger: "schedule", added: 1, partial: false });
   });
 });
