@@ -39,6 +39,11 @@ export interface InputForm {
 
 export type FormAnswer = Record<string, string | number | boolean | string[]>;
 
+/** `tool_result` 的显示摘要（plugin-sdk `ToolResult.display`）。 */
+export interface ToolDisplay {
+  summary: { zh: string; en: string };
+}
+
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other" | "aborted";
 
 type EventBody =
@@ -58,7 +63,19 @@ type EventBody =
       type: "assistant_message";
       payload: { step: number; content: ContentBlock[]; stopReason: StopReason };
     }
-  | { type: "usage"; payload: { step: number } }
+  | {
+      type: "usage";
+      payload: {
+        step: number;
+        provider: string;
+        model: string;
+        /** 未缓存的输入；输入总量 = inputTokens + cacheReadTokens + cacheWriteTokens。 */
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens: number;
+        cacheWriteTokens: number;
+      };
+    }
   | { type: "reminder"; payload: { step: number; text: string } }
   | {
       type: "tool_call_started";
@@ -75,6 +92,8 @@ type EventBody =
         outputId?: string;
         contentTypes?: string[];
         loadedTools?: string[];
+        /** 工具给的一句说明（中英各一份，只用于显示，不进模型上下文）。 */
+        display?: ToolDisplay;
       };
     }
   | {

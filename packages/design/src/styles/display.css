@@ -562,6 +562,13 @@
 }
 
 /* 代码块 */
+.cb-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--cb-line);
+}
+
 .cb-code {
   min-width: 0;
   margin: 0;

@@ -151,8 +151,15 @@ test("MCP 应用 → agent 引用 → destructive 工具触发审批 → 批准 
   await expect(
     page.locator('[data-role="approval"]').getByText(zh.approval.decision.approved),
   ).toBeVisible();
-  await page.locator('[data-role="tool"]').getByText(zh.tools.details).click();
-  await expect(page.getByRole("textbox", { name: zh.tools.result })).toHaveValue("deleted x1");
+  // 工具调用是时间线里的一行（默认折叠）：点开看 IN / OUT
+  const row = page
+    .locator('[data-role="tool"]')
+    .getByRole("button", { name: /fixture__delete_item/ });
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await row.click();
+  await expect(
+    page.locator('[data-role="tool"]').getByText("deleted x1", { exact: true }),
+  ).toBeVisible();
 });
 
 test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；elicitation 表单回答后工具继续", async ({

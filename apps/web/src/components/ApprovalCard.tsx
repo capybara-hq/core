@@ -195,6 +195,7 @@ export function ApprovalCard({ orgId, item }: { orgId: string; item: ApprovalIte
     <div data-role="approval" data-approval-id={item.approvalId}>
       <Card
         title={t("title")}
+        tone={outcome === null ? "accent" : "default"}
         actions={
           outcome === null ? <StatusMark status="waiting" label={t("waiting")} /> : undefined
         }

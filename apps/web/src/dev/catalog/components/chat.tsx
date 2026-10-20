@@ -1,8 +1,10 @@
 import {
+  Card,
   Checklist,
   CodeBlock,
   EmbedFrame,
   Grid,
+  ImageBlock,
   IoBlock,
   Tabs,
   Text,
@@ -32,6 +34,11 @@ const TASKS = [
   { text: "写周报草稿", status: "pending" as const },
   { text: "发到 #product", status: "pending" as const },
 ];
+
+/** 固定的占位图（无颜色字面量：矩形取默认填充）。 */
+const SAMPLE_IMAGE = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="80"><rect width="320" height="80"/></svg>',
+)}`;
 
 const PANEL_TABS = [
   { id: "run", label: "运行", alert: true },
@@ -154,6 +161,22 @@ export function ChatSection() {
           />
           <CodeBlock text="capybara plugins review todo" />
         </Grid>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          图片 ImageBlock · 宽度不超出容器
+        </Text>
+        <ImageBlock src={SAMPLE_IMAGE} alt="示例图片" />
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          待人处理的卡片 Card tone=accent（审批 / 提问 / 连接）
+        </Text>
+        <Card tone="accent" title="需要审批">
+          <Text variant="small" tone="muted">
+            fixture__delete_item · 删除条目 x1
+          </Text>
+        </Card>
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">

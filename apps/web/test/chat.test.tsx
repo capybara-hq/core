@@ -111,9 +111,13 @@ describe("对话页（PlaygroundPage）", () => {
     const { container } = renderChat("en");
     expect(container.querySelector('[data-template="PlaygroundPage"]')).not.toBeNull();
     const inspector = screen.getByRole("complementary");
+    expect(await within(inspector).findByText(`● ${en.chat.running}`)).toBeTruthy();
+    // agent 与会话 ID 在「上下文」标签
+    await userEvent
+      .setup()
+      .click(within(inspector).getByRole("tab", { name: new RegExp(en.chatPanel.context) }));
     expect(await within(inspector).findByText("Echo agent")).toBeTruthy();
     expect(within(inspector).getByText("c1")).toBeTruthy();
-    expect(await within(inspector).findByText(`● ${en.chat.running}`)).toBeTruthy();
     expect(within(inspector).getByRole("button", { name: en.chat.stop })).toBeTruthy();
     // 输入框旁也有「停止」：任何宽度下一次点击即可停止（inspector 在窄屏收进 Sheet）
     const composer = screen.getByLabelText(en.chat.inputLabel).closest("form") as HTMLElement;
@@ -419,9 +423,14 @@ describe("对话页切换组织", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
     await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
-    // 顶栏的待处理审批数按新组织读取是正常的；会话不能以新组织读取
+    // 顶栏的待处理审批数与「扩展」菜单按新组织读取是正常的；会话不能以新组织读取
     expect(
-      calls.some((c) => c.url.includes("/orgs/o2/") && !c.url.includes("/orgs/o2/approvals")),
+      calls.some(
+        (c) =>
+          c.url.includes("/orgs/o2/") &&
+          !c.url.includes("/orgs/o2/approvals") &&
+          !c.url.includes("/orgs/o2/ui/contributions"),
+      ),
     ).toBe(false);
     expect(screen.queryByText("hi")).toBeNull();
   });

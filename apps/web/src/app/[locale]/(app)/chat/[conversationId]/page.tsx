@@ -1,18 +1,12 @@
 "use client";
 
-import {
-  Button,
-  KeyValue,
-  PlaygroundPage,
-  Stack,
-  StatusMark,
-  useStatusBar,
-} from "@capybara-hq/design";
+import { Button, PlaygroundPage, Stack, StatusMark, useStatusBar } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useChat } from "../../../../../components/ChatView";
 import { Composer } from "../../../../../components/Composer";
+import { ChatPanel } from "../../../../../components/chat-panel/ChatPanel";
 import { FormError } from "../../../../../components/form-error";
 import { MessageList } from "../../../../../components/MessageList";
 import { OrgGate } from "../../../../../components/OrgGate";
@@ -58,21 +52,21 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
       }}
       inspectorTitle={t("chat.inspectorTitle")}
       inspector={
-        <Stack gap={16}>
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("chat.agent"), v: chat.agentName ?? "—" },
-              { k: t("chat.conversation"), v: conversationId },
-              { k: t("chat.status"), v: status },
-            ]}
-          />
-          {active && (
-            <Button onClick={chat.stop} disabled={chat.stopping}>
-              {t("chat.stop")}
-            </Button>
-          )}
-        </Stack>
+        <ChatPanel
+          orgId={orgId}
+          conversationId={conversationId}
+          chat={chat}
+          header={
+            <Stack direction="row" gap={8} align="center" justify="between">
+              {status}
+              {active && (
+                <Button onClick={chat.stop} disabled={chat.stopping}>
+                  {t("chat.stop")}
+                </Button>
+              )}
+            </Stack>
+          }
+        />
       }
       composer={
         <Stack gap={8}>

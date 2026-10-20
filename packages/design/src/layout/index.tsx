@@ -55,7 +55,8 @@ export function Card({
 }: {
   title?: ReactNode;
   actions?: ReactNode;
-  tone?: "default" | "danger";
+  /** danger：危险区块；accent：待人处理的对话卡片（审批 / 提问 / 连接，spec §6.9）。 */
+  tone?: "default" | "danger" | "accent";
   children?: ReactNode;
 }) {
   return (

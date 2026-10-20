@@ -1,0 +1,120 @@
+import { readFileSync } from "node:fs";
+import { expect, type Page, test } from "@playwright/test";
+
+/** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
+const zh = JSON.parse(
+  readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
+) as typeof import("../messages/zh.json");
+
+const LOGIN = "admin";
+const PASSWORD = "correct-horse-battery";
+/** 内核要求非安全方法带的 CSRF 头。 */
+const CSRF = { "X-Capybara-Csrf": "1" };
+
+/**
+ * 登录（与其他用例共用同一个内核：若尚未初始化则走初始化向导），并选中组织 Acme。
+ * 本文件排在 chat.spec 之后（按文件名），通常已初始化。
+ */
+async function signIn(page: Page) {
+  await page.goto("/zh");
+  const setupButton = page.getByRole("button", { name: zh.setup.submit });
+  const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
+  await expect(setupButton.or(loginButton)).toBeVisible();
+  if (await setupButton.isVisible()) {
+    await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
+    await page.getByLabel(zh.setup.passwordLabel).fill(PASSWORD);
+    await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");
+    await page.getByLabel(zh.setup.orgNameLabel).fill("Acme");
+    await page.getByRole("button", { name: zh.setup.submit }).click();
+  } else {
+    await page.getByLabel(zh.login.loginLabel).fill(LOGIN);
+    await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
+    await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
+  }
+  await expect(page).toHaveURL(/\/zh$/);
+  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
+}
+
+test("todo：todo__write 之后右侧「任务」标签实时刷新，badge 为「已完成/总数」；时间线显示工具摘要", async ({
+  page,
+}) => {
+  await signIn(page);
+  // 页面的 Cookie 与 page.request 共用：经同源代理调内核 API 做准备工作
+  const me = await page.request.get("/api/v1/me");
+  expect(me.ok()).toBe(true);
+  const orgId = ((await me.json()) as { currentOrgId: string }).currentOrgId;
+  const base = `/api/v1/orgs/${orgId}`;
+  const enable = await page.request.put(`${base}/plugins/todo`, {
+    headers: CSRF,
+    data: { enabled: true },
+  });
+  expect(enable.status(), await enable.text()).toBe(200);
+  // 网页的 agent 表单不列插件工具：经 API 建一个引用 todo__write 的 agent
+  const agent = await page.request.post(`${base}/agents`, {
+    headers: CSRF,
+    data: {
+      definition: {
+        name: "Planner",
+        instructions: "Keep a task list.",
+        model: { provider: "model-fake", model: "fake-1" },
+        tools: [{ kind: "plugin", plugin: "todo", name: "write" }],
+      },
+      visibility: "private",
+    },
+  });
+  expect(agent.status(), await agent.text()).toBe(201);
+  const agentId = ((await agent.json()) as { agent: { id: string } }).agent.id;
+  const conv = await page.request.post(`${base}/conversations`, {
+    headers: CSRF,
+    data: { agentId },
+  });
+  expect(conv.status(), await conv.text()).toBe(201);
+  const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
+
+  await page.goto(`/zh/chat/${convId}`);
+  await expect(page.locator('[data-template="PlaygroundPage"]')).toBeVisible();
+  const panel = page.getByRole("complementary");
+  // 插件对话视图排在第一个；空清单的 badge 为 0/0
+  const tasks = panel.getByRole("tab", { name: /任务/ });
+  await expect(tasks).toBeVisible();
+  await expect(tasks).toContainText("0/0");
+  await expect(tasks).toHaveAttribute("aria-selected", "true");
+
+  const todos = {
+    todos: [
+      { content: "Collect feedback", status: "completed", activeForm: "Collecting feedback" },
+      { content: "Cluster topics", status: "in_progress", activeForm: "Clustering topics" },
+      { content: "Write the report", status: "pending", activeForm: "Writing the report" },
+    ],
+  };
+  const input = page.getByLabel(zh.chat.inputLabel);
+  await input.fill(`tool:todo__write:${JSON.stringify(todos)}`);
+  await input.press("Enter");
+
+  // 不刷新页面：event: ui 到达后重新取视图，badge 与清单实时更新
+  await expect(tasks).toContainText("1/3");
+  const tabpanel = panel.getByRole("tabpanel");
+  await expect(tabpanel.getByText("Collect feedback")).toBeVisible();
+  // 进行中的条目显示 activeForm，并以 aria-current 标出
+  await expect(tabpanel.locator('[aria-current="step"]')).toContainText("Clustering topics");
+
+  // 时间线里这次调用是一行带摘要的工具调用，不再显示原样 JSON
+  const row = page.locator('[data-role="tool"]').filter({ hasText: "todo__write" });
+  await expect(row).toHaveAttribute("data-status", "done");
+  await expect(row.getByText("更新任务清单（3 项）")).toBeVisible();
+
+  // 运行标签列出这次调用
+  await panel.getByRole("tab", { name: new RegExp(zh.chatPanel.run) }).click();
+  await expect(
+    panel.locator('[data-role="run-call"]').getByRole("button", { name: /todo__write/ }),
+  ).toBeVisible();
+
+  // 刷新后记住所选标签（运行），任务标签的 badge 由视图重建
+  await page.reload();
+  await expect(
+    page.getByRole("complementary").getByRole("tab", { name: new RegExp(zh.chatPanel.run) }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("complementary").getByRole("tab", { name: /任务/ })).toContainText(
+    "1/3",
+  );
+});

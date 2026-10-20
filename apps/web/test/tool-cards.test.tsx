@@ -209,37 +209,43 @@ describe("ToolCallCard", () => {
       ...over,
     }) as Extract<ChatItem, { kind: "tool" }>;
 
-  it.each(LOCALES)("默认折叠；展开显示参数 JSON 与结果（%s）", async (locale) => {
-    const m = msgs[locale];
-    renderPage(<ToolCallCard item={item()} />, { locale });
-    const card = screen.getByText(`${m.tools.call} · fixture__search`).closest("[data-role]");
-    expect(card?.getAttribute("data-status")).toBe("done");
-    expect(screen.getByText(`✓ ${m.tools.status.done}`)).toBeTruthy();
-    const details = (card as HTMLElement).querySelector("details") as HTMLDetailsElement;
-    expect(details.open).toBe(false);
-    await userEvent.setup().click(screen.getByText(m.tools.details));
-    expect(details.open).toBe(true);
-    expect(screen.getByLabelText(m.tools.input)).toHaveProperty(
-      "value",
-      JSON.stringify({ q: "capybara" }, null, 2),
-    );
-    expect(screen.getByLabelText(m.tools.result)).toHaveProperty("value", "3 results");
-  });
+  it.each(LOCALES)(
+    "时间线一行，默认折叠；展开显示 IN（参数 JSON）与 OUT（结果）（%s）",
+    async (locale) => {
+      renderPage(<ToolCallCard item={item()} />, { locale });
+      const row = screen.getByRole("button", { name: /fixture__search/ });
+      const card = row.closest("[data-role]");
+      expect(card?.getAttribute("data-role")).toBe("tool");
+      expect(card?.getAttribute("data-status")).toBe("done");
+      // 没有显示摘要：退回输入的前几个字段
+      expect(within(row).getByText("q: capybara")).toBeTruthy();
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.queryByText("3 results")).toBeNull();
+      await userEvent.setup().click(row);
+      expect(row.getAttribute("aria-expanded")).toBe("true");
+      expect(screen.getByText(/"q": "capybara"/).textContent).toBe(
+        JSON.stringify({ q: "capybara" }, null, 2),
+      );
+      expect(screen.getByText("3 results")).toBeTruthy();
+    },
+  );
 
-  it.each(LOCALES)("超长结果只显示预览并给出存档 id；失败显示 ✗（%s）", (locale) => {
+  it.each(LOCALES)("超长结果只显示预览并给出存档 id；失败显示 ✗（%s）", async (locale) => {
     const m = msgs[locale];
     const long = "x".repeat(RESULT_PREVIEW_CHARS + 10);
     renderPage(<ToolCallCard item={item({ status: "error", result: long, outputId: "out_9" })} />, {
       locale,
     });
     expect(screen.getByText(`✗ ${m.tools.status.error}`)).toBeTruthy();
-    expect((screen.getByLabelText(m.tools.result) as HTMLTextAreaElement).value.length).toBe(
-      RESULT_PREVIEW_CHARS,
-    );
+    await userEvent.setup().click(screen.getByRole("button", { name: /fixture__search/ }));
+    expect(screen.getByText("x".repeat(RESULT_PREVIEW_CHARS))).toBeTruthy();
     expect(screen.getByText(m.tools.outputId.replace("{id}", "out_9"))).toBeTruthy();
-    expect(
-      screen.getByText(m.tools.truncated.replace("{n}", String(RESULT_PREVIEW_CHARS))),
-    ).toBeTruthy();
+  });
+
+  it.each(LOCALES)("等待审批的调用显示「等待中」（%s）", (locale) => {
+    const m = msgs[locale];
+    renderPage(<ToolCallCard item={item({ status: "pending", result: null })} />, { locale });
+    expect(screen.getByText(`● ${m.tools.status.pending}`)).toBeTruthy();
   });
 });
 
@@ -649,7 +655,7 @@ describe("对话页里的工具与审批", () => {
       renderPage(<ChatPage />, { locale });
       const log = await screen.findByRole("log");
       expect(await within(log).findByText(m.approval.title)).toBeTruthy();
-      expect(within(log).getByText(`${m.tools.call} · fixture__delete_item`)).toBeTruthy();
+      expect(within(log).getByRole("button", { name: /fixture__delete_item/ })).toBeTruthy();
       const inspector = screen.getByRole("complementary");
       expect(within(inspector).getByText(`‖ ${m.chat.waiting}`)).toBeTruthy();
       // 等待时也可以停止

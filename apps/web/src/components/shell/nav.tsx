@@ -1,10 +1,11 @@
 "use client";
 
-import type { CommandGroup, TopBarProps } from "@capybara-hq/design";
+import type { CommandGroup, MenuItem, TopBarProps } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { listApprovals } from "../../lib/approvals";
+import { listUiContributions, type UiContributionItem, uiLocale } from "../../lib/ui";
 
 /**
  * 一级导航：只列已存在的路由（spec §4.1 的其余项上线后再加）。`admin` 项只对当前组织的管理员显示
@@ -77,6 +78,45 @@ export function usePendingApprovals(
   }, [orgId, pathname, nonce]);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
   return { count, refresh };
+}
+
+/** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
+export const pluginPageHref = (plugin: string, id: string) =>
+  `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
+
+/**
+ * 顶栏「扩展」菜单的菜单项：当前组织已启用插件的页面贡献（`place: "page"`），按插件分组（组间分隔线），
+ * 显示「插件 · 页面标题」。嵌入应用（`kind: "embed"`）由 T26 接入，这里先不列。
+ * 没有当前组织、没有页面贡献或读取失败时为空（菜单不出现）。
+ */
+export function useExtensions(orgId: string | null, locale: string): MenuItem[] {
+  const [pages, setPages] = useState<UiContributionItem[]>([]);
+  useEffect(() => {
+    if (orgId === null) {
+      setPages([]);
+      return;
+    }
+    let disposed = false;
+    listUiContributions(orgId).then(
+      ({ items }) => {
+        if (!disposed) setPages(items.filter((c) => c.place === "page" && c.kind === "view"));
+      },
+      () => {
+        if (!disposed) setPages([]);
+      },
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [orgId]);
+  const lang = uiLocale(locale);
+  const plugins = [...new Set(pages.map((p) => p.plugin))];
+  return plugins.flatMap((plugin, i): MenuItem[] => [
+    ...(i > 0 ? ["separator" as const] : []),
+    ...pages
+      .filter((p) => p.plugin === plugin)
+      .map((p) => ({ label: `${plugin} · ${p.title[lang]}`, href: pluginPageHref(plugin, p.id) })),
+  ]);
 }
 
 /** StatusBar 上下文路径里的路由段：去掉开头的 `/`，首页记为 `~`。 */

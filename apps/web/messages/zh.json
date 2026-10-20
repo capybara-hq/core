@@ -271,7 +271,30 @@
     "appUnavailableHint": {
       "not_connected": "你还没有连接 {app}。请先在「应用」页连接，再重试。",
       "failed": "暂时无法访问 {app}，请稍后重试。"
-    }
+    },
+    "timeline": "本轮步骤",
+    "thinkingLive": "思考中…"
+  },
+  "ui": {
+    "dangerDescription": "这个操作由插件执行，可能无法撤销。"
+  },
+  "chatPanel": {
+    "label": "对话面板",
+    "run": "运行",
+    "context": "上下文",
+    "runEmpty": "本对话还没有工具调用。",
+    "agent": "Agent",
+    "model": "模型",
+    "conversation": "会话",
+    "tokens": "Token",
+    "tokensOf": "{used} / {total}（{pct}%）",
+    "tokensOnly": "{used}",
+    "noUsage": "暂无用量",
+    "windowUnknown": "模型没有声明上下文窗口，只显示已用 token 数。",
+    "apps": "用到的应用",
+    "none": "无",
+    "compactions": "压缩记录",
+    "compactionCovers": "压缩到第 {seq} 条事件"
   },
   "nav": {
     "overview": "概览",

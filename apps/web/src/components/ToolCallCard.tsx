@@ -1,87 +1,83 @@
 "use client";
 
-import { Card, Stack, StatusMark, Text, Textarea } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
-import type { ComponentProps } from "react";
+import { ToolCallRow, type ToolCallStatus } from "@capybara-hq/design";
+import { useLocale, useTranslations } from "next-intl";
 import { formatInput } from "../lib/approvals";
-import type { ChatItem, ToolStatus } from "../lib/stream";
+import type { ChatItem } from "../lib/stream";
 
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
 
-/** 卡片内展示的结果上限（内核已把超大结果转存并截为预览，这里再兜一次底）。 */
+/** 对话流里展示的结果上限（内核已把超大结果转存并截为预览，这里再兜一次底）；运行标签显示全文。 */
 export const RESULT_PREVIEW_CHARS = 4000;
 
-type Status = ComponentProps<typeof StatusMark>["status"];
+/** 退回摘要里取输入的前几个字段，每个值至多这么多字符。 */
+const SUMMARY_FIELDS = 2;
+const SUMMARY_VALUE_CHARS = 40;
 
-const STATUS: Record<ToolStatus, Status> = {
-  pending: "waiting",
+const clip = (s: string) =>
+  s.length > SUMMARY_VALUE_CHARS ? `${s.slice(0, SUMMARY_VALUE_CHARS - 1)}…` : s;
+
+/** 输入的前几个字段，如 `id: x1 · reason: cleanup`；输入不是对象时取其文本。 */
+export function inputPreview(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  if (typeof input !== "object" || Array.isArray(input)) {
+    return clip(typeof input === "string" ? input : (JSON.stringify(input) ?? ""));
+  }
+  return Object.entries(input as Record<string, unknown>)
+    .slice(0, SUMMARY_FIELDS)
+    .map(([k, v]) => `${k}: ${clip(typeof v === "string" ? v : (JSON.stringify(v) ?? ""))}`)
+    .join(" · ");
+}
+
+/** 工具调用的一句说明：工具给的 `display.summary[locale]`，没有时退回输入的前几个字段。 */
+export function toolSummary(item: ToolItem, locale: string): string {
+  const summary = item.display?.summary;
+  const text = summary === undefined ? undefined : locale === "zh" ? summary.zh : summary.en;
+  return typeof text === "string" && text !== "" ? text : inputPreview(item.input);
+}
+
+/** 对话项的状态 → 工具调用行的状态（等待中按「运行中」画，文案另给）。 */
+const ROW_STATUS: Record<ToolItem["status"], ToolCallStatus> = {
+  pending: "running",
   running: "running",
-  done: "success",
-  error: "failed",
+  done: "done",
+  error: "error",
   cancelled: "cancelled",
 };
 
-/** 行数（代码样式 Textarea 的高度）：至少 2 行，至多 12 行。 */
-const rowsOf = (text: string) => Math.min(12, Math.max(2, text.split("\n").length));
-
 /**
- * 工具调用卡片：标题为工具名，右侧为状态；默认折叠，展开显示参数（JSON）与结果（只读代码样式）。
- * 结果超长时只显示预览，并给出完整结果的存档 id（模型可用 read_tool_output 读取）。
+ * 工具调用行（时间线里一行，默认折叠）：工具名 + 一句说明 + 非完成态的状态；展开为 IN / OUT。
+ * `full` 时显示完整结果（运行标签），否则超过 {@link RESULT_PREVIEW_CHARS} 的结果只显示预览。
+ * 结果已存档（内核截断）时给出存档 id。外层带 `data-call-id` 与 `data-status`；`data-role` 在对话流里为
+ * `tool`，在运行标签里（`full`）为 `run-call`。
  */
-export function ToolCallCard({ item }: { item: ToolItem }) {
+export function ToolCallCard({ item, full = false }: { item: ToolItem; full?: boolean }) {
   const t = useTranslations("tools");
-  const input = formatInput(item.input);
-  const result = item.result ?? "";
-  const truncated = result.length > RESULT_PREVIEW_CHARS;
-  const shown = truncated ? result.slice(0, RESULT_PREVIEW_CHARS) : result;
+  const locale = useLocale();
+  const result = item.result;
+  const cut = !full && result !== null && result.length > RESULT_PREVIEW_CHARS;
+  const output = result === null ? undefined : cut ? result.slice(0, RESULT_PREVIEW_CHARS) : result;
+  const truncated = cut || item.outputId !== null;
   return (
-    <div data-role="tool" data-call-id={item.callId} data-status={item.status}>
-      <Card
-        title={`${t("call")} · ${item.name}`}
-        actions={<StatusMark status={STATUS[item.status]} label={t(`status.${item.status}`)} />}
-      >
-        <details>
-          <summary>
-            <Text variant="small" tone="muted">
-              {t("details")}
-            </Text>
-          </summary>
-          <Stack gap={8}>
-            <Text variant="small" tone="muted">
-              {t("input")}
-            </Text>
-            <Textarea code readOnly aria-label={t("input")} rows={rowsOf(input)} value={input} />
-            <Text variant="small" tone="muted">
-              {t("result")}
-            </Text>
-            {item.result === null ? (
-              <Text variant="small" tone="faint">
-                {t("noResult")}
-              </Text>
-            ) : (
-              <div data-part="result">
-                <Textarea
-                  code
-                  readOnly
-                  aria-label={t("result")}
-                  rows={rowsOf(shown)}
-                  value={shown}
-                />
-              </div>
-            )}
-            {truncated && (
-              <Text variant="small" tone="muted">
-                {t("truncated", { n: RESULT_PREVIEW_CHARS })}
-              </Text>
-            )}
-            {item.outputId !== null && (
-              <Text variant="small" tone="muted">
-                {t("outputId", { id: item.outputId })}
-              </Text>
-            )}
-          </Stack>
-        </details>
-      </Card>
+    <div
+      data-role={full ? "run-call" : "tool"}
+      data-call-id={item.callId}
+      data-status={item.status}
+    >
+      <ToolCallRow
+        name={item.name}
+        summary={toolSummary(item, locale)}
+        status={ROW_STATUS[item.status]}
+        input={formatInput(item.input)}
+        {...(output !== undefined && { output })}
+        outputTruncated={truncated}
+        labels={{
+          running: t(`status.${item.status === "pending" ? "pending" : "running"}`),
+          error: t("status.error"),
+          cancelled: t("status.cancelled"),
+          ...(item.outputId !== null && { truncated: t("outputId", { id: item.outputId }) }),
+        }}
+      />
     </div>
   );
 }

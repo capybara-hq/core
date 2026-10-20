@@ -284,3 +284,15 @@ export function CodeBlock({ language, text }: CodeBlockProps) {
     </figure>
   );
 }
+
+export type ImageBlockProps = {
+  src: string;
+  alt: string;
+};
+
+/** 图片（插件视图）：宽度不超出容器、按比例缩放；不带 referrer、懒加载。地址由调用方校验。 */
+export function ImageBlock({ src, alt }: ImageBlockProps) {
+  return (
+    <img className="cb-image" src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" />
+  );
+}

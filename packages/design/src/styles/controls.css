@@ -94,6 +94,9 @@
 .cb-card[data-tone="danger"] {
   border-color: var(--cb-fail);
 }
+.cb-card[data-tone="accent"] {
+  border-color: var(--cb-accent);
+}
 .cb-card-head {
   display: flex;
   align-items: center;

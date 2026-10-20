@@ -5,6 +5,8 @@ export {
   type ChecklistStatus,
   CodeBlock,
   type CodeBlockProps,
+  ImageBlock,
+  type ImageBlockProps,
   IoBlock,
   type IoBlockLabels,
   type IoBlockProps,

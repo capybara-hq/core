@@ -71,7 +71,7 @@
 | 形态 | 用于 |
 |---|---|
 | 实心（`accent` 底 + `on-accent` 字） | 视图内**唯一**的主操作 |
-| 描边（1px `accent` 边 + `accent` 字） | 需强调的次级操作、选中的分段、当前页码 |
+| 描边（1px `accent` 边 + `accent` 字） | 需强调的次级操作、选中的分段、当前页码；待人处理的对话卡片只描边（`Card tone="accent"`） |
 | 下划线（`inset 0 -2px 0 accent`） | 当前一级导航、当前 PageTab |
 | 文字（`accent` 字 / `●`） | 正在发生：运行中、实时、自动刷新倒计时、光标 |
 | 底色 + 左标（`accent-tint` 底 + `inset 2px 0 0 accent`） | 选中的行 / 项 / 锚点 |
@@ -325,6 +325,8 @@
 - **Checklist**：每项 `glyph + 文字`。`pending` `□` `faint`；`in_progress` `▶` 主色，整行 `accent-tint` 底 + 左侧 2px 主色 + 700，`aria-current="step"`；`completed` `✓` `ok`，文字 `faint` 并用 `<s>` 划线。每项带读屏状态文字（待办 / 进行中 / 已完成）。
 - **CodeBlock**：1px `line` 外框、`panel` 底；有语言时顶部 11px `faint` 语言标注 + 下边线；正文等宽、不换行、框内横向滚动；不做语法高亮。
 - **EmbedFrame**：界面里**唯一**渲染 iframe 的组件（`apps/web` 不得自己写 iframe）。`sandbox` 固定为 `allow-scripts allow-forms`（绝不含 `allow-same-origin`），`referrerpolicy="no-referrer"`，`title` 必填；宽度撑满，高度来自 props（默认 360）；1px `line` 边、`panel` 底。只把 `event.source` 为本 iframe 的 `message` 交给 `onMessage`（内容由调用方解析校验），并以 `frameRef` 暴露 iframe 以便 `postMessage`。
+- **ImageBlock**：插件视图里的图片；块级、宽度不超出容器、按比例缩放，1px `line` 边；`loading="lazy"`、`referrerpolicy="no-referrer"`。只收地址与 alt，地址由调用方校验（`apps/web` 只放行 http(s)）。
+- **Card `tone="accent"`**：对话里待人处理的卡片（审批 / 提问 / 连接）用 1px `accent` 描边（§2.3 描边），处理完回到默认边框。
 - 图表沿用 §6.8 的 `BarChart` / `Sparkline`，属性列表沿用 `KeyValue`，表格沿用 DataTable，不另造。
 
 ---

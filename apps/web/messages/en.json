@@ -271,7 +271,30 @@
     "appUnavailableHint": {
       "not_connected": "You have not connected {app}. Connect it on the Apps page, then try again.",
       "failed": "Could not reach {app}. Try again later."
-    }
+    },
+    "timeline": "Steps",
+    "thinkingLive": "Thinking…"
+  },
+  "ui": {
+    "dangerDescription": "The plugin performs this action. It may not be reversible."
+  },
+  "chatPanel": {
+    "label": "Conversation panel",
+    "run": "Run",
+    "context": "Context",
+    "runEmpty": "No tool calls in this conversation yet.",
+    "agent": "Agent",
+    "model": "Model",
+    "conversation": "Conversation",
+    "tokens": "Tokens",
+    "tokensOf": "{used} / {total} tokens ({pct}%)",
+    "tokensOnly": "{used} tokens",
+    "noUsage": "No usage yet",
+    "windowUnknown": "The model doesn't declare a context window; showing tokens used only.",
+    "apps": "Apps used",
+    "none": "None",
+    "compactions": "Compactions",
+    "compactionCovers": "Compacted up to event #{seq}"
   },
   "nav": {
     "overview": "Overview",
