@@ -1,11 +1,11 @@
 ---
 name: writing-plugins
-description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单字段、权限清单与批准（capybara plugins review / approve、pluginPermissions.autoApprove）、能力取用 ctx.capabilities 与 orgScoped、部署级 / 组织级 / 渠道连接配置、ctx 各项的用法、多副本下禁止的写法（定时器、模块级状态）及替代方案，以及用双副本工具写测试的模板。
+description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单字段、权限清单与批准（capybara plugins review / approve、pluginPermissions.autoApprove）、能力取用 ctx.capabilities 与 orgScoped、部署级 / 组织级 / 渠道连接配置、ctx 各项的用法、多副本下禁止的写法（定时器、模块级状态）及替代方案，以及用双副本工具写测试的模板。往网页加界面（ctx.ui）见 writing-plugin-ui。
 ---
 
 # 写插件
 
-参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。模型供应商插件（`model-provider@2`）另见 `skills/writing-model-providers`；给 agent 提供工具（`ctx.tools`）或连接器（`connector@1`）另见 `skills/writing-tools`；IM 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`）另见 `skills/writing-channels`（参考 `plugins/slack`、`plugins/lark`）。
+参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。模型供应商插件（`model-provider@2`）另见 `skills/writing-model-providers`；给 agent 提供工具（`ctx.tools`）或连接器（`connector@1`）另见 `skills/writing-tools`；IM 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`）另见 `skills/writing-channels`（参考 `plugins/slack`、`plugins/lark`）；往网页加界面（`ctx.ui`：渲染 schema 视图与嵌入应用）另见 `skills/writing-plugin-ui`（参考 `plugins/todo`、`plugins/example-board`）。
 
 ## 硬约束（先看这个）
 
@@ -74,7 +74,7 @@ export default definePlugin({
 | `http` | `[{ method, path, public? }]` | 每条 `ctx.http.route` 都要列出，`method` 为 GET / POST / PUT / DELETE，`path` 以 `/` 开头；`public: true` 表示免登录，会高亮展示。**目前 `public` 只是声明**（Ruling A2）：插件路由不论是否 `public` 都不经内核鉴权，见下文「插件路由的匹配语义」 |
 | `tools` | `["write"]` | 每个 `ctx.tools.register` 的工具名（本地名，不含 `<插件名>__` 前缀）；工具能看到会话内容，会高亮展示 |
 | `network` | `["api.example.com"]` | 会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写；不支持通配 |
-| `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的 id 列进 `views`（记入快照、不卡加载），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）；embed 的 `path` 须以 `/ui/` 开头并在 `http` 里声明为 GET。`definePlugin` 交叉核对；`ctx.ui.view / action(id)` 的 id 须在 `views` 里（`perm-ui`）。升级多出 view 照常加载、快照自动补上（不写审计、记 info 日志）；多出 embed 待批准 |
+| `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的列进 `views`（记入快照、**不卡加载**），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）。细则见 `skills/writing-plugin-ui` |
 | `hooks` / `models` / `storage` | — | 预留项（M4 尚未提供 `ctx.storage` / `ctx.models`，用了 `check:plugin-permissions` 报 `perm-reserved`） |
 
 **能力取用（`requires` / `optional`）**：`ctx.capabilities.get / list(ref)` 只能取 `requires` / `optional`（或自己 `provides`）里声明的 ref，别的 ref 报 `perm-capability`。只能取直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器、沙箱、密钥存储、对象存储）只能经平台能力用，取它直接抛普通 `Error`（声明也解决不了，不记审计）。`requires` 的提供方缺失则本插件不加载；`optional` 缺失照常加载，取用时 `list` 为空、`get` 抛 `CapabilityUnavailableError`。多选能力 `get` 必须给提供方名。
@@ -135,7 +135,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 | `ctx.http.route` | 对外接口 | 实际挂在 `/plugins/<name><path>`；匹配与 body 语义见下节，不经内核鉴权 |
 | `ctx.provide` | 对外暴露能力实现 | 要与清单 `provides` 一致 |
 | `ctx.tools` | 给 agent 提供工具 | `register(spec, handler)` 只能在 `setup` 里调用；模型可见名 `<插件名>__<spec.name>`；**只在启用了本插件的组织可用**（组织 admin `PUT /api/v1/orgs/:orgId/plugins/<name> {"enabled": true}`），未启用时运行时按不可用工具处理。描述与错误文案规则、默认策略、`ToolError`、`InputRequired` 见 `skills/writing-tools`，参考 `plugins/todo` |
-| `ctx.ui` | 对话页右侧标签 / 组织页面（渲染 schema 视图） | `view(id, render)` / `action(id, handler)` 只能在 `setup` 里调用，id 是 `permissions.ui.views` 里的；`render({ orgId, accountId, conversationId?, locale, signal })` 返回 `UiView`（`validateUiView` 校验，块与上限见 SDK `ui.ts`），身份由内核鉴权后给出，对话视图的 `conversationId` 已核对调用者能访问；5 秒内必须返回：超时内核中止 `signal`、返回 504，网页只让那个标签显示失败。**`render` 与 `action` 都必须响应 `signal`**——把它传给查询 / 外部请求（如 `fetch(url, { signal })`），中止后尽快放弃，别在超时后继续做事（尤其 `action` 里的写操作：超时后用户看到的是失败，可能会重试）；抛错（render → `ui.render_failed`，action → `ui.action_failed`）/ 非法视图同样只影响那个标签、记告警、不写对话日志。数据变了调 `invalidate({ orgId, conversationId?, contribution })`（`conversationId` 须是会话 UUID）：带对话发到会话流（`event: ui`），不带发到组织流，经 Redis bus 跨副本。**只在启用了本插件的组织出现**。参考 `plugins/todo` 的 `tasks`。嵌入应用（kind embed）见下文「嵌入应用」 |
+| `ctx.ui` | 对话页右侧标签 / 顶栏「扩展」里的组织页面 | `view` / `action`（渲染 schema 视图，只能在 `setup` 里注册，`render` 与 `action` 必须响应 `signal`、5 秒超时）、`invalidate`（经 bus 跨副本刷新）、`verifyEmbedToken`（嵌入应用的数据路由先验令牌）。写法、积木、上限与嵌入应用的安全规则见 `skills/writing-plugin-ui`，参考 `plugins/todo`、`plugins/example-board` |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
 | `ctx.config` / `ctx.log` | 部署配置 / 日志 | 日志里不要打印密钥 |
 
@@ -163,20 +163,11 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 - **内核会话 Cookie 被剥掉**：转交前从 `Cookie` 头删去 `cap_at` / `cap_rt`（其余 Cookie 原样保留；只剩这两个时不带 `Cookie` 头），插件拿不到用户的内核会话。
 - 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
 - `req.signal` 只在响应写完之前客户端断开时中止（正常写完不会中止）：长连接（SSE）的 handler 用它退订、收尾。
+- 嵌入应用的路由放在 `/ui/` 下，网页经同源代理 `/plugin-ui/<插件>/...` 访问，代理只转发嵌入令牌、改写响应头与缓存，见 `skills/writing-plugin-ui`。
 
-### 嵌入应用（kind embed，参考 example-board）
+### 界面（视图与嵌入应用）
 
-插件自己的页面放进网页的沙箱 iframe（`allow-scripts allow-forms`，不透明源）。参考 `plugins/example-board`。
-
-- 清单：`ui` 里 `{ id, title, place, kind: "embed", path: "/ui/..." }`，id 列进 `permissions.ui.embeds`（敏感项、要批准），页面与数据路由都声明在 `permissions.http`，路径以 `/ui/` 开头。
-- 网页经同源代理 `/plugin-ui/<插件>/<rest>` 访问 `/plugins/<插件>/ui/<rest>`：只放行 GET / POST、只到 `/ui/` 下，不转发 Cookie，`Authorization` 只转发嵌入令牌形状的 Bearer；统一加 CSP（`sandbox allow-scripts allow-forms`、`frame-ancestors 'self'`、资源与 `connect-src` 只限本源、允许内联脚本 / 样式）。页面里用**相对地址**（如 `fetch("cards")`、`<script src="board.js">`）；外部资源会被 CSP 拦下。
-- 响应头只透传白名单：`content-type`、`cache-control`（没给时代理补 `no-store`）、`etag`、`last-modified`、`expires`、`vary`、`content-language`、`x-accel-buffering`、`retry-after`；`Set-Cookie` 等其他头都会被丢掉。重定向的 `Location` 只保留仍在 `/plugin-ui/<插件>/` 下的。
-- **多页面用 History API，不要整页跳转。** 外层只在 iframe 第一次 `load` 时发 `init`；iframe 再次 `load`（整页导航、表单提交跳转、`location` 赋值）就被视为离开了插件页面：外层不再给它发任何消息，并在原 `src` 上重新挂载 iframe。页内切换视图用 `history.pushState` 与前端路由。外层在 10 秒内最多重新挂载 3 次，再多就停下来显示错误，等用户点「重试」。
-- **页面在 `load` 之前不得导航。** `init`（含令牌）发给第一个触发 `load` 的文档：外层只能看到 iframe 的 `load` 事件，看不到里面是哪个文档（不透明源，读不到 `location`）。所以嵌入页不要在加载过程中重定向、`location.replace` 或 `<meta http-equiv="refresh">`，否则令牌会交给跳转后的文档。路由层面的重定向只能留在本插件的 `/plugin-ui/<插件>/` 下（代理会去掉指向别处的 `Location`）。
-- 身份：外层页面在 iframe 第一次加载后发 `init`（`EMBED_PROTOCOL` 消息，带嵌入令牌、语言、主题、`--cb-*` 设计 token、组织 / 对话），过期前 60 秒发 `token` 续期，主题切换发 `theme`。页面请求带 `Authorization: Bearer <令牌>`，**每个数据路由先 `await ctx.ui.verifyEmbedToken(token)`**，返回 null 就 401；组织、账号、对话只从返回的声明里取（对话嵌入的 `conversationId` 内核已核对调用者能访问）。令牌 300 秒有效、只认签给本插件的，插件在该组织停用后立即失效（`verifyEmbedToken` 每次查启用状态），内核 `/api` 不认它。
-- 静态页面与脚本不含数据时可以不验令牌（iframe 导航带不了 Authorization 头）；数据一律验。
-- 发给外层：`resize`（高度）、`navigate`（只能是站内路径，如 `/chat/<id>`：单个 `/` 开头，不含 `//`、`.` / `..` 段，规范化后不变）、`toast`（纯文本），用 `window.parent.postMessage(msg, "*")`。
-- 实时刷新：自己开 SSE 路由（EventSource 带不了头，页面用 `fetch` 读流），**按请求** `ctx.bus.subscribe`，在 `req.signal` 中止（客户端断开）或 `ReadableStream` 的 `cancel` 里退订；流在令牌 `exp` 时结束，页面用续期的令牌重连。心跳用 `AbortSignal.timeout` 的单次请求内等待，不用定时器。
+插件往网页加界面（对话页右侧标签、顶栏「扩展」里的组织页面）有两档：渲染 schema 视图（`ctx.ui.view`，参考 `plugins/todo`）与沙箱 iframe 里的嵌入应用（插件 `/ui/` 下的路由 + `ctx.ui.verifyEmbedToken`，参考 `plugins/example-board`）。清单、批准规则、积木与上限、嵌入令牌、`/plugin-ui` 代理、消息桥与测试写法都在 `skills/writing-plugin-ui`。
 
 ### 持久计数与幂等的写法（参考 example-counter）
 

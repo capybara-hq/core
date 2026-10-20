@@ -256,6 +256,20 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 
 写渠道、登录、通讯录插件见 [skills/writing-channels](skills/writing-channels/SKILL.md)。
 
+### 对话页的右侧面板与插件界面
+
+对话页中间是对话，工具调用按时间线一行一条（工具给了显示摘要就显示那句话，如「更新任务清单（4 项）」，展开看完整的输入输出）。右侧是可以收起的标签面板：
+
+- 内核自带的标签：「运行」（本次对话的全部工具调用，有待批准的操作时带提醒标记）和「上下文」（已用 token / 上下文窗口、agent 与模型、用到的应用、压缩记录）。
+- 插件的标签：组织启用了带界面的插件后自动出现。例如启用 `@capybara-hq/plugin-todo`，就多一个「任务」标签，agent 每次更新清单都会实时刷新。插件也能往顶栏的「扩展」菜单加组织页面。
+
+插件界面分两档：
+
+- **渲染 schema 视图**：插件只返回结构化的块（清单、表格、图表、按钮、表单等），网页用设计系统组件画。插件写不了样式，也执行不了代码。升级时多出视图不需要重新批准。参考 `plugins/todo`。
+- **嵌入应用**：插件自己的页面放进沙箱 iframe，用来做看板、工作流这类复杂交互。页面经同源代理 `/plugin-ui/<插件>/...` 加载，读不到会话 Cookie，只拿到一个只对这个插件有效、5 分钟过期的令牌。嵌入应用在 `capybara plugins review` 里标为 `(sensitive)`，必须批准后才加载。参考 `plugins/example-board`：加进 `CAPYBARA_PLUGINS` 并在组织启用后，从顶栏「扩展」菜单打开组织看板，对话里会多一个「看板」标签。
+
+写插件界面见 [skills/writing-plugin-ui](skills/writing-plugin-ui/SKILL.md)。
+
 ## 运维须知
 
 - **初始化向导何时重新开放**：「需要初始化」的判定是「不存在活跃（`status = active`）的企业管理员」，每次实时查 PG。如果有人直接改库把所有企业管理员都停用或撤销了，部署会重新对未认证的 `POST /api/v1/setup` 开放，谁先调用谁就成为新的企业管理员。生产部署请始终设置 `CAPYBARA_AUTH__SETUP_TOKEN`（初始化须带同值的 `setupToken`）；恢复管理员优先用 CLI：`echo "$PW" | pnpm capybara admin create --login <名字> --display-name <显示名>`。
