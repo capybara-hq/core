@@ -60,6 +60,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 模型供应商插件：详见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。
 - 工具（`ctx.tools`、描述与错误文案、默认策略、输出存档、`tool_search`、漂移复核）：详见 [skills/writing-tools](skills/writing-tools/SKILL.md)，参考实现 `plugins/todo`。
 - 连接器（`connector@1`：MCP / OpenAPI 等远端服务接成应用）：详见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，参考实现 `plugins/connector-mcp`、`plugins/connector-openapi`。
+- 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`：身份键 `<插件>:<租户>`、onEvent 后才确认、卡片规范、防 @所有人、长连接与选主由内核负责）：详见 [skills/writing-channels](skills/writing-channels/SKILL.md)，参考实现 `plugins/slack`、`plugins/lark`。
 - **能自动检查的规则以检查为准**：`pnpm check` 会逐步收录各项自定义检查，每道检查都有「违规 fixture 使其失败」的测试。
 
 ## 常用命令

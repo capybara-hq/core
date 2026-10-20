@@ -63,6 +63,8 @@ definePlugin({
 
 能力登记表（`CAPABILITY_CARDINALITY`）扩成 `{ cardinality, brokered }`；`ctx.capabilities.get` 对 `brokered` 能力直接抛错。
 
+> **M4 实现说明**：登记表为 `CAPABILITIES`（`packages/plugin-sdk/src/capability.ts`），每项 `{ cardinality, brokered, orgScoped }`；`channel`、`directory` 为 `orgScoped`，`identity-source` 不是（登录是部署级，经 `auth.loginSources` 启用，Ruling P1）。`get` / `list` 另有带 `{ orgId }` 的重载：返回 Promise、按该组织的启用状态过滤（每次查库，不缓存；Ruling A1），不带 `orgId` 时同步、不按组织过滤。取 brokered 能力抛普通 `Error`（声明也解决不了，不记审计；Ruling A3）。
+
 ```ts
 // ctx 新增（只能取清单 requires / optional 里声明过的能力）
 capabilities: {
@@ -81,6 +83,7 @@ capabilities: {
 - 插件**安装在部署级、启用在组织级**（总设计 2.2）。A 依赖的能力在某组织没有任何已启用的提供者时，**在该组织启用 A 会被拒绝**，并提示缺哪个能力。
 - 运行中被依赖方在该组织被停用：取用时抛 `CapabilityUnavailableError`（`optional` 能力在 `list` 中消失），由 A 决定失败还是降级。
   停用被依赖方时界面提示「以下插件依赖它」。
+  （M4 实现：只有停用会让某个已启用的依赖方**再无**该能力的已启用提供方时才拒绝，`plugin.has_dependents`，可强制，Ruling A5。）
 - 部署级的能力（如模型供应商）不受组织启用开关影响，按 4.2 的用途配置决定组织能用哪些模型。
 
 ## 3. 调用上下文：跟着扩展点走
@@ -99,6 +102,8 @@ capabilities: {
 - M3 的 `ToolCallContext` 就是这条原则的第一个实现，其他扩展点照此设计。
 - **能看到会话内容的扩展点**（工具、`agent.preStep`、`model.*`、`tool.*` hook、渠道入站）在权限清单里单独声明并高亮（7.2）。
 - 插件需要跨调用保存的会话相关数据写自己的 `ctx.db`，这属于插件数据，在清单的数据项中展示；多副本纪律已禁止放进程内存。
+
+> **M4 实现说明**：渠道插件实际拿到的是渠道连接的 `connectionId` 与连接配置（`send` 另有目标、消息与组织语言 `locale`），组织与发言人账号由内核按连接与身份解析，插件看不到；通讯录只拿到该组织的组织级配置。提供 `channel@1` 不是单独的权限项，安装时在「提供的能力」里展示，权限清单接口的敏感分组只有密钥、公开路由、工具、hook（Ruling A5）。
 
 ## 4. 模型能力层
 
@@ -206,19 +211,22 @@ models: {
 | 模型 | `permissions.models`（用途列表，4.2） | 普通 | 「会调用模型：会话摘要（对话）」 |
 | 对象存储 | `permissions.storage` | 普通 | 「会读写对象存储」 |
 | 密钥 | `permissions.secrets` | **敏感** | 「会保存密钥」 |
-| HTTP 路由 | `permissions.http`（路由列表，含是否公开） | 公开路由**敏感** | 路由列表 |
+| HTTP 路由 | `permissions.http`（路由列表，含是否公开） | 公开路由**敏感** | 路由列表（M4：`public` 只是声明，插件路由仍不经内核鉴权，见下方说明） |
 | 工具 | `permissions.tools`（工具名列表） | **敏感** | 工具名与描述（工具能看到会话参数） |
 | Hook | `permissions.hooks`（挂载点列表） | 能看到会话内容的**敏感** | 挂载点与说明 |
 | 外部网络 | `permissions.network`（域名列表） | 仅展示（MVP 不拦截，见第 11 节） | 「会访问：open.feishu.cn……」，标注「声明，平台不拦截」 |
 
 敏感项在安装确认页单独高亮；组织管理员启用插件时也能看到同一张清单。
 
+> **M4 实现说明**：`permissions.http[].public` 目前只用于展示与快照（Ruling A2）：插件路由不论是否声明 `public` 都和 M0 起一样不经内核鉴权、由插件自行验签；非公开插件路由改由内核鉴权是以后的决定（届时是一次行为变更）。`hooks` 只校验挂载点名（`ctx.hooks` 在 M6），`models` / `storage` 为预留项，用了 `check:plugin-permissions` 报 `perm-reserved`。
+
 ### 7.3 批准与升级
 
 - 内核在 PG 记录每个插件**已批准的权限快照**。插件首次出现、或升级后清单比快照多出任何一项，该插件**不加载**，
   后台显示「待批准」，企业管理员确认后生效；权限变少或不变的升级直接生效。
 - 后台界面之前（M6 以前）用 CLI：`capybara plugins review` / `capybara plugins approve <name>`。
-- 开发与试用可在启动配置里显式开启 `plugins.autoApprove: true`，启动日志醒目提示；生产默认关闭。
+- 开发与试用可在启动配置里显式开启 `pluginPermissions.autoApprove: true`（`plugins` 仍是要加载的插件名数组，Ruling A4），启动时自动批准并打 warn 日志；生产默认关闭。
+- **M4 实现说明**：快照也约束 `capybara migrate`（未批准的插件不跑迁移、不建表；`plugins review` 会先跑内核迁移）；自动批准写快照（来源 auto）但不写审计；比快照版本旧的插件（滚动升级中重启的旧副本、回滚）权限不超出快照就照常加载，快照不缩减；「多出一项」按条目比较，把公开路由改成非公开、密钥字段改成普通字段也算新条目；数据表只解析 `CREATE TABLE`（`ALTER … RENAME`、视图不进快照）。「后台显示待批准」随 M6 管理后台提供，M4 只有 CLI 与启动日志。
 
 ### 7.4 自动检查
 
