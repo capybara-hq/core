@@ -22,6 +22,7 @@ import { readOrgSettings } from "../orgs/settings.service.js";
 import { configToJsonSchema, type JsonSchema } from "../plugins/config-json-schema.js";
 import type { PluginHost } from "../plugins/host.js";
 import { toIssues } from "../plugins/org-config.js";
+import { adaptToFeatures } from "./features.js";
 
 /** 内核 secrets 命名空间（插件名不能取 `kernel`）。 */
 const SECRETS_NAMESPACE = "kernel";
@@ -606,7 +607,8 @@ export class ChannelConnections {
   }
 
   /**
-   * 出站会话：解密一次连接配置，之后经插件发 / 改消息（每次调用 15s 超时）。出站投递任务在一次任务内复用它；
+   * 出站会话：解密一次连接配置，之后经插件发 / 改消息（每次调用 15s 超时）。目标与消息先按渠道的
+   * `features` 调整（不支持卡片的退回为文本、不支持话题的去掉 threadId，Ruling A33，见 features.ts）。出站投递任务在一次任务内复用它；
    * `redact` 按该连接的密钥打码（插件异常信息写进 `last_error` 前使用）。
    */
   async outbound(connectionId: string): Promise<ChannelOutboundSession> {
@@ -620,8 +622,7 @@ export class ChannelConnections {
       send: (target, message, idempotencyKey) =>
         channel.send({
           config,
-          target,
-          message,
+          ...adaptToFeatures(channel.features, target, message, locale),
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
           locale,
           ...(idempotencyKey !== undefined && { idempotencyKey }),
@@ -629,8 +630,7 @@ export class ChannelConnections {
       update: (target, messageId, message, idempotencyKey) =>
         channel.update({
           config,
-          target,
-          message,
+          ...adaptToFeatures(channel.features, target, message, locale),
           messageId,
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
           locale,

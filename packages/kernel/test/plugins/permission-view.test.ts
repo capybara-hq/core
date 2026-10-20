@@ -50,7 +50,7 @@ describe("permissionGroups", () => {
       },
     });
     const by = Object.fromEntries(groups.map((g) => [g.category, g]));
-    expect(by.provides).toEqual({ category: "provides", sensitive: false, items: ["channel@1"] });
+    expect(by.provides).toEqual({ category: "provides", sensitive: true, items: ["channel@1"] });
     expect(by.config?.items).toEqual(["org:token", "org:id"]);
     expect(by.secrets).toEqual({
       category: "secrets",
@@ -70,16 +70,16 @@ describe("permissionGroups", () => {
     expect(by.storage?.sensitive).toBe(false);
   });
 
-  it("提供 directory@1 或 identity-source@1 时「提供」一组标为敏感（能加人进组织 / 能登录成别人）", () => {
-    for (const cap of ["directory@1", "identity-source@1"]) {
-      const [g] = permissionGroups({ ...base, provides: ["channel@1", cap] });
+  it("提供 channel@1、directory@1 或 identity-source@1 时「提供」一组标为敏感（收到组织对话 / 能加人进组织 / 能登录成别人）", () => {
+    for (const cap of ["channel@1", "directory@1", "identity-source@1"]) {
+      const [g] = permissionGroups({ ...base, provides: ["counter@1", cap] });
       expect(g, cap).toEqual({
         category: "provides",
         sensitive: true,
-        items: ["channel@1", cap],
+        items: ["counter@1", cap],
       });
     }
-    const [plain] = permissionGroups({ ...base, provides: ["channel@1", "model-provider@2"] });
+    const [plain] = permissionGroups({ ...base, provides: ["counter@1", "model-provider@2"] });
     expect(plain?.sensitive).toBe(false);
   });
 });

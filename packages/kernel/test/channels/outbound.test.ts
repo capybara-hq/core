@@ -44,6 +44,9 @@ const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts"
 const CHAN_NOEDIT = fileURLToPath(
   new URL("../fixtures/plugins/chan-noedit/index.ts", import.meta.url),
 );
+const CHAN_PLAIN = fileURLToPath(
+  new URL("../fixtures/plugins/chan-plain/index.ts", import.meta.url),
+);
 const CHAN_SLOWEDIT = fileURLToPath(
   new URL("../fixtures/plugins/chan-slowedit/index.ts", import.meta.url),
 );
@@ -69,6 +72,7 @@ let noEditId: string;
 let failId: string;
 let anonId: string;
 let slowId: string;
+let plainId: string;
 let redis: Redis;
 /** 出站投递任务空闲多久结束（测试缩短到 1s）。 */
 const IDLE_MS = 1000;
@@ -80,7 +84,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, CHAN_MINI, CHAN_NOEDIT, CHAN_SLOWEDIT, MEM_CONNECTOR],
+        plugins: [MODEL_FAKE, CHAN_MINI, CHAN_NOEDIT, CHAN_SLOWEDIT, CHAN_PLAIN, MEM_CONNECTOR],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 2000, deliveryIdleMs: IDLE_MS },
@@ -102,7 +106,13 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   await testMembers(db).add(orgId, member.id, "member", ownerId);
-  for (const plugin of ["chan-mini", "chan-noedit", "chan-slowedit", "mem-connector"]) {
+  for (const plugin of [
+    "chan-mini",
+    "chan-noedit",
+    "chan-slowedit",
+    "chan-plain",
+    "mem-connector",
+  ]) {
     const en = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/plugins/${plugin}`,
@@ -134,6 +144,7 @@ beforeAll(async () => {
     ["chan-mini:t1", "u-member", member.id],
     ["chan-noedit:t1", "u-owner", ownerId],
     ["chan-slowedit:t1", "u-owner", ownerId],
+    ["chan-plain:t1", "u-owner", ownerId],
   ] as const) {
     await sql`INSERT INTO capybara.identities (source, external_id, account_id)
       VALUES (${source}, ${ext}, ${acct})`.execute(raw);
@@ -180,6 +191,7 @@ beforeAll(async () => {
   failId = await mk("chan-mini", "cli_fail", flakyId);
   anonId = await mk("chan-mini", "cli_anon", agentId, "anonymous");
   slowId = await mk("chan-slowedit", "cli_slow");
+  plainId = await mk("chan-plain", "cli_plain");
 }, 120_000);
 
 afterAll(async () => {
@@ -802,6 +814,34 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
       im.sent.slice(n).filter((s) => s.message.text === "You can't handle this request."),
     ).toEqual([]);
     await settled(await convOf(anonId, chat));
+  });
+});
+
+describe("features.cards / threads = false 的渠道（Ruling A33）", { timeout: 40_000 }, () => {
+  it("卡片按 renderCardAsText 拼进正文、不传 cards；群聊回复与卡片的目标都不带 threadId", async () => {
+    const chat = "grp-plain";
+    im.push(plainId, group("pl1", "u-owner", ECHO, { chatId: chat }));
+    const cardMsg = await waitFor(
+      async () => sentTo("cli_plain", chat).find((s) => s.message.text.includes("[Approval]")),
+      15_000,
+      "approval as text",
+    );
+    expect(cardMsg.message.cards).toBeUndefined();
+    expect(cardMsg.message.text).toContain("https://cap.example/chat/");
+    expect(sentTo("cli_plain", chat).every((s) => s.message.cards === undefined)).toBe(true);
+    expect(sentTo("cli_plain", chat).every((s) => s.target.threadId === undefined)).toBe(true);
+    expect(cardMsg.target).toEqual({ chatId: chat, chatType: "group" });
+  });
+
+  it("未绑定的人私聊：绑定卡片退回为文本（含绑定链接）", async () => {
+    im.push(plainId, dm("pl2", "u-stranger-plain", "hello"));
+    const msg = await waitFor(
+      async () => sentTo("cli_plain", "dm-u-stranger-plain")[0],
+      10_000,
+      "bind text",
+    );
+    expect(msg.message.cards).toBeUndefined();
+    expect(msg.message.text).toMatch(/https:\/\/cap\.example\/bind\//);
   });
 });
 

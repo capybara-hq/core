@@ -22,10 +22,14 @@ export interface PermissionGroup {
 }
 
 /**
- * 敏感的能力：`directory@1` 能把人加进组织（并为其建账号、建身份）、`identity-source@1` 决定谁能登录成哪个账号。
- * 插件提供其中任何一个时，「提供」一组标为敏感。
+ * 敏感的能力：`channel@1` 收到组织在 IM 里的对话内容（Ruling A33）、`directory@1` 能把人加进组织（并为其建账号、
+ * 建身份）、`identity-source@1` 决定谁能登录成哪个账号。插件提供其中任何一个时，「提供」一组标为敏感。
  */
-export const SENSITIVE_CAPABILITIES: readonly string[] = ["directory@1", "identity-source@1"];
+export const SENSITIVE_CAPABILITIES: readonly string[] = [
+  "channel@1",
+  "directory@1",
+  "identity-source@1",
+];
 
 /** 把权限集合整理成分组清单（固定顺序，空组省略）。纯函数。 */
 export function permissionGroups(set: PermissionSet): PermissionGroup[] {
