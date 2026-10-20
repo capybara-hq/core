@@ -22,6 +22,7 @@ import {
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import { EmbedTokens } from "../ui/embed-token.js";
 import {
   orgUiTopic,
   PluginUiRegistration,
@@ -204,6 +205,7 @@ export type KernelPluginContext = PluginContext & {
  * - `secrets` 仅当 `permissions.secrets`；`http.route` 只允许 `permissions.http` 声明的 method + path；
  *   `tools.register` 只允许 `permissions.tools` 声明的名字；`ui.view` / `ui.action` 只允许 `permissions.ui.views`
  *   声明的 id（只在 setup 期间）；`ui.invalidate` 经内核 bus（命名空间 `kernel`）发刷新，跨副本；
+ *   `ui.verifyEmbedToken` 校验内核签发的嵌入令牌，`claims.plugin` 必须是本插件；
  * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
  * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
  */
@@ -246,6 +248,7 @@ export function createPluginContext(
   ]);
 
   const uiReg = new PluginUiRegistration(manifest, deny);
+  const embedTokens = new EmbedTokens(deps.keyring);
 
   type Entry = { plugin: string; impl: unknown };
   /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
@@ -395,9 +398,9 @@ export function createPluginContext(
           msg,
         );
       },
-      // TODO(M4 T26)：校验内核签发的嵌入令牌；在那之前一律不认
-      async verifyEmbedToken() {
-        return null;
+      // 只认签给本插件、未过期、未篡改的令牌（见 ui/embed-token.ts）；其余一律 null
+      async verifyEmbedToken(token) {
+        return embedTokens.verify(token, name);
       },
     },
     provide(capability, impl) {

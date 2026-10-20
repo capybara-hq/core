@@ -6,12 +6,10 @@
  * 可带最大 2 MB 的 OpenAPI 文档，与内核这两个路由一致放宽到 6 MiB。客户端地址的处理见 `lib/peer.ts`。
  */
 
+import { configuredMaxBodyBytes, kernelUrl, readBody, tooLarge } from "../../../lib/kernel-proxy";
 import { FORWARDING_HEADERS, trustedPeer } from "../../../lib/peer";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_KERNEL_URL = "http://localhost:8080";
-const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 
 /** 安装 / 预览应用的请求体上限（与内核 http/app.ts 的 LARGE_BODY_LIMIT 一致）。 */
 const APP_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
@@ -48,52 +46,11 @@ const DROP_RESPONSE = new Set([
   "set-cookie",
 ]);
 
-function kernelUrl(): string {
-  return (process.env.CAPYBARA_KERNEL_URL ?? DEFAULT_KERNEL_URL).replace(/\/+$/, "");
-}
-
 function maxBodyBytes(method: string, pathname: string): number {
-  const n = Number(process.env.CAPYBARA_WEB_MAX_BODY_BYTES);
-  const base = Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_BODY_BYTES;
+  const base = configuredMaxBodyBytes();
   return method === "POST" && APP_INSTALL_PATH.test(pathname)
     ? Math.max(base, APP_INSTALL_MAX_BODY_BYTES)
     : base;
-}
-
-const tooLarge = (limit: number) =>
-  Response.json(
-    { error: { code: "payload_too_large", message: `Request body exceeds ${limit} bytes` } },
-    { status: 413 },
-  );
-
-/**
- * 读完请求体，超过 `limit` 字节立即中止并返回 `undefined`：先看 content-length（超限则一字节都不读），
- * 再边读边计数（没有或谎报 content-length 时兜底）。
- */
-async function readBody(req: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | undefined> {
-  const declared = Number(req.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > limit) return undefined;
-  if (req.body === null) return new Uint8Array(new ArrayBuffer(0));
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel().catch(() => {});
-      return undefined;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(new ArrayBuffer(size));
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
 }
 
 async function proxy(req: Request): Promise<Response> {

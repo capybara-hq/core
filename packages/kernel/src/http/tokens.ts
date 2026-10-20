@@ -108,6 +108,8 @@ export const DIRECTORY_SYNC = Symbol("DIRECTORY_SYNC");
 
 /** `UiViews`（插件视图：列出贡献、render / action）的注入令牌。 */
 export const UI_VIEWS = Symbol("UI_VIEWS");
+/** `EmbedTokens`（嵌入应用的短期令牌，签发 / 校验）的注入令牌。 */
+export const EMBED_TOKENS = Symbol("EMBED_TOKENS");
 
 /** `OrgUiStreams`（组织级界面刷新 SSE）的注入令牌。 */
 export const ORG_UI_STREAMS = Symbol("ORG_UI_STREAMS");

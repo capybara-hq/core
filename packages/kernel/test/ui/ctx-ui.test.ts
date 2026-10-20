@@ -9,6 +9,7 @@ import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.j
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { orgUiTopic } from "../../src/ui/registry.js";
 import { waitFor } from "../helpers/runs.js";
 
@@ -135,8 +136,20 @@ describe("ctx.ui.invalidate", () => {
     await ctx.close();
   });
 
-  it("verifyEmbedToken 仍返回 null（T26 实现）", async () => {
+  it("verifyEmbedToken：同一主密钥签给本插件的令牌通过；签给别的插件、别的主密钥、乱写的一律 null", async () => {
     const ctx = createPluginContext(deps, mf(), {});
+    const claims = { orgId: "o1", accountId: "a1", contribution: "board" };
+    const mine = new EmbedTokens(deps.keyring).issue({ plugin: "ui-test", ...claims }).token;
+    expect(await ctx.ui.verifyEmbedToken(mine)).toEqual(
+      expect.objectContaining({ plugin: "ui-test", orgId: "o1", accountId: "a1" }),
+    );
+    const theirs = new EmbedTokens(deps.keyring).issue({ plugin: "other", ...claims }).token;
+    expect(await ctx.ui.verifyEmbedToken(theirs)).toBeNull();
+    const foreign = new EmbedTokens(createKeyring(Buffer.alloc(32, 9), [])).issue({
+      plugin: "ui-test",
+      ...claims,
+    }).token;
+    expect(await ctx.ui.verifyEmbedToken(foreign)).toBeNull();
     expect(await ctx.ui.verifyEmbedToken("x")).toBeNull();
     await ctx.close();
   });

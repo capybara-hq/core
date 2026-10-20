@@ -86,7 +86,7 @@ export const pluginPageHref = (plugin: string, id: string) =>
 
 /**
  * 顶栏「扩展」菜单的菜单项：当前组织已启用插件的页面贡献（`place: "page"`），按插件分组（组间分隔线），
- * 显示「插件 · 页面标题」。嵌入应用（`kind: "embed"`）由 T26 接入，这里先不列。
+ * 显示「插件 · 页面标题」。渲染 schema 视图与嵌入应用（`kind: "embed"`）都列，页面按 kind 渲染。
  * 没有当前组织、没有页面贡献或读取失败时为空（菜单不出现）。
  */
 export function useExtensions(orgId: string | null, locale: string): MenuItem[] {
@@ -99,7 +99,7 @@ export function useExtensions(orgId: string | null, locale: string): MenuItem[] 
     let disposed = false;
     listUiContributions(orgId).then(
       ({ items }) => {
-        if (!disposed) setPages(items.filter((c) => c.place === "page" && c.kind === "view"));
+        if (!disposed) setPages(items.filter((c) => c.place === "page"));
       },
       () => {
         if (!disposed) setPages([]);

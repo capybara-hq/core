@@ -4,6 +4,7 @@ import { Button, DetailPage, Skeleton, Stack, Text } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { EmbedTab } from "../../../../../../components/chat-panel/EmbedTab";
 import {
   PluginViewTab,
   usePluginViews,
@@ -16,7 +17,11 @@ import { listUiContributions, openUiStream, uiKey, uiLocale } from "../../../../
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
 
-/** `/[locale]/p/[plugin]/[id]`：插件的组织页面（顶栏「扩展」菜单），DetailPage、不带 Inspector。 */
+/**
+ * `/[locale]/p/[plugin]/[id]`：插件的组织页面（顶栏「扩展」菜单），DetailPage、不带 Inspector。
+ * 渲染 schema 视图（kind view）由我们的组件画、经组织级刷新流实时刷新；嵌入应用（kind embed）在沙箱 iframe
+ * 里打开插件自己的页面（`EmbedTab`），刷新由插件页面自己做。
+ */
 export default function PluginPage() {
   const { plugin, id } = useParams<{ plugin: string; id: string }>();
   return (
@@ -37,8 +42,8 @@ function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string;
           (c) => c.plugin === plugin && c.id === id && c.place === "page",
         )
       : undefined;
-  // embed 贡献：T26 用 EmbedFrame 渲染（coming in T26）；在那之前按「不可用」处理
   const isView = contribution?.kind === "view";
+  const isEmbed = contribution?.kind === "embed";
   const targets = useMemo(() => (isView ? [{ plugin, id }] : []), [isView, plugin, id]);
 
   // 组织级刷新流：本页面的贡献变了就重取；断线重连后也重取一次（期间可能漏掉刷新）
@@ -80,6 +85,8 @@ function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string;
         </Stack>
       </Stack>
     );
+  } else if (isEmbed) {
+    body = <EmbedTab key={key} orgId={orgId} plugin={plugin} id={id} title={title} />;
   } else if (!isView) body = <Text tone="muted">{t("errors.ui.not_found")}</Text>;
   else {
     body = (

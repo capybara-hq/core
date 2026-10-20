@@ -2,7 +2,7 @@ import { apiFetch } from "./api";
 import type { FormAnswer, InputForm } from "./conversations";
 
 /**
- * 插件界面（第一档：渲染 schema）的类型与接口。
+ * 插件界面（第一档：渲染 schema；第二档：嵌入应用的令牌）的类型与接口。
  * 类型照抄 `packages/plugin-sdk/src/ui.ts`（`UiBlock` / `UiView` / `UiContribution`）：Web 层只依赖 design，
  * 不 import SDK，SDK 改了这里要同步。接口见内核 `packages/kernel/src/ui/views.controller.ts`。
  */
@@ -17,6 +17,15 @@ export interface UiContributionItem {
   title: { zh: string; en: string };
   place: UiPlace;
   kind: UiKind;
+  /** 仅 embed：插件路由下 `/ui/` 开头的路径。 */
+  path?: string;
+}
+
+/** 嵌入令牌（`POST .../ui/embeds/:plugin/:id/token`）：`src` 是同源代理下的页面地址。 */
+export interface EmbedToken {
+  token: string;
+  src: string;
+  expiresAt: string;
 }
 
 export type UiBlock =
@@ -115,6 +124,20 @@ export const postUiAction = (
   apiFetch<UiActionResult>(`${base(orgId)}/actions/${target(plugin, id)}`, {
     method: "POST",
     body: JSON.stringify(body),
+  });
+
+/** 取嵌入令牌：对话嵌入带 `conversationId`，组织页面不带。 */
+export const requestEmbedToken = (
+  orgId: string,
+  plugin: string,
+  id: string,
+  opts: { conversationId?: string } = {},
+) =>
+  apiFetch<EmbedToken>(`${base(orgId)}/embeds/${target(plugin, id)}/token`, {
+    method: "POST",
+    body: JSON.stringify(
+      opts.conversationId !== undefined ? { conversationId: opts.conversationId } : {},
+    ),
   });
 
 /** 组织级刷新流的 URL（SSE，经同源代理）。 */

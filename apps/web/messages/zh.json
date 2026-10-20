@@ -274,7 +274,8 @@
     "thinkingLive": "思考中…"
   },
   "ui": {
-    "dangerDescription": "这个操作由插件执行，可能无法撤销。"
+    "dangerDescription": "这个操作由插件执行，可能无法撤销。",
+    "embedRefreshFailed": "插件页面的凭据续期失败，正在重试；页面可能暂时无法读写。"
   },
   "chatPanel": {
     "label": "对话面板",

@@ -14,13 +14,14 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { API_TOKENS, ORG_UI_STREAMS, SESSIONS, UI_VIEWS } from "../http/tokens.js";
+import { API_TOKENS, EMBED_TOKENS, ORG_UI_STREAMS, SESSIONS, UI_VIEWS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import type { SessionService } from "../identity/sessions.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import type { EmbedTokens } from "./embed-token.js";
 import type { OrgUiStreams } from "./ui-stream.js";
 import type { UiContributionItem, UiViews } from "./views.js";
 
@@ -64,13 +65,26 @@ const ActionBody = z.object({
   locale: Locale,
 });
 
+const EmbedTokenBody = z
+  .object({ conversationId: z.string().min(1).max(100).optional() })
+  .default({});
+
+/** 嵌入页的同源代理前缀（网页 `/plugin-ui/<plugin>/<rest>` → 内核 `/plugins/<plugin>/ui/<rest>`）。 */
+const embedSrc = (plugin: string, path: string) =>
+  `/plugin-ui/${plugin}/${path.replace(/^\/ui\//, "")}`;
+
 /**
- * 插件界面（第一档：渲染 schema），会话鉴权、`ui.use`（只给人用，服务令牌 403）：
- * - `GET  /api/v1/orgs/:orgId/ui/contributions` → `{ items: { plugin, id, title, place, kind }[] }`；
+ * 插件界面（第一档：渲染 schema；第二档：嵌入应用），会话鉴权、`ui.use`（只给人用，服务令牌 403）：
+ * - `GET  /api/v1/orgs/:orgId/ui/contributions` → `{ items: { plugin, id, title, place, kind, path? }[] }`
+ *   （`path` 仅 embed）；
  * - `GET  /api/v1/orgs/:orgId/ui/views/:plugin/:id?conversationId=&locale=` → `{ view }`；
  * - `POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id`（`{ actionId, payload?, answer?, conversationId?, locale? }`）
  *   → `{ toast }` | `{ view }`；
- * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`）。
+ * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`）；
+ * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（`{ conversationId? }`）
+ *   → `{ token, src: "/plugin-ui/<plugin>/<path 去掉 /ui/>", expiresAt }`：嵌入令牌（300 秒，见 `embed-token.ts`）。
+ *   插件须在组织启用、贡献须是 embed；对话嵌入要求能访问该对话（否则 404）。令牌只给插件路由用，
+ *   内核鉴权守卫不认它（它不是 API 令牌）。
  * 对话视图的刷新走现有的会话流 `/conversations/:id/stream`。
  */
 @Controller("api/v1/orgs/:orgId/ui")
@@ -80,6 +94,7 @@ export class UiController implements OnModuleDestroy {
     @Inject(ORG_UI_STREAMS) private readonly streams: OrgUiStreams,
     @Inject(SESSIONS) private readonly sessions: SessionService,
     @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
+    @Inject(EMBED_TOKENS) private readonly embeds: EmbedTokens,
   ) {}
 
   @Get("contributions")
@@ -139,6 +154,34 @@ export class UiController implements OnModuleDestroy {
         ...(body.answer !== undefined && { answer: body.answer }),
       },
     );
+  }
+
+  @Post("embeds/:plugin/:id/token")
+  @HttpCode(200)
+  @OrgAction("ui.use")
+  async embedToken(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("plugin", new ZodPipe(Id)) plugin: string,
+    @Param("id", new ZodPipe(Id)) id: string,
+    @Body(new ZodPipe(EmbedTokenBody)) body: z.infer<typeof EmbedTokenBody>,
+  ): Promise<{ token: string; src: string; expiresAt: string }> {
+    const p = requireUser(principal);
+    const target = await this.views.embed({
+      orgId: org.orgId,
+      accountId: p.account.id,
+      plugin,
+      id,
+      ...(body.conversationId !== undefined && { conversationId: body.conversationId }),
+    });
+    const { token, expiresAt } = this.embeds.issue({
+      plugin: target.plugin,
+      orgId: org.orgId,
+      accountId: p.account.id,
+      ...(target.conversationId !== undefined && { conversationId: target.conversationId }),
+      contribution: target.contribution,
+    });
+    return { token, src: embedSrc(target.plugin, target.path), expiresAt: expiresAt.toISOString() };
   }
 
   /** 组织级刷新流：与会话流一样用 `reply.hijack()` 直接写原始响应；心跳与复核间隔同 `runtime.sse*`。 */

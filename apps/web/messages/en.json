@@ -274,7 +274,8 @@
     "thinkingLive": "Thinking…"
   },
   "ui": {
-    "dangerDescription": "The plugin performs this action. It may not be reversible."
+    "dangerDescription": "The plugin performs this action. It may not be reversible.",
+    "embedRefreshFailed": "Could not renew the plugin page's credentials. Retrying; the page may not load or save data for now."
   },
   "chatPanel": {
     "label": "Conversation panel",

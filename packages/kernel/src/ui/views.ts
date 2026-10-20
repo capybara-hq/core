@@ -20,6 +20,17 @@ export interface UiContributionItem {
   title: UiContribution["title"];
   place: UiContribution["place"];
   kind: UiContribution["kind"];
+  /** 仅 embed：插件路由下 `/ui/` 开头的路径（网页经 `/plugin-ui/<plugin>/...` 代理访问）。 */
+  path?: string;
+}
+
+/** 嵌入应用的签发目标：已核对组织启用与对话访问。 */
+export interface UiEmbedTarget {
+  plugin: string;
+  contribution: string;
+  /** 清单里的 `path`（`/ui/` 开头）。 */
+  path: string;
+  conversationId?: string;
 }
 
 export interface UiViewsDeps {
@@ -96,7 +107,24 @@ export class UiViews {
         title: c.title,
         place: c.place,
         kind: c.kind,
+        ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
       }));
+  }
+
+  /**
+   * 嵌入应用：核对贡献是 embed、插件在该组织启用；对话嵌入要求调用者能访问该对话（否则 404，与视图一致），
+   * 组织页面不收 `conversationId`。返回签发令牌所需的目标（令牌由调用方签）。
+   */
+  async embed(t: Omit<UiTarget, "locale">): Promise<UiEmbedTarget> {
+    const { entry, args } = await this.resolve({ ...t, locale: "en" }, "embed");
+    const path = entry.contribution.path;
+    if (path === undefined) throw notFound();
+    return {
+      plugin: t.plugin,
+      contribution: t.id,
+      path,
+      ...(args.conversationId !== undefined && { conversationId: args.conversationId }),
+    };
   }
 
   /** 取视图：调用插件 `render`，校验返回的视图。 */
@@ -131,15 +159,22 @@ export class UiViews {
   }
 
   /** 找贡献、核对组织启用与对话访问；返回传给插件的参数（不含 signal）。 */
-  private async resolve(t: UiTarget, need: "render" | "action") {
+  private async resolve(
+    t: UiTarget,
+    need: "render" | "action" | "embed",
+  ): Promise<{
+    entry: LoadedUiContribution;
+    args: { orgId: string; accountId: string; locale: UiTarget["locale"]; conversationId?: string };
+  }> {
     const entry = this.d.host
       .uiContributions()
       .find(
         (c) =>
           c.plugin === t.plugin &&
           c.contribution.id === t.id &&
-          c.contribution.kind === "view" &&
-          c[need] !== undefined,
+          (need === "embed"
+            ? c.contribution.kind === "embed"
+            : c.contribution.kind === "view" && c[need] !== undefined),
       );
     if (!entry || !(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
     const base = { orgId: t.orgId, accountId: t.accountId, locale: t.locale };
@@ -147,14 +182,17 @@ export class UiViews {
       if (t.conversationId !== undefined) {
         throw new ApiError(
           "validation_failed",
-          "conversationId is not allowed for an organization page view",
+          `conversationId is not allowed for an organization page ${need === "embed" ? "embed" : "view"}`,
         );
       }
       return { entry, args: base };
     }
     const conversationId = t.conversationId;
     if (conversationId === undefined) {
-      throw new ApiError("validation_failed", "conversationId is required for a conversation view");
+      throw new ApiError(
+        "validation_failed",
+        `conversationId is required for a conversation ${need === "embed" ? "embed" : "view"}`,
+      );
     }
     if (
       !UUID_RE.test(conversationId) ||

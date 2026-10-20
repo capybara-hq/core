@@ -63,6 +63,7 @@ import type { ToolOutputs } from "../tools/outputs.js";
 import { QuestionsController } from "../tools/questions.controller.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { EmbedTokens } from "../ui/embed-token.js";
 import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
 import { UiController } from "../ui/views.controller.js";
 import { UiViews } from "../ui/views.js";
@@ -79,6 +80,7 @@ import {
   CONVERSATIONS,
   CREDENTIALS,
   DIRECTORY_SYNC,
+  EMBED_TOKENS,
   EVENT_LOG,
   EXTERNAL_IDENTITIES,
   IDENTITY_BINDING,
@@ -307,6 +309,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         }),
       inject: [KERNEL_DB, CONVERSATIONS],
     },
+    { provide: EMBED_TOKENS, useFactory: () => new EmbedTokens(deps.keyring) },
     {
       provide: ORG_UI_STREAMS,
       useFactory: (db: KernelDb, bus: StreamBus, config: () => KernelConfig) =>

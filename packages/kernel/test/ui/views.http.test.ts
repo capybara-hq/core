@@ -189,6 +189,7 @@ describe("插件视图接口", () => {
         title: { zh: "看板", en: "Board" },
         place: "page",
         kind: "embed",
+        path: "/ui/board",
       },
     ]);
     // 成员（guest 以上）都能列

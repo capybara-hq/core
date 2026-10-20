@@ -11,7 +11,7 @@ import { AppFrame } from "../src/components/shell/AppFrame";
 import { RequireSession } from "../src/components/shell/session";
 import type { UiView } from "../src/lib/ui";
 import { bodyOf, json, stubApi } from "./support/api";
-import { Link, resetNavigation } from "./support/navigation";
+import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -136,6 +136,7 @@ describe("对话页右侧标签面板", () => {
     const tabs = within(panelOf()).getAllByRole("tab");
     expect(tabs.map((t) => t.textContent?.replace(/1\/2/, ""))).toEqual([
       "任务",
+      "实时",
       zh.chatPanel.run,
       zh.chatPanel.context,
     ]);
@@ -583,6 +584,7 @@ describe("顶栏「扩展」菜单", () => {
     const items = await screen.findAllByRole("menuitem");
     expect(items.map((i) => [i.textContent, i.getAttribute("href")])).toEqual([
       ["board · Board", "/p/board/overview"],
+      ["board · Live", "/p/board/live"],
       ["crm · Deals", "/p/crm/deals"],
     ]);
   });
@@ -675,5 +677,103 @@ describe("插件页面 /p/<plugin>/<id>", () => {
     renderPage(<PluginPage />, { locale: "en" });
     expect(await screen.findByText(`✗ ${en.errors.ui.render_failed}`)).toBeTruthy();
     expect(screen.getByRole("button", { name: en.common.retry })).toBeTruthy();
+  });
+});
+
+describe("嵌入应用（第二档）", () => {
+  const issued = (src: string) =>
+    json(200, { token: "tok-1", src, expiresAt: new Date(Date.now() + 300_000).toISOString() });
+
+  it("对话标签：取令牌（带 conversationId），沙箱 iframe 打开同源代理地址；加载后发 init，处理 navigate / toast / resize", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [EMBED] }),
+      [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    const tab = await within(panelOf()).findByRole("tab", { name: /Live/ });
+    expect(tab.getAttribute("aria-selected")).toBe("true");
+    const frame = (await within(panelOf()).findByTitle("Live")) as HTMLIFrameElement;
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame.getAttribute("src")).toBe("/plugin-ui/board/live");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-forms");
+    expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
+    const post = calls.find((c) => c.url === `${UI}/embeds/board/live/token`);
+    expect(bodyOf(post)).toEqual({ conversationId: "c1" });
+    expect(post?.headers.get("x-capybara-csrf")).toBe("1");
+
+    const win = frame.contentWindow as Window;
+    const sent: unknown[] = [];
+    vi.spyOn(win, "postMessage").mockImplementation((m: unknown) => {
+      sent.push(m);
+    });
+    act(() => {
+      frame.dispatchEvent(new Event("load"));
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        protocol: "capybara-embed/1",
+        type: "init",
+        token: "tok-1",
+        locale: "en",
+        context: { orgId: "o1", conversationId: "c1" },
+      }),
+    ]);
+
+    const fromFrame = (data: unknown, source: unknown = win) =>
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data, source: source as Window }));
+      });
+    // 别的 window 发来的、站外跳转：忽略
+    fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "/chat/c9" }, window);
+    fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "https://evil.example" });
+    fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "//evil.example" });
+    expect(router.push).not.toHaveBeenCalled();
+    fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "/chat/c9" });
+    expect(router.push).toHaveBeenCalledWith("/chat/c9");
+    fromFrame({ protocol: "capybara-embed/1", type: "toast", text: "Card added" });
+    expect(await screen.findByText("Card added")).toBeTruthy();
+    fromFrame({ protocol: "capybara-embed/1", type: "resize", height: 640 });
+    await vi.waitFor(() => expect(frame.getAttribute("height")).toBe("640"));
+  });
+
+  it("取令牌失败：只在这个标签显示错误与「重试」，重试后打开", async () => {
+    let fail = true;
+    stubApi({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [EMBED] }),
+      [`POST ${UI}/embeds/board/live/token`]: () =>
+        fail
+          ? json(404, { error: { code: "ui.not_found", message: "x" } })
+          : issued("/plugin-ui/board/live"),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    const panel = panelOf();
+    expect(await within(panel).findByText(`✗ ${en.errors.ui.not_found}`)).toBeTruthy();
+    expect(screen.getByText("hi")).toBeTruthy();
+    fail = false;
+    await userEvent.setup().click(within(panel).getByRole("button", { name: en.common.retry }));
+    expect(await within(panel).findByTitle("Live")).toBeTruthy();
+  });
+
+  it("组织页面 /p/<plugin>/<id>：kind embed 渲染沙箱 iframe（不带 conversationId，不开组织流）", async () => {
+    params.current = { plugin: "board", id: "live" };
+    const calls = stubApi({
+      [`GET ${UI}/contributions`]: () =>
+        json(200, { items: [{ ...EMBED, place: "page", path: "/ui/live" }] }),
+      [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
+    });
+    const { container } = renderPage(<PluginPage />, { locale: "en" });
+    const frame = await vi.waitFor(() => {
+      const f = container.querySelector("iframe");
+      if (!f) throw new Error("no iframe yet");
+      return f;
+    });
+    expect(frame.getAttribute("title")).toBe("Live");
+    expect(frame.getAttribute("src")).toBe("/plugin-ui/board/live");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-forms");
+    expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
+    expect(bodyOf(calls.find((c) => c.url.includes("/embeds/")))).toEqual({});
+    expect(FakeEventSource.instances.find((s) => s.url === `${UI}/stream`)).toBeUndefined();
   });
 });

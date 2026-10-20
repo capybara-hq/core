@@ -135,7 +135,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 | `ctx.http.route` | 对外接口 | 实际挂在 `/plugins/<name><path>`；匹配与 body 语义见下节，不经内核鉴权 |
 | `ctx.provide` | 对外暴露能力实现 | 要与清单 `provides` 一致 |
 | `ctx.tools` | 给 agent 提供工具 | `register(spec, handler)` 只能在 `setup` 里调用；模型可见名 `<插件名>__<spec.name>`；**只在启用了本插件的组织可用**（组织 admin `PUT /api/v1/orgs/:orgId/plugins/<name> {"enabled": true}`），未启用时运行时按不可用工具处理。描述与错误文案规则、默认策略、`ToolError`、`InputRequired` 见 `skills/writing-tools`，参考 `plugins/todo` |
-| `ctx.ui` | 对话页右侧标签 / 组织页面（渲染 schema 视图） | `view(id, render)` / `action(id, handler)` 只能在 `setup` 里调用，id 是 `permissions.ui.views` 里的；`render({ orgId, accountId, conversationId?, locale, signal })` 返回 `UiView`（`validateUiView` 校验，块与上限见 SDK `ui.ts`），身份由内核鉴权后给出，对话视图的 `conversationId` 已核对调用者能访问；5 秒内必须返回：超时内核中止 `signal`、返回 504，网页只让那个标签显示失败。**`render` 与 `action` 都必须响应 `signal`**——把它传给查询 / 外部请求（如 `fetch(url, { signal })`），中止后尽快放弃，别在超时后继续做事（尤其 `action` 里的写操作：超时后用户看到的是失败，可能会重试）；抛错（render → `ui.render_failed`，action → `ui.action_failed`）/ 非法视图同样只影响那个标签、记告警、不写对话日志。数据变了调 `invalidate({ orgId, conversationId?, contribution })`（`conversationId` 须是会话 UUID）：带对话发到会话流（`event: ui`），不带发到组织流，经 Redis bus 跨副本。**只在启用了本插件的组织出现**。参考 `plugins/todo` 的 `tasks` |
+| `ctx.ui` | 对话页右侧标签 / 组织页面（渲染 schema 视图） | `view(id, render)` / `action(id, handler)` 只能在 `setup` 里调用，id 是 `permissions.ui.views` 里的；`render({ orgId, accountId, conversationId?, locale, signal })` 返回 `UiView`（`validateUiView` 校验，块与上限见 SDK `ui.ts`），身份由内核鉴权后给出，对话视图的 `conversationId` 已核对调用者能访问；5 秒内必须返回：超时内核中止 `signal`、返回 504，网页只让那个标签显示失败。**`render` 与 `action` 都必须响应 `signal`**——把它传给查询 / 外部请求（如 `fetch(url, { signal })`），中止后尽快放弃，别在超时后继续做事（尤其 `action` 里的写操作：超时后用户看到的是失败，可能会重试）；抛错（render → `ui.render_failed`，action → `ui.action_failed`）/ 非法视图同样只影响那个标签、记告警、不写对话日志。数据变了调 `invalidate({ orgId, conversationId?, contribution })`（`conversationId` 须是会话 UUID）：带对话发到会话流（`event: ui`），不带发到组织流，经 Redis bus 跨副本。**只在启用了本插件的组织出现**。参考 `plugins/todo` 的 `tasks`。嵌入应用（kind embed）见下文「嵌入应用」 |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
 | `ctx.config` / `ctx.log` | 部署配置 / 日志 | 日志里不要打印密钥 |
 
@@ -162,6 +162,18 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 - **插件路由不经内核鉴权**：没有 AuthGuard、不检查 CSRF 头、拿不到调用者身份（尚未提供；清单的 `public` 目前只是声明，Ruling A2）。对外暴露的 webhook 必须自行验签。
 - **内核会话 Cookie 被剥掉**：转交前从 `Cookie` 头删去 `cap_at` / `cap_rt`（其余 Cookie 原样保留；只剩这两个时不带 `Cookie` 头），插件拿不到用户的内核会话。
 - 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
+- `req.signal` 在客户端断开（响应连接关闭）时中止：长连接（SSE）的 handler 用它退订、收尾。
+
+### 嵌入应用（kind embed，参考 example-board）
+
+插件自己的页面放进网页的沙箱 iframe（`allow-scripts allow-forms`，不透明源）。参考 `plugins/example-board`。
+
+- 清单：`ui` 里 `{ id, title, place, kind: "embed", path: "/ui/..." }`，id 列进 `permissions.ui.embeds`（敏感项、要批准），页面与数据路由都声明在 `permissions.http`，路径以 `/ui/` 开头。
+- 网页经同源代理 `/plugin-ui/<插件>/<rest>` 访问 `/plugins/<插件>/ui/<rest>`：只放行 GET / POST、只到 `/ui/` 下，不转发 Cookie，去掉 `Set-Cookie`，统一加 CSP（`sandbox allow-scripts allow-forms`、`frame-ancestors 'self'`、资源与 `connect-src` 只限本源、允许内联脚本 / 样式）。页面里用**相对地址**（如 `fetch("cards")`、`<script src="board.js">`）；外部资源会被 CSP 拦下。
+- 身份：外层页面在 iframe 加载后发 `init`（`EMBED_PROTOCOL` 消息，带嵌入令牌、语言、主题、`--cb-*` 设计 token、组织 / 对话），过期前 60 秒发 `token` 续期，主题切换发 `theme`。页面请求带 `Authorization: Bearer <令牌>`，**每个数据路由先 `await ctx.ui.verifyEmbedToken(token)`**，返回 null 就 401；组织、账号、对话只从返回的声明里取（对话嵌入的 `conversationId` 内核已核对调用者能访问）。令牌 300 秒有效、只认签给本插件的，内核 `/api` 不认它。
+- 静态页面与脚本不含数据时可以不验令牌（iframe 导航带不了 Authorization 头）；数据一律验。
+- 发给外层：`resize`（高度）、`navigate`（只能是站内路径，如 `/chat/<id>`）、`toast`（纯文本），用 `window.parent.postMessage(msg, "*")`。
+- 实时刷新：自己开 SSE 路由（EventSource 带不了头，页面用 `fetch` 读流），**按请求** `ctx.bus.subscribe`，在 `req.signal` 中止（客户端断开）或 `ReadableStream` 的 `cancel` 里退订；流在令牌 `exp` 时结束，页面用续期的令牌重连。心跳用 `AbortSignal.timeout` 的单次请求内等待，不用定时器。
 
 ### 持久计数与幂等的写法（参考 example-counter）
 

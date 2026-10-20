@@ -8,6 +8,7 @@ import { listUiContributions, type UiContributionItem, uiKey, uiLocale } from ".
 import { useLoad } from "../../lib/use-load";
 import type { ChatView } from "../ChatView";
 import { ContextTab } from "./ContextTab";
+import { EmbedTab } from "./EmbedTab";
 import { PluginViewTab, usePluginViews, useUiAction } from "./PluginViewTab";
 import { RunTab } from "./RunTab";
 
@@ -31,14 +32,15 @@ function writeTab(id: string): void {
 }
 
 const viewTab = (c: UiContributionItem) => `view:${uiKey(c.plugin, c.id)}`;
+const embedTab = (c: UiContributionItem) => `embed:${uiKey(c.plugin, c.id)}`;
 
 type ToolItem = Extract<ChatItem, { kind: "tool" }>;
 
 /**
  * 对话页右侧面板（PlaygroundPage 的 Inspector）：顶部是运行状态与「停止」（`header`），下面一组标签：
- * 插件对话视图（按贡献顺序，带插件给的 badge）、产物（还没有来源，隐藏）、运行（工具调用；有待批准的操作时带提醒）、
- * 上下文。插件视图各自取数、各自失败：一个插件慢了或挂了只影响它自己的标签，对话流照常。
- * 嵌入应用（`kind: "embed"`）由 T26 渲染，这里先跳过。
+ * 插件对话视图与嵌入应用（按贡献顺序；视图带插件给的 badge）、产物（还没有来源，隐藏）、运行（工具调用；有待批准的操作时带提醒）、
+ * 上下文。插件标签各自取数、各自失败：一个插件慢了或挂了只影响它自己的标签，对话流照常。
+ * 嵌入应用（`kind: "embed"`）在沙箱 iframe 里打开插件自己的页面（`EmbedTab`），只在选中时挂载。
  */
 export function ChatPanel({
   orgId,
@@ -55,16 +57,14 @@ export function ChatPanel({
   const tc = useTranslations("common");
   const locale = uiLocale(useLocale());
   const contributions = useLoad(() => listUiContributions(orgId), [orgId]);
-  const targets = useMemo(
+  const conversational = useMemo(
     () =>
       contributions.state.kind === "ready"
-        ? contributions.state.data.items.filter(
-            // embed 贡献：T26 用 EmbedFrame 渲染（coming in T26），这里不出标签
-            (c) => c.place === "conversation" && c.kind === "view",
-          )
+        ? contributions.state.data.items.filter((c) => c.place === "conversation")
         : [],
     [contributions.state],
   );
+  const targets = useMemo(() => conversational.filter((c) => c.kind === "view"), [conversational]);
   const views = usePluginViews(orgId, targets, {
     conversationId,
     locale,
@@ -79,7 +79,8 @@ export function ChatPanel({
   const pendingApproval = chat.items.some((i) => i.kind === "approval" && i.decided === null);
 
   const items: TabItem[] = [
-    ...targets.map((c): TabItem => {
+    ...conversational.map((c): TabItem => {
+      if (c.kind === "embed") return { id: embedTab(c), label: c.title[locale] };
       const state = views.states[uiKey(c.plugin, c.id)];
       const badge = state?.kind === "ready" ? state.view.badge : undefined;
       return { id: viewTab(c), label: c.title[locale], ...(badge !== undefined && { badge }) };
@@ -122,6 +123,20 @@ export function ChatPanel({
         contextWindowOf={chat.contextWindowOf}
       />
     );
+  } else if (current?.startsWith("embed:")) {
+    const c = conversational.find((x) => x.kind === "embed" && embedTab(x) === current);
+    if (c !== undefined) {
+      content = (
+        <EmbedTab
+          key={`${uiKey(c.plugin, c.id)}/${conversationId}`}
+          orgId={orgId}
+          plugin={c.plugin}
+          id={c.id}
+          title={c.title[locale]}
+          conversationId={conversationId}
+        />
+      );
+    }
   } else {
     const c = targets.find((x) => viewTab(x) === current);
     if (c !== undefined) {

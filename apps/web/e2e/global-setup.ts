@@ -1,6 +1,7 @@
 /**
  * e2e 全局准备：Testcontainers 起 PostgreSQL 与 Valkey，用 CLI（`capybara migrate` / `start`）
- * 从源码起一个加载 `model-fake`、`connector-mcp`、`connector-openapi`（都允许本机 http）、`todo` 与假 IM 测试插件 `fake-im` 的内核，再用 server.mjs 起 Web 层
+ * 从源码起一个加载 `model-fake`、`connector-mcp`、`connector-openapi`（都允许本机 http）、`todo`、`example-board`
+ * 与假 IM 测试插件 `fake-im` 的内核，再用 server.mjs 起 Web 层
  * （`next dev`）指向它；另起一个假 MCP 服务（有状态会话；destructive 工具 `delete_item`、会发起 elicitation 的 `signup`、
  * 提示模板 `summarize` 与资源 `docs://handbook`）供工具 / 审批 / 斜杠命令 / 资源引用用例接入；再起一个假 OpenAPI 服务
  * （宠物 CRUD，要求请求头 API key）供安装向导用例接入。
@@ -28,6 +29,8 @@ const connectorMcp = join(repoRoot, "plugins/connector-mcp/src/index.ts");
 const connectorOpenApi = join(repoRoot, "plugins/connector-openapi/src/index.ts");
 /** todo 插件：工具 todo__write 与对话视图 tasks（右侧「任务」标签）。 */
 const todo = join(repoRoot, "plugins/todo/src/index.ts");
+/** example-board 插件：嵌入应用（组织页面 board、对话标签 board-conv），权限经 autoApprove 自动批准。 */
+const exampleBoard = join(repoRoot, "plugins/example-board/src/index.ts");
 /**
  * 假 IM 测试插件（内核测试夹具：channel@1 + identity-source@1 + directory@1），按路径加载。
  * 渠道连接的平台地址写在连接配置里（im-channels.spec 在 worker 里自起假 IM 平台）；部署级的 platformUrl
@@ -254,7 +257,7 @@ export default async function globalSetup(): Promise<Cleanup> {
       db: { url: pg.getConnectionUri() },
       redis: { url: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}` },
       masterKey: randomBytes(32).toString("base64"),
-      plugins: [modelFake, connectorMcp, connectorOpenApi, fakeIm, todo],
+      plugins: [modelFake, connectorMcp, connectorOpenApi, fakeIm, todo, exampleBoard],
       pluginConfig: {
         "connector-mcp": { allowInsecureLoopback: true },
         "connector-openapi": { allowInsecureLoopback: true },
