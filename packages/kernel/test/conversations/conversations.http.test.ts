@@ -415,6 +415,40 @@ describe("工具输出存档（GET .../conversations/:id/outputs/:outputId）", 
       url: outputsUrl(orgId, conv.id, saved.id, "?limit=0"),
     });
     expect(bad.statusCode).toBe(400);
+    // 每页上限 OUTPUT_PAGE_MAX_CHARS（200000）：恰好上限 200，超过 400
+    const max = await req({
+      method: "GET",
+      url: outputsUrl(orgId, conv.id, saved.id, "?limit=200000"),
+    });
+    expect(max.statusCode).toBe(200);
+    const over = await req({
+      method: "GET",
+      url: outputsUrl(orgId, conv.id, saved.id, "?limit=200001"),
+    });
+    expect(over.statusCode).toBe(400);
+    expect(errCode(over)).toBe("validation_failed");
+  });
+
+  it("过期的存档 → 404 conversation.output_not_found", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const saved = await k.tools.outputs.save({
+      orgId,
+      conversationId: conv.id,
+      callId: "call_1",
+      content: "old output",
+    });
+    await kernelDb(raw)
+      .updateTable("tool_outputs")
+      .set({ expires_at: new Date(Date.now() - 1000) })
+      .where("id", "=", saved.id)
+      .execute();
+    const res = await req({ method: "GET", url: outputsUrl(orgId, conv.id, saved.id) });
+    expect(res.statusCode).toBe(404);
+    expect(errCode(res)).toBe("conversation.output_not_found");
+    expect(res.body).not.toContain("old output");
   });
 
   it("别人的会话 → 404 conversation.not_found；别的会话的存档 → 404 conversation.output_not_found", async () => {
