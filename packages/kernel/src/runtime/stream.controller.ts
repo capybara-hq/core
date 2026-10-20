@@ -42,7 +42,8 @@ function parseLastEventId(v: string): number {
  * 会话事件流（SSE）：`GET /api/v1/orgs/:orgId/conversations/:id/stream?after=<seq>`，`agents.use`，只有会话所有者可用。
  * - 打开时不阻塞地调用一次 ensureRun（`ConversationsService.kickRun`），停在「运行中」的孤儿运行由此被清理；
  * - 先订阅会话频道、再回放 `after`（或优先的 `Last-Event-ID`）之后的事件：`id: <seq>` / `event: event`；
- *   之后收到 `events` 通知就补读新事件（按 seq 去重），收到增量就发 `event: delta`；
+ *   之后收到 `events` 通知就补读新事件（按 seq 去重），收到增量就发 `event: delta`，收到界面刷新
+ *   （插件 `ctx.ui.invalidate`）就发 `event: ui`（`data: {"plugin","contribution"}`）；
  * - 每 `runtime.sseHeartbeatMs` 发 `: ping` 注释；每 `runtime.sseRecheckMs` 复核凭据（会话未吊销 / 令牌仍有效，
  *   access token 到期本身不算失效）与可见性，失败时发 `event: error`（`data: {"code"}`）后关闭流；
  * - 用 `@Res()` + `reply.hijack()` 直接写原始响应，绕开 Nest / Fastify 的响应处理与缓冲。

@@ -33,7 +33,9 @@ export const conversationTopic = (conversationId: string): string => `conv.${con
  * - `events`：会话日志已推进到 `toSeq`（订阅方据此 `readAfter` 补读，消息本身不携带事件）；
  * - `delta`：运行的流式增量（文本 / 思考 / `step_reset`：丢弃该步此前推出的增量），只是草稿，
  *   最终内容以日志中的 assistant_message 为准。`offset`（仅 text）：本步本次尝试中此前已推出的文本字符数，
- *   中途才订阅的一方据此判断自己是否从头收到了该步的文本（渠道出站投递只在完整时发草稿）。
+ *   中途才订阅的一方据此判断自己是否从头收到了该步的文本（渠道出站投递只在完整时发草稿）；
+ * - `ui`：插件经 `ctx.ui.invalidate` 告知这个会话的某个界面贡献变了（不进日志、不是模型可见内容），
+ *   SSE 转发为 `event: ui`，网页据此重新取视图。
  */
 export type ConversationBusMessage =
   | { kind: "events"; toSeq: number }
@@ -44,7 +46,8 @@ export type ConversationBusMessage =
       delta: "text" | "thinking" | "step_reset";
       text?: string;
       offset?: number;
-    };
+    }
+  | { kind: "ui"; plugin: string; contribution: string };
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
 

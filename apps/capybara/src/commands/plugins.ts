@@ -1,4 +1,5 @@
 import {
+  blockingKeys,
   createDb,
   diffPermissions,
   type InspectedPlugin,
@@ -148,7 +149,8 @@ export async function runPluginsApprove(
       const { name, version } = target.manifest;
       const snap = snapshots.get(name);
       const { added, removed } = diffPermissions(snap?.permissions, target.permissions);
-      if (snap && added.length === 0) {
+      // 只多出视图（ui.view:*）不需要批准：内核加载时自动补进快照
+      if (snap && blockingKeys(added).length === 0) {
         // 自身已批准但被依赖阻塞：点名阻塞它的提供方，退出码 1（批准它本身无济于事）
         const decision = planApprovals(
           plugins.map((p) => p.manifest),
@@ -164,7 +166,7 @@ export async function runPluginsApprove(
           );
         }
         io.stdout.write(
-          `${name} ${version} has no new permissions to approve (the kernel loads it and updates the snapshot when permissions shrink).\n`,
+          `${name} ${version} has no new permissions to approve (the kernel loads it and updates the snapshot when permissions shrink or only ui views are added).\n`,
         );
         return 0;
       }

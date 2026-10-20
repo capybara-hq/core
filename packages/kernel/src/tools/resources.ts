@@ -46,6 +46,16 @@ export function resourceToolSpecs(): ToolSpec[] {
 const NOT_SUPPORTED =
   "This app no longer supports resources; ask an administrator to refresh the app.";
 
+/** 显示摘要里的资源地址上限（码点）：摘要整体须 ≤ 200 码点。 */
+const DISPLAY_URI_MAX = 150;
+
+const shortUri = (uri: string): string => {
+  const cps = [...uri.replace(/\s+/g, " ")];
+  return cps.length > DISPLAY_URI_MAX
+    ? `${cps.slice(0, DISPLAY_URI_MAX - 1).join("")}…`
+    : cps.join("");
+};
+
 /** 执行 resources 工具：路由到会话的 listResources / readResource。 */
 export async function runResourceTool(
   session: ConnectorSession,
@@ -62,6 +72,9 @@ export async function runResourceTool(
           text: items.length === 0 ? "This app exposes no resources." : JSON.stringify(items),
         },
       ],
+      display: {
+        summary: { zh: `列出资源 · ${items.length} 个`, en: `Listed resources · ${items.length}` },
+      },
     };
   }
   if (name === READ_RESOURCE) {
@@ -69,7 +82,12 @@ export async function runResourceTool(
     const uri = (input as { uri?: unknown } | null)?.uri;
     if (typeof uri !== "string" || uri === "")
       throw new ToolError("uri must be a non-empty string.");
-    return session.readResource(uri);
+    // 摘要由内核给（覆盖连接器结果里可能带的 display：那来自外部服务，不采信）
+    const u = shortUri(uri);
+    return {
+      ...(await session.readResource(uri)),
+      display: { summary: { zh: `读取资源 ${u}`, en: `Read resource ${u}` } },
+    };
   }
   throw new ToolError(`Unknown resource tool ${name}.`);
 }

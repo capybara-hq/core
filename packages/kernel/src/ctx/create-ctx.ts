@@ -19,8 +19,16 @@ import {
   Kysely,
   TransactionBuilder,
 } from "kysely";
+import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import {
+  orgUiTopic,
+  PluginUiRegistration,
+  type UiActionHandler,
+  type UiBusMessage,
+  type UiRender,
+} from "../ui/registry.js";
 import { type BusSubscriber, createBus } from "./bus.js";
 import { createKv } from "./kv.js";
 import { createLock } from "./lock.js";
@@ -181,7 +189,11 @@ export type KernelPluginContext = PluginContext & {
   provided: Map<CapabilityRef, unknown>;
   /** 已注册的工具（按注册顺序）。 */
   registeredTools: RegisteredTool[];
-  /** setup 结束后调用：此后 `tools.register` 抛错。 */
+  /** 经 `ctx.ui.view` 注册的视图（按贡献 id）。 */
+  uiViews: ReadonlyMap<string, UiRender>;
+  /** 经 `ctx.ui.action` 注册的动作处理函数（按贡献 id）。 */
+  uiActions: ReadonlyMap<string, UiActionHandler>;
+  /** setup 结束后调用：此后 `tools.register`、`ui.view`、`ui.action` 抛错。 */
   sealTools(): void;
   close(): Promise<void>;
 };
@@ -190,7 +202,8 @@ export type KernelPluginContext = PluginContext & {
  * 为单个插件按权限清单构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。
  * - 自动授予：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`；
  * - `secrets` 仅当 `permissions.secrets`；`http.route` 只允许 `permissions.http` 声明的 method + path；
- *   `tools.register` 只允许 `permissions.tools` 声明的名字；
+ *   `tools.register` 只允许 `permissions.tools` 声明的名字；`ui.view` / `ui.action` 只允许 `permissions.ui.views`
+ *   声明的 id（只在 setup 期间）；`ui.invalidate` 经内核 bus（命名空间 `kernel`）发刷新，跨副本；
  * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
  * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
  */
@@ -208,6 +221,8 @@ export function createPluginContext(
   const queue = createQueue(deps.redisUrl, name, { runWorkers: deps.runWorkers, log: deps.log });
   const { close: closeQueue, ...queueApi } = queue;
   const bus = createBus(deps.redis, deps.busSubscriber, name, deps.log);
+  // 界面刷新发在内核命名空间（会话主题 conv.<id> / 组织主题 org-ui.<orgId>），不在插件自己的命名空间
+  const kernelBus = createBus(deps.redis, deps.busSubscriber, "kernel", deps.log);
   const unsubs = new Set<() => Promise<void>>();
   const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
   let closing: Promise<void> | undefined;
@@ -229,6 +244,8 @@ export function createPluginContext(
     ...(manifest.requires ?? []),
     ...(manifest.optional ?? []),
   ]);
+
+  const uiReg = new PluginUiRegistration(manifest, deny);
 
   type Entry = { plugin: string; impl: unknown };
   /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
@@ -361,13 +378,24 @@ export function createPluginContext(
         registeredTools.push({ spec, handler });
       },
     },
-    // TODO(M4 T24)：真正的界面贡献运行时——按 permissions.ui 登记 view / action（只在 setup 期间）、
-    // invalidate 经 bus 发 conv.<id> / 组织主题的 ui 消息、verifyEmbedToken 校验内核签发的嵌入令牌。
-    // 这里只是让 ctx 满足 SDK 类型的占位：登记丢弃、invalidate 什么也不做、令牌一律不认。
     ui: {
-      view() {},
-      action() {},
-      async invalidate() {},
+      view(id, render) {
+        uiReg.view(id, render);
+      },
+      action(id, handler) {
+        uiReg.action(id, handler);
+      },
+      async invalidate(target) {
+        const t = uiReg.target(target);
+        const msg: UiBusMessage = { kind: "ui", plugin: name, contribution: t.contribution };
+        await kernelBus.publish(
+          t.conversationId !== undefined
+            ? conversationTopic(t.conversationId)
+            : orgUiTopic(t.orgId),
+          msg,
+        );
+      },
+      // TODO(M4 T26)：校验内核签发的嵌入令牌；在那之前一律不认
       async verifyEmbedToken() {
         return null;
       },
@@ -392,8 +420,11 @@ export function createPluginContext(
     routes,
     provided,
     registeredTools,
+    uiViews: uiReg.views,
+    uiActions: uiReg.actions,
     sealTools() {
       toolsSealed = true;
+      uiReg.seal();
     },
     /** 幂等：重复 / 并发调用共享同一次关闭。 */
     close() {

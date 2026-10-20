@@ -67,6 +67,10 @@ export const ERROR_CODES = {
   "bind.invalid": 404,
   "channel.not_found": 404,
   "channel.verify_failed": 502,
+  "ui.not_found": 404,
+  "ui.render_failed": 502,
+  "ui.invalid_view": 502,
+  "ui.timeout": 504,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

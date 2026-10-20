@@ -15,8 +15,12 @@ export interface PermissionGroup {
     | "tools"
     | "hooks"
     | "models"
-    | "network";
-  /** 敏感类别：密钥、公开路由、工具、hook；「提供」一组含 {@link SENSITIVE_CAPABILITIES} 时也算。 */
+    | "network"
+    | "ui";
+  /**
+   * 敏感类别：密钥、公开路由、工具、hook；「提供」一组含 {@link SENSITIVE_CAPABILITIES} 时也算；
+   * 「界面」一组含嵌入应用（embed：插件自己的页面放进 iframe）时也算。
+   */
   sensitive: boolean;
   items: string[];
 }
@@ -34,6 +38,8 @@ export const SENSITIVE_CAPABILITIES: readonly string[] = [
 /** 把权限集合整理成分组清单（固定顺序，空组省略）。纯函数。 */
 export function permissionGroups(set: PermissionSet): PermissionGroup[] {
   const p = set.permissions;
+  // 旧快照没有 ui（按空处理）
+  const ui = p.ui ?? { views: [], embeds: [] };
   const secretFields = [...set.config.deployment, ...set.config.org]
     .filter((f) => f.secret)
     .map((f) => f.path || "<root>");
@@ -71,6 +77,11 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
       items: p.models.map((m) => `${m.purpose} (${m.kind})`),
     },
     { category: "network", sensitive: false, items: p.network },
+    {
+      category: "ui",
+      sensitive: ui.embeds.length > 0,
+      items: [...ui.views.map((v) => `view:${v}`), ...ui.embeds.map((e) => `embed:${e}`)],
+    },
   ];
   return groups.filter((g) => g.items.length > 0);
 }

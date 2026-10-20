@@ -193,6 +193,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * `loadedTools` 并集（含已被摘要覆盖的部分），构建请求时由日志还原，不放进程内存。
        */
       loadedTools: z.array(z.string()).optional(),
+      /**
+       * 工具给的一句话说明（`ToolResult.display`，中英文），只给界面显示：不进模型请求（重建请求只用
+       * callId / content / isError），也不进压缩记录。插件 / 内置工具给出且通过 `validateToolDisplay` 时才写。
+       */
+      display: z.object({ summary: z.object({ zh: z.string(), en: z.string() }) }).optional(),
     }),
   ),
   /**

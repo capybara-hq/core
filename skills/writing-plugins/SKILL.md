@@ -74,7 +74,7 @@ export default definePlugin({
 | `http` | `[{ method, path, public? }]` | 每条 `ctx.http.route` 都要列出，`method` 为 GET / POST / PUT / DELETE，`path` 以 `/` 开头；`public: true` 表示免登录，会高亮展示。**目前 `public` 只是声明**（Ruling A2）：插件路由不论是否 `public` 都不经内核鉴权，见下文「插件路由的匹配语义」 |
 | `tools` | `["write"]` | 每个 `ctx.tools.register` 的工具名（本地名，不含 `<插件名>__` 前缀）；工具能看到会话内容，会高亮展示 |
 | `network` | `["api.example.com"]` | 会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写；不支持通配 |
-| `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的 id 列进 `views`（记入快照、不卡加载），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）；embed 的 `path` 须以 `/ui/` 开头并在 `http` 里声明为 GET。`definePlugin` 交叉核对；`ctx.ui.view / action(id)` 的 id 须在 `views` 里（`perm-ui`）。内核运行时随 M4 T24 落地 |
+| `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的 id 列进 `views`（记入快照、不卡加载），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）；embed 的 `path` 须以 `/ui/` 开头并在 `http` 里声明为 GET。`definePlugin` 交叉核对；`ctx.ui.view / action(id)` 的 id 须在 `views` 里（`perm-ui`）。升级多出 view 照常加载、快照自动补上（不写审计、记 info 日志）；多出 embed 待批准 |
 | `hooks` / `models` / `storage` | — | 预留项（M4 尚未提供 `ctx.storage` / `ctx.models`，用了 `check:plugin-permissions` 报 `perm-reserved`） |
 
 **能力取用（`requires` / `optional`）**：`ctx.capabilities.get / list(ref)` 只能取 `requires` / `optional`（或自己 `provides`）里声明的 ref，别的 ref 报 `perm-capability`。只能取直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器、沙箱、密钥存储、对象存储）只能经平台能力用，取它直接抛普通 `Error`（声明也解决不了，不记审计）。`requires` 的提供方缺失则本插件不加载；`optional` 缺失照常加载，取用时 `list` 为空、`get` 抛 `CapabilityUnavailableError`。多选能力 `get` 必须给提供方名。
@@ -135,6 +135,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 | `ctx.http.route` | 对外接口 | 实际挂在 `/plugins/<name><path>`；匹配与 body 语义见下节，不经内核鉴权 |
 | `ctx.provide` | 对外暴露能力实现 | 要与清单 `provides` 一致 |
 | `ctx.tools` | 给 agent 提供工具 | `register(spec, handler)` 只能在 `setup` 里调用；模型可见名 `<插件名>__<spec.name>`；**只在启用了本插件的组织可用**（组织 admin `PUT /api/v1/orgs/:orgId/plugins/<name> {"enabled": true}`），未启用时运行时按不可用工具处理。描述与错误文案规则、默认策略、`ToolError`、`InputRequired` 见 `skills/writing-tools`，参考 `plugins/todo` |
+| `ctx.ui` | 对话页右侧标签 / 组织页面（渲染 schema 视图） | `view(id, render)` / `action(id, handler)` 只能在 `setup` 里调用，id 是 `permissions.ui.views` 里的；`render({ orgId, accountId, conversationId?, locale, signal })` 返回 `UiView`（`validateUiView` 校验，块与上限见 SDK `ui.ts`），身份由内核鉴权后给出，对话视图的 `conversationId` 已核对调用者能访问；5 秒内必须返回（超时中止 `signal`，网页只让那个标签显示失败）；抛错 / 非法视图同样只影响那个标签、记告警、不写对话日志。数据变了调 `invalidate({ orgId, conversationId?, contribution })`：带对话发到会话流（`event: ui`），不带发到组织流，经 Redis bus 跨副本。**只在启用了本插件的组织出现**。参考 `plugins/todo` 的 `tasks` |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
 | `ctx.config` / `ctx.log` | 部署配置 / 日志 | 日志里不要打印密钥 |
 

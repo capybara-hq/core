@@ -844,7 +844,8 @@
       "tools": "Agent tools",
       "hooks": "Hooks",
       "models": "Models",
-      "network": "Network access"
+      "network": "Network access",
+      "ui": "Interface (views / embedded apps)"
     },
     "configTitle": "Organization config",
     "save": "Save config",

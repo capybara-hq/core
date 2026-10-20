@@ -119,7 +119,11 @@ export function answerText(questions: Question[], answer: FormAnswer): string {
   return `User answered: ${parts.join("; ")}`;
 }
 
-const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
+/** 给模型的结果文本 + 给界面的一句话说明（中英文，不进模型上下文）。 */
+const text = (t: string, zh: string, en: string) => ({
+  content: [{ type: "text" as const, text: t }],
+  display: { summary: { zh, en } },
+});
 
 /**
  * 内置工具 `ask_user`：用通用的输入请求机制实现——首次调用返回 `input_required`，
@@ -134,15 +138,28 @@ export function askUserTool(deps: { config: () => KernelConfig }): BuiltinTool {
       const { questions } = input as { questions: Question[] };
       if (ctx.resume) {
         const { answer, state } = ctx.resume;
-        if (answer !== null) return text(answerText(questions, answer));
+        if (answer !== null) {
+          const n = questions.length;
+          return text(
+            answerText(questions, answer),
+            `用户回答了 ${n} 个问题`,
+            `User answered ${n} question${n === 1 ? "" : "s"}`,
+          );
+        }
         const hours = (state as Partial<AskState> | null)?.hours;
         // 运行在等待中被中止时内核直接写取消说明，不会再调用工具；能走到这里的 null 只有超时
         // （以及未来的「用户关闭提问」，那时 state 不带小时数）。
-        return text(
-          typeof hours === "number"
-            ? `The user did not answer within ${hours}h.`
-            : "The user dismissed the question.",
-        );
+        return typeof hours === "number"
+          ? text(
+              `The user did not answer within ${hours}h.`,
+              `用户未在 ${hours} 小时内回答`,
+              `No answer within ${hours}h`,
+            )
+          : text(
+              "The user dismissed the question.",
+              "用户关闭了提问",
+              "User dismissed the question",
+            );
       }
       for (const q of questions) {
         const labels = q.options.map((o) => o.label);

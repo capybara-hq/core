@@ -696,7 +696,7 @@ class Delivery {
         const m = this.inbox.shift() as ConversationBusMessage;
         if (m.kind === "events") {
           if (m.toSeq > this.seen) await this.catchUp();
-        } else {
+        } else if (m.kind === "delta") {
           this.onDelta(m);
         }
       }

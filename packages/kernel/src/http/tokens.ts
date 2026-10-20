@@ -102,3 +102,9 @@ export const CHANNEL_CONNECTIONS = Symbol("CHANNEL_CONNECTIONS");
 
 /** `DirectorySync`（通讯录同步）的注入令牌。 */
 export const DIRECTORY_SYNC = Symbol("DIRECTORY_SYNC");
+
+/** `UiViews`（插件视图：列出贡献、render / action）的注入令牌。 */
+export const UI_VIEWS = Symbol("UI_VIEWS");
+
+/** `OrgUiStreams`（组织级界面刷新 SSE）的注入令牌。 */
+export const ORG_UI_STREAMS = Symbol("ORG_UI_STREAMS");

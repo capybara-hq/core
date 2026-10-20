@@ -844,7 +844,8 @@
       "tools": "Agent 工具",
       "hooks": "Hook",
       "models": "模型",
-      "network": "网络访问"
+      "network": "网络访问",
+      "ui": "界面（视图 / 嵌入应用）"
     },
     "configTitle": "组织级配置",
     "save": "保存配置",

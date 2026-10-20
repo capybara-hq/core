@@ -32,6 +32,11 @@ export interface PermissionSet {
     /** 模型用途（label 只是展示文案，不参与比较）。 */
     models: { purpose: string; kind: string }[];
     network: string[];
+    /**
+     * 界面贡献（`permissions.ui`）：`views` 记入快照但不卡加载（升级时自动补进快照）；
+     * `embeds` 与其他权限一样卡加载。旧快照没有这一项（按空处理）。
+     */
+    ui: { views: string[]; embeds: string[] };
   };
 }
 
@@ -128,13 +133,14 @@ export async function computePermissionSet(
         .map((m) => ({ purpose: m.purpose, kind: m.kind }))
         .sort((a, b) => cmp(a.purpose, b.purpose)),
       network: sortedUnique(p.network),
+      ui: { views: sortedUnique(p.ui?.views), embeds: sortedUnique(p.ui?.embeds) },
     },
   };
 }
 
 /**
  * 权限集合的稳定字符串键（排序），如 `provides:channel@1`、`config.org.secret:apiKey`、`table:todos`、
- * `permissions.tools:write`、`permissions.http.public:POST /events`。
+ * `permissions.tools:write`、`permissions.http.public:POST /events`、`ui.view:tasks`、`ui.embed:board`。
  * 容忍旧快照缺字段（按空处理），快照格式演进时不会抛错。
  */
 export function permissionKeys(set: PermissionSet): string[] {
@@ -159,7 +165,20 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const h of p.hooks ?? []) keys.push(`permissions.hooks:${h}`);
   for (const m of p.models ?? []) keys.push(`permissions.models:${m.purpose} (${m.kind})`);
   for (const d of p.network ?? []) keys.push(`permissions.network:${d}`);
+  for (const v of p.ui?.views ?? []) keys.push(`${UI_VIEW_KEY_PREFIX}${v}`);
+  for (const e of p.ui?.embeds ?? []) keys.push(`ui.embed:${e}`);
   return sortedUnique(keys);
+}
+
+/** 渲染 schema 视图的权限键前缀：记入快照但不卡加载（见 {@link blockingKeys}）。 */
+export const UI_VIEW_KEY_PREFIX = "ui.view:";
+
+/**
+ * 新增项里需要批准（卡加载）的部分：除 `ui.view:*` 之外的全部。视图只是把插件已有的数据交给内核组件来画，
+ * 不给插件新能力（spec §4.1），升级多出视图时插件照常加载、快照自动补上。
+ */
+export function blockingKeys(added: readonly string[]): string[] {
+  return added.filter((k) => !k.startsWith(UI_VIEW_KEY_PREFIX));
 }
 
 /** 两份权限集合的差异（按 {@link permissionKeys}）；`prev` 为空（无快照）时全部算新增。 */

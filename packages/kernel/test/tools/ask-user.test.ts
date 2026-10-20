@@ -158,6 +158,7 @@ describe("ask_user（单元）", () => {
           text: 'User answered: "Which database should I use?" = "SQLite, please"; "Which features?" = "Postgres, Mongo"',
         },
       ],
+      display: { summary: { zh: "用户回答了 2 个问题", en: "User answered 2 questions" } },
     });
   });
 

@@ -16,6 +16,7 @@ const base: PermissionSet = {
     hooks: [],
     models: [],
     network: [],
+    ui: { views: [], embeds: [] },
   },
 };
 
@@ -47,6 +48,7 @@ describe("permissionGroups", () => {
         hooks: ["run.completed"],
         models: [{ purpose: "chat", kind: "llm" }],
         network: ["a.example.com"],
+        ui: { views: [], embeds: [] },
       },
     });
     const by = Object.fromEntries(groups.map((g) => [g.category, g]));

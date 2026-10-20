@@ -14,6 +14,7 @@ import type { KernelConfig } from "../config/schema.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
+import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { AccountsService } from "../identity/accounts.js";
@@ -60,6 +61,9 @@ import {
 import { QuestionsController } from "../tools/questions.controller.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
+import { UiController } from "../ui/views.controller.js";
+import { UiViews } from "../ui/views.js";
 import {
   ACCOUNTS,
   AGENTS,
@@ -86,6 +90,7 @@ import {
   OFFBOARDING,
   ORG_PLUGIN_CONFIGS,
   ORG_SETTINGS,
+  ORG_UI_STREAMS,
   ORGS,
   PROVIDER_REGISTRY,
   QUESTIONS,
@@ -95,6 +100,7 @@ import {
   SETUP,
   SSO_FLOW,
   TOOL_REGISTRY,
+  UI_VIEWS,
 } from "./tokens.js";
 
 /** 内核 API 的依赖：由 createKernel 传入，ApiModule 据此构造各领域服务。 */
@@ -160,6 +166,7 @@ const CONTROLLERS: Type[] = [
   MeIdentitiesController,
   ChannelConnectionsController,
   DirectorySyncController,
+  UiController,
 ];
 
 /**
@@ -273,6 +280,24 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           log: deps.log,
         }),
       inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
+    },
+    {
+      provide: UI_VIEWS,
+      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+        new UiViews({
+          host: deps.host,
+          enabledPlugins: (orgId) => queryEnabledPlugins(db, orgId),
+          canAccessConversation: (orgId, id, accountId) =>
+            conversations.isAccessible(orgId, id, accountId),
+          log: deps.log,
+        }),
+      inject: [KERNEL_DB, CONVERSATIONS],
+    },
+    {
+      provide: ORG_UI_STREAMS,
+      useFactory: (db: KernelDb, bus: StreamBus, config: () => KernelConfig) =>
+        new OrgUiStreams({ bus, isMember: orgMembership(db), config, log: deps.log }),
+      inject: [KERNEL_DB, KERNEL_BUS, KERNEL_CONFIG],
     },
     { provide: CREDENTIALS, useValue: deps.credentials },
     { provide: EXTERNAL_IDENTITIES, useValue: deps.identity.external },

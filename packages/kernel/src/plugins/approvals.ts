@@ -3,7 +3,12 @@ import { sql } from "kysely";
 import semver from "semver";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
-import { diffPermissions, type PermissionSet, permissionKeys } from "./permission-set.js";
+import {
+  blockingKeys,
+  diffPermissions,
+  type PermissionSet,
+  permissionKeys,
+} from "./permission-set.js";
 
 /** 已批准的权限快照（`capybara.plugin_permission_snapshots` 一行）。 */
 export interface PermissionSnapshot {
@@ -46,7 +51,9 @@ export type ApprovalDecision =
 
 /**
  * 按依赖拓扑序（`ordered`）比对快照，决定每个插件加载还是待批准：
- * - 无快照或比快照多出任何一项 → 待批准（`autoApprove` 时改为加载，由调用方写快照）；
+ * - 无快照或比快照多出任何需要批准的一项（{@link blockingKeys}：`ui.view:*` 除外）→ 待批准
+ *   （`autoApprove` 时改为加载，由调用方写快照）；只多出 `ui.view:*` 时照常加载，`changed` 为真，
+ *   调用方经 `refresh` 把它们补进快照；
  * - 权限变少或不变 → 加载，`changed` 表示快照需要更新（权限或版本变了）；版本比快照旧时照常加载但不更新快照；
  * - 某个 `requires` 能力的提供方全都不加载 → 同样不加载（reason dependency）；`optional` 不受影响。
  */
@@ -62,7 +69,7 @@ export function planApprovals(
     const set = sets.get(m.name) as PermissionSet;
     const snap = snapshots.get(m.name);
     const { added, removed } = diffPermissions(snap?.permissions, set);
-    const needsApproval = !snap || added.length > 0;
+    const needsApproval = !snap || blockingKeys(added).length > 0;
     if (needsApproval && !opts.autoApprove) {
       skipped.add(m.name);
       out.push({
@@ -195,9 +202,10 @@ export class PluginApprovals {
   }
 
   /**
-   * 权限变少或不变（已批准）时更新快照的权限集合与版本；批准人、批准时间与来源保持不变。
+   * 权限变少、不变或只多出 `ui.view:*`（不卡加载）时更新快照的权限集合与版本；批准人、批准时间与来源保持不变，
+   * 不写审计（与 autoApprove 一样，Ruling A4；调用方记日志）。
    * 在事务内锁行后重新核对（多副本并发启动时以库里的当前快照为准）：快照不存在、`version` 比快照旧、
-   * 或当前集合相对快照有新增时不更新。返回是否更新。
+   * 或当前集合相对快照有需要批准的新增时不更新。返回是否更新。
    */
   async refresh(plugin: string, version: string, permissions: PermissionSet): Promise<boolean> {
     return this.db.transaction().execute(async (trx) => {
@@ -208,7 +216,8 @@ export class PluginApprovals {
         .forUpdate()
         .executeTakeFirst();
       if (!row || isOlder(version, row.version)) return false;
-      if (diffPermissions(row.permissions as PermissionSet, permissions).added.length > 0) {
+      const { added } = diffPermissions(row.permissions as PermissionSet, permissions);
+      if (blockingKeys(added).length > 0) {
         return false;
       }
       await trx

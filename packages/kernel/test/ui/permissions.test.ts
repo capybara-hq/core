@@ -1,0 +1,248 @@
+import { fileURLToPath } from "node:url";
+import { definePlugin, type PluginManifest } from "@capybara-hq/plugin-sdk";
+import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
+import { sql } from "kysely";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createBusSubscriber } from "../../src/ctx/bus.js";
+import type { KernelDeps } from "../../src/ctx/create-ctx.js";
+import { createKeyring } from "../../src/ctx/secrets.js";
+import { kernelDb } from "../../src/db/kernel-schema.js";
+import { migrate } from "../../src/db/migrator.js";
+import { createDb } from "../../src/db/pool.js";
+import { PluginApprovals, planApprovals } from "../../src/plugins/approvals.js";
+import { PluginHost } from "../../src/plugins/host.js";
+import {
+  computePermissionSet,
+  type PermissionSet,
+  permissionKeys,
+} from "../../src/plugins/permission-set.js";
+import { permissionGroups } from "../../src/plugins/permission-view.js";
+
+/**
+ * 界面权限（spec §4.1、审查重点 5）：`ui.view:*` 记入快照但不卡加载（升级时自动补进快照，不写审计、记日志）；
+ * `ui.embed:*` 与其他新增权限一样卡加载；权限清单的 `ui` 分组含 embed 时为敏感。
+ */
+
+const fx = (n: string) =>
+  fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
+
+const manifest = (ui: PluginManifest["permissions"]) =>
+  definePlugin({
+    name: "ui-demo",
+    version: "0.1.0",
+    sdk: "^0.1.0",
+    provides: [],
+    ui: [
+      ...(ui?.ui?.views ?? []).map((id) => ({
+        id,
+        title: { zh: id, en: id },
+        place: "conversation" as const,
+        kind: "view" as const,
+      })),
+      ...(ui?.ui?.embeds ?? []).map((id) => ({
+        id,
+        title: { zh: id, en: id },
+        place: "page" as const,
+        kind: "embed" as const,
+        path: "/ui/x",
+      })),
+    ],
+    permissions: ui ?? {},
+    setup() {},
+  });
+
+describe("permissionKeys / permissionGroups 的 ui 项", () => {
+  it("views → ui.view:<id>，embeds → ui.embed:<id>；旧快照缺 ui 时按空处理", async () => {
+    const set = await computePermissionSet(
+      manifest({
+        http: [{ method: "GET", path: "/ui/x" }],
+        ui: { views: ["tasks", "notes"], embeds: ["board"] },
+      }),
+      "/tmp",
+    );
+    expect(set.permissions.ui).toEqual({ views: ["notes", "tasks"], embeds: ["board"] });
+    expect(permissionKeys(set)).toEqual([
+      "permissions.http:GET /ui/x",
+      "ui.embed:board",
+      "ui.view:notes",
+      "ui.view:tasks",
+    ]);
+    const old = structuredClone(set) as PermissionSet;
+    delete (old.permissions as Partial<PermissionSet["permissions"]>).ui;
+    expect(permissionKeys(old)).toEqual(["permissions.http:GET /ui/x"]);
+  });
+
+  it("ui 分组：只有 view 时不敏感；含 embed 时敏感", async () => {
+    const views = await computePermissionSet(manifest({ ui: { views: ["tasks"] } }), "/tmp");
+    expect(permissionGroups(views).find((g) => g.category === "ui")).toEqual({
+      category: "ui",
+      sensitive: false,
+      items: ["view:tasks"],
+    });
+    const both = await computePermissionSet(
+      manifest({
+        http: [{ method: "GET", path: "/ui/x" }],
+        ui: { views: ["tasks"], embeds: ["board"] },
+      }),
+      "/tmp",
+    );
+    expect(permissionGroups(both).find((g) => g.category === "ui")).toEqual({
+      category: "ui",
+      sensitive: true,
+      items: ["view:tasks", "embed:board"],
+    });
+  });
+});
+
+describe("planApprovals：ui.view 不卡加载，ui.embed 卡加载", () => {
+  const snap = (permissions: PermissionSet) =>
+    new Map([
+      [
+        "ui-demo",
+        {
+          plugin: "ui-demo",
+          version: "0.1.0",
+          permissions,
+          approvedBy: null,
+          approvedAt: new Date(),
+          source: "cli" as const,
+        },
+      ],
+    ]);
+
+  it("只多出 view → 加载（不算 autoApprove），快照需更新；多出 embed → 待批准", async () => {
+    const before = await computePermissionSet(manifest({}), "/tmp");
+    const view = manifest({ ui: { views: ["tasks"] } });
+    const viewSet = await computePermissionSet(view, "/tmp");
+    const [d1] = planApprovals([view], new Map([["ui-demo", viewSet]]), snap(before));
+    expect(d1).toMatchObject({
+      action: "load",
+      autoApprove: false,
+      changed: true,
+      added: ["ui.view:tasks"],
+    });
+
+    const embed = manifest({
+      http: [{ method: "GET", path: "/ui/x" }],
+      ui: { views: ["tasks"], embeds: ["board"] },
+    });
+    const withRoute = await computePermissionSet(
+      manifest({ http: [{ method: "GET", path: "/ui/x" }], ui: { views: ["tasks"] } }),
+      "/tmp",
+    );
+    const embedSet = await computePermissionSet(embed, "/tmp");
+    const [d2] = planApprovals([embed], new Map([["ui-demo", embedSet]]), snap(withRoute));
+    expect(d2).toMatchObject({
+      action: "pending",
+      pending: { reason: "added", added: ["ui.embed:board"] },
+    });
+  });
+
+  it("全新插件（没有快照）即使只有 view 也要批准", async () => {
+    const view = manifest({ ui: { views: ["tasks"] } });
+    const [d] = planApprovals(
+      [view],
+      new Map([["ui-demo", await computePermissionSet(view, "/tmp")]]),
+      new Map(),
+    );
+    expect(d?.action).toBe("pending");
+  });
+});
+
+describe("PluginHost.load：插件升级多出 view / embed（审查重点 5）", () => {
+  let pg: Awaited<ReturnType<typeof startTestPostgres>>;
+  let rd: Awaited<ReturnType<typeof startTestRedis>>;
+  let deps: KernelDeps;
+  let redis: Redis;
+  let sub: ReturnType<typeof createBusSubscriber>;
+  const hosts: PluginHost[] = [];
+  const logs: { level: string; msg: string; fields: Record<string, unknown> | undefined }[] = [];
+  const at =
+    (level: string) =>
+    (msg: string, fields?: Record<string, unknown>): void => {
+      logs.push({ level, msg, fields });
+    };
+
+  const host = () => {
+    const h = new PluginHost(deps, {});
+    hosts.push(h);
+    return h;
+  };
+  const snapshot = async () =>
+    kernelDb(deps.db)
+      .selectFrom("plugin_permission_snapshots")
+      .selectAll()
+      .where("plugin", "=", "ui-a")
+      .executeTakeFirst();
+  const auditRows = async () =>
+    kernelDb(deps.db).selectFrom("audit_events").select("action").execute();
+
+  beforeAll(async () => {
+    [pg, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+    await migrate(pg.url, {
+      schema: "capybara",
+      dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
+    });
+    redis = new Redis(rd.url);
+    sub = createBusSubscriber(() => new Redis(rd.url));
+    deps = {
+      db: createDb(pg.url, 5),
+      dbUrl: pg.url,
+      redis,
+      busSubscriber: sub,
+      redisUrl: rd.url,
+      keyring: createKeyring(Buffer.alloc(32, 1), []),
+      runWorkers: false,
+      log: { info: at("info"), warn: at("warn"), error: at("error") },
+    };
+  }, 120_000);
+  afterAll(async () => {
+    await sub?.close();
+    redis?.disconnect();
+    await deps?.db.destroy();
+    await Promise.all([pg?.stop(), rd?.stop()]);
+  });
+  beforeEach(async () => {
+    logs.length = 0;
+    await sql`TRUNCATE capybara.plugin_permission_snapshots, capybara.audit_events`.execute(
+      deps.db,
+    );
+    // 批准 0.1.0（模拟 `capybara plugins approve`）
+    const [p] = await PluginHost.inspect([fx("ui-a")]);
+    if (!p) throw new Error("fixture missing");
+    await new PluginApprovals(kernelDb(deps.db)).approve("ui-a", "0.1.0", p.permissions, {
+      source: "cli",
+    });
+  });
+  afterEach(async () => {
+    await Promise.all(hosts.splice(0).map((h) => h.close()));
+  });
+
+  it("多出 view → 照常加载，快照补上 ui.view:tasks（来源不变、不写审计），记一条 info 日志", async () => {
+    const h = host();
+    await h.load([fx("ui-a-view")]);
+    expect(h.manifests().map((m) => `${m.name}@${m.version}`)).toEqual(["ui-a@0.2.0"]);
+    expect(h.pending()).toEqual([]);
+    const snap = await snapshot();
+    expect(snap?.version).toBe("0.2.0");
+    expect(snap?.source).toBe("cli");
+    expect(permissionKeys(snap?.permissions as PermissionSet)).toContain("ui.view:tasks");
+    expect(await auditRows()).toEqual([]);
+    const merged = logs.find((l) => l.level === "info" && l.fields?.plugin === "ui-a");
+    expect(merged?.fields).toMatchObject({ version: "0.2.0", merged: ["ui.view:tasks"] });
+  });
+
+  it("多出 embed → 待批准、不加载，快照不变", async () => {
+    // 先让 0.2.0 加载（快照补上 view），再升级到带 embed 的 0.3.0
+    await host().load([fx("ui-a-view")]);
+    await Promise.all(hosts.splice(0).map((h) => h.close()));
+    const h = host();
+    await h.load([fx("ui-a-embed")]);
+    expect(h.manifests()).toEqual([]);
+    expect(h.pending()).toEqual([
+      { plugin: "ui-a", version: "0.3.0", reason: "added", added: ["ui.embed:board"], removed: [] },
+    ]);
+    expect((await snapshot())?.version).toBe("0.2.0");
+  });
+});

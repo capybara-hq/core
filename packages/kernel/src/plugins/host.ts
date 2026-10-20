@@ -12,6 +12,7 @@ import {
   SDK_VERSION,
   type ToolHandler,
   type ToolSpec,
+  type UiContribution,
 } from "@capybara-hq/plugin-sdk";
 import type { core } from "zod";
 import {
@@ -33,13 +34,19 @@ import {
 import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { createDb } from "../db/pool.js";
+import type { UiActionHandler, UiRender } from "../ui/registry.js";
 import {
   type ApprovalDecision,
   type PendingPlugin,
   PluginApprovals,
   planApprovals,
 } from "./approvals.js";
-import { computePermissionSet, type PermissionSet } from "./permission-set.js";
+import {
+  blockingKeys,
+  computePermissionSet,
+  type PermissionSet,
+  UI_VIEW_KEY_PREFIX,
+} from "./permission-set.js";
 import { resolvePlugins } from "./resolve.js";
 
 /** 键排序后的 JSON（对象键顺序不影响结果）；undefined 字段与 JSON.stringify 一样省略。 */
@@ -92,7 +99,17 @@ interface Loaded {
   provided: Map<CapabilityRef, unknown>;
   routes: Route[];
   tools: RegisteredTool[];
+  uiViews: ReadonlyMap<string, UiRender>;
+  uiActions: ReadonlyMap<string, UiActionHandler>;
   close(): Promise<void>;
+}
+
+/** {@link PluginHost.uiContributions} 的一项：清单里的界面贡献及其注册的视图 / 动作（embed 没有）。 */
+export interface LoadedUiContribution {
+  plugin: string;
+  contribution: UiContribution;
+  render?: UiRender;
+  action?: UiActionHandler;
 }
 
 /** {@link PluginHost.list} 的一项。 */
@@ -424,8 +441,21 @@ export class PluginHost {
             added: decision.added,
           });
         } else {
-          // 权限变少或不变（版本变了）：直接加载，快照跟上当前清单
-          await approvals.refresh(name, manifest.version, sets.get(name) as PermissionSet);
+          // 权限变少、不变（版本变了）或只多出视图（ui.view:*，不卡加载）：直接加载，快照跟上当前清单。
+          // 补进视图不写审计（与 autoApprove 一样，Ruling A4），只记日志
+          const updated = await approvals.refresh(
+            name,
+            manifest.version,
+            sets.get(name) as PermissionSet,
+          );
+          const merged = decision.added.filter((k) => k.startsWith(UI_VIEW_KEY_PREFIX));
+          if (updated && merged.length > 0 && blockingKeys(decision.added).length === 0) {
+            this.deps.log.info("plugin ui views merged into the permission snapshot", {
+              plugin: name,
+              version: manifest.version,
+              merged,
+            });
+          }
         }
       }
       if (this.closed) throw new Error(CLOSED_DURING_LOAD);
@@ -474,6 +504,8 @@ export class PluginHost {
         provided: ctx.provided,
         routes: ctx.routes,
         tools: ctx.registeredTools,
+        uiViews: ctx.uiViews,
+        uiActions: ctx.uiActions,
         close: ctx.close,
       });
     }
@@ -577,6 +609,25 @@ export class PluginHost {
   tools(): { plugin: string; spec: ToolSpec; handler: ToolHandler }[] {
     return this.loaded.flatMap((l) =>
       l.tools.map((t) => ({ plugin: l.manifest.name, spec: t.spec, handler: t.handler })),
+    );
+  }
+
+  /**
+   * 已加载插件清单里的界面贡献（按加载顺序、清单顺序），附带 setup 期间注册的视图 render / 动作处理函数。
+   * 是否在某组织启用由调用方另查（每次查询，不缓存）。
+   */
+  uiContributions(): LoadedUiContribution[] {
+    return this.loaded.flatMap((l) =>
+      (l.manifest.ui ?? []).map((c) => {
+        const render = c.kind === "view" ? l.uiViews.get(c.id) : undefined;
+        const action = c.kind === "view" ? l.uiActions.get(c.id) : undefined;
+        return {
+          plugin: l.manifest.name,
+          contribution: c,
+          ...(render !== undefined && { render }),
+          ...(action !== undefined && { action }),
+        };
+      }),
     );
   }
 

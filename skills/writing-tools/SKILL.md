@@ -89,6 +89,7 @@ export default definePlugin({
 
 - 返回 `{ content: ToolContent[], isError? }`。`text` 原样拼接；`image` / `resource_link` 给模型的是类型说明（不丢弃）。`isError: true` 表示「工具执行了但结果是错误」，内容照样给模型。
 - 抛 `ToolError(message)`：message **原样**给模型（所以必须英文、可执行）。可选第二个参数 `{ kind: "unavailable" }` 表示远端不可用（连不上、HTTP 5xx），只对连接器有意义；缺省 `kind: "error"`（参数错误、业务错误、鉴权失败等）说明远端可达。熔断语义（Ruling A15）：应用级熔断只统计「远端不可用」——超时、传输 / 连接错误（非 `ToolError` 的异常）、`kind: "unavailable"`；`kind: "error"` 的 `ToolError` 与 `isError` 结果都表示远端可达，清零计数。插件工具与内置工具不受熔断影响。
+- **显示摘要 `display`（可选，只给人看）**：`{ content, display: { summary: { zh, en } } }`，对话流里那一行工具调用显示这句话（如 todo 的「更新任务清单（3 项）」/「Updated task list (3 items)」），不再显示原样的输入 JSON。中英文都要给、各 ≤ 200 码点（`validateToolDisplay`）；不合法的内核丢弃并记告警，结果照常写入。摘要随 `tool_result` 事件进日志（刷新页面能还原），**不进模型上下文**（重建请求只用 content / isError），所以别把模型需要的信息只写在摘要里。只认插件工具、内核内置工具与内核的 resources 工具给的摘要；连接器工具的结果不采信（网页退回「工具名 + 输入的前几个字段」）。内置工具 `ask_user` / `read_tool_output` / `tool_search` 都给了摘要。
 - 抛其他错误：模型只看到 `Tool <key> failed (<ErrorName>). The operation may not have completed; check before retrying or try another approach.`，错误详情进日志（经打码）。不要依赖异常消息传话。
 - 超时：`Tool <key> timed out after <n>s. The operation may or may not have completed; verify before retrying.`
 - **有副作用不盲目重跑**（spec 4.3）：内核在执行前写 `tool_call_started`。进程在执行中崩溃，续跑时这次调用的结果写为 `Result unknown: the call was interrupted before a result was recorded. Verify the outcome before retrying.`，**不会再调用你的处理函数**。所以处理函数无需为「被内核重放」做幂等，但模型可能看到「结果未知」后自己重试 —— 有条件的话让写操作天然幂等（如 todo 的整表覆盖）。
