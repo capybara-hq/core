@@ -141,6 +141,29 @@ export function validateChannelCard(card: unknown): string[] {
 
 type Locale = "zh" | "en";
 
+/**
+ * 把模型可控的值（审批标题、输入预览、提问标题、回答摘要）放进代码里，退回文本里它们不会变成链接、强调或 HTML：
+ * 单行用行内代码，多行用围栏代码块（以换行开头），分隔符都比值里最长的反引号串更长（CommonMark 6.1 / 4.5）。
+ * 选代码而不是给标点加反斜杠：代码是 CommonMark / GFM 里唯一保证内容按原样显示的写法（反斜杠挡不住 GFM 的裸网址
+ * 自动链接，各渠道转换器对反斜杠的处理也不一致）。
+ */
+function asCode(s: string): string {
+  const v = s.replace(/\r\n?/g, "\n");
+  const longest = Math.max(0, ...[...v.matchAll(/`+/g)].map((m) => m[0].length));
+  if (v.includes("\n")) {
+    const fence = "`".repeat(Math.max(3, longest + 1));
+    return `\n${fence}\n${v}\n${fence}`;
+  }
+  const d = "`".repeat(longest + 1);
+  // 值以反引号开头 / 结尾、或首尾都是空格时补一个空格（渲染时去掉），否则会与分隔符粘连或被吃掉空格
+  const pad = /^`|`$/.test(v) || (v.startsWith(" ") && v.endsWith(" ")) ? " " : "";
+  return `${d}${pad}${v}${pad}${d}`;
+}
+
+/** 前缀 + 代码：代码是围栏块（以换行开头）时去掉前缀末尾的空格。 */
+const withCode = (prefix: string, code: string) =>
+  code.startsWith("\n") ? `${prefix.trimEnd()}${code}` : `${prefix}${code}`;
+
 const TEXT = {
   en: {
     sep: ": ",
@@ -202,18 +225,21 @@ const TEXT = {
   },
 } as const;
 
-/** 不支持卡片的渠道的统一退回文本（含链接）；固定话术按 locale 取 zh / en。 */
+/**
+ * 不支持卡片的渠道的统一退回文本（含链接）；固定话术按 locale 取 zh / en。结果是 Markdown（放进
+ * `OutboundMessage.text`，由渠道插件转换）：模型可控的字段放在代码里（见 `asCode`），不会产生链接。
+ */
 export function renderCardAsText(card: ChannelCard, locale: Locale): string {
   const t = TEXT[locale] ?? TEXT.en;
-  const line = (label: string, value: string) => `${label}${t.sep}${value}`;
+  const line = (label: string, value: string) => withCode(`${label}${t.sep}`, value);
   switch (card.kind) {
     case "approval": {
       const state = t.approvalStates[card.state];
       const lines = [
-        `${t.approval}${card.title}`,
+        withCode(t.approval, asCode(card.title)),
         line(t.tool, card.appName ? `${card.appName} / ${card.toolName}` : card.toolName),
         line(t.agent, card.agentName),
-        line(t.input, card.inputPreview),
+        line(t.input, asCode(card.inputPreview)),
         line(t.status, card.decidedBy ? `${state} (${card.decidedBy})` : state),
       ];
       if (card.state === "pending")
@@ -223,8 +249,11 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
     }
     case "question": {
       const title = typeof card.form.title === "string" ? card.form.title : card.form.title[locale];
-      const lines = [`${t.question}${title}`, line(t.status, t.questionStates[card.state])];
-      if (card.answerSummary) lines.push(line(t.answer, card.answerSummary));
+      const lines = [
+        withCode(t.question, asCode(title)),
+        line(t.status, t.questionStates[card.state]),
+      ];
+      if (card.answerSummary) lines.push(line(t.answer, asCode(card.answerSummary)));
       lines.push(line(card.state === "pending" ? t.answerOnWeb : t.details, card.webUrl));
       return lines.join("\n");
     }

@@ -76,7 +76,7 @@ interface Channel {
 - `features.minEditIntervalMs`：平台允许的同一条消息两次编辑的最小间隔，内核流式草稿的更新间隔取 `max(1000, minEditIntervalMs)`（Slack 2500，Lark 1500）。更高并发靠限流错误 + 退避兜底。
 - `locale`（`"zh" | "en"`，组织设置的 IM 语言）：插件自己渲染的固定词（按钮、降级文本）按它选。
 - `idempotencyKey`（可选）：不超过 40 个 `[A-Za-z0-9_-]` 字符（内核实际给 32 个），同一条逻辑消息的每次重试都相同。平台支持幂等发送时透传（Lark `uuid`；拆成多条时第 i 条用 `<key>-<i>`），不支持的忽略（Slack）。
-- `features.cards` 为 false 的渠道，内核先把每张卡片按 `renderCardAsText(card, locale)` 退回为文本、以空行分隔拼在正文之后，交给插件的消息不带 `cards`（Ruling A33，`packages/kernel/src/channels/features.ts`）。声明 `cards: true` 的插件收到 `message.cards`，自己渲染原生卡片；某张卡片渲染不了（如按钮回传值超限）时插件自己退回链接或文本。
+- `features.cards` 为 false 的渠道，内核先把每张卡片按 `renderCardAsText(card, locale)` 退回为文本、以空行分隔拼在正文之后，交给插件的消息不带 `cards`（Ruling A33，`packages/kernel/src/channels/features.ts`）。退回文本是 **Markdown**（与 `message.text` 一样由插件转换成原生富文本），模型可控的字段（审批标题、输入预览、提问标题、回答摘要）放在行内代码 / 围栏代码块里，不会变成链接；插件的转换器必须让代码内容按原样显示。声明 `cards: true` 的插件收到 `message.cards`，自己渲染原生卡片；某张卡片渲染不了（如按钮回传值超限）时插件自己退回链接或文本。
 - `features.threads` 为 false 的渠道（平台没有话题），内核交给插件的目标不带 `threadId`，回复直接发在 chat 里。入站事件也不要带 `threadId`，此时群里每条 @ 消息各开一个对话。
 - `features.edit` 为 false 时不发流式草稿，只在定稿时发一条（见上）。
 
@@ -104,7 +104,7 @@ interface Channel {
 | `bind` | `text`、`url` | 链接按钮（内核只在私聊里发） |
 
 - 结构用 `validateChannelCard(card)` 校验（返回问题列表）；URL 字段必须是 http(s) 绝对地址且不超过 2000 字符。
-- 退回文本统一用 `renderCardAsText(card, locale)`（含链接），不要自己另写一套；声明 `cards: false` 时内核已替你做了。
+- 退回文本统一用 `renderCardAsText(card, locale)`（Markdown，含链接；模型可控字段在代码里），不要自己另写一套；声明 `cards: false` 时内核已替你做了。
 - 卡片操作解析成 `CardAction { cardKind, cardId, action, scope?, answer? }`。**按钮回传值**：把需要的信息（卡片 id、动作、范围、选项值）编码进按钮本身（紧凑 JSON 数组），插件不记发出的表单，任一副本都能解析；编码超过平台上限（Slack 2000，Lark 没写明，取 2000）时抛错、改为只给网页链接；解析**严格**：长度、类型、种类、范围逐项核对，不合法返回 null 并忽略这次点击（只认本插件前缀的 action id）。
 - 回传值里的会话类型只是参考（见上，内核以记下的卡片目标为准）；能关的话关掉卡片转发后的交互（Lark `enable_forward_interaction: false`）。
 - 卡片点击的应答不改卡片：卡片随后由内核按审批 / 提问的新状态更新。

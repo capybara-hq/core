@@ -199,14 +199,102 @@ describe("validateChannelCard", () => {
   });
 });
 
+/**
+ * 测试自带的 CommonMark 判定：去掉代码块（围栏）与行内代码之后剩下的「活」文本。
+ * 行内代码按等长反引号串配对（CommonMark 6.1），围栏按同字符、不短于开头的收尾行。
+ */
+function liveText(md: string): string {
+  const out: string[] = [];
+  let fence: { c: string; n: number } | undefined;
+  for (const line of md.split("\n")) {
+    if (fence) {
+      const m = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (m && m[1]?.[0] === fence.c && (m[1]?.length ?? 0) >= fence.n) fence = undefined;
+      continue;
+    }
+    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (open && !(open[1]?.startsWith("`") && open[2]?.includes("`"))) {
+      fence = { c: (open[1] ?? "")[0] ?? "", n: (open[1] ?? "").length };
+      continue;
+    }
+    out.push(line);
+  }
+  // 行内代码：反引号串与之后第一个等长的反引号串配对
+  const text = out.join("\n");
+  let live = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "`") {
+      live += text[i];
+      i++;
+      continue;
+    }
+    let n = 0;
+    while (text[i + n] === "`") n++;
+    const run = "`".repeat(n);
+    let j = i + n;
+    let close = -1;
+    while (j < text.length) {
+      const k = text.indexOf(run, j);
+      if (k < 0) break;
+      if (text[k + n] !== "`" && text[k - 1] !== "`") {
+        close = k;
+        break;
+      }
+      j = k + 1;
+      while (text[j] === "`") j++;
+    }
+    if (close < 0) {
+      live += run;
+      i += n;
+    } else {
+      i = close + n;
+    }
+  }
+  return live;
+}
+
+describe("renderCardAsText：模型可控字段不产生链接（A33，退回文本是 Markdown）", () => {
+  const evil = [
+    "[Approve now](https://evil.example/a)",
+    "<https://evil.example/b>",
+    "`` ` ``[x](https://evil.example/c)",
+    "```\n[x](https://evil.example/d)\n```",
+    "a\n\n[y](https://evil.example/e)",
+    "~~~\n[z](https://evil.example/f)",
+  ];
+
+  it("审批标题、输入预览、提问标题、回答摘要都放进代码里，原文可还原", () => {
+    for (const v of evil) {
+      for (const locale of ["en", "zh"] as const) {
+        const texts = [
+          renderCardAsText({ ...approval, title: v }, locale),
+          renderCardAsText({ ...approval, inputPreview: v }, locale),
+          renderCardAsText({ ...question, form: { ...question.form, title: v } }, locale),
+          renderCardAsText({ ...question, state: "answered", answerSummary: v }, locale),
+        ];
+        for (const t of texts) {
+          expect(liveText(t), `${v} → ${t}`).not.toContain("evil.example");
+        }
+      }
+    }
+  });
+
+  it("多行的值用围栏代码块（围栏比内容里最长的反引号串更长）", () => {
+    const v = "line 1\n```\nline 3";
+    const t = renderCardAsText({ ...approval, inputPreview: v }, "en");
+    expect(t).toContain("Input:\n````\nline 1\n```\nline 3\n````\n");
+  });
+});
+
 describe("renderCardAsText", () => {
   it("approval 待审批：en / zh", () => {
     expect(renderCardAsText(approval, "en")).toBe(
       [
-        "[Approval] Create issue",
+        "[Approval] `Create issue`",
         "Tool: GitHub / create_issue",
         "Agent: Helper",
-        'Input: {"title":"bug"}',
+        'Input: `{"title":"bug"}`',
         "Status: Pending",
         "Expires: 2026-10-19T12:00:00.000Z",
         "Cards are not supported here. Approve or deny on the web: https://capy.example.com/c/1",
@@ -214,10 +302,10 @@ describe("renderCardAsText", () => {
     );
     expect(renderCardAsText(approval, "zh")).toBe(
       [
-        "【审批】Create issue",
+        "【审批】`Create issue`",
         "工具：GitHub / create_issue",
         "Agent：Helper",
-        '输入：{"title":"bug"}',
+        '输入：`{"title":"bug"}`',
         "状态：待审批",
         "过期时间：2026-10-19T12:00:00.000Z",
         "此处不支持卡片，请到网页上批准或拒绝：https://capy.example.com/c/1",
@@ -230,20 +318,20 @@ describe("renderCardAsText", () => {
     const c: ChannelCard = { ...noApp, state: "approved", decidedBy: "bob" };
     expect(renderCardAsText(c, "en")).toBe(
       [
-        "[Approval] Create issue",
+        "[Approval] `Create issue`",
         "Tool: create_issue",
         "Agent: Helper",
-        'Input: {"title":"bug"}',
+        'Input: `{"title":"bug"}`',
         "Status: Approved (bob)",
         "Details: https://capy.example.com/c/1",
       ].join("\n"),
     );
     expect(renderCardAsText({ ...noApp, state: "denied" }, "zh")).toBe(
       [
-        "【审批】Create issue",
+        "【审批】`Create issue`",
         "工具：create_issue",
         "Agent：Helper",
-        '输入：{"title":"bug"}',
+        '输入：`{"title":"bug"}`',
         "状态：已拒绝",
         "详情：https://capy.example.com/c/1",
       ].join("\n"),
@@ -253,15 +341,17 @@ describe("renderCardAsText", () => {
   it("question：en / zh，按语言取标题", () => {
     expect(renderCardAsText(question, "en")).toBe(
       [
-        "[Question] Pick env",
+        "[Question] `Pick env`",
         "Status: Pending",
         "Answer on the web: https://capy.example.com/c/1?q=q_1",
       ].join("\n"),
     );
     expect(renderCardAsText(question, "zh")).toBe(
-      ["【提问】选择环境", "状态：待回答", "到网页上回答：https://capy.example.com/c/1?q=q_1"].join(
-        "\n",
-      ),
+      [
+        "【提问】`选择环境`",
+        "状态：待回答",
+        "到网页上回答：https://capy.example.com/c/1?q=q_1",
+      ].join("\n"),
     );
     const answered: ChannelCard = {
       ...question,
@@ -271,17 +361,17 @@ describe("renderCardAsText", () => {
     };
     expect(renderCardAsText(answered, "en")).toBe(
       [
-        "[Question] Plain",
+        "[Question] `Plain`",
         "Status: Answered",
-        "Answer: o1",
+        "Answer: `o1`",
         "Details: https://capy.example.com/c/1?q=q_1",
       ].join("\n"),
     );
     expect(renderCardAsText(answered, "zh")).toBe(
       [
-        "【提问】Plain",
+        "【提问】`Plain`",
         "状态：已回答",
-        "回答：o1",
+        "回答：`o1`",
         "详情：https://capy.example.com/c/1?q=q_1",
       ].join("\n"),
     );
@@ -306,16 +396,16 @@ describe("renderCardAsText", () => {
     const head = (zh: boolean) =>
       zh
         ? [
-            "【审批】Create issue",
+            "【审批】`Create issue`",
             "工具：GitHub / create_issue",
             "Agent：Helper",
-            '输入：{"title":"bug"}',
+            '输入：`{"title":"bug"}`',
           ]
         : [
-            "[Approval] Create issue",
+            "[Approval] `Create issue`",
             "Tool: GitHub / create_issue",
             "Agent: Helper",
-            'Input: {"title":"bug"}',
+            'Input: `{"title":"bug"}`',
           ];
     const cases = [
       ["expired", "en", "Status: Expired"],
@@ -334,16 +424,16 @@ describe("renderCardAsText", () => {
       );
     }
     expect(renderCardAsText({ ...question, state: "expired" }, "en")).toBe(
-      "[Question] Pick env\nStatus: Expired\nDetails: https://capy.example.com/c/1?q=q_1",
+      "[Question] `Pick env`\nStatus: Expired\nDetails: https://capy.example.com/c/1?q=q_1",
     );
     expect(renderCardAsText({ ...question, state: "cancelled" }, "en")).toBe(
-      "[Question] Pick env\nStatus: Cancelled\nDetails: https://capy.example.com/c/1?q=q_1",
+      "[Question] `Pick env`\nStatus: Cancelled\nDetails: https://capy.example.com/c/1?q=q_1",
     );
     expect(renderCardAsText({ ...question, state: "expired" }, "zh")).toBe(
-      "【提问】选择环境\n状态：已过期\n详情：https://capy.example.com/c/1?q=q_1",
+      "【提问】`选择环境`\n状态：已过期\n详情：https://capy.example.com/c/1?q=q_1",
     );
     expect(renderCardAsText({ ...question, state: "cancelled" }, "zh")).toBe(
-      "【提问】选择环境\n状态：已取消\n详情：https://capy.example.com/c/1?q=q_1",
+      "【提问】`选择环境`\n状态：已取消\n详情：https://capy.example.com/c/1?q=q_1",
     );
   });
 

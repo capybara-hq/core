@@ -41,4 +41,27 @@ describe("adaptToFeatures（Ruling A33）", () => {
     const r = adaptToFeatures({ ...all, threads: false }, target, { text: "hi" }, "en");
     expect(r.target).toEqual({ chatId: "g1", chatType: "group" });
   });
+
+  it("features.cards = false：审批卡片里模型给的标题与输入预览放在代码里，不成为链接", () => {
+    const approval: ChannelCard = {
+      kind: "approval",
+      id: "ap_1",
+      title: "[Approve now](https://evil.example/a)",
+      toolName: "t",
+      agentName: "A",
+      inputPreview: '{"u":"[x](https://evil.example/b)"}',
+      scopes: ["once"],
+      expiresAt: "2026-10-19T12:00:00.000Z",
+      state: "pending",
+      webUrl: "https://cap.example/c/1",
+    };
+    const r = adaptToFeatures(
+      { ...all, cards: false },
+      target,
+      { text: "", cards: [approval] },
+      "en",
+    );
+    expect(r.message.text).toContain("[Approval] `[Approve now](https://evil.example/a)`");
+    expect(r.message.text).toContain('Input: `{"u":"[x](https://evil.example/b)"}`');
+  });
 });
