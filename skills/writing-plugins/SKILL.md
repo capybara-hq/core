@@ -163,6 +163,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 - **内核会话 Cookie 被剥掉**：转交前从 `Cookie` 头删去 `cap_at` / `cap_rt`（其余 Cookie 原样保留；只剩这两个时不带 `Cookie` 头），插件拿不到用户的内核会话。
 - 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
 - `req.signal` 只在响应写完之前客户端断开时中止（正常写完不会中止）：长连接（SSE）的 handler 用它退订、收尾。
+- **停机时内核中止所有进行中的插件请求**（`req.signal` 一齐 abort，此后到达的请求一开始就是中止的）：handler 要么很快结束，要么能容忍中止（收到 abort 就结束流、放弃未完成的工作；需要做完的事放进队列）。不响应 signal 的长连接会占用 http 停机预算，到时被强制断开。
 - 嵌入应用的路由放在 `/ui/` 下，网页经同源代理 `/plugin-ui/<插件>/...` 访问，代理只转发嵌入令牌、改写响应头与缓存，见 `skills/writing-plugin-ui`。
 
 ### 界面（视图与嵌入应用）
