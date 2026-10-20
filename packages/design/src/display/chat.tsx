@@ -68,7 +68,7 @@ export function ThinkingRow({ seconds, text, labels }: ThinkingRowProps) {
         type="button"
         className="cb-row-toggle cb-thinking-title"
         aria-expanded={open}
-        aria-controls={id}
+        aria-controls={open ? id : undefined}
         onClick={() => setOpen((o) => !o)}
       >
         {title}
@@ -142,7 +142,7 @@ export function ToolCallRow({
         type="button"
         className="cb-row-toggle cb-toolcall-head"
         aria-expanded={open}
-        aria-controls={id}
+        aria-controls={open ? id : undefined}
         onClick={() => setOpen((o) => !o)}
       >
         <span className="cb-toolcall-name">{name}</span>

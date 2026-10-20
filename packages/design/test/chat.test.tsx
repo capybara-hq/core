@@ -64,6 +64,29 @@ describe("ThinkingRow", () => {
   });
 });
 
+describe("aria-controls 只指向存在的元素", () => {
+  /** 按钮的 aria-controls（若有）必须指向文档里存在的元素；返回它是否存在。 */
+  const controls = (btn: HTMLElement): boolean => {
+    const id = btn.getAttribute("aria-controls");
+    if (id === null) return false;
+    expect(document.getElementById(id), `aria-controls=${id}`).not.toBeNull();
+    return true;
+  };
+  it("ThinkingRow / ToolCallRow：收起时不带 aria-controls（面板不在 DOM），展开后带上", async () => {
+    for (const el of [
+      <ThinkingRow key="t" seconds={7} text="x" />,
+      <ToolCallRow key="c" name="tool" status="done" input="{}" />,
+    ]) {
+      wrap(el);
+      const btn = screen.getAllByRole("button")[0] as HTMLElement;
+      expect(controls(btn)).toBe(false);
+      await userEvent.click(btn);
+      expect(controls(btn)).toBe(true);
+      cleanup();
+    }
+  });
+});
+
 describe("ToolCallRow", () => {
   it("默认只显示一行，展开后显示 IN / OUT", async () => {
     wrap(
@@ -206,12 +229,22 @@ describe("EmbedFrame", () => {
     expect(onMessage).toHaveBeenCalledTimes(1);
     expect(onMessage.mock.calls[0]?.[0].data).toBe("mine");
   });
-  it("卸载后不再转发", () => {
-    const onMessage = vi.fn();
-    const { unmount } = wrap(<EmbedFrame src="about:blank" title="f" onMessage={onMessage} />);
-    unmount();
-    window.dispatchEvent(new MessageEvent("message", { data: "x", source: window }));
-    expect(onMessage).not.toHaveBeenCalled();
+  it("卸载时移除同一个 message 监听", () => {
+    const add = vi.spyOn(window, "addEventListener");
+    const remove = vi.spyOn(window, "removeEventListener");
+    try {
+      const onMessage = vi.fn();
+      const { unmount } = wrap(<EmbedFrame src="about:blank" title="f" onMessage={onMessage} />);
+      const added = add.mock.calls.filter(([type]) => type === "message").map(([, l]) => l);
+      expect(added).toHaveLength(1);
+      unmount();
+      const removed = remove.mock.calls.filter(([type]) => type === "message").map(([, l]) => l);
+      expect(removed).toContain(added[0]);
+      expect(onMessage).not.toHaveBeenCalled();
+    } finally {
+      add.mockRestore();
+      remove.mockRestore();
+    }
   });
 });
 
