@@ -24,6 +24,8 @@ description: 给插件加界面时使用（对话页右侧标签、顶栏「扩�
 
 两档能放的位置一样：`place: "conversation"` 是对话页右侧面板的一个标签（面板里还有内核自带的「运行」「上下文」）；`place: "page"` 是顶栏「扩展」菜单里的组织页面，路由 `/p/<插件>/<id>`。贡献只在**启用了本插件的组织**出现；kind view 还要求插件真的用 `ctx.ui.view` 注册了 render。
 
+**角色（Ruling A38）**：`place: "page"` 的贡献（view 与 embed）只给组织角色 **member 以上**。guest 的贡献列表里没有组织页面；guest 取组织页面视图、执行其动作、签组织页面的嵌入令牌、连组织级刷新流一律 404 `ui.not_found`（与不存在一样）。`place: "conversation"` 的贡献照常给能访问该对话的任何角色（guest 也用共享的 agent）。插件在 `UiRenderArgs` / `UiActionArgs` / `EmbedClaims` 里都能拿到 `role`（`owner` / `admin` / `member` / `guest`），可以据此再收紧（例如只有 member 以上能改数据）；但不需要自己挡 guest 进组织页面，内核已经挡了。
+
 ## 清单
 
 ```ts
@@ -72,7 +74,7 @@ await ctx.ui.invalidate({ orgId, conversationId, contribution: "tasks" }).catch(
 ```
 
 - `view` / `action` 只能在 `setup` 里调用（setup 结束即封存），id 必须在 `permissions.ui.views` 里，否则抛 `PluginPermissionError` 并写越权审计；同一个 id 重复注册抛错。
-- 参数里的身份（`orgId`、`accountId`、`conversationId`）由内核鉴权后给出：对话视图已核对调用者能访问这个对话，插件拿不到用户的会话凭据。组织页面（place page）不传 `conversationId`。`locale` 是网页当前语言（`zh` / `en`，默认 `en`），视图里的文字按它出。
+- 参数里的身份（`orgId`、`accountId`、`role`、`conversationId`）由内核鉴权后给出：对话视图已核对调用者能访问这个对话，插件拿不到用户的会话凭据。组织页面（place page）不传 `conversationId`。`locale` 是网页当前语言（`zh` / `en`，默认 `en`），视图里的文字按它出。
 - **5 秒超时，`render` 与 `action` 都必须响应 `signal`**：把它传给查询和外部请求（`fetch(url, { signal })`），中止后尽快放弃。超时后用户看到的是失败、可能会重试，`action` 里的写操作尤其不能在超时后继续做完。
 - 失败只影响那一个标签（显示错误和「重试」），对话照常流式显示；内核记告警，不写对话日志。错误码：
 
@@ -136,7 +138,7 @@ return {
 ### 嵌入令牌
 
 - 网页调 `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（对话嵌入带 `{ conversationId }`）拿 `{ token, src, expiresAt, expiresIn }`；`src` 是 `/plugin-ui/<插件>/<path 去掉开头的 /ui/>`，如 `/plugin-ui/example-board/board`。签发时内核已核对插件已启用、贡献是 embed、调用者能访问这个对话。
-- 令牌是 `base64url(声明).base64url(HMAC)`，**无状态**（不落库、不进 Redis），各副本用同一主密钥校验；有效期 300 秒（`EMBED_TOKEN_TTL_SECONDS`，容许 30 秒时钟偏差），主密钥轮换后上一把签的令牌在过期前仍有效。声明是 `EmbedClaims`：`plugin`、`orgId`、`accountId`、`conversationId?`、`contribution`、`exp`。
+- 令牌是 `base64url(声明).base64url(HMAC)`，**无状态**（不落库、不进 Redis），各副本用同一主密钥校验；有效期 300 秒（`EMBED_TOKEN_TTL_SECONDS`，容许 30 秒时钟偏差），主密钥轮换后上一把签的令牌在过期前仍有效。声明是 `EmbedClaims`：`plugin`、`orgId`、`accountId`、`role`、`conversationId?`、`contribution`、`exp`（`role` 签发时写入并在校验时核对是四种角色之一）。
 - 插件**每个数据路由先 `await ctx.ui.verifyEmbedToken(token)`**，返回 null 就 401。它只认签给**本插件**的令牌（签给别的插件的一律 null），并且每次都查 PG 确认本插件此刻仍在 `claims.orgId` 启用（Ruling A37，不缓存）：组织停用插件后，已签出的令牌立即失效，重新启用后未过期的又能用。组织、账号、对话只从返回的声明里取，不信请求里的任何参数。对话令牌要按 `conversationId` 限定数据范围；组织令牌（没有对话）别让它看到对话里的数据（example-board 的 `scoped()`）。
 - **内核 `/api` 不认嵌入令牌**：鉴权守卫只把 Bearer 当 API 令牌（`cap_pat_` / `cap_svc_`）查，嵌入令牌一律 401 `auth.required`。令牌泄露的最坏结果是在 300 秒内以该用户身份调用**这个插件**的数据路由。
 

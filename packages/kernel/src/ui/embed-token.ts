@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { EmbedClaims } from "@capybara-hq/plugin-sdk";
 import type { Keyring } from "../ctx/secrets.js";
+import { ORG_ROLES } from "../orgs/roles.js";
 
 /** 嵌入令牌的有效期（秒）。网页在过期前 60 秒续期。 */
 export const EMBED_TOKEN_TTL_SECONDS = 300;
@@ -18,10 +19,13 @@ const CLAIM_KEYS = new Set([
   "plugin",
   "orgId",
   "accountId",
+  "role",
   "conversationId",
   "contribution",
   "exp",
 ]);
+
+const ROLES: ReadonlySet<unknown> = new Set(ORG_ROLES);
 
 const isId = (v: unknown): v is string => typeof v === "string" && v !== "" && v.length <= 100;
 
@@ -42,12 +46,14 @@ function parseClaims(v: unknown): EmbedClaims | null {
   if (Object.keys(c).some((k) => !CLAIM_KEYS.has(k))) return null;
   if (typeof c.plugin !== "string" || !PLUGIN_RE.test(c.plugin)) return null;
   if (!isId(c.orgId) || !isId(c.accountId) || !isId(c.contribution)) return null;
+  if (!ROLES.has(c.role)) return null;
   if (c.conversationId !== undefined && !isId(c.conversationId)) return null;
   if (typeof c.exp !== "number" || !Number.isSafeInteger(c.exp)) return null;
   return {
     plugin: c.plugin,
     orgId: c.orgId,
     accountId: c.accountId,
+    role: c.role as EmbedClaims["role"],
     ...(c.conversationId !== undefined && { conversationId: c.conversationId }),
     contribution: c.contribution,
     exp: c.exp,

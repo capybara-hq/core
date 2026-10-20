@@ -209,6 +209,7 @@ describe("插件视图接口", () => {
     expect(probe().lastRender).toEqual({
       orgId,
       accountId: ownerId,
+      role: "owner",
       conversationId: convId,
       locale: "zh",
     });
@@ -323,7 +324,12 @@ describe("插件视图接口", () => {
     await enable(owner, orgId, "ui-probe");
     const r = await other({ method: "GET", url: `${ui}/views/ui-probe/orgpage` });
     expect(r.statusCode, r.body).toBe(200);
-    expect(probe().lastRender).toEqual({ orgId, accountId: expect.any(String), locale: "en" });
+    expect(probe().lastRender).toEqual({
+      orgId,
+      accountId: expect.any(String),
+      role: "member",
+      locale: "en",
+    });
     const withConv = await owner({
       method: "GET",
       url: `${ui}/views/ui-probe/orgpage?conversationId=${convId}`,
@@ -367,6 +373,7 @@ describe("插件视图接口", () => {
     expect(probe().lastAction).toEqual({
       orgId,
       accountId: ownerId,
+      role: "owner",
       conversationId: convId,
       locale: "zh",
       actionId: "toast",
@@ -388,8 +395,8 @@ describe("插件视图接口", () => {
     // 没有 action 处理函数的视图 → 404
     const none = await owner({
       method: "POST",
-      url: `${ui}/actions/ui-probe/orgpage`,
-      payload: { actionId: "x" },
+      url: `${ui}/actions/ui-probe/boom`,
+      payload: { actionId: "x", conversationId: convId },
     });
     expect(none.statusCode).toBe(404);
     expect(errCode(none)).toBe("ui.not_found");
@@ -399,6 +406,64 @@ describe("插件视图接口", () => {
       payload: { conversationId: convId },
     });
     expect(invalid.statusCode).toBe(400);
+  });
+
+  it("角色（A38）：guest 看不到组织页面（列表隐藏，视图 / 动作 / 嵌入令牌 / 组织流 404）；member 可以；guest 可用对话视图", async () => {
+    await enable(owner, orgId, "ui-probe");
+    const guestId = await account("guest");
+    await testMembers(db).add(orgId, guestId, "guest", ownerId);
+    const guest = await session(k, "guest");
+    const guestConv = await createConv(guest, orgId, agentId);
+    const ids = async (req: Req) =>
+      (
+        (await req({ method: "GET", url: `${ui}/contributions` })).json() as {
+          items: { id: string }[];
+        }
+      ).items.map((i) => i.id);
+    expect(await ids(guest)).toEqual(["panel", "boom", "slow", "bad"]);
+    expect(await ids(other)).toEqual(["panel", "boom", "slow", "bad", "orgpage", "board"]);
+
+    const pageCalls = [
+      { method: "GET", url: `${ui}/views/ui-probe/orgpage` },
+      { method: "POST", url: `${ui}/actions/ui-probe/orgpage`, payload: { actionId: "go" } },
+      { method: "POST", url: `${ui}/embeds/ui-probe/board/token`, payload: {} },
+      { method: "GET", url: `${ui}/stream` },
+    ] as const;
+    for (const call of pageCalls) {
+      const r = await guest(call);
+      expect(r.statusCode, call.url).toBe(404);
+      expect(errCode(r), call.url).toBe("ui.not_found");
+    }
+    for (const call of pageCalls.slice(0, 3)) {
+      const r = await other(call);
+      expect(r.statusCode, `${call.url} ${r.body}`).toBe(200);
+    }
+    expect(probe().lastAction).toEqual(expect.objectContaining({ role: "member", actionId: "go" }));
+    const issued = await other(pageCalls[2]);
+    const claims = JSON.parse(
+      Buffer.from(
+        (issued.json() as { token: string }).token.split(".")[0] ?? "",
+        "base64url",
+      ).toString("utf8"),
+    ) as Record<string, unknown>;
+    expect(claims.role).toBe("member");
+
+    // 对话位置的贡献：能访问该对话的 guest 照常可用
+    const v = await guest({
+      method: "GET",
+      url: `${ui}/views/ui-probe/panel?conversationId=${guestConv}`,
+    });
+    expect(v.statusCode, v.body).toBe(200);
+    expect(probe().lastRender).toEqual(
+      expect.objectContaining({ role: "guest", accountId: guestId }),
+    );
+    const a = await guest({
+      method: "POST",
+      url: `${ui}/actions/ui-probe/panel`,
+      payload: { actionId: "toast", conversationId: guestConv },
+    });
+    expect(a.statusCode, a.body).toBe(200);
+    expect(probe().lastAction).toEqual(expect.objectContaining({ role: "guest" }));
   });
 
   it("服务令牌 → 403（HUMAN_ONLY）", async () => {

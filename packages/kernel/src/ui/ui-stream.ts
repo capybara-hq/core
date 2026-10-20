@@ -1,16 +1,20 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import type { CredentialCheck } from "../identity/credential-check.js";
+import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import type { SseOutput, StreamBus, StreamHandle } from "../runtime/stream.js";
 import { isUiBusMessage, orgUiTopic, uiFrame } from "./registry.js";
+import { PAGE_MIN_ROLE } from "./views.js";
 
 export interface OrgUiStreamsDeps {
   bus: StreamBus;
-  /** 调用者仍是组织成员（组织未删除、账号仍 active）：连接建立时与每 `sseRecheckMs` 复核一次。 */
-  isMember(orgId: string, accountId: string): Promise<boolean>;
+  /**
+   * 调用者此刻的组织角色（组织未删除、账号 active、仍有成员关系，否则 undefined）：
+   * 连接建立时与每 `sseRecheckMs` 复核一次；组织级刷新只服务组织页面，要 member 以上（A38）。
+   */
+  memberRole(orgId: string, accountId: string): Promise<OrgRole | undefined>;
   config: () => KernelConfig;
   log: Pick<Logger, "warn">;
 }
@@ -21,27 +25,29 @@ export interface OrgUiStreamParams {
   credential: CredentialCheck;
 }
 
-/** 组织成员判定（一条查询）：组织未删除、账号 active、仍有成员关系。 */
-export function orgMembership(db: KernelDb): OrgUiStreamsDeps["isMember"] {
+/** 组织成员角色（一条查询）：组织未删除、账号 active、仍有成员关系。 */
+export function orgMembership(db: KernelDb): OrgUiStreamsDeps["memberRole"] {
   return async (orgId, accountId) => {
     const row = await db
       .selectFrom("memberships")
       .innerJoin("orgs", "orgs.id", "memberships.org_id")
       .innerJoin("accounts", "accounts.id", "memberships.account_id")
-      .select(sql`1`.as("one"))
+      .select("memberships.role")
       .where("memberships.org_id", "=", orgId)
       .where("memberships.account_id", "=", accountId)
       .where("orgs.deleted_at", "is", null)
       .where("accounts.status", "=", "active")
       .executeTakeFirst();
-    return row !== undefined;
+    return row?.role;
   };
 }
 
 async function authorize(d: OrgUiStreamsDeps, p: OrgUiStreamParams): Promise<ErrorCode | null> {
   const denied = await p.credential();
   if (denied !== null) return denied;
-  return (await d.isMember(p.orgId, p.viewerAccountId)) ? null : "org.not_found";
+  const role = await d.memberRole(p.orgId, p.viewerAccountId);
+  if (role === undefined) return "org.not_found";
+  return roleAtLeast(role, PAGE_MIN_ROLE) ? null : "ui.not_found";
 }
 
 /** 慢客户端的积压上限（刷新帧很小，超过即说明客户端不读了）。 */

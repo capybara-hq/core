@@ -7,6 +7,7 @@ import {
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
+import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import type { LoadedUiContribution, PluginHost } from "../plugins/host.js";
 import { UUID_RE } from "./registry.js";
 
@@ -48,6 +49,8 @@ export interface UiViewsDeps {
 export interface UiTarget {
   orgId: string;
   accountId: string;
+  /** 调用者在 `orgId` 的角色（OrgGuard 查出的成员关系）。 */
+  role: OrgRole;
   plugin: string;
   id: string;
   conversationId?: string;
@@ -58,6 +61,13 @@ const TOAST_MAX = 500;
 const MAX_LOGGED_PROBLEMS = 10;
 
 const notFound = () => new ApiError("ui.not_found", "UI contribution not found");
+
+/** 组织页面（`place: "page"`）所需的最低角色（A38）：guest 只用对话位置的贡献。 */
+export const PAGE_MIN_ROLE: OrgRole = "member";
+
+/** 该角色能否使用这个位置的贡献。 */
+export const canUsePlace = (place: UiContribution["place"], role: OrgRole): boolean =>
+  place !== "page" || roleAtLeast(role, PAGE_MIN_ROLE);
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -81,6 +91,7 @@ function actionResultProblems(r: unknown): string[] {
  * 插件视图（第一档：渲染 schema）：列出贡献、调用插件 `render` / `action`。
  * - 只认在该组织已启用、且已在本副本加载的插件（启用状态每次查库）；
  * - 对话视图要求调用者能访问这个对话（与 SSE 流一致），访问不了与不存在一样返回 404 `ui.not_found`；
+ * - 组织页面（`place: "page"`，视图与嵌入）只给 member 以上：guest 列表里看不到、取视图 / 动作 / 令牌一律 404；
  * - 组织页面视图不接受 `conversationId`（带了 400，与对话视图缺它一致）；
  * - 调用带 5 秒时限与中止信号：render 抛错 502 `ui.render_failed`、action 抛错 502 `ui.action_failed`、
  *   超时 504 `ui.timeout`、返回非法视图 502
@@ -94,13 +105,18 @@ export class UiViews {
     this.timeoutMs = d.timeoutMs ?? UI_CALL_TIMEOUT_MS;
   }
 
-  /** 该组织可见的界面贡献：插件已启用且已加载；kind view 的要求插件注册了 render。 */
-  async contributions(orgId: string): Promise<UiContributionItem[]> {
+  /** 该组织、该角色可见的界面贡献：插件已启用且已加载；kind view 的要求插件注册了 render；组织页面要 member 以上。 */
+  async contributions(orgId: string, role: OrgRole): Promise<UiContributionItem[]> {
     const all = this.d.host.uiContributions();
     if (all.length === 0) return [];
     const enabled = await this.d.enabledPlugins(orgId);
     return all
-      .filter((c) => enabled.has(c.plugin) && (c.contribution.kind === "embed" || c.render))
+      .filter(
+        (c) =>
+          enabled.has(c.plugin) &&
+          (c.contribution.kind === "embed" || c.render) &&
+          canUsePlace(c.contribution.place, role),
+      )
       .map(({ plugin, contribution: c }) => ({
         plugin,
         id: c.id,
@@ -164,7 +180,13 @@ export class UiViews {
     need: "render" | "action" | "embed",
   ): Promise<{
     entry: LoadedUiContribution;
-    args: { orgId: string; accountId: string; locale: UiTarget["locale"]; conversationId?: string };
+    args: {
+      orgId: string;
+      accountId: string;
+      role: OrgRole;
+      locale: UiTarget["locale"];
+      conversationId?: string;
+    };
   }> {
     const entry = this.d.host
       .uiContributions()
@@ -176,8 +198,9 @@ export class UiViews {
             ? c.contribution.kind === "embed"
             : c.contribution.kind === "view" && c[need] !== undefined),
       );
-    if (!entry || !(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
-    const base = { orgId: t.orgId, accountId: t.accountId, locale: t.locale };
+    if (!entry || !canUsePlace(entry.contribution.place, t.role)) throw notFound();
+    if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
+    const base = { orgId: t.orgId, accountId: t.accountId, role: t.role, locale: t.locale };
     if (entry.contribution.place !== "conversation") {
       if (t.conversationId !== undefined) {
         throw new ApiError(

@@ -21,6 +21,7 @@ const CLAIMS = {
   orgId: "11111111-1111-4111-8111-111111111111",
   accountId: "22222222-2222-4222-8222-222222222222",
   contribution: "board",
+  role: "member" as const,
 };
 
 const tokens = (now: number, ring = createKeyring(K1, [])) =>
@@ -132,6 +133,15 @@ describe("EmbedTokens", () => {
     expect(t.verify(signWithSameKey({ ...CLAIMS, exp: exp + 0.5 }), CLAIMS.plugin)).toBeNull();
     expect(t.verify(signWithSameKey({ ...CLAIMS, exp, admin: true }), CLAIMS.plugin)).toBeNull();
     expect(t.verify(signWithSameKey({ ...CLAIMS, exp, orgId: 1 }), CLAIMS.plugin)).toBeNull();
+    // 角色（A38）：必须是四种之一，缺了也拒绝
+    const { role: _role, ...noRole } = CLAIMS;
+    expect(t.verify(signWithSameKey({ ...noRole, exp }), CLAIMS.plugin)).toBeNull();
+    expect(t.verify(signWithSameKey({ ...CLAIMS, exp, role: "root" }), CLAIMS.plugin)).toBeNull();
+    for (const role of ["owner", "admin", "member", "guest"]) {
+      expect(t.verify(signWithSameKey({ ...CLAIMS, exp, role }), CLAIMS.plugin)).toMatchObject({
+        role,
+      });
+    }
     expect(
       t.verify(signWithSameKey({ ...CLAIMS, exp, conversationId: null }), CLAIMS.plugin),
     ).toBeNull();

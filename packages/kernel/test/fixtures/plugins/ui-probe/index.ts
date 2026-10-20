@@ -22,7 +22,7 @@ const plain = ({ signal: _signal, ...rest }: UiRenderArgs) => rest;
  * 界面接口测试用插件：
  * - 对话视图 panel（回显参数）、boom（抛错）、slow（一直等到中止信号）、bad（返回非法视图）；
  * - 组织页面视图 orgpage，嵌入应用 board（路由 GET /ui/board）；
- * - panel 的动作：toast / view / bad / boom；
+ * - panel 的动作：toast / view / bad / boom；orgpage 的动作回一条提示；
  * - 路由 POST /invalidate：按请求体调用 ctx.ui.invalidate（测试从指定副本触发刷新）。
  */
 export default definePlugin({
@@ -101,6 +101,11 @@ export default definePlugin({
         default:
           throw new Error("action exploded");
       }
+    });
+    ctx.ui.action("orgpage", async (args) => {
+      const { signal: _s, ...rest } = args;
+      state().lastAction = rest as Record<string, unknown>;
+      return { toast: t("好了", "Done") };
     });
     ctx.http.route("GET", "/ui/board", async () => new Response("board"));
     ctx.http.route("POST", "/invalidate", async (req) => {

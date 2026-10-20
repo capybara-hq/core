@@ -276,10 +276,18 @@ export function validateUiView(v: unknown): string[] {
   return out;
 }
 
+/**
+ * 调用者在组织内的角色（由高到低 owner / admin / member / guest）。`place: "page"` 的贡献只给 member 以上
+ * （内核对 guest 返回 404，插件收不到 guest 的组织页面请求）；对话位置的贡献给能访问该对话的任何角色。
+ */
+export type UiRole = "owner" | "admin" | "member" | "guest";
+
 /** 内核调用插件 `render` 时传入的参数（身份由内核鉴权后给出，插件拿不到用户的会话凭据）。 */
 export interface UiRenderArgs {
   orgId: string;
   accountId: string;
+  /** 调用者此刻在 `orgId` 的角色（内核按成员关系填，插件可据此收紧按钮等，见 {@link UiRole}）。 */
+  role: UiRole;
   /** 仅对话视图。 */
   conversationId?: string;
   locale: "zh" | "en";
@@ -301,6 +309,8 @@ export interface EmbedClaims {
   plugin: string;
   orgId: string;
   accountId: string;
+  /** 调用者的角色：签发时写入；`ctx.ui.verifyEmbedToken` 返回校验时刻的当前角色。 */
+  role: UiRole;
   conversationId?: string;
   contribution: string;
   exp: number;

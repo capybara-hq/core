@@ -87,6 +87,8 @@ const embedSrc = (plugin: string, path: string) =>
  *   插件须在组织启用、贡献须是 embed；对话嵌入要求能访问该对话（否则 404）。令牌只给插件路由用，
  *   内核鉴权守卫不认它（它不是 API 令牌）。
  * 对话视图的刷新走现有的会话流 `/conversations/:id/stream`。
+ * 角色（A38）：组织页面（`place: "page"`，含组织级刷新流）只给 member 以上，guest 一律 404 `ui.not_found`、
+ * 列表里也不出现；对话位置的贡献给能访问该对话的任何成员。插件收到的 `role` 来自 OrgGuard 查出的成员关系。
  */
 @Controller("api/v1/orgs/:orgId/ui")
 export class UiController implements OnModuleDestroy {
@@ -105,7 +107,7 @@ export class UiController implements OnModuleDestroy {
     @CurrentOrg() org: OrgContext,
   ): Promise<{ items: UiContributionItem[] }> {
     requireUser(principal);
-    return { items: await this.views.contributions(org.orgId) };
+    return { items: await this.views.contributions(org.orgId, org.role) };
   }
 
   @Get("views/:plugin/:id")
@@ -121,6 +123,7 @@ export class UiController implements OnModuleDestroy {
     const view = await this.views.render({
       orgId: org.orgId,
       accountId: p.account.id,
+      role: org.role,
       plugin,
       id,
       ...(q.conversationId !== undefined && { conversationId: q.conversationId }),
@@ -144,6 +147,7 @@ export class UiController implements OnModuleDestroy {
       {
         orgId: org.orgId,
         accountId: p.account.id,
+        role: org.role,
         plugin,
         id,
         ...(body.conversationId !== undefined && { conversationId: body.conversationId }),
@@ -171,6 +175,7 @@ export class UiController implements OnModuleDestroy {
     const target = await this.views.embed({
       orgId: org.orgId,
       accountId: p.account.id,
+      role: org.role,
       plugin,
       id,
       ...(body.conversationId !== undefined && { conversationId: body.conversationId }),
@@ -179,6 +184,7 @@ export class UiController implements OnModuleDestroy {
       plugin: target.plugin,
       orgId: org.orgId,
       accountId: p.account.id,
+      role: org.role,
       ...(target.conversationId !== undefined && { conversationId: target.conversationId }),
       contribution: target.contribution,
     });

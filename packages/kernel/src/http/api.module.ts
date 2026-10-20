@@ -313,7 +313,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     {
       provide: ORG_UI_STREAMS,
       useFactory: (db: KernelDb, bus: StreamBus, config: () => KernelConfig) =>
-        new OrgUiStreams({ bus, isMember: orgMembership(db), config, log: deps.log }),
+        new OrgUiStreams({ bus, memberRole: orgMembership(db), config, log: deps.log }),
       inject: [KERNEL_DB, KERNEL_BUS, KERNEL_CONFIG],
     },
     { provide: CREDENTIALS, useValue: deps.credentials },

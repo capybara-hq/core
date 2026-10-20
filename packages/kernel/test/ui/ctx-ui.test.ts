@@ -146,7 +146,7 @@ describe("ctx.ui.invalidate", () => {
         enabledPlugins: async (orgId) => new Set(orgId === "o1" ? ["ui-test"] : []),
       },
     );
-    const claims = { orgId: "o1", accountId: "a1", contribution: "board" };
+    const claims = { orgId: "o1", accountId: "a1", contribution: "board", role: "member" as const };
     const mine = new EmbedTokens(deps.keyring).issue({ plugin: "ui-test", ...claims }).token;
     expect(await ctx.ui.verifyEmbedToken(mine)).toEqual(
       expect.objectContaining({ plugin: "ui-test", orgId: "o1", accountId: "a1" }),
@@ -178,6 +178,7 @@ describe("ctx.ui.invalidate", () => {
       orgId: "o1",
       accountId: "a1",
       contribution: "board",
+      role: "member",
     }).token;
     expect(await ctx.ui.verifyEmbedToken(token)).not.toBeNull();
     enabled = false;
