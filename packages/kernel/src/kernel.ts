@@ -751,6 +751,7 @@ export async function createKernel(
         sandbox,
         skills,
         skillChanges,
+        sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),

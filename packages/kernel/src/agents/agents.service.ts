@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
+import { type Logger, type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -16,6 +16,9 @@ import type { AgentDefinition } from "./definition.js";
 type Trx = Transaction<KernelDatabase>;
 
 export const AGENT_VISIBILITIES = ["private", "org", "members"] as const;
+
+/** 删除 agent 时每个销毁任务带的对话数。 */
+const SANDBOX_DESTROY_BATCH = 500;
 export type AgentVisibility = (typeof AGENT_VISIBILITIES)[number];
 
 /** 对外的 agent 视图：当前版本的定义 + 元数据；`memberIds` 只在 visibility='members' 时为数组。 */
@@ -127,6 +130,12 @@ export class AgentsService {
       SkillChangesService,
       "cancelPendingForAgent" | "finishCancel"
     >,
+    /**
+     * 删除 agent 后销毁它各对话的沙箱（内核投递一次性维护任务 `sandbox-destroy-for`，worker 在锁内逐个销毁，
+     * 幂等）。不给时留给不活跃销毁扫描。
+     */
+    private readonly sandboxes?: { destroy(conversationIds: string[]): Promise<void> },
+    private readonly log?: Pick<Logger, "warn">,
   ) {}
 
   /**
@@ -452,6 +461,28 @@ export class AgentsService {
       );
     });
     await this.skillChanges.finishCancel(orgId, cancelled);
+    await this.destroySandboxes(orgId, agentId);
+  }
+
+  /** 提交后尽力而为：投递销毁这个 agent 各对话还没销毁的沙箱（失败只记日志，留给不活跃销毁扫描）。 */
+  private async destroySandboxes(orgId: string, agentId: string): Promise<void> {
+    if (!this.sandboxes) return;
+    try {
+      const rows = await this.db
+        .selectFrom("sandboxes as s")
+        .innerJoin("conversations as c", "c.id", "s.conversation_id")
+        .select("s.conversation_id")
+        .where("c.org_id", "=", orgId)
+        .where("c.agent_id", "=", agentId)
+        .where("s.status", "<>", "destroyed")
+        .execute();
+      const ids = rows.map((r) => r.conversation_id);
+      for (let i = 0; i < ids.length; i += SANDBOX_DESTROY_BATCH) {
+        await this.sandboxes.destroy(ids.slice(i, i + SANDBOX_DESTROY_BATCH));
+      }
+    } catch (err) {
+      this.log?.warn("cannot schedule sandbox destruction for a deleted agent", { agentId, err });
+    }
   }
 
   /**

@@ -878,6 +878,34 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
     }
   });
 
+  it("内核：删除 agent 投递 sandbox-destroy-for（它各对话还没销毁的沙箱；已销毁的不算）", async () => {
+    const { agent_id: agentId } = await db
+      .selectFrom("conversations")
+      .select("agent_id")
+      .where("id", "=", f.conversationId)
+      .executeTakeFirstOrThrow();
+    const other = randomUUID();
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${other}, ${f.orgId}, ${agentId}, ${f.leaver.id})`.execute(raw);
+    await sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status)
+      VALUES (${f.conversationId}, ${f.orgId}, 'sandbox-fake', 'running'),
+             (${other}, ${f.orgId}, 'sandbox-fake', 'destroyed')`.execute(raw);
+    const q = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+    try {
+      const res = await f.ownerReq({
+        method: "DELETE",
+        url: `/api/v1/orgs/${f.orgId}/agents/${agentId}`,
+      });
+      expect(res.statusCode, res.body).toBe(204);
+      const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
+      const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
+      expect(job?.data).toEqual({ conversationIds: [f.conversationId] });
+    } finally {
+      await q.close();
+      await sql`DELETE FROM capybara.sandboxes`.execute(raw);
+    }
+  });
+
   it("内核：离职投递 sandbox-destroy-for 维护任务（数据为对话 id）", async () => {
     await sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status)
       VALUES (${f.conversationId}, ${f.orgId}, 'sandbox-fake', 'running')`.execute(raw);
