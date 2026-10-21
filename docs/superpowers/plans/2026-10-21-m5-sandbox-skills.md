@@ -10,7 +10,7 @@
 - 沙箱按对话懒创建：空闲时休眠，长期不用才销毁；沙箱工具是内核内置工具。
 - 技能的元数据放 PG，文件放对象存储；用到技能时，按需复制进沙箱。
 
-**Tech Stack:** TypeScript、NestJS + Fastify、Kysely + 纯 SQL 迁移、BullMQ、Redis、`@aws-sdk/client-s3`、Docker Engine API（经 socket 代理）、E2B SDK、Next + `@capybara-hq/design`、Vitest + Testcontainers（PG / Valkey / MinIO）。
+**Tech Stack:** TypeScript、NestJS + Fastify、Kysely + 纯 SQL 迁移、BullMQ、Redis、`@aws-sdk/client-s3`、Docker Engine API（经 socket 代理）、E2B SDK、Next + `@capybara-hq/design`、Vitest + Testcontainers（PG / Valkey / SeaweedFS S3）。
 
 **Spec:**
 - `docs/superpowers/specs/2026-10-17-capybara-architecture-design.md`：§3.6（R1–R6）、§5.6（技能）、§8.3（沙箱）、§8.8（数据删除）。
@@ -46,7 +46,7 @@
 - **D9** 媒体输入先做图片和 PDF。
   - 模型自己声明支持哪些媒体；不支持时，内核给模型的是文字占位。
   - 字节存对象存储，日志只记引用。
-- **D10** `plugins/object-store-s3`：兼容 MinIO 等 S3 存储；开发用 compose 加 MinIO；插件经 `ctx.storage` 使用，自动加前缀。
+- **D10** `plugins/object-store-s3`：兼容 MinIO 等 S3 存储；开发用 compose 加 SeaweedFS（S3）；插件经 `ctx.storage` 使用，自动加前缀。
 - **D11** 技能分两种：组织技能库，以及 agent 自己的技能。格式兼容 Anthropic Agent Skills；元数据在 PG，文件在对象存储；市场留到 M6。
 - **D12** R4：私有 agent 写技能直接生效；共享 agent 写技能进收件箱，负责人批准后对他人生效。
 
@@ -161,12 +161,12 @@ export const MEDIA_LIMITS: { imageBytes: 5_242_880; documentBytes: 33_554_432 };
 - [ ] **Step 4：** 运行 `pnpm vitest run packages/plugin-sdk tools/checks`、`pnpm typecheck`（内核暂时给 `ctx.storage` 一个占位实现，标 `TODO(M5 T2)`），确认通过。
 - [ ] **Step 5：** 提交 `feat(plugin-sdk): object-store@1、ctx.storage 与图片 / 文档媒体块`。
 
-### Task 2: `plugins/object-store-s3`、内核存储服务与 MinIO
+### Task 2: `plugins/object-store-s3`、内核存储服务与 SeaweedFS（S3）
 
 **Files:**
 - 新建 `plugins/object-store-s3/**`。
-- 新建 `packages/testing/src/containers.ts` 中的 `startTestMinio()`。
-- 修改 `docker/compose.dev.yaml`（加 MinIO 与建桶）。
+- 新建 `packages/testing/src/containers.ts` 中的 `startTestS3()`。
+- 修改 `docker/compose.dev.yaml`（加 SeaweedFS S3 与建桶）。
 - 新建 `packages/kernel/src/storage/{storage.service,prefix}.ts`。
 - 修改 `ctx/create-ctx.ts`、`kernel.ts`、`config/schema.ts`。
 - 测试 `plugins/object-store-s3/test/*`、`packages/kernel/test/storage/*`。
@@ -181,13 +181,13 @@ class StorageService {
   deleteOrg(orgId: string): Promise<void>;                       // 删掉 kernel/<orgId>/ 与所有 plugins/*/<orgId>/
 }
 // 插件部署配置：{ endpoint?: string; region: string; bucket: string; accessKeyId: secret; secretAccessKey: secret; forcePathStyle: boolean; publicEndpoint?: string /* 浏览器可达的地址，预签名 URL 用它 */ }
-startTestMinio(): Promise<{ endpoint: string; accessKey: string; secretKey: string; bucket: string; stop(): Promise<void> }>
+startTestS3(): Promise<{ endpoint: string; accessKey: string; secretKey: string; bucket: string; stop(): Promise<void> }>
 ```
 - 键的校验：组织 id 与键都不能含 `..`、不能以 `/` 开头，长度 ≤ 1024，传进来的 orgId 必须是 UUID。任何拼出来会落到前缀之外的键，一律报错。
 - 没有提供方时：声明了 `permissions.storage` 的插件不加载，原因写进 pending 列表；内核里依赖存储的功能返回 `storage.unavailable`（503）。
 
 - [ ] **Step 1：先写失败测试。**
-  - 插件用 MinIO 跑通全部方法。预签名 PUT 超过 `maxSize` 时，被存储拒绝。
+  - 插件用 SeaweedFS（S3）跑通全部方法。预签名 PUT 超过 `maxSize` 时，被存储拒绝。
   - 内核前缀隔离：插件 A 读不到插件 B、读不到别的组织；用 `../` 构造的键会报错。
   - `deleteOrg` 只删除该组织的对象。
   - 没有提供方时，声明了存储的插件进入 pending。
@@ -271,7 +271,7 @@ POST .../conversations/:id/messages 的 body 增加 files?: string[]（ready 附
 - [ ] **Step 1：** 先写失败的组件测试，覆盖三种加文件方式、进度、错误、发送时带上的 id。
 - [ ] **Step 2：** 运行测试，确认失败。
 - [ ] **Step 3：** 实现。
-- [ ] **Step 4：** e2e：e2e 环境里起 MinIO，上传一张 PNG 并发消息，用 model-fake 回显收到的块类型，断言时间线显示缩略图。
+- [ ] **Step 4：** e2e：e2e 环境里起 SeaweedFS（S3），上传一张 PNG 并发消息，用 model-fake 回显收到的块类型，断言时间线显示缩略图。
 - [ ] **Step 5：** 提交 `feat(web): 对话中上传图片与文件`。
 
 ---
@@ -605,7 +605,7 @@ POST /api/v1/orgs/:orgId/skill-changes/:id/decide {decision: approve|reject}   /
   - `skills/writing-sandbox-providers`：`sandbox@1` 契约、生命周期、出站、测试。
   - `skills/writing-object-store-providers`，可以并进上一份，由实现者定。
   - 更新 `writing-model-providers`（媒体块）、`writing-tools`（沙箱工具、技能工具）、`writing-plugins`（`ctx.storage`、`perm-storage`）。
-- 更新 `AGENTS.md` 规则速记、README（MinIO、沙箱启用、技能），以及路线图（M5 完成，并列出推迟项）。
+- 更新 `AGENTS.md` 规则速记、README（S3 存储、沙箱启用、技能），以及路线图（M5 完成，并列出推迟项）。
 - 更新人工验收清单：Docker runsc、E2B、带图片的真实模型请求。
 - [ ] 提交 `test: M5 第三段验收` 与 `docs: M5 对象存储、沙箱与技能文档`。
 
