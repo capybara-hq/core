@@ -1,4 +1,11 @@
-import type { ContentBlock, ModelUsage, StopReason } from "@capybara-hq/plugin-sdk";
+import {
+  type ContentBlock,
+  DOCUMENT_MEDIA_TYPES,
+  IMAGE_MEDIA_TYPES,
+  type MediaSource,
+  type ModelUsage,
+  type StopReason,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 
@@ -9,7 +16,16 @@ const ProviderOpaqueSchema = z.object({
   data: z.unknown(),
 });
 
-/** 内容块（plugin-sdk 的 `ContentBlock`）。 */
+/**
+ * 日志里的媒体来源：只有附件引用。字节（`base64`）绝不进事件日志——日志是事实源、字节不是；
+ * 构建模型请求时内核按 `attachmentId` 取字节换成 `base64`（见 {@link LogContentBlock}）。
+ */
+const RefMediaSourceSchema = z.object({ kind: z.literal("ref"), attachmentId: z.string().min(1) });
+
+/**
+ * 日志里的内容块：plugin-sdk 的 `ContentBlock`，但 image / document 的 `source` 只能是 `ref`
+ * （写入时用这个 schema 校验，带 `base64` 的块被拒绝）。
+ */
 export const ContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string(), opaque: ProviderOpaqueSchema.optional() }),
   z.object({
@@ -30,7 +46,32 @@ export const ContentBlockSchema = z.discriminatedUnion("type", [
     content: z.string(),
     isError: z.boolean(),
   }),
+  z.object({
+    type: z.literal("image"),
+    mediaType: z.enum(IMAGE_MEDIA_TYPES),
+    source: RefMediaSourceSchema,
+    name: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("document"),
+    mediaType: z.enum(DOCUMENT_MEDIA_TYPES),
+    source: RefMediaSourceSchema,
+    name: z.string().optional(),
+  }),
 ]);
+
+type MediaBlock = Extract<ContentBlock, { type: "image" | "document" }>;
+/**
+ * 日志形状的内容块：与 plugin-sdk 的 `ContentBlock` 相同，只是媒体块的 `source` 收窄为 `ref`。
+ * 它是 `ContentBlock` 的子类型，所以从日志读出的块可直接当 `ContentBlock` 用（请求构建时再解析 ref）。
+ */
+export type LogContentBlock =
+  | Exclude<ContentBlock, MediaBlock>
+  | (MediaBlock extends infer B
+      ? B extends MediaBlock
+        ? Omit<B, "source"> & { source: Extract<MediaSource, { kind: "ref" }> }
+        : never
+      : never);
 
 const STOP_REASONS = ["end_turn", "tool_use", "max_tokens", "refusal", "other"] as const;
 
@@ -298,7 +339,9 @@ export type EventPayload<T extends ConversationEventType> = Extract<
 // 编译期核对：zod 形状与 plugin-sdk 的类型一致（任一方改动而另一方未跟上则 typecheck 失败）。
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type StripOpt<T> = T extends unknown ? { [K in keyof T]: Exclude<T[K], undefined> } : never;
-const _blocks: Same<StripOpt<z.infer<typeof ContentBlockSchema>>, StripOpt<ContentBlock>> = true;
+// 日志 schema 对的是收窄后的 LogContentBlock（媒体块只认 ref）；再核对它确是 ContentBlock 的子类型。
+const _blocks: Same<StripOpt<z.infer<typeof ContentBlockSchema>>, StripOpt<LogContentBlock>> = true;
+const _logIsBlock: [LogContentBlock] extends [ContentBlock] ? true : false = true;
 const _stop: Same<(typeof STOP_REASONS)[number], StopReason> = true;
 const _usage: Same<z.infer<z.ZodObject<typeof ModelUsageShape>>, ModelUsage> = true;
 // tool_result 事件与内容块中的 tool_result 共享 callId / content / isError 的形状。
@@ -309,5 +352,6 @@ const _toolResult: Same<
 > = true;
 void _toolResult;
 void _blocks;
+void _logIsBlock;
 void _stop;
 void _usage;

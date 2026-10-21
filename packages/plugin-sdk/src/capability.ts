@@ -24,7 +24,7 @@ export const CAPABILITIES: Record<string, CapabilityInfo> = {
   sandbox: info("single", true),
   "config-source": info("single"),
   "secret-store": info("single", true),
-  "object-store": info("single", true), // 预留（M5）
+  "object-store": info("single", true),
   channel: info("multi", false, true),
   "model-provider": info("multi", true),
   "identity-source": info("multi"),

@@ -136,7 +136,8 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
   if (pe?.type === "ObjectExpression") {
     const secrets = prop(pe, "secrets");
     m.secrets = !!secrets && (resolve(secrets.value as Node, decls) as Node).value === true;
-    m.storage = !!prop(pe, "storage");
+    const storage = prop(pe, "storage");
+    m.storage = !!storage && (resolve(storage.value as Node, decls) as Node).value === true;
     m.models = !!prop(pe, "models");
     for (const t of strings(prop(pe, "tools")?.value as Node | undefined, decls)) m.tools.add(t);
     const ui = prop(pe, "ui");
@@ -299,11 +300,19 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
             "perm-secrets",
             "ctx.secrets is used but not declared; set permissions.secrets to true in the plugin manifest",
           );
-        } else if (name === "storage" || name === "models") {
+        } else if (name === "storage") {
+          if (!m.storage) {
+            add(
+              n,
+              "perm-storage",
+              "ctx.storage is used but not declared; set permissions.storage to true in the plugin manifest",
+            );
+          }
+        } else if (name === "models") {
           add(
             n,
             "perm-reserved",
-            `ctx.${name} is reserved and not provided in this release; remove the access`,
+            "ctx.models is reserved and not provided in this release; remove the access",
           );
         } else if (
           name === "http" ||
@@ -362,7 +371,8 @@ function scanFile(f: ParsedFile): Finding[] {
  * - perm-tools：ctx.tools.register({ name }) 的名字不在 permissions.tools 里；
  * - perm-capability：ctx.capabilities.get|list(ref) 的 ref 不在 requires / optional / provides 里；
  * - perm-ui：ctx.ui.view|action(id) 的 id 不在 permissions.ui.views 里；
- * - perm-reserved：用了尚未提供的 ctx.storage / ctx.models。
+ * - perm-storage：用了 ctx.storage 而 permissions.storage 不是 true；
+ * - perm-reserved：用了尚未提供的 ctx.models。
  * 路由路径、工具名、能力 ref、界面 id 须是字符串字面量或本文件的 const；动态的写法报「无法静态确认」，
  * 豁免：`// capybara:allow-dynamic-permission <原因>`（行尾或紧邻上一行，原因必填）。
  * ctx 会跟踪本地别名，以及按位置传给同文件函数的参数。

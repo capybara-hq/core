@@ -12,7 +12,7 @@ export interface PluginPermissions {
   hooks?: HookMountPoint[];
   /** 预留：模型用途，键须为 `<插件名>.<名称>`。 */
   models?: { purpose: string; kind: "chat" | "embedding"; label: { zh: string; en: string } }[];
-  /** 预留（M5）。 */
+  /** ctx.storage（对象存储，键限定在 `plugins/<插件名>/<orgId>/` 下）。 */
   storage?: boolean;
   /** 访问的域名，只展示不拦截。 */
   network?: string[];

@@ -21,7 +21,8 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     ["plugin-perm-http", "perm-http", 3],
     ["plugin-perm-tools", "perm-tools", 2],
     ["plugin-perm-capability", "perm-capability", 2],
-    ["plugin-perm-reserved", "perm-reserved", 2],
+    ["plugin-perm-storage", "perm-storage", 3],
+    ["plugin-perm-reserved", "perm-reserved", 1],
     ["plugin-perm-ui", "perm-ui", 5],
   ];
   for (const [dir, rule, count] of cases) {
@@ -40,6 +41,8 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     expect(msg("plugin-perm-tools")).toContain("permissions.tools");
     expect(msg("plugin-perm-capability")).toContain("requires or optional");
     expect(msg("plugin-perm-ui")).toContain("permissions.ui.views");
+    expect(msg("plugin-perm-storage")).toContain("permissions.storage");
+    expect(msg("plugin-perm-reserved")).toContain("ctx.models");
   });
 });
 
@@ -68,7 +71,7 @@ describe("豁免注释只放行「无法静态确认」", () => {
       "perm-http",
       "perm-tools",
       "perm-capability",
-      "perm-reserved",
+      "perm-storage",
       "perm-reserved",
       "perm-ui",
     ]);

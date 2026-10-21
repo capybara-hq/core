@@ -109,7 +109,8 @@ function inputChars(req: ModelRequest): number {
     for (const b of m.content) {
       if (b.type === "text" || b.type === "thinking") n += b.text.length;
       else if (b.type === "tool_result") n += b.content.length;
-      else n += b.name.length + JSON.stringify(b.input ?? null).length;
+      else if (b.type === "tool_call") n += b.name.length + JSON.stringify(b.input ?? null).length;
+      // image / document 不计入（媒体映射见 M5 T4）
     }
   }
   return n;
