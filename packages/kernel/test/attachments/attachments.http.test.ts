@@ -516,6 +516,40 @@ describe("下载", { timeout: 30_000 }, () => {
   });
 });
 
+describe("只有附件的消息", { timeout: 30_000 }, () => {
+  it("text 为空 + files：202，日志与请求里都没有空文本块", async () => {
+    const convId = await conversationWith("see-1");
+    const img = await ready(owner, "cat.png", "image/png", PNG);
+    const res = await post(owner, convId, { text: "", files: [img] });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, convId);
+    const [msg] = (await eventsOf(db, convId)).filter((e) => e.type === "user_message");
+    expect(msg?.payload.content).toEqual([
+      {
+        type: "image",
+        mediaType: "image/png",
+        source: { kind: "ref", attachmentId: img },
+        name: "cat.png",
+      },
+    ]);
+    const blocks = userBlocks(provider().requests[0] as ModelRequest);
+    expect(blocks.map((b) => b.type)).toEqual(["image"]);
+  });
+
+  it("text 为空且没有 files → 400；text 为空但带 @ 资源 → 400", async () => {
+    const convId = await conversationWith("see-1");
+    expect((await post(owner, convId, { text: "" })).statusCode).toBe(400);
+    expect((await post(owner, convId, { text: "", files: [] })).statusCode).toBe(400);
+    const img = await ready(owner, "cat.png", "image/png", PNG);
+    const res = await post(owner, convId, {
+      text: "",
+      files: [img],
+      attachments: [{ appId: "00000000-0000-4000-8000-000000000001", uri: "x://y" }],
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
   it("fetchMedia 按 caps 只取开头；模型收到截断并注明的文档；mediaInfo 带 etag", async () => {
     const big = Buffer.from("a,b\n".repeat(50_000)); // 200 000 字节

@@ -32,7 +32,8 @@ const OutputQuery = z.object({
 
 const MessageBody = z
   .object({
-    text: z.string().min(1).max(100_000),
+    /** 用户输入的文本；只有带 `files` 且不带 `attachments` 时可以为空（只发图片 / 文件）。 */
+    text: z.string().max(100_000),
     clientMessageId: z.string().min(1).max(200).optional(),
     /** `@` 资源引用：内核以发送者的凭据读取并作为附加文本块写入（见 ConversationsService.postUserMessage）。 */
     attachments: z
@@ -45,7 +46,12 @@ const MessageBody = z
      */
     files: z.array(z.uuid()).max(100).optional(),
   })
-  .strict();
+  .strict()
+  // `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
+  .refine((b) => b.text.length > 0 || ((b.files?.length ?? 0) > 0 && !b.attachments?.length), {
+    message: "Text is required unless the message carries files (and no @ resources)",
+    path: ["text"],
+  });
 
 /**
  * 会话（`/api/v1/orgs/:orgId/conversations`）：`agents.use`（访客以上），只接受人类用户；

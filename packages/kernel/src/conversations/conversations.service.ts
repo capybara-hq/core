@@ -272,6 +272,7 @@ export class ConversationsService {
    *
    * `files`（上传的附件 id）：在写事件的同一事务里校验并绑定到本会话（见 {@link BindFiles}），作为 image /
    * document 引用块追加在最后（`@` 资源块之后）；任一附件不可用则整条不写。日志里只有引用，没有字节。
+   * `text` 为空时（只发附件，HTTP 层保证此时有 `files` 且没有 `@` 资源）不写文本块。
    */
   async postUserMessage(
     orgId: string,
@@ -318,7 +319,12 @@ export class ConversationsService {
         idemKey: userMessageIdemKey(input.clientMessageId),
       }),
       payload: {
-        content: [{ type: "text", text: input.text }, ...extra.blocks, ...fileBlocks],
+        // 只发附件时（text 为空）不写空文本块（供应商不接受空文本）；带 `@` 资源时 text 一定非空（content[0]）
+        content: [
+          ...(input.text === "" ? [] : [{ type: "text" as const, text: input.text }]),
+          ...extra.blocks,
+          ...fileBlocks,
+        ],
         ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
         authorAccountId: accountId,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),

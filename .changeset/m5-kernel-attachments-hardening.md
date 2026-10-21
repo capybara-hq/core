@@ -11,3 +11,4 @@
 - `GET /attachments/limits` 新增 `requestMediaBytes` 与 `available`（是否配置了对象存储）。
 - `POST /attachments`：同一账号在组织里已有 50 个未 finalize 的附件时 429 `attachment.too_many_pending`。
 - 配置 `attachments.requestMediaBytes` 不得超过 24 MiB（base64 后约 32 MiB，常见供应商的请求上限）。
+- 发消息时 `text` 可以为空，只要带了 `files` 且没有 `@` 资源（只发图片 / 文件）；此时日志里不写空文本块。
