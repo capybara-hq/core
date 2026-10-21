@@ -10,6 +10,7 @@ export * from "./identity.js";
 export * from "./model.js";
 export * from "./model-params.js";
 export * from "./permissions.js";
+export * from "./sandbox.js";
 export * from "./secret.js";
 export * from "./storage.js";
 export * from "./tool.js";
