@@ -177,7 +177,7 @@ export function ChatSection() {
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
-          上传条目 AttachmentChip · 上传中 / 就绪 / 出错 / 无移除按钮
+          上传条目 AttachmentChip · 上传中 / 就绪 / 出错 / 出错可重试 / 无移除按钮
         </Text>
         <Stack direction="row" gap={8} wrap>
           <AttachmentChip
@@ -193,6 +193,14 @@ export function ChatSection() {
             size={2048}
             status="error"
             error="不支持这种文件类型。"
+            onRemove={noop}
+          />
+          <AttachmentChip
+            name="scan.pdf"
+            size={4_194_304}
+            status="error"
+            error="上传失败，请检查网络后重试。"
+            onRetry={noop}
             onRemove={noop}
           />
           <AttachmentChip

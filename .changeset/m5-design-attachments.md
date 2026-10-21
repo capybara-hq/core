@@ -9,3 +9,8 @@
 - `FileButton`：选文件按钮（隐藏的 file input）。
 - `AttachmentPreview`：消息里的附件（图片缩略图 / 文件卡片），地址只认 http(s) 与本源绝对路径。
 - 工具函数 `formatBytes`、`isSafeAttachmentHref`。
+
+修正：`isSafeAttachmentHref` 拒绝含 ASCII 控制字符、空白或 `\` 的地址，`/` 开头的按占位源解析后源必须不变
+（防 `/\t/evil` 被浏览器变成 `//evil`）；`AttachmentChip` 新增 `onRetry`；`AttachmentPreview` 新增
+`onImageError`、`retry`（图片地址加缓存参数）与 `onOpen`；`FileDrop` 粘贴时剪贴板有文字则不阻止默认粘贴，
+drop / dragend 一律收起覆盖层。

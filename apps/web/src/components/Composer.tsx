@@ -17,15 +17,7 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import {
-  type ChangeEvent,
-  type FormEvent,
-  type KeyboardEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import { ApiClientError } from "../lib/api";
+import { type ChangeEvent, type FormEvent, type KeyboardEvent, useRef, useState } from "react";
 import {
   type AppPrompt,
   type AppResource,
@@ -34,8 +26,8 @@ import {
   listAppResources,
   renderAppPrompt,
 } from "../lib/apps";
-import { ACCEPT, ATTACHMENT_LIMITS, precheckFile, uploadAttachment } from "../lib/attachments";
 import { useErrorMessage } from "../lib/use-error-message";
+import { useDraftFiles } from "./use-draft-files";
 
 /** 一条消息最多附件数（与内核 `MAX_ATTACHMENTS` 一致）。 */
 const MAX_ATTACHMENTS = 5;
@@ -58,22 +50,10 @@ function newClientMessageId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * 草稿里上传的文件（与 `@` 资源引用分开管理）：选中即开始上传（登记 → 直传 → finalize），
- * `ready` 后带 `id`，发送时作为 `files` 引用。
- */
-export interface DraftFile {
-  /** 本地 key（上传完成前还没有附件 id）。 */
-  key: string;
-  name: string;
-  size: number;
-  status: "uploading" | "ready" | "error";
-  progress: number;
-  /** 附件 id（`ready` 时有）。 */
-  id?: string;
-  /** 错误码（`error` 时有）：内核错误码或 `attachment.upload_failed`。 */
-  error?: unknown;
-}
+export type { DraftFile } from "./use-draft-files";
+
+/** `onSend` 的结果：失败时带上错误（如附件不存在，用来标出对应条目）。 */
+export type SendResult = { ok: true } | { ok: false; error: unknown };
 
 /** 草稿的身份：文本 + 附件 + 文件（任一变了即视为新消息）。 */
 const draftKey = (text: string, attachments: DraftAttachment[], files: string[]) =>
@@ -99,7 +79,8 @@ type Palette = "prompts" | "resources" | null;
  *
  * 上传文件（与 `@` 资源分开的一份列表）：点「+」选择、拖入输入区或粘贴。先在前端按类型 / 大小预检
  * （文案与内核错误码一致），通过的立即上传（登记 → 预签名直传，显示进度 → finalize）。上传中或有出错的文件时
- * 不能发送；出错的文件显示原因，可以移除。发送时带上已就绪的附件 id（`files`）。
+ * 不能发送；出错的文件显示原因，可以移除或重试。发送时带上已就绪的附件 id（`files`），成功后只移除发出去的；
+ * 内核说某个附件不存在 / 未就绪时把对应条目标为出错。上限取自内核（见 `useDraftFiles`）。
  */
 export function Composer({
   orgId,
@@ -112,7 +93,7 @@ export function Composer({
     clientMessageId: string,
     attachments: DraftAttachment[],
     files: string[],
-  ) => Promise<boolean>;
+  ) => Promise<SendResult>;
   /** 运行中时传入：输入框旁显示「停止」（任何宽度一次点击即可停止）。 */
   stop?: { onStop(): void; stopping: boolean } | undefined;
 }) {
@@ -122,10 +103,9 @@ export function Composer({
   const errorMessage = useErrorMessage();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
-  const [files, setFiles] = useState<DraftFile[]>([]);
-  /** 进行中的上传（移除或卸载时中止）。 */
-  const uploads = useRef(new Map<string, AbortController>());
-  const fileSeq = useRef(0);
+  const drafts = useDraftFiles(orgId);
+  const files = drafts.files;
+
   const [pending, setPending] = useState(false);
   const [palette, setPalette] = useState<Palette>(null);
   const [prompts, setPrompts] = useState<{ items: AppPrompt[]; unavailable: AppUnavailable[] }>();
@@ -144,89 +124,28 @@ export function Composer({
    */
   const trigger = useRef<{ char: string; pos: number; picked: boolean } | null>(null);
 
-  useEffect(() => {
-    const map = uploads.current;
-    return () => {
-      for (const c of map.values()) c.abort();
-      map.clear();
-    };
-  }, []);
-
-  /** 上传中或有出错的文件时不能发送（出错的要先移除，免得悄悄丢掉）。 */
-  const filesBlocking = files.some((f) => f.status !== "ready");
-
   async function submit() {
     const value = text.trim();
-    if (value === "" || pending || filesBlocking) return;
-    const fileIds = files.flatMap((f) => (f.id !== undefined ? [f.id] : []));
+    if (value === "" || pending || drafts.blocking) return;
+    const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
+    const fileIds = sent.map((f) => f.id);
     const key = draftKey(value, attachments, fileIds);
     if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
     const clientMessageId = draft.current.id;
     setPending(true);
     try {
-      if (await onSend(value, clientMessageId, attachments, fileIds)) {
+      const r = await onSend(value, clientMessageId, attachments, fileIds);
+      if (r.ok) {
         draft.current = undefined;
         setText("");
         setAttachments([]);
-        setFiles([]);
+        drafts.removeSent(sent.map((f) => f.key));
+      } else {
+        drafts.markFailed(r.error);
       }
     } finally {
       setPending(false);
     }
-  }
-
-  const patchFile = (key: string, patch: Partial<DraftFile>) =>
-    setFiles((list) => list.map((f) => (f.key === key ? { ...f, ...patch } : f)));
-
-  /** 加文件（选择 / 拖入 / 粘贴）：先在前端预检，通过的立即开始上传。 */
-  function addFiles(picked: File[]) {
-    const room = ATTACHMENT_LIMITS.maxPerMessage - files.length;
-    if (picked.length > room) {
-      toast.error(t("filesLimit", { max: ATTACHMENT_LIMITS.maxPerMessage }));
-    }
-    const accepted = picked.slice(0, Math.max(0, room));
-    const added: DraftFile[] = [];
-    for (const file of accepted) {
-      fileSeq.current += 1;
-      const key = `f${fileSeq.current}`;
-      const rejected = precheckFile(file);
-      if (rejected !== null) {
-        added.push({
-          key,
-          name: file.name,
-          size: file.size,
-          status: "error",
-          progress: 0,
-          error: new ApiClientError(0, rejected, rejected),
-        });
-        continue;
-      }
-      added.push({ key, name: file.name, size: file.size, status: "uploading", progress: 0 });
-      const ctrl = new AbortController();
-      uploads.current.set(key, ctrl);
-      uploadAttachment(orgId, file, {
-        signal: ctrl.signal,
-        onProgress: (p) => patchFile(key, { progress: p }),
-      })
-        .then(
-          (view) => {
-            if (ctrl.signal.aborted) return;
-            patchFile(key, { status: "ready", progress: 1, id: view.id });
-          },
-          (e: unknown) => {
-            if (ctrl.signal.aborted) return;
-            patchFile(key, { status: "error", error: e });
-          },
-        )
-        .finally(() => uploads.current.delete(key));
-    }
-    if (added.length > 0) setFiles((list) => [...list, ...added]);
-  }
-
-  function removeFile(key: string) {
-    uploads.current.get(key)?.abort();
-    uploads.current.delete(key);
-    setFiles((list) => list.filter((f) => f.key !== key));
   }
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -377,7 +296,7 @@ export function Composer({
 
   return (
     <form onSubmit={onSubmit}>
-      <FileDrop label={t("dropFiles")} onFiles={addFiles}>
+      <FileDrop label={t("dropFiles")} onFiles={drafts.add}>
         <Stack gap={8}>
           {files.length > 0 && (
             // biome-ignore lint/a11y/useSemanticElements: 文件条目分组；apps/web 不能写样式，用 role=group
@@ -390,8 +309,9 @@ export function Composer({
                     size={f.size}
                     status={f.status}
                     progress={f.progress}
-                    {...(f.status === "error" && { error: errorMessage(f.error) })}
-                    onRemove={() => removeFile(f.key)}
+                    {...(f.status === "error" && { error: drafts.errorText(f) })}
+                    {...(drafts.canRetry(f) && { onRetry: () => drafts.retry(f.key) })}
+                    onRemove={() => drafts.remove(f.key)}
                   />
                 ))}
               </Stack>
@@ -420,7 +340,12 @@ export function Composer({
             </div>
           )}
           <Stack direction="row" gap={8} align="end">
-            <FileButton label={t("addFiles")} onFiles={addFiles} accept={ACCEPT} multiple />
+            <FileButton
+              label={t("addFiles")}
+              onFiles={drafts.add}
+              accept={drafts.limits.types.join(",")}
+              multiple
+            />
             <Textarea
               name="message"
               aria-label={t("inputLabel")}
@@ -438,7 +363,7 @@ export function Composer({
             <Button
               type="submit"
               variant="primary"
-              disabled={pending || filesBlocking || text.trim() === ""}
+              disabled={pending || drafts.blocking || text.trim() === ""}
             >
               {t("send")}
             </Button>

@@ -161,8 +161,8 @@
       "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed."
     },
     "attachment": {
-      "too_large": "The file is too large (images up to 5 MB, other files up to 20 MB).",
-      "type_not_allowed": "This file type is not supported. Upload PNG, JPEG, GIF or WebP images, or PDF, TXT, Markdown or CSV files.",
+      "too_large": "The file is larger than the size limit for one attachment.",
+      "type_not_allowed": "This file type is not supported.",
       "not_ready": "The file has not finished uploading. Wait a moment, then send.",
       "not_found": "The file does not exist or has expired. Upload it again.",
       "upload_failed": "The upload failed. Check your connection, then remove the file and add it again."
@@ -285,7 +285,9 @@
     "files": "Files",
     "addFiles": "Add files",
     "dropFiles": "Drop to add files",
-    "filesLimit": "At most {max} files per message."
+    "filesLimit": "At most {max} files per message.",
+    "fileTooLarge": "The file is too large: images up to {image}, other files up to {other}.",
+    "fileTypeNotAllowed": "This file type is not supported. Supported: {types}."
   },
   "ui": {
     "dangerDescription": "The plugin performs this action. It may not be reversible.",

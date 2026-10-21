@@ -10,7 +10,8 @@ import { renderPage } from "./support/render";
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
 
-type Call = { url: string; method: string; body: unknown };
+type Call = { url: string; method: string; body: unknown; signal?: AbortSignal | null | undefined };
+type Handler = (call: Call) => Response | Promise<Response>;
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -88,15 +89,16 @@ const png = (name = "chart.png", size = 4) =>
   new File([new Uint8Array(size)], name, { type: "image/png" });
 
 /** 按 `METHOD path` 路由的 fetch 桩；登记附件依次发出 ID1、ID2。 */
-function stubApi(extra: Record<string, (call: Call) => Response> = {}): Call[] {
+function stubApi(extra: Record<string, Handler> = {}): Call[] {
   const calls: Call[] = [];
   const ids = [ID1, ID2];
-  const routes: Record<string, (call: Call) => Response> = {
+  let n = 0;
+  const routes: Record<string, Handler> = {
     [`GET ${BASE}/events`]: () =>
       json(200, { events: [userMsg(1, [{ type: "text", text: "hi" }])] }),
     [`POST ${ATT}`]: () =>
       json(201, {
-        id: ids.shift(),
+        id: ids.shift() ?? `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
         upload: {
           method: "POST",
           url: S3_URL,
@@ -116,11 +118,17 @@ function stubApi(extra: Record<string, (call: Call) => Response> = {}): Call[] {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
-      const call = { url, method, body: init?.body };
+      const call = { url, method, body: init?.body, signal: init?.signal };
       calls.push(call);
-      const handler = routes[`${method} ${url.split("?")[0]}`];
-      if (!handler) throw new Error(`unexpected ${method} ${url}`);
-      return handler(call);
+      const path = url.split("?")[0] as string;
+      const handler = routes[`${method} ${path}`];
+      if (handler) return handler(call);
+      // 其余附件的 finalize：按 id 回显
+      const fin = new RegExp(`^${ATT}/([^/]+)/finalize$`).exec(path);
+      if (method === "POST" && fin) {
+        return json(200, { id: fin[1], name: "f", contentType: "image/png", size: 4 });
+      }
+      throw new Error(`unexpected ${method} ${url}`);
     }),
   );
   return calls;
@@ -276,14 +284,18 @@ describe("输入框：上传文件", () => {
     const user = userEvent.setup({ applyAccept: false });
     await user.upload(fileInput(container), new File(["x"], "a.zip", { type: "application/zip" }));
     const group = await screen.findByRole("group", { name: zh.chat.files });
+    // 未取到上限（接口不可用）时按内核默认值预检，文案由上限拼出
     expect(within(group).getByRole("alert").textContent).toBe(
-      zh.errors.attachment.type_not_allowed,
+      zh.chat.fileTypeNotAllowed.replace(
+        "{types}",
+        "PNG / JPEG / GIF / WebP / PDF / TXT / Markdown / CSV",
+      ),
     );
     // 图片上限 5 MB
     await user.upload(fileInput(container), png("huge.png", 5 * 1024 * 1024 + 1));
     await vi.waitFor(() => expect(within(group).getAllByRole("alert")).toHaveLength(2));
     expect(within(group).getAllByRole("alert")[1]?.textContent).toBe(
-      zh.errors.attachment.too_large,
+      zh.chat.fileTooLarge.replace("{image}", "5 MB").replace("{other}", "20 MB"),
     );
     expect(posted(calls, ATT)).toHaveLength(0);
     // 有出错的文件时不能发送；移除后可以
@@ -305,7 +317,9 @@ describe("输入框：上传文件", () => {
     await user.upload(fileInput(container), png());
     const group = await screen.findByRole("group", { name: en.chat.files });
     await vi.waitFor(() =>
-      expect(within(group).getByRole("alert").textContent).toBe(en.errors.attachment.too_large),
+      expect(within(group).getByRole("alert").textContent).toBe(
+        en.chat.fileTooLarge.replace("{image}", "5 MB").replace("{other}", "20 MB"),
+      ),
     );
     cleanup();
     FakeXhr.instances = [];
@@ -347,6 +361,163 @@ describe("输入框：上传文件", () => {
     await vi.waitFor(() => expect(posted(calls, ATT)).toHaveLength(10));
     const group = screen.getByRole("group", { name: en.chat.files });
     expect(within(group).getAllByText(/^p\d+\.png$/)).toHaveLength(10);
+  });
+});
+
+describe("输入框：上传文件（修正轮 1）", () => {
+  it("上限取自内核 GET /attachments/limits：按它预检，文案由它拼出", async () => {
+    const calls = stubApi({
+      [`GET ${ATT}/limits`]: () =>
+        json(200, {
+          types: ["image/png", "text/plain"],
+          maxBytes: 1000,
+          imageMaxBytes: 100,
+          maxPerMessage: 2,
+        }),
+    });
+    const { container } = await renderChat("zh");
+    await vi.waitFor(() => expect(calls.some((c) => c.url === `${ATT}/limits`)).toBe(true));
+    const input = fileInput(container);
+    await vi.waitFor(() => expect(input.accept).toBe("image/png,text/plain"));
+    const user = userEvent.setup({ applyAccept: false });
+    await user.upload(input, new File(["%PDF-"], "a.pdf", { type: "application/pdf" }));
+    const group = await screen.findByRole("group", { name: zh.chat.files });
+    expect(within(group).getByRole("alert").textContent).toBe(
+      zh.chat.fileTypeNotAllowed.replace("{types}", "PNG / TXT"),
+    );
+    await user.upload(input, png("big.png", 101));
+    await vi.waitFor(() => expect(within(group).getAllByRole("alert")).toHaveLength(2));
+    expect(within(group).getAllByRole("alert")[1]?.textContent).toBe(
+      zh.chat.fileTooLarge.replace("{image}", "100 B").replace("{other}", "1000 B"),
+    );
+    // 条数上限 2：已有 2 个，再加被拦下
+    await user.upload(input, png("third.png"));
+    expect(await screen.findByText(zh.chat.filesLimit.replace("{max}", "2"))).toBeTruthy();
+    expect(posted(calls, ATT)).toHaveLength(0);
+  });
+
+  it("两次并发拖入：合计只收 10 个，只为收下的文件发起上传", async () => {
+    const calls = stubApi();
+    const { container } = await renderChat("en");
+    const zone = dropZone(container);
+    const batch = (p: string) => Array.from({ length: 6 }, (_, i) => png(`${p}${i}.png`));
+    act(() => {
+      fireEvent.drop(zone, { dataTransfer: transfer(batch("a")) });
+      fireEvent.drop(zone, { dataTransfer: transfer(batch("b")) });
+    });
+    await vi.waitFor(() => expect(posted(calls, ATT)).toHaveLength(10));
+    const group = screen.getByRole("group", { name: en.chat.files });
+    expect(within(group).getAllByText(/^[ab]\d\.png$/)).toHaveLength(10);
+    expect(within(group).queryByText("b4.png")).toBeNull();
+    expect(screen.getByText(en.chat.filesLimit.replace("{max}", "10"))).toBeTruthy();
+    // 稍等也不会多发
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posted(calls, ATT)).toHaveLength(10);
+  });
+
+  it("上传中移除：登记请求也被中止（AbortSignal 传给 createAttachment）", async () => {
+    let seen: AbortSignal | null | undefined;
+    stubApi({
+      [`POST ${ATT}`]: (c) =>
+        new Promise<Response>((_, reject) => {
+          seen = c.signal;
+          c.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    });
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    await user.upload(fileInput(container), png());
+    await vi.waitFor(() => expect(seen).toBeDefined());
+    const group = screen.getByRole("group", { name: en.chat.files });
+    await user.click(within(group).getByRole("button", { name: "Remove chart.png" }));
+    expect(seen?.aborted).toBe(true);
+    expect(FakeXhr.instances).toHaveLength(0);
+  });
+
+  it("直传失败：可重试，用同一个文件重新登记、上传", async () => {
+    const calls = stubApi();
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    await user.upload(fileInput(container), png());
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    act(() => (FakeXhr.instances[0] as FakeXhr).respond(403));
+    const group = screen.getByRole("group", { name: en.chat.files });
+    await user.click(await within(group).findByRole("button", { name: "Retry chart.png" }));
+    await vi.waitFor(() => expect(posted(calls, ATT)).toHaveLength(2));
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(2));
+    const second = FakeXhr.instances[1] as FakeXhr;
+    expect(((second.body as FormData).get("file") as File).name).toBe("chart.png");
+    act(() => second.respond(204));
+    await vi.waitFor(() => expect(within(group).queryByRole("progressbar")).toBeNull());
+    expect(within(group).queryByRole("alert")).toBeNull();
+  });
+
+  it("前端预检拦下的文件没有重试按钮", async () => {
+    stubApi();
+    const { container } = await renderChat("en");
+    await userEvent
+      .setup({ applyAccept: false })
+      .upload(fileInput(container), new File(["x"], "a.zip", { type: "application/zip" }));
+    const group = await screen.findByRole("group", { name: en.chat.files });
+    expect(within(group).queryByRole("button", { name: "Retry a.zip" })).toBeNull();
+  });
+
+  it("发送时内核说附件不存在：对应条目标为出错（可重试），其余保持就绪", async () => {
+    stubApi({
+      [`POST ${BASE}/messages`]: () =>
+        json(404, {
+          error: {
+            code: "attachment.not_found",
+            message: "gone",
+            details: [{ path: "files", message: "gone", attachmentId: ID2 }],
+          },
+        }),
+    });
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    await user.upload(fileInput(container), [png("one.png"), png("two.png")]);
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(2));
+    act(() => {
+      for (const x of FakeXhr.instances) x.respond(204);
+    });
+    const group = screen.getByRole("group", { name: en.chat.files });
+    await vi.waitFor(() => expect(within(group).queryByRole("progressbar")).toBeNull());
+    await user.type(screen.getByLabelText(en.chat.inputLabel), "go");
+    await user.click(screen.getByRole("button", { name: en.chat.send }));
+    const alert = await within(group).findByRole("alert");
+    expect(alert.textContent).toBe(en.errors.attachment.not_found);
+    expect(within(group).getByRole("button", { name: "Retry two.png" })).toBeTruthy();
+    expect(within(group).queryByRole("button", { name: "Retry one.png" })).toBeNull();
+  });
+
+  it("发送成功只移除发出去的文件：发送期间新加的保留", async () => {
+    let release: (r: Response) => void = () => {};
+    const calls = stubApi({
+      [`POST ${BASE}/messages`]: () =>
+        new Promise<Response>((r) => {
+          release = r;
+        }),
+    });
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    await user.upload(fileInput(container), png("first.png"));
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    act(() => (FakeXhr.instances[0] as FakeXhr).respond(204));
+    const send = screen.getByRole("button", { name: en.chat.send });
+    await user.type(screen.getByLabelText(en.chat.inputLabel), "go");
+    await vi.waitFor(() => expect(send).toHaveProperty("disabled", false));
+    await user.click(send);
+    await vi.waitFor(() => expect(posted(calls, `${BASE}/messages`)).toHaveLength(1));
+    // 发送进行中又拖入一个
+    fireEvent.drop(dropZone(container), { dataTransfer: transfer([png("later.png")]) });
+    await act(async () => {
+      release(json(202, { event: userMsg(2, [{ type: "text", text: "go" }]) }));
+    });
+    const group = await screen.findByRole("group", { name: en.chat.files });
+    await vi.waitFor(() => expect(within(group).queryByText("first.png")).toBeNull());
+    expect(within(group).getByText("later.png")).toBeTruthy();
   });
 });
 
@@ -414,5 +585,88 @@ describe("时间线：消息附件", () => {
     expect(screen.queryByText("Attached resource …")).toBeNull();
     const group = screen.getByRole("group", { name: en.chat.files });
     expect(within(group).getByRole("link", { name: /notes\.txt/ })).toBeTruthy();
+  });
+});
+
+describe("时间线：登录过期后的附件（修正轮 1）", () => {
+  const events = () =>
+    json(200, {
+      events: [
+        userMsg(1, [
+          { type: "text", text: "hi" },
+          {
+            type: "image",
+            mediaType: "image/png",
+            source: { kind: "ref", attachmentId: ID1 },
+            name: "chart.png",
+          },
+          {
+            type: "document",
+            mediaType: "application/pdf",
+            source: { kind: "ref", attachmentId: ID2 },
+            name: "report.pdf",
+          },
+        ]),
+      ],
+    });
+
+  it("图片加载失败：先确认登录（必要时刷新）再带缓存参数重试一次；再失败不再重试", async () => {
+    let expired = true;
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: events,
+      "GET /api/v1/me": () =>
+        expired
+          ? json(401, { error: { code: "auth.token_expired", message: "expired" } })
+          : json(200, { account: { id: "a1" } }),
+      "POST /api/v1/auth/refresh": () => {
+        expired = false;
+        return new Response(null, { status: 204 });
+      },
+    });
+    await renderChat("en");
+    const img = screen.getByRole("img", { name: "chart.png" });
+    fireEvent.error(img);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("img", { name: "chart.png" }).getAttribute("src")).toBe(
+        `${ATT}/${ID1}/download?retry=1`,
+      ),
+    );
+    expect(calls.filter((c) => c.url === "/api/v1/auth/refresh")).toHaveLength(1);
+    fireEvent.error(screen.getByRole("img", { name: "chart.png" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByRole("img", { name: "chart.png" }).getAttribute("src")).toBe(
+      `${ATT}/${ID1}/download?retry=1`,
+    );
+    expect(calls.filter((c) => c.url === "/api/v1/me")).toHaveLength(2);
+  });
+
+  it("点开文件卡片：先同步开新标签页，确认登录后再导航到下载地址（不留 opener）", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: events,
+      "GET /api/v1/me": () => json(200, { account: { id: "a1" } }),
+    });
+    const tab = { opener: {} as unknown, location: { href: "about:blank" }, close: vi.fn() };
+    const open = vi.fn(() => tab);
+    vi.stubGlobal("open", open);
+    await renderChat("en");
+    fireEvent.click(screen.getByRole("link", { name: /report\.pdf/ }), { button: 0 });
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(tab.opener).toBeNull();
+    await vi.waitFor(() =>
+      expect(tab.location.href).toBe(new URL(`${ATT}/${ID2}/download`, window.location.href).href),
+    );
+    expect(calls.some((c) => c.url === "/api/v1/me")).toBe(true);
+  });
+});
+
+describe("uploadToStorage", () => {
+  it("signal 已中止：立即拒绝，不发请求", async () => {
+    const { uploadToStorage } = await import("../src/lib/attachments");
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(
+      uploadToStorage({ method: "PUT", url: S3_URL, headers: {} }, png(), { signal: ctrl.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(FakeXhr.instances).toHaveLength(0);
   });
 });

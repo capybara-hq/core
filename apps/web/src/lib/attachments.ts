@@ -5,29 +5,32 @@ import { ApiClientError, apiFetch } from "./api";
  * 与 `@` 资源引用（`DraftAttachment`，内核读取应用资源）是两回事。
  */
 
+/** 附件上限（内核 `GET /attachments/limits`）。 */
+export interface AttachmentLimits {
+  types: string[];
+  /** 非图片的单个上限（字节）。 */
+  maxBytes: number;
+  /** 图片的单个上限（字节）。 */
+  imageMaxBytes: number;
+  maxPerMessage: number;
+}
+
+export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+
 /**
- * 前端预检用的上限。内核没有提供读取这些配置的接口，这里抄写内核的默认值：
- * `attachments.allowedTypes` / `attachments.maxBytes` / `attachments.maxPerMessage`
- * （packages/kernel/src/config/schema.ts），以及 plugin-sdk 的 `IMAGE_MEDIA_TYPES` / `DOCUMENT_MEDIA_TYPES`
- * 与 `MEDIA_LIMITS.imageBytes`（图片另受 5 MiB 限制）。部署改了配置时以内核的错误码为准，这里只是提前拦下。
+ * 上限接口还没返回（或取不到）时的兜底：抄写内核的默认值（`attachments.*` 配置与 plugin-sdk 的
+ * `MEDIA_LIMITS.imageBytes`）。以内核的错误码为准，这里只是提前拦下。
  */
-export const ATTACHMENT_LIMITS = {
+export const DEFAULT_LIMITS: AttachmentLimits = {
+  types: [...IMAGE_TYPES, "application/pdf", "text/plain", "text/markdown", "text/csv"],
   maxBytes: 20_971_520,
   imageMaxBytes: 5_242_880,
   maxPerMessage: 10,
-} as const;
+};
 
-export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
-export const DOCUMENT_TYPES = [
-  "application/pdf",
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-] as const;
-export const ALLOWED_TYPES: readonly string[] = [...IMAGE_TYPES, ...DOCUMENT_TYPES];
-
-/** 文件选择框的 accept。 */
-export const ACCEPT = ALLOWED_TYPES.join(",");
+/** 读取上限（组织成员可读，不需要对象存储）。 */
+export const getAttachmentLimits = (orgId: string) =>
+  apiFetch<AttachmentLimits>(`/api/v1/orgs/${encodeURIComponent(orgId)}/attachments/limits`);
 
 /** 浏览器没给类型（常见于 .md）时按扩展名推断。 */
 const BY_EXTENSION: Record<string, string> = {
@@ -54,14 +57,13 @@ export function fileContentType(file: { name: string; type: string }): string {
 const isImageType = (ct: string) => (IMAGE_TYPES as readonly string[]).includes(ct);
 
 /** 前端预检：返回与内核一致的错误码，通过时返回 null。 */
-export function precheckFile(file: {
-  name: string;
-  type: string;
-  size: number;
-}): "attachment.type_not_allowed" | "attachment.too_large" | null {
+export function precheckFile(
+  file: { name: string; type: string; size: number },
+  limits: AttachmentLimits,
+): "attachment.type_not_allowed" | "attachment.too_large" | null {
   const ct = fileContentType(file);
-  if (!ALLOWED_TYPES.includes(ct)) return "attachment.type_not_allowed";
-  const max = isImageType(ct) ? ATTACHMENT_LIMITS.imageMaxBytes : ATTACHMENT_LIMITS.maxBytes;
+  if (!limits.types.includes(ct)) return "attachment.type_not_allowed";
+  const max = isImageType(ct) ? limits.imageMaxBytes : limits.maxBytes;
   if (file.size > max) return "attachment.too_large";
   return null;
 }
@@ -93,12 +95,19 @@ const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/attac
 export const createAttachment = (
   orgId: string,
   input: { name: string; contentType: string; size: number },
-) => apiFetch<CreatedAttachment>(base(orgId), { method: "POST", body: JSON.stringify(input) });
+  signal?: AbortSignal,
+) =>
+  apiFetch<CreatedAttachment>(base(orgId), {
+    method: "POST",
+    body: JSON.stringify(input),
+    ...(signal && { signal }),
+  });
 
 /** 上传完成后核对大小与类型，附件变为可发送。 */
-export const finalizeAttachment = (orgId: string, id: string) =>
+export const finalizeAttachment = (orgId: string, id: string, signal?: AbortSignal) =>
   apiFetch<AttachmentView>(`${base(orgId)}/${encodeURIComponent(id)}/finalize`, {
     method: "POST",
+    ...(signal && { signal }),
   });
 
 /** 下载地址（同源；内核 302 到预签名地址）。 */
@@ -118,6 +127,10 @@ export function uploadToStorage(
   opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) {
+      reject(new DOMException("Upload aborted", "AbortError"));
+      return;
+    }
     const xhr = new XMLHttpRequest();
     xhr.open(upload.method, upload.url);
     xhr.withCredentials = false;
@@ -131,13 +144,7 @@ export function uploadToStorage(
     };
     xhr.onerror = () => reject(new ApiClientError(0, UPLOAD_FAILED, "Upload failed"));
     xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
-    if (opts.signal) {
-      if (opts.signal.aborted) {
-        xhr.abort();
-        return;
-      }
-      opts.signal.addEventListener("abort", () => xhr.abort(), { once: true });
-    }
+    opts.signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     if (upload.method === "POST") {
       const form = new FormData();
       for (const [k, v] of Object.entries(upload.fields ?? {})) form.append(k, v);
@@ -155,20 +162,32 @@ export async function uploadAttachment(
   file: File,
   opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
 ): Promise<AttachmentView> {
-  const created = await createAttachment(orgId, {
-    name: file.name,
-    contentType: fileContentType(file),
-    size: file.size,
-  });
+  const created = await createAttachment(
+    orgId,
+    { name: file.name, contentType: fileContentType(file), size: file.size },
+    opts.signal,
+  );
   opts.signal?.throwIfAborted();
   await uploadToStorage(created.upload, file, opts);
   opts.signal?.throwIfAborted();
-  return finalizeAttachment(orgId, created.id);
+  return finalizeAttachment(orgId, created.id, opts.signal);
 }
+
+/** 允许类型的简短列表（预检文案用）：`PNG / JPEG / … / CSV`。 */
+export const typeList = (types: readonly string[]): string =>
+  types.map(attachmentTypeLabel).join(" / ");
 
 /** 文件卡片上的类型说明。 */
 export function attachmentTypeLabel(mediaType: string): string {
   switch (mediaType) {
+    case "image/png":
+      return "PNG";
+    case "image/jpeg":
+      return "JPEG";
+    case "image/gif":
+      return "GIF";
+    case "image/webp":
+      return "WebP";
     case "application/pdf":
       return "PDF";
     case "text/plain":

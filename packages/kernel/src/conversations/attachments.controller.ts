@@ -7,6 +7,7 @@ import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type {
+  AttachmentLimits,
   AttachmentsService,
   AttachmentView,
   CreatedAttachment,
@@ -30,11 +31,18 @@ const CreateBody = z
  * 2. 浏览器直传对象存储；
  * 3. `POST /:id/finalize` 核对大小与类型；
  * 4. 发消息时在 `files` 里引用 id。
- * 下载 `GET /:id/download` 302 到预签名地址。没有对象存储时各接口 503 `storage.unavailable`。
+ * 下载 `GET /:id/download` 302 到预签名地址。上限 `GET /limits`（类型、单个大小、每条条数，供网页预检）。没有对象存储时各接口 503 `storage.unavailable`。
  */
 @Controller("api/v1/orgs/:orgId/attachments")
 export class AttachmentsController {
   constructor(@Inject(ATTACHMENTS) private readonly attachments: AttachmentsService) {}
+
+  @Get("limits")
+  @OrgAction("agents.use")
+  limits(@CurrentPrincipal() principal: Principal): AttachmentLimits {
+    requireUser(principal);
+    return this.attachments.limits();
+  }
 
   @Post()
   @OrgAction("agents.use")

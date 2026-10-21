@@ -129,7 +129,13 @@ test("前端拦下不允许的类型：显示与内核错误码一致的文案�
     buffer: Buffer.from("PK"),
   });
   const files = composer.getByRole("group", { name: zh.chat.files });
-  await expect(files.getByRole("alert")).toHaveText(zh.errors.attachment.type_not_allowed);
+  // 文案由内核 GET /attachments/limits 返回的类型拼出
+  await expect(files.getByRole("alert")).toHaveText(
+    zh.chat.fileTypeNotAllowed.replace(
+      "{types}",
+      "PNG / JPEG / GIF / WebP / PDF / TXT / Markdown / CSV",
+    ),
+  );
   await page.getByLabel(zh.chat.inputLabel).fill("echo:hi");
   await expect(composer.getByRole("button", { name: zh.chat.send })).toBeDisabled();
   await files.getByRole("button", { name: "移除 a.zip" }).click();

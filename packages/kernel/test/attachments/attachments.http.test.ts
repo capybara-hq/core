@@ -316,6 +316,34 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
 });
 
 describe("校验", { timeout: 30_000 }, () => {
+  it("GET /attachments/limits：组织成员可读上限；非成员 → 404", async () => {
+    const res = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/limits` });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({
+      types: [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+      ],
+      maxBytes: 20_971_520,
+      imageMaxBytes: 5_242_880,
+      maxPerMessage: 10,
+    });
+    const other2 = await other({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/limits` });
+    expect(other2.statusCode).toBe(200);
+    const stranger = await createOrg(other, "Elsewhere");
+    const denied = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${stranger}/attachments/limits`,
+    });
+    expect(denied.statusCode).toBe(404);
+  });
+
   it("类型不在允许列表 → 415；超出大小 → 413；名字非法 → 400", async () => {
     const url = `/api/v1/orgs/${orgId}/attachments`;
     const bad = await owner({
@@ -392,11 +420,18 @@ describe("校验", { timeout: 30_000 }, () => {
     const r1 = await post(owner, convId, { text: "x", files: [pending.id] });
     expect(r1.statusCode).toBe(409);
     expect(r1.json().error.code).toBe("attachment.not_ready");
+    // 细节里带出问题附件的 id：网页据此把对应条目标为出错
+    expect(r1.json().error.details).toEqual([
+      expect.objectContaining({ path: "files", attachmentId: pending.id }),
+    ]);
 
     const theirs = await ready(other, "o.png", "image/png", PNG);
     const r2 = await post(owner, convId, { text: "x", files: [theirs] });
     expect(r2.statusCode).toBe(404);
     expect(r2.json().error.code).toBe("attachment.not_found");
+    expect(r2.json().error.details).toEqual([
+      expect.objectContaining({ path: "files", attachmentId: theirs }),
+    ]);
 
     const mine = await ready(owner, "m.png", "image/png", PNG);
     expect((await post(owner, convId, { text: "x", files: [mine] })).statusCode).toBe(202);

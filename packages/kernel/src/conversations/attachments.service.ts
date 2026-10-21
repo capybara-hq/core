@@ -38,6 +38,18 @@ export interface AttachmentView {
   size: number;
 }
 
+/** 附件上限（`GET /attachments/limits`）：网页据此在上传前预检。 */
+export interface AttachmentLimits {
+  /** 允许的内容类型。 */
+  types: string[];
+  /** 非图片的单个上限（字节）。 */
+  maxBytes: number;
+  /** 图片的单个上限（字节，另受 `MEDIA_LIMITS.imageBytes` 限制）。 */
+  imageMaxBytes: number;
+  /** 单条消息最多附件数。 */
+  maxPerMessage: number;
+}
+
 /** `POST /attachments` 的返回：浏览器按 `upload` 直传存储，然后调 finalize。 */
 export interface CreatedAttachment {
   id: string;
@@ -120,6 +132,17 @@ export class AttachmentsService {
       maxBytes,
       isImage(contentType) ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes,
     );
+  }
+
+  /** 当前配置下的上限（不需要对象存储）。 */
+  limits(): AttachmentLimits {
+    const cfg = this.d.config().attachments;
+    return {
+      types: [...cfg.allowedTypes],
+      maxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.documentBytes),
+      imageMaxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.imageBytes),
+      maxPerMessage: cfg.maxPerMessage,
+    };
   }
 
   /**
@@ -284,6 +307,7 @@ export class AttachmentsService {
    * - 超过 `attachments.maxPerMessage`、或同一个 id 出现多次 → `validation_failed`；
    * - 不存在、不是发送者上传的、已绑定到别的会话、未绑定且已过期 → `attachment.not_found`；
    * - 还没 finalize → `attachment.not_ready`。
+   * 后两种的 details 为 `[{ path: "files", message, attachmentId }]`，网页据此标出对应条目。
    * 已绑定到本会话的（重试）照常返回块。
    */
   async bindForMessage(
@@ -334,13 +358,16 @@ export class AttachmentsService {
         (r.conversation_id !== null && r.conversation_id !== conversationId) ||
         (r.conversation_id === null && r.expired)
       ) {
-        throw new ApiError(
-          "attachment.not_found",
-          `Attachment ${id} not found, expired, or already used in another conversation`,
-        );
+        const message = `Attachment ${id} not found, expired, or already used in another conversation`;
+        throw new ApiError("attachment.not_found", message, [
+          { path: "files", message, attachmentId: id },
+        ]);
       }
       if (r.status !== "ready") {
-        throw new ApiError("attachment.not_ready", `Attachment ${id} has not been finalized`);
+        const message = `Attachment ${id} has not been finalized`;
+        throw new ApiError("attachment.not_ready", message, [
+          { path: "files", message, attachmentId: id },
+        ]);
       }
       if (r.conversation_id === null) toBind.push(id);
       const source = { kind: "ref" as const, attachmentId: id };

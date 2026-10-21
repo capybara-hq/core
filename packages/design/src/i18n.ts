@@ -76,6 +76,7 @@ const zh = {
   "checklist.completed": "已完成",
   "attachment.remove": "移除 {name}",
   "attachment.uploading": "正在上传 {name}",
+  "attachment.retry": "重试 {name}",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -156,6 +157,7 @@ const en: Record<DesignKey, string> = {
   "checklist.completed": "Done",
   "attachment.remove": "Remove {name}",
   "attachment.uploading": "Uploading {name}",
+  "attachment.retry": "Retry {name}",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

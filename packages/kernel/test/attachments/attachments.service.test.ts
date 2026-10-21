@@ -34,6 +34,44 @@ describe("AttachmentsService", () => {
     expect(await svc.deleteExpired()).toBe(0);
   });
 
+  it("limits：允许的类型、单个上限（图片另受 MEDIA_LIMITS 限制）与每条条数；没有存储也能读", () => {
+    const mk = (attachments: Record<string, unknown>) =>
+      new AttachmentsService({
+        db: {} as KernelDb,
+        storage: new StorageService({ provider: () => undefined, plugins: async () => [] }),
+        config: () =>
+          KernelConfigSchema.parse({
+            db: { url: "postgres://x" },
+            redis: { url: "redis://x" },
+            masterKey: Buffer.alloc(32, 7).toString("base64"),
+            attachments,
+          }),
+        canAccessConversation: async () => true,
+        log: { info() {}, warn() {} },
+      });
+    expect(mk({}).limits()).toEqual({
+      types: [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+      ],
+      maxBytes: 20_971_520,
+      imageMaxBytes: 5_242_880,
+      maxPerMessage: 10,
+    });
+    expect(mk({ maxBytes: 1000, allowedTypes: ["image/png"], maxPerMessage: 3 }).limits()).toEqual({
+      types: ["image/png"],
+      maxBytes: 1000,
+      imageMaxBytes: 1000,
+      maxPerMessage: 3,
+    });
+  });
+
   it("配置要求 maxBytes ≤ requestMediaBytes（单个附件总能放进一次请求）", () => {
     const base = {
       db: { url: "postgres://x" },

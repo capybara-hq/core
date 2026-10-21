@@ -74,6 +74,18 @@ describe("AttachmentChip", () => {
     expect(onRemove).toHaveBeenCalledOnce();
   });
 
+  it("出错且给了 onRetry：显示「重试」按钮", async () => {
+    const onRetry = vi.fn();
+    wrap(
+      <AttachmentChip name="a.png" size={1} status="error" error="上传失败" onRetry={onRetry} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "重试 a.png" }));
+    expect(onRetry).toHaveBeenCalledOnce();
+    cleanup();
+    wrap(<AttachmentChip name="a.png" size={1} status="ready" onRetry={onRetry} />);
+    expect(screen.queryByRole("button", { name: "重试 a.png" })).toBeNull();
+  });
+
   it("没有 onRemove 时不显示移除按钮", () => {
     wrap(<AttachmentChip name="a.txt" size={1} status="ready" />);
     expect(screen.queryByRole("button")).toBeNull();
@@ -158,6 +170,45 @@ describe("FileDrop", () => {
     expect(screen.getByText("松开以添加文件")).toBeTruthy();
   });
 
+  it("粘贴同时含文字与文件（如从文档里复制）：文件交给 onFiles，但不阻止文字粘贴", () => {
+    const onFiles = vi.fn();
+    wrap(
+      <FileDrop label="drop" onFiles={onFiles}>
+        <textarea aria-label="输入" />
+      </FileDrop>,
+    );
+    const input = screen.getByLabelText("输入");
+    const f = png("clip.png");
+    const both = createEvent.paste(input, {
+      clipboardData: { ...transfer([f]), types: ["text/plain", "Files"] },
+    });
+    fireEvent(input, both);
+    expect(onFiles).toHaveBeenCalledWith([f]);
+    expect(both.defaultPrevented).toBe(false);
+  });
+
+  it("drop / dragend 不论 types 如何都把拖入计数归零", () => {
+    const { container } = wrap(
+      <FileDrop label="drop" onFiles={() => {}}>
+        <textarea aria-label="输入" />
+      </FileDrop>,
+    );
+    const zone = container.querySelector(".cb-file-drop") as HTMLElement;
+    fireEvent.dragEnter(zone, { dataTransfer: transfer([png()]) });
+    fireEvent.dragEnter(zone, { dataTransfer: transfer([png()]) });
+    // 浏览器在 drop 时 types 可能变了：仍应收起
+    fireEvent.drop(zone, { dataTransfer: transfer([]) });
+    expect(zone.getAttribute("data-dragging")).toBeNull();
+    // 再拖一次只需一次 leave 就收起（计数已归零）
+    fireEvent.dragEnter(zone, { dataTransfer: transfer([png()]) });
+    fireEvent.dragLeave(zone, { dataTransfer: transfer([png()]) });
+    expect(zone.getAttribute("data-dragging")).toBeNull();
+    fireEvent.dragEnter(zone, { dataTransfer: transfer([png()]) });
+    fireEvent.dragEnter(zone, { dataTransfer: transfer([png()]) });
+    fireEvent.dragEnd(zone, { dataTransfer: transfer([]) });
+    expect(zone.getAttribute("data-dragging")).toBeNull();
+  });
+
   it("disabled：拖放与粘贴都不响应", () => {
     const onFiles = vi.fn();
     const { container } = wrap(
@@ -231,6 +282,12 @@ describe("AttachmentPreview", () => {
     "data:image/png;base64,AAAA",
     "//evil.example.com/x.png",
     "/\\evil.example.com/x.png",
+    "/\t/evil",
+    "/\n/evil",
+    "/\r/evil",
+    "/\u0000/evil",
+    "/ /evil",
+    "/api/a b.png",
     "api/relative.png",
     "",
   ])("不安全的地址 %j：不渲染链接与图片，只显示文件名", (href) => {
@@ -238,5 +295,46 @@ describe("AttachmentPreview", () => {
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.getByText("x.png")).toBeTruthy();
+  });
+
+  it("图片加载失败交给 onImageError；retry 递增时加上缓存参数重新加载", () => {
+    const onImageError = vi.fn();
+    const { rerender } = wrap(
+      <AttachmentPreview kind="image" name="x.png" href={HREF} onImageError={onImageError} />,
+    );
+    const img = screen.getByRole("img");
+    fireEvent.error(img);
+    expect(onImageError).toHaveBeenCalledOnce();
+    rerender(
+      <DesignProvider locale="zh">
+        <AttachmentPreview
+          kind="image"
+          name="x.png"
+          href={HREF}
+          retry={1}
+          onImageError={onImageError}
+        />
+      </DesignProvider>,
+    );
+    expect(screen.getByRole("img").getAttribute("src")).toBe(`${HREF}?retry=1`);
+    // 链接仍是原地址
+    expect(screen.getByRole("link").getAttribute("href")).toBe(HREF);
+    cleanup();
+    wrap(<AttachmentPreview kind="image" name="x.png" href={`${HREF}?a=1`} retry={2} />);
+    expect(screen.getByRole("img").getAttribute("src")).toBe(`${HREF}?a=1&retry=2`);
+  });
+
+  it("onOpen：普通点击交给调用方（阻止默认打开）；带修饰键的点击照常", () => {
+    const onOpen = vi.fn();
+    wrap(<AttachmentPreview kind="file" name="r.pdf" href={HREF} onOpen={onOpen} />);
+    const link = screen.getByRole("link");
+    const click = createEvent.click(link, { button: 0 });
+    fireEvent(link, click);
+    expect(onOpen).toHaveBeenCalledWith(HREF);
+    expect(click.defaultPrevented).toBe(true);
+    const ctrl = createEvent.click(link, { button: 0, ctrlKey: true });
+    fireEvent(link, ctrl);
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(ctrl.defaultPrevented).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
+  type MouseEvent,
   type ReactNode,
   useRef,
   useState,
@@ -41,6 +42,8 @@ export type AttachmentChipProps = {
   error?: string;
   /** 不传则不显示移除按钮。 */
   onRemove?: () => void;
+  /** `error` 时给了它就显示「重试」按钮。 */
+  onRetry?: () => void;
 };
 
 /** 输入框里待发送的上传文件：名称、大小、上传进度 / 错误、移除。 */
@@ -51,6 +54,7 @@ export function AttachmentChip({
   progress = 0,
   error,
   onRemove,
+  onRetry,
 }: AttachmentChipProps) {
   const t = useDesignT();
   const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
@@ -61,6 +65,14 @@ export function AttachmentChip({
           {name}
         </span>
         <span className="cb-attachment-chip-size">{formatBytes(size)}</span>
+        {status === "error" && onRetry ? (
+          <IconButton
+            size={24}
+            icon="↻"
+            label={t("attachment.retry").replace("{name}", name)}
+            onClick={onRetry}
+          />
+        ) : null}
         {onRemove ? (
           <IconButton
             size={24}
@@ -111,8 +123,8 @@ export type FileDropProps = {
 };
 
 /**
- * 拖放 / 粘贴区域：拖入带文件的内容时显示覆盖层，松手交给 `onFiles`；区域内粘贴含文件时同样交给 `onFiles`
- * 并阻止默认粘贴（不含文件的粘贴照常）。
+ * 拖放 / 粘贴区域：拖入带文件的内容时显示覆盖层，松手交给 `onFiles`；区域内粘贴含文件时同样交给 `onFiles`，
+ * 剪贴板里没有文字时阻止默认粘贴（同时有文字的，如从文档里复制，文字照常粘贴；不含文件的粘贴不受影响）。
  */
 export function FileDrop({ label, onFiles, disabled, dragging: forced, children }: FileDropProps) {
   const [over, setDragging] = useState(false);
@@ -142,9 +154,10 @@ export function FileDrop({ label, onFiles, disabled, dragging: forced, children 
     if (depth.current === 0) setDragging(false);
   };
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    // 不论 types 如何都收起（拖放结束时浏览器给的 types 不一定可靠）
+    reset();
     if (disabled || !hasFiles(e.dataTransfer)) return;
     e.preventDefault();
-    reset();
     const files = Array.from(e.dataTransfer.files ?? []);
     if (files.length > 0) onFiles(files);
   };
@@ -152,7 +165,7 @@ export function FileDrop({ label, onFiles, disabled, dragging: forced, children 
     if (disabled) return;
     const files = Array.from(e.clipboardData?.files ?? []);
     if (files.length === 0) return;
-    e.preventDefault();
+    if (!Array.from(e.clipboardData.types ?? []).includes("text/plain")) e.preventDefault();
     onFiles(files);
   };
 
@@ -165,6 +178,7 @@ export function FileDrop({ label, onFiles, disabled, dragging: forced, children 
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
+      onDragEnd={reset}
       onPaste={onPaste}
     >
       {children}
@@ -225,13 +239,23 @@ export function FileButton({
   );
 }
 
+/** 本源路径解析用的占位源：解析后源不变才算本源路径。 */
+const PLACEHOLDER_ORIGIN = "http://x.invalid";
+
 /**
  * 附件地址是否安全：http(s) 绝对地址，或本源的绝对路径（单个 `/` 开头）。
- * 协议相对地址（`//host`）、`/\host`（部分浏览器按 `//` 处理）、`javascript:`、`data:` 与相对路径一律不认。
+ * 原串里有任何 ASCII 控制字符、空白或 `\` 一律不认（浏览器会删掉制表 / 换行，`/\t/evil` 会变成 `//evil`）；
+ * `/` 开头的再按占位源解析，源变了（协议相对地址）也不认。`javascript:`、`data:` 与相对路径同样不认。
  */
 export function isSafeAttachmentHref(href: string): boolean {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
+  if (href === "" || /[\u0000-\u0020\u007f\\]/.test(href)) return false;
   if (href.startsWith("/")) {
-    return !href.startsWith("//") && !href.includes("\\");
+    try {
+      return new URL(href, PLACEHOLDER_ORIGIN).origin === PLACEHOLDER_ORIGIN;
+    } catch {
+      return false;
+    }
   }
   try {
     const u = new URL(href);
@@ -241,6 +265,12 @@ export function isSafeAttachmentHref(href: string): boolean {
   }
 }
 
+/** 加上重试用的缓存参数 `retry=<n>`（n ≤ 0 时原样返回）。 */
+function withRetry(href: string, retry: number): string {
+  if (retry <= 0) return href;
+  return `${href}${href.includes("?") ? "&" : "?"}retry=${retry}`;
+}
+
 export type AttachmentPreviewProps = {
   kind: "image" | "file";
   name: string;
@@ -248,10 +278,24 @@ export type AttachmentPreviewProps = {
   href: string;
   /** 文件卡片的说明（如类型）。 */
   meta?: string;
+  /** 图片加载失败时调用（调用方可刷新登录后递增 `retry` 重试）。 */
+  onImageError?: () => void;
+  /** 重试次数：大于 0 时图片地址加上缓存参数重新加载（链接地址不变）。 */
+  retry?: number;
+  /** 给了它时，不带修饰键的左键点击交给调用方打开（阻止默认打开），其余点击照常。 */
+  onOpen?: (href: string) => void;
 };
 
 /** 消息里的附件：图片为缩略图，其他为文件卡片；都是新标签页打开的链接。 */
-export function AttachmentPreview({ kind, name, href, meta }: AttachmentPreviewProps) {
+export function AttachmentPreview({
+  kind,
+  name,
+  href,
+  meta,
+  onImageError,
+  retry = 0,
+  onOpen,
+}: AttachmentPreviewProps) {
   if (!isSafeAttachmentHref(href)) {
     return (
       <span className="cb-attachment" data-kind="file">
@@ -262,6 +306,13 @@ export function AttachmentPreview({ kind, name, href, meta }: AttachmentPreviewP
       </span>
     );
   }
+  const onClick = onOpen
+    ? (e: MouseEvent<HTMLAnchorElement>) => {
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        onOpen(href);
+      }
+    : undefined;
   if (kind === "image") {
     return (
       <a
@@ -271,13 +322,15 @@ export function AttachmentPreview({ kind, name, href, meta }: AttachmentPreviewP
         target="_blank"
         rel="noopener noreferrer"
         title={name}
+        onClick={onClick}
       >
         <img
           className="cb-attachment-thumb"
-          src={href}
+          src={withRetry(href, retry)}
           alt={name}
           loading="lazy"
           referrerPolicy="no-referrer"
+          onError={onImageError}
         />
       </a>
     );
@@ -290,6 +343,7 @@ export function AttachmentPreview({ kind, name, href, meta }: AttachmentPreviewP
       target="_blank"
       rel="noopener noreferrer"
       title={name}
+      onClick={onClick}
     >
       <span className="cb-attachment-glyph" aria-hidden="true">
         ▤
