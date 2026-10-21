@@ -209,10 +209,7 @@
     - secrets 键 `credentials:app:*`：加密的附加数据绑定了键名，改名要重新加密，收益不值；
     - 旧审计记录 `app.*`：审计只追加；新记录写 `connector.*`，按 action 查询时两者视为同义。
   - slug 的值不变，所以工具 key `<slug>__<tool>` 不变；旧日志的回放由 T22 的夹具测试保证零漂移。
-- **C28 滚动升级的兼容层**：
-  - 改名迁移同时建兼容视图 `capybara.apps` / `capybara.app_tools`（列名映射回旧名，是可更新的简单视图），旧副本在滚动升级期间照常读写；
-  - HTTP 旧路径 `/apps*` 作为别名保留；
-  - 两者都在 M7 删除（写进路线图）。
+- **C28 不做改名兼容层**：项目尚未发布，web 是唯一的 API 客户端，也没有需要兼容的外部部署，所以不建兼容视图、不留 `/apps` 路由别名；web 在同一任务里切到新名。C27 的例外只为日志确定性与已存数据保留。
 - **C29 改名前后的命名**：
   - 第一、二段触及现有代码时沿用旧名（如 `tools/apps.service.ts`），由 T22 统一改名；
   - M6 新增的标识符一律直接用新名（如部署设置 `customConnectors`）；
@@ -1212,7 +1209,6 @@ export function effectiveSandboxLimits(deployment: SandboxLimits, override: { cp
   - `lib/apps.ts` → `lib/connectors.ts`；
   - `nav.tsx`、`settings-nav.ts`；
   - i18n 键 `apps.*` → `connectors.*`，中文文案「应用」→「连接器」；
-  - `next.config` 里加 `/apps*` → `/connectors*` 的重定向。
 - 文档：`skills/writing-connectors`、`writing-tools`、`writing-kernel-api`、`writing-plugins`、`AGENTS.md`、README。在 writing-connectors 里写明「不支持 stdio MCP」。
 - 新增夹具 `packages/kernel/test/evals/fixtures/pre-rename/*.json` 与测试 `packages/kernel/test/tools/rename-compat.test.ts`。
 
@@ -1220,8 +1216,7 @@ export function effectiveSandboxLimits(deployment: SandboxLimits, override: { cp
 ```
 表：capybara.apps → capybara.connectors；capybara.app_tools → capybara.connector_tools；
     所有 app_id 列 → connector_id（connector_tools、approvals、tool_grants、conversation_tool_grants 等，实现时用 grep "app_" migrations 列全）；索引与约束名不改
-兼容视图（C28）：CREATE OR REPLACE VIEW capybara.apps AS SELECT …, id AS id, … FROM capybara.connectors（列名映射回旧名，可更新的简单视图）；app_tools 同样
-HTTP：/api/v1/orgs/:orgId/apps* → /api/v1/orgs/:orgId/connectors*（旧路径作为别名保留到 M7）
+HTTP：/api/v1/orgs/:orgId/apps* → /api/v1/orgs/:orgId/connectors*（不留旧路径别名，C28）
 OrgAction：apps.manage → connectors.manage；apps.use → connectors.use
 错误码：app.not_found / slug_taken / connect_failed / tool_not_found / tool_not_pending / resources_disabled → connector.*
 AgentToolRef：新增 { kind: "connector", connectorId, tools }；{ kind: "app", appId, tools } 仍可解析，读入时规范化为 connector 形；新保存只写 connector 形
@@ -1229,7 +1224,7 @@ registry 的工具来源：{ kind: "connector"; connectorId; name; resources?: t
 审计 action：新写 connector.created / updated / deleted / tools_refreshed / tools_drifted；旧记录 app.* 不改
 ```
 - **迁移的写法**：
-  - 每条 `RENAME` 紧邻的上一行都写 `-- capybara:allow-destructive D17 应用 → 连接器全量改名；同一发布内代码同步改名，旧副本经兼容视图读写`（`skills/writing-migrations` 的豁免注释）。
+  - 每条 `RENAME` 紧邻的上一行都写 `-- capybara:allow-destructive D17 应用 → 连接器全量改名；同一发布内代码与 web 同步改名（项目未发布，无兼容层，C28）`（`skills/writing-migrations` 的豁免注释）。
   - 表改名用 `ALTER TABLE IF EXISTS … RENAME TO …`。列改名没有 `IF EXISTS`，放在 `DO $$ … IF EXISTS (SELECT 1 FROM information_schema.columns …) THEN ALTER TABLE … RENAME COLUMN … END IF; $$` 里保证幂等。
   - 先确认迁移检查认得 `DO` 块里的 `RENAME`，并接受紧邻其上的豁免注释；不认得就修检查，并补违规 fixture。
 - **不改的部分（C27）**：
@@ -1244,12 +1239,11 @@ registry 的工具来源：{ kind: "connector"; connectorId; name; resources?: t
   - 用当前代码跑一段对话，覆盖 MCP 连接器工具、`tool_search` 加载、`connection_required` 和一次审批，导出 `CaseSnapshot` 与 model-fake 收到的每个请求，存为 `fixtures/pre-rename/*.json`。
   - 测试断言：改名后，`reconstructRequest` 对夹具里每个可回放调用 `drift` 为 `[]`，请求与记录的请求 `toEqual`。
   - 测试断言：含 `{kind:"app"}` 的旧 agent 版本能加载、能运行，工具 key 不变。
-  - 测试断言：经兼容视图 `capybara.apps` 能读也能写（模拟旧副本）。
-  - 测试断言：旧路径 `/apps` 与新路径 `/connectors` 返回相同的结果。
+  - 测试断言：`/connectors` 路由可用，旧路径 `/apps` 返回 404。
 - [ ] **Step 2：** 运行测试：夹具在旧代码上通过，改名相关的断言失败。
 - [ ] **Step 3：** 全量改名。
-- [ ] **Step 4：** 运行全量 `pnpm test`、`pnpm check`（包括迁移检查与 web-ui 检查）、web e2e，以及 `grep -rn "apps\.\(manage\|use\)\|AppsService\|/apps/" packages apps` 确认没有旧名残留（允许残留的只有兼容别名、视图与夹具）。
-- [ ] **Step 5：** 提交 `refactor!: 应用改名为连接器（路由、权限、错误码、表与界面）`，附 changeset，写明破坏性变更与兼容期。
+- [ ] **Step 4：** 运行全量 `pnpm test`、`pnpm check`（包括迁移检查与 web-ui 检查）、web e2e，以及 `grep -rn "apps\.\(manage\|use\)\|AppsService\|/apps/" packages apps` 确认没有旧名残留（允许残留的只有 C27 的例外与夹具）。
+- [ ] **Step 5：** 提交 `refactor!: 应用改名为连接器（路由、权限、错误码、表与界面）`，附 changeset，写明破坏性变更（无兼容层，C28）。
 
 ### Task 23: 目录条目与导入（插件 / 连接器模板 / 技能）
 
@@ -1708,7 +1702,6 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
     - ghcr 镜像（amd64 + arm64），**核心镜像只有内核加 `openai-compatible`、`object-store-s3`**；
     - 官方插件、连接器模板、应用以 npm 包 / tgz 发布；
     - 官方清单仓库（如 `capybara-hq/catalog`）上线：用 SDK 的 schema 在 CI 里校验；官方包的 CI 先发布到 npm，再向清单提 PR；`catalogs.official.url` 换成正式地址；签名 / provenance；
-    - 删除 D17 改名的兼容层：`capybara.apps` / `app_tools` 视图与 `/apps` 路由别名；
     - `gemini`（Gemini API）；
     - `ctx.hooks` + `usage.report`；
     - SDK 公开 API 快照检查；
