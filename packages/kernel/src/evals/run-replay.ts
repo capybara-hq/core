@@ -64,6 +64,10 @@ export type RunBaseline = Omit<RunReplayResult, "conversationId" | "outcome" | "
 export interface EvalReplayHooks {
   /** 种子已写入（评测对话已记到结果上）、loop 开始之前调用：抛错即模拟此时崩溃。 */
   afterRunSeeded?(evalRunId: string, conversationId: string): Promise<void>;
+  /** 每次请求前的检查（查运行状态与认领）之前调用：抛错即模拟检查时的 DB 故障。 */
+  beforeCheck?(evalRunId: string): Promise<void>;
+  /** 每次计费（`consumeTokens`）之前调用：抛错即模拟计费时的 DB 故障。 */
+  beforeCharge?(evalRunId: string): Promise<void>;
 }
 
 export interface RunReplayDeps {
@@ -362,6 +366,7 @@ export async function replayRun(
    */
   const allowed = async (): Promise<boolean> => {
     if (loopSignal.aborted) return false;
+    await d.hooks?.beforeCheck?.(evalRunId);
     const why = await stopReason(db, evalRunId, d.stillClaimed);
     if (why === null) return true;
     stopped ??= why;
@@ -380,7 +385,10 @@ export async function replayRun(
   const charges = new Set<Promise<unknown>>();
   const charge = (n: number): Promise<void> => {
     // 计费写不进去也按崩溃处理：不能让请求在预算之外继续发
-    const p = consumeTokens(db, evalRunId, n).then(() => {}, crashed);
+    const p = (async () => {
+      await d.hooks?.beforeCharge?.(evalRunId);
+      await consumeTokens(db, evalRunId, n);
+    })().then(() => {}, crashed);
     charges.add(p);
     void p.finally(() => charges.delete(p));
     return p;

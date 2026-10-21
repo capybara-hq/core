@@ -561,7 +561,16 @@ export class EvalWorker {
       .where("eval_conversation_id", "is not", null)
       .execute();
     for (const r of left) {
-      await deleteEvalConversation(this.d.runReplay, r.eval_conversation_id as string);
+      // 清理失败不能挡住记错误（否则结果一直 running、运行卡住）；残留的评测对话随评测集删除或组织删除清掉
+      try {
+        await deleteEvalConversation(this.d.runReplay, r.eval_conversation_id as string);
+      } catch (e) {
+        this.d.log.warn("cannot delete the eval conversation of a failed eval job", {
+          runId: data.runId,
+          caseId: data.caseId,
+          err: e,
+        });
+      }
     }
     await this.d.db
       .updateTable("eval_results")

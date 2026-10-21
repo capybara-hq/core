@@ -55,6 +55,11 @@ let root: string;
 /** 置为 true 时，下一个用例在种子写好之后、loop 开始之前模拟崩溃一次。 */
 let crashOnce = false;
 let crashes = 0;
+/** 模拟检查 / 计费时的 DB 故障：剩余次数（-1 = 一直失败）。 */
+let checkFailures = 0;
+let chargeFailures = 0;
+let checkFailed = 0;
+let chargeFailed = 0;
 
 let owner: Req;
 let admin: Req;
@@ -85,6 +90,18 @@ beforeAll(async () => {
           crashOnce = false;
           crashes++;
           throw new Error("simulated crash after seeding");
+        },
+        async beforeCheck() {
+          if (checkFailures === 0) return;
+          if (checkFailures > 0) checkFailures--;
+          checkFailed++;
+          throw new Error("simulated PG error in the request check");
+        },
+        async beforeCharge() {
+          if (chargeFailures === 0) return;
+          if (chargeFailures > 0) chargeFailures--;
+          chargeFailed++;
+          throw new Error("simulated PG error while charging");
         },
       },
     },
@@ -653,5 +670,66 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       .execute();
     expect(convs.map((c) => c.id)).toEqual([rs[0]?.evalConversationId]);
     expect((rs[0]?.candidate as RunReplayResult | undefined)?.unmatched).toBe(0);
+  });
+
+  it("请求前检查出 DB 错误：按崩溃交给 BullMQ 重试，从头重跑后 done", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "dberr", 'tool:tools-count__count:{"n":4}', [
+      { name: "tools-count__count", input: { n: 4 }, content: "counted 4" },
+    ]);
+    await addCase(setId, conv, "dberr");
+    checkFailed = 0;
+    checkFailures = 1;
+    const run = await startRun(setId, {});
+    expect((await finished(run.id, 45_000)).status).toBe("completed");
+    expect(checkFailed).toBe(1);
+    const rs = await results(run.id);
+    expect(rs).toHaveLength(1);
+    expect(rs[0]?.status, JSON.stringify(rs[0]?.error)).toBe("done");
+    const convs = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("eval_run_id", "=", run.id)
+      .execute();
+    expect(convs.map((c) => c.id)).toEqual([rs[0]?.evalConversationId]);
+  });
+
+  it("计费一直写不进去：尝试用尽后结果记 error，评测对话被删掉", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "chargeerr", 'tool:tools-count__count:{"n":3}', [
+      { name: "tools-count__count", input: { n: 3 }, content: "counted 3" },
+    ]);
+    await addCase(setId, conv, "chargeerr");
+    chargeFailed = 0;
+    chargeFailures = -1;
+    try {
+      const run = await startRun(setId, {});
+      const rs = await waitFor(
+        async () => {
+          const x = await results(run.id);
+          return x.every((r) => !["pending", "running"].includes(r.status)) ? x : null;
+        },
+        45_000,
+        "result settled",
+        100,
+      );
+      expect(rs).toHaveLength(1);
+      expect(rs[0]?.status).toBe("error");
+      expect((rs[0]?.error as { code?: string } | null)?.code).toBe("eval.internal");
+      expect(rs[0]?.evalConversationId).toBeNull();
+      // 3 次尝试（attempts: 3），每次都在第一次计费处崩溃
+      expect(chargeFailed).toBeGreaterThanOrEqual(3);
+      expect((await finished(run.id)).status).toBe("completed");
+      const convs = await db
+        .selectFrom("conversations")
+        .select("id")
+        .where("eval_run_id", "=", run.id)
+        .execute();
+      expect(convs).toHaveLength(0);
+    } finally {
+      chargeFailures = 0;
+    }
   });
 });
