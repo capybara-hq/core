@@ -54,3 +54,52 @@ describe("ContentBlockSchema", () => {
     expect(ConversationEventSchema.safeParse(ev(b64)).success).toBe(false);
   });
 });
+
+describe("media_excluded 与 model_call.request.media（Ruling M8）", () => {
+  const uuid = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  const excluded = (attachmentIds: string[], reason = "provider_rejected") =>
+    ConversationEventSchema.safeParse({
+      type: "media_excluded",
+      payload: { attachmentIds, reason },
+    }).success;
+
+  it("media_excluded：UUID、1..50 个、原因只有 provider_rejected", () => {
+    expect(excluded([uuid(1)])).toBe(true);
+    expect(excluded(Array.from({ length: 50 }, (_, i) => uuid(i)))).toBe(true);
+    expect(excluded(Array.from({ length: 51 }, (_, i) => uuid(i)))).toBe(false);
+    expect(excluded([])).toBe(false);
+    expect(excluded(["att_1"])).toBe(false);
+    expect(excluded([uuid(1)], "other")).toBe(false);
+  });
+
+  it("model_call.request.media：可选；outcome 限定取值，etag 可选", () => {
+    const call = (media?: unknown) =>
+      ConversationEventSchema.safeParse({
+        type: "model_call",
+        payload: {
+          step: 1,
+          attempt: 1,
+          provider: "p",
+          model: "m",
+          fallback: false,
+          request: {
+            fromSeq: 1,
+            toSeq: 2,
+            summarySeq: null,
+            systemHash: "h",
+            reminderSeqs: [],
+            ...(media !== undefined && { media }),
+          },
+        },
+      }).success;
+    expect(call()).toBe(true);
+    expect(
+      call([
+        { attachmentId: uuid(1), outcome: "bytes", etag: "abc" },
+        { attachmentId: uuid(2), outcome: "too_many_pages" },
+      ]),
+    ).toBe(true);
+    expect(call([{ attachmentId: uuid(1), outcome: "sent" }])).toBe(false);
+    expect(call([{ attachmentId: "x", outcome: "bytes" }])).toBe(false);
+  });
+});

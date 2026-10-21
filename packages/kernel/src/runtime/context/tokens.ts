@@ -1,5 +1,5 @@
 import type { ContentBlock, ModelMessage, ModelRequest } from "@capybara-hq/plugin-sdk";
-import { IMAGE_TOKENS } from "./build.js";
+import { IMAGE_TOKENS, pdfTokens } from "./build.js";
 
 /** 文档按「字节数 ÷ 3」估算。 */
 const BYTES_PER_TOKEN = 3;
@@ -12,11 +12,16 @@ function base64Bytes(data: string): number {
   return Math.max(0, Math.floor((data.length / 4) * 3) - pad);
 }
 
-/** 媒体块的兜底估算（没有构建时算好的 `mediaTokens` 时用）：图片固定 1600，文档按字节 ÷ 3（不解码）。 */
+/**
+ * 媒体块的兜底估算（没有构建时算好的 `mediaTokens` 时用，不解码）：图片固定 1600；PDF 按大小换算页数
+ * （见 `pdfTokens`，绝不按字节 ÷ 3）；其他文档按字节 ÷ 3。
+ */
 function blockMediaTokens(b: Extract<ContentBlock, { type: "image" | "document" }>): number {
   if (b.type === "image") return IMAGE_TOKENS;
   if (b.source.kind !== "base64") return UNRESOLVED_DOCUMENT_TOKENS;
-  return Math.ceil(base64Bytes(b.source.data) / BYTES_PER_TOKEN);
+  const size = base64Bytes(b.source.data);
+  if (b.mediaType === "application/pdf") return pdfTokens(size, null);
+  return Math.ceil(size / BYTES_PER_TOKEN);
 }
 
 /** 校正比例的上下限：单轮真实值偏差再大，也不让估算失控。 */

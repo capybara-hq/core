@@ -485,24 +485,25 @@ export class AttachmentsService {
     if (ids.length === 0) return new Map();
     const rows = await this.d.db
       .selectFrom("attachments")
-      .select(["id", "size", "pages"])
+      .select(["id", "size", "pages", "etag"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();
-    return new Map(rows.map((r) => [r.id, { size: Number(r.size), pages: r.pages }]));
+    return new Map(rows.map((r) => [r.id, { size: Number(r.size), pages: r.pages, etag: r.etag }]));
   }
 
   /**
    * 构建模型请求时取附件字节：只取绑定在该会话、已 ready 的附件。只有「确定不存在」才为 null：没有行、对象已不在、
    * 大小或 etag 与 finalize 时不符（内容被替换，记 warn）。其余错误（存储不可用、网络错误）一律抛出（Ruling M4），
-   * 由调用方按可重试处理，不会变成占位。
+   * 由调用方按可重试处理，不会变成占位。`caps` 里的附件只按范围读开头若干字节（`text/*` 封顶，更后面的不取）。
    */
   async fetchMedia(
     orgId: string,
     conversationId: string,
     ids: readonly string[],
+    caps?: ReadonlyMap<string, number>,
   ): Promise<Map<string, MediaBytes | null>> {
     const out = new Map<string, MediaBytes | null>();
     if (ids.length === 0) return out;
@@ -520,7 +521,12 @@ export class AttachmentsService {
       ids.map(async (id) => {
         const r = byId.get(id);
         if (!r) return out.set(id, null);
-        const got = await store.get(r.object_key);
+        const cap = caps?.get(id);
+        const want = cap !== undefined && cap < Number(r.size) ? Math.max(1, cap) : Number(r.size);
+        const got = await store.get(
+          r.object_key,
+          want < Number(r.size) ? { range: { start: 0, end: want - 1 } } : undefined,
+        );
         if (!got) return out.set(id, null);
         const where = { orgId, conversationId, attachmentId: id };
         if (got.head.size !== Number(r.size) || !this.sameContent(r.etag, got.head.etag, where)) {
@@ -534,10 +540,7 @@ export class AttachmentsService {
           return out.set(id, null);
         }
         const data = await readAll(got.body);
-        out.set(
-          id,
-          data.byteLength === Number(r.size) ? { mediaType: r.content_type, data } : null,
-        );
+        out.set(id, data.byteLength === want ? { mediaType: r.content_type, data } : null);
       }),
     );
     return out;

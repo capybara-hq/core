@@ -516,6 +516,32 @@ describe("下载", { timeout: 30_000 }, () => {
   });
 });
 
+describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
+  it("fetchMedia 按 caps 只取开头；模型收到截断并注明的文档；mediaInfo 带 etag", async () => {
+    const big = Buffer.from("a,b\n".repeat(50_000)); // 200 000 字节
+    const id = await ready(owner, "big.csv", "text/csv", big);
+    const convId = await conversationWith("see-1");
+    expect((await post(owner, convId, { text: "read", files: [id] })).statusCode).toBe(202);
+    await waitForTerminal(db, convId);
+
+    const got = await k.attachments.fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
+    expect(got.get(id)?.data.byteLength).toBe(1000);
+    const info = await k.attachments.mediaInfo(orgId, convId, [id]);
+    expect(info.get(id)).toMatchObject({ size: big.length, pages: null });
+    expect(typeof info.get(id)?.etag).toBe("string");
+
+    const doc = userBlocks(provider().requests[0] as ModelRequest).find(
+      (b) => b.type === "document",
+    );
+    const sent =
+      doc?.type === "document" && doc.source.kind === "base64"
+        ? Buffer.from(doc.source.data, "base64").toString("utf8")
+        : "";
+    expect(sent.length).toBeLessThan(50_200);
+    expect(sent).toContain(`characters of a ${big.length}-byte file.]`);
+  });
+});
+
 describe("openForConversation（沙箱同步用）", { timeout: 30_000 }, () => {
   it("只返回绑定在该会话、已 ready、内容未被替换的附件", async () => {
     const id = await ready(owner, "notes.txt", "text/plain", TEXT);

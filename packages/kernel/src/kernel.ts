@@ -637,7 +637,8 @@ export async function createKernel(
     toolPipeline,
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
-      fetch: (orgId, conversationId, ids) => attachments.fetchMedia(orgId, conversationId, ids),
+      fetch: (orgId, conversationId, ids, caps) =>
+        attachments.fetchMedia(orgId, conversationId, ids, caps),
     },
   };
   const runs: KernelRuns = {

@@ -23,10 +23,15 @@ const ProviderOpaqueSchema = z.object({
  * 日志里的媒体来源：只有附件引用。字节（`base64`）绝不进事件日志——日志是事实源、字节不是；
  * 构建模型请求时内核按 `attachmentId` 取字节换成 `base64`（见 {@link LogContentBlock}）。
  */
+const AttachmentIdSchema = z.string().refine(isAttachmentId, "attachmentId must be a UUID");
+
 const RefMediaSourceSchema = z.object({
   kind: z.literal("ref"),
-  attachmentId: z.string().refine(isAttachmentId, "attachmentId must be a UUID"),
+  attachmentId: AttachmentIdSchema,
 });
+
+/** 一条 `media_excluded` 事件最多的附件数。 */
+export const MEDIA_EXCLUDED_MAX_IDS = 50;
 
 /** 媒体块的名字：与 plugin-sdk `validateMediaBlock` 同规则（≤255 字符、不含控制字符）。 */
 const MediaNameSchema = z
@@ -206,6 +211,28 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          * 定义本身按 specHash 存在 `capybara.tool_specs`。
          */
         toolChoice: z.enum(["auto", "none"]).optional(),
+        /**
+         * 请求里每个附件的处理结果（Ruling M8，按首次出现，同一附件一条）：发了字节（`bytes`，带 finalize 时的
+         * etag）、内联文本、模型不支持的占位、省略（预算 / 图片太多 / 太大）、不再可用、PDF 页数太多、
+         * 被 `media_excluded` 排除。没有媒体时不写；较早的事件没有。
+         */
+        media: z
+          .array(
+            z.object({
+              attachmentId: AttachmentIdSchema,
+              outcome: z.enum([
+                "bytes",
+                "inline",
+                "placeholder_unsupported",
+                "omitted",
+                "unavailable",
+                "too_many_pages",
+                "excluded",
+              ]),
+              etag: z.string().max(1024).optional(),
+            }),
+          )
+          .optional(),
       }),
     }),
   ),
@@ -309,6 +336,18 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       answer: FormAnswerSchema.nullable(),
       byAccountId: z.string().nullable(),
       outcome: z.enum(["answered", "expired", "cancelled"]),
+    }),
+  ),
+  /**
+   * 带媒体的模型请求被供应商以不可重试的 `invalid_request` / `context_overflow` 拒绝（Ruling M8）：这些附件
+   * （该请求里发了字节的）此后一律换成「被供应商拒绝」的占位，会话不会因同一个附件永久卡住。不进模型请求
+   * 本身，只影响之后的请求构建（可由日志推出）。
+   */
+  ev(
+    "media_excluded",
+    z.object({
+      attachmentIds: z.array(AttachmentIdSchema).min(1).max(MEDIA_EXCLUDED_MAX_IDS),
+      reason: z.enum(["provider_rejected"]),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),

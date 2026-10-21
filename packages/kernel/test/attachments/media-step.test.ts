@@ -21,7 +21,13 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
-import type { MediaBytes, MediaInfo } from "../../src/runtime/context/build.js";
+import {
+  type MediaBytes,
+  type MediaInfo,
+  TEXT_FETCH_MAX_BYTES,
+  TEXT_INLINE_MAX_CHARS,
+} from "../../src/runtime/context/build.js";
+import { MediaCache } from "../../src/runtime/media-cache.js";
 import { type ModelStepDeps, RunError, runModelStep } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { truncateTables } from "../helpers/db.js";
@@ -59,9 +65,15 @@ const info = (id: string, vision: boolean): ModelInfo => ({
   parameters: [],
 });
 
-/** 测试桩：`see` 有视觉、`blind` 没有；`failing` 里的模型每次都以可重试错误失败（请求仍被记录）。 */
+/**
+ * 测试桩：`see` 有视觉、`blind` 没有；`failing` 里的模型每次都以可重试错误失败（请求仍被记录）；
+ * `rejectMedia` 为真时带图片 / 文档字节的请求以 `invalid_request` 失败（模拟供应商拒收坏图片）。
+ */
 const calls: ModelRequest[] = [];
 let failing = new Set<string>();
+let rejectMedia = false;
+/** 为真时每个请求都以 `invalid_request` 失败。 */
+let rejectAll = false;
 const provider: ModelProvider = {
   async listModels() {
     return [info("see", true), info("blind", false)];
@@ -69,6 +81,10 @@ const provider: ModelProvider = {
   async *stream(req): AsyncGenerator<ModelStreamEvent> {
     calls.push(structuredClone(req));
     if (failing.has(req.model)) throw new ModelError("overloaded", "busy", { retryAfterMs: 1 });
+    if (rejectAll) throw new ModelError("invalid_request", "bad");
+    if (rejectMedia && userBlocks(req).some((b) => b.type === "image" || b.type === "document")) {
+      throw new ModelError("invalid_request", "Could not process image");
+    }
     yield {
       type: "message_complete",
       content: [{ type: "text", text: "ok" }],
@@ -78,10 +94,14 @@ const provider: ModelProvider = {
   },
 };
 
-/** 假的附件来源：`rows` 是行（声明大小），`bytes` 是存储里的字节；`fetchFails` 次数内取字节抛错。 */
+/**
+ * 假的附件来源：`rows` 是行（声明大小），`bytes` 是存储里的字节；`fetchFails` 次数内取字节抛错。
+ * `caps` 里的附件只给开头若干字节（按范围读）。
+ */
 let rows = new Map<string, MediaInfo>();
 let bytes = new Map<string, MediaBytes>();
 let fetched: string[][] = [];
+let fetchCaps: (ReadonlyMap<string, number> | undefined)[] = [];
 let fetchFails = 0;
 
 let deps: ModelStepDeps;
@@ -118,13 +138,21 @@ beforeAll(async () => {
     media: {
       info: async (_o, _c, ids) =>
         new Map(ids.flatMap((id) => (rows.has(id) ? [[id, rows.get(id) as MediaInfo]] : []))),
-      fetch: async (_o, _c, ids) => {
+      fetch: async (_o, _c, ids, caps) => {
         fetched.push([...ids]);
+        fetchCaps.push(caps);
         if (fetchFails > 0) {
           fetchFails--;
           throw new Error("ECONNRESET");
         }
-        return new Map(ids.map((id) => [id, bytes.get(id) ?? null]));
+        return new Map(
+          ids.map((id) => {
+            const b = bytes.get(id);
+            const cap = caps?.get(id);
+            if (!b) return [id, null];
+            return [id, cap === undefined ? b : { ...b, data: b.data.subarray(0, cap) }];
+          }),
+        );
       },
     },
   };
@@ -143,9 +171,12 @@ let conversationId: string;
 beforeEach(async () => {
   calls.length = 0;
   failing = new Set();
+  rejectMedia = false;
+  rejectAll = false;
   rows = new Map();
   bytes = new Map();
   fetched = [];
+  fetchCaps = [];
   fetchFails = 0;
   budget = 20_971_520;
   await redis.flushdb();
@@ -202,18 +233,28 @@ async function say(text: string, ids: string[]): Promise<void> {
   ]);
 }
 
-const step = (a: AgentDefinition) =>
+const step = (
+  a: AgentDefinition,
+  opts: { runId?: string; step?: number; mediaCache?: MediaCache } = {},
+) =>
   runModelStep(deps, {
     orgId,
     conversationId,
-    runId: randomUUID(),
-    step: 1,
+    runId: opts.runId ?? randomUUID(),
+    step: opts.step ?? 1,
     agent: a,
     agentVersion: 1,
     absorbedUpToSeq: 1_000_000_000,
     signal: new AbortController().signal,
     sink: () => {},
+    ...(opts.mediaCache && { mediaCache: opts.mediaCache }),
   });
+
+/** 读会话日志里某类事件。 */
+async function eventsOfType(type: string) {
+  const all = await eventLog.readAfter(conversationId, 0, 1000);
+  return all.filter((e) => e.type === type);
+}
 
 const userBlocks = (r: ModelRequest) =>
   r.messages.flatMap((m) => (m.role === "user" ? m.content : []));
@@ -301,5 +342,121 @@ describe("主模型与兜底的能力不同", () => {
     expect(JSON.stringify(blindCalls)).not.toContain(b64);
     expect(seeCalls).toHaveLength(1);
     expect(JSON.stringify(seeCalls)).toContain(b64);
+  });
+});
+
+describe("大文本附件（Ruling M8 / C1）", () => {
+  it("5 MB 的 CSV 发给 documents:true 模型：只按范围取开头，发出的文档被截断并注明", async () => {
+    const id = randomUUID();
+    const big = new TextEncoder().encode("a,b\n".repeat(5 * 1024 * 256));
+    rows.set(id, { size: big.byteLength, pages: null });
+    bytes.set(id, { mediaType: "text/csv", data: big });
+    await eventLog.append(conversationId, [
+      {
+        type: "user_message",
+        payload: {
+          content: [
+            { type: "text", text: "read" },
+            {
+              type: "document",
+              mediaType: "text/csv",
+              source: { kind: "ref", attachmentId: id },
+              name: "big.csv",
+            },
+          ],
+          authorAccountId: "acc",
+        },
+      },
+    ]);
+    await step(agent("see"));
+    expect(fetchCaps.at(-1)?.get(id)).toBe(TEXT_FETCH_MAX_BYTES);
+    const doc = userBlocks(calls[0] as ModelRequest).find((b) => b.type === "document");
+    const sent =
+      doc?.type === "document" && doc.source.kind === "base64"
+        ? Buffer.from(doc.source.data, "base64").toString("utf8")
+        : "";
+    expect(sent.length).toBeLessThan(TEXT_INLINE_MAX_CHARS + 200);
+    expect(sent).toContain("[Truncated:");
+    expect(JSON.stringify(calls[0]).length).toBeLessThan(200_000);
+  });
+});
+
+describe("供应商拒收媒体（Ruling M8 / I1）", () => {
+  it("invalid_request 且请求带字节：追加 media_excluded、运行照常失败；下一条消息换成占位并成功", async () => {
+    const id = image(new Uint8Array([1, 1, 2, 3]));
+    await say("look", [id]);
+    rejectMedia = true;
+    const err = await step(agent("see")).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RunError);
+    expect((err as RunError).code).toBe("model.invalid_request");
+    const excluded = await eventsOfType("media_excluded");
+    expect(excluded).toHaveLength(1);
+    expect(excluded[0]?.payload).toEqual({ attachmentIds: [id], reason: "provider_rejected" });
+
+    await say("again", []);
+    calls.length = 0;
+    fetched = [];
+    const r = await step(agent("see"));
+    expect(r.stopReason).toBe("end_turn");
+    expect(calls).toHaveLength(1);
+    expect(fetched.flat()).not.toContain(id);
+    expect(userBlocks(calls[0] as ModelRequest)).toContainEqual({
+      type: "text",
+      text: '[Attachment "img-look-0.png" was rejected by the model provider.]',
+    });
+  });
+
+  it("请求里没有媒体字节：invalid_request 不写 media_excluded", async () => {
+    const id = image(new Uint8Array([1, 2]));
+    await say("look", [id]);
+    // 不支持视觉：只发占位；模型以 invalid_request 失败
+    rejectAll = true;
+    const err = await step(agent("blind")).catch((e: unknown) => e);
+    expect((err as RunError).code).toBe("model.invalid_request");
+    expect(await eventsOfType("media_excluded")).toHaveLength(0);
+  });
+});
+
+describe("model_call 记录媒体结果（I2）", () => {
+  it("request.media 记下每个附件的结果与 etag", async () => {
+    const id = image(new Uint8Array([4, 4]));
+    rows.set(id, { size: 2, pages: null, etag: "etag-1" });
+    await say("look", [id]);
+    await step(agent("see"));
+    const [mc] = await eventsOfType("model_call");
+    expect(mc?.type === "model_call" && mc.payload.request.media).toEqual([
+      { attachmentId: id, outcome: "bytes", etag: "etag-1" },
+    ]);
+  });
+});
+
+describe("每次运行的媒体缓存（9）", () => {
+  it("同一次运行的第二步不再取同一附件的字节", async () => {
+    const id = image(new Uint8Array([7, 7, 7]));
+    rows.set(id, { size: 3, pages: null, etag: "e" });
+    await say("look", [id]);
+    const cache = new MediaCache();
+    const runId = randomUUID();
+    await step(agent("see"), { runId, step: 1, mediaCache: cache });
+    await step(agent("see"), { runId, step: 2, mediaCache: cache });
+    expect(calls).toHaveLength(2);
+    expect(fetched.flat()).toEqual([id]);
+    // 两次请求都带字节
+    for (const c of calls) expect(userBlocks(c).some((b) => b.type === "image")).toBe(true);
+  });
+
+  it("按总字节数 LRU 淘汰", () => {
+    const cache = new MediaCache(10);
+    const m = (n: number): MediaBytes => ({ mediaType: "image/png", data: new Uint8Array(n) });
+    cache.set("a", m(4));
+    cache.set("b", m(4));
+    expect(cache.get("a")).toBeDefined(); // a 变成最近使用
+    cache.set("c", m(4)); // 超出 10：淘汰最久未用的 b
+    expect(cache.get("b")).toBeUndefined();
+    expect(cache.get("a")).toBeDefined();
+    expect(cache.get("c")).toBeDefined();
+    cache.set("huge", m(11)); // 比上限还大：不缓存
+    expect(cache.get("huge")).toBeUndefined();
+    expect(cache.size).toBe(8);
   });
 });

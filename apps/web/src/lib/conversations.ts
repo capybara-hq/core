@@ -148,6 +148,10 @@ type EventBody =
     }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
+  | {
+      type: "media_excluded";
+      payload: { attachmentIds: string[]; reason: "provider_rejected" };
+    }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }
   | { type: "run_failed"; payload: { error: { code: string; message: string } } }
   | { type: "run_aborted"; payload: { byAccountId: string | null; reason: string } };
