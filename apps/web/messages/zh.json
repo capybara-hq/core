@@ -91,7 +91,8 @@
       "login_taken": "用户名已被占用。"
     },
     "org": {
-      "not_found": "组织不存在或你已不是成员。"
+      "not_found": "组织不存在或你已不是成员。",
+      "sandbox_egress_not_allowed": "本部署已禁止沙箱联网，组织只能选择「不联网」。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -891,6 +892,23 @@
       "allowHint": "沙箱工具无需审批（默认）。",
       "ask": "需要审批",
       "askHint": "除只读工具外，每次调用都要用户批准。"
+    },
+    "egress": {
+      "title": "沙箱网络",
+      "description": "沙箱里的命令能访问哪些主机。白名单能挡住内网，但挡不住把数据发到允许的主机（例如 git push 到 github.com）；敏感组织请选「不联网」。",
+      "default": "跟随部署默认",
+      "defaultHint": {
+        "allowlist": "部署设置的白名单（{count} 个主机）。",
+        "none": "部署已禁止沙箱联网。",
+        "open": "部署允许任意出站网络。"
+      },
+      "allowlist": "自定义白名单",
+      "allowlistHint": "只放行下面的主机，替换部署的清单。",
+      "none": "不联网",
+      "noneHint": "沙箱只能访问自身（回环）。",
+      "hosts": "允许的主机",
+      "hostsHelp": "每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称；最多 200 个。",
+      "newOnly": "改动只对之后新建的沙箱生效；已有的沙箱沿用原来的网络设置，直到被销毁。"
     }
   },
   "schemaForm": {

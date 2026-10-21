@@ -100,6 +100,88 @@ describe("组织设置（SettingsPage）", () => {
     expect(actionRow("en")).toBeNull();
   });
 
+  const DEPLOYMENT = {
+    sandboxEgress: { mode: "allowlist", allowHosts: ["registry.npmjs.org", "pypi.org"] },
+  };
+
+  it.each(LOCALES)(
+    "管理员：沙箱网络改为自定义白名单（初始为部署清单）→ PATCH sandboxEgress；再改回跟随部署发 null（%s）",
+    async (locale) => {
+      const o = msgs[locale].orgSettings;
+      let current: Record<string, unknown> = { toolSearch: "on", locale: "en" };
+      const calls = stubApi({
+        [`GET ${SETTINGS}`]: () => json(200, { settings: current, deployment: DEPLOYMENT }),
+        [`PATCH ${SETTINGS}`]: (c) => {
+          const body = bodyOf(c) as { sandboxEgress?: unknown };
+          const { sandboxEgress: _e, ...rest } = current;
+          current = body.sandboxEgress === null ? rest : { ...current, ...body };
+          return json(200, { settings: current, deployment: DEPLOYMENT });
+        },
+      });
+      renderPage(<OrganizationSettingsPage />, { locale });
+      const def = await screen.findByRole("radio", { name: new RegExp(`^${o.egress.default}`) });
+      expect(def).toHaveProperty("checked", true);
+      expect(screen.getByText(o.egress.newOnly)).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("radio", { name: new RegExp(`^${o.egress.allowlist}`) }));
+      const hosts = screen.getByRole("textbox", { name: o.egress.hosts }) as HTMLTextAreaElement;
+      expect(hosts.value).toBe("registry.npmjs.org\npypi.org");
+      await user.clear(hosts);
+      await user.type(hosts, "registry.npmjs.org{enter}*.corp.example.org{enter}{enter}");
+      const row = actionRow(locale);
+      await user.click(within(row as HTMLElement).getByRole("button", { name: o.save }));
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        sandboxEgress: {
+          mode: "allowlist",
+          allowHosts: ["registry.npmjs.org", "*.corp.example.org"],
+        },
+      });
+      await vi.waitFor(() => expect(actionRow(locale)).toBeNull());
+
+      await user.click(screen.getByRole("radio", { name: new RegExp(`^${o.egress.default}`) }));
+      await user.click(
+        within(actionRow(locale) as HTMLElement).getByRole("button", { name: o.save }),
+      );
+      expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({ sandboxEgress: null });
+      await vi.waitFor(() => expect(actionRow(locale)).toBeNull());
+    },
+  );
+
+  it("部署不联网时不提供自定义白名单；选不联网 → PATCH { mode: none }", async () => {
+    const calls = stubApi({
+      [`GET ${SETTINGS}`]: () =>
+        json(200, {
+          settings: { toolSearch: "on" },
+          deployment: { sandboxEgress: { mode: "none", allowHosts: [] } },
+        }),
+      [`PATCH ${SETTINGS}`]: (c) =>
+        json(200, { settings: { toolSearch: "on", ...(bodyOf(c) as object) } }),
+    });
+    const o = en.orgSettings;
+    renderPage(<OrganizationSettingsPage />);
+    expect(await screen.findByText(o.egress.defaultHint.none)).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: new RegExp(`^${o.egress.allowlist}`) })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: new RegExp(`^${o.egress.none}`) }));
+    await user.click(within(actionRow("en") as HTMLElement).getByRole("button", { name: o.save }));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      sandboxEgress: { mode: "none" },
+    });
+    // 响应不带 deployment（旧内核）时保留之前的，页面不丢沙箱网络一节
+    await vi.waitFor(() => expect(actionRow("en")).toBeNull());
+    expect(screen.getByRole("radio", { name: new RegExp(`^${o.egress.none}`) })).toHaveProperty(
+      "checked",
+      true,
+    );
+  });
+
+  it("旧内核不返回 deployment：不显示沙箱网络一节", async () => {
+    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    renderPage(<OrganizationSettingsPage />);
+    await screen.findByRole("radio", { name: new RegExp(`^${en.orgSettings.toolSearch.on}`) });
+    expect(screen.queryByText(en.orgSettings.egress.title)).toBeNull();
+  });
+
   it("普通成员：只读（单选不可用、说明只有管理员能改），没有 ActionRow", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "off" } }) });
     renderPage(<OrganizationSettingsPage />, { me: MEMBER });

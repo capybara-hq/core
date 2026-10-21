@@ -91,7 +91,8 @@
       "login_taken": "This username is already taken."
     },
     "org": {
-      "not_found": "The organization does not exist or you are no longer a member."
+      "not_found": "The organization does not exist or you are no longer a member.",
+      "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -891,6 +892,23 @@
       "allowHint": "Sandbox tools run without approval (default).",
       "ask": "Ask first",
       "askHint": "Every call except the read-only tools needs the user's approval."
+    },
+    "egress": {
+      "title": "Sandbox network",
+      "description": "Which hosts commands in the sandbox may reach. The allowlist blocks internal networks but does not stop data from being sent to an allowed host (for example git push to github.com); choose No network for sensitive organizations.",
+      "default": "Deployment default",
+      "defaultHint": {
+        "allowlist": "Allowlist set by the deployment ({count} hosts).",
+        "none": "The deployment disables sandbox network access.",
+        "open": "The deployment allows any outbound network."
+      },
+      "allowlist": "Custom allowlist",
+      "allowlistHint": "Only the hosts below; replaces the deployment list.",
+      "none": "No network",
+      "noneHint": "Sandboxes can only reach themselves (loopback).",
+      "hosts": "Allowed hosts",
+      "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
+      "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed."
     }
   },
   "schemaForm": {
