@@ -291,7 +291,39 @@ export CAPYBARA_PLUGIN_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:
 | `forcePathStyle` | 路径风格访问（`<endpoint>/<bucket>/<key>`），SeaweedFS、MinIO、Ceph 一般要开；默认 `false` |
 | `publicEndpoint` | 浏览器可达的地址，预签名 URL 用它签名；内核走内网 `endpoint`、浏览器走公网域名时填写 |
 
-浏览器直传与直接下载时，桶要允许网页来源的跨域请求（CORS：`GET`、`POST` 与 `Content-Type` 头）。
+浏览器直传与直接下载时，桶要允许网页来源的跨域请求（CORS：`GET`、`POST`、`PUT` 与 `Content-Type` 等请求头）。`AllowedOrigins` 填网页的来源（协议 + 域名 + 端口）。
+
+AWS S3（控制台「权限 → 跨源资源共享 (CORS)」里粘贴）：
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://capybara.example.com"],
+    "AllowedMethods": ["GET", "POST", "PUT"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+MinIO、Ceph 等支持 `PutBucketCors` 的 S3 兼容存储，用 AWS CLI 指向自己的端点（`aws s3api put-bucket-cors --endpoint-url http://minio:9000 --bucket capybara --cors-configuration file://cors.json`）：
+
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://capybara.example.com"],
+      "AllowedMethods": ["GET", "POST", "PUT"],
+      "AllowedHeaders": ["*"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}
+```
+
+不支持按桶配置 CORS 的旧版 MinIO 用环境变量 `MINIO_API_CORS_ALLOW_ORIGIN` 设置允许的来源。SeaweedFS 默认允许跨域请求，开发编排与测试不需要另配。
 
 没装对象存储插件时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。
 

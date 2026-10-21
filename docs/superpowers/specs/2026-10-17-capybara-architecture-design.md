@@ -487,7 +487,7 @@ Agent 的环境修改能力都是普通工具：
 |---|---|---|
 | **Postgres** | 唯一事实源：账号组织、agent、事件日志、checkpoint、扩展、加密凭据、审计 | 插件各自独立 schema；内核不需要 pgvector |
 | **Redis / Valkey** | 队列（BullMQ）、跨副本广播、锁、限流、短时状态、缓存 | 丢了最多导致重试、不丢数据；只用协议层能力，保证 Valkey（BSD）可直接替换 |
-| **S3 兼容对象存储** | 附件、技能包、沙箱工作区 | 经 `object-store@1` 插件接入，默认 `object-store-s3`（MinIO / Ceph / SeaweedFS / 各家云的 S3 兼容接口）；试用编排自带 MinIO（2026-10-19 调整） |
+| **S3 兼容对象存储** | 附件、技能包、沙箱工作区 | 经 `object-store@1` 插件接入，默认 `object-store-s3`（MinIO / Ceph / SeaweedFS / 各家云的 S3 兼容接口）；开发编排自带 SeaweedFS（2026-10-19 调整；2026-10-21 由 MinIO 改为 SeaweedFS） |
 
 - **不用 RabbitMQ**（暂无场景；事件外送 Kafka / RabbitMQ 做成插件）。
 - 试用版也要求 PG + Redis 两者（不做「仅 PG」精简模式），保证只有一套实现。

@@ -103,6 +103,7 @@ interface ModelParameter {
 user 消息里可以有 `image`（png / jpeg / gif / webp）与 `document`（`application/pdf`、`text/plain` / `text/markdown` / `text/csv`），`source` 为 `{ kind: "base64", data }`，可带附件名 `name`。
 
 - **把关在内核**：模型声明 `vision: true` 才会收到 `image`，声明 `documents: true` 才会收到 `document`（`documents` 为 true 时 `text/*` 也作为文档块发来）；不支持时内核换成英文文字占位或内联文本，插件不用判断能力。所以**声明要准**：按官方文档或 Models API 声明，注释里写出处与核实日期。anthropic 取 Models API 的 `image_input` / `pdf_input`；openai 由部署配置 `models[].vision` / `documents`（缺省 false）给；openai-compatible 按端点模型配置 `vision` / `documents`（缺省 false），`documents` 只能在 Chat Completions 收 PDF 的方言（`pdfInput`：generic、qwen）上开启，deepseek / ark 配置校验拒绝。
+- **供应商的媒体上限也由内核执行**，插件不用再查：单次请求最多 20 张图片（保留最新的）、PDF 超过 100 页、`text/*` 超过 50 000 个字符（截断并注明，两种发送方式都一样）、单个块超过 `MEDIA_LIMITS`、整个请求的媒体超过 `attachments.requestMediaBytes`，内核都会换成英文占位或截断。供应商仍以 `invalid_request` / `context_overflow` 拒收带媒体的请求时，内核写 `media_excluded`，之后的请求把这些附件换成占位——所以插件把这类拒收如实映射成对应的 `ModelError` 即可，不要自己丢块或重试。
 - **`ref` 不该到插件**：事件日志里只存引用，内核构建请求时解析成 `base64`。插件收到 `ref` 是内核缺陷，抛 `ModelError("invalid_request", …)`（不可重试），不要静默丢弃。
 - **映射**（只看块自身，仍然只追加）：
 
