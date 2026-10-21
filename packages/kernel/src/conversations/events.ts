@@ -32,6 +32,8 @@ const RefMediaSourceSchema = z.object({
 
 /** 一条 `media_excluded` 事件最多的附件数。 */
 export const MEDIA_EXCLUDED_MAX_IDS = 50;
+/** 一份 `skills_catalog` 快照最多的技能数（组织技能引用上限 100，余量给 agent 自己的技能）。 */
+export const SKILLS_CATALOG_MAX = 1000;
 
 /** 媒体块的名字：与 plugin-sdk `validateMediaBlock` 同规则（≤255 字符、不含控制字符）。 */
 const MediaNameSchema = z
@@ -371,6 +373,27 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       objectKey: z.string().min(1),
       sourcePath: z.string().min(1),
       callId: z.string(),
+    }),
+  ),
+  /**
+   * 本对话此刻生效的技能（M5 T14，Ruling M17）：运行开始时内核解析生效的技能集合（agent 版本选中的组织技能 +
+   * agent 自己的技能，未删除，取 current_version），与日志里上一份快照不同才写。模型看到的技能目录只来自这里：
+   * 第一份（在任何 `model_call` 之前）进 system 缓存段，之后的在所在位置渲染为英文变更提醒；`skill_load` 按最新一份
+   * 把名字解析为 id 与版本。按 name 排序。
+   */
+  ev(
+    "skills_catalog",
+    z.object({
+      skills: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(100),
+            name: z.string().min(1).max(64),
+            description: z.string().max(4096),
+            version: z.number().int().positive(),
+          }),
+        )
+        .max(SKILLS_CATALOG_MAX),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),

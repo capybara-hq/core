@@ -12,6 +12,15 @@ import type { AgentDefinition } from "../../agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
+import {
+  type CatalogSkill,
+  sameSkills,
+  skillsCatalogEvents,
+  skillsCatalogText,
+  skillsChangeText,
+  skillsCurrentText,
+  systemSkillsCatalog,
+} from "./skills.js";
 
 /**
  * 平台行为规范（模型可见，英文）。短而通用（spec 6 原则 5）；不放时间戳、会话 ID 等会变化的内容，
@@ -504,8 +513,11 @@ export function summaryText(summary: string): string {
 
 /**
  * 由会话事件日志 + agent 定义构建模型请求（纯函数，不做 I/O）。
- * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；启用 tool_search 时
+ * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；日志里第一份 `skills_catalog`
+ *   快照在任何 `model_call` 之前时，技能目录接在这个块末尾（Ruling M17，见 ./skills.ts）；启用 tool_search 时
  *   第二个块是工具目录（见 {@link BuildModelRequestInput.toolSearch}）；
+ * - 之后的 `skills_catalog` 在所在位置渲染为 system 变更提醒；被压缩摘要覆盖的，若摘要时生效的目录与 system 里的
+ *   不同，紧随摘要补一条完整的当前目录；
  * - messages：最近一条摘要（若有）作为首条 user 消息，其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
  *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
@@ -616,11 +628,26 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     const k = resultKey(e.runId, e.payload.callId);
     if (!results.has(k)) results.set(k, e.payload);
   }
+  // 技能目录（Ruling M17）：第一份快照进 system；之后的每份在所在位置追加变更提醒（相对上一份快照）。
+  const skillSnaps = skillsCatalogEvents(events);
+  const systemSkills = systemSkillsCatalog(events);
+  const prevSkills = new Map<number, readonly CatalogSkill[]>();
+  skillSnaps.forEach((e, i) => {
+    prevSkills.set(e.seq, skillSnaps[i - 1]?.payload.skills ?? []);
+  });
   if (summary) {
     messages.push({
       role: "user",
       content: [{ type: "text", text: summaryText(summary.payload.text) }],
     });
+    // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
+    const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
+    if (covered && covered !== systemSkills) {
+      const shown = systemSkills?.payload.skills ?? [];
+      if (!sameSkills(shown, covered.payload.skills)) {
+        messages.push({ role: "system", content: skillsCurrentText(covered.payload.skills) });
+      }
+    }
   }
   for (const [i, e] of events.entries()) {
     if (e.seq <= after) continue;
@@ -666,6 +693,14 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         messages.push({ role: "system", content: e.payload.text });
         reminderSeqs.push(e.seq);
         break;
+      case "skills_catalog":
+        if (e !== systemSkills) {
+          messages.push({
+            role: "system",
+            content: skillsChangeText(prevSkills.get(e.seq) ?? [], e.payload.skills),
+          });
+        }
+        break;
       default:
         break;
     }
@@ -673,7 +708,13 @@ export function buildModelRequest(input: BuildModelRequestInput): {
 
   if (absorbed !== undefined) flush(absorbed);
 
-  const system = [{ text: `${BEHAVIOR_RULES}\n\n${agent.instructions}`, cache: true }];
+  const base = `${BEHAVIOR_RULES}\n\n${agent.instructions}`;
+  const system = [
+    {
+      text: systemSkills ? `${base}\n\n${skillsCatalogText(systemSkills.payload.skills)}` : base,
+      cache: true,
+    },
+  ];
   const sorted = [...(input.tools ?? [])].sort((a, b) =>
     a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
   );

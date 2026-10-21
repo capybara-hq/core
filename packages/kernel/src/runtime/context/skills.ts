@@ -1,0 +1,119 @@
+import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
+
+/**
+ * 技能目录在模型请求里的渲染（M5 T14，Ruling M17）。纯函数：只取决于日志里的 `skills_catalog` 快照，
+ * 请求可由日志还原。模型可见文案一律英文。
+ */
+
+/** 快照里的一项技能。 */
+export type CatalogSkill = EventPayload<"skills_catalog">["skills"][number];
+
+/** 日志里的 `skills_catalog` 事件。 */
+export type SkillsCatalogEvent = Extract<ConversationEvent, { type: "skills_catalog" }>;
+
+/** 加载技能的内置工具名。 */
+export const SKILL_LOAD = "skill_load";
+
+/** 目录开头的说明（system 缓存段里的第一份目录）。 */
+export const SKILLS_CATALOG_HEADER =
+  "Skills are available in this conversation. A skill is a set of instructions, sometimes with " +
+  "scripts or other files, for a specific kind of task. When a task matches a skill's description, " +
+  `call ${SKILL_LOAD} with the skill's name to read its instructions before you start; do not guess ` +
+  "what a skill says. Available skills:";
+
+/** 按码点比较名字（与区域设置无关，结果确定）。 */
+const byName = (a: CatalogSkill, b: CatalogSkill) =>
+  a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+
+/** 一行：`- <name>: <description>`（描述折叠成一行）。 */
+const line = (s: CatalogSkill) => `- ${s.name}: ${s.description.replace(/\s+/g, " ").trim()}`;
+
+const lines = (skills: readonly CatalogSkill[]) => [...skills].sort(byName).map(line).join("\n");
+
+/** 第一份目录（进 system 缓存段），按名字排序。 */
+export function skillsCatalogText(skills: readonly CatalogSkill[]): string {
+  return `${SKILLS_CATALOG_HEADER}\n${lines(skills)}`;
+}
+
+/** 两份快照是否相同（按 id 与版本；名字与描述随版本确定）。顺序无关。 */
+export function sameSkills(a: readonly CatalogSkill[], b: readonly CatalogSkill[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (s: CatalogSkill) => `${s.id}\u0000${s.version}\u0000${s.name}\u0000${s.description}`;
+  const set = new Set(a.map(key));
+  return b.every((s) => set.has(key(s)));
+}
+
+/**
+ * 目录变更提醒（之后的快照在所在位置以 system 消息追加）：新增、移除、更新（同一 id 的版本或描述变了）。
+ * `prev` 为上一份快照（没有为空）。
+ */
+export function skillsChangeText(
+  prev: readonly CatalogSkill[],
+  next: readonly CatalogSkill[],
+): string {
+  const before = new Map(prev.map((s) => [s.id, s]));
+  const after = new Map(next.map((s) => [s.id, s]));
+  const added = next.filter((s) => !before.has(s.id));
+  const removed = prev.filter((s) => !after.has(s.id));
+  const updated = next.filter((s) => {
+    const p = before.get(s.id);
+    return p !== undefined && (p.version !== s.version || p.description !== s.description);
+  });
+  const parts = ["The skills available in this conversation have changed."];
+  if (added.length > 0) {
+    parts.push(`New skills (call ${SKILL_LOAD} with the name to use one):\n${lines(added)}`);
+  }
+  if (updated.length > 0) {
+    parts.push(
+      `Updated skills (call ${SKILL_LOAD} again before relying on earlier instructions):\n${lines(updated)}`,
+    );
+  }
+  if (removed.length > 0) {
+    parts.push(
+      `Removed skills (no longer available; do not use them): ${[...removed]
+        .sort(byName)
+        .map((s) => s.name)
+        .join(", ")}`,
+    );
+  }
+  if (next.length === 0) parts.push("No skills are available now.");
+  return parts.join("\n\n");
+}
+
+/** 压缩摘要之后补上的「当前目录」（与 system 里的第一份不同时）：完整列出，替代之前的目录与提醒。 */
+export function skillsCurrentText(skills: readonly CatalogSkill[]): string {
+  if (skills.length === 0) {
+    return "No skills are available in this conversation now (this replaces any earlier list of skills).";
+  }
+  return (
+    "Skills available in this conversation now (this replaces any earlier list of skills; call " +
+    `${SKILL_LOAD} with a name to read a skill's instructions):\n${lines(skills)}`
+  );
+}
+
+/** 日志里的全部 `skills_catalog` 事件，按 seq 升序。 */
+export function skillsCatalogEvents(events: readonly ConversationEvent[]): SkillsCatalogEvent[] {
+  return events
+    .filter((e): e is SkillsCatalogEvent => e.type === "skills_catalog")
+    .sort((a, b) => a.seq - b.seq);
+}
+
+/** 最新一份快照；没有为 null。 */
+export function latestSkillsCatalog(
+  events: readonly ConversationEvent[],
+): SkillsCatalogEvent | null {
+  return skillsCatalogEvents(events).at(-1) ?? null;
+}
+
+/**
+ * 进 system 缓存段的快照：第一份快照，且它之前没有任何 `model_call`（对话已经发过请求之后才有技能时，
+ * 改为在所在位置追加提醒，已发送的前缀不变）。没有为 null。
+ */
+export function systemSkillsCatalog(
+  events: readonly ConversationEvent[],
+): SkillsCatalogEvent | null {
+  const first = skillsCatalogEvents(events)[0];
+  if (!first) return null;
+  const earlierCall = events.some((e) => e.type === "model_call" && e.seq < first.seq);
+  return earlierCall ? null : first;
+}

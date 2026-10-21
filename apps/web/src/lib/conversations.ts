@@ -158,6 +158,13 @@ type EventBody =
         callId: string;
       };
     }
+  | {
+      /** 此刻生效的技能目录快照（运行开始时目录变了才写；界面不显示）。 */
+      type: "skills_catalog";
+      payload: {
+        skills: { id: string; name: string; description: string; version: number }[];
+      };
+    }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | {

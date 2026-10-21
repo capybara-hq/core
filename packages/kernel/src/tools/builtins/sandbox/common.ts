@@ -27,6 +27,8 @@ export interface SandboxSession {
   h: SandboxHandle;
   p: SandboxProvider;
   signal: AbortSignal;
+  /** 本次是新建 / 重建的沙箱（之前复制进去的文件都已不在）。 */
+  reset: boolean;
 }
 
 // ---- 模型可见文案（英文） ----
@@ -292,16 +294,11 @@ export async function inSandbox<T>(
     return await deps.sandbox.withSandbox(
       { orgId: ctx.orgId, conversationId: ctx.conversationId },
       async (h, p, info, signal) => {
-        const s = { h, p, signal };
+        const s = { h, p, signal, reset: info.fresh || info.recreated };
         const notices: string[] = [];
         if (info.recreated) notices.push(SANDBOX_RECREATED_NOTICE);
         else if (info.fresh) notices.push(SANDBOX_STARTED_NOTICE);
-        const { copied, failures } = await syncAttachments(
-          deps,
-          ctx,
-          s,
-          info.fresh || info.recreated,
-        );
+        const { copied, failures } = await syncAttachments(deps, ctx, s, s.reset);
         if (copied.length > 0) {
           notices.push(`Attachments copied into the sandbox: ${copied.join(", ")}.`);
         }

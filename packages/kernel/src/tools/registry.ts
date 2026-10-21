@@ -26,6 +26,7 @@ export const BUILTIN_TOOL_NAMES = [
   "ask_user",
   "read_tool_output",
   "tool_search",
+  "skill_load",
   ...SANDBOX_TOOL_NAMES,
 ] as const;
 
@@ -162,6 +163,8 @@ export interface AgentTools {
 
 /** 内置 `tool_search` 的名字（由注册表按组织设置与阈值自动加入，不进 agent 定义）。 */
 const TOOL_SEARCH = "tool_search";
+/** 内置 `skill_load` 的名字（对话日志里有技能目录快照时由注册表自动加入，不进 agent 定义）。 */
+const SKILL_LOAD = "skill_load";
 
 /** 工具定义（模型可见三项）的估算 token 数（与请求估算同一口径）。 */
 function estimateToolTokens(tools: readonly ResolvedTool[]): number {
@@ -302,9 +305,25 @@ export class ToolRegistry {
    * 解析 agent 引用的工具（见类注释），再判定是否启用 `tool_search`：组织设置 `toolSearch === "on"`，且
    * 可用工具数 > `tools.searchThresholdTools` 或其定义的估算 token > `tools.searchThresholdTokens`。
    * 启用时把内置 `tool_search` 追加到末尾。定义里显式引用的 `tool_search` 忽略（由这里按设置管理）。
+   * `skillLoad`：对话日志里有技能目录快照（`skills_catalog`，Ruling M17）→ 加入内置 `skill_load`（始终完整加载）；
+   * 定义里显式引用的 `skill_load` 同样忽略。
    */
-  async forAgent(orgId: string, def: { tools: readonly AgentToolRef[] }): Promise<AgentTools> {
+  async forAgent(
+    orgId: string,
+    def: { tools: readonly AgentToolRef[]; skillLoad?: boolean },
+  ): Promise<AgentTools> {
     const { tools, unavailable, hidden } = await this.resolve(orgId, def);
+    const sl = def.skillLoad === true && this.deps.builtins.find((x) => x.spec.name === SKILL_LOAD);
+    if (sl) {
+      tools.push({
+        key: SKILL_LOAD,
+        source: { kind: "builtin", name: SKILL_LOAD },
+        spec: sl.spec,
+        specHash: specHash(sl.spec),
+        defaultPolicy: sl.defaultPolicy,
+        ...(sl.timeoutMs !== undefined && { timeoutMs: sl.timeoutMs }),
+      });
+    }
     const toolSearch = await this.searchActive(orgId, tools);
     if (toolSearch) {
       const b = this.deps.builtins.find((x) => x.spec.name === TOOL_SEARCH) as BuiltinTool;
@@ -361,7 +380,7 @@ export class ToolRegistry {
 
     for (const ref of def.tools) {
       if (ref.kind === "builtin") {
-        if (ref.name === TOOL_SEARCH) continue;
+        if (ref.name === TOOL_SEARCH || ref.name === SKILL_LOAD) continue;
         const b = this.deps.builtins.find((x) => x.spec.name === ref.name);
         if (!b) {
           unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });

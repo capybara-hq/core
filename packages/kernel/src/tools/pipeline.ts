@@ -304,7 +304,16 @@ export class ToolPipeline {
     let resolved: Resolved | undefined;
     const resolve = async (): Promise<Resolved> => {
       // 每步实时解析（应用 / 插件状态可能在模型调用之后变化）
-      resolved ??= await this.deps.registry.forAgent(ctx.orgId, { tools: ctx.agent.tools ?? [] });
+      if (!resolved) {
+        // 与构建请求时同一判定：日志里有技能目录快照 → skill_load 可用（Ruling M17）
+        const skillLoad =
+          (await this.deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog")) !==
+          undefined;
+        resolved = await this.deps.registry.forAgent(ctx.orgId, {
+          tools: ctx.agent.tools ?? [],
+          skillLoad,
+        });
+      }
       return resolved;
     };
     for (const call of calls) {

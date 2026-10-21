@@ -78,6 +78,7 @@ import { Breaker } from "./tools/breaker.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
 import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
 import { sandboxTools } from "./tools/builtins/sandbox/index.js";
+import { skillLoadTool } from "./tools/builtins/skill-load.js";
 import { toolSearchTool } from "./tools/builtins/tool-search.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolDrift } from "./tools/drift.js";
@@ -458,6 +459,8 @@ export async function createKernel(
   registerSandboxMaintenance(maintenance, sandbox, log);
   builtins.push(
     ...sandboxTools({ sandbox, attachments, storage, eventLog, config: () => current }),
+    // 技能加载：对话日志里有技能目录快照时由注册表自动加入（Ruling M17）
+    skillLoadTool({ db: kdb, sandbox, attachments, storage, eventLog, config: () => current }),
   );
   // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
   const toolDrift = new ToolDrift({

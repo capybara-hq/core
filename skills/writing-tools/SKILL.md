@@ -13,7 +13,9 @@ description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.regi
   `builtins/sandbox/`）。内置工具（`BuiltinTool`）可选三项：`timeoutMs(input)` 覆盖 `tools.timeoutMs`
   （`sandbox_bash` 按命令超时加等锁 / 创建的余量）、`spillChars` 给更低的转存阈值（`sandbox_bash` 30000）、
   `unavailable()` 返回本部署不可用的英文原因（没有沙箱提供方时沙箱工具报不可用）。新内置工具的名字要加进
-  `BUILTIN_TOOL_NAMES`。
+  `BUILTIN_TOOL_NAMES`。`tool_search` 与 `skill_load`（`builtins/skill-load.ts`）不进 agent 定义，由注册表自动加入：
+  后者在对话日志里有技能目录快照（`skills_catalog`，运行开始时写，Ruling M17）时出现，按最新快照把名字解析为
+  技能 id 与版本，带其他文件的技能复制进沙箱 `/skills/<name>/`（只读，脚本用解释器运行）。
 
 工具的执行全部经内核管线 `packages/kernel/src/tools/pipeline.ts`：解析 `{"$output": id}` 引用 → ajv 校验参数 → 策略判定（allow / ask / deny）→ 写 `tool_call_started` → 执行（超时 + 中止）→ 渲染结果 → 超大结果转存 → 写 `tool_result`。插件只管「做事并返回结果」，审批、超时、存档、审计、打码都是内核的事，**不要在插件里重复实现**。
 

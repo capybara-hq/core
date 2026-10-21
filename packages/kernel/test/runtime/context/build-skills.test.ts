@@ -1,0 +1,173 @@
+import { describe, expect, it } from "vitest";
+import type { ConversationEvent } from "../../../src/conversations/events.js";
+import { BEHAVIOR_RULES, buildModelRequest } from "../../../src/runtime/context/build.js";
+import { AGENT, Log, MODEL } from "./fixtures.js";
+
+/**
+ * M5 T14 / Ruling M17：技能目录来自日志里的 `skills_catalog` 快照。第一份快照（在任何模型调用之前）进 system
+ * 的缓存段；之后的变化在它出现的位置以英文提醒追加，前缀不变；没有技能时不出现目录。
+ */
+
+type Skill = { id: string; name: string; description: string; version: number };
+
+const skill = (name: string, version = 1, description = `Use for ${name} tasks.`): Skill => ({
+  id: `id-${name}`,
+  name,
+  description,
+  version,
+});
+
+function catalog(log: Log, skills: Skill[]): ConversationEvent {
+  return log.add({ type: "skills_catalog", payload: { skills } });
+}
+
+const build = (events: ConversationEvent[]) =>
+  buildModelRequest({ events, agent: AGENT, agentVersion: 1, model: MODEL, step: 1 });
+
+const systemNotices = (events: ConversationEvent[]) =>
+  build(events)
+    .request.messages.filter((m) => m.role === "system")
+    .map((m) => m.content as string);
+
+describe("skills catalog in the request", () => {
+  it("no snapshot: system has no catalog", () => {
+    const log = new Log();
+    log.user("hi");
+    const { request } = build(log.events);
+    expect(request.system).toEqual([
+      { text: `${BEHAVIOR_RULES}\n\n${AGENT.instructions}`, cache: true },
+    ]);
+  });
+
+  it("first snapshot renders in the cached system segment, sorted by name, telling to call skill_load", () => {
+    const log = new Log();
+    log.user("hi");
+    log.runStarted();
+    // 日志里的顺序不影响渲染：按名字排序
+    catalog(log, [skill("zeta"), skill("alpha")]);
+    const { request } = build(log.events);
+    expect(request.system).toHaveLength(1);
+    const text = request.system[0]?.text as string;
+    expect(request.system[0]?.cache).toBe(true);
+    expect(text.startsWith(`${BEHAVIOR_RULES}\n\n${AGENT.instructions}\n\n`)).toBe(true);
+    expect(text).toContain("skill_load");
+    expect(text.indexOf("- alpha: Use for alpha tasks.")).toBeGreaterThan(0);
+    expect(text.indexOf("- alpha:")).toBeLessThan(text.indexOf("- zeta:"));
+    // 不进消息
+    expect(request.messages.some((m) => m.role === "system")).toBe(false);
+  });
+
+  it("later snapshots render as an appended notice; the system prefix stays the same", () => {
+    const log = new Log();
+    log.user("hi");
+    log.runStarted();
+    catalog(log, [skill("alpha"), skill("beta")]);
+    log.modelCall(1);
+    log.assistant("hello");
+    const before = build(log.events);
+
+    log.user("again");
+    log.runStarted();
+    catalog(log, [skill("alpha", 2, "New alpha."), skill("gamma")]);
+    const after = build(log.events);
+    expect(after.meta.systemHash).toBe(before.meta.systemHash);
+    expect(after.request.system).toEqual(before.request.system);
+    // 前缀只追加
+    expect(after.request.messages.slice(0, before.request.messages.length)).toEqual(
+      before.request.messages,
+    );
+    const notices = systemNotices(log.events);
+    expect(notices).toHaveLength(1);
+    const n = notices[0] as string;
+    expect(n).toContain("- gamma: Use for gamma tasks.");
+    expect(n).toMatch(/Removed[^\n]*\n?[^\n]*beta/);
+    expect(n).toContain("- alpha: New alpha.");
+    expect(n).toContain("skill_load");
+    // 提醒在第二条用户消息之后
+    const msgs = after.request.messages;
+    expect(msgs.at(-1)?.role).toBe("system");
+    expect(msgs.at(-2)?.role).toBe("user");
+  });
+
+  it("all skills removed: notice lists the removals", () => {
+    const log = new Log();
+    log.user("hi");
+    catalog(log, [skill("alpha")]);
+    log.modelCall(1);
+    log.assistant("ok");
+    log.user("next");
+    catalog(log, []);
+    const notices = systemNotices(log.events);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("alpha");
+    expect(notices[0]).toMatch(/no skills are available/i);
+  });
+
+  it("first snapshot after an earlier model call renders as a notice (prefix unchanged)", () => {
+    const log = new Log();
+    log.user("hi");
+    log.modelCall(1);
+    log.assistant("hello");
+    const before = build(log.events);
+    log.user("again");
+    catalog(log, [skill("alpha")]);
+    const after = build(log.events);
+    expect(after.request.system).toEqual(before.request.system);
+    const notices = systemNotices(log.events);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("- alpha: Use for alpha tasks.");
+    expect(notices[0]).toContain("skill_load");
+  });
+
+  it("after a compaction summary the current catalog follows the summary when it differs from system", () => {
+    const log = new Log();
+    log.user("hi");
+    catalog(log, [skill("alpha")]);
+    log.modelCall(1);
+    log.assistant("ok");
+    log.user("next");
+    catalog(log, [skill("beta")]);
+    log.modelCall(4);
+    log.assistant("ok2");
+    log.summary(log.events.at(-1)?.seq as number, "Earlier talk.");
+    log.user("more");
+    const { request } = build(log.events);
+    expect(request.system[0]?.text).toContain("- alpha:");
+    expect(request.messages[0]?.role).toBe("user");
+    expect(request.messages[1]?.role).toBe("system");
+    const current = request.messages[1]?.content as string;
+    expect(current).toContain("- beta:");
+    expect(current).not.toContain("- alpha:");
+  });
+
+  it("rebuilding a past request from the log (events up to toSeq) gives the same system and history", () => {
+    const log = new Log();
+    log.user("hi");
+    log.runStarted();
+    catalog(log, [skill("alpha")]);
+    const first = build(log.events);
+    log.add({
+      type: "model_call",
+      payload: {
+        step: 1,
+        attempt: 1,
+        provider: "model-fake",
+        model: "fake-1",
+        fallback: false,
+        request: first.meta,
+      },
+    });
+    log.assistant("hello");
+    log.user("again");
+    log.runStarted();
+    catalog(log, [skill("alpha", 2)]);
+    const second = build(log.events);
+    // 按 model_call 记下的 toSeq 截取日志重建：与当时一致
+    const rebuilt = build(log.events.filter((e) => e.seq <= first.meta.toSeq));
+    expect(rebuilt.request).toEqual(first.request);
+    expect(rebuilt.meta.systemHash).toBe(first.meta.systemHash);
+    const rebuilt2 = build(log.events.filter((e) => e.seq <= second.meta.toSeq));
+    expect(rebuilt2.request).toEqual(second.request);
+    expect(second.meta.systemHash).toBe(first.meta.systemHash);
+  });
+});

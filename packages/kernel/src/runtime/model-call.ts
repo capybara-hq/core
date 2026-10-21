@@ -273,7 +273,11 @@ async function runStep(
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
     // 每步实时解析（应用 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
-    const resolved = await deps.tools.forAgent(input.orgId, { tools: input.agent.tools ?? [] });
+    // 日志里有技能目录快照 → 带上 skill_load（Ruling M17）
+    const resolved = await deps.tools.forAgent(input.orgId, {
+      tools: input.agent.tools ?? [],
+      skillLoad: events.some((e) => e.type === "skills_catalog"),
+    });
     const tools: StepTools = {
       list: resolved.tools,
       toolSearch: resolved.toolSearch === true,
