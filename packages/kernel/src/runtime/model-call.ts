@@ -23,6 +23,7 @@ import { skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
 import { recordToolSpecs } from "../tools/specs.js";
 import {
+  type BuildModelRequestInput,
   buildModelRequest,
   latestSummary,
   type MediaBytes,
@@ -444,10 +445,42 @@ function attemptParams(
   return sanitizeParams(info.parameters, saved);
 }
 
+/** {@link assembleModelRequest} 的输入。 */
+export interface AssembleModelRequestInput extends Omit<BuildModelRequestInput, "tools"> {
+  /** 本步解析出的工具；模型不支持工具（`capabilities.tools` 为 false）时不带。 */
+  tools: readonly RequestTool[];
+  /** 参数里没有 `maxOutputTokens` 旋钮时的输出上限（运行时为 `runtime.maxOutputTokens`）。 */
+  defaultMaxOutputTokens: number;
+}
+
 /**
- * 由事件构建模型请求：`buildModelRequest`（注入 `params` 与本步工具：模型不支持工具时不带；收尾调用带
- * `toolChoice: "none"`）→ `guardToolPairs`。输出上限：
- * 参数里有 `maxOutputTokens` 旋钮时取 `min(模型上限, 旋钮)`，否则 `min(模型上限, runtime.maxOutputTokens)`。
+ * 发给模型的请求（纯函数）：`buildModelRequest`（注入 `params` 与本步工具：模型不支持工具时不带；收尾调用带
+ * `toolChoice: "none"`）→ `guardToolPairs`。输出上限：参数里有 `maxOutputTokens` 旋钮时取
+ * `min(模型上限, 旋钮)`，否则 `min(模型上限, defaultMaxOutputTokens)`。
+ * 运行时（{@link runModelStep}）与由日志还原请求（`evals/reconstruct.ts`）共用这一份，二者不会漂移。
+ */
+export function assembleModelRequest(input: AssembleModelRequestInput): {
+  request: ModelRequest;
+  meta: ModelCallMeta;
+  mediaTokens: number;
+} {
+  const { defaultMaxOutputTokens, tools, ...rest } = input;
+  const built = buildModelRequest({
+    ...rest,
+    tools: input.model.capabilities.tools ? [...tools] : [],
+  });
+  const { request } = built;
+  request.messages = guardToolPairs(request.messages);
+  const knob = request.params.maxOutputTokens;
+  request.maxOutputTokens = Math.min(
+    input.model.maxOutputTokens,
+    typeof knob === "number" ? knob : defaultMaxOutputTokens,
+  );
+  return built;
+}
+
+/**
+ * 由事件构建本步的模型请求（{@link assembleModelRequest}）并给出输入 token 估算。
  *
  * 调用方不变式：不得在「已记录 tool_call、尚未记录其 tool_result」之间构建请求——
  * 否则配对守卫会给进行中的调用补上 unknown 结果并发给模型。运行循环在工具结果落日志后才进入下一步。
@@ -462,7 +495,7 @@ function buildRequest(
   tools: StepTools,
   wrapUp: boolean,
 ): { request: ModelRequest; meta: ModelCallMeta; estimate: number } {
-  const { request, meta, mediaTokens } = buildModelRequest({
+  const { request, meta, mediaTokens } = assembleModelRequest({
     events,
     agent: input.agent,
     agentVersion: input.agentVersion,
@@ -470,19 +503,14 @@ function buildRequest(
     step: input.step,
     absorbedUpToSeq: input.absorbedUpToSeq,
     params,
-    tools: info.capabilities.tools ? tools.list : [],
+    tools: tools.list,
     toolSearch: tools.toolSearch,
     ...(wrapUp && { toolChoice: "none" as const }),
     mediaInfo: tools.media.info,
     media: tools.media.bytes,
     mediaBudgetBytes: deps.config().attachments.requestMediaBytes,
+    defaultMaxOutputTokens: runtime.maxOutputTokens,
   });
-  request.messages = guardToolPairs(request.messages);
-  const knob = params.maxOutputTokens;
-  request.maxOutputTokens = Math.min(
-    info.maxOutputTokens,
-    typeof knob === "number" ? knob : runtime.maxOutputTokens,
-  );
   return {
     request,
     meta,
