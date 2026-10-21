@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -93,6 +93,11 @@ export interface FakeE2BServer {
   reboots: Map<string, number>;
   /** 下一个匹配的请求一直不回，直到客户端断开。 */
   hangNext(match: FakeE2BMatch): void;
+  /**
+   * 为 true 时 create / connect 的响应不带 `envdAccessToken`（模拟没拿到令牌：测提供方是否 fail closed）；
+   * envd 照样要求令牌。
+   */
+  withholdAccessToken: boolean;
   /** 沙箱直接消失（杀掉它的进程、删掉根目录）。 */
   expire(id: string): Promise<void>;
   /** 沙箱内路径在本机上的位置。 */
@@ -132,6 +137,8 @@ interface Proc {
   pid: number;
   args: string[];
   child: ChildProcess;
+  /** 记下的子进程组（见 SendSignal）。 */
+  groups: Set<number>;
 }
 
 function envelope(flags: number, msg: unknown): Buffer {
@@ -175,6 +182,8 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
   const calls: FakeE2BCall[] = [];
   const fails: { match: FakeE2BMatch; status: number; message: string; raw: boolean }[] = [];
   const reboots = new Map<string, number>();
+  let withhold = false;
+  const tokenOf = (s: FakeE2BSandbox) => (withhold ? null : s.envdAccessToken);
   const hangs: FakeE2BMatch[] = [];
   const hanging = new Set<ServerResponse>();
 
@@ -186,18 +195,27 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
   const mapPath = (root: string, s: string) =>
     s.replace(PATH_RE, (_m, pre, dir) => `${pre}${root}${dir}`);
 
-  const killGroup = (pid: number) => {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      // 已退出
+  /** 直接子进程（命令包装里的 `timeout` 自成一个进程组，按进程组杀会漏掉它）。 */
+  const childrenOf = (pid: number): number[] =>
+    (spawnSync("pgrep", ["-P", String(pid)], { encoding: "utf8" }).stdout ?? "")
+      .split("\n")
+      .filter((l) => l !== "")
+      .map(Number);
+  /** 杀掉一个进程（Start 启动的）的进程组、它直接子进程的进程组，以及之前记下的子进程组（本机未必有 `pkill -s`）。 */
+  const killGroup = (p: Proc) => {
+    for (const g of [...p.groups, ...childrenOf(p.pid), p.pid]) {
+      try {
+        process.kill(-g, "SIGKILL");
+      } catch {
+        // 已退出
+      }
     }
   };
 
   const destroy = async (id: string) => {
     const s = sandboxes.get(id);
     sandboxes.delete(id);
-    for (const p of procs.get(id) ?? []) killGroup(p.pid);
+    for (const p of procs.get(id) ?? []) killGroup(p);
     procs.delete(id);
     if (s) await rm(s.root, { recursive: true, force: true });
   };
@@ -258,7 +276,7 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
         templateID: s.templateID,
         clientID: "fake",
         envdVersion: "0.4.2",
-        envdAccessToken: s.envdAccessToken,
+        envdAccessToken: tokenOf(s),
         domain: opts.domain ?? null,
       });
       return;
@@ -303,7 +321,7 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
       s.state = "running";
       if (body.memory === false) {
         // 冷启动（SDK 的 onResume: "reboot"）：内存里的进程全部结束，文件保留
-        for (const p of procs.get(s.id) ?? []) killGroup(p.pid);
+        for (const p of procs.get(s.id) ?? []) killGroup(p);
         reboots.set(s.id, (reboots.get(s.id) ?? 0) + 1);
       }
       if (typeof body.timeout === "number" && body.timeout > s.timeout) s.timeout = body.timeout;
@@ -312,7 +330,7 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
         templateID: s.templateID,
         clientID: "fake",
         envdVersion: "0.4.2",
-        envdAccessToken: s.envdAccessToken,
+        envdAccessToken: tokenOf(s),
         domain: opts.domain ?? null,
       });
       return;
@@ -376,7 +394,7 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
     });
     const pid = child.pid as number;
     if (pid === undefined) return;
-    const proc: Proc = { pid, args: [p.cmd ?? "", ...args], child };
+    const proc: Proc = { pid, args: [p.cmd ?? "", ...args], child, groups: new Set() };
     const list = procs.get(s.id) ?? [];
     list.push(proc);
     procs.set(s.id, list);
@@ -481,7 +499,9 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
         sendJson(res, 404, { code: "not_found", message: `process with pid ${pid} not found` });
         return;
       }
-      // 与 envd 一样只给这个进程发信号（不是整个进程组）
+      // 与 envd 一样只给这个进程发信号（不是整个进程组）。先记下它的子进程组：它死后子进程被收养、
+      // 再也按父子关系找不到，删沙箱 / 冷启动时（真 E2B 结束沙箱里的一切）靠这份记录杀掉它们
+      for (const g of childrenOf(p.pid)) p.groups.add(g);
       try {
         process.kill(p.pid, "SIGKILL");
       } catch {
@@ -568,6 +588,12 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
       fails.push({ match, status, message, raw: opts.raw === true });
     },
     reboots,
+    get withholdAccessToken() {
+      return withhold;
+    },
+    set withholdAccessToken(v: boolean) {
+      withhold = v;
+    },
     hangNext(match) {
       hangs.push(match);
     },

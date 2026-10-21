@@ -64,6 +64,14 @@ export function isSandboxGoneError(e: unknown): e is SandboxGoneError {
  * 实例确定不在时：`resume` 返回 `gone`；`exec` / `readFile` / `writeFile` / `stat` 抛 {@link SandboxGoneError}；
  * `suspend` / `destroy` 照常成功。
  *
+ * **自动启动**：实例还在、但已停止 / 暂停（被内核之外的原因停掉：宿主机重启、守护进程重启、沙箱里的进程把
+ * 自己的 init 弄停了、休眠扫描停了实例却没来得及记下 `suspended`……）时，`exec` / `readFile` / `writeFile` /
+ * `stat` 必须先透明地把它启动起来（同 `resume`，文件保留）再执行，而不是报错——内核只信自己记的 `running`。
+ *
+ * **命令时限在沙箱里也要生效**：`exec` 除了在提供方这边按 `timeoutMs` 停掉命令，还必须让沙箱里的命令自己在
+ * `timeoutMs` 之后不久（几秒的余量）被杀掉。内核副本崩溃时提供方这边的计时随之消失，断开连接也不会结束命令；
+ * 沙箱里的时限保证它不会无限期地与下一个持锁方的命令同时运行。
+ *
  * **中止**：每个方法都必须及时响应 `signal`（已中止就立即失败，进行中被中止就尽快以中止原因结束）——内核在锁丢失、
  * 运行被中止或超时时靠它停下，不响应就可能与新的持锁方同时操作同一实例。`exec` 被中止时必须杀掉正在跑的命令
  * （连同它派生的进程），而不只是不再等待它的输出；命令启动后才被中止的 `exec` 以 `exitCode: null`、
@@ -88,6 +96,15 @@ export interface SandboxProvider {
    * 内核在拿不到句柄时用它清理（例如 `create` 已在提供方那边完成、内核却在记下句柄前退出）。
    */
   destroyByName?(name: string, signal: AbortSignal): Promise<void>;
+  /**
+   * 可选：杀掉这个实例里经 `exec` 启动、仍在运行的全部命令（连同它们派生的、没有自己另起会话的进程）。
+   * 内核在接手一个前任持锁方没有正常结束的沙箱（前任崩溃）时、第一次执行前调用，清掉前任遗留的命令；
+   * 命令自己放到后台、另起会话的进程不保证被杀。实例已停止时同样先启动；不在时抛 {@link SandboxGoneError}。
+   */
+  killAll?(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+  /**
+   * 执行一条命令。`maxOutputBytes` 是 stdout 与 stderr **合计**最多收集的字节，超出的丢弃、`truncated` 为 true。
+   */
   exec(
     h: SandboxHandle,
     args: {
@@ -99,6 +116,7 @@ export interface SandboxProvider {
       signal: AbortSignal;
     },
   ): Promise<ExecResult>;
+  /** 读文件（最多 `maxBytes` 字节，更长的截断、`truncated` 为 true）。不存在、或是目录时返回 null。 */
   readFile(
     h: SandboxHandle,
     path: string,
