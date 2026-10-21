@@ -158,6 +158,8 @@ export class ConversationsService {
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .where("account_id", "=", viewerAccountId)
+      // 评测回放的隐藏对话（kind = 'eval'）不经会话接口访问（只读轨迹查看器可见）
+      .where("kind", "=", "chat")
       .executeTakeFirst();
     if (!row) throw notFound();
     try {
@@ -185,6 +187,7 @@ export class ConversationsService {
       .where("conversations.id", "=", conversationId)
       .where("conversations.org_id", "=", orgId)
       .where("conversations.account_id", "=", viewerAccountId)
+      .where("conversations.kind", "=", "chat")
       .where((eb) =>
         eb.and([
           eb.exists(

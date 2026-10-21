@@ -1,0 +1,583 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
+import type { ConversationEvent } from "../../src/conversations/events.js";
+import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { createDb } from "../../src/db/pool.js";
+import { REPLAY_NO_RECORDING } from "../../src/evals/recorded-tools.js";
+import type { RunReplayResult } from "../../src/evals/run-replay.js";
+import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
+import type { EvalSetView } from "../../src/evals/sets.service.js";
+import type { TrajectoryListItem } from "../../src/evals/trajectory.service.js";
+import { AccountsService } from "../../src/identity/accounts.js";
+import type { Kernel } from "../../src/kernel.js";
+import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
+import { testMembers } from "../helpers/members.js";
+import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import {
+  createConv,
+  createOrg,
+  eventsOf,
+  PW,
+  postMessage,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  waitFor,
+  waitForTerminal,
+} from "../helpers/runs.js";
+
+/**
+ * 整轮回放（T5，C6 / Review Focus 3）：在 `kind = 'eval'` 的隐藏对话里跑真实 loop，工具结果只回放原运行记录的，
+ * 任何真实工具、沙箱、应用或审批都不触发。
+ */
+
+const TOOLS_COUNT = fileURLToPath(
+  new URL("../fixtures/plugins/tools-count/index.ts", import.meta.url),
+);
+const SANDBOX_FAKE = fileURLToPath(
+  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+);
+
+let pgc: TestContainer;
+let rd: TestContainer;
+let raw: ReturnType<typeof createDb>;
+let db: KernelDb;
+let k: Kernel;
+let eventLog: EventLog;
+let root: string;
+/** 置为 true 时，下一个用例在种子写好之后、loop 开始之前模拟崩溃一次。 */
+let crashOnce = false;
+let crashes = 0;
+
+let owner: Req;
+let admin: Req;
+let adminId: string;
+let orgId: string;
+let agentId: string;
+
+beforeAll(async () => {
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  raw = createDb(pgc.url, 3);
+  db = kernelDb(raw);
+  eventLog = new EventLog(db, { publish: async () => {} });
+  root = await mkdtemp(join(tmpdir(), "cap-run-replay-"));
+  k = await startKernel(
+    runConfig(
+      { pg: pgc.url, redis: rd.url },
+      {
+        roles: ["api", "worker"],
+        plugins: [MODEL_FAKE, TOOLS_COUNT, SANDBOX_FAKE],
+        pluginConfig: { "sandbox-fake": { root } },
+        evals: { orgConcurrency: 2 },
+      },
+    ),
+    {
+      evalHooks: {
+        async afterRunSeeded() {
+          if (!crashOnce) return;
+          crashOnce = false;
+          crashes++;
+          throw new Error("simulated crash after seeding");
+        },
+      },
+    },
+  );
+  const accounts = new AccountsService(db);
+  const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
+  adminId = (await accounts.createLocal({ login: "admin", password: PW, displayName: "A" })).id;
+  owner = await session(k, "owner");
+  orgId = await createOrg(owner);
+  await testMembers(db).add(orgId, adminId, "admin", ownerId);
+  admin = await session(k, "admin");
+  const en = await owner({
+    method: "PUT",
+    url: `/api/v1/orgs/${orgId}/plugins/tools-count`,
+    payload: { enabled: true },
+  });
+  expect(en.statusCode, en.body).toBe(200);
+  const res = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/agents`,
+    payload: {
+      definition: {
+        name: "Replayer",
+        instructions: "Use tools.",
+        model: { provider: "model-fake", model: "fake-1" },
+        tools: [
+          { kind: "plugin", plugin: "tools-count", name: "count" },
+          { kind: "plugin", plugin: "tools-count", name: "ask" },
+          { kind: "builtin", name: "sandbox_bash" },
+        ],
+      },
+      visibility: "org",
+    },
+  });
+  expect(res.statusCode, res.body).toBe(201);
+  agentId = (res.json() as { agent: { id: string } }).agent.id;
+}, 180_000);
+
+afterAll(async () => {
+  await k?.stop();
+  await raw?.destroy();
+  await Promise.all([pgc?.stop(), rd?.stop()]);
+  if (root) await rm(root, { recursive: true, force: true });
+});
+
+const setsUrl = () => `/api/v1/orgs/${orgId}/eval-sets`;
+const runsUrl = () => `/api/v1/orgs/${orgId}/eval-runs`;
+
+async function createSet(): Promise<string> {
+  const res = await admin({ method: "POST", url: setsUrl(), payload: { agentId, name: "Run" } });
+  expect(res.statusCode, res.body).toBe(201);
+  return (res.json() as { set: EvalSetView }).set.id;
+}
+
+async function addCase(setId: string, conversationId: string, runId: string): Promise<void> {
+  const res = await admin({
+    method: "POST",
+    url: `${setsUrl()}/${setId}/cases`,
+    payload: { conversationId, runId },
+  });
+  expect(res.statusCode, res.body).toBe(201);
+}
+
+async function startRun(setId: string, body: Record<string, unknown>): Promise<EvalRunView> {
+  const res = await admin({
+    method: "POST",
+    url: `${setsUrl()}/${setId}/runs`,
+    payload: { mode: "run", candidate: {}, judge: false, ...body },
+  });
+  expect(res.statusCode, res.body).toBe(201);
+  return (res.json() as { run: EvalRunView }).run;
+}
+
+async function getRun(runId: string): Promise<EvalRunView> {
+  const res = await admin({ method: "GET", url: `${runsUrl()}/${runId}` });
+  expect(res.statusCode, res.body).toBe(200);
+  return (res.json() as { run: EvalRunView }).run;
+}
+
+async function results(runId: string): Promise<EvalResultView[]> {
+  const res = await admin({ method: "GET", url: `${runsUrl()}/${runId}/results?limit=200` });
+  expect(res.statusCode, res.body).toBe(200);
+  return (res.json() as { results: EvalResultView[] }).results;
+}
+
+const finished = (runId: string, timeoutMs = 30_000) =>
+  waitFor(
+    async () => {
+      const r = await getRun(runId);
+      return ["queued", "running"].includes(r.status) ? null : r;
+    },
+    timeoutMs,
+    "eval run finished",
+    100,
+  );
+
+const approvalsCount = async () =>
+  Number(
+    (
+      await db
+        .selectFrom("approvals")
+        .select((eb) => eb.fn.countAll().as("n"))
+        .executeTakeFirstOrThrow()
+    ).n,
+  );
+
+type Baseline = {
+  toolCalls: { name: string; input: unknown }[];
+  finalContent: unknown[];
+  stopReason: string | null;
+};
+
+/**
+ * 直接写日志的一次原运行（用于对照记录与模型现在给出的调用）：
+ * user_message（`text`）→ run_started → 第 1 步 model_call（absorbedUpToSeq = 该消息）→
+ * [可选：运行中途到达的插话] → 第 1 步回复（`recorded` 里的工具调用）→ 每个调用的开始与结果 →
+ * 第 2 步 model_call（absorbedUpToSeq = 插话或原消息）→ 文本回复 → run_finished。
+ */
+async function seedRun(
+  convId: string,
+  runId: string,
+  text: string,
+  recorded: { name: string; input: unknown; content: string }[],
+  interjection?: string,
+): Promise<{ userSeq: number; interjectionSeq: number | null }> {
+  const [msg] = await eventLog.append(convId, [
+    {
+      type: "user_message",
+      payload: { content: [{ type: "text", text }], authorAccountId: adminId },
+    },
+  ]);
+  const userSeq = msg?.seq ?? 0;
+  await db
+    .insertInto("runs")
+    .values({
+      id: runId,
+      conversation_id: convId,
+      status: "completed",
+      agent_version: 1,
+      trigger_account_id: adminId,
+      trigger_seq: userSeq,
+      started_at: new Date(),
+      finished_at: new Date(),
+    })
+    .execute();
+  const call = (step: number, absorbedUpToSeq: number) => ({
+    type: "model_call" as const,
+    runId,
+    payload: {
+      step,
+      attempt: 1,
+      provider: "model-fake",
+      model: "fake-1",
+      fallback: false,
+      request: {
+        fromSeq: 1,
+        toSeq: 1_000_000,
+        summarySeq: null,
+        systemHash: "h",
+        reminderSeqs: [],
+        tools: [],
+        params: {},
+        absorbedUpToSeq,
+        maxOutputTokens: 1000,
+      },
+    },
+  });
+  const usage = (step: number) => ({
+    type: "usage" as const,
+    runId,
+    payload: {
+      step,
+      provider: "model-fake",
+      model: "fake-1",
+      inputTokens: 10,
+      outputTokens: 1,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    },
+  });
+  await eventLog.append(convId, [
+    {
+      type: "run_started",
+      runId,
+      payload: {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId: adminId,
+      },
+    },
+    call(1, userSeq),
+  ]);
+  let interjectionSeq: number | null = null;
+  if (interjection !== undefined) {
+    const [m] = await eventLog.append(convId, [
+      {
+        type: "user_message",
+        payload: { content: [{ type: "text", text: interjection }], authorAccountId: adminId },
+      },
+    ]);
+    interjectionSeq = m?.seq ?? null;
+  }
+  await eventLog.append(convId, [
+    {
+      type: "assistant_message",
+      runId,
+      payload: {
+        step: 1,
+        content: recorded.map((r, i) => ({
+          type: "tool_call",
+          id: `rec-${runId}-${i}`,
+          name: r.name,
+          input: r.input,
+        })),
+        stopReason: "tool_use",
+      },
+    },
+    usage(1),
+    ...recorded.flatMap((r, i) => [
+      {
+        type: "tool_call_started" as const,
+        runId,
+        payload: { step: 1, callId: `rec-${runId}-${i}`, toolKey: r.name, specHash: "s" },
+      },
+      {
+        type: "tool_result" as const,
+        runId,
+        payload: {
+          step: 1,
+          callId: `rec-${runId}-${i}`,
+          toolKey: r.name,
+          content: r.content,
+          isError: false,
+        },
+      },
+    ]),
+    call(2, interjectionSeq ?? userSeq),
+    {
+      type: "assistant_message",
+      runId,
+      payload: {
+        step: 2,
+        content: [{ type: "text", text: "original end" }],
+        stopReason: "end_turn",
+      },
+    },
+    usage(2),
+    {
+      type: "run_finished",
+      runId,
+      payload: { reason: "completed", consumedUpToSeq: interjectionSeq ?? userSeq },
+    },
+  ]);
+  return { userSeq, interjectionSeq };
+}
+
+const evalEvents = (r: EvalResultView) => eventsOf(db, r.evalConversationId as string);
+
+describe("整轮回放", { timeout: 60_000 }, () => {
+  it("候选等于基线：工具序列与原运行一致、unmatched 0，工具处理函数 0 次、没有审批、没有沙箱调用", async () => {
+    // 原运行是真实运行：工具确实执行了一次
+    const conv = await createConv(admin, orgId, agentId);
+    await postMessage(admin, orgId, conv, 'tool:tools-count__count:{"n":7}');
+    await waitForTerminal(db, conv);
+    expect(toolsCountState().count).toBe(1);
+    const [src] = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    const setId = await createSet();
+    await addCase(setId, conv, src?.id as string);
+
+    const before = {
+      ...toolsCountState(),
+      approvals: await approvalsCount(),
+      sandbox: (await readFakeSandboxOps(root)).length,
+    };
+    const run = await startRun(setId, {});
+    const done = await finished(run.id);
+    expect(done.status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const cand = r?.candidate as RunReplayResult;
+    const base = r?.baseline as Baseline;
+    expect(cand.unmatched).toBe(0);
+    expect(r?.drift).toEqual([]);
+    expect(cand.outcome).toBe("completed");
+    expect(cand.toolCalls).toEqual([{ name: "tools-count__count", input: { n: 7 } }]);
+    expect(cand.toolCalls).toEqual(base.toolCalls);
+    expect(cand.finalContent).toEqual(base.finalContent);
+    expect(cand.stopReason).toBe("end_turn");
+    expect(cand.steps).toBe(2);
+    expect(cand.conversationId).toBe(r?.evalConversationId);
+
+    // 没有执行任何真实工具、没有审批、没有沙箱操作
+    expect(toolsCountState()).toEqual({ count: before.count, ask: before.ask });
+    expect(await approvalsCount()).toBe(before.approvals);
+    expect((await readFakeSandboxOps(root)).length).toBe(before.sandbox);
+
+    // 评测对话：kind = eval、属于该评测运行；工具结果取自记录；每次请求的用量都计入预算
+    const ec = await db
+      .selectFrom("conversations")
+      .select(["kind", "eval_run_id"])
+      .where("id", "=", cand.conversationId)
+      .executeTakeFirstOrThrow();
+    expect(ec).toEqual({ kind: "eval", eval_run_id: run.id });
+    const evs = await evalEvents(r as EvalResultView);
+    const tr = evs.filter((e) => e.type === "tool_result");
+    expect(tr.map((e) => (e.payload as { content: string }).content)).toEqual(["counted 7"]);
+    // 种子事件保留原 seq：新的 run_started 与原运行的 run_started 同一个 seq
+    const orig = await eventsOf(db, conv);
+    const origStart = orig.find((e) => e.type === "run_started");
+    const evalStart = evs.find((e) => e.type === "run_started");
+    expect(evalStart?.seq).toBe(origStart?.seq);
+    for (const e of orig.filter((x) => x.seq < (origStart?.seq ?? 0))) {
+      expect(evs.find((x) => x.seq === e.seq)?.payload).toEqual(e.payload);
+    }
+    const used = evs
+      .filter((e): e is Extract<ConversationEvent, { type: "usage" }> => e.type === "usage")
+      .reduce(
+        (a, e) =>
+          a +
+          e.payload.inputTokens +
+          e.payload.outputTokens +
+          e.payload.cacheReadTokens +
+          e.payload.cacheWriteTokens,
+        0,
+      );
+    expect(used).toBeGreaterThan(0);
+    expect(done.tokensUsed).toBe(used);
+    expect(evs.at(-1)?.type).toBe("run_finished");
+
+    // 隐藏对话：不在「我的对话」、按 id 也取不到；轨迹用 kind=eval 能列出
+    const mine = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations` });
+    const ids = (mine.json() as { conversations: { id: string }[] }).conversations.map((c) => c.id);
+    expect(ids).toContain(conv);
+    expect(ids).not.toContain(cand.conversationId);
+    const one = await admin({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations/${cand.conversationId}`,
+    });
+    expect(one.statusCode).toBe(404);
+    const traj = async (q: string) =>
+      (
+        (await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/trajectories${q}` })).json() as {
+          items: TrajectoryListItem[];
+        }
+      ).items.map((i) => i.conversationId);
+    expect(await traj("?kind=eval")).toContain(cand.conversationId);
+    expect(await traj("")).not.toContain(cand.conversationId);
+  });
+
+  it("Review Focus 3：参数不同或没有记录的工具都不执行；模型收到英文错误，结果标 unmatched", async () => {
+    const setId = await createSet();
+    // 记录的是 n=1，模型现在给 n=2；第二个用例让模型调用从未记录过的 sandbox_bash
+    const c1 = await createConv(admin, orgId, agentId);
+    await seedRun(c1, "rf3-args", 'tool:tools-count__ask:{"n":2}', [
+      { name: "tools-count__ask", input: { n: 1 }, content: "recorded ask" },
+    ]);
+    const c2 = await createConv(admin, orgId, agentId);
+    await seedRun(c2, "rf3-sandbox", 'tool:sandbox_bash:{"command":"touch /workspace/pwned"}', [
+      { name: "tools-count__count", input: { n: 1 }, content: "recorded count" },
+    ]);
+    await addCase(setId, c1, "rf3-args");
+    await addCase(setId, c2, "rf3-sandbox");
+
+    const before = {
+      ...toolsCountState(),
+      approvals: await approvalsCount(),
+      sandbox: (await readFakeSandboxOps(root)).length,
+    };
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const rs = await results(run.id);
+    expect(rs).toHaveLength(2);
+    for (const r of rs) {
+      expect(r.status, JSON.stringify(r.error)).toBe("done");
+      const cand = r.candidate as RunReplayResult;
+      expect(cand.unmatched).toBe(1);
+      expect(r.drift).toContain("tool_unmatched");
+      const evs = await evalEvents(r);
+      const [result] = evs.filter((e) => e.type === "tool_result");
+      expect(result?.payload).toMatchObject({ content: REPLAY_NO_RECORDING, isError: true });
+      // 模型下一步收到的就是这条英文错误（model-fake 回显工具结果）
+      const text = cand.finalContent.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+      expect(text).toContain(REPLAY_NO_RECORDING);
+    }
+    const names = rs.map((r) => (r.candidate as RunReplayResult).toolCalls[0]?.name).sort();
+    expect(names).toEqual(["sandbox_bash", "tools-count__ask"]);
+    expect(toolsCountState()).toEqual({ count: before.count, ask: before.ask });
+    expect(await approvalsCount()).toBe(before.approvals);
+    expect((await readFakeSandboxOps(root)).length).toBe(before.sandbox);
+    // 也没有写审批相关事件
+    for (const r of rs) {
+      expect((await evalEvents(r)).some((e) => e.type === "approval_requested")).toBe(false);
+    }
+  });
+
+  it("运行中途的插话在原吸收步骤喂入：出现在第 1 步工具结果之后、第 2 步请求之前", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(
+      conv,
+      "interject",
+      'tool:tools-count__count:{"n":3}',
+      [{ name: "tools-count__count", input: { n: 3 }, content: "counted 3" }],
+      "echo:interjected",
+    );
+    await addCase(setId, conv, "interject");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const cand = r?.candidate as RunReplayResult;
+    expect(cand.unmatched).toBe(0);
+    const evs = await evalEvents(r as EvalResultView);
+    const userMsgs = evs.filter((e) => e.type === "user_message");
+    const inter = userMsgs.find((e) =>
+      JSON.stringify(e.payload).includes("echo:interjected"),
+    ) as ConversationEvent;
+    expect(inter).toBeDefined();
+    const calls = evs.filter(
+      (e): e is Extract<ConversationEvent, { type: "model_call" }> => e.type === "model_call",
+    );
+    const step1 = calls.find((c) => c.payload.step === 1);
+    const step2 = calls.find((c) => c.payload.step === 2);
+    const result1 = evs.find((e) => e.type === "tool_result");
+    expect(inter.seq).toBeGreaterThan(result1?.seq ?? Number.POSITIVE_INFINITY);
+    expect(inter.seq).toBeLessThan(step2?.seq ?? 0);
+    // 第 1 步没有吸收插话，第 2 步吸收了
+    expect(step1?.payload.request.absorbedUpToSeq).toBeLessThan(inter.seq);
+    expect(step2?.payload.request.absorbedUpToSeq).toBe(inter.seq);
+    const text = cand.finalContent.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+    expect(text).toBe("interjected");
+  });
+
+  it("达到 token 上限：loop 在下一次请求前停下，结果 skipped，运行 capped", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "capped", 'tool:tools-count__count:{"n":4}', [
+      { name: "tools-count__count", input: { n: 4 }, content: "counted 4" },
+    ]);
+    await addCase(setId, conv, "capped");
+    const run = await startRun(setId, { tokenCap: 1 });
+    const done = await finished(run.id);
+    expect(done.status).toBe("capped");
+    // 运行一越限就是 capped；回放要到下一次请求前才发现并停下，等结果落定
+    const [r] = await waitFor(
+      async () => {
+        const rs = await results(run.id);
+        return rs.every((x) => !["pending", "running"].includes(x.status)) ? rs : null;
+      },
+      20_000,
+      "result settled",
+      100,
+    );
+    expect(r?.status).toBe("skipped");
+    const ec = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("eval_run_id", "=", run.id)
+      .execute();
+    expect(ec).toHaveLength(1);
+    await waitForTerminal(db, ec[0]?.id as string);
+    const evs = await eventsOf(db, ec[0]?.id as string);
+    // 第一次请求之后就越限：只发了一次请求
+    expect(evs.filter((e) => e.type === "usage")).toHaveLength(1);
+    expect(evs.at(-1)?.type).toBe("run_aborted");
+    expect(done.tokensUsed).toBeGreaterThan(1);
+  });
+
+  it("崩溃后从头重跑：旧的评测对话被删掉，只剩一份结果", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "crash", 'tool:tools-count__count:{"n":5}', [
+      { name: "tools-count__count", input: { n: 5 }, content: "counted 5" },
+    ]);
+    await addCase(setId, conv, "crash");
+    crashOnce = true;
+    const run = await startRun(setId, {});
+    expect((await finished(run.id, 45_000)).status).toBe("completed");
+    expect(crashes).toBe(1);
+    const rs = await results(run.id);
+    expect(rs).toHaveLength(1);
+    expect(rs[0]?.status).toBe("done");
+    const convs = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("eval_run_id", "=", run.id)
+      .execute();
+    expect(convs.map((c) => c.id)).toEqual([rs[0]?.evalConversationId]);
+    expect((rs[0]?.candidate as RunReplayResult | undefined)?.unmatched).toBe(0);
+  });
+});

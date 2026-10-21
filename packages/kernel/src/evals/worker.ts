@@ -7,11 +7,18 @@ import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { MediaUnavailableError } from "../runtime/model-call.js";
+import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
 import { ProviderListError } from "../runtime/providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
 import { bullConnection } from "../runtime/run-queue.js";
 import { consumeTokens, recordOutcome, recountCases, runActive, usageTokens } from "./budget.js";
+import {
+  deleteEvalConversation,
+  ReplayClaimLost,
+  type RunReplayDeps,
+  replayRun,
+  runBaseline,
+} from "./run-replay.js";
 import {
   caseBase,
   EVAL_QUEUE_NAME,
@@ -61,6 +68,8 @@ export interface EvalWorkerDeps {
   config: () => KernelConfig;
   log: Logger;
   replay: StepReplayDeps;
+  /** 整轮回放（mode = run）的依赖；认领相关的两项由 worker 按每次执行补上。 */
+  runReplay: Omit<RunReplayDeps, "stillClaimed" | "onSeeded">;
   /** 测试用：覆盖拿不到配额时的延后时长。 */
   quotaRetryMs?: number;
 }
@@ -85,6 +94,8 @@ function classify(err: unknown): Failure {
   if (err instanceof MediaUnavailableError) {
     return { retryable: true, code: "run.storage_unavailable", message: err.message };
   }
+  // 整轮回放的 loop 失败（降级梯子已在 loop 内重试过）：沿用运行时的码
+  if (err instanceof RunError) return { retryable: false, code: err.code, message: err.message };
   if (err instanceof ProviderListError) {
     return { retryable: true, code: "run.provider_unavailable", message: err.message };
   }
@@ -98,6 +109,14 @@ function classify(err: unknown): Failure {
     message: err instanceof Error ? err.message : String(err),
   };
 }
+
+/** 回放本身的失败（结果记 error）；其余错误按崩溃处理（见 runWhole）。 */
+const isReplayFailure = (err: unknown): boolean =>
+  isModelError(err) ||
+  err instanceof RunError ||
+  err instanceof ApiError ||
+  err instanceof MediaUnavailableError ||
+  err instanceof ProviderListError;
 
 class Aborted extends Error {}
 
@@ -269,7 +288,11 @@ export class EvalWorker {
     const db = this.d.db;
     const [row, run] = await Promise.all([
       db.selectFrom("eval_cases").select("snapshot").where("id", "=", caseId).executeTakeFirst(),
-      db.selectFrom("eval_runs").select("candidate").where("id", "=", runId).executeTakeFirst(),
+      db
+        .selectFrom("eval_runs")
+        .select(["candidate", "mode"])
+        .where("id", "=", runId)
+        .executeTakeFirst(),
     ]);
     if (!row || !run) return;
     const s = row.snapshot as CaseSnapshot;
@@ -292,6 +315,11 @@ export class EvalWorker {
           await versionDefinition(db, s.agentId, candidate.agentVersion),
         )
       : null;
+    if (run.mode === "run") {
+      const [r] = pending;
+      if (r) await this.runWhole(data, claim, signal, s, resolved, r.id);
+      return;
+    }
     const calls = new Map(replayableCalls(s).map((c) => [c.seq, c]));
 
     for (const r of pending) {
@@ -392,6 +420,115 @@ export class EvalWorker {
         return;
       }
     }
+  }
+
+  /**
+   * 整轮回放一个用例（一条结果）。认领结果后先删掉上一次执行留下的评测对话（崩溃重跑从头开始，C6），
+   * 再 {@link replayRun}；计费在每次模型请求上完成（含失败与失去认领的请求）。
+   * - 运行不再活跃（取消 / 越限 / 熔断）→ 结果 skipped；失去认领 → 停下，不写；
+   * - 回放出错 → 结果 error 并计入熔断；停机 → 任务回到队列，接手的执行从头重跑。
+   */
+  private async runWhole(
+    data: EvalJobData,
+    claim: string,
+    signal: AbortSignal,
+    s: CaseSnapshot,
+    resolved: ReturnType<typeof resolveCandidate> | null,
+    resultId: string,
+  ): Promise<void> {
+    const { runId } = data;
+    const db = this.d.db;
+    if (!(await runActive(db, runId))) {
+      await this.skipCase(data);
+      return;
+    }
+    const claimed = await db
+      .updateTable("eval_results")
+      .set({ status: "running", claimed_by: claim, updated_at: sql`now()` })
+      .where("id", "=", resultId)
+      .where("status", "in", [...UNFINISHED])
+      .returning("eval_conversation_id")
+      .executeTakeFirst();
+    if (!claimed) return;
+    if (claimed.eval_conversation_id !== null) {
+      await deleteEvalConversation(this.d.runReplay, claimed.eval_conversation_id);
+    }
+    if (!resolved) {
+      await this.resultError(data, resultId, claim, {
+        code: "eval.definition_missing",
+        message: "The agent version of this case is missing",
+      });
+      return;
+    }
+    const held = async (q: KernelDb = db) =>
+      (await q
+        .selectFrom("eval_results")
+        .select("id")
+        .where("id", "=", resultId)
+        .where("status", "=", "running")
+        .where("claimed_by", "=", claim)
+        .executeTakeFirst()) !== undefined;
+    let out: Awaited<ReturnType<typeof replayRun>>;
+    try {
+      out = await replayRun(
+        {
+          ...this.d.runReplay,
+          stillClaimed: () => held(),
+          onSeeded: async (trx, conversationId) => {
+            const w = await trx
+              .updateTable("eval_results")
+              .set({ eval_conversation_id: conversationId, updated_at: sql`now()` })
+              .where("id", "=", resultId)
+              .where("status", "=", "running")
+              .where("claimed_by", "=", claim)
+              .executeTakeFirst();
+            return Number(w.numUpdatedRows) > 0;
+          },
+        },
+        s,
+        resolved,
+        runId,
+        signal,
+      );
+    } catch (err) {
+      if (signal.aborted) throw new Aborted();
+      if (err instanceof ReplayClaimLost) return;
+      // 意外错误（PG / Redis 暂时故障、进程内异常）按崩溃处理：抛给 BullMQ 按 attempts 重试，
+      // 下一次执行删掉这次的评测对话、从头重跑（C6）；用尽后 failed 事件把结果记 error
+      if (!isReplayFailure(err)) throw err;
+      const f = classify(err);
+      await this.resultError(data, resultId, claim, { code: f.code, message: f.message });
+      return;
+    }
+    if (signal.aborted) throw new Aborted();
+    if (!(await runActive(db, runId))) {
+      // 取消 / 越限 / 熔断：回放中途停下，结果不完整
+      await this.skipCase(data);
+      return;
+    }
+    if (!(await held())) return;
+    const baseline = runBaseline(s);
+    const drift = out.unmatched > 0 ? ["tool_unmatched"] : [];
+    await db.transaction().execute(async (trx) => {
+      const w = await trx
+        .updateTable("eval_results")
+        .set({
+          status: "done",
+          baseline: JSON.stringify(baseline),
+          candidate: JSON.stringify(out),
+          drift,
+          error: null,
+          eval_conversation_id: out.conversationId,
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", resultId)
+        .where("status", "=", "running")
+        .where("claimed_by", "=", claim)
+        .executeTakeFirst();
+      if (Number(w.numUpdatedRows) > 0) {
+        await recordOutcome(trx, runId, true, this.d.config().evals.maxConsecutiveErrors);
+      }
+    });
   }
 
   /** 该用例剩下的结果标 skipped。 */

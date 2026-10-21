@@ -681,11 +681,6 @@ describe("校验与权限", () => {
     expect(errCode(badParams)).toBe("eval.candidate_invalid");
     expect(JSON.stringify(badParams.json())).toContain("model-eval.level");
 
-    // 整轮回放的执行器在 T5：先拒绝（估算照常可用）
-    const runMode = await post({ mode: "run", candidate: {} });
-    expect(runMode.statusCode).toBe(400);
-    expect(errCode(runMode)).toBe("validation_failed");
-
     const judge = await post({ mode: "step", candidate: {}, judge: true });
     expect(judge.statusCode).toBe(409);
     expect(errCode(judge)).toBe("model.unconfigured");

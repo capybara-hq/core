@@ -36,6 +36,7 @@ import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
+import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EvalQueue } from "./evals/runs.service.js";
 import { EvalWorker } from "./evals/worker.js";
 import { ApiModule } from "./http/api.module.js";
@@ -250,6 +251,8 @@ export interface KernelOptions {
   loop?: (deps: LoopDeps) => AgentLoop;
   /** 运行 worker 的测试钩子。 */
   runHooks?: RunHooks;
+  /** 评测整轮回放的测试钩子。 */
+  evalHooks?: EvalReplayHooks;
 }
 
 /**
@@ -996,6 +999,19 @@ export async function createKernel(
               registry,
               config: () => current,
               ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+            },
+            // 整轮回放（C6）：同一个 loop 工厂（同一 LangGraphLoop），只换工具管线（RecordedToolPipeline，
+            // 从不执行工具）、计费的模型注册表与按原对话取附件的来源
+            runReplay: {
+              db: kdb,
+              eventLog,
+              config: () => current,
+              log,
+              registry,
+              ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+              checkpoints,
+              loop: (d) => loopFactory({ ...stepDeps, ...d }),
+              ...(opts.evalHooks !== undefined && { hooks: opts.evalHooks }),
             },
           });
           evalWorker.start();

@@ -88,7 +88,7 @@ export type StreamSink = (delta: {
 export interface ModelStepDeps {
   db: KernelDb;
   eventLog: EventLog;
-  registry: ProviderRegistry;
+  registry: Pick<ProviderRegistry, "resolve">;
   /** 工具注册表：每步开始时解析 agent 引用的工具（状态可能在步骤之间变化）。 */
   tools: Pick<ToolRegistry, "forAgent">;
   config: () => KernelConfig;

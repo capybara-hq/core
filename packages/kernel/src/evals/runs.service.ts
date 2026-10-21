@@ -456,12 +456,6 @@ export class EvalRunsService {
     if (!Number.isInteger(tokenCap) || tokenCap < 1 || tokenCap > maxTokenCap) {
       throw new ApiError("eval.token_cap_invalid", `tokenCap must be between 1 and ${maxTokenCap}`);
     }
-    if (input.mode === "run") {
-      // 整轮回放（T5）还没有执行器：先拒绝，不建出永远跑不完的运行
-      throw new ApiError("validation_failed", "Whole-run replay is not available yet", [
-        { path: "mode", message: 'only "step" is supported' },
-      ]);
-    }
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     if (input.judge) await (this.d.purposes ?? UNCONFIGURED_PURPOSES).resolve(orgId, "eval");
     const planned = await this.plan(setId, input.mode, input.candidate, versionDef);
