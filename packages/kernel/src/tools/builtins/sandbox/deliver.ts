@@ -112,15 +112,21 @@ function defaultName(path: string): string {
 
 const NO_STORAGE =
   "File storage is not configured in this deployment, so files cannot be delivered; ask an administrator, or provide the result in your reply instead.";
+/** 「工具不可用」提醒里的原因（内核在后面补句号）。 */
+const NO_STORAGE_REASON = NO_STORAGE.slice(0, -1);
 
 /** 内置工具 `sandbox_deliver`：把沙箱里的文件存进对象存储，写 `artifact_created`，用户可下载。 */
 export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
   return {
     spec: SPEC,
     defaultPolicy: "allow",
-    unavailable: unavailableWhenNoSandbox(deps),
+    // 没有沙箱或没有对象存储都交付不了（先报沙箱的原因）
+    unavailable: () =>
+      unavailableWhenNoSandbox(deps)() ?? (deps.storage.available ? null : NO_STORAGE_REASON),
     timeoutMs: () => 2 * sandboxBaseTimeoutMs(deps.config()),
     async run(input, ctx) {
+      // 存储在调用前就核对：不为一个交付不了的文件去 stat / 读沙箱
+      if (!deps.storage.available) throw new ToolError(NO_STORAGE);
       const path = checkPath((input as DeliverInput).path);
       const given = (input as DeliverInput).name?.trim();
       // 与 artifact_created 的 schema 同一规则，在上传前检查（不合法的名字不会在写事件时才失败）
@@ -151,7 +157,10 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
           signal: ctx.signal,
         });
       } catch (e) {
-        if (e instanceof ApiError && e.code === "storage.unavailable") {
+        if (
+          (e instanceof ApiError && e.code === "storage.unavailable") ||
+          (e instanceof Error && e.message.startsWith("storage.unavailable"))
+        ) {
           throw new ToolError(NO_STORAGE);
         }
         throw e;

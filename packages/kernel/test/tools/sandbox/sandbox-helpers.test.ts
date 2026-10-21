@@ -403,13 +403,17 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
       failWrite?: string;
       exec?: { exitCode: number; stdout: string; stderr: string };
       append?: () => Promise<unknown>;
+      /** 有没有对象存储（默认有）。 */
+      storage?: boolean;
     } = {},
   ) {
+    let reads = 0;
     const files = new Map<string, Uint8Array>();
     const puts: string[] = [];
     const deletes: string[] = [];
     const p = {
       readFile: async (_h: unknown, path: string) => {
+        reads++;
         const d = files.get(path);
         return d === undefined ? null : { data: d, truncated: false };
       },
@@ -418,6 +422,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         files.set(path, data);
       },
       stat: async (_h: unknown, path: string) => {
+        reads++;
         if (path === "/workspace") return { size: 0, isDir: true };
         const d = files.get(path);
         return d === undefined ? null : { size: d.byteLength, isDir: false };
@@ -442,6 +447,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         }),
       } as unknown as SandboxToolDeps["attachments"],
       storage: {
+        available: opts.storage ?? true,
         kernel: () => ({
           put: async (key: string) => {
             puts.push(key);
@@ -459,7 +465,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     });
     const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
     const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
-    return { files, puts, deletes, tool, text };
+    return { files, puts, deletes, tool, text, reads: () => reads };
   }
 
   it("a failed marker write still counts the file as copied; the marker keeps only saved entries", async () => {
@@ -488,6 +494,21 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         .run({ path: "/workspace/out.txt", name: "x".repeat(300) }, callCtx()),
     ).rejects.toThrow(/plain file name/);
     expect(r.puts).toEqual([]);
+  });
+
+  it("deliver without an object store: unavailable with an English reason, fails before stat / read", async () => {
+    const r = rig({ storage: false });
+    r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
+    const deliver = r.tool("sandbox_deliver");
+    expect(deliver.unavailable?.()).toMatch(/^File storage is not configured in this deployment/);
+    // 其他沙箱工具不受影响
+    expect(r.tool("sandbox_read").unavailable?.()).toBeNull();
+    await expect(deliver.run({ path: "/workspace/out.txt" }, callCtx())).rejects.toThrow(
+      /File storage is not configured/,
+    );
+    expect(r.reads()).toBe(0);
+    expect(r.puts).toEqual([]);
+    expect(rig().tool("sandbox_deliver").unavailable?.()).toBeNull();
   });
 
   it("deliver deletes the uploaded object when writing artifact_created fails", async () => {

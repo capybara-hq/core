@@ -17,7 +17,7 @@ import type { BuiltinCallContext } from "../../registry.js";
 export interface SandboxToolDeps {
   sandbox: Pick<SandboxService, "available" | "withSandbox">;
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
-  storage: Pick<StorageService, "kernel">;
+  storage: Pick<StorageService, "kernel" | "available">;
   eventLog: Pick<EventLog, "append">;
   config: () => KernelConfig;
 }
