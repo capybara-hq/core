@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   type ContentBlock,
+  clipMediaName,
   MEDIA_LIMITS,
   type MediaSource,
   type ModelInfo,
@@ -121,5 +122,17 @@ describe("类型", () => {
 
   it("ModelInfo.capabilities.documents 可选", () => {
     expectTypeOf<ModelInfo["capabilities"]["documents"]>().toEqualTypeOf<boolean | undefined>();
+  });
+});
+
+describe("clipMediaName", () => {
+  it("keeps short names, clips long ones to max code points keeping a short extension", () => {
+    expect(clipMediaName("a.pdf")).toBe("a.pdf");
+    const long = `${"中".repeat(300)}.csv`;
+    const c = clipMediaName(long, 20);
+    expect([...c]).toHaveLength(20);
+    expect(c.endsWith("….csv")).toBe(true);
+    // 扩展名太长（不像扩展名）时不保留
+    expect(clipMediaName(`x.${"y".repeat(40)}`, 10)).toBe(`x.${"y".repeat(7)}…`);
   });
 });

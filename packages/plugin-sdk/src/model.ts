@@ -87,6 +87,23 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** 媒体块 `name` 的最大长度（字符）。 */
 export const MEDIA_NAME_MAX_CHARS = 255;
 
+/** 供应商请求里文件名 / 标题的建议上限（码点），{@link clipMediaName} 的默认值。 */
+export const PROVIDER_MEDIA_NAME_MAX = 200;
+
+/**
+ * 把附件名截到 `max` 个码点以内（供应商映射用：有的接口对 filename / title 有长度限制，补后缀后还会更长）。
+ * 尽量保留扩展名（不超过 16 个字符的 `.ext`），中间用 `…` 表示截掉的部分。纯函数。
+ */
+export function clipMediaName(name: string, max = PROVIDER_MEDIA_NAME_MAX): string {
+  const cps = [...name];
+  if (cps.length <= max) return name;
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? [...name.slice(dot)] : [];
+  const keep = ext.length > 0 && ext.length <= 16 && ext.length < max - 1 ? ext : [];
+  const head = cps.slice(0, max - 1 - keep.length);
+  return `${head.join("")}…${keep.join("")}`;
+}
+
 /** 是否含控制字符（C0、DEL 与 C1）。 */
 export function hasControlChars(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
