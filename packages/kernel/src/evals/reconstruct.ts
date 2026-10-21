@@ -44,7 +44,9 @@ export type DriftReason =
   | "legacy_event"
   | "params_changed"
   | "media_missing"
-  | "media_changed";
+  | "media_changed"
+  /** 整轮回放（T5）：有工具调用没有匹配到记录（模型收到 REPLAY_NO_RECORDING）。 */
+  | "tool_unmatched";
 
 const DRIFT_ORDER: readonly DriftReason[] = [
   "system_hash",
@@ -55,6 +57,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "params_changed",
   "media_missing",
   "media_changed",
+  "tool_unmatched",
 ];
 
 export interface ReconstructOptions {

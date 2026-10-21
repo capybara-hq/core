@@ -22,7 +22,13 @@ import { type MediaSourceDeps, RunError } from "../runtime/model-call.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { finishRun } from "../runtime/run-finish.js";
 import { skillsCatalogIdemKey } from "../skills/catalog.js";
-import { addUsage, consumeTokens, runActive, usageTokens } from "./budget.js";
+import {
+  ACTIVE_EVAL_STATUSES,
+  addUsage,
+  consumeTokens,
+  TOO_MANY_ERRORS,
+  usageTokens,
+} from "./budget.js";
 import { RecordedToolPipeline, recordedCalls } from "./recorded-tools.js";
 import type { CaseSnapshot, SnapshotEvent } from "./snapshot.js";
 import type { ResolvedCandidate } from "./step-replay.js";
@@ -81,12 +87,39 @@ export interface RunReplayDeps {
   hooks?: EvalReplayHooks;
 }
 
-/** 写种子时发现已失去认领：本次执行停下，不留评测对话。 */
+/** 写种子时发现已失去认领或运行已不在执行：本次执行停下，不留评测对话。 */
 export class ReplayClaimLost extends Error {
   constructor() {
     super("the eval result is no longer claimed by this execution");
     this.name = "ReplayClaimLost";
   }
+}
+
+/** 整轮回放被停下的原因（`run_aborted.detail`）。 */
+export type StopDetail = "cancelled" | "capped" | "too_many_errors" | "claim_lost" | "shutdown";
+
+/** 运行不再执行或失去认领时的原因；还能继续为 null。 */
+async function stopReason(
+  db: KernelDb,
+  evalRunId: string,
+  stillClaimed: (() => Promise<boolean>) | undefined,
+): Promise<StopDetail | null> {
+  const r = await db
+    .selectFrom("eval_runs")
+    .select(["status", "error"])
+    .where("id", "=", evalRunId)
+    .executeTakeFirst();
+  if (!r) return "cancelled";
+  if (r.status === "capped") return "capped";
+  if (r.status === "cancelled") return "cancelled";
+  if (r.status === "failed") {
+    return (r.error as { code?: string } | null)?.code === TOO_MANY_ERRORS.code
+      ? "too_many_errors"
+      : "cancelled";
+  }
+  if (!(ACTIVE_EVAL_STATUSES as readonly string[]).includes(r.status)) return "cancelled";
+  if (stillClaimed && !(await stillClaimed())) return "claim_lost";
+  return null;
 }
 
 /** 种子插入的分批大小。 */
@@ -230,6 +263,15 @@ export async function replayRun(
   const conversationId = randomUUID();
   const runId = randomUUID();
   await db.transaction().execute(async (t) => {
+    // 运行行加共享锁并复核仍在执行：与取消 / 删除评测集（UPDATE 持行锁）互斥，删除之后不会再长出评测对话
+    const live = await t
+      .selectFrom("eval_runs")
+      .select("id")
+      .where("id", "=", evalRunId)
+      .where("status", "in", [...ACTIVE_EVAL_STATUSES])
+      .forShare()
+      .executeTakeFirst();
+    if (!live) throw new ReplayClaimLost();
     await t
       .insertInto("conversations")
       .values({
@@ -304,19 +346,41 @@ export async function replayRun(
   // 停止：取消 / 越限 / 熔断 / 失去认领 / 截止时间 → 中止 loop（进行中的请求立即停下，loop 以 aborted 返回）
   const stopper = new AbortController();
   const loopSignal = AbortSignal.any([signal, stopper.signal]);
+  /** 为什么停下（写进 `run_aborted.detail`，轨迹据此说明原因）。 */
+  let stopped: StopDetail | undefined;
+  /**
+   * 检查与计费过程中的意外错误（PG 暂时故障等）：记下并中止 loop，loop 返回后按崩溃抛出
+   * （交给 BullMQ 重试、从头重跑），不让它在模型调用里被当成供应商错误、走降级梯子。
+   */
+  let crash: unknown;
+  const crashed = (err: unknown) => {
+    crash ??= err;
+    stopper.abort();
+  };
+  /**
+   * 还能发下一次请求吗。取消只在请求之间生效（与单步回放一致）：进行中的请求做完，之后不再发。
+   */
   const allowed = async (): Promise<boolean> => {
     if (loopSignal.aborted) return false;
-    if (!(await runActive(db, evalRunId))) return false;
-    if (d.stillClaimed && !(await d.stillClaimed())) return false;
-    return true;
+    const why = await stopReason(db, evalRunId, d.stillClaimed);
+    if (why === null) return true;
+    stopped ??= why;
+    return false;
+  };
+  /** 同 {@link allowed}，但出错时记为崩溃（返回 false）。 */
+  const allowedSafe = async (): Promise<boolean> => {
+    try {
+      return await allowed();
+    } catch (err) {
+      crashed(err);
+      return false;
+    }
   };
   /** 进行中的计费（提前结束的流在 finally 里计费，不阻塞调用方）；返回前等它们写完。 */
   const charges = new Set<Promise<unknown>>();
   const charge = (n: number): Promise<void> => {
-    const p = consumeTokens(db, evalRunId, n).then(
-      () => {},
-      (err) => d.log.warn("cannot charge eval tokens", { evalRunId, err }),
-    );
+    // 计费写不进去也按崩溃处理：不能让请求在预算之外继续发
+    const p = consumeTokens(db, evalRunId, n).then(() => {}, crashed);
     charges.add(p);
     void p.finally(() => charges.delete(p));
     return p;
@@ -325,7 +389,7 @@ export async function replayRun(
     const metered = Object.create(provider) as ModelProvider;
     metered.stream = (req: ModelRequest, opts: { signal: AbortSignal }) =>
       (async function* (): AsyncGenerator<ModelStreamEvent> {
-        if (!(await allowed())) {
+        if (!(await allowedSafe())) {
           stopper.abort();
           throw new ModelError("aborted", "The eval run stopped before this request");
         }
@@ -364,6 +428,7 @@ export async function replayRun(
   const pipeline = new RecordedToolPipeline({
     eventLog,
     recordings: recordedCalls(s),
+    // 出错直接抛出：tools 节点的异常让 loop 抛出，按崩溃处理
     beforeStep: async () => {
       if (await allowed()) return "continue";
       stopper.abort();
@@ -456,16 +521,19 @@ export async function replayRun(
       event: { type: "run_failed", payload: { error: { code: err.code, message: err.message } } },
     }).catch((x) => d.log.warn("cannot finish eval replay run", { runId, err: x }));
     await Promise.allSettled([...charges]);
-    throw e;
+    throw crash ?? e;
   } finally {
     clearTimeout(timer);
     await d.checkpoints
       ?.deleteThread(runId)
       .catch((err) => d.log.warn("eval replay checkpoint delete failed", { runId, err }));
   }
-  if (outcome.kind === "aborted" && deadlineHit && !signal.aborted) {
+  await Promise.allSettled([...charges]);
+  if (crash !== undefined) throw crash;
+  if (outcome.kind === "aborted" && deadlineHit && !signal.aborted && stopped === undefined) {
     outcome = { kind: "max_duration", consumedUpToSeq: 0 };
   }
+  if (outcome.kind === "aborted" && stopped === undefined && signal.aborted) stopped = "shutdown";
   const finalConsumed = Math.max(0, ...fed.values(), trigger);
   await finishRun(db, eventLog, {
     conversationId,
@@ -474,7 +542,14 @@ export async function replayRun(
     consumed: finalConsumed,
     event:
       outcome.kind === "aborted"
-        ? { type: "run_aborted", payload: { byAccountId: null, reason: "user" } }
+        ? {
+            type: "run_aborted",
+            payload: {
+              byAccountId: null,
+              reason: "eval_stopped",
+              ...(stopped !== undefined && { detail: stopped }),
+            },
+          }
         : {
             type: "run_finished",
             payload: {

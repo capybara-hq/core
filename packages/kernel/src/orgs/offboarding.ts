@@ -194,6 +194,8 @@ export class Offboarding {
       .innerJoin("conversations", "conversations.id", "runs.conversation_id")
       .select(["runs.id", "runs.conversation_id", "runs.status"])
       .where("conversations.org_id", "=", orgId)
+      // 评测回放的隐藏对话由评测 worker 驱动（不执行工具），随评测运行停下，不在这里中止
+      .where("conversations.kind", "=", "chat")
       .where("runs.status", "in", ACTIVE)
       .where((eb) =>
         eb.or([
@@ -395,6 +397,7 @@ export class Offboarding {
         .select(["runs.id", "runs.conversation_id", "runs.status"])
         .select(sql<string>`runs.created_at::text`.as("created_at_text"))
         .where("runs.status", "in", ACTIVE)
+        .where("conversations.kind", "=", "chat")
         .where(({ not, exists, selectFrom }) =>
           not(
             exists(

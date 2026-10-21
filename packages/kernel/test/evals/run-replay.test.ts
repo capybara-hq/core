@@ -12,7 +12,7 @@ import { REPLAY_NO_RECORDING } from "../../src/evals/recorded-tools.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
-import type { TrajectoryListItem } from "../../src/evals/trajectory.service.js";
+import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -342,6 +342,15 @@ async function seedRun(
   return { userSeq, interjectionSeq };
 }
 
+async function trajectory(conversationId: string): Promise<TrajectoryDetail> {
+  const res = await admin({
+    method: "GET",
+    url: `/api/v1/orgs/${orgId}/trajectories/${conversationId}`,
+  });
+  expect(res.statusCode, res.body).toBe(200);
+  return res.json() as TrajectoryDetail;
+}
+
 const evalEvents = (r: EvalResultView) => eventsOf(db, r.evalConversationId as string);
 
 describe("整轮回放", { timeout: 60_000 }, () => {
@@ -483,6 +492,15 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     for (const r of rs) {
       expect((await evalEvents(r)).some((e) => e.type === "approval_requested")).toBe(false);
     }
+    // 没匹配到的调用 specHash 为空串：轨迹照常构建，工具调用带着英文错误结果
+    for (const r of rs) {
+      const started = (await evalEvents(r)).find((e) => e.type === "tool_call_started");
+      expect((started?.payload as { specHash: string } | undefined)?.specHash).toBe("");
+      const tr = await trajectory(r.evalConversationId as string);
+      const call = tr.runs.at(-1)?.steps[0]?.toolCalls[0];
+      expect(call?.result).toEqual({ content: REPLAY_NO_RECORDING, isError: true });
+      expect(call?.startedAt).not.toBeNull();
+    }
   });
 
   it("运行中途的插话在原吸收步骤喂入：出现在第 1 步工具结果之后、第 2 步请求之前", async () => {
@@ -555,7 +573,63 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     // 第一次请求之后就越限：只发了一次请求
     expect(evs.filter((e) => e.type === "usage")).toHaveLength(1);
     expect(evs.at(-1)?.type).toBe("run_aborted");
+    // 轨迹说明为什么停下
+    expect(evs.at(-1)?.payload).toEqual({
+      byAccountId: null,
+      reason: "eval_stopped",
+      detail: "capped",
+    });
+    expect((await trajectory(ec[0]?.id as string)).runs.at(-1)?.end).toEqual({
+      kind: "aborted",
+      detail: "capped",
+    });
     expect(done.tokensUsed).toBeGreaterThan(1);
+  });
+
+  it("上限恰好等于一次完整回放的用量：最后一次请求越限，回放已做完，结果 done、运行 capped", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "exact", 'tool:tools-count__count:{"n":6}', [
+      { name: "tools-count__count", input: { n: 6 }, content: "counted 6" },
+    ]);
+    await addCase(setId, conv, "exact");
+    // 先量出一次完整回放的用量（确定性：model-fake 的用量只取决于请求内容）
+    const probe = await startRun(setId, {});
+    const full = await finished(probe.id);
+    expect(full.status).toBe("completed");
+    const run = await startRun(setId, { tokenCap: full.tokensUsed });
+    const done = await finished(run.id);
+    expect(done.status).toBe("capped");
+    expect(done.tokensUsed).toBe(full.tokensUsed);
+    const [r] = await waitFor(
+      async () => {
+        const rs = await results(run.id);
+        return rs.every((x) => !["pending", "running"].includes(x.status)) ? rs : null;
+      },
+      20_000,
+      "result settled",
+      100,
+    );
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    expect((r?.candidate as RunReplayResult | undefined)?.outcome).toBe("completed");
+    expect((r?.candidate as RunReplayResult | undefined)?.steps).toBe(2);
+  });
+
+  it("删除评测集：评测对话一并删除", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "purge", 'tool:tools-count__count:{"n":8}', [
+      { name: "tools-count__count", input: { n: 8 }, content: "counted 8" },
+    ]);
+    await addCase(setId, conv, "purge");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const convs = () =>
+      db.selectFrom("conversations").select("id").where("eval_run_id", "=", run.id).execute();
+    expect(await convs()).toHaveLength(1);
+    const del = await admin({ method: "DELETE", url: `${setsUrl()}/${setId}` });
+    expect(del.statusCode, del.body).toBe(204);
+    expect(await convs()).toHaveLength(0);
   });
 
   it("崩溃后从头重跑：旧的评测对话被删掉，只剩一份结果", async () => {

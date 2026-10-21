@@ -6,6 +6,7 @@ import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
 import type { PricesService } from "../models/prices.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { recountCases } from "./budget.js";
 import { type CaseSnapshot, replayableCalls, takeSnapshot, toEvents } from "./snapshot.js";
 import { buildTrajectory, type TrajectoryRun } from "./trajectory.js";
 
@@ -305,6 +306,7 @@ export class EvalSetsService {
         .where("deleted_at", "is", null)
         .executeTakeFirst();
       if (Number(r.numUpdatedRows) === 0) throw setNotFound();
+      await stopAndPurgeRuns(trx, setId);
       await audit(trx, {
         actorAccountId: actor,
         ...(actorTokenId !== undefined && { actorTokenId }),
@@ -605,4 +607,43 @@ export class EvalSetsService {
       currency: settings.priceCurrency,
     };
   }
+}
+
+/**
+ * 删除评测集时（同一事务内）：在执行的评测运行置 `cancelled`、未开始的结果 `skipped`（在途的用例在下一次请求前停下），
+ * 并删掉这些运行的整轮回放隐藏对话（及其 checkpoint）——集合软删后它们没有入口，也不该留着。
+ * 与回放写种子互斥：种子事务对运行行加共享锁并复核仍在执行（见 `replayRun`），这里的 UPDATE 持行锁，
+ * 先提交的一方胜出，不会在删除之后再长出新的评测对话。
+ */
+async function stopAndPurgeRuns(trx: KernelDb, setId: string): Promise<void> {
+  const runs = await trx
+    .updateTable("eval_runs")
+    .set({ status: "cancelled", finished_at: sql`now()` })
+    .where("set_id", "=", setId)
+    .where("status", "in", ["queued", "running"])
+    .returning("id")
+    .execute();
+  for (const r of runs) {
+    await trx
+      .updateTable("eval_results")
+      .set({ status: "skipped", updated_at: sql`now()` })
+      .where("run_id", "=", r.id)
+      .where("status", "=", "pending")
+      .execute();
+    await recountCases(trx, r.id);
+  }
+  const all = trx.selectFrom("eval_runs").select("id").where("set_id", "=", setId);
+  const convs = trx
+    .selectFrom("conversations")
+    .select("id")
+    .where("kind", "=", "eval")
+    .where("eval_run_id", "in", all);
+  const threads = trx.selectFrom("runs").select("id").where("conversation_id", "in", convs);
+  await trx.deleteFrom("lg_checkpoint_writes").where("thread_id", "in", threads).execute();
+  await trx.deleteFrom("lg_checkpoints").where("thread_id", "in", threads).execute();
+  await trx
+    .deleteFrom("conversations")
+    .where("kind", "=", "eval")
+    .where("eval_run_id", "in", all)
+    .execute();
 }

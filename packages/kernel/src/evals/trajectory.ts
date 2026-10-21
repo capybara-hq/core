@@ -151,7 +151,8 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         ? { kind: "finished", detail: endEvent.payload.reason }
         : endEvent.type === "run_failed"
           ? { kind: "failed", detail: endEvent.payload.error.code }
-          : { kind: "aborted", detail: endEvent.payload.reason };
+          : // 评测回放被停下时给出具体原因（capped / too_many_errors / claim_lost / cancelled / shutdown）
+            { kind: "aborted", detail: endEvent.payload.detail ?? endEvent.payload.reason };
 
   const modelCalls = new Map<number, Ev<"model_call">[]>();
   const assistants = new Map<number, Ev<"assistant_message">[]>();

@@ -12,6 +12,7 @@ import { ProviderListError } from "../runtime/providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
 import { bullConnection } from "../runtime/run-queue.js";
 import { consumeTokens, recordOutcome, recountCases, runActive, usageTokens } from "./budget.js";
+import type { DriftReason } from "./reconstruct.js";
 import {
   deleteEvalConversation,
   ReplayClaimLost,
@@ -492,7 +493,10 @@ export class EvalWorker {
       );
     } catch (err) {
       if (signal.aborted) throw new Aborted();
-      if (err instanceof ReplayClaimLost) return;
+      if (err instanceof ReplayClaimLost) {
+        if (!(await runActive(db, runId))) await this.skipCase(data);
+        return;
+      }
       // 意外错误（PG / Redis 暂时故障、进程内异常）按崩溃处理：抛给 BullMQ 按 attempts 重试，
       // 下一次执行删掉这次的评测对话、从头重跑（C6）；用尽后 failed 事件把结果记 error
       if (!isReplayFailure(err)) throw err;
@@ -501,14 +505,16 @@ export class EvalWorker {
       return;
     }
     if (signal.aborted) throw new Aborted();
-    if (!(await runActive(db, runId))) {
-      // 取消 / 越限 / 熔断：回放中途停下，结果不完整
-      await this.skipCase(data);
+    if (out.outcome === "aborted") {
+      // 回放中途被停下（取消 / 越限 / 熔断 / 失去认领）：结果不完整。运行不再活跃 → skipped；
+      // 运行仍活跃说明是失去认领，由接手的执行负责
+      if (!(await runActive(db, runId))) await this.skipCase(data);
       return;
     }
+    // 回放已完整做完：即使最后一次请求的用量刚好越限（运行已 capped），结果照常记 done（只要仍持有认领）
     if (!(await held())) return;
     const baseline = runBaseline(s);
-    const drift = out.unmatched > 0 ? ["tool_unmatched"] : [];
+    const drift: DriftReason[] = out.unmatched > 0 ? ["tool_unmatched"] : [];
     await db.transaction().execute(async (trx) => {
       const w = await trx
         .updateTable("eval_results")
@@ -545,6 +551,18 @@ export class EvalWorker {
   /** BullMQ 判定任务失败（stalled 次数超限或重试用尽）：剩下的结果记 error，再重算进度。 */
   private async failCase(data: EvalJobData, err: Error): Promise<void> {
     const stalled = /stalled/i.test(err.message);
+    // 整轮回放：尝试用尽后不会再有执行来清理，删掉留下的半截评测对话
+    const left = await this.d.db
+      .selectFrom("eval_results")
+      .select("eval_conversation_id")
+      .where("run_id", "=", data.runId)
+      .where("case_id", "=", data.caseId)
+      .where("status", "in", [...UNFINISHED])
+      .where("eval_conversation_id", "is not", null)
+      .execute();
+    for (const r of left) {
+      await deleteEvalConversation(this.d.runReplay, r.eval_conversation_id as string);
+    }
     await this.d.db
       .updateTable("eval_results")
       .set({
@@ -554,6 +572,7 @@ export class EvalWorker {
             ? { code: "eval.stalled", message: "The replay was interrupted too many times" }
             : { code: "eval.internal", message: "The replay failed unexpectedly" },
         ),
+        eval_conversation_id: null,
         updated_at: sql`now()`,
       })
       .where("run_id", "=", data.runId)

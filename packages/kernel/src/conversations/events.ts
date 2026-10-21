@@ -424,7 +424,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "run_aborted",
     z.object({
       byAccountId: z.string().nullable(),
-      reason: z.enum(["user", "shutdown_exhausted"]),
+      /** `eval_stopped`：评测整轮回放被评测运行停下（只出现在 `kind = 'eval'` 的对话里），原因见 `detail`。 */
+      reason: z.enum(["user", "shutdown_exhausted", "eval_stopped"]),
+      detail: z
+        .enum(["cancelled", "capped", "too_many_errors", "claim_lost", "shutdown"])
+        .optional(),
     }),
   ),
 ]);
