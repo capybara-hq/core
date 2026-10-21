@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -136,6 +136,16 @@ beforeEach(async () => {
 
 const row = (id = conversationId) =>
   db.selectFrom("sandboxes").selectAll().where("conversation_id", "=", id).executeTakeFirst();
+/** 等假沙箱登记下正在跑的命令（`instances/<id>/procs/<pid>`），代替固定的等待。 */
+async function waitForProc(id: string, timeoutMs = 10_000): Promise<void> {
+  const dir = join(root, "instances", id, "procs");
+  const until = Date.now() + timeoutMs;
+  while ((await readdir(dir).catch(() => [])).length === 0) {
+    if (Date.now() > until) throw new Error(`no running command registered for ${id}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 const ops = async (op?: string) =>
   (await readFakeSandboxOps(root)).filter((o) => op === undefined || o[0] === op);
 
@@ -997,7 +1007,7 @@ describe("接手崩溃的前任（fix wave S2 I2）", () => {
       signal: signal(),
     });
     await redis.set(busyKey(), "dead-holder", "PX", 60_000);
-    await new Promise((r) => setTimeout(r, 200));
+    await waitForProc(h.id);
     const started = Date.now();
     const order: string[] = [];
     await s.withSandbox(
@@ -1049,7 +1059,7 @@ describe("恢复休眠的沙箱时清掉遗留命令（fix round 2）", () => {
       maxOutputBytes: 100,
       signal: signal(),
     });
-    await new Promise((r) => setTimeout(r, 200));
+    await waitForProc(h.id);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
     expect(await redis.get(`${SANDBOX_BUSY_PREFIX}${conversationId}`)).toBeNull();
     const order: string[] = [];
