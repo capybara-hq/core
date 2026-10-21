@@ -5,6 +5,8 @@ import {
   OBJECT_STORE_CAPABILITY,
   type ObjectStore,
   type PluginContext,
+  SANDBOX_CAPABILITY,
+  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -60,6 +62,8 @@ import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
+import { registerSandboxMaintenance } from "./sandbox/lifecycle.js";
+import { SandboxService } from "./sandbox/sandbox.service.js";
 import {
   purgeDeletedOrgStorage,
   STORAGE_PURGE_EVERY_MS,
@@ -197,6 +201,11 @@ export interface Kernel {
   readonly storage: StorageService;
   /** 对话附件（上传、finalize、绑定、取字节、过期清理）。 */
   readonly attachments: AttachmentsService;
+  /**
+   * 按对话的沙箱（`sandbox@1` 提供方之上：懒创建、锁、休眠与销毁）；
+   * 没有提供方时 `available` 为 false，使用时抛 `sandbox.unavailable`（503）。
+   */
+  readonly sandbox: SandboxService;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -425,6 +434,18 @@ export async function createKernel(
     name: ATTACHMENT_CLEANUP_JOB,
     everyMs: () => ATTACHMENT_CLEANUP_EVERY_MS,
   });
+  // 沙箱：提供方在 host.load() 之后才就绪，按调用时取；休眠与销毁由维护队列扫描
+  const sandbox = new SandboxService({
+    db: kdb,
+    redis,
+    provider: () => {
+      const e = host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY);
+      return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
+    },
+    config: () => current,
+    log,
+  });
+  registerSandboxMaintenance(maintenance, sandbox, log);
   // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
   const toolDrift = new ToolDrift({
     db: kdb,
@@ -854,6 +875,7 @@ export async function createKernel(
     channels,
     storage,
     attachments,
+    sandbox,
     log,
     get config() {
       return current;

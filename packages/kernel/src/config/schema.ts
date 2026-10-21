@@ -1,4 +1,8 @@
-import { DOCUMENT_MEDIA_TYPES, IMAGE_MEDIA_TYPES } from "@capybara-hq/plugin-sdk";
+import {
+  DOCUMENT_MEDIA_TYPES,
+  IMAGE_MEDIA_TYPES,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { LOG_LEVELS } from "../log.js";
 
@@ -35,6 +39,16 @@ export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 
 /** `attachments.requestMediaBytes` 的上限（24 MiB）：base64 后约 32 MiB，是常见供应商的请求上限。 */
 export const REQUEST_MEDIA_BYTES_MAX = 25_165_824;
+
+/** 沙箱出站白名单的默认值（`sandbox.limits.allowHosts`）：常用的包仓库与源码托管。 */
+export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
+  "registry.npmjs.org",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "github.com",
+  "objects.githubusercontent.com",
+  "deb.debian.org",
+];
 
 const masterKey = z
   .string()
@@ -620,6 +634,105 @@ export const KernelConfigSchema = z.object({
     .refine((c) => c.maxBytes <= c.requestMediaBytes, {
       message: "attachments.maxBytes must be at most attachments.requestMediaBytes",
       path: ["maxBytes"],
+    })
+    .prefault({} as never),
+  sandbox: z
+    .object({
+      image: z
+        .string()
+        .min(1)
+        .default("capybara-sandbox:latest")
+        .meta(
+          meta({
+            description:
+              "Image (or provider template) for conversation sandboxes; built from plugins/sandbox-docker/image/Dockerfile",
+          }),
+        ),
+      limits: z
+        .object({
+          cpu: z
+            .number()
+            .positive()
+            .default(1)
+            .meta(meta({ description: "CPU cores for each sandbox" })),
+          memoryMb: z
+            .number()
+            .int()
+            .positive()
+            .default(2048)
+            .meta(meta({ description: "Memory limit of each sandbox in MiB" })),
+          diskMb: z
+            .number()
+            .int()
+            .positive()
+            .default(5120)
+            .meta(meta({ description: "Disk limit of each sandbox in MiB" })),
+          maxCommandSeconds: z
+            .number()
+            .int()
+            .positive()
+            .default(7200)
+            .meta(meta({ description: "Longest a single sandbox command may run, in seconds" })),
+          suspendAfterIdleMinutes: z
+            .number()
+            .int()
+            .positive()
+            .default(10)
+            .meta(
+              meta({
+                description:
+                  "Minutes without use before a running sandbox is suspended (files are kept)",
+              }),
+            ),
+          destroyAfterInactiveDays: z
+            .number()
+            .int()
+            .positive()
+            .default(7)
+            .meta(
+              meta({
+                description:
+                  "Days without use before a sandbox is destroyed with its files; the next use starts an empty one",
+              }),
+            ),
+          maxRunningMinutes: z
+            .number()
+            .int()
+            .positive()
+            .default(120)
+            .meta(
+              meta({
+                description:
+                  "Minutes a sandbox may run continuously before it is suspended even while in use (skipped while a command is running)",
+              }),
+            ),
+          egress: z
+            .enum(["none", "allowlist", "open"])
+            .default("allowlist")
+            .meta(
+              meta({
+                description:
+                  "Outbound network from sandboxes: none, allowlist (only allowHosts) or open",
+              }),
+            ),
+          allowHosts: z
+            .array(z.string())
+            .default([...DEFAULT_SANDBOX_ALLOW_HOSTS])
+            .superRefine((hosts, ctx) => {
+              hosts.forEach((h, i) => {
+                for (const message of validateAllowHost(h)) {
+                  ctx.addIssue({ code: "custom", path: [i], message: `${h}: ${message}` });
+                }
+              });
+            })
+            .meta(
+              meta({
+                description:
+                  "Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names",
+              }),
+            ),
+        })
+        .prefault({} as never),
     })
     .prefault({} as never),
   log: z

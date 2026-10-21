@@ -63,6 +63,16 @@
 | `attachments.maxPerMessage` | `CAPYBARA_ATTACHMENTS__MAX_PER_MESSAGE` | `number` | `10` | 否 | 否 | Maximum number of attachments in one message |
 | `attachments.unboundTtlHours` | `CAPYBARA_ATTACHMENTS__UNBOUND_TTL_HOURS` | `number` | `24` | 否 | 否 | Hours after upload before an attachment never used in a message is deleted (row and object) |
 | `attachments.requestMediaBytes` | `CAPYBARA_ATTACHMENTS__REQUEST_MEDIA_BYTES` | `number` | `20971520` | 否 | 否 | Budget of raw attachment bytes in one model request; the newest attachments are kept and older ones are replaced with a placeholder. At most 24 MiB: base64 inflates it by about 4/3, and common providers cap a request at 32 MB |
+| `sandbox.image` | `CAPYBARA_SANDBOX__IMAGE` | `string` | `"capybara-sandbox:latest"` | 否 | 否 | Image (or provider template) for conversation sandboxes; built from plugins/sandbox-docker/image/Dockerfile |
+| `sandbox.limits.cpu` | `CAPYBARA_SANDBOX__LIMITS__CPU` | `number` | `1` | 否 | 否 | CPU cores for each sandbox |
+| `sandbox.limits.memoryMb` | `CAPYBARA_SANDBOX__LIMITS__MEMORY_MB` | `number` | `2048` | 否 | 否 | Memory limit of each sandbox in MiB |
+| `sandbox.limits.diskMb` | `CAPYBARA_SANDBOX__LIMITS__DISK_MB` | `number` | `5120` | 否 | 否 | Disk limit of each sandbox in MiB |
+| `sandbox.limits.maxCommandSeconds` | `CAPYBARA_SANDBOX__LIMITS__MAX_COMMAND_SECONDS` | `number` | `7200` | 否 | 否 | Longest a single sandbox command may run, in seconds |
+| `sandbox.limits.suspendAfterIdleMinutes` | `CAPYBARA_SANDBOX__LIMITS__SUSPEND_AFTER_IDLE_MINUTES` | `number` | `10` | 否 | 否 | Minutes without use before a running sandbox is suspended (files are kept) |
+| `sandbox.limits.destroyAfterInactiveDays` | `CAPYBARA_SANDBOX__LIMITS__DESTROY_AFTER_INACTIVE_DAYS` | `number` | `7` | 否 | 否 | Days without use before a sandbox is destroyed with its files; the next use starts an empty one |
+| `sandbox.limits.maxRunningMinutes` | `CAPYBARA_SANDBOX__LIMITS__MAX_RUNNING_MINUTES` | `number` | `120` | 否 | 否 | Minutes a sandbox may run continuously before it is suspended even while in use (skipped while a command is running) |
+| `sandbox.limits.egress` | `CAPYBARA_SANDBOX__LIMITS__EGRESS` | `"none" \| "allowlist" \| "open"` | `"allowlist"` | 否 | 否 | Outbound network from sandboxes: none, allowlist (only allowHosts) or open |
+| `sandbox.limits.allowHosts` | `CAPYBARA_SANDBOX__LIMITS__ALLOW_HOSTS` | `array<string>` | `["registry.npmjs.org","pypi.org","files.pythonhosted.org","github.com","objects.githubusercontent.com","deb.debian.org"]` | 否 | 否 | Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

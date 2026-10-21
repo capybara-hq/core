@@ -475,6 +475,25 @@ export interface AttachmentsTable {
   expires_at: TsNullable;
 }
 
+/** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */
+export interface SandboxesTable {
+  conversation_id: string;
+  org_id: string;
+  provider: string;
+  /** 提供方的 `SandboxHandle`；creating 时为 NULL。 */
+  handle: ColumnType<
+    { id: string; [k: string]: unknown } | null,
+    string | null | undefined,
+    string | null
+  >;
+  status: "creating" | "running" | "suspended" | "destroyed";
+  last_used_at: Ts;
+  running_since: TsNullable;
+  created_at: Ts;
+  suspended_at: TsNullable;
+  destroyed_at: TsNullable;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
@@ -516,6 +535,7 @@ export interface KernelDatabase {
   org_anonymous_accounts: OrgAnonymousAccountsTable;
   directory_exclusions: DirectoryExclusionsTable;
   attachments: AttachmentsTable;
+  sandboxes: SandboxesTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

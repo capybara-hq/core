@@ -85,6 +85,15 @@ export { isSensitivePermissionKey } from "./plugins/permission-view.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
 export {
+  SANDBOX_DESTROY_JOB,
+  SANDBOX_SUSPEND_JOB,
+} from "./sandbox/lifecycle.js";
+export {
+  SandboxService,
+  type SandboxServiceDeps,
+  type SandboxUseInfo,
+} from "./sandbox/sandbox.service.js";
+export {
   MAX_STORAGE_KEY_BYTES,
   StorageKeyError,
 } from "./storage/prefix.js";
