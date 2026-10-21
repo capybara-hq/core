@@ -74,6 +74,8 @@ const zh = {
   "checklist.pending": "待办",
   "checklist.in_progress": "进行中",
   "checklist.completed": "已完成",
+  "attachment.remove": "移除 {name}",
+  "attachment.uploading": "正在上传 {name}",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -152,6 +154,8 @@ const en: Record<DesignKey, string> = {
   "checklist.pending": "To do",
   "checklist.in_progress": "In progress",
   "checklist.completed": "Done",
+  "attachment.remove": "Remove {name}",
+  "attachment.uploading": "Uploading {name}",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

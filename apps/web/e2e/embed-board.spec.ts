@@ -30,6 +30,13 @@ async function signIn(page: Page) {
   }
   await expect(page).toHaveURL(/\/zh$/);
   await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
+  // 选组织是异步请求：等 /me 里出现当前组织，否则紧接着读 /me 可能拿到 null
+  await expect
+    .poll(async () => {
+      const me = await page.request.get("/api/v1/me");
+      return me.ok() ? ((await me.json()) as { currentOrgId: string | null }).currentOrgId : null;
+    })
+    .not.toBeNull();
 }
 
 test("example-board：「扩展」打开看板（沙箱 iframe、令牌校验通过），另一个浏览器上下文改状态后实时刷新；对话里有看板标签", async ({

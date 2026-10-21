@@ -1,3 +1,16 @@
+export {
+  AttachmentChip,
+  type AttachmentChipProps,
+  type AttachmentChipStatus,
+  AttachmentPreview,
+  type AttachmentPreviewProps,
+  FileButton,
+  type FileButtonProps,
+  FileDrop,
+  type FileDropProps,
+  formatBytes,
+  isSafeAttachmentHref,
+} from "./attachments";
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
 export {
   Checklist,

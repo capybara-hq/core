@@ -165,6 +165,7 @@ export function useChat(orgId: string, conversationId: string): ChatView {
       text: string,
       clientMessageId: string,
       attachments: { appId: string; uri: string }[] = [],
+      files: string[] = [],
     ) => {
       try {
         const { event } = await postMessage(
@@ -173,6 +174,7 @@ export function useChat(orgId: string, conversationId: string): ChatView {
           text,
           clientMessageId,
           attachments.map((a) => ({ appId: a.appId, uri: a.uri })),
+          files,
         );
         dispatch({ kind: "events", events: [event] });
         setError(undefined);

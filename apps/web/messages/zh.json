@@ -159,6 +159,16 @@
     },
     "member": {
       "anonymous_guest": "匿名访客不能被授予角色、所有权或 agent，也不能被邀请或移出。"
+    },
+    "attachment": {
+      "too_large": "文件太大，超过了单个附件的大小上限（图片 5 MB，其他文件 20 MB）。",
+      "type_not_allowed": "不支持这种文件类型。可以上传 PNG、JPEG、GIF、WebP 图片，以及 PDF、TXT、Markdown、CSV 文件。",
+      "not_ready": "文件还没有上传完成，请稍候再发送。",
+      "not_found": "文件不存在或已过期，请重新上传。",
+      "upload_failed": "上传失败，请检查网络后移除并重新添加。"
+    },
+    "storage": {
+      "unavailable": "文件存储暂不可用，请稍后重试或联系管理员。"
     }
   },
   "agents": {
@@ -271,7 +281,11 @@
       "failed": "暂时无法访问 {app}，请稍后重试。"
     },
     "timeline": "本轮步骤",
-    "thinkingLive": "思考中…"
+    "thinkingLive": "思考中…",
+    "files": "文件",
+    "addFiles": "添加文件",
+    "dropFiles": "松开以添加文件",
+    "filesLimit": "每条消息最多 {max} 个文件。"
   },
   "ui": {
     "dangerDescription": "这个操作由插件执行，可能无法撤销。",

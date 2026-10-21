@@ -9,7 +9,13 @@ export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; callId: string; content: string; isError: boolean };
+  | { type: "tool_result"; callId: string; content: string; isError: boolean }
+  /** 上传的附件（只出现在 user 消息里）：日志里只有引用，字节经 download 取。 */
+  | { type: "image"; mediaType: string; source: MediaSource; name?: string }
+  | { type: "document"; mediaType: string; source: MediaSource; name?: string };
+
+/** 媒体块的来源：日志里只会是 `ref`（字节不进日志）。 */
+export type MediaSource = { kind: "ref"; attachmentId: string } | { kind: "base64"; data: string };
 
 type FormText = string | { zh: string; en: string };
 
@@ -208,7 +214,7 @@ export async function listAllEvents(
 
 /**
  * 发送用户消息（运行中发送即插话）：202 `{ event }`。`attachments`（`@` 资源引用）由内核以当前用户的凭据读取，
- * 作为附加文本块写入同一条消息。
+ * 作为附加文本块写入同一条消息；`files`（已 finalize 的上传附件 id）作为 image / document 引用块追加在最后。
  */
 export const postMessage = (
   orgId: string,
@@ -216,6 +222,7 @@ export const postMessage = (
   text: string,
   clientMessageId: string,
   attachments: { appId: string; uri: string }[] = [],
+  files: string[] = [],
 ) =>
   apiFetch<{ event: ConversationEvent }>(`${one(orgId, id)}/messages`, {
     method: "POST",
@@ -223,6 +230,7 @@ export const postMessage = (
       text,
       clientMessageId,
       ...(attachments.length > 0 && { attachments }),
+      ...(files.length > 0 && { files }),
     }),
   });
 

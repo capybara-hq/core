@@ -326,6 +326,10 @@
 - **CodeBlock**：1px `line` 外框、`panel` 底；有语言时顶部 11px `faint` 语言标注 + 下边线；正文等宽、不换行、框内横向滚动；不做语法高亮。
 - **EmbedFrame**：界面里**唯一**渲染 iframe 的组件（`apps/web` 不得自己写 iframe）。`sandbox` 固定为 `allow-scripts allow-forms`（绝不含 `allow-same-origin`），`referrerpolicy="no-referrer"`，`title` 必填；宽度撑满，高度来自 props（默认 360）；1px `line` 边、`panel` 底。只把 `event.source` 为本 iframe 的 `message` 交给 `onMessage`（内容由调用方解析校验），并以 `frameRef` 暴露 iframe 以便 `postMessage`。
 - **ImageBlock**：插件视图里的图片；块级、宽度不超出容器、按比例缩放，1px `line` 边；`loading="lazy"`、`referrerpolicy="no-referrer"`。只收地址与 alt；只渲染 http(s) 绝对地址，其他（`javascript:`、`data:`、相对路径）什么都不渲染。
+- **AttachmentChip**：输入框里待发送的上传文件。1px `line` 边、`panel` 底的一行：文件名（单行省略，最多 24ch）+ 大小（small `muted`，`B` / `KB` / `MB`）+ 右侧移除按钮（`✕` 图标按钮，`aria-label`「移除 <文件名>」）。三态（`data-status`）：`uploading` 在名称下方一条 4px 分段进度条（`role="progressbar"`，`aria-valuenow` 0–100，已完成段主色、其余 `line-strong`，与 Toast 进度一致）；`ready` 无进度条；`error` 边框 `fail`，名称下方 small `fail` 的错误文字（`role="alert"`），仍可移除。
+- **FileDrop**：包住输入区的拖放 / 粘贴区域。拖入带文件的内容时（只认 `Files`，拖文字不响应）在区域上盖一层覆盖层：`accent-tint` 底 + 1px 虚线 `accent` 边，居中一行提示文字（由调用方传入）；松手把文件交给 `onFiles`。区域内粘贴含文件的剪贴板时同样交给 `onFiles` 并阻止默认粘贴；不含文件的粘贴不受影响。`disabled` 时两者都不响应。`dragging` 可强制显示覆盖层（目录页与截图用）。
+- **FileButton**：选文件按钮。外观同 `IconButton`（默认 `+`，`aria-label` 由调用方传入），点击打开系统文件选择（隐藏的 `input type=file`，可设 `accept` / `multiple`），选中后交给 `onFiles` 并清空，同一文件可再次选择。
+- **AttachmentPreview**：消息里的附件。`kind="image"` 为缩略图：最大 240×160、按比例裁切填满（`object-fit: cover`），1px `line` 边，`loading="lazy"`、`referrerpolicy="no-referrer"`；`kind="file"` 为文件卡片：1px `line` 边、`panel` 底，左侧 `▤` `muted`，文件名（单行省略）+ 下方 small `muted` 说明（如类型）。两者都是新标签页打开的链接（`target="_blank"`、`rel="noopener noreferrer"`），悬停边框 `line-strong`。地址只认 http(s) 绝对地址与本源的绝对路径（以单个 `/` 开头，不含 `//` 开头与 `\`）；其他（`javascript:`、`data:`、协议相对地址）不渲染链接与图片，只显示文件名。
 - **Card `tone="accent"`**：对话里待人处理的卡片（审批 / 提问 / 连接）用 1px `accent` 描边（§2.3 描边），处理完回到默认边框。
 - 图表沿用 §6.8 的 `BarChart` / `Sparkline`，属性列表沿用 `KeyValue`，表格沿用 DataTable，不另造。
 

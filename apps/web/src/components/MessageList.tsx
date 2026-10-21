@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AttachmentPreview,
   Badge,
   Card,
   Stack,
@@ -13,6 +14,7 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
+import { attachmentDownloadUrl, attachmentTypeLabel } from "../lib/attachments";
 import type { ModelRef } from "../lib/conversations";
 import type { ChatItem } from "../lib/stream";
 import { ApprovalCard } from "./ApprovalCard";
@@ -50,7 +52,7 @@ const TOOL_MARK: Record<ToolItem["status"], TimelineMark> = {
   cancelled: "hollow",
 };
 
-function UserMessage({ item }: { item: UserItem }) {
+function UserMessage({ orgId, item }: { orgId: string; item: UserItem }) {
   const t = useTranslations("chat");
   return (
     <div data-role="user">
@@ -65,6 +67,22 @@ function UserMessage({ item }: { item: UserItem }) {
               <Stack direction="row" gap={8} wrap>
                 {item.attachments.map((a) => (
                   <Badge key={`${a.appId}:${a.uri}`}>{`@${a.name} · ${a.appName}`}</Badge>
+                ))}
+              </Stack>
+            </div>
+          )}
+          {item.files.length > 0 && (
+            // biome-ignore lint/a11y/useSemanticElements: 文件分组；apps/web 不能写样式，用 role=group
+            <div role="group" aria-label={t("files")}>
+              <Stack direction="row" gap={8} wrap>
+                {item.files.map((f) => (
+                  <AttachmentPreview
+                    key={f.attachmentId}
+                    kind={f.kind === "image" ? "image" : "file"}
+                    name={f.name}
+                    href={attachmentDownloadUrl(orgId, f.attachmentId)}
+                    meta={attachmentTypeLabel(f.mediaType)}
+                  />
                 ))}
               </Stack>
             </div>
@@ -184,7 +202,7 @@ export function MessageList({
       <Stack gap={12}>
         {groupItems(items).map((g) =>
           g.kind === "user" ? (
-            <UserMessage key={g.item.key} item={g.item} />
+            <UserMessage key={g.item.key} orgId={orgId} item={g.item} />
           ) : (
             <Timeline key={g.key} label={t("timeline")}>
               {g.items.flatMap(step)}

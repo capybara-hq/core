@@ -1,13 +1,19 @@
 import {
+  AttachmentChip,
+  AttachmentPreview,
   Card,
   Checklist,
   CodeBlock,
   EmbedFrame,
+  FileButton,
+  FileDrop,
   Grid,
   ImageBlock,
   IoBlock,
+  Stack,
   Tabs,
   Text,
+  Textarea,
   ThinkingRow,
   Timeline,
   TimelineItem,
@@ -168,6 +174,59 @@ export function ChatSection() {
           图片 ImageBlock · 只渲染 http(s)，宽度不超出容器
         </Text>
         <ImageBlock src={SAMPLE_IMAGE} alt="示例图片" />
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          上传条目 AttachmentChip · 上传中 / 就绪 / 出错 / 无移除按钮
+        </Text>
+        <Stack direction="row" gap={8} wrap>
+          <AttachmentChip
+            name="weekly-chart.png"
+            size={348_160}
+            status="uploading"
+            progress={0.6}
+            onRemove={noop}
+          />
+          <AttachmentChip name="report.pdf" size={1_258_291} status="ready" onRemove={noop} />
+          <AttachmentChip
+            name="archive.zip"
+            size={2048}
+            status="error"
+            error="不支持这种文件类型。"
+            onRemove={noop}
+          />
+          <AttachmentChip
+            name="a-very-long-file-name-for-truncation.csv"
+            size={512}
+            status="ready"
+          />
+        </Stack>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          拖放区域 FileDrop · 拖入时的覆盖层；选文件 FileButton
+        </Text>
+        <FileDrop label="松开以添加文件" onFiles={noop} dragging>
+          <Stack direction="row" gap={8} align="end">
+            <FileButton label="添加文件" onFiles={noop} />
+            <Textarea aria-label="消息" rows={3} placeholder="输入消息" />
+          </Stack>
+        </FileDrop>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          消息附件 AttachmentPreview · 图片缩略图 / 文件卡片 / 不安全地址只显示名称
+        </Text>
+        <Stack direction="row" gap={8} wrap>
+          <AttachmentPreview kind="image" name="示例图片.png" href={SAMPLE_IMAGE} />
+          <AttachmentPreview kind="file" name="report.pdf" meta="PDF" href="/dev/ui/components" />
+          <AttachmentPreview
+            kind="file"
+            name="notes.md"
+            meta="Markdown"
+            href="//evil.example.com/notes.md"
+          />
+        </Stack>
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">

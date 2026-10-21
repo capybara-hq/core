@@ -33,6 +33,13 @@ async function signIn(page: Page) {
   }
   await expect(page).toHaveURL(/\/zh$/);
   await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
+  // 选组织是异步请求：等 /me 里出现当前组织，否则紧接着读 /me 可能拿到 null
+  await expect
+    .poll(async () => {
+      const me = await page.request.get("/api/v1/me");
+      return me.ok() ? ((await me.json()) as { currentOrgId: string | null }).currentOrgId : null;
+    })
+    .not.toBeNull();
 }
 
 test("todo：todo__write 之后右侧「任务」标签实时刷新，badge 为「已完成/总数」；时间线显示工具摘要", async ({

@@ -247,4 +247,53 @@ describe("model-fake", () => {
     const err = await run(mk(), req("hi", { model: "nope" })).catch((e: unknown) => e);
     expect(isModelError(err) && err.kind).toBe("invalid_request");
   });
+
+  it("vision / documents are off by default and can be enabled per model", async () => {
+    const [m] = await mk().listModels();
+    expect(m?.capabilities).toMatchObject({ vision: false, documents: false });
+    const p = createFakeProvider({
+      kv: memKv(),
+      sleep: noSleep,
+      models: [{ id: "fake-1", vision: true, documents: true }],
+    });
+    const [v] = await p.listModels();
+    expect(v?.capabilities).toMatchObject({ vision: true, documents: true });
+  });
+
+  it("media: lists the media blocks of the last user message with their decoded sizes", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]).toString("base64");
+    const r = req("media:", {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "media:" },
+            {
+              type: "image",
+              mediaType: "image/png",
+              source: { kind: "base64", data: png },
+              name: "chart.png",
+            },
+            {
+              type: "document",
+              mediaType: "text/plain",
+              source: { kind: "base64", data: Buffer.from("hello").toString("base64") },
+            },
+          ],
+        },
+      ],
+    });
+    const text = (complete(await run(mk(), r)).content[0] as { text: string }).text;
+    expect(text).toBe("Media: image image/png 6 bytes chart.png; document text/plain 5 bytes");
+  });
+
+  it("media: without media blocks says so", async () => {
+    const text = (complete(await run(mk(), req("media:"))).content[0] as { text: string }).text;
+    expect(text).toBe("Media: none");
+  });
+
+  it("deployment config accepts vision / documents per model", () => {
+    const models = [{ id: "fake-1", vision: true, documents: true }];
+    expect(plugin.config?.deployment?.parse({ models })).toEqual({ models });
+  });
 });
