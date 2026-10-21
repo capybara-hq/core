@@ -68,13 +68,14 @@ export function activeNavOf(pathname: string): string {
 
 /**
  * 当前用户收件箱里的待处理数（`GET /inbox`：工具审批 + 技能变更）：组织或路由变化时、每 30 秒、以及调用
- * `refresh()` 时重读；没有当前组织或读取失败时为 0。
+ * `refresh()` 时重读；没有当前组织或读取失败时为 0。`more`：收件箱被截断（实际不止 `count` 项）。
  */
 export function usePendingApprovals(
   orgId: string | null,
   pathname: string,
-): { count: number; refresh(): void } {
+): { count: number; more: boolean; refresh(): void } {
   const [count, setCount] = useState(0);
+  const [more, setMore] = useState(false);
   const [nonce, setNonce] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: pathname 与 nonce 只用于触发重读
   useEffect(() => {
@@ -86,10 +87,14 @@ export function usePendingApprovals(
     const load = () =>
       listInbox(orgId).then(
         (r) => {
-          if (!disposed) setCount(r.items.length);
+          if (disposed) return;
+          setCount(r.items.length);
+          setMore(r.truncated === true);
         },
         () => {
-          if (!disposed) setCount(0);
+          if (disposed) return;
+          setCount(0);
+          setMore(false);
         },
       );
     void load();
@@ -100,7 +105,7 @@ export function usePendingApprovals(
     };
   }, [orgId, pathname, nonce]);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
-  return { count, refresh };
+  return { count, more, refresh };
 }
 
 /** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
@@ -151,6 +156,7 @@ export function routeLabel(pathname: string): string {
 export function useNav(
   pending = 0,
   level: NavLevel = "guest",
+  pendingMore = false,
 ): Pick<TopBarProps, "nav" | "commands"> {
   const t = useTranslations();
   const router = useRouter();
@@ -158,7 +164,9 @@ export function useNav(
     id: n.id,
     label: t(`nav.${n.key}`),
     href: n.href,
-    ...(n.id === "inbox" && pending > 0 ? { count: pending } : {}),
+    ...(n.id === "inbox" && pending > 0
+      ? { count: pending, ...(pendingMore ? { countMore: true } : {}) }
+      : {}),
   }));
   const commands: CommandGroup[] = [
     {

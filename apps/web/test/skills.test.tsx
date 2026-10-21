@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -40,6 +40,8 @@ const skill = (id: string, name: string, over: Record<string, unknown> = {}) => 
 class FakeXhr {
   static instances: FakeXhr[] = [];
   static status = 204;
+  /** 为 true 时 send 之后不自动完成（测试进度与取消）。 */
+  static hold = false;
   method = "";
   url = "";
   body: unknown;
@@ -59,6 +61,7 @@ class FakeXhr {
   setRequestHeader() {}
   send(body: unknown) {
     this.body = body;
+    if (FakeXhr.hold) return;
     queueMicrotask(() => {
       this.status = FakeXhr.status;
       this.onload?.();
@@ -79,6 +82,7 @@ beforeEach(() => {
   resetNavigation("/skills");
   vi.stubGlobal("XMLHttpRequest", FakeXhr);
   FakeXhr.status = 204;
+  FakeXhr.hold = false;
 });
 afterEach(() => {
   cleanup();
@@ -177,6 +181,44 @@ describe("技能库列表（ListPage）", () => {
       expect(within(alert).getByText("✗ SKILL.md is missing at the package root")).toBeTruthy();
     },
   );
+
+  it.each(LOCALES)("上传中显示进度、可取消；取消或失败后可用同一文件重试（%s）", async (locale) => {
+    const u = msgs[locale].skills.upload;
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [] }),
+      [`POST ${BASE}/uploads`]: () =>
+        json(201, { id: "up1", upload: { method: "PUT", url: S3_URL, headers: {} }, expiresAt: T }),
+      [`POST ${BASE}`]: () =>
+        json(201, { skill: skill("s1", "pdf-tools"), version: 1, created: true }),
+    });
+    const { container } = renderPage(<SkillsPage />, { locale });
+    await screen.findByText(msgs[locale].skills.empty);
+    FakeXhr.hold = true;
+    const user = userEvent.setup();
+    await user.upload(fileInput(container), zipFile());
+    const uploading = (pct: number) =>
+      u.uploading.replace("{name}", "pdf-tools.zip").replace("{percent}", String(pct));
+    expect(await screen.findByText(uploading(0))).toBeTruthy();
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    act(() => {
+      FakeXhr.instances[0]?.upload.onprogress?.({
+        lengthComputable: true,
+        loaded: 1,
+        total: 2,
+      } as ProgressEvent);
+    });
+    expect(await screen.findByText(uploading(50))).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: u.cancel }));
+    expect(await screen.findByText(u.cancelled)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(calls.some((c) => c.method === "POST" && c.url === BASE)).toBe(false);
+
+    FakeXhr.hold = false;
+    await user.click(screen.getByRole("button", { name: u.retry }));
+    expect(await screen.findByText(u.created.replace("{name}", "pdf-tools"))).toBeTruthy();
+    expect(FakeXhr.instances).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: u.retry })).toBeNull();
+  });
 
   it("前端预检：不是 zip、超过 50MB 不发请求", async () => {
     const calls = stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [] }) });

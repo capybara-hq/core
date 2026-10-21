@@ -206,6 +206,49 @@ describe("编辑 agent（FormPage）", () => {
     },
   );
 
+  it("不改动直接保存：工具引用保持原顺序、skills 合并（保留不认识的键）、带 expectedVersion", async () => {
+    const tools = [
+      { kind: "plugin", plugin: "todo", name: "write" },
+      { kind: "builtin", name: "read_tool_output" },
+      { kind: "builtin", name: "ask_user" },
+    ];
+    const def = agent().definition;
+    const calls = stubApi({
+      ...routes({ definition: { ...def, tools, skills: { orgSkills: ["s1"], future: 1 } } }),
+      [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
+    });
+    renderPage(<EditAgentPage />);
+    const group = await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
+    await within(group).findByRole("checkbox", { name: /pdf-tools/ });
+    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
+      definition: Record<string, unknown>;
+      expectedVersion?: number;
+    };
+    expect(body.definition.tools).toEqual(tools);
+    expect(body.definition.skills).toEqual({ orgSkills: ["s1"], future: 1 });
+    expect(body.expectedVersion).toBe(3);
+  });
+
+  it.each(["zh", "en"] as const)(
+    "别人已保存过新版本：409 agent.version_conflict 显示翻译后的文案（%s）",
+    async (locale) => {
+      stubApi({
+        ...routes(),
+        [`PATCH ${ORG}/agents/ag1`]: () =>
+          json(409, { error: { code: "agent.version_conflict", message: "changed" } }),
+      });
+      renderPage(<EditAgentPage />, { locale });
+      const m = msgs[locale];
+      const group = await screen.findByRole("group", { name: m.agents.form.orgSkillsLabel });
+      await within(group).findByRole("checkbox", { name: /pdf-tools/ });
+      await userEvent.setup().click(screen.getByRole("button", { name: m.agents.form.submit }));
+      expect(await screen.findByText(new RegExp(m.errors.agent.version_conflict))).toBeTruthy();
+      expect(router.push).not.toHaveBeenCalled();
+    },
+  );
+
   it("不是负责人：自己的技能没有删除按钮", async () => {
     stubApi(routes({ ownerAccountId: "someone-else" }));
     renderPage(<EditAgentPage />);

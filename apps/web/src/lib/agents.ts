@@ -38,7 +38,8 @@ export interface AgentDefinitionInput {
   /** 按工具 key 收紧策略。 */
   toolPolicies?: Record<string, TightenedPolicy>;
   /** 选用的组织技能（id）；不用技能时省略。 */
-  skills?: { orgSkills: string[] };
+  /** 技能设置；表单只管 `orgSkills`，其余键（新版本内核加的）保存时原样带回。 */
+  skills?: { orgSkills: string[]; [key: string]: unknown };
 }
 
 export interface Agent {
@@ -150,11 +151,18 @@ export const createAgent = (
 export const getAgent = (orgId: string, agentId: string) =>
   apiFetch<{ agent: Agent }>(`${base(orgId)}/agents/${encodeURIComponent(agentId)}`);
 
-/** 修改 agent：定义有变化时内核写新版本；`visibility` 只在改动时给。 */
+/**
+ * 修改 agent：定义有变化时内核写新版本；`visibility` 只在改动时给。`expectedVersion` 是编辑页打开时的
+ * `currentVersion`：别人已保存过新版本时内核返回 409 `agent.version_conflict`，不覆盖别人的改动。
+ */
 export const updateAgent = (
   orgId: string,
   agentId: string,
-  input: { definition?: AgentDefinitionInput; visibility?: AgentVisibility },
+  input: {
+    definition?: AgentDefinitionInput;
+    visibility?: AgentVisibility;
+    expectedVersion?: number;
+  },
 ) =>
   apiFetch<{ agent: Agent; warnings: AgentWarning[] }>(
     `${base(orgId)}/agents/${encodeURIComponent(agentId)}`,

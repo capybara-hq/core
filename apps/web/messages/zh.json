@@ -100,7 +100,8 @@
     },
     "agent": {
       "not_found": "Agent 不存在或你无权访问。",
-      "model_unavailable": "所选模型不可用。"
+      "model_unavailable": "所选模型不可用。",
+      "version_conflict": "你编辑期间有人保存了这个 agent。请刷新页面后重新修改。"
     },
     "conversation": {
       "not_found": "对话不存在或你无权访问。",
@@ -306,11 +307,14 @@
       "choose": "选择 .zip 文件",
       "chooseHint": "选择文件，或拖放到这里。",
       "drop": "松开即上传 .zip 文件",
-      "uploading": "正在上传 {name}…",
+      "uploading": "正在上传 {name}… {percent}%",
       "created": "已添加技能 {name}。",
       "versionCreated": "技能 {name} 已更新到版本 {version}。",
       "notZip": "请选择 .zip 文件。",
-      "tooLarge": "zip 文件超过 50 MB。"
+      "tooLarge": "zip 文件超过 50 MB。",
+      "cancel": "取消",
+      "cancelled": "已取消上传。",
+      "retry": "重试"
     },
     "detail": {
       "tabsLabel": "技能分区",

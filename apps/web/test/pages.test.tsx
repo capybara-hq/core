@@ -376,6 +376,25 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     },
   );
 
+  it("收件箱被截断（truncated）：Badge 显示「<数量>+」", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () => json(200, ME),
+      "GET /api/v1/orgs/o1/inbox": () =>
+        json(200, {
+          items: [
+            { type: "tool_approval", id: "x" },
+            { type: "skill_change", id: "y" },
+          ],
+          truncated: true,
+        }),
+    });
+    renderFrame("en");
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    const link = await within(nav).findByRole("link", { name: `${en.nav.inbox}, 2+ pending` });
+    expect(link.querySelector('.cb-badge[data-tone="count"]')?.textContent).toBe("2+");
+  });
+
   it("组织菜单切换当前组织；用户菜单含语言、主题与退出登录", async () => {
     const me = {
       ...ME,

@@ -251,13 +251,23 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const noModels = providers !== undefined && options.length === 0;
   const canSubmit = !pending && providers !== undefined && !noModels;
 
-  /** 保存的工具引用：表单里的内置工具与应用，加上修改时原样保留的其他引用。 */
+  /**
+   * 保存的工具引用：表单里的内置工具与应用，加上修改时原样保留的其他引用。修改时按原定义的顺序保留仍选着的
+   * 引用、新加的排在后面——没改动的保存与原定义完全相同，不产生新版本。
+   */
   function toolRefs(): AgentToolRef[] {
-    return [
+    const picked: AgentToolRef[] = [
       ...builtins.map((name) => ({ kind: "builtin" as const, name })),
       ...selectedApps.map((appId) => ({ kind: "app" as const, appId, tools: "all" as const })),
-      ...initial.extraTools,
     ];
+    if (!existing) return [...picked, ...initial.extraTools];
+    const keyOf = (r: AgentToolRef) => JSON.stringify(r);
+    const pickedKeys = new Set(picked.map(keyOf));
+    const kept = (existing.definition.tools ?? []).filter(
+      (r) => !isFormTool(r) || pickedKeys.has(keyOf(r)),
+    );
+    const keptKeys = new Set(kept.map(keyOf));
+    return [...kept, ...picked.filter((r) => !keptKeys.has(keyOf(r)))];
   }
 
   /** 保存的策略：表单里当前引用的工具；修改时，表单管不到的工具（如保留的插件工具）的原有策略也带回。 */
@@ -290,8 +300,9 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
       toolPolicies: toolPolicies(),
     };
     // 不用技能的定义不带 skills（保存前后不变、不多一个版本）；原来带了就照实保存（含清空）
+    // 合并而不是整个替换：skills 里表单不认识的键原样带回
     if (skillIds.length > 0 || existing?.definition.skills !== undefined) {
-      definition.skills = { orgSkills: skillIds };
+      definition.skills = { ...(existing?.definition.skills ?? {}), orgSkills: skillIds };
     }
     setPending(true);
     setError(undefined);
@@ -301,6 +312,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
       const res = existing
         ? await updateAgent(orgId, existing.id, {
             definition,
+            expectedVersion: existing.currentVersion,
             ...(visibility !== existing.visibility ? { visibility } : {}),
           })
         : await createAgent(orgId, { definition, visibility });

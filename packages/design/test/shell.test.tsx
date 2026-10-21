@@ -365,6 +365,25 @@ describe("TopBar 组织与账户按钮", () => {
     expect(await screen.findByRole("menuitem", { name: "收件箱 (99+)" })).toBeTruthy();
   });
 
+  it("countMore：计数显示为「<count>+」（列表被截断）", () => {
+    zh(
+      <AppShell
+        topBar={{
+          ...topBar,
+          nav: [
+            ...topBar.nav,
+            { id: "inbox", label: "收件箱", href: "/inbox", count: 5, countMore: true },
+          ],
+        }}
+        status={status}
+      >
+        <div />
+      </AppShell>,
+    );
+    const inbox = screen.getByRole("link", { name: "收件箱，5+ 项待处理" });
+    expect(inbox.querySelector('.cb-badge[data-tone="count"]')?.textContent).toBe("5+");
+  });
+
   it("用户菜单为空（会话加载中）时不渲染可点击的下拉", () => {
     zh(
       <AppShell topBar={{ ...topBar, user: { name: "加载中…", menu: [] } }} status={status}>

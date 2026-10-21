@@ -74,7 +74,11 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const toast = useToast();
   const [me, setMe] = useState<Me>();
   const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
-  const { nav, commands } = useNav(pending.count, me === undefined ? "guest" : navLevelOf(me));
+  const { nav, commands } = useNav(
+    pending.count,
+    me === undefined ? "guest" : navLevelOf(me),
+    pending.more,
+  );
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
   const [error, setError] = useState<string>();
   const [theme, setTheme] = useState<Theme>("dark");

@@ -4,9 +4,16 @@ import { type CommandGroup, Menu, type MenuItem } from "../overlays/index";
 import { useDesignLink, useDesignT } from "../provider";
 import { useMediaQuery } from "./use-media-query";
 
+/** 计数徽标的文字：超过 99 为 `99+`，被截断（`countMore`）时加 `+`。 */
+const countText = (n: { count?: number; countMore?: boolean }): string =>
+  (n.count ?? 0) > 99 ? "99+" : `${n.count ?? 0}${n.countMore ? "+" : ""}`;
+
 export type TopBarProps = {
-  /** `count`：待处理数等（>0 时在名称后以计数 Badge 显示，0 / 缺省不显示）。 */
-  nav: { id: string; label: string; href: string; count?: number }[];
+  /**
+   * `count`：待处理数等（>0 时在名称后以计数 Badge 显示，0 / 缺省不显示）；`countMore`：实际比 `count` 多
+   * （列表被截断），显示为 `<count>+`。
+   */
+  nav: { id: string; label: string; href: string; count?: number; countMore?: boolean }[];
   activeNav: string;
   org: { name: string; menu?: MenuItem[] } | null;
   /** 名称旁的 ▾ 由 TopBar 渲染；`menu` 为空时只显示名称、不可点击。 */
@@ -68,14 +75,14 @@ export function TopBar({
               ? {
                   "aria-label": t("shell.navCount")
                     .replace("{label}", n.label)
-                    .replace("{n}", String(n.count)),
+                    .replace("{n}", countText(n)),
                 }
               : {})}
           >
             {n.label}
             {n.count ? (
               <span className="cb-topbar-count">
-                <Badge tone="count">{n.count > 99 ? "99+" : n.count}</Badge>
+                <Badge tone="count">{countText(n)}</Badge>
               </span>
             ) : null}
           </Link>
@@ -83,7 +90,7 @@ export function TopBar({
         {overflow.length > 0 ? (
           <Menu
             items={overflow.map((n) => ({
-              label: n.count ? `${n.label} (${n.count > 99 ? "99+" : n.count})` : n.label,
+              label: n.count ? `${n.label} (${countText(n)})` : n.label,
               href: n.href,
             }))}
             trigger={

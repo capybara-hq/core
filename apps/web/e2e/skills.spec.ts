@@ -6,6 +6,20 @@ const zh = JSON.parse(
   readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
 ) as typeof import("../messages/zh.json");
 
+/**
+ * design 包里的 zh 文案（`packages/design/src/i18n.ts`，如 ActionRow 区域名 `shell.pending`）：按键从源码读出，
+ * 不在用例里重复硬编码。
+ */
+const designZh = (key: string): string => {
+  const src = readFileSync(
+    new URL("../../../packages/design/src/i18n.ts", import.meta.url),
+    "utf8",
+  );
+  const m = new RegExp(`"${key.replace(/\./g, "\\.")}":\\s*"([^"]*)"`).exec(src);
+  if (!m?.[1]) throw new Error(`design message ${key} not found`);
+  return m[1];
+};
+
 const LOGIN = "admin";
 const PASSWORD = "correct-horse-battery";
 /** 内核要求非安全方法带的 CSRF 头。 */
@@ -219,7 +233,7 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
   await expect(
     card.getByRole("region", { name: fill(zh.inbox.skillChange.diffLabel, { path: "SKILL.md" }) }),
   ).toContainText("+ Say capybara.");
-  const row = page.getByRole("region", { name: "待提交改动" });
+  const row = page.getByRole("region", { name: designZh("shell.pending") });
   await row.getByRole("button", { name: zh.inbox.skillChange.approve }).click();
   await expect(page.getByText(zh.inbox.skillChange.approved)).toBeVisible();
   await expect(list.getByText(`${zh.inbox.skillChange.label} · team-glossary`)).toHaveCount(0);

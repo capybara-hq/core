@@ -6,6 +6,20 @@ const zh = JSON.parse(
   readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
 ) as typeof import("../messages/zh.json");
 
+/**
+ * design 包里的 zh 文案（`packages/design/src/i18n.ts`，如 ActionRow 区域名 `shell.pending`）：按键从源码读出，
+ * 不在用例里重复硬编码。
+ */
+const designZh = (key: string): string => {
+  const src = readFileSync(
+    new URL("../../../packages/design/src/i18n.ts", import.meta.url),
+    "utf8",
+  );
+  const m = new RegExp(`"${key.replace(/\./g, "\\.")}":\\s*"([^"]*)"`).exec(src);
+  if (!m?.[1]) throw new Error(`design message ${key} not found`);
+  return m[1];
+};
+
 const LOGIN = "admin";
 const PASSWORD = "correct-horse-battery";
 /** DataTable 行菜单的触发按钮名称（设计系统文案 table.rowActions，zh）。 */
@@ -37,7 +51,7 @@ async function signIn(page: Page) {
 }
 
 /** 安装向导的 ActionRow（主操作 / 上一步都在这里）。 */
-const actionRow = (page: Page) => page.getByRole("region", { name: "待提交改动" });
+const actionRow = (page: Page) => page.getByRole("region", { name: designZh("shell.pending") });
 
 /** 用安装向导装一个无需认证的 MCP 应用，完成后打开应用详情。 */
 async function installMcp(page: Page, name: string, slug: string, url: string) {
