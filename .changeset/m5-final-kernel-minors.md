@@ -8,4 +8,5 @@ M5 收尾的小修：
 - `model_call.request.media` 的 outcome 新增 `too_many_images`（单次请求图片超过 20 张）与 `too_large`（单个超过
   供应商上限），`omitted` 只表示因请求媒体预算省略。
 - 只在最新的技能目录快照不为空时给模型 `skill_load`（技能被全部删除或取消选择后不再提供）。
+- `PATCH /agents/:id` 可带 `expectedVersion`（乐观并发）：与当前版本不同 → 409 `agent.version_conflict`。
 - 删除 agent 后投递一次性任务 `sandbox-destroy-for` 销毁它各对话的沙箱（与成员离职同一路径，锁内、幂等）。

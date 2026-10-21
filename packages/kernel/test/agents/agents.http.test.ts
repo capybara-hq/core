@@ -183,6 +183,38 @@ describe("Agent HTTP", () => {
     expect(errCode(gone)).toBe("agent.not_found");
   });
 
+  it("PATCH expectedVersion：与当前版本一致才保存；过期 → 409 agent.version_conflict，不产生新版本", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const create = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: { definition, visibility: "org" },
+    });
+    const id = (create.json() as { agent: AgentJson }).agent.id;
+    const url = `/api/v1/orgs/${orgId}/agents/${id}`;
+    const ok = await req({
+      method: "PATCH",
+      url,
+      payload: { definition: { ...definition, instructions: "A." }, expectedVersion: 1 },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json()).toMatchObject({ agent: { currentVersion: 2 } });
+    // 另一个编辑页仍以版本 1 为基础
+    const stale = await req({
+      method: "PATCH",
+      url,
+      payload: { definition: { ...definition, instructions: "B." }, expectedVersion: 1 },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(errCode(stale)).toBe("agent.version_conflict");
+    const one = await req({ method: "GET", url });
+    expect(one.json()).toMatchObject({ agent: { currentVersion: 2 } });
+    // 不带 expectedVersion 的旧客户端不检查
+    const legacy = await req({ method: "PATCH", url, payload: { visibility: "private" } });
+    expect(legacy.statusCode).toBe(200);
+  });
+
   it("不存在的模型 → 400 agent.model_unavailable；非法定义 → 400 validation_failed", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);

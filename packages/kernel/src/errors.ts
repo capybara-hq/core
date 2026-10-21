@@ -47,6 +47,7 @@ export const ERROR_CODES = {
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
   "agent.not_found": 404,
+  "agent.version_conflict": 409,
   "agent.model_unavailable": 400,
   "conversation.not_found": 404,
   "conversation.output_not_found": 404,

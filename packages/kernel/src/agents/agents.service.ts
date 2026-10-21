@@ -363,6 +363,8 @@ export class AgentsService {
       definition?: AgentDefinition | undefined;
       visibility?: AgentVisibility | undefined;
       memberIds?: string[] | undefined;
+      /** 给出且不等于当前版本 → `agent.version_conflict`（409），在锁内判定。 */
+      expectedVersion?: number | undefined;
     },
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
@@ -370,6 +372,12 @@ export class AgentsService {
     if (patch.definition) await this.checkTools(orgId, patch.definition);
     const agent = await this.db.transaction().execute(async (t) => {
       const before = await this.lockForWrite(t, orgId, agentId, actorAccountId);
+      if (patch.expectedVersion !== undefined && patch.expectedVersion !== before.current_version) {
+        throw new ApiError(
+          "agent.version_conflict",
+          `The agent was changed by someone else (now version ${before.current_version}, expected ${patch.expectedVersion}); reload it and apply your changes again`,
+        );
+      }
       const visibility = patch.visibility ?? before.visibility;
       if (visibility !== "members" && (patch.memberIds?.length ?? 0) > 0) {
         throw new ApiError("validation_failed", "memberIds requires visibility 'members'");

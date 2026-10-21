@@ -48,6 +48,11 @@ const UpdateBody = z
     definition: AgentDefinitionSchema.optional(),
     visibility: z.enum(AGENT_VISIBILITIES).optional(),
     memberIds: MemberIds.optional(),
+    /**
+     * 乐观并发：编辑页打开时读到的 `currentVersion`。给出且与当前版本不同（别人已保存过）→ 409
+     * `agent.version_conflict`，不覆盖别人的改动。不给时不检查（旧客户端）。
+     */
+    expectedVersion: z.number().int().positive().optional(),
   })
   .strict();
 
