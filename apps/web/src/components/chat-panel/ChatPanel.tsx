@@ -3,10 +3,12 @@
 import { Button, Stack, type TabItem, Tabs, Text } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { artifactsOf } from "../../lib/artifacts";
 import type { ChatItem } from "../../lib/stream";
 import { listUiContributions, type UiContributionItem, uiKey, uiLocale } from "../../lib/ui";
 import { useLoad } from "../../lib/use-load";
 import type { ChatView } from "../ChatView";
+import { ArtifactsTab } from "./ArtifactsTab";
 import { ContextTab } from "./ContextTab";
 import { EmbedTab } from "./EmbedTab";
 import { PluginViewTab, usePluginViews, useUiAction } from "./PluginViewTab";
@@ -38,7 +40,8 @@ type ToolItem = Extract<ChatItem, { kind: "tool" }>;
 
 /**
  * 对话页右侧面板（PlaygroundPage 的 Inspector）：顶部是运行状态与「停止」（`header`），下面一组标签：
- * 插件对话视图与嵌入应用（按贡献顺序；视图带插件给的 badge）、产物（还没有来源，隐藏）、运行（工具调用；有待批准的操作时带提醒）、
+ * 插件对话视图与嵌入应用（按贡献顺序；视图带插件给的 badge）、产物（agent 交付的文件，有产物时才显示，带数量）、
+ * 运行（工具调用；有待批准的操作时带提醒）、
  * 上下文。插件标签各自取数、各自失败：一个插件慢了或挂了只影响它自己的标签，对话流照常。
  * 嵌入应用（`kind: "embed"`）在沙箱 iframe 里打开插件自己的页面（`EmbedTab`），只在选中时挂载。
  */
@@ -78,6 +81,8 @@ export function ChatPanel({
     () => chat.items.filter((i): i is ToolItem => i.kind === "tool"),
     [chat.items],
   );
+  // 产物从日志重建：SSE 收到 artifact_created 时随 chat.events 实时更新
+  const artifacts = useMemo(() => artifactsOf(chat.events), [chat.events]);
   const pendingApproval = chat.items.some((i) => i.kind === "approval" && i.decided === null);
 
   const items: TabItem[] = [
@@ -87,7 +92,9 @@ export function ChatPanel({
       const badge = state?.kind === "ready" ? state.view.badge : undefined;
       return { id: viewTab(c), label: c.title[locale], ...(badge !== undefined && { badge }) };
     }),
-    // 产物：还没有产物插件（没有来源），标签隐藏
+    ...(artifacts.length > 0
+      ? [{ id: "artifacts", label: t("artifacts"), count: artifacts.length } satisfies TabItem]
+      : []),
     {
       id: "run",
       label: t("run"),
@@ -114,7 +121,9 @@ export function ChatPanel({
 
   let content: ReactNode = null;
   if (current === "run") content = <RunTab tools={tools} outputs={outputs} />;
-  else if (current === "context") {
+  else if (current === "artifacts") {
+    content = <ArtifactsTab orgId={orgId} conversationId={conversationId} artifacts={artifacts} />;
+  } else if (current === "context") {
     content = (
       <ContextTab
         orgId={orgId}

@@ -187,6 +187,24 @@ export class SandboxService {
   }
 
   /**
+   * 该对话沙箱的对外状态（只读，不拿锁）：`running` / `suspended` 与最近使用时间。
+   * 还没有、已销毁、或停在 `creating`（正在创建，或创建失败等下次使用重建）的都返回 null（界面显示「未创建」）。
+   */
+  async status(
+    orgId: string,
+    conversationId: string,
+  ): Promise<{ status: "running" | "suspended"; lastUsedAt: Date } | null> {
+    const row = await this.d.db
+      .selectFrom("sandboxes")
+      .select(["status", "last_used_at"])
+      .where("conversation_id", "=", conversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!row || (row.status !== "running" && row.status !== "suspended")) return null;
+    return { status: row.status, lastUsedAt: row.last_used_at };
+  }
+
+  /**
    * 在该对话的沙箱上执行 `fn`：拿锁 → 确保沙箱在运行（创建 / 恢复 / 重建）→ `fn` → 更新 `last_used_at` → 放锁。
    * - 等锁超过 `sandbox.lockWaitSeconds` 抛 `sandbox.busy`（409）；`signal` 中止等锁与创建 / 恢复。
    * - `fn` 的第四个参数是 `signal` 与「锁已丢失」的合并：执行命令时用它，锁丢失就中止。

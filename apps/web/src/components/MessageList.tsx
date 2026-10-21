@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  AttachmentPreview,
   Badge,
   Card,
   Stack,
@@ -13,14 +12,14 @@ import {
   type TimelineMark,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useRef, useState } from "react";
-import { ensureSession } from "../lib/api";
+import type { ReactNode } from "react";
 import { attachmentDownloadUrl, attachmentTypeLabel } from "../lib/attachments";
 import type { ModelRef } from "../lib/conversations";
 import type { ChatItem, MessageFile } from "../lib/stream";
 import { ApprovalCard } from "./ApprovalCard";
 import { ConnectCard } from "./ConnectCard";
 import { QuestionCard } from "./QuestionCard";
+import { SessionFilePreview } from "./SessionFilePreview";
 import { ToolCallCard } from "./ToolCallCard";
 
 type UserItem = Extract<ChatItem, { kind: "user" }>;
@@ -53,47 +52,14 @@ const TOOL_MARK: Record<ToolItem["status"], TimelineMark> = {
   cancelled: "hollow",
 };
 
-/**
- * 消息里的一个上传文件。下载地址是同源 `/api/...`（302 到预签名地址），浏览器直接加载，走不到 apiFetch 的
- * 自动刷新：图片加载失败时先确认登录（过期则刷新一次）再带缓存参数重试一次；点开文件时先同步开新标签页
- * （保住用户手势、断开 opener），确认登录后再导航过去。
- */
+/** 消息里的一个上传文件（同源下载地址；登录过期时的重试见 SessionFilePreview）。 */
 function MessageFilePreview({ orgId, file }: { orgId: string; file: MessageFile }) {
-  const [retry, setRetry] = useState(0);
-  const retried = useRef(false);
-  const href = attachmentDownloadUrl(orgId, file.attachmentId);
-  const onImageError = () => {
-    if (retried.current) return;
-    retried.current = true;
-    ensureSession().then(
-      () => setRetry(1),
-      () => {
-        // 登录确实失效：不再重试，显示加载失败的图片
-      },
-    );
-  };
-  const onOpen = (url: string) => {
-    const target = new URL(url, window.location.href).href;
-    const tab = window.open("", "_blank");
-    if (!tab) {
-      window.open(target, "_blank", "noopener,noreferrer");
-      return;
-    }
-    tab.opener = null;
-    const go = () => {
-      tab.location.href = target;
-    };
-    ensureSession().then(go, go);
-  };
   return (
-    <AttachmentPreview
+    <SessionFilePreview
       kind={file.kind === "image" ? "image" : "file"}
       name={file.name}
-      href={href}
+      href={attachmentDownloadUrl(orgId, file.attachmentId)}
       meta={attachmentTypeLabel(file.mediaType)}
-      retry={retry}
-      onImageError={onImageError}
-      onOpen={onOpen}
     />
   );
 }

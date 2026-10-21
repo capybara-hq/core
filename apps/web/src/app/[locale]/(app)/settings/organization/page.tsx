@@ -28,7 +28,8 @@ import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
 /**
- * `/[locale]/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）。成员可看，管理员可改；
+ * `/[locale]/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）、
+ * 沙箱工具的默认策略（直接执行 / 需要审批）。成员可看，管理员可改；
  * 有改动时出现 ActionRow。
  */
 export default function OrganizationSettingsPage() {
@@ -50,6 +51,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const saved = state.kind === "ready" ? state.data : undefined;
   const toolSearch = draft.toolSearch ?? saved?.toolSearch ?? "on";
   const locale = draft.locale ?? saved?.locale ?? "en";
+  const sandboxPolicy = draft.sandboxToolPolicy ?? saved?.sandboxToolPolicy ?? "allow";
   // 只提交改过的项
   const patch: Partial<OrgSettings> =
     saved === undefined
@@ -57,6 +59,9 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
       : {
           ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
           ...(locale !== (saved.locale ?? "en") ? { locale } : {}),
+          ...(sandboxPolicy !== (saved.sandboxToolPolicy ?? "allow")
+            ? { sandboxToolPolicy: sandboxPolicy }
+            : {}),
         };
   const unsaved = Object.keys(patch).length;
   const dirty = unsaved > 0;
@@ -138,6 +143,31 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
               }))}
             />
           </Field>
+        </FormSection>
+      )}
+      {saved !== undefined && (
+        <FormSection
+          id="sandbox-tools"
+          title={t("sandbox.title")}
+          description={t("sandbox.description")}
+        >
+          <RadioGroup
+            label={t("sandbox.title")}
+            variant="card"
+            value={sandboxPolicy}
+            disabled={!manage}
+            onChange={(v) =>
+              setDraft((d) => ({
+                ...d,
+                sandboxToolPolicy: v as NonNullable<OrgSettings["sandboxToolPolicy"]>,
+              }))
+            }
+            options={(["allow", "ask"] as const).map((v) => ({
+              value: v,
+              label: t(`sandbox.${v}`),
+              description: t(`sandbox.${v}Hint`),
+            }))}
+          />
         </FormSection>
       )}
     </SettingsPage>

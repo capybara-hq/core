@@ -1,12 +1,32 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Res } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  HttpCode,
+  Inject,
+  Param,
+  Post,
+  Query,
+  Res,
+} from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
-import { CONVERSATION_ARTIFACTS, CONVERSATION_OUTPUTS, CONVERSATIONS } from "../http/tokens.js";
+import {
+  CONVERSATION_ARTIFACTS,
+  CONVERSATION_OUTPUTS,
+  CONVERSATION_SANDBOX,
+  CONVERSATIONS,
+} from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { MAX_ATTACHMENTS } from "../tools/app-content.js";
-import { ARTIFACT_DOWNLOAD_CACHE_SECONDS, type ConversationArtifacts } from "./artifacts.js";
+import {
+  ARTIFACT_DOWNLOAD_CACHE_SECONDS,
+  type ArtifactPreview,
+  type ConversationArtifacts,
+} from "./artifacts.js";
 import type { ConversationsService, ConversationView } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
 import {
@@ -14,6 +34,7 @@ import {
   OUTPUT_PAGE_MAX_CHARS,
   type OutputPage,
 } from "./outputs-read.js";
+import type { ConversationSandboxStatus, SandboxStatusView } from "./sandbox-status.js";
 
 const CreateBody = z.object({ agentId: z.string().min(1).max(100) }).strict();
 
@@ -31,6 +52,9 @@ const OutputQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(OUTPUT_PAGE_MAX_CHARS).default(OUTPUT_PAGE_MAX_CHARS),
 });
+
+/** `inline=1`：要求以 inline 打开（只对位图生效，见 ConversationArtifacts）。 */
+const DownloadQuery = z.object({ inline: z.enum(["0", "1"]).optional() });
 
 const MessageBody = z
   .object({
@@ -65,6 +89,7 @@ export class ConversationsController {
     @Inject(CONVERSATIONS) private readonly conversations: ConversationsService,
     @Inject(CONVERSATION_OUTPUTS) private readonly outputs: ConversationOutputs,
     @Inject(CONVERSATION_ARTIFACTS) private readonly artifacts: ConversationArtifacts,
+    @Inject(CONVERSATION_SANDBOX) private readonly sandboxStatus: ConversationSandboxStatus,
   ) {}
 
   @Post()
@@ -150,13 +175,49 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @Param("artifactId") artifactId: string,
+    @Query(new ZodPipe(DownloadQuery)) q: z.infer<typeof DownloadQuery>,
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const p = requireUser(principal);
-    const { url } = await this.artifacts.downloadUrl(org.orgId, id, p.account.id, artifactId);
+    const { url } = await this.artifacts.downloadUrl(org.orgId, id, p.account.id, artifactId, {
+      inline: q.inline === "1",
+    });
     await reply
       .header("cache-control", `private, max-age=${ARTIFACT_DOWNLOAD_CACHE_SECONDS}`)
       .redirect(url, 302);
+  }
+
+  /**
+   * 文本产物的开头若干行（`{ preview: { text, truncated } }`，网页按纯文本显示）。
+   * 不是文本类 → `conversation.artifact_not_previewable`；可见性与下载相同。
+   */
+  @Get(":id/artifacts/:artifactId/preview")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async previewArtifact(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("artifactId") artifactId: string,
+  ): Promise<{ preview: ArtifactPreview }> {
+    const p = requireUser(principal);
+    return { preview: await this.artifacts.preview(org.orgId, id, p.account.id, artifactId) };
+  }
+
+  /**
+   * 对话沙箱的状态 `{ status: "running" | "suspended", lastUsedAt }`；
+   * 没有可用的沙箱（未创建、已销毁）→ 404 `sandbox.not_found`。可见性与会话流相同。
+   */
+  @Get(":id/sandbox")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async sandbox(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<SandboxStatusView> {
+    const p = requireUser(principal);
+    return this.sandboxStatus.get(org.orgId, id, p.account.id);
   }
 
   @Post(":id/messages")

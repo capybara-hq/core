@@ -731,6 +731,7 @@ export async function createKernel(
         runs: runControl,
         attachments,
         storage,
+        sandbox,
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),

@@ -61,6 +61,45 @@ describe("组织设置（SettingsPage）", () => {
     },
   );
 
+  it.each(LOCALES)(
+    "管理员：沙箱工具改为「需要审批」→ 保存 PATCH sandboxToolPolicy（%s）",
+    async (locale) => {
+      const o = msgs[locale].orgSettings;
+      const calls = stubApi({
+        [`GET ${SETTINGS}`]: () =>
+          json(200, { settings: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow" } }),
+        [`PATCH ${SETTINGS}`]: (c) =>
+          json(200, {
+            settings: { toolSearch: "on", locale: "en", ...(bodyOf(c) as object) },
+          }),
+      });
+      renderPage(<OrganizationSettingsPage />, { locale });
+      const allow = await screen.findByRole("radio", { name: new RegExp(`^${o.sandbox.allow}`) });
+      expect(allow).toHaveProperty("checked", true);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("radio", { name: new RegExp(`^${o.sandbox.ask}`) }));
+      const row = actionRow(locale);
+      expect(row).not.toBeNull();
+      await user.click(within(row as HTMLElement).getByRole("button", { name: o.save }));
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ sandboxToolPolicy: "ask" });
+      await vi.waitFor(() => expect(actionRow(locale)).toBeNull());
+      expect(screen.getByRole("radio", { name: new RegExp(`^${o.sandbox.ask}`) })).toHaveProperty(
+        "checked",
+        true,
+      );
+    },
+  );
+
+  it("沙箱工具策略缺省（旧内核没有这个字段）按 allow 显示", async () => {
+    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    renderPage(<OrganizationSettingsPage />);
+    const allow = await screen.findByRole("radio", {
+      name: new RegExp(`^${en.orgSettings.sandbox.allow}`),
+    });
+    expect(allow).toHaveProperty("checked", true);
+    expect(actionRow("en")).toBeNull();
+  });
+
   it("普通成员：只读（单选不可用、说明只有管理员能改），没有 ActionRow", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "off" } }) });
     renderPage(<OrganizationSettingsPage />, { me: MEMBER });

@@ -446,6 +446,7 @@ describe("对话页右侧标签面板", () => {
         }),
       [`GET ${ORG}/apps`]: () =>
         json(200, { apps: [{ id: "app1", slug: "fixture", name: "Fixture", status: "active" }] }),
+      [`GET ${BASE}/sandbox`]: () => json(404, { error: { code: "sandbox.not_found" } }),
       [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
     });
     renderPage(<ChatPage />, { locale: "en" });

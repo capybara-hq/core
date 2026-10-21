@@ -50,6 +50,7 @@ export const ERROR_CODES = {
   "conversation.not_found": 404,
   "conversation.output_not_found": 404,
   "conversation.artifact_not_found": 404,
+  "conversation.artifact_not_previewable": 400,
   "run.not_active": 409,
   "app.not_found": 404,
   "app.slug_taken": 409,
@@ -82,6 +83,7 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
+  "sandbox.not_found": 404,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

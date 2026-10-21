@@ -70,6 +70,9 @@ export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
 /** `ConversationArtifacts`（产物下载）的注入令牌。 */
 export const CONVERSATION_ARTIFACTS = Symbol("CONVERSATION_ARTIFACTS");
 
+/** `ConversationSandboxStatus`（对话沙箱状态）的注入令牌。 */
+export const CONVERSATION_SANDBOX = Symbol("CONVERSATION_SANDBOX");
+
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
 

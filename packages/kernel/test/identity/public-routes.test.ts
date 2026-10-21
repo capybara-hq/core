@@ -123,6 +123,7 @@ beforeAll(async () => {
           channels: k.channels.connections,
           attachments: k.attachments,
           storage: k.storage,
+          sandbox: k.sandbox,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

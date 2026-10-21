@@ -10,6 +10,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { ARTIFACT_PREVIEW_MAX_LINES } from "../../../src/conversations/artifacts.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
@@ -362,6 +363,123 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect((unknown.json() as { error: { code: string } }).error.code).toBe(
       "conversation.artifact_not_found",
     );
+  });
+
+  it("download ?inline=1 opens only raster images inline; preview returns text first lines", async () => {
+    const conv = await sandboxConversation();
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await call(
+      conv,
+      "sandbox_bash",
+      { command: `printf '%s' '${png.toString("base64")}' | base64 -d > /workspace/dot.png` },
+      1,
+    );
+    await call(conv, "sandbox_write", { path: "/workspace/notes.txt", content: "l1\nl2\n" }, 2);
+    await call(
+      conv,
+      "sandbox_write",
+      { path: "/workspace/page.svg", content: "<svg xmlns='http://www.w3.org/2000/svg'/>" },
+      3,
+    );
+    await call(conv, "sandbox_deliver", { path: "/workspace/dot.png" }, 4);
+    await call(conv, "sandbox_deliver", { path: "/workspace/notes.txt" }, 5);
+    await call(conv, "sandbox_deliver", { path: "/workspace/page.svg" }, 6);
+    const arts = (await eventsOf(db, conv))
+      .filter(
+        (e): e is Extract<ConversationEvent, { type: "artifact_created" }> =>
+          e.type === "artifact_created",
+      )
+      .map((e) => e.payload);
+    const idOf = (n: string) => arts.find((a) => a.name === n)?.artifactId as string;
+    const base = `/api/v1/orgs/${orgId}/conversations/${conv}/artifacts`;
+
+    const img = await owner({ method: "GET", url: `${base}/${idOf("dot.png")}/download?inline=1` });
+    expect(img.statusCode).toBe(302);
+    expect(decodeURIComponent(String(img.headers.location))).toContain("inline");
+    // 图片的预签名地址浏览器能直接加载（<img src>，不需要 CORS）
+    const fetched = await fetch(String(img.headers.location));
+    expect(fetched.status).toBe(200);
+    expect(fetched.headers.get("content-type")).toBe("image/png");
+    // 非位图（SVG 能执行脚本）、文本：?inline=1 不生效，仍是 attachment
+    for (const n of ["page.svg", "notes.txt"]) {
+      const r = await owner({ method: "GET", url: `${base}/${idOf(n)}/download?inline=1` });
+      expect(r.statusCode).toBe(302);
+      const loc = decodeURIComponent(String(r.headers.location));
+      expect(loc).toContain("attachment");
+      expect(loc).not.toContain("inline");
+    }
+
+    const text = await owner({ method: "GET", url: `${base}/${idOf("notes.txt")}/preview` });
+    expect(text.statusCode, text.body).toBe(200);
+    expect(text.headers["cache-control"]).toContain("no-store");
+    expect(text.json()).toEqual({ preview: { text: "l1\nl2\n", truncated: false } });
+    // 不是文本类（图片、SVG）：不给预览
+    for (const n of ["dot.png", "page.svg"]) {
+      const r = await owner({ method: "GET", url: `${base}/${idOf(n)}/preview` });
+      expect(r.statusCode).toBe(400);
+      expect((r.json() as { error: { code: string } }).error.code).toBe(
+        "conversation.artifact_not_previewable",
+      );
+    }
+    // 看不到会话的人：404
+    const denied = await other({ method: "GET", url: `${base}/${idOf("notes.txt")}/preview` });
+    expect(denied.statusCode).toBe(404);
+  });
+
+  it("preview of a long text file is cut at a line boundary and marked truncated", async () => {
+    const conv = await sandboxConversation();
+    await call(
+      conv,
+      "sandbox_bash",
+      // 972 字节（低于本测试的 deliverMaxBytes 1024），120 行：超过预览的行数上限
+      { command: "seq 1 120 | sed 's/^/line /' > /workspace/long.log" },
+      1,
+    );
+    await call(conv, "sandbox_deliver", { path: "/workspace/long.log" }, 2);
+    const a = (await eventsOf(db, conv)).find((e) => e.type === "artifact_created") as Extract<
+      ConversationEvent,
+      { type: "artifact_created" }
+    >;
+    const r = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/artifacts/${a.payload.artifactId}/preview`,
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    const p = (r.json() as { preview: { text: string; truncated: boolean } }).preview;
+    expect(p.truncated).toBe(true);
+    const lines = p.text.split("\n");
+    expect(lines[0]).toBe("line 1");
+    expect(lines.length).toBeLessThanOrEqual(ARTIFACT_PREVIEW_MAX_LINES);
+    for (const l of lines) expect(l).toMatch(/^line \d+$/);
+  });
+
+  it("GET .../sandbox: 404 before first use, running after, suspended after the idle sweep", async () => {
+    const conv = await sandboxConversation();
+    const url = `/api/v1/orgs/${orgId}/conversations/${conv}/sandbox`;
+    const none = await owner({ method: "GET", url });
+    expect(none.statusCode).toBe(404);
+    expect((none.json() as { error: { code: string } }).error.code).toBe("sandbox.not_found");
+    await call(conv, "sandbox_bash", { command: "true" }, 1);
+    const running = await owner({ method: "GET", url });
+    expect(running.statusCode, running.body).toBe(200);
+    const s = running.json() as { status: string; lastUsedAt: string };
+    expect(s.status).toBe("running");
+    expect(Number.isNaN(Date.parse(s.lastUsedAt))).toBe(false);
+    // 看不到会话的人：与会话流相同，404 conversation.not_found
+    const denied = await other({ method: "GET", url });
+    expect(denied.statusCode).toBe(404);
+    expect((denied.json() as { error: { code: string } }).error.code).toBe(
+      "conversation.not_found",
+    );
+    expect(await k.sandbox.suspendIdle(new Date(Date.now() + 24 * 3600_000))).toBeGreaterThan(0);
+    const suspended = await owner({ method: "GET", url });
+    expect((suspended.json() as { status: string }).status).toBe("suspended");
+    // 已销毁的：与未创建一样（文件已不在），404
+    await k.sandbox.destroyFor(conv);
+    expect((await owner({ method: "GET", url })).statusCode).toBe(404);
   });
 
   it("deliver refuses files over sandbox.deliverMaxBytes", async () => {

@@ -103,7 +103,9 @@
     },
     "conversation": {
       "not_found": "对话不存在或你无权访问。",
-      "output_not_found": "完整输出已过期或不存在。"
+      "output_not_found": "完整输出已过期或不存在。",
+      "artifact_not_found": "文件不存在或已被删除。",
+      "artifact_not_previewable": "这种类型的文件不能预览。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。"
@@ -170,6 +172,11 @@
     },
     "storage": {
       "unavailable": "文件存储暂不可用，请稍后重试或联系管理员。"
+    },
+    "sandbox": {
+      "not_found": "本对话还没有沙箱。",
+      "unavailable": "当前部署没有可用的沙箱。",
+      "busy": "沙箱正忙，请稍后再试。"
     }
   },
   "agents": {
@@ -315,7 +322,20 @@
     "compactions": "压缩记录",
     "compactionCovers": "压缩到第 {seq} 条事件",
     "loadingOutput": "正在读取全部输出…",
-    "contributionsFailed": "插件面板加载失败，插件标签暂不可用。"
+    "contributionsFailed": "插件面板加载失败，插件标签暂不可用。",
+    "artifacts": "产物",
+    "artifactType": "类型",
+    "artifactSize": "大小",
+    "artifactCreated": "时间",
+    "download": "下载",
+    "previewTruncated": "只显示开头部分，完整内容请下载。",
+    "previewFailed": "预览加载失败。",
+    "sandbox": "沙箱",
+    "sandboxNone": "未创建",
+    "sandboxRunning": "运行中",
+    "sandboxSuspended": "已休眠",
+    "sandboxLastUsed": "最近使用",
+    "sandboxFailed": "状态读取失败"
   },
   "pluginPage": {
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
@@ -753,6 +773,14 @@
       "title": "IM 语言",
       "description": "机器人在 IM 中发送的固定话术（绑定提示、错误提示）所用的语言；模型回复不翻译。",
       "label": "IM 语言"
+    },
+    "sandbox": {
+      "title": "沙箱工具",
+      "description": "agent 使用沙箱（执行命令、写文件、交付文件）时的默认策略；只读的 sandbox_read / sandbox_glob / sandbox_grep 始终直接执行。",
+      "allow": "直接执行",
+      "allowHint": "沙箱工具无需审批（默认）。",
+      "ask": "需要审批",
+      "askHint": "除只读工具外，每次调用都要用户批准。"
     }
   },
   "schemaForm": {

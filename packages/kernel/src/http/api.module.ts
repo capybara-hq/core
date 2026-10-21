@@ -18,6 +18,7 @@ import { ConversationsController } from "../conversations/conversations.controll
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
 import { ConversationOutputs } from "../conversations/outputs-read.js";
+import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -49,6 +50,7 @@ import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
+import type { SandboxService } from "../sandbox/sandbox.service.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { AppContentController } from "../tools/app-content.controller.js";
 import type { AppContent } from "../tools/app-content.js";
@@ -82,6 +84,7 @@ import {
   CHANNEL_CONNECTIONS,
   CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
+  CONVERSATION_SANDBOX,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
@@ -155,6 +158,8 @@ export interface ApiDeps {
   attachments: AttachmentsService;
   /** 对象存储（与 `Kernel.storage` 同一实例；产物下载用）。 */
   storage: StorageService;
+  /** 按对话的沙箱（与 `Kernel.sandbox` 同一实例；上下文标签读状态）。 */
+  sandbox: SandboxService;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -309,6 +314,15 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
       inject: [KERNEL_DB, CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_SANDBOX,
+      useFactory: (conversations: ConversationsService) =>
+        new ConversationSandboxStatus({
+          sandbox: deps.sandbox,
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+        }),
+      inject: [CONVERSATIONS],
     },
     {
       provide: CONVERSATION_STREAMS,

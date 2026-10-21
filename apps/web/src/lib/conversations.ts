@@ -146,6 +146,18 @@ type EventBody =
         outcome: "answered" | "expired" | "cancelled";
       };
     }
+  | {
+      /** agent 经 `sandbox_deliver` 交付的文件（产物）：字节在对象存储，经 artifacts 下载接口取。 */
+      type: "artifact_created";
+      payload: {
+        artifactId: string;
+        name: string;
+        contentType: string;
+        size: number;
+        sourcePath: string;
+        callId: string;
+      };
+    }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
   | {
