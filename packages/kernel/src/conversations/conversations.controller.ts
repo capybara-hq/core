@@ -1,10 +1,12 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Res } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { z } from "zod";
-import { CONVERSATION_OUTPUTS, CONVERSATIONS } from "../http/tokens.js";
+import { CONVERSATION_ARTIFACTS, CONVERSATION_OUTPUTS, CONVERSATIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { MAX_ATTACHMENTS } from "../tools/app-content.js";
+import { ARTIFACT_DOWNLOAD_CACHE_SECONDS, type ConversationArtifacts } from "./artifacts.js";
 import type { ConversationsService, ConversationView } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
 import {
@@ -62,6 +64,7 @@ export class ConversationsController {
   constructor(
     @Inject(CONVERSATIONS) private readonly conversations: ConversationsService,
     @Inject(CONVERSATION_OUTPUTS) private readonly outputs: ConversationOutputs,
+    @Inject(CONVERSATION_ARTIFACTS) private readonly artifacts: ConversationArtifacts,
   ) {}
 
   @Post()
@@ -134,6 +137,26 @@ export class ConversationsController {
   ): Promise<{ output: OutputPage }> {
     const p = requireUser(principal);
     return { output: await this.outputs.read(org.orgId, id, p.account.id, outputId, q) };
+  }
+
+  /**
+   * 下载 agent 交付的产物（`artifact_created`）：302 到预签名地址（一律 `attachment`，带文件名）。
+   * 会话可见性与会话流相同，不可见 → `conversation.not_found`；不是该会话的产物 → `conversation.artifact_not_found`。
+   */
+  @Get(":id/artifacts/:artifactId/download")
+  @OrgAction("agents.use")
+  async downloadArtifact(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("artifactId") artifactId: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    const { url } = await this.artifacts.downloadUrl(org.orgId, id, p.account.id, artifactId);
+    await reply
+      .header("cache-control", `private, max-age=${ARTIFACT_DOWNLOAD_CACHE_SECONDS}`)
+      .redirect(url, 302);
   }
 
   @Post(":id/messages")

@@ -11,6 +11,7 @@ import { ModelsController } from "../agents/models.controller.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
 import type { KernelConfig } from "../config/schema.js";
+import { ConversationArtifacts } from "../conversations/artifacts.js";
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import type { AttachmentsService } from "../conversations/attachments.service.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
@@ -48,6 +49,7 @@ import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
+import type { StorageService } from "../storage/storage.service.js";
 import { AppContentController } from "../tools/app-content.controller.js";
 import type { AppContent } from "../tools/app-content.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
@@ -78,6 +80,7 @@ import {
   APPS,
   ATTACHMENTS,
   CHANNEL_CONNECTIONS,
+  CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
@@ -150,6 +153,8 @@ export interface ApiDeps {
   channels: ChannelConnections;
   /** 对话附件（与 `Kernel.attachments` 同一实例）。 */
   attachments: AttachmentsService;
+  /** 对象存储（与 `Kernel.storage` 同一实例；产物下载用）。 */
+  storage: StorageService;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -294,6 +299,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           load: (scope, id) => deps.outputs.load(scope, id),
         }),
       inject: [CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_ARTIFACTS,
+      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+        new ConversationArtifacts({
+          db,
+          storage: deps.storage,
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+        }),
+      inject: [KERNEL_DB, CONVERSATIONS],
     },
     {
       provide: CONVERSATION_STREAMS,

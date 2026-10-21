@@ -658,6 +658,17 @@ export const KernelConfigSchema = z.object({
               "Seconds a sandbox call waits while another command in the same conversation holds the sandbox before failing with sandbox.busy",
           }),
         ),
+      deliverMaxBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(104_857_600)
+        .meta(
+          meta({
+            description:
+              "Largest file in bytes an agent may deliver from its sandbox to the user as an artifact (sandbox_deliver)",
+          }),
+        ),
       limits: z
         .object({
           cpu: z

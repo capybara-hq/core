@@ -1,6 +1,8 @@
 import { sql } from "kysely";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
+import { SANDBOX_ASK_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
 import type { ResolvedTool, ToolPolicy } from "./registry.js";
 
@@ -54,6 +56,7 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
 
 /**
  * 执行时的策略判定（spec 3.6 R5：在动作执行那一刻判定）。每次调用都实时读取：
+ * - 沙箱工具（bash / write / edit / deliver）的组织设置 `sandboxToolPolicy`（为 ask 时组织默认至少 ask）；
  * - 应用工具的 `app_tools.default_policy` / 状态 / 指纹（应用或工具已不存在、停用、删除、待审核 →
  *   `{ unavailable: 原因 }`，管线写「工具不可用」的事实说明，而非策略拒绝）；
  * - agent 当前版本的 `toolPolicies`，与运行所用版本取更严者（负责人运行中收紧立即生效；放宽不影响已在跑的运行）；
@@ -94,6 +97,12 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       if (row.status !== "enabled") return { unavailable: "Tool is pending review" };
       appDefault = row.default_policy;
       hashCurrent = row.spec_hash === tool.specHash;
+    }
+    // 沙箱工具的组织默认（M5 T8）：组织设置 sandboxToolPolicy 为 ask 时，有副作用的沙箱工具至少 ask
+    if (tool.source.kind === "builtin" && SANDBOX_ASK_TOOL_NAMES.has(tool.source.name)) {
+      if ((await readOrgSettings(db, ctx.orgId)).sandboxToolPolicy === "ask") {
+        appDefault = stricter(appDefault, "ask");
+      }
     }
 
     // 运行所用版本可能是加 toolPolicies 字段之前保存的：缺省为空

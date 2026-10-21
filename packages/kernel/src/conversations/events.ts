@@ -350,6 +350,23 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       reason: z.enum(["provider_rejected"]),
     }),
   ),
+  /**
+   * agent 经 `sandbox_deliver` 把沙箱里的文件交付给用户（M5 T8，C3）：字节在对象存储
+   * `kernel/<orgId>/<objectKey>`（`objectKey` = `artifacts/<conversationId>/<artifactId>`，相对内核前缀），
+   * 这里只有元数据。网页从日志重建产物列表；不进模型请求（模型看到的是同一调用的 tool_result 确认）。
+   */
+  ev(
+    "artifact_created",
+    z.object({
+      artifactId: z.uuid(),
+      name: MediaNameSchema.min(1),
+      contentType: z.string().min(1).max(200),
+      size: z.number().int().nonnegative(),
+      objectKey: z.string().min(1),
+      sourcePath: z.string().min(1),
+      callId: z.string(),
+    }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(

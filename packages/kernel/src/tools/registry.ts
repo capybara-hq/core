@@ -14,14 +14,20 @@ import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import type { PluginHost } from "../plugins/host.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
+import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 
 /**
- * 内核内置工具的名字（Task 10 / Task 19 实现）。保存 agent 时内置工具引用按这份清单校验，
+ * 内核内置工具的名字（Task 10 / Task 19 实现；M5 T8 加沙箱工具）。保存 agent 时内置工具引用按这份清单校验，
  * 不依赖当前是否已注册，避免实现落地顺序影响已保存的定义；运行时未注册的照常报不可用。
  */
-export const BUILTIN_TOOL_NAMES = ["ask_user", "read_tool_output", "tool_search"] as const;
+export const BUILTIN_TOOL_NAMES = [
+  "ask_user",
+  "read_tool_output",
+  "tool_search",
+  ...SANDBOX_TOOL_NAMES,
+] as const;
 
 /** 保存 agent 时引用校验的问题（`path` 为 `tools.<i>`）。 */
 export interface ToolRefIssue {
@@ -35,6 +41,8 @@ export interface ToolRefIssue {
  */
 export interface BuiltinCallContext extends ToolCallContext {
   tools?: readonly ResolvedTool[];
+  /** 本次运行 id（内置工具写自己的事件时用，如沙箱 deliver 的 `artifact_created`）。 */
+  runId?: string;
 }
 
 /**
@@ -51,6 +59,14 @@ export interface BuiltinTool {
   spec: ToolSpec;
   defaultPolicy: "allow" | "ask";
   run: BuiltinHandler;
+  /**
+   * 本次调用的执行时限（毫秒，按已校验的输入算）；缺省为 `tools.timeoutMs`。沙箱 `bash` 按命令自己的超时加余量。
+   */
+  timeoutMs?: (input: unknown) => number;
+  /** 结果转存阈值（字符）：与 `tools.outputSpillChars` 取小者。缺省只用配置。 */
+  spillChars?: number;
+  /** 本部署当前不可用时返回事实原因（英文、可执行，进「工具不可用」提醒）；可用返回 null。 */
+  unavailable?: () => string | null;
 }
 
 /**
@@ -77,6 +93,10 @@ export interface ResolvedTool {
   /** sha256(canonical spec) 前 16 位。 */
   specHash: string;
   defaultPolicy: ToolPolicy;
+  /** 内置工具的执行时限（见 {@link BuiltinTool.timeoutMs}）；缺省为 `tools.timeoutMs`。 */
+  timeoutMs?: (input: unknown) => number;
+  /** 内置工具的结果转存阈值（见 {@link BuiltinTool.spillChars}）。 */
+  spillChars?: number;
   /**
    * 执行所需的最低组织角色（spec 3.6 R1）。发起人当前角色不足时转为按角色升级的审批
    * （推给持有该角色的人）。M3 的内置与应用工具都不设。
@@ -347,12 +367,19 @@ export class ToolRegistry {
           unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });
           continue;
         }
+        const why = b.unavailable?.() ?? null;
+        if (why !== null) {
+          unavailable.push({ ref: ref.name, reason: why });
+          continue;
+        }
         add({
           key: b.spec.name,
           source: { kind: "builtin", name: b.spec.name },
           spec: b.spec,
           specHash: specHash(b.spec),
           defaultPolicy: b.defaultPolicy,
+          ...(b.timeoutMs !== undefined && { timeoutMs: b.timeoutMs }),
+          ...(b.spillChars !== undefined && { spillChars: b.spillChars }),
         });
       } else if (ref.kind === "plugin") {
         const key = toolKey(ref.plugin, ref.name);

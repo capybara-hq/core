@@ -339,6 +339,24 @@ export class AttachmentsService {
   }
 
   /**
+   * 绑定在该会话、已 ready 的附件（id 与原始文件名），按上传时间、id 排序（沙箱同步按这个顺序分配文件名）。
+   */
+  async listForConversation(
+    orgId: string,
+    conversationId: string,
+  ): Promise<{ id: string; name: string }[]> {
+    return this.d.db
+      .selectFrom("attachments")
+      .select(["id", "name"])
+      .where("org_id", "=", orgId)
+      .where("conversation_id", "=", conversationId)
+      .where("status", "=", "ready")
+      .orderBy("created_at")
+      .orderBy("id")
+      .execute();
+  }
+
+  /**
    * 读取一个绑定在该会话、已 ready 的附件（沙箱同步等内核内部用途）：没有行、未绑定到该会话、对象已不在、
    * 大小或 etag 与 finalize 时不符 → null。其余错误（存储不可用等）照常抛出。调用方负责读完或取消 `body`。
    */

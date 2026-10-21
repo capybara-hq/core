@@ -500,7 +500,11 @@ export class ToolPipeline {
     const cfg = this.deps.config().tools;
     const spilled = await spillIfLarge(
       rendered.text,
-      { spillChars: cfg.outputSpillChars, previewChars: cfg.outputPreviewChars },
+      {
+        // 内置工具可给更低的转存阈值（沙箱 bash 30000 字符）
+        spillChars: Math.min(cfg.outputSpillChars, tool.spillChars ?? Number.POSITIVE_INFINITY),
+        previewChars: cfg.outputPreviewChars,
+      },
       (content) =>
         this.deps.outputs.save({
           orgId: ctx.orgId,
@@ -645,14 +649,19 @@ export class ToolPipeline {
       callId,
       ...(resume !== undefined && { resume }),
       ...(tool.source.kind === "builtin" && stepTools !== undefined && { tools: stepTools }),
+      ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
     };
+    // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
+    const timeoutMs = tool.timeoutMs?.(input) ?? this.deps.config().tools.timeoutMs;
     try {
-      const r = await this.bounded(ctx.signal, (signal) => handler(input, { ...base, signal }));
+      const r = await this.bounded(
+        ctx.signal,
+        (signal) => handler(input, { ...base, signal }),
+        undefined,
+        timeoutMs,
+      );
       if (r === "timeout") {
-        return {
-          kind: "error",
-          message: timeoutText(tool.key, this.deps.config().tools.timeoutMs),
-        };
+        return { kind: "error", message: timeoutText(tool.key, timeoutMs) };
       }
       if (r === "aborted") return { kind: "error", message: RUN_STOPPED_DURING_TEXT };
       if (isInputRequired(r.value)) {
@@ -843,11 +852,13 @@ export class ToolPipeline {
     work: (signal: AbortSignal) => Promise<T>,
     /** 额外参与竞速的信号（不传给 work）：中止时以 `Stopped` 抛出，由调用方判断原因。 */
     interrupt?: AbortSignal,
+    /** 时限（毫秒），缺省 `tools.timeoutMs`。 */
+    timeoutMs: number = this.deps.config().tools.timeoutMs,
   ): Promise<{ value: T } | "timeout" | "aborted"> {
     if (runSignal.aborted) return "aborted";
     const timeout = new AbortController();
     // 本进程发起的调用自己的计时器，结束即清除
-    const timer = setTimeout(() => timeout.abort(), this.deps.config().tools.timeoutMs);
+    const timer = setTimeout(() => timeout.abort(), timeoutMs);
     const signal = AbortSignal.any([runSignal, timeout.signal]);
     let onAbort: () => void = () => {};
     const race = interrupt ? AbortSignal.any([signal, interrupt]) : signal;

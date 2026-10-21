@@ -76,13 +76,14 @@ import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
 import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
+import { sandboxTools } from "./tools/builtins/sandbox/index.js";
 import { toolSearchTool } from "./tools/builtins/tool-search.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolDrift } from "./tools/drift.js";
 import { ToolOutputs } from "./tools/outputs.js";
 import { ToolPipeline } from "./tools/pipeline.js";
 import { QuestionsService } from "./tools/questions.service.js";
-import { ToolRegistry } from "./tools/registry.js";
+import { type BuiltinTool, ToolRegistry } from "./tools/registry.js";
 
 /**
  * 内核迁移目录。src/ 与 dist/ 都在包根下一层，所以统一指向 `<包根>/src/migrations`：
@@ -350,17 +351,19 @@ export async function createKernel(
   const registry = new ProviderRegistry(host, redis, log);
   const credentials = new Credentials(kdb, keyring, log, { redis, config: () => current });
   const toolOutputs = new ToolOutputs(kdb, () => current);
-  // 内置工具；tool_search 由注册表按组织设置与阈值自动加入（不进 agent 定义）
+  // 内置工具；tool_search 由注册表按组织设置与阈值自动加入（不进 agent 定义）。
+  // 沙箱工具依赖下面才创建的存储、附件与沙箱服务，创建后追加进同一个数组（注册表每次调用时读它）。
+  const builtins: BuiltinTool[] = [
+    askUserTool({ config: () => current }),
+    readToolOutputTool({ outputs: toolOutputs, config: () => current }),
+    toolSearchTool(),
+  ];
   const toolRegistry = new ToolRegistry({
     db: kdb,
     host,
     credentials,
     log,
-    builtins: [
-      askUserTool({ config: () => current }),
-      readToolOutputTool({ outputs: toolOutputs, config: () => current }),
-      toolSearchTool(),
-    ],
+    builtins,
     config: () => current,
   });
   // 审批决定 / 输入回答提交后续跑（waits 在下面创建；回调只在运行期间被调用）
@@ -449,6 +452,9 @@ export async function createKernel(
     log,
   });
   registerSandboxMaintenance(maintenance, sandbox, log);
+  builtins.push(
+    ...sandboxTools({ sandbox, attachments, storage, eventLog, config: () => current }),
+  );
   // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
   const toolDrift = new ToolDrift({
     db: kdb,
@@ -724,6 +730,7 @@ export async function createKernel(
         channels: channelConnections,
         runs: runControl,
         attachments,
+        storage,
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),

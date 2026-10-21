@@ -122,6 +122,7 @@ beforeAll(async () => {
           identity: k.identity,
           channels: k.channels.connections,
           attachments: k.attachments,
+          storage: k.storage,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

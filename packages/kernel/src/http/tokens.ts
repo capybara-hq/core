@@ -67,6 +67,9 @@ export const ATTACHMENTS = Symbol("ATTACHMENTS");
 /** `ConversationOutputs`（网页读工具输出存档）的注入令牌。 */
 export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
 
+/** `ConversationArtifacts`（产物下载）的注入令牌。 */
+export const CONVERSATION_ARTIFACTS = Symbol("CONVERSATION_ARTIFACTS");
+
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
 

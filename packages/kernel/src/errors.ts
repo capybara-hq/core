@@ -49,6 +49,7 @@ export const ERROR_CODES = {
   "agent.model_unavailable": 400,
   "conversation.not_found": 404,
   "conversation.output_not_found": 404,
+  "conversation.artifact_not_found": 404,
   "run.not_active": 409,
   "app.not_found": 404,
   "app.slug_taken": 409,
