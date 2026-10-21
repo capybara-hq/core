@@ -75,7 +75,7 @@ export default definePlugin({
 | `tools` | `["write"]` | 每个 `ctx.tools.register` 的工具名（本地名，不含 `<插件名>__` 前缀）；工具能看到会话内容，会高亮展示 |
 | `network` | `["api.example.com"]` | 会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写；不支持通配 |
 | `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的列进 `views`（记入快照、**不卡加载**），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）。细则见 `skills/writing-plugin-ui` |
-| `storage` | `storage: true` | 才能用 `ctx.storage`（对象存储：每个方法第一个参数是 `orgId`（须是 UUID），键自动限定在 `plugins/<插件名>/<orgId>/` 下；键不能为空、不能以 `/` 开头、不能有 `.` / `..` 段、`\` 与控制字符，加前缀后 ≤ 1024 字节，否则抛 `StorageKeyError`；`list` 返回的键已去掉前缀。`presignPut` 返回 `{ method, url, headers, fields? }`：S3 实现是 `POST` 表单直传，大小由存储端限制）；未声明而用了报 `perm-storage`。部署没装 `object-store@1` 提供方（如 `object-store-s3`）时，声明了它的插件**不加载**（pending，原因 dependency） |
+| `storage` | `storage: true` | 才能用 `ctx.storage`（对象存储：每个方法第一个参数是 `orgId`（须是 UUID，统一按小写），键自动限定在 `plugins/<插件名>/<orgId>/` 下；键不能为空、不能以 `/` 开头、不能有 `.` / `..` 段、`\`、控制字符与 `${`，加前缀后 ≤ 1024 字节，否则抛 `StorageKeyError`；预签名的 `ttlSeconds` 会被限制在 1..604800；`list` 返回的键已去掉前缀。`presignPut` 返回 `{ method, url, headers, fields? }`：S3 实现是 `POST` 表单直传，大小由存储端限制）；未声明而用了报 `perm-storage`。部署没装 `object-store@1` 提供方（如 `object-store-s3`）时，声明了它的插件**不加载**（pending，原因 dependency） |
 | `hooks` / `models` | — | 预留项（尚未提供 `ctx.models`，用了 `check:plugin-permissions` 报 `perm-reserved`） |
 
 **能力取用（`requires` / `optional`）**：`ctx.capabilities.get / list(ref)` 只能取 `requires` / `optional`（或自己 `provides`）里声明的 ref，别的 ref 报 `perm-capability`。只能取直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器、沙箱、密钥存储、对象存储）只能经平台能力用，取它直接抛普通 `Error`（声明也解决不了，不记审计）。`requires` 的提供方缺失则本插件不加载；`optional` 缺失照常加载，取用时 `list` 为空、`get` 抛 `CapabilityUnavailableError`。多选能力 `get` 必须给提供方名。

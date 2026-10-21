@@ -49,6 +49,8 @@ export interface OrgsTable {
   deleted_at: TsNullable;
   /** 0021：已删除组织的对象存储清理完成时间（storage/purge.ts）；插入可省略。 */
   storage_purged_at: TsNullable;
+  /** 0021：清理任务的认领时间（认领超时后可重新认领）；插入可省略。 */
+  storage_purge_claimed_at: TsNullable;
 }
 
 export interface MembershipsTable {

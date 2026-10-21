@@ -65,13 +65,18 @@ export class MemoryObjectStore implements ObjectStore {
     return keys.length > limit ? { items, cursor: page[page.length - 1] as string } : { items };
   }
 
-  async presignGet(key: string): Promise<string> {
+  /** 最近一次预签名收到的 ttlSeconds。 */
+  lastTtl: number | undefined;
+
+  async presignGet(key: string, opts: { ttlSeconds: number }): Promise<string> {
     this.calls.push({ method: "presignGet", key });
+    this.lastTtl = opts.ttlSeconds;
     return `https://store.test/${key}`;
   }
 
-  async presignPut(key: string): Promise<PresignedUpload> {
+  async presignPut(key: string, opts: { ttlSeconds: number }): Promise<PresignedUpload> {
     this.calls.push({ method: "presignPut", key });
+    this.lastTtl = opts.ttlSeconds;
     return { method: "POST", url: "https://store.test/", headers: {}, fields: { key } };
   }
 }

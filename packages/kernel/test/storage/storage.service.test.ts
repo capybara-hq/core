@@ -6,6 +6,8 @@ import { MemoryObjectStore } from "./memory-store.js";
 
 const ORG_A = randomUUID();
 const ORG_B = randomUUID();
+/** 字面的 `${`（直接写在字符串里会被 lint 当成误写的模板占位符）。 */
+const DB = "\u0024\u007b";
 const bytes = (s: string) => new TextEncoder().encode(s);
 const text = async (b: ReadableStream<Uint8Array>) => new Response(b).text();
 
@@ -126,6 +128,10 @@ describe("键校验", () => {
     ["换行", "a\nb"],
     ["DEL", "a\u007fb"],
     ["超长", "x".repeat(1024)],
+    // POST 策略里的 ${filename} 等变量会被存储端替换成上传方给的文件名
+    ["变量 filename", `a/${DB}filename}`],
+    ["${ 出现在中间", `a${DB}b}c`],
+    ["只有 ${", DB],
   ] as const;
 
   for (const [label, key] of bad) {
@@ -167,6 +173,39 @@ describe("键校验", () => {
     }
     await expect(svc.deleteOrg("not-a-uuid")).rejects.toThrow(StorageKeyError);
     expect(mem.calls).toEqual([]);
+  });
+
+  it("list / deletePrefix 的前缀里也不能有 ${", async () => {
+    const { svc } = setup();
+    await expect(svc.forPlugin("aa").list(ORG_A, `a${DB}`)).rejects.toThrow(StorageKeyError);
+    await expect(svc.kernel(ORG_A).deletePrefix(`${DB}x}/`)).rejects.toThrow(StorageKeyError);
+  });
+
+  it("同一组织 id 大小写不同也落到同一个前缀（统一转小写）", async () => {
+    const { mem, svc } = setup();
+    const upper = ORG_A.toUpperCase();
+    await svc.forPlugin("aa").put(upper, "x", bytes("1"), { contentType: "text/plain" });
+    await svc.kernel(upper).put("y", bytes("1"), { contentType: "text/plain" });
+    expect([...mem.objects.keys()].sort()).toEqual(
+      [`kernel/${ORG_A}/y`, `plugins/aa/${ORG_A}/x`].sort(),
+    );
+    expect(await svc.forPlugin("aa").head(ORG_A, "x")).not.toBeNull();
+    await svc.deleteOrg(upper);
+    expect(mem.objects.size).toBe(0);
+  });
+
+  it("预签名的 ttlSeconds 被限制在 1..604800（7 天）", async () => {
+    const { mem, svc } = setup();
+    const a = svc.forPlugin("aa");
+    await a.presignGet(ORG_A, "f", { ttlSeconds: 0 });
+    expect(mem.lastTtl).toBe(1);
+    await a.presignGet(ORG_A, "f", { ttlSeconds: 10_000_000 });
+    expect(mem.lastTtl).toBe(604_800);
+    await a.presignPut(ORG_A, "f", { contentType: "text/plain", maxSize: 1, ttlSeconds: -5 });
+    expect(mem.lastTtl).toBe(1);
+    await svc.kernel(ORG_A).presignGet("f", { ttlSeconds: 90.7 });
+    expect(mem.lastTtl).toBe(90);
+    await expect(a.presignGet(ORG_A, "f", { ttlSeconds: Number.NaN })).rejects.toThrow(RangeError);
   });
 
   it("插件名不合法时拒绝", () => {

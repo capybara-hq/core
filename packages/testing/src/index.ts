@@ -1,10 +1,10 @@
 export {
-  startTestMinio,
   startTestPostgres,
   startTestRedis,
-  TEST_MINIO_IMAGE,
+  startTestS3,
+  TEST_S3_IMAGE,
   type TestContainer,
-  type TestMinio,
+  type TestS3,
 } from "./containers.js";
 export {
   createDualReplicaHarness,

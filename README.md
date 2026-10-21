@@ -8,7 +8,7 @@
 
 ```bash
 pnpm install
-docker compose -f docker/compose.dev.yaml up -d      # postgres:5432 + valkey:6379 + minio:9000（控制台 9001）
+docker compose -f docker/compose.dev.yaml up -d      # postgres:5432 + valkey:6379 + seaweedfs（S3 API 8333）
 
 export CAPYBARA_DB__URL=postgres://capybara:capybara@localhost:5432/capybara
 export CAPYBARA_REDIS__URL=redis://localhost:6379
@@ -274,21 +274,21 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 
 对象存储由 `object-store@1` 插件提供，默认实现 `@capybara-hq/plugin-object-store-s3`（官方 `@aws-sdk/client-s3`）：AWS S3、MinIO、Ceph、SeaweedFS，以及提供 S3 兼容接口的阿里云 OSS、火山引擎 TOS 都能用。一个部署一个桶；插件经 `ctx.storage` 读写，键自动加前缀 `plugins/<插件>/<组织 id>/`（内核自己用 `kernel/<组织 id>/`），互相看不到。大文件由浏览器经预签名 URL 直传、直接下载，不经内核中转；上传大小由存储端按策略限制。
 
-本地的 `docker/compose.dev.yaml` 自带 MinIO（S3 API 在 `localhost:9000`，控制台 <http://localhost:9001>，账号 `capybara` / `capybara-secret`），并由一次性容器 `createbuckets` 建好桶 `capybara`。官方 `minio/minio` 镜像已不再在 Docker Hub 发布，compose 与测试用社区维护的分支构建 `pgsty/minio`（测试可用 `CAPYBARA_TEST_MINIO_IMAGE` 换成别的镜像）。启用：
+本地的 `docker/compose.dev.yaml` 自带官方 SeaweedFS 镜像（`chrislusf/seaweedfs`，按标签加摘要固定）：S3 API 在 `localhost:8333`，凭据 `capybara` / `capybara-secret`，filer 的文件浏览页在 <http://localhost:8888>。一次性容器 `createbuckets` 建好桶 `capybara`。测试用同一个镜像（`startTestS3()`），可用 `CAPYBARA_TEST_S3_IMAGE` 换成私有镜像源。启用：
 
 ```bash
 export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-object-store-s3"]'
-export CAPYBARA_PLUGIN_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:9000","region":"us-east-1","bucket":"capybara","accessKeyId":"capybara","secretAccessKey":"capybara-secret","forcePathStyle":true}}'
+export CAPYBARA_PLUGIN_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:8333","region":"us-east-1","bucket":"capybara","accessKeyId":"capybara","secretAccessKey":"capybara-secret","forcePathStyle":true}}'
 # 或逐字段：CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__SECRET_ACCESS_KEY=...
 ```
 
 | 字段 | 说明 |
 |---|---|
 | `endpoint` | S3 兼容服务的地址；用 AWS S3 时不填（按 `region` 取端点） |
-| `region` | 区域；MinIO 填 `us-east-1` |
+| `region` | 区域；SeaweedFS、MinIO 填 `us-east-1` |
 | `bucket` | 桶名（须事先建好） |
 | `accessKeyId` / `secretAccessKey` | 凭据（密钥字段，加密存储、日志打码） |
-| `forcePathStyle` | 路径风格访问（`<endpoint>/<bucket>/<key>`），MinIO、Ceph 一般要开；默认 `false` |
+| `forcePathStyle` | 路径风格访问（`<endpoint>/<bucket>/<key>`），SeaweedFS、MinIO、Ceph 一般要开；默认 `false` |
 | `publicEndpoint` | 浏览器可达的地址，预签名 URL 用它签名；内核走内网 `endpoint`、浏览器走公网域名时填写 |
 
 浏览器直传与直接下载时，桶要允许网页来源的跨域请求（CORS：`GET`、`POST` 与 `Content-Type` 头）。

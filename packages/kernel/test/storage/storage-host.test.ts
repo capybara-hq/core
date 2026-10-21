@@ -162,6 +162,20 @@ describe("有提供方", () => {
 
 describe("已删除组织的存储清理", () => {
   const k = () => kernelDb(deps.db);
+  // 每个用例只看自己建的组织：之前留下的都标为已清理
+  beforeEach(async () => {
+    await k()
+      .updateTable("orgs")
+      .set({ storage_purged_at: sql<Date>`now()` })
+      .where("storage_purged_at", "is", null)
+      .execute();
+  });
+  const purgedAt = async (id: string) =>
+    await k()
+      .selectFrom("orgs")
+      .select(["storage_purged_at", "storage_purge_claimed_at"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
   const org = async (deletedDaysAgo: number | null) => {
     const id = randomUUID();
     await k()
@@ -217,5 +231,65 @@ describe("已删除组织的存储清理", () => {
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
     expect(row.storage_purged_at).toBeNull();
+  });
+
+  it("删除失败：不标记已清理、释放认领，下一次运行重试", async () => {
+    const mem = new MemoryObjectStore();
+    let fail = true;
+    const orig = mem.deletePrefix.bind(mem);
+    mem.deletePrefix = async (prefix) => {
+      if (fail) throw new Error("s3 down");
+      return orig(prefix);
+    };
+    const storage = new StorageService({ provider: () => mem, plugins: async () => [] });
+    const id = await org(40);
+    await storage.kernel(id).put("x", new Uint8Array([1]), { contentType: "text/plain" });
+    expect(await purgeDeletedOrgStorage({ db: k(), storage, afterDays: 30, log })).toBe(0);
+    expect(await purgedAt(id)).toEqual({ storage_purged_at: null, storage_purge_claimed_at: null });
+    expect(mem.objects.size).toBe(1);
+    fail = false;
+    expect(await purgeDeletedOrgStorage({ db: k(), storage, afterDays: 30, log })).toBe(1);
+    expect((await purgedAt(id)).storage_purged_at).not.toBeNull();
+    expect(mem.objects.size).toBe(0);
+  });
+
+  it("两次运行并发：每个组织只处理一次", async () => {
+    const mem = new MemoryObjectStore();
+    const orig = mem.deletePrefix.bind(mem);
+    const kernelDeletes = new Map<string, number>();
+    mem.deletePrefix = async (prefix) => {
+      if (prefix.startsWith("kernel/")) {
+        kernelDeletes.set(prefix, (kernelDeletes.get(prefix) ?? 0) + 1);
+      }
+      await new Promise((r) => setTimeout(r, 30));
+      return orig(prefix);
+    };
+    const storage = new StorageService({ provider: () => mem, plugins: async () => [] });
+    const ids = [await org(40), await org(41), await org(42), await org(43)];
+    const run = () => purgeDeletedOrgStorage({ db: k(), storage, afterDays: 30, log });
+    const [a, b] = await Promise.all([run(), run()]);
+    expect(a + b).toBe(ids.length);
+    expect([...kernelDeletes.keys()].sort()).toEqual(ids.map((id) => `kernel/${id}/`).sort());
+    expect([...kernelDeletes.values()].every((n) => n === 1)).toBe(true);
+  });
+
+  it("认领超时（进程中途退出）后可被重新认领；新的认领不会被抢", async () => {
+    const mem = new MemoryObjectStore();
+    const storage = new StorageService({ provider: () => mem, plugins: async () => [] });
+    const stale = await org(40);
+    const fresh = await org(40);
+    await k()
+      .updateTable("orgs")
+      .set({ storage_purge_claimed_at: sql<Date>`now() - interval '2 hours'` })
+      .where("id", "=", stale)
+      .execute();
+    await k()
+      .updateTable("orgs")
+      .set({ storage_purge_claimed_at: sql<Date>`now() - interval '1 minute'` })
+      .where("id", "=", fresh)
+      .execute();
+    expect(await purgeDeletedOrgStorage({ db: k(), storage, afterDays: 30, log })).toBe(1);
+    expect((await purgedAt(stale)).storage_purged_at).not.toBeNull();
+    expect((await purgedAt(fresh)).storage_purged_at).toBeNull();
   });
 });

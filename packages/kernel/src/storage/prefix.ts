@@ -19,12 +19,18 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+/** 字面的 `${`（POST 策略的变量起始符）。 */
+const TEMPLATE_START = "${";
 
-/** 组织 id 必须是 UUID。 */
-export function assertOrgId(orgId: string): void {
+/**
+ * 组织 id 必须是 UUID；统一转成小写，同一组织不论大小写都落到同一个前缀
+ * （内核生成的组织 id 本来就是小写）。
+ */
+export function normalizeOrgId(orgId: string): string {
   if (typeof orgId !== "string" || !UUID_RE.test(orgId)) {
     throw new StorageKeyError("organization id must be a UUID");
   }
+  return orgId.toLowerCase();
 }
 
 /** 插件名必须符合清单规则（不含 `/`、`..`）。 */
@@ -36,7 +42,8 @@ export function assertPluginName(plugin: string): void {
 
 /**
  * 校验调用方给的相对键（`allowEmpty` 时是列举 / 批量删除的前缀，空串表示全部）：
- * 不能以 `/` 开头，不能有 `.` / `..` 段，不能含 `\` 与控制字符。
+ * 不能以 `/` 开头，不能有 `.` / `..` 段，不能含 `\`、控制字符与 `${`
+ * （S3 POST 策略会把键里的 `${filename}` 换成上传方给的文件名，键就不再是签名时的那个）。
  */
 function assertRelative(key: string, allowEmpty: boolean): void {
   if (typeof key !== "string") throw new StorageKeyError("key must be a string");
@@ -47,6 +54,8 @@ function assertRelative(key: string, allowEmpty: boolean): void {
   if (key.startsWith("/")) throw new StorageKeyError("key must not start with '/'");
   if (key.includes("\\")) throw new StorageKeyError("key must not contain '\\'");
   if (CONTROL_RE.test(key)) throw new StorageKeyError("key must not contain control characters");
+  if (key.includes(TEMPLATE_START))
+    throw new StorageKeyError(`key must not contain '${TEMPLATE_START}'`);
   for (const seg of key.split("/")) {
     if (seg === "." || seg === "..") {
       throw new StorageKeyError("key must not contain '.' or '..' segments");
@@ -94,12 +103,10 @@ export class KeySpace {
 /** 插件在某组织下的前缀 `plugins/<插件>/<orgId>/`。 */
 export function pluginPrefix(plugin: string, orgId: string): string {
   assertPluginName(plugin);
-  assertOrgId(orgId);
-  return `plugins/${plugin}/${orgId}/`;
+  return `plugins/${plugin}/${normalizeOrgId(orgId)}/`;
 }
 
 /** 内核在某组织下的前缀 `kernel/<orgId>/`。 */
 export function kernelPrefix(orgId: string): string {
-  assertOrgId(orgId);
-  return `kernel/${orgId}/`;
+  return `kernel/${normalizeOrgId(orgId)}/`;
 }

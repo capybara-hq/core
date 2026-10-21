@@ -5,7 +5,7 @@ import {
   type PluginStorage,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
-import { assertOrgId, KeySpace, kernelPrefix, pluginPrefix } from "./prefix.js";
+import { KeySpace, kernelPrefix, normalizeOrgId, pluginPrefix } from "./prefix.js";
 
 export { StorageKeyError } from "./prefix.js";
 
@@ -14,6 +14,17 @@ export const storageUnavailable = (): CapabilityUnavailableError =>
   new CapabilityUnavailableError(
     "storage.unavailable: object storage is not available in this deployment",
   );
+
+/** 预签名 URL 的有效期上限（秒）：SigV4 预签名最长 7 天。 */
+export const MAX_PRESIGN_TTL_SECONDS = 604_800;
+
+/** 把预签名有效期取整并限制在 1..{@link MAX_PRESIGN_TTL_SECONDS}；不是有限数时抛 RangeError。 */
+export function clampPresignTtl(ttlSeconds: number): number {
+  if (typeof ttlSeconds !== "number" || !Number.isFinite(ttlSeconds)) {
+    throw new RangeError("storage: ttlSeconds must be a finite number");
+  }
+  return Math.min(MAX_PRESIGN_TTL_SECONDS, Math.max(1, Math.floor(ttlSeconds)));
+}
 
 export interface StorageServiceDeps {
   /** 当前的 `object-store@1` 提供方；每次调用时取（提供方在插件加载过程中才就绪）。 */
@@ -87,7 +98,7 @@ export class StorageService {
   /** 删除该组织的全部对象：`kernel/<orgId>/` 与每个插件的 `plugins/<插件>/<orgId>/`。返回删除数。 */
   async deleteOrg(orgId: string): Promise<number> {
     const store = this.require();
-    assertOrgId(orgId);
+    normalizeOrgId(orgId);
     let n = await store.deletePrefix(kernelPrefix(orgId));
     for (const plugin of new Set(await this.d.plugins())) {
       n += await store.deletePrefix(pluginPrefix(plugin, orgId));
@@ -149,13 +160,15 @@ class ScopedStore implements ObjectStore {
   }
 
   async presignGet(key: string, opts: { ttlSeconds: number; downloadName?: string }) {
-    return this.store.presignGet(this.space.key(key), opts);
+    const ttlSeconds = clampPresignTtl(opts.ttlSeconds);
+    return this.store.presignGet(this.space.key(key), { ...opts, ttlSeconds });
   }
 
   async presignPut(
     key: string,
     opts: { contentType: string; maxSize: number; ttlSeconds: number },
   ) {
-    return this.store.presignPut(this.space.key(key), opts);
+    const ttlSeconds = clampPresignTtl(opts.ttlSeconds);
+    return this.store.presignPut(this.space.key(key), { ...opts, ttlSeconds });
   }
 }
