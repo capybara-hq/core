@@ -343,7 +343,7 @@ Agent 的环境修改能力都是普通工具：
   - 聊天界面的能力相关元素（思考过程、图片上传等）只依据模型声明的能力显示，不按厂商名判断。
 - 企业管理员添加供应商与模型；组织管理员为 agent 选择；**兜底模型必须是另一家供应商**（后台提示）。
 - **模型能力层**（2026-10-19 调整，详见扩展模型设计 `2026-10-18-extension-model-design.md`第 4 节）：
-  - 按模态分契约：对话 `model-provider@2`；媒体输入（图片 / 音频 / 视频）在 M5 设计；向量 `embedding-provider`、重排 `rerank-provider` 预留，随第一个消费方实现。
+  - 按模态分契约：对话 `model-provider@2`；媒体输入 M5 已做图片与 PDF（`@2` 内追加 `image` / `document` 块，由 `vision` / `documents` 把关；音频 / 视频待定）；向量 `embedding-provider`、重排 `rerank-provider` 预留，随第一个消费方实现。
   - agent 主循环用 agent 版本选定的模型；其他平台功能与插件**按用途要模型**（用途在清单声明，组织管理员把用途映射到具体模型），经 `ctx.models` 调用，不各自接入模型。
   - 生成类（文生图、文生视频、TTS）做成工具，不进模型能力层。
 - 每次调用产生带（组织、账号、agent、会话）归属的用量事件，经 `usage.report` 交给计量 / 计费插件；开源默认只记录。
@@ -362,7 +362,7 @@ Agent 的环境修改能力都是普通工具：
 
 | 来源 | 例子 | 谁装 |
 |---|---|---|
-| 内置（尽量少） | `ask_user`（问用户与给选项）、`read_tool_output`、`tool_search`；`skill_load` 与沙箱启用时的命令执行、文件读写随沙箱（M5）。任务清单不再内置，改为官方插件 `todo`（2026-10-18 调整） | 内核 |
+| 内置（尽量少） | `ask_user`（问用户与给选项）、`read_tool_output`、`tool_search`；`skill_load` 与沙箱启用时的命令执行、文件读写随沙箱（M5 已做：`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`、`skill_load`、`skill_write`，key 不含点）。任务清单不再内置，改为官方插件 `todo`（2026-10-18 调整） | 内核 |
 | 应用 | 飞书文档、Jira、公司内部系统 | 组织管理员 |
 | 技能 | `SKILL.md` + 脚本与资料 | 组织管理员 / agent 自己（见 3.6） |
 | 插件提供的工具 | Slack「读取频道历史」 | 随插件 |

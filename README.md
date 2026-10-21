@@ -327,6 +327,8 @@ MinIO、Ceph 等支持 `PutBucketCors` 的 S3 兼容存储，用 AWS CLI 指向�
 
 没装对象存储插件时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。
 
+**附件与图片 / PDF 输入**：装了对象存储后，对话输入框可以加附件（默认单个 ≤ 20MB、每条消息 ≤ 10 个，类型限 PNG / JPEG / GIF / WebP、PDF 与纯文本 / Markdown / CSV，见 `docs/config.md` 的 `attachments.*`）。模型声明支持图片（`vision`）或文档（`documents`）时收到原文件，不支持时只收到英文文字占位，字节绝不发给不支持的模型；事件日志只记附件引用。单次请求的媒体总量由 `attachments.requestMediaBytes` 限制，超出时较早的附件换成占位。写存储插件见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)。
+
 ### 对话沙箱（Docker）
 
 沙箱由 `sandbox@1` 插件提供，Docker 实现是 `@capybara-hq/plugin-sandbox-docker`：每个对话一个容器（runc 或 gVisor 的 runsc），文件在卷上，空闲时休眠、长期不用时销毁；出站默认按白名单经代理放行。插件只经 socket 代理（`docker/sandbox-proxy`）访问 Docker，自己不挂 `docker.sock`。本地：
@@ -337,7 +339,13 @@ export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-
 export CAPYBARA_PLUGIN_CONFIG='{"sandbox-docker":{"endpoint":"tcp://127.0.0.1:2375"}}'
 ```
 
-`127.0.0.1:2375` 只供本机开发：生产环境绝不要把 socket 代理发布到宿主机地址上，只放在内核的内部网络里；`egress: "open"` 须显式打开插件配置 `allowOpenEgress`（默认关）。配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)。
+生产部署：
+
+- **镜像**：`docker build -t capybara-sandbox:latest plugins/sandbox-docker/image`（标签与内核配置 `sandbox.image` 的默认值一致）、`docker build -t capybara-sandbox-egress:latest plugins/sandbox-docker/egress-proxy`，推到自己的仓库后在**每个 Docker 节点上预先拉好**（不在本地时第一次用沙箱才拉，可能拖过那次工具调用的时限）。要 gVisor 时先在守护进程里登记 `runsc`，插件配置加 `"runtime":"runsc"`。
+- **socket 代理的位置**：能访问代理就几乎能控制 Docker。`127.0.0.1:2375` 只供本机开发；生产环境**绝不要把它发布到宿主机的任何地址上（包括 127.0.0.1）**，只放在内核所在的内部网络里（`endpoint` 填 `tcp://sandbox-proxy:2375`），沙箱不接那个网络。
+- **出站**：`sandbox.limits.egress` 默认 `allowlist`，只放行 `sandbox.limits.allowHosts`（预置 npm、PyPI、GitHub、Debian 源），代理按解析后的 IP 拒绝内网与云元数据地址；`none` 断网；`open` 须显式打开插件配置 `allowOpenEgress`（默认关），只在可信环境用。改出站与资源限制只影响之后新建的沙箱。默认的 local 卷驱动不限 `diskMb`。
+
+给 agent 加内置工具 `sandbox_bash` / `sandbox_read` / `sandbox_write` / `sandbox_edit` / `sandbox_glob` / `sandbox_grep` / `sandbox_deliver` 后就能用（默认不带）。沙箱工具默认直接执行（沙箱是隔离的），组织管理员可在设置里把 `sandboxToolPolicy` 改成 `ask`（写、执行、交付需要审批）。附件自动放进 `/workspace/attachments/`，`sandbox_deliver` 交付的文件出现在对话页右侧的「产物」标签。空闲 10 分钟休眠（文件保留）、7 天不用销毁，见 `docs/config.md` 的 `sandbox.*`。配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)；写沙箱插件见 [skills/writing-sandbox-providers](skills/writing-sandbox-providers/SKILL.md)。
 
 ### 对话沙箱（E2B）
 
@@ -348,7 +356,19 @@ export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-
 export CAPYBARA_PLUGIN_CONFIG='{"sandbox-e2b":{"apiKey":"e2b_…","template":"capybara-sandbox"}}'
 ```
 
+- **模板**：用 E2B 的 Template SDK 从 Dockerfile 构建（`Template().fromDockerfile(...)`，`cpuCount: 1`、`memoryMB: 2048` 与内核默认值一致），把模板名填进 `template`；改了 Dockerfile 要重建模板。E2B 的 CPU、内存、磁盘由模板决定，`sandbox.limits` 的这三项对它不生效，内核配置 `sandbox.image` 也不用。
+- **出站比 Docker 弱**：E2B 的域名白名单只看 80 端口的 Host 头与 443 端口的 SNI，不核对目的 IP，沙箱可能借白名单里的域名连到任意地址；用了白名单时 E2B 还会放行到 8.8.8.8 的 DNS。对出站要求严的部署用 Docker。自托管 E2B 的内网与云元数据地址要在 E2B 的网络层自己挡掉；不支持域名白名单的版本设 `domainAllowlist: false`（`allowlist` 退化为 `none`）。
+- Hobby 套餐的沙箱超时最多 1 小时，要把 `sandbox.limits.maxCommandSeconds` 调到 3480 以下。
+
 模板构建步骤、自托管（`apiUrl` / `domain`）、出站与资源限制的局限见 [plugins/sandbox-e2b/README.md](plugins/sandbox-e2b/README.md)。
+
+### 技能
+
+技能兼容 Anthropic Agent Skills 格式：一个目录，根下是带 `name` / `description` frontmatter 的 `SKILL.md`，可以附脚本与其他文件。元数据在 PG，文件在对象存储（所以要先装对象存储插件）。
+
+- **技能库**（顶栏「技能」）：组织管理员上传 zip（≤ 50MB，单个文件 ≤ 10MB，解压后合计 ≤ 50MB；`SKILL.md` 放在根目录或唯一的顶层文件夹里），同名再传生成新版本；成员可以浏览。编辑 agent 时在「技能」分组里勾选要用的组织技能。
+- **运行时**：对话开始一次运行时，内核把这个 agent 可用的技能清单（名字 + 描述）写进对话日志并告诉模型；模型用内置工具 `skill_load` 按名字读取正文。带脚本的技能会复制进沙箱的 `/skills/<name>/`（只读，用 `sh` / `python3` 运行），agent 需要有沙箱工具。技能有变化时，模型在**下一次运行开始**时收到提醒。
+- **agent 自己写技能**：给 agent 加内置工具 `skill_write`（默认不带）。私有 agent 写的立即生效；共享 agent 写技能时先由发起人在对话里确认这次工具调用，再进入 agent 负责人的「收件箱」等批准，批准前只有发起改动的那个对话能试用，批准后所有对话在下一次运行时用上新版本。负责人可以在 agent 编辑页删除 agent 自写的技能。
 
 ## 运维须知
 

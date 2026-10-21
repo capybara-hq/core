@@ -1,4 +1,4 @@
-# M5 真实环境验收清单（沙箱：Docker runsc / E2B）
+# M5 真实环境验收清单（沙箱：Docker runsc / E2B；真实模型的图片 / PDF；技能）
 
 M5 第二段验收（Task 12）分三部分：
 
@@ -9,6 +9,10 @@ M5 第二段验收（Task 12）分三部分：
    持有的沙箱锁过期，锁 TTL 60 秒）。
 2. **真实运行时自动检查**（有 runsc / E2B 凭据时跑，本清单第 2、3 节）。
 3. **人工检查**（本清单第 4 节）：网页上的附件、产物标签与沙箱状态。
+
+第一段（附件与媒体输入）与第三段（技能）的真实环境部分在第 5、6 节：带图片 / PDF 的真实模型请求，以及网页上的技能库、
+技能变更审批与技能脚本。第三段的双副本验收 `packages/kernel/test/skills/m5-segment3.dual.test.ts`（假沙箱，`pnpm test`
+里跑，约 10 秒）覆盖共享 agent 的 `skill_write` → 跨副本批准 → 另一对话下次运行生效、`skill_load` 复制脚本进沙箱并执行。
 
 插件细节见 `plugins/sandbox-docker/README.md`、`plugins/sandbox-e2b/README.md`，这里不重复。
 
@@ -162,7 +166,51 @@ pnpm dev:web                   # 另一个终端，网页 :3000
 - [ ] **重建**：`docker rm -f cap-<对话 id>` 后再用沙箱：结果带「Sandbox was recreated; previous files are gone.」，
       运行不报错卡住。
 
-## 5. 执行记录
+## 5. 真实模型：带图片 / PDF 的请求
+
+凭据同样放在 `~/.capybara-test.env`（`CAPYBARA_TEST_ANTHROPIC_API_KEY`、`CAPYBARA_TEST_OPENAI_API_KEY` +
+`CAPYBARA_TEST_OPENAI_MODEL`、`CAPYBARA_TEST_OAICOMPAT_*`），只注入环境，不打印。
+
+### 5.1 一致性套件的媒体用例
+
+```bash
+set -a; . ~/.capybara-test.env; set +a
+pnpm vitest run plugins/anthropic/test/conformance.test.ts plugins/openai/test/conformance.test.ts
+# 方舟（ark）：CAPYBARA_TEST_OAICOMPAT_DIALECT=ark，模型支持图片时加 CAPYBARA_TEST_OAICOMPAT_VISION=1
+pnpm vitest run plugins/openai-compatible/test/conformance.test.ts
+```
+
+- [ ] anthropic、openai 的「user message with image」「user message with PDF document」「user message with text document」
+      通过（不是 skipped）；
+- [ ] **ark 方言的图片用例**通过（尚未用真实接口验证过；ark 不收 PDF，`documents` 由配置校验拒绝）；
+- [ ] 换用新模型时先核对它的 `vision` / `documents` 声明（anthropic 取 Models API；openai / openai-compatible 由配置给）。
+
+### 5.2 内核 + 网页（人工）
+
+按第 4 节起内核与网页，`CAPYBARA_PLUGINS` 换成真实模型插件（如 `@capybara-hq/plugin-anthropic`）加 `object-store-s3`。
+
+- [ ] 上传一张 PNG，问「图里是什么颜色」：回答正确；`model_call` 事件的 `request.media` 里该附件 `outcome` 为 `bytes`；
+- [ ] 上传一页 PDF，问其中的一个词：回答正确；
+- [ ] 换一个不支持图片的模型（如 openai-compatible 未开 `vision`）再发图片：模型只收到英文占位 `[Attached image "<名字>" — this model cannot view images.]`、照常回答，
+      `request.media` 为 `placeholder_unsupported`，供应商请求里没有图片字节；
+- [ ] 一条消息带 10 个附件、总量超过 `attachments.requestMediaBytes`：较早的换成占位，请求不被供应商拒收。
+
+## 6. 技能（人工）
+
+按第 4 节起内核与网页（对象存储 + `sandbox-docker`）。准备一个 zip：根下 `SKILL.md`（frontmatter 带 `name: fruit-sum`、
+`description`）与 `run.sh`（`echo fruit-sum ok`）。
+
+- [ ] **技能库**：管理员在顶栏「技能」上传 zip，列表出现 `fruit-sum v1`；详情页 SKILL.md 按纯文本显示；成员能看、看不到上传与删除；
+      再传一次同名包得到 v2；超过 50MB 或缺 `SKILL.md` 的包被拒并逐条列出原因。
+- [ ] **agent 用技能**：编辑 agent，在「技能」里勾选 `fruit-sum`，工具加 `sandbox_bash`；对话里
+      `tool:skill_load:{"name":"fruit-sum"}` 返回正文，再 `tool:sandbox_bash:{"command":"sh /skills/fruit-sum/run.sh"}`
+      输出 `fruit-sum ok`；`touch /skills/x` 失败（只读）。
+- [ ] **共享 agent 改技能**：共享（组织可见）agent 加 `skill_write`，由另一个成员在对话里让它写技能：先出现工具确认（R3），
+      确认后负责人的收件箱出现「技能变更」，能看到逐文件差异；批准前别的对话 `skill_load` 看不到，批准后别的对话下一次运行
+      收到更新提醒并加载到新版本；拒绝时发起对话回到旧版本。
+- [ ] **私有 agent 改技能**：直接生效，不进收件箱；负责人在 agent 编辑页能删除 agent 自写的技能。
+
+## 7. 执行记录
 
 | 日期 | 执行人 | 部分 | 结果 / 备注 |
 |---|---|---|---|
@@ -171,3 +219,8 @@ pnpm dev:web                   # 另一个终端，网页 :3000
 | | | CI linux/amd64 Docker（2.4） | 待 CI 执行 |
 | | | E2B（第 3 节，含 14 条假设） | 待凭据到位后执行 |
 | | | 人工（第 4 节） | 待执行 |
+| 2026-10-21 | 自动 | 第三段双副本验收（假沙箱） | 通过 3/3，每次约 10 秒 |
+| 2026-10-21 | 协调者 | 真实模型媒体（5.1：anthropic `claude-haiku-5-5`、openai `gpt-5-nano`） | 图片、PDF、文本文档通过 |
+| | | ark 方言图片（5.1） | 待凭据 |
+| | | 内核 + 真实模型媒体（5.2） | 待执行 |
+| | | 技能（第 6 节） | 待执行 |

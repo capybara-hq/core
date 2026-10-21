@@ -137,12 +137,20 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 | `ctx.provide` | 对外暴露能力实现 | 要与清单 `provides` 一致 |
 | `ctx.tools` | 给 agent 提供工具 | `register(spec, handler)` 只能在 `setup` 里调用；模型可见名 `<插件名>__<spec.name>`；**只在启用了本插件的组织可用**（组织 admin `PUT /api/v1/orgs/:orgId/plugins/<name> {"enabled": true}`），未启用时运行时按不可用工具处理。描述与错误文案规则、默认策略、`ToolError`、`InputRequired` 见 `skills/writing-tools`，参考 `plugins/todo` |
 | `ctx.ui` | 对话页右侧标签 / 顶栏「扩展」里的组织页面 | `view` / `action`（渲染 schema 视图，只能在 `setup` 里注册，`render` 与 `action` 必须响应 `signal`、5 秒超时）、`invalidate`（经 bus 跨副本刷新）、`verifyEmbedToken`（嵌入应用的数据路由先验令牌）。写法、积木、上限与嵌入应用的安全规则见 `skills/writing-plugin-ui`，参考 `plugins/todo`、`plugins/example-board` |
+| `ctx.storage` | 文件、大对象（按组织隔离） | 需清单 `permissions.storage`（`perm-storage`）；每个方法第一个参数是 `orgId`，键落在 `plugins/<插件名>/<orgId>/` 下，别的插件、内核（`kernel/<orgId>/`）互相看不到。浏览器上传用 `presignPut`（返回 `{ method, url, headers, fields? }`，按 `method` 发 PUT 或 POST 表单），下载用 `presignGet`（用户上传的内容只对图片 / PDF 用 `inline`）；组织删除后它的对象由内核定期清掉。没有存储提供方时插件不加载。写存储提供方见 `skills/writing-object-store-providers` |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
 | `ctx.config` / `ctx.log` | 部署配置 / 日志 | 日志里不要打印密钥 |
 
 ### 连接器（`connector@1`）
 
 `provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`，把一类远端服务接成组织里的「应用」（工具快照、凭据、审批都由内核管）。连接器是部署级的，不需要按组织启用。要点：会话按次打开、用完关闭，不缓存连接；每个出站请求前调用 `auth()`；401 → `onUnauthorized()` 后重试一次；不跟随重定向；不把凭据写进错误与日志。详见 `skills/writing-connectors`，参考 `plugins/connector-mcp`、`plugins/connector-openapi`。
+
+### 沙箱与对象存储（`sandbox@1` / `object-store@1`）
+
+两者都是单选、中转能力：一个部署只装一个提供方，别的插件不能 `requires`，由内核取用（沙箱经 `SandboxService` 与内置的
+`sandbox_*` 工具，存储经 `ctx.storage` 与内核功能）。提供方只实现原语，生命周期、锁、前缀隔离、清理都在内核。详见
+`skills/writing-sandbox-providers`（参考 `plugins/sandbox-docker`、`plugins/sandbox-e2b`）与
+`skills/writing-object-store-providers`（参考 `plugins/object-store-s3`）。
 
 ### 渠道、登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`）
 

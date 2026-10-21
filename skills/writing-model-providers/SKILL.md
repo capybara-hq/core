@@ -103,8 +103,9 @@ interface ModelParameter {
 user 消息里可以有 `image`（png / jpeg / gif / webp）与 `document`（`application/pdf`、`text/plain` / `text/markdown` / `text/csv`），`source` 为 `{ kind: "base64", data }`，可带附件名 `name`。
 
 - **把关在内核**：模型声明 `vision: true` 才会收到 `image`，声明 `documents: true` 才会收到 `document`（`documents` 为 true 时 `text/*` 也作为文档块发来）；不支持时内核换成英文文字占位或内联文本，插件不用判断能力。所以**声明要准**：按官方文档或 Models API 声明，注释里写出处与核实日期。anthropic 取 Models API 的 `image_input` / `pdf_input`；openai 由部署配置 `models[].vision` / `documents`（缺省 false）给；openai-compatible 按端点模型配置 `vision` / `documents`（缺省 false），`documents` 只能在 Chat Completions 收 PDF 的方言（`pdfInput`：generic、qwen）上开启，deepseek / ark 配置校验拒绝。
-- **供应商的媒体上限也由内核执行**，插件不用再查：单次请求最多 20 张图片（保留最新的）、PDF 超过 100 页、`text/*` 超过 50 000 个字符（截断并注明，两种发送方式都一样）、单个块超过 `MEDIA_LIMITS`、整个请求的媒体超过 `attachments.requestMediaBytes`，内核都会换成英文占位或截断。供应商仍以 `invalid_request` / `context_overflow` 拒收带媒体的请求时，内核写 `media_excluded`，之后的请求把这些附件换成占位——所以插件把这类拒收如实映射成对应的 `ModelError` 即可，不要自己丢块或重试。
+- **供应商的媒体上限也由内核执行**，插件不用再查：单次请求最多 20 张图片（保留最新的）、PDF 超过 100 页、`text/*` 超过 50 000 个字符（截断并注明，两种发送方式都一样）、单个块超过 `MEDIA_LIMITS`（图片 5 MiB、文档 32 MiB，解码后）、整个请求的媒体超过 `attachments.requestMediaBytes`，内核都会换成英文占位或截断。供应商仍以 `invalid_request` / `context_overflow` 拒收带媒体的请求时，内核写 `media_excluded`，之后的请求把这些附件换成占位——所以插件把这类拒收如实映射成对应的 `ModelError` 即可，不要自己丢块或重试。
 - **`ref` 不该到插件**：事件日志里只存引用，内核构建请求时解析成 `base64`。插件收到 `ref` 是内核缺陷，抛 `ModelError("invalid_request", …)`（不可重试），不要静默丢弃。
+- **引用怎么解析**（内核侧，插件不用做，但排查时要知道）：附件字节在对象存储，日志里的块只有 `{ kind: "ref", attachmentId }`。构建请求时按引用取字节并核对 finalize 时记下的 etag：附件已删除 / 过期、对象不在、大小或 etag 不符是**确定的缺失**，换成英文占位；存储暂时出错则这一步按可重试错误重来，不降级成占位（Ruling M4，否则同一份日志还原不出同一个请求）。每次 `model_call` 事件的 `request.media` 记下每个附件的去向（`{ attachmentId, outcome, etag? }`，outcome 为 bytes / inline / placeholder_unsupported / omitted / unavailable / too_many_pages / excluded），请求能由日志还原。
 - **映射**（只看块自身，仍然只追加）：
 
 | 插件 | 图片 | PDF | `text/*` |
@@ -195,7 +196,7 @@ describe.skipIf(!LIVE_KEY)("live", () => {
 - `startFakeModelServer(routes)`：`routes(req)` 收到 `{ path, body, headers }`，返回 `{ status, json, headers? }`（普通 / 错误响应）、`{ status: 200, sse: [{ event?, data }], delayMs? }`（SSE）或 `{ stall: true }`（只发响应头、不发数据，用来测中止与看门狗）。`server.requests` 记录全部请求，可断言实际发出的原生请求体。夹具按供应商原生格式手写在插件的 `test/fixtures.ts`（参考 `plugins/anthropic/test/fixtures.ts` 的 `sseMessage`、`errorJson`），不要录制真实响应里的密钥。
 - 插件构造函数要接受 `baseUrl`，夹具模式靠它指向假服务。
 - 一致性套件之外，按上面的错误映射表逐行写用例（429 带 `retry-after`、529、5xx、401/403、400、413、流中途 error 事件、流截断、畸形工具参数、网络失败、中止、停滞流中止），以及请求映射的前缀单测。
-- 真实接口模式：anthropic 设 `CAPYBARA_TEST_ANTHROPIC_API_KEY`（跑 `claude-haiku-5-5`）；openai 设 `CAPYBARA_TEST_OPENAI_API_KEY` 与 `CAPYBARA_TEST_OPENAI_MODEL`；openai-compatible 设 `CAPYBARA_TEST_OAICOMPAT_BASE_URL` / `_API_KEY` / `_MODEL` / `_DIALECT`（`generic` / `deepseek` / `qwen` / `ark`，四个都设才跑；可选 `_VISION=1` / `_DOCUMENTS=1` 声明该模型收图片 / PDF，跑媒体用例）。已用真实接口验证过：anthropic（`claude-haiku-5-5`）、DeepSeek（`deepseek-flash`，方言 `deepseek`）、openai（`gpt-5-nano`）。未设置时测试打一行 info 说明已跳过。改了请求映射或升级 SDK 后在本地用真实接口跑一遍。
+- 真实接口模式：anthropic 设 `CAPYBARA_TEST_ANTHROPIC_API_KEY`（跑 `claude-haiku-5-5`）；openai 设 `CAPYBARA_TEST_OPENAI_API_KEY` 与 `CAPYBARA_TEST_OPENAI_MODEL`；openai-compatible 设 `CAPYBARA_TEST_OAICOMPAT_BASE_URL` / `_API_KEY` / `_MODEL` / `_DIALECT`（`generic` / `deepseek` / `qwen` / `ark`，四个都设才跑；可选 `_VISION=1` / `_DOCUMENTS=1` 声明该模型收图片 / PDF，跑媒体用例）。已用真实接口验证过：anthropic（`claude-haiku-5-5`）、DeepSeek（`deepseek-flash`，方言 `deepseek`）、openai（`gpt-5-nano`）；媒体（图片、PDF、`text/*` 文档）在 anthropic `claude-haiku-5-5` 与 openai `gpt-5-nano` 上验证过，ark 方言的图片映射**尚未用真实接口验证**。未设置时测试打一行 info 说明已跳过。改了请求映射或升级 SDK 后在本地用真实接口跑一遍。
 - **发布前必须跑真实接口**：CI 没有密钥，夹具只是按文档与已知报错手写的近似。每次发布供应商插件之前，用真实接口把一致性套件跑通（尤其是思考回放：openai reasoning 项 + 带 id 的 message 项、anthropic 签名思考块，以及顶层 `cache_control` 的缓存命中），并在发布说明里写明跑过的模型。
 - `plugins/model-fake` 同样跑这套一致性套件（不需要假服务；声明 `effort` 三档与 `model-fake.style`）；它的脚本语法（`echo:`、`slow:<ms>:`、`stall`、`fail:<kind>`、`tool:<name>:<json>`、`long:<n>`，其余文本回复 `You said: …`）见其源码 `src/script.ts`。
 

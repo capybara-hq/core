@@ -112,7 +112,7 @@ capabilities: {
 | 能力 | 状态 | 说明 |
 |---|---|---|
 | `model-provider@2` | 已有 | 对话：流式、工具调用、思考、缓存。agent 主循环使用 |
-| 媒体输入（图片 / 音频 / 视频作为输入） | M5 设计 | 在对话契约中加媒体块，字节存对象存储、事件日志只记引用；模型按媒体类型声明支持，内核不给不支持的模型发媒体。倾向在 `@2` 内追加并由声明把关，是否需要 `@3` 在 M5 定 |
+| 媒体输入（图片 / 音频 / 视频作为输入） | M5 已做图片与 PDF（音频 / 视频待定） | 在对话契约中加媒体块，字节存对象存储、事件日志只记引用；模型按媒体类型声明支持，内核不给不支持的模型发媒体。M5 定为在 `@2` 内追加 `image` / `document` 块（C1），由 `capabilities.vision` / `documents` 把关，不升 `@3` |
 | `embedding-provider@1` | 预留 | `listModels()`（维度、最大输入、批量上限）+ `embed(inputs, { model, dimensions?, inputType? })` → 向量与用量 |
 | `rerank-provider@1` | 预留 | 形状与向量类似，随第一个消费方设计 |
 
@@ -171,6 +171,8 @@ models: {
 - 内核自己也是消费方：附件、沙箱文件导入导出（M5）。M3 的输出存档已定为放在 PG，不受影响。
 - 没装提供方时：声明了 `storage` 的插件不能加载，依赖对象存储的内核功能不可用并在后台提示。开发编排（`docker/compose.dev.yaml`）自带 SeaweedFS（2026-10-21 由 MinIO 改为 SeaweedFS）。
 
+> **M5 实现说明**：`presignPut` 返回 `PresignedUpload { method: "PUT" | "POST", url, headers, fields? }`（Ruling M3）：预签名 PUT 限制不了大小，S3 实现用 POST 策略（精确键、`content-length-range`、`Content-Type` 条件），超过 `maxSize` 由存储端拒绝；键里不能有 `${`（POST 会把 `${filename}` 换成上传方的文件名）。`presignGet` 多了 `downloadName` / `disposition` / `responseContentType`（Ruling M9）。`ctx.storage` 已提供（不再是预留项），用了须声明 `permissions.storage`（`perm-storage`）。组织删除后由维护任务按前缀清理（`storage.purgeDeletedOrgsAfterDays`）。写法见 `skills/writing-object-store-providers`。
+
 ## 6. 配置与密钥
 
 三件事分开：
@@ -218,7 +220,7 @@ models: {
 
 敏感项在安装确认页单独高亮；组织管理员启用插件时也能看到同一张清单。
 
-> **M4 实现说明**：`permissions.http[].public` 目前只用于展示与快照（Ruling A2）：插件路由不论是否声明 `public` 都和 M0 起一样不经内核鉴权、由插件自行验签；非公开插件路由改由内核鉴权是以后的决定（届时是一次行为变更）。`hooks` 只校验挂载点名（`ctx.hooks` 在 M6），`models` / `storage` 为预留项，用了 `check:plugin-permissions` 报 `perm-reserved`。
+> **M4 实现说明**：`permissions.http[].public` 目前只用于展示与快照（Ruling A2）：插件路由不论是否声明 `public` 都和 M0 起一样不经内核鉴权、由插件自行验签；非公开插件路由改由内核鉴权是以后的决定（届时是一次行为变更）。`hooks` 只校验挂载点名（`ctx.hooks` 在 M6），`models` / `storage` 为预留项，用了 `check:plugin-permissions` 报 `perm-reserved`（M5 起 `storage` 已提供，见第 5 节；`models` 仍是预留项）。
 
 ### 7.3 批准与升级
 
@@ -265,8 +267,8 @@ models: {
 |---|---|---|
 | 方舟方言（`openai-compatible` 加 `ark`） | 随时，M2 后续 | 小改动，与本文独立 |
 | 清单格式（`optional`、`permissions`）+ 按清单构造 `ctx` + `ctx.capabilities` + `check:plugin-permissions` + 权限快照与 CLI 批准 | **M4 第一组任务** | M4 一次进来 Slack、飞书等多能力插件，清单格式要在它们之前定；渠道、身份、通讯录开始互相取用 |
-| `object-store@1` + `object-store-s3` + `ctx.storage` | **M5 开头** | 第一个消费方是附件与沙箱文件 |
-| 媒体输入契约 | **M5** | 依赖对象存储与附件 |
+| `object-store@1` + `object-store-s3` + `ctx.storage` | **M5 开头**（已完成） | 第一个消费方是附件与沙箱文件 |
+| 媒体输入契约 | **M5**（已完成：图片与 PDF） | 依赖对象存储与附件 |
 | 部署级插件配置入 PG、安装确认页、用途 → 模型配置页 | **M6**（管理后台） | 界面在 M6；M6 的「SDK 公开 API 快照检查」之前清单格式必须稳定 |
 | `ctx.models`、向量、重排 | MVP 之后，随第一个消费方 | MVP 内没有消费方（记忆、知识库不做） |
 
