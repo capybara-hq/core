@@ -308,7 +308,7 @@ export class ToolPipeline {
     const resolve = async (): Promise<Resolved> => {
       // 每步实时解析（应用 / 插件状态可能在模型调用之后变化）
       if (!resolved) {
-        // 与构建请求时同一判定：最新的技能目录快照不为空 → skill_load 可用（Ruling M17）
+        // 与构建请求时同一判定：日志里有过技能目录快照 → skill_load 可用（空快照也不收回，见 skillLoadOffered）
         const skillLoad = skillLoadOffered(
           await this.deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog"),
         );

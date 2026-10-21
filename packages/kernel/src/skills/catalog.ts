@@ -123,13 +123,14 @@ export async function resolveEffectiveSkills(
 
 /** `skills_catalog` 的幂等键：每次运行最多写一份。 */
 /**
- * 是否给模型 `skill_load`：日志里**最新**的技能目录快照不为空（Ruling M17）。技能被全部删除或取消选择后，
- * 空快照之后的请求不再带这个工具。构建请求与执行工具调用用同一判定。
+ * 是否给模型 `skill_load`：日志里有过技能目录快照（Ruling M17），**即使最新一份是空的**。构建请求与执行工具调用
+ * 用同一判定。不因空快照收回这个工具：工具集合一变缓存前缀就失效；而且 agent 没有别的工具时会发出「没有工具
+ * 但历史里有 tool_use」的请求，Anthropic 会拒绝。空目录下调用 skill_load 由 `NO_SKILLS_TEXT` 给出可执行的说明。
  */
 export function skillLoadOffered(
   latest: Extract<ConversationEvent, { type: "skills_catalog" }> | undefined,
 ): boolean {
-  return latest !== undefined && latest.payload.skills.length > 0;
+  return latest !== undefined;
 }
 
 export const skillsCatalogIdemKey = (runId: string): string => `skills_catalog:${runId}`;

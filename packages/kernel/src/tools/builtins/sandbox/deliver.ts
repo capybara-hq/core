@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { MEDIA_NAME_MAX_CHARS, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  CapabilityUnavailableError,
+  MEDIA_NAME_MAX_CHARS,
+  ToolError,
+  type ToolSpec,
+} from "@capybara-hq/plugin-sdk";
 import { isValidArtifactName } from "../../../conversations/events.js";
 import { ApiError } from "../../../errors.js";
 import type { BuiltinTool } from "../../registry.js";
@@ -159,7 +164,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
       } catch (e) {
         if (
           (e instanceof ApiError && e.code === "storage.unavailable") ||
-          (e instanceof Error && e.message.startsWith("storage.unavailable"))
+          e instanceof CapabilityUnavailableError
         ) {
           throw new ToolError(NO_STORAGE);
         }

@@ -363,7 +363,10 @@ export class AgentsService {
       definition?: AgentDefinition | undefined;
       visibility?: AgentVisibility | undefined;
       memberIds?: string[] | undefined;
-      /** 给出且不等于当前版本 → `agent.version_conflict`（409），在锁内判定。 */
+      /**
+       * 给出且不等于当前版本 → `agent.version_conflict`（409），在锁内判定。只比定义版本：只改可见范围 / 成员
+       * 不产生新版本，所以检测不到别人只改了可见范围（之后的保存会按本次给出的 visibility 覆盖）。
+       */
       expectedVersion?: number | undefined;
     },
     actorTokenId?: string,

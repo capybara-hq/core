@@ -15,7 +15,11 @@ import {
   sql,
   type UpdateObject,
 } from "kysely";
-import type { KernelConfig } from "../config/schema.js";
+import {
+  DEFAULT_MAX_COMMAND_SECONDS,
+  DEFAULT_MAX_RUN_SECONDS,
+  type KernelConfig,
+} from "../config/schema.js";
 import type { KernelDatabase, KernelDb, SandboxesTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { effectiveSandboxEgress, readOrgSettings } from "../orgs/settings.service.js";
@@ -115,26 +119,30 @@ const opSignal = (held: Held): AbortSignal =>
  * 启动时要提醒运维的沙箱配置问题（英文日志）：
  * - `runtime.maxRunSeconds` 小于 `sandbox.limits.maxCommandSeconds`：长命令会被运行时限截断（Ruling M20）；
  * - `sandbox.limits.egress` 为 open、但当前提供方插件没打开 `allowOpenEgress`：每次创建沙箱都会被拒。
+ * 两个时限都是默认值（900 < 7200，已知的取舍）时只记 info；运维改过其中一个却仍不一致时才 warn。
  */
 export function sandboxConfigWarnings(
   cfg: Pick<KernelConfig, "runtime" | "sandbox" | "pluginConfig">,
   providerPlugin?: string,
-): string[] {
-  const out: string[] = [];
+): { level: "info" | "warn"; message: string }[] {
+  const out: { level: "info" | "warn"; message: string }[] = [];
   if (cfg.sandbox.limits.egress === "open" && providerPlugin !== undefined) {
     const pc = cfg.pluginConfig[providerPlugin] as { allowOpenEgress?: unknown } | undefined;
     if (pc?.allowOpenEgress !== true) {
-      out.push(
-        `sandbox.limits.egress is "open" but pluginConfig."${providerPlugin}".allowOpenEgress is not true: the ${providerPlugin} plugin refuses to create sandboxes with open egress; set allowOpenEgress to true (trusted environments only) or use "allowlist" or "none"`,
-      );
+      out.push({
+        level: "warn",
+        message: `sandbox.limits.egress is "open" but pluginConfig."${providerPlugin}".allowOpenEgress is not true: the ${providerPlugin} plugin refuses to create sandboxes with open egress; set allowOpenEgress to true (trusted environments only) or use "allowlist" or "none"`,
+      });
     }
   }
   const run = cfg.runtime.maxRunSeconds;
   const cmd = cfg.sandbox.limits.maxCommandSeconds;
   if (run < cmd) {
-    out.push(
-      `runtime.maxRunSeconds (${run}) is less than sandbox.limits.maxCommandSeconds (${cmd}): sandbox commands are limited to the time left in the run, so commands longer than about ${run} seconds cannot finish; raise runtime.maxRunSeconds to at least ${cmd} if agents need long commands`,
-    );
+    const defaults = run === DEFAULT_MAX_RUN_SECONDS && cmd === DEFAULT_MAX_COMMAND_SECONDS;
+    out.push({
+      level: defaults ? "info" : "warn",
+      message: `runtime.maxRunSeconds (${run}) is less than sandbox.limits.maxCommandSeconds (${cmd}): sandbox commands are limited to the time left in the run, so commands longer than about ${run} seconds cannot finish; raise runtime.maxRunSeconds to at least ${cmd} if agents need long commands`,
+    });
   }
   return out;
 }

@@ -59,10 +59,17 @@ describe("运行时限与命令超时（纯函数）", () => {
     expect(searchTimeoutMs(cfg, t0, t0, t0 + 1000)).toBe(1000);
   });
 
-  it("maxRunSeconds < maxCommandSeconds 时启动告警，指向两个配置键", () => {
+  it("maxRunSeconds < maxCommandSeconds：都是默认值时 info，运维改过一个仍不一致时 warn；指向两个配置键", () => {
     const [w] = sandboxConfigWarnings(cfg);
-    expect(w).toContain("runtime.maxRunSeconds (900)");
-    expect(w).toContain("sandbox.limits.maxCommandSeconds (7200)");
+    expect(w?.level).toBe("info");
+    expect(w?.message).toContain("runtime.maxRunSeconds (900)");
+    expect(w?.message).toContain("sandbox.limits.maxCommandSeconds (7200)");
+    const [changed] = sandboxConfigWarnings({
+      ...cfg,
+      runtime: { ...cfg.runtime, maxRunSeconds: 1800 },
+    });
+    expect(changed?.level).toBe("warn");
+    expect(changed?.message).toContain("runtime.maxRunSeconds (1800)");
     expect(
       sandboxConfigWarnings({ ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } }),
     ).toEqual([]);
@@ -75,7 +82,8 @@ describe("运行时限与命令超时（纯函数）", () => {
       sandbox: { ...long.sandbox, limits: { ...long.sandbox.limits, egress: "open" as const } },
     };
     const [w] = sandboxConfigWarnings(open, "sandbox-docker");
-    expect(w).toContain('pluginConfig."sandbox-docker".allowOpenEgress');
+    expect(w?.level).toBe("warn");
+    expect(w?.message).toContain('pluginConfig."sandbox-docker".allowOpenEgress');
     expect(
       sandboxConfigWarnings(
         { ...open, pluginConfig: { "sandbox-docker": { allowOpenEgress: true } } },

@@ -34,6 +34,11 @@ function isValidMasterKey(value: string): boolean {
  */
 const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
 
+/** `runtime.maxRunSeconds` 的默认值。 */
+export const DEFAULT_MAX_RUN_SECONDS = 900;
+/** `sandbox.limits.maxCommandSeconds` 的默认值。 */
+export const DEFAULT_MAX_COMMAND_SECONDS = 7200;
+
 /** access token 寿命上限（秒）；会话吊销标记的 TTL 按它计算，与实例当前配置无关。 */
 export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 
@@ -252,7 +257,7 @@ export const KernelConfigSchema = z.object({
         .number()
         .int()
         .positive()
-        .default(900)
+        .default(DEFAULT_MAX_RUN_SECONDS)
         .meta(
           meta({
             description:
@@ -365,7 +370,7 @@ export const KernelConfigSchema = z.object({
     })
     .default({
       maxSteps: 50,
-      maxRunSeconds: 900,
+      maxRunSeconds: DEFAULT_MAX_RUN_SECONDS,
       streamIdleMs: 60000,
       maxOutputTokens: 16000,
       compactionThreshold: 0.8,
@@ -718,7 +723,7 @@ export const KernelConfigSchema = z.object({
             .number()
             .int()
             .positive()
-            .default(7200)
+            .default(DEFAULT_MAX_COMMAND_SECONDS)
             .meta(
               meta({
                 description:

@@ -941,7 +941,7 @@ export async function createKernel(
           .list("sandbox")
           .find((x) => x.capability === SANDBOX_CAPABILITY)?.plugin;
         if (sandboxPlugin !== undefined) {
-          for (const w of sandboxConfigWarnings(current, sandboxPlugin)) log.warn(w);
+          for (const w of sandboxConfigWarnings(current, sandboxPlugin)) log[w.level](w.message);
         }
         if (config.roles.includes("worker")) {
           runWorker = new RunWorker({

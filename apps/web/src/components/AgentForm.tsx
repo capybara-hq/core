@@ -261,7 +261,13 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
       ...selectedApps.map((appId) => ({ kind: "app" as const, appId, tools: "all" as const })),
     ];
     if (!existing) return [...picked, ...initial.extraTools];
-    const keyOf = (r: AgentToolRef) => JSON.stringify(r);
+    // 与键顺序无关的身份：内置按名字、应用按 id（表单只管这两种；其余引用总是保留，不参与比较）
+    const keyOf = (r: AgentToolRef) =>
+      r.kind === "builtin"
+        ? `builtin:${r.name}`
+        : r.kind === "app"
+          ? `app:${r.appId}:${r.tools === "all" ? "*" : r.tools.join(",")}`
+          : `plugin:${r.plugin}:${r.name}`;
     const pickedKeys = new Set(picked.map(keyOf));
     const kept = (existing.definition.tools ?? []).filter(
       (r) => !isFormTool(r) || pickedKeys.has(keyOf(r)),

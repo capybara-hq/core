@@ -379,13 +379,13 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     expect(r.isError).toBe(true);
     const snaps = await catalogs(conv);
     expect(snaps.map((s) => s.payload.skills.length)).toEqual([1, 0]);
-    // 最新快照为空：之后的模型请求不再带 skill_load
+    // 最新快照为空也照样带 skill_load（不改工具集合：缓存前缀不变，也不会出现没有工具却有 tool_use 历史的请求）
     const calls = (await eventsOf(db, conv)).filter(
       (e): e is Extract<ConversationEvent, { type: "model_call" }> => e.type === "model_call",
     );
     const keys = (i: number) => (calls.at(i)?.payload.request.tools ?? []).map((t) => t.key);
     expect(keys(0)).toContain("skill_load");
-    expect(keys(-1)).not.toContain("skill_load");
+    expect(keys(-1)).toContain("skill_load");
   });
 });
 

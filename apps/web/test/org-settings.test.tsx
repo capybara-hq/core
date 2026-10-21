@@ -175,6 +175,25 @@ describe("组织设置（SettingsPage）", () => {
     );
   });
 
+  it("存量为自定义白名单、部署已改成不联网：显示为「不联网」，没有待提交改动", async () => {
+    stubApi({
+      [`GET ${SETTINGS}`]: () =>
+        json(200, {
+          settings: {
+            toolSearch: "on",
+            sandboxEgress: { mode: "allowlist", allowHosts: ["a.example.com"] },
+          },
+          deployment: { sandboxEgress: { mode: "none", allowHosts: [] } },
+        }),
+    });
+    const o = en.orgSettings;
+    renderPage(<OrganizationSettingsPage />);
+    const none = await screen.findByRole("radio", { name: new RegExp(`^${o.egress.none}`) });
+    expect(none).toHaveProperty("checked", true);
+    expect(screen.queryByRole("textbox", { name: o.egress.hosts })).toBeNull();
+    expect(actionRow("en")).toBeNull();
+  });
+
   it("旧内核不返回 deployment：不显示沙箱网络一节", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
     renderPage(<OrganizationSettingsPage />);

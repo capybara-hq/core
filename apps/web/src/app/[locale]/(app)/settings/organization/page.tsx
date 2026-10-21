@@ -66,7 +66,11 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const sandboxPolicy = draft.sandboxToolPolicy ?? saved?.sandboxToolPolicy ?? "allow";
   // 沙箱出站：跟随部署时 sandboxEgress 缺省；自定义白名单的初始内容是组织的或部署的清单
   const savedEgress = saved?.sandboxEgress;
-  const savedMode: EgressMode = savedEgress?.mode ?? "default";
+  // 部署已改成不联网时，存量的组织白名单实际按 none 生效（内核 effectiveSandboxEgress），这里也显示为 none
+  const savedMode: EgressMode =
+    savedEgress?.mode === "allowlist" && deployment?.sandboxEgress.mode === "none"
+      ? "none"
+      : (savedEgress?.mode ?? "default");
   const egressMode = draft.egressMode ?? savedMode;
   const baseHosts = savedEgress?.allowHosts ?? deployment?.sandboxEgress.allowHosts ?? [];
   const hostsText = draft.hostsText ?? baseHosts.join("\n");
