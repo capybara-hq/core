@@ -19,6 +19,7 @@ import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import type { WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
+import { skillLoadOffered } from "../skills/catalog.js";
 import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
@@ -307,10 +308,10 @@ export class ToolPipeline {
     const resolve = async (): Promise<Resolved> => {
       // 每步实时解析（应用 / 插件状态可能在模型调用之后变化）
       if (!resolved) {
-        // 与构建请求时同一判定：日志里有技能目录快照 → skill_load 可用（Ruling M17）
-        const skillLoad =
-          (await this.deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog")) !==
-          undefined;
+        // 与构建请求时同一判定：最新的技能目录快照不为空 → skill_load 可用（Ruling M17）
+        const skillLoad = skillLoadOffered(
+          await this.deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog"),
+        );
         resolved = await this.deps.registry.forAgent(ctx.orgId, {
           tools: ctx.agent.tools ?? [],
           skillLoad,

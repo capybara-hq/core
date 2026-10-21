@@ -2,7 +2,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventLog } from "../conversations/event-log.js";
-import { SKILLS_CATALOG_MAX } from "../conversations/events.js";
+import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../conversations/events.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { type CatalogSkill, sameSkills } from "../runtime/context/skills.js";
 
@@ -122,6 +122,16 @@ export async function resolveEffectiveSkills(
 }
 
 /** `skills_catalog` 的幂等键：每次运行最多写一份。 */
+/**
+ * 是否给模型 `skill_load`：日志里**最新**的技能目录快照不为空（Ruling M17）。技能被全部删除或取消选择后，
+ * 空快照之后的请求不再带这个工具。构建请求与执行工具调用用同一判定。
+ */
+export function skillLoadOffered(
+  latest: Extract<ConversationEvent, { type: "skills_catalog" }> | undefined,
+): boolean {
+  return latest !== undefined && latest.payload.skills.length > 0;
+}
+
 export const skillsCatalogIdemKey = (runId: string): string => `skills_catalog:${runId}`;
 
 /**

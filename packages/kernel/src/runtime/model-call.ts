@@ -19,6 +19,7 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
 import { recordToolSpecs } from "../tools/specs.js";
 import {
@@ -273,10 +274,15 @@ async function runStep(
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
     // 每步实时解析（应用 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
-    // 日志里有技能目录快照 → 带上 skill_load（Ruling M17）
+    // 最新的技能目录快照不为空 → 带上 skill_load（Ruling M17）
     const resolved = await deps.tools.forAgent(input.orgId, {
       tools: input.agent.tools ?? [],
-      skillLoad: events.some((e) => e.type === "skills_catalog"),
+      skillLoad: skillLoadOffered(
+        events.findLast(
+          (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+            e.type === "skills_catalog",
+        ),
+      ),
     });
     const tools: StepTools = {
       list: resolved.tools,
