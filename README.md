@@ -337,7 +337,7 @@ export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-
 export CAPYBARA_PLUGIN_CONFIG='{"sandbox-docker":{"endpoint":"tcp://127.0.0.1:2375"}}'
 ```
 
-配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)。
+`127.0.0.1:2375` 只供本机开发：生产环境绝不要把 socket 代理发布到宿主机地址上，只放在内核的内部网络里；`egress: "open"` 须显式打开插件配置 `allowOpenEgress`（默认关）。配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)。
 
 ## 运维须知
 

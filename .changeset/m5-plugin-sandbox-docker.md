@@ -4,7 +4,7 @@
 
 新插件 `@capybara-hq/plugin-sandbox-docker`（`sandbox@1`，M5 T9）：每个对话一个 Docker 容器（runc 或 gVisor
 runsc），只经 socket 代理（`docker/sandbox-proxy` 的 HAProxy 配置，只放行用到的 Engine API）访问 Docker，不挂
-`docker.sock`。部署配置 `endpoint`、`runtime`、`network`、`egressProxyImage`、`volumeDriver`。同名 `create`
+`docker.sock`。部署配置 `endpoint`、`runtime`、`network`（须以 cap 开头）、`egressProxyImage`、`volumeDriver`、`allowOpenEgress`（默认 false）。socket 代理只放行 cap- 资源并按正则检查请求体，绝不能发布到宿主机地址。同名 `create`
 先换掉旧实例；`destroyByName` 清容器、出站代理、内部网络与卷。非 root、`CapDrop: ALL`、`no-new-privileges`、
 只读根文件系统、cpu / 内存 / 进程数限制；`/skills` 只读挂载（插件经 root 专用的可写挂载写技能）。`exec` 超时或
 中止时按会话杀掉命令及其子进程。出站 `none` / `allowlist` / `open`：allowlist 经每个沙箱一个的出站代理（无依赖
