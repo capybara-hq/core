@@ -29,8 +29,10 @@ describe("配置 sandbox", () => {
         "pypi.org",
         "files.pythonhosted.org",
         "github.com",
+        "codeload.github.com",
+        "raw.githubusercontent.com",
         "objects.githubusercontent.com",
-        "deb.debian.org",
+        "release-assets.githubusercontent.com",
       ],
     });
   });

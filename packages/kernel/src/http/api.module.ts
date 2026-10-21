@@ -259,8 +259,8 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: ORG_SETTINGS,
-      useFactory: (db: KernelDb) => new OrgSettingsService(db),
-      inject: [KERNEL_DB],
+      useFactory: (db: KernelDb, config: () => KernelConfig) => new OrgSettingsService(db, config),
+      inject: [KERNEL_DB, KERNEL_CONFIG],
     },
     {
       provide: MEMBERS,

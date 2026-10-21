@@ -18,6 +18,7 @@ import {
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb, SandboxesTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { effectiveSandboxEgress, readOrgSettings } from "../orgs/settings.service.js";
 import { ConversationLock, type Lease } from "../runtime/conversation-lock.js";
 
 /** 沙箱锁的键前缀：`capk:sandbox:<conversationId>`。 */
@@ -718,12 +719,16 @@ export class SandboxService {
       ...extra,
     });
     const cfg = this.d.config().sandbox;
+    // 出站按组织设置收窄（Ruling M19）；只在创建时生效，改设置只影响之后新建的沙箱
+    const egress = effectiveSandboxEgress(
+      cfg.limits,
+      (await readOrgSettings(this.d.db, ctx.orgId)).sandboxEgress,
+    );
     const limits: SandboxLimits = {
       cpu: cfg.limits.cpu,
       memoryMb: cfg.limits.memoryMb,
       diskMb: cfg.limits.diskMb,
-      egress: cfg.limits.egress,
-      allowHosts: [...cfg.limits.allowHosts],
+      ...egress,
     };
     const handle = await p.impl.create({ name: `cap-${id}`, image: cfg.image, limits, signal });
     try {

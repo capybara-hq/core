@@ -74,7 +74,7 @@
 | `sandbox.limits.destroyAfterInactiveDays` | `CAPYBARA_SANDBOX__LIMITS__DESTROY_AFTER_INACTIVE_DAYS` | `number` | `7` | 否 | 否 | Days without use before a sandbox is destroyed with its files; the next use starts an empty one |
 | `sandbox.limits.maxRunningMinutes` | `CAPYBARA_SANDBOX__LIMITS__MAX_RUNNING_MINUTES` | `number` | `120` | 否 | 否 | Minutes a sandbox may run continuously before it is suspended even while in use (skipped while a command is running) |
 | `sandbox.limits.egress` | `CAPYBARA_SANDBOX__LIMITS__EGRESS` | `"none" \| "allowlist" \| "open"` | `"allowlist"` | 否 | 否 | Outbound network from sandboxes: none, allowlist (only allowHosts) or open; applies to sandboxes created after the change, existing ones keep theirs until destroyed |
-| `sandbox.limits.allowHosts` | `CAPYBARA_SANDBOX__LIMITS__ALLOW_HOSTS` | `array<string>` | `["registry.npmjs.org","pypi.org","files.pythonhosted.org","github.com","objects.githubusercontent.com","deb.debian.org"]` | 否 | 否 | Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to sandboxes created after the change |
+| `sandbox.limits.allowHosts` | `CAPYBARA_SANDBOX__LIMITS__ALLOW_HOSTS` | `array<string>` | `["registry.npmjs.org","pypi.org","files.pythonhosted.org","github.com","codeload.github.com","raw.githubusercontent.com","objects.githubusercontent.com","release-assets.githubusercontent.com"]` | 否 | 否 | Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to sandboxes created after the change |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

@@ -157,6 +157,58 @@ describe("没有提供方", () => {
   });
 });
 
+describe("组织出站设置（Ruling M19）", () => {
+  const setEgress = (value: unknown, org = orgId) =>
+    sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ sandboxEgress: value })}::jsonb
+      WHERE id = ${org}`.execute(raw);
+  const limitsOf = async (s: SandboxService, id = conversationId) =>
+    (await fakeSandboxMeta(root, (await use(s, id)).h.id))?.limits;
+
+  it("组织 none → 创建时 egress none；allowlist + 主机 → 替换部署白名单；省略主机 → 沿用部署的", async () => {
+    const s = service();
+    await setEgress({ mode: "none" });
+    expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
+
+    await setEgress({ mode: "allowlist", allowHosts: ["example.com", "*.corp.example.org"] });
+    expect(await limitsOf(s, await newConversation())).toMatchObject({
+      egress: "allowlist",
+      allowHosts: ["example.com", "*.corp.example.org"],
+    });
+
+    await setEgress({ mode: "allowlist" });
+    expect(await limitsOf(s, await newConversation())).toMatchObject({
+      egress: "allowlist",
+      allowHosts: config.sandbox.limits.allowHosts,
+    });
+  });
+
+  it("部署为 none 时组织的 allowlist 不放宽；部署 open 时组织 allowlist 收窄；非法存量按 none", async () => {
+    const s = service();
+    await setEgress({ mode: "allowlist", allowHosts: ["example.com"] });
+    config.sandbox.limits.egress = "none";
+    expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
+    config.sandbox.limits.egress = "open";
+    expect(await limitsOf(s, await newConversation())).toMatchObject({
+      egress: "allowlist",
+      allowHosts: ["example.com"],
+    });
+    await setEgress({ mode: "open" });
+    expect(await limitsOf(s, await newConversation())).toMatchObject({
+      egress: "none",
+      allowHosts: [],
+    });
+  });
+
+  it("改设置只影响之后新建的沙箱：已有的沿用创建时的出站", async () => {
+    const s = service();
+    const first = await use(s);
+    await setEgress({ mode: "none" });
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits.egress).toBe("allowlist");
+  });
+});
+
 describe("懒创建", () => {
   it("首次使用才创建（名字 cap-<对话>、镜像与限制取配置）；之后复用同一个", async () => {
     const s = service();

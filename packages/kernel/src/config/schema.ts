@@ -40,14 +40,20 @@ export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 /** `attachments.requestMediaBytes` 的上限（24 MiB）：base64 后约 32 MiB，是常见供应商的请求上限。 */
 export const REQUEST_MEDIA_BYTES_MAX = 25_165_824;
 
-/** 沙箱出站白名单的默认值（`sandbox.limits.allowHosts`）：常用的包仓库与源码托管。 */
+/**
+ * 沙箱出站白名单的默认值（`sandbox.limits.allowHosts`）：常用的包仓库与源码托管（git clone、归档下载、
+ * raw 文件、release 附件）。不预置 `deb.debian.org`：沙箱用户是 uid 1000、没有 sudo，装不了 apt 包，
+ * 放行它只多一个出口；需要系统包的部署把它们装进镜像。组织可以替换这份清单（`sandboxEgress`，Ruling M19）。
+ */
 export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
   "registry.npmjs.org",
   "pypi.org",
   "files.pythonhosted.org",
   "github.com",
+  "codeload.github.com",
+  "raw.githubusercontent.com",
   "objects.githubusercontent.com",
-  "deb.debian.org",
+  "release-assets.githubusercontent.com",
 ];
 
 const masterKey = z
