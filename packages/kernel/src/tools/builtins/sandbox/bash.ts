@@ -23,7 +23,9 @@ const SPEC: ToolSpec = {
     "Run a shell command (bash) in this conversation's sandbox, an isolated Linux machine. " +
     "Use it to run programs and scripts, install packages, process files and inspect the " +
     "filesystem. The working directory is /workspace; files persist between calls in the same " +
-    "conversation. Files the user attached to the conversation are under /workspace/attachments, " +
+    "conversation, but background processes may not: when the sandbox is suspended after a period " +
+    "without use they can be stopped and /tmp cleared, so keep results in files under /workspace. " +
+    "Files the user attached to the conversation are under /workspace/attachments, " +
     "and skill files under /skills (read-only). Each call runs in a fresh shell (no state such as " +
     "cd or environment variables carries over). The result has stdout, stderr and the exit code; " +
     "long output is saved and can be paged with read_tool_output. A command that runs longer than " +
@@ -67,7 +69,7 @@ export function formatExec(r: ExecResult, seconds: number): string {
     parts.push(`[Output truncated: only the first ${MAX_OUTPUT_BYTES} bytes were kept.]`);
   if (r.timedOut) {
     parts.push(
-      `[timedOut: the command did not finish within ${seconds}s and was stopped. The sandbox is still usable; pass a larger timeoutSeconds or run the work in the background and check on it later.]`,
+      `[timedOut: the command did not finish within ${seconds}s and was stopped. The sandbox is still usable; pass a larger timeoutSeconds (up to the deployment maximum), or split the work into shorter steps that save progress to files under /workspace.]`,
     );
   } else if (r.exitCode === null) {
     parts.push(

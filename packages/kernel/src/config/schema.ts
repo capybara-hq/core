@@ -645,7 +645,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Image (or provider template) for conversation sandboxes; built from plugins/sandbox-docker/image/Dockerfile",
+              "Image for conversation sandboxes, used by the Docker sandbox plugin (built from plugins/sandbox-docker/image/Dockerfile; pre-pull it on every Docker node). The E2B plugin ignores it and uses its own template setting",
           }),
         ),
       lockWaitSeconds: z
@@ -675,19 +675,34 @@ export const KernelConfigSchema = z.object({
             .number()
             .positive()
             .default(1)
-            .meta(meta({ description: "CPU cores for each sandbox" })),
+            .meta(
+              meta({
+                description:
+                  "CPU cores for each sandbox; applies to sandboxes created after the change (E2B: set in the template)",
+              }),
+            ),
           memoryMb: z
             .number()
             .int()
             .positive()
             .default(2048)
-            .meta(meta({ description: "Memory limit of each sandbox in MiB" })),
+            .meta(
+              meta({
+                description:
+                  "Memory limit of each sandbox in MiB; applies to sandboxes created after the change (E2B: set in the template)",
+              }),
+            ),
           diskMb: z
             .number()
             .int()
             .positive()
             .default(5120)
-            .meta(meta({ description: "Disk limit of each sandbox in MiB" })),
+            .meta(
+              meta({
+                description:
+                  "Disk limit of each sandbox in MiB; applies to sandboxes created after the change (Docker: only with a volume driver that supports size; E2B: set by the template / plan)",
+              }),
+            ),
           maxCommandSeconds: z
             .number()
             .int()
@@ -733,7 +748,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Outbound network from sandboxes: none, allowlist (only allowHosts) or open",
+                  "Outbound network from sandboxes: none, allowlist (only allowHosts) or open; applies to sandboxes created after the change, existing ones keep theirs until destroyed",
               }),
             ),
           allowHosts: z
@@ -749,7 +764,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names",
+                  "Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to sandboxes created after the change",
               }),
             ),
         })

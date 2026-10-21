@@ -62,7 +62,7 @@ import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
-import { registerSandboxMaintenance } from "./sandbox/lifecycle.js";
+import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService } from "./sandbox/sandbox.service.js";
 import { SkillsService } from "./skills/skills.service.js";
 import {
@@ -549,6 +549,8 @@ export async function createKernel(
     redis,
     maintenance,
     log,
+    // 离职者对话的沙箱：提交后投递维护任务，由 worker 逐个销毁（等正在跑的命令结束）
+    sandboxes: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
   });
   const identity: KernelIdentity = {
     external,

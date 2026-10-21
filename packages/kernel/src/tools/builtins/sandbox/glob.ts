@@ -8,6 +8,7 @@ import {
   type SandboxToolDeps,
   SYNC_MARKER,
   sandboxBaseTimeoutMs,
+  searchTimeoutMs,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -66,6 +67,7 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
     unavailable: unavailableWhenNoSandbox(deps),
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config()),
     async run(input, ctx) {
+      const startedAt = Date.now();
       const { pattern } = input as GlobInput;
       if (pattern.startsWith("/")) throw new ToolError(ABSOLUTE_PATTERN);
       const dir = checkPath((input as GlobInput).path ?? "/workspace");
@@ -84,7 +86,7 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
         const r = await p.exec(h, {
           command: "find . -type f -print0",
           cwd: dir,
-          timeoutMs: deps.config().tools.timeoutMs,
+          timeoutMs: searchTimeoutMs(deps.config(), startedAt),
           maxOutputBytes: MAX_FIND_BYTES,
           signal,
         });

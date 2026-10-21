@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -454,6 +455,53 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(lines[0]).toBe("line 1");
     expect(lines.length).toBeLessThanOrEqual(ARTIFACT_PREVIEW_MAX_LINES);
     for (const l of lines) expect(l).toMatch(/^line \d+$/);
+  });
+
+  it("preview: a text file over 8 KB is cut at a UTF-8 boundary / a line; NUL bytes → not previewable", async () => {
+    const conv = await sandboxConversation();
+    const store = k.storage.kernel(orgId);
+    const put = async (name: string, bytes: Buffer, contentType = "text/plain") => {
+      const artifactId = randomUUID();
+      const objectKey = `artifacts/${conv}/${artifactId}`;
+      await store.put(objectKey, bytes, {
+        contentType,
+        size: bytes.byteLength,
+        signal: AbortSignal.timeout(10_000),
+      });
+      await k.runs.eventLog.append(conv, [
+        {
+          type: "artifact_created",
+          payload: {
+            artifactId,
+            name,
+            contentType,
+            size: bytes.byteLength,
+            objectKey,
+            sourcePath: `/workspace/${name}`,
+            callId: "preview-test",
+          },
+        },
+      ]);
+      return owner({
+        method: "GET",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/artifacts/${artifactId}/preview`,
+      });
+    };
+    type P = { preview: { text: string; truncated: boolean } };
+    // 一行 3000 个「中」（9000 字节）：开头 8192 字节截在第 2731 个字符中间，残缺的字符被丢掉
+    const oneLine = await put("one-line.txt", Buffer.from("中".repeat(3000)));
+    expect(oneLine.statusCode, oneLine.body).toBe(200);
+    expect((oneLine.json() as P).preview).toEqual({ text: "中".repeat(2730), truncated: true });
+    expect((oneLine.json() as P).preview.text).not.toContain("\uFFFD");
+    // 有换行：去掉被截断的最后一行
+    const lines = await put("lines.txt", Buffer.from(`head\n${"中".repeat(3000)}\n`));
+    expect((lines.json() as P).preview).toEqual({ text: "head", truncated: true });
+    // 声称是文本、开头却有 NUL：不预览（界面显示「不能预览」）
+    const bin = await put("bin.txt", Buffer.from([0x61, 0x62, 0x00, 0x63, 0x0a]));
+    expect(bin.statusCode).toBe(400);
+    expect((bin.json() as { error: { code: string } }).error.code).toBe(
+      "conversation.artifact_not_previewable",
+    );
   });
 
   it("GET .../sandbox: 404 before first use, running after, suspended after the idle sweep", async () => {

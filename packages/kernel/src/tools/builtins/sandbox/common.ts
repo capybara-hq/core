@@ -55,9 +55,28 @@ const MARKER_MAX_BYTES = 1024 * 1024;
 /** 附件文件名的上限（UTF-8 字节，常见文件系统单个文件名上限 255 字节，留出 `-N` 后缀的余量）。 */
 export const ATTACHMENT_NAME_MAX_BYTES = 200;
 
-/** 沙箱工具执行时限的余量：等锁与创建 / 恢复沙箱（`tools.timeoutMs + sandbox.lockWaitSeconds`）。 */
+/**
+ * 沙箱工具时限里额外留出的余量（毫秒）：创建 / 恢复沙箱，以及命令超时后停命令的兜底——E2B 杀进程脚本没跑完时
+ * 重启沙箱（杀进程最多约 20 秒，加 pause + 冷启动 connect 最多 120 秒，约 160 秒）。首次创建时拉取镜像不在其内
+ * （部署时应预先拉好 `sandbox.image`，见 plugins/sandbox-docker/README.md）。
+ */
+export const SANDBOX_SETUP_MARGIN_MS = 180_000;
+
+/**
+ * 沙箱工具的基本执行时限：`tools.timeoutMs` + 等锁（`sandbox.lockWaitSeconds`）+ {@link SANDBOX_SETUP_MARGIN_MS}。
+ */
 export const sandboxBaseTimeoutMs = (cfg: KernelConfig): number =>
-  cfg.tools.timeoutMs + cfg.sandbox.lockWaitSeconds * 1000;
+  cfg.tools.timeoutMs + cfg.sandbox.lockWaitSeconds * 1000 + SANDBOX_SETUP_MARGIN_MS;
+
+/**
+ * glob / grep 的命令超时：不超过 `tools.timeoutMs`，且放得进本次调用剩下的时间（基本时限从 `startedAt` 起算，
+ * 扣掉 {@link SANDBOX_SETUP_MARGIN_MS}，留给超时后停命令的兜底）——等锁或恢复沙箱用掉的时间从这里扣，
+ * 命令自己先超时、给模型可执行的说明，而不是被管线的时限打断。至少 1 秒。
+ */
+export function searchTimeoutMs(cfg: KernelConfig, startedAt: number, now = Date.now()): number {
+  const left = startedAt + sandboxBaseTimeoutMs(cfg) - SANDBOX_SETUP_MARGIN_MS - now;
+  return Math.max(1000, Math.min(cfg.tools.timeoutMs, left));
+}
 
 /** 显示摘要（中英文，各截到 200 码点以内；只给界面看）。 */
 export function display(zh: string, en: string): { summary: { zh: string; en: string } } {

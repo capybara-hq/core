@@ -81,7 +81,7 @@ async function readPrefix(body: ReadableStream<Uint8Array>, max: number): Promis
  *   （网页的缩略图），其余类型即使要求 inline 也仍是 `attachment`。
  * - 文本预览：`text/*` 等文本类，按 Range 读开头 {@link ARTIFACT_PREVIEW_MAX_BYTES} 字节、
  *   至多 {@link ARTIFACT_PREVIEW_MAX_LINES} 行，以 JSON 字符串返回（网页按纯文本显示）；
- *   其他类型 → `conversation.artifact_not_previewable`。
+ *   其他类型、或读到的开头里有 NUL 字节（其实是二进制）→ `conversation.artifact_not_previewable`。
  *
  * 查找走 `conversation_events` 的主键 `(conversation_id, seq)` 前缀，在 SQL 里按 `type` 与
  * `payload->>'artifactId'` 过滤、`LIMIT 1`（只扫这一个会话的事件，不在 JS 里扫日志；不加迁移）。
@@ -150,6 +150,13 @@ export class ConversationArtifacts {
       .get(a.objectKey, { range: { start: 0, end: ARTIFACT_PREVIEW_MAX_BYTES - 1 } });
     if (!got) throw artifactNotFound();
     const bytes = await readPrefix(got.body, ARTIFACT_PREVIEW_MAX_BYTES);
+    // 类型说是文本、内容却是二进制（有 NUL）：不给预览，界面显示「不能预览」
+    if (bytes.includes(0)) {
+      throw new ApiError(
+        "conversation.artifact_not_previewable",
+        "This artifact contains binary data and has no text preview",
+      );
+    }
     // stream: true 丢掉被截断在末尾的半个多字节字符
     let text = new TextDecoder("utf-8").decode(bytes, { stream: true });
     let truncated = got.head.size > bytes.byteLength;

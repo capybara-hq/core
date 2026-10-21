@@ -105,7 +105,7 @@
       "not_found": "对话不存在或你无权访问。",
       "output_not_found": "完整输出已过期或不存在。",
       "artifact_not_found": "文件不存在或已被删除。",
-      "artifact_not_previewable": "这种类型的文件不能预览。"
+      "artifact_not_previewable": "这个文件不能预览。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。"

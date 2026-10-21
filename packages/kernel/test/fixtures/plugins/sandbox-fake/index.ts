@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -23,7 +23,9 @@ import { z } from "zod";
  * - `root/instances/<id>/fs/{workspace,skills,tmp}`：沙箱内 `/workspace`、`/skills`、`/tmp` 的内容（休眠后保留）；
  * - `root/ops.log`：每个操作一行 `<op> <id> [name]`（create / resume / resume-gone / suspend / destroy /
  *   destroy-by-name `<name>`），测试据此计数；
- * - 实例目录不在时 exec / readFile / writeFile / stat 抛 `SandboxGoneError`；
+ * - 实例目录不在时 exec / readFile / writeFile / stat / killAll 抛 `SandboxGoneError`；实例在但 `suspended` 时
+ *   它们先把它启动起来（契约的自动启动，ops.log 记 `autostart <id>`）；
+ * - `root/instances/<id>/procs/<pid>`：exec 正在跑的命令（进程组 id）；`killAll` 杀掉它们（ops.log 记 `kill-all <id>`）；
  * - `root/delays.json`（可选）：`{ create?, resume?, suspend?, destroy? }` 毫秒，模拟慢操作（每次操作时读取）。
  * 模拟 `gone`：测试删掉 `root/instances/<id>`（{@link removeFakeSandbox}），之后 resume 返回 `gone`。
  *
@@ -122,8 +124,13 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
   const requireRunning = async (h: SandboxHandle) => {
     const s = await fakeSandboxState(root, h.id);
     if (s === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
-    if (s !== "running") throw new Error(`fake sandbox ${h.id} is not running (${s})`);
+    if (s !== "running") {
+      // 契约：实例还在、只是停了 → 透明地启动
+      await writeFile(join(instanceDir(root, h.id), "state"), "running");
+      await log(`autostart ${h.id}`);
+    }
   };
+  const procsDir = (h: SandboxHandle) => join(instanceDir(root, h.id), "procs");
   const real = (h: SandboxHandle, p: string) => {
     const errors = validateSandboxPath(p);
     if (errors.length > 0) throw new Error(errors.join("; "));
@@ -226,6 +233,11 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
             // 已退出
           }
         };
+        const pidFile = child.pid === undefined ? undefined : join(procsDir(h), String(child.pid));
+        if (pidFile) {
+          mkdirSync(dirname(pidFile), { recursive: true });
+          writeFileSync(pidFile, "");
+        }
         const timer = setTimeout(() => {
           timedOut = true;
           kill();
@@ -236,6 +248,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
         if (args.signal.aborted) kill();
         child.once("close", (code) => {
           clearTimeout(timer);
+          if (pidFile) rmSync(pidFile, { force: true });
           args.signal.removeEventListener("abort", onAbort);
           resolve({
             exitCode: killed ? null : code,
@@ -246,6 +259,20 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
           });
         });
       });
+    },
+
+    async killAll(h, signal) {
+      signal.throwIfAborted();
+      await requireRunning(h);
+      const pids = await readdir(procsDir(h)).catch(() => [] as string[]);
+      for (const pid of pids) {
+        try {
+          process.kill(-Number(pid), "SIGKILL");
+        } catch {
+          // 已退出
+        }
+      }
+      await log(`kill-all ${h.id}`);
     },
 
     async readFile(h, path, opts) {

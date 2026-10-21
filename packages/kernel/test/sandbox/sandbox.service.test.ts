@@ -19,6 +19,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { ConversationLock } from "../../src/runtime/conversation-lock.js";
 import {
+  SANDBOX_BUSY_PREFIX,
   SandboxLockLostError,
   SandboxService,
   type SandboxServiceDeps,
@@ -878,5 +879,109 @@ describe("锁的防护（fix round 2）", () => {
     const err = (await use(s, conversationId, other).catch((e: unknown) => e)) as ApiError;
     expect(err.code).toBe("forbidden");
     expect(err.message).not.toContain(orgId);
+  });
+});
+
+describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
+  it("记录是 running、实例却停了：下一次调用由提供方自动启动接上，文件还在，不重建", async () => {
+    const s = service();
+    const { h } = await use(s);
+    await s.withSandbox(
+      { orgId, conversationId },
+      (hh, p, _i, sig) => p.writeFile(hh, "/workspace/a.txt", new TextEncoder().encode("a"), sig),
+      signal(),
+    );
+    // 例如休眠扫描停了实例、却在写 suspended 之前丢了锁
+    await provider?.suspend(h, signal());
+    expect((await row())?.status).toBe("running");
+    const out = await s.withSandbox(
+      { orgId, conversationId },
+      async (hh, p, info, sig) => ({
+        info,
+        r: await p.exec(hh, {
+          command: "cat /workspace/a.txt",
+          timeoutMs: 5000,
+          maxOutputBytes: 100,
+          signal: sig,
+        }),
+      }),
+      signal(),
+    );
+    expect(out.info).toEqual({ fresh: false, recreated: false });
+    expect(out.r.stdout).toBe("a");
+    expect(await ops("autostart")).toHaveLength(1);
+    expect(await ops("create")).toHaveLength(1);
+  });
+});
+
+describe("接手崩溃的前任（fix wave S2 I2）", () => {
+  const busyKey = () => `${SANDBOX_BUSY_PREFIX}${conversationId}`;
+
+  it("执行期间写下 capk:sandbox-busy:<对话>（带 TTL），结束后删掉；正常交接不调 killAll", async () => {
+    const s = service();
+    let seen: { v: string | null; ttl: number } = { v: null, ttl: 0 };
+    await s.withSandbox(
+      { orgId, conversationId },
+      async () => {
+        seen = { v: await redis.get(busyKey()), ttl: await redis.pttl(busyKey()) };
+      },
+      signal(),
+    );
+    expect(seen.v).not.toBeNull();
+    expect(seen.ttl).toBeGreaterThan(config.sandbox.limits.maxCommandSeconds * 1000);
+    expect(await redis.get(busyKey())).toBeNull();
+    await use(s);
+    expect(await ops("kill-all")).toHaveLength(0);
+  });
+
+  it("拿到锁时前任的标记还在：先 killAll 杀掉前任遗留的命令，再执行 fn", async () => {
+    const s = service();
+    const { h } = await use(s);
+    // 前任（已崩溃的副本）启动的命令：没有人再按超时杀它，也没有删标记
+    const left = provider?.exec(h, {
+      command: "sleep 30",
+      timeoutMs: 60_000,
+      maxOutputBytes: 100,
+      signal: signal(),
+    });
+    await redis.set(busyKey(), "dead-holder", "PX", 60_000);
+    await new Promise((r) => setTimeout(r, 200));
+    const started = Date.now();
+    const order: string[] = [];
+    await s.withSandbox(
+      { orgId, conversationId },
+      async () => {
+        order.push(`fn after ${(await ops("kill-all")).length} kill-all`);
+      },
+      signal(),
+    );
+    expect(order).toEqual(["fn after 1 kill-all"]);
+    expect(await left).toMatchObject({ exitCode: null, timedOut: false });
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(await redis.get(busyKey())).toBeNull();
+  });
+
+  it("前任的标记还在、但这次是新建的沙箱：不调 killAll", async () => {
+    const s = service();
+    await redis.set(busyKey(), "dead-holder", "PX", 60_000);
+    const { info } = await use(s);
+    expect(info.fresh).toBe(true);
+    expect(await ops("kill-all")).toHaveLength(0);
+  });
+
+  it("killAll 失败只记 warn，照常执行 fn", async () => {
+    const base = createFakeSandbox(root);
+    const failing: SandboxProvider = {
+      ...base,
+      killAll: async () => {
+        throw new Error("kill failed");
+      },
+    };
+    const s = service(() => failing);
+    await use(s);
+    await redis.set(busyKey(), "dead-holder", "PX", 60_000);
+    const r = await s.withSandbox({ orgId, conversationId }, async () => "ran", signal());
+    expect(r).toBe("ran");
+    expect(warned).toContain("cannot kill leftover sandbox commands");
   });
 });

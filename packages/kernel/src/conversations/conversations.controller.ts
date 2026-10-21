@@ -189,7 +189,7 @@ export class ConversationsController {
 
   /**
    * 文本产物的开头若干行（`{ preview: { text, truncated } }`，网页按纯文本显示）。
-   * 不是文本类 → `conversation.artifact_not_previewable`；可见性与下载相同。
+   * 不是文本类、或开头有 NUL 字节 → `conversation.artifact_not_previewable`；可见性与下载相同。
    */
   @Get(":id/artifacts/:artifactId/preview")
   @Header("cache-control", "private, no-store")
@@ -205,7 +205,8 @@ export class ConversationsController {
   }
 
   /**
-   * 对话沙箱的状态 `{ status: "running" | "suspended", lastUsedAt }`；
+   * 对话沙箱的状态。响应体**不套外层键**，直接是 `{ status: "running" | "suspended", lastUsedAt }`
+   * （不同于 `{ preview }`、`{ conversation }` 等；网页 `getSandboxStatus` 按此解析）；
    * 没有可用的沙箱（未创建、已销毁）→ 404 `sandbox.not_found`。可见性与会话流相同。
    */
   @Get(":id/sandbox")

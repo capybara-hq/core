@@ -8,6 +8,7 @@ import {
   type SandboxToolDeps,
   SYNC_MARKER,
   sandboxBaseTimeoutMs,
+  searchTimeoutMs,
   shellQuote,
   unavailableWhenNoSandbox,
   withNotices,
@@ -95,6 +96,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
     unavailable: unavailableWhenNoSandbox(deps),
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config()),
     async run(input, ctx) {
+      const startedAt = Date.now();
       const { pattern, glob, ignoreCase = false } = input as GrepInput;
       const path = checkPath((input as GrepInput).path ?? "/workspace");
       const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
@@ -117,7 +119,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
         const r = await p.exec(h, {
           command,
           cwd,
-          timeoutMs: deps.config().tools.timeoutMs,
+          timeoutMs: searchTimeoutMs(deps.config(), startedAt),
           maxOutputBytes: MAX_GREP_BYTES,
           signal,
         });

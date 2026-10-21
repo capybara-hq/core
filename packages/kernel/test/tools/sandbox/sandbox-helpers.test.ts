@@ -1,5 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { KernelDb } from "../../../src/db/kernel-schema.js";
 import type { PluginHost } from "../../../src/plugins/host.js";
@@ -10,8 +10,11 @@ import {
   formatExec,
   GlobPatternError,
   MAX_GLOB_STARS,
+  SANDBOX_SETUP_MARGIN_MS,
   type SandboxToolDeps,
+  sandboxBaseTimeoutMs,
   sandboxTools,
+  searchTimeoutMs,
   shellQuote,
 } from "../../../src/tools/builtins/sandbox/index.js";
 import type { Credentials } from "../../../src/tools/credentials.js";
@@ -76,6 +79,16 @@ describe("formatExec", () => {
     expect(text).toContain("partial");
     expect(text).toContain("stopped before it finished");
     expect(text).not.toContain("exit code");
+  });
+
+  it("a timed-out command is not told to rely on background work surviving", () => {
+    const text = formatExec(
+      { exitCode: null, stdout: "", stderr: "", truncated: false, timedOut: true },
+      120,
+    );
+    expect(text).toContain("did not finish within 120s");
+    expect(text).not.toMatch(/background/i);
+    expect(text).toContain("/workspace");
   });
 });
 
@@ -146,11 +159,87 @@ describe("sandbox_bash time limit", () => {
       eventLog: {} as any,
       config: () => cfg,
     }).find((t) => t.spec.name === "sandbox_bash");
-    const margin = cfg.tools.timeoutMs + cfg.sandbox.lockWaitSeconds * 1000;
+    // 等锁 + 创建 / 恢复 + 停命令的兜底（E2B 重启沙箱约 160 秒）
+    const margin =
+      cfg.tools.timeoutMs + cfg.sandbox.lockWaitSeconds * 1000 + SANDBOX_SETUP_MARGIN_MS;
+    expect(SANDBOX_SETUP_MARGIN_MS).toBeGreaterThanOrEqual(160_000);
+    expect(sandboxBaseTimeoutMs(cfg)).toBe(margin);
     expect(bash?.spillChars).toBe(30_000);
     expect(bash?.timeoutMs?.({ command: "x", timeoutSeconds: 600 })).toBe(600_000 + margin);
     expect(bash?.timeoutMs?.({ command: "x" })).toBe(120_000 + margin);
     expect(bash?.timeoutMs?.({ command: "x", timeoutSeconds: 99_999 })).toBe(7_200_000 + margin);
+  });
+});
+
+describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
+  const cfg = KernelConfigSchema.parse({
+    db: { url: "postgres://x/y" },
+    redis: { url: "redis://x" },
+    masterKey: Buffer.alloc(32, 7).toString("base64"),
+  });
+
+  it("searchTimeoutMs: tools.timeoutMs while the call is young, shrinking after a long lock wait", () => {
+    const t0 = 1_000_000;
+    const wait = cfg.sandbox.lockWaitSeconds * 1000;
+    expect(searchTimeoutMs(cfg, t0, t0)).toBe(cfg.tools.timeoutMs);
+    expect(searchTimeoutMs(cfg, t0, t0 + wait)).toBe(cfg.tools.timeoutMs);
+    expect(searchTimeoutMs(cfg, t0, t0 + wait + 20_000)).toBe(cfg.tools.timeoutMs - 20_000);
+    expect(searchTimeoutMs(cfg, t0, t0 + 10 * wait)).toBe(1000);
+    // 命令超时之后还留着停命令兜底的余量
+    expect(
+      t0 + wait + 20_000 + searchTimeoutMs(cfg, t0, t0 + wait + 20_000) + SANDBOX_SETUP_MARGIN_MS,
+    ).toBe(t0 + sandboxBaseTimeoutMs(cfg));
+  });
+
+  it.each([
+    ["sandbox_glob", { pattern: "*.txt" }],
+    ["sandbox_grep", { pattern: "x" }],
+  ])("%s passes the time left in the call to exec", async (name, input) => {
+    let now = 5_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const timeouts: number[] = [];
+      const p = {
+        stat: async () => ({ size: 0, isDir: true }),
+        exec: async (_h: unknown, a: { timeoutMs: number }) => {
+          timeouts.push(a.timeoutMs);
+          return {
+            exitCode: name === "sandbox_grep" ? 1 : 0,
+            stdout: "",
+            stderr: "",
+            truncated: false,
+            timedOut: false,
+          };
+        },
+      };
+      const tool = sandboxTools({
+        sandbox: {
+          available: true,
+          // 等锁用掉了 lockWaitSeconds + 25 秒
+          withSandbox: async (_c, fn, sig) => {
+            now += cfg.sandbox.lockWaitSeconds * 1000 + 25_000;
+            // biome-ignore lint/suspicious/noExplicitAny: 只用到 stat / exec
+            return fn({ id: "h" }, p as any, { fresh: false, recreated: false }, sig);
+          },
+        },
+        // biome-ignore lint/suspicious/noExplicitAny: 只列附件
+        attachments: { listForConversation: async () => [] } as any,
+        // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
+        storage: {} as any,
+        // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
+        eventLog: {} as any,
+        config: () => cfg,
+      }).find((t) => t.spec.name === name) as BuiltinTool;
+      await tool.run(input, {
+        orgId: "o",
+        conversationId: "c",
+        signal: AbortSignal.timeout(10_000),
+        // biome-ignore lint/suspicious/noExplicitAny: 只用到上面几项
+      } as any);
+      expect(timeouts).toEqual([cfg.tools.timeoutMs - 25_000]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
 

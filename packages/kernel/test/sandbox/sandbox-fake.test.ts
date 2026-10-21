@@ -2,7 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import {
+  createFakeSandbox,
+  fakeSandboxState,
+  readFakeSandboxOps,
+} from "../fixtures/plugins/sandbox-fake/index.js";
 
 /** 假沙箱（测试夹具）本身的冒烟测试：T8 的工具测试依赖这些行为。 */
 
@@ -50,8 +54,30 @@ describe("sandbox-fake", () => {
     expect(big.truncated).toBe(true);
     expect(big.stdout).toHaveLength(100);
 
+    // 契约的自动启动：已停止（休眠）的实例在 exec 时透明地启动
     await p.suspend(h, sig());
-    await expect(run("echo x")).rejects.toThrow("not running");
+    expect((await run("cat /workspace/a.txt")).stdout).toBe("hi\n");
+    expect(await fakeSandboxState(root, h.id)).toBe("running");
+    expect(
+      (await readFakeSandboxOps(root)).some((o) => o[0] === "autostart" && o[1] === h.id),
+    ).toBe(true);
+  });
+
+  it("killAll 杀掉仍在跑的 exec 命令（前任崩溃遗留的）", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-k", image: "i", limits, signal: sig() });
+    const left = p.exec(h, {
+      command: "sleep 30",
+      timeoutMs: 60_000,
+      maxOutputBytes: 100,
+      signal: sig(),
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    await p.killAll?.(h, sig());
+    expect(await left).toMatchObject({ exitCode: null, timedOut: false });
+    expect((await readFakeSandboxOps(root)).some((o) => o[0] === "kill-all" && o[1] === h.id)).toBe(
+      true,
+    );
   });
 
   it("中止的 exec 杀掉正在跑的命令；已中止的 signal 让调用立即失败", async () => {

@@ -24,6 +24,27 @@ import { ConversationLock, type Lease } from "../runtime/conversation-lock.js";
 export const SANDBOX_LOCK_PREFIX = "capk:sandbox:";
 /** 沙箱锁的 TTL（毫秒）：持有期间每 TTL / 3 续租。 */
 export const SANDBOX_LOCK_TTL_MS = 60_000;
+/**
+ * 「沙箱正在使用」标记的键前缀：`capk:sandbox-busy:<conversationId>`。持锁方在执行 `fn` 前写下、结束后删掉；
+ * 拿到锁时标记还在，说明前任持锁方没有正常结束（副本崩溃），它的命令可能还在沙箱里跑。
+ */
+export const SANDBOX_BUSY_PREFIX = "capk:sandbox-busy:";
+/** 标记的 TTL 在最长命令时间之外的余量（毫秒）：过期时前任的命令早已被沙箱里的时限杀掉。 */
+const BUSY_TTL_MARGIN_MS = 10 * 60_000;
+
+/** 写下自己的标记并返回之前的值（原子）。 */
+const BUSY_SWAP = `
+local old = redis.call('GET', KEYS[1])
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return old
+`;
+/** 只删自己写的标记。 */
+const BUSY_RELEASE = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`;
 /** 维护扫描里单个提供方操作（休眠 / 销毁）的超时。 */
 const SWEEP_OP_TIMEOUT_MS = 120_000;
 /** 每次扫描最多处理的沙箱数，与同时进行的提供方操作数。 */
@@ -166,6 +187,10 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   锁被持有（正在执行命令）就跳过这一个，下次扫描再说。
  * - **透明恢复**：已休眠的在下次使用时恢复；恢复返回 `gone`、已销毁、记录的提供方不是当前提供方、
  *   或 `fn` 抛 `SandboxGoneError`（重试一次）时重建空沙箱，`recreated` 为 true（工具层告诉模型「之前的文件已不在」）。
+ *   记录是 `running`、实例却被内核之外的原因停了时，由提供方的自动启动（`sandbox@1` 契约）接上。
+ * - **接手崩溃的前任**：执行 `fn` 期间 Redis 里有标记 `capk:sandbox-busy:<对话>`（TTL 为最长命令时间加余量）；
+ *   拿到锁时标记还在（前任没正常结束），先调提供方的 `killAll` 杀掉前任遗留的命令，再执行 `fn`（尽力而为，
+ *   失败只记 warn：提供方在沙箱里也有命令时限兜底）。
  *
  * 换提供方会泄漏旧实例：新提供方销毁不了旧提供方的实例，只有旧提供方仍加载时才能清理（记在 `prev_*` 列）。
  * 没有提供方时 {@link available} 为 false，使用时抛 `sandbox.unavailable`（503）。本身无进程内状态，可多副本共用。
@@ -225,10 +250,15 @@ export class SandboxService {
     const capMs = this.d.config().sandbox.lockWaitSeconds * 1000;
     const held = this.hold(await this.acquire(ctx.conversationId, signal, capMs));
     const sig = AbortSignal.any([signal, held.signal]);
+    const busy = randomUUID();
     try {
       const s = await this.ensure(ctx, p, held, sig);
+      const leftover = await this.markBusy(ctx.conversationId, busy);
       try {
         try {
+          // 新建的实例里不会有前任的命令
+          if (leftover && !s.info.fresh)
+            await this.killLeftovers(ctx.conversationId, s.handle, p, sig);
           return await fn(s.handle, p.impl, s.info, sig);
         } catch (e) {
           if (!isSandboxGoneError(e)) throw e;
@@ -239,6 +269,14 @@ export class SandboxService {
           return await fn(handle, p.impl, { fresh: true, recreated: true }, sig);
         }
       } finally {
+        await this.d.redis
+          .eval(BUSY_RELEASE, 1, `${SANDBOX_BUSY_PREFIX}${ctx.conversationId}`, busy)
+          .catch((err: unknown) =>
+            this.d.log.warn("cannot clear sandbox busy marker", {
+              conversationId: ctx.conversationId,
+              err,
+            }),
+          );
         await this.d.db
           .updateTable("sandboxes")
           .set({ last_used_at: sql<Date>`now()` })
@@ -364,6 +402,59 @@ export class SandboxService {
       if (current) await this.destroyRow(current, p, held);
     } finally {
       await held.release();
+    }
+  }
+
+  /**
+   * 写下本次的「正在使用」标记；返回之前是否已有标记（前任没正常结束）。Redis 出错只记 warn、按没有处理。
+   */
+  private async markBusy(conversationId: string, token: string): Promise<boolean> {
+    const ttl = this.d.config().sandbox.limits.maxCommandSeconds * 1000 + BUSY_TTL_MARGIN_MS;
+    try {
+      const old = await this.d.redis.eval(
+        BUSY_SWAP,
+        1,
+        `${SANDBOX_BUSY_PREFIX}${conversationId}`,
+        token,
+        ttl,
+      );
+      return old !== null;
+    } catch (err) {
+      this.d.log.warn("cannot write sandbox busy marker", { conversationId, err });
+      return false;
+    }
+  }
+
+  /**
+   * 接手前任：杀掉沙箱里前任遗留的命令。实例已不在（SandboxGoneError）与中止照常抛出（交给 withSandbox 重建 /
+   * 结束）；其余失败只记 warn。提供方没有 `killAll` 时只记 info。
+   */
+  private async killLeftovers(
+    conversationId: string,
+    handle: SandboxHandle,
+    p: SandboxProviderEntry,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!p.impl.killAll) {
+      this.d.log.info(
+        "sandbox taken over from a holder that did not finish; provider cannot kill its commands",
+        {
+          conversationId,
+        },
+      );
+      return;
+    }
+    try {
+      await p.impl.killAll(handle, signal);
+      this.d.log.info(
+        "sandbox taken over from a holder that did not finish; leftover commands killed",
+        {
+          conversationId,
+        },
+      );
+    } catch (err) {
+      if (signal.aborted || isSandboxGoneError(err)) throw err;
+      this.d.log.warn("cannot kill leftover sandbox commands", { conversationId, err });
     }
   }
 
