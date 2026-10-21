@@ -120,7 +120,7 @@
   - 本地目录 `plugins.dir`，结构为 `<name>/<sha256 前 16 位>/`：先解到临时目录，再改名换入。每个副本校验 sha256 后再加载。
 - **C14 内置插件**：`openai-compatible` 与 `object-store-s3` 由 `apps/capybara` 以 `builtinPlugins` 传给内核，按模块解析加载，来源 `builtin`。
   - 它们总是可用：不能卸载、停用，也不能在网页上升级（随核心镜像升级）。
-  - 仍要过权限批准、部署配置与组织启用。
+  - 随核心镜像预先批准、始终启用：不进权限审批（权限清单在插件页只读展示），也不需要组织启用（模型供应商与对象存储都是部署级能力）；只需填部署配置（如供应商地址与密钥、S3 端点），没配好时显示「待配置」。（2026-10-22 用户确认）
   - 依赖方向新增：CLI 依赖这两个插件包（写进 AGENTS.md）。
 - **C15 配置声明的插件**：启动配置的 `plugins` 列表保留，来源记为 `config`。开发模式（工作区 `plugins/*`）和已有部署都走它。
   - 在后台只读：不能在网页上安装、升级、卸载或停用；列表改动后要重启才生效。
@@ -152,7 +152,7 @@
   - `capybara plugins list`：安装记录与各副本状态；
   - `install <file.tgz | npm:<name>[@<ver>]>`；
   - `enable | disable | uninstall <name>`；
-  - `review` / `approve` 覆盖安装记录、内置插件与配置声明的插件。
+  - `review` / `approve` 覆盖安装记录与配置声明的插件（内置插件预先批准，不需要）。
 
   CLI 写完 PG 后经 Redis 发布 `kernel.plugins.changed`；发布失败只告警，副本在一个 reconcile 周期内仍会收敛。
 - **C19 组织级沙箱 cpu / 内存**由企业管理员按组织覆盖（部署设置 `sandboxLimitOverrides`），组织管理员只读。只对新建的沙箱生效（Ruling M16）。
@@ -874,11 +874,11 @@ export interface AdminPluginView { name: string; version: string; source: Plugin
 ```
 ```
 GET  /api/v1/admin/plugins → { plugins: AdminPluginView[] }；GET /api/v1/admin/plugins/:name
-POST /api/v1/admin/plugins/:name/approve {sha256 | null /* 内置或配置声明的插件为 null */, reviewHash}
+POST /api/v1/admin/plugins/:name/approve {sha256 | null /* 配置声明的插件为 null；内置插件预先批准，调用返回 409 plugin.builtin */, reviewHash}
      → 写快照（source web）+ 审计 plugin.permissions_approved + 发布 kernel.plugins.changed
 错误码：plugin.approval_stale 409、plugin.not_pending 409
 ```
-- 权限集合：安装记录的版本用 `permissionSetOfPackage`，内置与配置声明的插件用已导入模块的 `computePermissionSet`。
+- 权限集合：安装记录的版本用 `permissionSetOfPackage`，配置声明的插件用已导入模块的 `computePermissionSet`；内置插件不进审批（视为已批准），加载时跳过权限快照比对。
 - `status` 由期望状态、快照、配置校验、`migrated_sha` 和各副本的状态推出，优先级：`failed` > `pending_approval` > `pending_config` > `pending_migration` > `converging` > `enabled` / `disabled`。
 - 敏感标记只影响展示，不改快照键。
 
