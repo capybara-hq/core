@@ -12,9 +12,10 @@ import {
   type MediaInfo,
   type ModelCallMeta,
   mediaRefs,
+  planMedia,
   type RequestTool,
 } from "../runtime/context/build.js";
-import { assembleModelRequest } from "../runtime/model-call.js";
+import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
 /**
@@ -241,4 +242,42 @@ export function snapshotMediaRefs(
 ): string[] {
   const all = toEvents(s);
   return mediaRefs(inputEvents(all, findCall(all, modelCallSeq)), model);
+}
+
+/**
+ * 按快照自己的 `orgId` / `conversationId` 取还原该请求要用的附件（C3：媒体不进快照，回放时取原附件）：
+ * 先查行信息，按 `planMedia`（与运行时同一规则；预算缺省用记录的 `mediaBudgetBytes`）只取要发字节的，
+ * `text/*` 只取开头。结果直接作 {@link ReconstructOptions} 的 `mediaInfo` / `media`。
+ * 原对话或附件已删除 → 行不在结果里，还原时按「不再可用」占位（drift 记 `media_missing`）；
+ * 暂时故障（存储不可用）由来源抛出，调用方按可重试处理。
+ */
+export async function loadSnapshotMedia(
+  s: CaseSnapshot,
+  modelCallSeq: number,
+  model: ModelInfo,
+  source: MediaSourceDeps,
+  mediaBudgetBytes?: number,
+): Promise<{ mediaInfo: Map<string, MediaInfo>; media: Map<string, MediaBytes | null> }> {
+  const all = toEvents(s);
+  const call = findCall(all, modelCallSeq);
+  const events = inputEvents(all, call);
+  const refs = mediaRefs(events, model);
+  const media = new Map<string, MediaBytes | null>();
+  if (refs.length === 0) return { mediaInfo: new Map(), media };
+  const mediaInfo = await source.info(s.orgId, s.conversationId, refs);
+  const budget = mediaBudgetBytes ?? call.payload.request.mediaBudgetBytes;
+  const plan = planMedia(events, model, mediaInfo, budget);
+  if (plan.fetch.length > 0) {
+    const caps = new Map(
+      plan.fetch.flatMap((id) => (plan.caps.has(id) ? [[id, plan.caps.get(id) as number]] : [])),
+    );
+    const got = await source.fetch(
+      s.orgId,
+      s.conversationId,
+      plan.fetch,
+      caps.size > 0 ? caps : undefined,
+    );
+    for (const id of plan.fetch) media.set(id, got.get(id) ?? null);
+  }
+  return { mediaInfo, media };
 }

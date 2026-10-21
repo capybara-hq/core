@@ -50,9 +50,9 @@ export type AgentWarning = "fallback_same_provider";
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
 
-/** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`。 */
-function paramIssues(
-  field: "modelParams" | "fallbackParams",
+/** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`（评测候选也用它）。 */
+export function paramIssues(
+  field: string,
   decl: ModelParameter[],
   params: Record<string, unknown>,
 ): { path: string; message: string }[] {

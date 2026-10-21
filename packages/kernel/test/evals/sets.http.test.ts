@@ -297,8 +297,16 @@ describe("评测集 CRUD 与加用例", () => {
     expect(await auditActions()).toEqual([
       "eval.set_created",
       "eval.case_added",
+      "eval.set_updated",
       "eval.set_deleted",
     ]);
+    const updated = await db
+      .selectFrom("audit_events")
+      .select(["target", "detail", "actor_account_id"])
+      .where("action", "=", "eval.set_updated")
+      .executeTakeFirstOrThrow();
+    expect(updated).toMatchObject({ target: set.id, actor_account_id: adminId });
+    expect(updated.detail).toEqual({ fields: ["name", "rubric"] });
   });
 
   it("同一运行重复加 409；别的 agent 的运行 409；未终态 409；超大 413；超过上限 409", async () => {
@@ -356,6 +364,19 @@ describe("评测集 CRUD 与加用例", () => {
     const again = await admin({ method: "DELETE", url: `${base()}/${set.id}/cases/${c.id}` });
     expect(again.statusCode).toBe(404);
     expect(errCode(again)).toBe("eval.case_not_found");
+    const removed = await db
+      .selectFrom("audit_events")
+      .select(["target", "detail", "actor_account_id"])
+      .where("action", "=", "eval.case_removed")
+      .execute();
+    // 只有真正删掉的那一次写审计
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toMatchObject({ target: set.id, actor_account_id: adminId });
+    expect(removed[0]?.detail).toEqual({
+      caseId: c.id,
+      conversationId: conv,
+      runId: "r0",
+    });
     // 删掉后可以重新加同一运行
     expect((await addCase(admin, set.id, conv, "r0")).statusCode).toBe(201);
 

@@ -5,7 +5,10 @@ import type { SettingsService } from "../identity/settings.js";
 /** 组织配额租约的默认时长（毫秒）：持有方每 `leaseMs / 3` 续租一次。 */
 export const ORG_QUOTA_LEASE_MS = 60_000;
 
-const quotaKey = (orgId: string) => `capk:org-runs:${orgId}`;
+/** 运行配额的键前缀（`capk:org-runs:<orgId>`）；评测运行用 {@link EVAL_QUOTA_PREFIX}。 */
+export const RUN_QUOTA_PREFIX = "capk:org-runs:";
+/** 评测运行的组织并发配额（C7）：`capk:org-evals:<orgId>`，成员为评测任务的 jobId。 */
+export const EVAL_QUOTA_PREFIX = "capk:org-evals:";
 
 /** 毫秒级当前时间取 Redis 服务器时钟，各副本一致。 */
 const NOW = `
@@ -41,11 +44,19 @@ return 0
 `;
 
 /**
- * 组织级运行并发配额（spec 4.3）：Redis ZSET `capk:org-runs:<orgId>`，成员 runId、分数为租约到期时间。
+ * 组织级运行并发配额（spec 4.3）：Redis ZSET `<keyPrefix><orgId>`（默认 `capk:org-runs:<orgId>`），
+ * 成员 runId（评测为 jobId）、分数为租约到期时间。
  * 持有方崩溃时不 `leave`，成员在租约到期后被下一次 `tryEnter` 清理，名额不泄漏。
  */
 export class OrgQuota {
-  constructor(private readonly redis: Redis) {}
+  constructor(
+    private readonly redis: Redis,
+    private readonly keyPrefix: string = RUN_QUOTA_PREFIX,
+  ) {}
+
+  private key(orgId: string): string {
+    return `${this.keyPrefix}${orgId}`;
+  }
 
   async tryEnter(
     orgId: string,
@@ -54,17 +65,17 @@ export class OrgQuota {
     leaseMs = ORG_QUOTA_LEASE_MS,
   ): Promise<boolean> {
     return (
-      Number(await this.redis.eval(TRY_ENTER, 1, quotaKey(orgId), runId, limit, leaseMs)) === 1
+      Number(await this.redis.eval(TRY_ENTER, 1, this.key(orgId), runId, limit, leaseMs)) === 1
     );
   }
 
   /** 续期；成员已过期被清理 → false。 */
   async renew(orgId: string, runId: string, leaseMs = ORG_QUOTA_LEASE_MS): Promise<boolean> {
-    return Number(await this.redis.eval(RENEW, 1, quotaKey(orgId), runId, leaseMs)) === 1;
+    return Number(await this.redis.eval(RENEW, 1, this.key(orgId), runId, leaseMs)) === 1;
   }
 
   async leave(orgId: string, runId: string): Promise<void> {
-    await this.redis.zrem(quotaKey(orgId), runId);
+    await this.redis.zrem(this.key(orgId), runId);
   }
 }
 

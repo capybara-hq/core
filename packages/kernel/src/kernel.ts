@@ -36,6 +36,8 @@ import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
+import { EvalQueue } from "./evals/runs.service.js";
+import { EvalWorker } from "./evals/worker.js";
 import { ApiModule } from "./http/api.module.js";
 import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
 import { AccountsService } from "./identity/accounts.js";
@@ -59,7 +61,7 @@ import type { AgentLoop } from "./runtime/loop.js";
 import { Maintenance } from "./runtime/maintenance.js";
 import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
-import { OrgQuota } from "./runtime/quota.js";
+import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
@@ -706,6 +708,9 @@ export async function createKernel(
     maintenance,
   };
   let runWorker: RunWorker | undefined;
+  /** 评测队列（生产方：API 启动运行时入队）与 worker（含 worker 角色时启动）。 */
+  const evalQueue = new EvalQueue(config.redis.url, log);
+  let evalWorker: EvalWorker | undefined;
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
   const releaseConnections = async (): Promise<void> => {
     redis.disconnect();
@@ -758,6 +763,7 @@ export async function createKernel(
         skills,
         skillChanges,
         prices,
+        evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
       trustProxy: config.http.trustProxy,
@@ -875,6 +881,13 @@ export async function createKernel(
       const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
+    if (evalWorker) {
+      await within(
+        "evals",
+        evalWorker.close(Math.max(0, runsDeadline - Date.now() - RUNS_FORCE_CLOSE_MS)),
+        Math.max(0, runsDeadline - Date.now()),
+      );
+    }
     if (channelsStopped) {
       // 至少留 2s 交还租约：否则其他副本要等租约过期（默认 30s）才能接管
       await within(
@@ -891,6 +904,7 @@ export async function createKernel(
       Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
     );
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
+    await within("eval-queue", evalQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
     await within("bus", busSubscriber.close());
     if (redis.status === "ready") {
@@ -971,6 +985,20 @@ export async function createKernel(
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();
+          evalWorker = new EvalWorker({
+            db: kdb,
+            redisUrl: config.redis.url,
+            quota: new OrgQuota(redis, EVAL_QUOTA_PREFIX),
+            config: () => current,
+            log,
+            // 媒体按快照自己的组织与对话、经组织范围的附件接口取（C3）
+            replay: {
+              registry,
+              config: () => current,
+              ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+            },
+          });
+          evalWorker.start();
           // 维护队列：周期任务的 scheduler（幂等，多副本重复登记无害）与唯一的 Worker。
           // 登记失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再登记。
           try {

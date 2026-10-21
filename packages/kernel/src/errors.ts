@@ -100,6 +100,12 @@ export const ERROR_CODES = {
   "eval.case_exists": 409,
   "eval.too_many_cases": 409,
   "eval.agent_mismatch": 409,
+  "eval.run_not_found": 404,
+  "eval.token_cap_invalid": 400,
+  "eval.run_finished": 409,
+  "eval.nothing_to_replay": 409,
+  "eval.candidate_invalid": 400,
+  "model.unconfigured": 409,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

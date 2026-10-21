@@ -231,7 +231,8 @@ interface Failure {
   retryAfterMs: number | undefined;
 }
 
-interface StreamOutcome {
+/** 一次模型流的结果（{@link consumeModelStream}）。 */
+export interface StreamOutcome {
   content: ContentBlock[];
   stopReason: StopReason;
   usage: ModelUsage;
@@ -665,7 +666,7 @@ async function maybeCompact(
   let summary = "";
   try {
     let partial = "";
-    const out = await consume(
+    const out = await consumeModelStream(
       provider,
       buildCompactionRequest(plan.transcript, info.id),
       info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
@@ -816,7 +817,7 @@ async function ladder(
         );
       });
       await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
-      const outcome = await consume(
+      const outcome = await consumeModelStream(
         provider,
         request,
         info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
@@ -957,8 +958,9 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 /**
  * 消费一次模型流，带空闲看门狗：两次事件之间超过 `idleMs` → 本地中止并按 `ModelError("timeout")` 抛出。
  * 外部 `signal` 触发 → `StepAborted`。每次 `next()` 都与停止信号竞速，供应商不响应 signal 也不会卡住。
+ * 运行时与评测单步回放（`evals/step-replay.ts`）、评委共用。
  */
-async function consume(
+export async function consumeModelStream(
   provider: ModelProvider,
   request: ModelRequest,
   idleMs: number,

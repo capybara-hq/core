@@ -125,6 +125,7 @@ beforeAll(async () => {
           skills: k.skills,
           skillChanges: k.skillChanges,
           prices: k.prices,
+          evalQueue: { enqueue: async () => {} },
           storage: k.storage,
           sandbox: k.sandbox,
           runs: {

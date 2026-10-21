@@ -257,6 +257,7 @@ export class EvalSetsService {
     actor: string,
     setId: string,
     patch: { name?: string; description?: string; rubric?: string | null },
+    actorTokenId?: string,
   ): Promise<EvalSetView> {
     if (!UUID.test(setId)) throw setNotFound();
     await this.db.transaction().execute(async (trx) => {
@@ -274,6 +275,19 @@ export class EvalSetsService {
         .where("deleted_at", "is", null)
         .executeTakeFirst();
       if (Number(r.numUpdatedRows) === 0) throw setNotFound();
+      await audit(trx, {
+        actorAccountId: actor,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "eval.set_updated",
+        target: setId,
+        // 只记改了哪些字段（评分标准可能很长，不进审计）
+        detail: {
+          fields: (["name", "description", "rubric"] as const).filter(
+            (f) => patch[f] !== undefined,
+          ),
+        },
+      });
     });
     return this.view(orgId, setId);
   }
@@ -511,7 +525,13 @@ export class EvalSetsService {
     return { added, skipped };
   }
 
-  async removeCase(orgId: string, actor: string, setId: string, caseId: string): Promise<void> {
+  async removeCase(
+    orgId: string,
+    actor: string,
+    setId: string,
+    caseId: string,
+    actorTokenId?: string,
+  ): Promise<void> {
     if (!UUID.test(setId)) throw setNotFound();
     if (!UUID.test(caseId)) throw caseNotFound();
     await this.db.transaction().execute(async (trx) => {
@@ -530,8 +550,21 @@ export class EvalSetsService {
         .where("id", "=", caseId)
         .where("set_id", "=", setId)
         .where("org_id", "=", orgId)
+        .returning(["source_conversation_id", "source_run_id"])
         .executeTakeFirst();
-      if (Number(r.numDeletedRows) === 0) throw caseNotFound();
+      if (!r) throw caseNotFound();
+      await audit(trx, {
+        actorAccountId: actor,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "eval.case_removed",
+        target: setId,
+        detail: {
+          caseId,
+          conversationId: r.source_conversation_id,
+          runId: r.source_run_id,
+        },
+      });
     });
   }
 

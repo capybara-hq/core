@@ -22,6 +22,8 @@ import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { EvalRunsController } from "../evals/runs.controller.js";
+import { type EvalQueue, EvalRunsService } from "../evals/runs.service.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
 import { EvalSetsService } from "../evals/sets.service.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
@@ -104,6 +106,7 @@ import {
   CREDENTIALS,
   DIRECTORY_SYNC,
   EMBED_TOKENS,
+  EVAL_RUNS,
   EVAL_SETS,
   EVENT_LOG,
   EXTERNAL_IDENTITIES,
@@ -186,6 +189,8 @@ export interface ApiDeps {
   skillChanges: SkillChangesService;
   /** 模型价格表（与 `Kernel.prices` 同一实例）。 */
   prices: PricesService;
+  /** 评测队列的生产方（与 worker 同一队列名）。 */
+  evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
   sandboxDestroy?: { destroy(conversationIds: string[]): Promise<void> };
 }
@@ -224,6 +229,7 @@ const CONTROLLERS: Type[] = [
   UiController,
   TrajectoryController,
   EvalSetsController,
+  EvalRunsController,
 ];
 
 /**
@@ -325,6 +331,17 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         settings: SettingsService,
       ) => new EvalSetsService(db, config, prices, settings),
       inject: [KERNEL_DB, KERNEL_CONFIG, PRICES, SETTINGS],
+    },
+    {
+      provide: EVAL_RUNS,
+      useFactory: (
+        db: KernelDb,
+        config: () => KernelConfig,
+        registry: ProviderRegistry,
+        prices: PricesService,
+        settings: SettingsService,
+      ) => new EvalRunsService({ db, config, registry, prices, settings, queue: deps.evalQueue }),
+      inject: [KERNEL_DB, KERNEL_CONFIG, PROVIDER_REGISTRY, PRICES, SETTINGS],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },

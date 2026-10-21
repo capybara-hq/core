@@ -140,3 +140,6 @@ export const TRAJECTORIES = Symbol("TRAJECTORIES");
 
 /** `EvalSetsService`（评测集与用例）的注入令牌。 */
 export const EVAL_SETS = Symbol("EVAL_SETS");
+
+/** `EvalRunsService`（评测运行）的注入令牌。 */
+export const EVAL_RUNS = Symbol("EVAL_RUNS");

@@ -122,11 +122,17 @@ export class EvalSetsController {
     @Body(new ZodPipe(PatchBody)) body: z.infer<typeof PatchBody>,
   ): Promise<{ set: EvalSetView }> {
     const p = requireUser(principal);
-    const set = await this.sets.update(org.orgId, p.account.id, setId, {
-      ...(body.name !== undefined && { name: body.name }),
-      ...(body.description !== undefined && { description: body.description }),
-      ...(body.rubric !== undefined && { rubric: body.rubric }),
-    });
+    const set = await this.sets.update(
+      org.orgId,
+      p.account.id,
+      setId,
+      {
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.description !== undefined && { description: body.description }),
+        ...(body.rubric !== undefined && { rubric: body.rubric }),
+      },
+      patTokenId(p),
+    );
     return { set };
   }
 
@@ -201,6 +207,6 @@ export class EvalSetsController {
     @Param("caseId") caseId: string,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.sets.removeCase(org.orgId, p.account.id, setId, caseId);
+    await this.sets.removeCase(org.orgId, p.account.id, setId, caseId, patTokenId(p));
   }
 }
