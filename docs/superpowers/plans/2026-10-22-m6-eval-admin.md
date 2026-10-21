@@ -6,7 +6,7 @@
 
 1. **评测**：轨迹查看器；从真实对话建评测集；单步回放与整轮回放（用记录的工具结果）；评分方式有结构差异、LLM 评委和人工标注；运行时排队，有并发上限、事先估算和 token 上限。
 2. **管理后台**：部署设置与组织设置分开。插件移到核心镜像之外，按需安装（npm-pack tgz），安装、批准、启用、停用、升级、卸载都不用重启。部署级插件配置入 PG。另有模型与用途映射、成员页和组织级沙箱限额。
-3. **企业目录**：插件、应用和技能都能从文件、npm 或清单（官方清单、企业清单，静态 `index.json`）导入，按条目设策略，成员可以申请。
+3. **企业目录**：先把「应用」全量改名为「连接器」（D17）。之后，插件、连接器模板、技能与应用包（`app.yaml`）都能从文件、npm 或清单（官方清单、企业清单，静态 `index.json`）导入，按条目设策略，成员可以申请；组织可以一次装好一个应用（插件 + 连接器 + 技能），卸载时保留共用的组件。
 
 **Architecture:**
 - **评测**完全建立在「事件日志是唯一事实源」上。
@@ -17,14 +17,14 @@
 - **插件**以 PG 安装记录加内容寻址的包（对象存储，无对象存储时存 PG）为准。
   - 每个副本把包同步到本地目录后加载，内核记下插件经 `ctx` 的每一项注册，停用时逐项撤销。
   - 期望状态的变化经 `ctx.bus` 广播，周期性的维护任务兜底。各副本各自收敛，并把加载状态写回 PG。
-- **企业目录**是部署级的 PG 表加对象存储前缀 `deployment/`。组织安装时，把条目物化成现有的应用、组织技能，或在组织内启用插件。
+- **企业目录**是部署级的 PG 表加对象存储前缀 `deployment/`。组织安装时，把条目物化成连接器、组织技能，或在组织内启用插件；应用包按组件台账一次装好，也能一次卸载。
 
 **Tech Stack:** TypeScript、NestJS + Fastify、Kysely + 纯 SQL 迁移、BullMQ、Redis、LangGraph（现有 loop）、esbuild（打包插件）、Next + `@capybara-hq/design`、Vitest + Testcontainers（PG / Valkey / SeaweedFS S3）。
 
 **Spec:**
 - `docs/superpowers/specs/2026-10-17-capybara-architecture-design.md`：§2.2、§2.5（插件安装、信任、权限）、§3.4（角色；企业管理员不读对话）、§4.2（日志用途含回放）、§4.5（企业管理员管模型、按用途要模型）、§6 原则 8（评测是一等公民）、§7.1–§7.3（包类型、两层目录、安装确认）、§8.7（轨迹查看器）。
 - `docs/superpowers/specs/2026-10-18-extension-model-design.md`：§2.3（被依赖方停用）、§4.2（用途）、§6（部署级插件配置入 PG、来源标注、`hot`）、§7.2–§7.3（权限清单、批准）、§9（M6 分期）。
-- 用户决策 D1–D16 见下文，也记在记忆 `capybara-m6-decisions` 里。
+- 用户决策 D1–D17 见下文，也记在记忆 `capybara-m6-decisions` 里。
 
 ---
 
@@ -38,7 +38,7 @@
 - **D6** 轨迹查看器：组织管理员与 agent 负责人可看；事件时间线、每次模型调用的 token / 延迟 / 成本、工具调用与审批链。
 - **D7（修订）** 不另设角色，沿用现有的企业管理员（`is_enterprise_admin`，CLI / 第一个账号设定），界面与文档都称「企业管理员」。管理后台分「部署设置」与「组织设置」。
 - **D8** 部署级插件配置在 PG 可改；文件 / Nacos 中出现的字段只读并显示来源；插件权限可在网页批准（CLI 保留）。
-- **D9** 企业目录在部署内（应用 + 技能，本次再加插件；从文件 / npm 导入）；按条目策略：允许 / 需审批 / 禁用；成员可申请。不做公共市场。
+- **D9** 企业目录在部署内（应用 + 技能，本次再加插件；从文件 / npm 导入）；按条目策略：允许 / 需审批 / 禁用；成员可申请。不做公共市场。按 D17，这里的「应用」现在叫连接器模板，另外新增应用包。
 - **D10** 私有 agent 的 `skill_write` 默认不确认（负责人可改成 ask）；沙箱 / 存储提供方插件在安装确认页标为敏感，须企业管理员批准。
 - **D11** 并入 M6 管理后台段：访客的角色 / 移除控件、组织级沙箱 cpu / 内存限额、渠道队列优先级的行为测试。
 - **D12**（M7 方向）gemini 走 Gemini API；CLA 以 Apache ICLA 起草；镜像发到 ghcr，amd64 + arm64。本计划只更新路线图。
@@ -61,6 +61,17 @@
   - 内核定期拉取清单，也能手动刷新。清单地址可配置，支持镜像，官方清单可以关掉以便离线使用；npm registry 地址也可配置。
   - 下载的包按清单里的 sha512 校验。M7 之前不做清单签名。
   - 官方清单仓库在 M7 上线：CI 发布到 npm 后，向清单仓库提 PR。
+- **D17 术语**：
+  - 今天的「应用 / app」（配置好的远端服务实例）改名为 **连接器（connector）**；
+  - 协议插件（connector-mcp / openapi 等）称 **连接器插件**，能力名 `connector@1` 不变；
+  - **应用（app）** 改指一个组合包 `app.yaml`：插件 + 连接器模板 + 技能，即 spec §7.1 的「生态包」。
+
+  改名一次做完：界面、文档、HTTP（`/apps` → `/connectors`）、`OrgAction`、表。改名放在第三段开头。目录的 kind 变为插件 / 连接器模板 / 技能 / 应用。
+
+  另外：
+  - 应用里的 agent 模板推迟，写进路线图；
+  - 不支持 stdio MCP；
+  - 成员的个人连接器推迟。
 - **C10 已确认**：部署级插件配置不合法时，该插件进入待处理（`reason: "config"`），内核照常启动。
 
 ## 计划层面的取舍（设计者的决定，执行中如被推翻，记入台账）
@@ -157,21 +168,22 @@
   CLI 写完 PG 后经 Redis 发布 `kernel.plugins.changed`；发布失败只告警，副本在一个 reconcile 周期内仍会收敛。
 - **C19 组织级沙箱 cpu / 内存**由企业管理员按组织覆盖（部署设置 `sandboxLimitOverrides`），组织管理员只读。只对新建的沙箱生效（Ruling M16）。
 - **C20 成员页顺带做邀请**（创建、列表、撤销，以及接受页）。
-- **C21 目录包格式统一为 `package.json` 的 `capybara` 段**：
-  - `kind: "plugin"`：同 C11；
-  - `kind: "skill"`：包内带 SKILL.md 等文件；
-  - `kind: "app"`：带 `app: {connector, endpoint, auth}`，不含凭据。
+- **C21 目录包格式统一为 `package.json` 的 `capybara` 段**，kind 共四种（D17）：
+  - `plugin`：同 C11；
+  - `connector-template`：连接器模板，见 C30；
+  - `skill`：包内带 SKILL.md 等文件；
+  - `app`：应用包，见 C31。
 
-  应用与技能另外接受 zip（根目录放 `package.json`）。签名 / provenance 推迟到 M7，只记录 npm 的 `integrity`。文件导入走内核直传（≤ `packages.maxBytes`，只有企业管理员能用）。
+  连接器模板与技能另外接受 zip（根目录放 `package.json`）。签名 / provenance 推迟到 M7，只记录 npm 的 `integrity`。文件导入走内核直传（≤ `packages.maxBytes`，只有企业管理员能用）。
 - **C22 目录策略。**
   - 三档：
     - `allow`：新导入的条目默认是它。
     - `needs_approval`：组织管理员提交后，由企业管理员批准。
     - `disabled`：不能新装，已装的不受影响。
   - 成员申请进组织管理员的收件箱。
-  - 部署设置 `customApps` / `customSkills` 为 `deny` 时，组织只能从目录安装。
+  - 部署设置 `customConnectors` / `customSkills` 为 `deny` 时，组织只能从目录安装。
   - **插件条目**：装到部署上只能由企业管理员操作；组织侧的「安装」是在本组织启用它，受该条目的策略约束。不经目录直接安装的插件不受目录策略约束。
-  - 从目录装的应用暂不支持升级。
+  - 应用条目：组织安装应用时，应用里的插件在本组织启用，由应用条目的策略决定，不再单独看各插件条目的策略。
 - **C23 不做给 agent 用的目录工具**：待定。
 - **C24 D10 的开关**是 agent 定义里的 `skills.writePolicy: "allow" | "ask"`，缺省 `allow`。私有 agent 设为 `ask` 时，`skill_write` 按固定 ask 处理，确认后直接生效。共享 agent 不论取值都走 R3 + R4。
 - **C25 清单条目先浏览，「引入」时才物化成目录条目。**
@@ -187,6 +199,34 @@
   - 清单不合法时保留上一份内容，来源状态记为 `error`。
   - 下载包的地址：清单给了 `tarball`（必须是 https）就用它，否则走 npm registry。校验一律以清单的 sha512 为准，不认 npm 元数据；不符时拒绝，返回 `catalog.integrity_mismatch`。
   - 清单里的权限摘要只用于展示。和下载后算出的权限不一致时，在审阅页显示警告，不拒绝——字节已经由 integrity 锁定。
+
+- **C27 改名的范围（D17）。**
+  - **要改的**：标识符、HTTP 路由、`OrgAction`（`connectors.*`）、错误码（`connector.*`）、表与列（`connectors`、`connector_tools`、`connector_id`）、界面与 i18n、文档。
+  - **不改的**：
+    - 模型可见的文案（`tool_search` 描述、不可用原因等英文）：避免请求构建产生漂移；
+    - 事件 payload 的字段名（`appId` / `appName`）：日志只追加，读的人知道它们指连接器；
+    - 已存 agent 版本里的 `{kind:"app", appId}`：读入时规范化为 `{kind:"connector", connectorId}`，新保存只写新形；
+    - secrets 键 `credentials:app:*`：加密的附加数据绑定了键名，改名要重新加密，收益不值；
+    - 旧审计记录 `app.*`：审计只追加；新记录写 `connector.*`，按 action 查询时两者视为同义。
+  - slug 的值不变，所以工具 key `<slug>__<tool>` 不变；旧日志的回放由 T22 的夹具测试保证零漂移。
+- **C28 滚动升级的兼容层**：
+  - 改名迁移同时建兼容视图 `capybara.apps` / `capybara.app_tools`（列名映射回旧名，是可更新的简单视图），旧副本在滚动升级期间照常读写；
+  - HTTP 旧路径 `/apps*` 作为别名保留；
+  - 两者都在 M7 删除（写进路线图）。
+- **C29 改名前后的命名**：
+  - 第一、二段触及现有代码时沿用旧名（如 `tools/apps.service.ts`），由 T22 统一改名；
+  - M6 新增的标识符一律直接用新名（如部署设置 `customConnectors`）；
+  - 第三段从 T23 起全部用新名。
+- **C30 连接器模板** = 连接器插件引用（插件名与可选的版本范围）+ `Connector.kind` + 端点预设 + `editableEndpoint`（组织能改的路径）+ 认证预设（不含任何凭据）+ 默认的 ownership + 各工具的默认策略 + 图标。
+  - 组织安装时，只能填凭据、客户端 id / secret 与可编辑的端点字段，其余以模板为准。
+  - 安装后的默认策略记为 `policy_source 'template'`。
+- **C31 应用包**：npm-pack tgz，`package.json` 为 `{capybara: {kind: "app", manifest: "app.yaml"}}`；`app.yaml` 按插件名、版本范围与 lock（版本 + sha512）引用插件，声明连接器模板，并把技能打在包里。
+  - **企业导入**：一次审阅所有插件的权限，确认时为每个插件写快照；可以同时把插件装到部署并启用。已装且满足版本范围的插件不动。
+  - **组织安装**：在本组织启用这些插件，按模板建连接器（需填凭据），导入技能。`app_install_components` 记下每个组件是本次新建的还是原本就有的。中途失败时，撤销本次新建的组件。
+  - **卸载**：只移除本次新建、且没有别处在用的组件；保留的组件在报告里列出原因。
+  - **升级**：M6 不支持，组织先卸载再安装新版本。理由：组件间的差异与迁移语义需要单独设计，推迟到 M7 / 待定。
+  - 清单条目（D16）也可以是 app 类。
+- **C32 推迟项**：应用里的 agent 模板、成员的个人连接器（D17）记入路线图的推迟项；stdio MCP 不支持（已接受），写进连接器指南。
 
 ## Global Constraints
 
@@ -208,6 +248,8 @@
   | 0029 | T6 | 0033 | T22 |
   | 0030 | T11 | 0034 | T23 |
   | | | 0035 | T24 |
+  | | | 0036 | T25 |
+  | | | 0037 | T26 |
 
   建表、删表都带 `IF NOT EXISTS` / `IF EXISTS`。
 - **配置**：新键写进 `config/schema.ts`，并重新生成 `docs/config.md`。`hot` 字段须在 `HOT_APPLIERS` 登记。
@@ -240,7 +282,7 @@
   |---|---|---|
   | `priceCurrency` | `"USD"` | |
   | `sandboxLimitOverrides` | `{}` | orgId → `{cpu?, memoryMb?}`，null 删除；cpu 0.25–64，memoryMb 为 256–262144 的整数 |
-  | `customApps` | `"allow"` | `"allow"` / `"deny"` |
+  | `customConnectors` | `"allow"` | `"allow"` / `"deny"` |
   | `customSkills` | `"allow"` | `"allow"` / `"deny"` |
 
 - **bus 主题 / 维护任务**：
@@ -781,7 +823,7 @@ POST /api/v1/admin/plugins/packages/npm {package, version?} → PackageReview
 审计：plugin.package_uploaded（name、version、sha256、source）
 ```
 - **启动顺序**：
-  1. 先加载内置插件（`object-store-s3` 配好时存储随即可用）；
+  1. 先加载内置插件：预先批准、始终启用，跳过权限快照比对，也不经组织启用（`object-store-s3` 配好时存储随即可用；部署配置没配好时为 `pending_config`）；
   2. 再加载配置声明的插件；
   3. 最后加载 `desired_state = enabled` 且已批准、已迁移的安装记录：`syncPackage` 后 import。本任务里由启动的副本在锁内执行迁移；T14 改为持锁协调。
 - 每次加载都写 `plugin_replica_status`，心跳随 T14 的 reconcile 更新。
@@ -793,7 +835,7 @@ POST /api/v1/admin/plugins/packages/npm {package, version?} → PackageReview
   - npm：integrity 不符、不同源、重定向、超大，都返回 502 / 413。
   - 写一条启用的安装记录后重启，打包好的 todo 插件从 `plugins.dir` 加载，工具可用。
   - 同一 sha 再次启动时复用本地目录。
-  - 内置插件来源为 `builtin`；与配置声明重名时告警。
+  - 内置插件来源为 `builtin`，`autoApprove: false` 时也直接加载，不写快照；组织插件页（`/settings/plugins`）不列出它们，组织启用检查对它们直接放行；与配置声明重名时告警。
 - [ ] **Step 2：** 运行测试，确认失败。
 - [ ] **Step 3：** 实现。
 - [ ] **Step 4：** 运行触及的测试与全量 `pnpm test`，确认通过。
@@ -1023,7 +1065,7 @@ capybara admin grant <login> / capybara admin revoke <login>：在 lockEnterpris
 - `/admin`（OverviewPage）显示四个数字：需要处理的插件（待批准、待配置、失败、副本不一致）、待处理的目录申请（T24 之前为 0）、组织数、账号数。
 - `/admin/accounts`（ListPage）：新建、停用、授予或撤销企业管理员（需二次确认）。
 - `/admin/orgs`（ListPage）：每个组织可以设置运行并发与沙箱 cpu / 内存。
-- `/admin/settings`（SettingsPage）：谁能建组织、币种、`customApps` / `customSkills`。
+- `/admin/settings`（SettingsPage）：谁能建组织、币种、`customConnectors` / `customSkills`。
 - 页面上统一使用「企业管理员」「部署设置」；组织设置仍在 `/settings/*`。
 
 - [ ] **Step 1：** 先写失败测试：
@@ -1052,7 +1094,7 @@ capybara admin grant <login> / capybara admin revoke <login>：在 lockEnterpris
   3. 确认：有敏感项时须勾选「我已了解敏感项」，然后依次调用 install → approve，再可选 enable。
 - **`/admin/plugins/[name]`**（DetailPage）三个标签：
   - **概要**：期望状态与各副本状态（失败原因、心跳时间）；启用、停用、升级（跳到安装向导）、卸载（须先停用，二次确认）。内置插件和配置声明的插件不显示这些按钮，并说明原因。
-  - **权限**：内容同安装确认页；待批准时提供批准。
+  - **权限**：内容同安装确认页；待批准时提供批准。内置插件只读展示，并注明「随核心镜像预先批准」。
   - **配置**：只读字段显示来源，密钥只能设置或清除；`hot` 字段即时生效，其余字段保存后插件会重新加载。
 - 停用或升级时提示：「进行中的工具调用最多等待 N 秒后中止」。
 
@@ -1146,103 +1188,169 @@ export function effectiveSandboxLimits(deployment: SandboxLimits, override: { cp
   5. 组织沙箱覆盖后，新建的沙箱拿到对应的 cpu。
   6. 组织覆盖 `eval` 用途后生效。
   7. 访客行改角色返回 `member.anonymous_guest`。
+  8. 内置插件：`autoApprove: false` 时不出现在待批准里；`object-store-s3` 没配置时为 `pending_config`，在 A 上配好后，两个副本都不重启即加载，存储可用。
 - [ ] 提交 `test: M6 第二段验收`。
 
 ---
 
 ## 第三段：企业目录
 
-### Task 22: 目录条目与导入（插件 / 应用 / 技能）
+### Task 22: 改名：应用 → 连接器（D17）
 
 **Files:**
-- 修改 `packages/plugin-sdk/src/plugin-package.ts`，加 `kind: "app" | "skill"` 两类 section 与解析函数，附 changeset。
-- 迁移 `0033_directory.sql`。
+- 迁移 `0033_rename_apps_to_connectors.sql`。
+- 内核：
+  - `tools/apps.{service,controller}.ts` → `tools/connectors.{service,controller}.ts`；
+  - `tools/app-content.{ts,controller.ts}` → `tools/connector-content.*`；
+  - `db/kernel-schema.ts`（`AppsTable` → `ConnectorsTable` 等）、`tools/{registry,policy,credentials,drift,naming,oauth/*}.ts`；
+  - `orgs/roles.ts`、`errors.ts`、`agents/{definition,agents.service}.ts`；
+  - 第一、二段里用到旧名的地方（`evals/trajectory.ts` 等）；
+  - 全部对应测试。
+- web：
+  - `apps/web/src/app/[locale]/(app)/apps/**` → `connectors/**`；
+  - `components/{AppForm,AppWizard}.tsx` → `ConnectorForm` / `ConnectorWizard`；
+  - `lib/apps.ts` → `lib/connectors.ts`；
+  - `nav.tsx`、`settings-nav.ts`；
+  - i18n 键 `apps.*` → `connectors.*`，中文文案「应用」→「连接器」；
+  - `next.config` 里加 `/apps*` → `/connectors*` 的重定向。
+- 文档：`skills/writing-connectors`、`writing-tools`、`writing-kernel-api`、`writing-plugins`、`AGENTS.md`、README。在 writing-connectors 里写明「不支持 stdio MCP」。
+- 新增夹具 `packages/kernel/test/evals/fixtures/pre-rename/*.json` 与测试 `packages/kernel/test/tools/rename-compat.test.ts`。
+
+**Interfaces (Produces):**
+```
+表：capybara.apps → capybara.connectors；capybara.app_tools → capybara.connector_tools；
+    所有 app_id 列 → connector_id（connector_tools、approvals、tool_grants、conversation_tool_grants 等，实现时用 grep "app_" migrations 列全）；索引与约束名不改
+兼容视图（C28）：CREATE OR REPLACE VIEW capybara.apps AS SELECT …, id AS id, … FROM capybara.connectors（列名映射回旧名，可更新的简单视图）；app_tools 同样
+HTTP：/api/v1/orgs/:orgId/apps* → /api/v1/orgs/:orgId/connectors*（旧路径作为别名保留到 M7）
+OrgAction：apps.manage → connectors.manage；apps.use → connectors.use
+错误码：app.not_found / slug_taken / connect_failed / tool_not_found / tool_not_pending / resources_disabled → connector.*
+AgentToolRef：新增 { kind: "connector", connectorId, tools }；{ kind: "app", appId, tools } 仍可解析，读入时规范化为 connector 形；新保存只写 connector 形
+registry 的工具来源：{ kind: "connector"; connectorId; name; resources?: true }（只在内存里）
+审计 action：新写 connector.created / updated / deleted / tools_refreshed / tools_drifted；旧记录 app.* 不改
+```
+- **迁移的写法**：
+  - 每条 `RENAME` 紧邻的上一行都写 `-- capybara:allow-destructive D17 应用 → 连接器全量改名；同一发布内代码同步改名，旧副本经兼容视图读写`（`skills/writing-migrations` 的豁免注释）。
+  - 表改名用 `ALTER TABLE IF EXISTS … RENAME TO …`。列改名没有 `IF EXISTS`，放在 `DO $$ … IF EXISTS (SELECT 1 FROM information_schema.columns …) THEN ALTER TABLE … RENAME COLUMN … END IF; $$` 里保证幂等。
+  - 先确认迁移检查认得 `DO` 块里的 `RENAME`，并接受紧邻其上的豁免注释；不认得就修检查，并补违规 fixture。
+- **不改的部分（C27）**：
+  - 模型可见的文案：`tool_search` 描述、工具不可用原因、连接相关的英文提示；
+  - 事件 payload 字段名：`user_message.attachments[].appId/appName`、`connection_required.appId/appName`；
+  - secrets 键 `credentials:app:*`；
+  - slug 的值，因此工具 key `<slug>__<tool>` 不变。
+
+  改的只是代码里的常量名与注释。
+
+- [ ] **Step 1：在改任何代码之前，先写回归夹具和测试：**
+  - 用当前代码跑一段对话，覆盖 MCP 连接器工具、`tool_search` 加载、`connection_required` 和一次审批，导出 `CaseSnapshot` 与 model-fake 收到的每个请求，存为 `fixtures/pre-rename/*.json`。
+  - 测试断言：改名后，`reconstructRequest` 对夹具里每个可回放调用 `drift` 为 `[]`，请求与记录的请求 `toEqual`。
+  - 测试断言：含 `{kind:"app"}` 的旧 agent 版本能加载、能运行，工具 key 不变。
+  - 测试断言：经兼容视图 `capybara.apps` 能读也能写（模拟旧副本）。
+  - 测试断言：旧路径 `/apps` 与新路径 `/connectors` 返回相同的结果。
+- [ ] **Step 2：** 运行测试：夹具在旧代码上通过，改名相关的断言失败。
+- [ ] **Step 3：** 全量改名。
+- [ ] **Step 4：** 运行全量 `pnpm test`、`pnpm check`（包括迁移检查与 web-ui 检查）、web e2e，以及 `grep -rn "apps\.\(manage\|use\)\|AppsService\|/apps/" packages apps` 确认没有旧名残留（允许残留的只有兼容别名、视图与夹具）。
+- [ ] **Step 5：** 提交 `refactor!: 应用改名为连接器（路由、权限、错误码、表与界面）`，附 changeset，写明破坏性变更与兼容期。
+
+### Task 23: 目录条目与导入（插件 / 连接器模板 / 技能）
+
+**Files:**
+- 修改 `packages/plugin-sdk/src/plugin-package.ts`，加 `connector-template`、`skill` 两类 section 与解析函数，附 changeset。
+- 迁移 `0034_directory.sql`。
 - 新建 `packages/kernel/src/directory/{archive,directory.service,admin-directory.controller}.ts`。
 - 修改 `errors.ts`。
 - 测试 `packages/plugin-sdk/test/package-kinds.test.ts`、`packages/kernel/test/directory/*`（用 `startFakeNpmRegistry`）。
 
 **Interfaces (Produces):**
 ```ts
-export type PackageKind = "plugin" | "app" | "skill";
-export interface AppPackageSection { kind: "app"; publisher: string; description: string; displayName?: { zh: string; en: string };
-  app: { connector: string; endpoint: Record<string, unknown>; auth: Record<string, unknown> } }
+export type PackageKind = "plugin" | "connector-template" | "skill" | "app";
+export interface ConnectorTemplateSpec {
+  plugin: string;                                   // 连接器插件名（如 connector-mcp）
+  pluginVersion?: string;                           // semver 范围，可选
+  connector: string;                                // Connector.kind（如 "mcp"）
+  endpoint: Record<string, unknown>;                // 预设；按连接器的 endpointSchema 校验
+  editableEndpoint?: string[];                      // 组织安装时允许改的点路径（如 "url"）；其余以模板为准
+  auth: Record<string, unknown>;                    // 与连接器安装接口的 AuthSchema 同形，不含任何凭据
+  ownership?: "org" | "personal";                   // 缺省取 auth.ownership
+  defaultToolPolicies?: Record<string /* 工具名 */, "allow" | "ask" | "deny">;
+  icon?: string;                                    // 包内路径，svg / png，≤ 64KB
+}
+export interface ConnectorTemplateSection { kind: "connector-template"; publisher: string; description: string; displayName?: { zh: string; en: string }; template: ConnectorTemplateSpec }
 export interface SkillPackageSection { kind: "skill"; publisher: string; description: string; displayName?: { zh: string; en: string } }
-export function parsePackageSection(pkg: unknown, hostSdkVersion: string): (CapybaraPackageSection | AppPackageSection | SkillPackageSection) | { errors: string[] };
+export function parsePackageSection(pkg: unknown, hostSdkVersion: string):
+  (CapybaraPackageSection | ConnectorTemplateSection | SkillPackageSection | AppPackageSection /* T25 */) | { errors: string[] };
+export function validateConnectorTemplate(t: unknown): string[];
 // kernel
-export function readDirectoryArchive(bytes: Uint8Array, maxBytes: number): Promise<{ packageJson: Record<string, unknown>; section: AppPackageSection | SkillPackageSection; files: SkillPackageFile[] }>;
-  // tgz 或 zip；剥掉 package/；沿用 SKILL_PACKAGE_MAX_*、压缩比与路径校验；skill 类再过 readSkillPackage 的校验
+export function readDirectoryArchive(bytes: Uint8Array, maxBytes: number): Promise<{ packageJson: Record<string, unknown>; section: ConnectorTemplateSection | SkillPackageSection | AppPackageSection; files: SkillPackageFile[] }>;
 export type DirectoryPolicy = "allow" | "needs_approval" | "disabled";
 class DirectoryService {
-  importFile(actor: string, bytes: Uint8Array): Promise<DirectoryItemView>;                  // 先按 package.json 的 kind 分流；plugin 类交给 PluginInstalls.ingestFile
+  importFile(actor: string, bytes: Uint8Array): Promise<DirectoryItemView>;
   importNpm(actor: string, input: { package: string; version?: string }): Promise<DirectoryItemView>;
   list(q: { kind?: PackageKind; includeDeleted?: boolean }): Promise<DirectoryItemView[]>; get(itemId: string): Promise<DirectoryItemDetail>;
   setPolicy(actor: string, itemId: string, policy: DirectoryPolicy): Promise<DirectoryItemView>; remove(actor: string, itemId: string): Promise<void>;
-  installToDeployment(actor: string, itemId: string, version: string): Promise<AdminPluginView>;   // plugin 类：调用 PluginAdminOps.install，source 记为 directory
+  installToDeployment(actor: string, itemId: string, version: string): Promise<AdminPluginView>;   // plugin 类，调用 PluginAdminOps.install
 }
 export interface DirectoryItemView { id: string; kind: PackageKind; name: string; publisher: string; displayName: { zh: string; en: string } | null;
-  description: string; policy: DirectoryPolicy; latestVersion: string; versions: string[]; installs: number; updatedAt: string }
+  description: string; policy: DirectoryPolicy; latestVersion: string; versions: string[]; installs: number; source: string; updatedAt: string }
 ```
 ```
-表 capybara.directory_items(id uuid pk, kind plugin|app|skill, name, publisher, display_name jsonb, description, policy default 'allow', latest_version,
-                            created_by, created_at, updated_at, deleted_at null, UNIQUE(kind, name) WHERE deleted_at IS NULL)
-表 capybara.directory_item_versions(item_id, version, section jsonb, source file|npm, source_ref text,
-                                    object_prefix text null /* app / skill：deployment/directory/<itemId>/<version>/ */,
-                                    plugin_sha256 text null → plugin_packages, files jsonb, size bigint, imported_by, imported_at, PRIMARY KEY(item_id, version))
-POST /api/v1/admin/directory/import/file（application/octet-stream，bodyLimit = packages.maxBytes）；POST /api/v1/admin/directory/import/npm {package, version?}
+表 capybara.directory_items(id uuid pk, kind plugin|connector-template|skill|app, name, publisher, display_name jsonb, description, policy default 'allow',
+                            latest_version, created_by, created_at, updated_at, deleted_at null, UNIQUE(kind, name) WHERE deleted_at IS NULL)
+表 capybara.directory_item_versions(item_id, version, section jsonb, source file|npm, source_ref text, object_prefix text null, plugin_sha256 text null,
+                                    resolved jsonb null /* app：T25 */, files jsonb, size bigint, imported_by, imported_at, PRIMARY KEY(item_id, version))
+POST /api/v1/admin/directory/import/file（application/octet-stream）；POST /api/v1/admin/directory/import/npm {package, version?}
 GET  /api/v1/admin/directory/items[?kind]；GET …/items/:id；PUT …/items/:id/policy {policy}；DELETE …/items/:id
 POST /api/v1/admin/directory/items/:id/install-deployment {version}（只有 plugin 类）
-错误码：directory.invalid_package 400、directory.version_exists 409、directory.item_not_found 404、directory.wrong_kind 409、沿用 packages.npm_failed、
-        plugin.package_too_large、storage.unavailable
+错误码：directory.invalid_package 400、directory.version_exists 409、directory.item_not_found 404、directory.wrong_kind 409
 审计：directory.imported、directory.policy_changed、directory.removed
 ```
-- npm 拉取复用 T11 的 `fetchNpmPackage`。
-- 应用类导入时按连接器的 `endpointSchema` 校验端点。
-- 同名同版本重复导入返回 409；更高的版本成为 latest。
+- 连接器模板导入时，用对应连接器的 `endpointSchema` 校验 `endpoint`；`editableEndpoint` 里的路径必须存在于 schema 中。
+- 插件 tgz 交给 `PluginInstalls.ingestFile`。技能与模板的文件放 `deployment/directory/<itemId>/<version>/`。
+- `kind: "app"` 的解析与导入留到 T25；本任务遇到 app 包返回 `directory.wrong_kind`。
 
 - [ ] **Step 1：先写失败测试：**
-  - 三种 kind 的 section 解析。
-  - zip 与 tgz 都能导入；越界、超限、缺 SKILL.md 被拒。
-  - 插件 tgz 进入 `plugin_packages`，并能装到部署（之后走 T14 的流程）。
-  - npm integrity 不符返回 502。
-  - 同版本重复导入 409。
+  - 三种 section 的解析；
+  - 模板里含凭据字段（如 `token`）时被拒；
+  - `editableEndpoint` 指向 schema 里不存在的路径时被拒；
+  - zip / tgz 都能导入；越界、超限、缺 SKILL.md 被拒；
+  - 插件 tgz 进入 `plugin_packages`；
+  - 同一版本重复导入 409；
   - 非企业管理员 403。
 - [ ] **Step 2：** 运行测试，确认失败。
 - [ ] **Step 3：** 实现。
 - [ ] **Step 4：** 运行触及的测试与 `pnpm check`，确认通过。
-- [ ] **Step 5：** 提交 `feat: 企业目录条目与导入（插件 / 应用 / 技能，文件 / npm）`。
+- [ ] **Step 5：** 提交 `feat: 企业目录条目与导入（插件 / 连接器模板 / 技能）`。
 
-### Task 23: 目录来源：清单格式、拉取与从清单引入
+### Task 24: 目录来源：清单格式、拉取与从清单引入
 
 **Files:**
-- 新建 `packages/plugin-sdk/src/catalog.ts`（zod schema + 纯函数），修改 `index.ts`，附 changeset。
-- 新建 `packages/plugin-sdk/schemas/catalog-index.v1.schema.json`：由脚本 `pnpm gen:catalog-schema` 用 `z.toJSONSchema` 生成；SDK 的 `files` 包含 `schemas/`，M7 的清单仓库在 CI 里用它校验。
-- 新增检查 `check:catalog-schema`：生成结果与仓库里的文件不一致就报错，附违规 fixture。
-- 迁移 `0034_catalogs.sql`。
+- 新建 `packages/plugin-sdk/src/catalog.ts`，修改 `index.ts`，附 changeset。
+- 新建 `packages/plugin-sdk/schemas/catalog-index.v1.schema.json`：由 `pnpm gen:package-schemas` 用 `z.toJSONSchema` 生成；SDK 的 `files` 包含 `schemas/`。
+- 新增检查 `check:package-schemas`：生成结果与仓库里的文件不一致就报错，附违规 fixture。T25 再把 `app.v1.schema.json` 加进来。
+- 迁移 `0035_catalogs.sql`。
 - 新建 `packages/kernel/src/directory/{catalogs.service,catalogs.controller,catalog-fetch}.ts`。
-- 修改 `directory/directory.service.ts`（`importFromCatalog`）、`runtime/maintenance.ts`（任务 `catalogs-refresh`）、`config/schema.ts`（`catalogs.*`）、`errors.ts`、`docs/config.md`。
+- 修改 `directory/directory.service.ts`（`importFromCatalog`）、`runtime/maintenance.ts`（`catalogs-refresh`）、`config/schema.ts`（`catalogs.*`）、`errors.ts`、`docs/config.md`。
 - 新建 `packages/testing/src/fake-catalog.ts`：`startFakeCatalog({ index: unknown }): Promise<{ url: string; setIndex(i: unknown): void; requests: { etag?: string }[]; stop(): Promise<void> }>`（支持 ETag / 304），从 `index.ts` 导出。
 - 测试 `packages/plugin-sdk/test/catalog.test.ts`、`packages/kernel/test/directory/catalogs*.test.ts`。
 
 **Interfaces (Produces):**
 ```ts
-// plugin-sdk/src/catalog.ts
 export const CATALOG_SCHEMA_VERSION = 1;
 export interface CatalogIndex { schemaVersion: 1; name: string /* 1–100 */; publisher?: string; updatedAt: string /* ISO 8601 */; entries: CatalogEntry[] /* ≤ 5000 */ }
 export interface CatalogEntry {
-  kind: PackageKind;                         // "plugin" | "skill" | "app"
-  name: string;                              // 目录名：^[a-z0-9][a-z0-9-]{0,63}$；同一清单内 (kind, name) 唯一
+  kind: PackageKind;                         // "plugin" | "connector-template" | "skill" | "app"
+  name: string;                              // ^[a-z0-9][a-z0-9-]{0,63}$；同一清单内 (kind, name) 唯一
   npm: string;                               // npm 包名（可带 @scope）
   publisher: string;                         // 1–100
   summary: { en: string; zh?: string };      // 各 ≤ 280
   homepage?: string;                         // https URL
-  permissions?: { keys: string[]; sensitive: string[] };   // 仅 plugin：permissionKeys 格式；sensitive ⊆ keys
+  permissions?: { keys: string[]; sensitive: string[] };   // plugin 与 app：permissionKeys 格式（app 为其全部插件的并集）；sensitive ⊆ keys
   versions: CatalogVersion[];                // ≥ 1，version 唯一
 }
 export interface CatalogVersion { version: string /* semver */; integrity: string /* ^sha512-[A-Za-z0-9+/]{86}==$ */;
-  minKernel: string /* semver */; minSdk?: string /* semver，plugin 必填 */; tarball?: string /* https URL */; publishedAt?: string; deprecated?: string }
+  minKernel: string /* semver */; minSdk?: string /* plugin 必填 */; tarball?: string /* https URL */; publishedAt?: string; deprecated?: string }
 export const CatalogIndexSchema: z.ZodType<CatalogIndex>;
 export function parseCatalogIndex(json: unknown): CatalogIndex | { errors: string[] };
-export function compatibleVersions(e: CatalogEntry, host: { kernel: string; sdk: string }): CatalogVersion[];   // 满足 minKernel / minSdk 的版本，按 semver 降序
+export function compatibleVersions(e: CatalogEntry, host: { kernel: string; sdk: string }): CatalogVersion[];
 ```
 ```
 表 capybara.catalog_sources(id text pk /* 官方为 "official" */, name, url, mirrors jsonb default '[]', builtin bool, enabled bool,
@@ -1252,112 +1360,193 @@ ALTER capybara.directory_items ADD catalog_source_id text null；directory_item_
 ```
 ```ts
 class CatalogsService {
-  syncOfficialFromConfig(): Promise<void>;                     // 启动时按 catalogs.official.* upsert "official" 行
+  syncOfficialFromConfig(): Promise<void>;
   list(): Promise<CatalogSourceView[]>;
   add(actor: string, input: { name: string; url: string; mirrors?: string[]; token?: string }): Promise<CatalogSourceView>;
   update(actor: string, id: string, patch: { name?: string; url?: string; mirrors?: string[]; enabled?: boolean; token?: string | null }): Promise<CatalogSourceView>;
-  remove(actor: string, id: string): Promise<void>;           // 官方来源不能删（只能停用）；已引入的目录条目保留
-  refresh(id: string, signal: AbortSignal): Promise<CatalogSourceView>;   // url → mirrors 依次尝试；If-None-Match；≤ catalogs.maxIndexBytes；不合法保留旧内容
+  remove(actor: string, id: string): Promise<void>;                     // official 只能停用；已引入的目录条目保留
+  refresh(id: string, signal: AbortSignal): Promise<CatalogSourceView>; // url → mirrors 依次尝试；If-None-Match；≤ catalogs.maxIndexBytes；不合法时保留旧内容
   entries(q: { sourceId?: string; kind?: PackageKind; q?: string }): Promise<CatalogEntryView[]>;
 }
 export interface CatalogEntryView { sourceId: string; sourceName: string; kind: PackageKind; name: string; npm: string; publisher: string;
   summary: { en: string; zh?: string }; permissions: { keys: string[]; sensitive: string[] } | null;
   versions: (CatalogVersion & { compatible: boolean })[]; adopted: { itemId: string; versions: string[] } | null; newerAvailable: boolean }
 DirectoryService.importFromCatalog(actor: string, input: { sourceId: string; kind: PackageKind; name: string; version: string }): Promise<DirectoryItemView>;
-  // 版本须兼容（catalog.incompatible）；fetchNpmPackage(…, {expectedIntegrity: version.integrity, tarballUrl: version.tarball})；
-  // tgz 的 package.json name / version 必须与 entry.npm / version 一致（catalog.package_mismatch）；随后按 kind 走 T22 的导入流程
+  // 版本须兼容（catalog.incompatible）；fetchNpmPackage(…, {expectedIntegrity, tarballUrl})；tgz 的 name / version 必须与条目一致（catalog.package_mismatch）；
+  // 然后按 kind 走 T23 / T25 的导入流程
 ```
 ```
-GET    /api/v1/admin/catalogs；POST /api/v1/admin/catalogs {name, url, mirrors?, token?}；PATCH /api/v1/admin/catalogs/:id；DELETE /api/v1/admin/catalogs/:id
-POST   /api/v1/admin/catalogs/:id/refresh
-GET    /api/v1/admin/catalogs/entries?sourceId&kind&q
-POST   /api/v1/admin/catalogs/:id/entries/:kind/:name/import {version}      全部 @EnterpriseAdmin
-错误码：catalog.not_found 404、catalog.entry_not_found 404、catalog.fetch_failed 502、catalog.invalid 502（details 列出 schema 问题）、
-        catalog.integrity_mismatch 502（消息写明期望与实际的 sha512 前缀，以及「包与清单不符，已拒绝安装」）、catalog.incompatible 409、
+GET /api/v1/admin/catalogs；POST /api/v1/admin/catalogs；PATCH /api/v1/admin/catalogs/:id；DELETE /api/v1/admin/catalogs/:id
+POST /api/v1/admin/catalogs/:id/refresh；GET /api/v1/admin/catalogs/entries?sourceId&kind&q
+POST /api/v1/admin/catalogs/:id/entries/:kind/:name/import {version}      全部 @EnterpriseAdmin
+错误码：catalog.not_found 404、catalog.entry_not_found 404、catalog.fetch_failed 502、catalog.invalid 502、
+        catalog.integrity_mismatch 502（写明期望与实际 sha512 的前缀，以及「包与清单不符，已拒绝安装」）、catalog.incompatible 409、
         catalog.package_mismatch 409、catalog.builtin 409
-审计：catalog.added / catalog.updated / catalog.removed / catalog.refreshed（只记状态变化）/ directory.imported（source catalog）
+审计：catalog.added / updated / removed / refreshed（只记状态变化）、directory.imported（source catalog）
 ```
-- 清单地址只认 https（测试里由 `catalogs.allowInsecureLoopback` 放行回环 http），不跟随重定向。
-- `catalogs-refresh` 每个周期刷新所有已启用的来源；某个来源失败不影响其他来源。
-- `catalogs.official.enabled` 为 false 时，「official」来源停用，网页上写明「离线模式」。
+- 清单地址只认 https（`catalogs.allowInsecureLoopback` 只给测试用），不跟随重定向。
+- 某个来源刷新失败不影响其他来源。
+- `catalogs.official.enabled` 为 false 时，界面显示「离线模式」。
 
 - [ ] **Step 1：先写失败测试：**
-  - `parseCatalogIndex`：缺 integrity、integrity 格式不对、版本重复、`sensitive` 不是 `keys` 的子集、plugin 缺 `minSdk`，都报错。
-  - JSON Schema 文件与 zod 对一组合法 / 非法 fixture 的判断一致（用 ajv 校验）。
-  - 生成的 schema 与仓库文件不一致时，`check:catalog-schema` 报错。
-  - `startFakeCatalog` + `startFakeNpmRegistry`：
-    - 刷新后条目出现；第二次刷新命中 304；清单不合法时保留旧条目并记为 `error`。
-    - 引入一个插件版本：建立目录条目（来源 catalog），包进入 `plugin_packages`。
-    - **integrity 不符**：fake registry 返回的 tgz 与清单的 sha512 不同，而 npm 元数据的 integrity 与 tgz 一致。断言返回 `catalog.integrity_mismatch`，没有建立任何条目，也没有写入任何包。
-    - 清单给了 `tarball` 时从该地址下载，不请求 registry 的元数据。
-    - `minKernel` 高于当前版本时返回 409。
-    - 包名不一致时返回 409。
-  - 官方来源不能删除；停用后不再刷新。
+  - `parseCatalogIndex` 的非法情况：缺 integrity、integrity 格式不对、版本重复、`sensitive` 不是 `keys` 的子集、plugin 缺 `minSdk`。
+  - 用一组 fixture 比对，JSON Schema（ajv）与 zod 的判断一致。
+  - 生成的 schema 与仓库文件不一致时，`check:package-schemas` 报错。
+  - 刷新：第二次刷新拿到 304；清单不合法时保留旧条目。
+  - 引入插件，目录里出现条目。
+  - **integrity 不符**：tgz 与清单的 sha512 不同，但与 npm 元数据一致。返回 `catalog.integrity_mismatch`，没有建任何条目或包。
+  - 清单给了 `tarball` 时，从该地址下载，不请求 registry 元数据。
+  - `minKernel` 太高返回 409；包名不一致返回 409。
+  - official 来源不能删除。
   - 非企业管理员 403。
 - [ ] **Step 2：** 运行测试，确认失败。
 - [ ] **Step 3：** 实现。
 - [ ] **Step 4：** 运行触及的测试与 `pnpm check`，确认通过。
 - [ ] **Step 5：** 提交 `feat: 企业目录来源（官方 / 企业清单）、清单格式与按 sha512 引入`。
 
-### Task 24: 组织安装、成员申请与审批
+### Task 25: 应用包（`app.yaml`）格式与企业导入
 
 **Files:**
-- 迁移 `0035_directory_requests.sql`。
-- 新建 `packages/kernel/src/directory/{org-directory.service,org-directory.controller,requests.service}.ts`。
+- 新建 `packages/plugin-sdk/src/app-manifest.ts`，修改 `plugin-package.ts`（`AppPackageSection`），附 changeset。
+- 新建 `packages/plugin-sdk/schemas/app.v1.schema.json`，加进 `gen:package-schemas` 与 `check:package-schemas`。
+- 迁移 `0036_app_import_staging.sql`：表 `capybara.app_import_staging(id uuid pk, review jsonb, object_prefix text, source jsonb, created_by, created_at, expires_at)`。
+- 新建 `packages/kernel/src/directory/app-import.ts`。
+- 修改 `directory/{directory.service,admin-directory.controller,catalogs.service}.ts`、`errors.ts`。
+- 测试 `packages/plugin-sdk/test/app-manifest.test.ts`、`packages/kernel/test/directory/app-import.test.ts`。
+
+**Interfaces (Produces):**
+```ts
+export const APP_MANIFEST_FILE = "app.yaml";
+export interface AppPackageSection { kind: "app"; manifest: "app.yaml" }
+export interface AppManifest {
+  schemaVersion: 1;
+  name: string;                               // ^[a-z0-9][a-z0-9-]{0,63}$
+  version: string;                            // semver，与 package.json 一致
+  publisher: string; description: string /* ≤1024 */; displayName?: { zh: string; en: string }; icon?: string;
+  plugins: { name: string /* 插件清单名 */; npm: string; version: string /* semver 范围 */;
+             lock: { version: string; integrity: string /* sha512-… */ }; optional?: boolean }[];   // ≤ 20；lock.version 必须满足 version
+  connectorTemplates: { id: string /* 包内唯一，^[a-z0-9][a-z0-9-]{0,63}$ */; displayName: { zh: string; en: string }; description?: string;
+                        template: ConnectorTemplateSpec }[];                                     // ≤ 20；template.plugin 必须在 plugins 里或为内置 / 已知连接器插件
+  skills: { path: string /* 包内目录，含 SKILL.md */ }[];                                         // ≤ 50
+}
+export const AppManifestSchema: z.ZodType<AppManifest>;
+export function parseAppManifest(yamlText: string): AppManifest | { errors: string[] };
+// kernel
+export interface AppReview { name: string; version: string;
+  plugins: { name: string; lockVersion: string; sha256: string; action: "install" | "upgrade" | "keep"; currentVersion: string | null;
+             permissions: PermissionGroup[]; added: string[]; reviewHash: string; sensitive: boolean }[];
+  connectorTemplates: { id: string; plugin: string; connector: string; endpoint: Record<string, unknown>; auth: Record<string, unknown> }[];
+  skills: { name: string; description: string; files: number }[];
+  reviewHash: string /* 各插件 reviewHash 与模板、技能清单的总摘要 */ }
+class AppImport {
+  prepare(actor: string, bytes: Uint8Array, source: { kind: "file" | "npm" | "catalog"; ref: string }): Promise<{ stagingId: string; review: AppReview }>;
+    // 解析 app.yaml；每个插件按 lock 从 npm 拉取并按 lock.integrity 校验（不符 → app.lock_mismatch），交给 PluginInstalls 入库；
+    // 校验模板与技能；暂存 24 小时（PG 行 + 对象存储，过期由维护任务清理）
+  confirm(actor: string, stagingId: string, input: { reviewHash: string; deployPlugins: boolean }): Promise<DirectoryItemView>;
+    // reviewHash 不符 → app.review_stale；在一个流程里为每个插件写快照（source web，审计 plugin.permissions_approved，detail.app）；
+    // deployPlugins 为真时，对 action 为 install / upgrade 的插件调 PluginAdminOps.install + enable；建 kind app 的目录条目，resolved = {plugins:[{name, sha256}]}
+}
+```
+```
+POST /api/v1/admin/directory/apps/prepare/file（octet-stream）｜/prepare/npm {package, version?} → {stagingId, review}
+POST /api/v1/admin/directory/apps/:stagingId/confirm {reviewHash, deployPlugins}
+清单引入 kind app 时走同一个 prepare / confirm（引入接口返回 review）
+错误码：app.invalid_manifest 400、app.lock_mismatch 502、app.review_stale 409、app.staging_not_found 404、app.plugin_conflict 409
+        （插件已作为配置声明或内置插件存在，且版本不满足范围）
+```
+- **插件的处理**：
+  - 已安装且满足版本范围的插件，`action` 为 `keep`，不改动；
+  - 不满足范围的，按 lock 版本升级（`upgrade`，走 T14 的流程）；
+  - 内置或配置声明的插件不满足范围时，返回 `app.plugin_conflict`。
+- 应用包里的技能和模板随条目版本一起存放，组织安装时再物化（T26）。
+- **升级**：M6 不支持组织内的应用升级（C31）。目录可以引入新版本，组织要先卸载旧版本再装新版本。
+
+- [ ] **Step 1：先写失败测试：**
+  - `parseAppManifest`：`lock.version` 不满足 `version`、模板引用了未列出的插件、id 重复、技能路径越界，都报错。
+  - JSON Schema 与 zod 的判断一致。
+  - `prepare`：lock 的 integrity 被篡改时返回 `app.lock_mismatch`，什么都不写。
+  - `confirm`：一次批准写入两个插件的快照；`deployPlugins` 为真时插件被安装并启用（不重启）；已有且满足范围的插件保持原版本；`reviewHash` 不符返回 409。
+  - 暂存过期后被清理。
+- [ ] **Step 2：** 运行测试，确认失败。
+- [ ] **Step 3：** 实现。
+- [ ] **Step 4：** 运行触及的测试与 `pnpm check`，确认通过。
+- [ ] **Step 5：** 提交 `feat: 应用包（app.yaml）格式与企业一次审阅导入`。
+
+### Task 26: 组织安装、成员申请与审批（含应用的安装与卸载）
+
+**Files:**
+- 迁移 `0037_directory_installs.sql`。
+- 新建 `packages/kernel/src/directory/{org-directory.service,org-directory.controller,requests.service,app-install}.ts`。
 - 修改：
   - `skills/skills.service.ts`：抽出 `createVersionFromFiles`；
-  - `tools/apps.service.ts`：`create` 接受 `directory`；`customApps` 为 deny 时拒绝自建应用；
+  - `tools/connectors.service.ts`：`create` 接受 `template?: {itemId, version, templateId?}`；`customConnectors` 为 deny 时拒绝自建；
   - `skills/skills.controller.ts`：`customSkills` 为 deny 时拒绝上传；
   - `plugins/org-config.ts`：启用来自目录的插件前检查策略与授予；
   - `inbox/inbox.service.ts`、`orgs/roles.ts`、`errors.ts`。
-- 测试 `packages/kernel/test/directory/{org,requests}.test.ts`。
+- 测试 `packages/kernel/test/directory/{org,requests,app-install}.test.ts`。
 
 **Interfaces (Produces):**
 ```
 表 capybara.directory_requests(id uuid pk, org_id, item_id, version text null, stage org|deployment, requested_by, note text,
                                status pending|approved|rejected|cancelled, decided_by null, decided_at null, created_at)
 表 capybara.directory_org_grants(item_id, org_id, granted_by, granted_at, PRIMARY KEY(item_id, org_id))
-ALTER capybara.apps / capybara.skills ADD directory_item_id uuid null, ADD directory_version text null
-ALTER capybara.plugin_installs ADD directory_item_id uuid null
+表 capybara.app_installs(id uuid pk, org_id, item_id, version, status installing|installed|failed|uninstalling, installed_by, installed_at, error jsonb null,
+                         UNIQUE(org_id, item_id) WHERE status <> 'failed')
+表 capybara.app_install_components(install_id → app_installs ON DELETE CASCADE, kind plugin|connector|skill, ref text /* 插件名 / connectorId / skillId */,
+                                   created bool /* 本次安装新建；false = 之前已存在 */, skill_version int null, PRIMARY KEY(install_id, kind, ref))
+ALTER capybara.connectors / capybara.skills ADD directory_item_id uuid null, ADD directory_version text null；capybara.plugin_installs ADD directory_item_id uuid null
 ```
 ```ts
 export interface OrgDirectoryItem extends Omit<DirectoryItemView, "installs"> {
-  installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed" /* 插件尚未装到部署 */;
-  installed: { appId?: string; skillId?: string; plugin?: string; version: string } | null;
+  installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
+  installed: { connectorId?: string; skillId?: string; plugin?: string; appInstallId?: string; version: string } | null;
   request: { id: string; stage: "org" | "deployment"; status: string } | null }
+export interface AppInstallInput {
+  connectors: Record<string /* templateId */, { name?: string; slug?: string; endpoint?: Record<string, unknown> /* 只限 editableEndpoint */;
+                                                credential?: Record<string, unknown>; client?: { clientId: string; clientSecret?: string } }>;
+  pluginConfigs?: Record<string /* 插件名 */, Record<string, unknown>>;   // 插件的组织级配置
+}
+export interface UninstallReport { removed: { kind: "plugin" | "connector" | "skill"; ref: string }[];
+  kept: { kind: "plugin" | "connector" | "skill"; ref: string; reason: "pre_existing" | "used_by_agents" | "used_by_other_install" | "used_by_connectors" }[] }
+class AppInstaller {
+  install(orgId: string, actor: string, itemId: string, version: string, input: AppInstallInput): Promise<{ installId: string }>;
+    // 依次：在本组织启用插件（已启用的记 created=false）→ 按模板建连接器（凭据、客户端写 secrets；工具快照建立后按 defaultToolPolicies 设默认策略，policy_source 'template'）
+    // → 导入技能（同名组织技能新增版本，记 created=false 与 skill_version）；任一步失败，按相反顺序撤销本次新建的组件，install 状态记 failed（error 只含步骤与错误码）
+  uninstall(orgId: string, actor: string, installId: string): Promise<UninstallReport>;
+    // 只移除 created=true 的组件：连接器被 agent 引用时保留（used_by_agents）；插件仍被别的应用安装、连接器使用或本来就启用时保留；技能被 agent 选中时保留
+}
 export type InboxItem = … | { type: "directory_request"; id: string; createdAt: string; request: DirectoryRequestView };
 ```
 ```
-GET  /api/v1/orgs/:orgId/directory[?kind]（directory.read；成员看不到 disabled，管理员能看到并有标注）
+GET  /api/v1/orgs/:orgId/directory[?kind]（directory.read；成员看不到 disabled）
 POST /api/v1/orgs/:orgId/directory/:itemId/requests {note?}（directory.request）→ 201，stage 为 org
-POST /api/v1/orgs/:orgId/directory/:itemId/install {version?, app?: {name?, slug?, credential?}}
-     skill 需 skills.manage、app 需 apps.manage、plugin（在本组织启用）需 org.plugins.manage；
+POST /api/v1/orgs/:orgId/directory/:itemId/install {version?, connector?: AppInstallInput["connectors"][string], app?: AppInstallInput}
+     技能需 skills.manage；连接器模板需 connectors.manage；插件需 org.plugins.manage；应用需 org.plugins.manage + connectors.manage + skills.manage
      needs_approval 且没有授予 → 202 {request}（stage 为 deployment）；否则 201
-POST /api/v1/orgs/:orgId/directory-requests/:id/decide {decision}（组织管理员，stage 为 org）
-     批准 skill → 直接安装；批准 app / plugin → status 为 approved，返回 {next: "install"}；条目需要审批时转为 deployment 阶段的申请
-GET  /api/v1/admin/directory/requests；POST /api/v1/admin/directory/requests/:id/decide（企业管理员，stage 为 deployment）→ 批准时写授予
-错误码：directory.item_disabled 403、directory.request_not_found 404、directory.request_decided 409、directory.custom_disabled 403、directory.not_deployed 409
-审计：directory.requested、directory.request_decided、directory.installed
+DELETE /api/v1/orgs/:orgId/app-installs/:installId → UninstallReport；GET /api/v1/orgs/:orgId/app-installs
+POST /api/v1/orgs/:orgId/directory-requests/:id/decide {decision}（组织管理员）；
+GET  /api/v1/admin/directory/requests；POST /api/v1/admin/directory/requests/:id/decide（企业管理员）
+错误码：directory.item_disabled 403、directory.request_not_found 404、directory.request_decided 409、directory.custom_disabled 403、directory.not_deployed 409、
+        app.install_failed 502（details 写明失败的步骤，已回滚）、app.install_not_found 404、app.already_installed 409
+审计：directory.requested、directory.request_decided、directory.installed、app.installed、app.uninstalled（detail 含 removed / kept）
 ```
-- 应用的端点与认证一律取清单，组织只提供凭据；安装后照常走工具快照与漂移复核。
-- 技能安装后成为组织技能（同名则新增版本），文件从 `deployment/` 复制到组织前缀。
-- 插件条目被设为 `disabled` 后，组织不能再新启用它，已启用的保持不变。
+- **连接器模板**：端点与认证以模板为准，组织只能改 `editableEndpoint` 里的路径并提供凭据；安装后照常走工具快照与漂移复核。
+- **应用里的插件**：在组织内启用它们，由应用条目的策略决定，不再单独看各插件条目的策略（企业管理员导入应用时已经一并审过）。插件没有装到部署上时，返回 `directory.not_deployed`。
 - 同一组织、同一条目只能有一个 pending 申请。
 
 - [ ] **Step 1：先写失败测试：**
-  - `allow`：直接安装技能、应用，以及在组织内启用插件。
-  - `needs_approval`：返回 202；企业管理员批准后再装成功。
-  - `disabled`：返回 403，已装的仍在。
-  - 成员申请进入收件箱，组织管理员批准技能申请后即安装。
-  - `customApps` 为 deny 时，自建应用返回 403，从目录安装照常成功。
-  - 请求体里篡改的端点不生效。
-  - 插件未装到部署时返回 `directory.not_deployed`。
+  - 三档策略对技能、连接器模板、插件、应用都生效，`needs_approval` 经两级审批后才能安装。
+  - 成员申请进入收件箱。
+  - `customConnectors` 为 deny 时，自建连接器返回 403。
+  - 篡改模板里不可编辑的端点无效。
+  - **应用安装**：插件被启用，按模板建好连接器（凭据存在 secrets、默认策略生效），技能被导入；在建连接器那一步注入失败时，已启用的插件和导入的技能都被撤销，状态为 failed。
+  - **卸载**：之前就启用的插件保留（`pre_existing`）；被 agent 引用的连接器保留（`used_by_agents`）；另一个应用也用到的插件保留（`used_by_other_install`）；其余组件被移除。
 - [ ] **Step 2：** 运行测试，确认失败。
 - [ ] **Step 3：** 实现。
 - [ ] **Step 4：** 运行全量 `pnpm test`，确认通过。
-- [ ] **Step 5：** 提交 `feat(kernel): 组织从企业目录安装、成员申请与审批`。
+- [ ] **Step 5：** 提交 `feat(kernel): 组织从企业目录安装（含应用）、卸载、成员申请与审批`。
 
-### Task 25: 私有 agent 的 `skill_write` 确认开关（D10）
+### Task 27: 私有 agent 的 `skill_write` 确认开关（D10）
 
 **Files:**
 - 修改 `agents/definition.ts`（`skills.writePolicy`）、`tools/policy.ts`、`apps/web/src/components/AgentSkills.tsx`（或 `AgentForm.tsx`）、i18n。
@@ -1370,8 +1559,7 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
   // skill_write：共享 → true；私有且 ask → true；私有且缺省 / allow → false
 ```
 - 执行时实时读取当前版本（R5）。私有 agent 确认后直接生效。
-- 网页只在私有 agent 上显示这个开关。
-- 缺省值不写进定义，避免因此多出一个版本。
+- 网页只在私有 agent 上显示这个开关。缺省值不写进定义。
 
 - [ ] **Step 1：** 先写失败测试：
   - 私有 agent 缺省时不确认；
@@ -1383,112 +1571,144 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
 - [ ] **Step 4：** 运行触及的测试，确认通过。
 - [ ] **Step 5：** 提交 `feat: 私有 agent 的 skill_write 确认开关`。
 
-### Task 26: 网页：企业目录
+### Task 28: 网页：企业目录（含清单、应用与卸载）
 
 **Files:**
 - 新建页面：
-  - `apps/web/src/app/[locale]/(app)/admin/directory/{page,[itemId]/page,requests/page,sources/page,catalog/page}.tsx`
-  - `apps/web/src/app/[locale]/(app)/directory/{page,[itemId]/page}.tsx`
+  - `apps/web/src/app/[locale]/(app)/admin/directory/{page,[itemId]/page,requests/page,sources/page,catalog/page,apps/review/page}.tsx`
+  - `apps/web/src/app/[locale]/(app)/directory/{page,[itemId]/page,[itemId]/install/page}.tsx`
 - 新建 `apps/web/src/lib/directory.ts`。
-- 修改 `apps/install/page.tsx` / `AppWizard.tsx`（支持 `?directoryItem=` 预填）、收件箱、`nav.tsx`（一级导航「目录」，audience member）、`admin-nav.ts`、i18n。
+- 修改 `connectors/install/page.tsx` / `ConnectorWizard.tsx`（支持 `?template=` 预填）、收件箱、`nav.tsx`（一级导航「目录」，audience member）、`admin-nav.ts`、i18n。
 - 测试、e2e。
 
-- **`/admin/directory`**（ListPage）：导入弹窗，可上传文件或填 npm 包名；Rail 按 kind 和来源（手动 / 官方清单 / 各企业清单）筛选；每行显示来源，已引入的清单条目有新版本时显示「有新版本」。
-- **`/admin/directory/catalog`**（ListPage）：浏览所有已启用清单的条目，可搜索、按来源和 kind 筛选。
-  - 每行显示来源、发布者、简介、权限摘要（敏感项高亮）、可用版本（不兼容的置灰并写明最低版本）。
-  - 「引入」时选版本，引入后跳到条目页。`catalog.integrity_mismatch` 用醒目的错误提示，写明「包与清单不符，已拒绝安装」。
-  - 插件条目引入后，审阅页上如果真实权限与清单摘要不一致，显示警告（C26）。
-- **`/admin/directory/sources`**（SettingsPage）：
-  - 官方清单：开关（关闭即离线模式）、地址与镜像（来自配置，只读并显示来源）。
-  - 企业清单：增、删、改（名称、地址、镜像、令牌）。
-  - 每个来源显示最近刷新时间、状态和错误，可以立即刷新。
-- **`/admin/directory/[itemId]`**（DetailPage）：
-  - 标签：概要（清单、文件或端点、插件的权限分组）、版本、安装情况（插件看部署状态，应用 / 技能看各组织装的版本）。
-  - 用 `Segmented` 切换策略。
-  - 插件条目有「装到部署」按钮，跳到 T17 的安装确认步骤。
+- **`/admin/directory`**（ListPage）：
+  - 导入可以上传文件或填 npm 包名。
+  - Rail 按 kind（插件 / 连接器模板 / 技能 / 应用）和来源（手动 / 官方清单 / 各企业清单）筛选，每行显示来源。
+  - 已引入的清单条目有新版本时显示「有新版本」。
+- **`/admin/directory/apps/review`**（WizardPage）：一次审阅整个应用。
+  - 每个插件的权限分组，敏感项高亮，显示动作（安装 / 升级 / 保持）。
+  - 连接器模板的端点与认证方式，技能列表。
+  - 勾选「同时把插件装到部署」，有敏感项时还须勾选「我已了解敏感项」，然后确认。
+- **`/admin/directory/catalog`**（ListPage）：
+  - 浏览清单条目：来源、发布者、简介、权限摘要；不兼容的版本置灰。
+  - 「引入」时，应用条目跳到上面的审阅页。
+  - `catalog.integrity_mismatch`、`app.lock_mismatch` 用醒目的错误提示。
+  - 真实权限与清单摘要不一致时，显示警告。
+- **`/admin/directory/sources`**（SettingsPage）：官方清单的开关（离线模式）与只读的地址；企业清单的增删改；各来源的状态，以及立即刷新。
+- **`/admin/directory/[itemId]`**（DetailPage）：概要、版本、安装情况，策略切换；插件条目可以「装到部署」。
 - **`/admin/directory/requests`**（InboxPage）：部署阶段的申请。
-- **`/directory`**（ListPage）与 **`/directory/[itemId]`**（DetailPage）：按 `installable` 显示按钮——成员「申请」，管理员「安装 / 启用」或「提交审批」；技能有新版本时显示「更新」。应用的安装进入预填好的向导，端点只读。
-- **收件箱**：`directory_request` 卡片可以批准 / 拒绝；批准应用 / 插件后，跳转到安装或启用。
+- **`/directory`**、**`/directory/[itemId]`**：按 `installable` 显示按钮。
+- **`/directory/[itemId]/install`**（WizardPage，应用与连接器模板用）：
+  - 逐个模板填凭据与客户端 id / secret（只能改可编辑的端点字段），需要时填插件的组织配置，最后确认。
+  - 失败时显示失败的步骤，并说明「已回滚」。
+- **已安装的应用**：在组织设置里列出，可以卸载；卸载后按 `UninstallReport` 显示哪些被移除、哪些被保留以及原因。
+- **收件箱**：`directory_request` 卡片可以批准 / 拒绝。
 
 - [ ] **Step 1：** 先写失败的组件测试：
-  - 各种 `installable` 状态显示对应按钮；
-  - 导入失败时展示错误详情；
-  - 预填的端点只读；
-  - 收件箱卡片能做决定；
-  - 清单页的不兼容版本不可选，integrity 不符时显示错误；
-  - 来源页里官方清单的地址只读，刷新后状态更新。
+  - 各种 `installable` 状态的按钮；
+  - 审阅页在勾选前确认按钮不可用；
+  - 安装向导里不可编辑的端点只读；
+  - 卸载报告的展示；
+  - 来源页里官方地址只读。
 - [ ] **Step 2：** 运行测试，确认失败。
 - [ ] **Step 3：** 实现。
-- [ ] **Step 4：** e2e：
-  - 从假清单引入一个技能，它出现在目录里，来源显示为该清单；
-  - 上传技能包并设为 `needs_approval` → 组织管理员提交 → 企业管理员批准 → 安装后技能出现在库里。
-- [ ] **Step 5：** 提交 `feat(web): 企业目录、安装与申请`。
+- [ ] **Step 4：** e2e：从假清单引入一个应用（插件 + 连接器模板 + 技能），一次审阅后装到部署；组织管理员走安装向导完成安装后卸载，页面显示保留项。
+- [ ] **Step 5：** 提交 `feat(web): 企业目录、清单、应用安装与卸载`。
 
-### Task 27: 第三段验收
+### Task 29: 第三段验收
 
-- 新建 `packages/kernel/test/directory/m6-segment3.dual.test.ts`，双副本 + SeaweedFS + `startFakeNpmRegistry` + `startFakeCatalog`（官方地址指向它，另加一个企业清单）+ 假 MCP 服务器，经 HTTP：
-  1. 在 A 上从 npm 导入应用包，从文件导入技能包；在 B 上手动刷新官方清单，并从中引入插件条目（todo tgz）。
-     - 维护任务刷新企业清单之后，A 上能看到新条目。
-     - 企业清单里有一个 integrity 被篡改的条目，引入时返回 `catalog.integrity_mismatch`，什么都没写入。
-  2. 企业管理员在 B 上把插件条目装到部署、批准并启用；组织管理员在 A 上于本组织启用它（策略 `allow`）。两个副本上工具都可用，全程不重启。
-  3. 成员申请技能，组织管理员批准后，技能进入库里，`skill_load` 能读到。
-  4. 应用条目设为 `needs_approval`：组织管理员得到 202，企业管理员批准后组织管理员安装成功，agent 能调用其工具。
-  5. `customApps` 设为 deny 后，自建应用返回 403。
-  6. 私有 agent `writePolicy: "ask"` 时，写技能产生审批。
+- 新建 `packages/kernel/test/directory/m6-segment3.dual.test.ts`。环境：双副本 + SeaweedFS + `startFakeNpmRegistry` + `startFakeCatalog`（官方地址指向它，另加一个企业清单）+ 假 MCP 服务器。全部经 HTTP：
+  1. **导入**：
+     - 在 A 上从 npm 导入连接器模板，从文件导入技能包；
+     - 在 B 上刷新官方清单并引入插件条目；
+     - 维护任务刷新企业清单后，A 上能看到新条目；
+     - 企业清单里 integrity 被篡改的条目，引入时返回 `catalog.integrity_mismatch`，什么都没写入。
+  2. **应用包端到端**：
+     - 企业管理员在 A 上从清单引入应用包（todo 插件 + 一个 MCP 连接器模板 + 一个技能），一次审阅并装到部署，两个副本都不重启就加载了插件；
+     - 组织管理员在 B 上安装该应用：插件在本组织启用，连接器建好且工具快照建立，技能进入库里；
+     - agent 能调用连接器的工具和 todo 工具，`skill_load` 能读到技能。
+  3. **卸载**：
+     - 组织里在安装应用之前已经启用了另一个插件，而该插件也被应用引用；
+     - 应用的连接器被一个 agent 引用；
+     - 卸载后，`kept` 列出这两项，其余组件被移除，agent 仍能运行。
+  4. **策略与申请**：
+     - 连接器模板条目设为 `needs_approval`，经两级审批后才能安装；
+     - 成员申请技能，批准后入库；
+     - `customConnectors` 为 deny 时，自建连接器返回 403。
+  5. **私有 agent**：`writePolicy: "ask"` 时，写技能产生审批。
+  6. **改名回归**：
+     - T22 的 `pre-rename` 夹具在当前代码上做单步回放，`drift` 为 `[]`；
+     - 用 T4 的单步模式对这个快照建一次评测运行，结果没有 drift 标记；
+     - 一个以 `{kind:"app"}` 保存的旧 agent 版本，在两个副本上都能运行。
 - [ ] 提交 `test: M6 第三段验收`。
 
 ---
 
 ## 收尾
 
-### Task 28: 文档与技能指南
+### Task 30: 文档与技能指南
 
 - 新增 `skills/replay-evals/SKILL.md`：
-  - 回放的不变式：改请求构建前先跑 T2 的测试；新增模型可见的输入必须进日志，并给 `DriftReason` 加对应原因；
+  - 回放的不变式：改请求构建前先跑 T2 与 T22 的夹具测试；新增模型可见的输入必须进日志，并给 `DriftReason` 加对应原因；
   - 评测队列与 token 上限；
-  - 整轮回放不执行工具；
-  - 测试写法。
+  - 整轮回放不执行工具。
+- 新增 `skills/writing-apps/SKILL.md`，写应用包与连接器模板：
+  - `app.yaml` 的 schema 与 lock；
+  - 怎么写 `editableEndpoint` 与默认策略；
+  - 安装、卸载的语义；
+  - JSON Schema 文件的位置；
+  - M6 不支持应用升级。
 - 更新 `skills/writing-plugins`：
-  - 包格式与 `pnpm pack-plugin`；
-  - 宿主提供 SDK 与 zod，不允许安装脚本和原生模块；
-  - 生命周期：安装、批准、启用、停用、升级、卸载；
-  - 记账与 `dispose` / `ctx.signal`；在途调用的等待时限；
-  - 依赖方会被重新加载，所以不要在 setup 之外长期持有别的插件的实现；
-  - 迁移只做扩展；
-  - 部署级配置入 PG，`ctx.config` 是 getter，`hot` 与重新加载；
+  - 包格式与 `pnpm pack-plugin`；宿主提供 SDK 与 zod；
+  - 生命周期；记账、`dispose`、`ctx.signal`；在途调用的等待时限；
+  - 依赖方会被重新加载；迁移只做扩展；
+  - 部署级配置入 PG；
   - 旧代码要到重启才从内存释放；
+  - 内置插件预先批准；
   - CLI 命令。
+- 更新 `skills/writing-connectors`：
+  - 「连接器 / 连接器插件」的术语；
+  - 连接器模板；
+  - 不支持 stdio MCP（T22 已写，这里复核）。
 - 更新其他指南：
-  - `writing-kernel-api`：企业管理员端点、新 `OrgAction`；
+  - `writing-kernel-api`：企业管理员端点、新 `OrgAction`、`connectors.*`；
   - `writing-web-ui`：后台页面用哪些模板、`SpanWaterfall`；
-  - `writing-tools`：`writePolicy`、插件被卸下时工具的错误；
+  - `writing-tools`：`writePolicy`，插件被卸下时工具的错误；
   - `writing-sandbox-providers`：组织级限额；
   - `writing-channels`：停用或升级时 supervisor 停掉长连接。
 - 更新 `AGENTS.md`：
   - 目录地图加 `tools/pack-plugin`；
-  - 依赖方向加上 Global Constraints 里新增的几条；
-  - 依赖方向写明：`@capybara-hq/capybara`（CLI，负责组装核心镜像）依赖 `@capybara-hq/plugin-openai-compatible` 与 `@capybara-hq/plugin-object-store-s3`；
-  - 规则速记加三行：
-    - 评测 / 回放；
-    - 插件包与生命周期；
-    - 企业目录与目录来源（清单 schema 在 `packages/plugin-sdk/schemas/catalog-index.v1.schema.json`，按清单的 sha512 校验）。
-- 更新 README：插件安装方式（核心镜像只内置两个插件）、从配置声明迁移到安装记录、`capybara admin grant`、企业目录；重新生成 `docs/config.md`。
-- 总设计 §2.5、§7.2、§8.7 各加一段「M6 实现说明」（C11–C17、C21、C22、C25、C26、C2 的结论）。README 写明怎样配置离线模式与企业清单。
-- [ ] 提交 `docs: M6 评测、插件生命周期、管理后台与企业目录文档`。
+  - 依赖方向：`@capybara-hq/capybara`（CLI，负责组装核心镜像）依赖两个内置插件包；
+  - 规则速记加四行：评测 / 回放；插件包与生命周期；企业目录与目录来源（schema 在 `packages/plugin-sdk/schemas/`，按清单的 sha512 校验）；应用包；
+  - 术语统一为「连接器」。
+- 更新 README：
+  - 插件安装（核心镜像只内置两个插件）与从配置声明迁移；
+  - `capybara admin grant`；
+  - 企业目录、离线模式与企业清单、应用包；
+  - 重新生成 `docs/config.md`。
+- 更新总设计：
+  - §5.2、§7.1 换成新术语：§7.1 的「应用」改为「连接器（模板）」，「生态包」改为「应用」；
+  - §2.5、§7.2、§8.7 各加一段「M6 实现说明」（C2、C11–C17、C21、C22、C25–C31）。
+- [ ] 提交 `docs: M6 评测、插件生命周期、管理后台、企业目录与应用包文档`。
 
-### Task 29: 路线图与人工验收清单
+### Task 31: 路线图与人工验收清单
 
 - **`docs/superpowers/plans/2026-10-17-mvp-roadmap.md`**：
   - 里程碑数改为 8。
-  - M6 行改为「评测、管理后台与企业目录」：按三段写交付，链接本计划，记下推迟项（`ctx.models`、包签名、目录工具、目录应用的升级）。
-  - 新增 M7 行「发布与生态」：
-    - docker compose 全量编排（api / worker / gateway / web / 依赖服务）；
-    - ghcr 镜像（amd64 + arm64）。**核心镜像只有内核加 `openai-compatible`、`object-store-s3`**，官方插件以 npm 包 / tgz 发布（打包工具在 M6 已有），按需安装，不再做派生镜像；
-    - 官方清单仓库（如 `capybara-hq/catalog`）上线：
-      - 静态 `index.json`，在 CI 里用 SDK 的 `catalog-index.v1.schema.json` 校验；
-      - 官方插件的 CI 先发布到 npm，再向清单仓库提 PR（写入新版本与 sha512）；
-      - `catalogs.official.url` 换成正式地址；
-      - 清单签名 / provenance 随包签名一起做；
+  - **M6 行**改为「评测、管理后台与企业目录」：按三段写交付，链接本计划，并记下推迟项：
+    - `ctx.models`；
+    - 包与清单签名；
+    - agent 用的目录工具；
+    - 应用升级（C31）；
+    - 应用内的 agent 模板（D17）；
+    - 成员的个人连接器（D17）；
+    - stdio MCP 不支持（已接受）。
+  - **新增 M7 行**「发布与生态」：
+    - docker compose 全量编排；
+    - ghcr 镜像（amd64 + arm64），**核心镜像只有内核加 `openai-compatible`、`object-store-s3`**；
+    - 官方插件、连接器模板、应用以 npm 包 / tgz 发布；
+    - 官方清单仓库（如 `capybara-hq/catalog`）上线：用 SDK 的 schema 在 CI 里校验；官方包的 CI 先发布到 npm，再向清单提 PR；`catalogs.official.url` 换成正式地址；签名 / provenance；
+    - 删除 D17 改名的兼容层：`capybara.apps` / `app_tools` 视图与 `/apps` 路由别名；
     - `gemini`（Gemini API）；
     - `ctx.hooks` + `usage.report`；
     - SDK 公开 API 快照检查；
@@ -1496,16 +1716,17 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
 
     覆盖 spec 6.8、8.4、13.5。
   - 删掉原 M6 行里「默认镜像只带 `openai-compatible`」的说法。
-  - 「M6 编排 web 镜像」与「SDK 公开 API 快照检查」相关的须知改为 M7。
-  - M3 行的 `ctx.hooks → M6` 改为 `→ M7`。
+  - 相关须知改为 M7；M3 行的 `ctx.hooks` 改为 `→ M7`。
   - M4 / M5 行里已在 M6 完成的推迟项，标注「已在 M6 完成」。
+  - 全文把「应用」按 D17 换成「连接器」（指远端服务实例的地方）。
 - 新建 `docs/superpowers/plans/m6-live-acceptance-checklist.md`，内容：
   - 真实模型当评委；
-  - 公共与私有 npm 导入；
-  - 真实托管的企业清单（经镜像访问、带令牌）与离线模式；
+  - 公共与私有 npm；
+  - 真实托管的企业清单（镜像、令牌）与离线模式；
   - Nacos 来源的只读显示；
-  - 真实 K8s / 多主机下的插件同步与收敛（本地目录在持久卷上与不在持久卷上两种情况）；
-  - 官方插件全部以 tgz 安装后跑一遍 M4 / M5 的冒烟。
+  - 多主机下的插件同步与收敛；
+  - 官方插件全部以 tgz 安装后跑 M4 / M5 的冒烟；
+  - 一个真实的应用包（例如飞书：插件 + 文档连接器模板 + 技能）端到端安装与卸载。
 - [ ] 提交 `docs: 路线图拆分 M6 / M7 与 M6 人工验收清单`。
 
 ---
@@ -1517,7 +1738,10 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
    - T11 依赖 T10；T12 依赖 T11；T13 依赖 T10–T12；
    - T14 依赖 T11–T13；T15 依赖 T14 的 `reload`；
    - T17 依赖 T13–T15；T18 依赖 T1 / T6；T19 依赖 T16。
-3. **第三段**：T22 → T27。开始前做一次第二段整体审查。T22 依赖 T11 / T14；T23 依赖 T22（`importFromCatalog` 复用导入流程）与 T11（`fetchNpmPackage`、`startFakeNpmRegistry`）；T24 依赖 T16 的部署设置。
-4. **收尾**：T28、T29；然后全分支终审，统一修复一轮。
+3. **第三段**：T22 → T29 串行。开始前做一次第二段整体审查。依赖关系：
+   - T22（改名）必须第一个做，之后的任务一律用新名；
+   - T23 依赖 T11 / T14；T24 依赖 T23 与 T11；T25 依赖 T23、T24 与 T13 / T14；
+   - T26 依赖 T25 与 T16 的部署设置。
+4. **收尾**：T30、T31；然后全分支终审，统一修复一轮。
 
-真实环境验收（评委模型、npm、Nacos、多主机插件同步）在条件到位后按清单补跑。
+真实环境验收（评委模型、npm、清单、Nacos、多主机插件同步、真实应用包）在条件到位后按清单补跑。
