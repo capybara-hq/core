@@ -43,7 +43,7 @@ const notFound = () => new ApiError("trajectory.not_found", "Trajectory not foun
  * 无权查看与不存在一律 `trajectory.not_found`，不泄露对话是否存在。每次查看详情写审计 `trajectory.viewed`。
  * 企业管理员不因身份而能看（不是组织成员时 OrgGuard 已 404）。
  *
- * `conversations.kind` 由 T3 加入：在那之前所有对话都按 `chat` 处理，`kind: "eval"` 列出为空。
+ * 列表按 `conversations.kind` 过滤，不传时只列 `chat`（评测回放的隐藏对话用 `kind: "eval"` 列出）。
  */
 export class TrajectoryService {
   constructor(
@@ -87,7 +87,7 @@ export class TrajectoryService {
   }
 
   /**
-   * 列出可查看的对话（admin 看全部，其余只看自己负责的 agent），按 (updated_at, id) 倒序。
+   * 列出可查看的对话（admin 看全部，其余只看自己负责的 agent），按 (updated_at, id) 倒序；`kind` 缺省为 `chat`。
    * `before` 是上一页的 `next`（对话 id）：从该对话当前的 (updated_at, id) 之后继续。
    */
   async list(
@@ -97,8 +97,6 @@ export class TrajectoryService {
   ): Promise<{ items: TrajectoryListItem[]; next: string | null }> {
     const role = await this.role(orgId, accountId);
     if (!TrajectoryService.isMember(role)) return { items: [], next: null };
-    // T3 加 conversations.kind 之前没有评测对话
-    if (q.kind === "eval") return { items: [], next: null };
     const admin = roleAtLeast(role, "admin");
     let query = this.db
       .selectFrom("conversations as c")
@@ -115,6 +113,7 @@ export class TrajectoryService {
         sql<string | null>`v.definition ->> 'name'`.as("agent_name"),
       ])
       .where("c.org_id", "=", orgId)
+      .where("c.kind", "=", q.kind ?? "chat")
       .where("a.org_id", "=", orgId)
       .where("a.deleted_at", "is", null)
       .orderBy("c.updated_at", "desc")
@@ -180,7 +179,7 @@ export class TrajectoryService {
   ): Promise<TrajectoryDetail> {
     const conv = await this.db
       .selectFrom("conversations")
-      .select(["id", "agent_id", "account_id", "title"])
+      .select(["id", "agent_id", "account_id", "title", "kind"])
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
@@ -208,7 +207,7 @@ export class TrajectoryService {
         agentId: conv.agent_id,
         accountId: conv.account_id,
         title: conv.title,
-        kind: "chat",
+        kind: conv.kind,
       },
       runs: buildTrajectory(events, table),
       currency: settings.priceCurrency,

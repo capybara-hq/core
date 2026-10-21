@@ -95,6 +95,11 @@ export const ERROR_CODES = {
   "eval.run_not_finished": 409,
   "eval.case_too_large": 413,
   "eval.call_not_found": 404,
+  "eval.set_not_found": 404,
+  "eval.case_not_found": 404,
+  "eval.case_exists": 409,
+  "eval.too_many_cases": 409,
+  "eval.agent_mismatch": 409,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

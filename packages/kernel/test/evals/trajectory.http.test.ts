@@ -309,7 +309,7 @@ describe("GET /orgs/:orgId/trajectories", () => {
       expect(res.statusCode, q).toBe(400);
       expect(errCode(res)).toBe("validation_failed");
     }
-    // conversations.kind 由 T3 加入：在那之前全部是 chat
+    // 种子对话都是 chat；eval 对话的列出见 sets.http.test.ts
     const chat = (await list(owner, "?kind=chat")).json() as Page;
     expect(chat.items).toHaveLength(3);
     const evals = await list(owner, "?kind=eval");

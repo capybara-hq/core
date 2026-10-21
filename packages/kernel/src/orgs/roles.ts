@@ -28,7 +28,8 @@ export type OrgAction =
   | "skills.read"
   | "skills.manage"
   | "ui.use"
-  | "trajectories.read";
+  | "trajectories.read"
+  | "evals.manage";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -60,6 +61,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "ui.use": "guest",
   // 轨迹查看器：服务里再判定「组织管理员或该 agent 的负责人」（实时读负责人），其余一律 404
   "trajectories.read": "member",
+  // 评测集、用例与评测运行（用例快照即对话内容，只给组织管理员）
+  "evals.manage": "admin",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

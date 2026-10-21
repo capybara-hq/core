@@ -197,7 +197,13 @@ export interface ConversationsTable {
   consumed_seq: Int8;
   created_at: Ts;
   updated_at: Ts;
+  /** 0028：chat（普通对话）/ eval（整轮回放的隐藏对话）。 */
+  kind: ColumnType<ConversationKind, ConversationKind | undefined, ConversationKind>;
+  /** 0028：eval 对话所属的评测运行。 */
+  eval_run_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
+
+export type ConversationKind = "chat" | "eval";
 
 /** 0006_conversations.sql：会话事件日志，只追加。 */
 export interface ConversationEventsTable {
@@ -584,6 +590,88 @@ export interface ModelPricesTable {
   updated_at: Ts;
 }
 
+/** 0028_evals.sql：评测集（一个集合对应一个 agent；软删除）。 */
+export interface EvalSetsTable {
+  id: Generated<string>;
+  org_id: string;
+  agent_id: string;
+  name: string;
+  description: ColumnType<string, string | undefined, string>;
+  rubric: string | null;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0028_evals.sql：评测用例（某次运行的日志快照，不引用原对话）。 */
+export interface EvalCasesTable {
+  id: Generated<string>;
+  set_id: string;
+  org_id: string;
+  source_conversation_id: string;
+  source_run_id: string;
+  agent_version: number;
+  title: string;
+  snapshot: Json<unknown>;
+  snapshot_bytes: number;
+  replayable_steps: ColumnType<number, number | undefined, number>;
+  added_by: string;
+  created_at: Ts;
+}
+
+export type EvalRunStatus = "queued" | "running" | "completed" | "cancelled" | "capped" | "failed";
+
+/** 0028_evals.sql：评测运行（T4 起写入）。 */
+export interface EvalRunsTable {
+  id: Generated<string>;
+  org_id: string;
+  set_id: string;
+  mode: "step" | "run";
+  candidate: Json<unknown>;
+  judge: ColumnType<boolean, boolean | undefined, boolean>;
+  token_cap: Int8;
+  tokens_used: Int8;
+  status: ColumnType<EvalRunStatus, EvalRunStatus | undefined, EvalRunStatus>;
+  cases_total: number;
+  cases_done: ColumnType<number, number | undefined, number>;
+  estimate: Json<unknown>;
+  created_by: string;
+  created_at: Ts;
+  started_at: TsNullable;
+  finished_at: TsNullable;
+}
+
+export type EvalResultStatus = "pending" | "running" | "done" | "error" | "skipped";
+
+/** 0028_evals.sql：评测结果（每用例一行或每步一行，T4 起写入）。 */
+export interface EvalResultsTable {
+  id: Generated<string>;
+  run_id: string;
+  case_id: string;
+  org_id: string;
+  step: number | null;
+  model_call_seq: ColumnType<
+    string | null,
+    number | string | null | undefined,
+    number | string | null
+  >;
+  status: ColumnType<EvalResultStatus, EvalResultStatus | undefined, EvalResultStatus>;
+  baseline: ColumnType<unknown | null, string | null | undefined, string | null>;
+  candidate: ColumnType<unknown | null, string | null | undefined, string | null>;
+  diff: ColumnType<unknown | null, string | null | undefined, string | null>;
+  judge: ColumnType<unknown | null, string | null | undefined, string | null>;
+  drift: ColumnType<string[], string[] | undefined, string[]>;
+  error: ColumnType<unknown | null, string | null | undefined, string | null>;
+  eval_conversation_id: string | null;
+  label: "pass" | "fail" | null;
+  label_note: string | null;
+  labeled_by: string | null;
+  labeled_at: TsNullable;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
@@ -630,6 +718,10 @@ export interface KernelDatabase {
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;
   model_prices: ModelPricesTable;
+  eval_sets: EvalSetsTable;
+  eval_cases: EvalCasesTable;
+  eval_runs: EvalRunsTable;
+  eval_results: EvalResultsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

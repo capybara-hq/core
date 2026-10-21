@@ -22,6 +22,8 @@ import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { EvalSetsController } from "../evals/sets.controller.js";
+import { EvalSetsService } from "../evals/sets.service.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { TrajectoryService } from "../evals/trajectory.service.js";
 import { AccountsService } from "../identity/accounts.js";
@@ -102,6 +104,7 @@ import {
   CREDENTIALS,
   DIRECTORY_SYNC,
   EMBED_TOKENS,
+  EVAL_SETS,
   EVENT_LOG,
   EXTERNAL_IDENTITIES,
   IDENTITY_BINDING,
@@ -220,6 +223,7 @@ const CONTROLLERS: Type[] = [
   DirectorySyncController,
   UiController,
   TrajectoryController,
+  EvalSetsController,
 ];
 
 /**
@@ -311,6 +315,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         settings: SettingsService,
       ) => new TrajectoryService(db, eventLog, prices, settings),
       inject: [KERNEL_DB, EVENT_LOG, PRICES, SETTINGS],
+    },
+    {
+      provide: EVAL_SETS,
+      useFactory: (
+        db: KernelDb,
+        config: () => KernelConfig,
+        prices: PricesService,
+        settings: SettingsService,
+      ) => new EvalSetsService(db, config, prices, settings),
+      inject: [KERNEL_DB, KERNEL_CONFIG, PRICES, SETTINGS],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },

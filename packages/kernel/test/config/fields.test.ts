@@ -23,6 +23,7 @@ describe("configFields", () => {
       "auth.loginSources",
       "auth.trustedIdentitySources",
       "runtime.orgConcurrency",
+      "evals.orgConcurrency",
       "log.level",
     ]);
   });

@@ -222,6 +222,8 @@ export class ConversationsService {
       .select(COLUMNS)
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
+      // 评测回放的隐藏对话（kind = 'eval'）不在「我的对话」里
+      .where("kind", "=", "chat")
       .where((eb) =>
         eb.exists(
           eb

@@ -75,6 +75,13 @@
 | `sandbox.limits.maxRunningMinutes` | `CAPYBARA_SANDBOX__LIMITS__MAX_RUNNING_MINUTES` | `number` | `120` | 否 | 否 | Minutes a sandbox may run continuously before it is suspended even while in use (skipped while a command is running) |
 | `sandbox.limits.egress` | `CAPYBARA_SANDBOX__LIMITS__EGRESS` | `"none" \| "allowlist" \| "open"` | `"allowlist"` | 否 | 否 | Outbound network from sandboxes: none, allowlist (only allowHosts) or open; applies to sandboxes created after the change, existing ones keep theirs until destroyed |
 | `sandbox.limits.allowHosts` | `CAPYBARA_SANDBOX__LIMITS__ALLOW_HOSTS` | `array<string>` | `["registry.npmjs.org","pypi.org","files.pythonhosted.org","github.com","codeload.github.com","raw.githubusercontent.com","objects.githubusercontent.com","release-assets.githubusercontent.com"]` | 否 | 否 | Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to sandboxes created after the change |
+| `evals.orgConcurrency` | `CAPYBARA_EVALS__ORG_CONCURRENCY` | `number` | `2` | 是 | 否 | Maximum eval cases executing concurrently per organization across all replicas |
+| `evals.workerConcurrency` | `CAPYBARA_EVALS__WORKER_CONCURRENCY` | `number` | `4` | 否 | 否 | Eval case jobs one replica processes at the same time |
+| `evals.defaultTokenCap` | `CAPYBARA_EVALS__DEFAULT_TOKEN_CAP` | `number` | `1000000` | 否 | 否 | Token cap of an eval run when none is given; the run stops sending new model requests once it is reached |
+| `evals.maxTokenCap` | `CAPYBARA_EVALS__MAX_TOKEN_CAP` | `number` | `20000000` | 否 | 否 | Largest token cap an eval run may ask for |
+| `evals.maxCasesPerSet` | `CAPYBARA_EVALS__MAX_CASES_PER_SET` | `number` | `500` | 否 | 否 | Maximum number of cases in one eval set |
+| `evals.maxCaseBytes` | `CAPYBARA_EVALS__MAX_CASE_BYTES` | `number` | `4194304` | 否 | 否 | Largest log snapshot in bytes (serialized JSON) one eval case may store; larger runs cannot be added |
+| `evals.judgeMaxOutputTokens` | `CAPYBARA_EVALS__JUDGE_MAX_OUTPUT_TOKENS` | `number` | `1024` | 否 | 否 | Maximum output tokens of one LLM judge request |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

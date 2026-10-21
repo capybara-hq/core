@@ -258,6 +258,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "log.level": (k, v) => k.log.setLevel(String(v)),
   // 并发上限由运行时在每次取额度时经 `config()` 读取当前值，替换配置即生效，无需额外动作。
   "runtime.orgConcurrency": () => {},
+  // 评测的组织并发同样在每次取额度时经 `config()` 读取当前值。
+  "evals.orgConcurrency": () => {},
   // 登录方式与受信任的身份源在每次请求时经 `config()` 读取，替换配置即生效。
   "auth.loginSources": () => {},
   "auth.trustedIdentitySources": () => {},

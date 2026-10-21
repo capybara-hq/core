@@ -792,6 +792,73 @@ export const KernelConfigSchema = z.object({
         .prefault({} as never),
     })
     .prefault({} as never),
+  evals: z
+    .object({
+      orgConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(2)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Maximum eval cases executing concurrently per organization across all replicas",
+          }),
+        ),
+      workerConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(4)
+        .meta(meta({ description: "Eval case jobs one replica processes at the same time" })),
+      defaultTokenCap: z
+        .number()
+        .int()
+        .positive()
+        .default(1_000_000)
+        .meta(
+          meta({
+            description:
+              "Token cap of an eval run when none is given; the run stops sending new model requests once it is reached",
+          }),
+        ),
+      maxTokenCap: z
+        .number()
+        .int()
+        .positive()
+        .default(20_000_000)
+        .meta(meta({ description: "Largest token cap an eval run may ask for" })),
+      maxCasesPerSet: z
+        .number()
+        .int()
+        .positive()
+        .default(500)
+        .meta(meta({ description: "Maximum number of cases in one eval set" })),
+      maxCaseBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(4_194_304)
+        .meta(
+          meta({
+            description:
+              "Largest log snapshot in bytes (serialized JSON) one eval case may store; larger runs cannot be added",
+          }),
+        ),
+      judgeMaxOutputTokens: z
+        .number()
+        .int()
+        .positive()
+        .default(1024)
+        .meta(meta({ description: "Maximum output tokens of one LLM judge request" })),
+    })
+    // 默认上限必须在允许范围内，否则不传 tokenCap 的运行一律被拒
+    .refine((c) => c.defaultTokenCap <= c.maxTokenCap, {
+      message: "evals.defaultTokenCap must be at most evals.maxTokenCap",
+      path: ["defaultTokenCap"],
+    })
+    .prefault({} as never),
   log: z
     .object({
       level: z
