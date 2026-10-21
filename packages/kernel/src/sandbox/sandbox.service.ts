@@ -190,7 +190,9 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   记录是 `running`、实例却被内核之外的原因停了时，由提供方的自动启动（`sandbox@1` 契约）接上。
  * - **接手崩溃的前任**：执行 `fn` 期间 Redis 里有标记 `capk:sandbox-busy:<对话>`（TTL 为最长命令时间加余量）；
  *   拿到锁时标记还在（前任没正常结束），先调提供方的 `killAll` 杀掉前任遗留的命令，再执行 `fn`（尽力而为，
- *   失败只记 warn：提供方在沙箱里也有命令时限兜底）。
+ *   失败只记 warn：提供方在沙箱里也有命令时限兜底）。刚从 `suspended` 恢复的沙箱同样先 `killAll`（所有提供方：
+ *   休眠的沙箱里不会有正当的命令；E2B 暂停保留内存且停住沙箱里的时钟，前任的命令可能比标记活得久；Docker 的
+ *   休眠本来就结束了全部进程，多一次 exec 的代价很小）。
  *
  * 换提供方会泄漏旧实例：新提供方销毁不了旧提供方的实例，只有旧提供方仍加载时才能清理（记在 `prev_*` 列）。
  * 没有提供方时 {@link available} 为 false，使用时抛 `sandbox.unavailable`（503）。本身无进程内状态，可多副本共用。
@@ -257,8 +259,16 @@ export class SandboxService {
       try {
         try {
           // 新建的实例里不会有前任的命令
-          if (leftover && !s.info.fresh)
-            await this.killLeftovers(ctx.conversationId, s.handle, p, sig);
+          // 刚从 suspended 恢复的也清一遍：休眠期间不可能有正当的命令，而 E2B 的暂停连内存一起保留——
+          // 前任的命令随恢复回来，暂停时沙箱里的时钟也停了（沙箱里的时限没走），标记却可能已按墙钟过期
+          if ((leftover || s.resumed) && !s.info.fresh)
+            await this.killLeftovers(
+              ctx.conversationId,
+              s.handle,
+              p,
+              sig,
+              leftover ? "takeover" : "resume",
+            );
           return await fn(s.handle, p.impl, s.info, sig);
         } catch (e) {
           if (!isSandboxGoneError(e)) throw e;
@@ -434,24 +444,25 @@ export class SandboxService {
     handle: SandboxHandle,
     p: SandboxProviderEntry,
     signal: AbortSignal,
+    why: "takeover" | "resume",
   ): Promise<void> {
     if (!p.impl.killAll) {
-      this.d.log.info(
-        "sandbox taken over from a holder that did not finish; provider cannot kill its commands",
-        {
-          conversationId,
-        },
-      );
+      if (why === "takeover") {
+        this.d.log.info(
+          "sandbox taken over from a holder that did not finish; provider cannot kill its commands",
+          { conversationId },
+        );
+      }
       return;
     }
     try {
       await p.impl.killAll(handle, signal);
-      this.d.log.info(
-        "sandbox taken over from a holder that did not finish; leftover commands killed",
-        {
-          conversationId,
-        },
-      );
+      if (why === "takeover") {
+        this.d.log.info(
+          "sandbox taken over from a holder that did not finish; leftover commands killed",
+          { conversationId },
+        );
+      }
     } catch (err) {
       if (signal.aborted || isSandboxGoneError(err)) throw err;
       this.d.log.warn("cannot kill leftover sandbox commands", { conversationId, err });
@@ -622,7 +633,7 @@ export class SandboxService {
     p: SandboxProviderEntry,
     held: Held,
     signal: AbortSignal,
-  ): Promise<{ handle: SandboxHandle; info: SandboxUseInfo; fence: Fence }> {
+  ): Promise<{ handle: SandboxHandle; info: SandboxUseInfo; fence: Fence; resumed?: boolean }> {
     const id = ctx.conversationId;
     await this.d.db
       .insertInto("sandboxes")
@@ -657,7 +668,7 @@ export class SandboxService {
             suspended_at: null,
             sweep_failed_at: null,
           });
-          return { handle, info: { fresh: false, recreated: false }, fence };
+          return { handle, info: { fresh: false, recreated: false }, fence, resumed: true };
         }
         this.d.log.info("sandbox is gone at the provider; recreating", { conversationId: id });
       }

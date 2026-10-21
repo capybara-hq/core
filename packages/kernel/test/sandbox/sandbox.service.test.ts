@@ -985,3 +985,33 @@ describe("接手崩溃的前任（fix wave S2 I2）", () => {
     expect(warned).toContain("cannot kill leftover sandbox commands");
   });
 });
+
+describe("恢复休眠的沙箱时清掉遗留命令（fix round 2）", () => {
+  it("从 suspended 恢复：即使标记已过期，也先 killAll（暂停保留内存的提供方，前任的命令随恢复回来）", async () => {
+    const s = service();
+    const { h } = await use(s);
+    // 前任留下的命令（假沙箱的 suspend 与 E2B 暂停一样不结束进程），标记已按墙钟过期（不存在）
+    const left = provider?.exec(h, {
+      command: "sleep 30",
+      timeoutMs: 60_000,
+      maxOutputBytes: 100,
+      signal: signal(),
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await s.suspendIdle(later(DAY))).toBe(1);
+    expect(await redis.get(`${SANDBOX_BUSY_PREFIX}${conversationId}`)).toBeNull();
+    const order: string[] = [];
+    await s.withSandbox(
+      { orgId, conversationId },
+      async () => {
+        order.push(`fn after ${(await ops("kill-all")).length} kill-all`);
+      },
+      signal(),
+    );
+    expect(order).toEqual(["fn after 1 kill-all"]);
+    expect(await left).toMatchObject({ exitCode: null, timedOut: false });
+    // 之后正常使用（运行中、没有标记）不再 killAll
+    await use(s);
+    expect(await ops("kill-all")).toHaveLength(1);
+  });
+});
