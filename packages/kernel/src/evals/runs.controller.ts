@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Put, Query } from "@nestjs/common";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 import { EVAL_RUNS } from "../http/tokens.js";
@@ -40,6 +40,13 @@ const ResultsQuery = z
   })
   .strict();
 
+const LabelBody = z
+  .object({
+    label: z.enum(["pass", "fail"]).nullable(),
+    note: z.string().max(2000).optional(),
+  })
+  .strict();
+
 /** 去掉 zod 输出里值为 undefined 的键（exactOptionalPropertyTypes）。 */
 function candidateOf(c: z.infer<typeof Candidate>): EvalCandidate {
   return {
@@ -51,7 +58,8 @@ function candidateOf(c: z.infer<typeof Candidate>): EvalCandidate {
 }
 
 /**
- * 评测运行（`/api/v1/orgs/:orgId/eval-sets/:setId/runs`、`/api/v1/orgs/:orgId/eval-runs/:runId`）：
+ * 评测运行（`/api/v1/orgs/:orgId/eval-sets/:setId/runs`、`/api/v1/orgs/:orgId/eval-runs/:runId`）与
+ * 结果的人工标注（`/api/v1/orgs/:orgId/eval-results/:resultId/label`）：
  * 全部 `evals.manage`（admin 起、只给人）。
  */
 @Controller("api/v1/orgs/:orgId")
@@ -147,5 +155,25 @@ export class EvalRunsController {
   ): Promise<{ run: EvalRunView }> {
     const p = requireUser(principal);
     return { run: await this.runs.cancel(org.orgId, p.account.id, runId, patTokenId(p)) };
+  }
+
+  /** 人工标注一条结果：`label` 为 pass / fail，或 null 清除（备注随之清除）。 */
+  @Put("eval-results/:resultId/label")
+  @OrgAction("evals.manage")
+  async label(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("resultId") resultId: string,
+    @Body(new ZodPipe(LabelBody)) body: z.infer<typeof LabelBody>,
+  ): Promise<{ result: EvalResultView }> {
+    const p = requireUser(principal);
+    const result = await this.runs.label(
+      org.orgId,
+      p.account.id,
+      resultId,
+      { label: body.label, ...(body.note !== undefined && { note: body.note }) },
+      patTokenId(p),
+    );
+    return { result };
   }
 }

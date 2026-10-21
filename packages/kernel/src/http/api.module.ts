@@ -44,6 +44,8 @@ import {
 import { InboxService } from "../inbox/inbox.service.js";
 import type { KernelIdentity } from "../kernel.js";
 import type { PricesService } from "../models/prices.js";
+import { ModelPurposesController } from "../models/purposes.controller.js";
+import type { ModelPurposesService } from "../models/purposes.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
 import { InvitationsService } from "../orgs/invitations.service.js";
@@ -119,6 +121,7 @@ import {
   KERNEL_LOG,
   KERNEL_REDIS,
   MEMBERS,
+  MODEL_PURPOSES,
   OAUTH_FLOW,
   OFFBOARDING,
   ORG_PLUGIN_CONFIGS,
@@ -189,6 +192,8 @@ export interface ApiDeps {
   skillChanges: SkillChangesService;
   /** 模型价格表（与 `Kernel.prices` 同一实例）。 */
   prices: PricesService;
+  /** 模型用途映射（与 `Kernel.purposes` 同一实例；评测 worker 的评委也用它）。 */
+  purposes: ModelPurposesService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
@@ -230,6 +235,7 @@ const CONTROLLERS: Type[] = [
   TrajectoryController,
   EvalSetsController,
   EvalRunsController,
+  ModelPurposesController,
 ];
 
 /**
@@ -312,6 +318,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY],
     },
     { provide: PRICES, useValue: deps.prices },
+    { provide: MODEL_PURPOSES, useValue: deps.purposes },
     {
       provide: TRAJECTORIES,
       useFactory: (
@@ -340,7 +347,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         registry: ProviderRegistry,
         prices: PricesService,
         settings: SettingsService,
-      ) => new EvalRunsService({ db, config, registry, prices, settings, queue: deps.evalQueue }),
+      ) =>
+        new EvalRunsService({
+          db,
+          config,
+          registry,
+          prices,
+          settings,
+          queue: deps.evalQueue,
+          purposes: deps.purposes,
+        }),
       inject: [KERNEL_DB, KERNEL_CONFIG, PROVIDER_REGISTRY, PRICES, SETTINGS],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },

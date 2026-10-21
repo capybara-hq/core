@@ -10,7 +10,8 @@ import {
 import { z } from "zod";
 
 /**
- * 评测测试用的模型供应商（model-provider@2）：模型 eval-1 / eval-2 / eval-v（视觉）。
+ * 评测测试用的模型供应商（model-provider@2）：模型 eval-1 / eval-2 / eval-v（视觉）/ eval-j（评委，回复
+ * `judgeReply`）。声明一个插件用途 `model-eval.summarize`（`permissions.models`）。
  * 用量固定（每次请求 `tokens` 个输入 token，其余三项为 0），可设延迟、失败序列、「先流出文本再失败」。
  * 状态挂在 globalThis 上，测试与插件共享（同一进程，双内核也共用一份），用来核对收到的请求与最大并发；
  * 部署级配置 `replica` 标出是哪个内核实例发的请求（`seenBy` 与 `requests` 一一对应）。
@@ -29,7 +30,12 @@ export interface EvalModelState {
   failures: ModelError[];
   /** 设了就让每个请求先流出这段文本、再抛这个错误（不产生 message_complete）。 */
   streamThenFail: { text: string; error: ModelError } | null;
+  /** 模型 eval-j（评委）的回复文本。 */
+  judgeReply: string;
 }
+
+/** eval-j 缺省的回复：合法的评委结论。 */
+export const DEFAULT_JUDGE_REPLY = '{"verdict":"pass","score":4,"reason":"Same answer."}';
 
 export function evalModelState(): EvalModelState {
   const g = globalThis as { __evalModel?: EvalModelState };
@@ -42,6 +48,7 @@ export function evalModelState(): EvalModelState {
     tokens: 100,
     failures: [],
     streamThenFail: null,
+    judgeReply: DEFAULT_JUDGE_REPLY,
   };
   return g.__evalModel;
 }
@@ -56,6 +63,7 @@ export function resetEvalModel(): void {
   s.tokens = 100;
   s.failures = [];
   s.streamThenFail = null;
+  s.judgeReply = DEFAULT_JUDGE_REPLY;
 }
 
 const info = (id: string, vision = false): ModelInfo => ({
@@ -102,11 +110,16 @@ export default definePlugin({
   sdk: "^0.1.0",
   provides: [MODEL_PROVIDER_CAPABILITY_V2],
   config: { deployment: Deployment },
+  permissions: {
+    models: [
+      { purpose: "model-eval.summarize", kind: "chat", label: { zh: "摘要", en: "Summarize" } },
+    ],
+  },
   setup(ctx) {
     const replica = Deployment.parse(ctx.config ?? {}).replica ?? "";
     const provider: ModelProvider = {
       async listModels() {
-        return [info("eval-1"), info("eval-2"), info("eval-v", true)];
+        return [info("eval-1"), info("eval-2"), info("eval-v", true), info("eval-j")];
       },
       async *stream(req, { signal }): AsyncGenerator<ModelStreamEvent> {
         const s = evalModelState();
@@ -124,7 +137,12 @@ export default definePlugin({
           }
           yield {
             type: "message_complete",
-            content: [{ type: "text", text: `reply from ${req.model}` }],
+            content: [
+              {
+                type: "text",
+                text: req.model === "eval-j" ? s.judgeReply : `reply from ${req.model}`,
+              },
+            ],
             stopReason: "end_turn",
             usage: {
               inputTokens: s.tokens,

@@ -29,7 +29,8 @@ export type OrgAction =
   | "skills.manage"
   | "ui.use"
   | "trajectories.read"
-  | "evals.manage";
+  | "evals.manage"
+  | "org.models.manage";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -63,6 +64,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "trajectories.read": "member",
   // 评测集、用例与评测运行（用例快照即对话内容，只给组织管理员）
   "evals.manage": "admin",
+  // 本组织的模型用途映射（覆盖部署默认，如评委用途 eval）
+  "org.models.manage": "admin",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

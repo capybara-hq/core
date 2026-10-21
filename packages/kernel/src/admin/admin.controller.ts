@@ -12,7 +12,15 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
-import { ACCOUNTS, KERNEL_LOG, ORGS, PRICES, SESSIONS, SETTINGS } from "../http/tokens.js";
+import {
+  ACCOUNTS,
+  KERNEL_LOG,
+  MODEL_PURPOSES,
+  ORGS,
+  PRICES,
+  SESSIONS,
+  SETTINGS,
+} from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
@@ -35,6 +43,13 @@ import {
   type ModelPricePut,
   type PricesService,
 } from "../models/prices.js";
+import { purposeTargetOf } from "../models/purposes.controller.js";
+import {
+  type ModelPurposesService,
+  PURPOSE_PUT,
+  type PurposePut,
+  type PurposeView,
+} from "../models/purposes.js";
 import type { Org, OrgsService } from "../orgs/orgs.service.js";
 
 const ListQuery = z.object({
@@ -75,6 +90,7 @@ export class AdminController {
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(SETTINGS) private readonly settings: SettingsService,
     @Inject(PRICES) private readonly prices: PricesService,
+    @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
   ) {}
 
   /**
@@ -183,5 +199,29 @@ export class AdminController {
     const actor = requireUser(principal);
     await this.prices.put(body, actor.account.id, patTokenId(actor));
     return this.getModelPrices();
+  }
+
+  /** 模型用途与部署默认映射（`override` 一律为 null；组织覆盖在组织侧接口）。 */
+  @Get("model-purposes")
+  async getModelPurposes(): Promise<{ purposes: PurposeView[] }> {
+    return { purposes: await this.purposes.list() };
+  }
+
+  /** 设置一个用途的部署默认，或 `target: null` 清除。 */
+  @Put("model-purposes/:purpose")
+  async putModelPurpose(
+    @CurrentPrincipal() principal: Principal,
+    @Param("purpose") purpose: string,
+    @Body(new ZodPipe(PURPOSE_PUT)) body: PurposePut,
+  ): Promise<{ purpose: PurposeView }> {
+    const actor = requireUser(principal);
+    return {
+      purpose: await this.purposes.setDefault(
+        purpose,
+        purposeTargetOf(body),
+        actor.account.id,
+        patTokenId(actor),
+      ),
+    };
   }
 }

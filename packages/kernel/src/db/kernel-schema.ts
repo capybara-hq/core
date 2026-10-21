@@ -590,6 +590,17 @@ export interface ModelPricesTable {
   updated_at: Ts;
 }
 
+/** 0029_model_purposes.sql：模型用途映射（org_id 为 null = 部署默认；组织可覆盖）。 */
+export interface ModelPurposeMappingsTable {
+  org_id: string | null;
+  purpose: string;
+  provider: string;
+  model: string;
+  params: Json;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
 /** 0028_evals.sql：评测集（一个集合对应一个 agent；软删除）。 */
 export interface EvalSetsTable {
   id: Generated<string>;
@@ -725,6 +736,7 @@ export interface KernelDatabase {
   eval_cases: EvalCasesTable;
   eval_runs: EvalRunsTable;
   eval_results: EvalResultsTable;
+  model_purpose_mappings: ModelPurposeMappingsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

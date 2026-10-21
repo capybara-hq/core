@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
+import type { ContentBlock } from "@capybara-hq/plugin-sdk";
 import { isModelError, isRetryableKind, type Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Worker } from "bullmq";
 import type { Redis } from "ioredis";
@@ -7,11 +8,14 @@ import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ModelPurposesService } from "../models/purposes.js";
 import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
 import { ProviderListError } from "../runtime/providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
 import { bullConnection } from "../runtime/run-queue.js";
 import { consumeTokens, recordOutcome, recountCases, runActive, usageTokens } from "./budget.js";
+import { replyParts, structuralDiff } from "./diff.js";
+import { judge } from "./judge.js";
 import type { DriftReason } from "./reconstruct.js";
 import {
   deleteEvalConversation,
@@ -44,6 +48,8 @@ import {
  *   发出后失败的尝试按估算同样 `consumeTokens`；
  * - 可重试的错误重试 3 次，不可重试的结果标 `error`；连续 `evals.maxConsecutiveErrors` 条结果出错 → 运行 `failed`；
  * - 结果按认领号（每次执行一个 uuid）写入：失去认领的旧执行写不进来（已发出请求的用量照样计入）；
+ * - 结果写 done 时一并写结构差异（`diff`）；开了评委时随后（运行仍活跃才）发一次评委请求，结论写进 `judge`，
+ *   用量同样 `consumeTokens`（请求失败按估算）；
  * - 用例做完重算 `cases_done`（已全部结束的用例数，幂等），达到总数且仍在执行 → `completed`。
  * 多副本：状态全在 PG / Redis；崩溃的任务由 BullMQ stalled 机制交给别的 worker，`running` 的结果从头重做；
  * 处理函数外的暂时故障（PG / Redis）按任务的 attempts 指数退避重试。
@@ -71,6 +77,8 @@ export interface EvalWorkerDeps {
   replay: StepReplayDeps;
   /** 整轮回放（mode = run）的依赖；认领相关的两项由 worker 按每次执行补上。 */
   runReplay: Omit<RunReplayDeps, "stillClaimed" | "onSeeded">;
+  /** 评委（用途 `eval`，D3）：开了评委的运行每条 done 的结果发一次评委请求。 */
+  purposes: Pick<ModelPurposesService, "chat">;
   /** 测试用：覆盖拿不到配额时的延后时长。 */
   quotaRetryMs?: number;
 }
@@ -137,6 +145,25 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 const UNFINISHED = ["pending", "running"] as const;
+
+/** 快照里 `beforeSeq` 之前最近一条用户消息的文本（评委看的「用户请求」）。 */
+function userRequestOf(s: CaseSnapshot, beforeSeq: number): string {
+  const msg = s.events.findLast((e) => e.type === "user_message" && e.seq < beforeSeq);
+  const content = (msg?.payload as { content?: ContentBlock[] } | undefined)?.content ?? [];
+  return replyParts(content).text;
+}
+
+/** 给评委看的回复：工具调用（名字与参数）在前，文本在后。 */
+function renderReply(toolCalls: { name: string; input: unknown }[], text: string): string {
+  const calls = toolCalls.map((c) => `Tool call: ${c.name} ${JSON.stringify(c.input ?? null)}`);
+  return [...calls, text].filter((x) => x.length > 0).join("\n");
+}
+
+/** 一次运行的评分设置。 */
+interface Grading {
+  judge: boolean;
+  rubric: string | null;
+}
 
 export class EvalWorker {
   private worker: Worker<EvalJobData> | undefined;
@@ -291,11 +318,13 @@ export class EvalWorker {
       db.selectFrom("eval_cases").select("snapshot").where("id", "=", caseId).executeTakeFirst(),
       db
         .selectFrom("eval_runs")
-        .select(["candidate", "mode"])
-        .where("id", "=", runId)
+        .innerJoin("eval_sets", "eval_sets.id", "eval_runs.set_id")
+        .select(["eval_runs.candidate", "eval_runs.mode", "eval_runs.judge", "eval_sets.rubric"])
+        .where("eval_runs.id", "=", runId)
         .executeTakeFirst(),
     ]);
     if (!row || !run) return;
+    const grade: Grading = { judge: run.judge, rubric: run.rubric };
     const s = row.snapshot as CaseSnapshot;
     const candidate = run.candidate as EvalCandidate;
     const pending = await db
@@ -318,7 +347,7 @@ export class EvalWorker {
       : null;
     if (run.mode === "run") {
       const [r] = pending;
-      if (r) await this.runWhole(data, claim, signal, s, resolved, r.id);
+      if (r) await this.runWhole(data, claim, signal, s, resolved, r.id, grade);
       return;
     }
     const calls = new Map(replayableCalls(s).map((c) => [c.seq, c]));
@@ -389,6 +418,12 @@ export class EvalWorker {
       }
       const result = out;
       const tokens = usageTokens(result.candidate.usage);
+      const b = replyParts(result.baseline.content);
+      const c = replyParts(result.candidate.content);
+      const diff = structuralDiff(
+        { ...b, stopReason: result.baseline.stopReason },
+        { ...c, stopReason: result.candidate.stopReason },
+      );
       const outcome = await db.transaction().execute(async (trx) => {
         // 只在仍由本次执行认领时写结果：stalled 后被接手的旧执行不覆盖结果。用量照样计入（请求确实发出且已付费，
         // 与失败尝试一样不以认领为条件），走同一个原子 consumeTokens
@@ -398,6 +433,7 @@ export class EvalWorker {
             status: "done",
             baseline: JSON.stringify(result.baseline),
             candidate: JSON.stringify(result.candidate),
+            diff: JSON.stringify(diff),
             drift: result.drift,
             error: null,
             updated_at: sql`now()`,
@@ -420,7 +456,65 @@ export class EvalWorker {
         await this.skipCase(data);
         return;
       }
+      if (grade.judge) {
+        const j = await this.judgeResult(data, r.id, claim, signal, {
+          userRequest: userRequestOf(s, call.seq),
+          baseline: renderReply(b.toolCalls, b.text),
+          candidate: renderReply(c.toolCalls, c.text),
+          rubric: grade.rubric,
+        });
+        if (j === "capped") {
+          await this.skipCase(data);
+          return;
+        }
+      }
     }
+  }
+
+  /**
+   * 评委（结果已写 done 之后）：运行仍活跃才发请求（取消 / 越限 / 熔断后不再发）。结论或失败原因只在仍由本次执行
+   * 认领时写进 `judge`；用量不以认领为条件计入（请求确实发出了）。返回 `capped` 表示评委的用量让运行达到上限。
+   * 评委失败不计入熔断（结果本身是 done）。
+   */
+  private async judgeResult(
+    data: EvalJobData,
+    resultId: string,
+    claim: string,
+    signal: AbortSignal,
+    input: Parameters<typeof judge>[2],
+  ): Promise<"ok" | "capped" | "inactive"> {
+    const db = this.d.db;
+    if (!(await runActive(db, data.runId))) return "inactive";
+    const v = await judge(
+      {
+        purposes: this.d.purposes,
+        maxOutputTokens: this.d.config().evals.judgeMaxOutputTokens,
+      },
+      data.orgId,
+      input,
+      signal,
+    );
+    if (signal.aborted) throw new Aborted();
+    const tokens = "error" in v ? v.tokens : usageTokens(v.usage);
+    const stored =
+      "error" in v
+        ? {
+            error: v.error,
+            ...(v.provider !== undefined && { provider: v.provider }),
+            ...(v.model !== undefined && { model: v.model }),
+          }
+        : v;
+    const capped = await db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("eval_results")
+        .set({ judge: JSON.stringify(stored), updated_at: sql`now()` })
+        .where("id", "=", resultId)
+        .where("status", "=", "done")
+        .where("claimed_by", "=", claim)
+        .execute();
+      return (await consumeTokens(trx, data.runId, tokens)).capped;
+    });
+    return capped ? "capped" : "ok";
   }
 
   /**
@@ -436,6 +530,7 @@ export class EvalWorker {
     s: CaseSnapshot,
     resolved: ReturnType<typeof resolveCandidate> | null,
     resultId: string,
+    grade: Grading,
   ): Promise<void> {
     const { runId } = data;
     const db = this.d.db;
@@ -515,13 +610,20 @@ export class EvalWorker {
     if (!(await held())) return;
     const baseline = runBaseline(s);
     const drift: DriftReason[] = out.unmatched > 0 ? ["tool_unmatched"] : [];
-    await db.transaction().execute(async (trx) => {
+    const baseText = replyParts(baseline.finalContent).text;
+    const candText = replyParts(out.finalContent).text;
+    const diff = structuralDiff(
+      { toolCalls: baseline.toolCalls, text: baseText, stopReason: baseline.stopReason },
+      { toolCalls: out.toolCalls, text: candText, stopReason: out.stopReason },
+    );
+    const written = await db.transaction().execute(async (trx) => {
       const w = await trx
         .updateTable("eval_results")
         .set({
           status: "done",
           baseline: JSON.stringify(baseline),
           candidate: JSON.stringify(out),
+          diff: JSON.stringify(diff),
           drift,
           error: null,
           eval_conversation_id: out.conversationId,
@@ -531,9 +633,17 @@ export class EvalWorker {
         .where("status", "=", "running")
         .where("claimed_by", "=", claim)
         .executeTakeFirst();
-      if (Number(w.numUpdatedRows) > 0) {
-        await recordOutcome(trx, runId, true, this.d.config().evals.maxConsecutiveErrors);
-      }
+      if (Number(w.numUpdatedRows) === 0) return false;
+      await recordOutcome(trx, runId, true, this.d.config().evals.maxConsecutiveErrors);
+      return true;
+    });
+    if (!written || !grade.judge) return;
+    const start = s.events.find((e) => e.runId === s.runId && e.type === "run_started");
+    await this.judgeResult(data, resultId, claim, signal, {
+      userRequest: userRequestOf(s, start?.seq ?? Number.POSITIVE_INFINITY),
+      baseline: renderReply(baseline.toolCalls, baseText),
+      candidate: renderReply(out.toolCalls, candText),
+      rubric: grade.rubric,
     });
   }
 

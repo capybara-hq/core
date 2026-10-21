@@ -1,15 +1,21 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
-import { sql } from "kysely";
+import { type Selectable, sql } from "kysely";
 import { paramIssues } from "../agents/agents.service.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { EvalResultStatus, EvalRunStatus, KernelDb } from "../db/kernel-schema.js";
+import type {
+  EvalResultStatus,
+  EvalResultsTable,
+  EvalRunStatus,
+  KernelDb,
+} from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
 import { costOf, type PricesService, priceKey } from "../models/prices.js";
+import type { ModelPurposesService } from "../models/purposes.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { ProviderListError, type ProviderRegistry } from "../runtime/providers.js";
 import { bullConnection } from "../runtime/run-queue.js";
@@ -104,20 +110,6 @@ export interface EvalResultView {
   labeledBy: string | null;
   labeledAt: string | null;
 }
-
-/**
- * 模型用途映射（T6 的 `ModelPurposesService.resolve`）：评委用途 `eval` 未映射 → `model.unconfigured`。
- * T6 之前用 {@link UNCONFIGURED_PURPOSES} 桩住（一律未映射）。
- */
-export interface EvalPurposes {
-  resolve(orgId: string, purpose: string): Promise<unknown>;
-}
-
-export const UNCONFIGURED_PURPOSES: EvalPurposes = {
-  async resolve(_orgId, purpose) {
-    throw new ApiError("model.unconfigured", `No model is configured for the "${purpose}" purpose`);
-  },
-};
 
 /** 评测队列（生产方）：懒建连接；`close()` 关闭。 */
 export class EvalQueue {
@@ -245,6 +237,36 @@ const RUN_COLUMNS = [
 
 const iso = (d: Date | null) => (d === null ? null : new Date(d).toISOString());
 
+/** 聚合出的比率（PG numeric / float 读出为字符串）；没有数据为 null。 */
+const rate = (v: string | number | null | undefined): number | null =>
+  v === null || v === undefined ? null : Number(v);
+
+type ResultRow = Selectable<EvalResultsTable>;
+
+/** 一行 `eval_results` 的视图。 */
+function resultView(r: ResultRow): EvalResultView {
+  return {
+    id: r.id,
+    caseId: r.case_id,
+    step: r.step,
+    modelCallSeq: r.model_call_seq === null ? null : Number(r.model_call_seq),
+    status: r.status,
+    baseline: r.baseline,
+    candidate: r.candidate,
+    diff: r.diff,
+    judge: r.judge,
+    drift: r.drift,
+    error: r.error,
+    evalConversationId: r.eval_conversation_id,
+    label: r.label,
+    labelNote: r.label_note,
+    labeledBy: r.labeled_by,
+    labeledAt: iso(r.labeled_at),
+  };
+}
+
+const resultNotFound = () => new ApiError("eval.result_not_found", "Eval result not found");
+
 /** 一个用例的计划（含用例 id 与成本）。 */
 interface PlannedCase extends CasePlan {
   caseId: string;
@@ -266,8 +288,8 @@ export interface EvalRunsDeps {
   prices: Pick<PricesService, "table">;
   settings: Pick<SettingsService, "get">;
   queue: Pick<EvalQueue, "enqueue">;
-  /** 评委用途映射（T6）；缺省 = 一律未映射。 */
-  purposes?: EvalPurposes;
+  /** 模型用途映射：开评委时 `eval` 用途必须已映射（否则 `model.unconfigured`）。 */
+  purposes: Pick<ModelPurposesService, "resolve">;
 }
 
 /**
@@ -457,7 +479,7 @@ export class EvalRunsService {
       throw new ApiError("eval.token_cap_invalid", `tokenCap must be between 1 and ${maxTokenCap}`);
     }
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
-    if (input.judge) await (this.d.purposes ?? UNCONFIGURED_PURPOSES).resolve(orgId, "eval");
+    if (input.judge) await this.d.purposes.resolve(orgId, "eval");
     const planned = await this.plan(setId, input.mode, input.candidate, versionDef);
     if (planned.length === 0) {
       throw new ApiError("eval.nothing_to_replay", "The eval set has nothing to replay");
@@ -584,6 +606,15 @@ export class EvalRunsService {
         sql<string>`count(*) FILTER (WHERE status = 'skipped')`.as("skipped"),
         sql<string>`count(*) FILTER (WHERE label IS NOT NULL)`.as("labeled"),
         sql<string>`count(*) FILTER (WHERE cardinality(drift) > 0)`.as("drifted"),
+        // 结构差异只在 done 的结果上有；评委比率只算给出了结论的（解析失败 / 请求失败不计）
+        sql<string | null>`avg(CASE WHEN (diff->>'toolCallsMatch')::boolean THEN 1.0 ELSE 0.0 END)
+          FILTER (WHERE status = 'done' AND diff IS NOT NULL)`.as("tool_rate"),
+        sql<string | null>`avg((diff->>'textSimilarity')::float8)
+          FILTER (WHERE status = 'done' AND diff IS NOT NULL)`.as("text_sim"),
+        sql<string | null>`avg(CASE WHEN judge->>'verdict' = 'pass' THEN 1.0 ELSE 0.0 END)
+          FILTER (WHERE judge->>'verdict' IS NOT NULL)`.as("judge_rate"),
+        sql<string | null>`avg(CASE WHEN label = 'pass' THEN 1.0 ELSE 0.0 END)
+          FILTER (WHERE label IS NOT NULL)`.as("human_rate"),
       ])
       .where("run_id", "in", finished)
       .groupBy("run_id")
@@ -594,10 +625,10 @@ export class EvalRunsService {
         done: Number(a?.done ?? 0),
         errors: Number(a?.errors ?? 0),
         skipped: Number(a?.skipped ?? 0),
-        toolCallsMatchRate: null,
-        meanTextSimilarity: null,
-        judgePassRate: null,
-        humanPassRate: null,
+        toolCallsMatchRate: rate(a?.tool_rate),
+        meanTextSimilarity: rate(a?.text_sim),
+        judgePassRate: rate(a?.judge_rate),
+        humanPassRate: rate(a?.human_rate),
         labeled: Number(a?.labeled ?? 0),
         drifted: Number(a?.drifted ?? 0),
       });
@@ -675,24 +706,7 @@ export class EvalRunsService {
     const rows = await query.execute();
     const page = rows.slice(0, q.limit);
     return {
-      results: page.map((r) => ({
-        id: r.id,
-        caseId: r.case_id,
-        step: r.step,
-        modelCallSeq: r.model_call_seq === null ? null : Number(r.model_call_seq),
-        status: r.status,
-        baseline: r.baseline,
-        candidate: r.candidate,
-        diff: r.diff,
-        judge: r.judge,
-        drift: r.drift,
-        error: r.error,
-        evalConversationId: r.eval_conversation_id,
-        label: r.label,
-        labelNote: r.label_note,
-        labeledBy: r.labeled_by,
-        labeledAt: iso(r.labeled_at),
-      })),
+      results: page.map(resultView),
       next: rows.length > q.limit ? (page.at(-1)?.id ?? null) : null,
     };
   }
@@ -738,5 +752,57 @@ export class EvalRunsService {
       });
     });
     return this.get(orgId, runId);
+  }
+
+  /**
+   * 人工标注（D3）：标通过 / 不通过（附可选备注），`label: null` 清除标注与备注。评测集已删除、结果不属于本组织 →
+   * `eval.result_not_found`。事务内锁组织并复核 `evals.manage`，写审计 `eval.result_labeled`（不含备注全文）。
+   */
+  async label(
+    orgId: string,
+    actor: string,
+    resultId: string,
+    input: { label: "pass" | "fail" | null; note?: string },
+    actorTokenId?: string,
+  ): Promise<EvalResultView> {
+    if (!UUID.test(resultId)) throw resultNotFound();
+    const row = await this.d.db.transaction().execute(async (trx) => {
+      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      const cleared = input.label === null;
+      const r = await trx
+        .updateTable("eval_results")
+        .set({
+          label: input.label,
+          label_note: cleared ? null : (input.note ?? null),
+          labeled_by: cleared ? null : actor,
+          labeled_at: cleared ? null : sql`now()`,
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", resultId)
+        .where("org_id", "=", orgId)
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom("eval_runs as er")
+              .innerJoin("eval_sets as es", "es.id", "er.set_id")
+              .select("er.id")
+              .whereRef("er.id", "=", "eval_results.run_id")
+              .where("es.deleted_at", "is", null),
+          ),
+        )
+        .returningAll()
+        .executeTakeFirst();
+      if (!r) throw resultNotFound();
+      await audit(trx, {
+        actorAccountId: actor,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "eval.result_labeled",
+        target: resultId,
+        detail: { runId: r.run_id, label: input.label },
+      });
+      return r;
+    });
+    return resultView(row);
   }
 }

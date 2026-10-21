@@ -49,6 +49,7 @@ import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { createLogger, type KernelLogger } from "./log.js";
 import { PricesService } from "./models/prices.js";
+import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
@@ -216,6 +217,8 @@ export interface Kernel {
   readonly skillChanges: SkillChangesService;
   /** 模型价格表（PG `model_prices`，成本读时计算）。 */
   readonly prices: PricesService;
+  /** 模型用途映射（部署默认 + 组织覆盖；评委用途 `eval`）。 */
+  readonly purposes: ModelPurposesService;
   /**
    * 按对话的沙箱（`sandbox@1` 提供方之上：懒创建、锁、休眠与销毁）；
    * 没有提供方时 `available` 为 false，使用时抛 `sandbox.unavailable`（503）。
@@ -450,6 +453,12 @@ export async function createKernel(
   });
   const skills = new SkillsService({ db: kdb, storage, attachments });
   const prices = new PricesService(kdb);
+  const purposes = new ModelPurposesService({
+    db: kdb,
+    registry,
+    config: () => current,
+    manifests: () => host.manifests(),
+  });
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
     const n = await attachments.deleteExpired();
     if (n > 0) log.info("expired attachments deleted", { count: n });
@@ -766,6 +775,7 @@ export async function createKernel(
         skills,
         skillChanges,
         prices,
+        purposes,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
@@ -933,6 +943,7 @@ export async function createKernel(
     skills,
     skillChanges,
     prices,
+    purposes,
     sandbox,
     log,
     get config() {
@@ -994,6 +1005,7 @@ export async function createKernel(
             quota: new OrgQuota(redis, EVAL_QUOTA_PREFIX),
             config: () => current,
             log,
+            purposes,
             // 媒体按快照自己的组织与对话、经组织范围的附件接口取（C3）
             replay: {
               registry,

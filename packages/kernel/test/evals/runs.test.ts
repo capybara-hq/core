@@ -422,10 +422,15 @@ describe("运行", () => {
       step: expect.any(Number),
       modelCallSeq: expect.any(Number),
       judge: null,
-      diff: null,
       label: null,
       evalConversationId: null,
     });
+    // 结构差异（T6）只在 done 的结果上有
+    for (const r of [...p1.results, ...p2.results]) {
+      if (r.status === "done")
+        expect(r.diff).toMatchObject({ toolCallsMatch: expect.any(Boolean) });
+      else expect(r.diff).toBeNull();
+    }
   }, 40_000);
 
   it("取消后剩余结果为 skipped；再取消 409", async () => {

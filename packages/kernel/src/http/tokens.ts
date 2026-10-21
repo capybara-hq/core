@@ -143,3 +143,6 @@ export const EVAL_SETS = Symbol("EVAL_SETS");
 
 /** `EvalRunsService`（评测运行）的注入令牌。 */
 export const EVAL_RUNS = Symbol("EVAL_RUNS");
+
+/** `ModelPurposesService`（模型用途映射）的注入令牌。 */
+export const MODEL_PURPOSES = Symbol("MODEL_PURPOSES");
