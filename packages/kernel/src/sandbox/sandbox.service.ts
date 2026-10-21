@@ -105,9 +105,17 @@ export const sandboxBusy = (): ApiError =>
 
 /** 持锁期间锁已丢失、或记录已被别人改过（防护号不符）：放弃本次操作。 */
 export class SandboxLockLostError extends Error {
-  constructor(conversationId: string) {
-    super(`sandbox lock lost for conversation ${conversationId}: its state changed concurrently`);
+  /** `lock`：锁已丢失（Lease 报告、续租失败或超时没有成功续租）；`generation`：记录的防护号已被别人改过。 */
+  readonly reason: "lock" | "generation";
+
+  constructor(conversationId: string, reason: "lock" | "generation" = "lock") {
+    super(
+      reason === "lock"
+        ? `sandbox lock lost for conversation ${conversationId}`
+        : `sandbox state of conversation ${conversationId} changed concurrently (generation mismatch)`,
+    );
     this.name = "SandboxLockLostError";
+    this.reason = reason;
   }
 }
 
@@ -382,7 +390,9 @@ export class SandboxService {
     lease.onLost(lose);
     let lastOk = Date.now();
     let inFlight = false;
-    const stale = () => Date.now() - lastOk > this.ttlMs;
+    // 键在最后一次成功续租后 TTL 过期；提前到 2/3 TTL 判为丢失，留出余量让中止先于键过期生效
+    const staleMs = Math.floor((this.ttlMs * 2) / 3);
+    const stale = () => Date.now() - lastOk > staleMs;
     const renew = async (): Promise<boolean> => {
       if (ctl.signal.aborted) return false;
       try {
@@ -394,6 +404,15 @@ export class SandboxService {
       if (stale()) lose();
       return !ctl.signal.aborted;
     };
+    // 更细的检查定时器（最多每 5 秒）：续租卡住不返回时也能及时判为丢失
+    const watchdog = setInterval(
+      () => {
+        if (stale()) lose();
+        if (ctl.signal.aborted) clearInterval(watchdog);
+      },
+      Math.min(5000, Math.max(1, Math.floor(this.ttlMs / 6))),
+    );
+    watchdog.unref();
     const timer = setInterval(
       () => {
         if (stale()) lose();
@@ -416,6 +435,7 @@ export class SandboxService {
       renew,
       release: async () => {
         clearInterval(timer);
+        clearInterval(watchdog);
         await lease
           .release()
           .catch((err: unknown) =>
@@ -436,7 +456,7 @@ export class SandboxService {
       .where("conversation_id", "=", id)
       .where("generation", "=", fence.gen)
       .executeTakeFirst();
-    if (Number(r.numUpdatedRows) !== 1) throw new SandboxLockLostError(id);
+    if (Number(r.numUpdatedRows) !== 1) throw new SandboxLockLostError(id, "generation");
     fence.gen++;
   }
 
@@ -536,7 +556,7 @@ export class SandboxService {
     // 换了提供方且旧实例还没销毁：交给旧提供方（仍加载时）销毁，否则记进 prev_*
     let prev: Patch = {};
     if (handle && row.provider !== p.plugin && row.status !== "destroyed") {
-      const kept = await this.retire(id, row.provider, handle);
+      const kept = await this.retire(id, row.provider, handle, signal);
       if (kept) {
         if (row.prev_handle) {
           this.d.log.warn("sandbox instance of an earlier provider is leaked", {
@@ -614,11 +634,19 @@ export class SandboxService {
   /**
    * 用旧提供方销毁别的提供方创建的实例：旧提供方仍加载且销毁成功 → false；否则 warn 并返回 true（需要留着记录）。
    */
-  private async retire(id: string, provider: string, handle: SandboxHandle): Promise<boolean> {
+  private async retire(
+    id: string,
+    provider: string,
+    handle: SandboxHandle,
+    signal: AbortSignal,
+  ): Promise<boolean> {
     const old = this.d.lookup?.(provider);
     if (old) {
       try {
-        await old.destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS));
+        await old.destroy(
+          handle,
+          AbortSignal.any([signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]),
+        );
         return false;
       } catch (err) {
         this.d.log.warn("cannot destroy sandbox instance of the previous provider", {
@@ -645,7 +673,7 @@ export class SandboxService {
     if (row.handle && row.provider === p.plugin) {
       await p.impl.destroy(row.handle, signal);
     } else if (row.handle && row.status !== "destroyed") {
-      if (await this.retire(id, row.provider, row.handle)) {
+      if (await this.retire(id, row.provider, row.handle, signal)) {
         prev = { prev_provider: row.provider, prev_handle: JSON.stringify(row.handle) };
       }
     } else if (!row.handle && row.provider === p.plugin && p.impl.destroyByName) {
@@ -653,7 +681,7 @@ export class SandboxService {
       await p.impl.destroyByName(`cap-${id}`, signal);
     }
     if (row.prev_handle && row.prev_provider && !("prev_handle" in prev)) {
-      if (!(await this.retire(id, row.prev_provider, row.prev_handle))) {
+      if (!(await this.retire(id, row.prev_provider, row.prev_handle, signal))) {
         prev = { prev_provider: null, prev_handle: null };
       }
     }
@@ -678,7 +706,7 @@ export class SandboxService {
         .where("conversation_id", "=", id)
         .where("generation", "=", fence.gen)
         .executeTakeFirst();
-      if (Number(r.numDeletedRows) !== 1) throw new SandboxLockLostError(id);
+      if (Number(r.numDeletedRows) !== 1) throw new SandboxLockLostError(id, "generation");
     }
     this.d.log.info("sandbox destroyed", { conversationId: id });
   }

@@ -18,7 +18,11 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { ConversationLock } from "../../src/runtime/conversation-lock.js";
-import { SandboxService, type SandboxServiceDeps } from "../../src/sandbox/sandbox.service.js";
+import {
+  SandboxLockLostError,
+  SandboxService,
+  type SandboxServiceDeps,
+} from "../../src/sandbox/sandbox.service.js";
 import {
   createFakeSandbox,
   fakeSandboxMeta,
@@ -730,22 +734,48 @@ describe("锁的防护（fix round 2）", () => {
     expect((await row())?.generation).toBe(g1 + 1);
   });
 
-  it("B 拿锁之前就开始的过期休眠扫描，之后写不进 suspended", async () => {
+  it("B 拿锁之前就开始的过期休眠扫描：只靠 generation 防护也写不进 suspended", async () => {
     const s = service(undefined, undefined, { lockTtlMs: 300 });
     await use(s);
     const started = gates();
     const base = createFakeSandbox(root);
-    let suspendSignal: AbortSignal | undefined;
     const slow: SandboxProvider = {
       ...base,
       suspend: async (h) => {
         started.entered();
-        // 故意不理 signal：模拟中止不及时的提供方，检验防护写入本身
+        // 故意不理 signal：模拟中止不及时的提供方
         await started.gate;
         return base.suspend(h, AbortSignal.timeout(5000));
       },
     };
-    const sweeper = service(() => slow, undefined, { lockTtlMs: 300 });
+    // 扫描方的锁永远「没丢」：续租总成功、从不报告丢失——只剩 generation 能挡住它
+    const real = new ConversationLock(redis, log, "capk:sandbox:");
+    const blind = {
+      acquire: async (id: string, token: string, ttl: number) => {
+        const lease = await real.acquire(id, token, ttl);
+        if (!lease) return null;
+        return {
+          conversationId: id,
+          runId: token,
+          lost: false,
+          renew: async () => true,
+          release: () => lease.release(),
+          abandon: () => lease.abandon(),
+          onLost: () => {},
+        };
+      },
+    };
+    const failures: unknown[] = [];
+    const sweeper = service(() => slow, undefined, {
+      lockTtlMs: 300,
+      lock: blind,
+      log: {
+        info() {},
+        warn: (m: string, f?: Record<string, unknown>) => {
+          if (m === "sandbox maintenance failed; will retry") failures.push(f?.err);
+        },
+      },
+    });
     const sweep = sweeper.suspendIdle(later(11 * MIN));
     await started.inside;
     // 扫描方的锁过期，B 拿到锁、走运行中的路径用完
@@ -754,8 +784,10 @@ describe("锁的防护（fix round 2）", () => {
     expect(b.info).toEqual({ fresh: false, recreated: false });
     started.release();
     expect(await sweep).toBe(0);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toBeInstanceOf(SandboxLockLostError);
+    expect((failures[0] as SandboxLockLostError).reason).toBe("generation");
     expect((await row())?.status).toBe("running");
-    void suspendSignal;
   });
 
   it("休眠途中锁丢失：中止提供方调用的 signal", async () => {
@@ -807,6 +839,36 @@ describe("锁的防护（fix round 2）", () => {
       signal(),
     );
     expect((reason as Error).name).toBe("SandboxLockLostError");
+  });
+
+  it("续租一直报错：在 TTL 的 2/3 之后、键过期之前就中止 fn 的 signal", async () => {
+    const real = new ConversationLock(redis, log, "capk:sandbox:");
+    const throwing = {
+      acquire: async (id: string, token: string, ttl: number) => {
+        const lease = await real.acquire(id, token, ttl);
+        if (!lease) return null;
+        return Object.assign(Object.create(lease), {
+          renew: async () => {
+            throw new Error("redis timeout");
+          },
+          release: () => lease.release(),
+          onLost: (cb: () => void) => lease.onLost(cb),
+        });
+      },
+    };
+    const ttl = 1500;
+    const s = service(undefined, undefined, { lockTtlMs: ttl, lock: throwing });
+    const elapsed = await s.withSandbox(
+      { orgId, conversationId },
+      async (_h, _p, _info, sig) => {
+        const t0 = Date.now();
+        await waitAborted(sig);
+        return Date.now() - t0;
+      },
+      signal(),
+    );
+    expect(elapsed).toBeGreaterThanOrEqual(800);
+    expect(elapsed).toBeLessThan(ttl);
   });
 
   it("组织不符的错误信息不带别的组织 id", async () => {

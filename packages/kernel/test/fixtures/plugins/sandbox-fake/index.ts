@@ -232,6 +232,8 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
         }, args.timeoutMs);
         const onAbort = () => kill();
         args.signal.addEventListener("abort", onAbort, { once: true });
+        // spawn 与登记监听之间已被中止：监听不会再触发，这里立即杀掉
+        if (args.signal.aborted) kill();
         child.once("close", (code) => {
           clearTimeout(timer);
           args.signal.removeEventListener("abort", onAbort);

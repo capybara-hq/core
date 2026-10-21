@@ -29,7 +29,7 @@ export interface SandboxHandle {
 
 /** 命令执行结果。 */
 export interface ExecResult {
-  /** 超时或被中止为 null。 */
+  /** 超时或在执行中被中止为 null（此时 `timedOut` 分别为 true / false）。 */
   exitCode: number | null;
   stdout: string;
   stderr: string;
@@ -66,7 +66,8 @@ export function isSandboxGoneError(e: unknown): e is SandboxGoneError {
  *
  * **中止**：每个方法都必须及时响应 `signal`（已中止就立即失败，进行中被中止就尽快以中止原因结束）——内核在锁丢失、
  * 运行被中止或超时时靠它停下，不响应就可能与新的持锁方同时操作同一实例。`exec` 被中止时必须杀掉正在跑的命令
- * （连同它派生的进程），而不只是不再等待它的输出。
+ * （连同它派生的进程），而不只是不再等待它的输出；命令启动后才被中止的 `exec` 以 `exitCode: null`、
+ * `timedOut: false` 正常 resolve（带上已收集的输出），不 reject。调用时 signal 已中止则立即 reject。
  */
 export interface SandboxProvider {
   /** `name` 形如 `cap-<conversationId>`。 */
