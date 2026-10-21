@@ -33,6 +33,9 @@ export interface DraftFile {
   file?: File;
 }
 
+/** 计入每条消息条数上限的条目：前端预检拦下的（没有原文件）不算。 */
+const counts = (f: DraftFile) => !(f.status === "error" && f.file === undefined);
+
 /** 前端预检的错误码（重试没有意义）。 */
 const PRECHECK_CODES = new Set(["attachment.type_not_allowed", "attachment.too_large"]);
 
@@ -134,24 +137,29 @@ export function useDraftFiles(orgId: string) {
       toast.error(t("filesUnavailable"));
       return;
     }
-    const room = Math.max(0, limits.maxPerMessage - filesRef.current.length);
-    if (picked.length > room) {
-      toast.error(t("filesLimit", { max: limits.maxPerMessage }));
-    }
+    // 预检拦下的条目（不会发出去、只是提示）不占条数名额
+    let room = Math.max(0, limits.maxPerMessage - filesRef.current.filter(counts).length);
+    let overflow = false;
     const added: DraftFile[] = [];
     const toStart: [string, File][] = [];
-    for (const file of picked.slice(0, room)) {
+    for (const file of picked) {
+      const rejected = precheckFile(file, limits);
+      if (rejected === null && room === 0) {
+        overflow = true;
+        continue;
+      }
       seq.current += 1;
       const key = `f${seq.current}`;
       const base = { key, name: file.name, size: file.size, progress: 0 };
-      const rejected = precheckFile(file, limits);
       if (rejected !== null) {
         added.push({ ...base, status: "error", error: clientError(rejected) });
       } else {
+        room -= 1;
         added.push({ ...base, status: "uploading", file });
         toStart.push([key, file]);
       }
     }
+    if (overflow) toast.error(t("filesLimit", { max: limits.maxPerMessage }));
     if (added.length === 0) return;
     const total = (list: DraftFile[]) =>
       list.reduce((n, f) => n + (f.status === "error" ? 0 : f.size), 0);

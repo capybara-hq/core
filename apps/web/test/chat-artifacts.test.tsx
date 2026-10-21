@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -161,6 +161,41 @@ describe("产物标签", () => {
         }),
       ),
     ).toBeTruthy();
+  });
+
+  it("缩略图 401（登录过期）：先确认登录（刷新一次）再带 retry 重载一次；再失败不再重试", async () => {
+    let expired = true;
+    const calls = stubApi({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [userMsg(1, "chart"), artifact(2, "a1", "chart.png", "image/png", 9)],
+        }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
+      "GET /api/v1/me": () =>
+        expired
+          ? json(401, { error: { code: "auth.token_expired", message: "expired" } })
+          : json(200, { account: { id: "a1" } }),
+      "POST /api/v1/auth/refresh": () => {
+        expired = false;
+        return new Response(null, { status: 204 });
+      },
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    const tab = await within(panelOf()).findByRole("tab", {
+      name: new RegExp(en.chatPanel.artifacts),
+    });
+    await userEvent.setup().click(tab);
+    const panel = within(panelOf()).getByRole("tabpanel");
+    const img = () => within(panel).getByRole("img", { name: "chart.png" });
+    fireEvent.error(img());
+    await vi.waitFor(() =>
+      expect(img().getAttribute("src")).toBe(`${BASE}/artifacts/a1/download?inline=1&retry=1`),
+    );
+    expect(calls.filter((c) => c.url === "/api/v1/auth/refresh")).toHaveLength(1);
+    fireEvent.error(img());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(img().getAttribute("src")).toBe(`${BASE}/artifacts/a1/download?inline=1&retry=1`);
+    expect(calls.filter((c) => c.url === "/api/v1/me")).toHaveLength(2);
   });
 
   it("文本预览按纯文本显示（HTML 不渲染）；预览失败时只提示，下载仍在", async () => {

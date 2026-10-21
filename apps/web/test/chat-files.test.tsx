@@ -390,10 +390,14 @@ describe("输入框：上传文件（修正轮 1）", () => {
     expect(within(group).getAllByRole("alert")[1]?.textContent).toBe(
       zh.chat.fileTooLarge.replace("{image}", "100 B").replace("{other}", "1000 B"),
     );
-    // 条数上限 2：已有 2 个，再加被拦下
-    await user.upload(input, png("third.png"));
+    // 预检拦下的 2 个不占名额（条数上限 2）：再加 2 个照常上传，第 3 个才被拦下
+    await user.upload(input, [png("third.png"), png("fourth.png")]);
+    await vi.waitFor(() => expect(posted(calls, ATT)).toHaveLength(2));
+    expect(screen.queryByText(zh.chat.filesLimit.replace("{max}", "2"))).toBeNull();
+    await user.upload(input, png("fifth.png"));
     expect(await screen.findByText(zh.chat.filesLimit.replace("{max}", "2"))).toBeTruthy();
-    expect(posted(calls, ATT)).toHaveLength(0);
+    expect(within(group).queryByText("fifth.png")).toBeNull();
+    expect(posted(calls, ATT)).toHaveLength(2);
   });
 
   it("两次并发拖入：合计只收 10 个，只为收下的文件发起上传", async () => {
@@ -656,6 +660,26 @@ describe("时间线：登录过期后的附件（修正轮 1）", () => {
       expect(tab.location.href).toBe(new URL(`${ATT}/${ID2}/download`, window.location.href).href),
     );
     expect(calls.some((c) => c.url === "/api/v1/me")).toBe(true);
+  });
+
+  it("点开文件卡片但登录已失效：关掉新标签页、在当前页提示，不导航到下载地址（不显示裸 401）", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: events,
+      "GET /api/v1/me": () =>
+        json(401, { error: { code: "auth.session_revoked", message: "revoked" } }),
+      "POST /api/v1/auth/refresh": () =>
+        json(401, { error: { code: "auth.refresh_invalid", message: "invalid" } }),
+    });
+    const tab = { opener: {} as unknown, location: { href: "about:blank" }, close: vi.fn() };
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => tab),
+    );
+    await renderChat("en");
+    fireEvent.click(screen.getByRole("link", { name: /report\.pdf/ }), { button: 0 });
+    await vi.waitFor(() => expect(tab.close).toHaveBeenCalled());
+    expect(tab.location.href).toBe("about:blank");
+    expect(await screen.findByText(/session is no longer valid|Please sign in/)).toBeTruthy();
   });
 });
 
