@@ -57,6 +57,16 @@ describe("skills catalog in the request", () => {
     expect(request.messages.some((m) => m.role === "system")).toBe(false);
   });
 
+  it("long descriptions are clipped deterministically in the catalog", () => {
+    const log = new Log();
+    log.user("hi");
+    catalog(log, [skill("alpha", 1, "x".repeat(1000))]);
+    const text = build(log.events).request.system[0]?.text as string;
+    const line = text.split("\n").find((l) => l.startsWith("- alpha: ")) as string;
+    expect([...line.slice("- alpha: ".length)].length).toBe(300);
+    expect(line.endsWith("…")).toBe(true);
+  });
+
   it("later snapshots render as an appended notice; the system prefix stays the same", () => {
     const log = new Log();
     log.user("hi");

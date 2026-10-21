@@ -478,7 +478,7 @@ export class RunWorker {
       ]);
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
       await recordSkillsCatalog(
-        { db: this.d.db, eventLog: this.d.eventLog },
+        { db: this.d.db, eventLog: this.d.eventLog, log: this.d.log },
         {
           orgId: conv.org_id,
           agentId: conv.agent_id,

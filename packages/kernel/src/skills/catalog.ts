@@ -1,5 +1,7 @@
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventLog } from "../conversations/event-log.js";
+import { SKILLS_CATALOG_MAX } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { type CatalogSkill, sameSkills } from "../runtime/context/skills.js";
 
@@ -35,6 +37,7 @@ export interface EffectiveSkillsInput {
 export async function resolveEffectiveSkills(
   db: KernelDb,
   input: EffectiveSkillsInput,
+  log?: Pick<Logger, "warn">,
 ): Promise<CatalogSkill[]> {
   const orgSkills = [...new Set(input.agent.skills?.orgSkills ?? [])];
   const rows = await db
@@ -70,7 +73,7 @@ export async function resolveEffectiveSkills(
     const prev = byName.get(r.name);
     if (!prev || (prev.scope === "org" && r.scope === "agent")) byName.set(r.name, r);
   }
-  return [...byName.values()]
+  const all = [...byName.values()]
     .map((r) => ({
       id: r.id,
       name: r.name,
@@ -78,6 +81,17 @@ export async function resolveEffectiveSkills(
       version: r.current_version,
     }))
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  // 快照大小不能让运行失败：按名字排序后确定地截到上限（事件 schema 的上限）
+  if (all.length > SKILLS_CATALOG_MAX) {
+    log?.warn("skills catalog truncated", {
+      orgId: input.orgId,
+      agentId: input.agentId,
+      skills: all.length,
+      kept: SKILLS_CATALOG_MAX,
+    });
+    return all.slice(0, SKILLS_CATALOG_MAX);
+  }
+  return all;
 }
 
 /** `skills_catalog` 的幂等键：每次运行最多写一份。 */
@@ -88,10 +102,14 @@ export const skillsCatalogIdemKey = (runId: string): string => `skills_catalog:$
  * 从没有快照、现在也没有技能 → 不写（没有技能的 agent 不出现目录）；之前有、现在全没了 → 写空快照（模型据此得知被移除）。
  */
 export async function recordSkillsCatalog(
-  deps: { db: KernelDb; eventLog: Pick<EventLog, "append" | "latestOfType"> },
+  deps: {
+    db: KernelDb;
+    eventLog: Pick<EventLog, "append" | "latestOfType">;
+    log?: Pick<Logger, "warn">;
+  },
   input: EffectiveSkillsInput & { runId: string },
 ): Promise<void> {
-  const skills = await resolveEffectiveSkills(deps.db, input);
+  const skills = await resolveEffectiveSkills(deps.db, input, deps.log);
   const last = await deps.eventLog.latestOfType(input.conversationId, "skills_catalog");
   if (last ? sameSkills(last.payload.skills, skills) : skills.length === 0) return;
   await deps.eventLog.append(input.conversationId, [

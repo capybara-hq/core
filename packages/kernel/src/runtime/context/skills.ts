@@ -25,8 +25,20 @@ export const SKILLS_CATALOG_HEADER =
 const byName = (a: CatalogSkill, b: CatalogSkill) =>
   a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 
-/** 一行：`- <name>: <description>`（描述折叠成一行）。 */
-const line = (s: CatalogSkill) => `- ${s.name}: ${s.description.replace(/\s+/g, " ").trim()}`;
+/** 目录里每个技能描述最多的码点数（超出确定地截断；`skill_load` 仍返回完整正文）。 */
+export const CATALOG_DESCRIPTION_MAX_CHARS = 300;
+
+/** 折叠成一行，按码点截到 {@link CATALOG_DESCRIPTION_MAX_CHARS}。 */
+function shortDescription(d: string): string {
+  const flat = d.replace(/\s+/g, " ").trim();
+  const cps = [...flat];
+  return cps.length <= CATALOG_DESCRIPTION_MAX_CHARS
+    ? flat
+    : `${cps.slice(0, CATALOG_DESCRIPTION_MAX_CHARS - 1).join("")}…`;
+}
+
+/** 一行：`- <name>: <description>`（描述折叠成一行并截断）。 */
+const line = (s: CatalogSkill) => `- ${s.name}: ${shortDescription(s.description)}`;
 
 const lines = (skills: readonly CatalogSkill[]) => [...skills].sort(byName).map(line).join("\n");
 

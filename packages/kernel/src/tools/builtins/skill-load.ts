@@ -22,6 +22,7 @@ import {
   sandboxBaseTimeoutMs,
   withNotices,
 } from "./sandbox/common.js";
+import { SANDBOX_TOOL_NAMES } from "./sandbox/names.js";
 
 /**
  * 内置工具 `skill_load`（M5 T14，Ruling M17）：按日志里最新一份技能目录快照把名字解析为 id 与版本，返回该版本
@@ -29,17 +30,22 @@ import {
  * （提供方以 root 写，命令用户只读）；没有沙箱提供方时只给正文，并说明脚本不可用。
  *
  * - 存储里读出的每个文件都按清单的 sha256 核对，不符即拒绝（不把被替换的内容给模型或放进沙箱）。
- * - 复制记录在内核控制的标记文件 {@link SKILLS_MARKER}（`/skills` 下，命令用户改不了）：`{ <name>: { id, version,
- *   files, stale } }`。新建 / 重建的沙箱、版本变化、同名换了技能时重新复制，否则跳过。
+ * - 复制记录在内核控制的标记文件（每个技能一个，{@link skillMarkerPath}：`/skills/.capybara/<name>.json`，
+ *   命令用户改不了）：`{ id, version, files, stale }`。新建 / 重建的沙箱、版本变化、同名换了技能时重新复制，否则跳过。
+ * - agent 没有任何沙箱工具时不创建沙箱、不复制（模型也跑不了脚本），只给正文并说明。
  * - 可执行位：提供方写的文件一律不可执行（0644）。不扩展 `sandbox@1` 的 `writeFile`，而是在结果里告诉模型用解释器
  *   运行（`sh` / `python3` / `node`）：契约与两个提供方不变，技能包里的 shebang 脚本照样能跑，代价只是不能 `./x`。
  * - 旧版本多出的文件：`sandbox@1` 没有删除原语，命令用户也删不了 `/skills` 下的文件，所以新版本原地覆盖，
  *   旧版本独有的文件留在原处、记进标记的 `stale`，每次加载都在结果里列出「不属于当前版本、忽略它们」。
  */
 
-/** 已复制进沙箱的技能的标记文件（内核控制：`/skills` 只有提供方以 root 能写；技能名不含 `.`，不会撞名）。 */
-export const SKILLS_MARKER = `${SKILLS_SANDBOX_ROOT}/.capybara-skills.json`;
-const MARKER_MAX_BYTES = 1024 * 1024;
+/**
+ * 已复制进沙箱的技能的标记目录（内核控制：`/skills` 只有提供方以 root 能写；技能名不以 `.` 开头，不会撞名）。
+ */
+export const SKILLS_MARKER_DIR = `${SKILLS_SANDBOX_ROOT}/.capybara`;
+/** 一个技能的标记文件。 */
+export const skillMarkerPath = (name: string): string => `${SKILLS_MARKER_DIR}/${name}.json`;
+const MARKER_MAX_BYTES = 256 * 1024;
 /** 结果里最多列出的文件数（其余只给数量）。 */
 const MAX_LISTED_FILES = 200;
 /** 「不在目录里」的错误里最多列出的技能名。 */
@@ -48,7 +54,7 @@ const MAX_LISTED_NAMES = 50;
 const SPEC: ToolSpec = {
   name: "skill_load",
   description:
-    "Load a skill from the skills list in your instructions: returns the skill's instructions " +
+    "Load a skill from the skills list: returns the skill's instructions " +
     "(its SKILL.md) and the list of its files. Call it before starting a task that matches a " +
     "skill's description, then follow the returned instructions. If the skill has scripts or other " +
     "files, they are copied read-only to /skills/<name>/ in this conversation's sandbox; run scripts " +
@@ -107,21 +113,16 @@ interface MarkerEntry {
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
-/** 解析标记文件；坏的按空处理（全部重新复制）。 */
-function parseMarker(data: Uint8Array): Record<string, MarkerEntry> {
+/** 解析一个技能的标记文件；坏的按没有处理（重新复制）。 */
+function parseMarker(data: Uint8Array): MarkerEntry | undefined {
   try {
-    const v = JSON.parse(new TextDecoder().decode(data)) as unknown;
-    if (v === null || typeof v !== "object" || Array.isArray(v)) return {};
-    const out: Record<string, MarkerEntry> = {};
-    for (const [k, e] of Object.entries(v as Record<string, unknown>)) {
-      if (e === null || typeof e !== "object") continue;
-      const r = e as Record<string, unknown>;
-      if (typeof r.id !== "string" || typeof r.version !== "number") continue;
-      out[k] = { id: r.id, version: r.version, files: strings(r.files), stale: strings(r.stale) };
-    }
-    return out;
+    const r = JSON.parse(new TextDecoder().decode(data)) as unknown;
+    if (r === null || typeof r !== "object" || Array.isArray(r)) return undefined;
+    const e = r as Record<string, unknown>;
+    if (typeof e.id !== "string" || typeof e.version !== "number") return undefined;
+    return { id: e.id, version: e.version, files: strings(e.files), stale: strings(e.stale) };
   } catch {
-    return {};
+    return undefined;
   }
 }
 
@@ -176,6 +177,8 @@ interface LoadedVersion {
   manifest: SkillManifest;
   prefix: string;
   store: ObjectStore;
+  /** 已核对过的 SKILL.md 字节（复制时不再读一遍）。 */
+  entryBytes: Uint8Array;
 }
 
 /**
@@ -184,28 +187,36 @@ interface LoadedVersion {
  */
 async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<{ stale: string[] }> {
   const { name, id, version } = v.entry;
-  let marker: Record<string, MarkerEntry> = {};
+  const markerPath = skillMarkerPath(name);
+  let cur: MarkerEntry | undefined;
   if (!s.reset) {
-    const m = await s.p.readFile(s.h, SKILLS_MARKER, {
-      maxBytes: MARKER_MAX_BYTES,
-      signal: s.signal,
-    });
-    if (m && !m.truncated) marker = parseMarker(m.data);
+    const m = await s.p.readFile(s.h, markerPath, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
+    if (m && !m.truncated) cur = parseMarker(m.data);
   }
-  const cur = Object.hasOwn(marker, name) ? marker[name] : undefined;
   if (cur && cur.id === id && cur.version === version) return { stale: cur.stale };
   for (const f of v.manifest.files) {
-    const data = await readVerified(v.store, `${v.prefix}${f.path}`, f, name, s.signal);
+    const data =
+      f.path === SKILL_ENTRY_FILE
+        ? v.entryBytes
+        : await readVerified(v.store, `${v.prefix}${f.path}`, f, name, s.signal);
     await s.p.writeFile(s.h, skillSandboxPath(name, f.path), data, s.signal);
   }
   const files = v.manifest.files.map((f) => f.path);
   const now = new Set(files);
   const stale = cur ? [...new Set([...cur.stale, ...cur.files])].filter((p) => !now.has(p)) : [];
   stale.sort();
-  const next = { ...marker, [name]: { id, version, files, stale } };
-  await s.p.writeFile(s.h, SKILLS_MARKER, new TextEncoder().encode(JSON.stringify(next)), s.signal);
+  const entry: MarkerEntry = { id, version, files, stale };
+  await s.p.writeFile(s.h, markerPath, new TextEncoder().encode(JSON.stringify(entry)), s.signal);
   return { stale };
 }
+
+/** 本步可用的工具里是否有沙箱工具（没有时模型用不了复制进去的文件）。 */
+const hasSandboxTools = (ctx: BuiltinCallContext): boolean =>
+  (ctx.tools ?? []).some(
+    (t) =>
+      t.source.kind === "builtin" &&
+      (SANDBOX_TOOL_NAMES as readonly string[]).includes(t.source.name),
+  );
 
 /** 文件清单（最多 {@link MAX_LISTED_FILES} 行）。 */
 function fileList(files: SkillManifest["files"]): string {
@@ -240,11 +251,12 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       if (!row || row.deleted_at !== null) throw new ToolError(removedText(name));
       const manifest = row.manifest;
       const store = deps.storage.kernel(ctx.orgId);
-      const v: LoadedVersion = { entry, manifest, prefix: row.object_prefix, store };
+      const prefix = row.object_prefix;
 
       const md = manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
       if (!md) throw new ToolError(integrityText(name));
-      const mdBytes = await readVerified(store, `${v.prefix}${md.path}`, md, name, ctx.signal);
+      const mdBytes = await readVerified(store, `${prefix}${md.path}`, md, name, ctx.signal);
+      const v: LoadedVersion = { entry, manifest, prefix, store, entryBytes: mdBytes };
       let parsed: ReturnType<typeof parseSkillMd>;
       try {
         parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(mdBytes));
@@ -264,6 +276,12 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
           `Skill files (for reference):\n${fileList(manifest.files)}\n` +
           "This deployment has no sandbox, so the skill's scripts and other files are not available; " +
           "follow the instructions without running them.";
+      } else if (!hasSandboxTools(ctx)) {
+        // 模型跑不了脚本：不为它创建沙箱、不复制
+        filesText =
+          `Skill files (for reference):\n${fileList(manifest.files)}\n` +
+          "This agent has no sandbox tools, so the skill's scripts and other files cannot be run; " +
+          "follow the instructions in the body without them.";
       } else {
         const r = await inSandbox(deps, ctx, (s) => copySkill(s, v));
         notices = r.notices;

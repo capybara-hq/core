@@ -4,6 +4,7 @@ import {
   hasControlChars,
   IMAGE_MEDIA_TYPES,
   isAttachmentId,
+  isSkillName,
   MEDIA_NAME_MAX_CHARS,
   type MediaSource,
   type ModelUsage,
@@ -388,7 +389,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         .array(
           z.object({
             id: z.string().min(1).max(100),
-            name: z.string().min(1).max(64),
+            name: z.string().refine(isSkillName, "invalid skill name"),
             description: z.string().max(4096),
             version: z.number().int().positive(),
           }),

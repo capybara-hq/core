@@ -348,6 +348,8 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     const v2 = await call(conv, "skill_load", { name: "delta" }, 4);
     expect(v2.content).toContain("version 2");
     expect(v2.content).toContain("(v2)");
+    // v1 独有的 data/notes.txt 留在原处，列为旧版本遗留（M18）
+    expect(v2.content).toMatch(/left over from an earlier version[^\n]*data\/notes\.txt/);
     expect(await sandboxFile(conv, "skills/delta/scripts/run.sh")).toBe("echo delta-v2");
     const snaps = await catalogs(conv);
     expect(snaps.map((s) => s.payload.skills[0]?.version)).toEqual([1, 2]);
@@ -436,6 +438,20 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
     expect(text).toContain("run.py");
     expect(text).toMatch(/no sandbox/i);
     expect(text).toMatch(/scripts?.*(not available|unavailable|cannot)/i);
+  });
+
+  it("agent without sandbox tools: no sandbox is created, body only", async () => {
+    const s = await seedSkill({
+      name: "nobox",
+      files: { "SKILL.md": skillMd("nobox", "Nobox body."), "run.sh": "echo hi" },
+    });
+    // 有沙箱提供方，但本步没有沙箱工具：withSandbox 一旦被调用，存根就抛错
+    const t = tool({ skills: [{ id: s.id, name: "nobox", description: "d", version: 1 }] }, true);
+    const r = (await t.run({ name: "nobox" }, { ...ctx(), tools: [] })) as ToolResult;
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toContain("Nobox body.");
+    expect(text).toContain("run.sh");
+    expect(text).toMatch(/no sandbox tools/i);
   });
 
   it("a skill removed after the snapshot: actionable error", async () => {
