@@ -94,6 +94,7 @@ export const ERROR_CODES = {
   "trajectory.not_found": 404,
   "eval.run_not_finished": 409,
   "eval.case_too_large": 413,
+  "eval.call_not_found": 404,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

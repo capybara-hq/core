@@ -245,6 +245,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
             }),
           )
           .optional(),
+        /**
+         * 本次请求的媒体字节预算（`attachments.requestMediaBytes`，见 planMedia）：请求里有媒体时才写，
+         * 还原时用它重现同样的省略结果。较早的事件没有。
+         */
+        mediaBudgetBytes: count.optional(),
       }),
     }),
   ),

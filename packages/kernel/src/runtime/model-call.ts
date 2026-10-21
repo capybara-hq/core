@@ -419,7 +419,14 @@ async function readAll(eventLog: EventLog, conversationId: string): Promise<Conv
   }
 }
 
-/** 追加一条事件并并入本地事件列表（幂等命中已在列表中的不重复加入）。 */
+/**
+ * 追加一条事件并并入本地事件列表（幂等命中已在列表中的不重复加入）。
+ *
+ * 并发注意（已知、接受）：只并入本次写入的事件，`readAll` 之后别处并发写入的事件（如运行中途到达的插话）
+ * 不在本地列表里，即使它们的 seq 比这里写入的更小。构建请求因此可能「缺」若干 seq ≤ `toSeq` 的事件；
+ * 这些只会是 seq > `absorbedUpToSeq` 的 user_message，构建时本来就被跳过，所以由日志
+ * （seq ≤ `toSeq` 的全部事件 + 记录的 `absorbedUpToSeq`）还原出的请求与实际发出的一致（evals/reconstruct.ts）。
+ */
 async function appendLocal(
   eventLog: EventLog,
   conversationId: string,

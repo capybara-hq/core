@@ -22,6 +22,7 @@ import {
 } from "../../src/evals/snapshot.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
@@ -526,6 +527,36 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     const snap = await snapshotOf(conv);
     await expectZeroDrift(conv, snap);
 
+    // 基线里媒体结果与记录不同 → media_changed（按附件 id 比 outcome 与 etag）
+    const head = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    expect(head.payload.request.mediaBudgetBytes).toBe(k.config.attachments.requestMediaBytes);
+    const headMedia = await mediaFor(conv, snap, head.seq, info);
+    const swapped = new Map(headMedia.mediaInfo);
+    swapped.set(keep, { ...(swapped.get(keep) as MediaInfo), etag: "replaced-object" });
+    expect(
+      reconstructRequest(snap, head.seq, { model: info, ...headMedia, mediaInfo: swapped }).drift,
+    ).toEqual(["media_changed"]);
+    // 预算不同（不传时用记录的预算）：图片被省略
+    const tight = reconstructRequest(snap, head.seq, {
+      model: info,
+      ...headMedia,
+      mediaBudgetBytes: 1,
+    });
+    expect(tight.drift).toEqual(["media_changed"]);
+    expect(JSON.stringify(tight.request)).toContain("omitted to fit the request size limit");
+    expect(reconstructRequest(snap, head.seq, { model: info, ...headMedia }).request).toEqual(
+      sent[0],
+    );
+    // 较早的事件：没有记录预算 / 没有记录媒体结果 → legacy_event（不限预算，请求不变）
+    for (const field of ["mediaBudgetBytes", "media"]) {
+      const old = structuredClone(snap);
+      const ev = old.events.find((e) => e.seq === head.seq) as { payload: unknown };
+      delete (ev.payload as { request: Record<string, unknown> }).request[field];
+      const out = reconstructRequest(old, head.seq, { model: info, ...headMedia });
+      expect(out.drift, field).toEqual(["legacy_event"]);
+      expect(out.request, field).toEqual(sent[0]);
+    }
+
     // 附件对象被删：带过字节的请求还原时只能给占位，记 media_missing
     await k.storage.kernel(orgId).delete(`attachments/${keep}`);
     const first = modelCalls(toEvents(snap))[0] as ModelCallEvent;
@@ -588,6 +619,34 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
   }, 60_000);
 
   const clone = () => structuredClone(snap);
+
+  it("快照里没有这个 model_call → eval.call_not_found", () => {
+    let err: unknown;
+    try {
+      reconstructRequest(snap, 999_999, { model: info });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("eval.call_not_found");
+    expect((err as ApiError).status).toBe(404);
+  });
+
+  it("没给候选参数：记录的参数按所用模型的声明清洗，丢了键 → params_changed", () => {
+    const s = clone();
+    const call = s.events.find((e) => e.seq === seq) as { payload: unknown };
+    (call.payload as { request: { params: Record<string, unknown> } }).request.params = {
+      effort: "high",
+    };
+    const same = reconstructRequest(s, seq, { model: info });
+    expect(same.request.params).toEqual({ effort: "high" });
+    expect(same.drift).toEqual([]);
+    const swapped: ModelInfo = { ...info, id: "other", parameters: [] };
+    const out = reconstructRequest(s, seq, { model: swapped });
+    expect(out.drift).toEqual(["params_changed"]);
+    expect(out.request.params).toEqual({});
+    expect(out.request.model).toBe("other");
+  });
 
   it("缺 agent 版本定义 → definition_missing（用空指令，system 也随之不同）", () => {
     const s = clone();
@@ -664,6 +723,9 @@ describe("takeSnapshot", { timeout: 60_000 }, () => {
     expect((big as ApiError).code).toBe("eval.case_too_large");
     expect((big as ApiError).status).toBe(413);
     expect(await takeSnapshot(db, orgId, conv, runId, size)).toEqual(snap);
+    // 读事件时一超过上限就停
+    const tiny = await takeSnapshot(db, orgId, conv, runId, 10).catch((e) => e);
+    expect((tiny as ApiError).code).toBe("eval.case_too_large");
 
     // 形状：事件截至终态，带运行与 agent 信息
     expect(snap).toMatchObject({ version: 1, orgId, conversationId: conv, runId, agentId });

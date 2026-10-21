@@ -81,7 +81,14 @@ export async function takeSnapshot(
   if (!end) throw new ApiError("eval.run_not_finished", "The run has not finished yet");
   const endSeq = Number(end.seq);
 
+  const tooLarge = () =>
+    new ApiError(
+      "eval.case_too_large",
+      `The run's snapshot is larger than the ${maxBytes}-byte limit`,
+    );
   const events: SnapshotEvent[] = [];
+  /** 已读事件序列化后的字节数（快照总大小的下界）：一超过上限就停，不把超大的对话整个读进内存。 */
+  let bytes = 0;
   let after = 0;
   for (;;) {
     const rows = await db
@@ -94,13 +101,16 @@ export async function takeSnapshot(
       .limit(PAGE)
       .execute();
     for (const r of rows) {
-      events.push({
+      const e: SnapshotEvent = {
         seq: Number(r.seq),
         type: r.type as ConversationEventType,
         payload: r.payload,
         runId: r.run_id,
         createdAt: new Date(r.created_at).toISOString(),
-      });
+      };
+      bytes += Buffer.byteLength(JSON.stringify(e));
+      if (bytes > maxBytes) throw tooLarge();
+      events.push(e);
     }
     const last = rows.at(-1);
     if (rows.length < PAGE || !last) break;
@@ -152,12 +162,7 @@ export async function takeSnapshot(
     definitions,
     toolSpecs,
   };
-  if (Buffer.byteLength(JSON.stringify(snapshot)) > maxBytes) {
-    throw new ApiError(
-      "eval.case_too_large",
-      `The run's snapshot is larger than the ${maxBytes}-byte limit`,
-    );
-  }
+  if (Buffer.byteLength(JSON.stringify(snapshot)) > maxBytes) throw tooLarge();
   return snapshot;
 }
 
