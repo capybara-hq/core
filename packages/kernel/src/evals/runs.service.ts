@@ -148,7 +148,7 @@ export class EvalQueue {
         opts: {
           jobId: evalJobId(data.runId, data.caseId),
           // 处理函数外的暂时故障（PG / Redis）：指数退避重试，不让整个用例一次失败。
-          // 结果按认领号写入，重做不会重复写或重复计费
+          // 结果按认领号写入，重做不会重复写结果
           attempts: 3,
           backoff: { type: "exponential" as const, delay: 1000 },
           removeOnComplete: true,

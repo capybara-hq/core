@@ -540,7 +540,7 @@ describe("失败计费与熔断", () => {
 });
 
 describe("认领号", () => {
-  it("结果被别的执行接手后，旧执行既不写 done 也不计费", async () => {
+  it("结果被别的执行接手后，旧执行不写 done，但用量照样计入", async () => {
     const setId = await seededSet(1);
     evalModelState().delayMs = 600;
     const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
@@ -564,7 +564,8 @@ describe("认领号", () => {
       .where("id", "=", first.id)
       .executeTakeFirstOrThrow();
     expect(row).toEqual({ status: "running", claimed_by: "another-attempt", candidate: null });
-    expect((await getRun(run.id)).tokensUsed).toBe(0);
+    // 请求确实发出且已付费：用量照样计入（model-eval 每次 100）
+    expect((await getRun(run.id)).tokensUsed).toBe(100);
     // 旧执行在失去认领处停下：同一用例的下一条结果没有被它继续做
     expect(evalModelState().requests).toHaveLength(1);
     const cancel = await admin({ method: "POST", url: `${runsUrl()}/${run.id}/cancel` });

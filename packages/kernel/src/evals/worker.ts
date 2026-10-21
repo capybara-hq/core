@@ -35,7 +35,7 @@ import {
  * - 每次请求前查 `runActive`；成功的请求在同一事务里写结果并 `consumeTokens`（越限即 `capped`），
  *   发出后失败的尝试按估算同样 `consumeTokens`；
  * - 可重试的错误重试 3 次，不可重试的结果标 `error`；连续 `evals.maxConsecutiveErrors` 条结果出错 → 运行 `failed`；
- * - 结果按认领号（每次执行一个 uuid）写入：失去认领的旧执行写不进来、也不计费；
+ * - 结果按认领号（每次执行一个 uuid）写入：失去认领的旧执行写不进来（已发出请求的用量照样计入）；
  * - 用例做完重算 `cases_done`（已全部结束的用例数，幂等），达到总数且仍在执行 → `completed`。
  * 多副本：状态全在 PG / Redis；崩溃的任务由 BullMQ stalled 机制交给别的 worker，`running` 的结果从头重做；
  * 处理函数外的暂时故障（PG / Redis）按任务的 attempts 指数退避重试。
@@ -211,7 +211,7 @@ export class EvalWorker {
         .where("id", "=", runId)
         .where("status", "=", "queued")
         .execute();
-      // 每次执行一个新的认领号：失去认领（stalled 后被别的 worker 接手）的旧执行写不进结果、也不计费
+      // 每次执行一个新的认领号：失去认领（stalled 后被别的 worker 接手）的旧执行写不进结果（用量照样计入）
       await this.runCase(data, randomUUID(), ac.signal);
     } catch (err) {
       if (ac.signal.aborted) {
@@ -359,8 +359,10 @@ export class EvalWorker {
         continue;
       }
       const result = out;
+      const tokens = usageTokens(result.candidate.usage);
       const outcome = await db.transaction().execute(async (trx) => {
-        // 只在仍由本次执行认领时写入并计费：stalled 后被接手的旧执行既不覆盖结果、也不重复计费
+        // 只在仍由本次执行认领时写结果：stalled 后被接手的旧执行不覆盖结果。用量照样计入（请求确实发出且已付费，
+        // 与失败尝试一样不以认领为条件），走同一个原子 consumeTokens
         const w = await trx
           .updateTable("eval_results")
           .set({
@@ -375,9 +377,12 @@ export class EvalWorker {
           .where("status", "=", "running")
           .where("claimed_by", "=", claim)
           .executeTakeFirst();
-        if (Number(w.numUpdatedRows) === 0) return "lost" as const;
+        if (Number(w.numUpdatedRows) === 0) {
+          await consumeTokens(trx, runId, tokens);
+          return "lost" as const;
+        }
         await recordOutcome(trx, runId, true, this.d.config().evals.maxConsecutiveErrors);
-        const { capped } = await consumeTokens(trx, runId, usageTokens(result.candidate.usage));
+        const { capped } = await consumeTokens(trx, runId, tokens);
         return capped ? ("capped" as const) : ("ok" as const);
       });
       // 失去认领：这个用例已由别的执行接手，本次停下
