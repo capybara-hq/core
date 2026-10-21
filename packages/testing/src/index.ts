@@ -95,9 +95,17 @@ export {
   startFakeSlack,
 } from "./fake-slack.js";
 export {
+  isPngBase64,
+  pdfBase64,
+  pdfSampleWord,
+  redPngBase64,
+  solidPngBase64,
+} from "./media-samples.js";
+export {
   type ConformanceTarget,
   checkDeclaredParameters,
   describeModelProviderConformance,
+  MEDIA_SAMPLES,
   thinkingReplayParams,
 } from "./model-conformance.js";
 export { assertPluginSecretsReachable, pluginDeploymentSecretValues } from "./plugin-config.js";
