@@ -22,7 +22,7 @@ import { dirname, join } from "node:path";
  *   `{code: "not_found"}`）。用户来自 `Authorization: Basic base64(<user>:)`（命令）或 `username`（上传）。
  *
  * **命令真的在本机跑**：每个沙箱一个临时目录作根，参数、工作目录、环境变量里以 `/workspace`、`/skills`、`/tmp`、
- * `/opt/capybara` 开头的路径映射到根下；`setsid` / `runuser` 由垫片代替（只 exec 后面的命令，不切换用户——
+ * `/opt/capybara` 开头的路径映射到根下；`setsid` / `runuser` / `timeout`（本机没有 GNU timeout 时）由垫片代替（只 exec 后面的命令，不切换用户——
  * 本机只有一个用户，权限隔离测不了，测试改为核对请求里的用户）。进程以新会话启动（与 setsid 等价），
  * 客户端断开**不会**结束进程（与 envd 一致），只有 SendSignal、杀进程脚本或删沙箱才会。
  *
@@ -133,6 +133,28 @@ done
 exec "$@"
 `;
 
+/**
+ * `timeout` 垫片（命令包装用 `timeout -s KILL <秒> 命令…`）：PATH 里（跳过垫片目录）有 `gtimeout` / `timeout`
+ * （GNU coreutils）就用它；没有（如未装 coreutils 的 macOS）时用 perl 的小实现：自成进程组、到点按进程组
+ * SIGKILL（与 GNU timeout 一样连自己一起），否则返回命令的退出状态。只支持 `[-s 信号] 秒 命令…`，信号一律按 KILL。
+ */
+const TIMEOUT_SHIM = `#!/bin/sh
+self=$(cd "$(dirname "$0")" && pwd)
+IFS=:
+for d in $PATH; do
+  [ "$d" = "$self" ] && continue
+  for n in gtimeout timeout; do
+    if [ -x "$d/$n" ]; then unset IFS; exec "$d/$n" "$@"; fi
+  done
+done
+unset IFS
+[ "$1" = "-s" ] && shift 2
+exec perl -e 'my $s = shift; setpgrp(0, 0); my $p = fork(); die "fork failed" unless defined $p;
+if ($p == 0) { exec { $ARGV[0] } @ARGV; exit 127 }
+$SIG{ALRM} = sub { kill "KILL", -$$ }; alarm $s; waitpid($p, 0); my $st = $?; alarm 0;
+exit(($st & 127) ? 128 + ($st & 127) : $st >> 8);' "$@"
+`;
+
 interface Proc {
   pid: number;
   args: string[];
@@ -174,6 +196,8 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
   await mkdir(shims, { recursive: true });
   await writeFile(join(shims, "runuser"), RUNUSER_SHIM);
   await writeFile(join(shims, "setsid"), SETSID_SHIM);
+  await writeFile(join(shims, "timeout"), TIMEOUT_SHIM);
+  await chmod(join(shims, "timeout"), 0o755);
   await chmod(join(shims, "runuser"), 0o755);
   await chmod(join(shims, "setsid"), 0o755);
 
