@@ -670,3 +670,84 @@ describe("uploadToStorage", () => {
     expect(FakeXhr.instances).toHaveLength(0);
   });
 });
+
+describe("输入框：只发文件、存储不可用与请求预算（修正波 S1）", () => {
+  it("只有就绪的文件、没有文字：可以发送，text 为空串", async () => {
+    const calls = stubApi({
+      [`POST ${BASE}/messages`]: () =>
+        json(202, {
+          event: userMsg(2, [
+            {
+              type: "image",
+              mediaType: "image/png",
+              source: { kind: "ref", attachmentId: ID1 },
+              name: "chart.png",
+            },
+          ]),
+        }),
+    });
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    const send = screen.getByRole("button", { name: en.chat.send });
+    // 什么都没有：不能发送
+    expect(send).toHaveProperty("disabled", true);
+    await user.upload(fileInput(container), png());
+    await vi.waitFor(() => expect(FakeXhr.instances).toHaveLength(1));
+    act(() => (FakeXhr.instances[0] as FakeXhr).respond(204));
+    await vi.waitFor(() => expect(send).toHaveProperty("disabled", false));
+    await user.click(send);
+    await vi.waitFor(() => expect(posted(calls, `${BASE}/messages`)).toHaveLength(1));
+    const body = JSON.parse(String(posted(calls, `${BASE}/messages`)[0]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({ text: "", files: [ID1] });
+  });
+
+  it("对象存储不可用（limits.available=false）：添加文件按钮禁用并提示，拖入 / 粘贴不上传", async () => {
+    const calls = stubApi({
+      [`GET ${ATT}/limits`]: () =>
+        json(200, {
+          types: ["image/png"],
+          maxBytes: 1000,
+          imageMaxBytes: 1000,
+          maxPerMessage: 10,
+          requestMediaBytes: 1000,
+          available: false,
+        }),
+    });
+    const { container } = await renderChat("zh");
+    const button = await screen.findByRole("button", { name: zh.chat.filesUnavailable });
+    expect(button).toHaveProperty("disabled", true);
+    expect(fileInput(container).disabled).toBe(true);
+    const zone = dropZone(container);
+    fireEvent.drop(zone, { dataTransfer: transfer([png()]) });
+    const input = screen.getByLabelText(zh.chat.inputLabel);
+    fireEvent(input, createEvent.paste(input, { clipboardData: transfer([png("p.png")]) }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posted(calls, ATT)).toHaveLength(0);
+    expect(screen.queryByRole("group", { name: zh.chat.files })).toBeNull();
+  });
+
+  it("选中的文件合计超过 requestMediaBytes：加文件时提醒（较早的文件可能被省略）", async () => {
+    stubApi({
+      [`GET ${ATT}/limits`]: () =>
+        json(200, {
+          types: ["image/png"],
+          maxBytes: 1000,
+          imageMaxBytes: 1000,
+          maxPerMessage: 10,
+          requestMediaBytes: 10,
+          available: true,
+        }),
+    });
+    const { container } = await renderChat("en");
+    const user = userEvent.setup();
+    const input = fileInput(container);
+    await vi.waitFor(() => expect(input.accept).toBe("image/png"));
+    await user.upload(input, png("a.png", 6));
+    expect(screen.queryByText(en.chat.filesOverBudget.replace("{max}", "10 B"))).toBeNull();
+    await user.upload(input, png("b.png", 6));
+    expect(await screen.findByText(en.chat.filesOverBudget.replace("{max}", "10 B"))).toBeTruthy();
+  });
+});

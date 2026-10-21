@@ -287,6 +287,8 @@
     "addFiles": "Add files",
     "dropFiles": "Drop to add files",
     "filesLimit": "At most {max} files per message.",
+    "filesUnavailable": "File uploads are unavailable: no object storage is configured.",
+    "filesOverBudget": "The selected files add up to more than {max} for one request. Older files will be left out when sending.",
     "fileTooLarge": "The file is too large: images up to {image}, other files up to {other}.",
     "fileTypeNotAllowed": "This file type is not supported. Supported: {types}."
   },

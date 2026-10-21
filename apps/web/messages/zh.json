@@ -287,6 +287,8 @@
     "addFiles": "添加文件",
     "dropFiles": "松开以添加文件",
     "filesLimit": "每条消息最多 {max} 个文件。",
+    "filesUnavailable": "文件上传不可用：部署没有配置对象存储。",
+    "filesOverBudget": "选中的文件合计超过单次请求的 {max}，发送后较早的文件会被省略。",
     "fileTooLarge": "文件太大：图片最多 {image}，其他文件最多 {other}。",
     "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。"
   },

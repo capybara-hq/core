@@ -126,8 +126,10 @@ export function Composer({
 
   async function submit() {
     const value = text.trim();
-    if (value === "" || pending || drafts.blocking) return;
+    if (pending || drafts.blocking) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
+    // 只有文件也能发（内核允许 text 为空）；带 `@` 资源时必须有文字（资源正文按 content[i + 1] 对应）
+    if (value === "" && (sent.length === 0 || attachments.length > 0)) return;
     const fileIds = sent.map((f) => f.id);
     const key = draftKey(value, attachments, fileIds);
     if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
@@ -296,7 +298,7 @@ export function Composer({
 
   return (
     <form onSubmit={onSubmit}>
-      <FileDrop label={t("dropFiles")} onFiles={drafts.add}>
+      <FileDrop label={t("dropFiles")} onFiles={drafts.add} disabled={!drafts.limits.available}>
         <Stack gap={8}>
           {files.length > 0 && (
             // biome-ignore lint/a11y/useSemanticElements: 文件条目分组；apps/web 不能写样式，用 role=group
@@ -341,9 +343,10 @@ export function Composer({
           )}
           <Stack direction="row" gap={8} align="end">
             <FileButton
-              label={t("addFiles")}
+              label={drafts.limits.available ? t("addFiles") : t("filesUnavailable")}
               onFiles={drafts.add}
               accept={drafts.limits.types.join(",")}
+              disabled={!drafts.limits.available}
               multiple
             />
             <Textarea
@@ -363,7 +366,11 @@ export function Composer({
             <Button
               type="submit"
               variant="primary"
-              disabled={pending || drafts.blocking || text.trim() === ""}
+              disabled={
+                pending ||
+                drafts.blocking ||
+                (text.trim() === "" && (files.length === 0 || attachments.length > 0))
+              }
             >
               {t("send")}
             </Button>

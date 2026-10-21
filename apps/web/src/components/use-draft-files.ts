@@ -74,7 +74,8 @@ export function useDraftFiles(orgId: string) {
     let live = true;
     getAttachmentLimits(orgId).then(
       (l) => {
-        if (live) setLimits(l);
+        // 较早的内核没有 requestMediaBytes / available：缺的项用默认值补上
+        if (live) setLimits({ ...DEFAULT_LIMITS, ...l });
       },
       () => {
         // 取不到时沿用默认值；以内核的错误码为准
@@ -124,8 +125,15 @@ export function useDraftFiles(orgId: string) {
     [orgId, patch],
   );
 
-  /** 加文件（选择 / 拖入 / 粘贴）：预检，通过的立即上传；超出条数上限的不收。 */
+  /**
+   * 加文件（选择 / 拖入 / 粘贴）：预检，通过的立即上传；超出条数上限的不收。存储不可用时一个都不收。
+   * 收下后合计大小首次超过单次请求的预算时提醒（发送后较早的文件会被省略）。
+   */
   const add = (picked: File[]) => {
+    if (!limits.available) {
+      toast.error(t("filesUnavailable"));
+      return;
+    }
     const room = Math.max(0, limits.maxPerMessage - filesRef.current.length);
     if (picked.length > room) {
       toast.error(t("filesLimit", { max: limits.maxPerMessage }));
@@ -145,7 +153,14 @@ export function useDraftFiles(orgId: string) {
       }
     }
     if (added.length === 0) return;
+    const total = (list: DraftFile[]) =>
+      list.reduce((n, f) => n + (f.status === "error" ? 0 : f.size), 0);
+    const before = total(filesRef.current);
     update((list) => [...list, ...added]);
+    const after = total(filesRef.current);
+    if (before <= limits.requestMediaBytes && after > limits.requestMediaBytes) {
+      toast.error(t("filesOverBudget", { max: formatBytes(limits.requestMediaBytes) }));
+    }
     for (const [key, file] of toStart) start(key, file);
   };
 

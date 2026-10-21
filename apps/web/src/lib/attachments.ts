@@ -13,6 +13,10 @@ export interface AttachmentLimits {
   /** 图片的单个上限（字节）。 */
   imageMaxBytes: number;
   maxPerMessage: number;
+  /** 单次模型请求里媒体原始字节的预算：选中的文件合计超过它时，较早的文件会被省略。 */
+  requestMediaBytes: number;
+  /** 部署是否配置了对象存储；为 false 时不能上传。 */
+  available: boolean;
 }
 
 export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
@@ -26,6 +30,8 @@ export const DEFAULT_LIMITS: AttachmentLimits = {
   maxBytes: 20_971_520,
   imageMaxBytes: 5_242_880,
   maxPerMessage: 10,
+  requestMediaBytes: 20_971_520,
+  available: true,
 };
 
 /** 读取上限（组织成员可读，不需要对象存储）。 */
