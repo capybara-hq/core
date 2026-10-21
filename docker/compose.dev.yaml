@@ -17,5 +17,82 @@ services:
     ports:
       - "6379:6379"
 
+  # 对象存储（object-store-s3 插件）：官方 SeaweedFS 单容器（master / volume / filer / S3 网关）。
+  # S3 API 在 8333（凭据见下面的 s3.json），filer 的文件浏览页在 8888。
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-dir=/data"]
+    configs:
+      - source: seaweedfs-s3
+        target: /etc/seaweedfs/s3.json
+    ports:
+      - "8333:8333"
+      - "8888:8888"
+    volumes:
+      - seaweedfsdata:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # 一次性：建桶 capybara（已存在时跳过）。
+  createbuckets:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 | grep -qw capybara
+        || echo "s3.bucket.create -name capybara" | weed shell -master=seaweedfs:9333
+    restart: "no"
+
+  # ---- 对话沙箱（sandbox-docker 插件），可选：docker compose -f docker/compose.dev.yaml --profile sandbox up -d
+  # Docker socket 代理：只有它挂 docker.sock，只放行插件用到的接口（见 sandbox-proxy/haproxy.cfg）。
+  # 仅供本机开发：为了让宿主机上的内核连上才发布在 127.0.0.1:2375（插件 endpoint 填 tcp://127.0.0.1:2375）。
+  # 注意 Docker Desktop 上容器经 host.docker.internal 能访问宿主机回环：不要打开插件的 allowOpenEgress；
+  # 生产环境绝不要把它发布到宿主机地址上，只放在内核的内部网络里（endpoint tcp://sandbox-proxy:2375）。
+  sandbox-proxy:
+    profiles: ["sandbox"]
+    image: haproxy:3.2-alpine@sha256:254e6370f01cd654e0744edf607c67f33777c1b6a9dc0d4b28bcba7171460122
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./sandbox-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "127.0.0.1:2375:2375"
+
+  # 一次性：构建沙箱镜像（标签与内核配置 sandbox.image 的默认值一致）与出站代理镜像，构建完即退出。
+  sandbox-image:
+    profiles: ["sandbox"]
+    build: ../plugins/sandbox-docker/image
+    image: capybara-sandbox:latest
+    command: ["true"]
+    restart: "no"
+
+  sandbox-egress-image:
+    profiles: ["sandbox"]
+    build: ../plugins/sandbox-docker/egress-proxy
+    image: capybara-sandbox-egress:latest
+    command: ["node", "-e", "0"]
+    restart: "no"
+
+configs:
+  seaweedfs-s3:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "capybara",
+            "credentials": [{ "accessKey": "capybara", "secretKey": "capybara-secret" }],
+            "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+          }
+        ]
+      }
+
 volumes:
   pgdata:
+  seaweedfsdata:

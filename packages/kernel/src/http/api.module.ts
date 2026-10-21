@@ -11,10 +11,14 @@ import { ModelsController } from "../agents/models.controller.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
 import type { KernelConfig } from "../config/schema.js";
+import { ConversationArtifacts } from "../conversations/artifacts.js";
+import { AttachmentsController } from "../conversations/attachments.controller.js";
+import type { AttachmentsService } from "../conversations/attachments.service.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
 import { ConversationOutputs } from "../conversations/outputs-read.js";
+import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -31,6 +35,7 @@ import {
   MeIdentitiesController,
   SsoController,
 } from "../identity/sso.controller.js";
+import { InboxService } from "../inbox/inbox.service.js";
 import type { KernelIdentity } from "../kernel.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
@@ -46,6 +51,16 @@ import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
+import type { SandboxService } from "../sandbox/sandbox.service.js";
+import {
+  AgentSkillsController,
+  InboxController,
+  SkillChangesController,
+} from "../skills/changes.controller.js";
+import type { SkillChangesService } from "../skills/changes.service.js";
+import { SkillsController } from "../skills/skills.controller.js";
+import type { SkillsService } from "../skills/skills.service.js";
+import type { StorageService } from "../storage/storage.service.js";
 import { AppContentController } from "../tools/app-content.controller.js";
 import type { AppContent } from "../tools/app-content.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
@@ -74,8 +89,11 @@ import {
   APP_CONTENT,
   APPROVALS,
   APPS,
+  ATTACHMENTS,
   CHANNEL_CONNECTIONS,
+  CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
+  CONVERSATION_SANDBOX,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
@@ -84,6 +102,7 @@ import {
   EVENT_LOG,
   EXTERNAL_IDENTITIES,
   IDENTITY_BINDING,
+  INBOX,
   INVITATIONS,
   KERNEL_BUS,
   KERNEL_CONFIG,
@@ -103,6 +122,8 @@ import {
   SESSIONS,
   SETTINGS,
   SETUP,
+  SKILL_CHANGES,
+  SKILLS,
   SSO_FLOW,
   TOOL_REGISTRY,
   UI_VIEWS,
@@ -145,6 +166,18 @@ export interface ApiDeps {
   identity: KernelIdentity;
   /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
   channels: ChannelConnections;
+  /** 对话附件（与 `Kernel.attachments` 同一实例）。 */
+  attachments: AttachmentsService;
+  /** 对象存储（与 `Kernel.storage` 同一实例；产物下载用）。 */
+  storage: StorageService;
+  /** 按对话的沙箱（与 `Kernel.sandbox` 同一实例；上下文标签读状态）。 */
+  sandbox: SandboxService;
+  /** 技能库（与 `Kernel.skills` 同一实例）。 */
+  skills: SkillsService;
+  /** agent 自写技能与技能变更审批（与 `Kernel.skillChanges` 同一实例）。 */
+  skillChanges: SkillChangesService;
+  /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
+  sandboxDestroy?: { destroy(conversationIds: string[]): Promise<void> };
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -160,6 +193,11 @@ const CONTROLLERS: Type[] = [
   AgentsController,
   ModelsController,
   ConversationsController,
+  AttachmentsController,
+  SkillsController,
+  SkillChangesController,
+  AgentSkillsController,
+  InboxController,
   ConversationStreamController,
   AppContentController,
   AppsController,
@@ -223,8 +261,8 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: ORG_SETTINGS,
-      useFactory: (db: KernelDb) => new OrgSettingsService(db),
-      inject: [KERNEL_DB],
+      useFactory: (db: KernelDb, config: () => KernelConfig) => new OrgSettingsService(db, config),
+      inject: [KERNEL_DB, KERNEL_CONFIG],
     },
     {
       provide: MEMBERS,
@@ -252,15 +290,28 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     {
       provide: AGENTS,
       useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry) =>
-        new AgentsService(db, registry, tools),
+        new AgentsService(db, registry, tools, deps.skillChanges, deps.sandboxDestroy, deps.log),
       inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },
     { provide: APP_CONTENT, useValue: deps.appContent },
+    { provide: ATTACHMENTS, useValue: deps.attachments },
+    { provide: SKILLS, useValue: deps.skills },
+    { provide: SKILL_CHANGES, useValue: deps.skillChanges },
+    {
+      provide: INBOX,
+      useValue: new InboxService({ approvals: deps.approvals, skillChanges: deps.skillChanges }),
+    },
     {
       provide: CONVERSATIONS,
-      useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService, content: AppContent) =>
+      useFactory: (
+        db: KernelDb,
+        eventLog: EventLog,
+        agents: AgentsService,
+        content: AppContent,
+        attachments: AttachmentsService,
+      ) =>
         new ConversationsService(
           db,
           eventLog,
@@ -268,8 +319,10 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           deps.runs,
           deps.log,
           (orgId, accountId, refs) => content.resolveAttachments(orgId, accountId, refs),
+          (trx, orgId, conversationId, accountId, ids) =>
+            attachments.bindForMessage(trx, orgId, conversationId, accountId, ids),
         ),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT],
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT, ATTACHMENTS],
     },
     {
       provide: CONVERSATION_OUTPUTS,
@@ -277,6 +330,25 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         new ConversationOutputs({
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
           load: (scope, id) => deps.outputs.load(scope, id),
+        }),
+      inject: [CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_ARTIFACTS,
+      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+        new ConversationArtifacts({
+          db,
+          storage: deps.storage,
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+        }),
+      inject: [KERNEL_DB, CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_SANDBOX,
+      useFactory: (conversations: ConversationsService) =>
+        new ConversationSandboxStatus({
+          sandbox: deps.sandbox,
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
       inject: [CONVERSATIONS],
     },

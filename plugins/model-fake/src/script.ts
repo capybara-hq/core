@@ -24,6 +24,10 @@ export interface FakeModelConfig {
   id: string;
   contextWindow?: number | undefined;
   streamIdleTimeoutMs?: number | undefined;
+  /** 声明支持图片输入（默认 false：内核把图片换成文字占位）。 */
+  vision?: boolean | undefined;
+  /** 声明支持文档输入（默认 false）。 */
+  documents?: boolean | undefined;
 }
 
 const CACHE_TTL_SECONDS = 300;
@@ -109,10 +113,28 @@ function inputChars(req: ModelRequest): number {
     for (const b of m.content) {
       if (b.type === "text" || b.type === "thinking") n += b.text.length;
       else if (b.type === "tool_result") n += b.content.length;
-      else n += b.name.length + JSON.stringify(b.input ?? null).length;
+      else if (b.type === "tool_call") n += b.name.length + JSON.stringify(b.input ?? null).length;
+      // image / document 不计入（媒体映射见 M5 T4）
     }
   }
   return n;
+}
+
+/** 最后一条 user 消息里的媒体块：`<类型> <mediaType> <解码后字节数> bytes[ <name>]`，以 `; ` 连接。 */
+function mediaSummary(req: ModelRequest): string {
+  for (let i = req.messages.length - 1; i >= 0; i--) {
+    const m = req.messages[i];
+    if (m?.role !== "user") continue;
+    const parts: string[] = [];
+    for (const b of m.content) {
+      if (b.type !== "image" && b.type !== "document") continue;
+      const size =
+        b.source.kind === "base64" ? `${Buffer.from(b.source.data, "base64").length} bytes` : "ref";
+      parts.push(`${b.type} ${b.mediaType} ${size}${b.name !== undefined ? ` ${b.name}` : ""}`);
+    }
+    return parts.length > 0 ? parts.join("; ") : "none";
+  }
+  return "none";
 }
 
 /** 最后一条 user 消息：文本，以及它是否带 tool_result。 */
@@ -167,6 +189,8 @@ function scripted(req: ModelRequest): Plan {
     return std(`Summary: ${text.slice(0, 200)}`);
   }
   if (text.startsWith("echo:")) return std(text.slice(5));
+  // media:：回显收到的媒体块（类型、mediaType、字节数），供 e2e 核对模型确实收到了字节
+  if (text.startsWith("media:")) return std(`Media: ${mediaSummary(req)}`);
   const slow = /^slow:(\d+):([\s\S]*)$/.exec(text);
   if (slow) {
     return { kind: "text", text: slow[2] as string, chunk: CHUNK_CHARS, delayMs: Number(slow[1]) };
@@ -236,7 +260,8 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
     maxOutputTokens: 4096,
     capabilities: {
       tools: true,
-      vision: false,
+      vision: m.vision ?? false,
+      documents: m.documents ?? false,
       reasoning: false,
       caching: true,
       midConversationSystem: true,

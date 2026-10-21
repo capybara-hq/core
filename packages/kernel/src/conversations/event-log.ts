@@ -161,6 +161,26 @@ export class EventLog {
     return r && toEvent(r);
   }
 
+  /**
+   * 会话里某类事件的最新一条（按 seq）；没有 → undefined。`skills_catalog` 有部分索引
+   * （0025，按会话直接取到最新一条）；其他类型按 (conversation_id, seq) 主键倒序扫本会话的事件并按 type 过滤，
+   * 没有该类事件时会扫完整个会话。
+   */
+  async latestOfType<T extends ConversationEventType>(
+    conversationId: string,
+    type: T,
+  ): Promise<Extract<ConversationEvent, { type: T }> | undefined> {
+    const r = await this.db
+      .selectFrom("conversation_events")
+      .select(EVENT_COLUMNS)
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", type)
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return r && (toEvent(r) as Extract<ConversationEvent, { type: T }>);
+  }
+
   private validate(e: AppendEvent): ConversationEventBody {
     const r = ConversationEventSchema.safeParse({ type: e.type, payload: e.payload });
     if (!r.success) {

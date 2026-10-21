@@ -3,6 +3,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { ToolPipeline } from "../tools/pipeline.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { AgentLoop, LoopContext, LoopOutcome, WaitingFor } from "./loop.js";
+import { MediaCache } from "./media-cache.js";
 import {
   type ModelStepDeps,
   type ModelStepInput,
@@ -133,6 +134,8 @@ export class LangGraphLoop implements AgentLoop {
 
   private build(ctx: LoopContext) {
     const timedOut = () => Date.now() >= ctx.limits.deadline;
+    // 本次运行的附件字节缓存：各步共用，运行结束即丢弃（只是优化，见 MediaCache）
+    const mediaCache = new MediaCache(this.stepDeps.config().attachments.requestMediaBytes);
     const input = (step: number, absorbedUpToSeq: number): ModelStepInput => ({
       orgId: ctx.orgId,
       conversationId: ctx.conversationId,
@@ -143,6 +146,7 @@ export class LangGraphLoop implements AgentLoop {
       signal: ctx.signal,
       sink: ctx.sink,
       absorbedUpToSeq,
+      mediaCache,
     });
     const deps = this.stepDeps;
     const hooks = this.hooks;
@@ -182,6 +186,7 @@ export class LangGraphLoop implements AgentLoop {
         agent: ctx.agent,
         accountId: ctx.triggerAccountId,
         signal: ctx.signal,
+        deadline: ctx.limits.deadline,
       });
       if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
       return {};

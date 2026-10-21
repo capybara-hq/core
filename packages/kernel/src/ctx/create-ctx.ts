@@ -3,9 +3,12 @@ import {
   type CapabilityRef,
   CapabilityUnavailableError,
   type Logger,
+  OBJECT_STORE_CAPABILITY,
+  type ObjectStore,
   type PluginContext,
   type PluginManifest,
   PluginPermissionError,
+  type PluginStorage,
   parseCapability,
   type ToolHandler,
   type ToolSpec,
@@ -23,6 +26,7 @@ import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { StorageService } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import {
   canUsePlace,
@@ -261,7 +265,7 @@ export type KernelPluginContext = PluginContext & {
 /**
  * 为单个插件按权限清单构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。
  * - 自动授予：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`；
- * - `secrets` 仅当 `permissions.secrets`；`http.route` 只允许 `permissions.http` 声明的 method + path；
+ * - `secrets` 仅当 `permissions.secrets`，`storage` 仅当 `permissions.storage`；`http.route` 只允许 `permissions.http` 声明的 method + path；
  *   `tools.register` 只允许 `permissions.tools` 声明的名字；`ui.view` / `ui.action` 只允许 `permissions.ui.views`
  *   声明的 id（只在 setup 期间）；`ui.invalidate` 经内核 bus（命名空间 `kernel`）发刷新，跨副本；
  *   `ui.verifyEmbedToken` 校验内核签发的嵌入令牌，`claims.plugin` 必须是本插件、插件仍在该组织启用、
@@ -299,6 +303,16 @@ export function createPluginContext(
   // 只暴露插件契约中的 get / set（KernelSecrets 的 delete 仅供内核使用）
   const secretsApi = perms.secrets
     ? (({ get, set }) => ({ get, set }))(createSecrets(deps.db, deps.keyring, name))
+    : undefined;
+  // ctx.storage：经已加载的 object-store@1 提供方（按调用时取；依赖排序保证提供方先于本插件 setup），
+  // 键加前缀 plugins/<name>/<orgId>/。没有提供方时各方法 reject storage.unavailable
+  // （宿主不会加载这样的插件，见 approvals.ts；单独构造 ctx 的测试会走到这里）
+  const storageApi: PluginStorage | undefined = perms.storage
+    ? new StorageService({
+        provider: () =>
+          capabilityAccess.providers(OBJECT_STORE_CAPABILITY)[0]?.impl as ObjectStore | undefined,
+        plugins: async () => [name],
+      }).forPlugin(name)
     : undefined;
   const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
   const declaredTools = new Set(perms.tools ?? []);
@@ -383,7 +397,7 @@ export function createPluginContext(
     },
   } as PluginContext["capabilities"];
 
-  const ctx: Omit<KernelPluginContext, "secrets"> = {
+  const ctx: Omit<KernelPluginContext, "secrets" | "storage"> = {
     kv: createKv(deps.redis, name),
     lock: createLock(deps.redis, name),
     capabilities,
@@ -523,12 +537,19 @@ export function createPluginContext(
       return closing;
     },
   };
-  // 声明了 secrets 时是普通属性；未声明时是不可枚举的抛错 getter——展开 / 打印 ctx 不会触发越权与审计
-  if (secretsApi) return Object.assign(ctx, { secrets: secretsApi });
-  Object.defineProperty(ctx, "secrets", {
-    get: () => deny("permissions.secrets"),
-    enumerable: false,
-    configurable: false,
-  });
+  // 声明了 secrets / storage 时是普通属性；未声明时是不可枚举的抛错 getter——展开 / 打印 ctx 不会触发越权与审计
+  const gated = (key: "secrets" | "storage", api: unknown): void => {
+    if (api) {
+      Object.assign(ctx, { [key]: api });
+      return;
+    }
+    Object.defineProperty(ctx, key, {
+      get: () => deny(`permissions.${key}`),
+      enumerable: false,
+      configurable: false,
+    });
+  };
+  gated("secrets", secretsApi);
+  gated("storage", storageApi);
   return ctx as KernelPluginContext;
 }

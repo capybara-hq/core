@@ -1,3 +1,8 @@
+import {
+  DOCUMENT_MEDIA_TYPES,
+  IMAGE_MEDIA_TYPES,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { LOG_LEVELS } from "../log.js";
 
@@ -29,8 +34,32 @@ function isValidMasterKey(value: string): boolean {
  */
 const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
 
+/** `runtime.maxRunSeconds` 的默认值。 */
+export const DEFAULT_MAX_RUN_SECONDS = 900;
+/** `sandbox.limits.maxCommandSeconds` 的默认值。 */
+export const DEFAULT_MAX_COMMAND_SECONDS = 7200;
+
 /** access token 寿命上限（秒）；会话吊销标记的 TTL 按它计算，与实例当前配置无关。 */
 export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
+
+/** `attachments.requestMediaBytes` 的上限（24 MiB）：base64 后约 32 MiB，是常见供应商的请求上限。 */
+export const REQUEST_MEDIA_BYTES_MAX = 25_165_824;
+
+/**
+ * 沙箱出站白名单的默认值（`sandbox.limits.allowHosts`）：常用的包仓库与源码托管（git clone、归档下载、
+ * raw 文件、release 附件）。不预置 `deb.debian.org`：沙箱用户是 uid 1000、没有 sudo，装不了 apt 包，
+ * 放行它只多一个出口；需要系统包的部署把它们装进镜像。组织可以替换这份清单（`sandboxEgress`，Ruling M19）。
+ */
+export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
+  "registry.npmjs.org",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "github.com",
+  "codeload.github.com",
+  "raw.githubusercontent.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+];
 
 const masterKey = z
   .string()
@@ -228,8 +257,13 @@ export const KernelConfigSchema = z.object({
         .number()
         .int()
         .positive()
-        .default(900)
-        .meta(meta({ description: "Maximum wall-clock duration of one agent run in seconds" })),
+        .default(DEFAULT_MAX_RUN_SECONDS)
+        .meta(
+          meta({
+            description:
+              "Maximum wall-clock duration of one agent run in seconds (time spent waiting for people is not counted). Sandbox commands are limited to the time left in the run, so agents that need long commands need maxRunSeconds >= sandbox.limits.maxCommandSeconds",
+          }),
+        ),
       streamIdleMs: z
         .number()
         .int()
@@ -336,7 +370,7 @@ export const KernelConfigSchema = z.object({
     })
     .default({
       maxSteps: 50,
-      maxRunSeconds: 900,
+      maxRunSeconds: DEFAULT_MAX_RUN_SECONDS,
       streamIdleMs: 60000,
       maxOutputTokens: 16000,
       compactionThreshold: 0.8,
@@ -545,6 +579,219 @@ export const KernelConfigSchema = z.object({
       deliveryConcurrency: 100,
       deliveryIdleMs: 15000,
     }),
+  storage: z
+    .object({
+      purgeDeletedOrgsAfterDays: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Days after an organization is deleted before a maintenance job permanently deletes its objects from object storage (kernel/<orgId>/ and plugins/*/<orgId>/)",
+          }),
+        ),
+    })
+    .default({ purgeDeletedOrgsAfterDays: 30 }),
+  attachments: z
+    .object({
+      maxBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(20_971_520)
+        .meta(
+          meta({
+            description:
+              "Maximum size in bytes of one chat attachment (images are also capped at 5 MiB, the model input limit)",
+          }),
+        ),
+      allowedTypes: z
+        .array(z.enum([...IMAGE_MEDIA_TYPES, ...DOCUMENT_MEDIA_TYPES]))
+        .min(1)
+        .default([...IMAGE_MEDIA_TYPES, ...DOCUMENT_MEDIA_TYPES])
+        .meta(meta({ description: "Content types accepted for chat attachments" })),
+      maxPerMessage: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(10)
+        .meta(meta({ description: "Maximum number of attachments in one message" })),
+      unboundTtlHours: z
+        .number()
+        .int()
+        .positive()
+        .default(24)
+        .meta(
+          meta({
+            description:
+              "Hours after upload before an attachment never used in a message is deleted (row and object)",
+          }),
+        ),
+      requestMediaBytes: z
+        .number()
+        .int()
+        .positive()
+        // base64 让字节膨胀约 4/3：24 MiB 原始字节 ≈ 32 MiB，正好压在常见供应商 32 MB 的请求上限内
+        .max(REQUEST_MEDIA_BYTES_MAX, {
+          message: "attachments.requestMediaBytes must be at most 25165824 (24 MiB)",
+        })
+        .default(20_971_520)
+        .meta(
+          meta({
+            description:
+              "Budget of raw attachment bytes in one model request; the newest attachments are kept and older ones are replaced with a placeholder. At most 24 MiB: base64 inflates it by about 4/3, and common providers cap a request at 32 MB",
+          }),
+        ),
+    })
+    // 单个附件不能大于单次请求的预算：否则它永远被省略（最新的附件总能放进请求）
+    .refine((c) => c.maxBytes <= c.requestMediaBytes, {
+      message: "attachments.maxBytes must be at most attachments.requestMediaBytes",
+      path: ["maxBytes"],
+    })
+    .prefault({} as never),
+  sandbox: z
+    .object({
+      image: z
+        .string()
+        .min(1)
+        .default("capybara-sandbox:latest")
+        .meta(
+          meta({
+            description:
+              "Image for conversation sandboxes, used by the Docker sandbox plugin (built from plugins/sandbox-docker/image/Dockerfile; pre-pull it on every Docker node). The E2B plugin ignores it and uses its own template setting",
+          }),
+        ),
+      lockWaitSeconds: z
+        .number()
+        .positive()
+        .default(75)
+        .meta(
+          meta({
+            description:
+              "Seconds a sandbox call waits while another command in the same conversation holds the sandbox before failing with sandbox.busy; keep it above the 60-second sandbox lock TTL so a call after a replica crash waits for the dead replica's lock to expire",
+          }),
+        ),
+      deliverMaxBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(104_857_600)
+        .meta(
+          meta({
+            description:
+              "Largest file in bytes an agent may deliver from its sandbox to the user as an artifact (sandbox_deliver)",
+          }),
+        ),
+      limits: z
+        .object({
+          cpu: z
+            .number()
+            .positive()
+            .default(1)
+            .meta(
+              meta({
+                description:
+                  "CPU cores for each sandbox; applies to sandboxes created after the change (E2B: set in the template)",
+              }),
+            ),
+          memoryMb: z
+            .number()
+            .int()
+            .positive()
+            .default(2048)
+            .meta(
+              meta({
+                description:
+                  "Memory limit of each sandbox in MiB; applies to sandboxes created after the change (E2B: set in the template)",
+              }),
+            ),
+          diskMb: z
+            .number()
+            .int()
+            .positive()
+            .default(5120)
+            .meta(
+              meta({
+                description:
+                  "Disk limit of each sandbox in MiB; applies to sandboxes created after the change (Docker: only with a volume driver that supports size; E2B: set by the template / plan)",
+              }),
+            ),
+          maxCommandSeconds: z
+            .number()
+            .int()
+            .positive()
+            .default(DEFAULT_MAX_COMMAND_SECONDS)
+            .meta(
+              meta({
+                description:
+                  "Longest a single sandbox command may run, in seconds. A command also stops when its run is about to reach runtime.maxRunSeconds, so long commands need runtime.maxRunSeconds >= maxCommandSeconds (a startup warning is logged otherwise)",
+              }),
+            ),
+          suspendAfterIdleMinutes: z
+            .number()
+            .int()
+            .positive()
+            .default(10)
+            .meta(
+              meta({
+                description:
+                  "Minutes without use before a running sandbox is suspended (files are kept)",
+              }),
+            ),
+          destroyAfterInactiveDays: z
+            .number()
+            .int()
+            .positive()
+            .default(7)
+            .meta(
+              meta({
+                description:
+                  "Days without use before a sandbox is destroyed with its files; the next use starts an empty one",
+              }),
+            ),
+          maxRunningMinutes: z
+            .number()
+            .int()
+            .positive()
+            .default(120)
+            .meta(
+              meta({
+                description:
+                  "Minutes a sandbox may run continuously before it is suspended even while in use (skipped while a command is running)",
+              }),
+            ),
+          egress: z
+            .enum(["none", "allowlist", "open"])
+            .default("allowlist")
+            .meta(
+              meta({
+                description:
+                  "Outbound network from sandboxes: none, allowlist (only allowHosts) or open; applies to sandboxes created after the change, existing ones keep theirs until destroyed",
+              }),
+            ),
+          allowHosts: z
+            .array(z.string())
+            .default([...DEFAULT_SANDBOX_ALLOW_HOSTS])
+            .superRefine((hosts, ctx) => {
+              hosts.forEach((h, i) => {
+                for (const message of validateAllowHost(h)) {
+                  ctx.addIssue({ code: "custom", path: [i], message: `${h}: ${message}` });
+                }
+              });
+            })
+            .meta(
+              meta({
+                description:
+                  "Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to sandboxes created after the change",
+              }),
+            ),
+        })
+        .prefault({} as never),
+    })
+    .prefault({} as never),
   log: z
     .object({
       level: z

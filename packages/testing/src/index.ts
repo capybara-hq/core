@@ -1,4 +1,11 @@
-export { startTestPostgres, startTestRedis, type TestContainer } from "./containers.js";
+export {
+  startTestPostgres,
+  startTestRedis,
+  startTestS3,
+  TEST_S3_IMAGE,
+  type TestContainer,
+  type TestS3,
+} from "./containers.js";
 export {
   createDualReplicaHarness,
   type DualReplicaOptions,
@@ -24,6 +31,14 @@ export {
   fakeGroupMessage,
   startFakeChannelServer,
 } from "./fake-channel.js";
+export {
+  type FakeE2BCall,
+  type FakeE2BMatch,
+  type FakeE2BOptions,
+  type FakeE2BSandbox,
+  type FakeE2BServer,
+  startFakeE2B,
+} from "./fake-e2b.js";
 export {
   type FakeLarkAck,
   type FakeLarkApi,
@@ -88,9 +103,17 @@ export {
   startFakeSlack,
 } from "./fake-slack.js";
 export {
+  isPngBase64,
+  pdfBase64,
+  pdfSampleWord,
+  redPngBase64,
+  solidPngBase64,
+} from "./media-samples.js";
+export {
   type ConformanceTarget,
   checkDeclaredParameters,
   describeModelProviderConformance,
+  MEDIA_SAMPLES,
   thinkingReplayParams,
 } from "./model-conformance.js";
 export { assertPluginSecretsReachable, pluginDeploymentSecretValues } from "./plugin-config.js";

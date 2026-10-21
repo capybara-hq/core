@@ -7,7 +7,8 @@ export default definePlugin({
   provides: [],
   permissions: { storage: true },
   setup(ctx) {
-    void ctx.storage; // FLAG
+    // 已声明 permissions.storage：ctx.storage 不再是预留项，不报
+    void ctx.storage.head("org", "a.txt");
     void ctx.models; // FLAG
   },
 });

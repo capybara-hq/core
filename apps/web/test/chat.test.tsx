@@ -423,12 +423,12 @@ describe("对话页切换组织", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
     await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
-    // 顶栏的待处理审批数与「扩展」菜单按新组织读取是正常的；会话不能以新组织读取
+    // 顶栏的收件箱待处理数与「扩展」菜单按新组织读取是正常的；会话不能以新组织读取
     expect(
       calls.some(
         (c) =>
           c.url.includes("/orgs/o2/") &&
-          !c.url.includes("/orgs/o2/approvals") &&
+          !c.url.includes("/orgs/o2/inbox") &&
           !c.url.includes("/orgs/o2/ui/contributions"),
       ),
     ).toBe(false);

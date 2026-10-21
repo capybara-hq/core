@@ -13,11 +13,13 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
+import { attachmentDownloadUrl, attachmentTypeLabel } from "../lib/attachments";
 import type { ModelRef } from "../lib/conversations";
-import type { ChatItem } from "../lib/stream";
+import type { ChatItem, MessageFile } from "../lib/stream";
 import { ApprovalCard } from "./ApprovalCard";
 import { ConnectCard } from "./ConnectCard";
 import { QuestionCard } from "./QuestionCard";
+import { SessionFilePreview } from "./SessionFilePreview";
 import { ToolCallCard } from "./ToolCallCard";
 
 type UserItem = Extract<ChatItem, { kind: "user" }>;
@@ -50,7 +52,19 @@ const TOOL_MARK: Record<ToolItem["status"], TimelineMark> = {
   cancelled: "hollow",
 };
 
-function UserMessage({ item }: { item: UserItem }) {
+/** 消息里的一个上传文件（同源下载地址；登录过期时的重试见 SessionFilePreview）。 */
+function MessageFilePreview({ orgId, file }: { orgId: string; file: MessageFile }) {
+  return (
+    <SessionFilePreview
+      kind={file.kind === "image" ? "image" : "file"}
+      name={file.name}
+      href={attachmentDownloadUrl(orgId, file.attachmentId)}
+      meta={attachmentTypeLabel(file.mediaType)}
+    />
+  );
+}
+
+function UserMessage({ orgId, item }: { orgId: string; item: UserItem }) {
   const t = useTranslations("chat");
   return (
     <div data-role="user">
@@ -65,6 +79,16 @@ function UserMessage({ item }: { item: UserItem }) {
               <Stack direction="row" gap={8} wrap>
                 {item.attachments.map((a) => (
                   <Badge key={`${a.appId}:${a.uri}`}>{`@${a.name} · ${a.appName}`}</Badge>
+                ))}
+              </Stack>
+            </div>
+          )}
+          {item.files.length > 0 && (
+            // biome-ignore lint/a11y/useSemanticElements: 文件分组；apps/web 不能写样式，用 role=group
+            <div role="group" aria-label={t("files")}>
+              <Stack direction="row" gap={8} wrap>
+                {item.files.map((f) => (
+                  <MessageFilePreview key={f.attachmentId} orgId={orgId} file={f} />
                 ))}
               </Stack>
             </div>
@@ -184,7 +208,7 @@ export function MessageList({
       <Stack gap={12}>
         {groupItems(items).map((g) =>
           g.kind === "user" ? (
-            <UserMessage key={g.item.key} item={g.item} />
+            <UserMessage key={g.item.key} orgId={orgId} item={g.item} />
           ) : (
             <Timeline key={g.key} label={t("timeline")}>
               {g.items.flatMap(step)}

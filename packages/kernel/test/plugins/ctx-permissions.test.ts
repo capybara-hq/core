@@ -113,6 +113,37 @@ describe("ctx 按权限清单构造", () => {
     expect(await denials()).toEqual([]);
   });
 
+  it("未声明 storage：访问抛 PluginPermissionError 并写审计；getter 不可枚举", async () => {
+    const ctx = createPluginContext(deps, mf(), {});
+    expect(() => ctx.storage).toThrow(PluginPermissionError);
+    expect(() => ctx.storage.head("o", "k")).toThrow(/permissions\.storage/);
+    expect(Object.keys(ctx)).not.toContain("storage");
+    expect(() => ({ ...ctx })).not.toThrow();
+    await ctx.close();
+    const rows = await denials();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.detail).toMatchObject({ item: "permissions.storage" });
+  });
+
+  it("声明了 storage：可取到 ctx.storage；没有对象存储提供方时每个方法 reject storage.unavailable", async () => {
+    const ctx = createPluginContext(deps, mf({ permissions: { storage: true } }), {});
+    expect(Object.keys(ctx)).toContain("storage");
+    const s = ctx.storage;
+    const calls = [
+      s.put("o", "k", new Uint8Array(1), { contentType: "text/plain" }),
+      s.get("o", "k"),
+      s.head("o", "k"),
+      s.delete("o", "k"),
+      s.deletePrefix("o", ""),
+      s.list("o", ""),
+      s.presignGet("o", "k", { ttlSeconds: 60 }),
+      s.presignPut("o", "k", { contentType: "text/plain", maxSize: 1, ttlSeconds: 60 }),
+    ];
+    for (const c of calls) await expect(c).rejects.toThrow(/storage\.unavailable/);
+    await ctx.close();
+    expect(await denials()).toEqual([]);
+  });
+
   it("http.route：只允许清单中声明的 method + path", async () => {
     const ctx = createPluginContext(
       deps,

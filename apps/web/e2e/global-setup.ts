@@ -4,7 +4,10 @@
  * 与假 IM 测试插件 `fake-im` 的内核，再用 server.mjs 起 Web 层
  * （`next dev`）指向它；另起一个假 MCP 服务（有状态会话；destructive 工具 `delete_item`、会发起 elicitation 的 `signup`、
  * 提示模板 `summarize` 与资源 `docs://handbook`）供工具 / 审批 / 斜杠命令 / 资源引用用例接入；再起一个假 OpenAPI 服务
- * （宠物 CRUD，要求请求头 API key）供安装向导用例接入。
+ * （宠物 CRUD，要求请求头 API key）供安装向导用例接入；再起一个 SeaweedFS（S3 兼容）容器，经 `object-store-s3`
+ * 插件作为对象存储，供上传附件用例（浏览器跨源直传预签名表单）使用；`model-fake` 的 fake-1 声明支持图片与文档；
+ * 沙箱用内核测试夹具里的假沙箱插件 `sandbox-fake`（真的 /bin/sh，实例目录在临时目录下，只用于测试），
+ * 供产物用例（sandbox_write → sandbox_deliver → 产物标签）使用。
  * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL），
  * 假 MCP 端点写入 `CAPYBARA_E2E_MCP_URL`，假 OpenAPI 文档地址与 API key 写入 `CAPYBARA_E2E_OPENAPI_SPEC_URL` /
  * `CAPYBARA_E2E_OPENAPI_KEY`。
@@ -43,6 +46,11 @@ const fakeIm = join(repoRoot, "packages/kernel/test/fixtures/plugins/fake-im/ind
  */
 const fakeMcpModule = join(repoRoot, "packages/testing/src/fake-mcp-server.ts");
 const fakeOpenApiModule = join(repoRoot, "packages/testing/src/fake-openapi-server.ts");
+const containersModule = join(repoRoot, "packages/testing/src/containers.ts");
+/** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
+const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
+/** S3 兼容对象存储插件（附件上传）。 */
+const objectStoreS3 = join(repoRoot, "plugins/object-store-s3/src/index.ts");
 /** 假 OpenAPI 服务要求的 API key（e2e 用例在安装向导里填写）。 */
 const OPENAPI_KEY = "e2e-openapi-key-7f3a";
 
@@ -50,6 +58,16 @@ const OPENAPI_KEY = "e2e-openapi-key-7f3a";
 type StartFakeOpenApi = (opts: {
   apiKey?: string;
 }) => Promise<{ specUrl: string; stop(): Promise<void> }>;
+/** 用到的 `startTestS3` 子集。 */
+type StartTestS3 = () => Promise<{
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  region: string;
+  stop(): Promise<void>;
+}>;
+
 /** 子进程日志（gitignore；每次运行覆盖，失败后可查看）。 */
 const logDir = join(webDir, "e2e-logs");
 
@@ -171,15 +189,17 @@ export default async function globalSetup(): Promise<Cleanup> {
     web: join(logDir, "web.log"),
   };
   try {
-    const [pg, valkey] = await Promise.all([
+    const { startTestS3 } = (await import(containersModule)) as { startTestS3: StartTestS3 };
+    const [pg, valkey, s3] = await Promise.all([
       new PostgreSqlContainer("postgres:17").start(),
       new GenericContainer("valkey/valkey:8")
         .withExposedPorts(6379)
         .withWaitStrategy(Wait.forLogMessage("Ready to accept connections"))
         .start(),
+      startTestS3(),
     ]);
     cleanups.push(async () => {
-      await Promise.all([pg.stop(), valkey.stop()]);
+      await Promise.all([pg.stop(), valkey.stop(), s3.stop()]);
     });
 
     const { startFakeMcpServer } = (await import(fakeMcpModule)) as {
@@ -257,8 +277,28 @@ export default async function globalSetup(): Promise<Cleanup> {
       db: { url: pg.getConnectionUri() },
       redis: { url: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}` },
       masterKey: randomBytes(32).toString("base64"),
-      plugins: [modelFake, connectorMcp, connectorOpenApi, fakeIm, todo, exampleBoard],
+      plugins: [
+        modelFake,
+        connectorMcp,
+        connectorOpenApi,
+        fakeIm,
+        todo,
+        exampleBoard,
+        objectStoreS3,
+        sandboxFake,
+      ],
       pluginConfig: {
+        // fake-1 声明支持图片与文档：上传附件用例核对模型收到的是 image 块（不是文字占位）
+        "model-fake": { models: [{ id: "fake-1", vision: true, documents: true }] },
+        "object-store-s3": {
+          endpoint: s3.endpoint,
+          region: s3.region,
+          bucket: s3.bucket,
+          accessKeyId: s3.accessKey,
+          secretAccessKey: s3.secretKey,
+          forcePathStyle: true,
+        },
+        "sandbox-fake": { root: join(dir, "sandboxes") },
         "connector-mcp": { allowInsecureLoopback: true },
         "connector-openapi": { allowInsecureLoopback: true },
         "fake-im": {

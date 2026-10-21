@@ -16,15 +16,20 @@ import {
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
-import type { ConversationEvent } from "../conversations/events.js";
+import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
 import { recordToolSpecs } from "../tools/specs.js";
 import {
   buildModelRequest,
   latestSummary,
+  type MediaBytes,
+  type MediaInfo,
   type ModelCallMeta,
+  mediaRefs,
+  planMedia,
   type RequestTool,
 } from "./context/build.js";
 import {
@@ -37,6 +42,7 @@ import {
 import { guardToolPairs } from "./context/pairing.js";
 import { turnLimitReminder } from "./context/reminders.js";
 import { calibrate, estimateTokens } from "./context/tokens.js";
+import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
@@ -86,6 +92,42 @@ export interface ModelStepDeps {
   tools: Pick<ToolRegistry, "forAgent">;
   config: () => KernelConfig;
   log: Logger;
+  /**
+   * 会话附件（构建请求时解析日志里的媒体引用；见 AttachmentsService）。未提供时媒体引用一律按「不再可用」处理。
+   * 两个方法都只对「确定不存在」返回缺省 / null；暂时故障（存储不可用、网络错误）一律抛错（Ruling M4）。
+   */
+  media?: MediaSourceDeps;
+}
+
+/** 构建请求用到的附件来源。 */
+export interface MediaSourceDeps {
+  /** 附件行的声明信息（只含绑定在该会话、已 ready 的；没有行的不在结果里）。 */
+  info(
+    orgId: string,
+    conversationId: string,
+    ids: readonly string[],
+  ): Promise<Map<string, MediaInfo>>;
+  /** 字节；对象已不在或内容被替换为 null。`caps` 里的附件只取开头若干字节（`text/*` 封顶，见 planMedia）。 */
+  fetch(
+    orgId: string,
+    conversationId: string,
+    ids: readonly string[],
+    caps?: ReadonlyMap<string, number>,
+  ): Promise<Map<string, MediaBytes | null>>;
+}
+
+/**
+ * 取附件时存储暂时不可用（Ruling M4）：不把它当成「附件不在」发占位，而是让本次尝试按可重试错误失败
+ * （`run.storage_unavailable`），走降级梯子的重试。
+ */
+export class MediaUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `Attachment storage is temporarily unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = "MediaUnavailableError";
+  }
 }
 
 export interface ModelStepInput {
@@ -103,6 +145,8 @@ export interface ModelStepInput {
    * 由后续步骤吸收或触发下一轮；写入 `model_call.request.absorbedUpToSeq`，请求可由日志还原。
    */
   absorbedUpToSeq: number;
+  /** 本次运行的附件字节缓存（同一次运行的各步共用，见 {@link MediaCache}）；缺省时只在本步内缓存。 */
+  mediaCache?: MediaCache;
 }
 
 export interface ModelStepResult {
@@ -140,10 +184,23 @@ export const modelCallIdemKey = (runId: string, step: number, attempt: number): 
 /** 一步最多的模型调用尝试次数（主模型、同模型重试、兜底，见 `ladder`）。 */
 export const MAX_MODEL_ATTEMPTS = 3;
 
-/** 本步解析出的工具与是否启用 tool_search（见 `ToolRegistry.forAgent`）。 */
+/** 本步解析出的工具与是否启用 tool_search（见 `ToolRegistry.forAgent`），以及本步已取的附件字节。 */
 interface StepTools {
   list: RequestTool[];
   toolSearch: boolean;
+  /** 本步已取到的附件信息与字节；同一步的多次构建（压缩估算、各次尝试）共用。只缓存成功的结果。 */
+  media: StepMedia;
+}
+
+/**
+ * 本步的附件缓存：`looked` 是已查过行的 id（没有行的不在 `info` 里）；`run` 是本次运行的字节缓存
+ * （跨步复用，键含 etag）。
+ */
+interface StepMedia {
+  looked: Set<string>;
+  info: Map<string, MediaInfo>;
+  bytes: Map<string, MediaBytes | null>;
+  run: MediaCache;
 }
 
 const idem = {
@@ -153,6 +210,8 @@ const idem = {
   toolsUnavailable: (runId: string, step: number) => `tools_unavailable:${runId}:${step}`,
   toolsUnsupported: (runId: string, step: number) => `tools_unsupported:${runId}:${step}`,
   modelCall: modelCallIdemKey,
+  mediaExcluded: (runId: string, step: number, attempt: number, part: number) =>
+    `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
 
 /** 外部 signal 已触发：本步按「中止」收尾。 */
@@ -215,8 +274,26 @@ async function runStep(
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
     // 每步实时解析（应用 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
-    const resolved = await deps.tools.forAgent(input.orgId, { tools: input.agent.tools ?? [] });
-    const tools: StepTools = { list: resolved.tools, toolSearch: resolved.toolSearch === true };
+    // 日志里有过技能目录快照 → 带上 skill_load（Ruling M17；空快照也不收回，见 skillLoadOffered）
+    const resolved = await deps.tools.forAgent(input.orgId, {
+      tools: input.agent.tools ?? [],
+      skillLoad: skillLoadOffered(
+        events.findLast(
+          (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+            e.type === "skills_catalog",
+        ),
+      ),
+    });
+    const tools: StepTools = {
+      list: resolved.tools,
+      toolSearch: resolved.toolSearch === true,
+      media: {
+        looked: new Set(),
+        info: new Map(),
+        bytes: new Map(),
+        run: input.mediaCache ?? new MediaCache(deps.config().attachments.requestMediaBytes),
+      },
+    };
     events = await maybeCompact(deps, input, events, runtime, tools);
 
     const last = lastToolsReminder(events, runId);
@@ -376,6 +453,7 @@ function attemptParams(
  * 否则配对守卫会给进行中的调用补上 unknown 结果并发给模型。运行循环在工具结果落日志后才进入下一步。
  */
 function buildRequest(
+  deps: Pick<ModelStepDeps, "config">,
   events: ConversationEvent[],
   input: ModelStepInput,
   info: ModelInfo,
@@ -384,7 +462,7 @@ function buildRequest(
   tools: StepTools,
   wrapUp: boolean,
 ): { request: ModelRequest; meta: ModelCallMeta; estimate: number } {
-  const { request, meta } = buildModelRequest({
+  const { request, meta, mediaTokens } = buildModelRequest({
     events,
     agent: input.agent,
     agentVersion: input.agentVersion,
@@ -395,6 +473,9 @@ function buildRequest(
     tools: info.capabilities.tools ? tools.list : [],
     toolSearch: tools.toolSearch,
     ...(wrapUp && { toolChoice: "none" as const }),
+    mediaInfo: tools.media.info,
+    media: tools.media.bytes,
+    mediaBudgetBytes: deps.config().attachments.requestMediaBytes,
   });
   request.messages = guardToolPairs(request.messages);
   const knob = params.maxOutputTokens;
@@ -405,8 +486,68 @@ function buildRequest(
   return {
     request,
     meta,
-    estimate: estimateTokens(request.messages, request.system, request.tools),
+    estimate: estimateTokens(request.messages, request.system, request.tools, mediaTokens),
   };
+}
+
+/**
+ * 取本次构建要用到的附件（只取该模型会用到的：不支持的图片 / PDF 只发占位，行与字节都不取）：先查行信息，
+ * 按 {@link planMedia}（只看声明大小、页数与日志）决定保留哪些，再只取保留的字节（`text/*` 只取开头），
+ * 并入 `tools.media`。先查本次运行的缓存（键含 etag），未命中才取。
+ * 取不到（确定不存在）的缓存为 null；暂时故障抛 {@link MediaUnavailableError}，不缓存，下一次尝试重新取。
+ */
+async function loadMedia(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  events: ConversationEvent[],
+  info: ModelInfo,
+  tools: StepTools,
+): Promise<void> {
+  const cache = tools.media;
+  const look = mediaRefs(events, info).filter((id) => !cache.looked.has(id));
+  if (look.length > 0) {
+    if (deps.media) {
+      let rows: Map<string, MediaInfo>;
+      try {
+        rows = await deps.media.info(input.orgId, input.conversationId, look);
+      } catch (err) {
+        throw new MediaUnavailableError(err);
+      }
+      for (const [id, row] of rows) cache.info.set(id, row);
+    }
+    for (const id of look) cache.looked.add(id);
+  }
+  const budget = deps.config().attachments.requestMediaBytes;
+  const plan = planMedia(events, info, cache.info, budget);
+  const runKey = (id: string) =>
+    MediaCache.key(id, cache.info.get(id) as MediaInfo, plan.caps.get(id));
+  const need: string[] = [];
+  for (const id of plan.fetch) {
+    if (cache.bytes.has(id)) continue;
+    const hit = cache.run.get(runKey(id));
+    if (hit) cache.bytes.set(id, hit);
+    else need.push(id);
+  }
+  if (need.length === 0 || !deps.media) return;
+  const caps = new Map(
+    need.flatMap((id) => (plan.caps.has(id) ? [[id, plan.caps.get(id) as number]] : [])),
+  );
+  let got: Map<string, MediaBytes | null>;
+  try {
+    got = await deps.media.fetch(
+      input.orgId,
+      input.conversationId,
+      need,
+      caps.size > 0 ? caps : undefined,
+    );
+  } catch (err) {
+    throw new MediaUnavailableError(err);
+  }
+  for (const id of need) {
+    const b = got.get(id) ?? null;
+    cache.bytes.set(id, b);
+    if (b) cache.run.set(runKey(id), b);
+  }
 }
 
 /**
@@ -459,7 +600,19 @@ async function maybeCompact(
     deps.log.warn("compaction skipped: model unavailable", { model: input.agent.model, err });
     return events;
   }
-  const { request } = buildRequest(
+  try {
+    await loadMedia(deps, input, events, info, tools);
+  } catch (err) {
+    if (!(err instanceof MediaUnavailableError)) throw err;
+    // 存储暂时不可用：本步跳过压缩，交给降级梯子（会按可重试错误处理）
+    deps.log.warn("compaction skipped: attachment storage unavailable", {
+      conversationId: input.conversationId,
+      err,
+    });
+    return events;
+  }
+  const { estimate: raw } = buildRequest(
+    deps,
     events,
     input,
     info,
@@ -468,10 +621,7 @@ async function maybeCompact(
     tools,
     false,
   );
-  const estimate = calibrate(
-    estimateTokens(request.messages, request.system, request.tools),
-    lastActual(events),
-  );
+  const estimate = calibrate(raw, lastActual(events));
   if (!shouldCompact(estimate, info, runtime.compactionThreshold)) return events;
   const plan = compactionPlan(events, runtime.keepRecentTurns);
   if (!plan) return events;
@@ -545,6 +695,8 @@ async function ladder(
 
   let last: Failure | undefined;
   let attempt = 0;
+  /** 本次尝试发出的请求里带了字节的附件（供应商拒收时写 media_excluded）。 */
+  let sentMedia: string[] = [];
   for (const rung of rungs) {
     if (last && !rung.fallback && (last.retryAfterMs ?? 0) > MAX_RETRY_AFTER_MS) {
       deps.log.warn("model retry skipped: suggested wait exceeds cap", {
@@ -561,6 +713,7 @@ async function ladder(
       streamed.text = "";
       if (!rung.fallback) await abortableSleep(last.retryAfterMs ?? DEFAULT_RETRY_DELAY_MS, signal);
     }
+    sentMedia = [];
     try {
       const { provider, info } = await deps.registry.resolve(rung.ref);
       if (tools.list.length > 0 && !info.capabilities.tools) {
@@ -580,7 +733,9 @@ async function ladder(
         });
       }
       const params = attemptParams(agent, info, rung.fallback);
+      await loadMedia(deps, input, evs, info, tools);
       const { request, meta, estimate } = buildRequest(
+        deps,
         evs,
         input,
         info,
@@ -588,6 +743,9 @@ async function ladder(
         runtime,
         tools,
         wrapUp,
+      );
+      sentMedia = (meta.media ?? []).flatMap((m) =>
+        m.outcome === "bytes" ? [m.attachmentId] : [],
       );
       // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
       // （请求可由日志 + tool_specs 还原）
@@ -651,12 +809,57 @@ async function ladder(
         retryable: f.retryable,
         error: f.message,
       });
-      if (!f.retryable) throw new RunError(f.code, f.message);
+      if (!f.retryable) {
+        if (REJECTS_MEDIA.has(f.code) && sentMedia.length > 0) {
+          // 记录失败不能掩盖原来的失败码：只记 warn，本次运行照常以原错误失败
+          try {
+            await excludeMedia(deps, input, attempt, sentMedia);
+          } catch (e) {
+            deps.log.warn("cannot record media_excluded", { conversationId, runId, step, err: e });
+          }
+        }
+        throw new RunError(f.code, f.message);
+      }
       last = f;
     }
   }
   const f = last as Failure;
   throw new RunError(f.code, f.message);
+}
+
+/** 不可重试、且可能由请求里的媒体引起的失败：带了媒体字节时写 `media_excluded`（Ruling M8）。 */
+const REJECTS_MEDIA = new Set(["model.invalid_request", "model.context_overflow"]);
+
+/**
+ * 供应商拒收了带媒体的请求：把这些附件记进 `media_excluded`（每条最多 {@link MEDIA_EXCLUDED_MAX_IDS} 个），
+ * 之后的请求一律换成占位，会话不会因同一个附件永久卡住（可由日志推出）。本次运行照常失败。
+ */
+async function excludeMedia(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  attempt: number,
+  ids: readonly string[],
+): Promise<void> {
+  const { conversationId, runId, step } = input;
+  const events: AppendEvent[] = [];
+  for (let i = 0; i < ids.length; i += MEDIA_EXCLUDED_MAX_IDS) {
+    events.push({
+      type: "media_excluded",
+      runId,
+      idemKey: idem.mediaExcluded(runId, step, attempt, i / MEDIA_EXCLUDED_MAX_IDS),
+      payload: {
+        attachmentIds: ids.slice(i, i + MEDIA_EXCLUDED_MAX_IDS),
+        reason: "provider_rejected",
+      },
+    });
+  }
+  deps.log.warn("model provider rejected a request with media; excluding the attachments", {
+    conversationId,
+    runId,
+    step,
+    attachmentIds: ids,
+  });
+  await deps.eventLog.append(conversationId, events);
 }
 
 function classify(err: unknown): Failure {
@@ -666,6 +869,14 @@ function classify(err: unknown): Failure {
       code: `model.${err.kind}`,
       message: err.message,
       retryAfterMs: err.retryAfterMs,
+    };
+  }
+  if (err instanceof MediaUnavailableError) {
+    return {
+      retryable: true,
+      code: "run.storage_unavailable",
+      message: err.message,
+      retryAfterMs: undefined,
     };
   }
   if (err instanceof ProviderListError) {

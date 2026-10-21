@@ -1,4 +1,4 @@
-import type { PluginManifest } from "@capybara-hq/plugin-sdk";
+import { OBJECT_STORE_CAPABILITY, type PluginManifest } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import semver from "semver";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -23,7 +23,8 @@ export interface PermissionSnapshot {
 /**
  * 待批准、本次不加载的插件（`PluginHost.pending()` / `capybara plugins review` 的一项）。
  * reason：new = 没有快照（首次出现）；added = 比快照多出权限；
- * dependency = 自身无需批准，但 `requires` 的某个能力只由待批准（或因此不加载）的插件提供。
+ * dependency = 自身无需批准，但 `requires` 的某个能力只由待批准（或因此不加载）的插件提供；
+ * 声明了 `permissions.storage` 而 `object-store@1` 没有（会加载的）提供方时同样如此（providers 可为空）。
  */
 export interface PendingPlugin {
   plugin: string;
@@ -31,7 +32,7 @@ export interface PendingPlugin {
   added: string[];
   removed: string[];
   reason: "new" | "added" | "dependency";
-  /** reason 为 dependency 时：阻塞它的能力与提供方（只有不加载的提供方）。 */
+  /** reason 为 dependency 时：阻塞它的能力与提供方（只有不加载的提供方；没有任何提供方时为空）。 */
   blockedBy?: { capability: string; providers: string[] }[];
 }
 
@@ -55,7 +56,8 @@ export type ApprovalDecision =
  *   （`autoApprove` 时改为加载，由调用方写快照）；只多出 `ui.view:*` 时照常加载，`changed` 为真，
  *   调用方经 `refresh` 把它们补进快照；
  * - 权限变少或不变 → 加载，`changed` 表示快照需要更新（权限或版本变了）；版本比快照旧时照常加载但不更新快照；
- * - 某个 `requires` 能力的提供方全都不加载 → 同样不加载（reason dependency）；`optional` 不受影响。
+ * - 某个 `requires` 能力的提供方全都不加载 → 同样不加载（reason dependency）；`optional` 不受影响；
+ * - 声明了 `permissions.storage` 而 `object-store@1` 没有提供方、或提供方全都不加载 → 同样不加载（reason dependency）。
  */
 export function planApprovals(
   ordered: PluginManifest[],
@@ -90,6 +92,14 @@ export function planApprovals(
       const providers = ordered.filter((p) => p.provides.includes(cap)).map((p) => p.name);
       if (providers.length > 0 && providers.every((p) => skipped.has(p))) {
         blockedBy.push({ capability: cap, providers });
+      }
+    }
+    if (m.permissions?.storage) {
+      const providers = ordered
+        .filter((p) => p !== m && p.provides.includes(OBJECT_STORE_CAPABILITY))
+        .map((p) => p.name);
+      if (providers.every((p) => skipped.has(p))) {
+        blockedBy.push({ capability: OBJECT_STORE_CAPABILITY, providers });
       }
     }
     if (blockedBy.length > 0) {

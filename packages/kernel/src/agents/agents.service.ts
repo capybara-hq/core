@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
+import { type Logger, type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -8,12 +8,17 @@ import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
+import type { SkillChangesService } from "../skills/changes.service.js";
+import { assertOrgSkills } from "../skills/skills.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { AgentDefinition } from "./definition.js";
 
 type Trx = Transaction<KernelDatabase>;
 
 export const AGENT_VISIBILITIES = ["private", "org", "members"] as const;
+
+/** 删除 agent 时每个销毁任务带的对话数。 */
+const SANDBOX_DESTROY_BATCH = 500;
 export type AgentVisibility = (typeof AGENT_VISIBILITIES)[number];
 
 /** 对外的 agent 视图：当前版本的定义 + 元数据；`memberIds` 只在 visibility='members' 时为数组。 */
@@ -120,6 +125,17 @@ export class AgentsService {
     private readonly db: KernelDb,
     private readonly registry: ProviderRegistry,
     private readonly tools: Pick<ToolRegistry, "checkRefs">,
+    /** 删除 agent 时取消它待处理的技能改动（T15）。 */
+    private readonly skillChanges: Pick<
+      SkillChangesService,
+      "cancelPendingForAgent" | "finishCancel"
+    >,
+    /**
+     * 删除 agent 后销毁它各对话的沙箱（内核投递一次性维护任务 `sandbox-destroy-for`，worker 在锁内逐个销毁，
+     * 幂等）。不给时留给不活跃销毁扫描。
+     */
+    private readonly sandboxes?: { destroy(conversationIds: string[]): Promise<void> },
+    private readonly log?: Pick<Logger, "warn">,
   ) {}
 
   /**
@@ -265,6 +281,7 @@ export class AgentsService {
     }
     const agent = await this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
+      await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
       const memberIds =
         input.visibility === "members"
           ? await this.checkMembers(t, orgId, input.memberIds ?? [])
@@ -346,6 +363,11 @@ export class AgentsService {
       definition?: AgentDefinition | undefined;
       visibility?: AgentVisibility | undefined;
       memberIds?: string[] | undefined;
+      /**
+       * 给出且不等于当前版本 → `agent.version_conflict`（409），在锁内判定。只比定义版本：只改可见范围 / 成员
+       * 不产生新版本，所以检测不到别人只改了可见范围（之后的保存会按本次给出的 visibility 覆盖）。
+       */
+      expectedVersion?: number | undefined;
     },
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
@@ -353,6 +375,12 @@ export class AgentsService {
     if (patch.definition) await this.checkTools(orgId, patch.definition);
     const agent = await this.db.transaction().execute(async (t) => {
       const before = await this.lockForWrite(t, orgId, agentId, actorAccountId);
+      if (patch.expectedVersion !== undefined && patch.expectedVersion !== before.current_version) {
+        throw new ApiError(
+          "agent.version_conflict",
+          `The agent was changed by someone else (now version ${before.current_version}, expected ${patch.expectedVersion}); reload it and apply your changes again`,
+        );
+      }
       const visibility = patch.visibility ?? before.visibility;
       if (visibility !== "members" && (patch.memberIds?.length ?? 0) > 0) {
         throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
@@ -366,6 +394,9 @@ export class AgentsService {
           .where("agent_id", "=", agentId)
           .where("version", "=", before.current_version)
           .executeTakeFirstOrThrow();
+        // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
+        const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
+        await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? [], kept);
         if (canonical(current.definition) !== canonical(patch.definition)) {
           toVersion = before.current_version + 1;
           await t
@@ -410,14 +441,14 @@ export class AgentsService {
     return { agent, warnings };
   }
 
-  /** 软删除：权限同 update。 */
+  /** 软删除：权限同 update。待处理的技能改动一并取消，提交后删除草稿（T15）。 */
   async softDelete(
     orgId: string,
     agentId: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.db.transaction().execute(async (t) => {
+    const cancelled = await this.db.transaction().execute(async (t) => {
       await this.lockForWrite(t, orgId, agentId, actorAccountId);
       await t
         .updateTable("agents")
@@ -431,7 +462,38 @@ export class AgentsService {
         action: "agent.deleted",
         target: agentId,
       });
+      return this.skillChanges.cancelPendingForAgent(
+        t,
+        orgId,
+        agentId,
+        actorAccountId,
+        "agent_deleted",
+        actorTokenId,
+      );
     });
+    await this.skillChanges.finishCancel(orgId, cancelled);
+    await this.destroySandboxes(orgId, agentId);
+  }
+
+  /** 提交后尽力而为：投递销毁这个 agent 各对话还没销毁的沙箱（失败只记日志，留给不活跃销毁扫描）。 */
+  private async destroySandboxes(orgId: string, agentId: string): Promise<void> {
+    if (!this.sandboxes) return;
+    try {
+      const rows = await this.db
+        .selectFrom("sandboxes as s")
+        .innerJoin("conversations as c", "c.id", "s.conversation_id")
+        .select("s.conversation_id")
+        .where("c.org_id", "=", orgId)
+        .where("c.agent_id", "=", agentId)
+        .where("s.status", "<>", "destroyed")
+        .execute();
+      const ids = rows.map((r) => r.conversation_id);
+      for (let i = 0; i < ids.length; i += SANDBOX_DESTROY_BATCH) {
+        await this.sandboxes.destroy(ids.slice(i, i + SANDBOX_DESTROY_BATCH));
+      }
+    } catch (err) {
+      this.log?.warn("cannot schedule sandbox destruction for a deleted agent", { agentId, err });
+    }
   }
 
   /**

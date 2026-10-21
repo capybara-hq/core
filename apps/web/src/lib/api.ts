@@ -53,6 +53,8 @@ async function send(path: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(path, { ...init, method, headers, credentials: "same-origin" });
   } catch (e) {
+    // 调用方中止：原样抛出 AbortError，不当作网络错误
+    if (init.signal?.aborted) throw e;
     throw new ApiClientError(0, "network", e instanceof Error ? e.message : String(e));
   }
 }
@@ -135,6 +137,16 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   if (!res.ok) throw await toError(res);
   return parse<T>(res);
 }
+
+/** 客户端自己判定的错误（如上传前预检）：与内核错误码同名，经 `useErrorMessage` 翻译。 */
+export const clientError = (code: string): ApiClientError => new ApiClientError(0, code, code);
+
+/**
+ * 确认登录仍有效：请求 `/api/v1/me`，access token 过期时由 {@link apiFetch} 刷新一次。
+ * 用于浏览器直接加载的同源地址（图片、新标签页下载）——它们走不到 apiFetch 的自动刷新。
+ */
+export const ensureSession = (): Promise<void> =>
+  apiFetch<unknown>("/api/v1/me").then(() => undefined);
 
 /** 错误的逐项明细（如 `plugin.config_invalid` 的 `{ path, message }`）排成 `path: message` 行。 */
 export function issueLines(e: unknown): string[] {

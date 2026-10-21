@@ -14,14 +14,23 @@ import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import type { PluginHost } from "../plugins/host.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
+import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 
 /**
- * 内核内置工具的名字（Task 10 / Task 19 实现）。保存 agent 时内置工具引用按这份清单校验，
+ * 内核内置工具的名字（Task 10 / Task 19 实现；M5 T8 加沙箱工具）。保存 agent 时内置工具引用按这份清单校验，
  * 不依赖当前是否已注册，避免实现落地顺序影响已保存的定义；运行时未注册的照常报不可用。
+ * `skill_write`（M5 T15）由 agent 定义显式引用才可用（负责人决定 agent 能否改自己的技能）。
  */
-export const BUILTIN_TOOL_NAMES = ["ask_user", "read_tool_output", "tool_search"] as const;
+export const BUILTIN_TOOL_NAMES = [
+  "ask_user",
+  "read_tool_output",
+  "tool_search",
+  "skill_load",
+  "skill_write",
+  ...SANDBOX_TOOL_NAMES,
+] as const;
 
 /** 保存 agent 时引用校验的问题（`path` 为 `tools.<i>`）。 */
 export interface ToolRefIssue {
@@ -35,6 +44,13 @@ export interface ToolRefIssue {
  */
 export interface BuiltinCallContext extends ToolCallContext {
   tools?: readonly ResolvedTool[];
+  /** 本次运行 id（内置工具写自己的事件时用，如沙箱 deliver 的 `artifact_created`）。 */
+  runId?: string;
+  /**
+   * 本次运行的截止时间（epoch 毫秒，`runtime.maxRunSeconds` 起算，Ruling M20）。到点运行被中止；
+   * 沙箱命令按它收紧超时，赶在截止前自己超时、给模型可执行的说明。
+   */
+  runDeadline?: number;
 }
 
 /**
@@ -51,6 +67,14 @@ export interface BuiltinTool {
   spec: ToolSpec;
   defaultPolicy: "allow" | "ask";
   run: BuiltinHandler;
+  /**
+   * 本次调用的执行时限（毫秒，按已校验的输入算）；缺省为 `tools.timeoutMs`。沙箱 `bash` 按命令自己的超时加余量。
+   */
+  timeoutMs?: (input: unknown) => number;
+  /** 结果转存阈值（字符）：与 `tools.outputSpillChars` 取小者。缺省只用配置。 */
+  spillChars?: number;
+  /** 本部署当前不可用时返回事实原因（英文、可执行，进「工具不可用」提醒）；可用返回 null。 */
+  unavailable?: () => string | null;
 }
 
 /**
@@ -77,6 +101,10 @@ export interface ResolvedTool {
   /** sha256(canonical spec) 前 16 位。 */
   specHash: string;
   defaultPolicy: ToolPolicy;
+  /** 内置工具的执行时限（见 {@link BuiltinTool.timeoutMs}）；缺省为 `tools.timeoutMs`。 */
+  timeoutMs?: (input: unknown) => number;
+  /** 内置工具的结果转存阈值（见 {@link BuiltinTool.spillChars}）。 */
+  spillChars?: number;
   /**
    * 执行所需的最低组织角色（spec 3.6 R1）。发起人当前角色不足时转为按角色升级的审批
    * （推给持有该角色的人）。M3 的内置与应用工具都不设。
@@ -142,6 +170,8 @@ export interface AgentTools {
 
 /** 内置 `tool_search` 的名字（由注册表按组织设置与阈值自动加入，不进 agent 定义）。 */
 const TOOL_SEARCH = "tool_search";
+/** 内置 `skill_load` 的名字（对话日志里有技能目录快照时由注册表自动加入，不进 agent 定义）。 */
+const SKILL_LOAD = "skill_load";
 
 /** 工具定义（模型可见三项）的估算 token 数（与请求估算同一口径）。 */
 function estimateToolTokens(tools: readonly ResolvedTool[]): number {
@@ -282,9 +312,25 @@ export class ToolRegistry {
    * 解析 agent 引用的工具（见类注释），再判定是否启用 `tool_search`：组织设置 `toolSearch === "on"`，且
    * 可用工具数 > `tools.searchThresholdTools` 或其定义的估算 token > `tools.searchThresholdTokens`。
    * 启用时把内置 `tool_search` 追加到末尾。定义里显式引用的 `tool_search` 忽略（由这里按设置管理）。
+   * `skillLoad`：对话日志里有技能目录快照（`skills_catalog`，Ruling M17）→ 加入内置 `skill_load`（始终完整加载）；
+   * 定义里显式引用的 `skill_load` 同样忽略。
    */
-  async forAgent(orgId: string, def: { tools: readonly AgentToolRef[] }): Promise<AgentTools> {
+  async forAgent(
+    orgId: string,
+    def: { tools: readonly AgentToolRef[]; skillLoad?: boolean },
+  ): Promise<AgentTools> {
     const { tools, unavailable, hidden } = await this.resolve(orgId, def);
+    const sl = def.skillLoad === true && this.deps.builtins.find((x) => x.spec.name === SKILL_LOAD);
+    if (sl) {
+      tools.push({
+        key: SKILL_LOAD,
+        source: { kind: "builtin", name: SKILL_LOAD },
+        spec: sl.spec,
+        specHash: specHash(sl.spec),
+        defaultPolicy: sl.defaultPolicy,
+        ...(sl.timeoutMs !== undefined && { timeoutMs: sl.timeoutMs }),
+      });
+    }
     const toolSearch = await this.searchActive(orgId, tools);
     if (toolSearch) {
       const b = this.deps.builtins.find((x) => x.spec.name === TOOL_SEARCH) as BuiltinTool;
@@ -341,10 +387,15 @@ export class ToolRegistry {
 
     for (const ref of def.tools) {
       if (ref.kind === "builtin") {
-        if (ref.name === TOOL_SEARCH) continue;
+        if (ref.name === TOOL_SEARCH || ref.name === SKILL_LOAD) continue;
         const b = this.deps.builtins.find((x) => x.spec.name === ref.name);
         if (!b) {
           unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });
+          continue;
+        }
+        const why = b.unavailable?.() ?? null;
+        if (why !== null) {
+          unavailable.push({ ref: ref.name, reason: why });
           continue;
         }
         add({
@@ -353,6 +404,8 @@ export class ToolRegistry {
           spec: b.spec,
           specHash: specHash(b.spec),
           defaultPolicy: b.defaultPolicy,
+          ...(b.timeoutMs !== undefined && { timeoutMs: b.timeoutMs }),
+          ...(b.spillChars !== undefined && { spillChars: b.spillChars }),
         });
       } else if (ref.kind === "plugin") {
         const key = toolKey(ref.plugin, ref.name);

@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import { type AgentsService, visibleTo } from "../agents/agents.service.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { EventLog } from "./event-log.js";
-import type { ConversationEvent } from "./events.js";
+import type { ConversationEvent, LogContentBlock } from "./events.js";
 
 /** 对外的会话视图。 */
 export interface ConversationView {
@@ -55,6 +55,18 @@ export type ResolveAttachments = (
   blocks: { type: "text"; text: string }[];
   attachments: { appId: string; appName: string; uri: string; name: string }[];
 }>;
+
+/**
+ * 消息引用的上传附件（`files`）：在发消息的事务里校验并绑定到会话，返回写进 user_message 的媒体块
+ * （`source: {kind: "ref"}`，见 AttachmentsService.bindForMessage）。
+ */
+export type BindFiles = (
+  trx: Transaction<KernelDatabase>,
+  orgId: string,
+  conversationId: string,
+  accountId: string,
+  ids: readonly string[],
+) => Promise<LogContentBlock[]>;
 
 /**
  * 用户消息的幂等键：客户端的 `clientMessageId` 加前缀，与运行流水线自用的幂等键分开，
@@ -107,6 +119,7 @@ export class ConversationsService {
     private readonly runs?: RunControl,
     private readonly log?: Pick<Logger, "warn">,
     private readonly resolveAttachments?: ResolveAttachments,
+    private readonly bindFiles?: BindFiles,
   ) {}
 
   /**
@@ -256,27 +269,43 @@ export class ConversationsService {
    * `attachments`（`@` 资源引用）：内核以发送者的凭据读取资源（打码、限长），作为用户文本之后的额外文本块写入同一条
    * user_message，并在 `payload.attachments` 记录元数据（第 i 个附件对应 `content[i + 1]`）。读取失败整条不写。
    * 带 `clientMessageId` 的重复提交直接返回已写入的事件，不再读取。
+   *
+   * `files`（上传的附件 id）：在写事件的同一事务里校验并绑定到本会话（见 {@link BindFiles}），作为 image /
+   * document 引用块追加在最后（`@` 资源块之后）；任一附件不可用则整条不写。日志里只有引用，没有字节。
+   * `text` 为空时（只发附件，HTTP 层保证此时有 `files` 且没有 `@` 资源）不写文本块。
    */
   async postUserMessage(
     orgId: string,
     conversationId: string,
     accountId: string,
-    input: { text: string; clientMessageId?: string; attachments?: AttachmentRef[] },
+    input: {
+      text: string;
+      clientMessageId?: string;
+      attachments?: AttachmentRef[];
+      files?: string[];
+    },
   ): Promise<ConversationEvent> {
     await this.get(orgId, conversationId, accountId);
     const refs = input.attachments ?? [];
+    const files = input.files ?? [];
+    if (files.length > 0 && !this.bindFiles) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "files", message: "Files are not supported" },
+      ]);
+    }
     let extra: Awaited<ReturnType<ResolveAttachments>> = { blocks: [], attachments: [] };
-    if (refs.length > 0) {
-      if (input.clientMessageId !== undefined) {
-        const existing = await this.eventLog.findByIdem(
-          conversationId,
-          userMessageIdemKey(input.clientMessageId),
-        );
-        if (existing) {
-          await this.runs?.ensureRun(conversationId);
-          return existing;
-        }
+    // 重复提交：直接返回已写入的事件（不再读取资源、不再校验附件）
+    if ((refs.length > 0 || files.length > 0) && input.clientMessageId !== undefined) {
+      const existing = await this.eventLog.findByIdem(
+        conversationId,
+        userMessageIdemKey(input.clientMessageId),
+      );
+      if (existing) {
+        await this.runs?.ensureRun(conversationId);
+        return existing;
       }
+    }
+    if (refs.length > 0) {
       if (!this.resolveAttachments) {
         throw new ApiError("validation_failed", "Request validation failed", [
           { path: "attachments", message: "Attachments are not supported" },
@@ -284,20 +313,34 @@ export class ConversationsService {
       }
       extra = await this.resolveAttachments(orgId, accountId, refs);
     }
-    const [event] = await this.eventLog.append(conversationId, [
-      {
-        type: "user_message",
-        ...(input.clientMessageId !== undefined && {
-          idemKey: userMessageIdemKey(input.clientMessageId),
-        }),
-        payload: {
-          content: [{ type: "text", text: input.text }, ...extra.blocks],
-          ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
-          authorAccountId: accountId,
-          ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
-        },
+    const message = (fileBlocks: LogContentBlock[]) => ({
+      type: "user_message" as const,
+      ...(input.clientMessageId !== undefined && {
+        idemKey: userMessageIdemKey(input.clientMessageId),
+      }),
+      payload: {
+        // 只发附件时（text 为空）不写空文本块（供应商不接受空文本）；带 `@` 资源时 text 一定非空（content[0]）
+        content: [
+          ...(input.text === "" ? [] : [{ type: "text" as const, text: input.text }]),
+          ...extra.blocks,
+          ...fileBlocks,
+        ],
+        ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
+        authorAccountId: accountId,
+        ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
       },
-    ]);
+    });
+    let event: ConversationEvent | undefined;
+    if (files.length > 0 && this.bindFiles) {
+      const bind = this.bindFiles;
+      [event] = await this.db.transaction().execute(async (t) => {
+        const blocks = await bind(t, orgId, conversationId, accountId, files);
+        return this.eventLog.append(conversationId, [message(blocks)], t);
+      });
+      if (event) await this.eventLog.notify(conversationId, event.seq);
+    } else {
+      [event] = await this.eventLog.append(conversationId, [message([])]);
+    }
     await this.runs?.ensureRun(conversationId);
     return event as ConversationEvent;
   }

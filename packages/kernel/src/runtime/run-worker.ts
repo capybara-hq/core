@@ -9,6 +9,7 @@ import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import type { SettingsService } from "../identity/settings.js";
+import { recordSkillsCatalog } from "../skills/catalog.js";
 import type { RunAbort } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
@@ -475,6 +476,17 @@ export class RunWorker {
           },
         },
       ]);
+      // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
+      await recordSkillsCatalog(
+        { db: this.d.db, eventLog: this.d.eventLog, log: this.d.log },
+        {
+          orgId: conv.org_id,
+          agentId: conv.agent_id,
+          conversationId,
+          runId,
+          agent,
+        },
+      );
       const updated = await this.d.db
         .updateTable("runs")
         .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })

@@ -47,6 +47,10 @@ export interface OrgsTable {
   settings: Json;
   created_at: Ts;
   deleted_at: TsNullable;
+  /** 0021：已删除组织的对象存储清理完成时间（storage/purge.ts）；插入可省略。 */
+  storage_purged_at: TsNullable;
+  /** 0021：清理任务的认领时间（认领超时后可重新认领）；插入可省略。 */
+  storage_purge_claimed_at: TsNullable;
 }
 
 export interface MembershipsTable {
@@ -454,6 +458,116 @@ export interface DirectoryExclusionsTable {
   created_by: string | null;
 }
 
+/** 0022_attachments.sql：对话附件（字节在对象存储，见 conversations/attachments.service.ts）。 */
+export interface AttachmentsTable {
+  id: string;
+  org_id: string;
+  conversation_id: string | null;
+  account_id: string;
+  name: string;
+  content_type: string;
+  size: Int8;
+  object_key: string;
+  status: "pending" | "ready" | "deleting";
+  etag: string | null;
+  pages: number | null;
+  created_at: Ts;
+  expires_at: TsNullable;
+  /** 0024：上传用途（技能包不能绑定到消息）。 */
+  purpose: ColumnType<AttachmentPurpose, AttachmentPurpose | undefined, AttachmentPurpose>;
+}
+
+/** 预签名上传的用途：对话附件 / 技能包 zip。 */
+export type AttachmentPurpose = "chat" | "skill-package";
+
+/** 技能版本的清单（`skill_versions.manifest`）。 */
+export interface SkillManifest {
+  name: string;
+  description: string;
+  files: { path: string; size: number; sha256: string }[];
+}
+
+/** 0024_skills.sql：技能（组织技能库 / agent 自己的技能）。 */
+export interface SkillsTable {
+  id: string;
+  org_id: string;
+  scope: "org" | "agent";
+  agent_id: string | null;
+  name: string;
+  description: string;
+  current_version: number;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0024_skills.sql：技能的版本。 */
+export interface SkillVersionsTable {
+  skill_id: string;
+  version: number;
+  manifest: Json<SkillManifest>;
+  object_prefix: string;
+  created_by: string;
+  created_at: Ts;
+}
+
+/** 0026_skill_changes.sql：技能变更申请里提议的版本。 */
+export interface ProposedSkillVersion {
+  /** 已有技能的 id，或新技能预先分配的 id。 */
+  skillId: string;
+  /** 批准后预期的版本号（试用时目录里用它）。 */
+  version: number;
+  manifest: SkillManifest;
+}
+
+/** 0026_skill_changes.sql：共享 agent 的技能变更申请（R4）。 */
+export interface SkillChangeRequestsTable {
+  id: string;
+  org_id: string;
+  agent_id: string;
+  skill_id: string | null;
+  proposed_version: Json<ProposedSkillVersion>;
+  object_prefix: string;
+  requested_by_account: string;
+  requested_in_conversation: string;
+  status: Generated<"pending" | "approved" | "rejected" | "cancelled">;
+  decided_by: string | null;
+  decided_at: TsNullable;
+  created_at: Ts;
+}
+
+/** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */
+export interface SandboxesTable {
+  conversation_id: string;
+  org_id: string;
+  provider: string;
+  /** 提供方的 `SandboxHandle`；creating 时为 NULL。 */
+  handle: ColumnType<
+    { id: string; [k: string]: unknown } | null,
+    string | null | undefined,
+    string | null
+  >;
+  status: "creating" | "running" | "suspended" | "destroyed";
+  last_used_at: Ts;
+  running_since: TsNullable;
+  created_at: Ts;
+  suspended_at: TsNullable;
+  destroyed_at: TsNullable;
+  /** 防护号：锁内的每次 status / handle 写入都按它比较并加一。 */
+  generation: ColumnType<number, number | undefined, number>;
+  /** 曾经成功创建过实例（只会置 true）。 */
+  had_instance: ColumnType<boolean, boolean | undefined, boolean>;
+  /** 换提供方时留下的旧实例。 */
+  prev_provider: string | null;
+  prev_handle: ColumnType<
+    { id: string; [k: string]: unknown } | null,
+    string | null | undefined,
+    string | null
+  >;
+  sweep_failed_at: TsNullable;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
@@ -494,6 +608,11 @@ export interface KernelDatabase {
   channel_card_messages: ChannelCardMessagesTable;
   org_anonymous_accounts: OrgAnonymousAccountsTable;
   directory_exclusions: DirectoryExclusionsTable;
+  attachments: AttachmentsTable;
+  sandboxes: SandboxesTable;
+  skills: SkillsTable;
+  skill_versions: SkillVersionsTable;
+  skill_change_requests: SkillChangeRequestsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

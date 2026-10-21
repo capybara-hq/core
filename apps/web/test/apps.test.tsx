@@ -692,8 +692,8 @@ describe("应用详情切换组织", () => {
         return noContent();
       },
       "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: detail() }),
-      "GET /api/v1/orgs/o1/approvals": () => json(200, { approvals: [] }),
-      "GET /api/v1/orgs/o2/approvals": () => json(200, { approvals: [] }),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "GET /api/v1/orgs/o2/inbox": () => json(200, { items: [], truncated: false }),
     });
     render(
       <NextIntlClientProvider locale="en" messages={en}>

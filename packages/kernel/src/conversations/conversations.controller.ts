@@ -1,10 +1,32 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  HttpCode,
+  Inject,
+  Param,
+  Post,
+  Query,
+  Res,
+} from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { z } from "zod";
-import { CONVERSATION_OUTPUTS, CONVERSATIONS } from "../http/tokens.js";
+import {
+  CONVERSATION_ARTIFACTS,
+  CONVERSATION_OUTPUTS,
+  CONVERSATION_SANDBOX,
+  CONVERSATIONS,
+} from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { MAX_ATTACHMENTS } from "../tools/app-content.js";
+import {
+  ARTIFACT_DOWNLOAD_CACHE_SECONDS,
+  type ArtifactPreview,
+  type ConversationArtifacts,
+} from "./artifacts.js";
 import type { ConversationsService, ConversationView } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
 import {
@@ -12,6 +34,7 @@ import {
   OUTPUT_PAGE_MAX_CHARS,
   type OutputPage,
 } from "./outputs-read.js";
+import type { ConversationSandboxStatus, SandboxStatusView } from "./sandbox-status.js";
 
 const CreateBody = z.object({ agentId: z.string().min(1).max(100) }).strict();
 
@@ -30,17 +53,31 @@ const OutputQuery = z.object({
   limit: z.coerce.number().int().min(1).max(OUTPUT_PAGE_MAX_CHARS).default(OUTPUT_PAGE_MAX_CHARS),
 });
 
+/** `inline=1`：要求以 inline 打开（只对位图生效，见 ConversationArtifacts）。 */
+const DownloadQuery = z.object({ inline: z.enum(["0", "1"]).optional() });
+
 const MessageBody = z
   .object({
-    text: z.string().min(1).max(100_000),
+    /** 用户输入的文本；只有带 `files` 且不带 `attachments` 时可以为空（只发图片 / 文件）。 */
+    text: z.string().max(100_000),
     clientMessageId: z.string().min(1).max(200).optional(),
     /** `@` 资源引用：内核以发送者的凭据读取并作为附加文本块写入（见 ConversationsService.postUserMessage）。 */
     attachments: z
       .array(z.object({ appId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
       .max(MAX_ATTACHMENTS)
       .optional(),
+    /**
+     * 上传的附件 id（已 finalize，见 AttachmentsController）；条数上限由 `attachments.maxPerMessage` 决定，
+     * 这里的 100 只是硬上限。
+     */
+    files: z.array(z.uuid()).max(100).optional(),
   })
-  .strict();
+  .strict()
+  // `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
+  .refine((b) => b.text.length > 0 || ((b.files?.length ?? 0) > 0 && !b.attachments?.length), {
+    message: "Text is required unless the message carries files (and no @ resources)",
+    path: ["text"],
+  });
 
 /**
  * 会话（`/api/v1/orgs/:orgId/conversations`）：`agents.use`（访客以上），只接受人类用户；
@@ -51,6 +88,8 @@ export class ConversationsController {
   constructor(
     @Inject(CONVERSATIONS) private readonly conversations: ConversationsService,
     @Inject(CONVERSATION_OUTPUTS) private readonly outputs: ConversationOutputs,
+    @Inject(CONVERSATION_ARTIFACTS) private readonly artifacts: ConversationArtifacts,
+    @Inject(CONVERSATION_SANDBOX) private readonly sandboxStatus: ConversationSandboxStatus,
   ) {}
 
   @Post()
@@ -125,6 +164,63 @@ export class ConversationsController {
     return { output: await this.outputs.read(org.orgId, id, p.account.id, outputId, q) };
   }
 
+  /**
+   * 下载 agent 交付的产物（`artifact_created`）：302 到预签名地址（一律 `attachment`，带文件名）。
+   * 会话可见性与会话流相同，不可见 → `conversation.not_found`；不是该会话的产物 → `conversation.artifact_not_found`。
+   */
+  @Get(":id/artifacts/:artifactId/download")
+  @OrgAction("agents.use")
+  async downloadArtifact(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("artifactId") artifactId: string,
+    @Query(new ZodPipe(DownloadQuery)) q: z.infer<typeof DownloadQuery>,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    const { url } = await this.artifacts.downloadUrl(org.orgId, id, p.account.id, artifactId, {
+      inline: q.inline === "1",
+    });
+    await reply
+      .header("cache-control", `private, max-age=${ARTIFACT_DOWNLOAD_CACHE_SECONDS}`)
+      .redirect(url, 302);
+  }
+
+  /**
+   * 文本产物的开头若干行（`{ preview: { text, truncated } }`，网页按纯文本显示）。
+   * 不是文本类、或开头有 NUL 字节 → `conversation.artifact_not_previewable`；可见性与下载相同。
+   */
+  @Get(":id/artifacts/:artifactId/preview")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async previewArtifact(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("artifactId") artifactId: string,
+  ): Promise<{ preview: ArtifactPreview }> {
+    const p = requireUser(principal);
+    return { preview: await this.artifacts.preview(org.orgId, id, p.account.id, artifactId) };
+  }
+
+  /**
+   * 对话沙箱的状态。响应体**不套外层键**，直接是 `{ status: "running" | "suspended", lastUsedAt }`
+   * （不同于 `{ preview }`、`{ conversation }` 等；网页 `getSandboxStatus` 按此解析）；
+   * 没有可用的沙箱（未创建、已销毁）→ 404 `sandbox.not_found`。可见性与会话流相同。
+   */
+  @Get(":id/sandbox")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async sandbox(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<SandboxStatusView> {
+    const p = requireUser(principal);
+    return this.sandboxStatus.get(org.orgId, id, p.account.id);
+  }
+
   @Post(":id/messages")
   @HttpCode(202)
   @OrgAction("agents.use")
@@ -140,6 +236,7 @@ export class ConversationsController {
         text: body.text,
         ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
         ...(body.attachments !== undefined && { attachments: body.attachments }),
+        ...(body.files !== undefined && { files: body.files }),
       }),
     };
   }

@@ -19,6 +19,7 @@ import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import type { WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
+import { skillLoadOffered } from "../skills/catalog.js";
 import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
@@ -158,6 +159,8 @@ export interface ToolStepContext {
   accountId: string;
   /** run 的中止信号（用户中止 / 截止时间）。 */
   signal: AbortSignal;
+  /** run 的截止时间（epoch 毫秒）；传给内置工具（沙箱命令据此收紧超时，Ruling M20）。 */
+  deadline?: number;
 }
 
 /** tools 节点一步的结果：全部调用都有了结果，或某个调用需要等人处理（之后的调用留到续跑）。 */
@@ -304,7 +307,16 @@ export class ToolPipeline {
     let resolved: Resolved | undefined;
     const resolve = async (): Promise<Resolved> => {
       // 每步实时解析（应用 / 插件状态可能在模型调用之后变化）
-      resolved ??= await this.deps.registry.forAgent(ctx.orgId, { tools: ctx.agent.tools ?? [] });
+      if (!resolved) {
+        // 与构建请求时同一判定：日志里有过技能目录快照 → skill_load 可用（空快照也不收回，见 skillLoadOffered）
+        const skillLoad = skillLoadOffered(
+          await this.deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog"),
+        );
+        resolved = await this.deps.registry.forAgent(ctx.orgId, {
+          tools: ctx.agent.tools ?? [],
+          skillLoad,
+        });
+      }
       return resolved;
     };
     for (const call of calls) {
@@ -500,7 +512,11 @@ export class ToolPipeline {
     const cfg = this.deps.config().tools;
     const spilled = await spillIfLarge(
       rendered.text,
-      { spillChars: cfg.outputSpillChars, previewChars: cfg.outputPreviewChars },
+      {
+        // 内置工具可给更低的转存阈值（沙箱 bash 30000 字符）
+        spillChars: Math.min(cfg.outputSpillChars, tool.spillChars ?? Number.POSITIVE_INFINITY),
+        previewChars: cfg.outputPreviewChars,
+      },
       (content) =>
         this.deps.outputs.save({
           orgId: ctx.orgId,
@@ -645,14 +661,21 @@ export class ToolPipeline {
       callId,
       ...(resume !== undefined && { resume }),
       ...(tool.source.kind === "builtin" && stepTools !== undefined && { tools: stepTools }),
+      ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
+      ...(tool.source.kind === "builtin" &&
+        ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
     };
+    // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
+    const timeoutMs = tool.timeoutMs?.(input) ?? this.deps.config().tools.timeoutMs;
     try {
-      const r = await this.bounded(ctx.signal, (signal) => handler(input, { ...base, signal }));
+      const r = await this.bounded(
+        ctx.signal,
+        (signal) => handler(input, { ...base, signal }),
+        undefined,
+        timeoutMs,
+      );
       if (r === "timeout") {
-        return {
-          kind: "error",
-          message: timeoutText(tool.key, this.deps.config().tools.timeoutMs),
-        };
+        return { kind: "error", message: timeoutText(tool.key, timeoutMs) };
       }
       if (r === "aborted") return { kind: "error", message: RUN_STOPPED_DURING_TEXT };
       if (isInputRequired(r.value)) {
@@ -843,11 +866,13 @@ export class ToolPipeline {
     work: (signal: AbortSignal) => Promise<T>,
     /** 额外参与竞速的信号（不传给 work）：中止时以 `Stopped` 抛出，由调用方判断原因。 */
     interrupt?: AbortSignal,
+    /** 时限（毫秒），缺省 `tools.timeoutMs`。 */
+    timeoutMs: number = this.deps.config().tools.timeoutMs,
   ): Promise<{ value: T } | "timeout" | "aborted"> {
     if (runSignal.aborted) return "aborted";
     const timeout = new AbortController();
     // 本进程发起的调用自己的计时器，结束即清除
-    const timer = setTimeout(() => timeout.abort(), this.deps.config().tools.timeoutMs);
+    const timer = setTimeout(() => timeout.abort(), timeoutMs);
     const signal = AbortSignal.any([runSignal, timeout.signal]);
     let onAbort: () => void = () => {};
     const race = interrupt ? AbortSignal.any([signal, interrupt]) : signal;

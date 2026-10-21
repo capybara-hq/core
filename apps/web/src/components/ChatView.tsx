@@ -21,6 +21,7 @@ import {
 } from "../lib/stream";
 import { type UiRefresh, uiKey } from "../lib/ui";
 import { useErrorMessage } from "../lib/use-error-message";
+import type { SendResult } from "./Composer";
 
 /** 连接被浏览器放弃后，连续重开订阅的次数上限（期间收到任何事件即清零）。 */
 const MAX_REOPEN = 3;
@@ -36,7 +37,13 @@ export type ChatView = {
   waiting: boolean;
   stopping: boolean;
   stop(): void;
-  send(text: string, clientMessageId: string): Promise<boolean>;
+  /** 发送（运行中即插话）：`attachments` 为 `@` 资源引用，`files` 为已就绪的上传附件 id。 */
+  send(
+    text: string,
+    clientMessageId: string,
+    attachments?: { appId: string; uri: string }[],
+    files?: string[],
+  ): Promise<SendResult>;
   error: string | undefined;
   /** 会话所属 agent 的名称（取不到时为 undefined）。 */
   agentName: string | undefined;
@@ -165,6 +172,7 @@ export function useChat(orgId: string, conversationId: string): ChatView {
       text: string,
       clientMessageId: string,
       attachments: { appId: string; uri: string }[] = [],
+      files: string[] = [],
     ) => {
       try {
         const { event } = await postMessage(
@@ -173,13 +181,14 @@ export function useChat(orgId: string, conversationId: string): ChatView {
           text,
           clientMessageId,
           attachments.map((a) => ({ appId: a.appId, uri: a.uri })),
+          files,
         );
         dispatch({ kind: "events", events: [event] });
         setError(undefined);
-        return true;
+        return { ok: true as const };
       } catch (e) {
         setError(errorMessage(e));
-        return false;
+        return { ok: false as const, error: e };
       }
     },
     [orgId, conversationId, errorMessage],

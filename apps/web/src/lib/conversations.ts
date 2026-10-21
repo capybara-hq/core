@@ -9,7 +9,13 @@ export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; callId: string; content: string; isError: boolean };
+  | { type: "tool_result"; callId: string; content: string; isError: boolean }
+  /** 上传的附件（只出现在 user 消息里）：日志里只有引用，字节经 download 取。 */
+  | { type: "image"; mediaType: string; source: MediaSource; name?: string }
+  | { type: "document"; mediaType: string; source: MediaSource; name?: string };
+
+/** 媒体块的来源：日志里只会是 `ref`（字节不进日志）。 */
+export type MediaSource = { kind: "ref"; attachmentId: string } | { kind: "base64"; data: string };
 
 type FormText = string | { zh: string; en: string };
 
@@ -140,8 +146,37 @@ type EventBody =
         outcome: "answered" | "expired" | "cancelled";
       };
     }
+  | {
+      /** agent 经 `sandbox_deliver` 交付的文件（产物）：字节在对象存储，经 artifacts 下载接口取。 */
+      type: "artifact_created";
+      payload: {
+        artifactId: string;
+        name: string;
+        contentType: string;
+        size: number;
+        sourcePath: string;
+        callId: string;
+      };
+    }
+  | {
+      /** 此刻生效的技能目录快照（运行开始时目录变了才写；界面不显示）。 */
+      type: "skills_catalog";
+      payload: {
+        skills: {
+          id: string;
+          name: string;
+          description: string;
+          version: number;
+          source: string;
+        }[];
+      };
+    }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
+  | {
+      type: "media_excluded";
+      payload: { attachmentIds: string[]; reason: "provider_rejected" };
+    }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }
   | { type: "run_failed"; payload: { error: { code: string; message: string } } }
   | { type: "run_aborted"; payload: { byAccountId: string | null; reason: string } };
@@ -208,7 +243,7 @@ export async function listAllEvents(
 
 /**
  * 发送用户消息（运行中发送即插话）：202 `{ event }`。`attachments`（`@` 资源引用）由内核以当前用户的凭据读取，
- * 作为附加文本块写入同一条消息。
+ * 作为附加文本块写入同一条消息；`files`（已 finalize 的上传附件 id）作为 image / document 引用块追加在最后。
  */
 export const postMessage = (
   orgId: string,
@@ -216,6 +251,7 @@ export const postMessage = (
   text: string,
   clientMessageId: string,
   attachments: { appId: string; uri: string }[] = [],
+  files: string[] = [],
 ) =>
   apiFetch<{ event: ConversationEvent }>(`${one(orgId, id)}/messages`, {
     method: "POST",
@@ -223,6 +259,7 @@ export const postMessage = (
       text,
       clientMessageId,
       ...(attachments.length > 0 && { attachments }),
+      ...(files.length > 0 && { files }),
     }),
   });
 

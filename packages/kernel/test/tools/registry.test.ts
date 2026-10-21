@@ -10,6 +10,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { Credentials } from "../../src/tools/credentials.js";
 import { canonicalJson, specHash, ToolRegistry } from "../../src/tools/registry.js";
@@ -322,7 +323,12 @@ describe("组织设置与 tool_search 启用条件", () => {
   it("GET 默认 toolSearch=on；PATCH 需 org.update，非法值 400，改动写审计", async () => {
     const got = await req({ method: "GET", url: settingsUrl() });
     expect(got.statusCode, got.body).toBe(200);
-    expect(got.json()).toEqual({ settings: { toolSearch: "on", locale: "en" } });
+    expect(got.json()).toEqual({
+      settings: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow" },
+      deployment: {
+        sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
+      },
+    });
 
     const bad = await req({
       method: "PATCH",
@@ -335,9 +341,11 @@ describe("组织设置与 tool_search 启用条件", () => {
 
     const off = await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
     expect(off.statusCode, off.body).toBe(200);
-    expect(off.json()).toEqual({ settings: { toolSearch: "off", locale: "en" } });
-    expect((await req({ method: "GET", url: settingsUrl() })).json()).toEqual({
-      settings: { toolSearch: "off", locale: "en" },
+    expect(off.json()).toMatchObject({
+      settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow" },
+    });
+    expect((await req({ method: "GET", url: settingsUrl() })).json()).toMatchObject({
+      settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow" },
     });
     const audits = await db
       .selectFrom("audit_events")
@@ -346,15 +354,17 @@ describe("组织设置与 tool_search 启用条件", () => {
       .execute();
     expect(audits).toHaveLength(1);
     expect(audits[0]?.detail).toEqual({
-      before: { toolSearch: "on", locale: "en" },
-      after: { toolSearch: "off", locale: "en" },
+      before: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow" },
+      after: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow" },
     });
 
     // 存量 jsonb 里的未知键保留、非法值按默认读
     await sql`UPDATE capybara.orgs SET settings = '{"toolSearch":"bogus","future":1}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
-    expect((await req({ method: "GET", url: settingsUrl() })).json()).toEqual({
-      settings: { toolSearch: "on", locale: "en" },
+    expect((await req({ method: "GET", url: settingsUrl() })).json().settings).toEqual({
+      toolSearch: "on",
+      locale: "en",
+      sandboxToolPolicy: "allow",
     });
     await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
     const row = await db
@@ -362,7 +372,12 @@ describe("组织设置与 tool_search 启用条件", () => {
       .select("settings")
       .where("id", "=", orgId)
       .executeTakeFirstOrThrow();
-    expect(row.settings).toEqual({ toolSearch: "off", locale: "en", future: 1 });
+    expect(row.settings).toEqual({
+      toolSearch: "off",
+      locale: "en",
+      sandboxToolPolicy: "allow",
+      future: 1,
+    });
 
     // 成员能读不能改
     await sql`UPDATE capybara.memberships SET role = 'member' WHERE org_id = ${orgId}`.execute(raw);
@@ -373,6 +388,65 @@ describe("组织设置与 tool_search 启用条件", () => {
     });
     expect(denied.statusCode).toBe(403);
     expect((await req({ method: "GET", url: settingsUrl() })).statusCode).toBe(200);
+  });
+
+  it("sandboxEgress（Ruling M19）：校验主机、无 open、上限 200；null 清除；部署 none 时只能设 none", async () => {
+    const patch = (sandboxEgress: unknown) =>
+      req({ method: "PATCH", url: settingsUrl(), payload: { sandboxEgress } });
+    for (const bad of [
+      { mode: "open" },
+      { mode: "allowlist", allowHosts: ["10.0.0.1"] },
+      { mode: "allowlist", allowHosts: ["localhost"] },
+      { mode: "allowlist", allowHosts: ["Example.com"] },
+      { mode: "allowlist", allowHosts: ["a.example.com", "a.example.com"] },
+      { mode: "allowlist", allowHosts: Array.from({ length: 201 }, (_, i) => `h${i}.example.com`) },
+      { mode: "none", extra: 1 },
+    ]) {
+      const r = await patch(bad);
+      expect(r.statusCode, JSON.stringify(bad)).toBe(400);
+    }
+    const ok = await patch({
+      mode: "allowlist",
+      allowHosts: ["registry.npmjs.org", "*.corp.example.org"],
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json().settings.sandboxEgress).toEqual({
+      mode: "allowlist",
+      allowHosts: ["registry.npmjs.org", "*.corp.example.org"],
+    });
+    // 同值再改是空操作（对象按值比较），不多写审计
+    await patch({ mode: "allowlist", allowHosts: ["registry.npmjs.org", "*.corp.example.org"] });
+    const audits = await db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("action", "=", "org.settings_updated")
+      .execute();
+    expect(audits).toHaveLength(1);
+    const cleared = await patch(null);
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().settings).not.toHaveProperty("sandboxEgress");
+    const row = await db
+      .selectFrom("orgs")
+      .select("settings")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    expect(row.settings).not.toHaveProperty("sandboxEgress");
+
+    // 部署 egress none：组织只能设 none
+    const ownerId = (await db.selectFrom("accounts").select("id").executeTakeFirstOrThrow()).id;
+    const none = new OrgSettingsService(db, () => ({
+      sandbox: { ...baseCfg.sandbox, limits: { ...baseCfg.sandbox.limits, egress: "none" } },
+    }));
+    const err = await none
+      .update(orgId, { sandboxEgress: { mode: "allowlist" } }, ownerId)
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "org.sandbox_egress_not_allowed" });
+    expect(await none.update(orgId, { sandboxEgress: { mode: "none" } }, ownerId)).toMatchObject({
+      sandboxEgress: { mode: "none" },
+    });
+    expect(none.deployment()).toEqual({
+      sandboxEgress: { mode: "none", allowHosts: baseCfg.sandbox.limits.allowHosts },
+    });
   });
 
   it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 tool_search；组织关闭后全部直接加载", async () => {

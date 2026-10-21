@@ -1,6 +1,6 @@
 ---
 name: writing-tools
-description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、应用工具（连接器）的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用。写连接器见 writing-connectors。
+description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、应用工具（连接器）的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用；内置的沙箱工具 sandbox_*（按工具的超时与转存阈值、sandboxToolPolicy、首次使用 / 重建提示）与技能工具 skill_load / skill_write（目录快照、R3 只对共享 agent 固定 ask、变更审批）。写连接器见 writing-connectors。
 ---
 
 # 写工具
@@ -9,7 +9,8 @@ description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.regi
 
 - 插件工具：`plugins/todo`（一个 `write` 工具，整表写入本插件 schema，默认 allow）。
 - 连接器：`plugins/connector-mcp`（`connector@1`，把远端 MCP 服务接成「应用」）；`plugins/connector-openapi`（OpenAPI 3.0 / 3.1 描述的 HTTP API，每个 operation 一个工具，实现了 `inspect`）。
-- 内核内置工具：`packages/kernel/src/tools/builtins`（`ask_user`、`read_tool_output`）。
+- 内核内置工具：`packages/kernel/src/tools/builtins`（`ask_user`、`read_tool_output`、`tool_search`；沙箱工具 `sandbox_*`
+  在 `builtins/sandbox/`；技能工具 `skill_load` / `skill_write`）。见下文「内核内置工具：沙箱与技能」。
 
 工具的执行全部经内核管线 `packages/kernel/src/tools/pipeline.ts`：解析 `{"$output": id}` 引用 → ajv 校验参数 → 策略判定（allow / ask / deny）→ 写 `tool_call_started` → 执行（超时 + 中止）→ 渲染结果 → 超大结果转存 → 写 `tool_result`。插件只管「做事并返回结果」，审批、超时、存档、审计、打码都是内核的事，**不要在插件里重复实现**。
 
@@ -19,7 +20,7 @@ description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.regi
 
 | 来源 | key | 名字规则 |
 |---|---|---|
-| 内置 | 名字本身：`ask_user`、`read_tool_output`、`tool_search` | — |
+| 内置 | 名字本身：`ask_user`、`read_tool_output`、`tool_search`、`sandbox_bash`、`skill_load` | 小写 + 下划线，**不含点**（Ruling M12） |
 | 插件 | `<plugin>__<tool>`，如 `todo__write` | `spec.name` 匹配 `^[a-zA-Z0-9_-]{1,40}$`（`PLUGIN_TOOL_NAME`） |
 | 应用（连接器） | `<appSlug>__<tool>`，如 `docs__search` | slug `^[a-z][a-z0-9_]{0,23}$`，不含连续 / 结尾下划线；工具名由远端决定 |
 
@@ -82,7 +83,7 @@ export default definePlugin({
 
 - 默认策略：插件 / 内置工具声明了 `defaultPolicy` 就用它；否则按注解推导 —— `readOnlyHint: true` → `allow`，其余（含无注解、destructive）→ `ask`（`policyFromAnnotations`）。应用工具在安装时按注解推导并存进 `app_tools.default_policy`，管理员可改。
 - 只有确实无副作用、或副作用只落在本会话的工具才声明 `defaultPolicy: "allow"`（如 todo）；拿不准就别声明，让它走 `ask`。
-- 最终策略在**执行那一刻**取最严者：组织默认策略、agent 的 `toolPolicies`（只能收紧为 `ask` / `deny`）、`requiresUserInteraction` 与 R3 清单（至少 `ask`，记住的授权对它们无效）；用户记住的授权（本会话 / 以后都允许）只能把 `ask` 放行为 `allow`，`spec_hash` 变了即失效，不越过 `deny`。
+- 最终策略在**执行那一刻**取最严者：组织默认策略、agent 的 `toolPolicies`（只能收紧为 `ask` / `deny`）、`requiresUserInteraction` 与 R3 清单（至少 `ask`，记住的授权对它们无效；`skill_write` 只对共享 agent 固定 ask，见下文）；用户记住的授权（本会话 / 以后都允许）只能把 `ask` 放行为 `allow`，`spec_hash` 变了即失效，不越过 `deny`。
 - `ask` → 内核建审批、run 进入 `waiting`（不占会话锁与配额），批准后从 checkpoint 续跑；拒绝 / 超时（`tools.approvalTimeoutHours`）/ 等待中被中止一律按拒绝写 `tool_result`。插件无需关心。
 
 ## 结果、`ToolError` 与失败
@@ -153,6 +154,47 @@ async (input, call) => {
 
 写连接器的人要注意：`listTools` 的输出必须确定性，否则会反复触发复核（见 `skills/writing-connectors`）。
 
+## 内核内置工具：沙箱与技能
+
+内置工具（`BuiltinTool`）比插件工具多三个可选项：`timeoutMs(input)` 覆盖 `tools.timeoutMs`；`spillChars` 给比
+`tools.outputSpillChars` 更低的转存阈值（取两者较小的）；`unavailable()` 返回本部署不可用的英文原因（注册表据此报
+不可用）。新内置工具的名字要加进 `BUILTIN_TOOL_NAMES`。内置工具写自己的事件时用 `ctx.runId` 与唯一的幂等键，并在
+同一事务里与业务行一起提交。
+
+**沙箱工具**（Ruling M12：key 不含点）：`sandbox_bash`、`sandbox_read`、`sandbox_write`、`sandbox_edit`、
+`sandbox_glob`、`sandbox_grep`、`sandbox_deliver`。
+
+- agent 定义显式引用才有（`DEFAULT_AGENT_TOOLS` 不含）；部署没有沙箱插件时报不可用（`unavailable()`）。
+- 全部经 `SandboxService.withSandbox`（每个对话一个沙箱，懒创建，见 `skills/writing-sandbox-providers`），把锁关联的
+  signal 传给每次提供方调用；路径过 `validateSandboxPath`，`write` / `edit` 拒绝 `/skills`。
+- 超时：`sandbox_bash` = `min(timeoutSeconds ?? 120, sandbox.limits.maxCommandSeconds)` 秒加余量（余量 =
+  `tools.timeoutMs` + `sandbox.lockWaitSeconds`，盖住等锁与创建 / 恢复）；超过上限的 `timeoutSeconds` 直接报错。
+  其他沙箱工具只用余量（deliver 两倍）。提供方的命令时限先到，模型拿到 `timedOut`，沙箱照常可用。
+- 转存：`sandbox_bash` 的 `spillChars` 为 30000，大输出照常经 `read_tool_output` / `{"$output": id}` 读。
+- 结果前缀提示（英文）：首次使用 `Sandbox started for this conversation (first use)…`，重建
+  `Sandbox was recreated; previous files are gone.`，新复制的附件列出路径。每次调用前把对话里已就绪的附件同步到
+  `/workspace/attachments/`。
+- 默认策略 allow（沙箱是隔离的，D5）；组织设置 `sandboxToolPolicy: "ask"` 时 bash / write / edit / deliver 需要审批，
+  **在执行那一刻**读设置，只读的 read / glob / grep 不受影响。
+- `sandbox_deliver` 把文件放进对象存储（`kernel/<orgId>/artifacts/<对话>/<id>`，上限 `sandbox.deliverMaxBytes`），
+  追加 `artifact_created` 事件，网页「产物」标签从日志重建。
+
+**技能工具**：
+
+- `skill_load {name}` 不进 agent 定义，由注册表自动加入：对话日志里有技能目录快照 `skills_catalog`（运行开始时按
+  agent 版本解析、与上一份不同才写，Ruling M17）时出现。它按**最新快照**把名字解析成技能 id、版本与 `source`（对象前缀），
+  只按 `source` 精确取文件，核对大小与 sha256。带其他文件的技能复制进沙箱 `/skills/<name>/`（只读，脚本没有可执行位，
+  结果提示用 `sh` / `python3` 运行；旧版本留下的文件列为可忽略，Ruling M18）；agent 没有沙箱工具时只返回正文。
+  目录的第一份进 system 缓存段，之后的变化在所在位置渲染为英文提醒（只追加），所以改动在**下一次运行开始**才到模型。
+- `skill_write {name, description, files}` 要 agent 定义显式引用（`builtin` / `skill_write`）。内核按 name / description
+  合成 SKILL.md 的 frontmatter，只收文本、合计 ≤ 1 MiB、每个 agent 最多 50 个自写技能。
+  - 私有 agent：默认 allow，直接生成新版本。
+  - 共享 agent：在 R3 固定 ask 清单上，**只对共享 agent 生效**（`R3_SHARED_AGENT_ONLY_TOOL_KEYS`，可见性在执行时实时读，
+    读不到按共享处理），记住的授权对它无效。发起人确认后生成变更申请（`skills/changes.service.ts`），负责人在收件箱批准前
+    只有发起对话能试用；同一对话再写取代旧申请，别的对话写同一技能被拒。
+  - 成功后在同一事务里追加一份目录快照，同一运行的下一步即可 `skill_load`。代价：对话里第一份目录在运行中途出现时，
+    下一步的工具清单多出 `skill_load`，提示缓存失效一次。
+
 ## 连接器
 
 连接器（`connector@1`）把远端服务接成应用，工具由远端决定，上述策略、审批、输出存档、漂移、`tool_search` 全部照常适用。契约、会话生命周期、鉴权注入、`ToolError` 的熔断语义、`connectorData` 路由、`inspect`、elicitation、测试夹具都在 **`skills/writing-connectors`**。参考实现：`plugins/connector-mcp`、`plugins/connector-openapi`。
@@ -164,3 +206,7 @@ async (input, call) => {
 - 插件单测：直接调用处理函数（构造 `ToolCallContext`），见 `plugins/todo/test/todo.test.ts`；多副本读写一致用 `createDualReplicaHarness`。
 - 连接器的测试夹具（`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`）见 `skills/writing-connectors`；漂移检测见 `packages/kernel/test/tools/drift.test.ts`，`tool_search` 见 `packages/kernel/test/tools/tool-search*.test.ts`。
 - 内核端到端：model-fake 的 `tool:<key>:<json>` 指令让模型调用指定工具（如 `tool:todo__write:{"todos":[]}`），见 `packages/kernel/test/tools/mcp-e2e.test.ts` 与双副本验收 `packages/kernel/test/tools/m3-segment1.dual.test.ts`（审批跨副本、审批超时、杀 worker 后结果未知、插件启用前后）。
+- 沙箱与技能工具：真实内核 + model-fake + 假沙箱插件（`packages/kernel/test/fixtures/plugins/sandbox-fake`）+ SeaweedFS，
+  见 `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`、`packages/kernel/test/skills/skills-runtime.test.ts`、
+  `skill-write.test.ts`；双副本验收 `packages/kernel/test/sandbox/m5-segment2.dual.test.ts`（真实 Docker）与
+  `packages/kernel/test/skills/m5-segment3.dual.test.ts`（技能变更跨副本批准、脚本进沙箱）。

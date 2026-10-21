@@ -91,7 +91,8 @@
       "login_taken": "用户名已被占用。"
     },
     "org": {
-      "not_found": "组织不存在或你已不是成员。"
+      "not_found": "组织不存在或你已不是成员。",
+      "sandbox_egress_not_allowed": "本部署已禁止沙箱联网，组织只能选择「不联网」。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -99,11 +100,14 @@
     },
     "agent": {
       "not_found": "Agent 不存在或你无权访问。",
-      "model_unavailable": "所选模型不可用。"
+      "model_unavailable": "所选模型不可用。",
+      "version_conflict": "你编辑期间有人保存了这个 agent。请刷新页面后重新修改。"
     },
     "conversation": {
       "not_found": "对话不存在或你无权访问。",
-      "output_not_found": "完整输出已过期或不存在。"
+      "output_not_found": "完整输出已过期或不存在。",
+      "artifact_not_found": "文件不存在或已被删除。",
+      "artifact_not_previewable": "这个文件不能预览。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。"
@@ -159,6 +163,31 @@
     },
     "member": {
       "anonymous_guest": "匿名访客不能被授予角色、所有权或 agent，也不能被邀请或移出。"
+    },
+    "attachment": {
+      "too_large": "文件太大，超过了单个附件的大小上限。",
+      "type_not_allowed": "不支持这种文件类型。",
+      "not_ready": "文件还没有上传完成，请稍候再发送。",
+      "not_found": "文件不存在或已过期，请重新上传。",
+      "too_many_pending": "未完成的上传太多，请先等它们完成或移除后再添加。",
+      "upload_failed": "上传失败，请检查网络后移除并重新添加。"
+    },
+    "storage": {
+      "unavailable": "文件存储暂不可用，请稍后重试或联系管理员。"
+    },
+    "sandbox": {
+      "not_found": "本对话还没有沙箱。",
+      "unavailable": "当前部署没有可用的沙箱。",
+      "busy": "沙箱正忙，请稍后再试。"
+    },
+    "skill": {
+      "not_found": "技能不存在或已删除。",
+      "invalid_package": "技能包不合法："
+    },
+    "skill_change": {
+      "not_found": "该技能改动不存在或你无权查看。",
+      "not_owner": "只有该 agent 的负责人可以批准或拒绝它的技能改动。",
+      "already_decided": "该技能改动已被处理。"
     }
   },
   "agents": {
@@ -179,7 +208,8 @@
       "visibilityLabel": "可见范围",
       "visibility": {
         "private": "仅自己",
-        "org": "组织内所有成员"
+        "org": "组织内所有成员",
+        "members": "指定成员"
       },
       "submit": "保存",
       "noModels": "没有可用的模型，请先安装并配置模型供应商插件。",
@@ -199,7 +229,8 @@
       "builtinLabel": "内置工具",
       "builtin": {
         "ask_user": "向用户提问（ask_user）",
-        "read_tool_output": "读取存档的工具结果（read_tool_output）"
+        "read_tool_output": "读取存档的工具结果（read_tool_output）",
+        "skill_write": "编写技能（skill_write）"
       },
       "appsLabel": "应用",
       "appTools": "{name} 的全部工具",
@@ -209,7 +240,23 @@
         "default": "默认",
         "ask": "需审批",
         "deny": "禁止"
-      }
+      },
+      "editTitle": "编辑 Agent",
+      "skillsSection": "技能",
+      "skillsSectionHint": "agent 在任务需要时可以加载的技能。",
+      "orgSkillsLabel": "组织技能",
+      "noOrgSkills": "组织还没有技能。",
+      "deletedSkill": "已删除的技能（{id}）",
+      "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
+      "ownSkillsLabel": "agent 自己写的技能",
+      "ownSkillsHint": "这些技能由 agent 通过 skill_write 编写。共享 agent 的每次改动都要等负责人在收件箱里批准。",
+      "noOwnSkills": "这个 agent 还没有写过技能。",
+      "ownSkillVersion": "{name} · v{version}",
+      "deleteOwnSkill": "删除",
+      "deleteOwnSkillLabel": "删除技能 {name}",
+      "deleteOwnSkillTitle": "删除技能 {name}？",
+      "deleteOwnSkillHint": "agent 不再加载这个技能，针对它的待处理改动会一并取消。",
+      "ownSkillDeleted": "已删除技能 {name}。"
     },
     "params": {
       "default": "默认",
@@ -238,7 +285,68 @@
       "model": "模型"
     },
     "emptyHint": "新建一个 Agent，然后开始对话。",
-    "noOrgHint": "请在工作台或顶栏的组织菜单中选择组织。"
+    "noOrgHint": "请在工作台或顶栏的组织菜单中选择组织。",
+    "edit": "编辑"
+  },
+  "skills": {
+    "title": "技能",
+    "listLabel": "组织技能",
+    "empty": "还没有技能。",
+    "emptyHint": "技能是一组说明与文件，agent 在任务需要时加载。由管理员上传。",
+    "version": "v{version}",
+    "columns": {
+      "name": "名称",
+      "description": "描述",
+      "version": "版本",
+      "updated": "更新时间"
+    },
+    "upload": {
+      "title": "上传技能",
+      "layoutHint": "上传 .zip 文件：SKILL.md 放在根目录，或放在唯一的一个顶层文件夹里（例如从 GitHub 下载得到的 repo-main/）。上传已有名称的技能会新增一个版本。",
+      "limits": "上限：zip 文件 50 MB，单个文件 10 MB，解压后合计 50 MB。",
+      "choose": "选择 .zip 文件",
+      "chooseHint": "选择文件，或拖放到这里。",
+      "drop": "松开即上传 .zip 文件",
+      "uploading": "正在上传 {name}… {percent}%",
+      "created": "已添加技能 {name}。",
+      "versionCreated": "技能 {name} 已更新到版本 {version}。",
+      "notZip": "请选择 .zip 文件。",
+      "tooLarge": "zip 文件超过 50 MB。",
+      "cancel": "取消",
+      "cancelled": "已取消上传。",
+      "retry": "重试"
+    },
+    "detail": {
+      "tabsLabel": "技能分区",
+      "tabs": {
+        "content": "SKILL.md",
+        "files": "文件",
+        "versions": "版本"
+      },
+      "bodyUnavailable": "无法显示 SKILL.md 的内容（文件过大或暂时读不到）。",
+      "inspectorTitle": "详情",
+      "name": "名称",
+      "version": "版本",
+      "files": "文件数",
+      "updated": "更新时间",
+      "description": "描述",
+      "filesLabel": "当前版本的文件",
+      "versionsLabel": "版本",
+      "columns": {
+        "path": "路径",
+        "size": "大小",
+        "version": "版本",
+        "description": "描述",
+        "files": "文件数",
+        "created": "创建时间"
+      },
+      "retry": "重试",
+      "dangerTitle": "危险操作",
+      "delete": "删除技能",
+      "deleteTitle": "删除 {name}？",
+      "deleteHint": "agent 将不再加载这个技能。agent 定义里的引用会保留并显示为「已删除」，直到负责人移除。",
+      "deleted": "已删除技能 {name}。"
+    }
   },
   "chat": {
     "title": "对话",
@@ -271,7 +379,15 @@
       "failed": "暂时无法访问 {app}，请稍后重试。"
     },
     "timeline": "本轮步骤",
-    "thinkingLive": "思考中…"
+    "thinkingLive": "思考中…",
+    "files": "文件",
+    "addFiles": "添加文件",
+    "dropFiles": "松开以添加文件",
+    "filesLimit": "每条消息最多 {max} 个文件。",
+    "filesUnavailable": "文件上传不可用：部署没有配置对象存储。",
+    "filesOverBudget": "选中的文件合计超过单次请求的 {max}，发送后较早的文件会被省略。",
+    "fileTooLarge": "文件太大：图片最多 {image}，其他文件最多 {other}。",
+    "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。"
   },
   "ui": {
     "dangerDescription": "这个操作由插件执行，可能无法撤销。",
@@ -296,7 +412,20 @@
     "compactions": "压缩记录",
     "compactionCovers": "压缩到第 {seq} 条事件",
     "loadingOutput": "正在读取全部输出…",
-    "contributionsFailed": "插件面板加载失败，插件标签暂不可用。"
+    "contributionsFailed": "插件面板加载失败，插件标签暂不可用。",
+    "artifacts": "产物",
+    "artifactType": "类型",
+    "artifactSize": "大小",
+    "artifactCreated": "时间",
+    "download": "下载",
+    "previewTruncated": "只显示开头部分，完整内容请下载。",
+    "previewFailed": "预览加载失败。",
+    "sandbox": "沙箱",
+    "sandboxNone": "未创建",
+    "sandboxRunning": "运行中",
+    "sandboxSuspended": "已休眠",
+    "sandboxLastUsed": "最近使用",
+    "sandboxFailed": "状态读取失败"
   },
   "pluginPage": {
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
@@ -308,7 +437,8 @@
     "actions": "操作",
     "inbox": "收件箱",
     "apps": "应用",
-    "channels": "渠道"
+    "channels": "渠道",
+    "skills": "技能"
   },
   "shell": {
     "switchLocale": "切换到 {name}",
@@ -409,10 +539,10 @@
   },
   "inbox": {
     "title": "收件箱",
-    "listLabel": "待审批",
-    "empty": "没有待处理的审批。",
-    "emptyHint": "需要你批准的工具调用会出现在这里。",
-    "pick": "在左侧选择一条审批。",
+    "listLabel": "待处理事项",
+    "empty": "没有待处理的事项。",
+    "emptyHint": "需要你批准的工具调用，以及你负责的 agent 的技能变更，会出现在这里。",
+    "pick": "在左侧选择一项。",
     "pendingCount": "{n} 项待处理",
     "inspectorTitle": "详情",
     "conversation": "会话",
@@ -423,6 +553,30 @@
     "columns": {
       "request": "请求",
       "time": "时间"
+    },
+    "truncated": "只显示最新的事项，处理掉一些后可看到其余的。",
+    "skillChange": {
+      "label": "技能变更",
+      "title": "技能变更 · {name}",
+      "newSkill": "新技能",
+      "update": "版本 {from} → {to}",
+      "agent": "Agent",
+      "requester": "发起人",
+      "version": "版本",
+      "description": "描述",
+      "files": "文件",
+      "added": "新增",
+      "removed": "删除",
+      "modified": "修改",
+      "unchanged": "未变",
+      "contentUnavailable": "无法显示这个文件的内容。",
+      "diffLabel": "{path} 的改动",
+      "ownerHint": "批准后，改动对这个 agent 的所有对话生效；在此之前只有发起改动的对话能用。",
+      "selfHint": "这项改动是你在自己的对话里发起的。作为共享 agent 的负责人，你先在对话里确认工具调用，再在这里批准改动，这是有意的设计。",
+      "approve": "批准",
+      "reject": "拒绝",
+      "approved": "已批准技能变更",
+      "rejected": "已拒绝技能变更"
     }
   },
   "apps": {
@@ -734,6 +888,31 @@
       "title": "IM 语言",
       "description": "机器人在 IM 中发送的固定话术（绑定提示、错误提示）所用的语言；模型回复不翻译。",
       "label": "IM 语言"
+    },
+    "sandbox": {
+      "title": "沙箱工具",
+      "description": "agent 使用沙箱（执行命令、写文件、交付文件）时的默认策略；只读的 sandbox_read / sandbox_glob / sandbox_grep 始终直接执行。",
+      "allow": "直接执行",
+      "allowHint": "沙箱工具无需审批（默认）。",
+      "ask": "需要审批",
+      "askHint": "除只读工具外，每次调用都要用户批准。"
+    },
+    "egress": {
+      "title": "沙箱网络",
+      "description": "沙箱里的命令能访问哪些主机。白名单能挡住内网，但挡不住把数据发到允许的主机（例如 git push 到 github.com）；敏感组织请选「不联网」。",
+      "default": "跟随部署默认",
+      "defaultHint": {
+        "allowlist": "部署设置的白名单（{count} 个主机）。",
+        "none": "部署已禁止沙箱联网。",
+        "open": "部署允许任意出站网络。"
+      },
+      "allowlist": "自定义白名单",
+      "allowlistHint": "只放行下面的主机，替换部署的清单。",
+      "none": "不联网",
+      "noneHint": "沙箱只能访问自身（回环）。",
+      "hosts": "允许的主机",
+      "hostsHelp": "每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称；最多 200 个。",
+      "newOnly": "改动只对之后新建的沙箱生效；已有的沙箱沿用原来的网络设置，直到被销毁。"
     }
   },
   "schemaForm": {

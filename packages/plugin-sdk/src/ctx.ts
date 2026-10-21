@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 import type { CapabilityRef } from "./capability.js";
+import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
 
@@ -14,6 +15,44 @@ export interface Logger {
 export interface Lease {
   renew(): Promise<boolean>;
   release(): Promise<void>;
+}
+
+/**
+ * 插件的对象存储（`ctx.storage`，需 `permissions.storage`）：与 `ObjectStore` 同形，但每个方法的第一个参数是
+ * `orgId`，键与前缀由内核自动加上 `plugins/<插件名>/<orgId>/`——插件只能看到自己在该组织下的对象。
+ * 底层是部署配置的 `object-store@1` 提供方；没有提供方时各方法抛错。
+ */
+export interface PluginStorage {
+  put(
+    orgId: string,
+    key: string,
+    body: Uint8Array | ReadableStream<Uint8Array>,
+    opts: { contentType: string; size?: number; signal?: AbortSignal },
+  ): Promise<ObjectHead>;
+  /**
+   * 不存在返回 null。`range` 为闭区间字节范围，缺省 `end` 表示读到末尾。
+   * 带 `range` 时 `head.size` 仍是整个对象的大小；存储忽略 Range 时 body 可能是整个对象。
+   */
+  get(
+    orgId: string,
+    key: string,
+    opts?: { signal?: AbortSignal; range?: { start: number; end?: number } },
+  ): Promise<{ head: ObjectHead; body: ReadableStream<Uint8Array> } | null>;
+  head(orgId: string, key: string): Promise<ObjectHead | null>;
+  /** 不存在也算成功。 */
+  delete(orgId: string, key: string): Promise<void>;
+  deletePrefix(orgId: string, prefix: string): Promise<number>;
+  list(
+    orgId: string,
+    prefix: string,
+    opts?: { cursor?: string; limit?: number },
+  ): Promise<{ items: ObjectHead[]; cursor?: string }>;
+  presignGet(orgId: string, key: string, opts: PresignGetOptions): Promise<string>;
+  presignPut(
+    orgId: string,
+    key: string,
+    opts: { contentType: string; maxSize: number; ttlSeconds: number },
+  ): Promise<PresignedUpload>;
 }
 
 /** 传给插件 `setup` 的上下文。不提供定时器与进程内共享状态；kv 写入必须带 TTL。 */
@@ -43,6 +82,8 @@ export interface PluginContext {
     get(orgId: string, key: string): Promise<string | null>;
     set(orgId: string, key: string, value: string): Promise<void>;
   };
+  /** 对象存储（需 `permissions.storage`，见 {@link PluginStorage}）。 */
+  storage: PluginStorage;
   /** 已切到本插件 schema（withSchema）的 Kysely 实例。 */
   // biome-ignore lint/suspicious/noExplicitAny: 插件自带表结构，内核无法静态得知
   db: Kysely<any>;

@@ -2,10 +2,12 @@
 
 import { Badge, KeyValue, Stack, Text } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { listApps } from "../../lib/apps";
+import { getSandboxStatus } from "../../lib/artifacts";
 import type { ConversationEvent, ModelRef } from "../../lib/conversations";
 import { useLoad } from "../../lib/use-load";
+import { formatTime } from "../ApprovalCard";
 
 type Usage = Extract<ConversationEvent, { type: "usage" }>["payload"];
 
@@ -59,9 +61,29 @@ function appsUsed(events: ConversationEvent[], nameOfSlug: Map<string, string>):
   return out;
 }
 
+/** 沙箱工具的调用结果数：变了就重新读沙箱状态（首次使用会创建，之后更新最近使用时间）。 */
+const sandboxUses = (events: ConversationEvent[]): number =>
+  events.filter((e) => e.type === "tool_result" && e.payload.toolKey.startsWith("sandbox_")).length;
+
+/**
+ * 对话沙箱的状态（`GET .../conversations/:id/sandbox`）：未创建 / 运行中 / 已休眠与最近使用时间。
+ * 本对话又用了沙箱工具时重读（保留上一次的数据，不闪回加载中）。
+ */
+function useSandboxStatus(orgId: string, conversationId: string, uses: number) {
+  const s = useLoad(() => getSandboxStatus(orgId, conversationId), [orgId, conversationId]);
+  const { reload } = s;
+  const seen = useRef(uses);
+  useEffect(() => {
+    if (uses === seen.current) return;
+    seen.current = uses;
+    reload();
+  }, [uses, reload]);
+  return s.state;
+}
+
 /**
  * 上下文标签：最近一次 `usage` 的 token 数对模型的上下文窗口（模型没有声明窗口时只显示 token 数）、
- * agent / 模型 / 会话、本对话用到的应用、压缩记录（`compaction_summary`）。
+ * agent / 模型 / 会话、沙箱状态、本对话用到的应用、压缩记录（`compaction_summary`）。
  */
 export function ContextTab({
   orgId,
@@ -84,6 +106,21 @@ export function ContextTab({
       new Map(apps.state.kind === "ready" ? apps.state.data.apps.map((a) => [a.slug, a.name]) : []),
     [apps.state],
   );
+  const sandbox = useSandboxStatus(orgId, conversationId, sandboxUses(events));
+  const sandboxRows: { k: string; v: string }[] =
+    sandbox.kind === "loading"
+      ? [{ k: t("sandbox"), v: "—" }]
+      : sandbox.kind === "error"
+        ? [{ k: t("sandbox"), v: t("sandboxFailed") }]
+        : sandbox.data === null
+          ? [{ k: t("sandbox"), v: t("sandboxNone") }]
+          : [
+              {
+                k: t("sandbox"),
+                v: t(sandbox.data.status === "running" ? "sandboxRunning" : "sandboxSuspended"),
+              },
+              { k: t("sandboxLastUsed"), v: formatTime(sandbox.data.lastUsedAt, locale) },
+            ];
   const fmt = new Intl.NumberFormat(locale === "zh" ? "zh-CN" : "en-US");
   const model = latestModel(events);
   const usage = latestUsage(events);
@@ -121,6 +158,7 @@ export function ContextTab({
             { k: t("model"), v: model === null ? "—" : `${model.provider}/${model.model}` },
             { k: t("conversation"), v: conversationId },
             { k: t("tokens"), v: tokens },
+            ...sandboxRows,
           ]}
         />
         {windowUnknown && (

@@ -1,0 +1,6 @@
+-- M5 T14：按会话取最新一份技能目录快照（skills_catalog，Ruling M17）。每次运行开始与每步工具执行都要查，
+-- 部分索引让查询不必倒序扫完整个会话的事件。
+-- 不用 CONCURRENTLY：与其他迁移的写法一致（发布前没有需要在线建索引的大表）。
+CREATE INDEX IF NOT EXISTS conversation_events_skills_catalog_idx
+  ON conversation_events (conversation_id, seq)
+  WHERE type = 'skills_catalog';

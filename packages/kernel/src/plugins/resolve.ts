@@ -1,6 +1,7 @@
 import {
   CAPABILITY_CARDINALITY,
   type CapabilityRef,
+  OBJECT_STORE_CAPABILITY,
   type PluginManifest,
   parseCapability,
 } from "@capybara-hq/plugin-sdk";
@@ -17,6 +18,8 @@ export class PluginResolveError extends Error {
 /**
  * 校验 sdk 范围、依赖满足度、单选能力唯一性与无环，返回按依赖拓扑排序后的列表（同层保持输入顺序）。
  * `requires` 缺提供方报错；`optional` 缺提供方不报错，但存在的提供方与 `requires` 一样参与排序与环检测。
+ * 声明了 `permissions.storage` 的插件隐含依赖 `object-store@1`（中转能力，不能 `requires`）：提供方排在它前面；
+ * 缺提供方不在这里报错，由权限闸门把它列为 pending（见 approvals.ts）。
  */
 export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string): PluginManifest[] {
   const seen = new Set<string>();
@@ -63,6 +66,9 @@ export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string):
     visiting.push(m.name);
     for (const cap of [...(m.requires ?? []), ...(m.optional ?? [])]) {
       for (const p of providers.get(cap) ?? []) visit(p);
+    }
+    if (m.permissions?.storage) {
+      for (const p of providers.get(OBJECT_STORE_CAPABILITY) ?? []) if (p !== m) visit(p);
     }
     visiting.pop();
     done.add(m.name);

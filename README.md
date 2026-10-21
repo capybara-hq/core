@@ -8,7 +8,7 @@
 
 ```bash
 pnpm install
-docker compose -f docker/compose.dev.yaml up -d      # postgres:5432 + valkey:6379
+docker compose -f docker/compose.dev.yaml up -d      # postgres:5432 + valkey:6379 + seaweedfs（S3 API 8333）
 
 export CAPYBARA_DB__URL=postgres://capybara:capybara@localhost:5432/capybara
 export CAPYBARA_REDIS__URL=redis://localhost:6379
@@ -107,7 +107,7 @@ export CAPYBARA_PLUGINS='["@capybara-hq/plugin-openai-compatible"]'
 export CAPYBARA_PLUGIN_CONFIG='{"openai-compatible":{"endpoints":[{"name":"deepseek","baseUrl":"https://api.deepseek.com","dialect":"deepseek","models":[{"id":"deepseek-flash","contextWindow":1048576,"maxOutputTokens":393216,"reasoning":true}]}],"apiKeys":{"deepseek":"sk-..."}}}'
 ```
 
-- `endpoints`（至少一个）：`name`（端点名，不含 `/`）、`baseUrl`、`dialect`（`generic` / `deepseek` / `qwen` / `ark`；方舟 baseUrl 为 `https://ark.cn-beijing.volces.com/api/v3`）、`models`（至少一个：`id`、`contextWindow`、`maxOutputTokens`，可选 `reasoning`、`vision`、`caching`、`streamIdleTimeoutMs`）；可选 `midConversationSystem`（覆盖方言默认）。对外模型 id 为 `<端点名>/<模型 id>`，如 `deepseek/deepseek-flash`。上例的 `contextWindow` / `maxOutputTokens` 取自 DeepSeek `GET /models` 对 `deepseek-flash` 的返回；其他模型以其官方返回为准。
+- `endpoints`（至少一个）：`name`（端点名，不含 `/`）、`baseUrl`、`dialect`（`generic` / `deepseek` / `qwen` / `ark`；方舟 baseUrl 为 `https://ark.cn-beijing.volces.com/api/v3`）、`models`（至少一个：`id`、`contextWindow`、`maxOutputTokens`，可选 `reasoning`、`vision`、`documents`（收 PDF；只有 generic、qwen 方言可开启）、`caching`、`streamIdleTimeoutMs`）；可选 `midConversationSystem`（覆盖方言默认）。对外模型 id 为 `<端点名>/<模型 id>`，如 `deepseek/deepseek-flash`。上例的 `contextWindow` / `maxOutputTokens` 取自 DeepSeek `GET /models` 对 `deepseek-flash` 的返回；其他模型以其官方返回为准。
 - `apiKeys`：端点名 → 密钥，是**顶层**的密钥字段（密钥不能放进 `endpoints[]` 数组元素里）；键必须是已配置的端点名，无密钥的端点（如内网 vLLM）不填。
 - 方言：`deepseek` 提供 `thinking`（`on|off`，默认 `on`）与 `effort`（`low|high|max`，默认 `high`），思考内容经 `reasoning_content` 读取并按 DeepSeek 的规则回传；`qwen` 提供 `thinking`（映射为 `enable_thinking`）；`ark` 提供 `thinking`（映射为 `thinking.type`，无默认值，不回传思考）；`generic` 只提供 `temperature` 与 `maxOutputTokens`。所有方言都声明 `temperature` 与 `maxOutputTokens`；思考相关参数只对配置了 `reasoning: true` 的模型声明。`reasoning` 不写时为 `false`：`deepseek` 方言下这类模型的请求总是发 `thinking: { type: "disabled" }`（DeepSeek 默认开启思考），所以 DeepSeek 的推理模型要显式写 `"reasoning": true`。
 - 当前 DeepSeek 模型为 `deepseek-flash` 与 `deepseek-v4-pro`，`deepseek-reasoner` 已下线。
@@ -134,7 +134,7 @@ export CAPYBARA_PLUGIN_CONFIG='{"openai":{"apiKey":"sk-...","models":[{"id":"gpt
 ```
 
 - `apiKey`（必填，密钥字段）；`baseUrl`、`organization`（可选）。
-- `models`（至少一个）：`id`、`contextWindow`、`maxOutputTokens`、`reasoning`、`vision`，可选 `streamIdleTimeoutMs`（推理模型长时间无输出时的看门狗阈值）、`effortLevels`（该模型接受的 effort 档位，取自 `low|medium|high|xhigh|max`，按给定顺序声明；未给时为 `low|medium|high`，所有推理模型都接受；档位因模型而异，例如 gpt-5-nano 不接受 `max`）。
+- `models`（至少一个）：`id`、`contextWindow`、`maxOutputTokens`、`reasoning`、`vision`，可选 `documents`（是否收 PDF，缺省 false）、`streamIdleTimeoutMs`（推理模型长时间无输出时的看门狗阈值）、`effortLevels`（该模型接受的 effort 档位，取自 `low|medium|high|xhigh|max`，按给定顺序声明；未给时为 `low|medium|high`，所有推理模型都接受；档位因模型而异，例如 gpt-5-nano 不接受 `max`）。
 - `reasoningSummary`：`auto`（默认）请求推理摘要，agent 可用 thinking 参数关闭；未完成组织验证的账号请求摘要会被拒绝，此时设 `off`，模型也不再声明 thinking 参数。
 - 以 `store: false` 调用，推理项以加密内容原样回放；SDK 同样不做重试。
 
@@ -269,6 +269,107 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 - **嵌入应用**：插件自己的页面放进沙箱 iframe，用来做看板、工作流这类复杂交互。页面经同源代理 `/plugin-ui/<插件>/...` 加载，读不到会话 Cookie，只拿到一个只对这个插件有效、5 分钟过期的令牌。嵌入应用在 `capybara plugins review` 里标为 `(sensitive)`，必须批准后才加载。参考 `plugins/example-board`：加进 `CAPYBARA_PLUGINS` 并在组织启用后，从顶栏「扩展」菜单打开组织看板，对话里会多一个「看板」标签。
 
 写插件界面见 [skills/writing-plugin-ui](skills/writing-plugin-ui/SKILL.md)。
+
+### 对象存储（附件、产物、技能文件）
+
+对象存储由 `object-store@1` 插件提供，默认实现 `@capybara-hq/plugin-object-store-s3`（官方 `@aws-sdk/client-s3`）：AWS S3、MinIO、Ceph、SeaweedFS，以及提供 S3 兼容接口的阿里云 OSS、火山引擎 TOS 都能用。一个部署一个桶；插件经 `ctx.storage` 读写，键自动加前缀 `plugins/<插件>/<组织 id>/`（内核自己用 `kernel/<组织 id>/`），互相看不到。大文件由浏览器经预签名 URL 直传、直接下载，不经内核中转；上传大小由存储端按策略限制。
+
+本地的 `docker/compose.dev.yaml` 自带官方 SeaweedFS 镜像（`chrislusf/seaweedfs`，按标签加摘要固定）：S3 API 在 `localhost:8333`，凭据 `capybara` / `capybara-secret`，filer 的文件浏览页在 <http://localhost:8888>。一次性容器 `createbuckets` 建好桶 `capybara`。测试用同一个镜像（`startTestS3()`），可用 `CAPYBARA_TEST_S3_IMAGE` 换成私有镜像源。启用：
+
+```bash
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-object-store-s3"]'
+export CAPYBARA_PLUGIN_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:8333","region":"us-east-1","bucket":"capybara","accessKeyId":"capybara","secretAccessKey":"capybara-secret","forcePathStyle":true}}'
+# 或逐字段：CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__SECRET_ACCESS_KEY=...
+```
+
+| 字段 | 说明 |
+|---|---|
+| `endpoint` | S3 兼容服务的地址；用 AWS S3 时不填（按 `region` 取端点） |
+| `region` | 区域；SeaweedFS、MinIO 填 `us-east-1` |
+| `bucket` | 桶名（须事先建好） |
+| `accessKeyId` / `secretAccessKey` | 凭据（密钥字段，加密存储、日志打码） |
+| `forcePathStyle` | 路径风格访问（`<endpoint>/<bucket>/<key>`），SeaweedFS、MinIO、Ceph 一般要开；默认 `false` |
+| `publicEndpoint` | 浏览器可达的地址，预签名 URL 用它签名；内核走内网 `endpoint`、浏览器走公网域名时填写 |
+
+浏览器直传与直接下载时，桶要允许网页来源的跨域请求（CORS：`GET`、`POST`、`PUT` 与 `Content-Type` 等请求头）。`AllowedOrigins` 填网页的来源（协议 + 域名 + 端口）。
+
+AWS S3（控制台「权限 → 跨源资源共享 (CORS)」里粘贴）：
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://capybara.example.com"],
+    "AllowedMethods": ["GET", "POST", "PUT"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+MinIO、Ceph 等支持 `PutBucketCors` 的 S3 兼容存储，用 AWS CLI 指向自己的端点（`aws s3api put-bucket-cors --endpoint-url http://minio:9000 --bucket capybara --cors-configuration file://cors.json`）：
+
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://capybara.example.com"],
+      "AllowedMethods": ["GET", "POST", "PUT"],
+      "AllowedHeaders": ["*"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}
+```
+
+不支持按桶配置 CORS 的旧版 MinIO 用环境变量 `MINIO_API_CORS_ALLOW_ORIGIN` 设置允许的来源。SeaweedFS 默认允许跨域请求，开发编排与测试不需要另配。
+
+没装对象存储插件时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。组织还在时，技能的对象不随删除而清理：被删除（软删除）的技能、技能的旧版本、已删除 agent 的 agent 级技能，文件都留在对象存储里，直到组织被删除后的这次清理（日志里的技能目录快照与已加载的版本仍引用它们）。
+
+**附件与图片 / PDF 输入**：装了对象存储后，对话输入框可以加附件（默认单个 ≤ 20MB、每条消息 ≤ 10 个，类型限 PNG / JPEG / GIF / WebP、PDF 与纯文本 / Markdown / CSV，见 `docs/config.md` 的 `attachments.*`）。模型声明支持图片（`vision`）或文档（`documents`）时收到原文件，不支持时只收到英文文字占位，字节绝不发给不支持的模型；事件日志只记附件引用。单次请求的媒体总量由 `attachments.requestMediaBytes` 限制，超出时较早的附件换成占位。写存储插件见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)。
+
+### 对话沙箱（Docker）
+
+沙箱由 `sandbox@1` 插件提供，Docker 实现是 `@capybara-hq/plugin-sandbox-docker`：每个对话一个容器（runc 或 gVisor 的 runsc），文件在卷上，空闲时休眠、长期不用时销毁；出站默认按白名单经代理放行。插件只经 socket 代理（`docker/sandbox-proxy`）访问 Docker，自己不挂 `docker.sock`。本地：
+
+```bash
+docker compose -f docker/compose.dev.yaml --profile sandbox up -d   # 构建沙箱与出站代理镜像，起 socket 代理（127.0.0.1:2375）
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-sandbox-docker"]'
+export CAPYBARA_PLUGIN_CONFIG='{"sandbox-docker":{"endpoint":"tcp://127.0.0.1:2375"}}'
+```
+
+生产部署：
+
+- **镜像**：`docker build -t capybara-sandbox:latest plugins/sandbox-docker/image`（标签与内核配置 `sandbox.image` 的默认值一致）、`docker build -t capybara-sandbox-egress:latest plugins/sandbox-docker/egress-proxy`，推到自己的仓库后在**每个 Docker 节点上预先拉好**（不在本地时第一次用沙箱才拉，可能拖过那次工具调用的时限）。要 gVisor 时先在守护进程里登记 `runsc`，插件配置加 `"runtime":"runsc"`。
+- **socket 代理的位置**：能访问代理就几乎能控制 Docker。`127.0.0.1:2375` 只供本机开发；生产环境**绝不要把它发布到宿主机的任何地址上（包括 127.0.0.1）**，只放在内核所在的内部网络里（`endpoint` 填 `tcp://sandbox-proxy:2375`），沙箱不接那个网络。
+- **出站**：`sandbox.limits.egress` 默认 `allowlist`，只放行 `sandbox.limits.allowHosts`（预置 npm、PyPI 与 GitHub 的克隆、归档、raw 与 release 下载地址；不预置 Debian 源：沙箱用户没有 sudo，装不了 apt 包，系统包请装进镜像），代理按解析后的 IP 拒绝内网与云元数据地址；`none` 断网；`open` 须显式打开插件配置 `allowOpenEgress`（默认关），只在可信环境用。组织管理员可在组织设置里改本组织的沙箱网络（`sandboxEgress`）：换一份白名单（替换部署的清单）或断网，但不能比部署放得更开（没有 `open`，部署为 `none` 时只能选 `none`）。改出站与资源限制只影响之后新建的沙箱。默认的 local 卷驱动不限 `diskMb`。
+- **长命令要放宽运行时限**：单条命令最长 `sandbox.limits.maxCommandSeconds`（默认 7200 秒），但命令也会在所属运行快到 `runtime.maxRunSeconds`（默认 900 秒）前被停掉（结果告诉模型是运行时限所致）。agent 要跑长命令时把 `runtime.maxRunSeconds` 调到不小于 `maxCommandSeconds`；不满足时内核启动会打 warn。
+
+给 agent 加内置工具 `sandbox_bash` / `sandbox_read` / `sandbox_write` / `sandbox_edit` / `sandbox_glob` / `sandbox_grep` / `sandbox_deliver` 后就能用（默认不带）。沙箱工具默认直接执行。**沙箱隔离的是宿主机与内网，不是数据**：出站白名单挡得住内网与云元数据地址，挡不住把数据发到白名单里的主机（例如 `git push` 到 github.com、往 npm 发包）；对话里的附件与 agent 能读到的数据都可能这样流出。处理敏感数据的组织，管理员应在组织设置里把 `sandboxToolPolicy` 改成 `ask`（写、执行、交付需要审批），和 / 或把沙箱网络（`sandboxEgress`）设为不联网。附件自动放进 `/workspace/attachments/`，`sandbox_deliver` 交付的文件出现在对话页右侧的「产物」标签。空闲 10 分钟休眠（文件保留）、7 天不用销毁，见 `docs/config.md` 的 `sandbox.*`。配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)；写沙箱插件见 [skills/writing-sandbox-providers](skills/writing-sandbox-providers/SKILL.md)。
+
+### 对话沙箱（E2B）
+
+另一个实现是 `@capybara-hq/plugin-sandbox-e2b`（与 Docker 二选一）：每个对话一个 E2B 沙箱（E2B 云或自托管），休眠用 E2B 的 pause、恢复用 connect，到点自动暂停而不删除；出站白名单映射到 E2B 的 `allowOut` / `denyOut`（按域名只管 80 / 443 端口）。模板由同一份 `plugins/sandbox-docker/image/Dockerfile` 构建：
+
+```bash
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-sandbox-e2b"]'
+export CAPYBARA_PLUGIN_CONFIG='{"sandbox-e2b":{"apiKey":"e2b_…","template":"capybara-sandbox"}}'
+```
+
+- **模板**：用 E2B 的 Template SDK 从 Dockerfile 构建（`Template().fromDockerfile(...)`，`cpuCount: 1`、`memoryMB: 2048` 与内核默认值一致），把模板名填进 `template`；改了 Dockerfile 要重建模板。E2B 的 CPU、内存、磁盘由模板决定，`sandbox.limits` 的这三项对它不生效，内核配置 `sandbox.image` 也不用。
+- **出站比 Docker 弱**：E2B 的域名白名单只看 80 端口的 Host 头与 443 端口的 SNI，不核对目的 IP，沙箱可能借白名单里的域名连到任意地址；用了白名单时 E2B 还会放行到 8.8.8.8 的 DNS。对出站要求严的部署用 Docker。自托管 E2B 的内网与云元数据地址要在 E2B 的网络层自己挡掉；不支持域名白名单的版本设 `domainAllowlist: false`（`allowlist` 退化为 `none`）。
+- Hobby 套餐的沙箱超时最多 1 小时，要把 `sandbox.limits.maxCommandSeconds` 调到 3480 以下。
+
+模板构建步骤、自托管（`apiUrl` / `domain`）、出站与资源限制的局限见 [plugins/sandbox-e2b/README.md](plugins/sandbox-e2b/README.md)。
+
+### 技能
+
+技能兼容 Anthropic Agent Skills 格式：一个目录，根下是带 `name` / `description` frontmatter 的 `SKILL.md`，可以附脚本与其他文件。元数据在 PG，文件在对象存储（所以要先装对象存储插件）。
+
+- **技能库**（顶栏「技能」）：组织管理员上传 zip（≤ 50MB，单个文件 ≤ 10MB，解压后合计 ≤ 50MB；`SKILL.md` 放在根目录或唯一的顶层文件夹里），同名再传生成新版本；成员可以浏览。编辑 agent 时在「技能」分组里勾选要用的组织技能。
+- **运行时**：对话开始一次运行时，内核把这个 agent 可用的技能清单（名字 + 描述）写进对话日志并告诉模型；模型用内置工具 `skill_load` 按名字读取正文。带脚本的技能会复制进沙箱的 `/skills/<name>/`（只读，用 `sh` / `python3` 运行），agent 需要有沙箱工具。技能有变化时，模型在**下一次运行开始**时收到提醒。
+- **agent 自己写技能**：给 agent 加内置工具 `skill_write`（默认不带）。私有 agent 写的立即生效；共享 agent 写技能时先由发起人在对话里确认这次工具调用，再进入 agent 负责人的「收件箱」等批准，批准前只有发起改动的那个对话能试用，批准后所有对话在下一次运行时用上新版本。负责人可以在 agent 编辑页删除 agent 自写的技能。
 
 ## 运维须知
 

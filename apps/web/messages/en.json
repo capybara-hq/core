@@ -91,7 +91,8 @@
       "login_taken": "This username is already taken."
     },
     "org": {
-      "not_found": "The organization does not exist or you are no longer a member."
+      "not_found": "The organization does not exist or you are no longer a member.",
+      "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -99,11 +100,14 @@
     },
     "agent": {
       "not_found": "The agent does not exist or you cannot access it.",
-      "model_unavailable": "The selected model is unavailable."
+      "model_unavailable": "The selected model is unavailable.",
+      "version_conflict": "Someone else saved this agent while you were editing it. Reload the page and apply your changes again."
     },
     "conversation": {
       "not_found": "The conversation does not exist or you cannot access it.",
-      "output_not_found": "The full output has expired or doesn't exist."
+      "output_not_found": "The full output has expired or doesn't exist.",
+      "artifact_not_found": "The file does not exist or has been removed.",
+      "artifact_not_previewable": "This file can't be previewed."
     },
     "run": {
       "not_active": "There is no reply in progress."
@@ -159,6 +163,31 @@
     },
     "member": {
       "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed."
+    },
+    "attachment": {
+      "too_large": "The file is larger than the size limit for one attachment.",
+      "type_not_allowed": "This file type is not supported.",
+      "not_ready": "The file has not finished uploading. Wait a moment, then send.",
+      "not_found": "The file does not exist or has expired. Upload it again.",
+      "too_many_pending": "Too many uploads are unfinished. Wait for them to finish or remove some, then add more.",
+      "upload_failed": "The upload failed. Check your connection, then remove the file and add it again."
+    },
+    "storage": {
+      "unavailable": "File storage is unavailable. Try again later or contact your administrator."
+    },
+    "sandbox": {
+      "not_found": "This conversation has no sandbox yet.",
+      "unavailable": "No sandbox is available in this deployment.",
+      "busy": "The sandbox is busy; try again shortly."
+    },
+    "skill": {
+      "not_found": "The skill does not exist or has been deleted.",
+      "invalid_package": "The skill package is invalid:"
+    },
+    "skill_change": {
+      "not_found": "The skill change does not exist or you cannot see it.",
+      "not_owner": "Only the agent's owner can approve or reject its skill changes.",
+      "already_decided": "This skill change has already been handled."
     }
   },
   "agents": {
@@ -179,7 +208,8 @@
       "visibilityLabel": "Visibility",
       "visibility": {
         "private": "Only me",
-        "org": "Everyone in the organization"
+        "org": "Everyone in the organization",
+        "members": "Selected members"
       },
       "submit": "Save",
       "noModels": "No models are available. Install and configure a model provider plugin first.",
@@ -199,7 +229,8 @@
       "builtinLabel": "Built-in tools",
       "builtin": {
         "ask_user": "Ask the user (ask_user)",
-        "read_tool_output": "Read archived tool output (read_tool_output)"
+        "read_tool_output": "Read archived tool output (read_tool_output)",
+        "skill_write": "Write skills (skill_write)"
       },
       "appsLabel": "Apps",
       "appTools": "All tools of {name}",
@@ -209,7 +240,23 @@
         "default": "Default",
         "ask": "Ask for approval",
         "deny": "Deny"
-      }
+      },
+      "editTitle": "Edit agent",
+      "skillsSection": "Skills",
+      "skillsSectionHint": "Skills the agent can load when a task needs them.",
+      "orgSkillsLabel": "Organization skills",
+      "noOrgSkills": "The organization has no skills yet.",
+      "deletedSkill": "Deleted skill ({id})",
+      "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",
+      "ownSkillsLabel": "Skills written by this agent",
+      "ownSkillsHint": "The agent writes these with skill_write. On a shared agent, each change waits for the owner's approval in the inbox.",
+      "noOwnSkills": "This agent has not written any skills.",
+      "ownSkillVersion": "{name} · v{version}",
+      "deleteOwnSkill": "Delete",
+      "deleteOwnSkillLabel": "Delete skill {name}",
+      "deleteOwnSkillTitle": "Delete skill {name}?",
+      "deleteOwnSkillHint": "The agent stops loading this skill, and pending changes to it are cancelled.",
+      "ownSkillDeleted": "Skill {name} deleted."
     },
     "params": {
       "default": "Default",
@@ -238,7 +285,68 @@
       "model": "Model"
     },
     "emptyHint": "Create an agent, then start a conversation.",
-    "noOrgHint": "Pick one on the home page or from the organization menu in the top bar."
+    "noOrgHint": "Pick one on the home page or from the organization menu in the top bar.",
+    "edit": "Edit"
+  },
+  "skills": {
+    "title": "Skills",
+    "listLabel": "Organization skills",
+    "empty": "No skills yet.",
+    "emptyHint": "Skills are packages of instructions and files that agents load when a task needs them. Admins upload them.",
+    "version": "v{version}",
+    "columns": {
+      "name": "Name",
+      "description": "Description",
+      "version": "Version",
+      "updated": "Updated"
+    },
+    "upload": {
+      "title": "Upload a skill",
+      "layoutHint": "Upload a .zip file with SKILL.md at the root, or inside a single top-level folder (such as repo-main/ from a GitHub download). Uploading a skill whose name already exists adds a new version.",
+      "limits": "Limits: the zip file up to 50 MB, each file up to 10 MB, and 50 MB in total after unzipping.",
+      "choose": "Choose a .zip file",
+      "chooseHint": "Choose a file, or drop it here.",
+      "drop": "Drop the .zip file to upload",
+      "uploading": "Uploading {name}… {percent}%",
+      "created": "Skill {name} added.",
+      "versionCreated": "Skill {name} updated to version {version}.",
+      "notZip": "Choose a .zip file.",
+      "tooLarge": "The zip file is larger than 50 MB.",
+      "cancel": "Cancel",
+      "cancelled": "Upload cancelled.",
+      "retry": "Retry"
+    },
+    "detail": {
+      "tabsLabel": "Skill sections",
+      "tabs": {
+        "content": "SKILL.md",
+        "files": "Files",
+        "versions": "Versions"
+      },
+      "bodyUnavailable": "The SKILL.md text cannot be shown (it is too large or unavailable).",
+      "inspectorTitle": "Details",
+      "name": "Name",
+      "version": "Version",
+      "files": "Files",
+      "updated": "Updated",
+      "description": "Description",
+      "filesLabel": "Files of the current version",
+      "versionsLabel": "Versions",
+      "columns": {
+        "path": "Path",
+        "size": "Size",
+        "version": "Version",
+        "description": "Description",
+        "files": "Files",
+        "created": "Created"
+      },
+      "retry": "Retry",
+      "dangerTitle": "Danger zone",
+      "delete": "Delete skill",
+      "deleteTitle": "Delete {name}?",
+      "deleteHint": "Agents stop loading this skill. Agent definitions keep the reference, which shows as deleted until their owners remove it.",
+      "deleted": "Skill {name} deleted."
+    }
   },
   "chat": {
     "title": "Chat",
@@ -271,7 +379,15 @@
       "failed": "Could not reach {app}. Try again later."
     },
     "timeline": "Steps",
-    "thinkingLive": "Thinking…"
+    "thinkingLive": "Thinking…",
+    "files": "Files",
+    "addFiles": "Add files",
+    "dropFiles": "Drop to add files",
+    "filesLimit": "At most {max} files per message.",
+    "filesUnavailable": "File uploads are unavailable: no object storage is configured.",
+    "filesOverBudget": "The selected files add up to more than {max} for one request. Older files will be left out when sending.",
+    "fileTooLarge": "The file is too large: images up to {image}, other files up to {other}.",
+    "fileTypeNotAllowed": "This file type is not supported. Supported: {types}."
   },
   "ui": {
     "dangerDescription": "The plugin performs this action. It may not be reversible.",
@@ -296,7 +412,20 @@
     "compactions": "Compactions",
     "compactionCovers": "Compacted up to event #{seq}",
     "loadingOutput": "Loading full output…",
-    "contributionsFailed": "Couldn't load plugin panels; plugin tabs are unavailable."
+    "contributionsFailed": "Couldn't load plugin panels; plugin tabs are unavailable.",
+    "artifacts": "Artifacts",
+    "artifactType": "Type",
+    "artifactSize": "Size",
+    "artifactCreated": "Created",
+    "download": "Download",
+    "previewTruncated": "Showing the beginning only; download for the full file.",
+    "previewFailed": "Preview failed to load.",
+    "sandbox": "Sandbox",
+    "sandboxNone": "Not created",
+    "sandboxRunning": "Running",
+    "sandboxSuspended": "Suspended",
+    "sandboxLastUsed": "Last used",
+    "sandboxFailed": "Status unavailable"
   },
   "pluginPage": {
     "liveLost": "Live updates stopped. Reload the page for the latest content."
@@ -308,7 +437,8 @@
     "actions": "Actions",
     "inbox": "Inbox",
     "apps": "Apps",
-    "channels": "Channels"
+    "channels": "Channels",
+    "skills": "Skills"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -409,10 +539,10 @@
   },
   "inbox": {
     "title": "Inbox",
-    "listLabel": "Pending approvals",
-    "empty": "Nothing to approve.",
-    "emptyHint": "Tool calls that need your approval show up here.",
-    "pick": "Select an approval on the left.",
+    "listLabel": "Pending items",
+    "empty": "Nothing to handle.",
+    "emptyHint": "Tool calls that need your approval, and skill changes on agents you own, show up here.",
+    "pick": "Select an item on the left.",
     "pendingCount": "{n} pending",
     "inspectorTitle": "Details",
     "conversation": "Conversation",
@@ -423,6 +553,30 @@
     "columns": {
       "request": "Request",
       "time": "Requested"
+    },
+    "truncated": "Only the newest items are shown. Handle some to see the rest.",
+    "skillChange": {
+      "label": "Skill change",
+      "title": "Skill change · {name}",
+      "newSkill": "New skill",
+      "update": "Version {from} → {to}",
+      "agent": "Agent",
+      "requester": "Requested by",
+      "version": "Version",
+      "description": "Description",
+      "files": "Files",
+      "added": "added",
+      "removed": "removed",
+      "modified": "modified",
+      "unchanged": "unchanged",
+      "contentUnavailable": "The content of this file cannot be shown.",
+      "diffLabel": "Changes in {path}",
+      "ownerHint": "After you approve, the change applies to every conversation with this agent. Until then, only the conversation that requested it can use it.",
+      "selfHint": "You requested this change in your own conversation. As the owner of a shared agent, you confirm the tool call there and then approve the change here. That is by design.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approved": "Skill change approved",
+      "rejected": "Skill change rejected"
     }
   },
   "apps": {
@@ -734,6 +888,31 @@
       "title": "IM language",
       "description": "Language of the fixed messages the bot sends in IM (link prompts, errors). Model replies are not translated.",
       "label": "IM language"
+    },
+    "sandbox": {
+      "title": "Sandbox tools",
+      "description": "Default policy when agents use the sandbox (run commands, write and deliver files); the read-only sandbox_read / sandbox_glob / sandbox_grep always run directly.",
+      "allow": "Allow",
+      "allowHint": "Sandbox tools run without approval (default).",
+      "ask": "Ask first",
+      "askHint": "Every call except the read-only tools needs the user's approval."
+    },
+    "egress": {
+      "title": "Sandbox network",
+      "description": "Which hosts commands in the sandbox may reach. The allowlist blocks internal networks but does not stop data from being sent to an allowed host (for example git push to github.com); choose No network for sensitive organizations.",
+      "default": "Deployment default",
+      "defaultHint": {
+        "allowlist": "Allowlist set by the deployment ({count} hosts).",
+        "none": "The deployment disables sandbox network access.",
+        "open": "The deployment allows any outbound network."
+      },
+      "allowlist": "Custom allowlist",
+      "allowlistHint": "Only the hosts below; replaces the deployment list.",
+      "none": "No network",
+      "noneHint": "Sandboxes can only reach themselves (loopback).",
+      "hosts": "Allowed hosts",
+      "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
+      "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed."
     }
   },
   "schemaForm": {

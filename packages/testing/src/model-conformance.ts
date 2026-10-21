@@ -15,6 +15,7 @@ import {
   validateParams,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { pdfBase64, redPngBase64 } from "./media-samples.js";
 
 interface TargetCommon {
   model: string;
@@ -108,6 +109,24 @@ async function collect(
   expect(events[events.length - 1]?.type).toBe("message_complete");
   return { events, done: completes[0] as Complete };
 }
+
+/**
+ * 媒体用例的样本与期望答案。夹具服务按原生格式认出这些样本后回答对应的词，所以夹具模式也能证明
+ * 插件把媒体块映射成了供应商认得的形状。
+ */
+export const MEDIA_SAMPLES = {
+  /** 64×64 纯红 PNG；期望回答含 "red"。 */
+  image: { mediaType: "image/png", name: "red.png", answer: "red" },
+  /** 一页 PDF，只印这个词。 */
+  pdf: { mediaType: "application/pdf", name: "fruit.pdf", word: "PINEAPPLE" },
+  /** 纯文本文档，内容是 {@link MEDIA_SAMPLES.text.content}。 */
+  text: {
+    mediaType: "text/plain",
+    name: "note.txt",
+    content: "The secret word is MANGO.\n",
+    word: "MANGO",
+  },
+} as const;
 
 const textOf = (content: ContentBlock[]): string =>
   content.map((b) => (b.type === "text" ? b.text : "")).join("");
@@ -257,6 +276,74 @@ export function describeModelProviderConformance(
         }),
       );
       expect(done.content.length).toBeGreaterThan(0);
+    });
+
+    /** `@2` 模型的能力声明；`@1` 返回 null（媒体用例只对 `@2` 跑）。 */
+    const caps = async (): Promise<ModelInfo["capabilities"] | null> => {
+      if (t.contract !== 2) return null;
+      const info = (await t.provider.listModels()).find((m) => m.id === t.model);
+      return info?.capabilities ?? null;
+    };
+    const ask = (block: ContentBlock, question: string): SuiteRequest =>
+      base({
+        messages: [{ role: "user", content: [block, { type: "text", text: question }] }],
+      });
+
+    it("user message with image", async (ctx) => {
+      if ((await caps())?.vision !== true) return ctx.skip();
+      const s = MEDIA_SAMPLES.image;
+      const { done } = await collect(
+        t,
+        ask(
+          {
+            type: "image",
+            mediaType: s.mediaType,
+            name: s.name,
+            source: { kind: "base64", data: redPngBase64() },
+          },
+          "What is the color of this image? Answer with one word.",
+        ),
+      );
+      expect(done.stopReason).toBe("end_turn");
+      expect(textOf(done.content).toLowerCase()).toContain(s.answer);
+    });
+
+    it("user message with PDF document", async (ctx) => {
+      if ((await caps())?.documents !== true) return ctx.skip();
+      const s = MEDIA_SAMPLES.pdf;
+      const { done } = await collect(
+        t,
+        ask(
+          {
+            type: "document",
+            mediaType: s.mediaType,
+            name: s.name,
+            source: { kind: "base64", data: pdfBase64(s.word) },
+          },
+          "What single word is printed in this PDF? Answer with just the word.",
+        ),
+      );
+      expect(done.stopReason).toBe("end_turn");
+      expect(textOf(done.content).toUpperCase()).toContain(s.word);
+    });
+
+    it("user message with text document", async (ctx) => {
+      if ((await caps())?.documents !== true) return ctx.skip();
+      const s = MEDIA_SAMPLES.text;
+      const { done } = await collect(
+        t,
+        ask(
+          {
+            type: "document",
+            mediaType: s.mediaType,
+            name: s.name,
+            source: { kind: "base64", data: Buffer.from(s.content, "utf8").toString("base64") },
+          },
+          "What is the secret word in the attached file? Answer with just the word.",
+        ),
+      );
+      expect(done.stopReason).toBe("end_turn");
+      expect(textOf(done.content).toUpperCase()).toContain(s.word);
     });
 
     it("abort", async () => {

@@ -199,8 +199,11 @@ async function permissionSets(
 /** 待批准插件的 warn 日志：点名插件、原因与新增项（依赖原因写明阻塞的能力与提供方）。 */
 function warnPending(log: KernelDeps["log"], p: PendingPlugin): void {
   if (p.reason === "dependency") {
+    const missing = (p.blockedBy ?? []).some((b) => b.providers.length === 0);
     log.warn(
-      "plugin not loaded: a required capability is only provided by plugins awaiting permission approval",
+      missing
+        ? "plugin not loaded: a capability it needs has no provider (e.g. permissions.storage needs an object-store@1 plugin such as object-store-s3)"
+        : "plugin not loaded: a required capability is only provided by plugins awaiting permission approval",
       { plugin: p.plugin, version: p.version, blockedBy: p.blockedBy },
     );
     return;

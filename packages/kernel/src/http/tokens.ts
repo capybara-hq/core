@@ -61,8 +61,26 @@ export const EVENT_LOG = Symbol("EVENT_LOG");
 /** `ConversationsService` 的注入令牌。 */
 export const CONVERSATIONS = Symbol("CONVERSATIONS");
 
+/** `AttachmentsService`（对话附件）的注入令牌。 */
+export const ATTACHMENTS = Symbol("ATTACHMENTS");
+
+/** `SkillsService`（技能库）的注入令牌。 */
+export const SKILLS = Symbol("SKILLS");
+
+/** `SkillChangesService`（agent 自写技能与技能变更审批）的注入令牌。 */
+export const SKILL_CHANGES = Symbol("SKILL_CHANGES");
+
+/** `InboxService`（收件箱汇总）的注入令牌。 */
+export const INBOX = Symbol("INBOX");
+
 /** `ConversationOutputs`（网页读工具输出存档）的注入令牌。 */
 export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
+
+/** `ConversationArtifacts`（产物下载）的注入令牌。 */
+export const CONVERSATION_ARTIFACTS = Symbol("CONVERSATION_ARTIFACTS");
+
+/** `ConversationSandboxStatus`（对话沙箱状态）的注入令牌。 */
+export const CONVERSATION_SANDBOX = Symbol("CONVERSATION_SANDBOX");
 
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");

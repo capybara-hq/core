@@ -7,11 +7,17 @@ import {
   type ModelProviderV1,
   type ModelRequestV1,
   type ModelStreamEvent,
+  validateMediaBlock,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
   checkDeclaredParameters,
   describeModelProviderConformance,
+  isPngBase64,
+  MEDIA_SAMPLES,
+  pdfBase64,
+  pdfSampleWord,
+  redPngBase64,
   thinkingReplayParams,
 } from "../src/index.js";
 
@@ -127,6 +133,97 @@ describeModelProviderConformance("in-memory @2", async () => ({
   expect: { thinking: true, caching: true },
   async teardown() {},
 }));
+
+/**
+ * 声明 vision / documents 的 `@2` 供应商：只有收到合法的样本媒体块时才答出期望的词，
+ * 证明媒体用例会跑、并把样本按契约形状发给插件。
+ */
+function makeMediaProvider(): ModelProvider {
+  const base = makeProvider();
+  return {
+    async listModels() {
+      const [m] = await base.listModels();
+      if (m === undefined) throw new Error("no model");
+      return [
+        {
+          ...m,
+          capabilities: { ...m.capabilities, vision: true, documents: true },
+          parameters: [],
+        },
+      ];
+    },
+    async *stream(req, opts): AsyncGenerator<ModelStreamEvent> {
+      const last = req.messages[req.messages.length - 1];
+      const media =
+        last?.role === "user"
+          ? last.content.find((b) => b.type === "image" || b.type === "document")
+          : undefined;
+      if (media === undefined) {
+        yield* base.stream(req, opts);
+        return;
+      }
+      expect(validateMediaBlock(media)).toEqual([]);
+      const data = media.source.kind === "base64" ? media.source.data : "";
+      const answer =
+        media.type === "image"
+          ? "Red."
+          : media.mediaType === "application/pdf"
+            ? MEDIA_SAMPLES.pdf.word
+            : Buffer.from(data, "base64").toString("utf8").includes(MEDIA_SAMPLES.text.word)
+              ? MEDIA_SAMPLES.text.word
+              : "?";
+      yield { type: "text_delta", text: answer };
+      yield {
+        type: "message_complete",
+        content: [{ type: "text", text: answer }],
+        stopReason: "end_turn",
+        usage: usage(0),
+      };
+    },
+  };
+}
+
+describeModelProviderConformance("in-memory @2 with media", async () => ({
+  contract: 2,
+  plugin: "in-memory",
+  provider: makeMediaProvider(),
+  model: "m",
+  expect: { thinking: true, caching: true },
+  async teardown() {},
+}));
+
+describe("media samples", () => {
+  it("red PNG is a valid PNG image block", () => {
+    const data = redPngBase64();
+    expect(Buffer.from(data, "base64").subarray(0, 8)).toEqual(
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    );
+    expect(
+      validateMediaBlock({
+        type: "image",
+        mediaType: "image/png",
+        source: { kind: "base64", data },
+      }),
+    ).toEqual([]);
+  });
+  it("PDF has correct xref offsets and prints the word", () => {
+    const pdf = Buffer.from(pdfBase64("PINEAPPLE"), "base64").toString("latin1");
+    expect(pdf.startsWith("%PDF-1.4\n")).toBe(true);
+    expect(pdf).toContain("(PINEAPPLE) Tj");
+    const startxref = Number(/startxref\n(\d+)/.exec(pdf)?.[1]);
+    expect(pdf.slice(startxref, startxref + 4)).toBe("xref");
+    const offsets = [...pdf.matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
+    expect(offsets).toHaveLength(5);
+    offsets.forEach((o, i) => {
+      expect(pdf.slice(o, o + `${i + 1} 0 obj`.length)).toBe(`${i + 1} 0 obj`);
+    });
+    expect(() => pdfBase64("not a word")).toThrow();
+    expect(pdfSampleWord(pdfBase64("KIWI7"))).toBe("KIWI7");
+    expect(pdfSampleWord(redPngBase64())).toBeNull();
+    expect(isPngBase64(redPngBase64())).toBe(true);
+    expect(isPngBase64(pdfBase64("KIWI"))).toBe(false);
+  });
+});
 
 describe("checkDeclaredParameters", () => {
   const model = (parameters: ModelParameter[]): ModelInfo => ({

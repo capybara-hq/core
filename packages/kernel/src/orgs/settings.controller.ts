@@ -10,20 +10,26 @@ import {
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
 import {
   type OrgSettings,
+  type OrgSettingsDeployment,
   type OrgSettingsPatch,
   OrgSettingsPatchSchema,
   type OrgSettingsService,
 } from "./settings.service.js";
 
-/** 组织设置（`/api/v1/orgs/:orgId/settings`）：成员可读，修改需 `org.update`（admin）。 */
+/**
+ * 组织设置（`/api/v1/orgs/:orgId/settings`）：成员可读，修改需 `org.update`（admin）。
+ * 响应带 `deployment`（部署默认值，如沙箱出站），设置页据此展示「跟随部署」时的实际取值。
+ */
+type SettingsResponse = { settings: OrgSettings; deployment: OrgSettingsDeployment };
+
 @Controller("api/v1/orgs/:orgId/settings")
 export class OrgSettingsController {
   constructor(@Inject(ORG_SETTINGS) private readonly settings: OrgSettingsService) {}
 
   @Get()
   @OrgAction("org.read")
-  async get(@CurrentOrg() org: OrgContext): Promise<{ settings: OrgSettings }> {
-    return { settings: await this.settings.get(org.orgId) };
+  async get(@CurrentOrg() org: OrgContext): Promise<SettingsResponse> {
+    return { settings: await this.settings.get(org.orgId), deployment: this.settings.deployment() };
   }
 
   @Patch()
@@ -32,10 +38,11 @@ export class OrgSettingsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Body(new ZodPipe(OrgSettingsPatchSchema)) body: OrgSettingsPatch,
-  ): Promise<{ settings: OrgSettings }> {
+  ): Promise<SettingsResponse> {
     const p = requireUser(principal);
     return {
       settings: await this.settings.update(org.orgId, body, p.account.id, patTokenId(p)),
+      deployment: this.settings.deployment(),
     };
   }
 }

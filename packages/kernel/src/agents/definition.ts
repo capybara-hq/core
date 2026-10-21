@@ -57,5 +57,14 @@ export const AgentDefinitionSchema = z.object({
    * 较早保存的定义没有该字段，按空处理。
    */
   toolPolicies: z.record(z.string(), z.enum(["ask", "deny"])).default({}),
+  /**
+   * 技能（M5 T13）：`orgSkills` 是引用的组织技能 id（保存时校验属于本组织且未删除，不可重复）。
+   * agent 自己的技能（`scope=agent`）自动对它生效，不进定义。可省略（较早保存的定义也没有），按空处理；
+   * 不给默认值：没用技能的定义保存前后不变，不会因此多出一个版本。
+   */
+  skills: z
+    .object({ orgSkills: z.array(z.string().min(1).max(100)).max(100).default([]) })
+    .strict()
+    .optional(),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;

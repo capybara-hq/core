@@ -252,7 +252,14 @@ export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_deci
 export type QuestionOutcome = Extract<ConversationEvent, { type: "question_answered" }>["payload"];
 
 export type ChatItem =
-  | { kind: "user"; key: string; text: string; attachments: MessageAttachment[] }
+  | {
+      kind: "user";
+      key: string;
+      text: string;
+      attachments: MessageAttachment[];
+      /** 上传的文件（image / document 引用块）。 */
+      files: MessageFile[];
+    }
   | {
       kind: "assistant";
       key: string;
@@ -316,6 +323,30 @@ export type ChatItem =
     }
   | { kind: "failed"; key: string; text: string; code: string };
 
+/** 消息里上传的文件。 */
+export interface MessageFile {
+  attachmentId: string;
+  kind: "image" | "document";
+  mediaType: string;
+  name: string;
+}
+
+/** user_message 里的 image / document 引用块（`base64` 来源不会进日志，忽略）。 */
+function messageFiles(content: ContentBlock[]): MessageFile[] {
+  return content.flatMap((b): MessageFile[] =>
+    (b.type === "image" || b.type === "document") && b.source.kind === "ref"
+      ? [
+          {
+            attachmentId: b.source.attachmentId,
+            kind: b.type,
+            mediaType: b.mediaType,
+            name: b.name ?? b.source.attachmentId,
+          },
+        ]
+      : [],
+  );
+}
+
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
   blocks
     .filter((b) => b.type === type)
@@ -363,7 +394,7 @@ export function chatItems(state: ChatState): ChatItem[] {
         attachments.length > 0
           ? joinText(e.payload.content.slice(0, 1), "text")
           : joinText(e.payload.content, "text");
-      items.push({ kind: "user", key, text, attachments });
+      items.push({ kind: "user", key, text, attachments, files: messageFiles(e.payload.content) });
     } else if (e.type === "assistant_message") {
       const text = joinText(e.payload.content, "text");
       const thinking = joinText(e.payload.content, "thinking");

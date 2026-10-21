@@ -74,13 +74,27 @@ async function withReview<T>(
 /** 权限键加敏感标记（与组织启用页的敏感分组同一套规则，spec §5.4）。 */
 const mark = (k: string): string => (isSensitivePermissionKey(k) ? `${k}  (sensitive)` : k);
 
+/**
+ * 依赖阻塞的说明：提供方都待批准时点名它们；没有任何提供方时（如声明了 `permissions.storage` 却没装
+ * `object-store@1` 提供方）说明要先安装。
+ */
+function blockedByText(p: PendingPlugin): string {
+  return (p.blockedBy ?? [])
+    .map((b) =>
+      b.providers.length > 0
+        ? `${b.capability} (provided only by ${b.providers.join(", ")})`
+        : `${b.capability} (no provider is installed; add a plugin that provides it)`,
+    )
+    .join("; ");
+}
+
 /** 一个待批准插件的说明行（含新增 / 减少的权限项）。 */
 function describePending(p: PendingPlugin): string[] {
   if (p.reason === "dependency") {
-    const why = (p.blockedBy ?? [])
-      .map((b) => `${b.capability} (provided only by ${b.providers.join(", ")})`)
-      .join("; ");
-    return [`${p.plugin} ${p.version}: not loaded: requires ${why}, awaiting approval`];
+    const waiting = (p.blockedBy ?? []).some((b) => b.providers.length > 0);
+    return [
+      `${p.plugin} ${p.version}: not loaded: requires ${blockedByText(p)}${waiting ? ", awaiting approval" : ""}`,
+    ];
   }
   const head =
     p.reason === "new"
@@ -162,11 +176,8 @@ export async function runPluginsApprove(
           snapshots,
         ).find((d) => d.plugin === name);
         if (decision?.action === "pending" && decision.pending.reason === "dependency") {
-          const why = (decision.pending.blockedBy ?? [])
-            .map((b) => `${b.capability} (provided only by ${b.providers.join(", ")})`)
-            .join("; ");
           return fail(
-            `${name} ${version} is already approved but is not loaded because it requires ${why}, which await approval; approve those plugins instead`,
+            `${name} ${version} is already approved but is not loaded because it requires ${blockedByText(decision.pending)}; approve or install those providers instead`,
           );
         }
         io.stdout.write(

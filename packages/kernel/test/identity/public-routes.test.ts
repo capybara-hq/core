@@ -121,6 +121,11 @@ beforeAll(async () => {
           appContent: k.tools.appContent,
           identity: k.identity,
           channels: k.channels.connections,
+          attachments: k.attachments,
+          skills: k.skills,
+          skillChanges: k.skillChanges,
+          storage: k.storage,
+          sandbox: k.sandbox,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

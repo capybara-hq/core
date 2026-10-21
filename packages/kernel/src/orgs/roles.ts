@@ -25,6 +25,8 @@ export type OrgAction =
   | "apps.use"
   | "approvals.decide"
   | "channels.manage"
+  | "skills.read"
+  | "skills.manage"
   | "ui.use";
 
 /** 每个动作所需的最低角色。 */
@@ -50,6 +52,9 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "approvals.decide": "guest",
   // 渠道连接（bot 凭据、绑定的 agent、未绑定用户策略）
   "channels.manage": "admin",
+  // 组织技能库：成员可查看（给 agent 选技能），管理员上传新技能 / 新版本与删除
+  "skills.read": "member",
+  "skills.manage": "admin",
   // 插件界面（列出贡献、取视图、执行动作、组织级刷新流）：只给人用，服务令牌不可
   "ui.use": "guest",
 };

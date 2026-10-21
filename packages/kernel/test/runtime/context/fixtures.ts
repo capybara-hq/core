@@ -1,8 +1,9 @@
-import type { ContentBlock, ModelInfo } from "@capybara-hq/plugin-sdk";
+import type { ModelInfo } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../../../src/agents/definition.js";
 import type {
   ConversationEvent,
   ConversationEventBody,
+  LogContentBlock,
 } from "../../../src/conversations/events.js";
 
 export const MODEL: ModelInfo = {
@@ -64,11 +65,11 @@ export class Log {
   }
 
   assistant(
-    content: ContentBlock[] | string,
+    content: LogContentBlock[] | string,
     stopReason: "end_turn" | "aborted" | "tool_use" = "end_turn",
     step = 0,
   ): ConversationEvent {
-    const blocks: ContentBlock[] =
+    const blocks: LogContentBlock[] =
       typeof content === "string" ? [{ type: "text", text: content }] : content;
     return this.add({ type: "assistant_message", payload: { step, content: blocks, stopReason } });
   }

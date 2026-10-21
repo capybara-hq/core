@@ -1,4 +1,15 @@
-import type { ContentBlock, ModelUsage, StopReason } from "@capybara-hq/plugin-sdk";
+import {
+  type ContentBlock,
+  DOCUMENT_MEDIA_TYPES,
+  hasControlChars,
+  IMAGE_MEDIA_TYPES,
+  isAttachmentId,
+  isSkillName,
+  MEDIA_NAME_MAX_CHARS,
+  type MediaSource,
+  type ModelUsage,
+  type StopReason,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 
@@ -9,7 +20,38 @@ const ProviderOpaqueSchema = z.object({
   data: z.unknown(),
 });
 
-/** 内容块（plugin-sdk 的 `ContentBlock`）。 */
+/**
+ * 日志里的媒体来源：只有附件引用。字节（`base64`）绝不进事件日志——日志是事实源、字节不是；
+ * 构建模型请求时内核按 `attachmentId` 取字节换成 `base64`（见 {@link LogContentBlock}）。
+ */
+const AttachmentIdSchema = z.string().refine(isAttachmentId, "attachmentId must be a UUID");
+
+const RefMediaSourceSchema = z.object({
+  kind: z.literal("ref"),
+  attachmentId: AttachmentIdSchema,
+});
+
+/** 一条 `media_excluded` 事件最多的附件数。 */
+export const MEDIA_EXCLUDED_MAX_IDS = 50;
+/** 一份 `skills_catalog` 快照最多的技能数（组织技能引用上限 100，余量给 agent 自己的技能）。 */
+export const SKILLS_CATALOG_MAX = 1000;
+
+/** 媒体块的名字：与 plugin-sdk `validateMediaBlock` 同规则（≤255 字符、不含控制字符）。 */
+const MediaNameSchema = z
+  .string()
+  .max(MEDIA_NAME_MAX_CHARS)
+  .refine((s) => !hasControlChars(s), "name must not contain control characters");
+
+const ArtifactNameSchema = MediaNameSchema.min(1);
+
+/** 产物名（`artifact_created.name`）是否合法：与日志 schema 同一规则（非空、≤255、不含控制字符）。 */
+export const isValidArtifactName = (name: string): boolean =>
+  ArtifactNameSchema.safeParse(name).success;
+
+/**
+ * 日志里的内容块：plugin-sdk 的 `ContentBlock`，但 image / document 的 `source` 只能是 `ref`
+ * （写入时用这个 schema 校验，带 `base64` 的块被拒绝）。
+ */
 export const ContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string(), opaque: ProviderOpaqueSchema.optional() }),
   z.object({
@@ -30,7 +72,32 @@ export const ContentBlockSchema = z.discriminatedUnion("type", [
     content: z.string(),
     isError: z.boolean(),
   }),
+  z.object({
+    type: z.literal("image"),
+    mediaType: z.enum(IMAGE_MEDIA_TYPES),
+    source: RefMediaSourceSchema,
+    name: MediaNameSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("document"),
+    mediaType: z.enum(DOCUMENT_MEDIA_TYPES),
+    source: RefMediaSourceSchema,
+    name: MediaNameSchema.optional(),
+  }),
 ]);
+
+type MediaBlock = Extract<ContentBlock, { type: "image" | "document" }>;
+/**
+ * 日志形状的内容块：与 plugin-sdk 的 `ContentBlock` 相同，只是媒体块的 `source` 收窄为 `ref`。
+ * 它是 `ContentBlock` 的子类型，所以从日志读出的块可直接当 `ContentBlock` 用（请求构建时再解析 ref）。
+ */
+export type LogContentBlock =
+  | Exclude<ContentBlock, MediaBlock>
+  | (MediaBlock extends infer B
+      ? B extends MediaBlock
+        ? Omit<B, "source"> & { source: Extract<MediaSource, { kind: "ref" }> }
+        : never
+      : never);
 
 const STOP_REASONS = ["end_turn", "tool_use", "max_tokens", "refusal", "other"] as const;
 
@@ -153,6 +220,31 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          * 定义本身按 specHash 存在 `capybara.tool_specs`。
          */
         toolChoice: z.enum(["auto", "none"]).optional(),
+        /**
+         * 请求里每个附件的处理结果（Ruling M8，按首次出现，同一附件一条）：发了字节（`bytes`，带 finalize 时的
+         * etag）、内联文本、模型不支持的占位、因请求媒体预算省略（`omitted`）、图片太多（`too_many_images`）、
+         * 单个超过供应商上限（`too_large`）、不再可用、PDF 页数太多、
+         * 被 `media_excluded` 排除。没有媒体时不写；较早的事件没有。
+         */
+        media: z
+          .array(
+            z.object({
+              attachmentId: AttachmentIdSchema,
+              outcome: z.enum([
+                "bytes",
+                "inline",
+                "placeholder_unsupported",
+                "omitted",
+                "too_many_images",
+                "too_large",
+                "unavailable",
+                "too_many_pages",
+                "excluded",
+              ]),
+              etag: z.string().max(1024).optional(),
+            }),
+          )
+          .optional(),
       }),
     }),
   ),
@@ -258,6 +350,61 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       outcome: z.enum(["answered", "expired", "cancelled"]),
     }),
   ),
+  /**
+   * 带媒体的模型请求被供应商以不可重试的 `invalid_request` / `context_overflow` 拒绝（Ruling M8）：这些附件
+   * （该请求里发了字节的）此后一律换成「被供应商拒绝」的占位，会话不会因同一个附件永久卡住。不进模型请求
+   * 本身，只影响之后的请求构建（可由日志推出）。
+   */
+  ev(
+    "media_excluded",
+    z.object({
+      attachmentIds: z.array(AttachmentIdSchema).min(1).max(MEDIA_EXCLUDED_MAX_IDS),
+      reason: z.enum(["provider_rejected"]),
+    }),
+  ),
+  /**
+   * agent 经 `sandbox_deliver` 把沙箱里的文件交付给用户（M5 T8，C3）：字节在对象存储
+   * `kernel/<orgId>/<objectKey>`（`objectKey` = `artifacts/<conversationId>/<artifactId>`，相对内核前缀），
+   * 这里只有元数据。网页从日志重建产物列表；不进模型请求（模型看到的是同一调用的 tool_result 确认）。
+   */
+  ev(
+    "artifact_created",
+    z.object({
+      artifactId: z.uuid(),
+      name: ArtifactNameSchema,
+      contentType: z.string().min(1).max(200),
+      size: z.number().int().nonnegative(),
+      objectKey: z.string().min(1),
+      sourcePath: z.string().min(1),
+      callId: z.string(),
+    }),
+  ),
+  /**
+   * 本对话此刻生效的技能（M5 T14，Ruling M17）：运行开始时内核解析生效的技能集合（agent 版本选中的组织技能 +
+   * agent 自己的技能，未删除，取 current_version），与日志里上一份快照不同才写。模型看到的技能目录只来自这里：
+   * 第一份（在任何 `model_call` 之前）进 system 缓存段，之后的在所在位置渲染为英文变更提醒；`skill_load` 按最新一份
+   * 把名字解析为 id 与版本。按 name 排序。
+   */
+  ev(
+    "skills_catalog",
+    z.object({
+      skills: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(100),
+            name: z.string().refine(isSkillName, "invalid skill name"),
+            description: z.string().max(4096),
+            version: z.number().int().positive(),
+            /**
+             * 内容来源（对象前缀，T15）：已生成的版本为 `skill_versions.object_prefix`，试用中的草稿为申请的
+             * `object_prefix`。同号的草稿与正式版本靠它区分；`skill_load` 只按它解析。
+             */
+            source: z.string().min(1).max(512),
+          }),
+        )
+        .max(SKILLS_CATALOG_MAX),
+    }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(
@@ -298,7 +445,9 @@ export type EventPayload<T extends ConversationEventType> = Extract<
 // 编译期核对：zod 形状与 plugin-sdk 的类型一致（任一方改动而另一方未跟上则 typecheck 失败）。
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type StripOpt<T> = T extends unknown ? { [K in keyof T]: Exclude<T[K], undefined> } : never;
-const _blocks: Same<StripOpt<z.infer<typeof ContentBlockSchema>>, StripOpt<ContentBlock>> = true;
+// 日志 schema 对的是收窄后的 LogContentBlock（媒体块只认 ref）；再核对它确是 ContentBlock 的子类型。
+const _blocks: Same<StripOpt<z.infer<typeof ContentBlockSchema>>, StripOpt<LogContentBlock>> = true;
+const _logIsBlock: [LogContentBlock] extends [ContentBlock] ? true : false = true;
 const _stop: Same<(typeof STOP_REASONS)[number], StopReason> = true;
 const _usage: Same<z.infer<z.ZodObject<typeof ModelUsageShape>>, ModelUsage> = true;
 // tool_result 事件与内容块中的 tool_result 共享 callId / content / isError 的形状。
@@ -309,5 +458,6 @@ const _toolResult: Same<
 > = true;
 void _toolResult;
 void _blocks;
+void _logIsBlock;
 void _stop;
 void _usage;

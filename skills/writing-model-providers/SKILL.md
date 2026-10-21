@@ -1,6 +1,6 @@
 ---
 name: writing-model-providers
-description: 新建或修改模型供应商插件时使用（provides model-provider@2，如 plugins/anthropic、plugins/openai、plugins/openai-compatible、plugins/model-fake）：契约、参数声明与标准旋钮、方言预设、原生协议原则、请求映射只追加、opaque 回放、用量语义、错误映射表、不在插件内重试、streamIdleTimeoutMs、用 startFakeModelServer 写夹具与真实接口模式。
+description: 新建或修改模型供应商插件时使用（provides model-provider@2，如 plugins/anthropic、plugins/openai、plugins/openai-compatible、plugins/model-fake）：契约、参数声明与标准旋钮、方言预设、原生协议原则、请求映射只追加、opaque 回放、媒体块（image / document 的映射与 vision / documents 声明）、用量语义、错误映射表、不在插件内重试、streamIdleTimeoutMs、用 startFakeModelServer 写夹具与真实接口模式。
 ---
 
 # 写模型供应商插件
@@ -22,11 +22,11 @@ interface ModelProvider {
 - `ModelRequest`：`model`、`system`（`{ text, cache }[]`，稳定内容在前，`cache: true` 的块之后打缓存断点）、`messages`（user / assistant / 中途 `system`）、`tools`、可选 `toolChoice`（`"auto"` / `"none"`）、`maxOutputTokens`、`params`（本次调用的参数，见下节；内核已按该模型的声明处理过：丢弃未声明 / 不合法的项、补上默认值）。
 - `toolChoice: "none"`：内核在步数上限的收尾调用里照常带上 `tools`（历史里有工具调用时部分供应商要求声明工具，也保持缓存前缀稳定），但模型不得调用工具。插件映射到原生字段（anthropic `tool_choice: {type: "none"}`、OpenAI Responses / Chat Completions `tool_choice: "none"`），`"auto"` / 缺省不发送，`tools` 为空时也不发送；做不到的供应商须保证不产出 `tool_call`（如 model-fake）。`capabilities.tools` 为 false 的模型，内核不发工具也不发 `toolChoice`，并写一条提醒告诉模型本次没有工具——所以真能调用工具的模型必须声明 `tools: true`。
 - `ModelStreamEvent`：`text_delta`、`thinking_delta`，最后恰好一个 `message_complete { content, stopReason, usage }`。增量拼起来必须等于最终 `content` 里的文本。流被截断（没收到供应商的结束事件）要抛错（一般是 `network`），**不能**拿半截内容发 `message_complete`。
-- `ContentBlock`：`text`、`thinking`、`tool_call`、`tool_result`；`text`、`thinking` 与 `tool_call` 可带 `opaque`（见下）。
-- `ModelInfo`：`contextWindow`、`maxOutputTokens`、`capabilities`（`tools` / `vision` / `reasoning` / `caching` / `midConversationSystem`；`effort` 已弃用，仅 `@1` 用）、可选 `streamIdleTimeoutMs`、必填 `parameters`（该模型支持的参数声明，可为空数组）。`listModels` 会被内核缓存，失败时内核跳过该供应商并记日志，不影响其他供应商。
+- `ContentBlock`：`text`、`thinking`、`tool_call`、`tool_result`，以及只出现在 user 消息里的 `image` / `document`（见「媒体块」）；`text`、`thinking` 与 `tool_call` 可带 `opaque`（见下）。
+- `ModelInfo`：`contextWindow`、`maxOutputTokens`、`capabilities`（`tools` / `vision` / `reasoning` / `caching` / `midConversationSystem` / 可选 `documents`；`effort` 已弃用，仅 `@1` 用）、可选 `streamIdleTimeoutMs`、必填 `parameters`（该模型支持的参数声明，可为空数组）。`listModels` 会被内核缓存，失败时内核跳过该供应商并记日志，不影响其他供应商。
 - 判断错误一律用 `isModelError(e)` / `isRetryableKind(kind)`（鸭子类型），不要 `instanceof ModelError`：插件可能带着另一份 plugin-sdk。
 
-插件无进程内可变状态：模型信息之类的缓存放 `ctx.kv`（带 TTL，参考 anthropic 的 `models:v2:<id>`，3600 秒），一次调用内的累积器是请求局部变量。
+插件无进程内可变状态：模型信息之类的缓存放 `ctx.kv`（带 TTL，参考 anthropic 的 `models:v3:<id>`，ModelInfo 形状变了就把版本号加一，3600 秒），一次调用内的累积器是请求局部变量。
 
 ## 参数声明（`ModelInfo.parameters`）
 
@@ -97,6 +97,26 @@ interface ModelParameter {
   - anthropic 用响应的 `model`；**服务端拒答兜底**（`fallbacks: "default"`）时消息里出现 `fallback` 块，整条消息的思考 / 工具 opaque 都改打 `fallback.to.model`（真正作答的模型），否则下一轮回放给原模型会因签名校验失败被拒（R39）。
 - 回放时只在 `opaque.provider === 本插件 && opaque.model === req.model && data != null` 时原样放回；否则：思考块整块丢掉，工具调用退化为不带私有字段的普通调用（openai 去掉输出项 id）。agent 切换模型、走 `fallback` 模型时历史里会混有别的模型的块，这是常态。
 - openai 的推理模型要求回放的 reasoning 项**紧跟它产出的输出项**：text 块的 opaque 保存 message 输出项的 `id`（与 `phase`），同一条 assistant 消息里已回放过 reasoning 项时，text 按原 message 项回放（`{ type: "message", id, role: "assistant", status, content: [output_text] }`）；没有回放 reasoning 项时不带 id（单独带 msg_ id 会被拒）。映射只看消息自身，仍然只追加。夹具按这条规则把关，但**真实接口尚未验证**——见下文「发布前必须跑真实接口」。
+
+## 媒体块（`image` / `document`）
+
+user 消息里可以有 `image`（png / jpeg / gif / webp）与 `document`（`application/pdf`、`text/plain` / `text/markdown` / `text/csv`），`source` 为 `{ kind: "base64", data }`，可带附件名 `name`。
+
+- **把关在内核**：模型声明 `vision: true` 才会收到 `image`，声明 `documents: true` 才会收到 `document`（`documents` 为 true 时 `text/*` 也作为文档块发来）；不支持时内核换成英文文字占位或内联文本，插件不用判断能力。所以**声明要准**：按官方文档或 Models API 声明，注释里写出处与核实日期。anthropic 取 Models API 的 `image_input` / `pdf_input`；openai 由部署配置 `models[].vision` / `documents`（缺省 false）给；openai-compatible 按端点模型配置 `vision` / `documents`（缺省 false），`documents` 只能在 Chat Completions 收 PDF 的方言（`pdfInput`：generic、qwen）上开启，deepseek / ark 配置校验拒绝。
+- **供应商的媒体上限也由内核执行**，插件不用再查：单次请求最多 20 张图片（保留最新的）、PDF 超过 100 页、`text/*` 超过 50 000 个字符（截断并注明，两种发送方式都一样）、单个块超过 `MEDIA_LIMITS`（图片 5 MiB、文档 32 MiB，解码后）、整个请求的媒体超过 `attachments.requestMediaBytes`，内核都会换成英文占位或截断。供应商仍以 `invalid_request` / `context_overflow` 拒收带媒体的请求时，内核写 `media_excluded`，之后的请求把这些附件换成占位——所以插件把这类拒收如实映射成对应的 `ModelError` 即可，不要自己丢块或重试。
+- **`ref` 不该到插件**：事件日志里只存引用，内核构建请求时解析成 `base64`。插件收到 `ref` 是内核缺陷，抛 `ModelError("invalid_request", …)`（不可重试），不要静默丢弃。
+- **引用怎么解析**（内核侧，插件不用做，但排查时要知道）：附件字节在对象存储，日志里的块只有 `{ kind: "ref", attachmentId }`。构建请求时按引用取字节并核对 finalize 时记下的 etag：附件已删除 / 过期、对象不在、大小或 etag 不符是**确定的缺失**，换成英文占位；存储暂时出错则这一步按可重试错误重来，不降级成占位（Ruling M4，否则同一份日志还原不出同一个请求）。每次 `model_call` 事件的 `request.media` 记下每个附件的去向（`{ attachmentId, outcome, etag? }`，outcome 为 bytes / inline / placeholder_unsupported / omitted / unavailable / too_many_pages / excluded），请求能由日志还原。
+- **映射**（只看块自身，仍然只追加）：
+
+| 插件 | 图片 | PDF | `text/*` |
+|---|---|---|---|
+| anthropic | `{type:"image", source:{type:"base64", media_type, data}}` | `{type:"document", source:{type:"base64", media_type:"application/pdf", data}, title?}` | `{type:"document", source:{type:"text", media_type:"text/plain", data:<UTF-8 文本>}, title?}` |
+| openai（Responses） | `input_image`，`image_url: "data:<type>;base64,…"`，`detail: "auto"` | `input_file`，`file_data` 为 data URL，`filename`（补 `.pdf` 后缀） | `input_text`：`[Attached file "<name>" (<type>)]` + 换行 + 文本 |
+| openai-compatible（Chat Completions） | `{type:"image_url", image_url:{url:<data URL>}}` | `{type:"file", file:{filename, file_data}}`（仅 `pdfInput` 方言） | 文本片段，写法同 openai |
+
+  供应商 API 只收 PDF 文档时，`text/*` 按 UTF-8 解码成文本、开头一行标出文件名与类型（与内核内联文本的写法一致）。openai-compatible 的 user 消息只有文本时内容仍是 `"\n\n"` 连接的字符串（与引入媒体之前逐字节相同，也兼容不收内容数组的服务），含图片 / PDF 时才用片段数组。
+- **assistant 消息里不放媒体块**：模型输出只有文本 / 思考 / 工具调用；回放时 assistant 消息里的媒体块一律不发。
+- 一致性套件有「user message with image」（模型声明 `vision` 才跑）、「user message with PDF document」「user message with text document」（声明 `documents` 才跑）。样本由 `@capybara-hq/testing` 运行时生成（64×64 纯红 PNG、只印一个词的一页 PDF）；夹具服务按原生形状认出样本、从内容里读出答案（`isPngBase64`、`pdfSampleWord`），映射错了用例就失败。
 
 ## 用量语义（`ModelUsage`）
 
@@ -176,7 +196,7 @@ describe.skipIf(!LIVE_KEY)("live", () => {
 - `startFakeModelServer(routes)`：`routes(req)` 收到 `{ path, body, headers }`，返回 `{ status, json, headers? }`（普通 / 错误响应）、`{ status: 200, sse: [{ event?, data }], delayMs? }`（SSE）或 `{ stall: true }`（只发响应头、不发数据，用来测中止与看门狗）。`server.requests` 记录全部请求，可断言实际发出的原生请求体。夹具按供应商原生格式手写在插件的 `test/fixtures.ts`（参考 `plugins/anthropic/test/fixtures.ts` 的 `sseMessage`、`errorJson`），不要录制真实响应里的密钥。
 - 插件构造函数要接受 `baseUrl`，夹具模式靠它指向假服务。
 - 一致性套件之外，按上面的错误映射表逐行写用例（429 带 `retry-after`、529、5xx、401/403、400、413、流中途 error 事件、流截断、畸形工具参数、网络失败、中止、停滞流中止），以及请求映射的前缀单测。
-- 真实接口模式：anthropic 设 `CAPYBARA_TEST_ANTHROPIC_API_KEY`（跑 `claude-haiku-5-5`）；openai 设 `CAPYBARA_TEST_OPENAI_API_KEY` 与 `CAPYBARA_TEST_OPENAI_MODEL`；openai-compatible 设 `CAPYBARA_TEST_OAICOMPAT_BASE_URL` / `_API_KEY` / `_MODEL` / `_DIALECT`（`generic` / `deepseek` / `qwen` / `ark`，四个都设才跑）。已用真实接口验证过：anthropic（`claude-haiku-5-5`）、DeepSeek（`deepseek-flash`，方言 `deepseek`）、openai（`gpt-5-nano`）。未设置时测试打一行 info 说明已跳过。改了请求映射或升级 SDK 后在本地用真实接口跑一遍。
+- 真实接口模式：anthropic 设 `CAPYBARA_TEST_ANTHROPIC_API_KEY`（跑 `claude-haiku-5-5`）；openai 设 `CAPYBARA_TEST_OPENAI_API_KEY` 与 `CAPYBARA_TEST_OPENAI_MODEL`；openai-compatible 设 `CAPYBARA_TEST_OAICOMPAT_BASE_URL` / `_API_KEY` / `_MODEL` / `_DIALECT`（`generic` / `deepseek` / `qwen` / `ark`，四个都设才跑；可选 `_VISION=1` / `_DOCUMENTS=1` 声明该模型收图片 / PDF，跑媒体用例）。已用真实接口验证过：anthropic（`claude-haiku-5-5`）、DeepSeek（`deepseek-flash`，方言 `deepseek`）、openai（`gpt-5-nano`）；媒体（图片、PDF、`text/*` 文档）在 anthropic `claude-haiku-5-5` 与 openai `gpt-5-nano` 上验证过，ark 方言的图片映射**尚未用真实接口验证**。未设置时测试打一行 info 说明已跳过。改了请求映射或升级 SDK 后在本地用真实接口跑一遍。
 - **发布前必须跑真实接口**：CI 没有密钥，夹具只是按文档与已知报错手写的近似。每次发布供应商插件之前，用真实接口把一致性套件跑通（尤其是思考回放：openai reasoning 项 + 带 id 的 message 项、anthropic 签名思考块，以及顶层 `cache_control` 的缓存命中），并在发布说明里写明跑过的模型。
 - `plugins/model-fake` 同样跑这套一致性套件（不需要假服务；声明 `effort` 三档与 `model-fake.style`）；它的脚本语法（`echo:`、`slow:<ms>:`、`stall`、`fail:<kind>`、`tool:<name>:<json>`、`long:<n>`，其余文本回复 `You said: …`）见其源码 `src/script.ts`。
 

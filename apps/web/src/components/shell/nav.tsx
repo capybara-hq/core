@@ -4,22 +4,44 @@ import type { CommandGroup, MenuItem, TopBarProps } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
-import { listApprovals } from "../../lib/approvals";
+import { listInbox } from "../../lib/inbox";
 import { listUiContributions, type UiContributionItem, uiLocale } from "../../lib/ui";
 
-/**
- * 一级导航：只列已存在的路由（spec §4.1 的其余项上线后再加）。`admin` 项只对当前组织的管理员显示
- * （只是界面上的隐藏，最终由内核判定权限）。
- */
-const NAV = [
-  { id: "overview", key: "overview", href: "/", admin: false },
-  { id: "agents", key: "agents", href: "/agents", admin: false },
-  { id: "inbox", key: "inbox", href: "/inbox", admin: false },
-  { id: "apps", key: "apps", href: "/apps", admin: false },
-  { id: "channels", key: "channels", href: "/channels", admin: true },
-] as const;
+/** 导航项的可见范围：`all` 所有人，`member` 成员以上（访客看不到），`admin` 管理员以上。 */
+type NavAudience = "all" | "member" | "admin";
+/** 当前用户在当前组织里能看到哪一档导航项。 */
+export type NavLevel = "guest" | "member" | "admin";
 
-/** 待处理审批数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
+/**
+ * 一级导航：只列已存在的路由（spec §4.1 的其余项上线后再加）。按 `audience` 对当前组织的角色隐藏
+ * （只是界面上的隐藏，最终由内核判定权限）。技能库与 agent 并列：成员可浏览，访客不可。
+ */
+const NAV: readonly { id: string; key: string; href: string; audience: NavAudience }[] = [
+  { id: "overview", key: "overview", href: "/", audience: "all" },
+  { id: "agents", key: "agents", href: "/agents", audience: "all" },
+  { id: "skills", key: "skills", href: "/skills", audience: "member" },
+  { id: "inbox", key: "inbox", href: "/inbox", audience: "all" },
+  { id: "apps", key: "apps", href: "/apps", audience: "all" },
+  { id: "channels", key: "channels", href: "/channels", audience: "admin" },
+];
+
+const VISIBLE: Record<NavLevel, readonly NavAudience[]> = {
+  guest: ["all"],
+  member: ["all", "member"],
+  admin: ["all", "member", "admin"],
+};
+
+/** 当前组织里的导航档位（没有当前组织或角色未知时按访客）。 */
+export function navLevelOf(me: {
+  currentOrgId: string | null;
+  memberships: { orgId: string; role: string }[];
+}): NavLevel {
+  const role = me.memberships.find((m) => m.orgId === me.currentOrgId)?.role;
+  if (role === "owner" || role === "admin") return "admin";
+  return role === "member" ? "member" : "guest";
+}
+
+/** 收件箱待处理数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
 const PENDING_POLL_MS = 30_000;
 
 /** 归在「应用」下的设置页，与设置页的二级导航一致。 */
@@ -37,6 +59,7 @@ const under = (pathname: string, prefix: string) =>
 /** 当前路由属于哪个一级导航项（对话页归在 Agents 下，个人连接 / 授权页归在应用下）。 */
 export function activeNavOf(pathname: string): string {
   if (under(pathname, "/agents") || under(pathname, "/chat")) return "agents";
+  if (under(pathname, "/skills")) return "skills";
   if (under(pathname, "/inbox")) return "inbox";
   if (under(pathname, "/channels")) return "channels";
   if (under(pathname, "/apps") || APP_SETTINGS.some((p) => under(pathname, p))) return "apps";
@@ -44,14 +67,15 @@ export function activeNavOf(pathname: string): string {
 }
 
 /**
- * 当前用户待处理的审批数（`GET /approvals?status=pending`）：组织或路由变化时、每 30 秒、以及调用
- * `refresh()` 时重读；没有当前组织或读取失败时为 0。
+ * 当前用户收件箱里的待处理数（`GET /inbox`：工具审批 + 技能变更）：组织或路由变化时、每 30 秒、以及调用
+ * `refresh()` 时重读；没有当前组织或读取失败时为 0。`more`：收件箱被截断（实际不止 `count` 项）。
  */
 export function usePendingApprovals(
   orgId: string | null,
   pathname: string,
-): { count: number; refresh(): void } {
+): { count: number; more: boolean; refresh(): void } {
   const [count, setCount] = useState(0);
+  const [more, setMore] = useState(false);
   const [nonce, setNonce] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: pathname 与 nonce 只用于触发重读
   useEffect(() => {
@@ -61,12 +85,16 @@ export function usePendingApprovals(
     }
     let disposed = false;
     const load = () =>
-      listApprovals(orgId, "pending").then(
+      listInbox(orgId).then(
         (r) => {
-          if (!disposed) setCount(r.approvals.length);
+          if (disposed) return;
+          setCount(r.items.length);
+          setMore(r.truncated === true);
         },
         () => {
-          if (!disposed) setCount(0);
+          if (disposed) return;
+          setCount(0);
+          setMore(false);
         },
       );
     void load();
@@ -77,7 +105,7 @@ export function usePendingApprovals(
     };
   }, [orgId, pathname, nonce]);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
-  return { count, refresh };
+  return { count, more, refresh };
 }
 
 /** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
@@ -125,14 +153,20 @@ export function routeLabel(pathname: string): string {
   return p === "" ? "~" : p;
 }
 
-export function useNav(pending = 0, admin = false): Pick<TopBarProps, "nav" | "commands"> {
+export function useNav(
+  pending = 0,
+  level: NavLevel = "guest",
+  pendingMore = false,
+): Pick<TopBarProps, "nav" | "commands"> {
   const t = useTranslations();
   const router = useRouter();
-  const nav = NAV.filter((n) => admin || !n.admin).map((n) => ({
+  const nav = NAV.filter((n) => VISIBLE[level].includes(n.audience)).map((n) => ({
     id: n.id,
     label: t(`nav.${n.key}`),
     href: n.href,
-    ...(n.id === "inbox" && pending > 0 ? { count: pending } : {}),
+    ...(n.id === "inbox" && pending > 0
+      ? { count: pending, ...(pendingMore ? { countMore: true } : {}) }
+      : {}),
   }));
   const commands: CommandGroup[] = [
     {

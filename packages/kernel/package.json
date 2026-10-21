@@ -44,12 +44,14 @@
     "rxjs": "^7.8.2",
     "semver": "^7.8.5",
     "yaml": "^2.9.1",
+    "yauzl": "3.4.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@capybara-hq/testing": "workspace:*",
     "@langchain/langgraph-checkpoint-validation": "^1.2.0",
     "@types/pg": "^8.23.1",
-    "@types/semver": "^7.8.0"
+    "@types/semver": "^7.8.0",
+    "@types/yauzl": "3.4.0"
   }
 }

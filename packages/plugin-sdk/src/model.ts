@@ -17,6 +17,12 @@ export interface ModelInfo {
     caching: boolean;
     midConversationSystem: boolean;
     /**
+     * 是否接受 `document` 块（缺省为 false）。图片看 `vision`。模型不支持时内核把媒体块换成英文文字占位
+     * （如 `[Attached image "<name>" — this model cannot view images.]`；`text/*` 文档改为内联截断后的文本），
+     * 绝不把字节发给它。
+     */
+    documents?: boolean;
+    /**
      * @deprecated `model-provider@1` 用：是否支持 `ModelRequestV1.effort`。`@2` 插件不填，改在
      * `parameters` 中声明 `effort` 旋钮；内核的 `@1` 适配层据此推导 `parameters`。
      */
@@ -40,12 +46,134 @@ export interface ProviderOpaque {
   data: unknown;
 }
 
+/** 图片块接受的类型。 */
+export const IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+/** 文档块接受的类型。 */
+export const DOCUMENT_MEDIA_TYPES = [
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+] as const;
+export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+export type DocumentMediaType = (typeof DOCUMENT_MEDIA_TYPES)[number];
+
+/**
+ * 媒体内容的来源：`base64` 是字节本身，`ref` 是内核附件的引用。
+ * 事件日志里只存 `ref`（字节不进日志）；内核构建请求时把 `ref` 解析成 `base64`，插件只会收到 `base64`。
+ */
+export type MediaSource = { kind: "base64"; data: string } | { kind: "ref"; attachmentId: string };
+
+/** 单个媒体块解码后的字节上限（按主流供应商的较小值取）。 */
+export const MEDIA_LIMITS = { imageBytes: 5_242_880, documentBytes: 33_554_432 } as const;
+
 export type ContentBlock =
   /** text 的 opaque：供应商需要随文本回放的私有数据（如 OpenAI message 输出项的 id）。 */
   | { type: "text"; text: string; opaque?: ProviderOpaque }
   | { type: "thinking"; text: string; opaque?: ProviderOpaque }
   | { type: "tool_call"; id: string; name: string; input: unknown; opaque?: ProviderOpaque }
-  | { type: "tool_result"; callId: string; content: string; isError: boolean };
+  | { type: "tool_result"; callId: string; content: string; isError: boolean }
+  /**
+   * 图片（只出现在 user 消息里）。模型不支持 `vision` 时内核换成文字占位，插件不用把关；
+   * 不认识此块的旧插件会跳过它。
+   */
+  | { type: "image"; mediaType: ImageMediaType; source: MediaSource; name?: string }
+  /** 文档（只出现在 user 消息里），由 `capabilities.documents` 把关，规则同 image。 */
+  | { type: "document"; mediaType: DocumentMediaType; source: MediaSource; name?: string };
+
+const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 媒体块 `name` 的最大长度（字符）。 */
+export const MEDIA_NAME_MAX_CHARS = 255;
+
+/** 供应商请求里文件名 / 标题的建议上限（码点），{@link clipMediaName} 的默认值。 */
+export const PROVIDER_MEDIA_NAME_MAX = 200;
+
+/**
+ * 把附件名截到 `max` 个码点以内（供应商映射用：有的接口对 filename / title 有长度限制，补后缀后还会更长）。
+ * 尽量保留扩展名（不超过 16 个字符的 `.ext`），中间用 `…` 表示截掉的部分。纯函数。
+ */
+export function clipMediaName(name: string, max = PROVIDER_MEDIA_NAME_MAX): string {
+  const cps = [...name];
+  if (cps.length <= max) return name;
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? [...name.slice(dot)] : [];
+  const keep = ext.length > 0 && ext.length <= 16 && ext.length < max - 1 ? ext : [];
+  const head = cps.slice(0, max - 1 - keep.length);
+  return `${head.join("")}…${keep.join("")}`;
+}
+
+/** 是否含控制字符（C0、DEL 与 C1）。 */
+export function hasControlChars(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return true;
+  }
+  return false;
+}
+
+/** 附件 id 是否为 UUID（任意版本，大小写不限）。 */
+export function isAttachmentId(s: unknown): s is string {
+  return typeof s === "string" && UUID_RE.test(s);
+}
+const MEDIA: Record<string, { types: readonly string[]; limit: number }> = {
+  image: { types: IMAGE_MEDIA_TYPES, limit: MEDIA_LIMITS.imageBytes },
+  document: { types: DOCUMENT_MEDIA_TYPES, limit: MEDIA_LIMITS.documentBytes },
+};
+
+/**
+ * 校验一个 image / document 块，返回错误列表（空表示合法）：类型在列表里；`base64` 是标准、带填充、
+ * 不含空白的 base64，解码后不超过 {@link MEDIA_LIMITS}；`ref` 的 `attachmentId` 是 UUID；`name` 若有须是字符串、
+ * 不超过 {@link MEDIA_NAME_MAX_CHARS} 个字符且不含控制字符。
+ */
+export function validateMediaBlock(b: unknown): string[] {
+  if (typeof b !== "object" || b === null || Array.isArray(b)) return ["block must be an object"];
+  const o = b as Record<string, unknown>;
+  const spec =
+    typeof o.type === "string" && Object.hasOwn(MEDIA, o.type) ? MEDIA[o.type] : undefined;
+  if (!spec) return ['block type must be "image" or "document"'];
+  const errs: string[] = [];
+  if (typeof o.mediaType !== "string" || !spec.types.includes(o.mediaType)) {
+    errs.push(`${o.type} mediaType must be one of ${spec.types.join(", ")}`);
+  }
+  if (o.name !== undefined) {
+    if (typeof o.name !== "string") errs.push(`${o.type} name must be a string`);
+    else if (o.name.length > MEDIA_NAME_MAX_CHARS) {
+      errs.push(`${o.type} name must be at most ${MEDIA_NAME_MAX_CHARS} characters`);
+    } else if (hasControlChars(o.name)) {
+      errs.push(`${o.type} name must not contain control characters`);
+    }
+  }
+  const src = o.source;
+  if (typeof src !== "object" || src === null) {
+    errs.push(`${o.type} source must be an object`);
+    return errs;
+  }
+  const source = src as Record<string, unknown>;
+  if (source.kind === "ref") {
+    if (!isAttachmentId(source.attachmentId)) {
+      errs.push(`${o.type} source.attachmentId must be a UUID`);
+    }
+  } else if (source.kind === "base64") {
+    const data = source.data;
+    if (typeof data !== "string" || data === "" || data.length % 4 !== 0) {
+      errs.push(`${o.type} source.data must be non-empty padded base64`);
+      return errs;
+    }
+    // 先按长度算解码后的大小，超限就不再逐字符校验
+    const pad = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+    const bytes = (data.length / 4) * 3 - pad;
+    if (bytes > spec.limit) {
+      errs.push(`${o.type} is ${bytes} bytes, over the limit of ${spec.limit} bytes`);
+    } else if (!B64_RE.test(data)) {
+      errs.push(`${o.type} source.data is not valid base64`);
+    }
+  } else {
+    errs.push(`${o.type} source.kind must be "base64" or "ref"`);
+  }
+  return errs;
+}
 
 export type ModelMessage =
   | { role: "user"; content: ContentBlock[] }

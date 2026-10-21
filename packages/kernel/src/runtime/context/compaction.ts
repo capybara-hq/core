@@ -128,7 +128,10 @@ function transcriptLine(e: ConversationEvent): string | null {
   }
 }
 
-/** 内容块转纯文本；思考块不进记录。 */
+/**
+ * 内容块转纯文本；思考块不进记录，媒体块记为 `[image: "<name>"]` / `[document: "<name>"]`
+ * （名字按 JSON.stringify 加引号，与请求里的占位一致）。
+ */
 function renderBlocks(blocks: EventPayload<"user_message">["content"]): string {
   const out: string[] = [];
   for (const b of blocks) {
@@ -143,6 +146,10 @@ function renderBlocks(blocks: EventPayload<"user_message">["content"]): string {
         out.push(`[Tool result${b.isError ? " (error)" : ""}: ${b.content}]`);
         break;
       case "thinking":
+        break;
+      case "image":
+      case "document":
+        out.push(`[${b.type}: ${JSON.stringify(b.name ?? "attachment")}]`);
         break;
     }
   }

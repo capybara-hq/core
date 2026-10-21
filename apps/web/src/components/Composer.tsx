@@ -1,12 +1,15 @@
 "use client";
 
 import {
+  AttachmentChip,
   Badge,
   Button,
   type CommandGroup,
   CommandPalette,
   Dialog,
   Field,
+  FileButton,
+  FileDrop,
   IconButton,
   Input,
   Stack,
@@ -24,6 +27,7 @@ import {
   renderAppPrompt,
 } from "../lib/apps";
 import { useErrorMessage } from "../lib/use-error-message";
+import { useDraftFiles } from "./use-draft-files";
 
 /** 一条消息最多附件数（与内核 `MAX_ATTACHMENTS` 一致）。 */
 const MAX_ATTACHMENTS = 5;
@@ -46,9 +50,14 @@ function newClientMessageId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** 草稿的身份：文本 + 附件（任一变了即视为新消息）。 */
-const draftKey = (text: string, attachments: DraftAttachment[]) =>
-  JSON.stringify([text, attachments.map((a) => [a.appId, a.uri])]);
+export type { DraftFile } from "./use-draft-files";
+
+/** `onSend` 的结果：失败时带上错误（如附件不存在，用来标出对应条目）。 */
+export type SendResult = { ok: true } | { ok: false; error: unknown };
+
+/** 草稿的身份：文本 + 附件 + 文件（任一变了即视为新消息）。 */
+const draftKey = (text: string, attachments: DraftAttachment[], files: string[]) =>
+  JSON.stringify([text, attachments.map((a) => [a.appId, a.uri]), files]);
 
 /** 斜杠命令的写法：`/<应用 slug>:<提示名>`。 */
 export const promptCommand = (p: Pick<AppPrompt, "appSlug" | "name">) => `/${p.appSlug}:${p.name}`;
@@ -67,6 +76,11 @@ type Palette = "prompts" | "resources" | null;
  *   内核渲染为文本放进输入框，由用户检查后发送。
  * - 在开头或空白后输入 `@` → 命令面板列出各应用的资源；选中的资源作为附件随消息发送（内核读取正文）。
  * 未连接个人凭据的应用在面板里单独列出，选中时提示去连接。
+ *
+ * 上传文件（与 `@` 资源分开的一份列表）：点「+」选择、拖入输入区或粘贴。先在前端按类型 / 大小预检
+ * （文案与内核错误码一致），通过的立即上传（登记 → 预签名直传，显示进度 → finalize）。上传中或有出错的文件时
+ * 不能发送；出错的文件显示原因，可以移除或重试。发送时带上已就绪的附件 id（`files`），成功后只移除发出去的；
+ * 内核说某个附件不存在 / 未就绪时把对应条目标为出错。上限取自内核（见 `useDraftFiles`）。
  */
 export function Composer({
   orgId,
@@ -78,7 +92,8 @@ export function Composer({
     text: string,
     clientMessageId: string,
     attachments: DraftAttachment[],
-  ) => Promise<boolean>;
+    files: string[],
+  ) => Promise<SendResult>;
   /** 运行中时传入：输入框旁显示「停止」（任何宽度一次点击即可停止）。 */
   stop?: { onStop(): void; stopping: boolean } | undefined;
 }) {
@@ -88,6 +103,9 @@ export function Composer({
   const errorMessage = useErrorMessage();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  const drafts = useDraftFiles(orgId);
+  const files = drafts.files;
+
   const [pending, setPending] = useState(false);
   const [palette, setPalette] = useState<Palette>(null);
   const [prompts, setPrompts] = useState<{ items: AppPrompt[]; unavailable: AppUnavailable[] }>();
@@ -108,16 +126,24 @@ export function Composer({
 
   async function submit() {
     const value = text.trim();
-    if (value === "" || pending) return;
-    const key = draftKey(value, attachments);
+    if (pending || drafts.blocking) return;
+    const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
+    // 只有文件也能发（内核允许 text 为空）；带 `@` 资源时必须有文字（资源正文按 content[i + 1] 对应）
+    if (value === "" && (sent.length === 0 || attachments.length > 0)) return;
+    const fileIds = sent.map((f) => f.id);
+    const key = draftKey(value, attachments, fileIds);
     if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
     const clientMessageId = draft.current.id;
     setPending(true);
     try {
-      if (await onSend(value, clientMessageId, attachments)) {
+      const r = await onSend(value, clientMessageId, attachments, fileIds);
+      if (r.ok) {
         draft.current = undefined;
         setText("");
         setAttachments([]);
+        drafts.removeSent(sent.map((f) => f.key));
+      } else {
+        drafts.markFailed(r.error);
       }
     } finally {
       setPending(false);
@@ -272,49 +298,85 @@ export function Composer({
 
   return (
     <form onSubmit={onSubmit}>
-      <Stack gap={8}>
-        {attachments.length > 0 && (
-          // biome-ignore lint/a11y/useSemanticElements: 附件条目分组；apps/web 不能写样式，用 role=group
-          <div role="group" aria-label={t("attachments")}>
-            <Stack direction="row" gap={8} wrap>
-              {attachments.map((a) => (
-                <Stack key={`${a.appId}:${a.uri}`} direction="row" gap={4} align="center">
-                  <Badge>{`@${a.name}`}</Badge>
-                  <IconButton
-                    size={24}
-                    icon="✕"
-                    label={t("removeAttachment", { name: a.name })}
-                    onClick={() =>
-                      setAttachments(
-                        attachments.filter((x) => !(x.appId === a.appId && x.uri === a.uri)),
-                      )
-                    }
+      <FileDrop label={t("dropFiles")} onFiles={drafts.add} disabled={!drafts.limits.available}>
+        <Stack gap={8}>
+          {files.length > 0 && (
+            // biome-ignore lint/a11y/useSemanticElements: 文件条目分组；apps/web 不能写样式，用 role=group
+            <div role="group" aria-label={t("files")}>
+              <Stack direction="row" gap={8} wrap>
+                {files.map((f) => (
+                  <AttachmentChip
+                    key={f.key}
+                    name={f.name}
+                    size={f.size}
+                    status={f.status}
+                    progress={f.progress}
+                    {...(f.status === "error" && { error: drafts.errorText(f) })}
+                    {...(drafts.canRetry(f) && { onRetry: () => drafts.retry(f.key) })}
+                    onRemove={() => drafts.remove(f.key)}
                   />
-                </Stack>
-              ))}
-            </Stack>
-          </div>
-        )}
-        <Stack direction="row" gap={8} align="end">
-          <Textarea
-            name="message"
-            aria-label={t("inputLabel")}
-            rows={3}
-            placeholder={t("placeholder")}
-            value={text}
-            onChange={onChange}
-            onKeyDown={onKeyDown}
-          />
-          {stop && (
-            <Button onClick={stop.onStop} disabled={stop.stopping}>
-              {t("stop")}
-            </Button>
+                ))}
+              </Stack>
+            </div>
           )}
-          <Button type="submit" variant="primary" disabled={pending || text.trim() === ""}>
-            {t("send")}
-          </Button>
+          {attachments.length > 0 && (
+            // biome-ignore lint/a11y/useSemanticElements: 附件条目分组；apps/web 不能写样式，用 role=group
+            <div role="group" aria-label={t("attachments")}>
+              <Stack direction="row" gap={8} wrap>
+                {attachments.map((a) => (
+                  <Stack key={`${a.appId}:${a.uri}`} direction="row" gap={4} align="center">
+                    <Badge>{`@${a.name}`}</Badge>
+                    <IconButton
+                      size={24}
+                      icon="✕"
+                      label={t("removeAttachment", { name: a.name })}
+                      onClick={() =>
+                        setAttachments(
+                          attachments.filter((x) => !(x.appId === a.appId && x.uri === a.uri)),
+                        )
+                      }
+                    />
+                  </Stack>
+                ))}
+              </Stack>
+            </div>
+          )}
+          <Stack direction="row" gap={8} align="end">
+            <FileButton
+              label={drafts.limits.available ? t("addFiles") : t("filesUnavailable")}
+              onFiles={drafts.add}
+              accept={drafts.limits.types.join(",")}
+              disabled={!drafts.limits.available}
+              multiple
+            />
+            <Textarea
+              name="message"
+              aria-label={t("inputLabel")}
+              rows={3}
+              placeholder={t("placeholder")}
+              value={text}
+              onChange={onChange}
+              onKeyDown={onKeyDown}
+            />
+            {stop && (
+              <Button onClick={stop.onStop} disabled={stop.stopping}>
+                {t("stop")}
+              </Button>
+            )}
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={
+                pending ||
+                drafts.blocking ||
+                (text.trim() === "" && (files.length === 0 || attachments.length > 0))
+              }
+            >
+              {t("send")}
+            </Button>
+          </Stack>
         </Stack>
-      </Stack>
+      </FileDrop>
       <CommandPalette
         open={palette !== null}
         onOpenChange={(open) => {

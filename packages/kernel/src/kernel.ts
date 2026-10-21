@@ -2,7 +2,11 @@ import { fileURLToPath } from "node:url";
 import {
   CHANNEL_CAPABILITY,
   DIRECTORY_CAPABILITY,
+  OBJECT_STORE_CAPABILITY,
+  type ObjectStore,
   type PluginContext,
+  SANDBOX_CAPABILITY,
+  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -14,6 +18,12 @@ import { ChannelSupervisor } from "./channels/supervisor.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
+import {
+  ATTACHMENT_CLEANUP_EVERY_MS,
+  ATTACHMENT_CLEANUP_JOB,
+  ATTACHMENT_CLEANUP_SCHEDULER_ID,
+  AttachmentsService,
+} from "./conversations/attachments.service.js";
 import { ConversationsService } from "./conversations/conversations.service.js";
 import {
   type ConversationBusMessage,
@@ -52,18 +62,32 @@ import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
+import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
+import { SandboxService, sandboxConfigWarnings } from "./sandbox/sandbox.service.js";
+import { SkillChangesService } from "./skills/changes.service.js";
+import { SkillsService } from "./skills/skills.service.js";
+import {
+  purgeDeletedOrgStorage,
+  STORAGE_PURGE_EVERY_MS,
+  STORAGE_PURGE_JOB,
+  STORAGE_PURGE_SCHEDULER_ID,
+} from "./storage/purge.js";
+import { StorageService } from "./storage/storage.service.js";
 import { AppContent } from "./tools/app-content.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
 import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
+import { sandboxTools } from "./tools/builtins/sandbox/index.js";
+import { skillLoadTool } from "./tools/builtins/skill-load.js";
+import { skillWriteTool } from "./tools/builtins/skill-write.js";
 import { toolSearchTool } from "./tools/builtins/tool-search.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolDrift } from "./tools/drift.js";
 import { ToolOutputs } from "./tools/outputs.js";
 import { ToolPipeline } from "./tools/pipeline.js";
 import { QuestionsService } from "./tools/questions.service.js";
-import { ToolRegistry } from "./tools/registry.js";
+import { type BuiltinTool, ToolRegistry } from "./tools/registry.js";
 
 /**
  * 内核迁移目录。src/ 与 dist/ 都在包根下一层，所以统一指向 `<包根>/src/migrations`：
@@ -175,6 +199,22 @@ export interface Kernel {
   readonly identity: KernelIdentity;
   /** 渠道连接与入站。 */
   readonly channels: KernelChannels;
+  /**
+   * 对象存储（`object-store@1` 提供方之上的前缀隔离，内核用 `kernel(orgId)`）；
+   * 没有提供方时 `available` 为 false，各方法 reject `storage.unavailable`。
+   */
+  readonly storage: StorageService;
+  /** 对话附件（上传、finalize、绑定、取字节、过期清理）。 */
+  readonly attachments: AttachmentsService;
+  /** 技能库（组织技能的上传、版本、列表与软删除）。 */
+  readonly skills: SkillsService;
+  /** agent 自写技能（`skill_write`）与共享 agent 的技能变更审批（R4）。 */
+  readonly skillChanges: SkillChangesService;
+  /**
+   * 按对话的沙箱（`sandbox@1` 提供方之上：懒创建、锁、休眠与销毁）；
+   * 没有提供方时 `available` 为 false，使用时抛 `sandbox.unavailable`（503）。
+   */
+  readonly sandbox: SandboxService;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -319,17 +359,19 @@ export async function createKernel(
   const registry = new ProviderRegistry(host, redis, log);
   const credentials = new Credentials(kdb, keyring, log, { redis, config: () => current });
   const toolOutputs = new ToolOutputs(kdb, () => current);
-  // 内置工具；tool_search 由注册表按组织设置与阈值自动加入（不进 agent 定义）
+  // 内置工具；tool_search 由注册表按组织设置与阈值自动加入（不进 agent 定义）。
+  // 沙箱工具依赖下面才创建的存储、附件与沙箱服务，创建后追加进同一个数组（注册表每次调用时读它）。
+  const builtins: BuiltinTool[] = [
+    askUserTool({ config: () => current }),
+    readToolOutputTool({ outputs: toolOutputs, config: () => current }),
+    toolSearchTool(),
+  ];
   const toolRegistry = new ToolRegistry({
     db: kdb,
     host,
     credentials,
     log,
-    builtins: [
-      askUserTool({ config: () => current }),
-      readToolOutputTool({ outputs: toolOutputs, config: () => current }),
-      toolSearchTool(),
-    ],
+    builtins,
     config: () => current,
   });
   // 审批决定 / 输入回答提交后续跑（waits 在下面创建；回调只在运行期间被调用）
@@ -354,6 +396,80 @@ export async function createKernel(
     },
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
+  // 对象存储：提供方在 host.load() 之后才就绪，按调用时取
+  const storage = new StorageService({
+    provider: () =>
+      host.list("object-store").find((e) => e.capability === OBJECT_STORE_CAPABILITY)?.impl as
+        | ObjectStore
+        | undefined,
+    // 可能存过数据的插件：已批准过权限的（含已卸载的）与当前加载的
+    plugins: async () => {
+      const rows = await kdb.selectFrom("plugin_permission_snapshots").select("plugin").execute();
+      return [...rows.map((r) => r.plugin), ...host.manifests().map((m) => m.name)];
+    },
+  });
+  // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
+  maintenance.handle(STORAGE_PURGE_JOB, async () => {
+    await purgeDeletedOrgStorage({
+      db: kdb,
+      storage,
+      afterDays: current.storage.purgeDeletedOrgsAfterDays,
+      log,
+    });
+  });
+  maintenance.schedule({
+    id: STORAGE_PURGE_SCHEDULER_ID,
+    name: STORAGE_PURGE_JOB,
+    everyMs: () => STORAGE_PURGE_EVERY_MS,
+  });
+  // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
+  // agent 自写技能（skill_write）与共享 agent 的技能变更审批（R4）
+  const skillChanges = new SkillChangesService({ db: kdb, storage, eventLog, log });
+  const conversationAccess = new ConversationsService(
+    kdb,
+    eventLog,
+    new AgentsService(kdb, registry, toolRegistry, skillChanges),
+  );
+  const attachments = new AttachmentsService({
+    db: kdb,
+    storage,
+    config: () => current,
+    canAccessConversation: (orgId, id, viewer) =>
+      conversationAccess.isAccessible(orgId, id, viewer),
+    log,
+  });
+  const skills = new SkillsService({ db: kdb, storage, attachments });
+  maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
+    const n = await attachments.deleteExpired();
+    if (n > 0) log.info("expired attachments deleted", { count: n });
+  });
+  maintenance.schedule({
+    id: ATTACHMENT_CLEANUP_SCHEDULER_ID,
+    name: ATTACHMENT_CLEANUP_JOB,
+    everyMs: () => ATTACHMENT_CLEANUP_EVERY_MS,
+  });
+  // 沙箱：提供方在 host.load() 之后才就绪，按调用时取；休眠与销毁由维护队列扫描
+  const sandbox = new SandboxService({
+    db: kdb,
+    redis,
+    provider: () => {
+      const e = host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY);
+      return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
+    },
+    lookup: (plugin) =>
+      host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY && x.plugin === plugin)
+        ?.impl as SandboxProvider | undefined,
+    config: () => current,
+    log,
+  });
+  registerSandboxMaintenance(maintenance, sandbox, log);
+  builtins.push(
+    ...sandboxTools({ sandbox, attachments, storage, eventLog, config: () => current }),
+    // 技能加载：对话日志里有技能目录快照时由注册表自动加入（Ruling M17）
+    skillLoadTool({ db: kdb, sandbox, attachments, storage, eventLog, config: () => current }),
+    // 自写技能：agent 定义显式引用才可用
+    skillWriteTool({ changes: skillChanges }),
+  );
   // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
   const toolDrift = new ToolDrift({
     db: kdb,
@@ -444,6 +560,8 @@ export async function createKernel(
     redis,
     maintenance,
     log,
+    // 离职者对话的沙箱：提交后投递维护任务，由 worker 逐个销毁（等正在跑的命令结束）
+    sandboxes: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
   });
   const identity: KernelIdentity = {
     external,
@@ -514,7 +632,7 @@ export async function createKernel(
       conversations: new ConversationsService(
         kdb,
         eventLog,
-        new AgentsService(kdb, registry, toolRegistry),
+        new AgentsService(kdb, registry, toolRegistry, skillChanges),
         runControl,
         log,
       ),
@@ -564,6 +682,11 @@ export async function createKernel(
     config: () => current,
     log,
     toolPipeline,
+    media: {
+      info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
+      fetch: (orgId, conversationId, ids, caps) =>
+        attachments.fetchMedia(orgId, conversationId, ids, caps),
+    },
   };
   const runs: KernelRuns = {
     eventLog,
@@ -623,6 +746,12 @@ export async function createKernel(
         identity,
         channels: channelConnections,
         runs: runControl,
+        attachments,
+        storage,
+        sandbox,
+        skills,
+        skillChanges,
+        sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
@@ -775,6 +904,11 @@ export async function createKernel(
     tools,
     identity,
     channels,
+    storage,
+    attachments,
+    skills,
+    skillChanges,
+    sandbox,
     log,
     get config() {
       return current;
@@ -803,6 +937,12 @@ export async function createKernel(
         checkpoint();
         await host.load(config.plugins);
         checkpoint();
+        const sandboxPlugin = host
+          .list("sandbox")
+          .find((x) => x.capability === SANDBOX_CAPABILITY)?.plugin;
+        if (sandboxPlugin !== undefined) {
+          for (const w of sandboxConfigWarnings(current, sandboxPlugin)) log[w.level](w.message);
+        }
         if (config.roles.includes("worker")) {
           runWorker = new RunWorker({
             db: kdb,
