@@ -573,6 +573,23 @@ describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
         : "";
     expect(sent.length).toBeLessThan(50_200);
     expect(sent).toContain(`characters of a ${big.length}-byte file.]`);
+
+    // 提供方不支持按范围读（给了整个对象）：同样只留开头
+    const real = k.host.list("object-store")[0]?.impl as ObjectStore;
+    const noRange: ObjectStore = {
+      ...real,
+      head: (key) => real.head(key),
+      get: (key) => real.get(key),
+    };
+    const svc = new AttachmentsService({
+      db,
+      storage: new StorageService({ provider: () => noRange, plugins: async () => [] }),
+      config: () => k.config,
+      canAccessConversation: async () => true,
+      log: { info() {}, warn() {} },
+    });
+    const whole = await svc.fetchMedia(orgId, convId, [id], new Map([[id, 1000]]));
+    expect(whole.get(id)?.data.byteLength).toBe(1000);
   });
 });
 

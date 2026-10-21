@@ -539,7 +539,9 @@ export class AttachmentsService {
           await got.body.cancel().catch(() => {});
           return out.set(id, null);
         }
-        const data = await readAll(got.body);
+        // 提供方没按范围读、给了整个对象时只留开头
+        const all = await readAll(got.body);
+        const data = all.byteLength === Number(r.size) ? all.subarray(0, want) : all;
         out.set(id, data.byteLength === want ? { mediaType: r.content_type, data } : null);
       }),
     );
