@@ -124,6 +124,7 @@ beforeAll(async () => {
           attachments: k.attachments,
           skills: k.skills,
           skillChanges: k.skillChanges,
+          prices: k.prices,
           storage: k.storage,
           sandbox: k.sandbox,
           runs: {

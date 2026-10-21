@@ -27,7 +27,8 @@ export type OrgAction =
   | "channels.manage"
   | "skills.read"
   | "skills.manage"
-  | "ui.use";
+  | "ui.use"
+  | "trajectories.read";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -57,6 +58,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "skills.manage": "admin",
   // 插件界面（列出贡献、取视图、执行动作、组织级刷新流）：只给人用，服务令牌不可
   "ui.use": "guest",
+  // 轨迹查看器：服务里再判定「组织管理员或该 agent 的负责人」（实时读负责人），其余一律 404
+  "trajectories.read": "member",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

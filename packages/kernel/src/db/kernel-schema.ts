@@ -568,6 +568,22 @@ export interface SandboxesTable {
   sweep_failed_at: TsNullable;
 }
 
+/** pg numeric：驱动读出为字符串（精确小数），读取方自行 `Number()`。 */
+type Numeric = ColumnType<string, number | string, number | string>;
+type NumericNullable = ColumnType<string | null, number | string | null, number | string | null>;
+
+/** 0027_model_prices.sql：模型价格（每百万 token，币种为部署设置 priceCurrency）。 */
+export interface ModelPricesTable {
+  provider: string;
+  model: string;
+  input_per_mtok: Numeric;
+  output_per_mtok: Numeric;
+  cache_read_per_mtok: NumericNullable;
+  cache_write_per_mtok: NumericNullable;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
@@ -613,6 +629,7 @@ export interface KernelDatabase {
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;
+  model_prices: ModelPricesTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

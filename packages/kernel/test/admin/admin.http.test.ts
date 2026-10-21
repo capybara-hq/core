@@ -500,6 +500,7 @@ describe("企业管理员端点", () => {
     expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: {},
+      priceCurrency: "USD",
     });
     const put = await adminReq({
       method: "PUT",
@@ -510,6 +511,7 @@ describe("企业管理员端点", () => {
     expect(put.json()).toEqual({
       orgCreation: "enterprise_admin",
       runConcurrencyOverrides: {},
+      priceCurrency: "USD",
     });
     const bad = await adminReq({
       method: "PUT",
@@ -537,6 +539,7 @@ describe("企业管理员端点", () => {
     expect(r1.json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgA: 1, orgB: 5 },
+      priceCurrency: "USD",
     });
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
@@ -554,6 +557,7 @@ describe("企业管理员端点", () => {
     expect(r2.json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgB: 5, orgC: 2 },
+      priceCurrency: "USD",
     });
     expect(await limit("orgA")).toBe(k.config.runtime.orgConcurrency);
     expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
@@ -573,6 +577,7 @@ describe("企业管理员端点", () => {
     expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgB: 5, orgC: 2 },
+      priceCurrency: "USD",
     });
   });
 

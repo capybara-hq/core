@@ -12,7 +12,7 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
-import { ACCOUNTS, KERNEL_LOG, ORGS, SESSIONS, SETTINGS } from "../http/tokens.js";
+import { ACCOUNTS, KERNEL_LOG, ORGS, PRICES, SESSIONS, SETTINGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
@@ -29,6 +29,12 @@ import {
   type DeploymentSettings,
   type SettingsService,
 } from "../identity/settings.js";
+import {
+  MODEL_PRICE_PUT,
+  type ModelPrice,
+  type ModelPricePut,
+  type PricesService,
+} from "../models/prices.js";
 import type { Org, OrgsService } from "../orgs/orgs.service.js";
 
 const ListQuery = z.object({
@@ -68,6 +74,7 @@ export class AdminController {
     @Inject(KERNEL_LOG) private readonly log: Logger,
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(SETTINGS) private readonly settings: SettingsService,
+    @Inject(PRICES) private readonly prices: PricesService,
   ) {}
 
   /**
@@ -158,5 +165,23 @@ export class AdminController {
   ): Promise<DeploymentSettings> {
     const actor = requireUser(principal);
     return this.settings.update(body, actor.account.id, patTokenId(actor));
+  }
+
+  /** 模型价格表（每百万 token）与币种（部署设置 `priceCurrency`）。 */
+  @Get("model-prices")
+  async getModelPrices(): Promise<{ prices: ModelPrice[]; currency: string }> {
+    const [prices, settings] = await Promise.all([this.prices.list(), this.settings.get()]);
+    return { prices, currency: settings.priceCurrency };
+  }
+
+  /** 设置一个模型的价格，或 `{provider, model, price: null}` 删除；返回更新后的价格表。 */
+  @Put("model-prices")
+  async putModelPrice(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodPipe(MODEL_PRICE_PUT)) body: ModelPricePut,
+  ): Promise<{ prices: ModelPrice[]; currency: string }> {
+    const actor = requireUser(principal);
+    await this.prices.put(body, actor.account.id, patTokenId(actor));
+    return this.getModelPrices();
   }
 }

@@ -6,10 +6,15 @@ import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
 
+/** 币种代码：ISO 4217 的三位大写字母（如 USD、CNY）。 */
+const CurrencyCode = z.string().regex(/^[A-Z]{3}$/, "must be a 3-letter ISO 4217 currency code");
+
 export const DEPLOYMENT_SETTINGS = z.object({
   orgCreation: z.enum(["anyone", "enterprise_admin"]).default("anyone"),
   /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
   runConcurrencyOverrides: z.record(z.string().min(1), z.number().int().positive()).default({}),
+  /** 模型价格表（`model_prices`）的币种；只用于显示估算成本，不做换算。 */
+  priceCurrency: CurrencyCode.default("USD"),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -26,6 +31,7 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
     runConcurrencyOverrides: z
       .record(z.string().min(1), z.number().int().positive().nullable())
       .optional(),
+    priceCurrency: CurrencyCode.optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -83,6 +89,7 @@ export class SettingsService {
       // 企业管理员锁串行化所有设置修改：在锁内读当前覆盖再合并，不会丢失并发修改。
       const next: Partial<DeploymentSettings> = {};
       if (check.data.orgCreation !== undefined) next.orgCreation = check.data.orgCreation;
+      if (check.data.priceCurrency !== undefined) next.priceCurrency = check.data.priceCurrency;
       if (check.data.runConcurrencyOverrides !== undefined) {
         const merged = { ...(await this.get(trx)).runConcurrencyOverrides };
         for (const [orgId, limit] of Object.entries(check.data.runConcurrencyOverrides)) {

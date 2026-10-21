@@ -131,3 +131,9 @@ export const EMBED_TOKENS = Symbol("EMBED_TOKENS");
 
 /** `OrgUiStreams`（组织级界面刷新 SSE）的注入令牌。 */
 export const ORG_UI_STREAMS = Symbol("ORG_UI_STREAMS");
+
+/** `PricesService`（模型价格表）的注入令牌。 */
+export const PRICES = Symbol("PRICES");
+
+/** `TrajectoryService`（轨迹查看器）的注入令牌。 */
+export const TRAJECTORIES = Symbol("TRAJECTORIES");

@@ -45,6 +45,7 @@ import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { createLogger, type KernelLogger } from "./log.js";
+import { PricesService } from "./models/prices.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
@@ -210,6 +211,8 @@ export interface Kernel {
   readonly skills: SkillsService;
   /** agent 自写技能（`skill_write`）与共享 agent 的技能变更审批（R4）。 */
   readonly skillChanges: SkillChangesService;
+  /** 模型价格表（PG `model_prices`，成本读时计算）。 */
+  readonly prices: PricesService;
   /**
    * 按对话的沙箱（`sandbox@1` 提供方之上：懒创建、锁、休眠与销毁）；
    * 没有提供方时 `available` 为 false，使用时抛 `sandbox.unavailable`（503）。
@@ -439,6 +442,7 @@ export async function createKernel(
     log,
   });
   const skills = new SkillsService({ db: kdb, storage, attachments });
+  const prices = new PricesService(kdb);
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
     const n = await attachments.deleteExpired();
     if (n > 0) log.info("expired attachments deleted", { count: n });
@@ -751,6 +755,7 @@ export async function createKernel(
         sandbox,
         skills,
         skillChanges,
+        prices,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
       trustProxy: config.http.trustProxy,
@@ -908,6 +913,7 @@ export async function createKernel(
     attachments,
     skills,
     skillChanges,
+    prices,
     sandbox,
     log,
     get config() {

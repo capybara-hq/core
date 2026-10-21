@@ -22,6 +22,8 @@ import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { TrajectoryController } from "../evals/trajectory.controller.js";
+import { TrajectoryService } from "../evals/trajectory.service.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { AuthController } from "../identity/auth.controller.js";
@@ -37,6 +39,7 @@ import {
 } from "../identity/sso.controller.js";
 import { InboxService } from "../inbox/inbox.service.js";
 import type { KernelIdentity } from "../kernel.js";
+import type { PricesService } from "../models/prices.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
 import { InvitationsService } from "../orgs/invitations.service.js";
@@ -116,6 +119,7 @@ import {
   ORG_SETTINGS,
   ORG_UI_STREAMS,
   ORGS,
+  PRICES,
   PROVIDER_REGISTRY,
   QUESTIONS,
   RATE_LIMITER,
@@ -126,6 +130,7 @@ import {
   SKILLS,
   SSO_FLOW,
   TOOL_REGISTRY,
+  TRAJECTORIES,
   UI_VIEWS,
 } from "./tokens.js";
 
@@ -176,6 +181,8 @@ export interface ApiDeps {
   skills: SkillsService;
   /** agent 自写技能与技能变更审批（与 `Kernel.skillChanges` 同一实例）。 */
   skillChanges: SkillChangesService;
+  /** 模型价格表（与 `Kernel.prices` 同一实例）。 */
+  prices: PricesService;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
   sandboxDestroy?: { destroy(conversationIds: string[]): Promise<void> };
 }
@@ -212,6 +219,7 @@ const CONTROLLERS: Type[] = [
   ChannelConnectionsController,
   DirectorySyncController,
   UiController,
+  TrajectoryController,
 ];
 
 /**
@@ -292,6 +300,17 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry) =>
         new AgentsService(db, registry, tools, deps.skillChanges, deps.sandboxDestroy, deps.log),
       inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY],
+    },
+    { provide: PRICES, useValue: deps.prices },
+    {
+      provide: TRAJECTORIES,
+      useFactory: (
+        db: KernelDb,
+        eventLog: EventLog,
+        prices: PricesService,
+        settings: SettingsService,
+      ) => new TrajectoryService(db, eventLog, prices, settings),
+      inject: [KERNEL_DB, EVENT_LOG, PRICES, SETTINGS],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },

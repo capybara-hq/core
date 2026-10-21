@@ -91,6 +91,7 @@ export const ERROR_CODES = {
   "skill_change.not_found": 404,
   "skill_change.not_owner": 403,
   "skill_change.already_decided": 409,
+  "trajectory.not_found": 404,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
