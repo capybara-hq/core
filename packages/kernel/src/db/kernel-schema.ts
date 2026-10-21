@@ -469,6 +469,8 @@ export interface AttachmentsTable {
   size: Int8;
   object_key: string;
   status: "pending" | "ready" | "deleting";
+  etag: string | null;
+  pages: number | null;
   created_at: Ts;
   expires_at: TsNullable;
 }

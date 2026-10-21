@@ -62,6 +62,7 @@
 | `attachments.allowedTypes` | `CAPYBARA_ATTACHMENTS__ALLOWED_TYPES` | `array<"image/png" \| "image/jpeg" \| "image/gif" \| "image/webp" \| "application/pdf" \| "text/plain" \| "text/markdown" \| "text/csv">` | `["image/png","image/jpeg","image/gif","image/webp","application/pdf","text/plain","text/markdown","text/csv"]` | 否 | 否 | Content types accepted for chat attachments |
 | `attachments.maxPerMessage` | `CAPYBARA_ATTACHMENTS__MAX_PER_MESSAGE` | `number` | `10` | 否 | 否 | Maximum number of attachments in one message |
 | `attachments.unboundTtlHours` | `CAPYBARA_ATTACHMENTS__UNBOUND_TTL_HOURS` | `number` | `24` | 否 | 否 | Hours after upload before an attachment never used in a message is deleted (row and object) |
+| `attachments.requestMediaBytes` | `CAPYBARA_ATTACHMENTS__REQUEST_MEDIA_BYTES` | `number` | `20971520` | 否 | 否 | Budget of raw attachment bytes in one model request; the newest attachments are kept and older ones are replaced with a placeholder |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

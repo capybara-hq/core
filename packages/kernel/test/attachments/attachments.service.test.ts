@@ -34,7 +34,7 @@ describe("AttachmentsService", () => {
     expect(await svc.deleteExpired()).toBe(0);
   });
 
-  it("默认配置：20 MiB、8 种类型、每条消息 10 个、24 小时", () => {
+  it("默认配置：20 MiB、8 种类型、每条消息 10 个、24 小时、单次请求 20 MiB 媒体", () => {
     expect(config.attachments).toEqual({
       maxBytes: 20_971_520,
       allowedTypes: [
@@ -49,6 +49,7 @@ describe("AttachmentsService", () => {
       ],
       maxPerMessage: 10,
       unboundTtlHours: 24,
+      requestMediaBytes: 20_971_520,
     });
   });
 });

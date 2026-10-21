@@ -25,8 +25,10 @@ import {
   buildModelRequest,
   latestSummary,
   type MediaBytes,
+  type MediaInfo,
   type ModelCallMeta,
-  mediaRefsNeeded,
+  mediaRefs,
+  planMedia,
   type RequestTool,
 } from "./context/build.js";
 import {
@@ -89,14 +91,40 @@ export interface ModelStepDeps {
   config: () => KernelConfig;
   log: Logger;
   /**
-   * 取会话附件的字节（构建请求时解析日志里的媒体引用；见 AttachmentsService.fetchMedia）。取不到的为 null。
-   * 未提供时媒体引用一律按「不再可用」占位处理。
+   * 会话附件（构建请求时解析日志里的媒体引用；见 AttachmentsService）。未提供时媒体引用一律按「不再可用」处理。
+   * 两个方法都只对「确定不存在」返回缺省 / null；暂时故障（存储不可用、网络错误）一律抛错（Ruling M4）。
    */
-  media?: (
+  media?: MediaSourceDeps;
+}
+
+/** 构建请求用到的附件来源。 */
+export interface MediaSourceDeps {
+  /** 附件行的声明信息（只含绑定在该会话、已 ready 的；没有行的不在结果里）。 */
+  info(
     orgId: string,
     conversationId: string,
     ids: readonly string[],
-  ) => Promise<Map<string, MediaBytes | null>>;
+  ): Promise<Map<string, MediaInfo>>;
+  /** 字节；对象已不在或内容被替换为 null。 */
+  fetch(
+    orgId: string,
+    conversationId: string,
+    ids: readonly string[],
+  ): Promise<Map<string, MediaBytes | null>>;
+}
+
+/**
+ * 取附件时存储暂时不可用（Ruling M4）：不把它当成「附件不在」发占位，而是让本次尝试按可重试错误失败
+ * （`run.storage_unavailable`），走降级梯子的重试。
+ */
+export class MediaUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `Attachment storage is temporarily unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = "MediaUnavailableError";
+  }
 }
 
 export interface ModelStepInput {
@@ -155,8 +183,15 @@ export const MAX_MODEL_ATTEMPTS = 3;
 interface StepTools {
   list: RequestTool[];
   toolSearch: boolean;
-  /** 本步已取过的附件字节（附件 id → 字节 / null）；同一步的多次构建（压缩估算、各次尝试）共用。 */
-  media: Map<string, MediaBytes | null>;
+  /** 本步已取到的附件信息与字节；同一步的多次构建（压缩估算、各次尝试）共用。只缓存成功的结果。 */
+  media: StepMedia;
+}
+
+/** 本步的附件缓存：`looked` 是已查过行的 id（没有行的不在 `info` 里）。 */
+interface StepMedia {
+  looked: Set<string>;
+  info: Map<string, MediaInfo>;
+  bytes: Map<string, MediaBytes | null>;
 }
 
 const idem = {
@@ -232,7 +267,7 @@ async function runStep(
     const tools: StepTools = {
       list: resolved.tools,
       toolSearch: resolved.toolSearch === true,
-      media: new Map(),
+      media: { looked: new Set(), info: new Map(), bytes: new Map() },
     };
     events = await maybeCompact(deps, input, events, runtime, tools);
 
@@ -393,6 +428,7 @@ function attemptParams(
  * 否则配对守卫会给进行中的调用补上 unknown 结果并发给模型。运行循环在工具结果落日志后才进入下一步。
  */
 function buildRequest(
+  deps: Pick<ModelStepDeps, "config">,
   events: ConversationEvent[],
   input: ModelStepInput,
   info: ModelInfo,
@@ -401,7 +437,7 @@ function buildRequest(
   tools: StepTools,
   wrapUp: boolean,
 ): { request: ModelRequest; meta: ModelCallMeta; estimate: number } {
-  const { request, meta } = buildModelRequest({
+  const { request, meta, mediaTokens } = buildModelRequest({
     events,
     agent: input.agent,
     agentVersion: input.agentVersion,
@@ -412,7 +448,9 @@ function buildRequest(
     tools: info.capabilities.tools ? tools.list : [],
     toolSearch: tools.toolSearch,
     ...(wrapUp && { toolChoice: "none" as const }),
-    media: tools.media,
+    mediaInfo: tools.media.info,
+    media: tools.media.bytes,
+    mediaBudgetBytes: deps.config().attachments.requestMediaBytes,
   });
   request.messages = guardToolPairs(request.messages);
   const knob = params.maxOutputTokens;
@@ -423,13 +461,14 @@ function buildRequest(
   return {
     request,
     meta,
-    estimate: estimateTokens(request.messages, request.system, request.tools),
+    estimate: estimateTokens(request.messages, request.system, request.tools, mediaTokens),
   };
 }
 
 /**
- * 取本次构建要用到的附件字节（只取该模型会用到的：不支持的图片 / PDF 只发占位，字节不取），并入 `tools.media`。
- * 读取失败只记日志，按取不到处理（构建时换成「不再可用」占位；日志不变，下一步会重新取）。
+ * 取本次构建要用到的附件（只取该模型会用到的：不支持的图片 / PDF 只发占位，行与字节都不取）：先查行信息，
+ * 按预算（{@link planMedia}，只看声明大小）决定保留哪些，再只取保留的字节，并入 `tools.media`。
+ * 取不到（确定不存在）的缓存为 null；暂时故障抛 {@link MediaUnavailableError}，不缓存，下一次尝试重新取。
  */
 async function loadMedia(
   deps: ModelStepDeps,
@@ -438,20 +477,32 @@ async function loadMedia(
   info: ModelInfo,
   tools: StepTools,
 ): Promise<void> {
-  const ids = mediaRefsNeeded(events, info).filter((id) => !tools.media.has(id));
-  if (ids.length === 0) return;
-  let got = new Map<string, MediaBytes | null>();
-  if (deps.media) {
-    try {
-      got = await deps.media(input.orgId, input.conversationId, ids);
-    } catch (err) {
-      deps.log.warn("cannot load attachments for model request", {
-        conversationId: input.conversationId,
-        err,
-      });
+  const cache = tools.media;
+  const look = mediaRefs(events, info).filter((id) => !cache.looked.has(id));
+  if (look.length > 0) {
+    if (deps.media) {
+      let rows: Map<string, MediaInfo>;
+      try {
+        rows = await deps.media.info(input.orgId, input.conversationId, look);
+      } catch (err) {
+        throw new MediaUnavailableError(err);
+      }
+      for (const [id, row] of rows) cache.info.set(id, row);
     }
+    for (const id of look) cache.looked.add(id);
   }
-  for (const id of ids) tools.media.set(id, got.get(id) ?? null);
+  const budget = deps.config().attachments.requestMediaBytes;
+  const need = planMedia(events, info, cache.info, budget).fetch.filter(
+    (id) => !cache.bytes.has(id),
+  );
+  if (need.length === 0 || !deps.media) return;
+  let got: Map<string, MediaBytes | null>;
+  try {
+    got = await deps.media.fetch(input.orgId, input.conversationId, need);
+  } catch (err) {
+    throw new MediaUnavailableError(err);
+  }
+  for (const id of need) cache.bytes.set(id, got.get(id) ?? null);
 }
 
 /**
@@ -504,8 +555,19 @@ async function maybeCompact(
     deps.log.warn("compaction skipped: model unavailable", { model: input.agent.model, err });
     return events;
   }
-  await loadMedia(deps, input, events, info, tools);
-  const { request } = buildRequest(
+  try {
+    await loadMedia(deps, input, events, info, tools);
+  } catch (err) {
+    if (!(err instanceof MediaUnavailableError)) throw err;
+    // 存储暂时不可用：本步跳过压缩，交给降级梯子（会按可重试错误处理）
+    deps.log.warn("compaction skipped: attachment storage unavailable", {
+      conversationId: input.conversationId,
+      err,
+    });
+    return events;
+  }
+  const { estimate: raw } = buildRequest(
+    deps,
     events,
     input,
     info,
@@ -514,10 +576,7 @@ async function maybeCompact(
     tools,
     false,
   );
-  const estimate = calibrate(
-    estimateTokens(request.messages, request.system, request.tools),
-    lastActual(events),
-  );
+  const estimate = calibrate(raw, lastActual(events));
   if (!shouldCompact(estimate, info, runtime.compactionThreshold)) return events;
   const plan = compactionPlan(events, runtime.keepRecentTurns);
   if (!plan) return events;
@@ -628,6 +687,7 @@ async function ladder(
       const params = attemptParams(agent, info, rung.fallback);
       await loadMedia(deps, input, evs, info, tools);
       const { request, meta, estimate } = buildRequest(
+        deps,
         evs,
         input,
         info,
@@ -713,6 +773,14 @@ function classify(err: unknown): Failure {
       code: `model.${err.kind}`,
       message: err.message,
       retryAfterMs: err.retryAfterMs,
+    };
+  }
+  if (err instanceof MediaUnavailableError) {
+    return {
+      retryable: true,
+      code: "run.storage_unavailable",
+      message: err.message,
+      retryAfterMs: undefined,
     };
   }
   if (err instanceof ProviderListError) {

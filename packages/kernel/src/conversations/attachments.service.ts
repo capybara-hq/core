@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  CapabilityUnavailableError,
   IMAGE_MEDIA_TYPES,
   type ImageMediaType,
   type Logger,
@@ -11,14 +10,14 @@ import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { MediaBytes } from "../runtime/context/build.js";
+import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { LogContentBlock } from "./events.js";
 
 type Trx = Transaction<KernelDatabase>;
 
-/** 预签名上传的有效期（秒）。 */
-export const ATTACHMENT_UPLOAD_TTL_SECONDS = 900;
+/** 预签名上传的有效期（秒）。尽量短：表单在有效期内可被再次使用（内容替换由 etag 核对兜底）。 */
+export const ATTACHMENT_UPLOAD_TTL_SECONDS = 300;
 /** 下载跳转的预签名有效期（秒）。 */
 export const ATTACHMENT_DOWNLOAD_TTL_SECONDS = 300;
 
@@ -92,6 +91,14 @@ export function sniffMatches(contentType: string, head: Uint8Array): boolean {
     default:
       return !head.includes(0);
   }
+}
+
+/**
+ * PDF 的页数：数未压缩的页对象（`/Type /Page`，不含 `/Pages`）。页对象放在压缩的对象流里时数不到，返回 0。
+ */
+export function countPdfPages(bytes: Uint8Array): number {
+  const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("latin1");
+  return text.match(/\/Type\s*\/Page(?![A-Za-z])/g)?.length ?? 0;
 }
 
 async function readAll(body: ReadableStream<Uint8Array>): Promise<Uint8Array> {
@@ -217,11 +224,15 @@ export class AttachmentsService {
         new ApiError("attachment.type_not_allowed", "Uploaded file type does not match"),
       );
     }
-    const got = await store.get(row.object_key, {
-      range: { start: 0, end: Math.max(0, Math.min(view.size, SNIFF_BYTES) - 1) },
-    });
-    const start = got ? await readAll(got.body) : new Uint8Array();
-    if (!sniffMatches(view.contentType, start)) {
+    // PDF 读全文（数页数，供 token 估算）；其他类型只读开头核对签名
+    const pdf = view.contentType === "application/pdf";
+    const got = await store.get(
+      row.object_key,
+      pdf ? {} : { range: { start: 0, end: Math.max(0, Math.min(view.size, SNIFF_BYTES) - 1) } },
+    );
+    const data = got ? await readAll(got.body) : new Uint8Array();
+    const pages = pdf ? countPdfPages(data) || null : null;
+    if (!sniffMatches(view.contentType, data.subarray(0, SNIFF_BYTES))) {
       await reject(
         new ApiError(
           "attachment.type_not_allowed",
@@ -231,7 +242,7 @@ export class AttachmentsService {
     }
     await this.d.db
       .updateTable("attachments")
-      .set({ status: "ready" })
+      .set({ status: "ready", etag: got?.head.etag ?? head.etag ?? null, pages })
       .where("id", "=", id)
       .where("status", "=", "pending")
       .execute();
@@ -246,7 +257,7 @@ export class AttachmentsService {
     this.d.storage.assertAvailable();
     const row = await this.d.db
       .selectFrom("attachments")
-      .select(["account_id", "conversation_id", "name", "object_key"])
+      .select(["account_id", "conversation_id", "name", "object_key", "etag"])
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("status", "=", "ready")
@@ -257,15 +268,20 @@ export class AttachmentsService {
         ? row.account_id === accountId
         : await this.d.canAccessConversation(orgId, row.conversation_id, accountId);
     if (!allowed) throw notFound();
-    return this.d.storage.kernel(orgId).presignGet(row.object_key, {
+    const store = this.d.storage.kernel(orgId);
+    const head = await store.head(row.object_key);
+    if (!head || !this.sameContent(row.etag, head.etag, { orgId, attachmentId: id })) {
+      throw notFound();
+    }
+    return store.presignGet(row.object_key, {
       ttlSeconds: ATTACHMENT_DOWNLOAD_TTL_SECONDS,
       downloadName: row.name,
     });
   }
 
   /**
-   * 发消息时在调用方事务里绑定附件（行锁），返回写进 user_message 的媒体块（`ref`，按 ids 顺序，重复的只算一次）：
-   * - 超过 `attachments.maxPerMessage` → `validation_failed`；
+   * 发消息时在调用方事务里绑定附件（行锁），返回写进 user_message 的媒体块（`ref`，按 ids 顺序）：
+   * - 超过 `attachments.maxPerMessage`、或同一个 id 出现多次 → `validation_failed`；
    * - 不存在、不是发送者上传的、已绑定到别的会话、未绑定且已过期 → `attachment.not_found`；
    * - 还没 finalize → `attachment.not_ready`。
    * 已绑定到本会话的（重试）照常返回块。
@@ -282,6 +298,11 @@ export class AttachmentsService {
     if (ids.length > max) {
       throw new ApiError("validation_failed", "Request validation failed", [
         { path: "files", message: `At most ${max} files per message` },
+      ]);
+    }
+    if (unique.length !== ids.length) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "files", message: "Each file may appear only once per message" },
       ]);
     }
     if (unique.length === 0) return [];
@@ -347,9 +368,42 @@ export class AttachmentsService {
     return blocks;
   }
 
+  /** 下载 / 取字节时核对 etag：finalize 记下的与当前对象的不一致 → 内容被替换（记 warn）。没有记录时不核对。 */
+  private sameContent(
+    recorded: string | null,
+    current: string | undefined,
+    where: { orgId: string; attachmentId: string; conversationId?: string },
+  ): boolean {
+    if (recorded === null || recorded === (current ?? null)) return true;
+    this.d.log.warn("attachment content changed after finalize; treating it as unavailable", where);
+    return false;
+  }
+
   /**
-   * 构建模型请求时取附件字节：只取绑定在该会话、已 ready 的附件。取不到（行或对象已不存在、没有对象存储、
-   * 读取失败）的为 null，构建时换成「不再可用」占位。
+   * 构建模型请求时查附件行的声明信息（只含绑定在该会话、已 ready 的）：大小与 PDF 页数。
+   * 没有行的不在结果里；查询失败照常抛出。
+   */
+  async mediaInfo(
+    orgId: string,
+    conversationId: string,
+    ids: readonly string[],
+  ): Promise<Map<string, MediaInfo>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.d.db
+      .selectFrom("attachments")
+      .select(["id", "size", "pages"])
+      .where("org_id", "=", orgId)
+      .where("conversation_id", "=", conversationId)
+      .where("status", "=", "ready")
+      .where("id", "in", [...ids])
+      .execute();
+    return new Map(rows.map((r) => [r.id, { size: Number(r.size), pages: r.pages }]));
+  }
+
+  /**
+   * 构建模型请求时取附件字节：只取绑定在该会话、已 ready 的附件。只有「确定不存在」才为 null：没有行、对象已不在、
+   * 大小或 etag 与 finalize 时不符（内容被替换，记 warn）。其余错误（存储不可用、网络错误）一律抛出（Ruling M4），
+   * 由调用方按可重试处理，不会变成占位。
    */
   async fetchMedia(
     orgId: string,
@@ -360,40 +414,36 @@ export class AttachmentsService {
     if (ids.length === 0) return out;
     const rows = await this.d.db
       .selectFrom("attachments")
-      .select(["id", "content_type", "object_key", "size"])
+      .select(["id", "content_type", "object_key", "size", "etag"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();
     const byId = new Map(rows.map((r) => [r.id, r]));
+    const store = this.d.storage.kernel(orgId);
     await Promise.all(
       ids.map(async (id) => {
         const r = byId.get(id);
         if (!r) return out.set(id, null);
-        try {
-          const got = await this.d.storage.kernel(orgId).get(r.object_key);
-          // 大小与 finalize 核对过的不一致（预签名表单在有效期内被再次使用）→ 按取不到处理
-          if (!got || got.head.size !== Number(r.size)) {
-            await got?.body.cancel().catch(() => {});
-            return out.set(id, null);
+        const got = await store.get(r.object_key);
+        if (!got) return out.set(id, null);
+        const where = { orgId, conversationId, attachmentId: id };
+        if (got.head.size !== Number(r.size) || !this.sameContent(r.etag, got.head.etag, where)) {
+          if (got.head.size !== Number(r.size)) {
+            this.d.log.warn(
+              "attachment size changed after finalize; treating it as unavailable",
+              where,
+            );
           }
-          const data = await readAll(got.body);
-          out.set(
-            id,
-            data.byteLength === Number(r.size) ? { mediaType: r.content_type, data } : null,
-          );
-        } catch (err) {
-          if (!(err instanceof CapabilityUnavailableError)) {
-            this.d.log.warn("cannot read attachment for model request", {
-              orgId,
-              conversationId,
-              attachmentId: id,
-              err,
-            });
-          }
-          out.set(id, null);
+          await got.body.cancel().catch(() => {});
+          return out.set(id, null);
         }
+        const data = await readAll(got.body);
+        out.set(
+          id,
+          data.byteLength === Number(r.size) ? { mediaType: r.content_type, data } : null,
+        );
       }),
     );
     return out;

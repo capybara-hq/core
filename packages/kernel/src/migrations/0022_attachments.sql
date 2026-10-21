@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS attachments (
   size bigint NOT NULL CHECK (size >= 0),
   object_key text NOT NULL,
   status text NOT NULL CHECK (status IN ('pending', 'ready', 'deleting')),
+  -- finalize 时记下的对象 etag：之后经同一预签名表单重传会改变 etag，取字节与下载时不符即视为不再可用
+  etag text,
+  -- PDF 的页数（finalize 时数出，用于 token 估算）；不是 PDF 或数不到为 NULL
+  pages integer,
   created_at timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz
 );

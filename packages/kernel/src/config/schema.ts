@@ -597,6 +597,17 @@ export const KernelConfigSchema = z.object({
               "Hours after upload before an attachment never used in a message is deleted (row and object)",
           }),
         ),
+      requestMediaBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(20_971_520)
+        .meta(
+          meta({
+            description:
+              "Budget of raw attachment bytes in one model request; the newest attachments are kept and older ones are replaced with a placeholder",
+          }),
+        ),
     })
     .prefault({} as never),
   log: z

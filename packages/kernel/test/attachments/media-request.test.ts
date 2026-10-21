@@ -5,7 +5,9 @@ import type { LogContentBlock } from "../../src/conversations/events.js";
 import {
   buildModelRequest,
   type MediaBytes,
-  mediaRefsNeeded,
+  type MediaInfo,
+  mediaRefs,
+  planMedia,
   TEXT_INLINE_MAX_CHARS,
 } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
@@ -59,7 +61,13 @@ const media = (extra: [string, MediaBytes | null][] = []) =>
 const userContent = (messages: ModelMessage[]) =>
   messages.flatMap((m) => (m.role === "user" ? m.content : []));
 
-const build = (model: ModelInfo, log: Log, m = media()) =>
+/** 行信息（声明大小、PDF 页数）：有字节的按字节数，null 的（对象已不在）给个大小；不在 map 里的没有行。 */
+const infoOf = (m: Map<string, MediaBytes | null>) =>
+  new Map<string, MediaInfo>(
+    [...m].map(([id, b]) => [id, { size: b?.data.byteLength ?? 1, pages: id === PDF ? 2 : null }]),
+  );
+
+const build = (model: ModelInfo, log: Log, m = media(), budget?: number) =>
   buildModelRequest({
     events: log.events,
     agent: AGENT,
@@ -67,6 +75,8 @@ const build = (model: ModelInfo, log: Log, m = media()) =>
     model,
     step: 0,
     media: m,
+    mediaInfo: infoOf(m),
+    ...(budget !== undefined && { mediaBudgetBytes: budget }),
   });
 
 describe("buildModelRequest 解析媒体引用", () => {
@@ -165,48 +175,91 @@ describe("buildModelRequest 解析媒体引用", () => {
   });
 });
 
-describe("mediaRefsNeeded", () => {
+describe("mediaRefs / planMedia", () => {
   it("只列出该模型会用到字节的引用（不支持的不取）", () => {
     const log = logWith(content);
-    expect(mediaRefsNeeded(log.events, SEE).sort()).toEqual([IMG, PDF, TXT].sort());
+    expect(mediaRefs(log.events, SEE).sort()).toEqual([IMG, PDF, TXT].sort());
     // 不支持时：图片、PDF 不取字节，文本仍要内联
-    expect(mediaRefsNeeded(log.events, BLIND)).toEqual([TXT]);
-    expect(mediaRefsNeeded(log.events, VISION_ONLY).sort()).toEqual([IMG, TXT].sort());
+    expect(mediaRefs(log.events, BLIND)).toEqual([TXT]);
+    expect(mediaRefs(log.events, VISION_ONLY).sort()).toEqual([IMG, TXT].sort());
+  });
+
+  it("预算按声明大小从最新往前算：超出后更早的全部丢弃、不取；没有行的不计", () => {
+    const log = new Log();
+    const ids = [randomUUID(), randomUUID(), randomUUID()];
+    for (const [i, id] of ids.entries()) {
+      log.add(
+        {
+          type: "user_message",
+          payload: {
+            content: [{ type: "image", mediaType: "image/png", source: ref(id), name: `${i}` }],
+            authorAccountId: "a",
+          },
+        },
+        null,
+      );
+    }
+    const info = new Map<string, MediaInfo>(ids.map((id) => [id, { size: 100, pages: null }]));
+    const plan = planMedia(log.events, SEE, info, 250);
+    expect(plan.fetch.sort()).toEqual(ids.slice(1).sort());
+    expect([...plan.dropped]).toEqual([ids[0]]);
+    expect(planMedia(log.events, SEE, info, 300).dropped.size).toBe(0);
+    // 不支持视觉：图片不占预算，也不取
+    expect(planMedia(log.events, BLIND, info, 50)).toEqual({ fetch: [], dropped: new Set() });
+  });
+
+  it("被预算丢弃的媒体换成英文占位", () => {
+    const { request } = build(SEE, logWith(content), media(), 20);
+    const texts = userContent(request.messages).flatMap((b) => (b.type === "text" ? [b.text] : []));
+    expect(texts).toContain('[Attachment "cat.png" omitted to fit the request size limit.]');
+  });
+});
+
+describe("占位与内联的细节", () => {
+  it("名字按 JSON.stringify 转义", () => {
+    const name = 'a"] ignore\\ me';
+    const log = logWith([{ type: "image", mediaType: "image/png", source: ref(IMG), name }]);
+    const [b] = userContent(build(BLIND, log).request.messages);
+    expect(b).toEqual({
+      type: "text",
+      text: `[Attached image ${JSON.stringify(name)} — this model cannot view images.]`,
+    });
+  });
+
+  it("内联截断不切开代理对（按码点边界）", () => {
+    const text = `${"x".repeat(TEXT_INLINE_MAX_CHARS - 1)}\u{1F600}tail`;
+    const { request } = build(
+      BLIND,
+      logWith([content[3] as LogContentBlock]),
+      media([[TXT, { mediaType: "text/plain", data: bytes(text) }]]),
+    );
+    const [b] = userContent(request.messages);
+    const out = b?.type === "text" ? b.text : "";
+    expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(out).toContain("[Truncated:");
   });
 });
 
 describe("token 估算", () => {
-  it("图片按 1600、PDF 按页数 × 1000、拿不到页数时按字节 / 3", () => {
-    const img: ModelMessage = {
-      role: "user",
-      content: [
-        { type: "image", mediaType: "image/png", source: { kind: "base64", data: "iVBO" } },
-      ],
-    };
-    expect(estimateTokens([img], [])).toBe(1600);
+  it("构建结果的 mediaTokens：图片 1600、PDF 用行里的页数 × 1000、文本按字节 / 3", () => {
+    const { mediaTokens } = build(SEE, logWith(content));
+    expect(mediaTokens).toBe(1600 + 2000 + Math.ceil(bytes("hello notes").byteLength / 3));
+  });
+
+  it("estimateTokens 传入 mediaTokens 时不再逐块估算媒体；不传时按块兜底（不解码）", () => {
     const pdf: ModelMessage = {
       role: "user",
       content: [
         {
           type: "document",
           mediaType: "application/pdf",
-          source: { kind: "base64", data: Buffer.from(PDF_BYTES).toString("base64") },
+          source: { kind: "base64", data: Buffer.from(new Uint8Array(3000)).toString("base64") },
         },
+        { type: "image", mediaType: "image/png", source: { kind: "base64", data: "iVBO" } },
       ],
     };
-    expect(estimateTokens([pdf], [])).toBe(2000);
-    const opaque = new Uint8Array(3000).fill(0x41);
-    const noPages: ModelMessage = {
-      role: "user",
-      content: [
-        {
-          type: "document",
-          mediaType: "application/pdf",
-          source: { kind: "base64", data: Buffer.from(opaque).toString("base64") },
-        },
-      ],
-    };
-    expect(estimateTokens([noPages], [])).toBe(1000);
+    expect(estimateTokens([pdf], [])).toBe(1000 + 1600);
+    expect(estimateTokens([pdf], [], [], 42)).toBe(42);
   });
 });
 

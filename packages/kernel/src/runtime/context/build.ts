@@ -95,11 +95,17 @@ export interface BuildModelRequestInput {
   /** 本次请求的 `ModelRequest.toolChoice`；只在有工具时生效（没有工具时请求与 meta 都不带）。 */
   toolChoice?: "auto" | "none";
   /**
-   * 日志里媒体引用（`source.kind === "ref"`）的字节：附件 id → 字节；null 或缺省表示取不到（已删除 / 过期）。
-   * 调用方先用 {@link mediaRefsNeeded} 列出该模型需要的引用、取好字节再传入（本函数保持纯函数）。
-   * 解析规则见 {@link resolveMedia}；不提供时所有需要字节的引用都按「不再可用」处理。
+   * 日志里媒体引用（`source.kind === "ref"`）对应的附件行（声明大小、PDF 页数）：附件 id → 信息；
+   * 缺省表示没有行（已删除）→「不再可用」占位。预算（{@link planMedia}）只按这里的声明大小计算，结果确定。
+   */
+  mediaInfo?: ReadonlyMap<string, MediaInfo>;
+  /**
+   * 引用的字节：附件 id → 字节；null 或缺省表示取不到（对象已不在、内容被替换）。调用方按 {@link planMedia}
+   * 的 `fetch` 取好再传入（本函数保持纯函数）。解析规则见 {@link resolveMedia}。
    */
   media?: ReadonlyMap<string, MediaBytes | null>;
+  /** 单次请求里媒体原始字节的预算（见 {@link planMedia}）；默认不限。 */
+  mediaBudgetBytes?: number;
 }
 
 /** 一个附件的字节。 */
@@ -108,8 +114,21 @@ export interface MediaBytes {
   data: Uint8Array;
 }
 
-/** 模型不支持 documents 时，`text/*` 附件内联的最大字符数（超出截断并注明）。 */
+/** 一个附件行的声明信息（finalize 时核对过）。 */
+export interface MediaInfo {
+  /** 字节数。 */
+  size: number;
+  /** PDF 的页数（finalize 时数出）；不是 PDF 或数不到为 null。 */
+  pages: number | null;
+}
+
+/** 模型不支持 documents 时，`text/*` 附件内联的最大字符数（UTF-16 码元，超出截断并注明）。 */
 export const TEXT_INLINE_MAX_CHARS = 50_000;
+
+/** 一张图片的估算 token 数（固定值，与尺寸无关）。 */
+export const IMAGE_TOKENS = 1600;
+/** PDF 每页的估算 token 数。 */
+export const PDF_PAGE_TOKENS = 1000;
 
 /** 日志里（按 zod 推导的形状）的内容块。 */
 type LogBlock = EventPayload<"user_message">["content"][number];
@@ -124,57 +143,122 @@ function mediaMode(b: LogMedia, model: ModelInfo): "bytes" | "inline" | "placeho
   return isText(b.mediaType) ? "inline" : "placeholder";
 }
 
-/**
- * 构建请求时该模型需要取字节的附件 id（最近摘要之后的消息里的媒体引用，去重、按出现顺序）。
- * 模型不支持的图片 / PDF 不在其中——只发占位，字节根本不取。
- */
-export function mediaRefsNeeded(events: readonly ConversationEvent[], model: ModelInfo): string[] {
-  const after = latestSummary([...events])?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
-  const out = new Set<string>();
-  for (const e of events) {
+/** 最近摘要之后、会进请求的消息里，该模型需要字节的媒体块（按 seq 与块顺序）。 */
+function mediaBlocks(events: readonly ConversationEvent[], model: ModelInfo): LogMedia[] {
+  const sorted = [...events].sort((a, b) => a.seq - b.seq);
+  const after = latestSummary(sorted)?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
+  const out: LogMedia[] = [];
+  for (const e of sorted) {
     if (e.seq <= after) continue;
     if (e.type !== "user_message" && e.type !== "assistant_message") continue;
     for (const b of e.payload.content) {
       if ((b.type === "image" || b.type === "document") && mediaMode(b, model) !== "placeholder") {
-        out.add(b.source.attachmentId);
+        out.push(b);
       }
     }
   }
-  return [...out];
+  return out;
 }
+
+/**
+ * 该模型需要的附件 id（去重、按出现顺序），调用方据此查行信息（{@link MediaInfo}）。
+ * 模型不支持的图片 / PDF 不在其中——只发占位，行与字节都不取。
+ */
+export function mediaRefs(events: readonly ConversationEvent[], model: ModelInfo): string[] {
+  return [...new Set(mediaBlocks(events, model).map((b) => b.source.attachmentId))];
+}
+
+/**
+ * 单次请求的媒体预算（Ruling M6）：按行里的**声明大小**从最新的媒体往前累计，第一次超出 `budgetBytes` 起，
+ * 该附件及更早的全部丢弃（换成「为控制请求大小而省略」的占位）；同一附件只算一次；没有行的不计（它们是
+ * 「不再可用」）。结果只取决于日志、模型能力与行信息，是确定的。`fetch` 是需要取字节的附件 id（被丢弃的不取）。
+ */
+export function planMedia(
+  events: readonly ConversationEvent[],
+  model: ModelInfo,
+  info: ReadonlyMap<string, MediaInfo>,
+  budgetBytes = Number.POSITIVE_INFINITY,
+): { fetch: string[]; dropped: Set<string> } {
+  const ids = mediaRefs(events, model);
+  // 每个附件按最后一次出现的位置算新旧
+  const newestFirst = [...ids].reverse();
+  const lastAt = new Map<string, number>();
+  mediaBlocks(events, model).forEach((b, i) => {
+    lastAt.set(b.source.attachmentId, i);
+  });
+  newestFirst.sort((a, b) => (lastAt.get(b) ?? 0) - (lastAt.get(a) ?? 0));
+  const fetch: string[] = [];
+  const dropped = new Set<string>();
+  let total = 0;
+  let over = false;
+  for (const id of newestFirst) {
+    const row = info.get(id);
+    if (!row) continue;
+    if (!over && total + row.size <= budgetBytes) {
+      total += row.size;
+      fetch.push(id);
+    } else {
+      over = true;
+      dropped.add(id);
+    }
+  }
+  return { fetch, dropped };
+}
+
+/** 文字占位里的附件名：按 JSON 字符串转义（带引号），名字里的引号、括号不会打乱占位。 */
+const quoted = (name: string) => JSON.stringify(name);
 
 /** 附件不可用时的占位（模型可见，英文）。 */
 export const mediaUnavailableText = (name: string): string =>
-  `[Attachment "${name}" is no longer available.]`;
+  `[Attachment ${quoted(name)} is no longer available.]`;
+
+/** 为控制单次请求大小而省略的附件（模型可见，英文）。 */
+export const mediaOmittedText = (name: string): string =>
+  `[Attachment ${quoted(name)} omitted to fit the request size limit.]`;
 
 function placeholder(b: LogMedia, name: string): string {
-  if (b.type === "image") return `[Attached image "${name}" — this model cannot view images.]`;
-  return `[Attached document "${name}" — this model cannot read ${
+  if (b.type === "image") {
+    return `[Attached image ${quoted(name)} — this model cannot view images.]`;
+  }
+  return `[Attached document ${quoted(name)} — this model cannot read ${
     b.mediaType === "application/pdf" ? "PDF documents" : "documents"
   }.]`;
 }
 
 function inlineText(name: string, mediaType: string, data: Uint8Array): string {
   const text = new TextDecoder("utf-8", { fatal: false }).decode(data);
-  const head = `[Attached file "${name}" (${mediaType})]\n`;
+  const head = `[Attached file ${quoted(name)} (${mediaType})]\n`;
   if (text.length <= TEXT_INLINE_MAX_CHARS) return head + text;
-  return `${head}${text.slice(0, TEXT_INLINE_MAX_CHARS)}\n[Truncated: showing the first ${TEXT_INLINE_MAX_CHARS} of ${text.length} characters.]`;
+  // 在码点边界截断：不把代理对切成两半
+  let end = TEXT_INLINE_MAX_CHARS;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${head}${text.slice(0, end)}\n[Truncated: showing the first ${end} of ${text.length} characters.]`;
+}
+
+/** {@link resolveMedia} 的输入：行信息、字节与被预算丢弃的附件。 */
+export interface MediaContext {
+  info: ReadonlyMap<string, MediaInfo> | undefined;
+  bytes: ReadonlyMap<string, MediaBytes | null> | undefined;
+  dropped: ReadonlySet<string>;
 }
 
 /**
- * 把日志里的媒体引用换成发给模型的内容（不改日志，结果只取决于日志、模型能力与字节）：
+ * 把日志里的媒体引用换成发给模型的内容（不改日志，结果只取决于日志、模型能力、行信息与字节）：
  * - 模型支持（图片看 `vision`，文档看 `documents`）且取到字节 → `base64` 块；
  * - 不支持：`text/*` 文档内联为文本（超过 {@link TEXT_INLINE_MAX_CHARS} 截断并注明），图片 / PDF 换成英文占位，
  *   **绝不带字节**；
- * - 需要字节但取不到（已删除、过期）→「不再可用」占位；字节超过 `MEDIA_LIMITS` → 占位。
- * 插件永远收不到 `ref`。
+ * - 被预算丢弃 →「省略」占位；没有行或取不到字节 →「不再可用」占位；字节超过 `MEDIA_LIMITS` → 占位。
+ * 插件永远收不到 `ref`。返回块与发出的媒体块的估算 token 数（图片 {@link IMAGE_TOKENS}，PDF 按行里的
+ * 页数 × {@link PDF_PAGE_TOKENS}，数不到页数与其他文档按声明字节数 ÷ 3）。
  */
 export function resolveMedia(
   content: readonly LogBlock[],
   model: ModelInfo,
-  media: ReadonlyMap<string, MediaBytes | null> | undefined,
-): ContentBlock[] {
+  ctx: MediaContext,
+): { blocks: ContentBlock[]; tokens: number } {
   const out: ContentBlock[] = [];
+  let tokens = 0;
   for (const b of content) {
     if (b.type !== "image" && b.type !== "document") {
       out.push(b as ContentBlock);
@@ -186,8 +270,14 @@ export function resolveMedia(
       out.push({ type: "text", text: placeholder(b, name) });
       continue;
     }
-    const got = media?.get(b.source.attachmentId) ?? null;
-    if (!got) {
+    const id = b.source.attachmentId;
+    if (ctx.dropped.has(id)) {
+      out.push({ type: "text", text: mediaOmittedText(name) });
+      continue;
+    }
+    const row = ctx.info?.get(id);
+    const got = row ? (ctx.bytes?.get(id) ?? null) : null;
+    if (!row || !got) {
       out.push({ type: "text", text: mediaUnavailableText(name) });
       continue;
     }
@@ -199,10 +289,16 @@ export function resolveMedia(
     if (got.data.byteLength > limit) {
       out.push({
         type: "text",
-        text: `[Attachment "${name}" is too large to send to this model.]`,
+        text: `[Attachment ${quoted(name)} is too large to send to this model.]`,
       });
       continue;
     }
+    tokens +=
+      b.type === "image"
+        ? IMAGE_TOKENS
+        : b.mediaType === "application/pdf" && row.pages !== null && row.pages > 0
+          ? row.pages * PDF_PAGE_TOKENS
+          : Math.ceil(row.size / 3);
     const source = {
       kind: "base64" as const,
       data: Buffer.from(got.data.buffer, got.data.byteOffset, got.data.byteLength).toString(
@@ -220,7 +316,7 @@ export function resolveMedia(
           },
     );
   }
-  return out;
+  return { blocks: out, tokens };
 }
 
 type SummaryEvent = ConversationEvent & {
@@ -259,14 +355,24 @@ export function summaryText(summary: string): string {
 export function buildModelRequest(input: BuildModelRequestInput): {
   request: ModelRequest;
   meta: ModelCallMeta;
+  /** 请求里媒体块（base64 的图片 / 文档）的估算 token 数，传给 `estimateTokens`。 */
+  mediaTokens: number;
 } {
   const { agent, model } = input;
   const events = [...input.events].sort((a, b) => a.seq - b.seq);
+  const mediaCtx: MediaContext = {
+    info: input.mediaInfo,
+    bytes: input.media,
+    dropped: planMedia(events, model, input.mediaInfo ?? new Map(), input.mediaBudgetBytes).dropped,
+  };
+  let mediaTokens = 0;
   /** 日志内容块 → 请求内容块：媒体引用按模型能力解析（见 {@link resolveMedia}）。 */
-  const blocksOf = (content: readonly LogBlock[]): ContentBlock[] =>
-    content.some((b) => b.type === "image" || b.type === "document")
-      ? resolveMedia(content, model, input.media)
-      : asBlocks(content);
+  const blocksOf = (content: readonly LogBlock[]): ContentBlock[] => {
+    if (!content.some((b) => b.type === "image" || b.type === "document")) return asBlocks(content);
+    const r = resolveMedia(content, model, mediaCtx);
+    mediaTokens += r.tokens;
+    return r.blocks;
+  };
   const summary = latestSummary(events);
   const after = summary ? summary.payload.coversUpToSeq : Number.NEGATIVE_INFINITY;
 
@@ -446,7 +552,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     }),
     ...(toolChoice !== undefined && { toolChoice }),
   };
-  return { request, meta };
+  return { request, meta, mediaTokens };
 }
 
 /**

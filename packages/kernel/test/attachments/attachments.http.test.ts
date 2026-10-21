@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelRequest, ObjectStore } from "@capybara-hq/plugin-sdk";
 import {
   startTestPostgres,
   startTestRedis,
@@ -9,10 +9,12 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import type { MediaProvider } from "../fixtures/plugins/model-media/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -102,6 +104,7 @@ const provider = (): MediaProvider => {
 let owner: Req;
 let other: Req;
 let ownerId: string;
+let otherId: string;
 let orgId: string;
 
 beforeEach(async () => {
@@ -112,9 +115,7 @@ beforeEach(async () => {
   provider().requests.length = 0;
   const accounts = new AccountsService(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
-  const otherId = (
-    await accounts.createLocal({ login: "other", password: PW, displayName: "Other" })
-  ).id;
+  otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "Other" })).id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
@@ -271,6 +272,33 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
     expect(texts).toEqual(["x", '[Attachment "gone.png" is no longer available.]']);
   });
 
+  it("finalize 之后经同一预签名表单重传（大小相同、内容不同）：etag 不符，模型与下载都按不再可用处理", async () => {
+    const convId = await conversationWith("see-1");
+    const c = await create(owner, { name: "re.png", contentType: "image/png", size: PNG.length });
+    expect(Date.parse(c.expiresAt) - Date.now()).toBeLessThanOrEqual(300_000);
+    expect(Date.parse(c.expiresAt) - Date.now()).toBeGreaterThan(240_000);
+    expect((await upload(c, PNG, "image/png")).status).toBeLessThan(300);
+    expect((await finalize(owner, c.id)).statusCode).toBe(200);
+    const evil = Buffer.from(PNG);
+    evil[evil.length - 1] = (evil[evil.length - 1] as number) ^ 0xff;
+    expect((await upload(c, evil, "image/png")).status).toBeLessThan(300);
+
+    expect((await post(owner, convId, { text: "x", files: [c.id] })).statusCode).toBe(202);
+    await waitForTerminal(db, convId);
+    const req = provider().requests[0] as ModelRequest;
+    expect(JSON.stringify(req)).not.toContain(evil.toString("base64"));
+    expect(userBlocks(req).map((b) => (b.type === "text" ? b.text : b.type))).toEqual([
+      "x",
+      '[Attachment "re.png" is no longer available.]',
+    ]);
+    const dl = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/attachments/${c.id}/download`,
+    });
+    expect(dl.statusCode).toBe(404);
+    expect(dl.json().error.code).toBe("attachment.not_found");
+  });
+
   it("finalize 之后对象被换成别的大小：不发字节，按不再可用处理", async () => {
     const convId = await conversationWith("see-1");
     const img = await ready(owner, "swap.png", "image/png", PNG);
@@ -377,9 +405,14 @@ describe("校验", { timeout: 30_000 }, () => {
     expect(r3.statusCode).toBe(404);
     expect(r3.json().error.code).toBe("attachment.not_found");
 
-    const many = Array.from({ length: 11 }, () => mine);
+    const fresh = await ready(owner, "f.png", "image/png", PNG);
+    const many = Array.from({ length: 11 }, () => fresh);
     const r4 = await post(owner, conv2, { text: "x", files: many });
     expect(r4.statusCode).toBe(400);
+    // 同一条消息里重复的 id → 400
+    const dup = await post(owner, conv2, { text: "x", files: [fresh, fresh] });
+    expect(dup.statusCode).toBe(400);
+    expect(dup.json().error.code).toBe("validation_failed");
     // 失败的消息没有写进日志
     expect((await eventsOf(db, conv2)).filter((e) => e.type === "user_message")).toHaveLength(0);
   });
@@ -404,6 +437,17 @@ describe("下载", { timeout: 30_000 }, () => {
     const denied = await other({ method: "GET", url });
     expect(denied.statusCode).toBe(404);
     expect(denied.json().error.code).toBe("attachment.not_found");
+  });
+
+  it("已绑定的附件：不是上传者、但能访问其会话的人可以下载", async () => {
+    const id = await ready(owner, "cat.png", "image/png", PNG);
+    const convId = await conversationWith("see-1");
+    expect((await post(owner, convId, { text: "x", files: [id] })).statusCode).toBe(202);
+    // 会话只对所有者可见：把上传者改成另一个成员，模拟「上传者 ≠ 能访问会话的人」
+    await db.updateTable("attachments").set({ account_id: otherId }).where("id", "=", id).execute();
+    const url = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
+    expect((await owner({ method: "GET", url })).statusCode).toBe(302);
+    expect((await other({ method: "GET", url })).statusCode).toBe(404);
   });
 });
 
@@ -436,5 +480,46 @@ describe("清理", { timeout: 30_000 }, () => {
     expect(await store.head(`attachments/${stale}`)).toBeNull();
     expect(await store.head(`attachments/${pending.id}`)).toBeNull();
     expect(await store.head(`attachments/${bound}`)).not.toBeNull();
+  });
+
+  it("删对象失败：行保持 deleting、对象还在；下次运行重试成功", async () => {
+    const id = await ready(owner, "old.png", "image/png", PNG);
+    await db
+      .updateTable("attachments")
+      .set({ expires_at: sql<Date>`now() - interval '1 hour'` })
+      .where("id", "=", id)
+      .execute();
+    const real = k.host.list("object-store")[0]?.impl as ObjectStore;
+    let failDeletes = 1;
+    const flaky: ObjectStore = {
+      ...real,
+      head: (key) => real.head(key),
+      get: (key, o) => real.get(key, o),
+      delete: async (key) => {
+        if (failDeletes-- > 0) throw new Error("S3 503");
+        return real.delete(key);
+      },
+    };
+    const svc = new AttachmentsService({
+      db,
+      storage: new StorageService({ provider: () => flaky, plugins: async () => [] }),
+      config: () => k.config,
+      canAccessConversation: async () => false,
+      log: { info() {}, warn() {} },
+    });
+    expect(await svc.deleteExpired()).toBe(0);
+    const row = await db
+      .selectFrom("attachments")
+      .select("status")
+      .where("id", "=", id)
+      .executeTakeFirst();
+    expect(row?.status).toBe("deleting");
+    expect(await k.storage.kernel(orgId).head(`attachments/${id}`)).not.toBeNull();
+
+    expect(await svc.deleteExpired()).toBe(1);
+    expect(
+      await db.selectFrom("attachments").select("id").where("id", "=", id).executeTakeFirst(),
+    ).toBeUndefined();
+    expect(await k.storage.kernel(orgId).head(`attachments/${id}`)).toBeNull();
   });
 });
