@@ -154,8 +154,8 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
           : { kind: "aborted", detail: endEvent.payload.reason };
 
   const modelCalls = new Map<number, Ev<"model_call">[]>();
-  const assistant = new Map<number, Ev<"assistant_message">>();
-  const usage = new Map<number, Ev<"usage">>();
+  const assistants = new Map<number, Ev<"assistant_message">[]>();
+  const usages = new Map<number, Ev<"usage">[]>();
   const toolStarts = new Map<string, Ev<"tool_call_started">>(); // callId → 最后一次
   const toolResults = new Map<string, Ev<"tool_result">>();
   const approvals = new Map<string, Ev<"approval_requested">>(); // callId → 最近一次
@@ -183,11 +183,11 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
       }
       case "assistant_message":
         steps.add(e.payload.step);
-        if (!assistant.has(e.payload.step)) assistant.set(e.payload.step, e);
+        assistants.set(e.payload.step, [...(assistants.get(e.payload.step) ?? []), e]);
         break;
       case "usage":
         steps.add(e.payload.step);
-        if (!usage.has(e.payload.step)) usage.set(e.payload.step, e);
+        usages.set(e.payload.step, [...(usages.get(e.payload.step) ?? []), e]);
         break;
       case "tool_call_started":
         noteCall(e.payload.step, e.payload.callId);
@@ -227,9 +227,11 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
   const out: TrajectoryStep[] = [...steps]
     .sort((a, b) => a - b)
     .map((step) => {
-      const msg = assistant.get(step);
-      const u = usage.get(step);
       const calls = modelCalls.get(step) ?? [];
+      // 回复与用量按该步最后一次 model_call 之后的第一条配对（步骤被重新发起时，较早的属于之前的尝试）
+      const after = calls.at(-1)?.seq ?? Number.NEGATIVE_INFINITY;
+      const msg = assistants.get(step)?.find((x) => x.seq > after);
+      const u = usages.get(step)?.find((x) => x.seq > after);
       const modelOut = calls.map((c, i): TrajectoryModelCall => {
         const last = i === calls.length - 1;
         const ok = last && u !== undefined;

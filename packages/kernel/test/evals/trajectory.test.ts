@@ -477,4 +477,44 @@ describe("buildTrajectory", () => {
     expect(run?.steps[0]?.text).toBe("par");
     expect(run?.steps[0]?.stopReason).toBe("aborted");
   });
+
+  it("步骤在 usage 之后被重新发起：用量、回复与延迟都按最后一次 model_call 之后的事件配对", () => {
+    const { events, e } = log();
+    e(0, "r1", {
+      type: "run_started",
+      payload: { agentVersion: 1, model: { provider: "p", model: "m1" }, triggerAccountId: "a" },
+    });
+    const call = (ms: number, attempt: number) =>
+      e(ms, "r1", {
+        type: "model_call",
+        payload: {
+          step: 0,
+          attempt,
+          provider: "p",
+          model: "m1",
+          fallback: false,
+          request: request(),
+        },
+      });
+    call(10, 1);
+    e(20, "r1", {
+      type: "assistant_message",
+      payload: { step: 0, content: [{ type: "text", text: "old" }], stopReason: "end_turn" },
+    });
+    e(20, "r1", { type: "usage", payload: { step: 0, provider: "p", model: "m1", ...U0 } });
+    call(100, 2);
+    e(400, "r1", {
+      type: "assistant_message",
+      payload: { step: 0, content: [{ type: "text", text: "new" }], stopReason: "end_turn" },
+    });
+    e(400, "r1", { type: "usage", payload: { step: 0, provider: "p", model: "m1", ...U1 } });
+    e(410, "r1", { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 0 } });
+    const [run] = buildTrajectory(events, table(PRICE_M1));
+    const [first, second] = run?.steps[0]?.modelCalls ?? [];
+    expect(first?.outcome).toBe("failed");
+    expect(second).toMatchObject({ outcome: "ok", latencyMs: 300, usage: U1 });
+    expect(second?.cost).toBe(costOf(U1, PRICE_M1));
+    expect(run?.steps[0]?.text).toBe("new");
+    expect(run?.totals.usage).toEqual(U1);
+  });
 });
