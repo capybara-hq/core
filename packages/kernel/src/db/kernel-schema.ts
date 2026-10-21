@@ -473,6 +473,43 @@ export interface AttachmentsTable {
   pages: number | null;
   created_at: Ts;
   expires_at: TsNullable;
+  /** 0024：上传用途（技能包不能绑定到消息）。 */
+  purpose: ColumnType<AttachmentPurpose, AttachmentPurpose | undefined, AttachmentPurpose>;
+}
+
+/** 预签名上传的用途：对话附件 / 技能包 zip。 */
+export type AttachmentPurpose = "chat" | "skill-package";
+
+/** 技能版本的清单（`skill_versions.manifest`）。 */
+export interface SkillManifest {
+  name: string;
+  description: string;
+  files: { path: string; size: number; sha256: string }[];
+}
+
+/** 0024_skills.sql：技能（组织技能库 / agent 自己的技能）。 */
+export interface SkillsTable {
+  id: string;
+  org_id: string;
+  scope: "org" | "agent";
+  agent_id: string | null;
+  name: string;
+  description: string;
+  current_version: number;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0024_skills.sql：技能的版本。 */
+export interface SkillVersionsTable {
+  skill_id: string;
+  version: number;
+  manifest: Json<SkillManifest>;
+  object_prefix: string;
+  created_by: string;
+  created_at: Ts;
 }
 
 /** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */
@@ -548,6 +585,8 @@ export interface KernelDatabase {
   directory_exclusions: DirectoryExclusionsTable;
   attachments: AttachmentsTable;
   sandboxes: SandboxesTable;
+  skills: SkillsTable;
+  skill_versions: SkillVersionsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

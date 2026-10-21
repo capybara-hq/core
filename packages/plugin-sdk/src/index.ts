@@ -12,6 +12,7 @@ export * from "./model-params.js";
 export * from "./permissions.js";
 export * from "./sandbox.js";
 export * from "./secret.js";
+export * from "./skill.js";
 export * from "./storage.js";
 export * from "./tool.js";
 export * from "./ui.js";

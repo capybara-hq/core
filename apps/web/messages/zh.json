@@ -177,6 +177,10 @@
       "not_found": "本对话还没有沙箱。",
       "unavailable": "当前部署没有可用的沙箱。",
       "busy": "沙箱正忙，请稍后再试。"
+    },
+    "skill": {
+      "not_found": "技能不存在或已删除。",
+      "invalid_package": "技能包不合法："
     }
   },
   "agents": {

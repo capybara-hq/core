@@ -51,6 +51,8 @@ import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
 import type { SandboxService } from "../sandbox/sandbox.service.js";
+import { SkillsController } from "../skills/skills.controller.js";
+import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { AppContentController } from "../tools/app-content.controller.js";
 import type { AppContent } from "../tools/app-content.js";
@@ -112,6 +114,7 @@ import {
   SESSIONS,
   SETTINGS,
   SETUP,
+  SKILLS,
   SSO_FLOW,
   TOOL_REGISTRY,
   UI_VIEWS,
@@ -160,6 +163,8 @@ export interface ApiDeps {
   storage: StorageService;
   /** 按对话的沙箱（与 `Kernel.sandbox` 同一实例；上下文标签读状态）。 */
   sandbox: SandboxService;
+  /** 技能库（与 `Kernel.skills` 同一实例）。 */
+  skills: SkillsService;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -176,6 +181,7 @@ const CONTROLLERS: Type[] = [
   ModelsController,
   ConversationsController,
   AttachmentsController,
+  SkillsController,
   ConversationStreamController,
   AppContentController,
   AppsController,
@@ -275,6 +281,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: EVENT_LOG, useValue: deps.eventLog },
     { provide: APP_CONTENT, useValue: deps.appContent },
     { provide: ATTACHMENTS, useValue: deps.attachments },
+    { provide: SKILLS, useValue: deps.skills },
     {
       provide: CONVERSATIONS,
       useFactory: (

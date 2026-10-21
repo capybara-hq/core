@@ -84,6 +84,8 @@ export const ERROR_CODES = {
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
   "sandbox.not_found": 404,
+  "skill.not_found": 404,
+  "skill.invalid_package": 400,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

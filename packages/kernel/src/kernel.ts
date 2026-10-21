@@ -64,6 +64,7 @@ import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance } from "./sandbox/lifecycle.js";
 import { SandboxService } from "./sandbox/sandbox.service.js";
+import { SkillsService } from "./skills/skills.service.js";
 import {
   purgeDeletedOrgStorage,
   STORAGE_PURGE_EVERY_MS,
@@ -202,6 +203,8 @@ export interface Kernel {
   readonly storage: StorageService;
   /** 对话附件（上传、finalize、绑定、取字节、过期清理）。 */
   readonly attachments: AttachmentsService;
+  /** 技能库（组织技能的上传、版本、列表与软删除）。 */
+  readonly skills: SkillsService;
   /**
    * 按对话的沙箱（`sandbox@1` 提供方之上：懒创建、锁、休眠与销毁）；
    * 没有提供方时 `available` 为 false，使用时抛 `sandbox.unavailable`（503）。
@@ -428,6 +431,7 @@ export async function createKernel(
       conversationAccess.isAccessible(orgId, id, viewer),
     log,
   });
+  const skills = new SkillsService({ db: kdb, storage, attachments });
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
     const n = await attachments.deleteExpired();
     if (n > 0) log.info("expired attachments deleted", { count: n });
@@ -732,6 +736,7 @@ export async function createKernel(
         attachments,
         storage,
         sandbox,
+        skills,
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
@@ -886,6 +891,7 @@ export async function createKernel(
     channels,
     storage,
     attachments,
+    skills,
     sandbox,
     log,
     get config() {

@@ -8,7 +8,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { AttachmentPurpose, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
 import type { StorageService } from "../storage/storage.service.js";
@@ -24,6 +24,23 @@ export const ATTACHMENT_DOWNLOAD_TTL_SECONDS = 300;
 export const ATTACHMENT_DOWNLOAD_CACHE_SECONDS = 60;
 /** 同一账号在一个组织里最多的未 finalize 附件数（超过 → 429 `attachment.too_many_pending`）。 */
 export const MAX_PENDING_ATTACHMENTS = 50;
+
+/** 技能包 zip 的内容类型（上传时一律按它签名，finalize 时核对 zip 文件头）。 */
+export const SKILL_PACKAGE_CONTENT_TYPE = "application/zip";
+/** 技能包 zip 的大小上限（字节）。 */
+export const SKILL_PACKAGE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+/** 同一账号在一个组织里最多的未 finalize 技能包上传数（与对话附件分开计数）。 */
+export const MAX_PENDING_SKILL_PACKAGES = 5;
+/**
+ * 技能包上传的过期时间（小时）：没被 `POST /skills` 用掉的由清理任务删除（不跟对话附件的 `unboundTtlHours`）；
+ * `POST /skills` 开始处理时再顺延这么久，处理期间不会被清理。
+ */
+export const SKILL_PACKAGE_TTL_HOURS = 1;
+/**
+ * 技能包解出的文件在 `kernel/<orgId>/` 下的前缀：按上传 id，同一上传重试写到同一批键（幂等），
+ * 并发处理同一上传也不会互相覆盖出不同内容。版本行记下这个前缀（`skill_versions.object_prefix`）。
+ */
+export const skillFilesPrefix = (uploadId: string) => `skills/${uploadId}/`;
 
 /** 维护任务：清理过期未绑定的附件（任务名与 scheduler id 不含 `:`）。 */
 export const ATTACHMENT_CLEANUP_JOB = "attachment-cleanup";
@@ -96,8 +113,9 @@ export const normalizeContentType = (ct: string): string =>
 const isImage = (ct: string): ct is ImageMediaType =>
   (IMAGE_MEDIA_TYPES as readonly string[]).includes(ct);
 
-/** 对象键：只用附件 id，用户的文件名不进键。 */
-const objectKey = (id: string) => `attachments/${id}`;
+/** 对象键：只用附件 id，用户的文件名不进键。技能包另放 `skill-packages/<id>`。 */
+const objectKey = (id: string, purpose: AttachmentPurpose = "chat") =>
+  purpose === "chat" ? `attachments/${id}` : `skill-packages/${id}`;
 
 const startsWith = (b: Uint8Array, sig: readonly number[], at = 0) =>
   sig.every((x, i) => b[at + i] === x);
@@ -116,6 +134,11 @@ export function sniffMatches(contentType: string, head: Uint8Array): boolean {
       return startsWith(head, ascii("RIFF")) && startsWith(head, ascii("WEBP"), 8);
     case "application/pdf":
       return Buffer.from(head.buffer, head.byteOffset, head.byteLength).includes("%PDF-");
+    case "application/zip":
+      // 本地文件头，或空 zip 的中央目录结尾
+      return (
+        startsWith(head, [0x50, 0x4b, 0x03, 0x04]) || startsWith(head, [0x50, 0x4b, 0x05, 0x06])
+      );
     default:
       return !head.includes(0);
   }
@@ -173,17 +196,23 @@ export class AttachmentsService {
     orgId: string,
     accountId: string,
     input: { name: string; contentType: string; size: number },
+    purpose: AttachmentPurpose = "chat",
   ): Promise<CreatedAttachment> {
     this.d.storage.assertAvailable();
     const cfg = this.d.config().attachments;
     const contentType = normalizeContentType(input.contentType);
-    if (!(cfg.allowedTypes as readonly string[]).includes(contentType)) {
+    const skill = purpose === "skill-package";
+    if (
+      skill
+        ? contentType !== SKILL_PACKAGE_CONTENT_TYPE
+        : !(cfg.allowedTypes as readonly string[]).includes(contentType)
+    ) {
       throw new ApiError(
         "attachment.type_not_allowed",
         `Attachment type ${JSON.stringify(contentType)} is not allowed`,
       );
     }
-    const limit = this.limitFor(contentType);
+    const limit = skill ? SKILL_PACKAGE_UPLOAD_MAX_BYTES : this.limitFor(contentType);
     if (input.size > limit) {
       throw new ApiError(
         "attachment.too_large",
@@ -196,15 +225,18 @@ export class AttachmentsService {
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .where("status", "=", "pending")
+      .where("purpose", "=", purpose)
       .executeTakeFirst();
-    if (Number(pending?.n ?? 0) >= MAX_PENDING_ATTACHMENTS) {
+    const maxPending = skill ? MAX_PENDING_SKILL_PACKAGES : MAX_PENDING_ATTACHMENTS;
+    if (Number(pending?.n ?? 0) >= maxPending) {
       throw new ApiError(
         "attachment.too_many_pending",
-        `Too many unfinished uploads (at most ${MAX_PENDING_ATTACHMENTS}); finish or wait for them first`,
+        `Too many unfinished uploads (at most ${maxPending}); finish or wait for them first`,
       );
     }
     const id = randomUUID();
-    const key = objectKey(id);
+    const key = objectKey(id, purpose);
+    const ttlHours = skill ? SKILL_PACKAGE_TTL_HOURS : cfg.unboundTtlHours;
     const upload = await this.d.storage.kernel(orgId).presignPut(key, {
       contentType,
       maxSize: input.size,
@@ -221,7 +253,8 @@ export class AttachmentsService {
         size: input.size,
         object_key: key,
         status: "pending",
-        expires_at: sql<Date>`now() + make_interval(hours => ${cfg.unboundTtlHours})`,
+        purpose,
+        expires_at: sql<Date>`now() + make_interval(hours => ${ttlHours})`,
       })
       .execute();
     return {
@@ -317,6 +350,7 @@ export class AttachmentsService {
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("status", "=", "ready")
+      .where("purpose", "=", "chat")
       .executeTakeFirst();
     if (!row) throw notFound();
     const allowed =
@@ -428,6 +462,8 @@ export class AttachmentsService {
       ])
       .where("org_id", "=", orgId)
       .where("id", "in", unique)
+      // 技能包上传不能当附件发出（当作不存在）
+      .where("purpose", "=", "chat")
       .orderBy("id")
       .forUpdate()
       .execute();
@@ -567,8 +603,72 @@ export class AttachmentsService {
   }
 
   /**
+   * 取一个技能包上传的字节，供 `POST /skills` 解包（只有上传者、只认 `skill-package` 用途）：
+   * 还没 finalize 的先 finalize（核对大小与 zip 文件头）；过期时间顺延 {@link SKILL_PACKAGE_TTL_HOURS} 小时，
+   * 处理期间不会被清理任务删掉。不存在、不是技能包、已用掉或已过期 → `attachment.not_found`；
+   * 对象已不在或内容与 finalize 时不符 → `attachment.not_found`。
+   */
+  async readSkillPackage(orgId: string, accountId: string, id: string): Promise<Uint8Array> {
+    this.d.storage.assertAvailable();
+    const row = await this.d.db
+      .selectFrom("attachments")
+      .select(["status", "purpose", sql<boolean>`expires_at <= now()`.as("expired")])
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .executeTakeFirst();
+    if (row?.purpose !== "skill-package" || row.status === "deleting" || row.expired) {
+      throw notFound();
+    }
+    if (row.status === "pending") await this.finalize(orgId, accountId, id);
+    const live = await this.d.db
+      .updateTable("attachments")
+      .set({ expires_at: sql<Date>`now() + make_interval(hours => ${SKILL_PACKAGE_TTL_HOURS})` })
+      .where("id", "=", id)
+      .where("status", "=", "ready")
+      .where("purpose", "=", "skill-package")
+      .returning(["object_key", "size", "etag"])
+      .executeTakeFirst();
+    if (!live) throw notFound();
+    const got = await this.d.storage.kernel(orgId).get(live.object_key);
+    if (!got) throw notFound();
+    if (
+      got.head.size !== Number(live.size) ||
+      !this.sameContent(live.etag, got.head.etag, { orgId, attachmentId: id })
+    ) {
+      await got.body.cancel().catch(() => {});
+      throw notFound();
+    }
+    return readAll(got.body);
+  }
+
+  /**
+   * 在调用方事务里把技能包上传标记为已用掉（行锁；之后由清理任务删 zip，解出的文件因被版本引用而保留）。
+   * 不是该账号的 ready 技能包（如已被并发的请求用掉）→ `attachment.not_found`。
+   */
+  async consumeSkillPackage(trx: Trx, orgId: string, accountId: string, id: string): Promise<void> {
+    const row = await trx
+      .selectFrom("attachments")
+      .select("status")
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("purpose", "=", "skill-package")
+      .forUpdate()
+      .executeTakeFirst();
+    if (row?.status !== "ready") throw notFound();
+    await trx
+      .updateTable("attachments")
+      .set({ status: "deleting", expires_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .execute();
+  }
+
+  /**
    * 删除过期（`expires_at < now()`）且从未绑定到会话的附件：先把行认领为 `deleting`（`FOR UPDATE SKIP LOCKED`，
    * 多副本并发时互不重复），再删对象、删行。删对象失败的行保持 `deleting`，下次运行重试。
+   * 技能包上传（过期未用掉的，或已被 `POST /skills` 用掉、`expires_at` 置为当时的）同样由这里删 zip；
+   * 解出的文件 `skills/<id>/` 只在没有任何技能版本引用时一并删除。
    * 没有对象存储时什么也不做。返回删除的附件数。
    */
   async deleteExpired(): Promise<number> {
@@ -593,12 +693,23 @@ export class AttachmentsService {
             .forUpdate()
             .skipLocked(),
         )
-        .returning(["id", "org_id", "object_key"])
+        .returning(["id", "org_id", "object_key", "purpose"])
         .execute();
       if (claimed.length === 0) return deleted;
       for (const r of claimed) {
         try {
-          await this.d.storage.kernel(r.org_id).delete(r.object_key);
+          const store = this.d.storage.kernel(r.org_id);
+          await store.delete(r.object_key);
+          if (r.purpose === "skill-package") {
+            // 解出的文件没被任何版本引用（处理中途失败、或从未用掉）才删
+            const prefix = skillFilesPrefix(r.id);
+            const used = await this.d.db
+              .selectFrom("skill_versions")
+              .select("skill_id")
+              .where("object_prefix", "=", prefix)
+              .executeTakeFirst();
+            if (!used) await store.deletePrefix(prefix);
+          }
           await this.d.db
             .deleteFrom("attachments")
             .where("id", "=", r.id)

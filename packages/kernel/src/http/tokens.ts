@@ -64,6 +64,9 @@ export const CONVERSATIONS = Symbol("CONVERSATIONS");
 /** `AttachmentsService`（对话附件）的注入令牌。 */
 export const ATTACHMENTS = Symbol("ATTACHMENTS");
 
+/** `SkillsService`（技能库）的注入令牌。 */
+export const SKILLS = Symbol("SKILLS");
+
 /** `ConversationOutputs`（网页读工具输出存档）的注入令牌。 */
 export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
 

@@ -122,6 +122,7 @@ beforeAll(async () => {
           identity: k.identity,
           channels: k.channels.connections,
           attachments: k.attachments,
+          skills: k.skills,
           storage: k.storage,
           sandbox: k.sandbox,
           runs: {

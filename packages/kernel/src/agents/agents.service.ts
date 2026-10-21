@@ -8,6 +8,7 @@ import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
+import { assertOrgSkills } from "../skills/skills.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { AgentDefinition } from "./definition.js";
 
@@ -265,6 +266,7 @@ export class AgentsService {
     }
     const agent = await this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
+      await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
       const memberIds =
         input.visibility === "members"
           ? await this.checkMembers(t, orgId, input.memberIds ?? [])
@@ -360,6 +362,7 @@ export class AgentsService {
 
       let toVersion = before.current_version;
       if (patch.definition) {
+        await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? []);
         const current = await t
           .selectFrom("agent_versions")
           .select("definition")

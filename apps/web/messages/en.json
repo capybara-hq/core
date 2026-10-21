@@ -177,6 +177,10 @@
       "not_found": "This conversation has no sandbox yet.",
       "unavailable": "No sandbox is available in this deployment.",
       "busy": "The sandbox is busy; try again shortly."
+    },
+    "skill": {
+      "not_found": "The skill does not exist or has been deleted.",
+      "invalid_package": "The skill package is invalid:"
     }
   },
   "agents": {
