@@ -59,6 +59,8 @@ export interface SandboxServiceDeps {
   lockPollMs?: number;
   /** 锁的 TTL（毫秒），默认 {@link SANDBOX_LOCK_TTL_MS}；测试可调小以便很快发现锁丢失。 */
   lockTtlMs?: number;
+  /** 锁实现，默认前缀为 {@link SANDBOX_LOCK_PREFIX} 的 `ConversationLock`（测试可替换）。 */
+  lock?: Pick<ConversationLock, "acquire">;
 }
 
 type Row = Selectable<SandboxesTable>;
@@ -67,6 +69,25 @@ type Patch = UpdateObject<KernelDatabase, "sandboxes">;
 interface Fence {
   gen: number;
 }
+
+/**
+ * 本进程持有的沙箱锁：在 `Lease` 之外自己续租，并记下最后一次成功续租的时间。
+ * `ConversationLock` 吞掉续租的报错（Redis 超时等），这里超过 TTL 没有成功续租就视为锁已丢失。
+ * `signal` 在锁丢失时中止（原因是 {@link SandboxLockLostError}）。
+ */
+interface Held {
+  readonly signal: AbortSignal;
+  /** 锁已丢失（`Lease` 报告的，或超过 TTL 没有成功续租）。 */
+  lost(): boolean;
+  /** 立即续租一次；锁已丢失 → false。 */
+  renew(): Promise<boolean>;
+  /** 停止本地续租并释放锁。 */
+  release(): Promise<void>;
+}
+
+/** 维护里一次提供方操作的 signal：超时或锁丢失时中止。 */
+const opSignal = (held: Held): AbortSignal =>
+  AbortSignal.any([held.signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]);
 
 /** 没有沙箱提供方时的错误（503）。 */
 export const sandboxUnavailable = (): ApiError =>
@@ -131,7 +152,8 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   （TTL 60 秒，持有期间续租）。并发调用在锁上排队（最多 `sandbox.lockWaitSeconds`，之后 `sandbox.busy`），
  *   两个副本同时首次使用也只创建一个。
  * - **防护**：锁可能在持有期间丢失（续租失败、进程卡顿）。锁内读到记录的 `generation`，之后每次改 status / handle
- *   都按它比较并加一，不符就放弃（{@link SandboxLockLostError}）；锁丢失时中止传给 `fn` 的 signal。
+ *   都按它比较并加一，不符就放弃（{@link SandboxLockLostError}）；每次拿到锁都先加一，旧持有者之后的写入必然失败。
+ *   锁丢失（含超过 TTL 没有成功续租）时中止传给 `fn` 的 signal 与维护里提供方调用的 signal。
  * - **休眠与销毁**由维护队列定期调用 {@link suspendIdle} / {@link destroyInactive}；它们只试一次锁，
  *   锁被持有（正在执行命令）就跳过这一个，下次扫描再说。
  * - **透明恢复**：已休眠的在下次使用时恢复；恢复返回 `gone`、已销毁、记录的提供方不是当前提供方、
@@ -141,12 +163,12 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  * 没有提供方时 {@link available} 为 false，使用时抛 `sandbox.unavailable`（503）。本身无进程内状态，可多副本共用。
  */
 export class SandboxService {
-  private readonly lock: ConversationLock;
+  private readonly lock: Pick<ConversationLock, "acquire">;
   private readonly pollMs: number;
   private readonly ttlMs: number;
 
   constructor(private readonly d: SandboxServiceDeps) {
-    this.lock = new ConversationLock(d.redis, d.log, SANDBOX_LOCK_PREFIX);
+    this.lock = d.lock ?? new ConversationLock(d.redis, d.log, SANDBOX_LOCK_PREFIX);
     this.pollMs = d.lockPollMs ?? 100;
     this.ttlMs = d.lockTtlMs ?? SANDBOX_LOCK_TTL_MS;
   }
@@ -175,12 +197,10 @@ export class SandboxService {
   ): Promise<T> {
     const p = this.require();
     const capMs = this.d.config().sandbox.lockWaitSeconds * 1000;
-    const lease = await this.acquire(ctx.conversationId, signal, capMs);
-    const lost = new AbortController();
-    lease.onLost(() => lost.abort(new SandboxLockLostError(ctx.conversationId)));
-    const sig = AbortSignal.any([signal, lost.signal]);
+    const held = this.hold(await this.acquire(ctx.conversationId, signal, capMs));
+    const sig = AbortSignal.any([signal, held.signal]);
     try {
-      const s = await this.ensure(ctx, p, lease, sig);
+      const s = await this.ensure(ctx, p, held, sig);
       try {
         try {
           return await fn(s.handle, p.impl, s.info, sig);
@@ -189,7 +209,7 @@ export class SandboxService {
           this.d.log.info("sandbox instance is gone during use; recreating", {
             conversationId: ctx.conversationId,
           });
-          const handle = await this.create(ctx, p, lease, s.fence, sig, {});
+          const handle = await this.create(ctx, p, held, s.fence, sig, {});
           return await fn(handle, p.impl, { fresh: true, recreated: true }, sig);
         }
       } finally {
@@ -207,7 +227,7 @@ export class SandboxService {
           );
       }
     } finally {
-      await this.release(lease);
+      await held.release();
     }
   }
 
@@ -222,7 +242,7 @@ export class SandboxService {
     const rows = await this.candidates(due);
     let n = 0;
     await inPool(rows, SWEEP_CONCURRENCY, async (id) => {
-      const done = await this.tryLocked(id, async (lease) => {
+      const done = await this.tryLocked(id, async (held) => {
         const row = await this.d.db
           .selectFrom("sandboxes")
           .selectAll()
@@ -231,8 +251,9 @@ export class SandboxService {
           .executeTakeFirst();
         if (!row?.handle) return false;
         const fence = { gen: row.generation };
-        await p.impl.suspend(row.handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS));
-        await this.fenced(lease, id, fence, {
+        await p.impl.suspend(row.handle, opSignal(held));
+        if (!(await held.renew())) throw new SandboxLockLostError(id);
+        await this.fenced(held, id, fence, {
           status: "suspended",
           suspended_at: sql<Date>`now()`,
           running_since: null,
@@ -257,7 +278,7 @@ export class SandboxService {
     const rows = await this.candidates(due);
     let n = 0;
     await inPool(rows, SWEEP_CONCURRENCY, async (id) => {
-      const done = await this.tryLocked(id, async (lease) => {
+      const done = await this.tryLocked(id, async (held) => {
         const row = await this.d.db
           .selectFrom("sandboxes")
           .selectAll()
@@ -265,7 +286,7 @@ export class SandboxService {
           .where(due)
           .executeTakeFirst();
         if (!row) return false;
-        await this.destroyRow(row, p, lease);
+        await this.destroyRow(row, p, held);
         return true;
       });
       if (done) n++;
@@ -304,7 +325,9 @@ export class SandboxService {
       this.d.log.warn("cannot destroy sandbox: no sandbox provider", { conversationId });
       return;
     }
-    const lease = await this.acquire(conversationId, AbortSignal.timeout(DESTROY_FOR_WAIT_MS));
+    const held = this.hold(
+      await this.acquire(conversationId, AbortSignal.timeout(DESTROY_FOR_WAIT_MS)),
+    );
     try {
       const current = await this.d.db
         .selectFrom("sandboxes")
@@ -312,9 +335,9 @@ export class SandboxService {
         .where("conversation_id", "=", conversationId)
         .where("status", "<>", "destroyed")
         .executeTakeFirst();
-      if (current) await this.destroyRow(current, p, lease);
+      if (current) await this.destroyRow(current, p, held);
     } finally {
-      await this.release(lease);
+      await held.release();
     }
   }
 
@@ -344,20 +367,69 @@ export class SandboxService {
     }
   }
 
-  private async release(lease: Lease): Promise<void> {
-    await lease.release().catch((err: unknown) =>
-      this.d.log.warn("cannot release sandbox lock", {
-        conversationId: lease.conversationId,
-        err,
-      }),
+  /**
+   * 包装刚拿到的锁：每 TTL / 3 自己续租一次（本进程持有的锁的续租，与 `ConversationLock` 同样的许可），
+   * 记下最后一次成功续租的时间；超过 TTL 没有成功续租（续租报错也算失败）或 `Lease` 报告丢失时中止 `signal`。
+   */
+  private hold(lease: Lease): Held {
+    const id = lease.conversationId;
+    const ctl = new AbortController();
+    const lose = () => {
+      if (ctl.signal.aborted) return;
+      this.d.log.warn("sandbox lock lost", { conversationId: id });
+      ctl.abort(new SandboxLockLostError(id));
+    };
+    lease.onLost(lose);
+    let lastOk = Date.now();
+    let inFlight = false;
+    const stale = () => Date.now() - lastOk > this.ttlMs;
+    const renew = async (): Promise<boolean> => {
+      if (ctl.signal.aborted) return false;
+      try {
+        if (await lease.renew()) lastOk = Date.now();
+        else lose();
+      } catch (err) {
+        this.d.log.warn("sandbox lock renew failed", { conversationId: id, err });
+      }
+      if (stale()) lose();
+      return !ctl.signal.aborted;
+    };
+    const timer = setInterval(
+      () => {
+        if (stale()) lose();
+        if (ctl.signal.aborted) {
+          clearInterval(timer);
+          return;
+        }
+        if (inFlight) return;
+        inFlight = true;
+        void renew().finally(() => {
+          inFlight = false;
+        });
+      },
+      Math.max(1, Math.floor(this.ttlMs / 3)),
     );
+    timer.unref();
+    return {
+      signal: ctl.signal,
+      lost: () => ctl.signal.aborted || lease.lost || stale(),
+      renew,
+      release: async () => {
+        clearInterval(timer);
+        await lease
+          .release()
+          .catch((err: unknown) =>
+            this.d.log.warn("cannot release sandbox lock", { conversationId: id, err }),
+          );
+      },
+    };
   }
 
   /**
    * 防护写入：锁仍在、且记录的 generation 仍是锁内读到的值时才写（并加一）；否则抛 {@link SandboxLockLostError}。
    */
-  private async fenced(lease: Lease, id: string, fence: Fence, set: Patch): Promise<void> {
-    if (lease.lost) throw new SandboxLockLostError(id);
+  private async fenced(held: Held, id: string, fence: Fence, set: Patch): Promise<void> {
+    if (held.lost()) throw new SandboxLockLostError(id);
     const r = await this.d.db
       .updateTable("sandboxes")
       .set({ ...set, generation: fence.gen + 1 })
@@ -388,7 +460,7 @@ export class SandboxService {
    */
   private async tryLocked(
     conversationId: string,
-    fn: (lease: Lease) => Promise<boolean>,
+    fn: (held: Held) => Promise<boolean>,
   ): Promise<boolean> {
     let lease: Lease | null;
     try {
@@ -398,8 +470,9 @@ export class SandboxService {
       return false;
     }
     if (!lease) return false;
+    const held = this.hold(lease);
     try {
-      return await fn(lease);
+      return await fn(held);
     } catch (err) {
       this.d.log.warn("sandbox maintenance failed; will retry", { conversationId, err });
       await this.d.db
@@ -410,7 +483,7 @@ export class SandboxService {
         .catch(() => {});
       return false;
     } finally {
-      await this.release(lease);
+      await held.release();
     }
   }
 
@@ -418,7 +491,7 @@ export class SandboxService {
   private async ensure(
     ctx: { orgId: string; conversationId: string },
     p: SandboxProviderEntry,
-    lease: Lease,
+    held: Held,
     signal: AbortSignal,
   ): Promise<{ handle: SandboxHandle; info: SandboxUseInfo; fence: Fence }> {
     const id = ctx.conversationId;
@@ -435,10 +508,12 @@ export class SandboxService {
     if (row.org_id !== ctx.orgId) {
       throw new ApiError(
         "forbidden",
-        `The sandbox of conversation ${id} belongs to organization ${row.org_id}, not ${ctx.orgId}`,
+        `The sandbox of conversation ${id} does not belong to organization ${ctx.orgId}`,
       );
     }
     const fence = { gen: row.generation };
+    // 每次拿到锁先防护地加一：锁已过期、却还在跑的旧持有者（如卡住的扫描）之后的写入一定失败
+    await this.fenced(held, id, fence, {});
     const handle = row.handle;
     if (handle && row.provider === p.plugin) {
       if (row.status === "running") {
@@ -447,7 +522,7 @@ export class SandboxService {
       if (row.status === "suspended") {
         const r = await p.impl.resume(handle, signal);
         if (r === "resumed") {
-          await this.fenced(lease, id, fence, {
+          await this.fenced(held, id, fence, {
             status: "running",
             running_since: sql<Date>`now()`,
             suspended_at: null,
@@ -472,7 +547,7 @@ export class SandboxService {
         prev = { prev_provider: row.provider, prev_handle: JSON.stringify(handle) };
       }
     }
-    const created = await this.create(ctx, p, lease, fence, signal, prev);
+    const created = await this.create(ctx, p, held, fence, signal, prev);
     // had_instance 只会置 true：之前成功创建过（哪怕后来重建失败）都算重建
     return { handle: created, info: { fresh: true, recreated: row.had_instance }, fence };
   }
@@ -484,13 +559,13 @@ export class SandboxService {
   private async create(
     ctx: { orgId: string; conversationId: string },
     p: SandboxProviderEntry,
-    lease: Lease,
+    held: Held,
     fence: Fence,
     signal: AbortSignal,
     extra: Patch,
   ): Promise<SandboxHandle> {
     const id = ctx.conversationId;
-    await this.fenced(lease, id, fence, {
+    await this.fenced(held, id, fence, {
       org_id: ctx.orgId,
       provider: p.plugin,
       handle: null,
@@ -512,7 +587,7 @@ export class SandboxService {
     };
     const handle = await p.impl.create({ name: `cap-${id}`, image: cfg.image, limits, signal });
     try {
-      await this.fenced(lease, id, fence, {
+      await this.fenced(held, id, fence, {
         status: "running",
         handle: JSON.stringify(handle),
         had_instance: true,
@@ -521,6 +596,9 @@ export class SandboxService {
         last_used_at: sql<Date>`now()`,
       });
     } catch (e) {
+      // 锁已丢失、没能记下句柄：尽力销毁刚建好的实例，免得泄漏。
+      // 提供方按名字（cap-<对话>）复用实例时（Ruling M10），这个 destroy 可能打到新持有者刚恢复 / 创建的同一个实例。
+      // 这能自愈：新持有者下一次提供方调用抛 SandboxGoneError（或 resume 返回 gone），withSandbox 原地重建并重试。
       await p.impl.destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)).catch((err: unknown) =>
         this.d.log.warn("cannot destroy sandbox created after the lock was lost", {
           conversationId: id,
@@ -559,10 +637,10 @@ export class SandboxService {
   }
 
   /** 在锁内：销毁实例（与遗留的旧提供方实例）；对话已不存在的删掉记录，否则标记 destroyed。 */
-  private async destroyRow(row: Row, p: SandboxProviderEntry, lease: Lease): Promise<void> {
+  private async destroyRow(row: Row, p: SandboxProviderEntry, held: Held): Promise<void> {
     const id = row.conversation_id;
     const fence = { gen: row.generation };
-    const signal = AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS);
+    const signal = opSignal(held);
     let prev: Patch = {};
     if (row.handle && row.provider === p.plugin) {
       await p.impl.destroy(row.handle, signal);
@@ -579,7 +657,7 @@ export class SandboxService {
         prev = { prev_provider: null, prev_handle: null };
       }
     }
-    if (!(await lease.renew())) throw new SandboxLockLostError(id);
+    if (!(await held.renew())) throw new SandboxLockLostError(id);
     const conversation = await this.d.db
       .selectFrom("conversations")
       .select("id")
@@ -587,7 +665,7 @@ export class SandboxService {
       .executeTakeFirst();
     const keepRow = conversation !== undefined || (prev.prev_handle ?? row.prev_handle) != null;
     if (keepRow) {
-      await this.fenced(lease, id, fence, {
+      await this.fenced(held, id, fence, {
         status: "destroyed",
         destroyed_at: sql<Date>`now()`,
         running_since: null,

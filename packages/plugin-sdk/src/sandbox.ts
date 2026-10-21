@@ -63,6 +63,10 @@ export function isSandboxGoneError(e: unknown): e is SandboxGoneError {
  * `sandbox@1` 的实现（由沙箱插件提供，如 Docker、E2B）。
  * 实例确定不在时：`resume` 返回 `gone`；`exec` / `readFile` / `writeFile` / `stat` 抛 {@link SandboxGoneError}；
  * `suspend` / `destroy` 照常成功。
+ *
+ * **中止**：每个方法都必须及时响应 `signal`（已中止就立即失败，进行中被中止就尽快以中止原因结束）——内核在锁丢失、
+ * 运行被中止或超时时靠它停下，不响应就可能与新的持锁方同时操作同一实例。`exec` 被中止时必须杀掉正在跑的命令
+ * （连同它派生的进程），而不只是不再等待它的输出。
  */
 export interface SandboxProvider {
   /** `name` 形如 `cap-<conversationId>`。 */

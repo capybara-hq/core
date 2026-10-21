@@ -17,3 +17,5 @@
 - 回调抛 `SandboxGoneError` 时原地重建并重试一次；`recreated` 按 `had_instance` 判断，重建失败后仍为 true。
 - 换提供方时旧实例记在 `prev_provider` / `prev_handle`，旧提供方仍加载时用它销毁；
   句柄为空（创建中途退出）时用可选的 `destroyByName` 清理；扫描失败的排在后面（`sweep_failed_at`）。
+- 每次拿到沙箱锁都先防护地把 `generation` 加一；内核自己续租并记下最后一次成功续租的时间，超过 TTL
+  没有成功续租（续租报错也算）即视为锁丢失，中止回调与维护里提供方调用的 signal。

@@ -17,6 +17,7 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
+import { ConversationLock } from "../../src/runtime/conversation-lock.js";
 import { SandboxService, type SandboxServiceDeps } from "../../src/sandbox/sandbox.service.js";
 import {
   createFakeSandbox,
@@ -717,5 +718,103 @@ describe("扫描失败的排在后面（fix round 1）", () => {
     fail = false;
     expect(await s.suspendIdle(later(11 * MIN))).toBe(1);
     expect(await row()).toMatchObject({ status: "suspended", sweep_failed_at: null });
+  });
+});
+
+describe("锁的防护（fix round 2）", () => {
+  it("每次拿到锁都防护地把 generation 加一（运行中的路径也是）", async () => {
+    const s = service();
+    await use(s);
+    const g1 = (await row())?.generation as number;
+    await use(s);
+    expect((await row())?.generation).toBe(g1 + 1);
+  });
+
+  it("B 拿锁之前就开始的过期休眠扫描，之后写不进 suspended", async () => {
+    const s = service(undefined, undefined, { lockTtlMs: 300 });
+    await use(s);
+    const started = gates();
+    const base = createFakeSandbox(root);
+    let suspendSignal: AbortSignal | undefined;
+    const slow: SandboxProvider = {
+      ...base,
+      suspend: async (h) => {
+        started.entered();
+        // 故意不理 signal：模拟中止不及时的提供方，检验防护写入本身
+        await started.gate;
+        return base.suspend(h, AbortSignal.timeout(5000));
+      },
+    };
+    const sweeper = service(() => slow, undefined, { lockTtlMs: 300 });
+    const sweep = sweeper.suspendIdle(later(11 * MIN));
+    await started.inside;
+    // 扫描方的锁过期，B 拿到锁、走运行中的路径用完
+    await redis.del(lockKey());
+    const b = await use(s);
+    expect(b.info).toEqual({ fresh: false, recreated: false });
+    started.release();
+    expect(await sweep).toBe(0);
+    expect((await row())?.status).toBe("running");
+    void suspendSignal;
+  });
+
+  it("休眠途中锁丢失：中止提供方调用的 signal", async () => {
+    const s = service(undefined, undefined, { lockTtlMs: 300 });
+    await use(s);
+    const started = gates();
+    let seen: AbortSignal | undefined;
+    const base = createFakeSandbox(root);
+    const slow: SandboxProvider = {
+      ...base,
+      suspend: async (_h, sig) => {
+        seen = sig;
+        started.entered();
+        await waitAborted(sig);
+        throw sig.reason;
+      },
+    };
+    const sweeper = service(() => slow, undefined, { lockTtlMs: 300 });
+    const sweep = sweeper.suspendIdle(later(11 * MIN));
+    await started.inside;
+    await redis.set(lockKey(), "someone-else");
+    expect(await sweep).toBe(0);
+    expect(seen?.aborted).toBe(true);
+    expect((await row())?.status).toBe("running");
+  });
+
+  it("续租一直报错：超过 TTL 没有成功续租即视为锁丢失，中止 fn 的 signal", async () => {
+    const real = new ConversationLock(redis, log, "capk:sandbox:");
+    const throwing = {
+      acquire: async (id: string, token: string, ttl: number) => {
+        const lease = await real.acquire(id, token, ttl);
+        if (!lease) return null;
+        return Object.assign(Object.create(lease), {
+          renew: async () => {
+            throw new Error("redis timeout");
+          },
+          release: () => lease.release(),
+          onLost: (cb: () => void) => lease.onLost(cb),
+        });
+      },
+    };
+    const s = service(undefined, undefined, { lockTtlMs: 300, lock: throwing });
+    const reason = await s.withSandbox(
+      { orgId, conversationId },
+      async (_h, _p, _info, sig) => {
+        await waitAborted(sig);
+        return sig.reason;
+      },
+      signal(),
+    );
+    expect((reason as Error).name).toBe("SandboxLockLostError");
+  });
+
+  it("组织不符的错误信息不带别的组织 id", async () => {
+    const s = service();
+    await use(s);
+    const other = await newOrg();
+    const err = (await use(s, conversationId, other).catch((e: unknown) => e)) as ApiError;
+    expect(err.code).toBe("forbidden");
+    expect(err.message).not.toContain(orgId);
   });
 });

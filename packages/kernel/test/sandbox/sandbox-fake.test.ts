@@ -53,4 +53,29 @@ describe("sandbox-fake", () => {
     await p.suspend(h, sig());
     await expect(run("echo x")).rejects.toThrow("not running");
   });
+
+  it("中止的 exec 杀掉正在跑的命令；已中止的 signal 让调用立即失败", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-y", image: "i", limits, signal: sig() });
+    const ac = new AbortController();
+    const pending = p.exec(h, {
+      command: "echo $$ > /workspace/pid; sleep 5",
+      timeoutMs: 10_000,
+      maxOutputBytes: 1000,
+      signal: ac.signal,
+    });
+    let pid = 0;
+    for (let i = 0; i < 100 && pid === 0; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      const f = await p.readFile(h, "/workspace/pid", { maxBytes: 100, signal: sig() });
+      pid = f ? Number(new TextDecoder().decode(f.data).trim()) : 0;
+    }
+    expect(pid).toBeGreaterThan(0);
+    ac.abort();
+    const r = await pending;
+    expect(r.exitCode).toBeNull();
+    expect(r.timedOut).toBe(false);
+    expect(() => process.kill(pid, 0)).toThrow();
+    await expect(p.stat(h, "/workspace", ac.signal)).rejects.toThrow();
+  });
 });

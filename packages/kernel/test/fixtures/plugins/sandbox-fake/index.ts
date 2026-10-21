@@ -28,7 +28,8 @@ import { z } from "zod";
  * 模拟 `gone`：测试删掉 `root/instances/<id>`（{@link removeFakeSandbox}），之后 resume 返回 `gone`。
  *
  * `exec` 用 `/bin/sh -c` 在实例目录里真的执行命令：命令里的 `/workspace`、`/skills`、`/tmp` 换成实例目录下的对应目录，
- * 输出里再换回来；超时或中止时杀掉整个进程组。只执行测试自己写的命令，**没有任何隔离**。
+ * 输出里再换回来；超时或中止时杀掉整个进程组（SIGKILL）。每个操作开始前已中止的 signal 让它立即失败，慢操作的延迟也响应中止。
+ * 只执行测试自己写的命令，**没有任何隔离**。
  */
 
 const Deployment = z.object({ root: z.string().min(1) });
@@ -181,6 +182,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     },
 
     async exec(h, args): Promise<ExecResult> {
+      args.signal.throwIfAborted();
       await requireRunning(h);
       const base = fsRoot(h);
       const command = args.command.replace(
@@ -245,6 +247,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     },
 
     async readFile(h, path, opts) {
+      opts.signal.throwIfAborted();
       await requireRunning(h);
       const p = real(h, path);
       const data = await readFile(p).catch(() => null);
@@ -256,14 +259,16 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       };
     },
 
-    async writeFile(h, path, data) {
+    async writeFile(h, path, data, signal) {
+      signal.throwIfAborted();
       await requireRunning(h);
       const p = real(h, path);
       await mkdir(dirname(p), { recursive: true });
       await writeFile(p, data);
     },
 
-    async stat(h, path) {
+    async stat(h, path, signal) {
+      signal.throwIfAborted();
       await requireRunning(h);
       const s = await stat(real(h, path)).catch(() => null);
       return s === null ? null : { size: s.size, isDir: s.isDirectory() };
