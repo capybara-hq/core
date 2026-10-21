@@ -362,13 +362,15 @@ export class AgentsService {
 
       let toVersion = before.current_version;
       if (patch.definition) {
-        await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? []);
         const current = await t
           .selectFrom("agent_versions")
           .select("definition")
           .where("agent_id", "=", agentId)
           .where("version", "=", before.current_version)
           .executeTakeFirstOrThrow();
+        // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
+        const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
+        await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? [], kept);
         if (canonical(current.definition) !== canonical(patch.definition)) {
           toVersion = before.current_version + 1;
           await t

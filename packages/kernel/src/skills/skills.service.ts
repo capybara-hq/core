@@ -62,12 +62,14 @@ const notFound = () => new ApiError("skill.not_found", "Skill not found");
 
 /**
  * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能，
- * 否则 `validation_failed`（path `skills.orgSkills.<i>`）。调用方须已锁组织行（技能删除同样锁组织行，二者串行）。
+ * 否则 `validation_failed`（path `skills.orgSkills.<i>`）；不可重复。调用方须已锁组织行（技能删除同样锁组织行，二者串行）。
+ * `kept`：当前版本里已有的引用（保存时合法），修改时不再核对——技能之后被删也不挡住其他改动（运行时由 T14 忽略已删除的技能）。
  */
 export async function assertOrgSkills(
   t: Trx,
   orgId: string,
   ids: readonly string[],
+  kept: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   const details: { path: string; message: string }[] = [];
   const seen = new Set<string>();
@@ -75,16 +77,17 @@ export async function assertOrgSkills(
     if (seen.has(id)) details.push({ path: `skills.orgSkills.${i}`, message: "Duplicate skill" });
     seen.add(id);
   });
-  if (seen.size > 0) {
+  const toCheck = [...seen].filter((id) => !kept.has(id));
+  if (toCheck.length > 0) {
     const found = await t
       .selectFrom("skills")
       .select("id")
       .where("org_id", "=", orgId)
       .where("scope", "=", "org")
       .where("deleted_at", "is", null)
-      .where("id", "in", [...seen])
+      .where("id", "in", toCheck)
       .execute();
-    const live = new Set(found.map((r) => r.id));
+    const live = new Set([...kept, ...found.map((r) => r.id)]);
     ids.forEach((id, i) => {
       if (!live.has(id)) {
         details.push({
@@ -161,6 +164,7 @@ export class SkillsService {
    * 3. 一个事务里：锁组织行并复核 `skills.manage`，把上传标记为已用掉（并发的同一上传只有一个成功），
    *    同名未删除的组织技能存在则 `current_version + 1`，否则新建（组织行锁串行化，版本号不会重复），写版本与审计。
    * 第 3 步之前中断不会留下可见的版本；已写的文件由清理任务在上传过期后删除（未被任何版本引用时）。
+   * 同一上传已经产生过版本（上次提交了、响应丢了而重试）→ 直接返回那个版本（同组织、同一发起人）。
    */
   async upload(
     orgId: string,
@@ -169,9 +173,27 @@ export class SkillsService {
     actorTokenId?: string,
   ): Promise<UploadedSkill> {
     this.d.storage.assertAvailable();
+    const prefix = skillFilesPrefix(uploadId);
+    // 重试（上次已提交、响应丢了）：同一上传已产生的版本直接返回，不再要求上传仍可用
+    const done = await this.d.db
+      .selectFrom("skill_versions")
+      .innerJoin("skills", "skills.id", "skill_versions.skill_id")
+      .select(["skills.id", "skill_versions.version"])
+      .where("skill_versions.object_prefix", "=", prefix)
+      .where("skills.org_id", "=", orgId)
+      .where("skill_versions.created_by", "=", actorAccountId)
+      .where("skills.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (done) {
+      const row = await this.d.db
+        .selectFrom("skills")
+        .select(SUMMARY_COLUMNS)
+        .where("id", "=", done.id)
+        .executeTakeFirstOrThrow();
+      return { skill: summary(row), version: done.version, created: done.version === 1 };
+    }
     const zip = await this.d.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
     const pkg = await readSkillPackage(zip);
-    const prefix = skillFilesPrefix(uploadId);
     const store = this.d.storage.kernel(orgId);
     const queue = [...pkg.files];
     await Promise.all(

@@ -215,12 +215,22 @@ describe("上传技能包", { timeout: 60_000 }, () => {
     expect(audits.map((a) => a.action)).toEqual(["skill.created", "skill.version_created"]);
   });
 
-  it("同一上传不能用两次；用掉的上传不能当附件发出或下载", async () => {
+  it("同一上传重试（响应丢失）返回同一个版本、不新增；技能包上传不能当附件发出或下载", async () => {
     const up = await uploadZip(admin, zipOf("once"));
-    expect((await createSkill(admin, up)).statusCode).toBe(201);
+    const first = await createSkill(admin, up);
+    expect(first.statusCode).toBe(201);
     const again = await createSkill(admin, up);
-    expect(again.statusCode).toBe(404);
-    expect(again.json().error.code).toBe("attachment.not_found");
+    expect(again.statusCode).toBe(201);
+    expect(again.json()).toEqual(first.json());
+    expect(await db.selectFrom("skill_versions").select("version").execute()).toHaveLength(1);
+    // 别的管理员拿同一 id 不行（上传只认上传者）
+    const adm2 = (
+      await new AccountsService(db).createLocal({ login: "adm2", password: PW, displayName: "B" })
+    ).id;
+    await testMembers(db).add(orgId, adm2, "admin", adminId);
+    const other = await createSkill(await session(k, "adm2"), up);
+    expect(other.statusCode).toBe(404);
+    expect(other.json().error.code).toBe("attachment.not_found");
 
     const pending = await uploadZip(admin, zipOf("other"));
     await admin({ method: "POST", url: `/api/v1/orgs/${orgId}/attachments/${pending}/finalize` });
@@ -331,6 +341,33 @@ describe("权限", { timeout: 30_000 }, () => {
     const anon = await k.http.inject({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
     expect(anon.statusCode).toBe(401);
   });
+
+  it("服务令牌（即使 admin 角色）访问技能接口一律 403", async () => {
+    const t = await admin({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/service-tokens`,
+      payload: { name: "ci", role: "admin" },
+    });
+    expect(t.statusCode, t.body).toBe(201);
+    const headers = { authorization: `Bearer ${(t.json() as { token: string }).token}` };
+    const base = `/api/v1/orgs/${orgId}/skills`;
+    for (const [method, url, payload] of [
+      ["GET", base, undefined],
+      ["GET", `${base}/x`, undefined],
+      ["POST", `${base}/uploads`, { name: "s.zip", size: 10 }],
+      ["POST", base, { uploadId: "x" }],
+      ["DELETE", `${base}/x`, undefined],
+    ] as const) {
+      const r = await k.http.inject({
+        method,
+        url,
+        headers,
+        ...(payload !== undefined && { payload }),
+      });
+      expect(r.statusCode, `${method} ${url}`).toBe(403);
+      expect(r.json().error.code).toBe("forbidden");
+    }
+  });
 });
 
 describe("删除与 agent 引用", { timeout: 60_000 }, () => {
@@ -398,15 +435,56 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
 
     const del = await admin({ method: "DELETE", url: `/api/v1/orgs/${orgId}/skills/${s2}` });
     expect(del.statusCode).toBe(204);
-    const stale = await admin({
+    // 当前版本已引用的技能被删：只改提示词照常保存（运行时由 T14 忽略已删除的技能）
+    const promptOnly = await admin({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
       payload: { definition: { ...agentBody([s1, s2]).definition, instructions: "x" } },
     });
-    expect(stale.statusCode).toBe(400);
-    expect(stale.json().error.details).toEqual([
-      expect.objectContaining({ path: "skills.orgSkills.1" }),
+    expect(promptOnly.statusCode, promptOnly.body).toBe(200);
+    expect(promptOnly.json().agent.currentVersion).toBe(3);
+    // 新加一个已删除的技能仍被拒
+    const s3 = await skill("three");
+    await admin({ method: "DELETE", url: `/api/v1/orgs/${orgId}/skills/${s3}` });
+    const addDeleted = await admin({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
+      payload: { definition: agentBody([s1, s2, s3]).definition },
+    });
+    expect(addDeleted.statusCode).toBe(400);
+    expect(addDeleted.json().error.details).toEqual([
+      expect.objectContaining({ path: "skills.orgSkills.2" }),
     ]);
+    // 新加别的组织的技能也被拒
+    const foreignSkill = await (async () => {
+      const r = await admin({
+        method: "POST",
+        url: `/api/v1/orgs/${otherOrg}/skills/uploads`,
+        payload: { name: "f.zip", size: zipOf("foreign").byteLength },
+      });
+      const c = r.json() as Created;
+      await putToStore(c, zipOf("foreign"), "application/zip");
+      const made = await admin({
+        method: "POST",
+        url: `/api/v1/orgs/${otherOrg}/skills`,
+        payload: { uploadId: c.id },
+      });
+      expect(made.statusCode, made.body).toBe(201);
+      return (made.json() as Uploaded).skill.id;
+    })();
+    const addForeign = await admin({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
+      payload: { definition: agentBody([s1, foreignSkill]).definition },
+    });
+    expect(addForeign.statusCode).toBe(400);
+    // 新建 agent 时严格核对：引用已删除的技能被拒
+    const createDeleted = await admin({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: agentBody([s2]),
+    });
+    expect(createDeleted.statusCode).toBe(400);
   });
 
   it("软删除：详情 404、列表不再有；同名可重新上传为新技能", async () => {

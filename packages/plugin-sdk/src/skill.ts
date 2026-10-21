@@ -11,7 +11,8 @@
  *
  * 取舍：description 会进模型的系统提示，所以照 Anthropic 的规则拒绝 XML 标签（防止伪造提示结构）；
  * 规范之外的键（如 Claude Code 的 `argument-hint`、`disable-model-invocation`）一律允许并忽略，
- * 已有的技能包不用改就能上传。
+ * 已有的技能包不用改就能上传。「与所在目录同名」不强制：上传的 zip 外层目录常是别的名字（如 GitHub 的
+ * `repo-main/`），技能名一律取 frontmatter 的 name，沙箱里的目录就是 `/skills/<name>/`。
  */
 import { parse as parseYaml } from "yaml";
 import { hasControlChars } from "./model.js";
@@ -30,6 +31,8 @@ export const SKILL_LIMITS = {
   maxFiles: 1000,
   /** 包内相对路径的长度上限（字符）。 */
   pathMaxChars: 512,
+  /** frontmatter（两条 `---` 之间）的长度上限（字符），超过不做 YAML 解析。 */
+  frontmatterMaxChars: 64 * 1024,
 } as const;
 
 /** 技能入口文件（包根目录，大小写敏感）。 */
@@ -76,6 +79,11 @@ export function parseSkillMd(text: string): ParsedSkillMd | { errors: string[] }
   const end = lines.findIndex((l, i) => i > 0 && l.trimEnd() === "---");
   if (end < 0) return { errors: ["SKILL.md frontmatter is not closed by a '---' line"] };
   const front = lines.slice(1, end).join("\n");
+  if (front.length > SKILL_LIMITS.frontmatterMaxChars) {
+    return {
+      errors: [`frontmatter must be at most ${SKILL_LIMITS.frontmatterMaxChars} characters`],
+    };
+  }
   const body = lines.slice(end + 1).join("\n");
 
   let data: unknown;

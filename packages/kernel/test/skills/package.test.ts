@@ -39,7 +39,7 @@ describe("readSkillPackage", () => {
     expect(Buffer.from(pkg.files[1]?.data ?? []).toString()).toBe("print(1)\n");
   });
 
-  it("只有一层同名外层目录时去掉它；外层目录与 name 不同 → 拒绝", async () => {
+  it("全部文件在同一个顶层目录下、其中有 SKILL.md：去掉该目录（目录名不必等于 name）", async () => {
     const pkg = await readSkillPackage(
       makeZip([
         { name: "pdf-tools/", data: "" },
@@ -48,13 +48,37 @@ describe("readSkillPackage", () => {
       ]),
     );
     expect(pkg.files.map((f) => f.path)).toEqual(["SKILL.md", "a.txt"]);
-    const r = await rejected(
+    // GitHub 下载的 repo-main/：名字取 frontmatter
+    const gh = await readSkillPackage(
       makeZip([
-        { name: "other/SKILL.md", data: SKILL_MD() },
-        { name: "other/a.txt", data: "a" },
+        { name: "skills-repo-main/SKILL.md", data: SKILL_MD() },
+        { name: "skills-repo-main/scripts/a.py", data: "a" },
       ]),
     );
-    expect(text(r)).toContain("must match the skill name");
+    expect(gh.name).toBe("pdf-tools");
+    expect(gh.files.map((f) => f.path)).toEqual(["SKILL.md", "scripts/a.py"]);
+  });
+
+  it("有歧义的布局不猜：多个顶层条目、或 SKILL.md 只在更深的目录里 → 缺少 SKILL.md", async () => {
+    for (const entries of [
+      // 两个顶层目录各有 SKILL.md
+      [
+        { name: "a/SKILL.md", data: SKILL_MD("a") },
+        { name: "b/SKILL.md", data: SKILL_MD("b") },
+      ],
+      // 顶层目录 + 顶层文件
+      [
+        { name: "a/SKILL.md", data: SKILL_MD("a") },
+        { name: "README.md", data: "x" },
+      ],
+      // 只有一个顶层目录，但 SKILL.md 在第二层
+      [
+        { name: "repo/skill/SKILL.md", data: SKILL_MD() },
+        { name: "repo/skill/a.txt", data: "a" },
+      ],
+    ]) {
+      expect(text(await rejected(makeZip(entries)))).toContain("SKILL.md is required at the root");
+    }
   });
 
   it("忽略 __MACOSX/ 与 .DS_Store", async () => {
@@ -170,14 +194,23 @@ describe("readSkillPackage", () => {
     expect(text(r)).toContain(`larger than ${SKILL_LIMITS.totalBytes} bytes in total`);
   });
 
-  it("压缩比异常（zip 炸弹）", async () => {
+  it("压缩比异常（zip 炸弹）：近乎单一字节重复（>1000:1）才拒绝；高度重复的正常文本通过", async () => {
     const r = await rejected(
       makeZip([
         { name: "SKILL.md", data: SKILL_MD() },
-        { name: "zeros.bin", data: new Uint8Array(5 * 1024 * 1024) },
+        { name: "zeros.bin", data: new Uint8Array(8 * 1024 * 1024) },
       ]),
     );
     expect(text(r)).toContain("compression ratio");
+    const line = "2026-10-21T12:00:00Z INFO request served status=200 path=/api/v1/health\n";
+    const log = line.repeat(Math.ceil((3 * 1024 * 1024) / line.length));
+    const pkg = await readSkillPackage(
+      makeZip([
+        { name: "SKILL.md", data: SKILL_MD() },
+        { name: "sample.log", data: log },
+      ]),
+    );
+    expect(pkg.files[1]?.size).toBe(log.length);
   });
 
   it("条目数超过上限", async () => {

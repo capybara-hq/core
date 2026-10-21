@@ -384,6 +384,7 @@ export class AttachmentsService {
       .select(["id", "name"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
+      .where("purpose", "=", "chat")
       .where("status", "=", "ready")
       .orderBy("created_at")
       .orderBy("id")
@@ -405,6 +406,7 @@ export class AttachmentsService {
       .where("id", "=", attachmentId)
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
+      .where("purpose", "=", "chat")
       .where("status", "=", "ready")
       .executeTakeFirst();
     if (!row) return null;
@@ -542,6 +544,7 @@ export class AttachmentsService {
       .select(["id", "size", "pages", "etag"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
+      .where("purpose", "=", "chat")
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();
@@ -566,6 +569,7 @@ export class AttachmentsService {
       .select(["id", "content_type", "object_key", "size", "etag"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
+      .where("purpose", "=", "chat")
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();

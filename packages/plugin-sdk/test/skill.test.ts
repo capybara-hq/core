@@ -99,6 +99,13 @@ describe("parseSkillMd", () => {
     });
   });
 
+  it("frontmatter 超过 64KB 不做 YAML 解析", () => {
+    const big = `name: x\ndescription: d\nextra: "${"a".repeat(SKILL_LIMITS.frontmatterMaxChars)}"`;
+    expect(parseSkillMd(md(big))).toEqual({
+      errors: [`frontmatter must be at most ${SKILL_LIMITS.frontmatterMaxChars} characters`],
+    });
+  });
+
   it("同时报出多个错误", () => {
     const r = parseSkillMd(md("name: -x\ndescription: ''"));
     expect("errors" in r && r.errors).toHaveLength(2);
