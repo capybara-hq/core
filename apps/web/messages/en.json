@@ -110,7 +110,11 @@
       "artifact_not_previewable": "This file can't be previewed."
     },
     "run": {
-      "not_active": "There is no reply in progress."
+      "not_active": "There is no reply in progress.",
+      "model_unavailable": "The model is unavailable.",
+      "provider_unavailable": "The model provider list is temporarily unavailable.",
+      "provider_error": "The model provider returned an error.",
+      "storage_unavailable": "Attachment storage is temporarily unavailable."
     },
     "app": {
       "not_found": "The app does not exist or has been removed.",
@@ -198,7 +202,32 @@
       "too_many_cases": "The eval set is full.",
       "agent_mismatch": "This run belongs to a different agent than the eval set.",
       "run_not_finished": "The run has not finished yet. Add it after it ends.",
-      "case_too_large": "This run is too large to add to an eval set."
+      "case_too_large": "This run is too large to add to an eval set.",
+      "call_not_found": "This model call is not in the snapshot.",
+      "case_not_found": "The case doesn't exist.",
+      "run_not_found": "The eval run doesn't exist.",
+      "result_not_found": "The eval result doesn't exist.",
+      "token_cap_invalid": "The token cap is out of range (at least 1 and no more than the deployment maximum).",
+      "run_finished": "The run has already ended.",
+      "nothing_to_replay": "The eval set has no replayable cases.",
+      "candidate_invalid": "The candidate isn't usable (wrong version, model or parameters).",
+      "too_many_errors": "Too many errors in a row; the run was stopped.",
+      "definition_missing": "The snapshot has no agent definition, so it can't be replayed.",
+      "stalled": "The replay was interrupted too many times.",
+      "internal": "The replay failed unexpectedly."
+    },
+    "model": {
+      "unconfigured": "No model is mapped to this purpose yet.",
+      "purpose_unknown": "There is no such model purpose.",
+      "rate_limited": "The model provider is rate limiting.",
+      "overloaded": "The model provider is overloaded.",
+      "server": "The model provider returned an error.",
+      "timeout": "The model request timed out.",
+      "network": "Couldn't reach the model provider.",
+      "auth": "The model provider rejected the credentials.",
+      "invalid_request": "The model provider rejected the request.",
+      "context_overflow": "The request exceeds the model's context length.",
+      "aborted": "The model request was aborted."
     }
   },
   "agents": {
@@ -1254,6 +1283,270 @@
       "noSets": "This agent has no eval sets yet.",
       "runNotFinished": "This run has not finished yet. Add it after it ends.",
       "added": "Added to eval set \"{name}\"."
+    }
+  },
+  "evals": {
+    "title": "Evals",
+    "runHistory": "Run history",
+    "new": "New eval set",
+    "empty": "No eval sets yet",
+    "emptyHint": "Pick runs from real conversations into an eval set, then replay them with another model, prompt or agent version and compare.",
+    "columns": {
+      "name": "Name",
+      "agent": "Agent",
+      "cases": "Cases",
+      "created": "Created"
+    },
+    "form": {
+      "title": "New eval set",
+      "basic": "Basics",
+      "basicHint": "An eval set belongs to one agent; cases can only come from that agent's conversations.",
+      "grading": "Grading",
+      "gradingHint": "The LLM judge compares baseline and candidate replies against it.",
+      "agentLabel": "Agent",
+      "noAgents": "No agents yet. Create one first.",
+      "nameLabel": "Name",
+      "descriptionLabel": "Description",
+      "rubricLabel": "Rubric",
+      "rubricHint": "Shown to the judge model; write it in English. Leave empty to use the default rubric.",
+      "submit": "Create",
+      "nameRequired": "Enter a name"
+    },
+    "set": {
+      "tabsLabel": "Eval set contents",
+      "tabs": {
+        "cases": "Cases",
+        "runs": "Runs"
+      },
+      "count": "{n} cases",
+      "run": "Run eval",
+      "sample": "Sample from conversations",
+      "more": "More actions",
+      "delete": "Delete eval set",
+      "deleteTitle": "Delete eval set \"{name}\"",
+      "deleteHint": "Cases and run results will no longer be visible, and runs in progress are cancelled.",
+      "deleted": "Deleted eval set \"{name}\".",
+      "inspectorTitle": "Eval set",
+      "agent": "Agent",
+      "description": "Description",
+      "rubric": "Rubric",
+      "defaultRubric": "(default rubric)",
+      "created": "Created",
+      "casesLabel": "Cases",
+      "casesEmpty": "No cases yet",
+      "casesEmptyHint": "Use \"Sample from conversations\", or \"Add to eval set\" from a run in the run history.",
+      "caseColumns": {
+        "title": "Trigger message",
+        "version": "Agent version",
+        "steps": "Replayable steps",
+        "created": "Added"
+      },
+      "viewTrajectory": "View snapshot trajectory",
+      "removeCase": "Remove case",
+      "caseRemoved": "Case removed.",
+      "runsLabel": "Runs",
+      "runsEmpty": "No runs yet",
+      "runColumns": {
+        "created": "Started",
+        "mode": "Mode",
+        "status": "Status",
+        "progress": "Progress",
+        "tokens": "Tokens"
+      }
+    },
+    "sample": {
+      "title": "Sample from conversations",
+      "hint": "Randomly picks finished runs of this agent's conversations; runs already in the set are not added again.",
+      "count": "Count",
+      "status": "Run outcome",
+      "statuses": {
+        "completed": "Completed",
+        "failed": "Failed",
+        "any": "Any (incl. aborted)"
+      },
+      "minToolCalls": "At least this many tool calls",
+      "from": "From (inclusive)",
+      "to": "To (exclusive)",
+      "submit": "Sample",
+      "done": "Added {added} cases, skipped {skipped}."
+    },
+    "case": {
+      "title": "Case · {title}"
+    },
+    "mode": {
+      "step": "Step replay",
+      "run": "Whole-run replay",
+      "stepHint": "Rebuilds each model request from the log and resends it with only the model, parameters and instructions changed.",
+      "runHint": "Reruns the whole turn from the original start; tool results come from the recording and no real tool runs."
+    },
+    "runStatus": {
+      "queued": "Queued",
+      "running": "Running",
+      "completed": "Completed",
+      "cancelled": "Cancelled",
+      "capped": "Cap reached",
+      "failed": "Failed"
+    },
+    "wizard": {
+      "title": "Run eval",
+      "steps": {
+        "candidate": "Mode & candidate",
+        "judge": "Judge & cap",
+        "confirm": "Estimate & confirm"
+      },
+      "next": "Next",
+      "back": "Back",
+      "start": "Start run",
+      "mode": "Replay mode",
+      "candidate": "Candidate",
+      "candidateHint": "Anything you leave unchanged keeps each case's original setting.",
+      "version": "Agent version",
+      "versionKeep": "Keep the case's version",
+      "versionValue": "v{n}",
+      "model": "Model",
+      "modelKeep": "Keep the case's model",
+      "params": "Model parameters",
+      "instructionsOverride": "Override instructions",
+      "instructions": "Instructions",
+      "instructionsHint": "System instructions shown to the model; write them in English.",
+      "judge": "LLM judge",
+      "judgeHint": "The judge (the model mapped to the eval purpose) compares baseline and candidate and gives pass / fail with a reason; judge requests count towards tokens.",
+      "judgeUnmapped": "No model is mapped to the judge purpose (eval), so the judge can't be turned on.",
+      "judgeConfigure": "Configure model purposes",
+      "tokenCap": "Token cap",
+      "tokenCapHint": "Leave empty for the deployment default. Once reached, no new requests are sent and the run ends as \"Cap reached\".",
+      "tokenCapInvalid": "Enter a positive whole number.",
+      "estimating": "Estimating…",
+      "estimate": {
+        "title": "Estimate",
+        "cases": "Cases",
+        "modelRequests": "Model requests",
+        "judgeRequests": "Judge requests",
+        "tokens": "Tokens",
+        "cost": "Cost (estimated)",
+        "tokenCap": "Token cap",
+        "tokenCapDefault": "Deployment default",
+        "overCap": "The estimate exceeds the cap; the run will stop at the cap."
+      },
+      "summary": {
+        "mode": "Mode",
+        "judge": "Judge",
+        "on": "On",
+        "off": "Off"
+      }
+    },
+    "run": {
+      "title": "Eval run · {time}",
+      "cancel": "Cancel run",
+      "cancelled": "Run cancelled.",
+      "metrics": {
+        "progress": "Progress",
+        "tokens": "Tokens / cap",
+        "toolMatch": "Tool calls match",
+        "judgePass": "Judge pass",
+        "humanPass": "Human pass"
+      },
+      "progressValue": "{done}/{total}",
+      "tokensValue": "{used} / {cap}",
+      "capped": "The token cap was reached ({used} / {cap}); unfinished results were skipped.",
+      "failed": "The run failed: {reason}",
+      "cancelledNotice": "The run was cancelled; unfinished results were skipped.",
+      "polling": "Running; refreshes every 5 seconds.",
+      "tabsLabel": "Run contents",
+      "tabs": {
+        "results": "Results",
+        "summary": "Summary"
+      },
+      "resultsLabel": "Results",
+      "resultsEmpty": "No results",
+      "columns": {
+        "case": "Case",
+        "step": "Step",
+        "status": "Status",
+        "tools": "Tool calls",
+        "similarity": "Text similarity",
+        "judge": "Judge",
+        "label": "Human label"
+      },
+      "wholeRun": "Whole run",
+      "stepValue": "Step {n}",
+      "match": "Match",
+      "mismatch": "Differ",
+      "resultStatus": {
+        "pending": "Queued",
+        "running": "Running",
+        "done": "Done",
+        "error": "Error",
+        "skipped": "Skipped"
+      },
+      "judgeStatus": {
+        "none": "—",
+        "pending": "Judging",
+        "skipped": "Not judged",
+        "error": "Judge error"
+      },
+      "verdict": {
+        "pass": "Pass",
+        "fail": "Fail"
+      },
+      "summary": {
+        "title": "Summary",
+        "pending": "The summary is available once the run ends.",
+        "done": "Done",
+        "errors": "Errors",
+        "skipped": "Skipped",
+        "toolMatch": "Tool-call match rate",
+        "similarity": "Mean text similarity",
+        "judgePass": "Judge pass rate",
+        "judgeErrors": "Judge errors",
+        "humanPass": "Human pass rate",
+        "labeled": "Labeled",
+        "drifted": "Drifted"
+      },
+      "candidate": {
+        "title": "Candidate",
+        "mode": "Mode",
+        "version": "Agent version",
+        "model": "Model",
+        "params": "Parameters",
+        "instructions": "Instructions",
+        "judge": "Judge",
+        "keep": "Keep the case's",
+        "overridden": "Overridden",
+        "estimate": "Estimate before run",
+        "estimateValue": "{model} requests + {judge} judge · {tokens} tokens · cost {cost}"
+      },
+      "inspector": {
+        "title": "Result",
+        "selectHint": "Select a result in the table to see the diff and the judge's reason.",
+        "case": "Case",
+        "status": "Status",
+        "drift": "Drift",
+        "error": "Error",
+        "textDiff": "Reply text diff (- baseline / + candidate)",
+        "noTextDiff": "The reply text is the same.",
+        "toolDiff": "Tool-call diff",
+        "noToolCalls": "Neither side made tool calls.",
+        "toolKinds": {
+          "same": "same",
+          "args_changed": "args differ",
+          "name_changed": "tool differs",
+          "added": "only in candidate",
+          "removed": "only in baseline"
+        },
+        "judge": "Judge",
+        "verdict": "Verdict",
+        "score": "Score",
+        "reason": "Reason",
+        "judgeError": "The judge gave no verdict: {reason}",
+        "unparseable": "the judge's reply could not be parsed",
+        "label": "Human label",
+        "note": "Note",
+        "pass": "Pass",
+        "fail": "Fail",
+        "clear": "Clear label",
+        "evalTrajectory": "View eval conversation trajectory"
+      }
     }
   }
 }

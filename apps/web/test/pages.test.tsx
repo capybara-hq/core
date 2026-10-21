@@ -288,7 +288,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.apps, "/apps"],
       // 管理员（owner）才看得到渠道与评测
       [zh.nav.channels, "/channels"],
-      [zh.nav.evals, "/trajectories"],
+      [zh.nav.evals, "/evals"],
     ]);
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),

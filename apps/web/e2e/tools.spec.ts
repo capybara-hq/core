@@ -307,11 +307,13 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
     /deleted t1/,
   );
 
-  // 2. 顶栏「评测」→ 运行记录 → 按 agent 筛选 → 运行结束后打开该对话
+  // 2. 顶栏「评测」→「运行记录」→ 按 agent 筛选 → 运行结束后打开该对话
   await page
     .getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: zh.nav.evals })
     .click();
+  await expect(page).toHaveURL(/\/zh\/evals$/);
+  await page.getByRole("link", { name: zh.evals.runHistory }).click();
   await expect(page).toHaveURL(/\/zh\/trajectories$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page

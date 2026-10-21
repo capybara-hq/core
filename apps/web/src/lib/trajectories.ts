@@ -125,14 +125,6 @@ export interface TrajectoryListItem {
   lastRun: { runId: string; status: RunStatus; startedAt: string | null } | null;
 }
 
-/** 评测集（`/orgs/:orgId/eval-sets`，组织管理员）。 */
-export interface EvalSetSummary {
-  id: string;
-  agentId: string;
-  name: string;
-  caseCount: number;
-}
-
 const org = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
 
 const query = (params: Record<string, string | number | undefined>) => {
@@ -159,19 +151,6 @@ export const getTrajectory = (
   apiFetch<TrajectoryDetail>(
     `${org(orgId)}/trajectories/${encodeURIComponent(conversationId)}${query({ limit: q.limit, before: q.before })}`,
   );
-
-export const listEvalSets = (orgId: string) =>
-  apiFetch<{ sets: EvalSetSummary[] }>(`${org(orgId)}/eval-sets`);
-
-export const addEvalCase = (
-  orgId: string,
-  setId: string,
-  body: { conversationId: string; runId: string },
-) =>
-  apiFetch<{ case: { id: string } }>(`${org(orgId)}/eval-sets/${encodeURIComponent(setId)}/cases`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
 
 /** 瀑布图里一个 span 对应的轨迹对象（详情区按它渲染）。 */
 export type SpanSource =

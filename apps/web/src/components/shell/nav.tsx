@@ -23,8 +23,8 @@ const NAV: readonly { id: string; key: string; href: string; audience: NavAudien
   { id: "inbox", key: "inbox", href: "/inbox", audience: "all" },
   { id: "apps", key: "apps", href: "/apps", audience: "all" },
   { id: "channels", key: "channels", href: "/channels", audience: "admin" },
-  // 评测：评测页（T8）之前先指向运行记录（轨迹查看器）；agent 负责人从 agent 详情页进入运行记录
-  { id: "evals", key: "evals", href: "/trajectories", audience: "admin" },
+  // 评测：评测集与运行（评测页有「运行记录」入口）；agent 负责人从 agent 详情页进入运行记录
+  { id: "evals", key: "evals", href: "/evals", audience: "admin" },
 ];
 
 const VISIBLE: Record<NavLevel, readonly NavAudience[]> = {
@@ -64,7 +64,7 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/skills")) return "skills";
   if (under(pathname, "/inbox")) return "inbox";
   if (under(pathname, "/channels")) return "channels";
-  if (under(pathname, "/trajectories")) return "evals";
+  if (under(pathname, "/evals") || under(pathname, "/trajectories")) return "evals";
   if (under(pathname, "/apps") || APP_SETTINGS.some((p) => under(pathname, p))) return "apps";
   return pathname === "/" ? "overview" : "";
 }

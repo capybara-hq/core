@@ -2,13 +2,9 @@
 
 import {
   Button,
-  Card,
   Dialog,
   Field,
-  formatSpanDuration,
-  IoBlock,
   KeyValue,
-  type MetricProps,
   Select,
   Skeleton,
   SpanWaterfall,
@@ -18,41 +14,30 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
-import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useState } from "react";
-import { formatTime } from "../../../../../components/ApprovalCard";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
 import { useSession } from "../../../../../components/shell/session";
+import {
+  SpanDetail,
+  useSpanLabels,
+  useTrajectoryMetrics,
+} from "../../../../../components/TrajectoryParts";
 import { ApiClientError } from "../../../../../lib/api";
+import { addEvalCase, listEvalSets } from "../../../../../lib/evals";
 import { canUpdateOrg } from "../../../../../lib/org-settings";
 import {
-  addEvalCase,
   getTrajectory,
   indexTrajectory,
-  inputTotal,
-  listEvalSets,
-  type ModelUsage,
-  type SpanSource,
   type TrajectoryDetail,
-  type TrajectoryModelCall,
   type TrajectoryRun,
-  type TrajectoryToolCall,
 } from "../../../../../lib/trajectories";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
 /** 每次读多少次运行（按运行分页，不一次读全对话）。 */
 const RUN_PAGE = 10;
-
-const grouped = new Intl.NumberFormat("en-US");
-const costFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 });
-
-/** 估算成本：`0.0064 USD`；没有价格为 `—`（C2）。 */
-const formatCost = (cost: number | null, currency: string) =>
-  cost === null ? "—" : `${costFormat.format(cost)} ${currency}`;
-
-const usageTotal = (u: ModelUsage) => inputTotal(u) + u.outputTokens;
 
 /**
  * `/[locale]/trajectories/[conversationId]`：轨迹查看器（TracePage，D6）。上方 Span 瀑布，下方选中 span 的详情；
@@ -105,12 +90,7 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
 
   const runs = [...(earlier?.runs ?? []), ...first.runs];
   const next = earlier !== null ? earlier.next : (first.next ?? null);
-  const { spans, sources } = indexTrajectory(runs, {
-    run: (version) => t("detail.spans.run", { version }),
-    step: (n) => t("detail.spans.step", { n }),
-    approval: t("detail.spans.approval"),
-    question: t("detail.spans.question"),
-  });
+  const { spans, sources } = indexTrajectory(runs, useSpanLabels());
   const lastRun = runs.at(-1);
   // 缺省选中最近一次运行
   const selectedId =
@@ -135,29 +115,7 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
     }
   };
 
-  const tokens = runs.reduce((n, r) => n + usageTotal(r.totals.usage), 0);
-  const cost = runs.reduce<number | null>(
-    (n, r) => (n === null || r.totals.cost === null ? null : n + r.totals.cost),
-    0,
-  );
-  const calls = runs.reduce((n, r) => n + r.totals.modelCalls + r.totals.toolCalls, 0);
-  const durations = runs.flatMap((r) =>
-    r.totals.durationMs === null ? [] : [r.totals.durationMs],
-  );
-  const metrics: MetricProps[] = [
-    { label: t("detail.metrics.tokens"), value: grouped.format(tokens) },
-    {
-      label: t("detail.metrics.cost"),
-      value: formatCost(runs.length === 0 ? null : cost, first.currency),
-    },
-    { label: t("detail.metrics.calls"), value: grouped.format(calls) },
-    {
-      label: t("detail.metrics.duration"),
-      value: formatSpanDuration(
-        durations.length === 0 ? null : durations.reduce((a, b) => a + b, 0),
-      ),
-    },
-  ];
+  const metrics = useTrajectoryMetrics(runs, first.currency);
   // 加入评测集：选中 span 所在的运行（没有选中时为最近一次）
   const targetRun = source?.run ?? lastRun;
 
@@ -223,160 +181,6 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
         />
       ) : null}
     </>
-  );
-}
-
-/** 选中 span 的详情。 */
-function SpanDetail({ source, currency }: { source: SpanSource; currency: string }) {
-  switch (source.kind) {
-    case "run":
-      return <RunDetail run={source.run} currency={currency} />;
-    case "step":
-      return <StepDetail step={source.step} />;
-    case "model":
-      return <ModelDetail call={source.call} currency={currency} />;
-    default:
-      // 工具调用与它的审批 / 提问等待：都显示该工具调用（含审批链与提问）
-      return <ToolDetail call={source.call} />;
-  }
-}
-
-function RunDetail({ run, currency }: { run: TrajectoryRun; currency: string }) {
-  const t = useTranslations("trajectories.detail.run");
-  const locale = useLocale();
-  const rows: { k: ReactNode; v: ReactNode }[] = [
-    { k: t("version"), v: `v${run.agentVersion}` },
-    { k: t("trigger"), v: run.triggerAccountId },
-    { k: t("started"), v: formatTime(run.startedAt, locale) },
-    { k: t("ended"), v: run.endedAt === null ? t("running") : formatTime(run.endedAt, locale) },
-    {
-      k: t("result"),
-      v: run.end === null ? t("running") : `${t(`end.${run.end.kind}`)} · ${run.end.detail}`,
-    },
-    { k: t("tokens"), v: grouped.format(usageTotal(run.totals.usage)) },
-    { k: t("cost"), v: formatCost(run.totals.cost, currency) },
-    {
-      k: t("calls"),
-      v: t("callsValue", { model: run.totals.modelCalls, tool: run.totals.toolCalls }),
-    },
-    { k: t("duration"), v: formatSpanDuration(run.totals.durationMs) },
-  ];
-  return (
-    <Card title={t("title", { id: run.runId })}>
-      <KeyValue keyWidth="16ch" rows={rows} />
-    </Card>
-  );
-}
-
-function StepDetail({ step }: { step: TrajectoryRun["steps"][number] }) {
-  const t = useTranslations("trajectories.detail.step");
-  return (
-    <Card title={t("title", { n: step.step })}>
-      <Stack gap={12}>
-        <KeyValue keyWidth="16ch" rows={[{ k: t("stopReason"), v: step.stopReason ?? "—" }]} />
-        <Stack gap={4}>
-          <Text variant="small" tone="muted">
-            {t("text")}
-          </Text>
-          {step.text === "" ? (
-            <Text tone="muted">{t("noText")}</Text>
-          ) : (
-            <Text pre>{step.text}</Text>
-          )}
-        </Stack>
-      </Stack>
-    </Card>
-  );
-}
-
-function ModelDetail({ call, currency }: { call: TrajectoryModelCall; currency: string }) {
-  const t = useTranslations("trajectories.detail.model");
-  const locale = useLocale();
-  const params = Object.entries(call.request.params ?? {});
-  const tools = (call.request.tools ?? []).map((x) => x.key);
-  const u = call.usage;
-  const rows: { k: ReactNode; v: ReactNode }[] = [
-    { k: t("provider"), v: call.provider },
-    { k: t("model"), v: call.model },
-    { k: t("attempt"), v: t("attemptValue", { n: call.attempt + 1 }) },
-    { k: t("fallback"), v: call.fallback ? t("fallbackYes") : t("fallbackNo") },
-    { k: t("outcome"), v: t(`outcomes.${call.outcome}`) },
-    {
-      k: t("tokens"),
-      v:
-        u === null
-          ? "—"
-          : t("tokensValue", {
-              input: grouped.format(u.inputTokens),
-              output: grouped.format(u.outputTokens),
-              cacheRead: grouped.format(u.cacheReadTokens),
-              cacheWrite: grouped.format(u.cacheWriteTokens),
-            }),
-    },
-    { k: t("latency"), v: formatSpanDuration(call.latencyMs) },
-    { k: t("cost"), v: formatCost(call.cost, currency) },
-    {
-      k: t("params"),
-      v: params.length === 0 ? "—" : params.map(([k, v]) => `${k}=${v}`).join(", "),
-    },
-    { k: t("tools"), v: tools.length === 0 ? "—" : tools.join(", ") },
-    { k: t("started"), v: formatTime(call.startedAt, locale) },
-  ];
-  return (
-    <Card title={t("title", { name: `${call.provider}/${call.model}` })}>
-      <KeyValue keyWidth="16ch" rows={rows} />
-    </Card>
-  );
-}
-
-const pretty = (v: unknown) => {
-  if (typeof v === "string") return v;
-  try {
-    return JSON.stringify(v, null, 2) ?? "";
-  } catch {
-    return String(v);
-  }
-};
-
-function ToolDetail({ call }: { call: TrajectoryToolCall }) {
-  const t = useTranslations("trajectories.detail.tool");
-  const locale = useLocale();
-  const rows: { k: ReactNode; v: ReactNode }[] = [
-    { k: t("duration"), v: formatSpanDuration(call.durationMs) },
-    {
-      k: t("started"),
-      v: call.startedAt === null ? t("notStarted") : formatTime(call.startedAt, locale),
-    },
-  ];
-  if (call.result?.isError) rows.push({ k: t("result"), v: <Text tone="fail">{t("error")}</Text> });
-  const ap = call.approval;
-  if (ap !== null) {
-    rows.push(
-      { k: t("approvalRequested"), v: formatTime(ap.requestedAt, locale) },
-      { k: t("decision"), v: t(`decisions.${ap.decision ?? "pending"}`) },
-      ...(ap.scope !== undefined ? [{ k: t("scope"), v: t(`scopes.${ap.scope}`) }] : []),
-      ...(ap.byAccountId !== null ? [{ k: t("by"), v: ap.byAccountId }] : []),
-      ...(ap.decidedAt !== null
-        ? [{ k: t("decidedAt"), v: formatTime(ap.decidedAt, locale) }]
-        : []),
-    );
-  }
-  const q = call.question;
-  if (q !== null) {
-    rows.push(
-      { k: t("asked"), v: formatTime(q.askedAt, locale) },
-      { k: t("questionOutcome"), v: t(`questionOutcomes.${q.outcome ?? "pending"}`) },
-      ...(q.byAccountId !== null ? [{ k: t("by"), v: q.byAccountId }] : []),
-    );
-  }
-  return (
-    <Card title={t("title", { name: call.toolKey })}>
-      <Stack gap={12}>
-        <IoBlock label="IN" text={pretty(call.input)} />
-        <IoBlock label="OUT" text={call.result === null ? t("noResult") : call.result.content} />
-        <KeyValue keyWidth="16ch" rows={rows} />
-      </Stack>
-    </Card>
   );
 }
 

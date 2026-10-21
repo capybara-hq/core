@@ -110,7 +110,11 @@
       "artifact_not_previewable": "这个文件不能预览。"
     },
     "run": {
-      "not_active": "当前没有进行中的回复。"
+      "not_active": "当前没有进行中的回复。",
+      "model_unavailable": "模型不可用。",
+      "provider_unavailable": "模型供应商列表暂时读不到。",
+      "provider_error": "模型供应商出错。",
+      "storage_unavailable": "附件存储暂时不可用。"
     },
     "app": {
       "not_found": "应用不存在或已被删除。",
@@ -198,7 +202,32 @@
       "too_many_cases": "评测集已满，无法再加入用例。",
       "agent_mismatch": "这次运行不属于该评测集的 agent。",
       "run_not_finished": "运行还没结束，结束后才能加入评测集。",
-      "case_too_large": "这次运行太大，不能加入评测集。"
+      "case_too_large": "这次运行太大，不能加入评测集。",
+      "call_not_found": "快照里找不到这次模型调用。",
+      "case_not_found": "用例不存在。",
+      "run_not_found": "评测运行不存在。",
+      "result_not_found": "评测结果不存在。",
+      "token_cap_invalid": "token 上限超出允许范围（至少 1，且不超过部署上限）。",
+      "run_finished": "运行已经结束了。",
+      "nothing_to_replay": "评测集里没有可回放的用例。",
+      "candidate_invalid": "候选设置不可用（版本、模型或参数不对）。",
+      "too_many_errors": "连续出错太多次，运行已停止。",
+      "definition_missing": "快照里缺少 agent 定义，无法回放。",
+      "stalled": "回放被中断太多次。",
+      "internal": "回放意外失败。"
+    },
+    "model": {
+      "unconfigured": "这个用途还没有映射模型。",
+      "purpose_unknown": "没有这个模型用途。",
+      "rate_limited": "模型供应商限流。",
+      "overloaded": "模型供应商繁忙。",
+      "server": "模型供应商出错。",
+      "timeout": "模型请求超时。",
+      "network": "连不上模型供应商。",
+      "auth": "模型供应商认证失败。",
+      "invalid_request": "模型供应商拒绝了请求。",
+      "context_overflow": "超出模型的上下文长度。",
+      "aborted": "模型请求被中止。"
     }
   },
   "agents": {
@@ -1254,6 +1283,270 @@
       "noSets": "该 agent 还没有评测集。",
       "runNotFinished": "这次运行还没结束，结束后才能加入。",
       "added": "已加入评测集「{name}」。"
+    }
+  },
+  "evals": {
+    "title": "评测",
+    "runHistory": "运行记录",
+    "new": "新建评测集",
+    "empty": "还没有评测集",
+    "emptyHint": "从真实对话里挑出运行组成评测集，换模型、提示词或 agent 版本后回放比较。",
+    "columns": {
+      "name": "名称",
+      "agent": "Agent",
+      "cases": "用例",
+      "created": "创建时间"
+    },
+    "form": {
+      "title": "新建评测集",
+      "basic": "基本信息",
+      "basicHint": "一个评测集对应一个 agent，用例只能来自这个 agent 的对话。",
+      "grading": "评分标准",
+      "gradingHint": "LLM 评委按它比较基线与候选的回复。",
+      "agentLabel": "Agent",
+      "noAgents": "还没有 agent，先新建一个。",
+      "nameLabel": "名称",
+      "descriptionLabel": "说明",
+      "rubricLabel": "评分标准（rubric）",
+      "rubricHint": "给评委模型看，请用英文；留空时用默认标准。",
+      "submit": "创建",
+      "nameRequired": "请填写名称"
+    },
+    "set": {
+      "tabsLabel": "评测集内容",
+      "tabs": {
+        "cases": "用例",
+        "runs": "运行"
+      },
+      "count": "{n} 个用例",
+      "run": "运行评测",
+      "sample": "从对话抽样",
+      "more": "更多操作",
+      "delete": "删除评测集",
+      "deleteTitle": "删除评测集「{name}」",
+      "deleteHint": "删除后用例与运行结果都不再可见，正在执行的运行会被取消。",
+      "deleted": "已删除评测集「{name}」。",
+      "inspectorTitle": "评测集",
+      "agent": "Agent",
+      "description": "说明",
+      "rubric": "评分标准",
+      "defaultRubric": "（默认标准）",
+      "created": "创建时间",
+      "casesLabel": "用例",
+      "casesEmpty": "还没有用例",
+      "casesEmptyHint": "用「从对话抽样」批量加入，或在运行记录里把一次运行「加入评测集」。",
+      "caseColumns": {
+        "title": "触发消息",
+        "version": "agent 版本",
+        "steps": "可回放步骤",
+        "created": "加入时间"
+      },
+      "viewTrajectory": "查看快照轨迹",
+      "removeCase": "移除用例",
+      "caseRemoved": "已移除用例。",
+      "runsLabel": "运行",
+      "runsEmpty": "还没有运行过",
+      "runColumns": {
+        "created": "开始时间",
+        "mode": "模式",
+        "status": "状态",
+        "progress": "进度",
+        "tokens": "token"
+      }
+    },
+    "sample": {
+      "title": "从对话抽样",
+      "hint": "从该 agent 已结束的对话运行里随机挑选，已在评测集里的不会重复加入。",
+      "count": "数量",
+      "status": "运行结果",
+      "statuses": {
+        "completed": "已完成",
+        "failed": "失败",
+        "any": "全部（含已中止）"
+      },
+      "minToolCalls": "至少几次工具调用",
+      "from": "开始日期（含）",
+      "to": "结束日期（不含）",
+      "submit": "抽样",
+      "done": "加入 {added} 个用例，跳过 {skipped} 个。"
+    },
+    "case": {
+      "title": "用例 · {title}"
+    },
+    "mode": {
+      "step": "单步回放",
+      "run": "整轮回放",
+      "stepHint": "由日志还原每次模型请求，只换模型、参数与指令后重发比较。",
+      "runHint": "从原对话的起点重跑整轮，工具结果取记录的，不执行真实工具。"
+    },
+    "runStatus": {
+      "queued": "排队",
+      "running": "运行中",
+      "completed": "已完成",
+      "cancelled": "已取消",
+      "capped": "已达上限",
+      "failed": "失败"
+    },
+    "wizard": {
+      "title": "运行评测",
+      "steps": {
+        "candidate": "模式与候选",
+        "judge": "评委与上限",
+        "confirm": "估算与确认"
+      },
+      "next": "下一步",
+      "back": "上一步",
+      "start": "开始运行",
+      "mode": "回放模式",
+      "candidate": "候选",
+      "candidateHint": "各项不改表示沿用用例原来的设置。",
+      "version": "agent 版本",
+      "versionKeep": "沿用用例的版本",
+      "versionValue": "v{n}",
+      "model": "模型",
+      "modelKeep": "沿用用例的模型",
+      "params": "模型参数",
+      "instructionsOverride": "覆盖指令",
+      "instructions": "指令",
+      "instructionsHint": "给模型看的系统指令，请用英文。",
+      "judge": "LLM 评委",
+      "judgeHint": "评委（用途 eval 映射的模型）比较基线与候选，给出通过 / 不通过与理由；评委请求也计入 token。",
+      "judgeUnmapped": "评委用途（eval）还没有映射模型，不能开评委。",
+      "judgeConfigure": "去配置模型用途",
+      "tokenCap": "token 上限",
+      "tokenCapHint": "留空用部署默认上限。达到上限后不再发新请求，运行记为「已达上限」。",
+      "tokenCapInvalid": "请输入正整数。",
+      "estimating": "正在估算…",
+      "estimate": {
+        "title": "估算",
+        "cases": "用例",
+        "modelRequests": "预计模型请求",
+        "judgeRequests": "预计评委请求",
+        "tokens": "预计 token",
+        "cost": "预计成本（估算）",
+        "tokenCap": "token 上限",
+        "tokenCapDefault": "部署默认",
+        "overCap": "预计 token 超过上限，运行会在上限处停下。"
+      },
+      "summary": {
+        "mode": "模式",
+        "judge": "评委",
+        "on": "开",
+        "off": "关"
+      }
+    },
+    "run": {
+      "title": "评测运行 · {time}",
+      "cancel": "取消运行",
+      "cancelled": "已取消运行。",
+      "metrics": {
+        "progress": "进度",
+        "tokens": "TOKEN / 上限",
+        "toolMatch": "工具调用一致",
+        "judgePass": "评委通过",
+        "humanPass": "人工通过"
+      },
+      "progressValue": "{done}/{total}",
+      "tokensValue": "{used} / {cap}",
+      "capped": "已达到 token 上限（{used} / {cap}），没做完的结果已跳过。",
+      "failed": "运行失败：{reason}",
+      "cancelledNotice": "运行已取消，没做完的结果已跳过。",
+      "polling": "运行中，每 5 秒刷新一次。",
+      "tabsLabel": "运行内容",
+      "tabs": {
+        "results": "结果",
+        "summary": "汇总"
+      },
+      "resultsLabel": "结果",
+      "resultsEmpty": "没有结果",
+      "columns": {
+        "case": "用例",
+        "step": "步骤",
+        "status": "状态",
+        "tools": "工具调用",
+        "similarity": "文本相似度",
+        "judge": "评委",
+        "label": "人工标注"
+      },
+      "wholeRun": "整轮",
+      "stepValue": "步骤 {n}",
+      "match": "一致",
+      "mismatch": "不一致",
+      "resultStatus": {
+        "pending": "排队",
+        "running": "进行中",
+        "done": "完成",
+        "error": "出错",
+        "skipped": "已跳过"
+      },
+      "judgeStatus": {
+        "none": "—",
+        "pending": "评分中",
+        "skipped": "未评",
+        "error": "评委出错"
+      },
+      "verdict": {
+        "pass": "通过",
+        "fail": "不通过"
+      },
+      "summary": {
+        "title": "汇总",
+        "pending": "运行结束后才有汇总。",
+        "done": "完成",
+        "errors": "出错",
+        "skipped": "跳过",
+        "toolMatch": "工具调用一致率",
+        "similarity": "平均文本相似度",
+        "judgePass": "评委通过率",
+        "judgeErrors": "评委出错",
+        "humanPass": "人工通过率",
+        "labeled": "已标注",
+        "drifted": "有漂移"
+      },
+      "candidate": {
+        "title": "候选",
+        "mode": "模式",
+        "version": "agent 版本",
+        "model": "模型",
+        "params": "参数",
+        "instructions": "指令",
+        "judge": "评委",
+        "keep": "沿用用例",
+        "overridden": "已覆盖",
+        "estimate": "运行前估算",
+        "estimateValue": "请求 {model} + 评委 {judge} · token {tokens} · 成本 {cost}"
+      },
+      "inspector": {
+        "title": "结果详情",
+        "selectHint": "在表格里选择一条结果查看差异与评委理由。",
+        "case": "用例",
+        "status": "状态",
+        "drift": "漂移",
+        "error": "错误",
+        "textDiff": "回复文本差异（- 基线 / + 候选）",
+        "noTextDiff": "回复文本相同。",
+        "toolDiff": "工具调用差异",
+        "noToolCalls": "两边都没有工具调用。",
+        "toolKinds": {
+          "same": "相同",
+          "args_changed": "参数不同",
+          "name_changed": "工具不同",
+          "added": "候选新增",
+          "removed": "候选缺少"
+        },
+        "judge": "评委",
+        "verdict": "结论",
+        "score": "分数",
+        "reason": "理由",
+        "judgeError": "评委没有给出结论：{reason}",
+        "unparseable": "评委回复无法解析",
+        "label": "人工标注",
+        "note": "备注",
+        "pass": "通过",
+        "fail": "不通过",
+        "clear": "清除标注",
+        "evalTrajectory": "查看评测对话轨迹"
+      }
     }
   }
 }
