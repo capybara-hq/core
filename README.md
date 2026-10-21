@@ -325,7 +325,7 @@ MinIO、Ceph 等支持 `PutBucketCors` 的 S3 兼容存储，用 AWS CLI 指向�
 
 不支持按桶配置 CORS 的旧版 MinIO 用环境变量 `MINIO_API_CORS_ALLOW_ORIGIN` 设置允许的来源。SeaweedFS 默认允许跨域请求，开发编排与测试不需要另配。
 
-没装对象存储插件时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。
+没装对象存储插件时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。组织还在时，技能的对象不随删除而清理：被删除（软删除）的技能、技能的旧版本、已删除 agent 的 agent 级技能，文件都留在对象存储里，直到组织被删除后的这次清理（日志里的技能目录快照与已加载的版本仍引用它们）。
 
 **附件与图片 / PDF 输入**：装了对象存储后，对话输入框可以加附件（默认单个 ≤ 20MB、每条消息 ≤ 10 个，类型限 PNG / JPEG / GIF / WebP、PDF 与纯文本 / Markdown / CSV，见 `docs/config.md` 的 `attachments.*`）。模型声明支持图片（`vision`）或文档（`documents`）时收到原文件，不支持时只收到英文文字占位，字节绝不发给不支持的模型；事件日志只记附件引用。单次请求的媒体总量由 `attachments.requestMediaBytes` 限制，超出时较早的附件换成占位。写存储插件见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)。
 
