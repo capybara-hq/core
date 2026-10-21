@@ -248,6 +248,49 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const grGlob = await call(conv, "sandbox_grep", { pattern: "beta", glob: "*.md" }, 9);
     expect(grGlob.content).toContain("b.md");
     expect(grGlob.content).not.toContain("a.txt");
+
+    // 多处匹配：不加 replaceAll 报歧义；加了全部替换
+    await call(conv, "sandbox_write", { path: "/workspace/r.txt", content: "x-x-x\n" }, 10);
+    const amb = await call(
+      conv,
+      "sandbox_edit",
+      { path: "/workspace/r.txt", oldText: "x", newText: "y" },
+      11,
+    );
+    expect(amb.isError).toBe(true);
+    expect(amb.content).toContain("occurs 3 times");
+    expect(amb.content).toContain("replaceAll");
+    const all = await call(
+      conv,
+      "sandbox_edit",
+      { path: "/workspace/r.txt", oldText: "x", newText: "$&y", replaceAll: true },
+      12,
+    );
+    expect(all.isError, all.content).toBe(false);
+    expect(all.content).toContain("replaced 3 occurrences");
+    const after = await call(conv, "sandbox_read", { path: "/workspace/r.txt" }, 13);
+    expect(after.content).toContain("$&y-$&y-$&y");
+  });
+
+  it("a ToolError inside the sandbox call does not recreate the sandbox", async () => {
+    const conv = await sandboxConversation();
+    await call(conv, "sandbox_bash", { command: "echo keep > /workspace/keep.txt" }, 1);
+    const handle = async () =>
+      (
+        await db
+          .selectFrom("sandboxes")
+          .select(["handle", "generation"])
+          .where("conversation_id", "=", conv)
+          .executeTakeFirstOrThrow()
+      ).handle;
+    const before = await handle();
+    const r = await call(conv, "sandbox_read", { path: "/workspace/missing.txt" }, 2);
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("File not found");
+    expect(await handle()).toEqual(before);
+    const ok = await call(conv, "sandbox_read", { path: "/workspace/keep.txt" }, 3);
+    expect(ok.content).not.toContain("recreated");
+    expect(ok.content).toContain("keep");
   });
 
   it("paths outside the sandbox roots are rejected", async () => {
@@ -301,6 +344,16 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     // 看不到这个会话的人：与会话流相同，404
     const denied = await other({ method: "GET", url });
     expect(denied.statusCode).toBe(404);
+    // 真实的产物 id、但挂在查看者自己的另一个会话下：404
+    const conv2 = await sandboxConversation();
+    const elsewhere = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv2}/artifacts/${a.artifactId}/download`,
+    });
+    expect(elsewhere.statusCode).toBe(404);
+    expect((elsewhere.json() as { error: { code: string } }).error.code).toBe(
+      "conversation.artifact_not_found",
+    );
     const unknown = await owner({
       method: "GET",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/artifacts/00000000-0000-4000-8000-000000000000/download`,
@@ -389,6 +442,13 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const r2 = await call(conv, "sandbox_bash", { command: "ls /workspace/attachments" }, 3);
     expect(r2.content).toContain("fruit.csv");
     expect(r2.content).not.toContain("Attachments copied");
+    // 标记文件不出现在 glob / grep 结果里（它的内容含 fruit.csv）
+    const g = await call(conv, "sandbox_glob", { pattern: "**" }, 4);
+    expect(g.content).toContain("/workspace/attachments/fruit.csv");
+    expect(g.content).not.toContain(".capybara-sync.json");
+    const gr = await call(conv, "sandbox_grep", { pattern: "fruit|apple" }, 5);
+    expect(gr.content).toContain("/workspace/attachments/fruit.csv:2:apple,3");
+    expect(gr.content).not.toContain(".capybara-sync.json");
 
     // 实例在提供方那边没了：透明重建，告诉模型文件已不在，并重新复制附件
     const row = await db
@@ -401,7 +461,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       conv,
       "sandbox_bash",
       { command: "cat /workspace/attachments/fruit.csv" },
-      4,
+      6,
     );
     expect(r3.content).toMatch(/^Sandbox was recreated; previous files are gone\./);
     expect(r3.content).toContain("Attachments copied");

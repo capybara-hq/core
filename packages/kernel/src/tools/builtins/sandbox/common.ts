@@ -1,4 +1,5 @@
 import {
+  isSandboxGoneError,
   type SandboxHandle,
   type SandboxProvider,
   ToolError,
@@ -31,8 +32,6 @@ export interface SandboxSession {
 // ---- 模型可见文案（英文） ----
 
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒与调用结果）。 */
-export const SANDBOX_UNAVAILABLE_REASON =
-  "no sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox";
 /** 本对话第一次用沙箱。 */
 export const SANDBOX_STARTED_NOTICE =
   "Sandbox started for this conversation (first use); the working directory is /workspace.";
@@ -43,6 +42,8 @@ const BUSY_TEXT =
   "The sandbox is busy with another command in this conversation; wait for it to finish and retry.";
 const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
+/** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
+export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
@@ -51,7 +52,8 @@ export const ATTACHMENTS_DIR = "/workspace/attachments";
 /** 已同步附件的标记文件：`{ <附件 id>: <文件名> }`。 */
 export const SYNC_MARKER = `${ATTACHMENTS_DIR}/.capybara-sync.json`;
 const MARKER_MAX_BYTES = 1024 * 1024;
-const NAME_MAX_CHARS = 200;
+/** 附件文件名的上限（UTF-8 字节，常见文件系统单个文件名上限 255 字节，留出 `-N` 后缀的余量）。 */
+export const ATTACHMENT_NAME_MAX_BYTES = 200;
 
 /** 沙箱工具执行时限的余量：等锁与创建 / 恢复沙箱（`tools.timeoutMs + sandbox.lockWaitSeconds`）。 */
 export const sandboxBaseTimeoutMs = (cfg: KernelConfig): number =>
@@ -103,23 +105,42 @@ export function shellQuote(s: string): string {
 
 const utf8 = new TextEncoder();
 
-/** 把一个文件名清理成单个安全的路径段（控制字符、`/`、`\` 换成 `_`），过长时保留扩展名截断。 */
+const byteLength = (s: string): number => Buffer.byteLength(s, "utf8");
+
+/** 拆成主名与扩展名（扩展名不超过 20 字节，`.` 开头的隐藏文件没有扩展名）。 */
+function splitExt(n: string): [string, string] {
+  const dot = n.lastIndexOf(".");
+  return dot > 0 && byteLength(n.slice(dot)) <= 20 ? [n.slice(0, dot), n.slice(dot)] : [n, ""];
+}
+
+/** `stem + suffix + ext` 不超过 {@link ATTACHMENT_NAME_MAX_BYTES} 字节：按码点截短主名，保留后缀与扩展名。 */
+function fitName(stem: string, suffix: string, ext: string): string {
+  const room = ATTACHMENT_NAME_MAX_BYTES - byteLength(suffix + ext);
+  let out = "";
+  let used = 0;
+  for (const cp of stem) {
+    const b = byteLength(cp);
+    if (used + b > room) break;
+    out += cp;
+    used += b;
+  }
+  return out + suffix + ext;
+}
+
+/** 把一个文件名清理成单个安全的路径段（控制字符、`/`、`\` 换成 `_`），过长时保留扩展名按字节截断。 */
 function sanitizeName(raw: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要换掉控制字符
-  let n = raw.replace(/[\u0000-\u001f\u007f/\\]/g, "_").trim();
+  const n = raw.replace(/[\u0000-\u001f\u007f/\\]/g, "_").trim();
   if (n === "" || n === "." || n === "..") return "attachment";
-  const cps = [...n];
-  if (cps.length > NAME_MAX_CHARS) {
-    const dot = n.lastIndexOf(".");
-    const ext = dot > 0 && n.length - dot <= 20 ? n.slice(dot) : "";
-    n = cps.slice(0, NAME_MAX_CHARS - [...ext].length).join("") + ext;
-  }
-  return n;
+  if (byteLength(n) <= ATTACHMENT_NAME_MAX_BYTES) return n;
+  const [stem, ext] = splitExt(n);
+  return fitName(stem, "", ext);
 }
 
 /**
- * 给附件分配沙箱里的文件名（按给定顺序，确定性）：清理成安全的路径段，与 `used`（已同步的）及彼此不重名，
- * 重名时加 `-2`、`-3`……（加在扩展名之前）。清理后仍不是合法沙箱路径的用 `attachment-<id 前 8 位>`。
+ * 给附件分配沙箱里的文件名（按给定顺序，确定性）：清理成安全的路径段（≤ {@link ATTACHMENT_NAME_MAX_BYTES}
+ * 字节），与 `used`（已同步的）及彼此不重名，重名时加 `-2`、`-3`……（加在扩展名之前）。
+ * 清理后仍不是合法沙箱路径的用 `attachment-<id 前 8 位>`。
  */
 export function assignAttachmentNames(
   items: readonly { id: string; name: string }[],
@@ -135,10 +156,8 @@ export function assignAttachmentNames(
     }
     let name = base;
     if (taken.has(name)) {
-      const dot = base.lastIndexOf(".");
-      const stem = dot > 0 ? base.slice(0, dot) : base;
-      const ext = dot > 0 ? base.slice(dot) : "";
-      for (let i = 2; taken.has(name); i++) name = `${stem}-${i}${ext}`;
+      const [stem, ext] = splitExt(base);
+      for (let i = 2; taken.has(name); i++) name = fitName(stem, `-${i}`, ext);
     }
     taken.add(name);
     out.set(a.id, name);
@@ -161,19 +180,30 @@ function parseMarker(data: Uint8Array): Record<string, string> {
   }
 }
 
+/** 一个附件复制失败时给模型的原因（不带内部细节）。 */
+function copyFailureReason(e: unknown): string {
+  if (e instanceof ApiError && e.code === "storage.unavailable") {
+    return "file storage is unavailable";
+  }
+  return "a temporary error occurred; it will be retried on the next sandbox call";
+}
+
 /**
  * 把本对话已 ready 的附件复制到 `/workspace/attachments/<name>`，标记文件记下已复制的（不重复复制）。
  * `reset`（新建 / 重建的沙箱，文件已不在）时忽略标记文件全部重新复制。对象已不在的附件跳过（下次再试）。
- * 返回本次复制的沙箱路径。
+ * 每复制一个就更新标记文件：中途超时 / 中止，下次从停下的地方继续。
+ * 单个附件失败（存储故障等）只跳过它并给出说明，不让工具调用失败；signal 已中止或实例已不在时照常抛出。
+ * 返回本次复制的沙箱路径与失败说明。
  */
 async function syncAttachments(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
   s: SandboxSession,
   reset: boolean,
-): Promise<string[]> {
+): Promise<{ copied: string[]; failures: string[] }> {
+  const none = { copied: [], failures: [] };
   const list = await deps.attachments.listForConversation(ctx.orgId, ctx.conversationId);
-  if (list.length === 0) return [];
+  if (list.length === 0) return none;
   let marker: Record<string, string> = {};
   if (!reset) {
     const m = await s.p.readFile(s.h, SYNC_MARKER, {
@@ -183,23 +213,32 @@ async function syncAttachments(
     if (m && !m.truncated) marker = parseMarker(m.data);
   }
   const pending = list.filter((a) => !Object.hasOwn(marker, a.id));
-  if (pending.length === 0) return [];
+  if (pending.length === 0) return none;
   const names = assignAttachmentNames(pending, new Set(Object.values(marker)));
   const copied: string[] = [];
+  const failures: string[] = [];
   for (const a of pending) {
-    const opened = await deps.attachments.openForConversation(ctx.orgId, ctx.conversationId, a.id);
-    if (!opened) continue;
-    const bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
     const name = names.get(a.id) as string;
     const path = `${ATTACHMENTS_DIR}/${name}`;
-    await s.p.writeFile(s.h, path, bytes, s.signal);
-    marker[a.id] = name;
-    copied.push(path);
+    try {
+      const opened = await deps.attachments.openForConversation(
+        ctx.orgId,
+        ctx.conversationId,
+        a.id,
+      );
+      if (!opened) continue;
+      const bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
+      await s.p.writeFile(s.h, path, bytes, s.signal);
+      marker[a.id] = name;
+      await s.p.writeFile(s.h, SYNC_MARKER, utf8.encode(JSON.stringify(marker)), s.signal);
+      copied.push(path);
+    } catch (e) {
+      // 中止（超时 / 锁丢失 / 运行停止）与实例已不在（withSandbox 据此重建）不吞
+      if (s.signal.aborted || isSandboxGoneError(e)) throw e;
+      failures.push(`Attachment ${name} could not be copied: ${copyFailureReason(e)}.`);
+    }
   }
-  if (copied.length > 0) {
-    await s.p.writeFile(s.h, SYNC_MARKER, utf8.encode(JSON.stringify(marker)), s.signal);
-  }
-  return copied;
+  return { copied, failures };
 }
 
 /** 沙箱服务的错误 → 给模型的可执行说明；其余原样抛出（管线按「工具失败」处理）。 */
@@ -230,10 +269,16 @@ export async function inSandbox<T>(
         const notices: string[] = [];
         if (info.recreated) notices.push(SANDBOX_RECREATED_NOTICE);
         else if (info.fresh) notices.push(SANDBOX_STARTED_NOTICE);
-        const copied = await syncAttachments(deps, ctx, s, info.fresh || info.recreated);
+        const { copied, failures } = await syncAttachments(
+          deps,
+          ctx,
+          s,
+          info.fresh || info.recreated,
+        );
         if (copied.length > 0) {
           notices.push(`Attachments copied into the sandbox: ${copied.join(", ")}.`);
         }
+        notices.push(...failures);
         return { value: await fn(s), notices };
       },
       ctx.signal,

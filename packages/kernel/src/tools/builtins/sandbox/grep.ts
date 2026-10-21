@@ -67,6 +67,26 @@ const failed = (stderr: string) =>
   `grep failed: ${clip(stderr, 300)}. Check the pattern (POSIX extended regular expression) and retry.`;
 const GREP_TIMEOUT = "The search did not finish in time; pass a narrower path or a glob and retry.";
 
+/**
+ * 解析 `grep -nH --null` 的输出：每条为 `<文件名>\0<行号>:<行>\n`（文件名可能含换行，行本身不含）。
+ * 返回 `<绝对路径>:<行号>:<行>`；文件名里的换行显示为 `\n`。最后一条不完整（输出被截断）时丢掉。
+ */
+export function parseGrepNull(stdout: string, base: string): string[] {
+  const out: string[] = [];
+  let pos = 0;
+  for (;;) {
+    const nul = stdout.indexOf("\0", pos);
+    if (nul === -1) break;
+    const nl = stdout.indexOf("\n", nul);
+    if (nl === -1) break;
+    const raw = stdout.slice(pos, nul);
+    const name = (raw.startsWith("./") ? raw.slice(2) : raw).replace(/\n/g, "\\n");
+    out.push(`${base}/${name}:${stdout.slice(nul + 1, nl)}`);
+    pos = nl + 1;
+  }
+  return out;
+}
+
 /** 内置工具 `sandbox_grep`：按正则搜文件内容（只读）。 */
 export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -77,7 +97,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const { pattern, glob, ignoreCase = false } = input as GrepInput;
       const path = checkPath((input as GrepInput).path ?? "/workspace");
-      const { value: lines, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
+      const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         // 在目标所在目录里搜相对路径，输出再拼回绝对路径（命令里不出现沙箱绝对路径）
@@ -85,7 +105,8 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
         const cwd = st.isDir ? path : path.slice(0, slash) || "/";
         const target = st.isDir ? "." : path.slice(slash + 1);
         const command = [
-          "grep -rnHIE",
+          // --null：文件名后跟 NUL 而不是 `:`，文件名里有换行或冒号也能解析
+          "grep -rnHIE --null",
           ...(ignoreCase ? ["-i"] : []),
           ...(glob !== undefined ? [`--include=${shellQuote(glob)}`] : []),
           "-e",
@@ -101,15 +122,16 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
           signal,
         });
         if (r.timedOut || r.exitCode === null) throw new ToolError(GREP_TIMEOUT);
-        if (r.exitCode === 1) return [];
-        if (r.exitCode !== 0) throw new ToolError(failed(r.stderr));
-        const out = r.stdout.split("\n").filter((l) => l !== "");
-        if (r.truncated) out.pop();
-        const base = cwd === "/" ? "" : cwd;
-        return out
-          .map((l) => `${base}/${l.startsWith("./") ? l.slice(2) : l}`)
-          .filter((l) => !l.startsWith(`${SYNC_MARKER}:`));
+        if (r.exitCode === 1) return { lines: [], warning: null };
+        const lines = parseGrepNull(r.stdout, cwd === "/" ? "" : cwd).filter(
+          (l) => !l.startsWith(`${SYNC_MARKER}:`),
+        );
+        // 退出码 2 = 有错误（如个别文件不可读）；有匹配时照常返回并附上说明
+        if (r.exitCode !== 0 && lines.length === 0) throw new ToolError(failed(r.stderr));
+        const warning = r.exitCode !== 0 ? clip(r.stderr, 300) : null;
+        return { lines, warning };
       });
+      const { lines, warning } = value;
       const shown = lines
         .slice(0, MAX_MATCHES)
         .map((l) => (l.length > MAX_LINE_CHARS ? `${l.slice(0, MAX_LINE_CHARS)}…` : l));
@@ -119,7 +141,8 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
           : shown.join("\n") +
             (lines.length > MAX_MATCHES
               ? `\n[Showing the first ${MAX_MATCHES} of ${lines.length} matching lines; use a narrower pattern, path or glob.]`
-              : "");
+              : "") +
+            (warning !== null ? `\n[grep also reported errors: ${warning}]` : "");
       const n = lines.length;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

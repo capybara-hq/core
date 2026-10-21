@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
-import {
-  hasControlChars,
-  MEDIA_NAME_MAX_CHARS,
-  ToolError,
-  type ToolSpec,
-} from "@capybara-hq/plugin-sdk";
+import { MEDIA_NAME_MAX_CHARS, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import { isValidArtifactName } from "../../../conversations/events.js";
 import { ApiError } from "../../../errors.js";
 import type { BuiltinTool } from "../../registry.js";
 import {
@@ -102,6 +98,18 @@ const tooLarge = (path: string, size: number, max: number) =>
   `File ${clip(path, 200)} is ${size} bytes, over the delivery limit of ${max} bytes; compress or split it with sandbox_bash and retry.`;
 const BAD_NAME =
   "name must not contain control characters, / or \\; pass a plain file name such as report.pdf.";
+/** 默认产物名：路径的文件名部分，过长时保留末尾（扩展名）截到 255 个 UTF-16 单元以内。 */
+function defaultName(path: string): string {
+  const cps = [...path.slice(path.lastIndexOf("/") + 1)];
+  let out = "";
+  for (let i = cps.length - 1; i >= 0; i--) {
+    const next = (cps[i] as string) + out;
+    if (next.length > MEDIA_NAME_MAX_CHARS) break;
+    out = next;
+  }
+  return isValidArtifactName(out) ? out : "artifact";
+}
+
 const NO_STORAGE =
   "File storage is not configured in this deployment, so files cannot be delivered; ask an administrator, or provide the result in your reply instead.";
 
@@ -115,11 +123,11 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const path = checkPath((input as DeliverInput).path);
       const given = (input as DeliverInput).name?.trim();
-      if (given !== undefined && (given === "" || hasControlChars(given) || /[/\\]/.test(given))) {
+      // 与 artifact_created 的 schema 同一规则，在上传前检查（不合法的名字不会在写事件时才失败）
+      if (given !== undefined && (!isValidArtifactName(given) || /[/\\]/.test(given))) {
         throw new ToolError(BAD_NAME);
       }
-      const name =
-        given ?? [...path.slice(path.lastIndexOf("/") + 1)].slice(-MEDIA_NAME_MAX_CHARS).join("");
+      const name = given ?? defaultName(path);
       const max = deps.config().sandbox.deliverMaxBytes;
       const { value: data, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, path, signal);
@@ -148,21 +156,30 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
         }
         throw e;
       }
-      await deps.eventLog.append(ctx.conversationId, [
-        {
-          type: "artifact_created",
-          ...(ctx.runId !== undefined && { runId: ctx.runId }),
-          payload: {
-            artifactId,
-            name,
-            contentType,
-            size: data.byteLength,
-            objectKey,
-            sourcePath: path,
-            callId: ctx.callId,
+      try {
+        await deps.eventLog.append(ctx.conversationId, [
+          {
+            type: "artifact_created",
+            ...(ctx.runId !== undefined && { runId: ctx.runId }),
+            payload: {
+              artifactId,
+              name,
+              contentType,
+              size: data.byteLength,
+              objectKey,
+              sourcePath: path,
+              callId: ctx.callId,
+            },
           },
-        },
-      ]);
+        ]);
+      } catch (e) {
+        // 事件没写进去：对象没人引用，尽力删掉
+        await deps.storage
+          .kernel(ctx.orgId)
+          .delete(objectKey)
+          .catch(() => {});
+        throw e;
+      }
       const text = `Delivered ${name} (${data.byteLength} bytes, ${contentType}) to the user as artifact ${artifactId}; the user can download it from the conversation.`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

@@ -11,6 +11,7 @@ import {
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
+import { compileGlob, GlobPatternError } from "./glob-match.js";
 
 /** 最多列出的文件数。 */
 const MAX_RESULTS = 1000;
@@ -57,59 +58,6 @@ const notDirectory = (path: string) =>
 const FIND_FAILED =
   "Listing files did not finish in time; pass a narrower path or pattern and retry.";
 
-const REGEX_SPECIAL = /[.+^$()|\\]/;
-
-/**
- * glob → 正则（整串匹配，路径分隔符 `/`）：`**` 跨目录（`**​/` 也匹配零层），`*` 不跨 `/`，`?` 一个字符，
- * `{a,b}` 二选一，`[...]` / `[!...]` 字符类；其余字符按字面。
- */
-export function globToRegExp(pattern: string): RegExp {
-  let re = "";
-  let braces = 0;
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i] as string;
-    if (c === "*") {
-      if (pattern[i + 1] === "*") {
-        i++;
-        if (pattern[i + 1] === "/") {
-          i++;
-          re += "(?:.*/)?";
-        } else {
-          re += ".*";
-        }
-      } else {
-        re += "[^/]*";
-      }
-    } else if (c === "?") {
-      re += "[^/]";
-    } else if (c === "{") {
-      braces++;
-      re += "(?:";
-    } else if (c === "}" && braces > 0) {
-      braces--;
-      re += ")";
-    } else if (c === "," && braces > 0) {
-      re += "|";
-    } else if (c === "[") {
-      const end = pattern.indexOf("]", i + 2);
-      if (end === -1) {
-        re += "\\[";
-        continue;
-      }
-      let body = pattern.slice(i + 1, end);
-      if (body.startsWith("!")) body = `^${body.slice(1)}`;
-      re += `[${body.replace(/\\/g, "\\\\")}]`;
-      i = end;
-    } else if (REGEX_SPECIAL.test(c) || c === "}" || c === "]") {
-      re += `\\${c}`;
-    } else {
-      re += c;
-    }
-  }
-  while (braces-- > 0) re += ")";
-  return new RegExp(`^${re}$`);
-}
-
 /** 内置工具 `sandbox_glob`：按文件名模式找文件（只读）。 */
 export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -121,32 +69,35 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
       const { pattern } = input as GlobInput;
       if (pattern.startsWith("/")) throw new ToolError(ABSOLUTE_PATTERN);
       const dir = checkPath((input as GlobInput).path ?? "/workspace");
-      let re: RegExp;
+      let matches: (rel: string) => boolean;
       try {
-        re = globToRegExp(pattern);
-      } catch {
+        matches = compileGlob(pattern);
+      } catch (e) {
+        if (!(e instanceof GlobPatternError)) throw e;
         throw new ToolError(
-          `Invalid glob pattern "${clip(pattern, 200)}"; check the brackets and braces and retry.`,
+          `Invalid glob pattern: ${e.message}; pass a simpler pattern (fewer wildcards and braces) and retry.`,
         );
       }
       const { value: files, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, dir, signal);
         if (!st?.isDir) throw new ToolError(notDirectory(dir));
         const r = await p.exec(h, {
-          command: "find . -type f",
+          command: "find . -type f -print0",
           cwd: dir,
           timeoutMs: deps.config().tools.timeoutMs,
           maxOutputBytes: MAX_FIND_BYTES,
           signal,
         });
         if (r.timedOut || r.exitCode === null) throw new ToolError(FIND_FAILED);
-        const lines = r.stdout.split("\n").filter((l) => l.startsWith("./"));
-        // 输出被截断时最后一行可能不完整
-        if (r.truncated) lines.pop();
+        // -print0：文件名里可能有换行，按 NUL 切分；最后一项（截断时不完整）丢掉
+        const names = r.stdout.split("\0");
+        names.pop();
+        if (r.truncated) names.pop();
         const base = dir === "/" ? "" : dir;
-        return lines
+        return names
+          .filter((l) => l.startsWith("./"))
           .map((l) => l.slice(2))
-          .filter((rel) => re.test(rel))
+          .filter((rel) => matches(rel))
           .map((rel) => `${base}/${rel}`)
           .filter((abs) => abs !== SYNC_MARKER)
           .sort();

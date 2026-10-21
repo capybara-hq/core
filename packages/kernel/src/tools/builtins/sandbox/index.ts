@@ -8,7 +8,7 @@ import { sandboxGrepTool } from "./grep.js";
 import { sandboxReadTool } from "./read.js";
 import { sandboxWriteTool } from "./write.js";
 
-export { BASH_SPILL_CHARS } from "./bash.js";
+export { BASH_SPILL_CHARS, formatExec } from "./bash.js";
 export {
   assignAttachmentNames,
   SANDBOX_RECREATED_NOTICE,
@@ -17,7 +17,7 @@ export {
   type SandboxToolDeps,
   shellQuote,
 } from "./common.js";
-export { globToRegExp } from "./glob.js";
+export { compileGlob, GlobPatternError, MAX_GLOB_STARS } from "./glob-match.js";
 export { SANDBOX_ASK_TOOL_NAMES, SANDBOX_TOOL_NAMES } from "./names.js";
 
 /**

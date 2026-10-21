@@ -39,6 +39,12 @@ const MediaNameSchema = z
   .max(MEDIA_NAME_MAX_CHARS)
   .refine((s) => !hasControlChars(s), "name must not contain control characters");
 
+const ArtifactNameSchema = MediaNameSchema.min(1);
+
+/** 产物名（`artifact_created.name`）是否合法：与日志 schema 同一规则（非空、≤255、不含控制字符）。 */
+export const isValidArtifactName = (name: string): boolean =>
+  ArtifactNameSchema.safeParse(name).success;
+
 /**
  * 日志里的内容块：plugin-sdk 的 `ContentBlock`，但 image / document 的 `source` 只能是 `ref`
  * （写入时用这个 schema 校验，带 `base64` 的块被拒绝）。
@@ -359,7 +365,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "artifact_created",
     z.object({
       artifactId: z.uuid(),
-      name: MediaNameSchema.min(1),
+      name: ArtifactNameSchema,
       contentType: z.string().min(1).max(200),
       size: z.number().int().nonnegative(),
       objectKey: z.string().min(1),
