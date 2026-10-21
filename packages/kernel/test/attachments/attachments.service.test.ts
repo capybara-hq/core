@@ -34,6 +34,30 @@ describe("AttachmentsService", () => {
     expect(await svc.deleteExpired()).toBe(0);
   });
 
+  it("配置要求 maxBytes ≤ requestMediaBytes（单个附件总能放进一次请求）", () => {
+    const base = {
+      db: { url: "postgres://x" },
+      redis: { url: "redis://x" },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+    };
+    const bad = KernelConfigSchema.safeParse({
+      ...base,
+      attachments: { maxBytes: 2000, requestMediaBytes: 1000 },
+    });
+    expect(bad.success).toBe(false);
+    expect(JSON.stringify(bad.error?.issues)).toContain("attachments.maxBytes must be at most");
+    expect(
+      KernelConfigSchema.safeParse({
+        ...base,
+        attachments: { maxBytes: 1000, requestMediaBytes: 1000 },
+      }).success,
+    ).toBe(true);
+    // 只调小预算、不调 maxBytes（默认 20 MiB）同样被拒
+    expect(
+      KernelConfigSchema.safeParse({ ...base, attachments: { requestMediaBytes: 1000 } }).success,
+    ).toBe(false);
+  });
+
   it("默认配置：20 MiB、8 种类型、每条消息 10 个、24 小时、单次请求 20 MiB 媒体", () => {
     expect(config.attachments).toEqual({
       maxBytes: 20_971_520,

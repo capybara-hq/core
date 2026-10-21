@@ -172,6 +172,9 @@ export function mediaRefs(events: readonly ConversationEvent[], model: ModelInfo
  * 单次请求的媒体预算（Ruling M6）：按行里的**声明大小**从最新的媒体往前累计，第一次超出 `budgetBytes` 起，
  * 该附件及更早的全部丢弃（换成「为控制请求大小而省略」的占位）；同一附件只算一次；没有行的不计（它们是
  * 「不再可用」）。结果只取决于日志、模型能力与行信息，是确定的。`fetch` 是需要取字节的附件 id（被丢弃的不取）。
+ *
+ * 已知取舍（接受）：新的媒体把较早的媒体挤成占位时，请求里**较早位置**的内容随之改变，这一处之后的提示词缓存
+ * 失效（不是严格的只追加）。配置保证 `maxBytes ≤ requestMediaBytes`，所以最新的附件总能放进请求。
  */
 export function planMedia(
   events: readonly ConversationEvent[],

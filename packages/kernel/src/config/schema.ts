@@ -609,6 +609,11 @@ export const KernelConfigSchema = z.object({
           }),
         ),
     })
+    // 单个附件不能大于单次请求的预算：否则它永远被省略（最新的附件总能放进请求）
+    .refine((c) => c.maxBytes <= c.requestMediaBytes, {
+      message: "attachments.maxBytes must be at most attachments.requestMediaBytes",
+      path: ["maxBytes"],
+    })
     .prefault({} as never),
   log: z
     .object({
