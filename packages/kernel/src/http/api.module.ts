@@ -11,6 +11,8 @@ import { ModelsController } from "../agents/models.controller.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
 import type { KernelConfig } from "../config/schema.js";
+import { AttachmentsController } from "../conversations/attachments.controller.js";
+import type { AttachmentsService } from "../conversations/attachments.service.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
@@ -74,6 +76,7 @@ import {
   APP_CONTENT,
   APPROVALS,
   APPS,
+  ATTACHMENTS,
   CHANNEL_CONNECTIONS,
   CONVERSATION_OUTPUTS,
   CONVERSATION_STREAMS,
@@ -145,6 +148,8 @@ export interface ApiDeps {
   identity: KernelIdentity;
   /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
   channels: ChannelConnections;
+  /** 对话附件（与 `Kernel.attachments` 同一实例）。 */
+  attachments: AttachmentsService;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -160,6 +165,7 @@ const CONTROLLERS: Type[] = [
   AgentsController,
   ModelsController,
   ConversationsController,
+  AttachmentsController,
   ConversationStreamController,
   AppContentController,
   AppsController,
@@ -258,9 +264,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },
     { provide: APP_CONTENT, useValue: deps.appContent },
+    { provide: ATTACHMENTS, useValue: deps.attachments },
     {
       provide: CONVERSATIONS,
-      useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService, content: AppContent) =>
+      useFactory: (
+        db: KernelDb,
+        eventLog: EventLog,
+        agents: AgentsService,
+        content: AppContent,
+        attachments: AttachmentsService,
+      ) =>
         new ConversationsService(
           db,
           eventLog,
@@ -268,8 +281,10 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           deps.runs,
           deps.log,
           (orgId, accountId, refs) => content.resolveAttachments(orgId, accountId, refs),
+          (trx, orgId, conversationId, accountId, ids) =>
+            attachments.bindForMessage(trx, orgId, conversationId, accountId, ids),
         ),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT],
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT, ATTACHMENTS],
     },
     {
       provide: CONVERSATION_OUTPUTS,

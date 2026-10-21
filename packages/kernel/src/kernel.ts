@@ -16,6 +16,12 @@ import { ChannelSupervisor } from "./channels/supervisor.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
+import {
+  ATTACHMENT_CLEANUP_EVERY_MS,
+  ATTACHMENT_CLEANUP_JOB,
+  ATTACHMENT_CLEANUP_SCHEDULER_ID,
+  AttachmentsService,
+} from "./conversations/attachments.service.js";
 import { ConversationsService } from "./conversations/conversations.service.js";
 import {
   type ConversationBusMessage,
@@ -189,6 +195,8 @@ export interface Kernel {
    * 没有提供方时 `available` 为 false，各方法 reject `storage.unavailable`。
    */
   readonly storage: StorageService;
+  /** 对话附件（上传、finalize、绑定、取字节、过期清理）。 */
+  readonly attachments: AttachmentsService;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -393,6 +401,29 @@ export async function createKernel(
     id: STORAGE_PURGE_SCHEDULER_ID,
     name: STORAGE_PURGE_JOB,
     everyMs: () => STORAGE_PURGE_EVERY_MS,
+  });
+  // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
+  const conversationAccess = new ConversationsService(
+    kdb,
+    eventLog,
+    new AgentsService(kdb, registry, toolRegistry),
+  );
+  const attachments = new AttachmentsService({
+    db: kdb,
+    storage,
+    config: () => current,
+    canAccessConversation: (orgId, id, viewer) =>
+      conversationAccess.isAccessible(orgId, id, viewer),
+    log,
+  });
+  maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
+    const n = await attachments.deleteExpired();
+    if (n > 0) log.info("expired attachments deleted", { count: n });
+  });
+  maintenance.schedule({
+    id: ATTACHMENT_CLEANUP_SCHEDULER_ID,
+    name: ATTACHMENT_CLEANUP_JOB,
+    everyMs: () => ATTACHMENT_CLEANUP_EVERY_MS,
   });
   // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
   const toolDrift = new ToolDrift({
@@ -604,6 +635,7 @@ export async function createKernel(
     config: () => current,
     log,
     toolPipeline,
+    media: (orgId, conversationId, ids) => attachments.fetchMedia(orgId, conversationId, ids),
   };
   const runs: KernelRuns = {
     eventLog,
@@ -663,6 +695,7 @@ export async function createKernel(
         identity,
         channels: channelConnections,
         runs: runControl,
+        attachments,
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
@@ -816,6 +849,7 @@ export async function createKernel(
     identity,
     channels,
     storage,
+    attachments,
     log,
     get config() {
       return current;

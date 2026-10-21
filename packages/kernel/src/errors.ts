@@ -74,6 +74,10 @@ export const ERROR_CODES = {
   "ui.invalid_view": 502,
   "ui.timeout": 504,
   "storage.unavailable": 503,
+  "attachment.not_found": 404,
+  "attachment.not_ready": 409,
+  "attachment.too_large": 413,
+  "attachment.type_not_allowed": 415,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

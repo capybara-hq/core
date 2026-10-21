@@ -1,3 +1,4 @@
+import { DOCUMENT_MEDIA_TYPES, IMAGE_MEDIA_TYPES } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { LOG_LEVELS } from "../log.js";
 
@@ -560,6 +561,44 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .default({ purgeDeletedOrgsAfterDays: 30 }),
+  attachments: z
+    .object({
+      maxBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(20_971_520)
+        .meta(
+          meta({
+            description:
+              "Maximum size in bytes of one chat attachment (images are also capped at 5 MiB, the model input limit)",
+          }),
+        ),
+      allowedTypes: z
+        .array(z.enum([...IMAGE_MEDIA_TYPES, ...DOCUMENT_MEDIA_TYPES]))
+        .min(1)
+        .default([...IMAGE_MEDIA_TYPES, ...DOCUMENT_MEDIA_TYPES])
+        .meta(meta({ description: "Content types accepted for chat attachments" })),
+      maxPerMessage: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(10)
+        .meta(meta({ description: "Maximum number of attachments in one message" })),
+      unboundTtlHours: z
+        .number()
+        .int()
+        .positive()
+        .default(24)
+        .meta(
+          meta({
+            description:
+              "Hours after upload before an attachment never used in a message is deleted (row and object)",
+          }),
+        ),
+    })
+    .prefault({} as never),
   log: z
     .object({
       level: z

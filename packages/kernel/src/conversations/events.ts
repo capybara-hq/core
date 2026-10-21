@@ -1,7 +1,10 @@
 import {
   type ContentBlock,
   DOCUMENT_MEDIA_TYPES,
+  hasControlChars,
   IMAGE_MEDIA_TYPES,
+  isAttachmentId,
+  MEDIA_NAME_MAX_CHARS,
   type MediaSource,
   type ModelUsage,
   type StopReason,
@@ -20,7 +23,16 @@ const ProviderOpaqueSchema = z.object({
  * 日志里的媒体来源：只有附件引用。字节（`base64`）绝不进事件日志——日志是事实源、字节不是；
  * 构建模型请求时内核按 `attachmentId` 取字节换成 `base64`（见 {@link LogContentBlock}）。
  */
-const RefMediaSourceSchema = z.object({ kind: z.literal("ref"), attachmentId: z.string().min(1) });
+const RefMediaSourceSchema = z.object({
+  kind: z.literal("ref"),
+  attachmentId: z.string().refine(isAttachmentId, "attachmentId must be a UUID"),
+});
+
+/** 媒体块的名字：与 plugin-sdk `validateMediaBlock` 同规则（≤255 字符、不含控制字符）。 */
+const MediaNameSchema = z
+  .string()
+  .max(MEDIA_NAME_MAX_CHARS)
+  .refine((s) => !hasControlChars(s), "name must not contain control characters");
 
 /**
  * 日志里的内容块：plugin-sdk 的 `ContentBlock`，但 image / document 的 `source` 只能是 `ref`
@@ -50,13 +62,13 @@ export const ContentBlockSchema = z.discriminatedUnion("type", [
     type: z.literal("image"),
     mediaType: z.enum(IMAGE_MEDIA_TYPES),
     source: RefMediaSourceSchema,
-    name: z.string().optional(),
+    name: MediaNameSchema.optional(),
   }),
   z.object({
     type: z.literal("document"),
     mediaType: z.enum(DOCUMENT_MEDIA_TYPES),
     source: RefMediaSourceSchema,
-    name: z.string().optional(),
+    name: MediaNameSchema.optional(),
   }),
 ]);
 

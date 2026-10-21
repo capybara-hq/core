@@ -61,6 +61,9 @@ export const EVENT_LOG = Symbol("EVENT_LOG");
 /** `ConversationsService` 的注入令牌。 */
 export const CONVERSATIONS = Symbol("CONVERSATIONS");
 
+/** `AttachmentsService`（对话附件）的注入令牌。 */
+export const ATTACHMENTS = Symbol("ATTACHMENTS");
+
 /** `ConversationOutputs`（网页读工具输出存档）的注入令牌。 */
 export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
 

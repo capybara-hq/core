@@ -17,8 +17,9 @@ export interface ModelInfo {
     caching: boolean;
     midConversationSystem: boolean;
     /**
-     * 是否接受 `document` 块（缺省为 false）。图片看 `vision`。模型不支持时内核把媒体块换成文字占位
-     * （`[image: <name>]` / `[document: <name>]`），绝不把字节发给它。
+     * 是否接受 `document` 块（缺省为 false）。图片看 `vision`。模型不支持时内核把媒体块换成英文文字占位
+     * （如 `[Attached image "<name>" — this model cannot view images.]`；`text/*` 文档改为内联截断后的文本），
+     * 绝不把字节发给它。
      */
     documents?: boolean;
     /**
@@ -81,6 +82,24 @@ export type ContentBlock =
   | { type: "document"; mediaType: DocumentMediaType; source: MediaSource; name?: string };
 
 const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 媒体块 `name` 的最大长度（字符）。 */
+export const MEDIA_NAME_MAX_CHARS = 255;
+
+/** 是否含控制字符（C0、DEL 与 C1）。 */
+export function hasControlChars(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return true;
+  }
+  return false;
+}
+
+/** 附件 id 是否为 UUID（任意版本，大小写不限）。 */
+export function isAttachmentId(s: unknown): s is string {
+  return typeof s === "string" && UUID_RE.test(s);
+}
 const MEDIA: Record<string, { types: readonly string[]; limit: number }> = {
   image: { types: IMAGE_MEDIA_TYPES, limit: MEDIA_LIMITS.imageBytes },
   document: { types: DOCUMENT_MEDIA_TYPES, limit: MEDIA_LIMITS.documentBytes },
@@ -88,7 +107,8 @@ const MEDIA: Record<string, { types: readonly string[]; limit: number }> = {
 
 /**
  * 校验一个 image / document 块，返回错误列表（空表示合法）：类型在列表里；`base64` 是标准、带填充、
- * 不含空白的 base64，解码后不超过 {@link MEDIA_LIMITS}；`ref` 的 `attachmentId` 非空；`name` 若有须是字符串。
+ * 不含空白的 base64，解码后不超过 {@link MEDIA_LIMITS}；`ref` 的 `attachmentId` 是 UUID；`name` 若有须是字符串、
+ * 不超过 {@link MEDIA_NAME_MAX_CHARS} 个字符且不含控制字符。
  */
 export function validateMediaBlock(b: unknown): string[] {
   if (typeof b !== "object" || b === null || Array.isArray(b)) return ["block must be an object"];
@@ -100,8 +120,14 @@ export function validateMediaBlock(b: unknown): string[] {
   if (typeof o.mediaType !== "string" || !spec.types.includes(o.mediaType)) {
     errs.push(`${o.type} mediaType must be one of ${spec.types.join(", ")}`);
   }
-  if (o.name !== undefined && typeof o.name !== "string")
-    errs.push(`${o.type} name must be a string`);
+  if (o.name !== undefined) {
+    if (typeof o.name !== "string") errs.push(`${o.type} name must be a string`);
+    else if (o.name.length > MEDIA_NAME_MAX_CHARS) {
+      errs.push(`${o.type} name must be at most ${MEDIA_NAME_MAX_CHARS} characters`);
+    } else if (hasControlChars(o.name)) {
+      errs.push(`${o.type} name must not contain control characters`);
+    }
+  }
   const src = o.source;
   if (typeof src !== "object" || src === null) {
     errs.push(`${o.type} source must be an object`);
@@ -109,8 +135,8 @@ export function validateMediaBlock(b: unknown): string[] {
   }
   const source = src as Record<string, unknown>;
   if (source.kind === "ref") {
-    if (typeof source.attachmentId !== "string" || source.attachmentId === "") {
-      errs.push(`${o.type} source.attachmentId must be a non-empty string`);
+    if (!isAttachmentId(source.attachmentId)) {
+      errs.push(`${o.type} source.attachmentId must be a UUID`);
     }
   } else if (source.kind === "base64") {
     const data = source.data;

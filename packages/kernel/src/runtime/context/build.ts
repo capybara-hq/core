@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import type {
-  ContentBlock,
-  ModelInfo,
-  ModelMessage,
-  ModelRequest,
-  ParamValue,
-  ToolDefinition,
+import {
+  type ContentBlock,
+  MEDIA_LIMITS,
+  type ModelInfo,
+  type ModelMessage,
+  type ModelRequest,
+  type ParamValue,
+  type ToolDefinition,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../../agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
@@ -93,6 +94,133 @@ export interface BuildModelRequestInput {
   toolSearch?: boolean;
   /** 本次请求的 `ModelRequest.toolChoice`；只在有工具时生效（没有工具时请求与 meta 都不带）。 */
   toolChoice?: "auto" | "none";
+  /**
+   * 日志里媒体引用（`source.kind === "ref"`）的字节：附件 id → 字节；null 或缺省表示取不到（已删除 / 过期）。
+   * 调用方先用 {@link mediaRefsNeeded} 列出该模型需要的引用、取好字节再传入（本函数保持纯函数）。
+   * 解析规则见 {@link resolveMedia}；不提供时所有需要字节的引用都按「不再可用」处理。
+   */
+  media?: ReadonlyMap<string, MediaBytes | null>;
+}
+
+/** 一个附件的字节。 */
+export interface MediaBytes {
+  mediaType: string;
+  data: Uint8Array;
+}
+
+/** 模型不支持 documents 时，`text/*` 附件内联的最大字符数（超出截断并注明）。 */
+export const TEXT_INLINE_MAX_CHARS = 50_000;
+
+/** 日志里（按 zod 推导的形状）的内容块。 */
+type LogBlock = EventPayload<"user_message">["content"][number];
+type LogMedia = Extract<LogBlock, { type: "image" | "document" }>;
+
+const isText = (mediaType: string) => mediaType.startsWith("text/");
+
+/** 该模型对这个媒体块的处理：发字节（`bytes`）、内联文本（`inline`）、只给占位（`placeholder`）。 */
+function mediaMode(b: LogMedia, model: ModelInfo): "bytes" | "inline" | "placeholder" {
+  if (b.type === "image") return model.capabilities.vision ? "bytes" : "placeholder";
+  if (model.capabilities.documents === true) return "bytes";
+  return isText(b.mediaType) ? "inline" : "placeholder";
+}
+
+/**
+ * 构建请求时该模型需要取字节的附件 id（最近摘要之后的消息里的媒体引用，去重、按出现顺序）。
+ * 模型不支持的图片 / PDF 不在其中——只发占位，字节根本不取。
+ */
+export function mediaRefsNeeded(events: readonly ConversationEvent[], model: ModelInfo): string[] {
+  const after = latestSummary([...events])?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
+  const out = new Set<string>();
+  for (const e of events) {
+    if (e.seq <= after) continue;
+    if (e.type !== "user_message" && e.type !== "assistant_message") continue;
+    for (const b of e.payload.content) {
+      if ((b.type === "image" || b.type === "document") && mediaMode(b, model) !== "placeholder") {
+        out.add(b.source.attachmentId);
+      }
+    }
+  }
+  return [...out];
+}
+
+/** 附件不可用时的占位（模型可见，英文）。 */
+export const mediaUnavailableText = (name: string): string =>
+  `[Attachment "${name}" is no longer available.]`;
+
+function placeholder(b: LogMedia, name: string): string {
+  if (b.type === "image") return `[Attached image "${name}" — this model cannot view images.]`;
+  return `[Attached document "${name}" — this model cannot read ${
+    b.mediaType === "application/pdf" ? "PDF documents" : "documents"
+  }.]`;
+}
+
+function inlineText(name: string, mediaType: string, data: Uint8Array): string {
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(data);
+  const head = `[Attached file "${name}" (${mediaType})]\n`;
+  if (text.length <= TEXT_INLINE_MAX_CHARS) return head + text;
+  return `${head}${text.slice(0, TEXT_INLINE_MAX_CHARS)}\n[Truncated: showing the first ${TEXT_INLINE_MAX_CHARS} of ${text.length} characters.]`;
+}
+
+/**
+ * 把日志里的媒体引用换成发给模型的内容（不改日志，结果只取决于日志、模型能力与字节）：
+ * - 模型支持（图片看 `vision`，文档看 `documents`）且取到字节 → `base64` 块；
+ * - 不支持：`text/*` 文档内联为文本（超过 {@link TEXT_INLINE_MAX_CHARS} 截断并注明），图片 / PDF 换成英文占位，
+ *   **绝不带字节**；
+ * - 需要字节但取不到（已删除、过期）→「不再可用」占位；字节超过 `MEDIA_LIMITS` → 占位。
+ * 插件永远收不到 `ref`。
+ */
+export function resolveMedia(
+  content: readonly LogBlock[],
+  model: ModelInfo,
+  media: ReadonlyMap<string, MediaBytes | null> | undefined,
+): ContentBlock[] {
+  const out: ContentBlock[] = [];
+  for (const b of content) {
+    if (b.type !== "image" && b.type !== "document") {
+      out.push(b as ContentBlock);
+      continue;
+    }
+    const name = b.name ?? "attachment";
+    const mode = mediaMode(b, model);
+    if (mode === "placeholder") {
+      out.push({ type: "text", text: placeholder(b, name) });
+      continue;
+    }
+    const got = media?.get(b.source.attachmentId) ?? null;
+    if (!got) {
+      out.push({ type: "text", text: mediaUnavailableText(name) });
+      continue;
+    }
+    if (mode === "inline") {
+      out.push({ type: "text", text: inlineText(name, b.mediaType, got.data) });
+      continue;
+    }
+    const limit = b.type === "image" ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes;
+    if (got.data.byteLength > limit) {
+      out.push({
+        type: "text",
+        text: `[Attachment "${name}" is too large to send to this model.]`,
+      });
+      continue;
+    }
+    const source = {
+      kind: "base64" as const,
+      data: Buffer.from(got.data.buffer, got.data.byteOffset, got.data.byteLength).toString(
+        "base64",
+      ),
+    };
+    out.push(
+      b.type === "image"
+        ? { type: "image", mediaType: b.mediaType, source, ...(b.name !== undefined && { name }) }
+        : {
+            type: "document",
+            mediaType: b.mediaType,
+            source,
+            ...(b.name !== undefined && { name }),
+          },
+    );
+  }
+  return out;
 }
 
 type SummaryEvent = ConversationEvent & {
@@ -119,7 +247,8 @@ export function summaryText(summary: string): string {
  * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；启用 tool_search 时
  *   第二个块是工具目录（见 {@link BuildModelRequestInput.toolSearch}）；
  * - messages：最近一条摘要（若有）作为首条 user 消息，其后按 seq 回放 `coversUpToSeq` 之后的
- *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放）/ `reminder`
+ *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
+ *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
  *   （`role: "system"`，放在它所在的位置）；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
  *   （同一步的多个结果合并，按该 assistant 消息里 tool_call 的顺序；找不到对应调用的结果不进请求）。
  *   其他事件不进请求。提供 `absorbedUpToSeq` 时，
@@ -133,6 +262,11 @@ export function buildModelRequest(input: BuildModelRequestInput): {
 } {
   const { agent, model } = input;
   const events = [...input.events].sort((a, b) => a.seq - b.seq);
+  /** 日志内容块 → 请求内容块：媒体引用按模型能力解析（见 {@link resolveMedia}）。 */
+  const blocksOf = (content: readonly LogBlock[]): ContentBlock[] =>
+    content.some((b) => b.type === "image" || b.type === "document")
+      ? resolveMedia(content, model, input.media)
+      : asBlocks(content);
   const summary = latestSummary(events);
   const after = summary ? summary.payload.coversUpToSeq : Number.NEGATIVE_INFINITY;
 
@@ -194,7 +328,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     messages.splice(
       at,
       0,
-      ...ready.map((u): ModelMessage => ({ role: "user", content: asBlocks(u.payload.content) })),
+      ...ready.map((u): ModelMessage => ({ role: "user", content: blocksOf(u.payload.content) })),
     );
   };
   /** (runId, callId) → 该调用的 tool_result 事件（同一调用只取第一个）。 */
@@ -219,7 +353,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
           case "inline":
             // seq 更小的延后消息被同一次或更早的调用吸收：先放它们，保持用户消息的发送顺序。
             flush(e.seq - 1);
-            messages.push({ role: "user", content: asBlocks(e.payload.content) });
+            messages.push({ role: "user", content: blocksOf(e.payload.content) });
             break;
           case "deferred":
             deferred.push(e);
@@ -234,7 +368,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       case "assistant_message":
         // 流出任何内容之前就中止的空消息不回放（供应商不接受空 content）。
         if (e.payload.content.length > 0) {
-          messages.push({ role: "assistant", content: asBlocks(e.payload.content) });
+          messages.push({ role: "assistant", content: blocksOf(e.payload.content) });
           const blocks: ContentBlock[] = [];
           for (const b of e.payload.content) {
             if (b.type !== "tool_call") continue;
@@ -333,7 +467,7 @@ export function loadedToolKeys(events: readonly ConversationEvent[]): string[] {
  * 写入时已按 `ContentBlockSchema` 校验、存的是 JSON（不会出现值为 undefined 的键），二者形状一致
  * （events.ts 有编译期核对），只差 exactOptionalPropertyTypes 下的 undefined。按引用原样回放。
  */
-function asBlocks(content: EventPayload<"user_message">["content"]): ContentBlock[] {
+function asBlocks(content: readonly LogBlock[]): ContentBlock[] {
   return content as ContentBlock[];
 }
 

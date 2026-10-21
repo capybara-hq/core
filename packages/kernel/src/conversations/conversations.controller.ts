@@ -39,6 +39,11 @@ const MessageBody = z
       .array(z.object({ appId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
       .max(MAX_ATTACHMENTS)
       .optional(),
+    /**
+     * 上传的附件 id（已 finalize，见 AttachmentsController）；条数上限由 `attachments.maxPerMessage` 决定，
+     * 这里的 100 只是硬上限。
+     */
+    files: z.array(z.uuid()).max(100).optional(),
   })
   .strict();
 
@@ -140,6 +145,7 @@ export class ConversationsController {
         text: body.text,
         ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
         ...(body.attachments !== undefined && { attachments: body.attachments }),
+        ...(body.files !== undefined && { files: body.files }),
       }),
     };
   }

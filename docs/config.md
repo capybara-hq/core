@@ -58,6 +58,10 @@
 | `channels.deliveryConcurrency` | `CAPYBARA_CHANNELS__DELIVERY_CONCURRENCY` | `number` | `100` | 否 | 否 | How many channel outbound delivery jobs one worker replica runs at the same time (each job follows one conversation while its run streams output) |
 | `channels.deliveryIdleMs` | `CAPYBARA_CHANNELS__DELIVERY_IDLE_MS` | `number` | `15000` | 否 | 否 | A channel delivery job that has caught up ends after this many milliseconds without new conversation output; the next event of the conversation starts a new job |
 | `storage.purgeDeletedOrgsAfterDays` | `CAPYBARA_STORAGE__PURGE_DELETED_ORGS_AFTER_DAYS` | `number` | `30` | 否 | 否 | Days after an organization is deleted before a maintenance job permanently deletes its objects from object storage (kernel/<orgId>/ and plugins/*/<orgId>/) |
+| `attachments.maxBytes` | `CAPYBARA_ATTACHMENTS__MAX_BYTES` | `number` | `20971520` | 否 | 否 | Maximum size in bytes of one chat attachment (images are also capped at 5 MiB, the model input limit) |
+| `attachments.allowedTypes` | `CAPYBARA_ATTACHMENTS__ALLOWED_TYPES` | `array<"image/png" \| "image/jpeg" \| "image/gif" \| "image/webp" \| "application/pdf" \| "text/plain" \| "text/markdown" \| "text/csv">` | `["image/png","image/jpeg","image/gif","image/webp","application/pdf","text/plain","text/markdown","text/csv"]` | 否 | 否 | Content types accepted for chat attachments |
+| `attachments.maxPerMessage` | `CAPYBARA_ATTACHMENTS__MAX_PER_MESSAGE` | `number` | `10` | 否 | 否 | Maximum number of attachments in one message |
+| `attachments.unboundTtlHours` | `CAPYBARA_ATTACHMENTS__UNBOUND_TTL_HOURS` | `number` | `24` | 否 | 否 | Hours after upload before an attachment never used in a message is deleted (row and object) |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

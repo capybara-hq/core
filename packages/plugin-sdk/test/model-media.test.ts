@@ -39,7 +39,11 @@ describe("validateMediaBlock", () => {
     for (const t of ["application/pdf", "text/plain", "text/markdown", "text/csv"]) {
       expect(validateMediaBlock(doc({ mediaType: t }))).toEqual([]);
     }
-    expect(validateMediaBlock(doc({ source: { kind: "ref", attachmentId: "att_1" } }))).toEqual([]);
+    expect(
+      validateMediaBlock(
+        doc({ source: { kind: "ref", attachmentId: "3f0c1a52-6b7e-4f43-9a9b-2c1d0e8f7a61" } }),
+      ),
+    ).toEqual([]);
   });
 
   it("不是对象、不是媒体块：报错", () => {
@@ -92,6 +96,15 @@ describe("validateMediaBlock", () => {
       [],
     );
     expect(validateMediaBlock(image({ name: 1 }))).not.toEqual([]);
+    // attachmentId 必须是 UUID；name 不超过 255 字符、不含控制字符
+    expect(
+      validateMediaBlock(image({ source: { kind: "ref", attachmentId: "att_1" } })).join(),
+    ).toMatch(/UUID/);
+    expect(validateMediaBlock(image({ name: "a".repeat(255) }))).toEqual([]);
+    expect(validateMediaBlock(image({ name: "a".repeat(256) })).join()).toMatch(/255/);
+    for (const name of ["a\u0000b", "a\nb", "a\u007fb", "a\u0085b"]) {
+      expect(validateMediaBlock(image({ name })).join(), JSON.stringify(name)).toMatch(/control/);
+    }
   });
 });
 

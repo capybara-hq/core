@@ -121,6 +121,7 @@ beforeAll(async () => {
           appContent: k.tools.appContent,
           identity: k.identity,
           channels: k.channels.connections,
+          attachments: k.attachments,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

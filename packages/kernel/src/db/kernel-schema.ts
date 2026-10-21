@@ -458,6 +458,21 @@ export interface DirectoryExclusionsTable {
   created_by: string | null;
 }
 
+/** 0022_attachments.sql：对话附件（字节在对象存储，见 conversations/attachments.service.ts）。 */
+export interface AttachmentsTable {
+  id: string;
+  org_id: string;
+  conversation_id: string | null;
+  account_id: string;
+  name: string;
+  content_type: string;
+  size: Int8;
+  object_key: string;
+  status: "pending" | "ready" | "deleting";
+  created_at: Ts;
+  expires_at: TsNullable;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
@@ -498,6 +513,7 @@ export interface KernelDatabase {
   channel_card_messages: ChannelCardMessagesTable;
   org_anonymous_accounts: OrgAnonymousAccountsTable;
   directory_exclusions: DirectoryExclusionsTable;
+  attachments: AttachmentsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

@@ -1,4 +1,39 @@
-import type { ModelMessage, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ContentBlock, ModelMessage, ModelRequest } from "@capybara-hq/plugin-sdk";
+
+/** 一张图片的估算 token 数（固定值，与尺寸无关）。 */
+export const IMAGE_TOKENS = 1600;
+/** PDF 每页的估算 token 数。 */
+export const PDF_PAGE_TOKENS = 1000;
+/** 拿不到 PDF 页数（或引用未解析）时按「字节数 ÷ 3」估算。 */
+const BYTES_PER_TOKEN = 3;
+/** 未解析的文档引用（不应出现在发出的请求里）的保守估算。 */
+const UNRESOLVED_DOCUMENT_TOKENS = 1000;
+
+/** base64 解码后的字节数（按长度计算，不解码）。 */
+function base64Bytes(data: string): number {
+  const pad = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((data.length / 4) * 3) - pad);
+}
+
+/**
+ * PDF 的页数：数未压缩的页对象（`/Type /Page`，不含 `/Pages`）。页对象放在压缩的对象流里时数不到，返回 0。
+ */
+export function countPdfPages(bytes: Uint8Array): number {
+  const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("latin1");
+  return text.match(/\/Type\s*\/Page(?![A-Za-z])/g)?.length ?? 0;
+}
+
+/** 媒体块的估算：图片固定 {@link IMAGE_TOKENS}；PDF 页数 × {@link PDF_PAGE_TOKENS}（数不到按字节 ÷ 3）；文本文档按字节 ÷ 3。 */
+function mediaTokens(b: Extract<ContentBlock, { type: "image" | "document" }>): number {
+  if (b.type === "image") return IMAGE_TOKENS;
+  if (b.source.kind !== "base64") return UNRESOLVED_DOCUMENT_TOKENS;
+  const size = base64Bytes(b.source.data);
+  if (b.mediaType === "application/pdf") {
+    const pages = countPdfPages(Buffer.from(b.source.data, "base64"));
+    if (pages > 0) return pages * PDF_PAGE_TOKENS;
+  }
+  return Math.ceil(size / BYTES_PER_TOKEN);
+}
 
 /** 校正比例的上下限：单轮真实值偏差再大，也不让估算失控。 */
 const MIN_RATIO = 0.5;
@@ -28,6 +63,7 @@ class CharCounter {
  * 估算请求的输入 token 数：ASCII 字符数 ÷ 4 + 非 ASCII 字符数 × 1，向上取整。
  * 故意不用 BPE 分词器：长段中文分词会阻塞事件循环（可靠性清单 A）；偏差由 `calibrate` 按真实用量校正。
  * 工具定义（名字、描述、inputSchema 的 JSON）计入。供应商私有数据（opaque）大小未知，不计入。
+ * 媒体块：图片固定 1600；PDF 按页数 × 1000（数不到页数时按字节 ÷ 3）；其他文档按字节 ÷ 3。
  */
 export function estimateTokens(
   messages: ModelMessage[],
@@ -35,6 +71,7 @@ export function estimateTokens(
   tools: ModelRequest["tools"] = [],
 ): number {
   const c = new CharCounter();
+  let media = 0;
   for (const s of system) c.add(s.text);
   for (const t of tools) {
     c.add(t.name);
@@ -59,10 +96,14 @@ export function estimateTokens(
         case "tool_result":
           c.add(b.content);
           break;
+        case "image":
+        case "document":
+          media += mediaTokens(b);
+          break;
       }
     }
   }
-  return c.tokens();
+  return c.tokens() + media;
 }
 
 /**

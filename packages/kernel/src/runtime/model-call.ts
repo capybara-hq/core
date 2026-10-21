@@ -24,7 +24,9 @@ import { recordToolSpecs } from "../tools/specs.js";
 import {
   buildModelRequest,
   latestSummary,
+  type MediaBytes,
   type ModelCallMeta,
+  mediaRefsNeeded,
   type RequestTool,
 } from "./context/build.js";
 import {
@@ -86,6 +88,15 @@ export interface ModelStepDeps {
   tools: Pick<ToolRegistry, "forAgent">;
   config: () => KernelConfig;
   log: Logger;
+  /**
+   * 取会话附件的字节（构建请求时解析日志里的媒体引用；见 AttachmentsService.fetchMedia）。取不到的为 null。
+   * 未提供时媒体引用一律按「不再可用」占位处理。
+   */
+  media?: (
+    orgId: string,
+    conversationId: string,
+    ids: readonly string[],
+  ) => Promise<Map<string, MediaBytes | null>>;
 }
 
 export interface ModelStepInput {
@@ -140,10 +151,12 @@ export const modelCallIdemKey = (runId: string, step: number, attempt: number): 
 /** 一步最多的模型调用尝试次数（主模型、同模型重试、兜底，见 `ladder`）。 */
 export const MAX_MODEL_ATTEMPTS = 3;
 
-/** 本步解析出的工具与是否启用 tool_search（见 `ToolRegistry.forAgent`）。 */
+/** 本步解析出的工具与是否启用 tool_search（见 `ToolRegistry.forAgent`），以及本步已取的附件字节。 */
 interface StepTools {
   list: RequestTool[];
   toolSearch: boolean;
+  /** 本步已取过的附件字节（附件 id → 字节 / null）；同一步的多次构建（压缩估算、各次尝试）共用。 */
+  media: Map<string, MediaBytes | null>;
 }
 
 const idem = {
@@ -216,7 +229,11 @@ async function runStep(
     let events = await readAll(deps.eventLog, conversationId);
     // 每步实时解析（应用 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
     const resolved = await deps.tools.forAgent(input.orgId, { tools: input.agent.tools ?? [] });
-    const tools: StepTools = { list: resolved.tools, toolSearch: resolved.toolSearch === true };
+    const tools: StepTools = {
+      list: resolved.tools,
+      toolSearch: resolved.toolSearch === true,
+      media: new Map(),
+    };
     events = await maybeCompact(deps, input, events, runtime, tools);
 
     const last = lastToolsReminder(events, runId);
@@ -395,6 +412,7 @@ function buildRequest(
     tools: info.capabilities.tools ? tools.list : [],
     toolSearch: tools.toolSearch,
     ...(wrapUp && { toolChoice: "none" as const }),
+    media: tools.media,
   });
   request.messages = guardToolPairs(request.messages);
   const knob = params.maxOutputTokens;
@@ -407,6 +425,33 @@ function buildRequest(
     meta,
     estimate: estimateTokens(request.messages, request.system, request.tools),
   };
+}
+
+/**
+ * 取本次构建要用到的附件字节（只取该模型会用到的：不支持的图片 / PDF 只发占位，字节不取），并入 `tools.media`。
+ * 读取失败只记日志，按取不到处理（构建时换成「不再可用」占位；日志不变，下一步会重新取）。
+ */
+async function loadMedia(
+  deps: ModelStepDeps,
+  input: ModelStepInput,
+  events: ConversationEvent[],
+  info: ModelInfo,
+  tools: StepTools,
+): Promise<void> {
+  const ids = mediaRefsNeeded(events, info).filter((id) => !tools.media.has(id));
+  if (ids.length === 0) return;
+  let got = new Map<string, MediaBytes | null>();
+  if (deps.media) {
+    try {
+      got = await deps.media(input.orgId, input.conversationId, ids);
+    } catch (err) {
+      deps.log.warn("cannot load attachments for model request", {
+        conversationId: input.conversationId,
+        err,
+      });
+    }
+  }
+  for (const id of ids) tools.media.set(id, got.get(id) ?? null);
 }
 
 /**
@@ -459,6 +504,7 @@ async function maybeCompact(
     deps.log.warn("compaction skipped: model unavailable", { model: input.agent.model, err });
     return events;
   }
+  await loadMedia(deps, input, events, info, tools);
   const { request } = buildRequest(
     events,
     input,
@@ -580,6 +626,7 @@ async function ladder(
         });
       }
       const params = attemptParams(agent, info, rung.fallback);
+      await loadMedia(deps, input, evs, info, tools);
       const { request, meta, estimate } = buildRequest(
         evs,
         input,
