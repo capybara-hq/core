@@ -50,6 +50,34 @@ services:
         || echo "s3.bucket.create -name capybara" | weed shell -master=seaweedfs:9333
     restart: "no"
 
+  # ---- 对话沙箱（sandbox-docker 插件），可选：docker compose -f docker/compose.dev.yaml --profile sandbox up -d
+  # Docker socket 代理：只有它挂 docker.sock，只放行插件用到的接口（见 sandbox-proxy/haproxy.cfg）。
+  # 只绑本机回环；插件配置 endpoint 填 tcp://127.0.0.1:2375（内核在容器里时用 tcp://sandbox-proxy:2375）。
+  sandbox-proxy:
+    profiles: ["sandbox"]
+    image: haproxy:3.2-alpine@sha256:254e6370f01cd654e0744edf607c67f33777c1b6a9dc0d4b28bcba7171460122
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./sandbox-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "127.0.0.1:2375:2375"
+
+  # 一次性：构建沙箱镜像（标签与内核配置 sandbox.image 的默认值一致）与出站代理镜像，构建完即退出。
+  sandbox-image:
+    profiles: ["sandbox"]
+    build: ../plugins/sandbox-docker/image
+    image: capybara-sandbox:latest
+    command: ["true"]
+    restart: "no"
+
+  sandbox-egress-image:
+    profiles: ["sandbox"]
+    build: ../plugins/sandbox-docker/egress-proxy
+    image: capybara-sandbox-egress:latest
+    command: ["node", "-e", "0"]
+    restart: "no"
+
 configs:
   seaweedfs-s3:
     content: |

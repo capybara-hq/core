@@ -327,6 +327,18 @@ MinIO、Ceph 等支持 `PutBucketCors` 的 S3 兼容存储，用 AWS CLI 指向�
 
 没装对象存储插件时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。
 
+### 对话沙箱（Docker）
+
+沙箱由 `sandbox@1` 插件提供，Docker 实现是 `@capybara-hq/plugin-sandbox-docker`：每个对话一个容器（runc 或 gVisor 的 runsc），文件在卷上，空闲时休眠、长期不用时销毁；出站默认按白名单经代理放行。插件只经 socket 代理（`docker/sandbox-proxy`）访问 Docker，自己不挂 `docker.sock`。本地：
+
+```bash
+docker compose -f docker/compose.dev.yaml --profile sandbox up -d   # 构建沙箱与出站代理镜像，起 socket 代理（127.0.0.1:2375）
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-sandbox-docker"]'
+export CAPYBARA_PLUGIN_CONFIG='{"sandbox-docker":{"endpoint":"tcp://127.0.0.1:2375"}}'
+```
+
+配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)。
+
 ## 运维须知
 
 - **初始化向导何时重新开放**：「需要初始化」的判定是「不存在活跃（`status = active`）的企业管理员」，每次实时查 PG。如果有人直接改库把所有企业管理员都停用或撤销了，部署会重新对未认证的 `POST /api/v1/setup` 开放，谁先调用谁就成为新的企业管理员。生产部署请始终设置 `CAPYBARA_AUTH__SETUP_TOKEN`（初始化须带同值的 `setupToken`）；恢复管理员优先用 CLI：`echo "$PW" | pnpm capybara admin create --login <名字> --display-name <显示名>`。

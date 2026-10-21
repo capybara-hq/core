@@ -47,6 +47,9 @@
       "path": "plugins/object-store-s3"
     },
     {
+      "path": "plugins/sandbox-docker"
+    },
+    {
       "path": "tools/checks"
     },
     {
