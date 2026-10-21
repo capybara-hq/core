@@ -25,7 +25,12 @@ export interface IdentitiesTable {
   email_verified: Generated<boolean>;
   profile: Json;
   created_at: Ts;
+  /** 0019：身份行如何建立（Ruling A18）；null 为旧行，按 `sso` 处理。 */
+  linked_via: ColumnType<LinkedVia | null, LinkedVia | null | undefined, LinkedVia | null>;
 }
+
+/** 身份行的建立方式：IM 绑定链接、第三方登录、通讯录同步、本地登录名。 */
+export type LinkedVia = "bind" | "sso" | "directory" | "local";
 
 export interface LocalPasswordsTable {
   account_id: string;
@@ -50,6 +55,8 @@ export interface MembershipsTable {
   role: "owner" | "admin" | "member" | "guest";
   created_at: Ts;
   updated_at: Ts;
+  /** 0017：成员关系来源；null = 手动 / 邀请，`"directory:<插件名>"` = 通讯录同步加入。 */
+  source: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface InvitationsTable {
@@ -121,6 +128,17 @@ export interface AuditEventsTable {
   action: string;
   target: string | null;
   detail: Json;
+}
+
+/** 0016_plugin_permissions.sql：插件已批准的权限快照。 */
+export interface PluginPermissionSnapshotsTable {
+  plugin: string;
+  version: string;
+  /** 规范化的权限集合（见 plugins/permission-set.ts）。 */
+  permissions: Json<unknown>;
+  approved_by: string | null;
+  approved_at: Ts;
+  source: "cli" | "auto";
 }
 
 /** 0002_secrets.sql：加密值（读写走 `createSecrets`，这里只供按键查询是否存在）。 */
@@ -366,9 +384,79 @@ export interface LgCheckpointWritesTable {
   task_path: Generated<string>;
 }
 
+/** 0018_channels.sql：组织的渠道连接（非密钥配置；密钥在 secrets `channels:<id>:config`）。 */
+export interface ChannelConnectionsTable {
+  id: string;
+  org_id: string;
+  plugin: string;
+  name: string;
+  agent_id: string;
+  config: Json;
+  unbound_policy: Generated<"bind" | "anonymous">;
+  status: Generated<"active" | "disabled" | "error">;
+  last_error: string | null;
+  bot_user_id: string | null;
+  tenant_id: string | null;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0018_channels.sql：IM 话题 ↔ 会话（未归档的行在 (连接, chat, thread_key, 账号) 上唯一）。 */
+export interface ChannelThreadsTable {
+  id: string;
+  connection_id: string;
+  chat_id: string;
+  thread_key: string;
+  account_id: string | null;
+  conversation_id: string;
+  created_at: Ts;
+  archived_at: TsNullable;
+}
+
+/** 0018_channels.sql：会话的 IM 投递目标与已投递到的事件序号（Task 11）。 */
+export interface ChannelDeliveriesTable {
+  conversation_id: string;
+  connection_id: string;
+  target: Json<unknown>;
+  last_seq: Int8;
+  draft_message_id: string | null;
+  fail_seq: ColumnType<string | null, number | string | null | undefined, number | string | null>;
+  fail_count: Generated<number>;
+  updated_at: Ts;
+}
+
+/** 0018_channels.sql：出站投递发出的审批 / 提问卡片对应的 IM 消息（Task 11，用于更新卡片状态）。 */
+export interface ChannelCardMessagesTable {
+  conversation_id: string;
+  connection_id: string;
+  card_kind: "approval" | "question";
+  card_id: string;
+  message_id: string;
+  target: Json<unknown>;
+  created_at: Ts;
+}
+
+/** 0018_channels.sql：每个组织一个的匿名访客账号。 */
+export interface OrgAnonymousAccountsTable {
+  org_id: string;
+  account_id: string;
+  created_at: Ts;
+}
+
+/** 0019：通讯录排除（Ruling A20）——手动移出 / 离开的通讯录成员，同步不再加回。 */
+export interface DirectoryExclusionsTable {
+  org_id: string;
+  account_id: string;
+  plugin: string;
+  created_at: Ts;
+  created_by: string | null;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
- * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql 与 0011_approvals_spec.sql。
+ * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
  */
 export interface KernelDatabase {
   accounts: AccountsTable;
@@ -399,6 +487,13 @@ export interface KernelDatabase {
   questions: QuestionsTable;
   tool_outputs: ToolOutputsTable;
   tool_specs: ToolSpecsTable;
+  plugin_permission_snapshots: PluginPermissionSnapshotsTable;
+  channel_connections: ChannelConnectionsTable;
+  channel_threads: ChannelThreadsTable;
+  channel_deliveries: ChannelDeliveriesTable;
+  channel_card_messages: ChannelCardMessagesTable;
+  org_anonymous_accounts: OrgAnonymousAccountsTable;
+  directory_exclusions: DirectoryExclusionsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

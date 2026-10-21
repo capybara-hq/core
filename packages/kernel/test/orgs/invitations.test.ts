@@ -12,9 +12,11 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { InvitationsService } from "../../src/orgs/invitations.service.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
+import { truncateTables } from "../helpers/db.js";
+import { testMembers } from "../helpers/members.js";
 
 /** 可让 hashPassword 人为变慢（毫秒），使「scrypt 是否在事务内执行」在任何机器上都能被观察到。 */
 const hashDelay = vi.hoisted(() => ({ ms: 0 }));
@@ -59,9 +61,9 @@ beforeAll(async () => {
   db2 = kernelDb(raw2);
   accounts = new AccountsService(db);
   orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
-  members = new MembersService(db);
+  members = testMembers(db);
   inv = new InvitationsService(db, accounts, members);
-  inv2 = new InvitationsService(db2, new AccountsService(db2), new MembersService(db2));
+  inv2 = new InvitationsService(db2, new AccountsService(db2), testMembers(db2));
 }, 120_000);
 afterAll(async () => {
   await raw.destroy();
@@ -69,7 +71,7 @@ afterAll(async () => {
   await pg.stop();
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   A = await accounts.createLocal({ login: "usera", password: PW, displayName: "A" });
   B = await accounts.createLocal({ login: "userb", password: PW, displayName: "B" });
   C = await accounts.createLocal({ login: "userc", password: PW, displayName: "C" });

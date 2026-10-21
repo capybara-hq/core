@@ -15,6 +15,7 @@ export const MODEL_FAKE_B = fileURLToPath(
 /** 加载两个模型供应商的内核配置片段：model-fake 配 fake-1、fake-2。 */
 export const MODEL_PLUGINS_CONFIG = {
   plugins: [MODEL_FAKE, MODEL_FAKE_B],
+  pluginPermissions: { autoApprove: true },
   pluginConfig: { "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] } },
 };
 

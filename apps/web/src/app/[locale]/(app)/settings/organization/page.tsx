@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  Field,
   FormSection,
   RadioGroup,
+  Select,
   SettingsPage,
   Skeleton,
   Stack,
@@ -26,7 +28,7 @@ import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
 /**
- * `/[locale]/settings/organization`：组织设置（SettingsPage）——工具搜索开关。成员可看，管理员可改；
+ * `/[locale]/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）。成员可看，管理员可改；
  * 有改动时出现 ActionRow。
  */
 export default function OrganizationSettingsPage() {
@@ -47,13 +49,22 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
 
   const saved = state.kind === "ready" ? state.data : undefined;
   const toolSearch = draft.toolSearch ?? saved?.toolSearch ?? "on";
-  const dirty =
-    saved !== undefined && draft.toolSearch !== undefined && draft.toolSearch !== saved.toolSearch;
+  const locale = draft.locale ?? saved?.locale ?? "en";
+  // 只提交改过的项
+  const patch: Partial<OrgSettings> =
+    saved === undefined
+      ? {}
+      : {
+          ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
+          ...(locale !== (saved.locale ?? "en") ? { locale } : {}),
+        };
+  const unsaved = Object.keys(patch).length;
+  const dirty = unsaved > 0;
 
   async function save() {
     setPending(true);
     try {
-      const { settings } = await updateOrgSettings(orgId, { toolSearch });
+      const { settings } = await updateOrgSettings(orgId, patch);
       set(settings);
       setDraft({});
       toast.success(t("saved"));
@@ -72,7 +83,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
       {...(dirty
         ? {
             actionRow: {
-              unsaved: 1,
+              unsaved,
               cancel: { label: tc("cancel"), onSelect: () => setDraft({}) },
               primary: { label: t("save"), onSelect: () => void save(), loading: pending },
             },
@@ -95,7 +106,9 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
               variant="card"
               value={toolSearch}
               disabled={!manage}
-              onChange={(v) => setDraft({ toolSearch: v as OrgSettings["toolSearch"] })}
+              onChange={(v) =>
+                setDraft((d) => ({ ...d, toolSearch: v as OrgSettings["toolSearch"] }))
+              }
               options={(["on", "off"] as const).map((v) => ({
                 value: v,
                 label: t(`toolSearch.${v}`),
@@ -108,6 +121,23 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
               </Text>
             )}
           </Stack>
+        </FormSection>
+      )}
+      {saved !== undefined && (
+        <FormSection id="im-locale" title={t("locale.title")} description={t("locale.description")}>
+          <Field label={t("locale.label")}>
+            <Select
+              value={locale}
+              disabled={!manage}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, locale: e.target.value as OrgSettings["locale"] }))
+              }
+              options={(["en", "zh"] as const).map((v) => ({
+                value: v,
+                label: tc(`localeName.${v}`),
+              }))}
+            />
+          </Field>
         </FormSection>
       )}
     </SettingsPage>

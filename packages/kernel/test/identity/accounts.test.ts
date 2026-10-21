@@ -9,6 +9,7 @@ import type { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { DUMMY_PASSWORD_HASH, verifyPassword } from "../../src/identity/passwords.js";
 import { SettingsService } from "../../src/identity/settings.js";
+import { truncateTables } from "../helpers/db.js";
 
 // 包一层 spy（行为不变），用来断言是否真的跑了 scrypt 校验，而不是靠计时
 vi.mock("../../src/identity/passwords.js", async (importOriginal) => {
@@ -37,7 +38,7 @@ afterAll(async () => {
   await box.stop();
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts");
 });
 
 const PW = "correct horse battery";
@@ -188,7 +189,7 @@ describe("最后一个企业管理员", () => {
     const svc2 = new AccountsService(kernelDb(raw2));
     try {
       for (let i = 0; i < 10; i++) {
-        await sql`TRUNCATE capybara.accounts CASCADE`.execute(raw);
+        await truncateTables(raw, "capybara.accounts");
         const a = await svc.createLocal({
           login: `root-a${i}`,
           password: PW,

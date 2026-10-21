@@ -66,6 +66,21 @@ export {
 } from "./kernel.js";
 export { createLogger, type KernelLogger, LOG_LEVELS, type LogLevel } from "./log.js";
 export { type Org, OrgsService } from "./orgs/orgs.service.js";
-export { assertSecretsReachable, PluginHost } from "./plugins/host.js";
+export {
+  type ApprovalDecision,
+  type PendingPlugin,
+  type PermissionSnapshot,
+  PluginApprovals,
+  planApprovals,
+} from "./plugins/approvals.js";
+export { assertSecretsReachable, type InspectedPlugin, PluginHost } from "./plugins/host.js";
+export {
+  blockingKeys,
+  computePermissionSet,
+  diffPermissions,
+  type PermissionSet,
+  permissionKeys,
+} from "./plugins/permission-set.js";
+export { isSensitivePermissionKey } from "./plugins/permission-view.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";

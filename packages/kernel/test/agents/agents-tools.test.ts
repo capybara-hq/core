@@ -22,6 +22,7 @@ import {
   TOOLS_UNAVAILABLE_PREFIX,
 } from "../../src/runtime/model-call.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
@@ -54,6 +55,7 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0 },
       plugins: [...MODEL_PLUGINS_CONFIG.plugins, MEM_CONNECTOR, TOOLS_PROBE],
+      pluginPermissions: { autoApprove: true },
       pluginConfig: MODEL_PLUGINS_CONFIG.pluginConfig,
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
@@ -70,7 +72,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
   ownerId = (
     await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })

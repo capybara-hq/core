@@ -20,9 +20,12 @@ export type OrgAction =
   | "org.plugins.manage"
   | "agents.create"
   | "agents.use"
+  | "agents.manage"
   | "apps.manage"
   | "apps.use"
-  | "approvals.decide";
+  | "approvals.decide"
+  | "channels.manage"
+  | "ui.use";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -37,12 +40,18 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "org.transfer": "owner",
   "agents.create": "member",
   "agents.use": "guest",
+  // 管理他人的 agent（如离职后重新指派负责人）
+  "agents.manage": "admin",
   // 安装 / 配置应用与审阅工具
   "apps.manage": "admin",
   // 读取本人可见的应用、连接自己的凭据（凭据属于具体的人，服务令牌不可用）
   "apps.use": "guest",
   // 能否处理某条审批另由 requested_for / approver_role 判定；审批只能由人处理（服务令牌 / agent 不可）
   "approvals.decide": "guest",
+  // 渠道连接（bot 凭据、绑定的 agent、未绑定用户策略）
+  "channels.manage": "admin",
+  // 插件界面（列出贡献、取视图、执行动作、组织级刷新流）：只给人用，服务令牌不可
+  "ui.use": "guest",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

@@ -10,6 +10,7 @@ import { createDb } from "../../src/db/pool.js";
 import { readToolOutputTool } from "../../src/tools/builtins/read-tool-output.js";
 import { ToolOutputs } from "../../src/tools/outputs.js";
 import { validateInput } from "../../src/tools/validate.js";
+import { truncateTables } from "../helpers/db.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /** Task 10：内置工具 `read_tool_output`（按行分页读取输出存档，只读本组织、未过期的）。 */
@@ -46,7 +47,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   cfg = base;
-  await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs");
   seed = await seedConversation(raw);
   other = await seedConversation(raw);
 });

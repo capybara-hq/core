@@ -10,6 +10,7 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { truncateTables } from "../helpers/db.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -60,7 +61,7 @@ let conversationId: string;
 let accountId: string;
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(rawA);
+  await truncateTables(rawA, "capybara.accounts, capybara.orgs");
   accountId = randomUUID();
   const orgId = randomUUID();
   const agentId = randomUUID();

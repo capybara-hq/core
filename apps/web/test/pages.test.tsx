@@ -285,12 +285,44 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.agents, "/agents"],
       [zh.nav.inbox, "/inbox"],
       [zh.nav.apps, "/apps"],
+      // 管理员（owner）才看得到渠道
+      [zh.nav.channels, "/channels"],
     ]);
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
     ).toBe("page");
     expect(screen.getByText("> Grant@Acme:agents/new")).toBeTruthy();
     expect(screen.getByText(/^v9\.9\.9/)).toBeTruthy();
+  });
+
+  it("普通成员的顶栏不显示管理员才能用的「渠道」", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () =>
+        json(200, {
+          ...ME,
+          memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+        }),
+      "GET /api/v1/orgs/o1/approvals?status=pending": () => json(200, { approvals: [] }),
+    });
+    renderFrame();
+    expect(await screen.findByText("page body")).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(nav).queryByRole("link", { name: zh.nav.channels })).toBeNull();
+    expect(within(nav).getByRole("link", { name: zh.nav.apps })).toBeTruthy();
+  });
+
+  it("未登录访问某页（401）：去登录页并带回该页", async () => {
+    resetNavigation("/channels/c1");
+    stubApi({
+      "GET /api/v1/me": () => json(401, { error: { code: "auth.required", message: "x" } }),
+      "POST /api/v1/auth/refresh": () =>
+        json(401, { error: { code: "auth.refresh_invalid", message: "x" } }),
+    });
+    renderFrame();
+    await vi.waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/login?returnTo=%2Fchannels%2Fc1"),
+    );
   });
 
   it.each(["zh", "en"] as const)(
@@ -421,6 +453,10 @@ describe("activeNavOf", () => {
     expect(activeNavOf("/settings")).toBe("");
     expect(activeNavOf("/appsx")).toBe("");
     expect(activeNavOf("/inbox")).toBe("inbox");
+    expect(activeNavOf("/channels")).toBe("channels");
+    expect(activeNavOf("/channels/new")).toBe("channels");
+    expect(activeNavOf("/settings/identities")).toBe("apps");
+    expect(activeNavOf("/settings/plugins")).toBe("apps");
     expect(activeNavOf("/chat/c1")).toBe("agents");
   });
 });

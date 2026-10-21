@@ -1,11 +1,11 @@
 ---
 name: writing-plugins
-description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单字段、两级配置、ctx 各项的用法、多副本下禁止的写法（定时器、模块级状态）及替代方案，以及用双副本工具写测试的模板。
+description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单字段、权限清单与批准（capybara plugins review / approve、pluginPermissions.autoApprove）、能力取用 ctx.capabilities 与 orgScoped、部署级 / 组织级 / 渠道连接配置、ctx 各项的用法、多副本下禁止的写法（定时器、模块级状态）及替代方案，以及用双副本工具写测试的模板。往网页加界面（ctx.ui）见 writing-plugin-ui。
 ---
 
 # 写插件
 
-参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。模型供应商插件（`model-provider@2`）另见 `skills/writing-model-providers`；给 agent 提供工具（`ctx.tools`）或连接器（`connector@1`）另见 `skills/writing-tools`。
+参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。模型供应商插件（`model-provider@2`）另见 `skills/writing-model-providers`；给 agent 提供工具（`ctx.tools`）或连接器（`connector@1`）另见 `skills/writing-tools`；IM 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`）另见 `skills/writing-channels`（参考 `plugins/slack`、`plugins/lark`）；往网页加界面（`ctx.ui`：渲染 schema 视图与嵌入应用）另见 `skills/writing-plugin-ui`（参考 `plugins/todo`、`plugins/example-board`）。
 
 ## 硬约束（先看这个）
 
@@ -14,6 +14,7 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 | 只能 import `@capybara-hq/plugin-sdk`、`zod`、其他第三方 npm 包；**不能** import `@capybara-hq/kernel` 或插件目录之外的文件。测试里可以用 devDependency `@capybara-hq/testing` | `pnpm check:deps` | `plugin-imports-kernel`、`plugin-imports-outside` |
 | 不得使用 `setTimeout` / `setInterval` / `setImmediate` / `node:timers` | `pnpm check:plugin-state` | `plugin-timer` |
 | 模块顶层不得有 `let` / `var` / `new Map/Set/WeakMap/WeakSet` / 数组字面量 | `pnpm check:plugin-state` | `plugin-module-state` |
+| `setup(ctx)` 里用到的 `ctx.secrets` / `ctx.http.route` / `ctx.tools.register` / `ctx.capabilities` / `ctx.ui.view` / `ctx.ui.action` 必须在清单里声明；`ctx.storage` / `ctx.models` 尚未提供 | `pnpm check:plugin-permissions` | `perm-secrets`、`perm-http`、`perm-tools`、`perm-capability`、`perm-ui`、`perm-reserved` |
 | `ctx.kv` 写入必须带 `ttlSeconds`（类型层强制） | `pnpm typecheck` | — |
 | 队列名、job id 不含 `:`（BullMQ 限制） | 运行时：`ctx.queue.define` / `add` 直接抛 `TypeError` | — |
 
@@ -47,6 +48,10 @@ export default definePlugin({
   sdk: "^0.1.0",              // 兼容的 SDK 版本范围
   provides: ["counter@1"],    // 提供的能力，形如 名称@主版本，须是 SDK 已登记的能力
   requires: [],               // 依赖的其他插件能力（可选；不能与 provides 重复）
+  optional: [],               // 可选依赖：缺提供方也能加载，取用时 list 为空
+  permissions: {              // 权限清单：未声明即禁止，见下
+    http: [{ method: "POST", path: "/inc" }],
+  },
   config: {
     deployment: z.object({ step: z.number().int().positive().default(1) }), // 部署级
     // org: z.object({...}),                                                // 组织级
@@ -58,6 +63,43 @@ export default definePlugin({
 
 `definePlugin` 在加载时校验清单，不合法直接抛错。
 
+**权限清单（`permissions`）**：内核按清单构造 `ctx`，未声明的平台能力访问抛 `PluginPermissionError`（消息写明要在清单哪一项声明）并记审计 `plugin.permission_denied`。
+
+- 自动授予、无需声明：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`。
+各项（都是治理信息，部署方批准时会看到）：
+
+| 项 | 写法 | 说明 |
+|---|---|---|
+| `secrets` | `secrets: true` | 才能用 `ctx.secrets` |
+| `http` | `[{ method, path, public? }]` | 每条 `ctx.http.route` 都要列出，`method` 为 GET / POST / PUT / DELETE，`path` 以 `/` 开头；`public: true` 表示免登录，会高亮展示。**目前 `public` 只是声明**（Ruling A2）：插件路由不论是否 `public` 都不经内核鉴权，见下文「插件路由的匹配语义」 |
+| `tools` | `["write"]` | 每个 `ctx.tools.register` 的工具名（本地名，不含 `<插件名>__` 前缀）；工具能看到会话内容，会高亮展示 |
+| `network` | `["api.example.com"]` | 会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写；不支持通配 |
+| `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的列进 `views`（记入快照、**不卡加载**），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）。细则见 `skills/writing-plugin-ui` |
+| `hooks` / `models` / `storage` | — | 预留项（M4 尚未提供 `ctx.storage` / `ctx.models`，用了 `check:plugin-permissions` 报 `perm-reserved`） |
+
+**能力取用（`requires` / `optional`）**：`ctx.capabilities.get / list(ref)` 只能取 `requires` / `optional`（或自己 `provides`）里声明的 ref，别的 ref 报 `perm-capability`。只能取直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器、沙箱、密钥存储、对象存储）只能经平台能力用，取它直接抛普通 `Error`（声明也解决不了，不记审计）。`requires` 的提供方缺失则本插件不加载；`optional` 缺失照常加载，取用时 `list` 为空、`get` 抛 `CapabilityUnavailableError`。多选能力 `get` 必须给提供方名。
+
+**`orgScoped` 能力与组织变体**：能力登记为 `orgScoped`（`channel`、`directory`；登记表见 `packages/plugin-sdk/src/capability.ts`）表示是否可用取决于组织是否启用了提供方插件。`identity-source` 不是：登录是部署级的，由内核配置 `auth.loginSources` 启用。组织启用插件时，它 `requires` 的每个 `orgScoped` 能力在该组织须至少有一个已启用的提供方（否则 `plugin.dependency_missing`）；停用会让某个已启用插件失去唯一提供方时拒绝（`plugin.has_dependents`，可强制）。不传 `orgId` 是部署级视角、同步返回，不按组织过滤；传 `{ orgId }` 是 async 变体，返回 Promise 并按该组织的启用状态过滤（每次查询、不缓存）：
+
+```ts
+// 部署级（setup 里）：同步
+const providers = ctx.capabilities.list<Directory>("directory@1");
+// 某个组织的视角（调用现场）：async，该组织未启用提供方时 get 会 reject CapabilityUnavailableError
+const dir = await ctx.capabilities.get<Directory>("directory@1", "lark", { orgId });
+const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId });
+```
+
+**调用上下文原则**：`setup(ctx)` 拿到的是**部署级**上下文，看不到任何组织、账号、会话。内核调用插件实现时把本次的上下文放进调用参数，内容由扩展点决定：工具执行带组织、账号、agent、会话（`ToolCallContext`）；渠道（`channel@1`）带该渠道连接的 `connectionId` 与连接配置（组织、账号由内核按连接与发言人解析，插件看不到）；通讯录带该组织的组织级配置；登录（`identity-source`）带部署级配置与认证请求、不含会话；队列任务只有你入队时写进 job 数据的内容（通常带 `orgId`，内核校验插件在该组织已启用）。所以**不要把组织 / 会话 / 身份存进模块变量或 ctx 的闭包里跨调用传递**，从本次调用的参数里取；需要跨调用保存的会话相关数据写自己的 `ctx.db`。
+
+**静态检查（`pnpm check:plugin-permissions`）**：扫描 `definePlugin({...})` 里 `setup` 的 `ctx` 参数（含本地别名，以及按位置传给**同文件**函数的 ctx，如 `mount(ctx)`），把 `ctx.secrets`、`ctx.http.route(method, path)`、`ctx.tools.register({ name })`、`ctx.capabilities.get|list(ref)`、`ctx.ui.view|action(id)`、`ctx.storage`、`ctx.models` 与清单比对，用了未声明的就失败。路由路径、工具名、能力 ref、界面 id 须写成字符串字面量（或指向同文件 const），动态的值报「Cannot statically confirm」；确属运行时才知道的（且已评审）在该行行尾或紧邻上一行写 `// capybara:allow-dynamic-permission <原因>`，原因不能为空；该注释只放行「无法静态确认」，未声明的字面量访问与 `perm-reserved` 不能豁免。ctx 传给其他文件的函数时检查跟不过去（靠运行时 `PluginPermissionError` 兜底），所以把用平台能力的代码放在 `setup` 同文件里。
+**批准**：内核在 PG 记已批准的权限快照（上面各项，加上 provides / requires / optional、配置字段与迁移里 `CREATE TABLE` 的表名）。插件首次出现、或升级后比快照多出任何一项时不加载，`requires` 它的插件同样不加载，管理员用 `capybara plugins review` / `capybara plugins approve <name>` 批准后重启生效；权限变少或不变直接加载。所以**发版时多要的每一项都会让部署方停下来批准**，别顺手多声明。比快照版本旧的插件（滚动升级中重启的旧副本、或有意回滚）只要权限不超出快照就照常加载，但**快照保留较新版本的内容不缩减**；回滚后旧版本多出的项仍需批准。开发与测试用配置项 `pluginPermissions.autoApprove: true`（环境变量推导规则见 `skills/adding-config`，双副本 harness 默认开启）：启动时自动批准新增或升级多要的权限，仅限开发与试用，生产别开。自动批准同样写快照（来源 auto）并打 warn 日志，但不写审计。
+
+批准的细节：
+
+- `capybara migrate` 与启动时的迁移同样受快照约束：未批准的插件不跑它的迁移（不建表）。`capybara plugins review` 直连 PG，会先执行内核迁移。
+- 「多出一项」按条目比较：把路由从 `public` 改成非公开、把配置字段从密钥改成普通字段，也算新条目，需要再批准一次。
+- 迁移里的表名靠解析 `CREATE TABLE` 得出，`ALTER TABLE … RENAME`、视图等不进快照，评审时看 SQL。
+
 **`setup` 必须返回**：插件按依赖顺序串行 setup，内核不给 setup 设超时。setup 永不 resolve（如等待一个永远不来的外部连接、`await` 一个没人 resolve 的 Promise）时，内核 `start()` 会**永远挂起**、HTTP 不监听、后续插件不加载；此时停机（`stop()`）仍会立即关闭该插件的 ctx 并释放连接。需要等外部依赖就绪时，在 setup 里自己设超时并抛错，或把等待挪到队列任务里。
 
 `sdk` 范围由内核按 `SDK_VERSION`（等于 `@capybara-hq/plugin-sdk` 的 package 版本，有测试钉住）校验。0.x 阶段 `^0.1.0` 只匹配 `0.1.x`：**SDK 升 minor（如 0.2.0）时，仓库内所有插件的 `sdk` 范围都要同步改**，否则内核拒绝加载。
@@ -67,6 +109,9 @@ export default definePlugin({
 - **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON，或逐字段 `CAPYBARA_PLUGIN_CONFIG__<插件名大写、- 换 _>__<字段>`，如 `CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE=3` 对应 `example-counter` 的 `poolSize`）。标了 `secret` 的部署级字段，其值校验通过后自动加入日志打码集合（嵌套的数组 / 对象展开为其中所有标量；数字转成字符串后打码，布尔不打码；短于 4 个字符的值不打码）。打码只是兜底，**不要主动把密钥写进日志**。内核启动时按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
 - **组织级**（`config.org`）：每个组织各自的启用状态与配置，由组织 admin 通过内核 API（`GET /api/v1/orgs/:orgId/plugins`、`PUT /api/v1/orgs/:orgId/plugins/:plugin`）设置，内核按该 schema 校验并存储，规则见下一节。
 - 插件自己运行中产生的密钥（如 OAuth 换来的 token）走 `ctx.secrets`（加密存储），不要放进普通配置。
+- **渠道连接配置**（`channel@1` 的 `connectionSchema`）是第三种：一个组织可以建多个渠道连接，每个连接一份（bot 凭据等），由组织管理员在网页「渠道」里填写，密钥字段同样用 `secret()`、加密存储、只回显「已设置」；内核在调用 `verify` / `connect` / `send` 时把校验后的值作为 `config` 传入。
+- 选哪一级：只有部署方能决定、全部署共用一份的（登录的 client id / secret、平台地址）放部署级；每个组织各自的（通讯录凭据）放组织级；每个 bot 一份的放渠道连接配置。凭据都经配置由内核传入时插件不需要 `permissions.secrets`（Slack、Lark 插件都没有声明）。
+- **组织级配置里某项能力的字段可选时**（同一插件提供多种能力，组织只用其中一些），用该能力提供的「是否已配置」钩子告诉内核，而不是在调用时返回空结果：如 `Directory.configured(orgConfig)` 返回 false 时内核把通讯录视为未配置、不扫描不同步（详见 `skills/writing-channels`）。它必须是纯函数。
 
 ### 组织级配置与 `secret()` 字段的存储与回显
 
@@ -90,12 +135,17 @@ export default definePlugin({
 | `ctx.http.route` | 对外接口 | 实际挂在 `/plugins/<name><path>`；匹配与 body 语义见下节，不经内核鉴权 |
 | `ctx.provide` | 对外暴露能力实现 | 要与清单 `provides` 一致 |
 | `ctx.tools` | 给 agent 提供工具 | `register(spec, handler)` 只能在 `setup` 里调用；模型可见名 `<插件名>__<spec.name>`；**只在启用了本插件的组织可用**（组织 admin `PUT /api/v1/orgs/:orgId/plugins/<name> {"enabled": true}`），未启用时运行时按不可用工具处理。描述与错误文案规则、默认策略、`ToolError`、`InputRequired` 见 `skills/writing-tools`，参考 `plugins/todo` |
+| `ctx.ui` | 对话页右侧标签 / 顶栏「扩展」里的组织页面 | `view` / `action`（渲染 schema 视图，只能在 `setup` 里注册，`render` 与 `action` 必须响应 `signal`、5 秒超时）、`invalidate`（经 bus 跨副本刷新）、`verifyEmbedToken`（嵌入应用的数据路由先验令牌）。写法、积木、上限与嵌入应用的安全规则见 `skills/writing-plugin-ui`，参考 `plugins/todo`、`plugins/example-board` |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
 | `ctx.config` / `ctx.log` | 部署配置 / 日志 | 日志里不要打印密钥 |
 
 ### 连接器（`connector@1`）
 
 `provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`，把一类远端服务接成组织里的「应用」（工具快照、凭据、审批都由内核管）。连接器是部署级的，不需要按组织启用。要点：会话按次打开、用完关闭，不缓存连接；每个出站请求前调用 `auth()`；401 → `onUnauthorized()` 后重试一次；不跟随重定向；不把凭据写进错误与日志。详见 `skills/writing-connectors`，参考 `plugins/connector-mcp`、`plugins/connector-openapi`。
+
+### 渠道、登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`）
+
+一个 IM 平台的插件通常三种都提供：`setup` 里分别 `ctx.provide(CHANNEL_CAPABILITY, …)`、`ctx.provide(IDENTITY_SOURCE_CAPABILITY, …)`、`ctx.provide(DIRECTORY_CAPABILITY, …)`。渠道与通讯录要在组织启用插件后才可用，登录经内核配置 `auth.loginSources` 启用。长连接（含多副本选主）、入站去重与持久排队、出站续投、卡片操作的授权都由内核做，插件只管协议转换。要点：三处的身份键 `<插件名>:<租户 id>` + 平台用户 id 必须一致；`onEvent` resolve 后才向平台确认；转义模型文本防 @所有人；通讯录列不全必须抛错。详见 `skills/writing-channels`，参考 `plugins/slack`、`plugins/lark`。
 
 ### 插件路由的匹配语义（`ctx.http.route`）
 
@@ -109,9 +159,16 @@ export default definePlugin({
 - 请求无法转成 Web `Request`（如畸形 `Host` 头）→ 400 `validation_failed`，到不了 handler。
 - 尾斜杠敏感：`/count` 与 `/count/` 是两条路由。
 - 未匹配 → 404 `not_found`；handler 抛错 → 500 `internal`（错误记日志，日志里的路径经脱敏：以 `cap_` 开头的路径段换成 `:redacted`；不回显给客户端）。
-- **插件路由不经内核鉴权**：没有 AuthGuard、不检查 CSRF 头、拿不到调用者身份（M4 再提供）。对外暴露的 webhook 必须自行验签。
+- **插件路由不经内核鉴权**：没有 AuthGuard、不检查 CSRF 头、拿不到调用者身份（尚未提供；清单的 `public` 目前只是声明，Ruling A2）。对外暴露的 webhook 必须自行验签。
 - **内核会话 Cookie 被剥掉**：转交前从 `Cookie` 头删去 `cap_at` / `cap_rt`（其余 Cookie 原样保留；只剩这两个时不带 `Cookie` 头），插件拿不到用户的内核会话。
 - 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
+- `req.signal` 只在响应写完之前客户端断开时中止（正常写完不会中止）：长连接（SSE）的 handler 用它退订、收尾。
+- **停机时内核中止所有进行中的插件请求**（`req.signal` 一齐 abort，此后到达的请求一开始就是中止的）：handler 要么很快结束，要么能容忍中止（收到 abort 就结束流、放弃未完成的工作；需要做完的事放进队列）。不响应 signal 的长连接会占用 http 停机预算，到时被强制断开。
+- 嵌入应用的路由放在 `/ui/` 下，网页经同源代理 `/plugin-ui/<插件>/...` 访问，代理只转发嵌入令牌、改写响应头与缓存，见 `skills/writing-plugin-ui`。
+
+### 界面（视图与嵌入应用）
+
+插件往网页加界面（对话页右侧标签、顶栏「扩展」里的组织页面）有两档：渲染 schema 视图（`ctx.ui.view`，参考 `plugins/todo`）与沙箱 iframe 里的嵌入应用（插件 `/ui/` 下的路由 + `ctx.ui.verifyEmbedToken`，参考 `plugins/example-board`）。清单、批准规则、积木与上限、嵌入令牌、`/plugin-ui` 代理、消息桥与测试写法都在 `skills/writing-plugin-ui`。
 
 ### 持久计数与幂等的写法（参考 example-counter）
 

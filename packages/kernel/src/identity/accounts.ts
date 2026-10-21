@@ -106,6 +106,7 @@ async function insertLocal(t: Trx, p: PreparedLocal): Promise<Account> {
         external_id: login,
         account_id: id,
         email: input.email ?? null,
+        linked_via: "local",
       })
       .execute();
   } catch (e) {

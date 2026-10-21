@@ -1,6 +1,5 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
@@ -9,8 +8,10 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -44,7 +45,7 @@ beforeAll(async () => {
   const db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   tokens = new ApiTokenService(db);
 }, 120_000);
 afterAll(async () => {
@@ -54,7 +55,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
 });
@@ -264,6 +265,7 @@ describe("Conversation HTTP", () => {
       ["GET", `${base}/${conv.id}`, undefined],
       ["GET", `${base}/${conv.id}/events`, undefined],
       ["POST", `${base}/${conv.id}/messages`, { text: "hi" }],
+      ["GET", `${base}/${conv.id}/outputs/00000000-0000-4000-8000-000000000000`, undefined],
     ] as const) {
       const res = await k.http.inject({ method, url, headers, ...(payload && { payload }) });
       expect(res.statusCode, `${method} ${url}`).toBe(403);
@@ -367,5 +369,120 @@ describe("Conversation HTTP", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("工具输出存档（GET .../conversations/:id/outputs/:outputId）", () => {
+  const outputsUrl = (orgId: string, convId: string, outputId: string, q = "") =>
+    `/api/v1/orgs/${orgId}/conversations/${convId}/outputs/${outputId}${q}`;
+  type OutputJson = {
+    output: { id: string; text: string; offset: number; totalChars: number; next: number | null };
+  };
+
+  it("自己的会话：200 全文；按字符分页（offset / limit，next 为下一页起点）", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const content = Array.from({ length: 50 }, (_, i) => `line ${i}`).join("\n");
+    const saved = await k.tools.outputs.save({
+      orgId,
+      conversationId: conv.id,
+      callId: "call_1",
+      content,
+    });
+    const all = await req({ method: "GET", url: outputsUrl(orgId, conv.id, saved.id) });
+    expect(all.statusCode).toBe(200);
+    expect((all.json() as OutputJson).output).toEqual({
+      id: saved.id,
+      text: content,
+      offset: 0,
+      totalChars: content.length,
+      next: null,
+    });
+    const page = await req({
+      method: "GET",
+      url: outputsUrl(orgId, conv.id, saved.id, "?offset=5&limit=10"),
+    });
+    expect(page.statusCode).toBe(200);
+    expect((page.json() as OutputJson).output).toMatchObject({
+      text: content.slice(5, 15),
+      offset: 5,
+      next: 15,
+    });
+    const bad = await req({
+      method: "GET",
+      url: outputsUrl(orgId, conv.id, saved.id, "?limit=0"),
+    });
+    expect(bad.statusCode).toBe(400);
+    // 每页上限 OUTPUT_PAGE_MAX_CHARS（200000）：恰好上限 200，超过 400
+    const max = await req({
+      method: "GET",
+      url: outputsUrl(orgId, conv.id, saved.id, "?limit=200000"),
+    });
+    expect(max.statusCode).toBe(200);
+    const over = await req({
+      method: "GET",
+      url: outputsUrl(orgId, conv.id, saved.id, "?limit=200001"),
+    });
+    expect(over.statusCode).toBe(400);
+    expect(errCode(over)).toBe("validation_failed");
+  });
+
+  it("过期的存档 → 404 conversation.output_not_found", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const saved = await k.tools.outputs.save({
+      orgId,
+      conversationId: conv.id,
+      callId: "call_1",
+      content: "old output",
+    });
+    await kernelDb(raw)
+      .updateTable("tool_outputs")
+      .set({ expires_at: new Date(Date.now() - 1000) })
+      .where("id", "=", saved.id)
+      .execute();
+    const res = await req({ method: "GET", url: outputsUrl(orgId, conv.id, saved.id) });
+    expect(res.statusCode).toBe(404);
+    expect(errCode(res)).toBe("conversation.output_not_found");
+    expect(res.body).not.toContain("old output");
+  });
+
+  it("别人的会话 → 404 conversation.not_found；别的会话的存档 → 404 conversation.output_not_found", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq);
+    const agentId = await createAgent(ownerReq, orgId);
+    const conv = await createConv(ownerReq, orgId, agentId);
+    const otherConv = await createConv(ownerReq, orgId, agentId);
+    const saved = await k.tools.outputs.save({
+      orgId,
+      conversationId: conv.id,
+      callId: "call_1",
+      content: "secret output",
+    });
+    const other = await memberSession(orgId, "other", "admin");
+    const theirs = await other.req({ method: "GET", url: outputsUrl(orgId, conv.id, saved.id) });
+    expect(theirs.statusCode).toBe(404);
+    expect(errCode(theirs)).toBe("conversation.not_found");
+    expect(theirs.body).not.toContain("secret output");
+
+    const elsewhere = await ownerReq({
+      method: "GET",
+      url: outputsUrl(orgId, otherConv.id, saved.id),
+    });
+    expect(elsewhere.statusCode).toBe(404);
+    expect(errCode(elsewhere)).toBe("conversation.output_not_found");
+
+    // id 不是 UUID：一律 404，不打到数据库
+    for (const url of [
+      outputsUrl(orgId, conv.id, "not-a-uuid"),
+      outputsUrl(orgId, "not-a-uuid", saved.id),
+    ]) {
+      const res = await ownerReq({ method: "GET", url });
+      expect(res.statusCode).toBe(404);
+    }
   });
 });

@@ -9,6 +9,7 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar, setCookies } from "../helpers/http.js";
 
 let pgc: TestContainer;
@@ -48,7 +49,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts");
   await redis.flushdb();
   admin = await accounts.createLocal({
     login: "admin",

@@ -1,14 +1,34 @@
 import { type KeyboardEvent, useRef } from "react";
 import type { ControlA11y } from "../controls/a11y";
-import { useDesignLink } from "../provider";
+import { useDesignLink, useDesignT } from "../provider";
 
-type TabItem = {
+export type TabItem = {
   id: string;
   label: string;
   count?: number | string;
+  /** 标签名后的计数徽标（如「2/4」），比 count 更醒目。 */
+  badge?: string;
+  /** 提醒标记（主色方点 + 读屏文字），如有待批准的操作。 */
+  alert?: boolean;
   disabled?: boolean;
   href?: string;
 };
+
+function TabExtras({ it }: { it: TabItem }) {
+  const t = useDesignT();
+  return (
+    <>
+      {it.count !== undefined ? <span className="cb-tab-count">{it.count}</span> : null}
+      {it.badge !== undefined ? <span className="cb-tab-badge">{it.badge}</span> : null}
+      {it.alert ? (
+        <span className="cb-tab-alert" data-alert="true">
+          <span aria-hidden="true">■</span>
+          <span className="cb-sr-only">{t("tabs.alert")}</span>
+        </span>
+      ) : null}
+    </>
+  );
+}
 
 export type TabsProps = {
   items: TabItem[];
@@ -37,7 +57,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
                 data-state={current ? "selected" : "disabled"}
               >
                 {it.label}
-                {it.count !== undefined ? <span className="cb-tab-count">{it.count}</span> : null}
+                <TabExtras it={it} />
               </a>
             );
           }
@@ -49,7 +69,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
               aria-current={current ? "page" : undefined}
             >
               {it.label}
-              {it.count !== undefined ? <span className="cb-tab-count">{it.count}</span> : null}
+              <TabExtras it={it} />
             </Link>
           );
         })}
@@ -91,7 +111,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             onClick={() => onChange?.(it.id)}
           >
             {it.label}
-            {it.count !== undefined ? <span className="cb-tab-count">{it.count}</span> : null}
+            <TabExtras it={it} />
           </button>
         );
       })}

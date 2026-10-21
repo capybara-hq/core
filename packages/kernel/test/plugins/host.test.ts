@@ -11,6 +11,7 @@ import { z } from "zod";
 import { createBusSubscriber } from "../../src/ctx/bus.js";
 import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
+import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { deploymentConfigHash, PluginHost } from "../../src/plugins/host.js";
@@ -23,14 +24,13 @@ vi.mock("../../src/ctx/create-ctx.js", async (importOriginal) => {
     createPluginContext: (...args: Parameters<typeof real.createPluginContext>) => {
       const ctx = real.createPluginContext(...args);
       if (args[1].name !== "closefail") return ctx;
+      // 不能展开 ctx：未声明的成员（如 secrets）是访问即抛错的 getter
       const close = ctx.close;
-      return {
-        ...ctx,
-        async close() {
-          await close();
-          throw new Error("close boom");
-        },
+      ctx.close = async () => {
+        await close();
+        throw new Error("close boom");
       };
+      return ctx;
     },
   };
 });
@@ -45,7 +45,8 @@ const hosts: PluginHost[] = [];
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = (cfg: Record<string, unknown> = {}, opts?: { resolveFrom?: string }) => {
-  const h = new PluginHost(deps, cfg, opts);
+  // 本文件只测加载机制：自动批准权限（闸门本身见 approvals.test.ts）
+  const h = new PluginHost(deps, cfg, { autoApprove: true, ...opts });
   hosts.push(h);
   return h;
 };
@@ -60,6 +61,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
   [pg, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  // 宿主读写插件权限快照（内核表）
+  await migrate(pg.url, {
+    schema: "capybara",
+    dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
+  });
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   deps = {
@@ -225,7 +231,7 @@ describe("PluginHost 配置加固", () => {
     const h = new PluginHost(
       { ...deps, log: real },
       { secretcfg: { token: "s3cr3t-value" } },
-      { onSecrets: (v) => real.addSecrets(v) },
+      { onSecrets: (v) => real.addSecrets(v), autoApprove: true },
     );
     hosts.push(h);
     await h.load([fx("secretcfg")]);
@@ -363,7 +369,18 @@ describe("createPluginContext 规则", () => {
   });
 
   it("http.route：路径必须以 / 开头、拒绝重复、带前缀", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createPluginContext(
+      deps,
+      mf({
+        permissions: {
+          http: [
+            { method: "GET", path: "/a" },
+            { method: "POST", path: "/a" },
+          ],
+        },
+      }),
+      {},
+    );
     const h = async () => new Response("ok");
     expect(() => ctx.http.route("GET", "x", h)).toThrow(/start with/);
     ctx.http.route("GET", "/a", h);
@@ -384,20 +401,29 @@ describe("createPluginContext 规则", () => {
 
 describe("PluginHost.migrateOnly", () => {
   it("只跑迁移、不调用 setup；返回每个有迁移的插件", async () => {
-    const r = await PluginHost.migrateOnly([fx("fixture"), fx("throws")], { dbUrl: deps.dbUrl });
+    const r = await PluginHost.migrateOnly([fx("fixture"), fx("throws")], {
+      dbUrl: deps.dbUrl,
+      autoApprove: true,
+    });
     expect(r.map((x) => x.plugin)).toEqual(["fixture"]);
     expect(r[0]?.schema).toBe("plugin_fixture");
   });
 
   it("插件的 secret 不在对象路径叶子上：同样拒绝（不迁移）", async () => {
     await expect(
-      PluginHost.migrateOnly([fx("fixture2"), fx("secretunion")], { dbUrl: deps.dbUrl }),
+      PluginHost.migrateOnly([fx("fixture2"), fx("secretunion")], {
+        dbUrl: deps.dbUrl,
+        autoApprove: true,
+      }),
     ).rejects.toThrow(/plugin secretunion: config\.org: secret\(\) at "auth<union#1>\.token"/);
   });
 
   it("依赖解析失败同样报错（不迁移）", async () => {
     await expect(
-      PluginHost.migrateOnly([fx("fixture"), fx("fixture")], { dbUrl: deps.dbUrl }),
+      PluginHost.migrateOnly([fx("fixture"), fx("fixture")], {
+        dbUrl: deps.dbUrl,
+        autoApprove: true,
+      }),
     ).rejects.toThrow(/more than once/);
   });
 });

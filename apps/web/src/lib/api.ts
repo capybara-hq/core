@@ -35,6 +35,8 @@ export class ApiClientError extends Error {
     readonly code: string,
     message: string,
     readonly details: ApiErrorDetail[] = [],
+    /** 错误信封里原样的 `details`（如 `plugin.dependency_missing` 的 `{ capability }`）。 */
+    readonly rawDetails: unknown[] = [],
   ) {
     super(message);
     this.name = "ApiClientError";
@@ -85,6 +87,7 @@ async function toError(res: Response): Promise<ApiClientError> {
         code,
         typeof message === "string" ? message : code,
         toDetails(details),
+        Array.isArray(details) ? details : [],
       );
     }
   } catch {
@@ -131,4 +134,11 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
   if (!res.ok) throw await toError(res);
   return parse<T>(res);
+}
+
+/** 错误的逐项明细（如 `plugin.config_invalid` 的 `{ path, message }`）排成 `path: message` 行。 */
+export function issueLines(e: unknown): string[] {
+  return e instanceof ApiClientError
+    ? e.details.map((d) => (d.path === "" ? d.message : `${d.path}: ${d.message}`))
+    : [];
 }

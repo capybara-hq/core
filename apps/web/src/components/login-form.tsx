@@ -1,8 +1,15 @@
 "use client";
 
-import { Button, Field, Input, Stack } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
-import { type FormEvent, useState } from "react";
+import { Button, Field, Input, Stack, Text } from "@capybara-hq/design";
+import { useLocale, useTranslations } from "next-intl";
+import { type FormEvent, useEffect, useState } from "react";
+import {
+  type AuthSource,
+  type LoginErrorCode,
+  listAuthSources,
+  ssoStartUrl,
+} from "../lib/auth-sources";
+import { navigateBrowser } from "../lib/browser";
 import { login } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
@@ -58,5 +65,51 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
         </Button>
       </Stack>
     </form>
+  );
+}
+
+/** 第三方登录回跳带回的原因码 → 译文（只显示自己的文案，不回显身份源的任何文本）。 */
+export function LoginErrorNotice({ code }: { code: LoginErrorCode }) {
+  const t = useTranslations("login.ssoError");
+  return <FormError message={t(code)} />;
+}
+
+/**
+ * 第三方登录按钮：按 `GET /api/v1/auth/sources` 渲染，点击整页跳到内核的发起地址（带回跳页面）。
+ * 没有可用的身份源（或读取失败）时不渲染任何东西。
+ */
+export function SsoButtons({ returnTo }: { returnTo: string }) {
+  const t = useTranslations("login");
+  const locale = useLocale();
+  const [sources, setSources] = useState<AuthSource[]>([]);
+  useEffect(() => {
+    let disposed = false;
+    listAuthSources().then(
+      (r) => {
+        if (!disposed) setSources(r.sources);
+      },
+      // 读取失败不影响本地登录
+      () => {},
+    );
+    return () => {
+      disposed = true;
+    };
+  }, []);
+  if (sources.length === 0) return null;
+  return (
+    <Stack gap={8}>
+      <Text variant="small" tone="muted">
+        {t("or")}
+      </Text>
+      {sources.map((s) => (
+        <Button
+          key={s.plugin}
+          size={36}
+          onClick={() => navigateBrowser(ssoStartUrl(s.plugin, returnTo))}
+        >
+          {t("sso", { name: locale === "zh" ? s.label.zh : s.label.en })}
+        </Button>
+      ))}
+    </Stack>
   );
 }

@@ -33,6 +33,9 @@ const PUBLIC_ROUTES = new Set([
   "GET /api/v1/setup",
   "POST /api/v1/setup",
   "GET /api/v1/oauth/callback",
+  "GET /api/v1/auth/sources",
+  "GET /api/v1/auth/sso/:plugin/start",
+  "GET /api/v1/auth/sso/:plugin/callback",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
@@ -114,7 +117,10 @@ beforeAll(async () => {
           approvals: k.tools.approvals,
           questions: k.tools.questions,
           drift: k.tools.drift,
+          outputs: k.tools.outputs,
           appContent: k.tools.appContent,
+          identity: k.identity,
+          channels: k.channels.connections,
           runs: {
             ensureRun: async () => null,
             abortIfOrphaned: async () => false,

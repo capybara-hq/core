@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBusSubscriber } from "../../src/ctx/bus.js";
 import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
+import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { PluginHost } from "../../src/plugins/host.js";
 
@@ -21,6 +22,11 @@ const quiet = { info() {}, warn() {}, error() {} };
 
 beforeAll(async () => {
   [pg, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  // 宿主读写插件权限快照（内核表）
+  await migrate(pg.url, {
+    schema: "capybara",
+    dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
+  });
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   deps = {
@@ -44,7 +50,7 @@ afterAll(async () => {
 
 describe("ctx.tools.register", () => {
   it("收集规则：非法名 / 空描述 / 重复抛错，合法的按序收集；host.tools() 列出", async () => {
-    const h = new PluginHost(deps);
+    const h = new PluginHost(deps, {}, { autoApprove: true });
     hosts.push(h);
     await h.load([fx("tools-probe")]);
     const { errors } = h.get<{ errors: string[] }>("counter@1", "tools-probe");
@@ -64,7 +70,7 @@ describe("ctx.tools.register", () => {
   });
 
   it("setup 完成后注册抛错", async () => {
-    const h = new PluginHost(deps);
+    const h = new PluginHost(deps, {}, { autoApprove: true });
     hosts.push(h);
     await h.load([fx("tools-probe")]);
     const ctx = (globalThis as { __probeCtx?: PluginContext }).__probeCtx as PluginContext;
@@ -77,7 +83,7 @@ describe("ctx.tools.register", () => {
   });
 
   it("没有注册工具的插件不出现在 host.tools()", async () => {
-    const h = new PluginHost(deps);
+    const h = new PluginHost(deps, {}, { autoApprove: true });
     hosts.push(h);
     await h.load([fx("fixture2")]);
     expect(h.tools()).toEqual([]);

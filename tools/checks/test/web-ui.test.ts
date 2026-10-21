@@ -78,6 +78,9 @@ describe("checkWebUi", () => {
     one("create-element-style", "web-ui-style", 7));
   it("JSX class 属性 -> web-ui-class-name", () => one("class-attr", "web-ui-class-name", 6));
   it("<style> 元素 -> web-ui-style", () => one("style-element", "web-ui-style", 6));
+  it("<iframe> 元素 -> web-ui-iframe", () => one("iframe-element", "web-ui-iframe", 6));
+  it('createElement("iframe") -> web-ui-iframe', () =>
+    one("create-element-iframe", "web-ui-iframe", 7));
   it("别名导入的模板通过", () => expect(run("aliased-template")).toEqual([]));
   it("本地同名组件不算模板", () => one("local-template", "web-ui-template"));
   it("styled-components 导入 -> web-ui-import", () => one("styled-import", "web-ui-import", 1));

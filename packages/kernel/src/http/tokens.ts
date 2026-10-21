@@ -61,6 +61,9 @@ export const EVENT_LOG = Symbol("EVENT_LOG");
 /** `ConversationsService` 的注入令牌。 */
 export const CONVERSATIONS = Symbol("CONVERSATIONS");
 
+/** `ConversationOutputs`（网页读工具输出存档）的注入令牌。 */
+export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
+
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
 
@@ -84,3 +87,29 @@ export const QUESTIONS = Symbol("QUESTIONS");
 
 /** `OAuthFlow`（OAuth 授权码连接流程）的注入令牌。 */
 export const OAUTH_FLOW = Symbol("OAUTH_FLOW");
+
+/** `ExternalIdentities`（外部身份 ↔ 账号）的注入令牌。 */
+export const EXTERNAL_IDENTITIES = Symbol("EXTERNAL_IDENTITIES");
+
+/** `IdentityBinding`（IM 身份的一次性绑定链接）的注入令牌。 */
+export const IDENTITY_BINDING = Symbol("IDENTITY_BINDING");
+
+/** `SsoFlow`（第三方登录）的注入令牌。 */
+export const SSO_FLOW = Symbol("SSO_FLOW");
+
+/** `Offboarding`（成员离职处理）的注入令牌。 */
+export const OFFBOARDING = Symbol("OFFBOARDING");
+
+/** `ChannelConnections`（组织的渠道连接）的注入令牌。 */
+export const CHANNEL_CONNECTIONS = Symbol("CHANNEL_CONNECTIONS");
+
+/** `DirectorySync`（通讯录同步）的注入令牌。 */
+export const DIRECTORY_SYNC = Symbol("DIRECTORY_SYNC");
+
+/** `UiViews`（插件视图：列出贡献、render / action）的注入令牌。 */
+export const UI_VIEWS = Symbol("UI_VIEWS");
+/** `EmbedTokens`（嵌入应用的短期令牌，签发 / 校验）的注入令牌。 */
+export const EMBED_TOKENS = Symbol("EMBED_TOKENS");
+
+/** `OrgUiStreams`（组织级界面刷新 SSE）的注入令牌。 */
+export const ORG_UI_STREAMS = Symbol("ORG_UI_STREAMS");

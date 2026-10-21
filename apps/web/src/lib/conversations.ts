@@ -39,6 +39,11 @@ export interface InputForm {
 
 export type FormAnswer = Record<string, string | number | boolean | string[]>;
 
+/** `tool_result` 的显示摘要（plugin-sdk `ToolResult.display`）。 */
+export interface ToolDisplay {
+  summary: { zh: string; en: string };
+}
+
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other" | "aborted";
 
 type EventBody =
@@ -58,7 +63,19 @@ type EventBody =
       type: "assistant_message";
       payload: { step: number; content: ContentBlock[]; stopReason: StopReason };
     }
-  | { type: "usage"; payload: { step: number } }
+  | {
+      type: "usage";
+      payload: {
+        step: number;
+        provider: string;
+        model: string;
+        /** 未缓存的输入；输入总量 = inputTokens + cacheReadTokens + cacheWriteTokens。 */
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens: number;
+        cacheWriteTokens: number;
+      };
+    }
   | { type: "reminder"; payload: { step: number; text: string } }
   | {
       type: "tool_call_started";
@@ -75,6 +92,8 @@ type EventBody =
         outputId?: string;
         contentTypes?: string[];
         loadedTools?: string[];
+        /** 工具给的一句说明（中英各一份，只用于显示，不进模型上下文）。 */
+        display?: ToolDisplay;
       };
     }
   | {
@@ -214,3 +233,39 @@ export const abortRun = (orgId: string, id: string) =>
 /** 会话事件流的 URL（SSE，经同源代理）。 */
 export const streamUrl = (orgId: string, id: string, after: number) =>
   `${one(orgId, id)}/stream?after=${after}`;
+
+/** 工具输出存档的一页（内核按字符分页；`next` 为下一页的 offset，已到末尾为 null）。 */
+export interface OutputPage {
+  id: string;
+  text: string;
+  offset: number;
+  totalChars: number;
+  next: number | null;
+}
+
+/** 网页读存档时最多取的页数（每页至多 20 万字符），再多就只显示已取到的部分。 */
+export const OUTPUT_MAX_PAGES = 5;
+
+/**
+ * 读工具输出存档的全文（`GET .../conversations/:id/outputs/:outputId`，逐页）：
+ * 会话不可见 → `conversation.not_found`；存档不属于该会话或已过期 → `conversation.output_not_found`。
+ * 超过 {@link OUTPUT_MAX_PAGES} 页时 `complete` 为 false。
+ */
+export async function readToolOutput(
+  orgId: string,
+  conversationId: string,
+  outputId: string,
+): Promise<{ text: string; complete: boolean }> {
+  let text = "";
+  let offset = 0;
+  for (let page = 0; page < OUTPUT_MAX_PAGES; page++) {
+    const q = offset === 0 ? "" : `?offset=${offset}`;
+    const { output } = await apiFetch<{ output: OutputPage }>(
+      `${one(orgId, conversationId)}/outputs/${encodeURIComponent(outputId)}${q}`,
+    );
+    text += output.text;
+    if (output.next === null) return { text, complete: true };
+    offset = output.next;
+  }
+  return { text, complete: false };
+}

@@ -4,7 +4,12 @@ import { resolvePlugins } from "../../src/plugins/resolve.js";
 
 const mk = (
   name: string,
-  o: { provides?: CapabilityRef[]; requires?: CapabilityRef[]; sdk?: string } = {},
+  o: {
+    provides?: CapabilityRef[];
+    requires?: CapabilityRef[];
+    optional?: CapabilityRef[];
+    sdk?: string;
+  } = {},
 ): PluginManifest =>
   definePlugin({
     name,
@@ -12,6 +17,7 @@ const mk = (
     sdk: o.sdk ?? "^0.1.0",
     provides: o.provides ?? [],
     ...(o.requires ? { requires: o.requires } : {}),
+    ...(o.optional ? { optional: o.optional } : {}),
     setup() {},
   });
 
@@ -20,6 +26,23 @@ describe("resolvePlugins", () => {
     const a = mk("aa", { requires: ["counter@1"] });
     const b = mk("bb", { provides: ["counter@1"] });
     expect(resolvePlugins([a, b], "0.1.0").map((m) => m.name)).toEqual(["bb", "aa"]);
+  });
+
+  it("optional 缺提供方不报错", () => {
+    const a = mk("aa", { optional: ["directory@1"] });
+    expect(resolvePlugins([a], "0.1.0").map((m) => m.name)).toEqual(["aa"]);
+  });
+
+  it("optional 存在提供方时参与拓扑排序", () => {
+    const a = mk("aa", { optional: ["directory@1"] });
+    const b = mk("bb", { provides: ["directory@1"] });
+    expect(resolvePlugins([a, b], "0.1.0").map((m) => m.name)).toEqual(["bb", "aa"]);
+  });
+
+  it("optional 同样参与环检测", () => {
+    const a = mk("aa", { provides: ["channel@1"], optional: ["directory@1"] });
+    const b = mk("bb", { provides: ["directory@1"], requires: ["channel@1"] });
+    expect(() => resolvePlugins([a, b], "0.1.0")).toThrow(/cycle/);
   });
 
   it("缺提供方：信息含能力名与插件名", () => {

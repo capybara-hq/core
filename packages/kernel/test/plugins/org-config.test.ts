@@ -14,10 +14,12 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import { PluginHost } from "../../src/plugins/host.js";
 import { OrgPluginConfigs } from "../../src/plugins/org-config.js";
+import { truncateTables } from "../helpers/db.js";
+import { testMembers } from "../helpers/members.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -65,12 +67,12 @@ beforeAll(async () => {
     runWorkers: false,
     log: silent,
   };
-  host = new PluginHost(deps, {});
+  host = new PluginHost(deps, {}, { autoApprove: true });
   await host.load([fx("fixture"), fx("orgcfg")]);
   svc = new OrgPluginConfigs(db, keyring, host);
   accounts = new AccountsService(db);
   orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
-  members = new MembersService(db);
+  members = testMembers(db);
 }, 120_000);
 afterAll(async () => {
   await host?.close();
@@ -80,7 +82,7 @@ afterAll(async () => {
   await Promise.all([pg?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   A = await accounts.createLocal({ login: "usera", password: PW, displayName: "A" });
   B = await accounts.createLocal({ login: "userb", password: PW, displayName: "B" });
   org = await orgs.create({ name: "Acme", slug: "acme" }, A);
@@ -166,7 +168,7 @@ describe("OrgPluginConfigs", () => {
     const list = await svc.list(org.id);
     expect(list.map((v) => v.plugin)).toEqual(["fixture", "orgcfg"]);
     const fixture = list.find((v) => v.plugin === "fixture");
-    expect(fixture).toEqual({
+    expect(fixture).toMatchObject({
       plugin: "fixture",
       version: "0.1.0",
       enabled: false,
@@ -385,7 +387,7 @@ describe("OrgPluginConfigs", () => {
           .execute()
       ).length;
     expect(await count("plugin-config:orgcfg:webhook.token")).toBe(1);
-    const slim = new PluginHost(deps, {});
+    const slim = new PluginHost(deps, {}, { autoApprove: true });
     await slim.load([fx("orgcfg-slim")]);
     try {
       const svc2 = new OrgPluginConfigs(db, keyring, slim);

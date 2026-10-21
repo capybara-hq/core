@@ -6,6 +6,8 @@ export default definePlugin({
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: ["counter@1"],
+  // bad name / empty 在规格校验时即被拒，无需声明；late 在 setup 之后注册（被封存拒绝）
+  permissions: { tools: ["echo", "second"] },
   setup(ctx: PluginContext) {
     (globalThis as { __probeCtx?: PluginContext }).__probeCtx = ctx;
     const spec = (name: string, description = "Probe tool.") => ({

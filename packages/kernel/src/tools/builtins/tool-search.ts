@@ -148,6 +148,16 @@ interface SearchInput {
   limit?: number;
 }
 
+/** 显示摘要里的查询词上限（码点）：摘要整体须 ≤ 200 码点（`validateToolDisplay`）。 */
+const DISPLAY_QUERY_MAX = 120;
+
+/** 摘要里的查询词：压成一行，超长按码点截断加省略号。 */
+function displayQuery(query: string): string {
+  const one = query.replace(/\s+/g, " ").trim();
+  const cps = [...one];
+  return cps.length > DISPLAY_QUERY_MAX ? `${cps.slice(0, DISPLAY_QUERY_MAX - 1).join("")}…` : one;
+}
+
 /**
  * 内置工具 `tool_search`（spec 5.5）：在本次运行可用、但未直接加载的工具中按关键词搜索，返回完整定义，
  * 并在结果里带 `loadedTools`（管线写进 `tool_result.loadedTools`；已加载集合只由日志还原）。
@@ -161,6 +171,7 @@ export function toolSearchTool(): BuiltinTool {
       const { query, limit = DEFAULT_LIMIT } = input as SearchInput;
       const catalog = (ctx.tools ?? []).filter((t) => !isAlwaysLoaded(t.key));
       const found = searchTools(query, catalog, limit);
+      const q = displayQuery(query);
       if (found.length === 0) {
         return {
           content: [
@@ -170,12 +181,21 @@ export function toolSearchTool(): BuiltinTool {
             },
           ],
           loadedTools: [],
+          display: {
+            summary: { zh: `搜索工具「${q}」· 无匹配`, en: `Searched tools for "${q}" · no match` },
+          },
         };
       }
       const head = `Loaded ${found.length} tool${found.length === 1 ? "" : "s"}. You can call ${found.length === 1 ? "it" : "them"} from your next step.`;
       return {
         content: [{ type: "text", text: [head, ...found.map(definitionText)].join("\n\n") }],
         loadedTools: found.map((t) => t.key),
+        display: {
+          summary: {
+            zh: `搜索工具「${q}」· 加载 ${found.length} 个`,
+            en: `Searched tools for "${q}" · loaded ${found.length}`,
+          },
+        },
       };
     },
   };

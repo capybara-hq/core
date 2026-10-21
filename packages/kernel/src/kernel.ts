@@ -1,10 +1,20 @@
 import { fileURLToPath } from "node:url";
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import {
+  CHANNEL_CAPABILITY,
+  DIRECTORY_CAPABILITY,
+  type PluginContext,
+} from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
+import { AgentsService } from "./agents/agents.service.js";
+import { ChannelConnections } from "./channels/connections.service.js";
+import { ChannelInbound } from "./channels/inbound.js";
+import { ChannelOutbound } from "./channels/outbound.js";
+import { ChannelSupervisor } from "./channels/supervisor.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
+import { ConversationsService } from "./conversations/conversations.service.js";
 import {
   type ConversationBusMessage,
   conversationTopic,
@@ -19,8 +29,15 @@ import { createDb } from "./db/pool.js";
 import { ApiModule } from "./http/api.module.js";
 import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
 import { AccountsService } from "./identity/accounts.js";
+import { IdentityBinding } from "./identity/binding.js";
+import { ExternalIdentities } from "./identity/external.js";
+import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
+import { SsoFlow } from "./identity/sso.js";
 import { createLogger, type KernelLogger } from "./log.js";
+import { DirectorySync } from "./orgs/directory-sync.js";
+import { Offboarding } from "./orgs/offboarding.js";
+import type { PendingPlugin } from "./plugins/approvals.js";
 import { PluginHost } from "./plugins/host.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
 import { RunAbort } from "./runtime/abort.js";
@@ -77,6 +94,9 @@ export const STOP_BUDGET_MS = {
   plugins: 5_000,
 } as const;
 
+/** 停机时留给渠道长连接交还租约的最少时间（与 runs 阶段并行开始，runs 用尽预算时仍保底）。 */
+const CHANNELS_STOP_MIN_MS = 2_000;
+
 /** runs 阶段里留给强制关闭 worker 的余量（预算的其余部分用于等运行到达步骤边界）。 */
 const RUNS_FORCE_CLOSE_MS = 500;
 
@@ -114,6 +134,30 @@ export interface KernelTools {
   readonly appContent: AppContent;
 }
 
+/** 外部身份相关的内核服务（渠道运行时、通讯录同步与 HTTP 共用）。 */
+export interface KernelIdentity {
+  /** 外部身份 ↔ 账号（登录、渠道入站、通讯录共用 `(source, externalId)` 键）。 */
+  readonly external: ExternalIdentities;
+  /** IM 身份的一次性绑定链接。 */
+  readonly binding: IdentityBinding;
+  /** 第三方登录（`identity-source@1`）。 */
+  readonly sso: SsoFlow;
+  /** 成员离职处理（移出、离开、通讯录同步共用）。 */
+  readonly offboarding: Offboarding;
+  /** 通讯录同步（`directory@1`：每小时扫描、手动、`directory_changed` 提示）。 */
+  readonly directory: DirectorySync;
+}
+
+/** 渠道运行时（连接、入站、出站投递）。 */
+export interface KernelChannels {
+  /** 组织的渠道连接（CRUD、运行时配置、出站会话 `outbound` / `send`）。 */
+  readonly connections: ChannelConnections;
+  /** 出站投递与入站任务（队列 `cap-kernel-channels`；worker 角色消费）。 */
+  readonly outbound: ChannelOutbound;
+  /** 入站事件：`onEvent`（插件 `connect` 的回调，去重并入队）与 `handle`（worker 上处理入站任务）。 */
+  readonly inbound: ChannelInbound;
+}
+
 /** 运行中的内核实例。 */
 export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
@@ -127,6 +171,10 @@ export interface Kernel {
   readonly runs: KernelRuns;
   /** 工具注册表与应用凭据。 */
   readonly tools: KernelTools;
+  /** 外部身份、绑定、第三方登录与离职处理。 */
+  readonly identity: KernelIdentity;
+  /** 渠道连接与入站。 */
+  readonly channels: KernelChannels;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -167,6 +215,9 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "log.level": (k, v) => k.log.setLevel(String(v)),
   // 并发上限由运行时在每次取额度时经 `config()` 读取当前值，替换配置即生效，无需额外动作。
   "runtime.orgConcurrency": () => {},
+  // 登录方式与受信任的身份源在每次请求时经 `config()` 读取，替换配置即生效。
+  "auth.loginSources": () => {},
+  "auth.trustedIdentitySources": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
@@ -175,10 +226,13 @@ const HOT_PATHS = configFields(KernelConfigSchema)
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。 */
+/**
+ * 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。
+ * 权限待批准的插件不迁移（`pluginPermissions.autoApprove` 时除外），经 `opts.onPending` 报告。
+ */
 export async function migrateAll(
   config: KernelConfig,
-  opts: { resolveFrom?: string } = {},
+  opts: { resolveFrom?: string; onPending?: (pending: PendingPlugin[]) => void } = {},
 ): Promise<{ schema: string; plugin?: string; applied: string[] }[]> {
   const connectTimeoutMs = config.db.connectTimeoutMs;
   const kernel = await migrate(
@@ -189,7 +243,9 @@ export async function migrateAll(
   const plugins = await PluginHost.migrateOnly(config.plugins, {
     dbUrl: config.db.url,
     connectTimeoutMs,
+    autoApprove: config.pluginPermissions.autoApprove,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+    ...(opts.onPending !== undefined && { onPending: opts.onPending }),
   });
   return [{ schema: KERNEL_SCHEMA, applied: kernel.applied }, ...plugins];
 }
@@ -246,14 +302,20 @@ export async function createKernel(
   const host = new PluginHost(deps, config.pluginConfig, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
+    autoApprove: config.pluginPermissions.autoApprove,
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),
+    // 组织停用插件：该插件的渠道连接立即断开（扫描复核只是兜底）
+    afterPut: async (orgId, plugin, enabled) => {
+      if (!enabled) await channelConnections.notifyOrgChanged(orgId, plugin);
+    },
   });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   const kdb = kernelDb(db);
   const bus = createBus(redis, busSubscriber, "kernel", log);
-  const eventLog = new EventLog(kdb, bus, log);
+  // 每次日志推进后给有 IM 投递目标的会话排出站任务（任务追上后空闲即结束，之后的事件靠这里续上）
+  const eventLog = new EventLog(kdb, bus, log, (conversationId) => enqueueOutbound(conversationId));
   const registry = new ProviderRegistry(host, redis, log);
   const credentials = new Credentials(kdb, keyring, log, { redis, config: () => current });
   const toolOutputs = new ToolOutputs(kdb, () => current);
@@ -278,6 +340,7 @@ export async function createKernel(
     log,
     onDecided: async (a) => {
       await waits.resume(a.runId, a.id);
+      enqueueOutbound(a.conversationId);
     },
   });
   const questions = new QuestionsService({
@@ -287,6 +350,7 @@ export async function createKernel(
     log,
     onAnswered: async (q) => {
       await waits.resume(q.runId, q.id);
+      enqueueOutbound(q.conversationId);
     },
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
@@ -350,25 +414,148 @@ export async function createKernel(
     maintenance,
     log,
   });
+  const external = new ExternalIdentities(kdb, () => current);
+  const offboarding = new Offboarding({
+    credentials,
+    approvals,
+    questions,
+    // Ruling A24：手动移出 / 离开时对该组织启用的每个通讯录插件写排除
+    directoryPlugins: () =>
+      host
+        .list("directory")
+        .filter((e) => e.capability === DIRECTORY_CAPABILITY)
+        .map((e) => e.plugin),
+    // 只用来写吊销标记（Redis 快速路径）；会话签发仍在 HTTP 层
+    sessions: new SessionService(kdb, redis, keyring, {
+      accessTtlSeconds: config.auth.accessTokenTtlSeconds,
+      refreshTtlDays: config.auth.refreshTokenTtlDays,
+    }),
+    eventLog,
+    runs: {
+      abortWaiting: async (c, runId, by) => {
+        const r = await waits.abortWaiting(c, runId, by);
+        enqueueOutbound(c);
+        return r;
+      },
+      abortIfOrphaned: (c, runId, by) => runQueue.abortIfOrphaned(c, runId, by),
+      requestAbort: (runId, by) => abort.request(runId, by),
+    },
+    db: kdb,
+    redis,
+    maintenance,
+    log,
+  });
+  const identity: KernelIdentity = {
+    external,
+    binding: new IdentityBinding({ db: kdb, redis, config: () => current, external }),
+    sso: new SsoFlow({ redis, config: () => current, host, external, log }),
+    offboarding,
+    // 通讯录同步：登记每小时扫描与同步任务（worker 角色执行）；手动与 directory_changed 也经它投递
+    directory: new DirectorySync({
+      db: kdb,
+      redis,
+      host,
+      orgPluginConfigs,
+      external,
+      offboarding,
+      maintenance,
+      log,
+    }),
+  };
+  const runControl = {
+    ensureRun: (id: string) => runQueue.ensureRun(id),
+    abortIfOrphaned: (id: string, runId: string, by: string) =>
+      runQueue.abortIfOrphaned(id, runId, by),
+    // 等待中被中止：审批 / 提问卡片变为已取消，排一个出站任务去更新
+    abortWaiting: async (id: string, runId: string, by: string) => {
+      const r = await waits.abortWaiting(id, runId, by);
+      enqueueOutbound(id);
+      return r;
+    },
+    requestAbort: (runId: string, by: string) => abort.request(runId, by),
+  };
+  const channelConnections = new ChannelConnections({
+    db: kdb,
+    keyring,
+    host,
+    bus,
+    redis,
+    log,
+    onSecrets: (v) => log.addOrgSecrets(v),
+    onResume: (id) => channelOutbound.resumeConnection(id),
+  });
+  const channelOutbound = new ChannelOutbound({
+    db: kdb,
+    redis,
+    redisUrl: config.redis.url,
+    bus,
+    eventLog,
+    connections: channelConnections,
+    approvals,
+    questions,
+    config: () => current,
+    log,
+    // 入站任务（Ruling A21）在同一队列的 worker 上处理
+    inbound: (id, e) => channels.inbound.handle(id, e),
+  });
+  /** 会话有 IM 投递目标时排一个出站任务（审批 / 回答 / 运行开始后）；失败只记日志。 */
+  function enqueueOutbound(conversationId: string): void {
+    channelOutbound
+      .enqueue(conversationId)
+      .catch((err) => log.warn("cannot enqueue channel delivery", { conversationId, err }));
+  }
+  const channels: KernelChannels = {
+    connections: channelConnections,
+    outbound: channelOutbound,
+    inbound: new ChannelInbound({
+      db: kdb,
+      redis,
+      connections: channelConnections,
+      conversations: new ConversationsService(
+        kdb,
+        eventLog,
+        new AgentsService(kdb, registry, toolRegistry),
+        runControl,
+        log,
+      ),
+      external,
+      binding: identity.binding,
+      directorySync: identity.directory,
+      outbound: channelOutbound,
+      queue: channelOutbound,
+      approvals,
+      questions,
+      log,
+    }),
+  };
+  let channelSupervisor: ChannelSupervisor | undefined;
   const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
    * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
    */
-  const sinkFor =
-    (conversationId: string): StreamSink =>
-    (d) => {
+  const sinkFor = (conversationId: string): StreamSink => {
+    // 本次运行执行中推出的文本字符数（按步，step_reset 清零）：本进程正在执行的这次运行自己的计数
+    let at = { runId: "", step: -1, chars: 0 };
+    return (d) => {
+      if (at.runId !== d.runId || at.step !== d.step || d.kind === "step_reset") {
+        at = { runId: d.runId, step: d.step, chars: 0 };
+      }
+      const offset = at.chars;
+      if (d.kind === "text") at.chars += d.text?.length ?? 0;
       const msg: ConversationBusMessage = {
         kind: "delta",
         runId: d.runId,
         step: d.step,
         delta: d.kind,
         ...(d.text !== undefined && { text: d.text }),
+        ...(d.kind === "text" && { offset }),
       };
       bus
         .publish(conversationTopic(conversationId), msg)
         .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
     };
+  };
   const stepDeps: LoopDeps = {
     db: kdb,
     eventLog,
@@ -431,13 +618,11 @@ export async function createKernel(
         approvals,
         questions,
         drift: toolDrift,
+        outputs: toolOutputs,
         appContent,
-        runs: {
-          ensureRun: (id) => runQueue.ensureRun(id),
-          abortIfOrphaned: (id, runId, by) => runQueue.abortIfOrphaned(id, runId, by),
-          abortWaiting: (id, runId, by) => waits.abortWaiting(id, runId, by),
-          requestAbort: (runId, by) => abort.request(runId, by),
-        },
+        identity,
+        channels: channelConnections,
+        runs: runControl,
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
@@ -523,6 +708,8 @@ export async function createKernel(
     // 宿主关闭时中止插件迁移、立即关闭 setup 中的 ctx；其余启动步骤在 checkpoint 处退出。
     // 正在进行的 listen 要先等完，否则关闭会与监听交错留下端口。
     startAbort.abort();
+    // 先中止进行中的插件请求（SSE 等长连接据 req.signal 收尾），否则它们会占满 http 阶段的预算
+    httpApp.abortPluginRequests();
     if (migratePromise)
       await within(
         "migrate",
@@ -545,12 +732,28 @@ export async function createKernel(
     }
     port = undefined;
     // runs 阶段：停止领取运行、让本进程的运行在步骤边界停下并回到队列；再关闭运行队列的生产方连接。
+    // 渠道长连接与之并行停止（中止 connect、释放租约），必须在插件关闭之前。
     const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
+    const channelsStopped = channelSupervisor?.stop();
     if (runWorker) {
       const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
+    if (channelsStopped) {
+      // 至少留 2s 交还租约：否则其他副本要等租约过期（默认 30s）才能接管
+      await within(
+        "channels",
+        channelsStopped,
+        Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
+      );
+    }
     await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
+    // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
+    await within(
+      "channel-outbound",
+      channelOutbound.close(),
+      Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
+    );
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
     await within("bus", busSubscriber.close());
@@ -570,6 +773,8 @@ export async function createKernel(
     bus,
     runs,
     tools,
+    identity,
+    channels,
     log,
     get config() {
       return current;
@@ -614,6 +819,7 @@ export async function createKernel(
             sinkFor,
             checkpoints,
             waits,
+            onRunStart: enqueueOutbound,
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();
@@ -626,6 +832,24 @@ export async function createKernel(
           }
           checkpoint();
           maintenance.startWorker();
+          // 渠道长连接选主：每个 worker 副本都参与，同一连接只有取得租约的一个副本连接
+          channelSupervisor = new ChannelSupervisor({
+            db: kdb,
+            redis,
+            bus,
+            connections: channelConnections,
+            localPlugins: () =>
+              host
+                .list("channel")
+                .filter((e) => e.capability === CHANNEL_CAPABILITY)
+                .map((e) => e.plugin),
+            onEvent: (id, e) => channels.inbound.onEvent(id, e),
+            config: () => current,
+            log,
+          });
+          await channelSupervisor.start();
+          checkpoint();
+          channelOutbound.startWorker();
         }
         httpApp.mountPlugins(host.routes());
         if (opts.source?.watch) {

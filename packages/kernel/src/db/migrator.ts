@@ -4,7 +4,8 @@ import { join } from "node:path";
 import pg from "pg";
 import { pgConnectOptions } from "./pool.js";
 
-const FILE_RE = /^\d{4}_[a-z0-9_]+\.sql$/;
+/** 迁移文件名：`NNNN_<snake_desc>.sql`（其他文件忽略）。 */
+export const MIGRATION_FILE_RE = /^\d{4}_[a-z0-9_]+\.sql$/;
 
 /** 迁移器所有者：目标 schema 与迁移文件目录。 */
 export interface MigrationOwner {
@@ -34,7 +35,7 @@ export async function migrate(
   const { schema, dir } = owner;
   const { signal } = opts;
   if (signal?.aborted) throw new Error(`Migration ${schema} aborted`);
-  const names = (await readdir(dir)).filter((f) => FILE_RE.test(f)).sort();
+  const names = (await readdir(dir)).filter((f) => MIGRATION_FILE_RE.test(f)).sort();
   const files = await Promise.all(
     names.map(async (name) => {
       const content = await readFile(join(dir, name), "utf8");

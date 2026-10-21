@@ -21,6 +21,7 @@ import {
 } from "../../src/runtime/model-call.js";
 import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
 import type { RunHooks } from "../../src/runtime/run-worker.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import {
   consumedSeq,
@@ -139,8 +140,9 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings CASCADE`.execute(
+  await truncateTables(
     raw,
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings",
   );
   await redis.flushdb();
   ownerId = (
@@ -201,7 +203,17 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(evs[5]?.payload).toEqual({ reason: "completed", consumedUpToSeq: seq });
     expect(await consumedSeq(db, convId)).toBe(seq);
     expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "completed" }]);
-    // 锁与配额已释放
+    // 锁与配额已释放（终态事件写入后才释放，负载高时稍晚一点：等到释放再断言）
+    await waitFor(
+      async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0,
+      5_000,
+      "conversation lock released",
+    );
+    await waitFor(
+      async () => (await redis.zcard(`capk:org-runs:${orgId}`)) === 0,
+      5_000,
+      "org run quota released",
+    );
     expect(await redis.exists(`capk:conv-run:${convId}`)).toBe(0);
     expect(await redis.zcard(`capk:org-runs:${orgId}`)).toBe(0);
   });
@@ -965,6 +977,14 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
         const failed = (await eventsOf(db, convId)).find((e) => e.type === "run_failed");
         expect(failed?.runId).toBe(orphan);
         expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
+        // 孤儿的检查点在收尾时异步清理：等清理完成再断言
+        await waitFor(
+          async () =>
+            ((await checkpointsOf(orphan)).length === 0 && (await writesOf(orphan)).length === 0) ||
+            undefined,
+          5_000,
+          `orphan checkpoints cleaned via ${via}`,
+        );
         expect(await checkpointsOf(orphan)).toEqual([]);
         expect(await writesOf(orphan)).toEqual([]);
         await worker();

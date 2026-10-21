@@ -404,6 +404,21 @@ export class ApprovalsService {
     return record;
   }
 
+  /**
+   * 详情，不做处理人校验（内核内部用：渠道出站投递组装 IM 审批卡片）；不存在返回 null。
+   * 不得直接回给请求方——HTTP 接口用 {@link get}。
+   */
+  async describe(id: string): Promise<ApprovalView | null> {
+    const row = await this.deps.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) return null;
+    const [view] = await this.views([toRecord(row)]);
+    return view ?? null;
+  }
+
   /** 某个工具调用最近一次的审批（attempt 最大者）；没有则返回 null。 */
   async forCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.deps.db
@@ -479,6 +494,41 @@ export class ApprovalsService {
       out.push(toRecord(updated));
     }
     return out;
+  }
+
+  /**
+   * 在事务 `t` 内取消某组织里指定由 `accountId` 处理（`requested_for`）的全部 pending 审批（成员离职），
+   * 走与 {@link cancelPendingIn} 相同的取消路径：置 cancelled、写 `approval_decided{cancelled}`（处理人为 null）。
+   * 返回被取消的记录与各会话写到的最大 seq；调用方提交后发布事件（并可续跑对应运行）。
+   */
+  async cancelPendingFor(
+    t: Trx,
+    orgId: string,
+    accountId: string,
+  ): Promise<{ records: ApprovalRecord[]; seqs: Map<string, number> }> {
+    const rows = await t
+      .selectFrom("approvals")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("requested_for", "=", accountId)
+      .where("status", "=", "pending")
+      .orderBy("created_at")
+      .forUpdate()
+      .execute();
+    const records: ApprovalRecord[] = [];
+    const seqs = new Map<string, number>();
+    for (const row of rows) {
+      const updated = await t
+        .updateTable("approvals")
+        .set({ status: "cancelled", decided_at: sql<Date>`now()` })
+        .where("id", "=", row.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const seq = await this.decidedEvent(t, toRecord(row), "cancelled");
+      seqs.set(row.conversation_id, Math.max(seqs.get(row.conversation_id) ?? 0, seq));
+      records.push(toRecord(updated));
+    }
+    return { records, seqs };
   }
 
   /** 系统写的 `approval_decided`（超时 / 取消，处理人为 null），返回事件 seq。 */

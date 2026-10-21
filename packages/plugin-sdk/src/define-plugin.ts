@@ -1,7 +1,13 @@
 import semver from "semver";
 import type { z } from "zod";
-import { CAPABILITY_CARDINALITY, type CapabilityRef, parseCapability } from "./capability.js";
+import { CAPABILITIES, type CapabilityRef, parseCapability } from "./capability.js";
 import type { PluginContext } from "./ctx.js";
+import {
+  type PluginPermissions,
+  validatePermissions,
+  validateUiContributions,
+} from "./permissions.js";
+import type { UiContribution } from "./ui.js";
 
 /** 插件清单。 */
 export interface PluginManifest {
@@ -10,6 +16,12 @@ export interface PluginManifest {
   sdk: string;
   provides: CapabilityRef[];
   requires?: CapabilityRef[];
+  /** 可选依赖：缺失时插件照常加载，运行时经 ctx.capabilities 判断。 */
+  optional?: CapabilityRef[];
+  /** 权限清单（治理而非沙箱）。 */
+  permissions?: PluginPermissions;
+  /** 界面贡献：对话页标签与组织页面；id 须同时列在 `permissions.ui` 里。 */
+  ui?: UiContribution[];
   config?: { deployment?: z.ZodTypeAny; org?: z.ZodTypeAny };
   migrations?: string;
   setup(ctx: PluginContext): void | Promise<void>;
@@ -28,7 +40,12 @@ const NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 /** 保留的插件名：内核用 `kernel` 作为自己的 secrets 命名空间，插件不能与之相同。 */
 const RESERVED_NAMES: ReadonlySet<string> = new Set(["kernel"]);
 
-function checkRefs(label: string, refs: readonly string[], fail: (m: string) => never): void {
+function checkRefs(
+  label: string,
+  refs: readonly string[],
+  fail: (m: string) => never,
+  forbidBrokered = false,
+): void {
   for (const ref of refs) {
     let name: string;
     try {
@@ -36,8 +53,11 @@ function checkRefs(label: string, refs: readonly string[], fail: (m: string) => 
     } catch {
       fail(`${label} entry "${ref}" is not a valid capability ref`);
     }
-    if (!Object.hasOwn(CAPABILITY_CARDINALITY, name)) {
+    if (!Object.hasOwn(CAPABILITIES, name)) {
       fail(`${label} entry "${ref}" references unregistered capability "${name}"`);
+    }
+    if (forbidBrokered && CAPABILITIES[name]?.brokered) {
+      fail(`${label} entry "${ref}" is a brokered capability and is used through the platform`);
     }
   }
 }
@@ -65,10 +85,24 @@ export function definePlugin(m: PluginManifest): PluginManifest {
     fail(`field "provides" has duplicate entries`);
   }
   const requires = m.requires ?? [];
-  checkRefs("requires", requires, fail);
+  checkRefs("requires", requires, fail, true);
   for (const r of requires) {
     if (m.provides.includes(r))
       fail(`field "requires" entry "${r}" is also provided by the same plugin`);
   }
+  const optional = m.optional ?? [];
+  if (!Array.isArray(optional)) fail(`field "optional" must be an array`);
+  checkRefs("optional", optional, fail, true);
+  for (const r of optional) {
+    if (m.provides.includes(r) || requires.includes(r)) {
+      fail(`field "optional" entry "${r}" overlaps with "provides" or "requires"`);
+    }
+  }
+  if (m.permissions !== undefined) {
+    const errs = validatePermissions(plugin, m.permissions);
+    if (errs.length > 0) fail(`invalid permissions: ${errs.join("; ")}`);
+  }
+  const uiErrs = validateUiContributions(m.ui, m.permissions);
+  if (uiErrs.length > 0) fail(`invalid ui: ${uiErrs.join("; ")}`);
   return m;
 }

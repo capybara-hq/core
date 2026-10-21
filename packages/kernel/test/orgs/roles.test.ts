@@ -27,9 +27,12 @@ const EXPECTED: Record<OrgAction, OrgRole[]> = {
   "org.transfer": [O],
   "agents.create": [M, A, O],
   "agents.use": [G, M, A, O],
+  "agents.manage": [A, O],
   "apps.manage": [A, O],
   "apps.use": [G, M, A, O],
   "approvals.decide": [G, M, A, O],
+  "channels.manage": [A, O],
+  "ui.use": [G, M, A, O],
 };
 
 /** 服务令牌可执行的动作（不在 HUMAN_ONLY 中）。 */
@@ -43,7 +46,7 @@ describe("roles", () => {
     expect(roleAtLeast("guest", "member")).toBe(false);
   });
 
-  it("ACTION_MIN_ROLE 覆盖全部 14 个动作", () => {
+  it("ACTION_MIN_ROLE 覆盖全部 17 个动作", () => {
     expect(Object.keys(ACTION_MIN_ROLE).sort()).toEqual(Object.keys(EXPECTED).sort());
   });
 
@@ -52,8 +55,8 @@ describe("roles", () => {
       (action) => [role, action, EXPECTED[action].includes(role)] as const,
     ),
   );
-  it("真值表共 4×14 = 56 个组合", () => {
-    expect(cases.length).toBe(56);
+  it("真值表共 4×17 = 68 个组合", () => {
+    expect(cases.length).toBe(68);
   });
   it.each(cases)("can(%s, %s) = %s", (role, action, allowed) => {
     expect(can(role, action)).toBe(allowed);
@@ -62,7 +65,13 @@ describe("roles", () => {
   it("HUMAN_ONLY 是除 org.read、org.members.read、agents.use 外的全部动作", () => {
     for (const a of SERVICE_OK) expect(HUMAN_ONLY.has(a)).toBe(false);
     expect(HUMAN_ONLY.has("agents.create")).toBe(true);
-    for (const a of ["apps.manage", "apps.use", "approvals.decide"] as const)
+    for (const a of [
+      "apps.manage",
+      "apps.use",
+      "approvals.decide",
+      "channels.manage",
+      "ui.use",
+    ] as const)
       expect(HUMAN_ONLY.has(a)).toBe(true);
     const rest = (Object.keys(EXPECTED) as OrgAction[]).filter((a) => !SERVICE_OK.includes(a));
     for (const a of rest) expect(HUMAN_ONLY.has(a)).toBe(true);

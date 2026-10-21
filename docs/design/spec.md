@@ -71,7 +71,7 @@
 | 形态 | 用于 |
 |---|---|
 | 实心（`accent` 底 + `on-accent` 字） | 视图内**唯一**的主操作 |
-| 描边（1px `accent` 边 + `accent` 字） | 需强调的次级操作、选中的分段、当前页码 |
+| 描边（1px `accent` 边 + `accent` 字） | 需强调的次级操作、选中的分段、当前页码；待人处理的对话卡片只描边（`Card tone="accent"`） |
 | 下划线（`inset 0 -2px 0 accent`） | 当前一级导航、当前 PageTab |
 | 文字（`accent` 字 / `●`） | 正在发生：运行中、实时、自动刷新倒计时、光标 |
 | 底色 + 左标（`accent-tint` 底 + `inset 2px 0 0 accent`） | 选中的行 / 项 / 锚点 |
@@ -150,6 +150,7 @@
 - 底色 `panel`，下边线 `line`。
 - 一级导航：概览 · Agents · 运行记录 · 审批 · 知识库 · 插件 · 设置（以产品实际为准，顺序固定）。当前项 `ink` + 主色下划线，其余 `muted`。
 - 导航项可带计数（如收件箱的待处理数）：大于 0 时在名称后以计数版 Badge 显示（超过 99 显示 `99+`），为 0 不显示；链接的可访问名称带上计数（「收件箱，3 项待处理」）；窄屏收进「更多 ▾」时以「名称 (n)」写进菜单项。
+- 插件页面入口：一级导航之后的「扩展 ▾」下拉（`Menu`），只有存在页面贡献时才显示；样式同导航项。
 - ⌘K 输入框宽 220，前缀 `>`，后缀 `⌘K`。
 
 ### 4.2 PageHeader
@@ -257,6 +258,9 @@
 
 ### 6.4 Tabs / Segmented / Pagination
 - Tabs：文字 + 选中下划线（§2.3）；悬停 `hover` 底；禁用 `faint`。
+  - 计数 `count`：名称后 small `faint` 数字。
+  - 徽标 `badge`（如 Inspector「任务 2/4」）：1px `line` 边、small `muted`；选中时 `line-strong` 边 + `ink` 字。
+  - 提醒 `alert`（如「运行」有待批准）：名称后主色小方块 `■`，并带读屏文字「有待处理」，不只靠颜色。
 - Segmented：相邻按钮共边，高 24；选中描边主色。
 - Pagination：`1–50 / 1,284` · 每页 N ▾ · `‹ 上一页` 页码 `下一页 ›`；当前页描边主色。
 
@@ -309,6 +313,21 @@
 - 迷你趋势 Sparkline（表格内）：12 根 4px 宽方柱，`muted`。
 - 柱状图的 `fail` 是 `value`（总数）的子集：柱高 = 总数，失败数画在柱顶的块上。
 - 坐标标签 small faint；不画网格线。
+
+### 6.9 对话时间线与插件视图积木
+
+对话流（参照 Claude Code VS Code 插件）与插件视图（渲染 schema，见 `docs/superpowers/specs/2026-10-21-chat-panel-plugin-ui-design.md` §3–§4）共用的组件。组件只收普通 props，不依赖 SDK 类型；文案可经 `labels` 覆盖，缺省走 design 自己的 i18n。
+
+- **Timeline / TimelineItem**：有序列表；每步左侧 7×7 方形标记，1px `line-strong` 竖线把各步串起（首项从标记开始、末项到标记结束）。标记：`dot`（`muted` 实心，已完成）、`hollow`（`faint` 边空心，思考 / 次要）、`running`（主色实心，闪烁，减少动效时静止）、`error`（`fail` 实心）。
+- **ThinkingRow**：`muted` 一行「思考了 N 秒」（秒数取整）；有正文时整行是展开按钮（`aria-expanded`，右侧 `▸` / `▾` `faint`），展开后正文 `muted`，左侧 1px `line` 引线，保留换行。
+- **ToolCallRow**：默认只一行：工具名（700）+ 一句说明（`muted`，单行省略）+ 非完成态的 `StatusMark`（运行中 / 失败 / 已取消）+ 右侧 `▸`。整行是展开按钮，悬停 `hover` 底。出错时工具名 `fail`，已取消时 `muted`。展开后在 1px `line` 外框里依次为 IN、OUT 两个 `IoBlock`（运行中无 OUT）；输出已截断时底部 small `faint`「输出过长，已截断」+「查看全部输出」文字按钮（交给调用方从存档取全文）。
+- **IoBlock**：`panel` 底；左侧 5ch 标签列（`IN` / `OUT`，11px 700 `faint`，右边线 `line`），右侧等宽原文（保留换行、长词断行）；IN 为 `ink`，OUT 为 `muted`（工具出错时 `fail`）。超过 `collapsedLines`（默认 12）行时只显示前 N 行，下方「展开全部（共 M 行）」/「收起」文字按钮（`aria-expanded`）。
+- **Checklist**：每项 `glyph + 文字`。`pending` `□` `faint`；`in_progress` `▶` 主色，整行 `accent-tint` 底 + 左侧 2px 主色 + 700，`aria-current="step"`；`completed` `✓` `ok`，文字 `faint` 并用 `<s>` 划线。每项带读屏状态文字（待办 / 进行中 / 已完成）。
+- **CodeBlock**：1px `line` 外框、`panel` 底；有语言时顶部 11px `faint` 语言标注 + 下边线；正文等宽、不换行、框内横向滚动；不做语法高亮。
+- **EmbedFrame**：界面里**唯一**渲染 iframe 的组件（`apps/web` 不得自己写 iframe）。`sandbox` 固定为 `allow-scripts allow-forms`（绝不含 `allow-same-origin`），`referrerpolicy="no-referrer"`，`title` 必填；宽度撑满，高度来自 props（默认 360）；1px `line` 边、`panel` 底。只把 `event.source` 为本 iframe 的 `message` 交给 `onMessage`（内容由调用方解析校验），并以 `frameRef` 暴露 iframe 以便 `postMessage`。
+- **ImageBlock**：插件视图里的图片；块级、宽度不超出容器、按比例缩放，1px `line` 边；`loading="lazy"`、`referrerpolicy="no-referrer"`。只收地址与 alt；只渲染 http(s) 绝对地址，其他（`javascript:`、`data:`、相对路径）什么都不渲染。
+- **Card `tone="accent"`**：对话里待人处理的卡片（审批 / 提问 / 连接）用 1px `accent` 描边（§2.3 描边），处理完回到默认边框。
+- 图表沿用 §6.8 的 `BarChart` / `Sparkline`，属性列表沿用 `KeyValue`，表格沿用 DataTable，不另造。
 
 ---
 

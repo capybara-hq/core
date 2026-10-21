@@ -3,6 +3,7 @@ import { checkConfigDocs } from "../config-docs.js";
 import { checkDeps } from "../deps.js";
 import { checkI18n } from "../i18n.js";
 import { checkMigrations } from "../migrations.js";
+import { checkPluginPermissions } from "../plugin-permissions.js";
 import { checkPluginState } from "../plugin-state.js";
 import type { Finding } from "../source.js";
 import { checkToolDesign } from "../tool-design.js";
@@ -16,6 +17,7 @@ const checks: { name: string; run: () => Finding[] }[] = [
   { name: "迁移", run: () => checkMigrations(migrationDirs()) },
   { name: "依赖边界", run: () => checkDeps(pluginDirs(), [join(root, "packages/plugin-sdk")]) },
   { name: "插件状态", run: () => checkPluginState(pluginDirs()) },
+  { name: "插件权限", run: () => checkPluginPermissions(pluginDirs()) },
   { name: "工具设计", run: () => checkToolDesign(toolDesignDirs(pluginDirs())) },
   { name: "配置文档", run: () => checkConfigDocs() },
   { name: "界面文案", run: () => checkI18n(join(root, "apps/web/messages")) },

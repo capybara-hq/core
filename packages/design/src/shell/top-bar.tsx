@@ -12,6 +12,11 @@ export type TopBarProps = {
   /** 名称旁的 ▾ 由 TopBar 渲染；`menu` 为空时只显示名称、不可点击。 */
   user: { name: string; menu: MenuItem[] };
   commands: CommandGroup[];
+  /**
+   * 插件页面的下拉入口（导航之后的「扩展 ▾」）。`items` 为空或缺省时不显示。
+   * `label` 缺省取 design 的「扩展」/「Extensions」。
+   */
+  extensions?: { label?: string; items: MenuItem[] };
 };
 
 export function TopBar({
@@ -19,6 +24,7 @@ export function TopBar({
   activeNav,
   org,
   user,
+  extensions,
   onOpenCommands,
 }: TopBarProps & { onOpenCommands?: () => void }) {
   const t = useDesignT();
@@ -83,6 +89,16 @@ export function TopBar({
             trigger={
               <button type="button" className="cb-topbar-link cb-topbar-more">
                 {t("shell.more")} ▾
+              </button>
+            }
+          />
+        ) : null}
+        {extensions && extensions.items.length > 0 ? (
+          <Menu
+            items={extensions.items}
+            trigger={
+              <button type="button" className="cb-topbar-link cb-topbar-more">
+                {extensions.label ?? t("shell.extensions")} <span aria-hidden="true">▾</span>
               </button>
             }
           />

@@ -1,4 +1,4 @@
-import type { PluginManifest } from "@capybara-hq/plugin-sdk";
+import { CAPABILITIES, type PluginManifest, parseCapability } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
 import type { core, z } from "zod";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
@@ -7,7 +7,10 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
 import type { PluginHost } from "./host.js";
+import type { PermissionSet } from "./permission-set.js";
+import { type PermissionGroup, permissionGroups } from "./permission-view.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -26,12 +29,29 @@ export interface OrgPluginView {
   /** 已存的非密钥配置；未配置或不可配置时为 null。 */
   config: Record<string, unknown> | null;
   secrets: { path: string; set: boolean }[];
+  /** 插件要用的权限，按类别分组并标出敏感项（密钥、公开路由、工具、hook）。 */
+  permissions: PermissionGroup[];
+  /** `config.org` 的 JSON Schema（密钥字段带 `x-secret`）；不可配置时为 null。 */
+  orgConfigSchema: JsonSchema | null;
+}
+
+/** 清单不可变：每个组织级 schema 的 JSON Schema 转换结果按 schema 对象缓存（只读、无跨请求状态）。 */
+const jsonSchemaCache = new WeakMap<object, JsonSchema>();
+function orgJsonSchema(schema: z.ZodTypeAny): JsonSchema {
+  let js = jsonSchemaCache.get(schema);
+  if (!js) {
+    js = configToJsonSchema(schema);
+    jsonSchemaCache.set(schema, js);
+  }
+  return structuredClone(js);
 }
 
 /** `put` 的输入：`config` 中的密钥字段缺省 = 保留原值、`null` = 清除、其他值 = 新值。 */
 export interface OrgPluginInput {
   enabled?: boolean | undefined;
   config?: Record<string, unknown> | undefined;
+  /** 停用时即使仍有已启用的依赖方也继续（默认 `plugin.has_dependents`）。 */
+  force?: boolean | undefined;
 }
 
 /** 校验失败的单条原因：只含路径与按 issue 类型生成的说明，不回显字段值。 */
@@ -94,7 +114,7 @@ function issueMessage(i: core.$ZodIssue): string {
   }
 }
 
-function toIssues(error: z.ZodError): ConfigIssue[] {
+export function toIssues(error: z.ZodError): ConfigIssue[] {
   return error.issues.map((i) => ({
     path: i.path.map(String).join("."),
     message: issueMessage(i),
@@ -125,6 +145,11 @@ export class OrgPluginConfigs {
        * 内核传 `log.addOrgSecrets` 使其在日志中打码。
        */
       onSecrets?: (values: string[]) => void;
+      /**
+       * 写入提交之后调用（`enabled` 为写入后的启用状态）。内核传：停用时给该组织该插件的渠道连接广播
+       * `channel.changed`，持有长连接的副本立即断开。
+       */
+      afterPut?: (orgId: string, plugin: string, enabled: boolean) => Promise<void>;
       /** 仅供测试：在读完配置行之后、读密钥之前插入确定性的交错点。 */
       afterConfigRowRead?: () => Promise<void>;
     } = {},
@@ -194,6 +219,10 @@ export class OrgPluginConfigs {
         .where("org_id", "=", orgId)
         .executeTakeFirst();
       const enabled = input.enabled ?? row?.enabled ?? false;
+      if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
+      else if (input.enabled === false && !input.force) {
+        await this.assertNoEnabledDependents(t, orgId, manifest);
+      }
       let plain: Obj | null = row?.config ?? null;
       let changed: string[] = [];
       if (schema) {
@@ -285,6 +314,7 @@ export class OrgPluginConfigs {
     });
     // 事务已提交：回滚的写入不会走到这里
     this.reportSecrets(seen);
+    await this.hooks.afterPut?.(orgId, plugin, view.enabled);
     return view;
   }
 
@@ -344,10 +374,92 @@ export class OrgPluginConfigs {
     return { enabled: true, config: r.data };
   }
 
+  /** 该组织已启用的插件名（只含当前已加载的插件；待批准的不算）。 */
+  private async enabledSet(t: Trx, orgId: string): Promise<Set<string>> {
+    const rows = await t
+      .selectFrom("plugin_org_configs")
+      .select("plugin")
+      .where("org_id", "=", orgId)
+      .where("enabled", "=", true)
+      .execute();
+    const loaded = new Set(this.host.manifests().map((m) => m.name));
+    return new Set(rows.map((r) => r.plugin).filter((n) => loaded.has(n)));
+  }
+
+  /** 引用是否为按组织启用的能力。 */
+  private isOrgScoped(ref: string): boolean {
+    return CAPABILITIES[parseCapability(ref).name]?.orgScoped === true;
+  }
+
+  /** 该组织内（已启用、已加载、非 `except`）提供完整引用（含主版本）的插件。 */
+  private enabledProviders(enabled: ReadonlySet<string>, ref: string, except: string): string[] {
+    return this.host
+      .manifests()
+      .filter((m) => m.name !== except && enabled.has(m.name) && m.provides.includes(ref as never))
+      .map((m) => m.name);
+  }
+
+  /** 启用前：A `requires` 的每个 orgScoped 能力（按主版本），该组织须至少有一个已启用的提供方。 */
+  private async assertDependenciesEnabled(
+    t: Trx,
+    orgId: string,
+    manifest: PluginManifest,
+  ): Promise<void> {
+    const needed = (manifest.requires ?? []).filter((r) => this.isOrgScoped(r));
+    if (needed.length === 0) return;
+    const enabled = await this.enabledSet(t, orgId);
+    const missing = needed.filter(
+      (r) => this.enabledProviders(enabled, r, manifest.name).length === 0,
+    );
+    if (missing.length > 0) {
+      throw new ApiError(
+        "plugin.dependency_missing",
+        `Plugin ${manifest.name} requires capabilities with no enabled provider in this organization: ${missing.join(", ")}`,
+        missing.map((capability) => ({ capability })),
+      );
+    }
+  }
+
+  /** 停用前：若停用后某个已启用的插件所 requires 的 orgScoped 能力（按主版本）再无已启用的提供方，拒绝。 */
+  private async assertNoEnabledDependents(
+    t: Trx,
+    orgId: string,
+    manifest: PluginManifest,
+  ): Promise<void> {
+    const provided = manifest.provides.filter((r) => this.isOrgScoped(r));
+    if (provided.length === 0) return;
+    const enabled = await this.enabledSet(t, orgId);
+    if (!enabled.has(manifest.name)) return;
+    const dependents = new Map<string, { plugin: string; capability: string }>();
+    for (const ref of provided) {
+      if (this.enabledProviders(enabled, ref, manifest.name).length > 0) continue;
+      for (const m of this.host.manifests()) {
+        if (m.name === manifest.name || !enabled.has(m.name)) continue;
+        if ((m.requires ?? []).includes(ref as never)) {
+          dependents.set(`${m.name}\0${ref}`, { plugin: m.name, capability: ref });
+        }
+      }
+    }
+    if (dependents.size > 0) {
+      const list = [...dependents.values()];
+      throw new ApiError(
+        "plugin.has_dependents",
+        `Plugin ${manifest.name} is required by enabled plugins in this organization: ${[...new Set(list.map((d) => d.plugin))].join(", ")} (pass force to disable anyway)`,
+        list,
+      );
+    }
+  }
+
   private manifest(plugin: string): PluginManifest {
     const m = this.host.manifests().find((x) => x.name === plugin);
     if (!m) throw new ApiError("plugin.not_found", `Plugin ${plugin} is not installed`);
     return m;
+  }
+
+  private permissionsOf(plugin: string): PermissionSet {
+    const set = this.host.permissionSet(plugin);
+    if (!set) throw new ApiError("plugin.not_found", `Plugin ${plugin} is not installed`);
+    return set;
   }
 
   private view(
@@ -369,6 +481,8 @@ export class OrgPluginConfigs {
       configurable: schema !== undefined,
       config,
       secrets: paths.map((p) => ({ path: p, set: setKeys.has(secretKey(m.name, p)) })),
+      permissions: permissionGroups(this.permissionsOf(m.name)),
+      orgConfigSchema: schema ? orgJsonSchema(schema) : null,
     };
   }
 

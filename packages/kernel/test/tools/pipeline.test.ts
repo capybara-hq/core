@@ -47,6 +47,7 @@ import {
   type UnavailableTool,
 } from "../../src/tools/registry.js";
 import { validateInput } from "../../src/tools/validate.js";
+import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedApp, seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -260,7 +261,7 @@ beforeEach(async () => {
   Object.assign(conn, { opened: 0, closed: 0, calls: 0, signals: [], ctxs: [] });
   connCall = async (name) => ({ content: [{ type: "text", text: `called ${name}` }] });
   await redis.flushdb();
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   seed = await seedConversation(raw);
   runId = randomUUID();
   appId = await seedApp(raw, seed.orgId, seed.accountId, { slug: "docs", name: "Docs" });

@@ -6,7 +6,6 @@ import {
   validateInputForm,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -14,11 +13,12 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { MembersService } from "../../src/orgs/members.service.js";
 import { TOOLS_UNAVAILABLE_PREFIX } from "../../src/runtime/model-call.js";
 import { askUserTool } from "../../src/tools/builtins/ask-user.js";
 import { validateInput } from "../../src/tools/validate.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { truncateTables } from "../helpers/db.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -158,6 +158,7 @@ describe("ask_user（单元）", () => {
           text: 'User answered: "Which database should I use?" = "SQLite, please"; "Which features?" = "Postgres, Mongo"',
         },
       ],
+      display: { summary: { zh: "用户回答了 2 个问题", en: "User answered 2 questions" } },
     });
   });
 
@@ -212,7 +213,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   const owner = await new AccountsService(db).createLocal({
     login: "owner",
     password: PW,
@@ -347,7 +348,7 @@ describe("ask_user 端到端", () => {
       password: PW,
       displayName: "X",
     });
-    await new MembersService(db).add(orgId, other.id, "member", ownerId);
+    await testMembers(db).add(orgId, other.id, "member", ownerId);
     const reqOther = await session(kb, "other");
     const res = await answer(reqOther, questionId, { answer: { q0: "Postgres" } });
     expect(res.statusCode, res.body).toBe(403);

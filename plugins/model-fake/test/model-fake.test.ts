@@ -123,6 +123,26 @@ describe("model-fake", () => {
     expect(complete(evs).content).toEqual([{ type: "text", text: "abcdefgh" }]);
   });
 
+  it("slowfail:<ms>:<text> streams the text, then fails without completing (non-retryable)", async () => {
+    const waits: number[] = [];
+    const seen: string[] = [];
+    const provider = mk(async (ms) => {
+      waits.push(ms);
+    });
+    const err = await (async () => {
+      for await (const e of provider.stream(req("slowfail:300:abcdefgh"), {
+        signal: new AbortController().signal,
+      })) {
+        if (e.type === "text_delta") seen.push(e.text);
+        if (e.type === "message_complete") throw new Error("must not complete");
+      }
+    })().catch((e: unknown) => e);
+    expect(seen).toEqual(["abcd", "efgh"]);
+    expect(waits).toEqual([300, 300]);
+    expect(isModelError(err) && err.kind).toBe("invalid_request");
+    expect(isModelError(err) && err.retryable).toBe(false);
+  });
+
   it("stall emits nothing until abort", async () => {
     const ac = new AbortController();
     const p = run(mk(), req("stall"), ac.signal);

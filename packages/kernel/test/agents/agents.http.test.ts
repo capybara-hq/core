@@ -1,6 +1,5 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -9,8 +8,10 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { testMembers } from "../helpers/members.js";
 import { fakeBCalls, MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -43,7 +44,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   tokens = new ApiTokenService(db);
 }, 120_000);
 afterAll(async () => {
@@ -53,7 +54,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
 });
@@ -262,9 +263,9 @@ describe("Agent HTTP", () => {
       url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
       payload: { visibility: "private" },
     });
-    // 请求开头的 OrgGuard 已判定非成员（404 不泄露组织）；锁内复核的 403 由服务层测试覆盖
-    expect(res.statusCode).toBe(404);
-    expect(errCode(res)).toBe("org.not_found");
+    // 移出走离职处理，其会话已被吊销；锁内复核的 403 由服务层测试覆盖
+    expect(res.statusCode).toBe(401);
+    expect(errCode(res)).toBe("auth.session_revoked");
   });
 
   it("访客 POST → 403；访客可 GET 列表与模型", async () => {

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import { truncateTables } from "../helpers/db.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -29,7 +29,7 @@ afterAll(async () => {
   await pg.stop();
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs");
 });
 
 async function account(): Promise<string> {

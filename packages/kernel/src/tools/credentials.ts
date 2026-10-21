@@ -111,6 +111,28 @@ const secretSchemas = {
   basic: z.strictObject({ username: nonEmpty, password: nonEmpty }),
 };
 
+/**
+ * 删除某账号在该组织所有应用上的个人凭据（`credentials:app:<appId>:user:<accountId>`，含已删除应用残留的），
+ * 成员离职时在其事务内调用（不解密，不需要密钥环）。返回删除条数。
+ */
+export async function clearAccountCredentials(
+  db: KernelDb | Transaction<KernelDatabase>,
+  orgId: string,
+  accountId: string,
+): Promise<number> {
+  NO_COLON("accountId", accountId);
+  const prefix = "credentials:app:";
+  const suffix = `:user:${accountId}`;
+  const r = await db
+    .deleteFrom("secrets")
+    .where("namespace", "=", NAMESPACE)
+    .where("org_id", "=", orgId)
+    .where(sql<string>`left(key, ${prefix.length})`, "=", prefix)
+    .where(sql<string>`right(key, ${suffix.length})`, "=", suffix)
+    .executeTakeFirst();
+  return Number(r.numDeletedRows);
+}
+
 /** OAuth 刷新所需的依赖（锁在 Redis，往返限时与本机 http 放行取自配置）。 */
 export interface CredentialsOAuthDeps {
   redis: Redis;
@@ -295,6 +317,15 @@ export class Credentials {
       .where("org_id", "=", orgId)
       .where("key", "like", `${prefix}%`)
       .execute();
+  }
+
+  /** 删除某账号在该组织所有应用上的个人凭据，见 {@link clearAccountCredentials}。 */
+  async clearAccount(
+    orgId: string,
+    accountId: string,
+    trx?: Transaction<KernelDatabase>,
+  ): Promise<number> {
+    return clearAccountCredentials(trx ?? this.db, orgId, accountId);
   }
 
   /**

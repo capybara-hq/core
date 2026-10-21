@@ -197,6 +197,8 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
     "页面内不得写 className / class；改用 @capybara-hq/design 的组件或布局原语，页面内不写样式";
   const STYLE_MSG =
     "页面内不得写 style / <style> / dangerouslySetInnerHTML；改用 @capybara-hq/design 的组件或布局原语，页面内不写样式";
+  const IFRAME_MSG =
+    "页面内不得直接渲染 iframe；用 @capybara-hq/design 的 EmbedFrame（固定 sandbox、只转发本 iframe 的消息）";
   const flag = (rule: string, message: string, at: Node) =>
     out.push({ file, line: p.lineOf(at.start), rule, message });
   const checkObject = (obj: unknown) => {
@@ -224,6 +226,8 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
       const name = n.name as Node;
       if (name.type === "JSXIdentifier" && name.name === "style")
         flag("web-ui-style", STYLE_MSG, n);
+      else if (name.type === "JSXIdentifier" && name.name === "iframe")
+        flag("web-ui-iframe", IFRAME_MSG, n);
     } else if (n.type === "CallExpression") {
       const callee = n.callee as Node;
       const fn =
@@ -232,7 +236,12 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
           : callee.type === "MemberExpression"
             ? ((callee.property as Node).name as string | undefined)
             : undefined;
-      if (fn !== undefined && CREATE_ELEMENT.has(fn)) checkObject((n.arguments as unknown[])[1]);
+      if (fn !== undefined && CREATE_ELEMENT.has(fn)) {
+        const args = n.arguments as Node[];
+        if (args[0]?.type === "Literal" && args[0].value === "iframe")
+          flag("web-ui-iframe", IFRAME_MSG, n);
+        checkObject(args[1]);
+      }
     }
   });
 

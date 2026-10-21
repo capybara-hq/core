@@ -15,9 +15,18 @@ export CAPYBARA_REDIS__URL=redis://localhost:6379
 export CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)
 export CAPYBARA_PLUGINS='["@capybara-hq/plugin-example-counter"]'
 export CAPYBARA_PLUGIN_CONFIG='{"example-counter":{"step":1}}'   # 可选，step 默认 1
+export CAPYBARA_PLUGIN_PERMISSIONS__AUTO_APPROVE=true   # 仅本地试用：自动批准插件权限（生产保持关闭）
 
 pnpm capybara migrate     # 迁移内核与插件 schema
 pnpm capybara start       # 监听 :8080（CAPYBARA_HTTP__PORT 可改）
+```
+
+插件权限：插件首次出现、或升级后清单比已批准的权限多出任何一项时**不加载**（启动日志有 warn），依赖它的插件同样不加载；
+权限变少或不变直接加载。生产不要开 `autoApprove`，改用 CLI 审阅并批准（直连 PG，会先执行内核迁移），批准后重启内核生效：
+
+```bash
+pnpm capybara plugins review                    # 列出待批准插件与新增的权限项
+pnpm capybara plugins approve example-counter   # 终端确认后写入快照并记审计；--yes 跳过确认
 ```
 
 另开一个终端验证：
@@ -98,9 +107,9 @@ export CAPYBARA_PLUGINS='["@capybara-hq/plugin-openai-compatible"]'
 export CAPYBARA_PLUGIN_CONFIG='{"openai-compatible":{"endpoints":[{"name":"deepseek","baseUrl":"https://api.deepseek.com","dialect":"deepseek","models":[{"id":"deepseek-flash","contextWindow":1048576,"maxOutputTokens":393216,"reasoning":true}]}],"apiKeys":{"deepseek":"sk-..."}}}'
 ```
 
-- `endpoints`（至少一个）：`name`（端点名，不含 `/`）、`baseUrl`、`dialect`（`generic` / `deepseek` / `qwen`）、`models`（至少一个：`id`、`contextWindow`、`maxOutputTokens`，可选 `reasoning`、`vision`、`caching`、`streamIdleTimeoutMs`）；可选 `midConversationSystem`（覆盖方言默认）。对外模型 id 为 `<端点名>/<模型 id>`，如 `deepseek/deepseek-flash`。上例的 `contextWindow` / `maxOutputTokens` 取自 DeepSeek `GET /models` 对 `deepseek-flash` 的返回；其他模型以其官方返回为准。
+- `endpoints`（至少一个）：`name`（端点名，不含 `/`）、`baseUrl`、`dialect`（`generic` / `deepseek` / `qwen` / `ark`；方舟 baseUrl 为 `https://ark.cn-beijing.volces.com/api/v3`）、`models`（至少一个：`id`、`contextWindow`、`maxOutputTokens`，可选 `reasoning`、`vision`、`caching`、`streamIdleTimeoutMs`）；可选 `midConversationSystem`（覆盖方言默认）。对外模型 id 为 `<端点名>/<模型 id>`，如 `deepseek/deepseek-flash`。上例的 `contextWindow` / `maxOutputTokens` 取自 DeepSeek `GET /models` 对 `deepseek-flash` 的返回；其他模型以其官方返回为准。
 - `apiKeys`：端点名 → 密钥，是**顶层**的密钥字段（密钥不能放进 `endpoints[]` 数组元素里）；键必须是已配置的端点名，无密钥的端点（如内网 vLLM）不填。
-- 方言：`deepseek` 提供 `thinking`（`on|off`，默认 `on`）与 `effort`（`low|high|max`，默认 `high`），思考内容经 `reasoning_content` 读取并按 DeepSeek 的规则回传；`qwen` 提供 `thinking`（映射为 `enable_thinking`）；`generic` 只提供 `temperature` 与 `maxOutputTokens`。所有方言都声明 `temperature` 与 `maxOutputTokens`；思考相关参数只对配置了 `reasoning: true` 的模型声明。`reasoning` 不写时为 `false`：`deepseek` 方言下这类模型的请求总是发 `thinking: { type: "disabled" }`（DeepSeek 默认开启思考），所以 DeepSeek 的推理模型要显式写 `"reasoning": true`。
+- 方言：`deepseek` 提供 `thinking`（`on|off`，默认 `on`）与 `effort`（`low|high|max`，默认 `high`），思考内容经 `reasoning_content` 读取并按 DeepSeek 的规则回传；`qwen` 提供 `thinking`（映射为 `enable_thinking`）；`ark` 提供 `thinking`（映射为 `thinking.type`，无默认值，不回传思考）；`generic` 只提供 `temperature` 与 `maxOutputTokens`。所有方言都声明 `temperature` 与 `maxOutputTokens`；思考相关参数只对配置了 `reasoning: true` 的模型声明。`reasoning` 不写时为 `false`：`deepseek` 方言下这类模型的请求总是发 `thinking: { type: "disabled" }`（DeepSeek 默认开启思考），所以 DeepSeek 的推理模型要显式写 `"reasoning": true`。
 - 当前 DeepSeek 模型为 `deepseek-flash` 与 `deepseek-v4-pro`，`deepseek-reasoner` 已下线。
 - SDK 不做重试，重试由内核统一处理。
 
@@ -202,6 +211,64 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 ```
 
 写工具见 [skills/writing-tools](skills/writing-tools/SKILL.md)，写连接器见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，相关配置（`tools.*`、`http.publicUrl`）见 [docs/config.md](docs/config.md)。
+
+### 接入 Slack 与 Lark（机器人、登录、通讯录）
+
+`@capybara-hq/plugin-slack` 与 `@capybara-hq/plugin-lark` 各提供三种能力：IM 机器人（`channel@1`，在 IM 里和 agent 对话、点卡片审批）、网页登录（`identity-source@1`）、通讯录同步（`directory@1`）。三处用同一个身份键（`slack:<team id>` / `lark:<tenant_key>` + 平台用户 id），同一个人只对应一个账号。两者都走长连接（Slack Socket Mode、Lark 长连接），**不需要公网回调地址**。平台侧的每一步、需要的权限（scope）与行为细节见插件 README，这里只列顺序：
+
+- Slack：[plugins/slack/README.md](plugins/slack/README.md)
+- Lark：[plugins/lark/README.md](plugins/lark/README.md)
+
+**0. 前提**：配置 `http.publicUrl`（网页的外部可达源，同上文 OAuth 一节）。绑定链接、卡片里的网页链接、登录回调都基于它；没配时机器人认不出未绑定的人（只回「请联系管理员」），审批 / 提问卡片退化为一句「请到网页上处理」，第三方登录不可用。长连接只在 `worker` 角色的副本上运行（`capybara start` 默认全部角色）。
+
+**1. 建平台应用**
+- Slack：用 [`plugins/slack/app-manifest.yaml`](plugins/slack/app-manifest.yaml) 从 manifest 建应用（Socket Mode、事件订阅与 bot scope 都在里面），再生成应用级令牌 `xapp-…`（scope `connections:write`）、安装到工作区得到 `xoxb-…`。
+- Lark：建**企业自建应用**（长连接只支持自建应用），加机器人能力，开通 README 列出的权限，事件与回调都选「使用长连接」，发布版本并设置可用范围。**登录、机器人、通讯录必须用同一个 Lark 应用**：`open_id` 按应用区分，换个应用同一个人就对不上（插件会尽量核对并报错）。目前只支持 Lark 国际版（`open.larksuite.com`），飞书（`feishu`）区域已预留、暂不可用。
+
+**2. 装插件并批准权限**：安装包并加进 `CAPYBARA_PLUGINS`（如 `'["@capybara-hq/plugin-openai-compatible","@capybara-hq/plugin-slack","@capybara-hq/plugin-lark"]'`）。新插件首次出现时不加载，用 `pnpm capybara plugins review` 查看它要的权限（两个插件只声明了 `permissions.network`，并提供三种能力、带部署级与组织级配置），`pnpm capybara plugins approve slack` / `approve lark` 批准后重启。`pluginPermissions.autoApprove` 只用于本地开发与试用。
+
+**3. 组织启用并建渠道连接**（组织管理员，网页）：「设置 → 插件」启用 `slack` / `lark`（可在这里同时填通讯录的组织级配置，见第 5 步）→ 一级导航「渠道」→ 新建连接：选插件，填 bot 凭据（Slack `appToken` + `botToken`；Lark `appId` + `appSecret`，都进密钥存储、接口只回「已设置」），选绑定的 agent 与未绑定用户的处理方式：
+- `bind`（默认）：不认识的人私聊机器人会收到绑定卡片，点开网页登录后确认绑定；在群里只提示他去私聊（绑定链接不发在群里）。
+- `anonymous`：本组织租户里未绑定的人以该组织的「匿名访客」身份对话，只在绑定的 agent 对全组织可见时生效，不能用个人凭据；外部租户的人仍只能绑定。
+
+保存时插件会校验凭据（`verify`），随后某个 worker 副本建立长连接；连接页显示状态与最近一次错误（`last_error`）。IM 里机器人固定话术的语言取「设置 → 组织 → IM 语言」（zh / en，默认 en）。
+
+**4. 网页登录**（企业管理员，部署级）：
+- 在平台应用里登记回调地址 `<http.publicUrl>/api/v1/auth/sso/slack/callback` / `.../sso/lark/callback`；
+- 部署级配置写 `pluginConfig.slack.clientId` / `clientSecret`、`pluginConfig.lark.appId` / `appSecret`（密钥字段日志打码）；
+- 把插件名加进 `auth.loginSources`（如 `CAPYBARA_AUTH__LOGIN_SOURCES='["slack","lark"]'`，热更新），登录页出现「使用 Slack / Lark 登录」。
+
+第三方登录只建账号、不加入任何组织（成员关系来自邀请或通讯录同步）。要让第三方登录按**已验证邮箱**合并到既有本地账号，把你们企业控制的租户写进 `auth.trustedIdentitySources`，每项是完整键 `<插件>:<租户 id>`（如 `"slack:T0123ABCD"`；只写插件名会被拒绝）。只列你们自己的工作区 / 租户，否则那个租户里的任何人都能认领你们用户的邮箱。目前只有 Slack 登录会给出「邮箱已验证」，Lark 登录与两家的通讯录一律报未验证，所以 Lark 登录不会合并账号。
+
+**5. 通讯录**（组织管理员）：在「设置 → 插件」该插件的组织级配置里填 Slack `teamId`（`T…`）+ `botToken`，或 Lark `appId` + `appSecret`（Lark 还要把通讯录权限范围设为全部成员）。不填就视为「未配置」，不同步也不报错。配好后内核每小时同步一次，平台推人员变动时也会同步；同一页的「立即同步」手动触发（`POST /api/v1/orgs/:orgId/plugins/:plugin/directory/sync`）。同步只加人（角色 member）与撤销**由通讯录加入的**成员关系，手动 / 邀请加入的人不会被同步移除。
+
+**行为须知**
+- **离职处理吊销的会话与令牌是账号级的**：通讯录判定离职、管理员移出或本人离开某个组织时，此人所有的网页会话与个人令牌都被吊销（不只是该组织的），需要重新登录（Ruling A8）。同时删除他在该组织的个人连接器凭据、中止他在该组织的进行中运行。
+- **同一个群话题里的匿名访客共用一个对话**（连接为 `anonymous` 时）：话题里所有未绑定的人共用同一段对话上下文，任何一个都能对该对话的审批卡片做「仅此一次」的批准（Ruling A16）。
+- **没有绑定外部身份的本地账号会被通讯录同步出第二个账号**：通讯录同步不按邮箱合并。要避免，先让此人用本地账号在 IM 里私聊机器人完成绑定，或在受信租户下用第三方登录按已验证邮箱合并（目前只有 Slack 登录可以），再开通讯录同步（Ruling A9 的结果）。
+- **经 IM 绑定的身份不能直接用于网页登录**：在 IM 里点绑定卡片建立的身份只能在 IM 里代表本人；要用它登录网页，先登录绑定的那个账号，再在登录状态下完成一次该平台的第三方登录（「设置 → IM 身份」里该身份的「验证」）。通讯录同步建立的身份不受此限（Ruling A18 / A23）。
+- **群里的话题跟进需要再 @ 机器人**：群聊里只处理 @ 了机器人的消息，话题里不 @ 的回复会被忽略（D4）。
+- **大批移除保护**：定时与人员变动触发的同步，计划移除人数超过 `max(5, 现有通讯录成员的 20%)`，或通讯录里一个在职成员都没有时，本轮不移除任何人并记审计 `org.directory.removal_blocked`。确认是真实的大批离职时，用「立即同步」手动触发，手动同步不受此限；但手动同步时如果正好有另一轮同步在跑，它会改由那一轮结束后的补跑完成，补跑按 `changed` 触发处理，仍受保护（Ruling A17）。
+- **人员变动不断时移除会推迟**：一轮同步进行中又来了人员变动，这一轮只加人不移除，移除留给随后的补跑（Ruling A32）。变动持续不断时移除会一直推迟。
+- **Slack Enterprise Grid**：租户是工作区（team），不是企业。同一企业其他工作区的人在共享频道里发言时按外部租户处理，只能绑定、不能匿名；通讯录只同步 `teamId` 这个工作区的正式成员，访客（单 / 多频道）不同步（Ruling A26 / A27 / A29）。
+- **其他限制**：Sign in with Slack 不用 PKCE（Slack OIDC 未声明），任何工作区的 Slack 用户都能完成登录（只建账号）；Lark 登录只服务于部署级登录应用所在的租户，其他租户的组织照样可以用机器人并在 IM 里绑定；Slack 发送没有幂等参数，超长回复拆成多条时中途失败重试可能重复前几段；IM 里暂不支持仅自己可见的回复（ephemeral）。
+- **尚待真实平台联调确认**（目前只在假服务端上验证）：Lark 卡片回调在回失败后是否像事件一样重推（不重推时这次点击丢失、需再点）；Lark 卡片回调以事件帧到达、JSON 2.0 卡片里多选表单与按钮布局的渲染；Lark 长连接 WSS 主机名；Lark v2 token 接口的返回码类型与部门递归分页在结构不变时的稳定性；Slack Socket Mode 的重连与限流在真实工作区的表现。
+
+写渠道、登录、通讯录插件见 [skills/writing-channels](skills/writing-channels/SKILL.md)。
+
+### 对话页的右侧面板与插件界面
+
+对话页中间是对话，工具调用按时间线一行一条（工具给了显示摘要就显示那句话，如「更新任务清单（4 项）」，展开看完整的输入输出）。右侧是可以收起的标签面板：
+
+- 内核自带的标签：「运行」（本次对话的全部工具调用，有待批准的操作时带提醒标记）和「上下文」（已用 token / 上下文窗口、agent 与模型、用到的应用、压缩记录）。
+- 插件的标签：组织启用了带界面的插件后自动出现。例如启用 `@capybara-hq/plugin-todo`，就多一个「任务」标签，agent 每次更新清单都会实时刷新。插件也能往顶栏的「扩展」菜单加组织页面。
+
+插件界面分两档：
+
+- **渲染 schema 视图**：插件只返回结构化的块（清单、表格、图表、按钮、表单等），网页用设计系统组件画。插件写不了样式，也执行不了代码。升级时多出视图不需要重新批准。参考 `plugins/todo`。
+- **嵌入应用**：插件自己的页面放进沙箱 iframe，用来做看板、工作流这类复杂交互。页面经同源代理 `/plugin-ui/<插件>/...` 加载，读不到会话 Cookie，只拿到一个只对这个插件有效、5 分钟过期的令牌。嵌入应用在 `capybara plugins review` 里标为 `(sensitive)`，必须批准后才加载。参考 `plugins/example-board`：加进 `CAPYBARA_PLUGINS` 并在组织启用后，从顶栏「扩展」菜单打开组织看板，对话里会多一个「看板」标签。
+
+写插件界面见 [skills/writing-plugin-ui](skills/writing-plugin-ui/SKILL.md)。
 
 ## 运维须知
 

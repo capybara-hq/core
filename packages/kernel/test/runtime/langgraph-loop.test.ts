@@ -38,6 +38,7 @@ import { Breaker } from "../../src/tools/breaker.js";
 import { ToolOutputs } from "../../src/tools/outputs.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { QuestionsService } from "../../src/tools/questions.service.js";
+import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
 
@@ -174,8 +175,9 @@ beforeEach(async () => {
   calls.length = 0;
   script = () => ({ text: "ok", stopReason: "end_turn" });
   runtimeOverrides = {};
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.lg_checkpoints, capybara.lg_checkpoint_writes CASCADE`.execute(
+  await truncateTables(
     raw,
+    "capybara.accounts, capybara.orgs, capybara.lg_checkpoints, capybara.lg_checkpoint_writes",
   );
   accountId = randomUUID();
   orgId = randomUUID();

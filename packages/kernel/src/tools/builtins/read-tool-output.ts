@@ -132,6 +132,7 @@ export function readToolOutputTool(deps: {
         content: [
           { type: "text", text: readPage(id, content, { offset, limit, charOffset, budget }) },
         ],
+        display: { summary: { zh: `已读取输出 ${id}`, en: `Read output ${id}` } },
       };
     },
   };

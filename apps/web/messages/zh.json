@@ -21,7 +21,23 @@
     "loginLabel": "用户名",
     "passwordLabel": "密码",
     "submit": "登录",
-    "subtitle": "使用账号与密码登录。"
+    "subtitle": "使用账号与密码登录。",
+    "or": "或使用以下方式登录",
+    "sso": "使用 {name} 登录",
+    "ssoError": {
+      "sso": {
+        "unavailable": "该登录方式暂不可用，请联系管理员。",
+        "state_invalid": "登录请求已过期或已使用，请重试。",
+        "session_mismatch": "登录是在另一个浏览器里发起的，请在这里重新开始。",
+        "access_denied": "登录已取消或授权被拒绝。",
+        "provider_error": "身份提供方返回错误，请稍后再试。",
+        "identity_not_verified": "这个账号是通过 IM 绑定链接关联的，还不能直接用它登录。请先用其他方式登录，再在登录状态下用它登录一次完成验证。"
+      },
+      "auth": {
+        "account_disabled": "该账号已被停用。"
+      },
+      "unknown": "登录失败，请重试。"
+    }
   },
   "setup": {
     "title": "初始化",
@@ -86,7 +102,8 @@
       "model_unavailable": "所选模型不可用。"
     },
     "conversation": {
-      "not_found": "对话不存在或你无权访问。"
+      "not_found": "对话不存在或你无权访问。",
+      "output_not_found": "完整输出已过期或不存在。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。"
@@ -109,6 +126,39 @@
     },
     "credential": {
       "missing": "使用该应用需要凭据。"
+    },
+    "plugin": {
+      "not_found": "插件未安装。",
+      "not_enabled": "该插件未在本组织启用，请到「设置 → 插件」中启用。",
+      "config_invalid": "配置不正确：",
+      "no_org_config": "该插件没有组织级配置。",
+      "dependency_missing": "请先启用它依赖的插件。",
+      "has_dependents": "还有其他已启用的插件依赖它。"
+    },
+    "directory": {
+      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
+    },
+    "ui": {
+      "not_found": "这个面板不可用：插件可能未启用，或你无权访问这个对话。",
+      "render_failed": "插件加载这个面板失败，请重试。",
+      "action_failed": "插件执行这个操作失败，请重试。",
+      "invalid_view": "插件返回的内容无法显示，请稍后重试。",
+      "timeout": "插件没有及时响应，请重试。"
+    },
+    "channel": {
+      "not_found": "渠道不存在或已删除。",
+      "verify_failed": "平台拒绝了机器人凭据，请检查后重试。"
+    },
+    "identity": {
+      "taken": "这个 IM 账号已绑定到另一个 Capybara 账号。",
+      "not_found": "该身份不存在或已解绑。",
+      "last_login_method": "这是你唯一的登录方式，请先设置密码再解绑。"
+    },
+    "bind": {
+      "invalid": "绑定链接无效或已过期。"
+    },
+    "member": {
+      "anonymous_guest": "匿名访客不能被授予角色、所有权或 agent，也不能被邀请或移出。"
     }
   },
   "agents": {
@@ -205,9 +255,6 @@
     "empty": "发送一条消息开始对话。",
     "streamLost": "与服务器的实时连接已断开，请刷新页面。",
     "idle": "就绪",
-    "agent": "Agent",
-    "conversation": "会话",
-    "status": "状态",
     "inspectorTitle": "会话信息",
     "waiting": "等你处理",
     "attachments": "附件",
@@ -222,7 +269,37 @@
     "appUnavailableHint": {
       "not_connected": "你还没有连接 {app}。请先在「应用」页连接，再重试。",
       "failed": "暂时无法访问 {app}，请稍后重试。"
-    }
+    },
+    "timeline": "本轮步骤",
+    "thinkingLive": "思考中…"
+  },
+  "ui": {
+    "dangerDescription": "这个操作由插件执行，可能无法撤销。",
+    "embedRefreshFailed": "插件页面的凭据续期失败，正在重试；页面可能暂时无法读写。",
+    "embedRemountLimit": "插件页面在加载后反复跳转离开，已停止加载。可以重试，或联系插件提供方。"
+  },
+  "chatPanel": {
+    "label": "对话面板",
+    "run": "运行",
+    "context": "上下文",
+    "runEmpty": "本对话还没有工具调用。",
+    "agent": "Agent",
+    "model": "模型",
+    "conversation": "会话",
+    "tokens": "Token",
+    "tokensOf": "{used} / {total}（{pct}%）",
+    "tokensOnly": "{used}",
+    "noUsage": "暂无用量",
+    "windowUnknown": "模型没有声明上下文窗口，只显示已用 token 数。",
+    "apps": "用到的应用",
+    "none": "无",
+    "compactions": "压缩记录",
+    "compactionCovers": "压缩到第 {seq} 条事件",
+    "loadingOutput": "正在读取全部输出…",
+    "contributionsFailed": "插件面板加载失败，插件标签暂不可用。"
+  },
+  "pluginPage": {
+    "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
   },
   "nav": {
     "overview": "概览",
@@ -230,7 +307,8 @@
     "goto": "跳转",
     "actions": "操作",
     "inbox": "收件箱",
-    "apps": "应用"
+    "apps": "应用",
+    "channels": "渠道"
   },
   "shell": {
     "switchLocale": "切换到 {name}",
@@ -244,12 +322,6 @@
     "back": "返回概览"
   },
   "tools": {
-    "call": "工具",
-    "details": "参数与结果",
-    "input": "参数",
-    "result": "结果",
-    "noResult": "尚无结果。",
-    "truncated": "仅显示前 {n} 个字符。",
     "outputId": "完整结果已存档：{id}。",
     "status": {
       "pending": "等待中",
@@ -614,7 +686,9 @@
     "nav": {
       "connections": "已连接的应用",
       "grants": "已记住的授权",
-      "organization": "组织设置"
+      "organization": "组织设置",
+      "identities": "IM 身份",
+      "plugins": "插件"
     },
     "empty": "没有需要你个人凭据的应用。",
     "emptyHint": "使用个人凭据的应用会出现在这里。",
@@ -655,6 +729,196 @@
       "onHint": "工具超过阈值时改用目录 + tool_search（推荐）。",
       "off": "关闭",
       "offHint": "总是把全部工具定义发给模型。"
+    },
+    "locale": {
+      "title": "IM 语言",
+      "description": "机器人在 IM 中发送的固定话术（绑定提示、错误提示）所用的语言；模型回复不翻译。",
+      "label": "IM 语言"
     }
+  },
+  "schemaForm": {
+    "none": "—",
+    "jsonHint": "填写 JSON 值。",
+    "secretSet": "••••••••（已设置）",
+    "secretWillClear": "保存后将清除",
+    "replace": "替换",
+    "replaceLabel": "替换 {field}",
+    "clear": "清除",
+    "clearLabel": "清除 {field}",
+    "cancelReplace": "保留原值",
+    "cancelReplaceLabel": "保留 {field} 原值",
+    "undoClear": "撤销",
+    "undoClearLabel": "保留 {field}",
+    "errors": {
+      "required": "必填",
+      "number": "请输入数字",
+      "integer": "请输入整数",
+      "json": "JSON 格式不正确"
+    }
+  },
+  "channels": {
+    "title": "渠道",
+    "new": "新建渠道",
+    "empty": "还没有渠道连接",
+    "emptyHint": "把 IM 机器人（如 Slack、飞书）接到一个 agent，大家就能在 IM 里和它对话。",
+    "columns": {
+      "name": "名称",
+      "plugin": "插件",
+      "agent": "Agent",
+      "policy": "未绑定的人",
+      "status": "状态"
+    },
+    "status": {
+      "active": "运行中",
+      "disabled": "已停用",
+      "error": "出错"
+    },
+    "policy": {
+      "bind": "提示绑定",
+      "anonymous": "匿名访客"
+    },
+    "policyHint": {
+      "bind": "未绑定 Capybara 账号的人会在私聊里收到绑定提示（推荐）。",
+      "anonymous": "未绑定的人以匿名访客身份对话：只能使用全组织可见的 agent，且不能取用个人凭据。"
+    },
+    "form": {
+      "title": "新建渠道",
+      "pluginSection": "平台",
+      "pluginHint": "该组织已启用的渠道插件。",
+      "pluginLabel": "插件",
+      "pluginPlaceholder": "选择插件",
+      "noPlugins": "该组织还没有启用任何渠道插件。",
+      "openPlugins": "打开插件设置",
+      "nameLabel": "名称",
+      "nameRequired": "请填写名称",
+      "configSection": "机器人凭据",
+      "configHint": "字段由插件定义。保存时会先向平台校验凭据。",
+      "pickPluginFirst": "请先选择插件。",
+      "agentSection": "Agent",
+      "agentSectionHint": "回复发给这个机器人的消息的 agent。",
+      "agentLabel": "Agent",
+      "agentHint": "回复由这个 agent 生成。",
+      "agentPlaceholder": "选择 agent",
+      "noAgents": "还没有 agent，请先新建一个。",
+      "policySection": "未绑定的人",
+      "policySectionHint": "还没绑定账号的人给机器人发消息时怎么处理。",
+      "policyLabel": "未绑定的人",
+      "submit": "创建渠道"
+    },
+    "inspector": {
+      "plugin": "插件",
+      "tenant": "租户",
+      "bot": "机器人",
+      "agent": "Agent",
+      "policy": "未绑定",
+      "created": "创建于"
+    },
+    "detail": {
+      "tabsLabel": "渠道分区",
+      "tabs": {
+        "overview": "概览",
+        "credentials": "凭据",
+        "settings": "设置"
+      },
+      "inspectorTitle": "详情",
+      "retry": "重试",
+      "statusTitle": "状态",
+      "lastError": "最近错误",
+      "noError": "最近没有错误。",
+      "enable": "启用",
+      "disable": "停用",
+      "enableHint": "机器人已离线，启用后重新连接。",
+      "disableHint": "停用会断开机器人，期间发来的消息不会回复。",
+      "enabledToast": "渠道已启用。",
+      "disabledToast": "渠道已停用。",
+      "credentialsTitle": "凭据与配置",
+      "credentialsHint": "不动的密钥保持原值；替换密钥即轮换凭据，新凭据保存前会先向平台校验。",
+      "schemaUnavailable": "渠道插件不可用，无法编辑配置。请确认插件已安装并已启用。",
+      "saveCredentials": "保存凭据",
+      "credentialsSaved": "凭据已保存。",
+      "settingsTitle": "设置",
+      "save": "保存",
+      "saved": "渠道已保存。",
+      "dangerTitle": "危险操作",
+      "delete": "删除渠道",
+      "deleteTitle": "删除 {name}？",
+      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 Capybara 中。"
+    }
+  },
+  "plugins": {
+    "title": "插件",
+    "empty": "没有安装任何插件。",
+    "version": "版本 {version}",
+    "enableLabel": "启用 {plugin}",
+    "enabled": "已在该组织启用",
+    "disabled": "未启用",
+    "enabledToast": "已启用 {plugin}。",
+    "disabledToast": "已停用 {plugin}。",
+    "dependencyMissing": "请先启用提供以下能力的插件：",
+    "hasDependents": "以下已启用的插件依赖它，停用后将无法工作：",
+    "forceDisable": "仍然停用",
+    "permissions": "权限",
+    "permissionsLabel": "{plugin} 的权限",
+    "sensitive": "敏感",
+    "category": {
+      "provides": "提供的能力",
+      "requires": "依赖的能力",
+      "optional": "可选依赖",
+      "config": "配置项",
+      "tables": "数据库表",
+      "secrets": "密钥",
+      "storage": "对象存储",
+      "http": "HTTP 路由",
+      "publicRoutes": "公开路由（无需登录）",
+      "tools": "Agent 工具",
+      "hooks": "Hook",
+      "models": "模型",
+      "network": "网络访问",
+      "ui": "界面（视图 / 嵌入应用）"
+    },
+    "configTitle": "组织级配置",
+    "save": "保存配置",
+    "saveLabel": "保存 {plugin} 的配置",
+    "configSaved": "{plugin} 的配置已保存。",
+    "sync": "立即同步",
+    "syncLabel": "立即同步 {plugin} 的通讯录",
+    "syncHint": "通讯录同步会按平台通讯录增删组织成员。",
+    "syncStarted": "已开始同步通讯录。"
+  },
+  "identities": {
+    "title": "IM 身份",
+    "hint": "绑定到你的 Capybara 账号的 IM 与第三方登录账号。已绑定的 IM 账号发来的消息以你的身份处理。",
+    "empty": "还没有绑定任何身份",
+    "emptyHint": "在 IM 里给 Capybara 机器人发消息并按链接绑定，或使用第三方账号登录。",
+    "columns": {
+      "name": "名称",
+      "source": "来源",
+      "tenant": "租户",
+      "externalId": "账号 ID",
+      "linkedAt": "绑定于"
+    },
+    "unlink": "解绑",
+    "unlinkTitle": "解绑 {name}？",
+    "unlinkHint": "解绑后，这个 IM 账号发来的消息不再以你的身份处理，也不能再用它登录。",
+    "unlinked": "已解绑 {name}。",
+    "unverified": "未验证",
+    "verify": "验证（用该账号登录一次）"
+  },
+  "bind": {
+    "title": "绑定 IM 账号",
+    "subtitle": "一个 IM 账号请求绑定到你的 Capybara 账号。",
+    "loading": "加载中…",
+    "source": "来源",
+    "tenant": "租户",
+    "externalId": "账号 ID",
+    "email": "邮箱",
+    "warning": "只有当你刚刚亲自在 IM 中发起时才确认：这会把该 IM 账号绑定到你的 Capybara 账号，它发来的消息将以你的身份处理。",
+    "confirm": "确认绑定",
+    "cancel": "取消",
+    "doneTitle": "绑定成功",
+    "doneHint": "回到 IM 继续对话吧。",
+    "invalidTitle": "链接已失效",
+    "invalidHint": "在 IM 里给机器人重新发一条消息，获取新的绑定链接。",
+    "goHome": "进入 Capybara"
   }
 }

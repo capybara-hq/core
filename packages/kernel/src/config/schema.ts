@@ -23,6 +23,12 @@ function isValidMasterKey(value: string): boolean {
   return Buffer.from(value, "base64").length === 32;
 }
 
+/**
+ * 受信任身份源的一项：完整的身份源键 `<插件名>:<租户 id>`（Ruling A19，信任按租户）。
+ * 插件名同清单规则（不能是 `local`），租户 id 非空、不含空白；与 identity/external.ts 的身份源键规则一致。
+ */
+const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
+
 /** access token 寿命上限（秒）；会话吊销标记的 TTL 按它计算，与实例当前配置无关。 */
 export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 
@@ -74,6 +80,19 @@ export const KernelConfigSchema = z.object({
     .record(z.string(), z.unknown())
     .default({})
     .meta(meta({ description: "Deployment-level config keyed by plugin name" })),
+  pluginPermissions: z
+    .object({
+      autoApprove: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Approve plugin permissions automatically at startup (development and trials only). When false, a plugin that is new or whose upgrade asks for more permissions is not loaded until an admin runs `capybara plugins approve <name>`",
+          }),
+        ),
+    })
+    .default({ autoApprove: false }),
   http: z
     .object({
       port: z
@@ -159,8 +178,44 @@ export const KernelConfigSchema = z.object({
         .min(1)
         .optional()
         .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
+      loginSources: z
+        .array(z.string().min(1).max(214))
+        .max(50)
+        .default([])
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Plugin names (providing identity-source@1) offered as third-party sign-in on the login page, in this order; the sign-in callback URL is <http.publicUrl>/api/v1/auth/sso/<plugin>/callback",
+          }),
+        ),
+      trustedIdentitySources: z
+        .array(
+          z
+            .string()
+            .max(471)
+            .refine((v) => TRUSTED_SOURCE_RE.test(v), {
+              message:
+                'Each entry must be a full identity source key "<plugin>:<tenantId>" (for example "lark:tenant_1"); plugin-only entries are not allowed, trust is per tenant',
+            }),
+        )
+        .max(50)
+        .default([])
+        .meta(
+          meta({
+            hot: true,
+            description:
+              'Identity source keys "<plugin>:<tenantId>" (one tenant each, e.g. "lark:tenant_1") whose external identities are trusted: on third-party sign-in, when the identity\'s email and an existing account\'s email are both verified and equal, the identity is linked to that account instead of creating a new one; and accounts created through a trusted source count as email-verified. Only list tenants (workspaces / apps) that your enterprise controls; otherwise anyone in that tenant could claim your users\' emails. Plugin-only entries are rejected',
+          }),
+        ),
     })
-    .default({ accessTokenTtlSeconds: 900, refreshTokenTtlDays: 30, cookieSecure: true }),
+    .default({
+      accessTokenTtlSeconds: 900,
+      refreshTokenTtlDays: 30,
+      cookieSecure: true,
+      loginSources: [],
+      trustedIdentitySources: [],
+    }),
   runtime: z
     .object({
       maxSteps: z
@@ -419,6 +474,76 @@ export const KernelConfigSchema = z.object({
       driftIntervalHours: 24,
       maxResultReadChars: 20000,
       oauthAllowInsecureLoopback: false,
+    }),
+  channels: z
+    .object({
+      leaseTtlMs: z
+        .number()
+        .int()
+        .positive()
+        .default(30000)
+        .meta(
+          meta({
+            description:
+              "TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long",
+          }),
+        ),
+      scanIntervalMs: z
+        .number()
+        .int()
+        .positive()
+        .default(10000)
+        .meta(
+          meta({
+            description:
+              "How often each worker replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds",
+          }),
+        ),
+      retryBaseMs: z
+        .number()
+        .int()
+        .positive()
+        .default(5000)
+        .meta(
+          meta({
+            description:
+              "First retry delay after a channel long connection fails, in milliseconds; doubles on each consecutive failure up to 5 minutes",
+          }),
+        ),
+      deliveryConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(100)
+        .meta(
+          meta({
+            description:
+              "How many channel outbound delivery jobs one worker replica runs at the same time (each job follows one conversation while its run streams output)",
+          }),
+        ),
+      deliveryIdleMs: z
+        .number()
+        .int()
+        .positive()
+        .default(15000)
+        .meta(
+          meta({
+            description:
+              "A channel delivery job that has caught up ends after this many milliseconds without new conversation output; the next event of the conversation starts a new job",
+          }),
+        ),
+    })
+    // 续租周期必须明显短于 TTL：至少能在租约过期前续两次，偶尔一次 Redis 抖动不至于丢租约
+    .refine((c) => c.scanIntervalMs <= c.leaseTtlMs / 2, {
+      message: "channels.scanIntervalMs must be at most half of channels.leaseTtlMs",
+      path: ["scanIntervalMs"],
+    })
+    .default({
+      leaseTtlMs: 30000,
+      scanIntervalMs: 10000,
+      retryBaseMs: 5000,
+      deliveryConcurrency: 100,
+      deliveryIdleMs: 15000,
     }),
   log: z
     .object({

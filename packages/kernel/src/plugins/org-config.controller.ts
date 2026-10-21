@@ -15,6 +15,7 @@ const PutBody = z
   .object({
     enabled: z.boolean().optional(),
     config: z.record(z.string(), z.unknown()).optional(),
+    force: z.boolean().optional(),
   })
   .strict();
 

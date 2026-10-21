@@ -9,6 +9,38 @@ export {
   replicaOf,
 } from "./dual-replica.js";
 export {
+  FAKE_CHANNEL_BAD_SECRET,
+  type FakeChannelPost,
+  type FakeChannelSent,
+  type FakeChannelServer,
+  type FakeChannelServerOptions,
+  type FakeChannelStream,
+  type FakeChannelUser,
+  type FakeDirectoryBook,
+  type FakeSenderProfile,
+  fakeCardAction,
+  fakeDirectoryMember,
+  fakeDm,
+  fakeGroupMessage,
+  startFakeChannelServer,
+} from "./fake-channel.js";
+export {
+  type FakeLarkAck,
+  type FakeLarkApi,
+  type FakeLarkButton,
+  type FakeLarkCall,
+  type FakeLarkDepartment,
+  type FakeLarkFailure,
+  type FakeLarkMessage,
+  type FakeLarkOptions,
+  type FakeLarkServer,
+  type FakeLarkUser,
+  findLarkButton,
+  larkCardAction,
+  larkMessageEvent,
+  startFakeLark,
+} from "./fake-lark.js";
+export {
   type FakeMcpCallInfo,
   type FakeMcpHandlerContext,
   type FakeMcpPrompt,
@@ -41,6 +73,20 @@ export {
   type FakePet,
   startFakeOpenApiServer,
 } from "./fake-openapi-server.js";
+export {
+  type FakeSlackAck,
+  type FakeSlackCall,
+  type FakeSlackFailure,
+  type FakeSlackMessage,
+  type FakeSlackOptions,
+  type FakeSlackServer,
+  type FakeSlackUser,
+  findSlackButton,
+  slackBlockAction,
+  slackDmEvent,
+  slackMentionEvent,
+  startFakeSlack,
+} from "./fake-slack.js";
 export {
   type ConformanceTarget,
   checkDeclaredParameters,

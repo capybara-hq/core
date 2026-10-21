@@ -17,16 +17,19 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { usePathname, useRouter } from "../../i18n/navigation";
 import { routing } from "../../i18n/routing";
 import { ApiClientError } from "../../lib/api";
+import { loginPathFor } from "../../lib/auth-sources";
 import { useConnectResultToast } from "../../lib/connect";
+import { canUpdateOrg } from "../../lib/org-settings";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
-import { activeNavOf, routeLabel, useNav, usePendingApprovals } from "./nav";
+import { activeNavOf, routeLabel, useExtensions, useNav, usePendingApprovals } from "./nav";
 import { type Session, SessionContext } from "./session";
 
 /** 本地时区，如 `UTC+8`、`UTC-3:30`（StatusBar 右侧，spec §4.4）。 */
@@ -58,11 +61,15 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const locale = useLocale();
   const router = useRouter();
   const pathname = usePathname();
+  // 回跳路径只在读取 /me 失败时取；换路由不应重读 /me，所以不放进 load 的依赖
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const [me, setMe] = useState<Me>();
   const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
-  const { nav, commands } = useNav(pending.count);
+  const { nav, commands } = useNav(pending.count, me !== undefined && canUpdateOrg(me));
+  const extensions = useExtensions(me?.currentOrgId ?? null, locale);
   const [error, setError] = useState<string>();
   const [theme, setTheme] = useState<Theme>("dark");
   const timeZone = useTimeZoneLabel();
@@ -77,7 +84,9 @@ export function AppFrame({ version, children }: { version: string; children: Rea
       setMe(await getMe());
       setError(undefined);
     } catch (e) {
-      if (e instanceof ApiClientError && e.status === 401) router.replace("/login");
+      // 未登录：去登录页，登录后回到当前页
+      if (e instanceof ApiClientError && e.status === 401)
+        router.replace(loginPathFor(`${pathnameRef.current}${window.location.search}`));
       else setError(errorMessage(e));
     }
   }, [router, errorMessage]);
@@ -161,6 +170,8 @@ export function AppFrame({ version, children }: { version: string; children: Rea
       menu: me === undefined ? [] : userMenu,
     },
     commands,
+    // 只有存在插件页面时才出现
+    ...(extensions.length > 0 && { extensions: { items: extensions } }),
   };
   const who =
     me === undefined ? "" : `${me.account.displayName}${currentOrg ? `@${currentOrg.name}` : ""}`;

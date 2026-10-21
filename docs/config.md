@@ -16,6 +16,7 @@
 | `masterKeyPrevious` | `CAPYBARA_MASTER_KEY_PREVIOUS` | `array<string>` | — | 否 | 是 | Previous master keys kept during rotation |
 | `plugins` | `CAPYBARA_PLUGINS` | `array<string>` | `[]` | 否 | 否 | Plugin names to load |
 | `pluginConfig` | `CAPYBARA_PLUGIN_CONFIG` | `record` | `{}` | 否 | 否 | Deployment-level config keyed by plugin name |
+| `pluginPermissions.autoApprove` | `CAPYBARA_PLUGIN_PERMISSIONS__AUTO_APPROVE` | `boolean` | `false` | 否 | 否 | Approve plugin permissions automatically at startup (development and trials only). When false, a plugin that is new or whose upgrade asks for more permissions is not loaded until an admin runs `capybara plugins approve <name>` |
 | `http.port` | `CAPYBARA_HTTP__PORT` | `number` | `8080` | 否 | 否 | HTTP listen port |
 | `http.trustProxy` | `CAPYBARA_HTTP__TRUST_PROXY` | `boolean \| number \| array<string>` | `false` | 否 | 否 | Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies |
 | `http.replicaId` | `CAPYBARA_HTTP__REPLICA_ID` | `string \| number` | 可选 | 否 | 否 | Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers) |
@@ -25,6 +26,8 @@
 | `auth.refreshTokenTtlDays` | `CAPYBARA_AUTH__REFRESH_TOKEN_TTL_DAYS` | `number` | `30` | 否 | 否 | Absolute lifetime of a web session (refresh token) in days; refreshing does not extend it |
 | `auth.cookieSecure` | `CAPYBARA_AUTH__COOKIE_SECURE` | `boolean` | `true` | 否 | 否 | Set the Secure attribute on session cookies; set false only for local trials over plain http |
 | `auth.setupToken` | `CAPYBARA_AUTH__SETUP_TOKEN` | `string` | 可选 | 否 | 是 | If set, the setup wizard requires this token |
+| `auth.loginSources` | `CAPYBARA_AUTH__LOGIN_SOURCES` | `array<string>` | `[]` | 是 | 否 | Plugin names (providing identity-source@1) offered as third-party sign-in on the login page, in this order; the sign-in callback URL is <http.publicUrl>/api/v1/auth/sso/<plugin>/callback |
+| `auth.trustedIdentitySources` | `CAPYBARA_AUTH__TRUSTED_IDENTITY_SOURCES` | `array<string>` | `[]` | 是 | 否 | Identity source keys "<plugin>:<tenantId>" (one tenant each, e.g. "lark:tenant_1") whose external identities are trusted: on third-party sign-in, when the identity's email and an existing account's email are both verified and equal, the identity is linked to that account instead of creating a new one; and accounts created through a trusted source count as email-verified. Only list tenants (workspaces / apps) that your enterprise controls; otherwise anyone in that tenant could claim your users' emails. Plugin-only entries are rejected |
 | `runtime.maxSteps` | `CAPYBARA_RUNTIME__MAX_STEPS` | `number` | `50` | 否 | 否 | Maximum model steps per agent run before the final wrap-up |
 | `runtime.maxRunSeconds` | `CAPYBARA_RUNTIME__MAX_RUN_SECONDS` | `number` | `900` | 否 | 否 | Maximum wall-clock duration of one agent run in seconds |
 | `runtime.streamIdleMs` | `CAPYBARA_RUNTIME__STREAM_IDLE_MS` | `number` | `60000` | 否 | 否 | Default model stream idle watchdog in milliseconds (a model's own streamIdleTimeoutMs takes precedence) |
@@ -49,6 +52,11 @@
 | `tools.driftIntervalHours` | `CAPYBARA_TOOLS__DRIFT_INTERVAL_HOURS` | `number` | `24` | 否 | 否 | Hours between checks of connected apps for changed tool definitions |
 | `tools.maxResultReadChars` | `CAPYBARA_TOOLS__MAX_RESULT_READ_CHARS` | `number` | `20000` | 否 | 否 | Maximum characters returned by one read_tool_output call |
 | `tools.oauthAllowInsecureLoopback` | `CAPYBARA_TOOLS__OAUTH_ALLOW_INSECURE_LOOPBACK` | `boolean` | `false` | 否 | 否 | Allow OAuth discovery, registration and token endpoints over plain http on loopback hosts (development and tests only; production requires https) |
+| `channels.leaseTtlMs` | `CAPYBARA_CHANNELS__LEASE_TTL_MS` | `number` | `30000` | 否 | 否 | TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long |
+| `channels.scanIntervalMs` | `CAPYBARA_CHANNELS__SCAN_INTERVAL_MS` | `number` | `10000` | 否 | 否 | How often each worker replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds |
+| `channels.retryBaseMs` | `CAPYBARA_CHANNELS__RETRY_BASE_MS` | `number` | `5000` | 否 | 否 | First retry delay after a channel long connection fails, in milliseconds; doubles on each consecutive failure up to 5 minutes |
+| `channels.deliveryConcurrency` | `CAPYBARA_CHANNELS__DELIVERY_CONCURRENCY` | `number` | `100` | 否 | 否 | How many channel outbound delivery jobs one worker replica runs at the same time (each job follows one conversation while its run streams output) |
+| `channels.deliveryIdleMs` | `CAPYBARA_CHANNELS__DELIVERY_IDLE_MS` | `number` | `15000` | 否 | 否 | A channel delivery job that has caught up ends after this many milliseconds without new conversation output; the next event of the conversation starts a new job |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

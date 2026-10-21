@@ -29,6 +29,7 @@ import {
 import { AgentDefinitionSchema, AgentToolRef, DEFAULT_AGENT_TOOLS } from "./definition.js";
 
 const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
+const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
 
 /** 创建时未给 `tools` → 默认工具（Ruling P7）；修改请求不注入默认值，版本里总是存显式的 tools。 */
 const CreateDefinition = AgentDefinitionSchema.extend({
@@ -122,6 +123,28 @@ export class AgentsController {
   ): Promise<void> {
     const p = requireUser(principal);
     await this.agents.softDelete(org.orgId, agentId, p.account.id, patTokenId(p));
+  }
+
+  /** 重新指派负责人（admin，如负责人离职后）；清除 `needsReassignment`。 */
+  @Post(":agentId/owner")
+  @HttpCode(200)
+  @OrgAction("agents.manage")
+  async reassign(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("agentId") agentId: string,
+    @Body(new ZodPipe(OwnerBody)) body: z.infer<typeof OwnerBody>,
+  ): Promise<{ agent: AgentView }> {
+    const p = requireUser(principal);
+    return {
+      agent: await this.agents.reassignOwner(
+        org.orgId,
+        agentId,
+        body.accountId,
+        p.account.id,
+        patTokenId(p),
+      ),
+    };
   }
 
   @Get(":agentId/versions")

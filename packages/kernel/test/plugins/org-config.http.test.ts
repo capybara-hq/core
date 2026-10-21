@@ -1,7 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -10,8 +9,10 @@ import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
+import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { testMembers } from "../helpers/members.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -40,6 +41,7 @@ beforeAll(async () => {
       http: { port: 0 },
       log: { level: "debug" },
       plugins: [fx("fixture"), fx("orgcfg")],
+      pluginPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("debug", { write: (l) => lines.push(l) }) },
   );
@@ -48,7 +50,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   tokens = new ApiTokenService(db);
 }, 120_000);
 afterAll(async () => {
@@ -58,7 +60,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
 });
@@ -106,7 +108,7 @@ describe("组织插件配置 HTTP", () => {
       payload: body,
     });
     expect(put.statusCode).toBe(200);
-    expect(put.json()).toEqual({
+    expect(put.json()).toMatchObject({
       plugin: {
         plugin: "orgcfg",
         version: "1.2.3",

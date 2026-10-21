@@ -346,6 +346,43 @@ export class QuestionsService {
     return out;
   }
 
+  /**
+   * 在事务 `t` 内取消某组织里由 `accountId` 发起的运行上的全部 pending 输入请求（只有运行发起人能回答，
+   * 即「其作为处理人」的提问；成员离职时调用），走与 {@link cancelPendingIn} 相同的取消路径：置 cancelled、
+   * 写 `question_answered{cancelled}`。返回被取消的记录与各会话写到的最大 seq；调用方提交后发布事件。
+   */
+  async cancelPendingFor(
+    t: Trx,
+    orgId: string,
+    accountId: string,
+  ): Promise<{ records: QuestionRecord[]; seqs: Map<string, number> }> {
+    const rows = await t
+      .selectFrom("questions")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("status", "=", "pending")
+      .where("run_id", "in", (eb) =>
+        eb.selectFrom("runs").select("id").where("trigger_account_id", "=", accountId),
+      )
+      .orderBy("created_at")
+      .forUpdate()
+      .execute();
+    const records: QuestionRecord[] = [];
+    const seqs = new Map<string, number>();
+    for (const row of rows) {
+      const updated = await t
+        .updateTable("questions")
+        .set({ status: "cancelled", answered_at: sql<Date>`now()` })
+        .where("id", "=", row.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const seq = await this.answeredEvent(t, toRecord(row), null, null, "cancelled");
+      seqs.set(row.conversation_id, Math.max(seqs.get(row.conversation_id) ?? 0, seq));
+      records.push(toRecord(updated));
+    }
+    return { records, seqs };
+  }
+
   private async answeredEvent(
     t: Trx,
     q: QuestionRecord,

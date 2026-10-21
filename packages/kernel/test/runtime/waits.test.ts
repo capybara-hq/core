@@ -10,7 +10,6 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { MembersService } from "../../src/orgs/members.service.js";
 import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
 import {
   APPROVAL_CANCELLED_TEXT,
@@ -20,6 +19,8 @@ import {
   TOO_MANY_INPUT_REQUESTS_TEXT,
 } from "../../src/tools/pipeline.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { truncateTables } from "../helpers/db.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -90,7 +91,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   const owner = await new AccountsService(db).createLocal({
     login: "owner",
     password: PW,
@@ -476,7 +477,7 @@ describe("输入请求等待", () => {
       password: PW,
       displayName: "X",
     });
-    await new MembersService(db).add(orgId, other.id, "member", ownerId);
+    await testMembers(db).add(orgId, other.id, "member", ownerId);
     await expect(k.tools.questions.answer(qid, other.id, { color: "red" })).rejects.toMatchObject({
       code: "forbidden",
     });

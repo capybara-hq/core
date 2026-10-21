@@ -2,10 +2,12 @@ import { apiFetch } from "./api";
 
 /**
  * 组织设置（`packages/kernel/src/orgs/settings.controller.ts`）：成员可读，管理员可改。
- * - `toolSearch`：工具很多时改用目录 + `tool_search` 按需加载（默认 on）。
+ * - `toolSearch`：工具很多时改用目录 + `tool_search` 按需加载（默认 on）；
+ * - `locale`：组织默认语言（默认 en），机器人在 IM 里说的固定话术按它选择。
  */
 export interface OrgSettings {
   toolSearch: "on" | "off";
+  locale: "zh" | "en";
 }
 
 const path = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/settings`;

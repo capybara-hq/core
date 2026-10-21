@@ -259,7 +259,11 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
 
   return (
     <div data-role="question" data-question-id={item.questionId}>
-      <Card title={formText(item.form.title, locale) || t("title")} actions={status}>
+      <Card
+        title={formText(item.form.title, locale) || t("title")}
+        tone={done === null && submitted === null ? "accent" : "default"}
+        actions={status}
+      >
         {answer !== null ? (
           <KeyValue
             keyWidth="12ch"

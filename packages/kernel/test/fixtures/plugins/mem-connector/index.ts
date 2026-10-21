@@ -107,6 +107,7 @@ export default definePlugin({
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: [CONNECTOR_CAPABILITY],
+  permissions: { tools: ["echo", "ask", "wipe"] },
   setup(ctx: PluginContext) {
     ctx.tools.register(
       {

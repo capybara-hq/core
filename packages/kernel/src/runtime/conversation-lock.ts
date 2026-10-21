@@ -4,7 +4,8 @@ import type { Redis } from "ioredis";
 /** 会话运行锁的默认 TTL（毫秒）：持有方每 `ttlMs / 3` 续租一次。 */
 export const CONVERSATION_LOCK_TTL_MS = 30_000;
 
-const lockKey = (conversationId: string) => `capk:conv-run:${conversationId}`;
+/** 会话运行锁的键前缀。 */
+const RUN_LOCK_PREFIX = "capk:conv-run:";
 
 const RENEW = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -42,17 +43,23 @@ export interface Lease {
  * 持有方崩溃时停止续租，锁在 TTL 后过期，其他副本可以取得。
  */
 export class ConversationLock {
+  /** `keyPrefix`：同样语义、按会话互斥的其他用途用别的前缀（如渠道出站投递 `capk:channel-deliver:`）。 */
   constructor(
     private readonly redis: Redis,
     private readonly log?: Pick<Logger, "warn">,
+    private readonly keyPrefix: string = RUN_LOCK_PREFIX,
   ) {}
+
+  private lockKey(conversationId: string): string {
+    return `${this.keyPrefix}${conversationId}`;
+  }
 
   async acquire(
     conversationId: string,
     runId: string,
     ttlMs = CONVERSATION_LOCK_TTL_MS,
   ): Promise<Lease | null> {
-    const key = lockKey(conversationId);
+    const key = this.lockKey(conversationId);
     const ok = await this.redis.set(key, runId, "PX", ttlMs, "NX");
     if (ok !== "OK") return null;
     const redis = this.redis;
@@ -106,11 +113,11 @@ export class ConversationLock {
    * （例如持有者崩溃、stalled 次数超限）后清理死去持有者留下的锁，不必等 TTL 过期。
    */
   async releaseFor(conversationId: string, runId: string): Promise<void> {
-    await this.redis.eval(RELEASE, 1, lockKey(conversationId), runId);
+    await this.redis.eval(RELEASE, 1, this.lockKey(conversationId), runId);
   }
 
   /** 当前持有者的 runId；无人持有 → null。 */
   holder(conversationId: string): Promise<string | null> {
-    return this.redis.get(lockKey(conversationId));
+    return this.redis.get(this.lockKey(conversationId));
   }
 }

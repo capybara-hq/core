@@ -44,6 +44,7 @@ export function ConnectCard({ orgId, item }: { orgId: string; item: ConnectItem 
     <div data-role="connect" data-app-id={item.appId}>
       <Card
         title={t("title")}
+        tone={item.closed ? "default" : "accent"}
         actions={item.closed ? undefined : <StatusMark status="waiting" label={t("status")} />}
       >
         {item.closed ? (

@@ -14,6 +14,9 @@
       "path": "plugins/example-counter"
     },
     {
+      "path": "plugins/example-board"
+    },
+    {
       "path": "plugins/model-fake"
     },
     {
@@ -33,6 +36,12 @@
     },
     {
       "path": "plugins/todo"
+    },
+    {
+      "path": "plugins/slack"
+    },
+    {
+      "path": "plugins/lark"
     },
     {
       "path": "tools/checks"

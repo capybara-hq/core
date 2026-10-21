@@ -36,6 +36,7 @@ import {
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
+import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -122,6 +123,7 @@ beforeAll(async () => {
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     http: { port: 0 },
     plugins: [MODEL_FAKE],
+    pluginPermissions: { autoApprove: true },
     pluginConfig: {
       "model-fake": {
         models: [
@@ -176,7 +178,7 @@ beforeEach(async () => {
   await redis.flushdb();
   runtimeOverrides = {};
   stubImpl = stub([stubInfo("ok")], () => "ok");
-  await sql`TRUNCATE capybara.accounts, capybara.orgs CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs");
   accountId = randomUUID();
   orgId = randomUUID();
   const agentId = randomUUID();

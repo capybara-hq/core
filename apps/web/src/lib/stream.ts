@@ -6,7 +6,9 @@ import {
   type ModelRef,
   type StopReason,
   streamUrl,
+  type ToolDisplay,
 } from "./conversations";
+import { parseUiRefresh, type UiRefresh } from "./ui";
 
 /** SSE `event: delta` 帧：运行的流式增量（只是草稿，最终内容以日志中的 assistant_message 为准）。 */
 export interface StreamDelta {
@@ -19,6 +21,8 @@ export interface StreamDelta {
 export interface StreamHandlers {
   onEvent(e: ConversationEvent): void;
   onDelta(d: StreamDelta): void;
+  /** `event: ui`：插件的某个对话视图变了（去重新取）。 */
+  onUi?(r: UiRefresh): void;
   /** 连接（含浏览器自动重连）已建立。 */
   onOpen?(): void;
   /**
@@ -65,6 +69,10 @@ export function openConversationStream(
   es.addEventListener("delta", (e) => {
     const data = parse(e);
     if (!closed && data !== undefined) handlers.onDelta(data as StreamDelta);
+  });
+  es.addEventListener("ui", (e) => {
+    const r = parseUiRefresh(parse(e));
+    if (!closed && r !== undefined) handlers.onUi?.(r);
   });
   // 「error」既是服务端错误帧的事件名（MessageEvent，带 data），也是 EventSource 自身的连接错误（普通 Event）。
   es.addEventListener("error", (e) => {
@@ -250,6 +258,12 @@ export type ChatItem =
       key: string;
       text: string;
       thinking: string;
+      /**
+       * 思考行「思考了 N 秒」的秒数。**是近似值**：日志里没有思考结束的时间，这里取整步的耗时
+       * （该步 model_call 到 assistant_message），包含了输出正文与工具调用参数的时间。
+       * 流式草稿与缺少 model_call 时为 null。
+       */
+      thinkingSeconds: number | null;
       stopReason: StopReason | null;
       streaming: boolean;
       /** 产出该消息的模型：该步的 `model_call`，没有时取运行的 `run_started`；都没有为 null。 */
@@ -268,6 +282,8 @@ export type ChatItem =
       result: string | null;
       /** 完整结果的存档 id（结果被截断时有）。 */
       outputId: string | null;
+      /** 工具给的显示摘要（没有时界面退回「工具名 + 输入前几个字段」）。 */
+      display: ToolDisplay | null;
     }
   | {
       kind: "approval";
@@ -320,6 +336,8 @@ export function chatItems(state: ChatState): ChatItem[] {
   const models = new Map<string, ModelRef>();
   const modelOf = (runId: string | null, step: number): ModelRef | null =>
     runId === null ? null : (models.get(stepKey(runId, step)) ?? models.get(runId) ?? null);
+  /** `runId:step` → 该步 model_call 的时间（算思考秒数）。 */
+  const stepStarted = new Map<string, number>();
   /** (runId, callId) → 工具项：不同运行可能复用同一个 callId（与内核按 (runId, callId) 配对一致）。 */
   const tools = new Map<string, { item: ToolItem; runId: string | null }>();
   const toolKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
@@ -337,6 +355,7 @@ export function chatItems(state: ChatState): ChatItem[] {
         provider: e.payload.provider,
         model: e.payload.model,
       });
+      stepStarted.set(stepKey(e.runId, e.payload.step), Date.parse(e.createdAt));
     } else if (e.type === "user_message") {
       // 带附件时只显示用户输入的文本（content[0]），附件正文不展开
       const attachments = e.payload.attachments ?? [];
@@ -352,11 +371,18 @@ export function chatItems(state: ChatState): ChatItem[] {
         (b): b is Extract<ContentBlock, { type: "tool_call" }> => b.type === "tool_call",
       );
       if (text !== "" || thinking !== "" || calls.length === 0) {
+        const started =
+          e.runId === null ? undefined : stepStarted.get(stepKey(e.runId, e.payload.step));
+        const ended = Date.parse(e.createdAt);
         items.push({
           kind: "assistant",
           key,
           text,
           thinking,
+          thinkingSeconds:
+            started === undefined || Number.isNaN(started) || Number.isNaN(ended)
+              ? null
+              : Math.max(0, (ended - started) / 1000),
           stopReason: e.payload.stopReason,
           streaming: false,
           model: modelOf(e.runId, e.payload.step),
@@ -372,6 +398,7 @@ export function chatItems(state: ChatState): ChatItem[] {
           status: "pending",
           result: null,
           outputId: null,
+          display: null,
         };
         tools.set(toolKey(e.runId, c.id), { item, runId: e.runId });
         items.push(item);
@@ -385,6 +412,7 @@ export function chatItems(state: ChatState): ChatItem[] {
         t.item.status = e.payload.isError ? "error" : "done";
         t.item.result = e.payload.content;
         t.item.outputId = e.payload.outputId ?? null;
+        t.item.display = e.payload.display ?? null;
       }
     } else if (e.type === "approval_requested") {
       approvals.set(e.payload.approvalId, items.length);
@@ -444,6 +472,7 @@ export function chatItems(state: ChatState): ChatItem[] {
       key: `d${d.runId}:${d.step}`,
       text: d.text,
       thinking: d.thinking,
+      thinkingSeconds: null,
       stopReason: null,
       streaming: true,
       model: modelOf(d.runId, d.step),

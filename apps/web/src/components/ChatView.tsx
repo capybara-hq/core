@@ -6,6 +6,7 @@ import { findModel, listAgents, listModels, type ProviderModels } from "../lib/a
 import { ApiClientError } from "../lib/api";
 import {
   abortRun,
+  type ConversationEvent,
   getConversation,
   listAllEvents,
   type ModelRef,
@@ -18,6 +19,7 @@ import {
   openConversationStream,
   reduceChat,
 } from "../lib/stream";
+import { type UiRefresh, uiKey } from "../lib/ui";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /** 连接被浏览器放弃后，连续重开订阅的次数上限（期间收到任何事件即清零）。 */
@@ -38,6 +40,15 @@ export type ChatView = {
   error: string | undefined;
   /** 会话所属 agent 的名称（取不到时为 undefined）。 */
   agentName: string | undefined;
+  /** 已收到的事件（按 seq 升序），供右侧面板的运行 / 上下文标签。 */
+  events: ConversationEvent[];
+  /** 模型的上下文窗口（模型列表未取到、模型已下线或没有声明时为 undefined）。 */
+  contextWindowOf(m: ModelRef): number | undefined;
+  /**
+   * 插件对话视图的刷新计数：键为 `插件/贡献`，`*` 为全部（事件流重连后，期间可能漏掉刷新）。
+   * 计数变了就重新取视图。
+   */
+  uiVersions: Readonly<Record<string, number>>;
 };
 
 /**
@@ -52,6 +63,10 @@ export function useChat(orgId: string, conversationId: string): ChatView {
   const [stopping, setStopping] = useState(false);
   const [providers, setProviders] = useState<ProviderModels[]>();
   const [agentName, setAgentName] = useState<string>();
+  const [uiVersions, setUiVersions] = useState<Record<string, number>>({});
+  const bumpUi = useCallback((key: string) => {
+    setUiVersions((v) => ({ ...v, [key]: (v[key] ?? 0) + 1 }));
+  }, []);
 
   // inspector 里的 agent 名称：会话 → agentId → agent 列表；取不到时忽略
   useEffect(() => {
@@ -87,6 +102,10 @@ export function useChat(orgId: string, conversationId: string): ChatView {
       providers === undefined ? undefined : findModel(providers, m)?.capabilities.reasoning,
     [providers],
   );
+  const contextWindowOf = useCallback(
+    (m: ModelRef) => (providers === undefined ? undefined : findModel(providers, m)?.contextWindow),
+    [providers],
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -97,6 +116,8 @@ export function useChat(orgId: string, conversationId: string): ChatView {
      * POST 返回的事件会先合入 state，若以它为起点会跳过流尚未送达的中间事件。
      */
     let streamSeq = 0;
+    /** 首次连接之后的每次连接成功（含浏览器自动重连）：期间可能漏掉 `event: ui`，让插件视图全部重取。 */
+    let connected = false;
     const fail = (e: unknown) => {
       if (!disposed) setError(errorMessage(e));
     };
@@ -105,7 +126,10 @@ export function useChat(orgId: string, conversationId: string): ChatView {
         // 每次连接成功（含浏览器自动重连）都清零，空闲会话偶发断线不会累计到上限
         onOpen: () => {
           failures = 0;
+          if (connected) bumpUi("*");
+          connected = true;
         },
+        onUi: (r: UiRefresh) => bumpUi(uiKey(r.plugin, r.contribution)),
         onEvent: (e) => {
           streamSeq = Math.max(streamSeq, e.seq);
           dispatch({ kind: "events", events: [e] });
@@ -134,7 +158,7 @@ export function useChat(orgId: string, conversationId: string): ChatView {
       disposed = true;
       close?.();
     };
-  }, [orgId, conversationId, errorMessage, t]);
+  }, [orgId, conversationId, errorMessage, t, bumpUi]);
 
   const onSend = useCallback(
     async (
@@ -185,5 +209,8 @@ export function useChat(orgId: string, conversationId: string): ChatView {
     send: onSend,
     error,
     agentName,
+    events: state.events,
+    contextWindowOf,
+    uiVersions,
   };
 }

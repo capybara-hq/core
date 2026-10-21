@@ -1,6 +1,5 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AgentsService, type AgentView } from "../../src/agents/agents.service.js";
 import { type AgentDefinition, AgentDefinitionSchema } from "../../src/agents/definition.js";
@@ -13,10 +12,12 @@ import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { MembersService } from "../../src/orgs/members.service.js";
+import type { MembersService } from "../../src/orgs/members.service.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { truncateTables } from "../helpers/db.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
 let pgc: TestContainer;
@@ -49,7 +50,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   accounts = new AccountsService(db);
-  members = new MembersService(db);
+  members = testMembers(db);
   orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
   agents = new AgentsService(db, new ProviderRegistry(k.host, redis), k.tools.registry);
 }, 120_000);
@@ -60,7 +61,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await sql`TRUNCATE capybara.accounts, capybara.orgs, capybara.audit_events CASCADE`.execute(raw);
+  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
 });
 

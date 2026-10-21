@@ -32,6 +32,47 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((a) => a.close()));
 });
 
+describe("插件路由的 req.signal", () => {
+  it("响应正常写完后不中止；写完之前客户端断开才中止", async () => {
+    const a = await app();
+    const seen: { done?: AbortSignal; stream?: AbortSignal } = {};
+    let streamAborted: () => void = () => {};
+    const aborted = new Promise<void>((r) => {
+      streamAborted = r;
+    });
+    a.mountPlugins([
+      route("GET", "/plugins/p/done", async (req) => {
+        seen.done = req.signal;
+        return Response.json({ ok: true });
+      }),
+      route("GET", "/plugins/p/stream", async (req) => {
+        seen.stream = req.signal;
+        req.signal.addEventListener("abort", () => streamAborted(), { once: true });
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("data: hi\n\n"));
+          },
+        });
+        return new Response(body, { headers: { "content-type": "text/event-stream" } });
+      }),
+    ]);
+    const port = await a.listen(0);
+    const done = await fetch(`http://127.0.0.1:${port}/plugins/p/done`);
+    expect(await done.json()).toEqual({ ok: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(seen.done?.aborted).toBe(false);
+
+    const ac = new AbortController();
+    const res = await fetch(`http://127.0.0.1:${port}/plugins/p/stream`, { signal: ac.signal });
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    await reader.read();
+    expect(seen.stream?.aborted).toBe(false);
+    ac.abort();
+    await aborted;
+    expect(seen.stream?.aborted).toBe(true);
+  });
+});
+
 describe("插件路由分发", () => {
   it("passes method, query, headers and raw body", async () => {
     const a = await app();

@@ -8,6 +8,7 @@ import {
 import type { ConversationEvent } from "../conversations/events.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import type { CredentialCheck } from "../identity/credential-check.js";
+import { isUiBusMessage, uiFrame } from "../ui/registry.js";
 
 /** 一次 SSE 连接的输出端（由 HTTP 层包装原始响应）。 */
 export interface SseOutput {
@@ -81,6 +82,7 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
   if (typeof m !== "object" || m === null) return false;
   const k = (m as { kind?: unknown }).kind;
   if (k === "events") return typeof (m as { toSeq?: unknown }).toSeq === "number";
+  if (k === "ui") return isUiBusMessage(m);
   return k === "delta" && typeof (m as { runId?: unknown }).runId === "string";
 }
 
@@ -201,6 +203,12 @@ class Connection implements StreamHandle {
       this.enqueue(async () => {
         if (toSeq > this.lastSeq) await this.catchUp();
       });
+      return;
+    }
+    if (m.kind === "ui") {
+      // 界面刷新：只是「去重新取视图」的提示，网页按 plugin + contribution 重新请求（那里再鉴权）
+      const frame = uiFrame(m);
+      this.enqueue(() => this.write(frame));
       return;
     }
     const { kind: _kind, ...delta } = m;

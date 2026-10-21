@@ -1,4 +1,5 @@
 import { checkParamValue, type ParamSchema } from "./model-params.js";
+import { isHttpUrl } from "./url.js";
 
 /** 工具注解（与 MCP 对齐的提示，用于推导默认策略）。 */
 export interface ToolAnnotations {
@@ -29,9 +30,35 @@ export type ToolContent =
   | { type: "image"; mimeType: string; data: string }
   | { type: "resource_link"; uri: string; name?: string; mimeType?: string };
 
+/** 工具调用的一句话说明，给界面显示（中英文各 ≤ 200 字符）；不进模型上下文。 */
+export interface ToolDisplay {
+  summary: { zh: string; en: string };
+}
+
 export interface ToolResult {
   content: ToolContent[];
   isError?: boolean;
+  /** 可选：对话流里显示这句说明，代替原样的输入 JSON。 */
+  display?: ToolDisplay;
+}
+
+const DISPLAY_MAX = 200;
+
+/** 校验 {@link ToolDisplay}，返回问题列表（空 = 合法）；长度按 Unicode 码点计。 */
+export function validateToolDisplay(d: unknown): string[] {
+  if (typeof d !== "object" || d === null || Array.isArray(d)) return ["display must be an object"];
+  const s = (d as Record<string, unknown>).summary;
+  if (typeof s !== "object" || s === null || Array.isArray(s))
+    return ["display.summary must be an object with zh and en"];
+  const out: string[] = [];
+  for (const k of ["zh", "en"] as const) {
+    const v = (s as Record<string, unknown>)[k];
+    if (typeof v !== "string" || v === "" || [...v].length > DISPLAY_MAX)
+      out.push(
+        `display.summary.${k} must be a non-empty string of at most ${DISPLAY_MAX} characters`,
+      );
+  }
+  return out;
 }
 
 type Text = { zh: string; en: string } | string;
@@ -154,18 +181,6 @@ function schemaProblems(schema: unknown): string[] {
   if (typeof s.minimum === "number" && typeof s.maximum === "number" && s.minimum > s.maximum)
     out.push("minimum must be <= maximum");
   return out;
-}
-
-const MAX_FORM_URL = 2000;
-
-function isHttpUrl(v: unknown): boolean {
-  if (typeof v !== "string" || v.length > MAX_FORM_URL) return false;
-  try {
-    const u = new URL(v);
-    return u.protocol === "https:" || u.protocol === "http:";
-  } catch {
-    return false;
-  }
 }
 
 const isEnum = (s: ParamSchema): s is Extract<ParamSchema, { enum: string[] }> =>

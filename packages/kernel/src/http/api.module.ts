@@ -8,10 +8,14 @@ import { SetupService } from "../admin/setup.service.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsService } from "../agents/agents.service.js";
 import { ModelsController } from "../agents/models.controller.js";
+import { ChannelConnectionsController } from "../channels/connections.controller.js";
+import type { ChannelConnections } from "../channels/connections.service.js";
 import type { KernelConfig } from "../config/schema.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
+import { ConversationOutputs } from "../conversations/outputs-read.js";
+import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { AccountsService } from "../identity/accounts.js";
@@ -22,6 +26,13 @@ import { MeController } from "../identity/me.controller.js";
 import { LoginRateLimiter } from "../identity/rate-limit.js";
 import { SessionService } from "../identity/sessions.js";
 import { SettingsService } from "../identity/settings.js";
+import {
+  BindController,
+  MeIdentitiesController,
+  SsoController,
+} from "../identity/sso.controller.js";
+import type { KernelIdentity } from "../kernel.js";
+import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
 import { InvitationsService } from "../orgs/invitations.service.js";
 import { MembersService } from "../orgs/members.service.js";
@@ -48,9 +59,14 @@ import {
   OAuthCallbackController,
   OAuthConnectController,
 } from "../tools/oauth/oauth.controller.js";
+import type { ToolOutputs } from "../tools/outputs.js";
 import { QuestionsController } from "../tools/questions.controller.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import { EmbedTokens } from "../ui/embed-token.js";
+import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
+import { UiController } from "../ui/views.controller.js";
+import { UiViews } from "../ui/views.js";
 import {
   ACCOUNTS,
   AGENTS,
@@ -58,10 +74,16 @@ import {
   APP_CONTENT,
   APPROVALS,
   APPS,
+  CHANNEL_CONNECTIONS,
+  CONVERSATION_OUTPUTS,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
+  DIRECTORY_SYNC,
+  EMBED_TOKENS,
   EVENT_LOG,
+  EXTERNAL_IDENTITIES,
+  IDENTITY_BINDING,
   INVITATIONS,
   KERNEL_BUS,
   KERNEL_CONFIG,
@@ -70,8 +92,10 @@ import {
   KERNEL_REDIS,
   MEMBERS,
   OAUTH_FLOW,
+  OFFBOARDING,
   ORG_PLUGIN_CONFIGS,
   ORG_SETTINGS,
+  ORG_UI_STREAMS,
   ORGS,
   PROVIDER_REGISTRY,
   QUESTIONS,
@@ -79,7 +103,9 @@ import {
   SESSIONS,
   SETTINGS,
   SETUP,
+  SSO_FLOW,
   TOOL_REGISTRY,
+  UI_VIEWS,
 } from "./tokens.js";
 
 /** 内核 API 的依赖：由 createKernel 传入，ApiModule 据此构造各领域服务。 */
@@ -111,8 +137,14 @@ export interface ApiDeps {
   questions: QuestionsService;
   /** 工具定义漂移检测（与 `Kernel.tools.drift` 同一实例；手动刷新走同一套比对）。 */
   drift: ToolDrift;
+  /** 工具输出存档（与 `Kernel.tools.outputs` 同一实例；网页的运行标签读全文）。 */
+  outputs: ToolOutputs;
   /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
   appContent: AppContent;
+  /** 外部身份、绑定、第三方登录与离职处理（与 `Kernel.identity` 同一组实例）。 */
+  identity: KernelIdentity;
+  /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
+  channels: ChannelConnections;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -136,6 +168,12 @@ const CONTROLLERS: Type[] = [
   QuestionsController,
   OAuthConnectController,
   OAuthCallbackController,
+  SsoController,
+  BindController,
+  MeIdentitiesController,
+  ChannelConnectionsController,
+  DirectorySyncController,
+  UiController,
 ];
 
 /**
@@ -178,7 +216,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     {
       provide: ORGS,
       useFactory: (db: KernelDb, settings: SettingsService, tokens: ApiTokenService) =>
-        new OrgsService(db, settings, tokens),
+        new OrgsService(db, settings, tokens, {
+          afterDelete: (orgId) => deps.channels.notifyOrgChanged(orgId),
+        }),
       inject: [KERNEL_DB, SETTINGS, API_TOKENS],
     },
     {
@@ -188,7 +228,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: MEMBERS,
-      useFactory: (db: KernelDb) => new MembersService(db),
+      useFactory: (db: KernelDb) => new MembersService(db, deps.identity.offboarding),
       inject: [KERNEL_DB],
     },
     {
@@ -232,6 +272,15 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT],
     },
     {
+      provide: CONVERSATION_OUTPUTS,
+      useFactory: (conversations: ConversationsService) =>
+        new ConversationOutputs({
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+          load: (scope, id) => deps.outputs.load(scope, id),
+        }),
+      inject: [CONVERSATIONS],
+    },
+    {
       provide: CONVERSATION_STREAMS,
       useFactory: (
         eventLog: EventLog,
@@ -248,7 +297,32 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         }),
       inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
     },
+    {
+      provide: UI_VIEWS,
+      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+        new UiViews({
+          host: deps.host,
+          enabledPlugins: (orgId) => queryEnabledPlugins(db, orgId),
+          canAccessConversation: (orgId, id, accountId) =>
+            conversations.isAccessible(orgId, id, accountId),
+          log: deps.log,
+        }),
+      inject: [KERNEL_DB, CONVERSATIONS],
+    },
+    { provide: EMBED_TOKENS, useFactory: () => new EmbedTokens(deps.keyring) },
+    {
+      provide: ORG_UI_STREAMS,
+      useFactory: (db: KernelDb, bus: StreamBus, config: () => KernelConfig) =>
+        new OrgUiStreams({ bus, memberRole: orgMembership(db), config, log: deps.log }),
+      inject: [KERNEL_DB, KERNEL_BUS, KERNEL_CONFIG],
+    },
     { provide: CREDENTIALS, useValue: deps.credentials },
+    { provide: EXTERNAL_IDENTITIES, useValue: deps.identity.external },
+    { provide: IDENTITY_BINDING, useValue: deps.identity.binding },
+    { provide: SSO_FLOW, useValue: deps.identity.sso },
+    { provide: OFFBOARDING, useValue: deps.identity.offboarding },
+    { provide: CHANNEL_CONNECTIONS, useValue: deps.channels },
+    { provide: DIRECTORY_SYNC, useValue: deps.identity.directory },
     { provide: TOOL_REGISTRY, useValue: deps.toolRegistry },
     { provide: APPROVALS, useValue: deps.approvals },
     { provide: QUESTIONS, useValue: deps.questions },

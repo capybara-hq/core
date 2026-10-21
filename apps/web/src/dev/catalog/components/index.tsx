@@ -1,5 +1,6 @@
 import { CatalogPage } from "../frame";
 import { ButtonsSection } from "./buttons";
+import { ChatSection } from "./chat";
 import { DisplaySection } from "./display";
 import { InputsSection } from "./inputs";
 import { NavigationSection } from "./navigation";
@@ -15,6 +16,7 @@ export function ComponentsCatalog() {
       <TogglesSection />
       <NavigationSection />
       <DisplaySection />
+      <ChatSection />
       <ShellSection />
     </CatalogPage>
   );

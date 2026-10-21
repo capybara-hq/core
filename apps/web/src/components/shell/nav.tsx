@@ -1,24 +1,35 @@
 "use client";
 
-import type { CommandGroup, TopBarProps } from "@capybara-hq/design";
+import type { CommandGroup, MenuItem, TopBarProps } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { listApprovals } from "../../lib/approvals";
+import { listUiContributions, type UiContributionItem, uiLocale } from "../../lib/ui";
 
-/** 一级导航：只列已存在的路由（spec §4.1 的其余项上线后再加）。 */
+/**
+ * 一级导航：只列已存在的路由（spec §4.1 的其余项上线后再加）。`admin` 项只对当前组织的管理员显示
+ * （只是界面上的隐藏，最终由内核判定权限）。
+ */
 const NAV = [
-  { id: "overview", key: "overview", href: "/" },
-  { id: "agents", key: "agents", href: "/agents" },
-  { id: "inbox", key: "inbox", href: "/inbox" },
-  { id: "apps", key: "apps", href: "/apps" },
+  { id: "overview", key: "overview", href: "/", admin: false },
+  { id: "agents", key: "agents", href: "/agents", admin: false },
+  { id: "inbox", key: "inbox", href: "/inbox", admin: false },
+  { id: "apps", key: "apps", href: "/apps", admin: false },
+  { id: "channels", key: "channels", href: "/channels", admin: true },
 ] as const;
 
 /** 待处理审批数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
 const PENDING_POLL_MS = 30_000;
 
-/** 归在「应用」下的设置页（已连接的应用、已记住的授权、组织设置），与设置页的二级导航一致。 */
-const APP_SETTINGS = ["/settings/connections", "/settings/grants", "/settings/organization"];
+/** 归在「应用」下的设置页，与设置页的二级导航一致。 */
+const APP_SETTINGS = [
+  "/settings/connections",
+  "/settings/grants",
+  "/settings/identities",
+  "/settings/organization",
+  "/settings/plugins",
+];
 
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -27,6 +38,7 @@ const under = (pathname: string, prefix: string) =>
 export function activeNavOf(pathname: string): string {
   if (under(pathname, "/agents") || under(pathname, "/chat")) return "agents";
   if (under(pathname, "/inbox")) return "inbox";
+  if (under(pathname, "/channels")) return "channels";
   if (under(pathname, "/apps") || APP_SETTINGS.some((p) => under(pathname, p))) return "apps";
   return pathname === "/" ? "overview" : "";
 }
@@ -68,16 +80,55 @@ export function usePendingApprovals(
   return { count, refresh };
 }
 
+/** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
+export const pluginPageHref = (plugin: string, id: string) =>
+  `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
+
+/**
+ * 顶栏「扩展」菜单的菜单项：当前组织已启用插件的页面贡献（`place: "page"`），按插件分组（组间分隔线），
+ * 显示「插件 · 页面标题」。渲染 schema 视图与嵌入应用（`kind: "embed"`）都列，页面按 kind 渲染。
+ * 没有当前组织、没有页面贡献或读取失败时为空（菜单不出现）。
+ */
+export function useExtensions(orgId: string | null, locale: string): MenuItem[] {
+  const [pages, setPages] = useState<UiContributionItem[]>([]);
+  useEffect(() => {
+    if (orgId === null) {
+      setPages([]);
+      return;
+    }
+    let disposed = false;
+    listUiContributions(orgId).then(
+      ({ items }) => {
+        if (!disposed) setPages(items.filter((c) => c.place === "page"));
+      },
+      () => {
+        if (!disposed) setPages([]);
+      },
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [orgId]);
+  const lang = uiLocale(locale);
+  const plugins = [...new Set(pages.map((p) => p.plugin))];
+  return plugins.flatMap((plugin, i): MenuItem[] => [
+    ...(i > 0 ? ["separator" as const] : []),
+    ...pages
+      .filter((p) => p.plugin === plugin)
+      .map((p) => ({ label: `${plugin} · ${p.title[lang]}`, href: pluginPageHref(plugin, p.id) })),
+  ]);
+}
+
 /** StatusBar 上下文路径里的路由段：去掉开头的 `/`，首页记为 `~`。 */
 export function routeLabel(pathname: string): string {
   const p = pathname.replace(/^\/+/, "");
   return p === "" ? "~" : p;
 }
 
-export function useNav(pending = 0): Pick<TopBarProps, "nav" | "commands"> {
+export function useNav(pending = 0, admin = false): Pick<TopBarProps, "nav" | "commands"> {
   const t = useTranslations();
   const router = useRouter();
-  const nav = NAV.map((n) => ({
+  const nav = NAV.filter((n) => admin || !n.admin).map((n) => ({
     id: n.id,
     label: t(`nav.${n.key}`),
     href: n.href,

@@ -64,6 +64,16 @@ const zh = {
   "shell.steps": "步骤",
   "template.done": "已完成",
   "template.todo": "待办",
+  "shell.extensions": "扩展",
+  "tabs.alert": "有待处理",
+  "chat.thought": "思考了 {n} 秒",
+  "chat.outputTruncated": "输出过长，已截断",
+  "chat.showAllOutput": "查看全部输出",
+  "chat.expandAll": "展开全部（共 {n} 行）",
+  "chat.collapse": "收起",
+  "checklist.pending": "待办",
+  "checklist.in_progress": "进行中",
+  "checklist.completed": "已完成",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -132,6 +142,16 @@ const en: Record<DesignKey, string> = {
   "shell.steps": "Steps",
   "template.done": "Done",
   "template.todo": "To do",
+  "shell.extensions": "Extensions",
+  "tabs.alert": "Needs attention",
+  "chat.thought": "Thought for {n}s",
+  "chat.outputTruncated": "Output truncated",
+  "chat.showAllOutput": "View full output",
+  "chat.expandAll": "Expand all ({n} lines)",
+  "chat.collapse": "Collapse",
+  "checklist.pending": "To do",
+  "checklist.in_progress": "In progress",
+  "checklist.completed": "Done",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

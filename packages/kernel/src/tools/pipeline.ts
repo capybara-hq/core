@@ -5,8 +5,10 @@ import {
   type InputForm,
   type InputRequired,
   type Logger,
+  type ToolDisplay,
   ToolError,
   validateInputForm,
+  validateToolDisplay,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -489,6 +491,12 @@ export class ToolPipeline {
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? loadedFrom(outcome.result, resolved.tools)
         : [];
+    // 显示摘要：只认插件 / 内置工具与内核的 resources 工具给的（连接器结果来自外部服务，不采信），
+    // 校验不过就丢弃并告警
+    const display =
+      outcome.kind === "result" && (tool.source.kind !== "app" || tool.source.resources)
+        ? this.displayOf(outcome.result, tool.key)
+        : undefined;
     const cfg = this.deps.config().tools;
     const spilled = await spillIfLarge(
       rendered.text,
@@ -527,6 +535,7 @@ export class ToolPipeline {
         ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
         ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
         ...(loadedTools.length > 0 && { loadedTools }),
+        ...(display !== undefined && { display }),
       },
       pre,
       {
@@ -879,6 +888,25 @@ export class ToolPipeline {
   }
 
   /**
+   * 工具结果里的显示摘要（`ToolResult.display`）：合法时只取 `{ summary: { zh, en } }`，没有给返回 undefined，
+   * 不合法时记告警并丢弃（结果照常写入）。摘要只进事件日志给界面看，不进模型请求。
+   */
+  private displayOf(result: unknown, toolKey: string): ToolDisplay | undefined {
+    const d = (result as { display?: unknown } | null)?.display;
+    if (d === undefined) return undefined;
+    const problems = validateToolDisplay(d);
+    if (problems.length > 0) {
+      this.deps.log.warn("tool returned an invalid display summary; dropped", {
+        toolKey,
+        problems,
+      });
+      return undefined;
+    }
+    const { zh, en } = (d as ToolDisplay).summary;
+    return { summary: { zh, en } };
+  }
+
+  /**
    * 管线第 6 阶段：写 `tool_result`（与 `connection_required` 同批）。传入 `callAudit`（即工具实际执行过；
    * 耗时 null = 执行过但耗时未知，如续跑时「有开始无结果」的调用）时在同一事务里写审计 `tool.called`。
    * 审计链（R6）：actor = 发起人 → agent（id + 版本）→ 会话 / 运行 / 调用 / 工具（应用工具带 appId）→
@@ -888,7 +916,14 @@ export class ToolPipeline {
     ctx: ToolStepContext,
     callId: string,
     toolKey: string,
-    r: { content: string; isError: boolean; outputId?: string; contentTypes?: string[] },
+    r: {
+      content: string;
+      isError: boolean;
+      outputId?: string;
+      contentTypes?: string[];
+      loadedTools?: string[];
+      display?: ToolDisplay;
+    },
     pre: AppendEvent[] = [],
     callAudit?: CallAudit,
   ): Promise<void> {
