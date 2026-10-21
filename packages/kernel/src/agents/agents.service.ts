@@ -122,8 +122,8 @@ export class AgentsService {
     private readonly db: KernelDb,
     private readonly registry: ProviderRegistry,
     private readonly tools: Pick<ToolRegistry, "checkRefs">,
-    /** 删除 agent 时取消它待处理的技能改动（T15）；不提供时不处理（只读用途的实例）。 */
-    private readonly skillChanges?: Pick<
+    /** 删除 agent 时取消它待处理的技能改动（T15）。 */
+    private readonly skillChanges: Pick<
       SkillChangesService,
       "cancelPendingForAgent" | "finishCancel"
     >,
@@ -442,15 +442,16 @@ export class AgentsService {
         action: "agent.deleted",
         target: agentId,
       });
-      return this.skillChanges?.cancelPendingForAgent(
+      return this.skillChanges.cancelPendingForAgent(
         t,
         orgId,
         agentId,
         actorAccountId,
         "agent_deleted",
+        actorTokenId,
       );
     });
-    if (cancelled) await this.skillChanges?.finishCancel(orgId, cancelled);
+    await this.skillChanges.finishCancel(orgId, cancelled);
   }
 
   /**

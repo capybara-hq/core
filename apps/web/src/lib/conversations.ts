@@ -167,7 +167,7 @@ type EventBody =
           name: string;
           description: string;
           version: number;
-          source?: string;
+          source: string;
         }[];
       };
     }

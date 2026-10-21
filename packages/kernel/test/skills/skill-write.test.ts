@@ -16,6 +16,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { sameSkills, skillsChangeText } from "../../src/runtime/context/skills.js";
+import { recordSkillsCatalog } from "../../src/skills/catalog.js";
 import { AGENT_SKILLS_MAX } from "../../src/skills/changes.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { buildSkillWrite, SKILL_WRITE_MAX_BYTES } from "../../src/tools/builtins/skill-write.js";
@@ -218,21 +219,17 @@ const decide = (req: Req, id: string, decision: "approve" | "reject") =>
   });
 
 describe("catalog source (pure)", () => {
-  const e = (version: number, source?: string) => ({
+  const e = (version: number, source: string) => ({
     id: "s1",
     name: "x",
     description: "d",
     version,
-    ...(source !== undefined && { source }),
+    source,
   });
   it("same id + version but a different source is a change, rendered as updated", () => {
     expect(sameSkills([e(2, "skills/a/")], [e(2, "skills/b/")])).toBe(false);
     expect(skillsChangeText([e(2, "skills/a/")], [e(2, "skills/b/")])).toContain("Updated skills");
     expect(sameSkills([e(2, "skills/a/")], [e(2, "skills/a/")])).toBe(true);
-  });
-  it("snapshots without source (pre-T15) match any source: no extra snapshot after upgrade", () => {
-    expect(sameSkills([e(2)], [e(2, "skills/a/")])).toBe(true);
-    expect(sameSkills([e(1)], [e(2, "skills/a/")])).toBe(false);
   });
   it("NUL in the SKILL.md body or the description is rejected", () => {
     const body = buildSkillWrite({
@@ -792,6 +789,51 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     const url = `/api/v1/orgs/${orgId}/agents/${agentId}/skills/${skill.id}`;
     const denied = await other({ method: "DELETE", url });
     expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe("forbidden");
+    // 服务令牌：403（HUMAN_ONLY）
+    const tok = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/service-tokens`,
+      payload: { name: "ci", role: "admin" },
+    });
+    expect(tok.statusCode, tok.body).toBe(201);
+    const svc = await k.http.inject({
+      method: "DELETE",
+      url,
+      headers: { authorization: `Bearer ${(tok.json() as { token: string }).token}` },
+    });
+    expect(svc.statusCode).toBe(403);
+    // 看不到的 agent（别人的私有 agent）：404 agent.not_found
+    const priv = await createAgent("private");
+    const hidden = await member({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/agents/${priv}/skills/${skill.id}`,
+    });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json().error.code).toBe("agent.not_found");
+    // 跨组织：别的组织的 agent 在本组织路径下 → 404 agent.not_found
+    const org2 = await createOrg(other, "Other");
+    const res2 = await other({
+      method: "POST",
+      url: `/api/v1/orgs/${org2}/agents`,
+      payload: {
+        definition: {
+          name: "X",
+          instructions: "x",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [],
+        },
+        visibility: "org",
+      },
+    });
+    expect(res2.statusCode, res2.body).toBe(201);
+    const foreign = (res2.json() as { agent: { id: string } }).agent.id;
+    const cross = await other({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/agents/${foreign}/skills/${skill.id}`,
+    });
+    expect(cross.statusCode).toBe(404);
+    expect(cross.json().error.code).toBe("agent.not_found");
     const ok = await owner({ method: "DELETE", url });
     expect(ok.statusCode, ok.body).toBe(204);
     expect((await owner({ method: "DELETE", url })).statusCode).toBe(404);
@@ -820,5 +862,86 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
       10_000,
       "draft deleted on agent delete",
     );
+  });
+
+  it("run start serializes with a reject + revert on the conversation row (no stale draft re-written)", async () => {
+    const agentId = await createAgent("org");
+    const convA = await createConv(member, orgId, agentId);
+    await sharedWrite(member, convA, write("rho", "Rho v1."), 1);
+    const [v1] = await pending();
+    expect((await decide(owner, v1?.id as string, "approve")).statusCode).toBe(200);
+    await sharedWrite(member, convA, write("rho", "Rho v2."), 2);
+    const [d2] = await pending();
+    const real = await db
+      .selectFrom("skills")
+      .select(["id", "description"])
+      .where("agent_id", "=", agentId)
+      .executeTakeFirstOrThrow();
+    const before = (await catalogs(convA)).length;
+
+    // 模拟拒绝事务：持有会话行锁期间改状态并写回退快照；运行开始的记录必须等它提交
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    const rejecting = db.transaction().execute(async (t) => {
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", convA)
+        .forUpdate()
+        .executeTakeFirst();
+      await t
+        .updateTable("skill_change_requests")
+        .set({ status: "rejected" })
+        .where("id", "=", d2?.id as string)
+        .execute();
+      await k.runs.eventLog.append(
+        convA,
+        [
+          {
+            type: "skills_catalog",
+            idemKey: "test-revert",
+            payload: {
+              skills: [
+                {
+                  id: real.id,
+                  name: "rho",
+                  description: real.description,
+                  version: 1,
+                  source: v1?.object_prefix as string,
+                },
+              ],
+            },
+          },
+        ],
+        t,
+      );
+      locked();
+      await held;
+    });
+    await isLocked;
+    let settled = false;
+    const recording = recordSkillsCatalog(
+      { db, eventLog: k.runs.eventLog },
+      { orgId, agentId, conversationId: convA, runId: "run-race", agent: {} },
+    ).then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(settled).toBe(false);
+    release();
+    await rejecting;
+    await recording;
+    const snaps = await catalogs(convA);
+    expect(snaps).toHaveLength(before + 1);
+    expect(snaps.at(-1)?.payload.skills[0]).toMatchObject({
+      version: 1,
+      source: v1?.object_prefix,
+    });
   });
 });

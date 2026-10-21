@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Logger, ToolError } from "@capybara-hq/plugin-sdk";
 import { type Selectable, sql, type Transaction } from "kysely";
+import { visibleTo } from "../agents/agents.service.js";
 import { skillFilesPrefix } from "../conversations/attachments.service.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type {
@@ -14,6 +15,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { type CatalogSkill, sameSkills } from "../runtime/context/skills.js";
 import type { StorageService } from "../storage/storage.service.js";
+import { lockLatestCatalog } from "./catalog.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -146,6 +148,7 @@ export class SkillChangesService {
     let committed: { outcome: SkillWriteOutcome; drop: string[]; toSeq: number | null };
     try {
       committed = await db.transaction().execute(async (t) => {
+        await keyShareOrg(t, ctx.orgId);
         const agent = await t
           .selectFrom("agents")
           .select(["visibility", "deleted_at"])
@@ -304,7 +307,8 @@ export class SkillChangesService {
       .executeTakeFirst();
     if (!head) throw notFound();
     const done = await db.transaction().execute(async (t) => {
-      // 加锁顺序与 write 一致：先 agent 行，再申请行
+      // 加锁顺序与 write 一致：组织行（KEY SHARE）→ agent 行 → 申请行 → 会话行
+      await keyShareOrg(t, orgId);
       const agent = await t
         .selectFrom("agents")
         .select(["owner_account_id", "deleted_at"])
@@ -415,6 +419,7 @@ export class SkillChangesService {
     actorTokenId?: string,
   ): Promise<void> {
     const cancelled = await this.d.db.transaction().execute(async (t) => {
+      await keyShareOrg(t, orgId);
       const agent = await t
         .selectFrom("agents")
         .select(["owner_account_id", "deleted_at"])
@@ -422,10 +427,17 @@ export class SkillChangesService {
         .where("org_id", "=", orgId)
         .forUpdate()
         .executeTakeFirst();
-      if (!agent || agent.deleted_at !== null) {
-        throw new ApiError("skill.not_found", "Skill not found");
-      }
+      const agentNotFound = () => new ApiError("agent.not_found", "Agent not found");
+      if (!agent || agent.deleted_at !== null) throw agentNotFound();
       if (agent.owner_account_id !== accountId) {
+        // 与 AgentsService 一致：看不到的 agent → 404，看得到但不是负责人 → 403
+        const visible = await t
+          .selectFrom("agents")
+          .select("id")
+          .where("id", "=", agentId)
+          .where(visibleTo(accountId))
+          .executeTakeFirst();
+        if (!visible) throw agentNotFound();
         throw new ApiError("forbidden", "Only the agent's owner can delete its skills");
       }
       const r = await t
@@ -544,21 +556,7 @@ export class SkillChangesService {
     idemKey: string,
     runId?: string,
   ): Promise<number | null> {
-    await t
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", conversationId)
-      .forUpdate()
-      .executeTakeFirst();
-    const last = await t
-      .selectFrom("conversation_events")
-      .select("payload")
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "skills_catalog")
-      .orderBy("seq", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    const base = (last?.payload as { skills?: CatalogSkill[] } | undefined)?.skills ?? [];
+    const base = (await lockLatestCatalog(t, conversationId)) ?? [];
     const derived = derive(base);
     if (derived === null) return null;
     const next = [...derived].sort(byName);
@@ -641,6 +639,7 @@ export class SkillChangesService {
     agentId: string,
     actorAccountId: string,
     reason: string,
+    actorTokenId?: string,
   ): Promise<CancelledDrafts> {
     const rows = await t
       .selectFrom("skill_change_requests")
@@ -660,6 +659,7 @@ export class SkillChangesService {
         .execute();
       await audit(t, {
         actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
         action: "skill.change_decided",
         target: r.id,
@@ -796,6 +796,14 @@ export class SkillChangesService {
       createdAt: iso(r.created_at),
     }));
   }
+}
+
+/**
+ * 先给组织行加 KEY SHARE 锁，再锁 agent 行：与 `AgentsService`（组织行 FOR UPDATE → agent 行）同一顺序。
+ * 不先锁的话，本事务持有 agent 行后插入引用组织的行（外键取 KEY SHARE）会与之互相等待（40P01）。
+ */
+async function keyShareOrg(t: Trx, orgId: string): Promise<void> {
+  await t.selectFrom("orgs").select("id").where("id", "=", orgId).forKeyShare().executeTakeFirst();
 }
 
 /** 并发写入全部文件。 */

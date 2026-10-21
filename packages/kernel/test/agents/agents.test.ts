@@ -52,7 +52,12 @@ beforeAll(async () => {
   accounts = new AccountsService(db);
   members = testMembers(db);
   orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
-  agents = new AgentsService(db, new ProviderRegistry(k.host, redis), k.tools.registry);
+  agents = new AgentsService(
+    db,
+    new ProviderRegistry(k.host, redis),
+    k.tools.registry,
+    k.skillChanges,
+  );
 }, 120_000);
 afterAll(async () => {
   await k?.stop();

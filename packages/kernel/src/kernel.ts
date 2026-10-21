@@ -423,10 +423,12 @@ export async function createKernel(
     everyMs: () => STORAGE_PURGE_EVERY_MS,
   });
   // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
+  // agent 自写技能（skill_write）与共享 agent 的技能变更审批（R4）
+  const skillChanges = new SkillChangesService({ db: kdb, storage, eventLog, log });
   const conversationAccess = new ConversationsService(
     kdb,
     eventLog,
-    new AgentsService(kdb, registry, toolRegistry),
+    new AgentsService(kdb, registry, toolRegistry, skillChanges),
   );
   const attachments = new AttachmentsService({
     db: kdb,
@@ -437,8 +439,6 @@ export async function createKernel(
     log,
   });
   const skills = new SkillsService({ db: kdb, storage, attachments });
-  // agent 自写技能（skill_write）与共享 agent 的技能变更审批（R4）
-  const skillChanges = new SkillChangesService({ db: kdb, storage, eventLog, log });
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
     const n = await attachments.deleteExpired();
     if (n > 0) log.info("expired attachments deleted", { count: n });
@@ -632,7 +632,7 @@ export async function createKernel(
       conversations: new ConversationsService(
         kdb,
         eventLog,
-        new AgentsService(kdb, registry, toolRegistry),
+        new AgentsService(kdb, registry, toolRegistry, skillChanges),
         runControl,
         log,
       ),

@@ -119,7 +119,7 @@ async function seedSkill(opts: {
   scope?: "org" | "agent";
   agentId?: string;
   skillId?: string;
-}): Promise<{ id: string; version: number }> {
+}): Promise<{ id: string; version: number; prefix: string }> {
   const prefix = `skills/${randomUUID()}/`;
   const store = k.storage.kernel(orgId);
   const files: { path: string; size: number; sha256: string }[] = [];
@@ -169,7 +169,7 @@ async function seedSkill(opts: {
       created_by: ownerId,
     })
     .execute();
-  return { id, version };
+  return { id, version, prefix };
 }
 
 async function createSkillAgent(orgSkills: string[]): Promise<string> {
@@ -431,7 +431,10 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
       name: "echo",
       files: { "SKILL.md": skillMd("echo", "Echo body."), "run.py": "print(1)" },
     });
-    const t = tool({ skills: [{ id: s.id, name: "echo", description: "d", version: 1 }] }, false);
+    const t = tool(
+      { skills: [{ id: s.id, name: "echo", description: "d", version: 1, source: s.prefix }] },
+      false,
+    );
     const r = (await t.run({ name: "echo" }, ctx())) as ToolResult;
     const text = (r.content[0] as { text: string }).text;
     expect(text).toContain("Echo body.");
@@ -446,7 +449,10 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
       files: { "SKILL.md": skillMd("nobox", "Nobox body."), "run.sh": "echo hi" },
     });
     // 有沙箱提供方，但本步没有沙箱工具：withSandbox 一旦被调用，存根就抛错
-    const t = tool({ skills: [{ id: s.id, name: "nobox", description: "d", version: 1 }] }, true);
+    const t = tool(
+      { skills: [{ id: s.id, name: "nobox", description: "d", version: 1, source: s.prefix }] },
+      true,
+    );
     const r = (await t.run({ name: "nobox" }, { ...ctx(), tools: [] })) as ToolResult;
     const text = (r.content[0] as { text: string }).text;
     expect(text).toContain("Nobox body.");
@@ -457,7 +463,10 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
   it("a skill removed after the snapshot: actionable error", async () => {
     const s = await seedSkill({ name: "gone", files: { "SKILL.md": skillMd("gone", "x") } });
     await db.updateTable("skills").set({ deleted_at: new Date() }).where("id", "=", s.id).execute();
-    const t = tool({ skills: [{ id: s.id, name: "gone", description: "d", version: 1 }] }, true);
+    const t = tool(
+      { skills: [{ id: s.id, name: "gone", description: "d", version: 1, source: s.prefix }] },
+      true,
+    );
     await expect(t.run({ name: "gone" }, ctx())).rejects.toThrow(/removed.*(ask|do the task)/i);
   });
 
@@ -473,7 +482,10 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
       contentType: "application/octet-stream",
       size: evil.byteLength,
     });
-    const t = tool({ skills: [{ id: s.id, name: "bad", description: "d", version: 1 }] }, true);
+    const t = tool(
+      { skills: [{ id: s.id, name: "bad", description: "d", version: 1, source: s.prefix }] },
+      true,
+    );
     await expect(t.run({ name: "bad" }, ctx())).rejects.toThrow(/integrity/i);
   });
 

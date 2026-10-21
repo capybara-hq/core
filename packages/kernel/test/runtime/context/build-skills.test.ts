@@ -8,13 +8,14 @@ import { AGENT, Log, MODEL } from "./fixtures.js";
  * 的缓存段；之后的变化在它出现的位置以英文提醒追加，前缀不变；没有技能时不出现目录。
  */
 
-type Skill = { id: string; name: string; description: string; version: number };
+type Skill = { id: string; name: string; description: string; version: number; source: string };
 
 const skill = (name: string, version = 1, description = `Use for ${name} tasks.`): Skill => ({
   id: `id-${name}`,
   name,
   description,
   version,
+  source: `skills/${name}-v${version}/`,
 });
 
 function catalog(log: Log, skills: Skill[]): ConversationEvent {

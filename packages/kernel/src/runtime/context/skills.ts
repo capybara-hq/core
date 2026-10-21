@@ -47,13 +47,7 @@ export function skillsCatalogText(skills: readonly CatalogSkill[]): string {
   return `${SKILLS_CATALOG_HEADER}\n${lines(skills)}`;
 }
 
-/**
- * 来源是否变了（T15）：两边都有 `source` 且不同。旧快照没有 `source`，视为与任何来源相同（升级后不多写快照）。
- */
-const sourceChanged = (a: CatalogSkill, b: CatalogSkill) =>
-  a.source !== undefined && b.source !== undefined && a.source !== b.source;
-
-/** 两份快照是否相同（按 id、版本、名字、描述与来源，见 {@link sourceChanged}）。顺序无关。 */
+/** 两份快照是否相同（按 id、版本、名字、描述与来源）。顺序无关。 */
 export function sameSkills(a: readonly CatalogSkill[], b: readonly CatalogSkill[]): boolean {
   if (a.length !== b.length) return false;
   const byId = new Map(a.map((s) => [s.id, s]));
@@ -65,7 +59,7 @@ export function sameSkills(a: readonly CatalogSkill[], b: readonly CatalogSkill[
       p.version === s.version &&
       p.name === s.name &&
       p.description === s.description &&
-      !sourceChanged(p, s)
+      p.source === s.source
     );
   });
 }
@@ -87,7 +81,7 @@ export function skillsChangeText(
     const p = before.get(s.id);
     return (
       p !== undefined &&
-      (p.version !== s.version || p.description !== s.description || sourceChanged(p, s))
+      (p.version !== s.version || p.description !== s.description || p.source !== s.source)
     );
   });
   const parts = ["The skills available in this conversation have changed."];
