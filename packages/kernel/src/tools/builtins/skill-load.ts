@@ -241,32 +241,40 @@ function fileList(files: SkillManifest["files"]): string {
 }
 
 /**
- * 目录条目对应的版本：先找已生成的版本（技能未删除）；没有时找本对话发起、仍待批准的技能改动（试用，T15）——
- * 草稿没有 `skill_versions` 行（新技能连 `skills` 行都没有），清单与对象前缀在申请里。都没有 → undefined（已移除）。
+ * 目录条目对应的内容。条目带 `source`（对象前缀，T15）时按它精确解析：先找该技能前缀相同的已生成版本（技能未删除），
+ * 再找本对话发起、仍待批准、前缀相同的技能改动（试用草稿：没有 `skill_versions` 行，新技能连 `skills` 行都没有）。
+ * 绝不只按版本号解析——被拒绝的草稿与之后别人批准的同号版本内容不同。旧快照没有 `source`，按 id + 版本找正式版本。
+ * 都没有 → undefined（已移除）。
  */
 async function findVersion(
   db: KernelDb,
   ctx: BuiltinCallContext,
   entry: CatalogSkill,
 ): Promise<{ manifest: SkillManifest; object_prefix: string } | undefined> {
-  const row = await db
+  let q = db
     .selectFrom("skills")
     .innerJoin("skill_versions", "skill_versions.skill_id", "skills.id")
     .select(["skills.deleted_at", "skill_versions.manifest", "skill_versions.object_prefix"])
     .where("skills.id", "=", entry.id)
-    .where("skills.org_id", "=", ctx.orgId)
-    .where("skill_versions.version", "=", entry.version)
-    .executeTakeFirst();
+    .where("skills.org_id", "=", ctx.orgId);
+  // 前缀唯一确定内容（批准时草稿前缀原样成为版本前缀）；没有前缀的旧快照按版本号
+  q =
+    entry.source !== undefined
+      ? q.where("skill_versions.object_prefix", "=", entry.source)
+      : q.where("skill_versions.version", "=", entry.version);
+  const row = await q.executeTakeFirst();
   if (row) return row.deleted_at === null ? row : undefined;
+  if (entry.source === undefined) return undefined;
   const draft = await db
     .selectFrom("skill_change_requests")
     .select(["proposed_version", "object_prefix"])
     .where("org_id", "=", ctx.orgId)
     .where("requested_in_conversation", "=", ctx.conversationId)
     .where("status", "=", "pending")
+    .where("object_prefix", "=", entry.source)
     .where(sql<string>`proposed_version ->> 'skillId'`, "=", entry.id)
     .executeTakeFirst();
-  if (!draft || draft.proposed_version.version !== entry.version) return undefined;
+  if (!draft) return undefined;
   return { manifest: draft.proposed_version.manifest, object_prefix: draft.object_prefix };
 }
 

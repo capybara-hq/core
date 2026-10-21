@@ -132,6 +132,9 @@ export function buildSkillWrite(input: SkillWriteInput): BuiltSkill | { errors: 
       `name "${String(input.name).slice(0, 80)}" is invalid: use 1-64 lowercase letters, digits and single hyphens (no leading or trailing hyphen)`,
     );
   }
+  if (input.description.includes("\u0000")) {
+    errors.push("description: only text is supported (it contains NUL bytes)");
+  }
   const entries = input.files.filter((f) => f.path === SKILL_ENTRY_FILE);
   if (entries.length > 1) errors.push(`${SKILL_ENTRY_FILE}: duplicate path`);
   const body = stripFrontmatter(entries[0]?.content ?? "").replace(/^\n+|\s+$/g, "");
@@ -153,13 +156,14 @@ export function buildSkillWrite(input: SkillWriteInput): BuiltSkill | { errors: 
     size: mdData.byteLength,
     sha256: sha256(mdData),
   });
+  for (const f of input.files) {
+    if (!f.content.includes("\u0000")) continue;
+    errors.push(
+      `${f.path.slice(0, 200)}: only text files are supported (the content contains NUL bytes)`,
+    );
+  }
   for (const f of others) {
-    if (f.content.includes("\u0000")) {
-      errors.push(
-        `${f.path.slice(0, 200)}: only text files are supported (the content contains NUL bytes)`,
-      );
-      continue;
-    }
+    if (f.content.includes("\u0000")) continue;
     const data = enc.encode(f.content);
     files.push({ path: f.path, data, size: data.byteLength, sha256: sha256(data) });
   }

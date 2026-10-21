@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
 import { INBOX, SKILL_CHANGES } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
@@ -52,6 +52,29 @@ export class SkillChangesController {
     return {
       skillChange: await this.changes.decide(org.orgId, id, p.account.id, body, patTokenId(p)),
     };
+  }
+}
+
+/**
+ * agent 自己的技能（`/api/v1/orgs/:orgId/agents/:agentId/skills`，M5 T15）：`DELETE /:skillId` 软删除，
+ * 只有该 agent 当前的负责人（其他人 403 `forbidden`），仅限用户主体（`agents.create` 属 HUMAN_ONLY）。
+ * 同名的待处理改动一并取消。
+ */
+@Controller("api/v1/orgs/:orgId/agents/:agentId/skills")
+export class AgentSkillsController {
+  constructor(@Inject(SKILL_CHANGES) private readonly changes: SkillChangesService) {}
+
+  @Delete(":skillId")
+  @HttpCode(204)
+  @OrgAction("agents.create")
+  async remove(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("agentId") agentId: string,
+    @Param("skillId") skillId: string,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.changes.deleteAgentSkill(org.orgId, agentId, skillId, p.account.id, patTokenId(p));
   }
 }
 

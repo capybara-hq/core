@@ -8,6 +8,7 @@ import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
+import type { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills } from "../skills/skills.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { AgentDefinition } from "./definition.js";
@@ -121,6 +122,11 @@ export class AgentsService {
     private readonly db: KernelDb,
     private readonly registry: ProviderRegistry,
     private readonly tools: Pick<ToolRegistry, "checkRefs">,
+    /** 删除 agent 时取消它待处理的技能改动（T15）；不提供时不处理（只读用途的实例）。 */
+    private readonly skillChanges?: Pick<
+      SkillChangesService,
+      "cancelPendingForAgent" | "finishCancel"
+    >,
   ) {}
 
   /**
@@ -415,14 +421,14 @@ export class AgentsService {
     return { agent, warnings };
   }
 
-  /** 软删除：权限同 update。 */
+  /** 软删除：权限同 update。待处理的技能改动一并取消，提交后删除草稿（T15）。 */
   async softDelete(
     orgId: string,
     agentId: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.db.transaction().execute(async (t) => {
+    const cancelled = await this.db.transaction().execute(async (t) => {
       await this.lockForWrite(t, orgId, agentId, actorAccountId);
       await t
         .updateTable("agents")
@@ -436,7 +442,15 @@ export class AgentsService {
         action: "agent.deleted",
         target: agentId,
       });
+      return this.skillChanges?.cancelPendingForAgent(
+        t,
+        orgId,
+        agentId,
+        actorAccountId,
+        "agent_deleted",
+      );
     });
+    if (cancelled) await this.skillChanges?.finishCancel(orgId, cancelled);
   }
 
   /**

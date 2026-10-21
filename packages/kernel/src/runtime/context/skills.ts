@@ -47,16 +47,32 @@ export function skillsCatalogText(skills: readonly CatalogSkill[]): string {
   return `${SKILLS_CATALOG_HEADER}\n${lines(skills)}`;
 }
 
-/** 两份快照是否相同（按 id 与版本；名字与描述随版本确定）。顺序无关。 */
+/**
+ * 来源是否变了（T15）：两边都有 `source` 且不同。旧快照没有 `source`，视为与任何来源相同（升级后不多写快照）。
+ */
+const sourceChanged = (a: CatalogSkill, b: CatalogSkill) =>
+  a.source !== undefined && b.source !== undefined && a.source !== b.source;
+
+/** 两份快照是否相同（按 id、版本、名字、描述与来源，见 {@link sourceChanged}）。顺序无关。 */
 export function sameSkills(a: readonly CatalogSkill[], b: readonly CatalogSkill[]): boolean {
   if (a.length !== b.length) return false;
-  const key = (s: CatalogSkill) => `${s.id}\u0000${s.version}\u0000${s.name}\u0000${s.description}`;
-  const set = new Set(a.map(key));
-  return b.every((s) => set.has(key(s)));
+  const byId = new Map(a.map((s) => [s.id, s]));
+  if (byId.size !== a.length) return false;
+  return b.every((s) => {
+    const p = byId.get(s.id);
+    return (
+      p !== undefined &&
+      p.version === s.version &&
+      p.name === s.name &&
+      p.description === s.description &&
+      !sourceChanged(p, s)
+    );
+  });
 }
 
 /**
- * 目录变更提醒（之后的快照在所在位置以 system 消息追加）：新增、移除、更新（同一 id 的版本或描述变了）。
+ * 目录变更提醒（之后的快照在所在位置以 system 消息追加）：新增、移除、更新（同一 id 的版本、描述或来源变了：
+ * 试用草稿被拒绝 / 批准了别人的同号版本时，内容变了而版本号可能不变）。
  * `prev` 为上一份快照（没有为空）。
  */
 export function skillsChangeText(
@@ -69,7 +85,10 @@ export function skillsChangeText(
   const removed = prev.filter((s) => !after.has(s.id));
   const updated = next.filter((s) => {
     const p = before.get(s.id);
-    return p !== undefined && (p.version !== s.version || p.description !== s.description);
+    return (
+      p !== undefined &&
+      (p.version !== s.version || p.description !== s.description || sourceChanged(p, s))
+    );
   });
   const parts = ["The skills available in this conversation have changed."];
   if (added.length > 0) {

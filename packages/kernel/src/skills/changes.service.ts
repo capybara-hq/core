@@ -81,10 +81,16 @@ export type SkillWriteOutcome =
   | { kind: "version"; skillId: string; version: number; created: boolean }
   | { kind: "requested"; requestId: string; skillId: string; version: number };
 
+/** 被取消的草稿：提交后要删的对象前缀与要发布的（对话, seq）。 */
+export interface CancelledDrafts {
+  prefixes: string[];
+  seqs: [string, number][];
+}
+
 export interface SkillChangesDeps {
   db: KernelDb;
   storage: StorageService;
-  eventLog: Pick<EventLog, "append" | "latestOfType" | "notify">;
+  eventLog: Pick<EventLog, "append" | "notify">;
   log: Pick<Logger, "warn">;
 }
 
@@ -95,7 +101,7 @@ const STORAGE_UNAVAILABLE_TEXT =
 const pendingElsewhereText = (name: string) =>
   `Skill "${name}" already has a change awaiting the owner's approval (requested in another conversation), so it cannot be changed now; ask the user to have the owner decide that change first, or use a different skill name.`;
 const capText = () =>
-  `This agent already has ${AGENT_SKILLS_MAX} skills (including changes awaiting approval), the maximum; update an existing skill instead, or ask the agent's owner to remove one.`;
+  `This agent already has ${AGENT_SKILLS_MAX} skills (including changes awaiting approval), the maximum; update an existing skill instead, or ask the agent's owner to delete one of this agent's skills.`;
 const AGENT_GONE_TEXT =
   "This agent no longer exists, so the skill cannot be saved; ask the user to start a conversation with another agent.";
 
@@ -137,7 +143,6 @@ export class SkillChangesService {
       await this.deletePrefix(ctx.orgId, prefix);
       throw storageError(e);
     }
-    const last = await eventLog.latestOfType(ctx.conversationId, "skills_catalog");
     let committed: { outcome: SkillWriteOutcome; drop: string[]; toSeq: number | null };
     try {
       committed = await db.transaction().execute(async (t) => {
@@ -255,28 +260,17 @@ export class SkillChangesService {
           });
           outcome = { kind: "requested", requestId: id, skillId, version };
         }
-        // 本对话立即看到新版本：在上一份快照上替换 / 加入这个技能（确定、来自日志）
-        const base = last?.payload.skills ?? [];
-        const next = [
-          ...base.filter((s) => s.name !== pkg.name),
-          { id: skillId, name: pkg.name, description: pkg.description, version },
-        ].sort(byName);
-        let toSeq: number | null = null;
-        if (!sameSkills(base, next)) {
-          const written = await eventLog.append(
-            ctx.conversationId,
-            [
-              {
-                type: "skills_catalog",
-                ...(ctx.runId !== undefined && { runId: ctx.runId }),
-                idemKey: `skills_catalog:write:${id}`,
-                payload: { skills: next },
-              },
-            ],
-            t,
-          );
-          toSeq = Math.max(...written.map((e) => e.seq));
-        }
+        // 本对话立即看到新版本：在上一份快照上替换 / 加入这个技能（确定、来自日志；来源 = 本次的对象前缀）
+        const toSeq = await this.appendCatalog(
+          t,
+          ctx.conversationId,
+          (base) => [
+            ...base.filter((s) => s.name !== pkg.name),
+            { id: skillId, name: pkg.name, description: pkg.description, version, source: prefix },
+          ],
+          `skills_catalog:write:${id}`,
+          ctx.runId,
+        );
         return { outcome, drop, toSeq };
       });
     } catch (e) {
@@ -309,7 +303,7 @@ export class SkillChangesService {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!head) throw notFound();
-    const row = await db.transaction().execute(async (t) => {
+    const done = await db.transaction().execute(async (t) => {
       // 加锁顺序与 write 一致：先 agent 行，再申请行
       const agent = await t
         .selectFrom("agents")
@@ -323,7 +317,9 @@ export class SkillChangesService {
         .selectAll()
         .where("id", "=", id)
         .forUpdate()
-        .executeTakeFirstOrThrow();
+        .executeTakeFirst();
+      // 首次读与加锁重读之间行被删了（agent / 组织被硬删除）→ 404，不是 500
+      if (!req) throw notFound();
       if (agent.owner_account_id !== accountId) {
         throw new ApiError(
           "skill_change.not_owner",
@@ -392,12 +388,95 @@ export class SkillChangesService {
           ...(body.note !== undefined && { note: body.note }),
         },
       });
-      return updated;
+      // 拒绝：发起对话立即回退到正式版本（或移除），模型在当前位置看到提醒
+      const revertSeq = approved ? null : await this.revertTrial(t, req);
+      return { updated, revertSeq };
     });
+    const row = done.updated;
+    if (done.revertSeq !== null) {
+      await this.d.eventLog.notify(row.requested_in_conversation, done.revertSeq);
+    }
     if (row.status === "rejected") await this.deletePrefix(orgId, row.object_prefix);
     const [view] = await this.views([row]);
     if (!view) throw notFound();
     return view;
+  }
+
+  /**
+   * 软删除 agent 自己的一个技能（只有该 agent 当前的负责人；其他人 403 `forbidden`）：技能不存在 / 已删除 / 不属于该
+   * agent → `skill.not_found`。同名的待处理改动一并取消（发起对话追加回退快照，提交后删草稿）。审计 `skill.deleted`。
+   * 各对话下一次运行开始时目录里去掉它；之后同名可再写为新技能。
+   */
+  async deleteAgentSkill(
+    orgId: string,
+    agentId: string,
+    skillId: string,
+    accountId: string,
+    actorTokenId?: string,
+  ): Promise<void> {
+    const cancelled = await this.d.db.transaction().execute(async (t) => {
+      const agent = await t
+        .selectFrom("agents")
+        .select(["owner_account_id", "deleted_at"])
+        .where("id", "=", agentId)
+        .where("org_id", "=", orgId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!agent || agent.deleted_at !== null) {
+        throw new ApiError("skill.not_found", "Skill not found");
+      }
+      if (agent.owner_account_id !== accountId) {
+        throw new ApiError("forbidden", "Only the agent's owner can delete its skills");
+      }
+      const r = await t
+        .updateTable("skills")
+        .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
+        .where("id", "=", skillId)
+        .where("org_id", "=", orgId)
+        .where("scope", "=", "agent")
+        .where("agent_id", "=", agentId)
+        .where("deleted_at", "is", null)
+        .returning(["name"])
+        .executeTakeFirst();
+      if (!r) throw new ApiError("skill.not_found", "Skill not found");
+      const out: CancelledDrafts = { prefixes: [], seqs: [] };
+      const pend = await t
+        .selectFrom("skill_change_requests")
+        .selectAll()
+        .where("agent_id", "=", agentId)
+        .where("status", "=", "pending")
+        .where(sql<string>`proposed_version -> 'manifest' ->> 'name'`, "=", r.name)
+        .forUpdate()
+        .executeTakeFirst();
+      if (pend) {
+        await t
+          .updateTable("skill_change_requests")
+          .set({ status: "cancelled", decided_at: sql<Date>`now()` })
+          .where("id", "=", pend.id)
+          .execute();
+        await audit(t, {
+          actorAccountId: accountId,
+          ...(actorTokenId !== undefined && { actorTokenId }),
+          orgId,
+          action: "skill.change_decided",
+          target: pend.id,
+          detail: { decision: "cancelled", reason: "skill_deleted", agentId, name: r.name },
+        });
+        const seq = await this.revertTrial(t, pend);
+        if (seq !== null) out.seqs.push([pend.requested_in_conversation, seq]);
+        out.prefixes.push(pend.object_prefix);
+      }
+      await audit(t, {
+        actorAccountId: accountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "skill.deleted",
+        target: skillId,
+        detail: { name: r.name, agentId },
+      });
+      return out;
+    });
+    await this.finishCancel(orgId, cancelled);
   }
 
   /** 当前用户（作为 agent 负责人）能决定的待处理申请，新的在前，最多 {@link SKILL_CHANGES_LIST_MAX} 条。 */
@@ -452,6 +531,151 @@ export class SkillChangesService {
       files.push({ path: f.path, size: f.size, content });
     }
     return { ...view, files };
+  }
+
+  /**
+   * 在事务 `t` 里由对话最新一份快照推出下一份并追加（不同才写）：先锁会话行（与 `EventLog.append` 同一把锁），
+   * 锁内读最新快照，保证「读最新 → 追加」之间没有别的快照插进来。返回写入的 seq，没写返回 null。
+   */
+  private async appendCatalog(
+    t: Trx,
+    conversationId: string,
+    derive: (base: readonly CatalogSkill[]) => CatalogSkill[] | null,
+    idemKey: string,
+    runId?: string,
+  ): Promise<number | null> {
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    const last = await t
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "skills_catalog")
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    const base = (last?.payload as { skills?: CatalogSkill[] } | undefined)?.skills ?? [];
+    const derived = derive(base);
+    if (derived === null) return null;
+    const next = [...derived].sort(byName);
+    if (sameSkills(base, next)) return null;
+    const written = await this.d.eventLog.append(
+      conversationId,
+      [
+        {
+          type: "skills_catalog",
+          ...(runId !== undefined && { runId }),
+          idemKey,
+          payload: { skills: next },
+        },
+      ],
+      t,
+    );
+    return Math.max(...written.map((e) => e.seq));
+  }
+
+  /**
+   * 草稿不再生效（拒绝 / 取消）时，在事务 `t` 里给发起对话追加一份回退快照：由该对话最新一份快照推出——
+   * 来源是这份草稿的条目换成这个 agent 技能当前的正式版本（`t` 里已是决定之后的状态），没有正式版本就移除。
+   * 快照里已没有这份草稿 → 不写。对话正在运行时，提醒落在当前位置（构建时排在工具结果之后），下一步即生效。
+   * 移除时不推测同名的组织技能（快照里已被替换掉），下一次运行开始的解析会把它补回来。
+   */
+  private async revertTrial(
+    t: Trx,
+    req: Selectable<SkillChangeRequestsTable>,
+  ): Promise<number | null> {
+    const name = req.proposed_version.manifest.name;
+    const real = await t
+      .selectFrom("skills")
+      .innerJoin("skill_versions", (j) =>
+        j
+          .onRef("skill_versions.skill_id", "=", "skills.id")
+          .onRef("skill_versions.version", "=", "skills.current_version"),
+      )
+      .select([
+        "skills.id",
+        "skills.current_version",
+        "skill_versions.manifest",
+        "skill_versions.object_prefix",
+      ])
+      .where("skills.org_id", "=", req.org_id)
+      .where("skills.scope", "=", "agent")
+      .where("skills.agent_id", "=", req.agent_id)
+      .where("skills.name", "=", name)
+      .where("skills.deleted_at", "is", null)
+      .executeTakeFirst();
+    return this.appendCatalog(
+      t,
+      req.requested_in_conversation,
+      (base) => {
+        if (!base.some((s) => s.source === req.object_prefix)) return null;
+        const rest = base.filter((s) => s.source !== req.object_prefix);
+        return real
+          ? [
+              ...rest,
+              {
+                id: real.id,
+                name,
+                description: real.manifest.description,
+                version: real.current_version,
+                source: real.object_prefix,
+              },
+            ]
+          : rest;
+      },
+      `skills_catalog:revert:${req.id}`,
+    );
+  }
+
+  /**
+   * 在事务 `t` 里取消该 agent 全部待处理的技能改动（agent 被删除时由 `AgentsService.softDelete` 调用）：
+   * 置 cancelled、审计、给各发起对话追加回退快照。提交后调用 {@link finishCancel} 删除草稿并发布事件。
+   */
+  async cancelPendingForAgent(
+    t: Trx,
+    orgId: string,
+    agentId: string,
+    actorAccountId: string,
+    reason: string,
+  ): Promise<CancelledDrafts> {
+    const rows = await t
+      .selectFrom("skill_change_requests")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("agent_id", "=", agentId)
+      .where("status", "=", "pending")
+      .orderBy("created_at")
+      .forUpdate()
+      .execute();
+    const out: CancelledDrafts = { prefixes: [], seqs: [] };
+    for (const r of rows) {
+      await t
+        .updateTable("skill_change_requests")
+        .set({ status: "cancelled", decided_at: sql<Date>`now()` })
+        .where("id", "=", r.id)
+        .execute();
+      await audit(t, {
+        actorAccountId,
+        orgId,
+        action: "skill.change_decided",
+        target: r.id,
+        detail: { decision: "cancelled", reason, agentId, name: r.proposed_version.manifest.name },
+      });
+      const seq = await this.revertTrial(t, r);
+      if (seq !== null) out.seqs.push([r.requested_in_conversation, seq]);
+      out.prefixes.push(r.object_prefix);
+    }
+    return out;
+  }
+
+  /** {@link cancelPendingForAgent} 提交之后：发布事件、尽力删除草稿对象。 */
+  async finishCancel(orgId: string, c: CancelledDrafts): Promise<void> {
+    for (const [conv, seq] of c.seqs) await this.d.eventLog.notify(conv, seq);
+    for (const p of c.prefixes) await this.deletePrefix(orgId, p);
   }
 
   /** 新技能的数量上限（含待批准的新技能；`excluding` 是将被取代的申请）。 */

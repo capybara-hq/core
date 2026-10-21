@@ -54,6 +54,7 @@ export async function resolveEffectiveSkills(
       "skills.name",
       "skills.current_version",
       "skill_versions.manifest",
+      "skill_versions.object_prefix",
     ])
     .where("skills.org_id", "=", input.orgId)
     .where("skills.deleted_at", "is", null)
@@ -77,23 +78,30 @@ export async function resolveEffectiveSkills(
   const effective = new Map<string, CatalogSkill>(
     [...byName.values()].map((r) => [
       r.name,
-      { id: r.id, name: r.name, description: r.manifest.description, version: r.current_version },
+      {
+        id: r.id,
+        name: r.name,
+        description: r.manifest.description,
+        version: r.current_version,
+        source: r.object_prefix,
+      },
     ]),
   );
   const trials = await db
     .selectFrom("skill_change_requests")
-    .select("proposed_version")
+    .select(["proposed_version", "object_prefix"])
     .where("requested_in_conversation", "=", input.conversationId)
     .where("agent_id", "=", input.agentId)
     .where("org_id", "=", input.orgId)
     .where("status", "=", "pending")
     .execute();
-  for (const { proposed_version: p } of trials) {
+  for (const { proposed_version: p, object_prefix } of trials) {
     effective.set(p.manifest.name, {
       id: p.skillId,
       name: p.manifest.name,
       description: p.manifest.description,
       version: p.version,
+      source: object_prefix,
     });
   }
   const all = [...effective.values()].sort((a, b) =>

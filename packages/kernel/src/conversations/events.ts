@@ -392,6 +392,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
             name: z.string().refine(isSkillName, "invalid skill name"),
             description: z.string().max(4096),
             version: z.number().int().positive(),
+            /**
+             * 内容来源（对象前缀，T15）：已生成的版本为 `skill_versions.object_prefix`，试用中的草稿为申请的
+             * `object_prefix`。同号的草稿与正式版本靠它区分；旧快照没有这一项，按正式版本（id + 版本）处理。
+             */
+            source: z.string().min(1).max(512).optional(),
           }),
         )
         .max(SKILLS_CATALOG_MAX),

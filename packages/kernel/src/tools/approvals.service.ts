@@ -10,6 +10,9 @@ import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 
 type Trx = Transaction<KernelDatabase>;
 
+/** `list` 一次最多返回的审批数（收件箱据此判断这个来源是否取满）。 */
+export const APPROVALS_LIST_MAX = 100;
+
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
 export type ApprovalScope = "once" | "session" | "always";
 
@@ -215,7 +218,7 @@ export class ApprovalsService {
     return record;
   }
 
-  /** 当前用户能处理的审批（新的在前，最多 100 条）；`status` 缺省为全部。 */
+  /** 当前用户能处理的审批（新的在前，最多 {@link APPROVALS_LIST_MAX} 条）；`status` 缺省为全部。 */
   async list(orgId: string, accountId: string, status?: ApprovalStatus): Promise<ApprovalView[]> {
     const role = await this.roleOf(this.deps.db, orgId, accountId);
     const roles = role === null ? [] : ORG_ROLES.filter((r) => roleAtLeast(role, r));
@@ -237,7 +240,10 @@ export class ApprovalsService {
     if (status !== undefined) q = q.where("approvals.status", "=", status);
     // 已到期、超时任务尚未处理的审批不再列为待处理（处理它会得到 approval.already_decided）
     if (status === "pending") q = q.where("approvals.expires_at", ">", sql<Date>`now()`);
-    const rows = await q.orderBy("approvals.created_at", "desc").limit(100).execute();
+    const rows = await q
+      .orderBy("approvals.created_at", "desc")
+      .limit(APPROVALS_LIST_MAX)
+      .execute();
     return this.views(rows.map(toRecord));
   }
 

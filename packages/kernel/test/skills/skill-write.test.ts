@@ -15,7 +15,9 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { sameSkills, skillsChangeText } from "../../src/runtime/context/skills.js";
 import { AGENT_SKILLS_MAX } from "../../src/skills/changes.service.js";
+import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { buildSkillWrite, SKILL_WRITE_MAX_BYTES } from "../../src/tools/builtins/skill-write.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -215,6 +217,35 @@ const decide = (req: Req, id: string, decision: "approve" | "reject") =>
     payload: { decision },
   });
 
+describe("catalog source (pure)", () => {
+  const e = (version: number, source?: string) => ({
+    id: "s1",
+    name: "x",
+    description: "d",
+    version,
+    ...(source !== undefined && { source }),
+  });
+  it("same id + version but a different source is a change, rendered as updated", () => {
+    expect(sameSkills([e(2, "skills/a/")], [e(2, "skills/b/")])).toBe(false);
+    expect(skillsChangeText([e(2, "skills/a/")], [e(2, "skills/b/")])).toContain("Updated skills");
+    expect(sameSkills([e(2, "skills/a/")], [e(2, "skills/a/")])).toBe(true);
+  });
+  it("snapshots without source (pre-T15) match any source: no extra snapshot after upgrade", () => {
+    expect(sameSkills([e(2)], [e(2, "skills/a/")])).toBe(true);
+    expect(sameSkills([e(1)], [e(2, "skills/a/")])).toBe(false);
+  });
+  it("NUL in the SKILL.md body or the description is rejected", () => {
+    const body = buildSkillWrite({
+      name: "x",
+      description: "Use for x.",
+      files: [{ path: "SKILL.md", content: "a\u0000b" }],
+    });
+    expect("errors" in body && body.errors.join(" ")).toMatch(/SKILL\.md: only text/);
+    const desc = buildSkillWrite({ name: "x", description: "Use\u0000x.", files: [] });
+    expect("errors" in desc && desc.errors.join(" ")).toMatch(/description: only text/);
+  });
+});
+
 describe("buildSkillWrite (pure)", () => {
   it("synthesizes SKILL.md from name + description + body, dropping frontmatter in the body", () => {
     const r = buildSkillWrite({
@@ -323,7 +354,13 @@ describe("skill_write on a private agent", { timeout: 120_000 }, () => {
     expect(after[0]?.runId).toBe(events[resultIdx]?.runId);
     expect(after[0]?.payload.request.tools?.map((t) => t.key)).toContain("skill_load");
     expect((await catalogs(conv)).at(-1)?.payload.skills).toEqual([
-      { id: skill.id, name: "notes", description: "Use for notes work.", version: 1 },
+      {
+        id: skill.id,
+        name: "notes",
+        description: "Use for notes work.",
+        version: 1,
+        source: v.object_prefix,
+      },
     ]);
 
     const loaded = await call(owner, conv, "skill_load", { name: "notes" }, 2);
@@ -653,5 +690,135 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     const l2 = await call(member, convM, "skill_load", { name: "delta" }, 5);
     expect(l2.content).toContain("version 2");
     expect(await file()).toBe("echo d2");
+  });
+
+  it("A's rejected draft vs B's approved same-numbered version: A reverts at once, then sees B's version as updated; a stale draft entry never resolves to B's content", async () => {
+    const agentId = await createAgent("org");
+    const convA = await createConv(member, orgId, agentId);
+    const convB = await createConv(other, orgId, agentId);
+    await sharedWrite(member, convA, write("xray", "X v1."), 1);
+    const [v1] = await pending();
+    expect((await decide(owner, v1?.id as string, "approve")).statusCode).toBe(200);
+    const v1Prefix = v1?.object_prefix as string;
+
+    // A 试用 v2，然后被拒绝：拒绝的事务里给 A 追加回退快照（不用等下一次运行）
+    await sharedWrite(member, convA, write("xray", "X v2 from A."), 2);
+    const [a2] = await pending();
+    const aDraft = a2?.object_prefix as string;
+    expect((await catalogs(convA)).at(-1)?.payload.skills[0]).toMatchObject({
+      version: 2,
+      source: aDraft,
+    });
+    const before = (await catalogs(convA)).length;
+    expect((await decide(owner, a2?.id as string, "reject")).statusCode).toBe(200);
+    const afterReject = await catalogs(convA);
+    expect(afterReject).toHaveLength(before + 1);
+    expect(afterReject.at(-1)?.payload.skills[0]).toMatchObject({ version: 1, source: v1Prefix });
+
+    // B 写同名 v2，负责人批准
+    await sharedWrite(other, convB, write("xray", "X v2 from B."), 1);
+    const [b2] = await pending();
+    expect((await decide(owner, b2?.id as string, "approve")).statusCode).toBe(200);
+
+    // A 的下一次运行：目录更新为 B 的 v2（来源不同），加载得到 B 的内容
+    const l = await call(member, convA, "skill_load", { name: "xray" }, 3);
+    expect(l.content).toContain("X v2 from B.");
+    expect((await catalogs(convA)).at(-1)?.payload.skills[0]).toMatchObject({
+      version: 2,
+      source: b2?.object_prefix,
+    });
+
+    // 即使日志里还留着 A 草稿的条目（{xray, v2, A 的前缀}），也只按来源解析：已移除，不会拿到 B 的内容
+    const skillId = a2?.proposed_version.skillId as string;
+    const t = skillLoadTool({
+      db,
+      storage: k.storage,
+      eventLog: {
+        append: async () => [],
+        latestOfType: async () =>
+          ({
+            conversationId: convA,
+            seq: 1,
+            runId: "r",
+            createdAt: new Date(),
+            type: "skills_catalog",
+            payload: {
+              skills: [{ id: skillId, name: "xray", description: "d", version: 2, source: aDraft }],
+            },
+          }) as never,
+      },
+      sandbox: {
+        available: false,
+        withSandbox: async () => {
+          throw new Error("unused");
+        },
+      },
+      attachments: {
+        listForConversation: async () => [],
+        openForConversation: async () => null,
+      },
+      config: () => k.config,
+    });
+    await expect(
+      t.run(
+        { name: "xray" },
+        {
+          orgId,
+          accountId: memberId,
+          agentId,
+          conversationId: convA,
+          callId: "c",
+          signal: new AbortController().signal,
+        },
+      ),
+    ).rejects.toThrow(/removed/);
+  });
+
+  it("deleting the agent cancels its pending changes and deletes the drafts; the owner can delete an agent skill", async () => {
+    const agentId = await createAgent("org");
+    const convM = await createConv(member, orgId, agentId);
+    await sharedWrite(member, convM, write("keep", "Keep v1."), 1);
+    const [k1] = await pending();
+    expect((await decide(owner, k1?.id as string, "approve")).statusCode).toBe(200);
+    const skill = await db
+      .selectFrom("skills")
+      .select("id")
+      .where("agent_id", "=", agentId)
+      .executeTakeFirstOrThrow();
+
+    // 只有负责人能删 agent 自己的技能；同名待处理改动一并取消
+    await sharedWrite(member, convM, write("keep", "Keep v2."), 2);
+    const [k2] = await pending();
+    const url = `/api/v1/orgs/${orgId}/agents/${agentId}/skills/${skill.id}`;
+    const denied = await other({ method: "DELETE", url });
+    expect(denied.statusCode).toBe(403);
+    const ok = await owner({ method: "DELETE", url });
+    expect(ok.statusCode, ok.body).toBe(204);
+    expect((await owner({ method: "DELETE", url })).statusCode).toBe(404);
+    expect(await pending()).toHaveLength(0);
+    expect((await catalogs(convM)).at(-1)?.payload.skills).toEqual([]);
+    await waitFor(
+      async () => (await k.storage.kernel(orgId).head(`${k2?.object_prefix}SKILL.md`)) === null,
+      10_000,
+      "draft deleted on skill delete",
+    );
+    expect(await audits("skill.deleted")).toHaveLength(1);
+
+    // 删除 agent：待处理改动取消、草稿删除
+    await sharedWrite(member, convM, write("other", "Other v1."), 3);
+    const [o1] = await pending();
+    const del = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${agentId}` });
+    expect(del.statusCode, del.body).toBe(204);
+    const row = await db
+      .selectFrom("skill_change_requests")
+      .select("status")
+      .where("id", "=", o1?.id as string)
+      .executeTakeFirstOrThrow();
+    expect(row.status).toBe("cancelled");
+    await waitFor(
+      async () => (await k.storage.kernel(orgId).head(`${o1?.object_prefix}SKILL.md`)) === null,
+      10_000,
+      "draft deleted on agent delete",
+    );
   });
 });

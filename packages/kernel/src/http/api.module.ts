@@ -52,7 +52,11 @@ import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
 import type { SandboxService } from "../sandbox/sandbox.service.js";
-import { InboxController, SkillChangesController } from "../skills/changes.controller.js";
+import {
+  AgentSkillsController,
+  InboxController,
+  SkillChangesController,
+} from "../skills/changes.controller.js";
 import type { SkillChangesService } from "../skills/changes.service.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import type { SkillsService } from "../skills/skills.service.js";
@@ -190,6 +194,7 @@ const CONTROLLERS: Type[] = [
   AttachmentsController,
   SkillsController,
   SkillChangesController,
+  AgentSkillsController,
   InboxController,
   ConversationStreamController,
   AppContentController,
@@ -283,7 +288,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     {
       provide: AGENTS,
       useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry) =>
-        new AgentsService(db, registry, tools),
+        new AgentsService(db, registry, tools, deps.skillChanges),
       inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },

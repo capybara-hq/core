@@ -3,12 +3,14 @@ import {
   type SkillChangesService,
   type SkillChangeView,
 } from "../skills/changes.service.js";
-import type { ApprovalsService, ApprovalView } from "../tools/approvals.service.js";
+import {
+  APPROVALS_LIST_MAX,
+  type ApprovalsService,
+  type ApprovalView,
+} from "../tools/approvals.service.js";
 
 /** 收件箱一次最多返回的事项数。 */
 export const INBOX_MAX_ITEMS = 100;
-/** `ApprovalsService.list` 一次最多返回的条数。 */
-const SOURCE_MAX = 100;
 
 /**
  * 收件箱里的一项（按 `type` 区分，形状稳定）：
@@ -69,8 +71,8 @@ export class InboxService {
             ? 1
             : 0,
     );
-    // 各来源自己也最多返回 100 条：某个来源取满了也算还有更多
-    const full = approvals.length >= SOURCE_MAX || changes.length >= SKILL_CHANGES_LIST_MAX;
+    // 各来源自己也有上限：某个来源取满了也算还有更多
+    const full = approvals.length >= APPROVALS_LIST_MAX || changes.length >= SKILL_CHANGES_LIST_MAX;
     return {
       items: all.slice(0, INBOX_MAX_ITEMS),
       truncated: full || all.length > INBOX_MAX_ITEMS,
