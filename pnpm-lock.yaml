@@ -41,6 +41,9 @@ importers:
       '@capybara-hq/plugin-sandbox-docker':
         specifier: workspace:*
         version: link:plugins/sandbox-docker
+      '@capybara-hq/plugin-sandbox-e2b':
+        specifier: workspace:*
+        version: link:plugins/sandbox-e2b
       '@changesets/cli':
         specifier: ^3.0.3
         version: 3.0.3
@@ -492,6 +495,19 @@ importers:
       testcontainers:
         specifier: ^12.2.1
         version: 12.2.1
+
+  plugins/sandbox-e2b:
+    dependencies:
+      '@capybara-hq/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@capybara-hq/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
 
   plugins/slack:
     dependencies:

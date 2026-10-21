@@ -38,6 +38,7 @@
     "@capybara-hq/plugin-openai": "workspace:*",
     "@capybara-hq/plugin-openai-compatible": "workspace:*",
     "@capybara-hq/plugin-sandbox-docker": "workspace:*",
+    "@capybara-hq/plugin-sandbox-e2b": "workspace:*",
     "@changesets/cli": "^3.0.3",
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.3",

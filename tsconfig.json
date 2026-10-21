@@ -50,6 +50,9 @@
       "path": "plugins/sandbox-docker"
     },
     {
+      "path": "plugins/sandbox-e2b"
+    },
+    {
       "path": "tools/checks"
     },
     {

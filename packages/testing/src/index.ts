@@ -32,6 +32,14 @@ export {
   startFakeChannelServer,
 } from "./fake-channel.js";
 export {
+  type FakeE2BCall,
+  type FakeE2BMatch,
+  type FakeE2BOptions,
+  type FakeE2BSandbox,
+  type FakeE2BServer,
+  startFakeE2B,
+} from "./fake-e2b.js";
+export {
   type FakeLarkAck,
   type FakeLarkApi,
   type FakeLarkButton,

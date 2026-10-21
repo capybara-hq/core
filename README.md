@@ -339,6 +339,17 @@ export CAPYBARA_PLUGIN_CONFIG='{"sandbox-docker":{"endpoint":"tcp://127.0.0.1:23
 
 `127.0.0.1:2375` 只供本机开发：生产环境绝不要把 socket 代理发布到宿主机地址上，只放在内核的内部网络里；`egress: "open"` 须显式打开插件配置 `allowOpenEgress`（默认关）。配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)。
 
+### 对话沙箱（E2B）
+
+另一个实现是 `@capybara-hq/plugin-sandbox-e2b`（与 Docker 二选一）：每个对话一个 E2B 沙箱（E2B 云或自托管），休眠用 E2B 的 pause、恢复用 connect，到点自动暂停而不删除；出站白名单映射到 E2B 的 `allowOut` / `denyOut`（按域名只管 80 / 443 端口）。模板由同一份 `plugins/sandbox-docker/image/Dockerfile` 构建：
+
+```bash
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-sandbox-e2b"]'
+export CAPYBARA_PLUGIN_CONFIG='{"sandbox-e2b":{"apiKey":"e2b_…","template":"capybara-sandbox"}}'
+```
+
+模板构建步骤、自托管（`apiUrl` / `domain`）、出站与资源限制的局限见 [plugins/sandbox-e2b/README.md](plugins/sandbox-e2b/README.md)。
+
 ## 运维须知
 
 - **初始化向导何时重新开放**：「需要初始化」的判定是「不存在活跃（`status = active`）的企业管理员」，每次实时查 PG。如果有人直接改库把所有企业管理员都停用或撤销了，部署会重新对未认证的 `POST /api/v1/setup` 开放，谁先调用谁就成为新的企业管理员。生产部署请始终设置 `CAPYBARA_AUTH__SETUP_TOKEN`（初始化须带同值的 `setupToken`）；恢复管理员优先用 CLI：`echo "$PW" | pnpm capybara admin create --login <名字> --display-name <显示名>`。
