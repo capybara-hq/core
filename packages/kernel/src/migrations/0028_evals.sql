@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     CHECK (status IN ('queued', 'running', 'completed', 'cancelled', 'capped', 'failed')),
   cases_total integer NOT NULL,
   cases_done integer NOT NULL DEFAULT 0,
+  -- 连续出错的结果数（成功即清零）；达到 evals.maxConsecutiveErrors 时运行置 failed，原因记在 error
+  consecutive_errors integer NOT NULL DEFAULT 0,
+  -- 运行失败的原因 {code, message}（英文；界面按 code 走 i18n）
+  error jsonb,
   estimate jsonb NOT NULL,
   created_by text NOT NULL REFERENCES accounts(id),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -71,6 +75,8 @@ CREATE TABLE IF NOT EXISTS eval_results (
   drift text[] NOT NULL DEFAULT '{}',
   error jsonb,
   eval_conversation_id text,
+  -- 认领该结果的任务尝试（每次执行一个新 uuid）：写 done 与计费都以它为条件，失去认领的旧执行者写不进来
+  claimed_by text,
   label text CHECK (label IN ('pass', 'fail')),
   label_note text,
   labeled_by text REFERENCES accounts(id) ON DELETE SET NULL,

@@ -7,3 +7,5 @@
 `/api/v1/orgs/:orgId/eval-runs/:runId`（查看、结果分页、取消），全部 `evals.manage`。运行经队列
 `cap-kernel-evals` 每用例一个任务执行，组织并发 `evals.orgConcurrency`，用量达上限即 `capped`；
 单步回放由日志还原请求换候选重发。评测集改动与删除用例写审计 `eval.set_updated` / `eval.case_removed`。
+发出后失败的尝试按估算计入 token 上限；连续 `evals.maxConsecutiveErrors`（默认 10）条结果出错时运行置 failed
+（`eval.too_many_errors`）；结果按认领号写入，任务对暂时故障指数退避重试。

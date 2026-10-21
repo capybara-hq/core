@@ -37,6 +37,7 @@ const MODEL_EVAL = fileURLToPath(
 );
 const EVAL_1 = { provider: "model-eval", model: "eval-1" };
 const MAX_TOKEN_CAP = 100_000;
+const MAX_CONSECUTIVE_ERRORS = 3;
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -55,7 +56,12 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         plugins: [MODEL_FAKE, MODEL_EVAL],
-        evals: { maxTokenCap: MAX_TOKEN_CAP, defaultTokenCap: 50_000, orgConcurrency: 2 },
+        evals: {
+          maxTokenCap: MAX_TOKEN_CAP,
+          defaultTokenCap: 50_000,
+          orgConcurrency: 2,
+          maxConsecutiveErrors: MAX_CONSECUTIVE_ERRORS,
+        },
       },
     ),
   );
@@ -86,7 +92,7 @@ const sum = (u: typeof U0) =>
  * 直接写日志的一次两步运行：第 0 步先有一次失败的尝试，再成功（回复带工具调用）、工具结果；第 1 步文本回复。
  * 可单步回放的调用 = 2（每步最后一次尝试），原运行的模型调用 = 3。
  */
-async function seedTwoStepRun(convId: string, runId: string): Promise<void> {
+async function seedTwoStepRun(convId: string, runId: string, version = 1): Promise<void> {
   const [msg] = await eventLog.append(convId, [
     {
       type: "user_message",
@@ -100,7 +106,7 @@ async function seedTwoStepRun(convId: string, runId: string): Promise<void> {
       id: runId,
       conversation_id: convId,
       status: "completed",
-      agent_version: 1,
+      agent_version: version,
       trigger_account_id: aliceId,
       trigger_seq: userSeq,
       started_at: new Date(),
@@ -135,7 +141,7 @@ async function seedTwoStepRun(convId: string, runId: string): Promise<void> {
       type: "run_started",
       runId,
       payload: {
-        agentVersion: 1,
+        agentVersion: version,
         model: { provider: "model-fake", model: "fake-1" },
         triggerAccountId: aliceId,
       },
@@ -395,7 +401,8 @@ describe("运行", () => {
       "completed",
       100,
     );
-    expect(finished.tokensUsed).toBe(300);
+    // 3 次成功各 100；3 次失败的尝试按估算另计（> 0）
+    expect(finished.tokensUsed).toBeGreaterThan(300);
     expect(finished.summary).toMatchObject({ done: 3, errors: 1, skipped: 0 });
 
     const page1 = await admin({ method: "GET", url: `${runsUrl()}/${run.id}/results?limit=3` });
@@ -433,13 +440,24 @@ describe("运行", () => {
     );
     const cancel = await admin({ method: "POST", url: `${runsUrl()}/${run.id}/cancel` });
     expect(cancel.statusCode, cancel.body).toBe(200);
-    expect((cancel.json() as { run: EvalRunView }).run.status).toBe("cancelled");
+    const cancelled = (cancel.json() as { run: EvalRunView }).run;
+    expect(cancelled.status).toBe("cancelled");
+    // 第 3 个用例还在等组织配额（结果全是 pending）：取消时立即 skipped，并计入进度
+    expect(cancelled.casesDone).toBeGreaterThanOrEqual(1);
     const results = await settled(run.id);
     const skipped = results.filter((r) => r.status === "skipped").length;
     // orgConcurrency = 2：至多两个在途请求做完，其余都 skipped
     expect(skipped).toBeGreaterThanOrEqual(4);
     expect(results.filter((r) => r.status === "done").length).toBeLessThanOrEqual(2);
-    const after = await getRun(run.id);
+    const after = await waitFor(
+      async () => {
+        const r = await getRun(run.id);
+        return r.casesDone === 3 ? r : null;
+      },
+      15_000,
+      "cases done",
+      100,
+    );
     expect(after.status).toBe("cancelled");
     expect(after.finishedAt).not.toBeNull();
 
@@ -453,6 +471,184 @@ describe("运行", () => {
       .orderBy("id")
       .execute();
     expect(audits.map((a) => a.action)).toEqual(["eval.run_started", "eval.run_cancelled"]);
+  });
+});
+
+describe("失败计费与熔断", () => {
+  it("流出一部分后失败的请求按估算计费，越过上限即 capped", async () => {
+    const setId = await seededSet(1);
+    const s = evalModelState();
+    s.streamThenFail = { text: "y".repeat(400), error: new ModelError("server", "boom") };
+    const run = await startRun(setId, {
+      mode: "step",
+      candidate: { model: EVAL_1 },
+      tokenCap: 50,
+    });
+    const results = await settled(run.id);
+    const final = await getRun(run.id);
+    expect(final.status).toBe("capped");
+    // 输入按估算器（> 0）+ 输出 400 字符 / 4 = 100
+    expect(final.tokensUsed).toBeGreaterThan(100);
+    // 第一次尝试计费后越限：可重试的错误不再重试，之后的结果也不再发
+    expect(s.requests).toHaveLength(1);
+    expect(results.map((r) => r.status)).toEqual(["skipped", "skipped"]);
+  });
+
+  it("没有流出内容就失败的请求同样计费", async () => {
+    const setId = await seededSet(1);
+    const s = evalModelState();
+    s.failures = [
+      new ModelError("invalid_request", "bad"),
+      new ModelError("invalid_request", "bad"),
+    ];
+    const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
+    await settled(run.id);
+    const final = await getRun(run.id);
+    expect(final.status).toBe("completed");
+    expect(final.summary).toMatchObject({ errors: 2, done: 0 });
+    expect(final.tokensUsed).toBeGreaterThan(0);
+  });
+
+  it("连续出错达到 evals.maxConsecutiveErrors：运行 failed，其余 skipped", async () => {
+    const setId = await seededSet(3);
+    const s = evalModelState();
+    s.failures = Array.from({ length: 20 }, () => new ModelError("invalid_request", "always 400"));
+    const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
+    const results = await settled(run.id, 30_000);
+    const final = await waitFor(
+      async () => {
+        const r = await getRun(run.id);
+        return r.casesDone === 3 ? r : null;
+      },
+      15_000,
+      "cases done",
+      100,
+    );
+    expect(final.status).toBe("failed");
+    expect(final.error).toEqual({
+      code: "eval.too_many_errors",
+      message: expect.stringContaining("consecutive"),
+    });
+    const errors = results.filter((r) => r.status === "error").length;
+    expect(errors).toBeGreaterThanOrEqual(MAX_CONSECUTIVE_ERRORS);
+    // 熔断后至多在途的那一个（orgConcurrency = 2）还会做完
+    expect(errors).toBeLessThanOrEqual(MAX_CONSECUTIVE_ERRORS + 1);
+    expect(results.filter((r) => r.status === "skipped")).toHaveLength(6 - errors);
+    expect(s.requests.length).toBe(errors);
+    expect(final.summary).toMatchObject({ errors, skipped: 6 - errors, done: 0 });
+  }, 40_000);
+});
+
+describe("认领号", () => {
+  it("结果被别的执行接手后，旧执行既不写 done 也不计费", async () => {
+    const setId = await seededSet(1);
+    evalModelState().delayMs = 600;
+    const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
+    const first = await waitFor(
+      async () => (await allResults(run.id)).find((r) => r.status === "running"),
+      10_000,
+      "a running result",
+      25,
+    );
+    // 模拟 stalled 后另一个 worker 认领了同一条结果（旧执行仍活着，请求还在途）
+    await db
+      .updateTable("eval_results")
+      .set({ claimed_by: "another-attempt" })
+      .where("id", "=", first.id)
+      .execute();
+    await waitFor(async () => evalModelState().inflight === 0, 5_000, "request done", 25);
+    await new Promise((r) => setTimeout(r, 300));
+    const row = await db
+      .selectFrom("eval_results")
+      .select(["status", "claimed_by", "candidate"])
+      .where("id", "=", first.id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ status: "running", claimed_by: "another-attempt", candidate: null });
+    expect((await getRun(run.id)).tokensUsed).toBe(0);
+    // 旧执行在失去认领处停下：同一用例的下一条结果没有被它继续做
+    expect(evalModelState().requests).toHaveLength(1);
+    const cancel = await admin({ method: "POST", url: `${runsUrl()}/${run.id}/cancel` });
+    expect(cancel.statusCode).toBe(200);
+  });
+});
+
+describe("按用例校验候选参数", () => {
+  it("参数不符某个用例所用模型的声明：该用例记错误，其余照常回放", async () => {
+    // agent 第 2 版换成 model-eval/eval-1；用例 A 来自第 1 版（model-fake），用例 B 来自第 2 版
+    const v1 = await db
+      .selectFrom("agent_versions")
+      .select(["definition", "created_by"])
+      .where("agent_id", "=", agentId)
+      .where("version", "=", 1)
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto("agent_versions")
+      .values({
+        agent_id: agentId,
+        version: 2,
+        definition: JSON.stringify({ ...(v1.definition as object), model: EVAL_1 }),
+        created_by: v1.created_by,
+      })
+      .execute();
+    await db.updateTable("agents").set({ current_version: 2 }).where("id", "=", agentId).execute();
+    const setId = await createSet();
+    const convA = await createConv(alice, orgId, agentId);
+    await seedTwoStepRun(convA, "run-v1", 1);
+    const caseA = await addCase(setId, convA, "run-v1");
+    const convB = await createConv(alice, orgId, agentId);
+    await seedTwoStepRun(convB, "run-v2", 2);
+    const caseB = await addCase(setId, convB, "run-v2");
+
+    const candidate = { modelParams: { "model-eval.level": 2 } };
+    const est = await admin({
+      method: "POST",
+      url: `${setsUrl()}/${setId}/runs/estimate`,
+      payload: { mode: "step", candidate },
+    });
+    expect(est.statusCode, est.body).toBe(200);
+    // 只算会发请求的用例 B
+    expect((est.json() as { estimate: EvalEstimate }).estimate).toMatchObject({
+      cases: 1,
+      modelRequests: 2,
+    });
+
+    const run = await startRun(setId, { mode: "step", candidate });
+    expect(run.casesTotal).toBe(2);
+    const results = await settled(run.id);
+    const ofA = results.filter((r) => r.caseId === caseA);
+    const ofB = results.filter((r) => r.caseId === caseB);
+    expect(ofA.map((r) => r.status)).toEqual(["error", "error"]);
+    expect(ofA[0]?.error).toMatchObject({
+      code: "eval.candidate_invalid",
+      details: [expect.objectContaining({ path: "candidate.modelParams.model-eval.level" })],
+    });
+    expect(ofB.map((r) => r.status)).toEqual(["done", "done"]);
+    const sent = evalModelState().requests;
+    expect(sent).toHaveLength(2);
+    expect(sent.every((r) => r.params["model-eval.level"] === 2)).toBe(true);
+    const final = await waitFor(
+      async () => {
+        const r = await getRun(run.id);
+        return r.status === "completed" ? r : null;
+      },
+      10_000,
+      "completed",
+      100,
+    );
+    expect(final.casesDone).toBe(2);
+
+    // 只剩不合法的用例：不建运行，直接 400
+    const onlyA = await createSet();
+    const convC = await createConv(alice, orgId, agentId);
+    await seedTwoStepRun(convC, "run-v1-c", 1);
+    await addCase(onlyA, convC, "run-v1-c");
+    const bad = await admin({
+      method: "POST",
+      url: `${setsUrl()}/${onlyA}/runs`,
+      payload: { mode: "step", candidate },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(errCode(bad)).toBe("eval.candidate_invalid");
   });
 });
 
@@ -517,6 +713,43 @@ describe("校验与权限", () => {
     }
     // 校验失败的启动不留下运行
     expect(await db.selectFrom("eval_runs").select("id").execute()).toEqual([]);
+  });
+
+  it("别的组织的管理员拿本组织的运行 / 集合 id：404", async () => {
+    const setId = await seededSet(1);
+    const run = await startRun(setId, { mode: "step", candidate: {} });
+    const bobId = (
+      await new AccountsService(db).createLocal({ login: "bob", password: PW, displayName: "bob" })
+    ).id;
+    expect(bobId).toBeTruthy();
+    const bob = await session(k, "bob");
+    const orgB = await createOrg(bob, "Other");
+    const runsB = `/api/v1/orgs/${orgB}/eval-runs`;
+    const setsB = `/api/v1/orgs/${orgB}/eval-sets`;
+    const cases: [string, string, unknown, string][] = [
+      ["GET", `${runsB}/${run.id}`, undefined, "eval.run_not_found"],
+      ["GET", `${runsB}/${run.id}/results`, undefined, "eval.run_not_found"],
+      ["POST", `${runsB}/${run.id}/cancel`, undefined, "eval.run_not_found"],
+      ["GET", `${setsB}/${setId}/runs`, undefined, "eval.set_not_found"],
+      ["POST", `${setsB}/${setId}/runs`, { mode: "step", candidate: {} }, "eval.set_not_found"],
+      [
+        "POST",
+        `${setsB}/${setId}/runs/estimate`,
+        { mode: "step", candidate: {} },
+        "eval.set_not_found",
+      ],
+    ];
+    for (const [method, url, payload, code] of cases) {
+      const res = await bob({
+        method: method as "GET",
+        url,
+        ...(payload !== undefined && { payload: payload as object }),
+      });
+      expect(res.statusCode, `${method} ${url}`).toBe(404);
+      expect(errCode(res), `${method} ${url}`).toBe(code);
+    }
+    // 运行未被别的组织取消
+    expect((await getRun(run.id)).status).not.toBe("cancelled");
   });
 
   it("member 403，未登录 401", async () => {

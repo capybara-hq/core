@@ -82,6 +82,7 @@
 | `evals.maxCasesPerSet` | `CAPYBARA_EVALS__MAX_CASES_PER_SET` | `number` | `500` | 否 | 否 | Maximum number of cases in one eval set |
 | `evals.maxCaseBytes` | `CAPYBARA_EVALS__MAX_CASE_BYTES` | `number` | `4194304` | 否 | 否 | Largest log snapshot in bytes (serialized JSON) one eval case may store; larger runs cannot be added |
 | `evals.judgeMaxOutputTokens` | `CAPYBARA_EVALS__JUDGE_MAX_OUTPUT_TOKENS` | `number` | `1024` | 否 | 否 | Maximum output tokens of one LLM judge request |
+| `evals.maxConsecutiveErrors` | `CAPYBARA_EVALS__MAX_CONSECUTIVE_ERRORS` | `number` | `10` | 否 | 否 | Consecutive failed results after which an eval run is marked failed and its remaining cases are skipped |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

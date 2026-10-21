@@ -852,6 +852,17 @@ export const KernelConfigSchema = z.object({
         .positive()
         .default(1024)
         .meta(meta({ description: "Maximum output tokens of one LLM judge request" })),
+      maxConsecutiveErrors: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({
+            description:
+              "Consecutive failed results after which an eval run is marked failed and its remaining cases are skipped",
+          }),
+        ),
     })
     // 默认上限必须在允许范围内，否则不传 tokenCap 的运行一律被拒
     .refine((c) => c.defaultTokenCap <= c.maxTokenCap, {

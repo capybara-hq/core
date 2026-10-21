@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { isModelError, isRetryableKind, type Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Worker } from "bullmq";
@@ -10,7 +11,7 @@ import { MediaUnavailableError } from "../runtime/model-call.js";
 import { ProviderListError } from "../runtime/providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
 import { bullConnection } from "../runtime/run-queue.js";
-import { consumeTokens, runActive, usageTokens } from "./budget.js";
+import { consumeTokens, recordOutcome, recountCases, runActive, usageTokens } from "./budget.js";
 import {
   caseBase,
   EVAL_QUEUE_NAME,
@@ -20,16 +21,24 @@ import {
   versionDefinition,
 } from "./runs.service.js";
 import { type CaseSnapshot, replayableCalls } from "./snapshot.js";
-import { replayStep, resolveCandidate, type StepReplayDeps } from "./step-replay.js";
+import {
+  ReplayAttemptError,
+  replayStep,
+  resolveCandidate,
+  type StepReplayDeps,
+} from "./step-replay.js";
 
 /**
  * 评测 worker（C7，只在含 `worker` 角色的进程启动）：领取 `cap-kernel-evals` 的任务，每个任务回放一个用例。
- * - 运行不活跃（取消 / 达到上限 / 已结束）→ 该用例剩余结果标 `skipped`；
+ * - 运行不活跃（取消 / 达到上限 / 熔断 / 已结束）→ 该用例剩余结果标 `skipped`；
  * - 组织并发配额 `capk:org-evals:<orgId>`（`evals.orgConcurrency`，成员为 jobId）拿不到 → 延后 5000ms；
- * - 每次请求前查 `runActive`，请求后在同一事务里写结果并 `consumeTokens`（越限即 `capped`，不再发新请求）；
- * - 可重试的错误重试 3 次，不可重试的结果标 `error`；
+ * - 每次请求前查 `runActive`；成功的请求在同一事务里写结果并 `consumeTokens`（越限即 `capped`），
+ *   发出后失败的尝试按估算同样 `consumeTokens`；
+ * - 可重试的错误重试 3 次，不可重试的结果标 `error`；连续 `evals.maxConsecutiveErrors` 条结果出错 → 运行 `failed`；
+ * - 结果按认领号（每次执行一个 uuid）写入：失去认领的旧执行写不进来、也不计费；
  * - 用例做完重算 `cases_done`（已全部结束的用例数，幂等），达到总数且仍在执行 → `completed`。
- * 多副本：状态全在 PG / Redis；崩溃的任务由 BullMQ stalled 机制交给别的 worker，`running` 的结果从头重做。
+ * 多副本：状态全在 PG / Redis；崩溃的任务由 BullMQ stalled 机制交给别的 worker，`running` 的结果从头重做；
+ * 处理函数外的暂时故障（PG / Redis）按任务的 attempts 指数退避重试。
  */
 
 /** 拿不到组织配额时任务延后的毫秒数。 */
@@ -137,6 +146,11 @@ export class EvalWorker {
     this.worker.on("error", (err) => this.d.log.error("eval worker error", { err }));
     this.worker.on("failed", (job, err) => {
       if (!job) return;
+      // 处理函数外的暂时故障（PG / Redis）由 BullMQ 按 attempts 指数退避重试；用尽（或 stalled 超限）才算失败
+      if (job.attemptsMade < (job.opts.attempts ?? 1) && !/stalled/i.test(err.message)) {
+        this.d.log.warn("eval job attempt failed; retrying", { jobId: job.id, err });
+        return;
+      }
       this.d.log.error("eval job failed", { jobId: job.id, err });
       // 任务不会再执行：该用例剩下的结果记 error，运行不因此卡住
       void this.failCase(job.data, err).catch((e) =>
@@ -172,11 +186,12 @@ export class EvalWorker {
     const jobId = job.id ?? evalJobId(runId, data.caseId);
     if (!(await runActive(this.d.db, runId))) {
       await this.skipCase(data);
-      await this.finishCase(runId);
+      await recountCases(this.d.db, runId);
       return;
     }
     const limit = this.d.config().evals.orgConcurrency;
     if (!(await this.d.quota.tryEnter(orgId, jobId, limit, ORG_QUOTA_LEASE_MS))) {
+      // 配额满：固定 5 秒后再试，不按事件唤醒。评测是后台批任务，几秒空等可以接受，换来没有跨副本通知
       await job.moveToDelayed(Date.now() + (this.d.quotaRetryMs ?? EVAL_QUOTA_RETRY_MS), token);
       throw new DelayedError();
     }
@@ -196,7 +211,8 @@ export class EvalWorker {
         .where("id", "=", runId)
         .where("status", "=", "queued")
         .execute();
-      await this.runCase(data, ac.signal);
+      // 每次执行一个新的认领号：失去认领（stalled 后被别的 worker 接手）的旧执行写不进结果、也不计费
+      await this.runCase(data, randomUUID(), ac.signal);
     } catch (err) {
       if (ac.signal.aborted) {
         // 停机：任务回到队列，`running` 的结果由接手的 worker 重做
@@ -211,11 +227,44 @@ export class EvalWorker {
         .leave(orgId, jobId)
         .catch((err) => this.d.log.warn("eval quota leave failed", { jobId, err }));
     }
-    await this.finishCase(runId);
+    await recountCases(this.d.db, runId);
+  }
+
+  /**
+   * 一条结果出错：只在仍由本次执行认领时写入，然后计入熔断；熔断 → 该用例剩下的结果 skipped（其他用例的任务
+   * 看到运行不活跃也会跳过）。返回 true 表示本用例应停下（熔断或失去认领）。
+   */
+  private async resultError(
+    data: EvalJobData,
+    resultId: string,
+    claim: string,
+    error: { code: string; message: string },
+  ): Promise<boolean> {
+    const db = this.d.db;
+    const w = await db
+      .updateTable("eval_results")
+      .set({ status: "error", error: JSON.stringify(error), updated_at: sql`now()` })
+      .where("id", "=", resultId)
+      .where("status", "=", "running")
+      .where("claimed_by", "=", claim)
+      .executeTakeFirst();
+    if (Number(w.numUpdatedRows) === 0) return true;
+    const { tripped } = await recordOutcome(
+      db,
+      data.runId,
+      false,
+      this.d.config().evals.maxConsecutiveErrors,
+    );
+    if (tripped) {
+      this.d.log.warn("eval run stopped after too many consecutive errors", { runId: data.runId });
+      await this.skipCase(data);
+      return true;
+    }
+    return false;
   }
 
   /** 回放一个用例的全部未结束结果（按调用顺序）。 */
-  private async runCase(data: EvalJobData, signal: AbortSignal): Promise<void> {
+  private async runCase(data: EvalJobData, claim: string, signal: AbortSignal): Promise<void> {
     const { runId, caseId } = data;
     const db = this.d.db;
     const [row, run] = await Promise.all([
@@ -236,18 +285,13 @@ export class EvalWorker {
     if (pending.length === 0) return;
 
     const base = await caseBase(db, s);
-    if (!base) {
-      await this.failResults(
-        pending.map((p) => p.id),
-        { code: "eval.definition_missing", message: "The agent version of this case is missing" },
-      );
-      return;
-    }
-    const resolved = resolveCandidate(
-      base,
-      candidate,
-      await versionDefinition(db, s.agentId, candidate.agentVersion),
-    );
+    const resolved = base
+      ? resolveCandidate(
+          base,
+          candidate,
+          await versionDefinition(db, s.agentId, candidate.agentVersion),
+        )
+      : null;
     const calls = new Map(replayableCalls(s).map((c) => [c.seq, c]));
 
     for (const r of pending) {
@@ -258,24 +302,31 @@ export class EvalWorker {
       }
       const claimed = await db
         .updateTable("eval_results")
-        .set({ status: "running", updated_at: sql`now()` })
+        .set({ status: "running", claimed_by: claim, updated_at: sql`now()` })
         .where("id", "=", r.id)
         .where("status", "in", [...UNFINISHED])
         .returning("id")
         .executeTakeFirst();
       if (!claimed) continue;
       const call = calls.get(Number(r.model_call_seq));
-      if (!call) {
-        await this.failResults([r.id], {
-          code: "eval.call_not_found",
-          message: "The model call is not replayable in this snapshot",
-        });
+      if (!resolved || !call) {
+        const error = !resolved
+          ? {
+              code: "eval.definition_missing",
+              message: "The agent version of this case is missing",
+            }
+          : {
+              code: "eval.call_not_found",
+              message: "The model call is not replayable in this snapshot",
+            };
+        if (await this.resultError(data, r.id, claim, error)) return;
         continue;
       }
 
       let out: Awaited<ReturnType<typeof replayStep>> | undefined;
+      let failure: Failure | undefined;
       for (let attempt = 0; ; attempt++) {
-        // 第一次请求前刚查过；重试前再查（取消 / 越限后不再发）
+        // 第一次请求前刚查过；重试前再查（取消 / 越限 / 熔断后不再发）
         if (attempt > 0 && !(await runActive(db, runId))) {
           await this.skipCase(data);
           return;
@@ -284,10 +335,13 @@ export class EvalWorker {
           out = await replayStep(this.d.replay, s, call, resolved, signal);
           break;
         } catch (err) {
+          // 已发出的请求没有正常收完：按估算计入预算（与成功的请求走同一个原子累加，越限同样置 capped）。
+          // 不以认领为条件：钱已经花出去了
+          if (err instanceof ReplayAttemptError) await consumeTokens(db, runId, err.tokens);
           if (signal.aborted) throw new Aborted();
-          const f = classify(err);
+          const f = classify(err instanceof ReplayAttemptError ? err.cause : err);
           if (!f.retryable || attempt >= EVAL_MAX_RETRIES) {
-            await this.failResults([r.id], { code: f.code, message: f.message });
+            failure = f;
             break;
           }
           const wait = Math.min(
@@ -297,10 +351,17 @@ export class EvalWorker {
           await sleep(wait, signal);
         }
       }
-      if (!out) continue;
+      if (!out) {
+        const f = failure as Failure;
+        if (await this.resultError(data, r.id, claim, { code: f.code, message: f.message })) {
+          return;
+        }
+        continue;
+      }
       const result = out;
-      const capped = await db.transaction().execute(async (trx) => {
-        await trx
+      const outcome = await db.transaction().execute(async (trx) => {
+        // 只在仍由本次执行认领时写入并计费：stalled 后被接手的旧执行既不覆盖结果、也不重复计费
+        const w = await trx
           .updateTable("eval_results")
           .set({
             status: "done",
@@ -311,24 +372,21 @@ export class EvalWorker {
             updated_at: sql`now()`,
           })
           .where("id", "=", r.id)
-          .execute();
-        return (await consumeTokens(trx, runId, usageTokens(result.candidate.usage))).capped;
+          .where("status", "=", "running")
+          .where("claimed_by", "=", claim)
+          .executeTakeFirst();
+        if (Number(w.numUpdatedRows) === 0) return "lost" as const;
+        await recordOutcome(trx, runId, true, this.d.config().evals.maxConsecutiveErrors);
+        const { capped } = await consumeTokens(trx, runId, usageTokens(result.candidate.usage));
+        return capped ? ("capped" as const) : ("ok" as const);
       });
-      if (capped) {
+      // 失去认领：这个用例已由别的执行接手，本次停下
+      if (outcome === "lost") return;
+      if (outcome === "capped") {
         await this.skipCase(data);
         return;
       }
     }
-  }
-
-  private async failResults(ids: string[], error: { code: string; message: string }) {
-    if (ids.length === 0) return;
-    await this.d.db
-      .updateTable("eval_results")
-      .set({ status: "error", error: JSON.stringify(error), updated_at: sql`now()` })
-      .where("id", "in", ids)
-      .where("status", "in", [...UNFINISHED])
-      .execute();
   }
 
   /** 该用例剩下的结果标 skipped。 */
@@ -342,7 +400,7 @@ export class EvalWorker {
       .execute();
   }
 
-  /** BullMQ 判定任务失败（stalled 次数超限或处理函数抛错）：剩下的结果记 error，再重算进度。 */
+  /** BullMQ 判定任务失败（stalled 次数超限或重试用尽）：剩下的结果记 error，再重算进度。 */
   private async failCase(data: EvalJobData, err: Error): Promise<void> {
     const stalled = /stalled/i.test(err.message);
     await this.d.db
@@ -360,37 +418,6 @@ export class EvalWorker {
       .where("case_id", "=", data.caseId)
       .where("status", "in", [...UNFINISHED])
       .execute();
-    await this.finishCase(data.runId);
-  }
-
-  /**
-   * 重算 `cases_done` = 结果全部结束的用例数（幂等：任务重做不会重复计数），达到 `cases_total` 且运行仍在执行 →
-   * `completed`。先锁运行行再数（READ COMMITTED 下新语句看得到其他任务已提交的结果），并发完成的任务不会互相覆盖。
-   */
-  private async finishCase(runId: string): Promise<void> {
-    await this.d.db.transaction().execute(async (trx) => {
-      const run = await trx
-        .selectFrom("eval_runs")
-        .select(["cases_total", "status"])
-        .where("id", "=", runId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!run) return;
-      const r = await sql<{ n: string }>`
-        SELECT count(*) AS n FROM (
-          SELECT case_id FROM capybara.eval_results WHERE run_id = ${runId}
-          GROUP BY case_id HAVING bool_and(status IN ('done', 'error', 'skipped'))
-        ) finished`.execute(trx);
-      const done = Number(r.rows[0]?.n ?? 0);
-      const complete = done >= run.cases_total && ["queued", "running"].includes(run.status);
-      await trx
-        .updateTable("eval_runs")
-        .set({
-          cases_done: done,
-          ...(complete && { status: "completed" as const, finished_at: sql`now()` }),
-        })
-        .where("id", "=", runId)
-        .execute();
-    });
+    await recountCases(this.d.db, data.runId);
   }
 }

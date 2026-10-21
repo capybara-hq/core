@@ -19,6 +19,7 @@ describe("evals 配置", () => {
       maxCasesPerSet: 500,
       maxCaseBytes: 4_194_304,
       judgeMaxOutputTokens: 1024,
+      maxConsecutiveErrors: 10,
     });
   });
   it("defaultTokenCap 不能大于 maxTokenCap", () => {

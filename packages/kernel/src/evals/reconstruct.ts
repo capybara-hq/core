@@ -78,6 +78,8 @@ export interface ReconstructResult {
   meta: ModelCallMeta;
   /** 按固定顺序、去重。基线（不传 definition / params / 不同的 agentVersion）为空 = 零漂移。 */
   drift: DriftReason[];
+  /** 请求里媒体的估算 token（`estimateTokens` 用；回放失败时按估算计费）。 */
+  mediaTokens: number;
 }
 
 type ModelCallEvent = Extract<ConversationEvent, { type: "model_call" }>;
@@ -180,7 +182,7 @@ export function reconstructRequest(
   }
   const budget = opts.mediaBudgetBytes ?? rec.mediaBudgetBytes;
 
-  const { request, meta } = assembleModelRequest({
+  const { request, meta, mediaTokens } = assembleModelRequest({
     events: inputEvents(all, call),
     agent,
     agentVersion: version,
@@ -231,7 +233,7 @@ export function reconstructRequest(
     if (rec.media.some((m) => !now.has(m.attachmentId))) drift.add("media_changed");
   }
 
-  return { request, meta, drift: DRIFT_ORDER.filter((r) => drift.has(r)) };
+  return { request, meta, drift: DRIFT_ORDER.filter((r) => drift.has(r)), mediaTokens };
 }
 
 /** 还原该请求要查的附件 id（该模型用得到的引用，去重、按出现顺序；见 `mediaRefs`）。 */

@@ -635,6 +635,8 @@ export interface EvalRunsTable {
   status: ColumnType<EvalRunStatus, EvalRunStatus | undefined, EvalRunStatus>;
   cases_total: number;
   cases_done: ColumnType<number, number | undefined, number>;
+  consecutive_errors: ColumnType<number, number | undefined, number>;
+  error: ColumnType<unknown | null, string | null | undefined, string | null>;
   estimate: Json<unknown>;
   created_by: string;
   created_at: Ts;
@@ -664,6 +666,7 @@ export interface EvalResultsTable {
   drift: ColumnType<string[], string[] | undefined, string[]>;
   error: ColumnType<unknown | null, string | null | undefined, string | null>;
   eval_conversation_id: string | null;
+  claimed_by: ColumnType<string | null, string | null | undefined, string | null>;
   label: "pass" | "fail" | null;
   label_note: string | null;
   labeled_by: string | null;

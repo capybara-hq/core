@@ -41,6 +41,86 @@ export async function consumeTokens(
   return { used: Number(r.tokens_used), capped: r.status === "capped" };
 }
 
+/** 连续出错熔断时运行记的原因（英文；界面按 code 走 i18n）。 */
+export const TOO_MANY_ERRORS = {
+  code: "eval.too_many_errors",
+  message: "The eval run stopped after too many consecutive failed results",
+} as const;
+
+/**
+ * 记一条结果的结局（熔断，C7 之外的保护）：出错 → `consecutive_errors + 1`，达到 `maxConsecutive` 且运行仍在执行时
+ * 同一语句置 `failed`、记原因与 `finished_at`；成功 → 清零。返回运行是否因此被熔断。
+ * 多个任务并发时「连续」按写入顺序计（近似），足以挡住「每个请求都失败」的运行。
+ */
+export async function recordOutcome(
+  db: KernelDb,
+  runId: string,
+  ok: boolean,
+  maxConsecutive: number,
+): Promise<{ tripped: boolean }> {
+  if (ok) {
+    await db
+      .updateTable("eval_runs")
+      .set({ consecutive_errors: 0 })
+      .where("id", "=", runId)
+      .where("consecutive_errors", ">", 0)
+      .execute();
+    return { tripped: false };
+  }
+  const trips = sql<boolean>`consecutive_errors + 1 >= ${maxConsecutive} AND status IN ('queued', 'running')`;
+  const r = await db
+    .updateTable("eval_runs")
+    .set({
+      consecutive_errors: sql`consecutive_errors + 1`,
+      status: sql`CASE WHEN ${trips} THEN 'failed' ELSE status END`,
+      error: sql`CASE WHEN ${trips} THEN ${JSON.stringify(TOO_MANY_ERRORS)}::jsonb ELSE error END`,
+      finished_at: sql`CASE WHEN ${trips} THEN now() ELSE finished_at END`,
+    })
+    .where("id", "=", runId)
+    .returning(["status", "error"])
+    .executeTakeFirst();
+  return {
+    tripped:
+      r?.status === "failed" &&
+      (r.error as { code?: string } | null)?.code === TOO_MANY_ERRORS.code,
+  };
+}
+
+/**
+ * 重算 `cases_done` = 结果全部结束的用例数（幂等：任务重做不会重复计数），达到 `cases_total` 且运行仍在执行 →
+ * `completed`。先锁运行行再数（READ COMMITTED 下新语句看得到其他任务已提交的结果），并发完成的任务不会互相覆盖。
+ * worker 每做完一个用例、取消、入队失败时都调用。在事务里调用时锁随事务释放。
+ */
+export async function recountCases(db: KernelDb, runId: string): Promise<void> {
+  const run = async (trx: KernelDb) => {
+    const row = await trx
+      .selectFrom("eval_runs")
+      .select(["cases_total", "status"])
+      .where("id", "=", runId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) return;
+    const r = await sql<{ n: string }>`
+      SELECT count(*) AS n FROM (
+        SELECT case_id FROM capybara.eval_results WHERE run_id = ${runId}
+        GROUP BY case_id HAVING bool_and(status IN ('done', 'error', 'skipped'))
+      ) finished`.execute(trx);
+    const done = Number(r.rows[0]?.n ?? 0);
+    const complete =
+      done >= row.cases_total && (ACTIVE_EVAL_STATUSES as readonly string[]).includes(row.status);
+    await trx
+      .updateTable("eval_runs")
+      .set({
+        cases_done: done,
+        ...(complete && { status: "completed" as const, finished_at: sql`now()` }),
+      })
+      .where("id", "=", runId)
+      .execute();
+  };
+  if (db.isTransaction) await run(db);
+  else await db.transaction().execute((trx) => run(trx));
+}
+
 /** 运行仍在执行（queued / running）：取消、达到上限、已结束或已删除都为 false。 */
 export async function runActive(db: KernelDb, runId: string): Promise<boolean> {
   const r = await db

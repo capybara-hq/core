@@ -13,7 +13,13 @@ import { costOf, type PricesService, priceKey } from "../models/prices.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { ProviderListError, type ProviderRegistry } from "../runtime/providers.js";
 import { bullConnection } from "../runtime/run-queue.js";
-import { ACTIVE_EVAL_STATUSES, type CasePlan, casePlan, usageTokens } from "./budget.js";
+import {
+  ACTIVE_EVAL_STATUSES,
+  type CasePlan,
+  casePlan,
+  recountCases,
+  usageTokens,
+} from "./budget.js";
 import type { CaseSnapshot } from "./snapshot.js";
 import { type EvalCandidate, resolveCandidate } from "./step-replay.js";
 
@@ -73,6 +79,8 @@ export interface EvalRunView {
   estimate: EvalEstimate;
   /** 运行结束后才有（queued / running 时为 null）。 */
   summary: EvalSummary | null;
+  /** 运行 failed 的原因（如连续出错熔断 `eval.too_many_errors`；英文，界面按 code 走 i18n）。 */
+  error: { code: string; message: string } | null;
   createdAt: string;
   finishedAt: string | null;
 }
@@ -139,6 +147,10 @@ export class EvalQueue {
         data,
         opts: {
           jobId: evalJobId(data.runId, data.caseId),
+          // 处理函数外的暂时故障（PG / Redis）：指数退避重试，不让整个用例一次失败。
+          // 结果按认领号写入，重做不会重复写或重复计费
+          attempts: 3,
+          backoff: { type: "exponential" as const, delay: 1000 },
           removeOnComplete: true,
           removeOnFail: 1000,
         },
@@ -209,6 +221,7 @@ type RunRow = {
   cases_total: number;
   cases_done: number;
   estimate: unknown;
+  error: unknown;
   created_at: Date;
   finished_at: Date | null;
 };
@@ -225,6 +238,7 @@ const RUN_COLUMNS = [
   "cases_total",
   "cases_done",
   "estimate",
+  "error",
   "created_at",
   "finished_at",
 ] as const;
@@ -235,6 +249,14 @@ const iso = (d: Date | null) => (d === null ? null : new Date(d).toISOString());
 interface PlannedCase extends CasePlan {
   caseId: string;
   cost: number | null;
+  /** 候选落到该用例上不合法（参数不符该用例所用模型的声明等）：不入队，结果直接记为这个错误。 */
+  problem: CaseProblem | null;
+}
+
+interface CaseProblem {
+  code: string;
+  message: string;
+  details?: { path: string; message: string }[];
 }
 
 export interface EvalRunsDeps {
@@ -268,7 +290,10 @@ export class EvalRunsService {
     return set;
   }
 
-  /** 解析模型；不存在 / 不可用 → `eval.candidate_invalid`（供应商列表暂时失败照常抛出）。 */
+  /**
+   * 解析模型；不存在 / 不可用 → `eval.candidate_invalid`（供应商列表暂时失败照常抛出）。
+   * 按部署范围解析，与运行时一致；组织级模型准入若在第二段落地，须同样覆盖评测候选。
+   */
   private async resolveModel(ref: ModelRef) {
     try {
       return await this.d.registry.resolve(ref);
@@ -334,6 +359,10 @@ export class EvalRunsService {
       .orderBy("id")
       .execute();
     const out: PlannedCase[] = [];
+    const infos = new Map<
+      string,
+      Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"] | null
+    >();
     for (const { id } of ids) {
       const row = await this.d.db
         .selectFrom("eval_cases")
@@ -347,12 +376,44 @@ export class EvalRunsService {
       const base = await caseBase(this.d.db, s);
       const model = base ? resolveCandidate(base, c, versionDef).model : (c.model ?? null);
       const price = model ? table.get(priceKey(model.provider, model.model)) : undefined;
-      out.push({ ...p, caseId: id, cost: costOf(p.usage, price) });
+      // 候选参数按每个用例实际所用的模型严格校验（没给候选模型 / 版本时，所用模型是该用例自己的）
+      let problem: CaseProblem | null = null;
+      if (c.modelParams !== undefined && model) {
+        const key = priceKey(model.provider, model.model);
+        if (!infos.has(key)) {
+          try {
+            infos.set(key, (await this.d.registry.resolve(model)).info);
+          } catch (e) {
+            if (e instanceof ProviderListError) throw e;
+            if (!(e instanceof ApiError && e.code === "agent.model_unavailable")) throw e;
+            infos.set(key, null);
+          }
+        }
+        const info = infos.get(key);
+        if (!info) {
+          problem = {
+            code: "run.model_unavailable",
+            message: `Model ${model.provider}/${model.model} is not available`,
+          };
+        } else {
+          const issues = paramIssues("candidate.modelParams", info.parameters, c.modelParams);
+          if (issues.length > 0) {
+            problem = {
+              code: "eval.candidate_invalid",
+              message: `Invalid candidate model parameters for ${model.provider}/${model.model}`,
+              details: issues,
+            };
+          }
+        }
+      }
+      out.push({ ...p, caseId: id, cost: problem ? 0 : costOf(p.usage, price), problem });
     }
     return out;
   }
 
-  private async summarize(plans: PlannedCase[], judge: boolean): Promise<EvalEstimate> {
+  /** 估算只算会发请求的用例（候选不合法的用例不发请求）。 */
+  private async summarize(all: PlannedCase[], judge: boolean): Promise<EvalEstimate> {
+    const plans = all.filter((p) => p.problem === null);
     const { priceCurrency } = await this.d.settings.get();
     let cost: number | null = 0;
     for (const p of plans) cost = cost === null || p.cost === null ? null : cost + p.cost;
@@ -407,6 +468,11 @@ export class EvalRunsService {
     if (planned.length === 0) {
       throw new ApiError("eval.nothing_to_replay", "The eval set has nothing to replay");
     }
+    // 候选对每个用例都不合法：不建运行，直接报第一个问题
+    const firstProblem = planned.every((p) => p.problem !== null) ? planned[0]?.problem : null;
+    if (firstProblem) {
+      throw candidateInvalid(firstProblem.message, firstProblem.details ?? []);
+    }
 
     const { runId, plans } = await this.d.db.transaction().execute(async (trx) => {
       await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
@@ -454,6 +520,7 @@ export class EvalRunsService {
         })
         .returning("id")
         .executeTakeFirstOrThrow();
+      // 候选不合法的用例：结果直接记错误（计入进度，不入队）
       const rows = plans.flatMap((p) =>
         p.results.map((r) => ({
           run_id: run.id,
@@ -461,6 +528,10 @@ export class EvalRunsService {
           org_id: orgId,
           step: r.step,
           model_call_seq: r.modelCallSeq,
+          ...(p.problem !== null && {
+            status: "error" as const,
+            error: JSON.stringify(p.problem),
+          }),
         })),
       );
       for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
@@ -477,7 +548,8 @@ export class EvalRunsService {
         target: run.id,
         detail: { setId, mode: input.mode, judge: input.judge, tokenCap, cases: plans.length },
       });
-      return { runId: run.id, plans };
+      await recountCases(trx, run.id);
+      return { runId: run.id, plans: plans.filter((p) => p.problem === null) };
     });
 
     try {
@@ -495,6 +567,7 @@ export class EvalRunsService {
           .where("run_id", "=", runId)
           .where("status", "=", "pending")
           .execute();
+        await recountCases(trx, runId);
       });
       throw e;
     }
@@ -552,6 +625,7 @@ export class EvalRunsService {
       casesDone: r.cases_done,
       estimate: r.estimate as EvalEstimate,
       summary,
+      error: (r.error ?? null) as EvalRunView["error"],
       createdAt: new Date(r.created_at).toISOString(),
       finishedAt: iso(r.finished_at),
     };
@@ -659,6 +733,8 @@ export class EvalRunsService {
         .where("run_id", "=", runId)
         .where("status", "=", "pending")
         .execute();
+      // 尚未开始的用例此刻已全部结束：进度立即反映（在途的用例做完后由 worker 再重算）
+      await recountCases(trx, runId);
       await audit(trx, {
         actorAccountId: actor,
         ...(actorTokenId !== undefined && { actorTokenId }),

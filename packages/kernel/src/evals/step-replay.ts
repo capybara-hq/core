@@ -7,6 +7,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
+import { estimateTokens } from "../runtime/context/tokens.js";
 import {
   consumeModelStream,
   type MediaSourceDeps,
@@ -97,6 +98,20 @@ export function resolveCandidate(
   return { definition, agentVersion, model, params, changed };
 }
 
+/**
+ * 候选请求已经发出、但没有正常收完（出错、超时、中止）：`tokens` 是这次尝试应计入预算的估算用量，
+ * `cause` 是原始错误（调用方按它分类重试）。请求发出之前的失败（解析模型、取附件）原样抛出，不计费。
+ */
+export class ReplayAttemptError extends Error {
+  constructor(
+    override readonly cause: unknown,
+    readonly tokens: number,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "ReplayAttemptError";
+  }
+}
+
 type SnapshotEvent = CaseSnapshot["events"][number];
 
 /** 快照里该步的回复（`assistantSeq`）与其后同一步的第一条 usage。 */
@@ -132,7 +147,10 @@ function baselineOf(
 /**
  * 回放一步：基线取快照里该步的回复与用量；候选请求 = `reconstructRequest`（候选未变时按基线还原，
  * 否则带候选的定义、版本与参数——参数按候选模型的声明宽松处理，与运行时一致），用 `consumeModelStream` 收完。
- * 错误原样抛出（模型错误、`agent.model_unavailable`、取附件暂时失败为 `MediaUnavailableError`），由调用方分类重试。
+ * 请求发出之前的错误原样抛出（`agent.model_unavailable`、取附件暂时失败为 `MediaUnavailableError`）；请求发出之后的
+ * 错误包成 {@link ReplayAttemptError}（带估算用量，调用方计入预算后按 `cause` 分类重试）。
+ * 模型按部署范围解析（与运行时一致；组织级模型准入若在第二段落地，须同样覆盖评测候选）。
+ * 不另设单次请求的墙钟时限：与运行时一样只有流空闲看门狗（`streamIdleTimeoutMs` / `runtime.streamIdleMs`）。
  */
 export async function replayStep(
   d: StepReplayDeps,
@@ -155,7 +173,7 @@ export async function replayStep(
       throw new MediaUnavailableError(err);
     }
   }
-  const { request, drift } = reconstructRequest(s, call.seq, {
+  const { request, drift, mediaTokens } = reconstructRequest(s, call.seq, {
     model: info,
     ...(candidate.changed && {
       definition: candidate.definition,
@@ -166,7 +184,18 @@ export async function replayStep(
   });
   const idleMs = info.streamIdleTimeoutMs ?? d.config().runtime.streamIdleMs;
   const started = Date.now();
-  const out = await consumeModelStream(provider, request, idleMs, signal, () => {});
+  let streamedChars = 0;
+  let out: Awaited<ReturnType<typeof consumeModelStream>>;
+  try {
+    out = await consumeModelStream(provider, request, idleMs, signal, (ev) => {
+      streamedChars += ev.text.length;
+    });
+  } catch (err) {
+    // 请求已发出：供应商流里不带中途用量（model-provider@2 只在 message_complete 给 usage），
+    // 按估算计费——输入 = 与运行时同一个估算器，输出 = 已流出的字符数 / 4
+    const input = estimateTokens(request.messages, request.system, request.tools, mediaTokens);
+    throw new ReplayAttemptError(err, input + Math.ceil(streamedChars / 4));
+  }
   return {
     baseline,
     candidate: {
