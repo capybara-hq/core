@@ -10,7 +10,13 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { EvalEstimate, EvalResultView, EvalRunsService, EvalRunView } from "./runs.service.js";
+import type {
+  EvalEstimate,
+  EvalResultView,
+  EvalRunsService,
+  EvalRunView,
+  EvalTokenCaps,
+} from "./runs.service.js";
 import type { EvalCandidate } from "./step-replay.js";
 
 const Candidate = z
@@ -22,16 +28,17 @@ const Candidate = z
   })
   .strict();
 
+/** `tokenCap` 只校验类型，范围由服务判定（`eval.token_cap_invalid`）。 */
 const EstimateBody = z
   .object({
     mode: z.enum(["step", "run"]),
     candidate: Candidate,
     judge: z.boolean().default(false),
+    tokenCap: z.number().int().optional(),
   })
   .strict();
 
-/** `tokenCap` 只校验类型，范围由服务判定（`eval.token_cap_invalid`）。 */
-const StartBody = EstimateBody.extend({ tokenCap: z.number().int().optional() }).strict();
+const StartBody = EstimateBody;
 
 const ResultsQuery = z
   .object({
@@ -74,14 +81,14 @@ export class EvalRunsController {
     @CurrentOrg() org: OrgContext,
     @Param("setId") setId: string,
     @Body(new ZodPipe(EstimateBody)) body: z.infer<typeof EstimateBody>,
-  ): Promise<{ estimate: EvalEstimate }> {
+  ): Promise<{ estimate: EvalEstimate } & EvalTokenCaps> {
     requireUser(principal);
-    const estimate = await this.runs.estimate(org.orgId, setId, {
+    return this.runs.estimate(org.orgId, setId, {
       mode: body.mode,
       candidate: candidateOf(body.candidate),
       judge: body.judge,
+      ...(body.tokenCap !== undefined && { tokenCap: body.tokenCap }),
     });
-    return { estimate };
   }
 
   @Post("eval-sets/:setId/runs")

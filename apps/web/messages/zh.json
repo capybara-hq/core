@@ -1425,7 +1425,6 @@
         "tokens": "预计 token",
         "cost": "预计成本（估算）",
         "tokenCap": "token 上限",
-        "tokenCapDefault": "部署默认",
         "overCap": "预计 token 超过上限，运行会在上限处停下。"
       },
       "summary": {
@@ -1433,7 +1432,9 @@
         "judge": "评委",
         "on": "开",
         "off": "关"
-      }
+      },
+      "tokenCapRange": "部署默认 {default}，最多 {max}。",
+      "tokenCapTooLarge": "不能超过部署上限 {max}。"
     },
     "run": {
       "title": "评测运行 · {time}",
@@ -1545,7 +1546,8 @@
         "pass": "通过",
         "fail": "不通过",
         "clear": "清除标注",
-        "evalTrajectory": "查看评测对话轨迹"
+        "evalTrajectory": "查看评测对话轨迹",
+        "diffCaption": "差异"
       }
     }
   }

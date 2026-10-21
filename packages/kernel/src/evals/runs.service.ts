@@ -61,6 +61,13 @@ export interface EvalEstimate {
  * 运行的汇总（F-C2：字段按 T6 的完整定义；比率无数据时为 null）。T4 只填计数，
  * `toolCallsMatchRate` / `meanTextSimilarity` / `judgePassRate` / `humanPassRate` 由 T6 填。
  */
+/** 估算响应里的 token 上限（D5）：部署默认、部署上限与本次生效的上限。 */
+export interface EvalTokenCaps {
+  defaultTokenCap: number;
+  maxTokenCap: number;
+  effectiveTokenCap: number;
+}
+
 export interface EvalSummary {
   done: number;
   errors: number;
@@ -459,12 +466,27 @@ export class EvalRunsService {
   async estimate(
     orgId: string,
     setId: string,
-    input: { mode: "step" | "run"; candidate: EvalCandidate; judge: boolean },
-  ): Promise<EvalEstimate> {
+    input: { mode: "step" | "run"; candidate: EvalCandidate; judge: boolean; tokenCap?: number },
+  ): Promise<{ estimate: EvalEstimate } & EvalTokenCaps> {
     const set = await this.liveSet(orgId, setId);
+    const caps = this.tokenCaps(input.tokenCap);
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     const plans = await this.plan(setId, input.mode, input.candidate, versionDef);
-    return this.summarize(plans, input.judge);
+    return { estimate: await this.summarize(plans, input.judge), ...caps };
+  }
+
+  /** token 上限：给了就校验 [1, `evals.maxTokenCap`]，缺省 `evals.defaultTokenCap`（D5）。 */
+  private tokenCaps(tokenCap: number | undefined): EvalTokenCaps {
+    const { defaultTokenCap, maxTokenCap } = this.d.config().evals;
+    const effectiveTokenCap = tokenCap ?? defaultTokenCap;
+    if (
+      !Number.isInteger(effectiveTokenCap) ||
+      effectiveTokenCap < 1 ||
+      effectiveTokenCap > maxTokenCap
+    ) {
+      throw new ApiError("eval.token_cap_invalid", `tokenCap must be between 1 and ${maxTokenCap}`);
+    }
+    return { defaultTokenCap, maxTokenCap, effectiveTokenCap };
   }
 
   /**
@@ -480,11 +502,7 @@ export class EvalRunsService {
     actorTokenId?: string,
   ): Promise<EvalRunView> {
     const set = await this.liveSet(orgId, setId);
-    const { defaultTokenCap, maxTokenCap } = this.d.config().evals;
-    const tokenCap = input.tokenCap ?? defaultTokenCap;
-    if (!Number.isInteger(tokenCap) || tokenCap < 1 || tokenCap > maxTokenCap) {
-      throw new ApiError("eval.token_cap_invalid", `tokenCap must be between 1 and ${maxTokenCap}`);
-    }
+    const tokenCap = this.tokenCaps(input.tokenCap).effectiveTokenCap;
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     if (input.judge) await this.d.purposes.resolve(orgId, "eval");
     const planned = await this.plan(setId, input.mode, input.candidate, versionDef);

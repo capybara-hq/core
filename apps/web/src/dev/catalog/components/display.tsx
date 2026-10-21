@@ -31,6 +31,7 @@ export function DisplaySection() {
         <StatusMark status="waiting" />
         <StatusMark status="queued" />
         <StatusMark status="cancelled" />
+        <StatusMark status="capped" />
       </Row>
       <Row label="Badge · 默认 / 强调 / 计数">
         <Badge>PROD</Badge>

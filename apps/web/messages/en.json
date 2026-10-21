@@ -1425,7 +1425,6 @@
         "tokens": "Tokens",
         "cost": "Cost (estimated)",
         "tokenCap": "Token cap",
-        "tokenCapDefault": "Deployment default",
         "overCap": "The estimate exceeds the cap; the run will stop at the cap."
       },
       "summary": {
@@ -1433,7 +1432,9 @@
         "judge": "Judge",
         "on": "On",
         "off": "Off"
-      }
+      },
+      "tokenCapRange": "Deployment default {default}, maximum {max}.",
+      "tokenCapTooLarge": "Can't exceed the deployment maximum of {max}."
     },
     "run": {
       "title": "Eval run · {time}",
@@ -1545,7 +1546,8 @@
         "pass": "Pass",
         "fail": "Fail",
         "clear": "Clear label",
-        "evalTrajectory": "View eval conversation trajectory"
+        "evalTrajectory": "View eval conversation trajectory",
+        "diffCaption": "diff"
       }
     }
   }

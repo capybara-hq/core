@@ -149,7 +149,8 @@
 .cb-status[data-status="failed"] {
   color: var(--cb-fail);
 }
-.cb-status[data-status="waiting"] {
+.cb-status[data-status="waiting"],
+.cb-status[data-status="capped"] {
   color: var(--cb-warn);
 }
 

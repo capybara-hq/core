@@ -12,7 +12,7 @@ import EvalRunPage from "../src/app/[locale]/(app)/evals/runs/[runId]/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import type { EvalResult, EvalRun } from "../src/lib/evals";
 import type { TrajectoryRun } from "../src/lib/trajectories";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, type Call, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderPage } from "./support/render";
 
@@ -398,12 +398,27 @@ describe("用例快照轨迹（TracePage）", () => {
 });
 
 describe("运行向导（WizardPage）", () => {
-  const routes = (mapped: boolean, over: Record<string, () => Response> = {}) => ({
+  /** 估算响应：上限按请求回显（缺省为部署默认）。 */
+  const estimated = (c: Call, over: Partial<typeof ESTIMATE> = {}) => {
+    const body = bodyOf(c) as { tokenCap?: number };
+    return {
+      estimate: { ...ESTIMATE, ...over },
+      defaultTokenCap: 1_000_000,
+      maxTokenCap: 20_000_000,
+      effectiveTokenCap: body.tokenCap ?? 1_000_000,
+    };
+  };
+  const estimates = (calls: Call[]) => calls.filter((c) => c.url.endsWith("/runs/estimate"));
+
+  const routes = (
+    mapped: boolean,
+    over: Record<string, (c: Call) => Response | Promise<Response>> = {},
+  ) => ({
     [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
     [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: AGENT }),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
     [`GET ${ORG}/model-purposes`]: () => json(200, purposes(mapped)),
-    [`POST ${SETS}/s1/runs/estimate`]: () => json(200, { estimate: ESTIMATE }),
+    [`POST ${SETS}/s1/runs/estimate`]: (c: Call) => json(200, estimated(c)),
     [`POST ${SETS}/s1/runs`]: () =>
       json(201, { run: evalRun({ status: "queued", summary: null }) }),
     ...over,
@@ -439,7 +454,18 @@ describe("运行向导（WizardPage）", () => {
       expect((judge as HTMLButtonElement).disabled).toBe(false);
       await user.click(judge);
       const cap = screen.getByRole("spinbutton", { name: m.wizard.tokenCap });
+      // 部署默认与上限来自估算响应
+      expect(
+        await screen.findByText(
+          fill(m.wizard.tokenCapRange, { default: "1,000,000", max: "20,000,000" }),
+          { exact: false },
+        ),
+      ).toBeTruthy();
       await user.type(cap, "10000");
+      // 改了上限会重新估算（带上 tokenCap）
+      await waitFor(() =>
+        expect(bodyOf(estimates(calls).at(-1))).toMatchObject({ tokenCap: 10000 }),
+      );
       await user.click(region.getByRole("button", { name: m.wizard.next }));
       // 3. 估算
       const est = await screen.findByRole("region", { name: m.wizard.estimate.title });
@@ -453,11 +479,11 @@ describe("运行向导（WizardPage）", () => {
       expect(value(m.wizard.estimate.tokenCap).getByText("10,000")).toBeTruthy();
       // 预计超过上限：提示会在上限处停下
       expect(within(est).getByText(m.wizard.estimate.overCap)).toBeTruthy();
-      const estimate = calls.find((c) => c.url.endsWith("/runs/estimate"));
-      expect(bodyOf(estimate)).toEqual({
+      expect(bodyOf(estimates(calls).at(-1))).toEqual({
         mode: "step",
         candidate: { model: { provider: "model-fake", model: "fake-2" } },
         judge: true,
+        tokenCap: 10000,
       });
       await user.click(region.getByRole("button", { name: m.wizard.start }));
       await waitFor(() => expect(router.push).toHaveBeenCalledWith("/evals/runs/er1"));
@@ -470,6 +496,93 @@ describe("运行向导（WizardPage）", () => {
       });
     },
   );
+
+  it("不填上限：确认步骤显示生效的部署默认上限；超过部署上限时不能开始", async () => {
+    const calls = stubApi(routes(true));
+    renderPage(<RunWizardPage />);
+    const user = userEvent.setup();
+    await screen.findByRole("combobox", { name: E.wizard.model });
+    await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
+    const cap = await screen.findByRole("spinbutton", { name: E.wizard.tokenCap });
+    await screen.findByText(
+      fill(E.wizard.tokenCapRange, { default: "1,000,000", max: "20,000,000" }),
+      { exact: false },
+    );
+    await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
+    const est = await screen.findByRole("region", { name: E.wizard.estimate.title });
+    const capRow = () =>
+      within(within(est).getByText(E.wizard.estimate.tokenCap).parentElement as HTMLElement);
+    await waitFor(() => expect(capRow().getByText("1,000,000")).toBeTruthy());
+    expect(within(est).queryByText(E.wizard.estimate.overCap)).toBeNull();
+    // 回到上一步填一个超过部署上限的数：本地拦下，不发估算，不能前进
+    await user.click(within(actionRow()).getByRole("button", { name: E.wizard.back }));
+    const sent = estimates(calls).length;
+    await user.type(await screen.findByRole("spinbutton", { name: E.wizard.tokenCap }), "30000000");
+    expect(
+      screen.getByText(fill(E.wizard.tokenCapTooLarge, { max: "20,000,000" }), { exact: false }),
+    ).toBeTruthy();
+    expect(
+      (within(actionRow()).getByRole("button", { name: E.wizard.next }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(estimates(calls).length).toBe(sent);
+    void cap;
+  });
+
+  it("估算按顺序生效：先发的慢响应不会覆盖后发的结果", async () => {
+    let release: (r: Response) => void = () => {};
+    let n = 0;
+    const calls = stubApi(
+      routes(true, {
+        [`POST ${SETS}/s1/runs/estimate`]: (c) => {
+          n++;
+          if (n === 1) {
+            // 第一次（不开评委）挂起，等后一次返回之后再放行
+            return new Promise<Response>((resolve) => {
+              release = resolve;
+            }).then(() => json(200, estimated(c, { judgeRequests: 0, estimatedTokens: 111 })));
+          }
+          return json(200, estimated(c, { judgeRequests: 3, estimatedTokens: 999 }));
+        },
+      }),
+    );
+    renderPage(<RunWizardPage />);
+    const user = userEvent.setup();
+    await screen.findByRole("combobox", { name: E.wizard.model });
+    await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
+    await waitFor(() => expect(estimates(calls)).toHaveLength(1));
+    // 开评委：重新估算（第二次立即返回）
+    await user.click(await screen.findByRole("switch", { name: E.wizard.judge }));
+    await waitFor(() => expect(estimates(calls)).toHaveLength(2));
+    await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
+    const est = await screen.findByRole("region", { name: E.wizard.estimate.title });
+    const row = (label: string) =>
+      within(within(est).getByText(label).parentElement as HTMLElement);
+    await waitFor(() => expect(row(E.wizard.estimate.tokens).getByText("999")).toBeTruthy());
+    // 先发的慢响应这时才回来：不覆盖
+    release(new Response());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(row(E.wizard.estimate.tokens).getByText("999")).toBeTruthy();
+    expect(row(E.wizard.estimate.judgeRequests).getByText("3")).toBeTruthy();
+  });
+
+  it("读不到模型用途：显示错误，评委开关禁用", async () => {
+    stubApi(
+      routes(true, {
+        [`GET ${ORG}/model-purposes`]: () =>
+          json(503, { error: { code: "upstream_unavailable", message: "down" } }),
+      }),
+    );
+    renderPage(<RunWizardPage />);
+    const user = userEvent.setup();
+    await screen.findByRole("combobox", { name: E.wizard.model });
+    await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
+    const judge = await screen.findByRole("switch", { name: E.wizard.judge });
+    expect(await screen.findByText(`✗ ${en.errors.upstream_unavailable}`)).toBeTruthy();
+    expect((judge as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText(E.wizard.judgeUnmapped)).toBeNull();
+  });
 
   it("eval 用途未映射：评委开关禁用，并给出去配置的链接", async () => {
     stubApi(routes(false));
@@ -511,7 +624,7 @@ describe("运行向导（WizardPage）", () => {
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
     expect(await screen.findByText(`✗ ${en.errors.eval.candidate_invalid}`)).toBeTruthy();
     expect(screen.getByText("✗ candidate.agentVersion: Version 9 does not exist")).toBeTruthy();
-    expect(bodyOf(calls.find((c) => c.url.endsWith("/estimate")))).toEqual({
+    expect(bodyOf(estimates(calls).at(-1))).toEqual({
       mode: "run",
       candidate: { instructions: "Be brief." },
       judge: false,
@@ -556,10 +669,14 @@ describe("评测运行（DetailPage）", () => {
       await userEvent.setup().click(within(row).getByText(m.run.mismatch));
       const region = await screen.findByRole("region", { name: m.run.inspector.title });
       const inspector = within(region);
-      // 文本差异：lineDiff + CodeBlock
-      expect(region.querySelector('code[data-language="diff"]')?.textContent).toBe(
+      // 文本差异：lineDiff + CodeBlock（标注走 i18n）；工具差异的代码块不带标注
+      const blocks = region.querySelectorAll("figure");
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0]?.querySelector("figcaption")?.textContent).toBe(m.run.inspector.diffCaption);
+      expect(blocks[0]?.querySelector("code")?.textContent).toBe(
         "- I will delete it.\n+ I will remove it.\n  Done.",
       );
+      expect(blocks[1]?.querySelector("figcaption")).toBeNull();
       // 工具差异
       expect(inspector.getByText(new RegExp(m.run.inspector.toolKinds.args_changed))).toBeTruthy();
       expect(inspector.getByText(/"id":"x2"/)).toBeTruthy();
@@ -652,7 +769,8 @@ describe("评测运行（DetailPage）", () => {
     expect(
       await screen.findByText(fill(E.run.capped, { used: "1,200", cap: "1,000" })),
     ).toBeTruthy();
-    expect(screen.getAllByText(new RegExp(E.runStatus.capped)).length).toBeGreaterThan(0);
+    // 已达上限有自己的符号（不是已取消的 ⊘）
+    expect(screen.getAllByText(`◆ ${E.runStatus.capped}`).length).toBeGreaterThan(0);
   });
 
   it("failed：按错误码显示原因", async () => {
@@ -704,6 +822,8 @@ describe("评测运行（DetailPage）", () => {
     await waitFor(() => expect(runReads).toBe(2));
     const resultReads = calls.filter((c) => c.url.includes("/results")).length;
     expect(resultReads).toBe(2);
+    // 轮询只读运行与结果，不再读评测集
+    expect(calls.filter((c) => c.url === `${SETS}/s1`)).toHaveLength(1);
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(screen.getByRole("button", { name: E.run.cancel }));
     expect(await screen.findByText(E.run.cancelledNotice)).toBeTruthy();
@@ -712,6 +832,79 @@ describe("评测运行（DetailPage）", () => {
     const reads = runReads;
     await act(() => vi.advanceTimersByTimeAsync(15_000));
     expect(runReads).toBe(reads);
+  });
+
+  it("轮询在上一次读完之后才排下一次：慢的读取不被下一拍取消；没有变化时逐步放慢", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let done = 0;
+    let runReads = 0;
+    let inflight = 0;
+    let maxInflight = 0;
+    let hold: (() => void) | null = null;
+    let resultReads = 0;
+    const pending = result({
+      status: "pending",
+      diff: null,
+      judge: null,
+      judgeStatus: "none",
+      baseline: null,
+      candidate: null,
+    });
+    stubApi(
+      routes(
+        () => {
+          runReads++;
+          return evalRun({ status: "running", casesDone: done, summary: null, finishedAt: null });
+        },
+        [],
+        {
+          [`GET ${RUN}/results`]: async () => {
+            resultReads++;
+            inflight++;
+            maxInflight = Math.max(maxInflight, inflight);
+            // 第一次轮询的结果读取很慢（挂起到手动放行）
+            if (resultReads === 2) await new Promise<void>((r) => (hold = r));
+            inflight--;
+            return json(200, { results: [pending], next: null });
+          },
+        },
+      ),
+    );
+    renderPage(<EvalRunPage />);
+    await screen.findByRole("table", { name: E.run.resultsLabel });
+    expect(runReads).toBe(1);
+    done = 1;
+    // 5 秒后第一次轮询：运行已读到，结果读取挂起
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() => expect(resultReads).toBe(2));
+    // 挂起期间不再发新的轮询
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(runReads).toBe(2);
+    expect(resultReads).toBe(2);
+    // 放行：这次读取的数据照常生效（进度变化）
+    (hold as unknown as () => void)();
+    const metrics = document.querySelector(".cb-pageheader-metrics") as HTMLElement;
+    await waitFor(() =>
+      expect(
+        within(
+          within(metrics).getByText(E.run.metrics.progress).parentElement as HTMLElement,
+        ).getByText("1/2"),
+      ).toBeTruthy(),
+    );
+    expect(maxInflight).toBe(1);
+    // 有变化：5 秒后再读
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() => expect(runReads).toBe(3));
+    // 没有变化：间隔加倍到 10 秒
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(runReads).toBe(3);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() => expect(runReads).toBe(4));
+    // 再加倍到 20 秒
+    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    expect(runReads).toBe(4);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() => expect(runReads).toBe(5));
   });
 
   it("整轮模式的结果可以跳到评测对话的轨迹", async () => {

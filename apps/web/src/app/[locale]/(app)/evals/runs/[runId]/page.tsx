@@ -19,7 +19,7 @@ import {
 } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { formatTime } from "../../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../../components/form-error";
 import { OrgGate } from "../../../../../../components/OrgGate";
@@ -48,13 +48,15 @@ import { useLoad } from "../../../../../../lib/use-load";
 
 /** 执行中的运行每隔多久重读一次（浏览器内轮询）。 */
 const POLL_MS = 5000;
+/** 没有变化时轮询逐次加倍放慢，最慢这么久一次。 */
+const MAX_POLL_MS = 30_000;
 
 const TABS = ["results", "summary"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
  * `/[locale]/evals/runs/[runId]`：评测运行（DetailPage）。页头是状态、进度、token 用量 / 上限与汇总比率；
- * 排队或执行中每 5 秒重读运行与结果，可以取消。「结果」标签页列出每条结果，选中后 Inspector 显示文本差异
+ * 排队或执行中轮询运行与结果（上一次读完才排下一次；5 秒起，没有变化时加倍放慢到 30 秒），可以取消。「结果」标签页列出每条结果，选中后 Inspector 显示文本差异
  * （lineDiff + CodeBlock）、工具调用差异、评委理由与人工标注；整轮回放的结果可以跳到评测对话的轨迹。
  * 「汇总」标签页是汇总数字与候选设置。
  */
@@ -72,7 +74,7 @@ type Loaded = { run: EvalRun; results: EvalResult[]; titles: Map<string, string>
 function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   const t = useTranslations("evals");
   const errorMessage = useErrorMessage();
-  const { state, reload, set } = useLoad(async (): Promise<Loaded> => {
+  const { state, set } = useLoad(async (): Promise<Loaded> => {
     const { run } = await getEvalRun(orgId, runId);
     const [results, setDetail] = await Promise.all([
       listAllEvalResults(orgId, runId),
@@ -88,16 +90,62 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
       titles: new Map((setDetail?.cases ?? []).map((c) => [c.id, c.title])),
     };
   }, [orgId, runId]);
-  const active = state.kind === "ready" && runActive(state.data.run.status);
-  // 执行中：每 5 秒重读（reload 保留上一次的数据，不闪回加载中）
+  const data = state.kind === "ready" ? state.data : null;
+  /** 最新的数据（轮询与刷新在它之上替换运行与结果，用例标题沿用）。 */
+  const latest = useRef(data);
+  latest.current = data;
+  const active = data !== null && runActive(data.run.status);
+
+  /** 重读运行与结果（不重读评测集）；返回运行进度是否有变化。 */
+  const refresh = useCallback(async (): Promise<boolean> => {
+    const [{ run }, results] = await Promise.all([
+      getEvalRun(orgId, runId),
+      listAllEvalResults(orgId, runId),
+    ]);
+    const prev = latest.current;
+    if (prev === null) return true;
+    set({ ...prev, run, results });
+    return (
+      prev.run.status !== run.status ||
+      prev.run.casesDone !== run.casesDone ||
+      prev.run.tokensUsed !== run.tokensUsed
+    );
+  }, [orgId, runId, set]);
+
+  // 执行中轮询：上一次读完才排下一次（慢的读取不会被下一拍打断或并发），有变化 5 秒、没有变化逐次加倍到
+  // 30 秒；运行结束（active 变 false）或卸载时停止
   useEffect(() => {
     if (!active) return;
-    const timer = setInterval(reload, POLL_MS);
-    return () => clearInterval(timer);
-  }, [active, reload]);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = POLL_MS;
+    const tick = async () => {
+      let changed = false;
+      try {
+        changed = await refresh();
+      } catch {
+        // 读取失败：保留上一次的数据，放慢后再试
+      }
+      if (stopped) return;
+      delay = changed ? POLL_MS : Math.min(delay * 2, MAX_POLL_MS);
+      timer = setTimeout(() => void tick(), delay);
+    };
+    timer = setTimeout(() => void tick(), delay);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [active, refresh]);
 
-  if (state.kind === "ready") {
-    return <EvalRunView orgId={orgId} data={state.data} onChange={set} onReload={reload} />;
+  if (data !== null) {
+    return (
+      <EvalRunView
+        orgId={orgId}
+        data={data}
+        onChange={set}
+        onRefresh={() => void refresh().catch(() => {})}
+      />
+    );
   }
   return (
     <DetailPage
@@ -110,9 +158,9 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
     >
       {state.kind === "loading" ? (
         <Skeleton rows={6} />
-      ) : (
+      ) : state.kind === "error" ? (
         <FormError message={errorMessage(new ApiClientError(0, state.code, ""))} />
-      )}
+      ) : null}
     </DetailPage>
   );
 }
@@ -121,12 +169,12 @@ function EvalRunView({
   orgId,
   data,
   onChange,
-  onReload,
+  onRefresh,
 }: {
   orgId: string;
   data: Loaded;
   onChange(data: Loaded): void;
-  onReload(): void;
+  onRefresh(): void;
 }) {
   const t = useTranslations("evals");
   const te = useTranslations("errors");
@@ -150,7 +198,7 @@ function EvalRunView({
       const r = await cancelEvalRun(orgId, run.id);
       onChange({ ...data, run: r.run });
       toast.success(t("run.cancelled"));
-      onReload();
+      onRefresh();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -162,9 +210,9 @@ function EvalRunView({
   const labeled = useCallback(
     (r: EvalResult) => {
       onChange({ ...data, results: data.results.map((x) => (x.id === r.id ? r : x)) });
-      onReload();
+      onRefresh();
     },
-    [data, onChange, onReload],
+    [data, onChange, onRefresh],
   );
 
   const metrics: MetricProps[] = [
@@ -535,7 +583,7 @@ function ResultInspector({
             {textDiff === "" ? (
               <Text tone="muted">{t("inspector.noTextDiff")}</Text>
             ) : (
-              <CodeBlock language="diff" text={textDiff} />
+              <CodeBlock language={t("inspector.diffCaption")} text={textDiff} />
             )}
           </Stack>
           <Stack gap={4}>
@@ -546,7 +594,6 @@ function ResultInspector({
               <Text tone="muted">{t("inspector.noToolCalls")}</Text>
             ) : (
               <CodeBlock
-                language="tools"
                 text={tools.map((e) => toolLine(e, t(`inspector.toolKinds.${e.kind}`))).join("\n")}
               />
             )}

@@ -18,7 +18,7 @@ import {
 } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { FormError } from "../../../../../../components/form-error";
 import { ModelParams } from "../../../../../../components/ModelParams";
 import { OrgGate } from "../../../../../../components/OrgGate";
@@ -110,8 +110,11 @@ function RunWizardInOrg({ orgId, setId }: { orgId: string; setId: string }) {
 type EstimateState =
   | { kind: "idle" }
   | { kind: "loading" }
-  | { kind: "ready"; estimate: EvalEstimate }
+  | { kind: "ready"; estimate: EvalEstimate; cap: number }
   | { kind: "error"; message: string; lines: string[] };
+
+/** 改动后等多久再估算（估算要读全部用例快照，输入上限时不逐键请求）。 */
+const ESTIMATE_DEBOUNCE_MS = 300;
 
 function RunWizard({
   orgId,
@@ -130,7 +133,7 @@ function RunWizard({
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const setHref = `/evals/${encodeURIComponent(set.id)}`;
-  // 评委用途是否已映射：读不到（如没有权限）时按未映射处理
+  // 评委用途是否已映射：读不到时显示错误，评委开关同样禁用
   const purposes = useLoad(
     () =>
       listModelPurposes(orgId).then(
@@ -150,6 +153,10 @@ function RunWizard({
   const [judgeOn, setJudgeOn] = useState(false);
   const [tokenCap, setTokenCap] = useState("");
   const [estimate, setEstimate] = useState<EstimateState>({ kind: "idle" });
+  /** 部署默认与部署上限（来自最近一次估算响应）。 */
+  const [caps, setCaps] = useState<{ defaultTokenCap: number; maxTokenCap: number } | null>(null);
+  /** 估算请求的序号：只认最后一次发出的响应，先发的慢响应不覆盖后发的。 */
+  const seq = useRef(0);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<{ message: string; lines: string[] } | null>(null);
 
@@ -157,7 +164,15 @@ function RunWizard({
   const decl = ref === null ? [] : (findModel(providers, ref)?.parameters ?? []);
   const judge = judgeOn && judgeAvailable;
   const cap = tokenCap.trim() === "" ? null : Number(tokenCap);
-  const capInvalid = cap !== null && !(Number.isInteger(cap) && cap >= 1);
+  const capError =
+    cap === null
+      ? undefined
+      : !(Number.isInteger(cap) && cap >= 1)
+        ? t("wizard.tokenCapInvalid")
+        : caps !== null && cap > caps.maxTokenCap
+          ? t("wizard.tokenCapTooLarge", { max: grouped.format(caps.maxTokenCap) })
+          : undefined;
+  const capInvalid = capError !== undefined;
 
   const candidate = (): EvalCandidate => ({
     ...(version !== "" && { agentVersion: Number(version) }),
@@ -166,16 +181,34 @@ function RunWizard({
     ...(override && { instructions }),
   });
   const input = () => ({ mode, candidate: candidate(), judge });
+  const estimateBody = { ...input(), ...(cap !== null && { tokenCap: cap }) };
+  const estimateKey = JSON.stringify(estimateBody);
+  const estimating = step >= 1 && !capInvalid;
 
-  const runEstimate = async () => {
-    setEstimate({ kind: "loading" });
-    try {
-      const r = await estimateEvalRun(orgId, set.id, input());
-      setEstimate({ kind: "ready", estimate: r.estimate });
-    } catch (e) {
-      setEstimate({ kind: "error", message: errorMessage(e), lines: issueLines(e) });
+  // 从第二步起，设置（含上限）一变就重新估算（防抖）；上限不合法时不发，并作废在途的估算
+  useEffect(() => {
+    const id = ++seq.current;
+    if (!estimating) {
+      setEstimate({ kind: "idle" });
+      return;
     }
-  };
+    setEstimate({ kind: "loading" });
+    const body = JSON.parse(estimateKey) as Parameters<typeof estimateEvalRun>[2];
+    const timer = setTimeout(() => {
+      estimateEvalRun(orgId, set.id, body).then(
+        (r) => {
+          if (id !== seq.current) return;
+          setCaps({ defaultTokenCap: r.defaultTokenCap, maxTokenCap: r.maxTokenCap });
+          setEstimate({ kind: "ready", estimate: r.estimate, cap: r.effectiveTokenCap });
+        },
+        (e: unknown) => {
+          if (id !== seq.current) return;
+          setEstimate({ kind: "error", message: errorMessage(e), lines: issueLines(e) });
+        },
+      );
+    }, ESTIMATE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [estimating, estimateKey, orgId, set.id, errorMessage]);
 
   const start = async () => {
     setStarting(true);
@@ -193,7 +226,6 @@ function RunWizard({
   };
 
   const next = () => {
-    if (step === 1) void runEstimate();
     setStartError(null);
     setStep((s) => s + 1);
   };
@@ -210,7 +242,7 @@ function RunWizard({
             label: t("wizard.start"),
             onSelect: () => void start(),
             loading: starting,
-            disabled: estimate.kind !== "ready" || starting,
+            disabled: estimate.kind !== "ready" || capInvalid || starting,
           },
   };
 
@@ -324,7 +356,9 @@ function RunWizard({
               />
               <Text tone={judgeAvailable ? "ink" : "muted"}>{t("wizard.judge")}</Text>
             </Stack>
-            {purposes.state.kind !== "loading" && !judgeAvailable ? (
+            {purposes.state.kind === "error" ? (
+              <FormError message={errorMessage(new ApiClientError(0, purposes.state.code, ""))} />
+            ) : purposes.state.kind === "ready" && !judgeAvailable ? (
               <Stack gap={4}>
                 <Text tone="warn">{t("wizard.judgeUnmapped")}</Text>
                 <Link href={PURPOSES_HREF}>{t("wizard.judgeConfigure")}</Link>
@@ -335,8 +369,15 @@ function RunWizard({
         <FormSection id="cap" title={t("wizard.tokenCap")}>
           <Field
             label={t("wizard.tokenCap")}
-            help={t("wizard.tokenCapHint")}
-            {...(capInvalid && { error: t("wizard.tokenCapInvalid") })}
+            help={
+              caps === null
+                ? t("wizard.tokenCapHint")
+                : `${t("wizard.tokenCapRange", {
+                    default: grouped.format(caps.defaultTokenCap),
+                    max: grouped.format(caps.maxTokenCap),
+                  })} ${t("wizard.tokenCapHint")}`
+            }
+            {...(capError !== undefined && { error: capError })}
           >
             <Input
               type="number"
@@ -371,7 +412,7 @@ function RunWizard({
         <section aria-label={t("wizard.estimate.title")}>
           <Card title={t("wizard.estimate.title")}>
             {estimate.kind === "ready" ? (
-              <EstimateView estimate={estimate.estimate} cap={cap} />
+              <EstimateView estimate={estimate.estimate} cap={estimate.cap} />
             ) : estimate.kind === "error" ? (
               <FormError message={estimate.message} extra={estimate.lines} />
             ) : (
@@ -398,8 +439,8 @@ function RunWizard({
   );
 }
 
-/** 估算数字（D5）与 token 上限；预计超过上限时提示会在上限处停下。 */
-function EstimateView({ estimate: e, cap }: { estimate: EvalEstimate; cap: number | null }) {
+/** 估算数字（D5）与本次生效的 token 上限；预计超过上限时提示会在上限处停下。 */
+function EstimateView({ estimate: e, cap }: { estimate: EvalEstimate; cap: number }) {
   const t = useTranslations("evals.wizard.estimate");
   return (
     <Stack gap={8}>
@@ -411,10 +452,10 @@ function EstimateView({ estimate: e, cap }: { estimate: EvalEstimate; cap: numbe
           { k: t("judgeRequests"), v: grouped.format(e.judgeRequests) },
           { k: t("tokens"), v: grouped.format(e.estimatedTokens) },
           { k: t("cost"), v: formatCost(e.estimatedCost, e.currency) },
-          { k: t("tokenCap"), v: cap === null ? t("tokenCapDefault") : grouped.format(cap) },
+          { k: t("tokenCap"), v: grouped.format(cap) },
         ]}
       />
-      {cap !== null && e.estimatedTokens > cap ? <Text tone="warn">{t("overCap")}</Text> : null}
+      {e.estimatedTokens > cap ? <Text tone="warn">{t("overCap")}</Text> : null}
     </Stack>
   );
 }

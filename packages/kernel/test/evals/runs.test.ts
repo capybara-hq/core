@@ -318,6 +318,24 @@ describe("估算", () => {
     // 候选模型没有价格：成本为 null；不要评委：0
     const noPrice = await estimate({ mode: "step", candidate: {}, judge: false });
     expect(noPrice).toMatchObject({ modelRequests: 4, judgeRequests: 0, estimatedCost: null });
+
+    // token 上限（D5）：响应给出部署默认、部署上限与本次生效的上限
+    const caps = async (body: Record<string, unknown>) =>
+      admin({ method: "POST", url: `${setsUrl()}/${setId}/runs/estimate`, payload: body });
+    const dflt = await caps({ mode: "step", candidate: {} });
+    expect(dflt.statusCode, dflt.body).toBe(200);
+    expect(dflt.json()).toMatchObject({
+      defaultTokenCap: 50_000,
+      maxTokenCap: MAX_TOKEN_CAP,
+      effectiveTokenCap: 50_000,
+    });
+    const given = await caps({ mode: "step", candidate: {}, tokenCap: 1234 });
+    expect(given.json()).toMatchObject({ effectiveTokenCap: 1234, maxTokenCap: MAX_TOKEN_CAP });
+    for (const tokenCap of [0, MAX_TOKEN_CAP + 1]) {
+      const bad = await caps({ mode: "step", candidate: {}, tokenCap });
+      expect(bad.statusCode).toBe(400);
+      expect(bad.json().error.code).toBe("eval.token_cap_invalid");
+    }
   });
 });
 

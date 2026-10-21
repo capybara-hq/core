@@ -165,9 +165,8 @@ export const runActive = (s: EvalRunStatus) => s === "queued" || s === "running"
 
 type MarkStatus = Parameters<typeof StatusMark>[0]["status"];
 
-/** 运行状态在 `StatusMark` 上的编码：达到上限按已取消的符号显示（文字另给）。 */
-export const evalRunMark = (s: EvalRunStatus): MarkStatus =>
-  s === "completed" ? "success" : s === "capped" ? "cancelled" : s;
+/** 运行状态在 `StatusMark` 上的编码（达到上限有自己的符号 `capped`）。 */
+export const evalRunMark = (s: EvalRunStatus): MarkStatus => (s === "completed" ? "success" : s);
 
 /** 结果状态在 `StatusMark` 上的编码。 */
 export const evalResultMark = (s: EvalResultStatus): MarkStatus =>
@@ -267,11 +266,25 @@ export interface RunInput {
   judge: boolean;
 }
 
-export const estimateEvalRun = (orgId: string, setId: string, body: RunInput) =>
-  apiFetch<{ estimate: EvalEstimate }>(`${sets(orgId)}/${enc(setId)}/runs/estimate`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+/** 估算响应里的 token 上限（D5）：部署默认、部署上限与本次生效的上限。 */
+export interface EvalTokenCaps {
+  defaultTokenCap: number;
+  maxTokenCap: number;
+  effectiveTokenCap: number;
+}
+
+export const estimateEvalRun = (
+  orgId: string,
+  setId: string,
+  body: RunInput & { tokenCap?: number },
+) =>
+  apiFetch<{ estimate: EvalEstimate } & EvalTokenCaps>(
+    `${sets(orgId)}/${enc(setId)}/runs/estimate`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
 
 export const startEvalRun = (
   orgId: string,

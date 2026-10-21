@@ -103,6 +103,10 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
   await expect(
     estimate.locator(".cb-kv-row").filter({ hasText: E.wizard.estimate.modelRequests }),
   ).toContainText("1");
+  // 上限留空：显示生效的部署默认上限（evals.defaultTokenCap）
+  await expect(
+    estimate.locator(".cb-kv-row").filter({ hasText: E.wizard.estimate.tokenCap }),
+  ).toContainText("1,000,000");
   await actions.getByRole("button", { name: E.wizard.start }).click();
   await expect(page).toHaveURL(/\/zh\/evals\/runs\/[^/]+$/);
 
