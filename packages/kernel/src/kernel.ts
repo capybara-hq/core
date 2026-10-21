@@ -936,8 +936,11 @@ export async function createKernel(
         checkpoint();
         await host.load(config.plugins);
         checkpoint();
-        if (sandbox.available) {
-          for (const w of sandboxConfigWarnings(current)) log.warn(w);
+        const sandboxPlugin = host
+          .list("sandbox")
+          .find((x) => x.capability === SANDBOX_CAPABILITY)?.plugin;
+        if (sandboxPlugin !== undefined) {
+          for (const w of sandboxConfigWarnings(current, sandboxPlugin)) log.warn(w);
         }
         if (config.roles.includes("worker")) {
           runWorker = new RunWorker({

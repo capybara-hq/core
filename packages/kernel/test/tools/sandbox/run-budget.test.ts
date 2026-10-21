@@ -67,6 +67,23 @@ describe("运行时限与命令超时（纯函数）", () => {
       sandboxConfigWarnings({ ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } }),
     ).toEqual([]);
   });
+
+  it("egress open 而提供方没打开 allowOpenEgress 时告警，点名插件配置", () => {
+    const long = { ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } };
+    const open = {
+      ...long,
+      sandbox: { ...long.sandbox, limits: { ...long.sandbox.limits, egress: "open" as const } },
+    };
+    const [w] = sandboxConfigWarnings(open, "sandbox-docker");
+    expect(w).toContain('pluginConfig."sandbox-docker".allowOpenEgress');
+    expect(
+      sandboxConfigWarnings(
+        { ...open, pluginConfig: { "sandbox-docker": { allowOpenEgress: true } } },
+        "sandbox-docker",
+      ),
+    ).toEqual([]);
+    expect(sandboxConfigWarnings(long, "sandbox-docker")).toEqual([]);
+  });
 });
 
 let pgc: TestContainer;
