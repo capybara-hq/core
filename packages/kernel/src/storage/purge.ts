@@ -19,7 +19,10 @@ const CLAIM_STALE_MINUTES = 60;
  *
  * 每个组织三步，不在事务里做网络调用：
  * 1. 认领：一条 `UPDATE … RETURNING`（子查询 `FOR UPDATE SKIP LOCKED`）写 `storage_purge_claimed_at`，
- *    只认领未被认领、或认领已超过 {@link CLAIM_STALE_MINUTES} 分钟的组织。多副本并发运行时同一组织只有一方认领到；
+ *    只认领未被认领、或认领已超过 {@link CLAIM_STALE_MINUTES} 分钟的组织。同一时刻的并发认领只有一方成功；
+ *    但认领不是租约：持有方删得比 {@link CLAIM_STALE_MINUTES} 还久（或已退出）时，别的副本会重新认领，两方可能
+ *    同时删同一组织的对象，先结束的一方还会清掉对方的认领。这是可以接受的：`deleteOrg` 幂等，`storage_purged_at`
+ *    只在删除成功后写，最坏只是重复删除或下一轮再删一次；
  * 2. 在事务外删除对象（`deleteOrg` 幂等）；
  * 3. 成功：写 `storage_purged_at` 并清空认领；失败：清空认领（下一次运行重试），本次运行不再碰它。
  */
