@@ -6,7 +6,7 @@ import zh from "../messages/zh.json";
 import TrajectoryPage from "../src/app/[locale]/(app)/trajectories/[conversationId]/page";
 import TrajectoriesPage from "../src/app/[locale]/(app)/trajectories/page";
 import { activeNavOf } from "../src/components/shell/nav";
-import { type TrajectoryRun, trajectorySpans } from "../src/lib/trajectories";
+import { type SpanLabels, type TrajectoryRun, trajectorySpans } from "../src/lib/trajectories";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
@@ -15,6 +15,14 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
 
 const msgs = { zh, en } as const;
+
+/** 瀑布 span 名称（测试里用英文技术名，页面按语言翻译）。 */
+const LABELS: SpanLabels = {
+  run: (version) => `run · v${version}`,
+  step: (n) => `step ${n}`,
+  approval: "approval",
+  question: "question",
+};
 const ORG = "/api/v1/orgs/o1";
 const DETAIL = `${ORG}/trajectories/c1`;
 
@@ -179,7 +187,7 @@ describe("trajectorySpans", () => {
         },
       ],
     });
-    const spans = trajectorySpans([run(), second]);
+    const spans = trajectorySpans([run(), second], LABELS);
     expect(spans.map((s) => [s.id, s.parentId ?? null, s.kind])).toEqual([
       ["run:r1", null, "run"],
       ["step:r1:0", "run:r1", "step"],
@@ -272,12 +280,47 @@ describe("trajectorySpans", () => {
         },
       ],
     });
-    const spans = new Map(trajectorySpans([failed, asking]).map((s) => [s.id, s]));
+    const spans = new Map(trajectorySpans([failed, asking], LABELS).map((s) => [s.id, s]));
     expect(spans.get("run:r1")?.status).toBe("error");
     expect(spans.get("tool:r3:q1")).toMatchObject({ status: "pending", durationMs: null });
     expect(spans.get("question:r3:qq")).toMatchObject({ kind: "wait", status: "pending" });
     expect(spans.get("tool:r3:bad")?.status).toBe("error");
-    expect(trajectorySpans([])).toEqual([]);
+    expect(trajectorySpans([], LABELS)).toEqual([]);
+  });
+
+  it("已结束的运行里仍为 pending 的模型调用算 error（步骤随之不再 pending）", () => {
+    const base = run().steps[1] as TrajectoryRun["steps"][0];
+    const ended = run({
+      end: { kind: "aborted", detail: "user" },
+      steps: [
+        {
+          ...base,
+          modelCalls: [
+            {
+              ...(base.modelCalls[0] as TrajectoryRun["steps"][0]["modelCalls"][0]),
+              latencyMs: null,
+              outcome: "pending",
+              usage: null,
+            },
+          ],
+        },
+      ],
+    });
+    const spans = new Map(trajectorySpans([ended], LABELS).map((s) => [s.id, s]));
+    expect(spans.get("model:r1:9")).toMatchObject({ status: "error", durationMs: null });
+    expect(spans.get("step:r1:1")?.status).toBe("error");
+  });
+
+  it("span 名称用调用方给的文案", () => {
+    const spans = trajectorySpans([run()], {
+      run: (v) => `运行 · v${v}`,
+      step: (n) => `步骤 ${n}`,
+      approval: "审批",
+      question: "提问",
+    });
+    expect(
+      spans.filter((s) => s.kind !== "model" && s.kind !== "tool").map((s) => s.label),
+    ).toEqual(["运行 · v3", "步骤 0", "审批", "步骤 1"]);
   });
 });
 
@@ -333,10 +376,22 @@ describe("轨迹详情（TracePage）", () => {
       expect(within(tool).getByText(m.detail.tool.decisions.approved)).toBeTruthy();
       expect(within(tool).getByText(m.detail.tool.scopes.once)).toBeTruthy();
       // 步骤：回复正文
-      await user.click(within(list).getByText("step 1"));
+      await user.click(within(list).getByText(m.detail.spans.step.replace("{n}", "1")));
       expect(within(detail()).getByText("Deleted it.")).toBeTruthy();
     },
   );
+
+  it("中文界面：瀑布的 span 名称与 kind 徽标都是中文", async () => {
+    stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
+    const { container } = renderPage(<TrajectoryPage />, { locale: "zh" });
+    const list = await screen.findByRole("tree", { name: zh.trajectories.detail.waterfall });
+    expect(within(list).getByText("运行 · v3")).toBeTruthy();
+    expect(within(list).getByText("步骤 1")).toBeTruthy();
+    expect(within(list).getByText("审批")).toBeTruthy();
+    expect(within(list).queryByText("run · v3")).toBeNull();
+    const kind = container.querySelector('[data-span="run:r1"] .cb-waterfall-kind');
+    expect(kind?.textContent).toBe("运行");
+  });
 
   it("没有价格时成本显示「—」", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run({}, null)])) });

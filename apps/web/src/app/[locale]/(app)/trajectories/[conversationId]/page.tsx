@@ -105,7 +105,12 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
 
   const runs = [...(earlier?.runs ?? []), ...first.runs];
   const next = earlier !== null ? earlier.next : (first.next ?? null);
-  const { spans, sources } = indexTrajectory(runs);
+  const { spans, sources } = indexTrajectory(runs, {
+    run: (version) => t("detail.spans.run", { version }),
+    step: (n) => t("detail.spans.step", { n }),
+    approval: t("detail.spans.approval"),
+    question: t("detail.spans.question"),
+  });
   const lastRun = runs.at(-1);
   // 缺省选中最近一次运行
   const selectedId =

@@ -187,11 +187,23 @@ export const inputTotal = (u: ModelUsage) => u.inputTokens + u.cacheReadTokens +
 
 const grouped = new Intl.NumberFormat("en-US");
 
+/** 瀑布 span 的名称（界面文案，调用方按语言给出）。模型与工具 span 用供应商 / 模型名与工具 key，不翻译。 */
+export interface SpanLabels {
+  run(version: number): string;
+  step(n: number): string;
+  approval: string;
+  question: string;
+}
+
 /**
  * 由轨迹推出瀑布图的 span 与各 span 的来源。层级：run → step → model / tool → wait（审批、提问），按深度优先排列；
- * `startMs` 相对最早一次运行的开始。未结束的为 pending、时长 null；失败 / 中止的运行、出错或没有结果就结束的工具为 error。
+ * `startMs` 相对最早一次运行的开始。未结束的为 pending、时长 null；失败 / 中止的运行、出错或没有结果就结束的工具、
+ * 运行已结束却仍为 pending 的模型调用为 error。
  */
-export function indexTrajectory(runs: readonly TrajectoryRun[]): {
+export function indexTrajectory(
+  runs: readonly TrajectoryRun[],
+  labels: SpanLabels,
+): {
   spans: Span[];
   sources: Map<string, SpanSource>;
 } {
@@ -214,7 +226,7 @@ export function indexTrajectory(runs: readonly TrajectoryRun[]): {
       {
         id: runId,
         kind: "run",
-        label: `run · v${run.agentVersion}`,
+        label: labels.run(run.agentVersion),
         startMs: off(run.startedAt),
         durationMs: run.totals.durationMs,
         status: run.end === null ? "pending" : run.end.kind === "finished" ? "ok" : "error",
@@ -228,7 +240,7 @@ export function indexTrajectory(runs: readonly TrajectoryRun[]): {
           id: stepId,
           parentId: runId,
           kind: "step",
-          label: `step ${step.step}`,
+          label: labels.step(step.step),
           startMs: 0,
           durationMs: null,
           status: "ok",
@@ -250,8 +262,13 @@ export function indexTrajectory(runs: readonly TrajectoryRun[]): {
               label: `${call.provider}/${call.model}`,
               startMs: off(call.startedAt),
               durationMs: call.latencyMs,
+              // 运行已结束仍没有结果的调用（没写 usage 就停了）算失败
               status:
-                call.outcome === "ok" ? "ok" : call.outcome === "failed" ? "error" : "pending",
+                call.outcome === "ok"
+                  ? "ok"
+                  : call.outcome === "failed" || ended
+                    ? "error"
+                    : "pending",
               ...(meta !== undefined && { meta }),
             },
             { kind: "model", run, call },
@@ -295,7 +312,7 @@ export function indexTrajectory(runs: readonly TrajectoryRun[]): {
                 id: `approval:${run.runId}:${ap.approvalId}`,
                 parentId: toolId,
                 kind: "wait",
-                label: "approval",
+                label: labels.approval,
                 startMs: off(ap.requestedAt),
                 durationMs: ap.decidedAt === null ? null : diff(ap.requestedAt, ap.decidedAt),
                 status:
@@ -319,7 +336,7 @@ export function indexTrajectory(runs: readonly TrajectoryRun[]): {
                 id: `question:${run.runId}:${q.questionId}`,
                 parentId: toolId,
                 kind: "wait",
-                label: "question",
+                label: labels.question,
                 startMs: off(q.askedAt),
                 durationMs: null,
                 status:
@@ -346,7 +363,7 @@ export function indexTrajectory(runs: readonly TrajectoryRun[]): {
       stepSpan.durationMs = pending ? null : end - start;
       stepSpan.status = pending
         ? "pending"
-        : last === undefined || last.outcome === "failed"
+        : last === undefined || last.outcome !== "ok"
           ? "error"
           : "ok";
     }
@@ -355,6 +372,6 @@ export function indexTrajectory(runs: readonly TrajectoryRun[]): {
 }
 
 /** 瀑布图的 span（见 {@link indexTrajectory}）。 */
-export function trajectorySpans(runs: TrajectoryRun[]): Span[] {
-  return indexTrajectory(runs).spans;
+export function trajectorySpans(runs: TrajectoryRun[], labels: SpanLabels): Span[] {
+  return indexTrajectory(runs, labels).spans;
 }

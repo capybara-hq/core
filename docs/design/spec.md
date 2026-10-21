@@ -335,10 +335,10 @@
 
 ### 6.10 Span 瀑布（SpanWaterfall）
 
-链路查看器（T8）上方的瀑布图：一次对话里各次运行的 span 按层级与时间排开。只收普通 props（`spans`、`selectedId`、`onSelect`、`labels.empty`、可选 `label`），span 的层级由 `parentId` 给出，调用方按深度优先顺序传入。
+链路查看器（T8）上方的瀑布图：一次对话里各次运行的 span 按层级与时间排开。只收普通 props（`spans`、`selectedId`、`onSelect`、`labels.empty`、可选 `labels.kinds`、可选 `label`），span 的层级由 `parentId` 给出，调用方按深度优先顺序传入。
 
 - span 字段：`kind`（`run` / `step` / `model` / `tool` / `wait`）、`label`、`startMs`（相对最早 span 的偏移）、`durationMs`（未知为 null）、`status`（`ok` / `error` / `pending`）、可选 `meta`（如 token 数）。
-- 每个 span 一行（高 28），自左而右：名称列（固定 40%：按深度每级缩进 16，`kind` 11px `faint` 定宽 5ch + 名称单行省略 + `meta` small `muted`）｜时间轨（1px `line` 左边线，条形按 `startMs / 总时长` 定位、按 `durationMs / 总时长` 定宽，最窄 2px）｜状态（`StatusMark`：ok 成功、error 失败、pending 运行中；`wait` 未结束为待审批）｜耗时（右对齐，`6.8s` / `312ms` / `00:02:18`，未知 `—`）。
+- 每个 span 一行（高 28），自左而右：名称列（固定 40%：按深度每级缩进 16，`kind` 徽标（文案缺省走 design i18n：运行 / 步骤 / 模型 / 工具 / 等待，en 为 run / step / model / tool / wait；可经 `labels.kinds` 覆盖）11px `faint` 定宽 5ch + 名称单行省略 + `meta` small `muted`）｜时间轨（1px `line` 左边线，条形按 `startMs / 总时长` 定位、按 `durationMs / 总时长` 定宽，最窄 2px）｜状态（`StatusMark`：ok 成功、error 失败、pending 运行中；`wait` 未结束为待审批）｜耗时（右对齐，`6.8s` / `312ms` / `00:02:18`，未知 `—`）。
 - 条形颜色：ok `line-strong`；error `fail`；pending `accent`（正在发生，§2.3「文字」职责的延伸），未结束的 span 从起点延伸到时间轨末端。`wait` 条形为 1px 描边空心（等待不是执行）。
 - 总时长 = 各 span 的 `startMs + (durationMs ?? 0)` 的最大值（至少 1ms）。
 - 交互：`role="tree"`（`aria-label` 取 `label`，缺省「Span 瀑布」，总是展开，不能折叠），每行 `role="treeitem"`，`aria-selected`、`aria-level`（深度 + 1），有子 span 的行 `aria-expanded="true"`；焦点留在 tree 上，当前项由 `aria-activedescendant` 指出。点击行选中；获得焦点后 ↑ / ↓ 选上一个 / 下一个，Home / End 选首 / 末项。选中行 `accent-tint` 底 + 左侧 2px 主色（§2.3）。

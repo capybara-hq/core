@@ -21,7 +21,8 @@ export interface SpanWaterfallProps {
   spans: Span[];
   selectedId: string | null;
   onSelect(id: string): void;
-  labels: { empty: string };
+  /** `empty`：空列表文案；`kinds`：kind 徽标文案（缺省取 design 的 `waterfall.kind.*`）。 */
+  labels: { empty: string; kinds?: Partial<Record<Span["kind"], string>> };
   /** 列表的可访问名称；缺省「Span 瀑布」。 */
   label?: string;
 }
@@ -125,7 +126,9 @@ export function SpanWaterfall({ spans, selectedId, onSelect, labels, label }: Sp
             onClick={() => onSelect(s.id)}
           >
             <div className="cb-waterfall-name" style={{ paddingLeft: d * 16 }}>
-              <span className="cb-waterfall-kind">{s.kind}</span>
+              <span className="cb-waterfall-kind">
+                {labels.kinds?.[s.kind] ?? t(`waterfall.kind.${s.kind}`)}
+              </span>
               <span className="cb-waterfall-label" title={s.label}>
                 {s.label}
               </span>

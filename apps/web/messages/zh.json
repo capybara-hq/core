@@ -1148,6 +1148,12 @@
       "loadEarlier": "加载更早的运行",
       "empty": "这个对话还没有开始过运行。",
       "selectHint": "选择上方的一个 span 查看详情。",
+      "spans": {
+        "run": "运行 · v{version}",
+        "step": "步骤 {n}",
+        "approval": "审批",
+        "question": "提问"
+      },
       "metrics": {
         "tokens": "总 TOKEN",
         "cost": "成本（估算）",

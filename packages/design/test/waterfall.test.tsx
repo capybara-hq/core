@@ -160,6 +160,28 @@ describe("SpanWaterfall", () => {
     expect(screen.getByRole("tree", { name: "运行 1" })).toBeTruthy();
   });
 
+  it("kind 徽标走 design i18n（中 / 英），可经 labels.kinds 覆盖", () => {
+    const { container } = wrap(<Controlled />);
+    const kind = (id: string) =>
+      container.querySelector(`[data-span="${id}"] .cb-waterfall-kind`)?.textContent;
+    expect(["r", "s", "m", "t", "w"].map(kind)).toEqual(["运行", "步骤", "模型", "工具", "等待"]);
+    cleanup();
+    const en = wrap(<Controlled />, "en").container;
+    expect(en.querySelector('[data-span="w"] .cb-waterfall-kind')?.textContent).toBe("wait");
+    expect(en.querySelector('[data-span="r"] .cb-waterfall-kind')?.textContent).toBe("run");
+    cleanup();
+    const custom = wrap(
+      <SpanWaterfall
+        spans={SPANS}
+        selectedId={null}
+        onSelect={() => {}}
+        labels={{ empty: "", kinds: { model: "LLM" } }}
+      />,
+    ).container;
+    expect(custom.querySelector('[data-span="m"] .cb-waterfall-kind')?.textContent).toBe("LLM");
+    expect(custom.querySelector('[data-span="t"] .cb-waterfall-kind')?.textContent).toBe("工具");
+  });
+
   it("耗时格式（spec §7）", () => {
     expect(formatSpanDuration(null)).toBe("—");
     expect(formatSpanDuration(0)).toBe("0ms");

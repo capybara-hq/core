@@ -1148,6 +1148,12 @@
       "loadEarlier": "Load earlier runs",
       "empty": "This conversation has not started any runs yet.",
       "selectHint": "Select a span above to see its details.",
+      "spans": {
+        "run": "run · v{version}",
+        "step": "step {n}",
+        "approval": "approval",
+        "question": "question"
+      },
       "metrics": {
         "tokens": "TOKENS",
         "cost": "Cost (est.)",
