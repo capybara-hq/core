@@ -6,7 +6,7 @@
 
 1. **评测**：轨迹查看器；从真实对话建评测集；单步回放与整轮回放（用记录的工具结果）；评分方式有结构差异、LLM 评委和人工标注；运行时排队，有并发上限、事先估算和 token 上限。
 2. **管理后台**：部署设置与组织设置分开。插件移到核心镜像之外，按需安装（npm-pack tgz），安装、批准、启用、停用、升级、卸载都不用重启。部署级插件配置入 PG。另有模型与用途映射、成员页和组织级沙箱限额。
-3. **企业目录**：插件、应用和技能都能从文件或 npm 导入，按条目设策略，成员可以申请。
+3. **企业目录**：插件、应用和技能都能从文件、npm 或清单（官方清单、企业清单，静态 `index.json`）导入，按条目设策略，成员可以申请。
 
 **Architecture:**
 - **评测**完全建立在「事件日志是唯一事实源」上。
@@ -24,7 +24,7 @@
 **Spec:**
 - `docs/superpowers/specs/2026-10-17-capybara-architecture-design.md`：§2.2、§2.5（插件安装、信任、权限）、§3.4（角色；企业管理员不读对话）、§4.2（日志用途含回放）、§4.5（企业管理员管模型、按用途要模型）、§6 原则 8（评测是一等公民）、§7.1–§7.3（包类型、两层目录、安装确认）、§8.7（轨迹查看器）。
 - `docs/superpowers/specs/2026-10-18-extension-model-design.md`：§2.3（被依赖方停用）、§4.2（用途）、§6（部署级插件配置入 PG、来源标注、`hot`）、§7.2–§7.3（权限清单、批准）、§9（M6 分期）。
-- 用户决策 D1–D15 见下文，也记在记忆 `capybara-m6-decisions` 里。
+- 用户决策 D1–D16 见下文，也记在记忆 `capybara-m6-decisions` 里。
 
 ---
 
@@ -55,6 +55,12 @@
   - 插件迁移由一个副本持锁执行。
   - 所有副本收敛到同一版本。
   - 开发模式照旧直接加载工作区的 `plugins/*`。
+- **D16 目录来源与官方清单**：
+  - 目录来源分三种：官方清单、企业清单（可以有多个）、手动上传。
+  - 清单是一个静态 `index.json`，列出条目的 kind、npm 包名、各版本（sha512 integrity、最低内核 / SDK 版本）、发布者、简介和权限摘要。
+  - 内核定期拉取清单，也能手动刷新。清单地址可配置，支持镜像，官方清单可以关掉以便离线使用；npm registry 地址也可配置。
+  - 下载的包按清单里的 sha512 校验。M7 之前不做清单签名。
+  - 官方清单仓库在 M7 上线：CI 发布到 npm 后，向清单仓库提 PR。
 - **C10 已确认**：部署级插件配置不合法时，该插件进入待处理（`reason: "config"`），内核照常启动。
 
 ## 计划层面的取舍（设计者的决定，执行中如被推翻，记入台账）
@@ -168,6 +174,19 @@
   - 从目录装的应用暂不支持升级。
 - **C23 不做给 agent 用的目录工具**：待定。
 - **C24 D10 的开关**是 agent 定义里的 `skills.writePolicy: "allow" | "ask"`，缺省 `allow`。私有 agent 设为 `ask` 时，`skill_write` 按固定 ask 处理，确认后直接生效。共享 agent 不论取值都走 R3 + R4。
+- **C25 清单条目先浏览，「引入」时才物化成目录条目。**
+  - 每次刷新把清单内容缓存到 PG（`catalog_entries`），只有企业管理员能浏览。
+  - 企业管理员点「引入」某个版本时，内核下载 tgz、按清单的 sha512 校验，通过后才建目录条目，来源标为 `catalog:<sourceId>`。
+  - 策略只挂在目录条目上（引入后默认 `allow`）；组织只能看到已经引入的条目。
+  - 清单出了新版本，已引入的条目上显示「有新版本」，由企业管理员手动引入，不自动拉取。
+  - 理由：内核不会因为清单更新就悄悄下载代码；策略也有明确的落点。
+- **C26 清单来源的存放与拉取。**
+  - 官方清单来自配置 `catalogs.official.*`，默认开启。默认地址是 M7 之前的占位地址，拉取失败时只记在来源状态里，日志只在状态变化时打一次。
+  - 企业清单存 PG `catalog_sources`，由企业管理员在后台增删。可选的访问令牌存 secrets。
+  - 维护任务 `catalogs-refresh` 每 `catalogs.refreshIntervalMinutes` 分钟拉一次（带 ETag 与大小上限）。手动刷新走接口。
+  - 清单不合法时保留上一份内容，来源状态记为 `error`。
+  - 下载包的地址：清单给了 `tarball`（必须是 https）就用它，否则走 npm registry。校验一律以清单的 sha512 为准，不认 npm 元数据；不符时拒绝，返回 `catalog.integrity_mismatch`。
+  - 清单里的权限摘要只用于展示。和下载后算出的权限不一致时，在审阅页显示警告，不拒绝——字节已经由 integrity 锁定。
 
 ## Global Constraints
 
@@ -188,6 +207,7 @@
   | 0028 | T3 | 0032 | T15 |
   | 0029 | T6 | 0033 | T22 |
   | 0030 | T11 | 0034 | T23 |
+  | | | 0035 | T24 |
 
   建表、删表都带 `IF NOT EXISTS` / `IF EXISTS`。
 - **配置**：新键写进 `config/schema.ts`，并重新生成 `docs/config.md`。`hot` 字段须在 `HOT_APPLIERS` 登记。
@@ -207,6 +227,12 @@
   | `packages.npmRegistry` | `https://registry.npmjs.org` | |
   | `packages.npmToken` | 无 | secret |
   | `packages.maxBytes` | 52,428,800 | |
+  | `catalogs.official.enabled` | `true` | 离线部署设为 false |
+  | `catalogs.official.url` | `https://catalog.capybarahq.com/v1/index.json` | M7 之前为占位地址 |
+  | `catalogs.official.mirrors` | `[]` | 依次尝试 |
+  | `catalogs.refreshIntervalMinutes` | 360 | |
+  | `catalogs.maxIndexBytes` | 5,242,880 | |
+  | `catalogs.allowInsecureLoopback` | `false` | 只供测试，允许 http 回环地址 |
 
 - **部署设置**（PG `deployment_settings`）：
 
@@ -222,7 +248,7 @@
   - `kernel.plugins.reconcile {}`
   - `kernel.plugins.migrated {plugin, sha256}`
   - `kernel.plugin-deployment-config {plugin}`
-  - 维护任务 `plugins-reconcile`（job id 不含 `:`）
+  - 维护任务 `plugins-reconcile`、`catalogs-refresh`（job id 不含 `:`）
 - **内核 HTTP**（`skills/writing-kernel-api`）：
   - 领域类不依赖 Nest，构造参数显式 `@Inject`，错误码登记在 `errors.ts`。
   - 新 `OrgAction` 及最低角色：
@@ -716,6 +742,7 @@ export function packPlugin(pluginDir: string, outDir: string): Promise<{ file: s
 **Files:**
 - 迁移 `0030_plugin_installs.sql`。
 - 新建 `packages/kernel/src/plugins/{installs,blobs,sync,sources}.ts`、`packages/kernel/src/packages/npm.ts`、`packages/kernel/src/admin/plugins.controller.ts`。
+- 新建 `packages/testing/src/fake-npm-registry.ts`：`startFakeNpmRegistry({ packages: { name, version, tgz, integrity? /* 可故意给错 */ }[] }): Promise<{ url: string; requests: string[]; stop(): Promise<void> }>`，提供包元数据与 tarball，从 `index.ts` 导出。
 - 修改 `plugins/host.ts`（插件来源改为内置 + 配置声明 + 安装记录）、`storage/storage.service.ts`（`deployment()`，前缀 `deployment/`，`deleteOrg` 不触及）、`kernel.ts`（`KernelOptions.builtinPlugins`、副本 id）、`apps/capybara`（传入两个内置插件并加依赖）、`config/schema.ts`（`plugins.*`、`packages.*`）、`errors.ts`、`docs/config.md`。
 - 测试 `packages/kernel/test/plugins/{installs,sync,npm}.test.ts`。
 
@@ -741,8 +768,10 @@ class PluginInstalls {
 export interface PackageReview { sha256: string; name: string; version: string; permissions: PermissionGroup[]; added: string[]; removed: string[]; reviewHash: string }
 export function syncPackage(dir: string, name: string, sha256: string, blobs: Pick<PluginBlobs, "get">): Promise<string /* entry 的 file URL */>;
   // <dir>/<name>/<sha16>/：已存在且校验文件完整就复用；否则先解到临时目录再改名；node_modules 下为 HOST_PROVIDED_PACKAGES 建指向宿主的符号链接
-export function fetchNpmPackage(cfg: { registry: string; token?: string; maxBytes: number }, name: string, version: string | undefined, signal: AbortSignal):
-  Promise<{ bytes: Uint8Array; version: string; integrity: string }>;   // tarball 与 registry 同源、不跟随重定向、校验 sha512 integrity
+export function fetchNpmPackage(cfg: { registry: string; token?: string; maxBytes: number }, name: string, version: string | undefined, signal: AbortSignal,
+  opts?: { expectedIntegrity?: string; tarballUrl?: string }): Promise<{ bytes: Uint8Array; version: string; integrity: string }>;
+  // 不跟随重定向、超过 maxBytes 中止；没有 opts 时 tarball 须与 registry 同源、按 npm 的 dist.integrity 校验；
+  // 给了 expectedIntegrity（清单安装，T23）时只认它，不符抛 IntegrityMismatchError；tarballUrl 必须是 https（测试里允许回环 http）
 export function newReplicaId(): string;   // <hostname>-<pid>-<6 位随机>
 ```
 ```
@@ -991,7 +1020,7 @@ GET /api/v1/admin/plugins/:name/config → DeploymentConfigView；PUT 同路径 
 capybara admin grant <login> / capybara admin revoke <login>：在 lockEnterpriseAdmins 事务里改 is_enterprise_admin，写审计（via cli）；
   撤销最后一个时返回 account.last_enterprise_admin；账号不存在时退出码为 1。
 ```
-- `/admin`（OverviewPage）显示四个数字：需要处理的插件（待批准、待配置、失败、副本不一致）、待处理的目录申请（T23 之前为 0）、组织数、账号数。
+- `/admin`（OverviewPage）显示四个数字：需要处理的插件（待批准、待配置、失败、副本不一致）、待处理的目录申请（T24 之前为 0）、组织数、账号数。
 - `/admin/accounts`（ListPage）：新建、停用、授予或撤销企业管理员（需二次确认）。
 - `/admin/orgs`（ListPage）：每个组织可以设置运行并发与沙箱 cpu / 内存。
 - `/admin/settings`（SettingsPage）：谁能建组织、币种、`customApps` / `customSkills`。
@@ -1130,7 +1159,7 @@ export function effectiveSandboxLimits(deployment: SandboxLimits, override: { cp
 - 迁移 `0033_directory.sql`。
 - 新建 `packages/kernel/src/directory/{archive,directory.service,admin-directory.controller}.ts`。
 - 修改 `errors.ts`。
-- 测试 `packages/plugin-sdk/test/package-kinds.test.ts`、`packages/kernel/test/directory/*`（用假 npm registry）。
+- 测试 `packages/plugin-sdk/test/package-kinds.test.ts`、`packages/kernel/test/directory/*`（用 `startFakeNpmRegistry`）。
 
 **Interfaces (Produces):**
 ```ts
@@ -1182,10 +1211,98 @@ POST /api/v1/admin/directory/items/:id/install-deployment {version}（只有 plu
 - [ ] **Step 4：** 运行触及的测试与 `pnpm check`，确认通过。
 - [ ] **Step 5：** 提交 `feat: 企业目录条目与导入（插件 / 应用 / 技能，文件 / npm）`。
 
-### Task 23: 组织安装、成员申请与审批
+### Task 23: 目录来源：清单格式、拉取与从清单引入
 
 **Files:**
-- 迁移 `0034_directory_requests.sql`。
+- 新建 `packages/plugin-sdk/src/catalog.ts`（zod schema + 纯函数），修改 `index.ts`，附 changeset。
+- 新建 `packages/plugin-sdk/schemas/catalog-index.v1.schema.json`：由脚本 `pnpm gen:catalog-schema` 用 `z.toJSONSchema` 生成；SDK 的 `files` 包含 `schemas/`，M7 的清单仓库在 CI 里用它校验。
+- 新增检查 `check:catalog-schema`：生成结果与仓库里的文件不一致就报错，附违规 fixture。
+- 迁移 `0034_catalogs.sql`。
+- 新建 `packages/kernel/src/directory/{catalogs.service,catalogs.controller,catalog-fetch}.ts`。
+- 修改 `directory/directory.service.ts`（`importFromCatalog`）、`runtime/maintenance.ts`（任务 `catalogs-refresh`）、`config/schema.ts`（`catalogs.*`）、`errors.ts`、`docs/config.md`。
+- 新建 `packages/testing/src/fake-catalog.ts`：`startFakeCatalog({ index: unknown }): Promise<{ url: string; setIndex(i: unknown): void; requests: { etag?: string }[]; stop(): Promise<void> }>`（支持 ETag / 304），从 `index.ts` 导出。
+- 测试 `packages/plugin-sdk/test/catalog.test.ts`、`packages/kernel/test/directory/catalogs*.test.ts`。
+
+**Interfaces (Produces):**
+```ts
+// plugin-sdk/src/catalog.ts
+export const CATALOG_SCHEMA_VERSION = 1;
+export interface CatalogIndex { schemaVersion: 1; name: string /* 1–100 */; publisher?: string; updatedAt: string /* ISO 8601 */; entries: CatalogEntry[] /* ≤ 5000 */ }
+export interface CatalogEntry {
+  kind: PackageKind;                         // "plugin" | "skill" | "app"
+  name: string;                              // 目录名：^[a-z0-9][a-z0-9-]{0,63}$；同一清单内 (kind, name) 唯一
+  npm: string;                               // npm 包名（可带 @scope）
+  publisher: string;                         // 1–100
+  summary: { en: string; zh?: string };      // 各 ≤ 280
+  homepage?: string;                         // https URL
+  permissions?: { keys: string[]; sensitive: string[] };   // 仅 plugin：permissionKeys 格式；sensitive ⊆ keys
+  versions: CatalogVersion[];                // ≥ 1，version 唯一
+}
+export interface CatalogVersion { version: string /* semver */; integrity: string /* ^sha512-[A-Za-z0-9+/]{86}==$ */;
+  minKernel: string /* semver */; minSdk?: string /* semver，plugin 必填 */; tarball?: string /* https URL */; publishedAt?: string; deprecated?: string }
+export const CatalogIndexSchema: z.ZodType<CatalogIndex>;
+export function parseCatalogIndex(json: unknown): CatalogIndex | { errors: string[] };
+export function compatibleVersions(e: CatalogEntry, host: { kernel: string; sdk: string }): CatalogVersion[];   // 满足 minKernel / minSdk 的版本，按 semver 降序
+```
+```
+表 capybara.catalog_sources(id text pk /* 官方为 "official" */, name, url, mirrors jsonb default '[]', builtin bool, enabled bool,
+                            etag text null, last_refreshed_at null, last_status ok|error|never, last_error text null, created_by null, created_at)
+表 capybara.catalog_entries(source_id → catalog_sources ON DELETE CASCADE, kind, name, npm, entry jsonb, updated_at, PRIMARY KEY(source_id, kind, name))
+ALTER capybara.directory_items ADD catalog_source_id text null；directory_item_versions.source 增加 'catalog'（source_ref = "<sourceId>:<npm>@<version>"）
+```
+```ts
+class CatalogsService {
+  syncOfficialFromConfig(): Promise<void>;                     // 启动时按 catalogs.official.* upsert "official" 行
+  list(): Promise<CatalogSourceView[]>;
+  add(actor: string, input: { name: string; url: string; mirrors?: string[]; token?: string }): Promise<CatalogSourceView>;
+  update(actor: string, id: string, patch: { name?: string; url?: string; mirrors?: string[]; enabled?: boolean; token?: string | null }): Promise<CatalogSourceView>;
+  remove(actor: string, id: string): Promise<void>;           // 官方来源不能删（只能停用）；已引入的目录条目保留
+  refresh(id: string, signal: AbortSignal): Promise<CatalogSourceView>;   // url → mirrors 依次尝试；If-None-Match；≤ catalogs.maxIndexBytes；不合法保留旧内容
+  entries(q: { sourceId?: string; kind?: PackageKind; q?: string }): Promise<CatalogEntryView[]>;
+}
+export interface CatalogEntryView { sourceId: string; sourceName: string; kind: PackageKind; name: string; npm: string; publisher: string;
+  summary: { en: string; zh?: string }; permissions: { keys: string[]; sensitive: string[] } | null;
+  versions: (CatalogVersion & { compatible: boolean })[]; adopted: { itemId: string; versions: string[] } | null; newerAvailable: boolean }
+DirectoryService.importFromCatalog(actor: string, input: { sourceId: string; kind: PackageKind; name: string; version: string }): Promise<DirectoryItemView>;
+  // 版本须兼容（catalog.incompatible）；fetchNpmPackage(…, {expectedIntegrity: version.integrity, tarballUrl: version.tarball})；
+  // tgz 的 package.json name / version 必须与 entry.npm / version 一致（catalog.package_mismatch）；随后按 kind 走 T22 的导入流程
+```
+```
+GET    /api/v1/admin/catalogs；POST /api/v1/admin/catalogs {name, url, mirrors?, token?}；PATCH /api/v1/admin/catalogs/:id；DELETE /api/v1/admin/catalogs/:id
+POST   /api/v1/admin/catalogs/:id/refresh
+GET    /api/v1/admin/catalogs/entries?sourceId&kind&q
+POST   /api/v1/admin/catalogs/:id/entries/:kind/:name/import {version}      全部 @EnterpriseAdmin
+错误码：catalog.not_found 404、catalog.entry_not_found 404、catalog.fetch_failed 502、catalog.invalid 502（details 列出 schema 问题）、
+        catalog.integrity_mismatch 502（消息写明期望与实际的 sha512 前缀，以及「包与清单不符，已拒绝安装」）、catalog.incompatible 409、
+        catalog.package_mismatch 409、catalog.builtin 409
+审计：catalog.added / catalog.updated / catalog.removed / catalog.refreshed（只记状态变化）/ directory.imported（source catalog）
+```
+- 清单地址只认 https（测试里由 `catalogs.allowInsecureLoopback` 放行回环 http），不跟随重定向。
+- `catalogs-refresh` 每个周期刷新所有已启用的来源；某个来源失败不影响其他来源。
+- `catalogs.official.enabled` 为 false 时，「official」来源停用，网页上写明「离线模式」。
+
+- [ ] **Step 1：先写失败测试：**
+  - `parseCatalogIndex`：缺 integrity、integrity 格式不对、版本重复、`sensitive` 不是 `keys` 的子集、plugin 缺 `minSdk`，都报错。
+  - JSON Schema 文件与 zod 对一组合法 / 非法 fixture 的判断一致（用 ajv 校验）。
+  - 生成的 schema 与仓库文件不一致时，`check:catalog-schema` 报错。
+  - `startFakeCatalog` + `startFakeNpmRegistry`：
+    - 刷新后条目出现；第二次刷新命中 304；清单不合法时保留旧条目并记为 `error`。
+    - 引入一个插件版本：建立目录条目（来源 catalog），包进入 `plugin_packages`。
+    - **integrity 不符**：fake registry 返回的 tgz 与清单的 sha512 不同，而 npm 元数据的 integrity 与 tgz 一致。断言返回 `catalog.integrity_mismatch`，没有建立任何条目，也没有写入任何包。
+    - 清单给了 `tarball` 时从该地址下载，不请求 registry 的元数据。
+    - `minKernel` 高于当前版本时返回 409。
+    - 包名不一致时返回 409。
+  - 官方来源不能删除；停用后不再刷新。
+  - 非企业管理员 403。
+- [ ] **Step 2：** 运行测试，确认失败。
+- [ ] **Step 3：** 实现。
+- [ ] **Step 4：** 运行触及的测试与 `pnpm check`，确认通过。
+- [ ] **Step 5：** 提交 `feat: 企业目录来源（官方 / 企业清单）、清单格式与按 sha512 引入`。
+
+### Task 24: 组织安装、成员申请与审批
+
+**Files:**
+- 迁移 `0035_directory_requests.sql`。
 - 新建 `packages/kernel/src/directory/{org-directory.service,org-directory.controller,requests.service}.ts`。
 - 修改：
   - `skills/skills.service.ts`：抽出 `createVersionFromFiles`；
@@ -1240,7 +1357,7 @@ GET  /api/v1/admin/directory/requests；POST /api/v1/admin/directory/requests/:i
 - [ ] **Step 4：** 运行全量 `pnpm test`，确认通过。
 - [ ] **Step 5：** 提交 `feat(kernel): 组织从企业目录安装、成员申请与审批`。
 
-### Task 24: 私有 agent 的 `skill_write` 确认开关（D10）
+### Task 25: 私有 agent 的 `skill_write` 确认开关（D10）
 
 **Files:**
 - 修改 `agents/definition.ts`（`skills.writePolicy`）、`tools/policy.ts`、`apps/web/src/components/AgentSkills.tsx`（或 `AgentForm.tsx`）、i18n。
@@ -1266,17 +1383,25 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
 - [ ] **Step 4：** 运行触及的测试，确认通过。
 - [ ] **Step 5：** 提交 `feat: 私有 agent 的 skill_write 确认开关`。
 
-### Task 25: 网页：企业目录
+### Task 26: 网页：企业目录
 
 **Files:**
 - 新建页面：
-  - `apps/web/src/app/[locale]/(app)/admin/directory/{page,[itemId]/page,requests/page}.tsx`
+  - `apps/web/src/app/[locale]/(app)/admin/directory/{page,[itemId]/page,requests/page,sources/page,catalog/page}.tsx`
   - `apps/web/src/app/[locale]/(app)/directory/{page,[itemId]/page}.tsx`
 - 新建 `apps/web/src/lib/directory.ts`。
 - 修改 `apps/install/page.tsx` / `AppWizard.tsx`（支持 `?directoryItem=` 预填）、收件箱、`nav.tsx`（一级导航「目录」，audience member）、`admin-nav.ts`、i18n。
 - 测试、e2e。
 
-- **`/admin/directory`**（ListPage）：导入弹窗，可上传文件或填 npm 包名；按 kind 筛选。
+- **`/admin/directory`**（ListPage）：导入弹窗，可上传文件或填 npm 包名；Rail 按 kind 和来源（手动 / 官方清单 / 各企业清单）筛选；每行显示来源，已引入的清单条目有新版本时显示「有新版本」。
+- **`/admin/directory/catalog`**（ListPage）：浏览所有已启用清单的条目，可搜索、按来源和 kind 筛选。
+  - 每行显示来源、发布者、简介、权限摘要（敏感项高亮）、可用版本（不兼容的置灰并写明最低版本）。
+  - 「引入」时选版本，引入后跳到条目页。`catalog.integrity_mismatch` 用醒目的错误提示，写明「包与清单不符，已拒绝安装」。
+  - 插件条目引入后，审阅页上如果真实权限与清单摘要不一致，显示警告（C26）。
+- **`/admin/directory/sources`**（SettingsPage）：
+  - 官方清单：开关（关闭即离线模式）、地址与镜像（来自配置，只读并显示来源）。
+  - 企业清单：增、删、改（名称、地址、镜像、令牌）。
+  - 每个来源显示最近刷新时间、状态和错误，可以立即刷新。
 - **`/admin/directory/[itemId]`**（DetailPage）：
   - 标签：概要（清单、文件或端点、插件的权限分组）、版本、安装情况（插件看部署状态，应用 / 技能看各组织装的版本）。
   - 用 `Segmented` 切换策略。
@@ -1289,16 +1414,22 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
   - 各种 `installable` 状态显示对应按钮；
   - 导入失败时展示错误详情；
   - 预填的端点只读；
-  - 收件箱卡片能做决定。
+  - 收件箱卡片能做决定；
+  - 清单页的不兼容版本不可选，integrity 不符时显示错误；
+  - 来源页里官方清单的地址只读，刷新后状态更新。
 - [ ] **Step 2：** 运行测试，确认失败。
 - [ ] **Step 3：** 实现。
-- [ ] **Step 4：** e2e：上传技能包并设为 `needs_approval` → 组织管理员提交 → 企业管理员批准 → 安装后技能出现在库里。
+- [ ] **Step 4：** e2e：
+  - 从假清单引入一个技能，它出现在目录里，来源显示为该清单；
+  - 上传技能包并设为 `needs_approval` → 组织管理员提交 → 企业管理员批准 → 安装后技能出现在库里。
 - [ ] **Step 5：** 提交 `feat(web): 企业目录、安装与申请`。
 
-### Task 26: 第三段验收
+### Task 27: 第三段验收
 
-- 新建 `packages/kernel/test/directory/m6-segment3.dual.test.ts`，双副本 + SeaweedFS + 假 npm registry + 假 MCP 服务器，经 HTTP：
-  1. 在 A 上从 npm 导入应用包与插件包（todo tgz），从文件导入技能包。
+- 新建 `packages/kernel/test/directory/m6-segment3.dual.test.ts`，双副本 + SeaweedFS + `startFakeNpmRegistry` + `startFakeCatalog`（官方地址指向它，另加一个企业清单）+ 假 MCP 服务器，经 HTTP：
+  1. 在 A 上从 npm 导入应用包，从文件导入技能包；在 B 上手动刷新官方清单，并从中引入插件条目（todo tgz）。
+     - 维护任务刷新企业清单之后，A 上能看到新条目。
+     - 企业清单里有一个 integrity 被篡改的条目，引入时返回 `catalog.integrity_mismatch`，什么都没写入。
   2. 企业管理员在 B 上把插件条目装到部署、批准并启用；组织管理员在 A 上于本组织启用它（策略 `allow`）。两个副本上工具都可用，全程不重启。
   3. 成员申请技能，组织管理员批准后，技能进入库里，`skill_load` 能读到。
   4. 应用条目设为 `needs_approval`：组织管理员得到 202，企业管理员批准后组织管理员安装成功，agent 能调用其工具。
@@ -1310,7 +1441,7 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
 
 ## 收尾
 
-### Task 27: 文档与技能指南
+### Task 28: 文档与技能指南
 
 - 新增 `skills/replay-evals/SKILL.md`：
   - 回放的不变式：改请求构建前先跑 T2 的测试；新增模型可见的输入必须进日志，并给 `DriftReason` 加对应原因；
@@ -1336,12 +1467,16 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
 - 更新 `AGENTS.md`：
   - 目录地图加 `tools/pack-plugin`；
   - 依赖方向加上 Global Constraints 里新增的几条；
-  - 规则速记加三行：评测 / 回放、插件包与生命周期、企业目录。
+  - 依赖方向写明：`@capybara-hq/capybara`（CLI，负责组装核心镜像）依赖 `@capybara-hq/plugin-openai-compatible` 与 `@capybara-hq/plugin-object-store-s3`；
+  - 规则速记加三行：
+    - 评测 / 回放；
+    - 插件包与生命周期；
+    - 企业目录与目录来源（清单 schema 在 `packages/plugin-sdk/schemas/catalog-index.v1.schema.json`，按清单的 sha512 校验）。
 - 更新 README：插件安装方式（核心镜像只内置两个插件）、从配置声明迁移到安装记录、`capybara admin grant`、企业目录；重新生成 `docs/config.md`。
-- 总设计 §2.5、§7.2、§8.7 各加一段「M6 实现说明」（C11–C17、C21、C22、C2 的结论）。
+- 总设计 §2.5、§7.2、§8.7 各加一段「M6 实现说明」（C11–C17、C21、C22、C25、C26、C2 的结论）。README 写明怎样配置离线模式与企业清单。
 - [ ] 提交 `docs: M6 评测、插件生命周期、管理后台与企业目录文档`。
 
-### Task 28: 路线图与人工验收清单
+### Task 29: 路线图与人工验收清单
 
 - **`docs/superpowers/plans/2026-10-17-mvp-roadmap.md`**：
   - 里程碑数改为 8。
@@ -1349,6 +1484,11 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
   - 新增 M7 行「发布与生态」：
     - docker compose 全量编排（api / worker / gateway / web / 依赖服务）；
     - ghcr 镜像（amd64 + arm64）。**核心镜像只有内核加 `openai-compatible`、`object-store-s3`**，官方插件以 npm 包 / tgz 发布（打包工具在 M6 已有），按需安装，不再做派生镜像；
+    - 官方清单仓库（如 `capybara-hq/catalog`）上线：
+      - 静态 `index.json`，在 CI 里用 SDK 的 `catalog-index.v1.schema.json` 校验；
+      - 官方插件的 CI 先发布到 npm，再向清单仓库提 PR（写入新版本与 sha512）；
+      - `catalogs.official.url` 换成正式地址；
+      - 清单签名 / provenance 随包签名一起做；
     - `gemini`（Gemini API）；
     - `ctx.hooks` + `usage.report`；
     - SDK 公开 API 快照检查；
@@ -1362,6 +1502,7 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
 - 新建 `docs/superpowers/plans/m6-live-acceptance-checklist.md`，内容：
   - 真实模型当评委；
   - 公共与私有 npm 导入；
+  - 真实托管的企业清单（经镜像访问、带令牌）与离线模式；
   - Nacos 来源的只读显示；
   - 真实 K8s / 多主机下的插件同步与收敛（本地目录在持久卷上与不在持久卷上两种情况）；
   - 官方插件全部以 tgz 安装后跑一遍 M4 / M5 的冒烟。
@@ -1376,7 +1517,7 @@ export function isFixedAsk(tool: ResolvedTool, visibility?: Visibility, skillWri
    - T11 依赖 T10；T12 依赖 T11；T13 依赖 T10–T12；
    - T14 依赖 T11–T13；T15 依赖 T14 的 `reload`；
    - T17 依赖 T13–T15；T18 依赖 T1 / T6；T19 依赖 T16。
-3. **第三段**：T22 → T26。开始前做一次第二段整体审查。T22 依赖 T11 / T14；T23 依赖 T16 的部署设置。
-4. **收尾**：T27、T28；然后全分支终审，统一修复一轮。
+3. **第三段**：T22 → T27。开始前做一次第二段整体审查。T22 依赖 T11 / T14；T23 依赖 T22（`importFromCatalog` 复用导入流程）与 T11（`fetchNpmPackage`、`startFakeNpmRegistry`）；T24 依赖 T16 的部署设置。
+4. **收尾**：T28、T29；然后全分支终审，统一修复一轮。
 
 真实环境验收（评委模型、npm、Nacos、多主机插件同步）在条件到位后按清单补跑。
