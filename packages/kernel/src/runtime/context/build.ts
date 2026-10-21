@@ -438,7 +438,7 @@ export function resolveMedia(
       continue;
     }
     if (plan.tooManyImages.has(id)) {
-      text(mediaTooManyImagesText(name), "omitted");
+      text(mediaTooManyImagesText(name), "too_many_images");
       continue;
     }
     if (plan.dropped.has(id)) {
@@ -464,7 +464,7 @@ export function resolveMedia(
     }
     const limit = b.type === "image" ? MEDIA_LIMITS.imageBytes : MEDIA_LIMITS.documentBytes;
     if (data.byteLength > limit) {
-      text(`[Attachment ${quoted(name)} is too large to send to this model.]`, "omitted");
+      text(`[Attachment ${quoted(name)} is too large to send to this model.]`, "too_large");
       continue;
     }
     tokens +=

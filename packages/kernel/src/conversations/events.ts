@@ -222,7 +222,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         toolChoice: z.enum(["auto", "none"]).optional(),
         /**
          * 请求里每个附件的处理结果（Ruling M8，按首次出现，同一附件一条）：发了字节（`bytes`，带 finalize 时的
-         * etag）、内联文本、模型不支持的占位、省略（预算 / 图片太多 / 太大）、不再可用、PDF 页数太多、
+         * etag）、内联文本、模型不支持的占位、因请求媒体预算省略（`omitted`）、图片太多（`too_many_images`）、
+         * 单个超过供应商上限（`too_large`）、不再可用、PDF 页数太多、
          * 被 `media_excluded` 排除。没有媒体时不写；较早的事件没有。
          */
         media: z
@@ -234,6 +235,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
                 "inline",
                 "placeholder_unsupported",
                 "omitted",
+                "too_many_images",
+                "too_large",
                 "unavailable",
                 "too_many_pages",
                 "excluded",

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ModelInfo, ModelMessage } from "@capybara-hq/plugin-sdk";
+import { MEDIA_LIMITS, type ModelInfo, type ModelMessage } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { LogContentBlock } from "../../src/conversations/events.js";
 import {
@@ -411,7 +411,18 @@ describe("供应商限制（Ruling M8 / I1）", () => {
       type: "text",
       text: '[Attachment "p0.png" omitted (too many images in one request).]',
     });
-    expect(meta.media?.[0]).toEqual({ attachmentId: ids[0], outcome: "omitted" });
+    expect(meta.media?.[0]).toEqual({ attachmentId: ids[0], outcome: "too_many_images" });
+  });
+
+  it("单个图片超过供应商上限：占位，meta 记 too_large（与预算省略 omitted 区分）", () => {
+    const big = new Uint8Array(MEDIA_LIMITS.imageBytes + 1);
+    const m = media([[IMG, { mediaType: "image/png", data: big }]]);
+    const { request, meta } = build(SEE, logWith(content), m, 100 * 1024 * 1024);
+    expect(userContent(request.messages)).toContainEqual({
+      type: "text",
+      text: '[Attachment "cat.png" is too large to send to this model.]',
+    });
+    expect(meta.media?.find((x) => x.attachmentId === IMG)?.outcome).toBe("too_large");
   });
 
   it(`PDF 页数超过 ${MAX_PDF_PAGES}：占位、不取、不计预算`, () => {
