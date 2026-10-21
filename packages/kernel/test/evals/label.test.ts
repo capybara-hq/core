@@ -176,9 +176,10 @@ describe("人工标注", () => {
       actor_account_id: adminId,
       org_id: orgId,
       target: a.id,
-      detail: { runId, label: "pass" },
+      detail: { runId, label: "pass", previousLabel: null },
     });
-    expect(audits[3]?.detail).toEqual({ runId, label: null });
+    expect(audits[2]?.detail).toEqual({ runId, label: "fail", previousLabel: "pass" });
+    expect(audits[3]?.detail).toEqual({ runId, label: null, previousLabel: "fail" });
   });
 
   it("member 403；未登录 401", async () => {

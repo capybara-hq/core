@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { replyParts, structuralDiff, textSimilarity } from "../../src/evals/diff.js";
+import {
+  MAX_ALIGN_CELLS,
+  replyParts,
+  structuralDiff,
+  textSimilarity,
+} from "../../src/evals/diff.js";
 
 /** 评分（T6 / D3、C8）：工具调用与参数的结构差异、文本相似度（空白切词的 LCS 比值）。 */
 
@@ -107,6 +112,21 @@ describe("structuralDiff", () => {
     expect(d.toolCallsMatch).toBe(true);
     expect(d.textSimilarity).toBe(0.5);
     expect(d.stopReasonMatch).toBe(false);
+  });
+
+  it("调用数之积超过 MAX_ALIGN_CELLS：按位置比较，不做名字对齐", () => {
+    expect(MAX_ALIGN_CELLS).toBe(1_000_000);
+    const n = 1001;
+    const base = Array.from({ length: n }, (_, i) => ({ name: `t${i}`, input: {} }));
+    const extra = { name: "x", input: {} };
+    // 候选在开头插入一个调用：对齐时只有一个 added；按位置比较则每个位置都是 name_changed
+    const big = structuralDiff(side(base), side([extra, ...base.slice(0, n - 1)]));
+    expect(big.toolCalls).toHaveLength(n);
+    expect(big.toolCalls.every((e) => e.kind === "name_changed")).toBe(true);
+    // 规模以内照常对齐
+    const ten = base.slice(0, 10);
+    const small = structuralDiff(side(ten), side([extra, ...ten]));
+    expect(small.toolCalls.map((e) => e.kind)).toEqual(["added", ...Array(10).fill("same")]);
   });
 
   it("replyParts：从内容块取工具调用与文本（忽略 thinking）", () => {

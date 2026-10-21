@@ -6,6 +6,7 @@ import { canonicalJson } from "./recorded-tools.js";
  * - 工具调用先按名字做 LCS 对齐（中间插入 / 删除一个调用不会让后面的全部错位）：对上的同名调用参数相同为
  *   `same`（参数按规范化 JSON 比较，键顺序不同也算相同），否则 `args_changed`；两个对齐点之间多出来的
  *   按位置配对为 `name_changed`，剩下的是 `added`（只在候选）/ `removed`（只在基线）；
+ *   两边调用数之积超过 {@link MAX_ALIGN_CELLS} 时不做对齐（DP 表是 O(n·m)），改为按位置逐个比较；
  * - 文本相似度见 {@link textSimilarity}（C8）。
  */
 
@@ -30,8 +31,12 @@ export const MAX_LCS_CELLS = 4_000_000;
 
 const words = (s: string): string[] => s.split(/\s+/).filter((w) => w.length > 0);
 
-/** 两个序列的 LCS 长度（两行滚动数组）。 */
-function lcsLength<T>(a: readonly T[], b: readonly T[], eq: (x: T, y: T) => boolean): number {
+/** 工具调用数之积超过它时按位置比较，不做名字对齐。 */
+export const MAX_ALIGN_CELLS = 1_000_000;
+
+/** 两个序列的 LCS 长度（两行滚动数组，行长取较短的一边）。 */
+function lcsLength<T>(x: readonly T[], y: readonly T[], eq: (p: T, q: T) => boolean): number {
+  const [a, b] = x.length >= y.length ? [x, y] : [y, x];
   let prev = new Array<number>(b.length + 1).fill(0);
   let cur = new Array<number>(b.length + 1).fill(0);
   for (let i = 1; i <= a.length; i++) {
@@ -64,7 +69,13 @@ export function textSimilarity(a: string, b: string): number {
 function alignByName(a: readonly Call[], b: readonly Call[]): [number, number][] {
   const n = a.length;
   const m = b.length;
-  // 工具调用数很少，完整 DP 表即可
+  if (n * m > MAX_ALIGN_CELLS) {
+    // 规模过大：按位置比较（同一位置同名的算对上，其余由 gap 按位置配对为 name_changed / added / removed）
+    const pairs: [number, number][] = [];
+    for (let i = 0; i < Math.min(n, m); i++) if (a[i]?.name === b[i]?.name) pairs.push([i, i]);
+    return pairs;
+  }
+  // 工具调用数通常很少，完整 DP 表即可
   const t: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {

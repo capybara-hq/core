@@ -9,6 +9,7 @@ import type {
   EvalResultStatus,
   EvalResultsTable,
   EvalRunStatus,
+  JudgeStatus,
   KernelDb,
 } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -24,6 +25,7 @@ import {
   type CasePlan,
   casePlan,
   recountCases,
+  skipPendingJudges,
   usageTokens,
 } from "./budget.js";
 import type { CaseSnapshot } from "./snapshot.js";
@@ -66,6 +68,8 @@ export interface EvalSummary {
   toolCallsMatchRate: number | null;
   meanTextSimilarity: number | null;
   judgePassRate: number | null;
+  /** 评委失败（解析失败 / 请求失败）的结果数。 */
+  judgeErrors: number;
   humanPassRate: number | null;
   labeled: number;
   drifted: number;
@@ -102,6 +106,8 @@ export interface EvalResultView {
   candidate: unknown | null;
   diff: unknown | null;
   judge: unknown | null;
+  /** 评委状态：none（不评）/ pending / done / error / skipped。 */
+  judgeStatus: JudgeStatus;
   drift: string[];
   error: unknown | null;
   evalConversationId: string | null;
@@ -255,6 +261,7 @@ function resultView(r: ResultRow): EvalResultView {
     candidate: r.candidate,
     diff: r.diff,
     judge: r.judge,
+    judgeStatus: r.judge_status,
     drift: r.drift,
     error: r.error,
     evalConversationId: r.eval_conversation_id,
@@ -605,6 +612,7 @@ export class EvalRunsService {
         sql<string>`count(*) FILTER (WHERE status = 'error')`.as("errors"),
         sql<string>`count(*) FILTER (WHERE status = 'skipped')`.as("skipped"),
         sql<string>`count(*) FILTER (WHERE label IS NOT NULL)`.as("labeled"),
+        sql<string>`count(*) FILTER (WHERE judge_status = 'error')`.as("judge_errors"),
         sql<string>`count(*) FILTER (WHERE cardinality(drift) > 0)`.as("drifted"),
         // 结构差异只在 done 的结果上有；评委比率只算给出了结论的（解析失败 / 请求失败不计）
         sql<string | null>`avg(CASE WHEN (diff->>'toolCallsMatch')::boolean THEN 1.0 ELSE 0.0 END)
@@ -628,6 +636,7 @@ export class EvalRunsService {
         toolCallsMatchRate: rate(a?.tool_rate),
         meanTextSimilarity: rate(a?.text_sim),
         judgePassRate: rate(a?.judge_rate),
+        judgeErrors: Number(a?.judge_errors ?? 0),
         humanPassRate: rate(a?.human_rate),
         labeled: Number(a?.labeled ?? 0),
         drifted: Number(a?.drifted ?? 0),
@@ -741,6 +750,7 @@ export class EvalRunsService {
         .where("run_id", "=", runId)
         .where("status", "=", "pending")
         .execute();
+      await skipPendingJudges(trx, runId);
       // 尚未开始的用例此刻已全部结束：进度立即反映（在途的用例做完后由 worker 再重算）
       await recountCases(trx, runId);
       await audit(trx, {
@@ -768,6 +778,15 @@ export class EvalRunsService {
     if (!UUID.test(resultId)) throw resultNotFound();
     const row = await this.d.db.transaction().execute(async (trx) => {
       await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      // 先锁住这条结果、读出原标注（写进审计）
+      const before = await trx
+        .selectFrom("eval_results")
+        .select("label")
+        .where("id", "=", resultId)
+        .where("org_id", "=", orgId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!before) throw resultNotFound();
       const cleared = input.label === null;
       const r = await trx
         .updateTable("eval_results")
@@ -799,7 +818,7 @@ export class EvalRunsService {
         orgId,
         action: "eval.result_labeled",
         target: resultId,
-        detail: { runId: r.run_id, label: input.label },
+        detail: { runId: r.run_id, label: input.label, previousLabel: before.label },
       });
       return r;
     });

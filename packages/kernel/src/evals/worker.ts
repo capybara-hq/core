@@ -8,12 +8,19 @@ import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { ModelPurposesService } from "../models/purposes.js";
+import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
 import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
 import { ProviderListError } from "../runtime/providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
 import { bullConnection } from "../runtime/run-queue.js";
-import { consumeTokens, recordOutcome, recountCases, runActive, usageTokens } from "./budget.js";
+import {
+  consumeTokens,
+  recordOutcome,
+  recountCases,
+  runActive,
+  skipPendingJudges,
+  usageTokens,
+} from "./budget.js";
 import { replyParts, structuralDiff } from "./diff.js";
 import { judge } from "./judge.js";
 import type { DriftReason } from "./reconstruct.js";
@@ -163,6 +170,46 @@ function renderReply(toolCalls: { name: string; input: unknown }[], text: string
 interface Grading {
   judge: boolean;
   rubric: string | null;
+}
+
+/** 一边（基线或候选）给评委看的内容：单步取回复的内容块，整轮取工具调用序列与最后的回复。 */
+function sideOf(
+  mode: "step" | "run",
+  v: unknown,
+): { toolCalls: { name: string; input: unknown }[]; text: string } {
+  if (mode === "step") return replyParts((v as { content?: ContentBlock[] } | null)?.content ?? []);
+  const r = v as {
+    toolCalls?: { name: string; input: unknown }[];
+    finalContent?: ContentBlock[];
+  } | null;
+  return { toolCalls: r?.toolCalls ?? [], text: replyParts(r?.finalContent ?? []).text };
+}
+
+/**
+ * 评委的输入（由结果里存的基线 / 候选得出，崩溃后补评委时同样可用）：用户请求 = 该调用（整轮为原运行开始）之前
+ * 最近一条用户消息；回复 = 工具调用在前、文本在后。
+ */
+function judgeInputOf(
+  s: CaseSnapshot,
+  mode: "step" | "run",
+  modelCallSeq: number | null,
+  baseline: unknown,
+  candidate: unknown,
+  rubric: string | null,
+): Parameters<typeof judge>[2] {
+  const start = s.events.find((e) => e.runId === s.runId && e.type === "run_started");
+  const before =
+    mode === "step" && modelCallSeq !== null
+      ? modelCallSeq
+      : (start?.seq ?? Number.POSITIVE_INFINITY);
+  const b = sideOf(mode, baseline);
+  const c = sideOf(mode, candidate);
+  return {
+    userRequest: userRequestOf(s, before),
+    baseline: renderReply(b.toolCalls, b.text),
+    candidate: renderReply(c.toolCalls, c.text),
+    rubric,
+  };
 }
 
 export class EvalWorker {
@@ -327,12 +374,18 @@ export class EvalWorker {
     const grade: Grading = { judge: run.judge, rubric: run.rubric };
     const s = row.snapshot as CaseSnapshot;
     const candidate = run.candidate as EvalCandidate;
+    // 未结束的结果，以及已 done 但评委还没做的（上一次执行在评委之前崩溃 / 停机）
     const pending = await db
       .selectFrom("eval_results")
-      .select(["id", "model_call_seq"])
+      .select(["id", "model_call_seq", "status"])
       .where("run_id", "=", runId)
       .where("case_id", "=", caseId)
-      .where("status", "in", [...UNFINISHED])
+      .where((eb) =>
+        eb.or([
+          eb("status", "in", [...UNFINISHED]),
+          eb.and([eb("status", "=", "done"), eb("judge_status", "=", "pending")]),
+        ]),
+      )
       .orderBy("model_call_seq")
       .execute();
     if (pending.length === 0) return;
@@ -345,9 +398,12 @@ export class EvalWorker {
           await versionDefinition(db, s.agentId, candidate.agentVersion),
         )
       : null;
-    if (run.mode === "run") {
+    const mode = run.mode;
+    if (mode === "run") {
       const [r] = pending;
-      if (r) await this.runWhole(data, claim, signal, s, resolved, r.id, grade);
+      if (!r) return;
+      if (r.status === "done") await this.judgeLeftover(data, r.id, claim, signal, s, mode, grade);
+      else await this.runWhole(data, claim, signal, s, resolved, r.id, grade);
       return;
     }
     const calls = new Map(replayableCalls(s).map((c) => [c.seq, c]));
@@ -357,6 +413,14 @@ export class EvalWorker {
       if (!(await runActive(db, runId))) {
         await this.skipCase(data);
         return;
+      }
+      if (r.status === "done") {
+        const j = await this.judgeLeftover(data, r.id, claim, signal, s, mode, grade);
+        if (j === "capped") {
+          await this.skipCase(data);
+          return;
+        }
+        continue;
       }
       const claimed = await db
         .updateTable("eval_results")
@@ -434,6 +498,8 @@ export class EvalWorker {
             baseline: JSON.stringify(result.baseline),
             candidate: JSON.stringify(result.candidate),
             diff: JSON.stringify(diff),
+            // 开了评委：评委做完之前用例不算做完（recountCases 不计 pending 的评委）
+            judge_status: grade.judge ? "pending" : "none",
             drift: result.drift,
             error: null,
             updated_at: sql`now()`,
@@ -457,12 +523,13 @@ export class EvalWorker {
         return;
       }
       if (grade.judge) {
-        const j = await this.judgeResult(data, r.id, claim, signal, {
-          userRequest: userRequestOf(s, call.seq),
-          baseline: renderReply(b.toolCalls, b.text),
-          candidate: renderReply(c.toolCalls, c.text),
-          rubric: grade.rubric,
-        });
+        const j = await this.judgeResult(
+          data,
+          r.id,
+          claim,
+          signal,
+          judgeInputOf(s, mode, call.seq, result.baseline, result.candidate, grade.rubric),
+        );
         if (j === "capped") {
           await this.skipCase(data);
           return;
@@ -472,9 +539,44 @@ export class EvalWorker {
   }
 
   /**
-   * 评委（结果已写 done 之后）：运行仍活跃才发请求（取消 / 越限 / 熔断后不再发）。结论或失败原因只在仍由本次执行
-   * 认领时写进 `judge`；用量不以认领为条件计入（请求确实发出了）。返回 `capped` 表示评委的用量让运行达到上限。
-   * 评委失败不计入熔断（结果本身是 done）。
+   * 补做评委：结果已 done、`judge_status = 'pending'`（上一次执行在评委之前崩溃 / 停机）。按本次执行的认领号重新认领
+   * （条件仍是 done + pending），由结果里存的基线 / 候选得出评委输入；候选请求不重发。
+   */
+  private async judgeLeftover(
+    data: EvalJobData,
+    resultId: string,
+    claim: string,
+    signal: AbortSignal,
+    s: CaseSnapshot,
+    mode: "step" | "run",
+    grade: Grading,
+  ): Promise<"ok" | "capped" | "inactive" | "lost"> {
+    const row = await this.d.db
+      .updateTable("eval_results")
+      .set({ claimed_by: claim, updated_at: sql`now()` })
+      .where("id", "=", resultId)
+      .where("status", "=", "done")
+      .where("judge_status", "=", "pending")
+      .returning(["model_call_seq", "baseline", "candidate"])
+      .executeTakeFirst();
+    if (!row) return "lost";
+    const seq = row.model_call_seq === null ? null : Number(row.model_call_seq);
+    return this.judgeResult(
+      data,
+      resultId,
+      claim,
+      signal,
+      judgeInputOf(s, mode, seq, row.baseline, row.candidate, grade.rubric),
+    );
+  }
+
+  /**
+   * 评委（结果已写 done、`judge_status = 'pending'` 之后）：
+   * - 运行不再活跃（取消 / 越限 / 熔断）→ 不发请求，评委记 `skipped`；
+   * - 先按用量（失败按估算）`consumeTokens`，不以认领为条件（请求确实发出了）；再在仍由本次执行认领、且仍是 pending
+   *   时写结论（`judge_status` done / error）。写之前出 DB 错误按崩溃处理：重试时补评委（会再发一次评委请求）；
+   * - 停机中止：已发出的评委请求按估算计费，任务回到队列，接手的执行补评委。
+   * 评委失败不计入熔断（结果本身是 done）。返回 `capped` 表示评委的用量让运行达到上限。
    */
   private async judgeResult(
     data: EvalJobData,
@@ -484,18 +586,35 @@ export class EvalWorker {
     input: Parameters<typeof judge>[2],
   ): Promise<"ok" | "capped" | "inactive"> {
     const db = this.d.db;
-    if (!(await runActive(db, data.runId))) return "inactive";
-    const v = await judge(
-      {
-        purposes: this.d.purposes,
-        maxOutputTokens: this.d.config().evals.judgeMaxOutputTokens,
-      },
-      data.orgId,
-      input,
-      signal,
-    );
-    if (signal.aborted) throw new Aborted();
+    if (!(await runActive(db, data.runId))) {
+      await db
+        .updateTable("eval_results")
+        .set({ judge_status: "skipped", updated_at: sql`now()` })
+        .where("id", "=", resultId)
+        .where("judge_status", "=", "pending")
+        .execute();
+      return "inactive";
+    }
+    await this.d.runReplay.hooks?.beforeJudge?.(data.runId);
+    let v: Awaited<ReturnType<typeof judge>>;
+    try {
+      v = await judge(
+        {
+          purposes: this.d.purposes,
+          maxOutputTokens: this.d.config().evals.judgeMaxOutputTokens,
+        },
+        data.orgId,
+        input,
+        signal,
+      );
+    } catch (err) {
+      // 中止时已发出的评委请求：按估算计费（与失败的回放尝试一致）
+      if (err instanceof PurposeAttemptError) await consumeTokens(db, data.runId, err.tokens);
+      if (signal.aborted) throw new Aborted();
+      throw err;
+    }
     const tokens = "error" in v ? v.tokens : usageTokens(v.usage);
+    const { capped } = await consumeTokens(db, data.runId, tokens);
     const stored =
       "error" in v
         ? {
@@ -504,16 +623,19 @@ export class EvalWorker {
             ...(v.model !== undefined && { model: v.model }),
           }
         : v;
-    const capped = await db.transaction().execute(async (trx) => {
-      await trx
-        .updateTable("eval_results")
-        .set({ judge: JSON.stringify(stored), updated_at: sql`now()` })
-        .where("id", "=", resultId)
-        .where("status", "=", "done")
-        .where("claimed_by", "=", claim)
-        .execute();
-      return (await consumeTokens(trx, data.runId, tokens)).capped;
-    });
+    await db
+      .updateTable("eval_results")
+      .set({
+        judge: JSON.stringify(stored),
+        judge_status: "error" in v ? "error" : "done",
+        updated_at: sql`now()`,
+      })
+      .where("id", "=", resultId)
+      .where("status", "=", "done")
+      .where("judge_status", "=", "pending")
+      .where("claimed_by", "=", claim)
+      .execute();
+    if (signal.aborted) throw new Aborted();
     return capped ? "capped" : "ok";
   }
 
@@ -624,6 +746,7 @@ export class EvalWorker {
           baseline: JSON.stringify(baseline),
           candidate: JSON.stringify(out),
           diff: JSON.stringify(diff),
+          judge_status: grade.judge ? "pending" : "none",
           drift,
           error: null,
           eval_conversation_id: out.conversationId,
@@ -638,13 +761,13 @@ export class EvalWorker {
       return true;
     });
     if (!written || !grade.judge) return;
-    const start = s.events.find((e) => e.runId === s.runId && e.type === "run_started");
-    await this.judgeResult(data, resultId, claim, signal, {
-      userRequest: userRequestOf(s, start?.seq ?? Number.POSITIVE_INFINITY),
-      baseline: renderReply(baseline.toolCalls, baseText),
-      candidate: renderReply(out.toolCalls, candText),
-      rubric: grade.rubric,
-    });
+    await this.judgeResult(
+      data,
+      resultId,
+      claim,
+      signal,
+      judgeInputOf(s, "run", null, baseline, out, grade.rubric),
+    );
   }
 
   /** 该用例剩下的结果标 skipped。 */
@@ -656,6 +779,7 @@ export class EvalWorker {
       .where("case_id", "=", data.caseId)
       .where("status", "in", [...UNFINISHED])
       .execute();
+    await skipPendingJudges(this.d.db, data.runId, data.caseId);
   }
 
   /** BullMQ 判定任务失败（stalled 次数超限或重试用尽）：剩下的结果记 error，再重算进度。 */
@@ -698,6 +822,8 @@ export class EvalWorker {
       .where("case_id", "=", data.caseId)
       .where("status", "in", [...UNFINISHED])
       .execute();
+    // 已 done 但评委一直没做成的：评委记 skipped（结果本身保留）
+    await skipPendingJudges(this.d.db, data.runId, data.caseId);
     await recountCases(this.d.db, data.runId);
   }
 }

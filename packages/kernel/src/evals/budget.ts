@@ -87,7 +87,25 @@ export async function recordOutcome(
 }
 
 /**
- * 重算 `cases_done` = 结果全部结束的用例数（幂等：任务重做不会重复计数），达到 `cases_total` 且运行仍在执行 →
+ * 运行停下（取消 / 越限 / 熔断 / 删除评测集）时：还在等评委的结果（`judge_status = 'pending'`）记 `skipped`，
+ * 否则这些用例永远算不上做完。给了 `caseId` 只处理该用例。在途的评委请求做完后写不进来（条件是 pending），用量照样计入。
+ */
+export async function skipPendingJudges(
+  db: KernelDb,
+  runId: string,
+  caseId?: string,
+): Promise<void> {
+  let q = db
+    .updateTable("eval_results")
+    .set({ judge_status: "skipped", updated_at: sql`now()` })
+    .where("run_id", "=", runId)
+    .where("judge_status", "=", "pending");
+  if (caseId !== undefined) q = q.where("case_id", "=", caseId);
+  await q.execute();
+}
+
+/**
+ * 重算 `cases_done` = 结果全部结束、且没有等评委的结果的用例数（幂等：任务重做不会重复计数），达到 `cases_total` 且运行仍在执行 →
  * `completed`。先锁运行行再数（READ COMMITTED 下新语句看得到其他任务已提交的结果），并发完成的任务不会互相覆盖。
  * worker 每做完一个用例、取消、入队失败时都调用。在事务里调用时锁随事务释放。
  */
@@ -103,7 +121,8 @@ export async function recountCases(db: KernelDb, runId: string): Promise<void> {
     const r = await sql<{ n: string }>`
       SELECT count(*) AS n FROM (
         SELECT case_id FROM capybara.eval_results WHERE run_id = ${runId}
-        GROUP BY case_id HAVING bool_and(status IN ('done', 'error', 'skipped'))
+        GROUP BY case_id
+        HAVING bool_and(status IN ('done', 'error', 'skipped') AND judge_status <> 'pending')
       ) finished`.execute(trx);
     const done = Number(r.rows[0]?.n ?? 0);
     const complete =

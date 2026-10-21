@@ -68,6 +68,10 @@ export interface EvalReplayHooks {
   beforeCheck?(evalRunId: string): Promise<void>;
   /** 每次计费（`consumeTokens`）之前调用：抛错即模拟计费时的 DB 故障。 */
   beforeCharge?(evalRunId: string): Promise<void>;
+  /** 删除评测对话之前调用：抛错即模拟删除时的 DB 故障。 */
+  beforeDeleteConversation?(conversationId: string): Promise<void>;
+  /** 每次评委请求之前调用（worker）：抛错即模拟「结果已 done、评委未做」时崩溃。 */
+  beforeJudge?(evalRunId: string): Promise<void>;
 }
 
 export interface RunReplayDeps {
@@ -184,9 +188,10 @@ export function runBaseline(s: CaseSnapshot): RunBaseline {
  * 只删 `kind = 'eval'` 的对话。
  */
 export async function deleteEvalConversation(
-  d: Pick<RunReplayDeps, "db" | "checkpoints">,
+  d: Pick<RunReplayDeps, "db" | "checkpoints" | "hooks">,
   conversationId: string,
 ): Promise<void> {
+  await d.hooks?.beforeDeleteConversation?.(conversationId);
   const runs = await d.db
     .selectFrom("runs")
     .innerJoin("conversations", "conversations.id", "runs.conversation_id")

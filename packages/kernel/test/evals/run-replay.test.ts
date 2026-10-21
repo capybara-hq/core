@@ -60,6 +60,8 @@ let checkFailures = 0;
 let chargeFailures = 0;
 let checkFailed = 0;
 let chargeFailed = 0;
+/** 置为 true 时删除评测对话一律失败。 */
+let deleteFails = false;
 
 let owner: Req;
 let admin: Req;
@@ -96,6 +98,10 @@ beforeAll(async () => {
           if (checkFailures > 0) checkFailures--;
           checkFailed++;
           throw new Error("simulated PG error in the request check");
+        },
+        async beforeDeleteConversation() {
+          if (deleteFails)
+            throw new Error("simulated PG error while deleting the eval conversation");
         },
         async beforeCharge() {
           if (chargeFailures === 0) return;
@@ -730,6 +736,43 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       expect(convs).toHaveLength(0);
     } finally {
       chargeFailures = 0;
+    }
+  });
+
+  it("尝试用尽后删除评测对话也失败：结果照常记 error，运行照常结束", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "delerr", 'tool:tools-count__count:{"n":2}', [
+      { name: "tools-count__count", input: { n: 2 }, content: "counted 2" },
+    ]);
+    await addCase(setId, conv, "delerr");
+    chargeFailures = -1;
+    deleteFails = true;
+    try {
+      const run = await startRun(setId, {});
+      const rs = await waitFor(
+        async () => {
+          const x = await results(run.id);
+          return x.every((r) => !["pending", "running"].includes(r.status)) ? x : null;
+        },
+        45_000,
+        "result settled",
+        100,
+      );
+      expect(rs[0]?.status).toBe("error");
+      expect((rs[0]?.error as { code?: string } | null)?.code).toBe("eval.internal");
+      expect(rs[0]?.evalConversationId).toBeNull();
+      expect((await finished(run.id)).status).toBe("completed");
+      // 删不掉的评测对话留下（随评测集删除清掉）
+      const convs = await db
+        .selectFrom("conversations")
+        .select("id")
+        .where("eval_run_id", "=", run.id)
+        .execute();
+      expect(convs).toHaveLength(1);
+    } finally {
+      chargeFailures = 0;
+      deleteFails = false;
     }
   });
 });

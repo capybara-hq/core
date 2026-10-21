@@ -59,6 +59,11 @@ describe("parseVerdict", () => {
       '{"verdict":"pass","score":"4","reason":"x"}',
       '{"verdict":"maybe","score":3,"reason":"x"}',
       '{"verdict":"pass","score":3}',
+      // verdict 与 score 矛盾：pass 只能 3–5，fail 只能 1–2
+      '{"verdict":"pass","score":1,"reason":"x"}',
+      '{"verdict":"pass","score":2,"reason":"x"}',
+      '{"verdict":"fail","score":3,"reason":"x"}',
+      '{"verdict":"fail","score":5,"reason":"x"}',
       "[1,2]",
       "pass",
       "",
@@ -126,6 +131,8 @@ describe("judge", () => {
     expect(JUDGE_SYSTEM).toMatch(/data/i);
     expect(JUDGE_SYSTEM).toMatch(/ignore/i);
     expect(JUDGE_SYSTEM).toMatch(/at least as good as the baseline/i);
+    expect(JUDGE_SYSTEM).toMatch(/"pass" requires a score of 3 to 5/);
+    expect(JUDGE_SYSTEM).toMatch(/"fail" requires a score of 1 or 2/);
     expect(JUDGE_SYSTEM).toContain(
       '{"verdict":"pass"|"fail","score":1-5,"reason":"<one sentence>"}',
     );
@@ -224,6 +231,10 @@ const MODEL_EVAL = fileURLToPath(
 );
 const JUDGE_MODEL = { provider: "model-eval", model: "eval-j" };
 
+/** 置为 true 时，下一次评委请求之前模拟崩溃一次（结果已 done、评委未做）。 */
+let judgeCrashOnce = false;
+let judgeCrashes = 0;
+
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
@@ -237,8 +248,21 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { plugins: [MODEL_FAKE, MODEL_EVAL], evals: { judgeMaxOutputTokens: 321 } },
+      {
+        plugins: [MODEL_FAKE, MODEL_EVAL],
+        evals: { judgeMaxOutputTokens: 321, orgConcurrency: 2 },
+      },
     ),
+    {
+      evalHooks: {
+        async beforeJudge() {
+          if (!judgeCrashOnce) return;
+          judgeCrashOnce = false;
+          judgeCrashes++;
+          throw new Error("simulated crash before the judge request");
+        },
+      },
+    },
   );
 }, 120_000);
 afterAll(async () => {
@@ -290,8 +314,8 @@ beforeEach(async () => {
 const setsUrl = () => `/api/v1/orgs/${orgId}/eval-sets`;
 const runsUrl = () => `/api/v1/orgs/${orgId}/eval-runs`;
 
-/** 一个用例：真实运行 `echo:<text>`（model-fake 原样回复）。 */
-async function echoSet(text: string, rubric?: string): Promise<string> {
+/** 每个文本一个用例：真实运行 `echo:<text>`（model-fake 原样回复）。 */
+async function echoSet(texts: string | string[], rubric?: string): Promise<string> {
   const res = await admin({
     method: "POST",
     url: setsUrl(),
@@ -299,6 +323,11 @@ async function echoSet(text: string, rubric?: string): Promise<string> {
   });
   expect(res.statusCode, res.body).toBe(201);
   const setId = (res.json() as { set: EvalSetView }).set.id;
+  for (const text of typeof texts === "string" ? [texts] : texts) await echoCase(setId, text);
+  return setId;
+}
+
+async function echoCase(setId: string, text: string): Promise<void> {
   const conv = await createConv(alice, orgId, agentId);
   await postMessage(alice, orgId, conv, `echo:${text}`);
   await waitForTerminal(db, conv);
@@ -313,7 +342,6 @@ async function echoSet(text: string, rubric?: string): Promise<string> {
     payload: { conversationId: conv, runId: src.id },
   });
   expect(c.statusCode, c.body).toBe(201);
-  return setId;
 }
 
 async function runToEnd(setId: string, body: Record<string, unknown>) {
@@ -433,6 +461,8 @@ describe("评测运行里的评委", () => {
     expect(run.status).toBe("capped");
     expect(results[0]?.status).toBe("done");
     expect(results[0]?.judge).toBeNull();
+    // 等评委的结果在运行越限后记为 skipped（运行因此能结束）
+    expect(results[0]?.judgeStatus).toBe("skipped");
     expect(judgeRequests()).toHaveLength(0);
   });
 
@@ -453,5 +483,64 @@ describe("评测运行里的评委", () => {
     expect(results[0]?.judge).toBeNull();
     expect(results[0]?.diff).toMatchObject({ toolCallsMatch: true });
     expect(judgeRequests()).toHaveLength(0);
+  });
+
+  it("两个用例并行、评委有延迟：运行 completed 时每条结论都已写入", async () => {
+    // 第一个评委请求慢、第二个快：快的用例先做完时，慢的用例仍在等评委，运行不能在此时 completed
+    evalModelState().delays = [1500, 50];
+    const setId = await echoSet(["alpha", "beta"]);
+    const res = await admin({
+      method: "POST",
+      url: `${setsUrl()}/${setId}/runs`,
+      payload: { mode: "step", candidate: {}, judge: true },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const id = (res.json() as { run: EvalRunView }).run.id;
+    const run = await waitFor(
+      async () => {
+        const r = await admin({ method: "GET", url: `${runsUrl()}/${id}` });
+        const v = (r.json() as { run: EvalRunView }).run;
+        return ["queued", "running"].includes(v.status) ? null : v;
+      },
+      20_000,
+      "eval run finished",
+      20,
+    );
+    // 一结束就读：结论必须已经全部写入
+    const r = await admin({ method: "GET", url: `${runsUrl()}/${id}/results?limit=200` });
+    const rs = (r.json() as { results: EvalResultView[] }).results;
+    expect(run.status).toBe("completed");
+    expect(rs).toHaveLength(2);
+    for (const x of rs) {
+      expect(x.status).toBe("done");
+      expect(x.judgeStatus).toBe("done");
+      expect(x.judge).toMatchObject({ verdict: "pass" });
+    }
+    expect(run.summary).toMatchObject({ judgePassRate: 1, judgeErrors: 0 });
+    expect(judgeRequests()).toHaveLength(2);
+  });
+
+  it("结果已 done、评委未做时崩溃：重试只补评委，不重发候选请求", async () => {
+    judgeCrashes = 0;
+    judgeCrashOnce = true;
+    const setId = await echoSet("crash judge");
+    const { run, results } = await runToEnd(setId, { mode: "step", candidate: {}, judge: true });
+    expect(judgeCrashes).toBe(1);
+    expect(run.status).toBe("completed");
+    const r = results[0] as EvalResultView;
+    expect(r.status).toBe("done");
+    expect(r.judgeStatus).toBe("done");
+    expect(r.judge).toMatchObject({ verdict: "pass", model: "eval-j" });
+    expect(judgeRequests()).toHaveLength(1);
+    // 候选只计一次
+    expect(run.tokensUsed).toBe(total((r.candidate as { usage: typeof USAGE }).usage) + 100);
+  });
+
+  it("评委失败计入 judgeErrors", async () => {
+    evalModelState().judgeReply = "nope";
+    const setId = await echoSet(["e1", "e2"]);
+    const { run, results } = await runToEnd(setId, { mode: "step", candidate: {}, judge: true });
+    expect(results.map((x) => x.judgeStatus)).toEqual(["error", "error"]);
+    expect(run.summary).toMatchObject({ judgeErrors: 2, judgePassRate: null });
   });
 });

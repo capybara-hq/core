@@ -6,7 +6,7 @@ import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
 import type { PricesService } from "../models/prices.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
-import { recountCases } from "./budget.js";
+import { recountCases, skipPendingJudges } from "./budget.js";
 import { type CaseSnapshot, replayableCalls, takeSnapshot, toEvents } from "./snapshot.js";
 import { buildTrajectory, type TrajectoryRun } from "./trajectory.js";
 
@@ -630,6 +630,7 @@ async function stopAndPurgeRuns(trx: KernelDb, setId: string): Promise<void> {
       .where("run_id", "=", r.id)
       .where("status", "=", "pending")
       .execute();
+    await skipPendingJudges(trx, r.id);
     await recountCases(trx, r.id);
   }
   const all = trx.selectFrom("eval_runs").select("id").where("set_id", "=", setId);

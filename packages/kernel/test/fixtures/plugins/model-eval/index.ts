@@ -24,6 +24,8 @@ export interface EvalModelState {
   maxInflight: number;
   /** 每次请求回复前等待的毫秒数。 */
   delayMs: number;
+  /** 接下来的若干次请求依次等待的毫秒数（取出即用掉；用完后按 `delayMs`）。 */
+  delays: number[];
   /** 每次请求报告的输入 token 数。 */
   tokens: number;
   /** 接下来的若干次请求依次抛出的错误（取出即用掉）。 */
@@ -45,6 +47,7 @@ export function evalModelState(): EvalModelState {
     inflight: 0,
     maxInflight: 0,
     delayMs: 0,
+    delays: [],
     tokens: 100,
     failures: [],
     streamThenFail: null,
@@ -60,6 +63,7 @@ export function resetEvalModel(): void {
   s.inflight = 0;
   s.maxInflight = 0;
   s.delayMs = 0;
+  s.delays = [];
   s.tokens = 100;
   s.failures = [];
   s.streamThenFail = null;
@@ -128,7 +132,7 @@ export default definePlugin({
         s.inflight++;
         s.maxInflight = Math.max(s.maxInflight, s.inflight);
         try {
-          await sleep(s.delayMs, signal);
+          await sleep(s.delays.shift() ?? s.delayMs, signal);
           const fail = s.failures.shift();
           if (fail) throw fail;
           if (s.streamThenFail) {

@@ -656,6 +656,8 @@ export interface EvalRunsTable {
 }
 
 export type EvalResultStatus = "pending" | "running" | "done" | "error" | "skipped";
+/** 0029：评委状态（pending = 结果已 done、评委还没做）。 */
+export type JudgeStatus = "none" | "pending" | "done" | "error" | "skipped";
 
 /** 0028_evals.sql：评测结果（每用例一行或每步一行，T4 起写入）。 */
 export interface EvalResultsTable {
@@ -678,6 +680,7 @@ export interface EvalResultsTable {
   error: ColumnType<unknown | null, string | null | undefined, string | null>;
   eval_conversation_id: string | null;
   claimed_by: ColumnType<string | null, string | null | undefined, string | null>;
+  judge_status: ColumnType<JudgeStatus, JudgeStatus | undefined, JudgeStatus>;
   label: "pass" | "fail" | null;
   label_note: string | null;
   labeled_by: string | null;
