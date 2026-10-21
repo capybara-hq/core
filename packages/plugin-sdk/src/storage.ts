@@ -26,7 +26,10 @@ export interface ObjectStore {
     body: Uint8Array | ReadableStream<Uint8Array>,
     opts: { contentType: string; size?: number; signal?: AbortSignal },
   ): Promise<ObjectHead>;
-  /** 读取；不存在返回 null。`range` 为闭区间字节范围，缺省 `end` 表示读到末尾。 */
+  /**
+   * 读取；不存在返回 null。`range` 为闭区间字节范围，缺省 `end` 表示读到末尾。
+   * 带 `range` 时 `head.size` 仍是整个对象的大小；存储忽略 Range 时 body 可能是整个对象。
+   */
   get(
     key: string,
     opts?: { signal?: AbortSignal; range?: { start: number; end?: number } },

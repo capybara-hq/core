@@ -281,7 +281,7 @@ async function runStep(
         looked: new Set(),
         info: new Map(),
         bytes: new Map(),
-        run: input.mediaCache ?? new MediaCache(),
+        run: input.mediaCache ?? new MediaCache(deps.config().attachments.requestMediaBytes),
       },
     };
     events = await maybeCompact(deps, input, events, runtime, tools);
@@ -801,7 +801,12 @@ async function ladder(
       });
       if (!f.retryable) {
         if (REJECTS_MEDIA.has(f.code) && sentMedia.length > 0) {
-          await excludeMedia(deps, input, attempt, sentMedia);
+          // 记录失败不能掩盖原来的失败码：只记 warn，本次运行照常以原错误失败
+          try {
+            await excludeMedia(deps, input, attempt, sentMedia);
+          } catch (e) {
+            deps.log.warn("cannot record media_excluded", { conversationId, runId, step, err: e });
+          }
         }
         throw new RunError(f.code, f.message);
       }

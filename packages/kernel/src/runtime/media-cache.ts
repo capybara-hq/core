@@ -1,10 +1,8 @@
 import type { MediaBytes, MediaInfo } from "./context/build.js";
 
-/** 每次运行的媒体缓存默认上限（字节）。 */
-export const MEDIA_CACHE_MAX_BYTES = 64 * 1024 * 1024;
-
 /**
  * 一次运行内的附件字节缓存（进程内，LRU，按总字节数封顶）：同一次运行的后续步骤不再重复取同一附件。
+ * 上限取 `attachments.requestMediaBytes`：一次请求带的媒体字节不超过它，缓存再大也用不上。
  *
  * 多副本下允许：键含 finalize 时的 etag 与大小（内容不可变），只是优化——缓存未命中时照常从存储取，
  * 不同副本之间不共享、也不需要一致；随运行结束丢弃。
@@ -13,7 +11,7 @@ export class MediaCache {
   private readonly entries = new Map<string, MediaBytes>();
   private total = 0;
 
-  constructor(private readonly maxBytes = MEDIA_CACHE_MAX_BYTES) {}
+  constructor(private readonly maxBytes: number) {}
 
   /** 缓存键：附件 id、etag、声明大小与取的字节上限（`text/*` 只取开头）。 */
   static key(attachmentId: string, info: MediaInfo, cap: number | undefined): string {

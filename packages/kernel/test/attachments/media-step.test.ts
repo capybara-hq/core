@@ -406,6 +406,40 @@ describe("供应商拒收媒体（Ruling M8 / I1）", () => {
     });
   });
 
+  it("写 media_excluded 失败：只记 warn，仍以原来的 RunError 失败", async () => {
+    const id = image(new Uint8Array([9, 9]));
+    await say("look", [id]);
+    rejectMedia = true;
+    const warned: string[] = [];
+    const brokenLog = Object.create(eventLog) as EventLog;
+    brokenLog.append = async (c, evs) => {
+      if (evs.some((e) => e.type === "media_excluded")) throw new Error("db down");
+      return eventLog.append(c, evs);
+    };
+    const err = await runModelStep(
+      {
+        ...deps,
+        eventLog: brokenLog,
+        log: { ...silent, warn: (msg: string) => void warned.push(msg) },
+      },
+      {
+        orgId,
+        conversationId,
+        runId: randomUUID(),
+        step: 1,
+        agent: agent("see"),
+        agentVersion: 1,
+        absorbedUpToSeq: 1_000_000_000,
+        signal: new AbortController().signal,
+        sink: () => {},
+      },
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RunError);
+    expect((err as RunError).code).toBe("model.invalid_request");
+    expect(warned).toContain("cannot record media_excluded");
+    expect(await eventsOfType("media_excluded")).toHaveLength(0);
+  });
+
   it("请求里没有媒体字节：invalid_request 不写 media_excluded", async () => {
     const id = image(new Uint8Array([1, 2]));
     await say("look", [id]);
@@ -435,7 +469,7 @@ describe("每次运行的媒体缓存（9）", () => {
     const id = image(new Uint8Array([7, 7, 7]));
     rows.set(id, { size: 3, pages: null, etag: "e" });
     await say("look", [id]);
-    const cache = new MediaCache();
+    const cache = new MediaCache(budget);
     const runId = randomUUID();
     await step(agent("see"), { runId, step: 1, mediaCache: cache });
     await step(agent("see"), { runId, step: 2, mediaCache: cache });
