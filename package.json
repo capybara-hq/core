@@ -34,6 +34,7 @@
     "@capybara-hq/plugin-connector-openapi": "workspace:*",
     "@capybara-hq/plugin-example-counter": "workspace:*",
     "@capybara-hq/plugin-model-fake": "workspace:*",
+    "@capybara-hq/plugin-object-store-s3": "workspace:*",
     "@capybara-hq/plugin-openai": "workspace:*",
     "@capybara-hq/plugin-openai-compatible": "workspace:*",
     "@changesets/cli": "^3.0.3",

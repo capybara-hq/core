@@ -47,6 +47,8 @@ export interface OrgsTable {
   settings: Json;
   created_at: Ts;
   deleted_at: TsNullable;
+  /** 0021：已删除组织的对象存储清理完成时间（storage/purge.ts）；插入可省略。 */
+  storage_purged_at: TsNullable;
 }
 
 export interface MembershipsTable {

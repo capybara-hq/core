@@ -1,4 +1,11 @@
-export { startTestPostgres, startTestRedis, type TestContainer } from "./containers.js";
+export {
+  startTestMinio,
+  startTestPostgres,
+  startTestRedis,
+  TEST_MINIO_IMAGE,
+  type TestContainer,
+  type TestMinio,
+} from "./containers.js";
 export {
   createDualReplicaHarness,
   type DualReplicaOptions,

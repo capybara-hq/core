@@ -6,7 +6,10 @@ const conditions = ["@capybara-hq/source", "module", "node", "development|produc
 
 export default defineConfig({
   resolve: { conditions },
-  ssr: { resolve: { conditions } },
+  // 服务端（测试）不带 "module"：vitest 会把 ssr 条件原样作为 Node 的 --conditions 传给 worker，
+  // 外部化的 CJS 依赖（如 @aws-sdk/client-s3 的 dist-cjs）再 require 子包时会被导到其 dist-es
+  // （无扩展名导入），Node 原生加载失败。生产运行时 Node 本来就不用 "module" 条件。
+  ssr: { resolve: { conditions: conditions.filter((c) => c !== "module") } },
   test: {
     hookTimeout: 120_000,
     // CI 机器负载高：起子进程的双副本测试、每次都算密码哈希的登录测试在 5s 默认值附近超时（非回归），CI 上放宽。

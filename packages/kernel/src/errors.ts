@@ -73,6 +73,7 @@ export const ERROR_CODES = {
   "ui.action_failed": 502,
   "ui.invalid_view": 502,
   "ui.timeout": 504,
+  "storage.unavailable": 503,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

@@ -2,6 +2,8 @@ import { fileURLToPath } from "node:url";
 import {
   CHANNEL_CAPABILITY,
   DIRECTORY_CAPABILITY,
+  OBJECT_STORE_CAPABILITY,
+  type ObjectStore,
   type PluginContext,
 } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
@@ -52,6 +54,13 @@ import { OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
+import {
+  purgeDeletedOrgStorage,
+  STORAGE_PURGE_EVERY_MS,
+  STORAGE_PURGE_JOB,
+  STORAGE_PURGE_SCHEDULER_ID,
+} from "./storage/purge.js";
+import { StorageService } from "./storage/storage.service.js";
 import { AppContent } from "./tools/app-content.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
@@ -175,6 +184,11 @@ export interface Kernel {
   readonly identity: KernelIdentity;
   /** 渠道连接与入站。 */
   readonly channels: KernelChannels;
+  /**
+   * 对象存储（`object-store@1` 提供方之上的前缀隔离，内核用 `kernel(orgId)`）；
+   * 没有提供方时 `available` 为 false，各方法 reject `storage.unavailable`。
+   */
+  readonly storage: StorageService;
   readonly log: KernelLogger;
   /** 当前生效的配置（热更新只替换 `hot` 字段）。 */
   readonly config: KernelConfig;
@@ -354,6 +368,32 @@ export async function createKernel(
     },
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
+  // 对象存储：提供方在 host.load() 之后才就绪，按调用时取
+  const storage = new StorageService({
+    provider: () =>
+      host.list("object-store").find((e) => e.capability === OBJECT_STORE_CAPABILITY)?.impl as
+        | ObjectStore
+        | undefined,
+    // 可能存过数据的插件：已批准过权限的（含已卸载的）与当前加载的
+    plugins: async () => {
+      const rows = await kdb.selectFrom("plugin_permission_snapshots").select("plugin").execute();
+      return [...rows.map((r) => r.plugin), ...host.manifests().map((m) => m.name)];
+    },
+  });
+  // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
+  maintenance.handle(STORAGE_PURGE_JOB, async () => {
+    await purgeDeletedOrgStorage({
+      db: kdb,
+      storage,
+      afterDays: current.storage.purgeDeletedOrgsAfterDays,
+      log,
+    });
+  });
+  maintenance.schedule({
+    id: STORAGE_PURGE_SCHEDULER_ID,
+    name: STORAGE_PURGE_JOB,
+    everyMs: () => STORAGE_PURGE_EVERY_MS,
+  });
   // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
   const toolDrift = new ToolDrift({
     db: kdb,
@@ -775,6 +815,7 @@ export async function createKernel(
     tools,
     identity,
     channels,
+    storage,
     log,
     get config() {
       return current;

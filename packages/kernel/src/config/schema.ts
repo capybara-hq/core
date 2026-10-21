@@ -545,6 +545,21 @@ export const KernelConfigSchema = z.object({
       deliveryConcurrency: 100,
       deliveryIdleMs: 15000,
     }),
+  storage: z
+    .object({
+      purgeDeletedOrgsAfterDays: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Days after an organization is deleted before a maintenance job permanently deletes its objects from object storage (kernel/<orgId>/ and plugins/*/<orgId>/)",
+          }),
+        ),
+    })
+    .default({ purgeDeletedOrgsAfterDays: 30 }),
   log: z
     .object({
       level: z

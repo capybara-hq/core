@@ -125,7 +125,7 @@ describe("ctx 按权限清单构造", () => {
     expect(rows[0]?.detail).toMatchObject({ item: "permissions.storage" });
   });
 
-  it("声明了 storage：可取到 ctx.storage；占位实现（M5 T2 之前）每个方法 reject storage.unavailable", async () => {
+  it("声明了 storage：可取到 ctx.storage；没有对象存储提供方时每个方法 reject storage.unavailable", async () => {
     const ctx = createPluginContext(deps, mf({ permissions: { storage: true } }), {});
     expect(Object.keys(ctx)).toContain("storage");
     const s = ctx.storage;

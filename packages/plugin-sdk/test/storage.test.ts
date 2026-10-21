@@ -5,6 +5,7 @@ import {
   type ObjectStore,
   type PluginContext,
   type PluginStorage,
+  type PresignedUpload,
   parseCapability,
   validatePermissions,
 } from "../src/index.js";
@@ -20,6 +21,12 @@ describe("object-store@1", () => {
     expectTypeOf<keyof ObjectStore>().toEqualTypeOf<
       "put" | "get" | "head" | "delete" | "deletePrefix" | "list" | "presignGet" | "presignPut"
     >();
+  });
+
+  it("presignPut 返回 PUT 或 POST（POST 带表单字段，存储端能限制大小）", () => {
+    expectTypeOf<Awaited<ReturnType<ObjectStore["presignPut"]>>>().toEqualTypeOf<PresignedUpload>();
+    expectTypeOf<PresignedUpload["method"]>().toEqualTypeOf<"PUT" | "POST">();
+    expectTypeOf<PresignedUpload["fields"]>().toEqualTypeOf<Record<string, string> | undefined>();
   });
 });
 

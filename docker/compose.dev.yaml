@@ -17,5 +17,37 @@ services:
     ports:
       - "6379:6379"
 
+  # 对象存储（object-store-s3 插件）：S3 API 在 9000，管理控制台在 9001。
+  # 官方 minio/minio 已不再在 Docker Hub 发布镜像，这里用社区维护的分支构建 pgsty/minio（命令与 S3 行为同官方）。
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: capybara
+      MINIO_ROOT_PASSWORD: capybara-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # 一次性：建桶 capybara（已存在时跳过）。
+  createbuckets:
+    image: pgsty/mc:RELEASE.2026-08-04T00-00-00Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - mc alias set local http://minio:9000 capybara capybara-secret && mc mb --ignore-existing local/capybara
+    restart: "no"
+
 volumes:
   pgdata:
+  miniodata:

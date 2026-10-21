@@ -84,3 +84,8 @@ export {
 export { isSensitivePermissionKey } from "./plugins/permission-view.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
+export {
+  MAX_STORAGE_KEY_BYTES,
+  StorageKeyError,
+} from "./storage/prefix.js";
+export { StorageService, type StorageServiceDeps } from "./storage/storage.service.js";

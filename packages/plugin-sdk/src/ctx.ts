@@ -1,6 +1,6 @@
 import type { Kysely } from "kysely";
 import type { CapabilityRef } from "./capability.js";
-import type { ObjectHead } from "./storage.js";
+import type { ObjectHead, PresignedUpload } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
 
@@ -52,7 +52,7 @@ export interface PluginStorage {
     orgId: string,
     key: string,
     opts: { contentType: string; maxSize: number; ttlSeconds: number },
-  ): Promise<{ url: string; headers: Record<string, string> }>;
+  ): Promise<PresignedUpload>;
 }
 
 /** 传给插件 `setup` 的上下文。不提供定时器与进程内共享状态；kv 写入必须带 TTL。 */

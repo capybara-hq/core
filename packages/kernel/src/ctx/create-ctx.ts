@@ -3,6 +3,8 @@ import {
   type CapabilityRef,
   CapabilityUnavailableError,
   type Logger,
+  OBJECT_STORE_CAPABILITY,
+  type ObjectStore,
   type PluginContext,
   type PluginManifest,
   PluginPermissionError,
@@ -24,6 +26,7 @@ import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { StorageService } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import {
   canUsePlace,
@@ -301,26 +304,15 @@ export function createPluginContext(
   const secretsApi = perms.secrets
     ? (({ get, set }) => ({ get, set }))(createSecrets(deps.db, deps.keyring, name))
     : undefined;
-  // TODO(M5 T2)：真正的 ctx.storage——经部署配置的 object-store@1 提供方，键加前缀 plugins/<name>/<orgId>/。
-  // 这里只是让 ctx 满足 SDK 类型的占位：每个方法都 reject storage.unavailable。
+  // ctx.storage：经已加载的 object-store@1 提供方（按调用时取；依赖排序保证提供方先于本插件 setup），
+  // 键加前缀 plugins/<name>/<orgId>/。没有提供方时各方法 reject storage.unavailable
+  // （宿主不会加载这样的插件，见 approvals.ts；单独构造 ctx 的测试会走到这里）
   const storageApi: PluginStorage | undefined = perms.storage
-    ? (() => {
-        const unavailable = async (): Promise<never> => {
-          throw new CapabilityUnavailableError(
-            "storage.unavailable: object storage is not available in this deployment",
-          );
-        };
-        return {
-          put: unavailable,
-          get: unavailable,
-          head: unavailable,
-          delete: unavailable,
-          deletePrefix: unavailable,
-          list: unavailable,
-          presignGet: unavailable,
-          presignPut: unavailable,
-        };
-      })()
+    ? new StorageService({
+        provider: () =>
+          capabilityAccess.providers(OBJECT_STORE_CAPABILITY)[0]?.impl as ObjectStore | undefined,
+        plugins: async () => [name],
+      }).forPlugin(name)
     : undefined;
   const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
   const declaredTools = new Set(perms.tools ?? []);
