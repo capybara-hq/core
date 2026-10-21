@@ -229,13 +229,21 @@ async function syncAttachments(
       if (!opened) continue;
       const bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
       await s.p.writeFile(s.h, path, bytes, s.signal);
-      marker[a.id] = name;
-      await s.p.writeFile(s.h, SYNC_MARKER, utf8.encode(JSON.stringify(marker)), s.signal);
-      copied.push(path);
     } catch (e) {
       // 中止（超时 / 锁丢失 / 运行停止）与实例已不在（withSandbox 据此重建）不吞
       if (s.signal.aborted || isSandboxGoneError(e)) throw e;
       failures.push(`Attachment ${name} could not be copied: ${copyFailureReason(e)}.`);
+      continue;
+    }
+    // 文件已复制：本次算复制成功。标记写成功后才记进内存里的标记（之后的写入不带上未落盘的项）；
+    // 标记写失败只意味着下次会重新复制这个文件
+    copied.push(path);
+    const next = { ...marker, [a.id]: name };
+    try {
+      await s.p.writeFile(s.h, SYNC_MARKER, utf8.encode(JSON.stringify(next)), s.signal);
+      marker = next;
+    } catch (e) {
+      if (s.signal.aborted || isSandboxGoneError(e)) throw e;
     }
   }
   return { copied, failures };

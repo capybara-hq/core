@@ -10,11 +10,12 @@ import {
   formatExec,
   GlobPatternError,
   MAX_GLOB_STARS,
+  type SandboxToolDeps,
   sandboxTools,
   shellQuote,
 } from "../../../src/tools/builtins/sandbox/index.js";
 import type { Credentials } from "../../../src/tools/credentials.js";
-import { BUILTIN_TOOL_NAMES, ToolRegistry } from "../../../src/tools/registry.js";
+import { BUILTIN_TOOL_NAMES, type BuiltinTool, ToolRegistry } from "../../../src/tools/registry.js";
 
 /** M5 T8：沙箱工具的纯函数与「没有沙箱提供方」时的不可用说明。 */
 
@@ -54,7 +55,8 @@ describe("compileGlob", () => {
     expect(m(name)).toBe(false);
     for (const p of paths) m(p);
     expect(md(`${"x/".repeat(30)}${name}`)).toBe(false);
-    expect(performance.now() - t0).toBeLessThan(100);
+    // 指数回溯时要几十秒；放宽到 CI 也稳的上限
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 
   it("rejects patterns with too many wildcards or alternatives", () => {
@@ -286,5 +288,165 @@ describe("attachment sync", () => {
       new TextDecoder().decode(mem.files.get("/workspace/attachments/.capybara-sync.json")),
     );
     expect(marker).toEqual({ a2: "ok.csv" });
+  });
+});
+
+describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
+  const cfg = KernelConfigSchema.parse({
+    db: { url: "postgres://x/y" },
+    redis: { url: "redis://x" },
+    masterKey: Buffer.alloc(32, 7).toString("base64"),
+  });
+  const callCtx = () => ({
+    orgId: "00000000-0000-4000-8000-000000000001",
+    accountId: "a",
+    agentId: "g",
+    conversationId: "c",
+    callId: "call",
+    runId: "run",
+    signal: new AbortController().signal,
+  });
+
+  /** 可定制的内存沙箱：`failWrite` 让指定路径的写入失败，`exec` 返回固定结果。 */
+  function rig(
+    opts: {
+      attachments?: { id: string; name: string }[];
+      failWrite?: string;
+      exec?: { exitCode: number; stdout: string; stderr: string };
+      append?: () => Promise<unknown>;
+    } = {},
+  ) {
+    const files = new Map<string, Uint8Array>();
+    const puts: string[] = [];
+    const deletes: string[] = [];
+    const p = {
+      readFile: async (_h: unknown, path: string) => {
+        const d = files.get(path);
+        return d === undefined ? null : { data: d, truncated: false };
+      },
+      writeFile: async (_h: unknown, path: string, data: Uint8Array) => {
+        if (path === opts.failWrite) throw new Error("disk full");
+        files.set(path, data);
+      },
+      stat: async (_h: unknown, path: string) => {
+        if (path === "/workspace") return { size: 0, isDir: true };
+        const d = files.get(path);
+        return d === undefined ? null : { size: d.byteLength, isDir: false };
+      },
+      exec: async () => ({ ...opts.exec, truncated: false, timedOut: false }),
+    };
+    const tools = sandboxTools({
+      sandbox: {
+        available: true,
+        withSandbox: async (
+          _ctx: unknown,
+          fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
+        ) => fn({ id: "x" }, p, { fresh: false, recreated: false }, new AbortController().signal),
+      } as unknown as SandboxToolDeps["sandbox"],
+      attachments: {
+        listForConversation: async () => opts.attachments ?? [],
+        openForConversation: async () => ({
+          name: "f",
+          contentType: "text/plain",
+          size: 2,
+          body: new Response("ok").body,
+        }),
+      } as unknown as SandboxToolDeps["attachments"],
+      storage: {
+        kernel: () => ({
+          put: async (key: string) => {
+            puts.push(key);
+            return { key, size: 0 };
+          },
+          delete: async (key: string) => {
+            deletes.push(key);
+          },
+        }),
+      } as unknown as SandboxToolDeps["storage"],
+      eventLog: {
+        append: opts.append ?? (async () => []),
+      } as unknown as SandboxToolDeps["eventLog"],
+      config: () => cfg,
+    });
+    const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
+    const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
+    return { files, puts, deletes, tool, text };
+  }
+
+  it("a failed marker write still counts the file as copied; the marker keeps only saved entries", async () => {
+    const r = rig({
+      attachments: [{ id: "a1", name: "ok.csv" }],
+      failWrite: "/workspace/attachments/.capybara-sync.json",
+    });
+    r.files.set("/workspace/f.txt", new TextEncoder().encode("hi\n"));
+    const out = r.text(await r.tool("sandbox_read").run({ path: "/workspace/f.txt" }, callCtx()));
+    expect(out).toContain("Attachments copied into the sandbox: /workspace/attachments/ok.csv");
+    expect(out).not.toContain("could not be copied");
+    expect(r.files.has("/workspace/attachments/.capybara-sync.json")).toBe(false);
+  });
+
+  it("deliver rejects a bad name before reading or uploading anything", async () => {
+    const r = rig();
+    r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
+    await expect(
+      r
+        .tool("sandbox_deliver")
+        .run({ path: "/workspace/out.txt", name: "bad\u0001name" }, callCtx()),
+    ).rejects.toThrow(/control characters/);
+    await expect(
+      r
+        .tool("sandbox_deliver")
+        .run({ path: "/workspace/out.txt", name: "x".repeat(300) }, callCtx()),
+    ).rejects.toThrow(/plain file name/);
+    expect(r.puts).toEqual([]);
+  });
+
+  it("deliver deletes the uploaded object when writing artifact_created fails", async () => {
+    const r = rig({
+      append: async () => {
+        throw new Error("db down");
+      },
+    });
+    r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
+    await expect(
+      r.tool("sandbox_deliver").run({ path: "/workspace/out.txt" }, callCtx()),
+    ).rejects.toThrow("db down");
+    expect(r.puts).toHaveLength(1);
+    expect(r.deletes).toEqual(r.puts);
+  });
+
+  it("grep exit 2 with partial matches returns them with the error note", async () => {
+    const r = rig({
+      exec: {
+        exitCode: 2,
+        stdout: "./a.txt\u00001:hit\n",
+        stderr: "grep: ./secret: Permission denied",
+      },
+    });
+    const out = r.text(await r.tool("sandbox_grep").run({ pattern: "hit" }, callCtx()));
+    expect(out).toContain("/workspace/a.txt:1:hit");
+    expect(out).toContain("[grep also reported errors: grep: ./secret: Permission denied]");
+  });
+
+  it("grep exit 2 whose only output is the hidden marker returns no matches plus the note", async () => {
+    const r = rig({
+      exec: {
+        exitCode: 2,
+        stdout: './attachments/.capybara-sync.json\u00001:{"a":"hit"}\n',
+        stderr: "grep: ./secret: Permission denied",
+      },
+    });
+    const out = r.text(await r.tool("sandbox_grep").run({ pattern: "hit" }, callCtx()));
+    expect(out).toContain("No matches for hit in /workspace.");
+    expect(out).toContain("[grep also reported errors:");
+    expect(out).not.toContain(".capybara-sync.json");
+  });
+
+  it("glob shows newlines in file names as \\n", async () => {
+    const r = rig({
+      exec: { exitCode: 0, stdout: "./we\nird.txt\u0000./b.txt\u0000", stderr: "" },
+    });
+    const out = r.text(await r.tool("sandbox_glob").run({ pattern: "*.txt" }, callCtx()));
+    expect(out.split("\n")).toEqual(["/workspace/b.txt", "/workspace/we\\nird.txt"]);
   });
 });

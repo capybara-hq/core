@@ -123,11 +123,10 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
         });
         if (r.timedOut || r.exitCode === null) throw new ToolError(GREP_TIMEOUT);
         if (r.exitCode === 1) return { lines: [], warning: null };
-        const lines = parseGrepNull(r.stdout, cwd === "/" ? "" : cwd).filter(
-          (l) => !l.startsWith(`${SYNC_MARKER}:`),
-        );
-        // 退出码 2 = 有错误（如个别文件不可读）；有匹配时照常返回并附上说明
-        if (r.exitCode !== 0 && lines.length === 0) throw new ToolError(failed(r.stderr));
+        const all = parseGrepNull(r.stdout, cwd === "/" ? "" : cwd);
+        const lines = all.filter((l) => !l.startsWith(`${SYNC_MARKER}:`));
+        // 退出码 2 = 有错误（如个别文件不可读）；有输出时照常返回（可能为空：只匹配到隐藏的标记文件）并附上说明
+        if (r.exitCode !== 0 && all.length === 0) throw new ToolError(failed(r.stderr));
         const warning = r.exitCode !== 0 ? clip(r.stderr, 300) : null;
         return { lines, warning };
       });
@@ -135,14 +134,14 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
       const shown = lines
         .slice(0, MAX_MATCHES)
         .map((l) => (l.length > MAX_LINE_CHARS ? `${l.slice(0, MAX_LINE_CHARS)}…` : l));
+      const note = warning !== null ? `\n[grep also reported errors: ${warning}]` : "";
       const text =
-        lines.length === 0
+        (lines.length === 0
           ? `No matches for ${pattern} in ${path}.`
           : shown.join("\n") +
             (lines.length > MAX_MATCHES
               ? `\n[Showing the first ${MAX_MATCHES} of ${lines.length} matching lines; use a narrower pattern, path or glob.]`
-              : "") +
-            (warning !== null ? `\n[grep also reported errors: ${warning}]` : "");
+              : "")) + note;
       const n = lines.length;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
