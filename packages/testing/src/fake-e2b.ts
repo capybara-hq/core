@@ -26,6 +26,9 @@ import { dirname, join } from "node:path";
  * 本机只有一个用户，权限隔离测不了，测试改为核对请求里的用户）。进程以新会话启动（与 setsid 等价），
  * 客户端断开**不会**结束进程（与 envd 一致），只有 SendSignal、杀进程脚本或删沙箱才会。
  *
+ * `connect` 带 `memory: false`（SDK 的 `onResume: "reboot"`）时结束该沙箱的全部进程（冷启动）。
+ * SendSignal 只杀指定进程（不是进程组）。
+ *
  * {@link FakeE2BServer.failNext} 让匹配的下一个请求返回指定状态；{@link FakeE2BServer.hangNext} 让它一直不回
  * （测中止）；{@link FakeE2BServer.expire} 让沙箱直接消失（过期 / 被别处删掉）。
  */
@@ -35,6 +38,8 @@ export interface FakeE2BOptions {
   apiKey?: string;
   /** 列表接口每页条数（默认 100；测分页时调小）。 */
   pageSize?: number;
+  /** create / connect 返回的沙箱 `domain`（默认 null，即用客户端配置的域名）。 */
+  domain?: string | null;
 }
 
 export interface FakeE2BSandbox {
@@ -69,6 +74,8 @@ export interface FakeE2BCall {
 export interface FakeE2BMatch {
   method?: string;
   path: RegExp;
+  /** 再按请求细看（Connect 流请求的 `body` 是解出的第一条消息）。 */
+  when?: (call: FakeE2BCall) => boolean;
 }
 
 export interface FakeE2BServer {
@@ -77,8 +84,13 @@ export interface FakeE2BServer {
   apiKey: string;
   sandboxes: Map<string, FakeE2BSandbox>;
   calls: FakeE2BCall[];
-  /** 下一个匹配的请求回 `status`（JSON `{code, message}`）。 */
-  failNext(match: FakeE2BMatch, status: number, message?: string): void;
+  /**
+   * 下一个匹配的请求回 `status`：默认 E2B 的错误格式 JSON `{code: status, message}`；`raw` 时回纯文本
+   * （模拟前面的代理 / 错配地址回的裸错误）。
+   */
+  failNext(match: FakeE2BMatch, status: number, message?: string, opts?: { raw?: boolean }): void;
+  /** 以 `memory: false` connect（冷启动，进程全部结束）的次数，按沙箱 id。 */
+  reboots: Map<string, number>;
   /** 下一个匹配的请求一直不回，直到客户端断开。 */
   hangNext(match: FakeE2BMatch): void;
   /** 沙箱直接消失（杀掉它的进程、删掉根目录）。 */
@@ -161,12 +173,15 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
   const sandboxes = new Map<string, FakeE2BSandbox>();
   const procs = new Map<string, Proc[]>();
   const calls: FakeE2BCall[] = [];
-  const fails: { match: FakeE2BMatch; status: number; message: string }[] = [];
+  const fails: { match: FakeE2BMatch; status: number; message: string; raw: boolean }[] = [];
+  const reboots = new Map<string, number>();
   const hangs: FakeE2BMatch[] = [];
   const hanging = new Set<ServerResponse>();
 
-  const matches = (m: FakeE2BMatch, method: string, path: string) =>
-    (m.method === undefined || m.method === method) && m.path.test(path);
+  const matches = (m: FakeE2BMatch, call: FakeE2BCall) =>
+    (m.method === undefined || m.method === call.method) &&
+    m.path.test(call.path) &&
+    (m.when === undefined || m.when(call));
 
   const mapPath = (root: string, s: string) =>
     s.replace(PATH_RE, (_m, pre, dir) => `${pre}${root}${dir}`);
@@ -244,7 +259,7 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
         clientID: "fake",
         envdVersion: "0.4.2",
         envdAccessToken: s.envdAccessToken,
-        domain: null,
+        domain: opts.domain ?? null,
       });
       return;
     }
@@ -286,6 +301,11 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
       if (!s) return notFound(res, m[1] as string);
       const resumed = s.state === "paused";
       s.state = "running";
+      if (body.memory === false) {
+        // 冷启动（SDK 的 onResume: "reboot"）：内存里的进程全部结束，文件保留
+        for (const p of procs.get(s.id) ?? []) killGroup(p.pid);
+        reboots.set(s.id, (reboots.get(s.id) ?? 0) + 1);
+      }
       if (typeof body.timeout === "number" && body.timeout > s.timeout) s.timeout = body.timeout;
       sendJson(res, resumed ? 201 : 200, {
         sandboxID: s.id,
@@ -293,7 +313,7 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
         clientID: "fake",
         envdVersion: "0.4.2",
         envdAccessToken: s.envdAccessToken,
-        domain: null,
+        domain: opts.domain ?? null,
       });
       return;
     }
@@ -461,7 +481,12 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
         sendJson(res, 404, { code: "not_found", message: `process with pid ${pid} not found` });
         return;
       }
-      killGroup(p.pid);
+      // 与 envd 一样只给这个进程发信号（不是整个进程组）
+      try {
+        process.kill(p.pid, "SIGKILL");
+      } catch {
+        // 已退出
+      }
       sendJson(res, 200, {});
       return;
     }
@@ -492,14 +517,22 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
         body,
         ...(isEnvd && { sandboxId }),
       };
+      if (u.pathname === "/process.Process/Start" && raw.byteLength >= 5) {
+        try {
+          call.body = JSON.parse(raw.subarray(5, 5 + raw.readUInt32BE(1)).toString("utf8"));
+        } catch {
+          call.body = null;
+        }
+      }
       calls.push(call);
-      const fi = fails.findIndex((f) => matches(f.match, method, u.pathname));
+      const fi = fails.findIndex((f) => matches(f.match, call));
       if (fi >= 0) {
         const [f] = fails.splice(fi, 1);
-        if (f) sendJson(res, f.status, { code: f.status, message: f.message });
+        if (f?.raw) res.writeHead(f.status, { "content-type": "text/plain" }).end(f.message);
+        else if (f) sendJson(res, f.status, { code: f.status, message: f.message });
         return;
       }
-      const hi = hangs.findIndex((h) => matches(h, method, u.pathname));
+      const hi = hangs.findIndex((h) => matches(h, call));
       if (hi >= 0) {
         hangs.splice(hi, 1);
         hanging.add(res);
@@ -531,9 +564,10 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
     apiKey,
     sandboxes,
     calls,
-    failNext(match, status, message = `fake failure ${status}`) {
-      fails.push({ match, status, message });
+    failNext(match, status, message = `fake failure ${status}`, opts = {}) {
+      fails.push({ match, status, message, raw: opts.raw === true });
     },
+    reboots,
     hangNext(match) {
       hangs.push(match);
     },
