@@ -18,8 +18,12 @@ type Trx = Transaction<KernelDatabase>;
 
 /** 预签名上传的有效期（秒）。尽量短：表单在有效期内可被再次使用（内容替换由 etag 核对兜底）。 */
 export const ATTACHMENT_UPLOAD_TTL_SECONDS = 300;
-/** 下载跳转的预签名有效期（秒）。 */
+/** 下载跳转的预签名有效期（秒）；不短于 {@link ATTACHMENT_DOWNLOAD_CACHE_SECONDS}（浏览器缓存的跳转仍可用）。 */
 export const ATTACHMENT_DOWNLOAD_TTL_SECONDS = 300;
+/** 下载 302 的 `Cache-Control: private, max-age=…`（秒）：同一页面里缩略图可复用跳转地址。 */
+export const ATTACHMENT_DOWNLOAD_CACHE_SECONDS = 60;
+/** 同一账号在一个组织里最多的未 finalize 附件数（超过 → 429 `attachment.too_many_pending`）。 */
+export const MAX_PENDING_ATTACHMENTS = 50;
 
 /** 维护任务：清理过期未绑定的附件（任务名与 scheduler id 不含 `:`）。 */
 export const ATTACHMENT_CLEANUP_JOB = "attachment-cleanup";
@@ -48,6 +52,18 @@ export interface AttachmentLimits {
   imageMaxBytes: number;
   /** 单条消息最多附件数。 */
   maxPerMessage: number;
+  /** 单次模型请求里媒体原始字节的预算（网页据此在发送前提醒总大小）。 */
+  requestMediaBytes: number;
+  /** 部署是否配置了对象存储；为 false 时上传不可用。 */
+  available: boolean;
+}
+
+/** {@link AttachmentsService.openForConversation} 的结果。 */
+export interface OpenedAttachment {
+  name: string;
+  contentType: string;
+  size: number;
+  body: ReadableStream<Uint8Array>;
 }
 
 /** `POST /attachments` 的返回：浏览器按 `upload` 直传存储，然后调 finalize。 */
@@ -142,13 +158,16 @@ export class AttachmentsService {
       maxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.documentBytes),
       imageMaxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.imageBytes),
       maxPerMessage: cfg.maxPerMessage,
+      requestMediaBytes: cfg.requestMediaBytes,
+      available: this.d.storage.available,
     };
   }
 
   /**
    * 登记一个附件（`pending`）并返回预签名上传：存储端按声明的大小与类型限制上传。
    * 类型不在 `attachments.allowedTypes` → `attachment.type_not_allowed`；超过上限 → `attachment.too_large`；
-   * 没有对象存储 → `storage.unavailable`。
+   * 该账号在组织里已有 {@link MAX_PENDING_ATTACHMENTS} 个未 finalize 的附件 → `attachment.too_many_pending`
+   * （软上限：并发登记可能略超）；没有对象存储 → `storage.unavailable`。
    */
   async create(
     orgId: string,
@@ -169,6 +188,19 @@ export class AttachmentsService {
       throw new ApiError(
         "attachment.too_large",
         `Attachment is ${input.size} bytes, over the limit of ${limit} bytes`,
+      );
+    }
+    const pending = await this.d.db
+      .selectFrom("attachments")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("status", "=", "pending")
+      .executeTakeFirst();
+    if (Number(pending?.n ?? 0) >= MAX_PENDING_ATTACHMENTS) {
+      throw new ApiError(
+        "attachment.too_many_pending",
+        `Too many unfinished uploads (at most ${MAX_PENDING_ATTACHMENTS}); finish or wait for them first`,
       );
     }
     const id = randomUUID();
@@ -274,13 +306,14 @@ export class AttachmentsService {
 
   /**
    * 下载地址（预签名，{@link ATTACHMENT_DOWNLOAD_TTL_SECONDS} 秒）：已绑定的附件要求能访问其会话，
-   * 未绑定的只有上传者；否则 `attachment.not_found`。
+   * 未绑定的只有上传者；否则 `attachment.not_found`。只有图片与 PDF 以 `inline` 打开，其余一律 `attachment`
+   * （即使存储里的类型被改成 text/html 也不会在页面里渲染）；响应类型按 finalize 核对过的类型返回。
    */
   async downloadUrl(orgId: string, accountId: string, id: string): Promise<string> {
     this.d.storage.assertAvailable();
     const row = await this.d.db
       .selectFrom("attachments")
-      .select(["account_id", "conversation_id", "name", "object_key", "etag"])
+      .select(["account_id", "conversation_id", "name", "content_type", "object_key", "etag"])
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("status", "=", "ready")
@@ -296,10 +329,44 @@ export class AttachmentsService {
     if (!head || !this.sameContent(row.etag, head.etag, { orgId, attachmentId: id })) {
       throw notFound();
     }
+    const inline = isImage(row.content_type) || row.content_type === "application/pdf";
     return store.presignGet(row.object_key, {
       ttlSeconds: ATTACHMENT_DOWNLOAD_TTL_SECONDS,
       downloadName: row.name,
+      disposition: inline ? "inline" : "attachment",
+      responseContentType: row.content_type,
     });
+  }
+
+  /**
+   * 读取一个绑定在该会话、已 ready 的附件（沙箱同步等内核内部用途）：没有行、未绑定到该会话、对象已不在、
+   * 大小或 etag 与 finalize 时不符 → null。其余错误（存储不可用等）照常抛出。调用方负责读完或取消 `body`。
+   */
+  async openForConversation(
+    orgId: string,
+    conversationId: string,
+    attachmentId: string,
+  ): Promise<OpenedAttachment | null> {
+    const row = await this.d.db
+      .selectFrom("attachments")
+      .select(["name", "content_type", "object_key", "size", "etag"])
+      .where("id", "=", attachmentId)
+      .where("org_id", "=", orgId)
+      .where("conversation_id", "=", conversationId)
+      .where("status", "=", "ready")
+      .executeTakeFirst();
+    if (!row) return null;
+    const got = await this.d.storage.kernel(orgId).get(row.object_key);
+    if (!got) return null;
+    const size = Number(row.size);
+    if (
+      got.head.size !== size ||
+      !this.sameContent(row.etag, got.head.etag, { orgId, conversationId, attachmentId })
+    ) {
+      await got.body.cancel().catch(() => {});
+      return null;
+    }
+    return { name: row.name, contentType: row.content_type, size, body: got.body };
   }
 
   /**

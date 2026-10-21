@@ -33,6 +33,9 @@ const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
 /** access token 寿命上限（秒）；会话吊销标记的 TTL 按它计算，与实例当前配置无关。 */
 export const ACCESS_TOKEN_TTL_MAX_SECONDS = 3600;
 
+/** `attachments.requestMediaBytes` 的上限（24 MiB）：base64 后约 32 MiB，是常见供应商的请求上限。 */
+export const REQUEST_MEDIA_BYTES_MAX = 25_165_824;
+
 const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
@@ -601,11 +604,15 @@ export const KernelConfigSchema = z.object({
         .number()
         .int()
         .positive()
+        // base64 让字节膨胀约 4/3：24 MiB 原始字节 ≈ 32 MiB，正好压在常见供应商 32 MB 的请求上限内
+        .max(REQUEST_MEDIA_BYTES_MAX, {
+          message: "attachments.requestMediaBytes must be at most 25165824 (24 MiB)",
+        })
         .default(20_971_520)
         .meta(
           meta({
             description:
-              "Budget of raw attachment bytes in one model request; the newest attachments are kept and older ones are replaced with a placeholder",
+              "Budget of raw attachment bytes in one model request; the newest attachments are kept and older ones are replaced with a placeholder. At most 24 MiB: base64 inflates it by about 4/3, and common providers cap a request at 32 MB",
           }),
         ),
     })

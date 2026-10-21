@@ -165,6 +165,7 @@
       "type_not_allowed": "This file type is not supported.",
       "not_ready": "The file has not finished uploading. Wait a moment, then send.",
       "not_found": "The file does not exist or has expired. Upload it again.",
+      "too_many_pending": "Too many uploads are unfinished. Wait for them to finish or remove some, then add more.",
       "upload_failed": "The upload failed. Check your connection, then remove the file and add it again."
     },
     "storage": {

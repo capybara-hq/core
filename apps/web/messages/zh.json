@@ -165,6 +165,7 @@
       "type_not_allowed": "不支持这种文件类型。",
       "not_ready": "文件还没有上传完成，请稍候再发送。",
       "not_found": "文件不存在或已过期，请重新上传。",
+      "too_many_pending": "未完成的上传太多，请先等它们完成或移除后再添加。",
       "upload_failed": "上传失败，请检查网络后移除并重新添加。"
     },
     "storage": {

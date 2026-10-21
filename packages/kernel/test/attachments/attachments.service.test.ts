@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import {
+  ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
+  ATTACHMENT_DOWNLOAD_TTL_SECONDS,
   AttachmentsService,
   normalizeContentType,
   sniffMatches,
@@ -63,12 +65,23 @@ describe("AttachmentsService", () => {
       maxBytes: 20_971_520,
       imageMaxBytes: 5_242_880,
       maxPerMessage: 10,
+      requestMediaBytes: 20_971_520,
+      available: false,
     });
-    expect(mk({ maxBytes: 1000, allowedTypes: ["image/png"], maxPerMessage: 3 }).limits()).toEqual({
+    expect(
+      mk({
+        maxBytes: 1000,
+        allowedTypes: ["image/png"],
+        maxPerMessage: 3,
+        requestMediaBytes: 4000,
+      }).limits(),
+    ).toEqual({
       types: ["image/png"],
       maxBytes: 1000,
       imageMaxBytes: 1000,
       maxPerMessage: 3,
+      requestMediaBytes: 4000,
+      available: false,
     });
   });
 
@@ -96,6 +109,18 @@ describe("AttachmentsService", () => {
     ).toBe(false);
   });
 
+  it("requestMediaBytes 不超过 24 MiB（base64 膨胀后仍在常见的 32 MB 请求上限内）", () => {
+    const base = {
+      db: { url: "postgres://x" },
+      redis: { url: "redis://x" },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+    };
+    const at = (n: number) =>
+      KernelConfigSchema.safeParse({ ...base, attachments: { requestMediaBytes: n } }).success;
+    expect(at(25_165_824)).toBe(true);
+    expect(at(25_165_825)).toBe(false);
+  });
+
   it("默认配置：20 MiB、8 种类型、每条消息 10 个、24 小时、单次请求 20 MiB 媒体", () => {
     expect(config.attachments).toEqual({
       maxBytes: 20_971_520,
@@ -113,6 +138,15 @@ describe("AttachmentsService", () => {
       unboundTtlHours: 24,
       requestMediaBytes: 20_971_520,
     });
+  });
+});
+
+describe("下载跳转", () => {
+  it("预签名有效期不短于 302 的浏览器缓存时间", () => {
+    expect(ATTACHMENT_DOWNLOAD_CACHE_SECONDS).toBe(60);
+    expect(ATTACHMENT_DOWNLOAD_TTL_SECONDS).toBeGreaterThanOrEqual(
+      ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
+    );
   });
 });
 

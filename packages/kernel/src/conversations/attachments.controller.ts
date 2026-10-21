@@ -6,11 +6,12 @@ import { ATTACHMENTS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type {
-  AttachmentLimits,
-  AttachmentsService,
-  AttachmentView,
-  CreatedAttachment,
+import {
+  ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
+  type AttachmentLimits,
+  type AttachmentsService,
+  type AttachmentView,
+  type CreatedAttachment,
 } from "./attachments.service.js";
 
 const CreateBody = z
@@ -31,7 +32,8 @@ const CreateBody = z
  * 2. 浏览器直传对象存储；
  * 3. `POST /:id/finalize` 核对大小与类型；
  * 4. 发消息时在 `files` 里引用 id。
- * 下载 `GET /:id/download` 302 到预签名地址。上限 `GET /limits`（类型、单个大小、每条条数，供网页预检）。没有对象存储时各接口 503 `storage.unavailable`。
+ * 下载 `GET /:id/download` 302 到预签名地址（`Cache-Control: private, max-age=60`）。上限 `GET /limits`（类型、单个大小、
+ * 每条条数、单次请求的媒体预算、存储是否可用，供网页预检；不需要对象存储）。没有对象存储时其余接口 503 `storage.unavailable`。
  */
 @Controller("api/v1/orgs/:orgId/attachments")
 export class AttachmentsController {
@@ -77,6 +79,9 @@ export class AttachmentsController {
   ): Promise<void> {
     const p = requireUser(principal);
     const location = await this.attachments.downloadUrl(org.orgId, p.account.id, id);
-    await reply.header("cache-control", "no-store").redirect(location, 302);
+    // 浏览器可在短时间内复用跳转（同一页面的缩略图）；预签名有效期不短于这段时间
+    await reply
+      .header("cache-control", `private, max-age=${ATTACHMENT_DOWNLOAD_CACHE_SECONDS}`)
+      .redirect(location, 302);
   }
 }

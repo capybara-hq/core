@@ -333,6 +333,8 @@ describe("校验", { timeout: 30_000 }, () => {
       maxBytes: 20_971_520,
       imageMaxBytes: 5_242_880,
       maxPerMessage: 10,
+      requestMediaBytes: 20_971_520,
+      available: true,
     });
     const other2 = await other({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/limits` });
     expect(other2.statusCode).toBe(200);
@@ -474,6 +476,34 @@ describe("下载", { timeout: 30_000 }, () => {
     expect(denied.json().error.code).toBe("attachment.not_found");
   });
 
+  it("图片与 PDF inline、其余一律 attachment；类型按核对过的值返回；302 可缓存 60 秒", async () => {
+    const img = await ready(owner, "猫 1.png", "image/png", PNG);
+    const pdf = await ready(owner, "spec.pdf", "application/pdf", PDF);
+    const txt = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const open = async (id: string) => {
+      const res = await owner({
+        method: "GET",
+        url: `/api/v1/orgs/${orgId}/attachments/${id}/download`,
+      });
+      expect(res.statusCode).toBe(302);
+      expect(res.headers["cache-control"]).toBe("private, max-age=60");
+      const got = await fetch(res.headers.location as string);
+      expect(got.status).toBe(200);
+      return {
+        cd: got.headers.get("content-disposition") ?? "",
+        ct: got.headers.get("content-type") ?? "",
+      };
+    };
+    const a = await open(img);
+    expect(a.cd).toMatch(/^inline;/);
+    expect(a.cd).toContain(`filename*=UTF-8''${encodeURIComponent("猫 1.png")}`);
+    expect(a.ct).toBe("image/png");
+    expect((await open(pdf)).cd).toMatch(/^inline;/);
+    const t = await open(txt);
+    expect(t.cd).toMatch(/^attachment;/);
+    expect(t.ct).toBe("text/plain");
+  });
+
   it("已绑定的附件：不是上传者、但能访问其会话的人可以下载", async () => {
     const id = await ready(owner, "cat.png", "image/png", PNG);
     const convId = await conversationWith("see-1");
@@ -483,6 +513,73 @@ describe("下载", { timeout: 30_000 }, () => {
     const url = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
     expect((await owner({ method: "GET", url })).statusCode).toBe(302);
     expect((await other({ method: "GET", url })).statusCode).toBe(404);
+  });
+});
+
+describe("openForConversation（沙箱同步用）", { timeout: 30_000 }, () => {
+  it("只返回绑定在该会话、已 ready、内容未被替换的附件", async () => {
+    const id = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const convId = await conversationWith("see-1");
+    // 未绑定 → null
+    expect(await k.attachments.openForConversation(orgId, convId, id)).toBeNull();
+    expect((await post(owner, convId, { text: "x", files: [id] })).statusCode).toBe(202);
+    await waitForTerminal(db, convId);
+    const got = await k.attachments.openForConversation(orgId, convId, id);
+    expect(got).toMatchObject({ name: "notes.txt", contentType: "text/plain", size: TEXT.length });
+    expect(Buffer.from(await new Response(got?.body).arrayBuffer()).equals(TEXT)).toBe(true);
+    // 别的会话、别的组织、不存在的 id → null
+    const conv2 = await conversationWith("see-1");
+    expect(await k.attachments.openForConversation(orgId, conv2, id)).toBeNull();
+    const org2 = await createOrg(owner, "Other org");
+    expect(await k.attachments.openForConversation(org2, convId, id)).toBeNull();
+    expect(
+      await k.attachments.openForConversation(
+        orgId,
+        convId,
+        "00000000-0000-4000-8000-000000000000",
+      ),
+    ).toBeNull();
+    // 内容被替换（etag 不符）→ null
+    await k.storage
+      .kernel(orgId)
+      .put(`attachments/${id}`, Buffer.from("name,qty\npear,9\n"), { contentType: "text/plain" });
+    expect(await k.attachments.openForConversation(orgId, convId, id)).toBeNull();
+  });
+});
+
+describe("待上传配额", { timeout: 30_000 }, () => {
+  it("同一账号在组织里已有 50 个未 finalize 的附件 → 429 attachment.too_many_pending", async () => {
+    await db
+      .insertInto("attachments")
+      .values(
+        Array.from({ length: 50 }, (_, i) => ({
+          id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+          org_id: orgId,
+          account_id: ownerId,
+          name: `p${i}.png`,
+          content_type: "image/png",
+          size: 1,
+          object_key: `attachments/p${i}`,
+          status: "pending",
+          expires_at: sql<Date>`now() + interval '1 hour'`,
+        })),
+      )
+      .execute();
+    const body = { name: "a.png", contentType: "image/png", size: PNG.length };
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/attachments`,
+      payload: body,
+    });
+    expect(res.statusCode, res.body).toBe(429);
+    expect(res.json().error.code).toBe("attachment.too_many_pending");
+    // 别的账号不受影响
+    const ok = await other({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/attachments`,
+      payload: body,
+    });
+    expect(ok.statusCode, ok.body).toBe(201);
   });
 });
 
