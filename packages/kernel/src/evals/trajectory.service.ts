@@ -31,7 +31,26 @@ export interface TrajectoryDetail {
   runs: TrajectoryRun[];
   /** 成本的币种（部署设置 `priceCurrency`）。 */
   currency: string;
+  /**
+   * 只在按运行分页（给了 `limit` / `before`）时出现：更早一页的游标（本页最早一次运行的 id，作为 `before`
+   * 传回）；没有更早的运行时为 null。给 `runId` 时总是 null。不带窗口时没有这个字段（形状与以前一致）。
+   */
+  next?: string | null;
 }
+
+/** 轨迹详情的运行窗口：`runId` 只取一次运行；否则取 `before` 之前（不传为最新）的 `limit` 次运行。 */
+export type RunWindow = { runId: string } | { before?: string; limit: number };
+
+/** 运行的状态（`runs.status`），列表按最近一次运行的状态过滤用。 */
+export const RUN_STATUSES = [
+  "queued",
+  "running",
+  "waiting",
+  "completed",
+  "failed",
+  "aborted",
+] as const;
+export type RunStatus = (typeof RUN_STATUSES)[number];
 
 /** 一次读事件的页大小。 */
 const EVENT_PAGE = 1000;
@@ -93,7 +112,14 @@ export class TrajectoryService {
   async list(
     orgId: string,
     accountId: string,
-    q: { agentId?: string; kind?: "chat" | "eval"; before?: string; limit: number },
+    q: {
+      agentId?: string;
+      kind?: "chat" | "eval";
+      /** 只列最近一次运行是该状态的对话（没有运行的对话不列）。 */
+      status?: RunStatus;
+      before?: string;
+      limit: number;
+    },
   ): Promise<{ items: TrajectoryListItem[]; next: string | null }> {
     const role = await this.role(orgId, accountId);
     if (!TrajectoryService.isMember(role)) return { items: [], next: null };
@@ -121,6 +147,17 @@ export class TrajectoryService {
       .limit(q.limit + 1);
     if (!admin) query = query.where("a.owner_account_id", "=", accountId);
     if (q.agentId !== undefined) query = query.where("c.agent_id", "=", q.agentId);
+    if (q.status !== undefined) {
+      const status = q.status;
+      // 与下面取 lastRun 的排序一致：最近一次运行 = created_at、id 最大的一条
+      query = query.where(
+        (eb) =>
+          sql<boolean>`(
+            SELECT r.status FROM capybara.runs r WHERE r.conversation_id = ${eb.ref("c.id")}
+            ORDER BY r.created_at DESC, r.id DESC LIMIT 1
+          ) = ${status}`,
+      );
+    }
     if (q.before !== undefined) {
       const before = q.before;
       query = query.where(
@@ -170,12 +207,16 @@ export class TrajectoryService {
     return { items, next };
   }
 
-  /** 一个对话的轨迹；无权或不存在 → `trajectory.not_found`。成功时写审计 `trajectory.viewed`。 */
+  /**
+   * 一个对话的轨迹；无权或不存在 → `trajectory.not_found`。成功时（含窗口为空）写审计 `trajectory.viewed`。
+   * 不给 `window` 时读全对话；给了只读窗口内（且已开始）的运行的事件，响应带 `next`。
+   */
   async get(
     orgId: string,
     accountId: string,
     conversationId: string,
     actorTokenId?: string,
+    window?: RunWindow,
   ): Promise<TrajectoryDetail> {
     const conv = await this.db
       .selectFrom("conversations")
@@ -185,12 +226,28 @@ export class TrajectoryService {
       .executeTakeFirst();
     if (!conv || !(await this.canView(orgId, accountId, conv.agent_id))) throw notFound();
     const events: ConversationEvent[] = [];
-    for (let after = 0; ; ) {
-      const page = await this.eventLog.readAfter(conversationId, after, EVENT_PAGE);
-      events.push(...page);
-      const last = page.at(-1);
-      if (page.length < EVENT_PAGE || last === undefined) break;
-      after = last.seq;
+    let next: string | null | undefined;
+    if (window === undefined) {
+      for (let after = 0; ; ) {
+        const page = await this.eventLog.readAfter(conversationId, after, EVENT_PAGE);
+        events.push(...page);
+        const last = page.at(-1);
+        if (page.length < EVENT_PAGE || last === undefined) break;
+        after = last.seq;
+      }
+    } else {
+      const picked = await this.windowRuns(conversationId, window);
+      next = picked.next;
+      // 运行的事件都在它的 trigger_seq 之后：从窗口里最小的 trigger_seq 开始读，不扫更早的历史
+      let after = Math.min(...picked.runs.map((r) => r.triggerSeq));
+      const ids = picked.runs.map((r) => r.id);
+      while (ids.length > 0) {
+        const page = await this.eventLog.readRunsAfter(conversationId, ids, after, EVENT_PAGE);
+        events.push(...page);
+        const last = page.at(-1);
+        if (page.length < EVENT_PAGE || last === undefined) break;
+        after = last.seq;
+      }
     }
     const [table, settings] = await Promise.all([this.prices.table(), this.settings.get()]);
     await audit(this.db, {
@@ -211,6 +268,46 @@ export class TrajectoryService {
       },
       runs: buildTrajectory(events, table),
       currency: settings.priceCurrency,
+      ...(next !== undefined && { next }),
+    };
+  }
+
+  /**
+   * 窗口内已开始（`started_at` 非空，与轨迹只列有 `run_started` 的运行一致）的运行，按 (created_at, id) 倒序取
+   * `limit` 次；`before` 是上一页的 `next`（运行 id）。`next`：还有更早的运行时为本页最早一次的 id。
+   */
+  private async windowRuns(
+    conversationId: string,
+    window: RunWindow,
+  ): Promise<{ runs: { id: string; triggerSeq: number }[]; next: string | null }> {
+    let query = this.db
+      .selectFrom("runs as r")
+      .select(["r.id", "r.trigger_seq"])
+      .where("r.conversation_id", "=", conversationId)
+      .where("r.started_at", "is not", null)
+      .orderBy("r.created_at", "desc")
+      .orderBy("r.id", "desc");
+    if ("runId" in window) {
+      query = query.where("r.id", "=", window.runId).limit(1);
+    } else {
+      query = query.limit(window.limit + 1);
+      if (window.before !== undefined) {
+        const before = window.before;
+        query = query.where(
+          (eb) =>
+            sql<boolean>`(${eb.ref("r.created_at")}, ${eb.ref("r.id")}) < (
+              SELECT x.created_at, x.id FROM capybara.runs x
+              WHERE x.id = ${before} AND x.conversation_id = ${conversationId}
+            )`,
+        );
+      }
+    }
+    const rows = await query.execute();
+    const limit = "runId" in window ? 1 : window.limit;
+    const page = rows.slice(0, limit);
+    return {
+      runs: page.map((r) => ({ id: r.id, triggerSeq: Number(r.trigger_seq) })),
+      next: rows.length > limit ? (page.at(-1)?.id ?? null) : null,
     };
   }
 }

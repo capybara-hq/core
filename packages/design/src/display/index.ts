@@ -43,3 +43,4 @@ export { CAPYBARA_BITMAP, Logo } from "./logo";
 export { Pagination, type PaginationProps } from "./pagination";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";
 export { Tooltip } from "./tooltip";
+export { formatSpanDuration, type Span, SpanWaterfall, type SpanWaterfallProps } from "./waterfall";

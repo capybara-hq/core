@@ -61,7 +61,12 @@ const errCode = (res: { json(): unknown }) =>
 const USAGE = { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
 /** 一次完成的运行：一次模型调用、一段文本。 */
-async function seedRun(convId: string, runId: string, triggerAccountId: string): Promise<void> {
+async function seedRun(
+  convId: string,
+  runId: string,
+  triggerAccountId: string,
+  createdAt = new Date(),
+): Promise<void> {
   await db
     .insertInto("runs")
     .values({
@@ -70,8 +75,9 @@ async function seedRun(convId: string, runId: string, triggerAccountId: string):
       status: "completed",
       agent_version: 1,
       trigger_account_id: triggerAccountId,
-      started_at: new Date(),
-      finished_at: new Date(),
+      created_at: createdAt,
+      started_at: createdAt,
+      finished_at: createdAt,
     })
     .execute();
   await eventLog.append(convId, [
@@ -250,6 +256,93 @@ describe("GET /orgs/:orgId/trajectories/:conversationId", () => {
     });
     expect(res.statusCode).toBe(401);
   });
+
+  describe("运行窗口（runId / before + limit）", () => {
+    type Windowed = Detail & { next: string | null };
+    const windowed = (req: Req, convId: string, query: string) =>
+      req({ method: "GET", url: `/api/v1/orgs/${orgId}/trajectories/${convId}${query}` });
+    const t0 = Date.now() - 60_000;
+
+    beforeEach(async () => {
+      // convAlice 共三次开始了的运行（run-a 最早）与一次还在排队、从未开始的运行
+      await db
+        .updateTable("runs")
+        .set({ created_at: new Date(t0) })
+        .where("id", "=", "run-a")
+        .execute();
+      await seedRun(convAlice, "run-a2", aliceId, new Date(t0 + 1000));
+      await seedRun(convAlice, "run-a3", aliceId, new Date(t0 + 2000));
+      await db
+        .insertInto("runs")
+        .values({
+          id: "run-q",
+          conversation_id: convAlice,
+          status: "queued",
+          agent_version: 1,
+          trigger_account_id: aliceId,
+          created_at: new Date(t0 + 3000),
+        })
+        .execute();
+    });
+
+    it("不带窗口：形状不变（没有 next），返回全部开始了的运行", async () => {
+      const res = await detail(alice, convAlice);
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as Windowed;
+      expect("next" in body).toBe(false);
+      expect(body.runs.map((r) => r.runId)).toEqual(["run-a", "run-a2", "run-a3"]);
+    });
+
+    it("limit：最新的 N 次运行按时间正序，next 是本页最早的运行；before 往前翻到底", async () => {
+      const before = await viewedCount();
+      const p1 = await windowed(alice, convAlice, "?limit=2");
+      expect(p1.statusCode, p1.body).toBe(200);
+      const b1 = p1.json() as Windowed;
+      expect(b1.runs.map((r) => r.runId)).toEqual(["run-a2", "run-a3"]);
+      // 只建这两次运行：别的运行的事件不进来
+      expect(b1.runs[0]?.steps[0]?.text).toBe("hello");
+      expect(b1.next).toBe("run-a2");
+      expect(b1.conversation.id).toBe(convAlice);
+      expect(b1.currency).toBe("USD");
+
+      const p2 = (await windowed(alice, convAlice, "?limit=2&before=run-a2")).json() as Windowed;
+      expect(p2.runs.map((r) => r.runId)).toEqual(["run-a"]);
+      expect(p2.next).toBeNull();
+
+      // 每次 200 都记审计
+      expect(await viewedCount()).toBe(before + 2);
+    });
+
+    it("runId：只取这一次运行；不属于该对话的运行为空", async () => {
+      const one = (await windowed(owner, convAlice, "?runId=run-a2")).json() as Windowed;
+      expect(one.runs.map((r) => r.runId)).toEqual(["run-a2"]);
+      expect(one.next).toBeNull();
+      const other = await windowed(owner, convAlice, "?runId=run-b");
+      expect(other.statusCode).toBe(200);
+      expect((other.json() as Windowed).runs).toEqual([]);
+      expect(await viewedCount()).toBe(2);
+    });
+
+    it("参数校验；无权仍是 404 且不记审计", async () => {
+      for (const q of [
+        "?runId=run-a&limit=2",
+        "?runId=run-a&before=run-a2",
+        "?limit=0",
+        "?limit=51",
+      ]) {
+        const res = await windowed(owner, convAlice, q);
+        expect(res.statusCode, q).toBe(400);
+        expect(errCode(res)).toBe("validation_failed");
+      }
+      // before 单独给时按缺省页大小
+      const b = (await windowed(owner, convAlice, "?before=run-a3")).json() as Windowed;
+      expect(b.runs.map((r) => r.runId)).toEqual(["run-a", "run-a2"]);
+      expect(b.next).toBeNull();
+      const denied = await windowed(bob, convAlice, "?limit=1");
+      expect(denied.statusCode).toBe(404);
+      expect(await viewedCount()).toBe(1);
+    });
+  });
 });
 
 describe("GET /orgs/:orgId/trajectories", () => {
@@ -281,6 +374,15 @@ describe("GET /orgs/:orgId/trajectories", () => {
     const b = await list(bob);
     expect(b.statusCode).toBe(200);
     expect((b.json() as Page).items).toEqual([]);
+
+    // 按最近一次运行的状态过滤
+    const done = (await list(owner, "?status=completed")).json() as Page;
+    expect(done.items.map((i) => i.conversationId).sort()).toEqual([convAlice, convBob].sort());
+    await db.updateTable("runs").set({ status: "failed" }).where("id", "=", "run-b").execute();
+    const failed = (await list(owner, "?status=failed")).json() as Page;
+    expect(failed.items.map((i) => i.conversationId)).toEqual([convBob]);
+    expect(((await list(owner, "?status=running")).json() as Page).items).toEqual([]);
+    expect((await list(owner, "?status=bogus")).statusCode).toBe(400);
 
     // agentId 过滤
     const filtered = (await list(owner, `?agentId=${agentO}`)).json() as Page;

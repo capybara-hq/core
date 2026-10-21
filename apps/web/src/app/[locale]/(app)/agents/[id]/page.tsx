@@ -7,6 +7,8 @@ import { useState } from "react";
 import { useAgentForm } from "../../../../../components/AgentForm";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
+import { navLevelOf } from "../../../../../components/shell/nav";
+import { useSession } from "../../../../../components/shell/session";
 import { useRouter } from "../../../../../i18n/navigation";
 import { type Agent, getAgent } from "../../../../../lib/agents";
 import { ApiClientError } from "../../../../../lib/api";
@@ -15,7 +17,8 @@ import { useLoad } from "../../../../../lib/use-load";
 
 /**
  * `/[locale]/agents/[id]`：修改 agent（FormPage）：与新建同一套分组，按当前定义预填；技能分组里另有
- * agent 自己写的技能（只读，负责人可删）。保存后回到列表。
+ * agent 自己写的技能（只读，负责人可删）。保存后回到列表。组织管理员与负责人在页头有「运行记录」入口
+ * （轨迹查看器，按该 agent 筛选；能否查看最终由内核判定）。
  */
 export default function EditAgentPage() {
   const { id } = useParams<{ id: string }>();
@@ -62,13 +65,26 @@ function LoadAgent({ orgId, id }: { orgId: string; id: string }) {
 function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
   const t = useTranslations();
   const router = useRouter();
+  const { me } = useSession();
   const done = () => router.push("/agents");
   const form = useAgentForm(orgId, done, agent);
+  const level = navLevelOf(me);
+  const canViewRuns =
+    level === "admin" || (level === "member" && agent.ownerAccountId === me.account.id);
   return (
     <FormPage
       header={{
         parent: { label: t("agents.title"), href: "/agents" },
         title: agent.definition.name || t("agents.form.editTitle"),
+        ...(canViewRuns && {
+          actions: [
+            {
+              label: t("agents.runHistory"),
+              variant: "default",
+              href: `/trajectories?agentId=${encodeURIComponent(agent.id)}`,
+            },
+          ],
+        }),
       }}
       anchors={form.anchors}
       actionRow={{

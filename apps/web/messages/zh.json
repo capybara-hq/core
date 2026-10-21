@@ -188,6 +188,17 @@
       "not_found": "该技能改动不存在或你无权查看。",
       "not_owner": "只有该 agent 的负责人可以批准或拒绝它的技能改动。",
       "already_decided": "该技能改动已被处理。"
+    },
+    "trajectory": {
+      "not_found": "没有找到这条运行记录，或你没有查看权限。"
+    },
+    "eval": {
+      "set_not_found": "评测集不存在。",
+      "case_exists": "这次运行已经在该评测集里了。",
+      "too_many_cases": "评测集已满，无法再加入用例。",
+      "agent_mismatch": "这次运行不属于该评测集的 agent。",
+      "run_not_finished": "运行还没结束，结束后才能加入评测集。",
+      "case_too_large": "这次运行太大，不能加入评测集。"
     }
   },
   "agents": {
@@ -286,7 +297,8 @@
     },
     "emptyHint": "新建一个 Agent，然后开始对话。",
     "noOrgHint": "请在工作台或顶栏的组织菜单中选择组织。",
-    "edit": "编辑"
+    "edit": "编辑",
+    "runHistory": "运行记录"
   },
   "skills": {
     "title": "技能",
@@ -438,7 +450,8 @@
     "inbox": "收件箱",
     "apps": "应用",
     "channels": "渠道",
-    "skills": "技能"
+    "skills": "技能",
+    "evals": "评测"
   },
   "shell": {
     "switchLocale": "切换到 {name}",
@@ -1099,5 +1112,142 @@
     "invalidTitle": "链接已失效",
     "invalidHint": "在 IM 里给机器人重新发一条消息，获取新的绑定链接。",
     "goHome": "进入 Capybara"
+  },
+  "trajectories": {
+    "title": "运行记录",
+    "untitled": "未命名对话",
+    "noRun": "没有运行",
+    "empty": "还没有可查看的运行记录",
+    "emptyHint": "你负责的 agent（组织管理员为全部 agent）有对话运行后会出现在这里。",
+    "noMatch": "没有符合当前筛选的对话。",
+    "loadMore": "加载更多",
+    "columns": {
+      "title": "对话",
+      "agent": "Agent",
+      "status": "最近一次运行",
+      "updated": "更新时间"
+    },
+    "filters": {
+      "agent": "Agent",
+      "allAgents": "全部 agent",
+      "status": "最近一次运行的状态",
+      "allStatuses": "全部"
+    },
+    "status": {
+      "queued": "排队",
+      "running": "运行中",
+      "waiting": "等人处理",
+      "completed": "已完成",
+      "failed": "失败",
+      "aborted": "已中止"
+    },
+    "detail": {
+      "waterfall": "Span 瀑布",
+      "region": "Span 详情",
+      "audited": "查看运行记录会记入审计。",
+      "loadEarlier": "加载更早的运行",
+      "empty": "这个对话还没有开始过运行。",
+      "selectHint": "选择上方的一个 span 查看详情。",
+      "metrics": {
+        "tokens": "总 TOKEN",
+        "cost": "成本（估算）",
+        "calls": "调用数",
+        "duration": "耗时"
+      },
+      "run": {
+        "title": "运行 {id}",
+        "version": "agent 版本",
+        "trigger": "发起人",
+        "started": "开始",
+        "ended": "结束",
+        "result": "结果",
+        "running": "进行中",
+        "end": {
+          "finished": "完成",
+          "failed": "失败",
+          "aborted": "中止"
+        },
+        "tokens": "token",
+        "cost": "本次运行成本（估算）",
+        "calls": "调用次数",
+        "callsValue": "模型 {model} · 工具 {tool}",
+        "duration": "耗时"
+      },
+      "step": {
+        "title": "步骤 {n}",
+        "stopReason": "停止原因",
+        "text": "回复正文",
+        "noText": "（没有文本）"
+      },
+      "model": {
+        "title": "模型调用 · {name}",
+        "provider": "供应商",
+        "model": "模型",
+        "attempt": "尝试",
+        "attemptValue": "第 {n} 次",
+        "fallback": "兜底",
+        "fallbackYes": "是（兜底模型）",
+        "fallbackNo": "否（主模型）",
+        "outcome": "结果",
+        "outcomes": {
+          "ok": "成功",
+          "failed": "失败",
+          "pending": "进行中"
+        },
+        "tokens": "token",
+        "tokensValue": "输入 {input} · 输出 {output} · 缓存读 {cacheRead} · 缓存写 {cacheWrite}",
+        "latency": "延迟",
+        "cost": "成本（估算）",
+        "params": "参数",
+        "tools": "工具",
+        "started": "开始"
+      },
+      "tool": {
+        "title": "工具调用 · {name}",
+        "result": "结果",
+        "noResult": "（没有结果）",
+        "error": "出错",
+        "duration": "耗时",
+        "started": "开始执行",
+        "notStarted": "未执行",
+        "approval": "审批",
+        "approvalRequested": "请求审批",
+        "decision": "决定",
+        "decisions": {
+          "approved": "已批准",
+          "denied": "已拒绝",
+          "expired": "已过期",
+          "cancelled": "已取消",
+          "pending": "待决定"
+        },
+        "scope": "范围",
+        "scopes": {
+          "once": "仅本次",
+          "session": "本会话",
+          "always": "始终"
+        },
+        "by": "处理人",
+        "decidedAt": "决定于",
+        "question": "提问",
+        "asked": "提问于",
+        "questionOutcome": "回答",
+        "questionOutcomes": {
+          "answered": "已回答",
+          "expired": "已过期",
+          "cancelled": "已取消",
+          "pending": "待回答"
+        }
+      }
+    },
+    "addToSet": {
+      "action": "加入评测集",
+      "title": "加入评测集",
+      "set": "评测集",
+      "run": "运行",
+      "submit": "加入",
+      "noSets": "该 agent 还没有评测集。",
+      "runNotFinished": "这次运行还没结束，结束后才能加入。",
+      "added": "已加入评测集「{name}」。"
+    }
   }
 }

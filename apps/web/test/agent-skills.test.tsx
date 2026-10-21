@@ -7,7 +7,7 @@ import EditAgentPage from "../src/app/[locale]/(app)/agents/[id]/page";
 import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { ME, renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ id: "ag1" }) }));
@@ -248,6 +248,29 @@ describe("编辑 agent（FormPage）", () => {
       expect(router.push).not.toHaveBeenCalled();
     },
   );
+
+  it("「运行记录」入口：负责人与组织管理员可见，指向按该 agent 筛选的运行记录", async () => {
+    // 组织 owner（管理员）且是负责人
+    stubApi(routes());
+    renderPage(<EditAgentPage />);
+    const link = await screen.findByRole("link", { name: en.agents.runHistory });
+    expect(link.getAttribute("href")).toBe("/trajectories?agentId=ag1");
+    cleanup();
+    // 普通成员、是负责人：可见
+    const member = {
+      ...ME,
+      memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+    };
+    stubApi(routes());
+    renderPage(<EditAgentPage />, { me: member });
+    expect(await screen.findByRole("link", { name: en.agents.runHistory })).toBeTruthy();
+    cleanup();
+    // 普通成员、不是负责人：不可见
+    stubApi(routes({ ownerAccountId: "someone-else" }));
+    renderPage(<EditAgentPage />, { me: member });
+    await screen.findByRole("group", { name: en.agents.form.ownSkillsLabel });
+    expect(screen.queryByRole("link", { name: en.agents.runHistory })).toBeNull();
+  });
 
   it("不是负责人：自己的技能没有删除按钮", async () => {
     stubApi(routes({ ownerAccountId: "someone-else" }));

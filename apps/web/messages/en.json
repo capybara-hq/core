@@ -188,6 +188,17 @@
       "not_found": "The skill change does not exist or you cannot see it.",
       "not_owner": "Only the agent's owner can approve or reject its skill changes.",
       "already_decided": "This skill change has already been handled."
+    },
+    "trajectory": {
+      "not_found": "Run history not found, or you do not have access to it."
+    },
+    "eval": {
+      "set_not_found": "Eval set not found.",
+      "case_exists": "This run is already in the eval set.",
+      "too_many_cases": "The eval set is full.",
+      "agent_mismatch": "This run belongs to a different agent than the eval set.",
+      "run_not_finished": "The run has not finished yet. Add it after it ends.",
+      "case_too_large": "This run is too large to add to an eval set."
     }
   },
   "agents": {
@@ -286,7 +297,8 @@
     },
     "emptyHint": "Create an agent, then start a conversation.",
     "noOrgHint": "Pick one on the home page or from the organization menu in the top bar.",
-    "edit": "Edit"
+    "edit": "Edit",
+    "runHistory": "Run history"
   },
   "skills": {
     "title": "Skills",
@@ -438,7 +450,8 @@
     "inbox": "Inbox",
     "apps": "Apps",
     "channels": "Channels",
-    "skills": "Skills"
+    "skills": "Skills",
+    "evals": "Evals"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -1099,5 +1112,142 @@
     "invalidTitle": "Link expired",
     "invalidHint": "Send the bot a new message in IM to get a fresh link.",
     "goHome": "Go to Capybara"
+  },
+  "trajectories": {
+    "title": "Run history",
+    "untitled": "Untitled conversation",
+    "noRun": "No runs",
+    "empty": "No run history to view yet",
+    "emptyHint": "Conversations with agents you own (all agents for org admins) appear here once they run.",
+    "noMatch": "No conversations match the current filters.",
+    "loadMore": "Load more",
+    "columns": {
+      "title": "Conversation",
+      "agent": "Agent",
+      "status": "Last run",
+      "updated": "Updated"
+    },
+    "filters": {
+      "agent": "Agent",
+      "allAgents": "All agents",
+      "status": "Last run status",
+      "allStatuses": "All"
+    },
+    "status": {
+      "queued": "Queued",
+      "running": "Running",
+      "waiting": "Waiting",
+      "completed": "Completed",
+      "failed": "Failed",
+      "aborted": "Aborted"
+    },
+    "detail": {
+      "waterfall": "Span waterfall",
+      "region": "Span details",
+      "audited": "Viewing run history is recorded in the audit log.",
+      "loadEarlier": "Load earlier runs",
+      "empty": "This conversation has not started any runs yet.",
+      "selectHint": "Select a span above to see its details.",
+      "metrics": {
+        "tokens": "TOKENS",
+        "cost": "Cost (est.)",
+        "calls": "Calls",
+        "duration": "Duration"
+      },
+      "run": {
+        "title": "Run {id}",
+        "version": "Agent version",
+        "trigger": "Started by",
+        "started": "Started",
+        "ended": "Ended",
+        "result": "Result",
+        "running": "In progress",
+        "end": {
+          "finished": "Finished",
+          "failed": "Failed",
+          "aborted": "Aborted"
+        },
+        "tokens": "Tokens",
+        "cost": "Run cost (est.)",
+        "calls": "Call counts",
+        "callsValue": "Model {model} · Tools {tool}",
+        "duration": "Duration"
+      },
+      "step": {
+        "title": "Step {n}",
+        "stopReason": "Stop reason",
+        "text": "Reply text",
+        "noText": "(no text)"
+      },
+      "model": {
+        "title": "Model call · {name}",
+        "provider": "Provider",
+        "model": "Model",
+        "attempt": "Attempt",
+        "attemptValue": "#{n}",
+        "fallback": "Fallback",
+        "fallbackYes": "Yes (fallback model)",
+        "fallbackNo": "No (primary model)",
+        "outcome": "Outcome",
+        "outcomes": {
+          "ok": "Succeeded",
+          "failed": "Failed",
+          "pending": "In progress"
+        },
+        "tokens": "Tokens",
+        "tokensValue": "Input {input} · Output {output} · Cache read {cacheRead} · Cache write {cacheWrite}",
+        "latency": "Latency",
+        "cost": "Cost (est.)",
+        "params": "Parameters",
+        "tools": "Tools",
+        "started": "Started"
+      },
+      "tool": {
+        "title": "Tool call · {name}",
+        "result": "Result",
+        "noResult": "(no result)",
+        "error": "Error",
+        "duration": "Duration",
+        "started": "Started",
+        "notStarted": "Not run",
+        "approval": "Approval",
+        "approvalRequested": "Requested",
+        "decision": "Decision",
+        "decisions": {
+          "approved": "Approved",
+          "denied": "Denied",
+          "expired": "Expired",
+          "cancelled": "Cancelled",
+          "pending": "Pending"
+        },
+        "scope": "Scope",
+        "scopes": {
+          "once": "This time only",
+          "session": "This conversation",
+          "always": "Always"
+        },
+        "by": "Decided by",
+        "decidedAt": "Decided",
+        "question": "Question",
+        "asked": "Asked",
+        "questionOutcome": "Answer",
+        "questionOutcomes": {
+          "answered": "Answered",
+          "expired": "Expired",
+          "cancelled": "Cancelled",
+          "pending": "Awaiting answer"
+        }
+      }
+    },
+    "addToSet": {
+      "action": "Add to eval set",
+      "title": "Add to eval set",
+      "set": "Eval set",
+      "run": "Run",
+      "submit": "Add",
+      "noSets": "This agent has no eval sets yet.",
+      "runNotFinished": "This run has not finished yet. Add it after it ends.",
+      "added": "Added to eval set \"{name}\"."
+    }
   }
 }

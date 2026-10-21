@@ -286,8 +286,9 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.skills, "/skills"],
       [zh.nav.inbox, "/inbox"],
       [zh.nav.apps, "/apps"],
-      // 管理员（owner）才看得到渠道
+      // 管理员（owner）才看得到渠道与评测
       [zh.nav.channels, "/channels"],
+      [zh.nav.evals, "/trajectories"],
     ]);
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
@@ -310,6 +311,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(await screen.findByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(nav).queryByRole("link", { name: zh.nav.channels })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: zh.nav.evals })).toBeNull();
     expect(within(nav).getByRole("link", { name: zh.nav.apps })).toBeTruthy();
     // 成员能浏览技能库
     expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();

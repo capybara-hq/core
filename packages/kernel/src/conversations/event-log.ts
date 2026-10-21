@@ -147,6 +147,29 @@ export class EventLog {
     return rows.map(toEvent);
   }
 
+  /**
+   * 读 `afterSeq` 之后、属于 `runIds` 中某次运行的事件，按 seq 升序，最多 `limit` 条（轨迹按运行分页用）。
+   * `runIds` 为空时返回空数组。
+   */
+  async readRunsAfter(
+    conversationId: string,
+    runIds: readonly string[],
+    afterSeq: number,
+    limit = 500,
+  ): Promise<ConversationEvent[]> {
+    if (runIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom("conversation_events")
+      .select(EVENT_COLUMNS)
+      .where("conversation_id", "=", conversationId)
+      .where("run_id", "in", [...runIds])
+      .where("seq", ">", String(afterSeq))
+      .orderBy("seq")
+      .limit(limit)
+      .execute();
+    return rows.map(toEvent);
+  }
+
   /** 按幂等键取事件；没有 → undefined。 */
   async findByIdem(
     conversationId: string,

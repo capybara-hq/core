@@ -288,3 +288,61 @@ test("OpenAPI 应用经安装向导接入（文档认证提示预填 API key、�
     /"name":\s*"Rex"/,
   );
 });
+
+test("带工具的对话结束后，管理员打开运行记录：瀑布里有模型与工具 span，详情含审批链", async ({
+  page,
+}) => {
+  const mcpUrl = process.env.CAPYBARA_E2E_MCP_URL as string;
+  await signIn(page);
+
+  // 1. 带工具的对话：destructive 工具 → 审批 → 批准 → 回复
+  await installMcp(page, "Trace", "trace", mcpUrl);
+  const input = await chatWithAgent(page, "Trace agent", "Trace");
+  await input.fill('tool:trace__delete_item:{"id":"t1"}');
+  await input.press("Enter");
+  const approval = page.locator('[data-role="approval"]');
+  await expect(approval).toHaveCount(1);
+  await approval.getByRole("button", { name: zh.approval.approve }).click();
+  await expect(page.locator('[data-role="assistant"] [data-part="body"]').last()).toHaveText(
+    /deleted t1/,
+  );
+
+  // 2. 顶栏「评测」→ 运行记录 → 按 agent 筛选 → 运行结束后打开该对话
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: zh.nav.evals })
+    .click();
+  await expect(page).toHaveURL(/\/zh\/trajectories$/);
+  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  await page
+    .getByRole("combobox", { name: zh.trajectories.filters.agent })
+    .selectOption({ label: "Trace agent" });
+  const table = page.getByRole("table", { name: zh.trajectories.title });
+  await expect(table.getByRole("row")).toHaveCount(2); // 表头 + 一个对话
+  await expect(async () => {
+    await page.reload();
+    await page
+      .getByRole("combobox", { name: zh.trajectories.filters.agent })
+      .selectOption({ label: "Trace agent" });
+    await expect(table.getByText(`✓ ${zh.trajectories.status.completed}`)).toBeVisible({
+      timeout: 2000,
+    });
+  }).toPass();
+  await table.getByRole("row").nth(1).click();
+  await expect(page).toHaveURL(/\/zh\/trajectories\/[^/]+$/);
+
+  // 3. 轨迹页：模型与工具 span；选中工具 span 显示结果与审批链；有审计提示与「加入评测集」
+  await expect(page.locator('[data-template="TracePage"]')).toBeVisible();
+  const tree = page.getByRole("tree", { name: zh.trajectories.detail.waterfall });
+  await expect(tree.locator('[data-kind="model"]').first()).toContainText("model-fake/fake-1");
+  const tool = tree.locator('[data-kind="tool"]');
+  await expect(tool).toHaveCount(1);
+  await expect(tool).toContainText("trace__delete_item");
+  await expect(tree.locator('[data-kind="wait"]')).toHaveCount(1);
+  await expect(page.getByText(zh.trajectories.detail.audited)).toBeVisible();
+  await expect(page.getByRole("button", { name: zh.trajectories.addToSet.action })).toBeVisible();
+  await tool.click();
+  const detail = page.getByRole("region", { name: zh.trajectories.detail.region });
+  await expect(detail.getByText("deleted t1", { exact: true })).toBeVisible();
+  await expect(detail.getByText(zh.trajectories.detail.tool.decisions.approved)).toBeVisible();
+});
