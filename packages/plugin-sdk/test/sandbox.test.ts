@@ -51,7 +51,7 @@ describe("sandbox@1", () => {
   });
 
   it("合法主机名", () => {
-    for (const h of ["github.com", "*.npmjs.org", "xn--bcher-kva.example", "localhost"]) {
+    for (const h of ["github.com", "*.npmjs.org", "xn--bcher-kva.example", "api.example.co"]) {
       expect(validateAllowHost(h)).toEqual([]);
     }
   });
@@ -71,6 +71,23 @@ describe("sandbox@1", () => {
       "-a.com",
       "a..com",
       "a b.com",
+      "127.0.0.1",
+      "127.1",
+      "0x7f000001",
+      "0x7f.0.0.1",
+      "0177.0.0.1",
+      "2130706433",
+      "*.10.0.0.1",
+      "[::1]",
+      "::1",
+      "[::ffff:127.0.0.1]",
+      "localhost",
+      "metadata",
+      "*.localhost",
+      "foo.localhost",
+      "printer.local",
+      "db.internal",
+      "*.internal",
     ]) {
       expect(validateAllowHost(h).length, h).toBeGreaterThan(0);
     }

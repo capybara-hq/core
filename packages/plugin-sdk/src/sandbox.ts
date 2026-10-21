@@ -116,7 +116,16 @@ export function validateAllowHost(h: string): string[] {
   const name = h.startsWith("*.") ? h.slice(2) : h;
   if (name.length === 0) return ["wildcard must be followed by a domain"];
   const labels = name.split(".");
-  if (labels.every((l) => LABEL.test(l))) return [];
+  if (labels.every((l) => LABEL.test(l))) {
+    const tld = labels[labels.length - 1] as string;
+    if (labels.length < 2) return ["host must have at least two labels (no single-label names)"];
+    // 末段必须以字母开头：挡住 IPv4 的十进制 / 八进制 / 十六进制写法
+    if (!/^[a-z]/.test(tld)) return ["host must not be an IP address literal"];
+    if (["local", "internal", "localhost"].includes(tld)) {
+      return ["host must not be in an internal-only domain (.local, .internal, .localhost)"];
+    }
+    return [];
+  }
   return [
     "host must be a lowercase hostname without scheme, port or path (optional leading '*.'; IDN as punycode)",
   ];
