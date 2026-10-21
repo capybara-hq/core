@@ -283,6 +283,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
       [zh.nav.overview, "/"],
       [zh.nav.agents, "/agents"],
+      [zh.nav.skills, "/skills"],
       [zh.nav.inbox, "/inbox"],
       [zh.nav.apps, "/apps"],
       // 管理员（owner）才看得到渠道
@@ -303,13 +304,32 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
           ...ME,
           memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
         }),
-      "GET /api/v1/orgs/o1/approvals?status=pending": () => json(200, { approvals: [] }),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
     });
     renderFrame();
     expect(await screen.findByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(nav).queryByRole("link", { name: zh.nav.channels })).toBeNull();
     expect(within(nav).getByRole("link", { name: zh.nav.apps })).toBeTruthy();
+    // 成员能浏览技能库
+    expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();
+  });
+
+  it("访客的顶栏不显示「技能」", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () =>
+        json(200, {
+          ...ME,
+          memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+        }),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+    });
+    renderFrame();
+    expect(await screen.findByText("page body")).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(nav).queryByRole("link", { name: zh.nav.skills })).toBeNull();
+    expect(within(nav).getByRole("link", { name: zh.nav.agents })).toBeTruthy();
   });
 
   it("未登录访问某页（401）：去登录页并带回该页", async () => {
@@ -326,13 +346,20 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
   });
 
   it.each(["zh", "en"] as const)(
-    "顶栏「收件箱」带待处理审批数 Badge（当前组织的 pending 审批）（%s）",
+    "顶栏「收件箱」带待处理数 Badge（收件箱汇总：工具审批 + 技能变更）（%s）",
     async (locale) => {
       const m = locale === "zh" ? zh : en;
       resetNavigation("/");
       stubApi({
         "GET /api/v1/me": () => json(200, ME),
-        "GET /api/v1/orgs/o1/approvals": () => json(200, { approvals: [{ id: "x" }, { id: "y" }] }),
+        "GET /api/v1/orgs/o1/inbox": () =>
+          json(200, {
+            items: [
+              { type: "tool_approval", id: "x" },
+              { type: "skill_change", id: "y" },
+            ],
+            truncated: false,
+          }),
       });
       renderFrame(locale);
       const nav = await screen.findByRole("navigation", {
@@ -458,5 +485,7 @@ describe("activeNavOf", () => {
     expect(activeNavOf("/settings/identities")).toBe("apps");
     expect(activeNavOf("/settings/plugins")).toBe("apps");
     expect(activeNavOf("/chat/c1")).toBe("agents");
+    expect(activeNavOf("/skills")).toBe("skills");
+    expect(activeNavOf("/skills/s1")).toBe("skills");
   });
 });

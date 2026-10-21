@@ -204,6 +204,8 @@ describe("上传技能包", { timeout: 60_000 }, () => {
     const d = detail.json() as { versions: { version: number; files: { path: string }[] }[] };
     expect(d.versions.map((v) => v.version)).toEqual([2, 1]);
     expect(d.versions[1]?.files.map((f) => f.path)).toEqual(["SKILL.md", "scripts/run.py"]);
+    // 当前版本 SKILL.md 的正文（去掉 frontmatter，网页按纯文本显示）
+    expect((detail.json() as { body: string | null }).body).toBe("# pdf-tools\n\nSteps.\n");
 
     const audits = await db
       .selectFrom("audit_events")
@@ -524,6 +526,34 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
       .execute();
     expect(await k.skills.list(orgId)).toEqual([]);
     expect((await k.skills.listForAgent(orgId, agentId)).map((s) => s.name)).toEqual(["mine"]);
+
+    // GET /agents/:agentId/skills：能看到该 agent 的人都能读；看不到的 agent → 404 agent.not_found
+    const url = `/api/v1/orgs/${orgId}/agents/${agentId}/skills`;
+    const own = await admin({ method: "GET", url });
+    expect(own.statusCode, own.body).toBe(200);
+    expect((own.json() as { skills: { name: string; scope: string }[] }).skills).toMatchObject([
+      { name: "mine", scope: "agent" },
+    ]);
+    // 组织可见的 agent：成员能读
+    const shared = await member({ method: "GET", url });
+    expect(shared.statusCode, shared.body).toBe(200);
+    expect((shared.json() as { skills: unknown[] }).skills).toHaveLength(1);
+    // 改成私有：成员看不到
+    const patched = await admin({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: { visibility: "private" },
+    });
+    expect(patched.statusCode, patched.body).toBe(200);
+    const hidden = await member({ method: "GET", url });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json().error.code).toBe("agent.not_found");
+    const missing = await admin({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/agents/nope/skills`,
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().error.code).toBe("agent.not_found");
   });
 });
 

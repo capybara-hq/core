@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import {
   type AttachmentsService,
@@ -43,7 +44,15 @@ export interface SkillVersionView {
 /** 技能详情：各版本新的在前。 */
 export interface SkillDetail extends SkillSummary {
   versions: SkillVersionView[];
+  /**
+   * 当前版本 SKILL.md 的正文（去掉 frontmatter；网页按纯文本显示）。超过 {@link SKILL_BODY_MAX_BYTES}、
+   * 读不到（对象缺失、存储不可用）或不是 UTF-8 时为 null。
+   */
+  body: string | null;
 }
+
+/** 详情里读取 SKILL.md 正文的上限。 */
+export const SKILL_BODY_MAX_BYTES = 1024 * 1024;
 
 /** `POST /skills` 的结果：`created` 为 true 表示新技能，否则是已有技能的新版本。 */
 export interface UploadedSkill {
@@ -313,12 +322,14 @@ export class SkillsService {
     if (!row) throw notFound();
     const versions = await this.d.db
       .selectFrom("skill_versions")
-      .select(["version", "manifest", "created_by", "created_at"])
+      .select(["version", "manifest", "created_by", "created_at", "object_prefix"])
       .where("skill_id", "=", skillId)
       .orderBy("version", "desc")
       .execute();
+    const current = versions.find((v) => v.version === row.current_version);
     return {
       ...summary(row),
+      body: current ? await this.readBody(orgId, current) : null,
       versions: versions.map((v) => ({
         version: v.version,
         description: v.manifest.description,
@@ -327,6 +338,26 @@ export class SkillsService {
         createdAt: v.created_at,
       })),
     };
+  }
+
+  /** 读某版本 SKILL.md 的正文（见 {@link SkillDetail.body}）；任何读取问题都返回 null，不让详情失败。 */
+  private async readBody(
+    orgId: string,
+    v: { manifest: SkillManifest; object_prefix: string },
+  ): Promise<string | null> {
+    const entry = v.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
+    if (!entry || entry.size > SKILL_BODY_MAX_BYTES) return null;
+    try {
+      const got = await this.d.storage.kernel(orgId).get(`${v.object_prefix}${SKILL_ENTRY_FILE}`);
+      if (!got) return null;
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(
+        await new Response(got.body).arrayBuffer(),
+      );
+      const parsed = parseSkillMd(text);
+      return "errors" in parsed ? text : parsed.body;
+    } catch {
+      return null;
+    }
   }
 
   /**

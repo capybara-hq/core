@@ -17,8 +17,12 @@ export type AgentToolRef =
 /** 收紧后的策略（只能收紧：`ask` / `deny`）。 */
 export type TightenedPolicy = "ask" | "deny";
 
-/** 网页可选的内置工具（内核没有列出内置工具的接口；`tool_search` 由内核按组织设置自动加入）。 */
-export const BUILTIN_TOOLS = ["ask_user", "read_tool_output"] as const;
+/**
+ * 网页可选的内置工具（内核没有列出内置工具的接口；`tool_search` 与 `skill_load` 由内核自动加入）。
+ * 新建时默认勾选 {@link DEFAULT_BUILTIN_TOOLS}（与内核的默认工具一致）。
+ */
+export const BUILTIN_TOOLS = ["ask_user", "read_tool_output", "skill_write"] as const;
+export const DEFAULT_BUILTIN_TOOLS: readonly string[] = ["ask_user", "read_tool_output"];
 
 export interface AgentDefinitionInput {
   name: string;
@@ -33,14 +37,18 @@ export interface AgentDefinitionInput {
   tools?: AgentToolRef[];
   /** 按工具 key 收紧策略。 */
   toolPolicies?: Record<string, TightenedPolicy>;
+  /** 选用的组织技能（id）；不用技能时省略。 */
+  skills?: { orgSkills: string[] };
 }
 
 export interface Agent {
   id: string;
   orgId: string;
+  ownerAccountId: string;
   visibility: AgentVisibility;
   currentVersion: number;
-  definition: AgentDefinitionInput & { fallback: ModelRef | null };
+  /** 定义里可能还有界面不认识的字段：修改时原样带回。 */
+  definition: AgentDefinitionInput & { fallback: ModelRef | null } & Record<string, unknown>;
   updatedAt: string;
 }
 
@@ -138,6 +146,20 @@ export const createAgent = (
     method: "POST",
     body: JSON.stringify(input),
   });
+
+export const getAgent = (orgId: string, agentId: string) =>
+  apiFetch<{ agent: Agent }>(`${base(orgId)}/agents/${encodeURIComponent(agentId)}`);
+
+/** 修改 agent：定义有变化时内核写新版本；`visibility` 只在改动时给。 */
+export const updateAgent = (
+  orgId: string,
+  agentId: string,
+  input: { definition?: AgentDefinitionInput; visibility?: AgentVisibility },
+) =>
+  apiFetch<{ agent: Agent; warnings: AgentWarning[] }>(
+    `${base(orgId)}/agents/${encodeURIComponent(agentId)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
 
 export const listModels = (orgId: string) =>
   apiFetch<{ providers: ProviderModels[] }>(`${base(orgId)}/models`);

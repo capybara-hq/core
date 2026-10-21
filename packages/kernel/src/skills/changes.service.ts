@@ -47,6 +47,8 @@ export interface SkillChangeView {
   files: { path: string; size: number }[];
   status: SkillChangeStatus;
   requestedBy: string;
+  /** 发起人的显示名（账号已不存在时为空串）。 */
+  requestedByName: string;
   requestedInConversation: string;
   /** 网页中发起对话的路径（不含语言前缀）。 */
   conversationPath: string;
@@ -55,9 +57,20 @@ export interface SkillChangeView {
   createdAt: string;
 }
 
-/** 详情：每个文件附文本内容（草稿已删除时为 null）。 */
+/** 详情里的一个文件：文本内容读不到（已删除、超出读取上限）时为 null。 */
+export interface SkillChangeFile {
+  path: string;
+  size: number;
+  content: string | null;
+}
+
+/**
+ * 详情：每个文件附文本内容（草稿已删除时为 null）；`current` 是改动已有技能时该技能当前生效的版本
+ * （网页据此显示差异），新技能或技能已删除时为 null。
+ */
 export interface SkillChangeDetail extends Omit<SkillChangeView, "files"> {
-  files: { path: string; size: number; content: string | null }[];
+  files: SkillChangeFile[];
+  current: { version: number; files: SkillChangeFile[] } | null;
 }
 
 /** {@link SkillChangesService.write} 的调用上下文（来自工具调用）。 */
@@ -528,21 +541,41 @@ export class SkillChangesService {
     const [view] = await this.views([row]);
     if (!view) throw notFound();
     const live = row.status === "pending" || row.status === "approved";
-    const store = live ? this.d.storage.kernel(orgId) : undefined;
-    let budget = DETAIL_MAX_BYTES;
-    const files = [];
-    for (const f of row.proposed_version.manifest.files) {
-      let content: string | null = null;
-      if (store && f.size <= budget) {
-        const got = await store.get(`${row.object_prefix}${f.path}`);
-        if (got) {
-          content = await new Response(got.body).text();
-          budget -= f.size;
-        }
+    const store = this.d.storage.kernel(orgId);
+    const budget = { left: DETAIL_MAX_BYTES };
+    const files = await readTexts(
+      live ? store : undefined,
+      row.object_prefix,
+      row.proposed_version.manifest.files,
+      budget,
+    );
+    // 改动已有技能：附上当前生效版本的文件（批准后它就是上一版，差异仍按申请时的当前版本显示）
+    let current: SkillChangeDetail["current"] = null;
+    if (row.skill_id !== null) {
+      const cur = await this.d.db
+        .selectFrom("skills")
+        .innerJoin("skill_versions", (j) =>
+          j
+            .onRef("skill_versions.skill_id", "=", "skills.id")
+            .onRef("skill_versions.version", "=", "skills.current_version"),
+        )
+        .select([
+          "skill_versions.version",
+          "skill_versions.manifest",
+          "skill_versions.object_prefix",
+        ])
+        .where("skills.id", "=", row.skill_id)
+        .where("skills.deleted_at", "is", null)
+        .executeTakeFirst();
+      // 已批准的申请自己就是当前版本：没有可比的「之前」，不给
+      if (cur && cur.object_prefix !== row.object_prefix) {
+        current = {
+          version: cur.version,
+          files: await readTexts(store, cur.object_prefix, cur.manifest.files, budget),
+        };
       }
-      files.push({ path: f.path, size: f.size, content });
     }
-    return { ...view, files };
+    return { ...view, files, current };
   }
 
   /**
@@ -772,6 +805,12 @@ export class SkillChangesService {
       .select(["agents.id", "agent_versions.definition"])
       .where("agents.id", "in", agentIds)
       .execute();
+    const requesters = await this.d.db
+      .selectFrom("accounts")
+      .select(["id", "display_name"])
+      .where("id", "in", [...new Set(rows.map((r) => r.requested_by_account))])
+      .execute();
+    const requesterNames = new Map(requesters.map((a) => [a.id, a.display_name]));
     const names = new Map(
       agents.map((a) => {
         const n = (a.definition as { name?: unknown } | null)?.name;
@@ -789,6 +828,7 @@ export class SkillChangesService {
       files: r.proposed_version.manifest.files.map((f) => ({ path: f.path, size: f.size })),
       status: r.status,
       requestedBy: r.requested_by_account,
+      requestedByName: requesterNames.get(r.requested_by_account) ?? "",
       requestedInConversation: r.requested_in_conversation,
       conversationPath: `/chat/${r.requested_in_conversation}`,
       decidedBy: r.decided_by,
@@ -804,6 +844,35 @@ export class SkillChangesService {
  */
 async function keyShareOrg(t: Trx, orgId: string): Promise<void> {
   await t.selectFrom("orgs").select("id").where("id", "=", orgId).forKeyShare().executeTakeFirst();
+}
+
+/**
+ * 按清单顺序读文件文本，共用读取额度 `budget`（超出、对象缺失、存储出错时该文件内容为 null）。
+ * `store` 为 undefined 表示不读（如草稿已删除）。
+ */
+async function readTexts(
+  store: ReturnType<StorageService["kernel"]> | undefined,
+  prefix: string,
+  manifest: readonly { path: string; size: number }[],
+  budget: { left: number },
+): Promise<SkillChangeFile[]> {
+  const out: SkillChangeFile[] = [];
+  for (const f of manifest) {
+    let content: string | null = null;
+    if (store && f.size <= budget.left) {
+      try {
+        const got = await store.get(`${prefix}${f.path}`);
+        if (got) {
+          content = await new Response(got.body).text();
+          budget.left -= f.size;
+        }
+      } catch {
+        content = null;
+      }
+    }
+    out.push({ path: f.path, size: f.size, content });
+  }
+  return out;
 }
 
 /** 并发写入全部文件。 */

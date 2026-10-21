@@ -26,10 +26,16 @@ import { routing } from "../../i18n/routing";
 import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
 import { useConnectResultToast } from "../../lib/connect";
-import { canUpdateOrg } from "../../lib/org-settings";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
-import { activeNavOf, routeLabel, useExtensions, useNav, usePendingApprovals } from "./nav";
+import {
+  activeNavOf,
+  navLevelOf,
+  routeLabel,
+  useExtensions,
+  useNav,
+  usePendingApprovals,
+} from "./nav";
 import { type Session, SessionContext } from "./session";
 
 /** 本地时区，如 `UTC+8`、`UTC-3:30`（StatusBar 右侧，spec §4.4）。 */
@@ -68,7 +74,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const toast = useToast();
   const [me, setMe] = useState<Me>();
   const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
-  const { nav, commands } = useNav(pending.count, me !== undefined && canUpdateOrg(me));
+  const { nav, commands } = useNav(pending.count, me === undefined ? "guest" : navLevelOf(me));
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
   const [error, setError] = useState<string>();
   const [theme, setTheme] = useState<Theme>("dark");

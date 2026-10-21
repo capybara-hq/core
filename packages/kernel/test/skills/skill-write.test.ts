@@ -513,6 +513,8 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     const files = (detail.json() as { skillChange: { files: { path: string; content: string }[] } })
       .skillChange.files;
     expect(files.find((f) => f.path === "SKILL.md")?.content).toContain("Alpha v1.");
+    // 新技能：没有当前版本
+    expect((detail.json() as { skillChange: { current: unknown } }).skillChange.current).toBeNull();
 
     // 非负责人（含组织管理员、发起人自己）决定 → 403
     for (const who of [other, member]) {
@@ -580,6 +582,26 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     const theirs = await call(other, convX, "skill_load", { name: "beta" }, 1);
     expect(theirs.content).toContain("Beta v1.");
     expect(theirs.content).not.toContain("Beta v2.");
+
+    // 详情：草稿文件 + 当前版本的文件（网页据此显示差异），以及发起人的名字
+    const det = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/skill-changes/${second?.id}`,
+    });
+    expect(det.statusCode, det.body).toBe(200);
+    const sc = (
+      det.json() as {
+        skillChange: {
+          requestedByName: string;
+          files: { path: string; content: string | null }[];
+          current: { version: number; files: { path: string; content: string | null }[] } | null;
+        };
+      }
+    ).skillChange;
+    expect(sc.requestedByName).toBe("M");
+    expect(sc.files.find((f) => f.path === "SKILL.md")?.content).toContain("Beta v2.");
+    expect(sc.current?.version).toBe(1);
+    expect(sc.current?.files.find((f) => f.path === "SKILL.md")?.content).toContain("Beta v1.");
 
     // 拒绝：草稿对象删除，发起对话的下一份快照回到 v1
     const prefix = second?.object_prefix as string;

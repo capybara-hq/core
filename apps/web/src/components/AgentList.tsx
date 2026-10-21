@@ -2,12 +2,14 @@
 
 import { Button, type Column, DataTable, useStatusBar, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { type Agent, listAgents } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
 import { createConversation } from "../lib/conversations";
+import { canUpdateOrg } from "../lib/org-settings";
 import { useErrorMessage } from "../lib/use-error-message";
+import { SessionContext } from "./shell/session";
 
 type AgentsState =
   | { kind: "loading" }
@@ -41,7 +43,8 @@ export function useAgents(orgId: string): AgentsState & { reload(): void } {
 
 /**
  * Agent 列表（DataTable）：列为名称、模型；点击行 / 回车或行菜单「开始对话」新建会话并进入对话页，
- * 创建期间该行置灰、名称后显示进度，其余行不再响应。空状态带「新建 Agent」。
+ * 创建期间该行置灰、名称后显示进度，其余行不再响应。负责人与组织管理员的行菜单另有「编辑」
+ * （界面上的隐藏，最终由内核判定）。空状态带「新建 Agent」。
  */
 export function AgentTable({
   orgId,
@@ -55,6 +58,9 @@ export function AgentTable({
   const router = useRouter();
   const toast = useToast();
   const [starting, setStarting] = useState<string>();
+  const session = useContext(SessionContext);
+  const canEdit = (a: Agent) =>
+    session !== null && (a.ownerAccountId === session.me.account.id || canUpdateOrg(session.me));
   useStatusBar(starting === undefined ? null : `· ${t("starting")}`);
 
   async function onStart(agentId: string) {
@@ -107,6 +113,14 @@ export function AgentTable({
           disabled: starting !== undefined,
           onSelect: () => void onStart(a.id),
         },
+        ...(canEdit(a)
+          ? [
+              {
+                label: t("edit"),
+                onSelect: () => router.push(`/agents/${encodeURIComponent(a.id)}`),
+              },
+            ]
+          : []),
       ]}
     />
   );

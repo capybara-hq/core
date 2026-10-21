@@ -14,12 +14,14 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useState } from "react";
 import {
+  type Agent,
   type AgentDefinitionInput,
   type AgentToolRef,
   type AgentVisibility,
   type AgentWarning,
   BUILTIN_TOOLS,
   createAgent,
+  DEFAULT_BUILTIN_TOOLS,
   findModel,
   keepDeclared,
   listModels,
@@ -27,15 +29,47 @@ import {
   type ParamValue,
   type ProviderModels,
   type TightenedPolicy,
+  updateAgent,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
 import { type AppDetail, type AppSummary, getApp, listApps } from "../lib/apps";
 import type { ModelRef } from "../lib/conversations";
 import { useErrorMessage } from "../lib/use-error-message";
+import { OrgSkillsPicker, OwnSkills, useOrgSkills } from "./AgentSkills";
 import { FormError } from "./form-error";
 import { ModelParams } from "./ModelParams";
+import { useSession } from "./shell/session";
 
 const VISIBILITIES = ["private", "org"] as const satisfies readonly AgentVisibility[];
+const BUILTIN_SET = new Set<string>(BUILTIN_TOOLS);
+
+/** 修改时表单管不到的工具引用（插件工具、按名单选的应用工具、界面不列的内置工具）：原样保留。 */
+const isFormTool = (r: AgentToolRef) =>
+  (r.kind === "builtin" && BUILTIN_SET.has(r.name)) || (r.kind === "app" && r.tools === "all");
+
+/** 由已有定义得到表单的初始值；新建时为默认值。 */
+function initialOf(existing: Agent | undefined) {
+  const d = existing?.definition;
+  const tools = d?.tools ?? [];
+  return {
+    name: d?.name ?? "",
+    instructions: d?.instructions ?? "",
+    visibility: existing?.visibility ?? ("private" as AgentVisibility),
+    model: d ? encode(d.model) : "",
+    fallback: d?.fallback ? encode(d.fallback) : "",
+    modelParams: { ...(d?.modelParams ?? {}) } as Params,
+    fallbackParams: { ...(d?.fallbackParams ?? {}) } as Params,
+    builtins: d
+      ? tools.flatMap((r) => (r.kind === "builtin" && BUILTIN_SET.has(r.name) ? [r.name] : []))
+      : [...DEFAULT_BUILTIN_TOOLS],
+    apps: tools.flatMap((r) => (r.kind === "app" && r.tools === "all" ? [r.appId] : [])),
+    extraTools: tools.filter((r) => !isFormTool(r)),
+    policies: { ...(d?.toolPolicies ?? {}) } as Record<string, TightenedPolicy>,
+    orgSkills: [...(d?.skills?.orgSkills ?? [])],
+  };
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const NAME_MAX = 80;
 /** 在这些单行输入框里按 Enter 即保存（表单没有原生提交按钮，含数字框时浏览器也不做隐式提交）。 */
 const ENTER_SUBMITS = new Set(["text", "search", "email", "url", "tel", "password", "number"]);
@@ -69,34 +103,39 @@ export type AgentFormView = {
 };
 
 /**
- * 新建 agent 的表单状态与分组：模型下拉框来自 `GET /models`，兜底模型可选；主模型与兜底模型
+ * 新建 / 修改 agent 的表单状态与分组（给 `existing` 即修改：按其定义预填，保存发 PATCH，定义里表单不认识的
+ * 字段与工具引用原样带回）：模型下拉框来自 `GET /models`，兜底模型可选；主模型与兜底模型
  * 各有一个参数分组，按所选模型的声明渲染（换模型时丢弃新模型没有声明的键）。保存成功且没有
  * 警告时调用 `onDone`；有警告（如 `fallback_same_provider`）时在表单顶部以 danger 卡片列出，
  * 由用户点「继续」再调用 `onDone`。
  */
-export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
+export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent): AgentFormView {
   const t = useTranslations("agents");
   const locale = useLocale();
   const errorMessage = useErrorMessage();
+  const { me } = useSession();
+  const [initial] = useState(() => initialOf(existing));
   const [providers, setProviders] = useState<ProviderModels[]>();
-  const [name, setName] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [visibility, setVisibility] = useState<AgentVisibility>("private");
-  const [model, setModel] = useState("");
-  const [fallback, setFallback] = useState("");
-  const [modelParams, setModelParams] = useState<Params>({});
-  const [fallbackParams, setFallbackParams] = useState<Params>({});
+  const [name, setName] = useState(initial.name);
+  const [instructions, setInstructions] = useState(initial.instructions);
+  const [visibility, setVisibility] = useState<AgentVisibility>(initial.visibility);
+  const [model, setModel] = useState(initial.model);
+  const [fallback, setFallback] = useState(initial.fallback);
+  const [modelParams, setModelParams] = useState<Params>(initial.modelParams);
+  const [fallbackParams, setFallbackParams] = useState<Params>(initial.fallbackParams);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const [nameError, setNameError] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>(NO_FIELD_ERRORS);
   const [otherErrors, setOtherErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<AgentWarning[]>();
-  const [builtins, setBuiltins] = useState<string[]>([...BUILTIN_TOOLS]);
+  const [builtins, setBuiltins] = useState<string[]>(initial.builtins);
   const [apps, setApps] = useState<AppSummary[]>();
-  const [selectedApps, setSelectedApps] = useState<string[]>([]);
+  const [selectedApps, setSelectedApps] = useState<string[]>(initial.apps);
   const [appDetails, setAppDetails] = useState<Record<string, AppDetail>>({});
-  const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>({});
+  const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>(initial.policies);
+  const orgSkills = useOrgSkills(orgId);
+  const [skillIds, setSkillIds] = useState<string[]>(initial.orgSkills);
 
   // 可选的应用（读不到时不提供应用工具，内置工具照常可选）
   useEffect(() => {
@@ -114,15 +153,22 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
     };
   }, [orgId]);
 
+  // 应用的工具列表只用于收紧策略：读不到时只是不显示该应用的策略选项
+  const loadAppDetail = (appId: string) =>
+    getApp(orgId, appId).then(
+      ({ app }) => setAppDetails((d) => ({ ...d, [appId]: app })),
+      () => {},
+    );
+
+  // 修改时：已选应用的工具列表（策略选项要用）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在打开表单时读一次
+  useEffect(() => {
+    for (const id of initial.apps) void loadAppDetail(id);
+  }, [orgId]);
+
   function toggleApp(appId: string, on: boolean) {
     setSelectedApps((cur) => (on ? [...cur, appId] : cur.filter((id) => id !== appId)));
-    if (on && appDetails[appId] === undefined) {
-      // 应用的工具列表只用于收紧策略：读不到时只是不显示该应用的策略选项
-      getApp(orgId, appId).then(
-        ({ app }) => setAppDetails((d) => ({ ...d, [appId]: app })),
-        () => {},
-      );
-    }
+    if (on && appDetails[appId] === undefined) void loadAppDetail(appId);
   }
 
   /** 当前引用的工具 key（用于策略收紧）：内置工具名 + 已选应用中启用的工具。 */
@@ -139,7 +185,7 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
       (r) => {
         if (disposed) return;
         setProviders(r.providers);
-        // 与原生下拉框一致：默认选中第一个模型
+        // 与原生下拉框一致：默认选中第一个模型（修改时保留原模型）
         const first = r.providers.find((p) => p.models.length > 0);
         const m = first?.models[0];
         if (first && m) setModel((cur) => cur || encode({ provider: first.provider, model: m.id }));
@@ -205,6 +251,24 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
   const noModels = providers !== undefined && options.length === 0;
   const canSubmit = !pending && providers !== undefined && !noModels;
 
+  /** 保存的工具引用：表单里的内置工具与应用，加上修改时原样保留的其他引用。 */
+  function toolRefs(): AgentToolRef[] {
+    return [
+      ...builtins.map((name) => ({ kind: "builtin" as const, name })),
+      ...selectedApps.map((appId) => ({ kind: "app" as const, appId, tools: "all" as const })),
+      ...initial.extraTools,
+    ];
+  }
+
+  /** 保存的策略：表单里当前引用的工具；修改时，表单管不到的工具（如保留的插件工具）的原有策略也带回。 */
+  function toolPolicies(): Record<string, TightenedPolicy> {
+    const managed = (k: string) =>
+      BUILTIN_SET.has(k) || Object.values(appDetails).some((a) => a.tools.some((x) => x.key === k));
+    return Object.fromEntries(
+      Object.entries(policies).filter(([k]) => toolKeys.includes(k) || !managed(k)),
+    );
+  }
+
   async function save() {
     if (!canSubmit || warnings !== undefined) return;
     const main = decode(model);
@@ -213,29 +277,33 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
     setNameError(trimmed === "");
     if (trimmed === "") return;
     const fb = decode(fallback);
-    const tools: AgentToolRef[] = [
-      ...builtins.map((name) => ({ kind: "builtin" as const, name })),
-      ...selectedApps.map((appId) => ({ kind: "app" as const, appId, tools: "all" as const })),
-    ];
-    const toolPolicies = Object.fromEntries(
-      Object.entries(policies).filter(([k]) => toolKeys.includes(k)),
-    );
     const definition: AgentDefinitionInput = {
+      // 修改：先铺上原定义，表单不认识的字段原样带回
+      ...(existing?.definition ?? {}),
       name: trimmed,
       instructions,
       model: main,
       fallback: fb,
       modelParams,
       fallbackParams: fb === null ? {} : fallbackParams,
-      tools,
-      toolPolicies,
+      tools: toolRefs(),
+      toolPolicies: toolPolicies(),
     };
+    // 不用技能的定义不带 skills（保存前后不变、不多一个版本）；原来带了就照实保存（含清空）
+    if (skillIds.length > 0 || existing?.definition.skills !== undefined) {
+      definition.skills = { orgSkills: skillIds };
+    }
     setPending(true);
     setError(undefined);
     setFieldErrors(NO_FIELD_ERRORS);
     setOtherErrors([]);
     try {
-      const res = await createAgent(orgId, { definition, visibility });
+      const res = existing
+        ? await updateAgent(orgId, existing.id, {
+            definition,
+            ...(visibility !== existing.visibility ? { visibility } : {}),
+          })
+        : await createAgent(orgId, { definition, visibility });
       if (res.warnings.length === 0) onDone();
       else setWarnings(res.warnings);
     } catch (err) {
@@ -268,18 +336,37 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
   const unsaved =
     warnings !== undefined
       ? 0
-      : [name.trim() !== "", instructions !== "", visibility !== "private", fallback !== ""].filter(
-          Boolean,
-        ).length +
-        Object.keys(modelParams).length +
-        Object.keys(fallbackParams).length +
-        selectedApps.length +
-        Object.keys(policies).length;
+      : existing
+        ? [
+            name.trim() !== initial.name,
+            instructions !== initial.instructions,
+            visibility !== initial.visibility,
+            model !== initial.model,
+            fallback !== initial.fallback,
+            !sameJson(modelParams, initial.modelParams),
+            !sameJson(fallbackParams, initial.fallbackParams),
+            !sameJson([...builtins].sort(), [...initial.builtins].sort()),
+            !sameJson([...selectedApps].sort(), [...initial.apps].sort()),
+            !sameJson(policies, initial.policies),
+            !sameJson(skillIds, initial.orgSkills),
+          ].filter(Boolean).length
+        : [
+            name.trim() !== "",
+            instructions !== "",
+            visibility !== "private",
+            fallback !== "",
+          ].filter(Boolean).length +
+          Object.keys(modelParams).length +
+          Object.keys(fallbackParams).length +
+          selectedApps.length +
+          Object.keys(policies).length +
+          skillIds.length;
 
   const anchors: AgentFormView["anchors"] = [
     { id: "basic", label: t("form.basicSection"), error: nameError },
     { id: "model", label: t("form.modelSection"), error: noModels },
     { id: "tools", label: t("form.toolsSection") },
+    { id: "skills", label: t("form.skillsSection") },
     ...(modelDecl.length > 0
       ? [{ id: "params", label: t("form.modelParamsTitle"), error: paramErrors.modelParams > 0 }]
       : []),
@@ -346,7 +433,11 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
                 name="visibility"
                 value={visibility}
                 onChange={(e) => setVisibility(e.target.value as AgentVisibility)}
-                options={VISIBILITIES.map((v) => ({ value: v, label: t(`form.visibility.${v}`) }))}
+                options={[
+                  ...VISIBILITIES,
+                  // 指定成员的可见范围只能经 API 设置：修改时保留这个选项
+                  ...(initial.visibility === "members" ? (["members"] as const) : []),
+                ].map((v) => ({ value: v, label: t(`form.visibility.${v}`) }))}
               />
             </Field>
           </FormSection>
@@ -450,6 +541,20 @@ export function useAgentForm(orgId: string, onDone: () => void): AgentFormView {
                   </div>
                 ))}
               </Stack>
+            )}
+          </FormSection>
+          <FormSection
+            id="skills"
+            title={t("form.skillsSection")}
+            description={t("form.skillsSectionHint")}
+          >
+            <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={setSkillIds} />
+            {existing && (
+              <OwnSkills
+                orgId={orgId}
+                agentId={existing.id}
+                canDelete={existing.ownerAccountId === me.account.id}
+              />
             )}
           </FormSection>
           {modelDecl.length > 0 && (

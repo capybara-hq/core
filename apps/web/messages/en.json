@@ -206,7 +206,8 @@
       "visibilityLabel": "Visibility",
       "visibility": {
         "private": "Only me",
-        "org": "Everyone in the organization"
+        "org": "Everyone in the organization",
+        "members": "Selected members"
       },
       "submit": "Save",
       "noModels": "No models are available. Install and configure a model provider plugin first.",
@@ -226,7 +227,8 @@
       "builtinLabel": "Built-in tools",
       "builtin": {
         "ask_user": "Ask the user (ask_user)",
-        "read_tool_output": "Read archived tool output (read_tool_output)"
+        "read_tool_output": "Read archived tool output (read_tool_output)",
+        "skill_write": "Write skills (skill_write)"
       },
       "appsLabel": "Apps",
       "appTools": "All tools of {name}",
@@ -236,7 +238,23 @@
         "default": "Default",
         "ask": "Ask for approval",
         "deny": "Deny"
-      }
+      },
+      "editTitle": "Edit agent",
+      "skillsSection": "Skills",
+      "skillsSectionHint": "Skills the agent can load when a task needs them.",
+      "orgSkillsLabel": "Organization skills",
+      "noOrgSkills": "The organization has no skills yet.",
+      "deletedSkill": "Deleted skill ({id})",
+      "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",
+      "ownSkillsLabel": "Skills written by this agent",
+      "ownSkillsHint": "The agent writes these with skill_write. On a shared agent, each change waits for the owner's approval in the inbox.",
+      "noOwnSkills": "This agent has not written any skills.",
+      "ownSkillVersion": "{name} · v{version}",
+      "deleteOwnSkill": "Delete",
+      "deleteOwnSkillLabel": "Delete skill {name}",
+      "deleteOwnSkillTitle": "Delete skill {name}?",
+      "deleteOwnSkillHint": "The agent stops loading this skill, and pending changes to it are cancelled.",
+      "ownSkillDeleted": "Skill {name} deleted."
     },
     "params": {
       "default": "Default",
@@ -265,7 +283,65 @@
       "model": "Model"
     },
     "emptyHint": "Create an agent, then start a conversation.",
-    "noOrgHint": "Pick one on the home page or from the organization menu in the top bar."
+    "noOrgHint": "Pick one on the home page or from the organization menu in the top bar.",
+    "edit": "Edit"
+  },
+  "skills": {
+    "title": "Skills",
+    "listLabel": "Organization skills",
+    "empty": "No skills yet.",
+    "emptyHint": "Skills are packages of instructions and files that agents load when a task needs them. Admins upload them.",
+    "version": "v{version}",
+    "columns": {
+      "name": "Name",
+      "description": "Description",
+      "version": "Version",
+      "updated": "Updated"
+    },
+    "upload": {
+      "title": "Upload a skill",
+      "layoutHint": "Upload a .zip file with SKILL.md at the root, or inside a single top-level folder (such as repo-main/ from a GitHub download). Uploading a skill whose name already exists adds a new version.",
+      "limits": "Limits: the zip file up to 50 MB, each file up to 10 MB, and 50 MB in total after unzipping.",
+      "choose": "Choose a .zip file",
+      "chooseHint": "Choose a file, or drop it here.",
+      "drop": "Drop the .zip file to upload",
+      "uploading": "Uploading {name}…",
+      "created": "Skill {name} added.",
+      "versionCreated": "Skill {name} updated to version {version}.",
+      "notZip": "Choose a .zip file.",
+      "tooLarge": "The zip file is larger than 50 MB."
+    },
+    "detail": {
+      "tabsLabel": "Skill sections",
+      "tabs": {
+        "content": "SKILL.md",
+        "files": "Files",
+        "versions": "Versions"
+      },
+      "bodyUnavailable": "The SKILL.md text cannot be shown (it is too large or unavailable).",
+      "inspectorTitle": "Details",
+      "name": "Name",
+      "version": "Version",
+      "files": "Files",
+      "updated": "Updated",
+      "description": "Description",
+      "filesLabel": "Files of the current version",
+      "versionsLabel": "Versions",
+      "columns": {
+        "path": "Path",
+        "size": "Size",
+        "version": "Version",
+        "description": "Description",
+        "files": "Files",
+        "created": "Created"
+      },
+      "retry": "Retry",
+      "dangerTitle": "Danger zone",
+      "delete": "Delete skill",
+      "deleteTitle": "Delete {name}?",
+      "deleteHint": "Agents stop loading this skill. Agent definitions keep the reference, which shows as deleted until their owners remove it.",
+      "deleted": "Skill {name} deleted."
+    }
   },
   "chat": {
     "title": "Chat",
@@ -356,7 +432,8 @@
     "actions": "Actions",
     "inbox": "Inbox",
     "apps": "Apps",
-    "channels": "Channels"
+    "channels": "Channels",
+    "skills": "Skills"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -457,10 +534,10 @@
   },
   "inbox": {
     "title": "Inbox",
-    "listLabel": "Pending approvals",
-    "empty": "Nothing to approve.",
-    "emptyHint": "Tool calls that need your approval show up here.",
-    "pick": "Select an approval on the left.",
+    "listLabel": "Pending items",
+    "empty": "Nothing to handle.",
+    "emptyHint": "Tool calls that need your approval, and skill changes on agents you own, show up here.",
+    "pick": "Select an item on the left.",
     "pendingCount": "{n} pending",
     "inspectorTitle": "Details",
     "conversation": "Conversation",
@@ -471,6 +548,30 @@
     "columns": {
       "request": "Request",
       "time": "Requested"
+    },
+    "truncated": "Only the newest items are shown. Handle some to see the rest.",
+    "skillChange": {
+      "label": "Skill change",
+      "title": "Skill change · {name}",
+      "newSkill": "New skill",
+      "update": "Version {from} → {to}",
+      "agent": "Agent",
+      "requester": "Requested by",
+      "version": "Version",
+      "description": "Description",
+      "files": "Files",
+      "added": "added",
+      "removed": "removed",
+      "modified": "modified",
+      "unchanged": "unchanged",
+      "contentUnavailable": "The content of this file cannot be shown.",
+      "diffLabel": "Changes in {path}",
+      "ownerHint": "After you approve, the change applies to every conversation with this agent. Until then, only the conversation that requested it can use it.",
+      "selfHint": "You requested this change in your own conversation. As the owner of a shared agent, you confirm the tool call there and then approve the change here. That is by design.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approved": "Skill change approved",
+      "rejected": "Skill change rejected"
     }
   },
   "apps": {
