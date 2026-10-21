@@ -86,6 +86,9 @@ export const ERROR_CODES = {
   "sandbox.not_found": 404,
   "skill.not_found": 404,
   "skill.invalid_package": 400,
+  "skill_change.not_found": 404,
+  "skill_change.not_owner": 403,
+  "skill_change.already_decided": 409,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

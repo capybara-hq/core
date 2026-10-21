@@ -1,0 +1,602 @@
+import { randomUUID } from "node:crypto";
+import { type Logger, ToolError } from "@capybara-hq/plugin-sdk";
+import { type Selectable, sql, type Transaction } from "kysely";
+import { skillFilesPrefix } from "../conversations/attachments.service.js";
+import type { EventLog } from "../conversations/event-log.js";
+import type {
+  KernelDatabase,
+  KernelDb,
+  ProposedSkillVersion,
+  SkillChangeRequestsTable,
+  SkillManifest,
+} from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
+import { audit } from "../identity/audit.js";
+import { type CatalogSkill, sameSkills } from "../runtime/context/skills.js";
+import type { StorageService } from "../storage/storage.service.js";
+
+type Trx = Transaction<KernelDatabase>;
+
+/**
+ * 每个 agent 自己的技能（`scope = agent`）上限，含待批准的新技能。远低于目录快照的上限（`SKILLS_CATALOG_MAX`），
+ * 正常使用不会让目录被截断。
+ */
+export const AGENT_SKILLS_MAX = 50;
+/** 写技能文件时的并发数。 */
+const PUT_CONCURRENCY = 4;
+/** 详情里读取文件内容的上限（草稿 ≤ 1MB，留余量）。 */
+const DETAIL_MAX_BYTES = 2 * 1024 * 1024;
+/** 收件箱一次最多返回的技能变更数。 */
+export const SKILL_CHANGES_LIST_MAX = 100;
+
+export type SkillChangeStatus = "pending" | "approved" | "rejected" | "cancelled";
+
+/** 一条技能变更申请（列表 / 收件箱）。 */
+export interface SkillChangeView {
+  id: string;
+  orgId: string;
+  agent: { id: string; name: string };
+  /** 已有技能的 id；新技能为 null（批准后才有）。 */
+  skillId: string | null;
+  name: string;
+  description: string;
+  /** 批准后预期的版本号。 */
+  version: number;
+  files: { path: string; size: number }[];
+  status: SkillChangeStatus;
+  requestedBy: string;
+  requestedInConversation: string;
+  /** 网页中发起对话的路径（不含语言前缀）。 */
+  conversationPath: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+}
+
+/** 详情：每个文件附文本内容（草稿已删除时为 null）。 */
+export interface SkillChangeDetail extends Omit<SkillChangeView, "files"> {
+  files: { path: string; size: number; content: string | null }[];
+}
+
+/** {@link SkillChangesService.write} 的调用上下文（来自工具调用）。 */
+export interface SkillWriteContext {
+  orgId: string;
+  agentId: string;
+  /** 触发本次运行的人。 */
+  accountId: string;
+  conversationId: string;
+  runId?: string;
+}
+
+/** 已合成、已校验的技能（见 tools/builtins/skill-write.ts 的 `buildSkillWrite`）。 */
+export interface SkillWritePackage {
+  name: string;
+  description: string;
+  files: { path: string; data: Uint8Array; size: number }[];
+  manifest: SkillManifest;
+}
+
+/** 写技能的结果：私有 agent 直接生成版本，共享 agent 生成变更申请。 */
+export type SkillWriteOutcome =
+  | { kind: "version"; skillId: string; version: number; created: boolean }
+  | { kind: "requested"; requestId: string; skillId: string; version: number };
+
+export interface SkillChangesDeps {
+  db: KernelDb;
+  storage: StorageService;
+  eventLog: Pick<EventLog, "append" | "latestOfType" | "notify">;
+  log: Pick<Logger, "warn">;
+}
+
+// ---- 模型可见文案（英文） ----
+
+const STORAGE_UNAVAILABLE_TEXT =
+  "File storage is temporarily unavailable, so the skill could not be saved; retry later.";
+const pendingElsewhereText = (name: string) =>
+  `Skill "${name}" already has a change awaiting the owner's approval (requested in another conversation), so it cannot be changed now; ask the user to have the owner decide that change first, or use a different skill name.`;
+const capText = () =>
+  `This agent already has ${AGENT_SKILLS_MAX} skills (including changes awaiting approval), the maximum; update an existing skill instead, or ask the agent's owner to remove one.`;
+const AGENT_GONE_TEXT =
+  "This agent no longer exists, so the skill cannot be saved; ask the user to start a conversation with another agent.";
+
+const iso = (v: Date | string): string => new Date(v).toISOString();
+const byName = (a: CatalogSkill, b: CatalogSkill) =>
+  a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+
+const notFound = () => new ApiError("skill_change.not_found", "Skill change not found");
+
+/**
+ * agent 自写技能与共享 agent 的技能变更审批（M5 T15，R4）：
+ * - `write`（工具 `skill_write` 调用）：私有 agent 直接生成新版本；共享 agent 生成一条待负责人批准的申请，
+ *   期间只有发起对话试用（`resolveEffectiveSkills` 按对话合并）；两种情况都在同一事务里往发起对话追加一份
+ *   技能目录快照（Ruling M17：日志是唯一事实源），同一运行的下一步即可 `skill_load`；
+ * - `decide`（HTTP，只有该 agent 当前的负责人）：批准 → 版本对所有对话生效（各对话下一次运行开始时写新快照）；
+ *   拒绝 → 删除草稿对象，发起对话下一次运行开始时目录回到当前版本；
+ * - 同一 agent 的同名技能最多一条待处理申请：同一对话再写取代旧的（旧的 cancelled、草稿删除、技能 id 不变），
+ *   别的对话再写被拒绝（英文说明）。
+ * 状态都在 PG（agent 行锁串行化同一 agent 的写与决定），文件在对象存储 `kernel/<orgId>/skills/<id>/`；无进程内状态。
+ */
+export class SkillChangesService {
+  constructor(private readonly d: SkillChangesDeps) {}
+
+  /** 写技能（见类注释）。模型可见的失败抛 `ToolError`。 */
+  async write(ctx: SkillWriteContext, pkg: SkillWritePackage): Promise<SkillWriteOutcome> {
+    const { db, eventLog } = this.d;
+    let store: ReturnType<StorageService["kernel"]>;
+    try {
+      this.d.storage.assertAvailable();
+      store = this.d.storage.kernel(ctx.orgId);
+    } catch (e) {
+      throw storageError(e);
+    }
+    const id = randomUUID();
+    const prefix = skillFilesPrefix(id);
+    try {
+      await putAll(store, prefix, pkg.files);
+    } catch (e) {
+      await this.deletePrefix(ctx.orgId, prefix);
+      throw storageError(e);
+    }
+    const last = await eventLog.latestOfType(ctx.conversationId, "skills_catalog");
+    let committed: { outcome: SkillWriteOutcome; drop: string[]; toSeq: number | null };
+    try {
+      committed = await db.transaction().execute(async (t) => {
+        const agent = await t
+          .selectFrom("agents")
+          .select(["visibility", "deleted_at"])
+          .where("id", "=", ctx.agentId)
+          .where("org_id", "=", ctx.orgId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!agent || agent.deleted_at !== null) throw new ToolError(AGENT_GONE_TEXT);
+        const existing = await t
+          .selectFrom("skills")
+          .select(["id", "current_version"])
+          .where("org_id", "=", ctx.orgId)
+          .where("scope", "=", "agent")
+          .where("agent_id", "=", ctx.agentId)
+          .where("name", "=", pkg.name)
+          .where("deleted_at", "is", null)
+          .forUpdate()
+          .executeTakeFirst();
+        const pend = await t
+          .selectFrom("skill_change_requests")
+          .selectAll()
+          .where("agent_id", "=", ctx.agentId)
+          .where("status", "=", "pending")
+          .where(sql<string>`proposed_version -> 'manifest' ->> 'name'`, "=", pkg.name)
+          .forUpdate()
+          .executeTakeFirst();
+        const drop: string[] = [];
+        if (pend) {
+          if (pend.requested_in_conversation !== ctx.conversationId) {
+            throw new ToolError(pendingElsewhereText(pkg.name));
+          }
+          // 同一对话再写：取代旧申请
+          await t
+            .updateTable("skill_change_requests")
+            .set({ status: "cancelled", decided_at: sql<Date>`now()` })
+            .where("id", "=", pend.id)
+            .execute();
+          drop.push(pend.object_prefix);
+          await audit(t, {
+            actorAccountId: ctx.accountId,
+            orgId: ctx.orgId,
+            action: "skill.change_decided",
+            target: pend.id,
+            detail: {
+              decision: "cancelled",
+              reason: "superseded",
+              supersededBy: id,
+              agentId: ctx.agentId,
+              name: pkg.name,
+            },
+          });
+        }
+        if (!existing) await this.assertBelowCap(t, ctx.agentId, pend?.id);
+        const version = (existing?.current_version ?? 0) + 1;
+        const skillId = existing?.id ?? pend?.proposed_version.skillId ?? randomUUID();
+        let outcome: SkillWriteOutcome;
+        if (agent.visibility === "private") {
+          await this.createVersion(t, {
+            orgId: ctx.orgId,
+            agentId: ctx.agentId,
+            skillId,
+            exists: existing !== undefined,
+            version,
+            manifest: pkg.manifest,
+            prefix,
+            createdBy: ctx.accountId,
+          });
+          await audit(t, {
+            actorAccountId: ctx.accountId,
+            orgId: ctx.orgId,
+            action: existing ? "skill.version_created" : "skill.created",
+            target: skillId,
+            detail: {
+              name: pkg.name,
+              version,
+              files: pkg.manifest.files.length,
+              agentId: ctx.agentId,
+              conversationId: ctx.conversationId,
+              via: "skill_write",
+            },
+          });
+          outcome = { kind: "version", skillId, version, created: !existing };
+        } else {
+          const proposed: ProposedSkillVersion = { skillId, version, manifest: pkg.manifest };
+          await t
+            .insertInto("skill_change_requests")
+            .values({
+              id,
+              org_id: ctx.orgId,
+              agent_id: ctx.agentId,
+              skill_id: existing?.id ?? null,
+              proposed_version: JSON.stringify(proposed),
+              object_prefix: prefix,
+              requested_by_account: ctx.accountId,
+              requested_in_conversation: ctx.conversationId,
+              decided_by: null,
+            })
+            .execute();
+          await audit(t, {
+            actorAccountId: ctx.accountId,
+            orgId: ctx.orgId,
+            action: "skill.change_requested",
+            target: id,
+            detail: {
+              agentId: ctx.agentId,
+              skillId: existing?.id ?? null,
+              name: pkg.name,
+              version,
+              files: pkg.manifest.files.length,
+              conversationId: ctx.conversationId,
+            },
+          });
+          outcome = { kind: "requested", requestId: id, skillId, version };
+        }
+        // 本对话立即看到新版本：在上一份快照上替换 / 加入这个技能（确定、来自日志）
+        const base = last?.payload.skills ?? [];
+        const next = [
+          ...base.filter((s) => s.name !== pkg.name),
+          { id: skillId, name: pkg.name, description: pkg.description, version },
+        ].sort(byName);
+        let toSeq: number | null = null;
+        if (!sameSkills(base, next)) {
+          const written = await eventLog.append(
+            ctx.conversationId,
+            [
+              {
+                type: "skills_catalog",
+                ...(ctx.runId !== undefined && { runId: ctx.runId }),
+                idemKey: `skills_catalog:write:${id}`,
+                payload: { skills: next },
+              },
+            ],
+            t,
+          );
+          toSeq = Math.max(...written.map((e) => e.seq));
+        }
+        return { outcome, drop, toSeq };
+      });
+    } catch (e) {
+      await this.deletePrefix(ctx.orgId, prefix);
+      throw e;
+    }
+    if (committed.toSeq !== null) await eventLog.notify(ctx.conversationId, committed.toSeq);
+    for (const p of committed.drop) await this.deletePrefix(ctx.orgId, p);
+    return committed.outcome;
+  }
+
+  /**
+   * 负责人决定一条申请：只有该 agent 当前的负责人（实时读）能决定，其他人 → 403 `skill_change.not_owner`；
+   * 已处理 → 409 `skill_change.already_decided`；agent 已删除或申请不在本组织 → 404。
+   * 批准：在同一事务里新增版本（技能不存在则用预先分配的 id 新建）、`current_version` 指向它，草稿对象原样成为版本文件；
+   * 拒绝：提交后删除草稿对象。审计 `skill.change_decided`。
+   */
+  async decide(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: { decision: "approve" | "reject"; note?: string | undefined },
+    actorTokenId?: string,
+  ): Promise<SkillChangeView> {
+    const { db } = this.d;
+    const head = await db
+      .selectFrom("skill_change_requests")
+      .select("agent_id")
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!head) throw notFound();
+    const row = await db.transaction().execute(async (t) => {
+      // 加锁顺序与 write 一致：先 agent 行，再申请行
+      const agent = await t
+        .selectFrom("agents")
+        .select(["owner_account_id", "deleted_at"])
+        .where("id", "=", head.agent_id)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!agent || agent.deleted_at !== null) throw notFound();
+      const req = await t
+        .selectFrom("skill_change_requests")
+        .selectAll()
+        .where("id", "=", id)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      if (agent.owner_account_id !== accountId) {
+        throw new ApiError(
+          "skill_change.not_owner",
+          "Only the agent's owner can decide on its skill changes",
+        );
+      }
+      if (req.status !== "pending") {
+        throw new ApiError(
+          "skill_change.already_decided",
+          "This skill change has already been decided",
+        );
+      }
+      const p = req.proposed_version;
+      const approved = body.decision === "approve";
+      let skillId = req.skill_id;
+      let version = p.version;
+      if (approved) {
+        const existing = await t
+          .selectFrom("skills")
+          .select(["id", "current_version"])
+          .where("org_id", "=", orgId)
+          .where("scope", "=", "agent")
+          .where("agent_id", "=", req.agent_id)
+          .where("name", "=", p.manifest.name)
+          .where("deleted_at", "is", null)
+          .forUpdate()
+          .executeTakeFirst();
+        skillId = existing?.id ?? p.skillId;
+        version = (existing?.current_version ?? 0) + 1;
+        await this.createVersion(t, {
+          orgId,
+          agentId: req.agent_id,
+          skillId,
+          exists: existing !== undefined,
+          version,
+          manifest: p.manifest,
+          prefix: req.object_prefix,
+          createdBy: req.requested_by_account,
+        });
+      }
+      const updated = await t
+        .updateTable("skill_change_requests")
+        .set({
+          status: approved ? "approved" : "rejected",
+          decided_by: accountId,
+          decided_at: sql<Date>`now()`,
+          ...(approved && { skill_id: skillId }),
+        })
+        .where("id", "=", id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await audit(t, {
+        actorAccountId: accountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: "skill.change_decided",
+        target: id,
+        detail: {
+          decision: approved ? "approved" : "rejected",
+          agentId: req.agent_id,
+          skillId,
+          name: p.manifest.name,
+          version: approved ? version : p.version,
+          requestedBy: req.requested_by_account,
+          conversationId: req.requested_in_conversation,
+          ...(body.note !== undefined && { note: body.note }),
+        },
+      });
+      return updated;
+    });
+    if (row.status === "rejected") await this.deletePrefix(orgId, row.object_prefix);
+    const [view] = await this.views([row]);
+    if (!view) throw notFound();
+    return view;
+  }
+
+  /** 当前用户（作为 agent 负责人）能决定的待处理申请，新的在前，最多 {@link SKILL_CHANGES_LIST_MAX} 条。 */
+  async listPending(orgId: string, accountId: string): Promise<SkillChangeView[]> {
+    const rows = await this.d.db
+      .selectFrom("skill_change_requests")
+      .innerJoin("agents", "agents.id", "skill_change_requests.agent_id")
+      .selectAll("skill_change_requests")
+      .where("skill_change_requests.org_id", "=", orgId)
+      .where("skill_change_requests.status", "=", "pending")
+      .where("agents.owner_account_id", "=", accountId)
+      .where("agents.deleted_at", "is", null)
+      .orderBy("skill_change_requests.created_at", "desc")
+      .limit(SKILL_CHANGES_LIST_MAX)
+      .execute();
+    return this.views(rows);
+  }
+
+  /**
+   * 详情（含文件文本）：只有该 agent 的负责人与发起人能看，其他人一律 404（不泄露存在）。
+   * 草稿对象已删除（拒绝 / 取消）时文件内容为 null。
+   */
+  async get(orgId: string, id: string, accountId: string): Promise<SkillChangeDetail> {
+    const row = await this.d.db
+      .selectFrom("skill_change_requests")
+      .innerJoin("agents", "agents.id", "skill_change_requests.agent_id")
+      .selectAll("skill_change_requests")
+      .select("agents.owner_account_id")
+      .where("skill_change_requests.id", "=", id)
+      .where("skill_change_requests.org_id", "=", orgId)
+      .where("agents.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    if (row.owner_account_id !== accountId && row.requested_by_account !== accountId) {
+      throw notFound();
+    }
+    const [view] = await this.views([row]);
+    if (!view) throw notFound();
+    const live = row.status === "pending" || row.status === "approved";
+    const store = live ? this.d.storage.kernel(orgId) : undefined;
+    let budget = DETAIL_MAX_BYTES;
+    const files = [];
+    for (const f of row.proposed_version.manifest.files) {
+      let content: string | null = null;
+      if (store && f.size <= budget) {
+        const got = await store.get(`${row.object_prefix}${f.path}`);
+        if (got) {
+          content = await new Response(got.body).text();
+          budget -= f.size;
+        }
+      }
+      files.push({ path: f.path, size: f.size, content });
+    }
+    return { ...view, files };
+  }
+
+  /** 新技能的数量上限（含待批准的新技能；`excluding` 是将被取代的申请）。 */
+  private async assertBelowCap(t: Trx, agentId: string, excluding?: string): Promise<void> {
+    const skills = await t
+      .selectFrom("skills")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("scope", "=", "agent")
+      .where("agent_id", "=", agentId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    let q = t
+      .selectFrom("skill_change_requests")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("agent_id", "=", agentId)
+      .where("status", "=", "pending")
+      .where("skill_id", "is", null);
+    if (excluding !== undefined) q = q.where("id", "!=", excluding);
+    const drafts = await q.executeTakeFirstOrThrow();
+    if (Number(skills.n) + Number(drafts.n) >= AGENT_SKILLS_MAX) throw new ToolError(capText());
+  }
+
+  /** 写一个版本并让 `current_version` 指向它（技能不存在则新建）。 */
+  private async createVersion(
+    t: Trx,
+    v: {
+      orgId: string;
+      agentId: string;
+      skillId: string;
+      exists: boolean;
+      version: number;
+      manifest: SkillManifest;
+      prefix: string;
+      createdBy: string;
+    },
+  ): Promise<void> {
+    if (v.exists) {
+      await t
+        .updateTable("skills")
+        .set({
+          current_version: v.version,
+          description: v.manifest.description,
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", v.skillId)
+        .execute();
+    } else {
+      await t
+        .insertInto("skills")
+        .values({
+          id: v.skillId,
+          org_id: v.orgId,
+          scope: "agent",
+          agent_id: v.agentId,
+          name: v.manifest.name,
+          description: v.manifest.description,
+          current_version: v.version,
+          created_by: v.createdBy,
+        })
+        .execute();
+    }
+    await t
+      .insertInto("skill_versions")
+      .values({
+        skill_id: v.skillId,
+        version: v.version,
+        manifest: JSON.stringify(v.manifest),
+        object_prefix: v.prefix,
+        created_by: v.createdBy,
+      })
+      .execute();
+  }
+
+  /** 尽力删除草稿对象（失败只记日志：孤儿对象随组织数据清理删除）。 */
+  private async deletePrefix(orgId: string, prefix: string): Promise<void> {
+    try {
+      await this.d.storage.kernel(orgId).deletePrefix(prefix);
+    } catch (err) {
+      this.d.log.warn("skill draft cleanup failed", { orgId, prefix, err });
+    }
+  }
+
+  /** 补齐 agent 名。 */
+  private async views(rows: Selectable<SkillChangeRequestsTable>[]): Promise<SkillChangeView[]> {
+    if (rows.length === 0) return [];
+    const agentIds = [...new Set(rows.map((r) => r.agent_id))];
+    const agents = await this.d.db
+      .selectFrom("agents")
+      .innerJoin("agent_versions", (j) =>
+        j
+          .onRef("agent_versions.agent_id", "=", "agents.id")
+          .onRef("agent_versions.version", "=", "agents.current_version"),
+      )
+      .select(["agents.id", "agent_versions.definition"])
+      .where("agents.id", "in", agentIds)
+      .execute();
+    const names = new Map(
+      agents.map((a) => {
+        const n = (a.definition as { name?: unknown } | null)?.name;
+        return [a.id, typeof n === "string" ? n : ""];
+      }),
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      orgId: r.org_id,
+      agent: { id: r.agent_id, name: names.get(r.agent_id) ?? "" },
+      skillId: r.skill_id,
+      name: r.proposed_version.manifest.name,
+      description: r.proposed_version.manifest.description,
+      version: r.proposed_version.version,
+      files: r.proposed_version.manifest.files.map((f) => ({ path: f.path, size: f.size })),
+      status: r.status,
+      requestedBy: r.requested_by_account,
+      requestedInConversation: r.requested_in_conversation,
+      conversationPath: `/chat/${r.requested_in_conversation}`,
+      decidedBy: r.decided_by,
+      decidedAt: r.decided_at === null ? null : iso(r.decided_at),
+      createdAt: iso(r.created_at),
+    }));
+  }
+}
+
+/** 并发写入全部文件。 */
+async function putAll(
+  store: ReturnType<StorageService["kernel"]>,
+  prefix: string,
+  files: SkillWritePackage["files"],
+): Promise<void> {
+  const queue = [...files];
+  await Promise.all(
+    Array.from({ length: Math.min(PUT_CONCURRENCY, queue.length) }, async () => {
+      for (let f = queue.shift(); f; f = queue.shift()) {
+        await store.put(`${prefix}${f.path}`, f.data, {
+          contentType: "application/octet-stream",
+          size: f.size,
+        });
+      }
+    }),
+  );
+}
+
+/** 存储错误 → 给模型的说明（存储不可用可重试）；其余原样抛出。 */
+function storageError(e: unknown): unknown {
+  if (e instanceof ApiError && e.code === "storage.unavailable") {
+    return new ToolError(STORAGE_UNAVAILABLE_TEXT);
+  }
+  return e;
+}

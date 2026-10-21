@@ -8,6 +8,7 @@ import {
   ToolError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
+import { sql } from "kysely";
 import type { EventLog } from "../../conversations/event-log.js";
 import type { KernelDb, SkillManifest } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
@@ -31,7 +32,8 @@ import { SANDBOX_TOOL_NAMES } from "./sandbox/names.js";
  *
  * - 存储里读出的每个文件都按清单的 sha256 核对，不符即拒绝（不把被替换的内容给模型或放进沙箱）。
  * - 复制记录在内核控制的标记文件（每个技能一个，{@link skillMarkerPath}：`/skills/.capybara/<name>.json`，
- *   命令用户改不了）：`{ id, version, files, stale }`。新建 / 重建的沙箱、版本变化、同名换了技能时重新复制，否则跳过。
+ *   命令用户改不了）：`{ id, version, prefix, files, stale }`。新建 / 重建的沙箱、版本或来源前缀变化、同名换了技能时
+ *   重新复制，否则跳过。
  * - agent 没有任何沙箱工具时不创建沙箱、不复制（模型也跑不了脚本），只给正文并说明。
  * - 可执行位：提供方写的文件一律不可执行（0644）。不扩展 `sandbox@1` 的 `writeFile`，而是在结果里告诉模型用解释器
  *   运行（`sh` / `python3` / `node`）：契约与两个提供方不变，技能包里的 shebang 脚本照样能跑，代价只是不能 `./x`。
@@ -105,6 +107,11 @@ export interface SkillLoadDeps extends SandboxToolDeps {
 interface MarkerEntry {
   id: string;
   version: number;
+  /**
+   * 复制来源的对象前缀：版本号相同但内容不同（被拒绝的试用草稿与之后的新草稿同号，T15）时据此重新复制。
+   * 旧标记没有这一项，按不一致处理（重新复制一次）。
+   */
+  prefix?: string;
   files: string[];
   /** 更早版本留下、不属于当前版本的文件。 */
   stale: string[];
@@ -120,7 +127,13 @@ function parseMarker(data: Uint8Array): MarkerEntry | undefined {
     if (r === null || typeof r !== "object" || Array.isArray(r)) return undefined;
     const e = r as Record<string, unknown>;
     if (typeof e.id !== "string" || typeof e.version !== "number") return undefined;
-    return { id: e.id, version: e.version, files: strings(e.files), stale: strings(e.stale) };
+    return {
+      id: e.id,
+      version: e.version,
+      ...(typeof e.prefix === "string" && { prefix: e.prefix }),
+      files: strings(e.files),
+      stale: strings(e.stale),
+    };
   } catch {
     return undefined;
   }
@@ -193,7 +206,9 @@ async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<{ stale: 
     const m = await s.p.readFile(s.h, markerPath, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
     if (m && !m.truncated) cur = parseMarker(m.data);
   }
-  if (cur && cur.id === id && cur.version === version) return { stale: cur.stale };
+  if (cur && cur.id === id && cur.version === version && cur.prefix === v.prefix) {
+    return { stale: cur.stale };
+  }
   for (const f of v.manifest.files) {
     const data =
       f.path === SKILL_ENTRY_FILE
@@ -205,7 +220,7 @@ async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<{ stale: 
   const now = new Set(files);
   const stale = cur ? [...new Set([...cur.stale, ...cur.files])].filter((p) => !now.has(p)) : [];
   stale.sort();
-  const entry: MarkerEntry = { id, version, files, stale };
+  const entry: MarkerEntry = { id, version, prefix: v.prefix, files, stale };
   await s.p.writeFile(s.h, markerPath, new TextEncoder().encode(JSON.stringify(entry)), s.signal);
   return { stale };
 }
@@ -225,6 +240,36 @@ function fileList(files: SkillManifest["files"]): string {
   return shown.join("\n");
 }
 
+/**
+ * 目录条目对应的版本：先找已生成的版本（技能未删除）；没有时找本对话发起、仍待批准的技能改动（试用，T15）——
+ * 草稿没有 `skill_versions` 行（新技能连 `skills` 行都没有），清单与对象前缀在申请里。都没有 → undefined（已移除）。
+ */
+async function findVersion(
+  db: KernelDb,
+  ctx: BuiltinCallContext,
+  entry: CatalogSkill,
+): Promise<{ manifest: SkillManifest; object_prefix: string } | undefined> {
+  const row = await db
+    .selectFrom("skills")
+    .innerJoin("skill_versions", "skill_versions.skill_id", "skills.id")
+    .select(["skills.deleted_at", "skill_versions.manifest", "skill_versions.object_prefix"])
+    .where("skills.id", "=", entry.id)
+    .where("skills.org_id", "=", ctx.orgId)
+    .where("skill_versions.version", "=", entry.version)
+    .executeTakeFirst();
+  if (row) return row.deleted_at === null ? row : undefined;
+  const draft = await db
+    .selectFrom("skill_change_requests")
+    .select(["proposed_version", "object_prefix"])
+    .where("org_id", "=", ctx.orgId)
+    .where("requested_in_conversation", "=", ctx.conversationId)
+    .where("status", "=", "pending")
+    .where(sql<string>`proposed_version ->> 'skillId'`, "=", entry.id)
+    .executeTakeFirst();
+  if (!draft || draft.proposed_version.version !== entry.version) return undefined;
+  return { manifest: draft.proposed_version.manifest, object_prefix: draft.object_prefix };
+}
+
 /** 内置工具 `skill_load`（见文件头）。 */
 export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
   return {
@@ -240,15 +285,8 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       const entry = skills.find((s) => s.name === name);
       if (!entry) throw new ToolError(notInCatalog(name, skills));
 
-      const row = await deps.db
-        .selectFrom("skills")
-        .innerJoin("skill_versions", "skill_versions.skill_id", "skills.id")
-        .select(["skills.deleted_at", "skill_versions.manifest", "skill_versions.object_prefix"])
-        .where("skills.id", "=", entry.id)
-        .where("skills.org_id", "=", ctx.orgId)
-        .where("skill_versions.version", "=", entry.version)
-        .executeTakeFirst();
-      if (!row || row.deleted_at !== null) throw new ToolError(removedText(name));
+      const row = await findVersion(deps.db, ctx, entry);
+      if (!row) throw new ToolError(removedText(name));
       const manifest = row.manifest;
       const store = deps.storage.kernel(ctx.orgId);
       const prefix = row.object_prefix;

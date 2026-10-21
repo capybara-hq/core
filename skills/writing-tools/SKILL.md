@@ -16,6 +16,10 @@ description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.regi
   `BUILTIN_TOOL_NAMES`。`tool_search` 与 `skill_load`（`builtins/skill-load.ts`）不进 agent 定义，由注册表自动加入：
   后者在对话日志里有技能目录快照（`skills_catalog`，运行开始时写，Ruling M17）时出现，按最新快照把名字解析为
   技能 id 与版本，带其他文件的技能复制进沙箱 `/skills/<name>/`（只读，脚本用解释器运行）。
+  `skill_write`（`builtins/skill-write.ts`，M5 T15）要 agent 定义显式引用：私有 agent 直接生成新版本；共享 agent
+  在 R3 固定 ask 清单上（`R3_SHARED_AGENT_ONLY_TOOL_KEYS`：只对共享 agent 固定询问），确认后生成变更申请等负责人
+  批准（`skills/changes.service.ts`），期间只有发起对话试用；成功后立即追加一份目录快照，同一运行即可 `skill_load`。
+  内置工具写自己的事件时用 `ctx.runId` 与唯一的幂等键，且在同一事务里与业务行一起提交。
 
 工具的执行全部经内核管线 `packages/kernel/src/tools/pipeline.ts`：解析 `{"$output": id}` 引用 → ajv 校验参数 → 策略判定（allow / ask / deny）→ 写 `tool_call_started` → 执行（超时 + 中止）→ 渲染结果 → 超大结果转存 → 写 `tool_result`。插件只管「做事并返回结果」，审批、超时、存档、审计、打码都是内核的事，**不要在插件里重复实现**。
 

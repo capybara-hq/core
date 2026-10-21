@@ -181,6 +181,11 @@
     "skill": {
       "not_found": "技能不存在或已删除。",
       "invalid_package": "技能包不合法："
+    },
+    "skill_change": {
+      "not_found": "该技能改动不存在或你无权查看。",
+      "not_owner": "只有该 agent 的负责人可以批准或拒绝它的技能改动。",
+      "already_decided": "该技能改动已被处理。"
     }
   },
   "agents": {

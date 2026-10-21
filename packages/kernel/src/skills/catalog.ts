@@ -17,8 +17,8 @@ export interface EffectiveSkillsInput {
   /** 本次运行固定的 agent 版本的定义（`skills.orgSkills` 是选中的组织技能 id）。 */
   agent: Pick<AgentDefinition, "skills">;
   /**
-   * 对话 id：T15 的「试用中的改动」只在发起它的对话里生效（待批准的技能改动在这里按对话覆盖），
-   * 本任务尚未使用。
+   * 对话 id：共享 agent 待批准的技能改动（T15，`skill_change_requests`）只在发起它的对话里生效（试用），
+   * 在这里按对话覆盖。
    */
   conversationId: string;
 }
@@ -31,8 +31,9 @@ export interface EffectiveSkillsInput {
  * - 版本取 `current_version`，描述取该版本清单里的描述。
  * 组织技能与 agent 自己的技能同名时只保留 agent 自己的（更具体；`/skills/<name>/` 与按名字加载都不能有两个）。
  *
- * T15 的接缝：待批准的技能改动（试用）只在发起它的对话里替换对应技能的版本 / 新增技能，在这里按
- * `input.conversationId` 合并进结果。
+ * 试用（T15，R4）：这个 agent 待批准、且由本对话发起的技能改动，按名字替换对应技能的版本 / 新增技能
+ * （id 为已有技能或预先分配的 id，版本为批准后预期的版本号）；其他对话照旧用 `current_version`。
+ * 批准后版本成为当前版本，各对话下一次运行开始时由快照差异得到提醒；拒绝 / 取消后发起对话回到当前版本。
  */
 export async function resolveEffectiveSkills(
   db: KernelDb,
@@ -73,14 +74,31 @@ export async function resolveEffectiveSkills(
     const prev = byName.get(r.name);
     if (!prev || (prev.scope === "org" && r.scope === "agent")) byName.set(r.name, r);
   }
-  const all = [...byName.values()]
-    .map((r) => ({
-      id: r.id,
-      name: r.name,
-      description: r.manifest.description,
-      version: r.current_version,
-    }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const effective = new Map<string, CatalogSkill>(
+    [...byName.values()].map((r) => [
+      r.name,
+      { id: r.id, name: r.name, description: r.manifest.description, version: r.current_version },
+    ]),
+  );
+  const trials = await db
+    .selectFrom("skill_change_requests")
+    .select("proposed_version")
+    .where("requested_in_conversation", "=", input.conversationId)
+    .where("agent_id", "=", input.agentId)
+    .where("org_id", "=", input.orgId)
+    .where("status", "=", "pending")
+    .execute();
+  for (const { proposed_version: p } of trials) {
+    effective.set(p.manifest.name, {
+      id: p.skillId,
+      name: p.manifest.name,
+      description: p.manifest.description,
+      version: p.version,
+    });
+  }
+  const all = [...effective.values()].sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  );
   // 快照大小不能让运行失败：按名字排序后确定地截到上限（事件 schema 的上限）
   if (all.length > SKILLS_CATALOG_MAX) {
     log?.warn("skills catalog truncated", {

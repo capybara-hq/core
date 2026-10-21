@@ -64,6 +64,7 @@ import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService } from "./sandbox/sandbox.service.js";
+import { SkillChangesService } from "./skills/changes.service.js";
 import { SkillsService } from "./skills/skills.service.js";
 import {
   purgeDeletedOrgStorage,
@@ -79,6 +80,7 @@ import { askUserTool } from "./tools/builtins/ask-user.js";
 import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
 import { sandboxTools } from "./tools/builtins/sandbox/index.js";
 import { skillLoadTool } from "./tools/builtins/skill-load.js";
+import { skillWriteTool } from "./tools/builtins/skill-write.js";
 import { toolSearchTool } from "./tools/builtins/tool-search.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolDrift } from "./tools/drift.js";
@@ -206,6 +208,8 @@ export interface Kernel {
   readonly attachments: AttachmentsService;
   /** 技能库（组织技能的上传、版本、列表与软删除）。 */
   readonly skills: SkillsService;
+  /** agent 自写技能（`skill_write`）与共享 agent 的技能变更审批（R4）。 */
+  readonly skillChanges: SkillChangesService;
   /**
    * 按对话的沙箱（`sandbox@1` 提供方之上：懒创建、锁、休眠与销毁）；
    * 没有提供方时 `available` 为 false，使用时抛 `sandbox.unavailable`（503）。
@@ -433,6 +437,8 @@ export async function createKernel(
     log,
   });
   const skills = new SkillsService({ db: kdb, storage, attachments });
+  // agent 自写技能（skill_write）与共享 agent 的技能变更审批（R4）
+  const skillChanges = new SkillChangesService({ db: kdb, storage, eventLog, log });
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
     const n = await attachments.deleteExpired();
     if (n > 0) log.info("expired attachments deleted", { count: n });
@@ -461,6 +467,8 @@ export async function createKernel(
     ...sandboxTools({ sandbox, attachments, storage, eventLog, config: () => current }),
     // 技能加载：对话日志里有技能目录快照时由注册表自动加入（Ruling M17）
     skillLoadTool({ db: kdb, sandbox, attachments, storage, eventLog, config: () => current }),
+    // 自写技能：agent 定义显式引用才可用
+    skillWriteTool({ changes: skillChanges }),
   );
   // 漂移检测：登记周期扫描与检查任务（worker 角色执行）；手动刷新与 list_changed 也经它
   const toolDrift = new ToolDrift({
@@ -742,6 +750,7 @@ export async function createKernel(
         storage,
         sandbox,
         skills,
+        skillChanges,
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
@@ -897,6 +906,7 @@ export async function createKernel(
     storage,
     attachments,
     skills,
+    skillChanges,
     sandbox,
     log,
     get config() {

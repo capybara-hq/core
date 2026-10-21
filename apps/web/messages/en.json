@@ -181,6 +181,11 @@
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
       "invalid_package": "The skill package is invalid:"
+    },
+    "skill_change": {
+      "not_found": "The skill change does not exist or you cannot see it.",
+      "not_owner": "Only the agent's owner can approve or reject its skill changes.",
+      "already_decided": "This skill change has already been handled."
     }
   },
   "agents": {

@@ -10,10 +10,17 @@ import type { ResolvedTool, ToolPolicy } from "./registry.js";
  * spec 3.6 R3「有权 ≠ 已确认」固定清单上的工具 key：策略至少为 `ask`，记住的授权也不放行。
  *
  * R3 清单：发布到公共市场、安装应用、提插件申请、改角色与成员、删除、改共享技能、改自己的指令。
- * M3 的内置工具（`ask_user`、`read_tool_output`、`tool_search`）与应用工具都不在清单上，因此为空；
- * 后续实现上述动作的内置工具时把 key 登记在这里。应用 / 插件工具由 `annotations.requiresUserInteraction` 表达同一约束。
+ * M3 的内置工具（`ask_user`、`read_tool_output`、`tool_search`）与应用工具都不在清单上；M5 T15 加入
+ * `skill_write`（改共享技能）。后续实现上述动作的内置工具时把 key 登记在这里。应用 / 插件工具由
+ * `annotations.requiresUserInteraction` 表达同一约束。
  */
-export const R3_FIXED_ASK_TOOL_KEYS: ReadonlySet<string> = new Set<string>([]);
+export const R3_FIXED_ASK_TOOL_KEYS: ReadonlySet<string> = new Set<string>(["skill_write"]);
+
+/**
+ * R3 清单里只对共享 agent 生效的 key（窄口子）：R3 的条目是「改共享技能」，私有 agent（`visibility = private`，
+ * 只有负责人本人能用）的技能不是共享的，`skill_write` 直接生效、不询问（R4）。其余 R3 条目不论可见性一律固定 ask。
+ */
+export const R3_SHARED_AGENT_ONLY_TOOL_KEYS: ReadonlySet<string> = new Set<string>(["skill_write"]);
 
 const RANK: Record<ToolPolicy, number> = { allow: 0, ask: 1, deny: 2 };
 
@@ -44,11 +51,19 @@ export function decide(input: PolicyInput): ToolPolicy {
   return p;
 }
 
-/** 是否属于 R3 固定询问（清单或工具声明需要用户交互）。 */
-export function isFixedAsk(tool: ResolvedTool): boolean {
-  return (
-    R3_FIXED_ASK_TOOL_KEYS.has(tool.key) || tool.spec.annotations?.requiresUserInteraction === true
-  );
+/**
+ * 是否属于 R3 固定询问（清单或工具声明需要用户交互）。`visibility` 为 agent 当前的可见性：
+ * {@link R3_SHARED_AGENT_ONLY_TOOL_KEYS} 里的内置工具在私有 agent 上不算固定询问；不知道可见性时按共享处理（更严）。
+ */
+export function isFixedAsk(
+  tool: ResolvedTool,
+  visibility?: "private" | "org" | "members" | undefined,
+): boolean {
+  if (tool.spec.annotations?.requiresUserInteraction === true) return true;
+  if (!R3_FIXED_ASK_TOOL_KEYS.has(tool.key)) return false;
+  const builtinOnly =
+    tool.source.kind === "builtin" && R3_SHARED_AGENT_ONLY_TOOL_KEYS.has(tool.key);
+  return !(builtinOnly && visibility === "private");
 }
 
 const asOverride = (v: unknown): "ask" | "deny" | undefined =>
@@ -116,7 +131,7 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
           .onRef("agent_versions.agent_id", "=", "agents.id")
           .onRef("agent_versions.version", "=", "agents.current_version"),
       )
-      .select("agent_versions.definition")
+      .select(["agent_versions.definition", "agents.visibility"])
       .where("agents.id", "=", ctx.agentId)
       .executeTakeFirst();
     const currentPolicies = (
@@ -138,7 +153,8 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       if (!roleAtLeast(m.role, tool.requiredRole)) escalateTo = tool.requiredRole;
     }
 
-    const fixedAsk = isFixedAsk(tool);
+    // 可见性实时读（R5）：共享 agent 的 skill_write 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
+    const fixedAsk = isFixedAsk(tool, current?.visibility);
     const input: PolicyInput = {
       appDefault,
       ...(agentOverride !== undefined && { agentOverride }),

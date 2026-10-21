@@ -21,12 +21,14 @@ import { toolKey, toolKeyIssue } from "./naming.js";
 /**
  * 内核内置工具的名字（Task 10 / Task 19 实现；M5 T8 加沙箱工具）。保存 agent 时内置工具引用按这份清单校验，
  * 不依赖当前是否已注册，避免实现落地顺序影响已保存的定义；运行时未注册的照常报不可用。
+ * `skill_write`（M5 T15）由 agent 定义显式引用才可用（负责人决定 agent 能否改自己的技能）。
  */
 export const BUILTIN_TOOL_NAMES = [
   "ask_user",
   "read_tool_output",
   "tool_search",
   "skill_load",
+  "skill_write",
   ...SANDBOX_TOOL_NAMES,
 ] as const;
 

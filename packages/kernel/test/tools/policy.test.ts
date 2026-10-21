@@ -18,6 +18,7 @@ import type { PolicyContext } from "../../src/tools/pipeline.js";
 import {
   createDecidePolicy,
   decide,
+  isFixedAsk,
   type PolicyInput,
   R3_FIXED_ASK_TOOL_KEYS,
 } from "../../src/tools/policy.js";
@@ -83,8 +84,22 @@ describe("decide", () => {
     expect(decide({ ...base, appDefault: "allow", agentOverride: "ask" })).toBe("ask");
   });
 
-  it("R3 固定询问清单在 M3 为空（内置 / 应用工具都不在清单上）", () => {
-    expect(R3_FIXED_ASK_TOOL_KEYS.size).toBe(0);
+  it("R3 固定询问清单：M5 起含 skill_write（改共享技能），只对共享 agent 生效", () => {
+    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["skill_write"]);
+    const tool = (key: string) =>
+      ({
+        key,
+        source: { kind: "builtin", name: key },
+        spec: { name: key, description: "d", inputSchema: { type: "object" } },
+        specHash: "h",
+        defaultPolicy: "allow",
+      }) as ResolvedTool;
+    expect(isFixedAsk(tool("skill_write"), "org")).toBe(true);
+    expect(isFixedAsk(tool("skill_write"), "members")).toBe(true);
+    expect(isFixedAsk(tool("skill_write"), "private")).toBe(false);
+    // 不知道可见性时按共享处理（更严）
+    expect(isFixedAsk(tool("skill_write"), undefined)).toBe(true);
+    expect(isFixedAsk(tool("skill_load"), "org")).toBe(false);
   });
 });
 

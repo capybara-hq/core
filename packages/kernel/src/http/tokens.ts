@@ -67,6 +67,12 @@ export const ATTACHMENTS = Symbol("ATTACHMENTS");
 /** `SkillsService`（技能库）的注入令牌。 */
 export const SKILLS = Symbol("SKILLS");
 
+/** `SkillChangesService`（agent 自写技能与技能变更审批）的注入令牌。 */
+export const SKILL_CHANGES = Symbol("SKILL_CHANGES");
+
+/** `InboxService`（收件箱汇总）的注入令牌。 */
+export const INBOX = Symbol("INBOX");
+
 /** `ConversationOutputs`（网页读工具输出存档）的注入令牌。 */
 export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
 

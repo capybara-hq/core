@@ -1,0 +1,75 @@
+import { Body, Controller, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
+import { z } from "zod";
+import { INBOX, SKILL_CHANGES } from "../http/tokens.js";
+import { ZodPipe } from "../http/zod.pipe.js";
+import {
+  CurrentPrincipal,
+  type Principal,
+  patTokenId,
+  requireUser,
+} from "../identity/principal.js";
+import type { InboxService, InboxView } from "../inbox/inbox.service.js";
+import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import type { SkillChangeDetail, SkillChangesService, SkillChangeView } from "./changes.service.js";
+
+const DecideBody = z
+  .object({
+    decision: z.enum(["approve", "reject"]),
+    note: z.string().max(1000).optional(),
+  })
+  .strict();
+
+/**
+ * 共享 agent 的技能变更申请（`/api/v1/orgs/:orgId/skill-changes`，M5 T15，R4）。动作 `approvals.decide`
+ * （访客起、仅限用户主体：agent / 服务令牌不能决定，R2）；能否决定由服务按该 agent **当前的负责人**判定，
+ * 其他人 403 `skill_change.not_owner`。详情只给负责人与发起人，其他人 404。
+ */
+@Controller("api/v1/orgs/:orgId/skill-changes")
+export class SkillChangesController {
+  constructor(@Inject(SKILL_CHANGES) private readonly changes: SkillChangesService) {}
+
+  @Get(":id")
+  @OrgAction("approvals.decide")
+  async get(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<{ skillChange: SkillChangeDetail }> {
+    const p = requireUser(principal);
+    return { skillChange: await this.changes.get(org.orgId, id, p.account.id) };
+  }
+
+  @Post(":id/decide")
+  @HttpCode(200)
+  @OrgAction("approvals.decide")
+  async decide(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(DecideBody)) body: z.infer<typeof DecideBody>,
+  ): Promise<{ skillChange: SkillChangeView }> {
+    const p = requireUser(principal);
+    return {
+      skillChange: await this.changes.decide(org.orgId, id, p.account.id, body, patTokenId(p)),
+    };
+  }
+}
+
+/**
+ * 收件箱（`GET /api/v1/orgs/:orgId/inbox`，计划取舍 C6：按类型汇总）：当前用户待处理的工具审批与
+ * 能决定的技能变更，新的在前、最多 100 项（`truncated` 表示还有更多）。仅限用户主体。
+ */
+@Controller("api/v1/orgs/:orgId/inbox")
+export class InboxController {
+  constructor(@Inject(INBOX) private readonly inbox: InboxService) {}
+
+  @Get()
+  @OrgAction("approvals.decide")
+  async list(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+  ): Promise<InboxView> {
+    const p = requireUser(principal);
+    return this.inbox.list(org.orgId, p.account.id);
+  }
+}

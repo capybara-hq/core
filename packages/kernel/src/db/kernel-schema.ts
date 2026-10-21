@@ -512,6 +512,31 @@ export interface SkillVersionsTable {
   created_at: Ts;
 }
 
+/** 0026_skill_changes.sql：技能变更申请里提议的版本。 */
+export interface ProposedSkillVersion {
+  /** 已有技能的 id，或新技能预先分配的 id。 */
+  skillId: string;
+  /** 批准后预期的版本号（试用时目录里用它）。 */
+  version: number;
+  manifest: SkillManifest;
+}
+
+/** 0026_skill_changes.sql：共享 agent 的技能变更申请（R4）。 */
+export interface SkillChangeRequestsTable {
+  id: string;
+  org_id: string;
+  agent_id: string;
+  skill_id: string | null;
+  proposed_version: Json<ProposedSkillVersion>;
+  object_prefix: string;
+  requested_by_account: string;
+  requested_in_conversation: string;
+  status: Generated<"pending" | "approved" | "rejected" | "cancelled">;
+  decided_by: string | null;
+  decided_at: TsNullable;
+  created_at: Ts;
+}
+
 /** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */
 export interface SandboxesTable {
   conversation_id: string;
@@ -587,6 +612,7 @@ export interface KernelDatabase {
   sandboxes: SandboxesTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
+  skill_change_requests: SkillChangeRequestsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

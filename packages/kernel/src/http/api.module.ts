@@ -35,6 +35,7 @@ import {
   MeIdentitiesController,
   SsoController,
 } from "../identity/sso.controller.js";
+import { InboxService } from "../inbox/inbox.service.js";
 import type { KernelIdentity } from "../kernel.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
@@ -51,6 +52,8 @@ import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
 import type { SandboxService } from "../sandbox/sandbox.service.js";
+import { InboxController, SkillChangesController } from "../skills/changes.controller.js";
+import type { SkillChangesService } from "../skills/changes.service.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
@@ -95,6 +98,7 @@ import {
   EVENT_LOG,
   EXTERNAL_IDENTITIES,
   IDENTITY_BINDING,
+  INBOX,
   INVITATIONS,
   KERNEL_BUS,
   KERNEL_CONFIG,
@@ -114,6 +118,7 @@ import {
   SESSIONS,
   SETTINGS,
   SETUP,
+  SKILL_CHANGES,
   SKILLS,
   SSO_FLOW,
   TOOL_REGISTRY,
@@ -165,6 +170,8 @@ export interface ApiDeps {
   sandbox: SandboxService;
   /** 技能库（与 `Kernel.skills` 同一实例）。 */
   skills: SkillsService;
+  /** agent 自写技能与技能变更审批（与 `Kernel.skillChanges` 同一实例）。 */
+  skillChanges: SkillChangesService;
 }
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
@@ -182,6 +189,8 @@ const CONTROLLERS: Type[] = [
   ConversationsController,
   AttachmentsController,
   SkillsController,
+  SkillChangesController,
+  InboxController,
   ConversationStreamController,
   AppContentController,
   AppsController,
@@ -282,6 +291,11 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: APP_CONTENT, useValue: deps.appContent },
     { provide: ATTACHMENTS, useValue: deps.attachments },
     { provide: SKILLS, useValue: deps.skills },
+    { provide: SKILL_CHANGES, useValue: deps.skillChanges },
+    {
+      provide: INBOX,
+      useValue: new InboxService({ approvals: deps.approvals, skillChanges: deps.skillChanges }),
+    },
     {
       provide: CONVERSATIONS,
       useFactory: (
