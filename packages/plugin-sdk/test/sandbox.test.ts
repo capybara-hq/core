@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   CAPABILITIES,
+  isSandboxGoneError,
   SANDBOX_CAPABILITY,
   SANDBOX_ROOTS,
+  SandboxGoneError,
   validateAllowHost,
   validateSandboxPath,
 } from "../src/index.js";
@@ -91,5 +93,22 @@ describe("sandbox@1", () => {
     ]) {
       expect(validateAllowHost(h).length, h).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("SandboxGoneError", () => {
+  it("带名字与 sandboxGone 标记；鸭子类型判断不依赖 instanceof", () => {
+    const e = new SandboxGoneError("instance fake-1 is gone", { cause: new Error("404") });
+    expect(e).toBeInstanceOf(Error);
+    expect(e.name).toBe("SandboxGoneError");
+    expect(e.sandboxGone).toBe(true);
+    expect(e.cause).toBeInstanceOf(Error);
+    expect(isSandboxGoneError(e)).toBe(true);
+    // 另一份 SDK 副本抛出的同形错误
+    const other = Object.assign(new Error("x"), { name: "SandboxGoneError", sandboxGone: true });
+    expect(isSandboxGoneError(other)).toBe(true);
+    expect(isSandboxGoneError(new Error("x"))).toBe(false);
+    expect(isSandboxGoneError({ name: "SandboxGoneError", sandboxGone: true })).toBe(false);
+    expect(isSandboxGoneError(null)).toBe(false);
   });
 });

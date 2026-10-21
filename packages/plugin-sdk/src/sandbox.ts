@@ -37,7 +37,33 @@ export interface ExecResult {
   timedOut: boolean;
 }
 
-/** `sandbox@1` 的实现（由沙箱插件提供，如 Docker、E2B）。 */
+/**
+ * 实例在提供方那边确定已经不在了（容器被删、E2B 沙箱过期）。`exec` / `readFile` / `writeFile` / `stat`
+ * 发现实例不在时必须抛它（而不是普通 Error），内核据此重建沙箱并重试一次；只是暂时连不上时抛普通错误。
+ */
+export class SandboxGoneError extends Error {
+  readonly sandboxGone = true as const;
+
+  constructor(message: string, opts?: { cause?: unknown }) {
+    super(message, opts && "cause" in opts ? { cause: opts.cause } : undefined);
+    this.name = "SandboxGoneError";
+  }
+}
+
+/** 鸭子类型判断（不用 instanceof），兼容插件自带另一份 plugin-sdk 副本的情况。 */
+export function isSandboxGoneError(e: unknown): e is SandboxGoneError {
+  return (
+    e instanceof Error &&
+    e.name === "SandboxGoneError" &&
+    (e as { sandboxGone?: unknown }).sandboxGone === true
+  );
+}
+
+/**
+ * `sandbox@1` 的实现（由沙箱插件提供，如 Docker、E2B）。
+ * 实例确定不在时：`resume` 返回 `gone`；`exec` / `readFile` / `writeFile` / `stat` 抛 {@link SandboxGoneError}；
+ * `suspend` / `destroy` 照常成功。
+ */
 export interface SandboxProvider {
   /** `name` 形如 `cap-<conversationId>`。 */
   create(args: {
@@ -48,10 +74,15 @@ export interface SandboxProvider {
   }): Promise<SandboxHandle>;
   /** `gone` 表示提供方那边已经没有这个实例。 */
   resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
-  /** 文件必须保留。 */
+  /** 文件必须保留。实例不存在也算成功。 */
   suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
   /** 不存在也算成功。 */
   destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+  /**
+   * 可选：按 `create` 时的 `name`（`cap-<conversationId>`）销毁实例，不存在也算成功。
+   * 内核在拿不到句柄时用它清理（例如 `create` 已在提供方那边完成、内核却在记下句柄前退出）。
+   */
+  destroyByName?(name: string, signal: AbortSignal): Promise<void>;
   exec(
     h: SandboxHandle,
     args: {

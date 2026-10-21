@@ -11,6 +11,7 @@ describe("配置 sandbox", () => {
   it("默认值", () => {
     const c = KernelConfigSchema.parse(base);
     expect(c.sandbox.image).toBeTypeOf("string");
+    expect(c.sandbox.lockWaitSeconds).toBe(30);
     expect(c.sandbox.limits).toEqual({
       cpu: 1,
       memoryMb: 2048,

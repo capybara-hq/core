@@ -492,6 +492,18 @@ export interface SandboxesTable {
   created_at: Ts;
   suspended_at: TsNullable;
   destroyed_at: TsNullable;
+  /** 防护号：锁内的每次 status / handle 写入都按它比较并加一。 */
+  generation: ColumnType<number, number | undefined, number>;
+  /** 曾经成功创建过实例（只会置 true）。 */
+  had_instance: ColumnType<boolean, boolean | undefined, boolean>;
+  /** 换提供方时留下的旧实例。 */
+  prev_provider: string | null;
+  prev_handle: ColumnType<
+    { id: string; [k: string]: unknown } | null,
+    string | null | undefined,
+    string | null
+  >;
+  sweep_failed_at: TsNullable;
 }
 
 /**

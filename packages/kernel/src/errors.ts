@@ -80,6 +80,7 @@ export const ERROR_CODES = {
   "attachment.type_not_allowed": 415,
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
+  "sandbox.busy": 409,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

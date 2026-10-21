@@ -648,6 +648,16 @@ export const KernelConfigSchema = z.object({
               "Image (or provider template) for conversation sandboxes; built from plugins/sandbox-docker/image/Dockerfile",
           }),
         ),
+      lockWaitSeconds: z
+        .number()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Seconds a sandbox call waits while another command in the same conversation holds the sandbox before failing with sandbox.busy",
+          }),
+        ),
       limits: z
         .object({
           cpu: z

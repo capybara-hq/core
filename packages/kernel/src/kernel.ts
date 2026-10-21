@@ -442,6 +442,9 @@ export async function createKernel(
       const e = host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY);
       return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
     },
+    lookup: (plugin) =>
+      host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY && x.plugin === plugin)
+        ?.impl as SandboxProvider | undefined,
     config: () => current,
     log,
   });

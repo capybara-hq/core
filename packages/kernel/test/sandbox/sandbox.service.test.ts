@@ -3,7 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxHandle, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import {
+  isSandboxGoneError,
+  type SandboxHandle,
+  type SandboxProvider,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -13,7 +17,7 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { SandboxService, type SandboxServiceDeps } from "../../src/sandbox/sandbox.service.js";
 import {
   createFakeSandbox,
   fakeSandboxMeta,
@@ -45,7 +49,11 @@ const DAY = 24 * 60 * MIN;
 const later = (ms: number) => new Date(Date.now() + ms);
 const signal = () => AbortSignal.timeout(30_000);
 
-const service = (p: () => SandboxProvider | undefined = () => provider, plugin = "sandbox-fake") =>
+const service = (
+  p: () => SandboxProvider | undefined = () => provider,
+  plugin = "sandbox-fake",
+  extra: Partial<SandboxServiceDeps> = {},
+) =>
   new SandboxService({
     db,
     redis,
@@ -56,6 +64,7 @@ const service = (p: () => SandboxProvider | undefined = () => provider, plugin =
     config: () => config,
     log,
     lockPollMs: 20,
+    ...extra,
   });
 
 beforeAll(async () => {
@@ -239,8 +248,19 @@ describe("懒创建", () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    const holder = s.withSandbox({ orgId, conversationId }, () => gate, signal());
-    await new Promise((r) => setTimeout(r, 100));
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => {
+      entered = r;
+    });
+    const holder = s.withSandbox(
+      { orgId, conversationId },
+      async () => {
+        entered();
+        await gate;
+      },
+      signal(),
+    );
+    await inside;
     const ac = new AbortController();
     const waiting = s.withSandbox({ orgId, conversationId }, async () => "x", ac.signal);
     ac.abort(new Error("run aborted"));
@@ -447,5 +467,255 @@ describe("锁", () => {
     );
     expect(seen).not.toBeNull();
     expect(await redis.get(`capk:sandbox:${conversationId}`)).toBeNull();
+  });
+});
+
+/** 一个只在测试放行后才 resolve 的 promise 与「已进入」通知。 */
+function gates() {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  let entered!: () => void;
+  const inside = new Promise<void>((r) => {
+    entered = r;
+  });
+  return { gate, release, inside, entered };
+}
+
+const lockKey = () => `capk:sandbox:${conversationId}`;
+const waitAborted = (sig: AbortSignal) =>
+  new Promise<void>((r) => {
+    if (sig.aborted) r();
+    else sig.addEventListener("abort", () => r(), { once: true });
+  });
+
+describe("锁的防护（fix round 1）", () => {
+  it("锁丢失：传给 fn 的 signal 被中止", async () => {
+    const s = service(undefined, undefined, { lockTtlMs: 300 });
+    const reason = await s.withSandbox(
+      { orgId, conversationId },
+      async (_h, _p, _info, sig) => {
+        expect(sig.aborted).toBe(false);
+        // 模拟锁过期后被别人拿走：下一次续租发现锁已不属于自己
+        await redis.set(lockKey(), "someone-else");
+        await waitAborted(sig);
+        return (sig.reason as Error).message;
+      },
+      signal(),
+    );
+    expect(reason).toMatch(/lock/);
+    // 只删自己持有的锁：别人的锁还在
+    expect(await redis.get(lockKey())).toBe("someone-else");
+  });
+
+  it("generation 已经变了的过期写入不覆盖记录", async () => {
+    const s = service();
+    await use(s);
+    await s.suspendIdle(later(11 * MIN));
+    await setFakeSandboxDelays(root, { resume: 300 });
+    const pending = use(s);
+    await new Promise((r) => setTimeout(r, 100));
+    // 恢复进行中，另一个持有者（锁丢失后）已经改了记录
+    await sql`UPDATE capybara.sandboxes SET status = 'destroyed', generation = generation + 1`.execute(
+      raw,
+    );
+    await expect(pending).rejects.toThrow(/changed|lost/);
+    expect((await row())?.status).toBe("destroyed");
+  });
+
+  it("旧持有者的锁丢失后，新持有者的 fn 运行期间扫描不会休眠", async () => {
+    const s = service(undefined, undefined, { lockTtlMs: 300 });
+    await use(s);
+    const a = s.withSandbox(
+      { orgId, conversationId },
+      async (_h, _p, _info, sig) => {
+        await redis.del(lockKey()); // 锁过期
+        await waitAborted(sig);
+      },
+      signal(),
+    );
+    await a;
+    const b = gates();
+    const holderB = s.withSandbox(
+      { orgId, conversationId },
+      async () => {
+        b.entered();
+        await b.gate;
+      },
+      signal(),
+    );
+    await b.inside;
+    await sql`UPDATE capybara.sandboxes SET running_since = now() - interval '3 hours',
+      last_used_at = now() - interval '1 hour'`.execute(raw);
+    expect(await s.suspendIdle(new Date())).toBe(0);
+    expect((await row())?.status).toBe("running");
+    b.release();
+    await holderB;
+  });
+
+  it("锁等待超过 lockWaitSeconds：sandbox.busy（409）", async () => {
+    config = { ...config, sandbox: { ...config.sandbox, lockWaitSeconds: 0.2 } };
+    const s = service();
+    const g = gates();
+    const holder = s.withSandbox(
+      { orgId, conversationId },
+      async () => {
+        g.entered();
+        await g.gate;
+      },
+      signal(),
+    );
+    await g.inside;
+    const err = await use(s).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("sandbox.busy");
+    expect((err as ApiError).status).toBe(409);
+    g.release();
+    await holder;
+  });
+
+  it("记录属于别的组织：ApiError", async () => {
+    const s = service();
+    await use(s);
+    const err = await use(s, conversationId, await newOrg()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+  });
+});
+
+describe("recreated 粘性（fix round 1）", () => {
+  it("销毁后重建失败，再下一次使用仍报 recreated", async () => {
+    let fail = false;
+    const base = createFakeSandbox(root);
+    const flaky: SandboxProvider = {
+      ...base,
+      create: async (a) => {
+        if (fail) throw new Error("docker down");
+        return base.create(a);
+      },
+    };
+    const s = service(() => flaky);
+    await use(s);
+    await s.destroyFor(conversationId);
+    fail = true;
+    await expect(use(s)).rejects.toThrow("docker down");
+    fail = false;
+    expect((await use(s)).info).toEqual({ fresh: true, recreated: true });
+  });
+});
+
+describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", () => {
+  it("运行中的沙箱实例消失：fn 抛 SandboxGoneError 后原地重建重试一次，recreated 为 true", async () => {
+    const s = service();
+    const a = await use(s);
+    await removeFakeSandbox(root, a.h.id);
+    const infos: unknown[] = [];
+    const out = await s.withSandbox(
+      { orgId, conversationId },
+      async (h, p, info, sig) => {
+        infos.push(info);
+        const r = await p.exec(h, {
+          command: "echo ok",
+          timeoutMs: 5000,
+          maxOutputBytes: 1000,
+          signal: sig,
+        });
+        return { h, stdout: r.stdout };
+      },
+      signal(),
+    );
+    expect(infos).toEqual([
+      { fresh: false, recreated: false },
+      { fresh: true, recreated: true },
+    ]);
+    expect(out.stdout).toBe("ok\n");
+    expect(out.h.id).not.toBe(a.h.id);
+    expect(await row()).toMatchObject({ status: "running", handle: out.h });
+  });
+
+  it("重试后仍然 gone：错误抛给调用方", async () => {
+    const s = service();
+    await use(s);
+    let calls = 0;
+    const err = await s
+      .withSandbox(
+        { orgId, conversationId },
+        async (h, p, _info, sig) => {
+          calls++;
+          await removeFakeSandbox(root, h.id);
+          return p.stat(h, "/workspace", sig);
+        },
+        signal(),
+      )
+      .catch((e: unknown) => e);
+    expect(calls).toBe(2);
+    expect(isSandboxGoneError(err)).toBe(true);
+  });
+});
+
+describe("清理遗留实例（fix round 1）", () => {
+  it("创建中途崩溃（handle 为空）：销毁时按名字 destroyByName", async () => {
+    const s = service();
+    // 提供方那边已经建好了，但记录还停在 creating（内核在写 handle 前退出）
+    const h = await (provider as SandboxProvider).create({
+      name: `cap-${conversationId}`,
+      image: "i",
+      limits: { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] },
+      signal: signal(),
+    });
+    await sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status, last_used_at)
+      VALUES (${conversationId}, ${orgId}, 'sandbox-fake', 'creating', now() - interval '30 days')`.execute(
+      raw,
+    );
+    expect(await s.destroyInactive(new Date())).toBe(1);
+    expect(await fakeSandboxState(root, h.id)).toBeNull();
+    expect((await ops("destroy-by-name")).map((o) => o[1])).toEqual([`cap-${conversationId}`]);
+  });
+
+  it("换了提供方：旧提供方仍加载时用它销毁旧实例；否则记下 prev_provider / prev_handle 并 warn", async () => {
+    const oldRoot = await mkdtemp(join(tmpdir(), "cap-sandbox-old-"));
+    const old = createFakeSandbox(oldRoot);
+    const a = await use(service(() => old, "sandbox-old"));
+    // 旧提供方还在：新服务能按名字找到它
+    const s = service(undefined, undefined, {
+      lookup: (name) => (name === "sandbox-old" ? old : undefined),
+    });
+    expect((await use(s)).info.recreated).toBe(true);
+    expect(await fakeSandboxState(oldRoot, a.h.id)).toBeNull();
+    expect(await row()).toMatchObject({ prev_provider: null, prev_handle: null });
+
+    // 旧提供方不在了：记下来、warn
+    const c2 = await newConversation();
+    const b = await use(
+      service(() => old, "sandbox-old"),
+      c2,
+    );
+    warned.length = 0;
+    await use(service(), c2);
+    expect(await row(c2)).toMatchObject({ prev_provider: "sandbox-old", prev_handle: b.h });
+    expect(warned.some((w) => /another provider/.test(w))).toBe(true);
+    expect(await fakeSandboxState(oldRoot, b.h.id)).toBe("running");
+    await rm(oldRoot, { recursive: true, force: true });
+  });
+});
+
+describe("扫描失败的排在后面（fix round 1）", () => {
+  it("休眠失败记 sweep_failed_at，成功后清空", async () => {
+    let fail = true;
+    const base = createFakeSandbox(root);
+    const flaky: SandboxProvider = {
+      ...base,
+      suspend: async (h, sig) => {
+        if (fail) throw new Error("daemon busy");
+        return base.suspend(h, sig);
+      },
+    };
+    const s = service(() => flaky);
+    await use(s);
+    expect(await s.suspendIdle(later(11 * MIN))).toBe(0);
+    expect((await row())?.sweep_failed_at).not.toBeNull();
+    fail = false;
+    expect(await s.suspendIdle(later(11 * MIN))).toBe(1);
+    expect(await row()).toMatchObject({ status: "suspended", sweep_failed_at: null });
   });
 });

@@ -6,6 +6,11 @@
 --   → running ⇄ suspended → destroyed（销毁后保留 handle 备查，下次使用重建）。
 -- provider：创建它的插件名；与当前提供方不同时当作已不在，下次使用重建。
 -- running_since：本次连续运行的开始时间（创建或恢复时写，休眠时清空），用于超时强制休眠。
+-- generation：防护号。持锁方在锁内读到它，此后每次改 status / handle 都带 WHERE generation = 读到的值
+--   并加一；没有匹配行说明锁已丢失、别人改过，放弃。
+-- had_instance：曾经成功创建过实例（只会置 true，重置时不清）：之后的创建都算重建（recreated）。
+-- prev_provider / prev_handle：换了提供方时旧提供方的实例（新提供方销毁不了），旧提供方还加载时用它销毁后清空。
+-- sweep_failed_at：上次维护扫描处理它失败的时间（成功后清空）；扫描时排在后面，免得总卡在同一批。
 CREATE TABLE IF NOT EXISTS sandboxes (
   conversation_id text PRIMARY KEY,
   org_id text NOT NULL,
@@ -16,7 +21,12 @@ CREATE TABLE IF NOT EXISTS sandboxes (
   running_since timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   suspended_at timestamptz,
-  destroyed_at timestamptz
+  destroyed_at timestamptz,
+  generation integer NOT NULL DEFAULT 0,
+  had_instance boolean NOT NULL DEFAULT false,
+  prev_provider text,
+  prev_handle jsonb,
+  sweep_failed_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS sandboxes_running_idx
   ON sandboxes (last_used_at)

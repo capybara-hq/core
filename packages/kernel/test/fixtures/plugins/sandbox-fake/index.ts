@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, realpathSync } from "node:fs";
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   definePlugin,
   type ExecResult,
   SANDBOX_CAPABILITY,
+  SandboxGoneError,
   type SandboxHandle,
   type SandboxLimits,
   type SandboxProvider,
@@ -20,7 +21,9 @@ import { z } from "zod";
  * 「提供方那边」的状态全在部署配置 `root` 目录里（像 Docker 守护进程，多个内核副本共用一个 root 即共用同一批实例）：
  * - `root/instances/<id>/state`：`running` / `suspended`；`meta.json`：create 收到的 name、image、limits；
  * - `root/instances/<id>/fs/{workspace,skills,tmp}`：沙箱内 `/workspace`、`/skills`、`/tmp` 的内容（休眠后保留）；
- * - `root/ops.log`：每个操作一行 `<op> <id> [name]`（create / resume / resume-gone / suspend / destroy），测试据此计数；
+ * - `root/ops.log`：每个操作一行 `<op> <id> [name]`（create / resume / resume-gone / suspend / destroy /
+ *   destroy-by-name `<name>`），测试据此计数；
+ * - 实例目录不在时 exec / readFile / writeFile / stat 抛 `SandboxGoneError`；
  * - `root/delays.json`（可选）：`{ create?, resume?, suspend?, destroy? }` 毫秒，模拟慢操作（每次操作时读取）。
  * 模拟 `gone`：测试删掉 `root/instances/<id>`（{@link removeFakeSandbox}），之后 resume 返回 `gone`。
  *
@@ -117,7 +120,8 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
   const fsRoot = (h: SandboxHandle) => join(instanceDir(root, h.id), "fs");
   const requireRunning = async (h: SandboxHandle) => {
     const s = await fakeSandboxState(root, h.id);
-    if (s !== "running") throw new Error(`fake sandbox ${h.id} is not running (${s ?? "gone"})`);
+    if (s === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+    if (s !== "running") throw new Error(`fake sandbox ${h.id} is not running (${s})`);
   };
   const real = (h: SandboxHandle, p: string) => {
     const errors = validateSandboxPath(p);
@@ -163,6 +167,17 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       await delay("destroy", signal);
       await rm(instanceDir(root, h.id), { recursive: true, force: true });
       await log(`destroy ${h.id}`);
+    },
+
+    async destroyByName(name, signal) {
+      await delay("destroy", signal);
+      const ids = await readdir(join(root, "instances")).catch(() => [] as string[]);
+      for (const id of ids) {
+        if ((await fakeSandboxMeta(root, id))?.name === name) {
+          await rm(instanceDir(root, id), { recursive: true, force: true });
+        }
+      }
+      await log(`destroy-by-name ${name}`);
     },
 
     async exec(h, args): Promise<ExecResult> {
