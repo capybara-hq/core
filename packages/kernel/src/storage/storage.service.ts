@@ -3,6 +3,7 @@ import {
   type ObjectHead,
   type ObjectStore,
   type PluginStorage,
+  type PresignGetOptions,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
 import { KeySpace, kernelPrefix, normalizeOrgId, pluginPrefix } from "./prefix.js";
@@ -159,7 +160,7 @@ class ScopedStore implements ObjectStore {
     return r.cursor === undefined ? { items } : { items, cursor: r.cursor };
   }
 
-  async presignGet(key: string, opts: { ttlSeconds: number; downloadName?: string }) {
+  async presignGet(key: string, opts: PresignGetOptions) {
     const ttlSeconds = clampPresignTtl(opts.ttlSeconds);
     return this.store.presignGet(this.space.key(key), { ...opts, ttlSeconds });
   }

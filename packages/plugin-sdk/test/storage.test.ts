@@ -6,6 +6,7 @@ import {
   type PluginContext,
   type PluginStorage,
   type PresignedUpload,
+  type PresignGetOptions,
   parseCapability,
   validatePermissions,
 } from "../src/index.js";
@@ -15,6 +16,17 @@ describe("object-store@1", () => {
     expect(OBJECT_STORE_CAPABILITY).toBe("object-store@1");
     const { name } = parseCapability(OBJECT_STORE_CAPABILITY);
     expect(CAPABILITIES[name]).toEqual({ cardinality: "single", brokered: true, orgScoped: false });
+  });
+
+  it("presignGet 的选项：disposition 与 responseContentType（两种 storage 同一形状）", () => {
+    expectTypeOf<PresignGetOptions>().toEqualTypeOf<{
+      ttlSeconds: number;
+      downloadName?: string;
+      disposition?: "attachment" | "inline";
+      responseContentType?: string;
+    }>();
+    expectTypeOf<Parameters<ObjectStore["presignGet"]>[1]>().toEqualTypeOf<PresignGetOptions>();
+    expectTypeOf<Parameters<PluginStorage["presignGet"]>[2]>().toEqualTypeOf<PresignGetOptions>();
   });
 
   it("ObjectStore 的方法", () => {

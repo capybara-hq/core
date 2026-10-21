@@ -1,4 +1,9 @@
-import type { ObjectHead, ObjectStore, PresignedUpload } from "@capybara-hq/plugin-sdk";
+import type {
+  ObjectHead,
+  ObjectStore,
+  PresignedUpload,
+  PresignGetOptions,
+} from "@capybara-hq/plugin-sdk";
 
 /** 测试用的内存 ObjectStore：按键排序列举，cursor 为上一页最后一个键。 */
 export class MemoryObjectStore implements ObjectStore {
@@ -68,9 +73,13 @@ export class MemoryObjectStore implements ObjectStore {
   /** 最近一次预签名收到的 ttlSeconds。 */
   lastTtl: number | undefined;
 
-  async presignGet(key: string, opts: { ttlSeconds: number }): Promise<string> {
+  /** 最近一次 presignGet 收到的选项。 */
+  lastGetOpts: PresignGetOptions | undefined;
+
+  async presignGet(key: string, opts: PresignGetOptions): Promise<string> {
     this.calls.push({ method: "presignGet", key });
     this.lastTtl = opts.ttlSeconds;
+    this.lastGetOpts = opts;
     return `https://store.test/${key}`;
   }
 

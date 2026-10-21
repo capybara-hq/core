@@ -45,8 +45,8 @@ export interface ObjectStore {
     prefix: string,
     opts?: { cursor?: string; limit?: number },
   ): Promise<{ items: ObjectHead[]; cursor?: string }>;
-  /** 预签名下载 URL；`downloadName` 用于 Content-Disposition。 */
-  presignGet(key: string, opts: { ttlSeconds: number; downloadName?: string }): Promise<string>;
+  /** 预签名下载 URL（选项见 {@link PresignGetOptions}）。 */
+  presignGet(key: string, opts: PresignGetOptions): Promise<string>;
   /**
    * 预签名上传：浏览器按返回的 {@link PresignedUpload} 直传存储。超过 `maxSize` 的上传必须由**存储端**拒绝
    * （预签名 PUT 无法限制大小，所以 S3 兼容实现用带 `content-length-range` 条件的 POST 策略）。
@@ -55,6 +55,20 @@ export interface ObjectStore {
     key: string,
     opts: { contentType: string; maxSize: number; ttlSeconds: number },
   ): Promise<PresignedUpload>;
+}
+
+/** 预签名下载的选项。 */
+export interface PresignGetOptions {
+  ttlSeconds: number;
+  /** 下载文件名，进 `Content-Disposition`（RFC 6266，非 ASCII 用 `filename*=UTF-8''…`）。 */
+  downloadName?: string;
+  /**
+   * 浏览器打开方式：`attachment`（缺省，下载）或 `inline`（在页面里显示）。用户上传的内容只应对
+   * 不会执行脚本的类型（图片、PDF）用 `inline`。
+   */
+  disposition?: "attachment" | "inline";
+  /** 覆盖响应的 `Content-Type`（如按核对过的类型返回，而不是存储里记的类型）。 */
+  responseContentType?: string;
 }
 
 /**

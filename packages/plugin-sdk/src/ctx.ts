@@ -1,6 +1,6 @@
 import type { Kysely } from "kysely";
 import type { CapabilityRef } from "./capability.js";
-import type { ObjectHead, PresignedUpload } from "./storage.js";
+import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
 
@@ -43,11 +43,7 @@ export interface PluginStorage {
     prefix: string,
     opts?: { cursor?: string; limit?: number },
   ): Promise<{ items: ObjectHead[]; cursor?: string }>;
-  presignGet(
-    orgId: string,
-    key: string,
-    opts: { ttlSeconds: number; downloadName?: string },
-  ): Promise<string>;
+  presignGet(orgId: string, key: string, opts: PresignGetOptions): Promise<string>;
   presignPut(
     orgId: string,
     key: string,

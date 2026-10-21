@@ -208,6 +208,20 @@ describe("键校验", () => {
     await expect(a.presignGet(ORG_A, "f", { ttlSeconds: Number.NaN })).rejects.toThrow(RangeError);
   });
 
+  it("presignGet 的 disposition / responseContentType 原样交给提供方", async () => {
+    const { mem, svc } = setup();
+    const opts = {
+      ttlSeconds: 60,
+      downloadName: "a.png",
+      disposition: "inline" as const,
+      responseContentType: "image/png",
+    };
+    await svc.forPlugin("aa").presignGet(ORG_A, "f", opts);
+    expect(mem.lastGetOpts).toEqual(opts);
+    await svc.kernel(ORG_A).presignGet("f", { ...opts, disposition: "attachment" });
+    expect(mem.lastGetOpts).toEqual({ ...opts, disposition: "attachment" });
+  });
+
   it("插件名不合法时拒绝", () => {
     const { svc } = setup();
     for (const name of ["", "../a", "a/b", "A"]) {
