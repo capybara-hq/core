@@ -13,7 +13,7 @@
 - 新配置 `sandbox.image` 与 `sandbox.limits.*`（`allowHosts` 每项按 `validateAllowHost` 校验）。
 - 没有沙箱提供方时使用报 `sandbox.unavailable`（503）。
 - 锁的防护：记录带 `generation`，锁内的每次状态写入都按它比较并加一；锁丢失时中止传给回调的 signal
-  （回调第四个参数）。等锁超过 `sandbox.lockWaitSeconds`（默认 30）报 `sandbox.busy`（409）。
+  （回调第四个参数）。等锁超过 `sandbox.lockWaitSeconds`（默认 75，须大于锁 TTL 60 秒）报 `sandbox.busy`（409）。
 - 回调抛 `SandboxGoneError` 时原地重建并重试一次；`recreated` 按 `had_instance` 判断，重建失败后仍为 true。
 - 换提供方时旧实例记在 `prev_provider` / `prev_handle`，旧提供方仍加载时用它销毁；
   句柄为空（创建中途退出）时用可选的 `destroyByName` 清理；扫描失败的排在后面（`sweep_failed_at`）。

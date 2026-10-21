@@ -651,11 +651,11 @@ export const KernelConfigSchema = z.object({
       lockWaitSeconds: z
         .number()
         .positive()
-        .default(30)
+        .default(75)
         .meta(
           meta({
             description:
-              "Seconds a sandbox call waits while another command in the same conversation holds the sandbox before failing with sandbox.busy",
+              "Seconds a sandbox call waits while another command in the same conversation holds the sandbox before failing with sandbox.busy; keep it above the 60-second sandbox lock TTL so a call after a replica crash waits for the dead replica's lock to expire",
           }),
         ),
       deliverMaxBytes: z
