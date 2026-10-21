@@ -253,7 +253,12 @@ export const KernelConfigSchema = z.object({
         .int()
         .positive()
         .default(900)
-        .meta(meta({ description: "Maximum wall-clock duration of one agent run in seconds" })),
+        .meta(
+          meta({
+            description:
+              "Maximum wall-clock duration of one agent run in seconds (time spent waiting for people is not counted). Sandbox commands are limited to the time left in the run, so agents that need long commands need maxRunSeconds >= sandbox.limits.maxCommandSeconds",
+          }),
+        ),
       streamIdleMs: z
         .number()
         .int()
@@ -714,7 +719,12 @@ export const KernelConfigSchema = z.object({
             .int()
             .positive()
             .default(7200)
-            .meta(meta({ description: "Longest a single sandbox command may run, in seconds" })),
+            .meta(
+              meta({
+                description:
+                  "Longest a single sandbox command may run, in seconds. A command also stops when its run is about to reach runtime.maxRunSeconds, so long commands need runtime.maxRunSeconds >= maxCommandSeconds (a startup warning is logged otherwise)",
+              }),
+            ),
           suspendAfterIdleMinutes: z
             .number()
             .int()

@@ -11,6 +11,8 @@ import { sandboxWriteTool } from "./write.js";
 export { BASH_SPILL_CHARS, formatExec } from "./bash.js";
 export {
   assignAttachmentNames,
+  RUN_DEADLINE_MARGIN_MS,
+  runTimeLeftMs,
   SANDBOX_RECREATED_NOTICE,
   SANDBOX_SETUP_MARGIN_MS,
   SANDBOX_STARTED_NOTICE,

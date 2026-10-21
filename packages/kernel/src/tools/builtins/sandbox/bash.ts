@@ -4,6 +4,8 @@ import {
   clip,
   display,
   inSandbox,
+  runBudgetNote,
+  runTimeLeftMs,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
@@ -60,14 +62,21 @@ interface BashInput {
 const secondsFor = (input: BashInput, max: number): number =>
   input.timeoutSeconds ?? Math.min(BASH_DEFAULT_TIMEOUT_SECONDS, max);
 
-/** 命令结果 → 给模型的文本。 */
-export function formatExec(r: ExecResult, seconds: number): string {
+/**
+ * 命令结果 → 给模型的文本。`budgetClamped`：运行的时限把超时收紧到了 `seconds`（Ruling M20），超时说明改为
+ * 指向 `runtime.maxRunSeconds`，而不是让模型加大 timeoutSeconds。
+ */
+export function formatExec(r: ExecResult, seconds: number, budgetClamped = false): string {
   const parts: string[] = [];
   if (r.stdout !== "") parts.push(r.stdout.replace(/\n$/, ""));
   if (r.stderr !== "") parts.push(`[stderr]\n${r.stderr.replace(/\n$/, "")}`);
   if (r.truncated)
     parts.push(`[Output truncated: only the first ${MAX_OUTPUT_BYTES} bytes were kept.]`);
-  if (r.timedOut) {
+  if (r.timedOut && budgetClamped) {
+    parts.push(
+      `[timedOut: the command did not finish within ${seconds}s and was stopped. ${runBudgetNote(seconds)} The sandbox is still usable; split the work into shorter steps that save progress to files under /workspace, or run long jobs in the background and check on them in a later run.]`,
+    );
+  } else if (r.timedOut) {
     parts.push(
       `[timedOut: the command did not finish within ${seconds}s and was stopped. The sandbox is still usable; pass a larger timeoutSeconds (up to the deployment maximum), or split the work into shorter steps that save progress to files under /workspace.]`,
     );
@@ -77,6 +86,7 @@ export function formatExec(r: ExecResult, seconds: number): string {
     );
   } else {
     parts.push(`[exit code: ${r.exitCode}]`);
+    if (budgetClamped) parts.push(`[${runBudgetNote(seconds)}]`);
   }
   return parts.join("\n");
 }
@@ -103,19 +113,24 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
           `timeoutSeconds ${req} is over the limit of ${max} seconds; pass a value of at most ${max}.`,
         );
       }
-      const seconds = secondsFor(input as BashInput, max);
-      const { value: r, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
-        p.exec(h, {
+      const asked = secondsFor(input as BashInput, max);
+      // 运行截止前命令要自己超时（Ruling M20）：在拿到沙箱之后算，等锁与恢复用掉的时间一并扣掉
+      let seconds = asked;
+      const { value: r, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) => {
+        const left = Math.floor(runTimeLeftMs(ctx.runDeadline) / 1000);
+        seconds = Math.max(1, Math.min(asked, left));
+        return p.exec(h, {
           command,
           cwd: "/workspace",
           timeoutMs: seconds * 1000,
           maxOutputBytes: MAX_OUTPUT_BYTES,
           signal,
-        }),
-      );
+        });
+      });
+      const clamped = seconds < asked;
       const shown = clip(command, 120);
       return {
-        content: [{ type: "text", text: withNotices(notices, formatExec(r, seconds)) }],
+        content: [{ type: "text", text: withNotices(notices, formatExec(r, seconds, clamped)) }],
         isError: r.timedOut || r.exitCode === null,
         display: r.timedOut
           ? display(

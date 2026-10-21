@@ -86,7 +86,7 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
         const r = await p.exec(h, {
           command: "find . -type f -print0",
           cwd: dir,
-          timeoutMs: searchTimeoutMs(deps.config(), startedAt),
+          timeoutMs: searchTimeoutMs(deps.config(), startedAt, Date.now(), ctx.runDeadline),
           maxOutputBytes: MAX_FIND_BYTES,
           signal,
         });

@@ -71,14 +71,37 @@ export const sandboxBaseTimeoutMs = (cfg: KernelConfig): number =>
   cfg.tools.timeoutMs + cfg.sandbox.lockWaitSeconds * 1000 + SANDBOX_SETUP_MARGIN_MS;
 
 /**
- * glob / grep 的命令超时：不超过 `tools.timeoutMs`，且放得进本次调用剩下的时间（基本时限从 `startedAt` 起算，
- * 扣掉 {@link SANDBOX_SETUP_MARGIN_MS}，留给超时后停命令的兜底）——等锁或恢复沙箱用掉的时间从这里扣，
- * 命令自己先超时、给模型可执行的说明，而不是被管线的时限打断。至少 1 秒。
+ * 运行截止前给沙箱命令留的余量（毫秒）：命令超时后停命令、写工具结果的时间（Ruling M20）。
  */
-export function searchTimeoutMs(cfg: KernelConfig, startedAt: number, now = Date.now()): number {
-  const left = startedAt + sandboxBaseTimeoutMs(cfg) - SANDBOX_SETUP_MARGIN_MS - now;
-  return Math.max(1000, Math.min(cfg.tools.timeoutMs, left));
+export const RUN_DEADLINE_MARGIN_MS = 30_000;
+
+/**
+ * 运行还允许沙箱命令跑多久（毫秒）：截止时间减去 {@link RUN_DEADLINE_MARGIN_MS}；没有截止时间为 Infinity。
+ * 可能为负（快到截止了），调用方自己取下限。
+ */
+export function runTimeLeftMs(runDeadline: number | undefined, now = Date.now()): number {
+  return runDeadline === undefined ? Infinity : runDeadline - RUN_DEADLINE_MARGIN_MS - now;
 }
+
+/**
+ * glob / grep 的命令超时：不超过 `tools.timeoutMs`，且放得进本次调用剩下的时间（基本时限从 `startedAt` 起算，
+ * 扣掉 {@link SANDBOX_SETUP_MARGIN_MS}，留给超时后停命令的兜底）与运行剩下的时间（{@link runTimeLeftMs}）——
+ * 等锁或恢复沙箱用掉的时间从这里扣，命令自己先超时、给模型可执行的说明，而不是被管线的时限或运行截止打断。
+ * 至少 1 秒。
+ */
+export function searchTimeoutMs(
+  cfg: KernelConfig,
+  startedAt: number,
+  now = Date.now(),
+  runDeadline?: number,
+): number {
+  const left = startedAt + sandboxBaseTimeoutMs(cfg) - SANDBOX_SETUP_MARGIN_MS - now;
+  return Math.max(1000, Math.min(cfg.tools.timeoutMs, left, runTimeLeftMs(runDeadline, now)));
+}
+
+/** 运行时限收紧了命令超时时给模型的说明（英文）。 */
+export const runBudgetNote = (seconds: number): string =>
+  `This run's time budget limits commands to ${seconds} seconds (configurable via runtime.maxRunSeconds).`;
 
 /** 显示摘要（中英文，各截到 200 码点以内；只给界面看）。 */
 export function display(zh: string, en: string): { summary: { zh: string; en: string } } {

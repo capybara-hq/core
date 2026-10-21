@@ -63,7 +63,7 @@ import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
-import { SandboxService } from "./sandbox/sandbox.service.js";
+import { SandboxService, sandboxConfigWarnings } from "./sandbox/sandbox.service.js";
 import { SkillChangesService } from "./skills/changes.service.js";
 import { SkillsService } from "./skills/skills.service.js";
 import {
@@ -936,6 +936,9 @@ export async function createKernel(
         checkpoint();
         await host.load(config.plugins);
         checkpoint();
+        if (sandbox.available) {
+          for (const w of sandboxConfigWarnings(current)) log.warn(w);
+        }
         if (config.roles.includes("worker")) {
           runWorker = new RunWorker({
             db: kdb,

@@ -186,6 +186,7 @@ export class LangGraphLoop implements AgentLoop {
         agent: ctx.agent,
         accountId: ctx.triggerAccountId,
         signal: ctx.signal,
+        deadline: ctx.limits.deadline,
       });
       if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
       return {};

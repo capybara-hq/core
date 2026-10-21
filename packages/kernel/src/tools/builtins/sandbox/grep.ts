@@ -119,7 +119,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
         const r = await p.exec(h, {
           command,
           cwd,
-          timeoutMs: searchTimeoutMs(deps.config(), startedAt),
+          timeoutMs: searchTimeoutMs(deps.config(), startedAt, Date.now(), ctx.runDeadline),
           maxOutputBytes: MAX_GREP_BYTES,
           signal,
         });

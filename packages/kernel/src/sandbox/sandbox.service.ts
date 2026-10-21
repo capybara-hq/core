@@ -111,6 +111,22 @@ interface Held {
 const opSignal = (held: Held): AbortSignal =>
   AbortSignal.any([held.signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]);
 
+/**
+ * 启动时要提醒运维的沙箱配置问题（英文日志）：`runtime.maxRunSeconds` 小于 `sandbox.limits.maxCommandSeconds`
+ * 时长命令会被运行时限截断（Ruling M20：命令超时收紧到运行剩下的时间）。
+ */
+export function sandboxConfigWarnings(cfg: Pick<KernelConfig, "runtime" | "sandbox">): string[] {
+  const out: string[] = [];
+  const run = cfg.runtime.maxRunSeconds;
+  const cmd = cfg.sandbox.limits.maxCommandSeconds;
+  if (run < cmd) {
+    out.push(
+      `runtime.maxRunSeconds (${run}) is less than sandbox.limits.maxCommandSeconds (${cmd}): sandbox commands are limited to the time left in the run, so commands longer than about ${run} seconds cannot finish; raise runtime.maxRunSeconds to at least ${cmd} if agents need long commands`,
+    );
+  }
+  return out;
+}
+
 /** 没有沙箱提供方时的错误（503）。 */
 export const sandboxUnavailable = (): ApiError =>
   new ApiError(

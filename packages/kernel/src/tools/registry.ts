@@ -46,6 +46,11 @@ export interface BuiltinCallContext extends ToolCallContext {
   tools?: readonly ResolvedTool[];
   /** 本次运行 id（内置工具写自己的事件时用，如沙箱 deliver 的 `artifact_created`）。 */
   runId?: string;
+  /**
+   * 本次运行的截止时间（epoch 毫秒，`runtime.maxRunSeconds` 起算，Ruling M20）。到点运行被中止；
+   * 沙箱命令按它收紧超时，赶在截止前自己超时、给模型可执行的说明。
+   */
+  runDeadline?: number;
 }
 
 /**

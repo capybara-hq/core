@@ -158,6 +158,8 @@ export interface ToolStepContext {
   accountId: string;
   /** run 的中止信号（用户中止 / 截止时间）。 */
   signal: AbortSignal;
+  /** run 的截止时间（epoch 毫秒）；传给内置工具（沙箱命令据此收紧超时，Ruling M20）。 */
+  deadline?: number;
 }
 
 /** tools 节点一步的结果：全部调用都有了结果，或某个调用需要等人处理（之后的调用留到续跑）。 */
@@ -659,6 +661,8 @@ export class ToolPipeline {
       ...(resume !== undefined && { resume }),
       ...(tool.source.kind === "builtin" && stepTools !== undefined && { tools: stepTools }),
       ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
+      ...(tool.source.kind === "builtin" &&
+        ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
     };
     // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
     const timeoutMs = tool.timeoutMs?.(input) ?? this.deps.config().tools.timeoutMs;
