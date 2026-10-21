@@ -79,6 +79,19 @@ export CAPYBARA_PLUGIN_CONFIG='{"object-store-s3":{…},"sandbox-docker":{"endpo
 - [ ] `sandbox_bash` 跑 `sleep 600`、`timeoutSeconds: 2`：约 2 秒后返回 timedOut，随后 `ps -eo args` 里没有 `sleep 600`；
 - [ ] 第 4 节的附件、交付、休眠 / 恢复流程在 runsc 下同样走通。
 
+### 2.4 CI 上的 linux/amd64 Docker
+
+本机验收在 arm64 的 Docker Desktop 上跑；amd64 镜像（Debian 包、GNU `timeout` / `pgrep -P` / `pkill -s` 的行为）
+与 Linux 原生守护进程（网络、`restart`、卷）要在 CI 上再确认一次：
+
+- [ ] CI 的 linux/amd64 runner（原生 Docker Engine，不是 Docker Desktop）上 `pnpm vitest run plugins/sandbox-docker`
+      全部通过（含 socket 代理的真实 HAProxy 用例、「stopped behind the kernel's back」、「commands left behind by a
+      crashed kernel replica」），没有 skipped（除 runsc）；
+- [ ] 同一 runner 上 `pnpm vitest run packages/kernel/test/sandbox/m5-segment2.dual.test.ts` 通过（接手时杀掉前任留下的
+      `sleep 300`，输出 `leftover=0`）；
+- [ ] `docker buildx build --platform linux/amd64 plugins/sandbox-docker/image` 成功，镜像里 `timeout --version` 是
+      GNU coreutils。
+
 ## 3. E2B
 
 ### 3.1 构建模板（与 Docker 插件同一份 Dockerfile）
@@ -155,5 +168,6 @@ pnpm dev:web                   # 另一个终端，网页 :3000
 |---|---|---|---|
 | 2026-10-21 | 自动 | 双副本验收（runc，arm64 Docker Desktop） | 通过 3/3，每次约 70 秒（续跑接手约 1.2 秒，复用沙箱等锁约 60 秒） |
 | | | runsc（第 2 节） | 待 Linux 主机执行 |
+| | | CI linux/amd64 Docker（2.4） | 待 CI 执行 |
 | | | E2B（第 3 节，含 14 条假设） | 待凭据到位后执行 |
 | | | 人工（第 4 节） | 待执行 |
