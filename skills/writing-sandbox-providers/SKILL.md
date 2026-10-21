@@ -71,6 +71,8 @@ interface SandboxProvider {
 
 ### 限制与出站（`SandboxLimits`）
 
+- `egress` / `allowHosts` 是**组织实际生效**的值：组织设置 `sandboxEgress` 可把白名单换成自己的一份或断网，
+  不能比部署更开（Ruling M19，内核 `effectiveSandboxEgress`）。提供方只管照 `create` 收到的执行，不读组织设置。
 - `cpu` / `memoryMb` / `diskMb` / `egress` / `allowHosts` **只在 `create` 时生效**：改配置只影响之后新建的沙箱，
   已有的（含休眠后恢复的）沿用创建时的设置，直到被销毁重建。做不到某项时在 README 里写明（Docker 默认 local 卷驱动
   不限 `diskMb`；E2B 的 cpu / 内存 / 磁盘由模板决定）。
@@ -79,6 +81,8 @@ interface SandboxProvider {
   - `allowlist`（默认）：只放行 `allowHosts`（`validateAllowHost` 已挡掉 IP 字面量、单段名、`.local` / `.internal`；
     `*.example.com` 匹配子域、不含本身）。
   - `open`：提供方部署配置 `allowOpenEgress` 默认 false，为 false 时 `create` 收到 open 直接报英文错误。新插件照此实现。
+- **白名单不防数据外传**：它挡内网与白名单外的主机，挡不住发往白名单主机的数据（`git push` 到 github.com、发包）。
+  README 要写明这一点，并建议敏感组织用 `sandboxToolPolicy: ask` 和 / 或 `sandboxEgress: none`。
 - 提供方做不到按域名放行时**拒绝或退化为 `none` 并打告警**，不能悄悄放开（E2B 自托管 `domainAllowlist: false`）。
   做得到但更弱的写进 README（E2B 只看 Host / SNI、不核对目的 IP，Ruling M14）。
 
@@ -98,7 +102,9 @@ interface SandboxProvider {
   成员离职经一次性任务 `sandbox-destroy-for` 立即销毁。
 - **透明恢复**：休眠的下次使用时 `resume`；`gone`、已销毁、或记录的提供方不是当前提供方时重建空沙箱，工具结果带
   英文提示。换提供方会泄漏旧实例（新提供方销毁不了，记在 `prev_*` 列，旧插件仍加载时才清理）。
-- **单条命令**上限 `sandbox.limits.maxCommandSeconds`（默认 7200）；`sandbox_bash` 默认 120 秒。
+- **单条命令**上限 `sandbox.limits.maxCommandSeconds`（默认 7200）；`sandbox_bash` 默认 120 秒。命令超时还会收紧到
+  所属运行剩下的时间减 30 秒（`runtime.maxRunSeconds`，默认 900，Ruling M20；内置工具上下文的 `runDeadline`），结果
+  告诉模型是运行时限所致。长命令需要 `maxRunSeconds ≥ maxCommandSeconds`，否则启动打 warn。
 
 ## 安全
 
