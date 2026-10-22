@@ -172,6 +172,27 @@ describe("撤销时的在途工具调用", () => {
   }, 60_000);
 });
 
+describe("模型供应商在流式输出途中被重新加载", () => {
+  it("旧实例的流被中止（PluginUnloadedError）→ 同模型重试取到新实例，运行 completed", async () => {
+    const convId = await createConv(owner, orgId, agentId);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
+      payload: { text: "slow:200:abcdefghijklmnopqrstuvwx" },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const old = k.host.current("model-fake");
+    await waitFor(async () => (old?.inflight.size ?? 0) === 1, 15_000, "model stream open");
+    await k.host.reload("model-fake", { drainMs: 100 });
+    expect(k.host.current("model-fake")).not.toBe(old);
+    const [term] = await waitForTerminal(db(), convId, 1, 30_000);
+    expect(term?.payload).toMatchObject({ reason: "completed" });
+    const calls = (await eventsOf(db(), convId)).filter((e) => e.type === "model_call");
+    expect(calls.map((e) => (e.payload as { attempt: number }).attempt)).toEqual([1, 2]);
+    expect((await runsOf(db(), convId)).map((r) => r.status)).toEqual(["completed"]);
+  }, 60_000);
+});
+
 describe("内核侧消费方实时向注册表取", () => {
   it("插件路由：撤销后 503 plugin.unavailable，重新加载后恢复；未知插件仍 404", async () => {
     const ok = await k.http.inject({ method: "GET", url: "/plugins/everything/hello" });
