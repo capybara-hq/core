@@ -312,6 +312,8 @@
       "skillsSectionHint": "agent 在任务需要时可以加载的技能。",
       "orgSkillsLabel": "组织技能",
       "noOrgSkills": "组织还没有技能。",
+      "confirmSkillWrite": "agent 写技能前需要我确认",
+      "confirmSkillWriteHint": "仅私有 agent。不勾选时 agent 写的技能直接生效；勾选后每次写入都要你确认，确认后同样直接生效。",
       "deletedSkill": "已删除的技能（{id}）",
       "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
       "ownSkillsLabel": "agent 自己写的技能",

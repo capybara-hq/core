@@ -311,6 +311,8 @@
       "skillsSection": "Skills",
       "skillsSectionHint": "Skills the agent can load when a task needs them.",
       "orgSkillsLabel": "Organization skills",
+      "confirmSkillWrite": "Ask me before the agent writes a skill",
+      "confirmSkillWriteHint": "Private agents only. When off, skills the agent writes take effect immediately; when on, each write needs your confirmation and then takes effect immediately too.",
       "noOrgSkills": "The organization has no skills yet.",
       "deletedSkill": "Deleted skill ({id})",
       "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",

@@ -107,6 +107,46 @@ describe("新建 agent：选择组织技能", () => {
     },
   );
 
+  it.each(["zh", "en"] as const)(
+    "私有 agent 显示 skill_write 确认开关，勾选后保存 writePolicy ask；改成共享后隐藏（%s）",
+    async (locale) => {
+      const m = msgs[locale];
+      const calls = stubApi({
+        [`GET ${ORG}/models`]: () => json(200, MODELS),
+        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+        [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
+        [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
+      });
+      renderPage(<NewAgentPage />, { locale });
+      const user = userEvent.setup();
+      const sw = await screen.findByRole("checkbox", { name: m.agents.form.confirmSkillWrite });
+      expect(sw).toHaveProperty("checked", false);
+      await user.click(sw);
+      await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Echo");
+      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
+      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
+      const body = bodyOf(calls.find((c) => c.method === "POST")) as {
+        definition: { skills?: unknown };
+      };
+      expect(body.definition.skills).toEqual({ orgSkills: [], writePolicy: "ask" });
+    },
+  );
+
+  it("可见性改成共享后，确认开关隐藏", async () => {
+    stubApi({
+      [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+      [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
+    });
+    renderPage(<NewAgentPage />);
+    await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
+      "org",
+    );
+    expect(screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillWrite })).toBeNull();
+  });
+
   it("不选技能：定义里不带 skills", async () => {
     const calls = stubApi({
       [`GET ${ORG}/models`]: () => json(200, MODELS),
@@ -270,6 +310,34 @@ describe("编辑 agent（FormPage）", () => {
     renderPage(<EditAgentPage />, { me: member });
     await screen.findByRole("group", { name: en.agents.form.ownSkillsLabel });
     expect(screen.queryByRole("link", { name: en.agents.runHistory })).toBeNull();
+  });
+
+  it("编辑：共享 agent 没有确认开关；私有 agent 已是 ask 时勾选，取消勾选去掉 writePolicy 键", async () => {
+    stubApi(routes());
+    renderPage(<EditAgentPage />);
+    await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
+    expect(screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillWrite })).toBeNull();
+    cleanup();
+
+    const def = agent().definition;
+    const calls = stubApi({
+      ...routes({
+        visibility: "private",
+        definition: { ...def, skills: { orgSkills: ["s1"], writePolicy: "ask", future: 1 } },
+      }),
+      [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
+    });
+    renderPage(<EditAgentPage />);
+    const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
+    expect(sw).toHaveProperty("checked", true);
+    const user = userEvent.setup();
+    await user.click(sw);
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
+      definition: Record<string, unknown>;
+    };
+    expect(body.definition.skills).toEqual({ orgSkills: ["s1"], future: 1 });
   });
 
   it("不是负责人：自己的技能没有删除按钮", async () => {

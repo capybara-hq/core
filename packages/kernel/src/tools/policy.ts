@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
@@ -53,17 +54,20 @@ export function decide(input: PolicyInput): ToolPolicy {
 
 /**
  * 是否属于 R3 固定询问（清单或工具声明需要用户交互）。`visibility` 为 agent 当前的可见性：
- * {@link R3_SHARED_AGENT_ONLY_TOOL_KEYS} 里的内置工具在私有 agent 上不算固定询问；不知道可见性时按共享处理（更严）。
+ * {@link R3_SHARED_AGENT_ONLY_TOOL_KEYS} 里的内置工具在私有 agent 上不算固定询问，
+ * 除非 agent 当前版本的 `skills.writePolicy` 为 `ask`（`skillWritePolicy`）；不知道可见性时按共享处理（更严）。
  */
 export function isFixedAsk(
   tool: ResolvedTool,
   visibility?: "private" | "org" | "members" | undefined,
+  skillWritePolicy?: "allow" | "ask" | undefined,
 ): boolean {
   if (tool.spec.annotations?.requiresUserInteraction === true) return true;
   if (!R3_FIXED_ASK_TOOL_KEYS.has(tool.key)) return false;
   const builtinOnly =
     tool.source.kind === "builtin" && R3_SHARED_AGENT_ONLY_TOOL_KEYS.has(tool.key);
-  return !(builtinOnly && visibility === "private");
+  // 私有 agent：缺省 / allow 不问（R4），负责人设为 ask（D10）时与共享 agent 一样固定询问
+  return !(builtinOnly && visibility === "private" && skillWritePolicy !== "ask");
 }
 
 const asOverride = (v: unknown): "ask" | "deny" | undefined =>
@@ -154,7 +158,9 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
     }
 
     // 可见性实时读（R5）：共享 agent 的 skill_write 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
-    const fixedAsk = isFixedAsk(tool, current?.visibility);
+    // 当前版本的 skills.writePolicy 同样实时读（R5）：运行中改为 ask，下一次调用即生效；固定 ask 时授权不放行
+    const writePolicy = (current?.definition as AgentDefinition | undefined)?.skills?.writePolicy;
+    const fixedAsk = isFixedAsk(tool, current?.visibility, writePolicy);
     const input: PolicyInput = {
       connectorDefault,
       ...(agentOverride !== undefined && { agentOverride }),

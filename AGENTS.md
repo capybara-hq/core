@@ -59,7 +59,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 内核 HTTP 用 NestJS + Fastify：领域类不依赖 Nest，构造参数显式 `@Inject`；插件不依赖 Nest。详见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
 - 运行时：会话事件日志是唯一事实源，模型看到的一切都进日志（任一次模型请求都能由日志加 agent 版本还原），发给模型的历史只追加。代码在 `packages/kernel/src/runtime`。
 - 模型供应商插件（含媒体块 image / document：能力声明把关、上限与占位都在内核，插件收不到 `ref`）：详见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。
-- 工具（`ctx.tools`、描述与错误文案、默认策略、输出存档、`tool_search`、漂移复核；内置的 `sandbox_*` 与技能工具 `skill_load` / `skill_write`，key 不含点，`skill_write` 只对共享 agent 固定确认）：详见 [skills/writing-tools](skills/writing-tools/SKILL.md)，参考实现 `plugins/todo`。
+- 工具（`ctx.tools`、描述与错误文案、默认策略、输出存档、`tool_search`、漂移复核；内置的 `sandbox_*` 与技能工具 `skill_load` / `skill_write`，key 不含点，`skill_write` 对共享 agent 固定确认，私有 agent 默认不确认、可设 `skills.writePolicy: "ask"`）：详见 [skills/writing-tools](skills/writing-tools/SKILL.md)，参考实现 `plugins/todo`。
 - 沙箱（`sandbox@1`：中止要杀命令、确定不在才抛 `SandboxGoneError`、已停止的自动启动、沙箱内也有命令时限、`killAll`、同名替换、`/skills` 只读、出站 `open` 须 `allowOpenEgress`；锁、休眠、销毁由内核 `SandboxService` 负责；socket 代理绝不发布到宿主机地址）：详见 [skills/writing-sandbox-providers](skills/writing-sandbox-providers/SKILL.md)，参考实现 `plugins/sandbox-docker`、`plugins/sandbox-e2b`。
 - 对象存储（`object-store@1` / `ctx.storage`：键前缀 `plugins/<插件>/<orgId>/` 与 `kernel/<orgId>/` 由内核加，预签名上传的大小必须由存储端拒绝，键不能含 `${`，用了 `ctx.storage` 须声明 `permissions.storage`）：详见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)，参考实现 `plugins/object-store-s3`。
 - 连接器（`connector@1`：MCP / OpenAPI 等远端服务接入为连接器）：详见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，参考实现 `plugins/connector-mcp`、`plugins/connector-openapi`。

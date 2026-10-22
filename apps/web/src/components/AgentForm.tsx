@@ -40,7 +40,7 @@ import {
 } from "../lib/connectors";
 import type { ModelRef } from "../lib/conversations";
 import { useErrorMessage } from "../lib/use-error-message";
-import { OrgSkillsPicker, OwnSkills, useOrgSkills } from "./AgentSkills";
+import { OrgSkillsPicker, OwnSkills, SkillWriteSwitch, useOrgSkills } from "./AgentSkills";
 import { FormError } from "./form-error";
 import { ModelParams } from "./ModelParams";
 import { useSession } from "./shell/session";
@@ -74,6 +74,7 @@ function initialOf(existing: Agent | undefined) {
     extraTools: tools.filter((r) => !isFormTool(r)),
     policies: { ...(d?.toolPolicies ?? {}) } as Record<string, TightenedPolicy>,
     orgSkills: [...(d?.skills?.orgSkills ?? [])],
+    confirmSkillWrite: d?.skills?.writePolicy === "ask",
   };
 }
 
@@ -144,6 +145,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>(initial.policies);
   const orgSkills = useOrgSkills(orgId);
   const [skillIds, setSkillIds] = useState<string[]>(initial.orgSkills);
+  const [confirmSkillWrite, setConfirmSkillWrite] = useState(initial.confirmSkillWrite);
 
   // 可选的连接器（读不到时不提供连接器工具，内置工具照常可选）
   useEffect(() => {
@@ -322,8 +324,15 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     };
     // 不用技能的定义不带 skills（保存前后不变、不多一个版本）；原来带了就照实保存（含清空）
     // 合并而不是整个替换：skills 里表单不认识的键原样带回
-    if (skillIds.length > 0 || existing?.definition.skills !== undefined) {
-      definition.skills = { ...(existing?.definition.skills ?? {}), orgSkills: skillIds };
+    if (skillIds.length > 0 || confirmSkillWrite || existing?.definition.skills !== undefined) {
+      const skills = { ...(existing?.definition.skills ?? {}), orgSkills: skillIds };
+      // writePolicy：只在开关被改动时写；关闭 = 去掉键（缺省即 allow，不写进定义）。
+      // 开关只对私有 agent 显示，但值保留在定义里（改回私有时仍生效）
+      if (confirmSkillWrite !== initial.confirmSkillWrite) {
+        if (confirmSkillWrite) skills.writePolicy = "ask";
+        else delete skills.writePolicy;
+      }
+      definition.skills = skills;
     }
     setPending(true);
     setError(undefined);
@@ -382,6 +391,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             !sameJson([...selectedConnectors].sort(), [...initial.apps].sort()),
             !sameJson(policies, initial.policies),
             !sameJson(skillIds, initial.orgSkills),
+            confirmSkillWrite !== initial.confirmSkillWrite,
           ].filter(Boolean).length
         : [
             name.trim() !== "",
@@ -393,7 +403,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
           Object.keys(fallbackParams).length +
           selectedConnectors.length +
           Object.keys(policies).length +
-          skillIds.length;
+          skillIds.length +
+          (confirmSkillWrite ? 1 : 0);
 
   const anchors: AgentFormView["anchors"] = [
     { id: "basic", label: t("form.basicSection"), error: nameError },
@@ -582,6 +593,9 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             description={t("form.skillsSectionHint")}
           >
             <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={setSkillIds} />
+            {visibility === "private" && (
+              <SkillWriteSwitch value={confirmSkillWrite} onChange={setConfirmSkillWrite} />
+            )}
             {existing && (
               <OwnSkills
                 orgId={orgId}

@@ -38,8 +38,11 @@ export interface AgentDefinitionInput {
   /** 按工具 key 收紧策略。 */
   toolPolicies?: Record<string, TightenedPolicy>;
   /** 选用的组织技能（id）；不用技能时省略。 */
-  /** 技能设置；表单只管 `orgSkills`，其余键（新版本内核加的）保存时原样带回。 */
-  skills?: { orgSkills: string[]; [key: string]: unknown };
+  /**
+   * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有 agent 的 skill_write 确认开关，缺省不写），
+   * 其余键（新版本内核加的）保存时原样带回。
+   */
+  skills?: { orgSkills: string[]; writePolicy?: "allow" | "ask"; [key: string]: unknown };
 }
 
 export interface Agent {

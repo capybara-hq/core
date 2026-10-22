@@ -1,6 +1,6 @@
 ---
 name: writing-tools
-description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、连接器工具的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用；内置的沙箱工具 sandbox_*（按工具的超时与转存阈值、sandboxToolPolicy、首次使用 / 重建提示）与技能工具 skill_load / skill_write（目录快照、R3 只对共享 agent 固定 ask、变更审批）。写连接器见 writing-connectors。
+description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、连接器工具的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用；内置的沙箱工具 sandbox_*（按工具的超时与转存阈值、sandboxToolPolicy、首次使用 / 重建提示）与技能工具 skill_load / skill_write（目录快照、R3 对共享 agent 固定 ask、私有 agent 的 writePolicy 开关、变更审批）。写连接器见 writing-connectors。
 ---
 
 # 写工具
@@ -83,7 +83,7 @@ export default definePlugin({
 
 - 默认策略：插件 / 内置工具声明了 `defaultPolicy` 就用它；否则按注解推导 —— `readOnlyHint: true` → `allow`，其余（含无注解、destructive）→ `ask`（`policyFromAnnotations`）。连接器工具在安装时按注解推导并存进 `connector_tools.default_policy`，管理员可改。
 - 只有确实无副作用、或副作用只落在本会话的工具才声明 `defaultPolicy: "allow"`（如 todo）；拿不准就别声明，让它走 `ask`。
-- 最终策略在**执行那一刻**取最严者：组织默认策略、agent 的 `toolPolicies`（只能收紧为 `ask` / `deny`）、`requiresUserInteraction` 与 R3 清单（至少 `ask`，记住的授权对它们无效；`skill_write` 只对共享 agent 固定 ask，见下文）；用户记住的授权（本会话 / 以后都允许）只能把 `ask` 放行为 `allow`，`spec_hash` 变了即失效，不越过 `deny`。
+- 最终策略在**执行那一刻**取最严者：组织默认策略、agent 的 `toolPolicies`（只能收紧为 `ask` / `deny`）、`requiresUserInteraction` 与 R3 清单（至少 `ask`，记住的授权对它们无效；`skill_write` 对共享 agent 固定 ask，对私有 agent 仅在 `skills.writePolicy = "ask"` 时固定 ask，见下文）；用户记住的授权（本会话 / 以后都允许）只能把 `ask` 放行为 `allow`，`spec_hash` 变了即失效，不越过 `deny`。
 - `ask` → 内核建审批、run 进入 `waiting`（不占会话锁与配额），批准后从 checkpoint 续跑；拒绝 / 超时（`tools.approvalTimeoutHours`）/ 等待中被中止一律按拒绝写 `tool_result`。插件无需关心。
 
 ## 结果、`ToolError` 与失败
@@ -188,7 +188,10 @@ async (input, call) => {
   目录的第一份进 system 缓存段，之后的变化在所在位置渲染为英文提醒（只追加），所以改动在**下一次运行开始**才到模型。
 - `skill_write {name, description, files}` 要 agent 定义显式引用（`builtin` / `skill_write`）。内核按 name / description
   合成 SKILL.md 的 frontmatter，只收文本、合计 ≤ 1 MiB、每个 agent 最多 50 个自写技能。
-  - 私有 agent：默认 allow，直接生成新版本。
+  - 私有 agent：默认 allow，直接生成新版本。负责人可在 agent 定义里设 `skills.writePolicy: "ask"`（D10，缺省即 allow，
+    不写进定义），此时与共享 agent 一样固定 ask（记住的授权无效），但确认后**直接生效**、不走变更申请。`writePolicy`
+    与可见性一样在执行那一刻读 agent **当前版本**（R5），运行中改为 ask 下一次调用即生效；共享 agent 不论取值都走 R3 + R4。
+    网页只在私有 agent 的表单上显示这个开关。
   - 共享 agent：在 R3 固定 ask 清单上，**只对共享 agent 生效**（`R3_SHARED_AGENT_ONLY_TOOL_KEYS`，可见性在执行时实时读，
     读不到按共享处理），记住的授权对它无效。发起人确认后生成变更申请（`skills/changes.service.ts`），负责人在收件箱批准前
     只有发起对话能试用；同一对话再写取代旧申请，别的对话写同一技能被拒。
