@@ -354,4 +354,95 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     expect(failed.statusCode, failed.body).toBe(200);
     expect(await env.db.selectFrom("app_installs").select("id").execute()).toEqual([]);
   });
+
+  it("清理 failed 安装不重复回滚：之后手动重新启用的插件、新传的技能版本都不动", async () => {
+    const base = await seedApp(env, {
+      name: "base",
+      templates: false,
+      plugins: [],
+      skills: ["pdf-tools"],
+    });
+    expect((await install(env.boss, env, base)).statusCode).toBe(201);
+    const appId = await seedApp(env, {
+      templates: false,
+      plugins: ["todo"],
+      skills: ["pdf-tools", "broken"],
+    });
+    const v = await env.db
+      .selectFrom("directory_item_versions")
+      .select("object_prefix")
+      .where("item_id", "=", appId)
+      .executeTakeFirstOrThrow();
+    await env.k.storage
+      .deployment()
+      .put(`${v.object_prefix}skills/broken/SKILL.md`, new TextEncoder().encode("tampered"), {
+        contentType: "application/octet-stream",
+        size: 8,
+      });
+    const failed = await install(env.boss, env, appId);
+    expect(failed.statusCode, failed.body).toBe(502);
+    // 回滚成功的组件行已删掉
+    const row = await env.db
+      .selectFrom("app_installs")
+      .select("id")
+      .where("item_id", "=", appId)
+      .executeTakeFirstOrThrow();
+    expect(
+      await env.db
+        .selectFrom("app_install_components")
+        .select("ref")
+        .where("install_id", "=", row.id)
+        .execute(),
+    ).toEqual([]);
+    // 之后：管理员手动重新启用 todo，用户给 pdf-tools 传了新版本（又是 v2）
+    await enable("todo");
+    const [skill] = await liveSkills();
+    const md = new TextEncoder().encode(
+      "---\nname: pdf-tools\ndescription: Mine.\n---\n# pdf-tools\n\nMine.\n",
+    );
+    const up = await env.k.skills.createVersionFromFiles(env.orgId, env.bossId, {
+      name: "pdf-tools",
+      description: "Mine.",
+      files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
+    });
+    expect(up.version).toBe(2);
+    const del = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/app-installs/${row.id}`,
+    });
+    expect(del.statusCode, del.body).toBe(200);
+    expect(del.json()).toEqual({ removed: [], kept: [] });
+    expect(await enabledPlugins()).toEqual(["todo"]);
+    const after = await env.db
+      .selectFrom("skills")
+      .select(["id", "current_version", "description"])
+      .where("deleted_at", "is", null)
+      .execute();
+    expect(after).toEqual([{ id: skill?.id, current_version: 2, description: "Mine." }]);
+  });
+
+  it("卸载按 requires 逆序处理插件：依赖方先移除，提供方随后移除，不留无主的提供方", async () => {
+    // 清单里依赖方在前；安装按 requires 排序先启用提供方
+    const appId = await seedApp(env, {
+      templates: false,
+      plugins: ["dep-requirer", "dep-provider"],
+      skills: [],
+    });
+    const r = await install(env.boss, env, appId);
+    expect(r.statusCode, r.body).toBe(201);
+    expect(await enabledPlugins()).toEqual(["dep-provider", "dep-requirer"]);
+    const del = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/app-installs/${r.json().installed.appInstallId}`,
+    });
+    expect(del.statusCode, del.body).toBe(200);
+    expect(del.json()).toEqual({
+      removed: [
+        { kind: "plugin", ref: "dep-requirer" },
+        { kind: "plugin", ref: "dep-provider" },
+      ],
+      kept: [],
+    });
+    expect(await enabledPlugins()).toEqual([]);
+  });
 });

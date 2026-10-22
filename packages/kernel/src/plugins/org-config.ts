@@ -75,6 +75,11 @@ export interface OrgPluginPutOptions {
    * 「之前就启用」与「本次启用」在锁内判定，不会与并发的启用竞争。
    */
   ifDisabled?: { skipped: boolean };
+  /**
+   * 在同一个事务（组织行锁内）里最后执行，`skipped` 同 {@link ifDisabled}：应用安装在这里记组件，启用与记录之间
+   * 插不进并发的卸载。
+   */
+  inTransaction?: (t: Trx, skipped: boolean) => Promise<void>;
 }
 
 /** 校验失败的单条原因：只含路径与按 issue 类型生成的说明，不回显字段值。 */
@@ -277,6 +282,7 @@ export class OrgPluginConfigs {
         .executeTakeFirst();
       if (opts.ifDisabled && row?.enabled === true) {
         opts.ifDisabled.skipped = true;
+        await opts.inTransaction?.(t, true);
         return this.view(manifest, row, await this.setSecretKeys(t, orgId));
       }
       const enabled = input.enabled ?? row?.enabled ?? false;
@@ -374,6 +380,7 @@ export class OrgPluginConfigs {
           ...(opts.viaItem !== undefined && { directoryItemId: opts.viaItem }),
         },
       });
+      await opts.inTransaction?.(t, false);
       // 在同一事务里读回，返回值就是刚提交的状态
       const saved = await t
         .selectFrom("plugin_org_configs")

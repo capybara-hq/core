@@ -34,6 +34,9 @@ function templateNoIcon() {
   return t;
 }
 
+const fixture = (name: string) =>
+  fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
+
 /** 假 MCP 服务要求的 bearer。 */
 export const MCP_TOKEN = "tok-123";
 
@@ -94,6 +97,8 @@ export async function startOrgEnv(): Promise<OrgEnv> {
         plugin("connector-mcp"),
         plugin("todo"),
         plugin("example-counter"),
+        fixture("dep-provider"),
+        fixture("dep-requirer"),
       ],
       pluginConfig: {
         "object-store-s3": {

@@ -7,7 +7,7 @@ import {
   type PluginManifest,
   parseCapability,
 } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
+import { sql, type Transaction } from "kysely";
 import { normalizeToolRef } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -171,9 +171,11 @@ export class AppInstaller {
     });
 
     const done: Component[] = [];
-    const record = async (c: Component) => {
+    // 在给定事务里记组件（安装记录已被清理时外键失败 → 整个安装中止并回滚）
+    const record = async (c: Component, t?: Trx) => {
+      // 先记进 done：记录失败时已建好的组件照样回滚（插件的启用与记录同一事务，失败则一起撤销）
       done.push(c);
-      await this.d.db
+      await (t ?? this.d.db)
         .insertInto("app_install_components")
         .values({
           install_id: installId,
@@ -188,7 +190,7 @@ export class AppInstaller {
     let step: Step = "plugins";
     try {
       for (const p of plugins) {
-        // 「之前就启用」在组织行锁内判定（已启用时 put 什么都不写，配置也不动）
+        // 「之前就启用」在组织行锁内判定（已启用时 put 什么都不写，配置也不动），组件在同一事务里记下
         const holder = { skipped: false };
         const config = input.pluginConfigs?.[p];
         await this.d.orgConfigs.put(
@@ -197,9 +199,13 @@ export class AppInstaller {
           { enabled: true, ...(config !== undefined && { config }) },
           actor,
           opts.actorTokenId,
-          { viaItem: itemId, ifDisabled: holder },
+          {
+            viaItem: itemId,
+            ifDisabled: holder,
+            inTransaction: (t, skipped) =>
+              record({ kind: "plugin", ref: p, created: !skipped, skillVersion: null }, t),
+          },
         );
-        await record({ kind: "plugin", ref: p, created: !holder.skipped, skillVersion: null });
       }
       step = "connectors";
       for (const ct of manifest.connectorTemplates) {
@@ -236,11 +242,19 @@ export class AppInstaller {
       }
       await this.d.db.transaction().execute(async (t) => {
         await lockOrg(t, orgId);
-        await t
+        const updated = await t
           .updateTable("app_installs")
           .set({ status: "installed" })
           .where("id", "=", installId)
-          .execute();
+          .where("status", "=", "installing")
+          .executeTakeFirst();
+        // 安装记录已被当作超时清理掉：不写 app.installed，走失败回滚
+        if (updated.numUpdatedRows === 0n) {
+          throw new ApiError(
+            "app.install_not_found",
+            "The install record was cleaned up as stale while the install was running",
+          );
+        }
         await this.d.requests.resolveByInstall(t, orgId, itemId, actor, opts);
         await audit(t, {
           actorAccountId: actor,
@@ -254,7 +268,7 @@ export class AppInstaller {
       return { installId };
     } catch (e) {
       const code = e instanceof ApiError ? e.code : "internal";
-      const rollbackErrors = await this.rollback(orgId, actor, done);
+      const rollbackErrors = await this.rollback(orgId, actor, installId, done);
       await this.d.db.transaction().execute(async (t) => {
         await t
           .updateTable("app_installs")
@@ -317,10 +331,15 @@ export class AppInstaller {
     }
   }
 
-  /** 按相反顺序撤销本次新建的组件（不再复核角色：撤销的是本次安装自己的改动）；返回撤销失败的组件。 */
+  /**
+   * 按相反顺序撤销本次新建的组件（不再复核角色：撤销的是本次安装自己的改动）；返回撤销失败的组件。
+   * 撤销成功（或组件已不在）的组件行在同一事务里删掉：之后清理 failed 安装只处理撤销失败或保留下来的组件，
+   * 不会把组织管理员之后手动重新启用的插件、用户之后新传的技能版本再撤销一遍。
+   */
   private async rollback(
     orgId: string,
     actor: string,
+    installId: string,
     done: Component[],
   ): Promise<{ kind: ComponentKind; ref: string }[]> {
     const errors: { kind: ComponentKind; ref: string }[] = [];
@@ -336,7 +355,14 @@ export class AppInstaller {
           ) {
             return false;
           }
-          return this.removeComponent(t, orgId, actor, c, "app_install_rollback");
+          const r = await this.removeComponent(t, orgId, actor, c, "app_install_rollback");
+          await t
+            .deleteFrom("app_install_components")
+            .where("install_id", "=", installId)
+            .where("kind", "=", c.kind)
+            .where("ref", "=", c.ref)
+            .execute();
+          return r;
         });
         if (removed && c.kind === "plugin") await this.d.orgConfigs.afterDisable(orgId, c.ref);
       } catch (e) {
@@ -408,17 +434,20 @@ export class AppInstaller {
       const row = await t
         .selectFrom("app_installs as a")
         .innerJoin("directory_items as i", "i.id", "a.item_id")
-        .select(["a.id", "a.item_id", "a.version", "a.status", "a.installed_at", "i.name"])
+        .select([
+          "a.id",
+          "a.item_id",
+          "a.version",
+          "a.status",
+          "i.name",
+          sql<boolean>`a.installed_at < now() - make_interval(mins => ${staleMinutes})`.as("stale"),
+        ])
         .where("a.id", "=", installId)
         .where("a.org_id", "=", orgId)
         .forUpdate("a")
         .executeTakeFirst();
       if (!row) throw installNotFound();
-      if (
-        row.status === "uninstalling" ||
-        (row.status === "installing" &&
-          Date.now() - row.installed_at.getTime() < staleMinutes * 60_000)
-      ) {
+      if (row.status === "uninstalling" || (row.status === "installing" && !row.stale)) {
         throw new ApiError(
           "app.install_in_progress",
           `This app install is still in progress; it can be cleaned up after ${staleMinutes} minutes`,
@@ -431,8 +460,13 @@ export class AppInstaller {
         .select(["kind", "ref", "created", "skill_version"])
         .where("install_id", "=", installId)
         .execute();
-      const order: ComponentKind[] = ["skill", "connector", "plugin"];
-      comps.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+      // 技能 → 连接器 → 插件；插件按 requires 的逆序（依赖方先于提供方），提供方检查时依赖方已处理完
+      const pluginOrder = this.uninstallPluginOrder(
+        comps.filter((c) => c.kind === "plugin").map((c) => c.ref),
+      );
+      const rank = (c: { kind: ComponentKind; ref: string }) =>
+        c.kind === "skill" ? 0 : c.kind === "connector" ? 1 : 2 + pluginOrder.indexOf(c.ref);
+      comps.sort((a, b) => rank(a) - rank(b));
       const agentRefs = await this.agentRefs(t, orgId);
       for (const c of comps) {
         const keep = (reason: UninstallReport["kept"][number]["reason"]) =>
@@ -537,6 +571,13 @@ export class AppInstaller {
       if (r.kind === "plugin") await this.d.orgConfigs.afterDisable(orgId, r.ref);
     }
     return report;
+  }
+
+  /** 卸载时插件的处理顺序：安装顺序（提供方在前）的逆序；本副本没加载的插件排在最后。 */
+  private uninstallPluginOrder(refs: string[]): string[] {
+    const loaded = new Map(this.d.host.manifests().map((m) => [m.name, m]));
+    const known = refs.filter((r) => loaded.has(r)).map((r) => loaded.get(r) as PluginManifest);
+    return [...orderByRequires(known).reverse(), ...refs.filter((r) => !loaded.has(r))];
   }
 
   /** 本组织的应用安装（含失败的），新的在前。 */
