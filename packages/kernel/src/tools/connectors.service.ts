@@ -577,8 +577,11 @@ export class ConnectorsService {
    * 读端点描述（认证提示、操作清单），能认证（静态凭据 / 客户端凭据流取到的 token）或 auth none 时再列工具并按
    * slug 拼 key、推导默认策略与问题。什么都不写（不落库、不审计）；OAuth 授权码流不列工具（不做动态注册）。
    * 外连失败一律 502 `connector.connect_failed`，说明里只有连接器给的英文说明（按注入的凭据打码）或错误类名。
+   * `customConnectors: deny` 时 → `directory.custom_disabled`。
    */
   async preview(orgId: string, input: PreviewConnectorInput): Promise<ConnectorPreview> {
+    // 部署禁止组织自建连接器时也不替组织去连任意端点（目录安装不走预览）
+    await assertCustomAllowed(this.db, "customConnectors");
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
     const connector = this.registry.findConnector(input.connector);
     if (!connector) throw fail("connector", `Unknown connector "${input.connector}"`);

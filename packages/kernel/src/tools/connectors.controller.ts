@@ -51,7 +51,7 @@ function forViewer<T extends ConnectorSummary>(org: OrgContext, c: T): T {
 }
 
 /** 凭据值：形状由 `Credentials.validate` 按认证方式校验（不回显值）；这里只限大小。 */
-const CredentialValue = z
+export const CredentialValue = z
   .record(z.string().max(100), z.unknown())
   .refine((v) => JSON.stringify(v).length <= 16_384, { message: "Credential is too large" });
 

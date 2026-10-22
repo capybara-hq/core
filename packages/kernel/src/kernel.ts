@@ -591,6 +591,7 @@ export async function createKernel(
     ops: pluginAdminOps,
     declared: () => host.declared(),
     findConnector,
+    pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
     apps,
   });
   // 目录来源（D16 / C26）：official 启动时按配置同步；维护任务 catalogs-refresh 定期刷新全部生效的来源

@@ -32,6 +32,7 @@ import { endpointCredentialIssues } from "../tools/endpoint.js";
 import type { AppImport, AppReview } from "./app-import.js";
 import { checkDirectoryArchive, invalidPackage, unpackDirectoryArchive } from "./archive.js";
 import { HOST_VERSIONS, loadCatalogEntry, sourceEffective } from "./catalogs.service.js";
+import { cancelPendingRequests } from "./requests.service.js";
 import { schemaHasPath } from "./schema-path.js";
 
 /** 条目策略（C22）：allow（新导入默认）/ needs_approval / disabled（不能新装，已装不受影响）。 */
@@ -97,6 +98,8 @@ export interface DirectoryServiceDeps {
   declared: () => ReadonlyMap<string, PluginSource>;
   /** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`（导入模板时校验端点）。 */
   findConnector: (plugin: string, kind: string) => Connector | undefined;
+  /** 本副本已加载的插件版本（导入模板时按 `pluginVersion` 复核；不传则不复核）。 */
+  pluginVersion?: (plugin: string) => string | undefined;
   /** 应用包导入（清单引入 kind app 时走它的 prepare）。 */
   apps?: Pick<AppImport, "prepare">;
 }
@@ -431,6 +434,16 @@ export class DirectoryService {
       ]);
     }
     const problems = templateProblems(c, t, "template");
+    const loaded = this.d.pluginVersion?.(t.plugin);
+    if (
+      t.pluginVersion !== undefined &&
+      loaded !== undefined &&
+      !semver.satisfies(loaded, t.pluginVersion, { includePrerelease: true })
+    ) {
+      problems.push(
+        `template.pluginVersion: plugin ${t.plugin} is loaded at version ${loaded}, which does not satisfy ${t.pluginVersion}`,
+      );
+    }
     if (problems.length > 0) throw invalidPackage(problems);
   }
 
@@ -567,7 +580,7 @@ export class DirectoryService {
   }
 
   /**
-   * 删除条目（软删除，审计 `directory.removed`）：版本与存储里的文件保留（已安装的组件仍引用它们），组织不再看到它；
+   * 删除条目（软删除，审计 `directory.removed`；仍 pending 的申请同一事务里取消）：版本与存储里的文件保留（已安装的组件仍引用它们），组织不再看到它；
    * 之后同一 (kind, name) 可以重新导入成新条目。已删除 / 不存在 → `directory.item_not_found`。
    */
   async remove(actor: string, itemId: string, opts: ActorOpts = {}): Promise<void> {
@@ -585,6 +598,8 @@ export class DirectoryService {
         .returning(["kind", "name"])
         .executeTakeFirst();
       if (!row) throw notFound();
+      // 条目没了，挂着的申请也没有意义：同一事务里取消（不再出现在收件箱 / 企业管理员列表）
+      await cancelPendingRequests(trx, { itemId }, actor, "item_removed", opts);
       await audit(trx, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),

@@ -24,6 +24,7 @@ import {
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { roleAtLeast } from "../orgs/roles.js";
+import { CredentialValue } from "../tools/connectors.controller.js";
 import type { AppInstaller, AppInstallView, UninstallReport } from "./app-install.js";
 import type {
   DirectoryIcon,
@@ -50,7 +51,7 @@ const ConnectorInput = z
     name: z.string().trim().min(1).max(80).optional(),
     slug: z.string().max(24).optional(),
     endpoint: z.record(z.string(), z.unknown()).optional(),
-    credential: z.record(z.string(), z.unknown()).optional(),
+    credential: CredentialValue.optional(),
     client: z
       .object({
         clientId: z.string().min(1).max(500),

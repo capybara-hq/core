@@ -1,6 +1,7 @@
 import { isModelError, type ModelUsage } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
+import { PluginUnloadedError } from "../plugins/inflight.js";
 import { usageTokens } from "./budget.js";
 import { textTokens } from "./plan.js";
 
@@ -110,14 +111,24 @@ export function parseVerdict(
   return null;
 }
 
+/** 评委请求失败时供应商插件正在被撤销 / 升级（调用方可重试，重试实时取到新实例）。 */
+export const JUDGE_PROVIDER_UNAVAILABLE = "run.provider_unavailable";
+
 const failureCode = (err: unknown): string => {
   if (isModelError(err)) return `model.${err.kind}`;
+  if (
+    err instanceof PluginUnloadedError ||
+    (err instanceof Error && err.cause instanceof PluginUnloadedError)
+  ) {
+    return JUDGE_PROVIDER_UNAVAILABLE;
+  }
   if (err instanceof ApiError) return err.code;
   return "run.provider_error";
 };
 
 /**
- * 请评委比较一次。中止（停机）照常抛出；其他失败返回 {@link JudgeFailure}（不重试：一条结果只发一次评委请求）。
+ * 请评委比较一次。中止（停机）照常抛出；其他失败返回 {@link JudgeFailure}（这里不重试；只有供应商插件途中被撤销
+ * 的 {@link JUDGE_PROVIDER_UNAVAILABLE} 由 worker 重试）。
  */
 export async function judge(
   d: { purposes: Pick<ModelPurposesService, "chat">; maxOutputTokens?: number },

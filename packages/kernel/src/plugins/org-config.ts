@@ -7,6 +7,8 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import {
   assertItemInstallable,
   assertPluginSourcesInstallable,
+  disabledPluginItems,
+  pluginItemDisabled,
 } from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -288,6 +290,9 @@ export class OrgPluginConfigs {
       const enabled = input.enabled ?? row?.enabled ?? false;
       // 新启用来自企业目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
       if (input.enabled === true && row?.enabled !== true) {
+        // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
+        const killed = await disabledPluginItems(t, [plugin]);
+        if (killed.length > 0) throw pluginItemDisabled(killed);
         // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
         if (opts.viaItem !== undefined) await assertItemInstallable(t, orgId, opts.viaItem);
         else await assertPluginSourcesInstallable(t, orgId, plugin);

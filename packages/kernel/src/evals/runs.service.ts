@@ -1,7 +1,7 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
-import { type Selectable, sql } from "kysely";
+import { type Selectable, sql, type Transaction } from "kysely";
 import { paramIssues } from "../agents/agents.service.js";
 import {
   type AgentDefinition,
@@ -14,6 +14,7 @@ import type {
   EvalResultsTable,
   EvalRunStatus,
   JudgeStatus,
+  KernelDatabase,
   KernelDb,
 } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -594,12 +595,32 @@ export class EvalRunsService {
     };
   }
 
+  /**
+   * 集合的 agent 已删除 → `agent.not_found`（删除 agent 会取消它的运行；之后再估算 / 启动只会建出全部跳过的运行）。
+   * 在事务里调用时 FOR SHARE，与删除 agent 互斥。
+   */
+  private async assertAgentLive(
+    db: KernelDb | Transaction<KernelDatabase>,
+    agentId: string,
+  ): Promise<void> {
+    let q = db
+      .selectFrom("agents")
+      .select("id")
+      .where("id", "=", agentId)
+      .where("deleted_at", "is", null);
+    if (db !== this.d.db) q = q.forShare();
+    if (!(await q.executeTakeFirst())) {
+      throw new ApiError("agent.not_found", "The agent of this eval set was deleted");
+    }
+  }
+
   async estimate(
     orgId: string,
     setId: string,
     input: { mode: "step" | "run"; candidate: EvalCandidate; judge: boolean; tokenCap?: number },
   ): Promise<{ estimate: EvalEstimate } & EvalTokenCaps> {
     const set = await this.liveSet(orgId, setId);
+    await this.assertAgentLive(this.d.db, set.agent_id);
     const caps = this.tokenCaps(input.tokenCap);
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     const plans = await this.plan(setId, input.mode, input.candidate, versionDef);
@@ -634,6 +655,7 @@ export class EvalRunsService {
     actorTokenId?: string,
   ): Promise<EvalRunView> {
     const set = await this.liveSet(orgId, setId);
+    await this.assertAgentLive(this.d.db, set.agent_id);
     const tokenCap = this.tokenCaps(input.tokenCap).effectiveTokenCap;
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     if (input.judge) await this.d.purposes.resolve(orgId, "eval");
@@ -660,6 +682,7 @@ export class EvalRunsService {
         .forShare()
         .executeTakeFirst();
       if (!locked) throw setNotFound();
+      await this.assertAgentLive(trx, set.agent_id);
       const alive = new Set(
         (
           await trx

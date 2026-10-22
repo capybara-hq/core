@@ -10,6 +10,7 @@ import {
   parseAppManifest,
 } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
+import semver from "semver";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -26,7 +27,7 @@ import type {
   CreateConnectorInput,
 } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
-import type { AppInstaller, AppInstallInput } from "./app-install.js";
+import type { AppInstaller, AppInstallInput, AppInstallSkipped } from "./app-install.js";
 import { iconProblem } from "./archive.js";
 import { type DirectoryItemView, itemView } from "./directory.service.js";
 import type { DirectoryRequestsService, DirectoryRequestView } from "./requests.service.js";
@@ -193,6 +194,8 @@ export type OrgInstallResult =
         skillVersion?: number;
         plugin?: string;
         appInstallId?: string;
+        /** 应用：跳过的可选插件与用到它们的连接器模板。 */
+        skipped?: AppInstallSkipped;
       };
     }
   | { status: 202; request: DirectoryRequestView };
@@ -271,26 +274,109 @@ function setPath(obj: Record<string, unknown>, path: string, value: unknown): vo
   node[segs[segs.length - 1] as string] = value;
 }
 
+const satisfies = (version: string, range: string) =>
+  semver.satisfies(version, range, { includePrerelease: true });
+
+/** 应用里的一个插件：名字、版本范围（app.yaml 的 `version`）与是否可选。 */
+export interface AppPluginRef {
+  name: string;
+  range?: string | undefined;
+  optional?: boolean | undefined;
+}
+
+/** {@link appPluginPlan} 的结果。 */
+export interface AppPluginPlan {
+  /** 要在组织里启用的插件（已加载、版本满足范围、插件条目没被禁用）。 */
+  use: string[];
+  /** 跳过的可选插件。 */
+  skipped: string[];
+  /** 缺的必选插件：没加载（absent）、加载的版本不满足范围（version，带加载的版本）。 */
+  missing: { name: string; reason: "absent" | "version"; loadedVersion?: string; range?: string }[];
+  /** 插件自己的目录条目被禁用的必选插件。 */
+  disabled: string[];
+}
+
+/**
+ * 应用的插件此刻能不能用（列表的 `installable` 与安装共用一套判定，M-13）：可选插件没加载、版本不满足、或插件条目被
+ * 禁用 → 跳过；必选插件同样情况 → 记进 missing / disabled。`killed` 为插件条目 disabled 的插件名（列表不查时传空）。
+ */
+export function appPluginPlan(
+  plugins: readonly AppPluginRef[],
+  loaded: ReadonlyMap<string, string>,
+  killed: ReadonlySet<string> = new Set(),
+): AppPluginPlan {
+  const out: AppPluginPlan = { use: [], skipped: [], missing: [], disabled: [] };
+  for (const p of plugins) {
+    const version = loaded.get(p.name);
+    let problem: AppPluginPlan["missing"][number] | "disabled" | undefined;
+    if (killed.has(p.name)) problem = "disabled";
+    else if (version === undefined) problem = { name: p.name, reason: "absent" };
+    else if (p.range !== undefined && !satisfies(version, p.range)) {
+      problem = { name: p.name, reason: "version", loadedVersion: version, range: p.range };
+    }
+    if (problem === undefined) out.use.push(p.name);
+    else if (p.optional === true) out.skipped.push(p.name);
+    else if (problem === "disabled") out.disabled.push(p.name);
+    else out.missing.push(problem);
+  }
+  return out;
+}
+
+/** 缺必选插件时的 `directory.not_deployed`（点名插件与版本）。 */
+export function appPluginsNotDeployed(missing: AppPluginPlan["missing"]): ApiError {
+  const what = missing.map((m) =>
+    m.reason === "absent"
+      ? m.name
+      : `${m.name} (deployed ${m.loadedVersion}, the app needs ${m.range})`,
+  );
+  return new ApiError(
+    "directory.not_deployed",
+    `Plugins this app needs are not deployed at a matching version: ${what.join(", ")}; ask the enterprise admin to install or upgrade them`,
+  );
+}
+
+/** 安装连接器模板时查连接器插件用的依赖。 */
+export interface TemplateDeps {
+  findConnector: OrgDirectoryDeps["findConnector"];
+  /** 本副本已加载的插件版本（没加载为 undefined）。 */
+  pluginVersion: (plugin: string) => string | undefined;
+}
+
+/**
+ * 模板的连接器插件此刻是否可用：插件加载且提供该 kind，并满足 `pluginVersion`（若写了）；不可用返回原因
+ * （模型不可见，给管理员看的英文）。
+ */
+export function templatePluginProblem(
+  d: TemplateDeps,
+  template: ConnectorTemplateSpec,
+): string | undefined {
+  if (!d.findConnector(template.plugin, template.connector)) {
+    return `Connector plugin ${template.plugin} providing "${template.connector}" is not deployed; ask the enterprise admin to install and enable it`;
+  }
+  const range = template.pluginVersion;
+  const version = d.pluginVersion(template.plugin);
+  if (range !== undefined && version !== undefined && !satisfies(version, range)) {
+    return `Connector plugin ${template.plugin} is deployed at version ${version}, but the template needs ${range}; ask the enterprise admin to upgrade it`;
+  }
+  return undefined;
+}
+
 /**
  * 由连接器模板与组织填的部分拼出安装连接器的输入（C30）：端点以模板为准，只有 `editableEndpoint` 列出的路径（或其下的
  * 字段）可以由组织改，改了别的路径 → `validation_failed`；认证方式取模板，组织只给凭据（静态凭据走 `credential`，
- * OAuth 走 `client`）。按此刻本副本加载的连接器复核模板的插件与 kind（没加载 → `directory.not_deployed`）；
+ * OAuth 走 `client`）。按此刻本副本加载的连接器复核模板的插件、kind 与 `pluginVersion`（不满足 → `directory.not_deployed`）；
  * 端点（合并后的整体）按 schema、凭据样式检查与 OAuth 地址策略的复核由 `ConnectorsService.create` 执行。
  */
 export function templateConnectorInput(
-  findConnector: OrgDirectoryDeps["findConnector"],
+  deps: TemplateDeps,
   template: ConnectorTemplateSpec,
   ref: ConnectorTemplateRef,
   input: ConnectorInstallInput | undefined,
   defaultName: string,
   at = "connector",
 ): CreateConnectorInput {
-  if (!findConnector(template.plugin, template.connector)) {
-    throw new ApiError(
-      "directory.not_deployed",
-      `Connector plugin ${template.plugin} providing "${template.connector}" is not deployed; ask the enterprise admin to install and enable it`,
-    );
-  }
+  const problem = templatePluginProblem(deps, template);
+  if (problem !== undefined) throw new ApiError("directory.not_deployed", problem);
   const given = input ?? {};
   const editable = template.editableEndpoint ?? [];
   const endpoint = structuredClone(template.endpoint);
@@ -590,24 +676,31 @@ export class OrgDirectoryService {
     return directoryHasIcon(this.d.db, this.d.storage, itemId);
   }
 
+  /** 查连接器插件与版本用的依赖（本副本此刻加载的）。 */
+  private templateDeps(): TemplateDeps {
+    const versions = new Map(this.d.host.manifests().map((m) => [m.name, m.version]));
+    return { findConnector: this.d.findConnector, pluginVersion: (n) => versions.get(n) };
+  }
+
   /**
-   * 条目依赖的插件此刻是否装在部署上（本副本已加载）：插件条目 = 该插件；连接器模板 = 提供该 kind 的连接器插件；
-   * 应用 = `resolved.plugins` 全部（列表不读 app.yaml，可选插件也算；安装时可选插件没装会跳过）。
+   * 条目依赖的插件此刻是否装在部署上（本副本已加载）：插件条目 = 该插件；连接器模板 = 提供该 kind 的连接器插件且满足
+   * `pluginVersion`；应用 = `resolved.plugins` 里的必选插件都已加载且版本满足范围（与安装同一套判定 {@link appPluginPlan}，
+   * 可选插件不算）。
    */
   private deployed(
     kind: PackageKind,
     name: string,
     latest: { section: unknown; resolved: unknown } | undefined,
   ): boolean {
-    const loaded = new Set(this.d.host.manifests().map((m) => m.name));
+    const loaded = new Map(this.d.host.manifests().map((m) => [m.name, m.version]));
     if (kind === "plugin") return loaded.has(name);
     if (kind === "connector-template") {
       const t = (latest?.section as ConnectorTemplateSection | undefined)?.template;
-      return t !== undefined && this.d.findConnector(t.plugin, t.connector) !== undefined;
+      return t !== undefined && templatePluginProblem(this.templateDeps(), t) === undefined;
     }
     if (kind === "app") {
-      const plugins = (latest?.resolved as { plugins?: { name: string }[] } | null)?.plugins ?? [];
-      return plugins.every((p) => loaded.has(p.name));
+      const plugins = (latest?.resolved as { plugins?: AppPluginRef[] } | null)?.plugins ?? [];
+      return appPluginPlan(plugins, loaded).missing.length === 0;
     }
     return true;
   }
@@ -621,6 +714,12 @@ export class OrgDirectoryService {
     actorTokenId?: string,
   ): Promise<OrgInstallResult> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
+    // 先判角色（不能安装任何种类的就 forbidden），再给条目相关的错误：成员不能借错误码探测 disabled 条目的存在、种类与版本
+    await this.d.db.transaction().execute(async (t) => {
+      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "directory.read");
+      const canAny = Object.values(INSTALL_ACTIONS).some((acts) => acts.every((a) => can(role, a)));
+      if (!canAny) throw new ApiError("forbidden", "Insufficient organization role");
+    });
     const item = await this.d.db
       .selectFrom("directory_items")
       .selectAll()
@@ -696,7 +795,10 @@ export class OrgDirectoryService {
         input.app ?? { connectors: {} },
         opts,
       );
-      return { status: 201, installed: { ...base, appInstallId: r.installId } };
+      return {
+        status: 201,
+        installed: { ...base, appInstallId: r.installId, skipped: r.skipped },
+      };
     }
     if (item.kind === "skill") {
       const files = await readDirectoryFiles(this.d.storage, v.object_prefix, v.files);
@@ -713,7 +815,7 @@ export class OrgDirectoryService {
         orgId,
         actor,
         templateConnectorInput(
-          this.d.findConnector,
+          this.templateDeps(),
           section.template,
           { itemId, version },
           input.connector,

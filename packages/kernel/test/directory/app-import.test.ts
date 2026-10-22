@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -414,8 +414,18 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
       .executeTakeFirstOrThrow();
     expect(v.resolved).toEqual({
       plugins: [
-        { name: "alpha", sha256: sha256(pkgs["alpha@1.0.0"] as Uint8Array) },
-        { name: "beta", sha256: sha256(pkgs["beta@1.0.0"] as Uint8Array) },
+        {
+          name: "alpha",
+          sha256: sha256(pkgs["alpha@1.0.0"] as Uint8Array),
+          range: "^1.0.0",
+          optional: false,
+        },
+        {
+          name: "beta",
+          sha256: sha256(pkgs["beta@1.0.0"] as Uint8Array),
+          range: "^1.0.0",
+          optional: false,
+        },
       ],
     });
     expect(v.section).toEqual({ kind: "app", manifest: "app.yaml" });
@@ -506,13 +516,30 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     ]);
     const installs = await db
       .selectFrom("plugin_installs")
-      .select(["name", "version", "desired_state"])
+      .select(["name", "version", "desired_state", "directory_item_id"])
       .orderBy("name")
       .execute();
+    // 经应用装到部署的插件记下来源条目（应用条目，M-12）；keep 的不动
+    const appItem = res.json().item.id as string;
     expect(installs).toEqual([
-      { name: "delta", version: "1.0.0", desired_state: "enabled" },
-      { name: "eps", version: "1.1.0", desired_state: "enabled" },
-      { name: "gamma", version: "1.0.0", desired_state: "disabled" },
+      { name: "delta", version: "1.0.0", desired_state: "enabled", directory_item_id: appItem },
+      { name: "eps", version: "1.1.0", desired_state: "enabled", directory_item_id: appItem },
+      { name: "gamma", version: "1.0.0", desired_state: "disabled", directory_item_id: null },
+    ]);
+    // resolved 带上范围与是否可选（列表与安装按同一份数据判定，M-13）
+    const v = await db
+      .selectFrom("directory_item_versions")
+      .select("resolved")
+      .where("item_id", "=", appItem)
+      .executeTakeFirstOrThrow();
+    expect(
+      (v.resolved as { plugins: { name: string; range: string; optional: boolean }[] }).plugins.map(
+        (p) => [p.name, p.range, p.optional],
+      ),
+    ).toEqual([
+      ["delta", "^1.0.0", false],
+      ["gamma", "^1.0.0", false],
+      ["eps", "^1.1.0", false],
     ]);
     // keep 的插件不写快照（F-O）
     const snaps = await db.selectFrom("plugin_permission_snapshots").select("plugin").execute();
@@ -532,6 +559,39 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     await waitFor(async () => k.host.current("delta")?.version === "1.0.0", 15_000, "delta");
     await waitFor(async () => k.host.current("eps")?.version === "1.1.0", 15_000, "eps");
     expect(k.host.current("gamma")).toBeUndefined();
+  });
+
+  it("应用里有插件自己的目录条目被禁用：审阅时就拒绝，点名插件（裁决 M-5），什么都不存", async () => {
+    await reset();
+    await db
+      .insertInto("directory_items")
+      .values({
+        id: randomUUID(),
+        kind: "plugin",
+        name: "delta",
+        package_name: NPM("delta"),
+        publisher: "Acme",
+        description: "delta",
+        latest_version: "1.0.0",
+        policy: "disabled",
+      })
+      .execute();
+    const m = manifest({
+      name: "ops-suite",
+      plugins: [pluginRef("delta", "1.0.0")],
+      connectorTemplates: [],
+      skills: [],
+      icon: undefined,
+    });
+    const res = await prepareFile(
+      admin,
+      await appBundleTgz({ manifest: m, name: "@acme/app-ops" }),
+    );
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe("directory.item_disabled");
+    expect(res.json().error.message).toContain("delta");
+    expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("plugin_packages").select("sha256").execute()).toEqual([]);
   });
 
   it("装到部署时某个插件装失败：已提交的条目照常返回，逐个给出结果；upgrade 的快照恢复原样", async () => {

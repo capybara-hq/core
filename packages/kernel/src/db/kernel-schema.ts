@@ -531,6 +531,9 @@ export interface SkillVersionsTable {
   object_prefix: string;
   created_by: string;
   created_at: Ts;
+  /** 0037：本版本的企业目录来源（自定义上传 / agent 技能为 NULL）。 */
+  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0026_skill_changes.sql：技能变更申请里提议的版本。 */

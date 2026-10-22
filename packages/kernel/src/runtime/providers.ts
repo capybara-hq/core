@@ -18,6 +18,13 @@ import { ApiError } from "../errors.js";
 
 /** 供应商模型列表在 Redis 中的缓存时长（秒）。 */
 const MODELS_TTL_SECONDS = 600;
+/** 单个供应商 `listModels()` 的时限（毫秒）：一个卡住的供应商不拖住整个列表与解析。 */
+export const LIST_MODELS_TIMEOUT_MS = 10_000;
+/**
+ * 列表视图（后台模型页、组织模型页）里列模型失败的供应商在这么多秒内直接标 error、不再请求（Redis，多副本共享）。
+ * 只用于列表；`resolve`（运行时）照常每次请求，失败由降级梯子重试。
+ */
+export const LIST_FAILURE_TTL_SECONDS = 15;
 /**
  * 键带供应商的契约主版本：插件从 `@1` 升级到 `@2` 后不会读到 `@1`（经适配）时写入的列表
  * （两者都是 `@2` 形状，按形状分辨不出来）。
@@ -27,6 +34,9 @@ const MODELS_TTL_SECONDS = 600;
  */
 const modelsKey = (p: ProviderEntry) =>
   `capk:models:${p.plugin}:v${p.major}:${p.version ?? "-"}:${p.configHash ?? "-"}`;
+/** 列表视图的失败标记（{@link LIST_FAILURE_TTL_SECONDS}），与模型列表同样按版本与配置摘要区分。 */
+const listFailedKey = (p: ProviderEntry) =>
+  `capk:models-failed:${p.plugin}:v${p.major}:${p.version ?? "-"}:${p.configHash ?? "-"}`;
 
 interface ProviderEntry {
   plugin: string;
@@ -135,7 +145,26 @@ export class ProviderRegistry {
     private readonly host: ProviderHost,
     private readonly kv: Redis,
     private readonly log?: Pick<Logger, "warn">,
+    private readonly opts: { listTimeoutMs?: number } = {},
   ) {}
+
+  /** `listModels()` 加时限（到时按失败处理，供应商的调用留在后台、结果丢弃）。 */
+  private async listModelsWithTimeout(impl: ModelProvider): Promise<ModelInfo[]> {
+    const ms = this.opts.listTimeoutMs ?? LIST_MODELS_TIMEOUT_MS;
+    let timer: NodeJS.Timeout | undefined;
+    const call = Promise.resolve().then(() => impl.listModels());
+    call.catch(() => {});
+    try {
+      return await Promise.race([
+        call,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`listModels timed out after ${ms}ms`)), ms);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   /** 每个插件取一个实现（`@2` 优先），按插件首次出现的顺序；不支持的主版本记 warn 后忽略。 */
   private providers(): ProviderEntry[] {
@@ -181,7 +210,7 @@ export class ProviderRegistry {
     }
     let models: ModelInfo[];
     try {
-      models = await impl.listModels();
+      models = await this.listModelsWithTimeout(impl);
     } catch (err) {
       throw new ProviderListError(provider, err);
     }
@@ -209,12 +238,27 @@ export class ProviderRegistry {
   }
 
   /**
-   * 每个已安装供应商及其状态（按插件加载顺序，后台用）：列模型失败或声明不合规的标 `error`、`models` 为空，
-   * 不影响其他供应商。`error` 只是内核自己的英文说明（不透出上游错误原文，原文记 warn 日志）。
+   * 每个已安装供应商及其状态（按插件加载顺序，后台用）：列模型失败（含超过 {@link LIST_MODELS_TIMEOUT_MS}）或声明
+   * 不合规的标 `error`、`models` 为空，不影响其他供应商；列模型失败的在 {@link LIST_FAILURE_TTL_SECONDS} 秒内不再请求。`error` 只是内核自己的英文说明（不透出上游错误原文，原文记 warn 日志）。
    */
   async listWithStatus(): Promise<ProviderStatus[]> {
     const providers = this.providers();
-    const settled = await Promise.allSettled(providers.map((p) => this.models(p)));
+    const settled = await Promise.allSettled(
+      providers.map(async (p) => {
+        // 刚失败过的供应商：短时间内直接标 error，不再等它（每个供应商另有时限）
+        if ((await this.kv.get(listFailedKey(p))) !== null) {
+          throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
+        }
+        try {
+          return await this.models(p);
+        } catch (err) {
+          if (err instanceof ProviderListError) {
+            await this.kv.set(listFailedKey(p), "1", "EX", LIST_FAILURE_TTL_SECONDS);
+          }
+          throw err;
+        }
+      }),
+    );
     return settled.map((r, i): ProviderStatus => {
       const provider = (providers[i] as { plugin: string }).plugin;
       if (r.status === "fulfilled") {

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createOrg } from "../helpers/runs.js";
 import {
   auditActions,
   importSkill,
@@ -119,9 +120,13 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
       skillName: "off-skill",
       policy: "disabled",
     });
+    // 成员看不到 disabled 的条目：not found（不暴露条目存在）；组织管理员得到 item_disabled
     const d = await requestItem(env.mem, env, off);
-    expect(d.statusCode).toBe(403);
-    expect(d.json().error.code).toBe("directory.item_disabled");
+    expect(d.statusCode).toBe(404);
+    expect(d.json().error.code).toBe("directory.item_not_found");
+    const da = await requestItem(env.boss, env, off);
+    expect(da.statusCode).toBe(403);
+    expect(da.json().error.code).toBe("directory.item_disabled");
     expect(
       (await decideOrg(env.boss, "00000000-0000-4000-8000-000000000000", "approve")).statusCode,
     ).toBe(404);
@@ -138,6 +143,82 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
       .executeTakeFirstOrThrow();
     expect(row).toEqual({ status: "approved", decided_by: env.bossId });
     expect(await inbox(env.boss)).toEqual([]);
+  });
+});
+
+describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭", { timeout: 60_000 }, () => {
+  it("删除条目：pending 申请取消（审计带原因）；企业管理员不能再批准已删除条目的申请", async () => {
+    const itemId = await importSkill(env, { policy: "needs_approval" });
+    const orgReq = (await requestItem(env.mem, env, itemId)).json().request.id as string;
+    // 另一条已交企业管理员（本组织只能有一条 pending：先让成员申请升级）
+    const up = await decideOrg(env.boss, orgReq, "approve");
+    expect(up.json().request.stage).toBe("deployment");
+    // 先禁用：企业管理员批准 disabled 条目的申请 → item_disabled，不写授予
+    await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/directory/items/${itemId}/policy`,
+      payload: { policy: "disabled" },
+    });
+    const blocked = await decideAdmin(env.root, orgReq, "approve");
+    expect(blocked.statusCode).toBe(403);
+    expect(blocked.json().error.code).toBe("directory.item_disabled");
+    expect(await env.db.selectFrom("directory_org_grants").select("item_id").execute()).toEqual([]);
+    const del = await env.root({
+      method: "DELETE",
+      url: `/api/v1/admin/directory/items/${itemId}`,
+    });
+    expect(del.statusCode, del.body).toBe(204);
+    const row = await env.db
+      .selectFrom("directory_requests")
+      .select(["status", "decided_by"])
+      .where("id", "=", orgReq)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ status: "cancelled", decided_by: env.rootId });
+    expect(await auditActions(env)).toContain("directory.request_cancelled");
+    expect(await overviewPending()).toBe(0);
+  });
+
+  it("needs_approval 时建的部署级申请：条目改成 allow 后安装，申请一并标为已批准", async () => {
+    const itemId = await importSkill(env, { policy: "needs_approval" });
+    const pend = await install(env.boss, env, itemId);
+    expect(pend.statusCode).toBe(202);
+    const id = pend.json().request.id as string;
+    await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/directory/items/${itemId}/policy`,
+      payload: { policy: "allow" },
+    });
+    expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
+    const row = await env.db
+      .selectFrom("directory_requests")
+      .select(["status", "decided_by"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ status: "approved", decided_by: env.bossId });
+    expect(await overviewPending()).toBe(0);
+  });
+
+  it("删除组织：它挂着的申请取消，不再出现在企业管理员列表与概览计数", async () => {
+    const itemId = await importSkill(env, { policy: "needs_approval" });
+    const other = await createOrg(env.root, "Doomed");
+    const r = await env.root({
+      method: "POST",
+      url: `/api/v1/orgs/${other}/directory/${itemId}/install`,
+      payload: {},
+    });
+    expect(r.statusCode, r.body).toBe(202);
+    expect(await overviewPending()).toBe(1);
+    const del = await env.root({ method: "DELETE", url: `/api/v1/orgs/${other}` });
+    expect(del.statusCode, del.body).toBe(204);
+    expect(await overviewPending()).toBe(0);
+    const list = await env.root({ method: "GET", url: "/api/v1/admin/directory/requests" });
+    expect((list.json() as { requests: unknown[] }).requests).toEqual([]);
+    const row = await env.db
+      .selectFrom("directory_requests")
+      .select("status")
+      .where("org_id", "=", other)
+      .executeTakeFirstOrThrow();
+    expect(row.status).toBe("cancelled");
   });
 });
 

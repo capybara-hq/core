@@ -62,6 +62,7 @@ import {
   templateProblems,
   writeDirectoryVersion,
 } from "./directory.service.js";
+import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
 
 /**
  * 应用包（`app.yaml`，D17 / C31）的企业导入：一次审阅、一次批准。
@@ -85,7 +86,7 @@ import {
  * confirm：`reviewHash` 须与暂存时一致；一个事务里删暂存行（只能确认一次）、按插件名加锁后按此刻的部署状态重算
  * （审阅后插件被装 / 升级 / 换包 → `app.review_stale`）、复核降级、为 action 为 install 的插件写快照（source web，审计
  * `plugin.permissions_approved` 带 `app`），`deployPlugins` 时 upgrade 的插件同样写快照（不装到部署时不写：快照必须
- * 对应实际运行的版本，F-O），建 / 加 kind app 的目录版本（`resolved = { plugins: [{ name, sha256 }] }`，文件留在暂存时
+ * 对应实际运行的版本，F-O），建 / 加 kind app 的目录版本（`resolved = { plugins: [{ name, sha256, range, optional }] }`，文件留在暂存时
  * 的前缀下由版本行接管）。提交后 `deployPlugins` 时先全部 `PluginAdminOps.install`，再全部 `enable`（各副本
  * reconcile，不重启）；失败不抛错，逐个返回结果，upgrade 没装上的恢复原快照（见 `deploy`）。
  *
@@ -311,6 +312,12 @@ export class AppImport {
       version,
     );
     const states = await this.pluginStates(manifest);
+    // 插件自己的目录条目被禁用：导入含它的应用也没有意义（组织装不上，裁决 M-5），审阅时就拒绝
+    const killed = await disabledPluginItems(
+      this.d.db,
+      manifest.plugins.map((p) => p.name),
+    );
+    if (killed.length > 0) throw pluginItemDisabled(killed);
     const fetched = await this.fetchPlugins(manifest, bytes.byteLength);
     this.d.storage.assertAvailable();
     const reviewPlugins = await this.reviewPlugins(manifest, states, fetched);
@@ -578,7 +585,15 @@ export class AppImport {
         pluginSha256: null,
         files: staged.files,
         size: staged.size,
-        resolved: { plugins: now.map((p) => ({ name: p.name, sha256: p.sha256 })) },
+        // 列表与安装按同一份数据判定（M-13）：带上范围与是否可选
+        resolved: {
+          plugins: now.map((p) => ({
+            name: p.name,
+            sha256: p.sha256,
+            range: p.range,
+            optional: p.optional,
+          })),
+        },
         auditDetail: {
           stagingId,
           deployPlugins: input.deployPlugins,
@@ -598,7 +613,7 @@ export class AppImport {
     });
 
     const deploy = input.deployPlugins
-      ? await this.deploy(actor, review, committed.now, committed.previous, opts)
+      ? await this.deploy(actor, review, committed.itemId, committed.now, committed.previous, opts)
       : null;
     return { item: await this.itemView(committed.itemId), deploy };
   }
@@ -614,6 +629,7 @@ export class AppImport {
   private async deploy(
     actor: string,
     review: AppReview,
+    itemId: string,
     plugins: AppReviewPlugin[],
     previous: Map<string, PreviousSnapshot | null>,
     opts: ActorOpts,
@@ -632,7 +648,9 @@ export class AppImport {
         sha256: p.sha256,
       };
       try {
-        await this.d.ops.install(p.name, p.sha256, actor, opts.actorTokenId);
+        await this.d.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
+          directoryItemId: itemId,
+        });
         results.push({ ...base, result: "installed" });
       } catch (e) {
         this.d.log.warn("installing an app plugin to the deployment failed", {

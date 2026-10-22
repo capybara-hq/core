@@ -10,6 +10,7 @@ import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { PluginUnloadedError } from "../../src/plugins/inflight.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -514,6 +515,22 @@ describe("组织或 agent 删除后运行停下", () => {
     await new Promise((r) => setTimeout(r, 300));
     // 至多在途的两个请求（orgConcurrency = 2）做完
     expect(evalModelState().requests.length).toBeLessThanOrEqual(2);
+    // agent 删除后：集合还在，但不能再估算 / 启动（否则建出全部跳过的运行）
+    const body = { mode: "step", candidate: { model: EVAL_1 } };
+    const est = await admin({
+      method: "POST",
+      url: `${setsUrl()}/${run.setId}/runs/estimate`,
+      payload: body,
+    });
+    expect(est.statusCode).toBe(404);
+    expect(errCode(est)).toBe("agent.not_found");
+    const again = await admin({
+      method: "POST",
+      url: `${setsUrl()}/${run.setId}/runs`,
+      payload: body,
+    });
+    expect(again.statusCode).toBe(404);
+    expect(errCode(again)).toBe("agent.not_found");
   });
 
   it("删除组织：运行取消（审计带原因）", async () => {
@@ -768,6 +785,32 @@ describe("失败计费与熔断", () => {
     expect(final.summary).toMatchObject({ errors: 2, done: 0 });
     expect(final.tokensUsed).toBeGreaterThan(0);
   });
+
+  it("单步回放途中供应商插件被撤销：重试（实时取新实例），不记错误、不动熔断计数", async () => {
+    const setId = await seededSet(1);
+    const s = evalModelState();
+    s.failures = [new PluginUnloadedError("model-eval"), new PluginUnloadedError("model-eval")];
+    const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
+    const results = await settled(run.id, 30_000);
+    expect(results.map((r) => r.status)).toEqual(["done", "done"]);
+    expect(s.requests).toHaveLength(4);
+    const row = await db
+      .selectFrom("eval_runs")
+      .select(["status", "consecutive_errors"])
+      .where("id", "=", run.id)
+      .executeTakeFirstOrThrow();
+    expect(row.consecutive_errors).toBe(0);
+    const final = await waitFor(
+      async () => {
+        const r = await getRun(run.id);
+        return r.status === "completed" ? r : null;
+      },
+      10_000,
+      "completed",
+      100,
+    );
+    expect(final.summary).toMatchObject({ done: 2, errors: 0 });
+  }, 40_000);
 
   it("连续出错达到 evals.maxConsecutiveErrors：运行 failed，其余 skipped", async () => {
     const setId = await seededSet(3);

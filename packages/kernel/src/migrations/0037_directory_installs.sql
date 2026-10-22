@@ -67,6 +67,10 @@ ALTER TABLE connectors ADD COLUMN IF NOT EXISTS template_tool_policies jsonb;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS directory_item_id uuid
   REFERENCES directory_items(id) ON DELETE SET NULL;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS directory_version text;
+-- 每个技能版本记自己的来源（自定义上传为 NULL）：退回版本时技能的来源跟着退回
+ALTER TABLE skill_versions ADD COLUMN IF NOT EXISTS directory_item_id uuid
+  REFERENCES directory_items(id) ON DELETE SET NULL;
+ALTER TABLE skill_versions ADD COLUMN IF NOT EXISTS directory_version text;
 
 -- 把插件带进部署的全部目录条目（插件条目装到部署、应用包确认时 install / upgrade 的插件）。同一插件可以有多个
 -- 来源；组织直接启用（不经某个条目安装）时按全部来源的策略判定，最严格的生效（C22）。不经目录安装的插件没有行；

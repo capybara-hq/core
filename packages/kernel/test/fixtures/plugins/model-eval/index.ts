@@ -28,8 +28,8 @@ export interface EvalModelState {
   delays: number[];
   /** 每次请求报告的输入 token 数。 */
   tokens: number;
-  /** 接下来的若干次请求依次抛出的错误（取出即用掉）。 */
-  failures: ModelError[];
+  /** 接下来的若干次请求依次抛出的错误（取出即用掉；测试也放内核的 PluginUnloadedError 模拟插件途中被撤销）。 */
+  failures: (ModelError | Error)[];
   /** 设了就让每个请求先流出这段文本、再抛这个错误（不产生 message_complete）。 */
   streamThenFail: { text: string; error: ModelError } | null;
   /** 模型 eval-j（评委）的回复文本。 */

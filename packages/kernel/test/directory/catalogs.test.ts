@@ -13,6 +13,7 @@ import {
 } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -28,7 +29,7 @@ import {
 } from "../../src/runtime/maintenance.js";
 import { truncateTables } from "../helpers/db.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
-import { PW, type Req, runConfig, session } from "../helpers/runs.js";
+import { PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
 
 const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -324,6 +325,43 @@ describe("企业清单：增删改与刷新", () => {
       .orderBy("id")
       .execute();
     expect(audits.map((a) => (a.detail as { to: string }).to)).toEqual(["ok", "error"]);
+  });
+
+  it("拉取期间管理员改了地址：拉到的旧地址内容丢弃，不写条目、ETag 与状态（M-1）", async () => {
+    const id = await addAcme();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked: () => void = () => {};
+    const isLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    // 占住刷新写结果用的那把锁：拉取照常完成，写之前等着
+    const holder = db.transaction().execute(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.catalog-source:${id}`}))`.execute(
+        trx,
+      );
+      locked();
+      await gate;
+    });
+    await isLocked;
+    const before = cat.requests.length;
+    const pending = refresh(admin, id);
+    await waitFor(async () => cat.requests.length > before, 10_000, "catalog fetched");
+    await db
+      .updateTable("catalog_sources")
+      .set({ url: mirror.url, etag: null })
+      .where("id", "=", id)
+      .execute();
+    release();
+    await holder;
+    const r = await pending;
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ entryCount: 0, etag: null, lastStatus: "never" });
+    expect(
+      await db.selectFrom("catalog_entries").select("name").where("source_id", "=", id).execute(),
+    ).toEqual([]);
   });
 
   it("重定向不跟随、超过 maxIndexBytes 被拒，都保留旧条目", async () => {

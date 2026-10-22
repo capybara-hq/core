@@ -19,14 +19,22 @@ import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorsService } from "../tools/connectors.service.js";
 import {
+  appPluginPlan,
+  appPluginsNotDeployed,
   INSTALL_ACTIONS,
   lockOrgForActions,
   readAppManifest,
   readDirectoryFiles,
   skillOf,
+  type TemplateDeps,
   templateConnectorInput,
 } from "./org-directory.service.js";
-import { assertItemInstallable, type DirectoryRequestsService } from "./requests.service.js";
+import {
+  assertItemInstallable,
+  type DirectoryRequestsService,
+  disabledPluginItems,
+  pluginItemDisabled,
+} from "./requests.service.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -48,6 +56,12 @@ export interface AppInstallInput {
 }
 
 export type ComponentKind = "plugin" | "connector" | "skill";
+
+/** 安装时跳过的可选部分：没装到部署 / 版本不满足 / 插件条目被禁用的可选插件，以及用这些插件的连接器模板。 */
+export interface AppInstallSkipped {
+  plugins: string[];
+  connectorTemplates: string[];
+}
 
 export interface UninstallReport {
   removed: { kind: ComponentKind; ref: string }[];
@@ -123,7 +137,7 @@ export class AppInstaller {
     version: string,
     input: AppInstallInput,
     opts: { actorTokenId?: string } = {},
-  ): Promise<{ installId: string }> {
+  ): Promise<{ installId: string; skipped: AppInstallSkipped }> {
     const v = await this.d.db
       .selectFrom("directory_item_versions as v")
       .innerJoin("directory_items as i", "i.id", "v.item_id")
@@ -136,7 +150,7 @@ export class AppInstaller {
       throw new ApiError("directory.item_not_found", "App version not found");
     }
     const manifest = await readAppManifest(this.d.storage, v);
-    const plugins = this.planPlugins(manifest);
+    const { plugins, skipped } = await this.planPlugins(orgId, manifest);
     this.checkInput(manifest, input);
 
     // 建安装记录（锁内复核角色与应用条目策略；同一组织同一应用只能有一个未失败的安装）
@@ -209,11 +223,12 @@ export class AppInstaller {
       }
       step = "connectors";
       for (const ct of manifest.connectorTemplates) {
+        if (skipped.connectorTemplates.includes(ct.id)) continue;
         const r = await this.d.connectors.create(
           orgId,
           actor,
           templateConnectorInput(
-            this.d.findConnector,
+            this.templateDeps(),
             ct.template,
             { itemId, version, templateId: ct.id },
             input.connectors[ct.id],
@@ -262,10 +277,10 @@ export class AppInstaller {
           orgId,
           action: "app.installed",
           target: installId,
-          detail: { itemId, name: v.name, version, components: done },
+          detail: { itemId, name: v.name, version, components: done, skipped },
         });
       });
-      return { installId };
+      return { installId, skipped };
     } catch (e) {
       const code = e instanceof ApiError ? e.code : "internal";
       const rollbackErrors = await this.rollback(orgId, actor, installId, done);
@@ -300,23 +315,56 @@ export class AppInstaller {
     }
   }
 
+  /** 查连接器插件与版本用的依赖（本副本此刻加载的）。 */
+  private templateDeps(): TemplateDeps {
+    const versions = new Map(this.d.host.manifests().map((m) => [m.name, m.version]));
+    return { findConnector: this.d.findConnector, pluginVersion: (n) => versions.get(n) };
+  }
+
   /**
-   * 要启用的插件（按 requires 排序：本组织要用的能力的提供方在前）。可选插件没装到部署 → 跳过；
-   * 必选插件没装 → `directory.not_deployed`。
+   * 要启用的插件（按 requires 排序：本组织要用的能力的提供方在前），与列表同一套判定（{@link appPluginPlan}）：
+   * - 必选插件没装到部署或加载的版本不满足范围 → `directory.not_deployed`（点名版本，M-4）；
+   * - 本组织还没启用、插件自己的目录条目被禁用的必选插件 → `directory.item_disabled`（点名插件；插件条目 disabled 是
+   *   总开关，应用也不能新启用它，裁决 M-5）；已启用的不受影响；
+   * - 可选插件遇到以上情况 → 跳过，用到它的连接器模板也跳过（M-3），都写进结果。
    */
-  private planPlugins(manifest: AppManifest): string[] {
-    const loaded = new Map(this.d.host.manifests().map((m) => [m.name, m]));
-    const missing = manifest.plugins.filter((p) => !p.optional && !loaded.has(p.name));
-    if (missing.length > 0) {
-      throw new ApiError(
-        "directory.not_deployed",
-        `Plugins this app needs are not deployed: ${missing.map((p) => p.name).join(", ")}; ask the enterprise admin to install and enable them`,
-      );
-    }
-    const set = manifest.plugins
-      .filter((p) => loaded.has(p.name))
-      .map((p) => loaded.get(p.name) as PluginManifest);
-    return orderByRequires(set);
+  private async planPlugins(
+    orgId: string,
+    manifest: AppManifest,
+  ): Promise<{ plugins: string[]; skipped: AppInstallSkipped }> {
+    const manifests = new Map(this.d.host.manifests().map((m) => [m.name, m]));
+    const names = manifest.plugins.map((p) => p.name);
+    const enabled = new Set(
+      names.length === 0
+        ? []
+        : (
+            await this.d.db
+              .selectFrom("plugin_org_configs")
+              .select("plugin")
+              .where("org_id", "=", orgId)
+              .where("enabled", "=", true)
+              .where("plugin", "in", names)
+              .execute()
+          ).map((r) => r.plugin),
+    );
+    const killed = new Set(
+      (await disabledPluginItems(this.d.db, names)).filter((n) => !enabled.has(n)),
+    );
+    const plan = appPluginPlan(
+      manifest.plugins.map((p) => ({ name: p.name, range: p.version, optional: p.optional })),
+      new Map([...manifests].map(([n, m]) => [n, m.version])),
+      killed,
+    );
+    if (plan.missing.length > 0) throw appPluginsNotDeployed(plan.missing);
+    if (plan.disabled.length > 0) throw pluginItemDisabled(plan.disabled);
+    const skippedPlugins = new Set(plan.skipped);
+    const templates = manifest.connectorTemplates
+      .filter((ct) => skippedPlugins.has(ct.template.plugin))
+      .map((ct) => ct.id);
+    return {
+      plugins: orderByRequires(plan.use.map((n) => manifests.get(n) as PluginManifest)),
+      skipped: { plugins: plan.skipped, connectorTemplates: templates },
+    };
   }
 
   /** 输入只认清单里的模板 id 与插件名。 */

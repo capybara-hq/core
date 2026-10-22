@@ -20,6 +20,7 @@ import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { PurposeAttemptError } from "../../src/models/purposes.js";
+import { PluginUnloadedError } from "../../src/plugins/inflight.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -460,6 +461,20 @@ describe("评测运行里的评委", () => {
     });
     const c = r.candidate as { usage: typeof USAGE };
     expect(run.tokensUsed).toBeGreaterThan(total(c.usage));
+  });
+
+  it("评委请求途中供应商插件被撤销：按估算计费后重试，结论照常写入", async () => {
+    evalModelState().failures = [new PluginUnloadedError("model-eval")];
+    const setId = await echoSet("reload");
+    const { run, results } = await runToEnd(setId, { mode: "step", candidate: {}, judge: true });
+    const r = results[0] as EvalResultView;
+    expect(r.status).toBe("done");
+    expect(r.judgeStatus).toBe("done");
+    expect(r.judge).toMatchObject({ verdict: "pass", provider: "model-eval", model: "eval-j" });
+    expect(judgeRequests()).toHaveLength(2);
+    const c = r.candidate as { usage: typeof USAGE };
+    // 成功的评委 100 + 失败尝试的估算（> 0）
+    expect(run.tokensUsed).toBeGreaterThan(total(c.usage) + 100);
   });
 
   it("候选请求已经达到上限：不再发评委请求", async () => {

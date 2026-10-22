@@ -709,6 +709,21 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     const r = await call("boss", 0, conv, "docs__search", { q: "after" }, 1);
     expect(r.isError, String(r.content)).toBe(false);
     expect(String(r.content)).toContain("hits for after");
+    // agent 定义里仍留着对 todo 的引用（插件已在本组织停用）：运行照常结束，调它只得到工具错误
+    const left = await ok("boss", 0, "GET", `${base}/agents/${agentId}`);
+    expect(
+      (left.agent as { definition: { tools: { kind: string; plugin?: string }[] } }).definition
+        .tools,
+    ).toContainEqual(expect.objectContaining({ kind: "plugin", plugin: "todo" }));
+    const dangling = await call(
+      "boss",
+      1,
+      conv,
+      "todo__write",
+      { todos: [{ content: "Call", status: "pending", activeForm: "Calling" }] },
+      2,
+    );
+    expect(dangling.isError).toBe(true);
   });
 
   it("4. 策略与申请：模板两级审批后才能安装；成员申请技能批准后入库；customConnectors deny 时自建 403", async () => {
@@ -777,20 +792,23 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     const lib = (await ok("mem", 0, "GET", `${base}/skills`)).skills as { name: string }[];
     expect(lib.map((s) => s.name)).toContain("sql-helper");
 
-    // customConnectors deny：自建连接器 403（两个副本都一样）
+    // customConnectors deny：自建连接器 403（两个副本都一样）；断言失败也要恢复，免得影响后面的用例
     await ok("root", 1, "PUT", "/api/v1/admin/settings", { customConnectors: "deny" });
-    for (const i of [0, 1] as const) {
-      const custom = await at("boss", i, "POST", `${base}/connectors`, {
-        name: "Mine",
-        connector: "mcp",
-        endpoint: { url: mcp.url },
-        auth: { type: "bearer", ownership: "org" },
-        credential: { token: MCP_TOKEN },
-      });
-      expect(custom.status, JSON.stringify(custom.json)).toBe(403);
-      expect(errCode(custom)).toBe("directory.custom_disabled");
+    try {
+      for (const i of [0, 1] as const) {
+        const custom = await at("boss", i, "POST", `${base}/connectors`, {
+          name: "Mine",
+          connector: "mcp",
+          endpoint: { url: mcp.url },
+          auth: { type: "bearer", ownership: "org" },
+          credential: { token: MCP_TOKEN },
+        });
+        expect(custom.status, JSON.stringify(custom.json)).toBe(403);
+        expect(errCode(custom)).toBe("directory.custom_disabled");
+      }
+    } finally {
+      await ok("root", 0, "PUT", "/api/v1/admin/settings", { customConnectors: "allow" });
     }
-    await ok("root", 0, "PUT", "/api/v1/admin/settings", { customConnectors: "allow" });
   });
 
   it("5. 私有 agent writePolicy ask：skill_write 产生审批，批准后直接生效", async () => {
@@ -900,7 +918,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     ).results;
     expect(results).toHaveLength(replayableCalls(snapshot).length);
     expect(results.map((r) => [r.status, r.drift])).toEqual(results.map(() => ["done", []]));
-    expect((done.summary as { drifted?: number } | null)?.drifted ?? 0).toBe(0);
+    expect(done.summary).toMatchObject({ drifted: 0 });
 
     // 以 {kind:"app"} 保存的旧 agent 版本：直接把旧形写回库（改名前存的版本），两个副本都能运行
     const ag = await ok("boss", 0, "POST", `${base}/agents`, {

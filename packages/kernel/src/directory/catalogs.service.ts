@@ -382,7 +382,8 @@ export class CatalogsService {
   /**
    * 刷新一个来源：主地址 → 镜像依次尝试（带 If-None-Match，≤ `catalogs.maxIndexBytes`）；304 保持条目，
    * 200 且合法就整体替换；全部失败保留旧条目、状态 `error`。停用的来源 → 409 `conflict`。
-   * 状态变化时审计 `catalog.refreshed {from, to}`（定期刷新没有操作人）并打一次日志。
+   * 状态变化时审计 `catalog.refreshed {from, to}`（定期刷新没有操作人）并打一次日志。拉取期间地址 / 镜像被改了：
+   * 结果丢弃，什么都不写（M-1）。
    * `throwOnError`（手动刷新）：状态记好之后，失败时抛 502——有地址返回了不合法的清单为 `catalog.invalid`，
    * 否则 `catalog.fetch_failed`（消息为各地址的失败原因）。
    */
@@ -443,11 +444,15 @@ export class CatalogsService {
       );
       const cur = await trx
         .selectFrom("catalog_sources")
-        .select("last_status")
+        .select(["last_status", "url", "mirrors"])
         .where("id", "=", id)
         .forUpdate()
         .executeTakeFirst();
       if (!cur) throw notFound();
+      // 拉取期间管理员改了地址 / 镜像：拉到的是旧地址的内容，不写条目、ETag 与状态（下一次刷新按新地址来）
+      if (cur.url !== row.url || JSON.stringify(cur.mirrors) !== JSON.stringify(row.mirrors)) {
+        return "stale" as const;
+      }
       if (outcome !== undefined && outcome !== "not_modified") {
         await this.replaceEntries(trx, id, outcome.index.entries);
       }
@@ -476,6 +481,10 @@ export class CatalogsService {
       }
       return cur.last_status;
     });
+    if (from === "stale") {
+      this.d.log.info("catalog source changed during refresh; result discarded", { catalog: id });
+      return this.get(id);
+    }
     if (from !== status) {
       if (status === "error") {
         this.d.log.warn("catalog refresh failed", { catalog: id, error: lastError });

@@ -87,6 +87,37 @@ export async function assertItemInstallable(t: Trx, orgId: string, itemId: strin
 }
 
 /**
+ * 插件自己的目录条目（`kind = plugin`、同名、未删除）里 disabled 的那些插件名（FOR SHARE：与改策略互斥）。
+ * 插件条目 disabled 是总开关：任何途径（直接启用、插件条目、含它的应用）都不能新启用该插件（裁决 M-5，
+ * 覆盖 C22 里「应用里的插件按应用条目判定」的应用途径）。
+ */
+export async function disabledPluginItems(
+  db: KernelDb | Trx,
+  plugins: readonly string[],
+): Promise<string[]> {
+  if (plugins.length === 0) return [];
+  const rows = await db
+    .selectFrom("directory_items")
+    .select("name")
+    .where("kind", "=", "plugin")
+    .where("name", "in", [...plugins])
+    .where("policy", "=", "disabled")
+    .where("deleted_at", "is", null)
+    .orderBy("name")
+    .forShare()
+    .execute();
+  return [...new Set(rows.map((r) => r.name))];
+}
+
+/** 插件被自己的目录条目禁用时抛 `directory.item_disabled`（消息点名插件）。 */
+export function pluginItemDisabled(names: readonly string[]): ApiError {
+  return new ApiError(
+    "directory.item_disabled",
+    `The enterprise admin disabled the directory item of plugin ${names.join(", ")}; it cannot be newly enabled, not even through an app that bundles it`,
+  );
+}
+
+/**
  * 组织直接启用插件（不经某个条目安装，如 `PUT /orgs/:orgId/plugins/:plugin`）时，按把它带进部署的全部目录条目
  * （`plugin_directory_sources`）判定，**最严格的生效**：任一来源 disabled → `directory.item_disabled`；否则任一来源
  * needs_approval 且本组织没有该条目的授予 → `directory.approval_required`；全部 allow / 已授予 → 通过。已删除的条目不再
@@ -123,6 +154,37 @@ export interface RequestActorOpts {
 }
 
 /**
+ * 在调用方事务里取消仍 pending 的目录申请（条目被删除 / 组织被删除时），状态 `cancelled`（决定人为操作者）。每条审计
+ * `directory.request_cancelled`（带原因）。返回取消的条数。
+ */
+export async function cancelPendingRequests(
+  t: Trx,
+  where: { itemId: string } | { orgId: string },
+  actor: string,
+  reason: "item_removed" | "org_deleted",
+  opts: RequestActorOpts = {},
+): Promise<number> {
+  let q = t
+    .updateTable("directory_requests")
+    .set({ status: "cancelled", decided_by: actor, decided_at: sql<Date>`now()` })
+    .where("status", "=", "pending");
+  q =
+    "itemId" in where ? q.where("item_id", "=", where.itemId) : q.where("org_id", "=", where.orgId);
+  const rows = await q.returning(["id", "org_id", "item_id", "stage"]).execute();
+  for (const r of rows) {
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId: r.org_id,
+      action: "directory.request_cancelled",
+      target: r.id,
+      detail: { itemId: r.item_id, stage: r.stage, reason },
+    });
+  }
+  return rows.length;
+}
+
+/**
  * 目录申请与审批（C22 / F-AF）。两级：
  * - 成员申请（stage `org`）进组织管理员收件箱，组织管理员（`directory.decide`）批准或拒绝；条目是 needs_approval 且本组织
  *   没有授予时，批准把申请升级到 stage `deployment`（仍 pending），交企业管理员决定；
@@ -136,7 +198,7 @@ export class DirectoryRequestsService {
 
   /**
    * 成员申请（`directory.request`，组织行锁内复核）。条目不存在 / 已删除 → `directory.item_not_found`；disabled →
-   * `directory.item_disabled`。已有 pending 申请时直接返回它（`created: false`），不另建。审计 `directory.requested`。
+   * 组织管理员得到 `directory.item_disabled`，成员得到 `directory.item_not_found`（成员看不到 disabled 的条目）。已有 pending 申请时直接返回它（`created: false`），不另建。审计 `directory.requested`。
    */
   async request(
     orgId: string,
@@ -146,10 +208,13 @@ export class DirectoryRequestsService {
     opts: RequestActorOpts = {},
   ): Promise<{ request: DirectoryRequestView; created: boolean }> {
     const r = await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actor, "directory.request");
+      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "directory.request");
       const item = await lockItem(t, itemId);
       if (!item || item.deleted_at !== null) throw itemNotFound();
-      if (item.policy === "disabled") throw itemDisabled();
+      // 成员看不到 disabled 的条目（列表、详情、图标一致）：同样答 not found，不暴露条目存在
+      if (item.policy === "disabled") {
+        throw roleAtLeast(role, "admin") ? itemDisabled() : itemNotFound();
+      }
       const existing = await this.pendingRow(t, orgId, itemId);
       if (existing) return { id: existing.id, created: false };
       const id = randomUUID();
@@ -243,7 +308,8 @@ export class DirectoryRequestsService {
   }
 
   /**
-   * 安装成功后：本组织该条目仍 pending 的成员申请（stage org）标为 approved（安装者即决定人），收件箱随之清空。
+   * 安装成功后：本组织该条目仍 pending 的申请（成员申请 stage org，以及之前因 needs_approval 建的 stage deployment
+   * 申请——条目之后改成 allow 再装的就不会一直挂着）标为 approved（安装者即决定人），收件箱与企业管理员列表随之清空。
    * 在调用方事务里执行。
    */
   async resolveByInstall(
@@ -259,8 +325,7 @@ export class DirectoryRequestsService {
       .where("org_id", "=", orgId)
       .where("item_id", "=", itemId)
       .where("status", "=", "pending")
-      .where("stage", "=", "org")
-      .returning("id")
+      .returning(["id", "stage"])
       .execute();
     for (const r of rows) {
       await audit(t, {
@@ -269,7 +334,7 @@ export class DirectoryRequestsService {
         orgId,
         action: "directory.request_decided",
         target: r.id,
-        detail: { itemId, decision: "approve", stage: "org", installed: true },
+        detail: { itemId, decision: "approve", stage: r.stage, installed: true },
       });
     }
   }
@@ -339,7 +404,8 @@ export class DirectoryRequestsService {
 
   /**
    * 企业管理员决定 stage deployment 的申请（企业管理员锁内复核；申请行 FOR UPDATE）。不存在或仍在组织阶段 →
-   * `directory.request_not_found`；已决定 → `directory.request_decided`。批准写授予 `directory_org_grants`。
+   * `directory.request_not_found`；已决定 → `directory.request_decided`；批准时条目已删除或 disabled →
+   * `directory.item_disabled`，申请的组织已删除 → `directory.request_not_found`。批准写授予 `directory_org_grants`。
    * 审计 `directory.request_decided`（带 orgId）。
    */
   async decideDeployment(
@@ -362,6 +428,14 @@ export class DirectoryRequestsService {
         throw new ApiError("directory.request_decided", "This request has already been decided");
       }
       if (decision === "approve") {
+        const item = await lockItem(t, row.item_id);
+        if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
+        const org = await t
+          .selectFrom("orgs")
+          .select("deleted_at")
+          .where("id", "=", row.org_id)
+          .executeTakeFirst();
+        if (!org || org.deleted_at !== null) throw requestNotFound();
         await t
           .insertInto("directory_org_grants")
           .values({ item_id: row.item_id, org_id: row.org_id, granted_by: actor })
@@ -396,6 +470,7 @@ export class DirectoryRequestsService {
     const rows = await this.baseQuery(this.db)
       .where("r.stage", "=", "deployment")
       .where("r.status", "=", q.status ?? "pending")
+      .where("o.deleted_at", "is", null)
       .orderBy("r.created_at", "desc")
       .orderBy("r.id")
       .limit(DIRECTORY_REQUESTS_LIST_MAX)
@@ -406,10 +481,12 @@ export class DirectoryRequestsService {
   /** 待企业管理员处理的申请数（后台概览）。 */
   async countPendingDeployment(): Promise<number> {
     const r = await this.db
-      .selectFrom("directory_requests")
+      .selectFrom("directory_requests as r")
+      .innerJoin("orgs as o", "o.id", "r.org_id")
       .select(sql<string>`count(*)`.as("n"))
-      .where("stage", "=", "deployment")
-      .where("status", "=", "pending")
+      .where("r.stage", "=", "deployment")
+      .where("r.status", "=", "pending")
+      .where("o.deleted_at", "is", null)
       .executeTakeFirstOrThrow();
     return Number(r.n);
   }

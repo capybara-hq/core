@@ -9,6 +9,7 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
+import { PluginUnloadedError } from "../plugins/inflight.js";
 import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
 import { ProviderListError } from "../runtime/providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
@@ -22,7 +23,7 @@ import {
   usageTokens,
 } from "./budget.js";
 import { replyParts, structuralDiff } from "./diff.js";
-import { judge } from "./judge.js";
+import { JUDGE_PROVIDER_UNAVAILABLE, judge } from "./judge.js";
 import { userRequestOf } from "./plan.js";
 import type { DriftReason } from "./reconstruct.js";
 import {
@@ -98,6 +99,11 @@ interface Failure {
   retryAfterMs?: number;
 }
 
+/** 供应商插件在调用途中被撤销（错误本身或其 cause）。 */
+const isPluginUnloaded = (err: unknown): boolean =>
+  err instanceof PluginUnloadedError ||
+  (err instanceof Error && err.cause instanceof PluginUnloadedError);
+
 /** 回放出错的分类（与运行时的降级梯子同一套码）。 */
 function classify(err: unknown): Failure {
   if (isModelError(err)) {
@@ -113,8 +119,13 @@ function classify(err: unknown): Failure {
   }
   // 整轮回放的 loop 失败（降级梯子已在 loop 内重试过）：沿用运行时的码
   if (err instanceof RunError) return { retryable: false, code: err.code, message: err.message };
-  if (err instanceof ProviderListError) {
-    return { retryable: true, code: "run.provider_unavailable", message: err.message };
+  // 供应商插件在请求途中被撤销 / 升级 / 重新加载：与运行时一致按可重试处理，重试时实时取到新实例
+  if (isPluginUnloaded(err) || err instanceof ProviderListError) {
+    return {
+      retryable: true,
+      code: "run.provider_unavailable",
+      message: err instanceof Error ? err.message : String(err),
+    };
   }
   if (err instanceof ApiError) {
     const code = err.code === "agent.model_unavailable" ? "run.model_unavailable" : err.code;
@@ -133,7 +144,8 @@ const isReplayFailure = (err: unknown): boolean =>
   err instanceof RunError ||
   err instanceof ApiError ||
   err instanceof MediaUnavailableError ||
-  err instanceof ProviderListError;
+  err instanceof ProviderListError ||
+  isPluginUnloaded(err);
 
 class Aborted extends Error {}
 
@@ -593,6 +605,7 @@ export class EvalWorker {
    * - 先按用量（失败按估算）`consumeTokens`，不以认领为条件（请求确实发出了）；再在仍由本次执行认领、且仍是 pending
    *   时写结论（`judge_status` done / error）。写之前出 DB 错误按崩溃处理：重试时补评委（会再发一次评委请求）；
    * - 停机中止：已发出的评委请求按估算计费，任务回到队列，接手的执行补评委。
+   * 供应商插件在评委请求途中被撤销（`run.provider_unavailable`）→ 按估算计费后重试，至多 {@link EVAL_MAX_RETRIES} 次；
    * 评委失败不计入熔断（结果本身是 done）。返回 `capped` 表示评委的用量让运行达到上限。
    */
   private async judgeResult(
@@ -614,21 +627,42 @@ export class EvalWorker {
     }
     await this.d.runReplay.hooks?.beforeJudge?.(data.runId);
     let v: Awaited<ReturnType<typeof judge>>;
-    try {
-      v = await judge(
-        {
-          purposes: this.d.purposes,
-          maxOutputTokens: this.d.config().evals.judgeMaxOutputTokens,
-        },
-        data.orgId,
-        input,
-        signal,
-      );
-    } catch (err) {
-      // 中止时已发出的评委请求：按估算计费（与失败的回放尝试一致）
-      if (err instanceof PurposeAttemptError) await consumeTokens(db, data.runId, err.tokens);
-      if (signal.aborted) throw new Aborted();
-      throw err;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        v = await judge(
+          {
+            purposes: this.d.purposes,
+            maxOutputTokens: this.d.config().evals.judgeMaxOutputTokens,
+          },
+          data.orgId,
+          input,
+          signal,
+        );
+      } catch (err) {
+        // 中止时已发出的评委请求：按估算计费（与失败的回放尝试一致）
+        if (err instanceof PurposeAttemptError) await consumeTokens(db, data.runId, err.tokens);
+        if (signal.aborted) throw new Aborted();
+        throw err;
+      }
+      // 供应商插件在评委请求途中被撤销 / 升级：失败的尝试按估算计费，运行仍活跃时重试（实时取到新实例）
+      if (
+        !("error" in v) ||
+        v.error !== JUDGE_PROVIDER_UNAVAILABLE ||
+        attempt >= EVAL_MAX_RETRIES
+      ) {
+        break;
+      }
+      const { capped } = await consumeTokens(db, data.runId, v.tokens);
+      if (capped || !(await runActive(db, data.runId))) {
+        await db
+          .updateTable("eval_results")
+          .set({ judge_status: "skipped", updated_at: sql`now()` })
+          .where("id", "=", resultId)
+          .where("judge_status", "=", "pending")
+          .execute();
+        return capped ? "capped" : "inactive";
+      }
+      await sleep(RETRY_DELAYS_MS[attempt] ?? 4000, signal);
     }
     const tokens = "error" in v ? v.tokens : usageTokens(v.usage);
     const { capped } = await consumeTokens(db, data.runId, tokens);

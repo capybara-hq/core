@@ -296,6 +296,12 @@ export async function seedApp(
     skills?: string[];
     templates?: boolean;
     policy?: Policy;
+    /** 标为可选的插件。 */
+    optional?: string[];
+    /** 插件的版本范围（缺省 ^0.1.0）。 */
+    ranges?: Record<string, string>;
+    /** 模板 gh 的连接器插件（缺省 connector-mcp）。 */
+    templatePlugin?: string;
   } = {},
 ): Promise<string> {
   const id = randomUUID();
@@ -311,8 +317,12 @@ export async function seedApp(
     plugins: plugins.map((p) => ({
       name: p,
       npm: `@capybara-hq/plugin-${p}`,
-      version: "^0.1.0",
-      lock: { version: "0.1.0", integrity: `sha512-${"A".repeat(86)}==` },
+      version: o.ranges?.[p] ?? "^0.1.0",
+      lock: {
+        version: (o.ranges?.[p] ?? "^0.1.0").replace(/^\^/, ""),
+        integrity: `sha512-${"A".repeat(86)}==`,
+      },
+      ...(o.optional?.includes(p) && { optional: true }),
     })),
     connectorTemplates:
       o.templates === false
@@ -321,7 +331,10 @@ export async function seedApp(
             {
               id: "gh",
               displayName: { zh: "GitHub", en: "GitHub" },
-              template: templateNoIcon(),
+              template: {
+                ...templateNoIcon(),
+                ...(o.templatePlugin !== undefined && { plugin: o.templatePlugin }),
+              },
             },
           ],
     skills: skills.map((s) => ({ path: `skills/${s}` })),
@@ -363,7 +376,12 @@ export async function seedApp(
       source_ref: "upload",
       object_prefix: prefix,
       resolved: JSON.stringify({
-        plugins: plugins.map((p) => ({ name: p, sha256: "0".repeat(64) })),
+        plugins: plugins.map((p) => ({
+          name: p,
+          sha256: "0".repeat(64),
+          range: o.ranges?.[p] ?? "^0.1.0",
+          optional: o.optional?.includes(p) === true,
+        })),
       }),
       files: JSON.stringify(
         files.map((f) => ({
