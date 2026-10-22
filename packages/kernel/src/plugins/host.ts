@@ -336,9 +336,13 @@ export interface InstalledPluginLoader {
   /**
    * 该包的迁移（`dir` 为审阅过的 `capybara.migrations` 的绝对路径，没有迁移时为 undefined）：
    * 已迁移或本副本持锁迁移完成 → `migrated`；别的副本正在迁移 → `busy`（记 pending / migration，等
-   * `plugins.migrated` 或下一个周期）；迁移出错时抛出。见 `ensureMigrated`。
+   * `plugins.migrated` 或下一个周期）；迁移出错时抛出。见 `ensureMigrated`。`signal` 在宿主关闭时中止（结束迁移会话）。
    */
-  migrate(d: DesiredPlugin, dir: string | undefined): Promise<"migrated" | "busy">;
+  migrate(
+    d: DesiredPlugin,
+    dir: string | undefined,
+    signal: AbortSignal,
+  ): Promise<"migrated" | "busy">;
 }
 
 /**
@@ -542,7 +546,7 @@ export class PluginHost {
   /** 已告警过的「安装记录与内置 / 配置声明重名」（每个名字只告警一次）。 */
   private readonly warnedConflicts = new Set<string>();
   /** 升级时被替换、后台排空中的旧实例（close() 等它们，最多 lifecycleWaitMs）。 */
-  private readonly retiring = new Set<Promise<void>>();
+  private readonly retiring = new Map<PluginInstance, Promise<void>>();
   /** 内置与配置声明插件的清单与权限集合（含未加载的；后台列表与网页批准用）。 */
   private readonly declaredInfo = new Map<
     string,
@@ -879,7 +883,7 @@ export class PluginHost {
         set: c.set,
         decision: { plugin: m.name, action: "pending" } as unknown as ApprovalDecision,
         fatal: false,
-        migrate: () => loader.migrate(c.d, c.migrationsDir),
+        migrate: () => loader.migrate(c.d, c.migrationsDir, this.abort.signal),
       };
       a.decision = this.decidePending(m.name, a, snapshots, installProviders);
       const old = this.registry.current(m.name);
@@ -1275,13 +1279,13 @@ export class PluginHost {
    */
   private retire(old: PluginInstance): void {
     const p = this.disposeQuietly(old, this.drainMs()).finally(() => {
-      this.retiring.delete(p);
+      this.retiring.delete(old);
       this.deps.log.info("previous plugin instance retired", {
         plugin: old.name,
         generation: old.generation,
       });
     });
-    this.retiring.add(p);
+    this.retiring.set(old, p);
   }
 
   /** 记下内置 / 配置声明插件的清单与权限集合（安装记录不在这里）。 */
@@ -1981,15 +1985,23 @@ export class PluginHost {
       }),
     ]);
     clearTimeout(timer);
-    // 升级时被替换、后台排空中的旧实例：同样最多等 lifecycleWaitMs（之后它们随进程退出）
+    // 升级时被替换、后台排空中的旧实例：同样最多等 lifecycleWaitMs，之后强制撤销（中止在途调用、不再排空），
+    // 赶在共用资源（Redis / PG）关闭之前
     if (this.retiring.size > 0) {
       await Promise.race([
-        Promise.allSettled([...this.retiring]),
+        Promise.allSettled([...this.retiring.values()]),
         new Promise<void>((resolve) => {
           timer = setTimeout(resolve, opts.lifecycleWaitMs ?? CLOSE_LIFECYCLE_WAIT_MS);
         }),
       ]);
       clearTimeout(timer);
+      await Promise.allSettled(
+        [...this.retiring.keys()].map((old) =>
+          old.hurry().catch((err: unknown) => {
+            this.deps.log.warn("plugin close failed", { plugin: old.name, err });
+          }),
+        ),
+      );
     }
     const settingUp = this.settingUp;
     this.settingUp = undefined;

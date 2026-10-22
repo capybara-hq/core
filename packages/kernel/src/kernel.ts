@@ -1104,7 +1104,7 @@ export async function createKernel(
               syncPackage(current.pluginHost.dir, d.name, d.sha256, pluginBlobs, {
                 maxBytes: current.packages.maxBytes,
               }),
-            migrate: async (d, dir) =>
+            migrate: async (d, dir, signal) =>
               d.migratedSha === d.sha256
                 ? "migrated"
                 : ensureMigrated(
@@ -1114,7 +1114,8 @@ export async function createKernel(
                       connectTimeoutMs: config.db.connectTimeoutMs,
                       bus,
                       log,
-                      signal: startAbort.signal,
+                      // 宿主关闭时中止（停机、运行中 reconcile 的迁移都一样）
+                      signal,
                     },
                     d.name,
                     d.sha256,

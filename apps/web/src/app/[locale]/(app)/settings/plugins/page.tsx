@@ -38,7 +38,7 @@ import { useLoad } from "../../../../../lib/use-load";
 /**
  * `/[locale]/settings/plugins`：组织插件（SettingsPage，管理员）。每个插件一个分组：启用开关（依赖缺失 /
  * 仍有依赖方时给出原因，后者可强制停用）、权限清单（只读，敏感类别高亮）、组织级配置表单、
- * 通讯录插件的「立即同步」。企业管理员在部署上停用的插件显示「不可用」：开关只读（组织的启用设置保留）。
+ * 通讯录插件的「立即同步」。部署上当前不可用的插件（如被企业管理员停用）显示「不可用」：开关只读（组织的启用设置保留）。
  */
 export default function PluginsPage() {
   return <OrgGate>{(orgId) => <Plugins key={orgId} orgId={orgId} />}</OrgGate>;

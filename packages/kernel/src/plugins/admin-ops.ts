@@ -47,6 +47,8 @@ export class PluginAdminOps {
    * - 内置 → `plugin.builtin`；配置声明 → `plugin.config_declared`；
    * - 包不在包存储 → `plugin.package_not_found`；包里的插件名不是 `name` → `plugin.name_mismatch`；
    * - 已有同名安装记录、但来自另一个 npm 包 → `plugin.name_conflict`（在事务里锁行判断，无竞态）；
+   *   没有安装记录、但包存储里已有同名插件来自另一个 npm 包（卸载过）→ 同样 `plugin.name_conflict`（Ruling P3：
+   *   卸载保留数据、密钥、快照与组织启用，换个包接手同名插件就继承了这些）；同一个 npm 包重新安装照常；
    * - 降级（目标版本低于当前）且目标版本有尚未执行的迁移文件 → `plugin.downgrade_unsupported`（迁移只做扩展，
    *   降级只能回到迁移是已执行迁移子集的版本）。
    * 已指向同一个包时什么都不改（不写审计）。
@@ -75,6 +77,11 @@ export class PluginAdminOps {
         `Package ${sha256} contains plugin ${pkg.name}, not ${name}`,
       );
     }
+    // 降级判断要用目标包的迁移文件：事务外先读包、解析（事务里只比对 _migrations）
+    const target = await readPluginPackage(await this.d.blobs.get(sha256), {
+      maxBytes: this.d.config().packages.maxBytes,
+      hostSdkVersion: SDK_VERSION,
+    });
     const changed = await this.d.db.transaction().execute(async (trx) => {
       if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await this.lockRow(trx, name);
@@ -84,13 +91,19 @@ export class PluginAdminOps {
           `Plugin ${name} is already installed from package ${row.package_name}; package ${pkg.package_name} uses the same plugin name`,
         );
       }
+      if (!row) {
+        // Ruling P3：卸载后名字仍归原来的 npm 包（数据、密钥与批准都还在），别的包不能接手
+        const prev = await this.previousOwner(trx, name);
+        if (prev !== undefined && prev !== pkg.package_name) {
+          throw new ApiError(
+            "plugin.name_conflict",
+            `Plugin name ${name} was previously used by package ${prev}; its data, secrets and permission approval are retained for that package, so package ${pkg.package_name} cannot take over the name`,
+          );
+        }
+      }
       if (row?.sha256 === sha256) return false;
       if (row && isDowngrade(pkg.version, row.version)) {
-        const target = await readPluginPackage(await this.d.blobs.get(sha256), {
-          maxBytes: this.d.config().packages.maxBytes,
-          hostSdkVersion: SDK_VERSION,
-        });
-        const unrun = await unrunMigrations(this.d.db, name, target.migrationSql);
+        const unrun = await unrunMigrations(trx, name, target.migrationSql);
         if (unrun.length > 0) {
           throw new ApiError(
             "plugin.downgrade_unsupported",
@@ -204,6 +217,39 @@ export class PluginAdminOps {
     });
     if (changed) await this.notify(name);
     return this.d.view(name);
+  }
+
+  /**
+   * 这个插件名之前归哪个 npm 包（没有安装记录时调用）：最近一次 `plugin.installed` 审计里的包；
+   * 审计里找不到、但还留着批准快照时（早于审计的安装记录）退回包存储里最早的同名包。
+   * 从没安装过 → undefined（只是上传过的包不占名字）。
+   */
+  private async previousOwner(trx: Trx, name: string): Promise<string | undefined> {
+    const last = await trx
+      .selectFrom("audit_events")
+      .innerJoin("plugin_packages", (j) =>
+        j.on(sql<boolean>`plugin_packages.sha256 = audit_events.detail->>'sha256'`),
+      )
+      .select("plugin_packages.package_name")
+      .where("audit_events.action", "=", "plugin.installed")
+      .where("audit_events.target", "=", name)
+      .orderBy("audit_events.at", "desc")
+      .executeTakeFirst();
+    if (last) return last.package_name;
+    // 没有安装审计（早于 T14 直接写库的安装记录）：保留着批准快照时，名字归包存储里最早的同名包
+    const snap = await trx
+      .selectFrom("plugin_permission_snapshots")
+      .select("plugin")
+      .where("plugin", "=", name)
+      .executeTakeFirst();
+    if (!snap) return undefined;
+    const any = await trx
+      .selectFrom("plugin_packages")
+      .select("package_name")
+      .where("name", "=", name)
+      .orderBy("created_at")
+      .executeTakeFirst();
+    return any?.package_name;
   }
 
   /** 内置 / 配置声明的插件不经安装记录管理。 */

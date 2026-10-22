@@ -18,7 +18,7 @@ export interface OrgPlugin {
   secrets: { path: string; set: boolean }[];
   permissions: PermissionGroup[];
   orgConfigSchema: JsonSchema | null;
-  /** false：企业管理员在部署上停用了它（组织页显示「不可用」，启用设置保留、不能修改）。 */
+  /** false：此插件在部署上当前不可用（如被停用；组织页显示「不可用」，启用设置保留、不能修改）。 */
   available?: boolean;
 }
 

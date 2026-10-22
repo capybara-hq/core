@@ -1,6 +1,7 @@
 import { type CapybaraPackageSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { destructiveStatements } from "../db/sql-statements.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -28,6 +29,22 @@ export interface PackageReview {
   removed: string[];
   /** 见 {@link reviewHash}：批准时回传，审阅后权限变了就拒绝。 */
   reviewHash: string;
+  /**
+   * 审阅警告（敏感，界面高亮；不拒绝）：插件迁移只该做扩展，包里的破坏性语句（删表 / 删列、TRUNCATE、DELETE、
+   * RENAME、改列类型）逐条列出——新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。
+   */
+  warnings: PackageWarning[];
+}
+
+/** {@link PackageReview.warnings} 的一项。 */
+export interface PackageWarning {
+  kind: "destructive_migration";
+  sensitive: true;
+  /** 迁移文件名（`capybara.migrations` 目录下）。 */
+  file: string;
+  line: number;
+  /** 语句（压成一行，字符串字面量已抹掉）。 */
+  statement: string;
 }
 
 /** 安装记录一行（`plugin_installs` 加包的 npm 包名）。 */
@@ -169,6 +186,15 @@ export class PluginInstalls {
       added,
       removed,
       reviewHash: reviewHash(set),
+      warnings: pkg.migrationSql.flatMap((m) =>
+        destructiveStatements(m.sql).map((st) => ({
+          kind: "destructive_migration" as const,
+          sensitive: true as const,
+          file: m.file,
+          line: st.line,
+          statement: st.text,
+        })),
+      ),
     };
   }
 
@@ -268,15 +294,5 @@ export class PluginInstalls {
       migratedSha: r.migrated_sha,
       section: r.section as CapybaraPackageSection,
     }));
-  }
-
-  /** 记下该包的迁移已执行（加载前由持迁移锁的副本调用）。 */
-  async markMigrated(name: string, sha256: string): Promise<void> {
-    await this.d.db
-      .updateTable("plugin_installs")
-      .set({ migrated_sha: sha256 })
-      .where("name", "=", name)
-      .where("sha256", "=", sha256)
-      .execute();
   }
 }

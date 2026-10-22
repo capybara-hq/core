@@ -118,6 +118,8 @@ export class PluginInstance {
   private readonly ctx: KernelPluginContext;
   private readonly log: KernelDeps["log"];
   private disposing: Promise<void> | undefined;
+  /** {@link hurry}：进行中的 dispose 不再等排空时限。 */
+  private readonly hurried = new AbortController();
 
   constructor(init: PluginInstanceInit) {
     this.manifest = init.manifest;
@@ -175,6 +177,16 @@ export class PluginInstance {
     return this.disposing;
   }
 
+  /**
+   * 让进行中（或之后开始）的 {@link dispose} 立即结束排空：余下的在途调用随即中止，队列任务按到时处理
+   * （停机时宿主对后台撤销中的旧实例调用）。没有在撤销时等同于以排空时限 0 撤销。
+   */
+  hurry(): Promise<void> {
+    this.hurried.abort();
+    this.inflight.abort();
+    return this.dispose({ drainMs: 0 });
+  }
+
   private async doDispose(opts: DisposeOptions): Promise<void> {
     const deadline = Date.now() + Math.max(0, opts.drainMs);
     this.inflight.close();
@@ -185,10 +197,17 @@ export class PluginInstance {
       });
       queues = this.ctx.drainQueues(deadline).catch(() => "timeout" as const);
     }
+    let onHurry: () => void = () => {};
+    const hurried = new Promise<"timeout">((resolve) => {
+      onHurry = () => resolve("timeout");
+      if (this.hurried.signal.aborted) onHurry();
+      else this.hurried.signal.addEventListener("abort", onHurry, { once: true });
+    });
     const [calls, jobs] = await Promise.all([
-      this.inflight.drain(Math.max(0, deadline - Date.now())),
-      queues,
+      Promise.race([this.inflight.drain(Math.max(0, deadline - Date.now())), hurried]),
+      Promise.race([queues, hurried]),
     ]);
+    this.hurried.signal.removeEventListener("abort", onHurry);
     if (jobs === "timeout") {
       this.log.warn(
         "plugin queue jobs still running after the drain timeout; leaving them queued",

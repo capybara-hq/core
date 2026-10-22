@@ -333,6 +333,44 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     await waitFor(async () => (await view("dep")).status === "enabled", 10_000, "dep enabled");
   });
 
+  it("审阅：迁移里的破坏性语句列为敏感警告（不拒绝）", async () => {
+    const r = (await upload(
+      await lifePkg({
+        name: "wreck",
+        version: "1.0.0",
+        migrations: [
+          {
+            file: "0001_wreck.sql",
+            sql: "CREATE TABLE IF NOT EXISTS keep (id int);\nDROP TABLE IF EXISTS old_stuff;\nALTER TABLE keep DROP COLUMN IF EXISTS gone;\n",
+          },
+        ],
+      }),
+    )) as unknown as { warnings: unknown[] };
+    expect(r.warnings).toEqual([
+      {
+        kind: "destructive_migration",
+        sensitive: true,
+        file: "0001_wreck.sql",
+        line: 2,
+        statement: "DROP TABLE IF EXISTS old_stuff",
+      },
+      {
+        kind: "destructive_migration",
+        sensitive: true,
+        file: "0001_wreck.sql",
+        line: 3,
+        statement: "ALTER TABLE keep DROP COLUMN IF EXISTS gone",
+      },
+    ]);
+    expect(
+      (
+        (await upload(await lifePkg({ name: "calm", version: "1.0.0" }))) as unknown as {
+          warnings: unknown[];
+        }
+      ).warnings,
+    ).toEqual([]);
+  });
+
   it("提供方调用（connector）计入提供方实例的在途计数：停用时排空到会话关闭才撤销", async () => {
     await install(
       "conn",
@@ -457,8 +495,45 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     ).toEqual([{ enabled: true }]);
     const gone = await admin({ method: "GET", url: "/api/v1/admin/plugins/life" });
     expect(gone.statusCode).toBe(404);
-    // 卸载后可以重新安装（数据还在：迁移已执行，不重复）
+    // Ruling P3：名字仍归原来的 npm 包（数据、密钥、批准都还在），别的包不能接手；原来的包可以重新安装
+    const usurper = await upload(
+      await lifePkg({ version: "3.0.0", packageName: "@evil/plugin-life" }),
+    );
+    const taken = await post("life/install", { sha256: usurper.sha256 });
+    expect(taken.statusCode, taken.body).toBe(409);
+    expect(taken.json().error.code).toBe("plugin.name_conflict");
+    expect(taken.json().error.message).toMatch(
+      /previously used by package @test\/plugin-life; its data, secrets and permission approval are retained/,
+    );
+    expect(
+      await db.selectFrom("plugin_installs").select("name").where("name", "=", "life").execute(),
+    ).toEqual([]);
+    // 卸载后可以从同一个包重新安装（数据还在：迁移已执行，不重复）
     await install("life", v2);
     expect((await view("life")).status).toBe("disabled");
+  });
+});
+
+describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤销", { timeout: 60_000 }, () => {
+  it("升级后旧实例的在途调用不结束：停机不等 drainSeconds，调用以 PluginUnloadedError 结束", async () => {
+    await setState("life", "enable");
+    await waitFor(async () => loadedVersion("life") === "2.0.0", 15_000, "life 2.0.0 loaded");
+    g.__lifeGate = new Promise<void>(() => {});
+    const old = k.host.current("life") as PluginInstance;
+    const pending = callTool("life");
+    pending.catch(() => {});
+    await waitFor(async () => old.inflight.size === 1, 5_000, "call in flight");
+    await install("life", await lifePkg({ version: "1.0.0" }));
+    await waitFor(async () => loadedVersion("life") === "1.0.0", 15_000, "1.0.0 loaded");
+    expect(old.disposed).toBe(true);
+    expect(old.registrations().length).toBeGreaterThan(0);
+    const started = Date.now();
+    await k.stop();
+    expect(Date.now() - started).toBeLessThan(15_000);
+    // 停机返回时旧实例已撤销完：在途调用已中止（不等 30 秒的排空时限）
+    expect(old.inflight.signal.aborted).toBe(true);
+    expect(old.registrations()).toEqual([]);
+    await expect(pending).rejects.toThrow(/unloaded/);
+    delete g.__lifeGate;
   });
 });

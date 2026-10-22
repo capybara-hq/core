@@ -50,7 +50,7 @@ export interface PluginLifecycleDeps {
  * 触发来源：bus `kernel.plugins.changed`（后台 / CLI 改了期望状态或快照）、`kernel.plugins.reconcile`（维护任务周期兜底，
  * 丢了消息也能收敛）、`kernel.plugins.migrated`（别的副本迁移完成），以及启动。
  * `reconcile` 在本副本内排队串行：进行中时再来的请求合并成「当前这次结束后再跑一次」。
- * 每次 reconcile 之后刷新本副本状态行的心跳，并清理已卸载插件的行与早已退出的副本的行。
+ * 每次 reconcile 开始与结束时都刷新本副本状态行的心跳，并清理已卸载插件的行与早已退出的副本的行。
  * 进程内只有排队用的 Promise（不是跨副本状态）。
  */
 export class PluginLifecycle {
@@ -120,6 +120,10 @@ export class PluginLifecycle {
   }
 
   private async run(reason: string): Promise<void> {
+    // 开始时也刷新心跳：converge 可能很久（排空在途调用、迁移），不能因此被读状态的一方当成退出的副本
+    await this.d.status.heartbeat().catch((err: unknown) => {
+      this.d.log.warn("cannot refresh plugin replica status heartbeats", { err });
+    });
     try {
       await this.d.host.converge();
     } catch (err) {

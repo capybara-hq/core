@@ -38,6 +38,12 @@ export {
 export { type KernelDatabase, type KernelDb, kernelDb } from "./db/kernel-schema.js";
 export { type MigrationOwner, migrate } from "./db/migrator.js";
 export { createDb } from "./db/pool.js";
+export {
+  destructiveStatements,
+  isDestructiveSql,
+  type SqlStatement,
+  splitSqlStatements,
+} from "./db/sql-statements.js";
 export { ApiError, ERROR_CODES, type ErrorCode } from "./errors.js";
 export {
   type CreateHttpAppOptions,

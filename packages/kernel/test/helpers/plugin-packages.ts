@@ -87,6 +87,8 @@ export interface LifePkgOptions {
   provides?: string[];
   requires?: string[];
   optional?: string[];
+  /** package.json 的 npm 包名（默认 `@test/plugin-<name>`）。 */
+  packageName?: string;
   /** 包里 `migrations/` 下的 SQL（有就声明 `capybara.migrations`）。 */
   migrations?: { file: string; sql: string }[];
 }
@@ -178,6 +180,7 @@ export default definePlugin({
   return pluginTgz({
     name,
     version: o.version,
+    ...(o.packageName !== undefined && { packageName: o.packageName }),
     manifest: staticManifestOf(real) as unknown as Record<string, unknown>,
     entry,
     ...(migrations.length > 0 && {

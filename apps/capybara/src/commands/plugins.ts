@@ -352,6 +352,12 @@ export async function runPluginsInstall(
           ...review.removed.map((k) => `  - ${k}`),
         );
       }
+      if (review.warnings.length > 0) {
+        lines.push(
+          "Warning (sensitive): the package's migrations contain destructive statements; plugin migrations should only expand, because old and new versions run side by side during an upgrade:",
+          ...review.warnings.map((w) => `  ! ${w.file}:${w.line}  ${w.statement}`),
+        );
+      }
       if (view.status === "pending_approval") {
         lines.push(`Approve with: capybara plugins approve ${review.name}`);
       }
