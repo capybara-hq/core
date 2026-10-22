@@ -591,6 +591,11 @@
   font: inherit;
   white-space: pre;
 }
+/* <code> 的 UA 样式是 font-family: monospace（系统字体）：与外层 Sarasa 的基线 / 行高不一致，
+   且 Linux 下系统等宽字体的度量不稳定（行距在 20 / 21px 间跳），一律继承设计字体。 */
+.cb-code-pre code {
+  font: inherit;
+}
 
 /* 插件嵌入页：宽度撑满，高度由属性给定 */
 .cb-embed {
