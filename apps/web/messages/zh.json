@@ -1969,6 +1969,19 @@
           "pending": "待处理"
         },
         "failedReplica": "副本 {replica} 加载失败：{reason}",
+        "stillServing": "该副本仍在用 {version}",
+        "replicaReason": {
+          "config": "部署配置缺失或不合法",
+          "approval": "权限待批准",
+          "migration": "另一个副本正在执行迁移",
+          "dependency": "依赖的能力没有可用的提供方",
+          "sync_failed": "同步插件包失败",
+          "sha_mismatch": "插件包内容与记录的 sha256 不符",
+          "import_failed": "导入插件模块失败",
+          "manifest_mismatch": "插件模块与审阅过的清单不一致",
+          "setup_failed": "插件初始化（setup）失败",
+          "migration_failed": "插件迁移失败"
+        },
         "converging": "各副本正在收敛到期望状态，页面会自动刷新。",
         "refresh": "刷新",
         "noReplicas": "还没有副本上报状态。",

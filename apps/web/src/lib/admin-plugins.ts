@@ -30,8 +30,11 @@ export interface PluginReplica {
   version: string;
   /** `loaded` / `failed` / `unloaded` / `pending`。 */
   state: string;
+  /** 原因码（内核给的，如 `setup_failed`、`approval`）；界面按 `detail.replicaReason.<码>` 翻译。 */
   reason: string | null;
   detail: string | null;
+  /** 这一行的版本没加载成、该副本仍在用的旧版本（新版失败 / 待批准时旧版照常）；否则 null。 */
+  servingVersion?: string | null;
   heartbeatAt: string;
 }
 

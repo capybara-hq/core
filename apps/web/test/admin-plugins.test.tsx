@@ -218,32 +218,41 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
     expect(screen.queryByRole("button", { name: p.detail.actions.uninstall })).toBeNull();
   });
 
-  it("副本分歧：列出出错的副本与原因、心跳", async () => {
-    const view = plugin({
-      status: "failed",
-      replicas: [
-        (plugin().replicas as View[])[0],
-        {
-          ...(plugin().replicas as View[])[1],
-          version: "1.0.0",
-          state: "failed",
-          reason: "setup_failed",
-          detail: "connect ECONNREFUSED",
-        },
-      ],
-    });
-    detailRoutes(view);
-    renderPage(<PluginDetailPage />, { locale: "zh" });
-    const p = zh.admin.plugins;
-    const alert = await screen.findByText(
-      fill(p.detail.failedReplica, { replica: "web-2-222-bbbbbb", reason: "setup_failed" }),
-    );
-    expect(alert).toBeTruthy();
-    expect(screen.getAllByText(/connect ECONNREFUSED/).length).toBeGreaterThan(0);
-    const replicas = screen.getByRole("table", { name: p.detail.replicasTitle });
-    expect(within(replicas).getByText("web-1-111-aaaaaa")).toBeTruthy();
-    expect(within(replicas).getByText("web-2-222-bbbbbb")).toBeTruthy();
-  });
+  it.each(LOCALES)(
+    "副本分歧：列出出错的副本与翻译后的原因、心跳；新版失败而旧版仍在服务时两者都显示（%s）",
+    async (locale) => {
+      const view = plugin({
+        status: "failed",
+        replicas: [
+          { ...(plugin().replicas as View[])[0], servingVersion: null },
+          {
+            ...(plugin().replicas as View[])[1],
+            version: "2.0.0",
+            state: "failed",
+            reason: "setup_failed",
+            detail: "connect ECONNREFUSED",
+            servingVersion: "1.0.0",
+          },
+        ],
+      });
+      detailRoutes(view);
+      renderPage(<PluginDetailPage />, { locale });
+      const p = msgs[locale].admin.plugins;
+      const reason = p.detail.replicaReason.setup_failed;
+      const alert = await screen.findByText(
+        fill(p.detail.failedReplica, { replica: "web-2-222-bbbbbb", reason }),
+      );
+      expect(alert).toBeTruthy();
+      expect(screen.getAllByText(/connect ECONNREFUSED/).length).toBeGreaterThan(0);
+      const serving = fill(p.detail.stillServing, { version: "1.0.0" });
+      expect(screen.getAllByText(serving).length).toBeGreaterThan(0);
+      const replicas = screen.getByRole("table", { name: p.detail.replicasTitle });
+      expect(within(replicas).getByText("web-1-111-aaaaaa")).toBeTruthy();
+      expect(within(replicas).getByText("web-2-222-bbbbbb")).toBeTruthy();
+      expect(within(replicas).getByText(`${reason} · connect ECONNREFUSED`)).toBeTruthy();
+      expect(within(replicas).queryByText(/setup_failed/)).toBeNull();
+    },
+  );
 
   it("停用：确认框写明在途调用最多等待 N 秒；确认后 POST disable 并显示收敛中", async () => {
     const calls = detailRoutes(plugin(), {

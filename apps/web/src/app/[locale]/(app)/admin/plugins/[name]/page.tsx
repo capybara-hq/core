@@ -168,6 +168,13 @@ function Overview({
   const installed = plugin.source === "install";
   const desiredState = plugin.desired?.state;
   const { failed } = replicaSummary(plugin);
+  /** 原因码 → 界面文案（没有译文的码原样显示）。 */
+  const reasonText = (code: string | null): string | null =>
+    code === null || code === ""
+      ? null
+      : t.has(`detail.replicaReason.${code}`)
+        ? t(`detail.replicaReason.${code}`)
+        : code;
 
   const run = async (op: "enable" | "disable") => {
     setBusy(true);
@@ -191,7 +198,17 @@ function Overview({
       key: "version",
       header: t("detail.replicaColumns.version"),
       tone: "muted",
-      cell: (r) => r.version,
+      cell: (r) =>
+        r.servingVersion ? (
+          <Stack gap={2}>
+            <Text>{r.version}</Text>
+            <Text variant="small" tone="muted">
+              {t("detail.stillServing", { version: r.servingVersion })}
+            </Text>
+          </Stack>
+        ) : (
+          r.version
+        ),
     },
     {
       key: "state",
@@ -207,7 +224,8 @@ function Overview({
       key: "reason",
       header: t("detail.replicaColumns.reason"),
       tone: "muted",
-      cell: (r) => [r.reason, r.detail].filter((s) => s !== null && s !== "").join(" · ") || "—",
+      cell: (r) =>
+        [reasonText(r.reason), r.detail].filter((s) => s !== null && s !== "").join(" · ") || "—",
     },
     {
       key: "heartbeat",
@@ -284,8 +302,16 @@ function Overview({
             {failed.map((r) => (
               <Stack key={r.replicaId} gap={4}>
                 <Text tone="fail">
-                  {t("detail.failedReplica", { replica: r.replicaId, reason: r.reason ?? "—" })}
+                  {t("detail.failedReplica", {
+                    replica: r.replicaId,
+                    reason: reasonText(r.reason) ?? "—",
+                  })}
                 </Text>
+                {r.servingVersion && (
+                  <Text variant="small" tone="muted">
+                    {t("detail.stillServing", { version: r.servingVersion })}
+                  </Text>
+                )}
                 {r.detail !== null && r.detail !== "" && (
                   <Text variant="small" tone="fail">
                     {r.detail}

@@ -1969,6 +1969,19 @@
           "pending": "Pending"
         },
         "failedReplica": "Replica {replica} failed to load: {reason}",
+        "stillServing": "This replica still serves {version}",
+        "replicaReason": {
+          "config": "Deployment config missing or invalid",
+          "approval": "Permissions awaiting approval",
+          "migration": "Another replica is running the migrations",
+          "dependency": "A required capability has no available provider",
+          "sync_failed": "Could not sync the plugin package",
+          "sha_mismatch": "Package contents do not match the recorded sha256",
+          "import_failed": "Could not import the plugin module",
+          "manifest_mismatch": "Plugin module does not match the reviewed manifest",
+          "setup_failed": "Plugin setup failed",
+          "migration_failed": "Plugin migration failed"
+        },
         "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
         "refresh": "Refresh",
         "noReplicas": "No replica has reported yet.",
