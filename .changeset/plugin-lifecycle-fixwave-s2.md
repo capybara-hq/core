@@ -1,5 +1,5 @@
 ---
-"@capybara-hq/kernel": patch
+"@capybara-hq/kernel": minor
 "@capybara-hq/capybara": minor
 ---
 
@@ -19,3 +19,5 @@
 - 读组织的沙箱限额覆盖时只解析该组织那一条：别的组织存量值非法不再连带丢掉全部覆盖。
 - 对象存储里缺插件包时报错点名缺的键（`deployment/plugins/blobs/<sha256>.tgz`）并提示换桶 / 换地址后的补救办法；writing-object-store-providers 写明换桶会让 `blob_store = object` 的包与附件等取不到。
 - 副本状态行新增 `serving_version`（迁移 0030 就地修改）：这一行的版本没加载成而本副本仍在用旧版本时记下旧版本号，后台视图的副本项新增 `servingVersion`。
+- Ruling P4：安装记录包的权限集合新增 `warningsDigest`（迁移警告摘要，记入快照，权限键 `migration.warnings:<摘要>`，敏感原因 `migration_warnings`）：权限不变、警告变了同样待批准；autoApprove 照样写入。`migrationWarnings` 新增参数 `plugin`；`foreign_schema` 另标写别的 schema、`SET search_path`、`CREATE SCHEMA` / `EXTENSION`、`ALTER … OWNER TO`、`COPY … PROGRAM`。
+- 安装记录模块的导入同样限 `pluginHost.reloadSetupTimeoutSeconds`（顶层代码挂住记 `import_failed`）；判断名字有无遗留数据时也看 `plugin_<name>` schema；配置声明插件的名字已归别的包时告警。

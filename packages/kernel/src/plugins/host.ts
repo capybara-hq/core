@@ -825,11 +825,30 @@ export class PluginHost {
     }
     if (rows.length === 0) return;
     try {
-      await kernelDb(this.deps.db)
+      const kdb = kernelDb(this.deps.db);
+      await kdb
         .insertInto("plugin_name_owners")
         .values(rows)
         .onConflict((oc) => oc.column("name").doNothing())
         .execute();
+      const owners = await kdb
+        .selectFrom("plugin_name_owners")
+        .select(["name", "package_name"])
+        .where(
+          "name",
+          "in",
+          rows.map((r) => r.name),
+        )
+        .execute();
+      for (const o of owners) {
+        const mine = rows.find((r) => r.name === o.name);
+        if (mine && mine.package_name !== o.package_name) {
+          this.deps.log.warn(
+            "plugin name is owned by a different npm package; the data, secrets and approval kept under this name came from that package",
+            { plugin: o.name, owner: o.package_name, package: mine.package_name },
+          );
+        }
+      }
     } catch (err) {
       this.deps.log.warn("cannot record plugin name owners", { err });
     }
@@ -1076,6 +1095,9 @@ export class PluginHost {
     const hit = this.prepared.get(d.name);
     if (hit && hit.d.sha256 === d.sha256) return { ...hit, d };
     this.prepared.delete(d.name);
+    // 换了包：上一个包导入的真实清单作废（部署配置 schema 不能再按旧版本给）
+    if (this.importedManifests.get(d.name)?.sha256 !== d.sha256)
+      this.importedManifests.delete(d.name);
     const fail = async (reason: InstallFailureReason, e: unknown): Promise<undefined> => {
       this.logFailure(d.name, d.sha256, reason, e, { version: d.version });
       await this.writeStatus({
@@ -1117,10 +1139,28 @@ export class PluginHost {
   /**
    * 权限闸门放行后导入安装记录的真实模块（模块顶层代码此时才执行）并核对：密钥标记、与审阅过的静态清单一致
    * （名字、版本、能力、权限、界面、配置字段；不一致抛 {@link ManifestMismatchError}）。同一入口 URL 由 Node 模块缓存，
-   * 重复调用不重复执行顶层代码。
+   * 重复调用不重复执行顶层代码。导入限 `pluginHost.reloadSetupTimeoutSeconds`（与 setup 同一时限）：顶层代码
+   * 永不结束时记 failed / import_failed，不卡住启动与 reconcile（挂住的模块留在内存里，下次导入同样超时）。
    */
   private async importInstalled(c: InstallCandidate): Promise<PluginManifest> {
-    const manifest = await importPluginModule(c.entryUrl, c.d.name, c.root);
+    const ms = this.reloadSetupTimeoutMs();
+    let timer: NodeJS.Timeout | undefined;
+    const importing = importPluginModule(c.entryUrl, c.d.name, c.root);
+    importing.catch(() => {});
+    const manifest = await Promise.race([
+      importing,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `plugin ${c.d.name}: importing its module did not finish within ${Math.round(ms / 1000)}s (pluginHost.reloadSetupTimeoutSeconds); its top-level code may never finish`,
+              ),
+            ),
+          ms,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
     assertSecretsReachable(manifest);
     if (!matchesSection(manifest, c.d.name, c.d.section.manifest)) {
       throw new ManifestMismatchError(c.d.name, manifest.name);

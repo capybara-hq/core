@@ -16,6 +16,7 @@ import { extract as tarExtract } from "tar-stream";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { MIGRATION_FILE_RE } from "../db/migrator.js";
 import { buildPermissionSet, type PermissionSet, parseCreatedTables } from "./permission-set.js";
+import { migrationWarnings, warningsDigest } from "./permission-view.js";
 
 /**
  * 插件包（npm-pack tgz，C11）的读取与校验。tgz 一律当作恶意输入：
@@ -367,6 +368,7 @@ export function permissionSetOfSection(
     config: { deployment: strip(m.config.deployment), org: strip(m.config.org) },
     tables,
     permissions: m.permissions,
+    warningsDigest: warningsDigest(migrationWarnings(migrationSql, m.name)),
   });
 }
 

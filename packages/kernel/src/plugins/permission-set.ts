@@ -38,7 +38,15 @@ export interface PermissionSet {
      */
     ui: { views: string[]; embeds: string[] };
   };
+  /**
+   * 安装记录包迁移警告的摘要（`warningsDigest`，Ruling P4）；没有警告或不是安装记录时省略。
+   * 记入快照：权限不变、警告变了同样要重新批准；没有摘要的旧快照遇到有警告的包同样要重新批准。
+   */
+  warningsDigest?: string;
 }
+
+/** 迁移警告摘要的权限键前缀（`migration.warnings:<摘要>`）。 */
+export const WARNINGS_KEY_PREFIX = "migration.warnings:";
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sortedUnique = (xs: readonly string[] | undefined) => [...new Set(xs ?? [])].sort(cmp);
@@ -135,6 +143,7 @@ export function buildPermissionSet(input: {
   config: { deployment: PermissionConfigField[]; org: PermissionConfigField[] };
   tables: readonly string[];
   permissions?: PluginPermissions | undefined;
+  warningsDigest?: string | undefined;
 }): PermissionSet {
   const p = input.permissions ?? {};
   const byPath = (a: PermissionConfigField, b: PermissionConfigField) => cmp(a.path, b.path);
@@ -161,6 +170,7 @@ export function buildPermissionSet(input: {
       network: sortedUnique(p.network),
       ui: { views: sortedUnique(p.ui?.views), embeds: sortedUnique(p.ui?.embeds) },
     },
+    ...(input.warningsDigest ? { warningsDigest: input.warningsDigest } : {}),
   };
 }
 
@@ -193,6 +203,7 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const d of p.network ?? []) keys.push(`permissions.network:${d}`);
   for (const v of p.ui?.views ?? []) keys.push(`${UI_VIEW_KEY_PREFIX}${v}`);
   for (const e of p.ui?.embeds ?? []) keys.push(`ui.embed:${e}`);
+  if (s.warningsDigest) keys.push(`${WARNINGS_KEY_PREFIX}${s.warningsDigest}`);
   return sortedUnique(keys);
 }
 

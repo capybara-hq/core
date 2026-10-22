@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
-import { type PermissionSet, permissionKeys } from "./permission-set.js";
+import { type PermissionSet, permissionKeys, WARNINGS_KEY_PREFIX } from "./permission-set.js";
 import type { PluginSource } from "./sources.js";
 
 /**
@@ -58,7 +59,8 @@ export type SensitiveReason =
   | "directory"
   | "identity_source"
   | "sandbox"
-  | "object_store";
+  | "object_store"
+  | "migration_warnings";
 
 /** 权限清单里的一项（分组里的一项，或 `added` 里的一个权限键）。 */
 export interface PermissionItem {
@@ -145,6 +147,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
  * 与 {@link permissionGroups} 的敏感分组同一套规则。
  */
 export function isSensitivePermissionKey(key: string): boolean {
+  if (key.startsWith(WARNINGS_KEY_PREFIX)) return true;
   const k = keyItem(key);
   return k !== null && itemReason(k.category, k.item) !== undefined;
 }
@@ -152,6 +155,10 @@ export function isSensitivePermissionKey(key: string): boolean {
 /** 权限键逐项的敏感标记与原因（`added` 用；与 {@link permissionGroups} 同一套规则）。 */
 export function permissionKeyItems(keys: string[]): PermissionItem[] {
   return keys.map((value) => {
+    // 迁移警告的摘要（Ruling P4）：警告本身见 `warnings`
+    if (value.startsWith(WARNINGS_KEY_PREFIX)) {
+      return { value, sensitive: true, reason: "migration_warnings" as const };
+    }
     const k = keyItem(value);
     if (k === null) return { value, sensitive: false };
     const reason = itemReason(k.category, k.item);
@@ -330,16 +337,65 @@ export function derivePluginStatus(i: StatusInput): DeploymentPluginStatus {
  * 块里可以执行任意语句），以及写到插件自己 schema 之外或改权限 / 角色 / 事务的语句（`foreign_schema`，
  * 见 {@link isForeignSchemaSql}）。都标敏感，不拒绝。
  */
-export function migrationWarnings(files: { file: string; sql: string }[]): PackageWarning[] {
+export function migrationWarnings(
+  files: { file: string; sql: string }[],
+  plugin: string,
+): PackageWarning[] {
+  const own = pluginSchemaName(plugin);
   return files.flatMap((m) =>
     splitSqlStatements(m.sql).flatMap((st): PackageWarning[] => {
       const base = { sensitive: true as const, file: m.file, line: st.line, statement: st.text };
       if (/^DO\b/i.test(st.text)) return [{ kind: "dynamic_sql", ...base }];
-      if (isForeignSchemaSql(withQuoted(st))) return [{ kind: "foreign_schema", ...base }];
+      if (isForeignSchemaSql(withQuoted(st), own)) return [{ kind: "foreign_schema", ...base }];
       if (isDestructiveSql(st.text)) return [{ kind: "destructive_migration", ...base }];
       return [];
     }),
   );
+}
+
+/**
+ * 迁移警告的摘要（种类、文件与语句，不含行号：只挪行不算变化）：sha256 前 16 位十六进制；没有警告时为空串。
+ * 记进安装记录包的权限集合（`warningsDigest`，Ruling P4）：权限不变、警告变了（如新增 `GRANT`）同样要重新批准。
+ */
+export function warningsDigest(warnings: readonly PackageWarning[]): string {
+  if (warnings.length === 0) return "";
+  return createHash("sha256")
+    .update(warnings.map((w) => `${w.kind}\t${w.file}\t${w.statement}`).join("\n"))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+const IDENT_RE = String.raw`(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)`;
+const TARGET_RE = String.raw`(${IDENT_RE}(?:\s*\.\s*${IDENT_RE})?)`;
+/** 写语句的目标对象（建 / 改 / 删表、索引、视图等，以及 INSERT / UPDATE / DELETE / TRUNCATE / MERGE / COPY 的表）。 */
+const WRITE_TARGETS: RegExp[] = [
+  new RegExp(String.raw`^INSERT\s+INTO\s+${TARGET_RE}`, "i"),
+  new RegExp(String.raw`^UPDATE\s+(?:ONLY\s+)?${TARGET_RE}`, "i"),
+  new RegExp(String.raw`^DELETE\s+FROM\s+(?:ONLY\s+)?${TARGET_RE}`, "i"),
+  new RegExp(String.raw`^TRUNCATE\s+(?:TABLE\s+)?(?:ONLY\s+)?${TARGET_RE}`, "i"),
+  new RegExp(String.raw`^MERGE\s+INTO\s+${TARGET_RE}`, "i"),
+  new RegExp(String.raw`^COPY\s+${TARGET_RE}`, "i"),
+  new RegExp(
+    String.raw`^(?:CREATE|ALTER|DROP)\s+(?:OR\s+REPLACE\s+)?(?:(?:GLOBAL|LOCAL)\s+)?(?:(?:TEMP|TEMPORARY|UNLOGGED|MATERIALIZED|UNIQUE|FOREIGN)\s+)?(?:TABLE|INDEX|VIEW|SEQUENCE|TYPE|DOMAIN)\s+(?:CONCURRENTLY\s+)?(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:ONLY\s+)?${TARGET_RE}`,
+    "i",
+  ),
+  // CREATE INDEX … ON <表>
+  new RegExp(String.raw`^CREATE\s+(?:UNIQUE\s+)?INDEX\b.*?\bON\s+(?:ONLY\s+)?${TARGET_RE}`, "i"),
+];
+
+/** 标识符规范化：带引号的去引号（`""` 还原），不带引号的转小写。 */
+const normIdent = (s: string) =>
+  s.startsWith('"') ? s.slice(1, -1).replaceAll('""', '"') : s.toLowerCase();
+
+/** 写语句的目标里有带 schema、且不是 `own` 的。 */
+function writesOtherSchema(t: string, own: string): boolean {
+  for (const re of WRITE_TARGETS) {
+    const m = re.exec(t);
+    if (!m) continue;
+    const parts = (m[1] as string).match(new RegExp(IDENT_RE, "g")) ?? [];
+    if (parts.length === 2 && normIdent(parts[0] as string) !== own) return true;
+  }
+  return false;
 }
 
 /** 把语句 `text` 里抹掉的双引号标识符填回去（`"capybara".x` 这类引用才看得见）。 */
@@ -349,14 +405,21 @@ function withQuoted(st: { text: string; quoted: string[] }): string {
 }
 
 /**
- * 语句是否越出插件自己的 schema（够用即可，不是 SQL 解析器）：引用内核 schema `capybara`（`capybara.x` /
- * `"capybara".x`）、`GRANT` / `REVOKE`、`CREATE` / `ALTER` / `DROP ROLE|USER|GROUP`、`ALTER DEFAULT PRIVILEGES`、
- * `SET ROLE` / `SET SESSION AUTHORIZATION`、`CREATE [OR REPLACE] FUNCTION|PROCEDURE|TRIGGER|EVENT TRIGGER`，
- * 以及事务控制 `COMMIT` / `ROLLBACK` / `BEGIN` / `START TRANSACTION` / `END`（迁移器把每个文件放在一个事务里）。
+ * 语句是否越出插件自己的 schema（`own`，即 `plugin_<name>`；够用即可，不是 SQL 解析器）：引用内核 schema
+ * `capybara`（`capybara.x` / `"capybara".x`）、写到别的 schema 的对象（`other.x`）、`GRANT` / `REVOKE`、
+ * `CREATE` / `ALTER` / `DROP ROLE|USER|GROUP`、`ALTER DEFAULT PRIVILEGES`、`ALTER … OWNER TO`、
+ * `SET ROLE` / `SET SESSION AUTHORIZATION` / `SET search_path`、`CREATE SCHEMA`、`CREATE EXTENSION`、
+ * `CREATE [OR REPLACE] FUNCTION|PROCEDURE|TRIGGER|EVENT TRIGGER`、`COPY … PROGRAM`，以及事务控制
+ * `COMMIT` / `ROLLBACK` / `BEGIN` / `START TRANSACTION` / `END`（迁移器把每个文件放在一个事务里）。
  */
-export function isForeignSchemaSql(t: string): boolean {
+export function isForeignSchemaSql(t: string, own: string): boolean {
   return (
     /(?:^|[^\w$"])"?capybara"?\s*\./i.test(t) ||
+    writesOtherSchema(t, own) ||
+    /^ALTER\b.*\bOWNER\s+TO\b/i.test(t) ||
+    /^SET\s+(?:SESSION\s+|LOCAL\s+)?search_path\b/i.test(t) ||
+    /^CREATE\s+(?:SCHEMA|EXTENSION)\b/i.test(t) ||
+    /^COPY\b.*\bPROGRAM\b/i.test(t) ||
     /^(?:GRANT|REVOKE)\b/i.test(t) ||
     /^(?:CREATE|ALTER|DROP)\s+(?:ROLE|USER|GROUP)\b/i.test(t) ||
     /^ALTER\s+DEFAULT\s+PRIVILEGES\b/i.test(t) ||

@@ -2,6 +2,7 @@ import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import semver from "semver";
 import type { KernelConfig } from "../config/schema.js";
+import { pluginSchemaName } from "../ctx/create-ctx.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -126,7 +127,8 @@ export class PluginAdminOps {
           `Plugin name ${name} was previously used by package ${owner.package_name}; its data, secrets and permission approval are retained for that package, so package ${pkg.package_name} cannot take over the name`,
         );
       }
-      if (row?.sha256 === sha256) return null;
+      // 已指向同一个包：什么都不改，降级视图仍给出真实的期望状态
+      if (row?.sha256 === sha256) return { changed: false, state: row.desired_state };
       if (row && isDowngrade(pkg.version, row.version)) {
         const unrun = await unrunMigrations(trx, name, target.migrationSql);
         if (unrun.length > 0) {
@@ -159,14 +161,10 @@ export class PluginAdminOps {
         )
         .execute();
       await this.audit(trx, actor, actorTokenId, "plugin.installed", name, pkg.version, sha256);
-      return { version: pkg.version, state: row?.desired_state ?? "disabled" };
+      return { changed: true, state: row?.desired_state ?? "disabled" };
     });
-    if (changed) await this.notify(name);
-    return this.viewAfterCommit(name, {
-      version: pkg.version,
-      sha256,
-      state: changed ? changed.state : undefined,
-    });
+    if (changed.changed) await this.notify(name);
+    return this.viewAfterCommit(name, { version: pkg.version, sha256, state: changed.state });
   }
 
   /** 部署上启用（审计 `plugin.enabled`）；已启用时不改。组织里的启用开关不变。 */
@@ -376,8 +374,12 @@ function fallbackView(
   };
 }
 
-/** 插件名已留下的数据：权限快照、部署配置或任一组织的配置。 */
+/** 插件名已留下的数据：权限快照、部署配置、任一组织的配置，或插件 schema（`plugin_<name>`）。 */
 async function hasRetainedData(trx: Trx, name: string): Promise<boolean> {
+  const schema = await sql<{
+    x: number;
+  }>`SELECT 1 AS x FROM pg_namespace WHERE nspname = ${pluginSchemaName(name)}`.execute(trx);
+  if (schema.rows.length > 0) return true;
   const hit = await trx
     .selectFrom("plugin_permission_snapshots")
     .select(sql<number>`1`.as("x"))

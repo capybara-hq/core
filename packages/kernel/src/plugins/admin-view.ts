@@ -289,7 +289,10 @@ export class PluginAdmin {
         maxBytes: this.d.config().packages.maxBytes,
         hostSdkVersion: SDK_VERSION,
       });
-      cached = { set: permissionSetOfPackage(pkg), warnings: migrationWarnings(pkg.migrationSql) };
+      cached = {
+        set: permissionSetOfPackage(pkg),
+        warnings: migrationWarnings(pkg.migrationSql, pkg.section.manifest.name),
+      };
       if (this.packageSets.size >= PACKAGE_SET_CACHE_MAX) this.packageSets.clear();
       this.packageSets.set(sha256, cached);
     }

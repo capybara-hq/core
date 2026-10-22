@@ -5,10 +5,12 @@ import {
   isSensitivePermissionKey,
   migrationWarnings,
   permissionGroups,
+  permissionKeyItems,
   pluginNeedsAction,
   reviewHash,
   SENSITIVE_CAPABILITIES,
   type StatusInput,
+  warningsDigest,
 } from "../../src/plugins/permission-view.js";
 
 const base: PermissionSet = {
@@ -278,7 +280,10 @@ describe("migrationWarnings：越出插件 schema 的语句（foreign_schema）"
       "COMMIT",
       "SELECT 'capybara.accounts'",
     ].join(";\n");
-    const kinds = migrationWarnings([{ file: "0001_x.sql", sql }]).map((w) => [w.line, w.kind]);
+    const kinds = migrationWarnings([{ file: "0001_x.sql", sql }], "notes-plugin").map((w) => [
+      w.line,
+      w.kind,
+    ]);
     expect(kinds).toEqual([
       [3, "foreign_schema"],
       [4, "foreign_schema"],
@@ -292,11 +297,58 @@ describe("migrationWarnings：越出插件 schema 的语句（foreign_schema）"
   });
 
   it("reviewHash 并入警告：权限相同、警告不同 → 摘要不同；没有警告时与只看权限的摘要相同", () => {
-    const w = migrationWarnings([{ file: "0001_x.sql", sql: "GRANT ALL ON notes TO public;" }]);
+    const w = migrationWarnings(
+      [{ file: "0001_x.sql", sql: "GRANT ALL ON notes TO public;" }],
+      "notes-plugin",
+    );
     expect(w).toHaveLength(1);
     expect(reviewHash(base, [])).toBe(reviewHash(base));
     expect(reviewHash(base, w)).not.toBe(reviewHash(base));
-    const w2 = migrationWarnings([{ file: "0002_y.sql", sql: "COMMIT;" }]);
+    const w2 = migrationWarnings([{ file: "0002_y.sql", sql: "COMMIT;" }], "notes-plugin");
     expect(reviewHash(base, w2)).not.toBe(reviewHash(base, w));
+  });
+});
+
+describe("foreign_schema：别的 schema、search_path、建 schema / 扩展、OWNER TO、COPY PROGRAM（Ruling P4 跟进）", () => {
+  it("逐条标出；写自己 schema（plugin_notes_plugin.x）或不带 schema 的不标", () => {
+    const sql = [
+      "CREATE TABLE IF NOT EXISTS plugin_notes_plugin.items (id int)",
+      "INSERT INTO items VALUES (1)",
+      "CREATE INDEX IF NOT EXISTS items_idx ON plugin_notes_plugin.items (id)",
+      "SET search_path TO public",
+      "INSERT INTO public.audit VALUES (1)",
+      "CREATE TABLE IF NOT EXISTS plugin_other.stolen (id int)",
+      'UPDATE "plugin_other".t SET x = 1',
+      "CREATE INDEX IF NOT EXISTS i ON public.t (id)",
+      "CREATE SCHEMA IF NOT EXISTS extra",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+      "ALTER TABLE items OWNER TO postgres",
+      "COPY items FROM PROGRAM 'curl x'",
+      "DROP TABLE IF EXISTS other_schema.t",
+    ].join(";\n");
+    const flagged = migrationWarnings([{ file: "0001_x.sql", sql }], "notes-plugin")
+      .filter((w) => w.kind === "foreign_schema")
+      .map((w) => w.line);
+    expect(flagged).toEqual([4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  });
+
+  it("warningsDigest：无警告为空串；不含行号（只挪行不变），语句变了就变；摘要键标敏感", () => {
+    const a = migrationWarnings([{ file: "0001_x.sql", sql: "GRANT ALL ON t TO public;" }], "p");
+    const moved = migrationWarnings(
+      [{ file: "0001_x.sql", sql: "\n\nGRANT ALL ON t TO public;" }],
+      "p",
+    );
+    const b = migrationWarnings([{ file: "0001_x.sql", sql: "GRANT SELECT ON t TO public;" }], "p");
+    expect(warningsDigest([])).toBe("");
+    expect(warningsDigest(a)).toMatch(/^[0-9a-f]{16}$/);
+    expect(warningsDigest(moved)).toBe(warningsDigest(a));
+    expect(warningsDigest(b)).not.toBe(warningsDigest(a));
+    expect(permissionKeyItems([`migration.warnings:${warningsDigest(a)}`])).toEqual([
+      {
+        value: `migration.warnings:${warningsDigest(a)}`,
+        sensitive: true,
+        reason: "migration_warnings",
+      },
+    ]);
   });
 });

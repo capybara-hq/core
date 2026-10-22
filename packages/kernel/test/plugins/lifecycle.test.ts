@@ -63,6 +63,7 @@ interface View {
   sha256: string | null;
   status: string;
   desired: { version: string; sha256: string; state: string } | null;
+  added: string[];
   replicas: {
     replicaId: string;
     state: string;
@@ -556,6 +557,44 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     await install("life", v2);
     expect((await view("life")).status).toBe("disabled");
   });
+
+  it("Ruling P4：权限不变、迁移里多了 foreign_schema 语句的升级 → 待批准（旧版照常）；批准后加载", async () => {
+    const TBL = { file: "0001_t.sql", sql: "CREATE TABLE IF NOT EXISTS t (id int);\n" };
+    await install("warned", await lifePkg({ name: "warned", version: "1.0.0", migrations: [TBL] }));
+    await approve("warned");
+    await setState("warned", "enable");
+    await waitFor(async () => loadedVersion("warned") === "1.0.0", 15_000, "warned 1.0.0");
+    const grant = {
+      file: "0002_grant.sql",
+      sql: "GRANT SELECT ON plugin_warned.t TO PUBLIC;\n",
+    };
+    const r = await install(
+      "warned",
+      await lifePkg({ name: "warned", version: "1.1.0", migrations: [TBL, grant] }),
+    );
+    expect(r.view.added).toEqual([expect.stringMatching(/^migration\.warnings:[0-9a-f]{16}$/)]);
+    expect(r.view.status).toBe("pending_approval");
+    await waitFor(
+      async () =>
+        (await view("warned")).replicas.some(
+          (x) => x.version === "1.1.0" && x.state === "pending" && x.reason === "approval",
+        ),
+      10_000,
+      "1.1.0 pending approval",
+    );
+    expect(loadedVersion("warned")).toBe("1.0.0");
+    await approve("warned");
+    await waitFor(async () => loadedVersion("warned") === "1.1.0", 15_000, "warned 1.1.0");
+    const snap = await db
+      .selectFrom("plugin_permission_snapshots")
+      .select(["version", "permissions"])
+      .where("plugin", "=", "warned")
+      .executeTakeFirstOrThrow();
+    expect(snap.version).toBe("1.1.0");
+    expect((snap.permissions as { warningsDigest?: string }).warningsDigest).toMatch(
+      /^[0-9a-f]{16}$/,
+    );
+  });
 });
 
 describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤销", { timeout: 60_000 }, () => {
@@ -741,6 +780,31 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
     } finally {
       await k2.stop();
       await db.deleteFrom("plugin_installs").where("name", "=", "hangsetup").execute();
+    }
+  });
+
+  it("模块顶层代码挂住：导入同样限时，start() 照常返回，记 failed / import_failed", async () => {
+    await seedInstall(
+      "hangimport",
+      await pluginTgz({
+        name: "hangimport",
+        entry: [
+          'import { definePlugin } from "@capybara-hq/plugin-sdk";',
+          "await new Promise(() => {});",
+          'export default definePlugin({ name: "hangimport", version: "1.0.0", sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });',
+        ].join("\n"),
+      }),
+    );
+    const k2 = await kernelWith({ reloadSetupTimeoutSeconds: 1 });
+    try {
+      expect(await startWithin(k2, 15_000)).toBe("started");
+      expect(k2.host.current("hangimport")).toBeUndefined();
+      const [row] = await statusOf("hangimport");
+      expect(row).toMatchObject({ state: "failed", reason: "import_failed" });
+      expect(row?.detail).toMatch(/importing its module did not finish within 1s/);
+    } finally {
+      await k2.stop();
+      await db.deleteFrom("plugin_installs").where("name", "=", "hangimport").execute();
     }
   });
 
