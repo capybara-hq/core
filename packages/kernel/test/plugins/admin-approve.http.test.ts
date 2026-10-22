@@ -175,6 +175,10 @@ describe("插件列表与网页批准权限", () => {
       ].sort(),
     );
 
+    // 顶层 sensitive 与分组标记一致（界面据此高亮）
+    for (const v of all.values()) {
+      expect(v.sensitive, v.name).toBe(v.permissions.some((g) => g.sensitive));
+    }
     const s3 = all.get("object-store-s3") as View;
     expect(s3).toMatchObject({
       source: "builtin",
@@ -373,5 +377,31 @@ describe("插件列表与网页批准权限", () => {
     expect(after.get("perm-a")?.status).toBe("enabled");
     expect(after.get("perm-dep")?.status).toBe("enabled");
     expect(after.get("sandbox-fake")?.status).toBe("pending_approval");
+  });
+
+  it("包读不到（字节缺失）：列表降级为 failed 项（空权限、error 写明名字版本与 sha、可卸载），详情与批准返回 409 plugin.package_unavailable", async () => {
+    const bytes = await pluginTgz({ name: "demo-broken" });
+    await installPkg("demo-broken", bytes, "enabled");
+    await db.deleteFrom("plugin_blobs").where("sha256", "=", sha(bytes)).execute();
+    const all = await list();
+    const b = all.get("demo-broken") as View & { error?: string };
+    expect(b).toMatchObject({
+      source: "install",
+      status: "failed",
+      permissions: [],
+      added: [],
+      removed: [],
+      sensitive: false,
+      removable: true,
+    });
+    expect(b.error).toContain(`demo-broken 1.0.0 (${sha(bytes)})`);
+    // 其余项不受影响
+    expect(all.get("demo-pkg")?.status).toBe("enabled");
+    const got = await admin({ method: "GET", url: "/api/v1/admin/plugins/demo-broken" });
+    expect(got.statusCode).toBe(409);
+    expect(got.json().error.code).toBe("plugin.package_unavailable");
+    const res = await approve("demo-broken", { sha256: sha(bytes), reviewHash: b.reviewHash });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("plugin.package_unavailable");
   });
 });

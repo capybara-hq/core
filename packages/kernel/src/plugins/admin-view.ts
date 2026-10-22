@@ -4,17 +4,21 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
-import { PluginApprovals, snapshotCovers, writeSnapshot } from "./approvals.js";
+import {
+  type PermissionSnapshot,
+  PluginApprovals,
+  snapshotCovers,
+  writeSnapshot,
+} from "./approvals.js";
 import type { PluginBlobs } from "./blobs.js";
 import type { DeclaredPluginInfo } from "./host.js";
 import type { PluginInstallRow, PluginInstalls } from "./installs.js";
 import { permissionSetOfPackage, readPluginPackage } from "./package.js";
-import { diffPermissions, type PermissionSet } from "./permission-set.js";
+import { buildPermissionSet, diffPermissions, type PermissionSet } from "./permission-set.js";
 import {
   type AdminPluginView,
   derivePluginStatus,
   permissionGroups,
-  providesSensitive,
   reviewHash,
 } from "./permission-view.js";
 import type { PluginSource } from "./sources.js";
@@ -65,6 +69,25 @@ interface Subject {
   configurable: boolean;
   /** 内置 / 配置声明：宿主按 schema 校验的结果；安装记录：看副本行。 */
   configValid: boolean | null;
+  /** 安装记录的包读不到时的说明（此时 `set` 为空集合）。 */
+  broken?: string;
+}
+
+/** 空权限集合（包读不到的降级项）。 */
+const EMPTY_SET: PermissionSet = buildPermissionSet({
+  provides: [],
+  config: { deployment: [], org: [] },
+  tables: [],
+});
+
+/** 包读不到 → `plugin.package_unavailable`（详情与批准不能基于读不到的包）。 */
+function assertReadable(s: Subject): void {
+  if (s.broken !== undefined) {
+    throw new ApiError(
+      "plugin.package_unavailable",
+      `The package of plugin ${s.name} cannot be read: ${s.broken}`,
+    );
+  }
 }
 
 /**
@@ -87,6 +110,7 @@ export class PluginAdmin {
     const s = (await this.subjects(name))[0];
     if (!s)
       throw new ApiError("plugin.not_found", `Plugin ${name} is not known to this deployment`);
+    assertReadable(s);
     return (await this.views([s]))[0] as AdminPluginView;
   }
 
@@ -108,6 +132,7 @@ export class PluginAdmin {
     const s = (await this.subjects(name))[0];
     if (!s)
       throw new ApiError("plugin.not_found", `Plugin ${name} is not known to this deployment`);
+    assertReadable(s);
     if (s.source === "builtin") {
       throw new ApiError(
         "plugin.builtin",
@@ -205,7 +230,30 @@ export class PluginAdmin {
       (r) => !taken.has(r.name) && (only === undefined || r.name === only),
     );
     for (const r of rows) {
-      const { set, configurable } = await this.packageInfo(r.sha256);
+      let info: { set: PermissionSet; configurable: boolean };
+      try {
+        info = await this.packageInfo(r.sha256);
+      } catch (err) {
+        // 一个包读不到（字节缺失 / 损坏、超过现行上限）不拖垮整个列表：降级为 failed 项
+        const detail = `package ${r.name} ${r.version} (${r.sha256}) cannot be read: ${err instanceof Error ? err.message : String(err)}`;
+        this.d.log.warn("plugin package unreadable for the admin view", {
+          plugin: r.name,
+          sha256: r.sha256,
+          err,
+        });
+        out.push({
+          name: r.name,
+          source: "install",
+          version: r.version,
+          set: EMPTY_SET,
+          install: r,
+          configurable: false,
+          configValid: null,
+          broken: detail,
+        });
+        continue;
+      }
+      const { set, configurable } = info;
       out.push({
         name: r.name,
         source: "install",
@@ -263,6 +311,32 @@ export class PluginAdmin {
           (r) => r.state === "pending" && r.reason === "config" && r.sha256 === target,
         );
       const install = s.install;
+      if (s.broken !== undefined) {
+        return {
+          name: s.name,
+          version: s.version,
+          source: s.source,
+          sha256: target,
+          status: "failed" as const,
+          desired: install && {
+            version: install.version,
+            sha256: install.sha256,
+            state: install.desiredState,
+          },
+          replicas: replicas.map(replicaView),
+          permissions: [],
+          added: [],
+          removed: [],
+          reviewHash: reviewHash(s.set),
+          sensitive: false,
+          snapshot: snapshotView(snap),
+          configurable: false,
+          configValid,
+          removable: true,
+          error: s.broken,
+        };
+      }
+      const permissions = permissionGroups(s.set);
       return {
         name: s.name,
         version: s.version,
@@ -281,27 +355,13 @@ export class PluginAdmin {
           sha256: install.sha256,
           state: install.desiredState,
         },
-        replicas: replicas.map((r) => ({
-          replicaId: r.replica_id,
-          version: r.version,
-          state: r.state,
-          reason: r.reason,
-          detail: r.detail,
-          heartbeatAt: r.heartbeat_at.toISOString(),
-        })),
-        permissions: permissionGroups(s.set),
+        replicas: replicas.map(replicaView),
+        permissions,
         added,
         removed,
         reviewHash: reviewHash(s.set),
-        sensitive: providesSensitive(s.set),
-        snapshot: snap
-          ? {
-              version: snap.version,
-              approvedAt: snap.approvedAt.toISOString(),
-              approvedBy: snap.approvedBy,
-              source: snap.source,
-            }
-          : null,
+        sensitive: permissions.some((g) => g.sensitive),
+        snapshot: snapshotView(snap),
         configurable: s.configurable,
         configValid,
         removable: s.source === "install",
@@ -309,3 +369,31 @@ export class PluginAdmin {
     });
   }
 }
+
+type ReplicaRow = {
+  replica_id: string;
+  version: string;
+  state: string;
+  reason: string | null;
+  detail: string | null;
+  heartbeat_at: Date;
+};
+
+const replicaView = (r: ReplicaRow): AdminPluginView["replicas"][number] => ({
+  replicaId: r.replica_id,
+  version: r.version,
+  state: r.state,
+  reason: r.reason,
+  detail: r.detail,
+  heartbeatAt: r.heartbeat_at.toISOString(),
+});
+
+const snapshotView = (snap: PermissionSnapshot | undefined): AdminPluginView["snapshot"] =>
+  snap
+    ? {
+        version: snap.version,
+        approvedAt: snap.approvedAt.toISOString(),
+        approvedBy: snap.approvedBy,
+        source: snap.source,
+      }
+    : null;

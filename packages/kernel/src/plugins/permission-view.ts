@@ -64,6 +64,7 @@ const ALWAYS_SENSITIVE: ReadonlySet<Category> = new Set<Category>([
  * 「提供」里的 {@link SENSITIVE_CAPABILITIES}；「界面」里的嵌入应用（`embed:<id>`）。
  */
 function itemSensitive(category: Category, item: string): boolean {
+  // storage 不算敏感：ctx.storage 的键由内核加前缀 `plugins/<插件>/<orgId>/`，插件只能读写自己的前缀
   if (category === "provides") return SENSITIVE_CAPABILITIES.includes(item);
   if (category === "ui") return item.startsWith("embed:");
   return ALWAYS_SENSITIVE.has(category);
@@ -147,11 +148,6 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     .map((g) => ({ ...g, sensitive: g.items.some((i) => itemSensitive(g.category, i)) }));
 }
 
-/** 插件是否提供 {@link SENSITIVE_CAPABILITIES} 之一（后台列表的 `sensitive`）。 */
-export function providesSensitive(set: PermissionSet): boolean {
-  return set.provides.some((c) => SENSITIVE_CAPABILITIES.includes(c));
-}
-
 /**
  * 部署级插件状态（后台展示；F-I：副本行存原因，这里推导展示用的状态）。
  * `dependency`：必需能力没有（加载着的）提供方（F-M：排在 `failed` 之后、`pending_approval` 之前）。
@@ -191,7 +187,7 @@ export interface AdminPluginView {
   removed: string[];
   /** 见 {@link reviewHash}：网页批准时回传。 */
   reviewHash: string;
-  /** 提供 {@link SENSITIVE_CAPABILITIES} 之一。 */
+  /** 任一权限分组敏感（与 `permissions[].sensitive` 一致，界面据此高亮）。 */
   sensitive: boolean;
   snapshot: {
     version: string;
@@ -204,6 +200,8 @@ export interface AdminPluginView {
   configValid: boolean;
   /** 能从部署卸载（只有安装记录；卸载前须先停用）。 */
   removable: boolean;
+  /** 安装记录的包读不到（字节缺失或损坏、超过现行大小上限）时的说明；此时 status 为 failed、权限为空。 */
+  error?: string;
 }
 
 /** {@link derivePluginStatus} 的输入。 */
