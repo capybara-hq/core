@@ -70,7 +70,13 @@ interface View {
   sha256: string | null;
   reviewHash: string;
   sensitive: boolean;
-  replicas: { replicaId: string; state: string; reason: string | null; version: string }[];
+  replicas: {
+    replicaId: string;
+    state: string;
+    reason: string | null;
+    version: string;
+    servingVersion: string | null;
+  }[];
 }
 type ToolResult = Extract<ConversationEvent, { type: "tool_result" }>["payload"];
 
@@ -150,6 +156,18 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     const ids = new Set(rows.map((r) => r.replicaId));
     return ids.has(bootIds.get(0) ?? "") && ids.has(bootIds.get(1) ?? "");
   };
+  /** 两个启动时的副本都把 `pending` 版本记为待批准（approval），同时仍在服务 `serving` 版本。 */
+  const servingOnBoth = (v: View, serving: string, pending: string) =>
+    [0, 1].every((i) =>
+      v.replicas.some(
+        (r) =>
+          r.replicaId === bootIds.get(i as 0 | 1) &&
+          r.state === "pending" &&
+          r.reason === "approval" &&
+          r.version === pending &&
+          r.servingVersion === serving,
+      ),
+    );
   /** 两个副本都在 `version` 上 loaded，且部署状态 enabled。 */
   const loadedOnBoth = async (name: string, version?: string) => {
     const v = await view(name);
@@ -380,7 +398,15 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         "v2 pending approval",
         100,
       );
-      expect(rowsLoaded(await view("todo"), "0.1.0")).toBe(true);
+      // 待批准由快照推导，立即生效；副本行要等各自下一次 reconcile（2 秒一轮）才变：在那之前是 loaded 0.1.0，
+      // 之后是 pending（approval）0.2.0、仍在服务 0.1.0。两种都算「还在 v1」；等两边都报告了 v2 待批准再往下走，
+      // 不赌断言落在 reconcile 之前还是之后
+      await waitFor(
+        async () => servingOnBoth(await view("todo"), "0.1.0", "0.2.0"),
+        20_000,
+        "both replicas report v2 pending while serving v1",
+        100,
+      );
       const approvedAt = Date.now();
       await approve(0, "todo");
       await waitFor(() => loadedOnBoth("todo", "0.2.0"), 30_000, "todo v2 on both", 100);
@@ -425,6 +451,9 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   });
 
   it("3. 停用 todo：两个副本上都不可用；再启用：又可用", async () => {
+    // 起点：todo v2 已批准并在两边加载（第 2 条中途失败时补上批准，失败不连锁到这里和第 8 条）
+    if ((await view("todo")).status === "pending_approval") await approve(0, "todo");
+    await waitFor(() => loadedOnBoth("todo", "0.2.0"), 30_000, "todo v2 on both (start)", 100);
     await ok(0, "POST", "/api/v1/admin/plugins/todo/disable");
     await waitFor(() => unloadedOnBoth("todo"), 30_000, "todo unloaded on both", 100);
     expect(await orgPluginAvailable(0, "todo")).toBe(false);
