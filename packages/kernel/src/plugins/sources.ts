@@ -41,11 +41,20 @@ export class ReplicaStatusStore {
   /** 本进程写过行（停机时才需要删；没写过时不碰数据库，例如启动在迁移前就失败）。 */
   private wrote = false;
 
+  /**
+   * @param redact 写 `detail` 之前打码（内核传 logger 的 `redact`：报错信息里可能带着插件拼进去的密钥）。
+   */
   constructor(
     private readonly db: KernelDb,
     readonly replicaId: string,
     private readonly httpReplicaId?: string,
+    private readonly redact: (text: string) => string = (t) => t,
   ) {}
+
+  /** 打码后截断到 {@link MAX_DETAIL}。 */
+  private cleanDetail(detail: string): string {
+    return this.redact(detail).slice(0, MAX_DETAIL);
+  }
 
   /** 写入（覆盖）本副本该插件的一行，心跳取当前时间。 */
   async write(s: PluginLoadStatus): Promise<void> {
@@ -58,7 +67,7 @@ export class ReplicaStatusStore {
       source: s.source,
       state: s.state,
       reason: s.reason,
-      detail: s.detail === null ? null : s.detail.slice(0, MAX_DETAIL),
+      detail: s.detail === null ? null : this.cleanDetail(s.detail),
       http_replica_id: this.httpReplicaId ?? null,
       heartbeat_at: sql<Date>`now()` as unknown as Date,
     };
@@ -87,7 +96,7 @@ export class ReplicaStatusStore {
   async note(plugin: string, detail: string): Promise<void> {
     await this.db
       .updateTable("plugin_replica_status")
-      .set({ detail: detail.slice(0, MAX_DETAIL) })
+      .set({ detail: this.cleanDetail(detail) })
       .where("replica_id", "=", this.replicaId)
       .where("plugin", "=", plugin)
       .execute();

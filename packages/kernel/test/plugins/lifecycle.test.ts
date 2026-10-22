@@ -17,6 +17,7 @@ import { createLogger } from "../../src/log.js";
 import { PluginBlobs } from "../../src/plugins/blobs.js";
 import type { PluginInstance } from "../../src/plugins/instance.js";
 import { readPluginPackage } from "../../src/plugins/package.js";
+import { ReplicaStatusStore } from "../../src/plugins/sources.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
@@ -917,6 +918,38 @@ describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, ()
       await b?.stop();
       await a.stop();
       await db.deleteFrom("plugin_installs").where("name", "=", "twin").execute();
+    }
+  });
+});
+
+describe("副本状态行的 detail 写入前打码（M2）", () => {
+  it("write / note 的 detail 经 redact 处理", async () => {
+    const log = createLogger("error", { write: () => {} });
+    log.addSecrets(["sup3r-s3cret-token"]);
+    const store = new ReplicaStatusStore(db, "redact-test-replica", undefined, (t) =>
+      log.redact(t),
+    );
+    try {
+      await store.write({
+        plugin: "leaky",
+        version: "1.0.0",
+        sha256: null,
+        source: "config",
+        state: "failed",
+        reason: "setup_failed",
+        detail: "login with sup3r-s3cret-token failed",
+      });
+      const read = () =>
+        db
+          .selectFrom("plugin_replica_status")
+          .select("detail")
+          .where("replica_id", "=", "redact-test-replica")
+          .executeTakeFirstOrThrow();
+      expect((await read()).detail).toBe("login with [REDACTED] failed");
+      await store.note("leaky", "retry sup3r-s3cret-token later");
+      expect((await read()).detail).toBe("retry [REDACTED] later");
+    } finally {
+      await store.removeAll();
     }
   });
 });

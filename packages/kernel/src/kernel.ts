@@ -411,6 +411,7 @@ export async function createKernel(
     kernelDb(db),
     replicaId,
     config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
+    (text) => log.redact(text),
   );
   const host = new PluginHost(deps, config.pluginConfig, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
