@@ -513,11 +513,11 @@ export class CatalogsService {
 
   /**
    * 浏览条目（只含生效的来源）：按来源、种类过滤，`q` 按名字 / npm 包名 / 简介做子串匹配（不区分大小写）。
-   * 按种类、名字、来源排序，最多 {@link CATALOG_ENTRIES_MAX} 条。
+   * 按种类、名字、来源排序，最多 {@link CATALOG_ENTRIES_MAX} 条；`truncated` 表示还有更多（界面提示缩小范围）。
    */
   async entries(
     q: { sourceId?: string; kind?: PackageKind; q?: string } = {},
-  ): Promise<CatalogEntryView[]> {
+  ): Promise<{ items: CatalogEntryView[]; truncated: boolean }> {
     const config = this.d.config();
     let query = this.d.db
       .selectFrom("catalog_entries as e")
@@ -527,7 +527,7 @@ export class CatalogsService {
       .orderBy("e.kind")
       .orderBy("e.name")
       .orderBy("e.source_id")
-      .limit(CATALOG_ENTRIES_MAX);
+      .limit(CATALOG_ENTRIES_MAX + 1);
     if (!config.catalogs.official.enabled) query = query.where("s.builtin", "=", false);
     if (q.sourceId !== undefined) query = query.where("e.source_id", "=", q.sourceId);
     if (q.kind !== undefined) query = query.where("e.kind", "=", q.kind);
@@ -542,8 +542,10 @@ export class CatalogsService {
         ]),
       );
     }
-    const rows = await query.execute();
-    if (rows.length === 0) return [];
+    const fetched = await query.execute();
+    const truncated = fetched.length > CATALOG_ENTRIES_MAX;
+    const rows = truncated ? fetched.slice(0, CATALOG_ENTRIES_MAX) : fetched;
+    if (rows.length === 0) return { items: [], truncated: false };
     const items = await this.d.db
       .selectFrom("directory_items as i")
       .leftJoin("directory_item_versions as v", "v.item_id", "i.id")
@@ -558,7 +560,7 @@ export class CatalogsService {
       if (i.version !== null) a.versions.push(i.version);
       adoptedBy.set(key, a);
     }
-    return rows.map((r) => {
+    const views = rows.map((r): CatalogEntryView => {
       const e = r.entry as CatalogEntry;
       const compatible = new Set(compatibleVersions(e, HOST_VERSIONS).map((v) => v.version));
       const adopted = adoptedBy.get(`${r.kind} ${r.name} ${r.npm}`) ?? null;
@@ -580,6 +582,7 @@ export class CatalogsService {
         newerAvailable: top !== undefined && [...compatible].some((v) => semver.gt(v, top)),
       };
     });
+    return { items: views, truncated };
   }
 
   private async replaceEntries(trx: Trx, id: string, entries: CatalogEntry[]): Promise<void> {

@@ -498,3 +498,86 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
     }
   });
 });
+
+describe("条目详情与图标（安装向导、网页只以 <img> 显示）", { timeout: 60_000 }, () => {
+  it("图标经内核路由给出：svg 类型、nosniff、CSP sandbox；没有图标 404；成员看不到 disabled 的图标", async () => {
+    const itemId = await importTemplate(env);
+    for (const [req, url] of [
+      [env.mem, `/api/v1/orgs/${env.orgId}/directory/${itemId}/icon`],
+      [env.root, `/api/v1/admin/directory/items/${itemId}/icon`],
+    ] as const) {
+      const r = await req({ method: "GET", url });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.headers["content-type"]).toBe("image/svg+xml");
+      expect(r.headers["x-content-type-options"]).toBe("nosniff");
+      expect(r.headers["content-security-policy"]).toBe(
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      );
+      expect(r.body).toContain("<svg");
+    }
+    const skillId = await importSkill(env);
+    const none = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/directory/${skillId}/icon`,
+    });
+    expect(none.statusCode).toBe(404);
+    expect(none.json().error.code).toBe("directory.icon_not_found");
+    await setPolicy(env, itemId, "disabled");
+    const hidden = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/directory/${itemId}/icon`,
+    });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json().error.code).toBe("directory.item_not_found");
+    const admin = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/directory/${itemId}/icon`,
+    });
+    expect(admin.statusCode).toBe(200);
+  });
+
+  it("详情：连接器模板给出端点预设、可改路径与认证预设；应用给出模板、插件与技能", async () => {
+    const tplId = await importTemplate(env);
+    const r = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/directory/${tplId}`,
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    const tpl = mcpTemplate();
+    expect(r.json()).toMatchObject({
+      item: { id: tplId, kind: "connector-template", installable: "yes" },
+      hasIcon: true,
+      templates: [
+        {
+          id: "connector",
+          plugin: tpl.plugin,
+          connector: tpl.connector,
+          endpoint: tpl.endpoint,
+          editableEndpoint: tpl.editableEndpoint ?? [],
+          auth: tpl.auth,
+        },
+      ],
+      plugins: [],
+      skills: [],
+    });
+    expect(r.json().item).not.toHaveProperty("catalogSourceId");
+    const appId = await seedApp(env);
+    const a = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/directory/${appId}` });
+    expect(a.statusCode, a.body).toBe(200);
+    expect(a.json()).toMatchObject({
+      item: { id: appId, kind: "app" },
+      hasIcon: false,
+      templates: [{ id: "gh", displayName: { en: "GitHub" }, connector: "mcp" }],
+      plugins: [
+        { name: "todo", range: "^0.1.0", optional: false },
+        { name: "example-counter", range: "^0.1.0", optional: false },
+      ],
+      skills: ["skills/pdf-tools"],
+    });
+    const missing = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/directory/${randomUUID()}`,
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+});

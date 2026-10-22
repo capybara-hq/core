@@ -23,8 +23,11 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { roleAtLeast } from "../orgs/roles.js";
 import type { AppInstaller, AppInstallView, UninstallReport } from "./app-install.js";
 import type {
+  DirectoryIcon,
+  OrgDirectoryDetail,
   OrgDirectoryItem,
   OrgDirectoryService,
   OrgInstallResult,
@@ -72,6 +75,19 @@ const InstallBody = z
   })
   .strict();
 
+/**
+ * 条目图标的响应头：图标可能是 SVG（可含脚本），只许网页以 `<img>` 显示；直接打开时 CSP sandbox 禁止脚本与一切外部
+ * 请求，nosniff 防浏览器按内容另行判型。
+ */
+export async function sendDirectoryIcon(reply: FastifyReply, icon: DirectoryIcon): Promise<void> {
+  await reply
+    .header("content-type", icon.contentType)
+    .header("x-content-type-options", "nosniff")
+    .header("content-security-policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'")
+    .header("cache-control", "private, max-age=300")
+    .send(Buffer.from(icon.data.buffer, icon.data.byteOffset, icon.data.byteLength));
+}
+
 const DecideBody = z.object({ decision: z.enum(["approve", "reject"]) }).strict();
 
 const AdminListQuery = z.object({
@@ -104,6 +120,33 @@ export class OrgDirectoryController {
   ): Promise<{ items: OrgDirectoryItem[] }> {
     const p = requireUser(principal);
     return { items: await this.directory.list(org.orgId, p.account.id, q.kind) };
+  }
+
+  /** 条目详情与安装向导需要的内容（成员看不到 disabled，→ 404 `directory.item_not_found`）。 */
+  @Get("directory/:itemId")
+  @OrgAction("directory.read")
+  detail(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("itemId") itemId: string,
+  ): Promise<OrgDirectoryDetail> {
+    const p = requireUser(principal);
+    return this.directory.detail(org.orgId, p.account.id, itemId);
+  }
+
+  /**
+   * 条目图标（连接器模板 / 应用；svg 或 png），见 {@link sendDirectoryIcon}。没有图标 → 404
+   * `directory.icon_not_found`；成员看不到 disabled 的条目。
+   */
+  @Get("directory/:itemId/icon")
+  @OrgAction("directory.read")
+  async icon(
+    @CurrentOrg() org: OrgContext,
+    @Param("itemId") itemId: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const icon = await this.directory.icon(itemId, roleAtLeast(org.role, "admin"));
+    await sendDirectoryIcon(reply, icon);
   }
 
   @Post("directory/:itemId/requests")

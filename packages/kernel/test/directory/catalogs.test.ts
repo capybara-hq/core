@@ -18,6 +18,7 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { CATALOG_ENTRIES_MAX } from "../../src/directory/catalogs.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import {
@@ -615,5 +616,41 @@ describe("定期刷新（维护任务 catalogs-refresh）", () => {
       await maint.close();
       await worker.stop();
     }
+  }, 60_000);
+});
+
+describe("浏览条目的上限", () => {
+  beforeEach(resetAll);
+
+  it("超过 CATALOG_ENTRIES_MAX 条时只返回上限条数并标 truncated；没超过为 false", async () => {
+    const id = await addAcme();
+    const small = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalogs/entries?sourceId=${id}`,
+    });
+    expect(small.json()).toEqual({ items: [], truncated: false });
+    const rows = Array.from({ length: CATALOG_ENTRIES_MAX + 1 }, (_, i) => {
+      const e = entry(`bulk-${String(i).padStart(5, "0")}`, [ver(pkgs["cat-a"] as Uint8Array)]);
+      return {
+        source_id: id,
+        kind: "plugin" as const,
+        name: e.name,
+        npm: e.npm,
+        entry: JSON.stringify(e),
+      };
+    });
+    for (let i = 0; i < rows.length; i += 1000) {
+      await db
+        .insertInto("catalog_entries")
+        .values(rows.slice(i, i + 1000))
+        .execute();
+    }
+    const big = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalogs/entries?sourceId=${id}`,
+    });
+    expect(big.statusCode, big.body).toBe(200);
+    expect(big.json().truncated).toBe(true);
+    expect(big.json().items).toHaveLength(CATALOG_ENTRIES_MAX);
   }, 60_000);
 });

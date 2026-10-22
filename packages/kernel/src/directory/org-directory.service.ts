@@ -6,6 +6,7 @@ import {
   type ConnectorTemplateSpec,
   type LocalizedName,
   type PackageKind,
+  type PackageSection,
   parseAppManifest,
 } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
@@ -26,13 +27,14 @@ import type {
 } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import type { AppInstaller, AppInstallInput } from "./app-install.js";
+import { iconProblem } from "./archive.js";
 import { type DirectoryItemView, itemView } from "./directory.service.js";
 import type { DirectoryRequestsService, DirectoryRequestView } from "./requests.service.js";
 
 type Trx = Transaction<KernelDatabase>;
 
 /** 组织视角的目录条目（`GET /orgs/:orgId/directory`）。 */
-export interface OrgDirectoryItem extends Omit<DirectoryItemView, "installs"> {
+export interface OrgDirectoryItem extends Omit<DirectoryItemView, "installs" | "catalogSourceId"> {
   /**
    * `yes` 可直接安装；`needs_approval` 需企业管理员批准（安装返回 202 并建申请）；`granted` 已批准本组织安装；
    * `disabled` 企业管理员禁用（成员看不到）；`not_deployed` 依赖的插件没有装到部署上。
@@ -47,6 +49,98 @@ export interface OrgDirectoryItem extends Omit<DirectoryItemView, "installs"> {
   } | null;
   /** 本组织对该条目最新的一条申请。 */
   request: { id: string; stage: "org" | "deployment"; status: string } | null;
+}
+
+/**
+ * 条目详情里的一个连接器模板（安装向导用）：端点预设、组织可改的路径、认证预设（不含凭据）。连接器模板条目只有一个，
+ * id 为 `connector`（安装时放请求体的 `connector`）；应用里的模板 id 为 app.yaml 里的 id（放 `app.connectors[id]`）。
+ */
+export interface OrgDirectoryTemplate {
+  id: string;
+  displayName: LocalizedName | null;
+  description: string;
+  plugin: string;
+  connector: string;
+  endpoint: Record<string, unknown>;
+  editableEndpoint: string[];
+  auth: Record<string, unknown>;
+  ownership: "org" | "personal" | null;
+}
+
+/** `GET /orgs/:orgId/directory/:itemId`：条目与安装向导需要的内容（最新版本）。 */
+export interface OrgDirectoryDetail {
+  item: OrgDirectoryItem;
+  /** 有图标（`GET .../icon` 可取）。 */
+  hasIcon: boolean;
+  templates: OrgDirectoryTemplate[];
+  /** 应用里的插件（其他种类为空）。 */
+  plugins: { name: string; range: string; optional: boolean }[];
+  /** 应用里的技能目录（其他种类为空）。 */
+  skills: string[];
+}
+
+/** 条目图标（最新版本的连接器模板 / 应用图标）。 */
+export interface DirectoryIcon {
+  data: Uint8Array;
+  contentType: "image/svg+xml" | "image/png";
+  policy: "allow" | "needs_approval" | "disabled";
+}
+
+const iconNotFound = () =>
+  new ApiError("directory.icon_not_found", "This directory item has no icon");
+
+/** 版本的图标在包内的路径（连接器模板读段，应用读 app.yaml）；没有图标为 undefined。 */
+async function iconPath(
+  storage: StorageService,
+  v: {
+    section: unknown;
+    object_prefix: string | null;
+    files: { path: string; size: number; sha256: string }[];
+  },
+): Promise<string | undefined> {
+  const section = v.section as PackageSection;
+  if (section.kind === "connector-template") return section.template.icon;
+  if (section.kind === "app") return (await readAppManifest(storage, v)).icon;
+  return undefined;
+}
+
+/**
+ * 读条目最新版本的图标（只经内核路由给出，响应头带 nosniff 与 CSP sandbox，网页只用 `<img>` 显示）。
+ * 条目不存在或已删除 → `directory.item_not_found`；没有图标 → `directory.icon_not_found`；
+ * 存储里的内容不是合法的 svg / png（导入时已校验，防存储被改）→ `internal`。
+ */
+export async function readDirectoryIcon(
+  db: KernelDb,
+  storage: StorageService,
+  itemId: string,
+): Promise<DirectoryIcon> {
+  if (!UUID_RE.test(itemId)) throw itemNotFound();
+  const item = await db
+    .selectFrom("directory_items")
+    .select(["latest_version", "policy"])
+    .where("id", "=", itemId)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  if (!item) throw itemNotFound();
+  const v = await db
+    .selectFrom("directory_item_versions")
+    .select(["section", "object_prefix", "files"])
+    .where("item_id", "=", itemId)
+    .where("version", "=", item.latest_version)
+    .executeTakeFirst();
+  if (!v) throw itemNotFound();
+  const path = await iconPath(storage, v);
+  const f = path === undefined ? undefined : v.files.find((x) => x.path === path);
+  if (path === undefined || !f) throw iconNotFound();
+  const [file] = await readDirectoryFiles(storage, v.object_prefix, [f]);
+  if (!file) throw iconNotFound();
+  const problem = iconProblem(path, file.data);
+  if (problem !== undefined) throw new ApiError("internal", `Stored icon is invalid: ${problem}`);
+  return {
+    data: file.data,
+    contentType: /\.svg$/i.test(path) ? "image/svg+xml" : "image/png",
+    policy: item.policy,
+  };
 }
 
 /** 安装连接器模板时组织能填的部分（C30）。 */
@@ -357,7 +451,7 @@ export class OrgDirectoryService {
     const out: OrgDirectoryItem[] = [];
     for (const i of items) {
       const vs = versions.filter((v) => v.item_id === i.id);
-      const { installs: _installs, ...view } = itemView(i, vs);
+      const { installs: _installs, catalogSourceId: _source, ...view } = itemView(i, vs);
       const latest = vs.find((v) => v.version === i.latest_version);
       let installable: OrgDirectoryItem["installable"];
       if (i.policy === "disabled") installable = "disabled";
@@ -383,6 +477,75 @@ export class OrgDirectoryService {
       out.push({ ...view, installable, installed, request: requests.get(i.id) ?? null });
     }
     return out;
+  }
+
+  /**
+   * 条目详情（安装向导用）：与列表同一份视图（成员看不到 disabled，看不到即 `directory.item_not_found`），另给出最新
+   * 版本的连接器模板（端点预设、可改路径、认证预设）、应用的插件与技能。
+   */
+  async detail(orgId: string, accountId: string, itemId: string): Promise<OrgDirectoryDetail> {
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    const item = (await this.list(orgId, accountId)).find((i) => i.id === itemId);
+    if (!item) throw itemNotFound();
+    const v = await this.d.db
+      .selectFrom("directory_item_versions")
+      .select(["section", "object_prefix", "files"])
+      .where("item_id", "=", itemId)
+      .where("version", "=", item.latestVersion)
+      .executeTakeFirst();
+    if (!v) throw itemNotFound();
+    const section = v.section as PackageSection;
+    const tpl = (
+      id: string,
+      t: ConnectorTemplateSpec,
+      displayName: LocalizedName | null,
+      description: string,
+    ): OrgDirectoryTemplate => ({
+      id,
+      displayName,
+      description,
+      plugin: t.plugin,
+      connector: t.connector,
+      endpoint: t.endpoint,
+      editableEndpoint: t.editableEndpoint ?? [],
+      auth: t.auth,
+      ownership:
+        t.ownership ??
+        (typeof t.auth.ownership === "string" ? (t.auth.ownership as "org" | "personal") : null),
+    });
+    const out: OrgDirectoryDetail = {
+      item,
+      hasIcon: false,
+      templates: [],
+      plugins: [],
+      skills: [],
+    };
+    if (section.kind === "connector-template") {
+      out.hasIcon = section.template.icon !== undefined;
+      out.templates = [
+        tpl("connector", section.template, section.displayName ?? null, section.description),
+      ];
+    } else if (section.kind === "app") {
+      const m = await readAppManifest(this.d.storage, v);
+      out.hasIcon = m.icon !== undefined;
+      out.templates = m.connectorTemplates.map((t) =>
+        tpl(t.id, t.template, t.displayName, t.description ?? ""),
+      );
+      out.plugins = m.plugins.map((p) => ({
+        name: p.name,
+        range: p.version,
+        optional: p.optional === true,
+      }));
+      out.skills = m.skills.map((s) => s.path);
+    }
+    return out;
+  }
+
+  /** 条目图标；成员看不到 disabled 的条目（→ `directory.item_not_found`）。 */
+  async icon(itemId: string, isAdmin: boolean): Promise<DirectoryIcon> {
+    const icon = await readDirectoryIcon(this.d.db, this.d.storage, itemId);
+    if (!isAdmin && icon.policy === "disabled") throw itemNotFound();
+    return icon;
   }
 
   /**

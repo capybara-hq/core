@@ -55,6 +55,8 @@ export interface DirectoryItemView {
   installs: number;
   /** 最新版本的来源（file / npm / catalog）。 */
   source: string;
+  /** 从清单引入的条目记下的来源清单 id（`official` 或企业清单 id）；手动导入或来源清单已删除为 null。 */
+  catalogSourceId: string | null;
   updatedAt: string;
 }
 
@@ -1023,6 +1025,7 @@ export function itemView(
     description: string;
     policy: DirectoryPolicy;
     latest_version: string;
+    catalog_source_id?: string | null;
     updated_at: Date;
   },
   versions: { version: string; source: string }[],
@@ -1041,6 +1044,7 @@ export function itemView(
     versions: sorted.map((v) => v.version),
     installs,
     source: versions.find((v) => v.version === i.latest_version)?.source ?? "file",
+    catalogSourceId: i.catalog_source_id ?? null,
     updatedAt: i.updated_at.toISOString(),
   };
 }

@@ -110,18 +110,16 @@ export class CatalogsController {
     );
   }
 
-  /** 浏览条目（只含生效的来源）。 */
+  /** 浏览条目（只含生效的来源；最多 `CATALOG_ENTRIES_MAX` 条，`truncated` 为 true 表示还有更多）。 */
   @Get("entries")
-  async entries(
+  entries(
     @Query(new ZodPipe(EntriesQuery)) q: z.infer<typeof EntriesQuery>,
-  ): Promise<{ items: CatalogEntryView[] }> {
-    return {
-      items: await this.catalogs.entries({
-        ...(q.sourceId !== undefined && { sourceId: q.sourceId }),
-        ...(q.kind !== undefined && { kind: q.kind }),
-        ...(q.q !== undefined && { q: q.q }),
-      }),
-    };
+  ): Promise<{ items: CatalogEntryView[]; truncated: boolean }> {
+    return this.catalogs.entries({
+      ...(q.sourceId !== undefined && { sourceId: q.sourceId }),
+      ...(q.kind !== undefined && { kind: q.kind }),
+      ...(q.q !== undefined && { q: q.q }),
+    });
   }
 
   /** 改来源（official 只能改 `enabled`，其余 → 409 `catalog.builtin`；`token: null` 清除令牌）。 */

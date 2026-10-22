@@ -11,10 +11,12 @@ import {
   Put,
   Query,
   Req,
+  Res,
 } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { APP_IMPORT, DIRECTORY } from "../http/tokens.js";
+import { APP_IMPORT, DIRECTORY, ORG_DIRECTORY } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -32,6 +34,8 @@ import {
   type DirectoryItemView,
   type DirectoryService,
 } from "./directory.service.js";
+import { sendDirectoryIcon } from "./org-directory.controller.js";
+import type { OrgDirectoryService } from "./org-directory.service.js";
 
 const NpmBody = z.object({
   package: z.string().min(1).max(214),
@@ -69,6 +73,7 @@ export class AdminDirectoryController {
   constructor(
     @Inject(DIRECTORY) private readonly directory: DirectoryService,
     @Inject(APP_IMPORT) private readonly apps: AppImport,
+    @Inject(ORG_DIRECTORY) private readonly orgDirectory: OrgDirectoryService,
   ) {}
 
   /**
@@ -196,6 +201,12 @@ export class AdminDirectoryController {
   @Get("items/:id")
   get(@Param("id") id: string): Promise<DirectoryItemDetail> {
     return this.directory.get(id);
+  }
+
+  /** 条目图标（含 disabled 的条目；响应头同组织侧，见 `sendDirectoryIcon`）。没有图标 → 404 `directory.icon_not_found`。 */
+  @Get("items/:id/icon")
+  async icon(@Param("id") id: string, @Res() reply: FastifyReply): Promise<void> {
+    await sendDirectoryIcon(reply, await this.orgDirectory.icon(id, true));
   }
 
   /** 改策略（allow / needs_approval / disabled）。 */

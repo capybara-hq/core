@@ -70,6 +70,7 @@ export const ERROR_CODES = {
   "directory.request_decided": 409,
   "directory.custom_disabled": 403,
   "directory.not_deployed": 409,
+  "directory.icon_not_found": 404,
   "catalog.not_found": 404,
   "catalog.entry_not_found": 404,
   "catalog.fetch_failed": 502,
