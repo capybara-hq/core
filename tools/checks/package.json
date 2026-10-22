@@ -16,6 +16,8 @@
   "devDependencies": {
     "@capybara-hq/design": "workspace:*",
     "@capybara-hq/kernel": "workspace:*",
+    "@capybara-hq/pack-plugin": "workspace:*",
+    "@capybara-hq/plugin-sdk": "workspace:*",
     "zod": "^4.6.7"
   }
 }

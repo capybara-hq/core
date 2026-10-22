@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
-import type { PluginManifest } from "@capybara-hq/plugin-sdk";
+import type { PluginManifest, PluginPermissions } from "@capybara-hq/plugin-sdk";
 import type { core } from "zod";
 import { configFields } from "../config/fields.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
@@ -111,16 +111,42 @@ export async function computePermissionSet(
       );
     }
   }
-  const p = manifest.permissions ?? {};
-  return {
-    provides: sortedUnique(manifest.provides),
-    requires: sortedUnique(manifest.requires),
-    optional: sortedUnique(manifest.optional),
+  return buildPermissionSet({
+    provides: manifest.provides,
+    requires: manifest.requires,
+    optional: manifest.optional,
     config: {
       deployment: fieldsOf(manifest.config?.deployment),
       org: fieldsOf(manifest.config?.org),
     },
-    tables: sortedUnique(tables),
+    tables,
+    permissions: manifest.permissions,
+  });
+}
+
+/**
+ * 由已提取的各项拼出规范化的权限集合（排序去重）：{@link computePermissionSet}（真实模块）与
+ * 插件包的 `permissionSetOfPackage`（静态 manifest + 迁移 SQL）共用，保证两边同形。
+ */
+export function buildPermissionSet(input: {
+  provides: readonly string[];
+  requires?: readonly string[] | undefined;
+  optional?: readonly string[] | undefined;
+  config: { deployment: PermissionConfigField[]; org: PermissionConfigField[] };
+  tables: readonly string[];
+  permissions?: PluginPermissions | undefined;
+}): PermissionSet {
+  const p = input.permissions ?? {};
+  const byPath = (a: PermissionConfigField, b: PermissionConfigField) => cmp(a.path, b.path);
+  return {
+    provides: sortedUnique(input.provides),
+    requires: sortedUnique(input.requires),
+    optional: sortedUnique(input.optional),
+    config: {
+      deployment: [...input.config.deployment].sort(byPath),
+      org: [...input.config.org].sort(byPath),
+    },
+    tables: sortedUnique(input.tables),
     permissions: {
       secrets: p.secrets === true,
       storage: p.storage === true,

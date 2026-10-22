@@ -53,6 +53,9 @@
       "path": "plugins/sandbox-e2b"
     },
     {
+      "path": "tools/pack-plugin"
+    },
+    {
       "path": "tools/checks"
     },
     {

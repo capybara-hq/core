@@ -75,6 +75,15 @@ export {
 } from "./plugins/approvals.js";
 export { assertSecretsReachable, type InspectedPlugin, PluginHost } from "./plugins/host.js";
 export {
+  extractPluginPackage,
+  PLUGIN_PACKAGE_LIMITS,
+  type PluginPackage,
+  PluginPackageError,
+  permissionSetOfPackage,
+  type ReadPluginPackageOptions,
+  readPluginPackage,
+} from "./plugins/package.js";
+export {
   blockingKeys,
   computePermissionSet,
   diffPermissions,

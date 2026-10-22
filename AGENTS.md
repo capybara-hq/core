@@ -34,7 +34,8 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - `@capybara-hq/capybara`（CLI）-> `@capybara-hq/kernel`
 - `@capybara-hq/design` 不依赖任何 `@capybara-hq/*`
 - `@capybara-hq/web` 只依赖 `@capybara-hq/design`，不依赖内核等其他包，只经 HTTP 调内核（属于「外部应用」层）
-- `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档）；`tools/checks` -> `@capybara-hq/design`（devDependency，仅测试用，核对模板清单）
+- `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档、校验插件包）；`tools/checks` -> `@capybara-hq/design`（devDependency，仅测试用，核对模板清单）；`tools/checks` -> `@capybara-hq/pack-plugin`、`@capybara-hq/plugin-sdk`（devDependency，`check:plugin-pack` 打包官方插件）
+- `@capybara-hq/pack-plugin`（`tools/pack-plugin`，私有）-> `@capybara-hq/plugin-sdk`（测试另用 devDependency `@capybara-hq/kernel` 校验产物）
 - `@capybara-hq/plugin-sdk` 不依赖任何 `@capybara-hq/*`
 
 内核、CLI 与插件的测试把 `@capybara-hq/testing` 作为 devDependency，只在测试里用。`pnpm check:deps` 只检查插件与 SDK 的边界；内核、CLI、web 的依赖方向暂无自动检查，靠评审。
@@ -54,7 +55,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 配置：环境变量前缀 `CAPYBARA_`，嵌套用双下划线（`CAPYBARA_DB__URL` -> `db.url`），环境变量优先级最高；来源由 `CAPYBARA_CONFIG_SOURCE`（`file` / `nacos`）选择。详见 [skills/adding-config](skills/adding-config/SKILL.md)。
 - 国际化：给模型看的文案（提示词、工具描述、模型可见的错误）一律英文；界面文案走 i18n。
 - 界面：页面 = 模板 + design 组件，apps/web 不写样式（无 className / style / .css / 颜色字面量），详见 [skills/writing-web-ui](skills/writing-web-ui/SKILL.md)；规则由 `pnpm check:web-ui` 检查。
-- 插件开发：详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，参考实现 `plugins/example-counter`。
+- 插件开发：详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，参考实现 `plugins/example-counter`。插件包 = npm-pack tgz（`pnpm pack-plugin` / `pack-plugins`，单文件 ESM、只有 SDK 与 zod 由宿主提供、动态 import 只许字面量），校验见 `packages/kernel/src/plugins/package.ts`。
 - 内核 HTTP 用 NestJS + Fastify：领域类不依赖 Nest，构造参数显式 `@Inject`；插件不依赖 Nest。详见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
 - 运行时：会话事件日志是唯一事实源，模型看到的一切都进日志（任一次模型请求都能由日志加 agent 版本还原），发给模型的历史只追加。代码在 `packages/kernel/src/runtime`。
 - 模型供应商插件（含媒体块 image / document：能力声明把关、上限与占位都在内核，插件收不到 `ref`）：详见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。

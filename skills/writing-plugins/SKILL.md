@@ -224,6 +224,16 @@ it("交替请求两个副本，结果一致", async () => {
 
 要点：`h.request` 的返回值带 `replica`（0 / 1，取自响应头 `x-capybara-replica`，harness 给每个副本设了 `http.replicaId`）；按 `h.replicas[i].port` 直接 `fetch` 指定副本时用 `replicaOf(res)` 确认落点（如 SSE 长连接）。`h.kill(i)` 对副本 i 发 SIGKILL 模拟硬崩溃（之后经 `h.request` 发往它的请求抛错），用来测「另一个副本接手」。`config` 选项可把额外的内核配置深合并进两个副本（如 `config: { auth: { cookieSecure: false } }`，经 IPC 传递）；每个 harness 自带一个 Redis 容器，用完 `stop()`；传入 `pgUrl`（管理员连接串）可让多个 harness 复用同一个 PG 容器；队列任务异步执行，断言时轮询等到期望值，不要只 `sleep` 固定时长；测试文件放在插件根的 `test/` 目录（`pnpm test` 会收集）。
 
+## 插件包（npm-pack tgz）
+
+插件在核心镜像之外，按插件包安装（C11）。`pnpm pack-plugin plugins/<name> [--out <dir>]` 打一个，`pnpm pack-plugins` 打全部（默认输出 `artifacts/plugins/`，CI 作为构建产物上传）；`pnpm check` 里的「插件打包」（`check:plugin-pack`）要求每个官方插件都能打成并通过内核校验。写插件时注意：
+
+- esbuild 把 `src/index.ts` 打成单文件 ESM `dist/index.mjs`，三方依赖全部打进去；只有 `@capybara-hq/plugin-sdk` 与 `zod`（含子路径）由宿主提供，Node 内置模块一律改写成 `node:*`。打不进去的依赖（没装、原生模块 `*.node`）就是打包失败。
+- **动态 `import()` 只许字面量**；`import(变量)` 打包和安装都会拒绝。
+- 清单 `version` 必须等于插件 `package.json` 的 `version`；声明了 `migrations` 时它必须解析到插件根的 `migrations/`（如 `"../migrations"`），包里记为 `capybara.migrations: "migrations"`；插件根有 `ui/` 时原样带上。
+- `package.json` 的 `capybara.manifest` 是 `staticManifestOf(清单)` 的结果：审阅只看它与迁移 SQL，不执行插件代码；加载时再与真实模块核对，不一致即 `manifest_mismatch`。所以清单（权限、配置字段的 secret / hot）不能依赖运行时环境。
+- 生成的包不带安装脚本、`dependencies`、`node_modules/`；安装时内核按 `readPluginPackage` 的规则拒绝这些（以及路径越界、链接、超大包）。
+
 ## 新插件清单
 
 1. 复制 `plugins/example-counter`，改包名 `@capybara-hq/plugin-<name>`、`name`、PG 表。
