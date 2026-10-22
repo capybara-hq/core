@@ -152,6 +152,13 @@ describe("readSandboxLimitOverride", () => {
     await setOverrides({ [orgId]: { cpu: 1000 } });
     expect(await readSandboxLimitOverride(db, orgId)).toBeUndefined();
   });
+
+  it("逐条解析：别的组织的存量值非法不影响本组织的覆盖", async () => {
+    await setOverrides({ broken: { cpu: "lots" }, [orgId]: { cpu: 2 } });
+    expect(await readSandboxLimitOverride(db, orgId)).toEqual({ cpu: 2 });
+    await setOverrides({ [orgId]: "nope" });
+    expect(await readSandboxLimitOverride(db, orgId)).toBeUndefined();
+  });
 });
 
 describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {

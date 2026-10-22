@@ -16,3 +16,4 @@
 - 副本状态行的 `detail` 写入 PG 前按 logger 已登记的密钥打码（`KernelLogger.redact`）。
 - 插件包上传路由在读请求体之前（`onRequest`）认证企业管理员：未登录 / 非企业管理员的超大请求体返回 401 / 403，不再读进内存；其余内核路由收到 `application/octet-stream` 一律 415。
 - 部署配置读取只并入当前 schema 里是密钥的字段的密钥（旧版本留下、已不是密钥或已删掉的字段不解密、不并入）；`readStoredDeploymentConfig` 新增必填选项 `secretPaths`。
+- 读组织的沙箱限额覆盖时只解析该组织那一条：别的组织存量值非法不再连带丢掉全部覆盖。
