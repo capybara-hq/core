@@ -817,7 +817,7 @@
       "next": "Next",
       "previous": "Previous",
       "install": "Install",
-      "openApp": "Open connector",
+      "openConnector": "Open connector",
       "typeTitle": "Choose the endpoint type",
       "connector": {
         "mcp": "MCP server",

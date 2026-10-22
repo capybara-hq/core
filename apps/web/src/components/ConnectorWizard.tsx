@@ -432,7 +432,11 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
     operations.length > 0 &&
     selectedOps.size === 0;
   const primaryLabel =
-    step === TOOLS ? t("wizard.install") : step === DONE ? t("wizard.openApp") : t("wizard.next");
+    step === TOOLS
+      ? t("wizard.install")
+      : step === DONE
+        ? t("wizard.openConnector")
+        : t("wizard.next");
   const actionRow: ActionRowProps = {
     errors: Object.keys(fieldErrors).length,
     ...(step !== DONE

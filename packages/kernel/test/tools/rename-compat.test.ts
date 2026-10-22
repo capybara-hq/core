@@ -13,7 +13,13 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
-import { type CaseSnapshot, replayableCalls, toEvents } from "../../src/evals/snapshot.js";
+import { caseBase } from "../../src/evals/runs.service.js";
+import {
+  type CaseSnapshot,
+  readSnapshot,
+  replayableCalls,
+  toEvents,
+} from "../../src/evals/snapshot.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -214,5 +220,31 @@ describe("改名后的路由与旧 agent 版本", () => {
     expect(results.map((e) => e.payload)).toMatchObject([
       { toolKey: "kb__search", content: "hits for x", isError: false },
     ]);
+  }, 60_000);
+
+  it("改名前的评测快照：readSnapshot + caseBase 交给实时注册表，连接器工具都在（没有 app:undefined）", async () => {
+    const docs = await install("fx_docs");
+    const priv = await install("fx_priv");
+    // 夹具定义引用的是录制库里的连接器 id：换成本库的 id，保持旧形 {kind:"app", appId}
+    const raw = structuredClone(fixture.snapshot) as unknown as {
+      definitions: Record<string, { tools: { kind: string; appId?: string }[] }>;
+    };
+    const def = raw.definitions[String(fixture.snapshot.agentVersion)];
+    expect(def?.tools.map((t) => t.kind)).toEqual(["app", "app"]);
+    const ids: string[] = [docs, priv];
+    def?.tools.forEach((t, i) => {
+      t.appId = ids[i] as string;
+    });
+    const snap = readSnapshot(raw);
+    const base = await caseBase(db, snap);
+    expect(base?.definition.tools).toEqual([
+      { kind: "connector", connectorId: docs, tools: "all" },
+      { kind: "connector", connectorId: priv, tools: ["search"] },
+    ]);
+    const resolved = await k.tools.registry.forAgent(orgId, base?.definition ?? { tools: [] });
+    const keys = resolved.tools.map((t) => t.key);
+    expect(keys).toEqual(expect.arrayContaining(["fx_docs__search", "fx_priv__search"]));
+    expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");
+    expect(resolved.unavailable).toEqual([]);
   }, 60_000);
 });

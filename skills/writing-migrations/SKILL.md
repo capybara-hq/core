@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS events (
 | 尽量不用 `DO` 块 | 其内部语句无法静态审查；能拆成普通幂等语句就拆。确需时（如 `RENAME COLUMN` 没有 `IF EXISTS`，要放进 `IF EXISTS (SELECT … information_schema.columns …) THEN … END IF` 才幂等），在 `DO` 行**正上方**写豁免注释，见下 | `do-block` |
 | 破坏性语句要豁免 | 见下 | `destructive` |
 
-破坏性语句 = 删列、`DROP TABLE` / `DROP SCHEMA`、`TRUNCATE`、`DELETE FROM`、含 `RENAME`、改列类型（`ALTER COLUMN ... TYPE`）。检查也扫描 `DO $$ … $$` 块体：块体里有这些语句、而 `DO` 行上方没有豁免注释时，除 `do-block` 外另报 `destructive`。写在 `$$` 里面的注释不算。
+破坏性语句 = 删列、`DROP TABLE` / `DROP SCHEMA`、`TRUNCATE`、`DELETE FROM`、含 `RENAME`、改列类型（`ALTER COLUMN ... TYPE`）。检查也扫描 `DO $$ … $$` 块体：块体里有这些语句、而 `DO` 行上方没有豁免注释时，除 `do-block` 外另报 `destructive`。写在 `$$` 里面的注释不算。块体里用 `EXECUTE` 拼出来的语句检查看不见，所以带豁免注释的 `DO` 块不论块体是否被识别为破坏性，原因都必填。
 
 ```sql
 -- capybara:allow-destructive 表改名；同一发布内代码同步改名（项目未发布，无兼容层）

@@ -9,7 +9,13 @@ import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { recountCases, skipPendingJudges } from "./budget.js";
 import { casePlans } from "./plan.js";
 import { caseBase } from "./runs.service.js";
-import { type CaseSnapshot, replayableCalls, takeSnapshot, toEvents } from "./snapshot.js";
+import {
+  type CaseSnapshot,
+  readSnapshot,
+  replayableCalls,
+  takeSnapshot,
+  toEvents,
+} from "./snapshot.js";
 import { buildTrajectory, type TrajectoryRun } from "./trajectory.js";
 
 export interface EvalSetView {
@@ -602,7 +608,7 @@ export class EvalSetsService {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!row) throw caseNotFound();
-    const snapshot = row.snapshot as CaseSnapshot;
+    const snapshot = readSnapshot(row.snapshot);
     const [table, settings] = await Promise.all([this.prices.table(), this.settings.get()]);
     await audit(this.db, {
       actorAccountId: actor,

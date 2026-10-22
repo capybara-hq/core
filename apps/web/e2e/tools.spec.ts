@@ -46,7 +46,7 @@ async function installMcp(page: Page, name: string, slug: string, url: string) {
   await expect(page.getByRole("table", { name: w.toolsTitle })).toBeVisible();
   await actionRow(page).getByRole("button", { name: w.install }).click();
   await expect(page.getByText(w.doneTitle.replace("{name}", name))).toBeVisible();
-  await actionRow(page).getByRole("button", { name: w.openApp }).click();
+  await actionRow(page).getByRole("button", { name: w.openConnector }).click();
   await expect(page).toHaveURL(/\/zh\/connectors\/[^/]+$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
 }
@@ -243,7 +243,7 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   }
   await actionRow(page).getByRole("button", { name: w.install }).click();
   await expect(page.getByText(w.doneTitle.replace("{name}", "Pets"))).toBeVisible();
-  await actionRow(page).getByRole("button", { name: w.openApp }).click();
+  await actionRow(page).getByRole("button", { name: w.openConnector }).click();
   await expect(page).toHaveURL(/\/zh\/connectors\/[^/]+$/);
   await expect(
     page.getByRole("combobox", {

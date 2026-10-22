@@ -83,6 +83,13 @@ describe("checkMigrations", () => {
       rules("DO $$\n-- capybara:allow-destructive 原因\nBEGIN ALTER TABLE t RENAME TO u; END $$;"),
     ).toEqual(["do-block", "destructive"]);
     expect(rules("DO $$ BEGIN PERFORM 1; END $$;")).toEqual(["do-block"]);
+    // 动态 EXECUTE 藏住了 RENAME：带豁免注释的 DO 块不论块体是否被识别为破坏性，原因都必填
+    expect(rules("-- capybara:allow-destructive\nDO $$ BEGIN PERFORM 1; END $$;")).toEqual([
+      "destructive",
+    ]);
+    const f = checkMigrations([fixture("do-block-empty-reason")]);
+    expect(f.map((x) => [x.rule, x.line])).toEqual([["destructive", 2]]);
+    expect(f[0]?.message).toContain("原因");
     expect(rules("DO $tag$ BEGIN ALTER TABLE t DROP COLUMN x; END $tag$;")).toEqual([
       "do-block",
       "destructive",

@@ -40,7 +40,7 @@ import {
   evalJobId,
   versionDefinition,
 } from "./runs.service.js";
-import { type CaseSnapshot, replayableCalls } from "./snapshot.js";
+import { type CaseSnapshot, readSnapshot, replayableCalls } from "./snapshot.js";
 import {
   ReplayAttemptError,
   replayStep,
@@ -386,7 +386,7 @@ export class EvalWorker {
     ]);
     if (!row || !run) return;
     const grade: Grading = { judge: run.judge, rubric: run.rubric };
-    const s = row.snapshot as CaseSnapshot;
+    const s = readSnapshot(row.snapshot);
     const candidate = run.candidate as EvalCandidate;
     // 未结束的结果，以及已 done 但评委还没做的（上一次执行在评委之前崩溃 / 停机）
     const pending = await db

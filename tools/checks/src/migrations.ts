@@ -66,7 +66,11 @@ export function checkSql(file: string, source: string): Finding[] {
       }
     }
 
-    if (dropsColumn || isDestructiveSql(t) || (isDo && st.bodies.some(isDestructiveBody))) {
+    if (
+      dropsColumn ||
+      isDestructiveSql(t) ||
+      (isDo && (allow !== null || st.bodies.some(isDestructiveBody)))
+    ) {
       if (!allow) add(st.line, "destructive", MSG_DESTRUCTIVE);
       else if (!allow[1]) add(st.line, "destructive", MSG_REASON);
     }

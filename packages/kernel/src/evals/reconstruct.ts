@@ -4,7 +4,11 @@ import {
   type ParamValue,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
-import { type AgentDefinition, AgentDefinitionSchema } from "../agents/definition.js";
+import {
+  type AgentDefinition,
+  AgentDefinitionSchema,
+  normalizeStoredDefinition,
+} from "../agents/definition.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { ApiError } from "../errors.js";
 import {
@@ -150,7 +154,8 @@ export function reconstructRequest(
   const version = opts.agentVersion ?? origVersion;
   const baseline =
     opts.definition === undefined && opts.params === undefined && version === origVersion;
-  let agent = opts.definition ?? s.definitions[String(version)];
+  const stored = s.definitions[String(version)];
+  let agent = opts.definition ?? (stored && normalizeStoredDefinition(stored));
   if (agent === undefined) {
     drift.add("definition_missing");
     agent = AgentDefinitionSchema.parse({

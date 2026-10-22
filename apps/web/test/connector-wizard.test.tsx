@@ -181,7 +181,7 @@ describe("安装向导（WizardPage）", () => {
       expect(currentStep()).toBe(w.steps.done);
       // 视图里至多一个主操作
       expect(container.querySelectorAll('[data-variant="primary"]').length).toBeLessThanOrEqual(1);
-      await clickAction(user, locale, w.openApp);
+      await clickAction(user, locale, w.openConnector);
       expect(router.push).toHaveBeenCalledWith("/connectors/app1");
     },
   );

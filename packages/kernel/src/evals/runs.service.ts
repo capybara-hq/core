@@ -215,7 +215,10 @@ export async function caseBase(
   s: CaseSnapshot,
 ): Promise<{ definition: AgentDefinition; agentVersion: number } | null> {
   const fromSnap = s.definitions[String(s.agentVersion)];
-  if (fromSnap) return { definition: fromSnap, agentVersion: s.agentVersion };
+  if (fromSnap) {
+    // 调用方一般已经过 readSnapshot；这里再规范化一次（幂等），不依赖调用方
+    return { definition: normalizeStoredDefinition(fromSnap), agentVersion: s.agentVersion };
+  }
   const row = await db
     .selectFrom("agent_versions")
     .select("definition")

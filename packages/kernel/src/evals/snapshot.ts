@@ -166,6 +166,19 @@ export async function takeSnapshot(
   return snapshot;
 }
 
+/**
+ * 读出库里存的快照（`eval_cases.snapshot`）：把各版本定义里改名前（D17）的 `{ kind: "app" }` 工具引用规范化为
+ * connector 形（C27）。整轮回放会把定义交给实时注册表，不规范化的话连接器工具全部失效。其余字段原样。
+ */
+export function readSnapshot(raw: unknown): CaseSnapshot {
+  const s = raw as CaseSnapshot;
+  const definitions: Record<string, AgentDefinition> = {};
+  for (const [v, d] of Object.entries(s.definitions ?? {})) {
+    definitions[v] = normalizeStoredDefinition(d);
+  }
+  return { ...s, definitions };
+}
+
 /** 快照事件还原为日志事件（`createdAt` 转回 Date）。 */
 export function toEvents(s: CaseSnapshot): ConversationEvent[] {
   return s.events.map(
