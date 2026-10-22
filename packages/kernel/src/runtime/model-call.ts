@@ -19,9 +19,9 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { PluginUnloadedError } from "../plugins/inflight.js";
 import { skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
-import { PluginUnloadedError } from "../plugins/inflight.js";
 import { recordToolSpecs } from "../tools/specs.js";
 import {
   type BuildModelRequestInput,

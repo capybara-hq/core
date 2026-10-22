@@ -591,7 +591,10 @@ export class PluginHost {
   /** 安装记录准备好的候选（按插件名；sha 变了就作废）。 */
   private readonly prepared = new Map<string, InstallCandidate>();
   /** 闸门放行后导入过的安装记录真实清单（按插件名；部署配置 schema 用，含待配置而未加载的）。 */
-  private readonly importedManifests = new Map<string, { sha256: string; manifest: PluginManifest }>();
+  private readonly importedManifests = new Map<
+    string,
+    { sha256: string; manifest: PluginManifest }
+  >();
   /** 本副本写过状态行的安装记录插件（停用 / 卸载后把未加载的那行标为 unloaded）。 */
   private readonly installRows = new Map<string, { version: string; sha256: string }>();
   /** 启用的安装记录按静态清单声明提供的能力（最近一次 {@link applyInstalls}；待定插件的 blockedBy 用）。 */
@@ -810,9 +813,12 @@ export class PluginHost {
     for (const e of entries) {
       const pkg = await packageNameOf(e.dir);
       if (pkg === undefined) {
-        this.deps.log.warn("plugin module has no package.json name; its plugin name is not claimed", {
-          plugin: e.manifest.name,
-        });
+        this.deps.log.warn(
+          "plugin module has no package.json name; its plugin name is not claimed",
+          {
+            plugin: e.manifest.name,
+          },
+        );
         continue;
       }
       rows.push({ name: e.manifest.name, package_name: pkg });

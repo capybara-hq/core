@@ -227,7 +227,9 @@ describe("有对象存储：上传、npm 与包存储", () => {
     // 对象没了（如换了桶）：报错点名缺的键与补救办法
     await expect(
       new PluginBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES }).get(todoSha),
-    ).rejects.toThrow(/deployment\/plugins\/blobs\/[0-9a-f]{64}\.tgz is missing there; if the object store's bucket/);
+    ).rejects.toThrow(
+      /deployment\/plugins\/blobs\/[0-9a-f]{64}\.tgz is missing there; if the object store's bucket/,
+    );
     expect((await upload(admin, todo)).statusCode).toBe(200);
     expect(await d.head(blobKey(todoSha))).not.toBeNull();
   });

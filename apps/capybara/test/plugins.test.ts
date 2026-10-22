@@ -297,9 +297,9 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
     expect(declined.stdout).toContain("Not installed");
     const none = createDb(pg.url, 1);
     try {
-      expect(
-        await kernelDb(none).selectFrom("plugin_installs").select("name").execute(),
-      ).toEqual([]);
+      expect(await kernelDb(none).selectFrom("plugin_installs").select("name").execute()).toEqual(
+        [],
+      );
     } finally {
       await none.destroy();
     }

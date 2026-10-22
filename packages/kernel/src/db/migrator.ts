@@ -100,7 +100,9 @@ export async function migrate(
   try {
     await client.connect();
     if (opts.statementTimeoutMs !== undefined) {
-      await client.query(`set statement_timeout = ${Math.max(1, Math.floor(opts.statementTimeoutMs))}`);
+      await client.query(
+        `set statement_timeout = ${Math.max(1, Math.floor(opts.statementTimeoutMs))}`,
+      );
     }
     if (opts.lockTimeoutMs !== undefined) {
       await client.query(`set lock_timeout = ${Math.max(1, Math.floor(opts.lockTimeoutMs))}`);

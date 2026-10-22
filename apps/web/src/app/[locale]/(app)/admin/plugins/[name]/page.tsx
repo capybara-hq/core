@@ -200,7 +200,7 @@ function Overview({
       tone: "muted",
       cell: (r) =>
         r.servingVersion ? (
-          <Stack gap={2}>
+          <Stack gap={4}>
             <Text>{r.version}</Text>
             <Text variant="small" tone="muted">
               {t("detail.stillServing", { version: r.servingVersion })}

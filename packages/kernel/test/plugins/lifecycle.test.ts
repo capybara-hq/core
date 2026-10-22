@@ -664,7 +664,10 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
 describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3）", { timeout: 60_000 }, () => {
   /** 把包存进 PG 包存储并写一条期望启用的安装记录。 */
   const seedInstall = async (name: string, bytes: Uint8Array) => {
-    const pkg = await readPluginPackage(bytes, { maxBytes: MAX_BYTES, hostSdkVersion: SDK_VERSION });
+    const pkg = await readPluginPackage(bytes, {
+      maxBytes: MAX_BYTES,
+      hostSdkVersion: SDK_VERSION,
+    });
     await new PluginBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
       source: "file",
       ref: "upload",
@@ -846,7 +849,9 @@ describe("插件名归属：内置与配置声明的插件也占名字（I4）",
       );
       expect(taken.statusCode, taken.body).toBe(409);
       expect(taken.json().error.code).toBe("plugin.name_conflict");
-      expect(taken.json().error.message).toMatch(/previously used by package @capybara-hq\/plugin-model-fake/);
+      expect(taken.json().error.message).toMatch(
+        /previously used by package @capybara-hq\/plugin-model-fake/,
+      );
 
       // 名字没有归属，但已有部署配置留下（归属表之前的数据）：不知道属于哪个包，拒绝
       await db
@@ -858,7 +863,11 @@ describe("插件名归属：内置与配置声明的插件也占名字（I4）",
       expect(ghost.json().error.code).toBe("plugin.name_conflict");
       expect(ghost.json().error.message).toMatch(/retained data/);
       expect(
-        await db.selectFrom("plugin_name_owners").select("name").where("name", "=", "ghost").execute(),
+        await db
+          .selectFrom("plugin_name_owners")
+          .select("name")
+          .where("name", "=", "ghost")
+          .execute(),
       ).toEqual([]);
     } finally {
       await k3.stop();
@@ -869,7 +878,10 @@ describe("插件名归属：内置与配置声明的插件也占名字（I4）",
 describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, () => {
   it("两个副本都加载了插件；一个正常停机后状态立即为 enabled（不等心跳过期）", async () => {
     const bytes = await pluginTgz({ name: "twin", version: "1.0.0" });
-    const pkg = await readPluginPackage(bytes, { maxBytes: MAX_BYTES, hostSdkVersion: SDK_VERSION });
+    const pkg = await readPluginPackage(bytes, {
+      maxBytes: MAX_BYTES,
+      hostSdkVersion: SDK_VERSION,
+    });
     await new PluginBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
       source: "file",
       ref: "upload",
@@ -910,7 +922,10 @@ describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, ()
       await waitFor(
         async () => {
           const s = await status();
-          return s.replicas.some((r) => r.replicaId === aId) && s.replicas.some((r) => r.replicaId === bId);
+          return (
+            s.replicas.some((r) => r.replicaId === aId) &&
+            s.replicas.some((r) => r.replicaId === bId)
+          );
         },
         15_000,
         "both replicas loaded twin",

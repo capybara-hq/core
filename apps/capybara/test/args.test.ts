@@ -91,7 +91,9 @@ describe("parseCli", () => {
     expect(() => parseCli(["plugins", "approve", "a", "--login", "r"])).toThrow(
       /only valid for admin create/,
     );
-    expect(() => parseCli(["start", "--yes"])).toThrow(/only valid for plugins approve and plugins install/);
+    expect(() => parseCli(["start", "--yes"])).toThrow(
+      /only valid for plugins approve and plugins install/,
+    );
     expect(() =>
       parseCli(["admin", "create", "--login", "r", "--display-name", "R", "--yes"]),
     ).toThrow(/only valid for plugins approve and plugins install/);

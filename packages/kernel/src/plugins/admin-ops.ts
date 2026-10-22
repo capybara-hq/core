@@ -389,7 +389,10 @@ async function hasRetainedData(trx: Trx, name: string): Promise<boolean> {
         .where("plugin", "=", name),
     )
     .union(
-      trx.selectFrom("plugin_org_configs").select(sql<number>`1`.as("x")).where("plugin", "=", name),
+      trx
+        .selectFrom("plugin_org_configs")
+        .select(sql<number>`1`.as("x"))
+        .where("plugin", "=", name),
     )
     .limit(1)
     .executeTakeFirst();
