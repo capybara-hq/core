@@ -252,9 +252,12 @@ export default definePlugin({
 /**
  * 用 `tools/pack-plugin` 把仓库里的一个官方插件打成插件包（子进程，避免内核依赖 pack-plugin）。
  * 先把插件复制到临时目录（`node_modules` 链接回原处）再打包：打包的临时文件不落在仓库的插件目录里，
- * 与同时运行的 pack-plugin 测试互不干扰。
+ * 与同时运行的 pack-plugin 测试互不干扰。`edit` 在打包前改这份副本（如升版本、加迁移），仓库里的插件不动。
  */
-export async function packOfficialPlugin(plugin: string): Promise<Uint8Array> {
+export async function packOfficialPlugin(
+  plugin: string,
+  edit?: (dir: string) => Promise<void>,
+): Promise<Uint8Array> {
   const work = await mkdtemp(join(tmpdir(), "kernel-pack-"));
   const src = join(REPO_ROOT, "plugins", plugin);
   const copy = join(work, plugin);
@@ -265,6 +268,7 @@ export async function packOfficialPlugin(plugin: string): Promise<Uint8Array> {
       filter: (from) => !/[/\\](node_modules|dist|test)([/\\]|$)/.test(from.slice(src.length)),
     });
     await symlink(join(src, "node_modules"), join(copy, "node_modules"), "dir");
+    await edit?.(copy);
     await promisify(execFile)("pnpm", ["-s", "pack-plugin", copy, "--out", out], {
       cwd: REPO_ROOT,
       env: { ...process.env, INIT_CWD: REPO_ROOT },
@@ -276,4 +280,26 @@ export async function packOfficialPlugin(plugin: string): Promise<Uint8Array> {
   } finally {
     await rm(work, { recursive: true, force: true });
   }
+}
+
+const SANDBOX_FAKE_SRC = fileURLToPath(
+  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+);
+
+/**
+ * 测试用 `sandbox@1` 插件 `sandbox-fake`（`test/fixtures/plugins/sandbox-fake`，部署配置 `{ root }`）打成的插件包：
+ * entry 是去掉类型标注后的同一份源码（只 import `node:*`、SDK 与 zod），静态清单取自真实模块。
+ * 提供 `sandbox@1`，安装确认页标敏感。
+ */
+export async function sandboxFakePkg(): Promise<Uint8Array> {
+  const { stripTypeScriptTypes } = await import("node:module");
+  const source = await readFile(SANDBOX_FAKE_SRC, "utf8");
+  const mod = (await import(SANDBOX_FAKE_SRC)) as { default: PluginManifest };
+  return pluginTgz({
+    name: mod.default.name,
+    version: mod.default.version,
+    packageName: "@test/plugin-sandbox-fake",
+    manifest: staticManifestOf(mod.default) as unknown as Record<string, unknown>,
+    entry: stripTypeScriptTypes(source, { mode: "strip" }),
+  });
 }
