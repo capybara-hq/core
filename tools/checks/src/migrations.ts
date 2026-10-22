@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isDestructiveSql, splitSqlStatements } from "@capybara-hq/kernel";
+import { isDestructiveBody, isDestructiveSql, splitSqlStatements } from "@capybara-hq/kernel";
 
 export type Finding = { file: string; line: number; rule: string; message: string };
 
@@ -11,6 +11,8 @@ const MSG_DESTRUCTIVE =
   "先在本版本停止读写该列，下一版本再删除；确需本版本执行请加 -- capybara:allow-destructive <原因>";
 const MSG_REASON =
   "-- capybara:allow-destructive 后必须写明原因（不能为空）；原因应说明为何本版本可以直接执行";
+const MSG_DO =
+  "DO 块的内部语句无法静态审查：能拆成普通幂等语句就拆；确需 DO 块（如带 IF EXISTS 判断的 RENAME COLUMN），在 DO 行正上方加 -- capybara:allow-destructive <原因>";
 const MSG_TX =
   "迁移器已为每个文件包一层事务；去掉事务控制语句。CONCURRENTLY 不能在事务中执行，改用普通 CREATE INDEX IF NOT EXISTS";
 
@@ -39,9 +41,10 @@ export function checkSql(file: string, source: string): Finding[] {
     if (create && !create[2]) {
       add(st.line, "idempotent", `CREATE ${create[1]?.toUpperCase()} 必须带 IF NOT EXISTS`);
     }
-    if (/^DO\b/i.test(t)) {
-      add(st.line, "do-block", "迁移不允许 DO 块（其内部语句无法静态审查）；拆成普通幂等语句");
-    }
+    const prev = st.line >= 2 ? (lines[st.line - 2] ?? "") : "";
+    const allow = ALLOW_RE.exec(prev);
+    const isDo = /^DO\b/i.test(t);
+    if (isDo && !allow) add(st.line, "do-block", MSG_DO);
 
     let dropsColumn = false;
     if (/^DROP\b/i.test(t) && !/\bIF EXISTS\b/i.test(t)) {
@@ -63,9 +66,7 @@ export function checkSql(file: string, source: string): Finding[] {
       }
     }
 
-    if (dropsColumn || isDestructiveSql(t)) {
-      const prev = st.line >= 2 ? (lines[st.line - 2] ?? "") : "";
-      const allow = ALLOW_RE.exec(prev);
+    if (dropsColumn || isDestructiveSql(t) || (isDo && st.bodies.some(isDestructiveBody))) {
       if (!allow) add(st.line, "destructive", MSG_DESTRUCTIVE);
       else if (!allow[1]) add(st.line, "destructive", MSG_REASON);
     }
@@ -74,7 +75,7 @@ export function checkSql(file: string, source: string): Finding[] {
 }
 
 /**
- * 检查若干迁移目录（不存在的目录被忽略）。规则：naming / idempotent / destructive / transaction-control。
+ * 检查若干迁移目录（不存在的目录被忽略）。规则：naming / idempotent / destructive / transaction-control / do-block。
  */
 export function checkMigrations(dirs: string[]): Finding[] {
   const findings: Finding[] = [];

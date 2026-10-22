@@ -3,26 +3,36 @@
  * 纯函数，不连库。迁移只做扩展：删表 / 删列、TRUNCATE、DELETE、RENAME、改列类型都算破坏性。
  */
 
-export type SqlStatement = { text: string; line: number };
+export type SqlStatement = {
+  text: string;
+  line: number;
+  /** 语句里美元引用字符串的原文（不含定界符），按出现顺序；`DO $$ … $$` 的块体在这里。 */
+  bodies: string[];
+};
 
 /**
  * 把 SQL 切成语句。忽略 `--` 行注释、块注释、单引号字符串（含 '' 转义）与美元引用字符串
- * 中的 `;` 和关键字：注释被丢弃，字符串/美元引用内容被抹成空串。line 为语句首个 token 的 1 基行号。
+ * 中的 `;` 和关键字：注释被丢弃，字符串/美元引用内容被抹成空串（美元引用原文另存于 `bodies`）。
+ * line 为语句首个 token 的 1 基行号。
  */
 export function splitSqlStatements(src: string): SqlStatement[] {
   const out: SqlStatement[] = [];
   let text = "";
   let line = 1;
   let startLine = 0;
+  let bodies: string[] = [];
   let i = 0;
   const push = (chunk: string) => {
     if (startLine === 0 && chunk.trim() !== "") startLine = line;
     text += chunk;
   };
   const flush = () => {
-    if (text.trim() !== "") out.push({ text: text.replace(/\s+/g, " ").trim(), line: startLine });
+    if (text.trim() !== "") {
+      out.push({ text: text.replace(/\s+/g, " ").trim(), line: startLine, bodies });
+    }
     text = "";
     startLine = 0;
+    bodies = [];
   };
   while (i < src.length) {
     const c = src[i] as string;
@@ -86,6 +96,7 @@ export function splitSqlStatements(src: string): SqlStatement[] {
         const end = src.indexOf(tag, i + tag.length);
         const stop = end === -1 ? src.length : end + tag.length;
         push("$$");
+        bodies.push(src.slice(i + tag.length, end === -1 ? src.length : end));
         for (let k = i; k < stop; k++) if (src[k] === "\n") line++;
         i = stop;
         continue;
@@ -125,6 +136,22 @@ export function isDestructiveSql(t: string): boolean {
     /\bRENAME\b/i.test(t) ||
     /\bALTER\s+(?:COLUMN\s+)?\S+\s+(?:SET\s+DATA\s+)?TYPE\b/i.test(t)
   );
+}
+
+/**
+ * `DO` 块体（PL/pgSQL，{@link SqlStatement.bodies}）里是否有破坏性语句：块体按 `;` 切开后，从每个
+ * `ALTER` / `DROP` / `TRUNCATE` / `DELETE` 关键字起按 {@link isDestructiveSql} 判断（块体以 `BEGIN` / `IF … THEN`
+ * 开头，关键字不在语句首）。嵌套的美元引用一并检查。
+ */
+export function isDestructiveBody(body: string): boolean {
+  for (const st of splitSqlStatements(body)) {
+    if (/\bRENAME\b/i.test(st.text)) return true;
+    for (const m of st.text.matchAll(/\b(?:ALTER|DROP|TRUNCATE|DELETE)\b/gi)) {
+      if (isDestructiveSql(st.text.slice(m.index ?? 0))) return true;
+    }
+    if (st.bodies.some(isDestructiveBody)) return true;
+  }
+  return false;
 }
 
 /** 一段迁移 SQL 里的破坏性语句（行号 1 基，语句已压成一行）。 */

@@ -60,10 +60,33 @@ describe("checkMigrations", () => {
 
   const rules = (sql: string) => checkSql("0001_x.sql", sql).map((x) => x.rule);
 
-  it("do-block：任何 DO 块都报，内部语句不被豁免", () => {
+  it("do-block：没有豁免注释的 DO 块报 do-block；块体里的破坏性语句另报 destructive", () => {
     const f = checkMigrations([fixture("do-block")]);
-    expect(f.map((x) => x.rule)).toEqual(["do-block"]);
+    expect(f.map((x) => x.rule)).toEqual(["do-block", "destructive"]);
     expect(f[0]?.message).toContain("DO 块");
+  });
+
+  it("DO 块体里的 RENAME 被看到：没有注释 -> do-block + destructive，行号为 DO 行", () => {
+    const f = checkMigrations([fixture("do-block-rename")]);
+    expect(f.map((x) => [x.rule, x.line])).toEqual([
+      ["do-block", 1],
+      ["destructive", 1],
+    ]);
+  });
+
+  it("DO 行正上方带原因的豁免注释 -> 0 条；空原因仍报；注释写在 $$ 里面不算", () => {
+    expect(checkMigrations([fixture("do-block-allowed")])).toEqual([]);
+    expect(
+      rules("-- capybara:allow-destructive\nDO $$ BEGIN ALTER TABLE t RENAME TO u; END $$;"),
+    ).toEqual(["destructive"]);
+    expect(
+      rules("DO $$\n-- capybara:allow-destructive 原因\nBEGIN ALTER TABLE t RENAME TO u; END $$;"),
+    ).toEqual(["do-block", "destructive"]);
+    expect(rules("DO $$ BEGIN PERFORM 1; END $$;")).toEqual(["do-block"]);
+    expect(rules("DO $tag$ BEGIN ALTER TABLE t DROP COLUMN x; END $tag$;")).toEqual([
+      "do-block",
+      "destructive",
+    ]);
   });
 
   it("省略 COLUMN 关键字的 DROP -> destructive + idempotent", () => {

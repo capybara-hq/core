@@ -46,6 +46,7 @@ export { type MigrationOwner, migrate } from "./db/migrator.js";
 export { createDb } from "./db/pool.js";
 export {
   destructiveStatements,
+  isDestructiveBody,
   isDestructiveSql,
   type SqlStatement,
   splitSqlStatements,
