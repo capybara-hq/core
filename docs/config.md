@@ -18,6 +18,8 @@
 | `pluginConfig` | `CAPYBARA_PLUGIN_CONFIG` | `record` | `{}` | 否 | 否 | Deployment-level config keyed by plugin name |
 | `pluginHost.dir` | `CAPYBARA_PLUGIN_HOST__DIR` | `string` | `"/var/lib/capybara/plugins"` | 否 | 否 | Local directory where each replica unpacks installed plugin packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store |
 | `pluginHost.drainSeconds` | `CAPYBARA_PLUGIN_HOST__DRAIN_SECONDS` | `number` | `30` | 否 | 否 | Seconds in-flight tool calls and queue jobs of a plugin being unloaded may keep running before they are aborted |
+| `pluginHost.disposeTimeoutSeconds` | `CAPYBARA_PLUGIN_HOST__DISPOSE_TIMEOUT_SECONDS` | `number` | `10` | 否 | 否 | Seconds a plugin's dispose() may run when it is unloaded or replaced; after that the kernel logs a warning and moves on |
+| `pluginHost.reloadSetupTimeoutSeconds` | `CAPYBARA_PLUGIN_HOST__RELOAD_SETUP_TIMEOUT_SECONDS` | `number` | `60` | 否 | 否 | Seconds a plugin's setup() may run when it is reloaded in a running process (enable, upgrade, dependency change); on timeout the reload fails and the previous instance stays |
 | `pluginHost.reconcileIntervalSeconds` | `CAPYBARA_PLUGIN_HOST__RECONCILE_INTERVAL_SECONDS` | `number` | `60` | 否 | 否 | Seconds between periodic reconciles of each replica's loaded plugins against the installed state in PostgreSQL |
 | `packages.npmRegistry` | `CAPYBARA_PACKAGES__NPM_REGISTRY` | `string` | `"https://registry.npmjs.org"` | 否 | 否 | npm registry used to install plugin packages by name |
 | `packages.npmToken` | `CAPYBARA_PACKAGES__NPM_TOKEN` | `string` | 可选 | 否 | 是 | Bearer token for the npm registry (private registries); sent only to the registry origin |

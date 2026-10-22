@@ -43,11 +43,14 @@ import {
 import type { InflightTracker } from "./inflight.js";
 import type { DesiredPlugin } from "./installs.js";
 import {
+  DEFAULT_DISPOSE_TIMEOUT_MS,
+  ImportTracker,
   importPluginModule,
   type LoadDeps,
   matchesSection,
   type PluginInstance,
   setupInstance,
+  warnUpgrades,
 } from "./instance.js";
 import {
   blockingKeys,
@@ -127,8 +130,12 @@ const CLOSED_DURING_LOAD = "plugin host closed during load";
 
 /** 撤销实例时在途调用的默认排空时限（`pluginHost.drainSeconds` 的默认值）。 */
 const DEFAULT_DRAIN_MS = 30_000;
-/** 同进程重新加载超过这么多次就告警：每次新实例的模块代码都留在内存里，直到进程重启。 */
-export const RELOAD_WARN_THRESHOLD = 20;
+/** 运行中重新加载时 setup 的默认时限（`pluginHost.reloadSetupTimeoutSeconds` 的默认值）。 */
+const DEFAULT_RELOAD_SETUP_TIMEOUT_MS = 60_000;
+/** 停机时等进行中的 unload / reload 的上限（之后直接关闭 setup 中的 ctx、撤销其余实例）。 */
+const CLOSE_LIFECYCLE_WAIT_MS = 2_000;
+/** 部署已知插件名（内置 / 配置声明 / 安装记录）缓存的有效期：路由闸门 503 / 404 用，跨副本靠它收敛。 */
+const KNOWN_NAMES_TTL_MS = 5_000;
 
 /** 一个插件的加载参数（{@link PluginHost.reload} 用同一份重新 setup）。 */
 interface InstanceSpec {
@@ -481,11 +488,16 @@ export class PluginHost {
   private readonly unloadedForDependency = new Set<string>();
   /** 每个插件已产生的实例代数。 */
   private readonly generations = new Map<string, number>();
-  /** 本进程启动之后的重新加载次数（旧代码留在内存直到重启，超过阈值告警）。 */
-  private reloads = 0;
+  /** 本进程导入过的模块入口（不同入口数超过阈值时告警：旧代码留在内存直到重启）。 */
+  private readonly imports = new ImportTracker();
   /** 串行化 unload / reload（同一时刻只做一件，依赖方的连锁处理不交错）。 */
   private lifecycle: Promise<unknown> = Promise.resolve();
   private readonly drainMs: () => number;
+  private readonly disposeTimeoutMs: () => number;
+  private readonly reloadSetupTimeoutMs: () => number;
+  private readonly installedNames: (() => Promise<string[]>) | undefined;
+  /** 安装记录里的插件名缓存（TTL + 注册表变化时作废）。 */
+  private installedCache: { at: number; names: Promise<Set<string>> } | undefined;
   /** 本次因权限待批准（或依赖待批准插件）而未加载的插件。 */
   private readonly pendingPlugins: PendingPlugin[] = [];
   /** 导入过的插件名 → 来源与包（含未加载的；重名被跳过的一方不在这里）。 */
@@ -522,9 +534,25 @@ export class PluginHost {
       status?: ReplicaStatusStore;
       /** 撤销实例时在途调用的排空时限（毫秒），默认 30s；内核传 `pluginHost.drainSeconds`。 */
       drainMs?: () => number;
+      /** 插件 `dispose()` 的时限（毫秒），默认 10s；内核传 `pluginHost.disposeTimeoutSeconds`。 */
+      disposeTimeoutMs?: () => number;
+      /** 运行中重新加载时 setup 的时限（毫秒），默认 60s；内核传 `pluginHost.reloadSetupTimeoutSeconds`。 */
+      reloadSetupTimeoutMs?: () => number;
+      /**
+       * 安装记录里的插件名（T11 安装记录，任何 desired_state）：与内置、配置声明的一起构成「部署已知」的插件，
+       * 不在本副本生效时它们的路由返回 503，完全未知的名字 404。缓存 {@link KNOWN_NAMES_TTL_MS}。
+       */
+      installedNames?: () => Promise<string[]>;
     } = {},
   ) {
     this.drainMs = opts.drainMs ?? (() => DEFAULT_DRAIN_MS);
+    this.disposeTimeoutMs = opts.disposeTimeoutMs ?? (() => DEFAULT_DISPOSE_TIMEOUT_MS);
+    this.reloadSetupTimeoutMs =
+      opts.reloadSetupTimeoutMs ?? (() => DEFAULT_RELOAD_SETUP_TIMEOUT_MS);
+    this.installedNames = opts.installedNames;
+    this.registry.onChange(() => {
+      this.installedCache = undefined;
+    });
     this.onSecrets = opts.onSecrets;
     this.autoApprove = opts.autoApprove === true;
     this.resolveFrom = resolvePath(opts.resolveFrom ?? process.cwd());
@@ -608,8 +636,12 @@ export class PluginHost {
       });
     }
 
-    if (p.installs) await this.loadInstalls(p.installs, ordered, sets, snapshots, approvals);
-    if (deferred.length > 0) await this.loadDeferred(deferred, dirs, urls, snapshots, approvals);
+    const installProviders = p.installs
+      ? await this.loadInstalls(p.installs, ordered, sets, snapshots, approvals)
+      : new Map<CapabilityRef, string[]>();
+    if (deferred.length > 0) {
+      await this.loadDeferred(deferred, dirs, urls, snapshots, approvals, installProviders);
+    }
 
     const orphans = Object.keys(this.pluginConfig).filter((k) => !this.sources.has(k));
     if (orphans.length > 0) {
@@ -626,7 +658,7 @@ export class PluginHost {
     phase1Sets: Map<string, PermissionSet>,
     snapshots: Map<string, PermissionSnapshot>,
     approvals: PluginApprovals,
-  ): Promise<void> {
+  ): Promise<Map<CapabilityRef, string[]>> {
     let desired: DesiredPlugin[];
     try {
       desired = await loader.desired();
@@ -634,7 +666,15 @@ export class PluginHost {
       this.deps.log.error("cannot read plugin install records; installed plugins are not loaded", {
         err: e,
       });
-      return;
+      return new Map();
+    }
+    // 启用的安装记录按审阅过的静态清单声明的能力（不论随后加载成败）：第 4 步据此判断待定还是缺提供方
+    const installProviders = new Map<CapabilityRef, string[]>();
+    for (const d of desired) {
+      if (this.sources.has(d.name)) continue;
+      for (const cap of d.section.manifest.provides as CapabilityRef[]) {
+        installProviders.set(cap, [...(installProviders.get(cap) ?? []), d.name]);
+      }
     }
     const fail = async (d: DesiredPlugin, reason: string, detail: string): Promise<void> => {
       this.deps.log.error("installed plugin not loaded", {
@@ -750,7 +790,7 @@ export class PluginHost {
       }
       await fail(c.d, "dependency", detail);
     }
-    if (accepted.length === 0) return;
+    if (accepted.length === 0) return installProviders;
     for (const c of accepted) this.sources.set(c.d.name, { source: "install", sha256: c.d.sha256 });
 
     const all = resolvePlugins([...phase1, ...accepted.map((a) => a.manifest)], SDK_VERSION);
@@ -787,11 +827,15 @@ export class PluginHost {
         onMigrated: () => loader.markMigrated(c.d.name, c.d.sha256),
       });
     }
+    return installProviders;
   }
 
   /**
-   * 第 4 步：第 2 步挑出来的配置声明插件（`requires` 只能由安装记录满足）。与已加载的插件一起解析依赖——
-   * 仍不满足时与此前一样抛错（内核启动失败）；满足的按拓扑序走同一道权限闸门后加载（出错同样直接抛）。
+   * 第 4 步：第 2 步挑出来的配置声明插件（`requires` 只能由安装记录满足）。与已加载的插件一起解析依赖：
+   * - 满足的按拓扑序走同一道权限闸门后加载（出错直接抛，与其他配置声明插件一致）；
+   * - 缺的能力有启用的安装记录声明提供、只是它没加载成（待批准 / 失败）→ 待定（pending，原因 dependency），
+   *   与「配置声明插件依赖待批准的配置声明插件」一致，内核照常启动；
+   * - 缺的能力没有任何提供方 → 与此前一样抛错（内核启动失败）。
    */
   private async loadDeferred(
     deferred: PluginManifest[],
@@ -799,14 +843,62 @@ export class PluginHost {
     urls: Map<string, string>,
     snapshots: Map<string, PermissionSnapshot>,
     approvals: PluginApprovals,
+    installProviders: Map<CapabilityRef, string[]>,
   ): Promise<void> {
     if (this.closed) throw new Error(CLOSED_DURING_LOAD);
     const loaded = this.registry.all();
-    const all = resolvePlugins([...loaded.map((i) => i.manifest), ...deferred], SDK_VERSION);
+    const { ready, deferred: blocked } = splitDeferred(
+      [...loaded.map((i) => i.manifest), ...deferred],
+      new Set(deferred.map((m) => m.name)),
+    );
     const sets = new Map([
       ...loaded.map((i) => [i.name, i.permissions] as const),
       ...(await permissionSets(deferred, dirs)),
     ]);
+    const blockedProvides = new Set(blocked.flatMap((m) => m.provides));
+    const readyProvides = new Set(ready.flatMap((m) => m.provides));
+    for (const m of blocked) {
+      const missing = (m.requires ?? []).filter((c) => !readyProvides.has(c));
+      if (missing.some((c) => !installProviders.has(c) && !blockedProvides.has(c))) {
+        // 没有任何提供方：与此前一样抛错（resolvePlugins 点名插件与能力）
+        resolvePlugins([...loaded.map((i) => i.manifest), ...deferred], SDK_VERSION);
+      }
+    }
+    for (const m of blocked) {
+      const blockedBy = (m.requires ?? [])
+        .filter((c) => !readyProvides.has(c))
+        .map((capability) => ({
+          capability,
+          providers: [
+            ...(installProviders.get(capability) ?? []),
+            ...blocked.filter((b) => b.provides.includes(capability)).map((b) => b.name),
+          ],
+        }));
+      await this.activate(approvals, {
+        manifest: m,
+        source: "config",
+        sha256: null,
+        entryUrl: urls.get(m.name) as string,
+        migrationsDir: migrationsDirOf(m, dirs.get(m.name) as string),
+        set: sets.get(m.name) as PermissionSet,
+        decision: {
+          plugin: m.name,
+          action: "pending",
+          pending: {
+            plugin: m.name,
+            version: m.version,
+            added: [],
+            removed: [],
+            reason: "dependency",
+            blockedBy,
+          },
+        },
+        fatal: true,
+      });
+    }
+    const loadable = deferred.filter((m) => !blocked.includes(m));
+    if (loadable.length === 0) return;
+    const all = resolvePlugins([...loaded.map((i) => i.manifest), ...loadable], SDK_VERSION);
     const decisions = new Map(
       planApprovals(
         all,
@@ -819,7 +911,7 @@ export class PluginHost {
         { autoApprove: this.autoApprove },
       ).map((d) => [d.plugin, d]),
     );
-    const names = new Set(deferred.map((m) => m.name));
+    const names = new Set(loadable.map((m) => m.name));
     for (const manifest of all) {
       if (!names.has(manifest.name)) continue;
       await this.activate(approvals, {
@@ -1030,22 +1122,61 @@ export class PluginHost {
         this.generations.set(name, g);
         return g;
       },
+      imports: this.imports,
     };
   }
 
-  /** 按加载参数建一个新实例（setup 期间的 ctx 记在 `settingUp`，close() 时立即关闭）。 */
-  private setup(spec: InstanceSpec): Promise<PluginInstance> {
-    return setupInstance(this.loadDeps, spec.manifest, {
+  /**
+   * 按加载参数建一个新实例（setup 期间的 ctx 记在 `settingUp`，close() 时立即关闭）。
+   * `timeoutMs`（运行中重新加载）：setup 超时或宿主被关闭时关闭这个 ctx 并抛错；迟到完成的实例随即撤销。
+   * 启动时不设时限（见 {@link load}）。
+   */
+  private async setup(spec: InstanceSpec, timeoutMs?: number): Promise<PluginInstance> {
+    if (this.imports.record(spec.manifest.name, spec.entryUrl)) {
+      warnUpgrades(this.deps.log, this.imports);
+    }
+    let ctx: KernelPluginContext | undefined;
+    const p = setupInstance(this.loadDeps, spec.manifest, {
       entryUrl: spec.entryUrl,
       source: spec.source,
       sha256: spec.sha256,
       config: spec.config,
       configHash: spec.configHash,
       permissions: spec.permissions,
-      onCtx: (ctx) => {
-        this.settingUp = ctx;
+      onCtx: (c) => {
+        if (c) ctx = c;
+        if (c || this.settingUp === ctx) this.settingUp = c;
       },
     });
+    if (timeoutMs === undefined) return p;
+    let timer: NodeJS.Timeout | undefined;
+    let onClose: () => void = () => {};
+    const stop = new Promise<"timeout" | "closed">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), timeoutMs);
+      onClose = () => resolve("closed");
+      if (this.abort.signal.aborted) onClose();
+      else this.abort.signal.addEventListener("abort", onClose, { once: true });
+    });
+    try {
+      const r = await Promise.race([p.then((inst) => ({ inst })), stop]);
+      if (typeof r === "object") return r.inst;
+      // setup 迟迟不返回：关闭它的 ctx（此后它的登记立即撤销），迟到完成的实例直接撤销
+      p.then(
+        (inst) => this.disposeQuietly(inst, 0),
+        () => {},
+      );
+      if (this.settingUp === ctx) this.settingUp = undefined;
+      await ctx?.close().catch((err: unknown) => {
+        this.deps.log.warn("plugin context close failed", { plugin: spec.manifest.name, err });
+      });
+      if (r === "closed") throw new Error(CLOSED_DURING_LOAD);
+      throw new Error(
+        `plugin ${spec.manifest.name}: setup did not finish within ${timeoutMs} ms during reload; the previous instance is kept`,
+      );
+    } finally {
+      clearTimeout(timer);
+      this.abort.signal.removeEventListener("abort", onClose);
+    }
   }
 
   /** 取能力实现：单选能力无需 providerName，多选能力必须指定。 */
@@ -1128,12 +1259,35 @@ export class PluginHost {
   }
 
   /**
-   * 插件在本进程加载过、此刻不在注册表里（已撤销 / 随依赖卸下）：它的 `/plugins/<name>/*` 与
-   * `/plugin-ui/<name>/*` 返回 503 `plugin.unavailable`（路由保留挂载只做闸门）。从未加载过的（待批准、加载失败、
-   * 不存在）不算，照常 404。
+   * 路由闸门：插件属于本部署（内置、配置声明，或 PG 里有安装记录）但此刻不在本副本生效 → true，
+   * 它的 `/plugins/<name>/*` 与 `/plugin-ui/<name>/*` 返回 503 `plugin.unavailable`（路由保留挂载只做闸门）；
+   * 生效的、或完全未知的名字 → false（未知的照常 404）。只看部署已知的状态，与本进程的加载历史无关。
+   * 安装记录的名字缓存 {@link KNOWN_NAMES_TTL_MS}，注册表变化时作废；读不到时按「未知」处理（404）。
    */
-  unavailable(plugin: string): boolean {
-    return !this.registry.current(plugin) && this.specs.has(plugin);
+  async unavailable(plugin: string): Promise<boolean> {
+    if (this.registry.current(plugin)) return false;
+    // 内置 / 配置声明（含待批准、配置不合法的）；安装记录以 PG 为准（卸载后的名字回到 404）
+    const source = this.sources.get(plugin)?.source;
+    if (source === "builtin" || source === "config") return true;
+    return (await this.installed()).has(plugin);
+  }
+
+  /** 安装记录里的插件名（缓存，见 {@link unavailable}）。 */
+  private installed(): Promise<Set<string>> {
+    const load = this.installedNames;
+    if (!load) return Promise.resolve(new Set());
+    const now = Date.now();
+    if (!this.installedCache || now - this.installedCache.at > KNOWN_NAMES_TTL_MS) {
+      const names = load()
+        .then((xs) => new Set(xs))
+        .catch((err: unknown) => {
+          this.deps.log.warn("cannot read plugin install records for the route gate", { err });
+          this.installedCache = undefined;
+          return new Set<string>();
+        });
+      this.installedCache = { at: now, names };
+    }
+    return this.installedCache.names;
   }
 
   /** 订阅注册表变化（激活 / 替换 / 摘下，参数为插件名）：只通知本进程，见 {@link PluginRegistry.onChange}。 */
@@ -1141,12 +1295,13 @@ export class PluginHost {
     return this.registry.onChange(listener);
   }
 
-  /** 插件路由表（给 HTTP 的插件转发用）：实时路由、注册表版本与闸门。 */
+  /** 插件路由表（给 HTTP 的插件转发用）：实时路由、注册表版本、闸门与变化通知（中止该插件进行中的请求）。 */
   routeTable(): PluginRouteTable {
     return {
       routes: () => this.routes(),
       revision: () => this.registry.revision(),
       unavailable: (plugin) => this.unavailable(plugin),
+      onChange: (listener) => this.registry.onChange(listener),
     };
   }
 
@@ -1189,42 +1344,59 @@ export class PluginHost {
     );
   }
 
-  /** 串行执行生命周期操作（unload / reload 互不交错）。 */
+  /** 串行执行生命周期操作（unload / reload 互不交错）；宿主关闭后拒绝。 */
   private serial<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.lifecycle.then(fn, fn);
+    const guarded = () => {
+      if (this.closed) return Promise.reject(new Error("plugin host is closed"));
+      return fn();
+    };
+    const run = this.lifecycle.then(guarded, guarded);
     this.lifecycle = run.catch(() => {});
     return run;
   }
 
   /**
    * 撤销一个插件（本副本，C17）：从注册表摘下（此后新请求取不到它）、排空在途调用（最多 `drainMs`，
-   * 默认 `pluginHost.drainSeconds`）、逐项撤销登记、调插件 `dispose`。连锁：
+   * 默认 `pluginHost.drainSeconds`）、逐项撤销登记、调插件 `dispose`（最多 `pluginHost.disposeTimeoutSeconds`）。连锁：
    * - `requires` 它提供的能力、且该能力已没有其他提供方的插件随之卸下（状态 `unloaded`、原因 `dependency`），
    *   提供方回来后（{@link reload}）自动重新加载；
-   * - 其余 `requires` / `optional` 它提供的能力的插件在本副本重新加载（拿到新的取用视图）。
-   * 返回卸下的插件名（含连锁卸下的）；插件不在注册表时返回空数组。
+   * - 其余 `requires` / `optional` 它提供的能力的插件（含间接依赖）在本副本按拓扑序各重新加载一次。
+   * 返回卸下的插件名（含连锁卸下的）；插件不在注册表时返回空数组。宿主关闭后拒绝。
    */
   unload(plugin: string, opts: { drainMs?: number } = {}): Promise<string[]> {
-    return this.serial(() => this.doUnload(plugin, opts.drainMs ?? this.drainMs(), null));
+    return this.serial(async () => {
+      const drainMs = opts.drainMs ?? this.drainMs();
+      const inst = await this.doUnload(plugin, drainMs, null);
+      if (!inst) return [];
+      return [plugin, ...(await this.cascade(inst.manifest.provides, drainMs))];
+    });
   }
 
   /**
    * 用同一份加载参数（同一模块入口、部署配置与权限）新建一个实例并原子替换（同进程重新加载 / 撤销后重新启用）：
-   * 新实例 setup 成功后才登记，旧实例随后撤销（排空在途调用）；setup 失败时旧实例保持不变并抛错。
-   * 依赖它的插件在本副本重新加载；此前因它卸下的依赖方重新加载。旧模块代码留在内存直到进程重启，
-   * 本进程重新加载超过 {@link RELOAD_WARN_THRESHOLD} 次时告警。
+   * 新实例 setup 成功后才登记（setup 最多 `pluginHost.reloadSetupTimeoutSeconds`），旧实例随后撤销（排空在途调用）；
+   * setup 失败或超时时旧实例保持不变并抛错。依赖它的插件在本副本按拓扑序各重新加载一次；此前因它卸下的依赖方重新加载。
+   * 同一入口的重新加载不新增模块代码；升级到新入口（T14）的模块代码留在内存直到进程重启，不同入口数超过阈值时告警。
+   * 宿主关闭后拒绝。
    */
   reload(plugin: string, opts: { drainMs?: number } = {}): Promise<PluginInstance> {
-    return this.serial(() => this.doReload(plugin, opts.drainMs ?? this.drainMs()));
+    return this.serial(async () => {
+      const drainMs = opts.drainMs ?? this.drainMs();
+      const inst = await this.doReload(plugin, drainMs);
+      await this.cascade(inst.manifest.provides, drainMs);
+      return inst;
+    });
   }
 
+  /** 摘下并撤销一个实例（不做连锁）；不在注册表时返回 undefined。 */
   private async doUnload(
     plugin: string,
     drainMs: number,
     reason: "dependency" | null,
-  ): Promise<string[]> {
+  ): Promise<PluginInstance | undefined> {
+    if (this.closed) throw new Error("plugin host is closed");
     const inst = this.registry.deactivate(plugin);
-    if (!inst) return [];
+    if (!inst) return undefined;
     if (reason === "dependency") this.unloadedForDependency.add(plugin);
     else this.unloadedForDependency.delete(plugin);
     await this.disposeQuietly(inst, drainMs);
@@ -1238,12 +1410,12 @@ export class PluginHost {
       detail: null,
     });
     this.deps.log.info("plugin unloaded", { plugin, generation: inst.generation, reason });
-    const removed = [plugin];
-    removed.push(...(await this.afterProviderChanged(inst.manifest.provides, drainMs)));
-    return removed;
+    return inst;
   }
 
+  /** 新建实例并原子替换、撤销旧实例（不做连锁）。 */
   private async doReload(plugin: string, drainMs: number): Promise<PluginInstance> {
+    if (this.closed) throw new Error("plugin host is closed");
     const spec = this.specs.get(plugin);
     if (!spec) throw new Error(`plugin ${plugin} has never been loaded in this process`);
     const available = new Set(
@@ -1258,13 +1430,10 @@ export class PluginHost {
         `plugin ${plugin}: required capability ${missing.join(", ")} has no provider`,
       );
     }
-    const inst = await this.setup(spec);
-    this.reloads += 1;
-    if (this.reloads === RELOAD_WARN_THRESHOLD + 1) {
-      this.deps.log.warn(
-        "plugins were reloaded many times in this process; the code of earlier plugin versions stays in memory until the process restarts, so restart this replica to free it",
-        { plugin, reloads: this.reloads },
-      );
+    const inst = await this.setup(spec, this.reloadSetupTimeoutMs());
+    if (this.closed) {
+      await this.disposeQuietly(inst, 0);
+      throw new Error("plugin host is closed");
     }
     this.unloadedForDependency.delete(plugin);
     const old = this.registry.activate(inst);
@@ -1279,37 +1448,58 @@ export class PluginHost {
     });
     if (old) await this.disposeQuietly(old, drainMs);
     this.deps.log.info("plugin reloaded", { plugin, generation: inst.generation });
-    await this.afterProviderChanged(inst.manifest.provides, drainMs);
     return inst;
   }
 
+  /** 生效实例按依赖拓扑排序（解析不了时退回注册表顺序）。 */
+  private topoOrder(): PluginInstance[] {
+    const all = this.registry.all();
+    try {
+      const order = resolvePlugins(
+        all.map((i) => i.manifest),
+        SDK_VERSION,
+      ).map((m) => m.name);
+      return order.flatMap((n) => {
+        const i = this.registry.current(n);
+        return i ? [i] : [];
+      });
+    } catch {
+      return all;
+    }
+  }
+
   /**
-   * 提供方实例变了（撤销 / 替换）之后的连锁：按拓扑序，必需能力已无提供方的依赖方卸下（dependency），
-   * 其余 `requires` / `optional` 这些能力的插件重新加载；最后把此前因依赖卸下、现在能满足的插件加回来。
-   * 返回连锁卸下的插件名。
+   * 提供方实例变了（撤销 / 替换）之后的连锁：先一次性收集受影响的插件（`requires` / `optional` 这些能力的，
+   * 以及间接依赖它们的——菱形依赖只收一次），再按拓扑序逐个处理：必需能力已无提供方的卸下（dependency），
+   * 其余重新加载一次。最后把此前因依赖卸下、现在能满足的插件加回来。返回连锁卸下的插件名。
    */
-  private async afterProviderChanged(caps: CapabilityRef[], drainMs: number): Promise<string[]> {
-    const changed = new Set(caps);
+  private async cascade(caps: CapabilityRef[], drainMs: number): Promise<string[]> {
     const removed: string[] = [];
+    const order = this.topoOrder();
+    const changing = new Set(caps);
+    const affected: string[] = [];
+    for (const i of order) {
+      const deps = [...(i.manifest.requires ?? []), ...(i.manifest.optional ?? [])];
+      if (!deps.some((c) => changing.has(c))) continue;
+      affected.push(i.name);
+      for (const c of i.manifest.provides) changing.add(c);
+    }
     const providedNow = () => new Set(this.registry.all().flatMap((i) => [...i.provided.keys()]));
-    if (changed.size > 0) {
-      for (const i of this.registry.all()) {
-        if (this.registry.current(i.name) !== i) continue;
-        const requires = i.manifest.requires ?? [];
-        const optional = i.manifest.optional ?? [];
-        if (![...requires, ...optional].some((c) => changed.has(c))) continue;
-        if (requires.some((c) => !providedNow().has(c))) {
-          removed.push(...(await this.doUnload(i.name, drainMs, "dependency")));
-          continue;
-        }
-        try {
-          await this.doReload(i.name, drainMs);
-        } catch (err) {
-          this.deps.log.error("dependent plugin reload failed; it keeps its previous instance", {
-            plugin: i.name,
-            err,
-          });
-        }
+    for (const name of affected) {
+      const i = this.registry.current(name);
+      if (!i) continue;
+      if ((i.manifest.requires ?? []).some((c) => !providedNow().has(c))) {
+        if (await this.doUnload(name, drainMs, "dependency")) removed.push(name);
+        continue;
+      }
+      try {
+        await this.doReload(name, drainMs);
+      } catch (err) {
+        if (this.closed) throw err;
+        this.deps.log.error("dependent plugin reload failed; it keeps its previous instance", {
+          plugin: name,
+          err,
+        });
       }
     }
     // 此前因依赖卸下的：必需能力都有提供方了就加回来（加回来的可能又满足别的，反复直到不动点）
@@ -1327,6 +1517,7 @@ export class PluginHost {
           await this.doReload(name, drainMs);
           progress = true;
         } catch (err) {
+          if (this.closed) throw err;
           this.deps.log.error("plugin reload after its dependency came back failed", {
             plugin: name,
             err,
@@ -1341,7 +1532,7 @@ export class PluginHost {
   /** 撤销实例；失败只记 error（已从注册表摘下，不影响其余）。 */
   private async disposeQuietly(inst: PluginInstance, drainMs: number): Promise<void> {
     try {
-      await inst.dispose({ drainMs });
+      await inst.dispose({ drainMs, disposeTimeoutMs: this.disposeTimeoutMs() });
     } catch (err) {
       this.deps.log.error("plugin dispose failed", { plugin: inst.name, err });
     }
@@ -1349,24 +1540,36 @@ export class PluginHost {
 
   /**
    * 按加载顺序（拓扑序）逆序串行撤销各插件：依赖方先于被依赖方。停机路径：不排空在途调用（运行此时已停），
-   * 队列 worker 等进行中的任务结束。调用后宿主进入 closed 状态（幂等）。进行中的 `load()`：迁移被中止并等其连接结束，
-   * setup 中的 ctx 被立即关闭（不等 setup 返回），load() 随后在检查点放弃。
-   * 单个插件关闭失败记 error 后继续关闭其余插件。返回时本宿主建立的连接都已关闭。
+   * 队列 worker 等进行中的任务结束。调用后宿主进入 closed 状态（幂等），此后 unload / reload 拒绝。
+   * 进行中的 `load()`：迁移被中止并等其连接结束，setup 中的 ctx 被立即关闭（不等 setup 返回），load() 随后在检查点放弃。
+   * 进行中的 unload / reload 最多等 `lifecycleWaitMs`（默认 2s；卡住的 setup / dispose 不拖住停机），
+   * 之后关闭 setup 中的 ctx、撤销其余实例。单个插件关闭失败记 error 后继续关闭其余插件。
    */
-  async close(): Promise<void> {
+  async close(opts: { lifecycleWaitMs?: number } = {}): Promise<void> {
     this.closed = true;
     this.abort.abort();
     await this.migrating?.catch(() => {});
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      this.lifecycle.catch(() => {}),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, opts.lifecycleWaitMs ?? CLOSE_LIFECYCLE_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
     const settingUp = this.settingUp;
     this.settingUp = undefined;
     await settingUp?.close().catch((e: unknown) => {
       this.deps.log.error("plugin close failed", { err: e });
     });
-    await this.lifecycle.catch(() => {});
     for (const inst of this.registry.all().reverse()) {
       this.registry.deactivate(inst.name);
       try {
-        await inst.dispose({ drainMs: 0, waitQueueJobs: true });
+        await inst.dispose({
+          drainMs: 0,
+          waitQueueJobs: true,
+          disposeTimeoutMs: this.disposeTimeoutMs(),
+        });
         this.deps.log.info("plugin closed", { plugin: inst.name });
       } catch (e) {
         this.deps.log.error("plugin close failed", { plugin: inst.name, err: e });

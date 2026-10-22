@@ -138,6 +138,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   );
 
   let table: PluginRouteTable | undefined;
+  let unwatch: (() => void) | undefined;
   const dispatch = opts.servePlugins
     ? await registerPluginDispatch(fastify, () => table, opts.log)
     : undefined;
@@ -156,6 +157,8 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
       // 先建一次：路径不在 /plugins/ 下的立即报错
       createPluginRouter(t.routes());
       table = t;
+      // 插件实例撤销 / 替换：中止它进行中的请求（SSE 等长连接不留在旧实例上）
+      unwatch = t.onChange?.((plugin) => dispatch?.abortPlugin(plugin));
     },
     async listen(port) {
       await app.listen(port, "0.0.0.0");
@@ -163,6 +166,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
       return addr && typeof addr === "object" ? addr.port : port;
     },
     close: () => {
+      unwatch?.();
       dispatch?.abortAll();
       return app.close();
     },

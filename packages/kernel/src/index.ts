@@ -98,7 +98,6 @@ export {
   type InstalledPluginLoader,
   PluginHost,
   type PluginLoadPlan,
-  RELOAD_WARN_THRESHOLD,
 } from "./plugins/host.js";
 export {
   type InflightEntry,
@@ -114,12 +113,16 @@ export {
   PluginInstalls,
 } from "./plugins/installs.js";
 export {
+  DEFAULT_DISPOSE_TIMEOUT_MS,
+  type DisposeOptions,
+  ImportTracker,
   type LoadDeps,
   loadInstance,
   ManifestMismatchError,
   PluginInstance,
   type Registration,
   type RegistrationKind,
+  UPGRADE_WARN_THRESHOLD,
 } from "./plugins/instance.js";
 export {
   extractPluginPackage,

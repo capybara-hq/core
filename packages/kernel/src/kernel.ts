@@ -390,6 +390,10 @@ export async function createKernel(
     autoApprove: config.pluginPermissions.autoApprove,
     status: replicaStatus,
     drainMs: () => current.pluginHost.drainSeconds * 1000,
+    disposeTimeoutMs: () => current.pluginHost.disposeTimeoutSeconds * 1000,
+    reloadSetupTimeoutMs: () => current.pluginHost.reloadSetupTimeoutSeconds * 1000,
+    // 路由闸门的「部署已知」插件：安装记录（任何 desired_state）；pluginInstalls 在下面创建，调用时才取
+    installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),

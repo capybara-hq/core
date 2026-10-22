@@ -135,6 +135,28 @@ export const KernelConfigSchema = z.object({
               "Seconds in-flight tool calls and queue jobs of a plugin being unloaded may keep running before they are aborted",
           }),
         ),
+      disposeTimeoutSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({
+            description:
+              "Seconds a plugin's dispose() may run when it is unloaded or replaced; after that the kernel logs a warning and moves on",
+          }),
+        ),
+      reloadSetupTimeoutSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(60)
+        .meta(
+          meta({
+            description:
+              "Seconds a plugin's setup() may run when it is reloaded in a running process (enable, upgrade, dependency change); on timeout the reload fails and the previous instance stays",
+          }),
+        ),
       reconcileIntervalSeconds: z
         .number()
         .int()

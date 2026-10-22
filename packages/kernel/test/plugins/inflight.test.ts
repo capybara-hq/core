@@ -47,7 +47,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, fx("everything"), fx("fake-idp"), fx("dir-mini")],
+        plugins: [MODEL_FAKE, fx("everything"), fx("fake-idp"), fx("dir-mini"), fx("sse-hold")],
         pluginConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false, loginSources: ["fake-idp"] },
@@ -218,5 +218,35 @@ describe("内核侧消费方实时向注册表取", () => {
     expect(await plugins()).toEqual([]);
     await k.host.reload("dir-mini");
     expect(await plugins()).toEqual(["dir-mini"]);
+  }, 30_000);
+
+  it("插件 SSE：插件实例被替换或撤销时，进行中的请求被中止、流结束", async () => {
+    const open = async () => {
+      const res = await fetch(`http://127.0.0.1:${k.port}/plugins/sse-hold/hold`);
+      expect(res.status).toBe(200);
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      await reader.read();
+      const ended = (async () => {
+        for (;;) if ((await reader.read()).done) return true;
+      })();
+      // 包一层：async 函数直接返回 Promise 会被展开（open 就会一直等到流结束）
+      return { ended };
+    };
+    const within = <T>(p: Promise<T>, ms = 5_000) =>
+      Promise.race([
+        p,
+        new Promise<"timeout">((r) => {
+          setTimeout(() => r("timeout"), ms);
+        }),
+      ]);
+    const a = await open();
+    await k.host.reload("sse-hold");
+    expect(await within(a.ended)).toBe(true);
+    const b = await open();
+    await k.host.unload("sse-hold");
+    expect(await within(b.ended)).toBe(true);
+    const gone = await k.http.inject({ method: "GET", url: "/plugins/sse-hold/hold" });
+    expect(gone.statusCode).toBe(503);
+    await k.host.reload("sse-hold");
   }, 30_000);
 });

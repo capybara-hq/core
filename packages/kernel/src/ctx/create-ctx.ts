@@ -256,6 +256,8 @@ export type KernelPluginContext = PluginContext & {
    * 撤销第一步：停止取新的队列任务；`deadline`（epoch 毫秒）之后撤销队列 worker 时不再等进行中的任务。
    */
   beginDispose(deadline: number): Promise<void>;
+  /** 等本实例队列 worker 进行中的任务结束，最多等到 `deadline`（epoch 毫秒）。 */
+  drainQueues(deadline: number): Promise<"drained" | "timeout">;
   /** 中止 `ctx.signal`（幂等）。 */
   abort(): void;
   routes: Route[];
@@ -603,6 +605,7 @@ export function createPluginContext(
       drainDeadline = deadline;
       await queue.pauseWorkers();
     },
+    drainQueues: (deadline) => queue.drainWorkers(deadline),
     abort() {
       if (!lifecycle.signal.aborted) lifecycle.abort();
     },

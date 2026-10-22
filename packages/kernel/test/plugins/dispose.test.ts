@@ -10,11 +10,18 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { PluginHost } from "../../src/plugins/host.js";
-import { loadInstance, ManifestMismatchError } from "../../src/plugins/instance.js";
+import {
+  ImportTracker,
+  loadInstance,
+  ManifestMismatchError,
+  UPGRADE_WARN_THRESHOLD,
+} from "../../src/plugins/instance.js";
 import type { PermissionSet } from "../../src/plugins/permission-set.js";
+import { diamondD } from "../fixtures/plugins/diamond-d/index.js";
 import everythingModule, { everythingProbe } from "../fixtures/plugins/everything/index.js";
 import { consumerProbe } from "../fixtures/plugins/everything-consumer/index.js";
 import { dependentProbe } from "../fixtures/plugins/everything-dependent/index.js";
+import { hangReload } from "../fixtures/plugins/hang-reload/index.js";
 
 /**
  * 注册追踪与撤销（T12，C17）的单副本测试：everything 插件把每一种登记都做一遍，
@@ -27,6 +34,7 @@ let deps: KernelDeps;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let jobsQueue: Queue;
+let jobsConn: Redis;
 const hosts: PluginHost[] = [];
 const warned: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
 
@@ -36,8 +44,11 @@ const EVERYTHING = fx("everything");
 const CONSUMER = fx("everything-consumer");
 const DEPENDENT = fx("everything-dependent");
 
-const host = (cfg: Record<string, unknown> = {}) => {
-  const h = new PluginHost(deps, cfg, { autoApprove: true, drainMs: () => 1_000 });
+const host = (
+  cfg: Record<string, unknown> = {},
+  opts: ConstructorParameters<typeof PluginHost>[2] = {},
+) => {
+  const h = new PluginHost(deps, cfg, { autoApprove: true, drainMs: () => 1_000, ...opts });
   hosts.push(h);
   return h;
 };
@@ -77,15 +88,15 @@ beforeAll(async () => {
       error() {},
     },
   };
-  jobsQueue = new Queue("cap.everything.jobs", {
-    connection: new Redis(rd.url, { maxRetriesPerRequest: null }),
-  });
+  jobsConn = new Redis(rd.url, { maxRetriesPerRequest: null });
+  jobsQueue = new Queue("cap.everything.jobs", { connection: jobsConn });
 });
 afterEach(async () => {
   await Promise.all(hosts.splice(0).map((h) => h.close()));
 });
 afterAll(async () => {
   await jobsQueue.close();
+  jobsConn.disconnect();
   await sub.close();
   redis.disconnect();
   await deps.db.destroy();
@@ -130,7 +141,8 @@ describe("插件撤销：每一种登记", () => {
     expect(first?.registrations()).toEqual([]);
     expect(h.tools()).toEqual([]);
     expect(h.routes()).toEqual([]);
-    expect(h.unavailable("everything")).toBe(true);
+    expect(await h.unavailable("everything")).toBe(true);
+    expect(await h.unavailable("nobody")).toBe(false);
     expect(h.list("counter")).toEqual([]);
     expect(h.uiContributions()).toEqual([]);
     expect(await subscribers()).toBe(0);
@@ -159,7 +171,7 @@ describe("插件撤销：每一种登记", () => {
     const second = await h.reload("everything");
     expect(second.generation).toBe(2);
     expect(h.current("everything")).toBe(second);
-    expect(h.unavailable("everything")).toBe(false);
+    expect(await h.unavailable("everything")).toBe(false);
     expect(h.tools().map((t) => t.spec.name)).toEqual(["hang", "polite"]);
     expect(h.routes().map((r) => r.path)).toEqual(["/plugins/everything/hello"]);
     expect(h.uiContributions()).toHaveLength(1);
@@ -208,15 +220,94 @@ describe("插件撤销：每一种登记", () => {
     expect(probe.ctxs.at(-1)?.signal.aborted).toBe(true);
   }, 30_000);
 
-  it("同进程第 21 次重新加载起告警：旧代码留在内存直到重启", async () => {
+  it("同一入口的重新加载不算升级、不告警；不同入口数超过 20 时告警一次", async () => {
     const h = host();
     await h.load([EVERYTHING]);
     warned.length = 0;
-    for (let i = 0; i < 21; i++) await h.reload("everything");
-    const w = warned.filter((x) => x.msg.includes("until the process restarts"));
-    expect(w).toHaveLength(1);
-    expect(w[0]?.fields).toMatchObject({ plugin: "everything", reloads: 21 });
+    for (let i = 0; i < UPGRADE_WARN_THRESHOLD + 1; i++) await h.reload("everything");
+    expect(warned.filter((x) => x.msg.includes("until the process restarts"))).toEqual([]);
+    const t = new ImportTracker();
+    for (let i = 0; i < 25; i++) expect(t.record("p", "file:///p/a.mjs")).toBe(false);
+    expect(t.upgrades).toBe(0);
+    const warns: number[] = [];
+    for (let i = 1; i <= UPGRADE_WARN_THRESHOLD + 3; i++) {
+      if (t.record("p", `file:///p/v${i}.mjs`)) warns.push(t.upgrades);
+    }
+    expect(warns).toEqual([UPGRADE_WARN_THRESHOLD + 1]);
   }, 60_000);
+
+  it("理会 ctx.signal 的队列任务在排空时限内正常结束，ctx.signal 不会提前中止", async () => {
+    const probe = everythingProbe();
+    const h = host();
+    await h.load([EVERYTHING]);
+    const conn = new Redis(rd.url, { maxRetriesPerRequest: null });
+    const slow = new Queue("cap.everything.slowjobs", { connection: conn });
+    try {
+      const startedBefore = probe.slowStarted;
+      const doneBefore = probe.slowDone.length;
+      await slow.add("slowjobs", {});
+      await waitFor(() => probe.slowStarted === startedBefore + 1, "slow job started");
+      await h.unload("everything", { drainMs: 5_000 });
+      expect(probe.slowDone.slice(doneBefore)).toEqual([{ aborted: false }]);
+      expect(probe.ctxs.at(-1)?.signal.aborted).toBe(true);
+    } finally {
+      await slow.close();
+      conn.disconnect();
+    }
+  }, 30_000);
+
+  it("插件 dispose() 卡住：按时限记日志后继续，后续 unload / reload 不被卡住", async () => {
+    const h = host({}, { disposeTimeoutMs: () => 200 });
+    await h.load([fx("hang-dispose")]);
+    warned.length = 0;
+    const t0 = Date.now();
+    await h.unload("hang-dispose");
+    expect(Date.now() - t0).toBeLessThan(3_000);
+    expect(warned.some((w) => w.msg.includes("dispose() did not finish in time"))).toBe(true);
+    await h.reload("hang-dispose");
+    await h.reload("hang-dispose");
+    expect(await h.unload("hang-dispose")).toEqual(["hang-dispose"]);
+  }, 30_000);
+
+  it("重新加载时 setup 卡住：按时限失败、旧实例保留；卡住的 reload 不拖住 close()", async () => {
+    const p = hangReload();
+    try {
+      const h = host({}, { reloadSetupTimeoutMs: () => 300 });
+      await h.load([fx("hang-reload")]);
+      p.hang = true;
+      const old = h.current("hang-reload");
+      await expect(h.reload("hang-reload")).rejects.toThrow(/did not finish within 300 ms/);
+      expect(h.current("hang-reload")).toBe(old);
+
+      p.hang = false;
+      const h2 = host({}, { reloadSetupTimeoutMs: () => 60_000 });
+      await h2.load([fx("hang-reload")]);
+      p.hang = true;
+      const pending = h2.reload("hang-reload");
+      pending.catch(() => {});
+      await sleep(100);
+      const t0 = Date.now();
+      await h2.close({ lifecycleWaitMs: 200 });
+      expect(Date.now() - t0).toBeLessThan(3_000);
+      await expect(pending).rejects.toThrow(/closed/);
+      expect(h2.current("hang-reload")).toBeUndefined();
+      await expect(h2.reload("hang-reload")).rejects.toThrow(/closed/);
+      await expect(h2.unload("hang-reload")).rejects.toThrow(/closed/);
+    } finally {
+      p.hang = false;
+    }
+  }, 30_000);
+
+  it("菱形依赖：提供方变化时连锁只重新加载每个依赖方一次（拓扑序）", async () => {
+    const d = diamondD();
+    const h = host();
+    await h.load([EVERYTHING, fx("diamond-b"), fx("diamond-c"), fx("diamond-d")]);
+    const before = d.setups;
+    await h.unload("everything");
+    expect(d.setups).toBe(before + 1);
+    await h.reload("everything");
+    expect(d.setups).toBe(before + 2);
+  }, 30_000);
 
   it("loadInstance：与包内静态清单核对（不一致抛 manifest_mismatch，不 setup），一致则 setup 出实例", async () => {
     const probe = everythingProbe();

@@ -579,6 +579,53 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
     expect(names).toContain("everything-dependent");
     expect(names.indexOf("inst-counter")).toBeLessThan(names.indexOf("everything-dependent"));
   });
+  it("延后加载的配置声明插件：提供方安装记录没加载成 → 待定 dependency、内核照常启动；路由闸门按部署已知状态 503 / 404", async () => {
+    await stopAll();
+    const DEPENDENT = fileURLToPath(
+      new URL("../fixtures/plugins/everything-dependent/index.ts", import.meta.url),
+    );
+    await db.deleteFrom("plugin_installs").where("name", "=", "inst-counter").execute();
+    // 模块清单比审阅过的静态清单多要了 secrets：failed / manifest_mismatch
+    await installPkg(
+      "bad-counter",
+      await pluginTgz({
+        name: "bad-counter",
+        manifest: { provides: ["counter@1"] },
+        entry: [
+          'import { definePlugin } from "@capybara-hq/plugin-sdk";',
+          'export default definePlugin({ name: "bad-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: { secrets: true }, setup(ctx) { ctx.provide("counter@1", {}); } });',
+        ].join("\n"),
+      }),
+    );
+    const k = await boot({ plugins: [MODEL_FAKE, DEPENDENT] });
+    const status = async (plugin: string) =>
+      db
+        .selectFrom("plugin_replica_status")
+        .select(["state", "reason"])
+        .where("replica_id", "=", k.replicaId)
+        .where("plugin", "=", plugin)
+        .executeTakeFirst();
+    expect(await status("bad-counter")).toEqual({ state: "failed", reason: "manifest_mismatch" });
+    expect(await status("everything-dependent")).toEqual({
+      state: "pending",
+      reason: "dependency",
+    });
+    expect(k.host.pending()).toContainEqual(
+      expect.objectContaining({
+        plugin: "everything-dependent",
+        reason: "dependency",
+        blockedBy: [{ capability: "counter@1", providers: ["bad-counter"] }],
+      }),
+    );
+    const get = (name: string) => k.http.inject({ method: "GET", url: `/plugins/${name}/x` });
+    // 安装记录（PG）与配置声明的插件都是部署已知的：不在本副本生效 → 503；完全未知 → 404
+    for (const name of ["bad-counter", "mig-mismatch", "everything-dependent"]) {
+      const r = await get(name);
+      expect(r.statusCode, name).toBe(503);
+      expect((r.json() as { error: { code: string } }).error.code).toBe("plugin.unavailable");
+    }
+    expect((await get("nobody")).statusCode).toBe(404);
+  });
 });
 
 describe("内置插件", () => {

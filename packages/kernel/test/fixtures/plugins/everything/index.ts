@@ -14,6 +14,10 @@ export interface EverythingProbe {
   hangStarted: number;
   /** polite 工具结束的次数。 */
   politeDone: number;
+  /** slowjobs 任务开始的次数。 */
+  slowStarted: number;
+  /** slowjobs 任务结束时 ctx.signal 是否已中止（理会 signal：中止就提前结束）。 */
+  slowDone: { aborted: boolean }[];
 }
 
 export const everythingProbe = (): EverythingProbe => {
@@ -27,6 +31,8 @@ export const everythingProbe = (): EverythingProbe => {
     disposeSawAborted: [],
     hangStarted: 0,
     politeDone: 0,
+    slowStarted: 0,
+    slowDone: [],
   };
   return g.__everything;
 };
@@ -92,6 +98,18 @@ export default definePlugin({
     ctx.http.route("GET", "/hello", async () => new Response("hello"));
     ctx.queue.define("jobs", async (data: unknown) => {
       probe.jobs.push(data);
+    });
+    // 理会 ctx.signal 的慢任务：300ms 后结束，ctx.signal 中止就提前结束
+    ctx.queue.define("slowjobs", async () => {
+      probe.slowStarted += 1;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 300);
+        ctx.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+      probe.slowDone.push({ aborted: ctx.signal.aborted });
     });
     await ctx.bus.subscribe("ping", (p) => {
       probe.messages.push(p);

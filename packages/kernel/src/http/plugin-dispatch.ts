@@ -24,7 +24,12 @@ export interface PluginRouter {
 export interface PluginRouteTable {
   routes(): Route[];
   revision(): number;
-  unavailable(plugin: string): boolean;
+  unavailable(plugin: string): boolean | Promise<boolean>;
+  /**
+   * 插件实例变化（撤销 / 替换）的通知：转发层据此中止该插件进行中请求的 `req.signal`
+   * （SSE 等长连接随之收尾，不留在旧实例上）。返回取消订阅函数。
+   */
+  onChange?(listener: (plugin: string) => void): () => void;
 }
 
 /** 固定的路由列表（测试与只挂一次的调用方）：版本不变、没有不可用的插件。 */
@@ -64,7 +69,8 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
 /**
  * 在独立的封装作用域里注册 `/plugins/*`，转成 Web `Request` 交给插件 handler：
  * 作用域内移除默认解析器、所有 content-type 一律按原始 Buffer 收下，插件拿到的 body 与客户端发出的字节一致。
- * - 插件属于本部署但不在注册表里（已撤销等）→ 503 `plugin.unavailable`；
+ * - 插件属于本部署但不在注册表里（已撤销等）→ 503 `plugin.unavailable`；插件实例被撤销或替换时，
+ *   该插件进行中请求的 `req.signal` 被中止（`abortPlugin`，路由来源的 `onChange` 触发）；
  * - 未挂载或无匹配 → 404 `not_found`；HEAD 没有专门路由时按 GET 处理，响应不带 body。
  * - 无法构造 `Request`（如畸形 Host）→ 400 `validation_failed`，不记 error。
  * - `req.signal` 只在响应写完之前客户端断开时中止（正常完成不中止），长连接 handler 用它退订；
@@ -80,8 +86,9 @@ export async function registerPluginDispatch(
   fastify: FastifyInstance,
   getTable: () => PluginRouteTable | undefined,
   log: Logger,
-): Promise<{ abortAll(): void }> {
-  const inFlight = new Set<AbortController>();
+): Promise<{ abortAll(): void; abortPlugin(plugin: string): void }> {
+  /** 进行中的请求 → 所属插件（停机时全部中止；插件实例变化时只中止该插件的）。 */
+  const inFlight = new Map<AbortController, string>();
   let stopping = false;
   // 按路由来源的版本缓存路由表（插件撤销 / 替换时版本变化才重建）
   let cached: { table: PluginRouteTable; revision: number; router: PluginRouter } | undefined;
@@ -96,7 +103,7 @@ export async function registerPluginDispatch(
     const path = req.url.split("?")[0] as string;
     const table = getTable();
     const plugin = pluginOfPath(path);
-    if (table && plugin !== undefined && table.unavailable(plugin)) {
+    if (table && plugin !== undefined && (await table.unavailable(plugin))) {
       return reply
         .code(503)
         .send(errorBody("plugin.unavailable", `Plugin ${plugin} is not available right now`));
@@ -108,7 +115,7 @@ export async function registerPluginDispatch(
     // 只在响应写完之前连接就关了（客户端断开）时中止 `req.signal`：长连接（SSE）的 handler 据此退订、收尾。
     // 正常写完后的 close 不中止（writableFinished 为 true）。
     const ac = new AbortController();
-    inFlight.add(ac);
+    inFlight.set(ac, plugin ?? "");
     if (stopping) ac.abort();
     reply.raw.once("close", () => {
       inFlight.delete(ac);
@@ -156,7 +163,10 @@ export async function registerPluginDispatch(
   return {
     abortAll() {
       stopping = true;
-      for (const ac of [...inFlight]) ac.abort();
+      for (const ac of [...inFlight.keys()]) ac.abort();
+    },
+    abortPlugin(plugin) {
+      for (const [ac, p] of [...inFlight]) if (p === plugin) ac.abort();
     },
   };
 }

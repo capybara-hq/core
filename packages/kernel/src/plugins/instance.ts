@@ -162,27 +162,44 @@ export class PluginInstance {
   /**
    * 撤销本实例（幂等；调用方应先把它从注册表摘下或替换掉）。依次：
    * 1. 停止接新的（在途计数关闭、队列 worker 停止取新任务）；
-   * 2. 等在途的工具调用结束，最多 `drainMs`；队列 worker 的进行中任务同一截止时刻；
-   * 3. 中止：余下的在途调用以 `PluginUnloadedError` 结束（模型收到 `PLUGIN_UNLOADED_TOOL_ERROR`），`ctx.signal` abort；
-   * 4. 逐项（倒序）撤销账上的登记；
-   * 5. 调插件的 `dispose(ctx)`（抛错只记日志）；
+   * 2. 同时等在途的工具调用与队列 worker 进行中的任务结束，最多 `drainMs`（同一截止时刻）；
+   * 3. 中止：余下的在途调用以 `PluginUnloadedError` 结束（模型收到 `PLUGIN_UNLOADED_TOOL_ERROR`），`ctx.signal` abort
+   *    （所以理会 `ctx.signal` 的任务在排空时限内不会被中止）；
+   * 4. 逐项（倒序）撤销账上的登记（到点仍未结束的队列任务强制留在队列里）；
+   * 5. 调插件的 `dispose(ctx)`，最多 `disposeTimeoutMs`（抛错或超时只记日志，继续）；
    * 6. 关闭 ctx（队列连接、未完成的审计写入）。第 6 步失败时抛出（由调用方记日志）。
    * `waitQueueJobs`（停机路径）：队列 worker 一直等进行中的任务结束，不按截止时刻强制关闭。
    */
-  dispose(opts: { drainMs: number; waitQueueJobs?: boolean }): Promise<void> {
+  dispose(opts: DisposeOptions): Promise<void> {
     this.disposing ??= this.doDispose(opts);
     return this.disposing;
   }
 
-  private async doDispose(opts: { drainMs: number; waitQueueJobs?: boolean }): Promise<void> {
+  private async doDispose(opts: DisposeOptions): Promise<void> {
     const deadline = Date.now() + Math.max(0, opts.drainMs);
     this.inflight.close();
+    let queues: Promise<"drained" | "timeout"> = Promise.resolve("drained");
     if (!opts.waitQueueJobs) {
       await this.ctx.beginDispose(deadline).catch((err: unknown) => {
         this.log.warn("plugin queue pause failed", { plugin: this.name, err });
       });
+      queues = this.ctx.drainQueues(deadline).catch(() => "timeout" as const);
     }
-    const drained = await this.inflight.drain(Math.max(0, deadline - Date.now()));
+    const [calls, jobs] = await Promise.all([
+      this.inflight.drain(Math.max(0, deadline - Date.now())),
+      queues,
+    ]);
+    if (jobs === "timeout") {
+      this.log.warn(
+        "plugin queue jobs still running after the drain timeout; leaving them queued",
+        {
+          plugin: this.name,
+          generation: this.generation,
+          drainMs: opts.drainMs,
+        },
+      );
+    }
+    const drained = calls;
     if (drained === "timeout") {
       this.log.warn("plugin calls still running after the drain timeout; aborting them", {
         plugin: this.name,
@@ -203,14 +220,89 @@ export class PluginInstance {
       }),
     );
     if (this.manifest.dispose) {
+      const dispose = this.manifest.dispose;
+      const ms = opts.disposeTimeoutMs ?? DEFAULT_DISPOSE_TIMEOUT_MS;
+      let timer: NodeJS.Timeout | undefined;
       try {
-        await this.manifest.dispose(this.ctx);
+        const r = await Promise.race([
+          Promise.resolve()
+            .then(() => dispose(this.ctx))
+            .then(() => "done" as const),
+          new Promise<"timeout">((resolve) => {
+            timer = setTimeout(() => resolve("timeout"), ms);
+          }),
+        ]);
+        if (r === "timeout") {
+          this.log.warn("plugin dispose() did not finish in time; continuing without it", {
+            plugin: this.name,
+            generation: this.generation,
+            timeoutMs: ms,
+          });
+        }
       } catch (err) {
         this.log.warn("plugin dispose() failed", { plugin: this.name, err });
+      } finally {
+        clearTimeout(timer);
       }
     }
     await this.ctx.close();
   }
+}
+
+/** 插件 `dispose()` 的默认时限（`pluginHost.disposeTimeoutSeconds` 的默认值）。 */
+export const DEFAULT_DISPOSE_TIMEOUT_MS = 10_000;
+
+/** {@link PluginInstance.dispose} 的参数。 */
+export interface DisposeOptions {
+  /** 在途调用与队列任务的排空时限（毫秒）。 */
+  drainMs: number;
+  /** 插件 `dispose()` 的时限（毫秒），默认 {@link DEFAULT_DISPOSE_TIMEOUT_MS}。 */
+  disposeTimeoutMs?: number;
+  /** 停机路径：队列 worker 一直等进行中的任务结束，不按截止时刻强制关闭。 */
+  waitQueueJobs?: boolean;
+}
+
+/** 同进程导入过的插件模块数超过多少（每个插件第一个入口不算）就告警。 */
+export const UPGRADE_WARN_THRESHOLD = 20;
+
+/**
+ * 记录本进程导入过的插件模块入口（按插件名去重的 URL）：ESM 模块无法卸载，每个新入口（升级到新包）
+ * 的代码都留在内存里直到进程重启。同一 URL 的重新加载不新增模块，不计数。
+ * 升级数 = 各插件「不同入口数 - 1」之和；第一次超过 {@link UPGRADE_WARN_THRESHOLD} 时 `record` 返回 true（只一次）。
+ */
+export class ImportTracker {
+  private readonly urls = new Map<string, Set<string>>();
+  private warned = false;
+
+  /** 本进程的升级数（见类注释）。 */
+  get upgrades(): number {
+    let n = 0;
+    for (const set of this.urls.values()) n += set.size - 1;
+    return n;
+  }
+
+  /** 记一次导入；返回这次是否应当告警。 */
+  record(plugin: string, url: string): boolean {
+    let set = this.urls.get(plugin);
+    if (!set) {
+      set = new Set();
+      this.urls.set(plugin, set);
+    }
+    set.add(url);
+    if (!this.warned && this.upgrades > UPGRADE_WARN_THRESHOLD) {
+      this.warned = true;
+      return true;
+    }
+    return false;
+  }
+}
+
+/** 升级次数超过阈值的告警（旧模块代码留在内存直到重启）。 */
+export function warnUpgrades(log: KernelDeps["log"], imports: ImportTracker): void {
+  log.warn(
+    "plugins were upgraded many times in this process; the code of earlier plugin versions stays in memory until the process restarts, so restart this replica to free it",
+    { upgrades: imports.upgrades, threshold: UPGRADE_WARN_THRESHOLD },
+  );
 }
 
 /** {@link setupInstance} / {@link loadInstance} 的依赖。 */
@@ -219,6 +311,8 @@ export interface LoadDeps {
   capabilityAccess: CapabilityAccess;
   /** 该插件下一代的编号（宿主按插件名递增）。 */
   nextGeneration(name: string): number;
+  /** 本进程导入过的模块入口（{@link loadInstance} 每次导入都记一笔，超过阈值时告警）。 */
+  imports?: ImportTracker;
 }
 
 /** 在已导入、已核对的清单上建 ctx（记账）并 setup；setup 抛错时撤销已登记的再抛。 */
@@ -299,5 +393,7 @@ export async function loadInstance(
   if (input.section && !matchesSection(manifest, input.section.name, input.section.manifest)) {
     throw new ManifestMismatchError(input.section.name, manifest.name);
   }
+  if (deps.imports?.record(manifest.name, input.entryUrl))
+    warnUpgrades(deps.kernel.log, deps.imports);
   return setupInstance(deps, manifest, input);
 }
