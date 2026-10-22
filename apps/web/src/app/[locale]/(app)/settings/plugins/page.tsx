@@ -38,7 +38,7 @@ import { useLoad } from "../../../../../lib/use-load";
 /**
  * `/[locale]/settings/plugins`：组织插件（SettingsPage，管理员）。每个插件一个分组：启用开关（依赖缺失 /
  * 仍有依赖方时给出原因，后者可强制停用）、权限清单（只读，敏感类别高亮）、组织级配置表单、
- * 通讯录插件的「立即同步」。
+ * 通讯录插件的「立即同步」。企业管理员在部署上停用的插件显示「不可用」：开关只读（组织的启用设置保留）。
  */
 export default function PluginsPage() {
   return <OrgGate>{(orgId) => <Plugins key={orgId} orgId={orgId} />}</OrgGate>;
@@ -108,6 +108,8 @@ function PluginSection({
   const { config, errors } = draftToConfig(fields, draft, "edit", plugin.secrets);
   const dirty = changedCount(draft, baseline);
   const directory = provides(plugin, "directory");
+  // 部署上停用（或尚未加载）：只显示组织的启用设置，不能修改
+  const unavailable = plugin.available === false;
 
   async function toggle(enabled: boolean, force = false) {
     setBusy("toggle");
@@ -172,11 +174,13 @@ function PluginSection({
         <Switch
           label={t("enableLabel", { plugin: plugin.plugin })}
           checked={plugin.enabled}
-          disabled={busy !== undefined}
+          disabled={busy !== undefined || unavailable}
           onChange={(on) => void toggle(on)}
         />
         <Text>{plugin.enabled ? t("enabled") : t("disabled")}</Text>
+        {unavailable && <Badge tone="accent">{t("unavailable")}</Badge>}
       </Stack>
+      {unavailable && <Text tone="muted">{t("unavailableHint")}</Text>}
       {problem?.kind === "dependency_missing" && (
         <FormError message={t("dependencyMissing")} extra={problem.capabilities} />
       )}
@@ -197,7 +201,7 @@ function PluginSection({
       )}
       {problem?.kind === "other" && <FormError message={problem.message} extra={problem.extra} />}
       <Permissions groups={plugin.permissions} plugin={plugin.plugin} />
-      {plugin.configurable && fields.length > 0 && (
+      {!unavailable && plugin.configurable && fields.length > 0 && (
         <Stack gap={12}>
           <Text variant="small" tone="muted">
             {t("configTitle")}
@@ -228,7 +232,7 @@ function PluginSection({
           </Stack>
         </Stack>
       )}
-      {directory && plugin.enabled && (
+      {!unavailable && directory && plugin.enabled && (
         <Stack gap={8}>
           <Text variant="small" tone="muted">
             {t("syncHint")}

@@ -1073,6 +1073,8 @@
     "enableLabel": "启用 {plugin}",
     "enabled": "已在该组织启用",
     "disabled": "未启用",
+    "unavailable": "部署上不可用",
+    "unavailableHint": "企业管理员在部署上停用了此插件；组织的启用设置会保留，重新启用后恢复。",
     "enabledToast": "已启用 {plugin}。",
     "disabledToast": "已停用 {plugin}。",
     "dependencyMissing": "请先启用提供以下能力的插件：",

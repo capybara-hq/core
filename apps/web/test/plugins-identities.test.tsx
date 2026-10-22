@@ -93,6 +93,44 @@ describe("组织插件（SettingsPage）", () => {
     },
   );
 
+  it.each(["zh", "en"] as const)(
+    "部署上停用的插件：显示「不可用」，开关只读、保留组织的启用设置，没有配置与同步（%s）",
+    async (locale) => {
+      const m = msgs[locale].plugins;
+      const calls = stubApi({
+        [`GET ${BASE}/plugins`]: () =>
+          json(200, {
+            plugins: [
+              {
+                ...FAKE_IM,
+                enabled: true,
+                configurable: false,
+                secrets: [],
+                permissions: [],
+                orgConfigSchema: null,
+                available: false,
+              },
+            ],
+          }),
+      });
+      renderPage(<PluginsPage />, { locale });
+      const toggle = await screen.findByRole("switch", {
+        name: m.enableLabel.replace("{plugin}", "fake-im"),
+      });
+      expect(
+        toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
+      ).toBe(true);
+      expect(screen.getByText(m.unavailable)).toBeTruthy();
+      expect(screen.getByText(m.unavailableHint)).toBeTruthy();
+      expect(screen.getByText(m.enabled)).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: m.syncLabel.replace("{plugin}", "fake-im") }),
+      ).toBeNull();
+      await userEvent.setup().click(toggle);
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    },
+  );
+
   it("依赖缺失（plugin.dependency_missing）列出缺的能力", async () => {
     stubApi({
       [`GET ${BASE}/plugins`]: () => json(200, { plugins: [FAKE_IM] }),
