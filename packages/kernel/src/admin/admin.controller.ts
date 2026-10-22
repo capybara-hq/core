@@ -12,8 +12,10 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
+import type { DirectoryRequestsService } from "../directory/requests.service.js";
 import {
   ACCOUNTS,
+  DIRECTORY_REQUESTS,
   KERNEL_LOG,
   MODEL_PURPOSES,
   ORGS,
@@ -61,7 +63,7 @@ import type { ProviderRegistry, ProviderStatus } from "../runtime/providers.js";
 export interface AdminOverview {
   /** 需要企业管理员处理的插件（待批准、待配置、失败、依赖缺失、副本不一致），见 `pluginNeedsAction`。 */
   pluginsNeedingAction: number;
-  /** 待处理的企业目录申请（申请在 T26 上线，之前恒为 0）。 */
+  /** 待企业管理员处理的目录申请（stage deployment、pending）。 */
   directoryRequestsPending: number;
   orgs: number;
   accounts: number;
@@ -108,19 +110,21 @@ export class AdminController {
     @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
     @Inject(PLUGIN_ADMIN) private readonly plugins: PluginAdmin,
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
+    @Inject(DIRECTORY_REQUESTS) private readonly directoryRequests: DirectoryRequestsService,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
   @Get("overview")
   async overview(): Promise<AdminOverview> {
-    const [plugins, orgs, accounts] = await Promise.all([
+    const [plugins, orgs, accounts, directoryRequestsPending] = await Promise.all([
       this.plugins.list(),
       this.orgs.listAll(),
       this.accounts.count(),
+      this.directoryRequests.countPendingDeployment(),
     ]);
     return {
       pluginsNeedingAction: plugins.filter((p) => pluginNeedsAction(p.status)).length,
-      directoryRequestsPending: 0,
+      directoryRequestsPending,
       orgs: orgs.length,
       accounts,
     };

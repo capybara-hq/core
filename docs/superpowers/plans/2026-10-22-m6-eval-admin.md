@@ -299,6 +299,7 @@
     | `org.models.manage` | admin |
     | `directory.read` | member |
     | `directory.request` | member |
+    | `directory.decide` | admin（F-AF：组织管理员决定成员申请） |
 
     以上全部是 `HUMAN_ONLY`。
   - 部署级端点一律放在 `/api/v1/admin/*`，用 `@EnterpriseAdmin()`；写操作在事务里调用 `lockEnterpriseAdminsAndAuthorize`。

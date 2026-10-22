@@ -260,6 +260,9 @@ export interface ConnectorsTable {
   deleted_at: TsNullable;
   /** 0015：最近一次成功拿到工具清单的时间；为空 = 从未拍过快照（首个快照按安装处理）。 */
   tools_synced_at: TsNullable;
+  /** 0037：从目录模板安装时的来源条目（应用里的模板记应用条目）与版本。 */
+  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0010_tools.sql（0033 由 `app_tools` 改名）：连接器暴露的工具。 */
@@ -278,7 +281,7 @@ export interface ConnectorToolsTable {
   pending_spec_hash: string | null;
   pending_source: "connector" | "resources" | null;
   /** 0015：默认策略的来历（admin = 管理员设定，复核通过后保留；derived = 按注解重新推导）。 */
-  policy_source: Generated<"derived" | "admin">;
+  policy_source: Generated<"derived" | "admin" | "template">;
   /** 0015：远端不再提供该工具的时间（工具停用，行保留）。 */
   missing_since: TsNullable;
 }
@@ -509,6 +512,9 @@ export interface SkillsTable {
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
+  /** 0037：从目录安装时的来源条目（应用里的技能记应用条目）与版本。 */
+  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0024_skills.sql：技能的版本。 */
@@ -830,6 +836,10 @@ export interface KernelDatabase {
   catalog_sources: CatalogSourcesTable;
   catalog_entries: CatalogEntriesTable;
   app_import_staging: AppImportStagingTable;
+  directory_requests: DirectoryRequestsTable;
+  directory_org_grants: DirectoryOrgGrantsTable;
+  app_installs: AppInstallsTable;
+  app_install_components: AppInstallComponentsTable;
 }
 
 /** 0034_directory.sql：企业目录条目。 */
@@ -920,6 +930,56 @@ export interface AppImportStagingTable {
   created_by: string | null;
   created_at: Generated<Date>;
   expires_at: ColumnType<Date, Date | string, Date | string>;
+}
+
+type NullableCol<T> = ColumnType<T | null, T | null | undefined, T | null>;
+
+/** 0037：组织的目录申请（stage org = 成员申请；deployment = 等企业管理员批准）。 */
+export interface DirectoryRequestsTable {
+  id: string;
+  org_id: string;
+  item_id: string;
+  version: NullableCol<string>;
+  stage: "org" | "deployment";
+  requested_by: string | null;
+  note: ColumnType<string, string | undefined, string>;
+  status: ColumnType<
+    "pending" | "approved" | "rejected" | "cancelled",
+    "pending" | "approved" | "rejected" | "cancelled" | undefined,
+    "pending" | "approved" | "rejected" | "cancelled"
+  >;
+  decided_by: NullableCol<string>;
+  decided_at: NullableCol<Date>;
+  created_at: Generated<Date>;
+}
+
+/** 0037：企业管理员批准某组织安装 needs_approval 条目。 */
+export interface DirectoryOrgGrantsTable {
+  item_id: string;
+  org_id: string;
+  granted_by: string | null;
+  granted_at: Generated<Date>;
+}
+
+/** 0037：应用在组织里的安装。 */
+export interface AppInstallsTable {
+  id: string;
+  org_id: string;
+  item_id: string;
+  version: string;
+  status: "installing" | "installed" | "failed" | "uninstalling";
+  installed_by: string | null;
+  installed_at: Generated<Date>;
+  error: ColumnType<unknown, string | null | undefined, string | null>;
+}
+
+/** 0037：应用安装的组件（created = 本次新建）。 */
+export interface AppInstallComponentsTable {
+  install_id: string;
+  kind: "plugin" | "connector" | "skill";
+  ref: string;
+  created: boolean;
+  skill_version: NullableCol<number>;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

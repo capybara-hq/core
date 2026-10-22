@@ -94,6 +94,31 @@ export async function readSandboxLimitOverride(
   return parsed.success ? parsed.data : undefined;
 }
 
+/**
+ * 组织自建连接器 / 技能被禁止时（部署设置 `customConnectors` / `customSkills` 为 `deny`，C22）抛
+ * `directory.custom_disabled`：只能从企业目录安装。每次实时读 PG（可在调用方事务里读）；存量值非法按 allow。
+ */
+export async function assertCustomAllowed(
+  db: KernelDb | Transaction<KernelDatabase>,
+  key: "customConnectors" | "customSkills",
+): Promise<void> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", key)
+    .executeTakeFirst();
+  if (!row) return;
+  const parsed = CustomPolicy.safeParse(row.value);
+  if (parsed.success && parsed.data === "deny") {
+    throw new ApiError(
+      "directory.custom_disabled",
+      key === "customConnectors"
+        ? "Custom connectors are disabled in this deployment; install connectors from the enterprise directory"
+        : "Custom skills are disabled in this deployment; install skills from the enterprise directory",
+    );
+  }
+}
+
 /** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */
 function mergeByOrg<T>(
   current: Record<string, T>,

@@ -161,3 +161,9 @@ export const DIRECTORY = Symbol("DIRECTORY");
 export const APP_IMPORT = Symbol("APP_IMPORT");
 /** 目录来源（`CatalogsService`）。 */
 export const CATALOGS = Symbol("CATALOGS");
+/** 组织从企业目录浏览与安装（`OrgDirectoryService`）。 */
+export const ORG_DIRECTORY = Symbol("ORG_DIRECTORY");
+/** 目录申请与审批（`DirectoryRequestsService`）。 */
+export const DIRECTORY_REQUESTS = Symbol("DIRECTORY_REQUESTS");
+/** 应用的组织安装与卸载（`AppInstaller`）。 */
+export const APP_INSTALLER = Symbol("APP_INSTALLER");

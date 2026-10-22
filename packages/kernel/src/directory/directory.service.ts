@@ -48,7 +48,10 @@ export interface DirectoryItemView {
   latestVersion: string;
   /** 全部版本，按 semver 从新到旧。 */
   versions: string[];
-  /** 组织安装数（安装表在 T26，之前恒为 0）。 */
+  /**
+   * 安装了它的组织数：技能 / 连接器模板 = 有未删除的、来自该条目的技能 / 连接器的组织；插件 = 启用了该插件的组织；
+   * 应用 = 已安装（installed）的组织。
+   */
   installs: number;
   /** 最新版本的来源（file / npm / catalog）。 */
   source: string;
@@ -472,7 +475,11 @@ export class DirectoryService {
       list.push(v);
       byItem.set(v.item_id, list);
     }
-    return { items: items.map((i) => itemView(i, byItem.get(i.id) ?? [])), nextOffset };
+    const installs = await countInstalls(this.d.db, items);
+    return {
+      items: items.map((i) => itemView(i, byItem.get(i.id) ?? [], installs.get(i.id) ?? 0)),
+      nextOffset,
+    };
   }
 
   /** 条目详情（含各版本；已删除的条目也能看）。不存在 → `directory.item_not_found`。 */
@@ -490,9 +497,10 @@ export class DirectoryService {
       .where("item_id", "=", itemId)
       .execute();
     rows.sort((a, b) => bySemverDesc(a.version, b.version));
+    const installs = await countInstalls(this.d.db, [item]);
     return {
       item: {
-        ...itemView(item, rows),
+        ...itemView(item, rows, installs.get(item.id) ?? 0),
         packageName: item.package_name,
         deletedAt: item.deleted_at?.toISOString() ?? null,
       },
@@ -938,6 +946,73 @@ function listingOf(
   };
 }
 
+/** 各条目的组织安装数（见 {@link DirectoryItemView.installs}）。 */
+async function countInstalls(
+  db: KernelDb,
+  items: { id: string; kind: PackageKind; name: string }[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const ids = (k: PackageKind) => items.filter((i) => i.kind === k).map((i) => i.id);
+  const add = (rows: { id: string | null; n: string | number }[]) => {
+    for (const r of rows) if (r.id) out.set(r.id, Number(r.n));
+  };
+  const skillIds = ids("skill");
+  if (skillIds.length > 0) {
+    add(
+      await db
+        .selectFrom("skills")
+        .select(["directory_item_id as id", sql<string>`count(DISTINCT org_id)`.as("n")])
+        .where("directory_item_id", "in", skillIds)
+        .where("deleted_at", "is", null)
+        .groupBy("directory_item_id")
+        .execute(),
+    );
+  }
+  const templateIds = ids("connector-template");
+  if (templateIds.length > 0) {
+    add(
+      await db
+        .selectFrom("connectors")
+        .select(["directory_item_id as id", sql<string>`count(DISTINCT org_id)`.as("n")])
+        .where("directory_item_id", "in", templateIds)
+        .where("deleted_at", "is", null)
+        .groupBy("directory_item_id")
+        .execute(),
+    );
+  }
+  const appIds = ids("app");
+  if (appIds.length > 0) {
+    add(
+      await db
+        .selectFrom("app_installs")
+        .select(["item_id as id", sql<string>`count(DISTINCT org_id)`.as("n")])
+        .where("item_id", "in", appIds)
+        .where("status", "=", "installed")
+        .groupBy("item_id")
+        .execute(),
+    );
+  }
+  const plugins = items.filter((i) => i.kind === "plugin");
+  if (plugins.length > 0) {
+    const rows = await db
+      .selectFrom("plugin_org_configs")
+      .select(["plugin", sql<string>`count(*)`.as("n")])
+      .where(
+        "plugin",
+        "in",
+        plugins.map((p) => p.name),
+      )
+      .where("enabled", "=", true)
+      .groupBy("plugin")
+      .execute();
+    for (const p of plugins) {
+      const r = rows.find((x) => x.plugin === p.name);
+      if (r) out.set(p.id, Number(r.n));
+    }
+  }
+  return out;
+}
+
 export function itemView(
   i: {
     id: string;
@@ -951,6 +1026,7 @@ export function itemView(
     updated_at: Date;
   },
   versions: { version: string; source: string }[],
+  installs = 0,
 ): DirectoryItemView {
   const sorted = [...versions].sort((a, b) => bySemverDesc(a.version, b.version));
   return {
@@ -963,7 +1039,7 @@ export function itemView(
     policy: i.policy,
     latestVersion: i.latest_version,
     versions: sorted.map((v) => v.version),
-    installs: 0,
+    installs,
     source: versions.find((v) => v.version === i.latest_version)?.source ?? "file",
     updatedAt: i.updated_at.toISOString(),
   };

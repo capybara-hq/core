@@ -11,8 +11,10 @@ import { sql, type Transaction } from "kysely";
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { assertItemInstallable } from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { assertCustomAllowed } from "../identity/settings.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import type { PluginHost } from "../plugins/host.js";
 import {
@@ -79,8 +81,11 @@ export interface ConnectorToolView {
   issue: string | null;
   /** `resources`：内核为支持 resources 的连接器补上的工具（见 resources.ts）。 */
   source: ToolSource;
-  /** 默认策略的来历：`derived` 按注解推导（定义变化复核通过后重新推导），`admin` 管理员设定（保留）。 */
-  policySource: "derived" | "admin";
+  /**
+   * 默认策略的来历：`derived` 按注解推导（定义变化复核通过后重新推导），`admin` 管理员设定（保留），
+   * `template` 来自目录模板的 `defaultToolPolicies`（与 admin 一样保留）。
+   */
+  policySource: "derived" | "admin" | "template";
   /** 远端已不再提供该工具（随之停用；又出现时待复核）。 */
   missing: boolean;
   reviewedAt: Date | null;
@@ -125,6 +130,21 @@ export interface CreateConnectorInput {
   endpoint: unknown;
   auth: ConnectorAuth;
   credential?: unknown;
+  /**
+   * 从企业目录的连接器模板安装（T26，由目录服务填写，HTTP 接口不接受）：连接器记下来源条目与版本，事务内按条目策略复核
+   * （应用里的模板传应用条目）；工具快照建立后按 `defaultToolPolicies` 设默认策略（`policy_source 'template'`）。
+   * 不给 = 自建，部署设置 `customConnectors` 为 deny 时拒绝（`directory.custom_disabled`）。
+   */
+  template?: ConnectorTemplateRef | undefined;
+}
+
+/** 连接器来自哪个目录条目的哪个模板。 */
+export interface ConnectorTemplateRef {
+  itemId: string;
+  version: string;
+  /** 应用里的模板 id；独立的连接器模板条目为空。 */
+  templateId?: string | undefined;
+  defaultToolPolicies?: Record<string, ToolPolicy> | undefined;
 }
 
 export interface PreviewConnectorInput {
@@ -443,6 +463,8 @@ export class ConnectorsService {
     input: CreateConnectorInput,
     actorTokenId?: string,
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
+    // 自建被禁止时先拒绝（事务里再复核一次）：不该为此触发外连
+    if (!input.template) await assertCustomAllowed(this.db, "customConnectors");
     const slug = this.resolveSlug(input);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
     if (this.host.manifests().some((m) => m.name === slug)) {
@@ -489,6 +511,8 @@ export class ConnectorsService {
 
     return this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      if (input.template) await assertItemInstallable(t, orgId, input.template.itemId);
+      else await assertCustomAllowed(t, "customConnectors");
       if (await this.slugTaken(t, orgId, slug)) {
         throw new ApiError("connector.slug_taken", "Connector slug is already taken");
       }
@@ -503,11 +527,13 @@ export class ConnectorsService {
           endpoint: JSON.stringify(endpoint),
           auth: JSON.stringify(auth),
           created_by: actorAccountId,
+          directory_item_id: input.template?.itemId ?? null,
+          directory_version: input.template?.version ?? null,
           // 授权码连接器安装时不拍快照（A16）：留空，首个快照按安装处理
           ...(auth.type !== "oauth_code" && { tools_synced_at: sql<Date>`now()` }),
         })
         .execute();
-      await this.insertTools(t, id, rows);
+      await this.insertTools(t, id, rows, input.template?.defaultToolPolicies);
       if (secret && owner) await this.credentials.setStatic(orgId, id, auth, owner, secret, t);
       if (oauth) {
         await this.credentials.setOAuthClient(orgId, id, oauth.client, t);
@@ -527,6 +553,15 @@ export class ConnectorsService {
           auth: { type: auth.type, ...(auth.type !== "none" && { ownership: auth.ownership }) },
           tools: rows.length,
           credentialProvided: secret !== undefined || oauth !== undefined,
+          ...(input.template && {
+            directory: {
+              itemId: input.template.itemId,
+              version: input.template.version,
+              ...(input.template.templateId !== undefined && {
+                templateId: input.template.templateId,
+              }),
+            },
+          }),
         },
       });
       return { connector: await this.detail(t, orgId, id, actorAccountId), issues };
@@ -631,9 +666,18 @@ export class ConnectorsService {
     };
   }
 
-  private async insertTools(t: Trx, connectorId: string, rows: SnapshotRow[]): Promise<void> {
+  private async insertTools(
+    t: Trx,
+    connectorId: string,
+    rows: SnapshotRow[],
+    templatePolicies?: Record<string, ToolPolicy>,
+  ): Promise<void> {
     if (rows.length === 0) return;
     await recordToolSpecs(t, rows);
+    const fromTemplate = (name: string): ToolPolicy | undefined =>
+      templatePolicies && Object.hasOwn(templatePolicies, name)
+        ? templatePolicies[name]
+        : undefined;
     await t
       .insertInto("connector_tools")
       .values(
@@ -643,7 +687,8 @@ export class ConnectorsService {
           spec: JSON.stringify(r.spec),
           spec_hash: r.specHash,
           status: r.issue ? ("disabled" as const) : ("enabled" as const),
-          default_policy: policyFromAnnotations(r.spec.annotations),
+          default_policy: fromTemplate(r.name) ?? policyFromAnnotations(r.spec.annotations),
+          ...(fromTemplate(r.name) !== undefined && { policy_source: "template" as const }),
           source: r.source,
           // 安装即复核
           ...(!r.issue && { reviewed_at: sql<Date>`now()` }),
@@ -908,27 +953,42 @@ export class ConnectorsService {
   ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
-      const app = await this.row(t, orgId, connectorId, true);
-      await t
-        .updateTable("connectors")
-        .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
-        .where("id", "=", connectorId)
-        .execute();
-      await this.credentials.clearConnector(orgId, connectorId, t);
-      // 授权绑定连接器 id（软删除不触发外键级联）：一并删掉，不留给任何后来的连接器
-      await t.deleteFrom("tool_grants").where("connector_id", "=", connectorId).execute();
-      await t
-        .deleteFrom("conversation_tool_grants")
-        .where("connector_id", "=", connectorId)
-        .execute();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "connector.deleted",
-        target: connectorId,
-        detail: { slug: app.slug },
-      });
+      await this.removeIn(t, orgId, connectorId, actorAccountId, actorTokenId);
+    });
+  }
+
+  /**
+   * 在调用方事务里软删除连接器（调用方已锁组织行并按需复核角色；应用安装的回滚与卸载用）：删全部凭据与授权，
+   * 审计 `connector.deleted`（`reason` 并进 detail）。已删除 / 不存在 → `connector.not_found`。
+   */
+  async removeIn(
+    t: Trx,
+    orgId: string,
+    connectorId: string,
+    actorAccountId: string,
+    actorTokenId?: string,
+    reason?: string,
+  ): Promise<void> {
+    const app = await this.row(t, orgId, connectorId, true);
+    await t
+      .updateTable("connectors")
+      .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
+      .where("id", "=", connectorId)
+      .execute();
+    await this.credentials.clearConnector(orgId, connectorId, t);
+    // 授权绑定连接器 id（软删除不触发外键级联）：一并删掉，不留给任何后来的连接器
+    await t.deleteFrom("tool_grants").where("connector_id", "=", connectorId).execute();
+    await t
+      .deleteFrom("conversation_tool_grants")
+      .where("connector_id", "=", connectorId)
+      .execute();
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.deleted",
+      target: connectorId,
+      detail: { slug: app.slug, ...(reason !== undefined && { reason }) },
     });
   }
 

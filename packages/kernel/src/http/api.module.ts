@@ -1,4 +1,4 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import type { Connector, Logger } from "@capybara-hq/plugin-sdk";
 import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import type { Redis } from "ioredis";
@@ -24,9 +24,16 @@ import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { AdminDirectoryController } from "../directory/admin-directory.controller.js";
 import type { AppImport } from "../directory/app-import.js";
+import { AppInstaller } from "../directory/app-install.js";
 import { CatalogsController } from "../directory/catalogs.controller.js";
 import type { CatalogsService } from "../directory/catalogs.service.js";
 import type { DirectoryService } from "../directory/directory.service.js";
+import {
+  AdminDirectoryRequestsController,
+  OrgDirectoryController,
+} from "../directory/org-directory.controller.js";
+import { OrgDirectoryService } from "../directory/org-directory.service.js";
+import { DirectoryRequestsService } from "../directory/requests.service.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { type EvalQueue, EvalRunsService } from "../evals/runs.service.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -105,6 +112,7 @@ import {
   AGENTS,
   API_TOKENS,
   APP_IMPORT,
+  APP_INSTALLER,
   APPROVALS,
   ATTACHMENTS,
   CATALOGS,
@@ -118,6 +126,7 @@ import {
   CONVERSATIONS,
   CREDENTIALS,
   DIRECTORY,
+  DIRECTORY_REQUESTS,
   DIRECTORY_SYNC,
   EMBED_TOKENS,
   EVAL_RUNS,
@@ -136,6 +145,7 @@ import {
   MODEL_PURPOSES,
   OAUTH_FLOW,
   OFFBOARDING,
+  ORG_DIRECTORY,
   ORG_PLUGIN_CONFIGS,
   ORG_SETTINGS,
   ORG_UI_STREAMS,
@@ -230,6 +240,16 @@ export interface ApiDeps {
   sandboxDestroy?: { destroy(conversationIds: string[]): Promise<void> };
 }
 
+/** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`。 */
+const findConnectorOf =
+  (host: ApiDeps["host"]) =>
+  (plugin: string, kind: string): Connector | undefined =>
+    host
+      .list("connector")
+      .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
+      | Connector
+      | undefined;
+
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
 const CONTROLLERS: Type[] = [
   AuthController,
@@ -269,6 +289,8 @@ const CONTROLLERS: Type[] = [
   EvalSetsController,
   EvalRunsController,
   ModelPurposesController,
+  OrgDirectoryController,
+  AdminDirectoryRequestsController,
 ];
 
 /**
@@ -408,8 +430,60 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: SKILLS, useValue: deps.skills },
     { provide: SKILL_CHANGES, useValue: deps.skillChanges },
     {
+      provide: DIRECTORY_REQUESTS,
+      useFactory: (db: KernelDb) => new DirectoryRequestsService(db),
+      inject: [KERNEL_DB],
+    },
+    {
       provide: INBOX,
-      useValue: new InboxService({ approvals: deps.approvals, skillChanges: deps.skillChanges }),
+      useFactory: (requests: DirectoryRequestsService) =>
+        new InboxService({
+          approvals: deps.approvals,
+          skillChanges: deps.skillChanges,
+          directoryRequests: requests,
+        }),
+      inject: [DIRECTORY_REQUESTS],
+    },
+    {
+      provide: APP_INSTALLER,
+      useFactory: (
+        db: KernelDb,
+        connectors: ConnectorsService,
+        requests: DirectoryRequestsService,
+      ) =>
+        new AppInstaller({
+          db,
+          storage: deps.storage,
+          host: deps.host,
+          findConnector: findConnectorOf(deps.host),
+          connectors,
+          skills: deps.skills,
+          orgConfigs: deps.orgPluginConfigs,
+          requests,
+          log: deps.log,
+        }),
+      inject: [KERNEL_DB, CONNECTORS, DIRECTORY_REQUESTS],
+    },
+    {
+      provide: ORG_DIRECTORY,
+      useFactory: (
+        db: KernelDb,
+        connectors: ConnectorsService,
+        requests: DirectoryRequestsService,
+        apps: AppInstaller,
+      ) =>
+        new OrgDirectoryService({
+          db,
+          storage: deps.storage,
+          host: deps.host,
+          findConnector: findConnectorOf(deps.host),
+          connectors,
+          skills: deps.skills,
+          orgConfigs: deps.orgPluginConfigs,
+          requests,
+          apps,
+        }),
+      inject: [KERNEL_DB, CONNECTORS, DIRECTORY_REQUESTS, APP_INSTALLER],
     },
     {
       provide: CONVERSATIONS,
