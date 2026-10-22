@@ -10,3 +10,4 @@
 - 安装 / 启用 / 停用提交之后拼视图失败（如包在 CLI 读不到的对象存储里）不再报失败：返回降级视图（status failed、带 `error`），CLI 照常报成功并附说明。
 - 模型供应商插件在流式输出途中被重新加载 / 升级：被中止的调用（`PluginUnloadedError`）归为可重试的 `run.provider_unavailable`，降级梯子的同模型重试取到新实例，运行照常完成。
 - 安装记录不受信任：启动时 setup 同样限 `pluginHost.reloadSetupTimeoutSeconds`（内置与配置声明的照旧不限）；新增配置 `pluginHost.migrationTimeoutSeconds`（默认 300）：插件迁移会话设 `statement_timeout` / `lock_timeout`，到时终止会话、释放迁移锁并记 `migration_failed`。
+- 插件名归属（Ruling P3 补充）：内置与配置声明的插件启动时按其 npm 包名登记 `plugin_name_owners`（已有不动）；名字没有归属却已有权限快照、部署配置或组织配置时，安装同样返回 `plugin.name_conflict`。

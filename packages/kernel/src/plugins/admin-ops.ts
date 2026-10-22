@@ -52,6 +52,8 @@ export class PluginAdminOps {
    * - 已有同名安装记录、但来自另一个 npm 包 → `plugin.name_conflict`（在事务里锁行判断，无竞态）；
    *   插件名归第一次安装它的 npm 包（`plugin_name_owners`，卸载不删）：卸载后别的包用同名插件安装同样
    *   `plugin.name_conflict`（Ruling P3：卸载保留数据、密钥、快照与组织启用）；同一个 npm 包重新安装照常；
+   *   内置 / 配置声明的插件启动时也登记归属（I4）；名字没有归属却已有快照 / 部署配置 / 组织配置 → 同样
+   *   `plugin.name_conflict`；
    * - 降级（目标版本低于当前）且目标版本有尚未执行的迁移文件 → `plugin.downgrade_unsupported`（迁移只做扩展，
    *   降级只能回到迁移是已执行迁移子集的版本）。
    * 已指向同一个包时什么都不改（不写审计）。
@@ -94,7 +96,20 @@ export class PluginAdminOps {
           `Plugin ${name} is already installed from package ${row.package_name}; package ${pkg.package_name} uses the same plugin name`,
         );
       }
-      // Ruling P3：插件名归第一次安装它的 npm 包（卸载不删），别的包不能接手（数据、密钥与批准都还在）
+      // Ruling P3：插件名归第一次安装它的 npm 包（卸载不删），别的包不能接手（数据、密钥与批准都还在）。
+      // 还没有归属、却已有这个名字留下的快照 / 部署配置 / 组织配置（I4：如归属表之前就有的配置声明插件）：
+      // 不知道它们属于哪个包，同样拒绝
+      const owned = await trx
+        .selectFrom("plugin_name_owners")
+        .select("package_name")
+        .where("name", "=", name)
+        .executeTakeFirst();
+      if (!owned && (await hasRetainedData(trx, name))) {
+        throw new ApiError(
+          "plugin.name_conflict",
+          `Plugin name ${name} already has retained data (permission approval, deployment config or organization settings) from a plugin that is not installed here, and no package owns the name; package ${pkg.package_name} cannot take it over. Remove that data or use a different plugin name`,
+        );
+      }
       await trx
         .insertInto("plugin_name_owners")
         .values({ name, package_name: pkg.package_name })
@@ -359,6 +374,26 @@ function fallbackView(
     removable: true,
     error: `the change was saved, but its current status cannot be read: ${err instanceof Error ? err.message : String(err)}`,
   };
+}
+
+/** 插件名已留下的数据：权限快照、部署配置或任一组织的配置。 */
+async function hasRetainedData(trx: Trx, name: string): Promise<boolean> {
+  const hit = await trx
+    .selectFrom("plugin_permission_snapshots")
+    .select(sql<number>`1`.as("x"))
+    .where("plugin", "=", name)
+    .union(
+      trx
+        .selectFrom("plugin_deployment_configs")
+        .select(sql<number>`1`.as("x"))
+        .where("plugin", "=", name),
+    )
+    .union(
+      trx.selectFrom("plugin_org_configs").select(sql<number>`1`.as("x")).where("plugin", "=", name),
+    )
+    .limit(1)
+    .executeTakeFirst();
+  return hit !== undefined;
 }
 
 const notFound = (name: string) =>

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -239,6 +240,24 @@ function dropShadowed(
     );
     return false;
   });
+}
+
+/**
+ * 模块所在目录往上最近的 `package.json` 的 `name`（npm 包名）；找不到返回 undefined。
+ * 内置 / 配置声明的插件据此登记插件名归属（`plugin_name_owners`，I4）。
+ */
+async function packageNameOf(dir: string): Promise<string | undefined> {
+  for (let d = resolvePath(dir); ; ) {
+    try {
+      const pj = JSON.parse(await readFile(join(d, "package.json"), "utf8")) as { name?: unknown };
+      if (typeof pj.name === "string" && pj.name !== "") return pj.name;
+    } catch {
+      // 没有或读不了：继续往上
+    }
+    const up = dirname(d);
+    if (up === d) return undefined;
+    d = up;
+  }
 }
 
 /** {@link PluginHost.inspect} 的一项。 */
@@ -705,6 +724,7 @@ export class PluginHost {
       this.deps.log,
     );
     const entries = [...builtin, ...config];
+    await this.claimNames(entries);
     const dirs = new Map(entries.map((e) => [e.manifest.name, e.dir]));
     const urls = new Map(entries.map((e) => [e.manifest.name, e.url]));
     // 有安装记录时：配置声明的插件若 requires 只能由安装记录满足，先挑出来，等安装记录加载完再解析与加载
@@ -778,6 +798,34 @@ export class PluginHost {
       this.deps.log.warn("pluginConfig has keys for plugins that are not loaded", {
         keys: orphans,
       });
+    }
+  }
+
+  /**
+   * 内置与配置声明的插件也占插件名（I4，Ruling P3 的补充）：按其 npm 包名在 `plugin_name_owners` 插入（已有则不动）。
+   * 之后它从配置列表里去掉，别的 npm 包也不能用同名插件安装、接手它留下的数据、密钥与批准。写失败只告警。
+   */
+  private async claimNames(entries: ImportedEntry[]): Promise<void> {
+    const rows: { name: string; package_name: string }[] = [];
+    for (const e of entries) {
+      const pkg = await packageNameOf(e.dir);
+      if (pkg === undefined) {
+        this.deps.log.warn("plugin module has no package.json name; its plugin name is not claimed", {
+          plugin: e.manifest.name,
+        });
+        continue;
+      }
+      rows.push({ name: e.manifest.name, package_name: pkg });
+    }
+    if (rows.length === 0) return;
+    try {
+      await kernelDb(this.deps.db)
+        .insertInto("plugin_name_owners")
+        .values(rows)
+        .onConflict((oc) => oc.column("name").doNothing())
+        .execute();
+    } catch (err) {
+      this.deps.log.warn("cannot record plugin name owners", { err });
     }
   }
 

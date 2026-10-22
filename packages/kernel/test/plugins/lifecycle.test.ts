@@ -786,3 +786,71 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
     }
   });
 });
+
+describe("插件名归属：内置与配置声明的插件也占名字（I4）", { timeout: 60_000 }, () => {
+  it("配置声明的插件从 plugins 去掉后，别的包不能用同名插件安装；无归属但有遗留数据的名字同样拒绝", async () => {
+    // 第一个内核启动时（plugins: [MODEL_FAKE]，内置 object-store-s3）已登记归属
+    const owners = await db
+      .selectFrom("plugin_name_owners")
+      .select(["name", "package_name"])
+      .where("name", "in", ["model-fake", "object-store-s3"])
+      .orderBy("name")
+      .execute();
+    expect(owners).toEqual([
+      { name: "model-fake", package_name: "@capybara-hq/plugin-model-fake" },
+      { name: "object-store-s3", package_name: "@capybara-hq/plugin-object-store-s3" },
+    ]);
+    // 重启后 model-fake 不再在配置列表里
+    const k3 = await startKernel(
+      runConfig(
+        { pg: pgc.url, redis: rd.url },
+        {
+          roles: ["api"],
+          plugins: [],
+          pluginPermissions: { autoApprove: false },
+          pluginHost: { dir: pluginsDir, reconcileIntervalSeconds: 3600 },
+          packages: { maxBytes: MAX_BYTES },
+        },
+      ),
+    );
+    try {
+      const root = await session(k3, "root");
+      const tryInstall = async (bytes: Uint8Array, name: string) => {
+        const up = await root({
+          method: "POST",
+          url: "/api/v1/admin/plugins/packages/file",
+          headers: { "content-type": "application/octet-stream" },
+          payload: Buffer.from(bytes),
+        });
+        expect(up.statusCode, up.body).toBe(200);
+        return root({
+          method: "POST",
+          url: `/api/v1/admin/plugins/${name}/install`,
+          payload: { sha256: (up.json() as { sha256: string }).sha256 },
+        });
+      };
+      const taken = await tryInstall(
+        await lifePkg({ name: "model-fake", version: "9.0.0", packageName: "@evil/model-fake" }),
+        "model-fake",
+      );
+      expect(taken.statusCode, taken.body).toBe(409);
+      expect(taken.json().error.code).toBe("plugin.name_conflict");
+      expect(taken.json().error.message).toMatch(/previously used by package @capybara-hq\/plugin-model-fake/);
+
+      // 名字没有归属，但已有部署配置留下（归属表之前的数据）：不知道属于哪个包，拒绝
+      await db
+        .insertInto("plugin_deployment_configs")
+        .values({ plugin: "ghost", config: JSON.stringify({ dir: "" }) })
+        .execute();
+      const ghost = await tryInstall(await lifePkg({ name: "ghost", version: "1.0.0" }), "ghost");
+      expect(ghost.statusCode, ghost.body).toBe(409);
+      expect(ghost.json().error.code).toBe("plugin.name_conflict");
+      expect(ghost.json().error.message).toMatch(/retained data/);
+      expect(
+        await db.selectFrom("plugin_name_owners").select("name").where("name", "=", "ghost").execute(),
+      ).toEqual([]);
+    } finally {
+      await k3.stop();
+    }
+  });
+});
