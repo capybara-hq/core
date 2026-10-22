@@ -69,7 +69,8 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS directory_item_id uuid
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS directory_version text;
 
 -- 把插件带进部署的全部目录条目（插件条目装到部署、应用包确认时 install / upgrade 的插件）。同一插件可以有多个
--- 来源；组织直接启用（不经某个条目安装）时按全部来源的策略判定，最严格的生效（C22）。不经目录安装的插件没有行。
+-- 来源；组织直接启用（不经某个条目安装）时按全部来源的策略判定，最严格的生效（C22）。不经目录安装的插件没有行；
+-- 插件从部署卸载（删安装记录）时同一事务删掉它的行，之后不经目录重装不受旧条目约束。
 CREATE TABLE IF NOT EXISTS plugin_directory_sources (
   plugin text NOT NULL,
   item_id uuid NOT NULL REFERENCES directory_items(id) ON DELETE CASCADE,

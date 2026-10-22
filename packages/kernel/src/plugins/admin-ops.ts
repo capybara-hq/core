@@ -219,7 +219,8 @@ export class PluginAdminOps {
   }
 
   /**
-   * 卸载：须先停用（否则 `plugin.not_disabled`）；删除安装记录（审计 `plugin.uninstalled`），数据保留：
+   * 卸载：须先停用（否则 `plugin.not_disabled`）；删除安装记录与它的目录来源条目（`plugin_directory_sources`，
+   * 同一事务；审计 `plugin.uninstalled`），数据保留：
    * 插件 schema、密钥、组织配置、权限快照与包存储里的包都不动（重新安装后接着用）。
    */
   async uninstall(name: string, actor: string | null, actorTokenId?: string): Promise<void> {
@@ -235,6 +236,8 @@ export class PluginAdminOps {
         );
       }
       await trx.deleteFrom("plugin_installs").where("name", "=", name).execute();
+      // 来源条目随安装记录一起删：之后不经目录重新安装时不再受旧条目的策略约束（T26 裁决）
+      await trx.deleteFrom("plugin_directory_sources").where("plugin", "=", name).execute();
       await this.audit(
         trx,
         actor,

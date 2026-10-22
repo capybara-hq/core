@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { waitFor } from "../helpers/runs.js";
 import {
   auditActions,
   importDeployedPlugin,
@@ -358,6 +359,44 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     // 删除条目即撤回它的约束
     await env.root({ method: "DELETE", url: `/api/v1/admin/directory/items/${pluginItem}` });
     expect((await enable(true)).statusCode).toBe(200);
+  });
+
+  it("插件从部署卸载时一并删除来源条目：之后不经目录重装不受旧条目约束", async () => {
+    const { itemId, sha256 } = await importDeployedPlugin(env, "dirplug2");
+    await setPolicy(env, itemId, "disabled");
+    const enable = () =>
+      env.boss({
+        method: "PUT",
+        url: `/api/v1/orgs/${env.orgId}/plugins/dirplug2`,
+        payload: { enabled: true },
+      });
+    expect((await enable()).json().error.code).toBe("directory.item_disabled");
+    expect(
+      (await env.root({ method: "POST", url: "/api/v1/admin/plugins/dirplug2/disable" }))
+        .statusCode,
+    ).toBe(200);
+    await waitFor(async () => env.k.host.current("dirplug2") === undefined, 15_000, "unloaded");
+    const del = await env.root({ method: "DELETE", url: "/api/v1/admin/plugins/dirplug2" });
+    expect(del.statusCode, del.body).toBe(204);
+    expect(
+      await env.db
+        .selectFrom("plugin_directory_sources")
+        .select("item_id")
+        .where("plugin", "=", "dirplug2")
+        .execute(),
+    ).toEqual([]);
+    // 不经目录重装（同一个包，已在包存储里）：没有来源条目，不受条目 disabled 约束
+    await env.k.pluginAdminOps.install("dirplug2", sha256, env.rootId);
+    await env.k.pluginAdminOps.enable("dirplug2", env.rootId);
+    await waitFor(async () => env.k.host.current("dirplug2") !== undefined, 15_000, "loaded");
+    const row = await env.db
+      .selectFrom("plugin_installs")
+      .select("directory_item_id")
+      .where("name", "=", "dirplug2")
+      .executeTakeFirstOrThrow();
+    expect(row.directory_item_id).toBeNull();
+    const ok = await enable();
+    expect(ok.statusCode, ok.body).toBe(200);
   });
 });
 
