@@ -68,7 +68,7 @@ export interface AdminPlugin {
 
 /** 迁移 SQL 的审阅警告（敏感，不拒绝）。 */
 export interface PackageWarning {
-  kind: "destructive_migration" | "dynamic_sql";
+  kind: "destructive_migration" | "dynamic_sql" | "foreign_schema";
   sensitive: true;
   file: string;
   line: number;

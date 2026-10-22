@@ -4,11 +4,17 @@ import { type PermissionSet, permissionKeys } from "./permission-set.js";
 import type { PluginSource } from "./sources.js";
 
 /**
- * 审阅摘要：`sha256(permissionKeys(set).join("\n"))` 的前 16 位十六进制。批准时调用方回传它，
- * 与此刻重新计算的不一致（审阅后权限变了）就拒绝批准（`plugin.approval_stale`）。
+ * 审阅摘要：`sha256(permissionKeys(set).join("\n"))` 的前 16 位十六进制；有迁移警告时再并入警告的摘要
+ * （种类、文件、行与语句），没有警告时与只看权限的摘要相同。批准时调用方回传它，与此刻重新计算的不一致
+ * （审阅后权限或警告变了）就拒绝批准（`plugin.approval_stale`）。
  */
-export function reviewHash(set: PermissionSet): string {
-  return createHash("sha256").update(permissionKeys(set).join("\n")).digest("hex").slice(0, 16);
+export function reviewHash(set: PermissionSet, warnings: readonly PackageWarning[] = []): string {
+  const h = createHash("sha256").update(permissionKeys(set).join("\n"));
+  if (warnings.length > 0) {
+    h.update("\n--warnings--\n");
+    h.update(warnings.map((w) => `${w.kind}\t${w.file}:${w.line}\t${w.statement}`).join("\n"));
+  }
+  return h.digest("hex").slice(0, 16);
 }
 
 /** 权限清单展示用的一组：按类别分组，`sensitive` 标出需要管理员特别留意的类别。 */
@@ -318,24 +324,55 @@ export function derivePluginStatus(i: StatusInput): DeploymentPluginStatus {
 }
 
 /**
- * 迁移 SQL 的审阅警告：破坏性语句（`destructive_migration`），以及内容不做静态检查的 `DO` 块（`dynamic_sql`，
- * 块里可以执行任意语句）。都标敏感，不拒绝。
+ * 迁移 SQL 的审阅警告：破坏性语句（`destructive_migration`）、内容不做静态检查的 `DO` 块（`dynamic_sql`，
+ * 块里可以执行任意语句），以及写到插件自己 schema 之外或改权限 / 角色 / 事务的语句（`foreign_schema`，
+ * 见 {@link isForeignSchemaSql}）。都标敏感，不拒绝。
  */
 export function migrationWarnings(files: { file: string; sql: string }[]): PackageWarning[] {
   return files.flatMap((m) =>
     splitSqlStatements(m.sql).flatMap((st): PackageWarning[] => {
       const base = { sensitive: true as const, file: m.file, line: st.line, statement: st.text };
       if (/^DO\b/i.test(st.text)) return [{ kind: "dynamic_sql", ...base }];
+      if (isForeignSchemaSql(withQuoted(st))) return [{ kind: "foreign_schema", ...base }];
       if (isDestructiveSql(st.text)) return [{ kind: "destructive_migration", ...base }];
       return [];
     }),
   );
 }
 
+/** 把语句 `text` 里抹掉的双引号标识符填回去（`"capybara".x` 这类引用才看得见）。 */
+function withQuoted(st: { text: string; quoted: string[] }): string {
+  let k = 0;
+  return st.text.replace(/""/g, () => `"${st.quoted[k++] ?? ""}"`);
+}
+
+/**
+ * 语句是否越出插件自己的 schema（够用即可，不是 SQL 解析器）：引用内核 schema `capybara`（`capybara.x` /
+ * `"capybara".x`）、`GRANT` / `REVOKE`、`CREATE` / `ALTER` / `DROP ROLE|USER|GROUP`、`ALTER DEFAULT PRIVILEGES`、
+ * `SET ROLE` / `SET SESSION AUTHORIZATION`、`CREATE [OR REPLACE] FUNCTION|PROCEDURE|TRIGGER|EVENT TRIGGER`，
+ * 以及事务控制 `COMMIT` / `ROLLBACK` / `BEGIN` / `START TRANSACTION` / `END`（迁移器把每个文件放在一个事务里）。
+ */
+export function isForeignSchemaSql(t: string): boolean {
+  return (
+    /(?:^|[^\w$"])"?capybara"?\s*\./i.test(t) ||
+    /^(?:GRANT|REVOKE)\b/i.test(t) ||
+    /^(?:CREATE|ALTER|DROP)\s+(?:ROLE|USER|GROUP)\b/i.test(t) ||
+    /^ALTER\s+DEFAULT\s+PRIVILEGES\b/i.test(t) ||
+    /^SET\s+(?:SESSION\s+|LOCAL\s+)?(?:ROLE|SESSION\s+AUTHORIZATION)\b/i.test(t) ||
+    /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?(?:FUNCTION|PROCEDURE|TRIGGER|EVENT\s+TRIGGER)\b/i.test(
+      t,
+    ) ||
+    /^(?:COMMIT|ROLLBACK|BEGIN|START\s+TRANSACTION|END|ABORT)\b/i.test(t)
+  );
+}
+
 /** {@link PackageReview.warnings} 的一项。 */
 export interface PackageWarning {
-  /** `dynamic_sql`：`DO` 块，块内语句没有检查。 */
-  kind: "destructive_migration" | "dynamic_sql";
+  /**
+   * `dynamic_sql`：`DO` 块，块内语句没有检查；`foreign_schema`：写到插件自己 schema 之外、改权限 / 角色、
+   * 建函数 / 触发器或控制事务（{@link isForeignSchemaSql}）。
+   */
+  kind: "destructive_migration" | "dynamic_sql" | "foreign_schema";
   sensitive: true;
   /** 迁移文件名（`capybara.migrations` 目录下）。 */
   file: string;

@@ -3,8 +3,10 @@ import type { PermissionSet } from "../../src/plugins/permission-set.js";
 import {
   derivePluginStatus,
   isSensitivePermissionKey,
+  migrationWarnings,
   permissionGroups,
   pluginNeedsAction,
+  reviewHash,
   SENSITIVE_CAPABILITIES,
   type StatusInput,
 } from "../../src/plugins/permission-view.js";
@@ -258,5 +260,43 @@ describe("pluginNeedsAction（后台概览「需要处理的插件」）", () =>
       "failed",
       "dependency",
     ]);
+  });
+});
+
+describe("migrationWarnings：越出插件 schema 的语句（foreign_schema）", () => {
+  it("内核表、GRANT / REVOKE、角色、函数 / 触发器、事务控制标 foreign_schema；自己 schema 里的普通语句不标", () => {
+    const sql = [
+      "CREATE TABLE IF NOT EXISTS notes (id int)",
+      "INSERT INTO notes SELECT 1",
+      "UPDATE capybara.accounts SET is_enterprise_admin = true",
+      'INSERT INTO notes SELECT count(*) FROM "capybara".sessions',
+      "GRANT ALL ON notes TO public",
+      "REVOKE SELECT ON notes FROM public",
+      "ALTER ROLE app SUPERUSER",
+      "CREATE OR REPLACE FUNCTION f() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql",
+      "CREATE TRIGGER t AFTER INSERT ON notes FOR EACH ROW EXECUTE FUNCTION f()",
+      "COMMIT",
+      "SELECT 'capybara.accounts'",
+    ].join(";\n");
+    const kinds = migrationWarnings([{ file: "0001_x.sql", sql }]).map((w) => [w.line, w.kind]);
+    expect(kinds).toEqual([
+      [3, "foreign_schema"],
+      [4, "foreign_schema"],
+      [5, "foreign_schema"],
+      [6, "foreign_schema"],
+      [7, "foreign_schema"],
+      [8, "foreign_schema"],
+      [9, "foreign_schema"],
+      [10, "foreign_schema"],
+    ]);
+  });
+
+  it("reviewHash 并入警告：权限相同、警告不同 → 摘要不同；没有警告时与只看权限的摘要相同", () => {
+    const w = migrationWarnings([{ file: "0001_x.sql", sql: "GRANT ALL ON notes TO public;" }]);
+    expect(w).toHaveLength(1);
+    expect(reviewHash(base, [])).toBe(reviewHash(base));
+    expect(reviewHash(base, w)).not.toBe(reviewHash(base));
+    const w2 = migrationWarnings([{ file: "0002_y.sql", sql: "COMMIT;" }]);
+    expect(reviewHash(base, w2)).not.toBe(reviewHash(base, w));
   });
 });

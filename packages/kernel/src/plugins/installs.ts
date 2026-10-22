@@ -179,6 +179,7 @@ export class PluginInstalls {
     const set = permissionSetOfPackage(pkg);
     const snapshot = (await new PluginApprovals(this.d.db).all()).get(m.name);
     const { added, removed } = diffPermissions(snapshot?.permissions, set);
+    const warnings = migrationWarnings(pkg.migrationSql);
     return {
       sha256: pkg.sha256,
       name: m.name,
@@ -187,8 +188,8 @@ export class PluginInstalls {
       added,
       addedItems: permissionKeyItems(added),
       removed,
-      reviewHash: reviewHash(set),
-      warnings: migrationWarnings(pkg.migrationSql),
+      reviewHash: reviewHash(set, warnings),
+      warnings,
     };
   }
 

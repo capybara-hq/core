@@ -1171,7 +1171,8 @@
       "warningsHint": "Plugin migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
       "warning": {
         "destructive_migration": "Destructive statement",
-        "dynamic_sql": "DO block (contents not checked)"
+        "dynamic_sql": "DO block (contents not checked)",
+        "foreign_schema": "Statement outside the plugin's own schema (kernel tables, grants / roles, functions / triggers or transaction control)"
       },
       "at": "{file} line {line}"
     }

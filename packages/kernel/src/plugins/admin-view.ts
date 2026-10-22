@@ -158,7 +158,7 @@ export class PluginAdmin {
         `The permissions of plugin ${name} changed since they were reviewed; review them again`,
       );
     if (s.install !== null && body.sha256 !== s.install.sha256) throw stale();
-    if (body.reviewHash !== reviewHash(s.set)) throw stale();
+    if (body.reviewHash !== reviewHash(s.set, s.warnings)) throw stale();
 
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
@@ -374,7 +374,7 @@ export class PluginAdmin {
         added,
         addedItems: permissionKeyItems(added),
         removed,
-        reviewHash: reviewHash(s.set),
+        reviewHash: reviewHash(s.set, s.warnings),
         sensitive: permissions.some((g) => g.sensitive),
         warnings: s.warnings,
         snapshot: snapshotView(snap),

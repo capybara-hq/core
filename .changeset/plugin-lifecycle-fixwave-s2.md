@@ -12,3 +12,4 @@
 - 安装记录不受信任：启动时 setup 同样限 `pluginHost.reloadSetupTimeoutSeconds`（内置与配置声明的照旧不限）；新增配置 `pluginHost.migrationTimeoutSeconds`（默认 300）：插件迁移会话设 `statement_timeout` / `lock_timeout`，到时终止会话、释放迁移锁并记 `migration_failed`。
 - 插件名归属（Ruling P3 补充）：内置与配置声明的插件启动时按其 npm 包名登记 `plugin_name_owners`（已有不动）；名字没有归属却已有权限快照、部署配置或组织配置时，安装同样返回 `plugin.name_conflict`。
 - 副本正常停机时删掉自己的 `plugin_replica_status` 行（原先标为 unloaded，后台在心跳过期前约 3 个周期里一直显示收敛中）；崩溃的副本仍按心跳清理。
+- 迁移审阅新增警告种类 `foreign_schema`（引用内核 schema `capybara`、`GRANT` / `REVOKE`、角色、`ALTER DEFAULT PRIVILEGES`、`SET ROLE`、建函数 / 过程 / 触发器、事务控制），标敏感、不拒绝；`reviewHash` 并入警告摘要（没有警告时不变），审阅后警告变了按 `plugin.approval_stale` 拒绝批准。`splitSqlStatements` 的结果新增 `quoted`（双引号标识符原文）。

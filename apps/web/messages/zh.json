@@ -1171,7 +1171,8 @@
       "warningsHint": "插件迁移只该做扩展：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
       "warning": {
         "destructive_migration": "破坏性语句",
-        "dynamic_sql": "DO 块（内容没有检查）"
+        "dynamic_sql": "DO 块（内容没有检查）",
+        "foreign_schema": "越出插件自己 schema 的语句（内核表、权限 / 角色、函数 / 触发器或事务控制）"
       },
       "at": "{file} 第 {line} 行"
     }

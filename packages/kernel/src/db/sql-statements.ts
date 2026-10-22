@@ -8,11 +8,16 @@ export type SqlStatement = {
   line: number;
   /** 语句里美元引用字符串的原文（不含定界符），按出现顺序；`DO $$ … $$` 的块体在这里。 */
   bodies: string[];
+  /**
+   * 语句里双引号标识符的内容（`""` 已还原为 `"`），按出现顺序；`text` 里对应位置是 `""`。
+   */
+  quoted: string[];
 };
 
 /**
  * 把 SQL 切成语句。忽略 `--` 行注释、块注释、单引号字符串（含 '' 转义）与美元引用字符串
- * 中的 `;` 和关键字：注释被丢弃，字符串/美元引用内容被抹成空串（美元引用原文另存于 `bodies`）。
+ * 中的 `;` 和关键字：注释被丢弃，字符串/美元引用/双引号标识符内容被抹成空串（美元引用原文另存于 `bodies`，
+ * 双引号标识符另存于 `quoted`）。
  * line 为语句首个 token 的 1 基行号。
  */
 export function splitSqlStatements(src: string): SqlStatement[] {
@@ -21,6 +26,7 @@ export function splitSqlStatements(src: string): SqlStatement[] {
   let line = 1;
   let startLine = 0;
   let bodies: string[] = [];
+  let quoted: string[] = [];
   let i = 0;
   const push = (chunk: string) => {
     if (startLine === 0 && chunk.trim() !== "") startLine = line;
@@ -28,11 +34,12 @@ export function splitSqlStatements(src: string): SqlStatement[] {
   };
   const flush = () => {
     if (text.trim() !== "") {
-      out.push({ text: text.replace(/\s+/g, " ").trim(), line: startLine, bodies });
+      out.push({ text: text.replace(/\s+/g, " ").trim(), line: startLine, bodies, quoted });
     }
     text = "";
     startLine = 0;
     bodies = [];
+    quoted = [];
   };
   while (i < src.length) {
     const c = src[i] as string;
@@ -77,6 +84,7 @@ export function splitSqlStatements(src: string): SqlStatement[] {
     if (c === '"') {
       push('"');
       i++;
+      const from = i;
       while (i < src.length) {
         if (src[i] === '"' && src[i + 1] === '"') i += 2;
         else if (src[i] === '"') break;
@@ -85,6 +93,7 @@ export function splitSqlStatements(src: string): SqlStatement[] {
           i++;
         }
       }
+      quoted.push(src.slice(from, Math.min(i, src.length)).replaceAll('""', '"'));
       i++;
       push('"');
       continue;
