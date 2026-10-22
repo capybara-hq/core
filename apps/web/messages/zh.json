@@ -1165,7 +1165,8 @@
         "directory": "能把人加进组织，并为其建账号",
         "identity_source": "决定谁能登录成哪个账号",
         "sandbox": "在部署里执行任意命令",
-        "object_store": "保管全部附件与插件包"
+        "object_store": "保管全部附件与插件包",
+        "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准"
       },
       "warnings": "迁移警告",
       "warningsHint": "插件迁移只该做扩展：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",

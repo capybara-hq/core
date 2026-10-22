@@ -1165,7 +1165,8 @@
         "directory": "can add people to organizations and create their accounts",
         "identity_source": "decides who can sign in as which account",
         "sandbox": "runs arbitrary commands in the deployment",
-        "object_store": "holds every attachment and plugin package"
+        "object_store": "holds every attachment and plugin package",
+        "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again"
       },
       "warnings": "Migration warnings",
       "warningsHint": "Plugin migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
