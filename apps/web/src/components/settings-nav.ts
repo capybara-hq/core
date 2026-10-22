@@ -25,6 +25,7 @@ export function useSettingsNav() {
     ...(admin
       ? [
           { id: "plugins", label: t("plugins"), href: "/settings/plugins" },
+          { id: "apps", label: t("apps"), href: "/settings/apps" },
           { id: "models", label: t("models"), href: "/settings/models" },
         ]
       : []),

@@ -22,16 +22,19 @@ import {
   ScopePicker,
   useDecide,
 } from "../../../../components/ApprovalCard";
+import { useKindLabel } from "../../../../components/DirectoryParts";
 import { OrgGate } from "../../../../components/OrgGate";
 import {
   requesterOf,
   SkillChangeReview,
   useDecideSkillChange,
 } from "../../../../components/SkillChangeReview";
-import { useRouter } from "../../../../i18n/navigation";
+import { Link, useRouter } from "../../../../i18n/navigation";
 import type { Approval, ApprovalScope } from "../../../../lib/approvals";
+import { type DirectoryRequest, decideOrgRequest, displayNameOf } from "../../../../lib/directory";
 import { type InboxItem, listInbox } from "../../../../lib/inbox";
 import type { SkillChange } from "../../../../lib/skills";
+import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
 /**
@@ -56,6 +59,10 @@ function Inbox({ orgId }: { orgId: string }) {
   const [scope, setScope] = useState<ApprovalScope>("once");
   const approvals = useDecide(orgId);
   const changes = useDecideSkillChange(orgId);
+  const td = useTranslations("directory.inbox");
+  const kindLabel = useKindLabel();
+  const errorMessage = useErrorMessage();
+  const [requestPending, setRequestPending] = useState<"approve" | "reject">();
   useStatusBar(state.kind === "ready" ? `· ${t("pendingCount", { n: rows.length })}` : null);
 
   // 换一项时审批范围回到「仅本次」
@@ -68,9 +75,13 @@ function Inbox({ orgId }: { orgId: string }) {
       header: t("columns.request"),
       cell: (item) => (
         <Stack gap={0}>
-          <Text>{titleOf(item, t("skillChange.label"))}</Text>
+          <Text>{titleOf(item, t("skillChange.label"), td("label"), locale)}</Text>
           <Text variant="small" tone="muted">
-            {item.type === "tool_approval" ? item.approval.agent.name : item.skillChange.agent.name}
+            {item.type === "tool_approval"
+              ? item.approval.agent.name
+              : item.type === "skill_change"
+                ? item.skillChange.agent.name
+                : kindLabel(item.request.item.kind)}
           </Text>
         </Stack>
       ),
@@ -103,29 +114,52 @@ function Inbox({ orgId }: { orgId: string }) {
     );
   }
 
+  async function decideRequest(request: DirectoryRequest, decision: "approve" | "reject") {
+    setRequestPending(decision);
+    try {
+      await decideOrgRequest(orgId, request.id, decision);
+      handled(decision === "approve" ? td("approved") : td("rejected"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+      handled(null);
+    } finally {
+      setRequestPending(undefined);
+    }
+  }
+
   const detail: Detail | null =
     active === undefined
       ? null
-      : active.type === "tool_approval"
-        ? toolApprovalDetail({
-            approval: active.approval,
-            scope,
-            setScope,
-            pending: approvals.pending,
-            onDecide: (d) => void decideApproval(active.approval, d),
-            openConversation: () => router.push(active.approval.conversationPath),
+      : active.type === "directory_request"
+        ? directoryRequestDetail({
+            request: active.request,
+            pending: requestPending,
+            onDecide: (d) => void decideRequest(active.request, d),
+            kindLabel,
+            td,
             t,
-            ta,
             locale,
           })
-        : skillChangeDetail({
-            orgId,
-            change: active.skillChange,
-            pending: changes.pending,
-            onDecide: (d) => void decideChange(active.skillChange, d),
-            t,
-            locale,
-          });
+        : active.type === "tool_approval"
+          ? toolApprovalDetail({
+              approval: active.approval,
+              scope,
+              setScope,
+              pending: approvals.pending,
+              onDecide: (d) => void decideApproval(active.approval, d),
+              openConversation: () => router.push(active.approval.conversationPath),
+              t,
+              ta,
+              locale,
+            })
+          : skillChangeDetail({
+              orgId,
+              change: active.skillChange,
+              pending: changes.pending,
+              onDecide: (d) => void decideChange(active.skillChange, d),
+              t,
+              locale,
+            });
 
   return (
     <InboxPage
@@ -141,7 +175,7 @@ function Inbox({ orgId }: { orgId: string }) {
           columns={columns}
           rows={rows}
           rowKey={(a) => a.id}
-          rowLabel={(a) => titleOf(a, t("skillChange.label"))}
+          rowLabel={(a) => titleOf(a, t("skillChange.label"), td("label"), locale)}
           {...(active ? { activeKey: active.id } : {})}
           onOpen={(a) => setActiveId(a.id)}
           state={state.kind === "ready" ? "ready" : state.kind}
@@ -173,9 +207,19 @@ function Inbox({ orgId }: { orgId: string }) {
   );
 }
 
-/** 列表里的一行标题：工具审批为「连接器 · 工具」，技能变更为「技能变更 · 名称」。 */
-function titleOf(item: InboxItem, skillChangeLabel: string): string {
+/**
+ * 列表里的一行标题：工具审批为「连接器 · 工具」，技能变更为「技能变更 · 名称」，目录申请为「目录申请 · 条目」。
+ */
+function titleOf(
+  item: InboxItem,
+  skillChangeLabel: string,
+  requestLabel: string,
+  locale: string,
+): string {
   if (item.type === "skill_change") return `${skillChangeLabel} · ${item.skillChange.name}`;
+  if (item.type === "directory_request") {
+    return `${requestLabel} · ${displayNameOf(item.request.item, locale)}`;
+  }
   const a = item.approval;
   return a.connector ? `${a.connector.name} · ${a.toolName}` : a.toolName;
 }
@@ -322,5 +366,75 @@ function skillChangeDetail({
       },
     },
     content: <SkillChangeReview key={change.id} orgId={orgId} change={change} />,
+  };
+}
+
+/** 成员提交的目录申请（组织管理员）：条目、版本与说明；批准 / 拒绝。 */
+function directoryRequestDetail({
+  request,
+  pending,
+  onDecide,
+  kindLabel,
+  td,
+  t,
+  locale,
+}: {
+  request: DirectoryRequest;
+  pending: "approve" | "reject" | undefined;
+  onDecide(decision: "approve" | "reject"): void;
+  kindLabel(kind: DirectoryRequest["item"]["kind"]): string;
+  td: Translate;
+  t: Translate;
+  locale: string;
+}): Detail {
+  const name = displayNameOf(request.item, locale);
+  return {
+    inspector: (
+      <KeyValue
+        keyWidth="10ch"
+        rows={[
+          { k: td("kind"), v: kindLabel(request.item.kind) },
+          { k: td("version"), v: request.version ?? "—" },
+          { k: t("requested"), v: formatTime(request.createdAt, locale) },
+        ]}
+      />
+    ),
+    actionRow: {
+      secondary: {
+        label: td("reject"),
+        onSelect: () => onDecide("reject"),
+        loading: pending === "reject",
+        disabled: pending !== undefined,
+      },
+      primary: {
+        label: td("approve"),
+        onSelect: () => onDecide("approve"),
+        loading: pending === "approve",
+        disabled: pending !== undefined,
+      },
+    },
+    content: (
+      <Card
+        title={td("title", { name })}
+        actions={<StatusMark status="waiting" label={td("label")} />}
+      >
+        <Stack gap={8}>
+          {request.note !== "" && (
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {td("note")}
+              </Text>
+              <Text>{request.note}</Text>
+            </Stack>
+          )}
+          <Text variant="small" tone="muted">
+            {td("hint")}
+          </Text>
+          <Text>
+            <Link href={`/directory/${request.item.id}`}>{td("openItem")}</Link>
+          </Text>
+        </Stack>
+      </Card>
+    ),
   };
 }

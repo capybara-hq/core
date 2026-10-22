@@ -25,6 +25,8 @@ const NAV: readonly { id: string; key: string; href: string; audience: NavAudien
   { id: "skills", key: "skills", href: "/skills", audience: "member" },
   { id: "inbox", key: "inbox", href: "/inbox", audience: "all" },
   { id: "connectors", key: "connectors", href: "/connectors", audience: "all" },
+  // 企业目录（组织视角）：成员浏览与申请，组织管理员安装
+  { id: "directory", key: "directory", href: "/directory", audience: "member" },
   { id: "channels", key: "channels", href: "/channels", audience: "admin" },
   // 评测：评测集与运行（评测页有「运行记录」入口）；agent 负责人从 agent 详情页进入运行记录
   { id: "evals", key: "evals", href: "/evals", audience: "admin" },
@@ -58,6 +60,7 @@ const CONNECTOR_SETTINGS = [
   "/settings/identities",
   "/settings/organization",
   "/settings/plugins",
+  "/settings/apps",
   "/settings/models",
 ];
 
@@ -72,6 +75,7 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/channels")) return "channels";
   if (under(pathname, "/evals") || under(pathname, "/trajectories")) return "evals";
   if (under(pathname, "/admin")) return "admin";
+  if (under(pathname, "/directory")) return "directory";
   if (under(pathname, "/connectors") || CONNECTOR_SETTINGS.some((p) => under(pathname, p)))
     return "connectors";
   return pathname === "/" ? "overview" : "";

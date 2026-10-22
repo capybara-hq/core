@@ -50,6 +50,11 @@ const fakeOpenApiModule = join(repoRoot, "packages/testing/src/fake-openapi-serv
 const containersModule = join(repoRoot, "packages/testing/src/containers.ts");
 /** 内核测试工具包里的插件包构造（按路径加载，不作为 apps/web 的依赖）。 */
 const pluginPackagesModule = join(repoRoot, "packages/kernel/test/helpers/plugin-packages.ts");
+/** 内核测试工具包里的目录包构造（应用包、连接器模板、技能内容）。 */
+const directoryPackagesModule = join(repoRoot, "packages/kernel/test/directory/packages.ts");
+const skillZipModule = join(repoRoot, "packages/kernel/test/skills/zip.ts");
+const fakeCatalogModule = join(repoRoot, "packages/testing/src/fake-catalog.ts");
+const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
 /** S3 兼容对象存储插件（附件上传）。 */
@@ -176,6 +181,117 @@ async function tail(file: string): Promise<string> {
   return text.split("\n").slice(-40).join("\n");
 }
 
+/** 用到的 `startFakeNpmRegistry` / `startFakeCatalog` 子集。 */
+type StartFakeNpm = (opts: {
+  packages: { name: string; version: string; tgz: Uint8Array }[];
+}) => Promise<{ url: string; stop(): Promise<void> }>;
+type StartFakeCatalog = (opts: {
+  index: unknown;
+}) => Promise<{ url: string; stop(): Promise<void> }>;
+
+/**
+ * 企业目录用例的夹具：插件包 `crm-core`（`@test/plugin-crm-core`）与应用包 `@acme/app-crm`（插件 crm-core + 连接器模板
+ * `docs`（connector-mcp，端点指向假 MCP、url 可改、无认证）+ 技能 `crm-notes`）放进假 npm registry；假清单只列应用条目
+ * `crm`（按应用包的 sha512）。目录用例在后台刷新官方清单后从清单引入应用。
+ */
+async function startDirectoryFixtures(mcpUrl: string): Promise<{
+  registryUrl: string;
+  catalogUrl: string;
+  stop(): Promise<void>;
+}> {
+  const { pluginTgz } = (await import(pluginPackagesModule)) as {
+    pluginTgz: (o: { name: string; version: string }) => Promise<Uint8Array>;
+  };
+  const { appBundleTgz, SVG_ICON } = (await import(directoryPackagesModule)) as {
+    appBundleTgz: (o: {
+      manifest: Record<string, unknown>;
+      name?: string;
+      files?: { path: string; data: string }[];
+    }) => Promise<Uint8Array>;
+    SVG_ICON: string;
+  };
+  const { SKILL_MD } = (await import(skillZipModule)) as {
+    SKILL_MD: (name?: string, description?: string) => string;
+  };
+  const { startFakeNpmRegistry } = (await import(fakeNpmModule)) as {
+    startFakeNpmRegistry: StartFakeNpm;
+  };
+  const { startFakeCatalog } = (await import(fakeCatalogModule)) as {
+    startFakeCatalog: StartFakeCatalog;
+  };
+  const { createHash } = await import("node:crypto");
+  const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
+  const plugin = await pluginTgz({ name: "crm-core", version: "1.0.0" });
+  const app = await appBundleTgz({
+    name: "@acme/app-crm",
+    manifest: {
+      schemaVersion: 1,
+      name: "crm",
+      version: "1.0.0",
+      publisher: "Acme",
+      description: "CRM bundle for e2e",
+      displayName: { zh: "CRM 套件", en: "CRM Suite" },
+      icon: "icon.svg",
+      plugins: [
+        {
+          name: "crm-core",
+          npm: "@test/plugin-crm-core",
+          version: "^1.0.0",
+          lock: { version: "1.0.0", integrity: sri(plugin) },
+        },
+      ],
+      connectorTemplates: [
+        {
+          id: "docs",
+          displayName: { zh: "文档", en: "Docs" },
+          template: {
+            plugin: "connector-mcp",
+            connector: "mcp",
+            endpoint: { url: mcpUrl },
+            editableEndpoint: ["url"],
+            auth: { type: "none" },
+          },
+        },
+      ],
+      skills: [{ path: "skills/crm-notes" }],
+    },
+    files: [
+      { path: "icon.svg", data: SVG_ICON },
+      { path: "skills/crm-notes/SKILL.md", data: SKILL_MD("crm-notes", "Take CRM notes.") },
+    ],
+  });
+  const registry = await startFakeNpmRegistry({
+    packages: [
+      { name: "@test/plugin-crm-core", version: "1.0.0", tgz: plugin },
+      { name: "@acme/app-crm", version: "1.0.0", tgz: app },
+    ],
+  });
+  const catalog = await startFakeCatalog({
+    index: {
+      schemaVersion: 1,
+      name: "Official (e2e)",
+      updatedAt: "2026-10-22T00:00:00Z",
+      entries: [
+        {
+          kind: "app",
+          name: "crm",
+          npm: "@acme/app-crm",
+          publisher: "Acme",
+          summary: { en: "CRM suite", zh: "CRM 套件" },
+          versions: [{ version: "1.0.0", integrity: sri(app), minKernel: "0.0.1" }],
+        },
+      ],
+    },
+  });
+  return {
+    registryUrl: registry.url,
+    catalogUrl: catalog.url,
+    async stop() {
+      await Promise.all([registry.stop(), catalog.stop()]);
+    },
+  };
+}
+
 export default async function globalSetup(): Promise<Cleanup> {
   const cleanups: Cleanup[] = [];
   const cleanup: Cleanup = async () => {
@@ -274,6 +390,10 @@ export default async function globalSetup(): Promise<Cleanup> {
     const openapi = await startFakeOpenApiServer({ apiKey: OPENAPI_KEY });
     cleanups.push(() => openapi.stop());
 
+    // 企业目录：假 npm registry（插件 crm-core 与应用包 @acme/app-crm）+ 假官方清单（应用条目 crm）
+    const directory = await startDirectoryFixtures(mcp.url);
+    cleanups.push(() => directory.stop());
+
     const [kernelPort, webPort] = [await freePort(), await freePort()];
     const configFile = join(dir, "capybara.yaml");
     const config = {
@@ -310,6 +430,9 @@ export default async function globalSetup(): Promise<Cleanup> {
           clientSecret: "e2e-login-secret",
         },
       },
+      // 官方清单指向假清单，插件与应用包从假 npm registry 下载（都是本机 http）
+      packages: { npmRegistry: directory.registryUrl },
+      catalogs: { official: { url: directory.catalogUrl }, allowInsecureLoopback: true },
       // e2e 自动批准插件权限（生产默认关闭）
       pluginPermissions: { autoApprove: true },
       // 后台安装的插件包解到临时目录（默认 /var/lib/capybara/plugins 在开发机上没有写权限）

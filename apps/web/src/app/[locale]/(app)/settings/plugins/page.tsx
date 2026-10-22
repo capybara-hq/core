@@ -24,6 +24,7 @@ import {
   schemaFields,
 } from "../../../../../components/SchemaForm";
 import { useSettingsNav } from "../../../../../components/settings-nav";
+import { Link } from "../../../../../i18n/navigation";
 import { ApiClientError, issueLines } from "../../../../../lib/api";
 import {
   listOrgPlugins,
@@ -75,7 +76,7 @@ function Plugins({ orgId }: { orgId: string }) {
 type ToggleProblem =
   | { kind: "dependency_missing"; capabilities: string[] }
   | { kind: "has_dependents"; plugins: string[] }
-  | { kind: "other"; message: string; extra: string[] };
+  | { kind: "other"; message: string; extra: string[]; directory?: boolean };
 
 const strings = (raw: unknown[], key: string): string[] => [
   ...new Set(
@@ -130,7 +131,16 @@ function PluginSection({
         });
       else if (e instanceof ApiClientError && e.code === "plugin.has_dependents")
         setProblem({ kind: "has_dependents", plugins: strings(e.rawDetails, "plugin") });
-      else setProblem({ kind: "other", message: errorMessage(e), extra: issueLines(e) });
+      else
+        setProblem({
+          kind: "other",
+          message: errorMessage(e),
+          extra: issueLines(e),
+          // 被把它带进部署的目录条目拒绝（禁用 / 需审批，最严格的生效）：给出去目录申请的入口
+          directory:
+            e instanceof ApiClientError &&
+            (e.code === "directory.item_disabled" || e.code === "directory.approval_required"),
+        });
     } finally {
       setBusy(undefined);
     }
@@ -200,7 +210,16 @@ function PluginSection({
           </Stack>
         </Stack>
       )}
-      {problem?.kind === "other" && <FormError message={problem.message} extra={problem.extra} />}
+      {problem?.kind === "other" && (
+        <Stack gap={4}>
+          <FormError message={problem.message} extra={problem.extra} />
+          {problem.directory === true && (
+            <Text>
+              <Link href="/directory">{t("openDirectory")}</Link>
+            </Text>
+          )}
+        </Stack>
+      )}
       <Permissions groups={plugin.permissions} plugin={plugin.plugin} />
       {!unavailable && plugin.configurable && fields.length > 0 && (
         <Stack gap={12}>

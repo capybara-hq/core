@@ -162,7 +162,19 @@
       "unavailable": "插件当前不可用。"
     },
     "directory": {
-      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
+      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。",
+      "invalid_package": "包不合法。",
+      "version_exists": "这个版本已经导入过。",
+      "item_not_found": "条目不存在或你看不到它。",
+      "wrong_kind": "这个操作不适用于该种类的条目（应用包请用「导入应用」）。",
+      "name_conflict": "同名条目来自另一个 npm 包。",
+      "item_disabled": "企业管理员禁用了这个条目，不能新装或启用。",
+      "approval_required": "把它带进部署的目录条目需要企业管理员批准，本组织获批前不能安装或启用。",
+      "request_not_found": "申请不存在或已处理。",
+      "request_decided": "这条申请已经处理过了。",
+      "custom_disabled": "企业管理员关闭了自建，只能从目录安装。",
+      "not_deployed": "依赖的插件还没装到部署上，请联系企业管理员。",
+      "icon_not_found": "没有图标。"
     },
     "ui": {
       "not_found": "这个面板不可用：插件可能未启用，或你无权访问这个对话。",
@@ -254,6 +266,28 @@
       "invalid": "邀请链接无效或已被撤销。",
       "expired": "邀请已过期。",
       "used": "这个邀请已经被使用过了。"
+    },
+    "catalog": {
+      "not_found": "清单来源不存在。",
+      "entry_not_found": "清单条目或版本不存在（来源可能已停用）。",
+      "fetch_failed": "拉取清单失败，已保留上一份条目。",
+      "invalid": "清单格式不合法，已保留上一份条目。",
+      "integrity_mismatch": "下载的包与清单的 sha512 不符，已拒绝引入。包可能被篡改，请联系清单维护者。",
+      "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
+      "package_mismatch": "下载的包与清单条目不一致。",
+      "builtin": "官方清单由部署配置决定，这里只能启用或停用。"
+    },
+    "app": {
+      "invalid_manifest": "应用清单（app.yaml）不合法。",
+      "lock_mismatch": "应用锁定的插件包与下载的不符（sha512 不一致），已拒绝。包可能被篡改。",
+      "review_stale": "审阅已过期（部署上的插件有变化），请重新读取应用包。",
+      "staging_not_found": "暂存的应用包已过期，请重新读取。",
+      "plugin_conflict": "应用要的插件版本与内置 / 配置声明的插件冲突。",
+      "bundle_too_large": "应用包太大。",
+      "install_failed": "安装失败，已回滚本次新建的组件。",
+      "install_not_found": "安装记录不存在。",
+      "already_installed": "本组织已经装了这个应用，请先卸载再装。",
+      "install_in_progress": "这个应用还在安装中，暂时不能卸载；安装中断时，超过时限后可以清理。"
     }
   },
   "agents": {
@@ -509,7 +543,8 @@
     "channels": "渠道",
     "skills": "技能",
     "evals": "评测",
-    "admin": "管理"
+    "admin": "管理",
+    "directory": "目录"
   },
   "shell": {
     "switchLocale": "切换到 {name}",
@@ -915,7 +950,8 @@
       "identities": "IM 身份",
       "plugins": "插件",
       "models": "模型用途",
-      "members": "成员"
+      "members": "成员",
+      "apps": "已安装的应用"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -1178,7 +1214,8 @@
         "foreign_schema": "越出插件自己 schema 的语句（内核表、权限 / 角色、函数 / 触发器或事务控制）"
       },
       "at": "{file} 第 {line} 行"
-    }
+    },
+    "openDirectory": "去企业目录查看或申请"
   },
   "identities": {
     "title": "IM 身份",
@@ -1739,7 +1776,8 @@
       "orgs": "组织",
       "settings": "部署设置",
       "plugins": "插件",
-      "models": "模型"
+      "models": "模型",
+      "directory": "企业目录"
     },
     "forbidden": {
       "title": "需要企业管理员",
@@ -2183,5 +2221,402 @@
     "invalidTitle": "邀请链接已失效",
     "invalidHint": "请联系邀请你的管理员重新发送邀请。",
     "goHome": "进入 Capybara"
+  },
+  "directory": {
+    "kind": {
+      "plugin": "插件",
+      "connector-template": "连接器模板",
+      "skill": "技能",
+      "app": "应用"
+    },
+    "policy": {
+      "allow": "允许",
+      "needs_approval": "需审批",
+      "disabled": "禁用"
+    },
+    "source": {
+      "manual": "手动导入",
+      "official": "官方清单",
+      "removed": "已删除的清单"
+    },
+    "versionSource": {
+      "file": "上传",
+      "npm": "npm",
+      "catalog": "清单"
+    },
+    "newer": "有新版本",
+    "iconAlt": "{name} 的图标",
+    "admin": {
+      "title": "企业目录",
+      "hint": "企业目录里的插件、连接器模板、技能与应用可以让各组织安装；策略决定组织能否直接安装。",
+      "empty": "目录里还没有条目。",
+      "noResults": "没有符合筛选条件的条目。",
+      "columns": {
+        "name": "名称",
+        "kind": "种类",
+        "version": "版本",
+        "source": "来源",
+        "policy": "策略",
+        "installs": "安装的组织"
+      },
+      "filters": {
+        "kind": "种类",
+        "allKinds": "全部种类",
+        "source": "来源",
+        "allSources": "全部来源"
+      },
+      "actions": {
+        "import": "导入",
+        "importApp": "导入应用",
+        "catalog": "浏览清单",
+        "more": "更多",
+        "sources": "目录来源",
+        "requests": "部署申请"
+      },
+      "import": {
+        "title": "导入到目录",
+        "hint": "插件、连接器模板与技能：上传 npm-pack 生成的 .tgz（模板与技能也可以是 .zip），或填 npm 包名。应用请用「导入应用」，一次审阅全部插件。",
+        "sourceLabel": "来源",
+        "sourceFile": "上传文件",
+        "sourceNpm": "npm 包",
+        "choose": "选择文件",
+        "noFile": "未选择文件",
+        "npmPackage": "npm 包名",
+        "npmVersion": "版本",
+        "npmVersionHelp": "版本、dist-tag 或范围；留空为 latest。",
+        "submit": "导入",
+        "cancel": "取消",
+        "appLink": "导入应用",
+        "done": "已导入 {name}",
+        "isApp": "这是应用包，请用「导入应用」一次审阅它的全部插件。"
+      },
+      "detail": {
+        "tabsLabel": "条目详情",
+        "tabs": {
+          "overview": "概要",
+          "versions": "版本"
+        },
+        "notFound": "条目不存在。",
+        "deleted": "这个条目已删除，组织不再能看到它；已安装的组件不受影响。",
+        "fields": {
+          "kind": "种类",
+          "package": "npm 包",
+          "publisher": "发布者",
+          "latest": "最新版本",
+          "source": "来源",
+          "installs": "安装的组织",
+          "updated": "更新时间"
+        },
+        "policyTitle": "策略",
+        "policyHint": "允许：组织管理员可直接安装；需审批：组织管理员提交后由企业管理员批准；禁用：不能新装，已安装的不受影响。",
+        "policySaved": "策略已改为「{policy}」",
+        "deployTitle": "装到部署",
+        "deployHint": "把插件的某个版本装到部署上（新装为停用，权限仍需在插件后台批准）。装好后组织才能启用它。",
+        "deployVersion": "版本",
+        "deploy": "装到部署",
+        "deployed": "已装到部署：{name}",
+        "openPlugin": "去插件后台",
+        "delete": "删除条目",
+        "deleteConfirm": {
+          "title": "删除条目 {name}",
+          "hint": "组织将不再看到这个条目，已安装的组件不受影响。之后可以重新导入。",
+          "confirm": "删除"
+        },
+        "deletedToast": "已删除 {name}",
+        "versionColumns": {
+          "version": "版本",
+          "source": "来源",
+          "ref": "来源引用",
+          "size": "大小",
+          "imported": "导入时间"
+        }
+      },
+      "review": {
+        "title": "导入应用",
+        "steps": {
+          "source": "选择应用包",
+          "review": "审阅",
+          "confirm": "确认"
+        },
+        "sourceLabel": "来源",
+        "sourceFile": "上传应用包（.tgz）",
+        "sourceNpm": "npm 包",
+        "fetch": "读取并审阅",
+        "loadingCatalog": "正在从清单下载并校验应用包…",
+        "app": "{name} {version}",
+        "publisher": "发布者：{publisher}",
+        "plugins": "插件",
+        "pluginsHint": "应用里每个插件的权限，确认时一次批准。敏感项已高亮。",
+        "action": {
+          "install": "安装 {version}",
+          "upgrade": "升级 {from} → {to}",
+          "keep": "保持 {version}（已满足范围）"
+        },
+        "optional": "可选",
+        "templates": "连接器模板",
+        "templatesEmpty": "没有连接器模板。",
+        "endpoint": "端点",
+        "editable": "组织可改：{paths}",
+        "auth": "认证方式：{type}",
+        "unchecked": "连接器插件没有在本副本加载，端点还没按它的 schema 校验。",
+        "skills": "技能",
+        "skillsEmpty": "没有技能。",
+        "skillFiles": "{n} 个文件",
+        "mismatch": "清单列出的权限摘要与下载的包不一致（以包为准）。",
+        "mismatchMissing": "清单没列出：{keys}",
+        "mismatchExtra": "清单列了但包没有要：{keys}",
+        "deployPlugins": "同时把插件装到部署",
+        "deployOn": "确认后把要安装 / 升级的插件装到部署并启用。",
+        "deployOff": "不勾选时，这些插件只记为目录条目，不会安装到部署；在企业管理员把它们装到部署之前，组织无法使用它们。",
+        "ackHint": "应用里有敏感权限或迁移警告，确认前请逐项看过。",
+        "ack": "我已了解敏感项",
+        "confirm": "确认导入",
+        "done": "已导入应用 {name}",
+        "deployResult": "部署结果",
+        "deployEnabled": "{name} {version}：已安装并启用",
+        "deployFailed": "{name} {version}：失败（{code}），可在插件后台重试",
+        "openItem": "查看条目",
+        "stale": "审阅已过期（部署上的插件有变化），请重新读取应用包。"
+      },
+      "catalog": {
+        "title": "浏览清单",
+        "hint": "清单条目要先「引入」才会成为目录条目；引入时下载并按清单的 sha512 校验。",
+        "empty": "没有清单条目。先在「目录来源」里添加或刷新清单。",
+        "noResults": "没有符合条件的条目。",
+        "truncated": "条目太多，只显示了前一部分；请按来源、种类或关键词缩小范围。",
+        "search": "搜索",
+        "searchPlaceholder": "名称、npm 包名或简介",
+        "columns": {
+          "name": "名称",
+          "kind": "种类",
+          "source": "来源",
+          "publisher": "发布者",
+          "summary": "简介",
+          "permissions": "权限摘要",
+          "versions": "版本",
+          "status": "状态"
+        },
+        "permissionsCount": "{n} 项",
+        "permissionsSensitive": "{n} 项敏感",
+        "permissionsNone": "未提供",
+        "incompatible": "{version}（不兼容）",
+        "adopted": "已引入 {version}",
+        "notAdopted": "未引入",
+        "importVersion": "引入 {version}",
+        "noCompatible": "没有兼容的版本",
+        "imported": "已引入 {name} {version}",
+        "mismatch": "{name}：清单列出的权限摘要与下载的包不一致（以包为准）。"
+      },
+      "sources": {
+        "title": "目录来源",
+        "official": "官方清单",
+        "officialHint": "地址在部署配置 catalogs.official.* 里设置，这里只读。",
+        "offline": "离线模式：部署配置关闭了官方清单（catalogs.official.enabled = false）。",
+        "enabled": "启用",
+        "url": "地址",
+        "mirrors": "镜像",
+        "status": "状态",
+        "statusValue": {
+          "ok": "正常（{n} 个条目，{at}）",
+          "error": "出错：{error}",
+          "never": "还没有拉取过"
+        },
+        "refresh": "立即刷新",
+        "refreshed": "已刷新 {name}",
+        "enterprise": "企业清单",
+        "enterpriseHint": "地址只认 https；令牌只发往清单地址的源。",
+        "enterpriseEmpty": "还没有企业清单。",
+        "name": "名称",
+        "token": "令牌",
+        "tokenHelp": "可选；留空不改。",
+        "tokenSet": "已设置令牌",
+        "clearToken": "清除令牌",
+        "save": "保存",
+        "saved": "已保存 {name}",
+        "remove": "删除",
+        "removeConfirm": {
+          "title": "删除清单 {name}",
+          "hint": "它的条目缓存随之删除，已引入的目录条目保留。",
+          "confirm": "删除"
+        },
+        "removed": "已删除 {name}",
+        "add": "添加企业清单",
+        "added": "已添加 {name}"
+      },
+      "requests": {
+        "title": "部署申请",
+        "listLabel": "待处理的申请",
+        "empty": "没有待处理的申请。",
+        "emptyHint": "组织申请安装「需审批」的条目时，申请会出现在这里。",
+        "pick": "在左侧选择一项。",
+        "inspectorTitle": "详情",
+        "columns": {
+          "request": "申请",
+          "time": "时间"
+        },
+        "fields": {
+          "org": "组织",
+          "kind": "种类",
+          "version": "版本",
+          "requested": "提交时间",
+          "orgApproved": "组织管理员批准",
+          "note": "说明"
+        },
+        "hint": "批准后这个组织可以安装该条目（所有版本有效）。",
+        "approve": "批准",
+        "reject": "拒绝",
+        "approved": "已批准",
+        "rejected": "已拒绝"
+      }
+    },
+    "org": {
+      "title": "目录",
+      "hint": "企业管理员提供的插件、连接器模板、技能与应用。",
+      "empty": "目录里还没有可用的条目。",
+      "noResults": "没有符合筛选条件的条目。",
+      "columns": {
+        "name": "名称",
+        "kind": "种类",
+        "description": "简介",
+        "status": "状态"
+      },
+      "filters": {
+        "kind": "种类",
+        "allKinds": "全部种类"
+      },
+      "status": {
+        "installed": "已安装 {version}",
+        "yes": "可安装",
+        "granted": "已获批准",
+        "needs_approval": "需企业管理员批准",
+        "disabled": "已禁用",
+        "not_deployed": "插件尚未部署",
+        "requested": "已申请，等待处理"
+      },
+      "action": {
+        "install": "安装",
+        "requestApproval": "申请企业管理员批准",
+        "request": "申请安装",
+        "disabledHint": "企业管理员禁用了这个条目，不能新装。",
+        "notDeployedHint": "它依赖的插件还没装到部署上，请联系企业管理员。",
+        "pendingHint": "已提交申请（{stage}），等待处理。",
+        "stage": {
+          "org": "组织管理员",
+          "deployment": "企业管理员"
+        },
+        "installed": "已安装 {name}",
+        "requested": "已提交申请",
+        "approvalRequested": "需要企业管理员批准，已提交申请",
+        "openApps": "查看已安装的应用"
+      },
+      "detail": {
+        "notFound": "条目不存在或你看不到它。",
+        "tabsLabel": "条目详情",
+        "tabs": {
+          "overview": "概要"
+        },
+        "fields": {
+          "kind": "种类",
+          "publisher": "发布者",
+          "version": "版本",
+          "status": "状态"
+        },
+        "templates": "连接器模板",
+        "plugins": "插件",
+        "skills": "技能"
+      },
+      "install": {
+        "title": "安装 {name}",
+        "connectorStep": "连接器：{name}",
+        "pluginsStep": "插件配置",
+        "confirmStep": "确认",
+        "name": "连接器名称",
+        "slug": "标识（slug）",
+        "slugHelp": "工具名的前缀：小写字母开头，小写字母、数字与下划线，最长 24 位；留空则由名称推导。",
+        "endpoint": "端点",
+        "endpointHint": "只读的字段由模板决定，不能修改。",
+        "credential": "凭据",
+        "credentialHint": "可以留空，之后在连接器的凭据页设置。",
+        "personalHint": "这个连接器使用个人凭据：每位成员之后各自连接。",
+        "noneHint": "这个连接器不需要凭据。",
+        "dcrHint": "客户端会自动注册，不需要填写。",
+        "pluginsHint": "应用会在本组织启用这些插件；需要组织配置的请填写（已启用的插件不改配置）。",
+        "pluginsNone": "没有需要填写的插件配置。",
+        "pluginEnabled": "{name}：已在本组织启用，保持现有配置",
+        "summary": "将安装：",
+        "summaryTemplates": "{n} 个连接器",
+        "summaryPlugins": "{n} 个插件",
+        "summarySkills": "{n} 个技能",
+        "submit": "安装",
+        "next": "下一步",
+        "back": "上一步",
+        "cancel": "取消",
+        "failed": "安装在「{step}」一步失败（{code}），已回滚本次新建的组件。",
+        "failedNoRollback": "安装在「{step}」一步失败（{code}），回滚时有组件没能移除，可在「已安装的应用」里卸载清理。",
+        "step": {
+          "plugins": "插件",
+          "connectors": "连接器",
+          "skills": "技能"
+        },
+        "notInstallable": "这个条目现在不能安装。"
+      }
+    },
+    "apps": {
+      "title": "已安装的应用",
+      "empty": "本组织还没有从目录安装应用。",
+      "status": {
+        "installing": "安装中",
+        "installed": "已安装",
+        "failed": "安装失败（已回滚）",
+        "uninstalling": "卸载中"
+      },
+      "failedAt": "失败于「{step}」：{code}",
+      "components": "组件",
+      "created": "本次新建",
+      "existing": "原有",
+      "componentKind": {
+        "plugin": "插件",
+        "connector": "连接器",
+        "skill": "技能"
+      },
+      "installedAt": "安装于 {at}",
+      "uninstall": "卸载",
+      "cleanup": "清理",
+      "confirm": {
+        "title": "卸载 {name}",
+        "hint": "只移除这次安装新建、且别处没有在用的组件；原有的和仍在用的会保留。",
+        "confirm": "卸载",
+        "cancel": "取消"
+      },
+      "report": {
+        "title": "{name} 已卸载",
+        "removed": "已移除",
+        "kept": "已保留",
+        "none": "无",
+        "reason": {
+          "pre_existing": "安装前就有",
+          "used_by_agents": "仍有 agent 在用",
+          "used_by_other_install": "另一个应用也在用",
+          "used_by_connectors": "仍有连接器在用",
+          "used_by_plugins": "仍有插件依赖"
+        },
+        "dismiss": "知道了"
+      },
+      "inProgress": "这个应用还在安装中，暂时不能卸载；安装中断时，超过时限后可以在这里清理。"
+    },
+    "inbox": {
+      "label": "目录申请",
+      "title": "目录申请 · {name}",
+      "requester": "申请人",
+      "kind": "种类",
+      "version": "版本",
+      "note": "说明",
+      "hint": "批准后：允许的条目可以由组织管理员安装；需审批的条目会转交企业管理员决定。",
+      "approve": "批准",
+      "reject": "拒绝",
+      "approved": "已批准目录申请",
+      "rejected": "已拒绝目录申请",
+      "openItem": "查看条目"
+    }
   }
 }

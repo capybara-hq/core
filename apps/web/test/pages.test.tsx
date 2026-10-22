@@ -286,6 +286,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.skills, "/skills"],
       [zh.nav.inbox, "/inbox"],
       [zh.nav.connectors, "/connectors"],
+      // 企业目录：成员起
+      [zh.nav.directory, "/directory"],
       // 管理员（owner）才看得到渠道与评测
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],
@@ -537,5 +539,8 @@ describe("activeNavOf", () => {
     expect(activeNavOf("/chat/c1")).toBe("agents");
     expect(activeNavOf("/skills")).toBe("skills");
     expect(activeNavOf("/skills/s1")).toBe("skills");
+    expect(activeNavOf("/directory")).toBe("directory");
+    expect(activeNavOf("/directory/x/install")).toBe("directory");
+    expect(activeNavOf("/settings/apps")).toBe("connectors");
   });
 });

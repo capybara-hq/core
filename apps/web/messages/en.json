@@ -162,7 +162,19 @@
       "unavailable": "The plugin is unavailable right now."
     },
     "directory": {
-      "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first."
+      "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first.",
+      "invalid_package": "The package is invalid.",
+      "version_exists": "This version has already been imported.",
+      "item_not_found": "The item does not exist or you cannot see it.",
+      "wrong_kind": "This action does not apply to this kind of item (use “Import app” for app packages).",
+      "name_conflict": "An item with the same name comes from a different npm package.",
+      "item_disabled": "An enterprise admin disabled this directory item, so it cannot be newly installed or enabled.",
+      "approval_required": "A directory item that brought this in needs enterprise admin approval before this organization can install or enable it.",
+      "request_not_found": "The request does not exist or was already handled.",
+      "request_decided": "This request has already been decided.",
+      "custom_disabled": "Enterprise admins turned off custom creation; install from the directory instead.",
+      "not_deployed": "A plugin it needs is not installed on the deployment. Contact an enterprise admin.",
+      "icon_not_found": "No icon."
     },
     "ui": {
       "not_found": "This panel is not available. The plugin may be disabled or you cannot access this conversation.",
@@ -254,6 +266,28 @@
       "invalid": "This invitation link is invalid or has been revoked.",
       "expired": "This invitation has expired.",
       "used": "This invitation has already been used."
+    },
+    "catalog": {
+      "not_found": "The catalog source does not exist.",
+      "entry_not_found": "The catalog entry or version does not exist (the source may be disabled).",
+      "fetch_failed": "Fetching the catalog failed; the previous entries are kept.",
+      "invalid": "The catalog is invalid; the previous entries are kept.",
+      "integrity_mismatch": "The downloaded package does not match the catalog's sha512 and was rejected. It may have been tampered with; contact the catalog maintainer.",
+      "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
+      "package_mismatch": "The downloaded package does not match the catalog entry.",
+      "builtin": "The official catalog comes from the deployment config; it can only be enabled or disabled here."
+    },
+    "app": {
+      "invalid_manifest": "The app manifest (app.yaml) is invalid.",
+      "lock_mismatch": "A plugin package locked by the app does not match the download (sha512 mismatch) and was rejected. It may have been tampered with.",
+      "review_stale": "The review is out of date (plugins on the deployment changed). Fetch the app package again.",
+      "staging_not_found": "The staged app package has expired. Fetch it again.",
+      "plugin_conflict": "The app needs a plugin version that conflicts with a built-in or config-declared plugin.",
+      "bundle_too_large": "The app package is too large.",
+      "install_failed": "Installing failed; the components it created were rolled back.",
+      "install_not_found": "The install does not exist.",
+      "already_installed": "This app is already installed in this organization. Uninstall it before installing again.",
+      "install_in_progress": "This app is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up after the timeout."
     }
   },
   "agents": {
@@ -509,7 +543,8 @@
     "channels": "Channels",
     "skills": "Skills",
     "evals": "Evals",
-    "admin": "Admin"
+    "admin": "Admin",
+    "directory": "Directory"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -915,7 +950,8 @@
       "identities": "IM identities",
       "plugins": "Plugins",
       "models": "Model purposes",
-      "members": "Members"
+      "members": "Members",
+      "apps": "Installed apps"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -1178,7 +1214,8 @@
         "foreign_schema": "Statement outside the plugin's own schema (kernel tables, grants / roles, functions / triggers or transaction control)"
       },
       "at": "{file} line {line}"
-    }
+    },
+    "openDirectory": "Open the enterprise directory to view or request it"
   },
   "identities": {
     "title": "IM identities",
@@ -1739,7 +1776,8 @@
       "orgs": "Organizations",
       "settings": "Deployment settings",
       "plugins": "Plugins",
-      "models": "Models"
+      "models": "Models",
+      "directory": "Directory"
     },
     "forbidden": {
       "title": "Enterprise admin required",
@@ -2183,5 +2221,402 @@
     "invalidTitle": "Invitation link no longer valid",
     "invalidHint": "Ask the admin who invited you to send a new invitation.",
     "goHome": "Go to Capybara"
+  },
+  "directory": {
+    "kind": {
+      "plugin": "Plugin",
+      "connector-template": "Connector template",
+      "skill": "Skill",
+      "app": "App"
+    },
+    "policy": {
+      "allow": "Allowed",
+      "needs_approval": "Needs approval",
+      "disabled": "Disabled"
+    },
+    "source": {
+      "manual": "Manual import",
+      "official": "Official catalog",
+      "removed": "Removed catalog"
+    },
+    "versionSource": {
+      "file": "Upload",
+      "npm": "npm",
+      "catalog": "Catalog"
+    },
+    "newer": "New version",
+    "iconAlt": "{name} icon",
+    "admin": {
+      "title": "Enterprise directory",
+      "hint": "Plugins, connector templates, skills and apps in the enterprise directory can be installed by organizations; the policy decides whether they can install directly.",
+      "empty": "The directory has no items yet.",
+      "noResults": "No items match the filters.",
+      "columns": {
+        "name": "Name",
+        "kind": "Kind",
+        "version": "Version",
+        "source": "Source",
+        "policy": "Policy",
+        "installs": "Organizations"
+      },
+      "filters": {
+        "kind": "Kind",
+        "allKinds": "All kinds",
+        "source": "Source",
+        "allSources": "All sources"
+      },
+      "actions": {
+        "import": "Import",
+        "importApp": "Import app",
+        "catalog": "Browse catalogs",
+        "more": "More",
+        "sources": "Directory sources",
+        "requests": "Deployment requests"
+      },
+      "import": {
+        "title": "Import to the directory",
+        "hint": "Plugins, connector templates and skills: upload an npm-pack .tgz (templates and skills may also be .zip), or enter an npm package name. Use “Import app” for apps, which reviews all their plugins at once.",
+        "sourceLabel": "Source",
+        "sourceFile": "Upload a file",
+        "sourceNpm": "npm package",
+        "choose": "Choose file",
+        "noFile": "No file chosen",
+        "npmPackage": "npm package name",
+        "npmVersion": "Version",
+        "npmVersionHelp": "A version, dist-tag or range; empty means latest.",
+        "submit": "Import",
+        "cancel": "Cancel",
+        "appLink": "Import app",
+        "done": "Imported {name}",
+        "isApp": "This is an app package. Use “Import app” to review all its plugins at once."
+      },
+      "detail": {
+        "tabsLabel": "Item details",
+        "tabs": {
+          "overview": "Overview",
+          "versions": "Versions"
+        },
+        "notFound": "The item does not exist.",
+        "deleted": "This item was deleted. Organizations can no longer see it; installed components are not affected.",
+        "fields": {
+          "kind": "Kind",
+          "package": "npm package",
+          "publisher": "Publisher",
+          "latest": "Latest version",
+          "source": "Source",
+          "installs": "Organizations",
+          "updated": "Updated"
+        },
+        "policyTitle": "Policy",
+        "policyHint": "Allowed: organization admins install directly. Needs approval: an enterprise admin approves after the organization admin asks. Disabled: no new installs; existing installs are not affected.",
+        "policySaved": "Policy changed to “{policy}”",
+        "deployTitle": "Install to the deployment",
+        "deployHint": "Install a version of the plugin on the deployment (a new install starts disabled and its permissions still need approval in the plugin admin). Organizations can enable it only after that.",
+        "deployVersion": "Version",
+        "deploy": "Install to deployment",
+        "deployed": "Installed on the deployment: {name}",
+        "openPlugin": "Open plugin admin",
+        "delete": "Delete item",
+        "deleteConfirm": {
+          "title": "Delete item {name}",
+          "hint": "Organizations will no longer see this item; installed components are not affected. You can import it again later.",
+          "confirm": "Delete"
+        },
+        "deletedToast": "Deleted {name}",
+        "versionColumns": {
+          "version": "Version",
+          "source": "Source",
+          "ref": "Reference",
+          "size": "Size",
+          "imported": "Imported"
+        }
+      },
+      "review": {
+        "title": "Import app",
+        "steps": {
+          "source": "Choose package",
+          "review": "Review",
+          "confirm": "Confirm"
+        },
+        "sourceLabel": "Source",
+        "sourceFile": "Upload app package (.tgz)",
+        "sourceNpm": "npm package",
+        "fetch": "Fetch and review",
+        "loadingCatalog": "Downloading and verifying the app package from the catalog…",
+        "app": "{name} {version}",
+        "publisher": "Publisher: {publisher}",
+        "plugins": "Plugins",
+        "pluginsHint": "Each plugin's permissions in the app; confirming approves them all at once. Sensitive items are highlighted.",
+        "action": {
+          "install": "Install {version}",
+          "upgrade": "Upgrade {from} → {to}",
+          "keep": "Keep {version} (already satisfies the range)"
+        },
+        "optional": "Optional",
+        "templates": "Connector templates",
+        "templatesEmpty": "No connector templates.",
+        "endpoint": "Endpoint",
+        "editable": "Organizations can change: {paths}",
+        "auth": "Authentication: {type}",
+        "unchecked": "The connector plugin is not loaded on this replica, so the endpoint has not been checked against its schema yet.",
+        "skills": "Skills",
+        "skillsEmpty": "No skills.",
+        "skillFiles": "{n} files",
+        "mismatch": "The permission summary in the catalog does not match the downloaded package (the package is what counts).",
+        "mismatchMissing": "Not listed in the catalog: {keys}",
+        "mismatchExtra": "Listed in the catalog but not requested: {keys}",
+        "deployPlugins": "Also install the plugins to the deployment",
+        "deployOn": "After confirming, the plugins to install or upgrade are installed on the deployment and enabled.",
+        "deployOff": "If unchecked, the plugins are only recorded as directory items and are not installed. Organizations cannot use them until an enterprise admin installs them on the deployment.",
+        "ackHint": "The app has sensitive permissions or migration warnings. Review them before confirming.",
+        "ack": "I understand the sensitive items",
+        "confirm": "Confirm import",
+        "done": "Imported app {name}",
+        "deployResult": "Deployment result",
+        "deployEnabled": "{name} {version}: installed and enabled",
+        "deployFailed": "{name} {version}: failed ({code}); retry in the plugin admin",
+        "openItem": "Open item",
+        "stale": "The review is out of date (plugins on the deployment changed). Fetch the app package again."
+      },
+      "catalog": {
+        "title": "Browse catalogs",
+        "hint": "Catalog entries become directory items only after you import them; the package is downloaded and checked against the catalog's sha512.",
+        "empty": "No catalog entries. Add or refresh a catalog in Directory sources first.",
+        "noResults": "No entries match.",
+        "truncated": "There are too many entries and the list is truncated. Narrow it down by source, kind or keyword.",
+        "search": "Search",
+        "searchPlaceholder": "Name, npm package or summary",
+        "columns": {
+          "name": "Name",
+          "kind": "Kind",
+          "source": "Source",
+          "publisher": "Publisher",
+          "summary": "Summary",
+          "permissions": "Permissions",
+          "versions": "Versions",
+          "status": "Status"
+        },
+        "permissionsCount": "{n} items",
+        "permissionsSensitive": "{n} sensitive",
+        "permissionsNone": "Not provided",
+        "incompatible": "{version} (incompatible)",
+        "adopted": "Imported {version}",
+        "notAdopted": "Not imported",
+        "importVersion": "Import {version}",
+        "noCompatible": "No compatible version",
+        "imported": "Imported {name} {version}",
+        "mismatch": "{name}: the permission summary in the catalog does not match the downloaded package (the package is what counts)."
+      },
+      "sources": {
+        "title": "Directory sources",
+        "official": "Official catalog",
+        "officialHint": "The address is set in the deployment config catalogs.official.* and is read-only here.",
+        "offline": "Offline mode: the deployment config turned the official catalog off (catalogs.official.enabled = false).",
+        "enabled": "Enabled",
+        "url": "URL",
+        "mirrors": "Mirrors",
+        "status": "Status",
+        "statusValue": {
+          "ok": "OK ({n} entries, {at})",
+          "error": "Error: {error}",
+          "never": "Not fetched yet"
+        },
+        "refresh": "Refresh now",
+        "refreshed": "Refreshed {name}",
+        "enterprise": "Enterprise catalogs",
+        "enterpriseHint": "Only https addresses are accepted; the token is sent only to the catalog's own origin.",
+        "enterpriseEmpty": "No enterprise catalogs yet.",
+        "name": "Name",
+        "token": "Token",
+        "tokenHelp": "Optional; leave empty to keep it unchanged.",
+        "tokenSet": "Token set",
+        "clearToken": "Clear token",
+        "save": "Save",
+        "saved": "Saved {name}",
+        "remove": "Remove",
+        "removeConfirm": {
+          "title": "Remove catalog {name}",
+          "hint": "Its cached entries are removed; directory items already imported are kept.",
+          "confirm": "Remove"
+        },
+        "removed": "Removed {name}",
+        "add": "Add enterprise catalog",
+        "added": "Added {name}"
+      },
+      "requests": {
+        "title": "Deployment requests",
+        "listLabel": "Pending requests",
+        "empty": "No pending requests.",
+        "emptyHint": "Requests from organizations to install items that need approval appear here.",
+        "pick": "Pick an item on the left.",
+        "inspectorTitle": "Details",
+        "columns": {
+          "request": "Request",
+          "time": "Time"
+        },
+        "fields": {
+          "org": "Organization",
+          "kind": "Kind",
+          "version": "Version",
+          "requested": "Requested",
+          "orgApproved": "Approved by org admin",
+          "note": "Note"
+        },
+        "hint": "Once approved, this organization can install the item (for every version).",
+        "approve": "Approve",
+        "reject": "Reject",
+        "approved": "Approved",
+        "rejected": "Rejected"
+      }
+    },
+    "org": {
+      "title": "Directory",
+      "hint": "Plugins, connector templates, skills and apps provided by your enterprise admins.",
+      "empty": "There are no items in the directory yet.",
+      "noResults": "No items match the filters.",
+      "columns": {
+        "name": "Name",
+        "kind": "Kind",
+        "description": "Description",
+        "status": "Status"
+      },
+      "filters": {
+        "kind": "Kind",
+        "allKinds": "All kinds"
+      },
+      "status": {
+        "installed": "Installed {version}",
+        "yes": "Available",
+        "granted": "Approved",
+        "needs_approval": "Needs enterprise admin approval",
+        "disabled": "Disabled",
+        "not_deployed": "Plugin not deployed",
+        "requested": "Requested, waiting"
+      },
+      "action": {
+        "install": "Install",
+        "requestApproval": "Ask an enterprise admin",
+        "request": "Request install",
+        "disabledHint": "An enterprise admin disabled this item; it cannot be newly installed.",
+        "notDeployedHint": "The plugins it needs are not installed on the deployment yet. Contact an enterprise admin.",
+        "pendingHint": "A request has been submitted ({stage}) and is waiting.",
+        "stage": {
+          "org": "organization admin",
+          "deployment": "enterprise admin"
+        },
+        "installed": "Installed {name}",
+        "requested": "Request submitted",
+        "approvalRequested": "Enterprise admin approval is needed; a request was submitted",
+        "openApps": "View installed apps"
+      },
+      "detail": {
+        "notFound": "The item does not exist or you cannot see it.",
+        "tabsLabel": "Item details",
+        "tabs": {
+          "overview": "Overview"
+        },
+        "fields": {
+          "kind": "Kind",
+          "publisher": "Publisher",
+          "version": "Version",
+          "status": "Status"
+        },
+        "templates": "Connector templates",
+        "plugins": "Plugins",
+        "skills": "Skills"
+      },
+      "install": {
+        "title": "Install {name}",
+        "connectorStep": "Connector: {name}",
+        "pluginsStep": "Plugin settings",
+        "confirmStep": "Confirm",
+        "name": "Connector name",
+        "slug": "Slug",
+        "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name.",
+        "endpoint": "Endpoint",
+        "endpointHint": "Read-only fields are set by the template and cannot be changed.",
+        "credential": "Credentials",
+        "credentialHint": "You can leave this empty and set it later on the connector's credentials page.",
+        "personalHint": "This connector uses personal credentials: each member connects later.",
+        "noneHint": "This connector needs no credentials.",
+        "dcrHint": "The client is registered automatically; nothing to fill in.",
+        "pluginsHint": "The app enables these plugins in this organization. Fill in the organization settings where needed (plugins already enabled keep their settings).",
+        "pluginsNone": "No plugin settings to fill in.",
+        "pluginEnabled": "{name}: already enabled in this organization; settings unchanged",
+        "summary": "This will install:",
+        "summaryTemplates": "{n} connectors",
+        "summaryPlugins": "{n} plugins",
+        "summarySkills": "{n} skills",
+        "submit": "Install",
+        "next": "Next",
+        "back": "Back",
+        "cancel": "Cancel",
+        "failed": "Installing failed at the “{step}” step ({code}); the components it created were rolled back.",
+        "failedNoRollback": "Installing failed at the “{step}” step ({code}) and some components could not be rolled back; uninstall it under Installed apps to clean up.",
+        "step": {
+          "plugins": "plugins",
+          "connectors": "connectors",
+          "skills": "skills"
+        },
+        "notInstallable": "This item cannot be installed right now."
+      }
+    },
+    "apps": {
+      "title": "Installed apps",
+      "empty": "This organization has not installed any apps from the directory.",
+      "status": {
+        "installing": "Installing",
+        "installed": "Installed",
+        "failed": "Install failed (rolled back)",
+        "uninstalling": "Uninstalling"
+      },
+      "failedAt": "Failed at “{step}”: {code}",
+      "components": "Components",
+      "created": "Created by this install",
+      "existing": "Pre-existing",
+      "componentKind": {
+        "plugin": "Plugin",
+        "connector": "Connector",
+        "skill": "Skill"
+      },
+      "installedAt": "Installed {at}",
+      "uninstall": "Uninstall",
+      "cleanup": "Clean up",
+      "confirm": {
+        "title": "Uninstall {name}",
+        "hint": "Only components created by this install and not used elsewhere are removed; pre-existing and still-used ones are kept.",
+        "confirm": "Uninstall",
+        "cancel": "Cancel"
+      },
+      "report": {
+        "title": "{name} was uninstalled",
+        "removed": "Removed",
+        "kept": "Kept",
+        "none": "None",
+        "reason": {
+          "pre_existing": "existed before the install",
+          "used_by_agents": "still used by agents",
+          "used_by_other_install": "used by another app install",
+          "used_by_connectors": "still used by connectors",
+          "used_by_plugins": "still required by plugins"
+        },
+        "dismiss": "Got it"
+      },
+      "inProgress": "This app is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up here after the timeout."
+    },
+    "inbox": {
+      "label": "Directory request",
+      "title": "Directory request · {name}",
+      "requester": "Requested by",
+      "kind": "Kind",
+      "version": "Version",
+      "note": "Note",
+      "hint": "If approved: allowed items can be installed by an organization admin; items that need approval are forwarded to an enterprise admin.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approved": "Directory request approved",
+      "rejected": "Directory request rejected",
+      "openItem": "Open item"
+    }
   }
 }
