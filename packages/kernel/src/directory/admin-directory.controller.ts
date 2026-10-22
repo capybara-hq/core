@@ -160,7 +160,8 @@ export class AdminDirectoryController {
   /**
    * 确认应用导入：一次批准全部要装 / 升级的插件（写快照），建 kind app 的目录条目；`deployPlugins` 时提交后装到部署并
    * 启用，返回 `{ item, deploy }`，`deploy` 逐个列出 enabled / failed（+ code）；部署失败不让已提交的导入报错，
-   * 失败的插件经插件后台按 sha256 重新安装。可预见的失败（降级到有未执行迁移的版本）在写之前 409
+   * 失败的插件经插件后台按 sha256 重新安装：install 的插件快照保留，install 后直接 enable；upgrade 的快照已恢复成
+   * 旧版本，install 后先 approve 再 enable。可预见的失败（降级到有未执行迁移的版本）在写之前 409
    * `plugin.downgrade_unsupported`。
    * 暂存不存在或已过期 → 404 `app.staging_not_found`；`reviewHash` 不符或部署上的插件已变 → 409 `app.review_stale`。
    */

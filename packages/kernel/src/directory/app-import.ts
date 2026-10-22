@@ -165,6 +165,8 @@ export interface AppDeployResult {
   result: "installed" | "enabled" | "failed";
   code?: string;
   message?: string;
+  /** 补充说明（如 upgrade 失败后快照已被别人改过、没有恢复：`snapshot_not_restored: …`）。 */
+  note?: string;
 }
 
 /** {@link AppImport.confirm} 的结果：已提交的条目，以及（`deployPlugins` 时）每个插件的部署结果。 */
@@ -596,8 +598,9 @@ export class AppImport {
    * 提交之后装到部署：先全部 `install`（新装为停用、换版本保持期望状态），再把装上的全部 `enable`（requires 的顺序
    * 不影响）。某个插件失败不影响其他、不抛错，逐个记结果；装上了的保持装上。upgrade 的插件没装上时，把确认时覆盖掉的
    * 快照恢复原样（运行中的旧版本继续有效，F-O；审计 `plugin.permissions_restored`）。
-   * 重试走插件后台：按结果里的 sha256 `POST /api/v1/admin/plugins/:name/install {sha256}`（包已在包存储里），upgrade
-   * 的再批准一次，然后 `…/enable`。
+   * 重试走插件后台（包已在包存储里）：install 的插件保留确认时写的快照，按结果里的 sha256
+   * `POST /api/v1/admin/plugins/:name/install {sha256}` 再 `…/enable` 即可；upgrade 的快照已恢复成旧版本的，install 之后
+   * 先 `…/approve` 再 `…/enable`。
    */
   private async deploy(
     actor: string,
@@ -631,7 +634,17 @@ export class AppImport {
         results.push({ ...base, result: "failed", ...failure(e) });
         if (p.action === "upgrade" && previous.has(p.name)) {
           try {
-            await this.restoreSnapshot(actor, review, p, previous.get(p.name) ?? null, opts);
+            const restored = await this.restoreSnapshot(
+              actor,
+              review,
+              p,
+              previous.get(p.name) ?? null,
+              opts,
+            );
+            if (!restored) {
+              (results.at(-1) as AppDeployResult).note =
+                "snapshot_not_restored: the permission approval changed after the import was confirmed, so it was left as it is";
+            }
           } catch (err) {
             this.d.log.error("cannot restore the permission snapshot of an app plugin", {
               plugin: p.name,
@@ -654,18 +667,28 @@ export class AppImport {
     return results;
   }
 
-  /** 把确认时覆盖的快照恢复成原样（原来没有快照则删除），审计 `plugin.permissions_restored`。 */
+  /**
+   * 把确认时覆盖的快照恢复成原样（原来没有快照则删除），审计 `plugin.permissions_restored`。比较后再写（锁行）：
+   * 快照仍是确认时写的那份（版本为 lock 版本、批准人为本次发起人）才恢复；期间被别人重新批准或改过就不动，返回 false。
+   */
   private async restoreSnapshot(
     actor: string,
     review: AppReview,
     p: AppReviewPlugin,
     prev: PreviousSnapshot | null,
     opts: ActorOpts,
-  ): Promise<void> {
-    await this.d.db.transaction().execute(async (trx) => {
+  ): Promise<boolean> {
+    return this.d.db.transaction().execute(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${p.name}`}))`.execute(
         trx,
       );
+      const current = await trx
+        .selectFrom("plugin_permission_snapshots")
+        .select(["version", "approved_by"])
+        .where("plugin", "=", p.name)
+        .forUpdate()
+        .executeTakeFirst();
+      if (current?.version !== p.lockVersion || current.approved_by !== actor) return false;
       if (prev) {
         await trx
           .updateTable("plugin_permission_snapshots")
@@ -693,6 +716,7 @@ export class AppImport {
           app: { name: review.name, version: review.version },
         },
       });
+      return true;
     });
   }
 

@@ -637,6 +637,103 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     expect((await k.storage.deployment().list("directory/")).items).toEqual([]);
   });
 
+  it("upgrade 没装上、但快照在此期间被别人改过：不恢复，结果里给出说明", async () => {
+    await reset();
+    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
+    await k.pluginAdminOps.install("eps", rv.sha256, adminId);
+    const m = manifest({
+      name: "race-suite",
+      plugins: [pluginRef("eps", "1.1.0", "^1.1.0")],
+      connectorTemplates: [],
+      skills: [],
+      icon: undefined,
+    });
+    const s = await prepared(await appBundleTgz({ manifest: m, name: "@acme/app-race" }));
+    const spy = vi.spyOn(k.pluginAdminOps, "install").mockImplementation(async (name) => {
+      // 确认之后、安装失败之前，别人（这里是 CLI）重新批准了 eps
+      await db
+        .updateTable("plugin_permission_snapshots")
+        .set({ approved_by: null, source: "cli" })
+        .where("plugin", "=", name)
+        .execute();
+      throw new ApiError("plugin.package_not_found", "simulated failure");
+    });
+    try {
+      const res = await confirm(admin, s.stagingId, {
+        reviewHash: s.review.reviewHash,
+        deployPlugins: true,
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      expect(res.json().deploy).toEqual([
+        expect.objectContaining({
+          name: "eps",
+          result: "failed",
+          note: expect.stringMatching(/^snapshot_not_restored/),
+        }),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+    const snap = await db
+      .selectFrom("plugin_permission_snapshots")
+      .select(["version", "approved_by", "source"])
+      .where("plugin", "=", "eps")
+      .executeTakeFirstOrThrow();
+    expect(snap).toEqual({ version: "1.1.0", approved_by: null, source: "cli" });
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select("id")
+        .where("action", "=", "plugin.permissions_restored")
+        .execute(),
+    ).toEqual([]);
+  });
+
+  it("prepare 之后迁移状态变了：confirm 在写之前拒绝降级 409 plugin.downgrade_unsupported", async () => {
+    await reset();
+    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
+    await k.pluginAdminOps.install("zeta", rv.sha256, adminId);
+    // prepare 时 zeta 1.0.0 的迁移看起来已执行过（降级可行）
+    const migrationSql = "CREATE TABLE IF NOT EXISTS notes (id int);\n";
+    await sql`CREATE SCHEMA IF NOT EXISTS plugin_zeta`.execute(db);
+    await sql`CREATE TABLE IF NOT EXISTS plugin_zeta._migrations (name text PRIMARY KEY, checksum text NOT NULL)`.execute(
+      db,
+    );
+    await sql`INSERT INTO plugin_zeta._migrations VALUES ('0001_notes.sql', ${createHash("sha256").update(migrationSql).digest("hex")})`.execute(
+      db,
+    );
+    try {
+      const m = manifest({
+        name: "old-suite",
+        plugins: [pluginRef("zeta", "1.0.0", "^1.0.0")],
+        connectorTemplates: [],
+        skills: [],
+        icon: undefined,
+      });
+      const s = await prepared(await appBundleTgz({ manifest: m, name: "@acme/app-old" }));
+      expect(s.review.plugins[0]).toMatchObject({ action: "upgrade", currentVersion: "2.0.0" });
+      // 之后迁移记录没了（目标版本的迁移不再算已执行）
+      await sql`DELETE FROM plugin_zeta._migrations`.execute(db);
+      const res = await confirm(admin, s.stagingId, {
+        reviewHash: s.review.reviewHash,
+        deployPlugins: true,
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json().error.code).toBe("plugin.downgrade_unsupported");
+      // 事务回滚：暂存还在，没有条目、快照，安装记录不变
+      expect(await db.selectFrom("app_import_staging").select("id").execute()).toHaveLength(1);
+      expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
+      expect(await db.selectFrom("plugin_permission_snapshots").select("plugin").execute()).toEqual(
+        [],
+      );
+      expect(await db.selectFrom("plugin_installs").select(["name", "version"]).execute()).toEqual([
+        { name: "zeta", version: "2.0.0" },
+      ]);
+    } finally {
+      await sql`DROP SCHEMA IF EXISTS plugin_zeta CASCADE`.execute(db);
+    }
+  });
+
   it("审阅之后部署状态变了（插件被别人装上）→ app.review_stale", async () => {
     const m = manifest({
       name: "late-suite",
