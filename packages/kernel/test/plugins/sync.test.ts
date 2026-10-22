@@ -7,6 +7,7 @@ import {
   readFile,
   readlink,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -72,6 +73,43 @@ describe("syncPackage", () => {
     expect(await readFile(join(root, "dist/index.mjs"), "utf8")).toContain("definePlugin");
   });
 
+  it("多出不在校验文件里的文件时也重新解包", async () => {
+    const root = join(dir, "sync-demo", digest.slice(0, 16));
+    await writeFile(join(root, "dist/extra.mjs"), "export default 1;");
+    const before = gets;
+    await syncPackage(dir, "sync-demo", digest, blobs);
+    expect(gets).toBe(before + 1);
+    expect(await readdir(join(root, "dist"))).toEqual(["index.mjs"]);
+  });
+
+  it("解包期间同机另一个进程先换入了完整目录：以它为准，不删", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let entered!: () => void;
+    const inGet = new Promise<void>((r) => {
+      entered = r;
+    });
+    const slow = {
+      get: async () => {
+        entered();
+        await gate;
+        return bytes;
+      },
+    };
+    const a = syncPackage(dir, "race-demo", digest, slow);
+    await inGet;
+    // 另一个进程在 a 取包期间完成同步
+    const urlB = await syncPackage(dir, "race-demo", digest, blobs);
+    const root = join(dir, "race-demo", digest.slice(0, 16));
+    const ino = (await stat(root)).ino;
+    release();
+    expect(await a).toBe(urlB);
+    expect((await stat(root)).ino).toBe(ino);
+    expect(await readdir(join(dir, "race-demo"))).toEqual([digest.slice(0, 16)]);
+  });
+
   it("没有校验文件的残留目录（上次解到一半）被替换", async () => {
     const root = join(dir, "sync-demo", digest.slice(0, 16));
     await rm(root, { recursive: true, force: true });
@@ -84,7 +122,7 @@ describe("syncPackage", () => {
   it("名字或 sha256 不合法时拒绝（不落盘）", async () => {
     await expect(syncPackage(dir, "../evil", digest, blobs)).rejects.toThrow(/plugin name/);
     await expect(syncPackage(dir, "sync-demo", "abc", blobs)).rejects.toThrow(/sha256/);
-    expect(await readdir(dir)).toEqual(["sync-demo"]);
+    expect((await readdir(dir)).sort()).toEqual(["race-demo", "sync-demo"]);
   });
 
   it("取到的包与 sha256 不符时拒绝", async () => {

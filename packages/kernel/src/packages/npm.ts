@@ -79,7 +79,11 @@ async function readCapped(res: Response, max: number, onTooLarge: () => Error): 
     }
     chunks.push(value);
   }
-  return chunks.length === 1 ? Buffer.from(chunks[0] as Uint8Array) : Buffer.concat(chunks);
+  if (chunks.length === 1) {
+    const c = chunks[0] as Uint8Array;
+    return Buffer.from(c.buffer, c.byteOffset, c.byteLength);
+  }
+  return Buffer.concat(chunks);
 }
 
 async function get(

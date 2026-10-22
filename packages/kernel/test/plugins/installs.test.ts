@@ -217,10 +217,15 @@ describe("有对象存储：上传、npm 与包存储", () => {
     await d.put(blobKey(todoSha), todo, { contentType: "application/gzip" });
   });
 
-  it("同一个包再传一次：幂等", async () => {
+  it("同一个包再传一次：幂等；对象存储里的字节丢了就补回", async () => {
     expect((await upload(admin, todo)).statusCode).toBe(200);
     const rows = await db.selectFrom("plugin_packages").select("sha256").execute();
     expect(rows).toHaveLength(1);
+    const d = k.storage.deployment();
+    await d.delete(blobKey(todoSha));
+    expect(await d.head(blobKey(todoSha))).toBeNull();
+    expect((await upload(admin, todo)).statusCode).toBe(200);
+    expect(await d.head(blobKey(todoSha))).not.toBeNull();
   });
 
   it("不合法的包 400 plugin.package_invalid（details 列出问题）；超过上限 413", async () => {
@@ -403,10 +408,11 @@ describe("启动时加载安装记录", () => {
     await stopAll();
     const after = await db
       .selectFrom("plugin_replica_status")
-      .select("state")
+      .select(["state", "detail"])
       .where("replica_id", "=", k.replicaId)
       .execute();
-    expect(after.map((r) => r.state)).toEqual(after.map(() => "unloaded"));
+    expect(after.length).toBeGreaterThan(0);
+    expect(after).toEqual(after.map(() => ({ state: "unloaded", detail: null })));
   });
 
   it("同一 sha 再次启动复用本地目录（包存储里没有字节也能加载）", async () => {
@@ -458,6 +464,95 @@ describe("启动时加载安装记录", () => {
   });
 });
 
+describe("安装记录：迁移目录只认审阅过的 capybara.migrations，模块清单须与静态清单一致", () => {
+  beforeAll(async () => {
+    await resetData();
+  });
+  afterAll(stopAll);
+
+  async function installPkg(name: string, bytes: Uint8Array): Promise<void> {
+    const pkg = await readPluginPackage(bytes, {
+      maxBytes: MAX_BYTES,
+      hostSdkVersion: SDK_VERSION,
+    });
+    await new PluginBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+      source: "file",
+      ref: "upload",
+      actor: null,
+      store: "pg",
+    });
+    await db
+      .insertInto("plugin_installs")
+      .values({
+        name,
+        sha256: sha(bytes),
+        version: "1.0.0",
+        source: "file",
+        desired_state: "enabled",
+      })
+      .execute();
+  }
+  const tablesOf = async (schema: string) =>
+    (
+      await sql<{ n: string }>`
+        SELECT table_name AS n FROM information_schema.tables
+        WHERE table_schema = ${schema} AND table_name <> '_migrations' ORDER BY 1`.execute(db)
+    ).rows.map((r) => r.n);
+  const statusOf = (plugin: string) =>
+    db
+      .selectFrom("plugin_replica_status")
+      .select(["state", "reason"])
+      .where("plugin", "=", plugin)
+      .executeTakeFirstOrThrow();
+  const MIGRATIONS = [
+    {
+      name: "package/migrations/0001_reviewed.sql",
+      data: "CREATE TABLE IF NOT EXISTS reviewed (id int);",
+    },
+    { name: "package/evil/0001_evil.sql", data: "CREATE TABLE IF NOT EXISTS evil (id int);" },
+  ];
+  const entry = (name: string, extra: string) =>
+    [
+      'import { definePlugin } from "@capybara-hq/plugin-sdk";',
+      `export default definePlugin({ name: "${name}", version: "1.0.0", sdk: "^0.1.0", provides: [], ${extra}, setup() {} });`,
+    ].join("\n");
+
+  it("(a) 模块清单声明了另一个 migrations 目录：只执行包里审阅过的 SQL；(b) 模块清单与静态清单不符：failed / manifest_mismatch，不跑迁移", async () => {
+    await installPkg(
+      "mig-dir",
+      await pluginTgz({
+        name: "mig-dir",
+        section: { migrations: "migrations" },
+        extra: MIGRATIONS,
+        entry: entry("mig-dir", 'permissions: {}, migrations: "../evil"'),
+      }),
+    );
+    await installPkg(
+      "mig-mismatch",
+      await pluginTgz({
+        name: "mig-mismatch",
+        section: { migrations: "migrations" },
+        extra: MIGRATIONS,
+        entry: entry("mig-mismatch", "permissions: { secrets: true }"),
+      }),
+    );
+    const k = await boot({ plugins: [MODEL_FAKE] });
+    expect(k.host.sourceOf("mig-dir")).toBe("install");
+    expect(await statusOf("mig-dir")).toEqual({ state: "loaded", reason: null });
+    expect(await tablesOf("plugin_mig_dir")).toEqual(["reviewed"]);
+
+    expect(k.host.manifests().map((m) => m.name)).not.toContain("mig-mismatch");
+    expect(await statusOf("mig-mismatch")).toEqual({
+      state: "failed",
+      reason: "manifest_mismatch",
+    });
+    expect(await tablesOf("plugin_mig_mismatch")).toEqual([]);
+    const inst = await db.selectFrom("plugin_installs").select(["name", "migrated_sha"]).execute();
+    expect(inst.find((r) => r.name === "mig-mismatch")?.migrated_sha).toBeNull();
+    expect(inst.find((r) => r.name === "mig-dir")?.migrated_sha).not.toBeNull();
+  });
+});
+
 describe("内置插件", () => {
   beforeAll(async () => {
     await resetData();
@@ -466,6 +561,24 @@ describe("内置插件", () => {
   afterAll(stopAll);
 
   it("来源 builtin：autoApprove 关闭也直接加载、不写快照；组织插件页不列出，组织启用检查直接放行", async () => {
+    // 同名的安装记录：被忽略，冲突记在生效那一行的 detail 里
+    const pkg = await readPluginPackage(todo, { maxBytes: MAX_BYTES, hostSdkVersion: SDK_VERSION });
+    await new PluginBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, todo, {
+      source: "file",
+      ref: "upload",
+      actor: null,
+      store: "pg",
+    });
+    await db
+      .insertInto("plugin_installs")
+      .values({
+        name: "todo",
+        sha256: todoSha,
+        version: "0.1.0",
+        source: "file",
+        desired_state: "enabled",
+      })
+      .execute();
     const k = await boot(
       // 配置列表里也写了 todo：以内置为准并告警
       { plugins: [MODEL_FAKE, TODO_SRC], pluginPermissions: { autoApprove: false } },
@@ -474,6 +587,14 @@ describe("内置插件", () => {
     );
     expect(k.host.sourceOf("todo")).toBe("builtin");
     expect(k.host.manifests().map((m) => m.name)).toContain("todo");
+    const todoRow = await db
+      .selectFrom("plugin_replica_status")
+      .select(["source", "state", "detail"])
+      .where("plugin", "=", "todo")
+      .executeTakeFirstOrThrow();
+    expect(todoRow.source).toBe("builtin");
+    expect(todoRow.state).toBe("loaded");
+    expect(todoRow.detail).toMatch(/^name_conflict: install record 0\.1\.0/);
     expect(await db.selectFrom("plugin_permission_snapshots").select("plugin").execute()).toEqual(
       [],
     );

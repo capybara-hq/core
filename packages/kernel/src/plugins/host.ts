@@ -635,6 +635,11 @@ export class PluginHost {
           `plugin is both installed and ${taken.source === "builtin" ? "built in" : "declared in the plugins config list"}; using the ${taken.source} plugin`,
           { plugin: d.name, installedVersion: d.version },
         );
+        // 该名字的状态行属于生效的一方，不覆盖；在它的 detail 里记下冲突（后台能看到）
+        await this.noteStatus(
+          d.name,
+          `name_conflict: install record ${d.version} (${d.sha256.slice(0, 16)}) ignored; the ${taken.source} plugin of the same name is used`,
+        );
         continue;
       }
       let url: string;
@@ -744,6 +749,16 @@ export class PluginHost {
         fatal: false,
         onMigrated: () => loader.markMigrated(c.d.name, c.d.sha256),
       });
+    }
+  }
+
+  /** 给已有状态行补说明；失败只记 warn。 */
+  private async noteStatus(plugin: string, detail: string): Promise<void> {
+    if (!this.status) return;
+    try {
+      await this.status.note(plugin, detail);
+    } catch (e) {
+      this.deps.log.warn("cannot write plugin replica status", { plugin, err: e });
     }
   }
 

@@ -79,12 +79,30 @@ export class ReplicaStatusStore {
       .execute();
   }
 
+  /**
+   * 给本副本该插件已有的一行补一句说明（不改状态），如「同名安装记录被忽略」。
+   * 该插件这一行属于生效的那一方（内置 / 配置声明），所以只追加 detail。
+   */
+  async note(plugin: string, detail: string): Promise<void> {
+    await this.db
+      .updateTable("plugin_replica_status")
+      .set({ detail: detail.slice(0, MAX_DETAIL) })
+      .where("replica_id", "=", this.replicaId)
+      .where("plugin", "=", plugin)
+      .execute();
+  }
+
   /** 停机：本副本的全部行标为 unloaded（尽力而为）。 */
   async markAllUnloaded(): Promise<void> {
     if (!this.wrote) return;
     await this.db
       .updateTable("plugin_replica_status")
-      .set({ state: "unloaded", reason: null, heartbeat_at: sql<Date>`now()` as unknown as Date })
+      .set({
+        state: "unloaded",
+        reason: null,
+        detail: null,
+        heartbeat_at: sql<Date>`now()` as unknown as Date,
+      })
       .where("replica_id", "=", this.replicaId)
       .execute();
   }

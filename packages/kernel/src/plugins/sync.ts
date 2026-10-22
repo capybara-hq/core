@@ -74,10 +74,21 @@ async function intact(root: string, sha: string): Promise<Marker | undefined> {
     if (!existsSync(join(root, "node_modules", ...pkg.split("/"), "package.json")))
       return undefined;
   }
+  // 文件集合也要一致：多出来的文件（不在校验文件里）同样视为不完整，重新解包
+  let present: string[];
+  try {
+    present = (await listFiles(root)).filter((f) => f !== MARKER);
+  } catch {
+    return undefined;
+  }
+  const expected = Object.keys(marker.files);
+  if (present.length !== expected.length || present.some((f) => !Object.hasOwn(marker.files, f))) {
+    return undefined;
+  }
   return marker;
 }
 
-/** 列出目录下的全部普通文件（相对路径，`/` 分隔）。 */
+/** 列出目录下的全部普通文件（相对路径，`/` 分隔；不跟随符号链接，宿主包链接不算）。 */
 async function listFiles(root: string, sub = ""): Promise<string[]> {
   const out: string[] = [];
   for (const e of await readdir(join(root, sub), { withFileTypes: true })) {
@@ -133,7 +144,9 @@ export async function syncPackage(
     }
     const marker: Marker = { sha256: sha, entry, files };
     await writeFile(join(tmp, MARKER), JSON.stringify(marker), { flag: "wx", mode: 0o644 });
-    // 换入：先移走目标位置的残缺目录（完整的已在上面复用）
+    // 换入：解包期间同机另一个进程可能已换入完整的目录——以它为准，不删；否则先移走残缺目录
+    const done = await intact(root, sha);
+    if (done) return urlOf(done);
     if (await exists(root)) await rm(root, { recursive: true, force: true });
     try {
       await rename(tmp, root);

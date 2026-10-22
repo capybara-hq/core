@@ -57,10 +57,14 @@ export class PluginBlobs {
     }
     const existing = await this.d.db
       .selectFrom("plugin_packages")
-      .select("sha256")
+      .select("blob_store")
       .where("sha256", "=", p.sha256)
       .executeTakeFirst();
-    if (existing) return;
+    if (existing) {
+      // 记录已在：字节若丢了（对象被删、库被清）就按原存放位置补上
+      await this.repair(p.sha256, existing.blob_store, bytes);
+      return;
+    }
     const store = src.store ?? (this.d.storage?.available ? "object" : "pg");
     if (store === "object") {
       if (!this.d.storage) throw new Error("object storage is not available");
@@ -96,6 +100,26 @@ export class PluginBlobs {
           .execute();
       }
     });
+  }
+
+  /** 已有记录的包：按记录的存放位置检查字节在不在，不在就写回（调用方已校验 sha256）。 */
+  private async repair(sha256: string, store: "object" | "pg", bytes: Uint8Array): Promise<void> {
+    if (store === "pg") {
+      await this.d.db
+        .insertInto("plugin_blobs")
+        .values({ sha256, bytes: Buffer.from(bytes) })
+        .onConflict((oc) => oc.column("sha256").doNothing())
+        .execute();
+      return;
+    }
+    if (!this.d.storage?.available) return;
+    const d = this.d.storage.deployment();
+    if ((await d.head(blobKey(sha256))) === null) {
+      await d.put(blobKey(sha256), bytes, {
+        contentType: "application/gzip",
+        size: bytes.byteLength,
+      });
+    }
   }
 
   /** 按记录的存放位置取包并校验 sha256；不符抛 {@link PluginBlobIntegrityError}。 */
