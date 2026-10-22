@@ -1,11 +1,20 @@
 ---
 name: writing-connectors
-description: 新建或修改连接器插件时使用（provides connector@1，如 plugins/connector-mcp、plugins/connector-openapi）：endpointSchema、按次 open / 关闭的会话生命周期、每个请求前 auth() 与 onUnauthorized 重试一次、不跟随重定向与 https（allowInsecureLoopback）、ToolError 的 kind 与熔断、connectorData 与按已复核定义路由（ctx.spec）、inspect 与安装预览、onToolsChanged、onElicit 与 elicitation 续跑、resources / prompts 可选方法、打码是内核的事，以及用 startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer 写测试。
+description: 新建或修改连接器插件时使用（provides connector@1，如 plugins/connector-mcp、plugins/connector-openapi）：「连接器 / 连接器插件 / 连接器模板」的术语、不支持 stdio MCP、endpointSchema、按次 open / 关闭的会话生命周期、每个请求前 auth() 与 onUnauthorized 重试一次、不跟随重定向与 https（allowInsecureLoopback）、ToolError 的 kind 与熔断、connectorData 与按已复核定义路由（ctx.spec）、inspect 与安装预览、onToolsChanged、onElicit 与 elicitation 续跑、resources / prompts 可选方法、打码是内核的事，以及用 startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer 写测试。
 ---
 
 # 写连接器
 
-连接器插件把一类远端服务接成组织里的「连接器」（远端服务实例：MCP 服务、OpenAPI 描述的 HTTP API 等；D17 之前叫「应用」）：插件 `provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`。通用的插件写法（清单、配置、多副本禁令）见 `skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `skills/writing-tools`，这里只讲连接器特有的部分。
+连接器插件把一类远端服务接成组织里的「连接器」（远端服务实例：MCP 服务、OpenAPI 描述的 HTTP API 等；D17 之前叫「应用」）：插件 `provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`。
+
+**术语（D17）**：
+
+| 词 | 指什么 | 例子 |
+|---|---|---|
+| 连接器（connector） | 组织里装好的一个远端服务实例：端点 + 认证 + 工具快照，表 `connectors` | 「Docs」这个 MCP 服务 |
+| 连接器插件 | 实现一种协议的插件，提供能力 `connector@1`（能力名不变），部署级、不需要按组织启用 | `connector-mcp`、`connector-openapi` |
+| 连接器模板 | 企业目录里的一种包（`kind: connector-template`）：引用一个连接器插件，预设端点与认证（不含凭据）、组织可改的端点字段与默认策略，组织填凭据即建出一个连接器 | 「飞书文档」模板 |
+| 应用（app） | 组合包 `app.yaml`：插件 + 连接器模板 + 技能（D17 之后「应用」只指这个） | 飞书插件 + 文档模板 + 技能 |通用的插件写法（清单、配置、多副本禁令）见 `skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `skills/writing-tools`，这里只讲连接器特有的部分。
 
 参考实现：`plugins/connector-mcp`（Streamable HTTP 的 MCP 服务，含 elicitation、prompts、resources、list_changed）与 `plugins/connector-openapi`（OpenAPI 3.0 / 3.1，每个 operation 一个工具，实现了 `inspect`、`connectorData` 路由）。契约在 `packages/plugin-sdk/src/connector.ts`。
 
@@ -19,7 +28,7 @@ description: 新建或修改连接器插件时使用（provides connector@1，�
 
 ```ts
 interface Connector {
-  kind: string;                 // 存进 apps.connector，如 "mcp"、"openapi"
+  kind: string;                 // 存进 connectors.connector，如 "mcp"、"openapi"
   endpointSchema: ZodTypeAny;   // 连接器 endpoint 的校验（安装 / 预览时内核调用）
   open(args: ConnectorOpenArgs): Promise<ConnectorSession>;
   inspect?(args: { endpoint; signal }): Promise<{ authHints: AuthHint[]; operations?: ConnectorOperation[] }>;
@@ -105,6 +114,14 @@ MCP `elicitation/create`（表单与 URL 两种模式）→ 调用 `args.onElici
 - 会话实现了 `listResources` / `readResource` 时内核补 `<slug>__list_resources` / `<slug>__read_resource` 两个工具（均标 `readOnlyHint`，默认 allow；管理员可停用），并支持网页输入框的 `@` 引用（消息接口 `attachments: [{ connectorId, uri }]`，内核以发送者凭据读取、打码、限长，作为用户消息的附加文本块）。资源读取（列表与附件）遵守管理员对该连接器 `read_resource` 工具的启停（Ruling A23：停用 → 不列出、附件 409 `connector.resources_disabled`）。
 - 实现了 `listPrompts` / `getPrompt` 时内核提供 `GET /orgs/:orgId/connectors/prompts`、`POST /orgs/:orgId/connectors/:connectorId/prompts/:name`，网页输入框出现 `/连接器:提示名` 斜杠命令。`getPrompt` 失败抛英文 `ToolError`、不含凭据。
 - 这两类都由用户本人发起、用其凭据，不经工具策略。代码见 `packages/kernel/src/tools/connector-content.ts`。
+
+## 连接器模板（C30）
+
+连接器模板让组织不必懂端点细节：企业管理员把模板包导入企业目录，组织管理员在目录里「安装」，只填凭据（静态凭据经 `credential`，OAuth 经 `client`）与模板 `editableEndpoint` 列出的端点字段，内核按模板拼出安装输入、走与手动安装同一条 `ConnectorsService.create`（端点按 `endpointSchema` 与凭据规则复核、默认策略记 `policy_source 'template'`）。模板包的格式、`editableEndpoint` 与 `defaultToolPolicies` 的写法见 `skills/writing-apps`。对连接器插件的要求：
+
+- 模板导入与组织安装都按**本副本已加载**的连接器插件与 `Connector.kind` 校验（没加载 → 导入拒绝 / 安装 `directory.not_deployed`）；`editableEndpoint` 的路径要能在你的 `endpointSchema` 里找到（`directory/schema-path.ts` 的 `schemaHasPath`：走对象字段、record、union / 交叉的分支，剥掉 optional / default / pipe 输入端等包装，**不进数组元素**）。所以组织可能要改的字段放在对象路径上，字段名保持稳定：改名等于让已发布的模板失效。
+- 端点里不能放凭据（模板的预设所有组织都能看到）；需要凭据的一律走认证设置。
+- 部署设置 `customConnectors` 为 `deny` 时组织只能从企业目录（模板）建连接器，手动安装返回 403 `directory.custom_disabled`。
 
 ## OAuth 与凭据：全在内核
 

@@ -76,6 +76,39 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 - **令牌过期时间**用 `identity/api-tokens.ts` 导出的共享 schema `FutureIsoDate`（完整 ISO 8601 datetime 字符串且晚于当前时间；数字、`"2099-01-01"` 之类 → 400）。
 - **组织插件配置**（`OrgPluginConfigs`）：`get` / `list` 在 `REPEATABLE READ` 只读事务里读配置行与密钥；`enabled=false` 的插件 `get` 不校验、返回 `{ enabled: false, config: null }`；`put` 同一事务内清掉当前 schema 里已不存在的密钥路径对应的 `capybara.secrets` 行；从未配置时 `config` 列存 NULL。
 
+### 现有的组织动作（M6 起）
+
+`connectors.manage`（admin）/ `connectors.use`（guest）是 D17 改名后的连接器动作（原 `apps.*`，HTTP `/api/v1/orgs/:orgId/connectors*`，错误码 `connector.*`；不留 `/apps` 别名与兼容层，C28）。M6 新增：
+
+| 动作 | 最低角色 | 用在 |
+|---|---|---|
+| `trajectories.read` | member | 轨迹查看器；服务里再判定「组织管理员或该 agent 的负责人」，评测对话只给组织管理员，其余一律 404 |
+| `evals.manage` | admin | 评测集、用例、运行、标注 |
+| `org.models.manage` | admin | 本组织的模型用途映射（`/model-purposes`） |
+| `directory.read` | member | 组织视角的企业目录；`POST directory/:itemId/install` 路由只要这一项，服务在组织行锁内按种类再复核 `skills.manage` / `connectors.manage` / `org.plugins.manage`（应用三者都要） |
+| `directory.request` | member | 成员申请目录条目 |
+| `directory.decide` | admin | 组织管理员决定成员申请 |
+
+以上都在 `HUMAN_ONLY` 里（服务令牌 403）。新动作照此在 `roles.ts` 登记并写一行注释说明用途。
+
+旧审计记录 `app.*` 不改写；按 action 查询审计时用 `auditActionAliases`（`identity/audit.ts`）的显式映射把新旧名当同义（不按前缀猜）。
+
+### 企业管理员端点（`/api/v1/admin/*`）
+
+部署级端点一律放在 `/api/v1/admin/*`，controller 上加 `@EnterpriseAdmin()`（服务令牌一律 403），称呼一律「企业管理员」（代码标识 `@EnterpriseAdmin`、路径 `/admin` 不改名，C1）。写操作在事务里先 `lockEnterpriseAdminsAndAuthorize`（见上）。现有：
+
+| 路径 | controller | 内容 |
+|---|---|---|
+| `overview`、`accounts*`、`orgs`、`settings`、`models`、`model-prices`、`model-purposes*` | `admin/admin.controller.ts` | 概览、账号、组织、部署设置（`deployment_settings`：`orgCreation`、`runConcurrencyOverrides`、`sandboxLimitOverrides`、`priceCurrency`、`customConnectors`、`customSkills`）、模型、价格、部署默认的用途映射 |
+| `plugins*` | `admin/plugins.controller.ts` | 插件列表与详情、部署级配置（`:name/config`）、批准、安装 / 启用 / 停用 / 卸载、包上传（`packages/file`）与 npm 导入（`packages/npm`） |
+| `directory*` | `directory/admin-directory.controller.ts` | 目录导入（`import/file`、`import/npm`）、应用包 `apps/prepare/*` → `apps/:stagingId/confirm`、条目列表 / 详情 / 图标 / 策略 / 删除、插件条目装到部署 |
+| `directory/requests*` | `directory/org-directory.controller.ts` | 待企业管理员决定的目录申请 |
+| `catalogs*` | `directory/catalogs.controller.ts` | 官方 / 企业清单的增删改、刷新、浏览条目、从清单引入 |
+
+- 企业管理员默认**读不到对话**：轨迹与评测只给组织管理员与 agent 负责人（C1），不要在 `/admin` 下加读对话内容的端点。
+- 包上传路由收原始字节（`application/octet-stream`，上限 `packages.maxBytes`，在 Fastify 里单独放宽 bodyLimit）；网页层代理另有自己的上限 `CAPYBARA_WEB_MAX_PACKAGE_BYTES`，见 `docs/config.md`。
+- CLI 复用同一批领域类（`capybara admin grant|revoke <login>`、`capybara plugins …`），所以领域类不能依赖请求上下文。
+
 ### 审计与个人令牌
 
 写操作在同一事务里调 `audit(trx, { actorAccountId, actorTokenId?, orgId?, action, target?, detail? })`。请求来自个人令牌时把令牌 id 记进 `actor_token_id`：controller 用 `patTokenId(requireUser(p))`（Web 会话返回 undefined）取值，作为服务方法末尾的可选参数 `actorTokenId` 传下去。`detail` 不得含令牌、密码等机密。

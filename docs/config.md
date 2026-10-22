@@ -24,7 +24,7 @@
 | `pluginHost.reconcileIntervalSeconds` | `CAPYBARA_PLUGIN_HOST__RECONCILE_INTERVAL_SECONDS` | `number` | `60` | 否 | 否 | Seconds between periodic reconciles of each replica's loaded plugins against the installed state in PostgreSQL |
 | `packages.npmRegistry` | `CAPYBARA_PACKAGES__NPM_REGISTRY` | `string` | `"https://registry.npmjs.org"` | 否 | 否 | npm registry used to install plugin packages by name |
 | `packages.npmToken` | `CAPYBARA_PACKAGES__NPM_TOKEN` | `string` | 可选 | 否 | 是 | Bearer token for the npm registry (private registries); sent only to the registry origin |
-| `packages.maxBytes` | `CAPYBARA_PACKAGES__MAX_BYTES` | `number` | `52428800` | 否 | 否 | Largest plugin package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store. Lowering it also caps what replicas read back from the object store, so packages accepted earlier under a larger limit can no longer be synced |
+| `packages.maxBytes` | `CAPYBARA_PACKAGES__MAX_BYTES` | `number` | `52428800` | 否 | 否 | Largest plugin package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store. Lowering it also caps what replicas read back from the object store, so packages accepted earlier under a larger limit can no longer be synced. Uploads through the web tier (apps/web) are also capped by its own CAPYBARA_WEB_MAX_PACKAGE_BYTES (default 50 MiB); raise both together |
 | `directory.maxBundleBytes` | `CAPYBARA_DIRECTORY__MAX_BUNDLE_BYTES` | `number` | 可选 | 否 | 否 | Largest total size in bytes of one app bundle import: the app package plus every plugin package it locks (downloaded and held in memory while validating). Defaults to 4 x packages.maxBytes |
 | `directory.staleInstallMinutes` | `CAPYBARA_DIRECTORY__STALE_INSTALL_MINUTES` | `number` | `30` | 否 | 否 | Minutes after which an organization app install still in the installing state (e.g. the replica crashed mid-install) may be cleaned up through uninstall, which rolls back the components it recorded |
 | `catalogs.official.enabled` | `CAPYBARA_CATALOGS__OFFICIAL__ENABLED` | `boolean` | `true` | 否 | 否 | Use the official directory catalog. Set to false for offline deployments: the official catalog is never fetched and the admin UI shows offline mode |
@@ -113,3 +113,15 @@
 | `CAPYBARA_NACOS_DATA_ID` | 配置的 dataId（YAML），必填；分组固定为 `DEFAULT_GROUP` |
 | `CAPYBARA_NACOS_USERNAME` / `CAPYBARA_NACOS_PASSWORD` | Nacos 开启鉴权时的用户名与密码：登录换取 accessToken，用到 `tokenTtl` 的 80% 或收到 403 时重新登录；须成对设置 |
 | `CAPYBARA_NACOS_ACCESS_TOKEN` | 直接使用的 accessToken（不调用登录接口）；不能与用户名密码同时设置 |
+
+## 网页层（apps/web）的环境变量
+
+网页层是独立进程（经 `apps/web/server.mjs` 启动），不读内核配置，只认下列环境变量：
+
+| 环境变量 | 说明 |
+| --- | --- |
+| `CAPYBARA_KERNEL_URL` | 内核地址，`/api/*` 代理转发到这里；默认 `http://localhost:8080` |
+| `PORT` / `CAPYBARA_WEB_HOST` | 网页层的监听端口（默认 3000）与地址 |
+| `CAPYBARA_WEB_MAX_BODY_BYTES` | `/api/*` 代理的请求体上限，默认 1 MiB（与内核的 bodyLimit 一致） |
+| `CAPYBARA_WEB_MAX_PACKAGE_BYTES` | 插件包、目录包与应用包上传（`/api/v1/admin/plugins/packages/file`、`/api/v1/admin/directory/import/file`、`/api/v1/admin/directory/apps/prepare/file`）的请求体上限，默认 50 MiB，边读边转发。这是网页层的上限，内核另按 `packages.maxBytes` 拒绝；调大 `packages.maxBytes` 时两个一起调，否则经网页上传的大包先被网页层以 413 拒绝 |
+| `CAPYBARA_DEV_UI` | 设为 `1` 时生产构建也开放 `/dev/ui` 组件目录页（默认关闭） |

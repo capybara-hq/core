@@ -1,6 +1,6 @@
 ---
 name: writing-tools
-description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、连接器工具的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用；内置的沙箱工具 sandbox_*（按工具的超时与转存阈值、sandboxToolPolicy、首次使用 / 重建提示）与技能工具 skill_load / skill_write（目录快照、R3 对共享 agent 固定 ask、私有 agent 的 writePolicy 开关、变更审批）。写连接器见 writing-connectors。
+description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、连接器工具的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用；内置的沙箱工具 sandbox_*（按工具的超时与转存阈值、sandboxToolPolicy、首次使用 / 重建提示）与技能工具 skill_load / skill_write（目录快照、R3 对共享 agent 固定 ask、私有 agent 的 writePolicy 开关、变更审批、customSkills 不影响 skill_write）；插件在调用途中被停用 / 升级时的工具错误（PLUGIN_UNLOADED_TOOL_ERROR）。写连接器见 writing-connectors。
 ---
 
 # 写工具
@@ -93,6 +93,7 @@ export default definePlugin({
 - **显示摘要 `display`（可选，只给人看）**：`{ content, display: { summary: { zh, en } } }`，对话流里那一行工具调用显示这句话（如 todo 的「更新任务清单（3 项）」/「Updated task list (3 items)」），不再显示原样的输入 JSON。中英文都要给、各 ≤ 200 码点（`validateToolDisplay`）；不合法的内核丢弃并记告警，结果照常写入。摘要随 `tool_result` 事件进日志（刷新页面能还原），**不进模型上下文**（重建请求只用 content / isError），所以别把模型需要的信息只写在摘要里。只认插件工具、内核内置工具与内核的 resources 工具给的摘要；连接器工具的结果不采信（网页退回「工具名 + 输入的前几个字段」）。内置工具 `ask_user` / `read_tool_output` / `tool_search` 都给了摘要。
 - 抛其他错误：模型只看到 `Tool <key> failed (<ErrorName>). The operation may not have completed; check before retrying or try another approach.`，错误详情进日志（经打码）。不要依赖异常消息传话。
 - 超时：`Tool <key> timed out after <n>s. The operation may or may not have completed; verify before retrying.`
+- **提供工具的插件在调用途中被卸下**（部署上停用 / 卸载 / 升级换实例，C17）：内核先停止接新调用，等在途调用最多 `pluginHost.drainSeconds`（默认 30 秒）；到时仍没结束的，`call.signal` 被中止，模型收到 `PLUGIN_UNLOADED_TOOL_ERROR`（`plugins/inflight.ts`：`The plugin that provides this tool was disabled or upgraded while the call was running, so the call was aborted. Retry if the tool is still available.`）。之后的步骤里，本副本已没有的插件工具按不可用工具处理（原因 `Plugin tool does not exist`；组织未启用时是 `Plugin <name> is not enabled in this organization`）。所以处理函数要理会 `call.signal`，长操作做成可中止、可重试的。
 - **有副作用不盲目重跑**（spec 4.3）：内核在执行前写 `tool_call_started`。进程在执行中崩溃，续跑时这次调用的结果写为 `Result unknown: the call was interrupted before a result was recorded. Verify the outcome before retrying.`，**不会再调用你的处理函数**。所以处理函数无需为「被内核重放」做幂等，但模型可能看到「结果未知」后自己重试 —— 有条件的话让写操作天然幂等（如 todo 的整表覆盖）。
 
 ## 输出大小与存档
@@ -148,7 +149,7 @@ async (input, call) => {
 
 `pending_review` / 停用的工具不进 `forAgent`：点名引用的进 `unavailable`（每步提醒模型），`tools: "all"` 引用的进 `hidden`（不提醒，模型调用时给事实原因）。管理员 `POST .../connectors/:connectorId/tools/:name/review {action: "approve" | "reject"}`：approve 采用新定义并启用并记 `reviewed_at`，reject 停用并保留旧定义（从未复核过的工具被拒后 `reviewed_at` 仍为空，之后仍可 approve）；待复核或从未复核过的工具不能经 PATCH 启用。授权按 `spec_hash` 比对，采用新定义后旧的「记住的授权」自然失效。
 
-**默认策略与 `policy_source`**：连接器工具的默认策略（`connector_tools.default_policy`）由注解推导（`policySource: "derived"`），管理员改过则为 `"admin"`。approve 或刷新采用新定义时，`derived` 的按新注解重新推导（注解变严格——如 `readOnlyHint` 变成 destructive——也会跟着变成 ask，不会沿用旧的 allow）；`admin` 的保留，除非工具的来源（`source`）变了。插件 / 内置工具没有这一层：用 `defaultPolicy` 或注解（见上）。
+**默认策略与 `policy_source`**：连接器工具的默认策略（`connector_tools.default_policy`）由注解推导（`policySource: "derived"`），管理员改过则为 `"admin"`，从企业目录的连接器模板安装、取自模板 `defaultToolPolicies` 的为 `"template"`（与 `admin` 一样保留，见 `skills/writing-apps`）。approve 或刷新采用新定义时，`derived` 的按新注解重新推导（注解变严格——如 `readOnlyHint` 变成 destructive——也会跟着变成 ask，不会沿用旧的 allow）；`admin` 的保留，除非工具的来源（`source`）变了。插件 / 内置工具没有这一层：用 `defaultPolicy` 或注解（见上）。
 
 后台检查用的凭据：组织凭据；个人凭据型连接器依次试至多 3 个现任成员的个人凭据（按凭据最近写入时间倒序），没有则跳过并记日志。审计 `connector.tools_drifted`（只有计数）/ `connector.tool_reviewed`。
 

@@ -18,6 +18,10 @@ describe("renderConfigDocs", () => {
     expect(md).toContain("`CAPYBARA_DB__POOL_MAX`");
     expect(md).toContain("`CAPYBARA_LOG__LEVEL`");
   });
+  it("附网页层的环境变量（上传包的上限与内核 packages.maxBytes 分开）", () => {
+    expect(md).toContain("`CAPYBARA_WEB_MAX_PACKAGE_BYTES`");
+    expect(md).toContain("`CAPYBARA_KERNEL_URL`");
+  });
   it("热更与密钥标记", () => {
     const row = (p: string) => md.split("\n").find((l) => l.startsWith(`| \`${p}\``)) ?? "";
     expect(row("log.level")).toMatch(/\| 是 \| 否 \|/);

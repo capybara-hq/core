@@ -1,6 +1,6 @@
 ---
 name: writing-sandbox-providers
-description: 新建或修改沙箱插件时使用（provides sandbox@1，如 plugins/sandbox-docker、plugins/sandbox-e2b）：契约原语与中止语义、SandboxGoneError 与普通错误的区别、已停止实例的自动启动、沙箱内命令时限、killAll（接手崩溃前任 / 从休眠恢复）、同名实例替换与 destroyByName、/skills 只读、出站 none / allowlist / open 与 allowOpenEgress、限制只在创建时生效；SandboxService 的生命周期（Redis 锁 TTL 与续租、lockWaitSeconds、防护号、空闲休眠、maxRunning、不活跃销毁、重建与提示）；安全（socket 代理放哪里、出站代理按解析后的 IP 挡 DNS 重绑定）；以及用假沙箱插件、真实 Docker 与 startFakeE2B / 真实 E2B 写测试。
+description: 新建或修改沙箱插件时使用（provides sandbox@1，如 plugins/sandbox-docker、plugins/sandbox-e2b）：契约原语与中止语义、组织级 cpu / 内存覆盖（sandboxLimitOverrides）、SandboxGoneError 与普通错误的区别、已停止实例的自动启动、沙箱内命令时限、killAll（接手崩溃前任 / 从休眠恢复）、同名实例替换与 destroyByName、/skills 只读、出站 none / allowlist / open 与 allowOpenEgress、限制只在创建时生效；SandboxService 的生命周期（Redis 锁 TTL 与续租、lockWaitSeconds、防护号、空闲休眠、maxRunning、不活跃销毁、重建与提示）；安全（socket 代理放哪里、出站代理按解析后的 IP 挡 DNS 重绑定）；以及用假沙箱插件、真实 Docker 与 startFakeE2B / 真实 E2B 写测试。
 ---
 
 # 写沙箱插件
@@ -73,6 +73,11 @@ interface SandboxProvider {
 
 - `egress` / `allowHosts` 是**组织实际生效**的值：组织设置 `sandboxEgress` 可把白名单换成自己的一份或断网，
   不能比部署更开（Ruling M19，内核 `effectiveSandboxEgress`）。提供方只管照 `create` 收到的执行，不读组织设置。
+- `cpu` / `memoryMb` 同样是**组织实际生效**的值：企业管理员可在后台按组织覆盖（部署设置 `sandboxLimitOverrides`，
+  orgId → `{ cpu?, memoryMb? }`，cpu 0.25–64、memoryMb 为 256–262144 的整数，C19），给出的项替换 `sandbox.limits` 的
+  部署默认，未给的项与 `diskMb` 沿用部署默认（内核 `effectiveSandboxLimits`）；组织管理员在组织设置里只读看到生效值与来源。
+  提供方照 `create` 收到的 `limits` 执行即可；做不到按沙箱指定规格的提供方（如 E2B，规格由模板决定）要在 README 里写明
+  「组织级 cpu / 内存覆盖对本插件不生效」，部署方需要不同规格时改用不同模板。
 - `cpu` / `memoryMb` / `diskMb` / `egress` / `allowHosts` **只在 `create` 时生效**：改配置只影响之后新建的沙箱，
   已有的（含休眠后恢复的）沿用创建时的设置，直到被销毁重建。做不到某项时在 README 里写明（Docker 默认 local 卷驱动
   不限 `diskMb`；E2B 的 cpu / 内存 / 磁盘由模板决定）。

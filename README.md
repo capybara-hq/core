@@ -21,8 +21,10 @@ pnpm capybara migrate     # 迁移内核与插件 schema
 pnpm capybara start       # 监听 :8080（CAPYBARA_HTTP__PORT 可改）
 ```
 
+这里用启动配置的 `CAPYBARA_PLUGINS` 直接加载工作区里的插件（开发模式，来源 `config`）；生产部署按插件包安装，见下文「插件：安装、生命周期与管理后台」。`openai-compatible` 与 `object-store-s3` 随 CLI 内置，不用写进 `CAPYBARA_PLUGINS`。
+
 插件权限：插件首次出现、或升级后清单比已批准的权限多出任何一项时**不加载**（启动日志有 warn），依赖它的插件同样不加载；
-权限变少或不变直接加载。生产不要开 `autoApprove`，改用 CLI 审阅并批准（直连 PG，会先执行内核迁移），批准后重启内核生效：
+权限变少或不变直接加载。生产不要开 `autoApprove`，改由企业管理员在网页「管理 → 插件」里审阅批准，或用 CLI（直连 PG，会先执行内核迁移）。批准后运行中的副本**不用重启**就会加载（CLI 写完 PG 经 Redis 通知各副本；通知失败时等下一个 reconcile 周期）：
 
 ```bash
 pnpm capybara plugins review                    # 列出待批准插件与新增的权限项
@@ -56,8 +58,36 @@ curl -s localhost:8080/api/v1/setup                          # {"needsSetup":fal
 - 公开接口的 POST 必须带 `X-Capybara-Csrf: 1` 头。
 - 生产部署建议设置 `CAPYBARA_AUTH__SETUP_TOKEN`，初始化时在 body 里带同值的 `setupToken`，避免被抢先初始化。
 - 不经 HTTP 也可以用 CLI 建企业管理员（密码只从 stdin 读）：`echo "$PW" | pnpm capybara admin create --login admin --display-name Admin`。
-- 给已有的本地账号授予或撤销企业管理员：`pnpm capybara admin grant <登录名>` / `pnpm capybara admin revoke <登录名>`（写审计；不能撤销最后一个活跃的企业管理员）。企业管理员在网页顶栏「管理」里管理账号、组织（运行并发、沙箱 CPU / 内存）与部署设置。
+- 给已有的本地账号授予或撤销企业管理员：`pnpm capybara admin grant <登录名>` / `pnpm capybara admin revoke <登录名>`（写审计；不能撤销最后一个活跃的企业管理员）。企业管理员在网页顶栏「管理」（`/admin`）里管理账号、组织（运行并发、沙箱 CPU / 内存）、部署设置（价格币种、是否允许组织自建连接器 / 技能）、插件（安装、批准、部署级配置）、模型价格与用途映射、企业目录。企业管理员默认**读不到对话**：轨迹与评测只给组织管理员与 agent 负责人。
 - 用浏览器在非 localhost 的明文 http 上试用时，设 `CAPYBARA_AUTH__COOKIE_SECURE=false`，否则浏览器不保存会话 Cookie；生产保持默认 `true`。
+
+### 插件：安装、生命周期与管理后台
+
+核心镜像只内置两个插件：`openai-compatible`（模型）与 `object-store-s3`（对象存储），由 CLI 以内置插件传给内核（来源 `builtin`）：预先批准、始终启用、不需要组织启用、不能卸载或停用，只需填部署级配置（没配好时后台显示「待配置」，内核照常启动）。其余插件在镜像之外，按**插件包**（npm-pack tgz：单文件 ESM、三方依赖已打进去，只有 `@capybara-hq/plugin-sdk` 与 `zod` 由宿主提供）装进插件目录：
+
+- 打包：`pnpm pack-plugin plugins/<名>`（`pnpm pack-plugins` 打全部官方插件，输出 `artifacts/plugins/`）。
+- 安装：企业管理员在「管理 → 插件 → 安装」上传 tgz 或填 npm 包名与版本（`packages.npmRegistry`，私有 registry 的令牌 `packages.npmToken`），看过权限审阅（敏感项与迁移警告高亮）后安装、批准、启用；也可以用 CLI：
+
+```bash
+pnpm capybara plugins install ./artifacts/plugins/capybara-hq-plugin-todo-0.1.0.tgz   # 或 npm:@capybara-hq/plugin-todo@0.1.0
+pnpm capybara plugins approve todo
+pnpm capybara plugins enable todo
+pnpm capybara plugins list            # 各插件的期望状态与各副本是否一致
+pnpm capybara plugins disable todo    # 卸载前须先停用：pnpm capybara plugins uninstall todo
+```
+
+- **安装、启用、停用、升级、卸载都不重启**：后台与 CLI 只写 PG 里的期望状态，各副本收到通知后自行加载 / 撤销（维护任务每 `pluginHost.reconcileIntervalSeconds` 秒兜底一次）。换版本时先加载新版、再撤销旧版；停用或升级时进行中的工具调用最多等 `pluginHost.drainSeconds`（默认 30 秒）。新版本要的权限多了就停在待批准，旧版本照常运行；插件迁移由一个副本持锁执行，只做扩展；降级只能回到迁移都执行过的版本。卸载不删数据（插件 schema、密钥、组织配置、批准记录都保留）。旧版本的代码留在进程内存里直到重启，同一进程升级很多次（> 20）时日志会提示重启该副本。
+- **部署级配置可在后台改**（「管理 → 插件 → 配置」，存 PG，密钥加密）：优先级 环境变量 > 配置文件 / Nacos > 后台 > 默认值，启动配置里给出的字段在后台只读并显示来源。配置不合法时插件显示「待配置」、不加载，内核照常启动，改好后自动加载。
+- 包存在对象存储的 `deployment/plugins/blobs/` 下（没配对象存储时存 PG），各副本按 sha256 同步到本地 `pluginHost.dir`（默认 `/var/lib/capybara/plugins`，可随时清空）。**换对象存储的桶或端点时要把 `deployment/` 前缀下的对象一起迁过去**，否则存在旧桶里的插件包与目录文件取不到，新副本同步失败。
+- 经网页上传的包还受网页层的 `CAPYBARA_WEB_MAX_PACKAGE_BYTES`（默认 50 MiB）限制；调大内核 `packages.maxBytes` 时一起调大，见 [docs/config.md](docs/config.md)。
+
+**从配置声明迁移到安装记录**（C15）：启动配置的 `plugins` 列表照样可用（开发模式与已有部署，来源 `config`），但这样声明的插件在后台只读，不能网页安装 / 升级 / 停用，改列表要重启；安装同名插件会返回 409 `plugin.config_declared`。内核不会自动转换，迁移步骤：
+
+1. 准备同一个 npm 包的插件包（`pnpm pack-plugin plugins/<名>`，或用 npm 上的版本）：插件名归第一次使用它的 npm 包，换包名会被拒绝（`plugin.name_conflict`）。
+2. 从 `plugins` 列表里去掉它（`pluginConfig` 里的部署配置可以留着，照样生效；也可以搬到后台），滚动重启各副本。此时插件不加载，依赖它的插件随之待定。
+3. 上传 / npm 安装该包并启用（后台或 `capybara plugins install …` + `enable`）。插件 schema、密钥、组织配置与批准记录都沿用；新包的权限没超出已批准的就直接加载。
+
+**信任模型**：插件在内核进程里全权运行（插件的迁移 SQL 也以内核的数据库连接执行）。权限清单、批准与目录策略是**治理与审计，不是沙箱**：它们管住内核握着的资源（密钥、存储、工具、会话内容），管不住插件直连数据库或网络。只安装你信任的发布者的包，批准前看迁移 SQL（写到插件自己 schema 之外、改权限、`DO` 块等会列为敏感警告，警告变了要重新批准）；不要对不受信的源码运行 `pnpm pack-plugin`（打包会执行插件代码）。不受信的扩展做成外部应用，经 HTTP 调内核。写插件见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)。
 
 ### 在网页上和 agent 对话（不需要模型密钥）
 
@@ -92,19 +122,18 @@ pnpm dev:web          # 即 pnpm --filter @capybara-hq/web dev，经 apps/web/se
 
 | 插件 | 说明 |
 |---|---|
-| `@capybara-hq/plugin-openai-compatible` | **默认发行版自带（M6 起）**。OpenAI 兼容的 Chat Completions 服务（DeepSeek、Qwen、vLLM 等），按端点配置、方言预设差异 |
+| `@capybara-hq/plugin-openai-compatible` | **内置**（随 CLI，不用安装、不用写进 `CAPYBARA_PLUGINS`）。OpenAI 兼容的 Chat Completions 服务（DeepSeek、Qwen、vLLM 等），按端点配置、方言预设差异 |
 | `@capybara-hq/plugin-model-fake` | 确定性脚本化模型，用于测试与无密钥演示 |
 | `@capybara-hq/plugin-anthropic` | Anthropic（官方 SDK + 原生 Messages API），**按需安装** |
 | `@capybara-hq/plugin-openai` | OpenAI（官方 SDK + 原生 Responses API），**按需安装** |
 
-可以同时加载多个，如 `CAPYBARA_PLUGINS='["@capybara-hq/plugin-openai-compatible","@capybara-hq/plugin-anthropic"]'`，`CAPYBARA_PLUGIN_CONFIG` 里按插件名分别给配置。`anthropic` 与 `openai` 不会进默认发行版（M6 起默认镜像只带 openai-compatible；目前还没有发行版，所有插件都要自行安装）：自建部署时先安装对应的包（如 `pnpm add @capybara-hq/plugin-anthropic`），再把它加进 `CAPYBARA_PLUGINS`。
+可以同时用多个：`openai-compatible` 是内置的，其余按插件包安装（见上文「插件：安装、生命周期与管理后台」），开发时也可以写进 `CAPYBARA_PLUGINS`（如 `'["@capybara-hq/plugin-anthropic"]'`）；部署级配置在 `CAPYBARA_PLUGIN_CONFIG` 里按插件名分别给，或由企业管理员在后台填写。`anthropic` 与 `openai` 不在核心镜像里，要用时自行安装。
 
 每个模型在插件里声明自己支持的参数（`effort`、`thinking`、`temperature`、`maxOutputTokens` 等标准旋钮，以及 `<插件名>.<名称>` 形式的厂商参数）；网页的 agent 表单按声明渲染，agent 版本保存时按声明校验。
 
 `openai-compatible` 接 DeepSeek 的部署级配置示例（默认示例）：
 
 ```bash
-export CAPYBARA_PLUGINS='["@capybara-hq/plugin-openai-compatible"]'
 export CAPYBARA_PLUGIN_CONFIG='{"openai-compatible":{"endpoints":[{"name":"deepseek","baseUrl":"https://api.deepseek.com","dialect":"deepseek","models":[{"id":"deepseek-flash","contextWindow":1048576,"maxOutputTokens":393216,"reasoning":true}]}],"apiKeys":{"deepseek":"sk-..."}}}'
 ```
 
@@ -226,7 +255,7 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 - Slack：用 [`plugins/slack/app-manifest.yaml`](plugins/slack/app-manifest.yaml) 从 manifest 建应用（Socket Mode、事件订阅与 bot scope 都在里面），再生成应用级令牌 `xapp-…`（scope `connections:write`）、安装到工作区得到 `xoxb-…`。
 - Lark：建**企业自建应用**（长连接只支持自建应用），加机器人能力，开通 README 列出的权限，事件与回调都选「使用长连接」，发布版本并设置可用范围。**登录、机器人、通讯录必须用同一个 Lark 应用**：`open_id` 按应用区分，换个应用同一个人就对不上（插件会尽量核对并报错）。目前只支持 Lark 国际版（`open.larksuite.com`），飞书（`feishu`）区域已预留、暂不可用。
 
-**2. 装插件并批准权限**：安装包并加进 `CAPYBARA_PLUGINS`（如 `'["@capybara-hq/plugin-openai-compatible","@capybara-hq/plugin-slack","@capybara-hq/plugin-lark"]'`）。新插件首次出现时不加载，用 `pnpm capybara plugins review` 查看它要的权限（两个插件只声明了 `permissions.network`，并提供三种能力、带部署级与组织级配置），`pnpm capybara plugins approve slack` / `approve lark` 批准后重启。`pluginPermissions.autoApprove` 只用于本地开发与试用。
+**2. 装插件并批准权限**：企业管理员在「管理 → 插件」安装 `@capybara-hq/plugin-slack` / `@capybara-hq/plugin-lark` 的插件包（或 `pnpm capybara plugins install npm:@capybara-hq/plugin-slack`；开发时也可写进 `CAPYBARA_PLUGINS`）。新插件首次出现时不加载，在安装确认页或用 `pnpm capybara plugins review` 查看它要的权限（两个插件只声明了 `permissions.network`，并提供三种能力、带部署级与组织级配置；渠道、登录、通讯录提供方标为敏感），批准（网页或 `pnpm capybara plugins approve slack` / `approve lark`）并启用后各副本不用重启即加载。`pluginPermissions.autoApprove` 只用于本地开发与试用。
 
 **3. 组织启用并建渠道连接**（组织管理员，网页）：「设置 → 插件」启用 `slack` / `lark`（可在这里同时填通讯录的组织级配置，见第 5 步）→ 一级导航「渠道」→ 新建连接：选插件，填 bot 凭据（Slack `appToken` + `botToken`；Lark `appId` + `appSecret`，都进密钥存储、接口只回「已设置」），选绑定的 agent 与未绑定用户的处理方式：
 - `bind`（默认）：不认识的人私聊机器人会收到绑定卡片，点开网页登录后确认绑定；在群里只提示他去私聊（绑定链接不发在群里）。
@@ -277,8 +306,9 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 
 本地的 `docker/compose.dev.yaml` 自带官方 SeaweedFS 镜像（`chrislusf/seaweedfs`，按标签加摘要固定）：S3 API 在 `localhost:8333`，凭据 `capybara` / `capybara-secret`，filer 的文件浏览页在 <http://localhost:8888>。一次性容器 `createbuckets` 建好桶 `capybara`。测试用同一个镜像（`startTestS3()`），可用 `CAPYBARA_TEST_S3_IMAGE` 换成私有镜像源。启用：
 
+`object-store-s3` 是内置插件，不用写进 `CAPYBARA_PLUGINS`，只给部署级配置（也可以由企业管理员在后台填）：
+
 ```bash
-export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-object-store-s3"]'
 export CAPYBARA_PLUGIN_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:8333","region":"us-east-1","bucket":"capybara","accessKeyId":"capybara","secretAccessKey":"capybara-secret","forcePathStyle":true}}'
 # 或逐字段：CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__SECRET_ACCESS_KEY=...
 ```
@@ -326,7 +356,7 @@ MinIO、Ceph 等支持 `PutBucketCors` 的 S3 兼容存储，用 AWS CLI 指向�
 
 不支持按桶配置 CORS 的旧版 MinIO 用环境变量 `MINIO_API_CORS_ALLOW_ORIGIN` 设置允许的来源。SeaweedFS 默认允许跨域请求，开发编排与测试不需要另配。
 
-没装对象存储插件时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。组织还在时，技能的对象不随删除而清理：被删除（软删除）的技能、技能的旧版本、已删除 agent 的 agent 级技能，文件都留在对象存储里，直到组织被删除后的这次清理（日志里的技能目录快照与已加载的版本仍引用它们）。
+对象存储插件没配置好（后台显示「待配置」）时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。组织还在时，技能的对象不随删除而清理：被删除（软删除）的技能、技能的旧版本、已删除 agent 的 agent 级技能，文件都留在对象存储里，直到组织被删除后的这次清理（日志里的技能目录快照与已加载的版本仍引用它们）。
 
 **附件与图片 / PDF 输入**：装了对象存储后，对话输入框可以加附件（默认单个 ≤ 20MB、每条消息 ≤ 10 个，类型限 PNG / JPEG / GIF / WebP、PDF 与纯文本 / Markdown / CSV，见 `docs/config.md` 的 `attachments.*`）。模型声明支持图片（`vision`）或文档（`documents`）时收到原文件，不支持时只收到英文文字占位，字节绝不发给不支持的模型；事件日志只记附件引用。单次请求的媒体总量由 `attachments.requestMediaBytes` 限制，超出时较早的附件换成占位。写存储插件见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)。
 
@@ -361,6 +391,7 @@ export CAPYBARA_PLUGIN_CONFIG='{"sandbox-e2b":{"apiKey":"e2b_…","template":"ca
 - **模板**：用 E2B 的 Template SDK 从 Dockerfile 构建（`Template().fromDockerfile(...)`，`cpuCount: 1`、`memoryMB: 2048` 与内核默认值一致），把模板名填进 `template`；改了 Dockerfile 要重建模板。E2B 的 CPU、内存、磁盘由模板决定，`sandbox.limits` 的这三项对它不生效，内核配置 `sandbox.image` 也不用。
 - **出站比 Docker 弱**：E2B 的域名白名单只看 80 端口的 Host 头与 443 端口的 SNI，不核对目的 IP，沙箱可能借白名单里的域名连到任意地址；用了白名单时 E2B 还会放行到 8.8.8.8 的 DNS。对出站要求严的部署用 Docker。自托管 E2B 的内网与云元数据地址要在 E2B 的网络层自己挡掉；不支持域名白名单的版本设 `domainAllowlist: false`（`allowlist` 退化为 `none`）。
 - Hobby 套餐的沙箱超时最多 1 小时，要把 `sandbox.limits.maxCommandSeconds` 调到 3480 以下。
+- 企业管理员在后台给组织设的沙箱 CPU / 内存覆盖对 E2B 不生效（规格由模板决定），只对 Docker 实现有效。
 
 模板构建步骤、自托管（`apiUrl` / `domain`）、出站与资源限制的局限见 [plugins/sandbox-e2b/README.md](plugins/sandbox-e2b/README.md)。
 
@@ -371,6 +402,28 @@ export CAPYBARA_PLUGIN_CONFIG='{"sandbox-e2b":{"apiKey":"e2b_…","template":"ca
 - **技能库**（顶栏「技能」）：组织管理员上传 zip（≤ 50MB，单个文件 ≤ 10MB，解压后合计 ≤ 50MB；`SKILL.md` 放在根目录或唯一的顶层文件夹里），同名再传生成新版本；成员可以浏览。编辑 agent 时在「技能」分组里勾选要用的组织技能。
 - **运行时**：对话开始一次运行时，内核把这个 agent 可用的技能清单（名字 + 描述）写进对话日志并告诉模型；模型用内置工具 `skill_load` 按名字读取正文。带脚本的技能会复制进沙箱的 `/skills/<name>/`（只读，用 `sh` / `python3` 运行），agent 需要有沙箱工具。技能有变化时，模型在**下一次运行开始**时收到提醒。
 - **agent 自己写技能**：给 agent 加内置工具 `skill_write`（默认不带）。私有 agent 写的立即生效；共享 agent 写技能时先由发起人在对话里确认这次工具调用，再进入 agent 负责人的「收件箱」等批准，批准前只有发起改动的那个对话能试用，批准后所有对话在下一次运行时用上新版本。负责人可以在 agent 编辑页删除 agent 自写的技能。
+
+### 评测与轨迹
+
+组织管理员在顶栏「评测」里工作（agent 负责人从 agent 详情页进入自己 agent 的运行记录）：
+
+- **轨迹查看器**（`/trajectories`）：一次对话的事件时间线与 Span 瀑布，每次模型调用的 token、延迟与成本（按「管理 → 模型」里的价格表读时估算，币种取部署设置 `priceCurrency`，没有价格显示「—」），工具调用与审批链。只有组织管理员与该 agent 的负责人能看，无权时一律 404；每次查看都记审计 `trajectory.viewed`。
+- **评测集**（`/evals`）：从真实对话加用例或抽样（一个评测集对应一个 agent；用例存日志快照，≤ `evals.maxCaseBytes`），换模型 / 参数 / 指令 / agent 版本做候选，选**单步回放**（逐次重发当时的模型请求比较）或**整轮回放**（在隐藏对话里重跑整轮，工具结果用当时记录的，**不执行任何工具**）。运行前显示预计请求数与 token，到 token 上限就停（`evals.defaultTokenCap` / `evals.maxTokenCap`）；每个组织同时执行的用例数受 `evals.orgConcurrency` 限制。结果有结构差异、可选的 LLM 评委（先在「设置 → 模型」或「管理 → 模型」给用途 `eval` 选模型）与人工通过 / 不通过。评测数据留在组织内，不提供导出。
+
+写评测与回放相关代码见 [skills/replay-evals](skills/replay-evals/SKILL.md)。
+
+### 企业目录、清单与应用包
+
+企业目录在部署内（「管理 → 企业目录」），条目四种：**插件**、**连接器模板**（预设好端点与认证的连接器，组织只填凭据）、**技能**、**应用**（`app.yaml` 组合包：插件 + 连接器模板 + 技能）。企业管理员给每个条目设策略：`allow`（新条目默认）、`needs_approval`（组织管理员安装时转企业管理员批准，批准对该组织跨版本有效）、`disabled`（不能新装，已装的不受影响）。成员在顶栏「目录」里浏览并申请，申请进组织管理员收件箱。部署设置 `customConnectors` / `customSkills` 设为 `deny` 时，组织只能从目录安装连接器 / 技能（不影响 agent 用 `skill_write` 写自己的技能）。
+
+- **条目来源**：手动上传（tgz；连接器模板与技能也可以是 zip）或 npm；**官方清单**（配置 `catalogs.official.*`，默认开启；官方清单在 M7 上线前是占位地址）；**企业清单**（「管理 → 企业目录 → 来源」添加，可多个，可带镜像与令牌）。清单是静态 `index.json`（格式见 `packages/plugin-sdk/schemas/catalog-index.v1.schema.json`），每 `catalogs.refreshIntervalMinutes` 分钟拉一次，也可手动刷新；清单里的条目先浏览，「引入」某个版本时才下载并建成目录条目，有新版本只提示、不自动拉取。
+- **校验**：下载一律按清单里的 sha512 校验（不认 npm 元数据），不符拒绝（`catalog.integrity_mismatch`）；清单里的权限摘要只用于展示，与下载后算出的不一致时审阅页警告。签名 / provenance 在 M7。
+- **网络与令牌**：清单地址、镜像与条目的 `tarball` 下载地址只接受 https（`catalogs.allowInsecureLoopback` 只供测试），不跟随重定向，响应有大小上限。企业清单的令牌只发往清单主地址的源（镜像在别的源上时不带），`tarball` 下载不带任何令牌。**不要把令牌写在清单 URL 的 query 里**（URL 会存进 PG、显示在后台），用来源的「令牌」字段（加密存储，作为 `Authorization: Bearer` 发送）。内核不拦截解析到内网地址的 https URL：清单与 `tarball` 地址由企业管理员（及清单作者）决定，只添加你信任的清单。
+- **离线部署**：设 `CAPYBARA_CATALOGS__OFFICIAL__ENABLED=false`（后台显示离线模式，从不访问官方清单），改用内网托管的企业清单与手动上传；npm 来源与应用包需要能访问 npm registry，把 `packages.npmRegistry` 指向内网镜像（如 Verdaccio、Nexus），私有 registry 的令牌放 `packages.npmToken`。
+- **应用包**：`app.yaml` 按 npm 包名 + 版本范围 + lock（精确版本 + sha512）引用插件，插件包不打进应用包，导入时从 `packages.npmRegistry` 拉取并按 lock 校验——**离线部署导入应用包必须有 npm 镜像**。企业管理员导入时一次审阅全部插件的权限与迁移警告，确认时可以同时把插件装到部署并启用（`deployPlugins`）；不勾选时只建目录条目、不动部署，之后要在插件后台按条目里的 sha256 手动安装（组织安装时必选插件没装会提示「未部署」）。组织管理员安装应用 = 在本组织启用插件、按模板建连接器（填凭据）、导入技能，失败会撤销本次新建的部分；卸载只移除本次新建且别处不在用的组件，保留项列出原因。安装中途副本崩溃、超过 `directory.staleInstallMinutes`（默认 30）分钟仍在「安装中」的，以及失败的安装，都可以通过卸载清理。**M6 不支持应用升级**：先卸载再安装新版本。
+- **插件条目与策略**：插件只能由企业管理员装到部署；组织侧的「安装」= 在本组织启用，受条目策略约束。组织直接启用插件（「设置 → 插件」）时，按把这个插件带进部署的全部目录条目判定，**最严格的生效**（任一条目 `disabled` 就不能启用，任一 `needs_approval` 且本组织未获批准就要先申请）；应用里的插件按应用条目的策略判定。不经目录安装的插件不受目录策略约束。
+
+写连接器模板与应用包见 [skills/writing-apps](skills/writing-apps/SKILL.md)。
 
 ## 运维须知
 

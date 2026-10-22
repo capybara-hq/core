@@ -14,6 +14,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 | `apps/web` | Next 网页（私有包，经 `/api/*` 代理调内核 HTTP；须经 `server.mjs` 启动），只用 `@capybara-hq/design` 搭页面 |
 | `plugins/*` | 官方插件（`example-counter` 是参考实现） |
 | `tools/*` | 仓库内部工具与自定义检查 |
+| `tools/pack-plugin` | 插件打包工具（`pnpm pack-plugin` / `pack-plugins`，esbuild 打成 npm-pack tgz 并生成静态清单） |
 | `docs/` | 设计文档与计划 |
 | `skills/` | 面向 Agent 的技能（`.claude/skills` 软链到此处） |
 
@@ -31,7 +32,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - `plugins/*` -> `@capybara-hq/plugin-sdk`（测试可额外用 devDependency `@capybara-hq/testing`）
 - `@capybara-hq/kernel` -> `@capybara-hq/plugin-sdk`
 - `@capybara-hq/testing` -> `@capybara-hq/kernel`（`@capybara-hq/plugin-sdk` 为 peerDependency）
-- `@capybara-hq/capybara`（CLI）-> `@capybara-hq/kernel`、`@capybara-hq/plugin-openai-compatible`、`@capybara-hq/plugin-object-store-s3`（内置插件，以 `builtinPlugins` 传给内核，来源 `builtin`；CLI 只按模块路径解析它们，不 import 其代码）
+- `@capybara-hq/capybara`（CLI，负责组装核心镜像）-> `@capybara-hq/kernel`、`@capybara-hq/plugin-openai-compatible`、`@capybara-hq/plugin-object-store-s3`（核心镜像只内置这两个插件，以 `builtinPlugins` 传给内核，来源 `builtin`；CLI 只按模块路径解析它们，不 import 其代码；其余插件按插件包装进插件目录）
 - `@capybara-hq/design` 不依赖任何 `@capybara-hq/*`
 - `@capybara-hq/web` 只依赖 `@capybara-hq/design`，不依赖内核等其他包，只经 HTTP 调内核（属于「外部应用」层）
 - `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档、校验插件包）；`tools/checks` -> `@capybara-hq/design`（devDependency，仅测试用，核对模板清单）；`tools/checks` -> `@capybara-hq/pack-plugin`、`@capybara-hq/plugin-sdk`（devDependency，`check:plugin-pack` 打包官方插件）
@@ -62,9 +63,13 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 工具（`ctx.tools`、描述与错误文案、默认策略、输出存档、`tool_search`、漂移复核；内置的 `sandbox_*` 与技能工具 `skill_load` / `skill_write`，key 不含点，`skill_write` 对共享 agent 固定确认，私有 agent 默认不确认、可设 `skills.writePolicy: "ask"`）：详见 [skills/writing-tools](skills/writing-tools/SKILL.md)，参考实现 `plugins/todo`。
 - 沙箱（`sandbox@1`：中止要杀命令、确定不在才抛 `SandboxGoneError`、已停止的自动启动、沙箱内也有命令时限、`killAll`、同名替换、`/skills` 只读、出站 `open` 须 `allowOpenEgress`；锁、休眠、销毁由内核 `SandboxService` 负责；socket 代理绝不发布到宿主机地址）：详见 [skills/writing-sandbox-providers](skills/writing-sandbox-providers/SKILL.md)，参考实现 `plugins/sandbox-docker`、`plugins/sandbox-e2b`。
 - 对象存储（`object-store@1` / `ctx.storage`：键前缀 `plugins/<插件>/<orgId>/` 与 `kernel/<orgId>/` 由内核加，预签名上传的大小必须由存储端拒绝，键不能含 `${`，用了 `ctx.storage` 须声明 `permissions.storage`）：详见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)，参考实现 `plugins/object-store-s3`。
-- 连接器（`connector@1`：MCP / OpenAPI 等远端服务接入为连接器）：详见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，参考实现 `plugins/connector-mcp`、`plugins/connector-openapi`。
+- 连接器（远端服务实例，旧称「应用」；协议由提供 `connector@1` 的**连接器插件**实现，如 MCP / OpenAPI；不支持 stdio MCP）：详见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，参考实现 `plugins/connector-mcp`、`plugins/connector-openapi`。
 - 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`：身份键 `<插件>:<租户>`、onEvent 后才确认、卡片规范、防 @所有人、长连接与选主由内核负责）：详见 [skills/writing-channels](skills/writing-channels/SKILL.md)，参考实现 `plugins/slack`、`plugins/lark`。
 - 插件界面（`ctx.ui`：对话页右侧标签与「扩展」页面；渲染 schema 视图不卡加载，嵌入应用要批准、是敏感项，令牌只认本插件、`/api` 不认）：详见 [skills/writing-plugin-ui](skills/writing-plugin-ui/SKILL.md)，参考实现 `plugins/todo`（视图）、`plugins/example-board`（嵌入应用）。
+- 评测与回放（轨迹、评测集、单步 / 整轮回放、评委）：事件日志是唯一事实源，改请求构建（`runtime/context/build.ts`、`model-call.ts`）前后都要跑零漂移夹具测试，新的模型可见输入必须进日志并加 `DriftReason`；整轮回放只用记录的工具结果、从不执行工具；评测走队列 `cap-kernel-evals`，组织并发与 token 上限。详见 [skills/replay-evals](skills/replay-evals/SKILL.md)。
+- 插件包与生命周期：插件包 = npm-pack tgz，安装 / 启用 / 停用 / 升级 / 卸载都不重启（PG 期望状态 + 各副本 reconcile，按实例记账撤销、可选 `dispose` 与 `ctx.signal`、在途调用排空 `pluginHost.drainSeconds`）；插件迁移只做扩展；插件进程内全权运行，权限审批是治理不是沙箱。详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)。
+- 企业目录与目录来源：目录条目四种（插件 / 连接器模板 / 技能 / 应用），策略 允许 / 需审批 / 禁用；来源 = 官方清单、企业清单、手动上传；清单与应用清单的 JSON Schema 在 `packages/plugin-sdk/schemas/`（`pnpm gen:package-schemas` 生成，`check:package-schemas` 防漂移），下载一律按清单（或应用 lock）的 sha512 校验，不认 npm 元数据。
+- 应用包（`app.yaml`：插件按 npm 名 + 范围 + lock 引用、内联连接器模板、技能打在包里；组织安装只撤 / 只删本次新建且别处不在用的组件；M6 不支持升级）与连接器模板：详见 [skills/writing-apps](skills/writing-apps/SKILL.md)。
 - **能自动检查的规则以检查为准**：`pnpm check` 会逐步收录各项自定义检查，每道检查都有「违规 fixture 使其失败」的测试。
 
 ## 常用命令
@@ -74,6 +79,7 @@ pnpm install
 pnpm lint        # biome check
 pnpm typecheck   # tsc -b
 pnpm test        # vitest run
+pnpm exec vitest run <路径>   # 单个测试：从仓库根跑（根配置带 @capybara-hq/source 条件，双副本测试需要）；别用 pnpm --filter <包> exec vitest
 pnpm check       # 自定义检查
 docker compose -f docker/compose.dev.yaml up -d   # 本地 postgres + valkey
 ```
