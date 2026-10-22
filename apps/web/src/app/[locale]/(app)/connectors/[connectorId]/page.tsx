@@ -30,25 +30,25 @@ import {
   EMPTY_CREDENTIAL,
   EMPTY_OAUTH_CLIENT,
   OAuthClientFields,
-} from "../../../../../components/AppForm";
+} from "../../../../../components/ConnectorForm";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
 import { useSession } from "../../../../../components/shell/session";
 import { useRouter } from "../../../../../i18n/navigation";
 import { ApiClientError } from "../../../../../lib/api";
 import {
-  type AppDetail,
-  type AppTool,
-  canManageApps,
-  deleteApp,
-  getApp,
-  refreshApp,
+  type ConnectorDetail,
+  type ConnectorTool,
+  canManageConnectors,
+  deleteConnector,
+  getConnector,
+  refreshConnector,
   reviewTool,
   setOrgCredential,
   type ToolDefinition,
   type ToolPolicy,
-  updateApp,
-} from "../../../../../lib/apps";
+  updateConnector,
+} from "../../../../../lib/connectors";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
@@ -57,42 +57,42 @@ type Tab = (typeof TABS)[number];
 const POLICIES = ["allow", "ask", "deny"] as const satisfies readonly ToolPolicy[];
 
 /**
- * `/[locale]/apps/[appId]`：应用详情（DetailPage）：工具（启停、默认策略）、复核（定义变化的新旧对比）、
+ * `/[locale]/connectors/[connectorId]`：连接器详情（DetailPage）：工具（启停、默认策略）、复核（定义变化的新旧对比）、
  * 凭据（含 OAuth 客户端轮换）、设置（改名、启停、删除）。
  */
-export default function AppDetailPage() {
-  const { appId } = useParams<{ appId: string }>();
-  return <OrgGate>{(orgId) => <AppInOrg orgId={orgId} appId={appId} />}</OrgGate>;
+export default function ConnectorDetailPage() {
+  const { connectorId } = useParams<{ connectorId: string }>();
+  return <OrgGate>{(orgId) => <ConnectorInOrg orgId={orgId} connectorId={connectorId} />}</OrgGate>;
 }
 
 /**
- * 应用属于打开它时的当前组织：切换组织后（AppFrame 正在跳回列表）不再以新组织 + 旧应用 id 渲染，
- * 免得用新组织去读旧应用、或显示上一组织的数据。
+ * 连接器属于打开它时的当前组织：切换组织后（AppFrame 正在跳回列表）不再以新组织 + 旧连接器 id 渲染，
+ * 免得用新组织去读旧连接器、或显示上一组织的数据。
  */
-function AppInOrg({ orgId, appId }: { orgId: string; appId: string }) {
+function ConnectorInOrg({ orgId, connectorId }: { orgId: string; connectorId: string }) {
   const [openedIn] = useState(orgId);
   if (orgId !== openedIn) return null;
-  return <AppView orgId={orgId} appId={appId} />;
+  return <ConnectorView orgId={orgId} connectorId={connectorId} />;
 }
 
-function AppView({ orgId, appId }: { orgId: string; appId: string }) {
-  const t = useTranslations("apps");
+function ConnectorView({ orgId, connectorId }: { orgId: string; connectorId: string }) {
+  const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
-  const manage = canManageApps(me);
+  const manage = canManageConnectors(me);
   const [tab, setTab] = useState<Tab>("tools");
   const { state, reload, set } = useLoad(
-    () => getApp(orgId, appId).then((r) => r.app),
-    [orgId, appId],
+    () => getConnector(orgId, connectorId).then((r) => r.connector),
+    [orgId, connectorId],
   );
   const [refreshing, setRefreshing] = useState(false);
 
   async function onRefresh() {
     setRefreshing(true);
     try {
-      const r = await refreshApp(orgId, appId);
-      set(r.app);
+      const r = await refreshConnector(orgId, connectorId);
+      set(r.connector);
       toast.success(t("detail.refreshed"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -105,7 +105,7 @@ function AppView({ orgId, appId }: { orgId: string; appId: string }) {
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/apps" },
+        parent: { label: t("title"), href: "/connectors" },
         title: app?.name ?? t("title"),
         ...(app
           ? {
@@ -131,7 +131,7 @@ function AppView({ orgId, appId }: { orgId: string; appId: string }) {
         onChange: (id) => setTab(id as Tab),
       }}
       inspectorTitle={t("detail.inspectorTitle")}
-      inspector={app ? <AppInspector app={app} /> : undefined}
+      inspector={app ? <ConnectorInspector app={app} /> : undefined}
     >
       {state.kind === "loading" ? (
         <Skeleton rows={6} />
@@ -161,8 +161,8 @@ function AppView({ orgId, appId }: { orgId: string; appId: string }) {
   );
 }
 
-function AppInspector({ app }: { app: AppDetail }) {
-  const t = useTranslations("apps");
+function ConnectorInspector({ app }: { app: ConnectorDetail }) {
+  const t = useTranslations("connectors");
   const ownership = app.auth.type === "none" ? null : app.auth.ownership;
   return (
     <KeyValue
@@ -194,23 +194,25 @@ function ToolsTab({
   refresh,
 }: {
   orgId: string;
-  app: AppDetail;
+  app: ConnectorDetail;
   manage: boolean;
-  onSaved(app: AppDetail): void;
+  onSaved(app: ConnectorDetail): void;
   refresh: { onRefresh(): void; refreshing: boolean };
 }) {
-  const t = useTranslations("apps");
+  const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState<string>();
 
   async function patch(
-    tool: AppTool,
+    tool: ConnectorTool,
     change: { status?: "enabled" | "disabled"; defaultPolicy?: ToolPolicy },
   ) {
     setBusy(tool.name);
     try {
-      const { app: next } = await updateApp(orgId, app.id, { tools: { [tool.name]: change } });
+      const { connector: next } = await updateConnector(orgId, app.id, {
+        tools: { [tool.name]: change },
+      });
       onSaved(next);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -219,7 +221,7 @@ function ToolsTab({
     }
   }
 
-  const columns: Column<AppTool>[] = [
+  const columns: Column<ConnectorTool>[] = [
     {
       key: "name",
       header: t("tools.columns.name"),
@@ -289,7 +291,7 @@ function ToolsTab({
   ];
 
   return (
-    <DataTable<AppTool>
+    <DataTable<ConnectorTool>
       label={t("detail.tabs.tools")}
       {...(manage
         ? {
@@ -316,11 +318,11 @@ function CredentialsTab({
   onSaved,
 }: {
   orgId: string;
-  app: AppDetail;
+  app: ConnectorDetail;
   manage: boolean;
   onSaved(): void;
 }) {
-  const t = useTranslations("apps");
+  const t = useTranslations("connectors");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -435,11 +437,11 @@ function SettingsTab({
   onSaved,
 }: {
   orgId: string;
-  app: AppDetail;
+  app: ConnectorDetail;
   manage: boolean;
-  onSaved(app: AppDetail): void;
+  onSaved(app: ConnectorDetail): void;
 }) {
-  const t = useTranslations("apps");
+  const t = useTranslations("connectors");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -453,7 +455,7 @@ function SettingsTab({
     if (name.trim() === "") return;
     setPending(true);
     try {
-      const { app: next } = await updateApp(orgId, app.id, {
+      const { connector: next } = await updateConnector(orgId, app.id, {
         name: name.trim(),
         status: active ? "active" : "disabled",
       });
@@ -522,13 +524,13 @@ function SettingsTab({
         confirmLabel={t("settings.delete")}
         onConfirm={async () => {
           try {
-            await deleteApp(orgId, app.id);
+            await deleteConnector(orgId, app.id);
           } catch (e) {
             // 对话框保持打开并显示原因（翻译后的文案）
             throw new Error(errorMessage(e));
           }
           setConfirm(false);
-          router.push("/apps");
+          router.push("/connectors");
         }}
       />
     </Stack>
@@ -536,13 +538,13 @@ function SettingsTab({
 }
 
 /** 从未复核过、已停用的工具（被拒的新工具）：不能在工具页签启用，只能在复核页签批准。 */
-const neverReviewedDisabled = (x: AppTool) =>
+const neverReviewedDisabled = (x: ConnectorTool) =>
   x.status === "disabled" && x.reviewedAt === null && x.missing !== true && x.issue === null;
 
 /**
  * 复核页签列出的工具：待复核的、有待复核新定义的（含不合规而停用的，只能拒绝），以及被拒的新工具（仍可批准）。
  */
-const reviewable = (x: AppTool) =>
+const reviewable = (x: ConnectorTool) =>
   x.missing !== true &&
   (x.status === "pending_review" || (x.pending ?? null) !== null || neverReviewedDisabled(x));
 
@@ -550,7 +552,7 @@ const reviewable = (x: AppTool) =>
  * 页签计数（漂移检测）：待复核的工具，加上带待复核新定义而停用的（如新定义不合规），
  * 后者不能在工具页签启用、只能在复核页签处理，要让管理员注意到。
  */
-const reviewCount = (app: AppDetail) =>
+const reviewCount = (app: ConnectorDetail) =>
   app.tools.filter(
     (x) =>
       x.status === "pending_review" ||
@@ -561,8 +563,16 @@ const reviewCount = (app: AppDetail) =>
  * OAuth 客户端轮换（Ruling A18，`PUT credentials/org`）：客户端凭据流在内核先用新客户端取 token 验证；
  * 手填客户端的授权码流不验证，填错会让所有成员重新连接（提示）。
  */
-function RotateClient({ orgId, app, onSaved }: { orgId: string; app: AppDetail; onSaved(): void }) {
-  const t = useTranslations("apps");
+function RotateClient({
+  orgId,
+  app,
+  onSaved,
+}: {
+  orgId: string;
+  app: ConnectorDetail;
+  onSaved(): void;
+}) {
+  const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [values, setValues] = useState(EMPTY_OAUTH_CLIENT);
@@ -627,7 +637,7 @@ function DiffRow({
   before: string | undefined;
   after: string;
 }) {
-  const t = useTranslations("apps.review");
+  const t = useTranslations("connectors.review");
   const changed = before !== undefined && before !== after;
   return (
     <Stack gap={4}>
@@ -660,21 +670,21 @@ function ReviewTab({
   onSaved,
 }: {
   orgId: string;
-  app: AppDetail;
+  app: ConnectorDetail;
   manage: boolean;
-  onSaved(app: AppDetail): void;
+  onSaved(app: ConnectorDetail): void;
 }) {
-  const t = useTranslations("apps");
+  const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState<string>();
   const pendingTools = app.tools.filter(reviewable);
   const missing = app.tools.filter((x) => x.missing === true);
 
-  async function decide(tool: AppTool, action: "approve" | "reject") {
+  async function decide(tool: ConnectorTool, action: "approve" | "reject") {
     setBusy(tool.name);
     try {
-      const { app: next } = await reviewTool(orgId, app.id, tool.name, action);
+      const { connector: next } = await reviewTool(orgId, app.id, tool.name, action);
       onSaved(next);
       toast.success(
         t(action === "approve" ? "review.approved" : "review.rejected", { tool: tool.key }),

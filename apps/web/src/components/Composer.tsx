@@ -19,13 +19,13 @@ import {
 import { useTranslations } from "next-intl";
 import { type ChangeEvent, type FormEvent, type KeyboardEvent, useRef, useState } from "react";
 import {
-  type AppPrompt,
-  type AppResource,
-  type AppUnavailable,
-  listAppPrompts,
-  listAppResources,
-  renderAppPrompt,
-} from "../lib/apps";
+  type ConnectorPrompt,
+  type ConnectorResource,
+  type ConnectorUnavailable,
+  listConnectorPrompts,
+  listConnectorResources,
+  renderConnectorPrompt,
+} from "../lib/connectors";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useDraftFiles } from "./use-draft-files";
 
@@ -34,8 +34,8 @@ const MAX_ATTACHMENTS = 5;
 
 /** 草稿里的附件（`@` 资源引用）。 */
 export interface DraftAttachment {
-  appId: string;
-  appName: string;
+  connectorId: string;
+  connectorName: string;
   uri: string;
   name: string;
 }
@@ -57,10 +57,11 @@ export type SendResult = { ok: true } | { ok: false; error: unknown };
 
 /** 草稿的身份：文本 + 附件 + 文件（任一变了即视为新消息）。 */
 const draftKey = (text: string, attachments: DraftAttachment[], files: string[]) =>
-  JSON.stringify([text, attachments.map((a) => [a.appId, a.uri]), files]);
+  JSON.stringify([text, attachments.map((a) => [a.connectorId, a.uri]), files]);
 
-/** 斜杠命令的写法：`/<应用 slug>:<提示名>`。 */
-export const promptCommand = (p: Pick<AppPrompt, "appSlug" | "name">) => `/${p.appSlug}:${p.name}`;
+/** 斜杠命令的写法：`/<连接器 slug>:<提示名>`。 */
+export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">) =>
+  `/${p.connectorSlug}:${p.name}`;
 
 type Palette = "prompts" | "resources" | null;
 
@@ -71,11 +72,11 @@ type Palette = "prompts" | "resources" | null;
  * 每条待发送的草稿持有一个 `clientMessageId`：发送失败（网络错误、5xx、响应丢失）后重试沿用同一个 id，
  * 内核据此去重，不会在只追加的日志里写出重复的 user_message；发送成功或文本 / 附件改动后才换新 id。
  *
- * 应用内容（D4，仿 Claude Code）：
- * - 空输入框里输入 `/` → 命令面板列出各应用的提示模板（`/应用:提示名`）；选中后填参数（有参数时弹对话框），
+ * 连接器内容（D4，仿 Claude Code）：
+ * - 空输入框里输入 `/` → 命令面板列出各连接器的提示模板（`/连接器:提示名`）；选中后填参数（有参数时弹对话框），
  *   内核渲染为文本放进输入框，由用户检查后发送。
- * - 在开头或空白后输入 `@` → 命令面板列出各应用的资源；选中的资源作为附件随消息发送（内核读取正文）。
- * 未连接个人凭据的应用在面板里单独列出，选中时提示去连接。
+ * - 在开头或空白后输入 `@` → 命令面板列出各连接器的资源；选中的资源作为附件随消息发送（内核读取正文）。
+ * 未连接个人凭据的连接器在面板里单独列出，选中时提示去连接。
  *
  * 上传文件（与 `@` 资源分开的一份列表）：点「+」选择、拖入输入区或粘贴。先在前端按类型 / 大小预检
  * （文案与内核错误码一致），通过的立即上传（登记 → 预签名直传，显示进度 → finalize）。上传中或有出错的文件时
@@ -108,13 +109,16 @@ export function Composer({
 
   const [pending, setPending] = useState(false);
   const [palette, setPalette] = useState<Palette>(null);
-  const [prompts, setPrompts] = useState<{ items: AppPrompt[]; unavailable: AppUnavailable[] }>();
+  const [prompts, setPrompts] = useState<{
+    items: ConnectorPrompt[];
+    unavailable: ConnectorUnavailable[];
+  }>();
   const [resources, setResources] = useState<{
-    items: AppResource[];
-    unavailable: AppUnavailable[];
+    items: ConnectorResource[];
+    unavailable: ConnectorUnavailable[];
   }>();
   /** 正在填参数的提示模板。 */
-  const [argsFor, setArgsFor] = useState<AppPrompt | null>(null);
+  const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
   const [rendering, setRendering] = useState(false);
   /** 当前草稿的 id 及其对应的内容（变了就作废）。 */
@@ -165,14 +169,14 @@ export function Composer({
   function openPalette(which: Exclude<Palette, null>, pos: number) {
     trigger.current = { char: which === "prompts" ? "/" : "@", pos, picked: false };
     setPalette(which);
-    // 每次打开都重新读取（凭据与应用可能已变化）
+    // 每次打开都重新读取（凭据与连接器可能已变化）
     if (which === "prompts") {
-      listAppPrompts(orgId).then(
+      listConnectorPrompts(orgId).then(
         (r) => setPrompts({ items: r.prompts, unavailable: r.unavailable }),
         (e: unknown) => toast.error(errorMessage(e)),
       );
     } else {
-      listAppResources(orgId).then(
+      listConnectorResources(orgId).then(
         (r) => setResources({ items: r.resources, unavailable: r.unavailable }),
         (e: unknown) => toast.error(errorMessage(e)),
       );
@@ -197,10 +201,10 @@ export function Composer({
     setText(next);
   }
 
-  async function insertPrompt(p: AppPrompt, values: Record<string, string>) {
+  async function insertPrompt(p: ConnectorPrompt, values: Record<string, string>) {
     setRendering(true);
     try {
-      const r = await renderAppPrompt(orgId, p.appId, p.name, values);
+      const r = await renderConnectorPrompt(orgId, p.connectorId, p.name, values);
       setText(r.text);
       setArgsFor(null);
     } catch (e) {
@@ -210,7 +214,7 @@ export function Composer({
     }
   }
 
-  function pickPrompt(p: AppPrompt) {
+  function pickPrompt(p: ConnectorPrompt) {
     if (p.arguments.length === 0) {
       void insertPrompt(p, {});
       return;
@@ -219,15 +223,15 @@ export function Composer({
     setArgsFor(p);
   }
 
-  function attach(r: AppResource) {
-    if (attachments.some((a) => a.appId === r.appId && a.uri === r.uri)) return;
+  function attach(r: ConnectorResource) {
+    if (attachments.some((a) => a.connectorId === r.connectorId && a.uri === r.uri)) return;
     if (attachments.length >= MAX_ATTACHMENTS) {
       toast.error(t("attachLimit", { max: MAX_ATTACHMENTS }));
       return;
     }
     setAttachments([
       ...attachments,
-      { appId: r.appId, appName: r.appName, uri: r.uri, name: r.name },
+      { connectorId: r.connectorId, connectorName: r.connectorName, uri: r.uri, name: r.name },
     ]);
   }
 
@@ -235,27 +239,30 @@ export function Composer({
     if (trigger.current) trigger.current.picked = true;
   };
 
-  /** 不可用的应用：单独一组，选中时说明原因。 */
-  const unavailableGroup = (list: AppUnavailable[] | undefined): CommandGroup[] =>
+  /** 不可用的连接器：单独一组，选中时说明原因。 */
+  const unavailableGroup = (list: ConnectorUnavailable[] | undefined): CommandGroup[] =>
     list && list.length > 0
       ? [
           {
-            label: t("unavailableApps"),
+            label: t("unavailableConnectors"),
             items: list.map((u) => ({
-              id: `unavailable:${u.appId}`,
-              label: `${u.appName} · ${t(`appUnavailable.${u.reason}`)}`,
-              onSelect: () => toast.error(t(`appUnavailableHint.${u.reason}`, { app: u.appName })),
+              id: `unavailable:${u.connectorId}`,
+              label: `${u.connectorName} · ${t(`connectorUnavailable.${u.reason}`)}`,
+              onSelect: () =>
+                toast.error(
+                  t(`connectorUnavailableHint.${u.reason}`, { connector: u.connectorName }),
+                ),
             })),
           },
         ]
       : [];
 
-  const byApp = <T extends { appId: string; appName: string }>(items: T[]) => {
+  const byConnector = <T extends { connectorId: string; connectorName: string }>(items: T[]) => {
     const groups = new Map<string, { label: string; items: T[] }>();
     for (const it of items) {
-      const g = groups.get(it.appId) ?? { label: it.appName, items: [] };
+      const g = groups.get(it.connectorId) ?? { label: it.connectorName, items: [] };
       g.items.push(it);
-      groups.set(it.appId, g);
+      groups.set(it.connectorId, g);
     }
     return [...groups.values()];
   };
@@ -263,10 +270,10 @@ export function Composer({
   const groups: CommandGroup[] =
     palette === "prompts"
       ? [
-          ...byApp(prompts?.items ?? []).map((g) => ({
+          ...byConnector(prompts?.items ?? []).map((g) => ({
             label: g.label,
             items: g.items.map((p) => ({
-              id: `prompt:${p.appId}:${p.name}`,
+              id: `prompt:${p.connectorId}:${p.name}`,
               label: `${promptCommand(p)}${p.description ? ` — ${p.description}` : ""}`,
               onSelect: () => {
                 picked();
@@ -278,10 +285,10 @@ export function Composer({
         ]
       : palette === "resources"
         ? [
-            ...byApp(resources?.items ?? []).map((g) => ({
+            ...byConnector(resources?.items ?? []).map((g) => ({
               label: g.label,
               items: g.items.map((r) => ({
-                id: `resource:${r.appId}:${r.uri}`,
+                id: `resource:${r.connectorId}:${r.uri}`,
                 label: `${r.name} · ${r.uri}`,
                 onSelect: () => {
                   picked();
@@ -324,7 +331,7 @@ export function Composer({
             <div role="group" aria-label={t("attachments")}>
               <Stack direction="row" gap={8} wrap>
                 {attachments.map((a) => (
-                  <Stack key={`${a.appId}:${a.uri}`} direction="row" gap={4} align="center">
+                  <Stack key={`${a.connectorId}:${a.uri}`} direction="row" gap={4} align="center">
                     <Badge>{`@${a.name}`}</Badge>
                     <IconButton
                       size={24}
@@ -332,7 +339,9 @@ export function Composer({
                       label={t("removeAttachment", { name: a.name })}
                       onClick={() =>
                         setAttachments(
-                          attachments.filter((x) => !(x.appId === a.appId && x.uri === a.uri)),
+                          attachments.filter(
+                            (x) => !(x.connectorId === a.connectorId && x.uri === a.uri),
+                          ),
                         )
                       }
                     />

@@ -19,24 +19,25 @@ import { type ReactNode, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { ApiClientError } from "../lib/api";
 import {
-  type AppAuth,
-  type AppDetail,
-  type AppEndpoint,
-  type AppPreview,
   type AuthHint,
   type AuthType,
+  type ConnectorAuth,
+  type ConnectorDetail,
+  type ConnectorEndpoint,
   type ConnectorKind,
   type ConnectorOperation,
+  type ConnectorPreview,
   type CredentialValue,
-  createApp,
+  createConnector,
   type Ownership,
-  previewApp,
+  previewConnector,
   type TokenAuthMethod,
   type ToolIssue,
   type ToolPolicy,
   type ToolPreview,
-} from "../lib/apps";
+} from "../lib/connectors";
 import { useErrorMessage } from "../lib/use-error-message";
+import { connectionHref } from "./ConnectCard";
 import {
   AUTH_TYPES,
   buildCredential,
@@ -45,8 +46,7 @@ import {
   EMPTY_CREDENTIAL,
   EMPTY_OAUTH_CLIENT,
   OAuthClientFields,
-} from "./AppForm";
-import { connectionHref } from "./ConnectCard";
+} from "./ConnectorForm";
 import { FormError } from "./form-error";
 
 /** 向导步骤：端点类型 → 端点与文档 → 认证 → 工具与默认策略 → 完成。 */
@@ -113,8 +113,8 @@ const annotationHint = (t: ToolPreview): "readOnly" | "destructive" | "none" =>
 
 type WizardError = { message: string; extra: string[] };
 
-/** {@link useAppWizard} 的结果：页面把它们放进 WizardPage。 */
-export type AppWizardView = {
+/** {@link useConnectorWizard} 的结果：页面把它们放进 WizardPage。 */
+export type ConnectorWizardView = {
   steps: string[];
   current: number;
   actionRow: ActionRowProps;
@@ -122,13 +122,13 @@ export type AppWizardView = {
 };
 
 /**
- * 安装应用的向导（MCP 或 OpenAPI）。端点一步用预览（不落库）读出认证提示与操作清单并预填认证；
+ * 安装连接器的向导（MCP 或 OpenAPI）。端点一步用预览（不落库）读出认证提示与操作清单并预填认证；
  * 认证一步再预览一次验证凭据并列出工具；工具一步勾选 OpenAPI 操作、查看默认策略后安装。
  * 安装失败时：OAuth 服务不支持自动注册客户端（`dcr_unsupported`）→ 回到认证一步改为手填客户端；
  * 未配置 `http.publicUrl` → 说明原因。
  */
-export function useAppWizard(orgId: string): AppWizardView {
-  const t = useTranslations("apps");
+export function useConnectorWizard(orgId: string): ConnectorWizardView {
+  const t = useTranslations("connectors");
   const tc = useTranslations("common");
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -148,7 +148,7 @@ export function useAppWizard(orgId: string): AppWizardView {
   const [specUrl, setSpecUrl] = useState("");
   const [specFile, setSpecFile] = useState<{ name: string; text: string }>();
   const [baseUrl, setBaseUrl] = useState("");
-  const [inspected, setInspected] = useState<AppPreview>();
+  const [inspected, setInspected] = useState<ConnectorPreview>();
   // 3. 认证
   const [authType, setAuthType] = useState<WizardAuthType>("none");
   const [authTouched, setAuthTouched] = useState(false);
@@ -161,15 +161,15 @@ export function useAppWizard(orgId: string): AppWizardView {
   const [oauth, setOAuth] = useState<OAuthDraft>(() => oauthDefaults("mcp"));
   const [client, setClient] = useState(EMPTY_OAUTH_CLIENT);
   // 4. 工具
-  const [tools, setTools] = useState<AppPreview>();
+  const [tools, setTools] = useState<ConnectorPreview>();
   const [selectedOps, setSelectedOps] = useState<Set<string>>(new Set());
   // 5. 完成
-  const [installed, setInstalled] = useState<{ app: AppDetail; issues: ToolIssue[] }>();
+  const [installed, setInstalled] = useState<{ connector: ConnectorDetail; issues: ToolIssue[] }>();
 
   const names = headerNames(namesRaw);
   const operations = inspected?.operations;
 
-  function endpoint(withOperations: boolean): AppEndpoint {
+  function endpoint(withOperations: boolean): ConnectorEndpoint {
     if (connector === "mcp") return { url: url.trim() };
     const ops =
       withOperations && operations !== undefined && selectedOps.size < operations.length
@@ -182,7 +182,7 @@ export function useAppWizard(orgId: string): AppWizardView {
     };
   }
 
-  function auth(): AppAuth {
+  function auth(): ConnectorAuth {
     const scopes = scopeList(oauth.scopes);
     const method = oauth.tokenAuthMethod === "" ? {} : { tokenAuthMethod: oauth.tokenAuthMethod };
     switch (authType) {
@@ -253,14 +253,14 @@ export function useAppWizard(orgId: string): AppWizardView {
     if (e instanceof ApiClientError) {
       for (const d of e.details) extra.push(d.path === "" ? d.message : `${d.path}: ${d.message}`);
       // 连接失败的说明（内核已打码）：没有明细时就是消息本身
-      if (e.code === "app.connect_failed" && e.details.length === 0 && e.message !== e.code) {
+      if (e.code === "connector.connect_failed" && e.details.length === 0 && e.message !== e.code) {
         extra.push(e.message);
       }
     }
     setError({ message: errorMessage(e), extra });
   }
 
-  /** OAuth 应用要求内核配置 `http.publicUrl`（回调地址），没配时 400 落在 `auth` 上。 */
+  /** OAuth 连接器要求内核配置 `http.publicUrl`（回调地址），没配时 400 落在 `auth` 上。 */
   const publicUrlMissing = (e: unknown) =>
     e instanceof ApiClientError &&
     e.code === "validation_failed" &&
@@ -322,7 +322,7 @@ export function useAppWizard(orgId: string): AppWizardView {
   /** 端点 → 认证：预览（只给端点）读认证提示与操作清单。 */
   const inspect = () =>
     run(async () => {
-      const res = await previewApp(orgId, {
+      const res = await previewConnector(orgId, {
         name: name.trim(),
         ...(slug.trim() !== "" ? { slug: slug.trim() } : {}),
         connector,
@@ -346,7 +346,7 @@ export function useAppWizard(orgId: string): AppWizardView {
     run(async () => {
       const cred = authType === "oauth_code" ? undefined : credentialValue();
       try {
-        const res = await previewApp(orgId, {
+        const res = await previewConnector(orgId, {
           name: name.trim(),
           ...(slug.trim() !== "" ? { slug: slug.trim() } : {}),
           connector,
@@ -371,7 +371,7 @@ export function useAppWizard(orgId: string): AppWizardView {
     run(async () => {
       const cred = credentialValue();
       try {
-        const res = await createApp(orgId, {
+        const res = await createConnector(orgId, {
           name: name.trim(),
           ...(slug.trim() !== "" ? { slug: slug.trim() } : {}),
           connector,
@@ -387,7 +387,7 @@ export function useAppWizard(orgId: string): AppWizardView {
       } catch (e) {
         if (
           e instanceof ApiClientError &&
-          e.code === "app.connect_failed" &&
+          e.code === "connector.connect_failed" &&
           e.details.some((d) => d.reason === "dcr_unsupported")
         ) {
           // 授权服务器不支持动态注册：回到认证一步改为手填客户端
@@ -416,7 +416,7 @@ export function useAppWizard(orgId: string): AppWizardView {
     } else if (step === TOOLS) {
       void install();
     } else if (installed) {
-      router.push(`/apps/${encodeURIComponent(installed.app.id)}`);
+      router.push(`/connectors/${encodeURIComponent(installed.connector.id)}`);
     }
   }
 
@@ -436,7 +436,7 @@ export function useAppWizard(orgId: string): AppWizardView {
   const actionRow: ActionRowProps = {
     errors: Object.keys(fieldErrors).length,
     ...(step !== DONE
-      ? { cancel: { label: tc("cancel"), onSelect: () => router.push("/apps") } }
+      ? { cancel: { label: tc("cancel"), onSelect: () => router.push("/connectors") } }
       : {}),
     ...(step > TYPE && step < DONE
       ? { secondary: { label: t("wizard.previous"), onSelect: previous, disabled: pending } }
@@ -655,7 +655,7 @@ export function useAppWizard(orgId: string): AppWizardView {
       />
     );
   } else if (installed) {
-    content = <DoneStep app={installed.app} issues={installed.issues} />;
+    content = <DoneStep app={installed.connector} issues={installed.issues} />;
   }
 
   const body = (
@@ -693,7 +693,7 @@ function AuthStep(props: {
   onKeyName(v: string): void;
   namesRaw: string;
   onNamesRaw(v: string): void;
-  auth: AppAuth;
+  auth: ConnectorAuth;
   credential: typeof EMPTY_CREDENTIAL;
   onCredential(v: typeof EMPTY_CREDENTIAL): void;
   oauth: OAuthDraft;
@@ -702,7 +702,7 @@ function AuthStep(props: {
   onClient(v: typeof EMPTY_OAUTH_CLIENT): void;
   fieldErrors: Record<string, string>;
 }) {
-  const t = useTranslations("apps");
+  const t = useTranslations("connectors");
   const { authType, oauth, fieldErrors } = props;
   const errorOf = (k: string) =>
     fieldErrors[k] !== undefined ? { error: fieldErrors[k] as string } : {};
@@ -935,7 +935,7 @@ function TokenAuthMethodField({
   value: OAuthDraft["tokenAuthMethod"];
   onChange(v: OAuthDraft["tokenAuthMethod"]): void;
 }) {
-  const t = useTranslations("apps.oauth");
+  const t = useTranslations("connectors.oauth");
   return (
     <Field label={t("tokenAuthMethodLabel")}>
       <Select
@@ -951,7 +951,7 @@ function TokenAuthMethodField({
 }
 
 function IssuesCard({ issues }: { issues: ToolIssue[] }) {
-  const t = useTranslations("apps");
+  const t = useTranslations("connectors");
   if (issues.length === 0) return null;
   return (
     <Card tone="danger" title={t("wizard.issuesTitle")}>
@@ -977,9 +977,9 @@ function ToolsStep({
   operations: ConnectorOperation[] | undefined;
   selected: Set<string>;
   onSelected(next: Set<string>): void;
-  preview: AppPreview | undefined;
+  preview: ConnectorPreview | undefined;
 }) {
-  const t = useTranslations("apps");
+  const t = useTranslations("connectors");
   const policyCell = (policy: ToolPolicy, hint: "readOnly" | "destructive" | "none") => (
     <Stack gap={0}>
       <Text>{t(`policy.${policy}`)}</Text>
@@ -1081,8 +1081,8 @@ function ToolsStep({
   );
 }
 
-function DoneStep({ app, issues }: { app: AppDetail; issues: ToolIssue[] }) {
-  const t = useTranslations("apps");
+function DoneStep({ app, issues }: { app: ConnectorDetail; issues: ToolIssue[] }) {
+  const t = useTranslations("connectors");
   const router = useRouter();
   const needsConnect =
     app.credential.ownership === "personal" && app.credential.status === "missing";

@@ -2,7 +2,7 @@
 
 import { Field, Input } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import type { AppAuth, AuthType, CredentialValue, OAuthClientValue } from "../lib/apps";
+import type { AuthType, ConnectorAuth, CredentialValue, OAuthClientValue } from "../lib/connectors";
 
 export const AUTH_TYPES = [
   "none",
@@ -40,7 +40,7 @@ export function CredentialFields({
   values,
   onChange,
 }: {
-  auth: AppAuth;
+  auth: ConnectorAuth;
   values: { token: string; username: string; password: string; headers: Record<string, string> };
   onChange(next: {
     token: string;
@@ -49,7 +49,7 @@ export function CredentialFields({
     headers: Record<string, string>;
   }): void;
 }) {
-  const t = useTranslations("apps.form");
+  const t = useTranslations("connectors.form");
   if (auth.type === "bearer" || auth.type === "api_key") {
     return (
       <Field label={t("tokenLabel")}>
@@ -126,7 +126,7 @@ export function OAuthClientFields({
   secretRequired: boolean;
   errors?: { clientId?: string; clientSecret?: string };
 }) {
-  const t = useTranslations("apps.oauth");
+  const t = useTranslations("connectors.oauth");
   return (
     <>
       <Field

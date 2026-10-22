@@ -22,7 +22,7 @@ const approval = (id: string, over: Record<string, unknown> = {}) => ({
   callId: `call-${id}`,
   toolKey: `fixture__${id}`,
   toolName: `tool_${id}`,
-  app: { id: "app1", name: "Fixture", slug: "fixture" },
+  connector: { id: "app1", name: "Fixture", slug: "fixture" },
   agent: { id: "ag1", name: "Echo agent" },
   input: { id },
   requestedFor: "a1",

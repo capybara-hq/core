@@ -224,7 +224,7 @@ describe("请求体大小上限（CAPYBARA_WEB_MAX_BODY_BYTES）", () => {
   });
 });
 
-describe("安装 / 预览应用的请求体上限（可带 2 MB 的 OpenAPI 文档）", () => {
+describe("安装 / 预览连接器的请求体上限（可带 2 MB 的 OpenAPI 文档）", () => {
   beforeEach(() => {
     handler = (_req, res) => {
       res.writeHead(200);
@@ -234,7 +234,7 @@ describe("安装 / 预览应用的请求体上限（可带 2 MB 的 OpenAPI 文�
 
   it("POST .../apps 与 .../apps/preview 放宽到 6 MiB；其他路由仍为默认 1 MiB", async () => {
     const big = "x".repeat(2_500_000);
-    for (const path of ["/api/v1/orgs/o1/apps", "/api/v1/orgs/o1/apps/preview"]) {
+    for (const path of ["/api/v1/orgs/o1/connectors", "/api/v1/orgs/o1/connectors/preview"]) {
       const res = await POST(
         new Request(`http://web.example${path}`, { method: "POST", body: big }),
       );
@@ -243,8 +243,8 @@ describe("安装 / 预览应用的请求体上限（可带 2 MB 的 OpenAPI 文�
     expect(seen.map((r) => r.body?.length)).toEqual([2_500_000, 2_500_000]);
     for (const path of [
       "/api/v1/x",
-      "/api/v1/orgs/o1/apps/a1/refresh",
-      "/api/v1/orgs/o1/apps/x/y",
+      "/api/v1/orgs/o1/connectors/a1/refresh",
+      "/api/v1/orgs/o1/connectors/x/y",
     ]) {
       const res = await POST(
         new Request(`http://web.example${path}`, { method: "POST", body: big }),
@@ -252,11 +252,11 @@ describe("安装 / 预览应用的请求体上限（可带 2 MB 的 OpenAPI 文�
       expect(res.status, path).toBe(413);
     }
     const patch = await PATCH(
-      new Request("http://web.example/api/v1/orgs/o1/apps", { method: "PATCH", body: big }),
+      new Request("http://web.example/api/v1/orgs/o1/connectors", { method: "PATCH", body: big }),
     );
     expect(patch.status).toBe(413);
     const huge = await POST(
-      new Request("http://web.example/api/v1/orgs/o1/apps", {
+      new Request("http://web.example/api/v1/orgs/o1/connectors", {
         method: "POST",
         body: "x".repeat(6 * 1024 * 1024 + 1),
       }),

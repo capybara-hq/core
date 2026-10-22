@@ -2,7 +2,7 @@
  * 同源代理：浏览器只和 Web 源通信（内核的会话 Cookie 只属于当前主机），
  * `/api/*` 原样转发到内核 `CAPYBARA_KERNEL_URL`（默认 http://localhost:8080）。
  * 响应体以流的形式透传、不缓冲，SSE 可用。请求体有大小上限（`CAPYBARA_WEB_MAX_BODY_BYTES`，
- * 默认 1 MiB，与内核 Fastify 的 bodyLimit 一致）；安装 / 预览应用（`POST /api/v1/orgs/:orgId/apps[/preview]`）
+ * 默认 1 MiB，与内核 Fastify 的 bodyLimit 一致）；安装 / 预览连接器（`POST /api/v1/orgs/:orgId/connectors[/preview]`）
  * 可带最大 2 MB 的 OpenAPI 文档，与内核这两个路由一致放宽到 6 MiB。上传插件包
  * （`POST /api/v1/admin/plugins/packages/file`）放宽到 `CAPYBARA_WEB_MAX_PACKAGE_BYTES`（默认 50 MiB），
  * 并且边读边转发、不整个缓冲。客户端地址的处理见 `lib/peer.ts`。
@@ -20,9 +20,9 @@ import { FORWARDING_HEADERS, trustedPeer } from "../../../lib/peer";
 
 export const dynamic = "force-dynamic";
 
-/** 安装 / 预览应用的请求体上限（与内核 http/app.ts 的 LARGE_BODY_LIMIT 一致）。 */
-const APP_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
-const APP_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/apps(?:\/preview)?$/;
+/** 安装 / 预览连接器的请求体上限（与内核 http/app.ts 的 LARGE_BODY_LIMIT 一致）。 */
+const CONNECTOR_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
+const CONNECTOR_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/connectors(?:\/preview)?$/;
 /** 流式透传请求体的上传路由（插件包 tgz，可达几十 MiB）。 */
 const STREAMED_UPLOAD_PATHS = new Set(["/api/v1/admin/plugins/packages/file"]);
 
@@ -65,8 +65,8 @@ const DROP_RESPONSE = new Set([
 
 function maxBodyBytes(method: string, pathname: string): number {
   const base = configuredMaxBodyBytes();
-  return method === "POST" && APP_INSTALL_PATH.test(pathname)
-    ? Math.max(base, APP_INSTALL_MAX_BODY_BYTES)
+  return method === "POST" && CONNECTOR_INSTALL_PATH.test(pathname)
+    ? Math.max(base, CONNECTOR_INSTALL_MAX_BODY_BYTES)
     : base;
 }
 

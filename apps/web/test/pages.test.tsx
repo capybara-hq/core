@@ -285,7 +285,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.agents, "/agents"],
       [zh.nav.skills, "/skills"],
       [zh.nav.inbox, "/inbox"],
-      [zh.nav.apps, "/apps"],
+      [zh.nav.connectors, "/connectors"],
       // 管理员（owner）才看得到渠道与评测
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],
@@ -314,7 +314,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(nav).queryByRole("link", { name: zh.nav.channels })).toBeNull();
     expect(within(nav).queryByRole("link", { name: zh.nav.evals })).toBeNull();
-    expect(within(nav).getByRole("link", { name: zh.nav.apps })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
     // 成员能浏览技能库
     expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();
   });
@@ -403,7 +403,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
           }),
         ).toBeTruthy(),
       );
-      expect(within(nav).getByRole("link", { name: m.nav.apps })).toBeTruthy();
+      expect(within(nav).getByRole("link", { name: m.nav.connectors })).toBeTruthy();
     },
   );
 
@@ -519,21 +519,21 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
 });
 
 describe("activeNavOf", () => {
-  it("应用只高亮 /apps*、/settings/connections、/settings/grants、/settings/organization；其他 /settings 不高亮", () => {
-    expect(activeNavOf("/apps")).toBe("apps");
-    expect(activeNavOf("/apps/x")).toBe("apps");
-    expect(activeNavOf("/settings/connections")).toBe("apps");
-    expect(activeNavOf("/settings/grants")).toBe("apps");
-    expect(activeNavOf("/settings/organization")).toBe("apps");
-    expect(activeNavOf("/apps/install")).toBe("apps");
+  it("连接器只高亮 /connectors*、/settings/connections、/settings/grants、/settings/organization；其他 /settings 不高亮", () => {
+    expect(activeNavOf("/connectors")).toBe("connectors");
+    expect(activeNavOf("/connectors/x")).toBe("connectors");
+    expect(activeNavOf("/settings/connections")).toBe("connectors");
+    expect(activeNavOf("/settings/grants")).toBe("connectors");
+    expect(activeNavOf("/settings/organization")).toBe("connectors");
+    expect(activeNavOf("/connectors/install")).toBe("connectors");
     expect(activeNavOf("/settings/org")).toBe("");
     expect(activeNavOf("/settings")).toBe("");
     expect(activeNavOf("/appsx")).toBe("");
     expect(activeNavOf("/inbox")).toBe("inbox");
     expect(activeNavOf("/channels")).toBe("channels");
     expect(activeNavOf("/channels/new")).toBe("channels");
-    expect(activeNavOf("/settings/identities")).toBe("apps");
-    expect(activeNavOf("/settings/plugins")).toBe("apps");
+    expect(activeNavOf("/settings/identities")).toBe("connectors");
+    expect(activeNavOf("/settings/plugins")).toBe("connectors");
     expect(activeNavOf("/chat/c1")).toBe("agents");
     expect(activeNavOf("/skills")).toBe("skills");
     expect(activeNavOf("/skills/s1")).toBe("skills");

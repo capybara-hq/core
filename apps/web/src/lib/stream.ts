@@ -316,8 +316,8 @@ export type ChatItem =
       kind: "connect";
       key: string;
       callId: string;
-      appId: string;
-      appName: string;
+      connectorId: string;
+      connectorName: string;
       /** 所在运行已到终态（历史里的卡片不再提供「连接」）。 */
       closed: boolean;
     }
@@ -482,8 +482,8 @@ export function chatItems(state: ChatState): ChatItem[] {
         kind: "connect",
         key,
         callId: e.payload.callId,
-        appId: e.payload.appId,
-        appName: e.payload.appName,
+        connectorId: e.payload.appId,
+        connectorName: e.payload.appName,
         closed: e.runId !== null && state.closedRuns[e.runId] === true,
       });
     } else if (e.type === "run_failed") {

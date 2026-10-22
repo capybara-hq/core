@@ -2,7 +2,7 @@ import { ApiClientError, apiFetch } from "./api";
 
 /**
  * 对话附件（上传的文件）：登记 → 浏览器直传对象存储（预签名）→ finalize → 发消息时在 `files` 里引用 id。
- * 与 `@` 资源引用（`DraftAttachment`，内核读取应用资源）是两回事。
+ * 与 `@` 资源引用（`DraftAttachment`，内核读取连接器资源）是两回事。
  */
 
 /** 附件上限（内核 `GET /attachments/limits`）。 */

@@ -7,12 +7,12 @@ export type AgentVisibility = "private" | "org" | "members";
 
 /**
  * agent 引用的工具（与内核 `AgentToolRef` 对应）：内置工具按名字；插件工具按插件名 + 工具名；
- * 应用工具按应用 id，`tools: "all"` 为该应用当前所有启用的工具。
+ * 连接器工具按连接器 id，`tools: "all"` 为该连接器当前所有启用的工具。
  */
 export type AgentToolRef =
   | { kind: "builtin"; name: string }
   | { kind: "plugin"; plugin: string; name: string }
-  | { kind: "app"; appId: string; tools: "all" | string[] };
+  | { kind: "connector"; connectorId: string; tools: "all" | string[] };
 
 /** 收紧后的策略（只能收紧：`ask` / `deny`）。 */
 export type TightenedPolicy = "ask" | "deny";

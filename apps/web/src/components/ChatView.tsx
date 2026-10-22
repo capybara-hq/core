@@ -41,7 +41,7 @@ export type ChatView = {
   send(
     text: string,
     clientMessageId: string,
-    attachments?: { appId: string; uri: string }[],
+    attachments?: { connectorId: string; uri: string }[],
     files?: string[],
   ): Promise<SendResult>;
   error: string | undefined;
@@ -171,7 +171,7 @@ export function useChat(orgId: string, conversationId: string): ChatView {
     async (
       text: string,
       clientMessageId: string,
-      attachments: { appId: string; uri: string }[] = [],
+      attachments: { connectorId: string; uri: string }[] = [],
       files: string[] = [],
     ) => {
       try {
@@ -180,7 +180,7 @@ export function useChat(orgId: string, conversationId: string): ChatView {
           conversationId,
           text,
           clientMessageId,
-          attachments.map((a) => ({ appId: a.appId, uri: a.uri })),
+          attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
           files,
         );
         dispatch({ kind: "events", events: [event] });

@@ -5,23 +5,27 @@ import { useTranslations } from "next-intl";
 import { OrgGate } from "../../../../components/OrgGate";
 import { useSession } from "../../../../components/shell/session";
 import { useRouter } from "../../../../i18n/navigation";
-import { type AppSummary, canManageApps, listApps } from "../../../../lib/apps";
+import {
+  type ConnectorSummary,
+  canManageConnectors,
+  listConnectors,
+} from "../../../../lib/connectors";
 import { useLoad } from "../../../../lib/use-load";
 
-/** `/[locale]/apps`：当前组织安装的应用（ListPage + DataTable），点击行进入详情。 */
+/** `/[locale]/connectors`：当前组织安装的连接器（ListPage + DataTable），点击行进入详情。 */
 export default function AppsPage() {
-  return <OrgGate>{(orgId) => <Apps orgId={orgId} />}</OrgGate>;
+  return <OrgGate>{(orgId) => <Connectors orgId={orgId} />}</OrgGate>;
 }
 
-function Apps({ orgId }: { orgId: string }) {
-  const t = useTranslations("apps");
+function Connectors({ orgId }: { orgId: string }) {
+  const t = useTranslations("connectors");
   const router = useRouter();
   const { me } = useSession();
-  const manage = canManageApps(me);
-  const { state, reload } = useLoad(() => listApps(orgId).then((r) => r.apps), [orgId]);
-  const open = (a: AppSummary) => router.push(`/apps/${encodeURIComponent(a.id)}`);
+  const manage = canManageConnectors(me);
+  const { state, reload } = useLoad(() => listConnectors(orgId).then((r) => r.connectors), [orgId]);
+  const open = (a: ConnectorSummary) => router.push(`/connectors/${encodeURIComponent(a.id)}`);
 
-  const columns: Column<AppSummary>[] = [
+  const columns: Column<ConnectorSummary>[] = [
     { key: "name", header: t("columns.name"), cell: (a) => a.name },
     { key: "slug", header: t("columns.slug"), tone: "muted", cell: (a) => a.slug },
     {
@@ -49,13 +53,13 @@ function Apps({ orgId }: { orgId: string }) {
         count: state.kind === "ready" ? String(state.data.length) : undefined,
         actions: [
           ...(manage
-            ? [{ label: t("new"), variant: "primary" as const, href: "/apps/install" }]
+            ? [{ label: t("new"), variant: "primary" as const, href: "/connectors/install" }]
             : []),
           { label: t("myConnections"), variant: "default" as const, href: "/settings/connections" },
         ],
       }}
     >
-      <DataTable<AppSummary>
+      <DataTable<ConnectorSummary>
         label={t("title")}
         framed={false}
         columns={columns}
@@ -69,7 +73,11 @@ function Apps({ orgId }: { orgId: string }) {
           title: t("empty"),
           hint: t("emptyHint"),
           ...(manage
-            ? { action: <Button onClick={() => router.push("/apps/install")}>{t("new")}</Button> }
+            ? {
+                action: (
+                  <Button onClick={() => router.push("/connectors/install")}>{t("new")}</Button>
+                ),
+              }
             : {}),
         }}
       />

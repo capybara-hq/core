@@ -173,11 +173,11 @@ function Inbox({ orgId }: { orgId: string }) {
   );
 }
 
-/** 列表里的一行标题：工具审批为「应用 · 工具」，技能变更为「技能变更 · 名称」。 */
+/** 列表里的一行标题：工具审批为「连接器 · 工具」，技能变更为「技能变更 · 名称」。 */
 function titleOf(item: InboxItem, skillChangeLabel: string): string {
   if (item.type === "skill_change") return `${skillChangeLabel} · ${item.skillChange.name}`;
   const a = item.approval;
-  return a.app ? `${a.app.name} · ${a.toolName}` : a.toolName;
+  return a.connector ? `${a.connector.name} · ${a.toolName}` : a.toolName;
 }
 
 /** 选中项的三块：内容区、Inspector、ActionRow。 */
@@ -245,7 +245,11 @@ function toolApprovalDetail({
     content: (
       <div data-approval-id={approval.id}>
         <Card
-          title={approval.app ? `${approval.app.name} · ${approval.toolName}` : approval.toolName}
+          title={
+            approval.connector
+              ? `${approval.connector.name} · ${approval.toolName}`
+              : approval.toolName
+          }
           actions={<StatusMark status="waiting" label={ta("waiting")} />}
         >
           <Stack gap={12}>
@@ -253,7 +257,7 @@ function toolApprovalDetail({
               keyWidth="10ch"
               rows={[
                 { k: ta("tool"), v: approval.toolKey },
-                ...(approval.app ? [{ k: ta("app"), v: approval.app.name }] : []),
+                ...(approval.connector ? [{ k: ta("connector"), v: approval.connector.name }] : []),
               ]}
             />
             <Stack gap={4}>

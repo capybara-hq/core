@@ -120,13 +120,13 @@
       "provider_error": "模型供应商出错。",
       "storage_unavailable": "附件存储暂时不可用。"
     },
-    "app": {
-      "not_found": "应用不存在或已被删除。",
-      "slug_taken": "该 slug 已被其他应用使用。",
-      "connect_failed": "无法连接应用的服务，请检查 URL 与凭据。",
-      "tool_not_found": "该应用没有这个工具。",
+    "connector": {
+      "not_found": "连接器不存在或已被删除。",
+      "slug_taken": "该 slug 已被其他连接器使用。",
+      "connect_failed": "无法访问连接器的服务，请检查 URL 与凭据。",
+      "tool_not_found": "该连接器没有这个工具。",
       "tool_not_pending": "该工具不在待复核状态。",
-      "resources_disabled": "该应用已关闭读取资源。"
+      "resources_disabled": "该连接器已关闭读取资源。"
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",
@@ -137,7 +137,7 @@
       "already_answered": "该问题已被回答或已过期。"
     },
     "credential": {
-      "missing": "使用该应用需要凭据。"
+      "missing": "使用该连接器需要凭据。"
     },
     "plugin": {
       "not_found": "插件未安装。",
@@ -298,9 +298,9 @@
         "read_tool_output": "读取存档的工具结果（read_tool_output）",
         "skill_write": "编写技能（skill_write）"
       },
-      "appsLabel": "应用",
-      "appTools": "{name} 的全部工具",
-      "noApps": "还没有安装应用。",
+      "connectorsLabel": "连接器",
+      "connectorTools": "{name} 的全部工具",
+      "noConnectors": "还没有安装连接器。",
       "policiesLabel": "策略",
       "policy": {
         "default": "默认",
@@ -436,14 +436,14 @@
     "removeAttachment": "移除 {name}",
     "attachLimit": "每条消息最多 {max} 个附件。",
     "insertPrompt": "插入",
-    "unavailableApps": "不可用的应用",
-    "appUnavailable": {
+    "unavailableConnectors": "不可用的连接器",
+    "connectorUnavailable": {
       "not_connected": "未连接",
       "failed": "不可用"
     },
-    "appUnavailableHint": {
-      "not_connected": "你还没有连接 {app}。请先在「应用」页连接，再重试。",
-      "failed": "暂时无法访问 {app}，请稍后重试。"
+    "connectorUnavailableHint": {
+      "not_connected": "你还没有连接 {connector}。请先在「连接器」页连接，再重试。",
+      "failed": "暂时无法访问 {connector}，请稍后重试。"
     },
     "timeline": "本轮步骤",
     "thinkingLive": "思考中…",
@@ -474,7 +474,7 @@
     "tokensOnly": "{used}",
     "noUsage": "暂无用量",
     "windowUnknown": "模型没有声明上下文窗口，只显示已用 token 数。",
-    "apps": "用到的应用",
+    "connectors": "用到的连接器",
     "none": "无",
     "compactions": "压缩记录",
     "compactionCovers": "压缩到第 {seq} 条事件",
@@ -503,7 +503,7 @@
     "goto": "跳转",
     "actions": "操作",
     "inbox": "收件箱",
-    "apps": "应用",
+    "connectors": "连接器",
     "channels": "渠道",
     "skills": "技能",
     "evals": "评测",
@@ -534,7 +534,7 @@
     "title": "需要审批",
     "waiting": "待处理",
     "tool": "工具",
-    "app": "应用",
+    "connector": "连接器",
     "agent": "Agent",
     "expires": "过期时间",
     "input": "参数",
@@ -587,22 +587,22 @@
     "openLink": "打开链接"
   },
   "connect": {
-    "title": "需要连接应用",
+    "title": "需要授权连接器",
     "status": "未连接",
-    "description": "agent 使用 {app} 前，需要先填写你的凭据。",
+    "description": "agent 使用 {connector} 前，需要先填写你的凭据。",
     "action": "连接",
-    "ended": "这次运行时 {app} 尚未连接。请在「我的连接」中填写凭据后再试。",
+    "ended": "这次运行时 {connector} 尚未连接。请在「我的连接」中填写凭据后再试。",
     "result": {
-      "connected": "应用已连接，请让智能体重试。",
-      "unknown": "无法连接该应用，请重试。",
+      "connected": "连接器已连接，请让智能体重试。",
+      "unknown": "无法完成该连接器的授权，请重试。",
       "error": {
         "state_invalid": "连接请求已过期，请重试。",
         "session_mismatch": "必须在发起连接的同一浏览器中完成授权。",
-        "access_denied": "授权被拒绝，应用未连接。",
-        "provider_error": "应用的登录服务报告了问题，请重试。",
-        "token_exchange_failed": "无法完成应用登录，请重试。",
+        "access_denied": "授权被拒绝，连接器未连接。",
+        "provider_error": "连接器的登录服务报告了问题，请重试。",
+        "token_exchange_failed": "无法完成连接器登录，请重试。",
         "issuer_mismatch": "登录响应并非来自预期的服务。",
-        "app_unavailable": "该应用当前无法连接。"
+        "connector_unavailable": "该连接器当前无法连接。"
       }
     }
   },
@@ -648,11 +648,11 @@
       "rejected": "已拒绝技能变更"
     }
   },
-  "apps": {
-    "title": "应用",
-    "new": "添加应用",
+  "connectors": {
+    "title": "连接器",
+    "new": "添加连接器",
     "myConnections": "我的连接",
-    "empty": "还没有应用。",
+    "empty": "还没有连接器。",
     "emptyHint": "接入一个 MCP 服务，为 agent 提供工具。",
     "columns": {
       "name": "名称",
@@ -705,7 +705,7 @@
       "headerNamesLabel": "请求头名称",
       "headerNamesHelp": "每行一个。",
       "credentialHint": {
-        "org": "组织凭据（现在可不填，之后在应用详情页设置）。",
+        "org": "组织凭据（现在可不填，之后在连接器详情页设置）。",
         "personal": "你自己的凭据（现在可不填，之后在「我的连接」中设置）。"
       },
       "tokenLabel": "令牌",
@@ -714,14 +714,14 @@
       "headerValueLabel": "{name} 的值"
     },
     "detail": {
-      "tabsLabel": "应用页内导航",
+      "tabsLabel": "连接器页内导航",
       "tabs": {
         "tools": "工具",
         "review": "复核",
         "credentials": "凭据",
         "settings": "设置"
       },
-      "inspectorTitle": "应用",
+      "inspectorTitle": "连接器",
       "refresh": "刷新工具",
       "refreshed": "工具列表已刷新。",
       "retry": "重试"
@@ -744,7 +744,7 @@
       "enabledLabel": "启用 {tool}",
       "enabled": "启用",
       "disabled": "已停用",
-      "empty": "该应用没有工具。",
+      "empty": "该连接器没有工具。",
       "missing": "服务已不再提供此工具",
       "pendingReview": "待复核",
       "neverReviewed": "从未复核：在「复核」页签批准后才能启用"
@@ -762,9 +762,9 @@
       "openConnections": "打开我的连接",
       "save": "保存凭据",
       "saved": "凭据已保存。",
-      "oauthOrgHint": "此应用通过 OAuth 客户端登录，组织令牌自动获取。",
+      "oauthOrgHint": "此连接器通过 OAuth 客户端登录，组织令牌自动获取。",
       "clientTitle": "OAuth 客户端",
-      "clientDcr": "此应用的客户端是自动注册的，不能替换；需要更换时请重新安装。",
+      "clientDcr": "此连接器的客户端是自动注册的，不能替换；需要更换时请重新安装。",
       "rotate": "替换客户端",
       "rotated": "OAuth 客户端已替换。",
       "rotateVerified": "新客户端会先换取一次令牌验证，验证失败则不做任何修改。",
@@ -772,13 +772,13 @@
     },
     "settings": {
       "title": "常规",
-      "activeLabel": "启用应用",
+      "activeLabel": "启用连接器",
       "save": "保存",
       "saved": "已保存。",
       "dangerTitle": "危险操作",
-      "delete": "删除应用",
+      "delete": "删除连接器",
       "deleteTitle": "删除 {name}？",
-      "deleteHint": "使用该应用的 agent 将失去它的工具，已保存的凭据也会删除。此操作不可撤销。"
+      "deleteHint": "使用该连接器的 agent 将失去它的工具，已保存的凭据也会删除。此操作不可撤销。"
     },
     "oauth": {
       "clientIdLabel": "Client ID",
@@ -806,7 +806,7 @@
       }
     },
     "wizard": {
-      "title": "安装应用",
+      "title": "安装连接器",
       "steps": {
         "type": "类型",
         "endpoint": "端点",
@@ -817,7 +817,7 @@
       "next": "下一步",
       "previous": "上一步",
       "install": "安装",
-      "openApp": "打开应用",
+      "openApp": "打开连接器",
       "typeTitle": "选择端点类型",
       "connector": {
         "mcp": "MCP 服务",
@@ -852,8 +852,8 @@
       "oauthClientHint": "用一个组织共用的 OAuth 客户端换取令牌；安装时会先验证客户端。",
       "noticeTitle": "需要调整",
       "dcrUnsupported": "授权服务器不支持自动注册客户端。请在服务方注册一个客户端，并在下面填写 Client ID 与 Client secret。",
-      "publicUrlRequired": "OAuth 应用需要内核配置 http.publicUrl（用于生成 OAuth 回调地址）。请联系部署管理员配置后再安装，或改用其他认证方式。",
-      "operationsHint": "勾选要提供给 agent 的操作；默认策略按 HTTP 方法推导，安装后可在应用详情中调整。",
+      "publicUrlRequired": "OAuth 连接器需要内核配置 http.publicUrl（用于生成 OAuth 回调地址）。请联系部署管理员配置后再安装，或改用其他认证方式。",
+      "operationsHint": "勾选要提供给 agent 的操作；默认策略按 HTTP 方法推导，安装后可在连接器详情中调整。",
       "operationsLabel": "操作",
       "noOperations": "文档里没有操作。",
       "selectOperation": "至少勾选一个操作。",
@@ -861,9 +861,9 @@
         "operation": "操作"
       },
       "toolsTitle": "工具",
-      "toolsHint": "以下工具将随应用安装；默认策略按工具注解推导，安装后可在应用详情中调整。",
+      "toolsHint": "以下工具将随连接器安装；默认策略按工具注解推导，安装后可在连接器详情中调整。",
       "toolsAfterInstall": "安装时列出工具。",
-      "toolsAfterConnect": "OAuth 授权码应用在第一位成员连接后列出工具。",
+      "toolsAfterConnect": "OAuth 授权码连接器在第一位成员连接后列出工具。",
       "annotation": {
         "readOnly": "只读",
         "destructive": "有破坏性",
@@ -872,7 +872,7 @@
       "issuesTitle": "以下工具将被停用：",
       "doneTitle": "已安装 {name}",
       "doneTools": "共 {count} 个工具。",
-      "doneOAuthCode": "每位成员需要先连接自己的账号，agent 才能代表他们调用此应用。",
+      "doneOAuthCode": "每位成员需要先连接自己的账号，agent 才能代表他们调用此连接器。",
       "connectNow": "连接我的账号",
       "credentialRequired": "请填写凭据，安装时要用它列出工具。",
       "credentialHint": {
@@ -907,7 +907,7 @@
   "connections": {
     "title": "个人设置",
     "nav": {
-      "connections": "已连接的应用",
+      "connections": "我的连接",
       "grants": "已记住的授权",
       "organization": "组织设置",
       "identities": "IM 身份",
@@ -915,15 +915,15 @@
       "models": "模型用途",
       "members": "成员"
     },
-    "empty": "没有需要你个人凭据的应用。",
-    "emptyHint": "使用个人凭据的应用会出现在这里。",
-    "sectionHint": "你在该应用上的个人凭据，其他成员使用各自的凭据。",
+    "empty": "没有需要你个人凭据的连接器。",
+    "emptyHint": "使用个人凭据的连接器会出现在这里。",
+    "sectionHint": "你在该连接器上的个人凭据，其他成员使用各自的凭据。",
     "connected": "已连接",
     "missing": "未连接",
     "save": "保存",
     "clear": "清除",
-    "saved": "{app} 的凭据已保存。",
-    "cleared": "{app} 的凭据已清除。",
+    "saved": "{connector} 的凭据已保存。",
+    "cleared": "{connector} 的凭据已清除。",
     "grants": {
       "empty": "没有已记住的授权。",
       "emptyHint": "审批时选择「以后都允许」会在这里留下一条。",
@@ -940,7 +940,7 @@
     "reconnect": "重新连接",
     "oauthConnect": "连接",
     "disconnect": "断开连接",
-    "oauthHint": "用你自己的账号登录此应用；其他成员各用各的。"
+    "oauthHint": "用你自己的账号登录此连接器；其他成员各用各的。"
   },
   "orgSettings": {
     "title": "组织设置",

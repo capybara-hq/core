@@ -87,7 +87,7 @@ describe("新建 agent：选择组织技能", () => {
       const m = msgs[locale];
       const calls = stubApi({
         [`GET ${ORG}/models`]: () => json(200, MODELS),
-        [`GET ${ORG}/apps`]: () => json(200, { apps: [] }),
+        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
         [`GET ${ORG}/skills`]: () =>
           json(200, { skills: [orgSkill("s1", "pdf-tools"), orgSkill("s2", "slides")] }),
         [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
@@ -110,7 +110,7 @@ describe("新建 agent：选择组织技能", () => {
   it("不选技能：定义里不带 skills", async () => {
     const calls = stubApi({
       [`GET ${ORG}/models`]: () => json(200, MODELS),
-      [`GET ${ORG}/apps`]: () => json(200, { apps: [] }),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
       [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
       [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
     });
@@ -132,7 +132,7 @@ describe("编辑 agent（FormPage）", () => {
   const routes = (over: Record<string, unknown> = {}) => ({
     [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agent(over) }),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
-    [`GET ${ORG}/apps`]: () => json(200, { apps: [] }),
+    [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
     [`GET ${ORG}/skills`]: () => json(200, { skills: [orgSkill("s1", "pdf-tools")] }),
     [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [ownSkill] }),
   });

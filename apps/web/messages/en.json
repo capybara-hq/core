@@ -120,13 +120,13 @@
       "provider_error": "The model provider returned an error.",
       "storage_unavailable": "Attachment storage is temporarily unavailable."
     },
-    "app": {
-      "not_found": "The app does not exist or has been removed.",
-      "slug_taken": "This slug is already used by another app.",
-      "connect_failed": "Could not connect to the app's server. Check the URL and credential.",
-      "tool_not_found": "The tool does not exist in this app.",
+    "connector": {
+      "not_found": "The connector does not exist or has been removed.",
+      "slug_taken": "This slug is already used by another connector.",
+      "connect_failed": "Could not connect to the connector's server. Check the URL and credential.",
+      "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",
-      "resources_disabled": "Reading resources is turned off for this app."
+      "resources_disabled": "Reading resources is turned off for this connector."
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
@@ -137,7 +137,7 @@
       "already_answered": "This question has already been answered or has expired."
     },
     "credential": {
-      "missing": "A credential is required for this app."
+      "missing": "A credential is required for this connector."
     },
     "plugin": {
       "not_found": "The plugin is not installed.",
@@ -298,9 +298,9 @@
         "read_tool_output": "Read archived tool output (read_tool_output)",
         "skill_write": "Write skills (skill_write)"
       },
-      "appsLabel": "Apps",
-      "appTools": "All tools of {name}",
-      "noApps": "No apps are installed.",
+      "connectorsLabel": "Connectors",
+      "connectorTools": "All tools of {name}",
+      "noConnectors": "No connectors are installed.",
       "policiesLabel": "Policies",
       "policy": {
         "default": "Default",
@@ -436,14 +436,14 @@
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
     "insertPrompt": "Insert",
-    "unavailableApps": "Unavailable apps",
-    "appUnavailable": {
+    "unavailableConnectors": "Unavailable connectors",
+    "connectorUnavailable": {
       "not_connected": "not connected",
       "failed": "unavailable"
     },
-    "appUnavailableHint": {
-      "not_connected": "You have not connected {app}. Connect it on the Apps page, then try again.",
-      "failed": "Could not reach {app}. Try again later."
+    "connectorUnavailableHint": {
+      "not_connected": "You have not connected {connector}. Connect it on the Connectors page, then try again.",
+      "failed": "Could not reach {connector}. Try again later."
     },
     "timeline": "Steps",
     "thinkingLive": "Thinking…",
@@ -474,7 +474,7 @@
     "tokensOnly": "{used} tokens",
     "noUsage": "No usage yet",
     "windowUnknown": "The model doesn't declare a context window; showing tokens used only.",
-    "apps": "Apps used",
+    "connectors": "Connectors used",
     "none": "None",
     "compactions": "Compactions",
     "compactionCovers": "Compacted up to event #{seq}",
@@ -503,7 +503,7 @@
     "goto": "Go to",
     "actions": "Actions",
     "inbox": "Inbox",
-    "apps": "Apps",
+    "connectors": "Connectors",
     "channels": "Channels",
     "skills": "Skills",
     "evals": "Evals",
@@ -534,7 +534,7 @@
     "title": "Approval required",
     "waiting": "Waiting",
     "tool": "Tool",
-    "app": "App",
+    "connector": "Connector",
     "agent": "Agent",
     "expires": "Expires",
     "input": "Arguments",
@@ -589,20 +589,20 @@
   "connect": {
     "title": "Connection required",
     "status": "Not connected",
-    "description": "{app} needs your credential before the agent can use it.",
+    "description": "{connector} needs your credential before the agent can use it.",
     "action": "Connect",
-    "ended": "{app} was not connected when this ran. Set your credential in My connections, then ask again.",
+    "ended": "{connector} was not connected when this ran. Set your credential in My connections, then ask again.",
     "result": {
-      "connected": "App connected. Ask the agent to try again.",
-      "unknown": "Could not connect the app. Please try again.",
+      "connected": "Connector connected. Ask the agent to try again.",
+      "unknown": "Could not complete the connection. Please try again.",
       "error": {
         "state_invalid": "The connection request expired. Please try again.",
         "session_mismatch": "The connection must be completed in the same browser that started it.",
-        "access_denied": "Access was denied, so the app was not connected.",
-        "provider_error": "The app's sign-in service reported a problem. Please try again.",
-        "token_exchange_failed": "Could not finish signing in to the app. Please try again.",
+        "access_denied": "Access was denied, so the connector was not connected.",
+        "provider_error": "The connector's sign-in service reported a problem. Please try again.",
+        "token_exchange_failed": "Could not finish signing in to the connector. Please try again.",
         "issuer_mismatch": "The sign-in response did not come from the expected service.",
-        "app_unavailable": "This app is not available for connecting."
+        "connector_unavailable": "This connector is not available for connecting."
       }
     }
   },
@@ -648,11 +648,11 @@
       "rejected": "Skill change rejected"
     }
   },
-  "apps": {
-    "title": "Apps",
-    "new": "Add app",
+  "connectors": {
+    "title": "Connectors",
+    "new": "Add connector",
     "myConnections": "My connections",
-    "empty": "No apps yet.",
+    "empty": "No connectors yet.",
     "emptyHint": "Connect an MCP server to give agents tools.",
     "columns": {
       "name": "Name",
@@ -694,7 +694,7 @@
       "ownershipLabel": "Credential",
       "ownershipHelp": {
         "org": "One credential set by an admin is used for everyone.",
-        "personal": "Every member fills in their own credential before using the app."
+        "personal": "Every member fills in their own credential before using the connector."
       },
       "keyInLabel": "Send the key in",
       "keyIn": {
@@ -705,7 +705,7 @@
       "headerNamesLabel": "Header names",
       "headerNamesHelp": "One per line.",
       "credentialHint": {
-        "org": "Organization credential (optional now; you can set it later on the app page).",
+        "org": "Organization credential (optional now; you can set it later on the connector page).",
         "personal": "Your own credential (optional now; you can set it later in My connections)."
       },
       "tokenLabel": "Token",
@@ -714,14 +714,14 @@
       "headerValueLabel": "Value of {name}"
     },
     "detail": {
-      "tabsLabel": "App sections",
+      "tabsLabel": "Connector sections",
       "tabs": {
         "tools": "Tools",
         "review": "Review",
         "credentials": "Credentials",
         "settings": "Settings"
       },
-      "inspectorTitle": "App",
+      "inspectorTitle": "Connector",
       "refresh": "Refresh tools",
       "refreshed": "Tool list refreshed.",
       "retry": "Retry"
@@ -744,7 +744,7 @@
       "enabledLabel": "Enable {tool}",
       "enabled": "Enabled",
       "disabled": "Disabled",
-      "empty": "This app has no tools.",
+      "empty": "This connector has no tools.",
       "missing": "No longer provided by the server",
       "pendingReview": "Pending review",
       "neverReviewed": "Never reviewed: approve it on the Review tab to enable it"
@@ -762,9 +762,9 @@
       "openConnections": "Open My connections",
       "save": "Save credential",
       "saved": "Credential saved.",
-      "oauthOrgHint": "This app signs in with an OAuth client; the organization token is obtained automatically.",
+      "oauthOrgHint": "This connector signs in with an OAuth client; the organization token is obtained automatically.",
       "clientTitle": "OAuth client",
-      "clientDcr": "This app's client was registered automatically and cannot be replaced; reinstall the app to change it.",
+      "clientDcr": "This connector's client was registered automatically and cannot be replaced; reinstall the connector to change it.",
       "rotate": "Replace client",
       "rotated": "OAuth client replaced.",
       "rotateVerified": "The new client is verified by obtaining a token first; nothing changes if that fails.",
@@ -772,13 +772,13 @@
     },
     "settings": {
       "title": "General",
-      "activeLabel": "App enabled",
+      "activeLabel": "Connector enabled",
       "save": "Save",
       "saved": "Saved.",
       "dangerTitle": "Danger zone",
-      "delete": "Delete app",
+      "delete": "Delete connector",
       "deleteTitle": "Delete {name}?",
-      "deleteHint": "Agents that use this app lose its tools, and stored credentials are removed. This cannot be undone."
+      "deleteHint": "Agents that use this connector lose its tools, and stored credentials are removed. This cannot be undone."
     },
     "oauth": {
       "clientIdLabel": "Client ID",
@@ -806,7 +806,7 @@
       }
     },
     "wizard": {
-      "title": "Install app",
+      "title": "Install connector",
       "steps": {
         "type": "Type",
         "endpoint": "Endpoint",
@@ -817,7 +817,7 @@
       "next": "Next",
       "previous": "Previous",
       "install": "Install",
-      "openApp": "Open app",
+      "openApp": "Open connector",
       "typeTitle": "Choose the endpoint type",
       "connector": {
         "mcp": "MCP server",
@@ -852,8 +852,8 @@
       "oauthClientHint": "One shared OAuth client obtains tokens for the organization; the client is verified when you install.",
       "noticeTitle": "Needs your attention",
       "dcrUnsupported": "The authorization server does not support automatic client registration. Register a client with the provider and enter its client ID and secret below.",
-      "publicUrlRequired": "OAuth apps need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask your deployment admin to set it, or use another authentication method.",
-      "operationsHint": "Choose the operations agents may use. Default policies follow the HTTP method; you can change them on the app page later.",
+      "publicUrlRequired": "OAuth connectors need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask your deployment admin to set it, or use another authentication method.",
+      "operationsHint": "Choose the operations agents may use. Default policies follow the HTTP method; you can change them on the connector page later.",
       "operationsLabel": "Operations",
       "noOperations": "The document has no operations.",
       "selectOperation": "Select at least one operation.",
@@ -861,9 +861,9 @@
         "operation": "Operation"
       },
       "toolsTitle": "Tools",
-      "toolsHint": "These tools come with the app. Default policies follow the tool annotations; you can change them on the app page later.",
-      "toolsAfterInstall": "The tools are listed when the app is installed.",
-      "toolsAfterConnect": "OAuth authorization-code apps list their tools after the first member connects.",
+      "toolsHint": "These tools come with the connector. Default policies follow the tool annotations; you can change them on the connector page later.",
+      "toolsAfterInstall": "The tools are listed when the connector is installed.",
+      "toolsAfterConnect": "OAuth authorization-code connectors list their tools after the first member connects.",
       "annotation": {
         "readOnly": "Read-only",
         "destructive": "Destructive",
@@ -872,7 +872,7 @@
       "issuesTitle": "These tools will be disabled:",
       "doneTitle": "{name} is installed",
       "doneTools": "{count, plural, one {# tool} other {# tools}}.",
-      "doneOAuthCode": "Each member must connect their own account before agents can use this app on their behalf.",
+      "doneOAuthCode": "Each member must connect their own account before agents can use this connector on their behalf.",
       "connectNow": "Connect my account",
       "credentialRequired": "Enter the credential; it is used to list the tools when installing.",
       "credentialHint": {
@@ -907,7 +907,7 @@
   "connections": {
     "title": "My settings",
     "nav": {
-      "connections": "Connected apps",
+      "connections": "My connections",
       "grants": "Remembered approvals",
       "organization": "Organization",
       "identities": "IM identities",
@@ -915,15 +915,15 @@
       "models": "Model purposes",
       "members": "Members"
     },
-    "empty": "No app needs your own credential.",
-    "emptyHint": "Apps that use personal credentials show up here.",
-    "sectionHint": "Your own credential for this app; other members use theirs.",
+    "empty": "No connector needs your own credential.",
+    "emptyHint": "Connectors that use personal credentials show up here.",
+    "sectionHint": "Your own credential for this connector; other members use theirs.",
     "connected": "Connected",
     "missing": "Not connected",
     "save": "Save",
     "clear": "Clear",
-    "saved": "Credential for {app} saved.",
-    "cleared": "Credential for {app} cleared.",
+    "saved": "Credential for {connector} saved.",
+    "cleared": "Credential for {connector} cleared.",
     "grants": {
       "empty": "No remembered approvals.",
       "emptyHint": "Choosing “Always for this agent” when approving adds one here.",
@@ -940,7 +940,7 @@
     "reconnect": "Reconnect",
     "oauthConnect": "Connect",
     "disconnect": "Disconnect",
-    "oauthHint": "Sign in to this app with your own account; other members use theirs."
+    "oauthHint": "Sign in to this connector with your own account; other members use theirs."
   },
   "orgSettings": {
     "title": "Organization settings",

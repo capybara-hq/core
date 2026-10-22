@@ -1,7 +1,7 @@
 import { apiFetch } from "./api";
 
 /**
- * 内核应用 API 的类型（`packages/kernel/src/tools/apps.controller.ts` / `apps.service.ts`；
+ * 内核连接器 API 的类型（`packages/kernel/src/tools/connectors.controller.ts` / `connectors.service.ts`；
  * 只声明界面用到的字段，时间为 JSON 字符串）。Web 层不 import 内核代码。
  */
 
@@ -32,7 +32,7 @@ export interface OAuthClientAuth {
 }
 
 /** 认证方式：只有类型与非密钥字段，凭据值走 `credential` / 凭据接口。 */
-export type AppAuth =
+export type ConnectorAuth =
   | { type: "none" }
   | { type: "bearer"; ownership: Ownership }
   | { type: "api_key"; ownership: Ownership; in: "header" | "query"; name: string }
@@ -42,7 +42,7 @@ export type AppAuth =
   | OAuthClientAuth;
 
 /** 能在界面里手填凭据值的认证方式（不含 none 与 OAuth）。 */
-export type AuthType = Exclude<AppAuth["type"], "oauth_code" | "oauth_client">;
+export type AuthType = Exclude<ConnectorAuth["type"], "oauth_code" | "oauth_client">;
 
 /** OAuth 客户端（安装时手填 / 轮换组织客户端）。 */
 export interface OAuthClientValue {
@@ -76,7 +76,7 @@ export interface ToolDefinition {
   connectorData: Record<string, unknown> | null;
 }
 
-export interface AppTool extends ToolDefinition {
+export interface ConnectorTool extends ToolDefinition {
   name: string;
   key: string;
   status: "enabled" | "disabled" | "pending_review";
@@ -93,20 +93,20 @@ export interface AppTool extends ToolDefinition {
   pending?: (ToolDefinition & { specHash: string }) | null;
 }
 
-export interface AppSummary {
+export interface ConnectorSummary {
   id: string;
   slug: string;
   name: string;
   connector: string;
   endpoint: { url?: string } & Record<string, unknown>;
-  auth: AppAuth;
+  auth: ConnectorAuth;
   status: "active" | "disabled";
   createdAt: string;
   updatedAt: string;
 }
 
-export interface AppDetail extends AppSummary {
-  tools: AppTool[];
+export interface ConnectorDetail extends ConnectorSummary {
+  tools: ConnectorTool[];
   /** 当前用户视角的凭据状态；`ownership` 为 null 表示无需凭据。 */
   credential: { ownership: Ownership | null; status: "connected" | "missing" };
 }
@@ -120,16 +120,16 @@ export interface ToolIssue {
 export type ConnectorKind = "mcp" | "openapi";
 
 /** MCP：端点 URL；OpenAPI：文档 URL 或文档正文（二选一）、可选 baseUrl 与勾选的操作。 */
-export type AppEndpoint =
+export type ConnectorEndpoint =
   | { url: string; headers?: Record<string, string> }
   | { specUrl?: string; specText?: string; baseUrl?: string; operations?: string[] };
 
-export interface CreateAppInput {
+export interface CreateConnectorInput {
   name: string;
   slug?: string;
   connector: string;
-  endpoint: AppEndpoint;
-  auth: AppAuth;
+  endpoint: ConnectorEndpoint;
+  auth: ConnectorAuth;
   credential?: CredentialValue;
 }
 
@@ -161,34 +161,34 @@ export interface ToolPreview {
 }
 
 /** 预览（不落库）：`tools` 为 null 表示没有列工具（未给认证、缺凭据、OAuth 授权码流）。 */
-export interface AppPreview {
+export interface ConnectorPreview {
   tools: ToolPreview[] | null;
   issues: ToolIssue[];
   authHints: AuthHint[];
   operations?: ConnectorOperation[];
 }
 
-export interface PreviewAppInput {
+export interface PreviewConnectorInput {
   name?: string;
   slug?: string;
   connector: string;
-  endpoint: AppEndpoint;
-  auth?: AppAuth;
+  endpoint: ConnectorEndpoint;
+  auth?: ConnectorAuth;
   credential?: CredentialValue;
 }
 
-export interface UpdateAppInput {
+export interface UpdateConnectorInput {
   name?: string;
   status?: "active" | "disabled";
   tools?: Record<string, { status?: "enabled" | "disabled"; defaultPolicy?: ToolPolicy }>;
 }
 
 /** 需要凭据的认证方式的归属；`none` 为 null。 */
-export const ownershipOf = (auth: AppAuth): Ownership | null =>
+export const ownershipOf = (auth: ConnectorAuth): Ownership | null =>
   auth.type === "none" ? null : auth.ownership;
 
-/** 当前组织中能否管理应用（`apps.manage`：管理员起；只用于决定是否显示管理入口，最终由内核判定）。 */
-export function canManageApps(me: {
+/** 当前组织中能否管理连接器（`connectors.manage`：管理员起；只用于决定是否显示管理入口，最终由内核判定）。 */
+export function canManageConnectors(me: {
   currentOrgId: string | null;
   memberships: { orgId: string; role: string }[];
 }): boolean {
@@ -196,13 +196,15 @@ export function canManageApps(me: {
   return role === "admin" || role === "owner";
 }
 
-const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/apps`;
-const one = (orgId: string, appId: string) => `${base(orgId)}/${encodeURIComponent(appId)}`;
+const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/connectors`;
+const one = (orgId: string, connectorId: string) =>
+  `${base(orgId)}/${encodeURIComponent(connectorId)}`;
 
-export const listApps = (orgId: string) => apiFetch<{ apps: AppSummary[] }>(base(orgId));
+export const listConnectors = (orgId: string) =>
+  apiFetch<{ connectors: ConnectorSummary[] }>(base(orgId));
 
-export const previewApp = (orgId: string, input: PreviewAppInput) =>
-  apiFetch<AppPreview>(`${base(orgId)}/preview`, {
+export const previewConnector = (orgId: string, input: PreviewConnectorInput) =>
+  apiFetch<ConnectorPreview>(`${base(orgId)}/preview`, {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -210,103 +212,113 @@ export const previewApp = (orgId: string, input: PreviewAppInput) =>
 /** 复核待复核的工具：approve 采用新定义并启用，reject 停用并保留旧定义。 */
 export const reviewTool = (
   orgId: string,
-  appId: string,
+  connectorId: string,
   name: string,
   action: "approve" | "reject",
 ) =>
-  apiFetch<{ app: AppDetail }>(`${one(orgId, appId)}/tools/${encodeURIComponent(name)}/review`, {
-    method: "POST",
-    body: JSON.stringify({ action }),
-  });
+  apiFetch<{ connector: ConnectorDetail }>(
+    `${one(orgId, connectorId)}/tools/${encodeURIComponent(name)}/review`,
+    {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    },
+  );
 
-export const getApp = (orgId: string, appId: string) =>
-  apiFetch<{ app: AppDetail }>(one(orgId, appId));
+export const getConnector = (orgId: string, connectorId: string) =>
+  apiFetch<{ connector: ConnectorDetail }>(one(orgId, connectorId));
 
-export const createApp = (orgId: string, input: CreateAppInput) =>
-  apiFetch<{ app: AppDetail; issues: ToolIssue[] }>(base(orgId), {
+export const createConnector = (orgId: string, input: CreateConnectorInput) =>
+  apiFetch<{ connector: ConnectorDetail; issues: ToolIssue[] }>(base(orgId), {
     method: "POST",
     body: JSON.stringify(input),
   });
 
-export const updateApp = (orgId: string, appId: string, input: UpdateAppInput) =>
-  apiFetch<{ app: AppDetail }>(one(orgId, appId), {
+export const updateConnector = (orgId: string, connectorId: string, input: UpdateConnectorInput) =>
+  apiFetch<{ connector: ConnectorDetail }>(one(orgId, connectorId), {
     method: "PATCH",
     body: JSON.stringify(input),
   });
 
-export const deleteApp = (orgId: string, appId: string) =>
-  apiFetch<void>(one(orgId, appId), { method: "DELETE" });
+export const deleteConnector = (orgId: string, connectorId: string) =>
+  apiFetch<void>(one(orgId, connectorId), { method: "DELETE" });
 
-export const refreshApp = (orgId: string, appId: string) =>
-  apiFetch<{ app: AppDetail; issues: ToolIssue[] }>(`${one(orgId, appId)}/refresh`, {
-    method: "POST",
-  });
+export const refreshConnector = (orgId: string, connectorId: string) =>
+  apiFetch<{ connector: ConnectorDetail; issues: ToolIssue[] }>(
+    `${one(orgId, connectorId)}/refresh`,
+    {
+      method: "POST",
+    },
+  );
 
-export const setOrgCredential = (orgId: string, appId: string, value: CredentialValue) =>
-  apiFetch<void>(`${one(orgId, appId)}/credentials/org`, {
+export const setOrgCredential = (orgId: string, connectorId: string, value: CredentialValue) =>
+  apiFetch<void>(`${one(orgId, connectorId)}/credentials/org`, {
     method: "PUT",
     body: JSON.stringify(value),
   });
 
-export const setMyCredential = (orgId: string, appId: string, value: CredentialValue) =>
-  apiFetch<void>(`${one(orgId, appId)}/credentials/me`, {
+export const setMyCredential = (orgId: string, connectorId: string, value: CredentialValue) =>
+  apiFetch<void>(`${one(orgId, connectorId)}/credentials/me`, {
     method: "PUT",
     body: JSON.stringify(value),
   });
 
 /** 发起 OAuth 连接：返回授权服务器的授权地址（随后整页跳转过去）；`returnTo` 为授权结束后回到的站内路径。 */
-export const connectApp = (orgId: string, appId: string, returnTo: string) =>
-  apiFetch<{ authorizationUrl: string }>(`${one(orgId, appId)}/connect`, {
+export const connectConnector = (orgId: string, connectorId: string, returnTo: string) =>
+  apiFetch<{ authorizationUrl: string }>(`${one(orgId, connectorId)}/connect`, {
     method: "POST",
     body: JSON.stringify({ returnTo }),
   });
 
-export const clearMyCredential = (orgId: string, appId: string) =>
-  apiFetch<void>(`${one(orgId, appId)}/credentials/me`, { method: "DELETE" });
+export const clearMyCredential = (orgId: string, connectorId: string) =>
+  apiFetch<void>(`${one(orgId, connectorId)}/credentials/me`, { method: "DELETE" });
 
-/** 应用提供的提示模板（`/应用:提示名` 斜杠命令）。 */
-export interface AppPrompt {
-  appId: string;
-  appSlug: string;
-  appName: string;
+/** 连接器提供的提示模板（`/连接器:提示名` 斜杠命令）。 */
+export interface ConnectorPrompt {
+  connectorId: string;
+  connectorSlug: string;
+  connectorName: string;
   name: string;
   title?: string;
   description?: string;
   arguments: { name: string; description?: string; required?: boolean }[];
 }
 
-/** 应用提供的资源（`@` 引用）。 */
-export interface AppResource {
-  appId: string;
-  appSlug: string;
-  appName: string;
+/** 连接器提供的资源（`@` 引用）。 */
+export interface ConnectorResource {
+  connectorId: string;
+  connectorSlug: string;
+  connectorName: string;
   uri: string;
   name: string;
   description?: string;
   mimeType?: string;
 }
 
-/** 列表时不可用的应用：当前用户未连接个人凭据，或连接失败。 */
-export interface AppUnavailable {
-  appId: string;
-  appName: string;
+/** 列表时不可用的连接器：当前用户未连接个人凭据，或连接失败。 */
+export interface ConnectorUnavailable {
+  connectorId: string;
+  connectorName: string;
   reason: "not_connected" | "failed";
 }
 
-export const listAppPrompts = (orgId: string) =>
-  apiFetch<{ prompts: AppPrompt[]; unavailable: AppUnavailable[] }>(`${base(orgId)}/prompts`);
+export const listConnectorPrompts = (orgId: string) =>
+  apiFetch<{ prompts: ConnectorPrompt[]; unavailable: ConnectorUnavailable[] }>(
+    `${base(orgId)}/prompts`,
+  );
 
 /** 按参数渲染提示模板为文本（放进输入框，由用户发送）。 */
-export const renderAppPrompt = (
+export const renderConnectorPrompt = (
   orgId: string,
-  appId: string,
+  connectorId: string,
   name: string,
   args: Record<string, string>,
 ) =>
-  apiFetch<{ text: string }>(`${one(orgId, appId)}/prompts/${encodeURIComponent(name)}`, {
+  apiFetch<{ text: string }>(`${one(orgId, connectorId)}/prompts/${encodeURIComponent(name)}`, {
     method: "POST",
     body: JSON.stringify({ arguments: args }),
   });
 
-export const listAppResources = (orgId: string) =>
-  apiFetch<{ resources: AppResource[]; unavailable: AppUnavailable[] }>(`${base(orgId)}/resources`);
+export const listConnectorResources = (orgId: string) =>
+  apiFetch<{ resources: ConnectorResource[]; unavailable: ConnectorUnavailable[] }>(
+    `${base(orgId)}/resources`,
+  );
