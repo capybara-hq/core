@@ -1,5 +1,8 @@
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelUsage } from "@capybara-hq/plugin-sdk";
+import type { ContentBlock, ModelUsage } from "@capybara-hq/plugin-sdk";
 import {
   createDualReplicaHarness,
   type Harness,
@@ -23,25 +26,34 @@ import {
 } from "../../src/evals/runs.service.js";
 import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
+import {
+  INFLIGHT_PREFIX,
+  JUDGE_GATE_TOKENS,
+  RELEASE_FILE,
+} from "../fixtures/plugins/judge-gate/index.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M6 第一段验收（双副本）：两个独立进程的内核副本（api / worker）共享 PG / Redis，加载 model-fake
- * （fake-1、fake-2）与 todo；全部操作经 HTTP（仅「删除原对话」没有 HTTP 接口，直接删库，见第 3 步）。
+ * （fake-1、fake-2）、todo 与测试用评委模型 judge-gate（经共享目录跨进程控制：请求在途写标记、等测试放行，
+ * 回复合法的评委结论）；全部操作经 HTTP（仅「删除原对话」没有 HTTP 接口，直接删库，见第 3 步）。
  *
  * 1. 共享 agent（负责人是普通成员）对话两轮，都调 `todo__write`：第一轮按 agent 的 toolPolicies 请求审批，
  *    发起人在另一个副本上按 `session` 批准；第二轮同一对话已有会话授权，不再审批。
  * 2. 轨迹：负责人（整段）与管理员（运行窗口 `limit=1`）能看，发起对话的普通成员 404；审计两条 `trajectory.viewed`。
  * 3. 建评测集、抽样 2 个用例；删除原对话后用例仍在、详情可读。
- * 4. 用途 `eval` 映射到 fake-1；估算（上限字段）；单步模式 + 评委、候选换 fake-2；评委进行中 SIGKILL 执行它的副本，
- *    存活副本接手（只补评委），运行 `completed`，评委状态无 pending。
+ * 4. 用途 `eval` 映射到 judge-gate；估算（上限字段）；单步模式 + 评委、候选换 fake-2；两个评委请求都停在闸门上时
+ *    SIGKILL 其中一个所在的副本，再放行；存活副本接手（只补评委），运行 `completed`，`judgePassRate` 0.5，计费精确。
  * 5. 整轮模式、tokenCap 1 → `capped`；评测对话以 `run_aborted {eval_stopped, capped}` 收尾，普通接口 404。
  * 6. 标注一条结果 pass → `humanPassRate` 为 1。
  */
 
 const TODO = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
+const JUDGE_GATE = fileURLToPath(
+  new URL("../fixtures/plugins/judge-gate/index.ts", import.meta.url),
+);
 
 type Json = Record<string, unknown>;
 type Res = { status: number; json: Json };
@@ -55,8 +67,7 @@ const todos = (...names: string[]) => ({
 });
 const TURN1 = todos("Plan", "Build");
 const TURN2 = todos("Ship");
-/** 评分标准写长：评委（model-fake 回显）的回复被截到 judgeMaxOutputTokens，每次评委请求流式约 2 秒以上。 */
-const RUBRIC = `Prefer replies that keep the same tool calls. ${"Be strict and concise. ".repeat(250)}`;
+const RUBRIC = "Prefer replies that keep the same tool calls.";
 
 describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回放、杀副本、标注）", () => {
   let pgc: TestContainer;
@@ -65,6 +76,13 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
   let raw: ReturnType<typeof createDb>;
   let db: KernelDb;
   let redis: Redis;
+  /** judge-gate 的共享目录：在途标记 `inflight-<pid>-<uuid>` 与放行文件 `release`。 */
+  let gateDir: string;
+  /** 已经到达过评委模型的请求各自来自哪个进程（标记文件只增不删）。 */
+  const inflightPids = async () =>
+    (await readdir(gateDir))
+      .filter((f) => f.startsWith(INFLIGHT_PREFIX))
+      .map((f) => Number(f.slice(INFLIGHT_PREFIX.length).split("-")[0]));
   /** 被杀之后所有请求只发往存活副本。 */
   let dead: 0 | 1 | undefined;
   const jars: Record<User, Map<string, string>> = {
@@ -103,11 +121,15 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
     redis = new Redis(rdc.url);
     await redis.flushdb();
+    gateDir = await mkdtemp(join(tmpdir(), "cap-m6-judge-"));
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, TODO],
+      plugins: [MODEL_FAKE, TODO, JUDGE_GATE],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: { "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] } },
+      pluginConfig: {
+        "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] },
+        "judge-gate": { dir: gateDir },
+      },
       config: {
         auth: { cookieSecure: false },
         // 短锁期与 stalled 检测间隔：被杀副本持有的评测任务约 1.5 秒后由存活副本接手
@@ -136,6 +158,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     await raw?.destroy();
     redis?.disconnect();
     await Promise.all([pgc?.stop(), rdc?.stop()]);
+    if (gateDir) await rm(gateDir, { recursive: true, force: true });
   }, 120_000);
 
   it("两轮对话 → 轨迹 → 评测集 → 单步回放杀副本 → 整轮越限 → 标注", async () => {
@@ -288,9 +311,9 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     expect(oneCase.status, JSON.stringify(oneCase.json)).toBe(200);
     expect((oneCase.json.trajectory as unknown[]).length).toBeGreaterThanOrEqual(1);
 
-    // ---- 4. 用途 eval → fake-1；单步 + 评委，候选 fake-2；评委进行中杀副本 ----
+    // ---- 4. 用途 eval → judge-gate/judge-1；单步 + 评委，候选 fake-2；评委卡在闸门时杀副本 ----
     const purpose = await at("admin", 0, "PUT", `${base}/model-purposes/eval`, {
-      target: { model: { provider: "model-fake", model: "fake-1" } },
+      target: { model: { provider: "judge-gate", model: "judge-1" } },
     });
     expect(purpose.status, JSON.stringify(purpose.json)).toBe(200);
     const stepBody = {
@@ -310,25 +333,40 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     expect(started.status, JSON.stringify(started.json)).toBe(201);
     const stepRun = (started.json.run as EvalRunView).id;
 
-    // 等一条结果候选已写 done、评委还在流式（judge_status pending），找出执行该用例的副本并杀掉
-    const judging = await waitFor(
-      () =>
-        db
-          .selectFrom("eval_results")
-          .select(["id", "case_id", "claimed_by", "candidate"])
-          .where("run_id", "=", stepRun)
-          .where("status", "=", "done")
-          .where("judge_status", "=", "pending")
-          .executeTakeFirst(),
+    // 两个用例并发（orgConcurrency 缺省 2），各自写完第一步的候选（done）后，评委请求停在闸门上：
+    // 等到两个评委请求都在途（标记文件带发起进程的 pid），此时两条结果都是 done + 评委 pending，且不会再变
+    const held = await waitFor(
+      async () => {
+        const pids = await inflightPids();
+        return pids.length >= 2 ? pids : null;
+      },
       60_000,
-      "a judge in flight",
+      "two judge requests held at the gate",
     );
-    const jobKey = `bull:${EVAL_QUEUE_NAME}:${evalJobId(stepRun, judging.case_id)}`;
-    const processedBy = await redis.hget(jobKey, "pb");
-    const victim = h.replicas.find((r) => processedBy?.endsWith(`-${r.pid}`));
-    expect(victim, `processedBy=${processedBy}`).toBeDefined();
+    expect(held).toHaveLength(2);
+    const pending = await db
+      .selectFrom("eval_results")
+      .select(["id", "case_id", "claimed_by", "candidate"])
+      .where("run_id", "=", stepRun)
+      .where("status", "=", "done")
+      .where("judge_status", "=", "pending")
+      .execute();
+    expect(pending).toHaveLength(2);
+    // 杀掉第一个在途评委所在的副本；它手里的用例（按任务的 processedBy）就是要由存活副本接手补评委的
+    const victim = h.replicas.find((r) => r.pid === held[0]);
+    expect(victim, `held=${held}`).toBeDefined();
     dead = (victim as { index: 0 | 1 }).index;
+    const victimPid = (victim as { pid: number }).pid;
+    const survivorPid = h.replicas[dead === 0 ? 1 : 0].pid;
+    const onVictim: typeof pending = [];
+    for (const p of pending) {
+      const pb = await redis.hget(`bull:${EVAL_QUEUE_NAME}:${evalJobId(stepRun, p.case_id)}`, "pb");
+      if (pb?.endsWith(`-${victimPid}`)) onVictim.push(p);
+    }
+    expect(onVictim.length).toBe(held.filter((p) => p === victimPid).length);
     await h.kill(dead);
+    // 杀完才放行：存活副本上卡住的评委、以及接手后补发的评委都直接得到结论
+    await writeFile(join(gateDir, RELEASE_FILE), "");
 
     const stepView = await waitFor(
       async () => {
@@ -351,46 +389,66 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     const stepResults = (stepRes.json as { results: EvalResultView[] }).results;
     expect(stepResults).toHaveLength(4);
     expect(stepResults.every((r) => r.status === "done")).toBe(true);
-    // 被杀时在途的评委由接手的副本补上：没有 pending，全部给了评委结论或评委错误
-    expect(
-      stepResults.map((r) => r.judgeStatus).filter((s) => s !== "done" && s !== "error"),
-    ).toEqual([]);
-    const leftover = stepResults.find((r) => r.id === judging.id) as EvalResultView;
-    expect(leftover.judge).not.toBeNull();
-    // 存活副本接手（任务完成即删除，removeOnComplete）：评委那条结果被重新认领（新认领号）后补评，候选没有重做
-    expect(await redis.exists(jobKey)).toBe(0);
-    const reclaimed = await db
-      .selectFrom("eval_results")
-      .select("claimed_by")
-      .where("id", "=", judging.id)
-      .executeTakeFirstOrThrow();
-    expect(reclaimed.claimed_by).not.toBeNull();
-    expect(reclaimed.claimed_by).not.toBe(judging.claimed_by);
-    expect(leftover.candidate).toEqual(judging.candidate);
-    // model-fake 只会回显，评委给不出合法结论：每条都记 unparseable，但请求照样发出并计费
+    // 全部评委都给出了结论（没有 pending / error）
+    expect(stepResults.map((r) => r.judgeStatus)).toEqual(["done", "done", "done", "done"]);
+    // 被杀副本手里的结果：存活副本重新认领（新认领号）后只补评委，候选没有重做
+    for (const p of onVictim) {
+      const r = stepResults.find((x) => x.id === p.id) as EvalResultView;
+      expect(r.candidate).toEqual(p.candidate);
+      const row = await db
+        .selectFrom("eval_results")
+        .select("claimed_by")
+        .where("id", "=", p.id)
+        .executeTakeFirstOrThrow();
+      expect(row.claimed_by).not.toBeNull();
+      expect(row.claimed_by).not.toBe(p.claimed_by);
+    }
+    // 真实的评委结论：评委对工具调用那一步判 pass / 4，对文本那一步判 fail / 2
+    const isToolStep = (r: EvalResultView) =>
+      (r.candidate as { content: ContentBlock[] }).content.some((b) => b.type === "tool_call");
+    expect(stepResults.filter(isToolStep)).toHaveLength(2);
     for (const r of stepResults) {
-      expect(r.judge).toMatchObject({
-        error: "unparseable",
-        provider: "model-fake",
-        model: "fake-1",
-      });
+      expect(r.judge).toMatchObject(
+        isToolStep(r)
+          ? {
+              verdict: "pass",
+              score: 4,
+              reason: "Same tool call.",
+              provider: "judge-gate",
+              model: "judge-1",
+            }
+          : {
+              verdict: "fail",
+              score: 2,
+              reason: "Text reply.",
+              provider: "judge-gate",
+              model: "judge-1",
+            },
+      );
       expect(r.candidate).toMatchObject({ provider: "model-fake", model: "fake-2" });
       expect(r.diff).toMatchObject({ toolCallsMatch: true, textSimilarity: 1 });
     }
+    // 评委请求：存活副本发了 4 次（自己卡住的、接手补发的、两个用例的第二步）；被杀副本上卡住的那几次丢失
+    const pids = await inflightPids();
+    expect(pids.filter((p) => p === survivorPid)).toHaveLength(4);
+    expect(pids.filter((p) => p === victimPid)).toHaveLength(onVictim.length);
+    expect(pids).toHaveLength(4 + onVictim.length);
+    // 计费恰好 = 4 次候选 + 4 次评委。被 SIGKILL 的进程里在途的评委请求永远不会计费：进程死了，没有机会
+    // 按估算记账（T6 的估算计费只覆盖中止 / 出错），这是进程级崩溃固有的代价（C7「在途可超出」的反面），
+    // 补评委那一次照常计费。闸门保证被杀时在途的只有评委请求，所以这里能断言精确值。
     const candidateTokens = stepResults.reduce(
       (n, r) => n + usageTokens((r.candidate as { usage: ModelUsage }).usage),
       0,
     );
-    // 评委用量另计（长评分标准 → 每次数千 token）
-    expect(stepView.tokensUsed).toBeGreaterThan(candidateTokens + 4 * 1000);
+    expect(stepView.tokensUsed).toBe(candidateTokens + 4 * JUDGE_GATE_TOKENS);
     expect(stepView.summary).toMatchObject({
       done: 4,
       errors: 0,
       skipped: 0,
       toolCallsMatchRate: 1,
       meanTextSimilarity: 1,
-      judgePassRate: null,
-      judgeErrors: 4,
+      judgePassRate: 0.5,
+      judgeErrors: 0,
       humanPassRate: null,
       labeled: 0,
     });
