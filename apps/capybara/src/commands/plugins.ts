@@ -152,6 +152,24 @@ export async function runPluginsReview(
       }
       if (out.length === 0) out.push("No plugins await permission approval.");
       else out.push("", "Approve with: capybara plugins approve <name>");
+      // 部署配置问题（C10）：不合法的插件内核不加载（待配置），配好后不重启即加载
+      const configLines: string[] = [];
+      // 内置插件是可选的（没配就待配置，后台显示「待配置」），这里只列配置声明的插件
+      for (const p of cli.inspected) {
+        const issues = cli.configIssues.get(p.manifest.name);
+        if (!issues || p.source === "builtin") continue;
+        configLines.push(
+          `${p.manifest.name} ${p.manifest.version}: not loaded until its deployment config is fixed:`,
+          ...issues.map((i) => `  ! ${i.path || "<root>"}: ${i.message}`),
+        );
+      }
+      if (configLines.length > 0) {
+        out.push(
+          "",
+          ...configLines,
+          "Set it in the admin console (Plugins → config) or the startup config; running replicas load it without a restart.",
+        );
+      }
       if (cli.config.pluginPermissions.autoApprove) {
         out.push(
           "Note: pluginPermissions.autoApprove is on; the kernel approves plugin permissions automatically.",

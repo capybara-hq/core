@@ -275,7 +275,16 @@ export type KernelPluginContext = PluginContext & {
 };
 
 /**
+ * 插件实例的部署配置（已校验）：`ctx.config` 是读它的 getter。hot 字段改动时宿主替换 `value`（C10），
+ * 插件下次读 `ctx.config` 就是新值；非 hot 改动重新加载实例（新 ctx）。
+ */
+export class LiveConfig {
+  constructor(public value: unknown) {}
+}
+
+/**
  * 为单个插件按权限清单构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。
+ * `deploymentConfig` 可以是 {@link LiveConfig}（实例共用、可就地替换），否则按固定值包一层。
  * - 自动授予：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`；
  * - `secrets` 仅当 `permissions.secrets`，`storage` 仅当 `permissions.storage`；`http.route` 只允许 `permissions.http` 声明的 method + path；
  *   `tools.register` 只允许 `permissions.tools` 声明的名字；`ui.view` / `ui.action` 只允许 `permissions.ui.views`
@@ -292,6 +301,8 @@ export function createPluginContext(
   capabilityAccess: CapabilityAccess = noProviders(deps),
 ): KernelPluginContext {
   const name = manifest.name;
+  const live =
+    deploymentConfig instanceof LiveConfig ? deploymentConfig : new LiveConfig(deploymentConfig);
   const routes: Route[] = [];
   const provided = new Map<CapabilityRef, unknown>();
   const registeredTools: RegisteredTool[] = [];
@@ -589,7 +600,10 @@ export function createPluginContext(
       });
     },
     signal: lifecycle.signal,
-    config: deploymentConfig,
+    // getter：hot 字段改动就地替换（C10），插件用时读到新值
+    get config(): unknown {
+      return live.value;
+    },
     log: {
       info: (msg, fields) => deps.log.info(msg, tag(fields)),
       warn: (msg, fields) => deps.log.warn(msg, tag(fields)),

@@ -109,7 +109,10 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 
 ## 两级配置
 
-- **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON，或逐字段 `CAPYBARA_PLUGIN_CONFIG__<插件名大写、- 换 _>__<字段>`，如 `CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE=3` 对应 `example-counter` 的 `poolSize`）。标了 `secret` 的部署级字段，其值校验通过后自动加入日志打码集合（嵌套的数组 / 对象展开为其中所有标量；数字转成字符串后打码，布尔不打码；短于 4 个字符的值不打码）。打码只是兜底，**不要主动把密钥写进日志**。内核启动时按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
+- **部署级**（`config.deployment`）：运维在内核配置的 `pluginConfig.<插件名>` 里给（环境变量 `CAPYBARA_PLUGIN_CONFIG` 传 JSON，或逐字段 `CAPYBARA_PLUGIN_CONFIG__<插件名大写、- 换 _>__<字段>`，如 `CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE=3` 对应 `example-counter` 的 `poolSize`）。标了 `secret` 的部署级字段，其值校验通过后自动加入日志打码集合（嵌套的数组 / 对象展开为其中所有标量；数字转成字符串后打码，布尔不打码；短于 4 个字符的值不打码）。打码只是兜底，**不要主动把密钥写进日志**。内核按 schema 校验，`ctx.config` 是校验后的值；类型是 `unknown`，在 `setup` 里用同一个 schema `parse` 一次拿到类型。
+  - **后台也能配（D8 / C10）**：企业管理员在后台（`GET / PUT /api/v1/admin/plugins/<name>/config`，`PUT` 体为 `{ values: { "<字段点路径>": 值 | null } }`，`null` 清除、缺省不变）填的值存 PG `plugin_deployment_configs`，`secret()` 字段各自加密存 `capybara.secrets`（namespace `kernel`、org `_deployment`、键 `plugin-deployment-config:<插件>:<点路径>`），响应只给「已设置」，审计 `plugin.deployment_config_updated` 只记路径。优先级：**环境变量 > 文件 / Nacos > PG > schema 默认值**，按字段合并；启动配置里有的字段在后台只读并显示来源（`env` / `file` / `nacos`），`PUT` 它返回 409 `plugin.config_readonly`。内置、配置声明与安装记录的插件都一样。
+  - **不合法 = 待配置，不是启动失败**：部署配置缺必填字段或不合法时插件不加载（副本状态 `pending / config`，后台 `pending_config`），内核照常启动；配好（后台保存或改启动配置后重启）后下一次 reconcile 不重启即加载。依赖它提供的能力的插件随之待定（`dependency`），它加载后一并加载。
+  - **`hot` 字段与重新加载**：字段标 `.meta({ hot: true })` 表示插件能在运行中接受新值。保存后各副本经 bus（`kernel.plugin-deployment-config`）重读并校验：只改了 hot 字段时**就地替换**——`ctx.config` 是 getter，**在用时读**（如每次请求时读 `(ctx.config as Cfg).timeoutMs`）才能拿到新值，别在 setup 里把 hot 字段拷进闭包；改了非 hot 字段时内核**重新加载实例**（新的 setup，先新后旧、排空在途调用，见上面「撤销与重新加载」）；新值不合法时保持当前值并告警。丢了消息由周期 reconcile 兜底重读。
 - **组织级**（`config.org`）：每个组织各自的启用状态与配置，由组织 admin 通过内核 API（`GET /api/v1/orgs/:orgId/plugins`、`PUT /api/v1/orgs/:orgId/plugins/:plugin`）设置，内核按该 schema 校验并存储，规则见下一节。
 - 插件自己运行中产生的密钥（如 OAuth 换来的 token）走 `ctx.secrets`（加密存储），不要放进普通配置。
 - **渠道连接配置**（`channel@1` 的 `connectionSchema`）是第三种：一个组织可以建多个渠道连接，每个连接一份（bot 凭据等），由组织管理员在网页「渠道」里填写，密钥字段同样用 `secret()`、加密存储、只回显「已设置」；内核在调用 `verify` / `connect` / `send` 时把校验后的值作为 `config` 传入。
@@ -141,7 +144,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 | `ctx.ui` | 对话页右侧标签 / 顶栏「扩展」里的组织页面 | `view` / `action`（渲染 schema 视图，只能在 `setup` 里注册，`render` 与 `action` 必须响应 `signal`、5 秒超时）、`invalidate`（经 bus 跨副本刷新）、`verifyEmbedToken`（嵌入应用的数据路由先验令牌）。写法、积木、上限与嵌入应用的安全规则见 `skills/writing-plugin-ui`，参考 `plugins/todo`、`plugins/example-board` |
 | `ctx.storage` | 文件、大对象（按组织隔离） | 需清单 `permissions.storage`（`perm-storage`）；每个方法第一个参数是 `orgId`，键落在 `plugins/<插件名>/<orgId>/` 下，别的插件、内核（`kernel/<orgId>/`）互相看不到。浏览器上传用 `presignPut`（返回 `{ method, url, headers, fields? }`，按 `method` 发 PUT 或 POST 表单），下载用 `presignGet`（用户上传的内容只对图片 / PDF 用 `inline`）；组织删除后它的对象由内核定期清掉。没有存储提供方时插件不加载。写存储提供方见 `skills/writing-object-store-providers` |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
-| `ctx.config` / `ctx.log` | 部署配置 / 日志 | 日志里不要打印密钥 |
+| `ctx.config` / `ctx.log` | 部署配置 / 日志 | `ctx.config` 是 getter，hot 字段在用时读；日志里不要打印密钥 |
 
 ### 连接器（`connector@1`）
 

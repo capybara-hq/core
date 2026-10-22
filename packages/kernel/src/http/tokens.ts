@@ -153,3 +153,5 @@ export const PLUGIN_INSTALLS = Symbol("PLUGIN_INSTALLS");
 export const PLUGIN_ADMIN = Symbol("PLUGIN_ADMIN");
 /** 部署级插件的安装 / 启用 / 停用 / 卸载（`PluginAdminOps`）。 */
 export const PLUGIN_ADMIN_OPS = Symbol("PLUGIN_ADMIN_OPS");
+/** 部署级插件配置（`DeploymentPluginConfigService`）。 */
+export const PLUGIN_DEPLOYMENT_CONFIGS = Symbol("PLUGIN_DEPLOYMENT_CONFIGS");

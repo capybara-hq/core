@@ -744,6 +744,14 @@ export interface PluginNameOwnersTable {
   created_at: Generated<Date>;
 }
 
+/** 0032：部署级插件配置的非密钥字段（密钥在 `secrets`，org_id `_deployment`）。 */
+export interface PluginDeploymentConfigsTable {
+  plugin: string;
+  config: ColumnType<Record<string, unknown>, string | undefined, string>;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
 export interface PluginReplicaStatusTable {
   replica_id: string;
   plugin: string;
@@ -809,6 +817,7 @@ export interface KernelDatabase {
   plugin_installs: PluginInstallsTable;
   plugin_replica_status: PluginReplicaStatusTable;
   plugin_name_owners: PluginNameOwnersTable;
+  plugin_deployment_configs: PluginDeploymentConfigsTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

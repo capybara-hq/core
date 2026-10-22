@@ -13,6 +13,7 @@ import {
   createPluginContext,
   type KernelDeps,
   type KernelPluginContext,
+  LiveConfig,
   type RegisteredTool,
   type Route,
 } from "../ctx/create-ctx.js";
@@ -90,8 +91,8 @@ export interface PluginInstanceInit {
   permissions: PermissionSet;
   /** 部署配置摘要（见 `deploymentConfigHash`）。 */
   configHash: string;
-  /** 已按清单 schema 校验的部署配置（含密钥）。 */
-  config: unknown;
+  /** 已按清单 schema 校验的部署配置（含密钥）；与 ctx 共用同一个 {@link LiveConfig}。 */
+  config: LiveConfig;
   /** 模块入口（`file:` URL）：同进程重新加载时用。 */
   entryUrl: string;
   ctx: KernelPluginContext;
@@ -111,8 +112,8 @@ export class PluginInstance {
   readonly generation: number;
   readonly manifest: PluginManifest;
   readonly permissions: PermissionSet;
-  readonly configHash: string;
-  readonly config: unknown;
+  private hash: string;
+  private readonly live: LiveConfig;
   readonly entryUrl: string;
   readonly inflight: InflightTracker;
   private readonly ctx: KernelPluginContext;
@@ -129,12 +130,28 @@ export class PluginInstance {
     this.source = init.source;
     this.generation = init.generation;
     this.permissions = init.permissions;
-    this.configHash = init.configHash;
-    this.config = init.config;
+    this.hash = init.configHash;
+    this.live = init.config;
     this.entryUrl = init.entryUrl;
     this.ctx = init.ctx;
     this.log = init.log;
     this.inflight = new InflightTracker(this.name);
+  }
+
+  /** 此刻的部署配置（hot 改动后是新值）。 */
+  get config(): unknown {
+    return this.live.value;
+  }
+
+  /** 部署配置摘要（见 `deploymentConfigHash`；hot 改动后随之更新）。 */
+  get configHash(): string {
+    return this.hash;
+  }
+
+  /** hot 字段改动：就地替换部署配置（插件下次读 `ctx.config` 拿到新值），不重新 setup（C10）。 */
+  updateConfig(config: unknown, configHash: string): void {
+    this.live.value = config;
+    this.hash = configHash;
   }
 
   /** 提供的能力（撤销后为空）。 */
@@ -349,7 +366,8 @@ export async function setupInstance(
     onCtx?: (ctx: KernelPluginContext | undefined) => void;
   },
 ): Promise<PluginInstance> {
-  const ctx = createPluginContext(deps.kernel, manifest, input.config, deps.capabilityAccess);
+  const live = new LiveConfig(input.config);
+  const ctx = createPluginContext(deps.kernel, manifest, live, deps.capabilityAccess);
   input.onCtx?.(ctx);
   try {
     await manifest.setup(ctx);
@@ -376,7 +394,7 @@ export async function setupInstance(
     generation: deps.nextGeneration(manifest.name),
     permissions: input.permissions,
     configHash: input.configHash,
-    config: input.config,
+    config: live,
     entryUrl: input.entryUrl,
     ctx,
     log: deps.kernel.log,

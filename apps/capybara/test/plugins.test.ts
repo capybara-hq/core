@@ -347,3 +347,28 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
     expect(after.stdout).not.toMatch(/^life\t/m);
   }, 180_000);
 });
+
+describe("capybara plugins review：部署配置问题（C10）", () => {
+  const BADCONFIG = kernelFixture("badconfig");
+
+  it("缺必填字段时列出路径与说明（不含值）；PG 里补上后不再列出", async () => {
+    const r = await run(["plugins", "review"], "", [BADCONFIG]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("badconfig 0.1.0: not loaded until its deployment config is fixed:");
+    expect(r.stdout).toContain("  ! port: expected number");
+    expect(r.stdout).toMatch(/admin console/);
+
+    const raw = createDb(pg.url, 1);
+    try {
+      await kernelDb(raw)
+        .insertInto("plugin_deployment_configs")
+        .values({ plugin: "badconfig", config: JSON.stringify({ port: 8080 }) })
+        .execute();
+    } finally {
+      await raw.destroy();
+    }
+    const after = await run(["plugins", "review"], "", [BADCONFIG]);
+    expect(after.code, after.stderr).toBe(0);
+    expect(after.stdout).not.toContain("badconfig 0.1.0: not loaded");
+  }, 60_000);
+});

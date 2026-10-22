@@ -212,8 +212,9 @@ describe("插件生命周期", () => {
     await ok.stop();
     expect(await waitFor(async () => (await pgKernelConnections()) === 0)).toBe(true);
 
-    const k = await kernel(cfg({ plugins: [fx("badconfig")] }));
-    await expect(k.start()).rejects.toThrow(/invalid deployment config/);
+    // 部署配置不合法不再让启动失败（C10：待配置）；用 setup 抛错的插件
+    const k = await kernel(cfg({ plugins: [fx("throws")] }));
+    await expect(k.start()).rejects.toThrow(/setup failed: boom/);
     expect(await waitFor(async () => (await pgKernelConnections()) === 0)).toBe(true);
   });
 

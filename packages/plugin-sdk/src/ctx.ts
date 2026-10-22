@@ -136,7 +136,11 @@ export interface PluginContext {
    * 插件自己起的长任务（轮询循环、长连接等）据此收尾。
    */
   signal: AbortSignal;
-  /** 部署级配置，已按插件 schema 校验。 */
-  config: unknown;
+  /**
+   * 部署级配置，已按插件 schema 校验（启动配置与企业管理员在后台保存的值合并后）。这是一个 getter：
+   * 标了 `hot`（`.meta({ hot: true })`）的字段改动时内核就地替换，插件**在用时读** `ctx.config` 才能拿到新值，
+   * 不要在 setup 里把 hot 字段拷进闭包；改了非 hot 字段时内核重新加载插件实例（新的 setup）。
+   */
+  readonly config: unknown;
   log: Logger;
 }

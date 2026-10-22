@@ -7,6 +7,7 @@ export {
   ConfigError,
   type ConfigSource,
   loadConfig,
+  loadConfigWithSources,
   resolveConfig,
   selectConfigSource,
 } from "./config/load.js";
@@ -18,6 +19,11 @@ export {
   meta,
   PACKAGES_MAX_BYTES_DEFAULT,
 } from "./config/schema.js";
+export {
+  type ConfigSourceKind,
+  configSourceKind,
+  pluginConfigSources,
+} from "./config/sources.js";
 export { type BusSubscriber, createBus, createBusSubscriber } from "./ctx/bus.js";
 export {
   createPluginContext,
@@ -103,6 +109,15 @@ export {
   PluginBlobs,
 } from "./plugins/blobs.js";
 export { openPluginCli, type PluginCli } from "./plugins/cli.js";
+export {
+  DEPLOYMENT_SECRETS_ORG,
+  type DeploymentConfigField,
+  type DeploymentConfigView,
+  DeploymentPluginConfigService,
+  mergeDeploymentConfig,
+  PLUGIN_DEPLOYMENT_CONFIG_TOPIC,
+  readStoredDeploymentConfig,
+} from "./plugins/deployment-config.js";
 export {
   assertSecretsReachable,
   type InspectedPlugin,

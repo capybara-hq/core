@@ -175,11 +175,22 @@ describe("PluginHost", () => {
     expect(() => h.get("channel@1")).toThrow(/channel@1/);
   });
 
-  it("部署配置不合法：点名插件与字段", async () => {
-    await expect(host({ badconfig: { port: "x" } }).load([fx("badconfig")])).rejects.toThrow(
-      /badconfig.*port/,
-    );
-    await expect(host().load([fx("badconfig")])).rejects.toThrow(/badconfig.*port/);
+  it("部署配置不合法：不加载、待配置（C10，加载照常完成），warn 点名插件与字段、不含值", async () => {
+    for (const cfg of [{ badconfig: { port: "x-secret-ish" } }, {}]) {
+      warned.length = 0;
+      const h = host(cfg);
+      await h.load([fx("badconfig")]);
+      expect(h.current("badconfig")).toBeUndefined();
+      expect(h.declaredPlugins()).toMatchObject([
+        { name: "badconfig", configurable: true, configValid: false },
+      ]);
+      const w = warned.find((x) => x.msg.includes("deployment config is missing or invalid"));
+      expect(w?.fields).toMatchObject({
+        plugin: "badconfig",
+        detail: expect.stringMatching(/^port: /),
+      });
+      expect(JSON.stringify(warned)).not.toContain("x-secret-ish");
+    }
   });
 
   it("secret 不在对象路径叶子上（discriminatedUnion 内）：加载失败，点名插件与路径", async () => {

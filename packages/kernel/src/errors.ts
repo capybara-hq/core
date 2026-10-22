@@ -41,6 +41,7 @@ export const ERROR_CODES = {
   "plugin.unavailable": 503,
   "plugin.no_org_config": 400,
   "plugin.config_invalid": 400,
+  "plugin.config_readonly": 409,
   "plugin.dependency_missing": 409,
   "plugin.has_dependents": 409,
   "plugin.not_enabled": 409,

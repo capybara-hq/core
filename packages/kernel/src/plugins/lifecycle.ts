@@ -1,4 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
+import { PLUGIN_DEPLOYMENT_CONFIG_TOPIC } from "./deployment-config.js";
 import type { PluginInstance } from "./instance.js";
 import { PLUGINS_MIGRATED_TOPIC } from "./migrate-lock.js";
 import type { ReplicaStatusStore } from "./sources.js";
@@ -27,6 +28,13 @@ export interface LifecycleHost {
   converge(): Promise<void>;
   /** 用同一个包重新 setup（配置的非 hot 改动、依赖方联动）。 */
   reload(name: string): Promise<PluginInstance>;
+  /**
+   * 部署配置保存后本副本重读并校验（hot 就地替换、非 hot 重新加载、不合法保持当前值）；
+   * 插件此刻没在本副本生效时返回 `not_loaded`（待配置的由随后的 reconcile 加载）。
+   */
+  applyDeploymentConfig(name: string): Promise<string>;
+  /** 在本副本生效、声明了部署级配置的插件（周期 reconcile 据此补上丢了消息的配置改动）。 */
+  configurablePlugins(): string[];
   /** 作废路由闸门的安装记录名字缓存。 */
   invalidateKnownNames(): void;
   /** 内置与配置声明的插件名。 */
@@ -77,6 +85,24 @@ export class PluginLifecycle {
     });
     await on(PLUGINS_RECONCILE_TOPIC, () => this.trigger("periodic"));
     await on(PLUGINS_MIGRATED_TOPIC, (p) => this.trigger(`migrated:${pluginOf(p)}`));
+    await on(PLUGIN_DEPLOYMENT_CONFIG_TOPIC, (p) => {
+      this.applyConfig(pluginOf(p)).catch((err: unknown) =>
+        this.d.log.error("applying a plugin deployment config change failed", {
+          plugin: pluginOf(p),
+          err,
+        }),
+      );
+    });
+  }
+
+  /**
+   * 部署配置保存后（C10，本副本的 HTTP 请求与 bus 消息都走这里）：生效的插件重读并校验（hot 就地替换、
+   * 非 hot 重新加载）；没在本副本生效的（如待配置）跑一次 reconcile，配置合法了就加载。
+   */
+  async applyConfig(plugin: string): Promise<void> {
+    if (this.stopped) return;
+    const r = await this.d.host.applyDeploymentConfig(plugin);
+    if (r === "not_loaded") await this.reconcile(`config:${plugin}`);
   }
 
   /** 取消订阅；之后的 reconcile 直接返回。进行中的那次由宿主关闭收尾。 */
@@ -131,6 +157,21 @@ export class PluginLifecycle {
       this.d.log.error("plugin reconcile failed; retrying on the next cycle", { reason, err });
     }
     if (this.stopped) return;
+    if (reason === "periodic") {
+      // 丢了 plugin-deployment-config 消息时：周期兜底重读生效插件的部署配置（没变时什么都不做）
+      for (const name of this.d.host.configurablePlugins()) {
+        if (this.stopped) return;
+        try {
+          await this.d.host.applyDeploymentConfig(name);
+        } catch (err) {
+          if (this.stopped) return;
+          this.d.log.error("applying a plugin deployment config change failed", {
+            plugin: name,
+            err,
+          });
+        }
+      }
+    }
     try {
       await this.d.status.heartbeat();
       const keep = [...this.d.host.declared().keys(), ...(await this.d.installedNames())];

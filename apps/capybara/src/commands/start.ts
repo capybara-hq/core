@@ -1,6 +1,8 @@
 import {
+  configSourceKind,
   createKernel,
   type KernelLogger,
+  pluginConfigSources,
   resolveConfig,
   selectConfigSource,
 } from "@capybara-hq/kernel";
@@ -24,12 +26,15 @@ export async function runStart(
   let kernel: Awaited<ReturnType<typeof createKernel>>;
   try {
     const source = selectConfigSource(env);
-    const config = resolveConfig(await source.load(), env);
+    const raw = await source.load();
+    const config = resolveConfig(raw, env);
     kernel = await createKernel(config, {
       source,
       logger: log,
       env,
       builtinPlugins: [...BUILTIN_PLUGINS],
+      // 启动配置里有的插件部署配置字段在后台只读并显示来源（D8）
+      pluginConfigSources: pluginConfigSources(raw, env, configSourceKind(env)),
     });
   } catch (e) {
     log.error("cannot load configuration", { err: e });

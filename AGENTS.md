@@ -52,7 +52,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 ## 规则速记
 
 - 迁移：纯 SQL 文件，命名 `NNNN_<snake_desc>.sql`，建删对象必须带 `IF NOT EXISTS` / `IF EXISTS`；内核 schema 为 `capybara`，插件为 `plugin_<name>`（`-` 换 `_`）。详见 [skills/writing-migrations](skills/writing-migrations/SKILL.md)。
-- 配置：环境变量前缀 `CAPYBARA_`，嵌套用双下划线（`CAPYBARA_DB__URL` -> `db.url`），环境变量优先级最高；来源由 `CAPYBARA_CONFIG_SOURCE`（`file` / `nacos`）选择。详见 [skills/adding-config](skills/adding-config/SKILL.md)。
+- 配置：环境变量前缀 `CAPYBARA_`，嵌套用双下划线（`CAPYBARA_DB__URL` -> `db.url`），环境变量优先级最高；来源由 `CAPYBARA_CONFIG_SOURCE`（`file` / `nacos`）选择。详见 [skills/adding-config](skills/adding-config/SKILL.md)。插件部署配置另可由企业管理员在后台存 PG（优先级 环境变量 > 文件 / Nacos > PG > 默认值，启动配置里有的字段只读；不合法 = 插件待配置，不让内核启动失败），见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)「两级配置」。
 - 国际化：给模型看的文案（提示词、工具描述、模型可见的错误）一律英文；界面文案走 i18n。
 - 界面：页面 = 模板 + design 组件，apps/web 不写样式（无 className / style / .css / 颜色字面量），详见 [skills/writing-web-ui](skills/writing-web-ui/SKILL.md)；规则由 `pnpm check:web-ui` 检查。
 - 插件开发：详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，参考实现 `plugins/example-counter`。插件包 = npm-pack tgz（`pnpm pack-plugin` / `pack-plugins`，单文件 ESM、只有 SDK 与 zod 由宿主提供、动态 import 只许字面量），校验见 `packages/kernel/src/plugins/package.ts`。

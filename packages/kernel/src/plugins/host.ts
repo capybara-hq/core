@@ -14,6 +14,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { core } from "zod";
 import {
+  changedPaths,
   configFields,
   getPath,
   secretValues,
@@ -55,6 +56,7 @@ import {
   setupInstance,
   warnUpgrades,
 } from "./instance.js";
+import { toIssues } from "./org-config.js";
 import {
   blockingKeys,
   computePermissionSet,
@@ -568,6 +570,13 @@ export class PluginHost {
   private readonly onSecrets: ((values: string[]) => void) | undefined;
   private readonly autoApprove: boolean;
   private readonly status: ReplicaStatusStore | undefined;
+  private readonly storedConfig:
+    | ((plugin: string, fileValue: unknown, schema: core.$ZodType | undefined) => Promise<unknown>)
+    | undefined;
+  /** 内置 / 配置声明插件的部署配置最近一次判定是否合法（后台列表用；没判定过时按启动配置校验）。 */
+  private readonly configValidity = new Map<string, boolean>();
+  /** 已告警过的「部署配置不合法」（插件名 → 说明；每个周期都会重新判定，同一说明只告警一次）。 */
+  private readonly configWarned = new Map<string, string>();
 
   /**
    * @param opts.resolveFrom 解析裸包名的目录，默认 `process.cwd()`；相对路径按构造时的 cwd 转为绝对路径。
@@ -597,8 +606,18 @@ export class PluginHost {
        * 不在本副本生效时它们的路由返回 503，完全未知的名字 404。缓存 {@link KNOWN_NAMES_TTL_MS}。
        */
       installedNames?: () => Promise<string[]>;
+      /**
+       * 插件的生效部署配置（C10）：启动配置（`fileValue`，文件 / Nacos 与环境变量合并后）补上 PG 里保存的字段
+       * （`DeploymentPluginConfigService.effective`），尚未校验。没有时只用启动配置。
+       */
+      deploymentConfig?: (
+        plugin: string,
+        fileValue: unknown,
+        schema: core.$ZodType | undefined,
+      ) => Promise<unknown>;
     } = {},
   ) {
+    this.storedConfig = opts.deploymentConfig;
     this.drainMs = opts.drainMs ?? (() => DEFAULT_DRAIN_MS);
     this.disposeTimeoutMs = opts.disposeTimeoutMs ?? (() => DEFAULT_DISPOSE_TIMEOUT_MS);
     this.reloadSetupTimeoutMs =
@@ -619,7 +638,10 @@ export class PluginHost {
    * 顺序（C14 / C15 / C13）：
    * 1. 内置插件：预先批准（不比对、不写权限快照）、始终启用；部署配置不合法时不加载，记 `pending`（reason config），
    *    内核照常启动。与配置列表重名时以内置为准并告警。
-   * 2. 配置声明的插件：与此前相同（待批准不加载；配置不合法、迁移或 setup 失败时抛错，内核启动失败）。
+   * 2. 配置声明的插件：待批准不加载；部署配置不合法时与内置插件一样记 `pending`（reason config，C10），
+   *    内核照常启动；迁移或 setup 失败时抛错，内核启动失败。
+   *    `requires` 的能力因提供方待配置等没加载成时，记待定（dependency），提供方加载后由 converge 一并加载。
+   * 部署配置 = 启动配置（`pluginConfig`）补上 PG 里保存的字段（构造参数 `deploymentConfig`，C10）。
    *    1、2 一起解析依赖与排序；配置声明的插件 `requires` 的能力只能由安装记录提供时，先挑出来，等第 3 步之后
    *    与已加载的插件一起解析再加载（第 4 步；仍不满足时与此前一样抛错）。
    * 3. 安装记录（`plan.installs`）：同步到本地、导入、核对静态清单（名字与 `capybara.manifest` 都须一致，
@@ -687,7 +709,10 @@ export class PluginHost {
         entryUrl: urls.get(manifest.name) as string,
         migrationsDir: migrationsDirOf(manifest, dirs.get(manifest.name) as string),
         set: sets.get(manifest.name) as PermissionSet,
-        decision: decisions.get(manifest.name) as ApprovalDecision,
+        decision: this.blockedByUnloaded(
+          manifest,
+          decisions.get(manifest.name) as ApprovalDecision,
+        ),
         fatal: true,
       });
     }
@@ -718,6 +743,53 @@ export class PluginHost {
         keys: orphans,
       });
     }
+  }
+
+  /**
+   * 启动时按拓扑序加载：权限闸门放行、但 `requires` 的能力此刻没有生效的提供方（提供方待配置等没加载成）→
+   * 改为待定（dependency，blockedBy 点名待定的提供方），提供方加载后由 {@link converge} 一并加载。
+   */
+  private blockedByUnloaded(
+    manifest: PluginManifest,
+    decision: ApprovalDecision,
+  ): ApprovalDecision {
+    if (decision.action === "pending") return decision;
+    const provided = new Set(this.registry.all().flatMap((i) => [...i.provided.keys()]));
+    const missing = (manifest.requires ?? []).filter((c) => !provided.has(c));
+    if (missing.length === 0) return decision;
+    return {
+      plugin: manifest.name,
+      action: "pending",
+      pending: {
+        plugin: manifest.name,
+        version: manifest.version,
+        added: decision.added,
+        removed: decision.removed,
+        reason: "dependency",
+        blockedBy: missing.map((capability) => ({
+          capability,
+          providers: [...this.pendingActivations.values()]
+            .filter((p) => p.manifest.provides.includes(capability))
+            .map((p) => p.manifest.name),
+        })),
+      },
+    };
+  }
+
+  /**
+   * 插件此刻的部署配置（未校验）：启动配置补上 PG 里保存的字段（C10，见构造参数 `deploymentConfig`）。
+   */
+  private async rawConfigOf(name: string, schema: core.$ZodType | undefined): Promise<unknown> {
+    const fileValue = this.pluginConfig[name];
+    if (!this.storedConfig) return fileValue ?? {};
+    return this.storedConfig(name, fileValue, schema);
+  }
+
+  /** 把一份已校验部署配置里的密钥值交给 onSecrets（日志打码）。 */
+  private reportSecrets(schema: core.$ZodType | undefined, config: unknown): void {
+    if (!schema || !this.onSecrets) return;
+    const values = secretValues(schema, config);
+    if (values.length > 0) this.onSecrets(values);
   }
 
   /**
@@ -1118,7 +1190,7 @@ export class PluginHost {
 
   /**
    * 加载一个插件：权限闸门结论、部署配置、迁移、setup、登记。`fatal` 时（内置 / 配置声明）出错直接抛；
-   * 否则（安装记录）记 failed 后返回。内置与安装记录的部署配置不合法时只记 pending（reason config），不抛。
+   * 否则（安装记录）记 failed 后返回。部署配置不合法时（任何来源）只记 pending（reason config），不抛（C10）。
    * 已有同名实例时（升级）：新实例登记后旧实例才撤销（后台排空在途调用）；新实例没加载成时旧实例保持不变。
    * 返回新登记的实例（没有加载时返回 undefined）。
    */
@@ -1130,22 +1202,39 @@ export class PluginHost {
     const { manifest, decision } = a;
     const name = manifest.name;
     const base = { plugin: name, version: manifest.version, sha256: a.sha256, source: a.source };
-    const raw = this.pluginConfig[name] ?? {};
-    let config: unknown = raw;
     const schema = manifest.config?.deployment;
+    // 安装记录每次 converge 都按 PG 重新判定，不进 pendingActivations
+    const retryLater = () => {
+      if (a.source !== "install") this.pendingActivations.set(name, a);
+    };
+    let raw: unknown;
+    try {
+      raw = await this.rawConfigOf(name, schema);
+    } catch (e) {
+      if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
+      // 读不到 PG 里保存的部署配置：按待配置处理，下次 reconcile 再试
+      this.deps.log.error("cannot read the stored deployment config of plugin", {
+        plugin: name,
+        err: e,
+      });
+      retryLater();
+      await this.writeStatus({
+        ...base,
+        state: "pending",
+        reason: "config",
+        detail: "cannot read the stored deployment config",
+      });
+      return undefined;
+    }
+    let config: unknown = raw;
+    const parsed = schema?.safeParse(raw);
+    if (a.source !== "install") this.configValidity.set(name, parsed?.success ?? true);
     if (decision.action === "pending") {
       // 待批准：不校验配置、不迁移、不 setup；配置合法时仍登记其中的密钥，避免日志泄露
-      if (schema && this.onSecrets) {
-        const r = schema.safeParse(raw);
-        if (r.success) {
-          const values = secretValues(schema, r.data);
-          if (values.length > 0) this.onSecrets(values);
-        }
-      }
+      if (parsed?.success) this.reportSecrets(schema, parsed.data);
       const before = this.pendingPlugins.find((p) => p.plugin === name);
       this.notePending(decision.pending);
-      // 安装记录每次 converge 都按 PG 重新判定，不进 pendingActivations
-      if (a.source !== "install") this.pendingActivations.set(name, a);
+      retryLater();
       // 每个周期都会重新判定：同一版本、同一原因只告警一次
       if (
         before?.version !== decision.pending.version ||
@@ -1159,35 +1248,12 @@ export class PluginHost {
       return undefined;
     }
     this.dropPending(name);
-    if (schema) {
-      const r = schema.safeParse(raw);
-      if (!r.success) {
-        const detail = r.error.issues
-          .map((i) => `${i.path.map(String).join(".") || "<root>"}: ${i.message}`)
-          .join("; ");
-        if (a.source === "config") {
-          throw new Error(`plugin ${name}: invalid deployment config: ${detail}`);
-        }
-        // 内置 / 安装记录：待配置（C10），内核照常启动
-        this.deps.log.warn("plugin not loaded: its deployment config is missing or invalid", {
-          plugin: name,
-          source: a.source,
-          detail,
-        });
-        await this.writeStatus({ ...base, state: "pending", reason: "config", detail });
-        return undefined;
-      }
-      config = r.data;
-      if (this.onSecrets) {
-        const values = secretValues(schema, config);
-        if (values.length > 0) this.onSecrets(values);
-      }
-    }
     const failSoft = async (reason: InstallFailureReason, e: unknown): Promise<undefined> => {
       this.logFailure(name, a.sha256, reason, e, { version: manifest.version });
       await this.writeStatus({ ...base, state: "failed", reason, detail: errMsg(e) });
       return undefined;
     };
+    // 权限放行在部署配置之前记下（autoApprove 的快照不因待配置而缺失，后台不会把待配置显示成待批准）
     if (decision.changed) {
       if (decision.autoApprove) {
         await approvals.approve(name, manifest.version, a.set, { source: "auto" });
@@ -1209,6 +1275,28 @@ export class PluginHost {
           });
         }
       }
+    }
+    if (schema && parsed) {
+      if (!parsed.success) {
+        // 只列路径与按 issue 类型生成的说明（不用 zod 的 message：自定义消息可能拼入输入值）
+        const detail = toIssues(parsed.error)
+          .map((i) => `${i.path || "<root>"}: ${i.message}`)
+          .join("; ");
+        // 待配置（C10）：内置、配置声明与安装记录都一样，内核照常启动；配置改好后下一次 reconcile 加载
+        if (this.configWarned.get(name) !== detail) {
+          this.configWarned.set(name, detail);
+          this.deps.log.warn(
+            "plugin not loaded: its deployment config is missing or invalid (set it in the admin console or the startup config; it loads without a restart)",
+            { plugin: name, source: a.source, detail },
+          );
+        }
+        retryLater();
+        await this.writeStatus({ ...base, state: "pending", reason: "config", detail });
+        return undefined;
+      }
+      this.configWarned.delete(name);
+      config = parsed.data;
+      this.reportSecrets(schema, config);
     }
     if (this.closed) throw new Error(CLOSED_DURING_LOAD);
     // 安装记录：一个副本持锁迁移（C16），别的副本正在迁移时待定、旧实例照常；内置 / 配置声明：按 schema 锁直接迁移
@@ -1314,7 +1402,9 @@ export class PluginHost {
         version: d.manifest.version,
         permissions: d.set,
         configurable: schema !== undefined,
-        configValid: schema ? schema.safeParse(this.pluginConfig[name] ?? {}).success : true,
+        configValid:
+          this.configValidity.get(name) ??
+          (schema ? schema.safeParse(this.pluginConfig[name] ?? {}).success : true),
       };
     });
   }
@@ -1380,7 +1470,7 @@ export class PluginHost {
           );
         } catch (e) {
           if (this.closed) throw e;
-          // 配置声明的插件部署配置不合法时 activate 抛错（启动时内核失败）；运行中只记 failed
+          // 配置声明的插件迁移 / setup 出错时 activate 抛错（启动时内核失败）；运行中只记 failed
           this.deps.log.error("approved plugin not loaded", { plugin: name, err: e });
           await this.writeStatus({
             plugin: name,
@@ -1396,9 +1486,9 @@ export class PluginHost {
           activated.push(name);
           progress = true;
           this.deps.log.info("approved plugin loaded", { plugin: name });
-        } else if (!this.pendingActivations.has(name)) {
-          // 加载失败（迁移、setup、部署配置）：留着，下一次 converge 重试
-          this.pendingActivations.set(name, a);
+        } else {
+          // 加载失败（迁移、setup）或待配置：留着，下一次 converge 重试（同一次不再试）
+          if (!this.pendingActivations.has(name)) this.pendingActivations.set(name, a);
           failedNow.add(name);
         }
       }
@@ -1429,10 +1519,12 @@ export class PluginHost {
       ...loaded.map((i) => [i.name, i.permissions] as const),
       [name, a.set] as const,
     ]);
+    // 内置插件预先批准（C14；待配置的内置插件也在这里重试）
+    const preApproved = a.source === "builtin" ? [...manifests, a.manifest] : manifests;
     const decision = planApprovals(
       [...manifests, a.manifest],
       sets,
-      withPreApproved(snapshots, manifests, sets),
+      withPreApproved(snapshots, preApproved, sets),
       { autoApprove: this.autoApprove },
     ).find((d) => d.plugin === name) as ApprovalDecision;
     if (decision.action === "pending") return decision;
@@ -1646,6 +1738,122 @@ export class PluginHost {
    */
   deploymentConfig(plugin: string): unknown {
     return this.registry.current(plugin)?.config;
+  }
+
+  /**
+   * 本副本拿得到的插件清单里的部署级 schema（生效实例 → 内置 / 配置声明 → 安装记录准备好的候选）；
+   * 都没有返回 undefined（如未加载的安装记录：调用方改用包内静态清单）。
+   */
+  deploymentSchema(
+    plugin: string,
+  ): { version: string; schema: core.$ZodType | undefined } | undefined {
+    const m =
+      this.registry.current(plugin)?.manifest ??
+      this.declaredInfo.get(plugin)?.manifest ??
+      this.prepared.get(plugin)?.manifest;
+    return m && { version: m.version, schema: m.config?.deployment };
+  }
+
+  /** 在本副本生效、声明了部署级配置的插件。 */
+  configurablePlugins(): string[] {
+    return this.registry
+      .all()
+      .filter((i) => i.manifest.config?.deployment !== undefined)
+      .map((i) => i.name);
+  }
+
+  /**
+   * 部署配置保存后（`kernel.plugin-deployment-config`）本副本重读并校验（C10；与 unload / reload 串行）：
+   * - 插件没在本副本生效 → `not_loaded`（内置 / 配置声明的刷新后台的合法性判定；待配置的由 reconcile 加载）；
+   * - 不合法 → `invalid`：保持当前值，告警；
+   * - 没变 → `unchanged`；只改了 hot 字段 → `hot`：就地替换，插件经 `ctx.config` 读到新值，不重新 setup；
+   * - 改了非 hot 字段 → `reload`：用新配置重新加载实例（先新后旧，排空在途调用），依赖方连锁；
+   *   重新加载失败旧实例保留（`reload_failed`，记 error）。
+   */
+  applyDeploymentConfig(
+    plugin: string,
+  ): Promise<"not_loaded" | "invalid" | "unchanged" | "hot" | "reload" | "reload_failed"> {
+    return this.serial(async () => {
+      const inst = this.registry.current(plugin);
+      const spec = this.specs.get(plugin);
+      if (!inst || !spec) {
+        const declared = this.declaredInfo.get(plugin);
+        const schema = declared?.manifest.config?.deployment;
+        if (schema) {
+          try {
+            const raw = await this.rawConfigOf(plugin, schema);
+            this.configValidity.set(plugin, schema.safeParse(raw).success);
+          } catch (err) {
+            this.deps.log.warn("cannot read the stored deployment config of plugin", {
+              plugin,
+              err,
+            });
+          }
+        }
+        return "not_loaded";
+      }
+      const schema = inst.manifest.config?.deployment;
+      if (!schema) return "unchanged";
+      let raw: unknown;
+      try {
+        raw = await this.rawConfigOf(plugin, schema);
+      } catch (err) {
+        this.deps.log.error(
+          "cannot read the stored deployment config of plugin; keeping its current config",
+          { plugin, err },
+        );
+        return "invalid";
+      }
+      const r = schema.safeParse(raw);
+      if (!r.success) {
+        this.deps.log.warn(
+          "plugin deployment config changed but is invalid on this replica; keeping the current config",
+          {
+            plugin,
+            detail: toIssues(r.error)
+              .map((i) => `${i.path || "<root>"}: ${i.message}`)
+              .join("; "),
+          },
+        );
+        return "invalid";
+      }
+      const next = r.data;
+      if (inst.source !== "install") this.configValidity.set(plugin, true);
+      const changed = changedPaths(schema, inst.config, next);
+      if (changed.length === 0) return "unchanged";
+      this.reportSecrets(schema, next);
+      const hot = new Set(
+        configFields(schema)
+          .filter((f) => f.meta?.hot)
+          .map((f) => f.path),
+      );
+      const configHash = deploymentConfigHash(schema, next);
+      // 之后的重新加载（依赖方连锁等）都用新配置
+      this.specs.set(plugin, { ...spec, config: next, configHash });
+      if (changed.every((p) => hot.has(p))) {
+        inst.updateConfig(next, configHash);
+        this.deps.log.info("plugin deployment config updated in place (hot fields)", {
+          plugin,
+          changed,
+        });
+        return "hot";
+      }
+      const drainMs = this.drainMs();
+      let fresh: PluginInstance;
+      try {
+        fresh = await this.doReload(plugin, drainMs);
+      } catch (err) {
+        if (this.closed) throw err;
+        this.deps.log.error(
+          "plugin reload after a deployment config change failed; it keeps its previous instance",
+          { plugin, changed, err },
+        );
+        return "reload_failed";
+      }
+      await this.cascade(fresh.manifest.provides, drainMs);
+      this.deps.log.info("plugin reloaded after a deployment config change", { plugin, changed });
+      return "reload";
+    });
   }
 
   /** 本次未加载、等待批准权限的插件（含因 `requires` 只能由它们满足而未加载的插件），按依赖拓扑序。 */

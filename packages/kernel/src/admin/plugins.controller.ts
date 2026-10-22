@@ -1,7 +1,23 @@
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Req } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  Post,
+  Put,
+  Req,
+} from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { PLUGIN_ADMIN, PLUGIN_ADMIN_OPS, PLUGIN_INSTALLS } from "../http/tokens.js";
+import {
+  PLUGIN_ADMIN,
+  PLUGIN_ADMIN_OPS,
+  PLUGIN_DEPLOYMENT_CONFIGS,
+  PLUGIN_INSTALLS,
+} from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -12,6 +28,10 @@ import {
 } from "../identity/principal.js";
 import type { PluginAdminOps } from "../plugins/admin-ops.js";
 import type { PluginAdmin } from "../plugins/admin-view.js";
+import type {
+  DeploymentConfigView,
+  DeploymentPluginConfigService,
+} from "../plugins/deployment-config.js";
 import type { PackageReview, PluginInstalls } from "../plugins/installs.js";
 import type { AdminPluginView } from "../plugins/permission-view.js";
 
@@ -27,6 +47,11 @@ const ApproveBody = z.object({
 const InstallBody = z.object({
   /** 包存储里的包（上传 / npm 导入返回的 sha256）。 */
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+const ConfigBody = z.object({
+  /** 字段点路径 → 新值（`null` 清除）。 */
+  values: z.record(z.string().min(1).max(256), z.unknown()),
 });
 
 const NpmBody = z.object({
@@ -46,6 +71,8 @@ export class AdminPluginsController {
     @Inject(PLUGIN_INSTALLS) private readonly installs: PluginInstalls,
     @Inject(PLUGIN_ADMIN) private readonly admin: PluginAdmin,
     @Inject(PLUGIN_ADMIN_OPS) private readonly ops: PluginAdminOps,
+    @Inject(PLUGIN_DEPLOYMENT_CONFIGS)
+    private readonly deploymentConfigs: DeploymentPluginConfigService,
   ) {}
 
   /** 部署上的全部插件（内置、配置声明、安装记录）及其状态、权限与快照。 */
@@ -58,6 +85,30 @@ export class AdminPluginsController {
   @Get(":name")
   get(@Param("name") name: string): Promise<AdminPluginView> {
     return this.admin.get(name);
+  }
+
+  /**
+   * 部署级配置（D8 / C10）：各字段的来源（文件 / Nacos / 环境变量的只读）、生效值（密钥只给是否已设置）、
+   * JSON Schema 与校验结果。不存在 → 404 `plugin.not_found`。
+   */
+  @Get(":name/config")
+  config(@Param("name") name: string): Promise<DeploymentConfigView> {
+    return this.deploymentConfigs.view(name);
+  }
+
+  /**
+   * 保存部署级配置（`values` 以字段点路径为键；`null` 清除、缺省不变）。启动配置里有的字段 → 409
+   * `plugin.config_readonly`；未知字段或不合法 → 400 `plugin.config_invalid`（不回显值）。保存后各副本重读：
+   * hot 字段就地替换，非 hot 字段重新加载插件，待配置的插件随之加载（不重启）。
+   */
+  @Put(":name/config")
+  putConfig(
+    @CurrentPrincipal() principal: Principal,
+    @Param("name") name: string,
+    @Body(new ZodPipe(ConfigBody)) body: z.infer<typeof ConfigBody>,
+  ): Promise<DeploymentConfigView> {
+    const actor = requireUser(principal);
+    return this.deploymentConfigs.put(name, body.values, actor.account.id, patTokenId(actor));
   }
 
   /**

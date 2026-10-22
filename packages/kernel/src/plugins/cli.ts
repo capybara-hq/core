@@ -2,6 +2,7 @@ import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
 import { createBus } from "../ctx/bus.js";
+import { createKeyring } from "../ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../db/kernel-schema.js";
 import { createDb } from "../db/pool.js";
 import type { KernelLogger } from "../log.js";
@@ -9,9 +10,16 @@ import { PluginAdminOps } from "./admin-ops.js";
 import { PluginAdmin } from "./admin-view.js";
 import { PluginApprovals } from "./approvals.js";
 import { PluginBlobs } from "./blobs.js";
+import {
+  type ConfigIssue,
+  mergeDeploymentConfig,
+  readStoredDeploymentConfig,
+  schemaFields,
+} from "./deployment-config.js";
 import { type DeclaredPluginInfo, type InspectedPlugin, PluginHost } from "./host.js";
 import { PluginInstalls } from "./installs.js";
 import { PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
+import { toIssues } from "./org-config.js";
 import { permissionSetOfPackage, readPluginPackage } from "./package.js";
 import type { PermissionSet } from "./permission-set.js";
 
@@ -24,6 +32,11 @@ export interface PluginCli {
   db: KernelDb;
   /** 内置与配置声明的插件（导入、按依赖排序，不 setup）。 */
   inspected: InspectedPlugin[];
+  /**
+   * 内置与配置声明插件的部署配置问题（启动配置与 PG 里保存的合并后按 schema 校验；只有路径与说明，不含值）：
+   * 有问题的插件内核不加载（待配置）。没有问题的不在这里。
+   */
+  configIssues: ReadonlyMap<string, ConfigIssue[]>;
   installs: PluginInstalls;
   admin: PluginAdmin;
   ops: PluginAdminOps;
@@ -64,19 +77,38 @@ export async function openPluginCli(
   const declared = new Map(
     inspected.map((p) => [p.manifest.name, p.source] as [string, "builtin" | "config"]),
   );
-  const declaredInfo: DeclaredPluginInfo[] = inspected.map((p) => {
-    const schema = p.manifest.config?.deployment;
-    return {
-      name: p.manifest.name,
-      source: p.source,
-      version: p.manifest.version,
-      permissions: p.permissions,
-      configurable: schema !== undefined,
-      configValid: schema
-        ? schema.safeParse(config.pluginConfig[p.manifest.name] ?? {}).success
-        : true,
-    };
-  });
+  // 部署配置 = 启动配置补上后台保存在 PG 的字段（C10）；不合法的插件内核不加载（待配置）
+  const keyring = createKeyring(
+    Buffer.from(config.masterKey, "base64"),
+    config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
+  );
+  const configIssues = new Map<string, ConfigIssue[]>();
+  try {
+    for (const p of inspected) {
+      const schema = p.manifest.config?.deployment;
+      if (!schema) continue;
+      const stored = await readStoredDeploymentConfig(db, keyring, p.manifest.name);
+      const r = schema.safeParse(
+        mergeDeploymentConfig(
+          stored,
+          config.pluginConfig[p.manifest.name],
+          schemaFields(schema).map((f) => f.path),
+        ),
+      );
+      if (!r.success) configIssues.set(p.manifest.name, toIssues(r.error));
+    }
+  } catch (e) {
+    await raw.destroy().catch(() => {});
+    throw e;
+  }
+  const declaredInfo: DeclaredPluginInfo[] = inspected.map((p) => ({
+    name: p.manifest.name,
+    source: p.source,
+    version: p.manifest.version,
+    permissions: p.permissions,
+    configurable: p.manifest.config?.deployment !== undefined,
+    configValid: !configIssues.has(p.manifest.name),
+  }));
   let redis: Redis | undefined;
   const publisher = {
     async publish(topic: string, payload: unknown): Promise<void> {
@@ -131,6 +163,7 @@ export async function openPluginCli(
     config,
     db,
     inspected,
+    configIssues,
     installs,
     admin,
     ops,

@@ -18,6 +18,7 @@ import { ChannelSupervisor } from "./channels/supervisor.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
+import { type ConfigSourceKind, configSourceKind, pluginConfigSources } from "./config/sources.js";
 import {
   ATTACHMENT_CLEANUP_EVERY_MS,
   ATTACHMENT_CLEANUP_JOB,
@@ -56,6 +57,11 @@ import { PluginAdminOps } from "./plugins/admin-ops.js";
 import { PluginAdmin } from "./plugins/admin-view.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
 import { PluginBlobs } from "./plugins/blobs.js";
+import {
+  DeploymentPluginConfigService,
+  schemaFields,
+  staticDeploymentSchema,
+} from "./plugins/deployment-config.js";
 import { PluginHost } from "./plugins/host.js";
 import { PluginInstalls } from "./plugins/installs.js";
 import {
@@ -217,6 +223,8 @@ export interface Kernel {
   readonly pluginLifecycle: PluginLifecycle;
   /** 内容寻址的插件包存储（对象存储或 PG）。 */
   readonly pluginBlobs: PluginBlobs;
+  /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
+  readonly pluginDeploymentConfigs: DeploymentPluginConfigService;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
   readonly orgPluginConfigs: OrgPluginConfigs;
   /** 内核总线（命名空间 `kernel`）。 */
@@ -287,6 +295,11 @@ export interface KernelOptions {
    * 与配置 `plugins` 列表重名时以内置为准并告警。
    */
   builtinPlugins?: string[];
+  /**
+   * 启动配置里各插件部署配置字段的来源（`loadConfigWithSources` 的 `pluginSources`）：这些字段在后台只读（D8）。
+   * 不传时按 `config.pluginConfig` 推出：环境变量里有的记 env，其余记 `CAPYBARA_CONFIG_SOURCE` 的来源（file / nacos）。
+   */
+  pluginConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
 }
 
 /**
@@ -409,6 +422,9 @@ export async function createKernel(
     reloadSetupTimeoutMs: () => current.pluginHost.reloadSetupTimeoutSeconds * 1000,
     // 路由闸门的「部署已知」插件：安装记录（任何 desired_state）；pluginInstalls 在下面创建，调用时才取
     installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
+    // 生效部署配置 = 启动配置补上 PG 里保存的字段（C10）；服务在下面创建，调用时才取
+    deploymentConfig: (plugin, fileValue, schema) =>
+      pluginDeploymentConfigs.effective(plugin, fileValue, schema),
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),
@@ -518,6 +534,26 @@ export async function createKernel(
     config: () => current,
     bus,
     reconcile: (reason) => pluginLifecycle.reconcile(reason),
+    log,
+  });
+  // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
+  const pluginDeploymentConfigs = new DeploymentPluginConfigService({
+    db: kdb,
+    keyring,
+    fileConfig: () => current.pluginConfig,
+    sources:
+      opts.pluginConfigSources ??
+      pluginConfigSources({ pluginConfig: config.pluginConfig }, env, configSourceKind(env)),
+    schemaOf: async (plugin) => {
+      const local = host.deploymentSchema(plugin);
+      if (local) return { ...local, fields: schemaFields(local.schema) };
+      // 与内置 / 配置声明重名的安装记录不生效
+      if (host.declared().has(plugin)) return undefined;
+      return staticDeploymentSchema(kdb, plugin);
+    },
+    bus,
+    applyLocal: (plugin) => pluginLifecycle.applyConfig(plugin),
+    onSecrets: (v) => log.addSecrets(v),
     log,
   });
   maintenance.handle(PLUGINS_RECONCILE_JOB, async () => {
@@ -886,6 +922,7 @@ export async function createKernel(
         pluginInstalls,
         pluginAdmin,
         pluginAdminOps,
+        pluginDeploymentConfigs,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
@@ -1054,6 +1091,7 @@ export async function createKernel(
     pluginAdminOps,
     pluginLifecycle,
     pluginBlobs,
+    pluginDeploymentConfigs,
     orgPluginConfigs,
     bus,
     runs,
