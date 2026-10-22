@@ -216,6 +216,21 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .prefault({} as never),
+  directory: z
+    .object({
+      maxBundleBytes: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Largest total size in bytes of one app bundle import: the app package plus every plugin package it locks (downloaded and held in memory while validating). Defaults to 4 x packages.maxBytes",
+          }),
+        ),
+    })
+    .prefault({} as never),
   catalogs: z
     .object({
       official: z

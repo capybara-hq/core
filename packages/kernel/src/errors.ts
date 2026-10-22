@@ -77,6 +77,7 @@ export const ERROR_CODES = {
   "app.review_stale": 409,
   "app.staging_not_found": 404,
   "app.plugin_conflict": 409,
+  "app.bundle_too_large": 413,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
   "agent.not_found": 404,

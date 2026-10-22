@@ -9,15 +9,17 @@ import {
   parseAppManifest,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import semver from "semver";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import type { PluginAdminOps } from "../plugins/admin-ops.js";
 import { writeSnapshot } from "../plugins/approvals.js";
 import type { PluginInstalls } from "../plugins/installs.js";
+import { unrunMigrations } from "../plugins/migrate-lock.js";
 import {
   type PluginPackage,
   PluginPackageError,
@@ -67,20 +69,25 @@ import {
  * **插件包从哪里来**：应用包里不打插件 tgz，`app.yaml` 用 npm 包名 + lock（精确版本 + sha512）引用插件，
  * prepare 时逐个从配置的 npm registry 拉取 `lock.version`，校验以 `lock.integrity` 为准（`app.lock_mismatch`），
  * 不认 npm 元数据。这样应用包小、插件包与单独安装时完全相同（内容寻址，同一 sha256），供应链以应用作者锁定的
- * sha512 为准；代价是导入需要能访问 npm registry（离线部署用私有 registry / 镜像）。
+ * sha512 为准；代价是导入需要能访问 npm registry（**离线部署须配置 npm 镜像 / 私有 registry**
+ * `packages.npmRegistry`，否则应用包导入不可用）。一次导入的总字节（应用包 + 全部插件包，校验期间都在内存里）
+ * 受 `directory.maxBundleBytes`（缺省 4 × `packages.maxBytes`）限制，超出 → 413 `app.bundle_too_large`。
  *
  * prepare：包一律当作恶意输入，**全部组件校验通过之前什么都不写**（F-AD）——解包（与目录包同一套上限）、
  * `app.yaml`（SDK `parseAppManifest`）、版本与 package.json 一致、图标、每个技能目录按技能包规则、连接器模板
  * （连接器插件在本副本已加载时按其 `endpointSchema` 校验，否则只做静态规则，组织安装时 T26 再按当时的连接器校验）、
  * 每个插件的部署状态（内置 / 配置声明不满足范围 → `app.plugin_conflict`；名字归属）与下载校验（下载全部放在内存里，
- * 读包校验名字、版本与 npm 包名）都在写之前；然后才把插件交给 `PluginInstalls.ingest` 入库（来源 `directory`）、
- * 把 app.yaml、图标与技能文件写进对象存储、写暂存行（24 小时）。内置 / 配置声明的插件只校验不入库。
+ * 读包校验名字、版本与 npm 包名）、降级到有未执行迁移的版本（`plugin.downgrade_unsupported`）都在写之前；然后才把
+ * 插件交给 `PluginInstalls.ingest` 入库（来源 `directory`）、把 app.yaml、图标与技能文件写进对象存储、写暂存行
+ * （24 小时）并审计 `directory.app_staged`。内置 / 配置声明的插件只校验不入库（它们在 `resolved` 里的 sha256 是锁定的
+ * npm 包，不在包存储里）。
  *
- * confirm：`reviewHash` 须与暂存时一致，且按此刻的部署状态重算的也一致（审阅后插件被装 / 升级 → `app.review_stale`）；
- * 一个事务里删暂存行（只能确认一次）、为 action 为 install 的插件写快照（source web，审计 `plugin.permissions_approved`
- * 带 `app`），`deployPlugins` 时 upgrade 的插件同样写快照（不装到部署时不写：快照必须对应实际运行的版本，F-O），
- * 建 / 加 kind app 的目录版本（`resolved = { plugins: [{ name, sha256 }] }`，文件留在暂存时的前缀下由版本行接管）。
- * 提交后 `deployPlugins` 时按清单顺序先全部 `PluginAdminOps.install`，再全部 `enable`（各副本 reconcile，不重启）。
+ * confirm：`reviewHash` 须与暂存时一致；一个事务里删暂存行（只能确认一次）、按插件名加锁后按此刻的部署状态重算
+ * （审阅后插件被装 / 升级 / 换包 → `app.review_stale`）、复核降级、为 action 为 install 的插件写快照（source web，审计
+ * `plugin.permissions_approved` 带 `app`），`deployPlugins` 时 upgrade 的插件同样写快照（不装到部署时不写：快照必须
+ * 对应实际运行的版本，F-O），建 / 加 kind app 的目录版本（`resolved = { plugins: [{ name, sha256 }] }`，文件留在暂存时
+ * 的前缀下由版本行接管）。提交后 `deployPlugins` 时先全部 `PluginAdminOps.install`，再全部 `enable`（各副本
+ * reconcile，不重启）；失败不抛错，逐个返回结果，upgrade 没装上的恢复原快照（见 `deploy`）。
  *
  * 暂存过期由维护任务 `app-staging-cleanup` 清理（{@link AppImport.cleanupExpired}）：删暂存行与其对象前缀；
  * 已入库的插件包留在内容寻址的 `plugin_packages`（与再次导入同一 tgz 相同，没有安装记录引用就不会被加载）。
@@ -106,6 +113,8 @@ export interface AppReviewPlugin {
   action: "install" | "upgrade" | "keep";
   /** 部署上当前的版本（没有为 null）。 */
   currentVersion: string | null;
+  /** 部署上当前安装的包（经安装记录装的才有；内置 / 配置声明与未装为 null）。 */
+  currentSha256: string | null;
   optional: boolean;
   /** 锁定版本的权限（按静态清单与迁移 SQL，不执行插件代码）。 */
   permissions: PermissionGroup[];
@@ -143,6 +152,34 @@ export interface AppReview {
   sensitive: boolean;
   /** 各插件（名字、sha256、action、当前版本、reviewHash）与模板、技能清单的总摘要；确认时回传。 */
   reviewHash: string;
+}
+
+/** `deployPlugins` 时每个插件的部署结果。 */
+export interface AppDeployResult {
+  name: string;
+  action: "install" | "upgrade";
+  version: string;
+  /** 要装的包（失败时按它经插件后台手动重试）。 */
+  sha256: string;
+  /** enabled：装上并启用；installed：只在过程中出现（启用前）；failed：见 code / message。 */
+  result: "installed" | "enabled" | "failed";
+  code?: string;
+  message?: string;
+}
+
+/** {@link AppImport.confirm} 的结果：已提交的条目，以及（`deployPlugins` 时）每个插件的部署结果。 */
+export interface AppConfirmResult {
+  item: DirectoryItemView;
+  deploy: AppDeployResult[] | null;
+}
+
+/** 确认时被覆盖的快照（部署失败时恢复）。 */
+interface PreviousSnapshot {
+  version: string;
+  permissions: PermissionSet;
+  approvedBy: string | null;
+  approvedAt: Date;
+  source: "auto" | "web" | "cli";
 }
 
 /** 暂存来源。 */
@@ -205,8 +242,19 @@ const invalid = (problems: string[]) =>
     problems.slice(0, 50),
   );
 
+/** 一次应用包导入的总字节上限：`directory.maxBundleBytes`，缺省 4 × `packages.maxBytes`。 */
+export const maxBundleBytes = (c: KernelConfig): number =>
+  c.directory.maxBundleBytes ?? 4 * c.packages.maxBytes;
+const bundleTooLarge = (cap: number) =>
+  new ApiError(
+    "app.bundle_too_large",
+    `The app package and the plugin packages it locks are larger than ${cap} bytes in total (directory.maxBundleBytes)`,
+  );
+
 const satisfies = (version: string, range: string) =>
   semver.satisfies(version, range, { includePrerelease: true });
+
+type Trx = Transaction<KernelDatabase>;
 
 /** 部署上一个插件的现状。 */
 type PluginState =
@@ -225,6 +273,9 @@ export class AppImport {
     opts: ActorOpts = {},
   ): Promise<{ stagingId: string; review: AppReview; permissionKeys: string[] }> {
     const maxBytes = this.d.config().packages.maxBytes;
+    if (bytes.byteLength > maxBundleBytes(this.d.config())) {
+      throw bundleTooLarge(maxBundleBytes(this.d.config()));
+    }
     const u = await unpackDirectoryArchive(bytes, maxBytes);
     if (u.section.kind !== "app") {
       throw new ApiError(
@@ -258,9 +309,14 @@ export class AppImport {
       version,
     );
     const states = await this.pluginStates(manifest);
-    const fetched = await this.fetchPlugins(manifest);
+    const fetched = await this.fetchPlugins(manifest, bytes.byteLength);
     this.d.storage.assertAvailable();
     const reviewPlugins = await this.reviewPlugins(manifest, states, fetched);
+    // 降级（lock 版本低于已装版本）且目标版本有没执行过的迁移：装到部署必然失败，导入时就拒绝
+    for (const [i, p] of reviewPlugins.entries()) {
+      const pkg = (fetched[i] as { pkg: PluginPackage }).pkg;
+      await assertDowngradable(this.d.db, p, pkg.migrationSql);
+    }
     const review: AppReview = {
       name: manifest.name,
       version,
@@ -313,18 +369,43 @@ export class AppImport {
       ...(source.integrity !== undefined && { integrity: source.integrity }),
       ...(source.catalog && { catalogSourceId: source.catalog.sourceId }),
     };
-    await this.d.db
-      .insertInto("app_import_staging")
-      .values({
-        id: stagingId,
-        review: JSON.stringify(review),
-        bundle: JSON.stringify(staged),
-        object_prefix: objectPrefix,
-        source: JSON.stringify(src),
-        created_by: actor,
-        expires_at: new Date(Date.now() + APP_STAGING_TTL_MS),
-      })
-      .execute();
+    await this.d.db.transaction().execute(async (trx) => {
+      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await trx
+        .insertInto("app_import_staging")
+        .values({
+          id: stagingId,
+          review: JSON.stringify(review),
+          bundle: JSON.stringify(staged),
+          object_prefix: objectPrefix,
+          source: JSON.stringify(src),
+          created_by: actor,
+          expires_at: new Date(Date.now() + APP_STAGING_TTL_MS),
+        })
+        .execute();
+      await audit(trx, {
+        actorAccountId: actor,
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        action: "directory.app_staged",
+        target: stagingId,
+        detail: {
+          stagingId,
+          name: manifest.name,
+          version,
+          source: src.kind,
+          sourceRef: src.ref,
+          ...(src.integrity !== undefined && { integrity: src.integrity }),
+          ...(src.catalogSourceId !== undefined && { catalogSourceId: src.catalogSourceId }),
+          reviewHash: review.reviewHash,
+          plugins: reviewPlugins.map((p) => ({
+            name: p.name,
+            version: p.lockVersion,
+            sha256: p.sha256,
+            action: p.action,
+          })),
+        },
+      });
+    });
     const keys = new Set<string>();
     for (const f of fetched) {
       for (const k of permissionKeys(permissionSetOfPackage(f.pkg))) {
@@ -355,13 +436,16 @@ export class AppImport {
     return { stagingId: r.stagingId, review: r.review };
   }
 
-  /** 确认导入（见文件头）。返回目录条目。 */
+  /**
+   * 确认导入（见文件头）。返回已提交的目录条目，`deployPlugins` 时另有每个插件的部署结果（部署失败不抛错，见
+   * {@link AppDeployResult}）。
+   */
   async confirm(
     actor: string,
     stagingId: string,
     input: { reviewHash: string; deployPlugins: boolean },
     opts: ActorOpts = {},
-  ): Promise<DirectoryItemView> {
+  ): Promise<AppConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
     const row = await this.d.db
       .selectFrom("app_import_staging")
@@ -379,24 +463,13 @@ export class AppImport {
         `The review of app ${review.name} ${review.version} is out of date (it changed, or plugins on this deployment changed since it was prepared); review it again`,
       );
     if (input.reviewHash !== review.reviewHash) throw stale();
-    // 按此刻的部署状态重算 action：审阅之后插件被装 / 升级 / 改了配置声明，都要重新审阅
-    const states = await this.pluginStates(staged.manifest);
-    const now = review.plugins.map((p, i) => ({
-      ...p,
-      ...actionOf(states[i] as PluginState, p.range, p.name),
-    }));
-    if (appReviewHash({ ...review, plugins: now }, staged.files) !== review.reviewHash) {
-      throw stale();
-    }
-    const approve = now.filter(
-      (p) => p.action === "install" || (p.action === "upgrade" && input.deployPlugins),
-    );
-    const sets = new Map<string, PermissionSet>();
-    for (const p of approve) {
-      sets.set(p.name, permissionSetOfPackage(await this.readStored(p.sha256)));
+    // 事务外先读包：审阅时不是 keep 的插件都读（事务里按此刻重算的 action 取用；action 变了就是 stale）
+    const stored = new Map<string, PluginPackage>();
+    for (const p of review.plugins) {
+      if (p.action !== "keep") stored.set(p.name, await this.readStored(p.sha256));
     }
 
-    const itemId = await this.d.db.transaction().execute(async (trx) => {
+    const committed = await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const used = await trx
         .deleteFrom("app_import_staging")
@@ -405,17 +478,55 @@ export class AppImport {
         .returning("id")
         .executeTakeFirst();
       if (!used) throw notFound();
+      // 与 PluginAdminOps.install 同一把按插件名的咨询锁（按名字排序防死锁），锁内按此刻的部署状态重算 action：
+      // 审阅之后插件被装 / 升级 / 换包 / 改了配置声明，都要重新审阅
+      for (const name of review.plugins.map((p) => p.name).sort()) {
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-install:${name}`}))`.execute(
+          trx,
+        );
+      }
+      const states = await this.pluginStates(staged.manifest, trx);
+      const now: AppReviewPlugin[] = review.plugins.map((p, i) => ({
+        ...p,
+        ...actionOf(states[i] as PluginState, p.range, p.name),
+      }));
+      if (appReviewHash({ ...review, plugins: now }, staged.files) !== review.reviewHash) {
+        throw stale();
+      }
+      // 可预见的部署失败（降级到有未执行迁移的版本）在写任何东西之前拒绝
+      if (input.deployPlugins) {
+        for (const p of now) {
+          if (p.action !== "upgrade") continue;
+          await assertDowngradable(trx, p, (stored.get(p.name) as PluginPackage).migrationSql);
+        }
+      }
+      const approve = now.filter(
+        (p) => p.action === "install" || (p.action === "upgrade" && input.deployPlugins),
+      );
+      const previous = new Map<string, PreviousSnapshot | null>();
       for (const p of approve) {
-        const set = sets.get(p.name) as PermissionSet;
+        const set = permissionSetOfPackage(stored.get(p.name) as PluginPackage);
         await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${p.name}`}))`.execute(
           trx,
         );
         const snapRow = await trx
           .selectFrom("plugin_permission_snapshots")
-          .select(["version", "permissions"])
+          .selectAll()
           .where("plugin", "=", p.name)
           .forUpdate()
           .executeTakeFirst();
+        previous.set(
+          p.name,
+          snapRow
+            ? {
+                version: snapRow.version,
+                permissions: snapRow.permissions as PermissionSet,
+                approvedBy: snapRow.approved_by,
+                approvedAt: snapRow.approved_at,
+                source: snapRow.source,
+              }
+            : null,
+        );
         // 快照归属于插件名：与 PluginAdminOps.install 一样先登记名字归属（Ruling P3），否则之后安装时「名字有遗留数据
         // 却没有归属」会被拒绝
         await trx
@@ -424,8 +535,10 @@ export class AppImport {
           .onConflict((oc) => oc.column("name").doNothing())
           .execute();
         await assertPluginNameOwner(trx, p.name, p.npm);
-        const snap = snapRow && { permissions: snapRow.permissions as PermissionSet };
-        const { added, removed } = diffPermissions(snap?.permissions, set);
+        const { added, removed } = diffPermissions(
+          snapRow?.permissions as PermissionSet | undefined,
+          set,
+        );
         await writeSnapshot(trx, p.name, p.lockVersion, set, {
           source: "web",
           approvedBy: actor,
@@ -439,7 +552,7 @@ export class AppImport {
         });
       }
       const m = staged.manifest;
-      return writeDirectoryVersion(trx, {
+      const itemId = await writeDirectoryVersion(trx, {
         actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         kind: "app",
@@ -470,17 +583,117 @@ export class AppImport {
           plugins: now.map((p) => ({ name: p.name, version: p.lockVersion, action: p.action })),
         },
       });
+      return { itemId, now, previous };
     });
 
-    if (input.deployPlugins) {
-      const deploy = now.filter((p) => p.action !== "keep");
-      // 先全部装上（新装为停用、换版本保持期望状态），再全部启用：requires 的顺序不影响
-      for (const p of deploy) {
+    const deploy = input.deployPlugins
+      ? await this.deploy(actor, review, committed.now, committed.previous, opts)
+      : null;
+    return { item: await this.itemView(committed.itemId), deploy };
+  }
+
+  /**
+   * 提交之后装到部署：先全部 `install`（新装为停用、换版本保持期望状态），再把装上的全部 `enable`（requires 的顺序
+   * 不影响）。某个插件失败不影响其他、不抛错，逐个记结果；装上了的保持装上。upgrade 的插件没装上时，把确认时覆盖掉的
+   * 快照恢复原样（运行中的旧版本继续有效，F-O；审计 `plugin.permissions_restored`）。
+   * 重试走插件后台：按结果里的 sha256 `POST /api/v1/admin/plugins/:name/install {sha256}`（包已在包存储里），upgrade
+   * 的再批准一次，然后 `…/enable`。
+   */
+  private async deploy(
+    actor: string,
+    review: AppReview,
+    plugins: AppReviewPlugin[],
+    previous: Map<string, PreviousSnapshot | null>,
+    opts: ActorOpts,
+  ): Promise<AppDeployResult[]> {
+    const results: AppDeployResult[] = [];
+    const failure = (e: unknown) =>
+      e instanceof ApiError
+        ? { code: e.code as string, message: e.message }
+        : { code: "internal", message: "Internal error" };
+    for (const p of plugins) {
+      if (p.action === "keep") continue;
+      const base = {
+        name: p.name,
+        action: p.action,
+        version: p.lockVersion,
+        sha256: p.sha256,
+      };
+      try {
         await this.d.ops.install(p.name, p.sha256, actor, opts.actorTokenId);
+        results.push({ ...base, result: "installed" });
+      } catch (e) {
+        this.d.log.warn("installing an app plugin to the deployment failed", {
+          app: review.name,
+          plugin: p.name,
+          err: e,
+        });
+        results.push({ ...base, result: "failed", ...failure(e) });
+        if (p.action === "upgrade" && previous.has(p.name)) {
+          try {
+            await this.restoreSnapshot(actor, review, p, previous.get(p.name) ?? null, opts);
+          } catch (err) {
+            this.d.log.error("cannot restore the permission snapshot of an app plugin", {
+              plugin: p.name,
+              err,
+            });
+          }
+        }
       }
-      for (const p of deploy) await this.d.ops.enable(p.name, actor, opts.actorTokenId);
     }
-    return this.itemView(itemId);
+    for (const r of results) {
+      if (r.result !== "installed") continue;
+      try {
+        await this.d.ops.enable(r.name, actor, opts.actorTokenId);
+        r.result = "enabled";
+      } catch (e) {
+        this.d.log.warn("enabling an app plugin failed", { plugin: r.name, err: e });
+        Object.assign(r, { result: "failed" }, failure(e));
+      }
+    }
+    return results;
+  }
+
+  /** 把确认时覆盖的快照恢复成原样（原来没有快照则删除），审计 `plugin.permissions_restored`。 */
+  private async restoreSnapshot(
+    actor: string,
+    review: AppReview,
+    p: AppReviewPlugin,
+    prev: PreviousSnapshot | null,
+    opts: ActorOpts,
+  ): Promise<void> {
+    await this.d.db.transaction().execute(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${p.name}`}))`.execute(
+        trx,
+      );
+      if (prev) {
+        await trx
+          .updateTable("plugin_permission_snapshots")
+          .set({
+            version: prev.version,
+            permissions: JSON.stringify(prev.permissions),
+            approved_by: prev.approvedBy,
+            approved_at: prev.approvedAt,
+            source: prev.source,
+          })
+          .where("plugin", "=", p.name)
+          .execute();
+      } else {
+        await trx.deleteFrom("plugin_permission_snapshots").where("plugin", "=", p.name).execute();
+      }
+      await audit(trx, {
+        actorAccountId: actor,
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        action: "plugin.permissions_restored",
+        target: p.name,
+        detail: {
+          plugin: p.name,
+          restoredVersion: prev?.version ?? null,
+          reason: "app_deploy_failed",
+          app: { name: review.name, version: review.version },
+        },
+      });
+    });
   }
 
   /**
@@ -584,6 +797,8 @@ export class AppImport {
       const at = `connectorTemplates.${i}.template`;
       const t: ConnectorTemplateSpec = c.template;
       if (t.icon !== undefined) icon(t.icon, `${at}.icon`);
+      // 校验结果取决于处理本次请求的副本此刻加载了哪些连接器（多副本收敛期间可能不同）：这里只是导入时的把关，
+      // 不是最终结论——组织安装时（T26）按当时加载的连接器对合并后的端点重新校验；`endpointChecked` 记下这次是否校验过
       const loaded = this.d.findConnector(t.plugin, t.connector);
       if (loaded) {
         problems.push(...templateProblems(loaded, t, at));
@@ -641,10 +856,13 @@ export class AppImport {
   }
 
   /** 每个插件在部署上的现状；内置 / 配置声明却不满足范围 → `app.plugin_conflict`；名字归属别的包 → `plugin.name_conflict`。 */
-  private async pluginStates(m: AppManifest): Promise<PluginState[]> {
+  private async pluginStates(
+    m: AppManifest,
+    db: KernelDb | Trx = this.d.db,
+  ): Promise<PluginState[]> {
     const declared = new Map(this.d.declaredPlugins().map((p) => [p.name, p]));
     const rows = m.plugins.length
-      ? await this.d.db
+      ? await db
           .selectFrom("plugin_installs")
           .innerJoin("plugin_packages", "plugin_packages.sha256", "plugin_installs.sha256")
           .select([
@@ -681,7 +899,7 @@ export class AppImport {
           `Plugin ${p.name} is already installed from package ${r.package_name}; the app references package ${p.npm}`,
         );
       }
-      await assertPluginNameOwner(this.d.db, p.name, p.npm);
+      await assertPluginNameOwner(db, p.name, p.npm);
       out.push(
         r
           ? { kind: "installed", version: r.version, sha256: r.sha256, packageName: r.package_name }
@@ -692,19 +910,37 @@ export class AppImport {
   }
 
   /** 按 lock 下载全部插件并读包校验（只在内存里，F-AD）。 */
-  private async fetchPlugins(m: AppManifest): Promise<{ bytes: Uint8Array; pkg: PluginPackage }[]> {
+  private async fetchPlugins(
+    m: AppManifest,
+    bundleBytes: number,
+  ): Promise<{ bytes: Uint8Array; pkg: PluginPackage }[]> {
     const maxBytes = this.d.config().packages.maxBytes;
+    const cap = maxBundleBytes(this.d.config());
+    let total = bundleBytes;
+    const abort = new AbortController();
     const out: { bytes: Uint8Array; pkg: PluginPackage }[] = new Array(m.plugins.length);
     const queue = [...m.plugins.entries()];
     await Promise.all(
       Array.from({ length: Math.min(FETCH_CONCURRENCY, queue.length) }, async () => {
         for (let next = queue.shift(); next; next = queue.shift()) {
+          if (abort.signal.aborted) return;
           const [i, p] = next;
-          const got = await this.d.installs.fetchLocked({
-            package: p.npm,
-            version: p.lock.version,
-            integrity: p.lock.integrity,
-          });
+          let got: { bytes: Uint8Array };
+          try {
+            got = await this.d.installs.fetchLocked(
+              { package: p.npm, version: p.lock.version, integrity: p.lock.integrity },
+              abort.signal,
+            );
+          } catch (e) {
+            abort.abort();
+            throw e;
+          }
+          total += got.bytes.byteLength;
+          if (total > cap) {
+            // 其余下载随之中止：内存里最多多出正在下载的几个包
+            abort.abort();
+            throw bundleTooLarge(cap);
+          }
           let pkg: PluginPackage;
           try {
             pkg = await readPluginPackage(got.bytes, { maxBytes, hostSdkVersion: SDK_VERSION });
@@ -806,7 +1042,7 @@ function actionOf(
   s: PluginState,
   range: string,
   name: string,
-): { action: AppReviewPlugin["action"]; currentVersion: string | null } {
+): Pick<AppReviewPlugin, "action" | "currentVersion" | "currentSha256"> {
   if (s.kind === "declared") {
     if (!satisfies(s.version, range)) {
       throw new ApiError(
@@ -814,17 +1050,21 @@ function actionOf(
         `Plugin ${name} is declared by this deployment at version ${s.version}, which does not satisfy the app's range ${range}`,
       );
     }
-    return { action: "keep", currentVersion: s.version };
+    return { action: "keep", currentVersion: s.version, currentSha256: null };
   }
   if (s.kind === "installed") {
-    return { action: satisfies(s.version, range) ? "keep" : "upgrade", currentVersion: s.version };
+    return {
+      action: satisfies(s.version, range) ? "keep" : "upgrade",
+      currentVersion: s.version,
+      currentSha256: s.sha256,
+    };
   }
-  return { action: "install", currentVersion: null };
+  return { action: "install", currentVersion: null, currentSha256: null };
 }
 
 /**
- * 应用审阅的总摘要（sha256 前 32 位十六进制）：应用名与版本、每个插件的名字 / sha256 / action / 当前版本 / 该插件的
- * reviewHash、每个模板的全部字段、每个技能的名字与路径，以及要存的每个文件的 sha256。
+ * 应用审阅的总摘要（sha256 前 32 位十六进制）：应用名与版本、每个插件的名字 / sha256 / action / 当前版本 /
+ * 当前安装的包（keep / upgrade 的已装插件换了包也算变化）/ 该插件的 reviewHash、每个模板的全部字段、每个技能的名字与路径，以及要存的每个文件的 sha256。
  */
 function appReviewHash(
   r: Pick<AppReview, "name" | "version" | "plugins" | "connectorTemplates" | "skills">,
@@ -833,7 +1073,14 @@ function appReviewHash(
   const canonical = JSON.stringify([
     r.name,
     r.version,
-    r.plugins.map((p) => [p.name, p.sha256, p.action, p.currentVersion, p.reviewHash]),
+    r.plugins.map((p) => [
+      p.name,
+      p.sha256,
+      p.action,
+      p.currentVersion,
+      p.currentSha256,
+      p.reviewHash,
+    ]),
     r.connectorTemplates.map((t) => [
       t.id,
       t.plugin,
@@ -846,4 +1093,25 @@ function appReviewHash(
     [...files].sort((a, b) => a.path.localeCompare(b.path)).map((f) => [f.path, f.sha256]),
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
+}
+
+/**
+ * 换版本是降级（lock 版本低于已装版本）且目标版本有在本部署没执行过的迁移 → `plugin.downgrade_unsupported`
+ * （与 `PluginAdminOps.install` 同一规则：插件迁移只做扩展，降级只能回到迁移都执行过的版本）。
+ */
+async function assertDowngradable(
+  db: KernelDb | Trx,
+  p: Pick<AppReviewPlugin, "name" | "action" | "lockVersion" | "currentVersion">,
+  migrationSql: { file: string; sql: string }[],
+): Promise<void> {
+  if (p.action !== "upgrade" || p.currentVersion === null) return;
+  if (!semver.valid(p.currentVersion) || !semver.lt(p.lockVersion, p.currentVersion)) return;
+  const unrun = await unrunMigrations(db, p.name, migrationSql);
+  if (unrun.length > 0) {
+    throw new ApiError(
+      "plugin.downgrade_unsupported",
+      `The app locks plugin ${p.name} ${p.lockVersion}, older than the installed ${p.currentVersion}, and that version has migrations that were never run here (${unrun.join(", ")}); plugin migrations only expand, so this downgrade is not possible`,
+      unrun.map((file) => ({ file })),
+    );
+  }
 }

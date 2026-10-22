@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,11 +15,12 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import {
@@ -28,7 +29,7 @@ import {
 } from "../../src/runtime/maintenance.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { lifePkg } from "../helpers/plugin-packages.js";
+import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { appBundleTgz, mcpTemplate, SVG_ICON, skillTgz } from "./packages.js";
@@ -46,6 +47,7 @@ const CONNECTOR_MCP = fileURLToPath(
 );
 
 const MAX_BYTES = 4 * 1024 * 1024;
+const MAX_BUNDLE_BYTES = 400_000;
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
 
@@ -120,6 +122,19 @@ beforeAll(async () => {
   ] as const) {
     pkgs[`${name}@${version}`] = await lifePkg({ name, version });
   }
+  // zeta：2.0.0 没有迁移，1.0.0 有（降级到 1.0.0 时迁移从未执行过）
+  pkgs["zeta@2.0.0"] = await lifePkg({ name: "zeta", version: "2.0.0" });
+  pkgs["zeta@1.0.0"] = await lifePkg({
+    name: "zeta",
+    version: "1.0.0",
+    migrations: [{ file: "0001_notes.sql", sql: "CREATE TABLE IF NOT EXISTS notes (id int);\n" }],
+  });
+  // huge：单个包不超过 packages.maxBytes，但应用包加上它超过 directory.maxBundleBytes
+  pkgs["huge@1.0.0"] = await pluginTgz({
+    name: "huge",
+    version: "1.0.0",
+    extra: [{ name: "package/dist/blob.txt", data: randomBytes(400_000).toString("base64") }],
+  });
   const npmApp = await bundle(manifest({ name: "npm-suite" }), "@acme/app-npm-suite");
   const catApp = await bundle(manifest({ name: "cat-suite" }), "@acme/app-cat-suite");
   pkgs.npmApp = npmApp;
@@ -160,6 +175,7 @@ beforeAll(async () => {
       roles: ["api", "worker"],
       pluginHost: { dir: pluginsDir },
       packages: { maxBytes: MAX_BYTES, npmRegistry: reg.url },
+      directory: { maxBundleBytes: MAX_BUNDLE_BYTES },
       catalogs: { allowInsecureLoopback: true },
       plugins: [S3_PLUGIN, MODEL_FAKE, CONNECTOR_MCP],
       pluginConfig: {
@@ -323,6 +339,24 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
     expect(await db.selectFrom("plugin_permission_snapshots").select("plugin").execute()).toEqual(
       [],
     );
+    const stagedAudit = await db
+      .selectFrom("audit_events")
+      .select(["target", "detail", "actor_account_id"])
+      .where("action", "=", "directory.app_staged")
+      .execute();
+    expect(stagedAudit).toEqual([
+      {
+        target: staged.stagingId,
+        actor_account_id: adminId,
+        detail: expect.objectContaining({
+          stagingId: staged.stagingId,
+          name: "crm-suite",
+          version: "1.0.0",
+          source: "file",
+          reviewHash: r.reviewHash,
+        }),
+      },
+    ]);
   });
 
   it("confirm：reviewHash 不符 409 app.review_stale，什么都不改", async () => {
@@ -342,7 +376,8 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
       deployPlugins: false,
     });
     expect(res.statusCode, res.body).toBe(201);
-    const item = res.json();
+    expect(res.json().deploy).toBeNull();
+    const item = res.json().item;
     expect(item).toMatchObject({
       kind: "app",
       name: "crm-suite",
@@ -459,6 +494,16 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       deployPlugins: true,
     });
     expect(res.statusCode, res.body).toBe(201);
+    expect(
+      (res.json().deploy as { name: string; action: string; result: string }[]).map((d) => [
+        d.name,
+        d.action,
+        d.result,
+      ]),
+    ).toEqual([
+      ["delta", "install", "enabled"],
+      ["eps", "upgrade", "enabled"],
+    ]);
     const installs = await db
       .selectFrom("plugin_installs")
       .select(["name", "version", "desired_state"])
@@ -477,6 +522,119 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     await waitFor(async () => k.host.current("delta")?.version === "1.0.0", 15_000, "delta");
     await waitFor(async () => k.host.current("eps")?.version === "1.1.0", 15_000, "eps");
     expect(k.host.current("gamma")).toBeUndefined();
+  });
+
+  it("装到部署时某个插件装失败：已提交的条目照常返回，逐个给出结果；upgrade 的快照恢复原样", async () => {
+    await reset();
+    // 部署上已有 eps 1.0.0 且已批准（快照 1.0.0）
+    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
+    await k.pluginAdminOps.install("eps", rv.sha256, adminId);
+    const view = await admin({ method: "GET", url: "/api/v1/admin/plugins/eps" });
+    const approved = await admin({
+      method: "POST",
+      url: "/api/v1/admin/plugins/eps/approve",
+      payload: { sha256: view.json().sha256, reviewHash: view.json().reviewHash },
+    });
+    expect(approved.statusCode, approved.body).toBe(200);
+    const before = await db
+      .selectFrom("plugin_permission_snapshots")
+      .selectAll()
+      .where("plugin", "=", "eps")
+      .executeTakeFirstOrThrow();
+    const m = manifest({
+      name: "flaky-suite",
+      plugins: [pluginRef("delta", "1.0.0"), pluginRef("eps", "1.1.0", "^1.1.0")],
+      connectorTemplates: [],
+      skills: [],
+      icon: undefined,
+    });
+    const s = await prepared(await appBundleTgz({ manifest: m, name: "@acme/app-flaky" }));
+    const original = k.pluginAdminOps.install.bind(k.pluginAdminOps);
+    const spy = vi.spyOn(k.pluginAdminOps, "install").mockImplementation(async (name, ...rest) => {
+      if (name === "eps") throw new ApiError("plugin.package_not_found", "simulated failure");
+      return original(name, ...rest);
+    });
+    try {
+      const res = await confirm(admin, s.stagingId, {
+        reviewHash: s.review.reviewHash,
+        deployPlugins: true,
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      expect(res.json().item).toMatchObject({ kind: "app", name: "flaky-suite" });
+      expect(res.json().deploy).toEqual([
+        expect.objectContaining({ name: "delta", action: "install", result: "enabled" }),
+        expect.objectContaining({
+          name: "eps",
+          action: "upgrade",
+          result: "failed",
+          code: "plugin.package_not_found",
+          sha256: sha256(pkgs["eps@1.1.0"] as Uint8Array),
+        }),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+    // 装上的保持装上；eps 仍是 1.0.0，快照恢复成确认前的样子（运行中的版本照常有效）
+    const installs = await db
+      .selectFrom("plugin_installs")
+      .select(["name", "version", "desired_state"])
+      .orderBy("name")
+      .execute();
+    expect(installs).toEqual([
+      { name: "delta", version: "1.0.0", desired_state: "enabled" },
+      { name: "eps", version: "1.0.0", desired_state: "disabled" },
+    ]);
+    const after = await db
+      .selectFrom("plugin_permission_snapshots")
+      .selectAll()
+      .where("plugin", "=", "eps")
+      .executeTakeFirstOrThrow();
+    expect(after).toEqual(before);
+    const restored = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "plugin.permissions_restored")
+      .where("target", "=", "eps")
+      .execute();
+    expect(restored).toHaveLength(1);
+    expect(restored[0]?.detail).toMatchObject({
+      restoredVersion: "1.0.0",
+      app: { name: "flaky-suite", version: "1.0.0" },
+    });
+  });
+
+  it("降级到有未执行迁移的版本：prepare 就拒绝 409 plugin.downgrade_unsupported，什么都不写", async () => {
+    await reset();
+    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
+    await k.pluginAdminOps.install("zeta", rv.sha256, adminId);
+    const m = manifest({
+      name: "old-suite",
+      plugins: [pluginRef("zeta", "1.0.0", "^1.0.0")],
+      connectorTemplates: [],
+      skills: [],
+      icon: undefined,
+    });
+    const res = await prepareFile(
+      admin,
+      await appBundleTgz({ manifest: m, name: "@acme/app-old" }),
+    );
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().error.code).toBe("plugin.downgrade_unsupported");
+    expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("plugin_permission_snapshots").select("plugin").execute()).toEqual(
+      [],
+    );
+    expect(
+      (
+        await db
+          .selectFrom("plugin_packages")
+          .select("version")
+          .where("name", "=", "zeta")
+          .execute()
+      ).map((r) => r.version),
+    ).toEqual(["2.0.0"]);
+    expect((await k.storage.deployment().list("directory/")).items).toEqual([]);
   });
 
   it("审阅之后部署状态变了（插件被别人装上）→ app.review_stale", async () => {
@@ -595,6 +753,18 @@ describe("恶意 / 不合法的应用包：什么都不写", { timeout: 60_000 }
     await nothingStored();
   });
 
+  it("应用包加上锁定的插件包超过 directory.maxBundleBytes → 413 app.bundle_too_large", async () => {
+    const res = await prepareFile(
+      admin,
+      await bundle(
+        manifest({ plugins: [pluginRef("alpha", "1.0.0"), pluginRef("huge", "1.0.0")] }),
+      ),
+    );
+    expect(res.statusCode, res.body).toBe(413);
+    expect(res.json().error.code).toBe("app.bundle_too_large");
+    await nothingStored();
+  });
+
   it("不是应用包 → 409 directory.wrong_kind", async () => {
     const res = await prepareFile(admin, await skillTgz());
     expect(res.statusCode).toBe(409);
@@ -630,7 +800,7 @@ describe("npm 与清单来源", { timeout: 60_000 }, () => {
       deployPlugins: false,
     });
     expect(c.statusCode, c.body).toBe(201);
-    expect(c.json().source).toBe("npm");
+    expect(c.json().item.source).toBe("npm");
   });
 
   it("清单引入 kind app：返回 200 {stagingId, review}，确认后条目记下来源清单", async () => {
@@ -659,17 +829,17 @@ describe("npm 与清单来源", { timeout: 60_000 }, () => {
       deployPlugins: false,
     });
     expect(c.statusCode, c.body).toBe(201);
-    expect(c.json().source).toBe("catalog");
+    expect(c.json().item.source).toBe("catalog");
     const item = await db
       .selectFrom("directory_items")
       .select("catalog_source_id")
-      .where("id", "=", c.json().id)
+      .where("id", "=", c.json().item.id)
       .executeTakeFirstOrThrow();
     expect(item.catalog_source_id).toBe(sourceId);
     const v = await db
       .selectFrom("directory_item_versions")
       .select(["source", "source_ref", "integrity"])
-      .where("item_id", "=", c.json().id)
+      .where("item_id", "=", c.json().item.id)
       .executeTakeFirstOrThrow();
     expect(v).toEqual({
       source: "catalog",

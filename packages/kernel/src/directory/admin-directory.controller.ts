@@ -24,7 +24,7 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import type { AdminPluginView } from "../plugins/permission-view.js";
-import type { AppImport, AppReview } from "./app-import.js";
+import type { AppConfirmResult, AppImport, AppReview } from "./app-import.js";
 import {
   type ActorOpts,
   DIRECTORY_LIST_MAX_LIMIT,
@@ -158,7 +158,10 @@ export class AdminDirectoryController {
   }
 
   /**
-   * 确认应用导入：一次批准全部要装 / 升级的插件（写快照），`deployPlugins` 时装到部署并启用；建 kind app 的目录条目。
+   * 确认应用导入：一次批准全部要装 / 升级的插件（写快照），建 kind app 的目录条目；`deployPlugins` 时提交后装到部署并
+   * 启用，返回 `{ item, deploy }`，`deploy` 逐个列出 enabled / failed（+ code）；部署失败不让已提交的导入报错，
+   * 失败的插件经插件后台按 sha256 重新安装。可预见的失败（降级到有未执行迁移的版本）在写之前 409
+   * `plugin.downgrade_unsupported`。
    * 暂存不存在或已过期 → 404 `app.staging_not_found`；`reviewHash` 不符或部署上的插件已变 → 409 `app.review_stale`。
    */
   @Post("apps/:stagingId/confirm")
@@ -167,7 +170,7 @@ export class AdminDirectoryController {
     @CurrentPrincipal() principal: Principal,
     @Param("stagingId") stagingId: string,
     @Body(new ZodPipe(ConfirmBody)) body: z.infer<typeof ConfirmBody>,
-  ): Promise<DirectoryItemView> {
+  ): Promise<AppConfirmResult> {
     const actor = requireUser(principal);
     return this.apps.confirm(actor.account.id, stagingId, body, actorOpts(actor));
   }
