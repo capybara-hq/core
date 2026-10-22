@@ -7,13 +7,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { loadConfigWithSources, resolveConfig } from "../../src/config/load.js";
 import { pluginConfigSources } from "../../src/config/sources.js";
+import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { DEPLOYMENT_SECRETS_ORG } from "../../src/plugins/deployment-config.js";
+import {
+  DEPLOYMENT_SECRETS_ORG,
+  DeploymentPluginConfigService,
+} from "../../src/plugins/deployment-config.js";
 import { deploycfgProbe } from "../fixtures/plugins/deploycfg/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -40,6 +44,7 @@ interface ConfigView {
   fields: Field[];
   schema: Record<string, unknown> | null;
   valid: boolean;
+  validated: boolean;
   issues: { path: string; message: string }[];
 }
 
@@ -107,7 +112,10 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
 
   /** 文件来源（region）与环境变量（poolSize）各占一个字段；endpoint 必填但没配。 */
   async function boot(fileCfg: Record<string, unknown>): Promise<Kernel> {
-    const env = { CAPYBARA_PLUGIN_CONFIG__DEPLOYCFG__POOL_SIZE: "3" };
+    const env = {
+      CAPYBARA_PLUGIN_CONFIG__DEPLOYCFG__POOL_SIZE: "3",
+      CAPYBARA_PLUGIN_CONFIG__DEPLOYCFG__HEADERS__X: "v1",
+    };
     const raw = {
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
@@ -157,7 +165,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       enterpriseAdmin: true,
     });
     await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
-    k = await boot({ region: "eu-file" });
+    k = await boot({ region: "eu-file", mode: "auto" });
     admin = await session(k, "root");
     member = await session(k, "mem");
   }, 240_000);
@@ -359,6 +367,61 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(lines.join("\n")).not.toContain(TOKEN2);
   });
 
+  it("非 hot 改动重新加载失败：旧实例与旧加载参数保留；PG 改回后 unchanged，reload 不用失败的配置", async () => {
+    const ctx = deploycfgProbe().ctx;
+    const before = deploycfgProbe().setups;
+    const res = await put({ failSetup: true });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(deploycfgProbe().ctx).toBe(ctx);
+    expect(live()?.failSetup).toBe(false);
+    const back = await put({ failSetup: null });
+    expect(back.statusCode, back.body).toBe(200);
+    expect(await k?.host.applyDeploymentConfig("deploycfg")).toBe("unchanged");
+    // 加载参数若还是失败的那份，这里会抛 setup failed
+    await k?.host.reload("deploycfg");
+    expect(deploycfgProbe().setups).toBe(before + 1);
+    expect(live()?.failSetup).toBe(false);
+  });
+
+  it("只读字段等于默认值仍标来源；数组 / record 字段：环境变量给了 record 的键 → 整个字段只读，数组可在后台改", async () => {
+    let v = await getView();
+    expect(field(v, "mode")).toMatchObject({ source: "file", readonly: true, value: "auto" });
+    expect(field(v, "headers")).toMatchObject({
+      source: "env",
+      readonly: true,
+      value: { x: "v1" },
+    });
+    expect(field(v, "tags")).toMatchObject({ source: "default", readonly: false, value: [] });
+    expect((await put({ mode: "auto" })).statusCode).toBe(409);
+    expect((await put({ headers: { y: "2" } })).statusCode).toBe(409);
+    const res = await put({ tags: ["a", "b"] });
+    expect(res.statusCode, res.body).toBe(200);
+    v = res.json() as ConfigView;
+    expect(field(v, "tags")).toMatchObject({ source: "db", value: ["a", "b"] });
+    await waitFor(async () => (live()?.tags as string[] | undefined)?.length === 2, 10_000, "tags");
+    expect(live()?.headers).toEqual({ x: "v1" });
+  });
+
+  it("本副本拿不到模块（静态清单）：validated false、schema null", async () => {
+    const svc = new DeploymentPluginConfigService({
+      db,
+      keyring: createKeyring(Buffer.alloc(32, 7), []),
+      fileConfig: () => ({}),
+      sources: {},
+      schemaOf: async () => ({
+        version: "1.0.0",
+        fields: [{ path: "a", secret: false, hot: false }],
+      }),
+      log: { warn() {}, error() {} },
+    });
+    expect(await svc.view("static-only")).toMatchObject({
+      validated: false,
+      valid: true,
+      schema: null,
+    });
+    expect((await getView()).validated).toBe(true);
+  });
+
   it("内置插件同样可以在 PG 里配：待配置 → 保存后不重启即加载", async () => {
     const before = await admin({ method: "GET", url: "/api/v1/admin/plugins/badconfig" });
     expect(before.json()).toMatchObject({ source: "builtin", status: "pending_config" });
@@ -380,7 +443,13 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     // 直接改 PG、不发布 plugin-deployment-config
     await db
       .updateTable("plugin_deployment_configs")
-      .set({ config: JSON.stringify({ endpoint: "https://two.example", greeting: "from-pg" }) })
+      .set({
+        config: JSON.stringify({
+          endpoint: "https://two.example",
+          tags: ["a", "b"],
+          greeting: "from-pg",
+        }),
+      })
       .where("plugin", "=", "deploycfg")
       .execute();
     await k?.bus.publish("plugins.reconcile", {});
@@ -391,7 +460,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   it("文件后来加了 PG 里已有的字段：以文件为准并显示为只读；PUT 该字段 409", async () => {
     await k?.stop();
     k = undefined;
-    k = await boot({ region: "eu-file", endpoint: "https://file.example" });
+    k = await boot({ region: "eu-file", mode: "auto", endpoint: "https://file.example" });
     admin = await session(k, "root");
     const v = await getView();
     expect(field(v, "endpoint")).toMatchObject({

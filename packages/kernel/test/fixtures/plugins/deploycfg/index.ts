@@ -23,6 +23,11 @@ export const DeploycfgSchema = z.object({
   limits: z
     .object({ burst: z.number().int().default(5).meta({ hot: true }) })
     .default({ burst: 5 }),
+  mode: z.string().default("auto"),
+  tags: z.array(z.string()).default([]),
+  headers: z.record(z.string(), z.string()).default({}),
+  /** 为 true 时 setup 抛错（测试非 hot 改动重新加载失败）。 */
+  failSetup: z.boolean().default(false),
 });
 
 /**
@@ -37,6 +42,7 @@ export default definePlugin({
   permissions: { http: [{ method: "GET", path: "/state" }] },
   config: { deployment: DeploycfgSchema },
   setup(ctx) {
+    if ((ctx.config as { failSetup?: boolean }).failSetup) throw new Error("failSetup is set");
     const probe = deploycfgProbe();
     probe.setups += 1;
     probe.ctx = ctx;

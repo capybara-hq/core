@@ -98,7 +98,8 @@ export class AdminPluginsController {
 
   /**
    * 保存部署级配置（`values` 以字段点路径为键；`null` 清除、缺省不变）。启动配置里有的字段 → 409
-   * `plugin.config_readonly`；未知字段或不合法 → 400 `plugin.config_invalid`（不回显值）。保存后各副本重读：
+   * `plugin.config_readonly`；未知字段或不合法 → 400 `plugin.config_invalid`（不回显值）。只读字段（启动配置给的值）
+   * 自身不合法不拦 PUT：照样保存，插件保持待配置，要改启动配置。保存后各副本重读：
    * hot 字段就地替换，非 hot 字段重新加载插件，待配置的插件随之加载（不重启）。
    */
   @Put(":name/config")

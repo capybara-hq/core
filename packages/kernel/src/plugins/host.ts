@@ -1158,7 +1158,11 @@ export class PluginHost {
         entryUrl: urls.get(manifest.name) as string,
         migrationsDir: migrationsDirOf(manifest, dirs.get(manifest.name) as string),
         set: sets.get(manifest.name) as PermissionSet,
-        decision: decisions.get(manifest.name) as ApprovalDecision,
+        // 同一批里的提供方可能刚记为待配置：依赖方改为待定，不让启动失败
+        decision: this.blockedByUnloaded(
+          manifest,
+          decisions.get(manifest.name) as ApprovalDecision,
+        ),
         fatal: true,
       });
     }
@@ -1828,7 +1832,7 @@ export class PluginHost {
           .map((f) => f.path),
       );
       const configHash = deploymentConfigHash(schema, next);
-      // 之后的重新加载（依赖方连锁等）都用新配置
+      // 之后的重新加载（依赖方连锁等）都用新配置；重新加载失败时恢复原来的（旧实例的配置）
       this.specs.set(plugin, { ...spec, config: next, configHash });
       if (changed.every((p) => hot.has(p))) {
         inst.updateConfig(next, configHash);
@@ -1843,6 +1847,9 @@ export class PluginHost {
       try {
         fresh = await this.doReload(plugin, drainMs);
       } catch (err) {
+        // 旧实例保留，加载参数也回到旧实例的（否则依赖方连锁 / reload 会用失败的配置重建）；
+        // 配置仍与 PG 不同，下次消息或周期 reconcile 再试
+        if (this.specs.get(plugin)?.config === next) this.specs.set(plugin, spec);
         if (this.closed) throw err;
         this.deps.log.error(
           "plugin reload after a deployment config change failed; it keeps its previous instance",

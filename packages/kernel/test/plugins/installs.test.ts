@@ -626,6 +626,42 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
     }
     expect((await get("nobody")).statusCode).toBe(404);
   });
+
+  it("延后加载链：中间的配置声明插件待配置 → 顶端待定 dependency（不让启动失败）；PG 补上配置后一起加载", async () => {
+    await stopAll();
+    const fixture = (n: string) =>
+      fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
+    await installPkg(
+      "chain-counter",
+      await pluginTgz({
+        name: "chain-counter",
+        manifest: { provides: ["counter@1"] },
+        entry: [
+          'import { definePlugin } from "@capybara-hq/plugin-sdk";',
+          'export default definePlugin({ name: "chain-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
+        ].join("\n"),
+      }),
+    );
+    const k = await boot({ plugins: [MODEL_FAKE, fixture("chain-mid"), fixture("chain-top")] });
+    const status = async (plugin: string) =>
+      db
+        .selectFrom("plugin_replica_status")
+        .select(["state", "reason"])
+        .where("replica_id", "=", k.replicaId)
+        .where("plugin", "=", plugin)
+        .executeTakeFirst();
+    expect(k.host.current("chain-counter")).toBeDefined();
+    expect(await status("chain-mid")).toEqual({ state: "pending", reason: "config" });
+    expect(await status("chain-top")).toEqual({ state: "pending", reason: "dependency" });
+    await db
+      .insertInto("plugin_deployment_configs")
+      .values({ plugin: "chain-mid", config: JSON.stringify({ port: 1 }) })
+      .execute();
+    await k.pluginLifecycle.reconcile("test");
+    expect(k.host.current("chain-mid")?.config).toEqual({ port: 1 });
+    expect(k.host.current("chain-top")).toBeDefined();
+    await db.deleteFrom("plugin_deployment_configs").where("plugin", "=", "chain-mid").execute();
+  });
 });
 
 describe("内置插件", () => {

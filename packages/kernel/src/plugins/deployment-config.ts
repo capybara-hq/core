@@ -56,8 +56,13 @@ export interface DeploymentConfigView {
   fields: DeploymentConfigField[];
   /** 部署级 schema 的 JSON Schema（密钥字段带 `x-secret`）；本副本拿不到模块（未加载的安装记录）时为 null。 */
   schema: JsonSchema | null;
-  /** 生效配置按 schema 校验通过（拿不到 schema 时为 true：加载时再校验）。 */
+  /** 生效配置按 schema 校验通过（`validated` 为 false 时没有校验，恒为 true，界面不要据此显示「合法」）。 */
   valid: boolean;
+  /**
+   * 本副本拿到了插件模块的 zod schema、`valid` / `issues` 是真实校验结果。false：未加载的安装记录，
+   * 字段按包内静态清单给出，没有校验（加载时才校验，不合法则待配置）。
+   */
+  validated: boolean;
   /** 校验失败的原因（只有路径与说明，不含值）。 */
   issues: ConfigIssue[];
 }
@@ -206,7 +211,7 @@ export interface DeploymentPluginConfigDeps {
   sources: Record<string, Record<string, ConfigSourceKind>>;
   /** 插件的部署级配置描述；部署不认识这个插件时返回 undefined（`plugin.not_found`）。 */
   schemaOf: (plugin: string) => Promise<DeploymentSchemaInfo | undefined>;
-  /** 保存提交后发布 {@link PLUGIN_DEPLOYMENT_CONFIG_TOPIC}；失败只告警（周期 reconcile 不覆盖 hot 字段，见文档）。 */
+  /** 保存提交后发布 {@link PLUGIN_DEPLOYMENT_CONFIG_TOPIC}；失败只告警（各副本的周期 reconcile 会重读生效插件的部署配置兜底）。 */
   bus?: { publish(topic: string, payload: unknown): Promise<void> };
   /** 本副本立即应用（不等 bus 消息回到自己；其他副本经 bus）。失败只记 error。 */
   applyLocal?: (plugin: string) => Promise<unknown>;
@@ -434,6 +439,7 @@ export class DeploymentPluginConfigService {
       fields,
       schema: info.schema ? jsonSchemaOf(info.schema) : null,
       valid,
+      validated: info.schema !== undefined,
       issues,
     };
   }
