@@ -100,6 +100,7 @@ export interface LifePkgOptions {
  * - 非空时工具开始执行写 `<dir>/started-<version>-<pid>`，等 `<dir>/release` 出现才返回（跨进程控制，双副本用）；
  *   为空时等同进程的 `globalThis.__lifeGate`（没有就立即返回）；
  * - setup 时 `<dir>/fail-<version>-<pid>` 存在则抛错（只让某个副本的某个版本失败）。
+ * 模块顶层把 `<name> <version>` 记进 `globalThis.__lifeImports`（批准之前不得导入）。
  * 提供的能力实现为 `{ from: <name>, version }`；`connector@1` 为一个最小连接器（`open` 等 `globalThis.__lifeGate`）。每次 setup 在 `globalThis.__lifeSetups[<name>]` 记一笔（同进程测试用）。
  */
 export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
@@ -131,6 +132,8 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const NAME = ${JSON.stringify(name)};
 const VERSION = ${JSON.stringify(o.version)};
+// 模块顶层代码：记一笔导入（测试「批准之前不执行插件代码」）
+(globalThis.__lifeImports ??= []).push(NAME + " " + VERSION);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export default definePlugin({
   name: NAME,

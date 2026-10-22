@@ -66,7 +66,11 @@ interface View {
   reviewHash: string;
 }
 
-const g = globalThis as { __lifeGate?: Promise<void>; __lifeSetups?: Record<string, string[]> };
+const g = globalThis as {
+  __lifeGate?: Promise<void>;
+  __lifeSetups?: Record<string, string[]>;
+  __lifeImports?: string[];
+};
 
 const upload = async (bytes: Uint8Array) => {
   const res = await admin({
@@ -236,6 +240,16 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
       10_000,
       "v2 pending approval",
     );
+    // 本副本已判定 v2 待批准（reconcile 跑过）；v2 的模块（含顶层代码）在批准之前没被导入
+    await waitFor(
+      async () =>
+        (await view("life")).replicas.some(
+          (r) => r.version === "2.0.0" && r.state === "pending" && r.reason === "approval",
+        ),
+      10_000,
+      "replica reports v2 pending approval",
+    );
+    expect(g.__lifeImports ?? []).not.toContain("life 2.0.0");
     expect(loadedVersion("life")).toBe("1.0.0");
 
     // v1 有一个在途调用
@@ -249,6 +263,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
 
     await approve("life");
     await waitFor(async () => loadedVersion("life") === "2.0.0", 15_000, "life 2.0.0 loaded");
+    expect(g.__lifeImports).toContain("life 2.0.0");
     // 新调用走 v2；v1 还在排空
     expect(old.disposed).toBe(true);
     expect(old.inflight.size).toBe(1);

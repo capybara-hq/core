@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, posix, relative, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
@@ -344,9 +344,20 @@ export async function readPluginPackage(
  * 的结果同形（配置字段只取 path / secret）。
  */
 export function permissionSetOfPackage(p: PluginPackage): PermissionSet {
-  const m = p.section.manifest;
+  return permissionSetOfSection(p.section, p.migrationSql);
+}
+
+/**
+ * 同 {@link permissionSetOfPackage}，输入为 `capybara` 段与迁移 SQL（宿主在同步到本地的包上用它判定权限闸门，
+ * 不导入插件模块：批准之前不执行插件的任何代码，含模块顶层代码）。
+ */
+export function permissionSetOfSection(
+  section: CapybaraPackageSection,
+  migrationSql: { file: string; sql: string }[],
+): PermissionSet {
+  const m = section.manifest;
   const schema = pluginSchemaName(m.name);
-  const tables = p.migrationSql.flatMap((f) => parseCreatedTables(f.sql, schema));
+  const tables = migrationSql.flatMap((f) => parseCreatedTables(f.sql, schema));
   const strip = (fs: { path: string; secret: boolean }[]) =>
     fs.map((f) => ({ path: f.path, secret: f.secret }));
   return buildPermissionSet({
@@ -357,6 +368,22 @@ export function permissionSetOfPackage(p: PluginPackage): PermissionSet {
     tables,
     permissions: m.permissions,
   });
+}
+
+/**
+ * 读本地已解包目录 `root` 下 `capybara.migrations` 里的迁移 SQL（不递归、只取符合迁移命名的，按文件名排序），
+ * 与 {@link readPluginPackage} 的 `migrationSql` 同形；没有声明迁移时为空。
+ */
+export async function readMigrationSql(
+  root: string,
+  section: CapybaraPackageSection,
+): Promise<{ file: string; sql: string }[]> {
+  if (section.migrations === undefined) return [];
+  const dir = resolvePath(root, section.migrations);
+  const names = (await readdir(dir)).filter((f) => MIGRATION_FILE_RE.test(f)).sort();
+  const out: { file: string; sql: string }[] = [];
+  for (const file of names) out.push({ file, sql: await readFile(resolvePath(dir, file), "utf8") });
+  return out;
 }
 
 /**

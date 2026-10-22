@@ -8,6 +8,7 @@ import {
   type PluginManifest,
   parseCapability,
   SDK_VERSION,
+  type StaticPluginManifest,
   type ToolHandler,
   type ToolSpec,
   type UiContribution,
@@ -57,6 +58,7 @@ import {
   warnUpgrades,
 } from "./instance.js";
 import { toIssues } from "./org-config.js";
+import { permissionSetOfSection, readMigrationSql } from "./package.js";
 import {
   blockingKeys,
   computePermissionSet,
@@ -395,15 +397,45 @@ interface Activation {
   fatal: boolean;
   /** 安装记录：持锁迁移（见 {@link InstalledPluginLoader.migrate}），代替按 schema 锁直接迁移。 */
   migrate?: () => Promise<"migrated" | "busy">;
+  /**
+   * 安装记录：`manifest` 只是审阅过的静态清单（{@link manifestOfSection}），权限闸门放行之后才调用它导入真实模块
+   * 并核对静态清单（不一致抛 {@link ManifestMismatchError}）。批准之前不执行插件的任何代码（含模块顶层代码）。
+   */
+  importModule?: () => Promise<PluginManifest>;
 }
 
-/** 安装记录准备好的加载候选（同步、导入、核对清单、算权限之后；同一个包结果不变，按 sha 缓存）。 */
+/**
+ * 安装记录准备好的加载候选（同步、按静态清单与迁移 SQL 算权限之后；不导入模块；同一个包结果不变，按 sha 缓存）。
+ * `manifest` 是静态清单（{@link manifestOfSection}），只供依赖解析与权限闸门用。
+ */
 interface InstallCandidate {
   d: DesiredPlugin;
   manifest: PluginManifest;
   set: PermissionSet;
   entryUrl: string;
+  /** 包根目录（解包后的 `package/`）。 */
+  root: string;
   migrationsDir: string | undefined;
+}
+
+/**
+ * 由审阅过的静态清单拼出解析依赖、判定权限闸门用的清单（没有 setup 与配置 schema，不能用来加载）。
+ * 闸门放行后导入的真实模块必须与静态清单一致（{@link matchesSection}），两者在依赖解析上等价。
+ */
+function manifestOfSection(m: StaticPluginManifest): PluginManifest {
+  return {
+    name: m.name,
+    version: m.version,
+    sdk: m.sdk,
+    provides: m.provides,
+    requires: m.requires,
+    optional: m.optional,
+    permissions: m.permissions,
+    ...(m.ui !== undefined && { ui: m.ui }),
+    setup() {
+      throw new Error(`plugin ${m.name}: static manifest cannot be set up`);
+    },
+  } as unknown as PluginManifest;
 }
 
 /** 内核消费的提供方能力：调用计入提供方实例的在途计数（撤销 / 升级时排空，C17）。 */
@@ -539,6 +571,8 @@ export class PluginHost {
   private readonly pendingActivations = new Map<string, Activation>();
   /** 安装记录准备好的候选（按插件名；sha 变了就作废）。 */
   private readonly prepared = new Map<string, InstallCandidate>();
+  /** 闸门放行后导入过的安装记录真实清单（按插件名；部署配置 schema 用，含待配置而未加载的）。 */
+  private readonly importedManifests = new Map<string, { sha256: string; manifest: PluginManifest }>();
   /** 本副本写过状态行的安装记录插件（停用 / 卸载后把未加载的那行标为 unloaded）。 */
   private readonly installRows = new Map<string, { version: string; sha256: string }>();
   /** 启用的安装记录按静态清单声明提供的能力（最近一次 {@link applyInstalls}；待定插件的 blockedBy 用）。 */
@@ -644,9 +678,9 @@ export class PluginHost {
    * 部署配置 = 启动配置（`pluginConfig`）补上 PG 里保存的字段（构造参数 `deploymentConfig`，C10）。
    *    1、2 一起解析依赖与排序；配置声明的插件 `requires` 的能力只能由安装记录提供时，先挑出来，等第 3 步之后
    *    与已加载的插件一起解析再加载（第 4 步；仍不满足时与此前一样抛错）。
-   * 3. 安装记录（`plan.installs`）：同步到本地、导入、核对静态清单（名字与 `capybara.manifest` 都须一致，
-   *    否则 failed / manifest_mismatch），与已有插件一起解析依赖后按拓扑序走同一道权限闸门，迁移目录只取审阅过的
-   *    `capybara.migrations`；任何一步失败只把该插件记为 failed（或 pending），其余照常。与内置 / 配置声明的插件重名时
+   * 3. 安装记录（`plan.installs`）：同步到本地，按审阅过的静态清单与迁移 SQL 算权限集合，与已有插件一起解析依赖后
+   *    按拓扑序走同一道权限闸门；放行之后才导入模块并核对静态清单（名字与 `capybara.manifest` 都须一致，
+   *    否则 failed / manifest_mismatch），批准之前不执行插件代码；迁移目录只取审阅过的 `capybara.migrations`；任何一步失败只把该插件记为 failed（或 pending），其余照常。与内置 / 配置声明的插件重名时
    *    以后者为准并告警。
    * 每个插件的结果都写进本副本的 `plugin_replica_status`（构造时给了 `status`）。
    * 加载成功的实例登记进注册表（C17）：此后可用 {@link unload} / {@link reload} 在本进程撤销或重新加载。
@@ -796,9 +830,10 @@ export class PluginHost {
    * 安装记录收敛到 PG 期望状态（启动第 3 步与运行中的 {@link converge} 共用，C16）；`desired` 为期望启用的记录。
    * 1. 不再期望启用的（停用 / 卸载）：卸下（排空在途调用），未加载但写过状态行的标为 unloaded；
    * 2. 期望启用、本副本已在目标包上的：不动；
-   * 3. 其余：准备候选（同步 → 导入 → 核对静态清单 → 权限集合；失败记 failed：`sync_failed` / `sha_mismatch` /
-   *    `import_failed` / `manifest_mismatch`），与生效的插件一起按依赖拓扑序逐个处理：权限闸门（新增权限待批准 →
-   *    pending / approval，旧实例照常）、必需能力（此刻没有生效的提供方 → pending / dependency）、部署配置、
+   * 3. 其余：准备候选（同步 → 按静态清单与迁移 SQL 算权限集合；失败记 failed：`sync_failed` / `sha_mismatch`），
+   *    与生效的插件一起按依赖拓扑序逐个处理：权限闸门（新增权限待批准 → pending / approval，旧实例照常）、
+   *    必需能力（此刻没有生效的提供方 → pending / dependency）、导入模块并核对静态清单（`import_failed` /
+   *    `manifest_mismatch`；闸门放行之前不导入）、部署配置、
    *    持锁迁移（busy → pending / migration）、setup，成功后登记新实例（先加载新、再撤销旧：旧实例在后台排空后撤销）；
    *    任何一步失败旧实例保留，记 failed（`migration_failed` / `setup_failed`）。
    * 4. 运行中（非启动）：对变了的能力做依赖方连锁（本轮刚加载的除外），此前因依赖卸下的插件随之补回。
@@ -849,6 +884,7 @@ export class PluginHost {
       if (wanted.has(name) || this.registry.current(name)) continue;
       this.dropPending(name);
       this.prepared.delete(name);
+      this.importedManifests.delete(name);
       await this.writeStatus({
         plugin: name,
         version: row.version,
@@ -956,6 +992,7 @@ export class PluginHost {
         decision: { plugin: m.name, action: "pending" } as unknown as ApprovalDecision,
         fatal: false,
         migrate: () => loader.migrate(c.d, c.migrationsDir, this.abort.signal),
+        importModule: () => this.importInstalled(c),
       };
       a.decision = this.decidePending(m.name, a, snapshots, installProviders);
       const old = this.registry.current(m.name);
@@ -974,9 +1011,10 @@ export class PluginHost {
   }
 
   /**
-   * 安装记录的加载候选：同步到本地 → 导入 → 核对静态清单 → 权限集合（迁移目录只取审阅过的 `capybara.migrations`）。
-   * 失败记 failed（`sync_failed` / `sha_mismatch` / `import_failed` / `manifest_mismatch`，detail 只写错误消息）并返回
-   * undefined。同一个包的结果不变，成功的按 sha 缓存（每个周期的 reconcile 不重复解包、导入）。
+   * 安装记录的加载候选：同步到本地 → 按审阅过的静态清单与包里的迁移 SQL 算权限集合（与审阅时的
+   * `permissionSetOfPackage` 同一算法；迁移目录只取 `capybara.migrations`）。不导入模块：导入在权限闸门放行之后
+   * （{@link importInstalled}）。失败记 failed（`sync_failed` / `sha_mismatch`，detail 只写错误消息）并返回
+   * undefined。同一个包的结果不变，成功的按 sha 缓存（每个周期的 reconcile 不重复解包）。
    */
   private async prepare(
     loader: InstalledPluginLoader,
@@ -999,44 +1037,43 @@ export class PluginHost {
       return undefined;
     };
     let url: string;
+    let root: string;
+    let set: PermissionSet;
     try {
       url = await loader.sync(d);
+      root = packageRootOf(url, d.section.entry);
+      set = permissionSetOfSection(d.section, await readMigrationSql(root, d.section));
     } catch (e) {
       const mismatch =
         e instanceof PluginBlobIntegrityError || e instanceof PackageShaMismatchError;
       return fail(mismatch ? "sha_mismatch" : "sync_failed", e);
     }
-    let manifest: PluginManifest;
-    let root: string;
-    try {
-      root = packageRootOf(url, d.section.entry);
-      manifest = await importPluginModule(url, d.name, root);
-      assertSecretsReachable(manifest);
-    } catch (e) {
-      return fail("import_failed", e);
-    }
-    // 审阅看的是静态清单：真实模块必须与它一致（名字、版本、能力、权限、界面、配置字段）
-    if (!matchesSection(manifest, d.name, d.section.manifest)) {
-      return fail("manifest_mismatch", new ManifestMismatchError(d.name, manifest.name));
-    }
-    // 迁移目录只取审阅过的静态 `capybara.migrations`（不认模块清单里的 migrations）
     const migrations = d.section.migrations;
-    const reviewed = { ...manifest, migrations } as PluginManifest;
-    let set: PermissionSet;
-    try {
-      set = await computePermissionSet(reviewed, root);
-    } catch (e) {
-      return fail("import_failed", e);
-    }
     const c: InstallCandidate = {
       d,
-      manifest,
+      manifest: manifestOfSection(d.section.manifest),
       set,
       entryUrl: url,
+      root,
       migrationsDir: migrations === undefined ? undefined : resolvePath(root, migrations),
     };
     this.prepared.set(d.name, c);
     return c;
+  }
+
+  /**
+   * 权限闸门放行后导入安装记录的真实模块（模块顶层代码此时才执行）并核对：密钥标记、与审阅过的静态清单一致
+   * （名字、版本、能力、权限、界面、配置字段；不一致抛 {@link ManifestMismatchError}）。同一入口 URL 由 Node 模块缓存，
+   * 重复调用不重复执行顶层代码。
+   */
+  private async importInstalled(c: InstallCandidate): Promise<PluginManifest> {
+    const manifest = await importPluginModule(c.entryUrl, c.d.name, c.root);
+    assertSecretsReachable(manifest);
+    if (!matchesSection(manifest, c.d.name, c.d.section.manifest)) {
+      throw new ManifestMismatchError(c.d.name, manifest.name);
+    }
+    this.importedManifests.set(c.d.name, { sha256: c.d.sha256, manifest });
+    return manifest;
   }
 
   /**
@@ -1203,17 +1240,36 @@ export class PluginHost {
     a: Activation,
     setupTimeoutMs?: number,
   ): Promise<PluginInstance | undefined> {
-    const { manifest, decision } = a;
+    const { decision } = a;
+    let manifest = a.manifest;
     const name = manifest.name;
     const base = { plugin: name, version: manifest.version, sha256: a.sha256, source: a.source };
+    const failSoft = async (reason: InstallFailureReason, e: unknown): Promise<undefined> => {
+      this.logFailure(name, a.sha256, reason, e, { version: manifest.version });
+      await this.writeStatus({ ...base, state: "failed", reason, detail: errMsg(e) });
+      return undefined;
+    };
+    // 安装记录：闸门放行之后才导入真实模块（I1：批准之前不执行插件代码）；待批准时只有静态清单，不读部署配置
+    if (a.importModule && decision.action !== "pending") {
+      try {
+        manifest = await a.importModule();
+      } catch (e) {
+        if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
+        return failSoft(
+          e instanceof ManifestMismatchError ? "manifest_mismatch" : "import_failed",
+          e,
+        );
+      }
+    }
     const schema = manifest.config?.deployment;
     // 安装记录每次 converge 都按 PG 重新判定，不进 pendingActivations
     const retryLater = () => {
       if (a.source !== "install") this.pendingActivations.set(name, a);
     };
+    const readConfig = !(a.importModule && decision.action === "pending");
     let raw: unknown;
     try {
-      raw = await this.rawConfigOf(name, schema);
+      if (readConfig) raw = await this.rawConfigOf(name, schema);
     } catch (e) {
       if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
       // 读不到 PG 里保存的部署配置：按待配置处理，下次 reconcile 再试
@@ -1231,7 +1287,7 @@ export class PluginHost {
       return undefined;
     }
     let config: unknown = raw;
-    const parsed = schema?.safeParse(raw);
+    const parsed = readConfig ? schema?.safeParse(raw) : undefined;
     if (a.source !== "install") this.configValidity.set(name, parsed?.success ?? true);
     if (decision.action === "pending") {
       // 待批准：不校验配置、不迁移、不 setup；配置合法时仍登记其中的密钥，避免日志泄露
@@ -1252,11 +1308,6 @@ export class PluginHost {
       return undefined;
     }
     this.dropPending(name);
-    const failSoft = async (reason: InstallFailureReason, e: unknown): Promise<undefined> => {
-      this.logFailure(name, a.sha256, reason, e, { version: manifest.version });
-      await this.writeStatus({ ...base, state: "failed", reason, detail: errMsg(e) });
-      return undefined;
-    };
     // 权限放行在部署配置之前记下（autoApprove 的快照不因待配置而缺失，后台不会把待配置显示成待批准）
     if (decision.changed) {
       if (decision.autoApprove) {
@@ -1754,7 +1805,7 @@ export class PluginHost {
     const m =
       this.registry.current(plugin)?.manifest ??
       this.declaredInfo.get(plugin)?.manifest ??
-      this.prepared.get(plugin)?.manifest;
+      this.importedManifests.get(plugin)?.manifest;
     return m && { version: m.version, schema: m.config?.deployment };
   }
 
