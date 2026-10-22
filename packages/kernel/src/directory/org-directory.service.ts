@@ -34,7 +34,11 @@ import type { DirectoryRequestsService, DirectoryRequestView } from "./requests.
 type Trx = Transaction<KernelDatabase>;
 
 /** 组织视角的目录条目（`GET /orgs/:orgId/directory`）。 */
-export interface OrgDirectoryItem extends Omit<DirectoryItemView, "installs" | "catalogSourceId"> {
+export interface OrgDirectoryItem
+  extends Omit<
+    DirectoryItemView,
+    "installs" | "catalogSourceId" | "latestCatalogVersion" | "newerInCatalog"
+  > {
   /**
    * `yes` 可直接安装；`needs_approval` 需企业管理员批准（安装返回 202 并建申请）；`granted` 已批准本组织安装；
    * `disabled` 企业管理员禁用（成员看不到）；`not_deployed` 依赖的插件没有装到部署上。
@@ -104,16 +108,8 @@ async function iconPath(
   return undefined;
 }
 
-/**
- * 读条目最新版本的图标（只经内核路由给出，响应头带 nosniff 与 CSP sandbox，网页只用 `<img>` 显示）。
- * 条目不存在或已删除 → `directory.item_not_found`；没有图标 → `directory.icon_not_found`；
- * 存储里的内容不是合法的 svg / png（导入时已校验，防存储被改）→ `internal`。
- */
-export async function readDirectoryIcon(
-  db: KernelDb,
-  storage: StorageService,
-  itemId: string,
-): Promise<DirectoryIcon> {
+/** 条目的最新版本行；条目不存在、已删除或（`includeDisabled` 为 false 时）被禁用 → `directory.item_not_found`。 */
+async function latestVersionRow(db: KernelDb, itemId: string, includeDisabled: boolean) {
   if (!UUID_RE.test(itemId)) throw itemNotFound();
   const item = await db
     .selectFrom("directory_items")
@@ -121,7 +117,8 @@ export async function readDirectoryIcon(
     .where("id", "=", itemId)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
-  if (!item) throw itemNotFound();
+  // 看不到的条目在读任何版本 / 存储之前就按「不存在」处理，不让「没有图标」暴露它存在
+  if (!item || (!includeDisabled && item.policy === "disabled")) throw itemNotFound();
   const v = await db
     .selectFrom("directory_item_versions")
     .select(["section", "object_prefix", "files"])
@@ -129,6 +126,36 @@ export async function readDirectoryIcon(
     .where("version", "=", item.latest_version)
     .executeTakeFirst();
   if (!v) throw itemNotFound();
+  return { item, v };
+}
+
+/** 条目最新版本有没有图标（应用要读 app.yaml）；读不到按没有。 */
+export async function directoryHasIcon(
+  db: KernelDb,
+  storage: StorageService,
+  itemId: string,
+): Promise<boolean> {
+  try {
+    const { v } = await latestVersionRow(db, itemId, true);
+    const path = await iconPath(storage, v);
+    return path !== undefined && v.files.some((f) => f.path === path);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 读条目最新版本的图标（只经内核路由给出，响应头带 nosniff 与 CSP sandbox，网页只用 `<img>` 显示）。
+ * 条目不存在、已删除或（`includeDisabled` 为 false 时）被禁用 → `directory.item_not_found`（在读存储之前判定）；
+ * 没有图标 → `directory.icon_not_found`；存储里的内容不是合法的 svg / png（导入时已校验，防存储被改）→ `internal`。
+ */
+export async function readDirectoryIcon(
+  db: KernelDb,
+  storage: StorageService,
+  itemId: string,
+  includeDisabled: boolean,
+): Promise<DirectoryIcon> {
+  const { item, v } = await latestVersionRow(db, itemId, includeDisabled);
   const path = await iconPath(storage, v);
   const f = path === undefined ? undefined : v.files.find((x) => x.path === path);
   if (path === undefined || !f) throw iconNotFound();
@@ -384,7 +411,12 @@ export class OrgDirectoryService {
   constructor(private readonly d: OrgDirectoryDeps) {}
 
   /** 组织视角的条目列表；成员（非管理员）看不到 disabled 的条目。 */
-  async list(orgId: string, accountId: string, kind?: PackageKind): Promise<OrgDirectoryItem[]> {
+  async list(
+    orgId: string,
+    accountId: string,
+    kind?: PackageKind,
+    itemId?: string,
+  ): Promise<OrgDirectoryItem[]> {
     const m = await this.d.db
       .selectFrom("memberships")
       .select("role")
@@ -400,6 +432,7 @@ export class OrgDirectoryService {
       .orderBy("name")
       .orderBy("id");
     if (kind !== undefined) q = q.where("kind", "=", kind);
+    if (itemId !== undefined) q = q.where("id", "=", itemId);
     if (!isAdmin) q = q.where("policy", "<>", "disabled");
     const items = await q.execute();
     if (items.length === 0) return [];
@@ -451,7 +484,13 @@ export class OrgDirectoryService {
     const out: OrgDirectoryItem[] = [];
     for (const i of items) {
       const vs = versions.filter((v) => v.item_id === i.id);
-      const { installs: _installs, catalogSourceId: _source, ...view } = itemView(i, vs);
+      const {
+        installs: _installs,
+        catalogSourceId: _source,
+        latestCatalogVersion: _latest,
+        newerInCatalog: _newer,
+        ...view
+      } = itemView(i, vs);
       const latest = vs.find((v) => v.version === i.latest_version);
       let installable: OrgDirectoryItem["installable"];
       if (i.policy === "disabled") installable = "disabled";
@@ -485,7 +524,7 @@ export class OrgDirectoryService {
    */
   async detail(orgId: string, accountId: string, itemId: string): Promise<OrgDirectoryDetail> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
-    const item = (await this.list(orgId, accountId)).find((i) => i.id === itemId);
+    const [item] = await this.list(orgId, accountId, undefined, itemId);
     if (!item) throw itemNotFound();
     const v = await this.d.db
       .selectFrom("directory_item_versions")
@@ -541,11 +580,14 @@ export class OrgDirectoryService {
     return out;
   }
 
-  /** 条目图标；成员看不到 disabled 的条目（→ `directory.item_not_found`）。 */
-  async icon(itemId: string, isAdmin: boolean): Promise<DirectoryIcon> {
-    const icon = await readDirectoryIcon(this.d.db, this.d.storage, itemId);
-    if (!isAdmin && icon.policy === "disabled") throw itemNotFound();
-    return icon;
+  /** 条目图标；成员看不到 disabled 的条目（→ `directory.item_not_found`，在读存储之前判定）。 */
+  icon(itemId: string, isAdmin: boolean): Promise<DirectoryIcon> {
+    return readDirectoryIcon(this.d.db, this.d.storage, itemId, isAdmin);
+  }
+
+  /** 后台条目详情用：最新版本有没有图标。 */
+  hasIcon(itemId: string): Promise<boolean> {
+    return directoryHasIcon(this.d.db, this.d.storage, itemId);
   }
 
   /**

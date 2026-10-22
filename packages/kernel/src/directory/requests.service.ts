@@ -25,6 +25,8 @@ export interface DirectoryRequestView {
   status: DirectoryRequestStatus;
   note: string;
   requestedBy: string | null;
+  /** 申请人的显示名（账号已删除为 null）。 */
+  requestedByName: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
   /** 组织管理员批准并升级到企业管理员时的批准人与时间（没有升级为 null）。 */
@@ -461,6 +463,7 @@ export class DirectoryRequestsService {
       .selectFrom("directory_requests as r")
       .innerJoin("directory_items as i", "i.id", "r.item_id")
       .innerJoin("orgs as o", "o.id", "r.org_id")
+      .leftJoin("accounts as a", "a.id", "r.requested_by")
       .select([
         "r.id",
         "r.org_id",
@@ -474,6 +477,7 @@ export class DirectoryRequestsService {
         "r.status",
         "r.note",
         "r.requested_by",
+        "a.display_name as requested_by_name",
         "r.decided_by",
         "r.decided_at",
         "r.org_decided_by",
@@ -496,6 +500,7 @@ function toView(r: {
   status: DirectoryRequestStatus;
   note: string;
   requested_by: string | null;
+  requested_by_name: string | null;
   decided_by: string | null;
   decided_at: Date | null;
   org_decided_by: string | null;
@@ -512,6 +517,7 @@ function toView(r: {
     status: r.status,
     note: r.note,
     requestedBy: r.requested_by,
+    requestedByName: r.requested_by_name,
     decidedBy: r.decided_by,
     decidedAt: r.decided_at?.toISOString() ?? null,
     orgDecidedBy: r.org_decided_by,

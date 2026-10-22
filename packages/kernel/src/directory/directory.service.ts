@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type CatalogEntry,
   CONNECTOR_TEMPLATE_LIMITS,
   type Connector,
   type ConnectorTemplateSpec,
@@ -30,7 +31,7 @@ import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import type { AppImport, AppReview } from "./app-import.js";
 import { checkDirectoryArchive, invalidPackage, unpackDirectoryArchive } from "./archive.js";
-import { HOST_VERSIONS, loadCatalogEntry } from "./catalogs.service.js";
+import { HOST_VERSIONS, loadCatalogEntry, sourceEffective } from "./catalogs.service.js";
 import { schemaHasPath } from "./schema-path.js";
 
 /** 条目策略（C22）：allow（新导入默认）/ needs_approval / disabled（不能新装，已装不受影响）。 */
@@ -57,6 +58,10 @@ export interface DirectoryItemView {
   source: string;
   /** 从清单引入的条目记下的来源清单 id（`official` 或企业清单 id）；手动导入或来源清单已删除为 null。 */
   catalogSourceId: string | null;
+  /** 来源清单（生效时）里该条目最高的兼容版本；不是从清单引入、来源停用或条目已不在清单里为 null。 */
+  latestCatalogVersion: string | null;
+  /** `latestCatalogVersion` 比已引入的最新版本新（界面显示「有新版本」；不自动引入）。 */
+  newerInCatalog: boolean;
   updatedAt: string;
 }
 
@@ -478,8 +483,11 @@ export class DirectoryService {
       byItem.set(v.item_id, list);
     }
     const installs = await countInstalls(this.d.db, items);
+    const latest = await catalogLatest(this.d.db, this.d.config(), items);
     return {
-      items: items.map((i) => itemView(i, byItem.get(i.id) ?? [], installs.get(i.id) ?? 0)),
+      items: items.map((i) =>
+        itemView(i, byItem.get(i.id) ?? [], installs.get(i.id) ?? 0, latest.get(i.id) ?? null),
+      ),
       nextOffset,
     };
   }
@@ -500,9 +508,10 @@ export class DirectoryService {
       .execute();
     rows.sort((a, b) => bySemverDesc(a.version, b.version));
     const installs = await countInstalls(this.d.db, [item]);
+    const latest = await catalogLatest(this.d.db, this.d.config(), [item]);
     return {
       item: {
-        ...itemView(item, rows, installs.get(item.id) ?? 0),
+        ...itemView(item, rows, installs.get(item.id) ?? 0, latest.get(item.id) ?? null),
         packageName: item.package_name,
         deletedAt: item.deleted_at?.toISOString() ?? null,
       },
@@ -948,6 +957,37 @@ function listingOf(
   };
 }
 
+/**
+ * 从清单引入的条目在其来源清单（生效时）里最高的兼容版本（见 {@link DirectoryItemView.latestCatalogVersion}）。
+ */
+async function catalogLatest(
+  db: KernelDb,
+  config: KernelConfig,
+  items: { id: string; kind: PackageKind; name: string; catalog_source_id?: string | null }[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const sourced = items.filter((i) => typeof i.catalog_source_id === "string");
+  if (sourced.length === 0) return out;
+  const rows = await db
+    .selectFrom("catalog_entries as e")
+    .innerJoin("catalog_sources as s", "s.id", "e.source_id")
+    .select(["e.source_id", "e.kind", "e.name", "e.entry", "s.builtin", "s.enabled"])
+    .where("e.source_id", "in", [...new Set(sourced.map((i) => i.catalog_source_id as string))])
+    .where("e.name", "in", [...new Set(sourced.map((i) => i.name))])
+    .execute();
+  for (const i of sourced) {
+    const r = rows.find(
+      (x) => x.source_id === i.catalog_source_id && x.kind === i.kind && x.name === i.name,
+    );
+    if (!r || !sourceEffective(r, config)) continue;
+    const [best] = compatibleVersions(r.entry as CatalogEntry, HOST_VERSIONS)
+      .map((v) => v.version)
+      .sort(bySemverDesc);
+    if (best !== undefined) out.set(i.id, best);
+  }
+  return out;
+}
+
 /** 各条目的组织安装数（见 {@link DirectoryItemView.installs}）。 */
 async function countInstalls(
   db: KernelDb,
@@ -1030,8 +1070,10 @@ export function itemView(
   },
   versions: { version: string; source: string }[],
   installs = 0,
+  latestCatalogVersion: string | null = null,
 ): DirectoryItemView {
   const sorted = [...versions].sort((a, b) => bySemverDesc(a.version, b.version));
+  const top = sorted[0]?.version ?? i.latest_version;
   return {
     id: i.id,
     kind: i.kind,
@@ -1045,6 +1087,8 @@ export function itemView(
     installs,
     source: versions.find((v) => v.version === i.latest_version)?.source ?? "file",
     catalogSourceId: i.catalog_source_id ?? null,
+    latestCatalogVersion,
+    newerInCatalog: latestCatalogVersion !== null && semver.gt(latestCatalogVersion, top),
     updatedAt: i.updated_at.toISOString(),
   };
 }

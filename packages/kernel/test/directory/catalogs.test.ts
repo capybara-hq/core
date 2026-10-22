@@ -492,6 +492,14 @@ describe("从清单引入", () => {
       url: `/api/v1/admin/catalogs/entries?sourceId=${id}`,
     });
     expect(after.json().items[0]).toMatchObject({ newerAvailable: true });
+    // 后台条目视图：来源清单里最高的兼容版本与「有新版本」
+    const items = await admin({ method: "GET", url: "/api/v1/admin/directory/items" });
+    expect(items.json().items[0]).toMatchObject({
+      name: "cat-a",
+      catalogSourceId: id,
+      latestCatalogVersion: "2.0.0",
+      newerInCatalog: true,
+    });
     expect(await db.selectFrom("directory_item_versions").select("version").execute()).toHaveLength(
       1,
     );

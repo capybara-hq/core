@@ -9,6 +9,7 @@ import {
   install,
   MCP_TOKEN,
   type OrgEnv,
+  requestItem,
   resetOrgDirectory,
   seedApp,
   seedPluginItem,
@@ -534,6 +535,52 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       url: `/api/v1/orgs/${env.orgId}/directory/${itemId}/icon`,
     });
     expect(admin.statusCode).toBe(200);
+  });
+
+  it("没有图标的 disabled 条目：成员得到 item_not_found（不因「没有图标」暴露条目存在）", async () => {
+    const skillId = await importSkill(env, { policy: "disabled" });
+    const r = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/directory/${skillId}/icon`,
+    });
+    expect(r.statusCode).toBe(404);
+    expect(r.json().error.code).toBe("directory.item_not_found");
+    const admin = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/directory/${skillId}/icon`,
+    });
+    expect(admin.json().error.code).toBe("directory.icon_not_found");
+  });
+
+  it("申请带申请人的显示名（收件箱卡片显示）", async () => {
+    const itemId = await importSkill(env);
+    const r = await requestItem(env.mem, env, itemId, "please");
+    expect(r.statusCode, r.body).toBe(201);
+    const inbox = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/inbox` });
+    const item = (
+      inbox.json() as { items: { type: string; request?: Record<string, unknown> }[] }
+    ).items.find((i) => i.type === "directory_request");
+    expect(item?.request).toMatchObject({ requestedBy: env.memId, requestedByName: "M" });
+  });
+
+  it("后台详情给出 hasIcon：模板有图标为 true，技能为 false", async () => {
+    const tplId = await importTemplate(env);
+    const skillId = await importSkill(env);
+    const t = await env.root({ method: "GET", url: `/api/v1/admin/directory/items/${tplId}` });
+    expect(t.json().hasIcon).toBe(true);
+    const k = await env.root({ method: "GET", url: `/api/v1/admin/directory/items/${skillId}` });
+    expect(k.json().hasIcon).toBe(false);
+  });
+
+  it("详情：成员看不到 disabled 的条目（404），组织管理员看得到", async () => {
+    const itemId = await importSkill(env, { policy: "disabled" });
+    const url = `/api/v1/orgs/${env.orgId}/directory/${itemId}`;
+    const hidden = await env.mem({ method: "GET", url });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json().error.code).toBe("directory.item_not_found");
+    const admin = await env.boss({ method: "GET", url });
+    expect(admin.statusCode).toBe(200);
+    expect(admin.json().item).toMatchObject({ id: itemId, installable: "disabled" });
   });
 
   it("详情：连接器模板给出端点预设、可改路径与认证预设；应用给出模板、插件与技能", async () => {

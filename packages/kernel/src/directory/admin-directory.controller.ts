@@ -197,10 +197,14 @@ export class AdminDirectoryController {
     });
   }
 
-  /** 条目详情与各版本；不存在 → 404 `directory.item_not_found`。 */
+  /**
+   * 条目详情与各版本，另给出 `hasIcon`（最新版本有图标，`GET items/:id/icon` 可取）；不存在 → 404
+   * `directory.item_not_found`。
+   */
   @Get("items/:id")
-  get(@Param("id") id: string): Promise<DirectoryItemDetail> {
-    return this.directory.get(id);
+  async get(@Param("id") id: string): Promise<DirectoryItemDetail & { hasIcon: boolean }> {
+    const detail = await this.directory.get(id);
+    return { ...detail, hasIcon: await this.orgDirectory.hasIcon(id) };
   }
 
   /** 条目图标（含 disabled 的条目；响应头同组织侧，见 `sendDirectoryIcon`）。没有图标 → 404 `directory.icon_not_found`。 */
