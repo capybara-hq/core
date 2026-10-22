@@ -1,7 +1,7 @@
 # 扩展包与市场设计（含 Claude Code 插件兼容）
 
 - 日期：2026-10-22
-- 状态：草案，待用户审阅（2026-10-22 用户选定：组织内应用原地升级纳入本期）
+- 状态：草案，待用户审阅（2026-10-22 用户选定：组织内应用原地升级纳入本期；文件一律 JSON；官方市场仓库含全部内置组件，core 带初始化清单）
 - 时机：**M7 合并之后**开工，暂称 M8。不插入、不改动 M6 / M7 的计划。
 - 基线：
   - M6 计划 `docs/superpowers/plans/2026-10-22-m6-eval-admin.md` 的 C11 / C21–C32、D14、D16、D17：插件包、四种目录包、目录来源、应用包、组织安装与卸载；
@@ -24,7 +24,9 @@
 2. 同时定义 Capybara 自己的 `.capybara-plugin/`；
 3. 借鉴 Claude Code 的做法，**把一个仓库当作市场**；Capybara 官方提供一个市场；
 4. 对已有的扩展能力做整体评估，**不重复造轮子**，形成一套完整的机制；
-5. 名字可以改（`app.yaml` 改成 `plugin.yaml` 也行），由设计者定。
+5. 名字可以改（`app.yaml` 改成 `plugin.yaml` 也行），由设计者定；
+6. 文件一律用 JSON，不用 YAML；
+7. 官方维护一个市场仓库，所有内置组件也在其中声明；core 带一份初始化 JSON，声明默认安装哪些组件的哪个版本，部署初始化时按它安装核心依赖。
 
 ## 1. 目标、非目标、反目标
 
@@ -59,6 +61,7 @@
 | 连接器插件 / 连接器模板（C30） | 协议适配（MCP、OpenAPI）/ 端点 + 认证预设，不含凭据 | 模板由企业管理员导入，连接器由组织安装 | **不变**。Claude 的 `.mcp.json` 远程服务翻译成连接器模板 |
 | 技能（M5，C21） | Agent Skills 格式 | 组织管理员 / agent | **不变**，新增「常驻」与「来源应用」两项元数据（第 6 节） |
 | 应用（C31） | 组合包 `app.yaml`：插件 + 连接器模板 + 技能 | 企业导入一次审阅，组织安装、卸载按组件台账 | **成为唯一的组合包**。新增仓库形式与 Claude 翻译两个读入口（第 3、5 节），补上组织内原地升级（第 6.5 节） |
+| 内置插件（D13） | 核心镜像自带 `openai-compatible`、`object-store-s3`，预先批准、始终启用 | 随镜像 | **改为「预装组件」**：由 core 的初始化清单按版本声明，也列在官方市场里，之后与其他组件一样升级（第 4.5 节） |
 | 目录与策略（C22、T23、T26） | 部署级条目、三档策略、成员申请 | 企业管理员 / 组织 | **不变**。新来源的条目落进同一张表 |
 | 目录来源（D16、C25、C26、T24） | https 上的 `index.json`、ETag 刷新、按 sha512 引入 | 企业管理员 | 来源新增 **git 仓库**一种；清单格式升 v2（第 4 节），v1 照旧可读 |
 | `ctx.hooks`（M7） | 进程内 JS 中间件链 | 随插件 | **不用于翻译 Claude hooks**。Claude 的 SessionStart 注入改由「常驻技能」承担 |
@@ -76,46 +79,59 @@
 
 ## 3. 命名与格式
 
-### 3.1 命名（设计者的决定）
+### 3.1 命名与文件格式
 
-- 仓库里的目录名遵循生态惯例，叫 **`.capybara-plugin/`**，和 `.claude-plugin/`、`.codex-plugin/` 并排放。多平台仓库的作者只需多加一个目录。
-- 目录里有两个文件：
-  - **`app.yaml`**：组合包清单，与 C31 的 tgz 根目录文件同名；
-  - **`marketplace.yaml`**：市场清单。
-- 产品内部概念**不改**：组合包在界面和文档里仍叫「应用」，「插件」仍只指进程内代码（D14、D17）。
-- 不采用 `plugin.yaml` 的理由：在 Capybara 里，「插件」已经指进程内代码，用户可见的接口、权限、CLI 都这么叫。组合包的文件再叫 plugin，同一个词就会指两种东西。目录名里的 `plugin` 只是生态惯例，文档里说明一句即可。
+- 仓库里的目录名遵循生态惯例，叫 **`.capybara-plugin/`**，和 `.claude-plugin/`、`.codex-plugin/` 并排放。多平台仓库的作者只需多加一个目录。（设计者的决定）
+- **一律用 JSON**（2026-10-22 用户决定：生态里大家都用 JSON）。目录里有两个文件：
+  - **`app.json`**：组合包清单；
+  - **`marketplace.json`**：市场清单。
+  
+  M6 C31 的 tgz 形式用的是 `app.yaml`。如果 M7 发布时已经有外部包在用 `app.yaml`，读取器仍接受它（只读兼容），新包和文档一律写 `app.json`。
+- 产品内部概念**不改**：组合包在界面和文档里仍叫「应用」，「插件」仍只指进程内代码（D14、D17）。（设计者的决定）
+- 不把组合包的文件叫 `plugin.json` 的理由：在 Capybara 里，「插件」已经指进程内代码，用户可见的接口、权限、CLI 都这么叫。组合包的文件再叫 plugin，同一个词就会指两种东西。目录名里的 `plugin` 只是生态惯例，文档里说明一句即可。
+- 每种文件都有 JSON Schema，放在 `packages/plugin-sdk/schemas/`，纳入 `check:package-schemas`（T24）。文件里可以写 `$schema` 字段，方便编辑器校验。
 
-### 3.2 应用清单 v2（`app.yaml`）
+### 3.2 应用清单 v2（`app.json`）
 
 v2 是 C31 v1 的超集，tgz 形式与仓库形式共用同一个 schema 和解析器。
 
-```yaml
-schemaVersion: 2
-name: superpowers                 # ^[a-z0-9][a-z0-9-]{0,63}$
-version: 7.0.1                    # semver
-publisher: Jesse Vincent
-description: …                    # ≤ 1024
-displayName: { zh: …, en: … }     # 可选
-icon: ./assets/icon.svg           # 可选，包内路径
-license: MIT                      # 可选，SPDX
-homepage: https://…               # 可选
-plugins:                          # 可选，同 v1：引用已构建的插件产物
-  - { name: todo, npm: "@capybara-hq/plugin-todo", version: "^1", lock: { version: 1.2.0, integrity: "sha512-…" } }
-connectorTemplates:               # 可选，同 v1；也可写成 connectors/*.yaml，每个文件一项
-  - { id: docs, displayName: {…}, template: {…} }
-skills:                           # 可选；省略时自动扫描 skills/*/SKILL.md
-  - { path: ./skills/brainstorming }
-  - { path: ./skills/using-superpowers, pinned: true }   # 新增：建议常驻（第 6 节）
-agents: []                        # 预留：子 agent 模板（第 7 节），v2 先不接受非空值
+```jsonc
+{
+  "$schema": "https://…/app.v2.schema.json",            // 可选
+  "schemaVersion": 2,
+  "name": "superpowers",                                // ^[a-z0-9][a-z0-9-]{0,63}$
+  "version": "7.0.1",                                   // semver
+  "publisher": "Jesse Vincent",
+  "description": "…",                                   // ≤ 1024
+  "displayName": { "zh": "…", "en": "…" },              // 可选
+  "icon": "./assets/icon.svg",                          // 可选，包内路径
+  "license": "MIT",                                     // 可选，SPDX
+  "homepage": "https://…",                              // 可选
+  "plugins": [                                          // 可选，同 v1：引用已构建的插件产物
+    { "name": "todo", "npm": "@capybara-hq/plugin-todo", "version": "^1",
+      "lock": { "version": "1.2.0", "integrity": "sha512-…" } }
+  ],
+  "connectorTemplates": [                               // 可选，同 v1；也可写成 connectors/*.json，每个文件一项
+    { "id": "docs", "displayName": { "zh": "…", "en": "…" }, "template": { } }
+  ],
+  "skills": [                                           // 可选；省略时自动扫描 skills/*/SKILL.md
+    { "path": "./skills/brainstorming" },
+    { "path": "./skills/using-superpowers", "pinned": true }   // 新增：建议常驻（第 6 节）
+  ],
+  "agents": []                                          // 预留：子 agent 模板（第 7 节），v2 先不接受非空值
+}
 ```
 
-- **仓库形式**：文件放在 `<包根>/.capybara-plugin/app.yaml`，其中的路径相对**包根**（不是相对 `.capybara-plugin/`）。路径必须以 `./` 开头，且不能越出包根。
-- **tgz 形式**（C31）：`app.yaml` 放在包根，`package.json` 的 `capybara` 段不变。读取器接受 v1 与 v2。
+（上面的注释只是说明，真实文件是严格的 JSON，不能带注释。）
+
+- **仓库形式**：文件放在 `<包根>/.capybara-plugin/app.json`，其中的路径相对**包根**（不是相对 `.capybara-plugin/`）。路径必须以 `./` 开头，且不能越出包根。
+- **tgz 形式**（C31）：`app.json` 放在包根，`package.json` 的 `capybara` 段为 `{ "kind": "app", "manifest": "app.json" }`。读取器接受 v1 与 v2。
 - **v2 相对 v1 的变化**：
+  - 改用 JSON；
   - `skills` 可以省略（自动扫描）；
   - 新增 `pinned`、`license`、`homepage`、`agents`（预留）；
   - 连接器模板可以拆成多个文件。
-- 同一个包根下同时有 `.capybara-plugin/app.yaml` 和 `.claude-plugin/plugin.json` 时，**以 Capybara 的为准**，Claude 清单不读，审阅页注明一句。作者写了原生清单，说明他明确要这样装。
+- 同一个包根下同时有 `.capybara-plugin/app.json` 和 `.claude-plugin/plugin.json` 时，**以 Capybara 的为准**，Claude 清单不读，审阅页注明一句。作者写了原生清单，说明他明确要这样装。
 
 ## 4. 市场：目录来源扩展到 git 仓库
 
@@ -123,10 +139,10 @@ agents: []                        # 预留：子 agent 模板（第 7 节），v
 
 | 形态 | 地址 | 清单文件 | 刷新 |
 |---|---|---|---|
-| http（D16，已有） | https URL，可配镜像 | v1 `index.json` 或 v2 `marketplace.yaml` / `.json` | ETag，同 C26 |
-| **git（新增）** | https git 地址；`owner/repo` 简写展开为 `https://github.com/owner/repo.git`；可选分支或标签（缺省为默认分支） | 仓库根目录下依次查找：`.capybara-plugin/marketplace.yaml` → `.claude-plugin/marketplace.json` → 单个包（见下） | 定期取分支最新提交；提交没变就跳过 |
+| http（D16，已有） | https URL，可配镜像 | v1 `index.json` 或 v2 `marketplace.json` | ETag，同 C26 |
+| **git（新增）** | https git 地址；`owner/repo` 简写展开为 `https://github.com/owner/repo.git`；可选分支或标签（缺省为默认分支） | 仓库根目录下依次查找：`.capybara-plugin/marketplace.json` → `.claude-plugin/marketplace.json` → 单个包（见下） | 定期取分支最新提交；提交没变就跳过 |
 
-- **单包仓库**：仓库根目录没有市场清单，但有 `.capybara-plugin/app.yaml`、`.claude-plugin/plugin.json`，或者有 `skills/` 目录，就当作只有一个条目的市场。企业管理员贴任何一个仓库地址都能用。
+- **单包仓库**：仓库根目录没有市场清单，但有 `.capybara-plugin/app.json`、`.claude-plugin/plugin.json`，或者有 `skills/` 目录，就当作只有一个条目的市场。企业管理员贴任何一个仓库地址都能用。
 - git 来源的每次刷新都记下提交 sha。浏览和引入都基于这个 sha 读内容（C25：浏览只缓存清单，引入时才下载并物化）。
 - **git 访问的约束**（具体实现方式由实现者定，可以用 git 客户端库，也可以用托管平台的归档接口）：
   - 只用 https，不跟随跨主机重定向；
@@ -142,47 +158,109 @@ agents: []                        # 预留：子 agent 模板（第 7 节），v
   - 企业管理员可以配置可选的主机白名单 `catalogs.allowedHosts`，缺省不限制。配了白名单后，白名单外的条目在浏览时就显示为不可引入。
 - **直接从 git 导入单个包**（设计者的决定）：与文件导入一样是一次性操作，不建来源行，不跟踪更新。目录条目记录来源 `git` 加上仓库、提交 sha 与路径，之后走同一套审阅和物化流程。需要跟踪更新时，把这个仓库加为来源。
 
-### 4.2 市场清单 v2（`marketplace.yaml`）
+### 4.2 市场清单 v2（`marketplace.json`）
 
-```yaml
-schemaVersion: 2
-name: capybara-official
-owner: { name: Capybara, url: https://… }
-description: …
-entries:
-  - kind: app                       # app | skill | connector-template | plugin
-    name: superpowers
-    summary: { en: …, zh: … }
-    version: 7.0.1                  # 可选；缺省取包内声明（第 4.4 节）
-    minKernel: 1.0.0                # 可选
-    permissions: { keys: [], sensitive: [] }   # 可选，只用于展示（同 C26）
-    source:                         # 四选一
-      path: ./apps/superpowers      # 同一仓库内，按本次刷新的提交读取
-      # git: { url: https://github.com/obra/superpowers.git, ref: main, commit: <40 位>, path: . }
-      # npm: { package: "@x/y", version: 1.2.0, integrity: "sha512-…" }
-      # archive: { url: https://…/x.tgz, integrity: "sha512-…" 或 "sha256-…" }
+```jsonc
+{
+  "schemaVersion": 2,
+  "name": "capybara-official",
+  "owner": { "name": "Capybara", "url": "https://…" },
+  "description": "…",
+  "entries": [
+    {
+      "kind": "app",                                    // app | skill | connector-template | plugin
+      "name": "superpowers",
+      "summary": { "en": "…", "zh": "…" },
+      "version": "7.0.1",                               // 可选；缺省取包内声明（第 4.4 节）
+      "minKernel": "1.0.0",                             // 可选
+      "permissions": { "keys": [], "sensitive": [] },   // 可选，只用于展示（同 C26）
+      "source": { "path": "./apps/superpowers" }        // 四选一，见下
+    }
+  ]
+}
 ```
+
+`source` 四选一：
+
+| 形式 | 写法 | 说明 |
+|---|---|---|
+| 同仓库路径 | `{ "path": "./apps/x" }` | 按本次刷新的提交读取 |
+| git | `{ "git": { "url": "https://…", "ref": "main", "commit": "<40 位>", "path": "." } }` | `ref`、`commit`、`path` 可选 |
+| npm | `{ "npm": { "package": "@x/y", "version": "1.2.0", "integrity": "sha512-…" } }` | |
+| 归档 | `{ "archive": { "url": "https://…/x.tgz", "integrity": "sha512-… 或 sha256-…" } }` | |
 
 - **代码插件**（`kind: plugin`）只能用 `npm` 或 `archive`，并且必须带 integrity。D14 规定安装时不构建，git 来源拿不到构建产物。
 - `git` 源写了 `commit` 时按它取，否则按 `ref` 取当时的最新提交，并在条目上记下实际的 sha。
 - v1 `index.json`（D16）继续可读，因为 M7 发布后会有外部部署在用。两个版本解析成同一个内部条目结构；v1 的「每个条目多个版本」照旧可用。
-- JSON Schema 放 `packages/plugin-sdk/schemas/marketplace.v2.schema.json`，纳入 `check:package-schemas`（T24）。
+- JSON Schema 为 `packages/plugin-sdk/schemas/marketplace.v2.schema.json`。
 
-### 4.3 官方市场
+### 4.3 官方市场仓库
 
-- 官方市场改为仓库形式：`capybara-hq/marketplace`。名字由 D16 的 `capybara-hq/catalog` 改来，M7 如果已经用了 catalog，就沿用它。
-- 仓库里放 `.capybara-plugin/marketplace.yaml`：
-  - 声明性的条目（技能、连接器模板、应用）直接放在仓库里；
-  - 代码插件指向 npm，并带 integrity，由发布 CI 写入。
+- 官方维护一个市场仓库，名字定为 **`capybara-hq/marketplace`**（设计者的决定）：
+  - 它里面不只有插件，还有技能、连接器模板、应用，叫 `plugins` 会和「插件 = 进程内代码」混淆；
+  - 和清单文件名、Claude 的叫法一致。
+  - D16 原先的名字是 `capybara-hq/catalog`，M7 如果已经用了这个名字，就改名并保留 GitHub 的重定向。
+- 仓库根目录放 `.capybara-plugin/marketplace.json`，**列出全部官方组件**，包括核心预装的组件（第 4.5 节）：
+  - 声明性的条目（技能、连接器模板、应用）直接放在仓库里，用同仓库路径来源；
+  - 代码插件的源码仍在 core 仓库的 `plugins/*`，由发布 CI 发到 npm 后，提 PR 把 `npm` 来源和 integrity 写进清单（同 D16 的流程）。
 - 配置 `catalogs.official.*` 增加 `type: git | http`，默认值改为这个仓库；`enabled: false` 仍表示离线模式。
 - 如果 M7 已经按 http `index.json` 上线了官方清单，可以过渡：仓库的 CI 同时生成 `index.json`，旧部署照旧可用。
 
 ### 4.4 版本与「有新版本」
 
-- **条目版本**按这个顺序取：条目上写的 `version` → 包内清单声明的版本（`app.yaml` / `plugin.json` / `package.json`）→ 都没有时用 `0.0.0-git.<sha12>`（归档来源为 `0.0.0-sha256.<12>`）。
+- **条目版本**按这个顺序取：条目上写的 `version` → 包内清单声明的版本（`app.json` / `plugin.json` / `package.json`）→ 都没有时用 `0.0.0-git.<sha12>`（归档来源为 `0.0.0-sha256.<12>`）。
 - **内容摘要**：引入时对规范化的文件树算 sha256（按路径排序，算路径和内容），连同来源的提交 sha 一起记进 `directory_item_versions`。
 - **同版本内容变化**：仓库前进后，版本号没变但内容摘要变了，界面显示「同版本内容已变化」。企业管理员再引入时，版本记为 `<version>+git.<sha12>`（semver 构建元数据），不覆盖已引入的版本。
 - 其余同 C25：只提示，不自动拉取。
+
+### 4.5 预装组件与初始化清单
+
+用户的要求：内置组件也在官方市场里声明；core 带一份初始化 JSON，声明默认安装哪些组件、哪个版本，部署初始化时按它安装核心依赖。这替代 D13 的「镜像内置插件」。
+
+**初始化清单** `packages/kernel/bootstrap.json`（随 core 发版，打进镜像）：
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "marketplace": {                                       // 这份清单对应的官方市场提交，用于核对
+    "url": "https://github.com/capybara-hq/marketplace.git",
+    "commit": "<40 位>"
+  },
+  "components": [
+    { "kind": "plugin", "name": "openai-compatible", "version": "1.4.0", "integrity": "sha512-…", "required": true },
+    { "kind": "plugin", "name": "object-store-s3",   "version": "1.1.0", "integrity": "sha512-…", "required": true }
+  ]
+}
+```
+
+- **字段**：
+  - `kind` 可以是 plugin、skill、connector-template、app，第一版只有上面两个插件；
+  - `required: true` 表示核心依赖，不能停用或卸载，只能升级；
+  - `required: false` 表示默认装上，企业管理员之后可以移除。
+- **与官方市场一致**：每一项都必须出现在 `marketplace.commit` 那一版的官方市场里，版本和 integrity 完全一致。
+  - core 的发版 CI 增加检查 `check:bootstrap`，需要网络，只在发版流水线里跑；
+  - 检查要有违规 fixture 使其失败的测试，照仓库惯例。
+- **离线可用**：镜像里同时带上这些组件的包文件（tgz 等），初始化时从镜像里取并按 integrity 校验，**不联网下载**。
+
+**初始化步骤**（部署初始化的必经一步）：
+
+- 由 `capybara init` 执行（也可以合进 `capybara migrate`，由实现者定）。内核启动时如果发现还没初始化，也会自动执行一次。
+- 幂等，并持有 PG 咨询锁，多副本同时启动时只有一个副本真正执行。
+- 按清单逐项安装：
+  - 插件写安装记录与包存储（D14）；
+  - 权限快照来源记为 `bootstrap`，预先批准，并写审计；
+  - 技能、连接器模板、应用导入企业目录；
+  - 结果与从市场引入的记录完全同形，来源标为 `bootstrap`。
+- 之后这些组件与其他组件**同样管理**：在官方市场里看得到、可以升级。
+
+**core 升级时**（新版本的 `bootstrap.json` 把某个组件的版本调高了）：
+
+- 已装版本低于清单版本，且安装来源是 `bootstrap`（没被管理员手动升到更高版本）时，初始化步骤把它升到清单版本。
+  - core 发版已经为这个版本背书，所以权限变多也预先批准，并写审计。（设计者的决定）
+- 已装版本高于清单版本时（管理员已经从市场升级）不动，**不降级**。
+- 清单新增的组件照常安装；清单删掉的组件不自动卸载，只失去 `required` 标记。
+
+**开发模式**：照 D15，继续直接加载工作区里的 `plugins/*`，不走初始化清单。
 
 ## 5. Claude Code 插件翻译
 
@@ -336,7 +414,7 @@ superpowers 的 `subagent-driven-development`、`dispatching-parallel-agents`、
 
 | 期 | 内容 | 依赖 |
 |---|---|---|
-| **A** | git 来源；市场清单 v2（读写 Capybara 格式）；应用清单 v2 与仓库形式；单包仓库；从 git 直接导入单个包；官方市场改为仓库形式；技能来源与同名冲突（第 6.2 节）；组织内应用原地升级（第 6.5 节） | M6 目录与来源、M7 官方清单 |
+| **A** | git 来源；市场清单 v2（读写 Capybara 格式）；应用清单 v2 与仓库形式；单包仓库；从 git 直接导入单个包；官方市场仓库（含全部内置组件）；初始化清单与预装组件（第 4.5 节）；技能来源与同名冲突（第 6.2 节）；组织内应用原地升级（第 6.5 节） | M6 目录与来源、M7 官方清单 |
 | **B** | Claude 读取器（`marketplace.json`、`plugin.json`、技能、`.mcp.json` 远程服务）；翻译报告与审阅页；常驻技能；限定名解析；工具名对照 | A |
 | **C** | 子 agent（先写设计文档）；应用的 `agents`；Claude `agents/` 翻译 | B |
 | **D**（可选） | 用户手动调用技能的入口（对话框里的 `/` 菜单）；之后再导入 `commands/` 与 `disable-model-invocation` 技能 | B |
@@ -353,6 +431,8 @@ superpowers 的 `subagent-driven-development`、`dispatching-parallel-agents`、
     - 被 agent 选中、而新版本里已移除的技能保留；
   - 在连接器那一步注入失败时，整个安装回到原版本；
   - 另一个应用带了同名技能时安装失败（`app.skill_conflict`）；
+  - 断网的全新部署执行初始化后，两个预装插件已安装、批准、可用，并且在官方市场条目上显示「已安装」；两个副本同时启动时只执行一次；
+  - 换上调高了预装版本的 core 后再初始化，预装插件升到新版本；管理员已经手动升到更高版本的，保持不动；
   - 双副本验收。
 - **B 期**：
   - 把 `obra/superpowers` 加为来源，引入 superpowers，审阅页的翻译报告列出 hooks、命令等被忽略的部分；
@@ -376,6 +456,8 @@ superpowers 的 `subagent-driven-development`、`dispatching-parallel-agents`、
 
 - M6 的 `directory_items` / `directory_item_versions` / `catalog_sources` / `catalog_entries` / `app_installs` 的实际字段，以及 `parseCatalogIndex`、`AppManifest`、`AppImport`、`AppInstaller` 的实际接口。
 - M7 的官方清单是否已经上线、用的是什么地址和格式（决定第 4.3 节的过渡方式）。
+- M7 的镜像怎样带内置插件、`capybara` CLI 已有哪些初始化相关命令（决定第 4.5 节怎样替换 D13，以及 `init` 与 `migrate` 的关系）。
+- M7 发布时有没有外部包已经在用 `app.yaml`（决定第 3.1 节是否保留只读兼容）。
 - `connector-mcp` 是否支持 SSE、OAuth 的具体形状（决定第 5.3 节）。
 - 技能目录快照事件当时的结构，以及常驻正文加入后对缓存段的影响。
 - 内置工具当时的名字（工具对照文本）。
