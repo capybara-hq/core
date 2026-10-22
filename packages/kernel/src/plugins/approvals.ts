@@ -1,7 +1,7 @@
 import { OBJECT_STORE_CAPABILITY, type PluginManifest } from "@capybara-hq/plugin-sdk";
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import semver from "semver";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import {
   blockingKeys,
@@ -17,7 +17,8 @@ export interface PermissionSnapshot {
   permissions: PermissionSet;
   approvedBy: string | null;
   approvedAt: Date;
-  source: "cli" | "auto";
+  /** cli：`capybara plugins approve`；auto：`pluginPermissions.autoApprove`；web：后台网页批准（T13）。 */
+  source: "cli" | "auto" | "web";
 }
 
 /**
@@ -138,6 +139,87 @@ export function planApprovals(
   return out;
 }
 
+/**
+ * 给预先批准的插件（内置，C14；以及已决定加载的插件）补一份与当前权限集合相同的快照，
+ * 让 {@link planApprovals} 视其为「已批准、无变化」：不进待批准、不写快照，依赖它的插件照常判定。
+ */
+export function withPreApproved(
+  snapshots: Map<string, PermissionSnapshot>,
+  manifests: PluginManifest[],
+  sets: Map<string, PermissionSet>,
+): Map<string, PermissionSnapshot> {
+  const out = new Map(snapshots);
+  for (const m of manifests) {
+    out.set(m.name, {
+      plugin: m.name,
+      version: m.version,
+      permissions: sets.get(m.name) as PermissionSet,
+      approvedBy: null,
+      approvedAt: new Date(0),
+      source: "auto",
+    });
+  }
+  return out;
+}
+
+/** 快照是否已覆盖该权限集合（没有需要批准的新增；F-N：「待批准」只看这一条，与期望状态无关）。 */
+export function snapshotCovers(
+  snap: Pick<PermissionSnapshot, "permissions"> | undefined,
+  set: PermissionSet,
+): boolean {
+  return (
+    snap !== undefined && blockingKeys(diffPermissions(snap.permissions, set).added).length === 0
+  );
+}
+
+/**
+ * 在调用方事务里写入（新增或覆盖）快照；`audit` 给出时同一事务写审计 `plugin.permissions_approved`
+ * （actor 为 `approvedBy`，CLI 为空）。
+ */
+export async function writeSnapshot(
+  trx: Transaction<KernelDatabase>,
+  plugin: string,
+  version: string,
+  permissions: PermissionSet,
+  opts: {
+    source: PermissionSnapshot["source"];
+    approvedBy?: string | null;
+    actorTokenId?: string;
+    audit?: { added: string[]; removed: string[]; sha256?: string | null };
+  },
+): Promise<void> {
+  const values = {
+    plugin,
+    version,
+    permissions: JSON.stringify(permissions),
+    approved_by: opts.approvedBy ?? null,
+    approved_at: sql<Date>`now()` as unknown as Date,
+    source: opts.source,
+  };
+  await trx
+    .insertInto("plugin_permission_snapshots")
+    .values(values)
+    .onConflict((oc) =>
+      oc.column("plugin").doUpdateSet({
+        version: values.version,
+        permissions: values.permissions,
+        approved_by: values.approved_by,
+        approved_at: values.approved_at,
+        source: values.source,
+      }),
+    )
+    .execute();
+  if (opts.audit) {
+    await audit(trx, {
+      ...(opts.approvedBy && { actorAccountId: opts.approvedBy }),
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "plugin.permissions_approved",
+      target: plugin,
+      detail: { plugin, version, source: opts.source, ...opts.audit },
+    });
+  }
+}
+
 /** `version` 是否比 `than` 旧（任一方不是合法 semver 时视为不旧）。 */
 const isOlder = (version: string, than: string) =>
   semver.valid(version) !== null && semver.valid(than) !== null && semver.lt(version, than);
@@ -173,42 +255,14 @@ export class PluginApprovals {
     version: string,
     permissions: PermissionSet,
     opts: {
-      source: "cli" | "auto";
+      source: PermissionSnapshot["source"];
       approvedBy?: string | null;
       audit?: { added: string[]; removed: string[] };
     },
   ): Promise<void> {
-    await this.db.transaction().execute(async (trx) => {
-      const values = {
-        plugin,
-        version,
-        permissions: JSON.stringify(permissions),
-        approved_by: opts.approvedBy ?? null,
-        approved_at: sql<Date>`now()` as unknown as Date,
-        source: opts.source,
-      };
-      await trx
-        .insertInto("plugin_permission_snapshots")
-        .values(values)
-        .onConflict((oc) =>
-          oc.column("plugin").doUpdateSet({
-            version: values.version,
-            permissions: values.permissions,
-            approved_by: values.approved_by,
-            approved_at: values.approved_at,
-            source: values.source,
-          }),
-        )
-        .execute();
-      if (opts.audit) {
-        await audit(trx, {
-          ...(opts.approvedBy && { actorAccountId: opts.approvedBy }),
-          action: "plugin.permissions_approved",
-          target: plugin,
-          detail: { plugin, version, source: opts.source, ...opts.audit },
-        });
-      }
-    });
+    await this.db
+      .transaction()
+      .execute((trx) => writeSnapshot(trx, plugin, version, permissions, opts));
   }
 
   /**

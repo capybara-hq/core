@@ -127,6 +127,7 @@ beforeAll(async () => {
           prices: k.prices,
           purposes: k.purposes,
           pluginInstalls: k.pluginInstalls,
+          pluginAdmin: k.pluginAdmin,
           evalQueue: { enqueue: async () => {} },
           storage: k.storage,
           sandbox: k.sandbox,

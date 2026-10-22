@@ -19,6 +19,9 @@ const PERM_DEP = kernelFixture("perm-dep");
 const UI_A = kernelFixture("ui-a");
 const UI_A_VIEW = kernelFixture("ui-a-view");
 const UI_A_EMBED = kernelFixture("ui-a-embed");
+const SANDBOX_FAKE = kernelFixture("sandbox-fake");
+/** 内置插件（C14）出现在配置列表里时以内置为准。 */
+const S3 = fileURLToPath(new URL("../../../plugins/object-store-s3/src/index.ts", import.meta.url));
 
 let pg: TestContainer;
 
@@ -188,5 +191,23 @@ describe("capybara plugins review / approve", () => {
     const approveView = await run(["plugins", "approve", "ui-a", "--yes"], "", [UI_A_VIEW]);
     expect(approveView.code).toBe(0);
     expect(approveView.stdout).toMatch(/no new permissions/i);
+  }, 120_000);
+
+  it("提供 sandbox@1 / object-store@1 标 (sensitive)；内置插件预先批准，不进 review，approve 无需批准", async () => {
+    const plugins = [SANDBOX_FAKE, S3];
+    const review = await run(["plugins", "review"], "", plugins);
+    expect(review.code, review.stderr).toBe(0);
+    const lines = review.stdout.split("\n");
+    expect(lines).toContain("  + provides:sandbox@1  (sensitive)");
+    expect(review.stdout).toContain("sandbox-fake 0.1.0");
+    expect(review.stdout).not.toContain("object-store-s3");
+    const approveBuiltin = await run(
+      ["plugins", "approve", "object-store-s3", "--yes"],
+      "",
+      plugins,
+    );
+    expect(approveBuiltin.code, approveBuiltin.stderr).toBe(0);
+    expect(approveBuiltin.stdout).toMatch(/built in.*pre-approved/i);
+    expect((await snapshots()).map((s) => s.plugin)).not.toContain("object-store-s3");
   }, 120_000);
 });

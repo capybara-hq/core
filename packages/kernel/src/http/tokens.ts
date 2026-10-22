@@ -149,3 +149,4 @@ export const MODEL_PURPOSES = Symbol("MODEL_PURPOSES");
 
 /** `PluginInstalls`（插件包导入与安装记录）的注入令牌。 */
 export const PLUGIN_INSTALLS = Symbol("PLUGIN_INSTALLS");
+export const PLUGIN_ADMIN = Symbol("PLUGIN_ADMIN");

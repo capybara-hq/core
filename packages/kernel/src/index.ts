@@ -79,12 +79,15 @@ export {
   NpmFetchError,
   PackageTooLargeError,
 } from "./packages/npm.js";
+export { PLUGINS_CHANGED_TOPIC, PluginAdmin } from "./plugins/admin-view.js";
 export {
   type ApprovalDecision,
   type PendingPlugin,
   type PermissionSnapshot,
   PluginApprovals,
   planApprovals,
+  snapshotCovers,
+  withPreApproved,
 } from "./plugins/approvals.js";
 export {
   blobKey,
@@ -143,10 +146,13 @@ export {
   permissionKeys,
 } from "./plugins/permission-set.js";
 export {
+  type AdminPluginView,
+  type DeploymentPluginStatus,
   isSensitivePermissionKey,
   type PermissionGroup,
   permissionGroups,
   reviewHash,
+  SENSITIVE_CAPABILITIES,
 } from "./plugins/permission-view.js";
 export { PluginRegistry } from "./plugins/registry.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";

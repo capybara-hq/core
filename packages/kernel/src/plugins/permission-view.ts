@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { type PermissionSet, permissionKeys } from "./permission-set.js";
+import type { PluginSource } from "./sources.js";
 
 /**
  * 审阅摘要：`sha256(permissionKeys(set).join("\n"))` 的前 16 位十六进制。批准时调用方回传它，
@@ -35,13 +36,17 @@ export interface PermissionGroup {
 }
 
 /**
- * 敏感的能力：`channel@1` 收到组织在 IM 里的对话内容（Ruling A33）、`directory@1` 能把人加进组织（并为其建账号、
- * 建身份）、`identity-source@1` 决定谁能登录成哪个账号。插件提供其中任何一个时，「提供」一组标为敏感。
+ * 敏感的能力（D10 + 计划扩展，F-AI）：`sandbox@1` 在部署里执行任意命令、`object-store@1` 保管全部附件与插件包（D10）；
+ * `channel@1` 收到组织在 IM 里的对话内容（Ruling A33）、`directory@1` 能把人加进组织（并为其建账号、建身份）、
+ * `identity-source@1` 决定谁能登录成哪个账号。插件提供其中任何一个时，「提供」一组标为敏感，
+ * 后台插件列表的 `sensitive` 为真，须企业管理员批准。只影响展示，不改权限快照的键。
  */
 export const SENSITIVE_CAPABILITIES: readonly string[] = [
   "channel@1",
   "directory@1",
   "identity-source@1",
+  "sandbox@1",
+  "object-store@1",
 ];
 
 type Category = PermissionGroup["category"];
@@ -140,4 +145,105 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
   return groups
     .filter((g) => g.items.length > 0)
     .map((g) => ({ ...g, sensitive: g.items.some((i) => itemSensitive(g.category, i)) }));
+}
+
+/** 插件是否提供 {@link SENSITIVE_CAPABILITIES} 之一（后台列表的 `sensitive`）。 */
+export function providesSensitive(set: PermissionSet): boolean {
+  return set.provides.some((c) => SENSITIVE_CAPABILITIES.includes(c));
+}
+
+/**
+ * 部署级插件状态（后台展示；F-I：副本行存原因，这里推导展示用的状态）。
+ * `dependency`：必需能力没有（加载着的）提供方（F-M：排在 `failed` 之后、`pending_approval` 之前）。
+ */
+export type DeploymentPluginStatus =
+  | "enabled"
+  | "disabled"
+  | "pending_approval"
+  | "pending_config"
+  | "pending_migration"
+  | "converging"
+  | "failed"
+  | "dependency";
+
+/** 后台插件列表的一项（`GET /api/v1/admin/plugins`）。 */
+export interface AdminPluginView {
+  name: string;
+  version: string;
+  source: PluginSource;
+  /** 安装记录的包；内置 / 配置声明为 null。 */
+  sha256: string | null;
+  status: DeploymentPluginStatus;
+  /** 安装记录的期望状态；内置 / 配置声明为 null（始终期望启用）。 */
+  desired: { version: string; sha256: string; state: "enabled" | "disabled" } | null;
+  /** 各副本最近一次上报的加载结果。 */
+  replicas: {
+    replicaId: string;
+    version: string;
+    state: string;
+    reason: string | null;
+    detail: string | null;
+    heartbeatAt: string;
+  }[];
+  permissions: PermissionGroup[];
+  /** 相对已批准快照多出 / 少了的权限键（没有快照时全部算新增；内置插件预先批准，恒为空）。 */
+  added: string[];
+  removed: string[];
+  /** 见 {@link reviewHash}：网页批准时回传。 */
+  reviewHash: string;
+  /** 提供 {@link SENSITIVE_CAPABILITIES} 之一。 */
+  sensitive: boolean;
+  snapshot: {
+    version: string;
+    approvedAt: string;
+    approvedBy: string | null;
+    source: "cli" | "auto" | "web";
+  } | null;
+  /** 有部署级配置字段。 */
+  configurable: boolean;
+  configValid: boolean;
+  /** 能从部署卸载（只有安装记录；卸载前须先停用）。 */
+  removable: boolean;
+}
+
+/** {@link derivePluginStatus} 的输入。 */
+export interface StatusInput {
+  source: PluginSource;
+  /** 安装记录的期望包与状态；内置 / 配置声明为 null。 */
+  desired: { sha256: string; state: "enabled" | "disabled" } | null;
+  /** 权限集合未被快照覆盖（F-N：与期望状态无关；内置插件恒为 false）。 */
+  pendingApproval: boolean;
+  configValid: boolean;
+  /** 安装记录的 `migrated_sha`。 */
+  migratedSha: string | null;
+  /** 计入的副本行（调用方已按心跳筛过）。 */
+  replicas: { state: string; reason: string | null; sha256: string | null }[];
+}
+
+/**
+ * 由期望状态、快照、配置校验、`migrated_sha` 与各副本状态推出部署级状态，优先级：
+ * `failed` > `dependency` > `pending_approval` > `pending_config` > `pending_migration` > `converging` > `enabled` / `disabled`。
+ * - 安装记录只看目标包（`desired.sha256`）的副本行：旧包的失败不算；
+ * - 停用的安装记录不看迁移；仍有副本加载着时为 `converging`；
+ * - 内置 / 配置声明始终期望启用。
+ */
+export function derivePluginStatus(i: StatusInput): DeploymentPluginStatus {
+  const target = i.desired?.sha256 ?? null;
+  const rows = target === null ? i.replicas : i.replicas.filter((r) => r.sha256 === target);
+  if (rows.some((r) => r.state === "failed")) return "failed";
+  if (
+    rows.some((r) => r.reason === "dependency" && (r.state === "pending" || r.state === "unloaded"))
+  )
+    return "dependency";
+  if (i.pendingApproval) return "pending_approval";
+  if (!i.configValid) return "pending_config";
+  const wantLoaded = i.desired === null || i.desired.state === "enabled";
+  if (!wantLoaded) return i.replicas.some((r) => r.state === "loaded") ? "converging" : "disabled";
+  if (i.desired !== null && i.migratedSha !== i.desired.sha256) return "pending_migration";
+  if (rows.some((r) => r.state === "pending" && r.reason === "migration"))
+    return "pending_migration";
+  const done =
+    i.replicas.length > 0 &&
+    i.replicas.every((r) => r.state === "loaded" && (target === null || r.sha256 === target));
+  return done ? "enabled" : "converging";
 }

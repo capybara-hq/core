@@ -142,7 +142,7 @@ export interface PluginPermissionSnapshotsTable {
   permissions: Json<unknown>;
   approved_by: string | null;
   approved_at: Ts;
-  source: "cli" | "auto";
+  source: "cli" | "auto" | "web";
 }
 
 /** 0002_secrets.sql：加密值（读写走 `createSecrets`，这里只供按键查询是否存在）。 */

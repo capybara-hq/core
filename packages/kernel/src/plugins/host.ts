@@ -39,6 +39,7 @@ import {
   type PermissionSnapshot,
   PluginApprovals,
   planApprovals,
+  withPreApproved,
 } from "./approvals.js";
 import type { InflightTracker } from "./inflight.js";
 import type { DesiredPlugin } from "./installs.js";
@@ -213,20 +214,6 @@ async function importEntries(specifiers: string[], resolveFrom: string): Promise
   return entries;
 }
 
-/** 导入并校验各插件清单，按依赖拓扑排序；同时返回每个插件模块所在目录。 */
-async function importPlugins(
-  specifiers: string[],
-  resolveFrom: string,
-): Promise<{ ordered: PluginManifest[]; dirs: Map<string, string> }> {
-  const entries = await importEntries(specifiers, resolveFrom);
-  const dirs = new Map(entries.map((e) => [e.manifest.name, e.dir]));
-  const ordered = resolvePlugins(
-    entries.map((e) => e.manifest),
-    SDK_VERSION,
-  );
-  return { ordered, dirs };
-}
-
 /**
  * 内置插件与配置声明的插件重名时以内置为准（F-AK）：返回去掉重名项后的配置项，重名项逐个告警。
  */
@@ -248,6 +235,8 @@ function dropShadowed(
 
 /** {@link PluginHost.inspect} 的一项。 */
 export interface InspectedPlugin {
+  /** 内置插件（`opts.builtin`）预先批准，不进审批（C14）；其余为配置声明。 */
+  source: "builtin" | "config";
   manifest: PluginManifest;
   /** 插件模块所在目录（`migrations` 相对它解析）。 */
   dir: string;
@@ -280,7 +269,7 @@ function warnPending(log: KernelDeps["log"], p: PendingPlugin): void {
     return;
   }
   log.warn(
-    "plugin not loaded: permissions awaiting approval (run `capybara plugins review`, then `capybara plugins approve <name>` and restart)",
+    "plugin not loaded: permissions awaiting approval (an enterprise admin approves it in the admin console, or run `capybara plugins review`, then `capybara plugins approve <name>` and restart)",
     { plugin: p.plugin, version: p.version, reason: p.reason, added: p.added, removed: p.removed },
   );
 }
@@ -333,29 +322,6 @@ const migrationsDirOf = (m: PluginManifest, dir: string): string | undefined =>
   m.migrations ? resolvePath(dir, m.migrations) : undefined;
 
 /**
- * 给预先批准的插件（内置，C14；以及已决定加载的插件）补一份与当前权限集合相同的快照，
- * 让 {@link planApprovals} 视其为「已批准、无变化」：不进待批准、不写快照，依赖它的插件照常判定。
- */
-function withPreApproved(
-  snapshots: Map<string, PermissionSnapshot>,
-  manifests: PluginManifest[],
-  sets: Map<string, PermissionSet>,
-): Map<string, PermissionSnapshot> {
-  const out = new Map(snapshots);
-  for (const m of manifests) {
-    out.set(m.name, {
-      plugin: m.name,
-      version: m.version,
-      permissions: sets.get(m.name) as PermissionSet,
-      approvedBy: null,
-      approvedAt: new Date(0),
-      source: "auto",
-    });
-  }
-  return out;
-}
-
-/**
  * 安装记录的加载入口（C13）：期望启用的记录、同步到本地（返回 entry URL）与记下已迁移。
  * 由内核用 `PluginInstalls` + `syncPackage` 实现；宿主在内置与配置声明的插件都加载完之后才调用
  * （包可能存在对象存储里，要等 object-store 插件就绪）。
@@ -364,6 +330,18 @@ export interface InstalledPluginLoader {
   desired(): Promise<DesiredPlugin[]>;
   sync(d: DesiredPlugin): Promise<string>;
   markMigrated(name: string, sha256: string): Promise<void>;
+}
+
+/** {@link PluginHost.declaredPlugins} 的一项。 */
+export interface DeclaredPluginInfo {
+  name: string;
+  source: "builtin" | "config";
+  version: string;
+  permissions: PermissionSet;
+  /** 清单有部署级配置 schema。 */
+  configurable: boolean;
+  /** 启动配置里的部署配置按 schema 校验通过（没有 schema 时恒为 true）。 */
+  configValid: boolean;
 }
 
 /** {@link PluginHost.load} 的插件来源，按此顺序加载（见 {@link PluginSource}）。 */
@@ -465,15 +443,25 @@ export class PluginHost {
    */
   static async inspect(
     specifiers: string[],
-    opts: { resolveFrom?: string } = {},
+    opts: { resolveFrom?: string; builtin?: string[] } = {},
   ): Promise<InspectedPlugin[]> {
-    const { ordered, dirs } = await importPlugins(
-      specifiers,
-      resolvePath(opts.resolveFrom ?? process.cwd()),
+    const from = resolvePath(opts.resolveFrom ?? process.cwd());
+    const builtin = await importEntries(opts.builtin ?? [], from);
+    // 与 load() 一样：与内置插件重名的配置项以内置为准（不告警：只读检查）
+    const entries = [
+      ...builtin,
+      ...dropShadowed(await importEntries(specifiers, from), builtin, { warn() {} }),
+    ];
+    const dirs = new Map(entries.map((e) => [e.manifest.name, e.dir]));
+    const ordered = resolvePlugins(
+      entries.map((e) => e.manifest),
+      SDK_VERSION,
     );
+    const builtinNames = new Set(builtin.map((e) => e.manifest.name));
     for (const manifest of ordered) assertSecretsReachable(manifest);
     const sets = await permissionSets(ordered, dirs);
     return ordered.map((manifest) => ({
+      source: builtinNames.has(manifest.name) ? "builtin" : "config",
       manifest,
       dir: dirs.get(manifest.name) as string,
       permissions: sets.get(manifest.name) as PermissionSet,
@@ -500,9 +488,18 @@ export class PluginHost {
   private installedCache: { at: number; names: Promise<Set<string>> } | undefined;
   /** 本次因权限待批准（或依赖待批准插件）而未加载的插件。 */
   private readonly pendingPlugins: PendingPlugin[] = [];
+  /** 待批准插件的加载参数：批准后 {@link activatePending} 在本副本据此加载。 */
+  private readonly pendingActivations = new Map<string, Activation>();
+  /** 内置与配置声明插件的清单与权限集合（含未加载的；后台列表与网页批准用）。 */
+  private readonly declaredInfo = new Map<
+    string,
+    { source: "builtin" | "config"; manifest: PluginManifest; set: PermissionSet }
+  >();
   /** 导入过的插件名 → 来源与包（含未加载的；重名被跳过的一方不在这里）。 */
   private readonly sources = new Map<string, { source: PluginSource; sha256: string | null }>();
   private didLoad = false;
+  /** load() 的安装记录入口（{@link activatePending} 据此复核期望状态）。 */
+  private installLoader: InstalledPluginLoader | undefined;
   private closed = false;
   /** close() 时中止进行中的插件迁移。 */
   private readonly abort = new AbortController();
@@ -585,6 +582,7 @@ export class PluginHost {
     if (this.didLoad) throw new Error("plugin host already loaded; load() may be called once");
     this.didLoad = true;
     const p: PluginLoadPlan = Array.isArray(plan) ? { config: plan } : plan;
+    this.installLoader = p.installs;
     const builtin = await importEntries(p.builtin ?? [], this.resolveFrom);
     const config = dropShadowed(
       await importEntries(p.config ?? [], this.resolveFrom),
@@ -608,6 +606,7 @@ export class PluginHost {
     for (const e of entries) assertSecretsReachable(e.manifest);
 
     const sets = await permissionSets(ordered, dirs);
+    this.noteDeclared(ordered, sets);
     const approvals = new PluginApprovals(kernelDb(this.deps.db));
     if (this.autoApprove) {
       this.deps.log.warn(
@@ -851,10 +850,9 @@ export class PluginHost {
       [...loaded.map((i) => i.manifest), ...deferred],
       new Set(deferred.map((m) => m.name)),
     );
-    const sets = new Map([
-      ...loaded.map((i) => [i.name, i.permissions] as const),
-      ...(await permissionSets(deferred, dirs)),
-    ]);
+    const deferredSets = await permissionSets(deferred, dirs);
+    this.noteDeclared(deferred, deferredSets);
+    const sets = new Map([...loaded.map((i) => [i.name, i.permissions] as const), ...deferredSets]);
     const blockedProvides = new Set(blocked.flatMap((m) => m.provides));
     const readyProvides = new Set(ready.flatMap((m) => m.provides));
     for (const m of blocked) {
@@ -951,7 +949,11 @@ export class PluginHost {
    * 加载一个插件：权限闸门结论、部署配置、迁移、setup、登记。`fatal` 时（内置 / 配置声明）出错直接抛；
    * 否则（安装记录）记 failed 后返回。内置与安装记录的部署配置不合法时只记 pending（reason config），不抛。
    */
-  private async activate(approvals: PluginApprovals, a: Activation): Promise<void> {
+  private async activate(
+    approvals: PluginApprovals,
+    a: Activation,
+    setupTimeoutMs?: number,
+  ): Promise<void> {
     const { manifest, decision } = a;
     const name = manifest.name;
     const base = { plugin: name, version: manifest.version, sha256: a.sha256, source: a.source };
@@ -968,6 +970,7 @@ export class PluginHost {
         }
       }
       this.pendingPlugins.push(decision.pending);
+      this.pendingActivations.set(name, a);
       warnPending(this.deps.log, decision.pending);
       const reason: PendingReason =
         decision.pending.reason === "dependency" ? "dependency" : "approval";
@@ -1055,7 +1058,7 @@ export class PluginHost {
     };
     let inst: PluginInstance;
     try {
-      inst = await this.setup(spec);
+      inst = await this.setup(spec, setupTimeoutMs);
     } catch (e) {
       if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
       if (a.fatal) throw e;
@@ -1071,6 +1074,166 @@ export class PluginHost {
     this.specs.set(name, spec);
     this.registry.activate(inst);
     await this.writeStatus({ ...base, state: "loaded", reason: null, detail: null });
+  }
+
+  /** 记下内置 / 配置声明插件的清单与权限集合（安装记录不在这里）。 */
+  private noteDeclared(manifests: PluginManifest[], sets: Map<string, PermissionSet>): void {
+    for (const m of manifests) {
+      const source = this.sourceOf(m.name);
+      if (source !== "builtin" && source !== "config") continue;
+      this.declaredInfo.set(m.name, {
+        source,
+        manifest: m,
+        set: sets.get(m.name) as PermissionSet,
+      });
+    }
+  }
+
+  /**
+   * 内置与配置声明的插件（含待批准、待配置而未加载的）：权限集合（{@link computePermissionSet}）、
+   * 部署配置此刻是否合法（按清单的 deployment schema 校验启动配置）。按导入顺序。
+   */
+  declaredPlugins(): DeclaredPluginInfo[] {
+    return [...this.declaredInfo].map(([name, d]) => {
+      const schema = d.manifest.config?.deployment;
+      return {
+        name,
+        source: d.source,
+        version: d.manifest.version,
+        permissions: d.set,
+        configurable: schema !== undefined,
+        configValid: schema ? schema.safeParse(this.pluginConfig[name] ?? {}).success : true,
+      };
+    });
+  }
+
+  /**
+   * 批准之后在本副本加载待批准的插件（T13 的单副本接缝；跨副本收敛与停用 / 升级由 T14 的 reconcile 负责）：
+   * 重读快照，按启动时同一套判定（{@link planApprovals}，另加「必需能力此刻要有生效的提供方」）逐个处理；
+   * 能加载的走与启动相同的加载流程（部署配置、迁移、setup，setup 时限 `pluginHost.reloadSetupTimeoutSeconds`），
+   * 失败只记 failed、不抛；仍被依赖阻塞的改记 pending / dependency。反复直到不动点（加载一个可能放行依赖它的），
+   * 最后对新提供的能力做依赖方连锁（与 {@link reload} 相同）。与 unload / reload 串行。返回本次加载的插件名。
+   */
+  activatePending(): Promise<string[]> {
+    return this.serial(async () => {
+      if (this.pendingActivations.size === 0) return [];
+      const approvals = new PluginApprovals(kernelDb(this.deps.db));
+      const snapshots = await approvals.all();
+      // 安装记录只加载此刻仍期望启用、且还是同一个包的（启动之后可能已被停用或换包：留给 reconcile）
+      const hasInstalls = [...this.pendingActivations.values()].some((a) => a.source === "install");
+      const desired =
+        hasInstalls && this.installLoader
+          ? new Map((await this.installLoader.desired()).map((d) => [d.name, d.sha256]))
+          : new Map<string, string>();
+      const activated: string[] = [];
+      for (let progress = true; progress; ) {
+        progress = false;
+        for (const [name, a] of [...this.pendingActivations]) {
+          if (this.closed) throw new Error("plugin host is closed");
+          if (a.source === "install" && desired.get(name) !== a.sha256) continue;
+          const decision = this.decidePending(name, a, snapshots);
+          if (decision.action === "pending") {
+            await this.stillPending(a, decision.pending);
+            continue;
+          }
+          this.pendingActivations.delete(name);
+          const at = this.pendingPlugins.findIndex((p) => p.plugin === name);
+          if (at >= 0) this.pendingPlugins.splice(at, 1);
+          try {
+            await this.activate(
+              approvals,
+              { ...a, decision, fatal: false },
+              this.reloadSetupTimeoutMs(),
+            );
+          } catch (e) {
+            if (this.closed) throw e;
+            // 配置声明的插件部署配置不合法时 activate 抛错（启动时内核失败）；运行中只记 failed
+            this.deps.log.error("approved plugin not loaded", { plugin: name, err: e });
+            await this.writeStatus({
+              plugin: name,
+              version: a.manifest.version,
+              sha256: a.sha256,
+              source: a.source,
+              state: "failed",
+              reason: "setup",
+              detail: errMsg(e),
+            });
+          }
+          if (this.registry.current(name)) {
+            activated.push(name);
+            progress = true;
+            this.deps.log.info("approved plugin loaded", { plugin: name });
+          }
+        }
+      }
+      if (activated.length > 0) {
+        await this.cascade(
+          activated.flatMap((n) => this.registry.current(n)?.manifest.provides ?? []),
+          this.drainMs(),
+        );
+      }
+      return activated;
+    });
+  }
+
+  /** 待批准插件此刻的判定：已生效的插件视为已批准；必需能力没有生效的提供方时仍待定（dependency）。 */
+  private decidePending(
+    name: string,
+    a: Activation,
+    snapshots: Map<string, PermissionSnapshot>,
+  ): ApprovalDecision {
+    const loaded = this.registry.all();
+    const manifests = loaded.map((i) => i.manifest);
+    const sets = new Map([
+      ...loaded.map((i) => [i.name, i.permissions] as const),
+      [name, a.set] as const,
+    ]);
+    const decision = planApprovals(
+      [...manifests, a.manifest],
+      sets,
+      withPreApproved(snapshots, manifests, sets),
+      { autoApprove: this.autoApprove },
+    ).find((d) => d.plugin === name) as ApprovalDecision;
+    if (decision.action === "pending") return decision;
+    const provided = new Set(loaded.flatMap((i) => [...i.provided.keys()]));
+    const missing = (a.manifest.requires ?? []).filter((c) => !provided.has(c));
+    if (missing.length === 0) return decision;
+    return {
+      plugin: name,
+      action: "pending",
+      pending: {
+        plugin: name,
+        version: a.manifest.version,
+        added: decision.added,
+        removed: decision.removed,
+        reason: "dependency",
+        blockedBy: missing.map((capability) => ({
+          capability,
+          providers: [...this.pendingActivations.values()]
+            .filter((p) => p.manifest.provides.includes(capability))
+            .map((p) => p.manifest.name),
+        })),
+      },
+    };
+  }
+
+  /** 仍不能加载的待批准插件：原因变了（如已批准、只剩依赖阻塞）时更新待批准清单与副本状态。 */
+  private async stillPending(a: Activation, p: PendingPlugin): Promise<void> {
+    const at = this.pendingPlugins.findIndex((x) => x.plugin === p.plugin);
+    const before = at >= 0 ? this.pendingPlugins[at] : undefined;
+    if (at >= 0) this.pendingPlugins[at] = p;
+    else this.pendingPlugins.push(p);
+    if (before?.reason === p.reason) return;
+    const reason: PendingReason = p.reason === "dependency" ? "dependency" : "approval";
+    await this.writeStatus({
+      plugin: p.plugin,
+      version: a.manifest.version,
+      sha256: a.sha256,
+      source: a.source,
+      state: "pending",
+      reason,
+      detail: null,
+    });
   }
 
   /** 插件的来源（导入过的；未知返回 undefined）。 */

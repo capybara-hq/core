@@ -18,7 +18,9 @@ import {
   permissionKeys,
   planApprovals,
   secretValues,
+  withPreApproved,
 } from "@capybara-hq/kernel";
+import { BUILTIN_PLUGINS } from "../builtin-plugins.js";
 import { type PasswordInput, readLine } from "./admin-create.js";
 
 /** plugins 命令的输入输出流（测试可替换）。 */
@@ -37,8 +39,9 @@ const defaultIo = (): PluginsIo => ({
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 共用准备：加载配置 → 跑内核迁移（幂等，快照表在其中）→ 导入并检查已配置插件（不调用 setup、不连 Redis）
- * → 读已批准快照。只连 PG。
+ * 共用准备：加载配置 → 跑内核迁移（幂等，快照表在其中）→ 导入并检查内置与已配置插件（不调用 setup、不连 Redis）
+ * → 读已批准快照。只连 PG。内置插件（C14）预先批准：`snapshots` 里补上与其当前权限相同的快照，
+ * 因此不会出现在待批准里，依赖它们的插件照常判定；与内置重名的配置项以内置为准。
  */
 async function withReview<T>(
   log: KernelLogger,
@@ -59,13 +62,18 @@ async function withReview<T>(
     { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
     { connectTimeoutMs },
   );
-  const plugins = await PluginHost.inspect(config.plugins);
+  const plugins = await PluginHost.inspect(config.plugins, { builtin: [...BUILTIN_PLUGINS] });
   const raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
     connectTimeoutMs,
   });
   try {
     const approvals = new PluginApprovals(kernelDb(raw));
-    return await fn({ config, plugins, approvals, snapshots: await approvals.all() });
+    const snapshots = withPreApproved(
+      await approvals.all(),
+      plugins.filter((p) => p.source === "builtin").map((p) => p.manifest),
+      new Map(plugins.map((p) => [p.manifest.name, p.permissions])),
+    );
+    return await fn({ config, plugins, approvals, snapshots });
   } finally {
     await raw.destroy().catch(() => {});
   }
@@ -165,6 +173,12 @@ export async function runPluginsApprove(
         );
       }
       const { name, version } = target.manifest;
+      if (target.source === "builtin") {
+        io.stdout.write(
+          `${name} ${version} is built into this deployment and pre-approved; it needs no approval.\n`,
+        );
+        return 0;
+      }
       const snap = snapshots.get(name);
       const { added, removed } = diffPermissions(snap?.permissions, target.permissions);
       // 只多出视图（ui.view:*）不需要批准：内核加载时自动补进快照

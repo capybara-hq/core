@@ -52,6 +52,7 @@ import { PricesService } from "./models/prices.js";
 import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
+import { PluginAdmin } from "./plugins/admin-view.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
 import { PluginBlobs } from "./plugins/blobs.js";
 import { PluginHost } from "./plugins/host.js";
@@ -200,6 +201,8 @@ export interface Kernel {
   readonly replicaId: string;
   /** 插件包的导入（上传 / npm）与安装记录。 */
   readonly pluginInstalls: PluginInstalls;
+  /** 部署级插件后台：列表、状态与网页批准权限。 */
+  readonly pluginAdmin: PluginAdmin;
   /** 内容寻址的插件包存储（对象存储或 PG）。 */
   readonly pluginBlobs: PluginBlobs;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
@@ -470,6 +473,15 @@ export async function createKernel(
     blobs: pluginBlobs,
     config: () => current,
     declared: () => host.declared(),
+  });
+  const pluginAdmin = new PluginAdmin({
+    db: kdb,
+    blobs: pluginBlobs,
+    installs: pluginInstalls,
+    config: () => current,
+    host,
+    bus,
+    log,
   });
   // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
   maintenance.handle(STORAGE_PURGE_JOB, async () => {
@@ -827,6 +839,7 @@ export async function createKernel(
         prices,
         purposes,
         pluginInstalls,
+        pluginAdmin,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
@@ -989,6 +1002,7 @@ export async function createKernel(
     host,
     replicaId,
     pluginInstalls,
+    pluginAdmin,
     pluginBlobs,
     orgPluginConfigs,
     bus,

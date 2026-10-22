@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionSet } from "../../src/plugins/permission-set.js";
-import { permissionGroups } from "../../src/plugins/permission-view.js";
+import {
+  derivePluginStatus,
+  isSensitivePermissionKey,
+  permissionGroups,
+  SENSITIVE_CAPABILITIES,
+  type StatusInput,
+} from "../../src/plugins/permission-view.js";
 
 const base: PermissionSet = {
   provides: [],
@@ -83,5 +89,123 @@ describe("permissionGroups", () => {
     }
     const [plain] = permissionGroups({ ...base, provides: ["counter@1", "model-provider@2"] });
     expect(plain?.sensitive).toBe(false);
+  });
+
+  it("D10 + 计划扩展：提供 sandbox@1 或 object-store@1 时「提供」一组同样标为敏感，CLI 逐项标记", () => {
+    expect([...SENSITIVE_CAPABILITIES].sort()).toEqual(
+      ["channel@1", "directory@1", "identity-source@1", "object-store@1", "sandbox@1"].sort(),
+    );
+    for (const cap of ["sandbox@1", "object-store@1"]) {
+      const [g] = permissionGroups({ ...base, provides: [cap] });
+      expect(g, cap).toEqual({ category: "provides", sensitive: true, items: [cap] });
+      expect(isSensitivePermissionKey(`provides:${cap}`), cap).toBe(true);
+      // 只影响展示：依赖它不算敏感
+      expect(isSensitivePermissionKey(`requires:${cap}`), cap).toBe(false);
+    }
+  });
+});
+
+describe("derivePluginStatus", () => {
+  const SHA = "a".repeat(64);
+  const OLD = "b".repeat(64);
+  const loaded = { state: "loaded", reason: null, sha256: SHA };
+  const install = (over: Partial<StatusInput> = {}): StatusInput => ({
+    source: "install",
+    desired: { sha256: SHA, state: "enabled" },
+    pendingApproval: false,
+    configValid: true,
+    migratedSha: SHA,
+    replicas: [loaded, loaded],
+    ...over,
+  });
+
+  it("安装记录：全部副本加载了目标包 → enabled；停用且没有副本还加载着 → disabled", () => {
+    expect(derivePluginStatus(install())).toBe("enabled");
+    expect(
+      derivePluginStatus(
+        install({
+          desired: { sha256: SHA, state: "disabled" },
+          replicas: [{ state: "unloaded", reason: null, sha256: SHA }],
+        }),
+      ),
+    ).toBe("disabled");
+  });
+
+  it("converging：有副本还没换到目标包、还没有副本、或停用后仍有副本加载着", () => {
+    expect(derivePluginStatus(install({ replicas: [loaded, { ...loaded, sha256: OLD }] }))).toBe(
+      "converging",
+    );
+    expect(derivePluginStatus(install({ replicas: [] }))).toBe("converging");
+    expect(derivePluginStatus(install({ desired: { sha256: SHA, state: "disabled" } }))).toBe(
+      "converging",
+    );
+  });
+
+  it("优先级：failed > dependency > pending_approval > pending_config > pending_migration > converging", () => {
+    const failed = { state: "failed", reason: "setup", sha256: SHA };
+    const dep = { state: "pending", reason: "dependency", sha256: SHA };
+    const all = {
+      pendingApproval: true,
+      configValid: false,
+      migratedSha: null,
+      replicas: [failed, dep],
+    };
+    expect(derivePluginStatus(install(all))).toBe("failed");
+    expect(derivePluginStatus(install({ ...all, replicas: [dep] }))).toBe("dependency");
+    expect(derivePluginStatus(install({ ...all, replicas: [] }))).toBe("pending_approval");
+    expect(derivePluginStatus(install({ ...all, pendingApproval: false, replicas: [] }))).toBe(
+      "pending_config",
+    );
+    expect(
+      derivePluginStatus(
+        install({ ...all, pendingApproval: false, configValid: true, replicas: [] }),
+      ),
+    ).toBe("pending_migration");
+  });
+
+  it("旧包的 failed 行不算 failed（期望已换新包，该副本仍在收敛）；随提供方卸下（unloaded / dependency）算 dependency", () => {
+    expect(
+      derivePluginStatus(
+        install({ replicas: [loaded, { state: "failed", reason: "sync", sha256: OLD }] }),
+      ),
+    ).toBe("converging");
+    expect(
+      derivePluginStatus(
+        install({ replicas: [{ state: "unloaded", reason: "dependency", sha256: SHA }] }),
+      ),
+    ).toBe("dependency");
+  });
+
+  it("待批准与期望状态无关（F-N）：停用的安装记录同样 pending_approval；停用时不看迁移", () => {
+    expect(
+      derivePluginStatus(
+        install({
+          desired: { sha256: SHA, state: "disabled" },
+          pendingApproval: true,
+          replicas: [],
+        }),
+      ),
+    ).toBe("pending_approval");
+    expect(
+      derivePluginStatus(
+        install({ desired: { sha256: SHA, state: "disabled" }, migratedSha: null, replicas: [] }),
+      ),
+    ).toBe("disabled");
+  });
+
+  it("内置 / 配置声明：始终期望启用，不看 sha 与迁移记录", () => {
+    const declared: StatusInput = {
+      source: "builtin",
+      desired: null,
+      pendingApproval: false,
+      configValid: true,
+      migratedSha: null,
+      replicas: [{ state: "loaded", reason: null, sha256: null }],
+    };
+    expect(derivePluginStatus(declared)).toBe("enabled");
+    expect(derivePluginStatus({ ...declared, configValid: false, replicas: [] })).toBe(
+      "pending_config",
+    );
+    expect(derivePluginStatus({ ...declared, source: "config", replicas: [] })).toBe("converging");
   });
 });

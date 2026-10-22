@@ -49,6 +49,8 @@ export const ERROR_CODES = {
   "plugin.config_declared": 409,
   "plugin.builtin": 409,
   "plugin.name_conflict": 409,
+  "plugin.approval_stale": 409,
+  "plugin.not_pending": 409,
   "packages.npm_failed": 502,
   "directory.not_configured": 409,
   "setup.already_completed": 409,

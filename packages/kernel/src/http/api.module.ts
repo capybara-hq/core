@@ -54,6 +54,7 @@ import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import { OrgSettingsService } from "../orgs/settings.service.js";
+import type { PluginAdmin } from "../plugins/admin-view.js";
 import type { PluginHost } from "../plugins/host.js";
 import type { PluginInstalls } from "../plugins/installs.js";
 import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
@@ -129,6 +130,7 @@ import {
   ORG_SETTINGS,
   ORG_UI_STREAMS,
   ORGS,
+  PLUGIN_ADMIN,
   PLUGIN_INSTALLS,
   PRICES,
   PROVIDER_REGISTRY,
@@ -198,6 +200,8 @@ export interface ApiDeps {
   purposes: ModelPurposesService;
   /** 插件包的导入与安装记录（与 `Kernel.pluginInstalls` 同一实例）。 */
   pluginInstalls: PluginInstalls;
+  /** 部署级插件后台：列表与网页批准（与 `Kernel.pluginAdmin` 同一实例）。 */
+  pluginAdmin: PluginAdmin;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
@@ -325,6 +329,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: PRICES, useValue: deps.prices },
     { provide: MODEL_PURPOSES, useValue: deps.purposes },
     { provide: PLUGIN_INSTALLS, useValue: deps.pluginInstalls },
+    { provide: PLUGIN_ADMIN, useValue: deps.pluginAdmin },
     {
       provide: TRAJECTORIES,
       useFactory: (
