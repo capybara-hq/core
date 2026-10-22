@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CatalogIndexSchema } from "@capybara-hq/plugin-sdk";
+import { AppManifestSchema, CatalogIndexSchema } from "@capybara-hq/plugin-sdk";
 import { type core, z } from "zod";
 import type { Finding } from "./source.js";
 
@@ -15,13 +15,19 @@ export interface PackageSchemaSpec {
   schema: core.$ZodType;
 }
 
-/** SDK 发布的 JSON Schema 清单（T25 再加 `app.v1.schema.json`）。 */
+/** SDK 发布的 JSON Schema 清单：目录清单 `index.json` 与应用包清单 `app.yaml`。 */
 export const PACKAGE_SCHEMAS: PackageSchemaSpec[] = [
   {
     file: "catalog-index.v1.schema.json",
     id: "https://catalog.capybarahq.com/schemas/catalog-index.v1.schema.json",
     title: "Capybara catalog index (schemaVersion 1)",
     schema: CatalogIndexSchema,
+  },
+  {
+    file: "app.v1.schema.json",
+    id: "https://catalog.capybarahq.com/schemas/app.v1.schema.json",
+    title: "Capybara app manifest app.yaml (schemaVersion 1)",
+    schema: AppManifestSchema,
   },
 ];
 

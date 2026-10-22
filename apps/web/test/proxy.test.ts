@@ -321,6 +321,19 @@ describe("上传插件包（POST /api/v1/admin/plugins/packages/file）：放宽
     expect(seen[0]?.body.length).toBe(big.length);
   });
 
+  it("应用包上传（/api/v1/admin/directory/apps/prepare/file）同样放宽上限", async () => {
+    const big = new Uint8Array(3 * 1024 * 1024).fill(5);
+    const res = await POST(
+      new Request("http://web.example/api/v1/admin/directory/apps/prepare/file", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: big,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]?.body.length).toBe(big.length);
+  });
+
   it("流式透传：客户端还没发完，上游已收到第一段；Cookie 与 CSRF 头照常透传", async () => {
     let release!: () => void;
     const firstSeen = new Promise<void>((r) => {

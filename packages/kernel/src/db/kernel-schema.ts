@@ -829,6 +829,7 @@ export interface KernelDatabase {
   directory_item_versions: DirectoryItemVersionsTable;
   catalog_sources: CatalogSourcesTable;
   catalog_entries: CatalogEntriesTable;
+  app_import_staging: AppImportStagingTable;
 }
 
 /** 0034_directory.sql：企业目录条目。 */
@@ -907,6 +908,18 @@ export interface CatalogEntriesTable {
   npm: string;
   entry: Json<unknown>;
   updated_at: Ts;
+}
+
+/** 0036_app_import_staging.sql：应用包导入的暂存（prepare 写、confirm 删，24 小时过期）。 */
+export interface AppImportStagingTable {
+  id: string;
+  review: Json<unknown>;
+  bundle: Json<unknown>;
+  object_prefix: string | null;
+  source: Json<unknown>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  expires_at: ColumnType<Date, Date | string, Date | string>;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

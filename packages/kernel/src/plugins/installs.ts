@@ -1,7 +1,7 @@
 import { type CapybaraPackageSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
-import { ApiError } from "../errors.js";
+import { ApiError, type ErrorCode } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import {
@@ -241,9 +241,37 @@ export class PluginInstalls {
    * 为准，不认 npm 元数据。不符 → 502 `catalog.integrity_mismatch`（写明期望与实际 sha512 的前缀）；
    * 下载失败 → 502 `catalog.fetch_failed`；超过 `packages.maxBytes` → `plugin.package_too_large`。
    */
-  async fetchCatalogPackage(
+  fetchCatalogPackage(
     input: { package: string; version: string; integrity: string; tarball?: string },
     signal?: AbortSignal,
+  ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
+    return this.fetchVerified(input, signal, {
+      mismatch: "catalog.integrity_mismatch",
+      failed: "catalog.fetch_failed",
+      against: "the catalog",
+    });
+  }
+
+  /**
+   * 按应用包 `app.yaml` 的 lock 拉取一个插件包（T25，C31）：从配置的 npm registry 下载 `lock.version`，校验以
+   * `lock.integrity`（sha512）为准，不认 npm 元数据。不符 → 502 `app.lock_mismatch`（写明期望与实际 sha512 的前缀）；
+   * 下载失败 → 502 `packages.npm_failed`；超过 `packages.maxBytes` → `plugin.package_too_large`。
+   */
+  fetchLocked(
+    input: { package: string; version: string; integrity: string },
+    signal?: AbortSignal,
+  ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
+    return this.fetchVerified(input, signal, {
+      mismatch: "app.lock_mismatch",
+      failed: "packages.npm_failed",
+      against: `the app's lock for ${input.package}@${input.version}`,
+    });
+  }
+
+  private async fetchVerified(
+    input: { package: string; version: string; integrity: string; tarball?: string },
+    signal: AbortSignal | undefined,
+    codes: { mismatch: ErrorCode; failed: ErrorCode; against: string },
   ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
     const c = this.d.config();
     const cfg: NpmFetchConfig = {
@@ -271,12 +299,12 @@ export class PluginInstalls {
       if (e instanceof IntegrityMismatchError) {
         const prefix = (sri: string) => `${sri.slice(0, 19)}…`;
         throw new ApiError(
-          "catalog.integrity_mismatch",
-          `The package does not match the catalog (expected ${prefix(e.expected)}, got ${prefix(e.actual)}); installation refused`,
+          codes.mismatch,
+          `The package does not match ${codes.against} (expected ${prefix(e.expected)}, got ${prefix(e.actual)}); installation refused`,
           [{ expected: prefix(e.expected), actual: prefix(e.actual) }],
         );
       }
-      if (e instanceof NpmFetchError) throw new ApiError("catalog.fetch_failed", e.message);
+      if (e instanceof NpmFetchError) throw new ApiError(codes.failed, e.message);
       throw e;
     }
   }

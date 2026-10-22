@@ -123,15 +123,15 @@ export async function unpackDirectoryArchive(
   return { format, packageJson: packageJson as Record<string, unknown>, section, files };
 }
 
-const toFile = (f: { path: string; data: Uint8Array }): SkillPackageFile => ({
+export const toFile = (f: { path: string; data: Uint8Array }): SkillPackageFile => ({
   path: f.path,
   size: f.data.byteLength,
   sha256: createHash("sha256").update(f.data).digest("hex"),
   data: f.data,
 });
 
-/** 图标内容确实是 svg / png（只看文件头与 UTF-8 文本，不渲染）。 */
-function iconProblem(path: string, data: Uint8Array): string | undefined {
+/** 图标内容确实是 svg / png（只看文件头与 UTF-8 文本，不渲染）；合法返回 undefined。 */
+export function iconProblem(path: string, data: Uint8Array): string | undefined {
   if (data.byteLength > CONNECTOR_TEMPLATE_LIMITS.iconBytes) {
     return `template.icon ${path} is larger than ${CONNECTOR_TEMPLATE_LIMITS.iconBytes} bytes`;
   }

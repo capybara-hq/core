@@ -4,7 +4,8 @@
  * 响应体以流的形式透传、不缓冲，SSE 可用。请求体有大小上限（`CAPYBARA_WEB_MAX_BODY_BYTES`，
  * 默认 1 MiB，与内核 Fastify 的 bodyLimit 一致）；安装 / 预览连接器（`POST /api/v1/orgs/:orgId/connectors[/preview]`）
  * 可带最大 2 MB 的 OpenAPI 文档，与内核这两个路由一致放宽到 6 MiB。上传插件包与企业目录包
- * （`POST /api/v1/admin/plugins/packages/file`、`/api/v1/admin/directory/import/file`）放宽到 `CAPYBARA_WEB_MAX_PACKAGE_BYTES`（默认 50 MiB），
+ * （`POST /api/v1/admin/plugins/packages/file`、`/api/v1/admin/directory/import/file`、
+ * `/api/v1/admin/directory/apps/prepare/file`）放宽到 `CAPYBARA_WEB_MAX_PACKAGE_BYTES`（默认 50 MiB），
  * 并且边读边转发、不整个缓冲。客户端地址的处理见 `lib/peer.ts`。
  */
 
@@ -23,10 +24,11 @@ export const dynamic = "force-dynamic";
 /** 安装 / 预览连接器的请求体上限（与内核 http/app.ts 的 LARGE_BODY_LIMIT 一致）。 */
 const CONNECTOR_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
 const CONNECTOR_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/connectors(?:\/preview)?$/;
-/** 流式透传请求体的上传路由（插件包 tgz、企业目录包 tgz / zip，可达几十 MiB）。 */
+/** 流式透传请求体的上传路由（插件包 tgz、企业目录包 tgz / zip、应用包 tgz，可达几十 MiB）。 */
 const STREAMED_UPLOAD_PATHS = new Set([
   "/api/v1/admin/plugins/packages/file",
   "/api/v1/admin/directory/import/file",
+  "/api/v1/admin/directory/apps/prepare/file",
 ]);
 
 const upstreamUnavailable = () =>

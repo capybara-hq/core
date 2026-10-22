@@ -388,7 +388,7 @@ export function validatePluginPackageJson(
 }
 
 // ---------------------------------------------------------------------------------------------
-// 企业目录的包种类（C21）：plugin（上面）、connector-template（C30）、skill、app（C31，T25 解析 app.yaml）。
+// 企业目录的包种类（C21）：plugin（上面）、connector-template（C30）、skill、app（C31，app.yaml 见 app-manifest.ts）。
 // 格式统一为 package.json 的 `capybara` 段；连接器模板与技能另接受 zip（根目录放 package.json）。
 // ---------------------------------------------------------------------------------------------
 
@@ -457,7 +457,7 @@ export interface SkillPackageSection {
 /** 应用包清单文件名（C31）。 */
 export const APP_MANIFEST_FILE = "app.yaml";
 
-/** `capybara` 段（kind = app）；`app.yaml` 的内容由 T25 解析。 */
+/** `capybara` 段（kind = app）；`app.yaml` 的格式与解析见 app-manifest.ts（`AppManifest` / `parseAppManifest`）。 */
 export interface AppPackageSection {
   kind: "app";
   manifest: "app.yaml";
@@ -750,7 +750,7 @@ const SECTION_FIELDS: Record<Exclude<PackageKind, "plugin">, ReadonlySet<string>
  * - `connector-template`：通用规则 + publisher / description / displayName + {@link validateConnectorTemplate}
  *   （问题路径前缀 `capybara.`）；npm 包名去掉 scope 后即目录条目名，须符合 {@link DIRECTORY_ITEM_NAME_RE}；
  * - `skill`：通用规则 + publisher / description / displayName（技能名取包里的 SKILL.md，由内核检查）；
- * - `app`：`manifest` 必须是 `app.yaml`（内容由 T25 解析）。
+ * - `app`：`manifest` 必须是 `app.yaml`（内容由 `parseAppManifest` 解析，内核读包时检查）。
  * 非插件包的通用规则：合法的 npm 包名与 semver 版本，不许安装脚本、dependencies / peerDependencies 等依赖字段。
  * 返回的段是输入里的对象本身（未复制）。
  */

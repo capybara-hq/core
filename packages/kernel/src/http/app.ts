@@ -70,10 +70,13 @@ export interface CreateHttpAppOptions {
 export const PACKAGE_UPLOAD_ROUTE = "/api/v1/admin/plugins/packages/file";
 /** 企业目录包上传路由（Fastify 路由模板）。 */
 export const DIRECTORY_UPLOAD_ROUTE = "/api/v1/admin/directory/import/file";
+/** 应用包上传路由（Fastify 路由模板）。 */
+export const APP_UPLOAD_ROUTE = "/api/v1/admin/directory/apps/prepare/file";
 /** 收原始字节（`application/octet-stream`、上限 `packages.maxBytes`、读请求体前先认证企业管理员）的上传路由。 */
 export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
   PACKAGE_UPLOAD_ROUTE,
   DIRECTORY_UPLOAD_ROUTE,
+  APP_UPLOAD_ROUTE,
 ]);
 
 /**

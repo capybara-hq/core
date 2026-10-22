@@ -14,7 +14,7 @@ import {
 } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { DIRECTORY } from "../http/tokens.js";
+import { APP_IMPORT, DIRECTORY } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -24,6 +24,7 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import type { AdminPluginView } from "../plugins/permission-view.js";
+import type { AppImport, AppReview } from "./app-import.js";
 import {
   type ActorOpts,
   DIRECTORY_LIST_MAX_LIMIT,
@@ -40,6 +41,11 @@ const NpmBody = z.object({
 const PolicyBody = z.object({ policy: z.enum(["allow", "needs_approval", "disabled"]) });
 
 const InstallBody = z.object({ version: z.string().min(1).max(256) });
+
+const ConfirmBody = z.object({
+  reviewHash: z.string().min(1).max(128),
+  deployPlugins: z.boolean(),
+});
 
 const ListQuery = z.object({
   kind: z.enum(PACKAGE_KINDS as [PackageKind, ...PackageKind[]]).optional(),
@@ -60,13 +66,16 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 @Controller("api/v1/admin/directory")
 @EnterpriseAdmin()
 export class AdminDirectoryController {
-  constructor(@Inject(DIRECTORY) private readonly directory: DirectoryService) {}
+  constructor(
+    @Inject(DIRECTORY) private readonly directory: DirectoryService,
+    @Inject(APP_IMPORT) private readonly apps: AppImport,
+  ) {}
 
   /**
    * 上传目录包（请求体为原始字节，`application/octet-stream`，上限 `packages.maxBytes`）：插件 / 应用为 npm-pack
    * tgz，连接器模板与技能也可以是 zip。包不合法 → 400 `directory.invalid_package`（details 逐条列出）；
    * 同一版本已导入 → 409 `directory.version_exists`；同名条目来自别的 npm 包 → 409 `directory.name_conflict`；
-   * 应用包（T25 之前）→ 409 `directory.wrong_kind`；插件与内置 / 配置声明的插件重名 → 409。
+   * 应用包 → 409 `directory.wrong_kind`（应用走 `apps/prepare/*`）；插件与内置 / 配置声明的插件重名 → 409。
    */
   @Post("import/file")
   @HttpCode(201)
@@ -102,6 +111,65 @@ export class AdminDirectoryController {
       { package: body.package, ...(body.version !== undefined && { version: body.version }) },
       actorOpts(actor),
     );
+  }
+
+  /**
+   * 应用包（npm-pack tgz，请求体为原始字节，`application/octet-stream`，上限 `packages.maxBytes`）：解析 app.yaml，
+   * 按 lock 从 npm 拉取每个插件并按 sha512 校验，校验模板与技能，全部通过后暂存 24 小时，返回一次审阅。
+   * 清单不合法 → 400 `app.invalid_manifest`；lock 的 sha512 不符 → 502 `app.lock_mismatch`；内置 / 配置声明的插件
+   * 不满足范围 → 409 `app.plugin_conflict`；不是应用包 → 409 `directory.wrong_kind`。
+   */
+  @Post("apps/prepare/file")
+  @HttpCode(200)
+  async prepareAppFile(
+    @CurrentPrincipal() principal: Principal,
+    @Req() req: { body?: unknown },
+  ): Promise<{ stagingId: string; review: AppReview }> {
+    const actor = requireUser(principal);
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.byteLength === 0) {
+      throw new ApiError(
+        "unsupported_media_type",
+        "Send the app package (.tgz) as the request body with content-type application/octet-stream",
+      );
+    }
+    const r = await this.apps.prepare(
+      actor.account.id,
+      new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+      { kind: "file", ref: "upload" },
+      actorOpts(actor),
+    );
+    return { stagingId: r.stagingId, review: r.review };
+  }
+
+  /** 从配置的 npm registry 拉取应用包再暂存（同 `apps/prepare/file`）。下载失败 → 502。 */
+  @Post("apps/prepare/npm")
+  @HttpCode(200)
+  prepareAppNpm(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodPipe(NpmBody)) body: z.infer<typeof NpmBody>,
+  ): Promise<{ stagingId: string; review: AppReview }> {
+    const actor = requireUser(principal);
+    return this.apps.prepareNpm(
+      actor.account.id,
+      { package: body.package, ...(body.version !== undefined && { version: body.version }) },
+      actorOpts(actor),
+    );
+  }
+
+  /**
+   * 确认应用导入：一次批准全部要装 / 升级的插件（写快照），`deployPlugins` 时装到部署并启用；建 kind app 的目录条目。
+   * 暂存不存在或已过期 → 404 `app.staging_not_found`；`reviewHash` 不符或部署上的插件已变 → 409 `app.review_stale`。
+   */
+  @Post("apps/:stagingId/confirm")
+  @HttpCode(201)
+  confirmApp(
+    @CurrentPrincipal() principal: Principal,
+    @Param("stagingId") stagingId: string,
+    @Body(new ZodPipe(ConfirmBody)) body: z.infer<typeof ConfirmBody>,
+  ): Promise<DirectoryItemView> {
+    const actor = requireUser(principal);
+    return this.apps.confirm(actor.account.id, stagingId, body, actorOpts(actor));
   }
 
   /**

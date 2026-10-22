@@ -185,7 +185,13 @@ export async function writeSnapshot(
     source: PermissionSnapshot["source"];
     approvedBy?: string | null;
     actorTokenId?: string;
-    audit?: { added: string[]; removed: string[]; sha256?: string | null };
+    /** `app`：经应用包导入一次批准时的应用（T25）。 */
+    audit?: {
+      added: string[];
+      removed: string[];
+      sha256?: string | null;
+      app?: { name: string; version: string };
+    };
   },
 ): Promise<void> {
   const values = {

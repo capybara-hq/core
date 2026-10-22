@@ -38,6 +38,7 @@ import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
+import { AppImport } from "./directory/app-import.js";
 import { CATALOGS_REFRESH_DEADLINE_MS, CatalogsService } from "./directory/catalogs.service.js";
 import { DirectoryService } from "./directory/directory.service.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
@@ -83,6 +84,9 @@ import { ConversationLock } from "./runtime/conversation-lock.js";
 import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
 import {
+  APP_STAGING_CLEANUP_EVERY_MS,
+  APP_STAGING_CLEANUP_JOB,
+  APP_STAGING_CLEANUP_SCHEDULER_ID,
   CATALOGS_REFRESH_JOB,
   CATALOGS_REFRESH_SCHEDULER_ID,
   Maintenance,
@@ -232,6 +236,8 @@ export interface Kernel {
   readonly pluginBlobs: PluginBlobs;
   /** 企业目录：条目与导入（插件 / 连接器模板 / 技能）。 */
   readonly directory: DirectoryService;
+  /** 应用包（app.yaml）的企业导入：prepare / confirm 与暂存清理。 */
+  readonly apps: AppImport;
   /** 目录来源：官方 / 企业清单与刷新。 */
   readonly catalogs: CatalogsService;
   /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
@@ -548,6 +554,34 @@ export async function createKernel(
     reconcile: (reason) => pluginLifecycle.reconcile(reason),
     log,
   });
+  const findConnector = (plugin: string, kind: string) =>
+    host
+      .list("connector")
+      .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
+      | Connector
+      | undefined;
+  // 应用包导入（C31）：一次审阅、一次批准；暂存 24 小时，维护任务 app-staging-cleanup 每小时清理过期的
+  const apps = new AppImport({
+    db: kdb,
+    config: () => current,
+    storage,
+    installs: pluginInstalls,
+    ops: pluginAdminOps,
+    blobs: pluginBlobs,
+    declaredPlugins: () => host.declaredPlugins(),
+    findConnector,
+    isConnectorPlugin: (name) => host.list("connector").some((e) => e.plugin === name),
+    log,
+  });
+  maintenance.handle(APP_STAGING_CLEANUP_JOB, async () => {
+    const n = await apps.cleanupExpired();
+    if (n > 0) log.info("expired app imports cleaned up", { count: n });
+  });
+  maintenance.schedule({
+    id: APP_STAGING_CLEANUP_SCHEDULER_ID,
+    name: APP_STAGING_CLEANUP_JOB,
+    everyMs: () => APP_STAGING_CLEANUP_EVERY_MS,
+  });
   // 企业目录（D9 / C21）：插件包交给 pluginInstalls 入库、pluginAdminOps 装到部署；连接器模板按本副本已加载的连接器校验
   const directory = new DirectoryService({
     db: kdb,
@@ -556,11 +590,8 @@ export async function createKernel(
     installs: pluginInstalls,
     ops: pluginAdminOps,
     declared: () => host.declared(),
-    findConnector: (plugin, kind) =>
-      host
-        .list("connector")
-        .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)
-        ?.impl as Connector | undefined,
+    findConnector,
+    apps,
   });
   // 目录来源（D16 / C26）：official 启动时按配置同步；维护任务 catalogs-refresh 定期刷新全部生效的来源
   const catalogs = new CatalogsService({ db: kdb, config: () => current, keyring, log });
@@ -960,6 +991,7 @@ export async function createKernel(
         pluginAdminOps,
         pluginDeploymentConfigs,
         directory,
+        apps,
         catalogs,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
@@ -1130,6 +1162,7 @@ export async function createKernel(
     pluginLifecycle,
     pluginBlobs,
     directory,
+    apps,
     catalogs,
     pluginDeploymentConfigs,
     orgPluginConfigs,

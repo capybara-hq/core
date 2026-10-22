@@ -1,4 +1,5 @@
 import type { ConnectorTemplateSpec } from "@capybara-hq/plugin-sdk";
+import { stringify as stringifyYaml } from "yaml";
 import { tgz } from "../helpers/plugin-packages.js";
 import { makeZip, SKILL_MD } from "../skills/zip.js";
 
@@ -103,5 +104,31 @@ export function appTgz(): Promise<Uint8Array> {
       }),
     },
     { name: "package/app.yaml", data: "schemaVersion: 1\n" },
+  ]);
+}
+
+/** 应用包：`manifest` 序列化成 app.yaml（字符串原样），`files` 为包内其他文件（路径相对包根）。 */
+export function appBundleTgz(o: {
+  manifest: Record<string, unknown> | string;
+  name?: string;
+  version?: string;
+  files?: { path: string; data: string | Buffer }[];
+}): Promise<Uint8Array> {
+  const version =
+    o.version ?? (typeof o.manifest === "string" ? "1.0.0" : String(o.manifest.version));
+  return tgz([
+    {
+      name: "package/package.json",
+      data: JSON.stringify({
+        name: o.name ?? "@acme/app-crm",
+        version,
+        capybara: { kind: "app", manifest: "app.yaml" },
+      }),
+    },
+    {
+      name: "package/app.yaml",
+      data: typeof o.manifest === "string" ? o.manifest : stringifyYaml(o.manifest),
+    },
+    ...(o.files ?? []).map((f) => ({ name: `package/${f.path}`, data: f.data })),
   ]);
 }

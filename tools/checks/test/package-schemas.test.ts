@@ -23,9 +23,19 @@ describe("checkPackageSchemas", () => {
     expect(checkPackageSchemas()).toEqual([]);
   });
 
-  it("违规 fixture：手改过的 catalog-index.v1.schema.json -> package-schema-stale", () => {
+  it("登记了目录清单与应用包清单两份 schema", () => {
+    expect(PACKAGE_SCHEMAS.map((s) => s.file)).toEqual([
+      "catalog-index.v1.schema.json",
+      "app.v1.schema.json",
+    ]);
+  });
+
+  it("违规 fixture：手改过的 catalog-index.v1.schema.json 与 app.v1.schema.json -> package-schema-stale", () => {
     const f = checkPackageSchemas(PACKAGE_SCHEMAS, join(FIXTURES, "stale"));
-    expect(f.map((x) => x.rule)).toEqual(["package-schema-stale"]);
+    expect(f.map((x) => [x.rule, x.file.split("/").pop()])).toEqual([
+      ["package-schema-stale", "catalog-index.v1.schema.json"],
+      ["package-schema-stale", "app.v1.schema.json"],
+    ]);
     expect(f[0]?.message).toContain("pnpm gen:package-schemas");
   });
 
@@ -33,6 +43,7 @@ describe("checkPackageSchemas", () => {
     const d = mkdtempSync(join(tmpdir(), "capybara-ps-"));
     tmp.push(d);
     expect(checkPackageSchemas(PACKAGE_SCHEMAS, d).map((x) => x.rule)).toEqual([
+      "package-schema-stale",
       "package-schema-stale",
     ]);
   });
@@ -42,7 +53,10 @@ describe("checkPackageSchemas", () => {
       ...s,
       schema: z.object({ schemaVersion: z.literal(1), extra: z.string() }),
     }));
-    expect(checkPackageSchemas(changed).map((x) => x.rule)).toEqual(["package-schema-stale"]);
+    expect(checkPackageSchemas(changed).map((x) => x.rule)).toEqual([
+      "package-schema-stale",
+      "package-schema-stale",
+    ]);
   });
 
   it("目录里多出没有对应 schema 的 *.schema.json -> package-schema-unknown", () => {

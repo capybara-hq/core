@@ -10,7 +10,9 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { CATALOG_MAX_MIRRORS, type KernelConfig } from "../config/schema.js";
 import { CATALOGS, DIRECTORY, KERNEL_CONFIG } from "../http/tokens.js";
@@ -169,21 +171,28 @@ export class CatalogsController {
     });
   }
 
-  /** 从清单引入某个版本（按清单 sha512 校验）。 */
+  /**
+   * 从清单引入某个版本（按清单 sha512 校验）。插件 / 连接器模板 / 技能直接建条目：201 `{ item, permissionsMismatch }`；
+   * 应用（F-AB）先暂存待审阅：200 `{ stagingId, review, permissionsMismatch }`，再经
+   * `POST /api/v1/admin/directory/apps/:stagingId/confirm` 确认。
+   */
   @Post(":id/entries/:kind/:name/import")
   @HttpCode(201)
-  importEntry(
+  async importEntry(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
     @Param("kind", new ZodPipe(Kind)) kind: PackageKind,
     @Param("name") name: string,
     @Body(new ZodPipe(ImportBody)) body: z.infer<typeof ImportBody>,
+    @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<CatalogImportResult> {
     const actor = requireUser(principal);
-    return this.directory.importFromCatalog(
+    const r = await this.directory.importFromCatalog(
       actor.account.id,
       { sourceId: id, kind, name, version: body.version },
       actorOpts(actor),
     );
+    if ("stagingId" in r) reply.code(200);
+    return r;
   }
 }

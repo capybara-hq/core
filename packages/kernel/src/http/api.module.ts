@@ -23,6 +23,7 @@ import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { AdminDirectoryController } from "../directory/admin-directory.controller.js";
+import type { AppImport } from "../directory/app-import.js";
 import { CatalogsController } from "../directory/catalogs.controller.js";
 import type { CatalogsService } from "../directory/catalogs.service.js";
 import type { DirectoryService } from "../directory/directory.service.js";
@@ -103,6 +104,7 @@ import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
+  APP_IMPORT,
   APPROVALS,
   ATTACHMENTS,
   CATALOGS,
@@ -218,6 +220,8 @@ export interface ApiDeps {
   pluginDeploymentConfigs: DeploymentPluginConfigService;
   /** 企业目录（与 `Kernel.directory` 同一实例）。 */
   directory: DirectoryService;
+  /** 应用包导入（与 `Kernel.apps` 同一实例）。 */
+  apps: AppImport;
   /** 目录来源（与 `Kernel.catalogs` 同一实例）。 */
   catalogs: CatalogsService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
@@ -353,6 +357,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: PLUGIN_ADMIN_OPS, useValue: deps.pluginAdminOps },
     { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.pluginDeploymentConfigs },
     { provide: DIRECTORY, useValue: deps.directory },
+    { provide: APP_IMPORT, useValue: deps.apps },
     { provide: CATALOGS, useValue: deps.catalogs },
     {
       provide: TRAJECTORIES,

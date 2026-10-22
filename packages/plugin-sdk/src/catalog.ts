@@ -71,9 +71,13 @@ export interface CatalogIndex {
   entries: CatalogEntry[];
 }
 
-const SEMVER_RE =
+/** 精确的 semver 版本（JSON Schema 可用的正则）。 */
+export const SEMVER_VERSION_RE =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/;
-const INTEGRITY_RE = /^sha512-[A-Za-z0-9+/]{86}==$/;
+/** npm 包 tgz 的 sha512 SRI：`sha512-<86 位 base64>==`。 */
+export const SHA512_INTEGRITY_RE = /^sha512-[A-Za-z0-9+/]{86}==$/;
+const SEMVER_RE = SEMVER_VERSION_RE;
+const INTEGRITY_RE = SHA512_INTEGRITY_RE;
 /** 内核 permissionKeys 的格式：`<类别>[:<值>]`，类别为小写字母与点。 */
 const PERMISSION_KEY_RE = /^[a-z][a-z.]{0,62}(?::[^\r\n]{1,256})?$/;
 const HTTPS_URL_RE = /^https:\/\/\S+$/;

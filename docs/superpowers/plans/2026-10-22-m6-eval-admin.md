@@ -287,7 +287,7 @@
   - `kernel.plugins.reconcile {}`
   - `kernel.plugins.migrated {plugin, sha256}`
   - `kernel.plugin-deployment-config {plugin}`
-  - 维护任务 `plugins-reconcile`、`catalogs-refresh`（job id 不含 `:`）
+  - 维护任务 `plugins-reconcile`、`catalogs-refresh`、`app-staging-cleanup`（每小时，F-AE）（job id 不含 `:`）
 - **内核 HTTP**（`skills/writing-kernel-api`）：
   - 领域类不依赖 Nest，构造参数显式 `@Inject`，错误码登记在 `errors.ts`。
   - 新 `OrgAction` 及最低角色：

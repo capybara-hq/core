@@ -28,6 +28,7 @@ import type { AdminPluginView } from "../plugins/permission-view.js";
 import type { PluginSource } from "../plugins/sources.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
+import type { AppImport, AppReview } from "./app-import.js";
 import { checkDirectoryArchive, invalidPackage, unpackDirectoryArchive } from "./archive.js";
 import { HOST_VERSIONS, loadCatalogEntry } from "./catalogs.service.js";
 import { schemaHasPath } from "./schema-path.js";
@@ -64,6 +65,8 @@ export interface DirectoryItemVersionView {
   files: { path: string; size: number; sha256: string }[];
   size: number;
   pluginSha256: string | null;
+  /** 应用包：解析出的插件（`{ plugins: [{ name, sha256 }] }`）；其他种类为 null。 */
+  resolved: unknown;
   importedBy: string | null;
   importedAt: string;
 }
@@ -84,6 +87,8 @@ export interface DirectoryServiceDeps {
   declared: () => ReadonlyMap<string, PluginSource>;
   /** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`（导入模板时校验端点）。 */
   findConnector: (plugin: string, kind: string) => Connector | undefined;
+  /** 应用包导入（清单引入 kind app 时走它的 prepare）。 */
+  apps?: Pick<AppImport, "prepare">;
 }
 
 /** 审计里带上 PAT（个人令牌发起时）。 */
@@ -110,15 +115,19 @@ interface ImportSource {
   };
 }
 
-/** {@link DirectoryService.importFromCatalog} 的结果（F-AB：T25 再加应用的审阅分支）。 */
-export interface CatalogImportResult {
-  item: DirectoryItemView;
-  /**
-   * 清单的权限摘要与包算出的权限键不一致（只警告，不拒绝；C26）：`missing` = 包要的、清单没列的，
-   * `extra` = 清单列了、包没要的。一致、清单没给摘要或不是插件时为 null。
-   */
-  permissionsMismatch: { missing: string[]; extra: string[] } | null;
-}
+/**
+ * 清单的权限摘要与包算出的权限键不一致（只警告，不拒绝；C26）：`missing` = 包要的、清单没列的，
+ * `extra` = 清单列了、包没要的（应用为其全部插件的并集）。一致、清单没给摘要或不是插件 / 应用时为 null。
+ */
+export type PermissionsMismatch = { missing: string[]; extra: string[] } | null;
+
+/**
+ * {@link DirectoryService.importFromCatalog} 的结果（F-AB）：插件 / 连接器模板 / 技能直接建条目（HTTP 201）；
+ * 应用返回暂存 id 与审阅（HTTP 200），由 `POST /admin/directory/apps/:stagingId/confirm` 确认。
+ */
+export type CatalogImportResult =
+  | { item: DirectoryItemView; permissionsMismatch: PermissionsMismatch }
+  | { stagingId: string; review: AppReview; permissionsMismatch: PermissionsMismatch };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () => new ApiError("directory.item_not_found", "Directory item not found");
@@ -226,12 +235,41 @@ export class DirectoryService {
       },
       opts.signal,
     );
+    const catalogRef = `${input.sourceId}:${entry.npm}@${v.version}`;
+    if (entry.kind === "app") {
+      // 种类以条目为准；包不是应用 → catalog.package_mismatch（反过来由 import() 的一致性检查拦下）
+      const u = await unpackDirectoryArchive(got.bytes, this.d.config().packages.maxBytes);
+      assertCatalogPackage(u, {
+        kind: entry.kind,
+        npm: entry.npm,
+        version: v.version,
+      });
+      if (!this.d.apps) {
+        throw new ApiError("directory.wrong_kind", "App packages cannot be imported here");
+      }
+      const staged = await this.d.apps.prepare(
+        actor,
+        got.bytes,
+        {
+          kind: "catalog",
+          ref: catalogRef,
+          integrity: v.integrity,
+          catalog: { sourceId: input.sourceId, name: entry.name },
+        },
+        opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
+      );
+      return {
+        stagingId: staged.stagingId,
+        review: staged.review,
+        permissionsMismatch: permissionsMismatch(entry.permissions?.keys, staged.permissionKeys),
+      };
+    }
     const r = await this.import(
       actor,
       got.bytes,
       {
         source: "catalog",
-        ref: `${input.sourceId}:${entry.npm}@${v.version}`,
+        ref: catalogRef,
         integrity: v.integrity,
         catalog: {
           sourceId: input.sourceId,
@@ -243,16 +281,10 @@ export class DirectoryService {
       },
       opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
     );
-    let permissionsMismatch: CatalogImportResult["permissionsMismatch"] = null;
-    const declared = entry.permissions?.keys;
-    if (declared !== undefined && r.permissionKeys !== undefined) {
-      const want = new Set(declared);
-      const have = new Set(r.permissionKeys);
-      const missing = [...have].filter((k) => !want.has(k)).sort();
-      const extra = [...want].filter((k) => !have.has(k)).sort();
-      if (missing.length > 0 || extra.length > 0) permissionsMismatch = { missing, extra };
-    }
-    return { item: r.item, permissionsMismatch };
+    return {
+      item: r.item,
+      permissionsMismatch: permissionsMismatch(entry.permissions?.keys, r.permissionKeys),
+    };
   }
 
   /** 导入一个包；`permissionKeys` 为插件包算出的权限键（不含迁移警告键；非插件为 undefined）。 */
@@ -266,24 +298,7 @@ export class DirectoryService {
     const u = await unpackDirectoryArchive(bytes, maxBytes);
     const packageName = String(u.packageJson.name);
     const cat = src.catalog;
-    const mismatch = (what: string) =>
-      new ApiError(
-        "catalog.package_mismatch",
-        `The downloaded package does not match the catalog entry: ${what}`,
-      );
-    if (cat) {
-      if (packageName !== cat.npm) {
-        throw mismatch(`package.json name is "${packageName}", the entry says ${cat.npm}`);
-      }
-      if (String(u.packageJson.version) !== cat.version) {
-        throw mismatch(
-          `package.json version is "${String(u.packageJson.version)}", the entry says ${cat.version}`,
-        );
-      }
-      if (u.section.kind !== cat.kind) {
-        throw mismatch(`the package is a ${u.section.kind}, the entry says ${cat.kind}`);
-      }
-    }
+    if (cat) assertCatalogPackage(u, cat);
     if (src.expectPackageName !== undefined && packageName !== src.expectPackageName) {
       throw invalidPackage([
         `package.json name "${packageName}" does not match the requested npm package ${src.expectPackageName}`,
@@ -293,7 +308,7 @@ export class DirectoryService {
     if (section.kind === "app") {
       throw new ApiError(
         "directory.wrong_kind",
-        "App packages are not supported by this import yet; use the app import",
+        "App packages are imported with one review of all their plugins: POST /api/v1/admin/directory/apps/prepare/file (or /apps/prepare/npm), then /apps/:stagingId/confirm",
       );
     }
 
@@ -336,13 +351,11 @@ export class DirectoryService {
       if (files.length > 0) this.d.storage.assertAvailable();
     }
     if (cat && name !== cat.name) {
-      throw mismatch(`the ${section.kind} is named "${name}", the entry says ${cat.name}`);
+      throw catalogMismatch(`the ${section.kind} is named "${name}", the entry says ${cat.name}`);
     }
     const version = String(u.packageJson.version);
     const kind = section.kind;
-    const existing = await this.liveItem(this.d.db, kind, name);
-    if (existing)
-      assertImportable(existing, packageName, version, await this.hasVersion(existing.id, version));
+    const existing = await precheckDirectoryImport(this.d.db, kind, name, packageName, version);
     // 写之前在锁内复核发起人仍是企业管理员（守卫读到的身份可能已过期）
     await this.d.db.transaction().execute((trx) => lockEnterpriseAdminsAndAuthorize(trx, actor));
 
@@ -363,98 +376,33 @@ export class DirectoryService {
       pluginSha256 = review.sha256;
     } else if (files.length > 0) {
       objectPrefix = directoryObjectPrefix(storeId, version, randomUUID());
-      await this.putFiles(objectPrefix, files);
+      await putDirectoryFiles(this.d.storage, objectPrefix, files);
     }
 
     // 3. 一个事务里复核、写条目与版本、审计
     const itemId = await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.directory-item:${kind}:${name}`}))`.execute(
-        trx,
-      );
-      if (kind === "plugin") await assertPluginNameOwner(trx, name, packageName);
-      const live = await this.liveItem(trx, kind, name);
-      const listing = listingOf(section, u.packageJson);
-      let id: string;
-      if (live) {
-        id = live.id;
-        const versions = await trx
-          .selectFrom("directory_item_versions")
-          .select("version")
-          .where("item_id", "=", id)
-          .execute();
-        assertImportable(
-          live,
-          packageName,
-          version,
-          versions.some((v) => v.version === version),
-        );
-        const newer = semver.gt(version, live.latest_version);
-        await trx
-          .updateTable("directory_items")
-          .set({
-            updated_at: sql<Date>`now()` as unknown as Date,
-            ...(cat && { catalog_source_id: cat.sourceId }),
-            ...(newer && {
-              latest_version: version,
-              publisher: listing.publisher,
-              description: listing.description,
-              display_name: listing.displayName ? JSON.stringify(listing.displayName) : null,
-            }),
-          })
-          .where("id", "=", id)
-          .execute();
-      } else {
-        id = storeId;
-        await trx
-          .insertInto("directory_items")
-          .values({
-            id,
-            kind,
-            name,
-            package_name: packageName,
-            publisher: listing.publisher,
-            description: listing.description,
-            display_name: listing.displayName ? JSON.stringify(listing.displayName) : null,
-            latest_version: version,
-            created_by: actor,
-            catalog_source_id: cat?.sourceId ?? null,
-          })
-          .execute();
+      if (kind === "plugin") {
+        await lockDirectoryName(trx, kind, name);
+        await assertPluginNameOwner(trx, name, packageName);
       }
-      await trx
-        .insertInto("directory_item_versions")
-        .values({
-          item_id: id,
-          version,
-          section: JSON.stringify(section),
-          source: src.source,
-          source_ref: src.ref,
-          integrity: src.integrity ?? null,
-          object_prefix: objectPrefix,
-          plugin_sha256: pluginSha256,
-          files: JSON.stringify(files.map(({ path, size, sha256 }) => ({ path, size, sha256 }))),
-          size: bytes.byteLength,
-          imported_by: actor,
-        })
-        .execute();
-      await audit(trx, {
-        actorAccountId: actor,
+      return writeDirectoryVersion(trx, {
+        actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "directory.imported",
-        target: id,
-        detail: {
-          kind,
-          name,
-          version,
-          source: src.source,
-          sourceRef: src.ref,
-          ...(pluginSha256 !== null && { sha256: pluginSha256 }),
-          ...(src.integrity !== undefined && { integrity: src.integrity }),
-          ...(cat && { catalogSourceId: cat.sourceId }),
-        },
+        kind,
+        name,
+        packageName,
+        version,
+        section,
+        listing: listingOf(section, u.packageJson),
+        newItemId: storeId,
+        source: src,
+        ...(cat && { catalogSourceId: cat.sourceId }),
+        objectPrefix,
+        pluginSha256,
+        files,
+        size: bytes.byteLength,
       });
-      return id;
     });
     const item = await this.view(itemId);
     return { item, ...(pkgPermissionKeys !== undefined && { permissionKeys: pkgPermissionKeys }) };
@@ -472,63 +420,8 @@ export class DirectoryService {
         `template.connector: plugin ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment; install and enable the connector plugin before importing templates for it`,
       ]);
     }
-    const problems: string[] = [];
-    const r = c.endpointSchema.safeParse(t.endpoint);
-    if (!r.success) {
-      for (const i of r.error.issues as { path: PropertyKey[]; message: string }[]) {
-        problems.push(`${["template.endpoint", ...i.path.map(String)].join(".")}: ${i.message}`);
-      }
-    } else {
-      for (const leak of endpointCredentialIssues(r.data)) {
-        problems.push(`template.${leak.path}: ${leak.message}`);
-      }
-    }
-    for (const p of t.editableEndpoint ?? []) {
-      if (!schemaHasPath(c.endpointSchema, p.split("."))) {
-        problems.push(
-          `template.editableEndpoint "${p}" is not a field of the ${t.connector} connector's endpoint`,
-        );
-      }
-    }
+    const problems = templateProblems(c, t, "template");
     if (problems.length > 0) throw invalidPackage(problems);
-  }
-
-  private async putFiles(
-    prefix: string,
-    files: { path: string; size: number; data: Uint8Array }[],
-  ): Promise<void> {
-    const store = this.d.storage.deployment();
-    const queue = [...files];
-    await Promise.all(
-      Array.from({ length: Math.min(PUT_CONCURRENCY, queue.length) }, async () => {
-        for (let f = queue.shift(); f; f = queue.shift()) {
-          await store.put(`${prefix}${f.path}`, f.data, {
-            contentType: "application/octet-stream",
-            size: f.size,
-          });
-        }
-      }),
-    );
-  }
-
-  private liveItem(db: KernelDb | Trx, kind: PackageKind, name: string) {
-    return db
-      .selectFrom("directory_items")
-      .select(["id", "package_name", "latest_version"])
-      .where("kind", "=", kind)
-      .where("name", "=", name)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
-  }
-
-  private async hasVersion(itemId: string, version: string): Promise<boolean> {
-    const row = await this.d.db
-      .selectFrom("directory_item_versions")
-      .select("version")
-      .where("item_id", "=", itemId)
-      .where("version", "=", version)
-      .executeTakeFirst();
-    return row !== undefined;
   }
 
   /**
@@ -612,6 +505,7 @@ export class DirectoryService {
         files: v.files,
         size: Number(v.size),
         pluginSha256: v.plugin_sha256,
+        resolved: v.resolved ?? null,
         importedBy: v.imported_by,
         importedAt: v.imported_at.toISOString(),
       })),
@@ -727,10 +621,253 @@ export class DirectoryService {
 }
 
 /**
+ * 连接器模板按已加载的连接器 `c` 校验（问题路径以 `at` 开头）：端点符合其 `endpointSchema`、不含凭据样式的头 /
+ * query / URL 用户信息（与连接器安装同一规则）；`editableEndpoint` 的每个路径都存在于端点 schema 中。
+ */
+export function templateProblems(c: Connector, t: ConnectorTemplateSpec, at: string): string[] {
+  const problems: string[] = [];
+  const r = c.endpointSchema.safeParse(t.endpoint);
+  if (!r.success) {
+    for (const i of r.error.issues as { path: PropertyKey[]; message: string }[]) {
+      problems.push(`${[`${at}.endpoint`, ...i.path.map(String)].join(".")}: ${i.message}`);
+    }
+  } else {
+    for (const leak of endpointCredentialIssues(r.data)) {
+      problems.push(`${at}.${leak.path}: ${leak.message}`);
+    }
+  }
+  for (const p of t.editableEndpoint ?? []) {
+    if (!schemaHasPath(c.endpointSchema, p.split("."))) {
+      problems.push(
+        `${at}.editableEndpoint "${p}" is not a field of the ${t.connector} connector's endpoint`,
+      );
+    }
+  }
+  return problems;
+}
+
+/** 把文件写到 `deployment/<prefix><path>`（并发 {@link PUT_CONCURRENCY}）。 */
+export async function putDirectoryFiles(
+  storage: StorageService,
+  prefix: string,
+  files: { path: string; size: number; data: Uint8Array }[],
+): Promise<void> {
+  const store = storage.deployment();
+  const queue = [...files];
+  await Promise.all(
+    Array.from({ length: Math.min(PUT_CONCURRENCY, queue.length) }, async () => {
+      for (let f = queue.shift(); f; f = queue.shift()) {
+        await store.put(`${prefix}${f.path}`, f.data, {
+          contentType: "application/octet-stream",
+          size: f.size,
+        });
+      }
+    }),
+  );
+}
+
+const catalogMismatch = (what: string) =>
+  new ApiError(
+    "catalog.package_mismatch",
+    `The downloaded package does not match the catalog entry: ${what}`,
+  );
+
+/** 清单引入：包的 npm 名、版本与种类必须与条目一致（否则 `catalog.package_mismatch`）。 */
+function assertCatalogPackage(
+  u: { packageJson: Record<string, unknown>; section: PackageSection },
+  cat: { kind: PackageKind; npm: string; version: string },
+): void {
+  const packageName = String(u.packageJson.name);
+  if (packageName !== cat.npm) {
+    throw catalogMismatch(`package.json name is "${packageName}", the entry says ${cat.npm}`);
+  }
+  if (String(u.packageJson.version) !== cat.version) {
+    throw catalogMismatch(
+      `package.json version is "${String(u.packageJson.version)}", the entry says ${cat.version}`,
+    );
+  }
+  if (u.section.kind !== cat.kind) {
+    throw catalogMismatch(`the package is a ${u.section.kind}, the entry says ${cat.kind}`);
+  }
+}
+
+/** 清单的权限摘要与包算出的权限键比对（见 {@link PermissionsMismatch}）。 */
+function permissionsMismatch(
+  declared: string[] | undefined,
+  actual: string[] | undefined,
+): PermissionsMismatch {
+  if (declared === undefined || actual === undefined) return null;
+  const want = new Set(declared);
+  const have = new Set(actual);
+  const missing = [...have].filter((k) => !want.has(k)).sort();
+  const extra = [...want].filter((k) => !have.has(k)).sort();
+  return missing.length > 0 || extra.length > 0 ? { missing, extra } : null;
+}
+
+/** 列表显示的字段（条目的 publisher / description / displayName）。 */
+export interface DirectoryListing {
+  publisher: string;
+  description: string;
+  displayName: LocalizedName | null;
+}
+
+/** {@link writeDirectoryVersion} 的输入。 */
+export interface DirectoryVersionWrite {
+  actor: string;
+  actorTokenId?: string;
+  kind: PackageKind;
+  name: string;
+  packageName: string;
+  version: string;
+  section: PackageSection;
+  listing: DirectoryListing;
+  /** 条目还不存在时用这个 id 新建（与写存储时用的前缀一致）。 */
+  newItemId: string;
+  source: { source: "file" | "npm" | "catalog"; ref: string; integrity?: string };
+  /** 从清单引入：条目记下来源清单。 */
+  catalogSourceId?: string;
+  objectPrefix: string | null;
+  pluginSha256: string | null;
+  files: { path: string; size: number; sha256: string }[];
+  size: number;
+  /** 应用包：解析出的组件（`{ plugins: [{ name, sha256 }] }`）。 */
+  resolved?: unknown;
+  /** 并进审计 `directory.imported` 的 detail。 */
+  auditDetail?: Record<string, unknown>;
+}
+
+/** 按 (kind, name) 取事务级咨询锁（同一条目的并发导入串行）。 */
+export async function lockDirectoryName(trx: Trx, kind: PackageKind, name: string): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.directory-item:${kind}:${name}`}))`.execute(
+    trx,
+  );
+}
+
+function liveItem(db: KernelDb | Trx, kind: PackageKind, name: string) {
+  return db
+    .selectFrom("directory_items")
+    .select(["id", "package_name", "latest_version"])
+    .where("kind", "=", kind)
+    .where("name", "=", name)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+}
+
+async function hasVersion(db: KernelDb | Trx, itemId: string, version: string): Promise<boolean> {
+  const row = await db
+    .selectFrom("directory_item_versions")
+    .select("version")
+    .where("item_id", "=", itemId)
+    .where("version", "=", version)
+    .executeTakeFirst();
+  return row !== undefined;
+}
+
+/**
+ * 写之前的冲突预检（不加锁；最终以 {@link writeDirectoryVersion} 在事务里的复核为准）：同名条目来自别的 npm 包 →
+ * `directory.name_conflict`；同一版本已导入 → `directory.version_exists`。返回现有条目（没有为 undefined）。
+ */
+export async function precheckDirectoryImport(
+  db: KernelDb,
+  kind: PackageKind,
+  name: string,
+  packageName: string,
+  version: string,
+): Promise<{ id: string } | undefined> {
+  const existing = await liveItem(db, kind, name);
+  if (existing) {
+    assertImportable(existing, packageName, version, await hasVersion(db, existing.id, version));
+  }
+  return existing;
+}
+
+/**
+ * 在调用方事务里写一个目录版本（调用方已复核企业管理员）：按 (kind, name) 咨询锁、再查冲突，没有条目就新建，
+ * 有就加版本（新版本更高才更新 latest 与展示字段），写版本行与审计 `directory.imported`。返回条目 id。
+ */
+export async function writeDirectoryVersion(trx: Trx, w: DirectoryVersionWrite): Promise<string> {
+  const { kind, name, version, listing } = w;
+  await lockDirectoryName(trx, kind, name);
+  const live = await liveItem(trx, kind, name);
+  let id: string;
+  if (live) {
+    id = live.id;
+    assertImportable(live, w.packageName, version, await hasVersion(trx, id, version));
+    const newer = semver.gt(version, live.latest_version);
+    await trx
+      .updateTable("directory_items")
+      .set({
+        updated_at: sql<Date>`now()` as unknown as Date,
+        ...(w.catalogSourceId !== undefined && { catalog_source_id: w.catalogSourceId }),
+        ...(newer && {
+          latest_version: version,
+          publisher: listing.publisher,
+          description: listing.description,
+          display_name: listing.displayName ? JSON.stringify(listing.displayName) : null,
+        }),
+      })
+      .where("id", "=", id)
+      .execute();
+  } else {
+    id = w.newItemId;
+    await trx
+      .insertInto("directory_items")
+      .values({
+        id,
+        kind,
+        name,
+        package_name: w.packageName,
+        publisher: listing.publisher,
+        description: listing.description,
+        display_name: listing.displayName ? JSON.stringify(listing.displayName) : null,
+        latest_version: version,
+        created_by: w.actor,
+        catalog_source_id: w.catalogSourceId ?? null,
+      })
+      .execute();
+  }
+  await trx
+    .insertInto("directory_item_versions")
+    .values({
+      item_id: id,
+      version,
+      section: JSON.stringify(w.section),
+      source: w.source.source,
+      source_ref: w.source.ref,
+      integrity: w.source.integrity ?? null,
+      object_prefix: w.objectPrefix,
+      plugin_sha256: w.pluginSha256,
+      resolved: w.resolved === undefined ? null : JSON.stringify(w.resolved),
+      files: JSON.stringify(w.files.map(({ path, size, sha256 }) => ({ path, size, sha256 }))),
+      size: w.size,
+      imported_by: w.actor,
+    })
+    .execute();
+  await audit(trx, {
+    actorAccountId: w.actor,
+    ...(w.actorTokenId !== undefined && { actorTokenId: w.actorTokenId }),
+    action: "directory.imported",
+    target: id,
+    detail: {
+      kind,
+      name,
+      version,
+      source: w.source.source,
+      sourceRef: w.source.ref,
+      ...(w.pluginSha256 !== null && { sha256: w.pluginSha256 }),
+      ...(w.source.integrity !== undefined && { integrity: w.source.integrity }),
+      ...(w.catalogSourceId !== undefined && { catalogSourceId: w.catalogSourceId }),
+      ...w.auditDetail,
+    },
+  });
+  return id;
+}
+
+/**
  * 插件名归第一次安装它的 npm 包（`plugin_name_owners`，Ruling P3）：归属是别的包时，导入时就拒绝
  * `plugin.name_conflict`（与安装时同一个错误码），不必等到装到部署才失败。
  */
-async function assertPluginNameOwner(
+export async function assertPluginNameOwner(
   db: KernelDb | Trx,
   name: string,
   packageName: string,
@@ -801,7 +938,7 @@ function listingOf(
   };
 }
 
-function itemView(
+export function itemView(
   i: {
     id: string;
     kind: PackageKind;
