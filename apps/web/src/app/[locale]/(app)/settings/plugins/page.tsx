@@ -15,6 +15,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
+import { PermissionReview } from "../../../../../components/PermissionReview";
 import {
   changedCount,
   draftToConfig,
@@ -253,32 +254,16 @@ function PluginSection({
   );
 }
 
-/** 权限清单（只读）：按类别分组，敏感类别带标记并以警示色显示。 */
+/** 权限清单（只读，与后台审阅共用 PermissionReview）：按类别分组，敏感类别高亮并写明原因。 */
 function Permissions({ groups, plugin }: { groups: PermissionGroup[]; plugin: string }) {
   const t = useTranslations("plugins");
   if (groups.length === 0) return null;
   return (
-    <section aria-label={t("permissionsLabel", { plugin })}>
-      <Stack gap={8}>
-        <Text variant="small" tone="muted">
-          {t("permissions")}
-        </Text>
-        {groups.map((g) => (
-          <Stack key={g.category} gap={4}>
-            <Stack direction="row" gap={8} align="center">
-              <Text>
-                {t.has(`category.${g.category}`) ? t(`category.${g.category}`) : g.category}
-              </Text>
-              {g.sensitive && <Badge tone="accent">{t("sensitive")}</Badge>}
-            </Stack>
-            {g.items.map((item) => (
-              <Text key={item} variant="small" tone={g.sensitive ? "warn" : "muted"}>
-                {`· ${item}`}
-              </Text>
-            ))}
-          </Stack>
-        ))}
-      </Stack>
-    </section>
+    <Stack gap={8}>
+      <Text variant="small" tone="muted">
+        {t("permissions")}
+      </Text>
+      <PermissionReview plugin={plugin} groups={groups} />
+    </Stack>
   );
 }

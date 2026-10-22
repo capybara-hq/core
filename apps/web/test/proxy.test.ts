@@ -9,11 +9,16 @@ type Seen = { method: string; url: string; headers: IncomingMessage["headers"]; 
 let server: Server;
 let seen: Seen[] = [];
 let handler: (req: IncomingMessage, res: ServerResponse, body: string) => void;
+/** 上游每收到一段请求体就调用（流式透传的用例用）。 */
+let onData: ((chunk: Buffer) => void) | undefined;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
     const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("data", (c: Buffer) => {
+      chunks.push(c);
+      onData?.(c);
+    });
     req.on("end", () => {
       const body = Buffer.concat(chunks).toString("utf8");
       seen.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body });
@@ -257,6 +262,95 @@ describe("安装 / 预览应用的请求体上限（可带 2 MB 的 OpenAPI 文�
       }),
     );
     expect(huge.status).toBe(413);
+  });
+});
+
+describe("上传插件包（POST /api/v1/admin/plugins/packages/file）：放宽上限并流式透传", () => {
+  const PATH = "http://web.example/api/v1/admin/plugins/packages/file";
+  beforeEach(() => {
+    handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+    };
+  });
+  afterEach(() => {
+    onData = undefined;
+    delete process.env.CAPYBARA_WEB_MAX_PACKAGE_BYTES;
+  });
+
+  it("默认上限 50 MiB：3 MiB 的包原样转发（content-type 保留）；其他路由仍为 1 MiB", async () => {
+    const big = new Uint8Array(3 * 1024 * 1024).fill(7);
+    const res = await POST(
+      new Request(PATH, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: big,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]?.body.length).toBe(big.length);
+    expect(seen[0]?.headers["content-type"]).toBe("application/octet-stream");
+    const other = await POST(
+      new Request("http://web.example/api/v1/admin/plugins/x/install", {
+        method: "POST",
+        body: big,
+      }),
+    );
+    expect(other.status).toBe(413);
+    const declared = await POST(
+      new Request(PATH, {
+        method: "POST",
+        headers: { "content-length": String(50 * 1024 * 1024 + 1) },
+        body: new ReadableStream({ pull: (c) => c.close() }),
+        duplex: "half",
+      } as RequestInit),
+    );
+    expect(declared.status).toBe(413);
+  });
+
+  it("流式透传：客户端还没发完，上游已收到第一段", async () => {
+    let release!: () => void;
+    const firstSeen = new Promise<void>((r) => {
+      release = r;
+    });
+    onData = () => release();
+    let step = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        step++;
+        if (step === 1) c.enqueue(new TextEncoder().encode("first-"));
+        else if (step === 2) {
+          // 上游收到第一段之前不发第二段：整个缓冲的实现会在这里卡死
+          await firstSeen;
+          c.enqueue(new TextEncoder().encode("second"));
+        } else c.close();
+      },
+    });
+    const res = await POST(
+      new Request(PATH, { method: "POST", body, duplex: "half" } as RequestInit),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]?.body).toBe("first-second");
+  }, 10_000);
+
+  it("CAPYBARA_WEB_MAX_PACKAGE_BYTES 可调；无 content-length 时边转发边计数，超限 -> 413", async () => {
+    process.env.CAPYBARA_WEB_MAX_PACKAGE_BYTES = "1000";
+    let chunks = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        chunks++;
+        if (chunks > 1000) return c.close();
+        c.enqueue(new TextEncoder().encode("0123456789"));
+      },
+    });
+    const res = await POST(
+      new Request(PATH, { method: "POST", body, duplex: "half" } as RequestInit),
+    );
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: { code: "payload_too_large" } });
+    expect(chunks).toBeLessThan(200);
+    const ok = await POST(new Request(PATH, { method: "POST", body: "x".repeat(1000) }));
+    expect(ok.status).toBe(200);
   });
 });
 

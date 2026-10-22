@@ -191,6 +191,65 @@ export default definePlugin({
 }
 
 /**
+ * 网页 e2e（`apps/web/e2e/admin-plugins.spec.ts`）用的插件包 `greeter` 1.0.0：工具 `greet` 返回
+ * `<greeting> from greeter`；部署配置 `greeting`（hot，默认 `hello`）与可选密钥 `token`。
+ * 工具是敏感权限，安装确认页须勾选「我已了解敏感项」。
+ */
+export async function greeterPkg(): Promise<Uint8Array> {
+  const { z } = await import("zod");
+  const { secret } = await import("@capybara-hq/plugin-sdk");
+  const permissions = { tools: ["greet"] };
+  const real: PluginManifest = definePlugin({
+    name: "greeter",
+    version: "1.0.0",
+    sdk: "^0.1.0",
+    provides: [],
+    permissions,
+    config: {
+      deployment: z.object({
+        greeting: z.string().default("hello").meta({ hot: true }),
+        token: secret(z.string()).optional(),
+      }),
+    },
+    setup() {},
+  });
+  const spec = {
+    name: "greet",
+    description: "Returns the configured greeting. Test fixture only.",
+    inputSchema: { type: "object" },
+    annotations: { readOnlyHint: true },
+  };
+  const entry = `import { definePlugin, secret } from "@capybara-hq/plugin-sdk";
+import { z } from "zod";
+export default definePlugin({
+  name: "greeter",
+  version: "1.0.0",
+  sdk: "^0.1.0",
+  provides: [],
+  permissions: ${JSON.stringify(permissions)},
+  config: {
+    deployment: z.object({
+      greeting: z.string().default("hello").meta({ hot: true }),
+      token: secret(z.string()).optional(),
+    }),
+  },
+  setup(ctx) {
+    ctx.tools.register(${JSON.stringify(spec)}, async () => ({
+      content: [{ type: "text", text: ctx.config.greeting + " from greeter" }],
+    }));
+  },
+});
+`;
+  return pluginTgz({
+    name: "greeter",
+    version: "1.0.0",
+    packageName: "@test/plugin-greeter",
+    manifest: staticManifestOf(real) as unknown as Record<string, unknown>,
+    entry,
+  });
+}
+
+/**
  * 用 `tools/pack-plugin` 把仓库里的一个官方插件打成插件包（子进程，避免内核依赖 pack-plugin）。
  * 先把插件复制到临时目录（`node_modules` 链接回原处）再打包：打包的临时文件不落在仓库的插件目录里，
  * 与同时运行的 pack-plugin 测试互不干扰。

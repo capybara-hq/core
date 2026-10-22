@@ -12,7 +12,7 @@ import { useLoad } from "../../../../lib/use-load";
 
 /**
  * `/[locale]/admin`：管理后台概览（企业管理员，OverviewPage）。页头四个数字：需要处理的插件、待处理的目录申请、
- * 组织数、账号数；正文是账号、组织与部署设置的入口。组织自己的设置仍在 `/settings/*`。
+ * 组织数、账号数；正文是账号、组织、插件与部署设置的入口。组织自己的设置仍在 `/settings/*`。
  */
 export default function AdminOverviewPage() {
   return (
@@ -25,6 +25,7 @@ export default function AdminOverviewPage() {
 const SECTIONS = [
   { id: "accounts", href: "/admin/accounts" },
   { id: "orgs", href: "/admin/orgs" },
+  { id: "plugins", href: "/admin/plugins" },
   { id: "settings", href: "/admin/settings" },
 ] as const;
 
@@ -54,7 +55,7 @@ function AdminOverview() {
         {state.kind === "error" && (
           <FormError message={errorMessage(new ApiClientError(0, state.code, state.code))} />
         )}
-        <Grid columns={3} gap={16}>
+        <Grid columns={2} gap={16}>
           {SECTIONS.map((s) => (
             <Card key={s.id} title={t(`overview.${s.id}.title`)}>
               <Stack gap={8}>

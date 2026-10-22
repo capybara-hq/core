@@ -11,8 +11,10 @@ import {
   Req,
 } from "@nestjs/common";
 import { z } from "zod";
+import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
 import {
+  KERNEL_CONFIG,
   PLUGIN_ADMIN,
   PLUGIN_ADMIN_OPS,
   PLUGIN_DEPLOYMENT_CONFIGS,
@@ -73,12 +75,20 @@ export class AdminPluginsController {
     @Inject(PLUGIN_ADMIN_OPS) private readonly ops: PluginAdminOps,
     @Inject(PLUGIN_DEPLOYMENT_CONFIGS)
     private readonly deploymentConfigs: DeploymentPluginConfigService,
+    // 字段名不能与路由方法同名（如 `config`）：实例字段会遮住原型上的处理函数
+    @Inject(KERNEL_CONFIG) private readonly kernelConfig: () => KernelConfig,
   ) {}
 
-  /** 部署上的全部插件（内置、配置声明、安装记录）及其状态、权限与快照。 */
+  /**
+   * 部署上的全部插件（内置、配置声明、安装记录）及其状态、权限与快照；`drainSeconds` 为停用 / 升级时
+   * 在途工具调用最多等待的秒数（`pluginHost.drainSeconds`，界面提示用）。
+   */
   @Get()
-  async list(): Promise<{ plugins: AdminPluginView[] }> {
-    return { plugins: await this.admin.list() };
+  async list(): Promise<{ plugins: AdminPluginView[]; drainSeconds: number }> {
+    return {
+      plugins: await this.admin.list(),
+      drainSeconds: this.kernelConfig().pluginHost.drainSeconds,
+    };
   }
 
   /** 单个插件；不存在 → 404 `plugin.not_found`。 */

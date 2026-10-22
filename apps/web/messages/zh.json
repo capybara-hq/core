@@ -143,7 +143,21 @@
       "config_invalid": "配置不正确：",
       "no_org_config": "该插件没有组织级配置。",
       "dependency_missing": "请先启用它依赖的插件。",
-      "has_dependents": "还有其他已启用的插件依赖它。"
+      "has_dependents": "还有其他已启用的插件依赖它。",
+      "config_readonly": "这个字段由启动配置给出，只读。",
+      "config_declared": "同名插件已由启动配置声明，不能在网页上安装。",
+      "builtin": "这是内置插件，不能执行这个操作。",
+      "name_conflict": "这个插件名之前属于另一个 npm 包，不能被别的包接手。",
+      "approval_stale": "审阅之后插件包或权限已经变化，请刷新后重新审阅。",
+      "not_pending": "这个插件不需要批准。",
+      "package_unavailable": "插件包读不到（可能已损坏或超过大小上限）。",
+      "package_not_found": "插件包不存在，请重新上传。",
+      "name_mismatch": "插件包里的插件名与目标不符。",
+      "downgrade_unsupported": "不能降级到这个版本：它有尚未执行的迁移。",
+      "not_disabled": "请先停用再卸载。",
+      "package_invalid": "插件包不合法：",
+      "package_too_large": "插件包超过大小上限。",
+      "unavailable": "插件当前不可用。"
     },
     "directory": {
       "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
@@ -230,7 +244,8 @@
       "invalid_request": "模型供应商拒绝了请求。",
       "context_overflow": "超出模型的上下文长度。",
       "aborted": "模型请求被中止。"
-    }
+    },
+    "payload_too_large": "内容超过大小上限。"
   },
   "agents": {
     "title": "Agent",
@@ -1109,7 +1124,34 @@
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
     "syncHint": "通讯录同步会按平台通讯录增删组织成员。",
-    "syncStarted": "已开始同步通讯录。"
+    "syncStarted": "已开始同步通讯录。",
+    "review": {
+      "network": "声明，平台不拦截",
+      "added": "新增的权限",
+      "removed": "减少的权限",
+      "none": "没有声明任何权限。",
+      "reason": {
+        "secrets": "可以读写密钥",
+        "publicRoutes": "这些路由不需要登录就能访问",
+        "tools": "组织里的 agent 可以调用这些工具",
+        "hooks": "可以介入内核流程",
+        "ui": "会把插件自己的页面嵌入网页"
+      },
+      "capability": {
+        "sandbox": "在部署里执行任意命令",
+        "object-store": "保管全部附件与插件包",
+        "channel": "收到组织在 IM 里的对话内容",
+        "directory": "能把人加进组织，并为其建账号",
+        "identity-source": "决定谁能登录成哪个账号"
+      },
+      "warnings": "迁移警告",
+      "warningsHint": "插件迁移只该做扩展：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
+      "warning": {
+        "destructive_migration": "破坏性语句",
+        "dynamic_sql": "DO 块（内容没有检查）"
+      },
+      "at": "{file} 第 {line} 行"
+    }
   },
   "identities": {
     "title": "IM 身份",
@@ -1591,14 +1633,15 @@
       "overview": "概览",
       "accounts": "账号",
       "orgs": "组织",
-      "settings": "部署设置"
+      "settings": "部署设置",
+      "plugins": "插件"
     },
     "forbidden": {
       "title": "需要企业管理员",
       "hint": "只有企业管理员能打开管理后台。可以请企业管理员授予，或在服务器上运行 capybara admin grant 加登录名。"
     },
     "overview": {
-      "intro": "企业管理员在这里管理整个部署：账号、组织与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
+      "intro": "企业管理员在这里管理整个部署：账号、组织、插件与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
       "metrics": {
         "plugins": "需要处理的插件",
         "directoryRequests": "待处理的目录申请",
@@ -1619,6 +1662,11 @@
         "title": "部署设置",
         "hint": "谁能建组织、价格币种、组织能否自建连接器与技能。",
         "open": "打开部署设置"
+      },
+      "plugins": {
+        "title": "插件",
+        "hint": "安装、批准、启用、停用、升级插件，填写部署级配置。",
+        "open": "管理插件"
       }
     },
     "accounts": {
@@ -1737,6 +1785,187 @@
         "description": "组织能否不经企业目录、自己新建或导入技能。",
         "allowHint": "组织可以自己新建、导入技能，也可以从企业目录安装。",
         "denyHint": "组织只能从企业目录安装技能。"
+      }
+    },
+    "plugins": {
+      "title": "插件",
+      "install": "安装插件",
+      "hint": "部署上的全部插件。安装、启用、停用、升级都不需要重启：操作提交后各副本会在几秒内收敛。",
+      "empty": "还没有插件",
+      "noResults": "没有符合筛选条件的插件",
+      "sensitive": "敏感",
+      "columns": {
+        "name": "名称",
+        "version": "版本",
+        "source": "来源",
+        "status": "状态",
+        "sensitive": "敏感",
+        "replicas": "副本"
+      },
+      "filters": {
+        "status": "状态",
+        "source": "来源",
+        "allStatuses": "全部状态",
+        "allSources": "全部来源"
+      },
+      "source": {
+        "builtin": "内置",
+        "config": "配置",
+        "install": "安装"
+      },
+      "status": {
+        "enabled": "已启用",
+        "disabled": "已停用",
+        "pending_approval": "待批准",
+        "pending_config": "待配置",
+        "pending_migration": "待迁移",
+        "converging": "收敛中",
+        "failed": "失败",
+        "dependency": "依赖缺失"
+      },
+      "replicas": {
+        "consistent": "一致（{n}）",
+        "diverged": "不一致（{n}）",
+        "none": "无副本上报"
+      },
+      "detail": {
+        "tabsLabel": "插件详情",
+        "tabs": {
+          "overview": "概要",
+          "permissions": "权限",
+          "config": "配置"
+        },
+        "notFound": "插件不存在或已卸载。",
+        "fields": {
+          "source": "来源",
+          "version": "版本",
+          "desired": "期望状态",
+          "sha": "包 sha256"
+        },
+        "desired": {
+          "enabled": "启用",
+          "disabled": "停用",
+          "always": "始终启用"
+        },
+        "replicasTitle": "各副本状态",
+        "replicaColumns": {
+          "replica": "副本",
+          "version": "版本",
+          "state": "状态",
+          "reason": "原因",
+          "heartbeat": "心跳"
+        },
+        "replicaState": {
+          "loaded": "已加载",
+          "failed": "失败",
+          "unloaded": "已卸下",
+          "pending": "待处理"
+        },
+        "failedReplica": "副本 {replica} 加载失败：{reason}",
+        "converging": "各副本正在收敛到期望状态，页面会自动刷新。",
+        "refresh": "刷新",
+        "noReplicas": "还没有副本上报状态。",
+        "builtinNote": "内置插件随核心镜像提供、始终启用：不能停用、升级或卸载，只需要填部署级配置。",
+        "configNote": "这个插件由启动配置的 plugins 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
+        "actions": {
+          "enable": "启用",
+          "disable": "停用",
+          "upgrade": "升级",
+          "uninstall": "卸载"
+        },
+        "uninstallNeedsDisable": "卸载前须先停用。",
+        "drainHint": "进行中的工具调用最多等待 {seconds} 秒后中止。",
+        "disableConfirm": {
+          "title": "停用「{name}」？",
+          "hint": "停用后各副本会卸下这个插件，组织里的 agent 不能再用它的工具。",
+          "confirm": "停用"
+        },
+        "uninstallConfirm": {
+          "title": "卸载「{name}」",
+          "hint": "卸载会把这个插件从部署移除；它的数据、密钥与组织配置会保留，以后重新安装同一个包可以继续使用。",
+          "confirm": "卸载"
+        },
+        "done": {
+          "enable": "已提交启用，各副本正在收敛。",
+          "disable": "已提交停用，各副本正在收敛。",
+          "uninstall": "已卸载「{name}」。"
+        },
+        "packageError": "插件包读不到：{error}"
+      },
+      "approve": {
+        "title": "批准权限",
+        "hint": "这个版本的权限超出已批准的范围（或还没有批准过），批准后插件才会加载。",
+        "ack": "我已了解敏感项",
+        "submit": "批准",
+        "done": "已批准，各副本正在加载。",
+        "stale": "审阅之后插件包或权限已经变化，请刷新后重新审阅。",
+        "refresh": "刷新后重新审阅",
+        "builtin": "随核心镜像预先批准",
+        "approved": "已批准：版本 {version}，{at}（{source}）",
+        "notApproved": "尚未批准。",
+        "via": {
+          "cli": "命令行",
+          "auto": "自动批准",
+          "web": "网页"
+        }
+      },
+      "wizard": {
+        "title": "安装插件",
+        "upgradeTitle": "升级「{name}」",
+        "steps": {
+          "source": "选来源",
+          "review": "审阅权限",
+          "confirm": "确认"
+        },
+        "sourceLabel": "来源",
+        "sourceFile": "上传插件包（.tgz）",
+        "sourceNpm": "从 npm 获取",
+        "choose": "选择 .tgz 文件",
+        "fileHint": "插件包是 npm pack 格式的 tgz（可用仓库里的 pack-plugin 打包）。",
+        "noFile": "还没有选文件。",
+        "npmPackage": "npm 包名",
+        "npmVersion": "版本",
+        "npmVersionHelp": "版本号、dist-tag 或范围；留空取 latest。",
+        "upload": "上传并审阅",
+        "fetch": "获取并审阅",
+        "cancelled": "已取消上传。",
+        "next": "下一步",
+        "back": "上一步",
+        "cancel": "取消",
+        "package": "{name} {version}",
+        "sha": "包 sha256：{sha}",
+        "newInstall": "安装后默认停用，批准权限并启用后才会加载。",
+        "upgradeFrom": "将从 {from} 升级到 {to}。",
+        "upgradeMismatch": "这个包是插件「{got}」，不是要升级的「{want}」。",
+        "conflictBuiltin": "「{name}」是内置插件，不能安装同名插件。",
+        "conflictConfig": "「{name}」由启动配置声明，不能在网页上安装同名插件。",
+        "ack": "我已了解敏感项",
+        "ackHint": "这个插件含敏感项（已高亮），确认前请逐项核对。",
+        "enableAfter": "安装后立即启用",
+        "install": "安装",
+        "done": "已安装「{name}」，各副本正在收敛。",
+        "failedAfterInstall": "插件已安装，但后续步骤没有完成，请到插件详情页继续。"
+      },
+      "config": {
+        "none": "这个插件没有部署级配置。",
+        "hint": "启动配置（配置文件、Nacos、环境变量）给出的字段只读；即时生效的字段保存后马上生效，其余字段保存后插件会重新加载（不重启）。",
+        "invalid": "配置不完整或不合法，插件待配置：",
+        "notValidated": "这个插件当前没有加载：保存时不校验，加载时再校验。",
+        "source": {
+          "env": "来自环境变量（只读）",
+          "file": "来自配置文件（只读）",
+          "nacos": "来自 Nacos（只读）",
+          "db": "已在后台保存",
+          "default": "使用默认值",
+          "unset": "未设置"
+        },
+        "secretSet": "已设置",
+        "secretUnset": "未设置",
+        "hot": "即时生效",
+        "reload": "保存后插件重新加载",
+        "save": "保存配置",
+        "saving": "正在保存；插件重新加载最多需要约 {seconds} 秒。",
+        "saved": "配置已保存。"
       }
     }
   }

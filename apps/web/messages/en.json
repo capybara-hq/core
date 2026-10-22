@@ -143,7 +143,21 @@
       "config_invalid": "The config is invalid:",
       "no_org_config": "This plugin has no organization config.",
       "dependency_missing": "Enable the plugins it depends on first.",
-      "has_dependents": "Other enabled plugins depend on this plugin."
+      "has_dependents": "Other enabled plugins depend on this plugin.",
+      "config_readonly": "This field comes from the startup config and is read-only.",
+      "config_declared": "A plugin with this name is declared in the startup config and cannot be installed here.",
+      "builtin": "This is a built-in plugin; that action is not available.",
+      "name_conflict": "This plugin name belonged to another npm package and cannot be taken over by a different one.",
+      "approval_stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
+      "not_pending": "This plugin does not need approval.",
+      "package_unavailable": "The plugin package cannot be read (it may be corrupt or over the size limit).",
+      "package_not_found": "The plugin package no longer exists. Upload it again.",
+      "name_mismatch": "The plugin name in the package does not match.",
+      "downgrade_unsupported": "Cannot downgrade to this version: it has migrations that were never run.",
+      "not_disabled": "Disable the plugin before uninstalling it.",
+      "package_invalid": "The plugin package is invalid:",
+      "package_too_large": "The plugin package is over the size limit.",
+      "unavailable": "The plugin is unavailable right now."
     },
     "directory": {
       "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first."
@@ -230,7 +244,8 @@
       "invalid_request": "The model provider rejected the request.",
       "context_overflow": "The request exceeds the model's context length.",
       "aborted": "The model request was aborted."
-    }
+    },
+    "payload_too_large": "The request is over the size limit."
   },
   "agents": {
     "title": "Agents",
@@ -1109,7 +1124,34 @@
     "sync": "Sync now",
     "syncLabel": "Sync directory of {plugin} now",
     "syncHint": "Directory sync adds and removes organization members from the platform's directory.",
-    "syncStarted": "Directory sync started."
+    "syncStarted": "Directory sync started.",
+    "review": {
+      "network": "Declared only; the platform does not enforce it",
+      "added": "Added permissions",
+      "removed": "Removed permissions",
+      "none": "No permissions declared.",
+      "reason": {
+        "secrets": "can read and write secrets",
+        "publicRoutes": "these routes are reachable without signing in",
+        "tools": "agents in organizations can call these tools",
+        "hooks": "can hook into kernel flows",
+        "ui": "embeds the plugin's own pages in the web app"
+      },
+      "capability": {
+        "sandbox": "runs arbitrary commands in the deployment",
+        "object-store": "holds every attachment and plugin package",
+        "channel": "receives the organization's IM conversations",
+        "directory": "can add people to organizations and create their accounts",
+        "identity-source": "decides who can sign in as which account"
+      },
+      "warnings": "Migration warnings",
+      "warningsHint": "Plugin migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
+      "warning": {
+        "destructive_migration": "Destructive statement",
+        "dynamic_sql": "DO block (contents not checked)"
+      },
+      "at": "{file} line {line}"
+    }
   },
   "identities": {
     "title": "IM identities",
@@ -1591,14 +1633,15 @@
       "overview": "Overview",
       "accounts": "Accounts",
       "orgs": "Organizations",
-      "settings": "Deployment settings"
+      "settings": "Deployment settings",
+      "plugins": "Plugins"
     },
     "forbidden": {
       "title": "Enterprise admin required",
       "hint": "Only enterprise admins can open the admin console. Ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
     },
     "overview": {
-      "intro": "Enterprise admins manage the whole deployment here: accounts, organizations and deployment settings. Each organization's own settings stay under its Settings. Enterprise admins cannot read conversations.",
+      "intro": "Enterprise admins manage the whole deployment here: accounts, organizations, plugins and deployment settings. Each organization's own settings stay under its Settings. Enterprise admins cannot read conversations.",
       "metrics": {
         "plugins": "Plugins needing action",
         "directoryRequests": "Pending directory requests",
@@ -1619,6 +1662,11 @@
         "title": "Deployment settings",
         "hint": "Who can create organizations, the price currency, and whether organizations may add their own connectors and skills.",
         "open": "Open deployment settings"
+      },
+      "plugins": {
+        "title": "Plugins",
+        "hint": "Install, approve, enable, disable and upgrade plugins; fill in deployment config.",
+        "open": "Manage plugins"
       }
     },
     "accounts": {
@@ -1737,6 +1785,187 @@
         "description": "Whether organizations may create or import skills themselves, outside the enterprise directory.",
         "allowHint": "Organizations can create and import skills themselves or install them from the enterprise directory.",
         "denyHint": "Organizations can only install skills from the enterprise directory."
+      }
+    },
+    "plugins": {
+      "title": "Plugins",
+      "install": "Install plugin",
+      "hint": "Every plugin on this deployment. Installing, enabling, disabling and upgrading need no restart: replicas converge within seconds of a change.",
+      "empty": "No plugins yet",
+      "noResults": "No plugins match the filters",
+      "sensitive": "Sensitive",
+      "columns": {
+        "name": "Name",
+        "version": "Version",
+        "source": "Source",
+        "status": "Status",
+        "sensitive": "Sensitive",
+        "replicas": "Replicas"
+      },
+      "filters": {
+        "status": "Status",
+        "source": "Source",
+        "allStatuses": "All statuses",
+        "allSources": "All sources"
+      },
+      "source": {
+        "builtin": "Built-in",
+        "config": "Config",
+        "install": "Installed"
+      },
+      "status": {
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "pending_approval": "Awaiting approval",
+        "pending_config": "Needs config",
+        "pending_migration": "Awaiting migration",
+        "converging": "Converging",
+        "failed": "Failed",
+        "dependency": "Missing dependency"
+      },
+      "replicas": {
+        "consistent": "In sync ({n})",
+        "diverged": "Out of sync ({n})",
+        "none": "No replica reported"
+      },
+      "detail": {
+        "tabsLabel": "Plugin details",
+        "tabs": {
+          "overview": "Overview",
+          "permissions": "Permissions",
+          "config": "Config"
+        },
+        "notFound": "The plugin does not exist or has been uninstalled.",
+        "fields": {
+          "source": "Source",
+          "version": "Version",
+          "desired": "Desired state",
+          "sha": "Package sha256"
+        },
+        "desired": {
+          "enabled": "Enabled",
+          "disabled": "Disabled",
+          "always": "Always enabled"
+        },
+        "replicasTitle": "Replica status",
+        "replicaColumns": {
+          "replica": "Replica",
+          "version": "Version",
+          "state": "State",
+          "reason": "Reason",
+          "heartbeat": "Heartbeat"
+        },
+        "replicaState": {
+          "loaded": "Loaded",
+          "failed": "Failed",
+          "unloaded": "Unloaded",
+          "pending": "Pending"
+        },
+        "failedReplica": "Replica {replica} failed to load: {reason}",
+        "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
+        "refresh": "Refresh",
+        "noReplicas": "No replica has reported yet.",
+        "builtinNote": "Built-in plugins ship with the core image and are always enabled: they cannot be disabled, upgraded or uninstalled. Only their deployment config needs filling in.",
+        "configNote": "This plugin is declared in the startup config's plugins list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
+        "actions": {
+          "enable": "Enable",
+          "disable": "Disable",
+          "upgrade": "Upgrade",
+          "uninstall": "Uninstall"
+        },
+        "uninstallNeedsDisable": "Disable the plugin before uninstalling it.",
+        "drainHint": "In-flight tool calls get up to {seconds} seconds to finish before they are aborted.",
+        "disableConfirm": {
+          "title": "Disable “{name}”?",
+          "hint": "Every replica unloads the plugin; agents in organizations can no longer use its tools.",
+          "confirm": "Disable"
+        },
+        "uninstallConfirm": {
+          "title": "Uninstall “{name}”",
+          "hint": "Uninstalling removes the plugin from the deployment. Its data, secrets and organization config are kept, so reinstalling the same package picks them up again.",
+          "confirm": "Uninstall"
+        },
+        "done": {
+          "enable": "Enable submitted; replicas are converging.",
+          "disable": "Disable submitted; replicas are converging.",
+          "uninstall": "Uninstalled “{name}”."
+        },
+        "packageError": "The plugin package cannot be read: {error}"
+      },
+      "approve": {
+        "title": "Approve permissions",
+        "hint": "This version asks for more than what was approved (or was never approved). The plugin loads only after approval.",
+        "ack": "I understand the sensitive items",
+        "submit": "Approve",
+        "done": "Approved; replicas are loading the plugin.",
+        "stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
+        "refresh": "Refresh and review again",
+        "builtin": "Pre-approved with the core image",
+        "approved": "Approved: version {version}, {at} ({source})",
+        "notApproved": "Not approved yet.",
+        "via": {
+          "cli": "command line",
+          "auto": "auto-approved",
+          "web": "web"
+        }
+      },
+      "wizard": {
+        "title": "Install plugin",
+        "upgradeTitle": "Upgrade “{name}”",
+        "steps": {
+          "source": "Source",
+          "review": "Review permissions",
+          "confirm": "Confirm"
+        },
+        "sourceLabel": "Source",
+        "sourceFile": "Upload a plugin package (.tgz)",
+        "sourceNpm": "Fetch from npm",
+        "choose": "Choose a .tgz file",
+        "fileHint": "A plugin package is an npm-pack tgz (the repository's pack-plugin tool builds one).",
+        "noFile": "No file chosen yet.",
+        "npmPackage": "npm package",
+        "npmVersion": "Version",
+        "npmVersionHelp": "A version, dist-tag or range; leave empty for latest.",
+        "upload": "Upload and review",
+        "fetch": "Fetch and review",
+        "cancelled": "Upload cancelled.",
+        "next": "Next",
+        "back": "Back",
+        "cancel": "Cancel",
+        "package": "{name} {version}",
+        "sha": "Package sha256: {sha}",
+        "newInstall": "New plugins start disabled; they load once their permissions are approved and they are enabled.",
+        "upgradeFrom": "Upgrades from {from} to {to}.",
+        "upgradeMismatch": "This package is plugin “{got}”, not “{want}” which you are upgrading.",
+        "conflictBuiltin": "“{name}” is a built-in plugin; a plugin with the same name cannot be installed.",
+        "conflictConfig": "“{name}” is declared in the startup config; a plugin with the same name cannot be installed here.",
+        "ack": "I understand the sensitive items",
+        "ackHint": "This plugin has sensitive items (highlighted). Check each one before confirming.",
+        "enableAfter": "Enable right after installing",
+        "install": "Install",
+        "done": "Installed “{name}”; replicas are converging.",
+        "failedAfterInstall": "The plugin is installed but a later step did not finish. Continue on the plugin's page."
+      },
+      "config": {
+        "none": "This plugin has no deployment config.",
+        "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the plugin reloads after saving (no restart).",
+        "invalid": "The config is incomplete or invalid; the plugin is waiting for config:",
+        "notValidated": "This plugin is not loaded right now: saving does not validate; it is validated when the plugin loads.",
+        "source": {
+          "env": "From an environment variable (read-only)",
+          "file": "From the config file (read-only)",
+          "nacos": "From Nacos (read-only)",
+          "db": "Saved in the admin console",
+          "default": "Default value",
+          "unset": "Not set"
+        },
+        "secretSet": "Set",
+        "secretUnset": "Not set",
+        "hot": "applies immediately",
+        "reload": "plugin reloads after saving",
+        "save": "Save config",
+        "saving": "Saving; reloading the plugin can take up to about {seconds} seconds.",
+        "saved": "Config saved."
       }
     }
   }

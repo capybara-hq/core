@@ -10,7 +10,8 @@
  * 供产物用例（sandbox_write → sandbox_deliver → 产物标签）使用。
  * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL），
  * 假 MCP 端点写入 `CAPYBARA_E2E_MCP_URL`，假 OpenAPI 文档地址与 API key 写入 `CAPYBARA_E2E_OPENAPI_SPEC_URL` /
- * `CAPYBARA_E2E_OPENAPI_KEY`。
+ * `CAPYBARA_E2E_OPENAPI_KEY`。另打一个插件包 `greeter`（内核测试工具包的 `greeterPkg`，工具 + 部署配置），
+ * 路径写入 `CAPYBARA_E2E_GREETER_TGZ`，供后台插件页用例在浏览器里上传安装。
  * 返回的函数是全局清理：停 Web、停内核、停假服务、停容器、删临时目录。
  */
 import { type ChildProcess, spawn } from "node:child_process";
@@ -47,6 +48,8 @@ const fakeIm = join(repoRoot, "packages/kernel/test/fixtures/plugins/fake-im/ind
 const fakeMcpModule = join(repoRoot, "packages/testing/src/fake-mcp-server.ts");
 const fakeOpenApiModule = join(repoRoot, "packages/testing/src/fake-openapi-server.ts");
 const containersModule = join(repoRoot, "packages/testing/src/containers.ts");
+/** 内核测试工具包里的插件包构造（按路径加载，不作为 apps/web 的依赖）。 */
+const pluginPackagesModule = join(repoRoot, "packages/kernel/test/helpers/plugin-packages.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
 /** S3 兼容对象存储插件（附件上传）。 */
@@ -309,6 +312,8 @@ export default async function globalSetup(): Promise<Cleanup> {
       },
       // e2e 自动批准插件权限（生产默认关闭）
       pluginPermissions: { autoApprove: true },
+      // 后台安装的插件包解到临时目录（默认 /var/lib/capybara/plugins 在开发机上没有写权限）
+      pluginHost: { dir: join(dir, "plugins") },
       // publicUrl：机器人发的绑定链接指向 Web 层（`<publicUrl>/bind/<token>`）
       http: { port: kernelPort, trustProxy: 1, publicUrl: `http://localhost:${webPort}` },
       auth: { cookieSecure: false, loginSources: ["fake-im"] },
@@ -353,6 +358,12 @@ export default async function globalSetup(): Promise<Cleanup> {
     process.env.CAPYBARA_E2E_MCP_URL = mcp.url;
     process.env.CAPYBARA_E2E_OPENAPI_SPEC_URL = openapi.specUrl;
     process.env.CAPYBARA_E2E_OPENAPI_KEY = OPENAPI_KEY;
+    const { greeterPkg } = (await import(pluginPackagesModule)) as {
+      greeterPkg: () => Promise<Uint8Array>;
+    };
+    const greeterTgz = join(dir, "greeter-1.0.0.tgz");
+    await writeFile(greeterTgz, await greeterPkg());
+    process.env.CAPYBARA_E2E_GREETER_TGZ = greeterTgz;
     console.log(`[e2e] kernel :${kernelPort}, web ${baseUrl}, logs in ${logDir}`);
   } catch (e) {
     await cleanup();

@@ -160,6 +160,12 @@ describe("插件列表与网页批准权限", () => {
     }
   });
 
+  it("列表带 drainSeconds（停用 / 升级时界面提示在途调用最多等多久）", async () => {
+    const res = await admin({ method: "GET", url: "/api/v1/admin/plugins" });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().drainSeconds).toBe(30);
+  });
+
   it("列表：内置 / 配置声明 / 安装记录三种来源；提供 sandbox@1 / object-store@1 的标敏感", async () => {
     const all = await list();
     expect([...all.keys()].sort()).toEqual(
