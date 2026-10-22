@@ -86,6 +86,7 @@ plugins:                       # ≤ 20
       integrity: sha512-…==    # 该版本 tgz 的 sha512（npm 的 dist.integrity）
     optional: false            # 可选插件：组织安装时没装到部署就跳过
 connectorTemplates:            # ≤ 20，template 与连接器模板包的 template 同形
+    # template.plugin 引用部署里已有的连接器插件 connector-mcp（没列在 plugins 里），见下文 isKnownConnectorPlugin
   - id: crm-mcp
     displayName: { zh: CRM, en: CRM }
     template: { plugin: connector-mcp, connector: mcp, endpoint: { url: "https://…" }, auth: { type: bearer, ownership: org } }
@@ -96,7 +97,11 @@ skills:                        # ≤ 50，包内目录，各含 SKILL.md
 - **插件包不打进应用包**：内核导入时按 lock 从配置的 `packages.npmRegistry` 拉取 `lock.version`，**只认 `lock.integrity`**
   （`app.lock_mismatch`），不认 npm 元数据；拉下来的包与单独安装时完全相同（同一 sha256）。所以发版流程是：先把插件发到 npm，
   取 `dist.integrity` 写进 lock，再打应用包。离线部署要配 npm 镜像 / 私有 registry，否则应用包导入不可用。
-- 模板的 `plugin` 必须列在 `plugins` 里，或是部署里已有的连接器插件；给了 `pluginVersion` 时锁定版本必须满足它。
+- 模板的 `plugin` 必须列在 `plugins` 里，或是部署里已有的连接器插件；给了 `pluginVersion` 时锁定版本必须满足它（只对列在 `plugins` 里的插件核对）。
+  「部署里已有」由调用方经 `parseAppManifest(yaml, { isKnownConnectorPlugin: (name) => … })` 告诉解析器：内核导入时传入「本副本已加载、
+  提供 `connector@1` 的插件」；**不传这个选项时，模板只能引用 `plugins` 里列出的插件**，上例这样引用内置 / 已装的 `connector-mcp`
+  会报 `connectorTemplates.0.template.plugin: connector plugin connector-mcp is not listed in plugins …`。外部 CI 校验应用包时，
+  按目标部署里有哪些连接器插件给这个回调（如 `(n) => ["connector-mcp", "connector-openapi"].includes(n)`），或把连接器插件也列进 `plugins`。
 - 未知字段一律拒绝（拼错字段报错，不是忽略）；YAML 重复键报错，`app.yaml` ≤ 256K 字符。
 - 一次导入的总字节（应用包 + 全部插件包，校验时都在内存里）≤ `directory.maxBundleBytes`（缺省 4 × `packages.maxBytes`），
   超出 → 413 `app.bundle_too_large`。
@@ -123,6 +128,9 @@ skills:                        # ≤ 50，包内目录，各含 SKILL.md
 - 安装应用要同时有 `org.plugins.manage`、`connectors.manage`、`skills.manage`（组织行锁内复核）；条目策略 `disabled` →
   `directory.item_disabled`，`needs_approval` 且本组织没有授予 → 202 并建（或升级）待企业管理员批准的申请，否则 201。
 - **应用里的插件按应用条目的策略判定，不再看各插件条目**（C22）。
+- 请求体：`{ version?, app: { connectors: { <模板 id>: {…} }, pluginConfigs?: { <插件名>: <组织级配置> } } }`。`pluginConfigs` 只认 `app.yaml`
+  `plugins` 里的插件名（别的 → 400 `validation_failed`），**只用于本次新启用的插件**：本组织已启用的插件记为原有，配置不动；新启用时按该插件的
+  `config.org` schema 校验（同 `PUT /orgs/:orgId/plugins/:plugin`），需要组织级配置才能启用的插件不给就装不上。
 - 依次：在本组织启用插件（按 requires 排序，提供方在前；本组织已启用的记为原有）→ 按模板建连接器（请求体 `app.connectors[<模板 id>]`
   给 `name?` / `slug?` / `endpoint?`（只限 `editableEndpoint`）/ `credential?` 或 `client?`）→ 导入技能（同名组织技能已存在则新增
   一个版本，记为原有并记下版本号）。每个组件建好就记进 `app_install_components`（新建 / 原有）。**任一步失败按相反顺序撤销本次
@@ -138,6 +146,7 @@ skills:                        # ≤ 50，包内目录，各含 SKILL.md
 
 1. 连接器模板：先在开发部署里装好、启用对应的连接器插件，再导入模板；端点预设与 `editableEndpoint` 用该插件的 `endpointSchema` 核对。
 2. 应用：插件先发 npm，lock 写 `dist.integrity`；`app.yaml` 的 `version` 与 `package.json` 一致；技能目录各有 `SKILL.md`。
-3. 本地校验：SDK 的 `parsePackageSection(pkg, SDK_VERSION)` 与 `parseAppManifest(yaml)` 返回无 `errors`。
+3. 本地校验：SDK 的 `parsePackageSection(pkg, SDK_VERSION)` 与 `parseAppManifest(yaml, { isKnownConnectorPlugin })` 返回无 `errors`
+   （模板引用的连接器插件没列在 `plugins` 里时必须给 `isKnownConnectorPlugin`，见上文）。
 4. 测试参考：`packages/kernel/test/directory/`（`archive`、`directory`、`app-import`、`app-install`、`org`、`requests`、`catalogs`）与
    双副本验收 `m6-segment3.dual.test.ts`；从仓库根跑 `pnpm exec vitest run <路径>`。

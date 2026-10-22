@@ -14,7 +14,9 @@ description: 新建或修改连接器插件时使用（provides connector@1，�
 | 连接器（connector） | 组织里装好的一个远端服务实例：端点 + 认证 + 工具快照，表 `connectors` | 「Docs」这个 MCP 服务 |
 | 连接器插件 | 实现一种协议的插件，提供能力 `connector@1`（能力名不变），部署级、不需要按组织启用 | `connector-mcp`、`connector-openapi` |
 | 连接器模板 | 企业目录里的一种包（`kind: connector-template`）：引用一个连接器插件，预设端点与认证（不含凭据）、组织可改的端点字段与默认策略，组织填凭据即建出一个连接器 | 「飞书文档」模板 |
-| 应用（app） | 组合包 `app.yaml`：插件 + 连接器模板 + 技能（D17 之后「应用」只指这个） | 飞书插件 + 文档模板 + 技能 |通用的插件写法（清单、配置、多副本禁令）见 `skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `skills/writing-tools`，这里只讲连接器特有的部分。
+| 应用（app） | 组合包 `app.yaml`：插件 + 连接器模板 + 技能（D17 之后「应用」只指这个） | 飞书插件 + 文档模板 + 技能 |
+
+通用的插件写法（清单、配置、多副本禁令）见 `skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `skills/writing-tools`，这里只讲连接器特有的部分。
 
 参考实现：`plugins/connector-mcp`（Streamable HTTP 的 MCP 服务，含 elicitation、prompts、resources、list_changed）与 `plugins/connector-openapi`（OpenAPI 3.0 / 3.1，每个 operation 一个工具，实现了 `inspect`、`connectorData` 路由）。契约在 `packages/plugin-sdk/src/connector.ts`。
 

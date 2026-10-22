@@ -237,7 +237,7 @@ export class PluginInstalls {
 
   /**
    * 按清单下载一个包（T24，C26）：清单给了 `tarball` 就从它下载（必须 https，`catalogs.allowInsecureLoopback`
-   * 只供测试；不请求 registry 元数据、不带 registry 令牌），否则走配置的 npm registry；校验一律以清单的 sha512
+   * 只供测试；不请求 registry 元数据；`packages.npmToken` 只在 tarball 与 registry 同源时才带），否则走配置的 npm registry；校验一律以清单的 sha512
    * 为准，不认 npm 元数据。不符 → 502 `catalog.integrity_mismatch`（写明期望与实际 sha512 的前缀）；
    * 下载失败 → 502 `catalog.fetch_failed`；超过 `packages.maxBytes` → `plugin.package_too_large`。
    */

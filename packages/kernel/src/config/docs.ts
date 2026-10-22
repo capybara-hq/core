@@ -62,6 +62,8 @@ export function renderConfigDocs(schema: core.$ZodType): string {
     "| `CAPYBARA_NACOS_USERNAME` / `CAPYBARA_NACOS_PASSWORD` | Nacos 开启鉴权时的用户名与密码：登录换取 accessToken，用到 `tokenTtl` 的 80% 或收到 403 时重新登录；须成对设置 |",
     "| `CAPYBARA_NACOS_ACCESS_TOKEN` | 直接使用的 accessToken（不调用登录接口）；不能与用户名密码同时设置 |",
     "",
+    // 网页层的环境变量与默认值以 apps/web/src/lib/kernel-proxy.ts（内核地址、请求体与包上传上限）、
+    // apps/web/server.mjs（PORT / CAPYBARA_WEB_HOST）、apps/web/src/dev/catalog/routes.tsx（CAPYBARA_DEV_UI）为准，改那边时同步改这里
     "## 网页层（apps/web）的环境变量",
     "",
     "网页层是独立进程（经 `apps/web/server.mjs` 启动），不读内核配置，只认下列环境变量：",
