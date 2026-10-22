@@ -518,6 +518,16 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     const snaps = await db.selectFrom("plugin_permission_snapshots").select("plugin").execute();
     expect(snaps.map((x) => x.plugin).sort()).toEqual(["delta", "eps"]);
     expect(snapBefore).toEqual([]);
+    // 应用带进部署的插件（install / upgrade）登记来源条目；keep 的不登记（T26 C22）
+    const sources = await db
+      .selectFrom("plugin_directory_sources")
+      .select(["plugin", "item_id"])
+      .orderBy("plugin")
+      .execute();
+    expect(sources).toEqual([
+      { plugin: "delta", item_id: res.json().item.id },
+      { plugin: "eps", item_id: res.json().item.id },
+    ]);
     // 不重启：本副本经 reconcile 加载
     await waitFor(async () => k.host.current("delta")?.version === "1.0.0", 15_000, "delta");
     await waitFor(async () => k.host.current("eps")?.version === "1.1.0", 15_000, "eps");

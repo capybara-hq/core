@@ -27,6 +27,9 @@ export interface DirectoryRequestView {
   requestedBy: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
+  /** 组织管理员批准并升级到企业管理员时的批准人与时间（没有升级为 null）。 */
+  orgDecidedBy: string | null;
+  orgDecidedAt: string | null;
   createdAt: string;
 }
 
@@ -78,6 +81,37 @@ export async function assertItemInstallable(t: Trx, orgId: string, itemId: strin
       "directory.approval_required",
       "This directory item needs enterprise admin approval before this organization can install it",
     );
+  }
+}
+
+/**
+ * 组织直接启用插件（不经某个条目安装，如 `PUT /orgs/:orgId/plugins/:plugin`）时，按把它带进部署的全部目录条目
+ * （`plugin_directory_sources`）判定，**最严格的生效**：任一来源 disabled → `directory.item_disabled`；否则任一来源
+ * needs_approval 且本组织没有该条目的授予 → `directory.approval_required`；全部 allow / 已授予 → 通过。已删除的条目不再
+ * 算来源（企业管理员删掉条目即撤回它的约束）。没有来源（不经目录安装）→ 不受目录策略约束。
+ */
+export async function assertPluginSourcesInstallable(
+  t: Trx,
+  orgId: string,
+  plugin: string,
+): Promise<void> {
+  const rows = await t
+    .selectFrom("plugin_directory_sources as s")
+    .innerJoin("directory_items as i", "i.id", "s.item_id")
+    .select(["i.id", "i.policy"])
+    .where("s.plugin", "=", plugin)
+    .where("i.deleted_at", "is", null)
+    .orderBy("i.id")
+    .forShare("i")
+    .execute();
+  if (rows.some((r) => r.policy === "disabled")) throw itemDisabled();
+  for (const r of rows) {
+    if (r.policy === "needs_approval" && !(await hasGrant(t, orgId, r.id))) {
+      throw new ApiError(
+        "directory.approval_required",
+        "A directory item that brought this plugin in needs enterprise admin approval before this organization can enable it",
+      );
+    }
   }
 }
 
@@ -169,7 +203,7 @@ export class DirectoryRequestsService {
       if (existing.stage === "org") {
         await t
           .updateTable("directory_requests")
-          .set({ stage: "deployment" })
+          .set({ stage: "deployment", org_decided_by: actor, org_decided_at: sql<Date>`now()` })
           .where("id", "=", existing.id)
           .execute();
         await audit(t, {
@@ -280,7 +314,7 @@ export class DirectoryRequestsService {
         .updateTable("directory_requests")
         .set(
           escalated
-            ? { stage: "deployment" }
+            ? { stage: "deployment", org_decided_by: actor, org_decided_at: sql<Date>`now()` }
             : {
                 status: decision === "approve" ? "approved" : "rejected",
                 decided_by: actor,
@@ -442,6 +476,8 @@ export class DirectoryRequestsService {
         "r.requested_by",
         "r.decided_by",
         "r.decided_at",
+        "r.org_decided_by",
+        "r.org_decided_at",
         "r.created_at",
       ]);
   }
@@ -462,6 +498,8 @@ function toView(r: {
   requested_by: string | null;
   decided_by: string | null;
   decided_at: Date | null;
+  org_decided_by: string | null;
+  org_decided_at: Date | null;
   created_at: Date;
 }): DirectoryRequestView {
   return {
@@ -476,6 +514,8 @@ function toView(r: {
     requestedBy: r.requested_by,
     decidedBy: r.decided_by,
     decidedAt: r.decided_at?.toISOString() ?? null,
+    orgDecidedBy: r.org_decided_by,
+    orgDecidedAt: r.org_decided_at?.toISOString() ?? null,
     createdAt: r.created_at.toISOString(),
   };
 }

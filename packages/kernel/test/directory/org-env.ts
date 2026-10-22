@@ -21,7 +21,8 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
+import { pluginTgz } from "../helpers/plugin-packages.js";
+import { createOrg, PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { mcpTemplate, skillTgz, templateTgz } from "./packages.js";
 
@@ -160,7 +161,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
 export async function resetOrgDirectory(env: OrgEnv): Promise<void> {
   await truncateTables(
     env.db,
-    "capybara.app_install_components, capybara.app_installs, capybara.directory_requests, capybara.directory_org_grants, capybara.directory_item_versions, capybara.directory_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.plugin_org_configs, capybara.deployment_settings, capybara.audit_events",
+    "capybara.app_install_components, capybara.app_installs, capybara.plugin_directory_sources, capybara.directory_requests, capybara.directory_org_grants, capybara.directory_item_versions, capybara.directory_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.plugin_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
   await env.k.storage.deployment().deletePrefix("directory/");
 }
@@ -219,6 +220,29 @@ export async function importTemplate(
   const id = (r.json() as { id: string }).id;
   if (o.policy && o.policy !== "allow") await setPolicy(env, id, o.policy);
   return id;
+}
+
+/**
+ * 真实走一遍：插件包导入为目录条目 → 装到部署（`plugin_installs.directory_item_id` 与来源表）→ 部署上启用并等本副本加载。
+ */
+export async function importDeployedPlugin(
+  env: OrgEnv,
+  name: string,
+): Promise<{ itemId: string; sha256: string }> {
+  const bytes = await pluginTgz({ name });
+  const r = await importFile(env.root, bytes);
+  expect(r.statusCode, r.body).toBe(201);
+  const itemId = (r.json() as { id: string }).id;
+  const inst = await env.root({
+    method: "POST",
+    url: `/api/v1/admin/directory/items/${itemId}/install-deployment`,
+    payload: { version: "1.0.0" },
+  });
+  expect(inst.statusCode, inst.body).toBe(200);
+  const en = await env.root({ method: "POST", url: `/api/v1/admin/plugins/${name}/enable` });
+  expect(en.statusCode, en.body).toBe(200);
+  await waitFor(async () => env.k.host.current(name) !== undefined, 15_000, name);
+  return { itemId, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 
 /** 直接写一个插件条目（插件已由启动配置加载；组织侧只看条目与策略）。 */

@@ -456,23 +456,27 @@ describe("插件", () => {
       .where("action", "=", "plugin.installed")
       .execute();
     expect(installed.at(-1)?.detail).toMatchObject({ name: "todo", directoryItemId: item.id });
-    // 同一个包不经目录重装：只清掉来源条目，并留审计
+    expect(
+      await db
+        .selectFrom("plugin_directory_sources")
+        .selectAll()
+        .where("plugin", "=", "todo")
+        .execute(),
+    ).toMatchObject([{ plugin: "todo", item_id: item.id }]);
+    // 同一个包不经目录重装：保留来源条目（清掉会让组织启用绕过目录策略，T26 修正），不写来源变化审计
     await k.pluginAdminOps.install("todo", sha256(todo), adminId);
-    const cleared = await db
+    const kept = await db
       .selectFrom("plugin_installs")
       .select("directory_item_id")
       .where("name", "=", "todo")
       .executeTakeFirstOrThrow();
-    expect(cleared.directory_item_id).toBeNull();
+    expect(kept.directory_item_id).toBe(item.id);
     const changed = await db
       .selectFrom("audit_events")
       .select("detail")
       .where("action", "=", "plugin.install_source_changed")
       .execute();
-    expect(changed[0]?.detail).toMatchObject({
-      directoryItemId: null,
-      previousDirectoryItemId: item.id,
-    });
+    expect(changed).toHaveLength(0);
     const missing = await admin({
       method: "POST",
       url: `/api/v1/admin/directory/items/${item.id}/install-deployment`,

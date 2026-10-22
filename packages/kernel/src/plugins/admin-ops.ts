@@ -58,9 +58,10 @@ export class PluginAdminOps {
    * - 降级（目标版本低于当前）且目标版本有尚未执行的迁移文件 → `plugin.downgrade_unsupported`（迁移只做扩展，
    *   降级只能回到迁移是已执行迁移子集的版本）。
    * 已指向同一个包时什么都不改（不写审计；只有来源条目变了的情况见下）。
-   * `opts.directoryItemId`：经企业目录安装时的来源条目，记进 `plugin_installs.directory_item_id`（F-AA）；
-   * 不经目录安装（上传 / npm / CLI）时清空——来源跟着当前版本走。审计 `plugin.installed` 的 detail 带 `directoryItemId`；
-   * 已指向同一个包、只有来源条目变了时只改这一列，审计 `plugin.install_source_changed`。
+   * `opts.directoryItemId`：经企业目录安装时的来源条目，记进 `plugin_installs.directory_item_id`（F-AA）并登记到
+   * `plugin_directory_sources`；不经目录安装（上传 / npm / CLI）时**保留**已有的来源条目（T26 修正：清掉会让组织启用
+   * 绕过目录策略，C22）。审计 `plugin.installed` 的 detail 带 `directoryItemId`；已指向同一个包、只有来源条目变了时
+   * 只改这一列，审计 `plugin.install_source_changed`。
    */
   async install(
     name: string,
@@ -69,7 +70,6 @@ export class PluginAdminOps {
     actorTokenId?: string,
     opts: { directoryItemId?: string } = {},
   ): Promise<AdminPluginView> {
-    const directoryItemId = opts.directoryItemId ?? null;
     this.assertInstallable(name);
     const pkg = await this.d.db
       .selectFrom("plugin_packages")
@@ -96,6 +96,15 @@ export class PluginAdminOps {
     const changed = await this.d.db.transaction().execute(async (trx) => {
       if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await this.lockRow(trx, name);
+      // 不经目录重装时保留原来的来源条目（不清空，C22）
+      const directoryItemId = opts.directoryItemId ?? row?.directory_item_id ?? null;
+      if (opts.directoryItemId !== undefined) {
+        await trx
+          .insertInto("plugin_directory_sources")
+          .values({ plugin: name, item_id: opts.directoryItemId })
+          .onConflict((oc) => oc.columns(["plugin", "item_id"]).doNothing())
+          .execute();
+      }
       if (row && row.package_name !== pkg.package_name) {
         throw new ApiError(
           "plugin.name_conflict",

@@ -87,6 +87,7 @@ export const ERROR_CODES = {
   "app.install_failed": 502,
   "app.install_not_found": 404,
   "app.already_installed": 409,
+  "app.install_in_progress": 409,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
   "agent.not_found": 404,

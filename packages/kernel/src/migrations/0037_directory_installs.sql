@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS directory_requests (
     CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
   decided_by text REFERENCES accounts(id) ON DELETE SET NULL,
   decided_at timestamptz,
+  -- 组织管理员批准后升级到 stage deployment 时记下批准人与时间（最终决定人仍记 decided_by）
+  org_decided_by text REFERENCES accounts(id) ON DELETE SET NULL,
+  org_decided_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS directory_requests_pending_uq
@@ -34,7 +37,7 @@ CREATE TABLE IF NOT EXISTS directory_org_grants (
 CREATE TABLE IF NOT EXISTS app_installs (
   id uuid PRIMARY KEY,
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-  item_id uuid NOT NULL REFERENCES directory_items(id) ON DELETE CASCADE,
+  item_id uuid NOT NULL REFERENCES directory_items(id) ON DELETE RESTRICT,
   version text NOT NULL,
   status text NOT NULL CHECK (status IN ('installing', 'installed', 'failed', 'uninstalling')),
   installed_by text REFERENCES accounts(id) ON DELETE SET NULL,
@@ -59,9 +62,23 @@ CREATE TABLE IF NOT EXISTS app_install_components (
 ALTER TABLE connectors ADD COLUMN IF NOT EXISTS directory_item_id uuid
   REFERENCES directory_items(id) ON DELETE SET NULL;
 ALTER TABLE connectors ADD COLUMN IF NOT EXISTS directory_version text;
+-- 模板的 defaultToolPolicies：授权码连接器安装时没有工具快照，首个快照时按它设默认策略（policy_source 'template'）
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS template_tool_policies jsonb;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS directory_item_id uuid
   REFERENCES directory_items(id) ON DELETE SET NULL;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS directory_version text;
+
+-- 把插件带进部署的全部目录条目（插件条目装到部署、应用包确认时 install / upgrade 的插件）。同一插件可以有多个
+-- 来源；组织直接启用（不经某个条目安装）时按全部来源的策略判定，最严格的生效（C22）。不经目录安装的插件没有行。
+CREATE TABLE IF NOT EXISTS plugin_directory_sources (
+  plugin text NOT NULL,
+  item_id uuid NOT NULL REFERENCES directory_items(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (plugin, item_id)
+);
+INSERT INTO plugin_directory_sources (plugin, item_id)
+  SELECT name, directory_item_id FROM plugin_installs WHERE directory_item_id IS NOT NULL
+  ON CONFLICT DO NOTHING;
 
 -- F-Z：模板安装的默认策略记 policy_source 'template'（约束名改名后不变）。
 ALTER TABLE connector_tools DROP CONSTRAINT IF EXISTS app_tools_policy_source_check;

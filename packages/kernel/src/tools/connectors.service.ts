@@ -529,6 +529,10 @@ export class ConnectorsService {
           created_by: actorAccountId,
           directory_item_id: input.template?.itemId ?? null,
           directory_version: input.template?.version ?? null,
+          // 授权码连接器安装时没有快照：模板的默认策略留到首个快照时应用
+          template_tool_policies: input.template?.defaultToolPolicies
+            ? JSON.stringify(input.template.defaultToolPolicies)
+            : null,
           // 授权码连接器安装时不拍快照（A16）：留空，首个快照按安装处理
           ...(auth.type !== "oauth_code" && { tools_synced_at: sql<Date>`now()` }),
         })
@@ -1026,6 +1030,19 @@ export class ConnectorsService {
       );
       const locked = await this.row(t, orgId, connectorId, true);
       const changes = await this.drift.apply(t, locked, rows);
+      // 首个快照（授权码连接器首个成员连接后）：按目录模板的 defaultToolPolicies 设默认策略（policy_source 'template'）
+      const templatePolicies = locked.template_tool_policies;
+      if (locked.tools_synced_at === null && templatePolicies) {
+        for (const [name, policy] of Object.entries(templatePolicies)) {
+          await t
+            .updateTable("connector_tools")
+            .set({ default_policy: policy, policy_source: "template" })
+            .where("connector_id", "=", connectorId)
+            .where("name", "=", name)
+            .where("policy_source", "=", "derived")
+            .execute();
+        }
+      }
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),

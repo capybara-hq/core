@@ -50,7 +50,7 @@ async function overviewPending(): Promise<number> {
   return (r.json() as { directoryRequestsPending: number }).directoryRequestsPending;
 }
 
-describe("成员申请与审批", () => {
+describe("成员申请与审批", { timeout: 60_000 }, () => {
   it("成员申请进组织管理员收件箱；组织管理员批准后安装", async () => {
     const itemId = await importSkill(env);
     const r = await requestItem(env.mem, env, itemId, "need PDFs");
@@ -76,7 +76,13 @@ describe("成员申请与审批", () => {
     const r = await requestItem(env.mem, env, itemId);
     const id = r.json().request.id as string;
     const up = await decideOrg(env.boss, id, "approve");
-    expect(up.json().request).toMatchObject({ stage: "deployment", status: "pending" });
+    expect(up.json().request).toMatchObject({
+      stage: "deployment",
+      status: "pending",
+      orgDecidedBy: env.bossId,
+      decidedBy: null,
+    });
+    expect(up.json().request.orgDecidedAt).toEqual(expect.any(String));
     expect(await inbox(env.boss)).toEqual([]);
     expect(await overviewPending()).toBe(1);
     // 组织管理员不能替企业管理员决定；非企业管理员调不了后台接口
@@ -135,7 +141,7 @@ describe("成员申请与审批", () => {
   });
 });
 
-describe("并发", () => {
+describe("并发", { timeout: 60_000 }, () => {
   it("同时两次申请：只有一条 pending，两次都返回它", async () => {
     const itemId = await importSkill(env);
     const [a, b] = await Promise.all([

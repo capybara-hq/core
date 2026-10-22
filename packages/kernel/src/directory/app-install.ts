@@ -54,7 +54,12 @@ export interface UninstallReport {
   kept: {
     kind: ComponentKind;
     ref: string;
-    reason: "pre_existing" | "used_by_agents" | "used_by_other_install" | "used_by_connectors";
+    reason:
+      | "pre_existing"
+      | "used_by_agents"
+      | "used_by_other_install"
+      | "used_by_connectors"
+      | "used_by_plugins";
   }[];
 }
 
@@ -78,8 +83,10 @@ export interface AppInstallerDeps {
   findConnector: (plugin: string, kind: string) => Connector | undefined;
   connectors: Pick<ConnectorsService, "create" | "removeIn">;
   skills: Pick<SkillsService, "createVersionFromFiles" | "softDeleteIn" | "revertVersionIn">;
-  orgConfigs: Pick<OrgPluginConfigs, "put" | "isEnabled" | "disableIn" | "afterDisable">;
+  orgConfigs: Pick<OrgPluginConfigs, "put" | "disableIn" | "afterDisable" | "enabledDependents">;
   requests: Pick<DirectoryRequestsService, "resolveByInstall">;
+  /** `directory.staleInstallMinutes`：installing 超过这么久可以经卸载清理。 */
+  staleInstallMinutes: () => number;
   log?: Pick<Logger, "warn">;
 }
 
@@ -181,10 +188,8 @@ export class AppInstaller {
     let step: Step = "plugins";
     try {
       for (const p of plugins) {
-        if (await this.d.orgConfigs.isEnabled(this.d.db, orgId, p)) {
-          await record({ kind: "plugin", ref: p, created: false, skillVersion: null });
-          continue;
-        }
+        // 「之前就启用」在组织行锁内判定（已启用时 put 什么都不写，配置也不动）
+        const holder = { skipped: false };
         const config = input.pluginConfigs?.[p];
         await this.d.orgConfigs.put(
           orgId,
@@ -192,9 +197,9 @@ export class AppInstaller {
           { enabled: true, ...(config !== undefined && { config }) },
           actor,
           opts.actorTokenId,
-          { viaItem: itemId },
+          { viaItem: itemId, ifDisabled: holder },
         );
-        await record({ kind: "plugin", ref: p, created: true, skillVersion: null });
+        await record({ kind: "plugin", ref: p, created: !holder.skipped, skillVersion: null });
       }
       step = "connectors";
       for (const ct of manifest.connectorTemplates) {
@@ -322,11 +327,18 @@ export class AppInstaller {
     for (const c of [...done].reverse()) {
       if (!c.created && c.skillVersion === null) continue;
       try {
-        await this.d.db.transaction().execute(async (t) => {
+        const removed = await this.d.db.transaction().execute(async (t) => {
           await lockOrg(t, orgId);
-          await this.removeComponent(t, orgId, actor, c, "app_install_rollback");
+          // 别的已启用插件依赖它（本组织里只有它提供所需能力）：保留，不让它们失去依赖
+          if (
+            c.kind === "plugin" &&
+            (await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0
+          ) {
+            return false;
+          }
+          return this.removeComponent(t, orgId, actor, c, "app_install_rollback");
         });
-        if (c.kind === "plugin") await this.d.orgConfigs.afterDisable(orgId, c.ref);
+        if (removed && c.kind === "plugin") await this.d.orgConfigs.afterDisable(orgId, c.ref);
       } catch (e) {
         errors.push({ kind: c.kind, ref: c.ref });
         this.d.log?.warn("app install rollback step failed", {
@@ -340,29 +352,47 @@ export class AppInstaller {
     return errors;
   }
 
+  /** 移除一个组件（已经不在的不报错）；返回是否真的改了东西。 */
   private async removeComponent(
     t: Trx,
     orgId: string,
     actor: string,
     c: Component,
     reason: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (c.kind === "plugin") {
-      await this.d.orgConfigs.disableIn(t, orgId, c.ref, actor, reason);
-    } else if (c.kind === "connector") {
-      await this.d.connectors.removeIn(t, orgId, c.ref, actor, undefined, reason);
-    } else if (c.created) {
-      await this.d.skills.softDeleteIn(t, orgId, c.ref, actor, reason);
-    } else if (c.skillVersion !== null) {
-      await this.d.skills.revertVersionIn(t, orgId, c.ref, c.skillVersion, actor, reason);
+      return this.d.orgConfigs.disableIn(t, orgId, c.ref, actor, reason);
     }
+    if (c.kind === "connector") {
+      const live = await t
+        .selectFrom("connectors")
+        .select("id")
+        .where("id", "=", c.ref)
+        .where("org_id", "=", orgId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (!live) return false;
+      await this.d.connectors.removeIn(t, orgId, c.ref, actor, undefined, reason);
+      return true;
+    }
+    if (c.created) return this.d.skills.softDeleteIn(t, orgId, c.ref, actor, reason);
+    if (c.skillVersion !== null) {
+      return this.d.skills.revertVersionIn(t, orgId, c.ref, c.skillVersion, actor, reason);
+    }
+    return false;
   }
 
   /**
-   * 卸载（`org.plugins.manage` + `connectors.manage` + `skills.manage`，组织行锁内复核，一个事务）：只移除 created=true
-   * 的组件——技能被 agent 选中时保留（used_by_agents）；连接器被 agent 引用时保留（used_by_agents）；插件仍被本组织别的
-   * 应用安装用到（used_by_other_install）、仍有连接器用它提供的连接器（used_by_connectors）时保留；之前就有的组件保留
-   * （pre_existing）。删除安装记录，审计 `app.uninstalled`（detail 含 removed / kept）。只有 installed 状态可以卸载。
+   * 卸载（`org.plugins.manage` + `connectors.manage` + `skills.manage`，组织行锁内复核，一个事务）。只移除 created=true 的组件：
+   * - 技能：被 agent 选中（used_by_agents）或本组织别的应用安装也用到（used_by_other_install）时保留；
+   * - 连接器：被 agent 引用时保留（used_by_agents）；
+   * - 插件：别的应用安装也用到（used_by_other_install）、仍有连接器用它提供的连接器（used_by_connectors）、别的已启用
+   *   插件依赖它（used_by_plugins）时保留；
+   * - 之前就有的组件保留（pre_existing）。
+   * 因 used_by_other_install 保留时把所有权交给最早的那个仍在的安装（它的组件行改为 created=true），卸载顺序不影响最终结果。
+   * 删除安装记录，审计 `app.uninstalled`（detail 含 removed / kept）。可以卸载：installed；failed（已回滚，清记录与残留）；
+   * 超过 `directory.staleInstallMinutes` 仍是 installing 的（副本中途崩溃）——后两种按回滚清理（已有技能上新增的版本也退回）。
+   * 仍在安装中的 → `app.install_in_progress`。
    */
   async uninstall(
     orgId: string,
@@ -372,17 +402,30 @@ export class AppInstaller {
   ): Promise<UninstallReport> {
     if (!UUID_RE.test(installId)) throw installNotFound();
     const report: UninstallReport = { removed: [], kept: [] };
+    const staleMinutes = this.d.staleInstallMinutes();
     await this.d.db.transaction().execute(async (t) => {
       await lockOrgForActions(t, orgId, actor, INSTALL_ACTIONS.app);
       const row = await t
         .selectFrom("app_installs as a")
         .innerJoin("directory_items as i", "i.id", "a.item_id")
-        .select(["a.id", "a.item_id", "a.version", "a.status", "i.name"])
+        .select(["a.id", "a.item_id", "a.version", "a.status", "a.installed_at", "i.name"])
         .where("a.id", "=", installId)
         .where("a.org_id", "=", orgId)
         .forUpdate("a")
         .executeTakeFirst();
-      if (row?.status !== "installed") throw installNotFound();
+      if (!row) throw installNotFound();
+      if (
+        row.status === "uninstalling" ||
+        (row.status === "installing" &&
+          Date.now() - row.installed_at.getTime() < staleMinutes * 60_000)
+      ) {
+        throw new ApiError(
+          "app.install_in_progress",
+          `This app install is still in progress; it can be cleaned up after ${staleMinutes} minutes`,
+        );
+      }
+      // failed（已回滚）与超时的 installing（副本中途崩溃）按回滚清理
+      const rollbackMode = row.status !== "installed";
       const comps = await t
         .selectFrom("app_install_components")
         .select(["kind", "ref", "created", "skill_version"])
@@ -394,7 +437,23 @@ export class AppInstaller {
       for (const c of comps) {
         const keep = (reason: UninstallReport["kept"][number]["reason"]) =>
           report.kept.push({ kind: c.kind, ref: c.ref, reason });
+        const comp: Component = {
+          kind: c.kind,
+          ref: c.ref,
+          created: c.created,
+          skillVersion: c.skill_version,
+        };
         if (!c.created) {
+          // 回滚清理：已有技能上本次新增的版本退回；其余之前就有的保留
+          if (
+            rollbackMode &&
+            c.kind === "skill" &&
+            c.skill_version !== null &&
+            (await this.removeComponent(t, orgId, actor, comp, "app_install_cleanup"))
+          ) {
+            report.removed.push({ kind: c.kind, ref: c.ref });
+            continue;
+          }
           keep("pre_existing");
           continue;
         }
@@ -406,21 +465,33 @@ export class AppInstaller {
           keep("used_by_agents");
           continue;
         }
-        if (c.kind === "plugin") {
-          const other = await t
+        if (c.kind !== "connector") {
+          const heir = await t
             .selectFrom("app_install_components as c")
             .innerJoin("app_installs as a", "a.id", "c.install_id")
             .select("a.id")
             .where("a.org_id", "=", orgId)
             .where("a.id", "<>", installId)
             .where("a.status", "in", ["installing", "installed"])
-            .where("c.kind", "=", "plugin")
+            .where("c.kind", "=", c.kind)
             .where("c.ref", "=", c.ref)
+            .orderBy("a.installed_at")
+            .orderBy("a.id")
             .executeTakeFirst();
-          if (other) {
+          if (heir) {
+            // 交接所有权：仍在用它的最早安装接手（created=true），卸载它时照常移除，卸载顺序不影响结果
+            await t
+              .updateTable("app_install_components")
+              .set({ created: true })
+              .where("install_id", "=", heir.id)
+              .where("kind", "=", c.kind)
+              .where("ref", "=", c.ref)
+              .execute();
             keep("used_by_other_install");
             continue;
           }
+        }
+        if (c.kind === "plugin") {
           const kinds = this.connectorKindsOf(c.ref);
           if (kinds.length > 0) {
             const used = await t
@@ -435,15 +506,15 @@ export class AppInstaller {
               continue;
             }
           }
+          if ((await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0) {
+            keep("used_by_plugins");
+            continue;
+          }
         }
-        await this.removeComponent(
-          t,
-          orgId,
-          actor,
-          { kind: c.kind, ref: c.ref, created: c.created, skillVersion: c.skill_version },
-          "app_uninstall",
-        );
-        report.removed.push({ kind: c.kind, ref: c.ref });
+        const reason = rollbackMode ? "app_install_cleanup" : "app_uninstall";
+        if (await this.removeComponent(t, orgId, actor, comp, reason)) {
+          report.removed.push({ kind: c.kind, ref: c.ref });
+        }
       }
       await t.deleteFrom("app_installs").where("id", "=", installId).execute();
       await audit(t, {
@@ -456,6 +527,7 @@ export class AppInstaller {
           itemId: row.item_id,
           name: row.name,
           version: row.version,
+          status: row.status,
           removed: report.removed,
           kept: report.kept,
         },

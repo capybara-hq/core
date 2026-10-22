@@ -84,7 +84,7 @@ export interface OrgDirectoryDeps {
   findConnector: (plugin: string, kind: string) => Connector | undefined;
   connectors: Pick<ConnectorsService, "create">;
   skills: Pick<SkillsService, "createVersionFromFiles">;
-  orgConfigs: Pick<OrgPluginConfigs, "put" | "isEnabled">;
+  orgConfigs: Pick<OrgPluginConfigs, "put">;
   requests: DirectoryRequestsService;
   apps: Pick<AppInstaller, "install">;
 }

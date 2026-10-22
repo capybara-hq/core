@@ -585,6 +585,15 @@ export class AppImport {
           plugins: now.map((p) => ({ name: p.name, version: p.lockVersion, action: p.action })),
         },
       });
+      // 应用带进部署（install / upgrade）的插件登记来源条目：组织直接启用时也按应用条目策略判定（C22）
+      for (const p of now) {
+        if (p.action !== "install" && p.action !== "upgrade") continue;
+        await trx
+          .insertInto("plugin_directory_sources")
+          .values({ plugin: p.name, item_id: itemId })
+          .onConflict((oc) => oc.columns(["plugin", "item_id"]).doNothing())
+          .execute();
+      }
       return { itemId, now, previous };
     });
 

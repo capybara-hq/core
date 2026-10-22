@@ -4,7 +4,10 @@ import type { core, z } from "zod";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
-import { assertItemInstallable } from "../directory/requests.service.js";
+import {
+  assertItemInstallable,
+  assertPluginSourcesInstallable,
+} from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
@@ -63,10 +66,15 @@ export interface OrgPluginInput {
 /** `put` 的内部选项（不来自 HTTP）。 */
 export interface OrgPluginPutOptions {
   /**
-   * 经企业目录的这个条目启用（插件条目自身，或应用条目：应用里的插件按应用条目策略，C22）。缺省时按部署安装记录的
-   * `directory_item_id` 判定；不经目录安装的插件不受目录策略约束。
+   * 经企业目录的这个条目启用（插件条目自身，或应用条目：应用里的插件按应用条目策略，C22）。缺省时按
+   * `plugin_directory_sources` 里的全部来源条目判定（最严格的生效）；不经目录安装的插件不受目录策略约束。
    */
   viaItem?: string;
+  /**
+   * 应用安装用：在组织行锁内读到该插件已启用时什么都不写（不改配置、不审计），并把 `skipped` 置为 true——
+   * 「之前就启用」与「本次启用」在锁内判定，不会与并发的启用竞争。
+   */
+  ifDisabled?: { skipped: boolean };
 }
 
 /** 校验失败的单条原因：只含路径与按 issue 类型生成的说明，不回显字段值。 */
@@ -267,11 +275,16 @@ export class OrgPluginConfigs {
         .where("plugin", "=", plugin)
         .where("org_id", "=", orgId)
         .executeTakeFirst();
+      if (opts.ifDisabled && row?.enabled === true) {
+        opts.ifDisabled.skipped = true;
+        return this.view(manifest, row, await this.setSecretKeys(t, orgId));
+      }
       const enabled = input.enabled ?? row?.enabled ?? false;
       // 新启用来自企业目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
       if (input.enabled === true && row?.enabled !== true) {
-        const itemId = opts.viaItem ?? (await this.directoryItemOf(t, plugin));
-        if (itemId) await assertItemInstallable(t, orgId, itemId);
+        // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
+        if (opts.viaItem !== undefined) await assertItemInstallable(t, orgId, opts.viaItem);
+        else await assertPluginSourcesInstallable(t, orgId, plugin);
       }
       if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
       else if (input.enabled === false && !input.force) {
@@ -432,25 +445,26 @@ export class OrgPluginConfigs {
     return { enabled: true, config: r.data };
   }
 
-  /** 部署安装记录上的来源目录条目（不经目录安装、内置或配置声明的插件为 undefined）。 */
-  private async directoryItemOf(t: Trx, plugin: string): Promise<string | undefined> {
-    const r = await t
-      .selectFrom("plugin_installs")
-      .select("directory_item_id")
-      .where("name", "=", plugin)
-      .executeTakeFirst();
-    return r?.directory_item_id ?? undefined;
-  }
-
-  /** 该组织此刻是否已启用该插件（读 PG；内置插件不算）。 */
-  async isEnabled(db: KernelDb | Trx, orgId: string, plugin: string): Promise<boolean> {
-    const r = await db
-      .selectFrom("plugin_org_configs")
-      .select("enabled")
-      .where("plugin", "=", plugin)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    return r?.enabled === true;
+  /**
+   * 该组织里已启用、且所 requires 的按组织启用的能力只剩这个插件提供的插件（停用它会让它们失去依赖）。
+   * 在调用方事务里读（应用卸载 / 回滚前判断是否保留）。
+   */
+  async enabledDependents(t: Trx, orgId: string, plugin: string): Promise<string[]> {
+    const manifest = this.host.manifests().find((m) => m.name === plugin);
+    if (!manifest) return [];
+    const provided = manifest.provides.filter((r) => this.isOrgScoped(r));
+    if (provided.length === 0) return [];
+    const enabled = await this.enabledSet(t, orgId);
+    if (!enabled.has(plugin)) return [];
+    const out = new Set<string>();
+    for (const ref of provided) {
+      if (this.enabledProviders(enabled, ref, plugin).length > 0) continue;
+      for (const m of this.host.manifests()) {
+        if (m.name === plugin || !enabled.has(m.name)) continue;
+        if ((m.requires ?? []).includes(ref as never)) out.add(m.name);
+      }
+    }
+    return [...out].sort();
   }
 
   /**
@@ -463,7 +477,7 @@ export class OrgPluginConfigs {
     plugin: string,
     actorAccountId: string,
     reason: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const r = await t
       .updateTable("plugin_org_configs")
       .set({ enabled: false, updated_by: actorAccountId, updated_at: new Date() })
@@ -472,7 +486,7 @@ export class OrgPluginConfigs {
       .where("enabled", "=", true)
       .returning("plugin")
       .executeTakeFirst();
-    if (!r) return;
+    if (!r) return false;
     await audit(t, {
       actorAccountId,
       orgId,
@@ -480,6 +494,7 @@ export class OrgPluginConfigs {
       target: plugin,
       detail: { enabled: false, changedPaths: [], reason },
     });
+    return true;
   }
 
   /** {@link disableIn} 的事务提交之后：通知停用（断开该插件的渠道连接等）。 */

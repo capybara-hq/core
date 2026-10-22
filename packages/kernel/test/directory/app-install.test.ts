@@ -56,7 +56,7 @@ async function enable(plugin: string): Promise<void> {
   expect(r.statusCode, r.body).toBe(200);
 }
 
-describe("应用的组织安装", () => {
+describe("应用的组织安装", { timeout: 60_000 }, () => {
   it("启用插件、按模板建连接器（凭据在 secrets、默认策略生效）、导入技能，组件逐个记录", async () => {
     const appId = await seedApp(env);
     const r = await install(env.boss, env, appId, appBody());
@@ -177,7 +177,7 @@ describe("应用的组织安装", () => {
   });
 });
 
-describe("应用卸载", () => {
+describe("应用卸载", { timeout: 60_000 }, () => {
   it("之前就有的插件、被 agent 引用的连接器、另一个应用也用的插件、仍有连接器在用的连接器插件都保留，其余移除", async () => {
     await enable("example-counter");
     const a = await seedApp(env, { plugins: ["todo", "example-counter", "connector-mcp"] });
@@ -239,13 +239,119 @@ describe("应用卸载", () => {
     const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/app-installs` });
     expect((list.json() as { installs: unknown[] }).installs).toHaveLength(1);
 
-    // 卸载 b：todo 是 a 启用的（对 b 来说之前就有）→ 保留；b 的技能移除
+    // 卸载 a 时 todo 的所有权交给了 b：卸载 b 时照常移除，b 的技能也移除
     const delB = await env.boss({
       method: "DELETE",
       url: `/api/v1/orgs/${env.orgId}/app-installs/${rb.json().installed.appInstallId}`,
     });
-    expect(delB.json().kept).toEqual([{ kind: "plugin", ref: "todo", reason: "pre_existing" }]);
-    expect(delB.json().removed).toHaveLength(1);
+    expect(delB.json().kept).toEqual([]);
+    expect(delB.json().removed).toEqual(expect.arrayContaining([{ kind: "plugin", ref: "todo" }]));
+    expect(delB.json().removed).toHaveLength(2);
     expect(await liveSkills()).toEqual([]);
+    expect(await enabledPlugins()).toEqual(["connector-mcp", "example-counter"]);
+  });
+
+  for (const order of [
+    ["a", "b"],
+    ["b", "a"],
+  ] as const) {
+    it(`共用的插件与技能：按 ${order.join(" → ")} 卸载，最终状态一致（都移除，用着时不删，无遗留）`, async () => {
+      const ids = {
+        a: await seedApp(env, {
+          name: "alpha",
+          templates: false,
+          plugins: ["todo"],
+          skills: ["shared"],
+        }),
+        b: await seedApp(env, {
+          name: "beta",
+          templates: false,
+          plugins: ["todo"],
+          skills: ["shared"],
+        }),
+      };
+      const installs: Record<string, string> = {};
+      for (const k of ["a", "b"] as const) {
+        const r = await install(env.boss, env, ids[k]);
+        expect(r.statusCode, r.body).toBe(201);
+        installs[k] = r.json().installed.appInstallId as string;
+      }
+      const [skill] = await liveSkills();
+      expect((await liveSkills()).length).toBe(1);
+      const del = async (k: "a" | "b") => {
+        const r = await env.boss({
+          method: "DELETE",
+          url: `/api/v1/orgs/${env.orgId}/app-installs/${installs[k]}`,
+        });
+        expect(r.statusCode, r.body).toBe(200);
+        return r.json() as {
+          removed: unknown[];
+          kept: { kind: string; ref: string; reason: string }[];
+        };
+      };
+      const first = await del(order[0]);
+      // 另一个安装还在用：都保留，插件仍启用、技能仍在
+      expect(first.removed).toEqual([]);
+      expect(await enabledPlugins()).toEqual(["todo"]);
+      expect((await liveSkills()).map((s) => s.id)).toEqual([skill?.id]);
+      const second = await del(order[1]);
+      expect(second.kept).toEqual([]);
+      expect(second.removed).toEqual(
+        expect.arrayContaining([
+          { kind: "plugin", ref: "todo" },
+          { kind: "skill", ref: skill?.id },
+        ]),
+      );
+      expect(await enabledPlugins()).toEqual([]);
+      expect(await liveSkills()).toEqual([]);
+      expect(await env.db.selectFrom("app_installs").select("id").execute()).toEqual([]);
+    });
+  }
+
+  it("中途崩溃留下的 installing：未超时 409；超过 directory.staleInstallMinutes 后经卸载回滚清理；failed 随时可清", async () => {
+    const appId = await seedApp(env, { templates: false, plugins: ["todo"] });
+    const r = await install(env.boss, env, appId);
+    const id = r.json().installed.appInstallId as string;
+    // 模拟副本在安装中途崩溃：记录停在 installing
+    await env.db
+      .updateTable("app_installs")
+      .set({ status: "installing" })
+      .where("id", "=", id)
+      .execute();
+    const fresh = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/app-installs/${id}`,
+    });
+    expect(fresh.statusCode).toBe(409);
+    expect(fresh.json().error.code).toBe("app.install_in_progress");
+    // 同一应用此时不能再装（未失败的安装还在）
+    expect((await install(env.boss, env, appId)).json().error.code).toBe("app.already_installed");
+    await env.db
+      .updateTable("app_installs")
+      .set({ installed_at: new Date(Date.now() - 31 * 60_000) })
+      .where("id", "=", id)
+      .execute();
+    const stale = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/app-installs/${id}`,
+    });
+    expect(stale.statusCode, stale.body).toBe(200);
+    expect(stale.json().removed).toHaveLength(2);
+    expect(await enabledPlugins()).toEqual([]);
+    expect(await liveSkills()).toEqual([]);
+    // 清理后可以重新安装；失败的安装记录随时可清
+    const again = await install(env.boss, env, appId);
+    expect(again.statusCode, again.body).toBe(201);
+    await env.db
+      .updateTable("app_installs")
+      .set({ status: "failed" })
+      .where("id", "=", again.json().installed.appInstallId)
+      .execute();
+    const failed = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/app-installs/${again.json().installed.appInstallId}`,
+    });
+    expect(failed.statusCode, failed.body).toBe(200);
+    expect(await env.db.selectFrom("app_installs").select("id").execute()).toEqual([]);
   });
 });

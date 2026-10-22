@@ -263,6 +263,12 @@ export interface ConnectorsTable {
   /** 0037：从目录模板安装时的来源条目（应用里的模板记应用条目）与版本。 */
   directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
   directory_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0037：模板的 defaultToolPolicies（授权码连接器在首个快照时应用）。 */
+  template_tool_policies: ColumnType<
+    Record<string, "allow" | "ask" | "deny"> | null,
+    string | null | undefined,
+    string | null
+  >;
 }
 
 /** 0010_tools.sql（0033 由 `app_tools` 改名）：连接器暴露的工具。 */
@@ -840,6 +846,7 @@ export interface KernelDatabase {
   directory_org_grants: DirectoryOrgGrantsTable;
   app_installs: AppInstallsTable;
   app_install_components: AppInstallComponentsTable;
+  plugin_directory_sources: PluginDirectorySourcesTable;
 }
 
 /** 0034_directory.sql：企业目录条目。 */
@@ -950,6 +957,15 @@ export interface DirectoryRequestsTable {
   >;
   decided_by: NullableCol<string>;
   decided_at: NullableCol<Date>;
+  org_decided_by: NullableCol<string>;
+  org_decided_at: NullableCol<Date>;
+  created_at: Generated<Date>;
+}
+
+/** 0037：把插件带进部署的目录条目（插件条目、应用条目）。 */
+export interface PluginDirectorySourcesTable {
+  plugin: string;
+  item_id: string;
   created_at: Generated<Date>;
 }
 

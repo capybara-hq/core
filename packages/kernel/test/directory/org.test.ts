@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   auditActions,
+  importDeployedPlugin,
   importSkill,
   importTemplate,
   install,
@@ -65,7 +66,7 @@ const connectorBody = (over: Record<string, unknown> = {}) => ({
   },
 });
 
-describe("组织从目录安装：三档策略", () => {
+describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
   it("技能：allow 直接装；disabled 拒绝且成员看不到；needs_approval 经企业管理员批准后才能装", async () => {
     const itemId = await importSkill(env);
     // allow
@@ -203,6 +204,56 @@ describe("组织从目录安装：三档策略", () => {
     expect(await env.db.selectFrom("connectors").select("id").execute()).toHaveLength(0);
   });
 
+  it("授权码模板：安装时没有快照，首个快照时按模板 defaultToolPolicies 设默认策略（policy_source template）", async () => {
+    const itemId = await importTemplate(env, {
+      name: "@acme/code-mcp",
+      template: mcpTemplate({
+        auth: {
+          type: "oauth_code",
+          ownership: "personal",
+          discovery: "manual",
+          authorizationUrl: "https://auth.example.com/authorize",
+          tokenUrl: "https://auth.example.com/token",
+          client: "manual",
+        },
+      }),
+    });
+    const r = await install(env.boss, env, itemId, {
+      connector: { endpoint: { url: env.mcp.url }, client: { clientId: "c" } },
+    });
+    expect(r.statusCode, r.body).toBe(201);
+    const connectorId = r.json().installed.connectorId as string;
+    expect(
+      await env.db
+        .selectFrom("connector_tools")
+        .select("name")
+        .where("connector_id", "=", connectorId)
+        .execute(),
+    ).toHaveLength(0);
+    // 首个成员连接后（这里直接写入其个人 token）刷新：首个快照
+    await env.k.tools.credentials.setOAuthTokens(
+      env.orgId,
+      connectorId,
+      { kind: "user", accountId: env.bossId },
+      { access_token: MCP_TOKEN, token_type: "bearer", expires_at: null },
+    );
+    const refreshed = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}/refresh`,
+    });
+    expect(refreshed.statusCode, refreshed.body).toBe(200);
+    const tools = await env.db
+      .selectFrom("connector_tools")
+      .select(["name", "default_policy", "policy_source"])
+      .where("connector_id", "=", connectorId)
+      .orderBy("name")
+      .execute();
+    expect(tools).toEqual([
+      { name: "delete_all", default_policy: "ask", policy_source: "derived" },
+      { name: "search", default_policy: "allow", policy_source: "template" },
+    ]);
+  });
+
   it("插件条目：在本组织启用受条目策略约束", async () => {
     const itemId = await seedPluginItem(env, "todo");
     const ok = await install(env.boss, env, itemId);
@@ -259,7 +310,58 @@ describe("组织从目录安装：三档策略", () => {
   });
 });
 
-describe("自建开关与权限", () => {
+describe("直接启用来自目录的插件（C22，按全部来源条目判定）", { timeout: 60_000 }, () => {
+  it("应用带进部署的插件：PUT /plugins 也受应用条目策略约束，最严格的来源生效；不经目录重装不清来源", async () => {
+    const { itemId: pluginItem, sha256 } = await importDeployedPlugin(env, "dirplug");
+    const row = await env.db
+      .selectFrom("plugin_installs")
+      .select("directory_item_id")
+      .where("name", "=", "dirplug")
+      .executeTakeFirstOrThrow();
+    expect(row.directory_item_id).toBe(pluginItem);
+    // 一个应用也把它带进了部署（应用包确认时登记来源，见 app-import.test）
+    const appId = await seedApp(env, { templates: false, plugins: ["dirplug"], skills: [] });
+    await env.db
+      .insertInto("plugin_directory_sources")
+      .values({ plugin: "dirplug", item_id: appId })
+      .execute();
+    const enable = (enabled: boolean) =>
+      env.boss({
+        method: "PUT",
+        url: `/api/v1/orgs/${env.orgId}/plugins/dirplug`,
+        payload: { enabled },
+      });
+    // 插件条目 allow、应用条目 disabled → 最严格的生效
+    await setPolicy(env, appId, "disabled");
+    const off = await enable(true);
+    expect(off.statusCode).toBe(403);
+    expect(off.json().error.code).toBe("directory.item_disabled");
+    // 应用条目 needs_approval 且未授予 → approval_required；授予后可以启用
+    await setPolicy(env, appId, "needs_approval");
+    const pend = await enable(true);
+    expect(pend.statusCode).toBe(403);
+    expect(pend.json().error.code).toBe("directory.approval_required");
+    expect((await install(env.boss, env, appId)).statusCode).toBe(202);
+    await grant(appId);
+    expect((await enable(true)).statusCode).toBe(200);
+    expect((await enable(false)).statusCode).toBe(200);
+    // 不经目录重装同一个包：来源条目保留，插件条目禁用后照样拦住
+    await env.k.pluginAdminOps.install("dirplug", sha256, env.rootId);
+    const kept = await env.db
+      .selectFrom("plugin_installs")
+      .select("directory_item_id")
+      .where("name", "=", "dirplug")
+      .executeTakeFirstOrThrow();
+    expect(kept.directory_item_id).toBe(pluginItem);
+    await setPolicy(env, pluginItem, "disabled");
+    expect((await enable(true)).json().error.code).toBe("directory.item_disabled");
+    // 删除条目即撤回它的约束
+    await env.root({ method: "DELETE", url: `/api/v1/admin/directory/items/${pluginItem}` });
+    expect((await enable(true)).statusCode).toBe(200);
+  });
+});
+
+describe("自建开关与权限", { timeout: 60_000 }, () => {
   it("customConnectors / customSkills 为 deny：自建 403，从目录安装不受影响", async () => {
     await setDeployment(env, { customConnectors: "deny", customSkills: "deny" });
     const custom = await env.boss({

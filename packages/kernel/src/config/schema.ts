@@ -229,6 +229,17 @@ export const KernelConfigSchema = z.object({
               "Largest total size in bytes of one app bundle import: the app package plus every plugin package it locks (downloaded and held in memory while validating). Defaults to 4 x packages.maxBytes",
           }),
         ),
+      staleInstallMinutes: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Minutes after which an organization app install still in the installing state (e.g. the replica crashed mid-install) may be cleaned up through uninstall, which rolls back the components it recorded",
+          }),
+        ),
     })
     .prefault({} as never),
   catalogs: z

@@ -192,6 +192,8 @@ async (input, call) => {
   - 共享 agent：在 R3 固定 ask 清单上，**只对共享 agent 生效**（`R3_SHARED_AGENT_ONLY_TOOL_KEYS`，可见性在执行时实时读，
     读不到按共享处理），记住的授权对它无效。发起人确认后生成变更申请（`skills/changes.service.ts`），负责人在收件箱批准前
     只有发起对话能试用；同一对话再写取代旧申请，别的对话写同一技能被拒。
+  - 部署设置 `customSkills` 为 `deny` 只挡组织管理员上传技能包，**不影响 `skill_write`**（agent 级技能与共享 agent 的变更由
+    R3 / R4 把关）。
   - 成功后在同一事务里追加一份目录快照，同一运行的下一步即可 `skill_load`。代价：对话里第一份目录在运行中途出现时，
     下一步的工具清单多出 `skill_load`，提示缓存失效一次。
 
