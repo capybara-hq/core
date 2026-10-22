@@ -609,6 +609,8 @@ describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤�
     await waitFor(async () => old.inflight.size === 1, 5_000, "call in flight");
     await install("life", await lifePkg({ version: "1.0.0" }));
     await waitFor(async () => loadedVersion("life") === "1.0.0", 15_000, "1.0.0 loaded");
+    // activate 先换上新实例，写完状态才 retire 旧实例
+    await waitFor(async () => old.disposed, 5_000, "old retiring");
     expect(old.disposed).toBe(true);
     expect(old.registrations().length).toBeGreaterThan(0);
     const started = Date.now();
