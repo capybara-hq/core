@@ -17,6 +17,7 @@ import {
   KERNEL_LOG,
   MODEL_PURPOSES,
   ORGS,
+  PLUGIN_ADMIN,
   PRICES,
   SESSIONS,
   SETTINGS,
@@ -51,6 +52,18 @@ import {
   type PurposeView,
 } from "../models/purposes.js";
 import type { Org, OrgsService } from "../orgs/orgs.service.js";
+import type { PluginAdmin } from "../plugins/admin-view.js";
+import { pluginNeedsAction } from "../plugins/permission-view.js";
+
+/** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
+export interface AdminOverview {
+  /** 需要企业管理员处理的插件（待批准、待配置、失败、依赖缺失、副本不一致），见 `pluginNeedsAction`。 */
+  pluginsNeedingAction: number;
+  /** 待处理的企业目录申请（申请在 T26 上线，之前恒为 0）。 */
+  directoryRequestsPending: number;
+  orgs: number;
+  accounts: number;
+}
 
 const ListQuery = z.object({
   after: z.string().min(1).optional(),
@@ -91,7 +104,24 @@ export class AdminController {
     @Inject(SETTINGS) private readonly settings: SettingsService,
     @Inject(PRICES) private readonly prices: PricesService,
     @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
+    @Inject(PLUGIN_ADMIN) private readonly plugins: PluginAdmin,
   ) {}
+
+  /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
+  @Get("overview")
+  async overview(): Promise<AdminOverview> {
+    const [plugins, orgs, accounts] = await Promise.all([
+      this.plugins.list(),
+      this.orgs.listAll(),
+      this.accounts.count(),
+    ]);
+    return {
+      pluginsNeedingAction: plugins.filter((p) => pluginNeedsAction(p.status)).length,
+      directoryRequestsPending: 0,
+      orgs: orgs.length,
+      accounts,
+    };
+  }
 
   /**
    * 全部账号，按 id 升序分页：`next` 为下一页的游标（作为 `after` 传回），没有更多时为 null。

@@ -1,6 +1,7 @@
 import { createLogger } from "@capybara-hq/kernel";
 import { parseCli, USAGE, UsageError } from "./args.js";
 import { runAdminCreate } from "./commands/admin-create.js";
+import { runAdminGrant } from "./commands/admin-grant.js";
 import { runMigrate } from "./commands/migrate.js";
 import {
   runPluginsApprove,
@@ -47,6 +48,8 @@ async function main(argv: string[]): Promise<number | undefined> {
         log,
         process.env,
       );
+    case "admin-grant":
+      return runAdminGrant({ login: cmd.login, grant: cmd.grant }, log, process.env);
     case "plugins-review":
       return runPluginsReview(log, process.env);
     case "plugins-approve":

@@ -162,6 +162,14 @@ export type DeploymentPluginStatus =
   | "failed"
   | "dependency";
 
+/**
+ * 需要企业管理员处理的状态（后台概览「需要处理的插件」）：待批准、待配置、失败、依赖缺失，以及副本不一致
+ * （`converging` 收敛中、`pending_migration` 待迁移）。
+ */
+export function pluginNeedsAction(status: DeploymentPluginStatus): boolean {
+  return status !== "enabled" && status !== "disabled";
+}
+
 /** 后台插件列表的一项（`GET /api/v1/admin/plugins`）。 */
 export interface AdminPluginView {
   name: string;

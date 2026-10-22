@@ -43,6 +43,29 @@ describe("parseCli", () => {
     expect(() => parseCli(["admin", "create", "--role", "api"])).toThrow(/only valid for start/);
   });
 
+  it("admin grant / revoke <login>", () => {
+    expect(parseCli(["admin", "grant", "alice"])).toEqual({
+      command: "admin-grant",
+      login: "alice",
+      grant: true,
+    });
+    expect(parseCli(["admin", "revoke", "alice"])).toEqual({
+      command: "admin-grant",
+      login: "alice",
+      grant: false,
+    });
+    expect(() => parseCli(["admin", "grant"])).toThrow(/needs a login/);
+    expect(() => parseCli(["admin", "revoke", " "])).toThrow(/needs a login/);
+    expect(() => parseCli(["admin", "grant", "a", "b"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["admin", "grant", "a", "--login", "b"])).toThrow(
+      /only valid for admin create/,
+    );
+    expect(() => parseCli(["admin", "revoke", "a", "--role", "api"])).toThrow(
+      /only valid for start/,
+    );
+    expect(() => parseCli(["admin", "grant", "a", "--yes"])).toThrow(UsageError);
+  });
+
   it("plugins review / approve", () => {
     expect(parseCli(["plugins", "review"])).toEqual({ command: "plugins-review" });
     expect(parseCli(["plugins", "approve", "todo"])).toEqual({

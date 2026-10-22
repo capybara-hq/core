@@ -4,6 +4,7 @@ import {
   derivePluginStatus,
   isSensitivePermissionKey,
   permissionGroups,
+  pluginNeedsAction,
   SENSITIVE_CAPABILITIES,
   type StatusInput,
 } from "../../src/plugins/permission-view.js";
@@ -207,5 +208,31 @@ describe("derivePluginStatus", () => {
       "pending_config",
     );
     expect(derivePluginStatus({ ...declared, source: "config", replicas: [] })).toBe("converging");
+  });
+});
+
+describe("pluginNeedsAction（后台概览「需要处理的插件」）", () => {
+  it("待批准、待配置、失败、依赖缺失与副本不一致（收敛中 / 待迁移）算；启用与停用不算", () => {
+    expect(
+      (
+        [
+          "enabled",
+          "disabled",
+          "pending_approval",
+          "pending_config",
+          "pending_migration",
+          "converging",
+          "failed",
+          "dependency",
+        ] as const
+      ).filter(pluginNeedsAction),
+    ).toEqual([
+      "pending_approval",
+      "pending_config",
+      "pending_migration",
+      "converging",
+      "failed",
+      "dependency",
+    ]);
   });
 });

@@ -88,7 +88,9 @@
       "csrf": "请求被拒绝，请刷新页面后重试。"
     },
     "account": {
-      "login_taken": "用户名已被占用。"
+      "login_taken": "用户名已被占用。",
+      "not_found": "账号不存在。",
+      "last_enterprise_admin": "不能撤销或停用最后一个企业管理员。"
     },
     "org": {
       "not_found": "组织不存在或你已不是成员。",
@@ -480,7 +482,8 @@
     "apps": "应用",
     "channels": "渠道",
     "skills": "技能",
-    "evals": "评测"
+    "evals": "评测",
+    "admin": "管理"
   },
   "shell": {
     "switchLocale": "切换到 {name}",
@@ -1580,6 +1583,161 @@
       "media_missing": "附件已不可用",
       "media_changed": "附件有变化",
       "tool_unmatched": "有工具调用没有对应的记录"
+    }
+  },
+  "admin": {
+    "title": "管理",
+    "nav": {
+      "overview": "概览",
+      "accounts": "账号",
+      "orgs": "组织",
+      "settings": "部署设置"
+    },
+    "forbidden": {
+      "title": "需要企业管理员",
+      "hint": "只有企业管理员能打开管理后台。可以请企业管理员授予，或在服务器上运行 capybara admin grant 加登录名。"
+    },
+    "overview": {
+      "intro": "企业管理员在这里管理整个部署：账号、组织与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
+      "metrics": {
+        "plugins": "需要处理的插件",
+        "directoryRequests": "待处理的目录申请",
+        "orgs": "组织",
+        "accounts": "账号"
+      },
+      "accounts": {
+        "title": "账号",
+        "hint": "新建、停用账号，授予或撤销企业管理员。",
+        "open": "管理账号"
+      },
+      "orgs": {
+        "title": "组织",
+        "hint": "为各组织设置运行并发与沙箱 CPU / 内存。",
+        "open": "管理组织"
+      },
+      "settings": {
+        "title": "部署设置",
+        "hint": "谁能建组织、价格币种、组织能否自建连接器与技能。",
+        "open": "打开部署设置"
+      }
+    },
+    "accounts": {
+      "title": "账号",
+      "new": "新建账号",
+      "empty": "还没有账号",
+      "loadMore": "加载更多",
+      "columns": {
+        "name": "名称",
+        "email": "邮箱",
+        "status": "状态",
+        "role": "角色"
+      },
+      "status": {
+        "active": "正常",
+        "disabled": "已停用"
+      },
+      "enterpriseAdmin": "企业管理员",
+      "menu": {
+        "grant": "授予企业管理员",
+        "revoke": "撤销企业管理员",
+        "disable": "停用账号",
+        "enable": "启用账号"
+      },
+      "confirm": {
+        "grantTitle": "授予「{name}」企业管理员？",
+        "grantHint": "企业管理员可以管理整个部署：账号、组织、插件与部署设置。",
+        "grant": "授予",
+        "revokeTitle": "撤销「{name}」的企业管理员？",
+        "revokeHint": "撤销后该账号不能再打开管理后台。最后一个企业管理员不能撤销。",
+        "revoke": "撤销",
+        "disableTitle": "停用「{name}」？",
+        "disableHint": "停用后该账号立即无法登录，已登录的会话与个人令牌全部失效。",
+        "disable": "停用",
+        "enableTitle": "启用「{name}」？",
+        "enableHint": "启用后该账号可以重新登录；之前的会话与令牌不会恢复。",
+        "enable": "启用"
+      },
+      "done": {
+        "grant": "已授予「{name}」企业管理员",
+        "revoke": "已撤销「{name}」的企业管理员",
+        "disable": "已停用「{name}」",
+        "enable": "已启用「{name}」"
+      },
+      "form": {
+        "title": "新建账号",
+        "login": "登录名",
+        "password": "初始密码",
+        "passwordHelp": "至少 12 个字符；请让对方登录后自行修改。",
+        "displayName": "显示名",
+        "email": "邮箱",
+        "enterpriseAdmin": "设为企业管理员",
+        "submit": "创建",
+        "created": "已创建账号「{name}」"
+      }
+    },
+    "orgs": {
+      "title": "组织",
+      "hint": "留空的项使用部署默认。组织管理员在组织设置里只能查看。",
+      "empty": "还没有组织",
+      "default": "默认",
+      "edit": "设置限额",
+      "saved": "已保存",
+      "columns": {
+        "name": "名称",
+        "slug": "标识",
+        "members": "成员",
+        "runConcurrency": "运行并发",
+        "cpu": "沙箱 CPU",
+        "memory": "沙箱内存"
+      },
+      "dialog": {
+        "title": "「{name}」的限额",
+        "runConcurrency": "运行并发上限",
+        "runConcurrencyHelp": "同时运行的对话数上限；留空使用部署默认。",
+        "runConcurrencyInvalid": "请输入正整数，或留空使用部署默认。",
+        "cpu": "沙箱 CPU（核）",
+        "cpuHelp": "0.25 到 64；留空使用部署默认。",
+        "cpuInvalid": "CPU 须在 0.25 到 64 之间。",
+        "memory": "沙箱内存（MB）",
+        "memoryHelp": "256 到 262144 的整数；留空使用部署默认。",
+        "memoryInvalid": "内存须是 256 到 262144 之间的整数。",
+        "newOnly": "沙箱限额只对之后新建的沙箱生效。",
+        "save": "保存"
+      }
+    },
+    "settings": {
+      "title": "部署设置",
+      "save": "保存",
+      "saved": "部署设置已保存",
+      "allow": "允许",
+      "deny": "禁止",
+      "orgCreation": {
+        "title": "谁能建组织",
+        "description": "限制后只有企业管理员能新建组织。",
+        "anyone": "所有人",
+        "anyoneHint": "任何登录的用户都能新建组织。",
+        "enterprise_admin": "只有企业管理员",
+        "enterprise_adminHint": "其他用户只能加入被邀请的组织。"
+      },
+      "currency": {
+        "title": "价格币种",
+        "description": "模型价格表使用的币种，只用于显示估算成本，不做换算。",
+        "label": "币种代码",
+        "help": "ISO 4217 的三位字母，如 USD、CNY。",
+        "invalid": "请输入三位大写字母的币种代码。"
+      },
+      "customConnectors": {
+        "title": "自建连接器",
+        "description": "组织能否不经企业目录、自己接入连接器。",
+        "allowHint": "组织管理员可以自己接入连接器，也可以从企业目录安装。",
+        "denyHint": "组织只能从企业目录安装连接器。"
+      },
+      "customSkills": {
+        "title": "自建技能",
+        "description": "组织能否不经企业目录、自己新建或导入技能。",
+        "allowHint": "组织可以自己新建、导入技能，也可以从企业目录安装。",
+        "denyHint": "组织只能从企业目录安装技能。"
+      }
     }
   }
 }

@@ -265,6 +265,7 @@ describe("企业管理员端点", () => {
     { method: "GET", url: "/api/v1/admin/orgs" },
     { method: "GET", url: "/api/v1/admin/settings" },
     { method: "PUT", url: "/api/v1/admin/settings" },
+    { method: "GET", url: "/api/v1/admin/overview" },
   ] as const;
 
   it("普通用户访问 /admin/* → 403 forbidden", async () => {
@@ -501,6 +502,9 @@ describe("企业管理员端点", () => {
       orgCreation: "anyone",
       runConcurrencyOverrides: {},
       priceCurrency: "USD",
+      sandboxLimitOverrides: {},
+      customConnectors: "allow",
+      customSkills: "allow",
     });
     const put = await adminReq({
       method: "PUT",
@@ -512,6 +516,9 @@ describe("企业管理员端点", () => {
       orgCreation: "enterprise_admin",
       runConcurrencyOverrides: {},
       priceCurrency: "USD",
+      sandboxLimitOverrides: {},
+      customConnectors: "allow",
+      customSkills: "allow",
     });
     const bad = await adminReq({
       method: "PUT",
@@ -540,6 +547,9 @@ describe("企业管理员端点", () => {
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgA: 1, orgB: 5 },
       priceCurrency: "USD",
+      sandboxLimitOverrides: {},
+      customConnectors: "allow",
+      customSkills: "allow",
     });
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
@@ -558,6 +568,9 @@ describe("企业管理员端点", () => {
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgB: 5, orgC: 2 },
       priceCurrency: "USD",
+      sandboxLimitOverrides: {},
+      customConnectors: "allow",
+      customSkills: "allow",
     });
     expect(await limit("orgA")).toBe(k.config.runtime.orgConcurrency);
     expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
@@ -578,6 +591,55 @@ describe("企业管理员端点", () => {
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgB: 5, orgC: 2 },
       priceCurrency: "USD",
+      sandboxLimitOverrides: {},
+      customConnectors: "allow",
+      customSkills: "allow",
+    });
+  });
+
+  it("PUT /admin/settings sandboxLimitOverrides：合并后可读回；cpu / memoryMb 越界 → 400", async () => {
+    const adminReq = await session("admin");
+    const put = async (payload: Record<string, unknown>) =>
+      adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
+    const ok = await put({
+      sandboxLimitOverrides: { orgA: { cpu: 1.5, memoryMb: 2048 } },
+      customConnectors: "deny",
+      customSkills: "deny",
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({
+      sandboxLimitOverrides: { orgA: { cpu: 1.5, memoryMb: 2048 } },
+      customConnectors: "deny",
+      customSkills: "deny",
+    });
+    for (const payload of [
+      { sandboxLimitOverrides: { orgA: { cpu: 0.1 } } },
+      { sandboxLimitOverrides: { orgA: { cpu: 65 } } },
+      { sandboxLimitOverrides: { orgA: { memoryMb: 100 } } },
+      { sandboxLimitOverrides: { orgA: { memoryMb: 1024.5 } } },
+      { customConnectors: "sometimes" },
+    ]) {
+      const res = await put(payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+    const removed = await put({ sandboxLimitOverrides: { orgA: null } });
+    expect((removed.json() as { sandboxLimitOverrides: unknown }).sandboxLimitOverrides).toEqual(
+      {},
+    );
+  });
+
+  it("GET /admin/overview：账号数、组织数、待处理插件数与目录申请数（T26 之前为 0）", async () => {
+    await orgs.create({ name: "One" }, user);
+    await orgs.create({ name: "Two" }, admin);
+    const req = await session("admin");
+    const res = await req({ method: "GET", url: "/api/v1/admin/overview" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      accounts: 2,
+      orgs: 2,
+      pluginsNeedingAction: 0,
+      directoryRequestsPending: 0,
     });
   });
 

@@ -9,6 +9,7 @@ export type Command =
   | { command: "start"; roles?: Role[] }
   | { command: "migrate" }
   | { command: "admin-create"; login: string; displayName: string; email?: string }
+  | { command: "admin-grant"; login: string; grant: boolean }
   | { command: "plugins-review" }
   | { command: "plugins-approve"; name: string; yes: boolean }
   | { command: "plugins-list" }
@@ -23,6 +24,9 @@ export const USAGE = `Usage:
                                                Create an enterprise admin; reads the password
                                                (one line) from stdin, e.g.
                                                echo "$PW" | capybara admin create ...
+  capybara admin grant <login>                 Make a local account an enterprise admin
+  capybara admin revoke <login>                Revoke enterprise admin from a local account
+                                               (the last active one cannot be revoked)
   capybara plugins list                        List the deployment's plugins and their status
   capybara plugins install <file.tgz | npm:<name>[@<version>]>
                                                Store a plugin package (in PostgreSQL) and
@@ -101,10 +105,25 @@ export function parseCli(argv: string[]): Command {
   }
   if (command === "admin") {
     const [sub, ...extra] = rest;
-    if (sub === undefined) throw new UsageError('missing admin command (expected "create")');
-    if (sub !== "create") throw new UsageError(`unknown admin command "${sub}"`);
-    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+    if (sub === undefined) {
+      throw new UsageError("missing admin command (expected one of create, grant, revoke)");
+    }
+    if (sub !== "create" && sub !== "grant" && sub !== "revoke") {
+      throw new UsageError(`unknown admin command "${sub}"`);
+    }
     if (v.role !== undefined) throw new UsageError("--role is only valid for start");
+    if (sub === "grant" || sub === "revoke") {
+      for (const opt of ["login", "display-name", "email"] as const) {
+        if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for admin create`);
+      }
+      const [login, ...more] = extra;
+      if (login === undefined || login.trim() === "") {
+        throw new UsageError(`admin ${sub} needs a login`);
+      }
+      if (more.length > 0) throw new UsageError(`unexpected argument "${more[0]}"`);
+      return { command: "admin-grant", login, grant: sub === "grant" };
+    }
+    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
     if (v.login === undefined || v.login.trim() === "") throw new UsageError("--login is required");
     if (v["display-name"] === undefined || v["display-name"].trim() === "") {
       throw new UsageError("--display-name is required");

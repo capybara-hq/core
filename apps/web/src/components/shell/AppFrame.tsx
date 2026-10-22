@@ -78,6 +78,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     pending.count,
     me === undefined ? "guest" : navLevelOf(me),
     pending.more,
+    me?.account.isEnterpriseAdmin === true,
   );
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
   const [error, setError] = useState<string>();

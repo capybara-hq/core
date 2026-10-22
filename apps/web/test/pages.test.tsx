@@ -289,6 +289,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       // 管理员（owner）才看得到渠道与评测
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],
+      // 企业管理员（与组织角色无关）看得到「管理」
+      [zh.nav.admin, "/admin"],
     ]);
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
@@ -315,6 +317,33 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(nav).getByRole("link", { name: zh.nav.apps })).toBeTruthy();
     // 成员能浏览技能库
     expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();
+  });
+
+  it("非企业管理员看不到一级导航「管理」（组织 owner 也不行）", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () =>
+        json(200, { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } }),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+    });
+    renderFrame();
+    expect(await screen.findByText("page body")).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(nav).queryByRole("link", { name: zh.nav.admin })).toBeNull();
+    expect(within(nav).getByRole("link", { name: zh.nav.evals })).toBeTruthy();
+  });
+
+  it("没有任何组织的企业管理员也看得到「管理」", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () => json(200, { ...ME, currentOrgId: null, memberships: [] }),
+    });
+    renderFrame();
+    expect(await screen.findByText("page body")).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(nav).getByRole("link", { name: zh.nav.admin }).getAttribute("href")).toBe(
+      "/admin",
+    );
   });
 
   it("访客的顶栏不显示「技能」", async () => {

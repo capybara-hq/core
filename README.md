@@ -56,6 +56,7 @@ curl -s localhost:8080/api/v1/setup                          # {"needsSetup":fal
 - 公开接口的 POST 必须带 `X-Capybara-Csrf: 1` 头。
 - 生产部署建议设置 `CAPYBARA_AUTH__SETUP_TOKEN`，初始化时在 body 里带同值的 `setupToken`，避免被抢先初始化。
 - 不经 HTTP 也可以用 CLI 建企业管理员（密码只从 stdin 读）：`echo "$PW" | pnpm capybara admin create --login admin --display-name Admin`。
+- 给已有的本地账号授予或撤销企业管理员：`pnpm capybara admin grant <登录名>` / `pnpm capybara admin revoke <登录名>`（写审计；不能撤销最后一个活跃的企业管理员）。企业管理员在网页顶栏「管理」里管理账号、组织（运行并发、沙箱 CPU / 内存）与部署设置。
 - 用浏览器在非 localhost 的明文 http 上试用时，设 `CAPYBARA_AUTH__COOKIE_SECURE=false`，否则浏览器不保存会话 Cookie；生产保持默认 `true`。
 
 ### 在网页上和 agent 对话（不需要模型密钥）

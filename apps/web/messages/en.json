@@ -88,7 +88,9 @@
       "csrf": "The request was rejected. Refresh the page and try again."
     },
     "account": {
-      "login_taken": "This username is already taken."
+      "login_taken": "This username is already taken.",
+      "not_found": "The account does not exist.",
+      "last_enterprise_admin": "The last enterprise admin cannot be revoked or deactivated."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
@@ -480,7 +482,8 @@
     "apps": "Apps",
     "channels": "Channels",
     "skills": "Skills",
-    "evals": "Evals"
+    "evals": "Evals",
+    "admin": "Admin"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -1580,6 +1583,161 @@
       "media_missing": "An attachment is no longer available",
       "media_changed": "An attachment changed",
       "tool_unmatched": "A tool call had no recorded result"
+    }
+  },
+  "admin": {
+    "title": "Admin",
+    "nav": {
+      "overview": "Overview",
+      "accounts": "Accounts",
+      "orgs": "Organizations",
+      "settings": "Deployment settings"
+    },
+    "forbidden": {
+      "title": "Enterprise admin required",
+      "hint": "Only enterprise admins can open the admin console. Ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
+    },
+    "overview": {
+      "intro": "Enterprise admins manage the whole deployment here: accounts, organizations and deployment settings. Each organization's own settings stay under its Settings. Enterprise admins cannot read conversations.",
+      "metrics": {
+        "plugins": "Plugins needing action",
+        "directoryRequests": "Pending directory requests",
+        "orgs": "Organizations",
+        "accounts": "Accounts"
+      },
+      "accounts": {
+        "title": "Accounts",
+        "hint": "Create and deactivate accounts; grant or revoke enterprise admin.",
+        "open": "Manage accounts"
+      },
+      "orgs": {
+        "title": "Organizations",
+        "hint": "Set each organization's run concurrency and sandbox CPU / memory.",
+        "open": "Manage organizations"
+      },
+      "settings": {
+        "title": "Deployment settings",
+        "hint": "Who can create organizations, the price currency, and whether organizations may add their own connectors and skills.",
+        "open": "Open deployment settings"
+      }
+    },
+    "accounts": {
+      "title": "Accounts",
+      "new": "New account",
+      "empty": "No accounts yet",
+      "loadMore": "Load more",
+      "columns": {
+        "name": "Name",
+        "email": "Email",
+        "status": "Status",
+        "role": "Role"
+      },
+      "status": {
+        "active": "Active",
+        "disabled": "Deactivated"
+      },
+      "enterpriseAdmin": "Enterprise admin",
+      "menu": {
+        "grant": "Grant enterprise admin",
+        "revoke": "Revoke enterprise admin",
+        "disable": "Deactivate account",
+        "enable": "Reactivate account"
+      },
+      "confirm": {
+        "grantTitle": "Make {name} an enterprise admin?",
+        "grantHint": "Enterprise admins manage the whole deployment: accounts, organizations, plugins and deployment settings.",
+        "grant": "Grant",
+        "revokeTitle": "Revoke enterprise admin from {name}?",
+        "revokeHint": "The account will no longer be able to open the admin console. The last enterprise admin cannot be revoked.",
+        "revoke": "Revoke",
+        "disableTitle": "Deactivate {name}?",
+        "disableHint": "The account is signed out at once; its sessions and personal tokens stop working.",
+        "disable": "Deactivate",
+        "enableTitle": "Reactivate {name}?",
+        "enableHint": "The account can sign in again; earlier sessions and tokens stay revoked.",
+        "enable": "Reactivate"
+      },
+      "done": {
+        "grant": "{name} is now an enterprise admin",
+        "revoke": "{name} is no longer an enterprise admin",
+        "disable": "{name} was deactivated",
+        "enable": "{name} was reactivated"
+      },
+      "form": {
+        "title": "New account",
+        "login": "Login",
+        "password": "Initial password",
+        "passwordHelp": "At least 12 characters; ask the person to change it after signing in.",
+        "displayName": "Display name",
+        "email": "Email",
+        "enterpriseAdmin": "Make enterprise admin",
+        "submit": "Create",
+        "created": "Created account {name}"
+      }
+    },
+    "orgs": {
+      "title": "Organizations",
+      "hint": "Empty values use the deployment default. Organization admins can only view them in their settings.",
+      "empty": "No organizations yet",
+      "default": "Default",
+      "edit": "Set limits",
+      "saved": "Saved",
+      "columns": {
+        "name": "Name",
+        "slug": "Slug",
+        "members": "Members",
+        "runConcurrency": "Run concurrency",
+        "cpu": "Sandbox CPU",
+        "memory": "Sandbox memory"
+      },
+      "dialog": {
+        "title": "Limits for {name}",
+        "runConcurrency": "Run concurrency limit",
+        "runConcurrencyHelp": "How many conversations may run at once; leave empty for the deployment default.",
+        "runConcurrencyInvalid": "Enter a positive whole number, or leave empty for the deployment default.",
+        "cpu": "Sandbox CPU (cores)",
+        "cpuHelp": "0.25 to 64; leave empty for the deployment default.",
+        "cpuInvalid": "CPU must be between 0.25 and 64.",
+        "memory": "Sandbox memory (MB)",
+        "memoryHelp": "A whole number from 256 to 262144; leave empty for the deployment default.",
+        "memoryInvalid": "Memory must be a whole number from 256 to 262144.",
+        "newOnly": "Sandbox limits apply to sandboxes created from now on.",
+        "save": "Save"
+      }
+    },
+    "settings": {
+      "title": "Deployment settings",
+      "save": "Save",
+      "saved": "Deployment settings saved",
+      "allow": "Allow",
+      "deny": "Deny",
+      "orgCreation": {
+        "title": "Who can create organizations",
+        "description": "When restricted, only enterprise admins can create organizations.",
+        "anyone": "Anyone",
+        "anyoneHint": "Any signed-in user can create an organization.",
+        "enterprise_admin": "Enterprise admins only",
+        "enterprise_adminHint": "Other users can only join organizations they are invited to."
+      },
+      "currency": {
+        "title": "Price currency",
+        "description": "The currency of the model price table; used only to show estimated costs, never converted.",
+        "label": "Currency code",
+        "help": "Three letters from ISO 4217, such as USD or CNY.",
+        "invalid": "Enter a three-letter uppercase currency code."
+      },
+      "customConnectors": {
+        "title": "Custom connectors",
+        "description": "Whether organizations may add connectors themselves, outside the enterprise directory.",
+        "allowHint": "Organization admins can add connectors themselves or install them from the enterprise directory.",
+        "denyHint": "Organizations can only install connectors from the enterprise directory."
+      },
+      "customSkills": {
+        "title": "Custom skills",
+        "description": "Whether organizations may create or import skills themselves, outside the enterprise directory.",
+        "allowHint": "Organizations can create and import skills themselves or install them from the enterprise directory.",
+        "denyHint": "Organizations can only install skills from the enterprise directory."
+      }
     }
   }
 }
