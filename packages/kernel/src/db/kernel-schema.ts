@@ -737,6 +737,13 @@ export interface PluginInstallsTable {
 }
 
 /** 0030：每个副本每个插件的加载结果。 */
+/** 插件名归哪个 npm 包（Ruling P3）：第一次安装时写入，卸载不删。 */
+export interface PluginNameOwnersTable {
+  name: string;
+  package_name: string;
+  created_at: Generated<Date>;
+}
+
 export interface PluginReplicaStatusTable {
   replica_id: string;
   plugin: string;
@@ -801,6 +808,7 @@ export interface KernelDatabase {
   plugin_blobs: PluginBlobsTable;
   plugin_installs: PluginInstallsTable;
   plugin_replica_status: PluginReplicaStatusTable;
+  plugin_name_owners: PluginNameOwnersTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

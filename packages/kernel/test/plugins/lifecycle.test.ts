@@ -3,16 +3,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ToolHandler } from "@capybara-hq/plugin-sdk";
+import { SDK_VERSION, type ToolHandler } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
-import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { createLogger } from "../../src/log.js";
+import { PluginBlobs } from "../../src/plugins/blobs.js";
 import type { PluginInstance } from "../../src/plugins/instance.js";
+import { readPluginPackage } from "../../src/plugins/package.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
@@ -341,7 +345,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
         migrations: [
           {
             file: "0001_wreck.sql",
-            sql: "CREATE TABLE IF NOT EXISTS keep (id int);\nDROP TABLE IF EXISTS old_stuff;\nALTER TABLE keep DROP COLUMN IF EXISTS gone;\n",
+            sql: "CREATE TABLE IF NOT EXISTS keep (id int);\nDROP TABLE IF EXISTS old_stuff;\nALTER TABLE keep DROP COLUMN IF EXISTS gone;\nDO $$ BEGIN EXECUTE 'DROP TABLE keep'; END $$;\n",
           },
         ],
       }),
@@ -360,6 +364,14 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
         file: "0001_wreck.sql",
         line: 3,
         statement: "ALTER TABLE keep DROP COLUMN IF EXISTS gone",
+      },
+      // DO 块的内容不做静态检查：整块标为 dynamic_sql
+      {
+        kind: "dynamic_sql",
+        sensitive: true,
+        file: "0001_wreck.sql",
+        line: 4,
+        statement: "DO $$",
       },
     ]);
     expect(
@@ -508,6 +520,12 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     expect(
       await db.selectFrom("plugin_installs").select("name").where("name", "=", "life").execute(),
     ).toEqual([]);
+    // 只上传、从没安装过的包不占名字
+    await upload(
+      await lifePkg({ name: "fresh", version: "1.0.0", packageName: "@other/plugin-fresh" }),
+    );
+    const fresh = await install("fresh", await lifePkg({ name: "fresh", version: "1.0.0" }));
+    expect(fresh.view.desired?.state).toBe("disabled");
     // 卸载后可以从同一个包重新安装（数据还在：迁移已执行，不重复）
     await install("life", v2);
     expect((await view("life")).status).toBe("disabled");
@@ -535,5 +553,84 @@ describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤�
     expect(old.registrations()).toEqual([]);
     await expect(pending).rejects.toThrow(/unloaded/);
     delete g.__lifeGate;
+  });
+});
+
+describe("启动中止：host.load 里进行中的插件迁移随停机中止", { timeout: 60_000 }, () => {
+  it("迁移卡在 schema 锁上时 stop() 很快返回，start() 失败，锁随后可用", async () => {
+    const pkgBytes = await lifePkg({
+      name: "slowmig",
+      version: "1.0.0",
+      migrations: [{ file: "0001_a.sql", sql: "CREATE TABLE IF NOT EXISTS a (id int);\n" }],
+    });
+    const pkg = await readPluginPackage(pkgBytes, {
+      maxBytes: MAX_BYTES,
+      hostSdkVersion: SDK_VERSION,
+    });
+    await new PluginBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, pkgBytes, {
+      source: "file",
+      ref: "upload",
+      actor: null,
+      store: "pg",
+    });
+    await db
+      .insertInto("plugin_installs")
+      .values({
+        name: "slowmig",
+        sha256: pkg.sha256,
+        version: "1.0.0",
+        source: "file",
+        desired_state: "enabled",
+      })
+      .execute();
+    const holder = new pg.Client({ connectionString: pgc.url });
+    await holder.connect();
+    await holder.query("SELECT pg_advisory_lock(hashtext($1))", [
+      "capybara-migrate:plugin_slowmig",
+    ]);
+    try {
+      const k2 = await createKernel(
+        runConfig(
+          { pg: pgc.url, redis: rd.url },
+          {
+            roles: ["api"],
+            plugins: [],
+            pluginPermissions: { autoApprove: true },
+            pluginHost: { dir: pluginsDir },
+            packages: { maxBytes: MAX_BYTES },
+          },
+        ),
+        { env: {}, logger: createLogger("error", { write: () => {} }) },
+      );
+      const starting = k2.start();
+      starting.catch(() => {});
+      await waitFor(
+        async () =>
+          (
+            await sql<{
+              n: number;
+            }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`.execute(
+              db,
+            )
+          ).rows[0]?.n === 1,
+        20_000,
+        "plugin migration waiting on the schema lock",
+      );
+      const t0 = Date.now();
+      await k2.stop();
+      expect(Date.now() - t0).toBeLessThan(10_000);
+      await expect(starting).rejects.toThrow();
+      expect(
+        (
+          await sql<{
+            n: number;
+          }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`.execute(
+            db,
+          )
+        ).rows[0]?.n,
+      ).toBe(0);
+    } finally {
+      await holder.end();
+    }
   });
 });

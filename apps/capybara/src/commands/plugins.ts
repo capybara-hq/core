@@ -354,8 +354,8 @@ export async function runPluginsInstall(
       }
       if (review.warnings.length > 0) {
         lines.push(
-          "Warning (sensitive): the package's migrations contain destructive statements; plugin migrations should only expand, because old and new versions run side by side during an upgrade:",
-          ...review.warnings.map((w) => `  ! ${w.file}:${w.line}  ${w.statement}`),
+          "Warning (sensitive): review these migration statements; plugin migrations should only expand, because old and new versions run side by side during an upgrade (DO blocks are not checked):",
+          ...review.warnings.map((w) => `  ! [${w.kind}] ${w.file}:${w.line}  ${w.statement}`),
         );
       }
       if (view.status === "pending_approval") {

@@ -1114,8 +1114,8 @@ export async function createKernel(
                       connectTimeoutMs: config.db.connectTimeoutMs,
                       bus,
                       log,
-                      // 宿主关闭时中止（停机、运行中 reconcile 的迁移都一样）
-                      signal,
+                      // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
+                      signal: AbortSignal.any([signal, startAbort.signal]),
                     },
                     d.name,
                     d.sha256,

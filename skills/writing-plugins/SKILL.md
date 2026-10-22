@@ -239,10 +239,10 @@ it("交替请求两个副本，结果一致", async () => {
 **安装、启用、停用、升级、卸载（不重启，C16 / C18）**：包先导入包存储（后台上传 / npm，或 `capybara plugins install <file.tgz | npm:<名>[@<版本>]>`，CLI 导入的包一律存 PG），再由安装记录指向它（`POST /api/v1/admin/plugins/:name/install {sha256}`；新装为停用），`…/enable`、`…/disable`、`DELETE …/:name`（须先停用）改期望状态；CLI 对应 `capybara plugins list | enable | disable | uninstall <name>`。后台与 CLI **只写 PG 期望状态**并发布 `kernel.plugins.changed`，各副本 reconcile 收敛（维护任务 `plugins-reconcile` 每 `pluginHost.reconcileIntervalSeconds` 秒发布 `kernel.plugins.reconcile` 兜底，丢了消息也能收敛）。写插件时要知道的：
 
 - 换版本时**先加载新版本、再撤销旧版本**（旧实例在后台排空在途调用）；新版本在某个副本上加载失败（`sync_failed` / `sha_mismatch` / `import_failed` / `manifest_mismatch` / `setup_failed` / `migration_failed`），那个副本继续跑旧版本、状态记 `failed`，之后每个周期重试。新版本权限超出快照时待批准，旧版本照常。
-- **迁移只做扩展**（加表、加列、加索引；删改走两步，见 `skills/writing-migrations`）：新旧版本会在不同副本上同时跑。上传 / 导入包时，迁移里的破坏性语句（删表 / 删列、TRUNCATE、DELETE、RENAME、改列类型）在审阅结果的 `warnings` 里逐条列为敏感警告（不拒绝），部署方会看到。迁移由第一个拿到咨询锁的副本执行一次（`ensureMigrated`），完成前其他副本不切换（`pending_migration`）。迁移目录只认包里审阅过的 `capybara.migrations`。
+- **迁移只做扩展**（加表、加列、加索引；删改走两步，见 `skills/writing-migrations`）：新旧版本会在不同副本上同时跑。上传 / 导入包时，迁移里的破坏性语句（删表 / 删列、TRUNCATE、DELETE、RENAME、改列类型，`destructive_migration`）与内容不做静态检查的 `DO` 块（`dynamic_sql`）在审阅结果的 `warnings` 里逐条列为敏感警告（不拒绝），部署方会看到；别用 `DO` 块。迁移由第一个拿到咨询锁的副本执行一次（`ensureMigrated`），完成前其他副本不切换（`pending_migration`）。迁移目录只认包里审阅过的 `capybara.migrations`。
 - **降级**只能回到「迁移文件都已执行过（文件名与内容一致）」的版本，否则 409 `plugin.downgrade_unsupported`。
 - 停用 / 卸载不删数据：插件 schema、密钥、组织配置、权限快照都保留，重新安装后接着用。部署上停用时组织里的启用开关不变，组织页显示「不可用」。
-- **插件名归 npm 包所有**：同名插件只能来自同一个 npm 包（`package.json` 的 `name`）。卸载之后也一样：数据、密钥、批准快照与组织启用都还在，另一个 npm 包用同一个插件名安装会被拒绝（409 `plugin.name_conflict`，提示该名字之前由哪个包使用），防止换个发布者接手这些数据；原来的包可以重新安装。所以**改 npm 包名等于换一个插件**，插件名也要换。
+- **插件名归 npm 包所有**：插件名归第一次安装它的 npm 包（`package.json` 的 `name`，记在 `plugin_name_owners`，只上传没安装的包不占名字），同名插件只能来自这个包。卸载之后也一样（卸载不删归属）：数据、密钥、批准快照与组织启用都还在，另一个 npm 包用同一个插件名安装会被拒绝（409 `plugin.name_conflict`，提示该名字之前由哪个包使用），防止换个发布者接手这些数据；原来的包可以重新安装。所以**改 npm 包名等于换一个插件**，插件名也要换。
 - 内核消费的提供方调用（`connector@1` 的 `open` 到会话 `close`、`sandbox@1`、`model-provider@*` 的每次调用与流）和插件工具一样计入实例的在途计数：停用 / 升级时先排空，到时限中止（参数里的 `AbortSignal` 被中止）。提供方实现要理会传入的 signal。
 
 ## 新插件清单

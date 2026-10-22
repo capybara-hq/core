@@ -37,6 +37,20 @@ CREATE TABLE IF NOT EXISTS plugin_installs (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- 插件名归哪个 npm 包（Ruling P3）：第一次安装时写入，卸载不删。卸载保留数据、密钥、批准快照与组织启用，
+-- 另一个 npm 包不能用同名插件接手这些。只上传、没安装过的包不占名字。
+CREATE TABLE IF NOT EXISTS plugin_name_owners (
+  name text PRIMARY KEY,
+  package_name text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO plugin_name_owners (name, package_name)
+SELECT plugin_installs.name, plugin_packages.package_name
+FROM plugin_installs
+JOIN plugin_packages ON plugin_packages.sha256 = plugin_installs.sha256
+ON CONFLICT DO NOTHING;
+
 -- 每个副本（进程）每个插件的加载结果；replica_id 是进程级的 <hostname>-<pid>-<6 位随机>，
 -- http_replica_id 是配置的 http.replicaId（有就记，便于与 x-capybara-replica 对照）。
 -- state = pending 时 reason 为 config / approval / migration / dependency。

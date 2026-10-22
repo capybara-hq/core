@@ -1,7 +1,7 @@
 import { type CapybaraPackageSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
-import { destructiveStatements } from "../db/sql-statements.js";
+import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -36,9 +36,25 @@ export interface PackageReview {
   warnings: PackageWarning[];
 }
 
+/**
+ * 迁移 SQL 的审阅警告：破坏性语句（`destructive_migration`），以及内容不做静态检查的 `DO` 块（`dynamic_sql`，
+ * 块里可以执行任意语句）。都标敏感，不拒绝。
+ */
+export function migrationWarnings(files: { file: string; sql: string }[]): PackageWarning[] {
+  return files.flatMap((m) =>
+    splitSqlStatements(m.sql).flatMap((st): PackageWarning[] => {
+      const base = { sensitive: true as const, file: m.file, line: st.line, statement: st.text };
+      if (/^DO\b/i.test(st.text)) return [{ kind: "dynamic_sql", ...base }];
+      if (isDestructiveSql(st.text)) return [{ kind: "destructive_migration", ...base }];
+      return [];
+    }),
+  );
+}
+
 /** {@link PackageReview.warnings} 的一项。 */
 export interface PackageWarning {
-  kind: "destructive_migration";
+  /** `dynamic_sql`：`DO` 块，块内语句没有检查。 */
+  kind: "destructive_migration" | "dynamic_sql";
   sensitive: true;
   /** 迁移文件名（`capybara.migrations` 目录下）。 */
   file: string;
@@ -186,15 +202,7 @@ export class PluginInstalls {
       added,
       removed,
       reviewHash: reviewHash(set),
-      warnings: pkg.migrationSql.flatMap((m) =>
-        destructiveStatements(m.sql).map((st) => ({
-          kind: "destructive_migration" as const,
-          sensitive: true as const,
-          file: m.file,
-          line: st.line,
-          statement: st.text,
-        })),
-      ),
+      warnings: migrationWarnings(pkg.migrationSql),
     };
   }
 
