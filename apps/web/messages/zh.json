@@ -902,7 +902,8 @@
       "grants": "已记住的授权",
       "organization": "组织设置",
       "identities": "IM 身份",
-      "plugins": "插件"
+      "plugins": "插件",
+      "models": "模型用途"
     },
     "empty": "没有需要你个人凭据的应用。",
     "emptyHint": "使用个人凭据的应用会出现在这里。",
@@ -1625,6 +1626,83 @@
       "tool_unmatched": "有工具调用没有对应的记录"
     }
   },
+  "models": {
+    "admin": {
+      "title": "模型",
+      "providers": {
+        "title": "供应商与模型",
+        "description": "已安装的模型供应商及其模型。价格为每百万 token 的单价，币种 {currency}（在部署设置中修改）；轨迹与评测里的成本都按这里的价格估算。"
+      },
+      "providerError": "供应商 {provider} 列模型失败，其他供应商不受影响。",
+      "noProviders": "还没有模型供应商。安装模型供应商插件后会出现在这里。",
+      "noModels": "这个供应商没有模型。",
+      "columns": {
+        "model": "模型",
+        "capabilities": "能力",
+        "context": "上下文长度",
+        "input": "输入",
+        "output": "输出",
+        "cacheRead": "缓存读",
+        "cacheWrite": "缓存写"
+      },
+      "sameAsInput": "同输入",
+      "menu": {
+        "editPrice": "编辑价格",
+        "clearPrice": "清除价格"
+      },
+      "price": {
+        "input": "输入（每百万 token）",
+        "output": "输出（每百万 token）",
+        "cacheRead": "缓存读（每百万 token）",
+        "cacheWrite": "缓存写（每百万 token）",
+        "cacheHint": "留空按输入价计。",
+        "invalid": "填 0 到 1,000,000 之间的数。",
+        "save": "保存价格",
+        "saveLabel": "保存 {model} 的价格",
+        "cancel": "取消",
+        "saved": "已保存 {model} 的价格。",
+        "cleared": "已清除 {model} 的价格。"
+      },
+      "purposes": {
+        "title": "用途默认映射",
+        "description": "内核与插件按用途取模型。这里设部署默认，各组织的管理员可以在组织设置里覆盖。不设模型白名单。"
+      }
+    },
+    "org": {
+      "title": "模型用途",
+      "description": "内核与插件按用途取模型。每个用途默认使用企业管理员设的部署默认；你可以为本组织覆盖，或恢复默认。"
+    },
+    "evalUnmapped": "评测用途 eval 还没有映射模型：评测不能开评委。",
+    "capability": {
+      "tools": "工具",
+      "vision": "图片",
+      "documents": "文档",
+      "reasoning": "推理",
+      "caching": "缓存"
+    },
+    "purpose": {
+      "declaredByKernel": "内核用途",
+      "declaredByPlugin": "插件 {plugin}",
+      "pluginNote": "插件调用模型尚未开放，可先配置。",
+      "model": "模型",
+      "modelInvalid": "所选模型不可用。",
+      "unset": "未设置",
+      "useDefault": "使用部署默认",
+      "deploymentDefault": "部署默认：{target}",
+      "overridden": "已覆盖",
+      "unavailable": "{target}（不可用）",
+      "params": "参数",
+      "save": "保存",
+      "saveLabel": "保存用途 {purpose}",
+      "clear": "清除",
+      "clearLabel": "清除用途 {purpose} 的部署默认",
+      "restore": "恢复默认",
+      "restoreLabel": "用途 {purpose} 恢复部署默认",
+      "saved": "已保存用途 {purpose}。",
+      "cleared": "已清除用途 {purpose} 的部署默认。",
+      "restored": "用途 {purpose} 已恢复部署默认。"
+    }
+  },
   "admin": {
     "title": "管理",
     "nav": {
@@ -1632,7 +1710,8 @@
       "accounts": "账号",
       "orgs": "组织",
       "settings": "部署设置",
-      "plugins": "插件"
+      "plugins": "插件",
+      "models": "模型"
     },
     "forbidden": {
       "title": "需要企业管理员",
@@ -1665,6 +1744,11 @@
         "title": "插件",
         "hint": "安装、批准、启用、停用、升级插件，填写部署级配置。",
         "open": "管理插件"
+      },
+      "models": {
+        "title": "模型",
+        "hint": "模型供应商、价格与各用途的默认模型。",
+        "open": "管理模型"
       }
     },
     "accounts": {

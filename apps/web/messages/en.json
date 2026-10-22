@@ -902,7 +902,8 @@
       "grants": "Remembered approvals",
       "organization": "Organization",
       "identities": "IM identities",
-      "plugins": "Plugins"
+      "plugins": "Plugins",
+      "models": "Model purposes"
     },
     "empty": "No app needs your own credential.",
     "emptyHint": "Apps that use personal credentials show up here.",
@@ -1625,6 +1626,83 @@
       "tool_unmatched": "A tool call had no recorded result"
     }
   },
+  "models": {
+    "admin": {
+      "title": "Models",
+      "providers": {
+        "title": "Providers and models",
+        "description": "Installed model providers and their models. Prices are per million tokens in {currency} (change it in Deployment settings); costs in trajectories and evals are estimated from these prices."
+      },
+      "providerError": "Provider {provider} failed to list its models. Other providers are not affected.",
+      "noProviders": "No model providers yet. Install a model provider plugin and it will show up here.",
+      "noModels": "This provider has no models.",
+      "columns": {
+        "model": "Model",
+        "capabilities": "Capabilities",
+        "context": "Context window",
+        "input": "Input",
+        "output": "Output",
+        "cacheRead": "Cache read",
+        "cacheWrite": "Cache write"
+      },
+      "sameAsInput": "Same as input",
+      "menu": {
+        "editPrice": "Edit price",
+        "clearPrice": "Clear price"
+      },
+      "price": {
+        "input": "Input (per million tokens)",
+        "output": "Output (per million tokens)",
+        "cacheRead": "Cache read (per million tokens)",
+        "cacheWrite": "Cache write (per million tokens)",
+        "cacheHint": "Leave empty to use the input price.",
+        "invalid": "Enter a number from 0 to 1,000,000.",
+        "save": "Save price",
+        "saveLabel": "Save price for {model}",
+        "cancel": "Cancel",
+        "saved": "Saved the price for {model}.",
+        "cleared": "Cleared the price for {model}."
+      },
+      "purposes": {
+        "title": "Default model per purpose",
+        "description": "The kernel and plugins pick models by purpose. Set the deployment default here; org admins can override it in their org settings. There is no model allowlist."
+      }
+    },
+    "org": {
+      "title": "Model purposes",
+      "description": "The kernel and plugins pick models by purpose. Each purpose uses the deployment default set by the enterprise admins; you can override it for this org or restore the default."
+    },
+    "evalUnmapped": "The eval purpose has no model mapped, so evals cannot use a judge.",
+    "capability": {
+      "tools": "Tools",
+      "vision": "Images",
+      "documents": "Documents",
+      "reasoning": "Reasoning",
+      "caching": "Caching"
+    },
+    "purpose": {
+      "declaredByKernel": "Kernel purpose",
+      "declaredByPlugin": "Plugin {plugin}",
+      "pluginNote": "Plugins cannot call models yet. You can configure this in advance.",
+      "model": "Model",
+      "modelInvalid": "The selected model is not available.",
+      "unset": "Not set",
+      "useDefault": "Use deployment default",
+      "deploymentDefault": "Deployment default: {target}",
+      "overridden": "Overridden",
+      "unavailable": "{target} (unavailable)",
+      "params": "Parameters",
+      "save": "Save",
+      "saveLabel": "Save purpose {purpose}",
+      "clear": "Clear",
+      "clearLabel": "Clear the deployment default for purpose {purpose}",
+      "restore": "Restore default",
+      "restoreLabel": "Restore the deployment default for purpose {purpose}",
+      "saved": "Saved purpose {purpose}.",
+      "cleared": "Cleared the deployment default for purpose {purpose}.",
+      "restored": "Purpose {purpose} now uses the deployment default."
+    }
+  },
   "admin": {
     "title": "Admin",
     "nav": {
@@ -1632,7 +1710,8 @@
       "accounts": "Accounts",
       "orgs": "Organizations",
       "settings": "Deployment settings",
-      "plugins": "Plugins"
+      "plugins": "Plugins",
+      "models": "Models"
     },
     "forbidden": {
       "title": "Enterprise admin required",
@@ -1665,6 +1744,11 @@
         "title": "Plugins",
         "hint": "Install, approve, enable, disable and upgrade plugins; fill in deployment config.",
         "open": "Manage plugins"
+      },
+      "models": {
+        "title": "Models",
+        "hint": "Model providers, prices and the default model for each purpose.",
+        "open": "Manage models"
       }
     },
     "accounts": {

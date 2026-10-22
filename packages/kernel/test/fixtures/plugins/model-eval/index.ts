@@ -34,6 +34,8 @@ export interface EvalModelState {
   streamThenFail: { text: string; error: ModelError } | null;
   /** 模型 eval-j（评委）的回复文本。 */
   judgeReply: string;
+  /** 为真时 listModels() 抛错（模拟上游不可用）。 */
+  listFails: boolean;
 }
 
 /** eval-j 缺省的回复：合法的评委结论。 */
@@ -52,6 +54,7 @@ export function evalModelState(): EvalModelState {
     failures: [],
     streamThenFail: null,
     judgeReply: DEFAULT_JUDGE_REPLY,
+    listFails: false,
   };
   return g.__evalModel;
 }
@@ -68,6 +71,7 @@ export function resetEvalModel(): void {
   s.failures = [];
   s.streamThenFail = null;
   s.judgeReply = DEFAULT_JUDGE_REPLY;
+  s.listFails = false;
 }
 
 const info = (id: string, vision = false): ModelInfo => ({
@@ -123,6 +127,7 @@ export default definePlugin({
     const replica = Deployment.parse(ctx.config ?? {}).replica ?? "";
     const provider: ModelProvider = {
       async listModels() {
+        if (evalModelState().listFails) throw new Error("upstream down");
         return [info("eval-1"), info("eval-2"), info("eval-v", true), info("eval-j")];
       },
       async *stream(req, { signal }): AsyncGenerator<ModelStreamEvent> {

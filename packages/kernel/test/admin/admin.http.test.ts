@@ -266,6 +266,7 @@ describe("企业管理员端点", () => {
     { method: "GET", url: "/api/v1/admin/settings" },
     { method: "PUT", url: "/api/v1/admin/settings" },
     { method: "GET", url: "/api/v1/admin/overview" },
+    { method: "GET", url: "/api/v1/admin/models" },
   ] as const;
 
   it("普通用户访问 /admin/* → 403 forbidden", async () => {

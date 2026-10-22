@@ -58,6 +58,7 @@ const APP_SETTINGS = [
   "/settings/identities",
   "/settings/organization",
   "/settings/plugins",
+  "/settings/models",
 ];
 
 const under = (pathname: string, prefix: string) =>

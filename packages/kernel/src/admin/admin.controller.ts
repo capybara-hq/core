@@ -19,6 +19,7 @@ import {
   ORGS,
   PLUGIN_ADMIN,
   PRICES,
+  PROVIDER_REGISTRY,
   SESSIONS,
   SETTINGS,
 } from "../http/tokens.js";
@@ -54,6 +55,7 @@ import {
 import type { Org, OrgsService } from "../orgs/orgs.service.js";
 import type { PluginAdmin } from "../plugins/admin-view.js";
 import { pluginNeedsAction } from "../plugins/permission-view.js";
+import type { ProviderRegistry, ProviderStatus } from "../runtime/providers.js";
 
 /** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
 export interface AdminOverview {
@@ -105,6 +107,7 @@ export class AdminController {
     @Inject(PRICES) private readonly prices: PricesService,
     @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
     @Inject(PLUGIN_ADMIN) private readonly plugins: PluginAdmin,
+    @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
@@ -211,6 +214,23 @@ export class AdminController {
   ): Promise<DeploymentSettings> {
     const actor = requireUser(principal);
     return this.settings.update(body, actor.account.id, patTokenId(actor));
+  }
+
+  /**
+   * 模型供应商与模型（后台「模型」页）：每个供应商带状态，列模型失败的标 `error`，不影响其他供应商；
+   * 一并返回价格表与币种（改价仍走 `PUT /admin/model-prices`）。
+   */
+  @Get("models")
+  async getModels(): Promise<{
+    providers: ProviderStatus[];
+    prices: ModelPrice[];
+    currency: string;
+  }> {
+    const [providers, prices] = await Promise.all([
+      this.registry.listWithStatus(),
+      this.getModelPrices(),
+    ]);
+    return { providers, ...prices };
   }
 
   /** 模型价格表（每百万 token）与币种（部署设置 `priceCurrency`）。 */

@@ -49,6 +49,15 @@ export interface ProviderHost {
 
 const CAPABILITY = "model-provider";
 
+/** 一个供应商在后台的视图：供应商名即插件名；`status: "error"` 时 `models` 为空、`error` 为内核的说明。 */
+export interface ProviderStatus {
+  provider: string;
+  plugin: string;
+  status: "ok" | "error";
+  error?: string;
+  models: ModelInfo[];
+}
+
 /**
  * 供应商的 `listModels()` 失败（上游不可用等）。仍是 `agent.model_unavailable`，HTTP 调用方照常
  * 得到该错误码；运行时（`runModelStep`）据此类型把它当作可重试的失败交给降级梯子，
@@ -194,15 +203,30 @@ export class ProviderRegistry {
 
   /** 每个已安装供应商及其模型（按插件加载顺序）；列模型失败或声明不合规的供应商跳过并记 warn。 */
   async list(): Promise<{ provider: string; models: ModelInfo[] }[]> {
+    return (await this.listWithStatus()).flatMap((p) =>
+      p.status === "ok" ? [{ provider: p.provider, models: p.models }] : [],
+    );
+  }
+
+  /**
+   * 每个已安装供应商及其状态（按插件加载顺序，后台用）：列模型失败或声明不合规的标 `error`、`models` 为空，
+   * 不影响其他供应商。`error` 只是内核自己的英文说明（不透出上游错误原文，原文记 warn 日志）。
+   */
+  async listWithStatus(): Promise<ProviderStatus[]> {
     const providers = this.providers();
     const settled = await Promise.allSettled(providers.map((p) => this.models(p)));
-    const out: { provider: string; models: ModelInfo[] }[] = [];
-    settled.forEach((r, i) => {
+    return settled.map((r, i): ProviderStatus => {
       const provider = (providers[i] as { plugin: string }).plugin;
-      if (r.status === "fulfilled") out.push({ provider, models: r.value });
-      else this.log?.warn("model provider listModels failed; skipped", { provider, err: r.reason });
+      if (r.status === "fulfilled") {
+        return { provider, plugin: provider, status: "ok", models: r.value };
+      }
+      this.log?.warn("model provider listModels failed; skipped", { provider, err: r.reason });
+      const error =
+        r.reason instanceof ApiError
+          ? r.reason.message
+          : `Model provider ${provider} failed to list its models`;
+      return { provider, plugin: provider, status: "error", error, models: [] };
     });
-    return out;
   }
 
   /**
