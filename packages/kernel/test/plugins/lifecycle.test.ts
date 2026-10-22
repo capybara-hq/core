@@ -19,7 +19,7 @@ import type { PluginInstance } from "../../src/plugins/instance.js";
 import { readPluginPackage } from "../../src/plugins/package.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { lifePkg } from "../helpers/plugin-packages.js";
+import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import {
   createOrg,
   PW,
@@ -646,6 +646,143 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
       ).toBe(0);
     } finally {
       await holder.end();
+    }
+  });
+});
+
+describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3）", { timeout: 60_000 }, () => {
+  /** 把包存进 PG 包存储并写一条期望启用的安装记录。 */
+  const seedInstall = async (name: string, bytes: Uint8Array) => {
+    const pkg = await readPluginPackage(bytes, { maxBytes: MAX_BYTES, hostSdkVersion: SDK_VERSION });
+    await new PluginBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+      source: "file",
+      ref: "upload",
+      actor: null,
+      store: "pg",
+    });
+    await db
+      .insertInto("plugin_installs")
+      .values({
+        name,
+        sha256: pkg.sha256,
+        version: "1.0.0",
+        source: "file",
+        desired_state: "enabled",
+      })
+      .execute();
+  };
+  /** start() 在 `ms` 内返回 → started；否则 hung（不等它）。 */
+  const startWithin = async (k2: Kernel, ms: number) => {
+    const starting = k2.start();
+    starting.catch(() => {});
+    let timer: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      starting.then(() => "started" as const),
+      new Promise<"hung">((r) => {
+        timer = setTimeout(() => r("hung"), ms);
+      }),
+    ]);
+    clearTimeout(timer);
+    return outcome;
+  };
+  const statusOf = (plugin: string) =>
+    db
+      .selectFrom("plugin_replica_status")
+      .select(["state", "reason", "detail"])
+      .where("plugin", "=", plugin)
+      .execute();
+  const kernelWith = (pluginHost: Record<string, unknown>) =>
+    createKernel(
+      runConfig(
+        { pg: pgc.url, redis: rd.url },
+        {
+          roles: ["api"],
+          plugins: [],
+          pluginPermissions: { autoApprove: true },
+          pluginHost: { dir: pluginsDir, ...pluginHost },
+          packages: { maxBytes: MAX_BYTES },
+        },
+      ),
+      { env: {}, logger: createLogger("error", { write: () => {} }) },
+    );
+
+  it("安装记录的 setup 挂住：start() 照常返回，该插件记 failed / setup_failed", async () => {
+    await seedInstall(
+      "hangsetup",
+      await pluginTgz({
+        name: "hangsetup",
+        entry: [
+          'import { definePlugin } from "@capybara-hq/plugin-sdk";',
+          'export default definePlugin({ name: "hangsetup", version: "1.0.0", sdk: "^0.1.0", provides: [], permissions: {}, setup() { return new Promise(() => {}); } });',
+        ].join("\n"),
+      }),
+    );
+    const k2 = await kernelWith({ reloadSetupTimeoutSeconds: 1 });
+    try {
+      expect(await startWithin(k2, 15_000)).toBe("started");
+      expect(k2.host.current("hangsetup")).toBeUndefined();
+      expect(await statusOf("hangsetup")).toEqual([
+        expect.objectContaining({ state: "failed", reason: "setup_failed" }),
+      ]);
+    } finally {
+      await k2.stop();
+      await db.deleteFrom("plugin_installs").where("name", "=", "hangsetup").execute();
+    }
+  });
+
+  it("迁移挂住：pluginHost.migrationTimeoutSeconds 到时终止会话、记 migration_failed，锁随之释放", async () => {
+    await seedInstall(
+      "sleepmig",
+      await lifePkg({
+        name: "sleepmig",
+        version: "1.0.0",
+        migrations: [{ file: "0001_sleep.sql", sql: "SELECT pg_sleep(60);\n" }],
+      }),
+    );
+    const k2 = await kernelWith({ migrationTimeoutSeconds: 1 });
+    try {
+      expect(await startWithin(k2, 20_000)).toBe("started");
+      expect(k2.host.current("sleepmig")).toBeUndefined();
+      const [row] = await statusOf("sleepmig");
+      expect(row).toMatchObject({ state: "failed", reason: "migration_failed" });
+      expect(row?.detail).toMatch(/did not finish within 1s/);
+      // 迁移锁与按 schema 的锁都已释放
+      const probe = new pg.Client({ connectionString: pgc.url });
+      await probe.connect();
+      try {
+        for (const key of [
+          "capybara.plugin-migrate:sleepmig",
+          "capybara-migrate:plugin_sleepmig",
+        ]) {
+          const r = await probe.query("SELECT pg_try_advisory_lock(hashtext($1)) AS ok", [key]);
+          expect(r.rows[0]?.ok, key).toBe(true);
+          await probe.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+        }
+      } finally {
+        await probe.end();
+      }
+      // 迁移会话已终止
+      await waitFor(
+        async () =>
+          (
+            await sql<{
+              n: number;
+            }>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE query LIKE 'SELECT pg_sleep(60)%'`.execute(
+              db,
+            )
+          ).rows[0]?.n === 0,
+        5_000,
+        "migration backend terminated",
+      );
+      const migrated = await db
+        .selectFrom("plugin_installs")
+        .select("migrated_sha")
+        .where("name", "=", "sleepmig")
+        .executeTakeFirstOrThrow();
+      expect(migrated.migrated_sha).toBeNull();
+    } finally {
+      await k2.stop();
+      await db.deleteFrom("plugin_installs").where("name", "=", "sleepmig").execute();
     }
   });
 });

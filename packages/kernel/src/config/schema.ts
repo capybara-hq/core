@@ -154,7 +154,18 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Seconds a plugin's setup() may run when it is reloaded in a running process (enable, upgrade, dependency change); on timeout the reload fails and the previous instance stays",
+              "Seconds a plugin's setup() may run when it is reloaded in a running process (enable, upgrade, dependency change), and when an installed plugin (install record) is loaded at startup; on timeout the load fails and the previous instance, if any, stays. Built-in and config-declared plugins are not bounded at startup",
+          }),
+        ),
+      migrationTimeoutSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(300)
+        .meta(
+          meta({
+            description:
+              "Seconds an installed plugin's migrations may run on the replica holding the migration lock; on timeout the migration session is terminated (statement_timeout bounds each statement, lock_timeout bounds lock waits), the lock is released and the replica reports migration_failed (retried on the next reconcile). Built-in and config-declared plugins are not bounded",
           }),
         ),
       reconcileIntervalSeconds: z

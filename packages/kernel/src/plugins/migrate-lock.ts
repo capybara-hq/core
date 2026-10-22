@@ -23,14 +23,24 @@ export interface MigrateLockDeps {
   log?: { warn(msg: string, fields?: Record<string, unknown>): void };
   /** 中止进行中的迁移（宿主关闭）。 */
   signal?: AbortSignal | undefined;
+  /**
+   * 迁移的总时限（毫秒，`pluginHost.migrationTimeoutSeconds`）：到时终止迁移会话并抛错（调用方记 migration_failed），
+   * 咨询锁随会话结束释放；迁移会话另设同值的 `statement_timeout` 与不超过 {@link MIGRATION_LOCK_TIMEOUT_MS} 的
+   * `lock_timeout`。不给不限时。
+   */
+  timeoutMs?: number | undefined;
 }
+
+/** 插件迁移等锁（表锁、按 schema 的咨询锁）的上限：排在它后面的业务查询不被长时间堵住。 */
+export const MIGRATION_LOCK_TIMEOUT_MS = 30_000;
 
 /**
  * 某插件某个包的迁移由一个副本持锁执行（C16，F-P）：
  * 1. 独立 `pg.Client`（不走连接池）上 `pg_try_advisory_lock(hashtext('capybara.plugin-migrate:' || name))`，
  *    拿不到 → `busy`（别的副本正在迁移；调用方记 `pending_migration`，等 `plugins.migrated` 或下一个周期）；
  * 2. 拿到后复核安装记录：已换成别的包 → `busy`（不迁移过期目标，下一轮按新目标处理）；`migrated_sha` 已是它 → `migrated`；
- * 3. 执行迁移（迁移器另开会话，持按 schema 的锁；只做扩展，见 skills/writing-migrations），写 `migrated_sha`；
+ * 3. 执行迁移（迁移器另开会话，持按 schema 的锁；只做扩展，见 skills/writing-migrations；`timeoutMs` 限时），
+ *    写 `migrated_sha`；
  * 4. 结束会话（锁随之释放，进程崩溃时同样释放），发布 `plugins.migrated {plugin, sha256}`（失败只告警）。
  * `dir` 为迁移目录的绝对路径（只取审阅过的 `capybara.migrations`）；没有迁移时直接记下 `migrated_sha`。
  * 迁移出错时抛出（不写 `migrated_sha`）。
@@ -63,11 +73,30 @@ export async function ensureMigrated(
     if (row?.sha256 !== sha256) return "busy";
     if (row.migrated_sha === sha256) return "migrated";
     if (dir !== undefined) {
-      await migrate(
-        d.dbUrl,
-        { schema: pluginSchemaName(name), dir },
-        { connectTimeoutMs: d.connectTimeoutMs, signal: d.signal },
-      );
+      const timeout = d.timeoutMs === undefined ? undefined : AbortSignal.timeout(d.timeoutMs);
+      const signals = [d.signal, timeout].filter((x): x is AbortSignal => x !== undefined);
+      try {
+        await migrate(
+          d.dbUrl,
+          { schema: pluginSchemaName(name), dir },
+          {
+            connectTimeoutMs: d.connectTimeoutMs,
+            signal: signals.length > 0 ? AbortSignal.any(signals) : undefined,
+            ...(d.timeoutMs !== undefined && {
+              statementTimeoutMs: d.timeoutMs,
+              lockTimeoutMs: Math.min(d.timeoutMs, MIGRATION_LOCK_TIMEOUT_MS),
+            }),
+          },
+        );
+      } catch (e) {
+        if (timeout?.aborted && !d.signal?.aborted) {
+          throw new Error(
+            `plugin ${name}: migrations did not finish within ${Math.round((d.timeoutMs as number) / 1000)}s (pluginHost.migrationTimeoutSeconds); the migration session was terminated`,
+            { cause: e },
+          );
+        }
+        throw e;
+      }
     }
     await client.query(
       "UPDATE capybara.plugin_installs SET migrated_sha = $2 WHERE name = $1 AND sha256 = $2",

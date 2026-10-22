@@ -685,8 +685,10 @@ export class PluginHost {
    * 每个插件的结果都写进本副本的 `plugin_replica_status`（构造时给了 `status`）。
    * 加载成功的实例登记进注册表（C17）：此后可用 {@link unload} / {@link reload} 在本进程撤销或重新加载。
    *
-   * 插件 setup 永不返回时 load()（进而内核 `start()`）永远挂起：内核不给 setup 设超时；
-   * 此时 `close()` / 内核 `stop()` 仍会立即关闭该插件的 ctx 并释放资源。
+   * 内置 / 配置声明的插件（受信任）setup 永不返回时 load()（进而内核 `start()`）永远挂起：内核不给它们设超时；
+   * 此时 `close()` / 内核 `stop()` 仍会立即关闭该插件的 ctx 并释放资源。安装记录不受信任：启动时 setup 同样限
+   * `pluginHost.reloadSetupTimeoutSeconds`（超时记 failed / setup_failed），迁移限
+   * `pluginHost.migrationTimeoutSeconds`（见 `ensureMigrated`）。
    * 加载期间宿主被 `close()` 时：进行中的迁移被中止、setup 中的 ctx 被立即关闭（此后其 queue 的
    * define / add 抛 `queue is closed`），load() 在下一个检查点抛 `plugin host closed during load`。
    */
@@ -996,11 +998,8 @@ export class PluginHost {
       };
       a.decision = this.decidePending(m.name, a, snapshots, installProviders);
       const old = this.registry.current(m.name);
-      const inst = await this.activate(
-        approvals,
-        a,
-        startup ? undefined : this.reloadSetupTimeoutMs(),
-      );
+      // 安装记录不受信任：启动时 setup 同样限时（I3），挂住的 setup 不卡住内核启动；内置 / 配置声明的启动时不限
+      const inst = await this.activate(approvals, a, this.reloadSetupTimeoutMs());
       if (inst) {
         activated.add(m.name);
         changed.push(...inst.manifest.provides, ...(old?.manifest.provides ?? []));
@@ -1685,7 +1684,7 @@ export class PluginHost {
   /**
    * 按加载参数建一个新实例（setup 期间的 ctx 记在 `settingUp`，close() 时立即关闭）。
    * `timeoutMs`（运行中重新加载）：setup 超时或宿主被关闭时关闭这个 ctx 并抛错；迟到完成的实例随即撤销。
-   * 启动时不设时限（见 {@link load}）。
+   * 内置 / 配置声明的插件启动时不设时限（见 {@link load}）。
    */
   private async setup(spec: InstanceSpec, timeoutMs?: number): Promise<PluginInstance> {
     if (this.imports.record(spec.manifest.name, spec.entryUrl)) {

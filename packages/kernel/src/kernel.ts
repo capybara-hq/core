@@ -1154,6 +1154,7 @@ export async function createKernel(
                       log,
                       // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
                       signal: AbortSignal.any([signal, startAbort.signal]),
+                      timeoutMs: current.pluginHost.migrationTimeoutSeconds * 1000,
                     },
                     d.name,
                     d.sha256,
