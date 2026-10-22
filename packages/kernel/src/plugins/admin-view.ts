@@ -392,6 +392,7 @@ type ReplicaRow = {
   state: string;
   reason: string | null;
   detail: string | null;
+  serving_version: string | null;
   heartbeat_at: Date;
 };
 
@@ -401,6 +402,7 @@ const replicaView = (r: ReplicaRow): AdminPluginView["replicas"][number] => ({
   state: r.state,
   reason: r.reason,
   detail: r.detail,
+  servingVersion: r.serving_version,
   heartbeatAt: r.heartbeat_at.toISOString(),
 });
 

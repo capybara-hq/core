@@ -1262,8 +1262,19 @@ export class PluginHost {
     }
   }
 
-  /** 写本副本的加载状态；失败只记 warn（状态是给后台看的，不影响加载）。 */
+  /**
+   * 写本副本的加载状态；失败只记 warn（状态是给后台看的，不影响加载）。这一行的版本没加载成（failed / pending）
+   * 而本副本仍有别的版本在跑时，记下那个版本（`servingVersion`，后台同时显示「新版失败、旧版仍在服务」）。
+   */
   private async writeStatus(s: PluginLoadStatus): Promise<void> {
+    if (s.servingVersion === undefined && (s.state === "failed" || s.state === "pending")) {
+      const cur = this.registry.current(s.plugin);
+      s = {
+        ...s,
+        servingVersion:
+          cur && (cur.sha256 !== s.sha256 || cur.version !== s.version) ? cur.version : null,
+      };
+    }
     if (s.source === "install") {
       if (s.state === "unloaded") this.installRows.delete(s.plugin);
       else this.installRows.set(s.plugin, { version: s.version, sha256: s.sha256 as string });

@@ -31,6 +31,11 @@ export interface PluginLoadStatus {
   state: "loaded" | "failed" | "pending" | "unloaded";
   reason: PendingReason | string | null;
   detail: string | null;
+  /**
+   * 这一行的版本没加载成（failed / pending）而本副本仍在用旧版本（升级失败或待批准时旧版照常）时，旧版本号。
+   * 省略视同 null。
+   */
+  servingVersion?: string | null;
 }
 
 /** detail 的长度上限（报错信息可能很长）。 */
@@ -68,6 +73,7 @@ export class ReplicaStatusStore {
       state: s.state,
       reason: s.reason,
       detail: s.detail === null ? null : this.cleanDetail(s.detail),
+      serving_version: s.servingVersion ?? null,
       http_replica_id: this.httpReplicaId ?? null,
       heartbeat_at: sql<Date>`now()` as unknown as Date,
     };
@@ -82,6 +88,7 @@ export class ReplicaStatusStore {
           state: values.state,
           reason: values.reason,
           detail: values.detail,
+          serving_version: values.serving_version,
           http_replica_id: values.http_replica_id,
           heartbeat_at: values.heartbeat_at,
         }),

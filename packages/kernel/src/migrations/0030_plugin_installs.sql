@@ -54,6 +54,7 @@ ON CONFLICT DO NOTHING;
 -- 每个副本（进程）每个插件的加载结果；replica_id 是进程级的 <hostname>-<pid>-<6 位随机>，
 -- http_replica_id 是配置的 http.replicaId（有就记，便于与 x-capybara-replica 对照）。
 -- state = pending 时 reason 为 config / approval / migration / dependency。
+-- serving_version：这一行的版本没加载成（failed / pending）而本副本仍在用旧版本时，旧版本号；否则为空。
 CREATE TABLE IF NOT EXISTS plugin_replica_status (
   replica_id text NOT NULL,
   plugin text NOT NULL,
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS plugin_replica_status (
   state text NOT NULL CHECK (state IN ('loaded', 'failed', 'unloaded', 'pending')),
   reason text,
   detail text,
+  serving_version text,
   http_replica_id text,
   heartbeat_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (replica_id, plugin)

@@ -18,3 +18,4 @@
 - 部署配置读取只并入当前 schema 里是密钥的字段的密钥（旧版本留下、已不是密钥或已删掉的字段不解密、不并入）；`readStoredDeploymentConfig` 新增必填选项 `secretPaths`。
 - 读组织的沙箱限额覆盖时只解析该组织那一条：别的组织存量值非法不再连带丢掉全部覆盖。
 - 对象存储里缺插件包时报错点名缺的键（`deployment/plugins/blobs/<sha256>.tgz`）并提示换桶 / 换地址后的补救办法；writing-object-store-providers 写明换桶会让 `blob_store = object` 的包与附件等取不到。
+- 副本状态行新增 `serving_version`（迁移 0030 就地修改）：这一行的版本没加载成而本副本仍在用旧版本时记下旧版本号，后台视图的副本项新增 `servingVersion`。

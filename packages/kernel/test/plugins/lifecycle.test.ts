@@ -63,7 +63,13 @@ interface View {
   sha256: string | null;
   status: string;
   desired: { version: string; sha256: string; state: string } | null;
-  replicas: { replicaId: string; state: string; reason: string | null; version: string }[];
+  replicas: {
+    replicaId: string;
+    state: string;
+    reason: string | null;
+    version: string;
+    servingVersion: string | null;
+  }[];
   reviewHash: string;
 }
 
@@ -252,6 +258,10 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     );
     expect(g.__lifeImports ?? []).not.toContain("life 2.0.0");
     expect(loadedVersion("life")).toBe("1.0.0");
+    // 状态行同时记下本副本仍在用的旧版本
+    expect((await view("life")).replicas).toEqual([
+      expect.objectContaining({ version: "2.0.0", state: "pending", servingVersion: "1.0.0" }),
+    ]);
 
     // v1 有一个在途调用
     let release: () => void = () => {};

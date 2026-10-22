@@ -249,6 +249,8 @@ export interface AdminPluginView {
     state: string;
     reason: string | null;
     detail: string | null;
+    /** 这一行的版本没加载成、该副本仍在用的旧版本（新版失败 / 待批准时旧版照常）；否则 null。 */
+    servingVersion: string | null;
     heartbeatAt: string;
   }[];
   permissions: PermissionGroup[];

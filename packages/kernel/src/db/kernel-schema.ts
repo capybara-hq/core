@@ -764,6 +764,8 @@ export interface PluginReplicaStatusTable {
   state: "loaded" | "failed" | "unloaded" | "pending";
   reason: string | null;
   detail: string | null;
+  /** 这一行的版本没加载成、本副本仍在用的旧版本（见迁移 0030）。 */
+  serving_version: Generated<string | null>;
   http_replica_id: string | null;
   heartbeat_at: Ts;
 }
