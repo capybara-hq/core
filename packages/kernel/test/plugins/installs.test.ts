@@ -224,6 +224,10 @@ describe("有对象存储：上传、npm 与包存储", () => {
     const d = k.storage.deployment();
     await d.delete(blobKey(todoSha));
     expect(await d.head(blobKey(todoSha))).toBeNull();
+    // 对象没了（如换了桶）：报错点名缺的键与补救办法
+    await expect(
+      new PluginBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES }).get(todoSha),
+    ).rejects.toThrow(/deployment\/plugins\/blobs\/[0-9a-f]{64}\.tgz is missing there; if the object store's bucket/);
     expect((await upload(admin, todo)).statusCode).toBe(200);
     expect(await d.head(blobKey(todoSha))).not.toBeNull();
   });
@@ -443,8 +447,8 @@ describe("启动时加载安装记录", () => {
       .select(["state", "detail"])
       .where("replica_id", "=", k.replicaId)
       .execute();
-    expect(after.length).toBeGreaterThan(0);
-    expect(after).toEqual(after.map(() => ({ state: "unloaded", detail: null })));
+    // 正常停机删掉本副本的状态行（不再标 unloaded 留着，部署状态不必等心跳过期）
+    expect(after).toEqual([]);
   });
 
   it("同一 sha 再次启动复用本地目录（包存储里没有字节也能加载）", async () => {

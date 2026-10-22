@@ -143,7 +143,12 @@ export class PluginBlobs {
     } else {
       if (!this.d.storage) throw new Error("object storage is not available");
       const got = await this.d.storage.deployment().get(blobKey(sha256));
-      if (!got) throw new Error(`plugin package ${sha256}: object is missing from object storage`);
+      if (!got) {
+        // 常见原因：对象存储换了桶 / 地址，旧桶里的包没有带过来
+        throw new Error(
+          `plugin package ${sha256} is recorded in object storage, but deployment/${blobKey(sha256)} is missing there; if the object store's bucket or endpoint was changed, copy the deployment/ prefix from the old bucket, or upload the same package again to restore it`,
+        );
+      }
       bytes = await readCapped(got.body, this.d.maxBytes());
     }
     if (createHash("sha256").update(bytes).digest("hex") !== sha256) {
