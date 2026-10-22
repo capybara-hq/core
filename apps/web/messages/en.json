@@ -168,12 +168,12 @@
       "item_not_found": "The item does not exist or you cannot see it.",
       "wrong_kind": "This action does not apply to this kind of item (use “Import app” for app packages).",
       "name_conflict": "An item with the same name comes from a different npm package.",
-      "item_disabled": "An enterprise admin disabled this directory item, so it cannot be newly installed or enabled.",
+      "item_disabled": "An enterprise admin disabled this directory item (or a plugin it contains), so it cannot be newly installed or enabled.",
       "approval_required": "A directory item that brought this in needs enterprise admin approval before this organization can install or enable it.",
       "request_not_found": "The request does not exist or was already handled.",
       "request_decided": "This request has already been decided.",
       "custom_disabled": "Enterprise admins turned off custom creation; install from the directory instead.",
-      "not_deployed": "A plugin it needs is not installed on the deployment. Contact an enterprise admin.",
+      "not_deployed": "A plugin it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
       "icon_not_found": "No icon."
     },
     "ui": {
@@ -1898,6 +1898,7 @@
         "memoryHelp": "A whole number from 256 to 262144; leave empty for the deployment default.",
         "memoryInvalid": "Memory must be a whole number from 256 to 262144.",
         "newOnly": "Sandbox limits apply to sandboxes created from now on.",
+        "e2bNote": "E2B sandboxes ignore the CPU and memory overrides: their size comes from the E2B template (the run concurrency limit still applies).",
         "save": "Save"
       }
     },

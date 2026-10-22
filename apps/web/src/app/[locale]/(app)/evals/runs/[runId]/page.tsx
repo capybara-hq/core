@@ -119,11 +119,21 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
     ]);
     const prev = latest.current;
     if (prev === null) return true;
+    // 运行刚结束：再整读一次轻量结果（增量读取可能漏掉与上次 asOf 同一时刻写入的最后几行），之后不再轮询
+    const full =
+      since !== undefined && runActive(prev.run.status) && !runActive(run.status)
+        ? await listEvalResultRows(orgId, runId)
+        : null;
     set({
       ...prev,
       run,
-      rows: since === undefined ? page.rows : mergeResultRows(prev.rows, page.rows),
-      asOf: page.asOf ?? prev.asOf,
+      rows:
+        full !== null
+          ? full.rows
+          : since === undefined
+            ? page.rows
+            : mergeResultRows(prev.rows, page.rows),
+      asOf: (full ?? page).asOf ?? prev.asOf,
     });
     return (
       prev.run.status !== run.status ||

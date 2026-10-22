@@ -225,6 +225,9 @@ function LimitsDialog({
         <Text variant="small" tone="muted">
           {t("newOnly")}
         </Text>
+        <Text variant="small" tone="muted">
+          {t("e2bNote")}
+        </Text>
         {error !== null && <FormError message={error} />}
       </Stack>
     </Dialog>

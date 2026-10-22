@@ -861,6 +861,25 @@ describe("评测运行（DetailPage）", () => {
     expect(runReads).toBe(reads);
   });
 
+  it("运行在轮询中变成终态：再整读一次结果（不带 updatedSince），之后不再轮询", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let status: EvalRun["status"] = "running";
+    const calls = stubApi(
+      routes(() => evalRun({ status, casesDone: 1, summary: null, finishedAt: null }), [result()]),
+    );
+    renderPage(<EvalRunPage />);
+    await screen.findByRole("table", { name: E.run.resultsLabel });
+    status = "completed";
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    const resultUrls = () => calls.filter((c) => c.url.includes("/results")).map((c) => c.url);
+    await waitFor(() => expect(resultUrls()).toHaveLength(3));
+    const [, incremental, full] = resultUrls();
+    expect(incremental).toContain("updatedSince");
+    expect(full).not.toContain("updatedSince");
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(resultUrls()).toHaveLength(3);
+  });
+
   it("轮询在上一次读完之后才排下一次：慢的读取不被下一拍取消；没有变化时逐步放慢", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let done = 0;

@@ -139,12 +139,17 @@ describe("新建 agent：选择组织技能", () => {
       [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
     });
     renderPage(<NewAgentPage />);
-    await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
+    const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
+    await userEvent.click(sw);
+    const unsaved = () => document.querySelector(".cb-actionrow-unsaved")?.textContent ?? "";
+    expect(unsaved()).toMatch(/\b1\b/);
     await userEvent.selectOptions(
       screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
       "org",
     );
     expect(screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillWrite })).toBeNull();
+    // 隐藏的开关不计入改动数：只剩可见性这一项
+    expect(unsaved()).toMatch(/\b1\b/);
   });
 
   it("不选技能：定义里不带 skills", async () => {

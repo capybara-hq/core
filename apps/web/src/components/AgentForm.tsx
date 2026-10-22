@@ -391,7 +391,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             !sameJson([...selectedConnectors].sort(), [...initial.apps].sort()),
             !sameJson(policies, initial.policies),
             !sameJson(skillIds, initial.orgSkills),
-            confirmSkillWrite !== initial.confirmSkillWrite,
+            // 开关只对私有 agent 显示：共享时不计入改动数
+            visibility === "private" && confirmSkillWrite !== initial.confirmSkillWrite,
           ].filter(Boolean).length
         : [
             name.trim() !== "",
@@ -404,7 +405,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
           selectedConnectors.length +
           Object.keys(policies).length +
           skillIds.length +
-          (confirmSkillWrite ? 1 : 0);
+          (visibility === "private" && confirmSkillWrite ? 1 : 0);
 
   const anchors: AgentFormView["anchors"] = [
     { id: "basic", label: t("form.basicSection"), error: nameError },
