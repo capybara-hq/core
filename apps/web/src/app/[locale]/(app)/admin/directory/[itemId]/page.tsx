@@ -81,7 +81,7 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
   const [tab, setTab] = useState<Tab>("overview");
   const detail = state.kind === "ready" ? state.data : undefined;
   const item = detail?.item;
-  const hasIcon = item?.kind === "connector-template" || item?.kind === "app";
+  const hasIcon = detail?.hasIcon === true;
 
   return (
     <DetailPage

@@ -22,6 +22,7 @@ import {
   decideDeploymentRequest,
   displayNameOf,
   listDeploymentRequests,
+  requesterOf,
 } from "../../../../../../lib/directory";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
@@ -120,6 +121,7 @@ function Requests() {
                 keyWidth="12ch"
                 rows={[
                   { k: t("fields.org"), v: active.orgName },
+                  { k: t("fields.requester"), v: requesterOf(active) },
                   { k: t("fields.kind"), v: kindLabel(active.item.kind) },
                   { k: t("fields.version"), v: active.version ?? "—" },
                   { k: t("fields.requested"), v: formatTime(active.createdAt, locale) },

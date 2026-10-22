@@ -2456,6 +2456,7 @@
         },
         "fields": {
           "org": "Organization",
+          "requester": "Requested by",
           "kind": "Kind",
           "version": "Version",
           "requested": "Requested",

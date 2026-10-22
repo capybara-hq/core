@@ -2456,6 +2456,7 @@
         },
         "fields": {
           "org": "组织",
+          "requester": "申请人",
           "kind": "种类",
           "version": "版本",
           "requested": "提交时间",

@@ -31,10 +31,8 @@ import {
   type DirectoryItem,
   displayNameOf,
   importDirectoryNpm,
-  listCatalogEntries,
   listCatalogSources,
   listDirectoryItems,
-  newerItemIds,
   PACKAGE_KINDS,
   type PackageKind,
   sourceKeyOf,
@@ -44,8 +42,8 @@ import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
 /**
- * `/[locale]/admin/directory`：企业目录（企业管理员，ListPage）。列：名称、种类、版本（清单里有更新的兼容版本时标
- * 「有新版本」）、来源（手动 / 官方清单 / 企业清单）、策略、安装的组织数；Rail 按种类与来源筛选。页头「导入」
+ * `/[locale]/admin/directory`：企业目录（企业管理员，ListPage）。列：名称、种类、版本（来源清单里有更新的兼容版本时标
+ * 「有新版本」，由内核的 newerInCatalog 给出）、来源（手动 / 官方清单 / 企业清单）、策略、安装的组织数；Rail 按种类与来源筛选。页头「导入」
  * 打开导入对话框（上传文件或 npm 包名），「导入应用」进应用审阅页，菜单里有清单、来源与部署申请。
  */
 export default function AdminDirectoryPage() {
@@ -68,10 +66,8 @@ function AdminDirectory() {
     () => listCatalogSources().catch(() => ({ items: [], offline: false })),
     [],
   );
-  const entries = useLoad(() => listCatalogEntries().catch(() => ({ items: [] })), []);
   const sourceList = sources.state.kind === "ready" ? sources.state.data.items : [];
   const sourceLabel = useSourceLabel(sourceList);
-  const newer = entries.state.kind === "ready" ? newerItemIds(entries.state.data.items) : new Set();
   const [kind, setKind] = useState<PackageKind | "">("");
   const [source, setSource] = useState("");
   const [importing, setImporting] = useState(false);
@@ -109,7 +105,7 @@ function AdminDirectory() {
       cell: (i) => (
         <Stack direction="row" gap={8} align="center">
           <Text tone="muted">{i.latestVersion}</Text>
-          {newer.has(i.id) && <Badge tone="accent">{td("newer")}</Badge>}
+          {i.newerInCatalog && <Badge tone="accent">{td("newer")}</Badge>}
         </Stack>
       ),
     },

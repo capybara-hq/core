@@ -7,12 +7,14 @@ import AdminDirectoryItemPage from "../src/app/[locale]/(app)/admin/directory/[i
 import AppReviewPage from "../src/app/[locale]/(app)/admin/directory/apps/review/page";
 import CatalogPage from "../src/app/[locale]/(app)/admin/directory/catalog/page";
 import AdminDirectoryPage from "../src/app/[locale]/(app)/admin/directory/page";
+import RequestsPage from "../src/app/[locale]/(app)/admin/directory/requests/page";
 import SourcesPage from "../src/app/[locale]/(app)/admin/directory/sources/page";
 import InstallPage from "../src/app/[locale]/(app)/directory/[itemId]/install/page";
 import DirectoryPage from "../src/app/[locale]/(app)/directory/page";
 import InboxRoute from "../src/app/[locale]/(app)/inbox/page";
 import AppsPage from "../src/app/[locale]/(app)/settings/apps/page";
 import PluginsPage from "../src/app/[locale]/(app)/settings/plugins/page";
+import { defaultSlug, slugOf } from "../src/components/DirectoryInstallWizard";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -473,6 +475,8 @@ describe("/admin/directory 与清单", () => {
     installs: 2,
     source: "catalog",
     catalogSourceId: "official",
+    latestCatalogVersion: "2.0.0",
+    newerInCatalog: true,
     updatedAt: "2026-10-22T00:00:00.000Z",
     ...over,
   });
@@ -502,12 +506,18 @@ describe("/admin/directory 与清单", () => {
         json(200, {
           items: [
             item({}),
-            item({ id: "m", name: "manual-skill", kind: "skill", catalogSourceId: null }),
+            item({
+              id: "m",
+              name: "manual-skill",
+              kind: "skill",
+              catalogSourceId: null,
+              latestCatalogVersion: null,
+              newerInCatalog: false,
+            }),
           ],
           nextOffset: null,
         }),
       "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
-      "GET /api/v1/admin/catalogs/entries": () => json(200, { items: [entry()], truncated: false }),
     });
     renderPage(<AdminDirectoryPage />);
     const table = await screen.findByRole("table", { name: t.admin.title });
@@ -551,6 +561,7 @@ describe("/admin/directory 与清单", () => {
             deletedAt: null,
           },
           versions: [],
+          hasIcon: true,
         }),
       "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
     });
@@ -560,6 +571,42 @@ describe("/admin/directory 与清单", () => {
     })) as HTMLImageElement;
     expect(img.src).toMatch(new RegExp(`/api/v1/admin/directory/items/${ID}/icon$`));
     expect(document.querySelector("svg[data-directory-icon]")).toBeNull();
+  });
+
+  it("条目详情：没有图标（hasIcon false）时不渲染图片", async () => {
+    params.current = { itemId: ID };
+    stubApi({
+      [`GET /api/v1/admin/directory/items/${ID}`]: () =>
+        json(200, {
+          item: {
+            ...item({ kind: "app", name: "crm" }),
+            packageName: "@acme/crm",
+            deletedAt: null,
+          },
+          versions: [],
+          hasIcon: false,
+        }),
+      "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
+    });
+    renderPage(<AdminDirectoryItemPage />);
+    expect(await screen.findByText("@acme/crm")).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("清单搜索防抖：连续输入只发一次带关键词的请求", async () => {
+    const calls = stubApi({
+      "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalogs/entries": () => json(200, { items: [entry()], truncated: false }),
+    });
+    renderPage(<CatalogPage />);
+    await screen.findByText("@acme/plugin-cat-a");
+    await userEvent
+      .setup()
+      .type(screen.getByRole("textbox", { name: en.directory.admin.catalog.search }), "cat-a");
+    await waitFor(() => expect(calls.some((c) => c.url.includes("q=cat-a"))).toBe(true));
+    expect(calls.filter((c) => c.url.includes("q=")).map((c) => c.url)).toEqual([
+      "/api/v1/admin/catalogs/entries?q=cat-a",
+    ]);
   });
 });
 
@@ -576,6 +623,7 @@ describe("收件箱：directory_request", () => {
       status: "pending",
       note: "please",
       requestedBy: "a2",
+      requestedByName: "Mia",
       decidedBy: null,
       decidedAt: null,
       orgDecidedBy: null,
@@ -601,6 +649,7 @@ describe("收件箱：directory_request", () => {
       (await screen.findAllByText(fill(d.title, { name: "pdf-tools" }))).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText("please")).toBeTruthy();
+    expect(screen.getByText("Mia")).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: d.approve }));
     expect(await screen.findByText(d.approved)).toBeTruthy();
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve" });
@@ -639,5 +688,79 @@ describe("组织插件：启用被目录条目拒绝", () => {
     expect(screen.getByRole("link", { name: m.plugins.openDirectory }).getAttribute("href")).toBe(
       "/directory",
     );
+  });
+});
+
+describe("安装向导的默认 slug", () => {
+  it("连接器模板条目按条目名推导（不是连接器种类）；应用里的模板按模板 id", () => {
+    expect(defaultSlug({ id: "connector" }, "github-mcp")).toBe("github_mcp");
+    expect(defaultSlug({ id: "connector" }, "9-docs")).toBe("docs");
+    expect(defaultSlug({ id: "crm-mcp" }, "crm")).toBe("crm_mcp");
+    expect(slugOf("中文")).toBe("");
+    expect(slugOf("a".repeat(30))).toHaveLength(24);
+  });
+
+  it("单模板条目：向导里预填的 slug 来自条目名", async () => {
+    params.current = { itemId: ID };
+    stubApi({
+      [`GET ${ORG}/directory/${ID}`]: () =>
+        json(200, {
+          item: orgItem({ kind: "connector-template", name: "github-mcp" }),
+          hasIcon: false,
+          templates: [
+            {
+              id: "connector",
+              displayName: null,
+              description: "",
+              plugin: "connector-mcp",
+              connector: "mcp",
+              endpoint: { url: "https://mcp.example.com" },
+              editableEndpoint: [],
+              auth: { type: "none" },
+              ownership: null,
+            },
+          ],
+          plugins: [],
+          skills: [],
+        }),
+      [`GET ${ORG}/plugins`]: () => json(200, { plugins: [] }),
+    });
+    renderPage(<InstallPage />);
+    const slug = (await screen.findByLabelText(en.directory.org.install.slug, {
+      exact: false,
+    })) as HTMLInputElement;
+    expect(slug.value).toBe("github_mcp");
+  });
+});
+
+describe("部署申请页显示申请人", () => {
+  it("Inspector 里有申请人的显示名", async () => {
+    stubApi({
+      "GET /api/v1/admin/directory/requests": () =>
+        json(200, {
+          requests: [
+            {
+              id: "r1",
+              orgId: "o1",
+              orgName: "Acme",
+              item: { id: ID, kind: "app", name: "crm", displayName: null },
+              version: null,
+              stage: "deployment",
+              status: "pending",
+              note: "",
+              requestedBy: "a2",
+              requestedByName: "Mia",
+              decidedBy: null,
+              decidedAt: null,
+              orgDecidedBy: null,
+              orgDecidedAt: null,
+              createdAt: "2026-10-22T00:00:00.000Z",
+            },
+          ],
+        }),
+    });
+    renderPage(<RequestsPage />);
+    expect(await screen.findByText("Mia")).toBeTruthy();
+    expect(screen.getByText(en.directory.admin.requests.fields.requester)).toBeTruthy();
   });
 });

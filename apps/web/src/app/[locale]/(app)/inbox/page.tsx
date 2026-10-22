@@ -31,7 +31,12 @@ import {
 } from "../../../../components/SkillChangeReview";
 import { Link, useRouter } from "../../../../i18n/navigation";
 import type { Approval, ApprovalScope } from "../../../../lib/approvals";
-import { type DirectoryRequest, decideOrgRequest, displayNameOf } from "../../../../lib/directory";
+import {
+  type DirectoryRequest,
+  decideOrgRequest,
+  requesterOf as directoryRequester,
+  displayNameOf,
+} from "../../../../lib/directory";
 import { type InboxItem, listInbox } from "../../../../lib/inbox";
 import type { SkillChange } from "../../../../lib/skills";
 import { useErrorMessage } from "../../../../lib/use-error-message";
@@ -393,6 +398,7 @@ function directoryRequestDetail({
       <KeyValue
         keyWidth="10ch"
         rows={[
+          { k: td("requester"), v: directoryRequester(request) },
           { k: td("kind"), v: kindLabel(request.item.kind) },
           { k: td("version"), v: request.version ?? "—" },
           { k: t("requested"), v: formatTime(request.createdAt, locale) },

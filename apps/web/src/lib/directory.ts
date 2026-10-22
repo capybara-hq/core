@@ -38,6 +38,10 @@ export interface DirectoryItem {
   source: string;
   /** 从清单引入时的来源清单 id（`official` 或企业清单 id），否则 null。 */
   catalogSourceId: string | null;
+  /** 来源清单里最高的兼容版本（不是从清单引入或来源停用为 null）。 */
+  latestCatalogVersion: string | null;
+  /** 清单里有比已引入的更新的兼容版本（「有新版本」）。 */
+  newerInCatalog: boolean;
   updatedAt: string;
 }
 
@@ -53,6 +57,8 @@ export interface DirectoryItemVersion {
 export interface DirectoryItemDetail {
   item: DirectoryItem & { packageName: string; deletedAt: string | null };
   versions: DirectoryItemVersion[];
+  /** 最新版本有图标（经内核路由以 `<img>` 显示）。 */
+  hasIcon: boolean;
 }
 
 /** 应用审阅里的一个插件（内核 `AppReviewPlugin`）。 */
@@ -160,6 +166,7 @@ export interface DirectoryRequest {
   status: "pending" | "approved" | "rejected" | "cancelled";
   note: string;
   requestedBy: string | null;
+  requestedByName: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
   orgDecidedBy: string | null;
@@ -168,7 +175,11 @@ export interface DirectoryRequest {
 }
 
 /** 组织视角的条目（内核 `OrgDirectoryItem`）。 */
-export interface OrgDirectoryItem extends Omit<DirectoryItem, "installs" | "catalogSourceId"> {
+export interface OrgDirectoryItem
+  extends Omit<
+    DirectoryItem,
+    "installs" | "catalogSourceId" | "latestCatalogVersion" | "newerInCatalog"
+  > {
   installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
   installed: {
     connectorId?: string;
@@ -441,13 +452,13 @@ export const displayNameOf = (
   locale: string,
 ): string => (i.displayName ? (locale === "zh" ? i.displayName.zh : i.displayName.en) : i.name);
 
+/** 申请人：显示名，账号已删除时退回账号 id，都没有为「—」。 */
+export const requesterOf = (r: Pick<DirectoryRequest, "requestedBy" | "requestedByName">): string =>
+  r.requestedByName ?? r.requestedBy ?? "—";
+
 /** 条目来源的筛选键：`manual`（文件 / npm 导入）或 `catalog:<清单 id>`。 */
 export const sourceKeyOf = (i: Pick<DirectoryItem, "catalogSourceId">): string =>
   i.catalogSourceId === null ? "manual" : `catalog:${i.catalogSourceId}`;
-
-/** 已引入且清单里有更新的兼容版本的条目 id（「有新版本」）。 */
-export const newerItemIds = (entries: CatalogEntry[]): Set<string> =>
-  new Set(entries.flatMap((e) => (e.newerAvailable && e.adopted ? [e.adopted.itemId] : [])));
 
 /** 对象的叶子点路径与值（数组与非对象值算叶子），用于展示端点预设。 */
 export function endpointLeaves(v: Record<string, unknown>, base = ""): [string, unknown][] {

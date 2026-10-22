@@ -14,7 +14,7 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminGate } from "../../../../../../components/AdminGate";
 import { useKindLabel } from "../../../../../../components/DirectoryParts";
 import { FormError } from "../../../../../../components/form-error";
@@ -45,6 +45,9 @@ export default function CatalogPage() {
   );
 }
 
+/** 搜索框的防抖时长（浏览器里的计时，不涉及服务端状态）。 */
+const SEARCH_DEBOUNCE_MS = 300;
+
 type Notice =
   | { tone: "error"; message: string; extra: string[] }
   | { tone: "warn"; message: string };
@@ -61,15 +64,21 @@ function Catalog() {
   const [sourceId, setSourceId] = useState("");
   const [kind, setKind] = useState<PackageKind | "">("");
   const [q, setQ] = useState("");
+  // 搜索词防抖：停止输入 300 ms 后才重新请求
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(q.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [q]);
   const sources = useLoad(listCatalogSources, []);
   const { state, reload } = useLoad(
     () =>
       listCatalogEntries({
         ...(sourceId !== "" && { sourceId }),
         ...(kind !== "" && { kind }),
-        ...(q.trim() !== "" && { q: q.trim() }),
+        ...(query !== "" && { q: query }),
       }),
-    [sourceId, kind, q.trim()],
+    [sourceId, kind, query],
   );
   const [notice, setNotice] = useState<Notice>();
   const [busy, setBusy] = useState<string>();
@@ -229,7 +238,7 @@ function Catalog() {
           state={state.kind === "loading" ? "loading" : state.kind === "error" ? "error" : "ready"}
           error={{ code: state.kind === "error" ? state.code : "unknown", onRetry: reload }}
           empty={{
-            title: sourceId === "" && kind === "" && q === "" ? t("empty") : t("noResults"),
+            title: sourceId === "" && kind === "" && query === "" ? t("empty") : t("noResults"),
           }}
           rowMenu={(e) => {
             const compatible = e.versions.filter((v) => v.compatible);

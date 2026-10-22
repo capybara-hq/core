@@ -96,9 +96,19 @@ export function slugOf(id: string): string {
   return /^[a-z][a-z0-9_]*$/.test(s) ? s : "";
 }
 
-const initialTemplateDraft = (t: OrgDirectoryTemplate, locale: string): TemplateDraft => ({
+/**
+ * 模板的默认 slug：连接器模板条目（只有一个模板，id 为 `connector`）按条目名推导，应用里的模板按模板 id 推导。
+ */
+export const defaultSlug = (t: Pick<OrgDirectoryTemplate, "id">, itemName: string): string =>
+  slugOf(t.id === "connector" ? itemName : t.id);
+
+const initialTemplateDraft = (
+  t: OrgDirectoryTemplate,
+  locale: string,
+  itemName: string,
+): TemplateDraft => ({
   name: t.displayName ? displayNameOf({ name: t.id, displayName: t.displayName }, locale) : "",
-  slug: slugOf(t.id === "connector" ? t.connector : t.id),
+  slug: defaultSlug(t, itemName),
   endpoint: Object.fromEntries(
     endpointFields(t)
       .filter((f) => f.editable)
@@ -272,7 +282,7 @@ function Wizard({
   ];
   const [step, setStep] = useState(0);
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>(() =>
-    Object.fromEntries(templates.map((c) => [c.id, initialTemplateDraft(c, locale)])),
+    Object.fromEntries(templates.map((c) => [c.id, initialTemplateDraft(c, locale, item.name)])),
   );
   const [configs, setConfigs] = useState<Record<string, SchemaDraft>>(() =>
     Object.fromEntries(withConfig.map((o) => [o.plugin, initialDraft(o.orgConfigSchema, null)])),
