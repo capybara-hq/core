@@ -22,6 +22,7 @@ MVP 拆成 8 个里程碑。每个里程碑单独一份详细计划，**前一�
 ## 后续里程碑须知
 
 - **扩展模型**（设计 `docs/superpowers/specs/2026-10-18-extension-model-design.md`，第 9 节为分期）：M4、M5、M6 的计划须按该文档展开对应任务（`ctx.hooks` 随 M7）。M4 的权限清单必须在 Slack / 飞书插件之前落地，并把 M3 的 `ctx.tools` 纳入声明；M7「SDK 公开 API 快照检查」之前清单格式须稳定。`ctx.models`、向量 / 重排不在 MVP（记忆、知识库不做），随第一个消费方排期。方舟方言（`openai-compatible` 加 `ark`）已排入 M4 完成（2026-10-19 调整）。
+- **M7 部署与升级说明**（M6 终审记录）：数据库要求 PostgreSQL ≥ 15（0029 用 `UNIQUE NULLS NOT DISTINCT`；开发与 CI 用 17），写进部署文档。升级说明要写：0027 / 0028 在迁移事务里非并发地建 `conversation_events_run_idx`、`conversations_agent_idx`、`conversations_org_kind_idx`，事件日志大的部署升级时这几张表的写入会被阻塞到索引建完（`lock_timeout` 只管等锁、不管建索引；每个文件一个事务，不能用 `CONCURRENTLY`），以及迁移的锁行为说明。
 - **M7 编排 web 镜像**：web 必须经 `apps/web/server.mjs` 启动（`node server.mjs`，即 `pnpm --filter @capybara-hq/web start`）。它丢弃客户端伪造的转发头、把 `x-forwarded-for` 改写为真实对端地址再交给 `/api` 代理；Next 的 `output: "standalone"` 产物自带 `server.js`、不经过它，与此不兼容，镜像不能用 standalone 输出。web 后面的内核设 `http.trustProxy: 1`（只信任 web 这一跳），否则登录限流看到的是 web 主机地址。
 
 ## M0 锁定的技术选型

@@ -52,6 +52,8 @@ description: 写企业目录里的连接器模板包（capybara.kind = connector
 - `plugin` / `connector`：连接器插件名与它的 `Connector.kind`。**导入时该连接器插件必须已在本副本加载**：内核按它的
   `endpointSchema` 校验端点，并确认 `editableEndpoint` 的每个路径都是端点 schema 里的字段；没加载就拒绝导入
   （`directory.invalid_package`）。组织安装时按当时加载的连接器再复核（没加载 → `directory.not_deployed`）。
+- `pluginVersion`（可选，semver 范围）：连接器插件的版本要求。导入时按本副本加载的版本核对（不满足 → `directory.invalid_package`），
+  组织安装时（与列表的「可安装」）再按当时加载的版本核对（不满足 → `directory.not_deployed`，消息带版本）。应用包里的模板另按 lock 核对。
 - `endpoint`：端点预设，所有组织都看得到，**任何层级都不许出现凭据样式的键**（`token`、`apiKey`、`secret`、`password`、
   `authorization`、`cookie` 等，比较时忽略大小写与 `-` / `_`），内核另按连接器安装的规则检查头 / query / URL 用户信息。
 - `editableEndpoint`：组织安装时允许改的点路径（字母、数字、`_`、`-`，≤ 50 条，不重复，不能像凭据字段）。只列确实因组织而异
@@ -84,7 +86,7 @@ plugins:                       # ≤ 20
     lock:
       version: 1.2.0           # 必须满足 version
       integrity: sha512-…==    # 该版本 tgz 的 sha512（npm 的 dist.integrity）
-    optional: false            # 可选插件：组织安装时没装到部署就跳过
+    optional: false            # 可选插件：组织安装时没装到部署 / 版本不满足就跳过（用到它的模板也跳过）
 connectorTemplates:            # ≤ 20，template 与连接器模板包的 template 同形
     # template.plugin 引用部署里已有的连接器插件 connector-mcp（没列在 plugins 里），见下文 isKnownConnectorPlugin
   - id: crm-mcp
@@ -127,7 +129,14 @@ skills:                        # ≤ 50，包内目录，各含 SKILL.md
 
 - 安装应用要同时有 `org.plugins.manage`、`connectors.manage`、`skills.manage`（组织行锁内复核）；条目策略 `disabled` →
   `directory.item_disabled`，`needs_approval` 且本组织没有授予 → 202 并建（或升级）待企业管理员批准的申请，否则 201。
-- **应用里的插件按应用条目的策略判定，不再看各插件条目**（C22）。
+- **应用里的插件按应用条目的策略判定，不看各插件条目的 needs_approval / allow**（C22）。**例外（裁决 M-5，覆盖 C22 的应用途径）**：
+  插件自己的目录条目（`kind = plugin`、同名）设为 `disabled` 是总开关，任何途径都不能在组织里新启用这个插件——直接启用、经插件条目、
+  经含它的应用都不行。含它的应用组织安装时返回 403 `directory.item_disabled`（消息点名插件；本组织已启用的不受影响），导入含它的应用包
+  审阅时同样拒绝（`directory.item_disabled`）。要停掉某个插件，禁用它自己的条目即可，不必逐个禁用含它的应用。
+- 插件判定（列表的「可安装」与安装同一套，按确认时写进条目版本 `resolved.plugins` 的范围与 `optional`）：必选插件没装到部署、或加载的版本
+  不满足 `app.yaml` 的范围 → `directory.not_deployed`（消息带部署的版本与要求的范围）；可选插件遇到这些情况（或插件条目被禁用）就跳过，
+  模板的 `plugin` 是被跳过的可选插件时该模板也跳过。跳过的插件与模板在安装结果 `installed.skipped`（`{ plugins, connectorTemplates }`）
+  与审计 `app.installed` 里列出。
 - 请求体：`{ version?, app: { connectors: { <模板 id>: {…} }, pluginConfigs?: { <插件名>: <组织级配置> } } }`。`pluginConfigs` 只认 `app.yaml`
   `plugins` 里的插件名（别的 → 400 `validation_failed`），**只用于本次新启用的插件**：本组织已启用的插件记为原有，配置不动；新启用时按该插件的
   `config.org` schema 校验（同 `PUT /orgs/:orgId/plugins/:plugin`），需要组织级配置才能启用的插件不给就装不上。

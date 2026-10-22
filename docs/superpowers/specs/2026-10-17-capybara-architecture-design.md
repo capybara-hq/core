@@ -490,7 +490,9 @@ Agent 的环境修改能力都是普通工具：
 - **策略**（C22）：条目策略 `allow`（新导入默认）/ `needs_approval`（组织管理员提交后企业管理员批准，批准对该组织跨版本有效）/
   `disabled`（不能新装，已装不受影响）；成员申请进组织管理员收件箱。部署设置 `customConnectors` / `customSkills` 为 `deny` 时组织只能从目录安装。
   插件只能由企业管理员装到部署，组织侧的「安装」是在本组织启用并受条目策略约束；组织直接启用经目录装进来的插件时，按全部来源条目里最严格的
-  策略判定；应用里的插件按应用条目的策略判定；不经目录安装的插件不受目录策略约束。
+  策略判定；应用里的插件按应用条目的策略判定；不经目录安装的插件不受目录策略约束。**例外（M6 终审裁决 M-5，覆盖上一句的应用途径）**：
+  插件自己的目录条目 `disabled` 是总开关——任何途径（直接启用、插件条目、含它的应用）都不能在组织里新启用该插件，含它的应用组织安装与
+  应用包导入审阅都返回 `directory.item_disabled`（点名插件）；已启用的不受影响。
 - **目录来源**（C25、C26）：官方清单（配置 `catalogs.official.*`，可关闭以离线部署，支持镜像）、企业清单（PG，可多个，可选令牌存 secrets）、
   手动上传。清单是静态 `index.json`（JSON Schema 在 `packages/plugin-sdk/schemas/`），维护任务 `catalogs-refresh` 定期拉取（ETag + 大小上限），
   不合法时保留上一份。条目先浏览，「引入」某个版本时才下载并物化为目录条目；下载给了 `tarball`（必须 https）就用它，否则走 npm registry，
@@ -526,7 +528,7 @@ Agent 的环境修改能力都是普通工具：
 
 | 组件 | 用途 | 说明 |
 |---|---|---|
-| **Postgres** | 唯一事实源：账号组织、agent、事件日志、checkpoint、扩展、加密凭据、审计 | 插件各自独立 schema；内核不需要 pgvector |
+| **Postgres** | 唯一事实源：账号组织、agent、事件日志、checkpoint、扩展、加密凭据、审计 | ≥ 15（迁移用 `UNIQUE NULLS NOT DISTINCT`；开发与 CI 用 17）；插件各自独立 schema；内核不需要 pgvector |
 | **Redis / Valkey** | 队列（BullMQ）、跨副本广播、锁、限流、短时状态、缓存 | 丢了最多导致重试、不丢数据；只用协议层能力，保证 Valkey（BSD）可直接替换 |
 | **S3 兼容对象存储** | 附件、技能包、沙箱工作区 | 经 `object-store@1` 插件接入，默认 `object-store-s3`（MinIO / Ceph / SeaweedFS / 各家云的 S3 兼容接口）；开发编排自带 SeaweedFS（2026-10-19 调整；2026-10-21 由 MinIO 改为 SeaweedFS） |
 

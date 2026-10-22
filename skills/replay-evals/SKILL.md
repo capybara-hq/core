@@ -64,7 +64,9 @@ description: 改动请求构建（runtime/context/build.ts、model-call.ts、事
   累加后达到上限即置 `capped`，之后不再发新请求；在途请求可以超出（每个并发任务最多多一次）。**发出后失败的尝试按估算同样
   计入**，失去认领的旧执行已发出的请求也计入（Ruling P2）；评委请求同样计入。
 - 每次模型请求前查运行仍活跃（未取消 / 未达上限 / 组织与 agent 未删除）且仍持有认领；结果按认领号写入。连续
-  `evals.maxConsecutiveErrors` 条结果出错 → 运行 `failed`。运行状态：`queued` / `running` / `completed` / `cancelled` /
+  `evals.maxConsecutiveErrors` 条结果出错 → 运行 `failed`。agent 已删除的集合不能再估算 / 启动（`agent.not_found`）。
+- 供应商插件在请求途中被撤销 / 升级 / 重新加载（`PluginUnloadedError`，如改了非热更的部署配置）：与运行时一致按可重试的
+  `run.provider_unavailable` 处理，单步回放与评委请求都重试（失败的尝试照样按估算计费），重试时实时取到新实例；不记错误、不动熔断。运行状态：`queued` / `running` / `completed` / `cancelled` /
   `capped` / `failed`；结果状态：`pending` / `running` / `done` / `error` / `skipped`。
 
 ## 轨迹查看器与隐私
