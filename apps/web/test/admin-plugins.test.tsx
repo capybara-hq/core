@@ -25,6 +25,28 @@ const HEARTBEAT = "2026-10-22T08:00:00.000Z";
 
 type View = Record<string, unknown>;
 
+/** 内核给的权限分组：`reasons` 里列出的项为敏感（原因码由内核判定，界面只渲染）。 */
+function group(category: string, items: string[], reasons: Record<string, string> = {}) {
+  const entries = items.map((value) =>
+    reasons[value] === undefined
+      ? { value, sensitive: false }
+      : { value, sensitive: true, reason: reasons[value] },
+  );
+  return { category, sensitive: entries.some((e) => e.sensitive), items, entries };
+}
+
+/** `added` 与逐项的敏感标记（`addedItems`）。 */
+function addedOf(keys: string[], reasons: Record<string, string> = {}) {
+  return {
+    added: keys,
+    addedItems: keys.map((value) =>
+      reasons[value] === undefined
+        ? { value, sensitive: false }
+        : { value, sensitive: true, reason: reasons[value] },
+    ),
+  };
+}
+
 function plugin(over: View = {}): View {
   return {
     name: "demo",
@@ -52,10 +74,12 @@ function plugin(over: View = {}): View {
       },
     ],
     permissions: [
-      { category: "tools", sensitive: true, items: ["echo"] },
-      { category: "network", sensitive: false, items: ["api.example.com"] },
+      group("tools", ["echo"], { echo: "tools" }),
+      group("network", ["api.example.com"]),
     ],
     added: [],
+    addedItems: [],
+    warnings: [],
     removed: [],
     reviewHash: "0123456789abcdef",
     sensitive: true,
@@ -78,7 +102,7 @@ const S3 = plugin({
   sha256: null,
   desired: null,
   status: "pending_config",
-  permissions: [{ category: "provides", sensitive: true, items: ["object-store@1"] }],
+  permissions: [group("provides", ["object-store@1"], { "object-store@1": "object_store" })],
   snapshot: null,
   removable: false,
 });
@@ -88,11 +112,13 @@ const REVIEW = {
   name: "demo",
   version: "1.0.0",
   permissions: [
-    { category: "provides", sensitive: true, items: ["sandbox@1"] },
-    { category: "network", sensitive: false, items: ["api.example.com"] },
-    { category: "tables", sensitive: false, items: ["notes"] },
+    group("provides", ["sandbox@1"], { "sandbox@1": "sandbox" }),
+    group("network", ["api.example.com"]),
+    group("tables", ["notes"]),
   ],
-  added: ["provides:sandbox@1", "permissions.network:api.example.com"],
+  ...addedOf(["provides:sandbox@1", "permissions.network:api.example.com"], {
+    "provides:sandbox@1": "sandbox",
+  }),
   removed: [],
   reviewHash: "0123456789abcdef",
   warnings: [],
@@ -259,7 +285,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
     const pending = plugin({
       status: "pending_approval",
       snapshot: null,
-      added: ["permissions.tools:echo"],
+      ...addedOf(["permissions.tools:echo"], { "permissions.tools:echo": "tools" }),
     });
     const calls = detailRoutes(pending, {
       "POST /api/v1/admin/plugins/demo/approve": () =>
@@ -284,6 +310,82 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
     await vi.waitFor(() =>
       expect(calls.filter((c) => c.method === "GET").length).toBeGreaterThan(before),
     );
+  });
+
+  it("待批准且包里有迁移警告（权限都不敏感）：详情页列出警告，批准前同样须勾选", async () => {
+    const pending = plugin({
+      status: "pending_approval",
+      snapshot: null,
+      permissions: [group("tables", ["notes"])],
+      sensitive: false,
+      ...addedOf(["tables:notes"]),
+      warnings: [
+        {
+          kind: "destructive_migration",
+          sensitive: true,
+          file: "0002_drop.sql",
+          line: 1,
+          statement: "DROP TABLE plugin_demo.old",
+        },
+      ],
+    });
+    detailRoutes(pending);
+    renderPage(<PluginDetailPage />);
+    const p = en.admin.plugins;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: p.detail.tabs.permissions }));
+    expect(await screen.findByText("DROP TABLE plugin_demo.old")).toBeTruthy();
+    const submit = screen.getByRole("button", { name: p.approve.submit });
+    expect(submit.hasAttribute("disabled")).toBe(true);
+    await user.click(screen.getByRole("checkbox", { name: p.approve.ack }));
+    expect(submit.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("新增权限按内核给的逐项标记高亮并写原因码对应的文案（界面不自己判定）", async () => {
+    const pending = plugin({
+      status: "pending_approval",
+      ...addedOf(["permissions.tools:echo", "permissions.network:x.example.com"], {
+        "permissions.tools:echo": "tools",
+      }),
+    });
+    detailRoutes(pending);
+    renderPage(<PluginDetailPage />, { locale: "zh" });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("tab", { name: zh.admin.plugins.detail.tabs.permissions }),
+    );
+    expect(
+      await screen.findByText(`+ permissions.tools:echo · ${zh.plugins.review.reason.tools}`),
+    ).toBeTruthy();
+    expect(screen.getByText("+ permissions.network:x.example.com")).toBeTruthy();
+  });
+
+  it("收敛中：只轮询 GET /:name；轮询出错时保留上一次的数据", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let polls = 0;
+      const calls = detailRoutes(plugin({ status: "converging" }), {
+        "GET /api/v1/admin/plugins/demo": () => {
+          polls++;
+          return polls === 1
+            ? json(503, { error: { code: "upstream_unavailable", message: "down" } })
+            : json(200, plugin({ status: "enabled" }));
+        },
+      });
+      renderPage(<PluginDetailPage />);
+      const p = en.admin.plugins;
+      expect(await screen.findByText(p.detail.converging)).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3100);
+      await vi.waitFor(() => expect(polls).toBe(1));
+      // 出错：仍显示上一次的数据（收敛中），没有变成错误页
+      expect(screen.getByText(p.detail.converging)).toBeTruthy();
+      expect(screen.getByRole("table", { name: p.detail.replicasTitle })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(3100);
+      await vi.waitFor(() => expect(screen.queryByText(p.detail.converging)).toBeNull());
+      expect(calls.filter((c) => c.url === "/api/v1/admin/plugins").length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each(LOCALES)(
@@ -414,7 +516,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
       const review = await screen.findByRole("region", {
         name: fill(msgs[locale].plugins.permissionsLabel, { plugin: "demo" }),
       });
-      expect(within(review).getByText(msgs[locale].plugins.review.capability.sandbox)).toBeTruthy();
+      expect(within(review).getByText(msgs[locale].plugins.review.reason.sandbox)).toBeTruthy();
       expect(within(review).getByText(msgs[locale].plugins.review.network)).toBeTruthy();
       expect(within(review).getAllByText(msgs[locale].plugins.sensitive).length).toBeGreaterThan(0);
       await user.click(screen.getByRole("button", { name: p.wizard.next }));
@@ -446,7 +548,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
       "POST /api/v1/admin/plugins/packages/npm": () =>
         json(200, {
           ...REVIEW,
-          permissions: [{ category: "tables", sensitive: false, items: ["notes"] }],
+          permissions: [group("tables", ["notes"])],
           warnings: [
             {
               kind: "destructive_migration",
@@ -492,7 +594,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
           : json(200, {
               ...REVIEW,
               version: "2.0.0",
-              added: ["provides:sandbox@1"],
+              ...addedOf(["provides:sandbox@1"], { "provides:sandbox@1": "sandbox" }),
               removed: ["permissions.tools:echo"],
             }),
     });
@@ -582,5 +684,46 @@ describe("/admin/plugins/install（WizardPage）", () => {
     expect(xhr.aborted).toBe(true);
     expect(await screen.findByText(p.wizard.cancelled)).toBeTruthy();
     expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("上传遇到登录过期（代理报上游不可达且 /me 401）：提示重新登录，不说后端不可用", async () => {
+    let me = 0;
+    stubApi({
+      "GET /api/v1/admin/plugins": () => json(200, { plugins: [], drainSeconds: 30 }),
+      "GET /api/v1/me": () => {
+        me++;
+        return me === 1
+          ? json(200, {})
+          : json(401, { error: { code: "auth.refresh_invalid", message: "expired" } });
+      },
+      "POST /api/v1/auth/refresh": () =>
+        json(401, { error: { code: "auth.refresh_invalid", message: "expired" } }),
+    });
+    class FakeXhr {
+      upload: { onprogress: ((e: ProgressEvent) => void) | null } = { onprogress: null };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      status = 502;
+      responseText = JSON.stringify({
+        error: { code: "upstream_unavailable", message: "Kernel is unreachable" },
+      });
+      withCredentials = false;
+      open() {}
+      setRequestHeader() {}
+      send() {
+        setTimeout(() => this.onload?.(), 0);
+      }
+      abort() {}
+    }
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+    renderPage(<PluginInstallPage />, { locale: "zh" });
+    const p = zh.admin.plugins;
+    const user = userEvent.setup();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File([new Uint8Array([1])], "x.tgz"));
+    await user.click(screen.getByRole("button", { name: p.wizard.upload }));
+    expect(await screen.findByText(new RegExp(escapeRe(p.wizard.sessionExpired)))).toBeTruthy();
+    expect(screen.queryByText(new RegExp(escapeRe(zh.errors.upstream_unavailable)))).toBeNull();
   });
 });

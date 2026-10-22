@@ -30,6 +30,7 @@ import {
   approvePlugin,
   disablePlugin,
   enablePlugin,
+  getAdminPlugin,
   listAdminPlugins,
   type PluginReplica,
   replicaSummary,
@@ -77,14 +78,27 @@ function PluginDetail({ name }: { name: string }) {
     setPolls(0);
   };
   const moving = plugin?.status === "converging" || plugin?.status === "pending_migration";
+  // 收敛中：只轮询这一个插件（`GET /:name`）；轮询出错时保留上一次的数据，下一轮再试
   useEffect(() => {
     if (!moving || polls >= POLL_MAX) return;
+    let disposed = false;
     const timer = setTimeout(() => {
-      setPolls((n) => n + 1);
-      reload();
+      getAdminPlugin(name).then(
+        (next) => {
+          if (disposed || !data) return;
+          set({ ...data, plugins: data.plugins.map((p) => (p.name === next.name ? next : p)) });
+          setPolls((n) => n + 1);
+        },
+        () => {
+          if (!disposed) setPolls((n) => n + 1);
+        },
+      );
     }, POLL_MS);
-    return () => clearTimeout(timer);
-  }, [moving, polls, reload]);
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, [moving, polls, name, data, set]);
 
   return (
     <DetailPage
@@ -392,8 +406,9 @@ function Permissions({
       <PermissionReview
         plugin={plugin.name}
         groups={plugin.permissions}
-        added={builtin ? [] : plugin.added}
+        added={builtin ? [] : plugin.addedItems}
         removed={builtin ? [] : plugin.removed}
+        warnings={plugin.warnings}
       />
       {pending && !builtin && (
         <Card tone="accent" title={t("title")}>

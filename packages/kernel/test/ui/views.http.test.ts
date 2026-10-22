@@ -504,6 +504,13 @@ describe("插件视图接口", () => {
       category: "ui",
       sensitive: true,
       items: ["view:bad", "view:boom", "view:orgpage", "view:panel", "view:slow", "embed:board"],
+      entries: [
+        ...["view:bad", "view:boom", "view:orgpage", "view:panel", "view:slow"].map((value) => ({
+          value,
+          sensitive: false,
+        })),
+        { value: "embed:board", sensitive: true, reason: "ui_embed" },
+      ],
     });
     const todo = (
       r.json() as { plugins: { plugin: string; permissions: { category: string }[] }[] }

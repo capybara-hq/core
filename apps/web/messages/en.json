@@ -1132,17 +1132,15 @@
       "none": "No permissions declared.",
       "reason": {
         "secrets": "can read and write secrets",
-        "publicRoutes": "these routes are reachable without signing in",
+        "public_routes": "these routes are reachable without signing in",
         "tools": "agents in organizations can call these tools",
         "hooks": "can hook into kernel flows",
-        "ui": "embeds the plugin's own pages in the web app"
-      },
-      "capability": {
-        "sandbox": "runs arbitrary commands in the deployment",
-        "object-store": "holds every attachment and plugin package",
+        "ui_embed": "embeds the plugin's own pages in the web app",
         "channel": "receives the organization's IM conversations",
         "directory": "can add people to organizations and create their accounts",
-        "identity-source": "decides who can sign in as which account"
+        "identity_source": "decides who can sign in as which account",
+        "sandbox": "runs arbitrary commands in the deployment",
+        "object_store": "holds every attachment and plugin package"
       },
       "warnings": "Migration warnings",
       "warningsHint": "Plugin migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
@@ -1944,7 +1942,8 @@
         "enableAfter": "Enable right after installing",
         "install": "Install",
         "done": "Installed “{name}”; replicas are converging.",
-        "failedAfterInstall": "The plugin is installed but a later step did not finish. Continue on the plugin's page."
+        "failedAfterInstall": "The plugin is installed but a later step did not finish. Continue on the plugin's page.",
+        "sessionExpired": "Your sign-in has expired. Sign in again, then upload."
       },
       "config": {
         "none": "This plugin has no deployment config.",

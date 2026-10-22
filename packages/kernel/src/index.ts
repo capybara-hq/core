@@ -190,9 +190,12 @@ export {
   type DeploymentPluginStatus,
   isSensitivePermissionKey,
   type PermissionGroup,
+  type PermissionItem,
   permissionGroups,
+  permissionKeyItems,
   reviewHash,
   SENSITIVE_CAPABILITIES,
+  type SensitiveReason,
 } from "./plugins/permission-view.js";
 export { PluginRegistry } from "./plugins/registry.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";

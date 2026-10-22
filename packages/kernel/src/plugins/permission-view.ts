@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import { type PermissionSet, permissionKeys } from "./permission-set.js";
 import type { PluginSource } from "./sources.js";
 
@@ -33,6 +34,32 @@ export interface PermissionGroup {
    */
   sensitive: boolean;
   items: string[];
+  /** 与 `items` 一一对应：逐项的敏感标记与原因（界面据此高亮并写原因，不自己判定）。 */
+  entries: PermissionItem[];
+}
+
+/**
+ * 敏感原因码（界面按码翻译）：密钥、公开路由、工具、hook、嵌入应用，以及敏感能力
+ * （{@link SENSITIVE_CAPABILITIES}，码为能力名去掉 `@<主版本>`、`-` 换 `_`）。
+ */
+export type SensitiveReason =
+  | "secrets"
+  | "public_routes"
+  | "tools"
+  | "hooks"
+  | "ui_embed"
+  | "channel"
+  | "directory"
+  | "identity_source"
+  | "sandbox"
+  | "object_store";
+
+/** 权限清单里的一项（分组里的一项，或 `added` 里的一个权限键）。 */
+export interface PermissionItem {
+  value: string;
+  sensitive: boolean;
+  /** 敏感时的原因码。 */
+  reason?: SensitiveReason;
 }
 
 /**
@@ -59,16 +86,32 @@ const ALWAYS_SENSITIVE: ReadonlySet<Category> = new Set<Category>([
   "hooks",
 ]);
 
+const CATEGORY_REASON: Partial<Record<Category, SensitiveReason>> = {
+  secrets: "secrets",
+  publicRoutes: "public_routes",
+  tools: "tools",
+  hooks: "hooks",
+};
+
 /**
- * 某类别里的一项是否敏感（分组清单与 CLI 的逐项标记共用这一处）：密钥、公开路由、工具、hook 总是敏感；
- * 「提供」里的 {@link SENSITIVE_CAPABILITIES}；「界面」里的嵌入应用（`embed:<id>`）。
+ * 某类别里的一项为什么敏感（不敏感返回 undefined；分组清单、`added` 逐项与 CLI 的标记共用这一处）：
+ * 密钥、公开路由、工具、hook 总是敏感；「提供」里的 {@link SENSITIVE_CAPABILITIES}；「界面」里的嵌入应用（`embed:<id>`）。
  */
-function itemSensitive(category: Category, item: string): boolean {
+function itemReason(category: Category, item: string): SensitiveReason | undefined {
   // storage 不算敏感：ctx.storage 的键由内核加前缀 `plugins/<插件>/<orgId>/`，插件只能读写自己的前缀
-  if (category === "provides") return SENSITIVE_CAPABILITIES.includes(item);
-  if (category === "ui") return item.startsWith("embed:");
-  return ALWAYS_SENSITIVE.has(category);
+  if (category === "provides") {
+    return SENSITIVE_CAPABILITIES.includes(item)
+      ? ((item.split("@")[0] as string).replaceAll("-", "_") as SensitiveReason)
+      : undefined;
+  }
+  if (category === "ui") return item.startsWith("embed:") ? "ui_embed" : undefined;
+  return ALWAYS_SENSITIVE.has(category) ? CATEGORY_REASON[category] : undefined;
 }
+
+const itemOf = (category: Category, value: string): PermissionItem => {
+  const reason = itemReason(category, value);
+  return reason === undefined ? { value, sensitive: false } : { value, sensitive: true, reason };
+};
 
 /** 权限键（{@link permissionKeys} 的格式）所属的类别与展示项；不属于敏感判定相关类别的返回 null。 */
 function keyItem(key: string): { category: Category; item: string } | null {
@@ -97,7 +140,17 @@ function keyItem(key: string): { category: Category; item: string } | null {
  */
 export function isSensitivePermissionKey(key: string): boolean {
   const k = keyItem(key);
-  return k !== null && itemSensitive(k.category, k.item);
+  return k !== null && itemReason(k.category, k.item) !== undefined;
+}
+
+/** 权限键逐项的敏感标记与原因（`added` 用；与 {@link permissionGroups} 同一套规则）。 */
+export function permissionKeyItems(keys: string[]): PermissionItem[] {
+  return keys.map((value) => {
+    const k = keyItem(value);
+    if (k === null) return { value, sensitive: false };
+    const reason = itemReason(k.category, k.item);
+    return reason === undefined ? { value, sensitive: false } : { value, sensitive: true, reason };
+  });
 }
 
 /** 把权限集合整理成分组清单（固定顺序，空组省略）。纯函数。 */
@@ -112,7 +165,7 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     set.config[level].map((f) => `${level}:${f.path || "<root>"}`),
   );
   const secretItems = [...(p.secrets ? ["secret store"] : []), ...secretFields];
-  const groups: Omit<PermissionGroup, "sensitive">[] = [
+  const groups: Omit<PermissionGroup, "sensitive" | "entries">[] = [
     {
       category: "provides",
       items: set.provides,
@@ -145,7 +198,10 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
   ];
   return groups
     .filter((g) => g.items.length > 0)
-    .map((g) => ({ ...g, sensitive: g.items.some((i) => itemSensitive(g.category, i)) }));
+    .map((g) => {
+      const entries = g.items.map((i) => itemOf(g.category, i));
+      return { ...g, sensitive: entries.some((e) => e.sensitive), entries };
+    });
 }
 
 /**
@@ -192,11 +248,18 @@ export interface AdminPluginView {
   permissions: PermissionGroup[];
   /** 相对已批准快照多出 / 少了的权限键（没有快照时全部算新增；内置插件预先批准，恒为空）。 */
   added: string[];
+  /** `added` 逐项的敏感标记与原因。 */
+  addedItems: PermissionItem[];
   removed: string[];
   /** 见 {@link reviewHash}：网页批准时回传。 */
   reviewHash: string;
   /** 任一权限分组敏感（与 `permissions[].sensitive` 一致，界面据此高亮）。 */
   sensitive: boolean;
+  /**
+   * 安装记录包里迁移 SQL 的审阅警告（与上传时的 `PackageReview.warnings` 相同；内置 / 配置声明为空）。
+   * 批准前界面同样高亮并要求确认。
+   */
+  warnings: PackageWarning[];
   snapshot: {
     version: string;
     approvedAt: string;
@@ -252,4 +315,31 @@ export function derivePluginStatus(i: StatusInput): DeploymentPluginStatus {
     i.replicas.length > 0 &&
     i.replicas.every((r) => r.state === "loaded" && (target === null || r.sha256 === target));
   return done ? "enabled" : "converging";
+}
+
+/**
+ * 迁移 SQL 的审阅警告：破坏性语句（`destructive_migration`），以及内容不做静态检查的 `DO` 块（`dynamic_sql`，
+ * 块里可以执行任意语句）。都标敏感，不拒绝。
+ */
+export function migrationWarnings(files: { file: string; sql: string }[]): PackageWarning[] {
+  return files.flatMap((m) =>
+    splitSqlStatements(m.sql).flatMap((st): PackageWarning[] => {
+      const base = { sensitive: true as const, file: m.file, line: st.line, statement: st.text };
+      if (/^DO\b/i.test(st.text)) return [{ kind: "dynamic_sql", ...base }];
+      if (isDestructiveSql(st.text)) return [{ kind: "destructive_migration", ...base }];
+      return [];
+    }),
+  );
+}
+
+/** {@link PackageReview.warnings} 的一项。 */
+export interface PackageWarning {
+  /** `dynamic_sql`：`DO` 块，块内语句没有检查。 */
+  kind: "destructive_migration" | "dynamic_sql";
+  sensitive: true;
+  /** 迁移文件名（`capybara.migrations` 目录下）。 */
+  file: string;
+  line: number;
+  /** 语句（压成一行，字符串字面量已抹掉）。 */
+  statement: string;
 }

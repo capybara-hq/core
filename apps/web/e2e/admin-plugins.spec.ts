@@ -1,43 +1,15 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
   readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
 ) as typeof import("../messages/zh.json");
 
-const LOGIN = "admin";
-const PASSWORD = "correct-horse-battery";
 /** 内核要求非安全方法带的 CSRF 头。 */
 const CSRF = { "X-Capybara-Csrf": "1" };
 const P = zh.admin.plugins;
-
-/** 登录（未初始化时走初始化向导，初始化的账号是企业管理员）并选中组织 Acme。 */
-async function signIn(page: Page) {
-  await page.goto("/zh");
-  const setupButton = page.getByRole("button", { name: zh.setup.submit });
-  const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
-  await expect(setupButton.or(loginButton)).toBeVisible();
-  if (await setupButton.isVisible()) {
-    await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.setup.passwordLabel).fill(PASSWORD);
-    await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");
-    await page.getByLabel(zh.setup.orgNameLabel).fill("Acme");
-    await page.getByRole("button", { name: zh.setup.submit }).click();
-  } else {
-    await page.getByLabel(zh.login.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
-    await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
-  }
-  await expect(page).toHaveURL(/\/zh$/);
-  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
-  await expect
-    .poll(async () => {
-      const me = await page.request.get("/api/v1/me");
-      return me.ok() ? ((await me.json()) as { currentOrgId: string | null }).currentOrgId : null;
-    })
-    .not.toBeNull();
-}
 
 /** 在对话里让 model-fake 调用 greeter 的工具，返回这一轮工具行与助手回复。 */
 async function callGreet(page: Page, convId: string) {
@@ -146,6 +118,9 @@ test("后台插件：上传 tgz → 审阅（敏感项须确认）→ 安装、�
 
   // 7. 再调用：工具已卸下，agent 拿到「工具不可用」的错误结果（没有重启内核）
   const second = await callGreet(page, convId);
-  await expect(second.reply).toHaveText(/Unknown tool|no longer available|unavailable/);
-  await expect(second.reply).not.toHaveText(/bonjour from greeter/);
+  // 内核工具管线对 agent 引用、但插件已卸下的工具返回的错误结果（tools/pipeline.ts 的 unavailableText）
+  await expect(second.tool).toHaveAttribute("data-status", "error");
+  await expect(second.reply).toHaveText(
+    'Tool result: Tool "greeter__greet" is unavailable: Plugin tool does not exist.',
+  );
 });

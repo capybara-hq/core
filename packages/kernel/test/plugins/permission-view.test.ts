@@ -59,18 +59,33 @@ describe("permissionGroups", () => {
       },
     });
     const by = Object.fromEntries(groups.map((g) => [g.category, g]));
-    expect(by.provides).toEqual({ category: "provides", sensitive: true, items: ["channel@1"] });
+    expect(by.provides).toEqual({
+      category: "provides",
+      sensitive: true,
+      items: ["channel@1"],
+      entries: [{ value: "channel@1", sensitive: true, reason: "channel" }],
+    });
     expect(by.config?.items).toEqual(["org:token", "org:id"]);
     expect(by.secrets).toEqual({
       category: "secrets",
       sensitive: true,
       items: ["secret store", "token"],
+      entries: [
+        { value: "secret store", sensitive: true, reason: "secrets" },
+        { value: "token", sensitive: true, reason: "secrets" },
+      ],
     });
-    expect(by.http).toEqual({ category: "http", sensitive: false, items: ["GET /a"] });
+    expect(by.http).toEqual({
+      category: "http",
+      sensitive: false,
+      items: ["GET /a"],
+      entries: [{ value: "GET /a", sensitive: false }],
+    });
     expect(by.publicRoutes).toEqual({
       category: "publicRoutes",
       sensitive: true,
       items: ["POST /events"],
+      entries: [{ value: "POST /events", sensitive: true, reason: "public_routes" }],
     });
     expect(by.tools?.sensitive).toBe(true);
     expect(by.hooks?.sensitive).toBe(true);
@@ -86,6 +101,10 @@ describe("permissionGroups", () => {
         category: "provides",
         sensitive: true,
         items: ["counter@1", cap],
+        entries: [
+          { value: "counter@1", sensitive: false },
+          { value: cap, sensitive: true, reason: cap.split("@")[0]?.replaceAll("-", "_") },
+        ],
       });
     }
     const [plain] = permissionGroups({ ...base, provides: ["counter@1", "model-provider@2"] });
@@ -98,7 +117,12 @@ describe("permissionGroups", () => {
     );
     for (const cap of ["sandbox@1", "object-store@1"]) {
       const [g] = permissionGroups({ ...base, provides: [cap] });
-      expect(g, cap).toEqual({ category: "provides", sensitive: true, items: [cap] });
+      expect(g, cap).toEqual({
+        category: "provides",
+        sensitive: true,
+        items: [cap],
+        entries: [{ value: cap, sensitive: true, reason: cap.split("@")[0]?.replaceAll("-", "_") }],
+      });
       expect(isSensitivePermissionKey(`provides:${cap}`), cap).toBe(true);
       // 只影响展示：依赖它不算敏感
       expect(isSensitivePermissionKey(`requires:${cap}`), cap).toBe(false);

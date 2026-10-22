@@ -19,7 +19,10 @@ import { buildPermissionSet, diffPermissions, type PermissionSet } from "./permi
 import {
   type AdminPluginView,
   derivePluginStatus,
+  migrationWarnings,
+  type PackageWarning,
   permissionGroups,
+  permissionKeyItems,
   reviewHash,
 } from "./permission-view.js";
 import type { PluginSource } from "./sources.js";
@@ -67,6 +70,8 @@ interface Subject {
   configValid: boolean | null;
   /** 安装记录的包读不到时的说明（此时 `set` 为空集合）。 */
   broken?: string;
+  /** 安装记录包里迁移 SQL 的审阅警告（内置 / 配置声明为空）。 */
+  warnings: PackageWarning[];
 }
 
 /** 空权限集合（包读不到的降级项）。 */
@@ -91,7 +96,10 @@ function assertReadable(s: Subject): void {
  * 状态由 PG（安装记录、快照、各副本状态行）与本副本宿主（内置 / 配置声明插件的清单）推出。
  */
 export class PluginAdmin {
-  private readonly packageSets = new Map<string, PermissionSet>();
+  private readonly packageSets = new Map<
+    string,
+    { set: PermissionSet; warnings: PackageWarning[] }
+  >();
 
   constructor(private readonly d: PluginAdminDeps) {}
 
@@ -220,13 +228,14 @@ export class PluginAdmin {
         install: null,
         configurable: p.configurable,
         configValid: p.configValid,
+        warnings: [],
       }));
     if (only !== undefined && out.length > 0) return out;
     const rows = (await this.d.installs.list()).filter(
       (r) => !taken.has(r.name) && (only === undefined || r.name === only),
     );
     for (const r of rows) {
-      let info: { set: PermissionSet; configurable: boolean };
+      let info: { set: PermissionSet; configurable: boolean; warnings: PackageWarning[] };
       try {
         info = await this.packageInfo(r.sha256);
       } catch (err) {
@@ -246,10 +255,11 @@ export class PluginAdmin {
           configurable: false,
           configValid: null,
           broken: detail,
+          warnings: [],
         });
         continue;
       }
-      const { set, configurable } = info;
+      const { set, configurable, warnings } = info;
       out.push({
         name: r.name,
         source: "install",
@@ -258,26 +268,29 @@ export class PluginAdmin {
         install: r,
         configurable,
         configValid: null,
+        warnings,
       });
     }
     return out;
   }
 
-  /** 包的权限集合（静态清单 + 迁移 SQL，与上传时的审阅相同）与是否有部署级配置字段；按 sha256 缓存。 */
+  /**
+   * 包的权限集合（静态清单 + 迁移 SQL，与上传时的审阅相同）、迁移审阅警告与是否有部署级配置字段；按 sha256 缓存。
+   */
   private async packageInfo(
     sha256: string,
-  ): Promise<{ set: PermissionSet; configurable: boolean }> {
-    let set = this.packageSets.get(sha256);
-    if (!set) {
+  ): Promise<{ set: PermissionSet; configurable: boolean; warnings: PackageWarning[] }> {
+    let cached = this.packageSets.get(sha256);
+    if (!cached) {
       const pkg = await readPluginPackage(await this.d.blobs.get(sha256), {
         maxBytes: this.d.config().packages.maxBytes,
         hostSdkVersion: SDK_VERSION,
       });
-      set = permissionSetOfPackage(pkg);
+      cached = { set: permissionSetOfPackage(pkg), warnings: migrationWarnings(pkg.migrationSql) };
       if (this.packageSets.size >= PACKAGE_SET_CACHE_MAX) this.packageSets.clear();
-      this.packageSets.set(sha256, set);
+      this.packageSets.set(sha256, cached);
     }
-    return { set, configurable: set.config.deployment.length > 0 };
+    return { ...cached, configurable: cached.set.config.deployment.length > 0 };
   }
 
   private async views(subjects: Subject[]): Promise<AdminPluginView[]> {
@@ -322,9 +335,11 @@ export class PluginAdmin {
           replicas: replicas.map(replicaView),
           permissions: [],
           added: [],
+          addedItems: [],
           removed: [],
           reviewHash: reviewHash(s.set),
           sensitive: false,
+          warnings: [],
           snapshot: snapshotView(snap),
           configurable: false,
           configValid,
@@ -354,9 +369,11 @@ export class PluginAdmin {
         replicas: replicas.map(replicaView),
         permissions,
         added,
+        addedItems: permissionKeyItems(added),
         removed,
         reviewHash: reviewHash(s.set),
         sensitive: permissions.some((g) => g.sensitive),
+        warnings: s.warnings,
         snapshot: snapshotView(snap),
         configurable: s.configurable,
         configValid,

@@ -1132,17 +1132,15 @@
       "none": "没有声明任何权限。",
       "reason": {
         "secrets": "可以读写密钥",
-        "publicRoutes": "这些路由不需要登录就能访问",
+        "public_routes": "这些路由不需要登录就能访问",
         "tools": "组织里的 agent 可以调用这些工具",
         "hooks": "可以介入内核流程",
-        "ui": "会把插件自己的页面嵌入网页"
-      },
-      "capability": {
-        "sandbox": "在部署里执行任意命令",
-        "object-store": "保管全部附件与插件包",
+        "ui_embed": "会把插件自己的页面嵌入网页",
         "channel": "收到组织在 IM 里的对话内容",
         "directory": "能把人加进组织，并为其建账号",
-        "identity-source": "决定谁能登录成哪个账号"
+        "identity_source": "决定谁能登录成哪个账号",
+        "sandbox": "在部署里执行任意命令",
+        "object_store": "保管全部附件与插件包"
       },
       "warnings": "迁移警告",
       "warningsHint": "插件迁移只该做扩展：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
@@ -1944,7 +1942,8 @@
         "enableAfter": "安装后立即启用",
         "install": "安装",
         "done": "已安装「{name}」，各副本正在收敛。",
-        "failedAfterInstall": "插件已安装，但后续步骤没有完成，请到插件详情页继续。"
+        "failedAfterInstall": "插件已安装，但后续步骤没有完成，请到插件详情页继续。",
+        "sessionExpired": "登录已过期，请重新登录后再上传。"
       },
       "config": {
         "none": "这个插件没有部署级配置。",

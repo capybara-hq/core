@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
@@ -49,27 +50,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await im?.stop();
 });
-
-/** 登录并选中组织 Acme（与其他用例共用一个内核：若尚未初始化则走初始化向导）。 */
-async function signIn(page: Page) {
-  await page.goto("/zh");
-  const setupButton = page.getByRole("button", { name: zh.setup.submit });
-  const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
-  await expect(setupButton.or(loginButton)).toBeVisible();
-  if (await setupButton.isVisible()) {
-    await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.setup.passwordLabel).fill(PASSWORD);
-    await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");
-    await page.getByLabel(zh.setup.orgNameLabel).fill("Acme");
-    await page.getByRole("button", { name: zh.setup.submit }).click();
-  } else {
-    await page.getByLabel(zh.login.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
-    await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
-  }
-  await expect(page).toHaveURL(/\/zh$/);
-  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
-}
 
 const sentTo = (chatId: string) => im.sent.filter((s) => s.target.chatId === chatId);
 

@@ -140,6 +140,23 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   const getView = async (req: Req = admin) => {
     const res = await req({ method: "GET", url: "/api/v1/admin/plugins/deploycfg/config" });
     expect(res.statusCode, res.body).toBe(200);
+    // 只给插件配置视图：内核配置（masterKey、数据库 / Redis 地址）绝不出现在响应里
+    expect(res.body).not.toContain("masterKey");
+    expect(res.body).not.toContain(Buffer.alloc(32, 7).toString("base64"));
+    expect(res.body).not.toContain(pgc.url);
+    expect(res.body).not.toContain(rd.url);
+    expect(Object.keys(res.json()).sort()).toEqual(
+      [
+        "configurable",
+        "fields",
+        "issues",
+        "plugin",
+        "schema",
+        "valid",
+        "validated",
+        "version",
+      ].sort(),
+    );
     return res.json() as ConfigView;
   };
   const put = (values: Record<string, unknown>, req: Req = admin) =>

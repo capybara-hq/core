@@ -1,7 +1,6 @@
 import { type CapybaraPackageSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
-import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -15,7 +14,18 @@ import { PluginApprovals } from "./approvals.js";
 import type { PluginBlobs } from "./blobs.js";
 import { PluginPackageError, permissionSetOfPackage, readPluginPackage } from "./package.js";
 import { diffPermissions } from "./permission-set.js";
-import { type PermissionGroup, permissionGroups, reviewHash } from "./permission-view.js";
+import {
+  migrationWarnings,
+  type PackageWarning,
+  type PermissionGroup,
+  type PermissionItem,
+  permissionGroups,
+  permissionKeyItems,
+  reviewHash,
+} from "./permission-view.js";
+
+export { migrationWarnings, type PackageWarning };
+
 import type { PluginSource } from "./sources.js";
 
 /** 上传 / 拉取一个包后的审阅结果（权限按静态清单与迁移 SQL 计算，不执行插件代码）。 */
@@ -26,6 +36,8 @@ export interface PackageReview {
   permissions: PermissionGroup[];
   /** 相对该插件当前权限快照多出 / 少了的权限键（没有快照时全部算新增）。 */
   added: string[];
+  /** `added` 逐项的敏感标记与原因（界面据此高亮，不自己判定）。 */
+  addedItems: PermissionItem[];
   removed: string[];
   /** 见 {@link reviewHash}：批准时回传，审阅后权限变了就拒绝。 */
   reviewHash: string;
@@ -34,33 +46,6 @@ export interface PackageReview {
    * RENAME、改列类型）逐条列出——新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。
    */
   warnings: PackageWarning[];
-}
-
-/**
- * 迁移 SQL 的审阅警告：破坏性语句（`destructive_migration`），以及内容不做静态检查的 `DO` 块（`dynamic_sql`，
- * 块里可以执行任意语句）。都标敏感，不拒绝。
- */
-export function migrationWarnings(files: { file: string; sql: string }[]): PackageWarning[] {
-  return files.flatMap((m) =>
-    splitSqlStatements(m.sql).flatMap((st): PackageWarning[] => {
-      const base = { sensitive: true as const, file: m.file, line: st.line, statement: st.text };
-      if (/^DO\b/i.test(st.text)) return [{ kind: "dynamic_sql", ...base }];
-      if (isDestructiveSql(st.text)) return [{ kind: "destructive_migration", ...base }];
-      return [];
-    }),
-  );
-}
-
-/** {@link PackageReview.warnings} 的一项。 */
-export interface PackageWarning {
-  /** `dynamic_sql`：`DO` 块，块内语句没有检查。 */
-  kind: "destructive_migration" | "dynamic_sql";
-  sensitive: true;
-  /** 迁移文件名（`capybara.migrations` 目录下）。 */
-  file: string;
-  line: number;
-  /** 语句（压成一行，字符串字面量已抹掉）。 */
-  statement: string;
 }
 
 /** 安装记录一行（`plugin_installs` 加包的 npm 包名）。 */
@@ -200,6 +185,7 @@ export class PluginInstalls {
       version: m.version,
       permissions: permissionGroups(set),
       added,
+      addedItems: permissionKeyItems(added),
       removed,
       reviewHash: reviewHash(set),
       warnings: migrationWarnings(pkg.migrationSql),

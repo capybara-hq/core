@@ -1,13 +1,12 @@
 import { readFileSync } from "node:fs";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
   readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
 ) as typeof import("../messages/zh.json");
 
-const LOGIN = "admin";
-const PASSWORD = "correct-horse-battery";
 /** DataTable 行菜单的触发按钮名称（设计系统文案 table.rowActions，zh）。 */
 const ROW_ACTIONS = "行操作";
 const A = zh.admin;
@@ -15,28 +14,8 @@ const A = zh.admin;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
-/** 登录（与其他用例共用同一个内核：未初始化时走初始化向导，初始化的账号是企业管理员）。 */
-async function signIn(page: Page) {
-  await page.goto("/zh");
-  const setupButton = page.getByRole("button", { name: zh.setup.submit });
-  const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
-  await expect(setupButton.or(loginButton)).toBeVisible();
-  if (await setupButton.isVisible()) {
-    await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.setup.passwordLabel).fill(PASSWORD);
-    await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");
-    await page.getByLabel(zh.setup.orgNameLabel).fill("Acme");
-    await page.getByRole("button", { name: zh.setup.submit }).click();
-  } else {
-    await page.getByLabel(zh.login.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
-    await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
-  }
-  await expect(page).toHaveURL(/\/zh$/);
-}
-
 test("企业管理员：顶栏「管理」→ 组织 → 设置运行并发并保存成功", async ({ page }) => {
-  await signIn(page);
+  await signIn(page, { org: false });
 
   await page
     .getByRole("navigation", { name: "主导航" })

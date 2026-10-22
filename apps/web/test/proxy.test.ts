@@ -308,7 +308,7 @@ describe("上传插件包（POST /api/v1/admin/plugins/packages/file）：放宽
     expect(declared.status).toBe(413);
   });
 
-  it("流式透传：客户端还没发完，上游已收到第一段", async () => {
+  it("流式透传：客户端还没发完，上游已收到第一段；Cookie 与 CSRF 头照常透传", async () => {
     let release!: () => void;
     const firstSeen = new Promise<void>((r) => {
       release = r;
@@ -327,10 +327,18 @@ describe("上传插件包（POST /api/v1/admin/plugins/packages/file）：放宽
       },
     });
     const res = await POST(
-      new Request(PATH, { method: "POST", body, duplex: "half" } as RequestInit),
+      new Request(PATH, {
+        method: "POST",
+        headers: { cookie: "cap_at=tok", "x-capybara-csrf": "1" },
+        body,
+        duplex: "half",
+      } as RequestInit),
     );
     expect(res.status).toBe(200);
     expect(seen[0]?.body).toBe("first-second");
+    // 流式路径同样透传会话 Cookie 与 CSRF 头
+    expect(seen[0]?.headers.cookie).toBe("cap_at=tok");
+    expect(seen[0]?.headers["x-capybara-csrf"]).toBe("1");
   }, 10_000);
 
   it("CAPYBARA_WEB_MAX_PACKAGE_BYTES 可调；无 content-length 时边转发边计数，超限 -> 413", async () => {

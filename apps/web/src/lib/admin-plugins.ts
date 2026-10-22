@@ -1,6 +1,6 @@
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession } from "./api";
 import type { JsonSchema } from "./json-schema";
-import type { PermissionGroup } from "./plugins";
+import type { PermissionGroup, PermissionItem } from "./plugins";
 
 /**
  * 部署级插件管理（`/api/v1/admin/plugins/*`，内核 `admin/plugins.controller.ts`，企业管理员）：列表与详情、
@@ -46,9 +46,13 @@ export interface AdminPlugin {
   replicas: PluginReplica[];
   permissions: PermissionGroup[];
   added: string[];
+  /** `added` 逐项的敏感标记与原因码（内核判定）。 */
+  addedItems: PermissionItem[];
   removed: string[];
   reviewHash: string;
   sensitive: boolean;
+  /** 安装记录包里迁移 SQL 的审阅警告（批准前同样要确认）。 */
+  warnings: PackageWarning[];
   snapshot: {
     version: string;
     approvedAt: string;
@@ -79,6 +83,8 @@ export interface PackageReview {
   permissions: PermissionGroup[];
   /** 相对该插件当前权限快照新增 / 减少的权限键（没有快照时全部算新增）。 */
   added: string[];
+  /** `added` 逐项的敏感标记与原因码（内核判定）。 */
+  addedItems: PermissionItem[];
   removed: string[];
   reviewHash: string;
   warnings: PackageWarning[];
@@ -116,6 +122,9 @@ const post = (body?: unknown): RequestInit => ({
 });
 
 /** 全部插件；`drainSeconds`：停用 / 升级时在途工具调用最多等待的秒数。 */
+/** 单个插件（详情页收敛中轮询用）；包读不到时 409 `plugin.package_unavailable`。 */
+export const getAdminPlugin = (name: string) => apiFetch<AdminPlugin>(one(name));
+
 export const listAdminPlugins = () =>
   apiFetch<{ plugins: AdminPlugin[]; drainSeconds: number }>(base);
 
@@ -176,9 +185,14 @@ function xhrError(xhr: XMLHttpRequest): ApiClientError {
   return new ApiClientError(xhr.status, "http_error", `HTTP ${xhr.status}`);
 }
 
+/** 上传途中登录过期（客户端错误码，页面提示重新登录，而不是「后端不可用」）。 */
+export const UPLOAD_SESSION_EXPIRED = "plugin.upload_session_expired";
+
 /**
  * 上传插件包（tgz 原始字节）并取回审阅结果。用 XMLHttpRequest 取得上传进度（fetch 没有）；`signal` 中止时
- * 抛 AbortError。代理对这个路由流式透传请求体，流无法重放，所以上传前先确认登录有效（必要时刷新一次）。
+ * 抛 AbortError。代理对这个路由流式透传请求体，流无法重放：上传前先确认登录有效（必要时刷新一次）；
+ * 上传遇到 401，或代理报上游不可达（流式请求体遇上游 401 时 undici 报网络错误）时，再确认一次登录，
+ * 登录确实失效则抛 {@link UPLOAD_SESSION_EXPIRED}。
  */
 export async function uploadPluginPackage(
   file: Blob,
@@ -186,6 +200,24 @@ export async function uploadPluginPackage(
 ): Promise<PackageReview> {
   await ensureSession();
   opts.signal?.throwIfAborted();
+  try {
+    return await sendPackage(file, opts);
+  } catch (e) {
+    if (e instanceof ApiClientError && (e.status === 401 || e.code === "upstream_unavailable")) {
+      const expired = await ensureSession().then(
+        () => false,
+        (err: unknown) => err instanceof ApiClientError && err.code.startsWith("auth."),
+      );
+      if (expired) throw new ApiClientError(401, UPLOAD_SESSION_EXPIRED, "Session expired");
+    }
+    throw e;
+  }
+}
+
+function sendPackage(
+  file: Blob,
+  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal },
+): Promise<PackageReview> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${base}/packages/file`);
@@ -228,27 +260,8 @@ export function replicaSummary(p: Pick<AdminPlugin, "replicas">): {
   return { total: p.replicas.length, consistent, failed };
 }
 
-/** 敏感的能力（与内核 `SENSITIVE_CAPABILITIES` 一致，只用于逐项高亮与写明原因）。 */
-export const SENSITIVE_CAPABILITIES = [
-  "channel@1",
-  "directory@1",
-  "identity-source@1",
-  "sandbox@1",
-  "object-store@1",
-] as const;
-
-/** 总是敏感的类别（与内核 `permission-view.ts` 一致）。 */
-const ALWAYS_SENSITIVE = new Set(["secrets", "publicRoutes", "tools", "hooks"]);
-
-/** 分组里的一项是否敏感（展示用：内核只给分组级标记，逐项规则与内核一致）。 */
-export function itemSensitive(category: string, item: string): boolean {
-  if (category === "provides") return (SENSITIVE_CAPABILITIES as readonly string[]).includes(item);
-  if (category === "ui") return item.startsWith("embed:");
-  return ALWAYS_SENSITIVE.has(category);
-}
-
 /** 审阅结果是否含敏感项（敏感分组或迁移警告）：确认安装 / 批准前须勾选「我已了解敏感项」。 */
 export const reviewSensitive = (r: {
   permissions: PermissionGroup[];
-  warnings?: PackageWarning[];
-}): boolean => r.permissions.some((g) => g.sensitive) || (r.warnings?.length ?? 0) > 0;
+  warnings: PackageWarning[];
+}): boolean => r.permissions.some((g) => g.sensitive) || r.warnings.length > 0;

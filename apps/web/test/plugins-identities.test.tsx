@@ -30,9 +30,27 @@ const FAKE_IM = {
   config: null,
   secrets: [{ path: "token", set: true }],
   permissions: [
-    { category: "provides", sensitive: false, items: ["channel@1", "directory@1"] },
-    { category: "secrets", sensitive: true, items: ["org:token"] },
-    { category: "tools", sensitive: true, items: ["post_announcement"] },
+    {
+      category: "provides",
+      sensitive: false,
+      items: ["channel@1", "directory@1"],
+      entries: [
+        { value: "channel@1", sensitive: false },
+        { value: "directory@1", sensitive: false },
+      ],
+    },
+    {
+      category: "secrets",
+      sensitive: true,
+      items: ["org:token"],
+      entries: [{ value: "org:token", sensitive: true, reason: "secrets" }],
+    },
+    {
+      category: "tools",
+      sensitive: true,
+      items: ["post_announcement"],
+      entries: [{ value: "post_announcement", sensitive: true, reason: "tools" }],
+    },
   ],
   orgConfigSchema: {
     type: "object",
@@ -50,7 +68,14 @@ const CORE = {
   configurable: false,
   config: null,
   secrets: [],
-  permissions: [{ category: "provides", sensitive: false, items: ["directory-core@1"] }],
+  permissions: [
+    {
+      category: "provides",
+      sensitive: false,
+      items: ["directory-core@1"],
+      entries: [{ value: "directory-core@1", sensitive: false }],
+    },
+  ],
   orgConfigSchema: null,
 };
 

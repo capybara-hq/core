@@ -27,6 +27,7 @@ import {
   listAdminPlugins,
   type PackageReview,
   reviewSensitive,
+  UPLOAD_SESSION_EXPIRED,
   uploadPluginPackage,
 } from "../../../../../../lib/admin-plugins";
 import { ApiClientError, issueLines } from "../../../../../../lib/api";
@@ -109,6 +110,8 @@ function PluginInstall() {
       setStep(1);
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") setCancelled(true);
+      else if (e instanceof ApiClientError && e.code === UPLOAD_SESSION_EXPIRED)
+        setFetchError({ message: t("sessionExpired"), extra: [] });
       else setFetchError(problem(e));
     } finally {
       abort.current = null;
@@ -294,7 +297,7 @@ function PluginInstall() {
           <PermissionReview
             plugin={review.name}
             groups={review.permissions}
-            {...(upgrading && { added: review.added, removed: review.removed })}
+            {...(upgrading && { added: review.addedItems, removed: review.removed })}
             warnings={review.warnings}
           />
         </Stack>

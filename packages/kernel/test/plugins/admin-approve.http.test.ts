@@ -203,7 +203,9 @@ describe("插件列表与网页批准权限", () => {
       category: "provides",
       sensitive: true,
       items: ["object-store@1"],
+      entries: [{ value: "object-store@1", sensitive: true, reason: "object_store" }],
     });
+    expect((s3 as View & { warnings: unknown[] }).warnings).toEqual([]);
 
     const sandbox = all.get("sandbox-fake") as View;
     expect(sandbox).toMatchObject({
@@ -214,6 +216,14 @@ describe("插件列表与网页批准权限", () => {
     });
     expect(sandbox.permissions.find((g) => g.category === "provides")?.sensitive).toBe(true);
     expect(sandbox.added).toContain("provides:sandbox@1");
+    // added 逐项带敏感标记与原因码：界面只渲染，不自己判定
+    const addedItems = (sandbox as View & { addedItems: unknown[] }).addedItems;
+    expect(addedItems).toHaveLength(sandbox.added.length);
+    expect(addedItems).toContainEqual({
+      value: "provides:sandbox@1",
+      sensitive: true,
+      reason: "sandbox",
+    });
 
     expect(all.get("model-fake")).toMatchObject({
       source: "config",
@@ -383,6 +393,33 @@ describe("插件列表与网页批准权限", () => {
     expect(after.get("perm-a")?.status).toBe("enabled");
     expect(after.get("perm-dep")?.status).toBe("enabled");
     expect(after.get("sandbox-fake")?.status).toBe("pending_approval");
+  });
+
+  it("安装记录的迁移警告随视图返回（详情页批准前同样高亮）；内置 / 配置声明为空", async () => {
+    const bytes = await pluginTgz({
+      name: "demo-warn",
+      section: { migrations: "migrations" },
+      extra: [
+        {
+          name: "package/migrations/0001_init.sql",
+          data: "CREATE TABLE IF NOT EXISTS plugin_demo_warn.notes (id int);\nDROP TABLE IF EXISTS plugin_demo_warn.old;\n",
+        },
+      ],
+    });
+    await installPkg("demo-warn", bytes, "disabled");
+    const all = await list();
+    const w = all.get("demo-warn") as View & { warnings: Record<string, unknown>[] };
+    expect(w.warnings).toEqual([
+      expect.objectContaining({
+        kind: "destructive_migration",
+        sensitive: true,
+        file: "0001_init.sql",
+        line: 2,
+      }),
+    ]);
+    expect((all.get("model-fake") as View & { warnings: unknown[] }).warnings).toEqual([]);
+    const one = await admin({ method: "GET", url: "/api/v1/admin/plugins/demo-warn" });
+    expect(one.json().warnings).toEqual(w.warnings);
   });
 
   it("包读不到（字节缺失）：列表降级为 failed 项（空权限、error 写明名字版本与 sha、可卸载），详情与批准返回 409 plugin.package_unavailable", async () => {

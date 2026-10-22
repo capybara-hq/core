@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
@@ -20,35 +21,8 @@ const designZh = (key: string): string => {
   return m[1];
 };
 
-const LOGIN = "admin";
-const PASSWORD = "correct-horse-battery";
 /** DataTable 行菜单的触发按钮名称（设计系统文案 table.rowActions，zh）。 */
 const ROW_ACTIONS = "行操作";
-
-/**
- * 登录（与 chat.spec 共用同一个内核：若尚未初始化则走初始化向导），并选中组织 Acme。
- * 每个用例是新的浏览器上下文，所以总要先登录。
- */
-async function signIn(page: Page) {
-  // 未登录访问首页：已初始化 → 登录页；未初始化 → 初始化向导（登录页也会再跳一次）
-  await page.goto("/zh");
-  const setupButton = page.getByRole("button", { name: zh.setup.submit });
-  const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
-  await expect(setupButton.or(loginButton)).toBeVisible();
-  if (await setupButton.isVisible()) {
-    await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.setup.passwordLabel).fill(PASSWORD);
-    await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");
-    await page.getByLabel(zh.setup.orgNameLabel).fill("Acme");
-    await page.getByRole("button", { name: zh.setup.submit }).click();
-  } else {
-    await page.getByLabel(zh.login.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
-    await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
-  }
-  await expect(page).toHaveURL(/\/zh$/);
-  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
-}
 
 /** 安装向导的 ActionRow（主操作 / 上一步都在这里）。 */
 const actionRow = (page: Page) => page.getByRole("region", { name: designZh("shell.pending") });
