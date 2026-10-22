@@ -7,7 +7,7 @@ import semver from "semver";
  * - 不跟随重定向（3xx 直接失败）：否则 registry 的一次重定向就能把下载（连同令牌）引到任意地址；
  * - 元数据与 tarball 都边读边计数，超过上限立即中止；
  * - 没有 `opts` 时 tarball 必须与 registry 同源（令牌只发往该源），并按 packument 的 `dist.integrity`
- *   （sha512 SRI）校验；给了 `opts.expectedIntegrity`（清单安装，T24）时只认它；
+ *   （sha512 SRI）校验；给了 `opts.expectedIntegrity`（清单引入，T24）时只认它；
  * - `opts.tarballUrl`（清单直接给出的下载地址）必须是 https，测试里可经 `allowInsecureLoopback` 允许回环 http，
  *   且必须同时给出 `expectedIntegrity`；不会带 registry 令牌。
  */
@@ -20,9 +20,13 @@ export class NpmFetchError extends Error {
   }
 }
 
-/** 下载内容与期望的 integrity 不符。 */
+/** 下载内容与期望的 integrity 不符（`expected` / `actual` 为 `sha512-<base64>`）。 */
 export class IntegrityMismatchError extends NpmFetchError {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly expected: string,
+    readonly actual: string,
+  ) {
     super(message);
     this.name = "IntegrityMismatchError";
   }
@@ -53,13 +57,18 @@ const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-const isLoopback = (host: string) => {
+/** 回环地址（`localhost`、`127.*`、`::1`）。 */
+export const isLoopback = (host: string) => {
   const h = host.replace(/^\[|\]$/g, "");
   return h === "localhost" || h === "::1" || (isIP(h) === 4 && h.startsWith("127."));
 };
 
 /** 读响应体，累计超过 `max` 立即取消并抛 `onTooLarge()`。 */
-async function readCapped(res: Response, max: number, onTooLarge: () => Error): Promise<Buffer> {
+export async function readCapped(
+  res: Response,
+  max: number,
+  onTooLarge: () => Error,
+): Promise<Buffer> {
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > max) {
     await res.body?.cancel().catch(() => {});
@@ -128,7 +137,11 @@ function verify(bytes: Uint8Array, integrity: string, label: string): void {
   if (!want) throw new NpmFetchError(`${label} is not a sha512 integrity`);
   const got = createHash("sha512").update(bytes).digest();
   if (!timingSafeEqual(want, got)) {
-    throw new IntegrityMismatchError(`the downloaded package does not match ${label}`);
+    throw new IntegrityMismatchError(
+      `the downloaded package does not match ${label}`,
+      `sha512-${want.toString("base64")}`,
+      `sha512-${got.toString("base64")}`,
+    );
   }
 }
 

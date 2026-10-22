@@ -21,6 +21,13 @@ export const OUTPUT_CLEANUP_SCHEDULER_ID = "output-cleanup-hourly";
 export const OUTPUT_CLEANUP_EVERY_MS = 3_600_000;
 export const OUTPUT_CLEANUP_BATCH = 1000;
 
+/**
+ * 目录来源的定期刷新（C26）：任务名与 job scheduler id（不含 `:`），周期为 `catalogs.refreshIntervalMinutes`。
+ * 一个 scheduler 管全部副本；处理函数逐个刷新生效的来源（见 directory/catalogs.service.ts）。
+ */
+export const CATALOGS_REFRESH_JOB = "catalogs-refresh";
+export const CATALOGS_REFRESH_SCHEDULER_ID = "catalogs-refresh-every";
+
 /** 维护任务的处理函数（`token` 供 `moveToDelayed` 等使用）。 */
 export type MaintenanceHandler = (job: Job, token: string | undefined) => Promise<void>;
 

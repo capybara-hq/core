@@ -16,6 +16,11 @@ export {
   replicaOf,
 } from "./dual-replica.js";
 export {
+  type FakeCatalog,
+  type FakeCatalogRequest,
+  startFakeCatalog,
+} from "./fake-catalog.js";
+export {
   FAKE_CHANNEL_BAD_SECRET,
   type FakeChannelPost,
   type FakeChannelSent,

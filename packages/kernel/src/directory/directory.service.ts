@@ -3,6 +3,7 @@ import {
   CONNECTOR_TEMPLATE_LIMITS,
   type Connector,
   type ConnectorTemplateSpec,
+  compatibleVersions,
   type LocalizedName,
   type PackageKind,
   type PackageSection,
@@ -17,12 +18,18 @@ import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import type { PluginAdminOps } from "../plugins/admin-ops.js";
 import type { PluginInstalls } from "../plugins/installs.js";
-import { PluginPackageError, readPluginPackage } from "../plugins/package.js";
+import {
+  PluginPackageError,
+  permissionSetOfPackage,
+  readPluginPackage,
+} from "../plugins/package.js";
+import { permissionKeys, WARNINGS_KEY_PREFIX } from "../plugins/permission-set.js";
 import type { AdminPluginView } from "../plugins/permission-view.js";
 import type { PluginSource } from "../plugins/sources.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import { checkDirectoryArchive, invalidPackage, unpackDirectoryArchive } from "./archive.js";
+import { HOST_VERSIONS, loadCatalogEntry } from "./catalogs.service.js";
 import { schemaHasPath } from "./schema-path.js";
 
 /** 条目策略（C22）：allow（新导入默认）/ needs_approval / disabled（不能新装，已装不受影响）。 */
@@ -42,7 +49,7 @@ export interface DirectoryItemView {
   versions: string[];
   /** 组织安装数（安装表在 T26，之前恒为 0）。 */
   installs: number;
-  /** 最新版本的来源（file / npm）。 */
+  /** 最新版本的来源（file / npm / catalog）。 */
   source: string;
   updatedAt: string;
 }
@@ -50,7 +57,7 @@ export interface DirectoryItemView {
 /** 条目的一个版本。 */
 export interface DirectoryItemVersionView {
   version: string;
-  source: "file" | "npm";
+  source: "file" | "npm" | "catalog";
   sourceRef: string;
   integrity: string | null;
   section: PackageSection;
@@ -71,7 +78,7 @@ export interface DirectoryServiceDeps {
   db: KernelDb;
   config: () => KernelConfig;
   storage: StorageService;
-  installs: Pick<PluginInstalls, "ingest" | "fetchNpm">;
+  installs: Pick<PluginInstalls, "ingest" | "fetchNpm" | "fetchCatalogPackage">;
   ops: Pick<PluginAdminOps, "install">;
   /** 内置与配置声明的插件名 → 来源（与它们重名的插件包导入时先报 `plugin.builtin` / `plugin.config_declared`）。 */
   declared: () => ReadonlyMap<string, PluginSource>;
@@ -88,11 +95,29 @@ type Trx = Transaction<KernelDatabase>;
 
 /** 包从哪里来（directory_item_versions.source / source_ref / integrity）。 */
 interface ImportSource {
-  source: "file" | "npm";
+  source: "file" | "npm" | "catalog";
   ref: string;
   integrity?: string;
   /** npm：包里的 package.json name 必须是请求的包。 */
   expectPackageName?: string;
+  /** 清单引入：包必须与条目一致（否则 `catalog.package_mismatch`），条目记下来源清单。 */
+  catalog?: {
+    sourceId: string;
+    kind: PackageKind;
+    name: string;
+    npm: string;
+    version: string;
+  };
+}
+
+/** {@link DirectoryService.importFromCatalog} 的结果（F-AB：T25 再加应用的审阅分支）。 */
+export interface CatalogImportResult {
+  item: DirectoryItemView;
+  /**
+   * 清单的权限摘要与包算出的权限键不一致（只警告，不拒绝；C26）：`missing` = 包要的、清单没列的，
+   * `extra` = 清单列了、包没要的。一致、清单没给摘要或不是插件时为 null。
+   */
+  permissionsMismatch: { missing: string[]; extra: string[] } | null;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -130,8 +155,12 @@ export class DirectoryService {
   constructor(private readonly d: DirectoryServiceDeps) {}
 
   /** 上传的包（tgz；连接器模板与技能也可以是 zip）。 */
-  importFile(actor: string, bytes: Uint8Array, opts: ActorOpts = {}): Promise<DirectoryItemView> {
-    return this.import(actor, bytes, { source: "file", ref: "upload" }, opts);
+  async importFile(
+    actor: string,
+    bytes: Uint8Array,
+    opts: ActorOpts = {},
+  ): Promise<DirectoryItemView> {
+    return (await this.import(actor, bytes, { source: "file", ref: "upload" }, opts)).item;
   }
 
   /** 从配置的 npm registry 拉取（按 `dist.integrity` 校验，记下 integrity）。 */
@@ -141,7 +170,7 @@ export class DirectoryService {
     opts: ActorOpts = {},
   ): Promise<DirectoryItemView> {
     const got = await this.d.installs.fetchNpm(input);
-    return this.import(
+    const r = await this.import(
       actor,
       got.bytes,
       {
@@ -152,17 +181,109 @@ export class DirectoryService {
       },
       opts,
     );
+    return r.item;
   }
 
+  /**
+   * 从清单引入某个条目的某个版本（C25 / C26）：版本须与宿主兼容（`catalog.incompatible`）；按清单下载（给了
+   * `tarball` 就从它下载，否则走 npm registry），校验一律以清单的 sha512 为准（`catalog.integrity_mismatch`，
+   * 什么都不写）；包的 npm 名、版本、种类与条目名必须与条目一致（`catalog.package_mismatch`）；然后走与文件 / npm
+   * 导入相同的流程，版本来源 `catalog`（source_ref `<sourceId>:<npm>@<version>`，integrity 为清单的 sha512），
+   * 插件包进包存储时来源 `directory`、ref `catalog:<sourceId>:<npm>@<version>`（F-L）。策略只挂在目录条目上
+   * （新条目默认 allow）。来源不存在 → `catalog.not_found`；来源停用、条目或版本不存在 → `catalog.entry_not_found`。
+   */
+  async importFromCatalog(
+    actor: string,
+    input: { sourceId: string; kind: PackageKind; name: string; version: string },
+    opts: ActorOpts & { signal?: AbortSignal } = {},
+  ): Promise<CatalogImportResult> {
+    const { entry } = await loadCatalogEntry(
+      this.d.db,
+      this.d.config(),
+      input.sourceId,
+      input.kind,
+      input.name,
+    );
+    const v = entry.versions.find((x) => x.version === input.version);
+    if (!v) {
+      throw new ApiError(
+        "catalog.entry_not_found",
+        `Version ${input.version} of catalog entry ${input.kind} ${input.name} not found`,
+      );
+    }
+    if (!compatibleVersions(entry, HOST_VERSIONS).some((x) => x.version === v.version)) {
+      throw new ApiError(
+        "catalog.incompatible",
+        `${entry.npm}@${v.version} needs kernel >= ${v.minKernel}${v.minSdk !== undefined ? ` and SDK >= ${v.minSdk}` : ""}; this deployment runs kernel ${HOST_VERSIONS.kernel} with SDK ${HOST_VERSIONS.sdk}`,
+      );
+    }
+    const got = await this.d.installs.fetchCatalogPackage(
+      {
+        package: entry.npm,
+        version: v.version,
+        integrity: v.integrity,
+        ...(v.tarball !== undefined && { tarball: v.tarball }),
+      },
+      opts.signal,
+    );
+    const r = await this.import(
+      actor,
+      got.bytes,
+      {
+        source: "catalog",
+        ref: `${input.sourceId}:${entry.npm}@${v.version}`,
+        integrity: v.integrity,
+        catalog: {
+          sourceId: input.sourceId,
+          kind: entry.kind,
+          name: entry.name,
+          npm: entry.npm,
+          version: v.version,
+        },
+      },
+      opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
+    );
+    let permissionsMismatch: CatalogImportResult["permissionsMismatch"] = null;
+    const declared = entry.permissions?.keys;
+    if (declared !== undefined && r.permissionKeys !== undefined) {
+      const want = new Set(declared);
+      const have = new Set(r.permissionKeys);
+      const missing = [...have].filter((k) => !want.has(k)).sort();
+      const extra = [...want].filter((k) => !have.has(k)).sort();
+      if (missing.length > 0 || extra.length > 0) permissionsMismatch = { missing, extra };
+    }
+    return { item: r.item, permissionsMismatch };
+  }
+
+  /** 导入一个包；`permissionKeys` 为插件包算出的权限键（不含迁移警告键；非插件为 undefined）。 */
   private async import(
     actor: string,
     bytes: Uint8Array,
     src: ImportSource,
     opts: ActorOpts,
-  ): Promise<DirectoryItemView> {
+  ): Promise<{ item: DirectoryItemView; permissionKeys?: string[] }> {
     const maxBytes = this.d.config().packages.maxBytes;
     const u = await unpackDirectoryArchive(bytes, maxBytes);
     const packageName = String(u.packageJson.name);
+    const cat = src.catalog;
+    const mismatch = (what: string) =>
+      new ApiError(
+        "catalog.package_mismatch",
+        `The downloaded package does not match the catalog entry: ${what}`,
+      );
+    if (cat) {
+      if (packageName !== cat.npm) {
+        throw mismatch(`package.json name is "${packageName}", the entry says ${cat.npm}`);
+      }
+      if (String(u.packageJson.version) !== cat.version) {
+        throw mismatch(
+          `package.json version is "${String(u.packageJson.version)}", the entry says ${cat.version}`,
+        );
+      }
+      if (u.section.kind !== cat.kind) {
+        throw mismatch(`the package is a ${u.section.kind}, the entry says ${cat.kind}`);
+      }
+    }
     if (src.expectPackageName !== undefined && packageName !== src.expectPackageName) {
       throw invalidPackage([
         `package.json name "${packageName}" does not match the requested npm package ${src.expectPackageName}`,
@@ -179,10 +300,14 @@ export class DirectoryService {
     // 1. 全部校验（不写任何东西）
     let name: string;
     let files: Awaited<ReturnType<typeof checkDirectoryArchive>>["files"] = [];
+    let pkgPermissionKeys: string[] | undefined;
     if (section.kind === "plugin") {
       try {
         const pkg = await readPluginPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION });
         name = pkg.section.manifest.name;
+        pkgPermissionKeys = permissionKeys(permissionSetOfPackage(pkg)).filter(
+          (k) => !k.startsWith(WARNINGS_KEY_PREFIX),
+        );
       } catch (e) {
         if (e instanceof PluginPackageError) throw invalidPackage(e.issues);
         throw e;
@@ -210,6 +335,9 @@ export class DirectoryService {
       // 只有要存文件时才需要对象存储（没有图标的模板只有 PG 行）
       if (files.length > 0) this.d.storage.assertAvailable();
     }
+    if (cat && name !== cat.name) {
+      throw mismatch(`the ${section.kind} is named "${name}", the entry says ${cat.name}`);
+    }
     const version = String(u.packageJson.version);
     const kind = section.kind;
     const existing = await this.liveItem(this.d.db, kind, name);
@@ -226,7 +354,10 @@ export class DirectoryService {
       const review = await this.d.installs.ingest(
         actor,
         bytes,
-        { source: "directory", ref: `${storeId}@${version}` },
+        {
+          source: "directory",
+          ref: cat ? `catalog:${cat.sourceId}:${cat.npm}@${version}` : `${storeId}@${version}`,
+        },
         opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
       );
       pluginSha256 = review.sha256;
@@ -263,6 +394,7 @@ export class DirectoryService {
           .updateTable("directory_items")
           .set({
             updated_at: sql<Date>`now()` as unknown as Date,
+            ...(cat && { catalog_source_id: cat.sourceId }),
             ...(newer && {
               latest_version: version,
               publisher: listing.publisher,
@@ -286,6 +418,7 @@ export class DirectoryService {
             display_name: listing.displayName ? JSON.stringify(listing.displayName) : null,
             latest_version: version,
             created_by: actor,
+            catalog_source_id: cat?.sourceId ?? null,
           })
           .execute();
       }
@@ -318,11 +451,13 @@ export class DirectoryService {
           sourceRef: src.ref,
           ...(pluginSha256 !== null && { sha256: pluginSha256 }),
           ...(src.integrity !== undefined && { integrity: src.integrity }),
+          ...(cat && { catalogSourceId: cat.sourceId }),
         },
       });
       return id;
     });
-    return this.view(itemId);
+    const item = await this.view(itemId);
+    return { item, ...(pkgPermissionKeys !== undefined && { permissionKeys: pkgPermissionKeys }) };
   }
 
   /**

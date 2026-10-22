@@ -827,6 +827,8 @@ export interface KernelDatabase {
   plugin_deployment_configs: PluginDeploymentConfigsTable;
   directory_items: DirectoryItemsTable;
   directory_item_versions: DirectoryItemVersionsTable;
+  catalog_sources: CatalogSourcesTable;
+  catalog_entries: CatalogEntriesTable;
 }
 
 /** 0034_directory.sql：企业目录条目。 */
@@ -852,6 +854,8 @@ export interface DirectoryItemsTable {
   created_at: Generated<Date>;
   updated_at: Ts;
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0035：从清单引入时的来源清单（来源删除后为空）。 */
+  catalog_source_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0034：企业目录条目的各版本。 */
@@ -859,7 +863,7 @@ export interface DirectoryItemVersionsTable {
   item_id: string;
   version: string;
   section: Json<unknown>;
-  source: "file" | "npm";
+  source: "file" | "npm" | "catalog";
   source_ref: string;
   integrity: string | null;
   object_prefix: string | null;
@@ -869,6 +873,40 @@ export interface DirectoryItemVersionsTable {
   size: Int8;
   imported_by: string | null;
   imported_at: Generated<Date>;
+}
+
+/** 0035_catalogs.sql：目录来源（官方 / 企业清单）。 */
+export interface CatalogSourcesTable {
+  id: string;
+  name: string;
+  url: string;
+  mirrors: Json<string[]>;
+  builtin: ColumnType<boolean, boolean | undefined, boolean>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  etag: ColumnType<string | null, string | null | undefined, string | null>;
+  last_refreshed_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+  last_status: ColumnType<
+    "ok" | "error" | "never",
+    "ok" | "error" | "never" | undefined,
+    "ok" | "error" | "never"
+  >;
+  last_error: ColumnType<string | null, string | null | undefined, string | null>;
+  created_by: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Generated<Date>;
+}
+
+/** 0035：清单条目缓存（每次成功刷新整体替换）。 */
+export interface CatalogEntriesTable {
+  source_id: string;
+  kind: "plugin" | "connector-template" | "skill" | "app";
+  name: string;
+  npm: string;
+  entry: Json<unknown>;
+  updated_at: Ts;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

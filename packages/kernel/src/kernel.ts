@@ -38,6 +38,7 @@ import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
+import { CATALOGS_REFRESH_DEADLINE_MS, CatalogsService } from "./directory/catalogs.service.js";
 import { DirectoryService } from "./directory/directory.service.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EvalQueue } from "./evals/runs.service.js";
@@ -81,7 +82,11 @@ import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
 import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
-import { Maintenance } from "./runtime/maintenance.js";
+import {
+  CATALOGS_REFRESH_JOB,
+  CATALOGS_REFRESH_SCHEDULER_ID,
+  Maintenance,
+} from "./runtime/maintenance.js";
 import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
 import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
@@ -227,6 +232,8 @@ export interface Kernel {
   readonly pluginBlobs: PluginBlobs;
   /** 企业目录：条目与导入（插件 / 连接器模板 / 技能）。 */
   readonly directory: DirectoryService;
+  /** 目录来源：官方 / 企业清单与刷新。 */
+  readonly catalogs: CatalogsService;
   /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
   readonly pluginDeploymentConfigs: DeploymentPluginConfigService;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
@@ -554,6 +561,16 @@ export async function createKernel(
         .list("connector")
         .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)
         ?.impl as Connector | undefined,
+  });
+  // 目录来源（D16 / C26）：official 启动时按配置同步；维护任务 catalogs-refresh 定期刷新全部生效的来源
+  const catalogs = new CatalogsService({ db: kdb, config: () => current, keyring, log });
+  maintenance.handle(CATALOGS_REFRESH_JOB, async () => {
+    await catalogs.refreshAll(AbortSignal.timeout(CATALOGS_REFRESH_DEADLINE_MS));
+  });
+  maintenance.schedule({
+    id: CATALOGS_REFRESH_SCHEDULER_ID,
+    name: CATALOGS_REFRESH_JOB,
+    everyMs: () => current.catalogs.refreshIntervalMinutes * 60_000,
   });
   // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
   const pluginDeploymentConfigs = new DeploymentPluginConfigService({
@@ -943,6 +960,7 @@ export async function createKernel(
         pluginAdminOps,
         pluginDeploymentConfigs,
         directory,
+        catalogs,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
@@ -1112,6 +1130,7 @@ export async function createKernel(
     pluginLifecycle,
     pluginBlobs,
     directory,
+    catalogs,
     pluginDeploymentConfigs,
     orgPluginConfigs,
     bus,
@@ -1152,6 +1171,8 @@ export async function createKernel(
         );
         await migratePromise;
         checkpoint();
+        // official 清单来源按配置同步（幂等；每个副本启动时都做）
+        await catalogs.syncOfficialFromConfig();
         // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 pluginHost.dir 后导入，
         // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
         await host.load({

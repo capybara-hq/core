@@ -3,6 +3,7 @@ import { checkConfigDocs } from "../config-docs.js";
 import { checkDeps } from "../deps.js";
 import { checkI18n } from "../i18n.js";
 import { checkMigrations } from "../migrations.js";
+import { checkPackageSchemas } from "../package-schemas.js";
 import { checkPluginPack } from "../plugin-pack.js";
 import { checkPluginPermissions } from "../plugin-permissions.js";
 import { checkPluginState } from "../plugin-state.js";
@@ -22,6 +23,7 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
   { name: "插件打包", run: () => checkPluginPack(pluginDirs()) },
   { name: "工具设计", run: () => checkToolDesign(toolDesignDirs(pluginDirs())) },
   { name: "配置文档", run: () => checkConfigDocs() },
+  { name: "包 JSON Schema", run: () => checkPackageSchemas() },
   { name: "界面文案", run: () => checkI18n(join(root, "apps/web/messages")) },
   {
     name: "界面规范",

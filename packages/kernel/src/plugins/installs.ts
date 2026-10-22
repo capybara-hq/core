@@ -6,6 +6,7 @@ import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import {
   fetchNpmPackage,
+  IntegrityMismatchError,
   type NpmFetchConfig,
   NpmFetchError,
   PackageTooLargeError,
@@ -230,6 +231,52 @@ export class PluginInstalls {
         throw new ApiError("plugin.package_too_large", e.message);
       }
       if (e instanceof NpmFetchError) throw new ApiError("packages.npm_failed", e.message);
+      throw e;
+    }
+  }
+
+  /**
+   * 按清单下载一个包（T24，C26）：清单给了 `tarball` 就从它下载（必须 https，`catalogs.allowInsecureLoopback`
+   * 只供测试；不请求 registry 元数据、不带 registry 令牌），否则走配置的 npm registry；校验一律以清单的 sha512
+   * 为准，不认 npm 元数据。不符 → 502 `catalog.integrity_mismatch`（写明期望与实际 sha512 的前缀）；
+   * 下载失败 → 502 `catalog.fetch_failed`；超过 `packages.maxBytes` → `plugin.package_too_large`。
+   */
+  async fetchCatalogPackage(
+    input: { package: string; version: string; integrity: string; tarball?: string },
+    signal?: AbortSignal,
+  ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
+    const c = this.d.config();
+    const cfg: NpmFetchConfig = {
+      registry: c.packages.npmRegistry,
+      maxBytes: c.packages.maxBytes,
+      allowInsecureLoopback: c.catalogs.allowInsecureLoopback,
+      ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
+    };
+    const timeout = AbortSignal.timeout(this.d.npmTimeoutMs ?? 120_000);
+    try {
+      return await fetchNpmPackage(
+        cfg,
+        input.package,
+        input.version,
+        signal ? AbortSignal.any([signal, timeout]) : timeout,
+        {
+          expectedIntegrity: input.integrity,
+          ...(input.tarball !== undefined && { tarballUrl: input.tarball }),
+        },
+      );
+    } catch (e) {
+      if (e instanceof PackageTooLargeError) {
+        throw new ApiError("plugin.package_too_large", e.message);
+      }
+      if (e instanceof IntegrityMismatchError) {
+        const prefix = (sri: string) => `${sri.slice(0, 19)}…`;
+        throw new ApiError(
+          "catalog.integrity_mismatch",
+          `The package does not match the catalog (expected ${prefix(e.expected)}, got ${prefix(e.actual)}); installation refused`,
+          [{ expected: prefix(e.expected), actual: prefix(e.actual) }],
+        );
+      }
+      if (e instanceof NpmFetchError) throw new ApiError("catalog.fetch_failed", e.message);
       throw e;
     }
   }

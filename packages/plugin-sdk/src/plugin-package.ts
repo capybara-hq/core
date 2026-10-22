@@ -74,8 +74,9 @@ export interface EntryImport {
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-// npm 包名规则（简化）：可带 scope，小写，≤ 214 字符。
-const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+/** npm 包名规则（简化）：可带 scope，小写，≤ 214 字符（长度另行检查）。 */
+export const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+const NPM_NAME_RE = NPM_PACKAGE_NAME_RE;
 
 /**
  * 包内相对路径是否安全：非空、不以 `/` 开头、不含 `\`、控制字符与盘符，没有空段、`.` 与 `..` 段，≤ 1024 字符。

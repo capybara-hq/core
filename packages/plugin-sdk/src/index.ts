@@ -1,6 +1,7 @@
 export const SDK_VERSION = "0.1.0";
 export * from "./capability.js";
 export * from "./cards.js";
+export * from "./catalog.js";
 export * from "./channel.js";
 export * from "./connector.js";
 export * from "./connector-auth.js";

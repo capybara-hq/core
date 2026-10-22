@@ -64,6 +64,11 @@ export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
 /** `packages.maxBytes` 的默认值（插件包 tgz 的大小上限）；`check:plugin-pack` 用同一个值。 */
 export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
 
+/** `catalogs.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
+export const CATALOG_OFFICIAL_URL_DEFAULT = "https://catalog.capybarahq.com/v1/index.json";
+/** 每个清单来源最多的镜像数。 */
+export const CATALOG_MAX_MIRRORS = 5;
+
 const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
@@ -207,6 +212,73 @@ export const KernelConfigSchema = z.object({
           meta({
             description:
               "Largest plugin package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store. Lowering it also caps what replicas read back from the object store, so packages accepted earlier under a larger limit can no longer be synced",
+          }),
+        ),
+    })
+    .prefault({} as never),
+  catalogs: z
+    .object({
+      official: z
+        .object({
+          enabled: z
+            .boolean()
+            .default(true)
+            .meta(
+              meta({
+                description:
+                  "Use the official directory catalog. Set to false for offline deployments: the official catalog is never fetched and the admin UI shows offline mode",
+              }),
+            ),
+          url: z
+            .url({ protocol: /^https?$/ })
+            .default(CATALOG_OFFICIAL_URL_DEFAULT)
+            .meta(
+              meta({
+                description:
+                  "URL of the official catalog index.json (https; a placeholder until the official catalog goes live)",
+              }),
+            ),
+          mirrors: z
+            .array(z.url({ protocol: /^https?$/ }))
+            .max(CATALOG_MAX_MIRRORS)
+            .default([])
+            .meta(
+              meta({
+                description:
+                  "Mirror URLs of the official catalog index.json (https), tried in order when the main URL fails",
+              }),
+            ),
+        })
+        .prefault({} as never),
+      refreshIntervalMinutes: z
+        .number()
+        .int()
+        .min(1)
+        .default(360)
+        .meta(
+          meta({
+            description:
+              "Minutes between periodic refreshes of every enabled catalog (one maintenance job for all replicas)",
+          }),
+        ),
+      maxIndexBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(5_242_880)
+        .meta(
+          meta({
+            description:
+              "Largest catalog index.json in bytes; a larger response is rejected and the previous entries are kept",
+          }),
+        ),
+      allowInsecureLoopback: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Testing only: allow plain http for catalog and tarball URLs on loopback addresses",
           }),
         ),
     })

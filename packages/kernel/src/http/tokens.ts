@@ -157,3 +157,5 @@ export const PLUGIN_ADMIN_OPS = Symbol("PLUGIN_ADMIN_OPS");
 export const PLUGIN_DEPLOYMENT_CONFIGS = Symbol("PLUGIN_DEPLOYMENT_CONFIGS");
 /** 企业目录（`DirectoryService`）。 */
 export const DIRECTORY = Symbol("DIRECTORY");
+/** 目录来源（`CatalogsService`）。 */
+export const CATALOGS = Symbol("CATALOGS");
