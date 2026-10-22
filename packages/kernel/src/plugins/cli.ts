@@ -15,6 +15,7 @@ import {
   mergeDeploymentConfig,
   readStoredDeploymentConfig,
   schemaFields,
+  secretPathsOf,
 } from "./deployment-config.js";
 import { type DeclaredPluginInfo, type InspectedPlugin, PluginHost } from "./host.js";
 import { PluginInstalls } from "./installs.js";
@@ -87,7 +88,9 @@ export async function openPluginCli(
     for (const p of inspected) {
       const schema = p.manifest.config?.deployment;
       if (!schema) continue;
-      const stored = await readStoredDeploymentConfig(db, keyring, p.manifest.name);
+      const stored = await readStoredDeploymentConfig(db, keyring, p.manifest.name, {
+        secretPaths: secretPathsOf(schemaFields(schema)),
+      });
       const r = schema.safeParse(
         mergeDeploymentConfig(
           stored,

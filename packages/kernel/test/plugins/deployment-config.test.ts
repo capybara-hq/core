@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { loadConfigWithSources, resolveConfig } from "../../src/config/load.js";
 import { pluginConfigSources } from "../../src/config/sources.js";
-import { createKeyring } from "../../src/ctx/secrets.js";
+import { createKeyring, createSecrets } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -437,6 +437,45 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       schema: null,
     });
     expect((await getView()).validated).toBe(true);
+  });
+
+  it("secrets 里留着当前 schema 已不是密钥（或已删掉）的字段：不并入生效配置与视图", async () => {
+    const { z } = await import("zod");
+    const { secret } = await import("@capybara-hq/plugin-sdk");
+    const keyring = createKeyring(Buffer.alloc(32, 7), []);
+    // 旧版本里 a 是密钥、gone 也是；新版本 a 不再是密钥、gone 删掉了，b 仍是密钥
+    const secrets = createSecrets(db, keyring, "kernel");
+    for (const [path, v] of [
+      ["a", "old-secret-a-value"],
+      ["gone", "old-secret-gone"],
+      ["b", "still-secret-b"],
+    ] as const) {
+      await secrets.set(
+        DEPLOYMENT_SECRETS_ORG,
+        `plugin-deployment-config:stale:${path}`,
+        JSON.stringify(v),
+      );
+    }
+    const schema = z.object({ a: z.string().optional(), b: secret(z.string()).optional() });
+    const svc = new DeploymentPluginConfigService({
+      db,
+      keyring,
+      fileConfig: () => ({}),
+      sources: {},
+      schemaOf: async () => ({
+        version: "2.0.0",
+        schema,
+        fields: [
+          { path: "a", secret: false, hot: false },
+          { path: "b", secret: true, hot: false },
+        ],
+      }),
+      log: { warn() {}, error() {} },
+    });
+    expect(await svc.effective("stale", undefined, schema)).toEqual({ b: "still-secret-b" });
+    const v = await svc.view("stale");
+    expect(JSON.stringify(v)).not.toContain("old-secret");
+    expect(v.fields.find((f) => f.path === "b")).toMatchObject({ set: true });
   });
 
   it("内置插件同样可以在 PG 里配：待配置 → 保存后不重启即加载", async () => {

@@ -156,18 +156,24 @@ export function mergeDeploymentConfig(
   return out;
 }
 
-/** PG 里一个插件保存的部署配置（非密钥字段 + 解密的密钥字段，按点路径放回对象）。 */
+/**
+ * PG 里一个插件保存的部署配置（非密钥字段 + 解密的密钥字段，按点路径放回对象）。只并入 `secretPaths`（当前
+ * schema 里是密钥的字段）的密钥：旧版本留下、现在已不是密钥或已删掉的字段不解密、不并入（否则会被当成明文回显
+ * 或保存）。
+ */
 export async function readStoredDeploymentConfig(
   db: KernelDb | Trx,
   keyring: Keyring,
   plugin: string,
-  opts: { forUpdate?: boolean } = {},
+  opts: { forUpdate?: boolean; secretPaths: readonly string[] },
 ): Promise<Obj> {
   let q = db.selectFrom("plugin_deployment_configs").select("config").where("plugin", "=", plugin);
   if (opts.forUpdate) q = q.forUpdate();
   const row = await q.executeTakeFirst();
   const out: Obj = structuredClone(row?.config ?? {});
   const prefix = secretKey(plugin, "");
+  const wanted = new Set(opts.secretPaths);
+  if (wanted.size === 0) return out;
   const keys = await db
     .selectFrom("secrets")
     .select("key")
@@ -176,12 +182,16 @@ export async function readStoredDeploymentConfig(
     .execute();
   const secrets = createSecrets(db, keyring, SECRETS_NAMESPACE);
   for (const { key } of keys) {
-    if (!key.startsWith(prefix)) continue;
+    if (!key.startsWith(prefix) || !wanted.has(key.slice(prefix.length))) continue;
     const v = await secrets.get(DEPLOYMENT_SECRETS_ORG, key);
     if (v !== null) setDeep(out, key.slice(prefix.length), JSON.parse(v));
   }
   return out;
 }
+
+/** 字段清单里的密钥字段路径。 */
+export const secretPathsOf = (fields: DeploymentSchemaInfo["fields"]): string[] =>
+  fields.filter((f) => f.secret).map((f) => f.path);
 
 /** JSON Schema 转换按 schema 对象缓存（清单不可变）。 */
 const jsonSchemaCache = new WeakMap<object, JsonSchema>();
@@ -234,7 +244,9 @@ export class DeploymentPluginConfigService {
 
   /** 插件的生效部署配置（未校验）：启动配置为底，补上 PG 里保存的字段。`schema` 给出时按它的字段合并。 */
   async effective(plugin: string, fileValue: unknown, schema?: core.$ZodType): Promise<unknown> {
-    const stored = await readStoredDeploymentConfig(this.d.db, this.d.keyring, plugin);
+    const stored = await readStoredDeploymentConfig(this.d.db, this.d.keyring, plugin, {
+      secretPaths: secretPathsOf(schemaFields(schema)),
+    });
     const fields = schema ? configFields(schema).map((f) => f.path) : undefined;
     return mergeDeploymentConfig(stored, fileValue, fields);
   }
@@ -246,7 +258,11 @@ export class DeploymentPluginConfigService {
       .transaction()
       .setIsolationLevel("repeatable read")
       .setAccessMode("read only")
-      .execute((t) => readStoredDeploymentConfig(t, this.d.keyring, plugin));
+      .execute((t) =>
+        readStoredDeploymentConfig(t, this.d.keyring, plugin, {
+          secretPaths: secretPathsOf(info.fields),
+        }),
+      );
     return this.render(plugin, info, stored);
   }
 
@@ -298,6 +314,7 @@ export class DeploymentPluginConfigService {
       );
       const before = await readStoredDeploymentConfig(t, this.d.keyring, plugin, {
         forUpdate: true,
+        secretPaths: secretPathsOf(info.fields),
       });
       const next = structuredClone(before);
       for (const [path, v] of Object.entries(values)) {
