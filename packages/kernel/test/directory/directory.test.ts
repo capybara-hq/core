@@ -109,6 +109,12 @@ beforeAll(async () => {
   memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" })).id;
   admin = await session(k, "root");
   member = await session(k, "mem");
+  // 预热存储：新起的 SeaweedFS 第一次写入偶尔要好几秒（分配卷），别让它落进第一个用例的时限里
+  const warm = new TextEncoder().encode("warm");
+  await k.storage
+    .deployment()
+    .put("warmup/probe", warm, { contentType: "text/plain", size: warm.byteLength });
+  await k.storage.deployment().delete("warmup/probe");
 }, 240_000);
 
 afterAll(async () => {
@@ -189,7 +195,7 @@ describe("技能", () => {
       target: item.id,
       detail: { kind: "skill", name: "pdf-tools", version: "1.0.0", source: "file" },
     });
-  });
+  }, 20_000);
 
   it("同一版本重复导入 409 directory.version_exists；zip 的新版本加到同一条目", async () => {
     const dup = await importFile(admin, await skillTgz());
