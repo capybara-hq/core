@@ -145,6 +145,14 @@ function run(over: Partial<TrajectoryRun> = {}, cost: number | null = 0.0032): T
   };
 }
 
+/** 成本按界面语言的货币格式（Intl，最多 6 位小数）。 */
+const usd = (v: number, locale: string) =>
+  new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 6,
+  }).format(v);
+
 const detailBody = (runs: TrajectoryRun[], next: string | null = null) => ({
   conversation: { id: "c1", agentId: "ag1", accountId: "a2", title: "Clean up", kind: "chat" },
   runs,
@@ -343,7 +351,7 @@ describe("轨迹详情（TracePage）", () => {
         within(metrics).getByText(label).parentElement as HTMLElement;
       // 输入（含缓存读 / 写）+ 输出
       expect(within(metric(m.detail.metrics.tokens)).getByText("2,240")).toBeTruthy();
-      expect(within(metric(m.detail.metrics.cost)).getByText("0.0064 USD")).toBeTruthy();
+      expect(within(metric(m.detail.metrics.cost)).getByText(usd(0.0064, locale))).toBeTruthy();
       // 模型调用 3 + 工具调用 1
       expect(within(metric(m.detail.metrics.calls)).getByText("4")).toBeTruthy();
       expect(within(metric(m.detail.metrics.duration)).getByText("9.0s")).toBeTruthy();
@@ -362,7 +370,7 @@ describe("轨迹详情（TracePage）", () => {
       expect(within(d).getByText(m.detail.model.attemptValue.replace("{n}", "2"))).toBeTruthy();
       expect(within(d).getByText(m.detail.model.fallbackYes)).toBeTruthy();
       expect(within(d).getByText(m.detail.model.cost)).toBeTruthy();
-      expect(within(d).getByText("0.0032 USD")).toBeTruthy();
+      expect(within(d).getByText(usd(0.0032, locale))).toBeTruthy();
       expect(within(d).getByText("1.5s")).toBeTruthy();
       expect(within(d).getByText("temperature=0.2")).toBeTruthy();
       expect(within(d).getByText("fixture__delete_item, ask_user")).toBeTruthy();
@@ -422,6 +430,51 @@ describe("轨迹详情（TracePage）", () => {
     await waitFor(() => expect(screen.getAllByText(/^run · v3$/)).toHaveLength(2));
     expect(calls.map((c) => c.url)).toEqual([`${DETAIL}?limit=10`, `${DETAIL}?limit=10&before=r1`]);
     expect(screen.queryByRole("button", { name: en.trajectories.detail.loadEarlier })).toBeNull();
+  });
+
+  it.each(["zh", "en"] as const)(
+    "运行结束原因走 i18n（%s）：中止原因与失败码；不认识的显示原始码",
+    async (locale) => {
+      const m = msgs[locale];
+      const ended = (r: TrajectoryRun) =>
+        stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([r])) });
+      const region = async () => {
+        await screen.findByRole("tree");
+        return within(screen.getByRole("region", { name: m.trajectories.detail.region }));
+      };
+      ended(run({ end: { kind: "aborted", detail: "capped" } }));
+      renderPage(<TrajectoryPage />, { locale });
+      expect(
+        (await region()).getByText(
+          `${m.trajectories.detail.run.end.aborted} · ${m.trajectories.endDetail.capped}`,
+        ),
+      ).toBeTruthy();
+      cleanup();
+      ended(run({ end: { kind: "failed", detail: "run.provider_error" } }));
+      renderPage(<TrajectoryPage />, { locale });
+      expect(
+        (await region()).getByText(
+          `${m.trajectories.detail.run.end.failed} · ${m.errors.run.provider_error}`,
+        ),
+      ).toBeTruthy();
+      cleanup();
+      ended(run({ end: { kind: "aborted", detail: "something_new" } }));
+      renderPage(<TrajectoryPage />, { locale });
+      expect(
+        (await region()).getByText(`${m.trajectories.detail.run.end.aborted} · something_new`),
+      ).toBeTruthy();
+    },
+  );
+
+  it("评测对话（kind = eval）不显示「加入评测集」", async () => {
+    const body = detailBody([run()]);
+    stubApi({
+      [`GET ${DETAIL}`]: () =>
+        json(200, { ...body, conversation: { ...body.conversation, kind: "eval" } }),
+    });
+    renderPage(<TrajectoryPage />);
+    await screen.findByRole("tree");
+    expect(screen.queryByRole("button", { name: en.trajectories.addToSet.action })).toBeNull();
   });
 
   it("非管理员（agent 负责人）看不到「加入评测集」", async () => {

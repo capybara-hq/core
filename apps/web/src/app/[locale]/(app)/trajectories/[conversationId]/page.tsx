@@ -42,7 +42,7 @@ const RUN_PAGE = 10;
 /**
  * `/[locale]/trajectories/[conversationId]`：轨迹查看器（TracePage，D6）。上方 Span 瀑布，下方选中 span 的详情；
  * 页头是已加载运行的合计（总 token、估算成本、调用数、耗时）。按运行分页：先读最新的 {@link RUN_PAGE} 次，
- * 「加载更早的运行」再往前翻。每次读取都会由内核记入审计（页面上有提示）。「加入评测集」只对组织管理员显示。
+ * 「加载更早的运行」再往前翻。每次读取都会由内核记入审计（页面上有提示）。「加入评测集」只对组织管理员显示，评测对话（kind = eval）不显示。
  */
 export default function TrajectoryPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
@@ -77,8 +77,9 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
   const t = useTranslations("trajectories");
   const { me } = useSession();
   const errorMessage = useErrorMessage();
-  const admin = canUpdateOrg(me);
   const conv = first.conversation;
+  // 评测回放的隐藏对话（kind = eval）不能加入评测集（内核只收 chat 对话）
+  const canAdd = canUpdateOrg(me) && conv.kind === "chat";
   /** 「加载更早的运行」读到的运行（按时间正序，拼在第一页前面）。 */
   const [earlier, setEarlier] = useState<{ runs: TrajectoryRun[]; next: string | null } | null>(
     null,
@@ -126,7 +127,7 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
           parent: { label: t("title"), href: "/trajectories" },
           title: conv.title ?? t("untitled"),
           metrics,
-          ...(admin && {
+          ...(canAdd && {
             actions: [
               { label: t("addToSet.action"), variant: "default", onSelect: () => setAdding(true) },
             ],
@@ -171,7 +172,7 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
           </section>
         }
       />
-      {admin && adding && targetRun !== undefined ? (
+      {canAdd && adding && targetRun !== undefined ? (
         <AddToSetDialog
           orgId={orgId}
           agentId={conv.agentId}

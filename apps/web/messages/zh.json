@@ -1283,6 +1283,19 @@
       "noSets": "该 agent 还没有评测集。",
       "runNotFinished": "这次运行还没结束，结束后才能加入。",
       "added": "已加入评测集「{name}」。"
+    },
+    "endDetail": {
+      "completed": "正常完成",
+      "max_steps": "达到步数上限",
+      "max_duration": "达到时长上限",
+      "user": "被用户停止",
+      "shutdown_exhausted": "服务停机",
+      "eval_stopped": "评测停止",
+      "cancelled": "评测运行已取消",
+      "capped": "达到 token 上限",
+      "too_many_errors": "连续出错过多",
+      "claim_lost": "已由其他 worker 接手",
+      "shutdown": "worker 停机"
     }
   },
   "evals": {
@@ -1425,7 +1438,9 @@
         "tokens": "预计 token",
         "cost": "预计成本（估算）",
         "tokenCap": "token 上限",
-        "overCap": "预计 token 超过上限，运行会在上限处停下。"
+        "overCap": "预计 token 超过上限，运行会在上限处停下。",
+        "judgeShare": "其中评委",
+        "judgeShareValue": "{tokens} token · 成本 {cost}"
       },
       "summary": {
         "mode": "模式",
@@ -1515,7 +1530,9 @@
         "keep": "沿用用例",
         "overridden": "已覆盖",
         "estimate": "运行前估算",
-        "estimateValue": "请求 {model} + 评委 {judge} · token {tokens} · 成本 {cost}"
+        "estimateValue": "请求 {model} + 评委 {judge} · token {tokens} · 成本 {cost}",
+        "judgeShare": "其中评委",
+        "judgeShareValue": "{tokens} token · 成本 {cost}"
       },
       "inspector": {
         "title": "结果详情",
@@ -1547,8 +1564,20 @@
         "fail": "不通过",
         "clear": "清除标注",
         "evalTrajectory": "查看评测对话轨迹",
-        "diffCaption": "差异"
+        "diffCaption": "差异",
+        "driftSeparator": "、"
       }
+    },
+    "drift": {
+      "system_hash": "系统提示词与记录时不同",
+      "tools_changed": "工具定义有变化",
+      "tool_spec_missing": "缺少记录的工具定义",
+      "definition_missing": "缺少 agent 版本定义",
+      "legacy_event": "旧格式记录",
+      "params_changed": "模型参数有变化",
+      "media_missing": "附件已不可用",
+      "media_changed": "附件有变化",
+      "tool_unmatched": "有工具调用没有对应的记录"
     }
   }
 }

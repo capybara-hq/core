@@ -10,7 +10,7 @@ import NewEvalSetPage from "../src/app/[locale]/(app)/evals/new/page";
 import EvalsPage from "../src/app/[locale]/(app)/evals/page";
 import EvalRunPage from "../src/app/[locale]/(app)/evals/runs/[runId]/page";
 import { activeNavOf } from "../src/components/shell/nav";
-import type { EvalResult, EvalRun } from "../src/lib/evals";
+import { type EvalResult, type EvalRun, rowOf } from "../src/lib/evals";
 import type { TrajectoryRun } from "../src/lib/trajectories";
 import { bodyOf, type Call, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -119,8 +119,21 @@ const ESTIMATE = {
   judgeRequests: 3,
   estimatedTokens: 12345,
   estimatedCost: 0.0123,
+  judgeTokens: 2345,
+  judgeCost: 0.002,
   currency: "USD",
 };
+
+/** 成本按界面语言的货币格式（Intl，最多 6 位小数）。 */
+const usd = (v: number, locale: string) =>
+  new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 6,
+  }).format(v);
+
+/** 结果的轻量行（结果表与轮询读的 `view=light`）。 */
+const light = (r: EvalResult) => rowOf(r, T);
 
 const SUMMARY = {
   done: 2,
@@ -475,7 +488,13 @@ describe("运行向导（WizardPage）", () => {
       expect(value(m.wizard.estimate.modelRequests).getByText("3")).toBeTruthy();
       expect(value(m.wizard.estimate.judgeRequests).getByText("3")).toBeTruthy();
       expect(value(m.wizard.estimate.tokens).getByText("12,345")).toBeTruthy();
-      expect(value(m.wizard.estimate.cost).getByText("0.0123 USD")).toBeTruthy();
+      // 评委的份额单列（已含在总数里）
+      expect(
+        value(m.wizard.estimate.judgeShare).getByText(
+          fill(m.wizard.estimate.judgeShareValue, { tokens: "2,345", cost: usd(0.002, locale) }),
+        ),
+      ).toBeTruthy();
+      expect(value(m.wizard.estimate.cost).getByText(usd(0.0123, locale))).toBeTruthy();
       expect(value(m.wizard.estimate.tokenCap).getByText("10,000")).toBeTruthy();
       // 预计超过上限：提示会在上限处停下
       expect(within(est).getByText(m.wizard.estimate.overCap)).toBeTruthy();
@@ -638,9 +657,13 @@ describe("运行向导（WizardPage）", () => {
 
 describe("评测运行（DetailPage）", () => {
   const RUN = `${ORG}/eval-runs/er1`;
+  /** 结果表读轻量行（`view=light`），查看器按需读单条完整行。 */
   const routes = (run: () => EvalRun, results: EvalResult[], over = {}) => ({
     [`GET ${RUN}`]: () => json(200, { run: run() }),
-    [`GET ${RUN}/results`]: () => json(200, { results, next: null }),
+    [`GET ${RUN}/results`]: () => json(200, { results: results.map(light), next: null, asOf: T }),
+    ...Object.fromEntries(
+      results.map((r) => [`GET ${RUN}/results/${r.id}`, () => json(200, { result: r })]),
+    ),
     [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
     ...over,
   });
@@ -702,10 +725,14 @@ describe("评测运行（DetailPage）", () => {
           [`GET ${RUN}/results`]: () =>
             json(200, {
               results: [
-                labeled ? result({ label: "pass", labeledBy: "a1", labeledAt: T }) : result(),
+                light(
+                  labeled ? result({ label: "pass", labeledBy: "a1", labeledAt: T }) : result(),
+                ),
               ],
               next: null,
+              asOf: T,
             }),
+          [`GET ${RUN}/results/res1`]: () => json(200, { result: result() }),
           [`PUT ${ORG}/eval-results/res1/label`]: () => {
             labeled = true;
             return json(200, {
@@ -865,7 +892,7 @@ describe("评测运行（DetailPage）", () => {
             // 第一次轮询的结果读取很慢（挂起到手动放行）
             if (resultReads === 2) await new Promise<void>((r) => (hold = r));
             inflight--;
-            return json(200, { results: [pending], next: null });
+            return json(200, { results: [light(pending)], next: null, asOf: T });
           },
         },
       ),
@@ -942,5 +969,100 @@ describe("评测运行（DetailPage）", () => {
     expect(
       inspector.getByRole("link", { name: E.run.inspector.evalTrajectory }).getAttribute("href"),
     ).toBe("/trajectories/evc1");
+  });
+
+  it.each(["zh", "en"] as const)("漂移原因走 i18n，不认识的显示原始码（%s）", async (locale) => {
+    const m = msgs[locale].evals;
+    stubApi(routes(() => evalRun(), [result({ drift: ["system_hash", "brand_new_reason"] })]));
+    renderPage(<EvalRunPage />, { locale });
+    const table = await screen.findByRole("table", { name: m.run.resultsLabel });
+    await userEvent.setup().click(await within(table).findByText(m.run.mismatch));
+    const inspector = within(await screen.findByRole("region", { name: m.run.inspector.title }));
+    expect(
+      await inspector.findByText(
+        `${m.drift.system_hash}${m.run.inspector.driftSeparator}brand_new_reason`,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("结果表读轻量行；轮询带上次的 asOf 只取变化并合并；查看器按需读单条完整行", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const pending = result({
+      status: "pending",
+      diff: null,
+      judge: null,
+      judgeStatus: "none",
+      baseline: null,
+      candidate: null,
+    });
+    const other = result({ id: "res2", caseId: "k2", status: "pending", diff: null, judge: null });
+    let done = false;
+    const calls = stubApi(
+      routes(
+        () => evalRun({ status: "running", casesDone: done ? 1 : 0, summary: null }),
+        [pending, other],
+        {
+          [`GET ${RUN}/results`]: (c: Call) =>
+            c.url.includes("updatedSince=")
+              ? json(200, {
+                  // 只有变化的那一行
+                  results: [{ ...light(result()), updatedAt: "2026-10-22T08:00:05.000Z" }],
+                  next: null,
+                  asOf: "2026-10-22T08:00:10.000Z",
+                })
+              : json(200, { results: [light(pending), light(other)], next: null, asOf: T }),
+          [`GET ${RUN}/results/res1`]: () => json(200, { result: done ? result() : pending }),
+        },
+      ),
+    );
+    renderPage(<EvalRunPage />);
+    const table = await screen.findByRole("table", { name: E.run.resultsLabel });
+    // 首次读取是轻量视图，不带 updatedSince
+    const first = calls.filter((c) => c.url.includes("/results"));
+    expect(first).toHaveLength(1);
+    expect(first[0]?.url).toContain("view=light");
+    expect(first[0]?.url).not.toContain("updatedSince");
+    // 选中才读单条
+    await userEvent
+      .setup({ advanceTimers: vi.advanceTimersByTime })
+      .click(within(table).getByRole("row", { name: /Delete the stale item/ }));
+    const inspector = within(await screen.findByRole("region", { name: E.run.inspector.title }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url === `${RUN}/results/res1`)).toHaveLength(1),
+    );
+    done = true;
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes(`updatedSince=${encodeURIComponent(T)}`))).toBe(true),
+    );
+    // 变化的行合并进表格（另一行不动）；这一行的 updatedAt 变了 → 查看器重读完整行
+    const row = await within(table).findByRole("row", { name: /Delete the stale item/ });
+    await waitFor(() => expect(within(row).getByText(E.run.mismatch)).toBeTruthy());
+    expect(within(table).getByRole("row", { name: /Summarize the doc/ })).toBeTruthy();
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url === `${RUN}/results/res1`)).toHaveLength(2),
+    );
+    expect(await inspector.findByText("Deleted the wrong item.")).toBeTruthy();
+    // 下一次轮询用上一次响应的 asOf
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() =>
+      expect(
+        calls.some((c) =>
+          c.url.includes(`updatedSince=${encodeURIComponent("2026-10-22T08:00:10.000Z")}`),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("汇总标签页：估算里评委的份额单列", async () => {
+    stubApi(routes(() => evalRun(), [result()]));
+    renderPage(<EvalRunPage />);
+    await screen.findByRole("table", { name: E.run.resultsLabel });
+    await userEvent.setup().click(screen.getByRole("tab", { name: E.run.tabs.summary }));
+    expect(
+      await screen.findByText(
+        fill(E.run.candidate.judgeShareValue, { tokens: "2,345", cost: usd(0.002, "en") }),
+      ),
+    ).toBeTruthy();
   });
 });

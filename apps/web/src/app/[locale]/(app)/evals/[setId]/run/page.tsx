@@ -22,7 +22,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { FormError } from "../../../../../../components/form-error";
 import { ModelParams } from "../../../../../../components/ModelParams";
 import { OrgGate } from "../../../../../../components/OrgGate";
-import { formatCost, grouped } from "../../../../../../components/TrajectoryParts";
+import { grouped, useFormatCost } from "../../../../../../components/TrajectoryParts";
 import { Link, useRouter } from "../../../../../../i18n/navigation";
 import {
   type Agent,
@@ -113,8 +113,8 @@ type EstimateState =
   | { kind: "ready"; estimate: EvalEstimate; cap: number }
   | { kind: "error"; message: string; lines: string[] };
 
-/** 改动后等多久再估算（估算要读全部用例快照，输入上限时不逐键请求）。 */
-const ESTIMATE_DEBOUNCE_MS = 300;
+/** 改动后等多久再估算（输入上限、参数时不逐键请求；内核只读用例上存好的计划列）。 */
+const ESTIMATE_DEBOUNCE_MS = 500;
 
 function RunWizard({
   orgId,
@@ -439,9 +439,13 @@ function RunWizard({
   );
 }
 
-/** 估算数字（D5）与本次生效的 token 上限；预计超过上限时提示会在上限处停下。 */
+/**
+ * 估算数字（D5）与本次生效的 token 上限：总数含评委，评委的份额单列；预计（总数）超过上限时提示会在上限处停下。
+ */
 function EstimateView({ estimate: e, cap }: { estimate: EvalEstimate; cap: number }) {
   const t = useTranslations("evals.wizard.estimate");
+  const formatCost = useFormatCost();
+  const judgeTokens = e.judgeTokens ?? 0;
   return (
     <Stack gap={8}>
       <KeyValue
@@ -451,6 +455,17 @@ function EstimateView({ estimate: e, cap }: { estimate: EvalEstimate; cap: numbe
           { k: t("modelRequests"), v: grouped.format(e.modelRequests) },
           { k: t("judgeRequests"), v: grouped.format(e.judgeRequests) },
           { k: t("tokens"), v: grouped.format(e.estimatedTokens) },
+          ...(judgeTokens > 0
+            ? [
+                {
+                  k: t("judgeShare"),
+                  v: t("judgeShareValue", {
+                    tokens: grouped.format(judgeTokens),
+                    cost: formatCost(e.judgeCost ?? null, e.currency),
+                  }),
+                },
+              ]
+            : []),
           { k: t("cost"), v: formatCost(e.estimatedCost, e.currency) },
           { k: t("tokenCap"), v: grouped.format(cap) },
         ]}

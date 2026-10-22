@@ -1283,6 +1283,19 @@
       "noSets": "This agent has no eval sets yet.",
       "runNotFinished": "This run has not finished yet. Add it after it ends.",
       "added": "Added to eval set \"{name}\"."
+    },
+    "endDetail": {
+      "completed": "completed",
+      "max_steps": "step limit reached",
+      "max_duration": "time limit reached",
+      "user": "stopped by a user",
+      "shutdown_exhausted": "server shutdown",
+      "eval_stopped": "eval stopped",
+      "cancelled": "eval run cancelled",
+      "capped": "token cap reached",
+      "too_many_errors": "too many consecutive errors",
+      "claim_lost": "taken over by another worker",
+      "shutdown": "worker shut down"
     }
   },
   "evals": {
@@ -1425,7 +1438,9 @@
         "tokens": "Tokens",
         "cost": "Cost (estimated)",
         "tokenCap": "Token cap",
-        "overCap": "The estimate exceeds the cap; the run will stop at the cap."
+        "overCap": "The estimate exceeds the cap; the run will stop at the cap.",
+        "judgeShare": "Judge share",
+        "judgeShareValue": "{tokens} tokens · cost {cost}"
       },
       "summary": {
         "mode": "Mode",
@@ -1515,7 +1530,9 @@
         "keep": "Keep the case's",
         "overridden": "Overridden",
         "estimate": "Estimate before run",
-        "estimateValue": "{model} requests + {judge} judge · {tokens} tokens · cost {cost}"
+        "estimateValue": "{model} requests + {judge} judge · {tokens} tokens · cost {cost}",
+        "judgeShare": "Judge share",
+        "judgeShareValue": "{tokens} tokens · cost {cost}"
       },
       "inspector": {
         "title": "Result",
@@ -1547,8 +1564,20 @@
         "fail": "Fail",
         "clear": "Clear label",
         "evalTrajectory": "View eval conversation trajectory",
-        "diffCaption": "diff"
+        "diffCaption": "diff",
+        "driftSeparator": ", "
       }
+    },
+    "drift": {
+      "system_hash": "System prompt changed since the recording",
+      "tools_changed": "Tool definitions changed",
+      "tool_spec_missing": "A recorded tool definition is missing",
+      "definition_missing": "The agent version definition is missing",
+      "legacy_event": "Recorded by an older format",
+      "params_changed": "Model parameters changed",
+      "media_missing": "An attachment is no longer available",
+      "media_changed": "An attachment changed",
+      "tool_unmatched": "A tool call had no recorded result"
     }
   }
 }

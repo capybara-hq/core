@@ -28,11 +28,29 @@ import { formatTime } from "./ApprovalCard";
  */
 
 export const grouped = new Intl.NumberFormat("en-US");
-const costFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 });
 
-/** 估算成本：`0.0064 USD`；没有价格为 `—`（C2）。 */
-export const formatCost = (cost: number | null, currency: string) =>
-  cost === null ? "—" : `${costFormat.format(cost)} ${currency}`;
+/**
+ * 估算成本：按界面语言的货币格式（`Intl.NumberFormat` 的 currency 样式，最多 6 位小数，如 `$0.0064`）；
+ * 没有价格为 `—`（C2）。币种不是合法的 ISO 4217 代码时退回 `0.0064 XYZ`。
+ */
+export function formatCost(cost: number | null, currency: string, locale: string): string {
+  if (cost === null) return "—";
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 6,
+    }).format(cost);
+  } catch {
+    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(cost)} ${currency}`;
+  }
+}
+
+/** 按当前界面语言格式化成本（见 {@link formatCost}）。 */
+export function useFormatCost(): (cost: number | null, currency: string) => string {
+  const locale = useLocale();
+  return (cost, currency) => formatCost(cost, currency, locale);
+}
 
 export const usageTotal = (u: ModelUsage) => inputTotal(u) + u.outputTokens;
 
@@ -50,6 +68,7 @@ export function useSpanLabels(): SpanLabels {
 /** 页头指标：已加载运行的总 token、成本（估算；有任一运行没有价格为 `—`）、调用数（模型 + 工具）、耗时。 */
 export function useTrajectoryMetrics(runs: TrajectoryRun[], currency: string): MetricProps[] {
   const t = useTranslations("trajectories.detail.metrics");
+  const formatCost = useFormatCost();
   const tokens = runs.reduce((n, r) => n + usageTotal(r.totals.usage), 0);
   const cost = runs.reduce<number | null>(
     (n, r) => (n === null || r.totals.cost === null ? null : n + r.totals.cost),
@@ -87,9 +106,20 @@ export function SpanDetail({ source, currency }: { source: SpanSource; currency:
   }
 }
 
+/**
+ * 运行结束的原因（`end.detail`）：结束 / 中止原因走 `trajectories.endDetail.*`，失败码走 `errors.*`，都没有时显示原始码。
+ */
+function useEndDetail(): (detail: string) => string {
+  const td = useTranslations("trajectories.endDetail");
+  const te = useTranslations("errors");
+  return (detail) => (td.has(detail) ? td(detail) : te.has(detail) ? te(detail) : detail);
+}
+
 function RunDetail({ run, currency }: { run: TrajectoryRun; currency: string }) {
   const t = useTranslations("trajectories.detail.run");
   const locale = useLocale();
+  const formatCost = useFormatCost();
+  const endDetail = useEndDetail();
   const rows: { k: ReactNode; v: ReactNode }[] = [
     { k: t("version"), v: `v${run.agentVersion}` },
     { k: t("trigger"), v: run.triggerAccountId },
@@ -97,7 +127,10 @@ function RunDetail({ run, currency }: { run: TrajectoryRun; currency: string }) 
     { k: t("ended"), v: run.endedAt === null ? t("running") : formatTime(run.endedAt, locale) },
     {
       k: t("result"),
-      v: run.end === null ? t("running") : `${t(`end.${run.end.kind}`)} · ${run.end.detail}`,
+      v:
+        run.end === null
+          ? t("running")
+          : `${t(`end.${run.end.kind}`)} · ${endDetail(run.end.detail)}`,
     },
     { k: t("tokens"), v: grouped.format(usageTotal(run.totals.usage)) },
     { k: t("cost"), v: formatCost(run.totals.cost, currency) },
@@ -138,6 +171,7 @@ function StepDetail({ step }: { step: TrajectoryRun["steps"][number] }) {
 function ModelDetail({ call, currency }: { call: TrajectoryModelCall; currency: string }) {
   const t = useTranslations("trajectories.detail.model");
   const locale = useLocale();
+  const formatCost = useFormatCost();
   const params = Object.entries(call.request.params ?? {});
   const tools = (call.request.tools ?? []).map((x) => x.key);
   const u = call.usage;

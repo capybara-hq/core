@@ -23,7 +23,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { formatTime } from "../../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../../components/form-error";
 import { OrgGate } from "../../../../../../components/OrgGate";
-import { formatCost, grouped } from "../../../../../../components/TrajectoryParts";
+import { grouped, useFormatCost } from "../../../../../../components/TrajectoryParts";
 import { Link } from "../../../../../../i18n/navigation";
 import { ApiClientError } from "../../../../../../lib/api";
 import { lineDiff } from "../../../../../../lib/diff";
@@ -31,14 +31,18 @@ import {
   cancelEvalRun,
   type EvalLabel,
   type EvalResult,
+  type EvalResultRow,
   type EvalRun,
   evalResultMark,
   evalRunMark,
   formatRate,
+  getEvalResult,
   getEvalRun,
   getEvalSet,
   labelEvalResult,
-  listAllEvalResults,
+  listEvalResultRows,
+  mergeResultRows,
+  rowOf,
   runActive,
   sideOf,
   type ToolCallDiffEntry,
@@ -56,8 +60,10 @@ type Tab = (typeof TABS)[number];
 
 /**
  * `/[locale]/evals/runs/[runId]`：评测运行（DetailPage）。页头是状态、进度、token 用量 / 上限与汇总比率；
- * 排队或执行中轮询运行与结果（上一次读完才排下一次；5 秒起，没有变化时加倍放慢到 30 秒），可以取消。「结果」标签页列出每条结果，选中后 Inspector 显示文本差异
- * （lineDiff + CodeBlock）、工具调用差异、评委理由与人工标注；整轮回放的结果可以跳到评测对话的轨迹。
+ * 排队或执行中轮询运行与结果（上一次读完才排下一次；5 秒起，没有变化时加倍放慢到 30 秒），可以取消。结果表只读轻量视图
+ * （不含内容块），轮询只取上次之后有变化的行（`updatedSince`）并按 id 合并。「结果」标签页列出每条结果，选中后
+ * Inspector 按需读这一条的完整内容，显示文本差异（lineDiff + CodeBlock）、工具调用差异、漂移原因、评委理由与人工标注；
+ * 整轮回放的结果可以跳到评测对话的轨迹。
  * 「汇总」标签页是汇总数字与候选设置。
  */
 export default function EvalRunPage() {
@@ -69,15 +75,22 @@ export default function EvalRunPage() {
   );
 }
 
-type Loaded = { run: EvalRun; results: EvalResult[]; titles: Map<string, string> };
+type Loaded = {
+  run: EvalRun;
+  /** 结果的轻量行（按 id 升序）。 */
+  rows: EvalResultRow[];
+  /** 下一次轮询的 `updatedSince`（内核没给时为 null：每次读全部）。 */
+  asOf: string | null;
+  titles: Map<string, string>;
+};
 
 function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   const t = useTranslations("evals");
   const errorMessage = useErrorMessage();
   const { state, set } = useLoad(async (): Promise<Loaded> => {
     const { run } = await getEvalRun(orgId, runId);
-    const [results, setDetail] = await Promise.all([
-      listAllEvalResults(orgId, runId),
+    const [page, setDetail] = await Promise.all([
+      listEvalResultRows(orgId, runId),
       // 用例标题只用于显示：读不到时显示用例 id
       getEvalSet(orgId, run.setId).then(
         (r) => r.set,
@@ -86,7 +99,8 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
     ]);
     return {
       run,
-      results,
+      rows: page.rows,
+      asOf: page.asOf,
       titles: new Map((setDetail?.cases ?? []).map((c) => [c.id, c.title])),
     };
   }, [orgId, runId]);
@@ -96,15 +110,21 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   latest.current = data;
   const active = data !== null && runActive(data.run.status);
 
-  /** 重读运行与结果（不重读评测集）；返回运行进度是否有变化。 */
+  /** 重读运行与有变化的结果行（不重读评测集）；返回运行进度是否有变化。 */
   const refresh = useCallback(async (): Promise<boolean> => {
-    const [{ run }, results] = await Promise.all([
+    const since = latest.current?.asOf ?? undefined;
+    const [{ run }, page] = await Promise.all([
       getEvalRun(orgId, runId),
-      listAllEvalResults(orgId, runId),
+      listEvalResultRows(orgId, runId, since),
     ]);
     const prev = latest.current;
     if (prev === null) return true;
-    set({ ...prev, run, results });
+    set({
+      ...prev,
+      run,
+      rows: since === undefined ? page.rows : mergeResultRows(prev.rows, page.rows),
+      asOf: page.asOf ?? prev.asOf,
+    });
     return (
       prev.run.status !== run.status ||
       prev.run.casesDone !== run.casesDone ||
@@ -181,13 +201,13 @@ function EvalRunView({
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const { run, results, titles } = data;
+  const { run, rows, titles } = data;
   const [tab, setTab] = useState<Tab>("results");
   const [selected, setSelected] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const active = runActive(run.status);
-  const title = (r: EvalResult) => titles.get(r.caseId) ?? r.caseId;
-  const current = results.find((r) => r.id === selected);
+  const title = (r: { caseId: string }) => titles.get(r.caseId) ?? r.caseId;
+  const current = rows.find((r) => r.id === selected);
   const s = run.summary;
 
   const cancel = async () => {
@@ -206,10 +226,13 @@ function EvalRunView({
     }
   };
 
-  /** 标注写入后：换掉表里这条结果，再重读运行（汇总随之更新）。 */
+  /** 标注写入后：就地更新表里这一行（沿用原 `updatedAt`，下一次轮询再带回新的），再重读运行（汇总随之更新）。 */
   const labeled = useCallback(
     (r: EvalResult) => {
-      onChange({ ...data, results: data.results.map((x) => (x.id === r.id ? r : x)) });
+      onChange({
+        ...data,
+        rows: data.rows.map((x) => (x.id === r.id ? rowOf(r, x.updatedAt) : x)),
+      });
       onRefresh();
     },
     [data, onChange, onRefresh],
@@ -249,19 +272,17 @@ function EvalRunView({
       <Text tone="muted">{t("run.polling")}</Text>
     ) : null;
 
-  const judgeCell = (r: EvalResult): ReactNode => {
-    if (r.judge !== null && "verdict" in r.judge) {
+  const judgeCell = (r: EvalResultRow): ReactNode => {
+    if (r.verdict !== null) {
       return (
-        <Text tone={r.judge.verdict === "pass" ? "ok" : "fail"}>
-          {t(`run.verdict.${r.judge.verdict}`)}
-        </Text>
+        <Text tone={r.verdict === "pass" ? "ok" : "fail"}>{t(`run.verdict.${r.verdict}`)}</Text>
       );
     }
     if (r.judgeStatus === "done") return "—";
     return <Text tone="muted">{t(`run.judgeStatus.${r.judgeStatus}`)}</Text>;
   };
 
-  const columns: Column<EvalResult>[] = [
+  const columns: Column<EvalResultRow>[] = [
     { key: "case", header: t("run.columns.case"), cell: (r) => <Text truncate>{title(r)}</Text> },
     {
       key: "step",
@@ -283,11 +304,11 @@ function EvalRunView({
       header: t("run.columns.tools"),
       width: 100,
       cell: (r) =>
-        r.diff === null ? (
+        r.toolCallsMatch === null ? (
           "—"
         ) : (
-          <Text tone={r.diff.toolCallsMatch ? "ok" : "fail"}>
-            {r.diff.toolCallsMatch ? t("run.match") : t("run.mismatch")}
+          <Text tone={r.toolCallsMatch ? "ok" : "fail"}>
+            {r.toolCallsMatch ? t("run.match") : t("run.mismatch")}
           </Text>
         ),
     },
@@ -296,7 +317,7 @@ function EvalRunView({
       header: t("run.columns.similarity"),
       width: 110,
       align: "right",
-      cell: (r) => formatRate(r.diff?.textSimilarity),
+      cell: (r) => formatRate(r.textSimilarity),
     },
     { key: "judge", header: t("run.columns.judge"), width: 100, cell: judgeCell },
     {
@@ -330,7 +351,7 @@ function EvalRunView({
         items: TABS.map((x) => ({
           id: x,
           label: t(`run.tabs.${x}`),
-          ...(x === "results" && { count: results.length }),
+          ...(x === "results" && { count: rows.length }),
         })),
         value: tab,
         onChange: (x) => setTab(x as Tab),
@@ -341,11 +362,12 @@ function EvalRunView({
           {current === undefined ? (
             <Text tone="muted">{t("run.inspector.selectHint")}</Text>
           ) : (
-            <ResultInspector
+            <ResultPanel
               key={current.id}
               orgId={orgId}
+              runId={run.id}
               mode={run.mode}
-              result={current}
+              row={current}
               title={title(current)}
               onLabeled={labeled}
             />
@@ -356,10 +378,10 @@ function EvalRunView({
       <Stack gap={12}>
         {notice}
         {tab === "results" ? (
-          <DataTable<EvalResult>
+          <DataTable<EvalResultRow>
             label={t("run.resultsLabel")}
             columns={columns}
-            rows={results}
+            rows={rows}
             rowKey={(r) => r.id}
             rowLabel={(r) => title(r)}
             state="ready"
@@ -377,6 +399,7 @@ function EvalRunView({
 
 function SummaryTab({ run }: { run: EvalRun }) {
   const t = useTranslations("evals");
+  const formatCost = useFormatCost();
   const s = run.summary;
   const c = run.candidate;
   const e = run.estimate;
@@ -439,6 +462,17 @@ function SummaryTab({ run }: { run: EvalRun }) {
                 cost: formatCost(e.estimatedCost, e.currency),
               }),
             },
+            ...(e.judgeTokens !== undefined && e.judgeTokens > 0
+              ? [
+                  {
+                    k: t("run.candidate.judgeShare"),
+                    v: t("run.candidate.judgeShareValue", {
+                      tokens: grouped.format(e.judgeTokens),
+                      cost: formatCost(e.judgeCost ?? null, e.currency),
+                    }),
+                  },
+                ]
+              : []),
           ]}
         />
         {c.instructions !== undefined ? <CodeBlock text={c.instructions} /> : null}
@@ -473,6 +507,54 @@ function toolLine(e: ToolCallDiffEntry, kind: string): string {
   }
 }
 
+/**
+ * 选中结果的查看器：按需读这一条的完整行（结果表只有轻量行）；轮询带回这一行的 `updatedAt` 变化时重读
+ * （重读期间保留上一次的内容）。
+ */
+function ResultPanel({
+  orgId,
+  runId,
+  mode,
+  row,
+  title,
+  onLabeled,
+}: {
+  orgId: string;
+  runId: string;
+  mode: EvalRun["mode"];
+  row: EvalResultRow;
+  title: string;
+  onLabeled(r: EvalResult): void;
+}) {
+  const errorMessage = useErrorMessage();
+  const { state, reload, set } = useLoad(
+    () => getEvalResult(orgId, runId, row.id).then((r) => r.result),
+    [orgId, runId, row.id],
+  );
+  const seen = useRef(row.updatedAt);
+  useEffect(() => {
+    if (seen.current === row.updatedAt) return;
+    seen.current = row.updatedAt;
+    reload();
+  }, [row.updatedAt, reload]);
+  if (state.kind === "loading") return <Skeleton rows={4} />;
+  if (state.kind === "error") {
+    return <FormError message={errorMessage(new ApiClientError(0, state.code, ""))} />;
+  }
+  return (
+    <ResultInspector
+      orgId={orgId}
+      mode={mode}
+      result={state.data}
+      title={title}
+      onLabeled={(r) => {
+        set(r);
+        onLabeled(r);
+      }}
+    />
+  );
+}
+
 function ResultInspector({
   orgId,
   mode,
@@ -487,6 +569,7 @@ function ResultInspector({
   onLabeled(r: EvalResult): void;
 }) {
   const t = useTranslations("evals.run");
+  const td = useTranslations("evals.drift");
   const te = useTranslations("errors");
   const errorMessage = useErrorMessage();
   const [note, setNote] = useState(r.labelNote ?? "");
@@ -563,7 +646,17 @@ function ResultInspector({
               <StatusMark status={evalResultMark(r.status)} label={t(`resultStatus.${r.status}`)} />
             ),
           },
-          ...(r.drift.length > 0 ? [{ k: t("inspector.drift"), v: r.drift.join(", ") }] : []),
+          ...(r.drift.length > 0
+            ? [
+                {
+                  k: t("inspector.drift"),
+                  // 漂移原因走 i18n，不认识的原因显示原始码
+                  v: r.drift
+                    .map((d) => (td.has(d) ? td(d) : d))
+                    .join(t("inspector.driftSeparator")),
+                },
+              ]
+            : []),
           ...(r.error !== null
             ? [{ k: t("inspector.error"), v: <Text tone="fail">{reason(r.error.code)}</Text> }]
             : []),
