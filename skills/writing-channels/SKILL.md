@@ -98,7 +98,7 @@ interface Channel {
 
 | `kind` | 内容 | 交互 |
 |---|---|---|
-| `approval` | 标题、工具 / 应用、agent、参数预览（内核已按键名与连接密钥打码，≤500 字符）、可选范围 `scopes`、`expiresAt`、`state`、`decidedBy`、`webUrl` | `pending` 时每个范围一个批准按钮 + 拒绝 + 网页链接；其他状态去掉按钮，只显示状态与「详情」链接 |
+| `approval` | 标题、工具 / 连接器、agent、参数预览（内核已按键名与连接密钥打码，≤500 字符）、可选范围 `scopes`、`expiresAt`、`state`、`decidedBy`、`webUrl` | `pending` 时每个范围一个批准按钮 + 拒绝 + 网页链接；其他状态去掉按钮，只显示状态与「详情」链接 |
 | `question` | `form`（`InputForm`）、`state`、`answerSummary`、`webUrl` | `questionRenderableInline(form)` 为真（恰一个枚举字段，单选 ≤5 / 多选 ≤10，不允许「其他」）时在 IM 内作答，否则只给网页链接 |
 | `connect` | `appName`、`url` | 链接按钮 |
 | `bind` | `text`、`url` | 链接按钮（内核只在私聊里发） |

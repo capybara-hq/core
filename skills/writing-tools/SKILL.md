@@ -1,6 +1,6 @@
 ---
 name: writing-tools
-description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、应用工具（连接器）的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用；内置的沙箱工具 sandbox_*（按工具的超时与转存阈值、sandboxToolPolicy、首次使用 / 重建提示）与技能工具 skill_load / skill_write（目录快照、R3 只对共享 agent 固定 ask、变更审批）。写连接器见 writing-connectors。
+description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、连接器工具的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用；内置的沙箱工具 sandbox_*（按工具的超时与转存阈值、sandboxToolPolicy、首次使用 / 重建提示）与技能工具 skill_load / skill_write（目录快照、R3 只对共享 agent 固定 ask、变更审批）。写连接器见 writing-connectors。
 ---
 
 # 写工具
@@ -8,7 +8,7 @@ description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.regi
 通用的插件写法（清单、配置、ctx、多副本禁令、双副本测试）见 `skills/writing-plugins`，这里只讲工具特有的部分。参考实现：
 
 - 插件工具：`plugins/todo`（一个 `write` 工具，整表写入本插件 schema，默认 allow）。
-- 连接器：`plugins/connector-mcp`（`connector@1`，把远端 MCP 服务接成「应用」）；`plugins/connector-openapi`（OpenAPI 3.0 / 3.1 描述的 HTTP API，每个 operation 一个工具，实现了 `inspect`）。
+- 连接器：`plugins/connector-mcp`（`connector@1`，把远端 MCP 服务接成连接器）；`plugins/connector-openapi`（OpenAPI 3.0 / 3.1 描述的 HTTP API，每个 operation 一个工具，实现了 `inspect`）。
 - 内核内置工具：`packages/kernel/src/tools/builtins`（`ask_user`、`read_tool_output`、`tool_search`；沙箱工具 `sandbox_*`
   在 `builtins/sandbox/`；技能工具 `skill_load` / `skill_write`）。见下文「内核内置工具：沙箱与技能」。
 
@@ -22,11 +22,11 @@ description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.regi
 |---|---|---|
 | 内置 | 名字本身：`ask_user`、`read_tool_output`、`tool_search`、`sandbox_bash`、`skill_load` | 小写 + 下划线，**不含点**（Ruling M12） |
 | 插件 | `<plugin>__<tool>`，如 `todo__write` | `spec.name` 匹配 `^[a-zA-Z0-9_-]{1,40}$`（`PLUGIN_TOOL_NAME`） |
-| 应用（连接器） | `<appSlug>__<tool>`，如 `docs__search` | slug `^[a-z][a-z0-9_]{0,23}$`，不含连续 / 结尾下划线；工具名由远端决定 |
+| 连接器 | `<connectorSlug>__<tool>`，如 `docs__search` | slug `^[a-z][a-z0-9_]{0,23}$`，不含连续 / 结尾下划线；工具名由远端决定 |
 
-key 超长或含非法字符时**不截断、不猜**：保存 agent 时报 `validation_failed`；应用工具在安装 / 刷新时停用并在 `issues` 里写原因。名字用小写 + 下划线的动词短语（`write`、`search`、`delete_doc`），不要把插件名再写进工具名（key 已带前缀）。
+key 超长或含非法字符时**不截断、不猜**：保存 agent 时报 `validation_failed`；连接器工具在安装 / 刷新时停用并在 `issues` 里写原因。名字用小写 + 下划线的动词短语（`write`、`search`、`delete_doc`），不要把插件名再写进工具名（key 已带前缀）。
 
-agent 定义按引用选工具：`{kind:"builtin",name}`、`{kind:"plugin",plugin,name}`、`{kind:"app",appId,tools:"all"|string[]}`。运行时每步实时解析（`ToolRegistry.forAgent`），不可用的工具（插件未启用、应用停用 / 删除、工具待复核等）跳过并写一条英文 `reminder`（`The following tools are unavailable in this run: <key> (<reason>), …`），模型仍调用它时得到 `Tool "<key>" is unavailable: <reason>.`，整轮不失败。
+agent 定义按引用选工具：`{kind:"builtin",name}`、`{kind:"plugin",plugin,name}`、`{kind:"connector",connectorId,tools:"all"|string[]}`。运行时每步实时解析（`ToolRegistry.forAgent`），不可用的工具（插件未启用、连接器停用 / 删除、工具待复核等）跳过并写一条英文 `reminder`（`The following tools are unavailable in this run: <key> (<reason>), …`），模型仍调用它时得到 `Tool "<key>" is unavailable: <reason>.`，整轮不失败。
 
 ## 插件工具：`ctx.tools.register`
 
@@ -81,7 +81,7 @@ export default definePlugin({
 
 `ToolSpec.annotations`（与 MCP 对齐）：`readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`、`requiresUserInteraction`。
 
-- 默认策略：插件 / 内置工具声明了 `defaultPolicy` 就用它；否则按注解推导 —— `readOnlyHint: true` → `allow`，其余（含无注解、destructive）→ `ask`（`policyFromAnnotations`）。应用工具在安装时按注解推导并存进 `app_tools.default_policy`，管理员可改。
+- 默认策略：插件 / 内置工具声明了 `defaultPolicy` 就用它；否则按注解推导 —— `readOnlyHint: true` → `allow`，其余（含无注解、destructive）→ `ask`（`policyFromAnnotations`）。连接器工具在安装时按注解推导并存进 `connector_tools.default_policy`，管理员可改。
 - 只有确实无副作用、或副作用只落在本会话的工具才声明 `defaultPolicy: "allow"`（如 todo）；拿不准就别声明，让它走 `ask`。
 - 最终策略在**执行那一刻**取最严者：组织默认策略、agent 的 `toolPolicies`（只能收紧为 `ask` / `deny`）、`requiresUserInteraction` 与 R3 清单（至少 `ask`，记住的授权对它们无效；`skill_write` 只对共享 agent 固定 ask，见下文）；用户记住的授权（本会话 / 以后都允许）只能把 `ask` 放行为 `allow`，`spec_hash` 变了即失效，不越过 `deny`。
 - `ask` → 内核建审批、run 进入 `waiting`（不占会话锁与配额），批准后从 checkpoint 续跑；拒绝 / 超时（`tools.approvalTimeoutHours`）/ 等待中被中止一律按拒绝写 `tool_result`。插件无需关心。
@@ -89,7 +89,7 @@ export default definePlugin({
 ## 结果、`ToolError` 与失败
 
 - 返回 `{ content: ToolContent[], isError? }`。`text` 原样拼接；`image` / `resource_link` 给模型的是类型说明（不丢弃）。`isError: true` 表示「工具执行了但结果是错误」，内容照样给模型。
-- 抛 `ToolError(message)`：message **原样**给模型（所以必须英文、可执行）。可选第二个参数 `{ kind: "unavailable" }` 表示远端不可用（连不上、HTTP 5xx），只对连接器有意义；缺省 `kind: "error"`（参数错误、业务错误、鉴权失败等）说明远端可达。熔断语义（Ruling A15）：应用级熔断只统计「远端不可用」——超时、传输 / 连接错误（非 `ToolError` 的异常）、`kind: "unavailable"`；`kind: "error"` 的 `ToolError` 与 `isError` 结果都表示远端可达，清零计数。插件工具与内置工具不受熔断影响。
+- 抛 `ToolError(message)`：message **原样**给模型（所以必须英文、可执行）。可选第二个参数 `{ kind: "unavailable" }` 表示远端不可用（连不上、HTTP 5xx），只对连接器有意义；缺省 `kind: "error"`（参数错误、业务错误、鉴权失败等）说明远端可达。熔断语义（Ruling A15）：连接器级熔断只统计「远端不可用」——超时、传输 / 连接错误（非 `ToolError` 的异常）、`kind: "unavailable"`；`kind: "error"` 的 `ToolError` 与 `isError` 结果都表示远端可达，清零计数。插件工具与内置工具不受熔断影响。
 - **显示摘要 `display`（可选，只给人看）**：`{ content, display: { summary: { zh, en } } }`，对话流里那一行工具调用显示这句话（如 todo 的「更新任务清单（3 项）」/「Updated task list (3 items)」），不再显示原样的输入 JSON。中英文都要给、各 ≤ 200 码点（`validateToolDisplay`）；不合法的内核丢弃并记告警，结果照常写入。摘要随 `tool_result` 事件进日志（刷新页面能还原），**不进模型上下文**（重建请求只用 content / isError），所以别把模型需要的信息只写在摘要里。只认插件工具、内核内置工具与内核的 resources 工具给的摘要；连接器工具的结果不采信（网页退回「工具名 + 输入的前几个字段」）。内置工具 `ask_user` / `read_tool_output` / `tool_search` 都给了摘要。
 - 抛其他错误：模型只看到 `Tool <key> failed (<ErrorName>). The operation may not have completed; check before retrying or try another approach.`，错误详情进日志（经打码）。不要依赖异常消息传话。
 - 超时：`Tool <key> timed out after <n>s. The operation may or may not have completed; verify before retrying.`
@@ -120,7 +120,7 @@ async (input, call) => {
 - `state` 可 JSON 序列化、≤ 16 KB；它存在 PG，续跑可能在另一个副本上，**不要把续跑需要的东西放内存**。
 - 同一调用最多连续请求输入 3 次，第 4 次 → `Tool requested user input too many times.`
 - 内置 `ask_user` 就是用这套机制实现的，可作参考。
-- MCP 应用的 elicitation（远端在调用途中向用户要输入）由内核转成同一套输入请求：内核中止远端调用、用户回答后用**同一 input** 重新发起调用，远端再次发起同样的 elicitation 时用答案答复（至多 3 轮；远端不再问或换了 schema 时答案用不上，elicitation 之前的副作用会重做一次）。这是连接器与内核之间的事，细节见 `skills/writing-connectors`，插件工具不涉及。
+- MCP 连接器的 elicitation（远端在调用途中向用户要输入）由内核转成同一套输入请求：内核中止远端调用、用户回答后用**同一 input** 重新发起调用，远端再次发起同样的 elicitation 时用答案答复（至多 3 轮；远端不再问或换了 schema 时答案用不上，elicitation 之前的副作用会重做一次）。这是连接器与内核之间的事，细节见 `skills/writing-connectors`，插件工具不涉及。
 
 ## `tool_search`：工具多时的目录与按需加载
 
@@ -139,18 +139,18 @@ async (input, call) => {
 
 ## 工具定义漂移与复核
 
-应用工具（连接器）的定义来自远端，可能被改（spec 7.3 防 rug-pull / 工具投毒）。内核（`packages/kernel/src/tools/drift.ts`）每 `tools.driftIntervalHours` 小时、收到连接器的 `onToolsChanged`、管理员 `POST .../apps/:appId/refresh` 时重新 `listTools` 并与快照比对：
+连接器工具的定义来自远端，可能被改（spec 7.3 防 rug-pull / 工具投毒）。内核（`packages/kernel/src/tools/drift.ts`）每 `tools.driftIntervalHours` 小时、收到连接器的 `onToolsChanged`、管理员 `POST .../connectors/:connectorId/refresh` 时重新 `listTools` 并与快照比对：
 
 - 新增的工具 → `pending_review`；
 - **任何 spec 变化**（描述、`inputSchema`、注解、`connectorData`，即 `spec_hash` 或来源变了；`connectorData` 计入哈希）→ `pending_review`，新定义存 `pending_spec`、旧定义保留供对比；管理员停用过的工具变了也一样；变成不合规的定义同样只进 `pending_spec`（工具停用，approve 被拒，reject 清掉），`spec` 始终是上次复核通过的定义；
 - 从未复核过的工具（`reviewed_at` 为空：新增待复核、被拒的新工具）没有可比的旧定义，再变时直接替换 `spec`（仍待复核）；
 - 消失 → `disabled` 并标记 `missing`（又出现按新增处理）。
 
-`pending_review` / 停用的工具不进 `forAgent`：点名引用的进 `unavailable`（每步提醒模型），`tools: "all"` 引用的进 `hidden`（不提醒，模型调用时给事实原因）。管理员 `POST .../apps/:appId/tools/:name/review {action: "approve" | "reject"}`：approve 采用新定义并启用并记 `reviewed_at`，reject 停用并保留旧定义（从未复核过的工具被拒后 `reviewed_at` 仍为空，之后仍可 approve）；待复核或从未复核过的工具不能经 PATCH 启用。授权按 `spec_hash` 比对，采用新定义后旧的「记住的授权」自然失效。
+`pending_review` / 停用的工具不进 `forAgent`：点名引用的进 `unavailable`（每步提醒模型），`tools: "all"` 引用的进 `hidden`（不提醒，模型调用时给事实原因）。管理员 `POST .../connectors/:connectorId/tools/:name/review {action: "approve" | "reject"}`：approve 采用新定义并启用并记 `reviewed_at`，reject 停用并保留旧定义（从未复核过的工具被拒后 `reviewed_at` 仍为空，之后仍可 approve）；待复核或从未复核过的工具不能经 PATCH 启用。授权按 `spec_hash` 比对，采用新定义后旧的「记住的授权」自然失效。
 
-**默认策略与 `policy_source`**：应用工具的默认策略（`app_tools.default_policy`）由注解推导（`policySource: "derived"`），管理员改过则为 `"admin"`。approve 或刷新采用新定义时，`derived` 的按新注解重新推导（注解变严格——如 `readOnlyHint` 变成 destructive——也会跟着变成 ask，不会沿用旧的 allow）；`admin` 的保留，除非工具的来源（`source`）变了。插件 / 内置工具没有这一层：用 `defaultPolicy` 或注解（见上）。
+**默认策略与 `policy_source`**：连接器工具的默认策略（`connector_tools.default_policy`）由注解推导（`policySource: "derived"`），管理员改过则为 `"admin"`。approve 或刷新采用新定义时，`derived` 的按新注解重新推导（注解变严格——如 `readOnlyHint` 变成 destructive——也会跟着变成 ask，不会沿用旧的 allow）；`admin` 的保留，除非工具的来源（`source`）变了。插件 / 内置工具没有这一层：用 `defaultPolicy` 或注解（见上）。
 
-后台检查用的凭据：组织凭据；个人凭据型应用依次试至多 3 个现任成员的个人凭据（按凭据最近写入时间倒序），没有则跳过并记日志。审计 `app.tools_drifted`（只有计数）/ `app.tool_reviewed`。
+后台检查用的凭据：组织凭据；个人凭据型连接器依次试至多 3 个现任成员的个人凭据（按凭据最近写入时间倒序），没有则跳过并记日志。审计 `connector.tools_drifted`（只有计数）/ `connector.tool_reviewed`。
 
 写连接器的人要注意：`listTools` 的输出必须确定性，否则会反复触发复核（见 `skills/writing-connectors`）。
 
@@ -197,9 +197,9 @@ async (input, call) => {
 
 ## 连接器
 
-连接器（`connector@1`）把远端服务接成应用，工具由远端决定，上述策略、审批、输出存档、漂移、`tool_search` 全部照常适用。契约、会话生命周期、鉴权注入、`ToolError` 的熔断语义、`connectorData` 路由、`inspect`、elicitation、测试夹具都在 **`skills/writing-connectors`**。参考实现：`plugins/connector-mcp`、`plugins/connector-openapi`。
+连接器（`connector@1`）把远端服务接成连接器，工具由远端决定，上述策略、审批、输出存档、漂移、`tool_search` 全部照常适用。契约、会话生命周期、鉴权注入、`ToolError` 的熔断语义、`connectorData` 路由、`inspect`、elicitation、测试夹具都在 **`skills/writing-connectors`**。参考实现：`plugins/connector-mcp`、`plugins/connector-openapi`。
 
-要点：`ToolError` 的 `kind: "unavailable"` 才计入应用熔断（见上）；OAuth 全在内核，连接器只做 `auth()` / `onUnauthorized()`；应用工具的结果与错误由内核按本次注入的凭据打码。
+要点：`ToolError` 的 `kind: "unavailable"` 才计入连接器熔断（见上）；OAuth 全在内核，连接器只做 `auth()` / `onUnauthorized()`；连接器工具的结果与错误由内核按本次注入的凭据打码。
 
 ## 测试
 

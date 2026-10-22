@@ -62,7 +62,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - 工具（`ctx.tools`、描述与错误文案、默认策略、输出存档、`tool_search`、漂移复核；内置的 `sandbox_*` 与技能工具 `skill_load` / `skill_write`，key 不含点，`skill_write` 只对共享 agent 固定确认）：详见 [skills/writing-tools](skills/writing-tools/SKILL.md)，参考实现 `plugins/todo`。
 - 沙箱（`sandbox@1`：中止要杀命令、确定不在才抛 `SandboxGoneError`、已停止的自动启动、沙箱内也有命令时限、`killAll`、同名替换、`/skills` 只读、出站 `open` 须 `allowOpenEgress`；锁、休眠、销毁由内核 `SandboxService` 负责；socket 代理绝不发布到宿主机地址）：详见 [skills/writing-sandbox-providers](skills/writing-sandbox-providers/SKILL.md)，参考实现 `plugins/sandbox-docker`、`plugins/sandbox-e2b`。
 - 对象存储（`object-store@1` / `ctx.storage`：键前缀 `plugins/<插件>/<orgId>/` 与 `kernel/<orgId>/` 由内核加，预签名上传的大小必须由存储端拒绝，键不能含 `${`，用了 `ctx.storage` 须声明 `permissions.storage`）：详见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)，参考实现 `plugins/object-store-s3`。
-- 连接器（`connector@1`：MCP / OpenAPI 等远端服务接成应用）：详见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，参考实现 `plugins/connector-mcp`、`plugins/connector-openapi`。
+- 连接器（`connector@1`：MCP / OpenAPI 等远端服务接成连接器）：详见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，参考实现 `plugins/connector-mcp`、`plugins/connector-openapi`。
 - 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`：身份键 `<插件>:<租户>`、onEvent 后才确认、卡片规范、防 @所有人、长连接与选主由内核负责）：详见 [skills/writing-channels](skills/writing-channels/SKILL.md)，参考实现 `plugins/slack`、`plugins/lark`。
 - 插件界面（`ctx.ui`：对话页右侧标签与「扩展」页面；渲染 schema 视图不卡加载，嵌入应用要批准、是敏感项，令牌只认本插件、`/api` 不认）：详见 [skills/writing-plugin-ui](skills/writing-plugin-ui/SKILL.md)，参考实现 `plugins/todo`（视图）、`plugins/example-board`（嵌入应用）。
 - **能自动检查的规则以检查为准**：`pnpm check` 会逐步收录各项自定义检查，每道检查都有「违规 fixture 使其失败」的测试。

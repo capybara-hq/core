@@ -148,7 +148,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 
 ### 连接器（`connector@1`）
 
-`provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`，把一类远端服务接成组织里的「应用」（工具快照、凭据、审批都由内核管）。连接器是部署级的，不需要按组织启用。要点：会话按次打开、用完关闭，不缓存连接；每个出站请求前调用 `auth()`；401 → `onUnauthorized()` 后重试一次；不跟随重定向；不把凭据写进错误与日志。详见 `skills/writing-connectors`，参考 `plugins/connector-mcp`、`plugins/connector-openapi`。
+`provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`，把一类远端服务接成组织里的「连接器」（工具快照、凭据、审批都由内核管）。连接器是部署级的，不需要按组织启用。要点：会话按次打开、用完关闭，不缓存连接；每个出站请求前调用 `auth()`；401 → `onUnauthorized()` 后重试一次；不跟随重定向；不把凭据写进错误与日志。详见 `skills/writing-connectors`，参考 `plugins/connector-mcp`、`plugins/connector-openapi`。
 
 ### 沙箱与对象存储（`sandbox@1` / `object-store@1`）
 

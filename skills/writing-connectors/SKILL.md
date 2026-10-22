@@ -5,18 +5,22 @@ description: 新建或修改连接器插件时使用（provides connector@1，�
 
 # 写连接器
 
-连接器把一类远端服务接成组织里的「应用」（MCP 服务、OpenAPI 描述的 HTTP API 等）：插件 `provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`。通用的插件写法（清单、配置、多副本禁令）见 `skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `skills/writing-tools`，这里只讲连接器特有的部分。
+连接器插件把一类远端服务接成组织里的「连接器」（远端服务实例：MCP 服务、OpenAPI 描述的 HTTP API 等；D17 之前叫「应用」）：插件 `provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`。通用的插件写法（清单、配置、多副本禁令）见 `skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `skills/writing-tools`，这里只讲连接器特有的部分。
 
 参考实现：`plugins/connector-mcp`（Streamable HTTP 的 MCP 服务，含 elicitation、prompts、resources、list_changed）与 `plugins/connector-openapi`（OpenAPI 3.0 / 3.1，每个 operation 一个工具，实现了 `inspect`、`connectorData` 路由）。契约在 `packages/plugin-sdk/src/connector.ts`。
 
 两个官方连接器的部署级配置都只有 `allowInsecureLoopback`（默认 `false`，仅开发 / 测试允许 `127.0.0.1` / `localhost` / `[::1]` 的明文 http）；`CAPYBARA_PLUGIN_CONFIG` 里按插件名给，如 `{"connector-mcp":{"allowInsecureLoopback":true}}`。连接器是部署级的，不需要按组织启用。
+
+**不支持 stdio MCP**：连接器只连远端服务（MCP 用 Streamable HTTP）。内核多副本运行、不在服务端为某个组织拉起本地进程，所以不要写 spawn 子进程的连接器；本地 MCP 服务要先包成 HTTP 端点再接入。
+
+**命名（D17）**：管理面叫「连接器」（HTTP `/api/v1/orgs/:orgId/connectors*`、`OrgAction` `connectors.manage` / `connectors.use`、错误码 `connector.*`、表 `connectors` / `connector_tools`、列 `connector_id`、agent 定义里的 `{kind:"connector", connectorId, tools}`）。为了日志确定性与已存数据，以下几处沿用旧名（C27）：模型可见的英文文案（`tool_search` 描述、工具不可用原因、resources 工具描述等仍说 app）；事件 payload 字段 `connection_required.appId` / `appName` 与 `user_message.attachments[].appId` / `appName`；已存 agent 版本里的 `{kind:"app", appId}`（读入时规范化为 connector 形）；secrets 键 `credentials:app:*`；旧审计记录 `app.*`（按 action 查询时用 `auditActionAliases` 的显式映射）。slug 不变，工具 key `<slug>__<tool>` 不变。
 
 ## 契约
 
 ```ts
 interface Connector {
   kind: string;                 // 存进 apps.connector，如 "mcp"、"openapi"
-  endpointSchema: ZodTypeAny;   // 应用 endpoint 的校验（安装 / 预览时内核调用）
+  endpointSchema: ZodTypeAny;   // 连接器 endpoint 的校验（安装 / 预览时内核调用）
   open(args: ConnectorOpenArgs): Promise<ConnectorSession>;
   inspect?(args: { endpoint; signal }): Promise<{ authHints: AuthHint[]; operations?: ConnectorOperation[] }>;
 }
@@ -43,8 +47,8 @@ interface ConnectorSession {
 
 - 内核在安装 / 预览 / 创建时用它校验 `endpoint`（失败 → 400 `validation_failed`），`open` 收到的是已校验的值（连接器里仍 `schema.parse` 一次拿类型）。
 - URL 只接受 https；部署配置 `allowInsecureLoopback` 打开时才放行确切的本机 http 三个主机名（`localhost.evil.com` 之类不算）。校验消息写英文并说明规则。
-- 端点配置对组织成员可见，**不得放凭据**：固定头禁止 `Authorization` / `Cookie` 等凭据头（凭据走应用认证设置、加密存储）；内核在安装时再按头名 / query 名 / URL 用户信息做一道检查并 400 拒绝（`x-api-key`、`*-token`、`*-secret`、`key` / `token` / `access_token` 等 query）。顶层名为 `url` 或 `*Url` 的字符串字段都按 URL 做凭据检查；没有 `apps.manage` 的人读应用时只看到不带 query 的 URL 与头名。
-- 体积大的字段（如 OpenAPI 的 `specText`，≤ 2 MB）：应用列表 / 详情不回显 `text` / `*Text` 字段全文，只给 `<field>Bytes` 与 `<field>Sha256`；安装与预览两个路由的请求体上限放宽到 6 MiB，其余路由 1 MiB。
+- 端点配置对组织成员可见，**不得放凭据**：固定头禁止 `Authorization` / `Cookie` 等凭据头（凭据走连接器认证设置、加密存储）；内核在安装时再按头名 / query 名 / URL 用户信息做一道检查并 400 拒绝（`x-api-key`、`*-token`、`*-secret`、`key` / `token` / `access_token` 等 query）。顶层名为 `url` 或 `*Url` 的字符串字段都按 URL 做凭据检查；没有 `connectors.manage` 的人读连接器时只看到不带 query 的 URL 与头名。
+- 体积大的字段（如 OpenAPI 的 `specText`，≤ 2 MB）：连接器列表 / 详情不回显 `text` / `*Text` 字段全文，只给 `<field>Bytes` 与 `<field>Sha256`；安装与预览两个路由的请求体上限放宽到 6 MiB，其余路由 1 MiB。
 
 ## 会话生命周期：按次打开
 
@@ -60,32 +64,32 @@ interface ConnectorSession {
 
 ## `ToolError`、`kind` 与熔断
 
-- 抛 `ToolError(message)`：message **原样**给模型，必须英文、可执行（含 `use` / `call` / `retry` / `check` / `ask` / `pass` / `provide` 之一，`pnpm check` 的 `tool-error-actionable` 检查）。预览 / 安装失败时同一条消息（按注入的凭据打码）会带进 502 `app.connect_failed` 的说明，所以写得让管理员也看得懂。
-- `new ToolError(message, { kind: "unavailable" })` 表示**远端不可用**（连不上、HTTP 5xx）：计入应用熔断。缺省 `kind: "error"`（参数错误、业务错误、401 重试后仍失败、重定向、4xx、JSON-RPC 业务错误）说明远端可达，与 `isError` 结果一样清零计数。
+- 抛 `ToolError(message)`：message **原样**给模型，必须英文、可执行（含 `use` / `call` / `retry` / `check` / `ask` / `pass` / `provide` 之一，`pnpm check` 的 `tool-error-actionable` 检查）。预览 / 安装失败时同一条消息（按注入的凭据打码）会带进 502 `connector.connect_failed` 的说明，所以写得让管理员也看得懂。
+- `new ToolError(message, { kind: "unavailable" })` 表示**远端不可用**（连不上、HTTP 5xx）：计入连接器熔断。缺省 `kind: "error"`（参数错误、业务错误、401 重试后仍失败、重定向、4xx、JSON-RPC 业务错误）说明远端可达，与 `isError` 结果一样清零计数。
 - 熔断在内核（连续失败 `tools.breakerFailures` 次后打开 `tools.breakerOpenSeconds` 秒），只有超时、传输 / 连接错误（非 `ToolError` 的异常）与 `kind: "unavailable"` 计数。连接器如实抛错 / 返回即可。
 - 抛其他异常：模型只看到 `Tool <key> failed (<ErrorName>)…`，详情进经打码的日志。上游 HTTP 错误给模型只说状态码，正文截断后记 warn。
 - 结果的 `isError: true` 表示「调用成功但内容是错误」（如 MCP 的 `isError`、OpenAPI 的非 2xx 正文）。
 
 ## `listTools`、`connectorData` 与按已复核的定义路由
 
-- 映射远端工具清单时保留 `annotations`（内核据此推导默认策略：`readOnlyHint` → allow，其余 ask），缺描述用 title / name 兜底并 warn。应用工具的 key 是 `<appSlug>__<tool>`，整体须匹配 `^[a-zA-Z0-9_-]{1,64}$`（见 `skills/writing-tools`）；超长 / 含非法字符时内核不截断、不猜，停用该工具并在 `issues` 里写原因。工具名由连接器给出：把远端名字规整到合理长度并保证同一应用内不重复（openapi 把 operationId 里的非法字符换成下划线、截到 40 字符，重名在预览里报告）。
+- 映射远端工具清单时保留 `annotations`（内核据此推导默认策略：`readOnlyHint` → allow，其余 ask），缺描述用 title / name 兜底并 warn。连接器工具的 key 是 `<connectorSlug>__<tool>`，整体须匹配 `^[a-zA-Z0-9_-]{1,64}$`（见 `skills/writing-tools`）；超长 / 含非法字符时内核不截断、不猜，停用该工具并在 `issues` 里写原因。工具名由连接器给出：把远端名字规整到合理长度并保证同一连接器内不重复（openapi 把 operationId 里的非法字符换成下划线、截到 40 字符，重名在预览里报告）。
 - **`ToolSpec.connectorData`**（Ruling A21，安全）：调用所需的路由信息放在这个不透明、可 JSON 序列化的字段里（OpenAPI：方法、路径模板、参数位置 / 风格、请求体媒体类型、解析好的服务器地址）。内核存进快照并计入 `spec_hash`（变了即漂移、待复核），**从不发给模型**。
-- 调用时内核把该工具**已复核**的定义（`app_tools.spec`，不是待复核的 `pending_spec`）作为 `callTool` 的第 4 个参数 `ctx.spec` 交回。远端描述可能被改（rug-pull），所以按 `ctx.spec` 路由，**不要重新读取远端描述**；`ctx` 缺失（旧内核）时报错提示管理员刷新。MCP 这种由远端按名字路由的连接器可忽略 `ctx`。
+- 调用时内核把该工具**已复核**的定义（`connector_tools.spec`，不是待复核的 `pending_spec`）作为 `callTool` 的第 4 个参数 `ctx.spec` 交回。远端描述可能被改（rug-pull），所以按 `ctx.spec` 路由，**不要重新读取远端描述**；`ctx` 缺失（旧内核）时报错提示管理员刷新。MCP 这种由远端按名字路由的连接器可忽略 `ctx`。
 - 远端描述改了怎么办不是连接器的事：内核定时（`tools.driftIntervalHours`）、收到 `onToolsChanged`、管理员刷新时重新 `listTools` 比对快照，新增或变化的工具待复核，复核前不可用（见 `skills/writing-tools` 的漂移一节）。所以 `listTools` 的输出应**确定性**：同一份远端描述每次给出同样的 spec（字段顺序稳定、不带时间戳 / 随机值），否则会反复触发复核。
 
 ## `inspect` 与安装预览（Ruling A20）
 
 `inspect({ endpoint, signal })` 不带凭据读端点的描述，返回 `authHints`（远端声明的认证方式，映射到内核 AppAuth 的形状：`bearer` / `basic` / `api_key{in,name}` / `oauth_client{tokenUrl,scopes}` / `oauth_code{authorizationUrl,tokenUrl,scopes}`，带 `scheme` 名与可选 `description`；只列内核支持的方式）与可选的 `operations`（`id` 是端点里勾选用的 id，`method` 大写、`path`、`summary?`）。失败抛英文的 `ToolError`。
 
-内核的 `POST /api/v1/orgs/:orgId/apps/preview`（`apps.manage`，什么都不写）与网页安装向导据此工作：有 `inspect` 时返回 `authHints` / `operations`；给了 `auth: none`、或静态认证带凭据、或客户端凭据流带 client 时再 `listTools` 返回 `tools`（key、默认策略、`issue`）与 `issues`，否则 `tools: null`（授权码流不列，避免动态注册）。不需要预填的连接器（如 MCP）不实现 `inspect`，内核判空。
+内核的 `POST /api/v1/orgs/:orgId/connectors/preview`（`connectors.manage`，什么都不写）与网页安装向导据此工作：有 `inspect` 时返回 `authHints` / `operations`；给了 `auth: none`、或静态认证带凭据、或客户端凭据流带 client 时再 `listTools` 返回 `tools`（key、默认策略、`issue`）与 `issues`，否则 `tools: null`（授权码流不列，避免动态注册）。不需要预填的连接器（如 MCP）不实现 `inspect`，内核判空。
 
 ## `onToolsChanged`
 
-远端报告工具清单变了（MCP `notifications/tools/list_changed`）→ 调用 `args.onToolsChanged?.()`：不等待、出错只记 warn、不影响本次调用，可能多次调用。内核据此投递一次该应用的漂移检查（维护队列，jobId `drift-<appId>-<分钟桶>` 去重）。连接器不要自己重新拉清单。
+远端报告工具清单变了（MCP `notifications/tools/list_changed`）→ 调用 `args.onToolsChanged?.()`：不等待、出错只记 warn、不影响本次调用，可能多次调用。内核据此投递一次该连接器的漂移检查（维护队列，jobId `drift-<connectorId>-<分钟桶>` 去重）。连接器不要自己重新拉清单。
 
 **已知限制（漂移检查与个人凭据）**：
 
-- 个人凭据型应用（静态个人凭据或 `oauth_code`）的后台漂移检查没有发起人，内核依次尝试最近写入凭据的至多 3 位现任成员的凭据（Ruling A19），所以每次检查用的凭据可能不同，在最近活跃的成员之间轮换。
+- 个人凭据型连接器（静态个人凭据或 `oauth_code`）的后台漂移检查没有发起人，内核依次尝试最近写入凭据的至多 3 位现任成员的凭据（Ruling A19），所以每次检查用的凭据可能不同，在最近活跃的成员之间轮换。
 - 因此，按用户返回不同工具集合的服务（工具清单取决于是谁登录）会让工具在「已消失」与「待复核」之间来回翻转：这次用 A 的凭据看不到某工具 → 记为消失并停用；下次用 B 的凭据又看到 → 按新增进入待复核。这类服务建议改用组织凭据，或让服务端对所有成员返回同一份工具清单。
 
 ## `onElicit`：远端在调用途中向用户要输入
@@ -98,22 +102,22 @@ MCP `elicitation/create`（表单与 URL 两种模式）→ 调用 `args.onElici
 
 ## 可选：resources 与 prompts
 
-- 会话实现了 `listResources` / `readResource` 时内核补 `<slug>__list_resources` / `<slug>__read_resource` 两个工具（均标 `readOnlyHint`，默认 allow；管理员可停用），并支持网页输入框的 `@` 引用（消息接口 `attachments: [{ appId, uri }]`，内核以发送者凭据读取、打码、限长，作为用户消息的附加文本块）。资源读取（列表与附件）遵守管理员对该应用 `read_resource` 工具的启停（Ruling A23：停用 → 不列出、附件 409 `app.resources_disabled`）。
-- 实现了 `listPrompts` / `getPrompt` 时内核提供 `GET /orgs/:orgId/apps/prompts`、`POST /orgs/:orgId/apps/:appId/prompts/:name`，网页输入框出现 `/应用:提示名` 斜杠命令。`getPrompt` 失败抛英文 `ToolError`、不含凭据。
-- 这两类都由用户本人发起、用其凭据，不经工具策略。代码见 `packages/kernel/src/tools/app-content.ts`。
+- 会话实现了 `listResources` / `readResource` 时内核补 `<slug>__list_resources` / `<slug>__read_resource` 两个工具（均标 `readOnlyHint`，默认 allow；管理员可停用），并支持网页输入框的 `@` 引用（消息接口 `attachments: [{ connectorId, uri }]`，内核以发送者凭据读取、打码、限长，作为用户消息的附加文本块）。资源读取（列表与附件）遵守管理员对该连接器 `read_resource` 工具的启停（Ruling A23：停用 → 不列出、附件 409 `connector.resources_disabled`）。
+- 实现了 `listPrompts` / `getPrompt` 时内核提供 `GET /orgs/:orgId/connectors/prompts`、`POST /orgs/:orgId/connectors/:connectorId/prompts/:name`，网页输入框出现 `/连接器:提示名` 斜杠命令。`getPrompt` 失败抛英文 `ToolError`、不含凭据。
+- 这两类都由用户本人发起、用其凭据，不经工具策略。代码见 `packages/kernel/src/tools/connector-content.ts`。
 
 ## OAuth 与凭据：全在内核
 
 连接器只需照上面「每个请求前 `auth()`、401 调一次 `onUnauthorized()`」做，OAuth 本身（`packages/kernel/src/tools/oauth/`）不在连接器里：
 
-- `auth()` 返回的 Bearer 由内核在过期前 60 秒刷新；`onUnauthorized()` 在 Redis 锁 `capk:oauth-refresh:<orgId>:<appId>:<owner>` 内强制刷新（别的副本已刷新则直接用新 token，不并发刷新）；refresh 被拒 → 凭据删除、调用得到「需要连接」。
-- 认证方式 `oauth_code`（个人；`discovery: "mcp"` 走 RFC 9728 → RFC 8414 发现，`discovery: "manual"` 给 `authorizationUrl` / `tokenUrl`；`client: "dcr"` 安装时 RFC 7591 注册，授权服务器不支持 DCR → 502 `app.connect_failed` 带 `dcr_unsupported`，改用 `client: "manual"` + `credential: { clientId, clientSecret? }`）与 `oauth_client`（组织，客户端凭据流）。都要求配置 `http.publicUrl`；可选 `tokenAuthMethod`（`client_secret_basic` 默认 / `client_secret_post`）。
+- `auth()` 返回的 Bearer 由内核在过期前 60 秒刷新；`onUnauthorized()` 在 Redis 锁 `capk:oauth-refresh:<orgId>:<connectorId>:<owner>` 内强制刷新（别的副本已刷新则直接用新 token，不并发刷新）；refresh 被拒 → 凭据删除、调用得到「需要连接」。
+- 认证方式 `oauth_code`（个人；`discovery: "mcp"` 走 RFC 9728 → RFC 8414 发现，`discovery: "manual"` 给 `authorizationUrl` / `tokenUrl`；`client: "dcr"` 安装时 RFC 7591 注册，授权服务器不支持 DCR → 502 `connector.connect_failed` 带 `dcr_unsupported`，改用 `client: "manual"` + `credential: { clientId, clientSecret? }`）与 `oauth_client`（组织，客户端凭据流）。都要求配置 `http.publicUrl`；可选 `tokenAuthMethod`（`client_secret_basic` 默认 / `client_secret_post`）。
 - 只有令牌端点以 400 / 401 返回 `invalid_grant` / `invalid_client` / `unauthorized_client` 才作废令牌；429、其他 4xx、没有错误码的响应一律按暂时不可用处理、凭据保留。
-- 授权码应用安装时不 `listTools`（首个成员经 `POST /orgs/:orgId/apps/:appId/connect` → 授权服务器 → `GET /api/v1/oauth/callback` 连接后，用其 token 刷新工具清单）。轮换客户端密钥：`PUT .../credentials/org` 传 `{ clientId, clientSecret }`。
+- 授权码连接器安装时不 `listTools`（首个成员经 `POST /orgs/:orgId/connectors/:connectorId/connect` → 授权服务器 → `GET /api/v1/oauth/callback` 连接后，用其 token 刷新工具清单）。轮换客户端密钥：`PUT .../credentials/org` 传 `{ clientId, clientSecret }`。
 
 ## 打码是内核的事
 
-内核写事件 / 存档之前，用本次调用**实际注入的凭据值**给应用工具的结果与错误打码（`[REDACTED]`），日志也经打码。但连接器仍不得主动把凭据写进错误消息、日志或工具结果：**不回显请求头**、不把含凭据的 URL 放进错误里、不 `JSON.stringify` 整个请求。测试里用「回显凭据」的夹具（`echoKey`、`intercept`）确认没有漏。
+内核写事件 / 存档之前，用本次调用**实际注入的凭据值**给连接器工具的结果与错误打码（`[REDACTED]`），日志也经打码。但连接器仍不得主动把凭据写进错误消息、日志或工具结果：**不回显请求头**、不把含凭据的 URL 放进错误里、不 `JSON.stringify` 整个请求。测试里用「回显凭据」的夹具（`echoKey`、`intercept`）确认没有漏。
 
 ## 测试
 
