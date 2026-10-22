@@ -33,6 +33,11 @@ export interface OrgPluginView {
   permissions: PermissionGroup[];
   /** `config.org` 的 JSON Schema（密钥字段带 `x-secret`）；不可配置时为 null。 */
   orgConfigSchema: JsonSchema | null;
+  /**
+   * 插件此刻在部署上可用（已加载）。false：已安装但在部署上停用（或尚未加载），组织页显示「不可用」，
+   * 组织的启用开关保留不变（不能修改），其余字段为空。
+   */
+  available: boolean;
 }
 
 /** 清单不可变：每个组织级 schema 的 JSON Schema 转换结果按 schema 对象缓存（只读、无跨请求状态）。 */
@@ -150,6 +155,8 @@ export class OrgPluginConfigs {
        * `channel.changed`，持有长连接的副本立即断开。
        */
       afterPut?: (orgId: string, plugin: string, enabled: boolean) => Promise<void>;
+      /** 部署上的安装记录（任何期望状态）：没加载的列为不可用（T14）。 */
+      installed?: () => Promise<{ name: string; version: string }[]>;
       /** 仅供测试：在读完配置行之后、读密钥之前插入确定性的交错点。 */
       afterConfigRowRead?: () => Promise<void>;
     } = {},
@@ -171,8 +178,12 @@ export class OrgPluginConfigs {
       .execute(fn);
   }
 
-  /** 列出所有已加载插件在该组织下的状态（按加载顺序）；无记录时 enabled=false、config=null。 */
+  /**
+   * 列出所有已加载插件在该组织下的状态（按加载顺序）；无记录时 enabled=false、config=null。
+   * 之后是已安装但此刻没加载的插件（部署上停用等），`available: false`，按名字排序。
+   */
   async list(orgId: string): Promise<OrgPluginView[]> {
+    const installed = (await this.hooks.installed?.()) ?? [];
     return this.snapshot(async (t) => {
       const rows = await t
         .selectFrom("plugin_org_configs")
@@ -183,8 +194,8 @@ export class OrgPluginConfigs {
       const setKeys = await this.setSecretKeys(t, orgId);
       // 内置插件始终启用、没有组织级设置（C14）：组织插件页不列出
       const builtin = this.host.builtinNames();
-      return this.host
-        .manifests()
+      const loaded = this.host.manifests();
+      const views = loaded
         .filter((m) => !builtin.has(m.name))
         .map((m) =>
           this.view(
@@ -193,6 +204,24 @@ export class OrgPluginConfigs {
             setKeys,
           ),
         );
+      const names = new Set(loaded.map((m) => m.name));
+      const unavailable = installed
+        .filter((i) => !names.has(i.name) && !builtin.has(i.name))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(
+          (i): OrgPluginView => ({
+            plugin: i.name,
+            version: i.version,
+            enabled: rows.find((r) => r.plugin === i.name)?.enabled ?? false,
+            configurable: false,
+            config: null,
+            secrets: [],
+            permissions: [],
+            orgConfigSchema: null,
+            available: false,
+          }),
+        );
+      return [...views, ...unavailable];
     });
   }
 
@@ -494,6 +523,7 @@ export class OrgPluginConfigs {
       secrets: paths.map((p) => ({ path: p, set: setKeys.has(secretKey(m.name, p)) })),
       permissions: permissionGroups(this.permissionsOf(m.name)),
       orgConfigSchema: schema ? orgJsonSchema(schema) : null,
+      available: true,
     };
   }
 

@@ -11,6 +11,9 @@ export type Command =
   | { command: "admin-create"; login: string; displayName: string; email?: string }
   | { command: "plugins-review" }
   | { command: "plugins-approve"; name: string; yes: boolean }
+  | { command: "plugins-list" }
+  | { command: "plugins-install"; target: string }
+  | { command: "plugins-state"; name: string; action: "enable" | "disable" | "uninstall" }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -20,12 +23,23 @@ export const USAGE = `Usage:
                                                Create an enterprise admin; reads the password
                                                (one line) from stdin, e.g.
                                                echo "$PW" | capybara admin create ...
+  capybara plugins list                        List the deployment's plugins and their status
+  capybara plugins install <file.tgz | npm:<name>[@<version>]>
+                                               Store a plugin package (in PostgreSQL) and
+                                               install it or switch to that version; a new
+                                               install starts disabled
+  capybara plugins enable <name>               Enable an installed plugin on the deployment
+  capybara plugins disable <name>              Disable an installed plugin on the deployment
+  capybara plugins uninstall <name>            Remove a disabled plugin's install record (its
+                                               data is kept)
   capybara plugins review                      List plugins awaiting permission approval and
                                                the permissions they add (runs kernel
-                                               migrations first; connects to PostgreSQL only)
+                                               migrations first)
   capybara plugins approve <name> [--yes]      Approve a plugin's current permissions (asks for
-                                               confirmation unless --yes); restart the kernel
-                                               to apply
+                                               confirmation unless --yes)
+                                               The plugins commands write PostgreSQL, then
+                                               notify running replicas over Redis (they apply
+                                               the change without a restart)
   capybara help                                Show this help`;
 
 /** 命令行参数错误。 */
@@ -54,27 +68,36 @@ export function parseCli(argv: string[]): Command {
   }
   if (command === "plugins") {
     const [sub, ...args] = rest;
+    const subs = ["list", "install", "enable", "disable", "uninstall", "review", "approve"];
     if (sub === undefined) {
-      throw new UsageError('missing plugins command (expected "review" or "approve")');
+      throw new UsageError(`missing plugins command (expected one of ${subs.join(", ")})`);
     }
-    if (sub !== "review" && sub !== "approve") {
+    if (!subs.includes(sub)) {
       throw new UsageError(`unknown plugins command "${sub}"`);
     }
     if (v.role !== undefined) throw new UsageError("--role is only valid for start");
     for (const opt of ["login", "display-name", "email"] as const) {
       if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for admin create`);
     }
-    if (sub === "review") {
-      if (v.yes !== undefined) throw new UsageError("--yes is only valid for plugins approve");
+    if (sub !== "approve" && v.yes !== undefined) {
+      throw new UsageError("--yes is only valid for plugins approve");
+    }
+    if (sub === "review" || sub === "list") {
       if (args.length > 0) throw new UsageError(`unexpected argument "${args[0]}"`);
-      return { command: "plugins-review" };
+      return { command: sub === "review" ? "plugins-review" : "plugins-list" };
     }
     const [name, ...extra] = args;
     if (name === undefined || name.trim() === "") {
-      throw new UsageError("plugins approve needs a plugin name");
+      throw new UsageError(
+        sub === "install"
+          ? "plugins install needs a package (<file.tgz> or npm:<name>[@<version>])"
+          : `plugins ${sub} needs a plugin name`,
+      );
     }
     if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
-    return { command: "plugins-approve", name, yes: v.yes === true };
+    if (sub === "install") return { command: "plugins-install", target: name };
+    if (sub === "approve") return { command: "plugins-approve", name, yes: v.yes === true };
+    return { command: "plugins-state", name, action: sub as "enable" | "disable" | "uninstall" };
   }
   if (command === "admin") {
     const [sub, ...extra] = rest;

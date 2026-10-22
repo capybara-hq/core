@@ -52,11 +52,19 @@ import { PricesService } from "./models/prices.js";
 import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
+import { PluginAdminOps } from "./plugins/admin-ops.js";
 import { PluginAdmin } from "./plugins/admin-view.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
 import { PluginBlobs } from "./plugins/blobs.js";
 import { PluginHost } from "./plugins/host.js";
 import { PluginInstalls } from "./plugins/installs.js";
+import {
+  PLUGINS_RECONCILE_JOB,
+  PLUGINS_RECONCILE_SCHEDULER_ID,
+  PLUGINS_RECONCILE_TOPIC,
+  PluginLifecycle,
+} from "./plugins/lifecycle.js";
+import { ensureMigrated } from "./plugins/migrate-lock.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
 import { newReplicaId, ReplicaStatusStore } from "./plugins/sources.js";
 import { syncPackage } from "./plugins/sync.js";
@@ -203,6 +211,10 @@ export interface Kernel {
   readonly pluginInstalls: PluginInstalls;
   /** 部署级插件后台：列表、状态与网页批准权限。 */
   readonly pluginAdmin: PluginAdmin;
+  /** 部署级插件的安装 / 启用 / 停用 / 卸载（只写期望状态并发布 `kernel.plugins.changed`）。 */
+  readonly pluginAdminOps: PluginAdminOps;
+  /** 本副本的插件生命周期：订阅 bus 并 reconcile 到 PG 期望状态（C16）。 */
+  readonly pluginLifecycle: PluginLifecycle;
   /** 内容寻址的插件包存储（对象存储或 PG）。 */
   readonly pluginBlobs: PluginBlobs;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
@@ -404,6 +416,9 @@ export async function createKernel(
     afterPut: async (orgId, plugin, enabled) => {
       if (!enabled) await channelConnections.notifyOrgChanged(orgId, plugin);
     },
+    // 部署上停用的安装记录插件：组织页显示「不可用」，组织的启用开关不变（T14）
+    installed: async () =>
+      (await pluginInstalls.list()).map((r) => ({ name: r.name, version: r.version })),
   });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   const kdb = kernelDb(db);
@@ -482,6 +497,36 @@ export async function createKernel(
     host,
     bus,
     log,
+    // 批准后等本副本 reconcile 一次再返回视图（其他副本经 bus 收敛）
+    reconcile: (reason) => pluginLifecycle.reconcile(reason),
+  });
+  // 插件生命周期（C16）：后台 / CLI 只写期望状态并发布 kernel.plugins.changed，各副本订阅后 reconcile；
+  // 维护任务 plugins-reconcile 每 pluginHost.reconcileIntervalSeconds 秒发布 kernel.plugins.reconcile 兜底
+  const pluginLifecycle = new PluginLifecycle({
+    host,
+    bus,
+    status: replicaStatus,
+    installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
+    reconcileIntervalSeconds: () => current.pluginHost.reconcileIntervalSeconds,
+    log,
+  });
+  const pluginAdminOps = new PluginAdminOps({
+    db: kdb,
+    view: (name) => pluginAdmin.get(name),
+    declared: () => host.declared(),
+    blobs: pluginBlobs,
+    config: () => current,
+    bus,
+    reconcile: (reason) => pluginLifecycle.reconcile(reason),
+    log,
+  });
+  maintenance.handle(PLUGINS_RECONCILE_JOB, async () => {
+    await bus.publish(PLUGINS_RECONCILE_TOPIC, {});
+  });
+  maintenance.schedule({
+    id: PLUGINS_RECONCILE_SCHEDULER_ID,
+    name: PLUGINS_RECONCILE_JOB,
+    everyMs: () => current.pluginHost.reconcileIntervalSeconds * 1000,
   });
   // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
   maintenance.handle(STORAGE_PURGE_JOB, async () => {
@@ -840,6 +885,7 @@ export async function createKernel(
         purposes,
         pluginInstalls,
         pluginAdmin,
+        pluginAdminOps,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
@@ -938,6 +984,8 @@ export async function createKernel(
       );
     unwatch?.();
     unwatchPlugins?.();
+    // 不再接 reconcile（进行中的那次由宿主关闭收尾）
+    await within("plugin-lifecycle", pluginLifecycle.stop(), 1_000);
     unwatch = undefined;
     // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
     const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
@@ -1003,6 +1051,8 @@ export async function createKernel(
     replicaId,
     pluginInstalls,
     pluginAdmin,
+    pluginAdminOps,
+    pluginLifecycle,
     pluginBlobs,
     orgPluginConfigs,
     bus,
@@ -1043,8 +1093,8 @@ export async function createKernel(
         );
         await migratePromise;
         checkpoint();
-        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 pluginHost.dir 后导入；
-        // 迁移由启动的副本在迁移器的咨询锁内执行（T14 改为持锁协调）
+        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 pluginHost.dir 后导入，
+        // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
         await host.load({
           builtin: opts.builtinPlugins ?? [],
           config: config.plugins,
@@ -1054,7 +1104,22 @@ export async function createKernel(
               syncPackage(current.pluginHost.dir, d.name, d.sha256, pluginBlobs, {
                 maxBytes: current.packages.maxBytes,
               }),
-            markMigrated: (name, sha256) => pluginInstalls.markMigrated(name, sha256),
+            migrate: async (d, dir) =>
+              d.migratedSha === d.sha256
+                ? "migrated"
+                : ensureMigrated(
+                    {
+                      db: kdb,
+                      dbUrl: config.db.url,
+                      connectTimeoutMs: config.db.connectTimeoutMs,
+                      bus,
+                      log,
+                      signal: startAbort.signal,
+                    },
+                    d.name,
+                    d.sha256,
+                    dir,
+                  ),
           },
         });
         checkpoint();
@@ -1145,6 +1210,11 @@ export async function createKernel(
         }
         // 路由保留挂载、实时取：插件撤销后 503 plugin.unavailable，重新加载后恢复（C17）
         httpApp.mountPlugins(host.routeTable());
+        // 订阅插件生命周期主题后补一次 reconcile（启动加载期间错过的消息，并写下第一轮心跳）
+        await pluginLifecycle.start();
+        checkpoint();
+        await pluginLifecycle.reconcile("startup");
+        checkpoint();
         if (opts.source?.watch) {
           unwatch = opts.source.watch(onConfigChange, (err) =>
             log.error("config watch error", { error: err.message }),

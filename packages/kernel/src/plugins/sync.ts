@@ -16,6 +16,14 @@ import { extractPluginPackage, type PluginPackageLimits } from "./package.js";
  *   就是内核用的那一份（同一模块实例）。插件目录不在宿主 `node_modules` 的上游，别的包一概解析不到。
  */
 
+/** 从包存储取到的字节与安装记录的 sha256 不符。 */
+export class PackageShaMismatchError extends Error {
+  constructor(name: string, sha: string) {
+    super(`package ${name}: downloaded bytes do not match sha256 ${sha}`);
+    this.name = "PackageShaMismatchError";
+  }
+}
+
 /** 解包完成后写入包根的校验文件（`wx` 写入：包里自带同名文件时同步失败）。 */
 export const MARKER = ".capybara-package.json";
 
@@ -120,9 +128,7 @@ export async function syncPackage(
   if (existing) return urlOf(existing);
 
   const bytes = await blobs.get(sha);
-  if (sha256(bytes) !== sha) {
-    throw new Error(`package ${name}: downloaded bytes do not match sha256 ${sha}`);
-  }
+  if (sha256(bytes) !== sha) throw new PackageShaMismatchError(name, sha);
   await mkdir(base, { recursive: true, mode: 0o755 });
   const tmp = join(base, `.tmp-${sha.slice(0, 16)}-${randomBytes(4).toString("hex")}`);
   try {

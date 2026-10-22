@@ -257,7 +257,7 @@ export class PluginApprovals {
     opts: {
       source: PermissionSnapshot["source"];
       approvedBy?: string | null;
-      audit?: { added: string[]; removed: string[] };
+      audit?: { added: string[]; removed: string[]; sha256?: string | null };
     },
   ): Promise<void> {
     await this.db

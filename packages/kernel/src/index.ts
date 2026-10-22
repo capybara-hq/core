@@ -79,6 +79,7 @@ export {
   NpmFetchError,
   PackageTooLargeError,
 } from "./packages/npm.js";
+export { PluginAdminOps, type PluginAdminOpsDeps } from "./plugins/admin-ops.js";
 export { PLUGINS_CHANGED_TOPIC, PluginAdmin } from "./plugins/admin-view.js";
 export {
   type ApprovalDecision,
@@ -95,10 +96,12 @@ export {
   type PluginBlobSource,
   PluginBlobs,
 } from "./plugins/blobs.js";
+export { openPluginCli, type PluginCli } from "./plugins/cli.js";
 export {
   assertSecretsReachable,
   type InspectedPlugin,
   type InstalledPluginLoader,
+  type InstallFailureReason,
   PluginHost,
   type PluginLoadPlan,
 } from "./plugins/host.js";
@@ -107,6 +110,8 @@ export {
   InflightTracker,
   PLUGIN_UNLOADED_TOOL_ERROR,
   PluginUnloadedError,
+  type TrackOptions,
+  trackCalls,
 } from "./plugins/inflight.js";
 export {
   type DesiredPlugin,
@@ -127,6 +132,20 @@ export {
   type RegistrationKind,
   UPGRADE_WARN_THRESHOLD,
 } from "./plugins/instance.js";
+export {
+  type LifecycleHost,
+  PLUGINS_RECONCILE_JOB,
+  PLUGINS_RECONCILE_TOPIC,
+  PluginLifecycle,
+  type PluginLifecycleDeps,
+} from "./plugins/lifecycle.js";
+export {
+  ensureMigrated,
+  MIGRATE_LOCK_PREFIX,
+  type MigrateLockDeps,
+  PLUGINS_MIGRATED_TOPIC,
+  unrunMigrations,
+} from "./plugins/migrate-lock.js";
 export {
   extractPluginPackage,
   HOST_ZOD_VERSION,

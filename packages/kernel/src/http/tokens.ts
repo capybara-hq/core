@@ -151,3 +151,5 @@ export const MODEL_PURPOSES = Symbol("MODEL_PURPOSES");
 export const PLUGIN_INSTALLS = Symbol("PLUGIN_INSTALLS");
 /** `PluginAdmin`（部署级插件列表、状态与网页批准权限，企业管理员）的注入令牌。 */
 export const PLUGIN_ADMIN = Symbol("PLUGIN_ADMIN");
+/** 部署级插件的安装 / 启用 / 停用 / 卸载（`PluginAdminOps`）。 */
+export const PLUGIN_ADMIN_OPS = Symbol("PLUGIN_ADMIN_OPS");

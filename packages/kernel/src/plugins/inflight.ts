@@ -117,4 +117,186 @@ export class InflightTracker {
     this.close();
     if (!this.ac.signal.aborted) this.ac.abort(new PluginUnloadedError(this.plugin));
   }
+
+  /** {@link trackCalls} 的包装缓存（同一实现对象 → 同一个代理），随实例回收。 */
+  readonly tracked = new WeakMap<object, unknown>();
+}
+
+/** {@link trackCalls} 的选项。 */
+export interface TrackOptions {
+  /**
+   * 返回「会话」的方法名（如 connector 的 `open`）：resolve 出的对象在 `close()` 之前一直计入在途，
+   * 会话上的其余方法与实例中止竞速。
+   */
+  sessions?: readonly string[];
+}
+
+const isPromiseLike = (v: unknown): v is PromiseLike<unknown> =>
+  typeof (v as { then?: unknown } | null)?.then === "function";
+const isAsyncIterable = (v: unknown): v is AsyncIterable<unknown> =>
+  typeof (v as { [Symbol.asyncIterator]?: unknown } | null)?.[Symbol.asyncIterator] === "function";
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && Object.getPrototypeOf(v) === Object.prototype;
+
+/**
+ * 把提供方能力的实现（connector / sandbox / model-provider，内核每次实时取）包成计入实例在途计数的代理：
+ * - 每次方法调用 `enter`，Promise settle、AsyncIterable 迭代结束（或 return / throw）、会话 `close()` 时离开；
+ * - 参数里的 `AbortSignal`（或普通对象参数的 `signal` 字段）换成「调用方信号 ∪ 实例中止」，实例中止时提供方收到中止；
+ * - 与实例中止竞速：排空时限到了仍未结束的调用以 {@link PluginUnloadedError} 结束；
+ * - 实例已在撤销（计数已关闭）时新调用同步抛 {@link PluginUnloadedError}。
+ * 非函数属性原样透传。同一 (tracker, impl) 返回同一个代理。
+ */
+export function trackCalls<T extends object>(
+  impl: T,
+  tracker: InflightTracker,
+  opts: TrackOptions = {},
+): T {
+  const hit = tracker.tracked.get(impl);
+  if (hit) return hit as T;
+  const sessions = new Set(opts.sessions ?? []);
+  const proxy = wrapMethods(impl, tracker, (prop, entry, result) => {
+    if (sessions.has(prop) && isPromiseLike(result)) {
+      return raceAbort(tracker, result).then(
+        (v) => {
+          if (typeof v === "object" && v !== null) return wrapSession(v, tracker, entry);
+          entry.leave();
+          return v;
+        },
+        (e: unknown) => {
+          entry.leave();
+          throw e;
+        },
+      );
+    }
+    return settle(tracker, entry, result);
+  });
+  tracker.tracked.set(impl, proxy);
+  return proxy;
+}
+
+/** 方法代理：每次调用 enter → 替换信号 → 调原方法 → 交给 `after` 决定何时离开。 */
+function wrapMethods<T extends object>(
+  impl: T,
+  tracker: InflightTracker,
+  after: (prop: string, entry: InflightEntry, result: unknown) => unknown,
+): T {
+  const fns = new Map<PropertyKey, unknown>();
+  return new Proxy(impl, {
+    get(target, prop, receiver) {
+      const v = Reflect.get(target, prop, receiver);
+      if (typeof v !== "function") return v;
+      let w = fns.get(prop);
+      if (!w) {
+        w = (...args: unknown[]) => {
+          const entry = tracker.enter(NEVER);
+          const call = args.map((a) => {
+            if (a instanceof AbortSignal) return AbortSignal.any([a, tracker.signal]);
+            if (isPlainObject(a) && a.signal instanceof AbortSignal) {
+              return { ...a, signal: AbortSignal.any([a.signal, tracker.signal]) };
+            }
+            return a;
+          });
+          let r: unknown;
+          try {
+            r = (v as (...a: unknown[]) => unknown).apply(target, call);
+          } catch (e) {
+            entry.leave();
+            throw e;
+          }
+          return after(String(prop), entry, r);
+        };
+        fns.set(prop, w);
+      }
+      return w;
+    },
+  });
+}
+
+/** 永不中止的信号（{@link InflightTracker.enter} 需要一个调用方信号；这里的中止由参数里的信号负责）。 */
+const NEVER = new AbortController().signal;
+
+/** 普通结果：Promise settle 时离开（与中止竞速）；AsyncIterable 迭代结束时离开；其余立即离开。 */
+function settle(tracker: InflightTracker, entry: InflightEntry, r: unknown): unknown {
+  if (isPromiseLike(r)) {
+    return raceAbort(tracker, r).finally(() => entry.leave());
+  }
+  if (isAsyncIterable(r)) return wrapIterable(r, tracker, entry);
+  entry.leave();
+  return r;
+}
+
+/** 与实例中止竞速：中止时以 PluginUnloadedError 拒绝（原 Promise 留在后台，结果丢弃）。 */
+function raceAbort<V>(tracker: InflightTracker, p: PromiseLike<V>): Promise<V> {
+  const own = Promise.resolve(p);
+  own.catch(() => {});
+  const signal = tracker.signal;
+  if (signal.aborted) return Promise.reject(signal.reason as Error);
+  let onAbort: () => void = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason as Error);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  aborted.catch(() => {});
+  return Promise.race([own, aborted]).finally(() => signal.removeEventListener("abort", onAbort));
+}
+
+/** 流：每次 next 与中止竞速；done / return / throw / 出错时离开。 */
+function wrapIterable(
+  src: AsyncIterable<unknown>,
+  tracker: InflightTracker,
+  entry: InflightEntry,
+): AsyncIterable<unknown> {
+  return {
+    [Symbol.asyncIterator]() {
+      const it = src[Symbol.asyncIterator]();
+      return {
+        async next() {
+          try {
+            const r = await raceAbort(tracker, it.next());
+            if (r.done) entry.leave();
+            return r;
+          } catch (e) {
+            entry.leave();
+            throw e;
+          }
+        },
+        async return(value?: unknown) {
+          entry.leave();
+          return it.return ? it.return(value) : { done: true as const, value };
+        },
+        async throw(err?: unknown) {
+          entry.leave();
+          if (it.throw) return it.throw(err);
+          throw err;
+        },
+      };
+    },
+  };
+}
+
+/** 会话：`close()` 时离开（幂等）；其余方法与实例中止竞速（整个会话已计一次在途）。 */
+function wrapSession<S extends object>(
+  session: S,
+  tracker: InflightTracker,
+  entry: InflightEntry,
+): S {
+  return new Proxy(session, {
+    get(target, prop, receiver) {
+      const v = Reflect.get(target, prop, receiver);
+      if (typeof v !== "function") return v;
+      if (prop === "close") {
+        return async (...args: unknown[]) => {
+          try {
+            return await (v as (...a: unknown[]) => unknown).apply(target, args);
+          } finally {
+            entry.leave();
+          }
+        };
+      }
+      return (...args: unknown[]) => {
+        const r = (v as (...a: unknown[]) => unknown).apply(target, args);
+        return isPromiseLike(r) ? raceAbort(tracker, r) : r;
+      };
+    },
+  });
 }

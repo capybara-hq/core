@@ -1,7 +1,7 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Req } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { PLUGIN_ADMIN, PLUGIN_INSTALLS } from "../http/tokens.js";
+import { PLUGIN_ADMIN, PLUGIN_ADMIN_OPS, PLUGIN_INSTALLS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -10,6 +10,7 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import type { PluginAdminOps } from "../plugins/admin-ops.js";
 import type { PluginAdmin } from "../plugins/admin-view.js";
 import type { PackageReview, PluginInstalls } from "../plugins/installs.js";
 import type { AdminPluginView } from "../plugins/permission-view.js";
@@ -23,6 +24,11 @@ const ApproveBody = z.object({
   reviewHash: z.string().regex(/^[0-9a-f]{16}$/),
 });
 
+const InstallBody = z.object({
+  /** 包存储里的包（上传 / npm 导入返回的 sha256）。 */
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
 const NpmBody = z.object({
   package: z.string().min(1).max(214),
   version: z.string().min(1).max(256).optional(),
@@ -30,7 +36,8 @@ const NpmBody = z.object({
 
 /**
  * 部署级插件管理（`/api/v1/admin/plugins/*`，企业管理员）：包的导入（上传 / npm，返回审阅结果）、
- * 插件列表与详情、网页批准权限（D8）。安装、启用等改期望状态的接口在 T14。
+ * 插件列表与详情、网页批准权限（D8）、安装 / 启用 / 停用 / 卸载（只写期望状态并发布 `kernel.plugins.changed`，
+ * 各副本 reconcile 收敛，不重启；返回时副本可能还在收敛）。
  */
 @Controller("api/v1/admin/plugins")
 @EnterpriseAdmin()
@@ -38,6 +45,7 @@ export class AdminPluginsController {
   constructor(
     @Inject(PLUGIN_INSTALLS) private readonly installs: PluginInstalls,
     @Inject(PLUGIN_ADMIN) private readonly admin: PluginAdmin,
+    @Inject(PLUGIN_ADMIN_OPS) private readonly ops: PluginAdminOps,
   ) {}
 
   /** 部署上的全部插件（内置、配置声明、安装记录）及其状态、权限与快照。 */
@@ -72,6 +80,56 @@ export class AdminPluginsController {
       body,
       tokenId !== undefined ? { actorTokenId: tokenId } : {},
     );
+  }
+
+  /**
+   * 新装或换版本（升级 / 降级）：安装记录指向包存储里的 `sha256`；期望状态不变（新装为停用）。
+   * 内置 → 409 `plugin.builtin`；配置声明 → 409 `plugin.config_declared`；包不存在 → 404 `plugin.package_not_found`；
+   * 包里的插件名不符 → 409 `plugin.name_mismatch`；同名插件来自别的 npm 包 → 409 `plugin.name_conflict`；
+   * 降级到有未执行迁移的版本 → 409 `plugin.downgrade_unsupported`。
+   */
+  @Post(":name/install")
+  @HttpCode(200)
+  install(
+    @CurrentPrincipal() principal: Principal,
+    @Param("name") name: string,
+    @Body(new ZodPipe(InstallBody)) body: z.infer<typeof InstallBody>,
+  ): Promise<AdminPluginView> {
+    const actor = requireUser(principal);
+    return this.ops.install(name, body.sha256, actor.account.id, patTokenId(actor));
+  }
+
+  /** 部署上启用；未安装 → 404 `plugin.not_found`；内置 / 配置声明 → 409。 */
+  @Post(":name/enable")
+  @HttpCode(200)
+  enable(
+    @CurrentPrincipal() principal: Principal,
+    @Param("name") name: string,
+  ): Promise<AdminPluginView> {
+    const actor = requireUser(principal);
+    return this.ops.enable(name, actor.account.id, patTokenId(actor));
+  }
+
+  /** 部署上停用（各副本排空在途调用后卸下）；未安装 → 404；内置 / 配置声明 → 409。 */
+  @Post(":name/disable")
+  @HttpCode(200)
+  disable(
+    @CurrentPrincipal() principal: Principal,
+    @Param("name") name: string,
+  ): Promise<AdminPluginView> {
+    const actor = requireUser(principal);
+    return this.ops.disable(name, actor.account.id, patTokenId(actor));
+  }
+
+  /** 卸载（须先停用，否则 409 `plugin.not_disabled`）；数据保留。 */
+  @Delete(":name")
+  @HttpCode(204)
+  async uninstall(
+    @CurrentPrincipal() principal: Principal,
+    @Param("name") name: string,
+  ): Promise<void> {
+    const actor = requireUser(principal);
+    await this.ops.uninstall(name, actor.account.id, patTokenId(actor));
   }
 
   /**

@@ -74,6 +74,32 @@ describe("parseCli", () => {
     ).toThrow(/only valid for plugins approve/);
   });
 
+  it("plugins list / install / enable / disable / uninstall", () => {
+    expect(parseCli(["plugins", "list"])).toEqual({ command: "plugins-list" });
+    expect(parseCli(["plugins", "install", "./life.tgz"])).toEqual({
+      command: "plugins-install",
+      target: "./life.tgz",
+    });
+    expect(parseCli(["plugins", "install", "npm:@acme/plugin-x@1.2.3"])).toEqual({
+      command: "plugins-install",
+      target: "npm:@acme/plugin-x@1.2.3",
+    });
+    for (const action of ["enable", "disable", "uninstall"] as const) {
+      expect(parseCli(["plugins", action, "life"])).toEqual({
+        command: "plugins-state",
+        name: "life",
+        action,
+      });
+      expect(() => parseCli(["plugins", action])).toThrow(/plugin name/);
+      expect(() => parseCli(["plugins", action, "a", "b"])).toThrow(/unexpected argument/);
+      expect(() => parseCli(["plugins", action, "a", "--yes"])).toThrow(
+        /only valid for plugins approve/,
+      );
+    }
+    expect(() => parseCli(["plugins", "install"])).toThrow(/needs a package/);
+    expect(() => parseCli(["plugins", "list", "x"])).toThrow(/unexpected argument/);
+  });
+
   it("非法输入抛 UsageError", () => {
     expect(() => parseCli(["start", "--role", "db"])).toThrow(UsageError);
     expect(() => parseCli(["start", "--role", ","])).toThrow(/at least one/);

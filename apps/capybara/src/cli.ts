@@ -2,7 +2,13 @@ import { createLogger } from "@capybara-hq/kernel";
 import { parseCli, USAGE, UsageError } from "./args.js";
 import { runAdminCreate } from "./commands/admin-create.js";
 import { runMigrate } from "./commands/migrate.js";
-import { runPluginsApprove, runPluginsReview } from "./commands/plugins.js";
+import {
+  runPluginsApprove,
+  runPluginsInstall,
+  runPluginsList,
+  runPluginsReview,
+  runPluginsState,
+} from "./commands/plugins.js";
 import { runStart } from "./commands/start.js";
 
 const log = createLogger("info");
@@ -45,6 +51,12 @@ async function main(argv: string[]): Promise<number | undefined> {
       return runPluginsReview(log, process.env);
     case "plugins-approve":
       return runPluginsApprove({ name: cmd.name, yes: cmd.yes }, log, process.env);
+    case "plugins-list":
+      return runPluginsList(log, process.env);
+    case "plugins-install":
+      return runPluginsInstall({ target: cmd.target }, log, process.env);
+    case "plugins-state":
+      return runPluginsState({ name: cmd.name, action: cmd.action }, log, process.env);
     case "start":
       return runStart(cmd.roles ? { roles: cmd.roles } : {}, log, process.env);
   }

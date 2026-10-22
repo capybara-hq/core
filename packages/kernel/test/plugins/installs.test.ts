@@ -423,7 +423,7 @@ describe("启动时加载安装记录", () => {
     await stopAll();
   });
 
-  it("没有批准快照：不加载，副本状态 pending / approval；包取不到：failed / sync", async () => {
+  it("没有批准快照：不加载，副本状态 pending / approval；包取不到：failed / sync_failed", async () => {
     await db.deleteFrom("plugin_permission_snapshots").execute();
     const ghost = await pluginTgz({ name: "ghost-pkg" });
     const pkg = await readPluginPackage(ghost, {
@@ -457,7 +457,7 @@ describe("启动时加载安装记录", () => {
       .orderBy("plugin")
       .execute();
     expect(rows).toEqual([
-      { plugin: "ghost-pkg", state: "failed", reason: "sync" },
+      { plugin: "ghost-pkg", state: "failed", reason: "sync_failed" },
       { plugin: "todo", state: "pending", reason: "approval" },
     ]);
     await stopAll();

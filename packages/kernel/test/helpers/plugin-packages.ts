@@ -80,6 +80,113 @@ export async function pluginTgz(
   ]);
 }
 
+/** {@link lifePkg} 的选项。 */
+export interface LifePkgOptions {
+  name?: string;
+  version: string;
+  provides?: string[];
+  requires?: string[];
+  optional?: string[];
+  /** 包里 `migrations/` 下的 SQL（有就声明 `capybara.migrations`）。 */
+  migrations?: { file: string; sql: string }[];
+}
+
+/**
+ * 生命周期测试用的插件包（默认名 `life`）：一个工具 `wait`，结果为 `<name> <version> done`；路由 `GET /version`
+ * 返回版本号（看某个副本此刻跑的是哪个版本）。
+ * 部署配置 `dir`（默认空）：
+ * - 非空时工具开始执行写 `<dir>/started-<version>-<pid>`，等 `<dir>/release` 出现才返回（跨进程控制，双副本用）；
+ *   为空时等同进程的 `globalThis.__lifeGate`（没有就立即返回）；
+ * - setup 时 `<dir>/fail-<version>-<pid>` 存在则抛错（只让某个副本的某个版本失败）。
+ * 提供的能力实现为 `{ from: <name>, version }`；`connector@1` 为一个最小连接器（`open` 等 `globalThis.__lifeGate`）。每次 setup 在 `globalThis.__lifeSetups[<name>]` 记一笔（同进程测试用）。
+ */
+export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
+  const name = o.name ?? "life";
+  const provides = o.provides ?? [];
+  const requires = o.requires ?? [];
+  const optional = o.optional ?? [];
+  const spec = {
+    name: "wait",
+    description: "Waits until the test releases it, then returns. Test fixture only.",
+    inputSchema: { type: "object" },
+    annotations: { readOnlyHint: true },
+  };
+  const { z } = await import("zod");
+  const real: PluginManifest = definePlugin({
+    name,
+    version: o.version,
+    sdk: "^0.1.0",
+    provides: provides as never,
+    requires: requires as never,
+    optional: optional as never,
+    permissions: { tools: ["wait"], http: [{ method: "GET", path: "/version" }] },
+    config: { deployment: z.object({ dir: z.string().default("") }).default({ dir: "" }) },
+    setup() {},
+  });
+  const entry = `import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { z } from "zod";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const NAME = ${JSON.stringify(name)};
+const VERSION = ${JSON.stringify(o.version)};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export default definePlugin({
+  name: NAME,
+  version: VERSION,
+  sdk: "^0.1.0",
+  provides: ${JSON.stringify(provides)},
+  requires: ${JSON.stringify(requires)},
+  optional: ${JSON.stringify(optional)},
+  permissions: { tools: ["wait"], http: [{ method: "GET", path: "/version" }] },
+  config: { deployment: z.object({ dir: z.string().default("") }).default({ dir: "" }) },
+  async setup(ctx) {
+    const dir = ctx.config.dir;
+    if (dir && existsSync(join(dir, "fail-" + VERSION + "-" + process.pid))) {
+      throw new Error("setup failure requested by the test");
+    }
+    globalThis.__lifeSetups ??= {};
+    globalThis.__lifeSetups[NAME] = [...(globalThis.__lifeSetups[NAME] ?? []), VERSION];
+    // connector@1：open 等同进程的 globalThis.__lifeGate，返回一个会话（测试提供方调用的在途计数）
+    const connector = {
+      kind: NAME,
+      async open() {
+        if (globalThis.__lifeGate) await globalThis.__lifeGate;
+        return {
+          async listTools() { return []; },
+          async callTool() { return { content: [{ type: "text", text: NAME + " " + VERSION }] }; },
+          async close() {},
+        };
+      },
+    };
+    for (const cap of ${JSON.stringify(provides)}) {
+      ctx.provide(cap, cap === "connector@1" ? connector : { from: NAME, version: VERSION });
+    }
+    ctx.http.route("GET", "/version", async () => new Response(VERSION));
+    ctx.tools.register(${JSON.stringify(spec)}, async () => {
+      if (dir) {
+        writeFileSync(join(dir, "started-" + VERSION + "-" + process.pid), "");
+        while (!existsSync(join(dir, "release"))) await sleep(20);
+      } else if (globalThis.__lifeGate) {
+        await globalThis.__lifeGate;
+      }
+      return { content: [{ type: "text", text: NAME + " " + VERSION + " done" }] };
+    });
+  },
+});
+`;
+  const migrations = o.migrations ?? [];
+  return pluginTgz({
+    name,
+    version: o.version,
+    manifest: staticManifestOf(real) as unknown as Record<string, unknown>,
+    entry,
+    ...(migrations.length > 0 && {
+      section: { migrations: "migrations" },
+      extra: migrations.map((m) => ({ name: `package/migrations/${m.file}`, data: m.sql })),
+    }),
+  });
+}
+
 /**
  * 用 `tools/pack-plugin` 把仓库里的一个官方插件打成插件包（子进程，避免内核依赖 pack-plugin）。
  * 先把插件复制到临时目录（`node_modules` 链接回原处）再打包：打包的临时文件不落在仓库的插件目录里，

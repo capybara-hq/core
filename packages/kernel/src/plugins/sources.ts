@@ -93,6 +93,37 @@ export class ReplicaStatusStore {
       .execute();
   }
 
+  /**
+   * 心跳：本副本全部行的 `heartbeat_at` 取当前时间（每次 reconcile 之后调用；读状态的一方只算心跳不超过
+   * 3 个 reconcile 周期的副本，C16）。
+   */
+  async heartbeat(): Promise<void> {
+    if (!this.wrote) return;
+    await this.db
+      .updateTable("plugin_replica_status")
+      .set({ heartbeat_at: sql<Date>`now()` as unknown as Date })
+      .where("replica_id", "=", this.replicaId)
+      .execute();
+  }
+
+  /**
+   * 清理：删掉本副本已不认识的插件的行（卸载后的名字，`keep` 为部署此刻已知的插件名），以及任何副本心跳超过
+   * `staleSeconds` 的行（副本已退出或崩溃；读的一方本来就不计入它们）。返回删除的行数。
+   */
+  async prune(keep: readonly string[], staleSeconds: number): Promise<number> {
+    let n = 0;
+    if (this.wrote) {
+      let q = this.db.deleteFrom("plugin_replica_status").where("replica_id", "=", this.replicaId);
+      if (keep.length > 0) q = q.where("plugin", "not in", [...keep]);
+      n += Number((await q.executeTakeFirst()).numDeletedRows);
+    }
+    const r = await this.db
+      .deleteFrom("plugin_replica_status")
+      .where("heartbeat_at", "<", sql<Date>`now() - make_interval(secs => ${staleSeconds})`)
+      .executeTakeFirst();
+    return n + Number(r.numDeletedRows);
+  }
+
   /** 停机：本副本的全部行标为 unloaded（尽力而为）。 */
   async markAllUnloaded(): Promise<void> {
     if (!this.wrote) return;

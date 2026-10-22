@@ -13,6 +13,7 @@ import {
 import type { PluginBlobs } from "./blobs.js";
 import type { DeclaredPluginInfo } from "./host.js";
 import type { PluginInstallRow, PluginInstalls } from "./installs.js";
+import { PLUGINS_CHANGED_TOPIC, STALE_RECONCILE_PERIODS } from "./lifecycle.js";
 import { permissionSetOfPackage, readPluginPackage } from "./package.js";
 import { buildPermissionSet, diffPermissions, type PermissionSet } from "./permission-set.js";
 import {
@@ -23,14 +24,7 @@ import {
 } from "./permission-view.js";
 import type { PluginSource } from "./sources.js";
 
-/**
- * 插件期望状态 / 快照变了（kernel bus 主题，频道 `cap:kernel:plugins.changed`，payload `{ plugin }`）。
- * 各副本据此 reconcile（T14）；CLI 写完 PG 后同样发布（C18）。
- */
-export const PLUGINS_CHANGED_TOPIC = "plugins.changed";
-
-/** 副本行心跳超过这么多个 reconcile 周期的副本不计入（C16）。 */
-const STALE_RECONCILE_PERIODS = 3;
+export { PLUGINS_CHANGED_TOPIC };
 
 /** 内容寻址的包 → 权限集合（包不可变，缓存安全；只作缓存，不是跨副本状态）。 */
 const PACKAGE_SET_CACHE_MAX = 256;
@@ -44,14 +38,16 @@ export interface ApproveBody {
 
 export interface PluginAdminDeps {
   db: KernelDb;
-  blobs: PluginBlobs;
+  blobs: Pick<PluginBlobs, "get">;
   installs: PluginInstalls;
   config: () => KernelConfig;
   host: {
     declaredPlugins(): DeclaredPluginInfo[];
-    /** 本副本加载批准后不再待定的插件（T13 接缝；跨副本收敛在 T14）。 */
-    activatePending(): Promise<string[]>;
   };
+  /**
+   * 本副本 reconcile（批准后等它完成再返回视图；其他副本经 `kernel.plugins.changed` 收敛）。CLI 没有（只发布）。
+   */
+  reconcile?: (reason: string) => Promise<void>;
   bus: { publish(topic: string, payload: unknown): Promise<void> };
   log: {
     warn(msg: string, fields?: Record<string, unknown>): void;
@@ -116,8 +112,8 @@ export class PluginAdmin {
 
   /**
    * 网页批准权限：在锁内复核企业管理员，核对审阅时的包（`sha256`）与权限摘要（`reviewHash`），写快照（source web）
-   * 与审计 `plugin.permissions_approved`；提交后发布 `kernel.plugins.changed`（失败只告警），并让本副本加载
-   * 此刻能加载的待批准插件（其他副本靠 T14 的 reconcile 收敛）。返回批准后的视图。
+   * 与审计 `plugin.permissions_approved`；提交后发布 `kernel.plugins.changed`（失败只告警），并等本副本 reconcile
+   * 一次（其他副本经 bus 收敛，丢消息时周期任务兜底）。返回批准后的视图。
    * - 内置插件预先批准 → `plugin.builtin`；不存在 → `plugin.not_found`；
    * - 安装记录的 `sha256` 与当前记录不符、或 `reviewHash` 与此刻重新计算的不符 → `plugin.approval_stale`；
    *   配置声明的插件 `sha256` 须为 null（否则 `validation_failed`）；
@@ -200,7 +196,7 @@ export class PluginAdmin {
       this.d.log.warn("cannot publish plugins.changed after approval", { plugin: name, err });
     }
     try {
-      await this.d.host.activatePending();
+      await this.d.reconcile?.(`approved:${name}`);
     } catch (err) {
       this.d.log.error("loading approved plugins on this replica failed", { plugin: name, err });
     }

@@ -93,7 +93,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 **调用上下文原则**：`setup(ctx)` 拿到的是**部署级**上下文，看不到任何组织、账号、会话。内核调用插件实现时把本次的上下文放进调用参数，内容由扩展点决定：工具执行带组织、账号、agent、会话（`ToolCallContext`）；渠道（`channel@1`）带该渠道连接的 `connectionId` 与连接配置（组织、账号由内核按连接与发言人解析，插件看不到）；通讯录带该组织的组织级配置；登录（`identity-source`）带部署级配置与认证请求、不含会话；队列任务只有你入队时写进 job 数据的内容（通常带 `orgId`，内核校验插件在该组织已启用）。所以**不要把组织 / 会话 / 身份存进模块变量或 ctx 的闭包里跨调用传递**，从本次调用的参数里取；需要跨调用保存的会话相关数据写自己的 `ctx.db`。
 
 **静态检查（`pnpm check:plugin-permissions`）**：扫描 `definePlugin({...})` 里 `setup` 的 `ctx` 参数（含本地别名，以及按位置传给**同文件**函数的 ctx，如 `mount(ctx)`），把 `ctx.secrets`、`ctx.http.route(method, path)`、`ctx.tools.register({ name })`、`ctx.capabilities.get|list(ref)`、`ctx.ui.view|action(id)`、`ctx.storage`、`ctx.models` 与清单比对，用了未声明的就失败。路由路径、工具名、能力 ref、界面 id 须写成字符串字面量（或指向同文件 const），动态的值报「Cannot statically confirm」；确属运行时才知道的（且已评审）在该行行尾或紧邻上一行写 `// capybara:allow-dynamic-permission <原因>`，原因不能为空；该注释只放行「无法静态确认」，未声明的字面量访问与 `perm-reserved` 不能豁免。ctx 传给其他文件的函数时检查跟不过去（靠运行时 `PluginPermissionError` 兜底），所以把用平台能力的代码放在 `setup` 同文件里。
-**批准**：内核在 PG 记已批准的权限快照（上面各项，加上 provides / requires / optional、配置字段与迁移里 `CREATE TABLE` 的表名）。插件首次出现、或升级后比快照多出任何一项时不加载，`requires` 它的插件同样不加载，企业管理员在后台网页批准（`POST /api/v1/admin/plugins/:name/approve`，带审阅时的 `sha256` 与 `reviewHash`，快照来源 web，免重启：本副本随即加载，其他副本经 `kernel.plugins.changed` 收敛），或用 `capybara plugins review` / `capybara plugins approve <name>` 批准后重启生效；权限变少或不变直接加载。内置插件（`openai-compatible`、`object-store-s3`）预先批准，不进审批。提供 `sandbox@1`、`object-store@1`、`channel@1`、`directory@1`、`identity-source@1` 的插件在审阅页与 CLI 标为敏感（只影响展示）。所以**发版时多要的每一项都会让部署方停下来批准**，别顺手多声明。比快照版本旧的插件（滚动升级中重启的旧副本、或有意回滚）只要权限不超出快照就照常加载，但**快照保留较新版本的内容不缩减**；回滚后旧版本多出的项仍需批准。开发与测试用配置项 `pluginPermissions.autoApprove: true`（环境变量推导规则见 `skills/adding-config`，双副本 harness 默认开启）：启动时自动批准新增或升级多要的权限，仅限开发与试用，生产别开。自动批准同样写快照（来源 auto）并打 warn 日志，但不写审计。
+**批准**：内核在 PG 记已批准的权限快照（上面各项，加上 provides / requires / optional、配置字段与迁移里 `CREATE TABLE` 的表名）。插件首次出现、或升级后比快照多出任何一项时不加载，`requires` 它的插件同样不加载，企业管理员在后台网页批准（`POST /api/v1/admin/plugins/:name/approve`，带审阅时的 `sha256` 与 `reviewHash`，快照来源 web，免重启：本副本随即加载，其他副本经 `kernel.plugins.changed` 收敛），或用 `capybara plugins review` / `capybara plugins approve <name>` 批准（覆盖配置声明的插件与安装记录；CLI 写完 PG 后经 Redis 发布 `kernel.plugins.changed`，运行中的副本同样免重启加载，发布失败时等下一个周期）；权限变少或不变直接加载。内置插件（`openai-compatible`、`object-store-s3`）预先批准，不进审批。提供 `sandbox@1`、`object-store@1`、`channel@1`、`directory@1`、`identity-source@1` 的插件在审阅页与 CLI 标为敏感（只影响展示）。所以**发版时多要的每一项都会让部署方停下来批准**，别顺手多声明。比快照版本旧的插件（滚动升级中重启的旧副本、或有意回滚）只要权限不超出快照就照常加载，但**快照保留较新版本的内容不缩减**；回滚后旧版本多出的项仍需批准。开发与测试用配置项 `pluginPermissions.autoApprove: true`（环境变量推导规则见 `skills/adding-config`，双副本 harness 默认开启）：启动时自动批准新增或升级多要的权限，仅限开发与试用，生产别开。自动批准同样写快照（来源 auto）并打 warn 日志，但不写审计。
 
 批准的细节：
 
@@ -235,6 +235,14 @@ it("交替请求两个副本，结果一致", async () => {
 - 清单 `version` 必须等于插件 `package.json` 的 `version`；声明了 `migrations` 时它必须解析到插件根的 `migrations/`（如 `"../migrations"`），包里记为 `capybara.migrations: "migrations"`；插件根有 `ui/` 时原样带上。
 - `package.json` 的 `capybara.manifest` 是 `staticManifestOf(清单)` 的结果：审阅只看它与迁移 SQL，不执行插件代码；加载时再与真实模块核对，不一致即 `manifest_mismatch`。所以清单（权限、配置字段的 secret / hot）不能依赖运行时环境。
 - 生成的包不带安装脚本、`dependencies`、`node_modules/`；安装时内核按 `readPluginPackage` 的规则拒绝这些（以及路径越界、链接、超大包）。
+
+**安装、启用、停用、升级、卸载（不重启，C16 / C18）**：包先导入包存储（后台上传 / npm，或 `capybara plugins install <file.tgz | npm:<名>[@<版本>]>`，CLI 导入的包一律存 PG），再由安装记录指向它（`POST /api/v1/admin/plugins/:name/install {sha256}`；新装为停用），`…/enable`、`…/disable`、`DELETE …/:name`（须先停用）改期望状态；CLI 对应 `capybara plugins list | enable | disable | uninstall <name>`。后台与 CLI **只写 PG 期望状态**并发布 `kernel.plugins.changed`，各副本 reconcile 收敛（维护任务 `plugins-reconcile` 每 `pluginHost.reconcileIntervalSeconds` 秒发布 `kernel.plugins.reconcile` 兜底，丢了消息也能收敛）。写插件时要知道的：
+
+- 换版本时**先加载新版本、再撤销旧版本**（旧实例在后台排空在途调用）；新版本在某个副本上加载失败（`sync_failed` / `sha_mismatch` / `import_failed` / `manifest_mismatch` / `setup_failed` / `migration_failed`），那个副本继续跑旧版本、状态记 `failed`，之后每个周期重试。新版本权限超出快照时待批准，旧版本照常。
+- **迁移只做扩展**（加表、加列、加索引；删改走两步，见 `skills/writing-migrations`）：新旧版本会在不同副本上同时跑。迁移由第一个拿到咨询锁的副本执行一次（`ensureMigrated`），完成前其他副本不切换（`pending_migration`）。迁移目录只认包里审阅过的 `capybara.migrations`。
+- **降级**只能回到「迁移文件都已执行过（文件名与内容一致）」的版本，否则 409 `plugin.downgrade_unsupported`。
+- 停用 / 卸载不删数据：插件 schema、密钥、组织配置、权限快照都保留，重新安装后接着用。部署上停用时组织里的启用开关不变，组织页显示「不可用」。
+- 内核消费的提供方调用（`connector@1` 的 `open` 到会话 `close`、`sandbox@1`、`model-provider@*` 的每次调用与流）和插件工具一样计入实例的在途计数：停用 / 升级时先排空，到时限中止（参数里的 `AbortSignal` 被中止）。提供方实现要理会传入的 signal。
 
 ## 新插件清单
 

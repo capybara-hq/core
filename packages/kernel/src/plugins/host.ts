@@ -41,13 +41,15 @@ import {
   planApprovals,
   withPreApproved,
 } from "./approvals.js";
-import type { InflightTracker } from "./inflight.js";
+import { PluginBlobIntegrityError } from "./blobs.js";
+import { type InflightTracker, type TrackOptions, trackCalls } from "./inflight.js";
 import type { DesiredPlugin } from "./installs.js";
 import {
   DEFAULT_DISPOSE_TIMEOUT_MS,
   ImportTracker,
   importPluginModule,
   type LoadDeps,
+  ManifestMismatchError,
   matchesSection,
   type PluginInstance,
   setupInstance,
@@ -67,7 +69,7 @@ import type {
   PluginSource,
   ReplicaStatusStore,
 } from "./sources.js";
-import { packageRootOf } from "./sync.js";
+import { PackageShaMismatchError, packageRootOf } from "./sync.js";
 
 /** 键排序后的 JSON（对象键顺序不影响结果）；undefined 字段与 JSON.stringify 一样省略。 */
 const canonicalJson = (v: unknown): string => {
@@ -125,6 +127,8 @@ export interface PluginCapabilityEntry {
   version: string;
   /** 部署配置摘要，见 {@link deploymentConfigHash}。 */
   configHash: string;
+  /** 提供方实例的在途计数（connector / sandbox / model-provider 的 `impl` 已经包成计入它的代理）。 */
+  inflight: InflightTracker;
 }
 
 const CLOSED_DURING_LOAD = "plugin host closed during load";
@@ -269,7 +273,7 @@ function warnPending(log: KernelDeps["log"], p: PendingPlugin): void {
     return;
   }
   log.warn(
-    "plugin not loaded: permissions awaiting approval (an enterprise admin approves it in the admin console, or run `capybara plugins review`, then `capybara plugins approve <name>` and restart)",
+    "plugin not loaded: permissions awaiting approval (an enterprise admin approves it in the admin console, or run `capybara plugins review`, then `capybara plugins approve <name>`; running replicas load it without a restart)",
     { plugin: p.plugin, version: p.version, reason: p.reason, added: p.added, removed: p.removed },
   );
 }
@@ -322,15 +326,32 @@ const migrationsDirOf = (m: PluginManifest, dir: string): string | undefined =>
   m.migrations ? resolvePath(dir, m.migrations) : undefined;
 
 /**
- * 安装记录的加载入口（C13）：期望启用的记录、同步到本地（返回 entry URL）与记下已迁移。
- * 由内核用 `PluginInstalls` + `syncPackage` 实现；宿主在内置与配置声明的插件都加载完之后才调用
+ * 安装记录的加载入口（C13 / C16）：期望启用的记录、同步到本地（返回 entry URL）与持锁迁移。
+ * 由内核用 `PluginInstalls` + `syncPackage` + `ensureMigrated` 实现；宿主在内置与配置声明的插件都加载完之后才调用
  * （包可能存在对象存储里，要等 object-store 插件就绪）。
  */
 export interface InstalledPluginLoader {
   desired(): Promise<DesiredPlugin[]>;
   sync(d: DesiredPlugin): Promise<string>;
-  markMigrated(name: string, sha256: string): Promise<void>;
+  /**
+   * 该包的迁移（`dir` 为审阅过的 `capybara.migrations` 的绝对路径，没有迁移时为 undefined）：
+   * 已迁移或本副本持锁迁移完成 → `migrated`；别的副本正在迁移 → `busy`（记 pending / migration，等
+   * `plugins.migrated` 或下一个周期）；迁移出错时抛出。见 `ensureMigrated`。
+   */
+  migrate(d: DesiredPlugin, dir: string | undefined): Promise<"migrated" | "busy">;
 }
+
+/**
+ * 安装记录加载失败的原因（写进副本状态行的 `reason`，`detail` 只写错误消息）：同步失败、包字节与 sha256 不符、
+ * 导入失败、模块清单与审阅过的静态清单不符、setup 失败、迁移失败。
+ */
+export type InstallFailureReason =
+  | "sync_failed"
+  | "sha_mismatch"
+  | "import_failed"
+  | "manifest_mismatch"
+  | "setup_failed"
+  | "migration_failed";
 
 /** {@link PluginHost.declaredPlugins} 的一项。 */
 export interface DeclaredPluginInfo {
@@ -366,8 +387,25 @@ interface Activation {
   decision: ApprovalDecision;
   /** 内置 / 配置声明的插件出错直接抛（内核启动失败）；安装记录只记 failed，其余照常。 */
   fatal: boolean;
-  onMigrated?: () => Promise<void>;
+  /** 安装记录：持锁迁移（见 {@link InstalledPluginLoader.migrate}），代替按 schema 锁直接迁移。 */
+  migrate?: () => Promise<"migrated" | "busy">;
 }
+
+/** 安装记录准备好的加载候选（同步、导入、核对清单、算权限之后；同一个包结果不变，按 sha 缓存）。 */
+interface InstallCandidate {
+  d: DesiredPlugin;
+  manifest: PluginManifest;
+  set: PermissionSet;
+  entryUrl: string;
+  migrationsDir: string | undefined;
+}
+
+/** 内核消费的提供方能力：调用计入提供方实例的在途计数（撤销 / 升级时排空，C17）。 */
+const TRACKED_CAPABILITIES: Record<string, TrackOptions> = {
+  connector: { sessions: ["open"] },
+  sandbox: {},
+  "model-provider": {},
+};
 
 /** 插件宿主：解析、校验配置、迁移、setup，并登记插件提供的能力与路由。 */
 export class PluginHost {
@@ -488,8 +526,23 @@ export class PluginHost {
   private installedCache: { at: number; names: Promise<Set<string>> } | undefined;
   /** 本次因权限待批准（或依赖待批准插件）而未加载的插件。 */
   private readonly pendingPlugins: PendingPlugin[] = [];
-  /** 待批准插件的加载参数：批准后 {@link activatePending} 在本副本据此加载。 */
+  /**
+   * 待批准（或运行中加载失败）的内置 / 配置声明插件的加载参数：{@link activatePending} / {@link converge} 据此重试。
+   * 安装记录不在这里：每次 converge 都按 PG 期望状态重新判定。
+   */
   private readonly pendingActivations = new Map<string, Activation>();
+  /** 安装记录准备好的候选（按插件名；sha 变了就作废）。 */
+  private readonly prepared = new Map<string, InstallCandidate>();
+  /** 本副本写过状态行的安装记录插件（停用 / 卸载后把未加载的那行标为 unloaded）。 */
+  private readonly installRows = new Map<string, { version: string; sha256: string }>();
+  /** 启用的安装记录按静态清单声明提供的能力（最近一次 {@link applyInstalls}；待定插件的 blockedBy 用）。 */
+  private installProvides = new Map<CapabilityRef, string[]>();
+  /** 已记过 error 日志的加载失败（插件名 → `<sha>:<原因>`；加载成功后清掉）。 */
+  private readonly loggedFailures = new Map<string, string>();
+  /** 已告警过的「安装记录与内置 / 配置声明重名」（每个名字只告警一次）。 */
+  private readonly warnedConflicts = new Set<string>();
+  /** 升级时被替换、后台排空中的旧实例（close() 等它们，最多 lifecycleWaitMs）。 */
+  private readonly retiring = new Set<Promise<void>>();
   /** 内置与配置声明插件的清单与权限集合（含未加载的；后台列表与网页批准用）。 */
   private readonly declaredInfo = new Map<
     string,
@@ -498,7 +551,7 @@ export class PluginHost {
   /** 导入过的插件名 → 来源与包（含未加载的；重名被跳过的一方不在这里）。 */
   private readonly sources = new Map<string, { source: PluginSource; sha256: string | null }>();
   private didLoad = false;
-  /** load() 的安装记录入口（{@link activatePending} 据此复核期望状态）。 */
+  /** load() 的安装记录入口（{@link converge} 据此按 PG 期望状态收敛）。 */
   private installLoader: InstalledPluginLoader | undefined;
   private closed = false;
   /** close() 时中止进行中的插件迁移。 */
@@ -635,9 +688,22 @@ export class PluginHost {
       });
     }
 
-    const installProviders = p.installs
-      ? await this.loadInstalls(p.installs, ordered, sets, snapshots, approvals)
-      : new Map<CapabilityRef, string[]>();
+    let installProviders = new Map<CapabilityRef, string[]>();
+    if (p.installs) {
+      // 与运行中的 reconcile 走同一条路径（{@link converge}）；启动时不做依赖方连锁
+      let desired: DesiredPlugin[] | undefined;
+      try {
+        desired = await p.installs.desired();
+      } catch (e) {
+        this.deps.log.error(
+          "cannot read plugin install records; installed plugins are not loaded",
+          {
+            err: e,
+          },
+        );
+      }
+      if (desired) installProviders = await this.applyInstalls(p.installs, desired, true);
+    }
     if (deferred.length > 0) {
       await this.loadDeferred(deferred, dirs, urls, snapshots, approvals, installProviders);
     }
@@ -650,130 +716,110 @@ export class PluginHost {
     }
   }
 
-  /** 第 3 步：安装记录（见 {@link load}）。`phase1` / `phase1Sets` 是第 1、2 步的插件及其权限集合。 */
-  private async loadInstalls(
+  /**
+   * 安装记录收敛到 PG 期望状态（启动第 3 步与运行中的 {@link converge} 共用，C16）；`desired` 为期望启用的记录。
+   * 1. 不再期望启用的（停用 / 卸载）：卸下（排空在途调用），未加载但写过状态行的标为 unloaded；
+   * 2. 期望启用、本副本已在目标包上的：不动；
+   * 3. 其余：准备候选（同步 → 导入 → 核对静态清单 → 权限集合；失败记 failed：`sync_failed` / `sha_mismatch` /
+   *    `import_failed` / `manifest_mismatch`），与生效的插件一起按依赖拓扑序逐个处理：权限闸门（新增权限待批准 →
+   *    pending / approval，旧实例照常）、必需能力（此刻没有生效的提供方 → pending / dependency）、部署配置、
+   *    持锁迁移（busy → pending / migration）、setup，成功后登记新实例（先加载新、再撤销旧：旧实例在后台排空后撤销）；
+   *    任何一步失败旧实例保留，记 failed（`migration_failed` / `setup_failed`）。
+   * 4. 运行中（非启动）：对变了的能力做依赖方连锁（本轮刚加载的除外），此前因依赖卸下的插件随之补回。
+   * 返回启用的安装记录在静态清单里声明提供的能力（启动第 4 步据此判断待定还是缺提供方）。
+   */
+  private async applyInstalls(
     loader: InstalledPluginLoader,
-    phase1: PluginManifest[],
-    phase1Sets: Map<string, PermissionSet>,
-    snapshots: Map<string, PermissionSnapshot>,
-    approvals: PluginApprovals,
+    desired: DesiredPlugin[],
+    startup: boolean,
   ): Promise<Map<CapabilityRef, string[]>> {
-    let desired: DesiredPlugin[];
-    try {
-      desired = await loader.desired();
-    } catch (e) {
-      this.deps.log.error("cannot read plugin install records; installed plugins are not loaded", {
-        err: e,
-      });
-      return new Map();
-    }
-    // 启用的安装记录按审阅过的静态清单声明的能力（不论随后加载成败）：第 4 步据此判断待定还是缺提供方
+    const declared = this.declared();
     const installProviders = new Map<CapabilityRef, string[]>();
+    const wanted = new Map<string, DesiredPlugin>();
     for (const d of desired) {
-      if (this.sources.has(d.name)) continue;
+      const taken = declared.get(d.name);
+      if (taken) {
+        if (!this.warnedConflicts.has(d.name)) {
+          this.warnedConflicts.add(d.name);
+          this.deps.log.warn(
+            `plugin is both installed and ${taken === "builtin" ? "built in" : "declared in the plugins config list"}; using the ${taken} plugin`,
+            { plugin: d.name, installedVersion: d.version },
+          );
+          // 该名字的状态行属于生效的一方，不覆盖；在它的 detail 里记下冲突（后台能看到）
+          await this.noteStatus(
+            d.name,
+            `name_conflict: install record ${d.version} (${d.sha256.slice(0, 16)}) ignored; the ${taken} plugin of the same name is used`,
+          );
+        }
+        continue;
+      }
+      wanted.set(d.name, d);
+      // 按审阅过的静态清单（不论随后加载成败）
       for (const cap of d.section.manifest.provides as CapabilityRef[]) {
         installProviders.set(cap, [...(installProviders.get(cap) ?? []), d.name]);
       }
     }
-    const fail = async (d: DesiredPlugin, reason: string, detail: string): Promise<void> => {
-      this.deps.log.error("installed plugin not loaded", {
-        plugin: d.name,
-        version: d.version,
-        sha256: d.sha256,
-        reason,
-        detail,
-      });
-      await this.writeStatus({
-        plugin: d.name,
-        version: d.version,
-        sha256: d.sha256,
-        source: "install",
-        state: "failed",
-        reason,
-        detail,
-      });
-    };
-    interface Candidate {
-      d: DesiredPlugin;
-      manifest: PluginManifest;
-      set: PermissionSet;
-      entryUrl: string;
-      migrationsDir: string | undefined;
+    this.installProvides = installProviders;
+    const drainMs = this.drainMs();
+    const changed: CapabilityRef[] = [];
+
+    // 1. 不再期望启用：卸下；未加载但写过状态行的标为 unloaded
+    for (const inst of this.registry.all()) {
+      if (inst.source !== "install" || wanted.has(inst.name)) continue;
+      const gone = await this.doUnload(inst.name, drainMs, null);
+      if (gone) changed.push(...gone.manifest.provides);
     }
-    const candidates: Candidate[] = [];
-    for (const d of desired) {
-      if (this.closed) throw new Error(CLOSED_DURING_LOAD);
-      const taken = this.sources.get(d.name);
-      if (taken) {
-        this.deps.log.warn(
-          `plugin is both installed and ${taken.source === "builtin" ? "built in" : "declared in the plugins config list"}; using the ${taken.source} plugin`,
-          { plugin: d.name, installedVersion: d.version },
-        );
-        // 该名字的状态行属于生效的一方，不覆盖；在它的 detail 里记下冲突（后台能看到）
-        await this.noteStatus(
-          d.name,
-          `name_conflict: install record ${d.version} (${d.sha256.slice(0, 16)}) ignored; the ${taken.source} plugin of the same name is used`,
-        );
-        continue;
-      }
-      let url: string;
-      try {
-        url = await loader.sync(d);
-      } catch (e) {
-        await fail(d, "sync", errMsg(e));
-        continue;
-      }
-      let manifest: PluginManifest;
-      let root: string;
-      try {
-        root = packageRootOf(url, d.section.entry);
-        manifest = await importPluginModule(url, d.name, root);
-        assertSecretsReachable(manifest);
-      } catch (e) {
-        await fail(d, "import", errMsg(e));
-        continue;
-      }
-      // 审阅看的是静态清单：真实模块必须与它一致（名字、版本、能力、权限、界面、配置字段）
-      if (!matchesSection(manifest, d.name, d.section.manifest)) {
-        await fail(
-          d,
-          "manifest_mismatch",
-          `the plugin module's manifest does not match the reviewed package manifest (module name "${manifest.name}")`,
-        );
-        continue;
-      }
-      // 迁移目录只取审阅过的静态 `capybara.migrations`（不认模块清单里的 migrations）
-      const migrations = d.section.migrations;
-      const reviewed = { ...manifest, migrations } as PluginManifest;
-      let set: PermissionSet;
-      try {
-        set = await computePermissionSet(reviewed, root);
-      } catch (e) {
-        await fail(d, "import", errMsg(e));
-        continue;
-      }
-      candidates.push({
-        d,
-        manifest,
-        set,
-        entryUrl: url,
-        migrationsDir: migrations === undefined ? undefined : resolvePath(root, migrations),
+    for (const [name, row] of [...this.installRows]) {
+      if (wanted.has(name) || this.registry.current(name)) continue;
+      this.dropPending(name);
+      this.prepared.delete(name);
+      await this.writeStatus({
+        plugin: name,
+        version: row.version,
+        sha256: row.sha256,
+        source: "install",
+        state: "unloaded",
+        reason: null,
+        detail: null,
       });
     }
 
-    // 与已有插件一起解析依赖：解析不过的逐个剔除（反复尝试，直到没有新的能加进来）
-    const accepted: Candidate[] = [];
-    const tryResolve = (c: Candidate) =>
-      resolvePlugins([...phase1, ...accepted.map((a) => a.manifest), c.manifest], SDK_VERSION);
+    // 2 / 3. 需要换包或尚未加载的：准备候选
+    const candidates: InstallCandidate[] = [];
+    for (const d of wanted.values()) {
+      if (this.closed) throw new Error(CLOSED_DURING_LOAD);
+      if (this.registry.current(d.name)?.sha256 === d.sha256) continue;
+      const c = await this.prepare(loader, d);
+      if (c) candidates.push(c);
+    }
+
+    // 与生效的插件一起解析依赖：被替换的旧实例在新的被接受之前仍算提供方；解析不过的反复重试直到没有新的能加进来
+    const accepted: InstallCandidate[] = [];
+    const base = () => {
+      const replaced = new Set(accepted.map((a) => a.d.name));
+      return this.registry
+        .all()
+        .filter((i) => !replaced.has(i.name))
+        .map((i) => i.manifest);
+    };
+    const tryResolve = (c: InstallCandidate) =>
+      resolvePlugins(
+        [
+          ...base().filter((m) => m.name !== c.d.name),
+          ...accepted.map((a) => a.manifest),
+          c.manifest,
+        ],
+        SDK_VERSION,
+      );
     let remaining = candidates;
-    for (let changed = true; changed && remaining.length > 0; ) {
-      changed = false;
-      const next: Candidate[] = [];
+    for (let progress = true; progress && remaining.length > 0; ) {
+      progress = false;
+      const next: InstallCandidate[] = [];
       for (const c of remaining) {
         try {
           tryResolve(c);
           accepted.push(c);
-          changed = true;
+          progress = true;
         } catch {
           next.push(c);
         }
@@ -787,46 +833,163 @@ export class PluginHost {
       } catch (e) {
         detail = errMsg(e);
       }
-      await fail(c.d, "dependency", detail);
+      this.notePending({
+        plugin: c.d.name,
+        version: c.d.version,
+        added: [],
+        removed: [],
+        reason: "dependency",
+        blockedBy: (c.manifest.requires ?? []).map((capability) => ({
+          capability,
+          providers: (installProviders.get(capability) ?? []).filter((n) => n !== c.d.name),
+        })),
+      });
+      await this.writeStatus({
+        plugin: c.d.name,
+        version: c.d.version,
+        sha256: c.d.sha256,
+        source: "install",
+        state: "pending",
+        reason: "dependency",
+        detail,
+      });
     }
-    if (accepted.length === 0) return installProviders;
+    if (accepted.length === 0) {
+      if (!startup && changed.length > 0) await this.cascade(changed, drainMs);
+      return installProviders;
+    }
     for (const c of accepted) this.sources.set(c.d.name, { source: "install", sha256: c.d.sha256 });
 
-    const all = resolvePlugins([...phase1, ...accepted.map((a) => a.manifest)], SDK_VERSION);
-    const sets = new Map([...phase1Sets, ...accepted.map((c) => [c.d.name, c.set] as const)]);
-    // 第 1、2 步已加载的视为已批准；没加载的（待批准、待配置）从快照里拿掉 → 依赖它们的安装插件同样待定
-    const loadedNow = new Set(this.registry.all().map((i) => i.name));
-    const plan = new Map(snapshots);
-    for (const m of phase1) if (!loadedNow.has(m.name)) plan.delete(m.name);
-    const decisions = new Map(
-      planApprovals(
-        all,
-        sets,
-        withPreApproved(
-          plan,
-          phase1.filter((m) => loadedNow.has(m.name)),
-          sets,
-        ),
-        { autoApprove: this.autoApprove },
-      ).map((d) => [d.plugin, d]),
-    );
+    // 4. 按拓扑序逐个：权限闸门 → 配置 → 迁移 → setup → 登记（替换旧实例）
+    const order = resolvePlugins([...base(), ...accepted.map((a) => a.manifest)], SDK_VERSION);
     const byName = new Map(accepted.map((c) => [c.d.name, c]));
-    for (const m of all) {
+    const approvals = new PluginApprovals(kernelDb(this.deps.db));
+    const snapshots = await approvals.all();
+    const activated = new Set<string>();
+    for (const m of order) {
       const c = byName.get(m.name);
       if (!c) continue;
-      await this.activate(approvals, {
-        manifest: m,
+      if (this.closed) throw new Error(CLOSED_DURING_LOAD);
+      const a: Activation = {
+        manifest: c.manifest,
         source: "install",
         sha256: c.d.sha256,
         entryUrl: c.entryUrl,
         migrationsDir: c.migrationsDir,
         set: c.set,
-        decision: decisions.get(m.name) as ApprovalDecision,
+        decision: { plugin: m.name, action: "pending" } as unknown as ApprovalDecision,
         fatal: false,
-        onMigrated: () => loader.markMigrated(c.d.name, c.d.sha256),
-      });
+        migrate: () => loader.migrate(c.d, c.migrationsDir),
+      };
+      a.decision = this.decidePending(m.name, a, snapshots, installProviders);
+      const old = this.registry.current(m.name);
+      const inst = await this.activate(
+        approvals,
+        a,
+        startup ? undefined : this.reloadSetupTimeoutMs(),
+      );
+      if (inst) {
+        activated.add(m.name);
+        changed.push(...inst.manifest.provides, ...(old?.manifest.provides ?? []));
+      }
     }
+    if (!startup && changed.length > 0) await this.cascade(changed, drainMs, activated);
     return installProviders;
+  }
+
+  /**
+   * 安装记录的加载候选：同步到本地 → 导入 → 核对静态清单 → 权限集合（迁移目录只取审阅过的 `capybara.migrations`）。
+   * 失败记 failed（`sync_failed` / `sha_mismatch` / `import_failed` / `manifest_mismatch`，detail 只写错误消息）并返回
+   * undefined。同一个包的结果不变，成功的按 sha 缓存（每个周期的 reconcile 不重复解包、导入）。
+   */
+  private async prepare(
+    loader: InstalledPluginLoader,
+    d: DesiredPlugin,
+  ): Promise<InstallCandidate | undefined> {
+    const hit = this.prepared.get(d.name);
+    if (hit && hit.d.sha256 === d.sha256) return { ...hit, d };
+    this.prepared.delete(d.name);
+    const fail = async (reason: InstallFailureReason, e: unknown): Promise<undefined> => {
+      this.logFailure(d.name, d.sha256, reason, e, { version: d.version });
+      await this.writeStatus({
+        plugin: d.name,
+        version: d.version,
+        sha256: d.sha256,
+        source: "install",
+        state: "failed",
+        reason,
+        detail: errMsg(e),
+      });
+      return undefined;
+    };
+    let url: string;
+    try {
+      url = await loader.sync(d);
+    } catch (e) {
+      const mismatch =
+        e instanceof PluginBlobIntegrityError || e instanceof PackageShaMismatchError;
+      return fail(mismatch ? "sha_mismatch" : "sync_failed", e);
+    }
+    let manifest: PluginManifest;
+    let root: string;
+    try {
+      root = packageRootOf(url, d.section.entry);
+      manifest = await importPluginModule(url, d.name, root);
+      assertSecretsReachable(manifest);
+    } catch (e) {
+      return fail("import_failed", e);
+    }
+    // 审阅看的是静态清单：真实模块必须与它一致（名字、版本、能力、权限、界面、配置字段）
+    if (!matchesSection(manifest, d.name, d.section.manifest)) {
+      return fail("manifest_mismatch", new ManifestMismatchError(d.name, manifest.name));
+    }
+    // 迁移目录只取审阅过的静态 `capybara.migrations`（不认模块清单里的 migrations）
+    const migrations = d.section.migrations;
+    const reviewed = { ...manifest, migrations } as PluginManifest;
+    let set: PermissionSet;
+    try {
+      set = await computePermissionSet(reviewed, root);
+    } catch (e) {
+      return fail("import_failed", e);
+    }
+    const c: InstallCandidate = {
+      d,
+      manifest,
+      set,
+      entryUrl: url,
+      migrationsDir: migrations === undefined ? undefined : resolvePath(root, migrations),
+    };
+    this.prepared.set(d.name, c);
+    return c;
+  }
+
+  /**
+   * 安装记录加载失败的 error 日志：每个周期都会重试，同一个包、同一个原因只记一次（状态行每次照写）。
+   */
+  private logFailure(
+    plugin: string,
+    sha256: string | null,
+    reason: InstallFailureReason,
+    err: unknown,
+    fields: Record<string, unknown>,
+  ): void {
+    const key = `${sha256}:${reason}`;
+    if (this.loggedFailures.get(plugin) === key) return;
+    this.loggedFailures.set(plugin, key);
+    this.deps.log.error("installed plugin not loaded", { plugin, sha256, reason, err, ...fields });
+  }
+
+  /** 记下（替换同名的）待定插件，供 {@link pending} 列出。 */
+  private notePending(p: PendingPlugin): void {
+    const at = this.pendingPlugins.findIndex((x) => x.plugin === p.plugin);
+    if (at >= 0) this.pendingPlugins[at] = p;
+    else this.pendingPlugins.push(p);
+  }
+
+  /** 从待定清单里去掉。 */
+  private dropPending(plugin: string): void {
+    const at = this.pendingPlugins.findIndex((x) => x.plugin === plugin);
+    if (at >= 0) this.pendingPlugins.splice(at, 1);
   }
 
   /**
@@ -937,6 +1100,10 @@ export class PluginHost {
 
   /** 写本副本的加载状态；失败只记 warn（状态是给后台看的，不影响加载）。 */
   private async writeStatus(s: PluginLoadStatus): Promise<void> {
+    if (s.source === "install") {
+      if (s.state === "unloaded") this.installRows.delete(s.plugin);
+      else this.installRows.set(s.plugin, { version: s.version, sha256: s.sha256 as string });
+    }
     if (!this.status) return;
     try {
       await this.status.write(s);
@@ -948,12 +1115,14 @@ export class PluginHost {
   /**
    * 加载一个插件：权限闸门结论、部署配置、迁移、setup、登记。`fatal` 时（内置 / 配置声明）出错直接抛；
    * 否则（安装记录）记 failed 后返回。内置与安装记录的部署配置不合法时只记 pending（reason config），不抛。
+   * 已有同名实例时（升级）：新实例登记后旧实例才撤销（后台排空在途调用）；新实例没加载成时旧实例保持不变。
+   * 返回新登记的实例（没有加载时返回 undefined）。
    */
   private async activate(
     approvals: PluginApprovals,
     a: Activation,
     setupTimeoutMs?: number,
-  ): Promise<void> {
+  ): Promise<PluginInstance | undefined> {
     const { manifest, decision } = a;
     const name = manifest.name;
     const base = { plugin: name, version: manifest.version, sha256: a.sha256, source: a.source };
@@ -969,14 +1138,23 @@ export class PluginHost {
           if (values.length > 0) this.onSecrets(values);
         }
       }
-      this.pendingPlugins.push(decision.pending);
-      this.pendingActivations.set(name, a);
-      warnPending(this.deps.log, decision.pending);
+      const before = this.pendingPlugins.find((p) => p.plugin === name);
+      this.notePending(decision.pending);
+      // 安装记录每次 converge 都按 PG 重新判定，不进 pendingActivations
+      if (a.source !== "install") this.pendingActivations.set(name, a);
+      // 每个周期都会重新判定：同一版本、同一原因只告警一次
+      if (
+        before?.version !== decision.pending.version ||
+        before.reason !== decision.pending.reason
+      ) {
+        warnPending(this.deps.log, decision.pending);
+      }
       const reason: PendingReason =
         decision.pending.reason === "dependency" ? "dependency" : "approval";
       await this.writeStatus({ ...base, state: "pending", reason, detail: null });
-      return;
+      return undefined;
     }
+    this.dropPending(name);
     if (schema) {
       const r = schema.safeParse(raw);
       if (!r.success) {
@@ -993,7 +1171,7 @@ export class PluginHost {
           detail,
         });
         await this.writeStatus({ ...base, state: "pending", reason: "config", detail });
-        return;
+        return undefined;
       }
       config = r.data;
       if (this.onSecrets) {
@@ -1001,9 +1179,10 @@ export class PluginHost {
         if (values.length > 0) this.onSecrets(values);
       }
     }
-    const failSoft = async (reason: string, e: unknown): Promise<void> => {
-      this.deps.log.error("installed plugin not loaded", { plugin: name, reason, err: e });
+    const failSoft = async (reason: InstallFailureReason, e: unknown): Promise<undefined> => {
+      this.logFailure(name, a.sha256, reason, e, { version: manifest.version });
       await this.writeStatus({ ...base, state: "failed", reason, detail: errMsg(e) });
+      return undefined;
     };
     if (decision.changed) {
       if (decision.autoApprove) {
@@ -1028,21 +1207,31 @@ export class PluginHost {
       }
     }
     if (this.closed) throw new Error(CLOSED_DURING_LOAD);
-    this.migrating = migratePlugin(
-      this.deps.dbUrl,
-      manifest,
-      a.migrationsDir,
-      this.deps.connectTimeoutMs,
-      this.abort.signal,
-    );
+    // 安装记录：一个副本持锁迁移（C16），别的副本正在迁移时待定、旧实例照常；内置 / 配置声明：按 schema 锁直接迁移
+    const migrating: Promise<unknown> = a.migrate
+      ? a.migrate()
+      : migratePlugin(
+          this.deps.dbUrl,
+          manifest,
+          a.migrationsDir,
+          this.deps.connectTimeoutMs,
+          this.abort.signal,
+        );
+    this.migrating = migrating;
     try {
-      await this.migrating;
-      await a.onMigrated?.();
+      if ((await migrating) === "busy") {
+        await this.writeStatus({
+          ...base,
+          state: "pending",
+          reason: "migration",
+          detail: "another replica is running this package's migrations",
+        });
+        return undefined;
+      }
     } catch (e) {
       if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
       if (a.fatal) throw e;
-      await failSoft("migration", e);
-      return;
+      return failSoft("migration_failed", e);
     } finally {
       this.migrating = undefined;
     }
@@ -1062,8 +1251,7 @@ export class PluginHost {
     } catch (e) {
       if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
       if (a.fatal) throw e;
-      await failSoft("setup", e);
-      return;
+      return failSoft("setup_failed", e);
     }
     if (this.closed) {
       await inst.dispose({ drainMs: 0 }).catch((err: unknown) => {
@@ -1071,9 +1259,29 @@ export class PluginHost {
       });
       throw new Error(CLOSED_DURING_LOAD);
     }
+    // 升级：替换加载参数（之后的依赖方连锁与 reload 用新版本），先登记新实例、再撤销旧实例
     this.specs.set(name, spec);
-    this.registry.activate(inst);
+    this.unloadedForDependency.delete(name);
+    const old = this.registry.activate(inst);
+    this.loggedFailures.delete(name);
     await this.writeStatus({ ...base, state: "loaded", reason: null, detail: null });
+    if (old) this.retire(old);
+    return inst;
+  }
+
+  /**
+   * 后台撤销被替换的旧实例（排空在途调用，最多 `pluginHost.drainSeconds`）：不挡住本副本后续的生命周期操作。
+   * close() 等它们（最多 lifecycleWaitMs）。
+   */
+  private retire(old: PluginInstance): void {
+    const p = this.disposeQuietly(old, this.drainMs()).finally(() => {
+      this.retiring.delete(p);
+      this.deps.log.info("previous plugin instance retired", {
+        plugin: old.name,
+        generation: old.generation,
+      });
+    });
+    this.retiring.add(p);
   }
 
   /** 记下内置 / 配置声明插件的清单与权限集合（安装记录不在这里）。 */
@@ -1108,81 +1316,110 @@ export class PluginHost {
   }
 
   /**
-   * 批准之后在本副本加载待批准的插件（T13 的单副本接缝；跨副本收敛与停用 / 升级由 T14 的 reconcile 负责）：
-   * 重读快照，按启动时同一套判定（{@link planApprovals}，另加「必需能力此刻要有生效的提供方」）逐个处理；
-   * 能加载的走与启动相同的加载流程（部署配置、迁移、setup，setup 时限 `pluginHost.reloadSetupTimeoutSeconds`），
-   * 失败只记 failed、不抛；仍被依赖阻塞的改记 pending / dependency。反复直到不动点（加载一个可能放行依赖它的），
-   * 最后对新提供的能力做依赖方连锁（与 {@link reload} 相同）。与 unload / reload 串行。返回本次加载的插件名。
+   * 在本副本加载此刻能加载的待定内置 / 配置声明插件（批准之后，或运行中加载失败后的重试），见 {@link converge}。
+   * 与 unload / reload 串行。返回本次加载的插件名。
    */
   activatePending(): Promise<string[]> {
+    return this.serial(() => this.activatePendingNow());
+  }
+
+  /**
+   * 本副本收敛到部署的期望状态（T14 reconcile 的一步，与 unload / reload 串行）：
+   * 1. 待定的内置 / 配置声明插件（批准后、或运行中加载失败的）按此刻的快照与生效的提供方重试；
+   * 2. 安装记录按 PG 期望状态收敛（见 {@link applyInstalls}：停用 / 卸载的卸下，换包的先加载新再撤销旧，
+   *    失败的每次重试），之后做依赖方连锁；
+   * 3. 再试一次第 1 步（安装记录提供的能力可能放行了依赖它的配置声明插件）。
+   * 读不到安装记录时只做第 1 步并抛错（调用方记日志，下一个周期再来）。
+   */
+  converge(): Promise<void> {
     return this.serial(async () => {
-      if (this.pendingActivations.size === 0) return [];
-      const approvals = new PluginApprovals(kernelDb(this.deps.db));
-      const snapshots = await approvals.all();
-      // 安装记录只加载此刻仍期望启用、且还是同一个包的（启动之后可能已被停用或换包：留给 reconcile）
-      const hasInstalls = [...this.pendingActivations.values()].some((a) => a.source === "install");
-      const desired =
-        hasInstalls && this.installLoader
-          ? new Map((await this.installLoader.desired()).map((d) => [d.name, d.sha256]))
-          : new Map<string, string>();
-      const activated: string[] = [];
-      for (let progress = true; progress; ) {
-        progress = false;
-        for (const [name, a] of [...this.pendingActivations]) {
-          if (this.closed) throw new Error("plugin host is closed");
-          if (a.source === "install" && desired.get(name) !== a.sha256) continue;
-          const decision = this.decidePending(name, a, snapshots);
-          if (decision.action === "pending") {
-            await this.stillPending(a, decision.pending);
-            continue;
-          }
-          this.pendingActivations.delete(name);
-          const at = this.pendingPlugins.findIndex((p) => p.plugin === name);
-          if (at >= 0) this.pendingPlugins.splice(at, 1);
-          try {
-            await this.activate(
-              approvals,
-              { ...a, decision, fatal: false },
-              this.reloadSetupTimeoutMs(),
-            );
-          } catch (e) {
-            if (this.closed) throw e;
-            // 配置声明的插件部署配置不合法时 activate 抛错（启动时内核失败）；运行中只记 failed
-            this.deps.log.error("approved plugin not loaded", { plugin: name, err: e });
-            await this.writeStatus({
-              plugin: name,
-              version: a.manifest.version,
-              sha256: a.sha256,
-              source: a.source,
-              state: "failed",
-              reason: "setup",
-              detail: errMsg(e),
-            });
-          }
-          if (this.registry.current(name)) {
-            activated.push(name);
-            progress = true;
-            this.deps.log.info("approved plugin loaded", { plugin: name });
-          }
-        }
-      }
-      if (activated.length > 0) {
-        await this.cascade(
-          activated.flatMap((n) => this.registry.current(n)?.manifest.provides ?? []),
-          this.drainMs(),
-        );
-      }
-      return activated;
+      await this.activatePendingNow();
+      const loader = this.installLoader;
+      if (!loader) return;
+      const desired = await loader.desired();
+      await this.applyInstalls(loader, desired, false);
+      if (this.pendingActivations.size > 0) await this.activatePendingNow();
     });
   }
 
-  /** 待批准插件此刻的判定：已生效的插件视为已批准；必需能力没有生效的提供方时仍待定（dependency）。 */
+  /**
+   * 待定的内置 / 配置声明插件（{@link pendingActivations}）：重读快照，按启动时同一套判定（{@link planApprovals}，
+   * 另加「必需能力此刻要有生效的提供方」）逐个处理；能加载的走与启动相同的加载流程（部署配置、迁移、setup，
+   * setup 时限 `pluginHost.reloadSetupTimeoutSeconds`），失败只记 failed、留着下次重试（T13 → T14 交接）；
+   * 仍被依赖阻塞的改记 pending / dependency。反复直到不动点（加载一个可能放行依赖它的），
+   * 最后对新提供的能力做依赖方连锁（与 {@link reload} 相同）。
+   */
+  private async activatePendingNow(): Promise<string[]> {
+    if (this.pendingActivations.size === 0) return [];
+    const approvals = new PluginApprovals(kernelDb(this.deps.db));
+    const snapshots = await approvals.all();
+    const activated: string[] = [];
+    /** 本次已经试过且失败的：同一次不再重试（下一次 converge 再试）。 */
+    const failedNow = new Set<string>();
+    for (let progress = true; progress; ) {
+      progress = false;
+      for (const [name, a] of [...this.pendingActivations]) {
+        if (this.closed) throw new Error("plugin host is closed");
+        if (failedNow.has(name)) continue;
+        const decision = this.decidePending(name, a, snapshots);
+        if (decision.action === "pending") {
+          await this.stillPending(a, decision.pending);
+          continue;
+        }
+        this.pendingActivations.delete(name);
+        this.dropPending(name);
+        try {
+          await this.activate(
+            approvals,
+            { ...a, decision, fatal: false },
+            this.reloadSetupTimeoutMs(),
+          );
+        } catch (e) {
+          if (this.closed) throw e;
+          // 配置声明的插件部署配置不合法时 activate 抛错（启动时内核失败）；运行中只记 failed
+          this.deps.log.error("approved plugin not loaded", { plugin: name, err: e });
+          await this.writeStatus({
+            plugin: name,
+            version: a.manifest.version,
+            sha256: a.sha256,
+            source: a.source,
+            state: "failed",
+            reason: "setup_failed",
+            detail: errMsg(e),
+          });
+        }
+        if (this.registry.current(name)) {
+          activated.push(name);
+          progress = true;
+          this.deps.log.info("approved plugin loaded", { plugin: name });
+        } else if (!this.pendingActivations.has(name)) {
+          // 加载失败（迁移、setup、部署配置）：留着，下一次 converge 重试
+          this.pendingActivations.set(name, a);
+          failedNow.add(name);
+        }
+      }
+    }
+    if (activated.length > 0) {
+      await this.cascade(
+        activated.flatMap((n) => this.registry.current(n)?.manifest.provides ?? []),
+        this.drainMs(),
+        new Set(activated),
+      );
+    }
+    return activated;
+  }
+
+  /**
+   * 待批准插件此刻的判定：已生效的（同名实例除外：升级时按新权限集合比对快照）视为已批准；必需能力没有生效的
+   * 提供方时仍待定（dependency）。`providers` 给出能力 → 声明提供它但没生效的安装记录（填 blockedBy）。
+   */
   private decidePending(
     name: string,
     a: Activation,
     snapshots: Map<string, PermissionSnapshot>,
+    providers: Map<CapabilityRef, string[]> = this.installProvides,
   ): ApprovalDecision {
-    const loaded = this.registry.all();
+    const loaded = this.registry.all().filter((i) => i.name !== name);
     const manifests = loaded.map((i) => i.manifest);
     const sets = new Map([
       ...loaded.map((i) => [i.name, i.permissions] as const),
@@ -1209,9 +1446,14 @@ export class PluginHost {
         reason: "dependency",
         blockedBy: missing.map((capability) => ({
           capability,
-          providers: [...this.pendingActivations.values()]
-            .filter((p) => p.manifest.provides.includes(capability))
-            .map((p) => p.manifest.name),
+          providers: [
+            ...new Set([
+              ...[...this.pendingActivations.values()]
+                .filter((p) => p.manifest.provides.includes(capability))
+                .map((p) => p.manifest.name),
+              ...(providers.get(capability) ?? []).filter((n) => n !== name),
+            ]),
+          ],
         })),
       },
     };
@@ -1372,15 +1614,21 @@ export class PluginHost {
    */
   list(capabilityName: string): PluginCapabilityEntry[] {
     const out: PluginCapabilityEntry[] = [];
+    const tracked = TRACKED_CAPABILITIES[capabilityName];
     for (const i of this.registry.all()) {
       for (const [cap, impl] of i.provided) {
         if (parseCapability(cap).name === capabilityName) {
           out.push({
             plugin: i.name,
             capability: cap,
-            impl,
+            // 内核消费的提供方调用计入实例在途计数：停用 / 升级时先排空、到时限中止（C17）
+            impl:
+              tracked && typeof impl === "object" && impl !== null
+                ? trackCalls(impl, i.inflight, tracked)
+                : impl,
             version: i.version,
             configHash: i.configHash,
+            inflight: i.inflight,
           });
         }
       }
@@ -1433,6 +1681,13 @@ export class PluginHost {
     const source = this.sources.get(plugin)?.source;
     if (source === "builtin" || source === "config") return true;
     return (await this.installed()).has(plugin);
+  }
+
+  /**
+   * 作废路由闸门的安装记录名字缓存（收到 `kernel.plugins.changed` 时各副本调用：卸载 / 新装后不等 TTL）。
+   */
+  invalidateKnownNames(): void {
+    this.installedCache = undefined;
   }
 
   /** 安装记录里的插件名（缓存，见 {@link unavailable}）。 */
@@ -1635,8 +1890,13 @@ export class PluginHost {
    * 提供方实例变了（撤销 / 替换）之后的连锁：先一次性收集受影响的插件（`requires` / `optional` 这些能力的，
    * 以及间接依赖它们的——菱形依赖只收一次），再按拓扑序逐个处理：必需能力已无提供方的卸下（dependency），
    * 其余重新加载一次。最后把此前因依赖卸下、现在能满足的插件加回来。返回连锁卸下的插件名。
+   * `skip`：本轮刚加载的插件（已按新的提供方 setup，不再重新加载）。
    */
-  private async cascade(caps: CapabilityRef[], drainMs: number): Promise<string[]> {
+  private async cascade(
+    caps: CapabilityRef[],
+    drainMs: number,
+    skip: ReadonlySet<string> = new Set(),
+  ): Promise<string[]> {
     const removed: string[] = [];
     const order = this.topoOrder();
     const changing = new Set(caps);
@@ -1644,6 +1904,7 @@ export class PluginHost {
     for (const i of order) {
       const deps = [...(i.manifest.requires ?? []), ...(i.manifest.optional ?? [])];
       if (!deps.some((c) => changing.has(c))) continue;
+      if (skip.has(i.name)) continue;
       affected.push(i.name);
       for (const c of i.manifest.provides) changing.add(c);
     }
@@ -1720,6 +1981,16 @@ export class PluginHost {
       }),
     ]);
     clearTimeout(timer);
+    // 升级时被替换、后台排空中的旧实例：同样最多等 lifecycleWaitMs（之后它们随进程退出）
+    if (this.retiring.size > 0) {
+      await Promise.race([
+        Promise.allSettled([...this.retiring]),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, opts.lifecycleWaitMs ?? CLOSE_LIFECYCLE_WAIT_MS);
+        }),
+      ]);
+      clearTimeout(timer);
+    }
     const settingUp = this.settingUp;
     this.settingUp = undefined;
     await settingUp?.close().catch((e: unknown) => {
