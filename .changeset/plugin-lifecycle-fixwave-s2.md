@@ -14,3 +14,4 @@
 - 副本正常停机时删掉自己的 `plugin_replica_status` 行（原先标为 unloaded，后台在心跳过期前约 3 个周期里一直显示收敛中）；崩溃的副本仍按心跳清理。
 - 迁移审阅新增警告种类 `foreign_schema`（引用内核 schema `capybara`、`GRANT` / `REVOKE`、角色、`ALTER DEFAULT PRIVILEGES`、`SET ROLE`、建函数 / 过程 / 触发器、事务控制），标敏感、不拒绝；`reviewHash` 并入警告摘要（没有警告时不变），审阅后警告变了按 `plugin.approval_stale` 拒绝批准。`splitSqlStatements` 的结果新增 `quoted`（双引号标识符原文）。
 - 副本状态行的 `detail` 写入 PG 前按 logger 已登记的密钥打码（`KernelLogger.redact`）。
+- 插件包上传路由在读请求体之前（`onRequest`）认证企业管理员：未登录 / 非企业管理员的超大请求体返回 401 / 403，不再读进内存；其余内核路由收到 `application/octet-stream` 一律 415。

@@ -4,9 +4,11 @@ import fastifyCookie from "@fastify/cookie";
 import { type DynamicModule, Module } from "@nestjs/common";
 import { APP_FILTER, NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
-import type { InjectOptions, LightMyRequestResponse } from "fastify";
+import type { FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
-import { ErrorFilter } from "./error.filter.js";
+import { ApiError, errorBody } from "../errors.js";
+import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
+import { ErrorFilter, redactPath } from "./error.filter.js";
 import { HealthController, type HealthOptions } from "./health.controller.js";
 import { NestLogAdapter } from "./nest-logger.js";
 import {
@@ -15,7 +17,7 @@ import {
   registerPluginDispatch,
   staticRouteTable,
 } from "./plugin-dispatch.js";
-import { HEALTH_OPTIONS, KERNEL_LOG } from "./tokens.js";
+import { ACCOUNTS, API_TOKENS, HEALTH_OPTIONS, KERNEL_LOG, SESSIONS } from "./tokens.js";
 
 export type { HealthOptions } from "./health.controller.js";
 
@@ -133,7 +135,50 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
       r.bodyLimit = opts.packageMaxBytes + 1;
     }
   });
-  // 原始字节的请求体（插件包上传）：交给处理函数一个 Buffer；其余路由收到它时由各自的校验拒绝
+  // 读请求体之前：插件包上传先认证（未认证 / 非企业管理员的大请求体不读进内存）；其余内核路由不收
+  // application/octet-stream（415）。插件路由 /plugins/* 在自己的作用域里收任何类型，不受影响
+  let authServices: AuthServices | undefined;
+  const services = (): AuthServices => {
+    authServices ??= {
+      accounts: app.get(ACCOUNTS, { strict: false }),
+      sessions: app.get(SESSIONS, { strict: false }),
+      tokens: app.get(API_TOKENS, { strict: false }),
+    };
+    return authServices;
+  };
+  const sendError = (reply: FastifyReply, e: unknown, method: string, url: string) => {
+    if (e instanceof ApiError) {
+      return reply.code(e.status).send(errorBody(e.code, e.message, e.details));
+    }
+    opts.log.error("http handler failed", { method, path: redactPath(url), err: e });
+    return reply.code(500).send(errorBody("internal", "Internal error"));
+  };
+  fastify.addHook("onRequest", async (req, reply) => {
+    if (!req.url.startsWith("/api/")) return;
+    if (req.method === "POST" && req.routeOptions.url === PACKAGE_UPLOAD_ROUTE) {
+      try {
+        await authorizeEnterpriseAdmin(req, services());
+      } catch (e) {
+        return sendError(reply, e, req.method, req.url);
+      }
+      return;
+    }
+    const type = String(req.headers["content-type"] ?? "")
+      .split(";")[0]
+      ?.trim()
+      .toLowerCase();
+    if (type === "application/octet-stream") {
+      return reply
+        .code(415)
+        .send(
+          errorBody(
+            "unsupported_media_type",
+            "This endpoint does not accept application/octet-stream request bodies",
+          ),
+        );
+    }
+  });
+  // 原始字节的请求体（只有插件包上传路由能走到这里，见上面的 onRequest）：交给处理函数一个 Buffer
   fastify.addContentTypeParser(
     "application/octet-stream",
     { parseAs: "buffer" },

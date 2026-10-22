@@ -269,6 +269,38 @@ describe("有对象存储：上传、npm 与包存储", () => {
     expect((await fromNpm(member, { package: "@capybara-hq/plugin-todo" })).statusCode).toBe(403);
   });
 
+  it("上传先认证再读请求体：未登录 / 非企业管理员的超大请求体 401 / 403（不是 413）；其他内核路由不收 octet-stream", async () => {
+    const huge = new Uint8Array(MAX_BYTES * 2);
+    const anon = await k.http.inject({
+      method: "POST",
+      url: "/api/v1/admin/plugins/packages/file",
+      headers: { "content-type": "application/octet-stream", "x-capybara-csrf": "1" },
+      payload: Buffer.from(huge),
+    });
+    expect(anon.statusCode, anon.body).toBe(401);
+    expect(anon.json().error.code).toBe("auth.required");
+    const mem = await upload(member, huge);
+    expect(mem.statusCode, mem.body).toBe(403);
+    expect(mem.json().error.code).toBe("forbidden");
+    // Cookie 认证缺 CSRF 头同样在读请求体之前拒绝
+    const noCsrf = await admin({
+      method: "POST",
+      url: "/api/v1/admin/plugins/packages/file",
+      csrf: false,
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(huge),
+    });
+    expect(noCsrf.json().error.code).toBe("auth.csrf");
+    const other = await admin({
+      method: "POST",
+      url: "/api/v1/orgs",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from("{}"),
+    });
+    expect(other.statusCode, other.body).toBe(415);
+    expect(other.json().error.code).toBe("unsupported_media_type");
+  });
+
   it("npm：按 registry 下载并入库，来源 npm", async () => {
     await db.deleteFrom("plugin_installs").execute();
     await db.deleteFrom("plugin_packages").execute();
