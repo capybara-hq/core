@@ -246,6 +246,9 @@ it("交替请求两个副本，结果一致", async () => {
 - **降级**只能回到「迁移文件都已执行过（文件名与内容一致）」的版本，否则 409 `plugin.downgrade_unsupported`。
 - 停用 / 卸载不删数据：插件 schema、密钥、组织配置、权限快照都保留，重新安装后接着用。部署上停用时组织里的启用开关不变，组织页显示「不可用」。
 - **插件名归 npm 包所有**：插件名归第一次安装它的 npm 包（`package.json` 的 `name`，记在 `plugin_name_owners`，只上传没安装的包不占名字），同名插件只能来自这个包。卸载之后也一样（卸载不删归属）：数据、密钥、批准快照与组织启用都还在，另一个 npm 包用同一个插件名安装会被拒绝（409 `plugin.name_conflict`，提示该名字之前由哪个包使用），防止换个发布者接手这些数据；原来的包可以重新安装。所以**改 npm 包名等于换一个插件**，插件名也要换。
+  - 内置与配置声明的插件同样占名字：内核启动时按模块所在目录最近的 `package.json` 的 `name` 写入归属（已有不动；已有的归属是别的包时记 warn）。它们之后从配置列表里去掉，别的包也不能用同名插件安装。
+  - 名字**没有归属、却留着数据**（权限快照、部署配置、任一组织的配置，或 `plugin_<name>` schema；例如归属表出现之前就有的插件）时，安装同样返回 `plugin.name_conflict`：不知道这些数据属于哪个包。
+  - 手动补救（由运维确认数据确实该交给新包，或确实不要了）：要么换插件名；要么删掉遗留数据——`plugin_permission_snapshots`、`plugin_deployment_configs`、`plugin_org_configs` 里该插件的行，`capybara.secrets` 里 `plugin-deployment-config:<name>:*` 等密钥，以及 `DROP SCHEMA plugin_<name> CASCADE`；要么确认交接后直接在 `plugin_name_owners` 插入（或改）一行，把名字归给新包。
 - 内核消费的提供方调用（`connector@1` 的 `open` 到会话 `close`、`sandbox@1`、`model-provider@*` 的每次调用与流）和插件工具一样计入实例的在途计数：停用 / 升级时先排空，到时限中止（参数里的 `AbortSignal` 被中止）。提供方实现要理会传入的 signal。
 
 ## 新插件清单
