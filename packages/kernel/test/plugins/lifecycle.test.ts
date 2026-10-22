@@ -854,3 +854,69 @@ describe("插件名归属：内置与配置声明的插件也占名字（I4）",
     }
   });
 });
+
+describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, () => {
+  it("两个副本都加载了插件；一个正常停机后状态立即为 enabled（不等心跳过期）", async () => {
+    const bytes = await pluginTgz({ name: "twin", version: "1.0.0" });
+    const pkg = await readPluginPackage(bytes, { maxBytes: MAX_BYTES, hostSdkVersion: SDK_VERSION });
+    await new PluginBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+      source: "file",
+      ref: "upload",
+      actor: null,
+      store: "pg",
+    });
+    await db
+      .insertInto("plugin_installs")
+      .values({
+        name: "twin",
+        sha256: pkg.sha256,
+        version: "1.0.0",
+        source: "file",
+        desired_state: "enabled",
+      })
+      .execute();
+    const cfg = runConfig(
+      { pg: pgc.url, redis: rd.url },
+      {
+        roles: ["api"],
+        plugins: [],
+        pluginPermissions: { autoApprove: true },
+        pluginHost: { dir: pluginsDir, reconcileIntervalSeconds: 3600 },
+        packages: { maxBytes: MAX_BYTES },
+      },
+    );
+    const a = await startKernel(cfg);
+    let b: Kernel | undefined = await startKernel(cfg);
+    const aId = a.replicaId;
+    const bId = b.replicaId;
+    try {
+      const root = await session(a, "root");
+      const status = async () => {
+        const res = await root({ method: "GET", url: "/api/v1/admin/plugins/twin" });
+        expect(res.statusCode, res.body).toBe(200);
+        return res.json() as View;
+      };
+      await waitFor(
+        async () => {
+          const s = await status();
+          return s.replicas.some((r) => r.replicaId === aId) && s.replicas.some((r) => r.replicaId === bId);
+        },
+        15_000,
+        "both replicas loaded twin",
+      );
+      const before = await status();
+      expect(before.status).toBe("enabled");
+      expect(before.replicas.every((r) => r.state === "loaded")).toBe(true);
+      await b.stop();
+      b = undefined;
+      const after = await status();
+      expect(after.replicas.map((r) => r.replicaId)).not.toContain(bId);
+      expect(after.replicas).toHaveLength(before.replicas.length - 1);
+      expect(after.status).toBe("enabled");
+    } finally {
+      await b?.stop();
+      await a.stop();
+      await db.deleteFrom("plugin_installs").where("name", "=", "twin").execute();
+    }
+  });
+});

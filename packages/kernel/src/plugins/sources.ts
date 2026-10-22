@@ -27,7 +27,7 @@ export interface PluginLoadStatus {
   version: string;
   sha256: string | null;
   source: PluginSource;
-  /** `unloaded`：本进程撤销了它（停用 / 卸载，或随提供方卸下时 reason 为 `dependency`）；停机时全部标为它。 */
+  /** `unloaded`：本进程撤销了它（停用 / 卸载，或随提供方卸下时 reason 为 `dependency`）。停机时删掉本副本的行。 */
   state: "loaded" | "failed" | "pending" | "unloaded";
   reason: PendingReason | string | null;
   detail: string | null;
@@ -38,7 +38,7 @@ const MAX_DETAIL = 2000;
 
 /** 本副本的插件加载状态（PG `plugin_replica_status`，每个副本只写自己的行）。 */
 export class ReplicaStatusStore {
-  /** 本进程写过行（停机时才需要标 unloaded；没写过时不碰数据库，例如启动在迁移前就失败）。 */
+  /** 本进程写过行（停机时才需要删；没写过时不碰数据库，例如启动在迁移前就失败）。 */
   private wrote = false;
 
   constructor(
@@ -124,17 +124,14 @@ export class ReplicaStatusStore {
     return n + Number(r.numDeletedRows);
   }
 
-  /** 停机：本副本的全部行标为 unloaded（尽力而为）。 */
-  async markAllUnloaded(): Promise<void> {
+  /**
+   * 正常停机：删掉本副本的全部行（尽力而为）。副本已不在，不该再计入部署状态（否则停机后约 3 个 reconcile
+   * 周期里一直显示「收敛中」）；崩溃的副本由 {@link prune} 按心跳清理。
+   */
+  async removeAll(): Promise<void> {
     if (!this.wrote) return;
     await this.db
-      .updateTable("plugin_replica_status")
-      .set({
-        state: "unloaded",
-        reason: null,
-        detail: null,
-        heartbeat_at: sql<Date>`now()` as unknown as Date,
-      })
+      .deleteFrom("plugin_replica_status")
       .where("replica_id", "=", this.replicaId)
       .execute();
   }

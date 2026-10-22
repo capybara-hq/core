@@ -1070,8 +1070,8 @@ export async function createKernel(
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("eval-queue", evalQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
-    // 本副本的加载状态标为 unloaded（尽力而为；心跳过期的行由 reconcile 清理）
-    await within("plugin-status", replicaStatus.markAllUnloaded(), 1_000);
+    // 删掉本副本的加载状态行（尽力而为；崩溃副本心跳过期的行由 reconcile 清理）
+    await within("plugin-status", replicaStatus.removeAll(), 1_000);
     await within("bus", busSubscriber.close());
     if (redis.status === "ready") {
       if (!(await within("redis", redis.quit()))) redis.disconnect();
