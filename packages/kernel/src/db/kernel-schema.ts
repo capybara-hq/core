@@ -627,6 +627,11 @@ export interface EvalCasesTable {
   snapshot: Json<unknown>;
   snapshot_bytes: number;
   replayable_steps: ColumnType<number, number | undefined, number>;
+  /** 两种回放模式的计划（`StoredCasePlan`），写入时算好。 */
+  plan_step: Json<unknown>;
+  plan_run: Json<unknown>;
+  /** 用例原版本的模型（`ModelRef`）；没有定义时为 null。 */
+  base_model: ColumnType<unknown | null, string | null | undefined, string | null>;
   added_by: string;
   created_at: Ts;
 }

@@ -1,6 +1,7 @@
 -- M6 T3：评测集、用例、评测运行与结果（D4、C3–C7）。一个评测集对应一个 agent；用例是某次真实运行的日志快照
 -- （eval_cases.snapshot，≤ evals.maxCaseBytes），不引用原对话：原对话删除后用例照常可读、可回放。
--- 评测数据只在本组织内；删除评测集为软删除（deleted_at）。eval_runs / eval_results 由 T4 起写入。
+-- 评测数据只在本组织内。删除评测集（Ruling S1-a）：用例（含快照）硬删，结果随之级联删除，集合行留作软删除
+-- （deleted_at）的审计存根，运行行保留。eval_runs / eval_results 由 T4 起写入。
 CREATE TABLE IF NOT EXISTS eval_sets (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
@@ -18,6 +19,8 @@ CREATE INDEX IF NOT EXISTS eval_sets_org_idx ON eval_sets (org_id, created_at DE
 
 -- source_conversation_id / source_run_id 只是来源记录，不设外键（原对话可被删除）。
 -- replayable_steps = replayableCalls(snapshot).length，写入时算好，列表不必读快照。
+-- plan_step / plan_run：两种回放模式的计划（预建结果的 step / seq、预计请求数、原运行用量、评委上下文 token），
+-- base_model：用例原版本的模型（快照与 agent_versions 都没有定义时为 NULL）。写入时算好，估算与启动不读快照。
 CREATE TABLE IF NOT EXISTS eval_cases (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   set_id uuid NOT NULL REFERENCES eval_sets(id) ON DELETE CASCADE,
@@ -29,6 +32,9 @@ CREATE TABLE IF NOT EXISTS eval_cases (
   snapshot jsonb NOT NULL,
   snapshot_bytes integer NOT NULL CHECK (snapshot_bytes >= 0),
   replayable_steps integer NOT NULL DEFAULT 0 CHECK (replayable_steps >= 0),
+  plan_step jsonb NOT NULL,
+  plan_run jsonb NOT NULL,
+  base_model jsonb,
   added_by text NOT NULL REFERENCES accounts(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (set_id, source_run_id)
@@ -95,3 +101,5 @@ ALTER TABLE conversations
 -- 轨迹列表（TrajectoryService.list）不按 agent 筛选时按 (org_id, kind) 取、按 (updated_at, id) 倒序
 CREATE INDEX IF NOT EXISTS conversations_org_kind_idx
   ON conversations (org_id, kind, updated_at DESC, id DESC);
+-- 删除评测集 / 组织清理按运行找评测对话
+CREATE INDEX IF NOT EXISTS conversations_eval_run_idx ON conversations (eval_run_id) WHERE kind = 'eval';

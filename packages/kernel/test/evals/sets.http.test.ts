@@ -288,8 +288,36 @@ describe("评测集 CRUD 与加用例", () => {
     expect(audit).toMatchObject({ target: set.id, actor_account_id: adminId });
     expect(audit.detail).toMatchObject({ caseId: c.id, conversationId: conv, runId: "run-1" });
 
+    // 删除前起一次运行（只有 api 角色，结果停在 pending）
+    const started = await admin({
+      method: "POST",
+      url: `${base()}/${set.id}/runs`,
+      payload: { mode: "step", candidate: {} },
+    });
+    expect(started.statusCode, started.body).toBe(201);
+    const runId = (started.json() as { run: { id: string } }).run.id;
+
     const del = await owner({ method: "DELETE", url: `${base()}/${set.id}` });
     expect(del.statusCode).toBe(204);
+    // Ruling S1-a：用例（含快照）硬删，结果随之级联删除；集合行留作软删除的审计存根，运行行保留
+    expect(
+      await db.selectFrom("eval_cases").select("id").where("set_id", "=", set.id).execute(),
+    ).toEqual([]);
+    expect(
+      await db.selectFrom("eval_results").select("id").where("run_id", "=", runId).execute(),
+    ).toEqual([]);
+    const stub = await db
+      .selectFrom("eval_sets")
+      .select("deleted_at")
+      .where("id", "=", set.id)
+      .executeTakeFirstOrThrow();
+    expect(stub.deleted_at).not.toBeNull();
+    const runRow = await db
+      .selectFrom("eval_runs")
+      .select("status")
+      .where("id", "=", runId)
+      .executeTakeFirstOrThrow();
+    expect(runRow.status).toBe("cancelled");
     const gone = await admin({ method: "GET", url: `${base()}/${set.id}` });
     expect(gone.statusCode).toBe(404);
     expect(errCode(gone)).toBe("eval.set_not_found");
@@ -298,6 +326,7 @@ describe("评测集 CRUD 与加用例", () => {
       "eval.set_created",
       "eval.case_added",
       "eval.set_updated",
+      "eval.run_started",
       "eval.set_deleted",
     ]);
     const updated = await db

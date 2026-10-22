@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { runActive } from "../../src/evals/budget.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -297,23 +298,29 @@ describe("估算", () => {
         2 * (U0.outputTokens + U1.outputTokens) * 4) /
       1_000_000;
 
-    const step = await estimate({ mode: "step", candidate: { model: EVAL_1 }, judge: true });
+    const step = await estimate({ mode: "step", candidate: { model: EVAL_1 }, judge: false });
     expect(step).toMatchObject({
       cases: 2,
       modelRequests: 4,
-      judgeRequests: 4,
+      judgeRequests: 0,
       estimatedTokens: tokens,
+      judgeTokens: 0,
+      judgeCost: 0,
       currency: "USD",
     });
     expect(step.estimatedCost).toBeCloseTo(cost, 12);
 
+    // 开评委：评委的估算单列，也计入总数；没有映射评委用途时评委成本未知 → 总成本 null
+    const judged = await estimate({ mode: "step", candidate: { model: EVAL_1 }, judge: true });
+    expect(judged).toMatchObject({ modelRequests: 4, judgeRequests: 4, judgeCost: null });
+    expect(judged.judgeTokens).toBeGreaterThan(4 * 1024);
+    expect(judged.estimatedTokens).toBe(tokens + judged.judgeTokens);
+    expect(judged.estimatedCost).toBeNull();
+
     const run = await estimate({ mode: "run", candidate: { model: EVAL_1 }, judge: true });
-    expect(run).toMatchObject({
-      cases: 2,
-      modelRequests: 6,
-      judgeRequests: 2,
-      estimatedTokens: tokens,
-    });
+    expect(run).toMatchObject({ cases: 2, modelRequests: 6, judgeRequests: 2 });
+    expect(run.judgeTokens).toBeGreaterThan(2 * 1024);
+    expect(run.estimatedTokens).toBe(tokens + run.judgeTokens);
 
     // 候选模型没有价格：成本为 null；不要评委：0
     const noPrice = await estimate({ mode: "step", candidate: {}, judge: false });
@@ -337,6 +344,236 @@ describe("估算", () => {
       expect(bad.json().error.code).toBe("eval.token_cap_invalid");
     }
   });
+
+  it("估算只读用例上存好的计划列，不读快照（含按用例校验参数时）", async () => {
+    const setId = await seededSet(2);
+    const body = (over: Record<string, unknown> = {}) => ({
+      method: "POST" as const,
+      url: `${setsUrl()}/${setId}/runs/estimate`,
+      payload: { mode: "step", candidate: {}, ...over },
+    });
+    const before = await admin(body());
+    expect(before.statusCode, before.body).toBe(200);
+    // 快照被换成无法解析的内容：估算若读快照就会出错
+    await db
+      .updateTable("eval_cases")
+      .set({ snapshot: JSON.stringify({ version: 1 }) })
+      .where("set_id", "=", setId)
+      .execute();
+    for (const mode of ["step", "run"]) {
+      const res = await admin(body({ mode }));
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    const after = (await admin(body())).json() as { estimate: EvalEstimate };
+    expect(after.estimate).toEqual((before.json() as { estimate: EvalEstimate }).estimate);
+    // 给了参数：按每个用例所用模型（存好的原模型）校验，同样不读快照
+    const params = await admin(
+      body({ candidate: { model: EVAL_1, modelParams: { "model-eval.level": 2 } } }),
+    );
+    expect(params.statusCode, params.body).toBe(200);
+    expect((params.json() as { estimate: EvalEstimate }).estimate.modelRequests).toBe(4);
+  });
+});
+
+describe("结果的轻量列表与查看审计", () => {
+  it("view=light 不含内容块；updatedSince 只给之后有变化的；单条读完整行；审计每人每运行每小时一条", async () => {
+    const setId = await seededSet(1);
+    const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
+    await settled(run.id);
+    const url = `${runsUrl()}/${run.id}/results`;
+    const light = await admin({ method: "GET", url: `${url}?view=light&limit=200` });
+    expect(light.statusCode, light.body).toBe(200);
+    const page = light.json() as {
+      results: Record<string, unknown>[];
+      next: string | null;
+      asOf: string;
+    };
+    expect(page.results).toHaveLength(2);
+    for (const r of page.results) {
+      expect(Object.keys(r).sort()).toEqual(
+        [
+          "caseId",
+          "driftCount",
+          "errorCode",
+          "id",
+          "judgeStatus",
+          "label",
+          "modelCallSeq",
+          "status",
+          "step",
+          "textSimilarity",
+          "toolCallsMatch",
+          "updatedAt",
+          "verdict",
+        ].sort(),
+      );
+      expect(r).toMatchObject({ status: "done", judgeStatus: "none", verdict: null, label: null });
+    }
+    expect(typeof page.asOf).toBe("string");
+
+    // updatedSince：只给之后有变化的（标注一条）
+    const later = new Date(Date.now() + 60_000).toISOString();
+    const none = await admin({
+      method: "GET",
+      url: `${url}?view=light&updatedSince=${encodeURIComponent(later)}`,
+    });
+    expect((none.json() as { results: unknown[] }).results).toEqual([]);
+    const target = page.results[0]?.id as string;
+    const since = new Date().toISOString();
+    await new Promise((r) => setTimeout(r, 20));
+    const lab = await admin({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/eval-results/${target}/label`,
+      payload: { label: "pass" },
+    });
+    expect(lab.statusCode, lab.body).toBe(200);
+    const changed = await admin({
+      method: "GET",
+      url: `${url}?view=light&updatedSince=${encodeURIComponent(since)}`,
+    });
+    expect(changed.statusCode, changed.body).toBe(200);
+    const rows = (changed.json() as { results: { id: string; label: string }[] }).results;
+    expect(rows.map((r) => [r.id, r.label])).toEqual([[target, "pass"]]);
+    expect((await admin({ method: "GET", url: `${url}?updatedSince=not-a-date` })).statusCode).toBe(
+      400,
+    );
+
+    // 单条：完整行
+    const one = await admin({ method: "GET", url: `${url}/${target}` });
+    expect(one.statusCode, one.body).toBe(200);
+    expect((one.json() as { result: EvalResultView }).result).toMatchObject({
+      id: target,
+      label: "pass",
+      baseline: expect.anything(),
+    });
+    const missing = await admin({ method: "GET", url: `${url}/${crypto.randomUUID()}` });
+    expect(missing.statusCode).toBe(404);
+    expect(errCode(missing)).toBe("eval.result_not_found");
+
+    // 审计：上面多次读取（轻量、完整、单条）只记一条；另一位管理员另记一条
+    const viewed = async () =>
+      db
+        .selectFrom("audit_events")
+        .select(["actor_account_id", "target"])
+        .where("action", "=", "eval.results_viewed")
+        .execute();
+    expect(await viewed()).toEqual([{ actor_account_id: adminId, target: run.id }]);
+    await allResults(run.id);
+    expect(await owner({ method: "GET", url: `${url}?view=light` })).toMatchObject({
+      statusCode: 200,
+    });
+    expect((await viewed()).length).toBe(2);
+  });
+});
+
+describe("组织或 agent 删除后运行停下", () => {
+  const slowRun = async () => {
+    const setId = await seededSet(2);
+    evalModelState().delayMs = 800;
+    const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
+    await waitFor(
+      async () => (await allResults(run.id)).some((r) => r.status === "running"),
+      10_000,
+      "a running result",
+      25,
+    );
+    return run;
+  };
+  const runRow = (id: string) =>
+    db
+      .selectFrom("eval_runs")
+      .select(["status", "finished_at"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+  const unfinished = async (id: string) =>
+    (
+      await db
+        .selectFrom("eval_results")
+        .select("status")
+        .where("run_id", "=", id)
+        .where("status", "=", "pending")
+        .execute()
+    ).length;
+  const cancelAudits = () =>
+    db
+      .selectFrom("audit_events")
+      .select(["target", "detail"])
+      .where("action", "=", "eval.run_cancelled")
+      .execute();
+
+  it("删除 agent：运行取消（审计带原因），未开始的结果 skipped，不再发新请求", async () => {
+    const run = await slowRun();
+    const del = await alice({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${agentId}` });
+    expect(del.statusCode, del.body).toBe(204);
+    expect((await runRow(run.id)).status).toBe("cancelled");
+    expect(await unfinished(run.id)).toBe(0);
+    expect(await cancelAudits()).toEqual([
+      { target: run.id, detail: expect.objectContaining({ reason: "agent_deleted" }) },
+    ]);
+    await waitFor(async () => evalModelState().inflight === 0, 5_000, "in flight done", 25);
+    await new Promise((r) => setTimeout(r, 300));
+    // 至多在途的两个请求（orgConcurrency = 2）做完
+    expect(evalModelState().requests.length).toBeLessThanOrEqual(2);
+  });
+
+  it("删除组织：运行取消（审计带原因）", async () => {
+    const run = await slowRun();
+    const del = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}` });
+    expect(del.statusCode, del.body).toBe(204);
+    expect((await runRow(run.id)).status).toBe("cancelled");
+    expect(await unfinished(run.id)).toBe(0);
+    expect(await cancelAudits()).toEqual([
+      { target: run.id, detail: expect.objectContaining({ reason: "org_deleted" }) },
+    ]);
+    await waitFor(async () => evalModelState().inflight === 0, 5_000, "in flight done", 25);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(evalModelState().requests.length).toBeLessThanOrEqual(2);
+  });
+
+  it("runActive：运行行仍是 running，但组织或 agent 已删除 → false", async () => {
+    const run = await slowRun();
+    expect(await runActive(db, run.id)).toBe(true);
+    await db
+      .updateTable("agents")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", agentId)
+      .execute();
+    expect(await runActive(db, run.id)).toBe(false);
+    await db.updateTable("agents").set({ deleted_at: null }).where("id", "=", agentId).execute();
+    expect(await runActive(db, run.id)).toBe(true);
+    await db.updateTable("orgs").set({ deleted_at: new Date() }).where("id", "=", orgId).execute();
+    expect(await runActive(db, run.id)).toBe(false);
+    await db.updateTable("orgs").set({ deleted_at: null }).where("id", "=", orgId).execute();
+    const cancel = await admin({ method: "POST", url: `${runsUrl()}/${run.id}/cancel` });
+    expect(cancel.statusCode).toBe(200);
+    await waitFor(async () => evalModelState().inflight === 0, 5_000, "in flight done", 25);
+  });
+
+  it("重试前失去认领：旧执行不再发请求", async () => {
+    const setId = await seededSet(1);
+    const s = evalModelState();
+    // 第一次请求可重试地失败（重试前等 1 秒）
+    s.failures = [new ModelError("overloaded", "busy")];
+    const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
+    const first = await waitFor(
+      async () =>
+        s.requests.length === 1
+          ? (await allResults(run.id)).find((r) => r.status === "running")
+          : null,
+      10_000,
+      "first attempt",
+      10,
+    );
+    await db
+      .updateTable("eval_results")
+      .set({ claimed_by: "another-attempt" })
+      .where("id", "=", (first as EvalResultView).id)
+      .execute();
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(s.requests).toHaveLength(1);
+    const cancel = await admin({ method: "POST", url: `${runsUrl()}/${run.id}/cancel` });
+    expect(cancel.statusCode).toBe(200);
+  }, 20_000);
 });
 
 describe("运行", () => {

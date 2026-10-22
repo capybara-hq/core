@@ -70,6 +70,19 @@ const canonical = (v: Record<string, ParamValue>) =>
   );
 
 /**
+ * 候选在某个用例上所用的模型（{@link resolveCandidate} 的同一规则）：候选模型，否则候选版本的模型，否则用例原版本的
+ * 模型（`baseModel`）。估算只用存好的 `base_model`，不读快照。
+ */
+export function candidateModel(
+  baseModel: ModelRef,
+  c: EvalCandidate,
+  versionDef?: AgentDefinition,
+): ModelRef {
+  if (c.model !== undefined) return c.model;
+  return c.agentVersion !== undefined && versionDef !== undefined ? versionDef.model : baseModel;
+}
+
+/**
  * 候选落到某个用例上：定义取候选版本的（`versionDef`，由调用方按 `agentVersion` 查好），否则用例自己的版本；
  * 指令、模型覆盖其上。参数：给了用候选的；没给时模型未变沿用定义的 `modelParams`，换了模型为空（原参数属于原模型）。
  */
@@ -81,7 +94,7 @@ export function resolveCandidate(
   const agentVersion = c.agentVersion ?? base.agentVersion;
   const from =
     c.agentVersion !== undefined && versionDef !== undefined ? versionDef : base.definition;
-  const model = c.model ?? from.model;
+  const model = candidateModel(base.definition.model, c, versionDef);
   const params =
     c.modelParams ?? (sameModel(model, from.model) ? { ...(from.modelParams ?? {}) } : {});
   const definition: AgentDefinition = {

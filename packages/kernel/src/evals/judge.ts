@@ -2,11 +2,15 @@ import { isModelError, type ModelUsage } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
 import { usageTokens } from "./budget.js";
+import { textTokens } from "./plan.js";
+
+export { textTokens };
 
 /**
  * LLM 评委（D3）：用途 `eval` 映射的模型比较同一请求的基线回复与候选回复，给出通过 / 不通过、1–5 分与一句理由。
  * 提示词是英文（模型可见文案）；被比较的内容只作为数据（JSON 字符串）放进用户消息，提示词要求忽略其中的指令。
- * 评委不调用工具；输出上限 `evals.judgeMaxOutputTokens`。评委请求的用量由调用方计入评测的 token 预算。
+ * 评委不调用工具；输出上限 `min(评委模型的 maxOutputTokens, evals.judgeMaxOutputTokens)`（模型上限由
+ * `ModelPurposesService.chat` 收紧）。评委请求的用量由调用方计入评测的 token 预算。
  */
 
 export const JUDGE_SYSTEM = [
@@ -25,6 +29,24 @@ export const JUDGE_SYSTEM = [
 /** 评测集没有评分标准时用的默认标准。 */
 export const DEFAULT_RUBRIC =
   "The candidate passes if it is at least as correct, complete and helpful for the user's request as the baseline, including the tool calls it makes.";
+
+/** 评委用户消息里数据之外的文字（前缀与 JSON 外壳；估算用）。 */
+const judgeMessage = (data: object) =>
+  `Evaluate the following data:\n${JSON.stringify(data, null, 2)}`;
+
+/**
+ * 评委一次请求里，除「用户请求」与两边回复之外的输入 token 估算：系统提示词、评分标准（没有用默认标准）与
+ * 用户消息的前缀和 JSON 外壳。运行前估算用（D5）；用户请求与回复由用例计划给出（`plan.ts`）。
+ */
+export function judgeOverheadTokens(rubric: string | null): number {
+  const shell = judgeMessage({
+    userRequest: "",
+    rubric: "",
+    baselineResponse: "",
+    candidateResponse: "",
+  });
+  return textTokens(JUDGE_SYSTEM) + textTokens(rubric ?? DEFAULT_RUBRIC) + textTokens(shell);
+}
 
 /** `evals.judgeMaxOutputTokens` 的缺省值（调用方未给时）。 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
@@ -103,16 +125,12 @@ export async function judge(
   input: { userRequest: string; baseline: string; candidate: string; rubric: string | null },
   signal: AbortSignal,
 ): Promise<JudgeVerdict | JudgeFailure> {
-  const data = JSON.stringify(
-    {
-      userRequest: input.userRequest,
-      rubric: input.rubric ?? DEFAULT_RUBRIC,
-      baselineResponse: input.baseline,
-      candidateResponse: input.candidate,
-    },
-    null,
-    2,
-  );
+  const message = judgeMessage({
+    userRequest: input.userRequest,
+    rubric: input.rubric ?? DEFAULT_RUBRIC,
+    baselineResponse: input.baseline,
+    candidateResponse: input.candidate,
+  });
   let out: Awaited<ReturnType<ModelPurposesService["chat"]>>;
   try {
     out = await d.purposes.chat(
@@ -123,7 +141,7 @@ export async function judge(
         messages: [
           {
             role: "user",
-            content: [{ type: "text", text: `Evaluate the following data:\n${data}` }],
+            content: [{ type: "text", text: message }],
           },
         ],
         tools: [],

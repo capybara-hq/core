@@ -3,6 +3,7 @@ import { type Logger, type ModelParameter, validateParams } from "@capybara-hq/p
 import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { cancelEvalRuns } from "../evals/budget.js";
 import { audit } from "../identity/audit.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
@@ -441,7 +442,7 @@ export class AgentsService {
     return { agent, warnings };
   }
 
-  /** 软删除：权限同 update。待处理的技能改动一并取消，提交后删除草稿（T15）。 */
+  /** 软删除：权限同 update。待处理的技能改动与该 agent 评测集在执行的评测运行一并取消，提交后删除草稿（T15）。 */
   async softDelete(
     orgId: string,
     agentId: string,
@@ -462,6 +463,13 @@ export class AgentsService {
         action: "agent.deleted",
         target: agentId,
       });
+      // 评测集的 agent 删除后其评测运行不再花钱：显式取消（审计带原因）
+      await cancelEvalRuns(
+        t,
+        { orgId, agentId },
+        { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
+        "agent_deleted",
+      );
       return this.skillChanges.cancelPendingForAgent(
         t,
         orgId,

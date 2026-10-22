@@ -13,3 +13,6 @@ CREATE TABLE IF NOT EXISTS model_prices (
 );
 -- 轨迹列表：按 agent 筛选、按最近更新倒序（TrajectoryService.list）
 CREATE INDEX IF NOT EXISTS conversations_agent_idx ON conversations (org_id, agent_id, updated_at DESC);
+-- 轨迹按运行窗口读事件（EventLog.readRunsAfter）：按 (会话, 运行, seq) 取，往前翻页时不扫更晚运行的事件
+CREATE INDEX IF NOT EXISTS conversation_events_run_idx
+  ON conversation_events (conversation_id, run_id, seq) WHERE run_id IS NOT NULL;

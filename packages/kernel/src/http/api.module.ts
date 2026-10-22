@@ -347,9 +347,11 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         registry: ProviderRegistry,
         prices: PricesService,
         settings: SettingsService,
+        redis: Redis,
       ) =>
         new EvalRunsService({
           db,
+          redis,
           config,
           registry,
           prices,
@@ -357,7 +359,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           queue: deps.evalQueue,
           purposes: deps.purposes,
         }),
-      inject: [KERNEL_DB, KERNEL_CONFIG, PROVIDER_REGISTRY, PRICES, SETTINGS],
+      inject: [KERNEL_DB, KERNEL_CONFIG, PROVIDER_REGISTRY, PRICES, SETTINGS, KERNEL_REDIS],
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },

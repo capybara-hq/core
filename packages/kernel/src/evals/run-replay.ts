@@ -9,6 +9,7 @@ import {
   type ModelUsage,
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
+import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
@@ -113,11 +114,19 @@ async function stopReason(
   stillClaimed: (() => Promise<boolean>) | undefined,
 ): Promise<StopDetail | null> {
   const r = await db
-    .selectFrom("eval_runs")
-    .select(["status", "error"])
-    .where("id", "=", evalRunId)
+    .selectFrom("eval_runs as r")
+    .innerJoin("eval_sets as s", "s.id", "r.set_id")
+    .innerJoin("agents as a", "a.id", "s.agent_id")
+    .innerJoin("orgs as o", "o.id", "r.org_id")
+    .select([
+      "r.status",
+      "r.error",
+      sql<boolean>`a.deleted_at IS NOT NULL OR o.deleted_at IS NOT NULL`.as("gone"),
+    ])
+    .where("r.id", "=", evalRunId)
     .executeTakeFirst();
-  if (!r) return "cancelled";
+  // 运行行不在，或组织 / agent 已删除（删除时会显式取消运行，这里兜底）
+  if (!r || r.gone) return "cancelled";
   if (r.status === "capped") return "capped";
   if (r.status === "cancelled") return "cancelled";
   if (r.status === "failed") {
@@ -419,9 +428,13 @@ export async function replayRun(
             yield ev;
           }
         } finally {
-          // 请求已发出但没有正常收完（出错、超时、中止）：按估算计费（与单步回放一致）
+          // 请求已发出但没有正常收完（出错、超时、中止）：按估算计费（与单步回放一致），计完再把错误交给 loop——
+          // loop 的重试 / 兜底请求在下一次检查前就能看到这笔用量（越限即停）。请求里的媒体块已解析成字节，
+          // `estimateTokens` 逐块计入（图片 1600、文档按大小，与构建请求时的 mediaTokens 同一套估算）
           if (!charged) {
-            void charge(estimateTokens(req.messages, req.system, req.tools) + Math.ceil(chars / 4));
+            await charge(
+              estimateTokens(req.messages, req.system, req.tools) + Math.ceil(chars / 4),
+            );
           }
         }
       })();

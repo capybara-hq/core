@@ -313,14 +313,19 @@ describe("GET /orgs/:orgId/trajectories/:conversationId", () => {
       expect(await viewedCount()).toBe(before + 2);
     });
 
-    it("runId：只取这一次运行；不属于该对话的运行为空", async () => {
+    it("runId：只取这一次运行；不属于该对话或不存在的 runId / before → 404，不记审计", async () => {
       const one = (await windowed(owner, convAlice, "?runId=run-a2")).json() as Windowed;
       expect(one.runs.map((r) => r.runId)).toEqual(["run-a2"]);
       expect(one.next).toBeNull();
-      const other = await windowed(owner, convAlice, "?runId=run-b");
-      expect(other.statusCode).toBe(200);
-      expect((other.json() as Windowed).runs).toEqual([]);
-      expect(await viewedCount()).toBe(2);
+      expect(await viewedCount()).toBe(1);
+      for (const q of ["?runId=run-b", "?runId=nope", "?before=run-b", "?limit=2&before=nope"]) {
+        const res = await windowed(owner, convAlice, q);
+        expect(res.statusCode, q).toBe(404);
+        expect(errCode(res)).toBe("trajectory.not_found");
+      }
+      // 还没开始的运行同样不在窗口里
+      expect((await windowed(owner, convAlice, "?runId=run-q")).statusCode).toBe(404);
+      expect(await viewedCount()).toBe(1);
     });
 
     it("参数校验；无权仍是 404 且不记审计", async () => {
@@ -419,5 +424,40 @@ describe("GET /orgs/:orgId/trajectories", () => {
     expect((evals.json() as Page).items).toEqual([]);
     expect((await list(ea)).statusCode).toBe(404);
     expect((await list(guest)).statusCode).toBe(403);
+  });
+});
+
+describe("评测对话只给组织管理员（Ruling S1-c）", () => {
+  it("非管理员的 agent 负责人列不出、看不到（404，不记审计）；管理员照常", async () => {
+    // alice 负责的 agentA 上的一个评测回放对话（含管理员的候选指令）
+    const convEval = "conv-eval-1";
+    await db
+      .insertInto("conversations")
+      .values({ id: convEval, org_id: orgId, agent_id: agentA, account_id: ownerId, kind: "eval" })
+      .execute();
+    await seedRun(convEval, "run-eval-1", ownerId);
+    const url = `/api/v1/orgs/${orgId}/trajectories`;
+    type Page = { items: TrajectoryListItem[]; next: string | null };
+
+    const ownerList = (await owner({ method: "GET", url: `${url}?kind=eval` })).json() as Page;
+    expect(ownerList.items.map((i) => i.conversationId)).toEqual([convEval]);
+    const aliceList = await alice({ method: "GET", url: `${url}?kind=eval` });
+    expect(aliceList.statusCode).toBe(200);
+    expect((aliceList.json() as Page).items).toEqual([]);
+    const filtered = await alice({ method: "GET", url: `${url}?kind=eval&agentId=${agentA}` });
+    expect((filtered.json() as Page).items).toEqual([]);
+
+    for (const q of ["", "?limit=1", "?runId=run-eval-1"]) {
+      const res = await alice({ method: "GET", url: `${url}/${convEval}${q}` });
+      expect(res.statusCode, q).toBe(404);
+      expect(errCode(res)).toBe("trajectory.not_found");
+    }
+    expect(await viewedCount()).toBe(0);
+    const ok = await owner({ method: "GET", url: `${url}/${convEval}` });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect((ok.json() as Detail).conversation.kind).toBe("eval");
+    expect(await viewedCount()).toBe(1);
+    // 负责人自己的 chat 对话照常
+    expect((await detail(alice, convAlice)).statusCode).toBe(200);
   });
 });

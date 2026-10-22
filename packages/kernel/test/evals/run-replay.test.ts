@@ -55,6 +55,8 @@ let root: string;
 /** 置为 true 时，下一个用例在种子写好之后、loop 开始之前模拟崩溃一次。 */
 let crashOnce = false;
 let crashes = 0;
+/** 置为 true 时，下一个用例在种子写好之后把评测运行置为取消、再模拟崩溃一次。 */
+let cancelThenCrash = false;
 /** 模拟检查 / 计费时的 DB 故障：剩余次数（-1 = 一直失败）。 */
 let checkFailures = 0;
 let chargeFailures = 0;
@@ -87,7 +89,16 @@ beforeAll(async () => {
     ),
     {
       evalHooks: {
-        async afterRunSeeded() {
+        async afterRunSeeded(evalRunId) {
+          if (cancelThenCrash) {
+            cancelThenCrash = false;
+            await db
+              .updateTable("eval_runs")
+              .set({ status: "cancelled", finished_at: new Date() })
+              .where("id", "=", evalRunId)
+              .execute();
+            throw new Error("simulated crash after seeding (run cancelled meanwhile)");
+          }
           if (!crashOnce) return;
           crashOnce = false;
           crashes++;
@@ -653,6 +664,34 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     const del = await admin({ method: "DELETE", url: `${setsUrl()}/${setId}` });
     expect(del.statusCode, del.body).toBe(204);
     expect(await convs()).toHaveLength(0);
+  });
+
+  it("崩溃后运行已停下：重试跳过该用例时删掉崩溃留下的、还在执行的评测对话", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "leftover", 'tool:tools-count__count:{"n":6}', [
+      { name: "tools-count__count", input: { n: 6 }, content: "counted 6" },
+    ]);
+    await addCase(setId, conv, "leftover");
+    cancelThenCrash = true;
+    const run = await startRun(setId, {});
+    await waitFor(
+      async () => {
+        const rs = await results(run.id);
+        return rs[0]?.status === "skipped" ? rs : null;
+      },
+      30_000,
+      "result skipped",
+      100,
+    );
+    expect((await getRun(run.id)).status).toBe("cancelled");
+    const convs = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("eval_run_id", "=", run.id)
+      .execute();
+    expect(convs).toEqual([]);
+    expect((await results(run.id))[0]?.evalConversationId).toBeNull();
   });
 
   it("崩溃后从头重跑：旧的评测对话被删掉，只剩一份结果", async () => {

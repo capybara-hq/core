@@ -261,6 +261,22 @@ describe("chat", () => {
     expect(req?.params).toEqual({ "model-eval.level": 1 });
     expect(req?.maxOutputTokens).toBe(64);
   });
+
+  it("输出上限不超过目标模型的 maxOutputTokens（eval-j 为 2000）", async () => {
+    await put(ent, adminUrl("eval"), J);
+    await k.purposes.chat(
+      orgId,
+      "eval",
+      {
+        system: [{ text: "Be a judge.", cache: false }],
+        messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        tools: [],
+        maxOutputTokens: 50_000,
+      },
+      new AbortController().signal,
+    );
+    expect(evalModelState().requests.at(-1)?.maxOutputTokens).toBe(2000);
+  });
 });
 
 describe("权限", () => {

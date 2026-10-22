@@ -5,10 +5,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
+import { recordOutcome } from "../../src/evals/budget.js";
 import type { StructuralDiff } from "../../src/evals/diff.js";
-import { JUDGE_SYSTEM, judge, parseVerdict } from "../../src/evals/judge.js";
-import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
+import {
+  JUDGE_SYSTEM,
+  judge,
+  judgeOverheadTokens,
+  parseVerdict,
+  textTokens,
+} from "../../src/evals/judge.js";
+import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
+import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { PurposeAttemptError } from "../../src/models/purposes.js";
@@ -234,6 +242,8 @@ const JUDGE_MODEL = { provider: "model-eval", model: "eval-j" };
 /** 置为 true 时，下一次评委请求之前模拟崩溃一次（结果已 done、评委未做）。 */
 let judgeCrashOnce = false;
 let judgeCrashes = 0;
+/** 设了就在每次评委请求之前调用（评委已过运行活跃检查、请求尚未发出）。 */
+let beforeJudgeHook: ((evalRunId: string) => Promise<void>) | null = null;
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -255,7 +265,8 @@ beforeAll(async () => {
     ),
     {
       evalHooks: {
-        async beforeJudge() {
+        async beforeJudge(evalRunId: string) {
+          await beforeJudgeHook?.(evalRunId);
           if (!judgeCrashOnce) return;
           judgeCrashOnce = false;
           judgeCrashes++;
@@ -280,9 +291,10 @@ let agentId: string;
 beforeEach(async () => {
   await truncateTables(
     raw,
-    "capybara.model_purpose_mappings, capybara.eval_results, capybara.eval_runs, capybara.eval_cases, capybara.eval_sets, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.model_prices, capybara.model_purpose_mappings, capybara.eval_results, capybara.eval_runs, capybara.eval_cases, capybara.eval_sets, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   resetEvalModel();
+  beforeJudgeHook = null;
   const accounts = new AccountsService(db);
   await accounts.createLocal({
     login: "ent",
@@ -542,5 +554,154 @@ describe("评测运行里的评委", () => {
     const { run, results } = await runToEnd(setId, { mode: "step", candidate: {}, judge: true });
     expect(results.map((x) => x.judgeStatus)).toEqual(["error", "error"]);
     expect(run.summary).toMatchObject({ judgeErrors: 2, judgePassRate: null });
+  });
+});
+
+describe("评委与运行停下（T6 补测）", () => {
+  const resultRow = async (runId: string) =>
+    db
+      .selectFrom("eval_results")
+      .select(["status", "judge_status", "judge"])
+      .where("run_id", "=", runId)
+      .executeTakeFirstOrThrow();
+  const runStatus = async (runId: string) =>
+    (
+      await db
+        .selectFrom("eval_runs")
+        .select("status")
+        .where("id", "=", runId)
+        .executeTakeFirstOrThrow()
+    ).status;
+  const start = async (setId: string) => {
+    const res = await admin({
+      method: "POST",
+      url: `${setsUrl()}/${setId}/runs`,
+      payload: { mode: "step", candidate: {}, judge: true },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return (res.json() as { run: EvalRunView }).run.id;
+  };
+  /** 评委（在途或未发）不再 pending、运行已终态。 */
+  const settledJudge = (runId: string) =>
+    waitFor(
+      async () => {
+        const r = await resultRow(runId);
+        const s = await runStatus(runId);
+        return r.judge_status !== "pending" && !["queued", "running"].includes(s) ? { r, s } : null;
+      },
+      20_000,
+      "judge settled",
+      50,
+    );
+  const drained = async () => {
+    await waitFor(async () => evalModelState().inflight === 0, 5_000, "judge done", 25);
+    await new Promise((x) => setTimeout(x, 200));
+  };
+
+  it("评委在途时取消：评委记 skipped，迟到的结论写不进来，运行 cancelled", async () => {
+    const setId = await echoSet("cancel judge");
+    evalModelState().delays = [800];
+    beforeJudgeHook = async (runId) => {
+      beforeJudgeHook = null;
+      const c = await admin({ method: "POST", url: `${runsUrl()}/${runId}/cancel` });
+      expect(c.statusCode, c.body).toBe(200);
+    };
+    const id = await start(setId);
+    const { s } = await settledJudge(id);
+    await drained();
+    expect(s).toBe("cancelled");
+    expect(await resultRow(id)).toMatchObject({
+      status: "done",
+      judge_status: "skipped",
+      judge: null,
+    });
+    expect(judgeRequests()).toHaveLength(1);
+  });
+
+  it("评委在途时熔断：评委记 skipped，运行 failed", async () => {
+    const setId = await echoSet("breaker judge");
+    evalModelState().delays = [800];
+    beforeJudgeHook = async (runId) => {
+      beforeJudgeHook = null;
+      // 别的用例连续出错触发熔断（max = 1）
+      const { tripped } = await recordOutcome(db, runId, false, 1);
+      expect(tripped).toBe(true);
+    };
+    const id = await start(setId);
+    const { s } = await settledJudge(id);
+    await drained();
+    expect(s).toBe("failed");
+    expect(await resultRow(id)).toMatchObject({
+      status: "done",
+      judge_status: "skipped",
+      judge: null,
+    });
+    expect(judgeRequests()).toHaveLength(1);
+  });
+
+  it("评委之前每次都崩溃、尝试用尽（failCase）：评委记 skipped，运行 completed", async () => {
+    const setId = await echoSet("fail judge");
+    let crashes = 0;
+    beforeJudgeHook = async () => {
+      crashes++;
+      throw new Error("simulated crash before every judge request");
+    };
+    const id = await start(setId);
+    const { r, s } = await settledJudge(id);
+    expect(crashes).toBe(3);
+    expect(s).toBe("completed");
+    expect(r).toMatchObject({ status: "done", judge_status: "skipped", judge: null });
+    expect(judgeRequests()).toHaveLength(0);
+  }, 30_000);
+});
+
+describe("评委估算", () => {
+  it("每条结果：系统提示词 + 评分标准 + 数据外壳 + 用户请求 + 两边回复 + 输出上限；按 eval 模型的价格单列", async () => {
+    const rubric = "Must say forty two.";
+    const setId = await echoSet(["forty two", "seven"], rubric);
+    await db
+      .insertInto("model_prices")
+      .values({
+        provider: "model-eval",
+        model: "eval-j",
+        input_per_mtok: "1",
+        output_per_mtok: "3",
+        cache_read_per_mtok: null,
+        cache_write_per_mtok: null,
+      })
+      .execute();
+    // 每个用例：触发消息与原运行的输出 token（快照里的 usage）
+    const cases = await db
+      .selectFrom("eval_cases")
+      .select("snapshot")
+      .where("set_id", "=", setId)
+      .execute();
+    let context = 0;
+    for (const { snapshot } of cases) {
+      const s = snapshot as CaseSnapshot;
+      const user = s.events.find((e) => e.type === "user_message");
+      const payload = (user?.payload ?? { content: [] }) as { content: { text: string }[] };
+      const text = payload.content[0]?.text ?? "";
+      const out = s.events
+        .filter((e) => e.type === "usage" && e.runId === s.runId)
+        .reduce((n, e) => n + (e.payload as { outputTokens: number }).outputTokens, 0);
+      context += textTokens(text) + 2 * out;
+    }
+    const res = await admin({
+      method: "POST",
+      url: `${setsUrl()}/${setId}/runs/estimate`,
+      payload: { mode: "step", candidate: {}, judge: true },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const e = (res.json() as { estimate: EvalEstimate }).estimate;
+    expect(e.judgeRequests).toBe(2);
+    // 输出上限 = min(模型 2000, judgeMaxOutputTokens 321)
+    const input = 2 * judgeOverheadTokens(rubric) + context;
+    const output = 2 * 321;
+    expect(e.judgeTokens).toBe(input + output);
+    expect(e.judgeCost).toBeCloseTo((input * 1 + output * 3) / 1_000_000, 12);
+    // 总数含评委；候选模型 model-fake 没有价格 → 总成本 null
+    expect(e.estimatedTokens).toBeGreaterThan(e.judgeTokens);
+    expect(e.estimatedCost).toBeNull();
   });
 });

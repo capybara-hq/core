@@ -7,6 +7,8 @@ import type { SettingsService } from "../identity/settings.js";
 import type { PricesService } from "../models/prices.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { recountCases, skipPendingJudges } from "./budget.js";
+import { casePlans } from "./plan.js";
+import { caseBase } from "./runs.service.js";
 import { type CaseSnapshot, replayableCalls, takeSnapshot, toEvents } from "./snapshot.js";
 import { buildTrajectory, type TrajectoryRun } from "./trajectory.js";
 
@@ -293,7 +295,10 @@ export class EvalSetsService {
     return this.view(orgId, setId);
   }
 
-  /** 软删除评测集（用例与运行保留在表里，界面与接口不再可见）。 */
+  /**
+   * 删除评测集（Ruling S1-a）：集合行软删除，留作审计存根；用例（含快照）硬删，结果随之级联删除，不留复制来的对话内容；
+   * 在执行的运行取消，运行行保留（无入口）。
+   */
   async remove(orgId: string, actor: string, setId: string, actorTokenId?: string): Promise<void> {
     if (!UUID.test(setId)) throw setNotFound();
     await this.db.transaction().execute(async (trx) => {
@@ -353,6 +358,9 @@ export class EvalSetsService {
   ): Promise<EvalCaseView | "exists" | "full"> {
     const max = this.config().evals.maxCasesPerSet;
     const json = JSON.stringify(snapshot);
+    // 估算与启动只读这些列（不读快照）：两种模式的计划与用例原版本的模型
+    const plans = casePlans(snapshot);
+    const base = await caseBase(this.db, snapshot);
     return this.db.transaction().execute(async (trx) => {
       await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
       const set = await trx
@@ -377,6 +385,9 @@ export class EvalSetsService {
           snapshot: json,
           snapshot_bytes: Buffer.byteLength(json),
           replayable_steps: replayableCalls(snapshot).length,
+          plan_step: JSON.stringify(plans.step),
+          plan_run: JSON.stringify(plans.run),
+          base_model: base ? JSON.stringify(base.definition.model) : null,
           added_by: actor,
         })
         .onConflict((oc) => oc.columns(["set_id", "source_run_id"]).doNothing())
@@ -611,7 +622,7 @@ export class EvalSetsService {
 
 /**
  * 删除评测集时（同一事务内）：在执行的评测运行置 `cancelled`、未开始的结果 `skipped`（在途的用例在下一次请求前停下），
- * 并删掉这些运行的整轮回放隐藏对话（及其 checkpoint）——集合软删后它们没有入口，也不该留着。
+ * 删掉这些运行的整轮回放隐藏对话（及其 checkpoint）与集合的全部用例（结果级联删除）——集合软删后它们没有入口，也不该留着。
  * 与回放写种子互斥：种子事务对运行行加共享锁并复核仍在执行（见 `replayRun`），这里的 UPDATE 持行锁，
  * 先提交的一方胜出，不会在删除之后再长出新的评测对话。
  */
@@ -647,4 +658,6 @@ async function stopAndPurgeRuns(trx: KernelDb, setId: string): Promise<void> {
     .where("kind", "=", "eval")
     .where("eval_run_id", "in", all)
     .execute();
+  // 用例快照是复制来的对话内容：硬删（结果随之级联删除），与单个移除用例一致
+  await trx.deleteFrom("eval_cases").where("set_id", "=", setId).execute();
 }

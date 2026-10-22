@@ -1,7 +1,7 @@
 import type { ModelUsage } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import type { KernelDb } from "../db/kernel-schema.js";
-import { type CaseSnapshot, replayableCalls } from "./snapshot.js";
+import { audit } from "../identity/audit.js";
 
 /**
  * 评测运行的 token 预算（C7）：`eval_runs.tokens_used` 在 PG 里原子累加，达到 `token_cap` 的同一条语句把
@@ -79,11 +79,11 @@ export async function recordOutcome(
     .where("id", "=", runId)
     .returning(["status", "error"])
     .executeTakeFirst();
-  return {
-    tripped:
-      r?.status === "failed" &&
-      (r.error as { code?: string } | null)?.code === TOO_MANY_ERRORS.code,
-  };
+  const tripped =
+    r?.status === "failed" && (r.error as { code?: string } | null)?.code === TOO_MANY_ERRORS.code;
+  // 熔断：整个运行还在等的评委都记 skipped（与取消一致；在途的评委做完后写不进来）
+  if (tripped) await skipPendingJudges(db, runId);
+  return { tripped };
 }
 
 /**
@@ -140,33 +140,68 @@ export async function recountCases(db: KernelDb, runId: string): Promise<void> {
   else await db.transaction().execute((trx) => run(trx));
 }
 
-/** 运行仍在执行（queued / running）：取消、达到上限、已结束或已删除都为 false。 */
+/**
+ * 运行仍在执行（queued / running），且所属组织与评测集的 agent 都没有删除：取消、达到上限、已结束、运行行已删除、
+ * 组织或 agent 已删除都为 false（删除组织 / agent 时会显式取消运行，这里再兜一次底，挡住删除与请求之间的竞争）。
+ */
 export async function runActive(db: KernelDb, runId: string): Promise<boolean> {
   const r = await db
-    .selectFrom("eval_runs")
-    .select("id")
-    .where("id", "=", runId)
-    .where("status", "in", [...ACTIVE_EVAL_STATUSES])
+    .selectFrom("eval_runs as r")
+    .innerJoin("eval_sets as s", "s.id", "r.set_id")
+    .innerJoin("agents as a", "a.id", "s.agent_id")
+    .innerJoin("orgs as o", "o.id", "r.org_id")
+    .select("r.id")
+    .where("r.id", "=", runId)
+    .where("r.status", "in", [...ACTIVE_EVAL_STATUSES])
+    .where("a.deleted_at", "is", null)
+    .where("o.deleted_at", "is", null)
     .executeTakeFirst();
   return r !== undefined;
 }
 
-/** 一个用例要回放的调用与原运行的用量（估算与预建结果用）。 */
-export interface CasePlan {
-  /** step 模式：每个可回放调用一行；run 模式：整个用例一行（step / seq 为 null）。 */
-  results: { step: number | null; modelCallSeq: number | null }[];
-  /** 预计的模型请求数。 */
-  modelRequests: number;
-  /** 这些请求在原运行里的用量（逐项相加）。 */
-  usage: ModelUsage;
+/**
+ * 删除组织或 agent 时（调用方的事务内）取消其在执行的评测运行：运行置 `cancelled`，未开始的结果 `skipped`、
+ * 等评委的记 `skipped`，重算进度，每个运行写审计 `eval.run_cancelled`（detail 带原因）。在途请求做完后写不进新的请求
+ * （worker 每次请求前查 {@link runActive}）。运行创建者离开组织不取消（Ruling S1-b：管理员的评测运行是组织的工作）。
+ */
+export async function cancelEvalRuns(
+  trx: KernelDb,
+  scope: { orgId: string; agentId?: string },
+  actor: { accountId: string; tokenId?: string },
+  reason: "org_deleted" | "agent_deleted",
+): Promise<string[]> {
+  let q = trx
+    .updateTable("eval_runs")
+    .set({ status: "cancelled", finished_at: sql`now()` })
+    .where("org_id", "=", scope.orgId)
+    .where("status", "in", [...ACTIVE_EVAL_STATUSES]);
+  if (scope.agentId !== undefined) {
+    const agentId = scope.agentId;
+    q = q.where("set_id", "in", (eb) =>
+      eb.selectFrom("eval_sets").select("id").where("agent_id", "=", agentId),
+    );
+  }
+  const runs = await q.returning("id").execute();
+  for (const r of runs) {
+    await trx
+      .updateTable("eval_results")
+      .set({ status: "skipped", updated_at: sql`now()` })
+      .where("run_id", "=", r.id)
+      .where("status", "=", "pending")
+      .execute();
+    await skipPendingJudges(trx, r.id);
+    await recountCases(trx, r.id);
+    await audit(trx, {
+      actorAccountId: actor.accountId,
+      ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
+      orgId: scope.orgId,
+      action: "eval.run_cancelled",
+      target: r.id,
+      detail: { reason },
+    });
+  }
+  return runs.map((r) => r.id);
 }
-
-const ZERO: ModelUsage = {
-  inputTokens: 0,
-  outputTokens: 0,
-  cacheReadTokens: 0,
-  cacheWriteTokens: 0,
-};
 
 export const addUsage = (a: ModelUsage, b: ModelUsage): ModelUsage => ({
   inputTokens: a.inputTokens + b.inputTokens,
@@ -174,44 +209,3 @@ export const addUsage = (a: ModelUsage, b: ModelUsage): ModelUsage => ({
   cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
   cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
 });
-
-const asUsage = (p: unknown): ModelUsage => {
-  const x = p as Partial<ModelUsage>;
-  return {
-    inputTokens: x.inputTokens ?? 0,
-    outputTokens: x.outputTokens ?? 0,
-    cacheReadTokens: x.cacheReadTokens ?? 0,
-    cacheWriteTokens: x.cacheWriteTokens ?? 0,
-  };
-};
-
-/**
- * 一个用例的回放计划：
- * - `step`：请求 = 可回放的调用（`replayableCalls`），用量 = 这些调用各自记录的 usage（该步该调用之后第一条）；
- * - `run`：请求 = 原运行的全部 `model_call`，用量 = 原运行的全部 usage。
- */
-export function casePlan(s: CaseSnapshot, mode: "step" | "run"): CasePlan {
-  const own = s.events.filter((e) => e.runId === s.runId);
-  if (mode === "run") {
-    let usage = ZERO;
-    let calls = 0;
-    for (const e of own) {
-      if (e.type === "model_call") calls++;
-      else if (e.type === "usage") usage = addUsage(usage, asUsage(e.payload));
-    }
-    return { results: [{ step: null, modelCallSeq: null }], modelRequests: calls, usage };
-  }
-  const calls = replayableCalls(s);
-  let usage = ZERO;
-  for (const c of calls) {
-    const u = own.find(
-      (e) => e.type === "usage" && e.seq > c.seq && (e.payload as { step: number }).step === c.step,
-    );
-    if (u) usage = addUsage(usage, asUsage(u.payload));
-  }
-  return {
-    results: calls.map((c) => ({ step: c.step, modelCallSeq: c.seq })),
-    modelRequests: calls.length,
-    usage,
-  };
-}

@@ -63,6 +63,8 @@ const notFound = () => new ApiError("trajectory.not_found", "Trajectory not foun
  * 企业管理员不因身份而能看（不是组织成员时 OrgGuard 已 404）。
  *
  * 列表按 `conversations.kind` 过滤，不传时只列 `chat`（评测回放的隐藏对话用 `kind: "eval"` 列出）。
+ * 评测对话（`kind = 'eval'`）只给组织管理员（Ruling S1-c）：里面是管理员的候选指令，非管理员的 agent 负责人
+ * 列不出、读详情 404。
  */
 export class TrajectoryService {
   constructor(
@@ -124,6 +126,8 @@ export class TrajectoryService {
     const role = await this.role(orgId, accountId);
     if (!TrajectoryService.isMember(role)) return { items: [], next: null };
     const admin = roleAtLeast(role, "admin");
+    // 评测对话只给组织管理员（Ruling S1-c）
+    if (q.kind === "eval" && !admin) return { items: [], next: null };
     let query = this.db
       .selectFrom("conversations as c")
       .innerJoin("agents as a", "a.id", "c.agent_id")
@@ -225,6 +229,11 @@ export class TrajectoryService {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!conv || !(await this.canView(orgId, accountId, conv.agent_id))) throw notFound();
+    // 评测对话只给组织管理员（Ruling S1-c）：负责人也 404
+    if (conv.kind === "eval") {
+      const role = await this.role(orgId, accountId);
+      if (role === null || !roleAtLeast(role, "admin")) throw notFound();
+    }
     const events: ConversationEvent[] = [];
     let next: string | null | undefined;
     if (window === undefined) {
@@ -275,6 +284,7 @@ export class TrajectoryService {
   /**
    * 窗口内已开始（`started_at` 非空，与轨迹只列有 `run_started` 的运行一致）的运行，按 (created_at, id) 倒序取
    * `limit` 次；`before` 是上一页的 `next`（运行 id）。`next`：还有更早的运行时为本页最早一次的 id。
+   * `runId` / `before` 不是本对话里已开始的运行 → `trajectory.not_found`（调用方在写审计之前调用）。
    */
   private async windowRuns(
     conversationId: string,
@@ -293,6 +303,15 @@ export class TrajectoryService {
       query = query.limit(window.limit + 1);
       if (window.before !== undefined) {
         const before = window.before;
+        // 游标必须是本对话里已开始的一次运行，否则 404（不写审计）
+        const cursor = await this.db
+          .selectFrom("runs")
+          .select("id")
+          .where("id", "=", before)
+          .where("conversation_id", "=", conversationId)
+          .where("started_at", "is not", null)
+          .executeTakeFirst();
+        if (!cursor) throw notFound();
         query = query.where(
           (eb) =>
             sql<boolean>`(${eb.ref("r.created_at")}, ${eb.ref("r.id")}) < (
@@ -303,6 +322,8 @@ export class TrajectoryService {
       }
     }
     const rows = await query.execute();
+    // 指定的运行不在本对话里（或还没开始）：404（不写审计）
+    if ("runId" in window && rows.length === 0) throw notFound();
     const limit = "runId" in window ? 1 : window.limit;
     const page = rows.slice(0, limit);
     return {

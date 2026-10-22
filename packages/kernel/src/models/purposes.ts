@@ -284,7 +284,8 @@ export class ModelPurposesService {
 
   /**
    * 按用途发一次对话请求：解析映射、按目标模型的声明宽松处理参数（补默认值，与运行时一致），用 `consumeModelStream`
-   * 收完（只有流空闲看门狗）。请求发出之前的失败原样抛出；发出之后的失败包成 {@link PurposeAttemptError}（带估算用量）。
+   * 收完（只有流空闲看门狗）。输出上限取 `min(req.maxOutputTokens, 目标模型的 maxOutputTokens)`。
+   * 请求发出之前的失败原样抛出；发出之后的失败包成 {@link PurposeAttemptError}（带估算用量）。
    */
   async chat(
     orgId: string,
@@ -304,6 +305,8 @@ export class ModelPurposesService {
       ...req,
       model: info.id,
       params: sanitizeParams(info.parameters, target.params).value,
+      // 输出上限不超过目标模型自己的上限（与运行时 assembleModelRequest 一致）
+      maxOutputTokens: Math.min(req.maxOutputTokens, info.maxOutputTokens),
     };
     const idleMs = info.streamIdleTimeoutMs ?? this.d.config().runtime.streamIdleMs;
     let chars = 0;

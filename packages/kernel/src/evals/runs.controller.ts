@@ -12,6 +12,7 @@ import {
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type {
   EvalEstimate,
+  EvalResultLight,
   EvalResultView,
   EvalRunsService,
   EvalRunView,
@@ -40,10 +41,20 @@ const EstimateBody = z
 
 const StartBody = EstimateBody;
 
+/**
+ * `view=light`：不含内容块（结果表与轮询用，响应带 `asOf`）；缺省 `full`。`updatedSince`（ISO 时间）只取之后有变化的，
+ * 轮询时传上一次的 `asOf`。
+ */
 const ResultsQuery = z
   .object({
     after: z.string().max(100).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
+    view: z.enum(["full", "light"]).default("full"),
+    updatedSince: z
+      .string()
+      .max(64)
+      .refine((v) => !Number.isNaN(Date.parse(v)), { message: "must be an ISO timestamp" })
+      .optional(),
   })
   .strict();
 
@@ -65,7 +76,7 @@ function candidateOf(c: z.infer<typeof Candidate>): EvalCandidate {
 }
 
 /**
- * 评测运行（`/api/v1/orgs/:orgId/eval-sets/:setId/runs`、`/api/v1/orgs/:orgId/eval-runs/:runId`）与
+ * 评测运行（`/api/v1/orgs/:orgId/eval-sets/:setId/runs`、`/api/v1/orgs/:orgId/eval-runs/:runId[/results[/:resultId]]`）与
  * 结果的人工标注（`/api/v1/orgs/:orgId/eval-results/:resultId/label`）：
  * 全部 `evals.manage`（admin 起、只给人）。
  */
@@ -144,12 +155,34 @@ export class EvalRunsController {
     @CurrentOrg() org: OrgContext,
     @Param("runId") runId: string,
     @Query(new ZodPipe(ResultsQuery)) q: z.infer<typeof ResultsQuery>,
-  ): Promise<{ results: EvalResultView[]; next: string | null }> {
-    requireUser(principal);
-    return this.runs.results(org.orgId, runId, {
+  ): Promise<
+    | { results: EvalResultView[]; next: string | null }
+    | { results: EvalResultLight[]; next: string | null; asOf: string }
+  > {
+    const p = requireUser(principal);
+    const query = {
       limit: q.limit,
       ...(q.after !== undefined && { after: q.after }),
-    });
+      ...(q.updatedSince !== undefined && { updatedSince: q.updatedSince }),
+    };
+    return q.view === "light"
+      ? this.runs.resultsLight(org.orgId, p.account.id, runId, query, patTokenId(p))
+      : this.runs.results(org.orgId, p.account.id, runId, query, patTokenId(p));
+  }
+
+  /** 一条结果的完整行（查看器按需读取）。 */
+  @Get("eval-runs/:runId/results/:resultId")
+  @OrgAction("evals.manage")
+  async result(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("runId") runId: string,
+    @Param("resultId") resultId: string,
+  ): Promise<{ result: EvalResultView }> {
+    const p = requireUser(principal);
+    return {
+      result: await this.runs.result(org.orgId, p.account.id, runId, resultId, patTokenId(p)),
+    };
   }
 
   @Post("eval-runs/:runId/cancel")

@@ -149,7 +149,8 @@ export class EventLog {
 
   /**
    * 读 `afterSeq` 之后、属于 `runIds` 中某次运行的事件，按 seq 升序，最多 `limit` 条（轨迹按运行分页用）。
-   * `runIds` 为空时返回空数组。
+   * `runIds` 为空时返回空数组。走部分索引 `conversation_events_run_idx (conversation_id, run_id, seq)`（0027）：
+   * 往前翻页读较早的运行时不扫更晚运行的事件。
    */
   async readRunsAfter(
     conversationId: string,

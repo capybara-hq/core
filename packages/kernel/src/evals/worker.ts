@@ -23,6 +23,7 @@ import {
 } from "./budget.js";
 import { replyParts, structuralDiff } from "./diff.js";
 import { judge } from "./judge.js";
+import { userRequestOf } from "./plan.js";
 import type { DriftReason } from "./reconstruct.js";
 import {
   deleteEvalConversation,
@@ -50,8 +51,8 @@ import {
 /**
  * 评测 worker（C7，只在含 `worker` 角色的进程启动）：领取 `cap-kernel-evals` 的任务，每个任务回放一个用例。
  * - 运行不活跃（取消 / 达到上限 / 熔断 / 已结束）→ 该用例剩余结果标 `skipped`；
- * - 组织并发配额 `capk:org-evals:<orgId>`（`evals.orgConcurrency`，成员为 jobId）拿不到 → 延后 5000ms；
- * - 每次请求前查 `runActive`；成功的请求在同一事务里写结果并 `consumeTokens`（越限即 `capped`），
+ * - 组织并发配额 `capk:org-evals:<orgId>`（`evals.orgConcurrency`，成员为 jobId + 认领号）拿不到 → 延后 5000ms；
+ * - 每次请求前查 `runActive`（含组织 / agent 未删除）与认领；成功的请求在同一事务里写结果并 `consumeTokens`（越限即 `capped`），
  *   发出后失败的尝试按估算同样 `consumeTokens`；
  * - 可重试的错误重试 3 次，不可重试的结果标 `error`；连续 `evals.maxConsecutiveErrors` 条结果出错 → 运行 `failed`；
  * - 结果按认领号（每次执行一个 uuid）写入：失去认领的旧执行写不进来（已发出请求的用量照样计入）；
@@ -152,13 +153,6 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 const UNFINISHED = ["pending", "running"] as const;
-
-/** 快照里 `beforeSeq` 之前最近一条用户消息的文本（评委看的「用户请求」）。 */
-function userRequestOf(s: CaseSnapshot, beforeSeq: number): string {
-  const msg = s.events.findLast((e) => e.type === "user_message" && e.seq < beforeSeq);
-  const content = (msg?.payload as { content?: ContentBlock[] } | undefined)?.content ?? [];
-  return replyParts(content).text;
-}
 
 /** 给评委看的回复：工具调用（名字与参数）在前，文本在后。 */
 function renderReply(toolCalls: { name: string; input: unknown }[], text: string): string {
@@ -284,7 +278,11 @@ export class EvalWorker {
       return;
     }
     const limit = this.d.config().evals.orgConcurrency;
-    if (!(await this.d.quota.tryEnter(orgId, jobId, limit, ORG_QUOTA_LEASE_MS))) {
+    // 每次执行一个新的认领号：失去认领（stalled 后被别的 worker 接手）的旧执行写不进结果（用量照样计入）。
+    // 配额成员 = 任务 id + 认领号：旧执行退出时只移除自己的名额，不会把接手执行的名额一起移掉
+    const claim = randomUUID();
+    const member = `${jobId}-${claim}`;
+    if (!(await this.d.quota.tryEnter(orgId, member, limit, ORG_QUOTA_LEASE_MS))) {
       // 配额满：固定 5 秒后再试，不按事件唤醒。评测是后台批任务，几秒空等可以接受，换来没有跨副本通知
       await job.moveToDelayed(Date.now() + (this.d.quotaRetryMs ?? EVAL_QUOTA_RETRY_MS), token);
       throw new DelayedError();
@@ -294,7 +292,7 @@ export class EvalWorker {
     if (this.closing) ac.abort();
     const renew = setInterval(() => {
       this.d.quota
-        .renew(orgId, jobId, ORG_QUOTA_LEASE_MS)
+        .renew(orgId, member, ORG_QUOTA_LEASE_MS)
         .catch((err) => this.d.log.warn("eval quota renew failed", { jobId, err }));
     }, ORG_QUOTA_LEASE_MS / 3);
     renew.unref();
@@ -305,8 +303,7 @@ export class EvalWorker {
         .where("id", "=", runId)
         .where("status", "=", "queued")
         .execute();
-      // 每次执行一个新的认领号：失去认领（stalled 后被别的 worker 接手）的旧执行写不进结果（用量照样计入）
-      await this.runCase(data, randomUUID(), ac.signal);
+      await this.runCase(data, claim, ac.signal);
     } catch (err) {
       if (ac.signal.aborted) {
         // 停机：任务回到队列，`running` 的结果由接手的 worker 重做
@@ -318,10 +315,27 @@ export class EvalWorker {
       clearInterval(renew);
       this.active.delete(ac);
       await this.d.quota
-        .leave(orgId, jobId)
+        .leave(orgId, member)
         .catch((err) => this.d.log.warn("eval quota leave failed", { jobId, err }));
     }
     await recountCases(this.d.db, runId);
+  }
+
+  /** 单步回放每次请求前：运行仍在执行（{@link runActive}）且结果仍由本次执行认领。 */
+  private async mayRequest(
+    runId: string,
+    resultId: string,
+    claim: string,
+  ): Promise<"ok" | "inactive" | "lost"> {
+    if (!(await runActive(this.d.db, runId))) return "inactive";
+    const held = await this.d.db
+      .selectFrom("eval_results")
+      .select("id")
+      .where("id", "=", resultId)
+      .where("status", "=", "running")
+      .where("claimed_by", "=", claim)
+      .executeTakeFirst();
+    return held ? "ok" : "lost";
   }
 
   /**
@@ -448,8 +462,11 @@ export class EvalWorker {
       let out: Awaited<ReturnType<typeof replayStep>> | undefined;
       let failure: Failure | undefined;
       for (let attempt = 0; ; attempt++) {
-        // 第一次请求前刚查过；重试前再查（取消 / 越限 / 熔断后不再发）
-        if (attempt > 0 && !(await runActive(db, runId))) {
+        // 每次请求前（含重试）：运行仍在执行（取消 / 越限 / 熔断 / 组织或 agent 删除后不再发），且仍由本次执行认领
+        // （stalled 后被接手的旧执行不再发）
+        const may = await this.mayRequest(runId, r.id, claim);
+        if (may === "lost") return;
+        if (may === "inactive") {
           await this.skipCase(data);
           return;
         }
@@ -770,16 +787,54 @@ export class EvalWorker {
     );
   }
 
-  /** 该用例剩下的结果标 skipped。 */
+  /**
+   * 该用例剩下的结果标 skipped。整轮回放留下的评测对话里若还有没结束的运行（上一次执行崩溃在回放中途），删掉它，
+   * 不留永远「执行中」的评测对话；已正常收尾（`run_aborted` / `run_finished`）的保留，轨迹里能看到停在哪里。
+   * 清理失败只记日志，不挡住标 skipped（残留的随评测集或组织删除清掉）。
+   */
   private async skipCase(data: EvalJobData): Promise<void> {
-    await this.d.db
+    const db = this.d.db;
+    const left = await db
+      .selectFrom("eval_results as er")
+      .select(["er.id", "er.eval_conversation_id"])
+      .where("er.run_id", "=", data.runId)
+      .where("er.case_id", "=", data.caseId)
+      .where("er.status", "in", [...UNFINISHED])
+      .where("er.eval_conversation_id", "is not", null)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("runs")
+            .select("runs.id")
+            .whereRef("runs.conversation_id", "=", "er.eval_conversation_id")
+            .where("runs.status", "in", ["queued", "running"]),
+        ),
+      )
+      .execute();
+    for (const r of left) {
+      try {
+        await deleteEvalConversation(this.d.runReplay, r.eval_conversation_id as string);
+        await db
+          .updateTable("eval_results")
+          .set({ eval_conversation_id: null })
+          .where("id", "=", r.id)
+          .execute();
+      } catch (err) {
+        this.d.log.warn("cannot delete the unfinished eval conversation of a skipped case", {
+          runId: data.runId,
+          caseId: data.caseId,
+          err,
+        });
+      }
+    }
+    await db
       .updateTable("eval_results")
       .set({ status: "skipped", updated_at: sql`now()` })
       .where("run_id", "=", data.runId)
       .where("case_id", "=", data.caseId)
       .where("status", "in", [...UNFINISHED])
       .execute();
-    await skipPendingJudges(this.d.db, data.runId, data.caseId);
+    await skipPendingJudges(db, data.runId, data.caseId);
   }
 
   /** BullMQ 判定任务失败（stalled 次数超限或重试用尽）：剩下的结果记 error，再重算进度。 */

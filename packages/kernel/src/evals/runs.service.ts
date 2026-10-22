@@ -15,21 +15,16 @@ import type {
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
-import { costOf, type PricesService, priceKey } from "../models/prices.js";
+import { costOf, type ModelPrice, type PricesService, priceKey } from "../models/prices.js";
 import type { ModelPurposesService } from "../models/purposes.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { ProviderListError, type ProviderRegistry } from "../runtime/providers.js";
 import { bullConnection } from "../runtime/run-queue.js";
-import {
-  ACTIVE_EVAL_STATUSES,
-  type CasePlan,
-  casePlan,
-  recountCases,
-  skipPendingJudges,
-  usageTokens,
-} from "./budget.js";
+import { ACTIVE_EVAL_STATUSES, recountCases, skipPendingJudges, usageTokens } from "./budget.js";
+import { judgeOverheadTokens } from "./judge.js";
+import type { CasePlan } from "./plan.js";
 import type { CaseSnapshot } from "./snapshot.js";
-import { type EvalCandidate, resolveCandidate } from "./step-replay.js";
+import { candidateModel, type EvalCandidate } from "./step-replay.js";
 
 export type { EvalCandidate, EvalResultStatus, EvalRunStatus };
 
@@ -51,9 +46,17 @@ export interface EvalEstimate {
   cases: number;
   modelRequests: number;
   judgeRequests: number;
+  /** 总数：候选请求 + 评委请求（{@link judgeTokens}）。达到上限的判断按它。 */
   estimatedTokens: number;
-  /** 按候选模型的价格；有用例的候选模型没有价格 → null。 */
+  /** 总成本：候选（按候选模型的价格）+ 评委；任一部分没有价格 → null。 */
   estimatedCost: number | null;
+  /**
+   * 评委的份额（已含在总数里）：每条结果 = 系统提示词 + 评分标准 + 数据外壳 + 用户请求 + 两边回复（候选按与基线同量估算）
+   * + 输出上限 `min(评委模型上限, evals.judgeMaxOutputTokens)`。不开评委为 0。
+   */
+  judgeTokens: number;
+  /** 评委份额的成本，按 `eval` 用途生效的模型的价格；没有映射或没有价格 → null；不开评委为 0。 */
+  judgeCost: number | null;
   currency: string;
 }
 
@@ -100,6 +103,28 @@ export interface EvalRunView {
   error: { code: string; message: string } | null;
   createdAt: string;
   finishedAt: string | null;
+}
+
+/**
+ * 一条结果的轻量视图（结果表与轮询用）：不含基线 / 候选 / 差异 / 评委全文，只有状态与标量；完整内容按需读单条。
+ */
+export interface EvalResultLight {
+  id: string;
+  caseId: string;
+  step: number | null;
+  modelCallSeq: number | null;
+  status: EvalResultStatus;
+  judgeStatus: JudgeStatus;
+  /** 评委结论；没有结论（未评、失败）为 null。 */
+  verdict: "pass" | "fail" | null;
+  label: "pass" | "fail" | null;
+  driftCount: number;
+  /** 结果出错时的错误码。 */
+  errorCode: string | null;
+  /** 结构差异的两个标量（done 才有）。 */
+  toolCallsMatch: boolean | null;
+  textSimilarity: number | null;
+  updatedAt: string;
 }
 
 /** 一条结果（F-C1：与 `eval_results` 行一一对应，camelCase）。 */
@@ -281,6 +306,34 @@ function resultView(r: ResultRow): EvalResultView {
 
 const resultNotFound = () => new ApiError("eval.result_not_found", "Eval result not found");
 
+/** 轻量视图的列（JSON 里只取标量，不读内容块）。 */
+const LIGHT_COLUMNS = [
+  "id",
+  "case_id",
+  "step",
+  "model_call_seq",
+  "status",
+  "judge_status",
+  "label",
+  "updated_at",
+  sql<"pass" | "fail" | null>`judge->>'verdict'`.as("verdict"),
+  sql<number>`cardinality(drift)`.as("drift_count"),
+  sql<string | null>`error->>'code'`.as("error_code"),
+  sql<boolean | null>`(diff->>'toolCallsMatch')::boolean`.as("tool_calls_match"),
+  sql<number | null>`(diff->>'textSimilarity')::float8`.as("text_similarity"),
+] as const;
+
+/**
+ * 轻量列表的 `asOf`：本次读取时数据库的当前时间往前留的余量（毫秒）。下一次轮询以它为 `updatedSince`：
+ * 写结果的事务在读取之前开始、之后才提交时，`updated_at` 早于读取时间，留出余量才不会漏掉；重复的行由调用方按 id 合并。
+ */
+export const RESULTS_ASOF_OVERLAP_MS = 15_000;
+
+/** 查看结果的审计去重：每位查看者每次运行每小时一条（Redis 键带 TTL，多副本共享）。 */
+const RESULTS_VIEWED_TTL_SECONDS = 3600;
+const resultsViewedKey = (runId: string, accountId: string) =>
+  `capk:eval-results-viewed:${runId}:${accountId}`;
+
 /** 一个用例的计划（含用例 id 与成本）。 */
 interface PlannedCase extends CasePlan {
   caseId: string;
@@ -297,13 +350,24 @@ interface CaseProblem {
 
 export interface EvalRunsDeps {
   db: KernelDb;
+  /** 查看结果审计的去重（`SET NX EX`）；不给时每次查看都写审计。 */
+  redis?: Pick<Redis, "set">;
   config: () => KernelConfig;
   registry: Pick<ProviderRegistry, "resolve">;
   prices: Pick<PricesService, "table">;
   settings: Pick<SettingsService, "get">;
   queue: Pick<EvalQueue, "enqueue">;
-  /** 模型用途映射：开评委时 `eval` 用途必须已映射（否则 `model.unconfigured`）。 */
+  /** 模型用途映射：开评委时 `eval` 用途必须已映射（否则 `model.unconfigured`）；估算按它给评委定价。 */
   purposes: Pick<ModelPurposesService, "resolve">;
+}
+
+/** 估算评委份额用的设置：评分标准、输出上限与评委模型的价格（没有映射为 undefined）。 */
+interface JudgePricing {
+  rubric: string | null;
+  maxOutputTokens: number;
+  price: ModelPrice | undefined;
+  /** 评委用途已映射（没有映射时评委成本为 null）。 */
+  mapped: boolean;
 }
 
 /**
@@ -313,11 +377,14 @@ export interface EvalRunsDeps {
 export class EvalRunsService {
   constructor(private readonly d: EvalRunsDeps) {}
 
-  private async liveSet(orgId: string, setId: string): Promise<{ agent_id: string }> {
+  private async liveSet(
+    orgId: string,
+    setId: string,
+  ): Promise<{ agent_id: string; rubric: string | null }> {
     if (!UUID.test(setId)) throw setNotFound();
     const set = await this.d.db
       .selectFrom("eval_sets")
-      .select("agent_id")
+      .select(["agent_id", "rubric"])
       .where("id", "=", setId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
@@ -379,7 +446,10 @@ export class EvalRunsService {
     return versionDef;
   }
 
-  /** 逐个用例（一次只读一份快照）算回放计划与成本。 */
+  /**
+   * 各用例的回放计划与成本：只读写入时存好的列（`plan_step` / `plan_run`、`base_model`），不读快照。
+   * 给了候选参数时按每个用例实际所用的模型严格校验（同一模型在一次调用里只解析一次）。
+   */
   private async plan(
     setId: string,
     mode: "step" | "run",
@@ -387,9 +457,13 @@ export class EvalRunsService {
     versionDef: AgentDefinition | undefined,
   ): Promise<PlannedCase[]> {
     const table = await this.d.prices.table();
-    const ids = await this.d.db
+    const rows = await this.d.db
       .selectFrom("eval_cases")
-      .select("id")
+      .select([
+        "id",
+        "base_model",
+        sql<unknown>`${sql.ref(mode === "step" ? "plan_step" : "plan_run")}`.as("plan"),
+      ])
       .where("set_id", "=", setId)
       .orderBy("created_at")
       .orderBy("id")
@@ -399,18 +473,12 @@ export class EvalRunsService {
       string,
       Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"] | null
     >();
-    for (const { id } of ids) {
-      const row = await this.d.db
-        .selectFrom("eval_cases")
-        .select("snapshot")
-        .where("id", "=", id)
-        .executeTakeFirst();
-      if (!row) continue;
-      const s = row.snapshot as CaseSnapshot;
-      const p = casePlan(s, mode);
+    for (const row of rows) {
+      const p = row.plan as CasePlan;
       if (p.results.length === 0) continue;
-      const base = await caseBase(this.d.db, s);
-      const model = base ? resolveCandidate(base, c, versionDef).model : (c.model ?? null);
+      const baseModel = row.base_model as ModelRef | null;
+      // 没有原版本定义（base_model 为 null）时 worker 会把结果记 eval.definition_missing，不发请求
+      const model = baseModel ? candidateModel(baseModel, c, versionDef) : (c.model ?? null);
       const price = model ? table.get(priceKey(model.provider, model.model)) : undefined;
       // 候选参数按每个用例实际所用的模型严格校验（没给候选模型 / 版本时，所用模型是该用例自己的）
       let problem: CaseProblem | null = null;
@@ -442,23 +510,79 @@ export class EvalRunsService {
           }
         }
       }
-      out.push({ ...p, caseId: id, cost: problem ? 0 : costOf(p.usage, price), problem });
+      out.push({ ...p, caseId: row.id, cost: problem ? 0 : costOf(p.usage, price), problem });
     }
     return out;
   }
 
-  /** 估算只算会发请求的用例（候选不合法的用例不发请求）。 */
-  private async summarize(all: PlannedCase[], judge: boolean): Promise<EvalEstimate> {
+  /**
+   * 评委份额的估算设置（不开评委 → null）：输出上限 `min(评委模型上限, evals.judgeMaxOutputTokens)`、评委模型的价格。
+   * `eval` 用途没有映射时照常估算 token（按配置的上限），成本未知。
+   */
+  private async judgePricing(
+    orgId: string,
+    rubric: string | null,
+    judge: boolean,
+  ): Promise<JudgePricing | null> {
+    if (!judge) return null;
+    const configured = this.d.config().evals.judgeMaxOutputTokens;
+    let target: Awaited<ReturnType<ModelPurposesService["resolve"]>>;
+    try {
+      target = await this.d.purposes.resolve(orgId, "eval");
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "model.unconfigured") {
+        return { rubric, maxOutputTokens: configured, price: undefined, mapped: false };
+      }
+      throw e;
+    }
+    let maxOutputTokens = configured;
+    try {
+      const { info } = await this.d.registry.resolve(target.model);
+      maxOutputTokens = Math.min(configured, info.maxOutputTokens);
+    } catch (e) {
+      if (e instanceof ProviderListError) throw e;
+      if (!(e instanceof ApiError && e.code === "agent.model_unavailable")) throw e;
+    }
+    const table = await this.d.prices.table();
+    return {
+      rubric,
+      maxOutputTokens,
+      price: table.get(priceKey(target.model.provider, target.model.model)),
+      mapped: true,
+    };
+  }
+
+  /** 估算只算会发请求的用例（候选不合法的用例不发请求）；开评委时评委份额单列，也计入总数。 */
+  private async summarize(all: PlannedCase[], judge: JudgePricing | null): Promise<EvalEstimate> {
     const plans = all.filter((p) => p.problem === null);
     const { priceCurrency } = await this.d.settings.get();
     let cost: number | null = 0;
     for (const p of plans) cost = cost === null || p.cost === null ? null : cost + p.cost;
+    const judgeRequests = judge ? plans.reduce((n, p) => n + p.results.length, 0) : 0;
+    let judgeTokens = 0;
+    let judgeCost: number | null = 0;
+    if (judge && judgeRequests > 0) {
+      const input =
+        judgeRequests * judgeOverheadTokens(judge.rubric) +
+        plans.reduce((n, p) => n + (p.judgeContextTokens ?? 0), 0);
+      const output = judgeRequests * judge.maxOutputTokens;
+      judgeTokens = input + output;
+      judgeCost = judge.mapped
+        ? costOf(
+            { inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0 },
+            judge.price,
+          )
+        : null;
+    }
     return {
       cases: plans.length,
       modelRequests: plans.reduce((n, p) => n + p.modelRequests, 0),
-      judgeRequests: judge ? plans.reduce((n, p) => n + p.results.length, 0) : 0,
-      estimatedTokens: plans.reduce((n, p) => n + usageTokens(p.usage), 0),
-      estimatedCost: plans.length === 0 ? 0 : cost,
+      judgeRequests,
+      estimatedTokens: plans.reduce((n, p) => n + usageTokens(p.usage), 0) + judgeTokens,
+      estimatedCost:
+        plans.length === 0 ? 0 : cost === null || judgeCost === null ? null : cost + judgeCost,
+      judgeTokens,
+      judgeCost,
       currency: priceCurrency,
     };
   }
@@ -472,7 +596,8 @@ export class EvalRunsService {
     const caps = this.tokenCaps(input.tokenCap);
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     const plans = await this.plan(setId, input.mode, input.candidate, versionDef);
-    return { estimate: await this.summarize(plans, input.judge), ...caps };
+    const judge = await this.judgePricing(orgId, set.rubric, input.judge);
+    return { estimate: await this.summarize(plans, judge), ...caps };
   }
 
   /** token 上限：给了就校验 [1, `evals.maxTokenCap`]，缺省 `evals.defaultTokenCap`（D5）。 */
@@ -505,6 +630,7 @@ export class EvalRunsService {
     const tokenCap = this.tokenCaps(input.tokenCap).effectiveTokenCap;
     const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
     if (input.judge) await this.d.purposes.resolve(orgId, "eval");
+    const judge = await this.judgePricing(orgId, set.rubric, input.judge);
     const planned = await this.plan(setId, input.mode, input.candidate, versionDef);
     if (planned.length === 0) {
       throw new ApiError("eval.nothing_to_replay", "The eval set has nothing to replay");
@@ -545,7 +671,7 @@ export class EvalRunsService {
       if (plans.length === 0) {
         throw new ApiError("eval.nothing_to_replay", "The eval set has nothing to replay");
       }
-      const estimate = await this.summarize(plans, input.judge);
+      const estimate = await this.summarize(plans, judge);
       const run = await trx
         .insertInto("eval_runs")
         .values({
@@ -712,16 +838,49 @@ export class EvalRunsService {
     return rows.map((r) => EvalRunsService.toView(r, sums.get(r.id) ?? null));
   }
 
-  /** 结果分页：按 id 升序，`after` 为上一页最后一条的 id。 */
-  async results(
+  /**
+   * 查看结果的审计 `eval.results_viewed`（结果里有回放出来的对话内容）：每位查看者每次运行每小时一条——Redis
+   * `SET NX EX` 去重（多副本共享），轻量轮询因此不会刷审计。Redis 不可用时照写（宁多不漏）。
+   */
+  private async viewed(
     orgId: string,
     runId: string,
-    q: { after?: string; limit: number },
-  ): Promise<{ results: EvalResultView[]; next: string | null }> {
-    await this.get(orgId, runId);
+    actor: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    if (this.d.redis) {
+      let first = true;
+      try {
+        const r = await this.d.redis.set(
+          resultsViewedKey(runId, actor),
+          "1",
+          "EX",
+          RESULTS_VIEWED_TTL_SECONDS,
+          "NX",
+        );
+        first = r === "OK";
+      } catch {
+        first = true;
+      }
+      if (!first) return;
+    }
+    await audit(this.d.db, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "eval.results_viewed",
+      target: runId,
+    });
+  }
+
+  /** 结果分页的公共部分：按 id 升序，`after` 为上一页最后一条的 id；`updatedSince` 只取之后有变化的。 */
+  private resultsQuery(
+    orgId: string,
+    runId: string,
+    q: { after?: string; limit: number; updatedSince?: string },
+  ) {
     let query = this.d.db
       .selectFrom("eval_results")
-      .selectAll()
       .where("run_id", "=", runId)
       .where("org_id", "=", orgId)
       .orderBy("id")
@@ -730,12 +889,96 @@ export class EvalRunsService {
       if (!UUID.test(q.after)) throw new ApiError("validation_failed", "Invalid cursor");
       query = query.where("id", ">", q.after);
     }
-    const rows = await query.execute();
+    if (q.updatedSince !== undefined) {
+      const since = new Date(q.updatedSince);
+      if (Number.isNaN(since.getTime())) {
+        throw new ApiError("validation_failed", "Invalid updatedSince");
+      }
+      query = query.where("updated_at", ">=", since);
+    }
+    return query;
+  }
+
+  /** 结果分页（完整行）：按 id 升序，`after` 为上一页最后一条的 id。写查看审计（去重见 {@link viewed}）。 */
+  async results(
+    orgId: string,
+    actor: string,
+    runId: string,
+    q: { after?: string; limit: number; updatedSince?: string },
+    actorTokenId?: string,
+  ): Promise<{ results: EvalResultView[]; next: string | null }> {
+    await this.get(orgId, runId);
+    const rows = await this.resultsQuery(orgId, runId, q).selectAll().execute();
     const page = rows.slice(0, q.limit);
+    await this.viewed(orgId, runId, actor, actorTokenId);
     return {
       results: page.map(resultView),
       next: rows.length > q.limit ? (page.at(-1)?.id ?? null) : null,
     };
+  }
+
+  /**
+   * 结果分页（轻量，结果表与轮询用）：不含内容块。`asOf` 作为下一次轮询的 `updatedSince`（已留余量，
+   * 见 {@link RESULTS_ASOF_OVERLAP_MS}；重复的行由调用方按 id 合并）。
+   */
+  async resultsLight(
+    orgId: string,
+    actor: string,
+    runId: string,
+    q: { after?: string; limit: number; updatedSince?: string },
+    actorTokenId?: string,
+  ): Promise<{ results: EvalResultLight[]; next: string | null; asOf: string }> {
+    await this.get(orgId, runId);
+    const now = await sql<{ now: Date }>`SELECT now() AS now`.execute(this.d.db);
+    const asOf = new Date(
+      new Date(now.rows[0]?.now ?? Date.now()).getTime() - RESULTS_ASOF_OVERLAP_MS,
+    );
+    const rows = await this.resultsQuery(orgId, runId, q).select(LIGHT_COLUMNS).execute();
+    const page = rows.slice(0, q.limit);
+    await this.viewed(orgId, runId, actor, actorTokenId);
+    return {
+      results: page.map(
+        (r): EvalResultLight => ({
+          id: r.id,
+          caseId: r.case_id,
+          step: r.step,
+          modelCallSeq: r.model_call_seq === null ? null : Number(r.model_call_seq),
+          status: r.status,
+          judgeStatus: r.judge_status,
+          verdict: r.verdict === "pass" || r.verdict === "fail" ? r.verdict : null,
+          label: r.label,
+          driftCount: Number(r.drift_count),
+          errorCode: r.error_code,
+          toolCallsMatch: r.tool_calls_match,
+          textSimilarity: r.text_similarity === null ? null : Number(r.text_similarity),
+          updatedAt: new Date(r.updated_at).toISOString(),
+        }),
+      ),
+      next: rows.length > q.limit ? (page.at(-1)?.id ?? null) : null,
+      asOf: asOf.toISOString(),
+    };
+  }
+
+  /** 一条结果的完整行（查看器按需读取）；不在该运行 / 本组织 → `eval.result_not_found`。写查看审计（去重）。 */
+  async result(
+    orgId: string,
+    actor: string,
+    runId: string,
+    resultId: string,
+    actorTokenId?: string,
+  ): Promise<EvalResultView> {
+    await this.get(orgId, runId);
+    if (!UUID.test(resultId)) throw resultNotFound();
+    const row = await this.d.db
+      .selectFrom("eval_results")
+      .selectAll()
+      .where("id", "=", resultId)
+      .where("run_id", "=", runId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!row) throw resultNotFound();
+    await this.viewed(orgId, runId, actor, actorTokenId);
+    return resultView(row);
   }
 
   /**
