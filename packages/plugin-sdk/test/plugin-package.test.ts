@@ -287,6 +287,10 @@ describe("staticManifestOf", () => {
       ...over,
     });
 
+  it("dispose 是函数，不进静态清单（有无 dispose 结果相同）", () => {
+    expect(staticManifestOf(real({ dispose() {} }))).toEqual(staticManifestOf(real()));
+  });
+
   it("只保留静态数据，补齐默认值", () => {
     const st = staticManifestOf(real());
     expect(st).toEqual({

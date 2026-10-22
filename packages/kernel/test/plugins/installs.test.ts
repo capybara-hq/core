@@ -551,6 +551,34 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
     expect(inst.find((r) => r.name === "mig-mismatch")?.migrated_sha).toBeNull();
     expect(inst.find((r) => r.name === "mig-dir")?.migrated_sha).not.toBeNull();
   });
+
+  it("配置声明的插件 requires 的能力只由安装记录提供：等安装记录加载完再加载；仍无提供方时启动失败", async () => {
+    await stopAll();
+    const DEPENDENT = fileURLToPath(
+      new URL("../fixtures/plugins/everything-dependent/index.ts", import.meta.url),
+    );
+    // 没有任何提供方：与此前一样，内核启动失败并点名
+    await expect(boot({ plugins: [MODEL_FAKE, DEPENDENT] })).rejects.toThrow(
+      /everything-dependent: required capability counter@1 has no provider/,
+    );
+    await installPkg(
+      "inst-counter",
+      await pluginTgz({
+        name: "inst-counter",
+        manifest: { provides: ["counter@1"] },
+        entry: [
+          'import { definePlugin } from "@capybara-hq/plugin-sdk";',
+          'export default definePlugin({ name: "inst-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
+        ].join("\n"),
+      }),
+    );
+    const k = await boot({ plugins: [MODEL_FAKE, DEPENDENT] });
+    expect(k.host.sourceOf("inst-counter")).toBe("install");
+    expect(k.host.sourceOf("everything-dependent")).toBe("config");
+    const names = k.host.manifests().map((m) => m.name);
+    expect(names).toContain("everything-dependent");
+    expect(names.indexOf("inst-counter")).toBeLessThan(names.indexOf("everything-dependent"));
+  });
 });
 
 describe("内置插件", () => {

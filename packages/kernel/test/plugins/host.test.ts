@@ -155,8 +155,8 @@ describe("PluginHost", () => {
     const b = host({ secretcfg: { token: "token-two-456" } });
     await b.load([fx("secretcfg")]);
     expect(a.manifests()[0]?.name).toBe("secretcfg");
-    const ha = (a as unknown as { loaded: { configHash: string }[] }).loaded[0]?.configHash;
-    const hb = (b as unknown as { loaded: { configHash: string }[] }).loaded[0]?.configHash;
+    const ha = a.current("secretcfg")?.configHash;
+    const hb = b.current("secretcfg")?.configHash;
     expect(ha).toMatch(/^[0-9a-f]{16}$/);
     expect(ha).toBe(hb);
   });

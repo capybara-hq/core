@@ -26,12 +26,24 @@ export function createQueue(
   redisUrl: string,
   namespace: string,
   opts: { runWorkers: boolean; log?: Pick<Logger, "error"> },
-): PluginContext["queue"] & { close(): Promise<void> } {
+): PluginContext["queue"] & {
+  close(): Promise<void>;
+  /** 停止取新任务（不等进行中的）：撤销插件实例的第一步。 */
+  pauseWorkers(): Promise<void>;
+  /**
+   * 关闭一个队列的 worker：不再取新任务，等进行中的任务结束，最多等到 `deadline`（epoch 毫秒）；到点仍未结束的
+   * 强制关闭——任务留在队列里（锁过期后按 stalled 交回等待），由新实例的 worker 接着处理（队列名不含版本）。
+   * 不给 `deadline` 时一直等到进行中的任务结束（停机路径）。没有 worker（本进程不含 worker 角色）时什么都不做。
+   */
+  stopWorker(name: string, deadline?: number): Promise<void>;
+} {
   assertNamespace(namespace);
   const log = opts.log ?? consoleLog;
   const connections: Redis[] = [];
   const queues = new Map<string, Queue>();
   const workers = new Map<string, Worker>();
+  /** 每个 worker 进行中的任务数与「空了」的等待者（撤销时排空用）。 */
+  const active = new Map<string, { n: number; idle: (() => void)[] }>();
   const defined = new Set<string>();
   let closed = false;
   const assertOpen = () => {
@@ -63,10 +75,18 @@ export function createQueue(
       if (defined.has(name)) throw new Error(`queue "${name}" already defined`);
       defined.add(name);
       if (!opts.runWorkers) return;
+      const st = { n: 0, idle: [] as (() => void)[] };
+      active.set(name, st);
       const worker = new Worker(
         queueName(name),
         async (job) => {
-          await handler(job.data);
+          st.n += 1;
+          try {
+            await handler(job.data);
+          } finally {
+            st.n -= 1;
+            if (st.n === 0) for (const w of st.idle.splice(0)) w();
+          }
         },
         { connection: newConn(), concurrency: o?.concurrency ?? 1 },
       );
@@ -88,6 +108,32 @@ export function createQueue(
         removeOnComplete: 1000,
         removeOnFail: 5000,
       });
+    },
+    async pauseWorkers() {
+      await Promise.all([...workers.values()].map((w) => w.pause(true).catch(() => {})));
+    },
+    async stopWorker(name, deadline) {
+      const w = workers.get(name);
+      if (!w) return;
+      workers.delete(name);
+      const st = active.get(name);
+      active.delete(name);
+      if (deadline === undefined) {
+        await w.close();
+        return;
+      }
+      await w.pause(true).catch(() => {});
+      if (st && st.n > 0) {
+        let timer: NodeJS.Timeout | undefined;
+        await Promise.race([
+          new Promise<void>((resolve) => st.idle.push(resolve)),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+          }),
+        ]);
+        clearTimeout(timer);
+      }
+      await w.close(st !== undefined && st.n > 0);
     },
     async close() {
       closed = true;

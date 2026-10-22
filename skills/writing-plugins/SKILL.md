@@ -103,6 +103,8 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 
 **`setup` 必须返回**：插件按依赖顺序串行 setup，内核不给 setup 设超时。setup 永不 resolve（如等待一个永远不来的外部连接、`await` 一个没人 resolve 的 Promise）时，内核 `start()` 会**永远挂起**、HTTP 不监听、后续插件不加载；此时停机（`stop()`）仍会立即关闭该插件的 ctx 并释放连接。需要等外部依赖就绪时，在 setup 里自己设超时并抛错，或把等待挪到队列任务里。
 
+**撤销与重新加载（不重启，C17）**：插件实例可能在进程运行中被撤销（停用、卸载、升级换新实例，或它 `requires` / `optional` 的提供方换了实例）。内核为每个实例记一本账：经 ctx 的每项登记——工具、路由、队列 worker、bus 订阅、`ctx.lock` 取到的租约、界面 view / action、`provide`——撤销时逐项撤掉，**插件不用自己退订或释放**。撤销顺序：停止接新调用 → 等在途的工具调用与队列任务结束（最多 `pluginHost.drainSeconds`，默认 30 秒；没结束的工具调用以英文错误结果交给模型，没结束的队列任务留在队列里由新实例接着处理）→ 中止 `ctx.signal` → 撤销账上各项 → 调用清单里可选的 `dispose(ctx)`。所以：自己起的长任务（轮询、长连接）要监听 `ctx.signal` 收尾；在 ctx 之外自建的资源（自己 new 的客户端、连接池）在 `dispose` 里关掉；`dispose` 里不要再经 ctx 登记。撤销后插件的 `/plugins/<name>/*` 返回 503 `plugin.unavailable`。旧版本模块代码留在内存直到进程重启，所以**模块级状态不会被重置**——这也是禁用模块级状态的又一个原因。setup 抛错时不调用 `dispose`，已登记的由内核撤销。
+
 `sdk` 范围由内核按 `SDK_VERSION`（等于 `@capybara-hq/plugin-sdk` 的 package 版本，有测试钉住）校验。0.x 阶段 `^0.1.0` 只匹配 `0.1.x`：**SDK 升 minor（如 0.2.0）时，仓库内所有插件的 `sdk` 范围都要同步改**，否则内核拒绝加载。
 
 ## 两级配置

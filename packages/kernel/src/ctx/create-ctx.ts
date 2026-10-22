@@ -26,6 +26,7 @@ import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { RegistrationLedger } from "../plugins/ledger.js";
 import { StorageService } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import {
@@ -249,6 +250,14 @@ const noProviders = (deps: KernelDeps): CapabilityAccess => ({
 
 /** 内核视角的插件 ctx：插件契约之外还带宿主要用的登记信息与关闭方法。 */
 export type KernelPluginContext = PluginContext & {
+  /** 本实例的登记账（C17）：每次登记记一笔，撤销时逐项撤销。 */
+  ledger: RegistrationLedger;
+  /**
+   * 撤销第一步：停止取新的队列任务；`deadline`（epoch 毫秒）之后撤销队列 worker 时不再等进行中的任务。
+   */
+  beginDispose(deadline: number): Promise<void>;
+  /** 中止 `ctx.signal`（幂等）。 */
+  abort(): void;
   routes: Route[];
   provided: Map<CapabilityRef, unknown>;
   /** 已注册的工具（按注册顺序）。 */
@@ -259,6 +268,7 @@ export type KernelPluginContext = PluginContext & {
   uiActions: ReadonlyMap<string, UiActionHandler>;
   /** setup 结束后调用：此后 `tools.register`、`ui.view`、`ui.action` 抛错。 */
   sealTools(): void;
+  /** 中止 signal、封账并逐项撤销仍在账上的登记、关闭队列连接（幂等）。 */
   close(): Promise<void>;
 };
 
@@ -285,11 +295,14 @@ export function createPluginContext(
   const registeredTools: RegisteredTool[] = [];
   let toolsSealed = false;
   const queue = createQueue(deps.redisUrl, name, { runWorkers: deps.runWorkers, log: deps.log });
-  const { close: closeQueue, ...queueApi } = queue;
   const bus = createBus(deps.redis, deps.busSubscriber, name, deps.log);
   // 界面刷新发在内核命名空间（会话主题 conv.<id> / 组织主题 org-ui.<orgId>），不在插件自己的命名空间
   const kernelBus = createBus(deps.redis, deps.busSubscriber, "kernel", deps.log);
-  const unsubs = new Set<() => Promise<void>>();
+  const ledger = new RegistrationLedger(name);
+  const lifecycle = new AbortController();
+  /** 撤销时队列 worker 排空的截止时刻（epoch 毫秒）；undefined = 一直等（停机路径）。 */
+  let drainDeadline: number | undefined;
+  const lock = createLock(deps.redis, name);
   const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
   let closing: Promise<void> | undefined;
   const perms = manifest.permissions ?? {};
@@ -399,28 +412,52 @@ export function createPluginContext(
 
   const ctx: Omit<KernelPluginContext, "secrets" | "storage"> = {
     kv: createKv(deps.redis, name),
-    lock: createLock(deps.redis, name),
+    lock: {
+      // 取到的租约记账：实例撤销时释放仍持有的；插件自己 release 时销账
+      async acquire(key, opts) {
+        const lease = await lock.acquire(key, opts);
+        if (!lease) return null;
+        const settle = ledger.add({ kind: "lease", key, dispose: () => lease.release() });
+        return {
+          renew: () => lease.renew(),
+          async release() {
+            settle();
+            await lease.release();
+          },
+        };
+      },
+    },
     capabilities,
     bus: {
       publish: bus.publish,
       async subscribe(topic, handler) {
         const closedError = () =>
           new Error(`plugin ${name}: ctx is closed; bus.subscribe is not allowed after close`);
-        if (closing) throw closedError();
+        if (closing || ledger.sealed) throw closedError();
         const un = await bus.subscribe(topic, handler);
-        // 订阅期间 ctx 被关闭：close 已清空退订集合，这里自己退订，不留下无人管的订阅
-        if (closing) {
+        // 订阅期间 ctx 被关闭 / 实例开始撤销：账已封，这里自己退订，不留下无人管的订阅
+        if (closing || ledger.sealed) {
           await un();
           throw closedError();
         }
-        unsubs.add(un);
+        const settle = ledger.add({ kind: "bus", key: topic, dispose: un });
         return async () => {
-          unsubs.delete(un);
+          settle();
           await un();
         };
       },
     },
-    queue: queueApi,
+    queue: {
+      define(qname, handler, o) {
+        queue.define(qname, handler, o);
+        ledger.add({
+          kind: "queue",
+          key: qname,
+          dispose: () => queue.stopWorker(qname, drainDeadline),
+        });
+      },
+      add: queue.add,
+    },
     db: guardDb(deps.db.withSchema(pluginSchemaName(name)), name),
     http: {
       route(method, path, handler) {
@@ -432,7 +469,16 @@ export function createPluginContext(
         if (routes.some((r) => r.method === method && r.path === full)) {
           throw new Error(`plugin ${name}: duplicate route ${method} ${path}`);
         }
-        routes.push({ method, path: full, handler });
+        const route: Route = { method, path: full, handler };
+        routes.push(route);
+        ledger.add({
+          kind: "route",
+          key: `${method} ${path}`,
+          dispose: async () => {
+            const i = routes.indexOf(route);
+            if (i >= 0) routes.splice(i, 1);
+          },
+        });
       },
     },
     tools: {
@@ -453,15 +499,38 @@ export function createPluginContext(
         if (registeredTools.some((t) => t.spec.name === spec.name)) {
           throw new Error(`plugin ${name}: duplicate tool "${spec.name}"`);
         }
-        registeredTools.push({ spec, handler });
+        const tool: RegisteredTool = { spec, handler };
+        registeredTools.push(tool);
+        ledger.add({
+          kind: "tool",
+          key: spec.name,
+          dispose: async () => {
+            const i = registeredTools.indexOf(tool);
+            if (i >= 0) registeredTools.splice(i, 1);
+          },
+        });
       },
     },
     ui: {
       view(id, render) {
         uiReg.view(id, render);
+        ledger.add({
+          kind: "ui.view",
+          key: id,
+          dispose: async () => {
+            if (uiReg.views.get(id) === render) uiReg.views.delete(id);
+          },
+        });
       },
       action(id, handler) {
         uiReg.action(id, handler);
+        ledger.add({
+          kind: "ui.action",
+          key: id,
+          dispose: async () => {
+            if (uiReg.actions.get(id) === handler) uiReg.actions.delete(id);
+          },
+        });
       },
       // 目标先核对（一条查询）：插件在 orgId 启用；带对话时对话属于 orgId。不满足就只记 debug、不发
       // （插件拿着过期或别的组织的 id 调用不是错误，但不能借它往别的组织的流里发刷新）
@@ -509,7 +578,15 @@ export function createPluginContext(
         throw new Error(`plugin ${name}: capability ${capability} provided more than once`);
       }
       provided.set(capability, impl);
+      ledger.add({
+        kind: "provide",
+        key: capability,
+        dispose: async () => {
+          if (provided.get(capability) === impl) provided.delete(capability);
+        },
+      });
     },
+    signal: lifecycle.signal,
     config: deploymentConfig,
     log: {
       info: (msg, fields) => deps.log.info(msg, tag(fields)),
@@ -521,6 +598,14 @@ export function createPluginContext(
     registeredTools,
     uiViews: uiReg.views,
     uiActions: uiReg.actions,
+    ledger,
+    async beginDispose(deadline) {
+      drainDeadline = deadline;
+      await queue.pauseWorkers();
+    },
+    abort() {
+      if (!lifecycle.signal.aborted) lifecycle.abort();
+    },
     sealTools() {
       toolsSealed = true;
       uiReg.seal();
@@ -528,10 +613,16 @@ export function createPluginContext(
     /** 幂等：重复 / 并发调用共享同一次关闭。 */
     close() {
       closing ??= (async () => {
-        const pending = [...unsubs];
-        unsubs.clear();
-        await Promise.allSettled(pending.map((u) => u()));
-        await closeQueue();
+        if (!lifecycle.signal.aborted) lifecycle.abort();
+        await ledger.disposeAll((r, err) =>
+          deps.log.warn("plugin registration dispose failed", {
+            plugin: name,
+            kind: r.kind,
+            key: r.key,
+            err,
+          }),
+        );
+        await queue.close();
         await Promise.allSettled([...audits]);
       })();
       return closing;

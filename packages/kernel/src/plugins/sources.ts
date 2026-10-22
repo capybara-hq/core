@@ -27,7 +27,8 @@ export interface PluginLoadStatus {
   version: string;
   sha256: string | null;
   source: PluginSource;
-  state: "loaded" | "failed" | "pending";
+  /** `unloaded`：本进程撤销了它（停用 / 卸载，或随提供方卸下时 reason 为 `dependency`）；停机时全部标为它。 */
+  state: "loaded" | "failed" | "pending" | "unloaded";
   reason: PendingReason | string | null;
   detail: string | null;
 }

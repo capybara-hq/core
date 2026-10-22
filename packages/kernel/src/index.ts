@@ -98,7 +98,14 @@ export {
   type InstalledPluginLoader,
   PluginHost,
   type PluginLoadPlan,
+  RELOAD_WARN_THRESHOLD,
 } from "./plugins/host.js";
+export {
+  type InflightEntry,
+  InflightTracker,
+  PLUGIN_UNLOADED_TOOL_ERROR,
+  PluginUnloadedError,
+} from "./plugins/inflight.js";
 export {
   type DesiredPlugin,
   type IngestSource,
@@ -106,6 +113,14 @@ export {
   type PluginInstallRow,
   PluginInstalls,
 } from "./plugins/installs.js";
+export {
+  type LoadDeps,
+  loadInstance,
+  ManifestMismatchError,
+  PluginInstance,
+  type Registration,
+  type RegistrationKind,
+} from "./plugins/instance.js";
 export {
   extractPluginPackage,
   HOST_ZOD_VERSION,
@@ -130,6 +145,7 @@ export {
   permissionGroups,
   reviewHash,
 } from "./plugins/permission-view.js";
+export { PluginRegistry } from "./plugins/registry.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
 export {
   newReplicaId,

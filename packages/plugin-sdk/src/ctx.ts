@@ -131,6 +131,11 @@ export interface PluginContext {
     verifyEmbedToken(token: string): Promise<EmbedClaims | null>;
   };
   provide(capability: CapabilityRef, impl: unknown): void;
+  /**
+   * 本插件实例的生命周期信号：实例被撤销（停用、卸载、升级）时、在途调用排空之后中止。
+   * 插件自己起的长任务（轮询循环、长连接等）据此收尾。
+   */
+  signal: AbortSignal;
   /** 部署级配置，已按插件 schema 校验。 */
   config: unknown;
   log: Logger;

@@ -38,6 +38,7 @@ export const ERROR_CODES = {
   "invitation.expired": 410,
   "invitation.used": 409,
   "plugin.not_found": 404,
+  "plugin.unavailable": 503,
   "plugin.no_org_config": 400,
   "plugin.config_invalid": 400,
   "plugin.dependency_missing": 409,

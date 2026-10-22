@@ -11,8 +11,9 @@ import { HealthController, type HealthOptions } from "./health.controller.js";
 import { NestLogAdapter } from "./nest-logger.js";
 import {
   createPluginRouter,
-  type PluginRouter,
+  type PluginRouteTable,
   registerPluginDispatch,
+  staticRouteTable,
 } from "./plugin-dispatch.js";
 import { HEALTH_OPTIONS, KERNEL_LOG } from "./tokens.js";
 
@@ -29,8 +30,11 @@ export interface KernelHttp {
 
 /** 内核 HTTP 应用。 */
 export interface KernelHttpApp extends KernelHttp {
-  /** 挂载插件路由；路径必须以 `/plugins/` 开头。只能调用一次。 */
-  mountPlugins(routes: Route[]): void;
+  /**
+   * 挂载插件路由；路径必须以 `/plugins/` 开头。只能调用一次。传路由来源（{@link PluginRouteTable}）时
+   * 每个请求实时取路由（插件撤销 / 替换后立即生效），撤销的插件返回 503 `plugin.unavailable`。
+   */
+  mountPlugins(routes: Route[] | PluginRouteTable): void;
   /** 监听 0.0.0.0，返回实际端口。 */
   listen(port: number): Promise<number>;
   close(): Promise<void>;
@@ -133,9 +137,9 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
     (_req, body, done) => done(null, body),
   );
 
-  let router: PluginRouter | undefined;
+  let table: PluginRouteTable | undefined;
   const dispatch = opts.servePlugins
-    ? await registerPluginDispatch(fastify, () => router, opts.log)
+    ? await registerPluginDispatch(fastify, () => table, opts.log)
     : undefined;
   await app.init();
 
@@ -147,8 +151,11 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
         fastify.server.getConnections((err, n) => (err ? reject(err) : resolve(n))),
       ),
     mountPlugins(pluginRoutes) {
-      if (router) throw new Error("plugin routes already mounted");
-      router = createPluginRouter(pluginRoutes);
+      if (table) throw new Error("plugin routes already mounted");
+      const t = Array.isArray(pluginRoutes) ? staticRouteTable(pluginRoutes) : pluginRoutes;
+      // 先建一次：路径不在 /plugins/ 下的立即报错
+      createPluginRouter(t.routes());
+      table = t;
     },
     async listen(port) {
       await app.listen(port, "0.0.0.0");

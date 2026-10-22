@@ -226,16 +226,20 @@ export class ToolRegistry {
 
   /**
    * 内置 / 插件工具的处理函数（执行管线用）；应用工具经连接器执行，返回 undefined。
-   * 插件已卸载等情况也返回 undefined。
+   * 插件已卸载等情况也返回 undefined。插件工具实时取当前实例，经实例的在途计数调用（C17）：
+   * 实例撤销时先排空、到时限后中止，此时以 `PluginUnloadedError` 结束（管线据此给模型英文错误结果）。
    */
   handler(source: ResolvedTool["source"]): BuiltinHandler | undefined {
     if (source.kind === "builtin") {
       return this.deps.builtins.find((b) => b.spec.name === source.name)?.run;
     }
     if (source.kind === "plugin") {
-      return this.deps.host
+      const t = this.deps.host
         .tools()
-        .find((t) => t.plugin === source.plugin && t.spec.name === source.name)?.handler;
+        .find((x) => x.plugin === source.plugin && x.spec.name === source.name);
+      if (!t) return undefined;
+      return (input, ctx) =>
+        t.inflight.run(ctx.signal, (signal) => t.handler(input, { ...ctx, signal }));
     }
     return undefined;
   }

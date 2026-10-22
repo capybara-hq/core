@@ -25,6 +25,14 @@ export interface PluginManifest {
   config?: { deployment?: z.ZodTypeAny; org?: z.ZodTypeAny };
   migrations?: string;
   setup(ctx: PluginContext): void | Promise<void>;
+  /**
+   * 可选：插件实例被撤销（停用、卸载、升级换新实例、依赖方随提供方重新加载）时调用。
+   * 调用时内核已经：停止接新的调用、等在途调用结束（最多 `pluginHost.drainSeconds`）、中止 `ctx.signal`、
+   * 撤销本实例经 ctx 做过的全部登记（工具、路由、队列 worker、bus 订阅、锁租约、界面、provide）。
+   * 这里只收拾插件自己在 ctx 之外开的东西（如自建的连接）；不要再经 ctx 登记任何东西。
+   * setup 抛错时不调用（已登记的由内核撤销）。
+   */
+  dispose?(ctx: PluginContext): void | Promise<void>;
 }
 
 /** 插件清单不合法。 */
@@ -79,6 +87,9 @@ export function definePlugin(m: PluginManifest): PluginManifest {
     fail(`field "sdk" must be a valid semver range`);
   }
   if (typeof m.setup !== "function") fail(`field "setup" must be a function`);
+  if (m.dispose !== undefined && typeof m.dispose !== "function") {
+    fail(`field "dispose" must be a function when present`);
+  }
   if (!Array.isArray(m.provides)) fail(`field "provides" must be an array`);
   checkRefs("provides", m.provides, fail);
   if (new Set(m.provides).size !== m.provides.length) {

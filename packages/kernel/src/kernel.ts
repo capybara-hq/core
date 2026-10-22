@@ -351,6 +351,8 @@ export async function createKernel(
   let migratePromise: Promise<unknown> | undefined;
   const startAbort = new AbortController();
   let unwatch: (() => void) | undefined;
+  /** 渠道 supervisor 对插件注册表变化的订阅（停机时取消）。 */
+  let unwatchPlugins: (() => void) | undefined;
 
   const redis = new Redis(config.redis.url, { lazyConnect: true });
   redis.on("error", (err: Error) => log.error("redis connection error", { err }));
@@ -387,6 +389,7 @@ export async function createKernel(
     onSecrets: (v) => log.addSecrets(v),
     autoApprove: config.pluginPermissions.autoApprove,
     status: replicaStatus,
+    drainMs: () => current.pluginHost.drainSeconds * 1000,
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),
@@ -917,6 +920,7 @@ export async function createKernel(
         STOP_BUDGET_MS.migrate,
       );
     unwatch?.();
+    unwatchPlugins?.();
     unwatch = undefined;
     // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
     const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
@@ -1115,10 +1119,14 @@ export async function createKernel(
             log,
           });
           await channelSupervisor.start();
+          // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）
+          const supervisor = channelSupervisor;
+          unwatchPlugins = host.onChange((plugin) => supervisor.pluginChanged(plugin));
           checkpoint();
           channelOutbound.startWorker();
         }
-        httpApp.mountPlugins(host.routes());
+        // 路由保留挂载、实时取：插件撤销后 503 plugin.unavailable，重新加载后恢复（C17）
+        httpApp.mountPlugins(host.routeTable());
         if (opts.source?.watch) {
           unwatch = opts.source.watch(onConfigChange, (err) =>
             log.error("config watch error", { error: err.message }),

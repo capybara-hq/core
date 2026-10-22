@@ -16,6 +16,7 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { PLUGIN_UNLOADED_TOOL_ERROR, PluginUnloadedError } from "../plugins/inflight.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import type { WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
@@ -852,6 +853,11 @@ export class ToolPipeline {
   /** 抛出的错误 → 给模型的结果：ToolError 的消息原样（插件约定为英文、可操作），其他只给错误类名。 */
   private thrown(key: string, e: unknown): ExecOutcome {
     if (e instanceof ToolError) return { kind: "error", message: e.message };
+    // 提供工具的插件实例在调用进行中被撤销（停用 / 升级），排空时限到后中止（C17）
+    if (e instanceof PluginUnloadedError) {
+      this.deps.log.warn("tool call aborted: plugin unloaded", { toolKey: key, plugin: e.plugin });
+      return { kind: "error", message: PLUGIN_UNLOADED_TOOL_ERROR };
+    }
     // 不记参数与结果；错误经日志打码
     this.deps.log.warn("tool call failed", { toolKey: key, err: e });
     return { kind: "error", message: failedText(key, errName(e)) };
