@@ -289,9 +289,28 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
   });
 
   it("install（新装停用）→ review 列出 → approve → enable：内核收到消息后加载；disable / uninstall 同样收敛", async () => {
-    const inst = await cli(["plugins", "install", tgzPath]);
+    // 先展示审阅（权限增减）再确认；回答 n → 不安装（只存了包）
+    const declined = await cli(["plugins", "install", tgzPath], "n\n");
+    expect(declined.code).toBe(1);
+    expect(declined.stdout).toContain("+ permissions.tools:wait");
+    expect(declined.stdout).toMatch(/Install life 1\.0\.0\? \[y\/N\]/);
+    expect(declined.stdout).toContain("Not installed");
+    const none = createDb(pg.url, 1);
+    try {
+      expect(
+        await kernelDb(none).selectFrom("plugin_installs").select("name").execute(),
+      ).toEqual([]);
+    } finally {
+      await none.destroy();
+    }
+    const inst = await cli(["plugins", "install", tgzPath], "y\n");
     expect(inst.code, inst.stderr).toBe(0);
+    expect(inst.stdout).toContain("+ permissions.tools:wait");
     expect(inst.stdout).toContain("Installed life 1.0.0");
+    // --yes 跳过确认（脚本用）：同一个包再装一次不改什么
+    const again = await cli(["plugins", "install", tgzPath, "--yes"]);
+    expect(again.code, again.stderr).toBe(0);
+    expect(again.stdout).not.toContain("[y/N]");
     expect(inst.stdout).toContain("capybara plugins approve life");
     expect(inst.stdout).toContain("capybara plugins enable life");
     const raw = createDb(pg.url, 1);
@@ -346,6 +365,51 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
     const after = await cli(["plugins", "list"]);
     expect(after.stdout).not.toMatch(/^life\t/m);
   }, 180_000);
+
+  it("包存在 CLI 读不到的对象存储里（网页安装）：disable 已生效 → 退出码 0，附说明", async () => {
+    const raw = createDb(pg.url, 1);
+    const sha = "e".repeat(64);
+    try {
+      const db = kernelDb(raw);
+      await db
+        .insertInto("plugin_packages")
+        .values({
+          sha256: sha,
+          name: "webpkg",
+          package_name: "@test/plugin-webpkg",
+          version: "1.0.0",
+          size: 1,
+          section: JSON.stringify({ kind: "plugin" }),
+          blob_store: "object",
+          source: "file",
+          source_ref: "upload",
+        })
+        .execute();
+      await db
+        .insertInto("plugin_installs")
+        .values({
+          name: "webpkg",
+          sha256: sha,
+          version: "1.0.0",
+          source: "file",
+          desired_state: "enabled",
+        })
+        .execute();
+      const r = await cli(["plugins", "disable", "webpkg"]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout).toContain("Disabled webpkg 1.0.0");
+      expect(r.stdout).toMatch(/status unknown: the package is kept in object storage/);
+      const row = await db
+        .selectFrom("plugin_installs")
+        .select("desired_state")
+        .where("name", "=", "webpkg")
+        .executeTakeFirstOrThrow();
+      expect(row.desired_state).toBe("disabled");
+      await db.deleteFrom("plugin_installs").where("name", "=", "webpkg").execute();
+    } finally {
+      await raw.destroy();
+    }
+  }, 60_000);
 });
 
 describe("capybara plugins review：部署配置问题（C10）", () => {

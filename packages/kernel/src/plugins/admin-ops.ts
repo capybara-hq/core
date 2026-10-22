@@ -14,7 +14,10 @@ import type { PluginSource } from "./sources.js";
 
 export interface PluginAdminOpsDeps {
   db: KernelDb;
-  /** 返回操作后的后台视图。 */
+  /**
+   * 返回操作后的后台视图；包读不到时应返回降级项（`PluginAdmin.get(name, { allowUnreadable: true })`）。
+   * 它抛错时操作已提交：ops 记 error 并返回 {@link fallbackView}，不让已生效的操作报失败。
+   */
   view(name: string): Promise<AdminPluginView>;
   /** 内置与配置声明的插件名 → 来源（这些插件不能安装 / 停用 / 卸载，C14 / C15）。 */
   declared(): ReadonlyMap<string, PluginSource>;
@@ -108,7 +111,7 @@ export class PluginAdminOps {
           `Plugin name ${name} was previously used by package ${owner.package_name}; its data, secrets and permission approval are retained for that package, so package ${pkg.package_name} cannot take over the name`,
         );
       }
-      if (row?.sha256 === sha256) return false;
+      if (row?.sha256 === sha256) return null;
       if (row && isDowngrade(pkg.version, row.version)) {
         const unrun = await unrunMigrations(trx, name, target.migrationSql);
         if (unrun.length > 0) {
@@ -141,10 +144,14 @@ export class PluginAdminOps {
         )
         .execute();
       await this.audit(trx, actor, actorTokenId, "plugin.installed", name, pkg.version, sha256);
-      return true;
+      return { version: pkg.version, state: row?.desired_state ?? "disabled" };
     });
     if (changed) await this.notify(name);
-    return this.d.view(name);
+    return this.viewAfterCommit(name, {
+      version: pkg.version,
+      sha256,
+      state: changed ? changed.state : undefined,
+    });
   }
 
   /** 部署上启用（审计 `plugin.enabled`）；已启用时不改。组织里的启用开关不变。 */
@@ -197,11 +204,11 @@ export class PluginAdminOps {
     actorTokenId: string | undefined,
   ): Promise<AdminPluginView> {
     this.assertInstallable(name);
-    const changed = await this.d.db.transaction().execute(async (trx) => {
+    const result = await this.d.db.transaction().execute(async (trx) => {
       if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await this.lockRow(trx, name);
       if (!row) throw notFound(name);
-      if (row.desired_state === state) return false;
+      if (row.desired_state === state) return { row, changed: false };
       await trx
         .updateTable("plugin_installs")
         .set({
@@ -220,10 +227,32 @@ export class PluginAdminOps {
         row.version,
         row.sha256,
       );
-      return true;
+      return { row, changed: true };
     });
-    if (changed) await this.notify(name);
-    return this.d.view(name);
+    if (result.changed) await this.notify(name);
+    return this.viewAfterCommit(name, {
+      version: result.row.version,
+      sha256: result.row.sha256,
+      state,
+    });
+  }
+
+  /**
+   * 提交后的视图：拼视图失败（读包、查状态行出错）时操作已经生效，不能再报失败——记 error，返回降级视图。
+   */
+  private async viewAfterCommit(
+    name: string,
+    known: { version: string; sha256: string; state: "enabled" | "disabled" | undefined },
+  ): Promise<AdminPluginView> {
+    try {
+      return await this.d.view(name);
+    } catch (err) {
+      this.d.log.error("plugin change committed, but its admin view cannot be built", {
+        plugin: name,
+        err,
+      });
+      return fallbackView(name, known, err);
+    }
   }
 
   /** 内置 / 配置声明的插件不经安装记录管理。 */
@@ -296,6 +325,40 @@ export class PluginAdminOps {
         );
     }
   }
+}
+
+/**
+ * 拼不出视图时的降级项（与后台列表里包读不到的项同形：status failed、权限为空、带 `error`）。
+ */
+function fallbackView(
+  name: string,
+  known: { version: string; sha256: string; state: "enabled" | "disabled" | undefined },
+  err: unknown,
+): AdminPluginView {
+  return {
+    name,
+    version: known.version,
+    source: "install",
+    sha256: known.sha256,
+    status: "failed",
+    desired:
+      known.state === undefined
+        ? null
+        : { version: known.version, sha256: known.sha256, state: known.state },
+    replicas: [],
+    permissions: [],
+    added: [],
+    addedItems: [],
+    removed: [],
+    reviewHash: "",
+    sensitive: false,
+    warnings: [],
+    snapshot: null,
+    configurable: false,
+    configValid: true,
+    removable: true,
+    error: `the change was saved, but its current status cannot be read: ${err instanceof Error ? err.message : String(err)}`,
+  };
 }
 
 const notFound = (name: string) =>

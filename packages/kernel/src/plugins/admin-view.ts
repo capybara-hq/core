@@ -109,12 +109,15 @@ export class PluginAdmin {
     return this.views(subjects);
   }
 
-  /** 单个插件；不存在 → `plugin.not_found`。 */
-  async get(name: string): Promise<AdminPluginView> {
+  /**
+   * 单个插件；不存在 → `plugin.not_found`；包读不到 → `plugin.package_unavailable`。`allowUnreadable` 时
+   * 包读不到也返回与 {@link list} 相同的降级项（status failed、带 `error`）：写操作提交之后用，不让已生效的操作报失败。
+   */
+  async get(name: string, opts: { allowUnreadable?: boolean } = {}): Promise<AdminPluginView> {
     const s = (await this.subjects(name))[0];
     if (!s)
       throw new ApiError("plugin.not_found", `Plugin ${name} is not known to this deployment`);
-    assertReadable(s);
+    if (!opts.allowUnreadable) assertReadable(s);
     return (await this.views([s]))[0] as AdminPluginView;
   }
 

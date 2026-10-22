@@ -57,7 +57,7 @@ async function main(argv: string[]): Promise<number | undefined> {
     case "plugins-list":
       return runPluginsList(log, process.env);
     case "plugins-install":
-      return runPluginsInstall({ target: cmd.target }, log, process.env);
+      return runPluginsInstall({ target: cmd.target, yes: cmd.yes }, log, process.env);
     case "plugins-state":
       return runPluginsState({ name: cmd.name, action: cmd.action }, log, process.env);
     case "start":

@@ -85,16 +85,16 @@ describe("parseCli", () => {
     expect(() => parseCli(["plugins", "approve", "a", "b"])).toThrow(/unexpected argument/);
     expect(() => parseCli(["plugins", "review", "x"])).toThrow(/unexpected argument/);
     expect(() => parseCli(["plugins", "review", "--yes"])).toThrow(
-      /only valid for plugins approve/,
+      /only valid for plugins approve and plugins install/,
     );
     expect(() => parseCli(["plugins", "review", "--role", "api"])).toThrow(/only valid for start/);
     expect(() => parseCli(["plugins", "approve", "a", "--login", "r"])).toThrow(
       /only valid for admin create/,
     );
-    expect(() => parseCli(["start", "--yes"])).toThrow(/only valid for plugins approve/);
+    expect(() => parseCli(["start", "--yes"])).toThrow(/only valid for plugins approve and plugins install/);
     expect(() =>
       parseCli(["admin", "create", "--login", "r", "--display-name", "R", "--yes"]),
-    ).toThrow(/only valid for plugins approve/);
+    ).toThrow(/only valid for plugins approve and plugins install/);
   });
 
   it("plugins list / install / enable / disable / uninstall", () => {
@@ -102,10 +102,13 @@ describe("parseCli", () => {
     expect(parseCli(["plugins", "install", "./life.tgz"])).toEqual({
       command: "plugins-install",
       target: "./life.tgz",
+      yes: false,
     });
+    expect(parseCli(["plugins", "install", "./life.tgz", "--yes"])).toMatchObject({ yes: true });
     expect(parseCli(["plugins", "install", "npm:@acme/plugin-x@1.2.3"])).toEqual({
       command: "plugins-install",
       target: "npm:@acme/plugin-x@1.2.3",
+      yes: false,
     });
     for (const action of ["enable", "disable", "uninstall"] as const) {
       expect(parseCli(["plugins", action, "life"])).toEqual({
@@ -116,7 +119,7 @@ describe("parseCli", () => {
       expect(() => parseCli(["plugins", action])).toThrow(/plugin name/);
       expect(() => parseCli(["plugins", action, "a", "b"])).toThrow(/unexpected argument/);
       expect(() => parseCli(["plugins", action, "a", "--yes"])).toThrow(
-        /only valid for plugins approve/,
+        /only valid for plugins approve and plugins install/,
       );
     }
     expect(() => parseCli(["plugins", "install"])).toThrow(/needs a package/);

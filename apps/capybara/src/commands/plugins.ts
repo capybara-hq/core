@@ -334,13 +334,20 @@ export function parseInstallTarget(
 }
 
 /**
- * `capybara plugins install <file.tgz | npm:<name>[@<ver>]>`：校验并存入包（一律存 PG，F-Q），新装或换版本
- * （期望状态不变：新装为停用），审计 `plugin.installed`，然后发布 `kernel.plugins.changed`。
+ * 写操作已生效后的视图说明：包读不到（如存在 CLI 读不到的对象存储里）时状态未知，给出可操作的提示。
+ */
+const statusText = (v: AdminPluginView): string =>
+  v.error !== undefined ? `status unknown: ${unreadable(v)}` : `status: ${v.status}`;
+
+/**
+ * `capybara plugins install <file.tgz | npm:<name>[@<ver>]> [--yes]`：校验并存入包（一律存 PG，F-Q），先展示审阅
+ * （相对已批准快照的权限增减与迁移警告），终端确认（`--yes` 跳过）后新装或换版本（期望状态不变：新装为停用），
+ * 审计 `plugin.installed`，然后发布 `kernel.plugins.changed`。未确认时只存了包，不安装。
  * 新增权限需要 `capybara plugins approve <name>`，新装的插件需要 `capybara plugins enable <name>`。
- * 退出码：0 / 1。
+ * 退出码：0 / 1（失败或未确认）。
  */
 export async function runPluginsInstall(
-  opts: { target: string },
+  opts: { target: string; yes?: boolean },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   io: PluginsIo = defaultIo(),
@@ -359,23 +366,35 @@ export async function runPluginsInstall(
             { store: "pg" },
           );
       if (bytes) cli.remember(review.sha256, bytes);
-      const view = await cli.ops.install(review.name, review.sha256, null);
-      const lines = [
-        `Installed ${review.name} ${review.version} (package ${review.sha256.slice(0, 16)}; deployment state: ${view.desired?.state ?? "?"}; status: ${view.status}).`,
-      ];
+      const pre = [`${review.name} ${review.version} (package ${review.sha256.slice(0, 16)})`];
       if (review.added.length > 0 || review.removed.length > 0) {
-        lines.push(
-          "Permissions changed since the approved snapshot:",
+        pre.push(
+          "Permissions changed since the approved snapshot (all are new when nothing was approved):",
           ...review.added.map((k) => `  + ${mark(k)}`),
           ...review.removed.map((k) => `  - ${k}`),
         );
+      } else {
+        pre.push("No permission changes since the approved snapshot.");
       }
       if (review.warnings.length > 0) {
-        lines.push(
-          "Warning (sensitive): review these migration statements; plugin migrations should only expand, because old and new versions run side by side during an upgrade (DO blocks are not checked):",
+        pre.push(
+          "Warning (sensitive): review these migration statements; plugin migrations should only expand, because old and new versions run side by side during an upgrade:",
           ...review.warnings.map((w) => `  ! [${w.kind}] ${w.file}:${w.line}  ${w.statement}`),
         );
       }
+      io.stdout.write(`${pre.join("\n")}\n`);
+      if (!opts.yes) {
+        io.stdout.write(`Install ${review.name} ${review.version}? [y/N] `);
+        const answer = (await readLine(io.stdin))?.trim().toLowerCase();
+        if (answer !== "y" && answer !== "yes") {
+          io.stdout.write("\nNot installed (the package is stored; nothing else changed).\n");
+          return 1;
+        }
+      }
+      const view = await cli.ops.install(review.name, review.sha256, null);
+      const lines = [
+        `Installed ${review.name} ${review.version} (package ${review.sha256.slice(0, 16)}; deployment state: ${view.desired?.state ?? "?"}; ${statusText(view)}).`,
+      ];
       if (view.status === "pending_approval") {
         lines.push(`Approve with: capybara plugins approve ${review.name}`);
       }
@@ -415,7 +434,7 @@ export async function runPluginsState(
           ? await cli.ops.enable(opts.name, null)
           : await cli.ops.disable(opts.name, null);
       io.stdout.write(
-        `${opts.action === "enable" ? "Enabled" : "Disabled"} ${opts.name} ${view.version} (status: ${view.status}).\n`,
+        `${opts.action === "enable" ? "Enabled" : "Disabled"} ${opts.name} ${view.version} (${statusText(view)}).\n`,
       );
       if (opts.action === "enable" && view.status === "pending_approval") {
         io.stdout.write(`It loads after approval: capybara plugins approve ${opts.name}\n`);

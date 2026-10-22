@@ -152,7 +152,7 @@ export async function openPluginCli(
   });
   const ops = new PluginAdminOps({
     db,
-    view: (name) => admin.get(name),
+    view: (name) => admin.get(name, { allowUnreadable: true }),
     declared: () => declared,
     blobs,
     config: () => config,

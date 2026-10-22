@@ -528,7 +528,7 @@ export async function createKernel(
   });
   const pluginAdminOps = new PluginAdminOps({
     db: kdb,
-    view: (name) => pluginAdmin.get(name),
+    view: (name) => pluginAdmin.get(name, { allowUnreadable: true }),
     declared: () => host.declared(),
     blobs: pluginBlobs,
     config: () => current,

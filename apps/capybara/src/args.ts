@@ -13,7 +13,7 @@ export type Command =
   | { command: "plugins-review" }
   | { command: "plugins-approve"; name: string; yes: boolean }
   | { command: "plugins-list" }
-  | { command: "plugins-install"; target: string }
+  | { command: "plugins-install"; target: string; yes: boolean }
   | { command: "plugins-state"; name: string; action: "enable" | "disable" | "uninstall" }
   | { command: "help" };
 
@@ -28,10 +28,11 @@ export const USAGE = `Usage:
   capybara admin revoke <login>                Revoke enterprise admin from a local account
                                                (the last active one cannot be revoked)
   capybara plugins list                        List the deployment's plugins and their status
-  capybara plugins install <file.tgz | npm:<name>[@<version>]>
-                                               Store a plugin package (in PostgreSQL) and
-                                               install it or switch to that version; a new
-                                               install starts disabled
+  capybara plugins install <file.tgz | npm:<name>[@<version>]> [--yes]
+                                               Store a plugin package (in PostgreSQL), show its
+                                               permission review and install it or switch to
+                                               that version (asks for confirmation unless
+                                               --yes); a new install starts disabled
   capybara plugins enable <name>               Enable an installed plugin on the deployment
   capybara plugins disable <name>              Disable an installed plugin on the deployment
   capybara plugins uninstall <name>            Remove a disabled plugin's install record (its
@@ -68,7 +69,7 @@ export function parseCli(argv: string[]): Command {
     return { command: "help" };
   }
   if (command !== "plugins" && v.yes !== undefined) {
-    throw new UsageError("--yes is only valid for plugins approve");
+    throw new UsageError("--yes is only valid for plugins approve and plugins install");
   }
   if (command === "plugins") {
     const [sub, ...args] = rest;
@@ -83,8 +84,8 @@ export function parseCli(argv: string[]): Command {
     for (const opt of ["login", "display-name", "email"] as const) {
       if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for admin create`);
     }
-    if (sub !== "approve" && v.yes !== undefined) {
-      throw new UsageError("--yes is only valid for plugins approve");
+    if (sub !== "approve" && sub !== "install" && v.yes !== undefined) {
+      throw new UsageError("--yes is only valid for plugins approve and plugins install");
     }
     if (sub === "review" || sub === "list") {
       if (args.length > 0) throw new UsageError(`unexpected argument "${args[0]}"`);
@@ -99,7 +100,7 @@ export function parseCli(argv: string[]): Command {
       );
     }
     if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
-    if (sub === "install") return { command: "plugins-install", target: name };
+    if (sub === "install") return { command: "plugins-install", target: name, yes: v.yes === true };
     if (sub === "approve") return { command: "plugins-approve", name, yes: v.yes === true };
     return { command: "plugins-state", name, action: sub as "enable" | "disable" | "uninstall" };
   }
