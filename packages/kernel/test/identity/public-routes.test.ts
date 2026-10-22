@@ -130,6 +130,7 @@ beforeAll(async () => {
           pluginAdmin: k.pluginAdmin,
           pluginAdminOps: k.pluginAdminOps,
           pluginDeploymentConfigs: k.pluginDeploymentConfigs,
+          directory: k.directory,
           evalQueue: { enqueue: async () => {} },
           storage: k.storage,
           sandbox: k.sandbox,

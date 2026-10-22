@@ -43,7 +43,9 @@ export class PluginManifestError extends Error {
   }
 }
 
-const NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
+/** 插件名规则（清单 `name`；连接器模板的 `plugin` 也按它校验）。 */
+export const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
+const NAME_RE = PLUGIN_NAME_RE;
 
 /** 保留的插件名：内核用 `kernel` 作为自己的 secrets 命名空间，插件不能与之相同。 */
 const RESERVED_NAMES: ReadonlySet<string> = new Set(["kernel"]);

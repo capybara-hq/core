@@ -3,6 +3,7 @@ export * from "./capability.js";
 export * from "./cards.js";
 export * from "./channel.js";
 export * from "./connector.js";
+export * from "./connector-auth.js";
 export * from "./ctx.js";
 export * from "./define-plugin.js";
 export * from "./directory.js";

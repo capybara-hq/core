@@ -108,10 +108,12 @@ const unpackLimits = (l: PluginPackageLimits) => ({
   maxEntries: l.maxEntries ?? PLUGIN_PACKAGE_LIMITS.maxEntries,
 });
 
-interface RawFile {
+/** tgz 里的一个文件（路径相对包根，已去掉 `package/`）。 */
+export interface PackageFile {
   path: string;
   data: Buffer;
 }
+type RawFile = PackageFile;
 
 const fail = (issue: string): never => {
   throw new PluginPackageError([issue]);
@@ -277,6 +279,35 @@ function checkModuleGraph(entry: string, byPath: Map<string, RawFile>): string[]
 }
 
 /**
+ * 按插件包的规则解包 tgz（大小、解压上限、条目数、只许普通文件、路径在 `package/` 下且安全、大小写去重、
+ * 不许 `node_modules/` / `*.node` / `binding.gyp`），不看内容。企业目录导入其他种类的 tgz 包同样用它。
+ * 不合法 → {@link PluginPackageError}。
+ */
+export function unpackPackageTgz(
+  bytes: Uint8Array,
+  limits: PluginPackageLimits,
+): Promise<PackageFile[]> {
+  return unpack(bytes, unpackLimits(limits));
+}
+
+/**
+ * 读包里的 `package.json`：必须存在、≤ {@link PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes}、严格 UTF-8 的 JSON。
+ * 不合法 → {@link PluginPackageError}。返回解析结果（未校验形状）。
+ */
+export function parsePackageJsonFile(file: { data: Buffer } | undefined): unknown {
+  if (!file) return fail("package.json not found in the package");
+  if (file.data.byteLength > PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes) {
+    fail(`package.json is larger than ${PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes} bytes`);
+  }
+  const text = utf8("package.json", file.data);
+  try {
+    return JSON.parse(text);
+  } catch {
+    return fail("package.json is not valid JSON");
+  }
+}
+
+/**
  * 读取并校验插件包（规则见文件头与 C11），不执行包里的任何代码。不合法 → {@link PluginPackageError}（列出全部
  * 能发现的问题；解包阶段的问题只报第一条就停）。
  */
@@ -287,18 +318,7 @@ export async function readPluginPackage(
   const files = await unpack(bytes, unpackLimits(opts));
   const byPath = new Map(files.map((f) => [f.path, f]));
 
-  const pj = byPath.get("package.json");
-  if (!pj) return fail("package.json not found in the package");
-  if (pj.data.byteLength > PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes) {
-    fail(`package.json is larger than ${PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes} bytes`);
-  }
-  let packageJson: unknown;
-  try {
-    packageJson = JSON.parse(utf8("package.json", pj.data));
-  } catch (e) {
-    if (e instanceof PluginPackageError) throw e;
-    fail("package.json is not valid JSON");
-  }
+  const packageJson = parsePackageJsonFile(byPath.get("package.json"));
   const pkgIssues = validatePluginPackageJson(packageJson, opts.hostSdkVersion, {
     hostZodVersion: opts.hostZodVersion ?? HOST_ZOD_VERSION,
   });

@@ -737,6 +737,8 @@ export interface PluginInstallsTable {
   installed_at: Ts;
   updated_by: string | null;
   updated_at: Ts;
+  /** 0034（F-AA）：经企业目录装到部署时的来源条目。 */
+  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0030：每个副本每个插件的加载结果。 */
@@ -823,6 +825,50 @@ export interface KernelDatabase {
   plugin_replica_status: PluginReplicaStatusTable;
   plugin_name_owners: PluginNameOwnersTable;
   plugin_deployment_configs: PluginDeploymentConfigsTable;
+  directory_items: DirectoryItemsTable;
+  directory_item_versions: DirectoryItemVersionsTable;
+}
+
+/** 0034_directory.sql：企业目录条目。 */
+export interface DirectoryItemsTable {
+  id: string;
+  kind: "plugin" | "connector-template" | "skill" | "app";
+  name: string;
+  package_name: string;
+  publisher: string;
+  display_name: ColumnType<
+    { zh: string; en: string } | null,
+    string | null | undefined,
+    string | null
+  >;
+  description: string;
+  policy: ColumnType<
+    "allow" | "needs_approval" | "disabled",
+    "allow" | "needs_approval" | "disabled" | undefined,
+    "allow" | "needs_approval" | "disabled"
+  >;
+  latest_version: string;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Ts;
+  deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+}
+
+/** 0034：企业目录条目的各版本。 */
+export interface DirectoryItemVersionsTable {
+  item_id: string;
+  version: string;
+  section: Json<unknown>;
+  source: "file" | "npm";
+  source_ref: string;
+  integrity: string | null;
+  object_prefix: string | null;
+  plugin_sha256: string | null;
+  resolved: ColumnType<unknown, string | null | undefined, string | null>;
+  files: Json<{ path: string; size: number; sha256: string }[]>;
+  size: Int8;
+  imported_by: string | null;
+  imported_at: Generated<Date>;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

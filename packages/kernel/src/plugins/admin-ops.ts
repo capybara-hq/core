@@ -58,13 +58,17 @@ export class PluginAdminOps {
    * - 降级（目标版本低于当前）且目标版本有尚未执行的迁移文件 → `plugin.downgrade_unsupported`（迁移只做扩展，
    *   降级只能回到迁移是已执行迁移子集的版本）。
    * 已指向同一个包时什么都不改（不写审计）。
+   * `opts.directoryItemId`：经企业目录安装时的来源条目，记进 `plugin_installs.directory_item_id`（F-AA）；
+   * 不经目录安装（上传 / npm / CLI）时清空——来源跟着当前版本走。
    */
   async install(
     name: string,
     sha256: string,
     actor: string | null,
     actorTokenId?: string,
+    opts: { directoryItemId?: string } = {},
   ): Promise<AdminPluginView> {
+    const directoryItemId = opts.directoryItemId ?? null;
     this.assertInstallable(name);
     const pkg = await this.d.db
       .selectFrom("plugin_packages")
@@ -128,7 +132,16 @@ export class PluginAdminOps {
         );
       }
       // 已指向同一个包：什么都不改，降级视图仍给出真实的期望状态
-      if (row?.sha256 === sha256) return { changed: false, state: row.desired_state };
+      if (row?.sha256 === sha256) {
+        if (row.directory_item_id !== directoryItemId) {
+          await trx
+            .updateTable("plugin_installs")
+            .set({ directory_item_id: directoryItemId })
+            .where("name", "=", name)
+            .execute();
+        }
+        return { changed: false, state: row.desired_state };
+      }
       if (row && isDowngrade(pkg.version, row.version)) {
         const unrun = await unrunMigrations(trx, name, target.migrationSql);
         if (unrun.length > 0) {
@@ -149,6 +162,7 @@ export class PluginAdminOps {
           desired_state: "disabled",
           installed_by: actor,
           updated_by: actor,
+          directory_item_id: directoryItemId,
         })
         .onConflict((oc) =>
           oc.column("name").doUpdateSet({
@@ -156,6 +170,7 @@ export class PluginAdminOps {
             version: pkg.version,
             source: pkg.source,
             updated_by: actor,
+            directory_item_id: directoryItemId,
             updated_at: sql<Date>`now()` as unknown as Date,
           }),
         )
@@ -297,6 +312,7 @@ export class PluginAdminOps {
         "plugin_installs.sha256",
         "plugin_installs.version",
         "plugin_installs.desired_state",
+        "plugin_installs.directory_item_id",
         "plugin_packages.package_name",
       ])
       .where("plugin_installs.name", "=", name)

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import {
   CHANNEL_CAPABILITY,
+  type Connector,
   DIRECTORY_CAPABILITY,
   OBJECT_STORE_CAPABILITY,
   type ObjectStore,
@@ -37,6 +38,7 @@ import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
+import { DirectoryService } from "./directory/directory.service.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EvalQueue } from "./evals/runs.service.js";
 import { EvalWorker } from "./evals/worker.js";
@@ -223,6 +225,8 @@ export interface Kernel {
   readonly pluginLifecycle: PluginLifecycle;
   /** 内容寻址的插件包存储（对象存储或 PG）。 */
   readonly pluginBlobs: PluginBlobs;
+  /** 企业目录：条目与导入（插件 / 连接器模板 / 技能）。 */
+  readonly directory: DirectoryService;
   /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
   readonly pluginDeploymentConfigs: DeploymentPluginConfigService;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
@@ -536,6 +540,19 @@ export async function createKernel(
     bus,
     reconcile: (reason) => pluginLifecycle.reconcile(reason),
     log,
+  });
+  // 企业目录（D9 / C21）：插件包交给 pluginInstalls 入库、pluginAdminOps 装到部署；连接器模板按本副本已加载的连接器校验
+  const directory = new DirectoryService({
+    db: kdb,
+    config: () => current,
+    storage,
+    installs: pluginInstalls,
+    ops: pluginAdminOps,
+    findConnector: (plugin, kind) =>
+      host
+        .list("connector")
+        .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)
+        ?.impl as Connector | undefined,
   });
   // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
   const pluginDeploymentConfigs = new DeploymentPluginConfigService({
@@ -924,6 +941,7 @@ export async function createKernel(
         pluginAdmin,
         pluginAdminOps,
         pluginDeploymentConfigs,
+        directory,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
@@ -1092,6 +1110,7 @@ export async function createKernel(
     pluginAdminOps,
     pluginLifecycle,
     pluginBlobs,
+    directory,
     pluginDeploymentConfigs,
     orgPluginConfigs,
     bus,

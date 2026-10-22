@@ -22,6 +22,8 @@ import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { AdminDirectoryController } from "../directory/admin-directory.controller.js";
+import type { DirectoryService } from "../directory/directory.service.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { type EvalQueue, EvalRunsService } from "../evals/runs.service.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -110,6 +112,7 @@ import {
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
+  DIRECTORY,
   DIRECTORY_SYNC,
   EMBED_TOKENS,
   EVAL_RUNS,
@@ -210,6 +213,8 @@ export interface ApiDeps {
   pluginAdminOps: PluginAdminOps;
   /** 部署级插件配置（与 `Kernel.pluginDeploymentConfigs` 同一实例）。 */
   pluginDeploymentConfigs: DeploymentPluginConfigService;
+  /** 企业目录（与 `Kernel.directory` 同一实例）。 */
+  directory: DirectoryService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
@@ -226,6 +231,7 @@ const CONTROLLERS: Type[] = [
   SetupController,
   AdminController,
   AdminPluginsController,
+  AdminDirectoryController,
   OrgPluginConfigsController,
   AgentsController,
   ModelsController,
@@ -340,6 +346,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: PLUGIN_ADMIN, useValue: deps.pluginAdmin },
     { provide: PLUGIN_ADMIN_OPS, useValue: deps.pluginAdminOps },
     { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.pluginDeploymentConfigs },
+    { provide: DIRECTORY, useValue: deps.directory },
     {
       provide: TRAJECTORIES,
       useFactory: (

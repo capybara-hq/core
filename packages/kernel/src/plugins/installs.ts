@@ -203,6 +203,38 @@ export class PluginInstalls {
   }
 
   /**
+   * 从配置的 npm registry 拉取一个包（按 `dist.integrity` 校验，见 packages/npm.ts），只下载不入库：
+   * 下载失败 → `packages.npm_failed`（502）；超过 `packages.maxBytes` → `plugin.package_too_large`。
+   * 企业目录的 npm 导入也用它。
+   */
+  async fetchNpm(
+    input: { package: string; version?: string },
+    signal?: AbortSignal,
+  ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
+    const c = this.d.config();
+    const cfg: NpmFetchConfig = {
+      registry: c.packages.npmRegistry,
+      maxBytes: c.packages.maxBytes,
+      ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
+    };
+    const timeout = AbortSignal.timeout(this.d.npmTimeoutMs ?? 120_000);
+    try {
+      return await fetchNpmPackage(
+        cfg,
+        input.package,
+        input.version,
+        signal ? AbortSignal.any([signal, timeout]) : timeout,
+      );
+    } catch (e) {
+      if (e instanceof PackageTooLargeError) {
+        throw new ApiError("plugin.package_too_large", e.message);
+      }
+      if (e instanceof NpmFetchError) throw new ApiError("packages.npm_failed", e.message);
+      throw e;
+    }
+  }
+
+  /**
    * 从配置的 npm registry 拉取（来源 `npm`，`ref` 为 `<包名>@<版本>`）。下载失败 → `packages.npm_failed`（502）；
    * 超过大小上限 → `plugin.package_too_large`；包里的 npm 包名与请求的不一致 → `plugin.package_invalid`。
    */
@@ -211,24 +243,7 @@ export class PluginInstalls {
     input: { package: string; version?: string },
     opts: { actorTokenId?: string; store?: "object" | "pg"; signal?: AbortSignal } = {},
   ): Promise<PackageReview> {
-    const c = this.d.config();
-    const cfg: NpmFetchConfig = {
-      registry: c.packages.npmRegistry,
-      maxBytes: c.packages.maxBytes,
-      ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
-    };
-    const timeout = AbortSignal.timeout(this.d.npmTimeoutMs ?? 120_000);
-    const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
-    let got: Awaited<ReturnType<typeof fetchNpmPackage>>;
-    try {
-      got = await fetchNpmPackage(cfg, input.package, input.version, signal);
-    } catch (e) {
-      if (e instanceof PackageTooLargeError) {
-        throw new ApiError("plugin.package_too_large", e.message);
-      }
-      if (e instanceof NpmFetchError) throw new ApiError("packages.npm_failed", e.message);
-      throw e;
-    }
+    const got = await this.fetchNpm(input, opts.signal);
     return this.ingest(
       actor,
       got.bytes,

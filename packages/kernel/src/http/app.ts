@@ -59,7 +59,7 @@ export interface CreateHttpAppOptions {
   /** 副本标识（`http.replicaId`）：设置时每个响应带 `x-capybara-replica` 头。 */
   replicaId?: string | undefined;
   /**
-   * 插件包上传（`POST /api/v1/admin/plugins/packages/file`，`application/octet-stream`）的大小上限，
+   * 包上传（{@link PACKAGE_UPLOAD_ROUTES}：插件包与企业目录包，`application/octet-stream`）的大小上限，
    * 即 `packages.maxBytes`。路由的 bodyLimit 多给 1 字节：恰好超出一个字节的包能到达处理函数、返回
    * `plugin.package_too_large`，更大的由 Fastify 直接拒绝（413 `payload_too_large`）。
    */
@@ -68,6 +68,13 @@ export interface CreateHttpAppOptions {
 
 /** 插件包上传路由（Fastify 路由模板）。 */
 export const PACKAGE_UPLOAD_ROUTE = "/api/v1/admin/plugins/packages/file";
+/** 企业目录包上传路由（Fastify 路由模板）。 */
+export const DIRECTORY_UPLOAD_ROUTE = "/api/v1/admin/directory/import/file";
+/** 收原始字节（`application/octet-stream`、上限 `packages.maxBytes`、读请求体前先认证企业管理员）的上传路由。 */
+export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
+  PACKAGE_UPLOAD_ROUTE,
+  DIRECTORY_UPLOAD_ROUTE,
+]);
 
 /**
  * 把 `http.trustProxy` 配置转成 Fastify 的 trustProxy。布尔与 IP / CIDR 列表原样传入；
@@ -131,11 +138,11 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
     if (LARGE_BODY_ROUTES.has(r.url) && [r.method].flat().includes("POST")) {
       r.bodyLimit = LARGE_BODY_LIMIT;
     }
-    if (r.url === PACKAGE_UPLOAD_ROUTE && opts.packageMaxBytes !== undefined) {
+    if (PACKAGE_UPLOAD_ROUTES.has(r.url) && opts.packageMaxBytes !== undefined) {
       r.bodyLimit = opts.packageMaxBytes + 1;
     }
   });
-  // 读请求体之前：插件包上传先认证（未认证 / 非企业管理员的大请求体不读进内存）；其余内核路由不收
+  // 读请求体之前：包上传（插件包、企业目录包）先认证（未认证 / 非企业管理员的大请求体不读进内存）；其余内核路由不收
   // application/octet-stream（415）。插件路由 /plugins/* 在自己的作用域里收任何类型，不受影响
   let authServices: AuthServices | undefined;
   const services = (): AuthServices => {
@@ -155,7 +162,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   };
   fastify.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/api/")) return;
-    if (req.method === "POST" && req.routeOptions.url === PACKAGE_UPLOAD_ROUTE) {
+    if (req.method === "POST" && PACKAGE_UPLOAD_ROUTES.has(req.routeOptions.url ?? "")) {
       try {
         await authorizeEnterpriseAdmin(req, services());
       } catch (e) {
@@ -178,7 +185,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
         );
     }
   });
-  // 原始字节的请求体（只有插件包上传路由能走到这里，见上面的 onRequest）：交给处理函数一个 Buffer
+  // 原始字节的请求体（只有包上传路由能走到这里，见上面的 onRequest）：交给处理函数一个 Buffer
   fastify.addContentTypeParser(
     "application/octet-stream",
     { parseAs: "buffer" },
