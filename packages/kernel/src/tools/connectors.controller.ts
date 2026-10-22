@@ -11,7 +11,7 @@ import {
   Put,
 } from "@nestjs/common";
 import { z } from "zod";
-import { APPS } from "../http/tokens.js";
+import { CONNECTORS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -21,22 +21,30 @@ import {
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { can } from "../orgs/roles.js";
-import type { AppDetail, AppPreview, AppSummary, AppsService, ToolIssue } from "./apps.service.js";
+import type {
+  ConnectorDetail,
+  ConnectorPreview,
+  ConnectorSummary,
+  ConnectorsService,
+  ToolIssue,
+} from "./connectors.service.js";
 import { publicEndpoint } from "./endpoint.js";
 
 /**
- * 没有 `apps.manage` 的读者只看到端点的公开部分（URL 不带 query、只有头名，见 endpoint.ts），
+ * 没有 `connectors.manage` 的读者只看到端点的公开部分（URL 不带 query、只有头名，见 endpoint.ts），
  * 也看不到工具的连接器数据（可能含服务器地址）。
  */
-function forViewer<T extends AppSummary>(org: OrgContext, app: T): T {
-  if (can(org.role, "apps.manage")) return app;
-  const view: T = { ...app, endpoint: publicEndpoint(app.endpoint) };
+function forViewer<T extends ConnectorSummary>(org: OrgContext, c: T): T {
+  if (can(org.role, "connectors.manage")) return c;
+  const view: T = { ...c, endpoint: publicEndpoint(c.endpoint) };
   if ("tools" in view) {
-    (view as unknown as AppDetail).tools = (view as unknown as AppDetail).tools.map((t) => ({
-      ...t,
-      connectorData: null,
-      pending: t.pending && { ...t.pending, connectorData: null },
-    }));
+    (view as unknown as ConnectorDetail).tools = (view as unknown as ConnectorDetail).tools.map(
+      (t) => ({
+        ...t,
+        connectorData: null,
+        pending: t.pending && { ...t.pending, connectorData: null },
+      }),
+    );
   }
   return view;
 }
@@ -184,28 +192,28 @@ const UpdateBody = z
   .strict();
 
 /**
- * 应用（`/api/v1/orgs/:orgId/apps`）：读与个人凭据用 `apps.use`（访客起），安装 / 修改 / 删除 / 刷新 /
- * 组织凭据用 `apps.manage`（管理员起）；两者都仅限用户主体。
+ * 连接器（`/api/v1/orgs/:orgId/connectors`）：读与个人凭据用 `connectors.use`（访客起），安装 / 修改 / 删除 / 刷新 /
+ * 组织凭据用 `connectors.manage`（管理员起）；两者都仅限用户主体。
  */
-@Controller("api/v1/orgs/:orgId/apps")
-export class AppsController {
-  constructor(@Inject(APPS) private readonly apps: AppsService) {}
+@Controller("api/v1/orgs/:orgId/connectors")
+export class ConnectorsController {
+  constructor(@Inject(CONNECTORS) private readonly connectors: ConnectorsService) {}
 
   @Get()
-  @OrgAction("apps.use")
-  async list(@CurrentOrg() org: OrgContext): Promise<{ apps: AppSummary[] }> {
-    return { apps: (await this.apps.list(org.orgId)).map((a) => forViewer(org, a)) };
+  @OrgAction("connectors.use")
+  async list(@CurrentOrg() org: OrgContext): Promise<{ connectors: ConnectorSummary[] }> {
+    return { connectors: (await this.connectors.list(org.orgId)).map((a) => forViewer(org, a)) };
   }
 
   @Post()
-  @OrgAction("apps.manage")
+  @OrgAction("connectors.manage")
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
-  ): Promise<{ app: AppDetail; issues: ToolIssue[] }> {
+  ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     const p = requireUser(principal);
-    return this.apps.create(org.orgId, p.account.id, body, patTokenId(p));
+    return this.connectors.create(org.orgId, p.account.id, body, patTokenId(p));
   }
 
   /**
@@ -214,83 +222,93 @@ export class AppsController {
    */
   @Post("preview")
   @HttpCode(200)
-  @OrgAction("apps.manage")
+  @OrgAction("connectors.manage")
   async preview(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Body(new ZodPipe(PreviewBody)) body: z.infer<typeof PreviewBody>,
-  ): Promise<AppPreview> {
+  ): Promise<ConnectorPreview> {
     requireUser(principal);
-    return this.apps.preview(org.orgId, body);
+    return this.connectors.preview(org.orgId, body);
   }
 
-  @Get(":appId")
-  @OrgAction("apps.use")
+  @Get(":connectorId")
+  @OrgAction("connectors.use")
   async get(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
-  ): Promise<{ app: AppDetail }> {
+    @Param("connectorId") connectorId: string,
+  ): Promise<{ connector: ConnectorDetail }> {
     const p = requireUser(principal);
-    return { app: forViewer(org, await this.apps.get(org.orgId, appId, p.account.id)) };
+    return {
+      connector: forViewer(org, await this.connectors.get(org.orgId, connectorId, p.account.id)),
+    };
   }
 
-  @Patch(":appId")
-  @OrgAction("apps.manage")
+  @Patch(":connectorId")
+  @OrgAction("connectors.manage")
   async update(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
+    @Param("connectorId") connectorId: string,
     @Body(new ZodPipe(UpdateBody)) body: z.infer<typeof UpdateBody>,
-  ): Promise<{ app: AppDetail }> {
+  ): Promise<{ connector: ConnectorDetail }> {
     const p = requireUser(principal);
-    return { app: await this.apps.update(org.orgId, appId, p.account.id, body, patTokenId(p)) };
+    return {
+      connector: await this.connectors.update(
+        org.orgId,
+        connectorId,
+        p.account.id,
+        body,
+        patTokenId(p),
+      ),
+    };
   }
 
-  @Delete(":appId")
+  @Delete(":connectorId")
   @HttpCode(204)
-  @OrgAction("apps.manage")
+  @OrgAction("connectors.manage")
   async remove(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
+    @Param("connectorId") connectorId: string,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.apps.remove(org.orgId, appId, p.account.id, patTokenId(p));
+    await this.connectors.remove(org.orgId, connectorId, p.account.id, patTokenId(p));
   }
 
-  @Post(":appId/refresh")
+  @Post(":connectorId/refresh")
   @HttpCode(200)
-  @OrgAction("apps.manage")
+  @OrgAction("connectors.manage")
   async refresh(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
+    @Param("connectorId") connectorId: string,
   ): Promise<{
-    app: AppDetail;
+    connector: ConnectorDetail;
     issues: ToolIssue[];
     changes: { added: string[]; removed: string[]; changed: string[] };
   }> {
     const p = requireUser(principal);
-    return this.apps.refresh(org.orgId, appId, p.account.id, patTokenId(p));
+    return this.connectors.refresh(org.orgId, connectorId, p.account.id, patTokenId(p));
   }
 
   /** 复核待复核的工具（漂移检测，spec 7.3）：approve 采用新定义并启用，reject 停用并保留旧定义。 */
-  @Post(":appId/tools/:name/review")
+  @Post(":connectorId/tools/:name/review")
   @HttpCode(200)
-  @OrgAction("apps.manage")
+  @OrgAction("connectors.manage")
   async review(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
+    @Param("connectorId") connectorId: string,
     @Param("name") name: string,
     @Body(new ZodPipe(ReviewBody)) body: z.infer<typeof ReviewBody>,
-  ): Promise<{ app: AppDetail }> {
+  ): Promise<{ connector: ConnectorDetail }> {
     const p = requireUser(principal);
     return {
-      app: await this.apps.reviewTool(
+      connector: await this.connectors.reviewTool(
         org.orgId,
-        appId,
+        connectorId,
         name,
         body.action,
         p.account.id,
@@ -299,41 +317,55 @@ export class AppsController {
     };
   }
 
-  @Put(":appId/credentials/org")
+  @Put(":connectorId/credentials/org")
   @HttpCode(204)
-  @OrgAction("apps.manage")
+  @OrgAction("connectors.manage")
   async setOrgCredential(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
+    @Param("connectorId") connectorId: string,
     @Body(new ZodPipe(CredentialValue)) body: z.infer<typeof CredentialValue>,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.apps.setCredential(org.orgId, appId, p.account.id, "org", body, patTokenId(p));
+    await this.connectors.setCredential(
+      org.orgId,
+      connectorId,
+      p.account.id,
+      "org",
+      body,
+      patTokenId(p),
+    );
   }
 
-  @Put(":appId/credentials/me")
+  @Put(":connectorId/credentials/me")
   @HttpCode(204)
-  @OrgAction("apps.use")
+  @OrgAction("connectors.use")
   async setMyCredential(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
+    @Param("connectorId") connectorId: string,
     @Body(new ZodPipe(CredentialValue)) body: z.infer<typeof CredentialValue>,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.apps.setCredential(org.orgId, appId, p.account.id, "personal", body, patTokenId(p));
+    await this.connectors.setCredential(
+      org.orgId,
+      connectorId,
+      p.account.id,
+      "personal",
+      body,
+      patTokenId(p),
+    );
   }
 
-  @Delete(":appId/credentials/me")
+  @Delete(":connectorId/credentials/me")
   @HttpCode(204)
-  @OrgAction("apps.use")
+  @OrgAction("connectors.use")
   async clearMyCredential(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
+    @Param("connectorId") connectorId: string,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.apps.clearMyCredential(org.orgId, appId, p.account.id, patTokenId(p));
+    await this.connectors.clearMyCredential(org.orgId, connectorId, p.account.id, patTokenId(p));
   }
 }

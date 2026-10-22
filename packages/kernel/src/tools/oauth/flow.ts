@@ -6,7 +6,7 @@ import type { KernelDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import { audit } from "../../identity/audit.js";
 import { lockOrgAndAuthorize } from "../../orgs/org-lock.js";
-import type { AppAuth, Credentials } from "../credentials.js";
+import type { ConnectorAuth, Credentials } from "../credentials.js";
 import { oauthHttpOptions } from "./discovery.js";
 import { tokenRequest } from "./tokens.js";
 
@@ -26,13 +26,13 @@ const BINDING_RE = /^[A-Za-z0-9_-]{43}$/;
 const b64url = (n = 32) => randomBytes(n).toString("base64url");
 const sha256 = (s: string) => createHash("sha256").update(s).digest("base64url");
 
-/** OAuth 应用需要 `http.publicUrl`（回调地址）；未配置 → 这条校验错误。 */
+/** OAuth 连接器需要 `http.publicUrl`（回调地址）；未配置 → 这条校验错误。 */
 export const publicUrlRequired = () =>
   new ApiError("validation_failed", "Request validation failed", [
     {
       path: "auth",
       message:
-        "OAuth apps require http.publicUrl to be configured (it is used to build the OAuth callback URL)",
+        "OAuth connectors require http.publicUrl to be configured (it is used to build the OAuth callback URL)",
     },
   ]);
 
@@ -62,7 +62,7 @@ export function browserBinding(existing: string | undefined): string {
 
 interface StateRecord {
   orgId: string;
-  appId: string;
+  connectorId: string;
   accountId: string;
   verifier: string;
   redirectUri: string;
@@ -81,7 +81,7 @@ export type OAuthCallbackError =
   | "provider_error"
   | "token_exchange_failed"
   | "issuer_mismatch"
-  | "app_unavailable";
+  | "connector_unavailable";
 
 /** 首次连接后刷新工具清单最多等这么久再 302（超时则在后台继续，结果照常写入）。 */
 export const FIRST_CONNECT_REFRESH_WAIT_MS = 15_000;
@@ -92,22 +92,22 @@ export interface OAuthFlowDeps {
   credentials: Credentials;
   config: () => KernelConfig;
   log: Logger;
-  /** 某成员首次成功连接、而应用还没有工具快照时调用（A16：用该成员的 token 刷新工具清单）。 */
-  onFirstConnect: (orgId: string, appId: string, accountId: string) => Promise<void>;
+  /** 某成员首次成功连接、而连接器还没有工具快照时调用（A16：用该成员的 token 刷新工具清单）。 */
+  onFirstConnect: (orgId: string, connectorId: string, accountId: string) => Promise<void>;
 }
 
 /**
  * 授权码 + PKCE（S256）连接流程。state 是 32 字节随机串，存 Redis `capk:oauth-state:<state>` 10 分钟、单次有效
- * （GETDEL），内含组织、应用、发起人、PKCE verifier、redirect_uri、回跳页面与浏览器绑定值的哈希。
+ * （GETDEL），内含组织、连接器、发起人、PKCE verifier、redirect_uri、回跳页面与浏览器绑定值的哈希。
  */
 export class OAuthFlow {
   constructor(private readonly deps: OAuthFlowDeps) {}
 
-  private async app(orgId: string, appId: string) {
+  private async app(orgId: string, connectorId: string) {
     return this.deps.db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .select(["id", "auth", "status"])
-      .where("id", "=", appId)
+      .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
@@ -116,30 +116,33 @@ export class OAuthFlow {
   /** 生成授权 URL。`binding` 为本浏览器的绑定值（由 controller 写入 Cookie）。 */
   async start(
     orgId: string,
-    appId: string,
+    connectorId: string,
     accountId: string,
     returnTo: string | undefined,
     binding: string,
   ): Promise<{ authorizationUrl: string }> {
     const publicUrl = this.deps.config().http.publicUrl;
     if (!publicUrl) throw publicUrlRequired();
-    const app = await this.app(orgId, appId);
-    if (!app) throw new ApiError("app.not_found", "App not found");
-    if ((app.auth as unknown as AppAuth).type !== "oauth_code") {
+    const app = await this.app(orgId, connectorId);
+    if (!app) throw new ApiError("connector.not_found", "Connector not found");
+    if ((app.auth as unknown as ConnectorAuth).type !== "oauth_code") {
       throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "auth", message: "Only OAuth authorization-code apps are connected this way" },
+        {
+          path: "auth",
+          message: "Only OAuth authorization-code connectors are connected this way",
+        },
       ]);
     }
     if (app.status !== "active") {
       throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "status", message: "The app is disabled; ask an administrator to enable it" },
+        { path: "status", message: "The connector is disabled; ask an administrator to enable it" },
       ]);
     }
-    const client = await this.deps.credentials.oauthClient(orgId, appId);
+    const client = await this.deps.credentials.oauthClient(orgId, connectorId);
     if (!client?.authorizationEndpoint) {
       throw new ApiError(
-        "app.connect_failed",
-        "The app has no registered OAuth client; ask an administrator to reinstall it",
+        "connector.connect_failed",
+        "The connector has no registered OAuth client; ask an administrator to reinstall it",
       );
     }
     const state = b64url();
@@ -147,7 +150,7 @@ export class OAuthFlow {
     const redirectUri = callbackUrl(publicUrl);
     const rec: StateRecord = {
       orgId,
-      appId,
+      connectorId,
       accountId,
       verifier,
       redirectUri,
@@ -184,7 +187,7 @@ export class OAuthFlow {
   /**
    * 处理授权服务器的回跳，返回 302 的目标。state 先取后删（无论后续成败都不能再用）；浏览器绑定不符 →
    * `session_mismatch`（把回跳链接转给别人不能把对方的授权连到发起人账号上）；授权服务器报错只映射为原因码。
-   * 成功则在组织行锁内复核发起人仍是成员（`apps.use`），写个人凭据与审计；应用还没有工具快照时用这个 token 刷新。
+   * 成功则在组织行锁内复核发起人仍是成员（`connectors.use`），写个人凭据与审计；连接器还没有工具快照时用这个 token 刷新。
    */
   async callback(
     query: {
@@ -213,11 +216,11 @@ export class OAuthFlow {
     }
     if (!query.code) return this.fail("provider_error", back);
 
-    const { orgId, appId, accountId } = rec;
-    const app = await this.app(orgId, appId);
-    const client = app ? await this.deps.credentials.oauthClient(orgId, appId) : null;
-    if (!app || !client || (app.auth as unknown as AppAuth).type !== "oauth_code") {
-      return this.fail("app_unavailable", back);
+    const { orgId, connectorId, accountId } = rec;
+    const app = await this.app(orgId, connectorId);
+    const client = app ? await this.deps.credentials.oauthClient(orgId, connectorId) : null;
+    if (!app || !client || (app.auth as unknown as ConnectorAuth).type !== "oauth_code") {
+      return this.fail("connector_unavailable", back);
     }
     let tokens: Awaited<ReturnType<typeof tokenRequest>>;
     try {
@@ -233,25 +236,25 @@ export class OAuthFlow {
         oauthHttpOptions(this.deps.config()),
       );
     } catch (e) {
-      this.deps.log.warn("oauth code exchange failed", { orgId, appId, err: e });
+      this.deps.log.warn("oauth code exchange failed", { orgId, connectorId, err: e });
       return this.fail("token_exchange_failed", back);
     }
 
     let first: boolean;
     try {
       first = await this.deps.db.transaction().execute(async (t) => {
-        await lockOrgAndAuthorize(t, orgId, accountId, "apps.use");
+        await lockOrgAndAuthorize(t, orgId, accountId, "connectors.use");
         const still = await t
-          .selectFrom("apps")
+          .selectFrom("connectors")
           .select("id")
-          .where("id", "=", appId)
+          .where("id", "=", connectorId)
           .where("deleted_at", "is", null)
           .forUpdate()
           .executeTakeFirst();
-        if (!still) throw new ApiError("app.not_found", "App not found");
+        if (!still) throw new ApiError("connector.not_found", "Connector not found");
         await this.deps.credentials.setOAuthTokens(
           orgId,
-          appId,
+          connectorId,
           { kind: "user", accountId },
           tokens,
           t,
@@ -259,28 +262,34 @@ export class OAuthFlow {
         await audit(t, {
           actorAccountId: accountId,
           orgId,
-          action: "app.credential.set",
-          target: appId,
+          action: "connector.credential.set",
+          target: connectorId,
           detail: { type: "oauth_code", ownership: "personal" },
         });
         const tool = await t
-          .selectFrom("app_tools")
+          .selectFrom("connector_tools")
           .select("name")
-          .where("app_id", "=", appId)
+          .where("connector_id", "=", connectorId)
           .limit(1)
           .executeTakeFirst();
         return tool === undefined;
       });
     } catch (e) {
-      if (e instanceof ApiError) return this.fail("app_unavailable", back);
+      if (e instanceof ApiError) return this.fail("connector_unavailable", back);
       throw e;
     }
     if (first) {
       // 首次连接（A16）：刷新失败不影响连接本身，凭据已存好；管理员之后可手动刷新
       // 最多等 FIRST_CONNECT_REFRESH_WAIT_MS 再回跳（本请求自己的计时器，结束即清除）；超时的刷新在后台继续
-      const refresh = this.deps.onFirstConnect(orgId, appId, accountId).catch((err: unknown) => {
-        this.deps.log.warn("oauth first-connect tool refresh failed", { orgId, appId, err });
-      });
+      const refresh = this.deps
+        .onFirstConnect(orgId, connectorId, accountId)
+        .catch((err: unknown) => {
+          this.deps.log.warn("oauth first-connect tool refresh failed", {
+            orgId,
+            connectorId,
+            err,
+          });
+        });
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         refresh,
@@ -290,6 +299,6 @@ export class OAuthFlow {
       ]);
       clearTimeout(timer);
     }
-    return this.redirect(back, ["connected", appId]);
+    return this.redirect(back, ["connected", connectorId]);
   }
 }

@@ -108,10 +108,10 @@ beforeEach(async () => {
   orgId = (org.json() as { org: { id: string } }).org.id;
 });
 
-async function installApp(slug: string): Promise<string> {
+async function installConnector(slug: string): Promise<string> {
   const res = await req({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/apps`,
+    url: `/api/v1/orgs/${orgId}/connectors`,
     payload: {
       name: slug,
       slug,
@@ -121,7 +121,7 @@ async function installApp(slug: string): Promise<string> {
     },
   });
   expect(res.statusCode, res.body).toBe(201);
-  return (res.json() as { app: { id: string } }).app.id;
+  return (res.json() as { connector: { id: string } }).connector.id;
 }
 
 async function enablePlugin(plugin: string, enabled: boolean): Promise<void> {
@@ -146,14 +146,14 @@ describe("ToolRegistry", () => {
     expect(() => registry.connector("nope")).toThrow();
   });
 
-  it("内置、插件、应用工具都能解析；插件工具须本组织启用该插件", async () => {
-    const appId = await installApp("docs");
+  it("内置、插件、连接器工具都能解析；插件工具须本组织启用该插件", async () => {
+    const connectorId = await installConnector("docs");
     const def = {
       tools: [
         { kind: "builtin" as const, name: "ask_user" },
         { kind: "plugin" as const, plugin: "mem-connector", name: "echo" },
         { kind: "plugin" as const, plugin: "mem-connector", name: "wipe" },
-        { kind: "app" as const, appId, tools: "all" as const },
+        { kind: "connector" as const, connectorId, tools: "all" as const },
       ],
     };
     const before = await registry.forAgent(orgId, def);
@@ -189,7 +189,7 @@ describe("ToolRegistry", () => {
     // 插件显式声明 defaultPolicy 优先于注解
     expect(byKey["mem-connector__wipe"]?.defaultPolicy).toBe("allow");
     expect(byKey.docs__read).toMatchObject({
-      source: { kind: "app", appId, name: "read" },
+      source: { kind: "connector", connectorId, name: "read" },
       defaultPolicy: "allow",
     });
     expect(byKey.docs__write?.defaultPolicy).toBe("ask");
@@ -199,30 +199,30 @@ describe("ToolRegistry", () => {
   });
 
   it("过滤停用 / 待复核 / 已删除，并给出原因", async () => {
-    const appId = await installApp("docs");
+    const connectorId = await installConnector("docs");
     await db
-      .updateTable("app_tools")
+      .updateTable("connector_tools")
       .set({ status: "disabled" })
-      .where("app_id", "=", appId)
+      .where("connector_id", "=", connectorId)
       .where("name", "=", "write")
       .execute();
     await db
-      .updateTable("app_tools")
+      .updateTable("connector_tools")
       .set({ status: "pending_review" })
-      .where("app_id", "=", appId)
+      .where("connector_id", "=", connectorId)
       .where("name", "=", "drop")
       .execute();
     await db
-      .updateTable("app_tools")
+      .updateTable("connector_tools")
       .set({ default_policy: "deny" })
-      .where("app_id", "=", appId)
+      .where("connector_id", "=", connectorId)
       .where("name", "=", "read")
       .execute();
 
     // all：只取启用的工具；停用 / 待复核的不进 unavailable（不触发每步的不可用提醒），
     // 而是进 hidden，模型点名调用时给事实原因（spec 6.3）
     const all = await registry.forAgent(orgId, {
-      tools: [{ kind: "app", appId, tools: "all" }],
+      tools: [{ kind: "connector", connectorId, tools: "all" }],
     });
     expect(all.tools.map((t) => t.key)).toEqual(["docs__read"]);
     expect(all.tools[0]?.defaultPolicy).toBe("deny");
@@ -235,10 +235,10 @@ describe("ToolRegistry", () => {
     // 点名：逐个报原因
     const named = await registry.forAgent(orgId, {
       tools: [
-        { kind: "app", appId, tools: ["read", "write", "drop", "gone"] },
+        { kind: "connector", connectorId, tools: ["read", "write", "drop", "gone"] },
         { kind: "builtin", name: "nope" },
         { kind: "plugin", plugin: "not-loaded", name: "x" },
-        { kind: "app", appId: "missing-app", tools: "all" },
+        { kind: "connector", connectorId: "missing-app", tools: "all" },
       ],
     });
     expect(named.tools.map((t) => t.key)).toEqual(["docs__read"]);
@@ -251,40 +251,47 @@ describe("ToolRegistry", () => {
       { ref: "app:missing-app", reason: "App does not exist" },
     ]);
 
-    // 应用停用 → 整个应用不可用
-    await db.updateTable("apps").set({ status: "disabled" }).where("id", "=", appId).execute();
+    // 连接器停用 → 整个连接器不可用
+    await db
+      .updateTable("connectors")
+      .set({ status: "disabled" })
+      .where("id", "=", connectorId)
+      .execute();
     const disabled = await registry.forAgent(orgId, {
-      tools: [{ kind: "app", appId, tools: "all" }],
+      tools: [{ kind: "connector", connectorId, tools: "all" }],
     });
     expect(disabled.tools).toEqual([]);
     expect(disabled.unavailable).toEqual([{ ref: "docs__*", reason: "App docs is disabled" }]);
 
-    // 应用删除
-    const del = await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/apps/${appId}` });
+    // 连接器删除
+    const del = await req({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}`,
+    });
     expect(del.statusCode).toBe(204);
     const deleted = await registry.forAgent(orgId, {
-      tools: [{ kind: "app", appId, tools: ["read"] }],
+      tools: [{ kind: "connector", connectorId, tools: ["read"] }],
     });
     expect(deleted.unavailable).toEqual([{ ref: "docs__*", reason: "App docs was deleted" }]);
 
-    // 别的组织的应用 id → 视为不存在
+    // 别的组织的连接器 id → 视为不存在
     const other = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Other" } });
     const otherId = (other.json() as { org: { id: string } }).org.id;
-    const app2 = await installApp("docs2");
+    const app2 = await installConnector("docs2");
     const cross = await registry.forAgent(otherId, {
-      tools: [{ kind: "app", appId: app2, tools: "all" }],
+      tools: [{ kind: "connector", connectorId: app2, tools: "all" }],
     });
     expect(cross.unavailable).toEqual([{ ref: `app:${app2}`, reason: "App does not exist" }]);
   });
 
   it("同一 key 只保留第一个，其余报重复", async () => {
-    const appId = await installApp("docs");
+    const connectorId = await installConnector("docs");
     const r = await registry.forAgent(orgId, {
       tools: [
         { kind: "builtin", name: "ask_user" },
         { kind: "builtin", name: "ask_user" },
-        { kind: "app", appId, tools: ["read"] },
-        { kind: "app", appId, tools: "all" },
+        { kind: "connector", connectorId, tools: ["read"] },
+        { kind: "connector", connectorId, tools: "all" },
       ],
     });
     expect(r.tools.map((t) => t.key)).toEqual([
@@ -456,13 +463,13 @@ describe("组织设置与 tool_search 启用条件", () => {
   });
 
   it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 tool_search；组织关闭后全部直接加载", async () => {
-    const appId = await installApp("docs");
+    const connectorId = await installConnector("docs");
     const def = {
       tools: [
         { kind: "builtin" as const, name: "ask_user" },
         // 定义里显式引用 tool_search 也不重复（由注册表按设置管理）
         { kind: "builtin" as const, name: "tool_search" },
-        { kind: "app" as const, appId, tools: "all" as const },
+        { kind: "connector" as const, connectorId, tools: "all" as const },
       ],
     };
     const r = searchRegistry();

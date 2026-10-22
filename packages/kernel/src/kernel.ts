@@ -97,7 +97,6 @@ import {
   STORAGE_PURGE_SCHEDULER_ID,
 } from "./storage/purge.js";
 import { StorageService } from "./storage/storage.service.js";
-import { AppContent } from "./tools/app-content.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
@@ -106,6 +105,7 @@ import { sandboxTools } from "./tools/builtins/sandbox/index.js";
 import { skillLoadTool } from "./tools/builtins/skill-load.js";
 import { skillWriteTool } from "./tools/builtins/skill-write.js";
 import { toolSearchTool } from "./tools/builtins/tool-search.js";
+import { ConnectorContent } from "./tools/connector-content.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolDrift } from "./tools/drift.js";
 import { ToolOutputs } from "./tools/outputs.js";
@@ -178,8 +178,8 @@ export interface KernelTools {
   readonly questions: QuestionsService;
   /** 工具定义漂移检测（周期扫描、list_changed、手动刷新）。 */
   readonly drift: ToolDrift;
-  /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
-  readonly appContent: AppContent;
+  /** 连接器的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
+  readonly connectorContent: ConnectorContent;
 }
 
 /** 外部身份相关的内核服务（渠道运行时、通讯录同步与 HTTP 共用）。 */
@@ -231,7 +231,7 @@ export interface Kernel {
   readonly bus: PluginContext["bus"];
   /** 运行编排服务。 */
   readonly runs: KernelRuns;
-  /** 工具注册表与应用凭据。 */
+  /** 工具注册表与连接器凭据。 */
   readonly tools: KernelTools;
   /** 外部身份、绑定、第三方登录与离职处理。 */
   readonly identity: KernelIdentity;
@@ -643,8 +643,8 @@ export async function createKernel(
     maintenance,
   });
   const breaker = new Breaker(redis, () => current);
-  // 用户直接使用应用内容（斜杠命令 / @ 资源引用）
-  const appContent = new AppContent({
+  // 用户直接使用连接器内容（斜杠命令 / @ 资源引用）
+  const connectorContent = new ConnectorContent({
     db: kdb,
     registry: toolRegistry,
     credentials,
@@ -663,8 +663,8 @@ export async function createKernel(
     questions,
     config: () => current,
     log,
-    onToolsChanged: (orgId, appId) => {
-      void toolDrift.onToolsChanged(orgId, appId);
+    onToolsChanged: (orgId, connectorId) => {
+      void toolDrift.onToolsChanged(orgId, connectorId);
     },
   });
   const tools: KernelTools = {
@@ -675,7 +675,7 @@ export async function createKernel(
     approvals,
     questions,
     drift: toolDrift,
-    appContent,
+    connectorContent,
   };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
@@ -908,7 +908,7 @@ export async function createKernel(
         questions,
         drift: toolDrift,
         outputs: toolOutputs,
-        appContent,
+        connectorContent,
         identity,
         channels: channelConnections,
         runs: runControl,

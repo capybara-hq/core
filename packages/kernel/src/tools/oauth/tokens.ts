@@ -7,7 +7,7 @@ import { type OAuthHttpOptions, OAuthSetupError, oauthFetch } from "./discovery.
 export type TokenAuthMethod = "client_secret_basic" | "client_secret_post" | "none";
 
 /**
- * 一个应用的 OAuth 客户端（组织级凭据，键 `credentials:app:<appId>:client`）：DCR 注册所得或管理员手填，
+ * 一个连接器的 OAuth 客户端（组织级凭据，键 `credentials:app:<connectorId>:client`）：DCR 注册所得或管理员手填，
  * 连同发现得到的端点与资源标识。
  */
 export interface OAuthClientRecord {
@@ -144,15 +144,19 @@ export async function tokenRequest(
 
 /** 令牌与客户端的存取（由 Credentials 实现：信封加密存入 capybara.secrets）。 */
 export interface OAuthStore {
-  readClient(orgId: string, appId: string): Promise<OAuthClientRecord | null>;
-  readTokens(orgId: string, appId: string, owner: OAuthOwner): Promise<OAuthTokenRecord | null>;
+  readClient(orgId: string, connectorId: string): Promise<OAuthClientRecord | null>;
+  readTokens(
+    orgId: string,
+    connectorId: string,
+    owner: OAuthOwner,
+  ): Promise<OAuthTokenRecord | null>;
   writeTokens(
     orgId: string,
-    appId: string,
+    connectorId: string,
     owner: OAuthOwner,
     rec: OAuthTokenRecord,
   ): Promise<void>;
-  deleteTokens(orgId: string, appId: string, owner: OAuthOwner): Promise<void>;
+  deleteTokens(orgId: string, connectorId: string, owner: OAuthOwner): Promise<void>;
 }
 
 /** 取 token 所需的认证方式字段（与 credentials.ts 的 OAuthAuth 对应）。 */
@@ -174,7 +178,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *
  * - 调用前：未过期（距过期 > 60 秒或未告知过期时间）直接用；否则刷新（授权码流用 refresh token，客户端凭据流重新取）。
  * - 收到 401：`forceRefresh(stale)`——只要库里的 token 仍是收到 401 的那个就刷新。
- * - 刷新一律在 Redis 锁 `capk:oauth-refresh:<orgId>:<appId>:<owner>` 内进行（SET NX PX，值为本次随机 id，
+ * - 刷新一律在 Redis 锁 `capk:oauth-refresh:<orgId>:<connectorId>:<owner>` 内进行（SET NX PX，值为本次随机 id，
  *   只删除自己持有的锁）；拿不到锁的轮询等锁消失后重读凭据，库里已是别的 token 就直接用（不并发刷新——授权服务器
  *   轮换 refresh token 时，并发刷新的第二个必然失败）。
  * - 令牌端点明确拒绝 → 删除该凭据并抛 OAuthReconnectRequired（需要重新连接）；暂时不可用 → OAuthUnavailable，凭据保留。
@@ -189,11 +193,11 @@ export class OAuthTokens {
 
   async accessToken(
     orgId: string,
-    appId: string,
+    connectorId: string,
     auth: TokenAuth,
     owner: OAuthOwner,
   ): Promise<string> {
-    const rec = await this.store.readTokens(orgId, appId, owner);
+    const rec = await this.store.readTokens(orgId, connectorId, owner);
     if (rec) {
       const fresh = rec.expires_at === null || rec.expires_at - Date.now() > REFRESH_MARGIN_MS;
       // 没有 refresh token 的授权码凭据无法提前刷新：照用，过期由服务端 401 → forceRefresh 处理
@@ -203,25 +207,25 @@ export class OAuthTokens {
     } else if (auth.type === "oauth_code") {
       throw new OAuthReconnectRequired(owner);
     }
-    return this.renew(orgId, appId, auth, owner, rec?.access_token ?? null);
+    return this.renew(orgId, connectorId, auth, owner, rec?.access_token ?? null);
   }
 
   /** 收到 401 后调用：`stale` 为收到 401 的那个 access token。 */
   async forceRefresh(
     orgId: string,
-    appId: string,
+    connectorId: string,
     auth: TokenAuth,
     owner: OAuthOwner,
     stale: string | undefined,
   ): Promise<void> {
-    const current = stale ?? (await this.store.readTokens(orgId, appId, owner))?.access_token;
+    const current = stale ?? (await this.store.readTokens(orgId, connectorId, owner))?.access_token;
     if (current === undefined && auth.type === "oauth_code")
       throw new OAuthReconnectRequired(owner);
-    await this.renew(orgId, appId, auth, owner, current ?? null);
+    await this.renew(orgId, connectorId, auth, owner, current ?? null);
   }
 
-  private lockKey(orgId: string, appId: string, owner: OAuthOwner): string {
-    return `capk:oauth-refresh:${orgId}:${appId}:${owner.kind === "org" ? "org" : owner.accountId}`;
+  private lockKey(orgId: string, connectorId: string, owner: OAuthOwner): string {
+    return `capk:oauth-refresh:${orgId}:${connectorId}:${owner.kind === "org" ? "org" : owner.accountId}`;
   }
 
   /**
@@ -230,12 +234,12 @@ export class OAuthTokens {
    */
   private async renew(
     orgId: string,
-    appId: string,
+    connectorId: string,
     auth: TokenAuth,
     owner: OAuthOwner,
     stale: string | null,
   ): Promise<string> {
-    const key = this.lockKey(orgId, appId, owner);
+    const key = this.lockKey(orgId, connectorId, owner);
     const ttlMs = this.http().timeoutMs + 5_000;
     const deadline = Date.now() + ttlMs * 2;
     const replaced = (rec: OAuthTokenRecord | null) =>
@@ -244,21 +248,21 @@ export class OAuthTokens {
       const id = randomUUID();
       if ((await this.redis.set(key, id, "PX", ttlMs, "NX")) === "OK") {
         try {
-          const rec = await this.store.readTokens(orgId, appId, owner);
+          const rec = await this.store.readTokens(orgId, connectorId, owner);
           const done = replaced(rec);
           if (done !== undefined) return done;
           if (rec === null && auth.type === "oauth_code") throw new OAuthReconnectRequired(owner);
-          return await this.obtain(orgId, appId, auth, owner, rec, key, id);
+          return await this.obtain(orgId, connectorId, auth, owner, rec, key, id);
         } finally {
           await this.redis.eval(RELEASE, 1, key, id).catch((err: unknown) => {
-            this.log.warn("oauth refresh lock release failed", { appId, err });
+            this.log.warn("oauth refresh lock release failed", { connectorId, err });
           });
         }
       }
       // 别的副本 / 请求正在刷新：等锁消失后重读
       while ((await this.redis.exists(key)) === 1 && Date.now() < deadline)
         await sleep(LOCK_POLL_MS);
-      const rec = await this.store.readTokens(orgId, appId, owner);
+      const rec = await this.store.readTokens(orgId, connectorId, owner);
       const done = replaced(rec);
       if (done !== undefined) return done;
       if (rec === null && auth.type === "oauth_code") throw new OAuthReconnectRequired(owner);
@@ -272,17 +276,17 @@ export class OAuthTokens {
    */
   private async obtain(
     orgId: string,
-    appId: string,
+    connectorId: string,
     auth: TokenAuth,
     owner: OAuthOwner,
     rec: OAuthTokenRecord | null,
     lockKey: string,
     lockId: string,
   ): Promise<string> {
-    const client = await this.store.readClient(orgId, appId);
+    const client = await this.store.readClient(orgId, connectorId);
     if (!client) throw new OAuthReconnectRequired({ kind: "org" });
     const invalidate = async (reason: string): Promise<string> => {
-      const current = await this.store.readTokens(orgId, appId, owner);
+      const current = await this.store.readTokens(orgId, connectorId, owner);
       const unchanged =
         current !== null &&
         rec !== null &&
@@ -293,8 +297,8 @@ export class OAuthTokens {
         // 锁已不归自己（过期）：不删，交给持锁者；这次按暂时不可用处理
         throw new OAuthUnavailable();
       }
-      if (current !== null) await this.store.deleteTokens(orgId, appId, owner);
-      this.log.warn("oauth credential invalidated", { appId, owner: owner.kind, reason });
+      if (current !== null) await this.store.deleteTokens(orgId, connectorId, owner);
+      this.log.warn("oauth credential invalidated", { connectorId, owner: owner.kind, reason });
       throw new OAuthReconnectRequired(owner);
     };
     let next: OAuthTokenRecord;
@@ -324,17 +328,17 @@ export class OAuthTokens {
       if (e instanceof OAuthGrantError) {
         if (INVALIDATING_ERRORS.has(e.error)) return invalidate(e.error);
         // invalid_scope / invalid_request 等：配置问题，凭据保留
-        this.log.warn("oauth token request rejected", { appId, error: e.error });
+        this.log.warn("oauth token request rejected", { connectorId, error: e.error });
         throw new OAuthUnavailable(
           `Could not obtain an access token: the authorization server rejected the request (${e.error}). Ask an administrator to check the app.`,
         );
       }
       if (e instanceof OAuthUnavailable) throw e;
       // URL 校验失败等（配置问题）：按不可用处理，不删凭据
-      this.log.warn("oauth token request failed", { appId, err: e });
+      this.log.warn("oauth token request failed", { connectorId, err: e });
       throw new OAuthUnavailable();
     }
-    await this.store.writeTokens(orgId, appId, owner, next);
+    await this.store.writeTokens(orgId, connectorId, owner, next);
     return next.access_token;
   }
 }

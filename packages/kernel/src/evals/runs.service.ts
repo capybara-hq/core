@@ -3,7 +3,11 @@ import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { type Selectable, sql } from "kysely";
 import { paramIssues } from "../agents/agents.service.js";
-import type { AgentDefinition, ModelRef } from "../agents/definition.js";
+import {
+  type AgentDefinition,
+  type ModelRef,
+  normalizeStoredDefinition,
+} from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type {
   EvalResultStatus,
@@ -219,7 +223,7 @@ export async function caseBase(
     .where("version", "=", s.agentVersion)
     .executeTakeFirst();
   return row
-    ? { definition: row.definition as unknown as AgentDefinition, agentVersion: s.agentVersion }
+    ? { definition: normalizeStoredDefinition(row.definition), agentVersion: s.agentVersion }
     : null;
 }
 
@@ -236,7 +240,7 @@ export async function versionDefinition(
     .where("agent_id", "=", agentId)
     .where("version", "=", version)
     .executeTakeFirst();
-  return row ? (row.definition as unknown as AgentDefinition) : undefined;
+  return row ? normalizeStoredDefinition(row.definition) : undefined;
 }
 
 type RunRow = {

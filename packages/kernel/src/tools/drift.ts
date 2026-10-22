@@ -11,7 +11,7 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { Maintenance } from "../runtime/maintenance.js";
-import { type AppAuth, CredentialMissing, type Credentials, isOAuth } from "./credentials.js";
+import { type ConnectorAuth, CredentialMissing, type Credentials, isOAuth } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import { policyFromAnnotations, specHash, type ToolRegistry } from "./registry.js";
@@ -26,31 +26,31 @@ import { recordToolSpecs } from "./specs.js";
  * 又出现时按新增处理）。定义不合规（key 不合法等）的工具只能停用：新增时直接停用；复核过的工具变成不合规
  * 定义时新定义同样只进 `pending_spec`（停用，approve 被拒），`spec` 始终是上次复核通过的定义。
  * 从未复核过的工具（`reviewed_at` 为空）没有可比的旧定义：定义再变时直接替换 `spec`（仍待复核），不产生 pending。
- * 应用从未拍过快照（`tools_synced_at` 为空且没有工具行，即 OAuth 授权码应用安装时不 listTools，A16）时，
+ * 连接器从未拍过快照（`tools_synced_at` 为空且没有工具行，即 OAuth 授权码连接器安装时不 listTools，A16）时，
  * 首个快照按安装处理（直接启用）。
  *
  * 触发：维护队列的周期扫描（`tools.driftIntervalHours`）、连接器在会话中报告工具清单变了（MCP
- * `notifications/tools/list_changed`）、管理员手动刷新（`AppsService.refresh`，走同一套比对）。
+ * `notifications/tools/list_changed`）、管理员手动刷新（`ConnectorsService.refresh`，走同一套比对）。
  * 授权（`tool_grants` / `conversation_tool_grants`）按 spec_hash 比对（D8），复核通过采用新指纹后旧授权自然失效。
  */
 
 /** 周期扫描：任务名与 job scheduler id（不含 `:`）。 */
 export const DRIFT_SCAN_JOB = "drift-scan";
 export const DRIFT_SCHEDULER_ID = "drift-scan-interval";
-/** 单个应用的漂移检查任务名。 */
-export const DRIFT_APP_JOB = "drift-app";
+/** 单个连接器的漂移检查任务名。 */
+export const DRIFT_CONNECTOR_JOB = "drift-connector";
 
 /**
- * list_changed 触发的检查：jobId 按应用与分钟桶去重（同一分钟内多次通知只检查一次；appId 为 UUID，不含 `:`）。
+ * list_changed 触发的检查：jobId 按连接器与分钟桶去重（同一分钟内多次通知只检查一次；connectorId 为 UUID，不含 `:`）。
  */
-export const listChangedJobId = (appId: string, now = Date.now()): string =>
-  `drift-${appId}-${Math.floor(now / 60_000)}`;
+export const listChangedJobId = (connectorId: string, now = Date.now()): string =>
+  `drift-${connectorId}-${Math.floor(now / 60_000)}`;
 
-/** 周期扫描投递的检查：jobId 按应用与扫描周期桶去重（同一周期内重复扫描只检查一次）。 */
-export const driftScanJobId = (appId: string, bucket: number): string =>
-  `drift-${appId}-scan-${bucket}`;
+/** 周期扫描投递的检查：jobId 按连接器与扫描周期桶去重（同一周期内重复扫描只检查一次）。 */
+export const driftScanJobId = (connectorId: string, bucket: number): string =>
+  `drift-${connectorId}-scan-${bucket}`;
 
-/** 个人凭据型应用：最多依次尝试几个成员的凭据。 */
+/** 个人凭据型连接器：最多依次尝试几个成员的凭据。 */
 export const PERSONAL_CANDIDATES = 3;
 
 export type DriftTrigger = "schedule" | "list_changed";
@@ -101,15 +101,15 @@ const MAX_FAILURE_DETAIL = 500;
  */
 export function connectFailedMessage(e: unknown, redact: (s: string) => string): string {
   if (e instanceof ToolError) {
-    return `Could not list tools from the app: ${redact(e.message).slice(0, MAX_FAILURE_DETAIL)}`;
+    return `Could not list tools from the connector: ${redact(e.message).slice(0, MAX_FAILURE_DETAIL)}`;
   }
-  return `Could not list tools from the app (${errName(e)})`;
+  return `Could not list tools from the connector (${errName(e)})`;
 }
 
 /**
  * 把连接器返回的工具清单整理成快照：只保留 `name / description / inputSchema / annotations / connectorData`
- * （应用工具不得自带 `defaultPolicy`），同名的后者丢弃；key 超长 / 含非法字符或定义不合规的工具
- * 照样入库但只能停用，并给出原因——一个坏工具不挡住整个应用。名字不是非空字符串的无法入库，只报原因。
+ * （连接器工具不得自带 `defaultPolicy`），同名的后者丢弃；key 超长 / 含非法字符或定义不合规的工具
+ * 照样入库但只能停用，并给出原因——一个坏工具不挡住整个连接器。名字不是非空字符串的无法入库，只报原因。
  */
 export function snapshot(
   slug: string,
@@ -119,7 +119,7 @@ export function snapshot(
   const rows: SnapshotRow[] = [];
   const issues: ToolIssue[] = [];
   if (!Array.isArray(specs)) {
-    throw new ApiError("app.connect_failed", "The app returned an invalid tool list");
+    throw new ApiError("connector.connect_failed", "The connector returned an invalid tool list");
   }
   const seen = new Set<string>();
   for (const raw of specs) {
@@ -153,13 +153,13 @@ export function snapshot(
     if (issue) issues.push({ name, reason: issue });
     rows.push({ name, spec, specHash: specHash(spec), issue, source: "connector" });
   }
-  // 应用支持 resources：补上 list_resources / read_resource；连接器自己的同名工具优先
+  // 连接器支持 resources：补上 list_resources / read_resource；连接器自己的同名工具优先
   if (resources) {
     for (const spec of resourceToolSpecs()) {
       if (seen.has(spec.name)) {
         issues.push({
           name: spec.name,
-          reason: `The app has its own tool named ${spec.name}; the built-in resource tool is not added`,
+          reason: `The connector has its own tool named ${spec.name}; the built-in resource tool is not added`,
         });
         continue;
       }
@@ -189,7 +189,7 @@ export interface ToolDriftDeps {
   maintenance?: Pick<Maintenance, "add" | "handle" | "schedule">;
 }
 
-interface AppRow {
+interface ConnectorRow {
   id: string;
   org_id: string;
   slug: string;
@@ -217,13 +217,13 @@ export class ToolDrift {
         const n = await this.scan();
         if (n > 0) d.log.info("tool drift checks enqueued", { count: n });
       });
-      m.handle(DRIFT_APP_JOB, async (job) => {
-        const { orgId, appId, trigger } = job.data as {
+      m.handle(DRIFT_CONNECTOR_JOB, async (job) => {
+        const { orgId, connectorId, trigger } = job.data as {
           orgId: string;
-          appId: string;
+          connectorId: string;
           trigger: DriftTrigger;
         };
-        await this.check(orgId, appId, trigger);
+        await this.check(orgId, connectorId, trigger);
       });
     }
   }
@@ -235,19 +235,19 @@ export class ToolDrift {
   /**
    * 打开一次会话拉工具清单，无论成败都关闭会话；会话带 `listResources` 即视为支持 resources。
    * 清单里回显的凭据按本次注入的值打码（见 redact.ts）。凭据缺失原样抛 `credential.missing`；
-   * 其余失败一律 502 `app.connect_failed`，消息只带上游错误的类名（不带消息，消息里可能回显凭据）。
+   * 其余失败一律 502 `connector.connect_failed`，消息只带上游错误的类名（不带消息，消息里可能回显凭据）。
    */
   async listTools(
     connector: string,
     endpoint: unknown,
     auth: () => Promise<AuthInjection>,
     logCtx: Record<string, unknown>,
-    /** 收到 401：OAuth 应用在刷新锁内刷新（参数为最后一次注入的鉴权）。 */
+    /** 收到 401：OAuth 连接器在刷新锁内刷新（参数为最后一次注入的鉴权）。 */
     onUnauthorized: (last: AuthInjection | undefined) => Promise<void> = async () => {},
   ): Promise<{ specs: unknown; resources: boolean }> {
     const c = this.d.registry.findConnector(connector);
     if (!c) {
-      throw new ApiError("app.connect_failed", `The connector ${connector} is not installed`);
+      throw new ApiError("connector.connect_failed", `The connector ${connector} is not installed`);
     }
     const signal = AbortSignal.timeout(this.d.config().tools.timeoutMs);
     const injected: AuthInjection[] = [];
@@ -273,8 +273,11 @@ export class ToolDrift {
     } catch (e) {
       if (e instanceof CredentialMissing) throw e;
       // 日志经 logger 打码（凭据值已在构造注入时登记）
-      this.d.log.warn("app listTools failed", { ...logCtx, connector, err: e });
-      throw new ApiError("app.connect_failed", connectFailedMessage(e, redactorFor(injected)));
+      this.d.log.warn("connector listTools failed", { ...logCtx, connector, err: e });
+      throw new ApiError(
+        "connector.connect_failed",
+        connectFailedMessage(e, redactorFor(injected)),
+      );
     } finally {
       await session?.close().catch((e: unknown) => {
         this.d.log.warn("connector session close failed", { ...logCtx, connector, err: e });
@@ -283,7 +286,7 @@ export class ToolDrift {
   }
 
   /**
-   * 把新快照与当前工具行比对并写入（调用方已在事务内锁住应用行）；返回按名排序的变化。
+   * 把新快照与当前工具行比对并写入（调用方已在事务内锁住连接器行）；返回按名排序的变化。
    * 规则见文件头。待复核的新定义也写进 `tool_specs`（内容寻址，只增不改）。
    */
   async apply(
@@ -292,7 +295,7 @@ export class ToolDrift {
     rows: SnapshotRow[],
   ): Promise<DriftChanges> {
     const current = await t
-      .selectFrom("app_tools")
+      .selectFrom("connector_tools")
       .select([
         "name",
         "spec_hash",
@@ -303,7 +306,7 @@ export class ToolDrift {
         "policy_source",
         "reviewed_at",
       ])
-      .where("app_id", "=", app.id)
+      .where("connector_id", "=", app.id)
       .forUpdate()
       .execute();
     const initial = app.tools_synced_at === null && current.length === 0;
@@ -316,10 +319,10 @@ export class ToolDrift {
     const fresh = rows.filter((r) => !before.has(r.name));
     if (fresh.length > 0) {
       await t
-        .insertInto("app_tools")
+        .insertInto("connector_tools")
         .values(
           fresh.map((r) => ({
-            app_id: app.id,
+            connector_id: app.id,
             name: r.name,
             spec: JSON.stringify(r.spec),
             spec_hash: r.specHash,
@@ -379,9 +382,9 @@ export class ToolDrift {
         changed.push(r.name);
       }
       await t
-        .updateTable("app_tools")
+        .updateTable("connector_tools")
         .set(set)
-        .where("app_id", "=", app.id)
+        .where("connector_id", "=", app.id)
         .where("name", "=", r.name)
         .execute();
     }
@@ -391,7 +394,7 @@ export class ToolDrift {
       .map((c) => c.name);
     if (removed.length > 0) {
       await t
-        .updateTable("app_tools")
+        .updateTable("connector_tools")
         .set({
           status: "disabled",
           missing_since: sql<Date>`now()`,
@@ -399,14 +402,14 @@ export class ToolDrift {
           pending_spec_hash: null,
           pending_source: null,
         })
-        .where("app_id", "=", app.id)
+        .where("connector_id", "=", app.id)
         .where("name", "in", removed)
         .execute();
     }
 
     const any = added.length + changed.length + removed.length > 0;
     await t
-      .updateTable("apps")
+      .updateTable("connectors")
       .set({ tools_synced_at: sql<Date>`now()`, ...(any && { updated_at: sql<Date>`now()` }) })
       .where("id", "=", app.id)
       .execute();
@@ -414,17 +417,21 @@ export class ToolDrift {
   }
 
   /**
-   * 后台检查一个应用（维护队列的 worker 上执行，没有发起人）：拉工具清单 → 比对写入 → 有变化记审计
-   * `app.tools_drifted`（detail 只有新增 / 变化 / 消失的个数与触发方式，不含定义与凭据）。
+   * 后台检查一个连接器（维护队列的 worker 上执行，没有发起人）：拉工具清单 → 比对写入 → 有变化记审计
+   * `connector.tools_drifted`（detail 只有新增 / 变化 / 消失的个数与触发方式，不含定义与凭据）。
    * 凭据：无需凭据 / 组织凭据型（含客户端凭据流）用组织凭据；个人凭据型（静态或 OAuth 授权码）依次尝试
    * 至多 {@link PERSONAL_CANDIDATES} 个**现任成员**的个人凭据，按凭据最近写入时间倒序（连接 / 刷新 token
    * 都会更新写入时间，即「最近连接成功的成员」优先），用第一个成功的；没有任何成员凭据 → 跳过并记日志。
    * 连不上 / 都失败 → 跳过（不改快照，下个周期或下次通知再查）。
    */
-  async check(orgId: string, appId: string, trigger: DriftTrigger): Promise<DriftCheckResult> {
+  async check(
+    orgId: string,
+    connectorId: string,
+    trigger: DriftTrigger,
+  ): Promise<DriftCheckResult> {
     const { db, log } = this.d;
     const app = (await db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .select([
         "id",
         "org_id",
@@ -436,29 +443,29 @@ export class ToolDrift {
         "created_by",
         "tools_synced_at",
       ])
-      .where("id", "=", appId)
+      .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
-      .executeTakeFirst()) as AppRow | undefined;
+      .executeTakeFirst()) as ConnectorRow | undefined;
     if (!app) return { status: "skipped", reason: "not_found" };
     if (app.status !== "active") return { status: "skipped", reason: "inactive" };
     if (!this.d.registry.findConnector(app.connector)) {
       log.warn("tool drift check skipped: connector not installed", {
         orgId,
-        appId,
+        connectorId,
         connector: app.connector,
       });
       return { status: "skipped", reason: "no_connector" };
     }
-    const auth = app.auth as AppAuth;
+    const auth = app.auth as ConnectorAuth;
     const personal = auth.type !== "none" && !isOAuth(auth) && auth.ownership === "personal";
     const personalOAuth = auth.type === "oauth_code";
     const accounts =
       personal || personalOAuth
-        ? await this.d.credentials.personalHolders(orgId, appId, PERSONAL_CANDIDATES)
+        ? await this.d.credentials.personalHolders(orgId, connectorId, PERSONAL_CANDIDATES)
         : [app.created_by];
     if (accounts.length === 0) {
-      log.info("tool drift check skipped: no member credential", { orgId, appId });
+      log.info("tool drift check skipped: no member credential", { orgId, connectorId });
       return { status: "skipped", reason: "no_credential" };
     }
 
@@ -469,9 +476,9 @@ export class ToolDrift {
         listed = await this.listTools(
           app.connector,
           app.endpoint,
-          () => this.d.credentials.injection(orgId, appId, auth, accountId),
-          { orgId, appId, trigger },
-          (last) => this.d.credentials.onUnauthorized(orgId, appId, auth, accountId, last),
+          () => this.d.credentials.injection(orgId, connectorId, auth, accountId),
+          { orgId, connectorId, trigger },
+          (last) => this.d.credentials.onUnauthorized(orgId, connectorId, auth, accountId, last),
         );
         break;
       } catch (e) {
@@ -484,16 +491,16 @@ export class ToolDrift {
       }
     }
     if (!listed) {
-      log.warn("tool drift check skipped: could not list tools", { orgId, appId, reason });
+      log.warn("tool drift check skipped: could not list tools", { orgId, connectorId, reason });
       return { status: "skipped", reason };
     }
     const { rows } = snapshot(app.slug, listed.specs, listed.resources);
 
     const changes = await db.transaction().execute(async (t) => {
       const locked = await t
-        .selectFrom("apps")
+        .selectFrom("connectors")
         .select(["id", "tools_synced_at"])
-        .where("id", "=", appId)
+        .where("id", "=", connectorId)
         .where("deleted_at", "is", null)
         .where("status", "=", "active")
         .forUpdate()
@@ -503,8 +510,8 @@ export class ToolDrift {
       if (c.added.length + c.changed.length + c.removed.length > 0) {
         await audit(t, {
           orgId,
-          action: "app.tools_drifted",
-          target: appId,
+          action: "connector.tools_drifted",
+          target: connectorId,
           detail: {
             added: c.added.length,
             changed: c.changed.length,
@@ -520,29 +527,29 @@ export class ToolDrift {
   }
 
   /**
-   * 连接器在会话中报告工具清单变了：投递一次该应用的检查（jobId 按分钟桶去重）。投递失败只记日志。
+   * 连接器在会话中报告工具清单变了：投递一次该连接器的检查（jobId 按分钟桶去重）。投递失败只记日志。
    */
-  async onToolsChanged(orgId: string, appId: string): Promise<void> {
+  async onToolsChanged(orgId: string, connectorId: string): Promise<void> {
     const m = this.d.maintenance;
-    if (!m || appId.includes(":")) return;
+    if (!m || connectorId.includes(":")) return;
     try {
       await m.add(
-        DRIFT_APP_JOB,
-        { orgId, appId, trigger: "list_changed" },
+        DRIFT_CONNECTOR_JOB,
+        { orgId, connectorId, trigger: "list_changed" },
         {
-          jobId: listChangedJobId(appId),
+          jobId: listChangedJobId(connectorId),
           removeOnComplete: { age: 3_600 },
           removeOnFail: KEEP_FAILED,
         },
       );
     } catch (err) {
-      this.d.log.warn("cannot enqueue tool drift check", { orgId, appId, err });
+      this.d.log.warn("cannot enqueue tool drift check", { orgId, connectorId, err });
     }
   }
 
   /**
-   * 周期扫描：给本周期内还没检查过的活动应用（`tools_synced_at` 为空或早于半个周期）各投递一次检查，
-   * jobId 按周期桶去重——即使扫描在多个副本上重复执行，每个应用每周期也只检查一次。返回投递数。
+   * 周期扫描：给本周期内还没检查过的活动连接器（`tools_synced_at` 为空或早于半个周期）各投递一次检查，
+   * jobId 按周期桶去重——即使扫描在多个副本上重复执行，每个连接器每周期也只检查一次。返回投递数。
    */
   async scan(): Promise<number> {
     const m = this.d.maintenance;
@@ -550,7 +557,7 @@ export class ToolDrift {
     const interval = this.intervalMs();
     const bucket = Math.floor(Date.now() / interval);
     const apps = await this.d.db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .select(["id", "org_id"])
       .where("deleted_at", "is", null)
       .where("status", "=", "active")
@@ -569,8 +576,8 @@ export class ToolDrift {
     for (const a of apps) {
       if (a.id.includes(":")) continue;
       await m.add(
-        DRIFT_APP_JOB,
-        { orgId: a.org_id, appId: a.id, trigger: "schedule" },
+        DRIFT_CONNECTOR_JOB,
+        { orgId: a.org_id, connectorId: a.id, trigger: "schedule" },
         {
           jobId: driftScanJobId(a.id, bucket),
           removeOnComplete: { age: Math.ceil(interval / 1000) },

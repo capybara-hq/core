@@ -3,7 +3,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
-import type { AgentDefinition } from "../agents/definition.js";
+import { normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
@@ -460,7 +460,7 @@ export class RunWorker {
       .where("agent_id", "=", conv.agent_id)
       .where("version", "=", run.agent_version)
       .executeTakeFirstOrThrow();
-    const agent = version.definition as unknown as AgentDefinition;
+    const agent = normalizeStoredDefinition(version.definition);
 
     let startedAt = run.started_at;
     if (run.status === "queued" || startedAt === null) {

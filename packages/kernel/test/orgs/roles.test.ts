@@ -28,8 +28,8 @@ const EXPECTED: Record<OrgAction, OrgRole[]> = {
   "agents.create": [M, A, O],
   "agents.use": [G, M, A, O],
   "agents.manage": [A, O],
-  "apps.manage": [A, O],
-  "apps.use": [G, M, A, O],
+  "connectors.manage": [A, O],
+  "connectors.use": [G, M, A, O],
   "approvals.decide": [G, M, A, O],
   "channels.manage": [A, O],
   "skills.read": [M, A, O],
@@ -71,8 +71,8 @@ describe("roles", () => {
     for (const a of SERVICE_OK) expect(HUMAN_ONLY.has(a)).toBe(false);
     expect(HUMAN_ONLY.has("agents.create")).toBe(true);
     for (const a of [
-      "apps.manage",
-      "apps.use",
+      "connectors.manage",
+      "connectors.use",
       "approvals.decide",
       "channels.manage",
       "ui.use",

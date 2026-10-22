@@ -140,7 +140,7 @@ type AppJson = {
 async function installDcr(mcp: FakeMcpServer): Promise<AppJson> {
   const res = await call({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/apps`,
+    url: `/api/v1/orgs/${orgId}/connectors`,
     payload: {
       name: "Docs",
       slug: "docs",
@@ -150,21 +150,24 @@ async function installDcr(mcp: FakeMcpServer): Promise<AppJson> {
     },
   });
   expect(res.statusCode, res.body).toBe(201);
-  return (res.json() as { app: AppJson }).app;
+  return (res.json() as { connector: AppJson }).connector;
 }
 
-async function getApp(appId: string, as: Req = req): Promise<AppJson> {
-  const res = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/${appId}` }, as);
+async function getConnector(connectorId: string, as: Req = req): Promise<AppJson> {
+  const res = await call(
+    { method: "GET", url: `/api/v1/orgs/${orgId}/connectors/${connectorId}` },
+    as,
+  );
   expect(res.statusCode, res.body).toBe(200);
-  return (res.json() as { app: AppJson }).app;
+  return (res.json() as { connector: AppJson }).connector;
 }
 
 /** 发起连接，返回授权 URL。 */
-async function connect(appId: string, as: Req = req, returnTo?: string): Promise<URL> {
+async function connect(connectorId: string, as: Req = req, returnTo?: string): Promise<URL> {
   const res = await call(
     {
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}/connect`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/connect`,
       payload: returnTo === undefined ? {} : { returnTo },
     },
     as,
@@ -189,11 +192,11 @@ async function callback(path: string, as: Req = req): Promise<string> {
   return res.headers.location as string;
 }
 
-async function connectFully(appId: string, as: Req = req): Promise<string> {
-  return callback(await approve(await connect(appId, as)), as);
+async function connectFully(connectorId: string, as: Req = req): Promise<string> {
+  return callback(await approve(await connect(connectorId, as)), as);
 }
 
-async function agentFor(appId: string): Promise<string> {
+async function agentFor(connectorId: string): Promise<string> {
   const res = await call({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -202,7 +205,7 @@ async function agentFor(appId: string): Promise<string> {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "app", appId, tools: "all" }],
+        tools: [{ kind: "connector", connectorId, tools: "all" }],
       },
       visibility: "org",
     },
@@ -244,14 +247,14 @@ describe("安装", () => {
     await installDcr(mcp);
   });
 
-  it("不支持 DCR → 502 app.connect_failed 带 dcr_unsupported，什么都不写；改填 client 后安装成功", async () => {
+  it("不支持 DCR → 502 connector.connect_failed 带 dcr_unsupported，什么都不写；改填 client 后安装成功", async () => {
     const { mcp } = await servers({
       dcr: false,
       clients: [{ clientId: "manual-client", clientSecret: "manual-secret-0123456789" }],
     });
     const res = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Docs",
         slug: "docs",
@@ -262,16 +265,16 @@ describe("安装", () => {
     });
     expect(res.statusCode, res.body).toBe(502);
     const err = (res.json() as { error: { code: string; details: { reason: string }[] } }).error;
-    expect(err.code).toBe("app.connect_failed");
+    expect(err.code).toBe("connector.connect_failed");
     expect(err.details.map((d) => d.reason)).toEqual(["dcr_unsupported"]);
-    expect(await db.selectFrom("apps").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("connectors").select("id").execute()).toEqual([]);
     expect(
       await db.selectFrom("secrets").select("key").where("org_id", "=", orgId).execute(),
     ).toEqual([]);
 
     const ok = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Docs",
         slug: "docs",
@@ -282,16 +285,16 @@ describe("安装", () => {
       },
     });
     expect(ok.statusCode, ok.body).toBe(201);
-    const appId = (ok.json() as { app: AppJson }).app.id;
-    const back = await connectFully(appId);
-    expect(back).toBe(`${PUBLIC_URL}/settings/connections?connected=${appId}`);
+    const connectorId = (ok.json() as { connector: AppJson }).connector.id;
+    const back = await connectFully(connectorId);
+    expect(back).toBe(`${PUBLIC_URL}/settings/connections?connected=${connectorId}`);
   });
 
   it("手填 client 但没给 credential → validation_failed；DCR 必须配合 MCP 发现", async () => {
     const { mcp } = await servers();
     const missing = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Docs",
         connector: "mcp",
@@ -305,7 +308,7 @@ describe("安装", () => {
     });
     const dcrManual = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Docs",
         connector: "mcp",
@@ -330,7 +333,7 @@ describe("安装", () => {
     });
     const res = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Svc",
         slug: "svc",
@@ -346,7 +349,7 @@ describe("安装", () => {
       },
     });
     expect(res.statusCode, res.body).toBe(201);
-    const app = (res.json() as { app: AppJson }).app;
+    const app = (res.json() as { connector: AppJson }).connector;
     expect(app.tools.map((t) => t.name)).toEqual(["whoami"]);
     expect(app.credential).toEqual({ ownership: "org", status: "connected" });
     expect(as.tokenRequests).toMatchObject([
@@ -361,7 +364,7 @@ describe("安装", () => {
 
     const bad = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Svc2",
         connector: "mcp",
@@ -371,15 +374,15 @@ describe("安装", () => {
       },
     });
     expect(bad.statusCode, bad.body).toBe(502);
-    expect(bad.json()).toMatchObject({ error: { code: "app.connect_failed" } });
+    expect(bad.json()).toMatchObject({ error: { code: "connector.connect_failed" } });
   }, 60_000);
 
-  it("OAuth 应用的个人 / 组织凭据只能经连接流程写入（PUT 凭据 → validation_failed）", async () => {
+  it("OAuth 连接器的个人 / 组织凭据只能经连接流程写入（PUT 凭据 → validation_failed）", async () => {
     const { mcp } = await servers();
     const app = await installDcr(mcp);
     const put = await call({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/apps/${app.id}/credentials/me`,
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}/credentials/me`,
       payload: { token: "a-token-of-some-length" },
     });
     expect(put.statusCode).toBe(400);
@@ -414,7 +417,7 @@ describe("连接（授权码 + PKCE）", () => {
     expect(tokenReq).toMatchObject({ status: 200, resource: mcp.url });
 
     // A16：首次连接用该成员的 token 刷新工具清单
-    const after = await getApp(app.id);
+    const after = await getConnector(app.id);
     expect(after.credential.status).toBe("connected");
     expect(after.tools.map((t) => t.name)).toEqual(["whoami"]);
 
@@ -430,7 +433,7 @@ describe("连接（授权码 + PKCE）", () => {
     for (const bad of ["https://evil.example.com/x", "//evil.example.com", "/\\evil.com", "x"]) {
       const res = await call({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/apps/${app.id}/connect`,
+        url: `/api/v1/orgs/${orgId}/connectors/${app.id}/connect`,
         payload: { returnTo: bad },
       });
       expect(res.statusCode, bad).toBe(400);
@@ -487,15 +490,15 @@ describe("连接（授权码 + PKCE）", () => {
     as.denyNext("temporarily_unavailable", "nope");
     const back2 = await callback(await approve(await connect(app.id)));
     expect(back2).toBe(`${PUBLIC_URL}/settings/connections?oauth_error=provider_error`);
-    expect((await getApp(app.id)).credential.status).toBe("missing");
+    expect((await getConnector(app.id)).credential.status).toBe("missing");
   });
 
-  it("connect 只用于授权码应用；非成员 404", async () => {
+  it("connect 只用于授权码连接器；非成员 404", async () => {
     const open = await startFakeMcpServer({ tools: [] });
     stops.push(() => open.stop());
     const res = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Open",
         connector: "mcp",
@@ -504,10 +507,10 @@ describe("连接（授权码 + PKCE）", () => {
       },
     });
     expect(res.statusCode, res.body).toBe(201);
-    const appId = (res.json() as { app: AppJson }).app.id;
+    const connectorId = (res.json() as { connector: AppJson }).connector.id;
     const c = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}/connect`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/connect`,
       payload: {},
     });
     expect(c.statusCode).toBe(400);
@@ -521,7 +524,11 @@ describe("连接（授权码 + PKCE）", () => {
     });
     const outsider = await session(k, "outsider");
     const c2 = await call(
-      { method: "POST", url: `/api/v1/orgs/${orgId}/apps/${appId}/connect`, payload: {} },
+      {
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/connect`,
+        payload: {},
+      },
       outsider,
     );
     expect(c2.statusCode).toBe(404);
@@ -569,7 +576,7 @@ describe("刷新", () => {
     expect(ofType(evs, "connection_required").map((e) => e.payload)).toMatchObject([
       { appId: app.id, appName: "Docs" },
     ]);
-    expect((await getApp(app.id)).credential.status).toBe("missing");
+    expect((await getConnector(app.id)).credential.status).toBe("missing");
 
     await connectFully(app.id);
     const r2 = await runTool(convId, 2, "docs__whoami");
@@ -602,7 +609,7 @@ describe("刷新", () => {
 });
 
 describe("轮换客户端与其他校验", () => {
-  it("A18：客户端凭据应用 PUT 组织凭据 → 先验证再替换客户端与组织 token；错误密钥 502 且不改动", async () => {
+  it("A18：客户端凭据连接器 PUT 组织凭据 → 先验证再替换客户端与组织 token；错误密钥 502 且不改动", async () => {
     const { as, mcp } = await servers({
       clients: [
         { clientId: "svc", clientSecret: "svc-secret-0123456789abc" },
@@ -611,7 +618,7 @@ describe("轮换客户端与其他校验", () => {
     });
     const res = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Svc",
         slug: "svc",
@@ -627,20 +634,20 @@ describe("轮换客户端与其他校验", () => {
       },
     });
     expect(res.statusCode, res.body).toBe(201);
-    const appId = (res.json() as { app: AppJson }).app.id;
+    const connectorId = (res.json() as { connector: AppJson }).connector.id;
     expect(as.tokenRequests.at(-1)).toMatchObject({ clientId: "svc", clientAuth: "post" });
 
     const bad = await call({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}/credentials/org`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/credentials/org`,
       payload: { clientId: "svc2", clientSecret: "wrong-secret-0123456789" },
     });
     expect(bad.statusCode, bad.body).toBe(502);
-    expect(bad.json()).toMatchObject({ error: { code: "app.connect_failed" } });
+    expect(bad.json()).toMatchObject({ error: { code: "connector.connect_failed" } });
 
     const ok = await call({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}/credentials/org`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/credentials/org`,
       payload: { clientId: "svc2", clientSecret: "svc2-secret-0123456789abc" },
     });
     expect(ok.statusCode, ok.body).toBe(204);
@@ -652,26 +659,26 @@ describe("轮换客户端与其他校验", () => {
     const audits = await db
       .selectFrom("audit_events")
       .select(["action", "detail"])
-      .where("action", "=", "app.credential.set")
+      .where("action", "=", "connector.credential.set")
       .execute();
     expect(audits.map((a) => a.detail)).toEqual([{ type: "oauth_client", ownership: "org" }]);
 
     // 调用用新客户端换来的 token（缓存已替换，不再取 token）
     const before = as.tokenRequests.length;
-    const convId = await createConv(req, orgId, await agentFor(appId));
+    const convId = await createConv(req, orgId, await agentFor(connectorId));
     const r = await runTool(convId, 1, "svc__whoami");
     expect(r?.isError).toBe(false);
     expect(as.tokenRequests.length).toBe(before);
 
     const missingSecret = await call({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}/credentials/org`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/credentials/org`,
       payload: { clientId: "svc2" },
     });
     expect(missingSecret.statusCode).toBe(400);
   }, 60_000);
 
-  it("A18：手填 client 的授权码应用只替换客户端（成员 token 保留）；DCR 应用不可替换", async () => {
+  it("A18：手填 client 的授权码连接器只替换客户端（成员 token 保留）；DCR 连接器不可替换", async () => {
     const { as, mcp } = await servers({
       clients: [
         { clientId: "m1", clientSecret: "m1-secret-0123456789abc" },
@@ -680,7 +687,7 @@ describe("轮换客户端与其他校验", () => {
     });
     const res = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Docs",
         slug: "docs",
@@ -691,23 +698,23 @@ describe("轮换客户端与其他校验", () => {
       },
     });
     expect(res.statusCode, res.body).toBe(201);
-    const appId = (res.json() as { app: AppJson }).app.id;
-    await connectFully(appId);
+    const connectorId = (res.json() as { connector: AppJson }).connector.id;
+    await connectFully(connectorId);
     const put = await call({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}/credentials/org`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/credentials/org`,
       payload: { clientId: "m2", clientSecret: "m2-secret-0123456789abc" },
     });
     expect(put.statusCode, put.body).toBe(204);
-    expect((await getApp(appId)).credential.status).toBe("connected");
-    const url = await connect(appId);
+    expect((await getConnector(connectorId)).credential.status).toBe("connected");
+    const url = await connect(connectorId);
     expect(url.searchParams.get("client_id")).toBe("m2");
 
     // DCR 注册的客户端不能被替换
     const other = await servers();
     const dcr = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Auto",
         slug: "auto",
@@ -719,7 +726,7 @@ describe("轮换客户端与其他校验", () => {
     expect(dcr.statusCode, dcr.body).toBe(201);
     const r = await call({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/apps/${(dcr.json() as { app: AppJson }).app.id}/credentials/org`,
+      url: `/api/v1/orgs/${orgId}/connectors/${(dcr.json() as { connector: AppJson }).connector.id}/credentials/org`,
       payload: { clientId: "x", clientSecret: "y" },
     });
     expect(r.statusCode).toBe(400);
@@ -738,18 +745,18 @@ describe("轮换客户端与其他校验", () => {
     expect(as.tokenRequests.filter((r) => r.grantType === "authorization_code")).toEqual([]);
   });
 
-  it("已停用的应用不能发起连接", async () => {
+  it("已停用的连接器不能发起连接", async () => {
     const { mcp } = await servers();
     const app = await installDcr(mcp);
     const off = await call({
       method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}`,
       payload: { status: "disabled" },
     });
     expect(off.statusCode, off.body).toBe(200);
     const c = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps/${app.id}/connect`,
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}/connect`,
       payload: {},
     });
     expect(c.statusCode).toBe(400);
@@ -760,7 +767,7 @@ describe("轮换客户端与其他校验", () => {
 });
 
 describe("http.publicUrl 未配置", () => {
-  it("OAuth 应用创建返回 validation_failed（path auth）", async () => {
+  it("OAuth 连接器创建返回 validation_failed（path auth）", async () => {
     const k2 = await createKernel(
       runConfig(
         { pg: pgc.url, redis: rd.url },
@@ -787,7 +794,7 @@ describe("http.publicUrl 未配置", () => {
       ]) {
         const res = await r2({
           method: "POST",
-          url: `/api/v1/orgs/${orgId}/apps`,
+          url: `/api/v1/orgs/${orgId}/connectors`,
           payload: {
             name: "Docs",
             connector: "mcp",

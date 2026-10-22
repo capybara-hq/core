@@ -238,8 +238,11 @@ export interface RunsTable {
   queued_at: TsNullable;
 }
 
-/** 0010_tools.sql：已安装的应用（连接器实例）。 */
-export interface AppsTable {
+/**
+ * 0010_tools.sql（0033 由 `apps` 改名）：已安装的连接器（远端服务实例）。列 `connector` 是连接器插件的 kind，
+ * 改名后叫 `connectors.connector` 有点别扭，但为避免多一次 RENAME 保持原名。
+ */
+export interface ConnectorsTable {
   id: string;
   org_id: string;
   slug: string;
@@ -259,16 +262,16 @@ export interface AppsTable {
   tools_synced_at: TsNullable;
 }
 
-/** 0010_tools.sql：应用暴露的工具。 */
-export interface AppToolsTable {
-  app_id: string;
+/** 0010_tools.sql（0033 由 `app_tools` 改名）：连接器暴露的工具。 */
+export interface ConnectorToolsTable {
+  connector_id: string;
   name: string;
   spec: Json<unknown>;
   spec_hash: string;
   status: "enabled" | "disabled" | "pending_review";
   default_policy: "allow" | "ask" | "deny";
   reviewed_at: TsNullable;
-  /** 0013：工具来源（`resources` = 内核为支持 resources 的应用补上的两个工具）。 */
+  /** 0013：工具来源（`resources` = 内核为支持 resources 的连接器补上的两个工具）。 */
   source: Generated<"connector" | "resources">;
   /** 0015：变化后待复核的新定义（复核前 spec / spec_hash / source 仍是旧的）。 */
   pending_spec: ColumnType<unknown, string | null | undefined, string | null>;
@@ -287,8 +290,8 @@ export interface ToolGrantsTable {
   agent_id: string;
   tool_key: string;
   spec_hash: string;
-  /** 应用工具的来源应用（插件 / 内置工具为 null）；授权只对同一个应用有效。 */
-  app_id: string | null;
+  /** 连接器工具的来源连接器（插件 / 内置工具为 null；0033 由 `app_id` 改名）；授权只对同一个连接器有效。 */
+  connector_id: string | null;
   created_at: Ts;
 }
 
@@ -297,8 +300,8 @@ export interface ConversationToolGrantsTable {
   conversation_id: string;
   tool_key: string;
   spec_hash: string;
-  /** 同 `ToolGrantsTable.app_id`。 */
-  app_id: string | null;
+  /** 同 `ToolGrantsTable.connector_id`。 */
+  connector_id: string | null;
 }
 
 /** 0010_tools.sql：工具调用审批；requested_for 与 approver_role 至少一个非空。 */
@@ -321,8 +324,8 @@ export interface ApprovalsTable {
   created_at: Ts;
   /** 0011：所批准的工具定义指纹（写授权用）。 */
   spec_hash: string;
-  /** 0011：应用工具的来源应用。 */
-  app_id: string | null;
+  /** 0011：连接器工具的来源连接器（0033 由 `app_id` 改名）。 */
+  connector_id: string | null;
   /** 0012：同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
   attempt: Generated<number>;
 }
@@ -786,8 +789,8 @@ export interface KernelDatabase {
   runs: RunsTable;
   lg_checkpoints: LgCheckpointsTable;
   lg_checkpoint_writes: LgCheckpointWritesTable;
-  apps: AppsTable;
-  app_tools: AppToolsTable;
+  connectors: ConnectorsTable;
+  connector_tools: ConnectorToolsTable;
   tool_grants: ToolGrantsTable;
   conversation_tool_grants: ConversationToolGrantsTable;
   approvals: ApprovalsTable;

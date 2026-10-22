@@ -40,19 +40,20 @@ export interface RunControl {
   requestAbort(runId: string, byAccountId: string): Promise<void>;
 }
 
-/** 消息附件引用（应用 + 资源 URI）。 */
+/** 消息附件引用（连接器 + 资源 URI）。 */
 export interface AttachmentRef {
-  appId: string;
+  connectorId: string;
   uri: string;
 }
 
-/** 附件解析：以发送者的凭据读取资源，返回追加在消息后的文本块与元数据（见 tools/app-content.ts）。 */
+/** 附件解析：以发送者的凭据读取资源，返回追加在消息后的文本块与元数据（见 tools/connector-content.ts）。 */
 export type ResolveAttachments = (
   orgId: string,
   accountId: string,
   refs: AttachmentRef[],
 ) => Promise<{
   blocks: { type: "text"; text: string }[];
+  /** 写进 user_message 的附件元数据：事件 payload 字段名仍为 `appId` / `appName`（C27）。 */
   attachments: { appId: string; appName: string; uri: string; name: string }[];
 }>;
 

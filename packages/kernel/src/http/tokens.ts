@@ -85,17 +85,17 @@ export const CONVERSATION_SANDBOX = Symbol("CONVERSATION_SANDBOX");
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
 
-/** 应用凭据（`Credentials`）的注入令牌。 */
+/** 连接器凭据（`Credentials`）的注入令牌。 */
 export const CREDENTIALS = Symbol("CREDENTIALS");
 
 /** `ToolRegistry` 的注入令牌。 */
 export const TOOL_REGISTRY = Symbol("TOOL_REGISTRY");
 
-/** `AppsService` 的注入令牌。 */
-export const APPS = Symbol("APPS");
+/** `ConnectorsService` 的注入令牌。 */
+export const CONNECTORS = Symbol("CONNECTORS");
 
-/** `AppContent`（应用的 prompts / resources，供斜杠命令与 @ 引用）的注入令牌。 */
-export const APP_CONTENT = Symbol("APP_CONTENT");
+/** `ConnectorContent`（连接器的 prompts / resources，供斜杠命令与 @ 引用）的注入令牌。 */
+export const CONNECTOR_CONTENT = Symbol("CONNECTOR_CONTENT");
 
 /** `ApprovalsService`（工具调用审批与授权）的注入令牌。 */
 export const APPROVALS = Symbol("APPROVALS");

@@ -8,7 +8,7 @@ import { canonicalJson } from "./registry.js";
  */
 const CACHE_MAX = 500;
 
-/** 不受信任的 schema（应用工具，来自连接器）JSON 序列化后的字节上限：超过不编译、不校验。 */
+/** 不受信任的 schema（连接器工具，来自连接器）JSON 序列化后的字节上限：超过不编译、不校验。 */
 export const UNTRUSTED_SCHEMA_MAX_BYTES = 64 * 1024;
 /** 不受信任的 schema 的嵌套层数上限（对象 / 数组层数）：超过不编译、不校验。 */
 export const UNTRUSTED_SCHEMA_MAX_DEPTH = 32;
@@ -187,7 +187,7 @@ function describe(e: ErrorObject): string {
 
 export interface ValidateOptions {
   /**
-   * schema 来自不受信任的来源（应用工具，由连接器提供）：编译前去掉 pattern / patternProperties / format，
+   * schema 来自不受信任的来源（连接器工具，由连接器提供）：编译前去掉 pattern / patternProperties / format，
    * 并限制大小与嵌套层数（超限不校验）。
    */
   untrusted?: boolean;

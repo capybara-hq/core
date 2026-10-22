@@ -292,7 +292,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
   });
 });
 
-describe("端到端：model-fake 脚本工具调用 → 应用工具与插件工具", () => {
+describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件工具", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
   let k: Kernel;
@@ -339,10 +339,10 @@ describe("端到端：model-fake 脚本工具调用 → 应用工具与插件工
     orgId = await createOrg(req);
   });
 
-  it("应用工具与插件工具各调用一次，模型拿到结果后结束", async () => {
+  it("连接器工具与插件工具各调用一次，模型拿到结果后结束", async () => {
     const app = await req({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps`,
+      url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Open",
         slug: "open",
@@ -352,7 +352,7 @@ describe("端到端：model-fake 脚本工具调用 → 应用工具与插件工
       },
     });
     expect(app.statusCode, app.body).toBe(201);
-    const appId = (app.json() as { app: { id: string } }).app.id;
+    const connectorId = (app.json() as { connector: { id: string } }).connector.id;
     const en = await req({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/plugins/mem-connector`,
@@ -368,7 +368,7 @@ describe("端到端：model-fake 脚本工具调用 → 应用工具与插件工
           instructions: "Be helpful.",
           model: { provider: "model-fake", model: "fake-1" },
           tools: [
-            { kind: "app", appId, tools: "all" },
+            { kind: "connector", connectorId, tools: "all" },
             { kind: "plugin", plugin: "mem-connector", name: "echo" },
           ],
         },

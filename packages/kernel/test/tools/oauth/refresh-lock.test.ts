@@ -17,7 +17,11 @@ import { kernelDb } from "../../../src/db/kernel-schema.js";
 import { migrate } from "../../../src/db/migrator.js";
 import { createDb } from "../../../src/db/pool.js";
 import { createLogger } from "../../../src/log.js";
-import { type AppAuth, CredentialMissing, Credentials } from "../../../src/tools/credentials.js";
+import {
+  type ConnectorAuth,
+  CredentialMissing,
+  Credentials,
+} from "../../../src/tools/credentials.js";
 
 /**
  * Task 15 Review 重点：两个「副本」（各自的 PG 连接池、Redis 连接与 Credentials 实例，没有任何进程内共享）
@@ -36,7 +40,7 @@ const stops: (() => Promise<void>)[] = [];
 
 const ORG = "org_oauth_lock";
 const ACCOUNT = "acct_1";
-const AUTH: AppAuth = {
+const AUTH: ConnectorAuth = {
   type: "oauth_code",
   ownership: "personal",
   discovery: "manual",
@@ -110,9 +114,9 @@ async function issueTokens(as: FakeOAuthServer) {
   return (await tok.json()) as { access_token: string; refresh_token: string; expires_in: number };
 }
 
-async function seed(creds: Credentials, as: FakeOAuthServer, appId: string) {
+async function seed(creds: Credentials, as: FakeOAuthServer, connectorId: string) {
   const t = await issueTokens(as);
-  await creds.setOAuthClient(ORG, appId, {
+  await creds.setOAuthClient(ORG, connectorId, {
     clientId: pub.clientId,
     authMethod: "none",
     authorizationEndpoint: `${as.issuer}/authorize`,
@@ -120,7 +124,7 @@ async function seed(creds: Credentials, as: FakeOAuthServer, appId: string) {
   });
   await creds.setOAuthTokens(
     ORG,
-    appId,
+    connectorId,
     { kind: "user", accountId: ACCOUNT },
     {
       access_token: t.access_token,

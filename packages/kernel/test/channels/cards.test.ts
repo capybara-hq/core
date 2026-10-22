@@ -67,7 +67,7 @@ describe("IM 卡片内容", () => {
     expect(webBase("https://cap.example/")).toBe("https://cap.example");
     expect(webBase(undefined)).toBeUndefined();
     expect(connectUrl("https://cap.example", "app 1")).toBe(
-      "https://cap.example/settings/connections#app-app%201",
+      "https://cap.example/settings/connections#connector-app%201",
     );
   });
 

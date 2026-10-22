@@ -21,8 +21,8 @@ export type OrgAction =
   | "agents.create"
   | "agents.use"
   | "agents.manage"
-  | "apps.manage"
-  | "apps.use"
+  | "connectors.manage"
+  | "connectors.use"
   | "approvals.decide"
   | "channels.manage"
   | "skills.read"
@@ -47,10 +47,10 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "agents.use": "guest",
   // 管理他人的 agent（如离职后重新指派负责人）
   "agents.manage": "admin",
-  // 安装 / 配置应用与审阅工具
-  "apps.manage": "admin",
-  // 读取本人可见的应用、连接自己的凭据（凭据属于具体的人，服务令牌不可用）
-  "apps.use": "guest",
+  // 安装 / 配置连接器与审阅工具
+  "connectors.manage": "admin",
+  // 读取本人可见的连接器、连接自己的凭据（凭据属于具体的人，服务令牌不可用）
+  "connectors.use": "guest",
   // 能否处理某条审批另由 requested_for / approver_role 判定；审批只能由人处理（服务令牌 / agent 不可）
   "approvals.decide": "guest",
   // 渠道连接（bot 凭据、绑定的 agent、未绑定用户策略）

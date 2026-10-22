@@ -35,7 +35,7 @@ import {
 
 /**
  * 整轮回放（T5，C6 / Review Focus 3）：在 `kind = 'eval'` 的隐藏对话里跑真实 loop，工具结果只回放原运行记录的，
- * 任何真实工具、沙箱、应用或审批都不触发。
+ * 任何真实工具、沙箱、连接器或审批都不触发。
  */
 
 const TOOLS_COUNT = fileURLToPath(

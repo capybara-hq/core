@@ -152,7 +152,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       content: z.array(ContentBlockSchema),
       /**
        * `@` 资源引用的附件元数据：第 i 个附件的正文是 `content[i + 1]`（`content[0]` 是用户输入的文本）。
-       * 界面据此把附件显示为条目而不是正文。较早的事件没有。
+       * 界面据此把附件显示为条目而不是正文。较早的事件没有。`appId` / `appName` 是连接器的 id 与名称：
+       * 「应用」改名「连接器」后字段名不变（D17 / C27：日志确定性）。
        */
       attachments: z
         .array(
@@ -298,8 +299,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
-   * 工具调用时发现发起人尚未连接个人凭据的应用：界面据此显示连接卡片（不进模型请求；模型看到的是
-   * 同一调用的 tool_result 错误说明）。组织凭据缺失不写此事件。
+   * 工具调用时发现发起人尚未连接个人凭据的连接器：界面据此显示连接卡片（不进模型请求；模型看到的是
+   * 同一调用的 tool_result 错误说明）。组织凭据缺失不写此事件。`appId` / `appName` 是连接器的 id 与名称，
+   * 改名后字段名不变（D17 / C27）。
    */
   ev(
     "connection_required",

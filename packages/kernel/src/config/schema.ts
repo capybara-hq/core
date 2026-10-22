@@ -254,7 +254,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth apps: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com",
+              "Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth connectors: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com",
           }),
         ),
     })
@@ -487,7 +487,9 @@ export const KernelConfigSchema = z.object({
         .positive()
         .default(5)
         .meta(
-          meta({ description: "Consecutive failures of one app that open its circuit breaker" }),
+          meta({
+            description: "Consecutive failures of one connector that open its circuit breaker",
+          }),
         ),
       breakerOpenSeconds: z
         .number()
@@ -567,7 +569,7 @@ export const KernelConfigSchema = z.object({
         .default(24)
         .meta(
           meta({
-            description: "Hours between checks of connected apps for changed tool definitions",
+            description: "Hours between checks of connectors for changed tool definitions",
           }),
         ),
       maxResultReadChars: z

@@ -10,22 +10,22 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Breaker } from "./breaker.js";
-import { type AppAuth, CredentialMissing, type Credentials } from "./credentials.js";
+import { type ConnectorAuth, CredentialMissing, type Credentials } from "./credentials.js";
 import { renderResult } from "./outputs.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import type { ToolRegistry } from "./registry.js";
 import { READ_RESOURCE } from "./resources.js";
 
 /**
- * 用户直接使用应用内容（D4，仿 Claude Code）：`/` 斜杠命令（MCP prompts）与 `@` 资源引用。
+ * 用户直接使用连接器内容（D4，仿 Claude Code）：`/` 斜杠命令（MCP prompts）与 `@` 资源引用。
  *
  * 与工具调用不同，这些操作由用户本人发起、不经模型：用发起人的凭据（组织凭据 / 本人的个人凭据）打开连接器会话，
- * 结果按本次注入的凭据打码（同 Review Focus 3）。不经工具策略与审批（用户自己在用），只要求 `apps.use`、
- * 应用为 active；熔断打开的应用直接跳过 / 报错，不计入熔断（列表请求是界面行为，不应让工具调用熔断）。
+ * 结果按本次注入的凭据打码（同 Review Focus 3）。不经工具策略与审批（用户自己在用），只要求 `connectors.use`、
+ * 连接器为 active；熔断打开的连接器直接跳过 / 报错，不计入熔断（列表请求是界面行为，不应让工具调用熔断）。
  * 会话按次打开、用完关闭，不缓存（多副本）。
  */
 
-/** 列表请求里每个应用的超时上限（毫秒；取它与 `tools.timeoutMs` 的较小值）。 */
+/** 列表请求里每个连接器的超时上限（毫秒；取它与 `tools.timeoutMs` 的较小值）。 */
 const LIST_TIMEOUT_MS = 10_000;
 /** 一次列出的资源最多条数。 */
 const MAX_RESOURCES = 500;
@@ -40,34 +40,37 @@ const ATTACHMENTS_TIMEOUT_MS = 30_000;
 /** 错误说明里带的上游错误消息最多字符数。 */
 const MAX_DETAIL = 500;
 
-export interface AppPromptView {
-  appId: string;
-  appSlug: string;
-  appName: string;
+export interface ConnectorPromptView {
+  connectorId: string;
+  connectorSlug: string;
+  connectorName: string;
   name: string;
   title?: string;
   description?: string;
   arguments: PromptInfo["arguments"];
 }
 
-export interface AppResourceView {
-  appId: string;
-  appSlug: string;
-  appName: string;
+export interface ConnectorResourceView {
+  connectorId: string;
+  connectorSlug: string;
+  connectorName: string;
   uri: string;
   name: string;
   description?: string;
   mimeType?: string;
 }
 
-/** 列表时某个应用不可用：发起人没有连接个人凭据，或连接 / 列出失败（含熔断打开）。 */
-export interface AppUnavailable {
-  appId: string;
-  appName: string;
+/** 列表时某个连接器不可用：发起人没有连接个人凭据，或连接 / 列出失败（含熔断打开）。 */
+export interface ConnectorUnavailable {
+  connectorId: string;
+  connectorName: string;
   reason: "not_connected" | "failed";
 }
 
-/** 附件元数据（存在 user_message 里，界面据此显示附件而不是正文）。 */
+/**
+ * 附件元数据（存在 user_message 里，界面据此显示附件而不是正文）。字段名是事件 payload 的一部分，
+ * 改名后仍为 `appId` / `appName`（C27：日志确定性）。
+ */
 export interface AttachmentMeta {
   appId: string;
   appName: string;
@@ -75,7 +78,7 @@ export interface AttachmentMeta {
   name: string;
 }
 
-interface AppRow {
+interface ConnectorRow {
   id: string;
   slug: string;
   name: string;
@@ -87,7 +90,7 @@ interface AppRow {
 const errName = (e: unknown): string =>
   e instanceof Error && typeof e.name === "string" && e.name !== "" ? e.name : "Error";
 
-export interface AppContentDeps {
+export interface ConnectorContentDeps {
   db: KernelDb;
   registry: Pick<ToolRegistry, "findConnector">;
   credentials: Pick<Credentials, "injection" | "onUnauthorized">;
@@ -96,12 +99,12 @@ export interface AppContentDeps {
   log: Logger;
 }
 
-export class AppContent {
-  constructor(private readonly d: AppContentDeps) {}
+export class ConnectorContent {
+  constructor(private readonly d: ConnectorContentDeps) {}
 
-  private async activeApps(orgId: string): Promise<AppRow[]> {
+  private async activeConnectors(orgId: string): Promise<ConnectorRow[]> {
     return this.d.db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .select(["id", "slug", "name", "connector", "endpoint", "auth"])
       .where("org_id", "=", orgId)
       .where("status", "=", "active")
@@ -111,60 +114,63 @@ export class AppContent {
       .execute();
   }
 
-  private async app(orgId: string, appId: string): Promise<AppRow> {
+  private async connectorRow(orgId: string, connectorId: string): Promise<ConnectorRow> {
     const r = await this.d.db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .select(["id", "slug", "name", "connector", "endpoint", "auth"])
       .where("org_id", "=", orgId)
-      .where("id", "=", appId)
+      .where("id", "=", connectorId)
       .where("status", "=", "active")
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (!r) throw new ApiError("app.not_found", "App not found");
+    if (!r) throw new ApiError("connector.not_found", "Connector not found");
     return r;
   }
 
   /**
-   * 读取资源受管理员对该应用 `read_resource` 工具（`source = 'resources'`）的启停约束（Ruling A23）：
-   * 返回其中该工具为 enabled 的应用 id。
+   * 读取资源受管理员对该连接器 `read_resource` 工具（`source = 'resources'`）的启停约束（Ruling A23）：
+   * 返回其中该工具为 enabled 的连接器 id。
    */
-  private async resourcesEnabled(appIds: string[]): Promise<Set<string>> {
-    if (appIds.length === 0) return new Set();
+  private async resourcesEnabled(connectorIds: string[]): Promise<Set<string>> {
+    if (connectorIds.length === 0) return new Set();
     const rows = await this.d.db
-      .selectFrom("app_tools")
-      .select("app_id")
-      .where("app_id", "in", appIds)
+      .selectFrom("connector_tools")
+      .select("connector_id")
+      .where("connector_id", "in", connectorIds)
       .where("source", "=", "resources")
       .where("name", "=", READ_RESOURCE)
       .where("status", "=", "enabled")
       .execute();
-    return new Set(rows.map((r) => r.app_id));
+    return new Set(rows.map((r) => r.connector_id));
   }
 
   /**
-   * 以 `accountId` 的凭据打开应用会话执行 `work`，结果按本次注入的凭据打码，会话无论成败都关闭。
-   * 缺凭据 → `credential.missing`；熔断打开、连接 / 远端失败 → 502 `app.connect_failed`（消息打码、限长）。
+   * 以 `accountId` 的凭据打开连接器会话执行 `work`，结果按本次注入的凭据打码，会话无论成败都关闭。
+   * 缺凭据 → `credential.missing`；熔断打开、连接 / 远端失败 → 502 `connector.connect_failed`（消息打码、限长）。
    * `work` 返回 undefined 表示该连接器不支持这项能力。
    */
   private async withSession<T>(
     orgId: string,
-    app: AppRow,
+    app: ConnectorRow,
     accountId: string,
     timeoutMs: number,
     work: (s: ConnectorSession) => Promise<T>,
   ): Promise<T> {
     const connector = this.d.registry.findConnector(app.connector);
     if (!connector) {
-      throw new ApiError("app.connect_failed", `The connector ${app.connector} is not installed`);
+      throw new ApiError(
+        "connector.connect_failed",
+        `The connector ${app.connector} is not installed`,
+      );
     }
     const breaker = await this.d.breaker.check(orgId, app.id);
     if (breaker.open) {
       throw new ApiError(
-        "app.connect_failed",
-        `The app is temporarily unavailable; retry in ${breaker.retryAfterSeconds}s`,
+        "connector.connect_failed",
+        `The connector is temporarily unavailable; retry in ${breaker.retryAfterSeconds}s`,
       );
     }
-    const auth = app.auth as AppAuth;
+    const auth = app.auth as ConnectorAuth;
     const injected: AuthInjection[] = [];
     let cached: Promise<AuthInjection> | undefined;
     const getAuth = () => {
@@ -191,27 +197,27 @@ export class AppContent {
       return redactDeep(await work(session), redact()) as T;
     } catch (e) {
       if (e instanceof ApiError) throw e;
-      this.d.log.warn("app content request failed", { orgId, appId: app.id, err: e });
+      this.d.log.warn("connector content request failed", { orgId, connectorId: app.id, err: e });
       const detail =
         e instanceof ToolError
           ? `: ${redact()(e.message).slice(0, MAX_DETAIL)}`
           : ` (${errName(e)})`;
-      throw new ApiError("app.connect_failed", `The app request failed${detail}`);
+      throw new ApiError("connector.connect_failed", `The connector request failed${detail}`);
     } finally {
       await session?.close().catch((err: unknown) => {
-        this.d.log.warn("connector session close failed", { orgId, appId: app.id, err });
+        this.d.log.warn("connector session close failed", { orgId, connectorId: app.id, err });
       });
     }
   }
 
-  /** 对每个 active 应用并行执行 `work`；缺凭据 / 失败的应用进 `unavailable`，不支持的（undefined）跳过。 */
-  private async acrossApps<T>(
+  /** 对每个 active 连接器并行执行 `work`；缺凭据 / 失败的连接器进 `unavailable`，不支持的（undefined）跳过。 */
+  private async acrossConnectors<T>(
     orgId: string,
     accountId: string,
-    work: (s: ConnectorSession, app: AppRow) => Promise<T[] | undefined>,
-    only?: (apps: AppRow[]) => Promise<AppRow[]>,
-  ): Promise<{ items: T[]; unavailable: AppUnavailable[] }> {
-    const all = await this.activeApps(orgId);
+    work: (s: ConnectorSession, app: ConnectorRow) => Promise<T[] | undefined>,
+    only?: (apps: ConnectorRow[]) => Promise<ConnectorRow[]>,
+  ): Promise<{ items: T[]; unavailable: ConnectorUnavailable[] }> {
+    const all = await this.activeConnectors(orgId);
     const apps = only ? await only(all) : all;
     const timeoutMs = Math.min(this.d.config().tools.timeoutMs, LIST_TIMEOUT_MS);
     const results = await Promise.all(
@@ -222,14 +228,14 @@ export class AppContent {
             items: await this.withSession(orgId, app, accountId, timeoutMs, (s) => work(s, app)),
           };
         } catch (e) {
-          const reason: AppUnavailable["reason"] =
+          const reason: ConnectorUnavailable["reason"] =
             e instanceof CredentialMissing ? "not_connected" : "failed";
-          return { app, unavailable: { appId: app.id, appName: app.name, reason } };
+          return { app, unavailable: { connectorId: app.id, connectorName: app.name, reason } };
         }
       }),
     );
     const items: T[] = [];
-    const unavailable: AppUnavailable[] = [];
+    const unavailable: ConnectorUnavailable[] = [];
     for (const r of results) {
       if ("unavailable" in r) unavailable.push(r.unavailable);
       else if (r.items) items.push(...r.items);
@@ -237,18 +243,18 @@ export class AppContent {
     return { items, unavailable };
   }
 
-  /** 发起人可用的全部提示模板（按应用创建顺序，应用内按远端顺序）。 */
+  /** 发起人可用的全部提示模板（按连接器创建顺序，连接器内按远端顺序）。 */
   async listPrompts(
     orgId: string,
     accountId: string,
-  ): Promise<{ prompts: AppPromptView[]; unavailable: AppUnavailable[] }> {
-    const { items, unavailable } = await this.acrossApps(orgId, accountId, async (s, app) => {
+  ): Promise<{ prompts: ConnectorPromptView[]; unavailable: ConnectorUnavailable[] }> {
+    const { items, unavailable } = await this.acrossConnectors(orgId, accountId, async (s, app) => {
       if (!s.listPrompts) return undefined;
       return (await s.listPrompts()).map(
-        (p): AppPromptView => ({
-          appId: app.id,
-          appSlug: app.slug,
-          appName: app.name,
+        (p): ConnectorPromptView => ({
+          connectorId: app.id,
+          connectorSlug: app.slug,
+          connectorName: app.name,
           name: p.name,
           ...(p.title !== undefined && { title: p.title }),
           ...(p.description !== undefined && { description: p.description }),
@@ -261,16 +267,16 @@ export class AppContent {
 
   /**
    * 渲染一个提示模板为文本（供用户放进输入框再发送）：各消息的文本按顺序以空行连接，assistant 消息加
-   * `Assistant:` 前缀；非文本内容给类型说明。应用不支持 prompts → 404 `app.not_found`。
+   * `Assistant:` 前缀；非文本内容给类型说明。连接器不支持 prompts → 404 `connector.not_found`。
    */
   async getPrompt(
     orgId: string,
-    appId: string,
+    connectorId: string,
     name: string,
     args: Record<string, string>,
     accountId: string,
   ): Promise<{ text: string }> {
-    const app = await this.app(orgId, appId);
+    const app = await this.connectorRow(orgId, connectorId);
     const rendered = await this.withSession(
       orgId,
       app,
@@ -278,7 +284,8 @@ export class AppContent {
       this.d.config().tools.timeoutMs,
       async (s) => (s.getPrompt ? s.getPrompt(name, args) : undefined),
     );
-    if (!rendered) throw new ApiError("app.not_found", "This app does not provide prompts");
+    if (!rendered)
+      throw new ApiError("connector.not_found", "This connector does not provide prompts");
     let text = rendered.messages
       .map((m) => {
         const t = renderResult({ content: m.content }).text;
@@ -294,9 +301,9 @@ export class AppContent {
     orgId: string,
     accountId: string,
     query?: string,
-  ): Promise<{ resources: AppResourceView[]; unavailable: AppUnavailable[] }> {
+  ): Promise<{ resources: ConnectorResourceView[]; unavailable: ConnectorUnavailable[] }> {
     const q = query?.trim().toLowerCase() ?? "";
-    const { items, unavailable } = await this.acrossApps(
+    const { items, unavailable } = await this.acrossConnectors(
       orgId,
       accountId,
       async (s, app) => {
@@ -308,10 +315,10 @@ export class AppContent {
               [r.name, r.uri, r.description ?? ""].some((v) => v.toLowerCase().includes(q)),
           )
           .map(
-            (r): AppResourceView => ({
-              appId: app.id,
-              appSlug: app.slug,
-              appName: app.name,
+            (r): ConnectorResourceView => ({
+              connectorId: app.id,
+              connectorSlug: app.slug,
+              connectorName: app.name,
               uri: r.uri,
               name: r.name,
               ...(r.description !== undefined && { description: r.description }),
@@ -319,7 +326,7 @@ export class AppContent {
             }),
           );
       },
-      // 管理员停用了读取资源的应用不列出（也不打开会话）
+      // 管理员停用了读取资源的连接器不列出（也不打开会话）
       async (apps) => {
         const enabled = await this.resourcesEnabled(apps.map((a) => a.id));
         return apps.filter((a) => enabled.has(a.id));
@@ -331,29 +338,30 @@ export class AppContent {
   /**
    * 解析消息附件：以发送者的凭据**并行**读取每个资源（打码、每个限 {@link MAX_ATTACHMENT_CHARS} 字符；总时限
    * min(`tools.timeoutMs`, 30s)），按请求顺序返回要追加在用户消息后的文本块与元数据。名称取资源清单里的 name
-   * （读不到清单时用 URI）。应用的 `read_resource` 工具被管理员停用 → 409 `app.resources_disabled`。
+   * （读不到清单时用 URI）。连接器的 `read_resource` 工具被管理员停用 → 409 `connector.resources_disabled`。
    * 任一附件失败整条消息失败（不写入）。
    */
   async resolveAttachments(
     orgId: string,
     accountId: string,
-    refs: { appId: string; uri: string }[],
+    refs: { connectorId: string; uri: string }[],
   ): Promise<{ blocks: { type: "text"; text: string }[]; attachments: AttachmentMeta[] }> {
-    const apps = new Map<string, AppRow>();
-    for (const id of new Set(refs.map((r) => r.appId))) apps.set(id, await this.app(orgId, id));
+    const apps = new Map<string, ConnectorRow>();
+    for (const id of new Set(refs.map((r) => r.connectorId)))
+      apps.set(id, await this.connectorRow(orgId, id));
     const enabled = await this.resourcesEnabled([...apps.keys()]);
     for (const id of apps.keys()) {
       if (!enabled.has(id)) {
         throw new ApiError(
-          "app.resources_disabled",
-          "Reading resources is turned off for this app",
+          "connector.resources_disabled",
+          "Reading resources is turned off for this connector",
         );
       }
     }
     const timeoutMs = Math.min(this.d.config().tools.timeoutMs, ATTACHMENTS_TIMEOUT_MS);
     const read = await Promise.all(
       refs.map(async (ref) => {
-        const app = apps.get(ref.appId) as AppRow;
+        const app = apps.get(ref.connectorId) as ConnectorRow;
         const got = await this.withSession(orgId, app, accountId, timeoutMs, async (s) => {
           if (!s.readResource) return undefined;
           const listed = s.listResources
@@ -362,7 +370,8 @@ export class AppContent {
           const result: ToolResult = await s.readResource(ref.uri);
           return { name: listed?.name ?? ref.uri, text: renderResult(result).text };
         });
-        if (!got) throw new ApiError("app.not_found", "This app does not provide resources");
+        if (!got)
+          throw new ApiError("connector.not_found", "This connector does not provide resources");
         return { app, ref, got };
       }),
     );

@@ -275,7 +275,7 @@ async function runStep(
   try {
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
-    // 每步实时解析（应用 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
+    // 每步实时解析（连接器 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
     // 日志里有过技能目录快照 → 带上 skill_load（Ruling M17；空快照也不收回，见 skillLoadOffered）
     const resolved = await deps.tools.forAgent(input.orgId, {
       tools: input.agent.tools ?? [],

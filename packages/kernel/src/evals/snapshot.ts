@@ -1,5 +1,5 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
-import type { AgentDefinition } from "../agents/definition.js";
+import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import type { ConversationEvent, ConversationEventType } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -137,7 +137,7 @@ export async function takeSnapshot(
     .orderBy("version")
     .execute();
   for (const r of defRows) {
-    definitions[String(r.version)] = r.definition as unknown as AgentDefinition;
+    definitions[String(r.version)] = normalizeStoredDefinition(r.definition);
   }
 
   const toolSpecs: Record<string, ToolSpec> = {};

@@ -251,7 +251,7 @@ function parseState(state: unknown): ElicitationState["elicitation"] | undefined
 }
 
 /**
- * 一次应用工具调用里的 elicitation 处理（见文件头）。`onSuspend` 中止本次调用；`declineAll` 用于不能续跑的场景
+ * 一次连接器工具调用里的 elicitation 处理（见文件头）。`onSuspend` 中止本次调用；`declineAll` 用于不能续跑的场景
  * （如 resources 工具），一律拒绝并附说明。
  */
 export class ElicitationSession {

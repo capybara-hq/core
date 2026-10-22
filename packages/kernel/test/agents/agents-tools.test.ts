@@ -106,10 +106,10 @@ async function createOrg(name: string): Promise<string> {
   return (org.json() as { org: { id: string } }).org.id;
 }
 
-async function installApp(slug: string, inOrg = orgId): Promise<string> {
+async function installConnector(slug: string, inOrg = orgId): Promise<string> {
   const res = await req({
     method: "POST",
-    url: `/api/v1/orgs/${inOrg}/apps`,
+    url: `/api/v1/orgs/${inOrg}/connectors`,
     payload: {
       name: slug,
       slug,
@@ -119,7 +119,7 @@ async function installApp(slug: string, inOrg = orgId): Promise<string> {
     },
   });
   expect(res.statusCode, res.body).toBe(201);
-  return (res.json() as { app: { id: string } }).app.id;
+  return (res.json() as { connector: { id: string } }).connector.id;
 }
 
 type AgentRes = { agent: { id: string; definition: AgentDefinition } };
@@ -175,13 +175,13 @@ describe("agent 定义的工具", () => {
     expect((patched.json() as AgentRes).agent.definition.tools).toEqual([]);
   });
 
-  it("引用存在的内置 / 插件 / 应用工具并收紧策略 → 保存成功", async () => {
-    const appId = await installApp("docs");
+  it("引用存在的内置 / 插件 / 连接器工具并收紧策略 → 保存成功", async () => {
+    const connectorId = await installConnector("docs");
     const res = await createAgent({
       tools: [
         { kind: "builtin", name: "ask_user" },
         { kind: "plugin", plugin: "tools-probe", name: "echo" },
-        { kind: "app", appId, tools: "all" },
+        { kind: "connector", connectorId, tools: "all" },
       ],
       toolPolicies: { docs__read: "ask", docs__write: "deny", "tools-probe__echo": "deny" },
     });
@@ -193,12 +193,12 @@ describe("agent 定义的工具", () => {
     });
   });
 
-  it("引用不存在的应用 / 其他组织的应用 / 应用里不存在的工具 → 400 validation_failed（path tools.<i>）", async () => {
-    const appId = await installApp("docs");
+  it("引用不存在的连接器 / 其他组织的连接器 / 连接器里不存在的工具 → 400 validation_failed（path tools.<i>）", async () => {
+    const connectorId = await installConnector("docs");
     const missing = await createAgent({
       tools: [
         { kind: "builtin", name: "ask_user" },
-        { kind: "app", appId: randomUUID(), tools: "all" },
+        { kind: "connector", connectorId: randomUUID(), tools: "all" },
       ],
     });
     expect(missing.statusCode).toBe(400);
@@ -206,20 +206,27 @@ describe("agent 定义的工具", () => {
     expect(detailPaths(missing)).toEqual(["tools.1"]);
 
     const otherOrg = await createOrg("Other");
-    const foreign = await installApp("theirs", otherOrg);
-    const cross = await createAgent({ tools: [{ kind: "app", appId: foreign, tools: "all" }] });
+    const foreign = await installConnector("theirs", otherOrg);
+    const cross = await createAgent({
+      tools: [{ kind: "connector", connectorId: foreign, tools: "all" }],
+    });
     expect(cross.statusCode).toBe(400);
     expect(detailPaths(cross)).toEqual(["tools.0"]);
 
-    const noTool = await createAgent({ tools: [{ kind: "app", appId, tools: ["read", "nope"] }] });
+    const noTool = await createAgent({
+      tools: [{ kind: "connector", connectorId, tools: ["read", "nope"] }],
+    });
     expect(noTool.statusCode).toBe(400);
     expect(detailPaths(noTool)).toEqual(["tools.0"]);
 
-    // 软删除的应用同样视为不存在
+    // 软删除的连接器同样视为不存在
     expect(
-      (await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/apps/${appId}` })).statusCode,
+      (await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/connectors/${connectorId}` }))
+        .statusCode,
     ).toBe(204);
-    const deleted = await createAgent({ tools: [{ kind: "app", appId, tools: "all" }] });
+    const deleted = await createAgent({
+      tools: [{ kind: "connector", connectorId, tools: "all" }],
+    });
     expect(deleted.statusCode).toBe(400);
   });
 
@@ -235,23 +242,23 @@ describe("agent 定义的工具", () => {
   });
 
   it("toolPolicies 放宽（allow）→ 400；键不是该 agent 的工具 → 400（path toolPolicies.<key>）", async () => {
-    const appId = await installApp("docs");
+    const connectorId = await installConnector("docs");
     const loosen = await createAgent({
-      tools: [{ kind: "app", appId, tools: "all" }],
+      tools: [{ kind: "connector", connectorId, tools: "all" }],
       toolPolicies: { docs__write: "allow" },
     });
     expect(loosen.statusCode).toBe(400);
     expect(detailPaths(loosen)).toEqual(["definition.toolPolicies.docs__write"]);
 
     const unknown = await createAgent({
-      tools: [{ kind: "app", appId, tools: ["read"] }],
+      tools: [{ kind: "connector", connectorId, tools: ["read"] }],
       toolPolicies: { docs__write: "deny", ask_user: "ask" },
     });
     expect(unknown.statusCode).toBe(400);
     expect(detailPaths(unknown)).toEqual(["toolPolicies.docs__write", "toolPolicies.ask_user"]);
 
     // PATCH 同样校验
-    const ok = await createAgent({ tools: [{ kind: "app", appId, tools: ["read"] }] });
+    const ok = await createAgent({ tools: [{ kind: "connector", connectorId, tools: ["read"] }] });
     const { agent } = ok.json() as AgentRes;
     const patched = await req({
       method: "PATCH",
@@ -260,7 +267,7 @@ describe("agent 定义的工具", () => {
         definition: {
           name: "Helper",
           model: MODEL,
-          tools: [{ kind: "app", appId, tools: ["read"] }],
+          tools: [{ kind: "connector", connectorId, tools: ["read"] }],
           toolPolicies: { docs__write: "deny" },
         },
       },
@@ -306,8 +313,10 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     })[];
 
   it("model_call.request.tools 记录按 key 排序的工具与指纹", async () => {
-    const appId = await installApp("docs");
-    const res = await createAgent({ tools: [{ kind: "app", appId, tools: ["write", "read"] }] });
+    const connectorId = await installConnector("docs");
+    const res = await createAgent({
+      tools: [{ kind: "connector", connectorId, tools: ["write", "read"] }],
+    });
     const { agent } = res.json() as AgentRes;
     const convId = await conversation(agent.id, "hello");
     const r = await step(agent.definition, convId, randomUUID(), 1);
@@ -322,18 +331,19 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     expect(await ofType(convId, "reminder")).toEqual([]);
   });
 
-  it("引用的应用被删除：写一条英文提醒、请求不带它的工具、本步照常完成；同样的提醒不逐步重复", async () => {
-    const appId = await installApp("docs");
+  it("引用的连接器被删除：写一条英文提醒、请求不带它的工具、本步照常完成；同样的提醒不逐步重复", async () => {
+    const connectorId = await installConnector("docs");
     const res = await createAgent({
       tools: [
         { kind: "plugin", plugin: "tools-probe", name: "echo" },
-        { kind: "app", appId, tools: "all" },
+        { kind: "connector", connectorId, tools: "all" },
       ],
     });
     expect(res.statusCode, res.body).toBe(201);
     const { agent } = res.json() as AgentRes;
     expect(
-      (await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/apps/${appId}` })).statusCode,
+      (await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/connectors/${connectorId}` }))
+        .statusCode,
     ).toBe(204);
 
     const convId = await conversation(agent.id, "hello");

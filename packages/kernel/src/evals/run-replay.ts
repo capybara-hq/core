@@ -36,7 +36,7 @@ import type { ResolvedCandidate } from "./step-replay.js";
 
 /**
  * 整轮回放（D2 / C6）：在 `kind = 'eval'` 的隐藏对话里跑**同一个** `LangGraphLoop`，工具管线换成
- * {@link RecordedToolPipeline}（只回放记录的结果，不执行任何工具、沙箱、应用或审批）。
+ * {@link RecordedToolPipeline}（只回放记录的结果，不执行任何工具、沙箱、连接器或审批）。
  *
  * - 种子：原运行 `run_started` 之前的事件按原 seq 插入（`last_seq` 停在其前一位，新的 `run_started` 因此与原来同 seq），
  *   原运行开始时的 `skills_catalog` 照抄；然后写 `runs` 行与 `run_started`，`agent` 用候选定义。

@@ -79,12 +79,12 @@ export interface BuiltinTool {
 
 /**
  * agent 定义里对工具的引用（Task 6 在 `AgentDefinitionSchema` 中落地同形的 zod schema）。
- * 应用工具按应用 id 引用，`tools: "all"` = 该应用当前所有启用的工具。
+ * 连接器工具按连接器 id 引用，`tools: "all"` = 该连接器当前所有启用的工具。
  */
 export type AgentToolRef =
   | { kind: "builtin"; name: string }
   | { kind: "plugin"; plugin: string; name: string }
-  | { kind: "app"; appId: string; tools: "all" | readonly string[] };
+  | { kind: "connector"; connectorId: string; tools: "all" | readonly string[] };
 
 export type ToolPolicy = "allow" | "ask" | "deny";
 
@@ -95,7 +95,7 @@ export interface ResolvedTool {
     | { kind: "builtin"; name: string }
     | { kind: "plugin"; plugin: string; name: string }
     /** `resources`：内核补上的 list_resources / read_resource（见 resources.ts），执行时路由到会话的 resources 方法。 */
-    | { kind: "app"; appId: string; name: string; resources?: true };
+    | { kind: "connector"; connectorId: string; name: string; resources?: true };
   /** 存储 / 注册时的定义（`name` 为来源内的原名，description 与 inputSchema 原样）；模型可见名用 `key`。 */
   spec: ToolSpec;
   /** sha256(canonical spec) 前 16 位。 */
@@ -107,7 +107,7 @@ export interface ResolvedTool {
   spillChars?: number;
   /**
    * 执行所需的最低组织角色（spec 3.6 R1）。发起人当前角色不足时转为按角色升级的审批
-   * （推给持有该角色的人）。M3 的内置与应用工具都不设。
+   * （推给持有该角色的人）。M3 的内置与连接器工具都不设。
    */
   requiredRole?: OrgRole;
 }
@@ -157,7 +157,7 @@ export interface AgentTools {
   tools: ResolvedTool[];
   unavailable: UnavailableTool[];
   /**
-   * `tools: "all"` 引用的应用里未启用的工具（待复核 / 停用 / 已消失）及事实原因。不进 `unavailable`
+   * `tools: "all"` 引用的连接器里未启用的工具（待复核 / 停用 / 已消失）及事实原因。不进 `unavailable`
    * （那会让每步都写「工具不可用」提醒），只在模型点名调用时用来给事实说明（spec 6.3）。缺省视为空。
    */
   hidden?: UnavailableTool[];
@@ -191,7 +191,7 @@ const sourceId = (s: ResolvedTool["source"]): string =>
     ? `builtin:${s.name}`
     : s.kind === "plugin"
       ? `plugin:${s.plugin}:${s.name}`
-      : `app:${s.appId}:${s.name}`;
+      : `connector:${s.connectorId}:${s.name}`;
 
 /**
  * 工具注册表：把 agent 定义里的引用解析成本次运行可用的工具。不缓存（每次实时读 PG 与宿主），
@@ -201,7 +201,7 @@ const sourceId = (s: ResolvedTool["source"]): string =>
  * - 内置：在 `builtins` 中；
  * - 插件工具：插件已加载且注册了该工具，并且本组织启用了该插件（`plugin_org_configs.enabled`，
  *   spec 2.2「安装在部署级、启用在组织级」；内置插件始终启用）；
- * - 应用工具：应用属于本组织、未删除、未停用、连接器已安装，工具状态为 `enabled` 且 key 合法。
+ * - 连接器工具：连接器属于本组织、未删除、未停用、连接器已安装，工具状态为 `enabled` 且 key 合法。
  *   `tools: "all"` 只取启用的工具，停用 / 待复核的视为管理员有意关闭，不报；点名的工具逐个报原因。
  * 同一 key 只保留第一个；同一来源被重复引用时静默去重，不同来源撞 key 报重复。
  */
@@ -225,7 +225,7 @@ export class ToolRegistry {
   }
 
   /**
-   * 内置 / 插件工具的处理函数（执行管线用）；应用工具经连接器执行，返回 undefined。
+   * 内置 / 插件工具的处理函数（执行管线用）；连接器工具经连接器执行，返回 undefined。
    * 插件已卸载等情况也返回 undefined。插件工具实时取当前实例，经实例的在途计数调用（C17）：
    * 实例撤销时先排空、到时限后中止，此时以 `PluginUnloadedError` 结束（管线据此给模型英文错误结果）。
    */
@@ -253,9 +253,9 @@ export class ToolRegistry {
    * 保存 agent 时校验工具引用（只看「存在」，停用 / 待复核 / 插件未启用等运行时状态不拒绝，由 `forAgent` 报不可用）：
    * - 内置：名字在 {@link BUILTIN_TOOL_NAMES} 中；
    * - 插件：插件已加载且注册了该工具，key 合法；
-   * - 应用：应用属于本组织且未删除；点名的工具必须在应用的工具快照中。
+   * - 连接器：连接器属于本组织且未删除；点名的工具必须在连接器的工具快照中。
    * 不同来源拼出同一个 key 也报出来（不截断、不猜）。
-   * 返回 `keys`：这些引用可能产生的全部工具 key（`"all"` 含应用当前所有工具，不论状态），供校验 `toolPolicies`。
+   * 返回 `keys`：这些引用可能产生的全部工具 key（`"all"` 含连接器当前所有工具，不论状态），供校验 `toolPolicies`。
    */
   async checkRefs(
     orgId: string,
@@ -264,8 +264,10 @@ export class ToolRegistry {
     const issues: ToolRefIssue[] = [];
     const owner = new Map<string, string>();
     const pluginTools = this.deps.host.tools();
-    const appIds = [...new Set(refs.flatMap((r) => (r.kind === "app" ? [r.appId] : [])))];
-    const apps = await this.loadApps(orgId, appIds);
+    const connectorIds = [
+      ...new Set(refs.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : []))),
+    ];
+    const apps = await this.loadConnectors(orgId, connectorIds);
     const claim = (path: string, key: string, source: string) => {
       const prev = owner.get(key);
       if (prev === undefined) owner.set(key, source);
@@ -294,18 +296,21 @@ export class ToolRegistry {
         }
         claim(path, key, `plugin:${ref.plugin}:${ref.name}`);
       } else {
-        const app = apps.get(ref.appId);
+        const app = apps.get(ref.connectorId);
         if (!app || app.deleted) {
-          issues.push({ path, message: `App "${ref.appId}" does not exist` });
+          issues.push({ path, message: `Connector "${ref.connectorId}" does not exist` });
           return;
         }
         const names = ref.tools === "all" ? app.tools.map((t) => t.name) : [...new Set(ref.tools)];
         for (const name of names) {
           if (!app.tools.some((t) => t.name === name)) {
-            issues.push({ path, message: `Tool "${name}" does not exist in app ${app.slug}` });
+            issues.push({
+              path,
+              message: `Tool "${name}" does not exist in connector ${app.slug}`,
+            });
             continue;
           }
-          claim(path, toolKey(app.slug, name), `app:${app.id}:${name}`);
+          claim(path, toolKey(app.slug, name), `connector:${app.id}:${name}`);
         }
       }
     });
@@ -385,8 +390,10 @@ export class ToolRegistry {
     const enabledPlugins = def.tools.some((r) => r.kind === "plugin")
       ? await this.enabledPlugins(orgId)
       : new Set<string>();
-    const appIds = [...new Set(def.tools.flatMap((r) => (r.kind === "app" ? [r.appId] : [])))];
-    const apps = await this.loadApps(orgId, appIds);
+    const connectorIds = [
+      ...new Set(def.tools.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : []))),
+    ];
+    const apps = await this.loadConnectors(orgId, connectorIds);
     const pluginTools = this.deps.host.tools();
 
     for (const ref of def.tools) {
@@ -438,9 +445,9 @@ export class ToolRegistry {
           defaultPolicy: t.spec.defaultPolicy ?? policyFromAnnotations(t.spec.annotations),
         });
       } else {
-        const app = apps.get(ref.appId);
+        const app = apps.get(ref.connectorId);
         if (!app) {
-          unavailable.push({ ref: `app:${ref.appId}`, reason: "App does not exist" });
+          unavailable.push({ ref: `app:${ref.connectorId}`, reason: "App does not exist" });
           continue;
         }
         const all = toolKey(app.slug, "*");
@@ -491,8 +498,8 @@ export class ToolRegistry {
           add({
             key,
             source: {
-              kind: "app",
-              appId: app.id,
+              kind: "connector",
+              connectorId: app.id,
               name: t.name,
               ...(t.source === "resources" && { resources: true as const }),
             },
@@ -511,7 +518,7 @@ export class ToolRegistry {
     return this.deps.host.enabledPlugins(orgId);
   }
 
-  private async loadApps(
+  private async loadConnectors(
     orgId: string,
     ids: string[],
   ): Promise<
@@ -538,9 +545,9 @@ export class ToolRegistry {
   > {
     const out = new Map();
     if (ids.length === 0) return out;
-    // 软删除的应用也读出来，只为给出「已删除」这个更准确的原因（slug 可能已被新应用复用，按 id 区分）
+    // 软删除的连接器也读出来，只为给出「已删除」这个更准确的原因（slug 可能已被新连接器复用，按 id 区分）
     const apps = await this.deps.db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .select(["id", "slug", "connector", "status", "deleted_at"])
       .where("org_id", "=", orgId)
       .where("id", "in", ids)
@@ -550,9 +557,9 @@ export class ToolRegistry {
       live.length === 0
         ? []
         : await this.deps.db
-            .selectFrom("app_tools")
+            .selectFrom("connector_tools")
             .select([
-              "app_id",
+              "connector_id",
               "name",
               "spec",
               "spec_hash",
@@ -561,7 +568,7 @@ export class ToolRegistry {
               "source",
               "missing_since",
             ])
-            .where("app_id", "in", live)
+            .where("connector_id", "in", live)
             .orderBy("name")
             .execute();
     for (const a of apps) {
@@ -572,7 +579,7 @@ export class ToolRegistry {
         status: a.status,
         deleted: a.deleted_at !== null,
         tools: toolRows
-          .filter((t) => t.app_id === a.id)
+          .filter((t) => t.connector_id === a.id)
           .map((t) => ({
             name: t.name,
             spec: t.spec as ToolSpec,

@@ -12,7 +12,7 @@ import type { ProviderRegistry } from "../runtime/providers.js";
 import type { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills } from "../skills/skills.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { AgentDefinition } from "./definition.js";
+import { type AgentDefinition, normalizeStoredDefinition } from "./definition.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -140,7 +140,7 @@ export class AgentsService {
   ) {}
 
   /**
-   * 校验工具引用与工具策略：引用的内置 / 插件 / 应用工具必须存在（见 `ToolRegistry.checkRefs`）；
+   * 校验工具引用与工具策略：引用的内置 / 插件 / 连接器工具必须存在（见 `ToolRegistry.checkRefs`）；
    * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
    * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
    */
@@ -251,7 +251,7 @@ export class AgentsService {
           ownerAccountId: r.owner_account_id,
           visibility: r.visibility,
           currentVersion: r.current_version,
-          definition: r.definition as unknown as AgentDefinition,
+          definition: normalizeStoredDefinition(r.definition),
           memberIds:
             r.visibility === "members"
               ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)
@@ -598,7 +598,7 @@ export class AgentsService {
     if (!r) throw notFound();
     return {
       version: r.version,
-      definition: r.definition as unknown as AgentDefinition,
+      definition: normalizeStoredDefinition(r.definition),
       createdBy: r.created_by,
       createdAt: r.created_at,
     };

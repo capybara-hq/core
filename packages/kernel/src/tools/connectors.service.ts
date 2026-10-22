@@ -16,7 +16,7 @@ import { audit } from "../identity/audit.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import type { PluginHost } from "../plugins/host.js";
 import {
-  type AppAuth,
+  type ConnectorAuth,
   CredentialMissing,
   type CredentialOwner,
   type Credentials,
@@ -61,8 +61,8 @@ export type { ToolIssue } from "./drift.js";
 type ToolStatus = "enabled" | "disabled" | "pending_review";
 type ToolSource = "connector" | "resources";
 
-/** 应用工具视图；`issue` 非空表示该工具不能启用的原因（如 key 超长）。 */
-export interface AppToolView {
+/** 连接器工具视图；`issue` 非空表示该工具不能启用的原因（如 key 超长）。 */
+export interface ConnectorToolView {
   name: string;
   key: string;
   description: string;
@@ -70,14 +70,14 @@ export interface AppToolView {
   annotations: ToolAnnotations | null;
   /**
    * 连接器的不透明路由数据（Ruling A21，如 OpenAPI 的方法 / 路径 / 服务器地址），供复核对比；没有时为 null。
-   * 只给 `apps.manage`（读者视图里置 null，见 apps.controller.ts）。
+   * 只给 `connectors.manage`（读者视图里置 null，见 connectors.controller.ts）。
    */
   connectorData: Record<string, unknown> | null;
   status: ToolStatus;
   defaultPolicy: ToolPolicy;
   specHash: string;
   issue: string | null;
-  /** `resources`：内核为支持 resources 的应用补上的工具（见 resources.ts）。 */
+  /** `resources`：内核为支持 resources 的连接器补上的工具（见 resources.ts）。 */
   source: ToolSource;
   /** 默认策略的来历：`derived` 按注解推导（定义变化复核通过后重新推导），`admin` 管理员设定（保留）。 */
   policySource: "derived" | "admin";
@@ -99,40 +99,40 @@ export interface AppToolView {
 }
 
 /** 列表项：不含工具与凭据（`auth` 只有类型与非密钥字段）。 */
-export interface AppSummary {
+export interface ConnectorSummary {
   id: string;
   slug: string;
   name: string;
   connector: string;
   endpoint: unknown;
-  auth: AppAuth;
+  auth: ConnectorAuth;
   status: "active" | "disabled";
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface AppDetail extends AppSummary {
-  tools: AppToolView[];
+export interface ConnectorDetail extends ConnectorSummary {
+  tools: ConnectorToolView[];
   /** 当前用户视角的凭据状态；`ownership` 为 null 表示无需凭据（auth none）。 */
   credential: { ownership: "org" | "personal" | null; status: "connected" | "missing" };
 }
 
-export interface CreateAppInput {
+export interface CreateConnectorInput {
   name: string;
   slug?: string | undefined;
   connector: string;
   endpoint: unknown;
-  auth: AppAuth;
+  auth: ConnectorAuth;
   credential?: unknown;
 }
 
-export interface PreviewAppInput {
+export interface PreviewConnectorInput {
   name?: string | undefined;
   slug?: string | undefined;
   connector: string;
   endpoint: unknown;
-  auth?: AppAuth | undefined;
+  auth?: ConnectorAuth | undefined;
   credential?: unknown;
 }
 
@@ -149,10 +149,10 @@ export interface ToolPreview {
 }
 
 /**
- * 应用预览（Ruling A20）：`tools` 为 null 表示没有列工具（没给认证方式、需要凭据但没给、OAuth 授权码流）；
+ * 连接器预览（Ruling A20）：`tools` 为 null 表示没有列工具（没给认证方式、需要凭据但没给、OAuth 授权码流）；
  * `authHints` / `operations` 来自连接器的 `inspect`（不实现时为空 / 缺省）。
  */
-export interface AppPreview {
+export interface ConnectorPreview {
   tools: ToolPreview[] | null;
   /** 列工具时被停用 / 跳过的工具及原因（与安装时的 issues 相同；同名工具只保留第一个）。 */
   issues: ToolIssue[];
@@ -166,7 +166,7 @@ const PREVIEW_SLUG = "app";
 /** 预览里 inspect 失败的说明里带上的 ToolError 消息最多字符数。 */
 const MAX_INSPECT_DETAIL = 500;
 
-export interface UpdateAppInput {
+export interface UpdateConnectorInput {
   name?: string | undefined;
   status?: "active" | "disabled" | undefined;
   tools?:
@@ -179,7 +179,7 @@ export interface UpdateAppInput {
   allowUnannotated?: boolean | undefined;
 }
 
-const notFound = () => new ApiError("app.not_found", "App not found");
+const notFound = () => new ApiError("connector.not_found", "Connector not found");
 
 const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
@@ -187,26 +187,26 @@ const fail = (path: string, message: string) =>
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** OAuth 应用在安装时可带的客户端（手填 client / 客户端凭据流）。 */
+/** OAuth 连接器在安装时可带的客户端（手填 client / 客户端凭据流）。 */
 const OAuthClientCredential = z.strictObject({
   clientId: z.string().min(1).max(500),
   clientSecret: z.string().min(1).max(4000).optional(),
 });
 
-/** 发现 / 注册 / 取 token 的失败 → 502 `app.connect_failed`，details 带原因码（向导据 `dcr_unsupported` 改为手填 client）。 */
+/** 发现 / 注册 / 取 token 的失败 → 502 `connector.connect_failed`，details 带原因码（向导据 `dcr_unsupported` 改为手填 client）。 */
 function connectFailed(e: unknown): ApiError {
   if (e instanceof OAuthSetupError) {
-    return new ApiError("app.connect_failed", e.message, [
+    return new ApiError("connector.connect_failed", e.message, [
       { reason: e.reason, message: e.message },
     ]);
   }
   if (e instanceof OAuthGrantError) {
     const message = `The authorization server rejected the client credentials (${e.error})`;
-    return new ApiError("app.connect_failed", message, [{ reason: "token_failed", message }]);
+    return new ApiError("connector.connect_failed", message, [{ reason: "token_failed", message }]);
   }
   const message =
-    e instanceof OAuthUnavailable ? e.message : "Could not complete OAuth setup with the app";
-  return new ApiError("app.connect_failed", message, [{ reason: "token_failed", message }]);
+    e instanceof OAuthUnavailable ? e.message : "Could not complete OAuth setup with the connector";
+  return new ApiError("connector.connect_failed", message, [{ reason: "token_failed", message }]);
 }
 
 /**
@@ -255,10 +255,10 @@ const unannotated = (a: ToolAnnotations | undefined) =>
   a?.readOnlyHint === undefined && a?.destructiveHint === undefined;
 
 /**
- * 应用（已安装的连接器实例）与其工具快照、凭据。写操作都在组织行锁内复核发起人权限并写审计
+ * 连接器（远端服务实例）与其工具快照、凭据。写操作都在组织行锁内复核发起人权限并写审计
  * （detail 只有凭据类型与归属，没有值）。连接器会话按操作打开、用完即关，不在进程内缓存。
  */
-export class AppsService {
+export class ConnectorsService {
   constructor(
     private readonly db: KernelDb,
     private readonly registry: ToolRegistry,
@@ -300,7 +300,7 @@ export class AppsService {
 
   private async slugTaken(db: KernelDb | Trx, orgId: string, slug: string): Promise<boolean> {
     const row = await db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .select("id")
       .where("org_id", "=", orgId)
       .where("slug", "=", slug)
@@ -309,7 +309,7 @@ export class AppsService {
     return row !== undefined;
   }
 
-  private resolveSlug(input: CreateAppInput): string {
+  private resolveSlug(input: CreateConnectorInput): string {
     if (input.slug !== undefined) {
       if (!isValidSlug(input.slug)) throw fail("slug", SLUG_RULE);
       return input.slug;
@@ -322,9 +322,9 @@ export class AppsService {
   }
 
   /**
-   * OAuth 应用安装前的准备（A16）：授权码流按 `discovery` 取端点（MCP 发现或手填）、按 `client` 动态注册或用请求里
+   * OAuth 连接器安装前的准备（A16）：授权码流按 `discovery` 取端点（MCP 发现或手填）、按 `client` 动态注册或用请求里
    * 手填的 client（不做首次 listTools）；客户端凭据流用请求里的 client 取一次组织 token。
-   * 外连失败一律 502 `app.connect_failed`（details 带原因码），什么都不写。
+   * 外连失败一律 502 `connector.connect_failed`（details 带原因码），什么都不写。
    */
   private async prepareOAuth(
     auth: OAuthAuth,
@@ -432,17 +432,17 @@ export class AppsService {
   }
 
   /**
-   * 安装应用（A4）：校验 → 用请求里的凭据（尚未落库）连接并 listTools → 一个事务内写应用、工具快照、
-   * 凭据与审计。连接失败时什么都不写。组织凭据型应用的 `credential` 是组织凭据，个人型是创建者自己的。
-   * OAuth（A16，要求 `http.publicUrl`）：授权码应用不做首次 listTools（首个成员连接后刷新），只存客户端；
-   * 客户端凭据应用用安装时取到的组织 token listTools，存客户端与 token。
+   * 安装连接器（A4）：校验 → 用请求里的凭据（尚未落库）连接并 listTools → 一个事务内写连接器、工具快照、
+   * 凭据与审计。连接失败时什么都不写。组织凭据型连接器的 `credential` 是组织凭据，个人型是创建者自己的。
+   * OAuth（A16，要求 `http.publicUrl`）：授权码连接器不做首次 listTools（首个成员连接后刷新），只存客户端；
+   * 客户端凭据连接器用安装时取到的组织 token listTools，存客户端与 token。
    */
   async create(
     orgId: string,
     actorAccountId: string,
-    input: CreateAppInput,
+    input: CreateConnectorInput,
     actorTokenId?: string,
-  ): Promise<{ app: AppDetail; issues: ToolIssue[] }> {
+  ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     const slug = this.resolveSlug(input);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
     if (this.host.manifests().some((m) => m.name === slug)) {
@@ -463,7 +463,7 @@ export class AppsService {
     }
     // 先做不需要连接的检查：冲突的 slug 不该触发一次外连
     if (await this.slugTaken(this.db, orgId, slug)) {
-      throw new ApiError("app.slug_taken", "App slug is already taken");
+      throw new ApiError("connector.slug_taken", "Connector slug is already taken");
     }
     const oauth = isOAuth(auth)
       ? await this.prepareOAuth(auth, endpoint, input.credential, publicUrl as string)
@@ -488,12 +488,12 @@ export class AppsService {
     }
 
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
       if (await this.slugTaken(t, orgId, slug)) {
-        throw new ApiError("app.slug_taken", "App slug is already taken");
+        throw new ApiError("connector.slug_taken", "Connector slug is already taken");
       }
       await t
-        .insertInto("apps")
+        .insertInto("connectors")
         .values({
           id,
           org_id: orgId,
@@ -503,7 +503,7 @@ export class AppsService {
           endpoint: JSON.stringify(endpoint),
           auth: JSON.stringify(auth),
           created_by: actorAccountId,
-          // 授权码应用安装时不拍快照（A16）：留空，首个快照按安装处理
+          // 授权码连接器安装时不拍快照（A16）：留空，首个快照按安装处理
           ...(auth.type !== "oauth_code" && { tools_synced_at: sql<Date>`now()` }),
         })
         .execute();
@@ -519,7 +519,7 @@ export class AppsService {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "app.created",
+        action: "connector.created",
         target: id,
         detail: {
           slug,
@@ -529,17 +529,17 @@ export class AppsService {
           credentialProvided: secret !== undefined || oauth !== undefined,
         },
       });
-      return { app: await this.detail(t, orgId, id, actorAccountId), issues };
+      return { connector: await this.detail(t, orgId, id, actorAccountId), issues };
     });
   }
 
   /**
-   * 预览应用（Ruling A20，安装向导用）：校验连接器、端点（含凭据样式检查）与凭据形状后，用 `connector.inspect`
+   * 预览连接器（Ruling A20，安装向导用）：校验连接器、端点（含凭据样式检查）与凭据形状后，用 `connector.inspect`
    * 读端点描述（认证提示、操作清单），能认证（静态凭据 / 客户端凭据流取到的 token）或 auth none 时再列工具并按
    * slug 拼 key、推导默认策略与问题。什么都不写（不落库、不审计）；OAuth 授权码流不列工具（不做动态注册）。
-   * 外连失败一律 502 `app.connect_failed`，说明里只有连接器给的英文说明（按注入的凭据打码）或错误类名。
+   * 外连失败一律 502 `connector.connect_failed`，说明里只有连接器给的英文说明（按注入的凭据打码）或错误类名。
    */
-  async preview(orgId: string, input: PreviewAppInput): Promise<AppPreview> {
+  async preview(orgId: string, input: PreviewConnectorInput): Promise<ConnectorPreview> {
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
     const connector = this.registry.findConnector(input.connector);
     if (!connector) throw fail("connector", `Unknown connector "${input.connector}"`);
@@ -586,9 +586,9 @@ export class AppsService {
       } catch (e) {
         const message =
           e instanceof ToolError
-            ? `Could not read the app description: ${e.message.slice(0, MAX_INSPECT_DETAIL)}`
-            : `Could not read the app description (${e instanceof Error ? e.name : "Error"})`;
-        throw new ApiError("app.connect_failed", message);
+            ? `Could not read the connector description: ${e.message.slice(0, MAX_INSPECT_DETAIL)}`
+            : `Could not read the connector description (${e instanceof Error ? e.name : "Error"})`;
+        throw new ApiError("connector.connect_failed", message);
       }
     }
 
@@ -631,14 +631,14 @@ export class AppsService {
     };
   }
 
-  private async insertTools(t: Trx, appId: string, rows: SnapshotRow[]): Promise<void> {
+  private async insertTools(t: Trx, connectorId: string, rows: SnapshotRow[]): Promise<void> {
     if (rows.length === 0) return;
     await recordToolSpecs(t, rows);
     await t
-      .insertInto("app_tools")
+      .insertInto("connector_tools")
       .values(
         rows.map((r) => ({
-          app_id: appId,
+          connector_id: connectorId,
           name: r.name,
           spec: JSON.stringify(r.spec),
           spec_hash: r.specHash,
@@ -652,12 +652,12 @@ export class AppsService {
       .execute();
   }
 
-  /** 读本组织未删除的应用行；不存在 → `app.not_found`。`lock` 时 FOR UPDATE。 */
-  private async row(db: KernelDb | Trx, orgId: string, appId: string, lock = false) {
+  /** 读本组织未删除的连接器行；不存在 → `connector.not_found`。`lock` 时 FOR UPDATE。 */
+  private async row(db: KernelDb | Trx, orgId: string, connectorId: string, lock = false) {
     let q = db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .selectAll()
-      .where("id", "=", appId)
+      .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null);
     if (lock) q = q.forUpdate();
@@ -666,7 +666,7 @@ export class AppsService {
     return r;
   }
 
-  private summary(r: Awaited<ReturnType<AppsService["row"]>>): AppSummary {
+  private summary(r: Awaited<ReturnType<ConnectorsService["row"]>>): ConnectorSummary {
     return {
       id: r.id,
       slug: r.slug,
@@ -674,7 +674,7 @@ export class AppsService {
       connector: r.connector,
       // 大段文本（如 OpenAPI 文档）不回显全文，见 endpoint.ts
       endpoint: endpointView(r.endpoint),
-      auth: r.auth as unknown as AppAuth,
+      auth: r.auth as unknown as ConnectorAuth,
       status: r.status,
       createdBy: r.created_by,
       createdAt: r.created_at,
@@ -685,12 +685,12 @@ export class AppsService {
   private async detail(
     db: KernelDb | Trx,
     orgId: string,
-    appId: string,
+    connectorId: string,
     viewerAccountId: string,
-  ): Promise<AppDetail> {
-    const r = await this.row(db, orgId, appId);
+  ): Promise<ConnectorDetail> {
+    const r = await this.row(db, orgId, connectorId);
     const tools = await db
-      .selectFrom("app_tools")
+      .selectFrom("connector_tools")
       .select([
         "name",
         "spec",
@@ -705,14 +705,14 @@ export class AppsService {
         "pending_spec_hash",
         "pending_source",
       ])
-      .where("app_id", "=", appId)
+      .where("connector_id", "=", connectorId)
       .orderBy("name")
       .execute();
     const s = this.summary(r);
     const auth = s.auth;
     const status = await this.credentials.status(
       orgId,
-      appId,
+      connectorId,
       auth,
       viewerAccountId,
       db === this.db ? undefined : (db as Trx),
@@ -754,10 +754,10 @@ export class AppsService {
     };
   }
 
-  /** 本组织未删除的应用（按创建时间）。 */
-  async list(orgId: string): Promise<AppSummary[]> {
+  /** 本组织未删除的连接器（按创建时间）。 */
+  async list(orgId: string): Promise<ConnectorSummary[]> {
     const rows = await this.db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .selectAll()
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
@@ -767,23 +767,23 @@ export class AppsService {
     return rows.map((r) => this.summary(r));
   }
 
-  async get(orgId: string, appId: string, viewerAccountId: string): Promise<AppDetail> {
-    return this.detail(this.db, orgId, appId, viewerAccountId);
+  async get(orgId: string, connectorId: string, viewerAccountId: string): Promise<ConnectorDetail> {
+    return this.detail(this.db, orgId, connectorId, viewerAccountId);
   }
 
-  /** 改名、启停应用、工具启停与默认策略、批量把无注解工具改为 allow（`apps.manage`）。 */
+  /** 改名、启停连接器、工具启停与默认策略、批量把无注解工具改为 allow（`connectors.manage`）。 */
   async update(
     orgId: string,
-    appId: string,
+    connectorId: string,
     actorAccountId: string,
-    patch: UpdateAppInput,
+    patch: UpdateConnectorInput,
     actorTokenId?: string,
-  ): Promise<AppDetail> {
+  ): Promise<ConnectorDetail> {
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
-      const app = await this.row(t, orgId, appId, true);
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      const app = await this.row(t, orgId, connectorId, true);
       const current = await t
-        .selectFrom("app_tools")
+        .selectFrom("connector_tools")
         .select([
           "name",
           "spec",
@@ -793,7 +793,7 @@ export class AppsService {
           "pending_spec_hash",
           "reviewed_at",
         ])
-        .where("app_id", "=", appId)
+        .where("connector_id", "=", connectorId)
         .forUpdate()
         .execute();
       const byName = new Map(current.map((c) => [c.name, c]));
@@ -802,7 +802,7 @@ export class AppsService {
       for (const [name, change] of toolChanges) {
         const c = byName.get(name);
         if (!c) {
-          problems.push({ path: `tools.${name}`, message: "No such tool in this app" });
+          problems.push({ path: `tools.${name}`, message: "No such tool in this connector" });
           continue;
         }
         if (change.status === "enabled") {
@@ -811,19 +811,19 @@ export class AppsService {
           if (c.status === "pending_review" || c.pending_spec_hash !== null) {
             problems.push({
               path,
-              message: `Tool is pending review; approve it with POST /apps/${appId}/tools/${name}/review`,
+              message: `Tool is pending review; approve it with POST /connectors/${connectorId}/tools/${name}/review`,
             });
             continue;
           }
           if (c.missing_since !== null) {
-            problems.push({ path, message: "The app no longer provides this tool" });
+            problems.push({ path, message: "The connector no longer provides this tool" });
             continue;
           }
           // 从未复核过的工具（如被拒绝的新工具）：启用等于跳过复核，只能经复核接口批准
           if (c.reviewed_at === null) {
             problems.push({
               path,
-              message: `Tool has never been reviewed; approve it with POST /apps/${appId}/tools/${name}/review`,
+              message: `Tool has never been reviewed; approve it with POST /connectors/${connectorId}/tools/${name}/review`,
             });
             continue;
           }
@@ -837,13 +837,13 @@ export class AppsService {
 
       if (patch.name !== undefined || patch.status !== undefined) {
         await t
-          .updateTable("apps")
+          .updateTable("connectors")
           .set({
             ...(patch.name !== undefined && { name: patch.name }),
             ...(patch.status !== undefined && { status: patch.status }),
             updated_at: sql`now()`,
           })
-          .where("id", "=", appId)
+          .where("id", "=", connectorId)
           .execute();
       }
       const allowed: string[] = [];
@@ -860,9 +860,9 @@ export class AppsService {
         }
         if (allowed.length > 0) {
           await t
-            .updateTable("app_tools")
+            .updateTable("connector_tools")
             .set({ default_policy: "allow", policy_source: "admin" })
-            .where("app_id", "=", appId)
+            .where("connector_id", "=", connectorId)
             .where("name", "in", allowed)
             .execute();
         }
@@ -870,7 +870,7 @@ export class AppsService {
       for (const [name, change] of toolChanges) {
         if (change.status === undefined && change.defaultPolicy === undefined) continue;
         await t
-          .updateTable("app_tools")
+          .updateTable("connector_tools")
           .set({
             ...(change.status !== undefined && { status: change.status }),
             ...(change.defaultPolicy !== undefined && {
@@ -878,7 +878,7 @@ export class AppsService {
               policy_source: "admin" as const,
             }),
           })
-          .where("app_id", "=", appId)
+          .where("connector_id", "=", connectorId)
           .where("name", "=", name)
           .execute();
       }
@@ -886,8 +886,8 @@ export class AppsService {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "app.updated",
-        target: appId,
+        action: "connector.updated",
+        target: connectorId,
         detail: {
           ...(patch.name !== undefined && { name: { from: app.name, to: patch.name } }),
           ...(patch.status !== undefined && { status: { from: app.status, to: patch.status } }),
@@ -895,35 +895,38 @@ export class AppsService {
           ...(allowed.length > 0 && { allowedUnannotated: allowed }),
         },
       });
-      return this.detail(t, orgId, appId, actorAccountId);
+      return this.detail(t, orgId, connectorId, actorAccountId);
     });
   }
 
-  /** 软删除，并删除该应用的全部凭据（`apps.manage`）。 */
+  /** 软删除，并删除该连接器的全部凭据（`connectors.manage`）。 */
   async remove(
     orgId: string,
-    appId: string,
+    connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
-      const app = await this.row(t, orgId, appId, true);
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      const app = await this.row(t, orgId, connectorId, true);
       await t
-        .updateTable("apps")
+        .updateTable("connectors")
         .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
-        .where("id", "=", appId)
+        .where("id", "=", connectorId)
         .execute();
-      await this.credentials.clearApp(orgId, appId, t);
-      // 授权绑定应用 id（软删除不触发外键级联）：一并删掉，不留给任何后来的应用
-      await t.deleteFrom("tool_grants").where("app_id", "=", appId).execute();
-      await t.deleteFrom("conversation_tool_grants").where("app_id", "=", appId).execute();
+      await this.credentials.clearConnector(orgId, connectorId, t);
+      // 授权绑定连接器 id（软删除不触发外键级联）：一并删掉，不留给任何后来的连接器
+      await t.deleteFrom("tool_grants").where("connector_id", "=", connectorId).execute();
+      await t
+        .deleteFrom("conversation_tool_grants")
+        .where("connector_id", "=", connectorId)
+        .execute();
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "app.deleted",
-        target: appId,
+        action: "connector.deleted",
+        target: connectorId,
         detail: { slug: app.slug },
       });
     });
@@ -931,26 +934,26 @@ export class AppsService {
 
   /**
    * 重新 listTools 并按漂移检测的规则比对写入（见 drift.ts）：新增 / 定义变化的工具待复核（旧定义保留供对比），
-   * 消失的工具停用；应用从未拍过快照时首个快照直接启用。
-   * 组织凭据型应用用组织凭据，个人型用发起人自己的凭据（缺 → `credential.missing`）。OAuth 应用收到 401 时
-   * 在刷新锁内刷新 token 后重试一次。`trigger: "first_connect"`：OAuth 授权码应用首个成员连接后由连接流程调用
-   * （A16），只要求 `apps.use`。审计 `app.tools_refreshed`（变化的工具名，不含定义）。
+   * 消失的工具停用；连接器从未拍过快照时首个快照直接启用。
+   * 组织凭据型连接器用组织凭据，个人型用发起人自己的凭据（缺 → `credential.missing`）。OAuth 连接器收到 401 时
+   * 在刷新锁内刷新 token 后重试一次。`trigger: "first_connect"`：OAuth 授权码连接器首个成员连接后由连接流程调用
+   * （A16），只要求 `connectors.use`。审计 `connector.tools_refreshed`（变化的工具名，不含定义）。
    */
   async refresh(
     orgId: string,
-    appId: string,
+    connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
     opts: { trigger?: "first_connect" } = {},
-  ): Promise<{ app: AppDetail; issues: ToolIssue[]; changes: DriftChanges }> {
-    const app = await this.row(this.db, orgId, appId);
-    const auth = app.auth as unknown as AppAuth;
+  ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[]; changes: DriftChanges }> {
+    const app = await this.row(this.db, orgId, connectorId);
+    const auth = app.auth as unknown as ConnectorAuth;
     const { specs, resources } = await this.drift.listTools(
       app.connector,
       app.endpoint,
-      () => this.credentials.injection(orgId, appId, auth, actorAccountId),
-      { orgId, appId },
-      (last) => this.credentials.onUnauthorized(orgId, appId, auth, actorAccountId, last),
+      () => this.credentials.injection(orgId, connectorId, auth, actorAccountId),
+      { orgId, connectorId },
+      (last) => this.credentials.onUnauthorized(orgId, connectorId, auth, actorAccountId, last),
     );
     const { rows, issues } = snapshot(app.slug, specs, resources);
 
@@ -959,42 +962,46 @@ export class AppsService {
         t,
         orgId,
         actorAccountId,
-        opts.trigger === "first_connect" ? "apps.use" : "apps.manage",
+        opts.trigger === "first_connect" ? "connectors.use" : "connectors.manage",
       );
-      const locked = await this.row(t, orgId, appId, true);
+      const locked = await this.row(t, orgId, connectorId, true);
       const changes = await this.drift.apply(t, locked, rows);
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "app.tools_refreshed",
-        target: appId,
+        action: "connector.tools_refreshed",
+        target: connectorId,
         detail: { ...changes, ...(opts.trigger && { trigger: opts.trigger }) },
       });
-      return { app: await this.detail(t, orgId, appId, actorAccountId), issues, changes };
+      return {
+        connector: await this.detail(t, orgId, connectorId, actorAccountId),
+        issues,
+        changes,
+      };
     });
   }
 
   /**
-   * 复核一个待复核的工具（`apps.manage`，spec 7.3）。`approve`：采用待复核的新定义（若有）并启用，
+   * 复核一个待复核的工具（`connectors.manage`，spec 7.3）。`approve`：采用待复核的新定义（若有）并启用，
    * `reviewed_at` 记为现在；默认策略按新定义的注解重新推导，除非管理员设过（`policy_source = admin`）且来源没变。
    * `reject`：停用，丢弃待复核的新定义、保留旧定义；从未复核过的工具被拒后 `reviewed_at` 仍为空（仍可再批准）。
-   * 工具不存在 → 404 `app.tool_not_found`；不可复核（已复核且无待复核定义，或已消失）→ 409 `app.tool_not_pending`；新定义不合规（如 key 不合法）不能通过 → `validation_failed`。
-   * 采用新定义即换了指纹：旧的「以后都允许」/「本会话都允许」授权按指纹比对自然失效（D8）。审计 `app.tool_reviewed`。
+   * 工具不存在 → 404 `connector.tool_not_found`；不可复核（已复核且无待复核定义，或已消失）→ 409 `connector.tool_not_pending`；新定义不合规（如 key 不合法）不能通过 → `validation_failed`。
+   * 采用新定义即换了指纹：旧的「以后都允许」/「本会话都允许」授权按指纹比对自然失效（D8）。审计 `connector.tool_reviewed`。
    */
   async reviewTool(
     orgId: string,
-    appId: string,
+    connectorId: string,
     name: string,
     action: "approve" | "reject",
     actorAccountId: string,
     actorTokenId?: string,
-  ): Promise<AppDetail> {
+  ): Promise<ConnectorDetail> {
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
-      const app = await this.row(t, orgId, appId, true);
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      const app = await this.row(t, orgId, connectorId, true);
       const tool = await t
-        .selectFrom("app_tools")
+        .selectFrom("connector_tools")
         .select([
           "status",
           "source",
@@ -1006,18 +1013,18 @@ export class AppsService {
           "reviewed_at",
           "missing_since",
         ])
-        .where("app_id", "=", appId)
+        .where("connector_id", "=", connectorId)
         .where("name", "=", name)
         .forUpdate()
         .executeTakeFirst();
-      if (!tool) throw new ApiError("app.tool_not_found", "Tool not found in this app");
+      if (!tool) throw new ApiError("connector.tool_not_found", "Tool not found in this connector");
       // 可复核：待复核、有待复核的新定义，或从未复核过（如被拒绝的新工具，仍可再批准）；已消失的不可复核
       const reviewable =
         tool.status === "pending_review" ||
         tool.pending_spec_hash !== null ||
         tool.reviewed_at === null;
       if (!reviewable || tool.missing_since !== null) {
-        throw new ApiError("app.tool_not_pending", "Tool is not pending review");
+        throw new ApiError("connector.tool_not_pending", "Tool is not pending review");
       }
       const next = (tool.pending_spec ?? tool.spec) as ToolSpec;
       const nextSource = tool.pending_source ?? tool.source;
@@ -1027,7 +1034,7 @@ export class AppsService {
       }
       const rederive = tool.policy_source === "derived" || nextSource !== tool.source;
       await t
-        .updateTable("app_tools")
+        .updateTable("connector_tools")
         .set({
           ...(action === "approve"
             ? {
@@ -1051,38 +1058,38 @@ export class AppsService {
             reviewed_at: sql<Date>`now()`,
           }),
         })
-        .where("app_id", "=", appId)
+        .where("connector_id", "=", connectorId)
         .where("name", "=", name)
         .execute();
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "app.tool_reviewed",
-        target: appId,
+        action: "connector.tool_reviewed",
+        target: connectorId,
         detail: { tool: name, action },
       });
-      return this.detail(t, orgId, appId, actorAccountId);
+      return this.detail(t, orgId, connectorId, actorAccountId);
     });
   }
 
   /**
-   * 写凭据（组织凭据：`apps.manage`；个人凭据：`apps.use`，只写发起人自己的那一条）。
+   * 写凭据（组织凭据：`connectors.manage`；个人凭据：`connectors.use`，只写发起人自己的那一条）。
    * 形状与归属不符 → `validation_failed`。审计只记类型与归属。
    */
   async setCredential(
     orgId: string,
-    appId: string,
+    connectorId: string,
     actorAccountId: string,
     ownership: "org" | "personal",
     value: unknown,
     actorTokenId?: string,
   ): Promise<void> {
     if (ownership === "org") {
-      const app = await this.row(this.db, orgId, appId);
-      const auth = app.auth as unknown as AppAuth;
+      const app = await this.row(this.db, orgId, connectorId);
+      const auth = app.auth as unknown as ConnectorAuth;
       if (isOAuth(auth)) {
-        await this.rotateOAuthClient(orgId, appId, actorAccountId, auth, value, actorTokenId);
+        await this.rotateOAuthClient(orgId, connectorId, actorAccountId, auth, value, actorTokenId);
         return;
       }
     }
@@ -1091,34 +1098,34 @@ export class AppsService {
         t,
         orgId,
         actorAccountId,
-        ownership === "org" ? "apps.manage" : "apps.use",
+        ownership === "org" ? "connectors.manage" : "connectors.use",
       );
-      const app = await this.row(t, orgId, appId);
-      const auth = app.auth as unknown as AppAuth;
+      const app = await this.row(t, orgId, connectorId);
+      const auth = app.auth as unknown as ConnectorAuth;
       const owner: CredentialOwner =
         ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
       this.credentials.validate(auth, owner, value);
-      await this.credentials.setStatic(orgId, appId, auth, owner, value, t);
+      await this.credentials.setStatic(orgId, connectorId, auth, owner, value, t);
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "app.credential.set",
-        target: appId,
+        action: "connector.credential.set",
+        target: connectorId,
         detail: { type: auth.type, ownership },
       });
     });
   }
 
   /**
-   * 轮换 OAuth 客户端（Ruling A18，组织凭据接口，`apps.manage`）：值为 `{ clientId, clientSecret }`。
-   * 客户端凭据应用先用新客户端取一次 token 验证（失败 → 502 `app.connect_failed`，什么都不改），再替换客户端并以
-   * 新 token 替换缓存的组织 token；授权码应用只限手填 client，只替换客户端（成员的 token 保留，之后刷新若得到
+   * 轮换 OAuth 客户端（Ruling A18，组织凭据接口，`connectors.manage`）：值为 `{ clientId, clientSecret }`。
+   * 客户端凭据连接器先用新客户端取一次 token 验证（失败 → 502 `connector.connect_failed`，什么都不改），再替换客户端并以
+   * 新 token 替换缓存的组织 token；授权码连接器只限手填 client，只替换客户端（成员的 token 保留，之后刷新若得到
    * invalid_client 会作废）。审计只记类型与归属。
    */
   private async rotateOAuthClient(
     orgId: string,
-    appId: string,
+    connectorId: string,
     actorAccountId: string,
     auth: OAuthAuth,
     value: unknown,
@@ -1127,15 +1134,15 @@ export class AppsService {
     if (auth.type === "oauth_code" && auth.client !== "manual") {
       throw fail(
         "auth.client",
-        "The OAuth client of this app was registered automatically and cannot be replaced",
+        "The OAuth client of this connector was registered automatically and cannot be replaced",
       );
     }
     const next = parseOAuthClient(value, auth.type === "oauth_client", "");
-    const current = await this.credentials.oauthClient(orgId, appId);
+    const current = await this.credentials.oauthClient(orgId, connectorId);
     if (!current) {
       throw new ApiError(
-        "app.connect_failed",
-        "The app has no registered OAuth client; reinstall it",
+        "connector.connect_failed",
+        "The connector has no registered OAuth client; reinstall it",
       );
     }
     const client: OAuthClientRecord = { ...current, clientId: next.clientId };
@@ -1161,39 +1168,45 @@ export class AppsService {
       }
     }
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.manage");
-      await this.row(t, orgId, appId, true);
-      await this.credentials.setOAuthClient(orgId, appId, client, t);
-      if (tokens) await this.credentials.setOAuthTokens(orgId, appId, { kind: "org" }, tokens, t);
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      await this.row(t, orgId, connectorId, true);
+      await this.credentials.setOAuthClient(orgId, connectorId, client, t);
+      if (tokens)
+        await this.credentials.setOAuthTokens(orgId, connectorId, { kind: "org" }, tokens, t);
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "app.credential.set",
-        target: appId,
+        action: "connector.credential.set",
+        target: connectorId,
         detail: { type: auth.type, ownership: "org" },
       });
     });
   }
 
-  /** 删除发起人自己的个人凭据（`apps.use`）；本来就没有也成功。 */
+  /** 删除发起人自己的个人凭据（`connectors.use`）；本来就没有也成功。 */
   async clearMyCredential(
     orgId: string,
-    appId: string,
+    connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "apps.use");
-      const app = await this.row(t, orgId, appId);
-      await this.credentials.clear(orgId, appId, { kind: "user", accountId: actorAccountId }, t);
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.use");
+      const app = await this.row(t, orgId, connectorId);
+      await this.credentials.clear(
+        orgId,
+        connectorId,
+        { kind: "user", accountId: actorAccountId },
+        t,
+      );
       await audit(t, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "app.credential.cleared",
-        target: appId,
-        detail: { type: (app.auth as unknown as AppAuth).type, ownership: "personal" },
+        action: "connector.credential.cleared",
+        target: connectorId,
+        detail: { type: (app.auth as unknown as ConnectorAuth).type, ownership: "personal" },
       });
     });
   }

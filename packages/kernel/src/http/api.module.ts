@@ -74,12 +74,12 @@ import type { SkillChangesService } from "../skills/changes.service.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
-import { AppContentController } from "../tools/app-content.controller.js";
-import type { AppContent } from "../tools/app-content.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
-import { AppsController } from "../tools/apps.controller.js";
-import { AppsService } from "../tools/apps.service.js";
+import { ConnectorContentController } from "../tools/connector-content.controller.js";
+import type { ConnectorContent } from "../tools/connector-content.js";
+import { ConnectorsController } from "../tools/connectors.controller.js";
+import { ConnectorsService } from "../tools/connectors.service.js";
 import type { Credentials } from "../tools/credentials.js";
 import type { ToolDrift } from "../tools/drift.js";
 import { OAuthFlow } from "../tools/oauth/flow.js";
@@ -99,11 +99,11 @@ import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
-  APP_CONTENT,
   APPROVALS,
-  APPS,
   ATTACHMENTS,
   CHANNEL_CONNECTIONS,
+  CONNECTOR_CONTENT,
+  CONNECTORS,
   CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
   CONVERSATION_SANDBOX,
@@ -170,7 +170,7 @@ export interface ApiDeps {
   registry: ProviderRegistry;
   /** 运行投递与中止。 */
   runs: RunControl;
-  /** 应用凭据（与 `Kernel.tools.credentials` 同一实例）。 */
+  /** 连接器凭据（与 `Kernel.tools.credentials` 同一实例）。 */
   credentials: Credentials;
   /** 工具注册表（与 `Kernel.tools.registry` 同一实例）。 */
   toolRegistry: ToolRegistry;
@@ -182,8 +182,8 @@ export interface ApiDeps {
   drift: ToolDrift;
   /** 工具输出存档（与 `Kernel.tools.outputs` 同一实例；网页的运行标签读全文）。 */
   outputs: ToolOutputs;
-  /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
-  appContent: AppContent;
+  /** 连接器的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
+  connectorContent: ConnectorContent;
   /** 外部身份、绑定、第三方登录与离职处理（与 `Kernel.identity` 同一组实例）。 */
   identity: KernelIdentity;
   /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
@@ -236,8 +236,8 @@ const CONTROLLERS: Type[] = [
   AgentSkillsController,
   InboxController,
   ConversationStreamController,
-  AppContentController,
-  AppsController,
+  ConnectorContentController,
+  ConnectorsController,
   ApprovalsController,
   ToolGrantsController,
   QuestionsController,
@@ -384,7 +384,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },
-    { provide: APP_CONTENT, useValue: deps.appContent },
+    { provide: CONNECTOR_CONTENT, useValue: deps.connectorContent },
     { provide: ATTACHMENTS, useValue: deps.attachments },
     { provide: SKILLS, useValue: deps.skills },
     { provide: SKILL_CHANGES, useValue: deps.skillChanges },
@@ -398,7 +398,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         db: KernelDb,
         eventLog: EventLog,
         agents: AgentsService,
-        content: AppContent,
+        content: ConnectorContent,
         attachments: AttachmentsService,
       ) =>
         new ConversationsService(
@@ -411,7 +411,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           (trx, orgId, conversationId, accountId, ids) =>
             attachments.bindForMessage(trx, orgId, conversationId, accountId, ids),
         ),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT, ATTACHMENTS],
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS, CONNECTOR_CONTENT, ATTACHMENTS],
     },
     {
       provide: CONVERSATION_OUTPUTS,
@@ -489,13 +489,13 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: APPROVALS, useValue: deps.approvals },
     { provide: QUESTIONS, useValue: deps.questions },
     {
-      provide: APPS,
+      provide: CONNECTORS,
       useFactory: (
         db: KernelDb,
         registry: ToolRegistry,
         credentials: Credentials,
         config: () => KernelConfig,
-      ) => new AppsService(db, registry, deps.host, credentials, config, deps.drift),
+      ) => new ConnectorsService(db, registry, deps.host, credentials, config, deps.drift),
       inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG],
     },
     {
@@ -505,7 +505,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         redis: Redis,
         credentials: Credentials,
         config: () => KernelConfig,
-        apps: AppsService,
+        connectors: ConnectorsService,
       ) =>
         new OAuthFlow({
           db,
@@ -513,11 +513,13 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           credentials,
           config,
           log: deps.log,
-          onFirstConnect: async (orgId, appId, accountId) => {
-            await apps.refresh(orgId, appId, accountId, undefined, { trigger: "first_connect" });
+          onFirstConnect: async (orgId, connectorId, accountId) => {
+            await connectors.refresh(orgId, connectorId, accountId, undefined, {
+              trigger: "first_connect",
+            });
           },
         }),
-      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, APPS],
+      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS],
     },
   ];
 }

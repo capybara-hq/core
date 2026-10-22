@@ -79,7 +79,10 @@ function fastifyTrustProxy(
 }
 
 /** 允许较大请求体的路由（Fastify 路由模板，只读常量表）及其上限。 */
-const LARGE_BODY_ROUTES = new Set(["/api/v1/orgs/:orgId/apps", "/api/v1/orgs/:orgId/apps/preview"]);
+const LARGE_BODY_ROUTES = new Set([
+  "/api/v1/orgs/:orgId/connectors",
+  "/api/v1/orgs/:orgId/connectors/preview",
+]);
 const LARGE_BODY_LIMIT = 6 * 1024 * 1024;
 
 /** 根模块：总是含健康检查；`serveApi` 时 import `apiModule`；全局错误过滤器。 */
@@ -122,7 +125,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   const routes: { method: string; url: string }[] = [];
   fastify.addHook("onRoute", (r) => {
     for (const method of [r.method].flat()) routes.push({ method, url: r.url });
-    // 安装 / 预览应用的请求体可带最大 2 MB 的 OpenAPI 文档（JSON 转义后更大），其余路由保持默认 1 MiB
+    // 安装 / 预览连接器的请求体可带最大 2 MB 的 OpenAPI 文档（JSON 转义后更大），其余路由保持默认 1 MiB
     if (LARGE_BODY_ROUTES.has(r.url) && [r.method].flat().includes("POST")) {
       r.bodyLimit = LARGE_BODY_LIMIT;
     }

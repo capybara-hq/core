@@ -118,7 +118,7 @@ beforeAll(async () => {
           questions: k.tools.questions,
           drift: k.tools.drift,
           outputs: k.tools.outputs,
-          appContent: k.tools.appContent,
+          connectorContent: k.tools.connectorContent,
           identity: k.identity,
           channels: k.channels.connections,
           attachments: k.attachments,

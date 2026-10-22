@@ -89,13 +89,13 @@ export function webBase(publicUrl: string | undefined): string | undefined {
 export const conversationUrl = (base: string, conversationId: string) =>
   `${base}/chat/${conversationId}`;
 
-/** 个人连接页里某个应用的位置（与网页 ConnectCard 的链接一致）。 */
-export const connectUrl = (base: string, appId: string) =>
-  `${base}/settings/connections#app-${encodeURIComponent(appId)}`;
+/** 个人连接页里某个连接器的位置（与网页 ConnectCard 的链接一致）。 */
+export const connectUrl = (base: string, connectorId: string) =>
+  `${base}/settings/connections#connector-${encodeURIComponent(connectorId)}`;
 
-/** 来源内的工具名：应用工具去掉 `<slug>__`（审批详情已处理），插件工具去掉 `<插件>__`。 */
+/** 来源内的工具名：连接器工具去掉 `<slug>__`（审批详情已处理），插件工具去掉 `<插件>__`。 */
 function shortToolName(v: ApprovalView): string {
-  if (v.app) return v.toolName;
+  if (v.connector) return v.toolName;
   const i = v.toolKey.indexOf(KEY_SEPARATOR);
   return i > 0 ? v.toolKey.slice(i + KEY_SEPARATOR.length) : v.toolKey;
 }
@@ -135,7 +135,7 @@ export async function approvalCard(
     id: v.id,
     title: phrase("approvalTitle", locale),
     toolName: shortToolName(v),
-    ...(v.app && { appName: v.app.name }),
+    ...(v.connector && { appName: v.connector.name }),
     agentName: v.agent.name || "Agent",
     inputPreview: inputPreview(v.input, redact),
     scopes: v.requestedFor === null ? ["once"] : ["once", "session", "always"],

@@ -92,7 +92,7 @@ interface Fixture {
   leaverReq: Req;
   leaverReq2: Req;
   pat: string;
-  appId: string;
+  connectorId: string;
   otherAppId: string;
   agentId: string;
   otherOrgAgentId: string;
@@ -116,9 +116,9 @@ async function insertAgent(orgId: string, ownerId: string): Promise<string> {
   return id;
 }
 
-async function insertApp(orgId: string, slug: string, by: string): Promise<string> {
+async function insertConnector(orgId: string, slug: string, by: string): Promise<string> {
   const id = randomUUID();
-  await sql`INSERT INTO capybara.apps (id, org_id, slug, name, connector, auth, created_by)
+  await sql`INSERT INTO capybara.connectors (id, org_id, slug, name, connector, auth, created_by)
     VALUES (${id}, ${orgId}, ${slug}, ${slug}, 'test',
       ${JSON.stringify({ type: "bearer", ownership: "personal" })}::jsonb, ${by})`.execute(raw);
   return id;
@@ -159,11 +159,11 @@ beforeEach(async () => {
   const leaverReq2 = await login("leaver");
   const pat = (await tokens.createPersonal(leaver.id, { name: "cli" })).token;
 
-  const appId = await insertApp(orgId, "docs", owner.id);
-  const otherAppId = await insertApp(otherOrgId, "docs", owner.id);
+  const connectorId = await insertConnector(orgId, "docs", owner.id);
+  const otherAppId = await insertConnector(otherOrgId, "docs", owner.id);
   const creds = k.tools.credentials;
-  await creds.setStatic(orgId, appId, AUTH, personal(leaver.id), { token: "leaver-token" });
-  await creds.setStatic(orgId, appId, AUTH, personal(bystander.id), { token: "b-token" });
+  await creds.setStatic(orgId, connectorId, AUTH, personal(leaver.id), { token: "leaver-token" });
+  await creds.setStatic(orgId, connectorId, AUTH, personal(bystander.id), { token: "b-token" });
   await creds.setStatic(otherOrgId, otherAppId, AUTH, personal(leaver.id), { token: "other" });
 
   const agentId = await insertAgent(orgId, leaver.id);
@@ -182,7 +182,7 @@ beforeEach(async () => {
     step: 1,
     toolKey: "docs__create_doc",
     specHash: "h",
-    appId,
+    connectorId,
     input: {},
   };
   const approval = await k.tools.approvals.request({
@@ -226,7 +226,7 @@ beforeEach(async () => {
     leaverReq,
     leaverReq2,
     pat,
-    appId,
+    connectorId,
     otherAppId,
     agentId,
     otherOrgAgentId,
@@ -289,7 +289,7 @@ async function expectOffboarded(reason: "removed" | "left") {
   // 只删除该组织里此人的个人凭据
   expect(await secretKeys()).toEqual(
     [
-      `org:credentials:app:${f.appId}:user:${f.bystander.id}`,
+      `org:credentials:app:${f.connectorId}:user:${f.bystander.id}`,
       `other:credentials:app:${f.otherAppId}:user:${f.leaver.id}`,
     ].sort(),
   );

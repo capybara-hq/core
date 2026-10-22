@@ -28,7 +28,7 @@
 | `http.port` | `CAPYBARA_HTTP__PORT` | `number` | `8080` | 否 | 否 | HTTP listen port |
 | `http.trustProxy` | `CAPYBARA_HTTP__TRUST_PROXY` | `boolean \| number \| array<string>` | `false` | 否 | 否 | Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies |
 | `http.replicaId` | `CAPYBARA_HTTP__REPLICA_ID` | `string \| number` | 可选 | 否 | 否 | Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers) |
-| `http.publicUrl` | `CAPYBARA_HTTP__PUBLIC_URL` | `string` | 可选 | 否 | 否 | Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth apps: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com |
+| `http.publicUrl` | `CAPYBARA_HTTP__PUBLIC_URL` | `string` | 可选 | 否 | 否 | Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth connectors: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com |
 | `roles` | `CAPYBARA_ROLES` | `array<"api" \| "worker" \| "gateway">` | `["api","worker","gateway"]` | 否 | 否 | Roles this process runs |
 | `auth.accessTokenTtlSeconds` | `CAPYBARA_AUTH__ACCESS_TOKEN_TTL_SECONDS` | `number` | `900` | 否 | 否 | Lifetime of web session access tokens in seconds |
 | `auth.refreshTokenTtlDays` | `CAPYBARA_AUTH__REFRESH_TOKEN_TTL_DAYS` | `number` | `30` | 否 | 否 | Absolute lifetime of a web session (refresh token) in days; refreshing does not extend it |
@@ -49,7 +49,7 @@
 | `runtime.sseHeartbeatMs` | `CAPYBARA_RUNTIME__SSE_HEARTBEAT_MS` | `number` | `15000` | 否 | 否 | Interval in milliseconds between heartbeat comments on a conversation event stream (SSE) |
 | `runtime.sseRecheckMs` | `CAPYBARA_RUNTIME__SSE_RECHECK_MS` | `number` | `60000` | 否 | 否 | How often an open conversation event stream (SSE) re-checks that the viewer may still access the conversation, in milliseconds; the stream closes when access is lost |
 | `tools.timeoutMs` | `CAPYBARA_TOOLS__TIMEOUT_MS` | `number` | `60000` | 否 | 否 | Timeout of one tool call in milliseconds |
-| `tools.breakerFailures` | `CAPYBARA_TOOLS__BREAKER_FAILURES` | `number` | `5` | 否 | 否 | Consecutive failures of one app that open its circuit breaker |
+| `tools.breakerFailures` | `CAPYBARA_TOOLS__BREAKER_FAILURES` | `number` | `5` | 否 | 否 | Consecutive failures of one connector that open its circuit breaker |
 | `tools.breakerOpenSeconds` | `CAPYBARA_TOOLS__BREAKER_OPEN_SECONDS` | `number` | `60` | 否 | 否 | Seconds an open circuit breaker rejects calls before allowing a probe |
 | `tools.outputSpillChars` | `CAPYBARA_TOOLS__OUTPUT_SPILL_CHARS` | `number` | `50000` | 否 | 否 | Tool results longer than this many characters are archived and replaced by a preview |
 | `tools.outputPreviewChars` | `CAPYBARA_TOOLS__OUTPUT_PREVIEW_CHARS` | `number` | `2000` | 否 | 否 | Characters of an archived tool result kept in the conversation as a preview |
@@ -57,7 +57,7 @@
 | `tools.approvalTimeoutHours` | `CAPYBARA_TOOLS__APPROVAL_TIMEOUT_HOURS` | `number` | `24` | 否 | 否 | Hours a pending approval or question waits before it expires (treated as denied) |
 | `tools.searchThresholdTools` | `CAPYBARA_TOOLS__SEARCH_THRESHOLD_TOOLS` | `number` | `30` | 否 | 否 | Switch to on-demand tool search when an agent has more than this many tools |
 | `tools.searchThresholdTokens` | `CAPYBARA_TOOLS__SEARCH_THRESHOLD_TOKENS` | `number` | `8000` | 否 | 否 | Switch to on-demand tool search when tool definitions exceed this many estimated tokens |
-| `tools.driftIntervalHours` | `CAPYBARA_TOOLS__DRIFT_INTERVAL_HOURS` | `number` | `24` | 否 | 否 | Hours between checks of connected apps for changed tool definitions |
+| `tools.driftIntervalHours` | `CAPYBARA_TOOLS__DRIFT_INTERVAL_HOURS` | `number` | `24` | 否 | 否 | Hours between checks of connectors for changed tool definitions |
 | `tools.maxResultReadChars` | `CAPYBARA_TOOLS__MAX_RESULT_READ_CHARS` | `number` | `20000` | 否 | 否 | Maximum characters returned by one read_tool_output call |
 | `tools.oauthAllowInsecureLoopback` | `CAPYBARA_TOOLS__OAUTH_ALLOW_INSECURE_LOOPBACK` | `boolean` | `false` | 否 | 否 | Allow OAuth discovery, registration and token endpoints over plain http on loopback hosts (development and tests only; production requires https) |
 | `channels.leaseTtlMs` | `CAPYBARA_CHANNELS__LEASE_TTL_MS` | `number` | `30000` | 否 | 否 | TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long |

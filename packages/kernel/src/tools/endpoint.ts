@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 
 /**
- * 应用端点的通用处理（与连接器无关，按约定：顶层名为 `url` 或以 `Url` 结尾的字符串字段是 URL，如 MCP 的 `url`、
- * OpenAPI 的 `specUrl` / `baseUrl`；`headers` 是固定头）：端点配置对 `apps.use` 的成员可见，
- * 不能放凭据——凭据走应用的认证设置（加密存储、按调用注入、结果打码）。
+ * 连接器端点的通用处理（与连接器无关，按约定：顶层名为 `url` 或以 `Url` 结尾的字符串字段是 URL，如 MCP 的 `url`、
+ * OpenAPI 的 `specUrl` / `baseUrl`；`headers` 是固定头）：端点配置对 `connectors.use` 的成员可见，
+ * 不能放凭据——凭据走连接器的认证设置（加密存储、按调用注入、结果打码）。
  */
 
-/** 端点里按「大段文本」处理的顶层字段名（如 OpenAPI 的 `specText`）：应用视图只给字节数与 sha256。 */
+/** 端点里按「大段文本」处理的顶层字段名（如 OpenAPI 的 `specText`）：连接器视图只给字节数与 sha256。 */
 const isTextField = (key: string): boolean => key === "text" || /^[a-z][A-Za-z0-9]*Text$/.test(key);
 
 /** 端点里按 URL 处理的顶层字段名。 */
@@ -30,7 +30,7 @@ const CREDENTIAL_QUERY = new Set([
   "secret",
 ]);
 
-const USE_CREDENTIALS = "configure it in the app's credential settings instead";
+const USE_CREDENTIALS = "configure it in the connector's credential settings instead";
 
 /** 端点里凭据样式的头 / query 参数 / URL 用户信息；path 相对 `endpoint`。 */
 export function endpointCredentialIssues(endpoint: unknown): { path: string; message: string }[] {
@@ -75,7 +75,7 @@ export function endpointCredentialIssues(endpoint: unknown): { path: string; mes
 }
 
 /**
- * 给没有 `apps.manage` 的人看的端点：URL 字段（`url` / `*Url`）只留源（scheme + host + port），有路径时打码为
+ * 给没有 `connectors.manage` 的人看的端点：URL 字段（`url` / `*Url`）只留源（scheme + host + port），有路径时打码为
  * `<origin>/…`（去掉路径、query、fragment 与用户信息）；`headers` 只留头名（`headerNames`）。
  * 路径、固定头值与 query 可能含租户号等管理员不想公开的信息。
  */
@@ -100,7 +100,7 @@ export function publicEndpoint(endpoint: unknown): unknown {
 }
 
 /**
- * 应用列表 / 详情里给所有人看的端点（Ruling A21）：`text` / `*Text` 字段（如最大 2 MB 的 OpenAPI 文档）不回显全文，
+ * 连接器列表 / 详情里给所有人看的端点（Ruling A21）：`text` / `*Text` 字段（如最大 2 MB 的 OpenAPI 文档）不回显全文，
  * 换成 `<field>Bytes`（UTF-8 字节数）与 `<field>Sha256`；要改文档时管理员重新上传。存储与连接器拿到的仍是全文。
  */
 export function endpointView(endpoint: unknown): unknown {

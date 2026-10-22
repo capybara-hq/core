@@ -12,23 +12,38 @@ export const ModelParams = z.record(z.string(), z.union([z.string(), z.number(),
 export type ModelParams = z.infer<typeof ModelParams>;
 
 /**
- * agent 定义里对工具的引用：内置工具按名字；插件工具按插件名 + 工具名；应用工具按应用 id，
- * `tools: "all"` = 该应用当前所有启用的工具。
+ * 改名前（D17）保存的连接器引用 `{ kind: "app", appId, tools }` 规范化为 `{ kind: "connector", connectorId, tools }`
+ * （C27：已存 agent 版本不改写，读入时规范化；新保存只写 connector 形）。其余值原样返回。
  */
-export const AgentToolRef = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("builtin"), name: z.string().min(1) }).strict(),
-  z
-    .object({ kind: z.literal("plugin"), plugin: z.string().min(1), name: z.string().min(1) })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("app"),
-      appId: z.string().min(1),
-      tools: z.union([z.literal("all"), z.array(z.string().min(1)).min(1)]),
-    })
-    .strict(),
-]);
-export type AgentToolRef = z.infer<typeof AgentToolRef>;
+export function normalizeToolRef(v: unknown): unknown {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return v;
+  const r = v as Record<string, unknown>;
+  if (r.kind !== "app") return v;
+  const { kind: _kind, appId, ...rest } = r;
+  return { kind: "connector", connectorId: appId, ...rest };
+}
+
+/**
+ * agent 定义里对工具的引用：内置工具按名字；插件工具按插件名 + 工具名；连接器工具按连接器 id，
+ * `tools: "all"` = 该连接器当前所有启用的工具。旧形 `{ kind: "app", appId }` 仍可解析（见 {@link normalizeToolRef}）。
+ */
+export const AgentToolRef = z.preprocess(
+  normalizeToolRef,
+  z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("builtin"), name: z.string().min(1) }).strict(),
+    z
+      .object({ kind: z.literal("plugin"), plugin: z.string().min(1), name: z.string().min(1) })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("connector"),
+        connectorId: z.string().min(1),
+        tools: z.union([z.literal("all"), z.array(z.string().min(1)).min(1)]),
+      })
+      .strict(),
+  ]),
+);
+export type AgentToolRef = z.output<typeof AgentToolRef>;
 
 /**
  * 新建 agent 未给 `tools` 时的默认工具（`tool_search` 由注册表按组织设置自动加入，不进定义）。
@@ -68,3 +83,16 @@ export const AgentDefinitionSchema = z.object({
     .optional(),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
+
+/**
+ * 库里读出的定义（`agent_versions.definition`，不经 zod 解析）：把改名前的 `{ kind: "app" }` 工具引用规范化为
+ * connector 形（C27）。其余字段原样保留；没有旧形引用时返回原对象。
+ */
+export function normalizeStoredDefinition(def: unknown): AgentDefinition {
+  const d = def as AgentDefinition;
+  const tools = (d as { tools?: unknown }).tools;
+  if (!Array.isArray(tools) || !tools.some((t) => (t as { kind?: unknown })?.kind === "app")) {
+    return d;
+  }
+  return { ...d, tools: tools.map(normalizeToolRef) as AgentToolRef[] };
+}
