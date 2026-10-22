@@ -24,7 +24,8 @@ export interface SourceFile {
 }
 
 /**
- * 递归列出目录下的源码文件。node_modules 在任何深度都跳过；dist 只在根目录跳过（构建产物），
+ * 递归列出目录下的源码文件。node_modules 与 pack-plugin 的临时目录 `.capybara-pack-*` 在任何深度都跳过；
+ * dist 只在根目录跳过（构建产物），
  * test / tests / __tests__ 目录只在根目录算测试（标 isTest），更深处同名目录照常当源码扫描，
  * 否则 `src/test/impl.ts` 再 re-export 就能绕过全部检查。结果有序。
  */
@@ -38,6 +39,8 @@ export function listSourceFiles(dir: string): SourceFile[] {
       const p = join(d, e.name);
       if (e.isDirectory()) {
         if (e.name === "node_modules") continue;
+        // pack-plugin 的临时目录（旧版本建在插件目录里，崩溃后可能残留）：里面是打包产物，不是插件源码
+        if (e.name.startsWith(".capybara-pack-")) continue;
         if (depth === 0 && e.name === "dist") continue;
         visit(p, depth + 1, inTestRoot || (depth === 0 && ROOT_TEST_DIRS.has(e.name)));
       } else if (e.isFile() && SOURCE_EXT.test(e.name)) {

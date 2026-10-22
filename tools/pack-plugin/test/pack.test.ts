@@ -87,6 +87,26 @@ describe("packPlugin 的其他行为", () => {
     expect(a.sha256).toBe(b.sha256);
   }, 60_000);
 
+  it("打包过程中插件源码树里从不出现临时目录（临时目录在系统临时目录下）", async () => {
+    let done = false;
+    const seen = new Set<string>();
+    const watch = (async () => {
+      while (!done) {
+        for (const f of await readdir(plugin("todo"))) {
+          if (f.startsWith(".capybara-pack")) seen.add(f);
+        }
+        await new Promise((r) => setImmediate(r));
+      }
+    })();
+    try {
+      await packPlugin(plugin("todo"), join(out, "watch"));
+    } finally {
+      done = true;
+      await watch;
+    }
+    expect([...seen]).toEqual([]);
+  }, 60_000);
+
   it("非字面量动态 import 的插件打包失败", async () => {
     await expect(packPlugin(fixture("dynamic-import"), out)).rejects.toThrow(/non-literal/);
     expect((await readdir(fixture("dynamic-import"))).sort()).toEqual(["package.json", "src"]);

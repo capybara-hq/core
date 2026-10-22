@@ -1,8 +1,18 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { builtinModules } from "node:module";
-import { join, posix, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, posix, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { gzip } from "node:zlib";
@@ -29,8 +39,33 @@ export interface PackResult {
   manifest: StaticPluginManifest;
 }
 
-/** 临时目录前缀：放在插件目录里，bundle 里对宿主包的 import 才能沿插件的 node_modules 解析。 */
+/**
+ * 临时目录前缀。临时目录建在系统临时目录下（不在插件源码树里，免得源码扫描读到半成品）；bundle 里对宿主包的
+ * import 经临时目录里指向插件解析结果的 `node_modules` 软链解析。
+ */
 export const STAGING_PREFIX = ".capybara-pack-";
+
+/**
+ * 在临时目录下建 `node_modules/<宿主包>` 软链，指向从插件目录按 Node 规则向上找到的那份（找不到的跳过，
+ * 导入产物时照常报错）。软链在 `package/` 之外，不进包。
+ */
+async function linkHostPackages(dir: string, stage: string): Promise<void> {
+  for (const name of HOST_PROVIDED_PACKAGES) {
+    let found: string | undefined;
+    for (let d = dir; ; d = dirname(d)) {
+      const candidate = join(d, "node_modules", name);
+      if (existsSync(candidate)) {
+        found = candidate;
+        break;
+      }
+      if (dirname(d) === d) break;
+    }
+    if (found === undefined) continue;
+    const link = join(stage, "node_modules", name);
+    await mkdir(dirname(link), { recursive: true });
+    await symlink(await realpath(found), link, "dir");
+  }
+}
 
 /** npm pack 使用的固定 mtime（让同样的输入产出字节相同的包）。 */
 const FIXED_MTIME = new Date("1985-10-26T08:15:00Z");
@@ -142,7 +177,7 @@ const tgzName = (name: string, version: string) =>
  *    `migrations/`（清单声明了 migrations 时，必须解析到插件根的 `migrations/`）与 `ui/`（存在时）；
  * 4. 打成带 `package/` 前缀、可复现的 tgz，写到 `outDir/<npm 风格文件名>`。
  *
- * 临时文件放在插件目录下的 `.capybara-pack-*`，结束后删除。
+ * 临时文件放在系统临时目录下的 `.capybara-pack-*`，结束后删除。
  */
 export async function packPlugin(pluginDir: string, outDir: string): Promise<PackResult> {
   const dir = resolve(pluginDir);
@@ -151,8 +186,9 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
     unknown
   >;
   const label = typeof srcPkg.name === "string" ? srcPkg.name : dir;
-  const stage = await mkdtemp(join(dir, STAGING_PREFIX));
+  const stage = await realpath(await mkdtemp(join(tmpdir(), STAGING_PREFIX)));
   try {
+    await linkHostPackages(dir, stage);
     const entryOut = join(stage, "package", PLUGIN_PACKAGE_ENTRY);
     const result = await build({
       absWorkingDir: dir,
