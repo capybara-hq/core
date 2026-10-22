@@ -72,6 +72,24 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
 
+/**
+ * 读某个组织的沙箱限额覆盖（创建沙箱、组织设置页用）；每次实时读 PG，多副本下改动立即生效。
+ * 没有设置、组织不在其中、或存量值非法（与 {@link SettingsService.get} 一样按默认值 `{}`）→ undefined。
+ */
+export async function readSandboxLimitOverride(
+  db: KernelDb,
+  orgId: string,
+): Promise<SandboxLimitOverride | undefined> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "sandboxLimitOverrides")
+    .executeTakeFirst();
+  if (!row) return undefined;
+  const parsed = DEPLOYMENT_SETTINGS.shape.sandboxLimitOverrides.safeParse(row.value);
+  return parsed.success && Object.hasOwn(parsed.data, orgId) ? parsed.data[orgId] : undefined;
+}
+
 /** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */
 function mergeByOrg<T>(
   current: Record<string, T>,

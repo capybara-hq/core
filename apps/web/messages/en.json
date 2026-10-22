@@ -94,7 +94,9 @@
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
-      "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network."
+      "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network.",
+      "last_owner": "An organization must keep at least one owner.",
+      "owner_required": "Only an owner can do this."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -182,7 +184,9 @@
       "invalid": "This link is invalid or has expired."
     },
     "member": {
-      "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed."
+      "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed.",
+      "not_found": "Member not found.",
+      "already_exists": "You are already a member of this organization."
     },
     "attachment": {
       "too_large": "The file is larger than the size limit for one attachment.",
@@ -245,7 +249,12 @@
       "context_overflow": "The request exceeds the model's context length.",
       "aborted": "The model request was aborted."
     },
-    "payload_too_large": "The request is over the size limit."
+    "payload_too_large": "The request is over the size limit.",
+    "invitation": {
+      "invalid": "This invitation link is invalid or has been revoked.",
+      "expired": "This invitation has expired.",
+      "used": "This invitation has already been used."
+    }
   },
   "agents": {
     "title": "Agents",
@@ -903,7 +912,8 @@
       "organization": "Organization",
       "identities": "IM identities",
       "plugins": "Plugins",
-      "models": "Model purposes"
+      "models": "Model purposes",
+      "members": "Members"
     },
     "empty": "No app needs your own credential.",
     "emptyHint": "Apps that use personal credentials show up here.",
@@ -974,6 +984,20 @@
       "hosts": "Allowed hosts",
       "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
       "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed."
+    },
+    "limits": {
+      "title": "Sandbox resources",
+      "description": "CPU and memory available to each sandbox. Enterprise admins adjust them per organization in deployment settings; organization admins can only view them.",
+      "cpu": "CPU",
+      "cpuValue": "{cpu} cores",
+      "memory": "Memory",
+      "memoryValue": "{mb} MiB",
+      "sourceLabel": "Source",
+      "source": {
+        "deployment": "Deployment default",
+        "override": "Set for this organization by an enterprise admin"
+      },
+      "newOnly": "Only applies to newly created sandboxes; existing sandboxes keep the limits they were created with until they are destroyed."
     }
   },
   "schemaForm": {
@@ -2051,5 +2075,96 @@
         "saved": "Config saved."
       }
     }
+  },
+  "members": {
+    "title": "Members",
+    "invite": "Invite members",
+    "columns": {
+      "name": "Member",
+      "email": "Email",
+      "role": "Role",
+      "joined": "Joined"
+    },
+    "you": "you",
+    "anonymous": "Anonymous guest",
+    "roleOf": "Role of {name}",
+    "roles": {
+      "guest": "Guest",
+      "member": "Member",
+      "admin": "Admin",
+      "owner": "Owner"
+    },
+    "roleChanged": "Changed {name} to {role}",
+    "empty": "No members yet",
+    "menu": {
+      "transfer": "Transfer ownership",
+      "remove": "Remove from organization"
+    },
+    "confirm": {
+      "removeTitle": "Remove {name}?",
+      "removeHint": "They lose access to this organization immediately: their sessions and tokens are revoked, and their agents and other resources go through offboarding.",
+      "remove": "Remove",
+      "transferTitle": "Transfer ownership to {name}?",
+      "transferHint": "They become an owner and you become an admin.",
+      "transfer": "Transfer"
+    },
+    "removed": "Removed {name}",
+    "transferred": "Transferred ownership to {name}",
+    "invitations": {
+      "title": "Invitations",
+      "empty": "No invitations yet",
+      "columns": {
+        "role": "Role",
+        "status": "Status",
+        "created": "Created",
+        "expires": "Expires"
+      },
+      "status": {
+        "pending": "Pending",
+        "accepted": "Accepted",
+        "expired": "Expired",
+        "revoked": "Revoked"
+      },
+      "revoke": "Revoke invitation",
+      "revoked": "Invitation revoked"
+    },
+    "inviteDialog": {
+      "title": "Invite members",
+      "role": "Role",
+      "roleHelp": "They join the organization with this role after accepting.",
+      "expires": "Valid for",
+      "hours": {
+        "24": "1 day",
+        "168": "7 days",
+        "720": "30 days"
+      },
+      "create": "Create invitation link",
+      "link": "Invitation link",
+      "linkHelp": "The link is shown only once and works only once; send it to them over a trusted channel.",
+      "copy": "Copy link",
+      "copied": "Invitation link copied",
+      "done": "Done"
+    }
+  },
+  "invite": {
+    "title": "Accept invitation",
+    "loading": "Loading…",
+    "subtitle": "You are invited to join {org}",
+    "role": "Role",
+    "expires": "Valid until",
+    "accept": "Accept invitation",
+    "signInHint": "Sign in to accept the invitation, or create a new account.",
+    "signIn": "Sign in to accept",
+    "signupToggle": "No account? Create one",
+    "loginLabel": "Username",
+    "loginHint": "3–64 characters: letters, digits and . _ @ + -",
+    "passwordLabel": "Password",
+    "passwordHint": "12–256 characters",
+    "displayNameLabel": "Display name",
+    "signup": "Create account and join",
+    "backToSignIn": "Have an account? Sign in",
+    "invalidTitle": "Invitation link no longer valid",
+    "invalidHint": "Ask the admin who invited you to send a new invitation.",
+    "goHome": "Go to Capybara"
   }
 }
