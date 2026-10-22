@@ -16,6 +16,12 @@
 | `masterKeyPrevious` | `CAPYBARA_MASTER_KEY_PREVIOUS` | `array<string>` | — | 否 | 是 | Previous master keys kept during rotation |
 | `plugins` | `CAPYBARA_PLUGINS` | `array<string>` | `[]` | 否 | 否 | Plugin names to load |
 | `pluginConfig` | `CAPYBARA_PLUGIN_CONFIG` | `record` | `{}` | 否 | 否 | Deployment-level config keyed by plugin name |
+| `pluginHost.dir` | `CAPYBARA_PLUGIN_HOST__DIR` | `string` | `"/var/lib/capybara/plugins"` | 否 | 否 | Local directory where each replica unpacks installed plugin packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store |
+| `pluginHost.drainSeconds` | `CAPYBARA_PLUGIN_HOST__DRAIN_SECONDS` | `number` | `30` | 否 | 否 | Seconds in-flight tool calls and queue jobs of a plugin being unloaded may keep running before they are aborted |
+| `pluginHost.reconcileIntervalSeconds` | `CAPYBARA_PLUGIN_HOST__RECONCILE_INTERVAL_SECONDS` | `number` | `60` | 否 | 否 | Seconds between periodic reconciles of each replica's loaded plugins against the installed state in PostgreSQL |
+| `packages.npmRegistry` | `CAPYBARA_PACKAGES__NPM_REGISTRY` | `string` | `"https://registry.npmjs.org"` | 否 | 否 | npm registry used to install plugin packages by name |
+| `packages.npmToken` | `CAPYBARA_PACKAGES__NPM_TOKEN` | `string` | 可选 | 否 | 是 | Bearer token for the npm registry (private registries); sent only to the registry origin |
+| `packages.maxBytes` | `CAPYBARA_PACKAGES__MAX_BYTES` | `number` | `52428800` | 否 | 否 | Largest plugin package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store |
 | `pluginPermissions.autoApprove` | `CAPYBARA_PLUGIN_PERMISSIONS__AUTO_APPROVE` | `boolean` | `false` | 否 | 否 | Approve plugin permissions automatically at startup (development and trials only). When false, a plugin that is new or whose upgrade asks for more permissions is not loaded until an admin runs `capybara plugins approve <name>` |
 | `http.port` | `CAPYBARA_HTTP__PORT` | `number` | `8080` | 否 | 否 | HTTP listen port |
 | `http.trustProxy` | `CAPYBARA_HTTP__TRUST_PROXY` | `boolean \| number \| array<string>` | `false` | 否 | 否 | Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies |

@@ -243,6 +243,13 @@ describe("readPluginPackage：违规包", () => {
     await rejects(await tgz(base({ pkg: pkgJson({ capybara: s }) })), /not satisfied/);
   });
 
+  it("peerDependencies.zod 不被宿主的 zod 满足（默认取内核自己的 zod 版本）", async () => {
+    const pkg = pkgJson({
+      peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^3.0.0" },
+    });
+    await rejects(await tgz(base({ pkg })), /zod "\^3\.0\.0" is not satisfied by the host zod 4\./);
+  });
+
   it("版本不一致", async () => {
     await rejects(
       await tgz(base({ pkg: pkgJson({ version: "1.0.1" }) })),
@@ -400,7 +407,7 @@ describe("extractPluginPackage", () => {
   it("解到目录并去掉 package/ 前缀", async () => {
     const bytes = await tgz(base({ extra: [{ name: "package/ui/a/b.html", data: "<b>" }] }));
     const out = join(dir, "a");
-    await extractPluginPackage(bytes, out);
+    await extractPluginPackage(bytes, out, OPTS);
     expect((await readdir(out)).sort()).toEqual(["dist", "package.json", "ui"]);
     expect(await readFile(join(out, "ui/a/b.html"), "utf8")).toBe("<b>");
     expect(await readFile(join(out, "dist/index.mjs"), "utf8")).toBe(ENTRY);
@@ -410,13 +417,24 @@ describe("extractPluginPackage", () => {
     const out = join(dir, "b");
     await mkdir(out);
     await writeFile(join(out, "x"), "x");
-    await expect(extractPluginPackage(await tgz(base()), out)).rejects.toThrow(/not empty/);
+    await expect(extractPluginPackage(await tgz(base()), out, OPTS)).rejects.toThrow(/not empty/);
+  });
+
+  it("与 readPluginPackage 用同一组上限（maxBytes / 条目数）", async () => {
+    const bytes = await tgz(base());
+    await expect(
+      extractPluginPackage(bytes, join(dir, "d"), { maxBytes: bytes.byteLength - 1 }),
+    ).rejects.toThrow(/larger than/);
+    await expect(
+      extractPluginPackage(bytes, join(dir, "e"), { maxBytes: OPTS.maxBytes, maxEntries: 1 }),
+    ).rejects.toThrow(/more than 1 entries/);
+    await expect(readdir(join(dir, "d"))).rejects.toThrow();
   });
 
   it("恶意包同样拒绝（不写出任何文件）", async () => {
     const out = join(dir, "c");
     const bytes = await tgz(base({ extra: [{ name: "package/../../x", data: "x" }] }));
-    await expect(extractPluginPackage(bytes, out)).rejects.toBeInstanceOf(PluginPackageError);
+    await expect(extractPluginPackage(bytes, out, OPTS)).rejects.toBeInstanceOf(PluginPackageError);
     await expect(readdir(out)).rejects.toThrow();
   });
 });

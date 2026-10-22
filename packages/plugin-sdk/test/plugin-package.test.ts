@@ -119,6 +119,45 @@ describe("validatePluginPackageJson", () => {
     expect(one(pkg({ capybara: s }))).toMatch(/not satisfied.*0\.1\.0/);
   });
 
+  it("SDK 范围按 includePrerelease 判断：宿主是预发布版也能满足", () => {
+    expect(one(pkg(), "0.1.1-beta.1")).toBe("");
+  });
+
+  it.each(["*", ">=0.1.0", ">0.0.1", "0.x || >=1.0.0", "x"])("拒绝没有上界的 SDK 范围 %s", (r) => {
+    const s = section({ sdk: r, manifest: manifest({ sdk: r }) });
+    const p = pkg({ capybara: s, peerDependencies: { "@capybara-hq/plugin-sdk": r } });
+    expect(one(p)).toMatch(/upper bound/);
+  });
+
+  it("有上界的范围放行（^、~、x 范围、区间）", () => {
+    for (const r of ["^0.1.0", "~0.1.0", "0.x", ">=0.1.0 <0.2.0", "0.1.0"]) {
+      const s = section({ sdk: r, manifest: manifest({ sdk: r }) });
+      const p = pkg({ capybara: s, peerDependencies: { "@capybara-hq/plugin-sdk": r } });
+      expect(one(p), r).toBe("");
+    }
+  });
+
+  it("peerDependencies 的 SDK 范围必须存在且等于 capybara.sdk", () => {
+    expect(one(pkg({ peerDependencies: { zod: "^4.0.0" } }))).toMatch(
+      /peerDependencies "@capybara-hq\/plugin-sdk"/,
+    );
+    expect(
+      one(pkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.1", zod: "^4.0.0" } })),
+    ).toMatch(/must equal capybara\.sdk/);
+  });
+
+  it("peerDependencies.zod 必须被宿主的 zod 满足（给了宿主版本时）", () => {
+    const p = pkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^3.22.0" } });
+    expect(validatePluginPackageJson(p, "0.1.0", { hostZodVersion: "4.6.7" }).join("\n")).toMatch(
+      /zod "\^3\.22\.0" is not satisfied by the host zod 4\.6\.7/,
+    );
+    expect(validatePluginPackageJson(pkg(), "0.1.0", { hostZodVersion: "4.6.7" })).toEqual([]);
+    const bad = pkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "nope" } });
+    expect(validatePluginPackageJson(bad, "0.1.0", { hostZodVersion: "4.6.7" }).join()).toMatch(
+      /zod must be a valid semver range/,
+    );
+  });
+
   it("SDK 范围不合法", () => {
     expect(one(pkg({ capybara: section({ sdk: "not a range" }) }))).toMatch(/sdk/);
   });

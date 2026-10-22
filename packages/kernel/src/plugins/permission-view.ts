@@ -1,4 +1,13 @@
-import type { PermissionSet } from "./permission-set.js";
+import { createHash } from "node:crypto";
+import { type PermissionSet, permissionKeys } from "./permission-set.js";
+
+/**
+ * 审阅摘要：`sha256(permissionKeys(set).join("\n"))` 的前 16 位十六进制。批准时调用方回传它，
+ * 与此刻重新计算的不一致（审阅后权限变了）就拒绝批准（`plugin.approval_stale`）。
+ */
+export function reviewHash(set: PermissionSet): string {
+  return createHash("sha256").update(permissionKeys(set).join("\n")).digest("hex").slice(0, 16);
+}
 
 /** 权限清单展示用的一组：按类别分组，`sensitive` 标出需要管理员特别留意的类别。 */
 export interface PermissionGroup {

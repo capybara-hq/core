@@ -87,6 +87,22 @@ export function isSafePackagePath(p: string): boolean {
   return p.split("/").every((seg) => seg !== "" && seg !== "." && seg !== "..");
 }
 
+/**
+ * 范围是否有上界：展开后的每个比较集（`||` 的每一支）都至少有一个 `<` / `<=` 或精确版本。
+ * `*`、`x`、`>=1.0.0` 这类没有上界的范围会把将来的大版本 SDK 也当成兼容。
+ */
+function hasUpperBound(range: string): boolean {
+  const r = new semver.Range(range);
+  return r.set.every((comparators) =>
+    comparators.some(
+      (c) =>
+        c.operator === "<" ||
+        c.operator === "<=" ||
+        ((c.operator === "" || c.operator === "=") && c.value !== ""),
+    ),
+  );
+}
+
 const isHostPackage = (name: string) =>
   HOST_PROVIDED_PACKAGES.some((h) => name === h || name.startsWith(`${h}/`));
 
@@ -257,10 +273,16 @@ function checkManifest(m: unknown, pkgVersion: unknown, sectionSdk: unknown, err
  * 校验插件包的 `package.json`（C11 里与它有关的规则），返回问题列表（空表示合法）：
  * 没有安装脚本（{@link FORBIDDEN_INSTALL_SCRIPTS}）与 `gypfile`；没有 dependencies / optionalDependencies /
  * bundle(d)Dependencies；peerDependencies 只含宿主提供的包；`capybara` 段字段齐全且路径不越界，entry 是 `.mjs`；
- * `capybara.sdk` 满足宿主 SDK 版本；manifest 的 version 与 package.json 一致、sdk 与 `capybara.sdk` 一致，
+ * `capybara.sdk` 有上界（`*`、`>=x` 这类会把将来的大版本也当成兼容，拒绝）且满足宿主 SDK 版本（includePrerelease），
+ * `peerDependencies` 的 SDK 范围必须存在且等于它；`peerDependencies.zod`（若有）是合法范围，给了
+ * `opts.hostZodVersion` 时须被宿主 zod 满足；manifest 的 version 与 package.json 一致、sdk 与 `capybara.sdk` 一致，
  * 其余按 definePlugin 的规则校验。
  */
-export function validatePluginPackageJson(pkg: unknown, hostSdkVersion: string): string[] {
+export function validatePluginPackageJson(
+  pkg: unknown,
+  hostSdkVersion: string,
+  opts: { hostZodVersion?: string } = {},
+): string[] {
   if (!isObj(pkg)) return ["package.json must be a JSON object"];
   const errs: string[] = [];
   if (typeof pkg.name !== "string" || pkg.name.length > 214 || !NPM_NAME_RE.test(pkg.name)) {
@@ -290,16 +312,31 @@ export function validatePluginPackageJson(pkg: unknown, hostSdkVersion: string):
       errs.push(`package.json ${f} is not allowed: bundle third-party dependencies into the entry`);
     }
   }
+  let peers: Record<string, unknown> = {};
   if (pkg.peerDependencies !== undefined) {
     if (!isObj(pkg.peerDependencies)) errs.push("package.json peerDependencies must be an object");
     else {
-      for (const k of Object.keys(pkg.peerDependencies)) {
+      peers = pkg.peerDependencies;
+      for (const k of Object.keys(peers)) {
         if (!(HOST_PROVIDED_PACKAGES as readonly string[]).includes(k)) {
           errs.push(
             `package.json peerDependencies "${k}" is not provided by the host (only ${HOST_PROVIDED_PACKAGES.join(", ")})`,
           );
         }
       }
+    }
+  }
+  const zodRange = peers.zod;
+  if (zodRange !== undefined) {
+    if (typeof zodRange !== "string" || semver.validRange(zodRange) === null) {
+      errs.push("package.json peerDependencies zod must be a valid semver range");
+    } else if (
+      opts.hostZodVersion !== undefined &&
+      !semver.satisfies(opts.hostZodVersion, zodRange, { includePrerelease: true })
+    ) {
+      errs.push(
+        `package.json peerDependencies zod "${zodRange}" is not satisfied by the host zod ${opts.hostZodVersion}`,
+      );
     }
   }
 
@@ -322,8 +359,27 @@ export function validatePluginPackageJson(pkg: unknown, hostSdkVersion: string):
   }
   if (typeof s.sdk !== "string" || semver.validRange(s.sdk) === null) {
     errs.push("capybara.sdk must be a valid semver range");
-  } else if (!semver.satisfies(hostSdkVersion, s.sdk)) {
-    errs.push(`capybara.sdk "${s.sdk}" is not satisfied by the host SDK version ${hostSdkVersion}`);
+  } else {
+    if (!hasUpperBound(s.sdk)) {
+      errs.push(
+        `capybara.sdk "${s.sdk}" has no upper bound: use a range such as ^0.1.0 so a future major SDK is not assumed compatible`,
+      );
+    }
+    if (!semver.satisfies(hostSdkVersion, s.sdk, { includePrerelease: true })) {
+      errs.push(
+        `capybara.sdk "${s.sdk}" is not satisfied by the host SDK version ${hostSdkVersion}`,
+      );
+    }
+    const peerSdk = peers["@capybara-hq/plugin-sdk"];
+    if (peerSdk === undefined) {
+      errs.push(
+        `package.json peerDependencies "@capybara-hq/plugin-sdk" is required and must equal capybara.sdk "${s.sdk}"`,
+      );
+    } else if (peerSdk !== s.sdk) {
+      errs.push(
+        `package.json peerDependencies "@capybara-hq/plugin-sdk" "${String(peerSdk)}" must equal capybara.sdk "${s.sdk}"`,
+      );
+    }
   }
   checkManifest(s.manifest, pkg.version, s.sdk, errs);
   return errs;

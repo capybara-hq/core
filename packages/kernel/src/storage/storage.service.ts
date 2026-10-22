@@ -10,6 +10,9 @@ import { KeySpace, kernelPrefix, normalizeOrgId, pluginPrefix } from "./prefix.j
 
 export { StorageKeyError } from "./prefix.js";
 
+/** 部署级对象的键前缀（见 {@link StorageService.deployment}）。 */
+export const DEPLOYMENT_PREFIX = "deployment/";
+
 /** 没有对象存储提供方时的错误（HTTP 层映射为 `storage.unavailable`，503）。 */
 export const storageUnavailable = (): CapabilityUnavailableError =>
   new CapabilityUnavailableError(
@@ -82,7 +85,18 @@ export class StorageService {
 
   /** 内核在该组织下的存储（前缀 `kernel/<orgId>/`）。orgId 不是 UUID 时立即抛 StorageKeyError。 */
   kernel(orgId: string): ObjectStore {
-    const ks = new KeySpace(kernelPrefix(orgId));
+    return this.scopedStore(new KeySpace(kernelPrefix(orgId)));
+  }
+
+  /**
+   * 内核的部署级存储（前缀 {@link DEPLOYMENT_PREFIX}，不属于任何组织，如插件包
+   * `deployment/plugins/blobs/<sha256>.tgz`）。{@link deleteOrg} 不触及。
+   */
+  deployment(): ObjectStore {
+    return this.scopedStore(new KeySpace(DEPLOYMENT_PREFIX));
+  }
+
+  private scopedStore(ks: KeySpace): ObjectStore {
     const scoped = () => new ScopedStore(this.require(), ks);
     return {
       put: async (key, body, opts) => scoped().put(key, body, opts),

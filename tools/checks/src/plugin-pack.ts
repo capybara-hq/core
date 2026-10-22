@@ -1,13 +1,17 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PluginPackageError, readPluginPackage } from "@capybara-hq/kernel";
+import {
+  PACKAGES_MAX_BYTES_DEFAULT,
+  PluginPackageError,
+  readPluginPackage,
+} from "@capybara-hq/kernel";
 import { packPlugin } from "@capybara-hq/pack-plugin";
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { Finding } from "./source.js";
 
-/** 与 `packages.maxBytes` 的默认值一致：官方插件打出来的包必须能按默认上限安装。 */
-export const PLUGIN_PACK_MAX_BYTES = 52_428_800;
+/** 即 `packages.maxBytes` 的默认值（取自内核配置 schema）：官方插件打出来的包必须能按默认上限安装。 */
+export const PLUGIN_PACK_MAX_BYTES = PACKAGES_MAX_BYTES_DEFAULT;
 
 /**
  * 每个插件都能打成自包含的插件包（C12）：用 `tools/pack-plugin` 打包（esbuild 单文件 ESM + 静态清单），

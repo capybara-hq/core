@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@capybara-hq/kernel": "workspace:*",
+    "@capybara-hq/plugin-object-store-s3": "workspace:*",
+    "@capybara-hq/plugin-openai-compatible": "workspace:*",
     "tsx": "^4.23.15"
   },
   "devDependencies": {

@@ -74,6 +74,11 @@ export {
   startFakeModelServer,
 } from "./fake-model-server.js";
 export {
+  type FakeNpmPackage,
+  type FakeNpmRegistry,
+  startFakeNpmRegistry,
+} from "./fake-npm-registry.js";
+export {
   type FakeOAuthClient,
   type FakeOAuthServer,
   type FakeOAuthServerOptions,

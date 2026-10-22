@@ -61,6 +61,9 @@ export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
   "release-assets.githubusercontent.com",
 ];
 
+/** `packages.maxBytes` 的默认值（插件包 tgz 的大小上限）；`check:plugin-pack` 用同一个值。 */
+export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
+
 const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
@@ -109,6 +112,72 @@ export const KernelConfigSchema = z.object({
     .record(z.string(), z.unknown())
     .default({})
     .meta(meta({ description: "Deployment-level config keyed by plugin name" })),
+  pluginHost: z
+    .object({
+      dir: z
+        .string()
+        .min(1)
+        .default("/var/lib/capybara/plugins")
+        .meta(
+          meta({
+            description:
+              "Local directory where each replica unpacks installed plugin packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store",
+          }),
+        ),
+      drainSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Seconds in-flight tool calls and queue jobs of a plugin being unloaded may keep running before they are aborted",
+          }),
+        ),
+      reconcileIntervalSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(60)
+        .meta(
+          meta({
+            description:
+              "Seconds between periodic reconciles of each replica's loaded plugins against the installed state in PostgreSQL",
+          }),
+        ),
+    })
+    .prefault({} as never),
+  packages: z
+    .object({
+      npmRegistry: z
+        .url()
+        .default("https://registry.npmjs.org")
+        .meta(meta({ description: "npm registry used to install plugin packages by name" })),
+      npmToken: z
+        .string()
+        .min(1)
+        .optional()
+        .meta(
+          meta({
+            secret: true,
+            description:
+              "Bearer token for the npm registry (private registries); sent only to the registry origin",
+          }),
+        ),
+      maxBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(PACKAGES_MAX_BYTES_DEFAULT)
+        .meta(
+          meta({
+            description:
+              "Largest plugin package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store",
+          }),
+        ),
+    })
+    .prefault({} as never),
   pluginPermissions: z
     .object({
       autoApprove: z

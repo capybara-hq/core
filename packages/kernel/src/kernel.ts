@@ -53,8 +53,12 @@ import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
+import { PluginBlobs } from "./plugins/blobs.js";
 import { PluginHost } from "./plugins/host.js";
+import { PluginInstalls } from "./plugins/installs.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
+import { newReplicaId, ReplicaStatusStore } from "./plugins/sources.js";
+import { syncPackage } from "./plugins/sync.js";
 import { RunAbort } from "./runtime/abort.js";
 import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
@@ -192,6 +196,12 @@ export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
   readonly http: KernelHttp;
   readonly host: PluginHost;
+  /** 本进程的副本 id（`<hostname>-<pid>-<6 位随机>`，写 `plugin_replica_status`）。 */
+  readonly replicaId: string;
+  /** 插件包的导入（上传 / npm）与安装记录。 */
+  readonly pluginInstalls: PluginInstalls;
+  /** 内容寻址的插件包存储（对象存储或 PG）。 */
+  readonly pluginBlobs: PluginBlobs;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
   readonly orgPluginConfigs: OrgPluginConfigs;
   /** 内核总线（命名空间 `kernel`）。 */
@@ -256,6 +266,12 @@ export interface KernelOptions {
   runHooks?: RunHooks;
   /** 评测整轮回放的测试钩子。 */
   evalHooks?: EvalReplayHooks;
+  /**
+   * 内置插件（C14）：由 CLI 传入（`openai-compatible`、`object-store-s3`），按模块解析（建议 `file:` URL），
+   * 来源 `builtin`：预先批准、始终启用、不需组织启用；部署配置没配好时不加载（待配置），内核照常启动。
+   * 与配置 `plugins` 列表重名时以内置为准并告警。
+   */
+  builtinPlugins?: string[];
 }
 
 /**
@@ -285,7 +301,13 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  */
 export async function migrateAll(
   config: KernelConfig,
-  opts: { resolveFrom?: string; onPending?: (pending: PendingPlugin[]) => void } = {},
+  opts: {
+    resolveFrom?: string;
+    onPending?: (pending: PendingPlugin[]) => void;
+    /** 内置插件（见 {@link KernelOptions.builtinPlugins}）：不过权限闸门。 */
+    builtinPlugins?: string[];
+    log?: { warn(msg: string, fields?: Record<string, unknown>): void };
+  } = {},
 ): Promise<{ schema: string; plugin?: string; applied: string[] }[]> {
   const connectTimeoutMs = config.db.connectTimeoutMs;
   const kernel = await migrate(
@@ -299,6 +321,8 @@ export async function migrateAll(
     autoApprove: config.pluginPermissions.autoApprove,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     ...(opts.onPending !== undefined && { onPending: opts.onPending }),
+    ...(opts.builtinPlugins !== undefined && { builtin: opts.builtinPlugins }),
+    ...(opts.log !== undefined && { log: opts.log }),
   });
   return [{ schema: KERNEL_SCHEMA, applied: kernel.applied }, ...plugins];
 }
@@ -352,10 +376,17 @@ export async function createKernel(
     runWorkers: config.roles.includes("worker"),
     log,
   };
+  const replicaId = newReplicaId();
+  const replicaStatus = new ReplicaStatusStore(
+    kernelDb(db),
+    replicaId,
+    config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
+  );
   const host = new PluginHost(deps, config.pluginConfig, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
     autoApprove: config.pluginPermissions.autoApprove,
+    status: replicaStatus,
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),
@@ -420,6 +451,18 @@ export async function createKernel(
       const rows = await kdb.selectFrom("plugin_permission_snapshots").select("plugin").execute();
       return [...rows.map((r) => r.plugin), ...host.manifests().map((m) => m.name)];
     },
+  });
+  // 插件包：有对象存储放 deployment/plugins/blobs/，否则放 PG；安装记录与包的导入
+  const pluginBlobs = new PluginBlobs({
+    db: kdb,
+    storage,
+    maxBytes: () => current.packages.maxBytes,
+  });
+  const pluginInstalls = new PluginInstalls({
+    db: kdb,
+    blobs: pluginBlobs,
+    config: () => current,
+    declared: () => host.declared(),
   });
   // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
   maintenance.handle(STORAGE_PURGE_JOB, async () => {
@@ -776,11 +819,13 @@ export async function createKernel(
         skillChanges,
         prices,
         purposes,
+        pluginInstalls,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
+      packageMaxBytes: config.packages.maxBytes,
     });
   } catch (e) {
     await releaseConnections();
@@ -919,6 +964,8 @@ export async function createKernel(
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("eval-queue", evalQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
+    // 本副本的加载状态标为 unloaded（尽力而为；心跳过期的行由 reconcile 清理）
+    await within("plugin-status", replicaStatus.markAllUnloaded(), 1_000);
     await within("bus", busSubscriber.close());
     if (redis.status === "ready") {
       if (!(await within("redis", redis.quit()))) redis.disconnect();
@@ -932,6 +979,9 @@ export async function createKernel(
   const kernel: Kernel = {
     http: httpApp,
     host,
+    replicaId,
+    pluginInstalls,
+    pluginBlobs,
     orgPluginConfigs,
     bus,
     runs,
@@ -971,7 +1021,20 @@ export async function createKernel(
         );
         await migratePromise;
         checkpoint();
-        await host.load(config.plugins);
+        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 pluginHost.dir 后导入；
+        // 迁移由启动的副本在迁移器的咨询锁内执行（T14 改为持锁协调）
+        await host.load({
+          builtin: opts.builtinPlugins ?? [],
+          config: config.plugins,
+          installs: {
+            desired: () => pluginInstalls.desired(),
+            sync: (d) =>
+              syncPackage(current.pluginHost.dir, d.name, d.sha256, pluginBlobs, {
+                maxBytes: current.packages.maxBytes,
+              }),
+            markMigrated: (name, sha256) => pluginInstalls.markMigrated(name, sha256),
+          },
+        });
         checkpoint();
         const sandboxPlugin = host
           .list("sandbox")

@@ -3,6 +3,7 @@ import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/co
 import { APP_GUARD } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import { AdminController } from "../admin/admin.controller.js";
+import { AdminPluginsController } from "../admin/plugins.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
 import { SetupService } from "../admin/setup.service.js";
 import { AgentsController } from "../agents/agents.controller.js";
@@ -19,7 +20,6 @@ import { ConversationsService, type RunControl } from "../conversations/conversa
 import type { EventBus, EventLog } from "../conversations/event-log.js";
 import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
-import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
@@ -55,6 +55,7 @@ import { OrgsService } from "../orgs/orgs.service.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import { OrgSettingsService } from "../orgs/settings.service.js";
 import type { PluginHost } from "../plugins/host.js";
+import type { PluginInstalls } from "../plugins/installs.js";
 import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
 import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
@@ -128,6 +129,7 @@ import {
   ORG_SETTINGS,
   ORG_UI_STREAMS,
   ORGS,
+  PLUGIN_INSTALLS,
   PRICES,
   PROVIDER_REGISTRY,
   QUESTIONS,
@@ -194,6 +196,8 @@ export interface ApiDeps {
   prices: PricesService;
   /** 模型用途映射（与 `Kernel.purposes` 同一实例；评测 worker 的评委也用它）。 */
   purposes: ModelPurposesService;
+  /** 插件包的导入与安装记录（与 `Kernel.pluginInstalls` 同一实例）。 */
+  pluginInstalls: PluginInstalls;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
@@ -209,6 +213,7 @@ const CONTROLLERS: Type[] = [
   InvitationsController,
   SetupController,
   AdminController,
+  AdminPluginsController,
   OrgPluginConfigsController,
   AgentsController,
   ModelsController,
@@ -319,6 +324,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     { provide: PRICES, useValue: deps.prices },
     { provide: MODEL_PURPOSES, useValue: deps.purposes },
+    { provide: PLUGIN_INSTALLS, useValue: deps.pluginInstalls },
     {
       provide: TRAJECTORIES,
       useFactory: (
@@ -439,15 +445,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: UI_VIEWS,
-      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+      useFactory: (conversations: ConversationsService) =>
         new UiViews({
           host: deps.host,
-          enabledPlugins: (orgId) => queryEnabledPlugins(db, orgId),
+          // 内置插件始终启用（C14）
+          enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
           canAccessConversation: (orgId, id, accountId) =>
             conversations.isAccessible(orgId, id, accountId),
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CONVERSATIONS],
+      inject: [CONVERSATIONS],
     },
     { provide: EMBED_TOKENS, useFactory: () => new EmbedTokens(deps.keyring) },
     {

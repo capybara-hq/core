@@ -200,7 +200,7 @@ const sourceId = (s: ResolvedTool["source"]): string =>
  * 可用条件：
  * - 内置：在 `builtins` 中；
  * - 插件工具：插件已加载且注册了该工具，并且本组织启用了该插件（`plugin_org_configs.enabled`，
- *   spec 2.2「安装在部署级、启用在组织级」）；
+ *   spec 2.2「安装在部署级、启用在组织级」；内置插件始终启用）；
  * - 应用工具：应用属于本组织、未删除、未停用、连接器已安装，工具状态为 `enabled` 且 key 合法。
  *   `tools: "all"` 只取启用的工具，停用 / 待复核的视为管理员有意关闭，不报；点名的工具逐个报原因。
  * 同一 key 只保留第一个；同一来源被重复引用时静默去重，不同来源撞 key 报重复。
@@ -502,14 +502,9 @@ export class ToolRegistry {
     return { tools, unavailable, hidden };
   }
 
+  /** 本组织启用的插件（内置插件始终算启用，C14）。 */
   private async enabledPlugins(orgId: string): Promise<Set<string>> {
-    const rows = await this.deps.db
-      .selectFrom("plugin_org_configs")
-      .select("plugin")
-      .where("org_id", "=", orgId)
-      .where("enabled", "=", true)
-      .execute();
-    return new Set(rows.map((r) => r.plugin));
+    return this.deps.host.enabledPlugins(orgId);
   }
 
   private async loadApps(

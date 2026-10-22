@@ -181,13 +181,18 @@ export class OrgPluginConfigs {
         .execute();
       await this.hooks.afterConfigRowRead?.();
       const setKeys = await this.setSecretKeys(t, orgId);
-      return this.host.manifests().map((m) =>
-        this.view(
-          m,
-          rows.find((r) => r.plugin === m.name),
-          setKeys,
-        ),
-      );
+      // 内置插件始终启用、没有组织级设置（C14）：组织插件页不列出
+      const builtin = this.host.builtinNames();
+      return this.host
+        .manifests()
+        .filter((m) => !builtin.has(m.name))
+        .map((m) =>
+          this.view(
+            m,
+            rows.find((r) => r.plugin === m.name),
+            setKeys,
+          ),
+        );
     });
   }
 
@@ -204,6 +209,10 @@ export class OrgPluginConfigs {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<OrgPluginView> {
+    // 内置插件始终启用、不在组织插件页（C14）
+    if (this.host.builtinNames().has(plugin)) {
+      throw new ApiError("plugin.not_found", `Plugin ${plugin} is built in and always enabled`);
+    }
     const manifest = this.manifest(plugin);
     const schema = manifest.config?.org;
     if (input.config !== undefined && !schema) {
@@ -374,7 +383,7 @@ export class OrgPluginConfigs {
     return { enabled: true, config: r.data };
   }
 
-  /** 该组织已启用的插件名（只含当前已加载的插件；待批准的不算）。 */
+  /** 该组织已启用的插件名（只含当前已加载的插件；待批准的不算；内置插件始终算启用）。 */
   private async enabledSet(t: Trx, orgId: string): Promise<Set<string>> {
     const rows = await t
       .selectFrom("plugin_org_configs")
@@ -383,7 +392,9 @@ export class OrgPluginConfigs {
       .where("enabled", "=", true)
       .execute();
     const loaded = new Set(this.host.manifests().map((m) => m.name));
-    return new Set(rows.map((r) => r.plugin).filter((n) => loaded.has(n)));
+    const out = new Set(rows.map((r) => r.plugin).filter((n) => loaded.has(n)));
+    for (const n of this.host.builtinNames()) if (loaded.has(n)) out.add(n);
+    return out;
   }
 
   /** 引用是否为按组织启用的能力。 */

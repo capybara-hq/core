@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, posix, relative, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
@@ -53,6 +54,14 @@ export const PLUGIN_PACKAGE_LIMITS = {
   maxPackageJsonBytes: 1024 * 1024,
 } as const;
 
+/**
+ * 宿主 zod 的版本（插件包的 `peerDependencies.zod` 必须被它满足：加载时插件用的就是这一份 zod）。
+ * 从内核自己的依赖解析，与 `syncPackage` 链接给插件的是同一个包。
+ */
+export const HOST_ZOD_VERSION: string = (
+  createRequire(import.meta.url)("zod/package.json") as { version: string }
+).version;
+
 /** tgz 内容的统一前缀（npm pack 的约定）。 */
 const PREFIX = "package/";
 
@@ -79,13 +88,24 @@ export interface PluginPackage {
   migrationSql: { file: string; sql: string }[];
 }
 
-/** {@link readPluginPackage} 的选项；`maxUnpackedBytes` / `maxEntries` 默认取 {@link PLUGIN_PACKAGE_LIMITS}。 */
-export interface ReadPluginPackageOptions {
+/** 解包上限：`maxBytes` 即 `packages.maxBytes`；其余默认取 {@link PLUGIN_PACKAGE_LIMITS}。 */
+export interface PluginPackageLimits {
   maxBytes: number;
-  hostSdkVersion: string;
   maxUnpackedBytes?: number;
   maxEntries?: number;
 }
+
+/** {@link readPluginPackage} 的选项；`hostZodVersion` 默认 {@link HOST_ZOD_VERSION}。 */
+export interface ReadPluginPackageOptions extends PluginPackageLimits {
+  hostSdkVersion: string;
+  hostZodVersion?: string;
+}
+
+const unpackLimits = (l: PluginPackageLimits) => ({
+  maxBytes: l.maxBytes,
+  maxUnpackedBytes: l.maxUnpackedBytes ?? PLUGIN_PACKAGE_LIMITS.maxUnpackedBytes,
+  maxEntries: l.maxEntries ?? PLUGIN_PACKAGE_LIMITS.maxEntries,
+});
 
 interface RawFile {
   path: string;
@@ -183,7 +203,11 @@ async function unpack(
       }
       const chunks: Buffer[] = [];
       for await (const c of entry) chunks.push(c as Buffer);
-      files.push({ path: rel, data: Buffer.concat(chunks) });
+      // 单块时直接用它（不复制）；多块才拼接
+      files.push({
+        path: rel,
+        data: chunks.length === 1 ? (chunks[0] as Buffer) : Buffer.concat(chunks),
+      });
     }
   } catch (e) {
     ex.destroy();
@@ -259,11 +283,7 @@ export async function readPluginPackage(
   bytes: Uint8Array,
   opts: ReadPluginPackageOptions,
 ): Promise<PluginPackage> {
-  const files = await unpack(bytes, {
-    maxBytes: opts.maxBytes,
-    maxUnpackedBytes: opts.maxUnpackedBytes ?? PLUGIN_PACKAGE_LIMITS.maxUnpackedBytes,
-    maxEntries: opts.maxEntries ?? PLUGIN_PACKAGE_LIMITS.maxEntries,
-  });
+  const files = await unpack(bytes, unpackLimits(opts));
   const byPath = new Map(files.map((f) => [f.path, f]));
 
   const pj = byPath.get("package.json");
@@ -278,7 +298,9 @@ export async function readPluginPackage(
     if (e instanceof PluginPackageError) throw e;
     fail("package.json is not valid JSON");
   }
-  const pkgIssues = validatePluginPackageJson(packageJson, opts.hostSdkVersion);
+  const pkgIssues = validatePluginPackageJson(packageJson, opts.hostSdkVersion, {
+    hostZodVersion: opts.hostZodVersion ?? HOST_ZOD_VERSION,
+  });
   if (pkgIssues.length > 0) throw new PluginPackageError(pkgIssues);
   const pkg = packageJson as Record<string, unknown>;
   const section = pkg.capybara as CapybaraPackageSection;
@@ -338,15 +360,16 @@ export function permissionSetOfPackage(p: PluginPackage): PermissionSet {
 }
 
 /**
- * 把包解到 `dir`（去掉 `package/` 前缀）。`dir` 必须不存在或为空；解包规则与 {@link readPluginPackage} 相同
- * （路径、文件类型、条目数与解压大小），应先用后者校验过。文件 0644、目录 0755，写入用 `wx`（不覆盖、不跟随已有链接）。
+ * 把包解到 `dir`（去掉 `package/` 前缀）。`dir` 必须不存在或为空；解包规则与上限与 {@link readPluginPackage} 相同
+ * （路径、文件类型、条目数与解压大小；`limits` 传同一组，即 `packages.maxBytes`），应先用后者校验过。
+ * 文件 0644、目录 0755，写入用 `wx`（不覆盖、不跟随已有链接）。
  */
-export async function extractPluginPackage(bytes: Uint8Array, dir: string): Promise<void> {
-  const files = await unpack(bytes, {
-    maxBytes: bytes.byteLength,
-    maxUnpackedBytes: PLUGIN_PACKAGE_LIMITS.maxUnpackedBytes,
-    maxEntries: PLUGIN_PACKAGE_LIMITS.maxEntries,
-  });
+export async function extractPluginPackage(
+  bytes: Uint8Array,
+  dir: string,
+  limits: PluginPackageLimits,
+): Promise<void> {
+  const files = await unpack(bytes, unpackLimits(limits));
   const root = resolvePath(dir);
   let existing: string[] = [];
   try {

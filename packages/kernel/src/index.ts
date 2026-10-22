@@ -11,7 +11,13 @@ export {
   selectConfigSource,
 } from "./config/load.js";
 export { createNacosSource, type NacosSourceOptions } from "./config/nacos-source.js";
-export { type FieldMeta, type KernelConfig, KernelConfigSchema, meta } from "./config/schema.js";
+export {
+  type FieldMeta,
+  type KernelConfig,
+  KernelConfigSchema,
+  meta,
+  PACKAGES_MAX_BYTES_DEFAULT,
+} from "./config/schema.js";
 export { type BusSubscriber, createBus, createBusSubscriber } from "./ctx/bus.js";
 export {
   createPluginContext,
@@ -67,18 +73,46 @@ export {
 export { createLogger, type KernelLogger, LOG_LEVELS, type LogLevel } from "./log.js";
 export { type Org, OrgsService } from "./orgs/orgs.service.js";
 export {
+  fetchNpmPackage,
+  IntegrityMismatchError,
+  type NpmFetchConfig,
+  NpmFetchError,
+  PackageTooLargeError,
+} from "./packages/npm.js";
+export {
   type ApprovalDecision,
   type PendingPlugin,
   type PermissionSnapshot,
   PluginApprovals,
   planApprovals,
 } from "./plugins/approvals.js";
-export { assertSecretsReachable, type InspectedPlugin, PluginHost } from "./plugins/host.js";
+export {
+  blobKey,
+  PluginBlobIntegrityError,
+  type PluginBlobSource,
+  PluginBlobs,
+} from "./plugins/blobs.js";
+export {
+  assertSecretsReachable,
+  type InspectedPlugin,
+  type InstalledPluginLoader,
+  PluginHost,
+  type PluginLoadPlan,
+} from "./plugins/host.js";
+export {
+  type DesiredPlugin,
+  type IngestSource,
+  type PackageReview,
+  type PluginInstallRow,
+  PluginInstalls,
+} from "./plugins/installs.js";
 export {
   extractPluginPackage,
+  HOST_ZOD_VERSION,
   PLUGIN_PACKAGE_LIMITS,
   type PluginPackage,
   PluginPackageError,
+  type PluginPackageLimits,
   permissionSetOfPackage,
   type ReadPluginPackageOptions,
   readPluginPackage,
@@ -90,8 +124,21 @@ export {
   type PermissionSet,
   permissionKeys,
 } from "./plugins/permission-set.js";
-export { isSensitivePermissionKey } from "./plugins/permission-view.js";
+export {
+  isSensitivePermissionKey,
+  type PermissionGroup,
+  permissionGroups,
+  reviewHash,
+} from "./plugins/permission-view.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
+export {
+  newReplicaId,
+  type PendingReason,
+  type PluginLoadStatus,
+  type PluginSource,
+  ReplicaStatusStore,
+} from "./plugins/sources.js";
+export { syncPackage } from "./plugins/sync.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
 export {
   SANDBOX_DESTROY_JOB,

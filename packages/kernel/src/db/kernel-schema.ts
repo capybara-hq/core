@@ -698,6 +698,58 @@ export interface EvalResultsTable {
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
  */
+/** 0030_plugin_installs.sql：内容寻址的插件包（sha256 = 整个 tgz）。 */
+export interface PluginPackagesTable {
+  sha256: string;
+  /** 插件清单名。 */
+  name: string;
+  /** package.json 的 npm 包名。 */
+  package_name: string;
+  version: string;
+  size: Int8;
+  /** package.json 的 `capybara` 段（审阅过的静态清单）。 */
+  section: Json<unknown>;
+  blob_store: "object" | "pg";
+  source: "npm" | "file" | "directory";
+  source_ref: string;
+  uploaded_by: string | null;
+  created_at: Ts;
+}
+
+/** 0030：没有对象存储时的包字节。 */
+export interface PluginBlobsTable {
+  sha256: string;
+  bytes: Buffer;
+}
+
+/** 0030：每插件一行的安装记录（期望状态）。 */
+export interface PluginInstallsTable {
+  name: string;
+  sha256: string;
+  version: string;
+  source: "npm" | "file" | "directory";
+  desired_state: ColumnType<"enabled" | "disabled", "enabled" | "disabled" | undefined>;
+  migrated_sha: string | null;
+  installed_by: string | null;
+  installed_at: Ts;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
+/** 0030：每个副本每个插件的加载结果。 */
+export interface PluginReplicaStatusTable {
+  replica_id: string;
+  plugin: string;
+  version: string;
+  sha256: string | null;
+  source: "builtin" | "config" | "install";
+  state: "loaded" | "failed" | "unloaded" | "pending";
+  reason: string | null;
+  detail: string | null;
+  http_replica_id: string | null;
+  heartbeat_at: Ts;
+}
+
 export interface KernelDatabase {
   accounts: AccountsTable;
   identities: IdentitiesTable;
@@ -745,6 +797,10 @@ export interface KernelDatabase {
   eval_runs: EvalRunsTable;
   eval_results: EvalResultsTable;
   model_purpose_mappings: ModelPurposeMappingsTable;
+  plugin_packages: PluginPackagesTable;
+  plugin_blobs: PluginBlobsTable;
+  plugin_installs: PluginInstallsTable;
+  plugin_replica_status: PluginReplicaStatusTable;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

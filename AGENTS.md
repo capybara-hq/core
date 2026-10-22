@@ -31,7 +31,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 - `plugins/*` -> `@capybara-hq/plugin-sdk`（测试可额外用 devDependency `@capybara-hq/testing`）
 - `@capybara-hq/kernel` -> `@capybara-hq/plugin-sdk`
 - `@capybara-hq/testing` -> `@capybara-hq/kernel`（`@capybara-hq/plugin-sdk` 为 peerDependency）
-- `@capybara-hq/capybara`（CLI）-> `@capybara-hq/kernel`
+- `@capybara-hq/capybara`（CLI）-> `@capybara-hq/kernel`、`@capybara-hq/plugin-openai-compatible`、`@capybara-hq/plugin-object-store-s3`（内置插件，以 `builtinPlugins` 传给内核，来源 `builtin`；CLI 只按模块路径解析它们，不 import 其代码）
 - `@capybara-hq/design` 不依赖任何 `@capybara-hq/*`
 - `@capybara-hq/web` 只依赖 `@capybara-hq/design`，不依赖内核等其他包，只经 HTTP 调内核（属于「外部应用」层）
 - `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档、校验插件包）；`tools/checks` -> `@capybara-hq/design`（devDependency，仅测试用，核对模板清单）；`tools/checks` -> `@capybara-hq/pack-plugin`、`@capybara-hq/plugin-sdk`（devDependency，`check:plugin-pack` 打包官方插件）

@@ -52,7 +52,16 @@ export interface CreateHttpAppOptions {
   trustProxy?: boolean | number | string[];
   /** 副本标识（`http.replicaId`）：设置时每个响应带 `x-capybara-replica` 头。 */
   replicaId?: string | undefined;
+  /**
+   * 插件包上传（`POST /api/v1/admin/plugins/packages/file`，`application/octet-stream`）的大小上限，
+   * 即 `packages.maxBytes`。路由的 bodyLimit 多给 1 字节：恰好超出一个字节的包能到达处理函数、返回
+   * `plugin.package_too_large`，更大的由 Fastify 直接拒绝（413 `payload_too_large`）。
+   */
+  packageMaxBytes?: number;
 }
+
+/** 插件包上传路由（Fastify 路由模板）。 */
+export const PACKAGE_UPLOAD_ROUTE = "/api/v1/admin/plugins/packages/file";
 
 /**
  * 把 `http.trustProxy` 配置转成 Fastify 的 trustProxy。布尔与 IP / CIDR 列表原样传入；
@@ -113,7 +122,16 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
     if (LARGE_BODY_ROUTES.has(r.url) && [r.method].flat().includes("POST")) {
       r.bodyLimit = LARGE_BODY_LIMIT;
     }
+    if (r.url === PACKAGE_UPLOAD_ROUTE && opts.packageMaxBytes !== undefined) {
+      r.bodyLimit = opts.packageMaxBytes + 1;
+    }
   });
+  // 原始字节的请求体（插件包上传）：交给处理函数一个 Buffer；其余路由收到它时由各自的校验拒绝
+  fastify.addContentTypeParser(
+    "application/octet-stream",
+    { parseAs: "buffer" },
+    (_req, body, done) => done(null, body),
+  );
 
   let router: PluginRouter | undefined;
   const dispatch = opts.servePlugins
