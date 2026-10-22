@@ -48,6 +48,7 @@ let k: Kernel;
 let admin: Req;
 let member: Req;
 let memberId: string;
+let adminId: string;
 
 beforeAll(async () => {
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -97,12 +98,14 @@ beforeAll(async () => {
   k = await createKernel(config, { env: {} });
   await k.start();
   const accounts = new AccountsService(db);
-  await accounts.createLocal({
-    login: "root",
-    password: PW,
-    displayName: "R",
-    enterpriseAdmin: true,
-  });
+  adminId = (
+    await accounts.createLocal({
+      login: "root",
+      password: PW,
+      displayName: "R",
+      enterpriseAdmin: true,
+    })
+  ).id;
   memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" })).id;
   admin = await session(k, "root");
   member = await session(k, "mem");
@@ -160,21 +163,18 @@ describe("技能", () => {
       installs: 0,
       source: "file",
     });
-    const d = k.storage.deployment();
-    expect(await d.head(`directory/${item.id}/1.0.0/SKILL.md`)).not.toBeNull();
-    expect(await d.head(`directory/${item.id}/1.0.0/scripts/run.py`)).not.toBeNull();
-    expect(await d.head(`directory/${item.id}/1.0.0/package.json`)).toBeNull();
     const v = await db
       .selectFrom("directory_item_versions")
       .selectAll()
       .where("item_id", "=", item.id)
       .executeTakeFirstOrThrow();
-    expect(v).toMatchObject({
-      version: "1.0.0",
-      source: "file",
-      object_prefix: `directory/${item.id}/1.0.0/`,
-      plugin_sha256: null,
-    });
+    expect(v).toMatchObject({ version: "1.0.0", source: "file", plugin_sha256: null });
+    // 每次导入一个独立前缀：directory/<itemId>/<version>/<importId>/
+    expect(v.object_prefix).toMatch(new RegExp(`^directory/${item.id}/1\\.0\\.0/[0-9a-f-]{36}/$`));
+    const d = k.storage.deployment();
+    expect(await d.head(`${v.object_prefix}SKILL.md`)).not.toBeNull();
+    expect(await d.head(`${v.object_prefix}scripts/run.py`)).not.toBeNull();
+    expect(await d.head(`${v.object_prefix}package.json`)).toBeNull();
     expect((v.files as { path: string }[]).map((f) => f.path).sort()).toEqual([
       "SKILL.md",
       "scripts/run.py",
@@ -236,6 +236,56 @@ describe("技能", () => {
     );
   });
 
+  it("并发导入已有条目的同一版本：一个成功一个 409，各用独立前缀，胜者的文件完好且与 sha256 一致", async () => {
+    const a = await skillTgz({
+      version: "3.0.0",
+      extra: [{ name: "package/a.txt", data: "A".repeat(4096) }],
+    });
+    const b = await skillTgz({
+      version: "3.0.0",
+      extra: [{ name: "package/a.txt", data: "B".repeat(4096) }],
+    });
+    const res = await Promise.all([importFile(admin, a), importFile(admin, b)]);
+    expect(res.map((r) => r.statusCode).sort()).toEqual([201, 409]);
+    // 两次都通过了预检、写了存储（真正并发），各自的前缀不同；旧实现两次共用一个前缀，这里会是 1
+    const prefixes = new Set(
+      (await k.storage.deployment().list("directory/")).items
+        .map((i) => i.key)
+        .filter((key) => key.includes("/3.0.0/"))
+        .map((key) => key.split("/").slice(0, 4).join("/")),
+    );
+    expect(prefixes.size).toBe(2);
+    const v = await db
+      .selectFrom("directory_item_versions")
+      .selectAll()
+      .where("version", "=", "3.0.0")
+      .executeTakeFirstOrThrow();
+    const d = k.storage.deployment();
+    for (const f of v.files) {
+      const got = await d.get(`${v.object_prefix}${f.path}`);
+      expect(got, f.path).not.toBeNull();
+      const bytes = new Uint8Array(await new Response(got?.body).arrayBuffer());
+      expect(sha256(bytes), f.path).toBe(f.sha256);
+    }
+  });
+
+  it("列表分页：limit / offset，nextOffset 指向下一页", async () => {
+    await importFile(admin, await skillTgz({ name: "@acme/skill-b", skillName: "b-skill" }));
+    const p1 = await admin({ method: "GET", url: "/api/v1/admin/directory/items?limit=1" });
+    expect(p1.statusCode, p1.body).toBe(200);
+    expect(p1.json().items).toHaveLength(1);
+    expect(p1.json().nextOffset).toBe(1);
+    const p2 = await admin({
+      method: "GET",
+      url: "/api/v1/admin/directory/items?limit=1&offset=1",
+    });
+    expect(p2.json().items).toHaveLength(1);
+    expect(p2.json().items[0].id).not.toBe(p1.json().items[0].id);
+    expect(p2.json().nextOffset).toBeNull();
+    const bad = await admin({ method: "GET", url: "/api/v1/admin/directory/items?limit=5000" });
+    expect(bad.statusCode).toBe(400);
+  });
+
   it("详情含各版本", async () => {
     const id = (
       await db
@@ -247,8 +297,8 @@ describe("技能", () => {
     const res = await admin({ method: "GET", url: `/api/v1/admin/directory/items/${id}` });
     expect(res.statusCode, res.body).toBe(200);
     const detail = res.json();
-    expect(detail.item.versions).toEqual(["2.0.0", "1.1.0", "1.0.0"]);
-    expect(detail.versions[0]).toMatchObject({ version: "2.0.0", source: "npm" });
+    expect(detail.item.versions).toEqual(["3.0.0", "2.0.0", "1.1.0", "1.0.0"]);
+    expect(detail.versions[1]).toMatchObject({ version: "2.0.0", source: "npm" });
     expect(detail.versions[0].section).toMatchObject({ kind: "skill" });
   });
 });
@@ -265,7 +315,27 @@ describe("连接器模板", () => {
       name: "github-mcp",
       displayName: { zh: "GitHub", en: "GitHub" },
     });
-    expect(await k.storage.deployment().head(`directory/${item.id}/1.0.0/icon.svg`)).not.toBeNull();
+    const v = await db
+      .selectFrom("directory_item_versions")
+      .select("object_prefix")
+      .where("item_id", "=", item.id)
+      .executeTakeFirstOrThrow();
+    expect(await k.storage.deployment().head(`${v.object_prefix}icon.svg`)).not.toBeNull();
+  });
+
+  it("没有图标的模板不写存储（object_prefix 为空）", async () => {
+    const { icon: _, ...noIcon } = mcpTemplate();
+    const res = await importFile(
+      admin,
+      await templateTgz({ name: "@acme/plain-mcp", template: noIcon, icon: null }),
+    );
+    expect(res.statusCode, res.body).toBe(201);
+    const v = await db
+      .selectFrom("directory_item_versions")
+      .select(["object_prefix", "files"])
+      .where("item_id", "=", res.json().id)
+      .executeTakeFirstOrThrow();
+    expect(v).toEqual({ object_prefix: null, files: [] });
   });
 
   it("模板里含凭据字段被拒，什么都不写", async () => {
@@ -335,6 +405,26 @@ describe("插件", () => {
     expect(v).toMatchObject({ plugin_sha256: sha256(todo), object_prefix: null, source: "file" });
   });
 
+  it("插件名归另一个 npm 包（plugin_name_owners）时导入被拒 plugin.name_conflict，什么都不写", async () => {
+    const before = await db.selectFrom("plugin_packages").select("sha256").execute();
+    await db
+      .insertInto("plugin_name_owners")
+      .values({ name: "owned-elsewhere", package_name: "@other/plugin-owned" })
+      .execute();
+    const res = await importFile(admin, await pluginTgz({ name: "owned-elsewhere" }));
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().error.code).toBe("plugin.name_conflict");
+    expect(await db.selectFrom("plugin_packages").select("sha256").execute()).toEqual(before);
+    expect(
+      await db
+        .selectFrom("directory_items")
+        .select("id")
+        .where("name", "=", "owned-elsewhere")
+        .execute(),
+    ).toEqual([]);
+    await db.deleteFrom("plugin_name_owners").where("name", "=", "owned-elsewhere").execute();
+  });
+
   it("从 npm 导入同一版本 409", async () => {
     const res = await importNpm(admin, { package: "@capybara-hq/plugin-todo" });
     expect(res.statusCode).toBe(409);
@@ -360,6 +450,29 @@ describe("插件", () => {
       .where("name", "=", "todo")
       .executeTakeFirstOrThrow();
     expect(row.directory_item_id).toBe(item.id);
+    const installed = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "plugin.installed")
+      .execute();
+    expect(installed.at(-1)?.detail).toMatchObject({ name: "todo", directoryItemId: item.id });
+    // 同一个包不经目录重装：只清掉来源条目，并留审计
+    await k.pluginAdminOps.install("todo", sha256(todo), adminId);
+    const cleared = await db
+      .selectFrom("plugin_installs")
+      .select("directory_item_id")
+      .where("name", "=", "todo")
+      .executeTakeFirstOrThrow();
+    expect(cleared.directory_item_id).toBeNull();
+    const changed = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "plugin.install_source_changed")
+      .execute();
+    expect(changed[0]?.detail).toMatchObject({
+      directoryItemId: null,
+      previousDirectoryItemId: item.id,
+    });
     const missing = await admin({
       method: "POST",
       url: `/api/v1/admin/directory/items/${item.id}/install-deployment`,

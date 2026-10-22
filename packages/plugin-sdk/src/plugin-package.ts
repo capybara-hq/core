@@ -615,6 +615,12 @@ export function validateConnectorTemplate(t: unknown): string[] {
           );
           continue;
         }
+        if (p.split(".").some((seg) => CREDENTIAL_KEYS.has(normKey(seg)))) {
+          errs.push(
+            `template.editableEndpoint "${p}" looks like a credential field: organizations provide credentials through the connector's auth, not the endpoint`,
+          );
+          continue;
+        }
         if (seen.has(p)) errs.push(`template.editableEndpoint has duplicate path "${p}"`);
         seen.add(p);
       }
@@ -656,6 +662,8 @@ export function validateConnectorTemplate(t: unknown): string[] {
       for (const [name, v] of Object.entries(p)) {
         if (name.length < 1 || name.length > 200) {
           errs.push("template.defaultToolPolicies keys must be tool names (1-200 characters)");
+        } else if (PROTO_KEYS.has(name)) {
+          errs.push(`template.defaultToolPolicies key "${name}" is not allowed`);
         } else if (v !== "allow" && v !== "ask" && v !== "deny") {
           errs.push(`template.defaultToolPolicies.${name} must be "allow", "ask" or "deny"`);
         }

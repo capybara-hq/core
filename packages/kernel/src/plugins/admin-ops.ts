@@ -57,9 +57,10 @@ export class PluginAdminOps {
    *   `plugin.name_conflict`；
    * - 降级（目标版本低于当前）且目标版本有尚未执行的迁移文件 → `plugin.downgrade_unsupported`（迁移只做扩展，
    *   降级只能回到迁移是已执行迁移子集的版本）。
-   * 已指向同一个包时什么都不改（不写审计）。
+   * 已指向同一个包时什么都不改（不写审计；只有来源条目变了的情况见下）。
    * `opts.directoryItemId`：经企业目录安装时的来源条目，记进 `plugin_installs.directory_item_id`（F-AA）；
-   * 不经目录安装（上传 / npm / CLI）时清空——来源跟着当前版本走。
+   * 不经目录安装（上传 / npm / CLI）时清空——来源跟着当前版本走。审计 `plugin.installed` 的 detail 带 `directoryItemId`；
+   * 已指向同一个包、只有来源条目变了时只改这一列，审计 `plugin.install_source_changed`。
    */
   async install(
     name: string,
@@ -134,11 +135,22 @@ export class PluginAdminOps {
       // 已指向同一个包：什么都不改，降级视图仍给出真实的期望状态
       if (row?.sha256 === sha256) {
         if (row.directory_item_id !== directoryItemId) {
+          // 包没变、只有来源条目变了：照样留审计（来源变化影响 T26 的目录策略约束）
           await trx
             .updateTable("plugin_installs")
             .set({ directory_item_id: directoryItemId })
             .where("name", "=", name)
             .execute();
+          await this.audit(
+            trx,
+            actor,
+            actorTokenId,
+            "plugin.install_source_changed",
+            name,
+            pkg.version,
+            sha256,
+            { directoryItemId, previousDirectoryItemId: row.directory_item_id },
+          );
         }
         return { changed: false, state: row.desired_state };
       }
@@ -175,7 +187,9 @@ export class PluginAdminOps {
           }),
         )
         .execute();
-      await this.audit(trx, actor, actorTokenId, "plugin.installed", name, pkg.version, sha256);
+      await this.audit(trx, actor, actorTokenId, "plugin.installed", name, pkg.version, sha256, {
+        directoryItemId,
+      });
       return { changed: true, state: row?.desired_state ?? "disabled" };
     });
     if (changed.changed) await this.notify(name);
@@ -328,13 +342,14 @@ export class PluginAdminOps {
     name: string,
     version: string,
     sha256: string,
+    extra: Record<string, unknown> = {},
   ): Promise<void> {
     await audit(trx, {
       ...(actor !== null && { actorAccountId: actor }),
       ...(actorTokenId !== undefined && { actorTokenId }),
       action,
       target: name,
-      detail: { name, version, sha256 },
+      detail: { name, version, sha256, ...extra },
     });
   }
 

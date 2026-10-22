@@ -24,11 +24,12 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import type { AdminPluginView } from "../plugins/permission-view.js";
-import type {
-  ActorOpts,
-  DirectoryItemDetail,
-  DirectoryItemView,
-  DirectoryService,
+import {
+  type ActorOpts,
+  DIRECTORY_LIST_MAX_LIMIT,
+  type DirectoryItemDetail,
+  type DirectoryItemView,
+  type DirectoryService,
 } from "./directory.service.js";
 
 const NpmBody = z.object({
@@ -43,6 +44,8 @@ const InstallBody = z.object({ version: z.string().min(1).max(256) });
 const ListQuery = z.object({
   kind: z.enum(PACKAGE_KINDS as [PackageKind, ...PackageKind[]]).optional(),
   includeDeleted: z.enum(["true", "false"]).optional(),
+  limit: z.coerce.number().int().min(1).max(DIRECTORY_LIST_MAX_LIMIT).optional(),
+  offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
 });
 
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
@@ -101,17 +104,20 @@ export class AdminDirectoryController {
     );
   }
 
-  /** 条目列表（`kind` 过滤；`includeDeleted=true` 含已删除）。 */
+  /**
+   * 条目列表（`kind` 过滤；`includeDeleted=true` 含已删除）。分页：`limit`（缺省 200，最大 1000）与 `offset`，
+   * `nextOffset` 为下一页的 offset，没有下一页为 null。
+   */
   @Get("items")
-  async list(
+  list(
     @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
-  ): Promise<{ items: DirectoryItemView[] }> {
-    return {
-      items: await this.directory.list({
-        ...(q.kind !== undefined && { kind: q.kind }),
-        includeDeleted: q.includeDeleted === "true",
-      }),
-    };
+  ): Promise<{ items: DirectoryItemView[]; nextOffset: number | null }> {
+    return this.directory.page({
+      ...(q.kind !== undefined && { kind: q.kind }),
+      includeDeleted: q.includeDeleted === "true",
+      ...(q.limit !== undefined && { limit: q.limit }),
+      ...(q.offset !== undefined && { offset: q.offset }),
+    });
   }
 
   /** 条目详情与各版本；不存在 → 404 `directory.item_not_found`。 */

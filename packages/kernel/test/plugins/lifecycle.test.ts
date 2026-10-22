@@ -217,6 +217,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
       name: "life",
       version: "1.0.0",
       sha256: sha(v1),
+      directoryItemId: null,
     });
     await approve("life");
     expect((await view("life")).status).toBe("disabled");

@@ -230,6 +230,21 @@ describe("validateConnectorTemplate", () => {
     }
   });
 
+  it("editableEndpoint 的路径段不许是凭据样式的键（组织安装时不能借可编辑端点填凭据）", () => {
+    for (const p of ["token", "headers.Authorization", "auth.client_secret", "apiKey"]) {
+      expect(validateConnectorTemplate(template({ editableEndpoint: [p] })).join(), p).toMatch(
+        /credential/,
+      );
+    }
+  });
+
+  it("defaultToolPolicies 的键不许是原型键", () => {
+    const policies = JSON.parse('{"__proto__":"allow","constructor":"deny"}');
+    const errs = validateConnectorTemplate(template({ defaultToolPolicies: policies })).join();
+    expect(errs).toMatch(/__proto__/);
+    expect(errs).toMatch(/constructor/);
+  });
+
   it("ownership 与 auth.ownership 不一致、auth none 时给 ownership", () => {
     expect(validateConnectorTemplate(template({ ownership: "personal" })).join()).toMatch(
       /ownership/,

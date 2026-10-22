@@ -548,6 +548,7 @@ export async function createKernel(
     storage,
     installs: pluginInstalls,
     ops: pluginAdminOps,
+    declared: () => host.declared(),
     findConnector: (plugin, kind) =>
       host
         .list("connector")

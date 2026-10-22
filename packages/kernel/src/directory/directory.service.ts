@@ -19,6 +19,7 @@ import type { PluginAdminOps } from "../plugins/admin-ops.js";
 import type { PluginInstalls } from "../plugins/installs.js";
 import { PluginPackageError, readPluginPackage } from "../plugins/package.js";
 import type { AdminPluginView } from "../plugins/permission-view.js";
+import type { PluginSource } from "../plugins/sources.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import { checkDirectoryArchive, invalidPackage, unpackDirectoryArchive } from "./archive.js";
@@ -72,6 +73,8 @@ export interface DirectoryServiceDeps {
   storage: StorageService;
   installs: Pick<PluginInstalls, "ingest" | "fetchNpm">;
   ops: Pick<PluginAdminOps, "install">;
+  /** 内置与配置声明的插件名 → 来源（与它们重名的插件包导入时先报 `plugin.builtin` / `plugin.config_declared`）。 */
+  declared: () => ReadonlyMap<string, PluginSource>;
   /** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`（导入模板时校验端点）。 */
   findConnector: (plugin: string, kind: string) => Connector | undefined;
 }
@@ -95,9 +98,16 @@ interface ImportSource {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () => new ApiError("directory.item_not_found", "Directory item not found");
 
-/** 对象存储里条目版本的前缀（相对 `deployment/`）。 */
-export const directoryObjectPrefix = (itemId: string, version: string) =>
-  `directory/${itemId}/${version}/`;
+/**
+ * 对象存储里一次导入的前缀（相对 `deployment/`）：`directory/<itemId>/<version>/<importId>/`。每次导入一个新的
+ * `importId`，并发导入同一版本时被拒的那次不会覆盖已提交版本的文件；读取一律按版本行里存的 `object_prefix`。
+ */
+export const directoryObjectPrefix = (itemId: string, version: string, importId: string) =>
+  `directory/${itemId}/${version}/${importId}/`;
+
+/** 列表默认 / 最大每页条数。 */
+export const DIRECTORY_LIST_DEFAULT_LIMIT = 200;
+export const DIRECTORY_LIST_MAX_LIMIT = 1000;
 
 const PUT_CONCURRENCY = 8;
 
@@ -112,7 +122,9 @@ const bySemverDesc = (a: string, b: string) => semver.rcompare(a, b);
  * `editableEndpoint`、同一版本 / 同名不同包的冲突、发起人仍是企业管理员（锁内复核）都在写之前；然后才写存储
  * （插件交给 `PluginInstalls.ingest`，来源 `directory`、ref `<itemId>@<version>`，F-L；技能与模板的文件放
  * `deployment/directory/<itemId>/<version>/`），最后一个事务里锁内复核、写条目与版本、审计 `directory.imported`。
- * 并发导入同一版本时后到的在事务里得到 409，它已写的对象留在存储里（键不被任何版本引用）。
+ * 写存储之后、事务之前或事务里失败（如并发导入同一版本，后到的在事务里得到 409）会留下无害的残留：
+ * 技能 / 模板的对象在本次导入独有的前缀下（不被任何版本引用、不会覆盖别的版本）；插件包已进内容寻址的
+ * `plugin_packages`（与再次导入同一 tgz 得到的完全相同，没有安装记录引用它也不会被加载）。
  */
 export class DirectoryService {
   constructor(private readonly d: DirectoryServiceDeps) {}
@@ -175,12 +187,28 @@ export class DirectoryService {
         if (e instanceof PluginPackageError) throw invalidPackage(e.issues);
         throw e;
       }
+      // 与内置 / 配置声明的插件重名：给出与插件包上传相同的明确错误（它们的名字归属也已登记，否则会先报归属冲突）
+      const declared = this.d.declared().get(name);
+      if (declared === "builtin") {
+        throw new ApiError(
+          "plugin.builtin",
+          `Plugin ${name} is built into this deployment and cannot be imported from a package`,
+        );
+      }
+      if (declared === "config") {
+        throw new ApiError(
+          "plugin.config_declared",
+          `Plugin ${name} is declared in the startup config (plugins); remove it there before importing it as a package`,
+        );
+      }
+      await assertPluginNameOwner(this.d.db, name, packageName);
     } else {
-      this.d.storage.assertAvailable();
       const a = checkDirectoryArchive(u);
       name = a.name;
       files = a.files;
       if (a.section.kind === "connector-template") this.checkTemplate(a.section.template);
+      // 只有要存文件时才需要对象存储（没有图标的模板只有 PG 行）
+      if (files.length > 0) this.d.storage.assertAvailable();
     }
     const version = String(u.packageJson.version);
     const kind = section.kind;
@@ -202,8 +230,8 @@ export class DirectoryService {
         opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
       );
       pluginSha256 = review.sha256;
-    } else {
-      objectPrefix = directoryObjectPrefix(storeId, version);
+    } else if (files.length > 0) {
+      objectPrefix = directoryObjectPrefix(storeId, version, randomUUID());
       await this.putFiles(objectPrefix, files);
     }
 
@@ -213,6 +241,7 @@ export class DirectoryService {
       await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.directory-item:${kind}:${name}`}))`.execute(
         trx,
       );
+      if (kind === "plugin") await assertPluginNameOwner(trx, name, packageName);
       const live = await this.liveItem(trx, kind, name);
       const listing = listingOf(section, u.packageJson);
       let id: string;
@@ -367,15 +396,39 @@ export class DirectoryService {
     return row !== undefined;
   }
 
-  /** 条目列表（默认不含已删除），按种类、名字排序。 */
+  /**
+   * 条目列表（默认不含已删除），按种类、名字、id 排序。分页：`limit` 缺省 {@link DIRECTORY_LIST_DEFAULT_LIMIT}、
+   * 最大 {@link DIRECTORY_LIST_MAX_LIMIT}，`offset` 缺省 0；只要第一页时直接用返回数组。
+   */
   async list(
-    q: { kind?: PackageKind; includeDeleted?: boolean } = {},
+    q: { kind?: PackageKind; includeDeleted?: boolean; limit?: number; offset?: number } = {},
   ): Promise<DirectoryItemView[]> {
-    let query = this.d.db.selectFrom("directory_items").selectAll().orderBy("kind").orderBy("name");
+    return (await this.page(q)).items;
+  }
+
+  /** 同 {@link list}，另给出下一页的 offset（没有下一页为 null）。 */
+  async page(
+    q: { kind?: PackageKind; includeDeleted?: boolean; limit?: number; offset?: number } = {},
+  ): Promise<{ items: DirectoryItemView[]; nextOffset: number | null }> {
+    const limit = Math.min(
+      Math.max(1, q.limit ?? DIRECTORY_LIST_DEFAULT_LIMIT),
+      DIRECTORY_LIST_MAX_LIMIT,
+    );
+    const offset = Math.max(0, q.offset ?? 0);
+    let query = this.d.db
+      .selectFrom("directory_items")
+      .selectAll()
+      .orderBy("kind")
+      .orderBy("name")
+      .orderBy("id")
+      .limit(limit + 1)
+      .offset(offset);
     if (q.kind !== undefined) query = query.where("kind", "=", q.kind);
     if (!q.includeDeleted) query = query.where("deleted_at", "is", null);
-    const items = await query.execute();
-    if (items.length === 0) return [];
+    const rows = await query.execute();
+    const nextOffset = rows.length > limit ? offset + limit : null;
+    const items = rows.slice(0, limit);
+    if (items.length === 0) return { items: [], nextOffset: null };
     const versions = await this.d.db
       .selectFrom("directory_item_versions")
       .select(["item_id", "version", "source"])
@@ -391,7 +444,7 @@ export class DirectoryService {
       list.push(v);
       byItem.set(v.item_id, list);
     }
-    return items.map((i) => itemView(i, byItem.get(i.id) ?? []));
+    return { items: items.map((i) => itemView(i, byItem.get(i.id) ?? [])), nextOffset };
   }
 
   /** 条目详情（含各版本；已删除的条目也能看）。不存在 → `directory.item_not_found`。 */
@@ -535,6 +588,28 @@ export class DirectoryService {
 
   private async view(itemId: string): Promise<DirectoryItemView> {
     return (await this.get(itemId)).item;
+  }
+}
+
+/**
+ * 插件名归第一次安装它的 npm 包（`plugin_name_owners`，Ruling P3）：归属是别的包时，导入时就拒绝
+ * `plugin.name_conflict`（与安装时同一个错误码），不必等到装到部署才失败。
+ */
+async function assertPluginNameOwner(
+  db: KernelDb | Trx,
+  name: string,
+  packageName: string,
+): Promise<void> {
+  const owner = await db
+    .selectFrom("plugin_name_owners")
+    .select("package_name")
+    .where("name", "=", name)
+    .executeTakeFirst();
+  if (owner && owner.package_name !== packageName) {
+    throw new ApiError(
+      "plugin.name_conflict",
+      `Plugin name ${name} belongs to package ${owner.package_name}; package ${packageName} cannot use it`,
+    );
   }
 }
 
