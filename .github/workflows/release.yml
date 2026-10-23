@@ -28,21 +28,22 @@ name: Release
 #
 # Container images (T10): ghcr.io/capybara-hq/capybara-{api,worker,gateway,web}, linux/amd64 + arm64,
 # tagged with the version of apps/capybara (private, versioned by changesets) plus `latest` when that
-# version has no prerelease part and no higher semver tag exists (re-running an old release never
-# moves `latest` back). apps/web shares that version (changesets `fixed` group, enforced by
-# check:release-metadata), so a web change bumps the tag; a change that only touches the images
+# version has no prerelease part and no higher stable semver tag exists (re-running an old release
+# never moves `latest` back; prerelease tags don't count), and not for an image whose tag lookup was
+# denied after the first release. apps/web shares that version (changesets `fixed` group, enforced
+# by check:release-metadata), so a web change bumps the tag; a change that only touches the images
 # (Dockerfiles, .dockerignore, runtime files baked into an image) needs a changeset on
-# @capybara-hq/capybara, or the images are never rebuilt. Three jobs after `publish` (so images follow a successful npm
-# release; `needs` shares no files, every job checks out github.sha itself):
+# @capybara-hq/capybara, or the images are never rebuilt. Three jobs after `publish` (so images
+# follow a successful npm release; `needs` shares no files, every job checks out github.sha itself):
 # - images-plan (`pnpm release:images`, tools/release/src/images.ts): on push, nothing until the first
-#   npm release exists (P-16: the first release, npm and images, is the manual run), nothing when the
-#   pushed commit is no longer the head of main (a re-run of an old run; the newer run releases), then
-#   every image whose version tag is not in ghcr.io yet, so like npm it catches up after a failed or
-#   cancelled run (R8); a manual run builds whatever tag is missing; a dry run builds all four and
-#   pushes nothing. If the first manual run published npm but no image digest at all (every build
-#   failed), the packages don't exist, ghcr.io answers "denied" and push runs fail (red) until a manual
-#   run publishes the images; once every package got at least one digest, the packages exist and push
-#   runs catch up by themselves.
+#   npm release exists (P-16: the first release, npm and images, is the manual run), then every image
+#   whose version tag is not in ghcr.io yet. A run only ever builds the apps/capybara version of its
+#   own commit, so re-running an old failed run rebuilds that version from exactly that commit; like
+#   npm it catches up after a failed or cancelled run (R8); a manual run builds whatever tag is
+#   missing; a dry run builds all four and pushes nothing. If the first manual run published npm but
+#   no image digest at all (every build failed), the packages don't exist, ghcr.io answers "denied"
+#   and push runs fail (red) until a manual run publishes the images; once every package got at least
+#   one digest, the packages exist and push runs catch up by themselves.
 # - images-build: one job per image and architecture, on native runners (ubuntu-24.04 and
 #   ubuntu-24.04-arm: no QEMU, and each build installs the native prebuilds of its own platform),
 #   pushing an untagged image by digest, with SLSA provenance (mode=max) and an SBOM attestation and the
@@ -210,7 +211,6 @@ jobs:
     outputs:
       version: ${{ steps.plan.outputs.version }}
       push: ${{ steps.plan.outputs.push }}
-      latest: ${{ steps.plan.outputs.latest }}
       build: ${{ steps.plan.outputs.build }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -347,7 +347,7 @@ jobs:
         env:
           IMAGE: ghcr.io/capybara-hq/${{ matrix.target.image }}
           VERSION: ${{ needs.images-plan.outputs.version }}
-          LATEST: ${{ needs.images-plan.outputs.latest }}
+          LATEST: ${{ matrix.target.latest }}
           DIR: ${{ runner.temp }}/digests
         run: |
           sources=()

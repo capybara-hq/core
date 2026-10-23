@@ -23,7 +23,7 @@ const missing = async (): Promise<TagState> => "missing";
 const quiet = () => {};
 
 describe("planImageRelease", () => {
-  it("auto: npmReleased comes from the registry; nothing on npm -> no registry or head lookups", async () => {
+  it("auto: npmReleased comes from the registry; nothing on npm -> no ghcr lookups", async () => {
     let looked = 0;
     const p = await planImageRelease({
       mode: "auto",
@@ -34,18 +34,13 @@ describe("planImageRelease", () => {
         looked++;
         return "missing";
       },
-      mainHead: async () => {
-        looked++;
-        return "abc";
-      },
-      sha: "abc",
     });
     expect(p).toMatchObject({ push: false, build: [] });
     expect(p.reason).toMatch(/nothing is on npm/);
     expect(looked).toBe(0);
   });
 
-  it("auto: released on npm and head of main -> builds the missing images", async () => {
+  it("auto: released on npm -> builds the missing images", async () => {
     const p = await planImageRelease({
       mode: "auto",
       root,
@@ -53,56 +48,88 @@ describe("planImageRelease", () => {
       publishedVersions: async () => ["0.1.0"],
       tagState: missing,
       listTags: async () => ["0.1.0", "latest"],
-      mainHead: async () => "abc",
-      sha: "abc",
     });
-    expect(p).toMatchObject({ version: "0.1.1", push: true, latest: true });
-    expect(p.build).toHaveLength(4);
+    expect(p).toMatchObject({ version: "0.1.1", push: true });
+    expect(p.build.map((t) => t.latest)).toEqual([true, true, true, true]);
   });
 
-  it("auto: an older commit than the head of main builds nothing", async () => {
+  it("re-running an old failed run rebuilds that run's own version, without latest", async () => {
+    // The old commit's tree says 0.1.1; main has moved on and 0.1.2 is already released.
+    const asked: string[] = [];
     const p = await planImageRelease({
       mode: "auto",
       root,
       log: quiet,
-      publishedVersions: async () => ["0.1.0"],
-      tagState: missing,
-      listTags: async () => [],
-      mainHead: async () => "newer",
-      sha: "abc",
+      publishedVersions: async () => ["0.1.1", "0.1.2"],
+      tagState: async (image, tag) => {
+        asked.push(tag);
+        return image === "capybara-web" ? "missing" : "present";
+      },
+      listTags: async () => ["0.1.0", "0.1.2", "latest"],
     });
-    expect(p).toMatchObject({ push: false, build: [] });
+    expect(p.version).toBe("0.1.1");
+    expect(p.build).toEqual([expect.objectContaining({ image: "capybara-web", latest: false })]);
+    expect(new Set(asked)).toEqual(new Set(["0.1.1"]));
   });
 
-  it("auto: refuses to guess without GITHUB_SHA", async () => {
-    await expect(
-      planImageRelease({
-        mode: "auto",
+  it("never builds a version other than the apps/capybara version of its own tree", async () => {
+    for (const mode of ["auto", "manual", "dry-run"] as const) {
+      write("apps/capybara", { name: "@capybara-hq/capybara", version: "0.4.0", private: true });
+      const asked = new Set<string>();
+      const p = await planImageRelease({
+        mode,
         root,
         log: quiet,
-        publishedVersions: async () => ["0.1.0"],
-        mainHead: async () => "abc",
-      }),
-    ).rejects.toThrow(/GITHUB_SHA/);
+        publishedVersions: async () => ["0.3.0", "0.5.0"],
+        tagState: async (_image, tag) => {
+          asked.add(tag);
+          return "missing";
+        },
+        listTags: async () => ["0.5.0", "9.9.9"],
+      });
+      expect(p.version, mode).toBe("0.4.0");
+      expect(
+        [...asked].every((t) => t === "0.4.0"),
+        mode,
+      ).toBe(true);
+    }
   });
 
-  it("manual: no npm or head lookups; latest stays on a higher existing tag", async () => {
+  it("manual: a higher existing tag keeps latest", async () => {
     const p = await planImageRelease({
       mode: "manual",
       root,
       log: quiet,
-      publishedVersions: async () => {
-        throw new Error("npm must not be asked");
-      },
+      publishedVersions: async () => ["0.1.1"],
       tagState: async (image) => (image === "capybara-web" ? "missing" : "present"),
       listTags: async () => ["0.1.1", "0.2.0"],
     });
-    expect(p.build.map((t) => t.image)).toEqual(["capybara-web"]);
-    expect(p.latest).toBe(false);
+    expect(p.build.map((t) => [t.image, t.latest])).toEqual([["capybara-web", false]]);
+  });
+
+  it("manual: a denied lookup keeps latest only on the first release", async () => {
+    const plan = (published: string[]) =>
+      planImageRelease({
+        mode: "manual",
+        root,
+        log: quiet,
+        publishedVersions: async () => published,
+        tagState: async () => "denied",
+        listTags: async () => [],
+      });
+    expect((await plan([])).build.every((t) => t.latest)).toBe(true);
+    expect((await plan(["0.1.0"])).build.some((t) => t.latest)).toBe(false);
   });
 
   it("dry-run: no lookups at all", async () => {
-    const p = await planImageRelease({ mode: "dry-run", root, tagState: present });
+    const p = await planImageRelease({
+      mode: "dry-run",
+      root,
+      tagState: present,
+      publishedVersions: async () => {
+        throw new Error("npm must not be asked");
+      },
+    });
     expect(p).toMatchObject({ push: false });
     expect(p.build).toHaveLength(4);
   });
@@ -114,6 +141,7 @@ describe("imageOutputs", () => {
       mode: "manual",
       root,
       log: quiet,
+      publishedVersions: async () => ["0.1.0"],
       tagState: async (image) => (image === "capybara-api" ? "missing" : "present"),
       listTags: async () => [],
     });
@@ -121,9 +149,8 @@ describe("imageOutputs", () => {
       [
         "version=0.1.1",
         "push=true",
-        "latest=true",
         "build=true",
-        'matrix=[{"image":"capybara-api","dockerfile":"docker/kernel.Dockerfile","roles":"api","cache":"kernel"}]',
+        'matrix=[{"image":"capybara-api","dockerfile":"docker/kernel.Dockerfile","roles":"api","cache":"kernel","latest":true}]',
         "",
       ].join("\n"),
     );

@@ -4,10 +4,10 @@
  *
  *   pnpm release:images --mode auto|manual|dry-run
  *
- * Reads the tag from apps/capybara/package.json. `auto` asks npm whether the first release has happened
- * and the GitHub API whether GITHUB_SHA is still the head of main; `auto` and `manual` ask ghcr.io
- * which tags exist (GITHUB_TOKEN from the environment, when set, for packages that are not public).
- * Outputs: version, push, latest, build (any image to build) and matrix (JSON list of the targets).
+ * Reads the tag from apps/capybara/package.json (this tree's own version, the only one it builds).
+ * `auto` and `manual` ask npm whether the first release has happened and ghcr.io which tags exist
+ * (GITHUB_TOKEN from the environment, when set, for packages that are not public). Outputs: version,
+ * push, build (any image to build) and matrix (JSON list of the targets, each with its `latest`).
  */
 import { appendFileSync } from "node:fs";
 import { type ImageMode, listTags, tagState } from "./images.js";
@@ -27,26 +27,9 @@ if (!MODES.includes(mode)) usage(`unknown mode ${args[1]}`);
 
 const githubToken = process.env.GITHUB_TOKEN;
 
-/** The head of main through the GitHub API (GITHUB_REPOSITORY, GITHUB_TOKEN with contents: read). */
-async function mainHead(): Promise<string> {
-  const repo = process.env.GITHUB_REPOSITORY;
-  if (repo === undefined || repo === "") throw new Error("GITHUB_REPOSITORY is not set");
-  const api = process.env.GITHUB_API_URL || "https://api.github.com";
-  const headers: Record<string, string> = { accept: "application/vnd.github+json" };
-  if (githubToken !== undefined && githubToken !== "")
-    headers.authorization = `Bearer ${githubToken}`;
-  const res = await fetch(`${api}/repos/${repo}/git/ref/heads/main`, { headers });
-  if (!res.ok) throw new Error(`head of main: HTTP ${res.status}`);
-  const sha = ((await res.json()) as { object?: { sha?: unknown } }).object?.sha;
-  if (typeof sha !== "string") throw new Error("head of main: no sha in the response");
-  return sha;
-}
-
 try {
   const plan = await planImageRelease({
     mode,
-    sha: process.env.GITHUB_SHA,
-    mainHead,
     tagState: (image, tag) => tagState(image, tag, { githubToken }),
     listTags: (image) => listTags(image, { githubToken }),
   });

@@ -14,6 +14,12 @@ import {
 const all = (s: TagState) =>
   Object.fromEntries(IMAGES.map((i) => [i.image, s])) as Record<string, TagState>;
 const names = (p: { build: { image: string }[] }) => p.build.map((t) => t.image);
+/** `latest` of every planned image (all equal unless a lookup was denied). */
+const latestOf = (p: { build: { latest: boolean }[] }) => {
+  const set = [...new Set(p.build.map((t) => t.latest))];
+  if (set.length !== 1) throw new Error(`mixed latest: ${JSON.stringify(p.build)}`);
+  return set[0];
+};
 
 describe("IMAGES", () => {
   it("are the four images: three kernel roles from one Dockerfile, plus web", () => {
@@ -52,7 +58,7 @@ describe("isPrerelease", () => {
 });
 
 describe("planImages", () => {
-  const base = { version: "0.2.0", npmReleased: true, headOfMain: true };
+  const base = { version: "0.2.0", npmReleased: true };
 
   it("rejects a version that is not a plain semver usable as an image tag", () => {
     for (const version of ["0.2", "v0.2.0", "0.2.0+build.1", "0.2.0 latest", "", "0.2.0-"]) {
@@ -69,18 +75,17 @@ describe("planImages", () => {
       expect(p.reason).toMatch(/first release/);
     });
 
-    it("builds nothing when the commit is no longer the head of main (re-run of an old run)", () => {
-      for (const headOfMain of [false, undefined]) {
-        const p = planImages({
-          version: "0.2.0",
-          npmReleased: true,
-          ...(headOfMain === undefined ? {} : { headOfMain }),
-          mode: "auto",
-          tags: all("missing"),
-        });
-        expect(p).toMatchObject({ push: false, build: [] });
-        expect(p.reason).toMatch(/head of main/);
-      }
+    it("builds only the version it is given, whatever newer tags exist (re-run of an old run)", () => {
+      const p = planImages({
+        ...base,
+        version: "0.1.0",
+        mode: "auto",
+        tags: all("missing"),
+        existingTags: ["0.1.1", "0.2.0", "latest"],
+      });
+      expect(p).toMatchObject({ version: "0.1.0", push: true });
+      expect(names(p)).toEqual(IMAGES.map((i) => i.image));
+      expect(latestOf(p)).toBe(false);
     });
 
     it("does nothing when every image already has the version tag", () => {
@@ -116,6 +121,26 @@ describe("planImages", () => {
       expect(names(p)).toEqual(IMAGES.map((i) => i.image));
     });
 
+    it("after the first release, a denied lookup drops latest for that image only", () => {
+      const tags = { ...all("missing"), "capybara-web": "denied" as const };
+      const p = planImages({ ...base, mode: "manual", tags, existingTags: ["0.1.0"] });
+      expect(names(p)).toEqual(IMAGES.map((i) => i.image));
+      expect(Object.fromEntries(p.build.map((t) => [t.image, t.latest]))).toEqual({
+        "capybara-api": true,
+        "capybara-worker": true,
+        "capybara-gateway": true,
+        "capybara-web": false,
+      });
+      // The first release: denied means "doesn't exist yet", so latest stays.
+      const first = planImages({
+        ...base,
+        npmReleased: false,
+        mode: "manual",
+        tags: all("denied"),
+      });
+      expect(latestOf(first)).toBe(true);
+    });
+
     it("skips images that already have the version tag", () => {
       const tags = { ...all("present"), "capybara-gateway": "missing" as const };
       const p = planImages({ ...base, mode: "manual", tags });
@@ -144,24 +169,27 @@ describe("planImages", () => {
       existingTags: ["0.1.0-rc.1", "0.1.1", "latest"],
     });
     expect(names(p)).toEqual(IMAGES.map((i) => i.image));
-    expect(p).toMatchObject({ push: true, latest: false });
+    expect(p.push).toBe(true);
+    expect(latestOf(p)).toBe(false);
   });
 
   it("a new highest version takes latest; no tags yet is eligible", () => {
     const tags = all("missing");
     const existingTags = ["0.1.0", "0.1.1", "latest", "sha256-abc.sig"];
-    expect(planImages({ ...base, mode: "manual", tags, existingTags }).latest).toBe(true);
-    expect(planImages({ ...base, mode: "manual", tags, existingTags: [] }).latest).toBe(true);
+    expect(latestOf(planImages({ ...base, mode: "manual", tags, existingTags }))).toBe(true);
+    expect(latestOf(planImages({ ...base, mode: "manual", tags, existingTags: [] }))).toBe(true);
     // A rebuild of the version that has latest keeps it.
     expect(
-      planImages({ ...base, mode: "manual", tags, existingTags: ["0.2.0", "latest"] }).latest,
+      latestOf(planImages({ ...base, mode: "manual", tags, existingTags: ["0.2.0", "latest"] })),
     ).toBe(true);
   });
 
   it("tags latest only for a non-prerelease version", () => {
     const tags = all("missing");
-    expect(planImages({ ...base, mode: "manual", tags }).latest).toBe(true);
-    expect(planImages({ ...base, version: "0.3.0-rc.1", mode: "manual", tags }).latest).toBe(false);
+    expect(latestOf(planImages({ ...base, mode: "manual", tags }))).toBe(true);
+    expect(latestOf(planImages({ ...base, version: "0.3.0-rc.1", mode: "manual", tags }))).toBe(
+      false,
+    );
   });
 });
 
@@ -182,8 +210,12 @@ describe("compareSemver / takesLatest", () => {
 
   it("ignores tags that are not semvers and never gives latest to a prerelease", () => {
     expect(takesLatest("0.2.0", ["latest", "main", "0.1.9"])).toBe(true);
-    expect(takesLatest("0.2.0", ["0.3.0-rc.1"])).toBe(false);
     expect(takesLatest("0.3.0-rc.2", [])).toBe(false);
+  });
+
+  it("prerelease tags don't count: latest tracks the highest stable version", () => {
+    expect(takesLatest("0.2.0", ["0.1.0", "0.3.0-rc.1", "latest"])).toBe(true);
+    expect(takesLatest("0.2.0", ["0.2.1", "0.3.0-rc.1"])).toBe(false);
   });
 });
 

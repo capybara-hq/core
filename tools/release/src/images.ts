@@ -84,12 +84,15 @@ export function compareSemver(a: string, b: string): number {
 }
 
 /**
- * Whether `version` may take `latest`: no prerelease part, and not lower than any semver tag already in
- * the registry (so re-running an old release never moves `latest` back). No tags yet = eligible.
+ * Whether `version` may take `latest`: no prerelease part, and not lower than any stable semver tag
+ * already in the registry (so re-running an old release never moves `latest` back). Prerelease tags
+ * don't count: `latest` tracks the highest stable version. No tags yet = eligible.
  */
 export function takesLatest(version: string, existingTags: readonly string[]): boolean {
   if (isPrerelease(version)) return false;
-  return existingTags.every((t) => parseSemver(t) === undefined || compareSemver(version, t) >= 0);
+  return existingTags.every(
+    (t) => parseSemver(t) === undefined || isPrerelease(t) || compareSemver(version, t) >= 0,
+  );
 }
 
 /** Whether an image has a tag: `denied` = the registry won't say (no such package, or no access). */
@@ -99,6 +102,7 @@ export type ImageMode = "auto" | "manual" | "dry-run";
 
 export interface PlanImagesInput {
   mode: ImageMode;
+  /** The version of apps/capybara in this run's own tree: the only tag a run ever builds. */
   version: string;
   /** Some public workspace package is on npm, i.e. the first (manual) release has happened. */
   npmReleased: boolean;
@@ -106,20 +110,18 @@ export interface PlanImagesInput {
   tags: Readonly<Record<string, TagState>>;
   /** Every tag the image packages already have (all four together); `latest` never moves back. */
   existingTags?: readonly string[];
-  /**
-   * `auto` only: the pushed commit is still the head of main. A re-run of an older push run (or a run
-   * queued behind a newer push) builds nothing; the run for the newer commit releases.
-   */
-  headOfMain?: boolean;
+}
+
+/** An image to build, and whether its multi-arch tag set includes `latest`. */
+export interface PlannedImage extends ImageTarget {
+  latest: boolean;
 }
 
 export interface ImagePlan {
   version: string;
   /** Push to ghcr.io (false: build only, or nothing to do). */
   push: boolean;
-  /** Also tag `latest`: no prerelease part, and no higher semver tag in the registry. */
-  latest: boolean;
-  build: ImageTarget[];
+  build: PlannedImage[];
   reason: string;
 }
 
@@ -130,31 +132,20 @@ export function planImages(input: PlanImagesInput): ImagePlan {
   }
   const latest = takesLatest(version, input.existingTags ?? []);
   if (mode === "dry-run") {
-    return { version, push: false, latest, build: [...IMAGES], reason: "dry run: build only" };
+    const build = IMAGES.map((t) => ({ ...t, latest }));
+    return { version, push: false, build, reason: "dry run: build only" };
   }
   if (mode === "auto" && !input.npmReleased) {
     return {
       version,
       push: false,
-      latest,
       build: [],
       reason:
         "nothing is on npm yet: the first release (npm and images) is published only by running " +
         "the release workflow manually (workflow_dispatch)",
     };
   }
-  if (mode === "auto" && input.headOfMain !== true) {
-    return {
-      version,
-      push: false,
-      latest,
-      build: [],
-      reason:
-        "this commit is no longer the head of main: the run for the newer commit releases " +
-        "(run the workflow manually to force a release)",
-    };
-  }
-  const build: ImageTarget[] = [];
+  const build: PlannedImage[] = [];
   for (const target of IMAGES) {
     const state = input.tags[target.image];
     if (state === undefined) throw new Error(`no tag state for ${target.image}`);
@@ -166,13 +157,16 @@ export function planImages(input: PlanImagesInput): ImagePlan {
           "access; publish a new image with a manual run of the release workflow",
       );
     }
-    build.push(target);
+    // A denied lookup hid this package's tags, so `latest` might move back. Only on the first
+    // release (nothing on npm yet) is "denied" expected to mean "the package doesn't exist yet".
+    const imageLatest = latest && (state !== "denied" || !input.npmReleased);
+    build.push({ ...target, latest: imageLatest });
   }
   const reason =
     build.length === 0
       ? `every image already has tag ${version}`
       : `missing tag ${version}: ${build.map((t) => t.image).join(", ")}`;
-  return { version, push: build.length > 0, latest, build, reason };
+  return { version, push: build.length > 0, build, reason };
 }
 
 /** Follows a registry `Link: <...>; rel="next"` header (relative to the registry). */

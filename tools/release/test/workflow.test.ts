@@ -181,7 +181,10 @@ describe("release.yml", () => {
     });
 
     it("publish: tags latest only when the plan says so, the version tag last", () => {
-      const run = publish.steps.find((s) => s.run?.includes("imagetools create"))?.run ?? "";
+      const step = publish.steps.find((s) => s.run?.includes("imagetools create"));
+      // Per image: a denied tag lookup drops latest for that image only.
+      expect(step?.env?.LATEST).toBe(`\${{ matrix.target.latest }}`);
+      const run = step?.run ?? "";
       expect(run).toMatch(/if \[ "\$LATEST" = "true" \]; then\s+tags\+=\(--tag "\$IMAGE:latest"\)/);
       expect(run.indexOf(':latest"')).toBeLessThan(run.indexOf('tags+=(--tag "$IMAGE:$VERSION")'));
       expect(run).toContain(
