@@ -171,8 +171,12 @@ export class ChannelInbound {
     const fresh = await redis.set(key, DEDUPE_PENDING, "EX", DEDUPE_PENDING_TTL_SECONDS, "NX");
     if (fresh !== "OK") {
       const state = await redis.get(key);
-      if (state !== DEDUPE_PENDING) return;
+      // Ack only a known-queued event ("1" = key from the pre-two-state code during a rolling
+      // upgrade); pending, or a key that vanished meanwhile (failed attempt, TTL), enqueues again
+      if (state === DEDUPE_DONE || state === "1") return;
     }
+    // Accepted edge: if the completed-job cap evicts the original job within the pending window,
+    // the re-add below runs the event twice (a duplicate run, never a loss)
     try {
       await queue.enqueueInbound(connectionId, e, jobId);
     } catch (err) {

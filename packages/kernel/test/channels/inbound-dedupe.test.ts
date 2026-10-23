@@ -47,10 +47,10 @@ function manualQueue() {
   };
 }
 
-const makeInbound = (queue: ReturnType<typeof manualQueue>) =>
+const makeInbound = (queue: ReturnType<typeof manualQueue>, r: Redis = redis) =>
   new ChannelInbound({
     db: {} as never,
-    redis,
+    redis: r,
     connections: {} as never,
     conversations: {} as never,
     external: {} as never,
@@ -152,6 +152,45 @@ describe("two-state inbound dedupe (long connection: onEvent)", () => {
     expect(third).toMatchObject({ settled: true, ok: true });
     expect(q.queued.size).toBe(1);
     expect(await redis.get(key)).toBe(DEDUPE_DONE);
+  });
+});
+
+describe("two-state inbound dedupe (key vanishes between SET NX and GET)", () => {
+  /** Redis whose GET of the dedupe key first deletes it (the other attempt's compare-and-delete or TTL). */
+  const vanishingRedis = () =>
+    new Proxy(redis, {
+      get(target, prop, receiver) {
+        if (prop === "get") {
+          return async (k: string) => {
+            await target.del(k);
+            return target.get(k);
+          };
+        }
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+
+  it("a redelivery reading null is not acked until its own enqueue succeeds", async () => {
+    const q = manualQueue();
+    await redis.set(key, DEDUPE_PENDING, "EX", 60);
+    const inbound = makeInbound(q, vanishingRedis());
+    const again = track(inbound.onEvent(CONN, event));
+    await waitCalls(q, 1);
+    await tick();
+    expect(again.settled).toBe(false);
+    q.calls[0]?.resolve();
+    await tick();
+    expect(again).toMatchObject({ settled: true, ok: true });
+    expect(q.queued.size).toBe(1);
+    expect(await redis.get(key)).toBe(DEDUPE_DONE);
+  });
+
+  it('a legacy "1" key from the old code still acks without enqueueing', async () => {
+    const q = manualQueue();
+    await redis.set(key, "1", "EX", 60);
+    await makeInbound(q).onEvent(CONN, event);
+    expect(q.calls).toHaveLength(0);
   });
 });
 
