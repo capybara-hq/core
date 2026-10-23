@@ -229,7 +229,6 @@ export async function runsOf(
     .execute();
 }
 
-/** 可从外部放行的闸门。 */
 /**
  * Wait until the BullMQ job that ran `runId` has finished (run jobs use `removeOnComplete` /
  * `removeOnFail`, so finished = gone). The job id is `runs.job_id` for resumed runs, else derived from
@@ -256,6 +255,7 @@ export async function waitForRunJobDone(
   );
 }
 
+/** A gate that can be opened from outside. */
 export function gate(): { promise: Promise<void>; open: () => void } {
   let open!: () => void;
   const promise = new Promise<void>((r) => {

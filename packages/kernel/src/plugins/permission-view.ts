@@ -366,9 +366,12 @@ export function warningsDigest(warnings: readonly PackageWarning[]): string {
     .slice(0, 16);
 }
 
-const IDENT_RE = String.raw`(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)`;
+const IDENT_RE = `(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)`;
 const TARGET_RE = String.raw`(${IDENT_RE}(?:\s*\.\s*${IDENT_RE})?)`;
-/** 写语句的目标对象（建 / 改 / 删表、索引、视图等，以及 INSERT / UPDATE / DELETE / TRUNCATE / MERGE / COPY 的表）。 */
+/**
+ * Targets of write statements (creating / altering / dropping tables, indexes, views and so on, and
+ * the table of INSERT / UPDATE / DELETE / TRUNCATE / MERGE / COPY).
+ */
 const WRITE_TARGETS: RegExp[] = [
   new RegExp(String.raw`^INSERT\s+INTO\s+${TARGET_RE}`, "i"),
   new RegExp(String.raw`^UPDATE\s+(?:ONLY\s+)?${TARGET_RE}`, "i"),

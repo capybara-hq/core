@@ -450,7 +450,6 @@ export class UsageReporter {
     };
   }
 
-  /** Writes the next `pending` set, fenced against a concurrent (stalled-over) execution (m-2). */
   /**
    * Writes the next `pending` set and the accumulated drops, fenced against a concurrent
    * (stalled-over) execution (m-2 fence): only plugins the stored data still lists as pending or
