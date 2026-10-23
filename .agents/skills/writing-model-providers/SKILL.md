@@ -1,167 +1,167 @@
 ---
 name: writing-model-providers
-description: 新建或修改模型供应商插件时使用（provides model-provider@2，如 plugins/anthropic、plugins/openai、plugins/openai-compatible、plugins/model-fake）：契约、参数声明与标准旋钮、方言预设、原生协议原则、请求映射只追加、opaque 回放、媒体块（image / document 的映射与 vision / documents 声明）、用量语义、错误映射表、不在插件内重试、streamIdleTimeoutMs、用 startFakeModelServer 写夹具与真实接口模式。
+description: Use when creating or modifying a model provider plugin (provides model-provider@2, e.g. plugins/anthropic, plugins/openai, plugins/openai-compatible, plugins/model-fake). Covers the contract, parameter declarations and standard knobs, dialect presets, the native-protocol principle, append-only request mapping, opaque replay, media blocks (image / document mapping and the vision / documents declarations), usage semantics, the error mapping table, no retries inside the plugin, streamIdleTimeoutMs, and writing fixtures with startFakeModelServer plus the live-API mode.
 ---
 
-# 写模型供应商插件
+# Writing model provider plugins
 
-通用的插件写法（清单、配置、ctx、多副本禁令、双副本测试）见 `.agents/skills/writing-plugins`，这里只讲 `model-provider@2` 特有的部分。参考实现：`plugins/anthropic`（Messages API）、`plugins/openai`（Responses API）、`plugins/openai-compatible`（Chat Completions + 方言预设）；`plugins/model-fake` 是确定性脚本化模型，给内核测试与无密钥演示用。
+General plugin authoring (manifest, config, ctx, the multi-replica prohibitions, dual-replica tests) is in `.agents/skills/writing-plugins`; this skill covers only what is specific to `model-provider@2`. Reference implementations: `plugins/anthropic` (Messages API), `plugins/openai` (Responses API), `plugins/openai-compatible` (Chat Completions + dialect presets). `plugins/model-fake` is a deterministic scripted model, used for kernel tests and key-free demos.
 
-## 契约：`model-provider@2`
+## Contract: `model-provider@2`
 
-类型都在 `@capybara-hq/plugin-sdk`（`packages/plugin-sdk/src/model.ts`）。插件清单 `provides: [MODEL_PROVIDER_CAPABILITY_V2]`（即 `model-provider@2`），在 `setup` 里 `ctx.provide(MODEL_PROVIDER_CAPABILITY_V2, provider)`：
+The types are in `@capybara-hq/plugin-sdk` (`packages/plugin-sdk/src/model.ts`). The plugin manifest has `provides: [MODEL_PROVIDER_CAPABILITY_V2]` (that is, `model-provider@2`), and `setup` calls `ctx.provide(MODEL_PROVIDER_CAPABILITY_V2, provider)`:
 
 ```ts
 interface ModelProvider {
   listModels(): Promise<ModelInfo[]>;
-  /** 事件序列必须以且仅以一个 message_complete 结束；出错抛 ModelError。 */
+  /** The event sequence must end with exactly one message_complete; on error, throw ModelError. */
   stream(req: ModelRequest, opts: { signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
 }
 ```
 
-- `ModelRequest`：`model`、`system`（`{ text, cache }[]`，稳定内容在前，`cache: true` 的块之后打缓存断点）、`messages`（user / assistant / 中途 `system`）、`tools`、可选 `toolChoice`（`"auto"` / `"none"`）、`maxOutputTokens`、`params`（本次调用的参数，见下节；内核已按该模型的声明处理过：丢弃未声明 / 不合法的项、补上默认值）。
-- `toolChoice: "none"`：内核在步数上限的收尾调用里照常带上 `tools`（历史里有工具调用时部分供应商要求声明工具，也保持缓存前缀稳定），但模型不得调用工具。插件映射到原生字段（anthropic `tool_choice: {type: "none"}`、OpenAI Responses / Chat Completions `tool_choice: "none"`），`"auto"` / 缺省不发送，`tools` 为空时也不发送；做不到的供应商须保证不产出 `tool_call`（如 model-fake）。`capabilities.tools` 为 false 的模型，内核不发工具也不发 `toolChoice`，并写一条提醒告诉模型本次没有工具——所以真能调用工具的模型必须声明 `tools: true`。
-- `ModelStreamEvent`：`text_delta`、`thinking_delta`，最后恰好一个 `message_complete { content, stopReason, usage }`。增量拼起来必须等于最终 `content` 里的文本。流被截断（没收到供应商的结束事件）要抛错（一般是 `network`），**不能**拿半截内容发 `message_complete`。
-- `ContentBlock`：`text`、`thinking`、`tool_call`、`tool_result`，以及只出现在 user 消息里的 `image` / `document`（见「媒体块」）；`text`、`thinking` 与 `tool_call` 可带 `opaque`（见下）。
-- `ModelInfo`：`contextWindow`、`maxOutputTokens`、`capabilities`（`tools` / `vision` / `reasoning` / `caching` / `midConversationSystem` / 可选 `documents`；`effort` 已弃用，仅 `@1` 用）、可选 `streamIdleTimeoutMs`、必填 `parameters`（该模型支持的参数声明，可为空数组）。`listModels` 会被内核缓存，失败时内核跳过该供应商并记日志，不影响其他供应商。
-- 判断错误一律用 `isModelError(e)` / `isRetryableKind(kind)`（鸭子类型），不要 `instanceof ModelError`：插件可能带着另一份 plugin-sdk。
+- `ModelRequest`: `model`, `system` (`{ text, cache }[]`, stable content first, a cache breakpoint after blocks with `cache: true`), `messages` (user / assistant / mid-conversation `system`), `tools`, optional `toolChoice` (`"auto"` / `"none"`), `maxOutputTokens`, `params` (the parameters for this call, see the next section; the kernel has already processed them against the model's declarations: undeclared / invalid entries dropped, defaults filled in).
+- `toolChoice: "none"`: in the wrap-up call at the step limit the kernel still sends `tools` as usual (some providers require tools to be declared when the history contains tool calls, and it also keeps the cache prefix stable), but the model must not call tools. The plugin maps it to the native field (anthropic `tool_choice: {type: "none"}`, OpenAI Responses / Chat Completions `tool_choice: "none"`); `"auto"` / absent is not sent, and it is not sent when `tools` is empty either; a provider that cannot do this must guarantee it produces no `tool_call` (e.g. model-fake). For a model whose `capabilities.tools` is false, the kernel sends neither tools nor `toolChoice`, and writes a reminder telling the model there are no tools this time, so a model that can really call tools must declare `tools: true`.
+- `ModelStreamEvent`: `text_delta`, `thinking_delta`, and finally exactly one `message_complete { content, stopReason, usage }`. The deltas concatenated must equal the text in the final `content`. A truncated stream (the provider's end event was not received) must throw (usually `network`); it **must not** send `message_complete` with half the content.
+- `ContentBlock`: `text`, `thinking`, `tool_call`, `tool_result`, and `image` / `document`, which appear only in user messages (see "Media blocks"); `text`, `thinking` and `tool_call` may carry `opaque` (see below).
+- `ModelInfo`: `contextWindow`, `maxOutputTokens`, `capabilities` (`tools` / `vision` / `reasoning` / `caching` / `midConversationSystem` / optional `documents`; `effort` is deprecated and used only by `@1`), optional `streamIdleTimeoutMs`, and required `parameters` (the parameter declarations the model supports; may be an empty array). The kernel caches `listModels`; on failure the kernel skips that provider and logs it, without affecting other providers.
+- Always use `isModelError(e)` / `isRetryableKind(kind)` (duck typing) to check errors, never `instanceof ModelError`: a plugin may ship with another copy of plugin-sdk.
 
-插件无进程内可变状态：模型信息之类的缓存放 `ctx.kv`（带 TTL，参考 anthropic 的 `models:v3:<id>`，ModelInfo 形状变了就把版本号加一，3600 秒），一次调用内的累积器是请求局部变量。
+A plugin has no mutable in-process state: caches such as model info go in `ctx.kv` (with a TTL; see anthropic's `models:v3:<id>`, bump the version when the ModelInfo shape changes, 3600 seconds), and accumulators within one call are request-local variables.
 
-## 参数声明（`ModelInfo.parameters`）
+## Parameter declarations (`ModelInfo.parameters`)
 
-模型在 `parameters` 里声明自己支持的参数；agent 版本的 `modelParams` / `fallbackParams` 按声明校验（保存时严格，运行时宽松），请求带上 `req.params`，插件负责映射到原生请求。**新增参数只改插件，不需要改前端**：网页的 agent 表单直接按声明渲染控件，文案由声明里的 `label` / `description` 提供。
+A model declares the parameters it supports in `parameters`; the agent version's `modelParams` / `fallbackParams` are validated against the declarations (strict on save, lenient at runtime), the request carries `req.params`, and the plugin maps them to the native request. **Adding a parameter changes only the plugin, not the frontend**: the web agent form renders controls straight from the declarations, with the text coming from the `label` / `description` in the declaration.
 
 ```ts
 interface ModelParameter {
-  key: string;                       // 标准旋钮名，或 "<插件名>.<名称>"
-  standard?: "effort" | "thinking" | "temperature" | "maxOutputTokens"; // 标准旋钮必填且等于 key，厂商参数不得填
-  schema: ParamSchema;               // 受限的 JSON Schema 子集
-  default?: ParamValue;              // 必须满足 schema
-  label: { zh: string; en: string }; // 都必填、非空
+  key: string;                       // a standard knob name, or "<plugin name>.<name>"
+  standard?: "effort" | "thinking" | "temperature" | "maxOutputTokens"; // required for standard knobs and equal to key; vendor parameters must not set it
+  schema: ParamSchema;               // a restricted JSON Schema subset
+  default?: ParamValue;              // must satisfy schema
+  label: { zh: string; en: string }; // both required, non-empty
   description?: { zh: string; en: string };
 }
 ```
 
-- **schema 只能是这几种**：`{ type: "string", enum: [...] }`、`{ type: "string", maxLength? }`、`{ type: "boolean" }`、`{ type: "number" | "integer", minimum?, maximum? }`。内核自己校验，不引入 ajv。
-- **键名**：标准旋钮直接用 `effort` / `thinking` / `temperature` / `maxOutputTokens`；厂商专有参数必须是 `<插件名>.<名称>`，前缀恰好是插件名（`model-fake.style`、`openai-compatible.xxx`）。不合规时该供应商加载阶段即不可用（`assertValidDeclarations` 抛错）。
-- **标准旋钮语义**（平台统一，换模型 / 兜底时可迁移，界面专门渲染）：
+- **The schema may only be one of these**: `{ type: "string", enum: [...] }`, `{ type: "string", maxLength? }`, `{ type: "boolean" }`, `{ type: "number" | "integer", minimum?, maximum? }`. The kernel validates them itself and does not bring in ajv.
+- **Key names**: standard knobs use `effort` / `thinking` / `temperature` / `maxOutputTokens` directly; vendor-specific parameters must be `<plugin name>.<name>`, with the prefix exactly equal to the plugin name (`model-fake.style`, `openai-compatible.xxx`). If this is violated the provider is unavailable at load time (`assertValidDeclarations` throws).
+- **Standard knob semantics** (uniform across the platform, portable when switching models / fallbacks, rendered specially in the UI):
 
-| 旋钮 | schema | 语义 |
+| Knob | schema | Semantics |
 |---|---|---|
-| `effort` | `string` enum，`low|medium|high|xhigh|max` 的子集 | 思考深度，档位由模型决定 |
-| `thinking` | `string` enum，`off|on|summarized` 的子集 | 思考模式：`off` 关闭，`on` 开启，`summarized` 开启并返回思考摘要 |
-| `temperature` | `number`（可带范围） | 采样温度 |
-| `maxOutputTokens` | `integer`（可带范围） | 最大输出 token，内核据此覆盖 `runtime.maxOutputTokens`（不超过模型上限） |
+| `effort` | `string` enum, a subset of `low|medium|high|xhigh|max` | Thinking depth; the levels are decided by the model |
+| `thinking` | `string` enum, a subset of `off|on|summarized` | Thinking mode: `off` disables, `on` enables, `summarized` enables and returns a thinking summary |
+| `temperature` | `number` (may have a range) | Sampling temperature |
+| `maxOutputTokens` | `integer` (may have a range) | Maximum output tokens; the kernel uses it to override `runtime.maxOutputTokens` (capped at the model limit) |
 
-- **默认值只在与供应商 API 自身的默认一致时才声明**，这样「未设置」与「设为默认」行为相同；供应商默认值因模型而异或查不到时不要给默认（openai 的 effort、Qwen 的 thinking 都不给）。例外：anthropic 的 thinking 默认 `summarized`（供应商默认不返回思考文本，平台选择返回摘要）。
-- 不是所有模型都有所有旋钮：anthropic 没有 `temperature`；openai 只在部署 `reasoningSummary != "off"` 时才声明 `thinking`。不支持的参数不要声明，也不要发。
-- 纯函数在 plugin-sdk：`assertValidDeclarations(plugin, decls)`（插件自测与内核加载时用）、`validateParams`、`sanitizeParams`。一致性套件有 `declares valid parameters` 用例。
-- 参数的取舍记录在 `model_call` 事件里（`params`、有丢弃时的 `droppedParams`），请求可由日志还原。
+- **Declare a default only when it matches the provider API's own default**, so that "unset" and "set to the default" behave the same; when the provider default varies by model or can't be looked up, give no default (neither openai's effort nor Qwen's thinking has one). Exception: anthropic's thinking defaults to `summarized` (the provider by default doesn't return thinking text; the platform chooses to return a summary).
+- Not every model has every knob: anthropic has no `temperature`; openai declares `thinking` only when the deployment has `reasoningSummary != "off"`. Don't declare or send unsupported parameters.
+- The pure functions are in plugin-sdk: `assertValidDeclarations(plugin, decls)` (used in plugin self-tests and by the kernel at load time), `validateParams`, `sanitizeParams`. The conformance suite has a `declares valid parameters` case.
+- Parameter decisions are recorded in the `model_call` event (`params`, and `droppedParams` when something was dropped), so the request can be reconstructed from the log.
 
-## `@1` 兼容
+## `@1` compatibility
 
-旧契约 `model-provider@1`（`ModelProviderV1` / `ModelInfoV1` / `ModelRequestV1`，`capabilities.effort` + `req.effort`）仍可用：内核经适配层由 `capabilities.effort` 推导 `effort` 旋钮（五档，不带默认值），并把 `params.effort` 映射为 `req.effort`。同一插件两者都提供时用 `@2`。新插件一律写 `@2`，`capabilities.effort` 已弃用。内核的模型列表缓存键带契约主版本、插件版本与部署配置摘要，插件升级或改部署配置后各副本立即按新声明校验，不会读到旧列表。
+The old contract `model-provider@1` (`ModelProviderV1` / `ModelInfoV1` / `ModelRequestV1`, `capabilities.effort` + `req.effort`) still works: through an adapter layer the kernel derives the `effort` knob from `capabilities.effort` (five levels, no default) and maps `params.effort` to `req.effort`. When one plugin provides both, `@2` is used. New plugins always write `@2`; `capabilities.effort` is deprecated. The kernel's model list cache key carries the contract major version, the plugin version and a digest of the deployment config, so after a plugin upgrade or a deployment config change every replica validates against the new declarations immediately and never reads a stale list.
 
-## 方言预设（OpenAI 兼容接口）
+## Dialect presets (OpenAI-compatible APIs)
 
-`plugins/openai-compatible` 用官方 `openai` SDK 的 `chat.completions` 接各家 Chat Completions 兼容服务。这类服务的差异（思考字段、用量字段、回放规则）收在 `src/dialects.ts` 的方言里：一个方言是纯数据加无状态的映射函数（`parameters(model)` 声明参数、`applyParams` 写请求体扩展字段、`readDelta` 读思考增量、`replayAssistant` 决定思考如何回放、`usage` 换算用量）。写法要点：
+`plugins/openai-compatible` uses the official `openai` SDK's `chat.completions` to talk to various Chat Completions-compatible services. The differences between these services (thinking fields, usage fields, replay rules) are collected in the dialects in `src/dialects.ts`: a dialect is pure data plus stateless mapping functions (`parameters(model)` declares parameters, `applyParams` writes extension fields into the request body, `readDelta` reads thinking deltas, `replayAssistant` decides how thinking is replayed, `usage` converts usage). Key points:
 
-- 每个字段都按供应商官方文档核实，注释里写明出处与核实时间；查不到的字段不实现。
-- 方言只看消息自身与请求级设定（模型及其部署属性、是否带工具、参数），不看其他消息——保持「只追加」（见下节）。
-- 新增方言：在 `dialects.ts` 加一个 `Dialect`，登记进 `DIALECTS` 与配置里的 `dialect` 枚举，补夹具与错误映射用例。
-- 对外模型 id 为 `<端点名>/<模型 id>`；密钥放顶层 `apiKeys`（端点名 → 密钥）——内核只认对象字段路径上的 `secret()`，放进 `endpoints[]` 数组元素里的密钥会导致插件被拒绝加载。
+- Verify every field against the provider's official docs, and note the source and verification date in a comment; don't implement fields you can't find.
+- A dialect looks only at the message itself and request-level settings (the model and its deployment attributes, whether tools are present, the parameters), not at other messages, to stay "append-only" (see the next section).
+- To add a dialect: add a `Dialect` in `dialects.ts`, register it in `DIALECTS` and in the `dialect` enum in the config, and add fixtures and error mapping cases.
+- The external model id is `<endpoint name>/<model id>`; keys go in the top-level `apiKeys` (endpoint name -> key). The kernel recognizes `secret()` only on object field paths, and a key placed inside an `endpoints[]` array element makes the plugin be rejected at load.
 
-## 原生协议：用官方 SDK，不经兼容层
+## Native protocol: use the official SDK, not a compatibility layer
 
-- 每个供应商用**自家官方 SDK** 调**原生接口**（Anthropic → `@anthropic-ai/sdk` Messages API；OpenAI → `openai` Responses API）。不用 LangChain 的 chat model 封装，不经「OpenAI 兼容」接口转译别家模型（`openai-compatible` 只用于本来就只提供 Chat Completions 的服务，如 DeepSeek、Qwen、vLLM；Anthropic / OpenAI 自家模型仍走各自的原生插件）：兼容层会丢掉思考块签名、加密推理项、缓存断点等供应商私有能力，也会掩盖真实错误类型。
-- 模型能力以原生接口为准：能从 Models API 取的就取（anthropic），取不到的由部署配置给出（openai 的 `models[]` 带 `contextWindow` / `maxOutputTokens` / `reasoning` / `vision`）。
+- Each provider calls its **native API** with its **own official SDK** (Anthropic -> `@anthropic-ai/sdk` Messages API; OpenAI -> `openai` Responses API). Don't use LangChain's chat model wrappers, and don't translate other vendors' models through an "OpenAI-compatible" API (`openai-compatible` is only for services that offer nothing but Chat Completions, such as DeepSeek, Qwen, vLLM; Anthropic / OpenAI's own models still go through their native plugins): compatibility layers lose provider-private capabilities such as thinking block signatures, encrypted reasoning items and cache breakpoints, and also hide real error types.
+- Model capabilities follow the native API: fetch from the Models API whatever it provides (anthropic), and take the rest from deployment config (openai's `models[]` carries `contextWindow` / `maxOutputTokens` / `reasoning` / `vision`).
 
-## 请求映射只追加
+## Request mapping is append-only
 
-内核保证「发给模型的历史只追加」：较早请求的消息序列是较晚请求的前缀（这也是提示词缓存能命中的前提）。插件的映射必须保住这一点：
+The kernel guarantees that "the history sent to the model is append-only": the message sequence of an earlier request is a prefix of a later request's (this is also what makes prompt cache hits possible). The plugin's mapping must preserve this:
 
-- **每条消息的映射只取决于它自己与请求级设定**（请求模型及其属性、请求的 `tools` 与 `params`），**不看其他消息**：不看后续消息、不按后续消息调整顺序、不合并或拆分已发送的消息。写成纯函数 `buildRequest(req)`，单测「请求 A 的映射结果是请求 A + 若干新消息（请求级设定不变）的映射结果的前缀」。例：DeepSeek 方言在带 tools 且未关闭思考的请求里给没有本模型思考的历史回合补空 `reasoning_content`——取决于请求级的 tools / thinking，不取决于其他消息。
-  - 代价：请求级设定在两次请求之间变化（如这一轮起带上 tools、或切换 thinking）时，较早回合的序列化随之改变，供应商的前缀缓存在变化点之前失效、多计一次输入费用；内核看到的历史仍然只追加，正确性不受影响。M3 接入工具后，tools 集合在会话中途变化时要留意这一点。
-- 中途 `system` 消息：供应商有不需要前后文的原生表达就用（openai 在原位置转成 `developer` 输入项，`midConversationSystem: true`）；原生表达有位置规则、需要看后续消息才能决定怎么放的，**不要用**，在原位置转成 user 文本块 `"[system] " + text`，并报 `midConversationSystem: false`。anthropic 就是这样：原生 system 的放置规则需要前瞻（后面跟着被跳过的空回合或失败的步骤时位置会变），会改写已发送的前缀。
-- 供应商私有块（思考、推理项）原样回放，不改写、不重排；不能回放的（见下）整块丢掉。
-- 历史缓存断点不要打在「最后一条消息的最后一个块」上：下一轮断点移到新的末尾块，已发送消息的字节随之改变。anthropic 用请求顶层的自动 `cache_control`（API 自己把断点放在最后一个可缓存的块上，占一个断点名额，system 已用满 4 个时不加）；openai 的缓存本来就是按前缀自动的。
-- 模型不支持的参数不发，也不声明：anthropic 只对 Models API 报告支持 adaptive 思考的模型声明并发送 `thinking`，`effort` 档位取 Models API 逐档的 `supported`。
+- **Each message's mapping depends only on itself and the request-level settings** (the requested model and its attributes, the request's `tools` and `params`), **and does not look at other messages**: no looking at later messages, no reordering based on later messages, no merging or splitting of messages already sent. Write it as a pure function `buildRequest(req)`, and unit test that "the mapped result of request A is a prefix of the mapped result of request A plus some new messages (request-level settings unchanged)". Example: in a request with tools and thinking not disabled, the DeepSeek dialect fills an empty `reasoning_content` into history turns that have no thinking from this model; this depends on the request-level tools / thinking, not on other messages.
+  - Cost: when request-level settings change between two requests (for example tools are included from this turn on, or thinking is switched), the serialization of earlier turns changes with them, the provider's prefix cache is invalidated before the change point, and input is billed once more; the history the kernel sees is still append-only, so correctness is unaffected. After M3 brought in tools, watch for this when the tools set changes in the middle of a conversation.
+- Mid-conversation `system` messages: if the provider has a native representation that needs no surrounding context, use it (openai converts it in place to a `developer` input item, `midConversationSystem: true`); if the native representation has placement rules and needs to see later messages to decide where to put it, **don't use it**; convert it in place to a user text block `"[system] " + text` and report `midConversationSystem: false`. This is what anthropic does: the placement rules of its native system need lookahead (the position changes when skipped empty turns or failed steps follow), which would rewrite an already sent prefix.
+- Provider-private blocks (thinking, reasoning items) are replayed as they are, without rewriting or reordering; ones that can't be replayed (see below) are dropped whole.
+- Don't put the history cache breakpoint on "the last block of the last message": on the next turn the breakpoint moves to the new last block, and the bytes of the already sent message change with it. anthropic uses the automatic top-level `cache_control` on the request (the API itself places the breakpoint on the last cacheable block, which takes one breakpoint slot, and is not added when system has already used all 4); openai's cache is automatically prefix-based anyway.
+- Parameters the model doesn't support are neither sent nor declared: anthropic declares and sends `thinking` only for models that the Models API reports as supporting adaptive thinking, and takes the `effort` levels from the Models API's per-level `supported`.
 
-## opaque 回放：只回放给同一供应商、同一模型
+## Opaque replay: only replay to the same provider and the same model
 
-`opaque = { provider, model, data }` 是供应商私有数据（Anthropic 思考块及其签名、OpenAI 含 `encrypted_content` 的 reasoning 项、function_call 与 message 的输出项 id）。规则：
+`opaque = { provider, model, data }` is provider-private data (Anthropic thinking blocks and their signatures, OpenAI reasoning items containing `encrypted_content`, the output item ids of function_call and message). Rules:
 
-- 产出时 `data` 存原生块原样（能直接塞回下一次请求），`provider` 填插件名，`model` 填**下一轮能接受它的那个模型 id**：
-  - openai 用**请求的** model id（响应里的 `model` 是带日期的快照名，按它打标签下一轮永远对不上）；
-  - anthropic 用响应的 `model`；**服务端拒答兜底**（`fallbacks: "default"`）时消息里出现 `fallback` 块，整条消息的思考 / 工具 opaque 都改打 `fallback.to.model`（真正作答的模型），否则下一轮回放给原模型会因签名校验失败被拒（R39）。
-- 回放时只在 `opaque.provider === 本插件 && opaque.model === req.model && data != null` 时原样放回；否则：思考块整块丢掉，工具调用退化为不带私有字段的普通调用（openai 去掉输出项 id）。agent 切换模型、走 `fallback` 模型时历史里会混有别的模型的块，这是常态。
-- openai 的推理模型要求回放的 reasoning 项**紧跟它产出的输出项**：text 块的 opaque 保存 message 输出项的 `id`（与 `phase`），同一条 assistant 消息里已回放过 reasoning 项时，text 按原 message 项回放（`{ type: "message", id, role: "assistant", status, content: [output_text] }`）；没有回放 reasoning 项时不带 id（单独带 msg_ id 会被拒）。映射只看消息自身，仍然只追加。夹具按这条规则把关，但**真实接口尚未验证**——见下文「发布前必须跑真实接口」。
+- When producing it, `data` stores the native block as is (it can be put straight back into the next request), `provider` is the plugin name, and `model` is **the model id that the next turn will accept it under**:
+  - openai uses the **request's** model id (the `model` in the response is a dated snapshot name; labeling by it would never match on the next turn);
+  - anthropic uses the response's `model`; when **server-side refusal fallback** (`fallbacks: "default"`) occurs, a `fallback` block appears in the message, and the thinking / tool opaque of the whole message is relabeled with `fallback.to.model` (the model that actually answered), otherwise replaying to the original model on the next turn would be rejected for failing signature validation (R39).
+- On replay, put it back as is only when `opaque.provider === this plugin && opaque.model === req.model && data != null`; otherwise: a thinking block is dropped whole, and a tool call degrades to a plain call without the private fields (openai drops the output item id). When an agent switches models or goes to a `fallback` model, the history contains blocks from other models; that is normal.
+- openai's reasoning models require a replayed reasoning item to **immediately precede the output item it produced**: a text block's opaque stores the message output item's `id` (and `phase`), and when a reasoning item has already been replayed in the same assistant message, the text is replayed as the original message item (`{ type: "message", id, role: "assistant", status, content: [output_text] }`); when no reasoning item was replayed, no id is included (a msg_ id on its own is rejected). The mapping looks only at the message itself and is still append-only. Fixtures enforce this rule, but **it has not yet been verified against the real API**; see "Run the live API before releasing" below.
 
-## 媒体块（`image` / `document`）
+## Media blocks (`image` / `document`)
 
-user 消息里可以有 `image`（png / jpeg / gif / webp）与 `document`（`application/pdf`、`text/plain` / `text/markdown` / `text/csv`），`source` 为 `{ kind: "base64", data }`，可带附件名 `name`。
+User messages can contain `image` (png / jpeg / gif / webp) and `document` (`application/pdf`, `text/plain` / `text/markdown` / `text/csv`), with `source` as `{ kind: "base64", data }`, and an optional attachment name `name`.
 
-- **把关在内核**：模型声明 `vision: true` 才会收到 `image`，声明 `documents: true` 才会收到 `document`（`documents` 为 true 时 `text/*` 也作为文档块发来）；不支持时内核换成英文文字占位或内联文本，插件不用判断能力。所以**声明要准**：按官方文档或 Models API 声明，注释里写出处与核实日期。anthropic 取 Models API 的 `image_input` / `pdf_input`；openai 由部署配置 `models[].vision` / `documents`（缺省 false）给；openai-compatible 按端点模型配置 `vision` / `documents`（缺省 false），`documents` 只能在 Chat Completions 收 PDF 的方言（`pdfInput`：generic、qwen）上开启，deepseek / ark 配置校验拒绝。
-- **供应商的媒体上限也由内核执行**，插件不用再查：单次请求最多 20 张图片（保留最新的）、PDF 超过 100 页、`text/*` 超过 50 000 个字符（截断并注明，两种发送方式都一样）、单个块超过 `MEDIA_LIMITS`（图片 5 MiB、文档 32 MiB，解码后）、整个请求的媒体超过 `attachments.requestMediaBytes`，内核都会换成英文占位或截断。供应商仍以 `invalid_request` / `context_overflow` 拒收带媒体的请求时，内核写 `media_excluded`，之后的请求把这些附件换成占位——所以插件把这类拒收如实映射成对应的 `ModelError` 即可，不要自己丢块或重试。
-- **`ref` 不该到插件**：事件日志里只存引用，内核构建请求时解析成 `base64`。插件收到 `ref` 是内核缺陷，抛 `ModelError("invalid_request", …)`（不可重试），不要静默丢弃。
-- **引用怎么解析**（内核侧，插件不用做，但排查时要知道）：附件字节在对象存储，日志里的块只有 `{ kind: "ref", attachmentId }`。构建请求时按引用取字节并核对 finalize 时记下的 etag：附件已删除 / 过期、对象不在、大小或 etag 不符是**确定的缺失**，换成英文占位；存储暂时出错则这一步按可重试错误重来，不降级成占位（Ruling M4，否则同一份日志还原不出同一个请求）。每次 `model_call` 事件的 `request.media` 记下每个附件的去向（`{ attachmentId, outcome, etag? }`，outcome 为 bytes / inline / placeholder_unsupported / omitted / unavailable / too_many_pages / excluded），请求能由日志还原。
-- **映射**（只看块自身，仍然只追加）：
+- **The gate is in the kernel**: a model receives `image` only if it declares `vision: true`, and `document` only if it declares `documents: true` (when `documents` is true, `text/*` also arrives as document blocks); when unsupported, the kernel substitutes an English text placeholder or inline text, and the plugin needn't check capabilities. So **declarations must be accurate**: declare per the official docs or the Models API, and note the source and verification date in a comment. anthropic takes the Models API's `image_input` / `pdf_input`; openai gets it from the deployment config `models[].vision` / `documents` (default false); openai-compatible follows the endpoint model config `vision` / `documents` (default false), and `documents` can be enabled only on dialects whose Chat Completions accepts PDF (`pdfInput`: generic, qwen); deepseek / ark config validation rejects it.
+- **The provider's media limits are also enforced by the kernel**, so the plugin needn't check again: at most 20 images per request (the newest are kept), PDFs over 100 pages, `text/*` over 50 000 characters (truncated and noted, the same for both sending methods), a single block over `MEDIA_LIMITS` (images 5 MiB, documents 32 MiB, after decoding), or the whole request's media over `attachments.requestMediaBytes`; the kernel replaces these with an English placeholder or truncates. If the provider still rejects a request with media using `invalid_request` / `context_overflow`, the kernel writes `media_excluded`, and later requests replace those attachments with placeholders; so the plugin only needs to map such rejections faithfully to the matching `ModelError`, and must not drop blocks or retry itself.
+- **`ref` must not reach the plugin**: the event log stores only references, and the kernel resolves them into `base64` when building the request. A plugin receiving a `ref` is a kernel bug; throw `ModelError("invalid_request", …)` (not retryable) and don't silently drop it.
+- **How references are resolved** (kernel side, the plugin needn't do it, but worth knowing when debugging): attachment bytes live in object storage, and a block in the log is only `{ kind: "ref", attachmentId }`. When building the request, the bytes are fetched by reference and checked against the etag recorded at finalize: an attachment that was deleted / expired, an object that's missing, or a size or etag mismatch is a **definite absence** and is replaced by an English placeholder; a transient storage error makes this step retry as a retryable error and does not degrade to a placeholder (Ruling M4, otherwise the same log could not reconstruct the same request). Each `model_call` event's `request.media` records what happened to every attachment (`{ attachmentId, outcome, etag? }`, where outcome is bytes / inline / placeholder_unsupported / omitted / unavailable / too_many_pages / excluded), so the request can be reconstructed from the log.
+- **Mapping** (looks only at the block itself, still append-only):
 
-| 插件 | 图片 | PDF | `text/*` |
+| Plugin | Image | PDF | `text/*` |
 |---|---|---|---|
-| anthropic | `{type:"image", source:{type:"base64", media_type, data}}` | `{type:"document", source:{type:"base64", media_type:"application/pdf", data}, title?}` | `{type:"document", source:{type:"text", media_type:"text/plain", data:<UTF-8 文本>}, title?}` |
-| openai（Responses） | `input_image`，`image_url: "data:<type>;base64,…"`，`detail: "auto"` | `input_file`，`file_data` 为 data URL，`filename`（补 `.pdf` 后缀） | `input_text`：`[Attached file "<name>" (<type>)]` + 换行 + 文本 |
-| openai-compatible（Chat Completions） | `{type:"image_url", image_url:{url:<data URL>}}` | `{type:"file", file:{filename, file_data}}`（仅 `pdfInput` 方言） | 文本片段，写法同 openai |
+| anthropic | `{type:"image", source:{type:"base64", media_type, data}}` | `{type:"document", source:{type:"base64", media_type:"application/pdf", data}, title?}` | `{type:"document", source:{type:"text", media_type:"text/plain", data:<UTF-8 text>}, title?}` |
+| openai (Responses) | `input_image`, `image_url: "data:<type>;base64,…"`, `detail: "auto"` | `input_file`, `file_data` as a data URL, `filename` (with a `.pdf` suffix added) | `input_text`: `[Attached file "<name>" (<type>)]` + newline + text |
+| openai-compatible (Chat Completions) | `{type:"image_url", image_url:{url:<data URL>}}` | `{type:"file", file:{filename, file_data}}` (only `pdfInput` dialects) | a text part, written the same as openai |
 
-  供应商 API 只收 PDF 文档时，`text/*` 按 UTF-8 解码成文本、开头一行标出文件名与类型（与内核内联文本的写法一致）。openai-compatible 的 user 消息只有文本时内容仍是 `"\n\n"` 连接的字符串（与引入媒体之前逐字节相同，也兼容不收内容数组的服务），含图片 / PDF 时才用片段数组。
-- **assistant 消息里不放媒体块**：模型输出只有文本 / 思考 / 工具调用；回放时 assistant 消息里的媒体块一律不发。
-- 一致性套件有「user message with image」（模型声明 `vision` 才跑）、「user message with PDF document」「user message with text document」（声明 `documents` 才跑）。样本由 `@capybara-hq/testing` 运行时生成（64×64 纯红 PNG、只印一个词的一页 PDF）；夹具服务按原生形状认出样本、从内容里读出答案（`isPngBase64`、`pdfSampleWord`），映射错了用例就失败。
+  When the provider API accepts only PDF documents, `text/*` is decoded as UTF-8 text with a first line giving the file name and type (the same format as the kernel's inline text). When an openai-compatible user message has only text, the content is still a string joined with `"\n\n"` (byte-for-byte identical to before media was introduced, and also compatible with services that don't accept content arrays); the parts array is used only when it contains images / PDFs.
+- **No media blocks in assistant messages**: model output is only text / thinking / tool calls; media blocks in assistant messages are never sent on replay.
+- The conformance suite has "user message with image" (run only when the model declares `vision`), "user message with PDF document" and "user message with text document" (run only when it declares `documents`). The samples are generated at runtime by `@capybara-hq/testing` (a 64×64 solid red PNG, a one-page PDF printing a single word); the fixture server recognizes the samples in their native shape and reads the answer from the content (`isPngBase64`, `pdfSampleWord`), so the case fails if the mapping is wrong.
 
-## 用量语义（`ModelUsage`）
+## Usage semantics (`ModelUsage`)
 
-三类输入互不重叠，内核按它们的**和**校正上下文估算、决定何时压缩：
+The three kinds of input do not overlap, and the kernel corrects the context estimate and decides when to compact using their **sum**:
 
-- `inputTokens`：**未缓存**的输入（既没命中缓存、也没写入缓存的部分），不是输入总量；
-- `cacheReadTokens`：从缓存读取的输入；`cacheWriteTokens`：本次写入缓存的输入；
-- 输入总量 = `inputTokens + cacheReadTokens + cacheWriteTokens`。
-- 供应商的输入计数已包含缓存部分时**先减掉**：openai `inputTokens = input_tokens − cached_tokens − cache_write_tokens`（下限 0）；anthropic 的 `input_tokens` 本来就不含缓存读写，直接用。
+- `inputTokens`: **uncached** input (the part that neither hit the cache nor was written to it), not the input total;
+- `cacheReadTokens`: input read from the cache; `cacheWriteTokens`: input written to the cache by this call;
+- The input total = `inputTokens + cacheReadTokens + cacheWriteTokens`.
+- When the provider's input count already includes the cached part, **subtract it first**: openai `inputTokens = input_tokens − cached_tokens − cache_write_tokens` (floor 0); anthropic's `input_tokens` already excludes cache reads and writes, so use it directly.
 
-## 错误映射
+## Error mapping
 
-一律抛 `ModelError(kind, message, { retryAfterMs?, cause })`。只按 SDK 异常类、HTTP 状态码与结构化错误 `type` / `code` 判断，**不匹配错误信息字符串**。`signal` 已中止时无论 SDK 抛什么都归为 `aborted`。
+Always throw `ModelError(kind, message, { retryAfterMs?, cause })`. Decide only by the SDK exception class, the HTTP status code and the structured error `type` / `code`, and **never match error message strings**. When `signal` has already aborted, classify as `aborted` whatever the SDK threw.
 
-| kind | 可重试 | 典型来源 |
+| kind | Retryable | Typical source |
 |---|---|---|
-| `rate_limited` | 是 | 429；带 `retry-after-ms`（毫秒）或 `retry-after`（秒 / HTTP 日期）时填 `retryAfterMs` |
-| `overloaded` | 是 | anthropic 529 / `overloaded_error` |
-| `server` | 是 | 5xx；`api_error` / `server_error`；流中途无法识别的 error 事件 |
-| `timeout` | 是 | SDK 连接超时、408、`timeout_error` |
-| `network` | 是 | 连接失败、流在结束事件之前断开 |
-| `auth` | 否 | 401 / 403；`billing_error`；openai `insufficient_quota`（虽然是 429，重试无用） |
-| `invalid_request` | 否 | 其余 4xx；**畸形的工具参数**（见下）；prompt 过长的 400（anthropic 没有专门的类型） |
-| `context_overflow` | 否 | 413 / anthropic `request_too_large`；openai `context_length_exceeded` |
-| `aborted` | 否 | 调用方中止 |
+| `rate_limited` | yes | 429; fill `retryAfterMs` when `retry-after-ms` (milliseconds) or `retry-after` (seconds / HTTP date) is present |
+| `overloaded` | yes | anthropic 529 / `overloaded_error` |
+| `server` | yes | 5xx; `api_error` / `server_error`; an unrecognized error event mid-stream |
+| `timeout` | yes | SDK connection timeout, 408, `timeout_error` |
+| `network` | yes | connection failure, stream cut off before the end event |
+| `auth` | no | 401 / 403; `billing_error`; openai `insufficient_quota` (a 429, but retrying is useless) |
+| `invalid_request` | no | other 4xx; **malformed tool arguments** (see below); a 400 for a too-long prompt (anthropic has no dedicated type) |
+| `context_overflow` | no | 413 / anthropic `request_too_large`; openai `context_length_exceeded` |
+| `aborted` | no | aborted by the caller |
 
-可重试的由内核降级梯子处理（主模型 → 主模型重试一次，等 `retryAfterMs`，默认 1 秒，超过 10 秒就跳过同模型重试 → agent 的 `fallback` 模型）；不可重试的直接让运行失败（错误码 `model.<kind>`）。分类错了的代价：把请求本身的问题标成可重试会白白重试并切到降级模型；把暂时故障标成不可重试会让本可成功的运行失败。
+Retryable errors are handled by the kernel's degradation ladder (primary model -> retry the primary model once, waiting `retryAfterMs`, default 1 second, skipping the same-model retry if it exceeds 10 seconds -> the agent's `fallback` model); non-retryable errors fail the run directly (error code `model.<kind>`). The cost of misclassifying: labeling a problem with the request itself as retryable wastes retries and switches to the fallback model; labeling a transient failure as non-retryable fails a run that could have succeeded.
 
-**畸形的工具参数 → `invalid_request`**：工具输入 JSON 解析失败或不是对象时抛 `invalid_request`。如果 SDK 的流式辅助类会自己预解析工具输入、把解析失败包成没有结构信息的通用异常（anthropic 的 `MessageStream` 就是这样），就不用它：直接用原始事件流（`create({ stream: true })`）、自己累积最终消息并 `JSON.parse`（anthropic / openai 的 `map-stream.ts` 都这样做）。
+**Malformed tool arguments -> `invalid_request`**: throw `invalid_request` when the tool input JSON fails to parse or isn't an object. If the SDK's streaming helper class pre-parses tool input itself and wraps a parse failure in a generic exception with no structural information (anthropic's `MessageStream` does this), don't use it: use the raw event stream directly (`create({ stream: true })`), accumulate the final message yourself and `JSON.parse` it (both anthropic and openai `map-stream.ts` do this).
 
-## 不在插件内重试
+## No retries inside the plugin
 
-SDK 客户端一律 `maxRetries: 0`。重试、等待、降级、`step_reset` 都在内核统一做；插件内再重试会叠加等待、绕过 10 秒上限，并让 `model_call` 事件对不上实际请求次数。插件也不要自己设请求超时去兜底空闲流——那是内核看门狗的事（见下）。
+SDK clients always use `maxRetries: 0`. Retrying, waiting, degrading and `step_reset` are all done uniformly in the kernel; retrying again inside the plugin stacks waits, bypasses the 10-second cap, and makes the `model_call` events disagree with the actual number of requests. A plugin also must not set its own request timeout to cover for idle streams; that is the kernel watchdog's job (see below).
 
 ## `streamIdleTimeoutMs`
 
-内核的看门狗在两次流事件之间超过阈值时本地中止并按 `timeout` 处理（可重试）。阈值取 `ModelInfo.streamIdleTimeoutMs`，没给时用内核配置 `runtime.streamIdleMs`（默认 60000）。
+When more than the threshold passes between two stream events, the kernel's watchdog aborts locally and treats it as `timeout` (retryable). The threshold is `ModelInfo.streamIdleTimeoutMs`, and when it isn't given the kernel config `runtime.streamIdleMs` (default 60000) is used.
 
-- 普通对话模型可以不填，用内核默认；
-- 推理 / 思考阶段可能长时间不发事件的模型要填大：anthropic 统一 300000（5 分钟）；openai 由部署配置 `models[].streamIdleTimeoutMs` 按模型给；
-- 太小会把正常的长思考当成卡死反复重试，太大则真卡死时要等很久才进入降级。
+- An ordinary chat model can leave it unset and use the kernel default;
+- A model whose reasoning / thinking phase may go a long time without events must set it large: anthropic uses 300000 uniformly (5 minutes); openai gets it per model from the deployment config `models[].streamIdleTimeoutMs`;
+- Too small treats normal long thinking as hung and retries repeatedly; too large means a real hang takes a long time to reach degradation.
 
-## 测试：夹具模式与真实接口模式
+## Tests: fixture mode and live-API mode
 
-每个供应商插件都跑 `@capybara-hq/testing` 的一致性套件 `describeModelProviderConformance(name, setup)`（流式文本、工具往返、思考回放、缓存、用量、中途 system、中止）。两种模式写在同一个 `test/conformance.test.ts` 里：
+Every provider plugin runs `@capybara-hq/testing`'s conformance suite `describeModelProviderConformance(name, setup)` (streaming text, tool round trip, thinking replay, caching, usage, mid-conversation system, abort). Both modes are written in the same `test/conformance.test.ts`:
 
 ```ts
 import { describeModelProviderConformance, startFakeModelServer } from "@capybara-hq/testing";
@@ -169,7 +169,7 @@ import { describe } from "vitest";
 import { createMyProvider } from "../src/index.js";
 import { myRoutes } from "./fixtures.js";
 
-// 夹具模式：本地假服务按原生协议回放，CI 默认跑
+// Fixture mode: a local fake server replays the native protocol; CI runs this by default
 describeModelProviderConformance("my (fixtures)", async () => {
   const server = await startFakeModelServer(myRoutes());
   return {
@@ -180,39 +180,39 @@ describeModelProviderConformance("my (fixtures)", async () => {
   };
 });
 
-// 真实接口模式：设了密钥才跑
+// Live-API mode: runs only when a key is set
 const LIVE_KEY = process.env.CAPYBARA_TEST_MY_API_KEY;
 describe.skipIf(!LIVE_KEY)("live", () => {
   describeModelProviderConformance("my (live)", async () => ({
     provider: createMyProvider({ apiKey: LIVE_KEY ?? "" }),
     model: "my-cheap-model",
     expect: { thinking: true, caching: true },
-    cachePrefixTokens: 6000, // 稳定前缀要超过该模型的最小可缓存长度
+    cachePrefixTokens: 6000, // the stable prefix must exceed the model's minimum cacheable length
     teardown: async () => {},
   }));
 });
 ```
 
-- `startFakeModelServer(routes)`：`routes(req)` 收到 `{ path, body, headers }`，返回 `{ status, json, headers? }`（普通 / 错误响应）、`{ status: 200, sse: [{ event?, data }], delayMs? }`（SSE）或 `{ stall: true }`（只发响应头、不发数据，用来测中止与看门狗）。`server.requests` 记录全部请求，可断言实际发出的原生请求体。夹具按供应商原生格式手写在插件的 `test/fixtures.ts`（参考 `plugins/anthropic/test/fixtures.ts` 的 `sseMessage`、`errorJson`），不要录制真实响应里的密钥。
-- 插件构造函数要接受 `baseUrl`，夹具模式靠它指向假服务。
-- 一致性套件之外，按上面的错误映射表逐行写用例（429 带 `retry-after`、529、5xx、401/403、400、413、流中途 error 事件、流截断、畸形工具参数、网络失败、中止、停滞流中止），以及请求映射的前缀单测。
-- 真实接口模式：anthropic 设 `CAPYBARA_TEST_ANTHROPIC_API_KEY`（跑 `claude-haiku-5-5`）；openai 设 `CAPYBARA_TEST_OPENAI_API_KEY` 与 `CAPYBARA_TEST_OPENAI_MODEL`；openai-compatible 设 `CAPYBARA_TEST_OAICOMPAT_BASE_URL` / `_API_KEY` / `_MODEL` / `_DIALECT`（`generic` / `deepseek` / `qwen` / `ark`，四个都设才跑；可选 `_VISION=1` / `_DOCUMENTS=1` 声明该模型收图片 / PDF，跑媒体用例）。已用真实接口验证过：anthropic（`claude-haiku-5-5`）、DeepSeek（`deepseek-flash`，方言 `deepseek`）、openai（`gpt-5-nano`）；媒体（图片、PDF、`text/*` 文档）在 anthropic `claude-haiku-5-5` 与 openai `gpt-5-nano` 上验证过，ark 方言的图片映射**尚未用真实接口验证**。未设置时测试打一行 info 说明已跳过。改了请求映射或升级 SDK 后在本地用真实接口跑一遍。
-- **发布前必须跑真实接口**：CI 没有密钥，夹具只是按文档与已知报错手写的近似。每次发布供应商插件之前，用真实接口把一致性套件跑通（尤其是思考回放：openai reasoning 项 + 带 id 的 message 项、anthropic 签名思考块，以及顶层 `cache_control` 的缓存命中），并在发布说明里写明跑过的模型。
-- `plugins/model-fake` 同样跑这套一致性套件（不需要假服务；声明 `effort` 三档与 `model-fake.style`）；它的脚本语法（`echo:`、`slow:<ms>:`、`stall`、`fail:<kind>`、`tool:<name>:<json>`、`long:<n>`，其余文本回复 `You said: …`）见其源码 `src/script.ts`。
+- `startFakeModelServer(routes)`: `routes(req)` receives `{ path, body, headers }` and returns `{ status, json, headers? }` (a normal / error response), `{ status: 200, sse: [{ event?, data }], delayMs? }` (SSE) or `{ stall: true }` (sends only the response headers and no data, used to test abort and the watchdog). `server.requests` records all requests, so you can assert on the native request body actually sent. Fixtures are handwritten in the provider's native format in the plugin's `test/fixtures.ts` (see `sseMessage`, `errorJson` in `plugins/anthropic/test/fixtures.ts`); don't record keys from real responses.
+- The plugin constructor must accept `baseUrl`; fixture mode uses it to point at the fake server.
+- Beyond the conformance suite, write a case for each row of the error mapping table above (429 with `retry-after`, 529, 5xx, 401/403, 400, 413, a mid-stream error event, stream truncation, malformed tool arguments, network failure, abort, stalled-stream abort), and prefix unit tests for the request mapping.
+- Live-API mode: for anthropic set `CAPYBARA_TEST_ANTHROPIC_API_KEY` (runs `claude-haiku-5-5`); for openai set `CAPYBARA_TEST_OPENAI_API_KEY` and `CAPYBARA_TEST_OPENAI_MODEL`; for openai-compatible set `CAPYBARA_TEST_OAICOMPAT_BASE_URL` / `_API_KEY` / `_MODEL` / `_DIALECT` (`generic` / `deepseek` / `qwen` / `ark`; it runs only when all four are set; optional `_VISION=1` / `_DOCUMENTS=1` declare that the model accepts images / PDFs, to run the media cases). Verified against the real API so far: anthropic (`claude-haiku-5-5`), DeepSeek (`deepseek-flash`, dialect `deepseek`), openai (`gpt-5-nano`); media (images, PDF, `text/*` documents) was verified on anthropic `claude-haiku-5-5` and openai `gpt-5-nano`, and the ark dialect's image mapping has **not yet been verified against the real API**. When unset, the test prints one info line saying it was skipped. After changing the request mapping or upgrading an SDK, run against the real API locally.
+- **Run the live API before releasing**: CI has no keys, and fixtures are only an approximation handwritten from the docs and known errors. Before every provider plugin release, get the conformance suite passing against the real API (especially thinking replay: openai reasoning items + message items with ids, anthropic signed thinking blocks, and cache hits with top-level `cache_control`), and state in the release notes which models it was run on.
+- `plugins/model-fake` also runs this conformance suite (no fake server needed; it declares three `effort` levels and `model-fake.style`); its script syntax (`echo:`, `slow:<ms>:`, `stall`, `fail:<kind>`, `tool:<name>:<json>`, `long:<n>`, other text replies `You said: …`) is in its source `src/script.ts`.
 
-## 模型或网关补丁只放在插件里，并写明何时可以删除
+## Model or gateway patches live only in the plugin, with a note on when they can be removed
 
-某个模型或网关的特殊处理（某参数在某些模型上会 400、某字段需要特殊值、某网关不支持某个头）**只写在对应插件里**，内核与 SDK 契约保持供应商无关。每处补丁就地写注释，说明：
+Special handling for a particular model or gateway (a parameter that returns 400 on some models, a field that needs a special value, a gateway that doesn't support a header) goes **only in the matching plugin**, keeping the kernel and the SDK contract provider-neutral. Comment every patch in place, saying:
 
-1. 补的是什么问题（哪个模型 / 网关、什么现象）；
-2. **何时可以删除**（供应商修复后、某模型下线后、SDK 某版本之后）。
+1. What problem it patches (which model / gateway, what symptom);
+2. **When it can be removed** (after the provider fixes it, after a model is retired, after some SDK version).
 
-例：anthropic 只发 `tool_choice: {type: "none"}`，不发 `any` / `tool`（在当前模型上会 400，模型支持后可去掉）；思考块用 `display: "summarized"`（当前模型默认 `omitted` 不返回思考文本）。只写「workaround」而不写删除条件的补丁会永远留下来。
+Examples: anthropic sends only `tool_choice: {type: "none"}` and not `any` / `tool` (these return 400 on current models; remove once models support them); thinking blocks use `display: "summarized"` (current models default to `omitted` and don't return thinking text). A patch that says only "workaround" without a removal condition stays forever.
 
-## 新供应商插件清单
+## New provider plugin checklist
 
-1. 按 `.agents/skills/writing-plugins` 建插件包（`@capybara-hq/plugin-<name>`），依赖官方 SDK 与 `@capybara-hq/plugin-sdk`，devDependency `@capybara-hq/testing`。
-2. 部署配置：`apiKey` 用 `secret(...)`，可选 `baseUrl`，模型清单；SDK 客户端 `maxRetries: 0`。`listModels` 返回的每个模型带 `parameters`，并在测试里过 `assertValidDeclarations`。
-3. `map-request.ts`（纯函数、只追加）、`map-stream.ts`（原始事件流累积、opaque、用量）、`errors.ts`（按上表映射）。
-4. 夹具模式一致性套件 + 错误映射用例 + 映射前缀单测；真实接口模式本地跑通。
-5. README 的「模型供应商插件」表加一行与配置示例；`pnpm changeset`（新插件 minor）。
+1. Create the plugin package (`@capybara-hq/plugin-<name>`) per `.agents/skills/writing-plugins`, depending on the official SDK and `@capybara-hq/plugin-sdk`, with devDependency `@capybara-hq/testing`.
+2. Deployment config: `apiKey` uses `secret(...)`, optional `baseUrl`, the model list; SDK client `maxRetries: 0`. Every model returned by `listModels` carries `parameters`, and tests run it through `assertValidDeclarations`.
+3. `map-request.ts` (pure function, append-only), `map-stream.ts` (raw event stream accumulation, opaque, usage), `errors.ts` (mapped per the table above).
+4. Fixture-mode conformance suite + error mapping cases + mapping prefix unit tests; live-API mode passing locally.
+5. Add a row and a config example to the README's "model provider plugins" table; `pnpm changeset` (new plugin: minor).

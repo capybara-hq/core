@@ -1,26 +1,26 @@
 ---
 name: writing-kernel-api
-description: 给内核新增或修改 HTTP API（Nest controller、guard、错误码）时使用：领域类不依赖 Nest 并用 useFactory 注入、构造参数显式 @Inject、默认拒绝与 @Public 清单、@OrgAction 与 HUMAN_ONLY、ZodPipe、错误码登记、多副本下状态放哪里，以及用 http.inject() 写测试的模板。
+description: Use when adding or changing a kernel HTTP API (Nest controller, guard, error code): domain classes do not depend on Nest and are injected with useFactory, constructor parameters use explicit @Inject, default deny and the @Public list, @OrgAction and HUMAN_ONLY, ZodPipe, registering error codes, where state lives under multiple replicas, and a template for writing tests with http.inject().
 ---
 
-# 写内核 HTTP API
+# Writing the kernel HTTP API
 
-内核 HTTP 是 **NestJS + Fastify**（`packages/kernel/src/http/`）。只有内核用 Nest：**插件不依赖 Nest**，插件路由仍是 `ctx.http.route(method, path, (req: Request) => Promise<Response>)`（见 `.agents/skills/writing-plugins`）。
+The kernel HTTP layer is **NestJS + Fastify** (`packages/kernel/src/http/`). Only the kernel uses Nest: **plugins do not depend on Nest**, and plugin routes are still `ctx.http.route(method, path, (req: Request) => Promise<Response>)` (see `.agents/skills/writing-plugins`).
 
-参考实现：`packages/kernel/src/orgs/`（`orgs.controller.ts` + `members.service.ts` + `org.guard.ts`）。
+Reference implementation: `packages/kernel/src/orgs/` (`orgs.controller.ts` + `members.service.ts` + `org.guard.ts`).
 
-## 分层：领域类不依赖 Nest
+## Layering: domain classes do not depend on Nest
 
-| 层 | 写在哪 | 规则 |
+| Layer | Where it lives | Rule |
 |---|---|---|
-| 领域服务 | `src/<领域>/*.service.ts` 或同类文件 | 普通 class，**不加任何 Nest 装饰器、不 import `@nestjs/*`**；依赖（`KernelDb`、`Redis`、其他服务）走构造参数 |
-| 注入令牌 | `src/http/tokens.ts` | 每个服务一个 `Symbol`，带一行 JSDoc 说明对应类型 |
-| 装配 | `src/http/api.module.ts` 的 `serviceProviders()` | `{ provide: TOKEN, useFactory: (db: KernelDb) => new XxxService(db), inject: [KERNEL_DB] }` |
-| controller | `src/<领域>/*.controller.ts`，加进 `CONTROLLERS` | 只做参数解析、鉴权声明、调用服务、设 Cookie；业务规则写在服务里 |
+| Domain service | `src/<domain>/*.service.ts` or a similar file | A plain class with **no Nest decorators and no `@nestjs/*` imports**; dependencies (`KernelDb`, `Redis`, other services) come through constructor parameters |
+| Injection token | `src/http/tokens.ts` | One `Symbol` per service, with a one-line JSDoc stating the corresponding type |
+| Wiring | `serviceProviders()` in `src/http/api.module.ts` | `{ provide: TOKEN, useFactory: (db: KernelDb) => new XxxService(db), inject: [KERNEL_DB] }` |
+| Controller | `src/<domain>/*.controller.ts`, added to `CONTROLLERS` | Only parses parameters, declares auth, calls services and sets cookies; business rules live in the service |
 
-领域类不依赖 Nest，单元测试直接 `new XxxService(db)`，CLI（如 `capybara admin create`）也能复用。
+Domain classes that don't depend on Nest can be unit-tested with a direct `new XxxService(db)`, and the CLI (such as `capybara admin create`) can reuse them.
 
-## 构造参数必须显式 `@Inject`
+## Constructor parameters must use an explicit `@Inject`
 
 ```ts
 @Controller("api/v1/widgets")
@@ -32,33 +32,33 @@ export class WidgetsController {
 }
 ```
 
-原因：仓库开 `experimentalDecorators`，**不开 `emitDecoratorMetadata`**；tsx / esbuild 与 Vitest 也不产出设计期类型元数据。Nest 拿不到参数类型，漏写 `@Inject` 会在应用初始化时报「Nest can't resolve dependencies」。guard 同理（`@Inject(Reflector)`、`@Inject(KERNEL_DB)`）。用 tsx 跑内核的入口要加载仓库的 `tsconfig.base.json`（根脚本 `--tsconfig tsconfig.base.json`），否则装饰器无法编译。
+Reason: the repo enables `experimentalDecorators` but **not `emitDecoratorMetadata`**; tsx / esbuild and Vitest also do not emit design-time type metadata. Nest cannot get the parameter types, and a missing `@Inject` reports "Nest can't resolve dependencies" at app initialization. The same goes for guards (`@Inject(Reflector)`, `@Inject(KERNEL_DB)`). An entry point that runs the kernel with tsx must load the repo's `tsconfig.base.json` (root scripts use `--tsconfig tsconfig.base.json`), otherwise the decorators cannot compile.
 
-## 鉴权：默认拒绝
+## Auth: default deny
 
-全局 `AuthGuard`（`APP_GUARD`）对**所有**路由默认要求凭据（Bearer API 令牌，或会话 Cookie `cap_at`；会话是否已吊销先看 Redis 标记、再以 PG `sessions.revoked_at` 为准，Redis 丢数据不会让已吊销的会话复活）；经 Cookie 认证的非安全方法（POST / PUT / PATCH / DELETE）要求 CSRF 头 `X-Capybara-Csrf: 1`，Bearer 不检查。每个请求实时读账号状态，停用账号 403 `auth.account_disabled`。按需叠加装饰器：
+The global `AuthGuard` (`APP_GUARD`) requires credentials by default on **every** route (a Bearer API token, or the session cookie `cap_at`; whether a session is revoked is checked first by the Redis marker and then settled by PG `sessions.revoked_at`, so Redis data loss does not resurrect a revoked session); non-safe methods (POST / PUT / PATCH / DELETE) authenticated by cookie require the CSRF header `X-Capybara-Csrf: 1`, and Bearer is not checked. Account status is read live on every request, and a disabled account gets 403 `auth.account_disabled`. Stack decorators as needed:
 
-| 装饰器 | 含义 |
+| Decorator | Meaning |
 |---|---|
-| `@Public()` | 不要求凭据（有凭据仍会解析成 principal；凭据无效即 `ApiError` 时按未携带处理，PG / Redis 故障等其他异常照常 500）。公开路由的非安全方法无论是否带 Cookie 都要求 `X-Capybara-Csrf: 1` |
-| `@SessionOnly()` | 只接受 Web 会话，如令牌管理、改密码：个人令牌 → 403 `auth.session_required`，服务令牌 → 403 `forbidden` |
-| `@EnterpriseAdmin()` | 只允许企业管理员；服务令牌一律 403 |
-| `@AllowService()` | 允许服务令牌（服务 principal 默认被拒） |
-| `@OrgAction(action)` | 组织级路由，见下 |
-| `@CurrentPrincipal()` | 参数装饰器，取 principal；需要人类用户时调 `requireUser(p)` |
+| `@Public()` | Credentials not required (credentials, if present, are still parsed into a principal; when credentials are invalid, i.e. an `ApiError`, they are treated as absent, while other exceptions such as PG / Redis failures are still 500). Non-safe methods on public routes require `X-Capybara-Csrf: 1` whether or not a cookie is present |
+| `@SessionOnly()` | Accepts only web sessions, such as token management and password change: a personal token -> 403 `auth.session_required`, a service token -> 403 `forbidden` |
+| `@EnterpriseAdmin()` | Allows only enterprise admins; service tokens are always 403 |
+| `@AllowService()` | Allows service tokens (a service principal is rejected by default) |
+| `@OrgAction(action)` | Org-level route, see below |
+| `@CurrentPrincipal()` | Parameter decorator, gets the principal; call `requireUser(p)` when a human user is needed |
 
-**加 `@Public()` 路由必须同时更新 `packages/kernel/test/identity/public-routes.test.ts` 的 `PUBLIC_ROUTES` 清单**，否则元测试失败。这道测试枚举全部路由、不带凭据逐一请求，保证没有路由意外公开；它还挂了一个探针 `APP_INTERCEPTOR`，清单外的路由只要 handler 被执行（守卫没拒绝）就判失败——handler 里自己补抛 `auth.required` 掩盖不了误标的 `@Public()`。公开路由必须是真的无需登录的入口（登录、刷新、邀请、初始化），而且要考虑限流与枚举攻击。
+**Adding a `@Public()` route must also update the `PUBLIC_ROUTES` list in `packages/kernel/test/identity/public-routes.test.ts`**, otherwise the meta test fails. This test enumerates all routes and requests each without credentials, ensuring no route is accidentally public; it also mounts a probe `APP_INTERCEPTOR`, and any route outside the list fails as soon as its handler is executed (the guard did not reject), so throwing `auth.required` yourself inside the handler cannot hide a mistaken `@Public()`. A public route must be a genuinely no-login entry point (login, refresh, invitation, setup), and rate limiting and enumeration attacks must be considered.
 
-### 凭据尝试限流（`RATE_LIMITER`）
+### Credential attempt rate limiting (`RATE_LIMITER`)
 
-`LoginRateLimiter`（`src/identity/rate-limit.ts`），计数在 Redis、窗口 900s，校验凭据**之前**先原子占用一次额度，成功后退还：
+`LoginRateLimiter` (`src/identity/rate-limit.ts`), counted in Redis with a 900s window; it atomically reserves one unit of quota **before** verifying credentials and refunds it on success:
 
-- 登录 `reserve(login, ip)` / `succeeded(login, ip)`：（登录名, IP）10 次、IP 50 次、单登录名跨 IP 100 次，任一已达上限即 429 `auth.rate_limited`（带 `Retry-After`），且被拒绝的尝试**不递增任何计数**（Lua 先查后增）。攻击者从自己的 IP 打满某登录名，不影响本人从别的 IP 登录。
-- 其他核对凭据的接口用 `reserveScoped(scope, key, ip, limit, ipLimit = 50)` / `succeededScoped(scope, key, ip)`，键为 `capk:rl:<scope>:…`，与登录的 IP 额度分开。现有 scope：`acct`（改密码，按账号 id 10 次）、`setup`（初始化令牌，全部署 100 次、单 IP 10 次）、`inv`（接受邀请，按令牌 10 次、单 IP 20 次）。新增核对凭据 / 令牌的公开入口照此接入。
+- Login `reserve(login, ip)` / `succeeded(login, ip)`: (login, IP) 10 attempts, IP 50, a single login across IPs 100; reaching any limit gives 429 `auth.rate_limited` (with `Retry-After`), and a rejected attempt **increments no counter** (Lua checks before incrementing). An attacker exhausting a login name from their own IP does not affect the real user logging in from another IP.
+- Other endpoints that check credentials use `reserveScoped(scope, key, ip, limit, ipLimit = 50)` / `succeededScoped(scope, key, ip)`, with keys `capk:rl:<scope>:…`, kept separate from the login IP quota. Existing scopes: `acct` (change password, 10 per account id), `setup` (setup token, 100 for the whole deployment, 10 per IP), `inv` (accept invitation, 10 per token, 20 per IP). A new public entry point that checks credentials / tokens should hook in the same way.
 
-### `@OrgAction` 与 `HUMAN_ONLY`
+### `@OrgAction` and `HUMAN_ONLY`
 
-组织级路由路径里必须有 `:orgId`，声明动作即可，不要在 controller 里自己查成员：
+An org-level route must have `:orgId` in its path; declare the action and do not look up membership in the controller yourself:
 
 ```ts
 @Patch(":orgId/members/:accountId")
@@ -66,61 +66,61 @@ export class WidgetsController {
 async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext, ...) {}
 ```
 
-- 动作与最低角色在 `src/orgs/roles.ts` 的 `ACTION_MIN_ROLE`（guest < member < admin < owner）；新动作在这里登记。
-- `OrgGuard` 每个请求实时从 PG 读组织与角色：组织不存在 / 已删除 / 调用者不是成员 → 一律 404 `org.not_found`（不泄露组织是否存在）；角色不足 → 403 `forbidden`。
-- `@OrgAction` 隐含 `@AllowService()`；`HUMAN_ONLY` 里的动作（除 `org.read`、`org.members.read`、`agents.use` 之外的全部）遇到服务令牌返回 403。
-- **依赖角色的写操作要在事务里重读角色**：guard 的判定与写入之间角色可能被改。服务事务里调 `lockOrgAndAuthorize(trx, orgId, actorAccountId, action)`（`src/orgs/org-lock.ts`）：`SELECT … FROM capybara.orgs WHERE id = $1 AND deleted_at IS NULL FOR UPDATE` 锁组织行，再读发起人当前角色；组织不存在 / 已删除 → 404 `org.not_found`，非成员或角色不足 → 403 `forbidden`，返回 `{ org, role }` 供进一步判断（如令牌 / 邀请角色不得高于发起人）。只需串行化、不看角色时用 `lockOrg` / `tryLockOrg`。服务只收发起人账号 id，不收调用方传入的角色。
-- **企业管理员写操作同理**（`@EnterpriseAdmin` 只是请求开头的判定）：撤销 / 停用账号、新建账号（含企业管理员）、改部署设置都在事务内先调 `lockEnterpriseAdminsAndAuthorize(trx, actorAccountId)`（`src/identity/enterprise-admin.ts`）：取 `pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))` 串行化，并在锁内确认发起人仍是活跃企业管理员，否则 403 `forbidden`。新增企业管理员写操作必须照做。
-- **管理员给自己降级是允许的行为**：`PATCH /orgs/:orgId/members/:self`（admin → member / guest）照常成功并写 `org.member.role_changed` 审计；只有授予 / 撤销 / 改动 owner 才要求发起人是 owner，且任何操作都不能让组织没有 owner（`org.last_owner`）。降级后该账号立刻失去 `org.members.manage`，后续请求由 OrgGuard 实时判定。
-- **依赖「成员关系仍然存在」的写入先锁关系行**：如 `PUT /me/current-org` 在一个事务里先 `FOR SHARE` 组织行、再 `SELECT … FROM memberships WHERE org_id = $1 AND account_id = $2 FOR SHARE`（只查这一条），再写会话；加锁顺序必须与「移出成员」一致（组织行 → 成员关系行），否则会死锁。
-- **令牌过期时间**用 `identity/api-tokens.ts` 导出的共享 schema `FutureIsoDate`（完整 ISO 8601 datetime 字符串且晚于当前时间；数字、`"2099-01-01"` 之类 → 400）。
-- **组织插件配置**（`OrgPluginConfigs`）：`get` / `list` 在 `REPEATABLE READ` 只读事务里读配置行与密钥；`enabled=false` 的插件 `get` 不校验、返回 `{ enabled: false, config: null }`；`put` 同一事务内清掉当前 schema 里已不存在的密钥路径对应的 `capybara.secrets` 行；从未配置时 `config` 列存 NULL。
+- Actions and their minimum roles are in `ACTION_MIN_ROLE` in `src/orgs/roles.ts` (guest < member < admin < owner); register new actions there.
+- `OrgGuard` reads the org and role live from PG on every request: org nonexistent / deleted / caller not a member -> always 404 `org.not_found` (not revealing whether the org exists); insufficient role -> 403 `forbidden`.
+- `@OrgAction` implies `@AllowService()`; actions in `HUMAN_ONLY` (all except `org.read`, `org.members.read` and `agents.use`) return 403 for a service token.
+- **A role-dependent write must re-read the role inside the transaction**: the role may change between the guard's decision and the write. In the service transaction call `lockOrgAndAuthorize(trx, orgId, actorAccountId, action)` (`src/orgs/org-lock.ts`): `SELECT … FROM capybara.orgs WHERE id = $1 AND deleted_at IS NULL FOR UPDATE` locks the org row, then reads the initiator's current role; org nonexistent / deleted -> 404 `org.not_found`, non-member or insufficient role -> 403 `forbidden`, and it returns `{ org, role }` for further checks (such as a token / invitation role not exceeding the initiator's). When you only need serialization and not the role, use `lockOrg` / `tryLockOrg`. Services accept only the initiator's account id, never a role passed in by the caller.
+- **Enterprise admin writes are the same** (`@EnterpriseAdmin` is only a check at the start of the request): revoking / disabling an account, creating an account (including an enterprise admin) and changing deployment settings all first call `lockEnterpriseAdminsAndAuthorize(trx, actorAccountId)` (`src/identity/enterprise-admin.ts`) inside the transaction: it takes `pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))` to serialize and, inside the lock, confirms the initiator is still an active enterprise admin, otherwise 403 `forbidden`. A new enterprise admin write must do the same.
+- **An admin demoting themselves is allowed**: `PATCH /orgs/:orgId/members/:self` (admin -> member / guest) succeeds as usual and writes an `org.member.role_changed` audit entry; only granting / revoking / changing an owner requires the initiator to be an owner, and no operation may leave an org without an owner (`org.last_owner`). After the demotion the account immediately loses `org.members.manage`, and later requests are decided live by OrgGuard.
+- **A write that depends on "the membership still exists" locks the membership row first**: for example `PUT /me/current-org` in one transaction first takes `FOR SHARE` on the org row, then `SELECT … FROM memberships WHERE org_id = $1 AND account_id = $2 FOR SHARE` (querying only that one row), then writes the session; the lock order must match "remove member" (org row -> membership row), otherwise it deadlocks.
+- **Token expiry** uses the shared schema `FutureIsoDate` exported from `identity/api-tokens.ts` (a full ISO 8601 datetime string later than now; a number, `"2099-01-01"` and the like -> 400).
+- **Org plugin config** (`OrgPluginConfigs`): `get` / `list` read config rows and secrets in a `REPEATABLE READ` read-only transaction; for a plugin with `enabled=false`, `get` does not validate and returns `{ enabled: false, config: null }`; `put` clears, in the same transaction, the `capybara.secrets` rows for secret paths that no longer exist in the current schema; when never configured the `config` column stores NULL.
 
-### 现有的组织动作（M6 起）
+### Existing org actions (since M6)
 
-`connectors.manage`（admin）/ `connectors.use`（guest）是 D17 改名后的连接器动作（原 `apps.*`，HTTP `/api/v1/orgs/:orgId/connectors*`，错误码 `connector.*`；不留 `/apps` 别名与兼容层，C28）。M6 新增：
+`connectors.manage` (admin) / `connectors.use` (guest) are the connector actions after the D17 rename (formerly `apps.*`; HTTP `/api/v1/orgs/:orgId/connectors*`, error codes `connector.*`; no `/apps` alias and no compatibility layer, C28). M6 added:
 
-| 动作 | 最低角色 | 用在 |
+| Action | Minimum role | Used for |
 |---|---|---|
-| `trajectories.read` | member | 轨迹查看器；服务里再判定「组织管理员或该 agent 的负责人」，评测对话只给组织管理员，其余一律 404 |
-| `evals.manage` | admin | 评测集、用例、运行、标注 |
-| `org.models.manage` | admin | 本组织的模型用途映射（`/model-purposes`） |
-| `directory.read` | member | 组织视角的企业目录；`POST directory/:itemId/install` 路由只要这一项，服务在组织行锁内按种类再复核 `skills.manage` / `connectors.manage` / `org.plugins.manage`（应用三者都要） |
-| `directory.request` | member | 成员申请目录条目 |
-| `directory.decide` | admin | 组织管理员决定成员申请 |
+| `trajectories.read` | member | trajectory viewer; the service then decides "org admin or the agent's owner", eval conversations go only to org admins, and everything else is 404 |
+| `evals.manage` | admin | eval sets, cases, runs, annotations |
+| `org.models.manage` | admin | this org's model purpose mapping (`/model-purposes`) |
+| `directory.read` | member | the org's view of the enterprise directory; the `POST directory/:itemId/install` route needs only this one, and the service re-checks `skills.manage` / `connectors.manage` / `org.plugins.manage` by kind inside the org row lock (an app bundle needs all three) |
+| `directory.request` | member | a member requests a directory item |
+| `directory.decide` | admin | an org admin decides a member's request |
 
-以上都在 `HUMAN_ONLY` 里（服务令牌 403）。新动作照此在 `roles.ts` 登记并写一行注释说明用途。
+All of the above are in `HUMAN_ONLY` (403 for service tokens). Register new actions in `roles.ts` the same way and add a one-line comment stating the purpose.
 
-旧审计记录 `app.*` 不改写；按 action 查询审计时用 `auditActionAliases`（`identity/audit.ts`）的显式映射把新旧名当同义（不按前缀猜）。
+Old audit records `app.*` are not rewritten; when querying audit by action use the explicit mapping in `auditActionAliases` (`identity/audit.ts`) to treat the old and new names as synonyms (do not guess by prefix).
 
-### 企业管理员端点（`/api/v1/admin/*`）
+### Enterprise admin endpoints (`/api/v1/admin/*`)
 
-部署级端点一律放在 `/api/v1/admin/*`，controller 上加 `@EnterpriseAdmin()`（服务令牌一律 403），称呼一律「企业管理员」（代码标识 `@EnterpriseAdmin`、路径 `/admin` 不改名，C1）。写操作在事务里先 `lockEnterpriseAdminsAndAuthorize`（见上）。现有：
+Deployment-level endpoints always go under `/api/v1/admin/*`, with `@EnterpriseAdmin()` on the controller (service tokens always 403), and are always called "enterprise admin" (the code identifier `@EnterpriseAdmin` and the path `/admin` are not renamed, C1). A write first calls `lockEnterpriseAdminsAndAuthorize` in its transaction (see above). Existing ones:
 
-| 路径 | controller | 内容 |
+| Path | Controller | Content |
 |---|---|---|
-| `overview`、`accounts*`、`orgs`、`settings`、`models`、`model-prices`、`model-purposes*` | `admin/admin.controller.ts` | 概览、账号、组织、部署设置（`deployment_settings`：`orgCreation`、`runConcurrencyOverrides`、`sandboxLimitOverrides`、`priceCurrency`、`customConnectors`、`customSkills`）、模型、价格、部署默认的用途映射 |
-| `plugins*` | `admin/plugins.controller.ts` | 插件列表与详情、部署级配置（`:name/config`）、批准、安装 / 启用 / 停用 / 卸载、包上传（`packages/file`）与 npm 导入（`packages/npm`） |
-| `directory*` | `directory/admin-directory.controller.ts` | 目录导入（`import/file`、`import/npm`）、应用包 `apps/prepare/*` → `apps/:stagingId/confirm`、条目列表 / 详情 / 图标 / 策略 / 删除、插件条目装到部署 |
-| `directory/requests*` | `directory/org-directory.controller.ts` | 待企业管理员决定的目录申请 |
-| `catalogs*` | `directory/catalogs.controller.ts` | 官方 / 企业清单的增删改、刷新、浏览条目、从清单引入 |
+| `overview`, `accounts*`, `orgs`, `settings`, `models`, `model-prices`, `model-purposes*` | `admin/admin.controller.ts` | overview, accounts, orgs, deployment settings (`deployment_settings`: `orgCreation`, `runConcurrencyOverrides`, `sandboxLimitOverrides`, `priceCurrency`, `customConnectors`, `customSkills`), models, prices, the deployment default purpose mapping |
+| `plugins*` | `admin/plugins.controller.ts` | plugin list and details, deployment-level config (`:name/config`), approval, install / enable / disable / uninstall, package upload (`packages/file`) and npm import (`packages/npm`) |
+| `directory*` | `directory/admin-directory.controller.ts` | directory import (`import/file`, `import/npm`), app bundles `apps/prepare/*` -> `apps/:stagingId/confirm`, item list / details / icon / policy / delete, installing plugin items to the deployment |
+| `directory/requests*` | `directory/org-directory.controller.ts` | directory requests awaiting an enterprise admin's decision |
+| `catalogs*` | `directory/catalogs.controller.ts` | create / update / delete official / enterprise catalogs, refresh, browse items, import from a catalog |
 
-- 企业管理员默认**读不到对话**：轨迹与评测只给组织管理员与 agent 负责人（C1），不要在 `/admin` 下加读对话内容的端点。
-- 包上传路由收原始字节（`application/octet-stream`，上限 `packages.maxBytes`，在 Fastify 里单独放宽 bodyLimit）；网页层代理另有自己的上限 `CAPYBARA_WEB_MAX_PACKAGE_BYTES`，见 `docs/config.md`。
-- CLI 复用同一批领域类（`capybara admin grant|revoke <login>`、`capybara plugins …`），所以领域类不能依赖请求上下文。
+- Enterprise admins **cannot read conversations** by default: trajectories and evals go only to org admins and agent owners (C1); do not add endpoints under `/admin` that read conversation content.
+- The package upload route takes raw bytes (`application/octet-stream`, limit `packages.maxBytes`, with the bodyLimit raised separately in Fastify); the web layer proxy has its own limit `CAPYBARA_WEB_MAX_PACKAGE_BYTES`, see `docs/config.md`.
+- The CLI reuses the same domain classes (`capybara admin grant|revoke <login>`, `capybara plugins …`), so domain classes must not depend on request context.
 
-### 审计与个人令牌
+### Audit and personal tokens
 
-写操作在同一事务里调 `audit(trx, { actorAccountId, actorTokenId?, orgId?, action, target?, detail? })`。请求来自个人令牌时把令牌 id 记进 `actor_token_id`：controller 用 `patTokenId(requireUser(p))`（Web 会话返回 undefined）取值，作为服务方法末尾的可选参数 `actorTokenId` 传下去。`detail` 不得含令牌、密码等机密。
+A write calls `audit(trx, { actorAccountId, actorTokenId?, orgId?, action, target?, detail? })` in the same transaction. When the request comes from a personal token, record the token id in `actor_token_id`: the controller takes the value with `patTokenId(requireUser(p))` (returns undefined for a web session) and passes it down as the optional trailing argument `actorTokenId` of the service method. `detail` must not contain secrets such as tokens or passwords.
 
-### 现行的凭据行为
+### Current credential behavior
 
-- 改密码（`PUT /me/password`，`@SessionOnly`）：核对旧密码前占用限流额度（scope `acct`：按账号 id 10 次、按客户端 IP 50 次，与登录额度分开，超限 429 `auth.rate_limited`）；成功后吊销该账号**除当前会话外的所有 Web 会话**，并**吊销其全部个人访问令牌**（R24）；新密码、会话 `revoked_at` 与令牌吊销在同一个 PG 事务内（`AccountsService.changePassword`），Redis 吊销标记随后尽力写入。
-- 停用账号（`PATCH /admin/accounts/:id`）与吊销其全部会话、个人令牌在同一个 PG 事务内完成（`AccountsService.updateAccount`），Redis 吊销标记在提交后尽力写入（鉴权以 PG `revoked_at` 为准）。
-- 初始化向导与凭邀请注册时，会话行与账号 / 组织 / 成员关系在同一事务内写入（`SessionService.create(accountId, meta, trx)`），Cookie 在提交之后才设置；新增「建账号即登录」的流程照此办理。
-- 列表接口一律返回信封对象（如 `{ tokens: [...] }`、`{ members: [...] }`），不返回裸数组；分页的列表附 `next`（下一页游标，作为 `after` 传回，没有更多时为 null），如 `GET /admin/accounts`。
+- Change password (`PUT /me/password`, `@SessionOnly`): reserves rate limit quota before checking the old password (scope `acct`: 10 per account id, 50 per client IP, separate from the login quota; over the limit 429 `auth.rate_limited`); on success it revokes **all web sessions of that account except the current one** and **revokes all of its personal access tokens** (R24); the new password, the session `revoked_at` and the token revocation are in the same PG transaction (`AccountsService.changePassword`), and the Redis revocation markers are then written on a best-effort basis.
+- Disabling an account (`PATCH /admin/accounts/:id`) and revoking all its sessions and personal tokens are done in the same PG transaction (`AccountsService.updateAccount`), and the Redis revocation markers are written best-effort after commit (auth is settled by PG `revoked_at`).
+- In the setup wizard and invitation sign-up, the session row is written in the same transaction as the account / org / membership (`SessionService.create(accountId, meta, trx)`), and the cookie is set only after commit; a new "create an account and log in" flow should do the same.
+- List endpoints always return an envelope object (such as `{ tokens: [...] }`, `{ members: [...] }`), never a bare array; paginated lists add `next` (the next-page cursor, passed back as `after`, null when there is no more), such as `GET /admin/accounts`.
 
-## 参数校验：`ZodPipe`
+## Parameter validation: `ZodPipe`
 
 ```ts
 const Body = z.object({ name: z.string().min(1).max(100) });
@@ -129,31 +129,31 @@ const Body = z.object({ name: z.string().min(1).max(100) });
 async create(@Body(new ZodPipe(Body)) body: z.infer<typeof Body>) {}
 ```
 
-校验失败返回 400 `validation_failed`，`details` 为字段问题列表。字符串都给上限（`max`），防止超长输入。
+A validation failure returns 400 `validation_failed` with `details` as the list of field problems. Give every string an upper bound (`max`) to prevent oversized input.
 
-## 错误码
+## Error codes
 
-- 业务错误抛 `new ApiError(code, message)`（`src/errors.ts`）；新码先登记到 `ERROR_CODES`（码 → HTTP 状态），命名 `<领域>.<snake>`。
-- `message` **一律英文**；界面以 `code` 为 key 走 i18n。不要把密钥、密码哈希、内部异常信息放进 `message` / `details`。
-- 响应信封统一为 `{ error: { code, message, details? } }`，由 `http/error.filter.ts` 生成；框架自身的错误（Nest `HttpException`、Fastify 的请求体过大 / 媒体类型不支持等）按该文件里的状态码表映射成通用码：400 `validation_failed`、401 `auth.required`、403 `forbidden`、404 `not_found`、409 `conflict`、413 `payload_too_large`、415 `unsupported_media_type`、429 `rate_limited`，表外一律 `internal`；未知异常一律 500 `internal`，不回显。
-- 5xx 会记日志，路径经 `redactPath` 脱敏（邀请令牌段换成 `:token`，任何 `cap_` 开头的段换成 `:redacted`）；不要在日志字段里另外放原始 URL 或令牌。
+- Business errors throw `new ApiError(code, message)` (`src/errors.ts`); register a new code in `ERROR_CODES` first (code -> HTTP status), named `<domain>.<snake>`.
+- `message` is **always English**; the UI uses `code` as the i18n key. Do not put secrets, password hashes or internal exception text into `message` / `details`.
+- The response envelope is uniformly `{ error: { code, message, details? } }`, produced by `http/error.filter.ts`; framework errors (Nest `HttpException`, Fastify's body too large / unsupported media type and so on) are mapped to generic codes by the status table in that file: 400 `validation_failed`, 401 `auth.required`, 403 `forbidden`, 404 `not_found`, 409 `conflict`, 413 `payload_too_large`, 415 `unsupported_media_type`, 429 `rate_limited`, anything outside the table `internal`; unknown exceptions are always 500 `internal`, not echoed.
+- 5xx is logged, with the path redacted by `redactPath` (an invitation token segment becomes `:token`, any segment starting with `cap_` becomes `:redacted`); do not put the raw URL or a token into log fields separately.
 
-## 多副本：状态放哪里
+## Multiple replicas: where state lives
 
-生产多副本，同一用户的连续请求会落在不同进程。
+Production runs multiple replicas, and consecutive requests from the same user land on different processes.
 
-| 状态 | 放哪里 |
+| State | Where |
 |---|---|
-| 账号、会话、成员角色、邀请等持久数据 | PG（`KERNEL_DB`），每个请求实时读，**不缓存在进程内存** |
-| 限流计数、短期标记 | Redis（`KERNEL_REDIS`），键前缀 `capk:`，**必须带 TTL**；「检查再写入」要用 Lua 原子完成 |
-| 并发互斥 | PG 行锁 / 咨询锁（如初始化向导用 `pg_advisory_xact_lock`） |
-| 配置 | 注入 `KERNEL_CONFIG`（`() => KernelConfig`），每次调用取当前值，热更新才生效 |
+| Persistent data such as accounts, sessions, member roles, invitations | PG (`KERNEL_DB`), read live on every request, **not cached in process memory** |
+| Rate limit counters, short-lived markers | Redis (`KERNEL_REDIS`), key prefix `capk:`, **must have a TTL**; "check then write" must be done atomically with Lua |
+| Concurrency mutual exclusion | PG row locks / advisory locks (e.g. the setup wizard uses `pg_advisory_xact_lock`) |
+| Config | Inject `KERNEL_CONFIG` (`() => KernelConfig`) and take the current value on every call, so hot updates take effect |
 
-不得用进程内 Map、定时器、本地事件保存跨请求状态。双副本验收测试（`packages/testing/test/m1-acceptance.test.ts`）会暴露这类缺陷。
+Do not use in-process Maps, timers or local events to hold cross-request state. The dual-replica acceptance test (`packages/testing/test/m1-acceptance.test.ts`) exposes this kind of defect.
 
-## 测试模板
+## Test template
 
-单副本 HTTP 测试用 `kernel.http.inject()`（Fastify light-my-request，不占端口）+ `packages/kernel/test/helpers/http.ts` 的 Cookie 罐：
+Single-replica HTTP tests use `kernel.http.inject()` (Fastify light-my-request, takes no port) plus the cookie jar from `packages/kernel/test/helpers/http.ts`:
 
 ```ts
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -185,27 +185,27 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-it("未登录访问被拒，登录后可访问", async () => {
+it("is rejected when not logged in and allowed after login", async () => {
   expect((await k.http.inject({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(401);
-  // 准备账号（如 new AccountsService(kernelDb(db)).createLocal(...)）后：
-  const req = asUser(k.http, cookieJar()); // 自动带 cookie 与 X-Capybara-Csrf: 1，收下 set-cookie
+  // after preparing an account (e.g. new AccountsService(kernelDb(db)).createLocal(...)):
+  const req = asUser(k.http, cookieJar()); // automatically sends the cookie and X-Capybara-Csrf: 1, and collects set-cookie
   const login = await req({ method: "POST", url: "/api/v1/auth/login", payload: { login: "u", password: "pw" } });
   expect(login.statusCode).toBe(200);
   expect((await req({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
 });
 ```
 
-要点：
+Key points:
 
-- 断言错误时同时断言状态码与 `error.code`。
-- 每个新端点至少覆盖：未登录、角色不足 / 非成员（404）、服务令牌（若有 `@OrgAction`）、校验失败、成功路径。
-- 并发与跨副本行为（竞态、登出后另一副本即时失效等）用 `@capybara-hq/testing` 的 `createDualReplicaHarness`（`config` 选项可深合并内核配置，如 `{ auth: { cookieSecure: false } }`），参考 `packages/testing/test/m1-acceptance.test.ts`。
+- When asserting errors, assert both the status code and `error.code`.
+- Every new endpoint covers at least: not logged in, insufficient role / non-member (404), service token (if it has `@OrgAction`), validation failure, success path.
+- For concurrency and cross-replica behavior (races, immediate invalidation on another replica after logout and so on) use `createDualReplicaHarness` from `@capybara-hq/testing` (the `config` option deep-merges kernel config, e.g. `{ auth: { cookieSecure: false } }`); see `packages/testing/test/m1-acceptance.test.ts`.
 
-## 清单
+## Checklist
 
-1. 领域服务（无 Nest）+ 单元测试。
-2. `tokens.ts` 加令牌，`api.module.ts` 加 `useFactory` provider 与 controller。
-3. controller：构造参数 `@Inject`、鉴权装饰器、`ZodPipe`；新错误码登记 `errors.ts`。
-4. 新 `@Public()` 路由 → 更新 `public-routes.test.ts`。
-5. 新配置项按 `.agents/skills/adding-config`；新表按 `.agents/skills/writing-migrations`。
-6. `pnpm lint && pnpm typecheck && pnpm check && pnpm test`；影响发布的改动加 changeset。
+1. Domain service (no Nest) + unit tests.
+2. Add a token in `tokens.ts`, and a `useFactory` provider and the controller in `api.module.ts`.
+3. Controller: constructor parameters with `@Inject`, auth decorators, `ZodPipe`; register new error codes in `errors.ts`.
+4. A new `@Public()` route -> update `public-routes.test.ts`.
+5. New config items follow `.agents/skills/adding-config`; new tables follow `.agents/skills/writing-migrations`.
+6. `pnpm lint && pnpm typecheck && pnpm check && pnpm test`; changes that affect publishing add a changeset.

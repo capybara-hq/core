@@ -1,151 +1,151 @@
 ---
 name: writing-connectors
-description: 新建或修改连接器插件时使用（provides connector@1，如 plugins/connector-mcp、plugins/connector-openapi）：「连接器 / 连接器插件 / 连接器模板」的术语、不支持 stdio MCP、endpointSchema、按次 open / 关闭的会话生命周期、每个请求前 auth() 与 onUnauthorized 重试一次、不跟随重定向与 https（allowInsecureLoopback）、ToolError 的 kind 与熔断、connectorData 与按已复核定义路由（ctx.spec）、inspect 与安装预览、onToolsChanged、onElicit 与 elicitation 续跑、resources / prompts 可选方法、打码是内核的事，以及用 startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer 写测试。
+description: Use when creating or changing a connector plugin (provides connector@1, e.g. plugins/connector-mcp, plugins/connector-openapi): the terms "connector / connector plugin / connector template", no stdio MCP support, endpointSchema, the per-call open / close session lifecycle, auth() before every request and a single onUnauthorized retry, no redirect following and https only (allowInsecureLoopback), ToolError kind and the circuit breaker, connectorData and routing by the reviewed definition (ctx.spec), inspect and the install preview, onToolsChanged, onElicit and elicitation resumption, optional resources / prompts methods, redaction is the kernel's job, and writing tests with startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer.
 ---
 
-# 写连接器
+# Writing connectors
 
-连接器插件把一类远端服务接成组织里的「连接器」（远端服务实例：MCP 服务、OpenAPI 描述的 HTTP API 等；D17 之前叫「应用」）：插件 `provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`。
+A connector plugin connects a kind of remote service as a "connector" in an org (a remote service instance: an MCP server, an HTTP API described by OpenAPI, and so on; called an "app" before D17). The plugin declares `provides: [CONNECTOR_CAPABILITY]` and calls `ctx.provide(CONNECTOR_CAPABILITY, connector)` in `setup`.
 
-**术语（D17）**：
+**Terms (D17)**:
 
-| 词 | 指什么 | 例子 |
+| Term | Meaning | Example |
 |---|---|---|
-| 连接器（connector） | 组织里装好的一个远端服务实例：端点 + 认证 + 工具快照，表 `connectors` | 「Docs」这个 MCP 服务 |
-| 连接器插件 | 实现一种协议的插件，提供能力 `connector@1`（能力名不变），部署级、不需要按组织启用 | `connector-mcp`、`connector-openapi` |
-| 连接器模板 | 企业目录里的一种包（`kind: connector-template`）：引用一个连接器插件，预设端点与认证（不含凭据）、组织可改的端点字段与默认策略，组织填凭据即建出一个连接器 | 「飞书文档」模板 |
-| 应用（app） | 组合包 `app.yaml`：插件 + 连接器模板 + 技能（D17 之后「应用」只指这个） | 飞书插件 + 文档模板 + 技能 |
+| connector | A remote service instance installed in an org: endpoint + auth + tool snapshot, table `connectors` | the "Docs" MCP server |
+| connector plugin | A plugin implementing one protocol, providing the capability `connector@1` (the capability name is unchanged); deployment-level, no per-org enablement needed | `connector-mcp`, `connector-openapi` |
+| connector template | A package kind in the enterprise directory (`kind: connector-template`): references a connector plugin and presets the endpoint and auth (no credentials), the endpoint fields an org may edit and the default policies; the org supplies credentials and a connector is created | the "Lark Docs" template |
+| app | The bundle `app.yaml`: plugins + connector templates + skills (after D17, "app" means only this) | Lark plugin + docs template + skills |
 
-通用的插件写法（清单、配置、多副本禁令）见 `.agents/skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `.agents/skills/writing-tools`，这里只讲连接器特有的部分。
+For general plugin authoring (manifest, config, multi-replica prohibitions) see `.agents/skills/writing-plugins`; for general tool rules (naming, English descriptions and errors, policy, approval) see `.agents/skills/writing-tools`. This skill covers only what is specific to connectors.
 
-参考实现：`plugins/connector-mcp`（Streamable HTTP 的 MCP 服务，含 elicitation、prompts、resources、list_changed）与 `plugins/connector-openapi`（OpenAPI 3.0 / 3.1，每个 operation 一个工具，实现了 `inspect`、`connectorData` 路由）。契约在 `packages/plugin-sdk/src/connector.ts`。
+Reference implementations: `plugins/connector-mcp` (MCP over Streamable HTTP, with elicitation, prompts, resources, list_changed) and `plugins/connector-openapi` (OpenAPI 3.0 / 3.1, one tool per operation, implements `inspect` and `connectorData` routing). The contract is in `packages/plugin-sdk/src/connector.ts`.
 
-两个官方连接器的部署级配置都只有 `allowInsecureLoopback`（默认 `false`，仅开发 / 测试允许 `127.0.0.1` / `localhost` / `[::1]` 的明文 http）；`CAPYBARA_PLUGIN_CONFIG` 里按插件名给，如 `{"connector-mcp":{"allowInsecureLoopback":true}}`。连接器是部署级的，不需要按组织启用。
+The deployment-level config of both official connectors is only `allowInsecureLoopback` (default `false`; for development / testing only, allows plain http to `127.0.0.1` / `localhost` / `[::1]`); give it per plugin name in `CAPYBARA_PLUGIN_CONFIG`, e.g. `{"connector-mcp":{"allowInsecureLoopback":true}}`. Connectors are deployment-level and need no per-org enablement.
 
-**不支持 stdio MCP**：连接器只连远端服务（MCP 用 Streamable HTTP）。内核多副本运行、不在服务端为某个组织拉起本地进程，所以不要写 spawn 子进程的连接器；本地 MCP 服务要先包成 HTTP 端点再接入。
+**stdio MCP is not supported**: connectors only connect to remote services (MCP uses Streamable HTTP). The kernel runs as multiple replicas and does not spawn local processes server-side for an org, so do not write a connector that spawns child processes; wrap a local MCP server as an HTTP endpoint first, then connect it.
 
-**命名（D17）**：管理面叫「连接器」（HTTP `/api/v1/orgs/:orgId/connectors*`、`OrgAction` `connectors.manage` / `connectors.use`、错误码 `connector.*`、表 `connectors` / `connector_tools`、列 `connector_id`、agent 定义里的 `{kind:"connector", connectorId, tools}`）。为了日志确定性与已存数据，以下几处沿用旧名（C27）：模型可见的英文文案（`tool_search` 描述、工具不可用原因、resources 工具描述等仍说 app）；事件 payload 字段 `connection_required.appId` / `appName` 与 `user_message.attachments[].appId` / `appName`；已存 agent 版本里的 `{kind:"app", appId}`（读入时规范化为 connector 形）；secrets 键 `credentials:app:*`；旧审计记录 `app.*`（按 action 查询时用 `auditActionAliases` 的显式映射）。slug 不变，工具 key `<slug>__<tool>` 不变。
+**Naming (D17)**: the management surface says "connector" (HTTP `/api/v1/orgs/:orgId/connectors*`, `OrgAction` `connectors.manage` / `connectors.use`, error codes `connector.*`, tables `connectors` / `connector_tools`, column `connector_id`, `{kind:"connector", connectorId, tools}` in agent definitions). For log determinism and stored data, these places keep the old name (C27): model-visible English text (the `tool_search` description, tool-unavailable reasons, the resources tool descriptions and so on still say app); the event payload fields `connection_required.appId` / `appName` and `user_message.attachments[].appId` / `appName`; `{kind:"app", appId}` in stored agent versions (normalized to the connector form when read); the secrets key `credentials:app:*`; old audit records `app.*` (queries by action use the explicit mapping in `auditActionAliases`). Slugs are unchanged, and so are tool keys `<slug>__<tool>`.
 
-## 契约
+## Contract
 
 ```ts
 interface Connector {
-  kind: string;                 // 存进 connectors.connector，如 "mcp"、"openapi"
-  endpointSchema: ZodTypeAny;   // 连接器 endpoint 的校验（安装 / 预览时内核调用）
+  kind: string;                 // stored in connectors.connector, e.g. "mcp", "openapi"
+  endpointSchema: ZodTypeAny;   // validates the connector endpoint (called by the kernel on install / preview)
   open(args: ConnectorOpenArgs): Promise<ConnectorSession>;
   inspect?(args: { endpoint; signal }): Promise<{ authHints: AuthHint[]; operations?: ConnectorOperation[] }>;
 }
 interface ConnectorOpenArgs {
-  endpoint: unknown;                        // 已按 endpointSchema 校验
+  endpoint: unknown;                        // already validated against endpointSchema
   auth(): Promise<AuthInjection>;           // { headers, query? }
   onUnauthorized(): Promise<void>;
   signal: AbortSignal;
-  onToolsChanged?(): void;                  // 可选
-  onElicit?(req: ElicitationRequest): Promise<ElicitationResponse>;   // 可选
+  onToolsChanged?(): void;                  // optional
+  onElicit?(req: ElicitationRequest): Promise<ElicitationResponse>;   // optional
 }
 interface ConnectorSession {
   listTools(): Promise<ToolSpec[]>;
   callTool(name, input, signal, ctx?: { spec: ToolSpec }): Promise<ToolResult>;
-  listResources?(); readResource?(uri);     // 可选
-  listPrompts?(); getPrompt?(name, args);   // 可选
+  listResources?(); readResource?(uri);     // optional
+  listPrompts?(); getPrompt?(name, args);   // optional
   close(): Promise<void>;
 }
 ```
 
-可选的回调与方法都要判空：旧内核不提供回调，连接器不支持的能力就不实现对应方法。
+Null-check every optional callback and method: an older kernel does not provide the callbacks, and a capability the connector does not support simply has no method implemented.
 
 ## `endpointSchema`
 
-- 内核在安装 / 预览 / 创建时用它校验 `endpoint`（失败 → 400 `validation_failed`），`open` 收到的是已校验的值（连接器里仍 `schema.parse` 一次拿类型）。
-- URL 只接受 https；部署配置 `allowInsecureLoopback` 打开时才放行确切的本机 http 三个主机名（`localhost.evil.com` 之类不算）。校验消息写英文并说明规则。
-- 端点配置对组织成员可见，**不得放凭据**：固定头禁止 `Authorization` / `Cookie` 等凭据头（凭据走连接器认证设置、加密存储）；内核在安装时再按头名 / query 名 / URL 用户信息做一道检查并 400 拒绝（`x-api-key`、`*-token`、`*-secret`、`key` / `token` / `access_token` 等 query）。顶层名为 `url` 或 `*Url` 的字符串字段都按 URL 做凭据检查；没有 `connectors.manage` 的人读连接器时只看到不带 query 的 URL 与头名。
-- 体积大的字段（如 OpenAPI 的 `specText`，≤ 2 MB）：连接器列表 / 详情不回显 `text` / `*Text` 字段全文，只给 `<field>Bytes` 与 `<field>Sha256`；安装与预览两个路由的请求体上限放宽到 6 MiB，其余路由 1 MiB。
+- The kernel validates `endpoint` with it on install / preview / create (failure -> 400 `validation_failed`); `open` receives the validated value (the connector still calls `schema.parse` once to get the type).
+- URLs accept https only; only when the deployment config `allowInsecureLoopback` is on are the three exact loopback http host names allowed (`localhost.evil.com` and the like do not count). Write validation messages in English and state the rule.
+- Endpoint config is visible to org members and **must not contain credentials**: fixed headers must not include credential headers such as `Authorization` / `Cookie` (credentials go through the connector auth settings and are stored encrypted); on install the kernel runs one more check by header name / query name / URL userinfo and rejects with 400 (`x-api-key`, `*-token`, `*-secret`, queries such as `key` / `token` / `access_token`). String fields whose top-level name is `url` or `*Url` are all checked as URLs for credentials; someone without `connectors.manage` who reads a connector sees only the URL without its query and the header names.
+- Large fields (such as OpenAPI's `specText`, <= 2 MB): connector list / detail do not echo the full text of `text` / `*Text` fields, only `<field>Bytes` and `<field>Sha256`; the request body limit of the install and preview routes is raised to 6 MiB, other routes stay at 1 MiB.
 
-## 会话生命周期：按次打开
+## Session lifecycle: open per call
 
-内核每次 `listTools`（安装 / 刷新 / 漂移检查）、每次工具调用、每次读资源或提示都 `open` → 用 → `close`。连接器**不缓存连接、不持有进程内会话**（多副本下下一次调用可能在另一个副本，进程内状态一律不行）。`close` 尽快返回：内核最多等 5 秒，出错只记 warn，不影响结果。尊重 `signal`（`open` 的与 `callTool` 的）；超时由内核的 `tools.timeoutMs` 决定，SDK 自带的请求超时要设得足够长，不要抢在内核前面。
+For every `listTools` (install / refresh / drift check), every tool call, and every resource or prompt read, the kernel does `open` -> use -> `close`. The connector **does not cache connections and holds no in-process session** (with multiple replicas the next call may land on another replica, so no in-process state at all). `close` should return quickly: the kernel waits at most 5 seconds, and an error only logs a warn without affecting the result. Respect `signal` (both `open`'s and `callTool`'s); the timeout is decided by the kernel's `tools.timeoutMs`, so set any SDK-built-in request timeout long enough that it does not fire before the kernel's.
 
-## 出站请求的规矩
+## Rules for outbound requests
 
-- **每个请求前调用 `auth()`**，把返回的 `headers` / `query` 合并进请求，不要在会话开头取一次就一直用（凭据可能刷新）。凭据由内核解密并只在这一刻出现，连接器不存、不记日志、不回显。
-- **401 → `onUnauthorized()` 一次，用新的 `auth()` 重试一次**；仍 401 抛 `ToolError("Authentication failed for this app; ask the user to reconnect it.")`。不要循环；其他错误也不要在插件里重试，重试与熔断由内核管。
-- **不跟随重定向**（`fetch(…, { redirect: "manual" })`，3xx 一律报错）：跟随会把请求体与注入的凭据头带到别的源。取远端描述文档（OpenAPI 的 `specUrl`）也不带凭据、也不跟随重定向。
-- 非 https（本机 loopback 例外）的任何出站地址一律拒绝，包括文档里声明的 server 地址。
-- 远端内容不受信任：远端描述里的 `inputSchema` 由内核在校验前清洗（去掉 `pattern` / `patternProperties` / `format`；这些约束出现在 `not` / `oneOf` / `if` / `then` / `else` 之下或 schema 用了 `unevaluatedProperties` / `unevaluatedItems` 时，去掉不一定是放宽，整份不校验；超过 64 KB 或嵌套超过 32 层的不校验，每个 schema 独立的 Ajv 实例）；连接器自己也限制响应体大小与读取时长（openapi：文档 2 MB / 30 秒，响应正文 5 MB）。
+- **Call `auth()` before every request** and merge the returned `headers` / `query` into the request; do not fetch it once at session start and reuse it (credentials may refresh). The kernel decrypts credentials and they appear only at this moment; the connector does not store, log or echo them.
+- **On 401, call `onUnauthorized()` once and retry once with a fresh `auth()`**; if it is still 401, throw `ToolError("Authentication failed for this app; ask the user to reconnect it.")`. Do not loop; do not retry other errors inside the plugin either: retry and the circuit breaker belong to the kernel.
+- **Do not follow redirects** (`fetch(…, { redirect: "manual" })`, any 3xx is an error): following would carry the request body and the injected credential headers to another origin. Fetching a remote description document (OpenAPI's `specUrl`) also carries no credentials and follows no redirects.
+- Reject any outbound address that is not https (loopback excepted), including server addresses declared in documents.
+- Remote content is untrusted: the kernel sanitizes the `inputSchema` in a remote description before validation (removes `pattern` / `patternProperties` / `format`; when these constraints appear under `not` / `oneOf` / `if` / `then` / `else`, or the schema uses `unevaluatedProperties` / `unevaluatedItems`, removing them is not necessarily a relaxation and the whole schema is not validated; schemas over 64 KB or nested deeper than 32 levels are not validated; each schema gets its own Ajv instance); the connector also limits response body size and read time itself (openapi: document 2 MB / 30 seconds, response body 5 MB).
 
-## `ToolError`、`kind` 与熔断
+## `ToolError`, `kind` and the circuit breaker
 
-- 抛 `ToolError(message)`：message **原样**给模型，必须英文、可执行（含 `use` / `call` / `retry` / `check` / `ask` / `pass` / `provide` 之一，`pnpm check` 的 `tool-error-actionable` 检查）。预览 / 安装失败时同一条消息（按注入的凭据打码）会带进 502 `connector.connect_failed` 的说明，所以写得让管理员也看得懂。
-- `new ToolError(message, { kind: "unavailable" })` 表示**远端不可用**（连不上、HTTP 5xx）：计入连接器熔断。缺省 `kind: "error"`（参数错误、业务错误、401 重试后仍失败、重定向、4xx、JSON-RPC 业务错误）说明远端可达，与 `isError` 结果一样清零计数。
-- 熔断在内核（连续失败 `tools.breakerFailures` 次后打开 `tools.breakerOpenSeconds` 秒），只有超时、传输 / 连接错误（非 `ToolError` 的异常）与 `kind: "unavailable"` 计数。连接器如实抛错 / 返回即可。
-- 抛其他异常：模型只看到 `Tool <key> failed (<ErrorName>)…`，详情进经打码的日志。上游 HTTP 错误给模型只说状态码，正文截断后记 warn。
-- 结果的 `isError: true` 表示「调用成功但内容是错误」（如 MCP 的 `isError`、OpenAPI 的非 2xx 正文）。
+- Throw `ToolError(message)`: the message goes to the model **verbatim**, must be English and actionable (contain one of `use` / `call` / `retry` / `check` / `ask` / `pass` / `provide`; the `tool-error-actionable` check of `pnpm check`). When a preview / install fails, the same message (redacted by the injected credentials) is carried into the description of the 502 `connector.connect_failed`, so write it so admins can understand it too.
+- `new ToolError(message, { kind: "unavailable" })` means the **remote is unavailable** (cannot connect, HTTP 5xx): it counts toward the connector circuit breaker. The default `kind: "error"` (bad arguments, business errors, still failing after the 401 retry, redirects, 4xx, JSON-RPC business errors) means the remote is reachable, and like an `isError` result it resets the count.
+- The circuit breaker lives in the kernel (after `tools.breakerFailures` consecutive failures it opens for `tools.breakerOpenSeconds` seconds); only timeouts, transport / connection errors (exceptions that are not `ToolError`) and `kind: "unavailable"` count. The connector just throws / returns honestly.
+- Throwing any other exception: the model sees only `Tool <key> failed (<ErrorName>)…`, and details go into the redacted log. For an upstream HTTP error the model gets only the status code; the body is truncated and logged as a warn.
+- A result with `isError: true` means "the call succeeded but the content is an error" (such as MCP's `isError`, or an OpenAPI non-2xx body).
 
-## `listTools`、`connectorData` 与按已复核的定义路由
+## `listTools`, `connectorData` and routing by the reviewed definition
 
-- 映射远端工具清单时保留 `annotations`（内核据此推导默认策略：`readOnlyHint` → allow，其余 ask），缺描述用 title / name 兜底并 warn。连接器工具的 key 是 `<connectorSlug>__<tool>`，整体须匹配 `^[a-zA-Z0-9_-]{1,64}$`（见 `.agents/skills/writing-tools`）；超长 / 含非法字符时内核不截断、不猜，停用该工具并在 `issues` 里写原因。工具名由连接器给出：把远端名字规整到合理长度并保证同一连接器内不重复（openapi 把 operationId 里的非法字符换成下划线、截到 40 字符，重名在预览里报告）。
-- **`ToolSpec.connectorData`**（Ruling A21，安全）：调用所需的路由信息放在这个不透明、可 JSON 序列化的字段里（OpenAPI：方法、路径模板、参数位置 / 风格、请求体媒体类型、解析好的服务器地址）。内核存进快照并计入 `spec_hash`（变了即漂移、待复核），**从不发给模型**。
-- 调用时内核把该工具**已复核**的定义（`connector_tools.spec`，不是待复核的 `pending_spec`）作为 `callTool` 的第 4 个参数 `ctx.spec` 交回。远端描述可能被改（rug-pull），所以按 `ctx.spec` 路由，**不要重新读取远端描述**；`ctx` 缺失（旧内核）时报错提示管理员刷新。MCP 这种由远端按名字路由的连接器可忽略 `ctx`。
-- 远端描述改了怎么办不是连接器的事：内核定时（`tools.driftIntervalHours`）、收到 `onToolsChanged`、管理员刷新时重新 `listTools` 比对快照，新增或变化的工具待复核，复核前不可用（见 `.agents/skills/writing-tools` 的漂移一节）。所以 `listTools` 的输出应**确定性**：同一份远端描述每次给出同样的 spec（字段顺序稳定、不带时间戳 / 随机值），否则会反复触发复核。
+- When mapping the remote tool list, keep `annotations` (the kernel derives the default policy from them: `readOnlyHint` -> allow, everything else ask); if the description is missing, fall back to title / name and warn. A connector tool key is `<connectorSlug>__<tool>` and the whole must match `^[a-zA-Z0-9_-]{1,64}$` (see `.agents/skills/writing-tools`); if it is too long / contains illegal characters the kernel neither truncates nor guesses, it disables the tool and writes the reason in `issues`. Tool names come from the connector: normalize remote names to a reasonable length and guarantee uniqueness within one connector (openapi replaces illegal characters in operationId with underscores and cuts to 40 characters; duplicates are reported in the preview).
+- **`ToolSpec.connectorData`** (Ruling A21, security): the routing information needed for a call goes in this opaque, JSON-serializable field (OpenAPI: method, path template, parameter locations / styles, request body media type, the resolved server address). The kernel stores it in the snapshot and counts it in `spec_hash` (a change means drift, pending review), and **never sends it to the model**.
+- On a call the kernel hands back the tool's **reviewed** definition (`connector_tools.spec`, not the pending `pending_spec`) as the 4th argument of `callTool`, `ctx.spec`. A remote description can be changed (rug-pull), so route by `ctx.spec` and **do not re-read the remote description**; when `ctx` is missing (older kernel) raise an error telling the admin to refresh. A connector like MCP where the remote routes by name may ignore `ctx`.
+- What to do when the remote description changes is not the connector's job: the kernel re-runs `listTools` on a schedule (`tools.driftIntervalHours`), on receiving `onToolsChanged`, and when an admin refreshes, and compares with the snapshot; new or changed tools are pending review and unusable until reviewed (see the drift section of `.agents/skills/writing-tools`). So the output of `listTools` should be **deterministic**: the same remote description gives the same spec every time (stable field order, no timestamps / random values), otherwise it triggers review again and again.
 
-## `inspect` 与安装预览（Ruling A20）
+## `inspect` and the install preview (Ruling A20)
 
-`inspect({ endpoint, signal })` 不带凭据读端点的描述，返回 `authHints`（远端声明的认证方式，映射到内核 AppAuth 的形状：`bearer` / `basic` / `api_key{in,name}` / `oauth_client{tokenUrl,scopes}` / `oauth_code{authorizationUrl,tokenUrl,scopes}`，带 `scheme` 名与可选 `description`；只列内核支持的方式）与可选的 `operations`（`id` 是端点里勾选用的 id，`method` 大写、`path`、`summary?`）。失败抛英文的 `ToolError`。
+`inspect({ endpoint, signal })` reads the endpoint's description without credentials and returns `authHints` (the auth methods the remote declares, mapped to the kernel's AppAuth shapes: `bearer` / `basic` / `api_key{in,name}` / `oauth_client{tokenUrl,scopes}` / `oauth_code{authorizationUrl,tokenUrl,scopes}`, with a `scheme` name and an optional `description`; list only the methods the kernel supports) and optional `operations` (`id` is the id used for selection in the endpoint, `method` upper case, `path`, `summary?`). On failure throw an English `ToolError`.
 
-内核的 `POST /api/v1/orgs/:orgId/connectors/preview`（`connectors.manage`，什么都不写）与网页安装向导据此工作：有 `inspect` 时返回 `authHints` / `operations`；给了 `auth: none`、或静态认证带凭据、或客户端凭据流带 client 时再 `listTools` 返回 `tools`（key、默认策略、`issue`）与 `issues`，否则 `tools: null`（授权码流不列，避免动态注册）。不需要预填的连接器（如 MCP）不实现 `inspect`，内核判空。
+The kernel's `POST /api/v1/orgs/:orgId/connectors/preview` (`connectors.manage`, writes nothing) and the web install wizard work from this: with `inspect` they return `authHints` / `operations`; when `auth: none` is given, or static auth comes with credentials, or the client-credentials flow comes with a client, `listTools` is run and `tools` (key, default policy, `issue`) and `issues` are returned, otherwise `tools: null` (the authorization-code flow is not listed, to avoid dynamic registration). A connector that needs no prefill (such as MCP) does not implement `inspect`, and the kernel null-checks it.
 
 ## `onToolsChanged`
 
-远端报告工具清单变了（MCP `notifications/tools/list_changed`）→ 调用 `args.onToolsChanged?.()`：不等待、出错只记 warn、不影响本次调用，可能多次调用。内核据此投递一次该连接器的漂移检查（维护队列，jobId `drift-<connectorId>-<分钟桶>` 去重）。连接器不要自己重新拉清单。
+When the remote reports that the tool list changed (MCP `notifications/tools/list_changed`), call `args.onToolsChanged?.()`: do not wait, an error only logs a warn, it does not affect the current call, and it may be called multiple times. The kernel uses it to enqueue one drift check for that connector (maintenance queue, deduplicated by jobId `drift-<connectorId>-<minute bucket>`). The connector must not re-fetch the list itself.
 
-**已知限制（漂移检查与个人凭据）**：
+**Known limitation (drift checks and personal credentials)**:
 
-- 个人凭据型连接器（静态个人凭据或 `oauth_code`）的后台漂移检查没有发起人，内核依次尝试最近写入凭据的至多 3 位现任成员的凭据（Ruling A19），所以每次检查用的凭据可能不同，在最近活跃的成员之间轮换。
-- 因此，按用户返回不同工具集合的服务（工具清单取决于是谁登录）会让工具在「已消失」与「待复核」之间来回翻转：这次用 A 的凭据看不到某工具 → 记为消失并停用；下次用 B 的凭据又看到 → 按新增进入待复核。这类服务建议改用组织凭据，或让服务端对所有成员返回同一份工具清单。
+- The background drift check of a personal-credential connector (static personal credential or `oauth_code`) has no initiator; the kernel tries in turn the credentials of up to 3 current members who wrote credentials most recently (Ruling A19), so the credential used may differ from check to check, rotating among the most recently active members.
+- Therefore a service that returns a different tool set per user (the tool list depends on who is logged in) makes tools flip between "gone" and "pending review": this time A's credential does not see a tool -> recorded as gone and disabled; next time B's credential sees it again -> it enters pending review as newly added. For such services, use an org credential instead, or make the server return the same tool list to all members.
 
-## `onElicit`：远端在调用途中向用户要输入
+## `onElicit`: the remote asks the user for input mid-call
 
-MCP `elicitation/create`（表单与 URL 两种模式）→ 调用 `args.onElicit?.(request)`，把返回的 `ElicitationResponse` 原样回给远端。**内核没提供 `onElicit` 时不要声明 elicitation 能力**（远端便不会发起）。URL 模式也可能以错误 `-32042`（URL elicitation required）出现：逐个交给 `onElicit`，全部 `accept` 后重试一次调用。
+For MCP `elicitation/create` (form and URL modes), call `args.onElicit?.(request)` and return the resulting `ElicitationResponse` to the remote unchanged. **When the kernel did not provide `onElicit`, do not declare the elicitation capability** (the remote will then not initiate it). URL mode may also appear as the error `-32042` (URL elicitation required): hand them to `onElicit` one by one, and once all are `accept`ed retry the call once.
 
-**连接器不要等用户、不要缓存答案**。内核不能在等人期间保持远端调用（run 暂停、会话关闭），所以需要问用户时它会中止 `callTool` 的 signal，并让 `onElicit` 以错误拒绝——连接器让该错误原样结束这次调用。内核把请求转成通用输入请求（`packages/kernel/src/tools/elicitation.ts`：表单按 InputForm 子集映射 `requestedSchema`，URL 模式为带 `url` 的表单 + 「已完成」开关），用户回答后用**同一 input 重新发起调用**；远端再次发起**同样的** elicitation（表单按 `requestedSchema` + 文案、URL 按 origin + path + 文案匹配）时，`onElicit` 立即用答案答复。
+**The connector must not wait for the user and must not cache answers.** The kernel cannot hold a remote call while waiting for a person (the run pauses, the session closes), so when it needs to ask the user it aborts the `callTool` signal and makes `onElicit` reject with an error; the connector lets that error end this call as is. The kernel turns the request into a generic input request (`packages/kernel/src/tools/elicitation.ts`: a form maps `requestedSchema` to an InputForm subset; URL mode is a form carrying `url` plus a "done" switch), and after the user answers it **re-issues the call with the same input**; when the remote initiates the **same** elicitation again (a form matched by `requestedSchema` + text, a URL by origin + path + text), `onElicit` answers immediately with the answer.
 
-限制（Ruling A24，已接受）：远端第二次不再问 / 换了 schema 时答案用不上（后者会再问一次，至多 3 轮）；elicitation 之前的副作用会随重新发起的调用再做一次；URL 完成通知（`notifications/elicitation/complete`）收不到，以用户确认为准；超出子集的表单立即 `decline`，工具结果后附英文说明。
+Limitations (Ruling A24, accepted): if the remote does not ask a second time / changes the schema, the answer goes unused (the latter asks again, at most 3 rounds); side effects before the elicitation are performed again with the re-issued call; the URL completion notification (`notifications/elicitation/complete`) is not received, the user's confirmation is authoritative; a form beyond the subset is `decline`d immediately, with an English note appended to the tool result.
 
-## 可选：resources 与 prompts
+## Optional: resources and prompts
 
-- 会话实现了 `listResources` / `readResource` 时内核补 `<slug>__list_resources` / `<slug>__read_resource` 两个工具（均标 `readOnlyHint`，默认 allow；管理员可停用），并支持网页输入框的 `@` 引用（消息接口 `attachments: [{ connectorId, uri }]`，内核以发送者凭据读取、打码、限长，作为用户消息的附加文本块）。资源读取（列表与附件）遵守管理员对该连接器 `read_resource` 工具的启停（Ruling A23：停用 → 不列出、附件 409 `connector.resources_disabled`）。
-- 实现了 `listPrompts` / `getPrompt` 时内核提供 `GET /orgs/:orgId/connectors/prompts`、`POST /orgs/:orgId/connectors/:connectorId/prompts/:name`，网页输入框出现 `/连接器:提示名` 斜杠命令。`getPrompt` 失败抛英文 `ToolError`、不含凭据。
-- 这两类都由用户本人发起、用其凭据，不经工具策略。代码见 `packages/kernel/src/tools/connector-content.ts`。
+- When the session implements `listResources` / `readResource`, the kernel adds two tools `<slug>__list_resources` / `<slug>__read_resource` (both marked `readOnlyHint`, default allow; admins can disable them) and supports `@` references in the web input box (message API `attachments: [{ connectorId, uri }]`; the kernel reads with the sender's credentials, redacts, limits length, and attaches the result as an extra text block of the user message). Resource reads (lists and attachments) honor the admin's enable / disable of that connector's `read_resource` tool (Ruling A23: disabled -> not listed, attachment 409 `connector.resources_disabled`).
+- When `listPrompts` / `getPrompt` are implemented, the kernel provides `GET /orgs/:orgId/connectors/prompts` and `POST /orgs/:orgId/connectors/:connectorId/prompts/:name`, and the web input box gets `/<connector>:<prompt name>` slash commands. When `getPrompt` fails, throw an English `ToolError` without credentials.
+- Both kinds are initiated by the user personally with their own credentials and do not go through tool policy. Code is in `packages/kernel/src/tools/connector-content.ts`.
 
-## 连接器模板（C30）
+## Connector templates (C30)
 
-连接器模板让组织不必懂端点细节：企业管理员把模板包导入企业目录，组织管理员在目录里「安装」，只填凭据（静态凭据经 `credential`，OAuth 经 `client`）与模板 `editableEndpoint` 列出的端点字段，内核按模板拼出安装输入、走与手动安装同一条 `ConnectorsService.create`（端点按 `endpointSchema` 与凭据规则复核、默认策略记 `policy_source 'template'`）。模板包的格式、`editableEndpoint` 与 `defaultToolPolicies` 的写法见 `.agents/skills/writing-apps`。对连接器插件的要求：
+A connector template spares the org from endpoint details: an enterprise admin imports the template package into the enterprise directory, an org admin "installs" it from the directory and fills in only the credentials (static credentials via `credential`, OAuth via `client`) and the endpoint fields listed in the template's `editableEndpoint`; the kernel assembles the install input from the template and goes through the same `ConnectorsService.create` as manual install (the endpoint is re-checked by `endpointSchema` and the credential rules, and default policies are recorded with `policy_source 'template'`). For the template package format and how to write `editableEndpoint` and `defaultToolPolicies`, see `.agents/skills/writing-apps`. What this asks of a connector plugin:
 
-- 模板导入与组织安装都按**本副本已加载**的连接器插件与 `Connector.kind` 校验（没加载 → 导入拒绝 / 安装 `directory.not_deployed`）；`editableEndpoint` 的路径要能在你的 `endpointSchema` 里找到（`directory/schema-path.ts` 的 `schemaHasPath`：走对象字段、record、union / 交叉的分支，剥掉 optional / default / pipe 输入端等包装，**不进数组元素**）。所以组织可能要改的字段放在对象路径上，字段名保持稳定：改名等于让已发布的模板失效。
-- 端点里不能放凭据（模板的预设所有组织都能看到）；需要凭据的一律走认证设置。
-- 部署设置 `customConnectors` 为 `deny` 时组织只能从企业目录（模板）建连接器，手动安装返回 403 `directory.custom_disabled`。
+- Template import and org install both validate against the connector plugin **loaded on this replica** and its `Connector.kind` (not loaded -> import rejected / install `directory.not_deployed`); the paths in `editableEndpoint` must be findable in your `endpointSchema` (`schemaHasPath` in `directory/schema-path.ts`: walks object fields, records, union / intersection branches, strips wrappers such as optional / default / the input side of pipe, and **does not enter array elements**). So put fields an org may need to change on object paths and keep field names stable: renaming invalidates already published templates.
+- No credentials in the endpoint (a template's presets are visible to every org); anything that needs a credential goes through the auth settings.
+- When the deployment setting `customConnectors` is `deny`, an org can create connectors only from the enterprise directory (templates), and manual install returns 403 `directory.custom_disabled`.
 
-## OAuth 与凭据：全在内核
+## OAuth and credentials: all in the kernel
 
-连接器只需照上面「每个请求前 `auth()`、401 调一次 `onUnauthorized()`」做，OAuth 本身（`packages/kernel/src/tools/oauth/`）不在连接器里：
+A connector only needs to follow "call `auth()` before every request, call `onUnauthorized()` once on 401" above; OAuth itself (`packages/kernel/src/tools/oauth/`) is not in the connector:
 
-- `auth()` 返回的 Bearer 由内核在过期前 60 秒刷新；`onUnauthorized()` 在 Redis 锁 `capk:oauth-refresh:<orgId>:<connectorId>:<owner>` 内强制刷新（别的副本已刷新则直接用新 token，不并发刷新）；refresh 被拒 → 凭据删除、调用得到「需要连接」。
-- 认证方式 `oauth_code`（个人；`discovery: "mcp"` 走 RFC 9728 → RFC 8414 发现，`discovery: "manual"` 给 `authorizationUrl` / `tokenUrl`；`client: "dcr"` 安装时 RFC 7591 注册，授权服务器不支持 DCR → 502 `connector.connect_failed` 带 `dcr_unsupported`，改用 `client: "manual"` + `credential: { clientId, clientSecret? }`）与 `oauth_client`（组织，客户端凭据流）。都要求配置 `http.publicUrl`；可选 `tokenAuthMethod`（`client_secret_basic` 默认 / `client_secret_post`）。
-- 只有令牌端点以 400 / 401 返回 `invalid_grant` / `invalid_client` / `unauthorized_client` 才作废令牌；429、其他 4xx、没有错误码的响应一律按暂时不可用处理、凭据保留。
-- 授权码连接器安装时不 `listTools`（首个成员经 `POST /orgs/:orgId/connectors/:connectorId/connect` → 授权服务器 → `GET /api/v1/oauth/callback` 连接后，用其 token 刷新工具清单）。轮换客户端密钥：`PUT .../credentials/org` 传 `{ clientId, clientSecret }`。
+- The Bearer returned by `auth()` is refreshed by the kernel 60 seconds before expiry; `onUnauthorized()` forces a refresh inside the Redis lock `capk:oauth-refresh:<orgId>:<connectorId>:<owner>` (if another replica already refreshed, the new token is used directly, with no concurrent refresh); when the refresh is rejected -> the credential is deleted and the call gets "connection required".
+- Auth method `oauth_code` (personal; `discovery: "mcp"` uses RFC 9728 -> RFC 8414 discovery, `discovery: "manual"` supplies `authorizationUrl` / `tokenUrl`; `client: "dcr"` registers per RFC 7591 at install, and if the authorization server does not support DCR -> 502 `connector.connect_failed` with `dcr_unsupported`, switch to `client: "manual"` + `credential: { clientId, clientSecret? }`) and `oauth_client` (org, client-credentials flow). Both require `http.publicUrl` to be configured; optional `tokenAuthMethod` (`client_secret_basic` default / `client_secret_post`).
+- A token is invalidated only when the token endpoint returns `invalid_grant` / `invalid_client` / `unauthorized_client` with 400 / 401; 429, other 4xx and responses without an error code are all treated as temporarily unavailable and the credential is kept.
+- An authorization-code connector does not `listTools` at install (after the first member connects via `POST /orgs/:orgId/connectors/:connectorId/connect` -> authorization server -> `GET /api/v1/oauth/callback`, the tool list is refreshed with their token). To rotate the client secret: `PUT .../credentials/org` with `{ clientId, clientSecret }`.
 
-## 打码是内核的事
+## Redaction is the kernel's job
 
-内核写事件 / 存档之前，用本次调用**实际注入的凭据值**给连接器工具的结果与错误打码（`[REDACTED]`），日志也经打码。但连接器仍不得主动把凭据写进错误消息、日志或工具结果：**不回显请求头**、不把含凭据的 URL 放进错误里、不 `JSON.stringify` 整个请求。测试里用「回显凭据」的夹具（`echoKey`、`intercept`）确认没有漏。
+Before writing events / archives, the kernel redacts connector tool results and errors (`[REDACTED]`) using the **credential values actually injected** for this call, and logs are redacted too. But the connector still must not write credentials into error messages, logs or tool results on its own: **do not echo request headers**, do not put a URL containing credentials into an error, do not `JSON.stringify` the whole request. In tests use fixtures that "echo the credential" (`echoKey`, `intercept`) to confirm nothing leaks.
 
-## 测试
+## Testing
 
-均来自 `@capybara-hq/testing`（连接器插件作 devDependency）：
+All from `@capybara-hq/testing` (connector plugins use it as a devDependency):
 
-- `startFakeMcpServer({ tools, resources?, prompts?, sessions?, requireBearer?, verifyBearer?, protectedResource?, unauthorizedTimes?, onCall?, intercept?, sseResponses? })`：模拟慢、报错、401、回显凭据（`calls[].headers`）、超大输出、重定向；`tools` 数组每个请求重新读取，测试里改它即模拟漂移；`sseResponses: true` 时处理函数可调 `ctx.notifyToolsChanged()` 在调用途中发 list_changed；`sessions: true`（有状态会话）时可调 `ctx.elicit(params)` 发起 elicitation（记录在 `server.elicitations`）。
-- `startFakeOpenApiServer({ apiKey?, apiKeyIn?, echoKey?, specRedirect?, spec? })`：`/openapi.json` 给出 `defaultFakeOpenApiSpec` 的宠物 CRUD 文档，`/v1/*` 实现它（API key 校验、404 / 500 / 302、纯文本与二进制响应）；`setSpec` 模拟文档更新。
-- `startFakeOAuthServer({ dcr?, metadata?, accessTokenTtl?, clients?, tokenDelayMs? })`：自动批准的授权端点、PKCE 校验、refresh 轮换、client_credentials、DCR 开关、`revokeAccessTokens` / `revokeRefreshTokens`；配合 `startFakeMcpServer({ verifyBearer: (t) => as.verify(t), protectedResource: { authorizationServers: [as.issuer], advertise: "header" | "well-known" } })`；内核需 `tools.oauthAllowInsecureLoopback: true` 与 `http.publicUrl`。
+- `startFakeMcpServer({ tools, resources?, prompts?, sessions?, requireBearer?, verifyBearer?, protectedResource?, unauthorizedTimes?, onCall?, intercept?, sseResponses? })`: simulates slowness, errors, 401, echoed credentials (`calls[].headers`), oversized output, redirects; the `tools` array is re-read on every request, so changing it in a test simulates drift; with `sseResponses: true` a handler can call `ctx.notifyToolsChanged()` to send list_changed mid-call; with `sessions: true` (stateful sessions) a handler can call `ctx.elicit(params)` to initiate an elicitation (recorded in `server.elicitations`).
+- `startFakeOpenApiServer({ apiKey?, apiKeyIn?, echoKey?, specRedirect?, spec? })`: `/openapi.json` serves the pet CRUD document `defaultFakeOpenApiSpec`, and `/v1/*` implements it (API key check, 404 / 500 / 302, plain text and binary responses); `setSpec` simulates a document update.
+- `startFakeOAuthServer({ dcr?, metadata?, accessTokenTtl?, clients?, tokenDelayMs? })`: auto-approving authorization endpoint, PKCE check, refresh rotation, client_credentials, DCR switch, `revokeAccessTokens` / `revokeRefreshTokens`; use together with `startFakeMcpServer({ verifyBearer: (t) => as.verify(t), protectedResource: { authorizationServers: [as.issuer], advertise: "header" | "well-known" } })`; the kernel needs `tools.oauthAllowInsecureLoopback: true` and `http.publicUrl`.
 
-测试清单（照 `plugins/connector-mcp/test/` 与 `plugins/connector-openapi/test/`）：endpoint 校验（非 https、凭据头）、每个请求前取 `auth()`、401 重试一次且仅一次、重定向被拒、`ToolError` 的 `kind`、凭据不进错误、`close` 后无残留连接、`signal` 中止；有 `connectorData` 的连接器再测「描述变了仍按 `ctx.spec` 调用」。内核端到端见 `packages/kernel/test/tools/mcp-e2e.test.ts`、`openapi-e2e.test.ts`、`drift.test.ts`、`oauth/`。
+Test checklist (follow `plugins/connector-mcp/test/` and `plugins/connector-openapi/test/`): endpoint validation (non-https, credential headers), `auth()` fetched before every request, 401 retried once and only once, redirects rejected, `ToolError` `kind`, credentials not in errors, no leftover connections after `close`, `signal` abort; for a connector with `connectorData`, also test "the call still goes by `ctx.spec` after the description changes". Kernel end-to-end: `packages/kernel/test/tools/mcp-e2e.test.ts`, `openapi-e2e.test.ts`, `drift.test.ts`, `oauth/`.
 
-真实服务验收在 `packages/kernel/test/tools/m3-live.test.ts`（DeepWiki MCP、Petstore OpenAPI、GitHub MCP）：只在显式设置 `CAPYBARA_TEST_LIVE_TOOLS=1` 时运行（普通 `pnpm test` 不访问外网）；GitHub 另需 `CAPYBARA_TEST_GITHUB_MCP_TOKEN` 与 `CAPYBARA_TEST_GITHUB_REPO`（owner/name），会开一个 issue 并在 `finally` 里经 GitHub REST 关闭。改了连接器的出站请求或协议处理后，本地用 `CAPYBARA_TEST_LIVE_TOOLS=1 pnpm vitest run packages/kernel/test/tools/m3-live.test.ts -t live` 跑一遍。
+Live-service acceptance is in `packages/kernel/test/tools/m3-live.test.ts` (DeepWiki MCP, Petstore OpenAPI, GitHub MCP): it runs only when `CAPYBARA_TEST_LIVE_TOOLS=1` is explicitly set (a plain `pnpm test` does not touch the external network); GitHub also needs `CAPYBARA_TEST_GITHUB_MCP_TOKEN` and `CAPYBARA_TEST_GITHUB_REPO` (owner/name), and it opens an issue and closes it in `finally` through the GitHub REST API. After changing a connector's outbound requests or protocol handling, run it locally once with `CAPYBARA_TEST_LIVE_TOOLS=1 pnpm vitest run packages/kernel/test/tools/m3-live.test.ts -t live`.

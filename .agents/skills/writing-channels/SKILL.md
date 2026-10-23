@@ -1,130 +1,130 @@
 ---
 name: writing-channels
-description: 新建或修改 IM 渠道、第三方登录、通讯录插件时使用（provides channel@1 / identity-source@1 / directory@1，如 plugins/slack、plugins/lark）：入站事件的 messageId / threadId / tenantId 约定、去掉 @ 机器人、只处理文本、onEvent resolve 后才 ack、card_action 的 eventId 与卡片目标、locale、ChannelSendError 的 retryable / reason、features 与 minEditIntervalMs、拆分返回最后一条 id、idempotencyKey；卡片规范（validateChannelCard、renderCardAsText、questionRenderableInline、按钮回传值）；防 @所有人与链接白名单；长连接与选主（含插件停用 / 升级时 supervisor 停掉旧实例的长连接）、持久入站 / 出站、去重、卡片操作复核由内核负责；自管重连；身份源键 <插件>:<租户>、PKCE、ID token；通讯录分页、configured()、不完整必须报错、大批移除保护；以及用 startFakeChannelServer / startFakeSlack / startFakeLark 与双副本写测试。
+description: Use when creating or modifying IM channel, third-party login or directory sync plugins (provides channel@1 / identity-source@1 / directory@1, e.g. plugins/slack, plugins/lark). Covers the inbound event conventions for messageId / threadId / tenantId, stripping the bot @, handling text only, ack only after onEvent resolves, card_action eventId and card target, locale, ChannelSendError retryable / reason, features and minEditIntervalMs, returning the last id when splitting, idempotencyKey; the card spec (validateChannelCard, renderCardAsText, questionRenderableInline, button callback values); preventing @everyone and the link allowlist; long connection and leader election (including the supervisor stopping the old instance's long connections when a plugin is disabled / upgraded), durable inbound / outbound, dedup and card action re-authorization owned by the kernel; self-managed reconnection; the identity source key <plugin>:<tenant>, PKCE, ID token; directory pagination, configured(), incomplete listings must error, the mass-removal guard; and writing tests with startFakeChannelServer / startFakeSlack / startFakeLark and dual-replica.
 ---
 
-# 写渠道、登录与通讯录插件
+# Writing channel, login and directory plugins
 
-一个 IM 平台通常由一个插件同时提供三种能力，三处共用**同一个身份键**：
+An IM platform is usually provided by one plugin offering all three capabilities, and the three share **the same identity key**:
 
-| 能力 | 契约 | 配置层级 | 是否按组织启用 |
+| Capability | Contract | Config level | Enabled per org |
 |---|---|---|---|
-| `channel@1`（机器人） | `packages/plugin-sdk/src/channel.ts`、卡片 `cards.ts` | 每个**渠道连接**一份（`connectionSchema`，组织管理员在网页「渠道」里建） | 是（`orgScoped`） |
-| `identity-source@1`（网页登录） | `identity.ts` | **部署级**（`config.deployment`，经 `auth.loginSources` 启用） | 否（Ruling P1） |
-| `directory@1`（通讯录） | `directory.ts` | **组织级**（`config.org`） | 是（`orgScoped`） |
+| `channel@1` (bot) | `packages/plugin-sdk/src/channel.ts`, cards in `cards.ts` | one per **channel connection** (`connectionSchema`, created by an org admin under "Channels" in the web app) | yes (`orgScoped`) |
+| `identity-source@1` (web login) | `identity.ts` | **deployment-level** (`config.deployment`, enabled through `auth.loginSources`) | no (Ruling P1) |
+| `directory@1` (directory sync) | `directory.ts` | **org-level** (`config.org`) | yes (`orgScoped`) |
 
-通用的插件写法（清单、两级配置、多副本禁令、权限批准）见 `.agents/skills/writing-plugins`，这里只讲这三种能力特有的部分。
+General plugin authoring (manifest, two-level config, the multi-replica prohibitions, permission approval) is in `.agents/skills/writing-plugins`; this skill covers only what is specific to these three capabilities.
 
-参考实现：
+Reference implementations:
 
-- `plugins/slack`：Socket Mode、Block Kit、Sign in with Slack（OIDC，校验 ID token）、`users.list` 通讯录。
-- `plugins/lark`：Lark 长连接（官方 SDK `WSClient`）、JSON 2.0 交互卡片、OAuth 授权码 + PKCE、按部门遍历通讯录。
-- `packages/kernel/test/fixtures/plugins/fake-im`：最小形状（连 `startFakeChannelServer`），先读它再读真实插件。
+- `plugins/slack`: Socket Mode, Block Kit, Sign in with Slack (OIDC, validating the ID token), `users.list` directory.
+- `plugins/lark`: the Lark long connection (official SDK `WSClient`), JSON 2.0 interactive cards, OAuth authorization code + PKCE, a directory traversed by department.
+- `packages/kernel/test/fixtures/plugins/fake-im`: the minimal shape (connects to `startFakeChannelServer`); read it before reading the real plugins.
 
-两个插件的 README（`plugins/slack/README.md`、`plugins/lark/README.md`）逐条写了平台文档出处与每个取舍，写新平台时照这个粒度写。
+The two plugins' READMEs (`plugins/slack/README.md`, `plugins/lark/README.md`) list the platform doc source and every trade-off one by one; follow that granularity when writing a new platform.
 
-## 身份键（先看这个）
+## Identity key (look at this first)
 
-- `identities.source` = `"<插件名>:<租户 id>"`，`external_id` = 平台用户 id。登录、渠道入站、通讯录三处必须得出**同一个**键，同一个人只对应一行身份、一个账号（Slack：`slack:<team id>` + `U…`；Lark：`lark:<tenant_key>` + `open_id`）。
-- 租户的口径要在三处一致：`verify` 返回的 `tenantId`、入站 `sender.tenantId`、`ExternalIdentity.tenantId`、`DirectoryMember.tenantId`。Slack 取 team id（Enterprise Grid 下是工作区 team，**不是** enterprise `E…`，否则同一人被拆成两行）；Lark 取 `tenant_key`。
-- 平台用户 id 按应用区分的平台（Lark 的 `open_id`）：登录、机器人、通讯录必须是同一个应用，插件要尽量自动核对（见 Lark README）。
+- `identities.source` = `"<plugin name>:<tenant id>"`, `external_id` = the platform user id. Login, channel inbound and directory must all derive **the same** key, so one person maps to exactly one identity row and one account (Slack: `slack:<team id>` + `U…`; Lark: `lark:<tenant_key>` + `open_id`).
+- The tenant definition must be consistent in all three places: the `tenantId` returned by `verify`, the inbound `sender.tenantId`, `ExternalIdentity.tenantId`, `DirectoryMember.tenantId`. Slack uses the team id (under Enterprise Grid it is the workspace team, **not** the enterprise `E…`, otherwise the same person is split into two rows); Lark uses `tenant_key`.
+- For platforms whose user ids differ per app (Lark's `open_id`): login, bot and directory must be the same app, and the plugin should check this automatically as far as possible (see the Lark README).
 
 ## `channel@1`
 
 ```ts
 interface Channel {
-  connectionSchema: ZodTypeAny;            // 密钥字段用 secret()
+  connectionSchema: ZodTypeAny;            // use secret() for secret fields
   features: { cards: boolean; edit: boolean; threads: boolean; minEditIntervalMs?: number };
   verify(args): Promise<{ botUserId; botName; tenantId }>;
-  connect(args: ChannelConnectArgs): Promise<void>;   // 长连接循环
+  connect(args: ChannelConnectArgs): Promise<void>;   // long connection loop
   send(args: ChannelSendArgs): Promise<{ messageId: string }>;
   update(args: ChannelSendArgs & { messageId: string }): Promise<void>;
 }
 ```
 
-### 入站事件（`InboundEvent`）的约定
+### Conventions for inbound events (`InboundEvent`)
 
-- **`messageId` 在本连接内唯一且稳定**（平台重投时相同）：内核按它去重。Slack 用 `<频道>:<ts>`，Lark 用 `message_id`。
-- **群聊 `target.threadId` = 话题根消息的 `messageId`**（与根消息入站时的 `messageId` 完全相同的串），不是平台另外的话题 id（Lark 是 `root_id` 的 `om_…`，不是 `thread_id` 的 `omt_…`）。消息不在话题里时不带 `threadId`：内核用这条消息的 `messageId` 当话题键，回复投进以它为根的话题，于是后续回复落到同一个会话。私聊不带。
-- **`sender.tenantId`** 为发言人所属企业（同上口径）。与连接租户不同的人（外部联系人、共享频道里的别家企业、Slack Grid 其他工作区）内核**只允许绑定**，即使连接开了匿名访客也不按匿名处理。
-- **`sender.displayName` / `avatarUrl`**：拿得到就带（Slack 取事件自带的 `user_profile`，否则 `users.info`；Lark 取用户信息接口）。查询要有短超时，查不到就不带，不能因此拖过平台的确认时限。内核把显示名放在绑定确认页（防钓鱼），没有时回落到 `externalId`。
-- **`text` 去掉 @ 机器人**，`mentionsBot` 另行说明是否 @ 了；只整理 @ 两侧的空格，换行与缩进保留（代码块不能被压坏）。其他人的 @ 换成可读的 `@名字`。
-- **M4 只处理文本**：图片、文件等附件忽略，消息只有附件时不发事件（带说明文字的文件分享只取文字）。
-- **编辑、撤回 / 删除不发事件**；机器人自己与其他机器人的消息忽略。
-- 群聊里插件如实转发话题回复（`mentionsBot: false` 也转发），**内核目前只处理 @ 了机器人的群消息**（D4），话题跟进需要再 @。
-- **`card_action`**：`messageId` = 卡片所在消息的 id（同一张卡片多次点击相同）；`eventId` = 平台给这次点击的唯一 id，拿得到就带（Slack `<频道>:<卡片 ts>:<点击者>:<action_ts>`，Lark 回调 `header.event_id`），内核按它去重平台重投；群聊里 `target.threadId` 拿得到就带，拿不到时内核取发出卡片时记下的话题。
-- **`target.chatType` 在卡片点击里只是参考值**：内核先核对点击所在 chat 与发卡片时记下的目标（`channel_card_messages`）一致，再按**记下的**会话类型、chat、话题解析点击者与回复。不一致只回「不能处理」，不解析发言人、不发绑定链接。所以按钮回传值里的会话类型被篡改或卡片被转发都无效。
-- `directory_changed`：平台推人员变动（Slack `team_join` / `user_change`，Lark `contact.user.*_v3`）时发 `{ type: "directory_changed", tenantId }`，内核按分钟合并后触发一次通讯录同步。
+- **`messageId` is unique and stable within the connection** (the same when the platform redelivers): the kernel dedups by it. Slack uses `<channel>:<ts>`, Lark uses `message_id`.
+- **In a group chat, `target.threadId` = the `messageId` of the thread's root message** (exactly the same string as the `messageId` when the root message came in), not some other thread id of the platform (for Lark it is the `om_…` of `root_id`, not the `omt_…` of `thread_id`). When the message is not in a thread, don't include `threadId`: the kernel uses this message's `messageId` as the thread key, and replies are delivered into the thread rooted at it, so later replies land in the same conversation. Direct messages carry none.
+- **`sender.tenantId`** is the enterprise the speaker belongs to (same definition as above). For people whose tenant differs from the connection's (external contacts, other companies in a shared channel, other Slack Grid workspaces) the kernel **allows binding only**, and does not treat them as anonymous even if the connection has anonymous guests enabled.
+- **`sender.displayName` / `avatarUrl`**: include them if you can get them (Slack takes the event's own `user_profile`, otherwise `users.info`; Lark uses the user info API). The lookup needs a short timeout, and if it can't be found leave it out; it must not drag past the platform's acknowledgement deadline. The kernel shows the display name on the binding confirmation page (anti-phishing), and falls back to `externalId` when absent.
+- **`text` has the bot @ stripped**, and `mentionsBot` separately says whether the bot was @-mentioned; only tidy the spaces on both sides of the @, and keep newlines and indentation (code blocks must not be crushed). @-mentions of other people are replaced with a readable `@name`.
+- **M4 handles text only**: attachments such as images and files are ignored, and no event is sent when a message has only attachments (for a file share with a caption, only the caption is taken).
+- **Edits and recalls / deletions send no event**; messages from the bot itself and other bots are ignored.
+- In group chats the plugin forwards thread replies faithfully (including `mentionsBot: false`), **and the kernel currently handles only group messages that @-mention the bot** (D4), so thread follow-ups need another @.
+- **`card_action`**: `messageId` = the id of the message the card is in (the same for multiple clicks on the same card); `eventId` = the platform's unique id for this click, included if you can get it (Slack `<channel>:<card ts>:<clicker>:<action_ts>`, Lark callback `header.event_id`), and the kernel dedups platform redeliveries by it; in group chats include `target.threadId` if you can get it, and when you can't, the kernel uses the thread recorded when the card was sent.
+- **`target.chatType` in a card click is only a reference value**: the kernel first checks that the chat of the click matches the target recorded when the card was sent (`channel_card_messages`), then resolves the clicker and the reply using the **recorded** conversation type, chat and thread. On a mismatch it only replies "cannot handle", and neither resolves the speaker nor sends a binding link. So tampering with the conversation type in a button callback value, or forwarding the card, has no effect.
+- `directory_changed`: when the platform pushes personnel changes (Slack `team_join` / `user_change`, Lark `contact.user.*_v3`), send `{ type: "directory_changed", tenantId }`, and the kernel merges them by the minute and triggers one directory sync.
 
-### `connect` 与确认（ack）
+### `connect` and acknowledgement (ack)
 
-- `onEvent` 由内核实现：只做去重（`message` 按 `messageId`、带 `eventId` 的 `card_action` 按 `eventId`，各 24 小时）并把事件持久地排进队列 `cap-kernel-channels`，很快返回。**resolve 即内核已可靠收下**。
-- 插件**在 `onEvent` resolve 之后才向平台确认**；reject 时**不要确认**（Lark 处理函数重新抛出，SDK 回 500），让平台重投。插件不自己重试 `onEvent`，也不在 `onEvent` 前做慢事（资料查询要有短超时，平台确认时限 Slack / Lark 都只有几秒）。
-- 被忽略的事件直接确认。
-- `connect` 只在 `signal` 中止时返回。抛错或提前返回，内核都记连接的 `last_error`，指数退避（`channels.retryBaseMs` 起翻倍，上限 5 分钟）后由任一副本重试。
+- `onEvent` is implemented by the kernel: it only dedups (`message` by `messageId`, `card_action` with an `eventId` by `eventId`, 24 hours each) and durably enqueues the event on the queue `cap-kernel-channels`, returning quickly. **Resolving means the kernel has reliably received it.**
+- The plugin **acknowledges to the platform only after `onEvent` resolves**; on reject **don't acknowledge** (the Lark handler rethrows and the SDK replies 500), so the platform redelivers. The plugin doesn't retry `onEvent` itself, and doesn't do slow work before `onEvent` (profile lookups need a short timeout; the platform acknowledgement deadline is only a few seconds for both Slack and Lark).
+- Ignored events are acknowledged directly.
+- `connect` returns only when `signal` aborts. If it throws or returns early, the kernel records the connection's `last_error`, backs off exponentially (doubling from `channels.retryBaseMs`, capped at 5 minutes), and any replica retries.
 
-### 重连
+### Reconnection
 
-- SDK 自带的重连如果吞掉错误（Slack SDK 3.1.0 把 `apps.connections.open` 的失败变成未处理的拒绝；Lark SDK 按服务端下发的长间隔静默重试、不回到调用方），**关掉它，自己写循环**：平台正常回收连接时立即重连；连接失败或连续短命（不到 10 秒）按指数退避**加抖动**；连续 5 次、或平台明确拒绝（凭据错误、`link_disabled`、超过连接数上限）时**抛错**，让内核记 `last_error` 并接管退避。
-- 等待用可中止的 `AbortSignal.timeout`（见 `plugins/lark/src/wait.ts` 的 `pause`），不能用 `setTimeout`（`check:plugin-state` 的 `plugin-timer`）。
-- `signal` 中止时关掉 socket 再返回；中止发生在建连途中也要检查 `signal.aborted` 并断开（否则泄漏连接）。
+- If the SDK's built-in reconnection swallows errors (Slack SDK 3.1.0 turns a failure of `apps.connections.open` into an unhandled rejection; the Lark SDK silently retries on the long interval the server sends and never returns to the caller), **turn it off and write your own loop**: reconnect immediately when the platform recycles the connection normally; on connection failure or consecutive short-lived connections (under 10 seconds) back off exponentially **with jitter**; after 5 in a row, or when the platform explicitly refuses (bad credentials, `link_disabled`, over the connection limit), **throw**, so the kernel records `last_error` and takes over backoff.
+- Wait with an abortable `AbortSignal.timeout` (see `pause` in `plugins/lark/src/wait.ts`); don't use `setTimeout` (`plugin-timer` of `check:plugin-state`).
+- When `signal` aborts, close the socket and then return; if the abort happens in the middle of connecting, also check `signal.aborted` and disconnect (otherwise the connection leaks).
 
 ### `send` / `update`
 
-- `message.text` 是 Markdown，转成平台原生富文本，**不翻译**。超过平台单条上限时插件自行拆成多条按序发送，**返回最后一条的 id**（内核之后编辑的是这条）。
-- `update` 的新文本超过单条上限、无法改成一条 → 抛不可重试的 `ChannelSendError`，`reason: "too_large"`：内核改为把完整文本作为新消息 `send`（由插件拆分）。`features.edit` 为 false 的渠道不会被调用 `update`；卡片状态变化时内核另发一条新卡片，旧卡片的按钮仍可点，内核回「已处理」。
-- `features.minEditIntervalMs`：平台允许的同一条消息两次编辑的最小间隔，内核流式草稿的更新间隔取 `max(1000, minEditIntervalMs)`（Slack 2500，Lark 1500）。更高并发靠限流错误 + 退避兜底。
-- `locale`（`"zh" | "en"`，组织设置的 IM 语言）：插件自己渲染的固定词（按钮、降级文本）按它选。
-- `idempotencyKey`（可选）：不超过 40 个 `[A-Za-z0-9_-]` 字符（内核实际给 32 个），同一条逻辑消息的每次重试都相同。平台支持幂等发送时透传（Lark `uuid`；拆成多条时第 i 条用 `<key>-<i>`），不支持的忽略（Slack）。
-- `features.cards` 为 false 的渠道，内核先把每张卡片按 `renderCardAsText(card, locale)` 退回为文本、以空行分隔拼在正文之后，交给插件的消息不带 `cards`（Ruling A33，`packages/kernel/src/channels/features.ts`）。退回文本是 **Markdown**（与 `message.text` 一样由插件转换成原生富文本），模型可控的字段（审批标题、输入预览、提问标题、回答摘要）放在行内代码 / 围栏代码块里，不会变成链接；插件的转换器必须让代码内容按原样显示。声明 `cards: true` 的插件收到 `message.cards`，自己渲染原生卡片；某张卡片渲染不了（如按钮回传值超限）时插件自己退回链接或文本。
-- `features.threads` 为 false 的渠道（平台没有话题），内核交给插件的目标不带 `threadId`，回复直接发在 chat 里。入站事件一般也不带 `threadId`（平台本来就没有话题可填）；不带时群里每条 @ 消息各开一个对话。
-- `features.edit` 为 false 时不发流式草稿，只在定稿时发一条（见上）。
+- `message.text` is Markdown, to be converted to the platform's native rich text, **not translated**. When it exceeds the platform's per-message limit, the plugin splits it into several messages itself and sends them in order, **returning the id of the last one** (the kernel edits that one afterwards).
+- When the new text of `update` exceeds the per-message limit and can't be made into one message -> throw a non-retryable `ChannelSendError` with `reason: "too_large"`: the kernel then `send`s the full text as a new message (split by the plugin). `update` is never called on a channel with `features.edit` false; when a card's state changes the kernel sends a new card instead, the old card's buttons are still clickable, and the kernel replies "already handled".
+- `features.minEditIntervalMs`: the minimum interval the platform allows between two edits of the same message; the kernel's streaming draft update interval is `max(1000, minEditIntervalMs)` (Slack 2500, Lark 1500). Higher concurrency is covered by rate-limit errors + backoff.
+- `locale` (`"zh" | "en"`, the org-setting IM language): fixed wording the plugin renders itself (buttons, fallback text) is chosen by it.
+- `idempotencyKey` (optional): at most 40 `[A-Za-z0-9_-]` characters (the kernel actually gives 32), identical on every retry of the same logical message. Pass it through when the platform supports idempotent sending (Lark `uuid`; when split into several messages the i-th uses `<key>-<i>`), and ignore it when unsupported (Slack).
+- For a channel with `features.cards` false, the kernel first falls each card back to text via `renderCardAsText(card, locale)`, joins them after the body separated by blank lines, and the message handed to the plugin has no `cards` (Ruling A33, `packages/kernel/src/channels/features.ts`). The fallback text is **Markdown** (converted by the plugin to native rich text, like `message.text`); model-controllable fields (approval title, input preview, question title, answer summary) are placed in inline code / fenced code blocks and won't turn into links; the plugin's converter must display code content as is. A plugin that declares `cards: true` receives `message.cards` and renders native cards itself; when a card can't be rendered (for example a button callback value over the limit) the plugin falls back to a link or text itself.
+- For a channel with `features.threads` false (the platform has no threads), the target the kernel hands the plugin has no `threadId`, and replies are sent straight into the chat. Inbound events generally carry no `threadId` either (the platform has no thread to fill in); without it, each @ message in a group opens its own conversation.
+- When `features.edit` is false no streaming draft is sent, only one message at finalization (see above).
 
-### 失败分类（`ChannelSendError`）
+### Failure classification (`ChannelSendError`)
 
-| 情况 | 抛 | 内核怎么做 |
+| Situation | Throw | What the kernel does |
 |---|---|---|
-| 限流、平台 5xx、网络、超时 | `retryable: true`，带平台给的 `retryAfterMs` | 退避后重试（有次数上限） |
-| 凭据失效、权限被收回、应用停用 | `retryable: false, reason: "auth"` | 记连接 `last_error`，停止该会话本轮投递 |
-| 机器人被移出群、群解散、用户不可达 | `reason: "target_gone"` | 停止该会话本轮投递，不计入毒事件 |
-| 内容被平台拒绝 | `reason: "rejected"`（未给原因按它处理） | 同一事件失败满 3 次跳过它，并尽力回一句「请到网页上处理」 |
-| 拆分后仍超限 / 编辑超长 | `reason: "too_large"` | 同上；`update` 时改发新消息 |
+| rate limit, platform 5xx, network, timeout | `retryable: true`, with the platform's `retryAfterMs` | retry after backoff (with an attempt cap) |
+| credentials invalid, permission revoked, app disabled | `retryable: false, reason: "auth"` | record the connection's `last_error`, stop delivery for this conversation this round |
+| bot removed from the group, group dissolved, user unreachable | `reason: "target_gone"` | stop delivery for this conversation this round, not counted as a poison event |
+| content rejected by the platform | `reason: "rejected"` (treated as this when no reason is given) | skip the same event after it fails 3 times, and make a best effort to reply with "please handle this on the web" |
+| still over the limit after splitting / edit too long | `reason: "too_large"` | same as above; on `update`, send a new message instead |
 
-其他异常内核按可重试处理（次数有限）。判断用 `isChannelSendError`（鸭子类型，不用 `instanceof`）。错误消息只带步骤与平台错误码，**不带令牌、请求头或响应体**（`cause` 可挂原错误，但原错误本身也不能含凭据，见 Lark 的 header-free 错误）。
+The kernel treats other exceptions as retryable (a limited number of times). Use `isChannelSendError` to check (duck typing, not `instanceof`). The error message carries only the step and the platform error code, **not tokens, request headers or response bodies** (`cause` may attach the original error, but the original error itself must not contain credentials either, see Lark's header-free errors).
 
-## 卡片规范（`cards.ts`）
+## Card spec (`cards.ts`)
 
-`ChannelCard` 由内核产出，插件按各 IM 的原生格式渲染：
+`ChannelCard` is produced by the kernel, and the plugin renders it in each IM's native format:
 
-| `kind` | 内容 | 交互 |
+| `kind` | Content | Interaction |
 |---|---|---|
-| `approval` | 标题、工具 / 连接器、agent、参数预览（内核已按键名与连接密钥打码，≤500 字符）、可选范围 `scopes`、`expiresAt`、`state`、`decidedBy`、`webUrl` | `pending` 时每个范围一个批准按钮 + 拒绝 + 网页链接；其他状态去掉按钮，只显示状态与「详情」链接 |
-| `question` | `form`（`InputForm`）、`state`、`answerSummary`、`webUrl` | `questionRenderableInline(form)` 为真（恰一个枚举字段，单选 ≤5 / 多选 ≤10，不允许「其他」）时在 IM 内作答，否则只给网页链接 |
-| `connect` | `appName`、`url` | 链接按钮 |
-| `bind` | `text`、`url` | 链接按钮（内核只在私聊里发） |
+| `approval` | title, tool / connector, agent, argument preview (already redacted by the kernel by key name and connection secrets, ≤500 characters), optional scopes `scopes`, `expiresAt`, `state`, `decidedBy`, `webUrl` | when `pending`, one approve button per scope + reject + web link; in other states the buttons are removed and only the state and a "details" link are shown |
+| `question` | `form` (`InputForm`), `state`, `answerSummary`, `webUrl` | when `questionRenderableInline(form)` is true (exactly one enum field, single-select ≤5 / multi-select ≤10, no "other" allowed) it is answered inside the IM, otherwise only the web link is given |
+| `connect` | `appName`, `url` | link button |
+| `bind` | `text`, `url` | link button (the kernel sends it only in direct messages) |
 
-- 结构用 `validateChannelCard(card)` 校验（返回问题列表）；URL 字段必须是 http(s) 绝对地址且不超过 2000 字符。
-- 退回文本统一用 `renderCardAsText(card, locale)`（Markdown，含链接；模型可控字段在代码里），不要自己另写一套；声明 `cards: false` 时内核已替你做了。
-- 卡片操作解析成 `CardAction { cardKind, cardId, action, scope?, answer? }`。**按钮回传值**：把需要的信息（卡片 id、动作、范围、选项值）编码进按钮本身（紧凑 JSON 数组），插件不记发出的表单，任一副本都能解析；编码超过平台上限（Slack 2000，Lark 没写明，取 2000）时抛错、改为只给网页链接；解析**严格**：长度、类型、种类、范围逐项核对，不合法返回 null 并忽略这次点击（只认本插件前缀的 action id）。
-- 回传值里的会话类型只是参考（见上，内核以记下的卡片目标为准）；能关的话关掉卡片转发后的交互（Lark `enable_forward_interaction: false`）。
-- 卡片点击的应答不改卡片：卡片随后由内核按审批 / 提问的新状态更新。
+- Validate the structure with `validateChannelCard(card)` (returns a list of problems); URL fields must be absolute http(s) addresses of at most 2000 characters.
+- For fallback text always use `renderCardAsText(card, locale)` (Markdown, including links; model-controllable fields in code), and don't write your own; when `cards: false` is declared the kernel has already done it for you.
+- A card action is resolved into `CardAction { cardKind, cardId, action, scope?, answer? }`. **Button callback value**: encode the needed information (card id, action, scope, option value) into the button itself (a compact JSON array); the plugin doesn't remember the forms it sent, so any replica can parse it; when the encoding exceeds the platform limit (Slack 2000; Lark doesn't state one, take 2000) throw and give only the web link instead; parsing is **strict**: length, type, kind and scope are checked item by item, an invalid value returns null and the click is ignored (only action ids with this plugin's prefix are recognized).
+- The conversation type in the callback value is only a reference (see above; the kernel goes by the recorded card target); if you can, turn off interaction after a card is forwarded (Lark `enable_forward_interaction: false`).
+- The response to a card click doesn't change the card: the kernel then updates the card per the new approval / question state.
 
-## 安全规则（每个渠道插件都要做）
+## Security rules (every channel plugin must do these)
 
-- **模型文本不能 @ 所有人或任何人**：转换富文本时转义平台的控制序列。Slack：`&`、`<`、`>` 转义，链接地址里的 `<`、`>`、`|` 百分号编码，模型写不出 `<!channel>` / `<!here>` / `<@U…>`；Lark：代码之外的 `<` 与 `&` 转成实体、反斜杠转成 `&#92;`，代码里的 `<at` 拆开，模型写不出 `<at id=all>`。卡片里的标题、参数预览、显示名、退回文本同样转义（不只是正文）。
-- **链接白名单**：只把 `http(s)://`（Lark 另加 `mailto:`）做成链接；`javascript:`、平台私有协议、图片与引用式链接按普通文字显示。卡片的链接按钮只用 http(s) 地址。
-- **凭据不进日志与错误**：令牌、App Secret、client secret 不写进日志、错误消息、`last_error`。部署级 `secret()` 字段与渠道连接的密钥字段内核会登记打码，但打码只是兜底。
-- 凭据都由内核按配置传入（`config` 参数），插件**不需要 `permissions.secrets`**；`permissions.network` 列出固定域名（只展示、不拦截，不支持通配，WSS 主机由平台分配时列主要的一个或不列）。
+- **Model text must not @ everyone or anyone**: escape the platform's control sequences when converting rich text. Slack: escape `&`, `<`, `>`, percent-encode `<`, `>`, `|` in link addresses, so the model can't write `<!channel>` / `<!here>` / `<@U…>`; Lark: turn `<` and `&` outside code into entities, backslash into `&#92;`, and split `<at` inside code, so the model can't write `<at id=all>`. Titles, argument previews, display names and fallback text in cards are escaped the same way (not just the body).
+- **Link allowlist**: only turn `http(s)://` (Lark adds `mailto:`) into links; `javascript:`, platform-private protocols, images and reference-style links are shown as plain text. A card's link buttons use only http(s) addresses.
+- **Credentials stay out of logs and errors**: tokens, App Secret and client secret are not written to logs, error messages or `last_error`. The kernel registers deployment-level `secret()` fields and a channel connection's secret fields for redaction, but redaction is only a backstop.
+- All credentials are passed in by the kernel from config (the `config` parameter), so the plugin **doesn't need `permissions.secrets`**; `permissions.network` lists fixed domains (display only, not enforced, no wildcards; when the WSS host is assigned by the platform, list the main one or none).
 
-## 内核负责什么（插件不要做）
+## What the kernel owns (plugins must not do these)
 
-- **长连接与选主**：runs only on the gateway role (outbound delivery and inbound jobs stay on the worker role)。每个渠道连接任一时刻只由一个副本持有（Redis 租约 `capk:channel-lease:<id>`，TTL `channels.leaseTtlMs` 默认 30s，`channels.scanIntervalMs` 默认 10s 续租与扫描）；持有者死了，另一副本在租约过期后接管；连接被停用、删除或轮换凭据时持有者断开、按新配置重连。插件的 `connect` 只管一条连接，不判断「该不该由我连」。**插件在运行中被停用、卸载或升级换实例时（C17）**，内核的 `ChannelSupervisor.pluginChanged` 交还该插件在本副本持有的全部长连接：中止旧实例 `connect` 的 `signal`、等它返回后释放租约；插件仍在（新实例）时下一轮扫描由任一副本按新实例重新选主，已撤销的不再连接。所以 `connect` 必须及时响应 `signal` 并返回，不要吞掉中止继续重连。
-- **持久入站与出站**：入站在队列里处理（失败退避重试共 5 次），出站按会话事件序号（`channel_deliveries.last_seq`）续投，崩溃后由别的副本接着投、不重复；流式草稿、定稿、卡片状态更新都由内核编排。
-- **去重**：入站按 `messageId` / `eventId`，出站按 `idempotencyKey` 与已投递序号。
-- **卡片操作的再授权**：点击者按入站同样的规则映射到账号，再走审批 / 提问服务的授权（不是审批人只回一句说明，未绑定的人在私聊里收到绑定卡片、群里只提示去私聊）。
-- **身份解析、绑定、匿名访客、固定话术**（i18n，按组织 `locale`）。
+- **Long connection and leader election**: runs only on the gateway role (outbound delivery and inbound jobs stay on the worker role). Each channel connection is held by only one replica at any moment (Redis lease `capk:channel-lease:<id>`, TTL `channels.leaseTtlMs` default 30s, lease renewal and scanning at `channels.scanIntervalMs` default 10s); if the holder dies, another replica takes over after the lease expires; when a connection is disabled, deleted or has its credentials rotated, the holder disconnects and reconnects with the new config. The plugin's `connect` handles just one connection and doesn't decide "whether I should connect". **When a plugin is disabled, uninstalled or upgraded to a new instance while running (C17)**, the kernel's `ChannelSupervisor.pluginChanged` hands back all of that plugin's long connections held on this replica: it aborts the `signal` of the old instance's `connect`, waits for it to return, then releases the lease; if the plugin is still there (a new instance), the next scan has any replica run leader election again for the new instance, and revoked ones no longer connect. So `connect` must respond to `signal` promptly and return, and must not swallow the abort and keep reconnecting.
+- **Durable inbound and outbound**: inbound is processed in a queue (retry with backoff on failure, 5 times in total), outbound resumes delivery by conversation event sequence number (`channel_deliveries.last_seq`), after a crash another replica continues delivering without duplicates; streaming drafts, finalization and card state updates are all orchestrated by the kernel.
+- **Dedup**: inbound by `messageId` / `eventId`, outbound by `idempotencyKey` and the delivered sequence number.
+- **Re-authorization of card actions**: the clicker is mapped to an account by the same rules as inbound, then goes through the approval / question service's authorization (a non-approver gets only an explanatory reply; an unbound person receives a binding card in a direct message, and in a group is only told to go to a direct message).
+- **Identity resolution, binding, anonymous guests, fixed wording** (i18n, by the org's `locale`).
 
-所以插件**不得保存跨调用的共享状态**（模块级 Map、进程内事件、定时器都不行，`check:plugin-state` 会拦）。允许的进程内缓存只有「丢了也对」的只读查询缓存，在工厂函数里创建、有大小上限与过期（如显示名缓存 10 分钟 / 1000 人，tenant token 缓存到过期前 3 分钟）。
+So a plugin **must not keep shared state across calls** (module-level Maps, in-process events and timers are all out, and `check:plugin-state` blocks them). The only in-process caches allowed are read-only lookup caches that are "correct even if lost", created in the factory function with a size cap and expiry (for example a display name cache of 10 minutes / 1000 people, a tenant token cache until 3 minutes before expiry).
 
 ## `identity-source@1`
 
@@ -136,15 +136,15 @@ interface IdentitySource {
 }
 ```
 
-- 部署级：`config` 是 `config.deployment`，管理员把插件名加进 `auth.loginSources` 后登录页才出现。回调地址 `<http.publicUrl>/api/v1/auth/sso/<插件名>/callback`。
-- state、nonce、PKCE verifier 都由内核生成并存在 Redis（state 单次有效、绑定发起登录的浏览器）。
-- **`source` 必须是 `` `${插件名}:${tenantId}` ``**：内核在回调后核对，不一致按身份源出错拒绝（Ruling A19）。
-- **`externalId` 必须与该平台渠道入站的 `sender.externalId` 是同一种 id**（同一个应用、同一个口径），否则登录和机器人对不上人。
-- **`emailVerified` 只在平台文档明确说明邮箱已验证时为 true**（Slack OIDC 的 `email_verified`）；文档没说就报 false（Lark 登录与两家的通讯录都是 false）。它决定能否按邮箱合并既有账号。
-- **平台支持 PKCE 就用**：把 `codeChallenge` / `codeChallengeMethod` 放进授权地址，换 token 时带 `codeVerifier`（Lark）。不支持就忽略并在 README 写明理由（Slack OIDC 没有声明 PKCE）。
-- **有 ID token 就校验**：JWKS 验签、`iss`、`aud = clientId`、未过期、`nonce` 与发起时一致；userinfo 的用户 / 租户必须与 ID token 一致。没有 ID token 的（Lark）核对用户的租户等于登录应用的租户，`redirect_uri` 严格一致。
-- 只申请登录真正需要的 scope：申请应用没开通的 scope 会让所有人登录失败（Lark 20027），所以 Lark 登录不带 scope（Ruling A31）。
-- 登录只建账号、不加入任何组织；按已验证邮箱合并只对 `auth.trustedIdentitySources` 里的完整键 `<插件名>:<租户>` 生效。
+- Deployment-level: `config` is `config.deployment`, and the login page shows the source only after an admin adds the plugin name to `auth.loginSources`. The callback address is `<http.publicUrl>/api/v1/auth/sso/<plugin name>/callback`.
+- The state, nonce and PKCE verifier are all generated by the kernel and stored in Redis (state is single-use and bound to the browser that started the login).
+- **`source` must be `` `${plugin name}:${tenantId}` ``**: the kernel checks it after the callback and rejects a mismatch as an identity source error (Ruling A19).
+- **`externalId` must be the same kind of id as the `sender.externalId` in that platform's channel inbound** (the same app, the same definition), otherwise login and the bot can't match people.
+- **`emailVerified` is true only when the platform docs explicitly say the email is verified** (Slack OIDC's `email_verified`); report false when the docs don't say (Lark login and both platforms' directories are false). It decides whether an existing account can be merged by email.
+- **Use PKCE if the platform supports it**: put `codeChallenge` / `codeChallengeMethod` in the authorization address and pass `codeVerifier` when exchanging the token (Lark). If it isn't supported, ignore it and write the reason in the README (Slack OIDC doesn't declare PKCE).
+- **Validate the ID token if there is one**: JWKS signature, `iss`, `aud = clientId`, not expired, `nonce` equal to the one at initiation; the userinfo's user / tenant must match the ID token. Where there is no ID token (Lark), check that the user's tenant equals the login app's tenant, and that `redirect_uri` matches strictly.
+- Request only the scopes login really needs: requesting a scope the app hasn't been granted makes login fail for everyone (Lark 20027), so Lark login carries no scope (Ruling A31).
+- Login only creates an account and doesn't add it to any org; merging by verified email takes effect only for the full keys `<plugin name>:<tenant>` in `auth.trustedIdentitySources`.
 
 ## `directory@1`
 
@@ -155,40 +155,40 @@ interface Directory {
 }
 ```
 
-- **分页**：每次调用返回一页与下一页游标 `next`，最后一页不带 `next`。内核每页 60 秒时限、一轮最多 10000 页。游标里放续页需要的一切（插件无状态）。
-- **`configured(orgConfig)`**（Ruling A28）：同一插件还提供渠道等能力、通讯录字段在组织级配置里可选时实现它。返回 false 时内核静默跳过每小时扫描、`directory_changed` 与移除前复核，手动同步返回 409 `directory.not_configured`。必须是纯函数（不发请求、不抛错）。
-- **未配置或凭据不对时抛错，绝不返回空列表**：空列表等于「所有人都离职了」。
-- **列不全就必须失败**：任何一页拿不全（权限不够、限流等待超预算、同步途中部门结构变了、租户在一轮里变了、状态字段因权限缺失拿不到）都抛错。内核只在整轮成功走完时才移除人；中途失败只加人不删人。不要「尽力返回能拿到的」。
-- **限流**：在本页内按平台给的等待时长重试，累计等待有预算（两个插件都是每页 30 秒、每个请求最多 3 次），超出就抛「rate limited」，本轮按不完整处理。
-- **`active: false`** 报离职（Slack `deleted`，Lark `is_resigned` / `is_frozen` / `is_exited`）；不是正式成员的人不报（Slack 访客 `is_restricted` / `is_ultra_restricted` 不同步，Ruling A29；Lark 未激活、未加入的不报；机器人、Slackbot 不报）。同一人出现多次没关系，内核按身份去重。
-- 内核侧的保护（插件不用实现，但要知道）：
-  - 只撤销 `memberships.source = "directory:<插件>"` 的成员关系；手动 / 邀请加入的人永远不被同步移除，账号本身不停用。
-  - **大批移除保护**（Ruling A17）：非手动触发的一轮，计划移除数超过 `max(5, 20% × 现有通讯录成员数)`，或列表里没有在职成员而已有通讯录成员时，当作不完整、不移除，审计 `org.directory.removal_blocked`；手动同步不受此限。
-  - **同步途中有变动**（Ruling A32）：一轮持锁期间又来了 `directory_changed` / 同步请求，这一轮不移除任何人（审计 `partialReason = changed_during_sync`），随后补跑的那一轮再移除。手动同步碰上锁被占时也是记下标记、由补跑（触发来源 `changed`）完成，所以那一轮仍受 A17 保护。
-  - **排除名单**（Ruling A20 / A24）：管理员手动移出或本人离开时，对该组织启用的每个通讯录插件写排除记录，同步不再把此人加回，直到有人手动重新加入。
+- **Pagination**: each call returns one page and the next-page cursor `next`, and the last page has no `next`. The kernel gives each page a 60-second limit and a round at most 10000 pages. Put everything needed to continue in the cursor (the plugin is stateless).
+- **`configured(orgConfig)`** (Ruling A28): implement it when the same plugin also provides channel and other capabilities and the directory fields are optional in the org-level config. When it returns false, the kernel silently skips the hourly scan, `directory_changed` and the pre-removal re-check, and a manual sync returns 409 `directory.not_configured`. It must be a pure function (no requests, no throwing).
+- **Throw when not configured or the credentials are wrong, and never return an empty list**: an empty list equals "everyone has left".
+- **If the listing is incomplete it must fail**: any page that can't be fetched in full (insufficient permission, rate-limit waiting over budget, the department structure changing mid-sync, the tenant changing within a round, a status field unavailable for lack of permission) throws. The kernel removes people only when the whole round completes successfully; on a mid-round failure it only adds and doesn't remove. Don't "return whatever you could get on a best-effort basis".
+- **Rate limiting**: within the page, retry for the wait time the platform gives, with a budget on cumulative waiting (both plugins use 30 seconds per page and at most 3 per request); beyond it throw "rate limited", and this round is treated as incomplete.
+- **`active: false`** reports someone as left (Slack `deleted`, Lark `is_resigned` / `is_frozen` / `is_exited`); people who aren't formal members are not reported (Slack guests `is_restricted` / `is_ultra_restricted` aren't synced, Ruling A29; Lark inactive and not-joined people aren't reported; bots and Slackbot aren't reported). It doesn't matter if the same person appears several times; the kernel dedups by identity.
+- Protections on the kernel side (the plugin needn't implement them, but should know):
+  - Only memberships with `memberships.source = "directory:<plugin>"` are revoked; people added manually / by invitation are never removed by sync, and the account itself is not deactivated.
+  - **Mass-removal guard** (Ruling A17): in a round not triggered manually, if the planned removals exceed `max(5, 20% × the current number of directory members)`, or the list has no active members while directory members already exist, it is treated as incomplete and nothing is removed, with the audit event `org.directory.removal_blocked`; a manual sync is not subject to this limit.
+  - **Changes during sync** (Ruling A32): when another `directory_changed` / sync request arrives while a round holds the lock, this round removes nobody (audit `partialReason = changed_during_sync`), and the follow-up round that runs afterwards does the removal. When a manual sync meets an occupied lock, it also records a flag and the follow-up (trigger source `changed`) completes it, so that round is still subject to A17.
+  - **Exclusion list** (Ruling A20 / A24): when an admin removes someone manually or the person leaves, an exclusion record is written for every directory plugin enabled for that org, and sync no longer adds the person back until someone rejoins them manually.
 
-## 测试
+## Testing
 
-假服务端都在 `@capybara-hq/testing`：
+The fake servers are all in `@capybara-hq/testing`:
 
-| 假服务端 | 扮演 | 构造入站事件 |
+| Fake server | Plays | Constructing inbound events |
 |---|---|---|
-| `startFakeChannelServer()` | 通用假 IM：NDJSON 长连接、`/send` `/update`（按 `idempotencyKey` 去重）、OAuth（含 PKCE）、通讯录 `book(key)`；统计每个连接同时在线的长连接数峰值 | `fakeDm`、`fakeGroupMessage`、`fakeCardAction`、`fakeDirectoryMember`；`push(connectionId, event)` |
-| `startFakeSlack()` | Web API、Socket Mode（记 `acks`）、Sign in with Slack（RS256 ID token，`tamperNextIdToken`）、`users.list`；`failNext` 注入平台错误 / 429 | `slackDmEvent`、`slackMentionEvent`、`slackBlockAction`、`findSlackButton` |
-| `startFakeLark()` | OpenAPI、长连接（SDK 的 protobuf 帧，跑真实 `WSClient`，记 `acks`）、OAuth + PKCE、部门 / 用户分页；`failNext`、`hideUserStatus` | `larkMessageEvent`、`larkCardAction`、`findLarkButton` |
+| `startFakeChannelServer()` | a generic fake IM: NDJSON long connection, `/send` `/update` (dedup by `idempotencyKey`), OAuth (including PKCE), directory `book(key)`; counts the peak number of concurrent long connections per connection | `fakeDm`, `fakeGroupMessage`, `fakeCardAction`, `fakeDirectoryMember`; `push(connectionId, event)` |
+| `startFakeSlack()` | Web API, Socket Mode (records `acks`), Sign in with Slack (RS256 ID token, `tamperNextIdToken`), `users.list`; `failNext` injects platform errors / 429 | `slackDmEvent`, `slackMentionEvent`, `slackBlockAction`, `findSlackButton` |
+| `startFakeLark()` | OpenAPI, long connection (the SDK's protobuf frames, runs the real `WSClient`, records `acks`), OAuth + PKCE, department / user pagination; `failNext`, `hideUserStatus` | `larkMessageEvent`, `larkCardAction`, `findLarkButton` |
 
-- **插件单测**（`plugins/<name>/test`）：直接调工厂函数（如 `createSlackChannel({ apiUrl })`）连假服务端，覆盖：入站各类消息的取舍与 id、去掉 @、ack 只在 `onEvent` resolve 后（reject 不 ack）、重连与退避、错误映射表、拆分与 `too_large`、转义（`@channel` / `<at id=all>` 注入）、链接白名单、按钮回传值的编码上限与严格解析、身份键与 ID token 篡改、通讯录分页 / 限流预算 / 未配置 / 列不全报错。
-- **双副本内核验收**（`packages/kernel/test/channels/*.dual.test.ts`）：`createDualReplicaHarness({ plugins: [MODEL_FAKE, <插件入口路径>], pluginConfig: { <插件>: { apiUrl: fake.apiUrl, … } } })`，插件按源码路径加载。要证明：只有一条长连接；杀掉持有者后另一副本接管；同一条消息重投只处理一次；流式回复、审批卡片点击、卡片更新、最终回复都只投一次。参考 `slack.dual.test.ts`、`lark.dual.test.ts`、`supervisor.dual.test.ts`。
-- **三处同一身份行**：`slack-identity.dual.test.ts`、`lark-identity.dual.test.ts` 的流程——网页登录（走假授权页、回调）→ 通讯录同步把同一个人加入组织（不另建身份、不另建账号）→ 同一个人私聊机器人被识别为该账号（不发绑定卡片）。新平台必须有这条用例，它能抓住租户口径、id 种类、应用不一致这类错误。
-- 测试插件写法照抄 fake-im（`packages/kernel/test/fixtures/plugins/fake-im`）；第一段验收 `m4-segment1.dual.test.ts` 用它跑通了全部内核行为。
-- 第二段验收 `m4-segment2-slack.dual.test.ts` / `m4-segment2-lark.dual.test.ts` 用真实插件把同一流程各跑一遍。真实插件不带 `x-pid`，要找出持有长连接的副本时用假平台的 `socketPeerPorts()` 加 `test/helpers/port-owner.ts`（按本地端口查进程）。
-- 真实平台：`plugins/<name>/test/live/*.live.test.ts` 只在 `CAPYBARA_TEST_LIVE_TOOLS=1` 且平台变量齐全时运行（只跑不需要人操作的检查）；人工部分见 `docs/superpowers/plans/m4-live-acceptance-checklist.md`。
+- **Plugin unit tests** (`plugins/<name>/test`): call the factory function directly (such as `createSlackChannel({ apiUrl })`) against the fake server, covering: the handling and ids of each kind of inbound message, stripping the @, ack only after `onEvent` resolves (no ack on reject), reconnection and backoff, the error mapping table, splitting and `too_large`, escaping (`@channel` / `<at id=all>` injection), the link allowlist, the encoding limit and strict parsing of button callback values, the identity key and ID token tampering, directory pagination / rate-limit budget / not configured / incomplete-listing errors.
+- **Dual-replica kernel acceptance** (`packages/kernel/test/channels/*.dual.test.ts`): `createDualReplicaHarness({ plugins: [MODEL_FAKE, <plugin entry path>], pluginConfig: { <plugin>: { apiUrl: fake.apiUrl, … } } })`, with the plugin loaded by source path. It must prove: there is only one long connection; after killing the holder another replica takes over; a redelivered message is processed only once; streaming replies, approval card clicks, card updates and the final reply are each delivered only once. See `slack.dual.test.ts`, `lark.dual.test.ts`, `supervisor.dual.test.ts`.
+- **The same identity row in all three places**: the flow of `slack-identity.dual.test.ts` and `lark-identity.dual.test.ts`: web login (through the fake authorization page, callback) -> directory sync adds the same person to the org (no new identity, no new account) -> the same person direct-messaging the bot is recognized as that account (no binding card sent). A new platform must have this case; it catches mistakes such as the tenant definition, the id kind, and app mismatch.
+- Write the test plugin by copying fake-im (`packages/kernel/test/fixtures/plugins/fake-im`); the first acceptance segment `m4-segment1.dual.test.ts` runs all the kernel behaviors with it.
+- The second acceptance segment `m4-segment2-slack.dual.test.ts` / `m4-segment2-lark.dual.test.ts` runs the same flow once each with the real plugins. The real plugins don't carry `x-pid`; to find the replica holding the long connection use the fake platform's `socketPeerPorts()` plus `test/helpers/port-owner.ts` (looks up the process by local port).
+- Real platforms: `plugins/<name>/test/live/*.live.test.ts` runs only when `CAPYBARA_TEST_LIVE_TOOLS=1` and the platform variables are all set (only checks that need no human action are run); the manual part is in `docs/superpowers/plans/m4-live-acceptance-checklist.md`.
 
-## 新渠道插件清单
+## New channel plugin checklist
 
-1. 先写 README：建应用的步骤与权限（scope）表、每个取舍的平台文档出处与查阅日期、确认 / 重连 / 限流 / 长度 / 错误映射、待真实联调确认的事项。
-2. 清单：`provides` 三种能力（按需）、`permissions.network`、`config.deployment`（登录）、`config.org`（通讯录，字段可选时实现 `configured`），渠道连接配置放 `connectionSchema`。
-3. 按上面的约定实现，转义与链接白名单单独成文件并配单测。
-4. 假服务端：平台协议能完整仿真就仿真（Lark 的 protobuf 帧），让插件测试跑真实 SDK。
-5. 三处同一身份行的双副本用例。
-6. `pnpm lint && pnpm typecheck && pnpm check && pnpm test`。
+1. Write the README first: the steps to create the app and the permissions (scope) table, the platform doc source and lookup date of every trade-off, acknowledgement / reconnection / rate limiting / length / error mapping, and items awaiting confirmation in real integration.
+2. Manifest: `provides` the three capabilities (as needed), `permissions.network`, `config.deployment` (login), `config.org` (directory; implement `configured` when the fields are optional), and put the channel connection config in `connectionSchema`.
+3. Implement per the conventions above, with escaping and the link allowlist in their own file with unit tests.
+4. Fake server: if the platform protocol can be fully simulated, simulate it (Lark's protobuf frames), so plugin tests run the real SDK.
+5. A dual-replica case for the same identity row in all three places.
+6. `pnpm lint && pnpm typecheck && pnpm check && pnpm test`.
