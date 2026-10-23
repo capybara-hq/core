@@ -18,7 +18,7 @@ them. In that case, stop them before migrating, or accept errors on them until t
 
 Plugin upgrades need no restart and are separate from kernel upgrades. Install the new version from
 the admin console or with `capybara plugins install`. See
-[skills/writing-plugins](../../skills/writing-plugins/SKILL.md).
+[.agents/skills/writing-plugins](../../.agents/skills/writing-plugins/SKILL.md).
 
 ### Docker Compose
 

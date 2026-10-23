@@ -337,7 +337,7 @@ installed at runtime. Installing, enabling, upgrading and disabling plugins don'
   catalogs, npm installs and manual uploads work as usual.
 
 Plugin lifecycle, permissions and the trust model are described in
-[skills/writing-plugins](../../skills/writing-plugins/SKILL.md).
+[.agents/skills/writing-plugins](../../.agents/skills/writing-plugins/SKILL.md).
 
 ## IM channels: inbound modes
 
