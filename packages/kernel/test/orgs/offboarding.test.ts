@@ -899,13 +899,7 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
         url: `/api/v1/orgs/${f.orgId}/agents/${agentId}`,
       });
       expect(res.statusCode, res.body).toBe(204);
-      const jobs = await q.getJobs([
-        "waiting",
-        "delayed",
-        "active",
-        "completed",
-        "failed",
-      ]);
+      const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
       const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
       expect(job?.data).toEqual({ conversationIds: [f.conversationId] });
     } finally {
@@ -927,13 +921,7 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
         url: `/api/v1/orgs/${f.orgId}/members/${f.leaver.id}`,
       });
       expect(res.statusCode).toBe(204);
-      const jobs = await q.getJobs([
-        "waiting",
-        "delayed",
-        "active",
-        "completed",
-        "failed",
-      ]);
+      const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
       const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
       expect(job?.data).toEqual({ conversationIds: [f.conversationId] });
     } finally {
