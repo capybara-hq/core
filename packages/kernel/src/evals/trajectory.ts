@@ -90,8 +90,9 @@ export interface TrajectoryRun {
   end: { kind: "finished" | "failed" | "aborted"; detail: string } | null;
   steps: TrajectoryStep[];
   totals: {
+    /** Usage of the step calls plus the compaction calls (`usage` events with `purpose: "compaction"`). */
     usage: ModelUsage;
-    /** 各次成功调用的成本之和；任一成功调用没有价格时为 null（部分求和会误导）。 */
+    /** 各次成功调用的成本之和（含压缩调用）；任一成功调用没有价格时为 null（部分求和会误导）。 */
     cost: number | null;
     modelCalls: number;
     toolCalls: number;
@@ -178,6 +179,7 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
   const modelCalls = new Map<number, Ev<"model_call">[]>();
   const assistants = new Map<number, Ev<"assistant_message">[]>();
   const usages = new Map<number, Ev<"usage">[]>();
+  const compactions: Ev<"usage">[] = [];
   const toolStarts = new Map<string, Ev<"tool_call_started">>(); // callId → 最后一次
   const toolResults = new Map<string, Ev<"tool_result">>();
   const approvals = new Map<string, Ev<"approval_requested">>(); // callId → 最近一次
@@ -210,6 +212,11 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         assistants.set(e.payload.step, [...(assistants.get(e.payload.step) ?? []), e]);
         break;
       case "usage":
+        // a compaction call's usage is not a step call's: counted in the totals only (I-1)
+        if (e.payload.purpose === "compaction") {
+          compactions.push(e);
+          break;
+        }
         steps.add(e.payload.step);
         usages.set(e.payload.step, [...(usages.get(e.payload.step) ?? []), e]);
         break;
@@ -381,6 +388,16 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         stopReason: msg?.payload.stopReason ?? null,
       };
     });
+
+  for (const c of compactions) {
+    const u = usageOf(c.payload);
+    totals.usage.inputTokens += u.inputTokens;
+    totals.usage.outputTokens += u.outputTokens;
+    totals.usage.cacheReadTokens += u.cacheReadTokens;
+    totals.usage.cacheWriteTokens += u.cacheWriteTokens;
+    const cost = costOf(u, prices.get(priceKey(c.payload.provider, c.payload.model)));
+    totals.cost = totals.cost === null || cost === null ? null : totals.cost + cost;
+  }
 
   return {
     runId,

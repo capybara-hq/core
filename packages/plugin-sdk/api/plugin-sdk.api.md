@@ -726,7 +726,39 @@ export function hasControlChars(s: string): boolean;
 export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report"];
 
 // @public
+export type HookContentBlock = Exclude<ContentBlock, {
+    type: "image";
+} | {
+    type: "document";
+}> | HookMediaPlaceholder;
+
+// @public
 export type HookHandler<K extends AvailableHook> = (payload: HookPayloads[K], signal: AbortSignal) => Promise<HookVerdict> | HookVerdict;
+
+// @public
+export interface HookMediaPlaceholder {
+    kind: "image" | "document";
+    mediaType: string;
+    size: number;
+    type: "media_omitted";
+}
+
+// @public
+export type HookModelMessage = {
+    role: "user";
+    content: HookContentBlock[];
+} | {
+    role: "assistant";
+    content: HookContentBlock[];
+} | {
+    role: "system";
+    content: string;
+};
+
+// @public
+export type HookModelRequest = Omit<ModelRequest, "messages"> & {
+    messages: HookModelMessage[];
+};
 
 // @public
 export type HookMountPoint = (typeof HOOK_MOUNT_POINTS)[number];
@@ -929,6 +961,9 @@ export const MODEL_PROVIDER_CAPABILITY = "model-provider@1";
 export const MODEL_PROVIDER_CAPABILITY_V2 = "model-provider@2";
 
 // @public
+export type ModelCallPurpose = "step" | "compaction";
+
+// @public
 export class ModelError extends Error {
     constructor(kind: ModelErrorKind, message: string, opts?: {
         retryAfterMs?: number;
@@ -1035,7 +1070,8 @@ export interface ModelRequestHookPayload extends HookScope {
     attempt: number;
     model: string;
     provider: string;
-    request: Readonly<ModelRequest>;
+    purpose: ModelCallPurpose;
+    request: Readonly<HookModelRequest>;
     step: number;
 }
 
@@ -1051,6 +1087,7 @@ export interface ModelResponseHookPayload extends HookScope {
     model: string;
     outcome: "ok" | "failed";
     provider: string;
+    purpose: ModelCallPurpose;
     step: number;
     stopReason: string | null;
     usage: ModelUsage | null;
@@ -1338,6 +1375,7 @@ export interface PluginPermissions {
         };
     }[];
     network?: string[];
+    policyHooks?: PolicyHook[];
     secrets?: boolean;
     storage?: boolean;
     tools?: string[];
@@ -1383,7 +1421,10 @@ export interface PluginStorage {
 }
 
 // @public
-export const POLICY_HOOKS: readonly AvailableHook[];
+export const POLICY_HOOKS: readonly ["model.request", "tool.preExecute"];
+
+// @public
+export type PolicyHook = (typeof POLICY_HOOKS)[number];
 
 // @public
 export interface PresignedUpload {
@@ -1819,6 +1860,7 @@ export interface UsageReportPayload {
     occurredAt: string;
     orgId: string;
     provider: string;
+    purpose: ModelCallPurpose;
     runId: string;
     usage: ModelUsage;
 }

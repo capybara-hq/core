@@ -12,6 +12,7 @@ import type { Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import {
   narrowPending,
+  queryUnservable,
   queryUsageSubscribers,
   USAGE_REPORT_QUEUE,
   UsageReporter,
@@ -164,6 +165,7 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
       const u = e.payload as unknown as Record<string, number>;
       expect(p).toMatchObject({
         eventId: `${conv}/${e.seq}`,
+        purpose: "step",
         orgId,
         agentId,
         conversationId: conv,
@@ -238,13 +240,17 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     }
   });
 
-  it("with no usage.report handler nothing is enqueued", async () => {
+  it("with no usage.report handler nothing is enqueued, without any query (M-2)", async () => {
     const conversationId = "00000000-0000-4000-8000-000000000001";
+    let looked = 0;
     const producer = new UsageReporter({
       db,
       redisUrl: rd.url,
-      hooks: { handlers: () => [] },
-      subscribers: async () => new Set(),
+      hooks: { handlers: () => [], has: () => false },
+      subscribers: async () => {
+        looked++;
+        return new Set(["hooks-probe"]);
+      },
       config: () => k.config,
       log: createLogger("error", { write: () => {} }),
     });
@@ -254,6 +260,7 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
       await producer.stop();
     }
     expect(await queue.getJob(usageReportJobId(conversationId, 7))).toBeUndefined();
+    expect(looked).toBe(0);
   });
 });
 
@@ -310,7 +317,14 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
   function reporter(
     handlers: Record<string, H>,
     subscribers: string[],
-    opts: { attempts?: number; backoffMs?: number; error?: (m: string, f?: unknown) => void } = {},
+    opts: {
+      attempts?: number;
+      backoffMs?: number;
+      error?: (m: string, f?: unknown) => void;
+      warn?: (m: string, f?: unknown) => void;
+      active?: string[];
+      unservable?: string[];
+    } = {},
   ): UsageReporter {
     const r = new UsageReporter({
       db,
@@ -321,10 +335,21 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
             plugin,
             handler: handler as never,
           })),
+        // the producer side counts as having handlers (a worker elsewhere delivers)
+        has: () => true,
       },
+      ...(opts.active && { isActive: (p: string) => opts.active?.includes(p) === true }),
+      ...(opts.unservable && {
+        unservable: async (ps: readonly string[]) =>
+          new Set(ps.filter((p) => opts.unservable?.includes(p))),
+      }),
       subscribers: async () => new Set(subscribers),
       config: () => k.config,
-      log: { ...silent, ...(opts.error && { error: opts.error }) },
+      log: {
+        ...silent,
+        ...(opts.error && { error: opts.error }),
+        ...(opts.warn && { warn: opts.warn }),
+      },
       retry: { attempts: opts.attempts ?? 3, backoffMs: opts.backoffMs ?? 50 },
     });
     reporters.push(r);
@@ -356,6 +381,130 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     expect(errors[0]?.[0]).toBe("usage report given up after retries");
     expect(errors[0]?.[1]).toMatchObject({ pending: ["x"], attempt: 3 });
     await r.stop();
+  });
+
+  it("failed jobs are capped by count as well as age (I-2)", async () => {
+    const r = reporter({}, ["x"]);
+    await r.enqueue(ev.conv, ev.seq);
+    expect((await jobOf())?.opts.removeOnFail).toEqual({ age: 7 * 86_400, count: 100_000 });
+    await r.stop();
+  });
+
+  it("a plugin loaded here without a usage.report handler is dropped, not retried (I-2)", async () => {
+    const warns: [string, unknown][] = [];
+    const errors: unknown[] = [];
+    let y = 0;
+    const r = reporter(
+      {
+        y: async () => {
+          y++;
+        },
+      },
+      ["x", "y"],
+      {
+        attempts: 3,
+        active: ["x", "y"],
+        warn: (m, f) => warns.push([m, f]),
+        error: (m) => errors.push(m),
+      },
+    );
+    r.startWorker();
+    await r.enqueue(ev.conv, ev.seq);
+    await waitFor(async () => (await jobOf())?.finishedOn !== undefined, 10_000, "job done");
+    const j = await jobOf();
+    expect(await j?.getState()).toBe("completed");
+    // completed on the first attempt (BullMQ counts the successful attempt too)
+    expect(j?.attemptsMade).toBe(1);
+    expect(j?.data.pending).toEqual([]);
+    expect(y).toBe(1);
+    expect(errors).toEqual([]);
+    expect(warns).toEqual([
+      ["usage.report target dropped", expect.objectContaining({ plugin: "x" })],
+    ]);
+    await r.stop();
+  });
+
+  it("a plugin no replica has loaded is dropped at once, with one warning (I-2)", async () => {
+    const warns: [string, unknown][] = [];
+    const r = reporter({}, ["x"], {
+      attempts: 6,
+      unservable: ["x"],
+      warn: (m, f) => warns.push([m, f]),
+    });
+    r.startWorker();
+    await r.enqueue(ev.conv, ev.seq);
+    await waitFor(async () => (await jobOf())?.finishedOn !== undefined, 10_000, "job done");
+    const j = await jobOf();
+    expect(await j?.getState()).toBe("completed");
+    // completed on the first attempt (BullMQ counts the successful attempt too)
+    expect(j?.attemptsMade).toBe(1);
+    expect(warns.filter(([m]) => m === "usage.report target dropped")).toEqual([
+      [
+        "usage.report target dropped",
+        expect.objectContaining({ plugin: "x", reason: "no replica has the plugin loaded" }),
+      ],
+    ]);
+    await r.stop();
+  });
+
+  it("a plugin not loaded here is retried, then dropped on the last attempt instead of failing (I-2)", async () => {
+    const warns: [string, unknown][] = [];
+    const errors: unknown[] = [];
+    const r = reporter({}, ["x"], {
+      attempts: 2,
+      unservable: [],
+      warn: (m, f) => warns.push([m, f]),
+      error: (m) => errors.push(m),
+    });
+    r.startWorker();
+    await r.enqueue(ev.conv, ev.seq);
+    await waitFor(async () => (await jobOf())?.finishedOn !== undefined, 10_000, "job done");
+    const j = await jobOf();
+    expect(await j?.getState()).toBe("completed");
+    // one failed attempt, then the last one drops the target and completes
+    expect(j?.attemptsMade).toBe(2);
+    expect(errors).toEqual([]);
+    expect(warns.filter(([m]) => m === "usage.report target dropped")).toEqual([
+      [
+        "usage.report target dropped",
+        expect.objectContaining({ reason: "no replica delivered it before the last attempt" }),
+      ],
+    ]);
+    await r.stop();
+  });
+
+  it("queryUnservable: reported by live replicas and loaded on none (I-2)", async () => {
+    const row = (replica: string, plugin: string, state: "loaded" | "failed" | "pending") => ({
+      replica_id: replica,
+      plugin,
+      version: "1.0.0",
+      sha256: null,
+      source: "install" as const,
+      state,
+      reason: null,
+      detail: null,
+      http_replica_id: null,
+    });
+    await db
+      .insertInto("plugin_replica_status")
+      .values([
+        row("rx-1", "nowhere", "failed"),
+        row("rx-2", "nowhere", "pending"),
+        row("rx-1", "somewhere", "failed"),
+        row("rx-2", "somewhere", "loaded"),
+        { ...row("rx-1", "stale", "failed"), heartbeat_at: new Date(Date.now() - 3_600_000) },
+      ])
+      .execute();
+    try {
+      const got = await queryUnservable(db, ["nowhere", "somewhere", "stale", "unknown"], 60);
+      expect([...got]).toEqual(["nowhere"]);
+      expect(await queryUnservable(db, [], 60)).toEqual(new Set());
+    } finally {
+      await db
+        .deleteFrom("plugin_replica_status")
+        .where("replica_id", "in", ["rx-1", "rx-2"])
+        .execute();
+    }
   });
 
   it("two plugins: only the failed one is retried", async () => {
@@ -555,7 +704,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       const r = new UsageReporter({
         db,
         redisUrl: rd2.url,
-        hooks: { handlers: () => [] },
+        hooks: { handlers: () => [], has: () => true },
         subscribers: async (o) =>
           new Set([...(await queryUsageSubscribers(db, o))].filter((p) => only.has(p))),
         config: () => k.config,

@@ -26,8 +26,12 @@ export interface UsageReportJob {
 export const USAGE_REPORT_ATTEMPTS = 6;
 /** Retry backoff: 2 s, doubling (2, 4, 8, 16, 32 s). */
 export const USAGE_REPORT_BACKOFF_MS = 2000;
-/** Failed jobs (given up) are kept for inspection. */
+/** Failed jobs (given up) are kept for inspection, at most {@link KEEP_FAILED_MAX} of them. */
 const KEEP_FAILED_S = 7 * 86_400;
+/** Upper bound on kept failed jobs (I-2): a long outage of a billing endpoint cannot grow Redis. */
+const KEEP_FAILED_MAX = 100_000;
+/** Warnings about a plugin that cannot take deliveries are logged at most once per this window. */
+const WARN_WINDOW_MS = 60_000;
 /**
  * Upper bound on kept finished jobs (Redis memory). At the default retention it only bites above
  * ~1.1 usage events per second sustained for a day; dedupe needs the jobs only for the sweeper overlap.
@@ -53,8 +57,22 @@ const JOB = "usage-report";
 export interface UsageReporterDeps {
   db: KernelDb;
   redisUrl: string;
-  /** The host's registry: handlers of the current local plugin generations (through inflight.run). */
-  hooks: Pick<HookRegistry, "handlers">;
+  /**
+   * The host's registry: handlers of the current local plugin generations (through inflight.run), and
+   * `has("usage.report")`, the in-process check that lets `enqueue` skip all I/O without handlers.
+   */
+  hooks: Pick<HookRegistry, "handlers" | "has">;
+  /**
+   * Whether the plugin's current instance is active on this replica (I-2): an active instance that
+   * registered no `usage.report` handler is not a subscriber, and its target is dropped. Absent: never.
+   */
+  isActive?(plugin: string): boolean;
+  /**
+   * Of these plugins, the ones no replica can serve right now (I-2): replicas report them (live
+   * `plugin_replica_status` rows) and none has them loaded. Their targets are dropped at once instead
+   * of failing every attempt. See {@link queryUnservable}. Absent: none.
+   */
+  unservable?(plugins: readonly string[]): Promise<Set<string>>;
   /**
    * Plugins that subscribe to `usage.report`, from deployment state (approved manifests in PG plus
    * builtin plugins), not from this replica's loaded handlers. With `orgId`: only those the
@@ -115,6 +133,43 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
 }
 
 /**
+ * Of `plugins`, those that live replicas report (a `plugin_replica_status` row with a heartbeat newer
+ * than `staleSeconds`) and none has loaded (I-2). A plugin with no live row at all is not listed: the
+ * state is unknown (e.g. a host without a status store), so it keeps the normal retries.
+ */
+export async function queryUnservable(
+  db: KernelDb,
+  plugins: readonly string[],
+  staleSeconds: number,
+): Promise<Set<string>> {
+  if (plugins.length === 0) return new Set();
+  const rows = await db
+    .selectFrom("plugin_replica_status")
+    .select("plugin")
+    .where("plugin", "in", [...plugins])
+    .where("heartbeat_at", ">", sql<Date>`now() - make_interval(secs => ${staleSeconds})`)
+    .groupBy("plugin")
+    .having(sql<boolean>`bool_or(state = 'loaded')`, "=", false)
+    .execute();
+  return new Set(rows.map((r) => r.plugin));
+}
+
+/** A target this replica cannot deliver to: not loaded here, or loaded without a handler. */
+class Undeliverable extends Error {
+  constructor(
+    readonly plugin: string,
+    readonly why: "not_loaded" | "no_handler",
+  ) {
+    super(
+      why === "no_handler"
+        ? `plugin ${plugin} is loaded on this replica but registered no usage.report handler`
+        : `plugin ${plugin} has no usage.report handler on this replica`,
+    );
+    this.name = "Undeliverable";
+  }
+}
+
+/**
  * The next `pending` set (m-2 fence): plugins that failed now, narrowed to what the stored job data
  * still lists. A plugin another (stalled-over) execution already delivered never comes back.
  */
@@ -126,7 +181,8 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  * Reliable `usage.report` delivery (F11, P-17, R13). Every `usage` event written to the event log (chat
  * runs and full-run eval replays) is delivered at least once to every subscribing plugin.
  * - **Fast path:** `model-call` enqueues job `usage-<conversationId>-<seq>` right after writing the event
- *   (never awaited; an enqueue failure only logs).
+ *   (never awaited; an enqueue failure only logs). Skipped without I/O when this replica has no
+ *   `usage.report` handler (M-2); the sweeper then offers the event.
  * - **Sweeper (R13):** a maintenance job (once across replicas, every minute) re-enqueues the `usage`
  *   events in `[watermark - 10 min, now - 30 s]` with the same job ids, so a lost fast-path enqueue is
  *   caught up and duplicates dedupe on the kept job (`hooks.usageReportKeepHours`).
@@ -134,14 +190,18 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  *   at execution time (the `usage` event, the conversation with `kind`, the run). On the first attempt
  *   the targets are the deployment's subscribers the organization enabled (I-2: not this replica's
  *   handlers), written into `pending`; plugins run concurrently (`allSettled`); failed ones stay in
- *   `pending` and are retried (5 retries, 2 s doubling); a plugin with no handler on this replica (not
- *   loaded here, or between generations) is a failure, so another replica or a later attempt delivers
- *   it. Plugins the organization disabled by delivery time are dropped. The final failure logs an error
- *   (no audit). Each call runs through the instance's `inflight.run`, limited by `hooks.timeoutMs`;
+ *   `pending` and are retried (5 retries, 2 s doubling). A plugin not loaded on this replica (or
+ *   between generations) is a failure, so another replica or a later attempt delivers it, except that
+ *   (I-2) it is dropped at once when live replicas report it and none has it loaded, and dropped
+ *   instead of failing on the last attempt (a throttled warning, never once per attempt). A plugin
+ *   loaded here that registered no handler is not a subscriber: dropped. Plugins the organization
+ *   disabled by delivery time are dropped. The final failure logs an error (no audit); failed jobs
+ *   are kept 7 days, at most 100 000. Each call runs through the instance's `inflight.run`, limited by `hooks.timeoutMs`;
  *   when this replica stops, in-flight calls are aborted and the job goes back to the queue without
  *   using up an attempt.
  * Handlers must be idempotent by `eventId` (`<conversationId>/<seq>`). Nothing is written to the event
- * log (never model-visible). Single-step eval replays and judge requests log no usage: not reported (M7).
+ * log (never model-visible). Compaction calls log usage too (`purpose: "compaction"`) and are reported.
+ * Single-step eval replays and judge requests log no usage: not reported (M7).
  */
 export class UsageReporter {
   private queue: Queue<UsageReportJob> | undefined;
@@ -162,7 +222,7 @@ export class UsageReporter {
         age: this.d.config().hooks.usageReportKeepHours * 3600,
         count: KEEP_COMPLETED_MAX,
       },
-      removeOnFail: { age: KEEP_FAILED_S },
+      removeOnFail: { age: KEEP_FAILED_S, count: KEEP_FAILED_MAX },
     };
   }
 
@@ -172,6 +232,9 @@ export class UsageReporter {
    */
   async enqueue(conversationId: string, seq: number): Promise<void> {
     if (this.closed) return;
+    // M-2: no usage.report handler on this replica → no I/O at all. A plugin loaded only on other
+    // replicas still gets the event: the sweeper re-offers it within about a minute and a half.
+    if (!this.d.hooks.has("usage.report")) return;
     try {
       if ((await this.d.subscribers()).size === 0) return;
       await this.getQueue().add(JOB, { conversationId, seq }, this.jobOpts(conversationId, seq));
@@ -338,6 +401,7 @@ export class UsageReporter {
       .executeTakeFirst();
     if (row?.type !== "usage") return null;
     const p = row.payload as {
+      purpose?: "compaction";
       provider: string;
       model: string;
       inputTokens: number;
@@ -347,6 +411,7 @@ export class UsageReporter {
     };
     return {
       eventId: `${conversationId}/${seq}`,
+      purpose: p.purpose === "compaction" ? "compaction" : "step",
       orgId: row.org_id,
       accountId: row.trigger_account_id ?? row.account_id,
       agentId: row.agent_id,
@@ -401,25 +466,56 @@ export class UsageReporter {
       targets.map(async (plugin) => {
         const handlers = byPlugin.get(plugin);
         if (!handlers || handlers.length === 0) {
-          throw new Error(`plugin ${plugin} has no usage.report handler on this replica`);
+          throw new Undeliverable(plugin, this.d.isActive?.(plugin) ? "no_handler" : "not_loaded");
         }
         for (const h of handlers) await this.call(h, frozen, timeoutMs);
       }),
     );
     const failed: string[] = [];
+    const notHere: string[] = [];
     results.forEach((r, i) => {
-      if (r.status === "rejected") {
-        const plugin = targets[i] as string;
-        failed.push(plugin);
-        if (!this.stopping.signal.aborted) {
-          this.d.log.warn("usage.report delivery to a plugin failed", {
+      if (r.status === "fulfilled") return;
+      const plugin = targets[i] as string;
+      if (r.reason instanceof Undeliverable) {
+        if (r.reason.why === "no_handler") {
+          // I-2: loaded here without a handler: not a subscriber (declared but never registered, or
+          // a downgrade); dropped, not retried
+          void this.warnOnce(plugin, "no-handler", "usage.report target dropped", {
             plugin,
             eventId: payload.eventId,
-            error: errMsg(r.reason),
+            reason: "loaded on this replica but registered no usage.report handler",
           });
-        }
+        } else notHere.push(plugin);
+        return;
+      }
+      failed.push(plugin);
+      if (!this.stopping.signal.aborted) {
+        this.d.log.warn("usage.report delivery to a plugin failed", {
+          plugin,
+          eventId: payload.eventId,
+          error: errMsg(r.reason),
+        });
       }
     });
+    if (notHere.length > 0 && !this.stopping.signal.aborted) {
+      // not loaded here: another replica may serve it (retry), unless no replica can (dropped at once)
+      // or this was the last attempt (dropped instead of failing); one warning per job, not per attempt
+      const final = j.attemptsMade + 1 >= (j.opts.attempts ?? 1);
+      const nobody = final ? new Set(notHere) : await this.unservable(notHere);
+      for (const plugin of notHere) {
+        if (!nobody.has(plugin)) {
+          failed.push(plugin);
+          continue;
+        }
+        void this.warnOnce(plugin, "unservable", "usage.report target dropped", {
+          plugin,
+          eventId: payload.eventId,
+          reason: final
+            ? "no replica delivered it before the last attempt"
+            : "no replica has the plugin loaded",
+        });
+      }
+    } else failed.push(...notHere);
     if (failed.length === 0) {
       await j.updateData({ conversationId, seq, pending: [] });
       return;
@@ -431,6 +527,35 @@ export class UsageReporter {
       throw new DelayedError();
     }
     throw new Error(`usage.report failed for: ${failed.join(", ")}`);
+  }
+
+  /** {@link UsageReporterDeps.unservable}; a lookup failure counts as "unknown" (keep retrying). */
+  private async unservable(plugins: string[]): Promise<Set<string>> {
+    if (!this.d.unservable) return new Set();
+    try {
+      return await this.d.unservable(plugins);
+    } catch (err) {
+      this.d.log.warn("cannot read plugin replica status for usage.report", { err });
+      return new Set();
+    }
+  }
+
+  /** Logs a warning at most once per plugin and kind per minute (Redis key with a TTL). */
+  private async warnOnce(
+    plugin: string,
+    kind: string,
+    msg: string,
+    fields: Record<string, unknown>,
+  ): Promise<void> {
+    let first = true;
+    try {
+      this.getQueue();
+      const key = `capk:usage-warn:${plugin}:${kind}`;
+      first = (await this.queueConn?.set(key, "1", "PX", WARN_WINDOW_MS, "NX")) !== null;
+    } catch {
+      // Redis unavailable: log anyway rather than hiding it
+    }
+    if (first) this.d.log.warn(msg, fields);
   }
 
   /** One handler call with its own signal (timeout or replica stop aborts it); rejects on either. */

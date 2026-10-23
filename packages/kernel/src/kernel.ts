@@ -80,6 +80,7 @@ import {
   PLUGINS_RECONCILE_SCHEDULER_ID,
   PLUGINS_RECONCILE_TOPIC,
   PluginLifecycle,
+  STALE_RECONCILE_PERIODS,
 } from "./plugins/lifecycle.js";
 import { ensureMigrated } from "./plugins/migrate-lock.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
@@ -104,6 +105,7 @@ import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import {
+  queryUnservable,
   queryUsageSubscribers,
   USAGE_SWEEP_EVERY_MS,
   USAGE_SWEEP_JOB,
@@ -955,6 +957,13 @@ export async function createKernel(
     db: kdb,
     redisUrl: config.redis.url,
     hooks: host.hooks,
+    isActive: (plugin) => host.current(plugin) !== undefined,
+    unservable: (plugins) =>
+      queryUnservable(
+        kdb,
+        plugins,
+        STALE_RECONCILE_PERIODS * current.pluginHost.reconcileIntervalSeconds,
+      ),
     // deployment state (approved manifests in PG) plus builtin plugins (no snapshot, always enabled)
     subscribers: async (orgId) => {
       const subs = await queryUsageSubscribers(kdb, orgId);

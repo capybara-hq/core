@@ -1,6 +1,10 @@
 import type {
   AvailableHook,
   ContentBlock,
+  HookContentBlock,
+  HookMediaPlaceholder,
+  HookModelMessage,
+  HookModelRequest,
   HookPayloads,
   HookScope,
   Logger,
@@ -67,33 +71,43 @@ export function fireObserve<K extends "model.response" | "tool.postExecute">(
   });
 }
 
+/** Decoded size of standard padded base64, in bytes. */
+const base64Bytes = (data: string): number => {
+  const pad = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(data.length / 4) * 3 - pad);
+};
+
 /**
- * The `model.request` payload's request without attachment `ref` ids (M-3). The request sent to the
- * provider never carries refs (the kernel resolves them to bytes or text placeholders), so this
- * normally returns the request unchanged; it only guards against a ref slipping through.
+ * The `model.request` payload's request (F10, I-3): the request sent to the provider with every image
+ * and document block replaced by a {@link HookMediaPlaceholder} (`kind`, `mediaType`, decoded `size`),
+ * so hook payloads carry neither media bytes nor attachment ids. Media never sits outside user
+ * messages, but every message is projected anyway. Building the copy also keeps the per-call clone
+ * and freeze of the payload small. A `ref` source should never reach here (the kernel resolves refs
+ * before sending); it becomes a placeholder of size 0 and logs a warning.
  */
-export function withoutMediaRefs(request: ModelRequest, log?: Pick<Logger, "warn">): ModelRequest {
-  const hasRef = (b: ContentBlock) =>
-    (b.type === "image" || b.type === "document") && b.source.kind === "ref";
-  if (!request.messages.some((m) => typeof m.content !== "string" && m.content.some(hasRef))) {
-    return request;
-  }
-  log?.warn("attachment refs reached a model.request hook payload; stripped them", {
-    model: request.model,
-  });
-  return {
-    ...request,
-    messages: request.messages.map((m) =>
-      typeof m.content === "string"
-        ? m
-        : {
-            ...m,
-            content: m.content.map(
-              (b): ContentBlock => (hasRef(b) ? { type: "text", text: "[attachment omitted]" } : b),
-            ),
-          },
-    ) as ModelRequest["messages"],
+export function hookRequestOf(request: ModelRequest, log?: Pick<Logger, "warn">): HookModelRequest {
+  let refs = 0;
+  const project = (b: ContentBlock): HookContentBlock => {
+    if (b.type !== "image" && b.type !== "document") return b;
+    if (b.source.kind === "ref") refs++;
+    return {
+      type: "media_omitted",
+      kind: b.type,
+      mediaType: b.mediaType,
+      size: b.source.kind === "base64" ? base64Bytes(b.source.data) : 0,
+    } satisfies HookMediaPlaceholder;
   };
+  const messages = request.messages.map(
+    (m): HookModelMessage =>
+      m.role === "system" ? m : { role: m.role, content: m.content.map(project) },
+  );
+  if (refs > 0) {
+    log?.warn("attachment refs reached a model.request hook payload", {
+      model: request.model,
+      refs,
+    });
+  }
+  return { ...request, messages };
 }
 
 /** Where a denial is recorded (conversation, run, actor and the idem key of its `hook_denied`). */
@@ -153,6 +167,8 @@ export function hookDeniedAudit(
       ...(denial.preflight
         ? { preflight: true, firstPolicyPlugin: denial.plugin, causedByPlugin: false }
         : {}),
+      // M-1: the named plugin is enabled but not loaded on the replica that handled the call
+      ...(denial.notLoaded ? { notLoaded: true } : {}),
     },
   };
 }

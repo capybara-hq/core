@@ -6,6 +6,7 @@ import {
   type HookPayloads,
   type Logger,
   POLICY_HOOKS,
+  type PolicyHook,
 } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
@@ -47,6 +48,11 @@ export type HookOutcome =
        * only the first policy plugin on the mount, not the cause.
        */
       preflight?: true;
+      /**
+       * M-1: `plugin` declares a policy hook on this mount (`permissions.policyHooks`), is enabled and
+       * approved, but is not loaded on this replica: the call fails closed without running any hook.
+       */
+      notLoaded?: true;
     };
 
 /** A hook a plugin instance registered through `ctx.hooks.on` (kept on the instance, like tools). */
@@ -101,6 +107,7 @@ export function clipText(s: string, max: number): string {
 }
 
 const failedReason = (plugin: string) => `The ${plugin} policy check failed`;
+const unavailableReason = (plugin: string) => `The ${plugin} policy check is unavailable`;
 const timeoutReason = (plugin: string) => `The ${plugin} policy check did not respond in time`;
 
 /** Deep-freezes a structured clone in place (typed arrays cannot be frozen and are left as they are). */
@@ -173,6 +180,10 @@ const clipDetail = (s: string): string => clipText(s, HOOK_DETAIL_MAX_CHARS);
  * 2. Resolve the organization's enabled plugins (every run, not cached) and make one deep-frozen
  *    `structuredClone` of the payload. If either throws (Ruling R10): with any policy hook on the
  *    mount, deny with a generic reason (`hook_error`); with only observe hooks, allow and warn.
+ *    If a plugin the organization enabled is expected to run policy hooks on the mount (deployment
+ *    state, `expectedPolicy`) but is not loaded on this replica, deny with a generic reason
+ *    (`hook_error`, `notLoaded`) without running any policy hook (M-1: fail closed). Observe hooks
+ *    of plugins that are not loaded are simply missing.
  * 3. Policy hooks run serially by plugin name (registration order within a plugin), each limited
  *    by `hooks.timeoutMs` (read on every run, hot). `{ deny }`, an error or a timeout stops the chain
  *    and denies (`deny` / `hook_error` / `timeout`). A policy hook cut off by its instance being
@@ -198,6 +209,13 @@ export class HookRegistry {
       instances(): readonly HookSource[];
       /** The active instance of a plugin (the current generation), if any. */
       current(plugin: string): HookSource | undefined;
+      /**
+       * Plugins that deployment state expects to run policy hooks on a mount point (M-1): enabled and
+       * approved, with `permissions.policyHooks` listing it in the approved snapshot (or the manifest
+       * of a builtin plugin). In-process (refreshed by the host on every reconcile), so asking costs no
+       * I/O. Absent: none.
+       */
+      expectedPolicy?(mount: PolicyHook): readonly string[];
       enabledPlugins(orgId: string): Promise<Set<string>>;
       redis: Redis;
       config: () => { hooks: Pick<KernelConfig["hooks"], "timeoutMs"> };
@@ -205,9 +223,28 @@ export class HookRegistry {
     },
   ) {}
 
-  /** Whether any active instance has a hook on the mount point (regardless of organization). */
+  /**
+   * Whether calls on the mount point need {@link run}: an active instance has a hook on it, or a plugin
+   * expected to run policy hooks on it is not loaded here (M-1). In-process only (regardless of
+   * organization), so callers skip building payloads and log lookups when it is false.
+   */
   has(mount: AvailableHook): boolean {
-    return this.d.instances().some((i) => i.hooks.some((h) => h.mount === mount));
+    return (
+      this.d.instances().some((i) => i.hooks.some((h) => h.mount === mount)) ||
+      this.unloadedPolicy(mount).length > 0
+    );
+  }
+
+  /**
+   * Plugins expected to run policy hooks on the mount (deployment state) that have no active instance
+   * on this replica, sorted by name. A loaded plugin that registered no policy hook is not listed.
+   */
+  private unloadedPolicy(mount: AvailableHook): string[] {
+    if (!POLICY.has(mount) || !this.d.expectedPolicy) return [];
+    return this.d
+      .expectedPolicy(mount as PolicyHook)
+      .filter((p) => this.d.current(p) === undefined)
+      .sort();
   }
 
   /**
@@ -232,9 +269,11 @@ export class HookRegistry {
   ): Promise<HookOutcome> {
     if (signal.aborted) throw signal.reason;
     const all = this.entries(mount);
-    if (all.length === 0) return { allowed: true };
+    const unloaded = this.unloadedPolicy(mount);
+    if (all.length === 0 && unloaded.length === 0) return { allowed: true };
     let enabled: Set<string>;
     let frozen: HookPayloads[K];
+    let missing: string[];
     try {
       const abort = abortOf(signal);
       try {
@@ -242,30 +281,39 @@ export class HookRegistry {
       } finally {
         abort.cleanup();
       }
+      missing = unloaded.filter((p) => enabled.has(p));
+      // M-1: an enabled policy plugin is not loaded on this replica: fail closed (R10 stance);
+      // observe hooks, if any, still see the denied call (below)
+      if (
+        missing.length > 0 &&
+        !all.some((e) => e.hook.mode === "observe" && enabled.has(e.src.name))
+      ) {
+        return this.notLoadedDenial(mount, missing);
+      }
       if (!all.some((e) => enabled.has(e.src.name))) return { allowed: true };
-      // Cost (M-2): clone + deep-freeze copies the whole request on every attempt, multi-MB base64
-      // media included. Accepted: freezing in place would freeze the object that goes into the log.
+      // Cost: one clone + deep-freeze per call. The model.request payload carries no media bytes
+      // (hookRequestOf, I-3), so it stays small. Freezing in place would freeze the logged object.
       // The clone is skipped when has() is false or no enabled plugin has a hook on this mount.
       frozen = deepFreeze(structuredClone(payload));
     } catch (err) {
       if (signal.aborted) throw signal.reason;
       const raw = errMsg(err);
-      const policy = all.find((e) => e.hook.mode === "policy");
-      if (policy) {
+      const firstPolicy = all.find((e) => e.hook.mode === "policy")?.src.name ?? unloaded[0];
+      if (firstPolicy !== undefined) {
         // R10: no plugin ran; the named plugin is only the first policy plugin on this mount, so
         // the detail says so instead of blaming it
         const detail = clipDetail(
-          `Hooks could not run (organization lookup or payload copy failed) before any plugin was called; ${policy.src.name} is named only as the first policy plugin on ${mount}: ${raw}`,
+          `Hooks could not run (organization lookup or payload copy failed) before any plugin was called; ${firstPolicy} is named only as the first policy plugin on ${mount}: ${raw}`,
         );
         this.d.log.warn("plugin hooks could not run; denying the call", {
           mount,
-          firstPolicyPlugin: policy.src.name,
+          firstPolicyPlugin: firstPolicy,
           error: raw,
         });
         return {
           allowed: false,
-          plugin: policy.src.name,
-          reason: failedReason(policy.src.name),
+          plugin: firstPolicy,
+          reason: failedReason(firstPolicy),
           cause: "hook_error",
           detail,
           preflight: true,
@@ -278,7 +326,8 @@ export class HookRegistry {
     }
     const active = all.filter((e) => enabled.has(e.src.name));
     const timeoutMs = this.d.config().hooks.timeoutMs;
-    let outcome: HookOutcome = { allowed: true };
+    let outcome: HookOutcome =
+      missing.length > 0 ? this.notLoadedDenial(mount, missing) : { allowed: true };
     // policy hooks grouped per plugin (entries are sorted, so groups are contiguous)
     const groups: { src: HookSource; hooks: RegisteredHook[] }[] = [];
     for (const e of active) {
@@ -287,7 +336,7 @@ export class HookRegistry {
       if (last && last.src === e.src) last.hooks.push(e.hook);
       else groups.push({ src: e.src, hooks: [e.hook] });
     }
-    for (const g of groups) {
+    for (const g of outcome.allowed ? groups : []) {
       const denied = await this.runPolicies(mount, g.src, g.hooks, frozen, signal, timeoutMs);
       if (denied) {
         outcome = denied;
@@ -302,6 +351,33 @@ export class HookRegistry {
       }
     }
     return outcome;
+  }
+
+  /**
+   * The M-1 denial: `missing` (sorted) are enabled policy plugins that are not loaded on this replica.
+   * The model-visible reason is generic; the detail and a throttled warning name the plugin for the
+   * admin.
+   */
+  private notLoadedDenial(mount: AvailableHook, missing: string[]): HookOutcome {
+    const plugin = missing[0] as string;
+    const detail = `plugin ${missing.join(", ")} declares a policy hook on ${mount} (permissions.policyHooks) and is enabled, but is not loaded on this replica; the call was denied without running any hook`;
+    for (const p of missing) {
+      void this.warnOnce(
+        p,
+        mount,
+        "not-loaded",
+        "policy plugin not loaded on this replica; denying calls (check the plugin's status in the admin console)",
+        "not loaded",
+      );
+    }
+    return {
+      allowed: false,
+      plugin,
+      reason: unavailableReason(plugin),
+      cause: "hook_error",
+      detail,
+      notLoaded: true,
+    };
   }
 
   /** Active entries of a mount point, sorted by plugin name (stable: registration order within). */

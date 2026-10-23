@@ -4,7 +4,9 @@ import {
   HOOK_MOUNT_POINTS,
   HOOKS_AVAILABLE,
   type HookHandler,
+  type HookMediaPlaceholder,
   type HookVerdict,
+  type ModelRequestHookPayload,
   type PluginContext,
   POLICY_HOOKS,
   type ToolPreHookPayload,
@@ -33,6 +35,34 @@ describe("hook mount points", () => {
   it("only model.request and tool.preExecute accept policy hooks", () => {
     expect([...POLICY_HOOKS]).toEqual(["model.request", "tool.preExecute"]);
     for (const h of POLICY_HOOKS) expect(HOOKS_AVAILABLE).toContain(h);
+  });
+
+  it("permissions.policyHooks: only policy mount points, each also in permissions.hooks", () => {
+    expect(
+      validatePermissions("p", {
+        hooks: ["model.request", "tool.preExecute"],
+        policyHooks: ["model.request", "tool.preExecute"],
+      }),
+    ).toEqual([]);
+    expect(
+      validatePermissions("p", { hooks: ["model.response"], policyHooks: ["model.response"] }),
+    ).toEqual([
+      'permissions.policyHooks has "model.response", which takes no policy hooks (allowed: model.request, tool.preExecute)',
+    ]);
+    expect(validatePermissions("p", { hooks: [], policyHooks: ["model.request"] })).toEqual([
+      'permissions.policyHooks has "model.request", which is missing from permissions.hooks',
+    ]);
+    expect(validatePermissions("p", { policyHooks: "model.request" })).toEqual([
+      "permissions.policyHooks must be an array",
+    ]);
+  });
+
+  it("model.request payloads carry media placeholders, never media sources (I-3)", () => {
+    type Block = ModelRequestHookPayload["request"]["messages"][number]["content"];
+    expectTypeOf<Extract<Exclude<Block, string>[number], { type: "image" }>>().toBeNever();
+    expectTypeOf<
+      Extract<Exclude<Block, string>[number], { type: "media_omitted" }>
+    >().toEqualTypeOf<HookMediaPlaceholder>();
   });
 
   it("ctx.hooks.on types the payload by mount point", () => {

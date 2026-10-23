@@ -298,7 +298,7 @@ export class LiveConfig {
  *   调用者仍是该组织的 active 成员（组织未删除），返回此刻的角色；
  * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
  * - `hooks.on` only during setup, only mount points declared in `permissions.hooks` and available
- *   (`HOOKS_AVAILABLE`), `policy` only on `POLICY_HOOKS`; kept on the ctx (`registeredHooks`, read by
+ *   (`HOOKS_AVAILABLE`), `policy` only on `POLICY_HOOKS` declared in `permissions.policyHooks`; kept on the ctx (`registeredHooks`, read by
  *   the host's `HookRegistry` from active instances only) and recorded in the ledger.
  * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
  */
@@ -351,6 +351,7 @@ export function createPluginContext(
   const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
   const declaredTools = new Set(perms.tools ?? []);
   const declaredHooks = new Set<string>(perms.hooks ?? []);
+  const declaredPolicyHooks = new Set<string>(perms.policyHooks ?? []);
   const registeredHooks: RegisteredHook[] = [];
   const declaredCaps = new Set<CapabilityRef>([
     ...(manifest.requires ?? []),
@@ -544,6 +545,10 @@ export function createPluginContext(
         // not-available / malformed registrations are programming errors, not permission denials
         checkHookRegistration(name, mount, handler, opts);
         if (!declaredHooks.has(mount)) deny(`permissions.hooks ${mount}`);
+        // M-1: deployment state learns policy mounts from the manifest, so they must be declared
+        if (opts.mode === "policy" && !declaredPolicyHooks.has(mount)) {
+          deny(`permissions.policyHooks ${mount}`);
+        }
         const hook: RegisteredHook = {
           mount: mount as AvailableHook,
           handler: handler as HookHandler<AvailableHook>,

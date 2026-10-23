@@ -29,6 +29,12 @@ export interface PermissionSet {
     http: { method: string; path: string; public: boolean }[];
     tools: string[];
     hooks: string[];
+    /**
+     * Mount points with `policy` hooks (`permissions.policyHooks`, M-1). Deployment state reads it from
+     * the approved snapshot to fail calls closed where the plugin is not loaded. Absent when none are
+     * declared (and in older snapshots).
+     */
+    policyHooks?: string[];
     /** 模型用途（label 只是展示文案，不参与比较）。 */
     models: { purpose: string; kind: string }[];
     network: string[];
@@ -164,6 +170,10 @@ export function buildPermissionSet(input: {
         .sort((a, b) => cmp(`${a.method} ${a.path}`, `${b.method} ${b.path}`)),
       tools: sortedUnique(p.tools),
       hooks: sortedUnique(p.hooks),
+      // only when declared: sets (and snapshots) of plugins without policy hooks stay as they were
+      ...(p.policyHooks && p.policyHooks.length > 0
+        ? { policyHooks: sortedUnique(p.policyHooks) }
+        : {}),
       models: (p.models ?? [])
         .map((m) => ({ purpose: m.purpose, kind: m.kind }))
         .sort((a, b) => cmp(a.purpose, b.purpose)),
@@ -199,6 +209,7 @@ export function permissionKeys(set: PermissionSet): string[] {
   }
   for (const t of p.tools ?? []) keys.push(`permissions.tools:${t}`);
   for (const h of p.hooks ?? []) keys.push(`permissions.hooks:${h}`);
+  for (const h of p.policyHooks ?? []) keys.push(`${POLICY_HOOK_KEY_PREFIX}${h}`);
   for (const m of p.models ?? []) keys.push(`permissions.models:${m.purpose} (${m.kind})`);
   for (const d of p.network ?? []) keys.push(`permissions.network:${d}`);
   for (const v of p.ui?.views ?? []) keys.push(`${UI_VIEW_KEY_PREFIX}${v}`);
@@ -206,6 +217,9 @@ export function permissionKeys(set: PermissionSet): string[] {
   if (s.warningsDigest) keys.push(`${WARNINGS_KEY_PREFIX}${s.warningsDigest}`);
   return sortedUnique(keys);
 }
+
+/** Key prefix of a policy hook mount (`permissions.policyHooks`): needs approval like any hook. */
+export const POLICY_HOOK_KEY_PREFIX = "permissions.policyHooks:";
 
 /** 渲染 schema 视图的权限键前缀：记入快照但不卡加载（见 {@link blockingKeys}）。 */
 export const UI_VIEW_KEY_PREFIX = "ui.view:";

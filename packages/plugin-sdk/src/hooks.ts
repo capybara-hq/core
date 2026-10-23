@@ -26,17 +26,61 @@ export interface HookScope {
   runId: string;
 }
 
-/** `model.request`: before a model call is sent (once per attempt). A policy hook may deny it. */
+/**
+ * What a model call is for: `step` is a run step's call (the agent's turn), `compaction` is the call
+ * that summarizes earlier history before a step when the context grows too large.
+ */
+export type ModelCallPurpose = "step" | "compaction";
+
+/**
+ * An image or document of a `model.request` payload. Hook payloads never carry media bytes or
+ * attachment ids: each image or document block is replaced by this placeholder.
+ * `size` is the size of the bytes sent to the provider, in bytes (0 when unknown).
+ */
+export interface HookMediaPlaceholder {
+  type: "media_omitted";
+  kind: "image" | "document";
+  mediaType: string;
+  size: number;
+}
+
+/** A content block of a `model.request` payload: image and document blocks become placeholders. */
+export type HookContentBlock =
+  | Exclude<ContentBlock, { type: "image" } | { type: "document" }>
+  | HookMediaPlaceholder;
+
+/** A message of a `model.request` payload (see {@link HookContentBlock}). */
+export type HookModelMessage =
+  | { role: "user"; content: HookContentBlock[] }
+  | { role: "assistant"; content: HookContentBlock[] }
+  | { role: "system"; content: string };
+
+/** The request of a `model.request` payload: the request sent to the provider, without media bytes. */
+export type HookModelRequest = Omit<ModelRequest, "messages"> & { messages: HookModelMessage[] };
+
+/**
+ * `model.request`: before a model call is sent. A policy hook may deny it. Fires once per attempt of a
+ * step (`purpose: "step"`) and once for each compaction call (`purpose: "compaction"`, `attempt` 1).
+ * `request` is the request as sent, except that images and documents are placeholders
+ * ({@link HookMediaPlaceholder}): no media bytes, no attachment ids.
+ */
 export interface ModelRequestHookPayload extends HookScope {
+  purpose: ModelCallPurpose;
   step: number;
   attempt: number;
   provider: string;
   model: string;
-  request: Readonly<ModelRequest>;
+  request: Readonly<HookModelRequest>;
 }
 
-/** `model.response`: after a model call finished or failed, with its usage when known. */
+/**
+ * `model.response`: after a sent model call finished or failed, with its usage when known (step
+ * attempts and compaction calls, see `purpose`). Not fired for a call the user aborted (the run was
+ * stopped while the call was in flight), nor for a call that was never sent (denied, or failed
+ * before sending), so a `model.request` can have no matching `model.response`.
+ */
 export interface ModelResponseHookPayload extends HookScope {
+  purpose: ModelCallPurpose;
   step: number;
   attempt: number;
   provider: string;
@@ -74,6 +118,8 @@ export interface ToolPostHookPayload extends ToolPreHookPayload {
  */
 export interface UsageReportPayload {
   eventId: string;
+  /** A run step's call or a compaction call (both are billed). */
+  purpose: ModelCallPurpose;
   orgId: string;
   accountId: string;
   agentId: string;
@@ -121,10 +167,18 @@ export type HookHandler<K extends AvailableHook> = (
  *   the call was denied; the call never waits for them. Verdicts, errors and timeouts are ignored
  *   (logged as throttled warnings). Each call keeps the `hooks.timeoutMs` limit and its abort signal;
  *   when too many observe calls of one plugin are in flight on a replica, new ones are dropped.
+ *
+ * A `policy` hook must also be declared in `permissions.policyHooks`. Policy hooks fail closed: when
+ * a plugin that declares a policy hook on a mount point is enabled and approved but not loaded on the
+ * replica that handles a call (setup failed, pending configuration, import failed), the call is
+ * denied with a generic reason. Observe hooks of a plugin that is not loaded are simply skipped.
  */
 export interface HookOptions {
   mode: "observe" | "policy";
 }
 
 /** Mount points where a `policy` hook may deny the call. */
-export const POLICY_HOOKS: readonly AvailableHook[] = ["model.request", "tool.preExecute"];
+export const POLICY_HOOKS = ["model.request", "tool.preExecute"] as const;
+
+/** A mount point that accepts `policy` hooks (`permissions.policyHooks`). */
+export type PolicyHook = (typeof POLICY_HOOKS)[number];

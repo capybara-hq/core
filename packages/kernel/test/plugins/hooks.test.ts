@@ -92,6 +92,7 @@ const toolPre = (input: unknown = { x: 1 }): ToolPreHookPayload => ({
 });
 const modelReq = (): ModelRequestHookPayload => ({
   ...scope,
+  purpose: "step",
   step: 1,
   attempt: 1,
   provider: "p",
@@ -117,6 +118,8 @@ function setup(
     enabled?: string[] | (() => Promise<Set<string>>);
     timeoutMs?: number;
     log?: KernelDeps["log"];
+    /** Deployment state: plugin → mounts with policy hooks (M-1). */
+    expected?: Record<string, string[]>;
   } = {},
 ) {
   const sources: Src[] = [];
@@ -125,6 +128,8 @@ function setup(
   const r = new HookRegistry({
     instances: () => sources,
     current: (p) => current.get(p),
+    expectedPolicy: (mount) =>
+      Object.entries(opts.expected ?? {}).flatMap(([p, ms]) => (ms.includes(mount) ? [p] : [])),
     enabledPlugins:
       typeof enabled === "function"
         ? enabled
@@ -524,6 +529,60 @@ describe("HookRegistry: listeners and detail", () => {
   });
 });
 
+describe("HookRegistry.run: a policy plugin not loaded on this replica (M-1)", () => {
+  it("fails closed: generic reason, notLoaded, a throttled warning naming the plugin; no hook runs", async () => {
+    const { warn, log } = warnSpy();
+    const { r, plugin } = setup({ expected: { beta: ["tool.preExecute"] }, log });
+    const alpha = vi.fn();
+    const observed = vi.fn();
+    plugin("alpha").on("tool.preExecute", alpha, { mode: "policy" });
+    plugin("zeta").on("tool.preExecute", observed, { mode: "observe" });
+    expect(await r.run("tool.preExecute", toolPre(), signal())).toMatchObject({
+      allowed: false,
+      plugin: "beta",
+      reason: "The beta policy check is unavailable",
+      cause: "hook_error",
+      notLoaded: true,
+      detail: expect.stringContaining("not loaded on this replica"),
+    });
+    expect(alpha).not.toHaveBeenCalled();
+    // observe hooks still see the denied call
+    await vi.waitFor(() => expect(observed).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("policy plugin not loaded"),
+        expect.objectContaining({ plugin: "beta", mount: "tool.preExecute" }),
+      ),
+    );
+    await r.run("tool.preExecute", toolPre(), signal());
+    await new Promise((res) => setTimeout(res, 20));
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("not loaded"))).toHaveLength(1);
+  });
+
+  it("has() is true with no local hooks; denies without any local instance", async () => {
+    const { r } = setup({ expected: { beta: ["model.request"] } });
+    expect(r.has("model.request")).toBe(true);
+    expect(r.has("tool.preExecute")).toBe(false);
+    expect(r.has("model.response")).toBe(false);
+    expect(await r.run("model.request", modelReq(), signal())).toMatchObject({
+      allowed: false,
+      plugin: "beta",
+      notLoaded: true,
+    });
+  });
+
+  it("an organization that has not enabled the plugin is not affected", async () => {
+    const { r } = setup({ expected: { beta: ["tool.preExecute"] }, enabled: ["alpha"] });
+    expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
+  });
+
+  it("once the plugin is loaded here its own hooks decide (no policy hook registered: allowed)", async () => {
+    const { r, plugin } = setup({ expected: { beta: ["tool.preExecute"] } });
+    plugin("beta").on("tool.preExecute", () => {}, { mode: "observe" });
+    expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
+  });
+});
+
 describe("HookRegistry: has / handlers", () => {
   it("no handlers: has() is false and run allows without querying the organization", async () => {
     const enabledPlugins = vi.fn(async () => new Set<string>());
@@ -598,7 +657,10 @@ const manifest = (): PluginManifest =>
     version: "0.1.0",
     sdk: "^0.1.0",
     provides: [],
-    permissions: { hooks: ["tool.preExecute", "model.response", "session.start"] },
+    permissions: {
+      hooks: ["tool.preExecute", "model.request", "model.response", "session.start"],
+      policyHooks: ["tool.preExecute"],
+    },
     setup() {},
   });
 
@@ -629,6 +691,10 @@ describe("ctx.hooks.on", () => {
       expect(reserved).not.toThrow(PluginPermissionError);
       // policy on a mount point that cannot deny
       expect(() => ctx.hooks.on("model.response", () => {}, { mode: "policy" })).toThrow(/policy/);
+      // policy on a mount point missing from permissions.policyHooks (M-1)
+      expect(() => ctx.hooks.on("model.request", () => {}, { mode: "policy" })).toThrow(
+        PluginPermissionError,
+      );
       ctx.sealTools();
       // outside setup
       expect(() => ctx.hooks.on("tool.preExecute", () => {}, { mode: "observe" })).toThrow(
@@ -675,8 +741,15 @@ describe("plugin host", () => {
     });
 
     await h.unload("hooks-a", { drainMs: 0 });
-    expect(h.hooks.has("tool.preExecute")).toBe(false);
     expect(h.hooks.has("model.response")).toBe(false);
+    // M-1: deployment state still expects its policy hook (approved snapshot), so calls fail closed
+    expect(h.expectedPolicy("tool.preExecute")).toEqual(["hooks-a"]);
+    expect(h.hooks.has("tool.preExecute")).toBe(true);
+    expect(await h.hooks.run("tool.preExecute", toolPre(), signal())).toMatchObject({
+      allowed: false,
+      plugin: "hooks-a",
+      notLoaded: true,
+    });
   });
 
   it("during an upgrade's drain window each hook fires exactly once, and the old call is drained", async () => {

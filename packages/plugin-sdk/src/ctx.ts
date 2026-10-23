@@ -134,7 +134,8 @@ export interface PluginContext {
   /**
    * Hooks (`permissions.hooks`): observe model and tool calls, or deny them with a policy hook.
    * `on` is only allowed during `setup`; the mount point must be declared in `permissions.hooks` and be
-   * one of `HOOKS_AVAILABLE`; `mode: "policy"` only on `POLICY_HOOKS`. Hooks fire only for organizations
+   * one of `HOOKS_AVAILABLE`; `mode: "policy"` only on `POLICY_HOOKS` and only for mount points also
+   * declared in `permissions.policyHooks`. Hooks fire only for organizations
    * that enabled the plugin, only in chat conversations (never in eval replays); see `HookOptions` for
    * how policy and observe hooks run. Unloading, upgrading or disabling the plugin instance revokes
    * them (in-flight hook calls are drained like tool calls).

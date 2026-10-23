@@ -132,6 +132,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
     ["permissions.http.public:", "publicRoutes", ""],
     ["permissions.tools:", "tools", ""],
     ["permissions.hooks:", "hooks", ""],
+    ["permissions.policyHooks:", "hooks", "policy:"],
     ["ui.embed:", "ui", "embed:"],
     ["ui.view:", "ui", "view:"],
   ];
@@ -198,7 +199,7 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
       items: p.http.filter((r) => r.public).map((r) => `${r.method} ${r.path}`),
     },
     { category: "tools", items: p.tools },
-    { category: "hooks", items: p.hooks },
+    { category: "hooks", items: [...p.hooks, ...(p.policyHooks ?? []).map((h) => `policy:${h}`)] },
     {
       category: "models",
       items: p.models.map((m) => `${m.purpose} (${m.kind})`),

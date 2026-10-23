@@ -17,6 +17,7 @@ import { takeSnapshot } from "../../src/evals/snapshot.js";
 import type { TrajectoryDetail } from "../../src/evals/trajectory.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { hookRequestOf } from "../../src/runtime/hook-calls.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -177,6 +178,7 @@ describe("model hooks", { timeout: 60_000 }, () => {
       agentId,
       conversationId: conv,
       runId: call?.runId,
+      purpose: "step",
       step: 1,
       attempt: 1,
       provider: "model-fake",
@@ -189,7 +191,8 @@ describe("model hooks", { timeout: 60_000 }, () => {
       mediaBudgetBytes: k.config.attachments.requestMediaBytes,
     });
     expect(out.drift).toEqual([]);
-    expect(seen.request).toEqual(JSON.parse(JSON.stringify(out.request)));
+    // the request sent, projected for hooks (I-3: media blocks become placeholders)
+    expect(seen.request).toEqual(JSON.parse(JSON.stringify(hookRequestOf(out.request))));
   });
 
   it("model.request policy deny: no model_call, hook_denied logged, run fails, provider not called", async () => {

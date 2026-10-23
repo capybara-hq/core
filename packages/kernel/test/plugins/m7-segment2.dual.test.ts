@@ -279,7 +279,10 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     expect(review.sensitive).toBe(true);
     const hooks = review.permissions.find((g) => g.category === "hooks");
     expect(hooks).toMatchObject({ sensitive: true });
-    expect([...(hooks?.items ?? [])].sort()).toEqual([...MOUNTS].sort());
+    // the mounts, plus the policy mounts (`permissions.policyHooks`, M-1)
+    expect([...(hooks?.items ?? [])].sort()).toEqual(
+      [...MOUNTS, "policy:model.request", "policy:tool.preExecute"].sort(),
+    );
     await approve(1, PROBE);
     await ok(0, "POST", `/api/v1/admin/plugins/${PROBE}/enable`);
     for (const name of ["model-fake", "todo", PROBE]) {

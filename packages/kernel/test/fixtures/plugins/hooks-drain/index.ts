@@ -19,7 +19,7 @@ export default definePlugin({
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: [],
-  permissions: { hooks: ["tool.preExecute"] },
+  permissions: { hooks: ["tool.preExecute"], policyHooks: ["tool.preExecute"] },
   setup(ctx: PluginContext) {
     const s = state();
     s.setups += 1;

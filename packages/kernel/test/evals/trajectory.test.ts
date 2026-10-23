@@ -608,4 +608,58 @@ describe("buildTrajectory: hook denials", () => {
     });
     expect(run?.end).toEqual({ kind: "failed", detail: "run.hook_denied" });
   });
+
+  it("a compaction call's usage counts in the totals, never as a step call's usage (I-1)", () => {
+    const { events, e } = log();
+    e(0, null, {
+      type: "user_message",
+      payload: { content: [{ type: "text", text: "hi" }], authorAccountId: "acc-1" },
+    });
+    e(10, "r1", {
+      type: "run_started",
+      payload: {
+        agentVersion: 1,
+        model: { provider: "p", model: "m1" },
+        triggerAccountId: "acc-1",
+      },
+    });
+    // the compaction call before step 1's model_call, then a step 2 that was denied (no model_call)
+    e(15, "r1", { type: "compaction_summary", payload: { coversUpToSeq: 1, text: "summary" } });
+    e(15, "r1", {
+      type: "usage",
+      payload: { step: 1, provider: "p", model: "m1", ...U0, purpose: "compaction" },
+    });
+    e(20, "r1", {
+      type: "model_call",
+      payload: {
+        step: 1,
+        attempt: 1,
+        provider: "p",
+        model: "m1",
+        fallback: false,
+        request: request(),
+      },
+    });
+    e(30, "r1", {
+      type: "assistant_message",
+      payload: { step: 1, content: [{ type: "text", text: "done" }], stopReason: "end_turn" },
+    });
+    e(31, "r1", { type: "usage", payload: { step: 1, provider: "p", model: "m1", ...U1 } });
+    e(40, "r1", { type: "compaction_failed", payload: { attempt: 1, reason: "x" } });
+    e(40, "r1", {
+      type: "usage",
+      payload: { step: 2, provider: "p", model: "m1", ...U1, purpose: "compaction" },
+    });
+    e(50, "r1", { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 1 } });
+    const [run] = buildTrajectory(events, table(PRICE_M1));
+    expect(run?.steps.map((s) => s.step)).toEqual([1]);
+    expect(run?.steps[0]?.modelCalls[0]?.usage).toEqual(U1);
+    expect(run?.totals.modelCalls).toBe(1);
+    expect(run?.totals.usage).toEqual(usage(5000, 300, 500, 100));
+    const price = PRICE_M1;
+    expect(run?.totals.cost).toBeCloseTo(
+      (costOf(U0, price) as number) + 2 * (costOf(U1, price) as number),
+      10,
+    );
+  });
 });

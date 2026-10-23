@@ -262,9 +262,20 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       stopReason: z.enum([...STOP_REASONS, "aborted"]),
     }),
   ),
+  /**
+   * Usage of one model call. Absent `purpose` = the step's call (written with its
+   * `assistant_message`); `compaction` = the compaction call before the step (I-1: billed and
+   * reported, but no step consumer may pair it with the step's `model_call`).
+   */
   ev(
     "usage",
-    z.object({ step: count, provider: z.string(), model: z.string(), ...ModelUsageShape }),
+    z.object({
+      step: count,
+      provider: z.string(),
+      model: z.string(),
+      ...ModelUsageShape,
+      purpose: z.literal("compaction").optional(),
+    }),
   ),
   ev("reminder", z.object({ step: count, text: z.string() })),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */

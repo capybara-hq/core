@@ -6,7 +6,7 @@ export default definePlugin({
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: [],
-  permissions: { hooks: ["tool.preExecute", "model.response"] },
+  permissions: { hooks: ["tool.preExecute", "model.response"], policyHooks: ["tool.preExecute"] },
   setup(ctx: PluginContext) {
     ctx.hooks.on(
       "tool.preExecute",

@@ -567,6 +567,11 @@ export class PluginHost {
   /** 本进程生效的插件实例（C17）：消费方每次实时取，不缓存实现对象。 */
   private readonly registry = new PluginRegistry();
   /**
+   * M-1: plugin → mount points where deployment state expects `policy` hooks. A per-replica copy of PG
+   * deployment state (like the registry), rebuilt on every load / converge, never written elsewhere.
+   */
+  private policyExpected = new Map<string, readonly string[]>();
+  /**
    * Runs the hooks of this process's active plugin instances (resolved from the registry on every
    * call, so an upgrade fires only the new generation; calls go through each instance's in-flight
    * tracker and are drained on revocation). Organization enablement is {@link enabledPlugins}.
@@ -692,6 +697,7 @@ export class PluginHost {
     this.hooks = new HookRegistry({
       instances: () => this.registry.all(),
       current: (plugin) => this.registry.current(plugin),
+      expectedPolicy: (mount) => this.expectedPolicy(mount),
       enabledPlugins: (orgId) => this.enabledPlugins(orgId),
       redis: deps.redis,
       config: () => ({ hooks: { timeoutMs: hookTimeoutMs() } }),
@@ -795,9 +801,9 @@ export class PluginHost {
     }
 
     let installProviders = new Map<CapabilityRef, string[]>();
+    let desired: DesiredPlugin[] | undefined;
     if (p.installs) {
       // 与运行中的 reconcile 走同一条路径（{@link converge}）；启动时不做依赖方连锁
-      let desired: DesiredPlugin[] | undefined;
       try {
         desired = await p.installs.desired();
       } catch (e) {
@@ -813,6 +819,7 @@ export class PluginHost {
     if (deferred.length > 0) {
       await this.loadDeferred(deferred, dirs, urls, snapshots, approvals, installProviders);
     }
+    await this.refreshPolicyExpectations(p.installs ? desired : []);
 
     const orphans = Object.keys(this.pluginConfig).filter((k) => !this.sources.has(k));
     if (orphans.length > 0) {
@@ -1610,7 +1617,47 @@ export class PluginHost {
       const desired = await loader.desired();
       await this.applyInstalls(loader, desired, false);
       if (this.pendingActivations.size > 0) await this.activatePendingNow();
+      await this.refreshPolicyExpectations(desired);
     });
+  }
+
+  /**
+   * Refreshes {@link policyExpected} from deployment state (M-1): builtin plugins from their manifest,
+   * config-declared plugins and enabled installs (`desired`) from their approved permission snapshot.
+   * `desired` undefined (install records unreadable) keeps the previous install entries.
+   */
+  private async refreshPolicyExpectations(desired: readonly DesiredPlugin[] | undefined) {
+    const snapshots = await new PluginApprovals(kernelDb(this.deps.db)).all();
+    const next = new Map<string, readonly string[]>();
+    const add = (name: string, set: PermissionSet | undefined) => {
+      const mounts = set?.permissions?.policyHooks ?? [];
+      if (mounts.length > 0) next.set(name, [...mounts]);
+    };
+    for (const [name, info] of this.declaredInfo) {
+      add(name, info.source === "builtin" ? info.set : snapshots.get(name)?.permissions);
+    }
+    const declared = this.declared();
+    if (desired === undefined) {
+      for (const [name, mounts] of this.policyExpected) {
+        if (!this.declaredInfo.has(name)) next.set(name, mounts);
+      }
+    } else {
+      for (const d of desired) {
+        if (!declared.has(d.name)) add(d.name, snapshots.get(d.name)?.permissions);
+      }
+    }
+    this.policyExpected = next;
+  }
+
+  /**
+   * Plugins that deployment state expects to run `policy` hooks on the mount point (M-1): enabled and
+   * approved, with the mount in `permissions.policyHooks`. In-process, no I/O (see
+   * {@link refreshPolicyExpectations}); the hook registry fails calls closed for those not loaded here.
+   */
+  expectedPolicy(mount: string): string[] {
+    return [...this.policyExpected].flatMap(([name, mounts]) =>
+      mounts.includes(mount) ? [name] : [],
+    );
   }
 
   /**

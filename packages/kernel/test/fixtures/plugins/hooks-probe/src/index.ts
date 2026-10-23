@@ -46,6 +46,7 @@ export default definePlugin({
       "tool.postExecute",
       "usage.report",
     ],
+    policyHooks: ["model.request", "tool.preExecute"],
     http: [
       { method: "GET", path: "/counts" },
       { method: "POST", path: "/config" },

@@ -510,9 +510,11 @@ export class ToolPipeline {
     // tool.preExecute after policy and approval, before tool_call_started (F10)
     const hooks = this.deps.pluginHooks;
     const scope = hookScope(hooks, ctx);
-    if (scope) {
+    if (scope && hooks?.has("tool.preExecute")) {
       // sticky: a denial already logged for this call (e.g. an older log, or a crash right after it)
-      // is final: fail with the recorded reason, never re-run the hooks or execute the tool
+      // is final: fail with the recorded reason, never re-run the hooks or execute the tool. Only
+      // looked up when a tool.preExecute hook could run (M-2: no query without hooks); a denial is
+      // written with the call's tool_result, so a call with a logged denial never runs again anyway.
       const prior = await this.deps.eventLog.findByIdem(
         ctx.conversationId,
         idem.hookDenied(ctx.runId, call.id),

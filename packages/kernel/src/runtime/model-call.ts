@@ -19,6 +19,7 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { audit } from "../identity/audit.js";
 import { PluginUnloadedError } from "../plugins/inflight.js";
 import { skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
@@ -48,9 +49,11 @@ import {
   type ConversationKindForHooks,
   fireObserve,
   type HookRunner,
+  hookDeniedAudit,
+  hookDeniedEvent,
+  hookRequestOf,
   hookScope,
   recordHookDenial,
-  withoutMediaRefs,
 } from "./hook-calls.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
@@ -113,7 +116,8 @@ export interface ModelStepDeps {
    */
   media?: MediaSourceDeps;
   /**
-   * Plugin hooks (`model.request` policy / observe before the call, `model.response` observe after it).
+   * Plugin hooks (`model.request` policy / observe before the call, `model.response` observe after it),
+   * for every attempt of a step and for the compaction call (`purpose: "compaction"`, I-1).
    * Only chat runs get it: full-run and single-step eval replays omit it (P-18), and hooks also need
    * `conversationKind: "chat"` on the step input.
    */
@@ -243,6 +247,9 @@ const idem = {
   modelCall: modelCallIdemKey,
   hookDenied: (runId: string, step: number, attempt: number) =>
     `hook_denied:${runId}:${step}:${attempt}`,
+  /** Usage of a compaction call: `n` is the compaction attempt (consecutive failures + 1). */
+  compactionUsage: (runId: string, step: number, n: number) =>
+    `usage_compaction:${runId}:${step}:${n}`,
   mediaExcluded: (runId: string, step: number, attempt: number, part: number) =>
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
@@ -314,6 +321,18 @@ async function runStep(
   try {
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
+    // sticky (M-4): a model.request denial already logged for this step (any attempt, e.g. a crash
+    // after recording it) is final: fail the same way, before compaction or any model call. Read from
+    // the events just loaded, so it costs no query (M-2).
+    if (hookScope(deps.hooks, input)) {
+      const prior = stickyModelDenial(events, runId, step);
+      if (prior) {
+        throw new RunError(
+          "run.hook_denied",
+          modelDeniedText(prior.payload.plugin, prior.payload.reason),
+        );
+      }
+    }
     // 每步实时解析（连接器 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
     // 日志里有过技能目录快照 → 带上 skill_load（Ruling M17；空快照也不收回，见 skillLoadOffered）
     const resolved = await deps.tools.forAgent(input.orgId, {
@@ -401,6 +420,21 @@ async function runStep(
     ]);
     return { content, stopReason: "aborted", reused: false, aborted: true, usage: null };
   }
+}
+
+/** The `hook_denied` of a `model.request` denial already logged for this run step (any attempt). */
+function stickyModelDenial(
+  events: readonly ConversationEvent[],
+  runId: string,
+  step: number,
+): Extract<ConversationEvent, { type: "hook_denied" }> | undefined {
+  return events.findLast(
+    (e): e is Extract<ConversationEvent, { type: "hook_denied" }> =>
+      e.type === "hook_denied" &&
+      e.runId === runId &&
+      e.payload.mount === "model.request" &&
+      e.payload.step === step,
+  );
 }
 
 /** 幂等命中：返回已写入的 assistant_message（与同批的 usage）对应的结果。 */
@@ -636,7 +670,8 @@ async function loadMedia(
  */
 function lastActual(events: ConversationEvent[]): { estimate: number; inputTokens: number } | null {
   let usage: (ConversationEvent & { type: "usage" }) | undefined;
-  for (const e of events) if (e.type === "usage") usage = e;
+  // compaction calls have their own request (not a model_call): only step usage calibrates
+  for (const e of events) if (e.type === "usage" && e.payload.purpose !== "compaction") usage = e;
   if (!usage) return null;
   let estimate: number | undefined;
   for (const e of events) {
@@ -705,19 +740,104 @@ async function maybeCompact(
   const plan = compactionPlan(events, runtime.keepRecentTurns);
   if (!plan) return events;
 
+  const { runId, step, signal, conversationId } = input;
+  const ref = input.agent.model;
+  const request = buildCompactionRequest(plan.transcript, info.id);
+  const attemptNo = consecutiveCompactionFailures(events) + 1;
+  // hooks see compaction calls like step attempts (I-1): same scope, chat runs only
+  const scope = hookScope(deps.hooks, input);
+  const hookBase = scope && {
+    ...scope,
+    purpose: "compaction" as const,
+    step,
+    attempt: 1,
+    provider: ref.provider,
+    model: ref.model,
+  };
+  if (hookBase && deps.hooks?.has("model.request")) {
+    let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+    try {
+      verdict = await deps.hooks.run(
+        "model.request",
+        { ...hookBase, request: hookRequestOf(request, deps.log) },
+        signal,
+      );
+    } catch (e) {
+      // run() rejects only when the run's signal aborted: an abort, never a deny
+      if (signal.aborted) throw new StepAborted();
+      throw e;
+    }
+    if (!verdict.allowed) {
+      // compaction fails (generic reason in the log, raw detail only in the audit row, R12); the
+      // step continues and its own request meets the hooks next
+      const site = {
+        orgId: input.orgId,
+        conversationId,
+        runId,
+        ...(input.accountId !== undefined && { accountId: input.accountId }),
+        ...(input.agentId !== undefined && { agentId: input.agentId }),
+        idemKey: `hook_denied_compaction:${runId}:${step}:${attemptNo}`,
+      };
+      const denied = hookDeniedEvent(site, "model.request", verdict, { step, attempt: 1 });
+      const entry = hookDeniedAudit(site, denied.payload, verdict);
+      entry.detail = { ...entry.detail, purpose: "compaction" };
+      const failed: AppendEvent = {
+        type: "compaction_failed",
+        runId,
+        payload: {
+          attempt: attemptNo,
+          reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})`,
+        },
+      };
+      deps.log.warn("compaction blocked by a policy hook", {
+        conversationId,
+        plugin: verdict.plugin,
+        cause: verdict.cause,
+      });
+      const written = await deps.db.transaction().execute(async (t) => {
+        const out = await deps.eventLog.append(conversationId, [failed], t);
+        await audit(t, entry);
+        return out;
+      });
+      if (written.length > 0) {
+        await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
+      }
+      return mergeLocal(events, written);
+    }
+  }
+
   let failure: string | null = null;
   let summary = "";
+  let usage: ModelUsage | null = null;
+  const sentAt = Date.now();
   try {
     let partial = "";
     const out = await consumeModelStream(
       provider,
-      buildCompactionRequest(plan.transcript, info.id),
+      request,
       info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-      input.signal,
+      signal,
       (ev) => {
         if (ev.type === "text_delta") partial += ev.text;
       },
     );
+    usage = out.usage;
+    if (hookBase && deps.hooks) {
+      fireObserve(
+        deps.hooks,
+        "model.response",
+        {
+          ...hookBase,
+          outcome: "ok",
+          content: out.content,
+          stopReason: out.stopReason,
+          usage: out.usage,
+          latencyMs: Date.now() - sentAt,
+        },
+        signal,
+        deps.log,
+      );
+    }
     const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
     summary = (final || partial).trim();
     if (!acceptSummary(summary, plan.transcript)) {
@@ -725,6 +845,23 @@ async function maybeCompact(
     }
   } catch (err) {
     if (err instanceof StepAborted) throw err;
+    if (hookBase && deps.hooks) {
+      fireObserve(
+        deps.hooks,
+        "model.response",
+        {
+          ...hookBase,
+          outcome: "failed",
+          content: [],
+          stopReason: null,
+          usage: null,
+          latencyMs: Date.now() - sentAt,
+          errorCode: classify(err).code,
+        },
+        signal,
+        deps.log,
+      );
+    }
     failure = err instanceof Error ? err.message : String(err);
   }
 
@@ -732,18 +869,41 @@ async function maybeCompact(
     failure === null
       ? {
           type: "compaction_summary",
-          runId: input.runId,
+          runId,
           payload: { coversUpToSeq: plan.coversUpToSeq, text: summary },
         }
       : {
           type: "compaction_failed",
-          runId: input.runId,
-          payload: { attempt: consecutiveCompactionFailures(events) + 1, reason: failure },
+          runId,
+          payload: { attempt: attemptNo, reason: failure },
         };
   if (failure !== null) {
-    deps.log.warn("compaction failed", { conversationId: input.conversationId, reason: failure });
+    deps.log.warn("compaction failed", { conversationId, reason: failure });
   }
-  return appendLocal(deps.eventLog, input.conversationId, events, event);
+  // the compaction call's usage (I-1): logged with the outcome in one append (one transaction), marked
+  // `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans) skip it
+  const batch: AppendEvent[] = [event];
+  if (usage !== null) {
+    batch.push({
+      type: "usage",
+      runId,
+      idemKey: idem.compactionUsage(runId, step, attemptNo),
+      payload: { step, provider: ref.provider, model: ref.model, ...usage, purpose: "compaction" },
+    });
+  }
+  const written = await deps.eventLog.append(conversationId, batch);
+  const usageEvent = written.find((e) => e.type === "usage");
+  if (deps.usageReport && usageEvent) void deps.usageReport.enqueue(conversationId, usageEvent.seq);
+  return mergeLocal(events, written);
+}
+
+/** Merges written events into the local list (idempotent hits already in it are not added twice). */
+function mergeLocal(
+  events: ConversationEvent[],
+  written: readonly ConversationEvent[],
+): ConversationEvent[] {
+  const fresh = written.filter((w) => !events.some((e) => e.seq === w.seq));
+  return fresh.length === 0 ? events : [...events, ...fresh];
 }
 
 /**
@@ -830,21 +990,8 @@ async function ladder(
       sentMedia = (meta.media ?? []).flatMap((m) =>
         m.outcome === "bytes" ? [m.attachmentId] : [],
       );
-      // model.request before model_call: a denied request is never logged as sent nor sent
-      if (scope) {
-        // sticky: this attempt's denial is already logged (crash after recording it) → fail the
-        // same way without running the hooks again
-        const prior = await deps.eventLog.findByIdem(
-          conversationId,
-          idem.hookDenied(runId, step, attempt),
-        );
-        if (prior?.type === "hook_denied") {
-          throw new RunError(
-            "run.hook_denied",
-            modelDeniedText(prior.payload.plugin, prior.payload.reason),
-          );
-        }
-      }
+      // model.request before model_call: a denied request is never logged as sent nor sent (a denial
+      // logged before a crash is sticky: runStep checks it before compaction)
       if (scope && deps.hooks?.has("model.request")) {
         let verdict: Awaited<ReturnType<HookRunner["run"]>>;
         try {
@@ -852,11 +999,12 @@ async function ladder(
             "model.request",
             {
               ...scope,
+              purpose: "step",
               step,
               attempt,
               provider: rung.ref.provider,
               model: rung.ref.model,
-              request: withoutMediaRefs(request, deps.log),
+              request: hookRequestOf(request, deps.log),
             },
             signal,
           );
@@ -938,6 +1086,7 @@ async function ladder(
           "model.response",
           {
             ...scope,
+            purpose: "step",
             step,
             attempt,
             provider: rung.ref.provider,
@@ -965,6 +1114,7 @@ async function ladder(
           "model.response",
           {
             ...scope,
+            purpose: "step",
             step,
             attempt,
             provider: rung.ref.provider,
