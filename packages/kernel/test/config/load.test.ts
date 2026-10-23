@@ -249,6 +249,18 @@ describe("http.trustProxy", () => {
     expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:0.0.0.0/0" })).toThrow(
       /trusts every address/,
     );
+    // proxy-addr unwraps a mapped address in any spelling, so detection must parse, not match text.
+    for (const v of [
+      "::ffff:a00:0/96",
+      "0:0:0:0:0:ffff:10.0.0.0/96",
+      "0:0:0:0:0:FFFF:0A00:0000/96",
+    ]) {
+      expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v }), v).toThrow(/trusts every address/);
+    }
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:a00:0/90" })).toThrow(
+      /out-of-range prefix/,
+    );
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:a00:0/104" })).toEqual(["::ffff:a00:0/104"]);
   });
 
   it("refuses malformed entries and /0 prefixes", () => {

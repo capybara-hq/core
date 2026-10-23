@@ -78,6 +78,31 @@ const masterKey = z
 const TRUST_PROXY_NAMES = new Set(["loopback", "linklocal", "uniquelocal"]);
 
 /**
+ * The IPv4 address carried by an IPv4-mapped IPv6 address (`::ffff:0:0/96`) in any spelling
+ * (`::ffff:10.0.0.1`, `::ffff:a00:1`, `0:0:0:0:0:ffff:10.0.0.1`), else undefined. Parsed, not matched
+ * as text: proxy-addr unwraps every spelling, so a regex on one spelling lets the others through.
+ */
+function mappedIpv4(addr: string): string | undefined {
+  if (isIP(addr) !== 6) return undefined;
+  let s = addr.toLowerCase().split("%")[0] ?? "";
+  const dotted = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (dotted !== null) {
+    const [a = 0, b = 0, c = 0, d = 0] = dotted.slice(2).map(Number);
+    s = `${dotted[1]}${(a * 256 + b).toString(16)}:${(c * 256 + d).toString(16)}`;
+  }
+  const [head = "", tail] = s.split("::");
+  const h = head === "" ? [] : head.split(":");
+  const t = tail === undefined || tail === "" ? [] : tail.split(":");
+  const words =
+    tail === undefined ? h : [...h, ...Array<string>(8 - h.length - t.length).fill("0"), ...t];
+  if (words.length !== 8) return undefined;
+  const n = words.map((w) => Number.parseInt(w, 16));
+  if (n.slice(0, 5).some((x) => x !== 0) || n[5] !== 0xffff) return undefined;
+  const [hi = 0, lo = 0] = n.slice(6);
+  return [hi >> 8, hi & 255, lo >> 8, lo & 255].join(".");
+}
+
+/**
  * Why an `http.trustProxy` list entry is refused, or undefined when it is an IP, a CIDR or a named
  * range. A /0 prefix is refused: it trusts every address, so any client could forge the header.
  */
@@ -102,8 +127,9 @@ export function trustProxyEntryProblem(entry: string): string | undefined {
     return `"${entry}" is not an IP address or CIDR`;
   }
   if (bits > (family === 6 ? 128 : 32)) return `"${entry}" has an out-of-range prefix`;
-  // proxy-addr turns an IPv4-mapped IPv6 range (::ffff:a.b.c.d/N) into the IPv4 range /N-96.
-  const mapped = family === 6 && /^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(addr);
+  // proxy-addr turns an IPv4-mapped IPv6 range (::ffff:a.b.c.d/N, any spelling) into the IPv4
+  // range /N-96.
+  const mapped = mappedIpv4(addr) !== undefined;
   if (bits === 0 || (mapped && bits === 96)) {
     return `"${entry}" trusts every address; list the proxies' own addresses or CIDRs`;
   }

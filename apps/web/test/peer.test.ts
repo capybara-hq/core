@@ -154,6 +154,24 @@ describe("sanitizeIncoming with CAPYBARA_WEB_TRUST_PROXY", () => {
     }
   });
 
+  it("recognizes IPv4-mapped ranges in every spelling (hex, expanded), not just ::ffff:a.b.c.d", () => {
+    for (const bad of [
+      "::ffff:a00:0/96",
+      "0:0:0:0:0:ffff:10.0.0.0/96",
+      "0:0:0:0:0:FFFF:0A00:0000/96",
+      "::ffff:0:0/96",
+    ]) {
+      expect(() => parseTrustProxy(bad), bad).toThrow(/trusts every address/);
+    }
+    for (const bad of ["::ffff:a00:0/90", "0:0:0:0:0:ffff:10.0.0.0/64"]) {
+      expect(() => parseTrustProxy(bad), bad).toThrow(/invalid entry/);
+    }
+    // A hex-form mapped /104 is the IPv4 10.0.0.0/8, for ranges and for peers alike.
+    expect(sanitize("::ffff:a00:0/104", "10.9.9.9", "1.2.3.4")["x-forwarded-for"]).toBe("1.2.3.4");
+    expect(sanitize("::ffff:a00:0/104", "11.0.0.1", "1.2.3.4")["x-forwarded-for"]).toBe("11.0.0.1");
+    expect(sanitize("10.0.0.0/8", "::ffff:a09:909", "1.2.3.4")["x-forwarded-for"]).toBe("1.2.3.4");
+  });
+
   it("refuses a /0 prefix, which would trust every address", () => {
     for (const bad of ["0.0.0.0/0", "::/0", "10.0.0.1, 0.0.0.0/00", "::ffff:0.0.0.0/0"]) {
       expect(() => parseTrustProxy(bad), bad).toThrow(/trusts every address/);
