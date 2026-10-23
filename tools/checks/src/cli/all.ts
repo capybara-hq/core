@@ -1,4 +1,5 @@
 import { join, relative } from "node:path";
+import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
 import { checkDeps } from "../deps.js";
 import { checkI18n } from "../i18n.js";
@@ -33,6 +34,14 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
   },
   { name: "测试插件", run: () => checkTestPlugins(root) },
   { name: "Synced skills", run: () => checkSyncedSkills(root) },
+  {
+    name: "compose haproxy",
+    run: () =>
+      checkComposeHaproxy(
+        join(root, "docker/compose.yaml"),
+        join(root, "docker/sandbox-proxy/haproxy.cfg"),
+      ),
+  },
 ];
 
 let failed = 0;

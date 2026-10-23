@@ -6,14 +6,18 @@
 #   3. install model-fake from a local tgz with `compose run api plugins install`, enable it, and
 #      without restarting anything both workers load it and a conversation turn completes;
 #   4. a third `up`: init exits 0 again and there is still exactly one enterprise admin;
-#   5. the sandbox profile: sandbox-proxy publishes no port, only the worker network reaches it, and
-#      its inline haproxy config matches docker/sandbox-proxy/haproxy.cfg;
-#   6. PostgreSQL 14 on fresh volumes: init fails with a clear error and api never starts.
-# Written for bash 3.2 (macOS) too. Needs Docker (Compose v2.23+), pnpm (dependencies installed,
-# for packing model-fake), node and curl on the host.
+#   5. object storage: an attachment goes through presigned upload, finalize and download;
+#   6. networks: web reaches only api; the sandbox profile's sandbox-proxy publishes no port and
+#      only worker reaches it;
+#   7. PostgreSQL 14 on fresh volumes: init fails with a clear error and api never starts.
+# (`pnpm check` keeps the inline haproxy config in sync with docker/sandbox-proxy/haproxy.cfg.)
+# Written for bash 3.2 (macOS) too. Needs Docker (Compose v2.23+), node and curl on the host, and
+# pnpm with dependencies installed unless MODEL_FAKE_TGZ is given.
 #
 # Usage: docker/test/compose-smoke.sh
-#   SKIP_BUILD=1   reuse existing capybara-{api,worker,gateway,web}:test images
+#   SKIP_BUILD=1              reuse existing capybara-{api,worker,gateway,web}:test images
+#   MODEL_FAKE_TGZ=<path>     use this model-fake package (e.g. from the pack-plugins CI job)
+#                             instead of packing it with pnpm
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -53,6 +57,7 @@ fail() {
 
 [ -f "$COMPOSE" ] || fail "missing $COMPOSE"
 
+hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 # Local images: no registry prefix, tag "test" (the tags docker/test/{kernel,web}-image.sh use).
 cat >"$ENV_FILE" <<EOF
 CAPYBARA_IMAGE_PREFIX=
@@ -60,33 +65,30 @@ CAPYBARA_VERSION=test
 CAPYBARA_WEB_PORT=0
 POSTGRES_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -d '/+=')
 CAPYBARA_MASTER_KEY=$(head -c 32 /dev/urandom | base64)
-CAPYBARA_S3_ACCESS_KEY=smoke-access
-CAPYBARA_S3_SECRET_KEY=$(head -c 18 /dev/urandom | base64 | tr -d '/+=')
+CAPYBARA_S3_ACCESS_KEY=$(hex 12)
+CAPYBARA_S3_SECRET_KEY=$(hex 24)
 CAPYBARA_INIT_ADMIN_LOGIN=$ADMIN
 CAPYBARA_INIT_ADMIN_NAME=Root
 EOF
 printf '%s\n' "$PW" >"$PW_FILE"
 printf 'services:\n  postgres:\n    image: postgres:14\n' >"$TMP/pg14.yaml"
 
-echo "==> haproxy config inlined in compose.yaml matches docker/sandbox-proxy/haproxy.cfg"
-# Compare without comments and blank lines (the inline copy drops the file's comments).
+echo "==> compose config: published ports and networks"
 dc --profile sandbox config --format json >"$TMP/config.json"
-node -e '
-const fs = require("node:fs");
-const strip = (s) => s.split("\n").map((l) => l.replace(/\s+$/, "")).filter((l) => l.trim() !== "" && !l.trim().startsWith("#")).join("\n");
-const cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-// `compose config` prints a literal "$" in content as "$$".
-const inline = cfg.configs?.["sandbox-proxy-haproxy"]?.content?.replaceAll("$$", () => "$");
-if (typeof inline !== "string") { console.error("configs.sandbox-proxy-haproxy.content missing"); process.exit(1); }
-if (strip(inline) !== strip(fs.readFileSync(process.argv[2], "utf8"))) {
-  console.error("the inline haproxy config differs from docker/sandbox-proxy/haproxy.cfg"); process.exit(1);
-}' "$TMP/config.json" "$ROOT/docker/sandbox-proxy/haproxy.cfg" || fail "haproxy config drift"
 # No service but web publishes a port (sandbox profile included).
 PUBLISHED="$(node -e '
 const cfg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
 for (const [n, s] of Object.entries(cfg.services)) if ((s.ports ?? []).length > 0) console.log(n);
 ' "$TMP/config.json")"
 [ "$PUBLISHED" = "web" ] || fail "services publishing ports: $(echo $PUBLISHED) (expected only web)"
+# The frontend network holds exactly web and api; web is on nothing else.
+FRONTEND="$(node -e '
+const cfg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+const nets = (s) => Object.keys(s.networks ?? { default: null }).sort().join(",");
+const on = Object.entries(cfg.services).filter(([, s]) => nets(s).split(",").includes("frontend"));
+console.log(on.map(([n]) => n).sort().join(" "), "|", nets(cfg.services.web));
+' "$TMP/config.json")"
+[ "$FRONTEND" = "api web | frontend" ] || fail "frontend network / web networks: $FRONTEND"
 
 if [ "${SKIP_BUILD:-}" != "1" ]; then
   echo "==> building the images (compose.build.yaml)"
@@ -164,9 +166,15 @@ out="$(api POST /api/v1/auth/login "{\"login\":\"$ADMIN\",\"password\":\"$PW\"}"
 echo "    admin login through web: 200"
 
 echo "==> install model-fake from a local tgz, approve and enable it, no restarts"
-(cd "$ROOT" && INIT_CWD="$ROOT" pnpm -s pack-plugin plugins/model-fake --out "$TMP/pkg") >/dev/null
+mkdir -p "$TMP/pkg"
+if [ -n "${MODEL_FAKE_TGZ:-}" ]; then
+  [ -f "$MODEL_FAKE_TGZ" ] || fail "MODEL_FAKE_TGZ=$MODEL_FAKE_TGZ does not exist"
+  cp "$MODEL_FAKE_TGZ" "$TMP/pkg/model-fake.tgz"
+else
+  (cd "$ROOT" && INIT_CWD="$ROOT" pnpm -s pack-plugin plugins/model-fake --out "$TMP/pkg") >/dev/null
+fi
 TGZ="$(cd "$TMP/pkg" && ls ./*.tgz | head -1)"
-[ -n "$TGZ" ] || fail "pack-plugin produced no tgz"
+[ -n "$TGZ" ] || fail "no model-fake tgz"
 chmod a+r "$TMP/pkg/$TGZ"
 WORKERS_BEFORE="$(dc ps -q worker | sort | tr '\n' ' ')"
 dc run --rm --no-deps -T -v "$TMP/pkg:/pkg:ro" api plugins install "/pkg/${TGZ#./}" --yes
@@ -214,6 +222,37 @@ for n in 1 2 3 4; do
 done
 echo "    4 turns finished with the echoed reply"
 
+echo "==> object storage: attachment upload, finalize, download"
+CONTENT="compose smoke object $$"
+out="$(api POST "$BASE/attachments" "{\"name\":\"smoke.txt\",\"contentType\":\"text/plain\",\"size\":${#CONTENT}}")"
+[ "${out%% *}" = "201" ] || [ "${out%% *}" = "200" ] || fail "create attachment: $out"
+ATT="$(json_get id)"
+# The presigned URL points at seaweedfs:8333 (backend network): upload from the api container.
+dc exec -T -e "U=$(cat "$TMP/body")" -e "C=$CONTENT" api node -e '
+const u = JSON.parse(process.env.U).upload;
+const body = new Blob([process.env.C], { type: "text/plain" });
+let init;
+if (u.method === "POST") {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(u.fields ?? {})) form.append(k, v);
+  form.append("file", body, "smoke.txt");
+  init = { method: "POST", headers: u.headers, body: form };
+} else {
+  init = { method: "PUT", headers: u.headers, body };
+}
+fetch(u.url, init).then(async (r) => {
+  if (!r.ok) { console.error(r.status, await r.text()); process.exit(1); }
+}, (e) => { console.error(String(e)); process.exit(1); });' || fail "presigned upload to seaweedfs failed"
+out="$(api POST "$BASE/attachments/$ATT/finalize" '{}')"
+[ "${out%% *}" = "200" ] || fail "finalize attachment: $out"
+LOCATION="$(curl -sS -o /dev/null -w '%{redirect_url}' -b "$JAR" "$WEB$BASE/attachments/$ATT/download")"
+[ -n "$LOCATION" ] || fail "attachment download did not redirect"
+GOT="$(dc exec -T -e "L=$LOCATION" api node -e '
+fetch(process.env.L).then(async (r) => { if (!r.ok) process.exit(1); process.stdout.write(await r.text()); },
+  () => process.exit(1));')" || fail "presigned download failed"
+[ "$GOT" = "$CONTENT" ] || fail "downloaded \"$GOT\", expected \"$CONTENT\""
+echo "    presigned upload, finalize and download round trip through seaweedfs"
+
 echo "==> third up: init exits 0, still one enterprise admin"
 dc up -d --scale worker=2
 wait_healthy api worker gateway web
@@ -221,10 +260,23 @@ wait_healthy api worker gateway web
 dc logs --no-color init | grep -q "already exists; skipped" || fail "init did not skip the admin"
 [ "$(admin_count)" = "1" ] || fail "expected one enterprise admin after the third up, got $(admin_count)"
 
-echo "==> sandbox profile: sandbox-proxy on the internal network only"
+echo "==> networks: web reaches only api; sandbox-proxy on the internal network only"
 dc --profile sandbox up -d --no-deps sandbox-proxy
 PORT_OUT="$(dc --profile sandbox port sandbox-proxy 2375 2>/dev/null || true)"
 echo "$PORT_OUT" | grep -q ':[0-9]' && fail "sandbox-proxy publishes 2375 at $PORT_OUT"
+# tcp_probe SERVICE HOST PORT: "open" when SERVICE can open a TCP connection to HOST:PORT.
+tcp_probe() {
+  dc exec -T "$1" node -e '
+const s = require("node:net").connect(Number(process.argv[2]), process.argv[1]);
+const done = (r) => { console.log(r); s.destroy(); process.exit(0); };
+s.once("connect", () => done("open")).once("error", () => done("closed"));
+setTimeout(() => done("closed"), 5000);' "$2" "$3"
+}
+for target in postgres:5432 valkey:6379 seaweedfs:8333 worker:8080 gateway:8080; do
+  [ "$(tcp_probe web "${target%%:*}" "${target##*:}")" = "closed" ] || fail "web reaches $target"
+done
+[ "$(tcp_probe web api 8080)" = "open" ] || fail "web cannot reach api:8080"
+echo "    web reaches api only (not postgres, valkey, seaweedfs, worker, gateway)"
 # probe SERVICE PATH: status of GET http://sandbox-proxy:2375PATH from SERVICE (0 = unreachable).
 probe() {
   dc exec -T "$1" node -e '

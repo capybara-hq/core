@@ -1,15 +1,17 @@
-import { createLogger } from "@capybara-hq/kernel";
+import { createDb, createLogger } from "@capybara-hq/kernel";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { queryServerVersion, runMigrate } from "../src/commands/migrate.js";
 
-let pg: TestContainer;
-
-beforeAll(async () => {
-  pg = await startTestPostgres();
-}, 120_000);
-afterAll(async () => {
-  await pg?.stop();
+// Every test gets its own fresh database, so none depends on what another one migrated.
+const started: TestContainer[] = [];
+async function freshPg(): Promise<TestContainer> {
+  const pg = await startTestPostgres();
+  started.push(pg);
+  return pg;
+}
+afterEach(async () => {
+  await Promise.all(started.splice(0).map((pg) => pg.stop()));
 });
 
 function testEnv(dbUrl: string): NodeJS.ProcessEnv {
@@ -26,30 +28,45 @@ function captureLog() {
   return { log, lines };
 }
 
+/** Whether the kernel schema exists in the database. */
+async function kernelSchemaExists(url: string): Promise<boolean> {
+  const db = createDb(url, 1);
+  try {
+    const row = await db
+      .selectNoFrom((eb) => eb.fn<string | null>("to_regnamespace", [eb.val("capybara")]).as("ns"))
+      .executeTakeFirstOrThrow();
+    return row.ns !== null;
+  } finally {
+    await db.destroy();
+  }
+}
+
 describe("capybara migrate: PostgreSQL version check", () => {
   it("refuses PostgreSQL older than 15 before running any migration", async () => {
+    const pg = await freshPg();
     const { log, lines } = captureLog();
     const serverVersion = vi.fn(async () => ({ num: 140_013, text: "14.13" }));
     const code = await runMigrate(log, testEnv(pg.url), { serverVersion });
     expect(code).toBe(1);
     expect(serverVersion).toHaveBeenCalledOnce();
-    const out = lines.join("\n");
-    expect(out).toContain("PostgreSQL 15 or newer is required (found 14.13)");
-    // Nothing was migrated: the kernel schema does not exist.
-    expect(out).not.toContain("migrations applied");
-  });
+    expect(lines.join("\n")).toContain("PostgreSQL 15 or newer is required (found 14.13)");
+    expect(await kernelSchemaExists(pg.url)).toBe(false);
+  }, 120_000);
 
   it("migrates on PostgreSQL 15 or newer", async () => {
-    const { log, lines } = captureLog();
+    const pg = await freshPg();
+    const { log } = captureLog();
     const serverVersion = vi.fn(async () => ({ num: 150_000, text: "15.0" }));
+    expect(await kernelSchemaExists(pg.url)).toBe(false);
     const code = await runMigrate(log, testEnv(pg.url), { serverVersion });
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("migrate finished");
-  });
+    expect(await kernelSchemaExists(pg.url)).toBe(true);
+  }, 120_000);
 
   it("reads the real server version", async () => {
+    const pg = await freshPg();
     const v = await queryServerVersion(pg.url, 5000);
     expect(v.num).toBeGreaterThanOrEqual(150_000);
     expect(v.text).toMatch(/^\d+/);
-  });
+  }, 120_000);
 });

@@ -14,8 +14,9 @@
 # worker and gateway (the three kernel roles, one image each); web (the only published port).
 # Scale workers with `docker compose up -d --scale worker=N`.
 #
-# Ports: only web is published. api, worker, gateway, postgres, valkey and seaweedfs are reachable
-# only on the compose network; never publish api or worker ports (api trusts one proxy hop, web).
+# Ports: only web is published. Networks: "frontend" holds only web and api; everything else is on
+# the backend (default) network, which api also joins. Never publish api or worker ports (api
+# trusts one proxy hop: web).
 #
 # Secrets: nothing secret is written here; values come from .env (POSTGRES_PASSWORD,
 # CAPYBARA_MASTER_KEY, CAPYBARA_S3_*) and from the admin password file.
@@ -35,10 +36,11 @@ x-kernel-env: &kernel-env
   CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
   CAPYBARA_REDIS__URL: redis://valkey:6379
   CAPYBARA_MASTER_KEY: ${CAPYBARA_MASTER_KEY:?set CAPYBARA_MASTER_KEY in .env (openssl rand -base64 32)}
-  # Only web reaches the kernel services, so the client address is one proxy hop away. A service
-  # reachable from anywhere else must not use 1 (see gateway below).
+  # api is reachable only from web (the "frontend" network holds just web and api), so the client
+  # address is exactly one proxy hop away. worker serves only health checks. gateway overrides
+  # this below: a service reachable any other way must never trust a hop count.
   CAPYBARA_HTTP__TRUST_PROXY: "1"
-  CAPYBARA_HTTP__PUBLIC_URL: ${CAPYBARA_PUBLIC_URL:-http://localhost:3000}
+  CAPYBARA_HTTP__PUBLIC_URL: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
   CAPYBARA_AUTH__COOKIE_SECURE: ${CAPYBARA_COOKIE_SECURE:-true}
   # Deployment config of the builtin object-store-s3 plugin: the seaweedfs service below.
   CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__ENDPOINT: http://seaweedfs:8333
@@ -140,6 +142,9 @@ services:
     image: *api-image
     init: true
     restart: "no"
+    # Root, so a 0600 password file owned by the host user is readable (compose bind-mounts
+    # file secrets with their host owner and mode). init only talks to PostgreSQL.
+    user: "0"
     depends_on:
       postgres:
         condition: service_healthy
@@ -161,13 +166,16 @@ services:
         if [ -f "$$pw" ]; then
           exec node /app/bin/capybara.mjs admin create --if-none --login "$$CAPYBARA_INIT_ADMIN_LOGIN" --display-name "$$CAPYBARA_INIT_ADMIN_NAME" --password-file "$$pw"
         fi
-        echo "init: no admin password file (CAPYBARA_INIT_ADMIN_PASSWORD_FILE is not set); create the enterprise admin on the web setup page"
+        echo "init: no admin password file (CAPYBARA_INIT_ADMIN_PASSWORD_FILE is not set or not a regular file); create the enterprise admin on the web setup page"
 
   api:
     <<: *kernel
     image: *api-image
     environment:
       <<: *kernel-env
+    networks:
+      - default
+      - frontend
 
   worker:
     <<: *kernel
@@ -191,10 +199,12 @@ services:
     # Webhook inbound (optional; long connections need no port): not published by default. To
     # receive webhooks, uncomment this, put an HTTPS proxy in front and set
     # CAPYBARA_CHANNELS__WEBHOOK_BASE_URL above. Then set CAPYBARA_GATEWAY_TRUST_PROXY to the
-    # proxy's address or CIDR (e.g. 172.18.0.1/32), or leave it false; never 1: the port is
-    # reachable directly, and a hop count would let any caller forge X-Forwarded-For.
+    # proxy's address or CIDR as the gateway sees it (a proxy on the host connects from your
+    # bridge gateway: the Gateway of `docker network inspect capybara_default`), or leave it
+    # false. Never 1: the port is reachable directly, and a hop count would let any caller forge
+    # X-Forwarded-For.
     # ports:
-    #   - "${CAPYBARA_GATEWAY_PORT:-8081}:8080"
+    #   - "127.0.0.1:${CAPYBARA_GATEWAY_PORT:-8081}:8080"
 
   web:
     image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0}
@@ -209,8 +219,13 @@ services:
       # share one login rate limit: set CAPYBARA_WEB_TRUST_PROXY in .env to the proxy's hop count
       # or its addresses / CIDRs (e.g. 1, or 10.0.0.0/8). Unset or 0 trusts no X-Forwarded-For.
       CAPYBARA_WEB_TRUST_PROXY: ${CAPYBARA_WEB_TRUST_PROXY:-0}
+    # Only api: web never reaches postgres, valkey, seaweedfs, worker or gateway.
+    networks:
+      - frontend
+    # CAPYBARA_WEB_BIND: the host address to publish on; 127.0.0.1 behind a TLS proxy on the same
+    # host, so plain http is not exposed.
     ports:
-      - "${CAPYBARA_WEB_PORT:-3000}:3000"
+      - "${CAPYBARA_WEB_BIND:-0.0.0.0}:${CAPYBARA_WEB_PORT:-3000}:3000"
 
   # ---- Conversation sandboxes (optional): docker compose --profile sandbox up -d
   # Needs a repository checkout: sandbox-image and sandbox-egress-image build the two images from
@@ -257,7 +272,10 @@ services:
     network_mode: none
 
 networks:
+  # Backend: datastores, init and the kernel services.
   default: {}
+  # web and api only.
+  frontend: {}
   # No route out: only worker and sandbox-proxy are on it.
   sandbox:
     internal: true

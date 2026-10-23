@@ -10,6 +10,7 @@ import {
   ssoStartUrl,
 } from "../lib/auth-sources";
 import { navigateBrowser } from "../lib/browser";
+import { secureCookiesBlocked } from "../lib/secure-origin";
 import { login } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
@@ -69,6 +70,26 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
 }
 
 /** 第三方登录回跳带回的原因码 → 译文（只显示自己的文案，不回显身份源的任何文本）。 */
+/**
+ * Warns when the page is served over plain http from a non-localhost host: the browser drops the
+ * Secure session cookies there, so sign-in silently fails. Renders nothing otherwise.
+ */
+export function InsecureOriginNotice() {
+  const t = useTranslations("login");
+  const [blocked, setBlocked] = useState(false);
+  useEffect(() => {
+    setBlocked(secureCookiesBlocked(window));
+  }, []);
+  if (!blocked) return null;
+  return (
+    <div role="status">
+      <Text variant="small" tone="warn">
+        {t("insecureOrigin")}
+      </Text>
+    </div>
+  );
+}
+
 export function LoginErrorNotice({ code }: { code: LoginErrorCode }) {
   const t = useTranslations("login.ssoError");
   return <FormError message={t(code)} />;
