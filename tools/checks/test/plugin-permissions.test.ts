@@ -44,7 +44,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     expect(msg("plugin-perm-ui")).toContain("permissions.ui.views");
     expect(msg("plugin-perm-storage")).toContain("permissions.storage");
     expect(msg("plugin-perm-reserved")).toContain("ctx.models");
-    expect(msg("plugin-perm-hooks")).toContain("permissions.hooks");
+    expect(msg("plugin-perm-hooks")).toContain("permissions.policyHooks");
   });
 });
 
@@ -91,10 +91,10 @@ describe("perm-ui 的动态 id 与别名", () => {
 });
 
 describe("perm-hooks", () => {
-  it("undeclared mount is reported; a variable mount cannot be confirmed; declared mounts pass", () => {
+  it("undeclared mount or policy mount is reported; a variable mount cannot be confirmed; declared mounts pass", () => {
     const f = checkPluginPermissions([fixture("plugin-perm-hooks")]);
     expect(f.map((x) => x.line)).toEqual(flagged("plugin-perm-hooks"));
-    expect(f[0]?.message).toContain('Hook "tool.preExecute" is not declared');
+    expect(f[0]?.message).toContain('Policy hook "tool.preExecute" is not declared');
     expect(f[1]?.message).toContain("Cannot statically confirm");
     expect(f[2]?.message).toContain('Hook "tool.postExecute" is not declared');
     expect(f[3]?.message).toContain("Cannot statically confirm how ctx.hooks is used");

@@ -9,11 +9,15 @@ export default definePlugin({
   version: "0.0.0",
   sdk: "^0.1.0",
   provides: [],
-  permissions: { hooks: ["model.request", RESPONSE] },
+  permissions: {
+    hooks: ["model.request", RESPONSE, "tool.preExecute"],
+    policyHooks: ["model.request"],
+  },
   setup(ctx) {
     ctx.hooks.on("model.request", () => undefined, { mode: "policy" });
     ctx.hooks.on(RESPONSE, () => {}, { mode: "observe" });
     ctx.hooks.on("tool.preExecute", () => undefined, { mode: "policy" }); // FLAG
+    ctx.hooks.on("tool.preExecute", () => undefined, { mode: "observe" });
     ctx.hooks.on(mounts[0] as "model.request", () => {}, { mode: "observe" }); // FLAG
     // capybara:allow-dynamic-permission mounts are the declared hooks, fixed at build time
     ctx.hooks.on(mounts[1] as "model.request", () => {}, { mode: "observe" });
