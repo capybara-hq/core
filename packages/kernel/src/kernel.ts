@@ -741,6 +741,8 @@ export async function createKernel(
     questions,
     config: () => current,
     log,
+    // plugin hooks (chat runs only; the eval replay uses RecordedToolPipeline, which has none)
+    pluginHooks: host.hooks,
     onToolsChanged: (orgId, connectorId) => {
       void toolDrift.onToolsChanged(orgId, connectorId);
     },
@@ -947,6 +949,8 @@ export async function createKernel(
     config: () => current,
     log,
     toolPipeline,
+    // plugin hooks for chat runs; the full-run replay below drops them (P-18)
+    hooks: host.hooks,
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
       fetch: (orgId, conversationId, ids, caps) =>
@@ -1330,7 +1334,11 @@ export async function createKernel(
               registry,
               ...(stepDeps.media !== undefined && { media: stepDeps.media }),
               checkpoints,
-              loop: (d) => loopFactory({ ...stepDeps, ...d }),
+              // explicitly without plugin hooks: eval replays never fire them (P-18)
+              loop: (d) => {
+                const { hooks: _noHooks, ...replayDeps } = stepDeps;
+                return loopFactory({ ...replayDeps, ...d });
+              },
               ...(opts.evalHooks !== undefined && { hooks: opts.evalHooks }),
             },
           });

@@ -412,6 +412,25 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         .max(SKILLS_CATALOG_MAX),
     }),
   ),
+  /**
+   * A plugin policy hook denied a model request or a tool call (E6). Not model-visible: request building
+   * skips it; the model sees only `reason`, inside the tool error of a denied tool call (and nothing for a
+   * denied model request, whose run fails with `run.hook_denied`). `detail` is the raw error of a
+   * `hook_error` / `timeout` (logs, audit and the trajectory viewer only).
+   */
+  ev(
+    "hook_denied",
+    z.object({
+      mount: z.enum(["model.request", "tool.preExecute"]),
+      plugin: z.string(),
+      reason: z.string().max(500),
+      cause: z.enum(["deny", "hook_error", "timeout"]),
+      step: count,
+      attempt: count.optional(),
+      callId: z.string().optional(),
+      detail: z.string().max(2048).optional(),
+    }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(

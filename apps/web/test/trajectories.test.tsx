@@ -389,6 +389,58 @@ describe("轨迹详情（TracePage）", () => {
     },
   );
 
+  it.each(["zh", "en"] as const)(
+    "policy hook denials show on the tool call and the step (%s)",
+    async (locale) => {
+      const m = msgs[locale].trajectories;
+      const base = run();
+      const [s0, s1] = base.steps as [
+        TrajectoryRun["steps"][number],
+        TrajectoryRun["steps"][number],
+      ];
+      const denied = run({
+        steps: [
+          {
+            ...s0,
+            toolCalls: [
+              {
+                ...(s0.toolCalls[0] as TrajectoryRun["steps"][number]["toolCalls"][number]),
+                startedAt: null,
+                durationMs: null,
+                result: { content: "blocked", isError: true },
+                approval: null,
+                hookDenied: { plugin: "guard", reason: "not on weekends", cause: "deny" },
+              },
+            ],
+          },
+          {
+            ...s1,
+            modelHookDenied: {
+              plugin: "guard",
+              reason: "The guard policy check did not respond in time",
+              cause: "timeout",
+              detail: "did not finish within 5000 ms",
+              attempt: 1,
+            },
+          },
+        ],
+      });
+      stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([denied])) });
+      renderPage(<TrajectoryPage />, { locale });
+      const list = await screen.findByRole("tree", { name: m.detail.waterfall });
+      const detail = () => screen.getByRole("region", { name: m.detail.region });
+      const user = userEvent.setup();
+      await user.click(within(list).getByText("fixture__delete_item"));
+      expect(within(detail()).getByText(m.detail.hook.title)).toBeTruthy();
+      expect(within(detail()).getByText("guard")).toBeTruthy();
+      expect(within(detail()).getByText(m.detail.hook.causes.deny)).toBeTruthy();
+      expect(within(detail()).getByText("not on weekends")).toBeTruthy();
+      await user.click(within(list).getByText(m.detail.spans.step.replace("{n}", "1")));
+      expect(within(detail()).getByText(m.detail.hook.causes.timeout)).toBeTruthy();
+      expect(within(detail()).getByText("did not finish within 5000 ms")).toBeTruthy();
+    },
+  );
+
   it("中文界面：瀑布的 span 名称与 kind 徽标都是中文", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
     const { container } = renderPage(<TrajectoryPage />, { locale: "zh" });

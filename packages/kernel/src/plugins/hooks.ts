@@ -14,7 +14,10 @@ import { type InflightTracker, PluginUnloadedError } from "./inflight.js";
 /** Default of `hooks.timeoutMs` (used when a host is built without kernel config, e.g. in tests). */
 export const DEFAULT_HOOK_TIMEOUT_MS = 5000;
 
-/** Longest plugin-authored deny reason kept, in code points (the model-visible denial quotes it). */
+/**
+ * Longest plugin-authored deny reason kept, in UTF-16 code units (the `hook_denied` event's limit;
+ * the model-visible denial quotes it).
+ */
 export const HOOK_REASON_MAX_CHARS = 500;
 
 /** In-flight observe calls allowed per plugin on one replica; overflow is dropped with a warning. */
@@ -39,6 +42,11 @@ export type HookOutcome =
       reason: string;
       cause: "deny" | "hook_error" | "timeout";
       detail?: string;
+      /**
+       * R10: the hooks could not run at all (organization lookup or payload copy failed); `plugin` is
+       * only the first policy plugin on the mount, not the cause.
+       */
+      preflight?: true;
     };
 
 /** A hook a plugin instance registered through `ctx.hooks.on` (kept on the instance, like tools). */
@@ -72,16 +80,24 @@ const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
 
 /**
  * Sanitizes a plugin-authored deny reason for the model: control characters become spaces,
- * whitespace collapses, and the text is clipped to {@link HOOK_REASON_MAX_CHARS} code points (never
- * splitting a surrogate pair). An empty result becomes {@link EMPTY_DENY_REASON}.
+ * whitespace collapses, and the text is clipped to {@link HOOK_REASON_MAX_CHARS} UTF-16 code units
+ * (never splitting a surrogate pair). An empty result becomes {@link EMPTY_DENY_REASON}.
  */
 export function sanitizeDenyReason(raw: string): string {
   const s = raw.replace(CONTROL_RE, " ").replace(/\s+/g, " ").trim();
   if (s === "") return EMPTY_DENY_REASON;
-  const cps = Array.from(s);
-  return cps.length > HOOK_REASON_MAX_CHARS
-    ? `${cps.slice(0, HOOK_REASON_MAX_CHARS - 1).join("")}…`
-    : s;
+  return clipText(s, HOOK_REASON_MAX_CHARS);
+}
+
+/** Clips to at most `max` UTF-16 code units, ending in "…", without splitting a surrogate pair. */
+export function clipText(s: string, max: number): string {
+  if (s.length <= max) return s;
+  let out = "";
+  for (const cp of s) {
+    if (out.length + cp.length > max - 1) break;
+    out += cp;
+  }
+  return `${out}…`;
 }
 
 const failedReason = (plugin: string) => `The ${plugin} policy check failed`;
@@ -143,8 +159,7 @@ const abortOf = (s: AbortSignal): { aborted: Promise<never>; cleanup: () => void
 /** Longest raw error kept in `HookOutcome.detail` (characters). */
 export const HOOK_DETAIL_MAX_CHARS = 2048;
 
-const clipDetail = (s: string): string =>
-  s.length > HOOK_DETAIL_MAX_CHARS ? `${s.slice(0, HOOK_DETAIL_MAX_CHARS - 1)}…` : s;
+const clipDetail = (s: string): string => clipText(s, HOOK_DETAIL_MAX_CHARS);
 
 /**
  * Runs the hooks of this process's **active** plugin instances (one registry per replica, like
@@ -234,13 +249,18 @@ export class HookRegistry {
       frozen = deepFreeze(structuredClone(payload));
     } catch (err) {
       if (signal.aborted) throw signal.reason;
-      const detail = clipDetail(errMsg(err));
+      const raw = errMsg(err);
       const policy = all.find((e) => e.hook.mode === "policy");
       if (policy) {
+        // R10: no plugin ran; the named plugin is only the first policy plugin on this mount, so
+        // the detail says so instead of blaming it
+        const detail = clipDetail(
+          `Hooks could not run (organization lookup or payload copy failed) before any plugin was called; ${policy.src.name} is named only as the first policy plugin on ${mount}: ${raw}`,
+        );
         this.d.log.warn("plugin hooks could not run; denying the call", {
           mount,
-          plugin: policy.src.name,
-          error: detail,
+          firstPolicyPlugin: policy.src.name,
+          error: raw,
         });
         return {
           allowed: false,
@@ -248,10 +268,11 @@ export class HookRegistry {
           reason: failedReason(policy.src.name),
           cause: "hook_error",
           detail,
+          preflight: true,
         };
       }
       for (const name of new Set(all.map((e) => e.src.name))) {
-        void this.warnOnce(name, mount, "prepare", "plugin observe hooks skipped", detail);
+        void this.warnOnce(name, mount, "prepare", "plugin observe hooks skipped", raw);
       }
       return { allowed: true };
     }

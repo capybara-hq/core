@@ -535,6 +535,8 @@ export async function replayRun(
       sink: () => {},
       pendingUserMessages,
       limits: { maxSteps: runtime.maxSteps, deadline },
+      // replays never fire plugin hooks (the loop deps omit them too, P-18)
+      conversationKind: "eval",
     });
   } catch (e) {
     const err =

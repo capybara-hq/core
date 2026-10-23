@@ -34,6 +34,14 @@ export interface TrajectoryModelCall {
   };
 }
 
+/** A plugin policy hook's denial (`detail` is the raw hook error; not shown to the model). */
+export interface TrajectoryHookDenial {
+  plugin: string;
+  reason: string;
+  cause: "deny" | "hook_error" | "timeout";
+  detail?: string;
+}
+
 export interface TrajectoryToolCall {
   callId: string;
   step: number;
@@ -56,10 +64,14 @@ export interface TrajectoryToolCall {
     outcome: "answered" | "expired" | "cancelled" | null;
     byAccountId: string | null;
   } | null;
+  /** A `tool.preExecute` policy hook denied the call. */
+  hookDenied?: TrajectoryHookDenial;
 }
 
 export interface TrajectoryStep {
   step: number;
+  /** A `model.request` policy hook denied the step's request (that attempt was never sent). */
+  modelHookDenied?: TrajectoryHookDenial & { attempt?: number };
   modelCalls: TrajectoryModelCall[];
   toolCalls: TrajectoryToolCall[];
   text: string;

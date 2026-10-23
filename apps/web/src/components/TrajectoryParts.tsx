@@ -16,6 +16,7 @@ import {
   type ModelUsage,
   type SpanLabels,
   type SpanSource,
+  type TrajectoryHookDenial,
   type TrajectoryModelCall,
   type TrajectoryRun,
   type TrajectoryToolCall,
@@ -147,12 +148,29 @@ function RunDetail({ run, currency }: { run: TrajectoryRun; currency: string }) 
   );
 }
 
+/** Rows describing a policy hook denial (shared by step and tool details). */
+function useHookRows() {
+  const t = useTranslations("trajectories.detail.hook");
+  return (d: TrajectoryHookDenial & { attempt?: number }): { k: ReactNode; v: ReactNode }[] => [
+    { k: t("title"), v: <Text tone="fail">{d.plugin}</Text> },
+    { k: t("cause"), v: t(`causes.${d.cause}`) },
+    { k: t("reason"), v: d.reason },
+    ...(d.attempt !== undefined ? [{ k: t("attempt"), v: String(d.attempt) }] : []),
+    ...(d.detail !== undefined ? [{ k: t("detail"), v: d.detail }] : []),
+  ];
+}
+
 function StepDetail({ step }: { step: TrajectoryRun["steps"][number] }) {
   const t = useTranslations("trajectories.detail.step");
+  const hookRows = useHookRows();
+  const rows: { k: ReactNode; v: ReactNode }[] = [
+    { k: t("stopReason"), v: step.stopReason ?? "—" },
+    ...(step.modelHookDenied !== undefined ? hookRows(step.modelHookDenied) : []),
+  ];
   return (
     <Card title={t("title", { n: step.step })}>
       <Stack gap={12}>
-        <KeyValue keyWidth="16ch" rows={[{ k: t("stopReason"), v: step.stopReason ?? "—" }]} />
+        <KeyValue keyWidth="16ch" rows={rows} />
         <Stack gap={4}>
           <Text variant="small" tone="muted">
             {t("text")}
@@ -222,6 +240,7 @@ export const pretty = (v: unknown) => {
 function ToolDetail({ call }: { call: TrajectoryToolCall }) {
   const t = useTranslations("trajectories.detail.tool");
   const locale = useLocale();
+  const hookRows = useHookRows();
   const rows: { k: ReactNode; v: ReactNode }[] = [
     { k: t("duration"), v: formatSpanDuration(call.durationMs) },
     {
@@ -230,6 +249,7 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
     },
   ];
   if (call.result?.isError) rows.push({ k: t("result"), v: <Text tone="fail">{t("error")}</Text> });
+  if (call.hookDenied !== undefined) rows.push(...hookRows(call.hookDenied));
   const ap = call.approval;
   if (ap !== null) {
     rows.push(

@@ -1403,6 +1403,19 @@
           "cancelled": "已取消",
           "pending": "待回答"
         }
+      },
+      "hook": {
+        "title": "被策略 hook 拦截",
+        "plugin": "插件",
+        "cause": "原因类别",
+        "causes": {
+          "deny": "拒绝",
+          "hook_error": "hook 出错",
+          "timeout": "hook 超时"
+        },
+        "reason": "原因（模型可见）",
+        "detail": "hook 错误",
+        "attempt": "尝试"
       }
     },
     "addToSet": {

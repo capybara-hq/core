@@ -695,6 +695,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         messages.push({ role: "system", content: e.payload.text });
         reminderSeqs.push(e.seq);
         break;
+      // hook_denied is not model-visible: the model sees only the denied tool call's tool_result
+      // (and nothing for a denied model request), so request building skips it
+      case "hook_denied":
+        break;
       case "skills_catalog":
         if (e !== systemSkills) {
           messages.push({

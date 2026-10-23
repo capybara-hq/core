@@ -16,8 +16,16 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { clipText } from "../plugins/hooks.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR, PluginUnloadedError } from "../plugins/inflight.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
+import {
+  type ConversationKindForHooks,
+  fireObserve,
+  type HookRunner,
+  hookScope,
+  recordHookDenial,
+} from "../runtime/hook-calls.js";
 import type { WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
 import { skillLoadOffered } from "../skills/catalog.js";
@@ -63,6 +71,14 @@ const unknownToolText = (name: string, keys: string[], toolSearch: boolean) =>
 const unavailableText = (name: string, reason: string) =>
   `Tool "${name}" is unavailable: ${reason}.`;
 const deniedText = (key: string) => `Tool ${key} is denied by policy.`;
+/** Longest hook reason quoted in {@link hookDeniedText}. */
+const HOOK_REASON_MAX = 500;
+/**
+ * A plugin policy hook denied the call (model-visible). `reason` is the sanitized deny reason, or the
+ * generic sentence for a hook error / timeout; truncated to 500 characters.
+ */
+export const hookDeniedText = (plugin: string, reason: string): string =>
+  `Tool call blocked by the "${plugin}" policy hook: ${clipText(reason, HOOK_REASON_MAX)}`;
 const invalidFormText = (key: string, problems: string[]) =>
   `Tool ${key} returned an invalid input form: ${problems.join("; ")}.`;
 const stateTooLargeText = (key: string) =>
@@ -140,6 +156,12 @@ export interface ToolPipelineDeps {
   decidePolicy?: DecidePolicy;
   hooks?: ToolPipelineHooks;
   /**
+   * Plugin hooks (`tool.preExecute` policy / observe after policy and approval, `tool.postExecute`
+   * observe after the result). Only the chat pipeline gets it; the eval replay uses
+   * `RecordedToolPipeline`, which never runs hooks. Also needs `conversationKind: "chat"` (P-18).
+   */
+  pluginHooks?: HookRunner;
+  /**
    * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该连接器的漂移检查。
    * 不等待、不抛错（实现自己吞掉错误）。
    */
@@ -162,6 +184,8 @@ export interface ToolStepContext {
   signal: AbortSignal;
   /** run 的截止时间（epoch 毫秒）；传给内置工具（沙箱命令据此收紧超时，Ruling M20）。 */
   deadline?: number;
+  /** Hooks fire only for `chat` conversations. */
+  conversationKind?: ConversationKindForHooks;
 }
 
 /** tools 节点一步的结果：全部调用都有了结果，或某个调用需要等人处理（之后的调用留到续跑）。 */
@@ -215,6 +239,7 @@ const idem = {
       : `tool_started:${runId}:${callId}:${attempt}`,
   result: (runId: string, callId: string) => `tool_result:${runId}:${callId}`,
   connection: (runId: string, callId: string) => `connection_required:${runId}:${callId}`,
+  hookDenied: (runId: string, callId: string) => `hook_denied:${runId}:${callId}`,
 };
 
 /** 同一调用最多连续请求用户输入的次数。 */
@@ -480,6 +505,45 @@ export class ToolPipeline {
           ? { grant: decision.grant }
           : { policy: "allow" };
 
+    // tool.preExecute after policy and approval, before tool_call_started (F10)
+    const hooks = this.deps.pluginHooks;
+    const scope = hookScope(hooks, ctx);
+    const hookBase = scope && {
+      ...scope,
+      step: ctx.step,
+      callId: call.id,
+      toolKey: tool.key,
+      specHash: tool.specHash,
+      input,
+    };
+    if (hooks && hookBase && hooks.has("tool.preExecute")) {
+      let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+      try {
+        verdict = await hooks.run("tool.preExecute", hookBase, ctx.signal);
+      } catch (e) {
+        // run() rejects only when the run's signal aborted: an abort, never a deny
+        if (ctx.signal.aborted) return fail(RUN_STOPPED_TEXT, tool.key);
+        throw e;
+      }
+      if (!verdict.allowed) {
+        await recordHookDenial(
+          this.deps,
+          {
+            orgId: ctx.orgId,
+            conversationId: ctx.conversationId,
+            runId: ctx.runId,
+            accountId: ctx.accountId,
+            agentId: ctx.agentId,
+            idemKey: idem.hookDenied(ctx.runId, call.id),
+          },
+          "tool.preExecute",
+          verdict,
+          { step: ctx.step, callId: call.id },
+        );
+        return fail(hookDeniedText(verdict.plugin, verdict.reason), tool.key);
+      }
+    }
+
     await this.deps.eventLog.append(ctx.conversationId, [
       {
         type: "tool_call_started",
@@ -566,6 +630,15 @@ export class ToolPipeline {
         authorization,
       },
     );
+    if (hooks && hookBase) {
+      fireObserve(
+        hooks,
+        "tool.postExecute",
+        { ...hookBase, isError: rendered.isError, content: spilled.content, durationMs },
+        ctx.signal,
+        this.deps.log,
+      );
+    }
     return undefined;
   }
 

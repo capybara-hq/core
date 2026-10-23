@@ -44,6 +44,14 @@ import {
 import { guardToolPairs } from "./context/pairing.js";
 import { turnLimitReminder } from "./context/reminders.js";
 import { calibrate, estimateTokens } from "./context/tokens.js";
+import {
+  type ConversationKindForHooks,
+  fireObserve,
+  type HookRunner,
+  hookScope,
+  recordHookDenial,
+  withoutMediaRefs,
+} from "./hook-calls.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
 
@@ -99,6 +107,12 @@ export interface ModelStepDeps {
    * 两个方法都只对「确定不存在」返回缺省 / null；暂时故障（存储不可用、网络错误）一律抛错（Ruling M4）。
    */
   media?: MediaSourceDeps;
+  /**
+   * Plugin hooks (`model.request` policy / observe before the call, `model.response` observe after it).
+   * Only chat runs get it: full-run and single-step eval replays omit it (P-18), and hooks also need
+   * `conversationKind: "chat"` on the step input.
+   */
+  hooks?: HookRunner;
 }
 
 /** 构建请求用到的附件来源。 */
@@ -149,6 +163,11 @@ export interface ModelStepInput {
   absorbedUpToSeq: number;
   /** 本次运行的附件字节缓存（同一次运行的各步共用，见 {@link MediaCache}）；缺省时只在本步内缓存。 */
   mediaCache?: MediaCache;
+  /** Hook payload scope: the run's agent, its trigger account and the conversation kind. */
+  agentId?: string;
+  accountId?: string;
+  /** Hooks fire only for `chat` (never for eval replays). */
+  conversationKind?: ConversationKindForHooks;
 }
 
 export interface ModelStepResult {
@@ -212,6 +231,8 @@ const idem = {
   toolsUnavailable: (runId: string, step: number) => `tools_unavailable:${runId}:${step}`,
   toolsUnsupported: (runId: string, step: number) => `tools_unsupported:${runId}:${step}`,
   modelCall: modelCallIdemKey,
+  hookDenied: (runId: string, step: number, attempt: number) =>
+    `hook_denied:${runId}:${step}:${attempt}`,
   mediaExcluded: (runId: string, step: number, attempt: number, part: number) =>
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
@@ -732,6 +753,8 @@ async function ladder(
 
   let last: Failure | undefined;
   let attempt = 0;
+  // hooks fire only for chat runs that have a registry (eval replays omit it, P-18)
+  const scope = hookScope(deps.hooks, input);
   /** 本次尝试发出的请求里带了字节的附件（供应商拒收时写 media_excluded）。 */
   let sentMedia: string[] = [];
   for (const rung of rungs) {
@@ -751,6 +774,8 @@ async function ladder(
       if (!rung.fallback) await abortableSleep(last.retryAfterMs ?? DEFAULT_RETRY_DELAY_MS, signal);
     }
     sentMedia = [];
+    /** When the request went out (model.response fires only for sent requests). */
+    let sentAt: number | undefined;
     try {
       const { provider, info } = await deps.registry.resolve(rung.ref);
       if (tools.list.length > 0 && !info.capabilities.tools) {
@@ -784,6 +809,48 @@ async function ladder(
       sentMedia = (meta.media ?? []).flatMap((m) =>
         m.outcome === "bytes" ? [m.attachmentId] : [],
       );
+      // model.request before model_call: a denied request is never logged as sent nor sent
+      if (scope && deps.hooks?.has("model.request")) {
+        let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+        try {
+          verdict = await deps.hooks.run(
+            "model.request",
+            {
+              ...scope,
+              step,
+              attempt,
+              provider: rung.ref.provider,
+              model: rung.ref.model,
+              request: withoutMediaRefs(request),
+            },
+            signal,
+          );
+        } catch (e) {
+          // run() rejects only when the run's signal aborted: an abort, never a deny
+          if (signal.aborted) throw new StepAborted();
+          throw e;
+        }
+        if (!verdict.allowed) {
+          await recordHookDenial(
+            deps,
+            {
+              orgId: input.orgId,
+              conversationId,
+              runId,
+              ...(input.accountId !== undefined && { accountId: input.accountId }),
+              ...(input.agentId !== undefined && { agentId: input.agentId }),
+              idemKey: idem.hookDenied(runId, step, attempt),
+            },
+            "model.request",
+            verdict,
+            { step, attempt },
+          );
+          throw new RunError(
+            "run.hook_denied",
+            `Model request blocked by the "${verdict.plugin}" policy hook: ${verdict.reason}`,
+          );
+        }
+      }
       // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
       // （请求可由日志 + tool_specs 还原）
       const sent = new Set([...meta.tools, ...(meta.catalog ?? [])].map((t) => t.specHash));
@@ -818,6 +885,7 @@ async function ladder(
         );
       });
       await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
+      sentAt = Date.now();
       const outcome = await consumeModelStream(
         provider,
         request,
@@ -832,11 +900,54 @@ async function ladder(
           }
         },
       );
+      if (scope && deps.hooks) {
+        fireObserve(
+          deps.hooks,
+          "model.response",
+          {
+            ...scope,
+            step,
+            attempt,
+            provider: rung.ref.provider,
+            model: rung.ref.model,
+            outcome: "ok",
+            content: outcome.content,
+            stopReason: outcome.stopReason,
+            usage: outcome.usage,
+            latencyMs: Date.now() - sentAt,
+          },
+          signal,
+          deps.log,
+        );
+      }
       return { outcome, ref: rung.ref };
     } catch (err) {
       if (err instanceof StepAborted) throw err;
       if (signal.aborted) throw new StepAborted();
+      // a hook denial is final (not retried, not reclassified)
+      if (err instanceof RunError) throw err;
       const f = classify(err);
+      if (scope && deps.hooks && sentAt !== undefined) {
+        fireObserve(
+          deps.hooks,
+          "model.response",
+          {
+            ...scope,
+            step,
+            attempt,
+            provider: rung.ref.provider,
+            model: rung.ref.model,
+            outcome: "failed",
+            content: [],
+            stopReason: null,
+            usage: null,
+            latencyMs: Date.now() - sentAt,
+            errorCode: f.code,
+          },
+          signal,
+          deps.log,
+        );
+      }
       deps.log.warn("model call attempt failed", {
         conversationId,
         runId,

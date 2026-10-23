@@ -1,0 +1,8 @@
+{
+  "name": "@capybara-hq/test-plugin-hooks-probe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test plugin: registers all five hook mount points and counts calls (packable with pnpm pack-plugin)",
+  "license": "Apache-2.0",
+  "type": "module"
+}

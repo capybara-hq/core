@@ -427,13 +427,19 @@ describe("HookRegistry.run: failures before the hooks run (Ruling R10)", () => {
     const { r, plugin } = setup({ enabled: failingEnablement, log });
     plugin("zeta").on("tool.preExecute", () => {}, { mode: "policy" });
     plugin("alpha").on("tool.preExecute", () => {}, { mode: "observe" });
-    expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({
+    const out = await r.run("tool.preExecute", toolPre(), signal());
+    expect(out).toMatchObject({
       allowed: false,
       plugin: "zeta",
       reason: "The zeta policy check failed",
       cause: "hook_error",
-      detail: "pg down",
+      preflight: true,
     });
+    // the audit text must not claim zeta caused the failure
+    const detail = (out.allowed === false && out.detail) || "";
+    expect(detail).toContain("before any plugin was called");
+    expect(detail).toContain("named only as the first policy plugin");
+    expect(detail).toContain("pg down");
     expect(JSON.stringify(warn.mock.calls)).toContain("pg down");
   });
 
@@ -561,10 +567,11 @@ describe("helpers", () => {
     expect(sanitizeDenyReason(" \n\t ")).toBe(EMPTY_DENY_REASON);
     expect(sanitizeDenyReason("")).toBe(EMPTY_DENY_REASON);
     const long = sanitizeDenyReason("x".repeat(1000));
-    expect(Array.from(long).length).toBe(HOOK_REASON_MAX_CHARS);
-    // the clip point falls inside an astral character: it is kept whole or dropped, never split
+    expect(long.length).toBe(HOOK_REASON_MAX_CHARS);
+    // the clip point falls inside an astral character: it is dropped whole, never split
     const emoji = sanitizeDenyReason(`${"x".repeat(HOOK_REASON_MAX_CHARS - 2)}${"😀".repeat(10)}`);
-    expect(Array.from(emoji).length).toBe(HOOK_REASON_MAX_CHARS);
+    expect(emoji.length).toBeLessThanOrEqual(HOOK_REASON_MAX_CHARS);
+    expect(emoji.endsWith("x…")).toBe(true);
     expect(emoji).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
   });
 
