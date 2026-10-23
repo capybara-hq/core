@@ -222,7 +222,9 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     await worker();
     const { orgId, convId } = await setup();
     await postMessage(req, orgId, convId, "slow:40:abcdefghijklmnopqrst");
-    await waitForEvent(db, convId, (e) => e.type === "run_started");
+    // 等到第一轮已吸收消息、开始调用模型（model_call）再发第二条：run_started 之后、第一次吸收之前到达的
+    // 消息按设计并入第一轮（插话），只有一轮；LangGraphLoop 起图较慢，CI 负载下常落在这个窗口里
+    await waitForEvent(db, convId, (e) => e.type === "model_call");
     const second = await postMessage(req, orgId, convId, "echo:two");
     await waitForTerminal(db, convId, 2);
     const evs = await eventsOf(db, convId);
