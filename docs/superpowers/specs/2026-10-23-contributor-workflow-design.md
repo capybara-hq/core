@@ -19,6 +19,7 @@ Items marked **(designer's call)** were decided by the author of this document, 
 4. Every repository offers the same two local commands, `pnpm doctor` and `pnpm verify`, so people and agents can check setup and run the CI gates locally (§6).
 5. Agent skills that turn the workflow into plain-language actions for any agent that reads `.agents/skills/`: `onboarding`, `contributing`, `reviewing-prs` (§7).
 6. Everything shared lives in `capybara-hq/.github`, versioned; `core` is the first consumer and the future plugins repository the second (§8).
+7. The organization's GitHub page shows a real profile instead of GitHub's getting-started page: what Capybara is, where to start, how to contribute (§8).
 
 **Non-goals (not in this project)**
 - The CLA bot (already planned for M7; this design must not conflict with it).
@@ -145,6 +146,7 @@ Files in `capybara-hq/.github` are **not** part of a clone of `core`: org-wide d
 
 **`capybara-hq/.github`** (new public repository, the single source of the shared workflow):
 - Org-wide defaults, used on github.com by every repository that has none of its own: issue forms (§4.1), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, designer's call), `SECURITY.md`, `pull_request_template.md` (English: what and why, linked issue, checklist: `pnpm verify`, changeset, design doc for larger changes), and `CONTRIBUTING.md`, the human-readable workflow of §3-§5.
+- `profile/README.md`: the organization profile shown on github.com/capybara-hq to everyone (maintainer's decision to include it in this project). English first, with a short Chinese introduction (designer's call): what Capybara is in two or three sentences, the repositories and what each is for, a quick start link to `core`'s README, how to contribute (link to the org `CONTRIBUTING.md`, `good first issue` search), license. No member-only profile (`.github-private`) for now.
 - Reusable workflows (`workflow_call`): issue format check, `/claim`, `issue-linked`.
 - `skills/onboarding`, `skills/contributing`, `skills/reviewing-prs`: the source of the shared skills (a plain `skills/` directory there, since the skills are that repository's product). `contributing` carries the workflow description and the PR body format agents use, so an agent never depends on the web-only template or guide.
 - The settings script: desired state for labels, rulesets, CODEOWNERS presence and repository options; `apply <repo>` and `check <repo>` (check reports drift and exits non-zero).
@@ -176,9 +178,11 @@ If an agent lists each skill twice (the likely case for Cursor), that is accepte
 
 These are outward-facing or change how the organization works; the implementation stops and asks before each:
 - Creating the public repository `capybara-hq/.github` (the maintainer's `gh` token can).
-- Creating the team `@capybara-hq/maintainers` (the token needs `admin:org`: the maintainer runs `gh auth refresh -h github.com -s admin:org`).
 - Applying the rulesets to `core`, which replaces `protect-main` and immediately requires approval and `issue-linked` for merges.
 - Publishing the contacts in `CODE_OF_CONDUCT.md` and `SECURITY.md` (§11).
+- Organization profile settings that are not files: avatar, display name, description, website, verified domain, pinned repositories, hiding GitHub's suggested tasks. The implementation lists them with suggested values; the maintainer sets them in Settings (or confirms before they are set through the API where possible).
+
+Already done on 2026-10-23: the team `@capybara-hq/maintainers` exists (visible to the org, only member `grant-chao`) with write access to `core`, and the maintainer's `gh` token has `admin:org`.
 
 ## 11. Public contacts and promises
 
