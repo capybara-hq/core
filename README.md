@@ -16,6 +16,7 @@ cd core/docker
   echo "CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)"   # encrypts stored secrets: back it up
   echo "CAPYBARA_S3_ACCESS_KEY=$(openssl rand -hex 24)"
   echo "CAPYBARA_S3_SECRET_KEY=$(openssl rand -hex 24)"
+  echo "CAPYBARA_SETUP_TOKEN=$(openssl rand -hex 16)"     # the setup page asks for it
 } > .env
 docker compose up -d
 docker compose ps -a     # init exits 0, the other services become healthy
@@ -25,8 +26,10 @@ docker compose ps -a     # init exits 0, the other services become healthy
 admin password file instead of the setup page.
 
 1. Open <http://localhost:3000>. The setup page creates the enterprise admin and the first
-   organization. Use `localhost`: over plain http on another host name, browsers drop the session
-   cookie (see [docs/deploy](docs/deploy/README.md#https-the-public-url-and-cookies)).
+   organization. Enter the setup token from `.env` (`grep CAPYBARA_SETUP_TOKEN .env`): without it,
+   setup is refused, so nobody else who reaches the port can take the deployment over. Use
+   `localhost`: over plain http on another host name, browsers drop the session cookie (see
+   [docs/deploy](docs/deploy/README.md#https-the-public-url-and-cookies)).
 2. Install a plugin from npm. `model-fake` is a scripted model that needs no API key:
 
    ```bash

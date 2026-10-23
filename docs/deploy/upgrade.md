@@ -59,19 +59,31 @@ Only `capybara migrate` checks the PostgreSQL version, though, so keep the Job.
 
 ## Version notes
 
-### Upgrading across 0027 / 0028 (index builds)
+### Upgrading across 0027 / 0028 (index builds and table locks)
 
-Migrations `0027_model_prices.sql` and `0028_evals.sql` build three indexes **non-concurrently inside
-the migration transaction**:
+Migrations `0027_model_prices.sql` and `0028_evals.sql` build indexes **non-concurrently inside the
+migration transaction**. `CONCURRENTLY` can't run inside a transaction, and every migration file is
+one.
 
-- `conversation_events_run_idx` on `conversation_events (conversation_id, run_id, seq)`;
-- `conversations_agent_idx` on `conversations (org_id, agent_id, updated_at DESC)`;
-- `conversations_org_kind_idx` on `conversations (org_id, kind, updated_at DESC, id DESC)`.
+- **0027** builds:
+  - `conversation_events_run_idx`, a partial index on
+    `conversation_events (conversation_id, run_id, seq) WHERE run_id IS NOT NULL`;
+  - `conversations_agent_idx` on `conversations (org_id, agent_id, updated_at DESC)`.
 
-`CREATE INDEX` without `CONCURRENTLY` blocks writes to the table until it finishes, and `CONCURRENTLY`
-can't run inside a transaction. On deployments with large event logs, writes to `conversation_events`
-and `conversations` (new messages, agent runs) are blocked until the indexes are built. Run the
-upgrade off-peak and estimate the duration from the table sizes first:
+  A plain `CREATE INDEX` blocks **writes** to the table until it finishes. Reads continue. New
+  messages and agent runs stall until both indexes are built.
+- **0028** first runs `ALTER TABLE conversations ADD COLUMN kind … CHECK (…)` and `ADD COLUMN
+  eval_run_id … REFERENCES eval_runs`. Then it builds `conversations_org_kind_idx` on
+  `conversations (org_id, kind, updated_at DESC, id DESC)` and the partial
+  `conversations_eval_run_idx`.
+  - The `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock, and the transaction holds it until the
+    migration commits: through the CHECK and foreign-key validation scans and through both index
+    builds.
+  - So `conversations` is closed to **reads as well as writes** for the whole migration. Conversation
+    lists, conversation pages and every run stall until it commits.
+
+On deployments with large event logs, run the upgrade off-peak and estimate the duration from the
+table sizes first:
 
 ```sql
 SELECT pg_size_pretty(pg_relation_size('capybara.conversation_events')) AS events,

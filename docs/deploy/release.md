@@ -139,8 +139,9 @@ stable semver tag already in ghcr.io:
 
 ## Cache budget
 
-Image layers are cached in the GitHub Actions cache, per Dockerfile and architecture (`kernel-amd64`,
-`kernel-arm64`, `web-amd64`, `web-arm64`, mode=max). The release image builds write them. The `docker`
-job in `ci.yml` reads the amd64 scopes and writes them only on pushes to `main`, never on PRs. Together with the pnpm caches, this can approach
-the 10 GB per-repository limit. When it's reached, GitHub evicts the least recently used entries:
-builds get slower (cold), but stay correct.
+Image layers are cached in the GitHub Actions cache, per Dockerfile and architecture
+(`kernel-amd64`, `kernel-arm64`, `web-amd64`, `web-arm64`, mode=max). The release image builds write
+them. The `docker` job in `ci.yml` reads the amd64 scopes and writes them only on pushes to `main`,
+never on PRs. Together with the pnpm caches, this can approach the 10 GB per-repository limit. When
+it's reached, GitHub evicts the least recently used entries: builds get slower (cold), but stay
+correct.

@@ -45,6 +45,7 @@ POSTGRES_PASSWORD=$(openssl rand -hex 24)       # letters and digits only: it go
 CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)  # encrypts stored secrets: back it up
 CAPYBARA_S3_ACCESS_KEY=$(openssl rand -hex 24)  # hex only: embedded in SeaweedFS's JSON config
 CAPYBARA_S3_SECRET_KEY=$(openssl rand -hex 24)
+CAPYBARA_SETUP_TOKEN=$(openssl rand -hex 16)    # the web setup page asks for it
 ```
 
 Without `CAPYBARA_MASTER_KEY`, encrypted secrets (plugin, connector and channel credentials) can't be
@@ -65,10 +66,14 @@ Open `http://localhost:3000` (`CAPYBARA_WEB_PORT` changes the port).
 There are two ways to create the first enterprise admin:
 
 - **Web setup page (default).** With no password file, `init` only migrates and prints
-  `init: no admin password file ...`. The first visitor to the web app sees the setup page and becomes
-  the enterprise admin. Until you finish setup, don't expose the port beyond the people who should do
-  it.
-- **Password file.** `init` creates the admin before anything is reachable:
+  `init: no admin password file ...`. The web app opens on the setup page, which creates the
+  enterprise admin and, optionally, the first organization. It asks for the setup token:
+  `CAPYBARA_SETUP_TOKEN` from `.env`, which compose passes to `api` as `auth.setupToken`. Without the
+  right token, setup is refused (403 `setup.token_invalid`), so whoever reaches the port first can't
+  take the deployment over. If you leave `CAPYBARA_SETUP_TOKEN` empty, no token is needed and the
+  first visitor becomes the enterprise admin.
+- **Password file.** `init` creates the admin before anything is reachable, so the setup page is
+  already closed and the setup token is moot:
 
   ```bash
   mkdir -p secrets && openssl rand -base64 18 > secrets/admin_password
@@ -162,9 +167,10 @@ starting. Read its output with `docker compose logs init`.
 - **`CAPYBARA_WEB_TRUST_PROXY`** behind a TLS proxy or load balancer: without it, every client looks
   like the proxy's address and all clients share one login rate limit. Set it to the proxy's addresses
   or CIDRs (preferred, e.g. `172.18.0.1` or `10.0.0.0/8`) or to a hop count (`1` = the nearest proxy).
-  It is unset or `0` by default, which trusts nothing. Never use a `/0` CIDR such as `0.0.0.0/0`: it
-  trusts every address, so any client could forge `X-Forwarded-For`. `web` doesn't refuse it, so check
-  the value yourself. A malformed value stops `web` at startup.
+  A hop count is safe only when clients can't reach `web` directly (`CAPYBARA_WEB_BIND=127.0.0.1`, or
+  a firewall): otherwise a client could send its own `X-Forwarded-For` and `web` would trust it. It is
+  unset or `0` by default, which trusts nothing. A `/0` CIDR such as `0.0.0.0/0` trusts every address
+  and is refused, and any malformed value stops `web` at startup.
 - **`CAPYBARA_WEB_SHUTDOWN_GRACE_MS`** (default 5000) is how long in-flight requests, including SSE
   streams, may run after SIGTERM before `web` exits. To raise it, add it to the `web` service's
   environment in a `compose.override.yaml` (below) and keep it below the service's stop grace period
@@ -202,15 +208,15 @@ section on object storage has CORS examples.
 ### More kernel settings: `compose.override.yaml`
 
 `compose.yaml` passes the kernel only the variables listed in its `x-kernel-env` block. To set any
-other key from [docs/config.md](../config.md), for example `CAPYBARA_AUTH__SETUP_TOKEN` or
-`CAPYBARA_CHANNELS__SHARE_SLACK`, put it in a `compose.override.yaml` next to `compose.yaml`.
+other key from [docs/config.md](../config.md), for example `CAPYBARA_CHANNELS__SHARE_SLACK` or
+`CAPYBARA_PACKAGES__NPM_REGISTRY`, put it in a `compose.override.yaml` next to `compose.yaml`.
 `docker compose` reads that file automatically when you don't pass `-f`. Add the variable to every
 kernel service that reads it. When in doubt, add it to `init`, `api`, `worker` and `gateway`:
 
 ```yaml
 # docker/compose.override.yaml
 x-extra-env: &extra-env
-  CAPYBARA_AUTH__SETUP_TOKEN: ${CAPYBARA_SETUP_TOKEN:?}
+  CAPYBARA_PACKAGES__NPM_REGISTRY: https://npm.internal.example.com
 services:
   init: { environment: *extra-env }
   api: { environment: *extra-env }
@@ -252,8 +258,10 @@ otherwise.
   Outbound delivery and the processing of inbound messages still run on `worker`.
 - **Gateway fair share.** Each channel connection's long connection is held by exactly one gateway
   replica, under a lease in Redis.
-  - Replicas send heartbeats per channel plugin and share each plugin's connections. A replica's
-    target is `ceil(connections / live gateways)`, with the remainder spread over the replicas, plus
+  - Replicas send heartbeats per channel plugin and share each plugin's connections. For a plugin
+    with `runnable` connections and `live` gateway replicas, a replica's target is
+    `floor(runnable / live) + (rank < runnable % live ? 1 : 0) + shareSlack`, where `rank` is the
+    replica's position among the live replica ids (sorted) and `shareSlack` is
     `channels.shareSlack` (default 1).
   - A replica above its target hands back one connection per scan round (`channels.scanIntervalMs`,
     default 10 s), and another replica picks it up.
@@ -269,7 +277,8 @@ otherwise.
   `web` can reach it. `web` drops forged forwarding headers and sets `X-Forwarded-For` to the real
   peer address. The kernel needs this address for the per-IP login rate limit and for session records.
   `web` must be started with `node server.mjs`, which the image does. The Next standalone server and
-  `next start` don't sanitize these headers. If `api` is also reachable another way, use a list of
+  `next start` forward no `X-Forwarded-For` at all, so the kernel sees every client as `web`'s address
+  and all clients share one login rate limit. If `api` is also reachable another way, use a list of
   trusted proxy addresses instead of a hop count, e.g. `CAPYBARA_HTTP__TRUST_PROXY='["10.0.0.0/8"]'`.
 
 ## Plugins
@@ -326,16 +335,35 @@ replica.
 - **Public ingress to the gateway.** The route is served only by processes with the `gateway` role, on
   the kernel HTTP port (8080), and it is not under `/api`. In compose, uncomment the gateway's `ports`
   entry (`127.0.0.1:${CAPYBARA_GATEWAY_PORT:-8081}:8080`) and put an HTTPS proxy in front of it.
-- **`channels.webhookBaseUrl`**: the public https origin that reaches the gateway replicas, e.g.
-  `https://im.example.com`. Plain http is accepted only for loopback addresses with
-  `tools.oauthAllowInsecureLoopback` (testing). The setting isn't hot: a change needs a restart. The
-  connection page then shows the webhook URL to register with the platform. Until the base URL is set,
-  switching a connection to webhook mode is refused (`channel.webhook_unavailable`).
+- **Proxy only the webhook path.** The ingress in front of the gateway should forward only
+  `/channels/webhook/` and nothing else of the kernel HTTP port.
+- **`channels.webhookBaseUrl` is set on `api`**, the role that validates the switch to webhook mode and
+  shows each connection's webhook URL. It is the public https origin that reaches the gateway
+  replicas, e.g. `https://im.example.com`. Plain http is accepted only for loopback addresses with
+  `tools.oauthAllowInsecureLoopback` (testing). The setting isn't hot: a change needs a restart of
+  `api`. The connection page then shows the webhook URL to register with the platform. Until the base
+  URL is set, switching a connection to webhook mode is refused (`channel.webhook_unavailable`). In
+  compose, uncomment `CAPYBARA_CHANNELS__WEBHOOK_BASE_URL` in the `api` service, or set it in a
+  `compose.override.yaml` together with the gateway port:
+
+  ```yaml
+  # docker/compose.override.yaml
+  services:
+    api:
+      environment:
+        CAPYBARA_CHANNELS__WEBHOOK_BASE_URL: https://im.example.com
+    gateway:
+      environment:
+        CAPYBARA_HTTP__TRUST_PROXY: 172.18.0.1   # the HTTPS proxy as the gateway sees it
+      ports:
+        - "127.0.0.1:8081:8080"
+  ```
 - **The gateway's trust proxy must be `false` or the proxy's address / CIDR, never `1`.** The webhook
   port is reachable without going through `web`, so a hop count would let any caller forge
   `X-Forwarded-For`. In compose, set `CAPYBARA_GATEWAY_TRUST_PROXY` to the proxy's address as the
-  gateway sees it, or leave it `false` (the default). A proxy on the host connects from the bridge
-  gateway address: the Gateway shown by `docker network inspect capybara_default`.
+  gateway sees it (a comma-separated list of addresses / CIDRs works too), or leave it `false` (the
+  default). A proxy on the host connects from the bridge gateway address: the Gateway shown by
+  `docker network inspect capybara_default`.
 - **Limits:**
   - Bodies over `channels.webhookMaxBodyBytes` (default 1 MiB) get 413.
   - Unknown connections, disabled connections and connections that aren't in webhook mode all get
@@ -405,12 +433,15 @@ this:
   `capybara admin create --if-none --login <login> --display-name <name> --password-file <path>`, from
   the `capybara-api` image before each rollout (e.g. a Helm pre-upgrade hook or an Argo CD sync wave).
   Kernel replicas also apply pending kernel migrations at startup, under the same advisory lock, but
-  only `capybara migrate` checks the PostgreSQL version. See [upgrade.md](upgrade.md).
+  only `capybara migrate` checks the PostgreSQL version. A replica starts listening on HTTP only after
+  its startup migrations finish, so run migrations in the Job rather than leaving them to the pods.
+  See [upgrade.md](upgrade.md).
 - **Never expose `api` or `worker`.** Expose only `web`, and the gateway's webhook route if you use
   webhooks.
   - Restrict ingress to `api` with a NetworkPolicy so that only `web` pods reach it, or set
     `CAPYBARA_HTTP__TRUST_PROXY` to the web pods' CIDR instead of `1`.
-  - On the gateway, set trust proxy to the ingress controller's CIDR, or `false`.
+  - On the gateway, set trust proxy to the ingress controller's CIDR, or `false`, and route only
+    `/channels/webhook/` to it.
 - **Plugin packages belong in object storage.** Configure the object-store plugin before you install
   plugins through the admin console. Each pod's `pluginHost.dir` (`/var/lib/capybara/plugins`) is a
   cache rebuilt from object storage or PostgreSQL, so an `emptyDir` is enough. Don't share a volume
@@ -418,7 +449,9 @@ this:
 - **Shutdown:** set `terminationGracePeriodSeconds` to 40 or more. The kernel's shutdown budget is 30
   seconds.
 - **Probes:** `/readyz` and `/healthz` on port 8080 (`CAPYBARA_HTTP__PORT`) for every kernel role, and
-  `/zh/login` on port 3000 for `web`.
+  `/zh/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
+  generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen
+  until they finish, and a liveness probe must not kill it halfway.
 - **Secrets:** pass `CAPYBARA_MASTER_KEY`, the database URL and plugin credentials from Kubernetes
   Secrets as environment variables
   (`CAPYBARA_PLUGIN_CONFIG__<PLUGIN_UPPER_SNAKE>__<FIELD>` for plugin deployment config).
