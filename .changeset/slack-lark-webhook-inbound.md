@@ -5,7 +5,8 @@
 ---
 
 Slack and Lark implement webhook inbound mode (`Channel.webhook.handle`).
-Slack: optional secret `signingSecret`; `v0` HMAC signature checked in constant time with a 300 s
+Slack: optional secret `signingSecret`; `appToken` becomes optional (Socket Mode `connect` fails
+with a clear `last_error` without it); `v0` HMAC signature checked in constant time with a 300 s
 timestamp window; `url_verification` echoes the challenge; `event_callback` and the interactivity
 form (`payload=`, block_actions) go through the Socket Mode parser, so `messageId` / `eventId` match.
 Lark: optional secrets `encryptKey` and `verificationToken`; encrypted bodies are signature-checked
