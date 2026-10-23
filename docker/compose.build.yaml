@@ -1,0 +1,31 @@
+# Build the four images from a repository checkout instead of pulling them from ghcr.io:
+#
+#   docker compose -f compose.yaml -f compose.build.yaml build
+#   docker compose -f compose.yaml -f compose.build.yaml up -d
+#
+# The tags follow compose.yaml (CAPYBARA_IMAGE_PREFIX, CAPYBARA_VERSION); set
+# CAPYBARA_IMAGE_PREFIX= (empty) in .env for local tags such as capybara-api:0.1.0. init runs the
+# api image, so it needs no build of its own.
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/kernel.Dockerfile
+      args:
+        ROLES: api
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/kernel.Dockerfile
+      args:
+        ROLES: worker
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/kernel.Dockerfile
+      args:
+        ROLES: gateway
+  web:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile

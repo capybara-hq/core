@@ -1,0 +1,430 @@
+# Capybara: full deployment on one Docker host.
+#
+#   cp .env.example .env        # then fill in the required values (see the comments in it)
+#   docker compose up -d        # web on http://localhost:${CAPYBARA_WEB_PORT:-3000}
+#
+# This file and .env are all you need on the host (images come from ghcr.io), except for the
+# optional sandbox profile, which builds two images from a repository checkout (see below).
+# Local build from a checkout instead of pulling:
+#   docker compose -f compose.yaml -f compose.build.yaml build
+# Needs Docker Compose v2.23 or newer (inline `configs: content:`).
+#
+# Services: postgres (17; 15 or newer is required), valkey, seaweedfs (S3 for object-store-s3) and
+# createbuckets; init (one-shot: migrate, then create the enterprise admin if none exists); api,
+# worker and gateway (the three kernel roles, one image each); web (the only published port).
+# Scale workers with `docker compose up -d --scale worker=N`.
+#
+# Ports: only web is published. api, worker, gateway, postgres, valkey and seaweedfs are reachable
+# only on the compose network; never publish api or worker ports (api trusts one proxy hop, web).
+#
+# Secrets: nothing secret is written here; values come from .env (POSTGRES_PASSWORD,
+# CAPYBARA_MASTER_KEY, CAPYBARA_S3_*) and from the admin password file.
+#
+# Enterprise admin: with CAPYBARA_INIT_ADMIN_PASSWORD_FILE set in .env, init creates the admin
+# (login CAPYBARA_INIT_ADMIN_LOGIN) on the first start and skips on every later start. Without it,
+# init only migrates and the admin is created on the web setup page.
+
+name: capybara
+
+x-images:
+  # ${CAPYBARA_IMAGE_PREFIX-...}: unset means ghcr.io; an empty value selects local tags
+  # (capybara-api:<version>, as built by compose.build.yaml).
+  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0}
+
+x-kernel-env: &kernel-env
+  CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
+  CAPYBARA_REDIS__URL: redis://valkey:6379
+  CAPYBARA_MASTER_KEY: ${CAPYBARA_MASTER_KEY:?set CAPYBARA_MASTER_KEY in .env (openssl rand -base64 32)}
+  # Only web reaches the kernel services, so the client address is one proxy hop away. A service
+  # reachable from anywhere else must not use 1 (see gateway below).
+  CAPYBARA_HTTP__TRUST_PROXY: "1"
+  CAPYBARA_HTTP__PUBLIC_URL: ${CAPYBARA_PUBLIC_URL:-http://localhost:3000}
+  CAPYBARA_AUTH__COOKIE_SECURE: ${CAPYBARA_COOKIE_SECURE:-true}
+  # Deployment config of the builtin object-store-s3 plugin: the seaweedfs service below.
+  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__ENDPOINT: http://seaweedfs:8333
+  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__REGION: us-east-1
+  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET: capybara
+  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__FORCE_PATH_STYLE: "true"
+  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__ACCESS_KEY_ID: ${CAPYBARA_S3_ACCESS_KEY:?set CAPYBARA_S3_ACCESS_KEY in .env}
+  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__SECRET_ACCESS_KEY: ${CAPYBARA_S3_SECRET_KEY:?set CAPYBARA_S3_SECRET_KEY in .env}
+  # Browsers upload and download attachments with presigned URLs signed for this address; it must
+  # be reachable from browsers (seaweedfs publishes no port by default; see the seaweedfs service).
+  # CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__PUBLIC_ENDPOINT: https://s3.capybara.example.com
+
+x-kernel: &kernel
+  # An init process forwards signals to node and reaps zombies; the grace period outlasts the
+  # kernel's drain of in-flight work (pluginHost.drainSeconds, default 30).
+  init: true
+  stop_grace_period: 40s
+  restart: unless-stopped
+  # Unpacked plugin packages: the same path in every kernel service (rebuilt from PostgreSQL).
+  volumes:
+    - plugins:/var/lib/capybara/plugins
+  depends_on:
+    init:
+      condition: service_completed_successfully
+    createbuckets:
+      condition: service_completed_successfully
+    valkey:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: capybara
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: capybara
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Over TCP: during initdb the server listens only on the socket.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "capybara", "-d", "capybara"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  valkey:
+    image: valkey/valkey:8
+    restart: unless-stopped
+    # Queued jobs (BullMQ) live here: keep an append-only file so a restart doesn't drop them.
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkeydata:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Object storage for the builtin object-store-s3 plugin: SeaweedFS in one container (S3 API on
+  # 8333). Not published. Browser uploads and downloads use presigned URLs, so for attachments and
+  # artifacts in the web app publish the S3 API behind HTTPS (for example uncomment the ports below
+  # and put a TLS proxy in front) and set ..._OBJECT_STORE_S3__PUBLIC_ENDPOINT above to its address.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    restart: unless-stopped
+    command: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-dir=/data"]
+    configs:
+      - source: seaweedfs-s3
+        target: /etc/seaweedfs/s3.json
+    volumes:
+      - seaweedfsdata:/data
+    # ports:
+    #   - "127.0.0.1:8333:8333"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # One-shot: create the bucket "capybara" (skipped when it exists).
+  createbuckets:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 | grep -qw capybara
+        || echo "s3.bucket.create -name capybara" | weed shell -master=seaweedfs:9333
+    restart: "no"
+
+  # One-shot, on every `up`: migrate (fails on PostgreSQL older than 15), then create the
+  # enterprise admin if the password file exists and no admin exists yet. A failure here keeps
+  # api, worker and gateway from starting.
+  init:
+    image: *api-image
+    init: true
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *kernel-env
+      CAPYBARA_INIT_ADMIN_LOGIN: ${CAPYBARA_INIT_ADMIN_LOGIN:-admin}
+      CAPYBARA_INIT_ADMIN_NAME: ${CAPYBARA_INIT_ADMIN_NAME:-Administrator}
+    secrets:
+      - admin_password
+    healthcheck:
+      disable: true
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        node /app/bin/capybara.mjs migrate
+        pw=/run/secrets/admin_password
+        if [ -f "$$pw" ]; then
+          exec node /app/bin/capybara.mjs admin create --if-none --login "$$CAPYBARA_INIT_ADMIN_LOGIN" --display-name "$$CAPYBARA_INIT_ADMIN_NAME" --password-file "$$pw"
+        fi
+        echo "init: no admin password file (CAPYBARA_INIT_ADMIN_PASSWORD_FILE is not set); create the enterprise admin on the web setup page"
+
+  api:
+    <<: *kernel
+    image: *api-image
+    environment:
+      <<: *kernel-env
+
+  worker:
+    <<: *kernel
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0}
+    environment:
+      <<: *kernel-env
+    # "sandbox": the internal network of the optional sandbox-proxy (sandbox profile).
+    networks:
+      - default
+      - sandbox
+
+  gateway:
+    <<: *kernel
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0}
+    environment:
+      <<: *kernel-env
+      # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
+      # by default, so it trusts no X-Forwarded-For.
+      CAPYBARA_HTTP__TRUST_PROXY: ${CAPYBARA_GATEWAY_TRUST_PROXY:-false}
+      # CAPYBARA_CHANNELS__WEBHOOK_BASE_URL: https://im.capybara.example.com
+    # Webhook inbound (optional; long connections need no port): not published by default. To
+    # receive webhooks, uncomment this, put an HTTPS proxy in front and set
+    # CAPYBARA_CHANNELS__WEBHOOK_BASE_URL above. Then set CAPYBARA_GATEWAY_TRUST_PROXY to the
+    # proxy's address or CIDR (e.g. 172.18.0.1/32), or leave it false; never 1: the port is
+    # reachable directly, and a hop count would let any caller forge X-Forwarded-For.
+    # ports:
+    #   - "${CAPYBARA_GATEWAY_PORT:-8081}:8080"
+
+  web:
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0}
+    init: true
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      CAPYBARA_KERNEL_URL: http://api:8080
+      # Behind a TLS proxy (or load balancer) every client would look like the proxy's address and
+      # share one login rate limit: set CAPYBARA_WEB_TRUST_PROXY in .env to the proxy's hop count
+      # or its addresses / CIDRs (e.g. 1, or 10.0.0.0/8). Unset or 0 trusts no X-Forwarded-For.
+      CAPYBARA_WEB_TRUST_PROXY: ${CAPYBARA_WEB_TRUST_PROXY:-0}
+    ports:
+      - "${CAPYBARA_WEB_PORT:-3000}:3000"
+
+  # ---- Conversation sandboxes (optional): docker compose --profile sandbox up -d
+  # Needs a repository checkout: sandbox-image and sandbox-egress-image build the two images from
+  # ../plugins/sandbox-docker (they are not published). First install the plugin
+  # @capybara-hq/plugin-sandbox-docker
+  #   docker compose run --rm api plugins install npm:@capybara-hq/plugin-sandbox-docker --yes
+  #   docker compose run --rm api plugins enable sandbox-docker
+  # and set its endpoint to tcp://sandbox-proxy:2375 (only worker can reach it).
+  #
+  # sandbox-proxy is the only container that mounts the Docker socket, and it allows only the
+  # Engine API calls the plugin uses (the same rules as docker/sandbox-proxy/haproxy.cfg, inlined
+  # below). Whoever reaches it nearly controls Docker: it sits only on the internal "sandbox"
+  # network, which only worker joins, and it never publishes a port, not even on 127.0.0.1.
+  sandbox-proxy:
+    profiles: ["sandbox"]
+    image: haproxy:3.2-alpine@sha256:254e6370f01cd654e0744edf607c67f33777c1b6a9dc0d4b28bcba7171460122
+    restart: unless-stopped
+    # Reading the Docker socket needs root.
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    configs:
+      - source: sandbox-proxy-haproxy
+        target: /usr/local/etc/haproxy/haproxy.cfg
+    networks:
+      - sandbox
+
+  # One-shot: build the sandbox image (tag = the default of the kernel setting sandbox.image) and
+  # the egress proxy image, then exit.
+  sandbox-image:
+    profiles: ["sandbox"]
+    build: ../plugins/sandbox-docker/image
+    image: capybara-sandbox:latest
+    command: ["true"]
+    restart: "no"
+    network_mode: none
+
+  sandbox-egress-image:
+    profiles: ["sandbox"]
+    build: ../plugins/sandbox-docker/egress-proxy
+    image: capybara-sandbox-egress:latest
+    command: ["node", "-e", "0"]
+    restart: "no"
+    network_mode: none
+
+networks:
+  default: {}
+  # No route out: only worker and sandbox-proxy are on it.
+  sandbox:
+    internal: true
+
+secrets:
+  admin_password:
+    # Unset: /dev/null (not a regular file), and init skips creating the admin.
+    file: ${CAPYBARA_INIT_ADMIN_PASSWORD_FILE:-/dev/null}
+
+volumes:
+  pgdata:
+  valkeydata:
+  seaweedfsdata:
+  plugins:
+
+configs:
+  seaweedfs-s3:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "capybara",
+            "credentials": [
+              {
+                "accessKey": "${CAPYBARA_S3_ACCESS_KEY:?set CAPYBARA_S3_ACCESS_KEY in .env}",
+                "secretKey": "${CAPYBARA_S3_SECRET_KEY:?set CAPYBARA_S3_SECRET_KEY in .env}"
+              }
+            ],
+            "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+          }
+        ]
+      }
+  # Copy of docker/sandbox-proxy/haproxy.cfg without its comments ("$$" is a literal "$"); see that
+  # file for what each rule does. docker/test/compose-smoke.sh fails when the two differ.
+  sandbox-proxy-haproxy:
+    content: |
+      global
+        log stdout format raw local0 info
+        maxconn 4096
+        tune.bufsize 65536
+
+      defaults
+        mode http
+        log global
+        option httplog
+        option dontlognull
+        timeout connect 10s
+        timeout http-request 30s
+        timeout client 8h
+        timeout server 8h
+        timeout tunnel 8h
+
+      frontend docker
+        bind :2375
+        option http-buffer-request
+
+        acl m_get method GET HEAD
+        acl m_post method POST
+        acl m_delete method DELETE
+
+        acl p_ping path_reg '^(/v1\.[0-9]+)?/(_ping|version)$$'
+        acl p_container_create path_reg '^(/v1\.[0-9]+)?/containers/create$$'
+        acl p_container path_reg '^(/v1\.[0-9]+)?/containers/cap-[A-Za-z0-9_.-]+$$'
+        acl p_container_json path_reg '^(/v1\.[0-9]+)?/containers/cap-[A-Za-z0-9_.-]+/json$$'
+        acl p_container_op path_reg '^(/v1\.[0-9]+)?/containers/cap-[A-Za-z0-9_.-]+/(start|stop|kill|restart|unpause)$$'
+        acl p_container_exec path_reg '^(/v1\.[0-9]+)?/containers/cap-[A-Za-z0-9_.-]+/exec$$'
+        acl p_exec_start path_reg '^(/v1\.[0-9]+)?/exec/[A-Za-z0-9]+/start$$'
+        acl p_exec_json path_reg '^(/v1\.[0-9]+)?/exec/[A-Za-z0-9]+/json$$'
+        acl p_volume_create path_reg '^(/v1\.[0-9]+)?/volumes/create$$'
+        acl p_volume path_reg '^(/v1\.[0-9]+)?/volumes/cap-[A-Za-z0-9_.-]+$$'
+        acl p_network_create path_reg '^(/v1\.[0-9]+)?/networks/create$$'
+        acl p_network path_reg '^(/v1\.[0-9]+)?/networks/cap[A-Za-z0-9_.-]*$$'
+        acl p_image_json path_reg '^(/v1\.[0-9]+)?/images/[A-Za-z0-9][A-Za-z0-9_./:@-]*/json$$'
+        acl p_image_pull path_reg '^(/v1\.[0-9]+)?/images/create$$'
+
+        acl p_body path_reg '^(/v1\.[0-9]+)?/(containers/create|containers/cap-[A-Za-z0-9_.-]+/exec|volumes/create|networks/create)$$'
+        acl json_ct req.hdr(content-type) -m beg application/json
+        acl has_te req.hdr(transfer-encoding) -m found
+        acl has_cl req.hdr(content-length) -m found
+        acl big_body req.hdr_val(content-length) gt 32768
+        http-request deny deny_status 403 if m_post p_body !json_ct
+        http-request deny deny_status 403 if m_post p_body has_te
+        http-request deny deny_status 403 if m_post p_body !has_cl
+        http-request deny deny_status 403 if m_post p_body big_body
+        http-request set-var(txn.blen) req.body_len if m_post p_body
+        acl body_complete req.hdr_val(content-length),sub(txn.blen) eq 0
+        http-request deny deny_status 403 if m_post p_body !body_complete
+
+        acl b_privileged req.body -m reg -i '"privileged"\s*:\s*true'
+        acl b_unicode req.body -m reg '\\u'
+        acl b_unicode_key req.body -m reg '"[^"]*\\u[^"]*"\s*:'
+        acl b_nonascii req.body -m reg '[^\x00-\x7f]'
+        acl b_nonascii_key req.body -m reg '"[^"]*[^\x00-\x7f][^"]*"\s*:'
+        acl b_forbidden_key req.body -m reg -i '"(binds|capadd|capabilities|devices|devicerequests|devicecgrouprules|volumesfrom|cgroupparent|cgroup|sysctls|links|annotations|maskedpaths|readonlypaths|portbindings|volumeoptions|driverconfig|bindoptions)"\s*:'
+        acl b_mount_type req.body -m reg -i '"type"\s*:\s*"(?!(volume|tmpfs)")'
+        acl b_mount_source req.body -m reg -i '"source"\s*:\s*"(?!cap-)'
+        acl b_host_mode req.body -m reg -i 'mode"\s*:\s*"(host|container:)'
+        acl b_publish_all req.body -m reg -i '"publishallports"\s*:\s*true'
+        acl b_unconfined req.body -m reg -i '(seccomp|apparmor)[=:]unconfined'
+        acl b_secopt req.body -m reg -i '"securityopt"\s*:'
+        acl b_secopt_ok req.body -m reg -i '"securityopt"\s*:\s*\[\s*"no-new-privileges(:true)?"\s*\]'
+        acl b_runtime_bad req.body -m reg -i '"runtime"\s*:\s*"(?!(runc|runsc)")'
+        acl b_netmode req.body -m reg -i '"networkmode"\s*:'
+        acl b_netmode_ok req.body -m reg -i '"networkmode"\s*:\s*"(none|cap[a-z0-9_.-]*)"'
+        acl b_endpoints req.body -m reg -i '"endpointsconfig"\s*:'
+        acl b_endpoints_ok req.body -m reg -i '"endpointsconfig"\s*:\s*\{(\s*"cap[a-z0-9_.-]*"\s*:\s*\{\s*\}\s*,?)*\s*\}'
+        acl b_dup_key req.body -m reg -i '"(?<k>hostconfig|networkingconfig|networkmode|securityopt|endpointsconfig|name|driver)"\s*:[\s\S]*"\k<k>"\s*:'
+        acl b_name_cap req.body -m reg -i '"name"\s*:\s*"cap-[a-z0-9_.-]+"'
+        acl b_netname_cap req.body -m reg -i '"name"\s*:\s*"cap[a-z0-9_.-]*"'
+        acl b_local_opts req.body -m reg -i '"(device|o|type)"\s*:'
+        acl b_driver_bad req.body -m reg -i '"driver"\s*:\s*"(?!bridge")'
+        acl q_name_cap urlp(name) -m reg '^cap-[A-Za-z0-9_.-]+$$'
+        acl q_dup_name query -m reg '(^|&)name=[^&]*&(.*&)?name='
+        acl q_pull_only query -m reg '^fromImage=[^&]+$$'
+
+        http-request deny deny_status 403 if m_post p_container_create !q_name_cap
+        http-request deny deny_status 403 if m_post p_container_create q_dup_name
+        http-request deny deny_status 403 if m_post p_container_create b_unicode
+        http-request deny deny_status 403 if m_post p_container_create b_nonascii
+        http-request deny deny_status 403 if m_post p_container_create b_privileged
+        http-request deny deny_status 403 if m_post p_container_create b_forbidden_key
+        http-request deny deny_status 403 if m_post p_container_create b_mount_type
+        http-request deny deny_status 403 if m_post p_container_create b_mount_source
+        http-request deny deny_status 403 if m_post p_container_create b_host_mode
+        http-request deny deny_status 403 if m_post p_container_create b_publish_all
+        http-request deny deny_status 403 if m_post p_container_create b_unconfined
+        http-request deny deny_status 403 if m_post p_container_create b_secopt !b_secopt_ok
+        http-request deny deny_status 403 if m_post p_container_create b_runtime_bad
+        http-request deny deny_status 403 if m_post p_container_create !b_netmode
+        http-request deny deny_status 403 if m_post p_container_create !b_netmode_ok
+        http-request deny deny_status 403 if m_post p_container_create b_endpoints !b_endpoints_ok
+        http-request deny deny_status 403 if m_post p_container_create b_dup_key
+        http-request deny deny_status 403 if m_post p_container_exec b_privileged
+        http-request deny deny_status 403 if m_post p_container_exec b_unicode_key
+        http-request deny deny_status 403 if m_post p_container_exec b_nonascii_key
+        http-request deny deny_status 403 if m_post p_volume_create b_unicode
+        http-request deny deny_status 403 if m_post p_volume_create b_nonascii
+        http-request deny deny_status 403 if m_post p_volume_create !b_name_cap
+        http-request deny deny_status 403 if m_post p_volume_create b_dup_key
+        http-request deny deny_status 403 if m_post p_volume_create b_local_opts
+        http-request deny deny_status 403 if m_post p_network_create b_unicode
+        http-request deny deny_status 403 if m_post p_network_create b_nonascii
+        http-request deny deny_status 403 if m_post p_network_create !b_netname_cap
+        http-request deny deny_status 403 if m_post p_network_create b_dup_key
+        http-request deny deny_status 403 if m_post p_network_create b_driver_bad
+
+        http-request deny deny_status 403 if m_post p_image_pull !q_pull_only
+
+        http-request allow if m_get p_ping
+        http-request allow if m_post p_container_create
+        http-request allow if m_get p_container_json
+        http-request allow if m_post p_container_op
+        http-request allow if m_delete p_container
+        http-request allow if m_post p_container_exec
+        http-request allow if m_post p_exec_start
+        http-request allow if m_get p_exec_json
+        http-request allow if m_post p_volume_create
+        http-request allow if m_get p_volume
+        http-request allow if m_delete p_volume
+        http-request allow if m_post p_network_create
+        http-request allow if m_get p_network
+        http-request allow if m_delete p_network
+        http-request allow if m_get p_image_json
+        http-request allow if m_post p_image_pull
+        http-request deny deny_status 403
+
+        default_backend dockerd
+
+      backend dockerd
+        server dockerd /var/run/docker.sock
