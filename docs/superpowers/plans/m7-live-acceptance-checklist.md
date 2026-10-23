@@ -67,7 +67,7 @@ Complete these before dispatching the release. Secret and variable names are the
   excluded** and no ruleset covers it (the CLA workflow pushes signatures there).
 - [ ] **No changeset-bearing PR before the first release.** Between merging M7 and the manual first run,
   merge no PR that adds a changeset. Any such PR makes `version-pr` open a Version Packages PR, and
-  merging that moves the first release to 0.1.1. Hold those PRs until step 2 is done.
+  merging that moves the first release past 0.1.0. Hold those PRs until step 2 is done.
 - [ ] **CLA.** Legal review of [CLA.md](../../../CLA.md) is done, and the draft banner is removed, before
   any external PR is merged (CONTRIBUTING.md: external PRs are not merged while the CLA is a draft).
 
