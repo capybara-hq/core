@@ -24,6 +24,7 @@ import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
+  cardRecorded,
   createOrg,
   eventsOf,
   PW,
@@ -534,6 +535,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       10_000,
       "second approval card",
     );
+    await cardRecorded(db, cardMsg);
     const updatesBefore = updatesOf(cardMsg.messageId).length;
 
     // 组织里的另一个成员（不是审批人）点了批准
@@ -650,6 +652,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       10_000,
       "question card",
     );
+    await cardRecorded(db, cardMsg);
     const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "question" }>;
     expect(card).toMatchObject({
       kind: "question",
@@ -704,6 +707,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     );
     const approvalId = (cardOf(cardMsg) as { id: string }).id;
     expect(cardMsg.target).toEqual({ chatId: chat, chatType: "group", threadId: "an1" });
+    await cardRecorded(db, cardMsg);
     // 另一个匿名访客（同一个共享访客账号）在别的话题里点了这张卡片
     const other: ChannelTarget = { chatId: chat, chatType: "group", threadId: "an-b" };
     const n = im.sent.length;
@@ -751,6 +755,7 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
       "approval card",
     );
     const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    await cardRecorded(db, cardMsg);
     // 未绑定的人在卡片所在的群里点卡片，插件声称是私聊 → 仍按记下的群处理：只提示去私聊，不含链接
     const n0 = im.sent.length;
     im.push(
@@ -799,6 +804,7 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
       "anonymous approval card",
     );
     const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    await cardRecorded(db, cardMsg);
     const n = im.sent.length;
     im.push(
       anonId,
