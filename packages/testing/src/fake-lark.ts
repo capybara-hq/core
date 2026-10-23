@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import protobuf from "protobufjs";
@@ -1044,5 +1044,42 @@ export function larkCardAction(
       host: "im_message",
       context: { open_message_id: message.messageId, open_chat_id: message.chatId },
     },
+  };
+}
+
+/**
+ * Encrypts a Lark webhook payload the way Lark does when an Encrypt Key is set
+ * (https://open.larksuite.com/document/ukTMukTMukTM/uYDNxYjL2QTM24iN0EjN/event-subscription-configure-/encrypt-key-encryption-configuration-case):
+ * AES-256-CBC with key = SHA-256(encryptKey), a random 16-byte IV prepended to the ciphertext,
+ * base64. Returns the request body `{"encrypt":"<base64>"}`.
+ */
+export function encryptLarkWebhook(payload: unknown, encryptKey: string): string {
+  const key = createHash("sha256").update(encryptKey).digest();
+  const iv = randomBytes(16);
+  const cipher = createCipheriv("aes-256-cbc", key, iv);
+  const enc = Buffer.concat([cipher.update(JSON.stringify(payload), "utf8"), cipher.final()]);
+  return JSON.stringify({ encrypt: Buffer.concat([iv, enc]).toString("base64") });
+}
+
+/**
+ * Signs a Lark webhook request: returns the `x-lark-request-timestamp` (seconds),
+ * `x-lark-request-nonce` and `x-lark-signature` headers, where the signature is
+ * hex SHA-256(timestamp + nonce + encryptKey + raw body).
+ */
+export function signLarkWebhook(
+  body: string | Uint8Array,
+  encryptKey: string,
+  opts: { timestamp?: number; nonce?: string } = {},
+): Record<string, string> {
+  const ts = String(opts.timestamp ?? Math.floor(Date.now() / 1000));
+  const nonce = opts.nonce ?? hex(8);
+  const sig = createHash("sha256")
+    .update(ts + nonce + encryptKey)
+    .update(typeof body === "string" ? Buffer.from(body) : Buffer.from(body))
+    .digest("hex");
+  return {
+    "x-lark-request-timestamp": ts,
+    "x-lark-request-nonce": nonce,
+    "x-lark-signature": sig,
   };
 }

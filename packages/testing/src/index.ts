@@ -51,6 +51,7 @@ export {
   startFakeE2B,
 } from "./fake-e2b.js";
 export {
+  encryptLarkWebhook,
   type FakeLarkAck,
   type FakeLarkApi,
   type FakeLarkButton,
@@ -64,6 +65,7 @@ export {
   findLarkButton,
   larkCardAction,
   larkMessageEvent,
+  signLarkWebhook,
   startFakeLark,
 } from "./fake-lark.js";
 export {
@@ -113,8 +115,11 @@ export {
   type FakeSlackServer,
   type FakeSlackUser,
   findSlackButton,
+  signSlackWebhook,
   slackBlockAction,
   slackDmEvent,
+  slackEventCallback,
+  slackInteractiveForm,
   slackMentionEvent,
   startFakeSlack,
 } from "./fake-slack.js";

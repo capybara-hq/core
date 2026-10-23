@@ -1,4 +1,10 @@
-import { createSign, generateKeyPairSync, type KeyObject, randomUUID } from "node:crypto";
+import {
+  createHmac,
+  createSign,
+  generateKeyPairSync,
+  type KeyObject,
+  randomUUID,
+} from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -566,15 +572,10 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
     pushEvent(event, o = {}) {
       return push({
         type: "events_api",
-        payload: {
-          token: "verification-token",
-          team_id: o.teamId ?? teamId,
-          api_app_id: "A0001",
-          type: "event_callback",
-          event_id: o.eventId ?? `Ev${++envSeq}`,
-          event_time: Math.floor(Date.now() / 1000),
-          event,
-        },
+        payload: slackEventCallback(event, {
+          teamId: o.teamId ?? teamId,
+          eventId: o.eventId ?? `Ev${++envSeq}`,
+        }),
       });
     },
     pushInteractive(payload) {
@@ -733,3 +734,42 @@ export function findSlackButton(
   }
   return undefined;
 }
+
+/**
+ * An Events API `event_callback` body: what Slack posts to a webhook Request URL, and the payload
+ * of a Socket Mode `events_api` envelope (the same object, so both inbound modes see one shape).
+ */
+export function slackEventCallback(
+  event: Record<string, unknown>,
+  opts: { teamId?: string; eventId?: string } = {},
+): Record<string, unknown> {
+  return {
+    token: "verification-token",
+    team_id: opts.teamId ?? "T0001",
+    api_app_id: "A0001",
+    type: "event_callback",
+    event_id: opts.eventId ?? `Ev${Math.random().toString(36).slice(2, 10)}`,
+    event_time: Math.floor(Date.now() / 1000),
+    event,
+  };
+}
+
+/**
+ * Signs a Slack webhook request the way Slack does
+ * (https://docs.slack.dev/authentication/verifying-requests-from-slack/): returns the
+ * `x-slack-request-timestamp` and `x-slack-signature` headers, where the signature is
+ * `v0=` + hex HMAC-SHA256(signingSecret, `v0:<ts>:<raw body>`). `ts` is in seconds.
+ */
+export function signSlackWebhook(
+  body: string | Uint8Array,
+  signingSecret: string,
+  ts: number,
+): Record<string, string> {
+  const raw = typeof body === "string" ? Buffer.from(body) : Buffer.from(body);
+  const mac = createHmac("sha256", signingSecret).update(`v0:${ts}:`).update(raw).digest("hex");
+  return { "x-slack-request-timestamp": String(ts), "x-slack-signature": `v0=${mac}` };
+}
+
+/** The form body Slack posts for an interactive payload (`payload=<url-encoded JSON>`). */
+export const slackInteractiveForm = (payload: Record<string, unknown>): string =>
+  new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
