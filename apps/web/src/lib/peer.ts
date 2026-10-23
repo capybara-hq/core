@@ -52,8 +52,8 @@ export type TrustProxy =
 
 /**
  * Parses {@link TRUST_PROXY_ENV}: unset or empty trusts nothing; a non-negative integer is a hop
- * count (0 trusts nothing); anything else is a comma-separated list of IPs / CIDRs. Throws on a
- * malformed value so the server fails at startup instead of silently trusting the wrong hops.
+ * count (0 trusts nothing); anything else is a comma-separated list of IPs / CIDRs (a /0 prefix is
+ * refused: it would trust every address). Throws on a malformed value so the server fails at startup instead of silently trusting the wrong hops.
  */
 export function parseTrustProxy(raw: string | undefined): TrustProxy {
   const value = raw?.trim() ?? "";
@@ -77,6 +77,12 @@ export function parseTrustProxy(raw: string | undefined): TrustProxy {
     ) {
       throw new Error(
         `${TRUST_PROXY_ENV}: invalid entry "${entry}"; expected a hop count or comma-separated IPs / CIDRs`,
+      );
+    }
+    if (bits === 0) {
+      // A /0 prefix trusts every address: any client could forge X-Forwarded-For.
+      throw new Error(
+        `${TRUST_PROXY_ENV}: "${entry}" trusts every address; list the proxies' own addresses or CIDRs`,
       );
     }
     list.addSubnet(ip, bits, family === 6 ? "ipv6" : "ipv4");

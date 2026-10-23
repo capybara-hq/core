@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Smoke test for docker/compose.yaml, run from scratch with locally built images:
 #   1. first `up` without an admin password file: init only migrates (web setup hint), the
-#      setup wizard is open, every service becomes healthy, two worker replicas (--scale worker=2);
+#      setup wizard is open and requires CAPYBARA_SETUP_TOKEN (refused without it, works with
+#      it), every service becomes healthy, two worker replicas (--scale worker=2);
 #   2. `up` again with the password file: init creates the enterprise admin; log in through web;
 #   3. install model-fake from a local tgz with `compose run api plugins install`, enable it, and
 #      without restarting anything both workers load it and a conversation turn completes;
@@ -59,6 +60,7 @@ fail() {
 [ -f "$COMPOSE" ] || fail "missing $COMPOSE"
 
 hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+SETUP_TOKEN="$(hex 16)"
 # A free host port for web: the public URL (and so the presigned URLs) must name it.
 WEB_PORT="$(node -e 'const s = require("node:net").createServer().listen(0, "127.0.0.1", () => {
   console.log(s.address().port); s.close(); });')"
@@ -74,6 +76,7 @@ CAPYBARA_S3_ACCESS_KEY=$(hex 12)
 CAPYBARA_S3_SECRET_KEY=$(hex 24)
 CAPYBARA_INIT_ADMIN_LOGIN=$ADMIN
 CAPYBARA_INIT_ADMIN_NAME=Root
+CAPYBARA_SETUP_TOKEN=$SETUP_TOKEN
 EOF
 printf '%s\n' "$PW" >"$PW_FILE"
 printf 'services:\n  postgres:\n    image: postgres:14\n' >"$TMP/pg14.yaml"
@@ -156,6 +159,21 @@ if (v === undefined) process.exit(1); console.log(v);' "$TMP/body" "$1"
 out="$(api GET /api/v1/setup)"
 [ "${out%% *}" = "200" ] || fail "GET /api/v1/setup: $out"
 echo "$out" | grep -q '"needsSetup":true' || fail "the setup wizard is not open: $out"
+# The setup page requires CAPYBARA_SETUP_TOKEN (compose passes it to api): without it, or with a
+# wrong one, setup is refused; with it, setup succeeds.
+SETUP_BODY='"login":"webadmin","password":"web-setup-password-123","displayName":"Web Admin"'
+out="$(api POST /api/v1/setup "{$SETUP_BODY}")"
+[ "${out%% *}" = "403" ] && echo "$out" | grep -q 'setup.token_invalid' \
+  || fail "setup without the token was not refused: $out"
+out="$(api POST /api/v1/setup "{$SETUP_BODY,\"setupToken\":\"wrong\"}")"
+[ "${out%% *}" = "403" ] || fail "setup with a wrong token was not refused: $out"
+out="$(api POST /api/v1/setup "{$SETUP_BODY,\"setupToken\":\"$SETUP_TOKEN\"}")"
+[ "${out%% *}" = "201" ] || fail "setup with the token: $out"
+[ "$(admin_count)" = "1" ] || fail "setup with the token did not create the admin"
+echo "    setup page: refused without the token (403), created the admin with it (201)"
+# Reopen setup for the password-file step below: demote the web-created admin (test-only shortcut).
+psql_q "UPDATE capybara.accounts SET is_enterprise_admin = false WHERE display_name = 'Web Admin'" >/dev/null
+[ "$(admin_count)" = "0" ] || fail "could not demote the web-created admin"
 
 echo "==> up with the password file: init creates the enterprise admin"
 echo "CAPYBARA_INIT_ADMIN_PASSWORD_FILE=$PW_FILE" >>"$ENV_FILE"

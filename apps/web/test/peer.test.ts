@@ -123,4 +123,11 @@ describe("sanitizeIncoming with CAPYBARA_WEB_TRUST_PROXY", () => {
     }
     expect(parseTrustProxy("fd00::/8, ::1").kind).toBe("cidrs");
   });
+
+  it("refuses a /0 prefix, which would trust every address", () => {
+    for (const bad of ["0.0.0.0/0", "::/0", "10.0.0.1, 0.0.0.0/00", "::ffff:0.0.0.0/0"]) {
+      expect(() => parseTrustProxy(bad), bad).toThrow(/trusts every address/);
+    }
+    expect(parseTrustProxy("0.0.0.0/1").kind).toBe("cidrs");
+  });
 });

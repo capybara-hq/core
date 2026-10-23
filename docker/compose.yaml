@@ -24,7 +24,9 @@
 #
 # Enterprise admin: with CAPYBARA_INIT_ADMIN_PASSWORD_FILE set in .env, init creates the admin
 # (login CAPYBARA_INIT_ADMIN_LOGIN) on the first start and skips on every later start. Without it,
-# init only migrates and the admin is created on the web setup page.
+# init only migrates and the admin is created on the web setup page, which then requires
+# CAPYBARA_SETUP_TOKEN from .env (when set). With the password file the token is moot: setup is
+# already complete when web comes up.
 
 name: capybara
 
@@ -196,13 +198,20 @@ services:
         if [ -f "$$pw" ]; then
           exec node /app/bin/capybara.mjs admin create --if-none --login "$$CAPYBARA_INIT_ADMIN_LOGIN" --display-name "$$CAPYBARA_INIT_ADMIN_NAME" --password-file "$$pw"
         fi
-        echo "init: no admin password file (CAPYBARA_INIT_ADMIN_PASSWORD_FILE is not set or not a regular file); create the enterprise admin on the web setup page"
+        echo "init: no admin password file (CAPYBARA_INIT_ADMIN_PASSWORD_FILE is not set or not a regular file); create the enterprise admin on the web setup page (enter CAPYBARA_SETUP_TOKEN from .env as the setup token)"
 
   api:
     <<: *kernel
     image: *api-image
     environment:
       <<: *kernel-env
+      # The web setup page (creating the first enterprise admin) asks for this token, so whoever
+      # reaches the port first can't take the deployment over. Empty: no token is required.
+      CAPYBARA_AUTH__SETUP_TOKEN: ${CAPYBARA_SETUP_TOKEN:-}
+      # Webhook inbound (optional): the public https origin that reaches the gateway's webhook
+      # route. api reads it (it validates the inbound-mode switch and shows each connection's
+      # webhook URL); see the gateway service below.
+      # CAPYBARA_CHANNELS__WEBHOOK_BASE_URL: https://im.capybara.example.com
     networks:
       - default
       - frontend
@@ -225,10 +234,10 @@ services:
       # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
       # by default, so it trusts no X-Forwarded-For.
       CAPYBARA_HTTP__TRUST_PROXY: ${CAPYBARA_GATEWAY_TRUST_PROXY:-false}
-      # CAPYBARA_CHANNELS__WEBHOOK_BASE_URL: https://im.capybara.example.com
     # Webhook inbound (optional; long connections need no port): not published by default. To
-    # receive webhooks, uncomment this, put an HTTPS proxy in front and set
-    # CAPYBARA_CHANNELS__WEBHOOK_BASE_URL above. Then set CAPYBARA_GATEWAY_TRUST_PROXY to the
+    # receive webhooks, uncomment this, put an HTTPS proxy in front that forwards only
+    # /channels/webhook/ here, and set CAPYBARA_CHANNELS__WEBHOOK_BASE_URL on api (above; it is
+    # api that reads it). Then set CAPYBARA_GATEWAY_TRUST_PROXY to the
     # proxy's address or CIDR as the gateway sees it (a proxy on the host connects from your
     # bridge gateway: the Gateway of `docker network inspect capybara_default`), or leave it
     # false. Never 1: the port is reachable directly, and a hop count would let any caller forge
@@ -246,8 +255,9 @@ services:
     environment:
       CAPYBARA_KERNEL_URL: http://api:8080
       # Behind a TLS proxy (or load balancer) every client would look like the proxy's address and
-      # share one login rate limit: set CAPYBARA_WEB_TRUST_PROXY in .env to the proxy's hop count
-      # or its addresses / CIDRs (e.g. 1, or 10.0.0.0/8). Unset or 0 trusts no X-Forwarded-For.
+      # share one login rate limit: set CAPYBARA_WEB_TRUST_PROXY in .env to the proxy's addresses /
+      # CIDRs (preferred, e.g. 172.18.0.1) or its hop count; a hop count only with
+      # CAPYBARA_WEB_BIND=127.0.0.1. Unset or 0 trusts no X-Forwarded-For.
       CAPYBARA_WEB_TRUST_PROXY: ${CAPYBARA_WEB_TRUST_PROXY:-0}
       # Object storage on the web origin: web proxies /capybara/** (GET, HEAD, POST) to the S3
       # gateway with Host set to the public origin's host, which the presigned URLs are signed

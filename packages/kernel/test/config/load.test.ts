@@ -209,4 +209,40 @@ describe("http.trustProxy", () => {
       expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v })).toThrow(ConfigError);
     }
   });
+
+  it("accepts a comma-separated string of addresses / CIDRs", () => {
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: "172.18.0.1" })).toEqual(["172.18.0.1"]);
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: " 10.0.0.0/8 , fd00::/8,loopback," })).toEqual([
+      "10.0.0.0/8",
+      "fd00::/8",
+      "loopback",
+    ]);
+    expect(
+      resolveConfig({ ...raw, http: { trustProxy: "192.168.0.0/16,10.1.2.3" } }, {}).http
+        .trustProxy,
+    ).toEqual(["192.168.0.0/16", "10.1.2.3"]);
+  });
+
+  it("refuses malformed entries and /0 prefixes", () => {
+    for (const v of ["proxy.local", "10.0.0.0/33", "10.0.0.0/8/1", ",", "0.0.0.0/0", "::/0"]) {
+      expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v }), v).toThrow(ConfigError);
+    }
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: '["10.0.0.1","0.0.0.0/0"]' })).toThrow(
+      /trusts every address/,
+    );
+  });
+});
+
+describe("auth.setupToken", () => {
+  const raw = {
+    db: { url: "postgres://h/db" },
+    redis: { url: "redis://h" },
+    masterKey: MASTER_KEY,
+  };
+
+  it("treats an empty value as unset", () => {
+    expect(resolveConfig(raw, { CAPYBARA_AUTH__SETUP_TOKEN: "" }).auth.setupToken).toBeUndefined();
+    expect(resolveConfig(raw, {}).auth.setupToken).toBeUndefined();
+    expect(resolveConfig(raw, { CAPYBARA_AUTH__SETUP_TOKEN: "abc" }).auth.setupToken).toBe("abc");
+  });
 });

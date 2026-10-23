@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import {
   DOCUMENT_MEDIA_TYPES,
   IMAGE_MEDIA_TYPES,
@@ -72,6 +73,28 @@ export const CATALOG_MAX_MIRRORS = 5;
 const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
+
+/** proxy-addr's named ranges, which Fastify's trustProxy also accepts. */
+const TRUST_PROXY_NAMES = new Set(["loopback", "linklocal", "uniquelocal"]);
+
+/**
+ * Why an `http.trustProxy` list entry is refused, or undefined when it is an IP, a CIDR or a named
+ * range. A /0 prefix is refused: it trusts every address, so any client could forge the header.
+ */
+export function trustProxyEntryProblem(entry: string): string | undefined {
+  if (TRUST_PROXY_NAMES.has(entry)) return undefined;
+  const [addr = "", prefix, extra] = entry.split("/");
+  const family = isIP(addr);
+  if (family === 0 || extra !== undefined || (prefix !== undefined && !/^\d+$/.test(prefix))) {
+    return `"${entry}" is not an IP address or CIDR`;
+  }
+  if (prefix === undefined) return undefined;
+  const bits = Number(prefix);
+  if (bits > (family === 6 ? 128 : 32)) return `"${entry}" has an out-of-range prefix`;
+  if (bits === 0)
+    return `"${entry}" trusts every address; list the proxies' own addresses or CIDRs`;
+  return undefined;
+}
 
 export const KernelConfigSchema = z.object({
   db: z
@@ -332,12 +355,37 @@ export const KernelConfigSchema = z.object({
         .default(8080)
         .meta(meta({ description: "HTTP listen port" })),
       trustProxy: z
-        .union([z.boolean(), z.number().int().min(1), z.array(z.string().min(1)).min(1)])
+        .preprocess(
+          // Also accept a comma-separated string of addresses / CIDRs (an env value that is not JSON
+          // arrives as a string, e.g. CAPYBARA_HTTP__TRUST_PROXY=172.18.0.1,10.0.0.0/8).
+          (v) =>
+            typeof v === "string"
+              ? v
+                  .split(",")
+                  .map((e) => e.trim())
+                  .filter((e) => e !== "")
+              : v,
+          z.union([
+            z.boolean(),
+            z.number().int().min(1),
+            z
+              .array(
+                z
+                  .string()
+                  .min(1)
+                  .superRefine((e, ctx) => {
+                    const problem = trustProxyEntryProblem(e);
+                    if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+                  }),
+              )
+              .min(1),
+          ]),
+        )
         .default(false)
         .meta(
           meta({
             description:
-              "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies",
+              "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended; a JSON array or a comma-separated string; a /0 prefix is refused). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies",
           }),
         ),
       // 环境变量按 JSON 解析，CAPYBARA_HTTP__REPLICA_ID=0 会得到数字，所以也接受非负整数（输出头时转字符串）
@@ -419,8 +467,8 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       setupToken: z
-        .string()
-        .min(1)
+        // An empty value means "not set" (compose passes ${CAPYBARA_SETUP_TOKEN:-}).
+        .preprocess((v) => (v === "" ? undefined : v), z.string().min(1).optional())
         .optional()
         .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
       loginSources: z
