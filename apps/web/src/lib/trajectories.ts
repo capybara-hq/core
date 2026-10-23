@@ -34,12 +34,11 @@ export interface TrajectoryModelCall {
   };
 }
 
-/** A plugin policy hook's denial (`detail` is the raw hook error; not shown to the model). */
+/** A plugin policy hook's denial: cause and sanitized reason (raw hook errors are in the audit log). */
 export interface TrajectoryHookDenial {
   plugin: string;
   reason: string;
   cause: "deny" | "hook_error" | "timeout";
-  detail?: string;
 }
 
 export interface TrajectoryToolCall {

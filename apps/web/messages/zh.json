@@ -1415,7 +1415,6 @@
           "timeout": "hook 超时"
         },
         "reason": "原因（模型可见）",
-        "detail": "hook 错误",
         "attempt": "尝试"
       }
     },

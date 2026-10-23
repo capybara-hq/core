@@ -156,7 +156,6 @@ function useHookRows() {
     { k: t("cause"), v: t(`causes.${d.cause}`) },
     { k: t("reason"), v: d.reason },
     ...(d.attempt !== undefined ? [{ k: t("attempt"), v: String(d.attempt) }] : []),
-    ...(d.detail !== undefined ? [{ k: t("detail"), v: d.detail }] : []),
   ];
 }
 

@@ -584,7 +584,6 @@ describe("buildTrajectory: hook denials", () => {
         cause: "timeout",
         step: 2,
         attempt: 1,
-        detail: "did not finish within 5000 ms",
       },
     });
     e(60, "r1", {
@@ -605,7 +604,6 @@ describe("buildTrajectory: hook denials", () => {
       plugin: "guard",
       reason: "The guard policy check did not respond in time",
       cause: "timeout",
-      detail: "did not finish within 5000 ms",
       attempt: 1,
     });
     expect(run?.end).toEqual({ kind: "failed", detail: "run.hook_denied" });

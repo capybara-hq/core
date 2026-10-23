@@ -125,7 +125,6 @@ export function hookDeniedEvent(
       step: where.step,
       ...(where.attempt !== undefined && { attempt: where.attempt }),
       ...(where.callId !== undefined && { callId: where.callId }),
-      ...(denial.detail !== undefined && { detail: denial.detail }),
     },
   };
 }
@@ -149,6 +148,8 @@ export function hookDeniedAudit(
       conversationId: at.conversationId,
       runId: at.runId,
       ...(at.agentId !== undefined && { agentId: at.agentId }),
+      // the raw hook error: audit only, never in the conversation event (Ruling R12)
+      ...(denial.detail !== undefined && { error: denial.detail }),
       ...(denial.preflight
         ? { preflight: true, firstPolicyPlugin: denial.plugin, causedByPlugin: false }
         : {}),

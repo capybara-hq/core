@@ -275,13 +275,33 @@ describe("tool hooks", { timeout: 60_000 }, () => {
   it("a policy hook timeout blocks the call with a policy hook error and does not hang the run", async () => {
     await probe({ sleepMs: 30_000, sleepIn: ["tool.preExecute"] });
     const t0 = Date.now();
-    const { events } = await turn(`tool:${TOOL}:{"text":"slow"}`);
+    const { conv, events } = await turn(`tool:${TOOL}:{"text":"slow"}`);
     expect(Date.now() - t0).toBeLessThan(15_000);
     const [result] = ofType(events, "tool_result");
     expect(result?.payload.content).toContain("policy hook");
     expect(result?.payload.isError).toBe(true);
     expect(ofType(events, "hook_denied").map((e) => e.payload.cause)).toEqual(["timeout"]);
     expect(ofType(events, "run_finished")[0]?.payload.reason).toBe("completed");
+    // Ruling R12: the events API (seen by conversation participants) has no raw hook error;
+    // the audit row keeps it
+    const api = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/events`,
+    });
+    expect(api.statusCode, api.body).toBe(200);
+    const apiDenied = (api.json() as { events: ConversationEvent[] }).events.find(
+      (e) => e.type === "hook_denied",
+    );
+    expect(apiDenied?.payload).toBeDefined();
+    expect(apiDenied?.payload).not.toHaveProperty("detail");
+    expect(api.body).not.toContain("did not finish within");
+    const rows = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "hook.denied")
+      .where("target", "=", conv)
+      .execute();
+    expect(JSON.stringify(rows[0]?.detail)).toContain("did not finish within");
     await probe({});
   });
 

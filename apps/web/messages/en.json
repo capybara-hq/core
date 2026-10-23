@@ -1415,7 +1415,6 @@
           "timeout": "Hook timed out"
         },
         "reason": "Reason (shown to the model)",
-        "detail": "Hook error",
         "attempt": "Attempt"
       }
     },

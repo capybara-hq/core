@@ -26,12 +26,11 @@ export interface TrajectoryModelCall {
   request: EventPayload<"model_call">["request"];
 }
 
-/** A plugin policy hook's denial (`hook_denied`); `detail` is the raw hook error, never model-visible. */
+/** A plugin policy hook's denial (`hook_denied`): cause and sanitized reason (raw errors: audit log). */
 export interface TrajectoryHookDenial {
   plugin: string;
   reason: string;
   cause: "deny" | "hook_error" | "timeout";
-  detail?: string;
 }
 
 /** 一次工具调用（模型回复里的一个 `tool_call` 块）。 */
@@ -109,7 +108,6 @@ const denialOf = (e: Ev<"hook_denied">): TrajectoryHookDenial => ({
   plugin: e.payload.plugin,
   reason: e.payload.reason,
   cause: e.payload.cause,
-  ...(e.payload.detail !== undefined && { detail: e.payload.detail }),
 });
 const ms = (from: Date, to: Date): number => to.getTime() - from.getTime();
 

@@ -419,7 +419,6 @@ describe("轨迹详情（TracePage）", () => {
               plugin: "guard",
               reason: "The guard policy check did not respond in time",
               cause: "timeout",
-              detail: "did not finish within 5000 ms",
               attempt: 1,
             },
           },
@@ -437,7 +436,9 @@ describe("轨迹详情（TracePage）", () => {
       expect(within(detail()).getByText("not on weekends")).toBeTruthy();
       await user.click(within(list).getByText(m.detail.spans.step.replace("{n}", "1")));
       expect(within(detail()).getByText(m.detail.hook.causes.timeout)).toBeTruthy();
-      expect(within(detail()).getByText("did not finish within 5000 ms")).toBeTruthy();
+      expect(
+        within(detail()).getByText("The guard policy check did not respond in time"),
+      ).toBeTruthy();
     },
   );
 
