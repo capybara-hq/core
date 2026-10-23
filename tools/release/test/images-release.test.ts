@@ -107,18 +107,36 @@ describe("planImageRelease", () => {
     expect(p.build.map((t) => [t.image, t.latest])).toEqual([["capybara-web", false]]);
   });
 
-  it("manual: a denied lookup keeps latest only on the first release", async () => {
-    const plan = (published: string[]) =>
-      planImageRelease({
-        mode: "manual",
-        root,
-        log: quiet,
-        publishedVersions: async () => published,
-        tagState: async () => "denied",
-        listTags: async () => [],
-      });
-    expect((await plan([])).build.every((t) => t.latest)).toBe(true);
-    expect((await plan(["0.1.0"])).build.some((t) => t.latest)).toBe(false);
+  it("manual: the first release keeps latest although npm already shows it", async () => {
+    // The real order: the `publish` job of the same run has already put 0.1.1 on npm, and none of
+    // the four image packages exists yet, so every lookup is denied and there are no tags at all.
+    const p = await planImageRelease({
+      mode: "manual",
+      root,
+      log: quiet,
+      publishedVersions: async () => ["0.1.1"],
+      tagState: async () => "denied",
+      listTags: async () => [],
+    });
+    expect(p.build).toHaveLength(4);
+    expect(p.build.every((t) => t.latest)).toBe(true);
+  });
+
+  it("manual: once some image package exists, a denied lookup drops latest", async () => {
+    const p = await planImageRelease({
+      mode: "manual",
+      root,
+      log: quiet,
+      publishedVersions: async () => ["0.1.0", "0.1.1"],
+      tagState: async (image) => (image === "capybara-web" ? "denied" : "missing"),
+      listTags: async (image) => (image === "capybara-web" ? [] : ["0.1.0", "latest"]),
+    });
+    expect(Object.fromEntries(p.build.map((t) => [t.image, t.latest]))).toEqual({
+      "capybara-api": true,
+      "capybara-worker": true,
+      "capybara-gateway": true,
+      "capybara-web": false,
+    });
   });
 
   it("dry-run: no lookups at all", async () => {

@@ -151,6 +151,12 @@ export function planImages(input: PlanImagesInput): ImagePlan {
         "the release workflow manually (workflow_dispatch)",
     };
   }
+  // No image package exists at all: every lookup is denied (ghcr.io answers "denied" for a package
+  // that doesn't exist) and the registry shows no tag anywhere. That is the first image release, even
+  // though npm already shows the version: the `publish` job of the same manual run published it before
+  // `images-plan` looked.
+  const firstImageRelease =
+    IMAGES.every((t) => input.tags[t.image] === "denied") && (input.existingTags ?? []).length === 0;
   const build: PlannedImage[] = [];
   for (const target of IMAGES) {
     const state = input.tags[target.image];
@@ -164,8 +170,9 @@ export function planImages(input: PlanImagesInput): ImagePlan {
       );
     }
     // A denied lookup hid this package's tags, so `latest` might move back. Only on the first
-    // release (nothing on npm yet) is "denied" expected to mean "the package doesn't exist yet".
-    const imageLatest = latest && (state !== "denied" || !input.npmReleased);
+    // release (nothing on npm yet, or no image package at all) is "denied" expected to mean "the
+    // package doesn't exist yet".
+    const imageLatest = latest && (state !== "denied" || !input.npmReleased || firstImageRelease);
     build.push({ ...target, latest: imageLatest });
   }
   const reason =

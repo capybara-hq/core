@@ -141,6 +141,18 @@ describe("planImages", () => {
       expect(latestOf(first)).toBe(true);
     });
 
+    it("every package denied and no tags anywhere: the first image release keeps latest", () => {
+      // npm already shows the version (the publish job ran first in the same run).
+      const p = planImages({ ...base, mode: "manual", tags: all("denied"), existingTags: [] });
+      expect(names(p)).toEqual(IMAGES.map((i) => i.image));
+      expect(latestOf(p)).toBe(true);
+    });
+
+    it("every lookup denied but some tag exists: not a first release, latest dropped", () => {
+      const p = planImages({ ...base, mode: "manual", tags: all("denied"), existingTags: ["0.1.0"] });
+      expect(p.build.some((t) => t.latest)).toBe(false);
+    });
+
     it("skips images that already have the version tag", () => {
       const tags = { ...all("present"), "capybara-gateway": "missing" as const };
       const p = planImages({ ...base, mode: "manual", tags });

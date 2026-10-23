@@ -136,8 +136,10 @@ stable semver tag already in ghcr.io:
 
 - Prerelease tags (e.g. `0.2.0-rc.1`) never get `latest` and don't count in the comparison.
 - Re-running an old release builds that version without `latest`, so `latest` never moves back.
-- In a manual run, an image whose tag lookup was `denied` doesn't get `latest`. The first release is
-  the exception, because every package is still missing then.
+- In a manual run, an image whose tag lookup was `denied` doesn't get `latest`. The first image
+  release is the exception: every lookup is `denied` and ghcr.io shows no tag at all, because none of
+  the four packages exists yet. This is decided from the registry, not from npm, because the
+  `publish` job of the same run has already put the version on npm when the images are planned.
 - `latest` is pushed before the version tag. The version tag is the "done" marker the planner looks
   for.
 
