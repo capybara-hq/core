@@ -69,10 +69,10 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
-/** 第三方登录回跳带回的原因码 → 译文（只显示自己的文案，不回显身份源的任何文本）。 */
 /**
- * Warns when the page is served over plain http from a non-localhost host: the browser drops the
- * Secure session cookies there, so sign-in silently fails. Renders nothing otherwise.
+ * Shown when the page is served over plain http from a non-localhost host, where the browser drops
+ * Secure session cookies. Worded as a condition ("if sign-in doesn't stick"): the page can't tell
+ * whether the deployment turned auth.cookieSecure off. Renders nothing otherwise.
  */
 export function InsecureOriginNotice() {
   const t = useTranslations("login");
@@ -90,6 +90,7 @@ export function InsecureOriginNotice() {
   );
 }
 
+/** 第三方登录回跳带回的原因码 → 译文（只显示自己的文案，不回显身份源的任何文本）。 */
 export function LoginErrorNotice({ code }: { code: LoginErrorCode }) {
   const t = useTranslations("login.ssoError");
   return <FormError message={t(code)} />;

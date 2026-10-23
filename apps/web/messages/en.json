@@ -38,7 +38,7 @@
       },
       "unknown": "Sign-in failed. Please try again."
     },
-    "insecureOrigin": "This page is served over plain http from a host other than localhost, so your browser will not keep the session and sign-in will not stick. Open it over HTTPS (or on localhost). For a short trial over http only, set CAPYBARA_AUTH__COOKIE_SECURE=false on the kernel services (CAPYBARA_COOKIE_SECURE=false in the compose .env)."
+    "insecureOrigin": "If sign-in doesn't stick: this page is served over plain http from a host other than localhost, and browsers drop the session cookie here while it is marked Secure (the default). Open the app over HTTPS (or on localhost), or, for a short trial over http only, set CAPYBARA_AUTH__COOKIE_SECURE=false on the kernel services (CAPYBARA_COOKIE_SECURE=false in the compose .env)."
   },
   "setup": {
     "title": "Setup",
