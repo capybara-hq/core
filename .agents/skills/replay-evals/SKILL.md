@@ -77,6 +77,12 @@ description: 改动请求构建（runtime/context/build.ts、model-call.ts、事
 - 延迟由事件 `created_at` 推出，不加事件字段（C2）：模型延迟 = 该步 `usage` − `model_call`，工具耗时 = `tool_result` −
   `tool_call_started`，审批等待 = `approval_decided` − `approval_requested`。成本读时按 PG `model_prices`（每百万 token，
   币种 = 部署设置 `priceCurrency`）计算，不写日志，界面标「估算」，无价格显示「—」。
+- A compaction call logs its own `usage` event with `purpose: "compaction"` (written with
+  `compaction_summary` / `compaction_failed`, before the step's `model_call`). It is not a step call:
+  anything that pairs `usage` with a step's `model_call` (estimate calibration, trajectory steps,
+  step-replay baselines, `plan_step`) must skip it; run totals (trajectory `totals`, `plan_run`,
+  full-run replay summaries) include it, since it is real spend. It is not model-visible and needs no
+  `DriftReason`.
 
 ## 测试
 

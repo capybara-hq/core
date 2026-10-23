@@ -90,7 +90,9 @@ export default definePlugin({
 | `network` | `["api.example.com"]` | 会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写；不支持通配 |
 | `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的列进 `views`（记入快照、**不卡加载**），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）。细则见 `.agents/skills/writing-plugin-ui` |
 | `storage` | `storage: true` | 才能用 `ctx.storage`（对象存储：每个方法第一个参数是 `orgId`（须是 UUID，统一按小写），键自动限定在 `plugins/<插件名>/<orgId>/` 下；键不能为空、不能以 `/` 开头、不能有 `.` / `..` 段、`\`、控制字符与 `${`，加前缀后 ≤ 1024 字节，否则抛 `StorageKeyError`；预签名的 `ttlSeconds` 会被限制在 1..604800；`list` 返回的键已去掉前缀。`presignPut` 返回 `{ method, url, headers, fields? }`：S3 实现是 `POST` 表单直传，大小由存储端限制）；未声明而用了报 `perm-storage`。部署没装 `object-store@1` 提供方（如 `object-store-s3`）时，声明了它的插件**不加载**（pending，原因 dependency） |
-| `hooks` / `models` | — | 预留项（尚未提供 `ctx.models`，用了 `check:plugin-permissions` 报 `perm-reserved`） |
+| `hooks` | `["model.request", "usage.report"]` | Mount points of `ctx.hooks.on` (five are registrable, see `HOOKS_AVAILABLE`); sensitive at review. `check:plugin-permissions` reports an undeclared mount as `perm-hooks`. See "Hooks" below |
+| `policyHooks` | `["model.request"]` | Mount points where the plugin registers `mode: "policy"` hooks: only `model.request` / `tool.preExecute`, each also listed in `hooks`. Deployment state reads it to fail calls closed where the plugin is not loaded (see "Hooks"); a policy hook on an undeclared mount throws `PluginPermissionError` and is reported as `perm-hooks` |
+| `models` | — | 预留项（尚未提供 `ctx.models`，用了 `check:plugin-permissions` 报 `perm-reserved`） |
 
 **能力取用（`requires` / `optional`）**：`ctx.capabilities.get / list(ref)` 只能取 `requires` / `optional`（或自己 `provides`）里声明的 ref，别的 ref 报 `perm-capability`。只能取直通能力（`channel`、`directory`、`identity-source` 等）；brokered 能力（模型供应商、连接器、沙箱、密钥存储、对象存储）只能经平台能力用，取它直接抛普通 `Error`（声明也解决不了，不记审计）。`requires` 的提供方缺失则本插件不加载；`optional` 缺失照常加载，取用时 `list` 为空、`get` 抛 `CapabilityUnavailableError`。多选能力 `get` 必须给提供方名。
 
@@ -200,6 +202,45 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 ### 界面（视图与嵌入应用）
 
 插件往网页加界面（对话页右侧标签、顶栏「扩展」里的组织页面）有两档：渲染 schema 视图（`ctx.ui.view`，参考 `plugins/todo`）与沙箱 iframe 里的嵌入应用（插件 `/ui/` 下的路由 + `ctx.ui.verifyEmbedToken`，参考 `plugins/example-board`）。清单、批准规则、积木与上限、嵌入令牌、`/plugin-ui` 代理、消息桥与测试写法都在 `.agents/skills/writing-plugin-ui`。
+
+### Hooks (`ctx.hooks`)
+
+`ctx.hooks.on(mount, handler, { mode })`, only during `setup`, on mount points declared in
+`permissions.hooks` (and, for `mode: "policy"`, in `permissions.policyHooks`). Hooks observe or deny;
+they never rewrite a request or a result. They fire only for organizations that enabled the plugin,
+only in chat conversations, never in eval replays. Payloads are deep-frozen copies.
+
+- **Policy hooks** (`model.request`, `tool.preExecute`) run serially by plugin name before the call;
+  `{ deny: reason }`, an error or a timeout (`hooks.timeoutMs`) blocks it. The model sees your reason
+  (sanitized, at most 500 characters) or a generic sentence for an error or a timeout; the raw error
+  goes only to the `hook.denied` audit row.
+- **Policy hooks fail closed.** While your plugin is enabled and approved, and its approved snapshot
+  lists a mount in `permissions.policyHooks`, a replica where it is not loaded (setup failed, pending
+  configuration, import failed, unloaded for a dependency) denies every call on that mount for
+  organizations that enabled it, with the generic reason `The <plugin> policy check is unavailable`.
+  The `hook.denied` audit row has `notLoaded: true`, and the replica logs a throttled warning naming
+  the plugin; fix it from the plugin's status in the admin console. Observe hooks of a plugin that
+  is not loaded are simply skipped. So declare `policyHooks` exactly for the mounts you register
+  policy hooks on.
+- **Observe hooks** are fire-and-forget (the call never waits), capped per plugin and replica, and
+  also run for denied calls.
+- **`model.request`** fires once per attempt of a step (`purpose: "step"`) and once per compaction
+  call (`purpose: "compaction"`, `attempt` 1): compaction sends earlier history to the same provider,
+  so DLP and budget policies see it too. A denied compaction only skips compaction (the step's own
+  request then meets your hook). The payload's request carries **no media bytes and no attachment
+  ids**: every image or document block is a placeholder
+  `{ type: "media_omitted", kind, mediaType, size }`.
+- **`model.response`** fires after a sent call finished or failed (step attempts and compaction
+  calls). It does **not** fire for a call the user aborted mid-stream, nor for a call that was never
+  sent (denied, or failed before sending); pair it with `model.request` accordingly.
+- **`usage.report`** gets every logged `usage` event at least once (retries on any replica), so the
+  handler must be idempotent by `eventId`; `purpose` tells a step call from a compaction call (both
+  are billed). Targets come from deployment state and organization enablement. A plugin that is
+  loaded but registered no `usage.report` handler is not a target (its deliveries are dropped), and
+  a target that no replica has loaded is dropped with one throttled warning instead of failing every
+  attempt; still, declare `usage.report` only when you always register the handler.
+- Hooks live on the plugin instance: an upgrade or disable drains in-flight hook calls like tool
+  calls.
 
 ### 持久计数与幂等的写法（参考 example-counter）
 
