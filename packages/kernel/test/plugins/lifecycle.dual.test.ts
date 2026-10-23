@@ -305,13 +305,21 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     const { sha256 } = await upload(v3);
     await ok(0, "POST", "/api/v1/admin/plugins/life/install", { sha256 });
     await waitFor(async () => (await versionAt(0)) === "3.0.0", 30_000, "A on 3.0.0", 100);
+    // A 的路由报 3.0.0 只说明新实例已登记；状态行在登记之后才写 loaded（此前可能还是迁移 busy 时记的
+    // pending / migration），所以要等 A 的行也收敛，不在某一刻断言
     const failed = await waitFor(
       async () => {
         const v = await view();
-        return v.status === "failed" && rowOf(v, 1)?.state === "failed" ? v : undefined;
+        const a = rowOf(v, 0);
+        return v.status === "failed" &&
+          rowOf(v, 1)?.state === "failed" &&
+          a?.state === "loaded" &&
+          a.version === "3.0.0"
+          ? v
+          : undefined;
       },
       20_000,
-      "status failed listing B",
+      "status failed listing B, A loaded 3.0.0",
       100,
     );
     expect(rowOf(failed, 1)).toMatchObject({ reason: "setup_failed", version: "3.0.0" });
