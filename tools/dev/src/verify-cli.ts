@@ -5,10 +5,10 @@
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { loadWorkspace, planFromFiles } from "@capybara-hq/ci/affected";
+import { loadWorkspace, planFromFiles, type Workspace } from "@capybara-hq/ci/affected";
 import { findUpstream, readRemotes } from "./remotes.ts";
 import { type Check, printReport } from "./report.ts";
-import { changedFiles, changesetWarning, verifySteps } from "./verify.ts";
+import { baseChecks, changesetWarning, safePlan, tryChangedFiles, verifySteps } from "./verify.ts";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
 const json = process.argv.includes("--json");
@@ -34,50 +34,59 @@ if (upstream === null) {
     cwd: root,
     stdio: "pipe",
   });
-  if (fetched.status !== 0) console.error(`warning: git fetch ${upstream.remote} main failed`);
   const mb = spawnSync("git", ["merge-base", "HEAD", `${upstream.remote}/main`], {
     cwd: root,
     encoding: "utf8",
   });
-  if (mb.status !== 0) {
-    console.error(`cannot find a merge base with ${upstream.remote}/main`);
-    process.exit(1);
-  }
-  const base = mb.stdout.trim();
-  const files = changedFiles(root, base);
-  const ws = loadWorkspace(root);
-  const plan = planFromFiles(files, ws);
-  say(`base: ${base}`);
-  say(`changed files: ${files.length}`);
-  say(`plan: ${plan.reason}`);
+  const resolved = baseChecks(
+    upstream.remote,
+    fetched.status === 0,
+    mb.status === 0 ? mb.stdout.trim() : null,
+  );
+  const listed = resolved.base === null ? null : tryChangedFiles(root, resolved.base);
+  if (resolved.base === null || listed === null || listed.files === null) {
+    const checks = [...resolved.checks, ...(listed?.check ? [listed.check] : [])];
+    process.exitCode = printReport(checks, json);
+  } else {
+    const base = resolved.base;
+    const files = listed.files;
+    let ws: Workspace | null = null;
+    const plan = safePlan(() => {
+      ws = loadWorkspace(root);
+      return planFromFiles(files, ws);
+    });
+    say(`base: ${base}`);
+    say(`changed files: ${files.length}`);
+    say(`plan: ${plan.reason}`);
 
-  const checks: Check[] = [];
-  for (const step of verifySteps(plan, base)) {
-    if (step.cmd === null) {
-      checks.push({ id: step.id, title: step.title, status: "skip", detail: step.note ?? "" });
-      continue;
+    const checks: Check[] = [...resolved.checks];
+    for (const step of verifySteps(plan, base)) {
+      if (step.cmd === null) {
+        checks.push({ id: step.id, title: step.title, status: "skip", detail: step.note ?? "" });
+        continue;
+      }
+      say(`\n==> ${step.title}: ${step.cmd.join(" ")}`);
+      const [cmd, ...args] = step.cmd as [string, ...string[]];
+      const r = spawnSync(cmd, args, {
+        cwd: root,
+        encoding: "utf8",
+        stdio: json ? "pipe" : "inherit",
+        maxBuffer: 256 * 1024 * 1024,
+      });
+      const ok = r.status === 0;
+      const tail = json
+        ? `${r.stdout ?? ""}${r.stderr ?? ""}`.trimEnd().split("\n").slice(-20).join("\n")
+        : "";
+      checks.push({
+        id: step.id,
+        title: step.title,
+        status: ok ? "pass" : "fail",
+        detail: ok ? step.cmd.join(" ") : `exit ${r.status ?? "signal"}${tail ? `\n${tail}` : ""}`,
+      });
     }
-    say(`\n==> ${step.title}: ${step.cmd.join(" ")}`);
-    const [cmd, ...args] = step.cmd as [string, ...string[]];
-    const r = spawnSync(cmd, args, {
-      cwd: root,
-      encoding: "utf8",
-      stdio: json ? "pipe" : "inherit",
-      maxBuffer: 256 * 1024 * 1024,
-    });
-    const ok = r.status === 0;
-    const tail = json
-      ? `${r.stdout ?? ""}${r.stderr ?? ""}`.trimEnd().split("\n").slice(-20).join("\n")
-      : "";
-    checks.push({
-      id: step.id,
-      title: step.title,
-      status: ok ? "pass" : "fail",
-      detail: ok ? step.cmd.join(" ") : `exit ${r.status ?? "signal"}${tail ? `\n${tail}` : ""}`,
-    });
+    const warning = ws === null ? null : changesetWarning(files, ws, root);
+    if (warning !== null) checks.push(warning);
+    say("");
+    process.exitCode = printReport(checks, json);
   }
-  const warning = changesetWarning(files, ws, root);
-  if (warning !== null) checks.push(warning);
-  say("");
-  process.exitCode = printReport(checks, json);
 }

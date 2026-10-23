@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Plan, Workspace } from "@capybara-hq/ci/affected";
+import { type Plan, planAll, type Workspace } from "@capybara-hq/ci/affected";
 import type { Check } from "./report.ts";
 
 export type VerifyStep = { id: string; title: string; cmd: string[] | null; note?: string };
@@ -75,4 +75,67 @@ export function changesetWarning(files: string[], ws: Workspace, root: string): 
     detail: `published packages changed without a changeset: ${published.map((p) => p.name).join(", ")}`,
     fix: "pnpm changeset",
   };
+}
+
+/**
+ * Interprets the outcome of `git fetch <remote> main` and `git merge-base HEAD <remote>/main`.
+ * A failed fetch is a warning (the local ref may be fresh enough); a missing merge base is a
+ * failure, since there is nothing to diff against. `base` is null exactly when a check failed.
+ */
+export function baseChecks(
+  remote: string,
+  fetchOk: boolean,
+  mergeBase: string | null,
+): { checks: Check[]; base: string | null } {
+  const checks: Check[] = [];
+  if (!fetchOk) {
+    checks.push({
+      id: "fetch",
+      title: "Fetch upstream",
+      status: "warn",
+      detail: `git fetch ${remote} main failed; using the local ${remote}/main`,
+      fix: `git fetch ${remote} main`,
+    });
+  }
+  if (mergeBase === null || mergeBase === "") {
+    checks.push({
+      id: "base",
+      title: "Merge base",
+      status: "fail",
+      detail: `cannot find a merge base between HEAD and ${remote}/main`,
+      fix: `git fetch ${remote} main (in a shallow clone: git fetch --unshallow ${remote})`,
+    });
+    return { checks, base: null };
+  }
+  return { checks, base: mergeBase };
+}
+
+/** `changedFiles`, with a git failure turned into a `base` failure check instead of a throw. */
+export function tryChangedFiles(
+  cwd: string,
+  base: string,
+): { files: string[]; check: null } | { files: null; check: Check } {
+  try {
+    return { files: changedFiles(cwd, base), check: null };
+  } catch (e) {
+    return {
+      files: null,
+      check: {
+        id: "base",
+        title: "Changed files",
+        status: "fail",
+        detail: `could not list the changed files: ${e instanceof Error ? e.message : String(e)}`,
+        fix: "git fetch --unshallow <remote> (or check that the repository is intact)",
+      },
+    };
+  }
+}
+
+/** The CI plan for `files`; on any error falls back to running everything, as tools/ci does. */
+export function safePlan(compute: () => Plan): Plan {
+  try {
+    return compute();
+  } catch (e) {
+    return planAll(`could not compute the plan: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }

@@ -19,6 +19,12 @@ describe("findUpstream", () => {
     expect(findUpstream(remotes, "core")).toEqual({ remote: "upstream", fork: true });
   });
 
+  it("ssh:// URLs match, case-insensitively", () => {
+    expect(
+      findUpstream([{ name: "up", url: "ssh://git@github.com/Capybara-HQ/core.git" }], "core"),
+    ).toEqual({ remote: "up", fork: true });
+  });
+
   it("HTTPS URLs with embedded user info match", () => {
     const remotes = [{ name: "origin", url: "https://grant-chao@github.com/capybara-hq/core.git" }];
     expect(findUpstream(remotes, "core")).toEqual({ remote: "origin", fork: false });

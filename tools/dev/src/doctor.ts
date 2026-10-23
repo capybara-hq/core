@@ -90,7 +90,7 @@ export async function runDoctor(env: DoctorEnv): Promise<Check[]> {
     status: upstream !== null ? "pass" : "fail",
     detail:
       upstream === null
-        ? "no remote points to github.com/capybara-hq/core"
+        ? "no remote points to github.com/capybara-hq/core (accepted URL forms: https://github.com/capybara-hq/core, git@github.com:capybara-hq/core, ssh://git@github.com/capybara-hq/core)"
         : upstream.fork
           ? `fork clone; upstream is "${upstream.remote}"`
           : 'main repository; upstream is "origin"',

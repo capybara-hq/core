@@ -33,7 +33,8 @@ function escapeRegExp(s: string): string {
 }
 
 /**
- * Finds the remote pointing at github.com/capybara-hq/<repo> (HTTPS or SSH). `fork` is true when
+ * Finds the remote pointing at github.com/capybara-hq/<repo> (https, git@github.com: or
+ * ssh://git@github.com/). `fork` is true when
  * that remote is not `origin`, i.e. the person works in a fork clone.
  */
 export function findUpstream(
@@ -41,7 +42,7 @@ export function findUpstream(
   repo: string,
 ): { remote: string; fork: boolean } | null {
   const re = new RegExp(
-    `^(?:https://(?:[^@/]+@)?github\\.com/|git@github\\.com:)capybara-hq/${escapeRegExp(repo)}(?:\\.git)?/?$`,
+    `^(?:https://(?:[^@/]+@)?github\\.com/|git@github\\.com:|ssh://git@github\\.com/)capybara-hq/${escapeRegExp(repo)}(?:\\.git)?/?$`,
     "i",
   );
   const matches = remotes.filter((r) => re.test(r.url));

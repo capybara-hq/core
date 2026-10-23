@@ -3,8 +3,16 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Plan, Workspace } from "@capybara-hq/ci/affected";
-import { afterEach, describe, expect, it } from "vitest";
-import { changedFiles, changesetWarning, verifySteps } from "../src/verify.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { printReport } from "../src/report.ts";
+import {
+  baseChecks,
+  changedFiles,
+  changesetWarning,
+  safePlan,
+  tryChangedFiles,
+  verifySteps,
+} from "../src/verify.ts";
 
 const basePlan: Plan = {
   reason: "test",
@@ -115,5 +123,67 @@ describe("changedFiles", () => {
     writeFileSync(join(dir, "a.txt"), "changed\n");
     writeFileSync(join(dir, "new.txt"), "n\n");
     expect(changedFiles(dir, base)).toEqual(["a.txt", "b.txt", "new.txt"]);
+  });
+});
+
+describe("baseChecks", () => {
+  it("passes through a merge base with no checks", () => {
+    expect(baseChecks("origin", true, "abc123")).toEqual({ checks: [], base: "abc123" });
+  });
+
+  it("turns a failed fetch into a warning and keeps the base", () => {
+    const r = baseChecks("upstream", false, "abc123");
+    expect(r.base).toBe("abc123");
+    expect(r.checks.map((c) => [c.id, c.status])).toEqual([["fetch", "warn"]]);
+  });
+
+  it("turns a missing merge base into a fail check with a fix, and the report is the JSON contract", () => {
+    const r = baseChecks("upstream", false, null);
+    expect(r.base).toBeNull();
+    expect(r.checks.map((c) => [c.id, c.status])).toEqual([
+      ["fetch", "warn"],
+      ["base", "fail"],
+    ]);
+    expect(r.checks[1]?.fix).toContain("git fetch --unshallow upstream");
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(printReport(r.checks, true)).toBe(1);
+      const out = JSON.parse(String(log.mock.calls[0]?.[0])) as {
+        ok: boolean;
+        checks: { id: string; title: string; status: string; detail: string; fix?: string }[];
+      };
+      expect(out.ok).toBe(false);
+      expect(out.checks.find((c) => c.id === "base")).toMatchObject({
+        status: "fail",
+        title: expect.any(String),
+        detail: expect.any(String),
+        fix: expect.any(String),
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
+describe("tryChangedFiles / safePlan", () => {
+  it("reports a git failure as a base fail check instead of throwing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "verify-nogit-"));
+    try {
+      const r = tryChangedFiles(dir, "deadbeef");
+      expect(r.files).toBeNull();
+      expect(r.check?.id).toBe("base");
+      expect(r.check?.status).toBe("fail");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to running everything when the plan can't be computed", () => {
+    const plan = safePlan(() => {
+      throw new Error("boom");
+    });
+    expect(plan.all).toBe(true);
+    expect(plan.reason).toBe("could not compute the plan: boom");
   });
 });
