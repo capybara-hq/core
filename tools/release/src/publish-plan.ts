@@ -67,22 +67,6 @@ export function publishedVersionsOf(packument: unknown): string[] {
 }
 
 /**
- * Published packages whose version differs between two snapshots of the workspace (`before` = the
- * commit before a push). Packages new in `after` or private in `after` don't count: on `main` a version
- * only changes when a "Version Packages" PR merges, which is the signal that a push should publish.
- */
-export function versionBumps(
-  before: readonly WorkspacePackage[],
-  after: readonly WorkspacePackage[],
-): string[] {
-  const old = new Map(before.map((p) => [p.name, p.version]));
-  return after
-    .filter((p) => !p.private && old.has(p.name) && old.get(p.name) !== p.version)
-    .map((p) => `${p.name}@${old.get(p.name)} -> ${p.version}`)
-    .sort();
-}
-
-/**
  * True while none of the packages that would be published has any version on the registry: the first
  * release. Automatic (push-triggered) releases refuse to do it; the first publish is a manual
  * `workflow_dispatch` once the prerequisites are confirmed (P-16).

@@ -2,24 +2,27 @@ name: Release
 
 # npm release. Never runs on pull requests: only on push to main and on manual dispatch.
 #
-# How a release happens (P-16):
+# How a release happens (P-16, R8):
 # - First release (0.1.0): only by running this workflow manually (workflow_dispatch) on main, once the
 #   prerequisites in the M7 release checklist are confirmed. Pushes never publish it: `pnpm release
-#   --if-bumped-since` refuses while none of our packages is on npm yet.
+#   --auto` refuses while none of our packages is on npm yet (so merging M7, or a version bump before
+#   0.1.0, publishes nothing).
 # - Afterwards: changesets. On push to main, if .changeset/ has pending changesets, the `version-pr`
-#   job opens or updates the "Version Packages" PR. Merging that PR is a push whose diff changes package
-#   versions; the `publish` job's `pnpm release --if-bumped-since <commit before the push>` sees the bump
-#   and publishes. A push that changes no published package's version (e.g. merging M7, which leaves
-#   zero changesets and every version at 0.1.0) publishes nothing.
+#   job opens or updates the "Version Packages" PR. On every push the `publish` job runs `pnpm release
+#   --auto`: it publishes whatever versions in the committed main tree are not on npm yet. Versions on
+#   main only change when a reviewed PR (the Version Packages PR) merges, so an ordinary push finds
+#   everything already published and does nothing. There is deliberately no "did this push bump a
+#   version" check: GitHub keeps only one pending run per concurrency group, so a queued run can be
+#   cancelled by a newer one, and the newer run must still publish what the cancelled one would have.
 # - A manual run publishes whatever version is not on npm yet (also the way to finish a release that
 #   failed half-way: versions already on npm are skipped, so reruns are idempotent). `dry_run` packs
 #   everything and runs `npm publish --dry-run`.
 #
 # Why two jobs (never merge them): `changeset version` rewrites package versions in the version-pr
 # job's checkout (and commits them to the changeset-release/main branch). If publishing ran in that
-# same checkout it would see the bump and ship versions nobody has reviewed. The publish job runs on
-# a fresh runner, checks out exactly github.sha, does not depend on version-pr (no `needs`, no
-# artifacts), and the gate reads versions from committed trees and requires HEAD == GITHUB_SHA.
+# same checkout it would ship versions nobody has reviewed. The publish job runs on a fresh runner,
+# checks out exactly github.sha, does not depend on version-pr (no `needs`, no artifacts), and
+# `--auto` requires HEAD == GITHUB_SHA with no uncommitted package.json changes.
 # tools/release/test/workflow.test.ts asserts this layout.
 #
 # Least privilege: version-pr can write contents and PRs but has no id-token and no npm token;
@@ -132,7 +135,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
@@ -140,7 +142,7 @@ jobs:
           fi
           args=(--provenance --out artifacts/release)
           if [ "$EVENT" = "push" ]; then
-            args+=(--if-bumped-since "$BEFORE")
+            args+=(--auto)
           elif [ "$DRY_RUN" = "true" ]; then
             args+=(--dry-run)
           fi

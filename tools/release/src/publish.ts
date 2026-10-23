@@ -10,7 +10,6 @@ import {
   packedManifestIssues,
   planPublish,
   publishedVersionsOf,
-  versionBumps,
   type WorkspacePackage,
 } from "./publish-plan.js";
 
@@ -54,32 +53,6 @@ export function discoverWorkspace(root: string = REPO_ROOT): WorkspacePackage[] 
   return workspaceDirs(root).map((dir) =>
     toWorkspacePackage(dir, readFileSync(join(root, dir, "package.json"), "utf8")),
   );
-}
-
-/**
- * The same packages as of git revision `rev` (read with `git show`); a package that did not exist at
- * `rev` is left out. Throws when `rev` itself is unknown.
- */
-export function workspaceAt(rev: string, root: string = REPO_ROOT): WorkspacePackage[] {
-  execFileSync("git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], {
-    cwd: root,
-    stdio: "ignore",
-  });
-  const out: WorkspacePackage[] = [];
-  for (const dir of workspaceDirs(root)) {
-    let text: string;
-    try {
-      text = execFileSync("git", ["show", `${rev}:${dir}/package.json`], {
-        cwd: root,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-    } catch {
-      continue;
-    }
-    out.push(toWorkspacePackage(dir, text));
-  }
-  return out;
 }
 
 /** Registry to compare against; npm reads the same variable when publishing. */
@@ -130,23 +103,15 @@ function readTgzManifest(tgz: string): Record<string, unknown> {
   ) as Record<string, unknown>;
 }
 
-export interface ReleaseGate {
-  publish: boolean;
-  /** Why not, or the version bumps that allow publishing. */
-  reason: string;
-}
-
 /**
- * The push gate (P-16): publish only when a published package's version differs between `since` (the
- * commit before the push) and HEAD. Both sides are read from committed trees, never from the working
- * tree, and uncommitted changes to a workspace package.json abort; with `expectedHead` (GITHUB_SHA) HEAD
- * must be exactly the pushed commit. So a `changeset version` run (or its commit) in the same checkout
- * can't open the gate. An all-zero or unknown `since` publishes nothing.
+ * Guard for automatic (push) releases: the checkout must be exactly the pushed commit (`expectedHead`,
+ * i.e. GITHUB_SHA) with no uncommitted changes to any workspace package.json. What gets published is
+ * then always the committed main tree, whose versions only change when a reviewed PR (the Version
+ * Packages PR) merges; output of a `changeset version` run can never be published (C1).
  */
-export function releaseGate(
-  since: string,
+export function assertCommittedTree(
   opts: { root?: string; expectedHead?: string | undefined } = {},
-): ReleaseGate {
+): void {
   const root = opts.root ?? REPO_ROOT;
   if (opts.expectedHead !== undefined && opts.expectedHead !== "") {
     const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
@@ -155,13 +120,6 @@ export function releaseGate(
         `the release checkout is at ${head}, not the pushed commit ${opts.expectedHead}: refusing to publish`,
       );
     }
-  }
-  if (/^0+$/.test(since)) return { publish: false, reason: `no previous commit (${since})` };
-  let before: WorkspacePackage[];
-  try {
-    before = workspaceAt(since, root);
-  } catch {
-    return { publish: false, reason: `cannot read the workspace at ${since}` };
   }
   const dirty = execFileSync(
     "git",
@@ -173,11 +131,6 @@ export function releaseGate(
       `uncommitted package.json changes in the release checkout (publish only committed versions):\n${dirty}`,
     );
   }
-  const bumps = versionBumps(before, workspaceAt("HEAD", root));
-  if (bumps.length === 0) {
-    return { publish: false, reason: `no published package changed version since ${since}` };
-  }
-  return { publish: true, reason: bumps.join(", ") };
 }
 
 export interface RunPublishOptions {

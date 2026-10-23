@@ -87,10 +87,11 @@ describe("release.yml", () => {
       expect(co[0]?.with?.["persist-credentials"]).toBe(false);
     });
 
-    it("gates pushes with --if-bumped-since the previous commit", () => {
+    it("releases pushes with --auto (committed-tree guard, first release refused)", () => {
       const run = job.steps.find((s) => s.run?.includes("pnpm release"));
-      expect(run?.run).toContain('--if-bumped-since "$BEFORE"');
-      expect(run?.env?.BEFORE).toBe("${{ github.event.before }}");
+      expect(run?.run).toMatch(/if \[ "\$EVENT" = "push" \]; then\s+args\+=\(--auto\)/);
+      // No comparison against the previous commit: a replaced (cancelled) run must not skip a release.
+      expect(jobText(job)).not.toMatch(/github\.event\.before|if-bumped-since/);
     });
   });
 

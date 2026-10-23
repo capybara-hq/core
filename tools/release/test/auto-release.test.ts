@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { releaseGate, runPublish, workspaceAt } from "../src/publish.js";
+import { assertCommittedTree, runPublish } from "../src/publish.js";
 
 // A throwaway git repository with a tiny workspace: packages/sdk (public), packages/web (private) and
 // one plugin. Every test starts from one commit, "base".
@@ -24,9 +24,7 @@ const commit = (msg: string) => {
   git("commit", "-q", "-m", msg);
   return git("rev-parse", "HEAD");
 };
-const ZERO = "0".repeat(40);
 
-let base: string;
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "release-gate-"));
   git("init", "-q", "-b", "main");
@@ -36,51 +34,104 @@ beforeEach(async () => {
   await writePkg("packages/sdk", { name: "@t/sdk", version: "0.1.0" });
   await writePkg("packages/web", { name: "@t/web", version: "0.1.0", private: true });
   await writePkg("plugins/chat", { name: "@t/plugin-chat", version: "0.1.0" });
-  base = commit("base");
+  commit("base");
 });
 afterEach(async () => {
   await rm(repo, { recursive: true, force: true });
 });
 
-describe("releaseGate", () => {
-  it("publishes nothing for an all-zero or unknown previous commit", () => {
-    expect(releaseGate(ZERO, { root: repo }).publish).toBe(false);
-    expect(releaseGate("1234567890abcdef1234567890abcdef12345678", { root: repo }).publish).toBe(
-      false,
-    );
+/**
+ * An automatic (push) release as the workflow runs it: committed-tree guard, then runPublish with
+ * refuseFirstRelease. Records every pack / publish; `registry` maps names to versions on npm.
+ */
+async function autoRelease(registry: Record<string, string[]>, expectedHead?: string) {
+  assertCommittedTree({ root: repo, expectedHead });
+  const calls: string[] = [];
+  const r = await runPublish({
+    dryRun: false,
+    provenance: true,
+    out: join(repo, "out"),
+    root: repo,
+    refuseFirstRelease: true,
+    publishedVersions: async (name) => registry[name] ?? [],
+    exec: async (cmd, args, cwd) => {
+      if (cmd === "pnpm") {
+        const pkg = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+        const file = `${pkg.name.replace(/^@/, "").replace("/", "-")}-${pkg.version}.tgz`;
+        await writeFile(join(args[2] as string, file), "lib");
+      } else calls.push(`${cmd} ${args[0]} ${(args[1] ?? "").split(/[/\\]/).pop()}`);
+    },
+    packPluginTgz: async (dir, o) => {
+      const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+      const file = join(o, `${pkg.name.replace(/^@/, "").replace("/", "-")}-${pkg.version}.tgz`);
+      await writeFile(file, "plugin");
+      return file;
+    },
+    readPackedManifest: () => ({ name: "x", version: "0.1.0" }),
+  });
+  return { ...r, calls };
+}
+
+/** Everything in the base commit is on npm: the first release has happened. */
+const RELEASED = { "@t/sdk": ["0.1.0"], "@t/plugin-chat": ["0.1.0"] };
+
+describe("automatic release on push (R8)", () => {
+  beforeEach(async () => {
+    await mkdir(join(repo, "packages/sdk/dist"), { recursive: true });
   });
 
-  it("opens when a pushed commit changes a published version (a merged Version Packages PR)", async () => {
-    await writePkg("plugins/chat", { name: "@t/plugin-chat", version: "0.1.1" });
-    commit("chore: version packages");
-    const g = releaseGate(base, { root: repo });
-    expect(g).toEqual({ publish: true, reason: "@t/plugin-chat@0.1.0 -> 0.1.1" });
+  describe("before the first release (P-16)", () => {
+    it("refuses the M7 merge (no version change, nothing on npm)", async () => {
+      await writeFile(join(repo, "README.md"), "m7\n");
+      commit("feat: M7");
+      expect(await autoRelease({})).toEqual({ published: [], skipped: [], calls: [] });
+      expect(existsSync(join(repo, "out"))).toBe(false);
+    });
+
+    it("refuses a pre-release version bump", async () => {
+      await writePkg("plugins/chat", { name: "@t/plugin-chat", version: "0.1.1" });
+      commit("chore: version packages");
+      expect(await autoRelease({})).toEqual({ published: [], skipped: [], calls: [] });
+    });
   });
 
-  it("stays closed when only a private package changed version", async () => {
-    await writePkg("packages/web", { name: "@t/web", version: "0.2.0", private: true });
-    commit("private bump");
-    expect(releaseGate(base, { root: repo }).publish).toBe(false);
-  });
-
-  describe("C1: a push with a pending changeset publishes nothing", () => {
-    beforeEach(async () => {
+  describe("after the first release", () => {
+    it("a pushed changeset commit (no version change) publishes nothing", async () => {
       await mkdir(join(repo, ".changeset"), { recursive: true });
       await writeFile(
         join(repo, ".changeset/brave-otter.md"),
         '---\n"@t/plugin-chat": patch\n---\n\nfix\n',
       );
-      commit("fix(chat): something (with a changeset)");
+      const pushed = commit("fix(chat): something (with a changeset)");
+      const r = await autoRelease(RELEASED, pushed);
+      expect(r.published).toEqual([]);
+      expect(r.calls).toEqual([]);
     });
 
-    it("the pushed commit itself changes no version", () => {
-      expect(releaseGate(base, { root: repo }).publish).toBe(false);
-    });
-
-    it("aborts if `changeset version` rewrote versions in the same checkout (uncommitted)", async () => {
-      // What changesets/action does to its working tree before committing to changeset-release/main.
+    it("a merged Version Packages PR publishes the new versions", async () => {
       await writePkg("plugins/chat", { name: "@t/plugin-chat", version: "0.1.1" });
-      expect(() => releaseGate(base, { root: repo })).toThrow(/uncommitted package\.json changes/);
+      const pushed = commit("chore: version packages");
+      const r = await autoRelease(RELEASED, pushed);
+      expect(r.published).toEqual(["@t/plugin-chat@0.1.1"]);
+      expect(r.calls).toEqual(["npm publish t-plugin-chat-0.1.1.tgz"]);
+    });
+
+    it("a run whose predecessor was cancelled still publishes the missed versions", async () => {
+      // The Version Packages merge's run was cancelled by the next push's run (one pending run per
+      // concurrency group); that next push changes no version, yet its run publishes 0.1.1.
+      await writePkg("plugins/chat", { name: "@t/plugin-chat", version: "0.1.1" });
+      commit("chore: version packages");
+      await writeFile(join(repo, "README.md"), "docs\n");
+      const pushed = commit("docs: unrelated");
+      const r = await autoRelease(RELEASED, pushed);
+      expect(r.published).toEqual(["@t/plugin-chat@0.1.1"]);
+    });
+  });
+
+  describe("C1: only the committed pushed tree is ever published", () => {
+    it("aborts if `changeset version` rewrote versions in the checkout (uncommitted)", async () => {
+      await writePkg("plugins/chat", { name: "@t/plugin-chat", version: "0.1.1" });
+      await expect(autoRelease(RELEASED)).rejects.toThrow(/uncommitted package\.json changes/);
     });
 
     it("aborts if the checkout moved to the version commit (HEAD != the pushed commit)", async () => {
@@ -88,27 +139,8 @@ describe("releaseGate", () => {
       git("checkout", "-q", "-b", "changeset-release/main");
       await writePkg("plugins/chat", { name: "@t/plugin-chat", version: "0.1.1" });
       commit("chore: version packages");
-      expect(() => releaseGate(base, { root: repo, expectedHead: pushed })).toThrow(
-        /not the pushed commit/,
-      );
+      await expect(autoRelease(RELEASED, pushed)).rejects.toThrow(/not the pushed commit/);
     });
-  });
-});
-
-describe("workspaceAt", () => {
-  it("leaves out packages that did not exist at that revision", async () => {
-    await writePkg("plugins/new", { name: "@t/plugin-new", version: "0.1.0" });
-    commit("add a plugin");
-    expect(workspaceAt(base, repo).map((p) => p.name)).toEqual([
-      "@t/sdk",
-      "@t/web",
-      "@t/plugin-chat",
-    ]);
-    expect(workspaceAt("HEAD", repo).map((p) => p.name)).toContain("@t/plugin-new");
-  });
-
-  it("throws for an unknown revision", () => {
-    expect(() => workspaceAt("no-such-rev", repo)).toThrow();
   });
 });
 

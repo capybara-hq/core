@@ -5,7 +5,6 @@ import {
   packedManifestIssues,
   planPublish,
   publishedVersionsOf,
-  versionBumps,
   type WorkspacePackage,
 } from "../src/publish-plan.js";
 
@@ -101,27 +100,6 @@ describe("publishedVersionsOf", () => {
   it("treats a packument without versions (e.g. fully unpublished) as none", () => {
     expect(publishedVersionsOf({ time: { unpublished: {} } })).toEqual([]);
     expect(publishedVersionsOf(null)).toEqual([]);
-  });
-});
-
-describe("versionBumps", () => {
-  it("is empty when no version changed (e.g. a feature merge with zero changesets)", () => {
-    expect(versionBumps(WORKSPACE, WORKSPACE)).toEqual([]);
-  });
-
-  it("lists published packages whose version changed (a merged Version Packages PR)", () => {
-    const after = WORKSPACE.map((p) =>
-      p.name === "@capybara-hq/plugin-slack" ? { ...p, version: "0.1.1" } : p,
-    );
-    expect(versionBumps(WORKSPACE, after)).toEqual(["@capybara-hq/plugin-slack@0.1.0 -> 0.1.1"]);
-  });
-
-  it("ignores private packages and packages that did not exist before", () => {
-    const after = [
-      ...WORKSPACE.map((p) => (p.name === "@capybara-hq/design" ? { ...p, version: "0.2.0" } : p)),
-      pkg("@capybara-hq/plugin-new", pluginDir("new")),
-    ];
-    expect(versionBumps(WORKSPACE, after)).toEqual([]);
   });
 });
 
