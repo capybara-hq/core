@@ -150,7 +150,7 @@ describe("packPlugin 的其他行为", () => {
     const r = await packPlugin(plugin("slack"), out);
     const p = await readPluginPackage(new Uint8Array(await readFile(r.file)), OPTS);
     const paths = p.files.map((f) => f.path);
-    for (const f of ["README.md", "LICENSE", "app-manifest.yaml", NOTICES_FILE]) {
+    for (const f of ["README.md", "LICENSE", "NOTICE", "app-manifest.yaml", NOTICES_FILE]) {
       expect(paths).toContain(f);
     }
     expect(r.dropped).toEqual([]);
@@ -158,6 +158,8 @@ describe("packPlugin 的其他行为", () => {
     expect(notices).toMatch(/^-{72}\n@slack\/web-api@\S+ \(MIT\)/m);
     expect(notices).toContain("Permission is hereby granted");
     expect(await readEntry(r.file, "LICENSE")).toBe(await readFile(join(repo, "LICENSE"), "utf8"));
+    // Apache-2.0 4(d): the repository's NOTICE travels with its LICENSE.
+    expect(await readEntry(r.file, "NOTICE")).toBe(await readFile(join(repo, "NOTICE"), "utf8"));
   }, 60_000);
 
   it("ships plain files listed in `files` and reports entries it cannot ship", async () => {

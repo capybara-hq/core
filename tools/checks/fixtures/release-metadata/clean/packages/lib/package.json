@@ -10,6 +10,8 @@
   },
   "homepage": "https://example.com/lib",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "NOTICE"
   ]
 }

@@ -26,12 +26,18 @@ function mustBePrivate(dir: string): boolean {
  * Release metadata of the workspace packages under `root`: a package that would be published (not
  * `"private": true`) needs a `description`, a `license`, an https `homepage` and `repository` =
  * `{ type: "git", url: REPOSITORY_URL, directory: <its dir> }` (npm provenance rejects a publish whose
- * repository does not match); published packages outside `plugins/` also need a `files` allowlist.
+ * repository does not match); published packages outside `plugins/` also need a `files` allowlist,
+ * a `README.md` (the npm page) and, when the repository has a `NOTICE`, an identical copy of it listed
+ * in `files` (Apache-2.0 4(d); pnpm pack copies the root LICENSE but not NOTICE). Plugins get both
+ * from pack-plugin.
  * Packages that must stay off npm must be private. Also runs `checkImageVersions` and `checkImageTag`
  * (the compose default image tag).
  */
 export function checkReleaseMetadata(root: string): Finding[] {
   const out: Finding[] = [...checkImageVersions(root), ...checkImageTag(root)];
+  const rootNotice = existsSync(join(root, "NOTICE"))
+    ? readFileSync(join(root, "NOTICE"), "utf8")
+    : undefined;
   for (const group of WORKSPACE_DIRS) {
     const base = join(root, group);
     if (!existsSync(base)) continue;
@@ -59,8 +65,29 @@ export function checkReleaseMetadata(root: string): Finding[] {
       }
       // Plugins are published as the pack-plugin tgz (its contents are fixed); libraries go through
       // pnpm pack, which without an allowlist would ship the whole directory (src, tests, configs).
-      if (group !== "plugins" && !(Array.isArray(pkg.files) && pkg.files.length > 0)) {
+      const files = Array.isArray(pkg.files) ? pkg.files.map(String) : [];
+      if (group !== "plugins" && files.length === 0) {
         finding("release-files", `${dir} is published and needs a "files" allowlist`);
+      }
+      if (group !== "plugins") {
+        const pkgDir = join(base, e.name);
+        if (!existsSync(join(pkgDir, "README.md"))) {
+          finding("release-readme", `${dir} is published and needs a README.md (its npm page)`);
+        }
+        const notice = join(pkgDir, "NOTICE");
+        if (rootNotice !== undefined && files.length > 0) {
+          if (!existsSync(notice) || !files.includes("NOTICE")) {
+            finding(
+              "release-notice",
+              `${dir} is published and needs a copy of the repository NOTICE, listed in "files" (Apache-2.0 4(d))`,
+            );
+          } else if (readFileSync(notice, "utf8") !== rootNotice) {
+            finding(
+              "release-notice",
+              `${dir}/NOTICE differs from the repository NOTICE: copy it again`,
+            );
+          }
+        }
       }
       const repo = pkg.repository as Record<string, unknown> | undefined;
       if (

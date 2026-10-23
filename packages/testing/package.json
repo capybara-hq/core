@@ -44,7 +44,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc -b"

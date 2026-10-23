@@ -34,7 +34,9 @@
   },
   "files": [
     "dist",
-    "src/migrations"
+    "src/migrations",
+    "README.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc -b"

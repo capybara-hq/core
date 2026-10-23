@@ -29,12 +29,24 @@ describe("checkReleaseMetadata", () => {
       ["packages/design/package.json", "release-private"],
       ["packages/no-files-homepage/package.json", "release-homepage"],
       ["packages/no-files-homepage/package.json", "release-files"],
+      ["packages/no-repo/package.json", "release-readme"],
+      ["packages/no-repo/package.json", "release-notice"],
       ["packages/no-repo/package.json", "release-repository"],
+      ["packages/stale-notice/package.json", "release-notice"],
       ["plugins/example-demo/package.json", "release-private"],
       ["plugins/no-desc/package.json", "release-description"],
       ["plugins/no-desc/package.json", "release-license"],
       ["plugins/wrong-dir/package.json", "release-repository"],
     ]);
+  });
+
+  it("says whether the NOTICE is missing or differs from the repository's", () => {
+    const msg = (dir: string) =>
+      checkReleaseMetadata(fixture("violations")).find(
+        (x) => x.rule === "release-notice" && x.file.includes(dir),
+      )?.message;
+    expect(msg("no-repo")).toMatch(/needs a copy of the repository NOTICE/);
+    expect(msg("stale-notice")).toMatch(/differs from the repository NOTICE/);
   });
 
   it("names the expected repository directory in the message", () => {

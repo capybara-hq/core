@@ -194,6 +194,7 @@ function findLicense(dir: string): string | undefined {
 
 /**
  * Files shipped besides the bundle: `README.md` and `LICENSE` (the plugin's own, else the workspace's),
+ * the `NOTICE` next to that `LICENSE` if there is one (Apache-2.0 4(d) asks redistributions to carry it),
  * plus every plain file named in the package.json `files` list at the plugin root (e.g. slack's
  * `app-manifest.yaml`). `dist` is replaced by the bundle and `migrations` / `ui` are handled by the
  * manifest; any other entry (a directory, a glob, a missing path) is reported in `dropped`.
@@ -209,9 +210,11 @@ async function extraFiles(
   }
   const license = findLicense(dir);
   if (license !== undefined) files.set("LICENSE", await readFile(license));
+  const notice = license === undefined ? undefined : join(dirname(license), "NOTICE");
+  if (notice !== undefined && existsSync(notice)) files.set("NOTICE", await readFile(notice));
   for (const raw of Array.isArray(listed) ? listed : []) {
     const entry = String(raw).replace(/^\.\//, "").replace(/\/+$/, "");
-    if (["dist", "migrations", "ui", "README.md", "LICENSE"].includes(entry)) continue;
+    if (["dist", "migrations", "ui", "README.md", "LICENSE", "NOTICE"].includes(entry)) continue;
     const p = join(dir, entry);
     const plain = /^[\w.-]+$/.test(entry) && existsSync(p) && (await stat(p)).isFile();
     if (plain) files.set(entry, await readFile(p));

@@ -31,7 +31,9 @@
   },
   "files": [
     "dist",
-    "schemas"
+    "schemas",
+    "README.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc -b"
