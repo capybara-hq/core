@@ -93,6 +93,13 @@ docker compose -f docker/compose.dev.yaml up -d   # 本地 postgres + valkey
 - `.claude/hooks/branch-safety.sh`（PreToolUse，接在 `.claude/settings.json`）强制执行：禁止推送 `main`；禁止在主 checkout 里切到 `feat/` `fix/` `docs/` `chore/` `test/` `refactor/` 分支（worktree 里不限）。
 - 两个 worktree 不要同时起开发栈（`docker/compose.dev.yaml`、内核、`pnpm dev:web`）：端口相同会撞，要并行就先停掉另一边。
 
+## CI 与检查
+
+- 汇总检查 `ci-ok` 是唯一的必需检查；`.github/workflows/ci.yml` 里每个任务都要接进它。
+- **PR 按差异跑，推到 `main` 跑全量。** 便宜或天然看全仓库的检查（lint、`tsc -b`、`pnpm check`）在 PR 上也全量跑；贵的、能限定范围的（测试、web 构建、e2e、visual）只在受影响时跑，触发条件写清楚。算不出差异、或动了根配置 / `.github` / lockfile 时一律全量。
+- **新增任何检查，都要明确它在 PR 上是全量还是按差异**，在 PR 说明里写出理由，并更新本节与 `ci.yml` 里的注释；`main` 上一律全量。
+- **不稳定的测试要修，不加重试掩盖。** 先在本地注入延迟或加压（`pnpm exec vitest run --maxWorkers=2`）复现，再判断是测试时序问题（等完整的收敛条件，不赌某一刻的状态）还是产品 bug（修代码并补测试）。曾有一个「偶发失败」是真的丢消息。
+
 ## 提交
 
 Conventional Commits（commitlint 校验）；影响发布的改动附 changeset（`pnpm changeset`）。
