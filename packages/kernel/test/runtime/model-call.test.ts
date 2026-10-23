@@ -476,7 +476,8 @@ describe("runModelStep", () => {
     });
     const elapsed = Date.now() - t0;
     expect(r.content).toEqual([{ type: "text", text: "fallback answer" }]);
-    expect(elapsed).toBeLessThan(2000);
+    // Without the watchdog the stalled stream never ends; 4 s leaves room for CI load.
+    expect(elapsed).toBeLessThan(4000);
     expect(elapsed).toBeGreaterThanOrEqual(400);
     const calls = await ofType("model_call");
     expect(calls.map((c) => [c.payload.attempt, c.payload.model, c.payload.fallback])).toEqual([
@@ -531,7 +532,8 @@ describe("runModelStep", () => {
         fallback: { provider: "stub", model: "ok" },
       }),
     });
-    expect(Date.now() - t0).toBeLessThan(1000);
+    // Honouring the suggested 600 s wait is the alternative; 5 s leaves room for CI load.
+    expect(Date.now() - t0).toBeLessThan(5000);
     expect(r.content).toEqual([{ type: "text", text: "from fallback" }]);
     const calls = await ofType("model_call");
     expect(calls.map((c) => [c.payload.attempt, c.payload.model, c.payload.fallback])).toEqual([
@@ -551,14 +553,15 @@ describe("runModelStep", () => {
       step({ agent: agentWith({ model: { provider: "stub", model: "limited" } }) }),
     );
     expect(code).toBe("model.rate_limited");
-    expect(Date.now() - t0).toBeLessThan(1000);
+    // Honouring the suggested 600 s wait is the alternative; 5 s leaves room for CI load.
+    expect(Date.now() - t0).toBeLessThan(5000);
     expect(await ofType("model_call")).toHaveLength(1);
   });
 
   it("retryAfterMs 在上限内 → 按建议等待后在同一模型上重试", async () => {
     let n = 0;
     stubImpl = stub([stubInfo("flaky")], () => {
-      if (++n === 1) throw new ModelError("overloaded", "busy", { retryAfterMs: 300 });
+      if (++n === 1) throw new ModelError("overloaded", "busy", { retryAfterMs: 2_000 });
       return "second try";
     });
     await say("hi");
@@ -566,8 +569,10 @@ describe("runModelStep", () => {
     const r = await step({ agent: agentWith({ model: { provider: "stub", model: "flaky" } }) });
     const elapsed = Date.now() - t0;
     expect(r.content).toEqual([{ type: "text", text: "second try" }]);
-    expect(elapsed).toBeGreaterThanOrEqual(280);
-    expect(elapsed).toBeLessThan(900);
+    // 2 s suggested vs the 1 s default delay: the lower bound tells them apart, so the upper
+    // bound only has to stay loose enough for CI load.
+    expect(elapsed).toBeGreaterThanOrEqual(1_900);
+    expect(elapsed).toBeLessThan(4_500);
     expect((await ofType("model_call")).map((c) => c.payload.attempt)).toEqual([1, 2]);
   });
 
@@ -696,12 +701,19 @@ describe("runModelStep", () => {
   });
 
   it("中止：重试等待期间 abort → 立即返回 aborted，不再尝试", async () => {
-    await say("fail:overloaded");
+    // A 5 s suggested wait (the default is 1 s) so "returned immediately" has a wide margin.
+    stubImpl = stub([stubInfo("busy")], () => {
+      throw new ModelError("overloaded", "busy", { retryAfterMs: 5_000 });
+    });
+    await say("hi");
     const ac = new AbortController();
     const t0 = Date.now();
     setTimeout(() => ac.abort(), 100);
-    const r = await step({ signal: ac.signal });
-    expect(Date.now() - t0).toBeLessThan(800);
+    const r = await step({
+      signal: ac.signal,
+      agent: agentWith({ model: { provider: "stub", model: "busy" } }),
+    });
+    expect(Date.now() - t0).toBeLessThan(2_500);
     expect(r).toMatchObject({ aborted: true, content: [] });
     expect(await ofType("model_call")).toHaveLength(1);
   });

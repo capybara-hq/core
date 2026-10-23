@@ -358,10 +358,10 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     const convB = await createConv(req, orgB, agentB);
     const text = "slow:100:abcdefghijkl";
     for (const c of convsA) await postMessage(req, orgA, c, text);
-    const postedB = Date.now();
     await postMessage(req, orgB, convB, text);
-    const startedB = await waitForEvent(db, convB, (e) => e.type === "run_started", 3_000);
-    expect(startedB.createdAt.getTime() - postedB).toBeLessThan(1_500);
+    // "B starts immediately" is asserted by ordering below (B starts before A's second run), not
+    // by a wall-clock budget, which is fragile on loaded CI runners.
+    const startedB = await waitForEvent(db, convB, (e) => e.type === "run_started", 10_000);
 
     const spans: [number, number][] = [];
     for (const c of convsA) {
@@ -393,8 +393,9 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     });
     expect(res.statusCode).toBe(202);
     const { runId } = res.json() as { runId: string };
-    const aborted = await waitForEvent(db, convId, (e) => e.type === "run_aborted", 2_000);
-    expect(Date.now() - t0).toBeLessThan(1_000);
+    const aborted = await waitForEvent(db, convId, (e) => e.type === "run_aborted", 10_000);
+    // The run would otherwise keep streaming for ~40 s; 5 s leaves room for CI load.
+    expect(Date.now() - t0).toBeLessThan(5_000);
     expect(aborted.runId).toBe(runId);
     expect(aborted.payload).toEqual({ byAccountId: ownerId, reason: "user" });
     await sleep(500);

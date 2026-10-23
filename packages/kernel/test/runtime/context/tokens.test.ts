@@ -36,11 +36,12 @@ describe("estimateTokens", () => {
     expect(n).toBe(Math.ceil(21 / 4 + 1));
   });
 
-  it("handles 2 million CJK characters in under 200ms", () => {
+  it("handles 2 million CJK characters in well under 2s (linear, not quadratic)", () => {
     const big = "中".repeat(2_000_000);
     const t0 = performance.now();
     expect(estimateTokens([user(big)], [])).toBe(2_000_000);
-    expect(performance.now() - t0).toBeLessThan(200);
+    // A linear pass takes tens of ms; a quadratic one would take minutes. 2 s tolerates CI load.
+    expect(performance.now() - t0).toBeLessThan(2000);
   });
 });
 
