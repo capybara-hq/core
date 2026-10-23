@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createDb, kernelDb, verifyPassword } from "@capybara-hq/kernel";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { readPassword } from "../src/commands/admin-create.js";
+import { readPassword, readPasswordFile } from "../src/commands/admin-create.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const PW = "cli-secret-password-123";
@@ -236,6 +236,77 @@ describe("capybara admin create --if-none / --password-file (fresh database)", (
     expect(hash).toBeDefined();
     expect(await verifyPassword(hash as string, PW)).toBe(true);
   }, 60_000);
+
+  it("--if-none treats a taken login as skipped when no active admin exists", async () => {
+    // Disable the only admin: --if-none then tries to create "root" again and hits login_taken.
+    const raw = createDb(fresh.url, 1);
+    try {
+      await kernelDb(raw).updateTable("accounts").set({ status: "disabled" }).execute();
+    } finally {
+      await raw.destroy();
+    }
+    const r = await run(
+      ["admin", "create", "--login", "root", "--display-name", "Root", "--if-none"],
+      `${PW}\n`,
+      fresh.url,
+    );
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain('login "root" already exists; skipped');
+    expect(await countAccounts(fresh.url)).toBe(1);
+  }, 60_000);
+});
+
+describe("capybara admin create --if-none (concurrent)", () => {
+  let fresh: TestContainer;
+  beforeAll(async () => {
+    fresh = await startTestPostgres();
+  }, 120_000);
+  afterAll(async () => {
+    await fresh?.stop();
+  });
+
+  it("two concurrent runs both exit 0 and create exactly one admin", async () => {
+    const file = join(tmp, "pw-concurrent");
+    await writeFile(file, `${PW}\n`);
+    const args = (login: string) => [
+      "admin",
+      "create",
+      "--login",
+      login,
+      "--display-name",
+      login,
+      "--if-none",
+      "--password-file",
+      file,
+    ];
+    const [a, b] = await Promise.all([
+      run(args("one"), "", fresh.url),
+      run(args("two"), "", fresh.url),
+    ]);
+    expect(a.code, a.stderr).toBe(0);
+    expect(b.code, b.stderr).toBe(0);
+    expect(`${a.stdout}${b.stdout}`).toContain("enterprise admin already exists; skipped");
+    expect(await countAccounts(fresh.url)).toBe(1);
+  }, 120_000);
+});
+
+describe("readPasswordFile", () => {
+  it("strips trailing newlines and a leading UTF-8 BOM", async () => {
+    const file = join(tmp, "pw-bom");
+    await writeFile(file, `\uFEFF${PW}\r\n`);
+    expect(await readPasswordFile(file)).toBe(PW);
+  });
+
+  it("rejects multi-line content", async () => {
+    const file = join(tmp, "pw-multi");
+    await writeFile(file, `${PW}\nsecond-line\n`);
+    await expect(readPasswordFile(file)).rejects.toThrow(/must contain a single line/);
+  });
+
+  it("a missing file names the path", async () => {
+    const file = join(tmp, "pw-none");
+    await expect(readPasswordFile(file)).rejects.toThrow(`cannot read password file ${file}`);
+  });
 });
 
 describe("readPassword", () => {

@@ -45,6 +45,22 @@ describe("loadConfig", () => {
     expect(config.roles).toEqual(["api", "worker", "gateway"]);
   });
 
+  it("roles accept a JSON array or a comma-separated string", async () => {
+    expect((await loadConfig(baseEnv({ CAPYBARA_ROLES: '["api"]' }))).roles).toEqual(["api"]);
+    expect((await loadConfig(baseEnv({ CAPYBARA_ROLES: "api" }))).roles).toEqual(["api"]);
+    expect((await loadConfig(baseEnv({ CAPYBARA_ROLES: " api , worker ," }))).roles).toEqual([
+      "api",
+      "worker",
+    ]);
+    const file = writeYaml("roles: gateway,worker\n");
+    expect((await loadConfig(baseEnv({ CAPYBARA_CONFIG_FILE: file }))).roles).toEqual([
+      "gateway",
+      "worker",
+    ]);
+    await expect(loadConfig(baseEnv({ CAPYBARA_ROLES: "api,db" }))).rejects.toThrow(/roles/);
+    await expect(loadConfig(baseEnv({ CAPYBARA_ROLES: "," }))).rejects.toThrow(/roles/);
+  });
+
   it("nested snake to camel", async () => {
     const config = await loadConfig(baseEnv({ CAPYBARA_DB__POOL_MAX: "20" }));
     expect(config.db.poolMax).toBe(20);

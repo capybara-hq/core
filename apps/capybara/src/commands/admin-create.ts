@@ -76,8 +76,9 @@ export function readPassword(
 }
 
 /**
- * Read the password from a file (Docker / K8s secret): the whole content minus trailing newlines.
- * A missing or unreadable file throws with an English message naming the path.
+ * Read the password from a file (Docker / K8s secret): the content minus a leading UTF-8 BOM and
+ * trailing newlines. A missing or unreadable file, or content spanning several lines, throws with an
+ * English message naming the path (never the content).
  */
 export async function readPasswordFile(path: string): Promise<string> {
   let text: string;
@@ -88,14 +89,19 @@ export async function readPasswordFile(path: string): Promise<string> {
       (e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e));
     throw new Error(`cannot read password file ${path}: ${reason}`);
   }
-  return text.replace(/[\r\n]+$/, "");
+  const password = text.replace(/^\uFEFF/, "").replace(/[\r\n]+$/, "");
+  if (/[\r\n]/.test(password)) {
+    throw new Error(`password file ${path} must contain a single line`);
+  }
+  return password;
 }
 
 /**
  * `capybara admin create`：从 stdin 读一行密码（终端上不回显，见 readPassword），或用 `passwordFile` 从文件读
  * （去掉行尾换行）→ 跑内核迁移（幂等）→ 建企业管理员。
  * `ifNone`：已有活跃企业管理员时打印 `enterprise admin already exists; skipped` 并返回 0——这一检查在读密码之前，
- * 所以此时密码文件缺失也不报错；没有管理员时照常要求密码（文件缺失 → 1，P-7）。
+ * 所以此时密码文件缺失也不报错；没有管理员时照常要求密码（文件缺失 → 1，P-7）。检查与插入在同一事务、
+ * 同一咨询锁内（SetupService.createEnterpriseAdminIfNone），并发执行也只建一个；登录名已占用同样视为跳过。
  * 只连 PG，不连 Redis。退出码：0 成功 / 1 失败（用法错误的 2 由 parseCli 负责）。
  * 错误信息不回显密码：密码登记为日志密钥，stderr 输出里出现的密码一律打码。
  */
@@ -165,21 +171,44 @@ export async function runAdminCreate(
     });
     const db = kernelDb(raw);
     const accounts = new AccountsService(db);
+    const skipped = (msg: string): number => {
+      (io.stdout ?? process.stdout).write(`${msg}; skipped\n`);
+      return 0;
+    };
+    const setup = new SetupService(
+      db,
+      accounts,
+      new OrgsService(db, new SettingsService(db, log), new ApiTokenService(db)),
+    );
+    const input = {
+      login: opts.login,
+      displayName: opts.displayName,
+      ...(opts.email !== undefined && { email: opts.email }),
+    };
     if (opts.ifNone) {
+      // Fast path without reading a password; the authoritative check runs again under the setup
+      // lock in createEnterpriseAdminIfNone, so concurrent runs create exactly one admin.
       if ((await accounts.countEnterpriseAdmins()) > 0) {
-        (io.stdout ?? process.stdout).write("enterprise admin already exists; skipped\n");
-        return 0;
+        return skipped("enterprise admin already exists");
       }
       const err = await obtainPassword();
       if (err !== undefined) return fail(err);
+      try {
+        const account = await setup.createEnterpriseAdminIfNone({
+          ...input,
+          password: password as string,
+        });
+        if (account === undefined) return skipped("enterprise admin already exists");
+        log.info("enterprise admin created", { accountId: account.id, login: opts.login });
+        return 0;
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "account.login_taken") {
+          return skipped(`login "${opts.login}" already exists`);
+        }
+        throw e;
+      }
     }
-    const orgs = new OrgsService(db, new SettingsService(db, log), new ApiTokenService(db));
-    const account = await new SetupService(db, accounts, orgs).createEnterpriseAdmin({
-      login: opts.login,
-      password: password as string,
-      displayName: opts.displayName,
-      ...(opts.email !== undefined && { email: opts.email }),
-    });
+    const account = await setup.createEnterpriseAdmin({ ...input, password: password as string });
     log.info("enterprise admin created", { accountId: account.id, login: opts.login });
     return 0;
   } catch (e) {

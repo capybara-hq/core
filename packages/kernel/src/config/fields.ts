@@ -45,7 +45,13 @@ export function describeSchema(schema: core.$ZodType): {
     element?: core.$ZodType;
     entries?: Record<string, unknown>;
     options?: core.$ZodType[];
+    in?: core.$ZodType;
+    out?: core.$ZodType;
   };
+  // z.preprocess(fn, T) is a pipe from a transform into T: document T.
+  if (def.type === "pipe" && def.in?._zod.def.type === "transform" && def.out) {
+    return { ...describeSchema(def.out), hasDefault, defaultValue, optional };
+  }
   let type = def.type;
   if (type === "array" && def.element) type = `array<${describeSchema(def.element).type}>`;
   else if (type === "union" && def.options) {

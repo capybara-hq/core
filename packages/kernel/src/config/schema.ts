@@ -369,9 +369,25 @@ export const KernelConfigSchema = z.object({
     })
     .default({ port: 8080, trustProxy: false }),
   roles: z
-    .array(z.enum(["api", "worker", "gateway"]))
+    .preprocess(
+      // Also accept a comma-separated string (CAPYBARA_ROLES=api,worker; env values that are not
+      // JSON arrive as strings).
+      (v) =>
+        typeof v === "string"
+          ? v
+              .split(",")
+              .map((r) => r.trim())
+              .filter((r) => r !== "")
+          : v,
+      z.array(z.enum(["api", "worker", "gateway"])).min(1),
+    )
     .default(["api", "worker", "gateway"])
-    .meta(meta({ description: "Roles this process runs" })),
+    .meta(
+      meta({
+        description:
+          'Roles this process runs: a JSON array or a comma-separated string, e.g. ["api"] or api,worker',
+      }),
+    ),
   auth: z
     .object({
       accessTokenTtlSeconds: z

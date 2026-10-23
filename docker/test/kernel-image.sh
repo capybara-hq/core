@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Smoke test for docker/kernel.Dockerfile: builds the capybara-api / capybara-worker /
 # capybara-gateway images, then against a throwaway PostgreSQL + Valkey network checks that
-# `migrate`, `admin create --if-none --password-file`, `plugins list` and `start` work, that
-# /readyz answers 200 for every role, and that the image holds no TypeScript sources or tsx.
+# `migrate`, `admin create --if-none --password-file`, `plugins list`, BullMQ and `start` work,
+# that /readyz answers 200 for every role, and that the image holds no TypeScript sources or tsx.
+# Written for bash 3.2 (macOS) too: empty arrays expand as ${a[@]+"${a[@]}"} under `set -u`.
 #
 # Usage: docker/test/kernel-image.sh            (from anywhere; needs Docker)
 #   SKIP_BUILD=1       reuse existing capybara-<role>:test images
@@ -21,12 +22,12 @@ STARTED=()
 cleanup() {
   local code=$?
   if [ "$code" -ne 0 ]; then
-    for c in "${STARTED[@]}"; do
+    for c in ${STARTED[@]+"${STARTED[@]}"}; do
       echo "---- logs of $c ----" >&2
       docker logs --tail 50 "$c" >&2 || true
     done
   fi
-  docker rm -f "${STARTED[@]}" "$PG" "$VALKEY" >/dev/null 2>&1 || true
+  docker rm -f ${STARTED[@]+"${STARTED[@]}"} "$PG" "$VALKEY" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   exit "$code"
 }
@@ -40,7 +41,7 @@ fail() {
 if [ "${SKIP_BUILD:-}" != "1" ]; then
   for role in $ROLES_TO_TEST; do
     echo "==> building capybara-$role:test"
-    docker build -f "$ROOT/docker/kernel.Dockerfile" --build-arg "ROLES=[\"$role\"]" \
+    docker build -f "$ROOT/docker/kernel.Dockerfile" --build-arg "ROLES=$role" \
       -t "capybara-$role:test" "$ROOT"
   done
 fi
@@ -74,6 +75,9 @@ TS_FILES="$(docker run --rm --entrypoint sh "$API_IMAGE" -c \
 [ -z "$TS_FILES" ] || fail "TypeScript sources in the image: $(echo "$TS_FILES" | head -5)"
 TSX="$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'find /app/node_modules -path "*/node_modules/tsx"')"
 [ -z "$TSX" ] || fail "tsx is in the image: $TSX"
+docker run --rm --entrypoint sh "$API_IMAGE" -c 'test ! -e /app/src' || fail "/app/src exists in the image"
+docker run --rm --entrypoint sh "$API_IMAGE" -c '! command -v npm && ! command -v corepack' >/dev/null \
+  || fail "npm or corepack is in the image"
 [ -n "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'ls /app/node_modules/@capybara-hq/kernel/src/migrations/*.sql')" ] \
   || fail "kernel migrations missing from the image"
 
@@ -85,10 +89,41 @@ admin_create() {
   docker run --rm --network "$NET" "${ENV_ARGS[@]}" --entrypoint sh "$API_IMAGE" -c \
     'printf "%s\n" "image-test-password-123" > /tmp/pw && exec node /app/bin/capybara.mjs admin create --login root --display-name Root --if-none --password-file /tmp/pw'
 }
-admin_create >/dev/null
+psql_count() {
+  docker exec "$PG" psql -U capybara -tAc \
+    "SELECT count(*) FROM capybara.accounts WHERE is_enterprise_admin AND status = 'active'"
+}
+OUT="$(admin_create 2>&1)"
+echo "$OUT" | grep -q "enterprise admin created" || fail "first admin create did not create: $OUT"
+[ "$(psql_count)" = "1" ] || fail "expected one enterprise admin after the first admin create"
 OUT="$(admin_create)"
 echo "$OUT" | grep -q "enterprise admin already exists; skipped" \
   || fail "second admin create --if-none did not skip: $OUT"
+[ "$(psql_count)" = "1" ] || fail "the second admin create --if-none changed the admin count"
+
+echo "==> BullMQ round trip"
+docker run --rm --network "$NET" -e "REDIS_URL=redis://$VALKEY:6379" --entrypoint node "$API_IMAGE" -e '
+const { createRequire } = require("node:module");
+// The kernel package is a pnpm symlink; resolve from its real location like Node does.
+const req = createRequire(require("node:fs").realpathSync("/app/node_modules/@capybara-hq/kernel/package.json"));
+const { Queue, Worker } = req("bullmq");
+const IORedis = req("ioredis");
+const conn = () => new (IORedis.default ?? IORedis)(process.env.REDIS_URL, { maxRetriesPerRequest: null });
+(async () => {
+  const q = new Queue("image-smoke", { connection: conn() });
+  const done = new Promise((resolve, reject) => {
+    const w = new Worker("image-smoke", async (job) => job.data.n * 2, { connection: conn() });
+    w.on("completed", (_job, result) => w.close().then(() => resolve(result)));
+    w.on("failed", (_job, err) => reject(err));
+  });
+  await q.add("double", { n: 21 });
+  const result = await Promise.race([done, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 15000))]);
+  await q.close();
+  if (result !== 42) throw new Error(`unexpected result ${result}`);
+  console.log("bullmq ok");
+  process.exit(0);
+})().catch((e) => { console.error(e); process.exit(1); });
+' || fail "BullMQ round trip failed"
 
 echo "==> plugins list"
 LIST="$(run "$API_IMAGE" plugins list)"
@@ -100,7 +135,7 @@ echo "$LIST" | grep -q object-store-s3 || fail "object-store-s3 missing"
 for role in $ROLES_TO_TEST; do
   name="$ID-$role"
   echo "==> start capybara-$role:test"
-  [ "$(docker run --rm --entrypoint printenv "capybara-$role:test" CAPYBARA_ROLES)" = "[\"$role\"]" ] \
+  [ "$(docker run --rm --entrypoint printenv "capybara-$role:test" CAPYBARA_ROLES)" = "$role" ] \
     || fail "capybara-$role:test has the wrong default CAPYBARA_ROLES"
   docker run -d --name "$name" --network "$NET" "${ENV_ARGS[@]}" "capybara-$role:test" >/dev/null
   STARTED+=("$name")
@@ -117,7 +152,7 @@ for role in $ROLES_TO_TEST; do
 done
 
 echo "==> waiting for the image HEALTHCHECK"
-for name in "${STARTED[@]}"; do
+for name in ${STARTED[@]+"${STARTED[@]}"}; do
   health=""
   for _ in $(seq 1 60); do
     health="$(docker inspect -f '{{.State.Health.Status}}' "$name")"
@@ -128,7 +163,7 @@ for name in "${STARTED[@]}"; do
 done
 
 echo "==> stop gracefully"
-for name in "${STARTED[@]}"; do
+for name in ${STARTED[@]+"${STARTED[@]}"}; do
   docker stop -t 30 "$name" >/dev/null
   code="$(docker inspect -f '{{.State.ExitCode}}' "$name")"
   [ "$code" = "0" ] || fail "$name exited with $code after SIGTERM"
