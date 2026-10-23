@@ -156,7 +156,8 @@ export function planImages(input: PlanImagesInput): ImagePlan {
   // though npm already shows the version: the `publish` job of the same manual run published it before
   // `images-plan` looked.
   const firstImageRelease =
-    IMAGES.every((t) => input.tags[t.image] === "denied") && (input.existingTags ?? []).length === 0;
+    IMAGES.every((t) => input.tags[t.image] === "denied") &&
+    (input.existingTags ?? []).length === 0;
   const build: PlannedImage[] = [];
   for (const target of IMAGES) {
     const state = input.tags[target.image];

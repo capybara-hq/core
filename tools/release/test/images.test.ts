@@ -149,7 +149,12 @@ describe("planImages", () => {
     });
 
     it("every lookup denied but some tag exists: not a first release, latest dropped", () => {
-      const p = planImages({ ...base, mode: "manual", tags: all("denied"), existingTags: ["0.1.0"] });
+      const p = planImages({
+        ...base,
+        mode: "manual",
+        tags: all("denied"),
+        existingTags: ["0.1.0"],
+      });
       expect(p.build.some((t) => t.latest)).toBe(false);
     });
 
