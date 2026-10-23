@@ -891,16 +891,26 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       VALUES (${f.conversationId}, ${f.orgId}, 'sandbox-fake', 'running'),
              (${other}, ${f.orgId}, 'sandbox-fake', 'destroyed')`.execute(raw);
     const q = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+    // 内核自己的维护 worker 会立刻执行并删掉完成的任务（removeOnComplete）：暂停队列，读到的才是投递的任务
+    await q.pause();
     try {
       const res = await f.ownerReq({
         method: "DELETE",
         url: `/api/v1/orgs/${f.orgId}/agents/${agentId}`,
       });
       expect(res.statusCode, res.body).toBe(204);
-      const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
+      const jobs = await q.getJobs([
+        "paused",
+        "waiting",
+        "delayed",
+        "active",
+        "completed",
+        "failed",
+      ]);
       const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
       expect(job?.data).toEqual({ conversationIds: [f.conversationId] });
     } finally {
+      await q.resume();
       await q.close();
       await sql`DELETE FROM capybara.sandboxes`.execute(raw);
     }
@@ -910,16 +920,26 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
     await sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status)
       VALUES (${f.conversationId}, ${f.orgId}, 'sandbox-fake', 'running')`.execute(raw);
     const q = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+    // 内核自己的维护 worker 会立刻执行并删掉完成的任务（removeOnComplete）：暂停队列，读到的才是投递的任务
+    await q.pause();
     try {
       const res = await f.ownerReq({
         method: "DELETE",
         url: `/api/v1/orgs/${f.orgId}/members/${f.leaver.id}`,
       });
       expect(res.statusCode).toBe(204);
-      const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
+      const jobs = await q.getJobs([
+        "paused",
+        "waiting",
+        "delayed",
+        "active",
+        "completed",
+        "failed",
+      ]);
       const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
       expect(job?.data).toEqual({ conversationIds: [f.conversationId] });
     } finally {
+      await q.resume();
       await q.close();
       await sql`DELETE FROM capybara.sandboxes`.execute(raw);
     }
