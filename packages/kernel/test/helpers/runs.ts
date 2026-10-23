@@ -37,6 +37,29 @@ export async function waitFor<T>(
   }
 }
 
+/**
+ * 等 IM 卡片的消息 id 记进 `channel_card_messages`。它在卡片发出之后的事务里才写，记下之前的点击按
+ * 「卡片不在这个会话」处理（只回「不能处理」）——测试点卡片之前要等到这一步，不能只看平台收到了卡片。
+ */
+export async function cardRecorded(
+  db: KernelDb,
+  card: { messageId: string } | { kind: "approval" | "question" },
+  timeoutMs = 20_000,
+): Promise<void> {
+  await waitFor(
+    async () => {
+      const q = db.selectFrom("channel_card_messages").select("card_id");
+      const row = await ("messageId" in card
+        ? q.where("message_id", "=", card.messageId)
+        : q.where("card_kind", "=", card.kind)
+      ).executeTakeFirst();
+      return row !== undefined;
+    },
+    timeoutMs,
+    "card message row",
+  );
+}
+
 /** 运行测试的内核配置：加载 model-fake 与 model-looper；`runtime` 与其他字段可覆盖。 */
 export function runConfig(
   urls: { pg: string; redis: string },

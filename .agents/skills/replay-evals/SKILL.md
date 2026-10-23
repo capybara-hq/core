@@ -7,7 +7,7 @@ description: 改动请求构建（runtime/context/build.ts、model-call.ts、事
 
 代码在 `packages/kernel/src/evals/`；HTTP 在 `/api/v1/orgs/:orgId/trajectories*`（`trajectories.read`）、`/eval-sets*`、
 `/eval-runs*`、`/eval-results/:id/label`（`evals.manage`）。网页：轨迹查看器 `/trajectories`、评测 `/evals`（`TracePage`，
-见 `skills/writing-web-ui`）。设计依据：总设计 §6 原则 8、M6 计划 C1–C9（D2–D6）。
+见 `.agents/skills/writing-web-ui`）。设计依据：总设计 §6 原则 8、M6 计划 C1–C9（D2–D6）。
 
 ## 回放的不变式（先看这个）
 

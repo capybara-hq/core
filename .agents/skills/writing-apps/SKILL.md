@@ -9,7 +9,7 @@ description: 写企业目录里的连接器模板包（capybara.kind = connector
 
 | kind | 内容 | 条目名 | 谁装 |
 |---|---|---|---|
-| `plugin` | 插件包（见 `skills/writing-plugins`「插件包」） | 插件清单名 | 企业管理员装到部署；组织「安装」= 在本组织启用 |
+| `plugin` | 插件包（见 `.agents/skills/writing-plugins`「插件包」） | 插件清单名 | 企业管理员装到部署；组织「安装」= 在本组织启用 |
 | `connector-template` | 连接器模板：引用一个连接器插件，预设端点与认证（不含凭据） | 去掉 scope 的 npm 包名 | 组织管理员（填凭据即建连接器） |
 | `skill` | 技能：包根放 `SKILL.md` 与其他文件 | `SKILL.md` 的 `name` | 组织管理员（导入为组织技能） |
 | `app` | 应用：`app.yaml` 组合插件 + 连接器模板 + 技能 | `app.yaml` 的 `name` | 企业管理员导入（一次审阅全部插件权限）；组织管理员安装 |

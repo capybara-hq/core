@@ -5,7 +5,7 @@ description: 新建或修改模型供应商插件时使用（provides model-prov
 
 # 写模型供应商插件
 
-通用的插件写法（清单、配置、ctx、多副本禁令、双副本测试）见 `skills/writing-plugins`，这里只讲 `model-provider@2` 特有的部分。参考实现：`plugins/anthropic`（Messages API）、`plugins/openai`（Responses API）、`plugins/openai-compatible`（Chat Completions + 方言预设）；`plugins/model-fake` 是确定性脚本化模型，给内核测试与无密钥演示用。
+通用的插件写法（清单、配置、ctx、多副本禁令、双副本测试）见 `.agents/skills/writing-plugins`，这里只讲 `model-provider@2` 特有的部分。参考实现：`plugins/anthropic`（Messages API）、`plugins/openai`（Responses API）、`plugins/openai-compatible`（Chat Completions + 方言预设）；`plugins/model-fake` 是确定性脚本化模型，给内核测试与无密钥演示用。
 
 ## 契约：`model-provider@2`
 
@@ -211,7 +211,7 @@ describe.skipIf(!LIVE_KEY)("live", () => {
 
 ## 新供应商插件清单
 
-1. 按 `skills/writing-plugins` 建插件包（`@capybara-hq/plugin-<name>`），依赖官方 SDK 与 `@capybara-hq/plugin-sdk`，devDependency `@capybara-hq/testing`。
+1. 按 `.agents/skills/writing-plugins` 建插件包（`@capybara-hq/plugin-<name>`），依赖官方 SDK 与 `@capybara-hq/plugin-sdk`，devDependency `@capybara-hq/testing`。
 2. 部署配置：`apiKey` 用 `secret(...)`，可选 `baseUrl`，模型清单；SDK 客户端 `maxRetries: 0`。`listModels` 返回的每个模型带 `parameters`，并在测试里过 `assertValidDeclarations`。
 3. `map-request.ts`（纯函数、只追加）、`map-stream.ts`（原始事件流累积、opaque、用量）、`errors.ts`（按上表映射）。
 4. 夹具模式一致性套件 + 错误映射用例 + 映射前缀单测；真实接口模式本地跑通。

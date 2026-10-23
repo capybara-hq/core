@@ -5,7 +5,7 @@ description: 在 plugins/* 下新建或修改 Capybara 插件时使用：清单�
 
 # 写插件
 
-参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。模型供应商插件（`model-provider@2`）另见 `skills/writing-model-providers`；给 agent 提供工具（`ctx.tools`）或连接器（`connector@1`）另见 `skills/writing-tools`；IM 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`）另见 `skills/writing-channels`（参考 `plugins/slack`、`plugins/lark`）；往网页加界面（`ctx.ui`：渲染 schema 视图与嵌入应用）另见 `skills/writing-plugin-ui`（参考 `plugins/todo`、`plugins/example-board`）。
+参考实现：`plugins/example-counter`（db 事务 + queue 幂等任务 + provide，直接复制它起步；kv 的用法见下文「持久计数与幂等的写法」）。模型供应商插件（`model-provider@2`）另见 `.agents/skills/writing-model-providers`；给 agent 提供工具（`ctx.tools`）或连接器（`connector@1`）另见 `.agents/skills/writing-tools`；IM 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`）另见 `.agents/skills/writing-channels`（参考 `plugins/slack`、`plugins/lark`）；往网页加界面（`ctx.ui`：渲染 schema 视图与嵌入应用）另见 `.agents/skills/writing-plugin-ui`（参考 `plugins/todo`、`plugins/example-board`）。
 
 ## 硬约束（先看这个）
 
@@ -88,7 +88,7 @@ export default definePlugin({
 | `http` | `[{ method, path, public? }]` | 每条 `ctx.http.route` 都要列出，`method` 为 GET / POST / PUT / DELETE，`path` 以 `/` 开头；`public: true` 表示免登录，会高亮展示。**目前 `public` 只是声明**（Ruling A2）：插件路由不论是否 `public` 都不经内核鉴权，见下文「插件路由的匹配语义」 |
 | `tools` | `["write"]` | 每个 `ctx.tools.register` 的工具名（本地名，不含 `<插件名>__` 前缀）；工具能看到会话内容，会高亮展示 |
 | `network` | `["api.example.com"]` | 会访问的固定域名，只展示、平台不拦截；端点全由管理员配置时不写；不支持通配 |
-| `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的列进 `views`（记入快照、**不卡加载**），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）。细则见 `skills/writing-plugin-ui` |
+| `ui` | `{ views: ["tasks"], embeds: ["board"] }` | 与清单顶层 `ui`（界面贡献）一一对应：kind view 的列进 `views`（记入快照、**不卡加载**），kind embed 的列进 `embeds`（卡加载、要批准、敏感项）。细则见 `.agents/skills/writing-plugin-ui` |
 | `storage` | `storage: true` | 才能用 `ctx.storage`（对象存储：每个方法第一个参数是 `orgId`（须是 UUID，统一按小写），键自动限定在 `plugins/<插件名>/<orgId>/` 下；键不能为空、不能以 `/` 开头、不能有 `.` / `..` 段、`\`、控制字符与 `${`，加前缀后 ≤ 1024 字节，否则抛 `StorageKeyError`；预签名的 `ttlSeconds` 会被限制在 1..604800；`list` 返回的键已去掉前缀。`presignPut` 返回 `{ method, url, headers, fields? }`：S3 实现是 `POST` 表单直传，大小由存储端限制）；未声明而用了报 `perm-storage`。部署没装 `object-store@1` 提供方（如 `object-store-s3`）时，声明了它的插件**不加载**（pending，原因 dependency） |
 | `hooks` / `models` | — | 预留项（尚未提供 `ctx.models`，用了 `check:plugin-permissions` 报 `perm-reserved`） |
 
@@ -107,7 +107,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 **调用上下文原则**：`setup(ctx)` 拿到的是**部署级**上下文，看不到任何组织、账号、会话。内核调用插件实现时把本次的上下文放进调用参数，内容由扩展点决定：工具执行带组织、账号、agent、会话（`ToolCallContext`）；渠道（`channel@1`）带该渠道连接的 `connectionId` 与连接配置（组织、账号由内核按连接与发言人解析，插件看不到）；通讯录带该组织的组织级配置；登录（`identity-source`）带部署级配置与认证请求、不含会话；队列任务只有你入队时写进 job 数据的内容（通常带 `orgId`，内核校验插件在该组织已启用）。所以**不要把组织 / 会话 / 身份存进模块变量或 ctx 的闭包里跨调用传递**，从本次调用的参数里取；需要跨调用保存的会话相关数据写自己的 `ctx.db`。
 
 **静态检查（`pnpm check:plugin-permissions`）**：扫描 `definePlugin({...})` 里 `setup` 的 `ctx` 参数（含本地别名，以及按位置传给**同文件**函数的 ctx，如 `mount(ctx)`），把 `ctx.secrets`、`ctx.http.route(method, path)`、`ctx.tools.register({ name })`、`ctx.capabilities.get|list(ref)`、`ctx.ui.view|action(id)`、`ctx.storage`、`ctx.models` 与清单比对，用了未声明的就失败。路由路径、工具名、能力 ref、界面 id 须写成字符串字面量（或指向同文件 const），动态的值报「Cannot statically confirm」；确属运行时才知道的（且已评审）在该行行尾或紧邻上一行写 `// capybara:allow-dynamic-permission <原因>`，原因不能为空；该注释只放行「无法静态确认」，未声明的字面量访问与 `perm-reserved` 不能豁免。ctx 传给其他文件的函数时检查跟不过去（靠运行时 `PluginPermissionError` 兜底），所以把用平台能力的代码放在 `setup` 同文件里。
-**批准**：内核在 PG 记已批准的权限快照（上面各项，加上 provides / requires / optional、配置字段与迁移里 `CREATE TABLE` 的表名）。插件首次出现、或升级后比快照多出任何一项时不加载，`requires` 它的插件同样不加载，企业管理员在后台网页批准（`POST /api/v1/admin/plugins/:name/approve`，带审阅时的 `sha256` 与 `reviewHash`，快照来源 web，免重启：本副本随即加载，其他副本经 `kernel.plugins.changed` 收敛），或用 `capybara plugins review` / `capybara plugins approve <name>` 批准（覆盖配置声明的插件与安装记录；CLI 写完 PG 后经 Redis 发布 `kernel.plugins.changed`，运行中的副本同样免重启加载，发布失败时等下一个周期）；权限变少或不变直接加载。内置插件（`openai-compatible`、`object-store-s3`）预先批准，不进审批。提供 `sandbox@1`、`object-store@1`、`channel@1`、`directory@1`、`identity-source@1` 的插件在审阅页与 CLI 标为敏感（只影响展示）。所以**发版时多要的每一项都会让部署方停下来批准**，别顺手多声明。比快照版本旧的插件（滚动升级中重启的旧副本、或有意回滚）只要权限不超出快照就照常加载，但**快照保留较新版本的内容不缩减**；回滚后旧版本多出的项仍需批准。开发与测试用配置项 `pluginPermissions.autoApprove: true`（环境变量推导规则见 `skills/adding-config`，双副本 harness 默认开启）：启动时自动批准新增或升级多要的权限，仅限开发与试用，生产别开。自动批准同样写快照（来源 auto）并打 warn 日志，但不写审计。
+**批准**：内核在 PG 记已批准的权限快照（上面各项，加上 provides / requires / optional、配置字段与迁移里 `CREATE TABLE` 的表名）。插件首次出现、或升级后比快照多出任何一项时不加载，`requires` 它的插件同样不加载，企业管理员在后台网页批准（`POST /api/v1/admin/plugins/:name/approve`，带审阅时的 `sha256` 与 `reviewHash`，快照来源 web，免重启：本副本随即加载，其他副本经 `kernel.plugins.changed` 收敛），或用 `capybara plugins review` / `capybara plugins approve <name>` 批准（覆盖配置声明的插件与安装记录；CLI 写完 PG 后经 Redis 发布 `kernel.plugins.changed`，运行中的副本同样免重启加载，发布失败时等下一个周期）；权限变少或不变直接加载。内置插件（`openai-compatible`、`object-store-s3`）预先批准，不进审批。提供 `sandbox@1`、`object-store@1`、`channel@1`、`directory@1`、`identity-source@1` 的插件在审阅页与 CLI 标为敏感（只影响展示）。所以**发版时多要的每一项都会让部署方停下来批准**，别顺手多声明。比快照版本旧的插件（滚动升级中重启的旧副本、或有意回滚）只要权限不超出快照就照常加载，但**快照保留较新版本的内容不缩减**；回滚后旧版本多出的项仍需批准。开发与测试用配置项 `pluginPermissions.autoApprove: true`（环境变量推导规则见 `.agents/skills/adding-config`，双副本 harness 默认开启）：启动时自动批准新增或升级多要的权限，仅限开发与试用，生产别开。自动批准同样写快照（来源 auto）并打 warn 日志，但不写审计。
 
 批准的细节：
 
@@ -134,7 +134,7 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 - 插件自己运行中产生的密钥（如 OAuth 换来的 token）走 `ctx.secrets`（加密存储），不要放进普通配置。
 - **渠道连接配置**（`channel@1` 的 `connectionSchema`）是第三种：一个组织可以建多个渠道连接，每个连接一份（bot 凭据等），由组织管理员在网页「渠道」里填写，密钥字段同样用 `secret()`、加密存储、只回显「已设置」；内核在调用 `verify` / `connect` / `send` 时把校验后的值作为 `config` 传入。
 - 选哪一级：只有部署方能决定、全部署共用一份的（登录的 client id / secret、平台地址）放部署级；每个组织各自的（通讯录凭据）放组织级；每个 bot 一份的放渠道连接配置。凭据都经配置由内核传入时插件不需要 `permissions.secrets`（Slack、Lark 插件都没有声明）。
-- **组织级配置里某项能力的字段可选时**（同一插件提供多种能力，组织只用其中一些），用该能力提供的「是否已配置」钩子告诉内核，而不是在调用时返回空结果：如 `Directory.configured(orgConfig)` 返回 false 时内核把通讯录视为未配置、不扫描不同步（详见 `skills/writing-channels`）。它必须是纯函数。
+- **组织级配置里某项能力的字段可选时**（同一插件提供多种能力，组织只用其中一些），用该能力提供的「是否已配置」钩子告诉内核，而不是在调用时返回空结果：如 `Directory.configured(orgConfig)` 返回 false 时内核把通讯录视为未配置、不扫描不同步（详见 `.agents/skills/writing-channels`）。它必须是纯函数。
 
 ### 组织级配置与 `secret()` 字段的存储与回显
 
@@ -151,32 +151,32 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 | 项 | 用途 | 要点 |
 |---|---|---|
 | `ctx.kv` | **临时、会过期**的状态：限流计数、短缓存、幂等键 | `set` / `incr` 必须带 `{ ttlSeconds }`；`incr` 每次只加 1，没有 `incrBy`。**持久数据（业务计数、账务）不要放 kv**：TTL 一到就没了，且与 db 双写无法保证一致 |
-| `ctx.db` | 持久数据 | Kysely，已切到本插件 schema，写表名**不带** schema 前缀；表由 `migrations/` 建，见 `skills/writing-migrations`。**注意**：原始 SQL `` sql`...`.execute(ctx.db) `` 不经过 `withSchema`，会落到连接默认的 search_path（`public`）——要么用查询构建器，要么在 SQL 里写全 `plugin_<name>.<表>` |
+| `ctx.db` | 持久数据 | Kysely，已切到本插件 schema，写表名**不带** schema 前缀；表由 `migrations/` 建，见 `.agents/skills/writing-migrations`。**注意**：原始 SQL `` sql`...`.execute(ctx.db) `` 不经过 `withSchema`，会落到连接默认的 search_path（`public`）——要么用查询构建器，要么在 SQL 里写全 `plugin_<name>.<表>` |
 | `ctx.queue` | 延迟 / 异步 / 周期任务 | `define(name, handler)` 在 `setup` 里注册；`add(name, data, { delayMs, jobId })`；任务可能在任一副本执行，投递是**至少一次**（失败重试，最多 3 次），handler 必须幂等（见下）；名称与 jobId 不含 `:` |
 | `ctx.lock` | 互斥 | `acquire(key, { ttlMs })` 返回租约或 `null`；长任务要 `renew()`，用完 `release()` |
 | `ctx.bus` | 跨副本广播 | `publish` / `subscribe`，订阅返回取消函数；消息可能丢，别当唯一的结束信号 |
 | `ctx.http.route` | 对外接口 | 实际挂在 `/plugins/<name><path>`；匹配与 body 语义见下节，不经内核鉴权 |
 | `ctx.provide` | 对外暴露能力实现 | 要与清单 `provides` 一致 |
-| `ctx.tools` | 给 agent 提供工具 | `register(spec, handler)` 只能在 `setup` 里调用；模型可见名 `<插件名>__<spec.name>`；**只在启用了本插件的组织可用**（组织 admin `PUT /api/v1/orgs/:orgId/plugins/<name> {"enabled": true}`），未启用时运行时按不可用工具处理。描述与错误文案规则、默认策略、`ToolError`、`InputRequired` 见 `skills/writing-tools`，参考 `plugins/todo` |
-| `ctx.ui` | 对话页右侧标签 / 顶栏「扩展」里的组织页面 | `view` / `action`（渲染 schema 视图，只能在 `setup` 里注册，`render` 与 `action` 必须响应 `signal`、5 秒超时）、`invalidate`（经 bus 跨副本刷新）、`verifyEmbedToken`（嵌入应用的数据路由先验令牌）。写法、积木、上限与嵌入应用的安全规则见 `skills/writing-plugin-ui`，参考 `plugins/todo`、`plugins/example-board` |
-| `ctx.storage` | 文件、大对象（按组织隔离） | 需清单 `permissions.storage`（`perm-storage`）；每个方法第一个参数是 `orgId`，键落在 `plugins/<插件名>/<orgId>/` 下，别的插件、内核（`kernel/<orgId>/`）互相看不到。浏览器上传用 `presignPut`（返回 `{ method, url, headers, fields? }`，按 `method` 发 PUT 或 POST 表单），下载用 `presignGet`（用户上传的内容只对图片 / PDF 用 `inline`）；组织删除后它的对象由内核定期清掉。没有存储提供方时插件不加载。写存储提供方见 `skills/writing-object-store-providers` |
+| `ctx.tools` | 给 agent 提供工具 | `register(spec, handler)` 只能在 `setup` 里调用；模型可见名 `<插件名>__<spec.name>`；**只在启用了本插件的组织可用**（组织 admin `PUT /api/v1/orgs/:orgId/plugins/<name> {"enabled": true}`），未启用时运行时按不可用工具处理。描述与错误文案规则、默认策略、`ToolError`、`InputRequired` 见 `.agents/skills/writing-tools`，参考 `plugins/todo` |
+| `ctx.ui` | 对话页右侧标签 / 顶栏「扩展」里的组织页面 | `view` / `action`（渲染 schema 视图，只能在 `setup` 里注册，`render` 与 `action` 必须响应 `signal`、5 秒超时）、`invalidate`（经 bus 跨副本刷新）、`verifyEmbedToken`（嵌入应用的数据路由先验令牌）。写法、积木、上限与嵌入应用的安全规则见 `.agents/skills/writing-plugin-ui`，参考 `plugins/todo`、`plugins/example-board` |
+| `ctx.storage` | 文件、大对象（按组织隔离） | 需清单 `permissions.storage`（`perm-storage`）；每个方法第一个参数是 `orgId`，键落在 `plugins/<插件名>/<orgId>/` 下，别的插件、内核（`kernel/<orgId>/`）互相看不到。浏览器上传用 `presignPut`（返回 `{ method, url, headers, fields? }`，按 `method` 发 PUT 或 POST 表单），下载用 `presignGet`（用户上传的内容只对图片 / PDF 用 `inline`）；组织删除后它的对象由内核定期清掉。没有存储提供方时插件不加载。写存储提供方见 `.agents/skills/writing-object-store-providers` |
 | `ctx.secrets` | 按组织存取密钥 | 加密落库 |
 | `ctx.config` / `ctx.log` | 部署配置 / 日志 | `ctx.config` 是 getter，hot 字段在用时读；日志里不要打印密钥 |
 
 ### 连接器（`connector@1`）
 
-`provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`，把一类远端服务接成组织里的「连接器」（工具快照、凭据、审批都由内核管）。连接器是部署级的，不需要按组织启用。要点：会话按次打开、用完关闭，不缓存连接；每个出站请求前调用 `auth()`；401 → `onUnauthorized()` 后重试一次；不跟随重定向；不把凭据写进错误与日志。详见 `skills/writing-connectors`，参考 `plugins/connector-mcp`、`plugins/connector-openapi`。
+`provides: [CONNECTOR_CAPABILITY]`，`setup` 里 `ctx.provide(CONNECTOR_CAPABILITY, connector)`，把一类远端服务接成组织里的「连接器」（工具快照、凭据、审批都由内核管）。连接器是部署级的，不需要按组织启用。要点：会话按次打开、用完关闭，不缓存连接；每个出站请求前调用 `auth()`；401 → `onUnauthorized()` 后重试一次；不跟随重定向；不把凭据写进错误与日志。详见 `.agents/skills/writing-connectors`，参考 `plugins/connector-mcp`、`plugins/connector-openapi`。
 
 ### 沙箱与对象存储（`sandbox@1` / `object-store@1`）
 
 两者都是单选、中转能力：一个部署只装一个提供方，别的插件不能 `requires`，由内核取用（沙箱经 `SandboxService` 与内置的
 `sandbox_*` 工具，存储经 `ctx.storage` 与内核功能）。提供方只实现原语，生命周期、锁、前缀隔离、清理都在内核。详见
-`skills/writing-sandbox-providers`（参考 `plugins/sandbox-docker`、`plugins/sandbox-e2b`）与
-`skills/writing-object-store-providers`（参考 `plugins/object-store-s3`）。
+`.agents/skills/writing-sandbox-providers`（参考 `plugins/sandbox-docker`、`plugins/sandbox-e2b`）与
+`.agents/skills/writing-object-store-providers`（参考 `plugins/object-store-s3`）。
 
 ### 渠道、登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`）
 
-一个 IM 平台的插件通常三种都提供：`setup` 里分别 `ctx.provide(CHANNEL_CAPABILITY, …)`、`ctx.provide(IDENTITY_SOURCE_CAPABILITY, …)`、`ctx.provide(DIRECTORY_CAPABILITY, …)`。渠道与通讯录要在组织启用插件后才可用，登录经内核配置 `auth.loginSources` 启用。长连接（含多副本选主）、入站去重与持久排队、出站续投、卡片操作的授权都由内核做，插件只管协议转换。要点：三处的身份键 `<插件名>:<租户 id>` + 平台用户 id 必须一致；`onEvent` resolve 后才向平台确认；转义模型文本防 @所有人；通讯录列不全必须抛错。详见 `skills/writing-channels`，参考 `plugins/slack`、`plugins/lark`。
+一个 IM 平台的插件通常三种都提供：`setup` 里分别 `ctx.provide(CHANNEL_CAPABILITY, …)`、`ctx.provide(IDENTITY_SOURCE_CAPABILITY, …)`、`ctx.provide(DIRECTORY_CAPABILITY, …)`。渠道与通讯录要在组织启用插件后才可用，登录经内核配置 `auth.loginSources` 启用。长连接（含多副本选主）、入站去重与持久排队、出站续投、卡片操作的授权都由内核做，插件只管协议转换。要点：三处的身份键 `<插件名>:<租户 id>` + 平台用户 id 必须一致；`onEvent` resolve 后才向平台确认；转义模型文本防 @所有人；通讯录列不全必须抛错。详见 `.agents/skills/writing-channels`，参考 `plugins/slack`、`plugins/lark`。
 
 ### 插件路由的匹配语义（`ctx.http.route`）
 
@@ -195,11 +195,11 @@ const enabled = await ctx.capabilities.list<Directory>("directory@1", { orgId })
 - 响应的 status、头（含多条 `set-cookie`）原样回给客户端，body 支持流式。
 - `req.signal` 只在响应写完之前客户端断开时中止（正常写完不会中止）：长连接（SSE）的 handler 用它退订、收尾。
 - **停机时内核中止所有进行中的插件请求**（`req.signal` 一齐 abort，此后到达的请求一开始就是中止的）：handler 要么很快结束，要么能容忍中止（收到 abort 就结束流、放弃未完成的工作；需要做完的事放进队列）。不响应 signal 的长连接会占用 http 停机预算，到时被强制断开。
-- 嵌入应用的路由放在 `/ui/` 下，网页经同源代理 `/plugin-ui/<插件>/...` 访问，代理只转发嵌入令牌、改写响应头与缓存，见 `skills/writing-plugin-ui`。
+- 嵌入应用的路由放在 `/ui/` 下，网页经同源代理 `/plugin-ui/<插件>/...` 访问，代理只转发嵌入令牌、改写响应头与缓存，见 `.agents/skills/writing-plugin-ui`。
 
 ### 界面（视图与嵌入应用）
 
-插件往网页加界面（对话页右侧标签、顶栏「扩展」里的组织页面）有两档：渲染 schema 视图（`ctx.ui.view`，参考 `plugins/todo`）与沙箱 iframe 里的嵌入应用（插件 `/ui/` 下的路由 + `ctx.ui.verifyEmbedToken`，参考 `plugins/example-board`）。清单、批准规则、积木与上限、嵌入令牌、`/plugin-ui` 代理、消息桥与测试写法都在 `skills/writing-plugin-ui`。
+插件往网页加界面（对话页右侧标签、顶栏「扩展」里的组织页面）有两档：渲染 schema 视图（`ctx.ui.view`，参考 `plugins/todo`）与沙箱 iframe 里的嵌入应用（插件 `/ui/` 下的路由 + `ctx.ui.verifyEmbedToken`，参考 `plugins/example-board`）。清单、批准规则、积木与上限、嵌入令牌、`/plugin-ui` 代理、消息桥与测试写法都在 `.agents/skills/writing-plugin-ui`。
 
 ### 持久计数与幂等的写法（参考 example-counter）
 
@@ -270,7 +270,7 @@ CLI（直连 PG，写完经 Redis 发布 `kernel.plugins.changed`，运行中的
 写插件时要知道的：
 
 - 换版本时**先加载新版本、再撤销旧版本**（旧实例在后台排空在途调用）；新版本在某个副本上加载失败（`sync_failed` / `sha_mismatch` / `import_failed` / `manifest_mismatch` / `setup_failed` / `migration_failed`），那个副本继续跑旧版本、状态记 `failed`，之后每个周期重试。新版本权限超出快照时待批准，旧版本照常。
-- **迁移只做扩展**（加表、加列、加索引；删改走两步，见 `skills/writing-migrations`）：新旧版本会在不同副本上同时跑。上传 / 导入包时，迁移里的破坏性语句（删表 / 删列、TRUNCATE、DELETE、RENAME、改列类型，`destructive_migration`）、内容不做静态检查的 `DO` 块（`dynamic_sql`）与写到自己 schema 之外 / 改权限角色 / 建函数触发器 / 控制事务的语句（`foreign_schema`）在审阅结果的 `warnings` 里逐条列为敏感警告（不拒绝），部署方会看到，警告变了要重新批准（见「信任模型」）；别用 `DO` 块，只动 `plugin_<name>` schema。迁移由第一个拿到咨询锁的副本执行一次（`ensureMigrated`），完成前其他副本不切换（`pending_migration`）。迁移目录只认包里审阅过的 `capybara.migrations`。
+- **迁移只做扩展**（加表、加列、加索引；删改走两步，见 `.agents/skills/writing-migrations`）：新旧版本会在不同副本上同时跑。上传 / 导入包时，迁移里的破坏性语句（删表 / 删列、TRUNCATE、DELETE、RENAME、改列类型，`destructive_migration`）、内容不做静态检查的 `DO` 块（`dynamic_sql`）与写到自己 schema 之外 / 改权限角色 / 建函数触发器 / 控制事务的语句（`foreign_schema`）在审阅结果的 `warnings` 里逐条列为敏感警告（不拒绝），部署方会看到，警告变了要重新批准（见「信任模型」）；别用 `DO` 块，只动 `plugin_<name>` schema。迁移由第一个拿到咨询锁的副本执行一次（`ensureMigrated`），完成前其他副本不切换（`pending_migration`）。迁移目录只认包里审阅过的 `capybara.migrations`。
 - **降级**只能回到「迁移文件都已执行过（文件名与内容一致）」的版本，否则 409 `plugin.downgrade_unsupported`。
 - 停用 / 卸载不删数据：插件 schema、密钥、组织配置、权限快照都保留，重新安装后接着用。部署上停用时组织里的启用开关不变，组织页显示「不可用」。
 - 包存储：有对象存储时包放在 `deployment/plugins/blobs/<sha256>.tgz`（`plugin_packages.blob_store = object`），否则（以及 CLI 导入的包）放 PG `plugin_blobs`。**换对象存储的桶（或端点）而不迁移对象**，`blob_store = object` 的包就取不到了：本地插件目录被清空或新副本启动时同步失败（`sync_failed`）。换桶前把 `deployment/` 前缀下的对象一起搬过去；或者重新上传这些包。企业目录条目的文件（`deployment/directory/…`）同理。
@@ -285,6 +285,6 @@ CLI（直连 PG，写完经 Redis 发布 `kernel.plugins.changed`，运行中的
 
 1. 复制 `plugins/example-counter`，改包名 `@capybara-hq/plugin-<name>`、`name`、PG 表。
 2. 在根 `tsconfig.json` 的 `references` 加一项。
-3. 迁移按 `skills/writing-migrations` 写。
+3. 迁移按 `.agents/skills/writing-migrations` 写。
 4. `pnpm lint && pnpm typecheck && pnpm check && pnpm test`。
 5. 影响发布的改动加 changeset（`pnpm changeset`）。

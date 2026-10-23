@@ -92,7 +92,7 @@ const ALWAYS_WITH_TESTS = "tools/checks";
 function isDoc(f: string): boolean {
   if (f.startsWith("docs/")) return true;
   if (f === ".gitignore") return true;
-  if (f.startsWith(".claude/")) return true;
+  if (f.startsWith(".claude/") || f.startsWith(".agents/")) return true;
   return f.endsWith(".md");
 }
 

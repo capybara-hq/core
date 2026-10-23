@@ -5,7 +5,7 @@ description: 给插件加界面时使用（对话页右侧标签、顶栏「扩�
 
 # 写插件界面
 
-通用的插件写法（清单、权限批准、ctx、多副本禁令、双副本测试）见 `skills/writing-plugins`，工具本身见 `skills/writing-tools`；这里只讲界面。设计依据是 `docs/superpowers/specs/2026-10-21-chat-panel-plugin-ui-design.md`。参考实现：
+通用的插件写法（清单、权限批准、ctx、多副本禁令、双副本测试）见 `.agents/skills/writing-plugins`，工具本身见 `.agents/skills/writing-tools`；这里只讲界面。设计依据是 `docs/superpowers/specs/2026-10-21-chat-panel-plugin-ui-design.md`。参考实现：
 
 - 第一档（渲染 schema 视图）：`plugins/todo`，对话视图 `tasks`，`todo__write` 写完调 `invalidate`。
 - 第二档（嵌入应用）：`plugins/example-board`，组织页面 `board` 与对话标签 `board-conv`，带 SSE 实时刷新。
@@ -129,7 +129,7 @@ return {
 
 - 中英文都要给、各 ≤ 200 码点（`validateToolDisplay`）；不合法的内核丢弃并记告警，结果照常写入。
 - 摘要随 `tool_result` 事件进日志，刷新页面能还原；**不进模型上下文**，重建模型请求、生成压缩记录都不用它，所以模型需要的信息必须写在 `content` 里。
-- 没有摘要（连接器工具的一律不采信）时，网页退回「工具名 + 输入的前两个字段」。细节见 `skills/writing-tools`。
+- 没有摘要（连接器工具的一律不采信）时，网页退回「工具名 + 输入的前两个字段」。细节见 `.agents/skills/writing-tools`。
 
 ## 第二档：嵌入应用
 

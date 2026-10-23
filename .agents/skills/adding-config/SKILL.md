@@ -5,7 +5,7 @@ description: 给内核新增或修改配置项（packages/kernel/src/config/sche
 
 # 加内核配置项
 
-内核配置只有一个来源的定义：`packages/kernel/src/config/schema.ts` 里的 `KernelConfigSchema`（Zod 4）。插件的部署级配置不在这里加，写在插件清单的 `config.deployment`（见 `skills/writing-plugins`）。
+内核配置只有一个来源的定义：`packages/kernel/src/config/schema.ts` 里的 `KernelConfigSchema`（Zod 4）。插件的部署级配置不在这里加，写在插件清单的 `config.deployment`（见 `.agents/skills/writing-plugins`）。
 
 ## 步骤
 

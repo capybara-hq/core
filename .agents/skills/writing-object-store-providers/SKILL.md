@@ -7,7 +7,7 @@ description: 新建或修改对象存储插件（provides object-store@1，如 p
 
 对象存储放附件、沙箱交付的产物、技能文件和插件数据。`object-store@1` 是**单选、中转**能力：一个部署只装一个
 提供方，插件不能 `requires` 它，只能经 `ctx.storage` 用（清单声明 `permissions.storage`）。通用插件写法见
-`skills/writing-plugins`。
+`.agents/skills/writing-plugins`。
 
 为什么和沙箱分成两份：两者的读者不同（存储插件作者 / 用 `ctx.storage` 的插件作者，与沙箱插件作者），契约和测试
 手段也没有交集；技能按描述触发，分开写更容易被找到。

@@ -24,7 +24,7 @@ import { specHash } from "./registry.js";
  *    时，本会话立即用用户的答案答复，远端继续执行。一次调用里有多个 elicitation 时，state 带上之前的全部答复，
  *    每次续跑整条重放；最多 3 轮（管线的输入轮次上限）。
  *
- * 限制（写进报告与 skills/writing-tools）：远端第二次没有发起同样的 elicitation（换了 schema / 不再问）时，答案
+ * 限制（写进报告与 .agents/skills/writing-tools）：远端第二次没有发起同样的 elicitation（换了 schema / 不再问）时，答案
  * 不会被使用——前者会再问一次用户，后者远端按自己的逻辑继续；远端在 elicitation 之前做过的副作用会随重新发起
  * 的调用再做一次（大多数服务在动手之前先问）；URL 模式的完成通知（`notifications/elicitation/complete`）收不到
  * （会话已关闭），以用户在卡片上确认「已完成」为准。

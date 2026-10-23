@@ -16,7 +16,7 @@ description: 新建或修改连接器插件时使用（provides connector@1，�
 | 连接器模板 | 企业目录里的一种包（`kind: connector-template`）：引用一个连接器插件，预设端点与认证（不含凭据）、组织可改的端点字段与默认策略，组织填凭据即建出一个连接器 | 「飞书文档」模板 |
 | 应用（app） | 组合包 `app.yaml`：插件 + 连接器模板 + 技能（D17 之后「应用」只指这个） | 飞书插件 + 文档模板 + 技能 |
 
-通用的插件写法（清单、配置、多副本禁令）见 `skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `skills/writing-tools`，这里只讲连接器特有的部分。
+通用的插件写法（清单、配置、多副本禁令）见 `.agents/skills/writing-plugins`，工具的通用规则（命名、英文描述与错误、策略、审批）见 `.agents/skills/writing-tools`，这里只讲连接器特有的部分。
 
 参考实现：`plugins/connector-mcp`（Streamable HTTP 的 MCP 服务，含 elicitation、prompts、resources、list_changed）与 `plugins/connector-openapi`（OpenAPI 3.0 / 3.1，每个 operation 一个工具，实现了 `inspect`、`connectorData` 路由）。契约在 `packages/plugin-sdk/src/connector.ts`。
 
@@ -83,10 +83,10 @@ interface ConnectorSession {
 
 ## `listTools`、`connectorData` 与按已复核的定义路由
 
-- 映射远端工具清单时保留 `annotations`（内核据此推导默认策略：`readOnlyHint` → allow，其余 ask），缺描述用 title / name 兜底并 warn。连接器工具的 key 是 `<connectorSlug>__<tool>`，整体须匹配 `^[a-zA-Z0-9_-]{1,64}$`（见 `skills/writing-tools`）；超长 / 含非法字符时内核不截断、不猜，停用该工具并在 `issues` 里写原因。工具名由连接器给出：把远端名字规整到合理长度并保证同一连接器内不重复（openapi 把 operationId 里的非法字符换成下划线、截到 40 字符，重名在预览里报告）。
+- 映射远端工具清单时保留 `annotations`（内核据此推导默认策略：`readOnlyHint` → allow，其余 ask），缺描述用 title / name 兜底并 warn。连接器工具的 key 是 `<connectorSlug>__<tool>`，整体须匹配 `^[a-zA-Z0-9_-]{1,64}$`（见 `.agents/skills/writing-tools`）；超长 / 含非法字符时内核不截断、不猜，停用该工具并在 `issues` 里写原因。工具名由连接器给出：把远端名字规整到合理长度并保证同一连接器内不重复（openapi 把 operationId 里的非法字符换成下划线、截到 40 字符，重名在预览里报告）。
 - **`ToolSpec.connectorData`**（Ruling A21，安全）：调用所需的路由信息放在这个不透明、可 JSON 序列化的字段里（OpenAPI：方法、路径模板、参数位置 / 风格、请求体媒体类型、解析好的服务器地址）。内核存进快照并计入 `spec_hash`（变了即漂移、待复核），**从不发给模型**。
 - 调用时内核把该工具**已复核**的定义（`connector_tools.spec`，不是待复核的 `pending_spec`）作为 `callTool` 的第 4 个参数 `ctx.spec` 交回。远端描述可能被改（rug-pull），所以按 `ctx.spec` 路由，**不要重新读取远端描述**；`ctx` 缺失（旧内核）时报错提示管理员刷新。MCP 这种由远端按名字路由的连接器可忽略 `ctx`。
-- 远端描述改了怎么办不是连接器的事：内核定时（`tools.driftIntervalHours`）、收到 `onToolsChanged`、管理员刷新时重新 `listTools` 比对快照，新增或变化的工具待复核，复核前不可用（见 `skills/writing-tools` 的漂移一节）。所以 `listTools` 的输出应**确定性**：同一份远端描述每次给出同样的 spec（字段顺序稳定、不带时间戳 / 随机值），否则会反复触发复核。
+- 远端描述改了怎么办不是连接器的事：内核定时（`tools.driftIntervalHours`）、收到 `onToolsChanged`、管理员刷新时重新 `listTools` 比对快照，新增或变化的工具待复核，复核前不可用（见 `.agents/skills/writing-tools` 的漂移一节）。所以 `listTools` 的输出应**确定性**：同一份远端描述每次给出同样的 spec（字段顺序稳定、不带时间戳 / 随机值），否则会反复触发复核。
 
 ## `inspect` 与安装预览（Ruling A20）
 
@@ -119,7 +119,7 @@ MCP `elicitation/create`（表单与 URL 两种模式）→ 调用 `args.onElici
 
 ## 连接器模板（C30）
 
-连接器模板让组织不必懂端点细节：企业管理员把模板包导入企业目录，组织管理员在目录里「安装」，只填凭据（静态凭据经 `credential`，OAuth 经 `client`）与模板 `editableEndpoint` 列出的端点字段，内核按模板拼出安装输入、走与手动安装同一条 `ConnectorsService.create`（端点按 `endpointSchema` 与凭据规则复核、默认策略记 `policy_source 'template'`）。模板包的格式、`editableEndpoint` 与 `defaultToolPolicies` 的写法见 `skills/writing-apps`。对连接器插件的要求：
+连接器模板让组织不必懂端点细节：企业管理员把模板包导入企业目录，组织管理员在目录里「安装」，只填凭据（静态凭据经 `credential`，OAuth 经 `client`）与模板 `editableEndpoint` 列出的端点字段，内核按模板拼出安装输入、走与手动安装同一条 `ConnectorsService.create`（端点按 `endpointSchema` 与凭据规则复核、默认策略记 `policy_source 'template'`）。模板包的格式、`editableEndpoint` 与 `defaultToolPolicies` 的写法见 `.agents/skills/writing-apps`。对连接器插件的要求：
 
 - 模板导入与组织安装都按**本副本已加载**的连接器插件与 `Connector.kind` 校验（没加载 → 导入拒绝 / 安装 `directory.not_deployed`）；`editableEndpoint` 的路径要能在你的 `endpointSchema` 里找到（`directory/schema-path.ts` 的 `schemaHasPath`：走对象字段、record、union / 交叉的分支，剥掉 optional / default / pipe 输入端等包装，**不进数组元素**）。所以组织可能要改的字段放在对象路径上，字段名保持稳定：改名等于让已发布的模板失效。
 - 端点里不能放凭据（模板的预设所有组织都能看到）；需要凭据的一律走认证设置。
