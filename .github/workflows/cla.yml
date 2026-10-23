@@ -8,13 +8,9 @@ on:
     types: [opened, closed, synchronize]
   issue_comment:
     types: [created]
-permissions:
-  contents: write
-  pull-requests: write
-  statuses: write
-  # actions: write lets the action re-run the last pull_request_target run after a signature;
-  # without it the CLA status stays red.
-  actions: write
+# No workflow-level grants: the token gets write scopes only inside the cla job (M-5). Until the
+# main ruleset is active (C1), contents: write could push to any unprotected branch.
+permissions: {}
 concurrency:
   group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
@@ -27,6 +23,13 @@ jobs:
       (github.event.comment.body == 'recheck' ||
       github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+      # actions: write lets the action re-run the last pull_request_target run after a signature;
+      # without it the CLA status stays red.
+      actions: write
     steps:
       # Self-seed the signatures branch (the archived action cannot create it reliably).
       # Uses only gh api and GITHUB_TOKEN; no PR data reaches the shell. The branch
