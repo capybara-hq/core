@@ -1,144 +1,143 @@
 ---
 name: writing-sandbox-providers
-description: 新建或修改沙箱插件时使用（provides sandbox@1，如 plugins/sandbox-docker、plugins/sandbox-e2b）：契约原语与中止语义、组织级 cpu / 内存覆盖（sandboxLimitOverrides）、SandboxGoneError 与普通错误的区别、已停止实例的自动启动、沙箱内命令时限、killAll（接手崩溃前任 / 从休眠恢复）、同名实例替换与 destroyByName、/skills 只读、出站 none / allowlist / open 与 allowOpenEgress、限制只在创建时生效；SandboxService 的生命周期（Redis 锁 TTL 与续租、lockWaitSeconds、防护号、空闲休眠、maxRunning、不活跃销毁、重建与提示）；安全（socket 代理放哪里、出站代理按解析后的 IP 挡 DNS 重绑定）；以及用假沙箱插件、真实 Docker 与 startFakeE2B / 真实 E2B 写测试。
+description: Use when creating or changing a sandbox plugin (provides sandbox@1, e.g. plugins/sandbox-docker, plugins/sandbox-e2b): contract primitives and abort semantics, org-level cpu / memory overrides (sandboxLimitOverrides), SandboxGoneError versus ordinary errors, auto-starting stopped instances, in-sandbox command time limits, killAll (taking over from a crashed predecessor / recovering from suspension), same-name instance replacement and destroyByName, read-only /skills, egress none / allowlist / open and allowOpenEgress, limits taking effect only at creation; the SandboxService lifecycle (Redis lock TTL and renewal, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction, rebuild and notices); security (where the socket proxy lives, the egress proxy blocking DNS rebinding by resolved IP); and writing tests with the fake sandbox plugin, real Docker, and startFakeE2B / real E2B.
 ---
 
-# 写沙箱插件
+# Writing sandbox plugins
 
-每个对话一个沙箱（D4），内核的沙箱工具（`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`）、
-附件同步与 `skill_load` 都经 `SandboxService` 用它。`sandbox@1` 是**单选、中转**能力：一个部署只装一个沙箱插件，
-别的插件不能 `requires` 它。通用插件写法见 `.agents/skills/writing-plugins`，工具这一侧见 `.agents/skills/writing-tools`。
+One sandbox per conversation (D4). The kernel's sandbox tools (`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`),
+attachment sync and `skill_load` all use it through `SandboxService`. `sandbox@1` is a **single-choice, relayed** capability: a deployment installs only one sandbox plugin,
+and other plugins cannot `requires` it. For general plugin writing see `.agents/skills/writing-plugins`; for the tools side see `.agents/skills/writing-tools`.
 
-参考实现：
+Reference implementations:
 
-- `plugins/sandbox-docker`：每个对话一个容器（runc 或 gVisor 的 runsc），只经 socket 代理访问 Docker，出站白名单由每个沙箱自带的代理容器执行。
-- `plugins/sandbox-e2b`：E2B 云或自托管，休眠用 pause、恢复用 connect，自写极简客户端（不用官方 SDK：它读进程环境变量、有模块级连接池）。
-- `packages/kernel/test/fixtures/plugins/sandbox-fake`：最小形状（本机目录 + `/bin/sh`，**没有隔离，只供测试**），先读它再读真实插件。
+- `plugins/sandbox-docker`: one container per conversation (runc, or gVisor's runsc), reaching Docker only through a socket proxy; the egress allowlist is enforced by a proxy container that each sandbox brings along.
+- `plugins/sandbox-e2b`: E2B cloud or self-hosted; pause for suspension and connect for resume; a hand-written minimal client (the official SDK is not used: it reads process environment variables and has a module-level connection pool).
+- `packages/kernel/test/fixtures/plugins/sandbox-fake`: the minimal shape (a local directory + `/bin/sh`, **no isolation, for tests only**); read it before reading the real plugins.
 
-两个插件的 README 逐条写了平台出处、每个取舍和已知局限，写新实现时照这个粒度写。
+The READMEs of the two plugins spell out, item by item, the platform sources, every trade-off and the known limitations; write a new implementation at that level of detail.
 
-## 契约：`sandbox@1`（`packages/plugin-sdk/src/sandbox.ts`）
+## Contract: `sandbox@1` (`packages/plugin-sdk/src/sandbox.ts`)
 
 ```ts
 interface SandboxProvider {
   create({ name, image, limits, signal }): Promise<SandboxHandle>;  // name = cap-<conversationId>
   resume(h, signal): Promise<"resumed" | "gone">;
-  suspend(h, signal): Promise<void>;          // 文件必须保留；实例不在也算成功
-  destroy(h, signal): Promise<void>;          // 不在也算成功
+  suspend(h, signal): Promise<void>;          // files must be kept; an instance that is not there also counts as success
+  destroy(h, signal): Promise<void>;          // not being there counts as success
   destroyByName?(name, signal): Promise<void>;
   killAll?(h, signal): Promise<void>;
   exec(h, { command, cwd?, env?, timeoutMs, maxOutputBytes, signal }): Promise<ExecResult>;
-  readFile(h, path, { maxBytes, signal }): Promise<{ data; truncated } | null>;  // 不存在或是目录 → null
-  writeFile(h, path, data, signal): Promise<void>;                               // 父目录自动创建
+  readFile(h, path, { maxBytes, signal }): Promise<{ data; truncated } | null>;  // missing or a directory → null
+  writeFile(h, path, data, signal): Promise<void>;                               // parent directories are created automatically
   stat(h, path, signal): Promise<{ size; isDir } | null>;
 }
 ```
 
-`glob` / `grep` / `edit` 由内核用 `exec` + `readFile` / `writeFile` 组合，提供方不实现。所以镜像里要有 GNU `find`
-（`-print0`）与 `grep`（`-rnHIE`、`--include`）、`timeout`、`setsid`、`pkill` / `pgrep`。
+`glob` / `grep` / `edit` are composed by the kernel from `exec` + `readFile` / `writeFile`; the provider does not implement them. So the image must have GNU `find`
+(`-print0`) and `grep` (`-rnHIE`, `--include`), `timeout`, `setsid`, `pkill` / `pgrep`.
 
-### 必须遵守的语义
+### Semantics you must follow
 
-- **中止**：每个方法都及时响应 `signal`。调用时已中止 → 立即 reject；进行中被中止 → 尽快以中止原因结束。
-  内核在锁丢失、运行被中止或超时时靠它停下，不响应就可能与新的持锁方同时操作同一实例。
-  **`exec` 被中止要杀掉命令及其派生进程**，不只是不再等输出；命令启动后才被中止的 `exec` 以
-  `{ exitCode: null, timedOut: false }` 正常 resolve（带已收集的输出），不 reject。超时 resolve `timedOut: true, exitCode: null`。
-- **gone 与普通错误**：实例在提供方那边**确定**不在了（容器被删、E2B 沙箱过期）时，`exec` / `readFile` /
-  `writeFile` / `stat` / `killAll` 抛 `SandboxGoneError`，`resume` 返回 `"gone"`。内核据此重建空沙箱并重试一次，
-  模型看到 `Sandbox was recreated; previous files are gone.`。只是暂时连不上（401、5xx、网络错误、代理返回的裸 404）
-  抛**普通错误**，否则一次网络抖动就把用户的文件清空了。判断用 `isSandboxGoneError`（鸭子类型，兼容插件自带一份 SDK）。
-  E2B 只把 E2B 格式的 404（`{code: 404, …}`）当 gone；拿不到 envd 访问令牌也按 gone 报（宁可重建，也不发不带令牌的请求）。
-- **自动启动**：实例还在但已停止 / 暂停（宿主机或守护进程重启、休眠扫描停了它却没来得及记下 `suspended`、有人
-  `docker pause`）时，`exec` / `readFile` / `writeFile` / `stat` / `killAll` 先按 `resume` 的做法把它启动起来再执行，
-  不报错。内核只信自己记的 `running`。
-- **沙箱里的命令时限**：除了在提供方这边按 `timeoutMs` 停掉命令，命令本身要在沙箱里经
-  `timeout -s KILL <timeoutMs + 几秒>` 运行。内核副本崩溃时提供方这边的计时随之消失，断开连接也不结束命令，
-  靠这道时限保证它不会无限期地与下一个持锁方的命令并行。
-- **killAll**：杀掉经 `exec` 启动、仍在运行的全部命令（按进程组与会话 SIGKILL），另起会话放到后台的进程不保证。
-  内核在两种时候调用：拿到锁时发现前任持锁方没正常结束（Redis 标记 `capk:sandbox-busy:<对话>` 还在，即接手崩溃的
-  副本），以及刚从 `suspended` 恢复时（E2B 暂停会连进程一起保留）。杀进程的 exec 本身起不来（进程数耗尽）时，
-  Docker 退而 `restart?t=0`，E2B 退而 pause + `connect {memory: false}` 冷启动；这两种都只打 warn，调用照常返回。
-- **同名替换**：`create` 先删掉同名的旧实例再建（内核可能在提供方建好、自己记下句柄之前退出）。同理实现
-  `destroyByName`：内核拿不到句柄时按 `cap-<对话>` 清理（对话删除、测试清理）。
-- **输出**：`maxOutputBytes` 是 stdout + stderr **合计**的上限，超出丢弃并置 `truncated`；截断时退回完整的 UTF-8 字符边界。
-- **`/skills` 只读**：对沙箱用户只读挂载（或归 root 0755），`writeFile("/skills/…")` 由提供方以 root 写入，
-  且不能被沙箱用户放的符号链接引到别处。内核的 `/skills` 写保护只按路径字符串判断，可被符号链接绕过，真正的
-  防线在提供方。技能文件没有可执行位，`skill_load` 告诉模型用解释器运行（`sh /skills/x/run.sh`）。
-- **文件操作以沙箱用户解析**：权限与符号链接按非 root 用户解析（Docker 在容器里跑 `head` / `stat` 小脚本；E2B 的
-  上传接口以 root 打开目标，所以先传到 root 专用的中转目录，再 `runuser -u sandbox` 写目标）。不要经守护进程以 root 写卷。
-- 路径都已经过 `validateSandboxPath`（只认 `/workspace`、`/skills`、`/tmp`），工作目录 `/workspace`，附件在
-  `/workspace/attachments/`。
+- **Abort**: every method responds to `signal` promptly. Already aborted at call time → reject immediately; aborted in flight → end as soon as possible with the abort reason.
+  The kernel relies on this to stop when the lock is lost, the run is aborted or times out; without it, you may operate on the same instance at the same time as a new lock holder.
+  **An aborted `exec` must kill the command and its child processes**, not merely stop waiting for output; an `exec` aborted after the command has started resolves normally with
+  `{ exitCode: null, timedOut: false }` (with the output collected so far) and does not reject. A timeout resolves `timedOut: true, exitCode: null`.
+- **gone versus ordinary errors**: when the instance is **definitely** no longer there on the provider's side (container deleted, E2B sandbox expired), `exec` / `readFile` /
+  `writeFile` / `stat` / `killAll` throw `SandboxGoneError` and `resume` returns `"gone"`. The kernel then rebuilds an empty sandbox and retries once,
+  and the model sees `Sandbox was recreated; previous files are gone.`. If the instance is only temporarily unreachable (401, 5xx, network errors, a bare 404 returned by a proxy),
+  throw an **ordinary error**; otherwise one network blip wipes the user's files. Use `isSandboxGoneError` to decide (duck-typed, compatible with a plugin bundling its own copy of the SDK).
+  E2B treats only E2B-format 404s (`{code: 404, …}`) as gone; failing to obtain the envd access token is also reported as gone (better to rebuild than to send a request without the token).
+- **Auto-start**: when the instance still exists but is stopped / paused (host or daemon restart, the suspension sweep stopped it before it could record `suspended`, someone ran
+  `docker pause`), `exec` / `readFile` / `writeFile` / `stat` / `killAll` first start it the way `resume` does and then proceed,
+  without reporting an error. The kernel trusts only the `running` it recorded itself.
+- **Command time limit inside the sandbox**: besides stopping the command on the provider side at `timeoutMs`, the command itself must run inside the sandbox through
+  `timeout -s KILL <timeoutMs + a few seconds>`. When a kernel replica crashes, the provider-side timer disappears with it, and disconnecting does not end the command;
+  this limit guarantees it cannot run indefinitely in parallel with the next lock holder's commands.
+- **killAll**: kill every command started through `exec` that is still running (SIGKILL by process group and session); processes moved to the background in a new session are not guaranteed.
+  The kernel calls it in two cases: when it gets the lock and finds the previous holder did not finish normally (the Redis marker `capk:sandbox-busy:<conversation>` is still there, i.e. taking over from a crashed
+  replica), and right after recovering from `suspended` (an E2B pause preserves processes too). When the exec that kills processes cannot even start (process table exhausted),
+  Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start; both only log a warn and the call returns normally.
+- **Same-name replacement**: `create` first deletes an old instance of the same name and then builds (the kernel may exit after the provider has built it but before it has recorded the handle). Likewise implement
+  `destroyByName`: when the kernel has no handle, it cleans up by `cap-<conversation>` (conversation deletion, test cleanup).
+- **Output**: `maxOutputBytes` is the **combined** limit on stdout + stderr; excess is discarded and `truncated` is set; truncation backs off to a full UTF-8 character boundary.
+- **`/skills` is read-only**: mounted read-only for the sandbox user (or owned by root with 0755), and `writeFile("/skills/…")` is written by the provider as root,
+  and must not be redirected elsewhere by a symlink the sandbox user places. The kernel's `/skills` write protection judges only the path string and can be bypassed by symlinks; the real
+  defense is in the provider. Skill files have no executable bit, and `skill_load` tells the model to run them with an interpreter (`sh /skills/x/run.sh`).
+- **File operations resolve as the sandbox user**: permissions and symlinks are resolved as the non-root user (Docker runs small `head` / `stat` scripts in the container; E2B's
+  upload endpoint opens the target as root, so upload first to a root-only staging directory and then write the target with `runuser -u sandbox`). Don't write volumes as root through the daemon.
+- Paths have already passed `validateSandboxPath` (only `/workspace`, `/skills`, `/tmp` are accepted); the working directory is `/workspace` and attachments are in
+  `/workspace/attachments/`.
 
-### 限制与出站（`SandboxLimits`）
+### Limits and egress (`SandboxLimits`)
 
-- `egress` / `allowHosts` 是**组织实际生效**的值：组织设置 `sandboxEgress` 可把白名单换成自己的一份或断网，
-  不能比部署更开（Ruling M19，内核 `effectiveSandboxEgress`）。提供方只管照 `create` 收到的执行，不读组织设置。
-- `cpu` / `memoryMb` 同样是**组织实际生效**的值：企业管理员可在后台按组织覆盖（部署设置 `sandboxLimitOverrides`，
-  orgId → `{ cpu?, memoryMb? }`，cpu 0.25–64、memoryMb 为 256–262144 的整数，C19），给出的项替换 `sandbox.limits` 的
-  部署默认，未给的项与 `diskMb` 沿用部署默认（内核 `effectiveSandboxLimits`）；组织管理员在组织设置里只读看到生效值与来源。
-  提供方照 `create` 收到的 `limits` 执行即可；做不到按沙箱指定规格的提供方（如 E2B，规格由模板决定）要在 README 里写明
-  「组织级 cpu / 内存覆盖对本插件不生效」，部署方需要不同规格时改用不同模板。
-- `cpu` / `memoryMb` / `diskMb` / `egress` / `allowHosts` **只在 `create` 时生效**：改配置只影响之后新建的沙箱，
-  已有的（含休眠后恢复的）沿用创建时的设置，直到被销毁重建。做不到某项时在 README 里写明（Docker 默认 local 卷驱动
-  不限 `diskMb`；E2B 的 cpu / 内存 / 磁盘由模板决定）。
-- `egress`：
-  - `none`：只有回环。
-  - `allowlist`（默认）：只放行 `allowHosts`（`validateAllowHost` 已挡掉 IP 字面量、单段名、`.local` / `.internal`；
-    `*.example.com` 匹配子域、不含本身）。
-  - `open`：提供方部署配置 `allowOpenEgress` 默认 false，为 false 时 `create` 收到 open 直接报英文错误。新插件照此实现。
-- **白名单不防数据外传**：它挡内网与白名单外的主机，挡不住发往白名单主机的数据（`git push` 到 github.com、发包）。
-  README 要写明这一点，并建议敏感组织用 `sandboxToolPolicy: ask` 和 / 或 `sandboxEgress: none`。
-- 提供方做不到按域名放行时**拒绝或退化为 `none` 并打告警**，不能悄悄放开（E2B 自托管 `domainAllowlist: false`）。
-  做得到但更弱的写进 README（E2B 只看 Host / SNI、不核对目的 IP，Ruling M14）。
+- `egress` / `allowHosts` are the values **in effect for the org**: the org setting `sandboxEgress` can replace the allowlist with its own or cut the network,
+  and cannot be more open than the deployment (Ruling M19, kernel `effectiveSandboxEgress`). The provider just enforces what `create` receives and does not read org settings.
+- `cpu` / `memoryMb` are likewise the values **in effect for the org**: an enterprise admin can override them per org in the admin console (deployment setting `sandboxLimitOverrides`,
+  orgId → `{ cpu?, memoryMb? }`, cpu 0.25–64, memoryMb an integer in 256–262144, C19); the items given replace the deployment defaults of `sandbox.limits`, and items not given and `diskMb` keep the deployment defaults (kernel `effectiveSandboxLimits`); org admins see the effective values and their source read-only in org settings.
+  The provider just enforces the `limits` it receives from `create`; a provider that cannot size each sandbox (such as E2B, where the template decides the size) must state in its README
+  "org-level cpu / memory overrides do not take effect for this plugin"; a deployer who needs different sizes uses different templates.
+- `cpu` / `memoryMb` / `diskMb` / `egress` / `allowHosts` **take effect only at `create`**: changing config affects only sandboxes created afterwards,
+  and existing ones (including those recovered from suspension) keep the settings from creation until they are destroyed and rebuilt. When an item cannot be done, say so in the README (Docker's default local volume driver
+  does not limit `diskMb`; E2B's cpu / memory / disk are decided by the template).
+- `egress`:
+  - `none`: loopback only.
+  - `allowlist` (default): allow only `allowHosts` (`validateAllowHost` already rejects IP literals, single-label names and `.local` / `.internal`;
+    `*.example.com` matches subdomains and not the domain itself).
+  - `open`: the provider's deployment config `allowOpenEgress` defaults to false; when false, `create` receiving open fails with an English error. New plugins implement it this way.
+- **The allowlist does not prevent data exfiltration**: it blocks the internal network and hosts outside the allowlist, but not data sent to allowlisted hosts (`git push` to github.com, publishing packages).
+  The README must say so and recommend `sandboxToolPolicy: ask` and / or `sandboxEgress: none` for sensitive orgs.
+- A provider that cannot allow by domain name must **refuse, or degrade to `none` with a warning**, and must never silently open up (E2B self-hosted `domainAllowlist: false`).
+  Where it can but more weakly, write it in the README (E2B looks only at Host / SNI and does not verify the destination IP, Ruling M14).
 
-## 生命周期：`SandboxService`（`packages/kernel/src/sandbox/sandbox.service.ts`）
+## Lifecycle: `SandboxService` (`packages/kernel/src/sandbox/sandbox.service.ts`)
 
-内核负责，插件只实现原语，**不要在插件里做调度、计时或状态表**：
+The kernel owns it; the plugin implements only primitives. **Do not do scheduling, timing or state tables in the plugin**:
 
-- **状态**在 PG 表 `sandboxes`（status `creating` / `running` / `suspended` / `destroyed`、handle、所属提供方），
-  懒创建：第一次沙箱工具调用才 `create`。
-- **串行**：同一对话的一切操作在 Redis 锁 `capk:sandbox:<对话>` 下，TTL 60 秒（`SANDBOX_LOCK_TTL_MS`），持有期间每
-  TTL/3 续租；超过 TTL 没有成功续租视为丢锁，中止传给提供方的 signal。并发调用排队，最多等 `sandbox.lockWaitSeconds`
-  （默认 75，**须大于锁 TTL**，否则副本崩溃后的第一次调用会先报 `sandbox.busy`，Ruling M15）。两个副本同时首次使用只建一个。
-- **防护号**：每次拿锁先把 `generation` 加一，之后的状态写入按它比较，旧持锁方的写入必然失败（`SandboxLockLostError`）。
-- **休眠**：维护任务每分钟扫描，空闲超过 `suspendAfterIdleMinutes`（默认 10），或连续运行超过 `maxRunningMinutes`
-  （默认 120，Ruling M1）的调 `suspend`。正在执行命令（锁被持有）的跳过，下次再说。
-- **销毁**：每小时扫描，不活跃超过 `destroyAfterInactiveDays`（默认 7）、组织已删除、对话已删除的调 `destroy`；
-  成员离职经一次性任务 `sandbox-destroy-for` 立即销毁。
-- **透明恢复**：休眠的下次使用时 `resume`；`gone`、已销毁、或记录的提供方不是当前提供方时重建空沙箱，工具结果带
-  英文提示。换提供方会泄漏旧实例（新提供方销毁不了，记在 `prev_*` 列，旧插件仍加载时才清理）。
-- **单条命令**上限 `sandbox.limits.maxCommandSeconds`（默认 7200）；`sandbox_bash` 默认 120 秒。命令超时还会收紧到
-  所属运行剩下的时间减 30 秒（`runtime.maxRunSeconds`，默认 900，Ruling M20；内置工具上下文的 `runDeadline`），结果
-  告诉模型是运行时限所致。长命令需要 `maxRunSeconds ≥ maxCommandSeconds`，否则启动打 warn。
+- **State** lives in the PG table `sandboxes` (status `creating` / `running` / `suspended` / `destroyed`, handle, owning provider),
+  created lazily: `create` runs only on the first sandbox tool call.
+- **Serialization**: everything for one conversation runs under the Redis lock `capk:sandbox:<conversation>`, TTL 60 seconds (`SANDBOX_LOCK_TTL_MS`), renewed every
+  TTL/3 while held; failing to renew successfully for longer than the TTL counts as losing the lock and aborts the signal passed to the provider. Concurrent calls queue, waiting at most `sandbox.lockWaitSeconds`
+  (default 75, **must be greater than the lock TTL**, otherwise the first call after a replica crash reports `sandbox.busy` first, Ruling M15). Two replicas using it for the first time at once build only one.
+- **Fencing generation**: each lock acquisition first increments `generation`, and later state writes compare against it, so an old lock holder's writes necessarily fail (`SandboxLockLostError`).
+- **Suspension**: a maintenance job scans every minute and calls `suspend` on sandboxes idle longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
+  (default 120, Ruling M1). Those executing a command (lock held) are skipped until the next time.
+- **Destruction**: scanned hourly; sandboxes inactive longer than `destroyAfterInactiveDays` (default 7), whose org is deleted, or whose conversation is deleted get `destroy`;
+  a departing member is destroyed immediately through the one-off job `sandbox-destroy-for`.
+- **Transparent recovery**: a suspended sandbox is `resume`d on next use; on `gone`, destroyed, or a recorded provider that is not the current provider, an empty sandbox is rebuilt and the tool result carries
+  an English notice. Switching providers leaks old instances (the new provider cannot destroy them; they are recorded in the `prev_*` columns and cleaned up only while the old plugin is still loaded).
+- **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `sandbox_bash` defaults to 120 seconds. A command timeout is also tightened to
+  the time remaining in the owning run minus 30 seconds (`runtime.maxRunSeconds`, default 900, Ruling M20; the built-in tool context's `runDeadline`), and the result
+  tells the model it was due to the run time limit. Long commands need `maxRunSeconds ≥ maxCommandSeconds`, otherwise startup logs a warn.
 
-## 安全
+## Security
 
-- **Docker 的 socket 代理**（`docker/sandbox-proxy/haproxy.cfg`）：只放行插件用到的接口，容器 / 卷只认 `cap-` 开头的名字，
-  请求体按正则拒绝特权、`Binds`、`CapAdd`、非 ASCII 键（Go 按 Unicode 折叠键名，`Bindſ` = `Binds`）等。**这只是兜底，
-  主要防线是网络位置**：能访问代理就几乎能控制 Docker。**绝不要把代理发布到宿主机的任何地址上（包括 127.0.0.1）**；
-  生产只放在内核所在的内部网络，沙箱不接那个网络。开发编排发布在 `127.0.0.1:2375` 只供本机（Ruling M13），此时不要开
-  `allowOpenEgress`（open 的沙箱能经 `host.docker.internal` 访问宿主机回环）。插件只经 `endpoint` 访问 Docker，不挂 `docker.sock`。
-- **容器加固**：非 root（uid 1000）执行命令，PID 1 以 root 运行但 `CapDrop: ALL`（沙箱用户停不掉容器，Ruling M16），
-  `no-new-privileges`、根文件系统只读、`PidsLimit`、私有 IPC，`/tmp` 是 tmpfs。
-- **出站代理挡 DNS 重绑定**：只看主机名挡不住 `10.0.0.1.nip.io`。代理先解析，**解析出的每个 IP** 都不能是私有、
-  回环、链路本地（含 169.254.169.254）、CGNAT、ULA、组播、保留地址（IPv4 映射 / NAT64 / 6to4 按内嵌 IPv4 判断），
-  然后直连检查过的那个 IP，不再二次解析。HTTPS 走 CONNECT，只放 443 / 80 端口。新的出站实现照这个标准。
-- 日志与错误里不带密钥（E2B 的 API key、envd 令牌）和其他组织的 id。
+- **Docker's socket proxy** (`docker/sandbox-proxy/haproxy.cfg`): allows only the endpoints the plugin uses, containers / volumes are recognized only by names starting with `cap-`,
+  and request bodies are rejected by regex for privileged mode, `Binds`, `CapAdd`, non-ASCII keys (Go folds key names by Unicode, `Bindſ` = `Binds`) and so on. **This is only a backstop;
+  the main defense is network position**: anything that can reach the proxy can nearly control Docker. **Never publish the proxy on any host address (127.0.0.1 included)**;
+  in production, put it only on the internal network where the kernel runs, and do not attach sandboxes to that network. The dev compose publishes it on `127.0.0.1:2375` for the local machine only (Ruling M13); in that case do not enable
+  `allowOpenEgress` (an open sandbox can reach the host loopback through `host.docker.internal`). The plugin reaches Docker only through `endpoint` and does not mount `docker.sock`.
+- **Container hardening**: commands run as non-root (uid 1000); PID 1 runs as root but with `CapDrop: ALL` (the sandbox user cannot stop the container, Ruling M16),
+  `no-new-privileges`, a read-only root filesystem, `PidsLimit`, private IPC, and `/tmp` is a tmpfs.
+- **The egress proxy blocks DNS rebinding**: checking only the hostname cannot stop `10.0.0.1.nip.io`. The proxy resolves first, and **every resolved IP** must not be private,
+  loopback, link-local (169.254.169.254 included), CGNAT, ULA, multicast or reserved (IPv4-mapped / NAT64 / 6to4 are judged by the embedded IPv4),
+  and then connects directly to the IP that was checked, with no second resolution. HTTPS goes through CONNECT, and only ports 443 / 80 are allowed. New egress implementations follow this standard.
+- Logs and errors carry no secrets (E2B API key, envd token) and no other orgs' ids.
 
-## 测试
+## Tests
 
-- **内核测试用假沙箱**：`packages/kernel/test/fixtures/plugins/sandbox-fake`，部署配置 `{ root }`，多个副本共用一个
-  root 就共用同一批实例。辅助函数 `readFakeSandboxOps`（操作计数）、`removeFakeSandbox`（模拟 gone）、
-  `setFakeSandboxDelays`（慢操作）、`fakeSandboxState`。用例见 `packages/kernel/test/sandbox/*`、
-  `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`、`packages/kernel/test/skills/m5-segment3.dual.test.ts`。
-- **Docker 插件**：`plugins/sandbox-docker/test/docker-env.ts` 的 `buildTestImages`（唯一标签）、`startSocketProxy`（真实 HAProxy）、
-  `cleanupTestResources`（按标签清理）；没有 Docker（或 `CAPYBARA_TEST_NO_DOCKER=1`）整组跳过，runsc 用例只在守护进程登记了
-  runsc 时跑。仅测试的选项（额外标签、`egressTestHosts`）走 `createDockerSandbox` 的第二个参数，插件配置 strict、设不了。
-  socket 代理的规则改动要配真实代理的违规用例（证明会被拒）。
-- **E2B 插件**：`@capybara-hq/testing` 的 `startFakeE2B`（控制面 + envd，命令在本机临时目录里真的跑）；真实 E2B 的
-  `test/live` 只在设了 `CAPYBARA_TEST_E2B_API_KEY` / `CAPYBARA_TEST_E2B_TEMPLATE` 时跑，文件头列出「只能在真实环境确认的
-  假设」，第一次跑时逐条核对。
-- **双副本**：`packages/kernel/test/sandbox/m5-segment2.dual.test.ts`（真实 Docker，杀执行副本后接手、休眠后恢复）。
-- 每个提供方至少覆盖：gone 与普通错误的映射、中止（调用前 / 进行中）、超时杀掉整组进程、自动启动、killAll、
-  同名替换、`/skills` 经符号链接写入被拒、出站三种模式、输出截断在 UTF-8 边界。
-- 真实运行时的人工验收（runsc、E2B、CI amd64）见 `docs/superpowers/plans/m5-live-acceptance-checklist.md`。
+- **Kernel tests use the fake sandbox**: `packages/kernel/test/fixtures/plugins/sandbox-fake`, deployment config `{ root }`; multiple replicas sharing one
+  root share the same instances. Helpers: `readFakeSandboxOps` (operation counts), `removeFakeSandbox` (simulate gone),
+  `setFakeSandboxDelays` (slow operations), `fakeSandboxState`. See `packages/kernel/test/sandbox/*`,
+  `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/m5-segment3.dual.test.ts` for cases.
+- **Docker plugin**: `buildTestImages` (unique tag), `startSocketProxy` (a real HAProxy) and `cleanupTestResources` (cleans up by label) in `plugins/sandbox-docker/test/docker-env.ts`;
+  without Docker (or with `CAPYBARA_TEST_NO_DOCKER=1`) the whole group is skipped, and runsc cases run only when the daemon has
+  runsc registered. Test-only options (extra labels, `egressTestHosts`) go through the second parameter of `createDockerSandbox`; the plugin config is strict and cannot set them.
+  A change to the socket proxy rules must come with a violating case against the real proxy (proving it is rejected).
+- **E2B plugin**: `startFakeE2B` from `@capybara-hq/testing` (control plane + envd; commands really run in a local temp directory); the real-E2B
+  `test/live` runs only when `CAPYBARA_TEST_E2B_API_KEY` / `CAPYBARA_TEST_E2B_TEMPLATE` are set, and the file header lists "assumptions that can only be confirmed in a real
+  environment", to be checked one by one on the first run.
+- **Dual-replica**: `packages/kernel/test/sandbox/m5-segment2.dual.test.ts` (real Docker; takeover after killing the executing replica, recovery after suspension).
+- Every provider covers at least: the mapping of gone versus ordinary errors, abort (before the call / in flight), a timeout killing the whole process group, auto-start, killAll,
+  same-name replacement, a `/skills` write through a symlink being rejected, the three egress modes, and output truncation at a UTF-8 boundary.
+- Manual acceptance on real runtimes (runsc, E2B, CI amd64) is in `docs/superpowers/plans/m5-live-acceptance-checklist.md`.
