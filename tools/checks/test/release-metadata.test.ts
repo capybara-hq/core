@@ -19,6 +19,8 @@ describe("checkReleaseMetadata", () => {
       x.rule,
     ]);
     expect(f).toEqual([
+      ["apps/web/package.json", "release-image-version"],
+      [".changeset/config.json", "release-image-version"],
       ["packages/design/package.json", "release-private"],
       ["packages/no-files-homepage/package.json", "release-homepage"],
       ["packages/no-files-homepage/package.json", "release-files"],
@@ -35,6 +37,14 @@ describe("checkReleaseMetadata", () => {
       (x) => x.file === join(fixture("violations"), "plugins/wrong-dir/package.json"),
     );
     expect(f?.message).toContain('"directory": "plugins/wrong-dir"');
+  });
+
+  it("names both versions when the image tag source and the web app differ", () => {
+    const f = checkReleaseMetadata(fixture("violations")).find(
+      (x) => x.file === join(fixture("violations"), "apps/web/package.json"),
+    );
+    expect(f?.message).toContain("0.1.0");
+    expect(f?.message).toContain("0.2.0");
   });
 
   it("passes on the repository", () => {

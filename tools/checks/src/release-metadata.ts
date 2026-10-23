@@ -26,10 +26,10 @@ function mustBePrivate(dir: string): boolean {
  * `"private": true`) needs a `description`, a `license`, an https `homepage` and `repository` =
  * `{ type: "git", url: REPOSITORY_URL, directory: <its dir> }` (npm provenance rejects a publish whose
  * repository does not match); published packages outside `plugins/` also need a `files` allowlist.
- * Packages that must stay off npm must be private.
+ * Packages that must stay off npm must be private. Also runs `checkImageVersions`.
  */
 export function checkReleaseMetadata(root: string): Finding[] {
-  const out: Finding[] = [];
+  const out: Finding[] = checkImageVersions(root);
   for (const group of WORKSPACE_DIRS) {
     const base = join(root, group);
     if (!existsSync(base)) continue;
@@ -74,6 +74,54 @@ export function checkReleaseMetadata(root: string): Finding[] {
         );
       }
     }
+  }
+  return out;
+}
+
+/** The image tag source (release.yml tags all four images with its version) and the web app. */
+const IMAGE_VERSION_GROUP = ["@capybara-hq/capybara", "@capybara-hq/web"];
+
+/**
+ * The images are tagged with the version of `apps/capybara`, but `capybara-web` is built from
+ * `apps/web`: a web-only fix must still produce a new image tag. So the two apps share one version
+ * (changesets `fixed` group in `.changeset/config.json`) and must never drift apart. Skipped when
+ * neither app exists (check fixtures).
+ */
+export function checkImageVersions(root: string): Finding[] {
+  const out: Finding[] = [];
+  const cliFile = join(root, "apps/capybara/package.json");
+  const webFile = join(root, "apps/web/package.json");
+  if (!existsSync(cliFile) && !existsSync(webFile)) return out;
+  const version = (f: string) =>
+    existsSync(f)
+      ? String((JSON.parse(readFileSync(f, "utf8")) as { version?: unknown }).version)
+      : "";
+  const cli = version(cliFile);
+  const web = version(webFile);
+  if (cli !== web) {
+    out.push({
+      file: webFile,
+      line: 1,
+      rule: "release-image-version",
+      message: `apps/web is ${web || "missing"} but apps/capybara (the image tag) is ${cli || "missing"}: they must share one version`,
+    });
+  }
+  const configFile = join(root, ".changeset/config.json");
+  const config = existsSync(configFile)
+    ? (JSON.parse(readFileSync(configFile, "utf8")) as { fixed?: unknown })
+    : {};
+  const grouped =
+    Array.isArray(config.fixed) &&
+    config.fixed.some(
+      (g) => Array.isArray(g) && IMAGE_VERSION_GROUP.every((name) => g.includes(name)),
+    );
+  if (!grouped) {
+    out.push({
+      file: configFile,
+      line: 1,
+      rule: "release-image-version",
+      message: `.changeset/config.json needs "fixed": [${JSON.stringify(IMAGE_VERSION_GROUP)}] so a web-only change bumps the image tag`,
+    });
   }
   return out;
 }

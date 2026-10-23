@@ -92,11 +92,12 @@ const ALWAYS_WITH_TESTS = "tools/checks";
 
 /**
  * The docker job builds the images from the CLI (kernel, plugin SDK, the builtin plugins) and the web
- * app (design), and docker/test/compose-smoke.sh installs model-fake into the running stack. Everything
+ * app (design), and docker/test/compose-smoke.sh packs model-fake (with tools/pack-plugin) and installs
+ * it into the running stack. Everything
  * under docker/ (Dockerfiles, compose files, the smoke script) and the root .dockerignore belong to no
  * package, so they already run everything.
  */
-const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake"];
+const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "tools/pack-plugin"];
 
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {

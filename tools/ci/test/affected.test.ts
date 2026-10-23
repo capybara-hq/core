@@ -286,6 +286,7 @@ describe("the real workspace", () => {
       "plugins/openai-compatible",
       "plugins/object-store-s3",
       "plugins/model-fake",
+      "tools/pack-plugin",
     ]) {
       expect(planFromFiles([`${dir}/src/x.ts`], real).docker, dir).toBe(true);
     }

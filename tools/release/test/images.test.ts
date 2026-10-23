@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareSemver,
   IMAGES,
   imageRef,
   isPrerelease,
+  listTags,
   planImages,
   type TagState,
   tagState,
+  takesLatest,
 } from "../src/images.js";
 
 const all = (s: TagState) =>
@@ -49,7 +52,7 @@ describe("isPrerelease", () => {
 });
 
 describe("planImages", () => {
-  const base = { version: "0.2.0", npmReleased: true };
+  const base = { version: "0.2.0", npmReleased: true, headOfMain: true };
 
   it("rejects a version that is not a plain semver usable as an image tag", () => {
     for (const version of ["0.2", "v0.2.0", "0.2.0+build.1", "0.2.0 latest", "", "0.2.0-"]) {
@@ -64,6 +67,20 @@ describe("planImages", () => {
       const p = planImages({ ...base, npmReleased: false, mode: "auto", tags: all("missing") });
       expect(p).toMatchObject({ push: false, build: [] });
       expect(p.reason).toMatch(/first release/);
+    });
+
+    it("builds nothing when the commit is no longer the head of main (re-run of an old run)", () => {
+      for (const headOfMain of [false, undefined]) {
+        const p = planImages({
+          version: "0.2.0",
+          npmReleased: true,
+          ...(headOfMain === undefined ? {} : { headOfMain }),
+          mode: "auto",
+          tags: all("missing"),
+        });
+        expect(p).toMatchObject({ push: false, build: [] });
+        expect(p.reason).toMatch(/head of main/);
+      }
     });
 
     it("does nothing when every image already has the version tag", () => {
@@ -118,10 +135,88 @@ describe("planImages", () => {
     });
   });
 
+  it("re-running 0.1.0 after 0.1.1 exists builds 0.1.0 but leaves latest on 0.1.1", () => {
+    const p = planImages({
+      ...base,
+      version: "0.1.0",
+      mode: "manual",
+      tags: all("missing"),
+      existingTags: ["0.1.0-rc.1", "0.1.1", "latest"],
+    });
+    expect(names(p)).toEqual(IMAGES.map((i) => i.image));
+    expect(p).toMatchObject({ push: true, latest: false });
+  });
+
+  it("a new highest version takes latest; no tags yet is eligible", () => {
+    const tags = all("missing");
+    const existingTags = ["0.1.0", "0.1.1", "latest", "sha256-abc.sig"];
+    expect(planImages({ ...base, mode: "manual", tags, existingTags }).latest).toBe(true);
+    expect(planImages({ ...base, mode: "manual", tags, existingTags: [] }).latest).toBe(true);
+    // A rebuild of the version that has latest keeps it.
+    expect(
+      planImages({ ...base, mode: "manual", tags, existingTags: ["0.2.0", "latest"] }).latest,
+    ).toBe(true);
+  });
+
   it("tags latest only for a non-prerelease version", () => {
     const tags = all("missing");
     expect(planImages({ ...base, mode: "manual", tags }).latest).toBe(true);
     expect(planImages({ ...base, version: "0.3.0-rc.1", mode: "manual", tags }).latest).toBe(false);
+  });
+});
+
+describe("compareSemver / takesLatest", () => {
+  it.each([
+    ["0.1.0", "0.1.1", -1],
+    ["0.10.0", "0.9.9", 1],
+    ["1.0.0", "1.0.0-rc.1", 1],
+    ["1.0.0-rc.2", "1.0.0-rc.10", -1],
+    ["1.0.0-alpha", "1.0.0-alpha.1", -1],
+    ["1.0.0-alpha.1", "1.0.0-beta", -1],
+    ["1.0.0-1", "1.0.0-alpha", -1],
+    ["2.0.0", "2.0.0", 0],
+  ])("%s vs %s", (a, b, sign) => {
+    expect(Math.sign(compareSemver(a, b))).toBe(sign);
+    expect(Math.sign(compareSemver(b, a))).toBe(sign === 0 ? 0 : -sign);
+  });
+
+  it("ignores tags that are not semvers and never gives latest to a prerelease", () => {
+    expect(takesLatest("0.2.0", ["latest", "main", "0.1.9"])).toBe(true);
+    expect(takesLatest("0.2.0", ["0.3.0-rc.1"])).toBe(false);
+    expect(takesLatest("0.3.0-rc.2", [])).toBe(false);
+  });
+});
+
+describe("listTags", () => {
+  it("follows the Link header across pages", async () => {
+    const urls: string[] = [];
+    const f = (async (url: string | URL) => {
+      urls.push(String(url));
+      if (String(url).includes("/token?")) return Response.json({ token: "t" });
+      if (String(url).includes("last=0.1.1")) return Response.json({ tags: ["latest"] });
+      return Response.json(
+        { tags: ["0.1.0", "0.1.1"] },
+        {
+          headers: {
+            link: '</v2/capybara-hq/capybara-api/tags/list?n=1000&last=0.1.1>; rel="next"',
+          },
+        },
+      );
+    }) as typeof fetch;
+    expect(await listTags("capybara-api", { fetch: f })).toEqual(["0.1.0", "0.1.1", "latest"]);
+    expect(urls[1]).toBe("https://ghcr.io/v2/capybara-hq/capybara-api/tags/list?n=1000");
+    expect(urls[2]).toBe("https://ghcr.io/v2/capybara-hq/capybara-api/tags/list?n=1000&last=0.1.1");
+  });
+
+  it("a package the registry won't show has no tags; other errors throw", async () => {
+    const denied = (async () =>
+      Response.json({ errors: [] }, { status: 403 })) as unknown as typeof fetch;
+    expect(await listTags("capybara-api", { fetch: denied })).toEqual([]);
+    const broken = (async (url: string | URL) =>
+      String(url).includes("/token?")
+        ? Response.json({ token: "t" })
+        : new Response(null, { status: 500 })) as typeof fetch;
+    await expect(listTags("capybara-api", { fetch: broken })).rejects.toThrow(/500/);
   });
 });
 

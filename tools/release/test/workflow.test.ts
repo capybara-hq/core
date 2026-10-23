@@ -163,6 +163,23 @@ describe("release.yml", () => {
       expect(String(b?.with?.["cache-to"])).toMatch(/^type=gha,mode=max,/);
     });
 
+    it("build: nothing runs before the build that could change the checked-out tree", () => {
+      const i = build.steps.findIndex((s) => s.uses?.startsWith("docker/build-push-action@"));
+      expect(i).toBeGreaterThan(0);
+      for (const s of build.steps.slice(0, i)) {
+        expect(s.run).toBeUndefined();
+        expect(s.uses ?? "").toMatch(
+          /^(actions\/checkout|docker\/setup-buildx-action|docker\/login-action)@/,
+        );
+      }
+      expect(jobText(build)).not.toMatch(/pnpm|npm install|setup-node/);
+    });
+
+    it("build: a re-run replaces its digest artifact", () => {
+      const up = build.steps.find((s) => s.uses?.startsWith("actions/upload-artifact@"));
+      expect(up?.with?.overwrite).toBe(true);
+    });
+
     it("publish: tags latest only when the plan says so, the version tag last", () => {
       const run = publish.steps.find((s) => s.run?.includes("imagetools create"))?.run ?? "";
       expect(run).toMatch(/if \[ "\$LATEST" = "true" \]; then\s+tags\+=\(--tag "\$IMAGE:latest"\)/);
@@ -178,5 +195,62 @@ describe("release.yml", () => {
     expect(uses.length).toBeGreaterThan(0);
     for (const l of uses)
       expect(l).toMatch(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+  });
+});
+
+// ci.yml's docker job builds the images on PRs: it must never reach a registry, and only pushes to
+// main may write the shared layer cache (PR runs would evict it, or seed it from unreviewed code).
+describe("ci.yml docker job", () => {
+  const ciText = readFileSync(
+    fileURLToPath(new URL("../../../.github/workflows/ci.yml", import.meta.url)),
+    "utf8",
+  );
+  const ci = parse(ciText) as { permissions: unknown; jobs: Record<string, Job> };
+  const docker = ci.jobs.docker as Job;
+  const builds = docker.steps.filter((s) => s.uses?.startsWith("docker/build-push-action@"));
+
+  it("runs when the plan says so, feeds ci-ok and only reads contents", () => {
+    expect(docker.if).toBe("needs.changes.outputs.docker == 'true'");
+    expect(ci.jobs["ci-ok"]?.needs).toContain("docker");
+    expect(ci.permissions).toEqual({});
+    expect(docker.permissions).toEqual({ contents: "read" });
+  });
+
+  it("never logs in or pushes: four builds loaded into the local Docker", () => {
+    expect(jobText(docker)).not.toMatch(/login-action|docker login|docker push|push-by-digest/);
+    expect(builds).toHaveLength(4);
+    for (const b of builds) {
+      expect(b.with?.load).toBe(true);
+      expect(b.with?.push).toBeUndefined();
+      expect(b.with?.outputs).toBeUndefined();
+      expect(b.with?.platforms).toBe("linux/amd64");
+    }
+  });
+
+  it("writes the layer cache only on push", () => {
+    expect(docker.env?.CACHE_TO).toBe(
+      `\${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}`,
+    );
+    for (const b of builds) {
+      const to = b.with?.["cache-to"];
+      if (to !== undefined) expect(String(to)).toMatch(/^\$\{\{ env\.CACHE_TO != '' && /);
+    }
+    expect(builds.filter((b) => b.with?.["cache-to"] !== undefined).length).toBeGreaterThan(0);
+  });
+
+  it("pins its actions to commit SHAs", () => {
+    for (const s of docker.steps.filter((x) => x.uses !== undefined)) {
+      expect(s.uses).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+    }
+    const lines = ciText.slice(ciText.indexOf("\n  docker:\n"), ciText.indexOf("\n  # Aggregate"));
+    for (const l of lines.split("\n").filter((x) => /^\s*-?\s*uses:/.test(x))) {
+      expect(l).toMatch(/@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+    }
+  });
+
+  it("runs the compose smoke test against the loaded images", () => {
+    const smoke = docker.steps.at(-1);
+    expect(smoke?.run).toBe("docker/test/compose-smoke.sh");
+    expect(smoke?.env?.SKIP_BUILD).toBe("1");
   });
 });

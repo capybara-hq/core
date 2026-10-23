@@ -10,6 +10,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# No default token permissions: each job asks for what it needs (only `contents: read` to check out;
+# artifacts and the Actions cache use the runner's own token, not GITHUB_TOKEN).
+permissions: {}
+
 # Branch protection requires `ci-ok` (which aggregates every job below) and `issue-linked`
 # (set by community.yml, not part of this workflow).
 #
@@ -24,13 +28,16 @@ concurrency:
 # - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;
 #   ~15 min, so by diff): when anything the images are built from changed (the dependency closure of
 #   apps/capybara and apps/web: kernel, plugin-sdk, the builtin plugins openai-compatible and
-#   object-store-s3, design) or plugins/model-fake (the smoke test installs it); docker/**, the
+#   object-store-s3, design), plugins/model-fake or tools/pack-plugin (the smoke test packs and
+#   installs model-fake); docker/**, the
 #   Dockerfiles and .dockerignore are outside every package, so they run everything;
 # - docs-only diffs skip test / web / e2e / visual / docker; root config, the lockfile, .github/**, tools/ci/**,
 #   packages/testing/**, unknown files, or a diff that can't be computed run everything.
 jobs:
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       test: ${{ steps.plan.outputs.test }}
       test-dirs: ${{ steps.plan.outputs.test-dirs }}
@@ -71,6 +78,8 @@ jobs:
   # Cheap or whole-repo checks and build artifacts: always run in full. Tests are in the test job.
   ci:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,6 +117,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.test == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -135,6 +146,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -149,6 +162,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # 本地实测 e2e 本身约 10s（含 Testcontainers 启动），CI 另需依赖安装、Playwright 与镜像拉取。
     # Chromium 按 lockfile 里 @playwright/test 的版本缓存在 ~/.cache/ms-playwright；命中时只装系统依赖
     # （install-deps 仍走 apt）。apt 镜像慢时只装依赖也能花掉几分钟（run 39890548962 在 10 分钟处被取消，
@@ -195,6 +210,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.visual == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # 基准截图只在此镜像中生成与比对（版本与 apps/web 的 @playwright/test 一致，升级时同步修改）。
     container: mcr.microsoft.com/playwright:v1.64.1-noble
     timeout-minutes: 15
@@ -226,14 +243,18 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 45
     env:
       CACHE_TO: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # compose-smoke.sh packs plugins/model-fake with `pnpm pack-plugin`.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -297,6 +318,7 @@ jobs:
     if: always()
     needs: [changes, ci, test, web, e2e, visual, docker]
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - env:
           CHANGES: ${{ needs.changes.result }}

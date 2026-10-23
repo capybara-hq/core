@@ -1,18 +1,17 @@
 /**
- * Plans the image release (see images.ts) and, under GitHub Actions, writes the plan to $GITHUB_OUTPUT.
+ * Plans the image release (see images.ts, images-release.ts) and, under GitHub Actions, writes the plan
+ * to $GITHUB_OUTPUT.
  *
  *   pnpm release:images --mode auto|manual|dry-run
  *
  * Reads the tag from apps/capybara/package.json. `auto` asks npm whether the first release has happened
- * and, like `manual`, asks ghcr.io which image tags exist (GITHUB_TOKEN from the environment, when set,
- * for packages that are not public). Outputs: version, push, latest, build (any image to build) and
- * matrix (JSON list of the image targets to build).
+ * and the GitHub API whether GITHUB_SHA is still the head of main; `auto` and `manual` ask ghcr.io
+ * which tags exist (GITHUB_TOKEN from the environment, when set, for packages that are not public).
+ * Outputs: version, push, latest, build (any image to build) and matrix (JSON list of the targets).
  */
-import { appendFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { IMAGES, type ImageMode, planImages, type TagState, tagState } from "./images.js";
-import { discoverWorkspace, fetchPublishedVersions, REPO_ROOT } from "./publish.js";
-import { isFirstRelease } from "./publish-plan.js";
+import { appendFileSync } from "node:fs";
+import { type ImageMode, listTags, tagState } from "./images.js";
+import { imageOutputs, planImageRelease } from "./images-release.js";
 
 const MODES: readonly ImageMode[] = ["auto", "manual", "dry-run"];
 
@@ -26,41 +25,36 @@ if (args.length !== 2 || args[0] !== "--mode") usage("expected --mode <mode>");
 const mode = args[1] as ImageMode;
 if (!MODES.includes(mode)) usage(`unknown mode ${args[1]}`);
 
+const githubToken = process.env.GITHUB_TOKEN;
+
+/** The head of main through the GitHub API (GITHUB_REPOSITORY, GITHUB_TOKEN with contents: read). */
+async function mainHead(): Promise<string> {
+  const repo = process.env.GITHUB_REPOSITORY;
+  if (repo === undefined || repo === "") throw new Error("GITHUB_REPOSITORY is not set");
+  const api = process.env.GITHUB_API_URL || "https://api.github.com";
+  const headers: Record<string, string> = { accept: "application/vnd.github+json" };
+  if (githubToken !== undefined && githubToken !== "")
+    headers.authorization = `Bearer ${githubToken}`;
+  const res = await fetch(`${api}/repos/${repo}/git/ref/heads/main`, { headers });
+  if (!res.ok) throw new Error(`head of main: HTTP ${res.status}`);
+  const sha = ((await res.json()) as { object?: { sha?: unknown } }).object?.sha;
+  if (typeof sha !== "string") throw new Error("head of main: no sha in the response");
+  return sha;
+}
+
 try {
-  const manifest = JSON.parse(
-    readFileSync(join(REPO_ROOT, "apps/capybara/package.json"), "utf8"),
-  ) as { version?: unknown };
-  const version = String(manifest.version);
-
-  let npmReleased = false;
-  const tags: Record<string, TagState> = {};
-  if (mode === "auto") {
-    const pkgs = discoverWorkspace();
-    const published = new Map<string, readonly string[]>();
-    for (const p of pkgs)
-      if (!p.private) published.set(p.name, await fetchPublishedVersions(p.name));
-    npmReleased = !isFirstRelease(pkgs, published);
-  }
-  if (mode === "manual" || (mode === "auto" && npmReleased)) {
-    for (const t of IMAGES) {
-      tags[t.image] = await tagState(t.image, version, { githubToken: process.env.GITHUB_TOKEN });
-      console.log(`${t.image}:${version}: ${tags[t.image]}`);
-    }
-  }
-
-  const plan = planImages({ mode, version, npmReleased, tags });
+  const plan = await planImageRelease({
+    mode,
+    sha: process.env.GITHUB_SHA,
+    mainHead,
+    tagState: (image, tag) => tagState(image, tag, { githubToken }),
+    listTags: (image) => listTags(image, { githubToken }),
+  });
   console.log(plan.reason);
-  const outputs: Record<string, string> = {
-    version: plan.version,
-    push: String(plan.push),
-    latest: String(plan.latest),
-    build: String(plan.build.length > 0),
-    matrix: JSON.stringify(plan.build),
-  };
-  const lines = Object.entries(outputs).map(([k, v]) => `${k}=${v}`);
-  console.log(lines.join("\n"));
+  const lines = imageOutputs(plan);
+  process.stdout.write(lines);
   const out = process.env.GITHUB_OUTPUT;
-  if (out !== undefined && out !== "") appendFileSync(out, `${lines.join("\n")}\n`);
+  if (out !== undefined && out !== "") appendFileSync(out, lines);
 } catch (e) {
   console.error(`image release plan failed: ${e instanceof Error ? e.message : String(e)}`);
   process.exit(1);

@@ -50,6 +50,48 @@ const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z-]+)*)?$/;
 
 export const isPrerelease = (version: string) => version.includes("-");
 
+/** Parses a tag that is a plain semver (`latest`, digests and other tags give undefined). */
+function parseSemver(v: string): { core: number[]; pre: string[] } | undefined {
+  if (!VERSION_RE.test(v)) return undefined;
+  const [core = "", pre] = v.split(/-(.*)/s);
+  return { core: core.split(".").map(Number), pre: pre === undefined ? [] : pre.split(".") };
+}
+
+/** Semver precedence (no build metadata): negative when a < b. Both must be plain semvers. */
+export function compareSemver(a: string, b: string): number {
+  const x = parseSemver(a);
+  const y = parseSemver(b);
+  if (x === undefined || y === undefined) throw new Error(`not a semver: ${a} / ${b}`);
+  for (let i = 0; i < 3; i++) {
+    const d = (x.core[i] ?? 0) - (y.core[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  // A version without a prerelease part ranks above any prerelease of it.
+  if (x.pre.length === 0 || y.pre.length === 0) return y.pre.length - x.pre.length;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i];
+    const q = y.pre[i];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    if (p === q) continue;
+    const pn = /^\d+$/.test(p);
+    const qn = /^\d+$/.test(q);
+    if (pn && qn) return Number(p) - Number(q);
+    if (pn !== qn) return pn ? -1 : 1;
+    return p < q ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Whether `version` may take `latest`: no prerelease part, and not lower than any semver tag already in
+ * the registry (so re-running an old release never moves `latest` back). No tags yet = eligible.
+ */
+export function takesLatest(version: string, existingTags: readonly string[]): boolean {
+  if (isPrerelease(version)) return false;
+  return existingTags.every((t) => parseSemver(t) === undefined || compareSemver(version, t) >= 0);
+}
+
 /** Whether an image has a tag: `denied` = the registry won't say (no such package, or no access). */
 export type TagState = "present" | "missing" | "denied";
 
@@ -62,13 +104,20 @@ export interface PlanImagesInput {
   npmReleased: boolean;
   /** Image name -> state of its `version` tag. Not needed for `dry-run`. */
   tags: Readonly<Record<string, TagState>>;
+  /** Every tag the image packages already have (all four together); `latest` never moves back. */
+  existingTags?: readonly string[];
+  /**
+   * `auto` only: the pushed commit is still the head of main. A re-run of an older push run (or a run
+   * queued behind a newer push) builds nothing; the run for the newer commit releases.
+   */
+  headOfMain?: boolean;
 }
 
 export interface ImagePlan {
   version: string;
   /** Push to ghcr.io (false: build only, or nothing to do). */
   push: boolean;
-  /** Also tag `latest` (only for a version without a prerelease part). */
+  /** Also tag `latest`: no prerelease part, and no higher semver tag in the registry. */
   latest: boolean;
   build: ImageTarget[];
   reason: string;
@@ -79,7 +128,7 @@ export function planImages(input: PlanImagesInput): ImagePlan {
   if (!VERSION_RE.test(version)) {
     throw new Error(`apps/capybara version "${version}" is not a semver usable as an image tag`);
   }
-  const latest = !isPrerelease(version);
+  const latest = takesLatest(version, input.existingTags ?? []);
   if (mode === "dry-run") {
     return { version, push: false, latest, build: [...IMAGES], reason: "dry run: build only" };
   }
@@ -92,6 +141,17 @@ export function planImages(input: PlanImagesInput): ImagePlan {
       reason:
         "nothing is on npm yet: the first release (npm and images) is published only by running " +
         "the release workflow manually (workflow_dispatch)",
+    };
+  }
+  if (mode === "auto" && input.headOfMain !== true) {
+    return {
+      version,
+      push: false,
+      latest,
+      build: [],
+      reason:
+        "this commit is no longer the head of main: the run for the newer commit releases " +
+        "(run the workflow manually to force a release)",
     };
   }
   const build: ImageTarget[] = [];
@@ -113,6 +173,54 @@ export function planImages(input: PlanImagesInput): ImagePlan {
       ? `every image already has tag ${version}`
       : `missing tag ${version}: ${build.map((t) => t.image).join(", ")}`;
   return { version, push: build.length > 0, latest, build, reason };
+}
+
+/** Follows a registry `Link: <...>; rel="next"` header (relative to the registry). */
+function nextLink(res: Response): string | undefined {
+  const m = /<([^>]+)>\s*;\s*rel="next"/.exec(res.headers.get("link") ?? "");
+  return m?.[1] === undefined ? undefined : new URL(m[1], `https://${REGISTRY}`).toString();
+}
+
+async function pullToken(repo: string, opts: TagStateOptions): Promise<string | "denied"> {
+  const f = opts.fetch ?? fetch;
+  const tokenUrl = new URL(`https://${REGISTRY}/token`);
+  tokenUrl.searchParams.set("service", REGISTRY);
+  tokenUrl.searchParams.set("scope", `repository:${repo}:pull`);
+  const headers: Record<string, string> = {};
+  if (opts.githubToken !== undefined && opts.githubToken !== "") {
+    const basic = Buffer.from(`x-access-token:${opts.githubToken}`).toString("base64");
+    headers.authorization = `Basic ${basic}`;
+  }
+  const tokenRes = await f(tokenUrl.toString(), { headers });
+  if (tokenRes.status === 401 || tokenRes.status === 403) return "denied";
+  if (!tokenRes.ok) throw new Error(`${REGISTRY} token for ${repo}: HTTP ${tokenRes.status}`);
+  const body = (await tokenRes.json()) as { token?: unknown };
+  if (typeof body.token !== "string") throw new Error(`${REGISTRY} token for ${repo}: no token`);
+  return body.token;
+}
+
+/**
+ * Every tag of `ghcr.io/capybara-hq/<image>` (paginated). A package the registry won't show (it does
+ * not exist yet, or we may not read it) has no tags as far as `latest` is concerned.
+ */
+export async function listTags(image: string, opts: TagStateOptions = {}): Promise<string[]> {
+  const f = opts.fetch ?? fetch;
+  const repo = `${NAMESPACE}/${image}`;
+  const token = await pullToken(repo, opts);
+  if (token === "denied") return [];
+  const tags: string[] = [];
+  let url: string | undefined = `https://${REGISTRY}/v2/${repo}/tags/list?n=1000`;
+  for (let page = 0; url !== undefined; page++) {
+    if (page >= 100) throw new Error(`${imageRef(image)}: too many tag pages`);
+    const res = await f(url, { headers: { authorization: `Bearer ${token}` } });
+    if (res.status === 401 || res.status === 403 || res.status === 404) return [];
+    if (!res.ok) throw new Error(`${imageRef(image)} tags: HTTP ${res.status}`);
+    const body = (await res.json()) as { tags?: unknown };
+    if (Array.isArray(body.tags))
+      for (const t of body.tags) if (typeof t === "string") tags.push(t);
+    url = nextLink(res);
+  }
+  return tags;
 }
 
 /** Media types a tag may point at: multi-arch indexes (what we push) and single manifests. */
@@ -142,23 +250,11 @@ export async function tagState(
 ): Promise<TagState> {
   const f = opts.fetch ?? fetch;
   const repo = `${NAMESPACE}/${image}`;
-  const tokenUrl = new URL(`https://${REGISTRY}/token`);
-  tokenUrl.searchParams.set("service", REGISTRY);
-  tokenUrl.searchParams.set("scope", `repository:${repo}:pull`);
-  const headers: Record<string, string> = {};
-  if (opts.githubToken !== undefined && opts.githubToken !== "") {
-    const basic = Buffer.from(`x-access-token:${opts.githubToken}`).toString("base64");
-    headers.authorization = `Basic ${basic}`;
-  }
-  const tokenRes = await f(tokenUrl.toString(), { headers });
-  if (tokenRes.status === 401 || tokenRes.status === 403) return "denied";
-  if (!tokenRes.ok) throw new Error(`${REGISTRY} token for ${repo}: HTTP ${tokenRes.status}`);
-  const body = (await tokenRes.json()) as { token?: unknown };
-  if (typeof body.token !== "string") throw new Error(`${REGISTRY} token for ${repo}: no token`);
-
+  const token = await pullToken(repo, opts);
+  if (token === "denied") return "denied";
   const res = await f(`https://${REGISTRY}/v2/${repo}/manifests/${encodeURIComponent(tag)}`, {
     method: "HEAD",
-    headers: { authorization: `Bearer ${body.token}`, accept: MANIFEST_ACCEPT },
+    headers: { authorization: `Bearer ${token}`, accept: MANIFEST_ACCEPT },
   });
   if (res.status === 200) return "present";
   if (res.status === 404) return "missing";
