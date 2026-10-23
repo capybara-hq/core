@@ -14,3 +14,5 @@ artifacts
 # Compose deployment: local secrets
 docker/.env
 docker/secrets/
+# check:sdk-api temp output (removed after each run)
+.sdk-api-tmp-*

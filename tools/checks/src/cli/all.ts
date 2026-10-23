@@ -9,6 +9,7 @@ import { checkPluginPack } from "../plugin-pack.js";
 import { checkPluginPermissions } from "../plugin-permissions.js";
 import { checkPluginState } from "../plugin-state.js";
 import { checkReleaseMetadata } from "../release-metadata.js";
+import { checkSdkApi } from "../sdk-api.js";
 import type { Finding } from "../source.js";
 import { checkSyncedSkills } from "../synced-skills.js";
 import { checkTestPlugins } from "../test-plugins.js";
@@ -36,6 +37,7 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
   { name: "测试插件", run: () => checkTestPlugins(root) },
   { name: "Synced skills", run: () => checkSyncedSkills(root) },
   { name: "release metadata", run: () => checkReleaseMetadata(root) },
+  { name: "SDK API snapshot", run: () => checkSdkApi({ update: false }) },
   {
     name: "compose haproxy",
     run: () =>
