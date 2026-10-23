@@ -236,9 +236,11 @@ only in chat conversations, never in eval replays. Payloads are deep-frozen copi
 - **`usage.report`** gets every logged `usage` event at least once (retries on any replica), so the
   handler must be idempotent by `eventId`; `purpose` tells a step call from a compaction call (both
   are billed). Targets come from deployment state and organization enablement. A plugin that is
-  loaded but registered no `usage.report` handler is not a target (its deliveries are dropped), and
-  a target that no replica has loaded is dropped with one throttled warning instead of failing every
-  attempt; still, declare `usage.report` only when you always register the handler.
+  loaded but registered no `usage.report` handler is dropped as a target, and a target still
+  undelivered on the last attempt is dropped only when it is definitely unservable (replicas report
+  it, none has it loaded or still serves an older version). A drop is never silent: the job ends
+  failed (kept, capped) with the dropped plugins in its failedReason, plus a throttled warning.
+  Declare `usage.report` only when you always register the handler.
 - Hooks live on the plugin instance: an upgrade or disable drains in-flight hook calls like tool
   calls.
 
