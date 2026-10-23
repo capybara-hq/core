@@ -22,20 +22,23 @@ import { root } from "./report.js";
 requireScanTargets();
 
 const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
-  { name: "迁移", run: () => checkMigrations(migrationDirs()) },
-  { name: "依赖边界", run: () => checkDeps(pluginDirs(), [join(root, "packages/plugin-sdk")]) },
-  { name: "插件状态", run: () => checkPluginState(pluginDirs()) },
-  { name: "插件权限", run: () => checkPluginPermissions(pluginDirs()) },
-  { name: "插件打包", run: () => checkPluginPack(pluginDirs()) },
-  { name: "工具设计", run: () => checkToolDesign(toolDesignDirs(pluginDirs())) },
-  { name: "配置文档", run: () => checkConfigDocs() },
-  { name: "包 JSON Schema", run: () => checkPackageSchemas() },
-  { name: "界面文案", run: () => checkI18n(join(root, "apps/web/messages")) },
+  { name: "Migrations", run: () => checkMigrations(migrationDirs()) },
   {
-    name: "界面规范",
+    name: "Dependency boundary",
+    run: () => checkDeps(pluginDirs(), [join(root, "packages/plugin-sdk")]),
+  },
+  { name: "Plugin state", run: () => checkPluginState(pluginDirs()) },
+  { name: "Plugin permissions", run: () => checkPluginPermissions(pluginDirs()) },
+  { name: "Plugin pack", run: () => checkPluginPack(pluginDirs()) },
+  { name: "Tool design", run: () => checkToolDesign(toolDesignDirs(pluginDirs())) },
+  { name: "Config docs", run: () => checkConfigDocs() },
+  { name: "Package JSON Schema", run: () => checkPackageSchemas() },
+  { name: "UI copy", run: () => checkI18n(join(root, "apps/web/messages")) },
+  {
+    name: "Web UI rules",
     run: () => checkWebUi(join(root, "apps/web/src"), join(root, "packages/design/src")),
   },
-  { name: "测试插件", run: () => checkTestPlugins(root) },
+  { name: "Test plugins", run: () => checkTestPlugins(root) },
   { name: "Synced skills", run: () => checkSyncedSkills(root) },
   { name: "Skills frontmatter", run: () => checkSkillsFrontmatter(join(root, ".agents/skills")) },
   { name: "release metadata", run: () => checkReleaseMetadata(root) },
@@ -57,22 +60,22 @@ for (const c of checks) {
     findings = await c.run();
   } catch (e) {
     console.error(
-      `[${c.name}] 检查自身崩溃：${e instanceof Error ? (e.stack ?? e.message) : String(e)}`,
+      `[${c.name}] check crashed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`,
     );
     failed++;
     continue;
   }
   if (findings.length === 0) {
-    console.log(`[${c.name}] 通过`);
+    console.log(`[${c.name}] passed`);
     continue;
   }
   failed++;
-  console.error(`[${c.name}] ${findings.length} 条问题`);
+  console.error(`[${c.name}] ${findings.length} finding(s)`);
   for (const f of findings)
     console.error(`  ${relative(root, f.file)}:${f.line} ${f.rule} ${f.message}`);
 }
 if (failed > 0) {
-  console.error(`\n${failed} 项检查未通过`);
+  console.error(`\n${failed} check(s) failed`);
   process.exit(1);
 }
-console.log("\n全部检查通过");
+console.log("\nAll checks passed");

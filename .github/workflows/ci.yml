@@ -104,7 +104,7 @@ jobs:
       - name: SDK API changeset
         if: github.event_name == 'pull_request'
         run: pnpm check:sdk-api-changeset --base "$(git rev-parse HEAD^1)"
-      - name: 打包全部官方插件（C12，构建产物；发布到 npm / ghcr 在 M7）
+      - name: Pack all official plugins (C12, build artifacts; publishing to npm / ghcr is in M7)
         run: pnpm pack-plugins --out artifacts/plugins
       - uses: actions/upload-artifact@v4
         with:
@@ -112,7 +112,7 @@ jobs:
           path: artifacts/plugins/*.tgz
           if-no-files-found: error
           retention-days: 14
-      - name: 校验提交信息
+      - name: Lint commit messages
         if: github.event_name == 'pull_request'
         run: >
           pnpm exec commitlint
@@ -173,10 +173,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # 本地实测 e2e 本身约 10s（含 Testcontainers 启动），CI 另需依赖安装、Playwright 与镜像拉取。
-    # Chromium 按 lockfile 里 @playwright/test 的版本缓存在 ~/.cache/ms-playwright；命中时只装系统依赖
-    # （install-deps 仍走 apt）。apt 镜像慢时只装依赖也能花掉几分钟（run 39890548962 在 10 分钟处被取消，
-    # 测试其实都已通过），所以时限 20 分钟。
+    # Measured locally, the e2e run itself takes about 10s (including Testcontainers startup); CI also
+    # needs dependency install, Playwright and image pulls. Chromium is cached under
+    # ~/.cache/ms-playwright by the @playwright/test version in the lockfile; on a hit only the system
+    # dependencies are installed (install-deps still goes through apt). With a slow apt mirror that alone
+    # can take several minutes (run 39890548962 was cancelled at the 10 minute mark although the tests
+    # had all passed), hence the 20 minute limit.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -186,24 +188,24 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 读 Playwright 版本
+      - name: Read the Playwright version
         id: playwright
         run: |
           version=$(node -p "require('./apps/web/node_modules/@playwright/test/package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: 缓存 Playwright 浏览器
+      - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-      - name: 安装 Playwright Chromium（含系统依赖）
+      - name: Install Playwright Chromium (with system dependencies)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @capybara-hq/web exec playwright install --with-deps chromium
-      - name: 只装 Chromium 的系统依赖（浏览器来自缓存）
+      - name: Install only the Chromium system dependencies (the browser comes from the cache)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @capybara-hq/web exec playwright install-deps chromium
-      - name: 端到端测试（Testcontainers 起 PG / Valkey，内核 + model-fake，Web 层）
+      - name: End-to-end tests (Testcontainers starts PG / Valkey, kernel + model-fake, web tier)
         run: pnpm --filter @capybara-hq/web e2e
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -221,7 +223,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # 基准截图只在此镜像中生成与比对（版本与 apps/web 的 @playwright/test 一致，升级时同步修改）。
+    # Baseline screenshots are generated and compared only in this image (the version matches
+    # @playwright/test in apps/web; change both together when upgrading).
     container: mcr.microsoft.com/playwright:v1.64.1-noble
     timeout-minutes: 15
     steps:
@@ -232,7 +235,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 截图回归（/dev/ui 目录页）
+      - name: Screenshot regression (/dev/ui catalog page)
         run: pnpm --filter @capybara-hq/web visual
       - uses: actions/upload-artifact@v4
         if: failure()

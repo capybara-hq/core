@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { scanTargetProblem } from "../sentinel.js";
 import { root } from "./report.js";
 
-/** 只扫描 packages/*\/src/migrations 与 plugins/*\/migrations；fixtures 不在扫描范围内。 */
+/** Scans only packages/*\/src/migrations and plugins/*\/migrations; fixtures are out of scope. */
 export function migrationDirs(): string[] {
   const dirs: string[] = [];
   const sub = (base: string, rest: string) => {
@@ -18,7 +18,7 @@ export function migrationDirs(): string[] {
   return dirs;
 }
 
-/** plugins/* 下的所有插件目录（真实代码；fixtures 不在范围内）。 */
+/** Every plugin directory under plugins/* (real code; fixtures are out of scope). */
 export function pluginDirs(): string[] {
   const base = join(root, "plugins");
   if (!existsSync(base)) return [];
@@ -28,12 +28,12 @@ export function pluginDirs(): string[] {
     .sort();
 }
 
-/** 工具设计检查的范围：内核内置工具目录 + 全部插件（fixtures 不在范围内）。 */
+/** Scope of the tool-design check: the kernel builtin tools directory plus all plugins (fixtures are out of scope). */
 export function toolDesignDirs(plugins: string[]): string[] {
   return [join(root, "packages/kernel/src/tools/builtins"), ...plugins];
 }
 
-/** 哨兵：插件目录为空或 plugin-sdk 缺失时直接 exit 1，避免空扫描假绿。 */
+/** Sentinel: exit 1 when the plugin directory is empty or plugin-sdk is missing, so an empty scan cannot pass. */
 export function requireScanTargets(): void {
   const problem = scanTargetProblem(pluginDirs(), root);
   if (problem === undefined) return;
