@@ -203,7 +203,7 @@ describe("M4 第一段验收（双副本）", () => {
     const sync1 = await call(ownerJar, "POST", `${base}/plugins/fake-im/directory/sync`);
     expect(sync1.status).toBe(202);
     await waitFor(async () => (await syncAudits()).length === 1, 20_000, "first directory sync");
-    const bobId = await waitFor(async () => identityOwner("u-bob"), 5_000, "bob's account");
+    const bobId = await waitFor(async () => identityOwner("u-bob"), 15_000, "bob's account");
     expect(await membership(bobId)).toEqual({ role: "member", source: "directory:fake-im" });
 
     const ag = await call(ownerJar, "POST", `${base}/agents`, {

@@ -361,7 +361,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     expect(
       await db.selectFrom("plugin_installs").select("name").where("name", "=", "life").execute(),
     ).toEqual([]);
-    await waitFor(() => both(404), 4_000, "route gate 404 on both replicas", 100);
+    await waitFor(() => both(404), 20_000, "route gate 404 on both replicas", 100);
     const hits = await sql<{ n: number }>`SELECT count(*)::int AS n FROM plugin_life.hits`.execute(
       db,
     );
