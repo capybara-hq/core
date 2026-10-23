@@ -14,6 +14,9 @@ artifacts
 docs
 skills
 apps/web/visual
+apps/web/e2e
+**/test-results
+**/playwright-report
 **/.DS_Store
 **/.env
 **/.env.*

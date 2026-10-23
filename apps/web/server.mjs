@@ -24,7 +24,7 @@ const app = next({ dev, dir: import.meta.dirname, port, ...(hostname && { hostna
 const handle = app.getRequestHandler();
 await app.prepare();
 
-createServer((req, res) => {
+const server = createServer((req, res) => {
   sanitizeIncoming(req, token);
   handle(req, res);
 }).listen(port, hostname, () => {
@@ -32,3 +32,16 @@ createServer((req, res) => {
     `> web listening on http://${hostname ?? "localhost"}:${port} (${dev ? "dev" : "production"})`,
   );
 });
+
+// In production (e.g. as PID 1 in a container, where node has no default signal handling) stop on
+// SIGTERM / SIGINT: refuse new connections, give in-flight requests a few seconds (SSE streams
+// never end by themselves), then exit. Dev keeps Node's default: exit at once.
+if (!dev) {
+  for (const signal of ["SIGTERM", "SIGINT"]) {
+    process.once(signal, () => {
+      server.close(() => process.exit(0));
+      server.closeIdleConnections();
+      setTimeout(() => process.exit(0), 5000).unref();
+    });
+  }
+}
