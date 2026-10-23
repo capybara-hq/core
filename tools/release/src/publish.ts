@@ -194,7 +194,8 @@ export async function runPublish(
     .map((p) => `${p.name}@${p.version}`)
     .sort();
   for (const s of skipped) console.log(`skip    ${s} (already on the registry)`);
-  for (const s of steps) console.log(`publish ${s.name}@${s.version} (${s.kind}, ${s.dir})`);
+  for (const s of steps)
+    console.log(`publish ${s.name}@${s.version} (${s.kind}, ${s.dir}, tag ${s.tag})`);
   if (steps.length === 0) {
     console.log("nothing to publish");
     return { published: [], skipped };
@@ -223,7 +224,7 @@ export async function runPublish(
       const issues = packedManifestIssues(readManifest(file));
       if (issues.length > 0) throw new Error(`${basename(file)}: ${issues.join("; ")}`);
     }
-    const args = ["publish", file, "--access", "public"];
+    const args = ["publish", file, "--access", "public", "--tag", step.tag];
     if (opts.provenance) args.push("--provenance");
     if (opts.dryRun) args.push("--dry-run");
     await exec("npm", args, root);

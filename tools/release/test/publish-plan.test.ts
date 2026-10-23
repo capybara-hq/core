@@ -80,7 +80,22 @@ describe("planPublish", () => {
       version: "0.1.0",
       kind: "plugin-tgz",
       dir: pluginDir("slack"),
+      tag: "latest",
     });
+  });
+
+  it("tags prereleases next and backports release-<major>.<minor>, never latest", () => {
+    const pkg = WORKSPACE.find((p) => p.name === "@capybara-hq/plugin-slack");
+    if (pkg === undefined) throw new Error("no slack in the fixture");
+    const tagOf = (version: string, published: string[]) =>
+      planPublish([{ ...pkg, version }], new Map([[pkg.name, published]]))[0]?.tag;
+    expect(tagOf("0.2.0-rc.0", ["0.1.0"])).toBe("next");
+    expect(tagOf("0.3.0-rc.1", [])).toBe("next");
+    expect(tagOf("0.1.5", ["0.1.4", "0.2.0"])).toBe("release-0.1");
+    // Prereleases on the registry don't count: 0.2.0 is the highest stable, so 0.1.9 is a backport.
+    expect(tagOf("0.1.9", ["0.2.0", "0.3.0-rc.0"])).toBe("release-0.1");
+    expect(tagOf("0.2.1", ["0.2.0", "0.3.0-rc.0"])).toBe("latest");
+    expect(tagOf("0.1.0", [])).toBe("latest");
   });
 
   it("returns an empty plan when everything is already published", () => {

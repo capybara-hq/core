@@ -2,6 +2,7 @@
  * Pure planning for the npm release: which workspace packages get published, in which order and how.
  * No I/O here; `publish.ts` discovers the workspace and asks the registry.
  */
+import { compareSemver, isPrerelease } from "./images.js";
 
 /** A workspace package as the release sees it (`dir` is relative to the repo root, POSIX separators). */
 export interface WorkspacePackage {
@@ -22,6 +23,28 @@ export interface PublishStep {
   version: string;
   kind: "pnpm" | "plugin-tgz";
   dir: string;
+  /** `npm publish --tag`: see `distTagFor`. */
+  tag: string;
+}
+
+/** A plain semver without build metadata (what `compareSemver` accepts). */
+const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z-]+)*)?$/;
+
+/**
+ * The npm dist-tag a version is published under, following the image `latest` rule: a prerelease
+ * goes to `next`; a stable version below the highest stable version already on the registry (a
+ * backport) goes to `release-<major>.<minor>`, so `latest` never moves back (and npm >= 11, which
+ * refuses an untagged publish below `latest`, accepts it); anything else is `latest`. Installing
+ * `npm:@capybara-hq/plugin-x` without a version therefore never picks up an rc or a backport.
+ */
+export function distTagFor(version: string, published: readonly string[]): string {
+  if (isPrerelease(version)) return "next";
+  const below = published.some(
+    (v) => SEMVER_RE.test(v) && !isPrerelease(v) && compareSemver(version, v) < 0,
+  );
+  if (!below) return "latest";
+  const [major, minor] = version.split(".");
+  return `release-${major}.${minor}`;
 }
 
 /**
@@ -55,6 +78,7 @@ export function planPublish(
       version: p.version,
       kind: p.isPlugin ? "plugin-tgz" : "pnpm",
       dir: p.dir,
+      tag: distTagFor(p.version, published.get(p.name) ?? []),
     }));
 }
 

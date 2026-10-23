@@ -141,6 +141,18 @@ stable semver tag already in ghcr.io:
 - `latest` is pushed before the version tag. The version tag is the "done" marker the planner looks
   for.
 
+### npm dist-tags
+
+npm follows the same rule as the image `latest` (`distTagFor` in `tools/release/src/publish-plan.ts`):
+
+- A prerelease (e.g. `0.2.0-rc.0`) is published with `--tag next`.
+- A stable version below the highest stable version already on npm (a backport such as 0.1.5 after
+  0.2.0) is published with `--tag release-<major>.<minor>` (`release-0.1`).
+- Anything else gets `latest`.
+
+So `capybara plugins install npm:@capybara-hq/plugin-slack` without a version never installs an rc
+or a backport, and npm >= 11 (which refuses an untagged publish below `latest`) accepts backports.
+
 ## Failures and re-runs
 
 - **Self-healing (every push):** a push doesn't check whether it bumped a version. It publishes

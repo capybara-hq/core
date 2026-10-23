@@ -203,11 +203,11 @@ describe("runPublish", () => {
     });
     expect(calls).toEqual([
       "pack @capybara-hq/plugin-sdk",
-      "npm --access --dry-run",
+      "npm --access --tag --dry-run",
       "pack @capybara-hq/kernel",
-      "npm --access --dry-run",
+      "npm --access --tag --dry-run",
       "pack-plugin chat.tgz",
-      "npm --access --dry-run",
+      "npm --access --tag --dry-run",
     ]);
     expect(r.published).toEqual([
       "@capybara-hq/plugin-sdk@0.1.0",
