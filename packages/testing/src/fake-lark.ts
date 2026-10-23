@@ -185,6 +185,8 @@ export interface FakeLarkServer {
   /**
    * 推一个事件（schema 2.0 负载，如 {@link larkMessageEvent} / {@link larkCardAction} 的结果）给最近打开的连接，
    * 返回帧的 message_id。缺省的 `header.tenant_key` / `app_id` 与 `event.sender.tenant_key` 用本服务的值补上。
+   * 该连接还没收到客户端的第一个 ping 时先暂存、收到后再发：SDK 在 `open` 之后（微任务里）才挂上 message 监听，
+   * 与握手响应一起到达的帧会被它丢掉（服务端此时已算连接打开）。
    */
   pushEvent(payload: Record<string, unknown>): string;
   waitForAck(id: string, timeoutMs?: number): Promise<FakeLarkAck>;
@@ -740,6 +742,9 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     ackWaiters.delete(id);
   };
 
+  /** 已收到第一个 ping 的连接（客户端已挂上 message 监听）；之前推的帧暂存在 `held`。 */
+  const listening = new WeakSet<WebSocket>();
+  const held = new Map<WebSocket, Buffer[]>();
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     const u = new URL(req.url ?? "/", "http://x");
@@ -755,6 +760,7 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
       ws.on("close", () => {
         const i = sockets.indexOf(ws);
         if (i >= 0) sockets.splice(i, 1);
+        held.delete(ws);
       });
       ws.on("message", (data: RawData) => {
         let f: FrameData;
@@ -765,6 +771,11 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
         }
         const type = f.headers.find((h) => h.key === "type")?.value;
         if (f.method === 0 && type === "ping") {
+          if (!listening.has(ws)) {
+            listening.add(ws);
+            for (const b of held.get(ws) ?? []) ws.send(b);
+            held.delete(ws);
+          }
           ws.send(
             encodeFrame({
               SeqID: 0,
@@ -814,22 +825,22 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     }
     const full = { ...payload, header, event };
     const id = `frame_${++seq}_${hex(3)}`;
-    ws.send(
-      encodeFrame({
-        SeqID: seq,
-        LogID: seq,
-        service: 1,
-        method: 1,
-        headers: [
-          { key: "type", value: "event" },
-          { key: "message_id", value: id },
-          { key: "sum", value: "1" },
-          { key: "seq", value: "0" },
-          { key: "trace_id", value: `trace_${seq}` },
-        ],
-        payload: Buffer.from(JSON.stringify(full)),
-      }),
-    );
+    const frame = encodeFrame({
+      SeqID: seq,
+      LogID: seq,
+      service: 1,
+      method: 1,
+      headers: [
+        { key: "type", value: "event" },
+        { key: "message_id", value: id },
+        { key: "sum", value: "1" },
+        { key: "seq", value: "0" },
+        { key: "trace_id", value: `trace_${seq}` },
+      ],
+      payload: Buffer.from(JSON.stringify(full)),
+    });
+    if (listening.has(ws)) ws.send(frame);
+    else held.set(ws, [...(held.get(ws) ?? []), frame]);
     return id;
   };
 
