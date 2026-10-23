@@ -137,12 +137,14 @@ function parseRange(
   else if (/^\d+$/.test(prefix)) bits = Number(prefix) - (mapped ? 96 : 0);
   else if (family === 4 && !mapped) bits = netmaskBits(prefix);
   if (bits === undefined || bits > (family === 6 ? 128 : 32)) throw invalid(entry);
-  if (bits <= 0) {
+  if (bits === 0 || (bits < 0 && Number(prefix) === 0)) {
     // A /0 range trusts every address: any client could forge X-Forwarded-For.
     throw new Error(
       `${TRUST_PROXY_ENV}: "${entry}" trusts every address; list the proxies' own addresses or CIDRs`,
     );
   }
+  // A mapped prefix between /1 and /95 has no IPv4 equivalent.
+  if (bits < 0) throw invalid(entry);
   return { ip, bits, family: family === 6 ? "ipv6" : "ipv4" };
 }
 

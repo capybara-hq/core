@@ -145,6 +145,10 @@ describe("sanitizeIncoming with CAPYBARA_WEB_TRUST_PROXY", () => {
     for (const bad of ["10.0.0.0/255.0.255.0", "fd00::/255.0.0.0", '["10.0.0.1", 1]', "[x"]) {
       expect(() => parseTrustProxy(bad), bad).toThrow(/CAPYBARA_WEB_TRUST_PROXY/);
     }
+    // A mapped prefix between /1 and /95 has no IPv4 equivalent: invalid, not "every address".
+    for (const bad of ["::ffff:10.0.0.0/90", "::ffff:10.0.0.0/1"]) {
+      expect(() => parseTrustProxy(bad), bad).toThrow(/invalid entry/);
+    }
     for (const bad of ["10.0.0.0/0.0.0.0", "::ffff:10.0.0.0/96", '["0.0.0.0/0"]']) {
       expect(() => parseTrustProxy(bad), bad).toThrow(/trusts every address/);
     }

@@ -120,7 +120,8 @@
       "provider_unavailable": "The model provider list is temporarily unavailable.",
       "provider_error": "The model provider returned an error.",
       "storage_unavailable": "Attachment storage is temporarily unavailable.",
-      "hook_denied": "The request was blocked by the policy of the \"{plugin}\" plugin."
+      "hook_denied": "The request was blocked by the policy of the \"{plugin}\" plugin.",
+      "hook_denied_unknown": "The request was blocked by a plugin policy."
     },
     "connector": {
       "not_found": "The connector does not exist or has been removed.",

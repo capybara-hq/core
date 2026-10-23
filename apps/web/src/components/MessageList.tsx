@@ -198,7 +198,9 @@ export function MessageList({
               <Text tone="fail">
                 {`✗ ${
                   item.code === "run.hook_denied"
-                    ? te("run.hook_denied", { plugin: item.plugin ?? "?" })
+                    ? item.plugin !== undefined
+                      ? te("run.hook_denied", { plugin: item.plugin })
+                      : te("run.hook_denied_unknown")
                     : t("failed", { code: item.code })
                 }`}
               </Text>
