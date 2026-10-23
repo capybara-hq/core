@@ -2432,7 +2432,7 @@
         "title": "目录来源",
         "official": "官方清单",
         "officialHint": "地址在部署配置 catalogs.official.* 里设置，这里只读。",
-        "offline": "离线模式：部署配置关闭了官方清单（catalogs.official.enabled = false）。",
+        "offline": "离线模式：官方清单尚未上线，部署配置默认关闭它（catalogs.official.enabled = false）。",
         "enabled": "启用",
         "url": "地址",
         "mirrors": "镜像",

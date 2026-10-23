@@ -248,11 +248,11 @@ export const KernelConfigSchema = z.object({
         .object({
           enabled: z
             .boolean()
-            .default(true)
+            .default(false)
             .meta(
               meta({
                 description:
-                  "Use the official directory catalog. Set to false for offline deployments: the official catalog is never fetched and the admin UI shows offline mode",
+                  "Use the official directory catalog. Off by default because the official catalog is not live yet: while false it is never fetched (no requests, no refresh logs) and the admin UI shows offline mode. Set to true once it is published",
               }),
             ),
           url: z

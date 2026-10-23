@@ -440,7 +440,10 @@ export default async function globalSetup(): Promise<Cleanup> {
       },
       // 官方清单指向假清单，插件与应用包从假 npm registry 下载（都是本机 http）
       packages: { npmRegistry: directory.registryUrl },
-      catalogs: { official: { url: directory.catalogUrl }, allowInsecureLoopback: true },
+      catalogs: {
+        official: { enabled: true, url: directory.catalogUrl },
+        allowInsecureLoopback: true,
+      },
       // e2e 自动批准插件权限（生产默认关闭）
       pluginPermissions: { autoApprove: true },
       // 后台安装的插件包解到临时目录（默认 /var/lib/capybara/plugins 在开发机上没有写权限）
