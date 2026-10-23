@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { findUpstream, readRemotes } from "@capybara-hq/dev/remotes";
 
 /**
  * 开工用的 git worktree 小工具（`pnpm wt:new | wt:rm | wt:ls`）。
@@ -23,6 +24,9 @@ import { resolve } from "node:path";
  */
 
 export const WORKTREE_DIR = ".claude/worktrees";
+
+/** This repository's name under github.com/capybara-hq, used to find the upstream remote. */
+const REPO = "core";
 
 export interface RunOptions {
   /** 在哪个目录下执行（主 checkout 或任一 worktree 都行），默认 process.cwd() */
@@ -103,6 +107,7 @@ function remoteNames(root: string): string[] {
 export function parseNewArgs(
   argv: string[],
   remotes: string[],
+  defaultFrom: string,
 ): { branch: string; from: string; install: boolean } {
   const first = argv[0];
   if (first === undefined) throw new Error(`没给分支名。\n${NEW_USAGE}`);
@@ -116,7 +121,7 @@ export function parseNewArgs(
   }
 
   const positionals: string[] = [];
-  let from = "origin/main";
+  let from = defaultFrom;
   let install = true;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
@@ -190,7 +195,9 @@ function refExists(root: string, ref: string): boolean {
 export function cmdNew(argv: string[], opts: RunOptions = {}): string {
   const log = opts.log ?? console.log;
   const root = mainRoot(opts.cwd ?? process.cwd());
-  const { branch, from, install } = parseNewArgs(argv, remoteNames(root));
+  const upstream = findUpstream(readRemotes(root), REPO);
+  const upstreamRemote = upstream?.remote ?? "origin";
+  const { branch, from, install } = parseNewArgs(argv, remoteNames(root), `${upstreamRemote}/main`);
   if (spawnSync("git", ["check-ref-format", "--branch", branch], { cwd: root }).status !== 0) {
     throw new Error(`\`${branch}\` 不是合法的分支名`);
   }
@@ -198,7 +205,10 @@ export function cmdNew(argv: string[], opts: RunOptions = {}): string {
   const target = resolve(root, WORKTREE_DIR, dirNameForBranch(branch));
   if (existsSync(target)) throw new Error(`目录已存在：${target}（要重建先 pnpm wt:rm）`);
 
-  execFileSync("git", ["fetch", "origin"], { cwd: root, stdio: "inherit" });
+  // Fetch the upstream (the default start point) and, in a fork clone, origin too (existing branches).
+  for (const remote of new Set([upstreamRemote, "origin"])) {
+    execFileSync("git", ["fetch", remote], { cwd: root, stdio: "inherit" });
+  }
   let mode: string;
   if (refExists(root, `refs/heads/${branch}`)) {
     execFileSync("git", ["worktree", "add", target, branch], { cwd: root, stdio: "inherit" });
@@ -215,7 +225,9 @@ export function cmdNew(argv: string[], opts: RunOptions = {}): string {
       cwd: root,
       stdio: "inherit",
     });
-    mode = `从 ${from} 新建分支（尚未 push；首次推送用 git push -u origin ${branch}）`;
+    mode = upstream?.fork
+      ? `Created from ${from}, not pushed yet; origin is your fork, push with git push -u origin ${branch}`
+      : `从 ${from} 新建分支（尚未 push；首次推送用 git push -u origin ${branch}）`;
   }
 
   if (install) {

@@ -632,7 +632,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/kernel
 
-  tools/worktree: {}
+  tools/worktree:
+    dependencies:
+      '@capybara-hq/dev':
+        specifier: workspace:*
+        version: link:../dev
 
 packages:
 

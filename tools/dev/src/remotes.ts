@@ -13,9 +13,22 @@ export function parseRemotes(output: string): Remote[] {
   return [...seen.values()];
 }
 
+/**
+ * Reads the configured remote URLs as written in the git config. `git remote -v` is not used
+ * because it applies `url.<base>.insteadOf` rewrites, which would hide the canonical URL.
+ */
 export function readRemotes(cwd: string): Remote[] {
-  const r = spawnSync("git", ["remote", "-v"], { cwd, encoding: "utf8" });
-  return r.status === 0 ? parseRemotes(r.stdout) : [];
+  const r = spawnSync("git", ["config", "--get-regexp", "^remote\\..+\\.url$"], {
+    cwd,
+    encoding: "utf8",
+  });
+  if (r.status !== 0) return [];
+  const remotes: Remote[] = [];
+  for (const line of r.stdout.split("\n")) {
+    const m = /^remote\.(.+)\.url (.+)$/.exec(line.trim());
+    if (m?.[1] !== undefined && m[2] !== undefined) remotes.push({ name: m[1], url: m[2] });
+  }
+  return remotes;
 }
 
 function escapeRegExp(s: string): string {

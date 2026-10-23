@@ -12,5 +12,8 @@
   },
   "dependencies": {
     "@capybara-hq/ci": "workspace:*"
+  },
+  "exports": {
+    "./remotes": "./src/remotes.ts"
   }
 }
