@@ -41,6 +41,8 @@ const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts"
 const TTL = 2000;
 const SCAN = 100;
 const CONNECTIONS = 6;
+const MINI_KEY = gatewayReplicasKey("chan-mini");
+const OTHER_KEY = gatewayReplicasKey("chan-other");
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -158,7 +160,33 @@ function fakeChannel(inst: string) {
   };
 }
 
-async function startSup(name: string, replicaId = `rep-${name}-${randomUUID()}`) {
+/** In-process stand-in for the kernel bus, shared by all supervisor instances of this file. */
+const topics = new Map<string, Set<(payload: unknown) => void>>();
+const bus = {
+  async publish(topic: string, payload: unknown) {
+    for (const fn of topics.get(topic) ?? []) queueMicrotask(() => fn(payload));
+  },
+  async subscribe(topic: string, fn: (payload: unknown) => void) {
+    const set = topics.get(topic) ?? new Set();
+    set.add(fn);
+    topics.set(topic, set);
+    return async () => {
+      set.delete(fn);
+    };
+  },
+} as PluginContext["bus"];
+
+async function startSup(
+  name: string,
+  opts: {
+    replicaId?: string;
+    plugins?: string[];
+    channels?: KernelConfig["channels"];
+  } = {},
+) {
+  const replicaId = opts.replicaId ?? `rep-${name}-${randomUUID()}`;
+  const plugins = opts.plugins ?? ["chan-mini"];
+  const cfg = opts.channels ?? channels;
   const channel = fakeChannel(name);
   const connections: Pick<ChannelConnections, "runtime"> = {
     runtime: async () =>
@@ -166,17 +194,14 @@ async function startSup(name: string, replicaId = `rep-${name}-${randomUUID()}`)
         ReturnType<ChannelConnections["runtime"]>
       >,
   };
-  const bus = {
-    subscribe: async () => async () => {},
-  } as unknown as PluginContext["bus"];
   const sup = new ChannelSupervisor({
     db: kernelDb(raw),
     redis,
     bus,
     connections,
-    localPlugins: () => ["chan-mini"],
+    localPlugins: () => plugins,
     onEvent: async () => {},
-    config: () => ({ channels }),
+    config: () => ({ channels: cfg }),
     log: { warn: () => {}, error: () => {} },
     replicaId,
   });
@@ -199,6 +224,12 @@ function holdings(): Map<string, Set<string>> {
     m.set(e.inst, s);
   }
   return m;
+}
+
+/** Redis server time in ms (heartbeat scores use it). */
+async function serverNow(): Promise<number> {
+  const [sec, usec] = await redis.time();
+  return Number(sec) * 1000 + Math.floor(Number(usec) / 1000);
 }
 
 const countOf = (inst: string) => holdings().get(inst)?.size ?? 0;
@@ -286,7 +317,7 @@ describe("channel long connections: fair share across gateway replicas", () => {
     await redis.set(channelHandoffKey(mine), replicaId, "PX", 1500);
     await redis.set(channelHandoffKey(other), "someone-else", "PX", 1500);
     const setAt = Date.now();
-    await startSup("solo", replicaId);
+    await startSup("solo", { replicaId });
     await waitFor(async () => countOf("solo") === CONNECTIONS - 1, 10_000, "all but one");
     // Another replica's marker does not block it; its own does until the marker expires
     expect(holdings().get("solo")?.has(other)).toBe(true);
@@ -296,61 +327,118 @@ describe("channel long connections: fair share across gateway replicas", () => {
     expect(up.at - setAt).toBeGreaterThanOrEqual(1400);
   }, 30_000);
 
-  it("heartbeat: the member is the replica id with a fresh score; stop() removes it", async () => {
+  it("a gateway without the plugin does not count: all connections held by the capable ones", async () => {
+    // Ruling R3: c has no chan-mini (it only loads another channel plugin), so chan-mini's share
+    // is split over a and b only; with one global heartbeat set c would count and 2 stay unheld
+    const a = await startSup("a");
+    const b = await startSup("b");
+    const c = await startSup("c", { plugins: ["chan-other"] });
+    await waitFor(
+      async () => countOf("a") === 3 && countOf("b") === 3,
+      10_000,
+      "a and b hold 3 each",
+    );
+    await sleep(SCAN * 10);
+    expect(countOf("a")).toBe(3);
+    expect(countOf("b")).toBe(3);
+    expect(countOf("c")).toBe(0);
+    expect(totalHeld()).toBe(CONNECTIONS);
+    // c heartbeats only for the plugin it has
+    expect(await redis.zscore(OTHER_KEY, c.replicaId)).not.toBeNull();
+    expect(await redis.zscore(MINI_KEY, c.replicaId)).toBeNull();
+    expect((await redis.zrange(MINI_KEY, "0", "-1")).sort()).toEqual(
+      [a.replicaId, b.replicaId].sort(),
+    );
+  }, 30_000);
+
+  it("a handback nudges replicas below their share to claim at once, not on their next round", async () => {
+    const slow: KernelConfig["channels"] = {
+      ...channels,
+      leaseTtlMs: 20_000,
+      scanIntervalMs: 4_000,
+    };
+    await startSup("a", { channels: slow });
+    await waitFor(async () => countOf("a") === CONNECTIONS, 10_000, "a holds all");
+    // Start b half a round after a's scan, so without the nudge b's next scan is ~2s after a's
+    await sleep(slow.scanIntervalMs / 2);
+    await startSup("b", { channels: slow });
+    await waitFor(async () => countOf("b") >= 1, 15_000, "b claims one");
+    const down = events.find((e) => e.inst === "a" && e.kind === "down") as Ev;
+    const up = events.find((e) => e.inst === "b" && e.kind === "up") as Ev;
+    expect(up.id).toBe(down.id);
+    expect(up.at - down.at).toBeLessThan(1_000);
+  }, 30_000);
+
+  it("heartbeat: the member is the replica id with a server-time score; stop() removes it", async () => {
     const s = await startSup("hb");
     await waitFor(
-      async () => (await redis.zscore(gatewayReplicasKey, s.replicaId)) !== null,
+      async () => (await redis.zscore(MINI_KEY, s.replicaId)) !== null,
       5_000,
       "heartbeat written",
     );
-    const score = Number(await redis.zscore(gatewayReplicasKey, s.replicaId));
-    expect(Date.now() - score).toBeLessThan(TTL);
-    expect(await redis.pttl(gatewayReplicasKey)).toBeGreaterThan(0);
+    const score = Number(await redis.zscore(MINI_KEY, s.replicaId));
+    expect((await serverNow()) - score).toBeLessThan(TTL);
+    expect(await redis.pttl(MINI_KEY)).toBeGreaterThan(0);
     // A stale member is cleared by the next heartbeat round
-    await redis.zadd(gatewayReplicasKey, Date.now() - TTL - 1000, "stale-replica");
+    await redis.zadd(MINI_KEY, (await serverNow()) - TTL - 1000, "stale-replica");
     await waitFor(
-      async () => (await redis.zscore(gatewayReplicasKey, "stale-replica")) === null,
+      async () => (await redis.zscore(MINI_KEY, "stale-replica")) === null,
       5_000,
       "stale member removed",
     );
     await stopAll();
-    expect(await redis.zscore(gatewayReplicasKey, s.replicaId)).toBeNull();
+    expect(await redis.zscore(MINI_KEY, s.replicaId)).toBeNull();
   }, 30_000);
 
-  it("maintenance check warns once per interval when connections exist and no gateway is live", async () => {
-    await redis.del(gatewayReplicasKey, gatewayMissingWarnedKey);
-    const warns: string[] = [];
+  it("maintenance check warns once per interval per missing plugin, after the grace period", async () => {
+    await redis.del(MINI_KEY, OTHER_KEY, gatewayMissingWarnedKey);
+    const warns: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
     const deps = {
       db: kernelDb(raw),
       redis,
       config: () => ({ channels }),
-      log: { warn: (m: string) => warns.push(m) },
+      log: { warn: (msg: string, fields?: Record<string, unknown>) => warns.push({ msg, fields }) },
       everyMs: 1000,
     };
-    expect(await checkGatewayPresence(deps)).toBe(true);
+    // Within the startup grace period: silent
+    expect(await checkGatewayPresence({ ...deps, graceUntil: Date.now() + 10_000 })).toBe(false);
+    // A live gateway for another plugin does not cover chan-mini
+    await redis.zadd(OTHER_KEY, await serverNow(), "other-replica");
+    expect(await checkGatewayPresence({ ...deps, graceUntil: Date.now() - 1 })).toBe(true);
     expect(await checkGatewayPresence(deps)).toBe(false);
     expect(warns).toHaveLength(1);
-    expect(warns[0]).toMatch(/no live gateway replica/);
+    expect(warns[0]?.msg).toMatch(/no live gateway replica/);
+    expect(warns[0]?.fields).toMatchObject({ plugins: ["chan-mini"], connections: CONNECTIONS });
 
-    // A live heartbeat: no warning, even after the rate limit window
+    // A live chan-mini heartbeat: no warning, even after the rate limit window
     await redis.del(gatewayMissingWarnedKey);
-    await redis.zadd(gatewayReplicasKey, Date.now(), "live-replica");
+    await redis.zadd(MINI_KEY, await serverNow(), "live-replica");
     expect(await checkGatewayPresence(deps)).toBe(false);
     // Only a stale heartbeat (older than one lease TTL) counts as no gateway
-    await redis.zadd(gatewayReplicasKey, Date.now() - TTL - 1000, "live-replica");
+    await redis.zadd(MINI_KEY, (await serverNow()) - TTL - 1000, "live-replica");
     expect(await checkGatewayPresence(deps)).toBe(true);
     expect(warns).toHaveLength(2);
 
-    // No active connections: nothing to warn about
-    await redis.del(gatewayReplicasKey, gatewayMissingWarnedKey);
+    // No holdable connections (inactive, or the plugin disabled for the org): nothing to warn about
+    await redis.del(gatewayMissingWarnedKey);
     await sql`UPDATE capybara.channel_connections SET status = 'disabled'`.execute(raw);
     try {
       expect(await checkGatewayPresence(deps)).toBe(false);
     } finally {
       await sql`UPDATE capybara.channel_connections SET status = 'active'`.execute(raw);
     }
+    await sql`UPDATE capybara.plugin_org_configs SET enabled = false WHERE plugin = 'chan-mini'`.execute(
+      raw,
+    );
+    try {
+      expect(await checkGatewayPresence(deps)).toBe(false);
+    } finally {
+      await sql`UPDATE capybara.plugin_org_configs SET enabled = true WHERE plugin = 'chan-mini'`.execute(
+        raw,
+      );
+    }
     expect(warns).toHaveLength(2);
-    await redis.del(gatewayReplicasKey, gatewayMissingWarnedKey);
+    await redis.del(MINI_KEY, OTHER_KEY, gatewayMissingWarnedKey);
   });
 
   it("a worker process without the gateway role logs one startup info line", () => {

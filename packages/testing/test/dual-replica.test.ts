@@ -95,10 +95,17 @@ describe("双副本测试工具", { timeout: 60_000 }, () => {
     });
     harnesses.push(h);
     expect(h.redisUrl).toMatch(/^redis:\/\//);
-    const gw = await h.startExtraReplica(["gateway"]);
+    // Concurrent starts, the first one failing (invalid role): no hole, the others get 2 and 3
+    const [bad, gwStart, apiStart] = [
+      h.startExtraReplica(["nope"]),
+      h.startExtraReplica(["gateway"]),
+      h.startExtraReplica(["api"]),
+    ];
+    await expect(bad).rejects.toThrow(/replica failed to start/);
+    const gw = await gwStart;
     expect(gw.index).toBe(2);
     expect(gw.roles).toEqual(["gateway"]);
-    const api = await h.startExtraReplica(["api"]);
+    const api = await apiStart;
     expect(api.index).toBe(3);
     const pids = new Set([...h.replicas.map((r) => r.pid), gw.pid, api.pid]);
     expect(pids.size).toBe(4);

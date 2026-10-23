@@ -158,8 +158,9 @@ describe("channel long connections: fair share across gateway replicas (dual rep
       LEASE_TTL_MS + SCAN_MS + 5_000,
       "the killed replica's share taken over",
     );
-    // One lease TTL plus one scan round; the rest is the fake handshake and this test's polling
-    expect(Date.now() - killedAt).toBeLessThanOrEqual(LEASE_TTL_MS + SCAN_MS + 500);
+    // Lease expiry plus up to two scan rounds (one may start just before the lease frees up); the
+    // margin covers the fake handshake, this test's polling and load on a busy runner
+    expect(Date.now() - killedAt).toBeLessThanOrEqual(LEASE_TTL_MS + 2 * SCAN_MS + 1_500);
     for (const id of ids) expect(im.maxConcurrent(id)).toBe(1);
   }, 180_000);
 });

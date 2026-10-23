@@ -884,9 +884,17 @@ export async function createKernel(
     }),
   };
   let channelSupervisor: ChannelSupervisor | undefined;
-  // Warn (rate limited) when active channel connections exist but no gateway replica is live (R1)
+  // Warn (rate limited) when a channel plugin has holdable connections but no live gateway replica
+  // with it loaded (R1 / R3); silent for one lease TTL after this process starts (first heartbeats)
+  const gatewayCheckGraceFrom = Date.now();
   maintenance.handle(GATEWAY_CHECK_JOB, async () => {
-    await checkGatewayPresence({ db: kdb, redis, config: () => current, log });
+    await checkGatewayPresence({
+      db: kdb,
+      redis,
+      config: () => current,
+      log,
+      graceUntil: gatewayCheckGraceFrom + current.channels.leaseTtlMs,
+    });
   });
   maintenance.schedule({
     id: GATEWAY_CHECK_SCHEDULER_ID,

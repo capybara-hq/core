@@ -16,10 +16,15 @@ import {
 export const channelLeaseKey = (connectionId: string) => `capk:channel-lease:${connectionId}`;
 
 /**
- * Gateway heartbeats: a ZSET whose members are process replica ids and whose scores are the
- * millisecond time of the member's last lease-renewal round. Live = score > now - `leaseTtlMs`.
+ * Gateway heartbeats, one ZSET per channel plugin (Ruling R3): members are process replica ids of the
+ * gateways that have that plugin loaded, scores the Redis server time (ms) of the member's last
+ * lease-renewal round. Live = score > server now - `leaseTtlMs`. Per plugin, so a gateway that cannot
+ * load a plugin does not count toward that plugin's share.
  */
-export const gatewayReplicasKey = "capk:gateway-replicas";
+export const gatewayReplicasKey = (plugin: string) => `capk:gateway-replicas:${plugin}`;
+
+/** Bus topic published after an over-share replica handed a connection back (claim-only nudge). */
+export const CHANNEL_HANDOFF_TOPIC = "channel.handoff";
 
 /**
  * Handoff marker written when an over-share replica gives a connection back: value = that replica's
@@ -60,6 +65,60 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
 end
 return 0
 `;
+
+/**
+ * Heartbeat with the Redis server clock (replica wall clocks may drift): for each key, ZADD the
+ * member, trim members older than one TTL and refresh the key's expiry. KEYS = heartbeat keys to
+ * write; ARGV = [member, ttlMs, ...stale keys to leave].
+ */
+const HEARTBEAT = `
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local ttl = tonumber(ARGV[2])
+for _, k in ipairs(KEYS) do
+  redis.call('ZADD', k, now, ARGV[1])
+  redis.call('ZREMRANGEBYSCORE', k, '-inf', now - ttl)
+  redis.call('PEXPIRE', k, ttl * 2)
+end
+for i = 3, #ARGV do
+  redis.call('ZREM', ARGV[i], ARGV[1])
+end
+return now
+`;
+
+/**
+ * Live members per heartbeat key, by the Redis server clock: returns one array per key (in KEYS
+ * order) of members with score > now - ARGV[1].
+ */
+const LIVE = `
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local out = {}
+for i, k in ipairs(KEYS) do
+  out[i] = redis.call('ZRANGEBYSCORE', k, '(' .. (now - tonumber(ARGV[1])), '+inf')
+end
+return out
+`;
+
+/** Live heartbeat members of each plugin (Redis server clock). */
+export async function liveGateways(
+  redis: Redis,
+  plugins: string[],
+  ttlMs: number,
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (plugins.length === 0) return out;
+  const res = (await redis.eval(
+    LIVE,
+    plugins.length,
+    ...plugins.map(gatewayReplicasKey),
+    ttlMs,
+  )) as string[][];
+  plugins.forEach((p, i) => {
+    out.set(p, res[i] ?? []);
+  });
+  return out;
+}
 
 const RELEASE = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -136,6 +195,11 @@ export class ChannelSupervisor {
   }[] = [];
   private stopped = false;
   private unsubscribe: (() => Promise<void>) | undefined;
+  private unsubscribeHandoff: (() => Promise<void>) | undefined;
+  /** Scans run one at a time (periodic and nudged), so share counts are never raced. */
+  private scanChain: Promise<void> = Promise.resolve();
+  /** Plugins this replica heartbeats for (to ZREM when a plugin goes away and on stop). */
+  private heartbeated = new Set<string>();
 
   constructor(private readonly deps: ChannelSupervisorDeps) {}
 
@@ -150,11 +214,29 @@ export class ChannelSupervisor {
         if (c) c.reconnect = true;
       }
     });
-    this.loop("renew", () => this.renewAll());
-    this.loop("scan", async () => {
-      await this.recheckHeld();
-      if (!this.stopped) await this.scan();
+    // Another replica handed a connection back: claim right away instead of waiting for the next
+    // round. Claim only (no hand-back), so hand-backs stay at one per plugin per scan round.
+    this.unsubscribeHandoff = await this.deps.bus.subscribe(CHANNEL_HANDOFF_TOPIC, (payload) => {
+      const m = payload as { replicaId?: unknown } | null;
+      if (this.stopped || m?.replicaId === this.deps.replicaId) return;
+      this.track(this.exclusive(() => this.scan(true))).catch((err: unknown) =>
+        this.deps.log.error("channel supervisor scan failed", { err }),
+      );
     });
+    this.loop("renew", () => this.renewAll());
+    this.loop("scan", () =>
+      this.exclusive(async () => {
+        await this.recheckHeld();
+        if (!this.stopped) await this.scan(false);
+      }),
+    );
+  }
+
+  /** Runs `fn` after any scan in progress. */
+  private exclusive(fn: () => Promise<void>): Promise<void> {
+    const p = this.scanChain.then(fn);
+    this.scanChain = p.catch(() => {});
+    return p;
   }
 
   /** 周期循环：上一轮结束后隔 `scanIntervalMs` 再跑下一轮；首轮立即执行。 */
@@ -206,46 +288,74 @@ export class ChannelSupervisor {
     );
   }
 
-  /** Writes this replica's heartbeat and drops members older than one TTL; the key itself expires too. */
+  /**
+   * Writes this replica's heartbeat into the ZSET of every channel plugin loaded here (trimming
+   * members older than one TTL; the keys expire too) and leaves the ZSETs of plugins no longer
+   * loaded. Uses the Redis server clock.
+   */
   private async heartbeat(ttl: number): Promise<void> {
     if (this.stopped) return;
-    const now = Date.now();
+    const plugins = [...new Set(this.deps.localPlugins())];
+    const gone = [...this.heartbeated].filter((p) => !plugins.includes(p));
+    if (plugins.length === 0 && gone.length === 0) return;
     try {
-      await this.deps.redis
-        .multi()
-        .zadd(gatewayReplicasKey, now, this.deps.replicaId)
-        .zremrangebyscore(gatewayReplicasKey, "-inf", now - ttl)
-        .pexpire(gatewayReplicasKey, ttl * 2)
-        .exec();
+      await this.deps.redis.eval(
+        HEARTBEAT,
+        plugins.length,
+        ...plugins.map(gatewayReplicasKey),
+        this.deps.replicaId,
+        ttl,
+        ...gone.map(gatewayReplicasKey),
+      );
+      this.heartbeated = new Set(plugins);
     } catch (err) {
       this.deps.log.warn("gateway heartbeat failed", { err });
     }
   }
 
   /**
-   * This replica's share target for the round. Live replicas are the heartbeat members newer than
-   * one TTL plus this replica itself (its own heartbeat may not be written yet on the first round).
+   * This replica's share target per plugin for the round. Live replicas of a plugin are its
+   * heartbeat members newer than one TTL plus this replica itself (its own heartbeat may not be
+   * written yet on the first round).
    */
-  private async target(runnable: number): Promise<number> {
+  private async targets(runnable: Map<string, number>): Promise<Map<string, number>> {
     const { leaseTtlMs: ttl, shareSlack } = this.deps.config().channels;
-    const members = await this.deps.redis.zrangebyscore(
-      gatewayReplicasKey,
-      `(${Date.now() - ttl}`,
-      "+inf",
-    );
-    const live = [...new Set([...members, this.deps.replicaId])].sort();
-    return shareTarget(runnable, live.length, shareSlack, live.indexOf(this.deps.replicaId));
+    const plugins = [...runnable.keys()];
+    const live = await liveGateways(this.deps.redis, plugins, ttl);
+    const out = new Map<string, number>();
+    for (const p of plugins) {
+      const members = [...new Set([...(live.get(p) ?? []), this.deps.replicaId])].sort();
+      const rank = members.indexOf(this.deps.replicaId);
+      out.set(p, shareTarget(runnable.get(p) ?? 0, members.length, shareSlack, rank));
+    }
+    return out;
   }
 
-  /** Gives back the most recently connected connection, leaving a handoff marker first. */
-  private async handOff(): Promise<void> {
+  private heldOf(plugin: string): number {
+    let n = 0;
+    for (const h of this.held.values()) if (h.plugin === plugin) n++;
+    return n;
+  }
+
+  /**
+   * Gives back the most recently connected connection of `plugin`, leaving a handoff marker first;
+   * once its lease is released, nudges the other replicas to claim it.
+   */
+  private async handOff(plugin: string): Promise<void> {
     let latest: [string, Held] | undefined;
-    for (const e of this.held) if (!latest || e[1].startedAt > latest[1].startedAt) latest = e;
+    for (const e of this.held) {
+      if (e[1].plugin !== plugin) continue;
+      if (!latest || e[1].startedAt > latest[1].startedAt) latest = e;
+    }
     if (!latest) return;
     const [id] = latest;
     const px = this.deps.config().channels.scanIntervalMs * 2;
     await this.deps.redis.set(channelHandoffKey(id), this.deps.replicaId, "PX", px);
-    this.releaseInBackground(id);
+    this.releaseInBackground(id, () =>
+      this.deps.bus
+        .publish(CHANNEL_HANDOFF_TOPIC, { plugin, replicaId: this.deps.replicaId })
+        .catch((err: unknown) => this.deps.log.warn("cannot publish channel handoff", { err })),
+    );
   }
 
   private async afterRenew(id: string, h: Held, ok: boolean, ttl: number): Promise<void> {
@@ -274,7 +384,7 @@ export class ChannelSupervisor {
           .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin")
           .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id"),
       )
-      .select("channel_connections.id")
+      .select(["channel_connections.id", "channel_connections.plugin"])
       .where("plugin_org_configs.enabled", "=", true)
       .where("channel_connections.status", "=", "active")
       .where("channel_connections.deleted_at", "is", null)
@@ -300,20 +410,32 @@ export class ChannelSupervisor {
     for (const id of ids) if (!live.has(id)) this.releaseInBackground(id);
   }
 
-  private async scan(): Promise<void> {
+  /**
+   * One scan round, per channel plugin (Ruling R3): above that plugin's share, give back one of its
+   * connections (never more, so this replica does not drop below its target) and claim none of it;
+   * otherwise claim unheld ones up to the target. `claimOnly` (a handoff nudge) never gives back.
+   */
+  private async scan(claimOnly: boolean): Promise<void> {
+    if (this.stopped) return;
     const plugins = this.deps.localPlugins();
     if (plugins.length === 0) return;
     const rows = await this.runnable(plugins).execute();
-    const target = await this.target(rows.length);
-    // Above the share: give back one per round (never more, so this replica does not drop below
-    // its target) and claim nothing
-    if (this.held.size > target) {
-      await this.handOff();
-      return;
+    const runnable = new Map<string, number>();
+    for (const r of rows) runnable.set(r.plugin, (runnable.get(r.plugin) ?? 0) + 1);
+    const targets = await this.targets(runnable);
+    const full = new Set<string>();
+    for (const [p, target] of targets) {
+      const held = this.heldOf(p);
+      if (held > target && !claimOnly) await this.handOff(p);
+      if (held >= target) full.add(p);
     }
-    for (const { id } of rows) {
+    for (const { id, plugin } of rows) {
       if (this.stopped) return;
-      if (this.held.size >= target) return;
+      if (full.has(plugin)) continue;
+      if (this.heldOf(plugin) >= (targets.get(plugin) ?? 0)) {
+        full.add(plugin);
+        continue;
+      }
       if (this.held.has(id)) continue;
       if ((await this.deps.redis.exists(channelBackoffKey(id))) === 1) continue;
       if ((await this.deps.redis.get(channelHandoffKey(id))) === this.deps.replicaId) continue;
@@ -421,16 +543,20 @@ export class ChannelSupervisor {
     h.abort.abort();
   }
 
-  /** 后台交还，记入 `releasing` 供 `stop()` 等待。 */
-  private releaseInBackground(id: string): void {
-    const p = this.release(id).finally(() => this.releasing.delete(p));
+  /** 后台交还，记入 `releasing` 供 `stop()` 等待；`after` runs once the lease is released. */
+  private releaseInBackground(id: string, after?: () => Promise<void>): void {
+    const p = this.release(id)
+      .then(async (released) => {
+        if (released && after) await after();
+      })
+      .finally(() => this.releasing.delete(p));
     this.releasing.add(p);
   }
 
   /** 主动交还：中止，等 `connect` 返回（至多 SETTLE_MS）后释放租约；超时则让租约自然过期，避免两边同时在线。 */
-  private async release(id: string): Promise<void> {
+  private async release(id: string): Promise<boolean> {
     const h = this.held.get(id);
-    if (!h) return;
+    if (!h) return false;
     this.held.delete(id);
     this.settling.set(id, h.token);
     h.abort.abort();
@@ -449,6 +575,7 @@ export class ChannelSupervisor {
       this.deps.log.warn("channel connect did not stop in time; lease left to expire", {
         connectionId: id,
       });
+    return settled;
   }
 
   private async releaseLease(id: string, token: string): Promise<void> {
@@ -476,10 +603,19 @@ export class ChannelSupervisor {
     await Promise.all(this.loops.map((st) => st.running?.catch(() => {})));
     await this.unsubscribe?.().catch(() => {});
     this.unsubscribe = undefined;
+    await this.unsubscribeHandoff?.().catch(() => {});
+    this.unsubscribeHandoff = undefined;
+    // A nudged scan may still be claiming: let it finish so its leases are released below
+    await this.scanChain;
     // Leave the share first so the other gateways count one replica fewer right away
-    await this.deps.redis.zrem(gatewayReplicasKey, this.deps.replicaId).catch((err: unknown) => {
-      this.deps.log.warn("cannot remove gateway heartbeat", { err });
-    });
+    await Promise.all(
+      [...this.heartbeated].map((p) =>
+        this.deps.redis.zrem(gatewayReplicasKey(p), this.deps.replicaId).catch((err: unknown) => {
+          this.deps.log.warn("cannot remove gateway heartbeat", { plugin: p, err });
+        }),
+      ),
+    );
+    this.heartbeated.clear();
     await Promise.all([...this.held.keys()].map((id) => this.release(id)));
     // 别处发起、仍在进行的交还（bus 广播、复核）也要等完，租约才都释放了
     await Promise.all([...this.releasing]);
@@ -494,10 +630,16 @@ export const GATEWAY_CHECK_SCHEDULER_ID = "channel-gateway-check-every";
 export const GATEWAY_CHECK_EVERY_MS = 60_000;
 
 /**
- * Runs on the worker role (maintenance queue): when active channel connections exist but no
- * gateway replica has a heartbeat newer than one lease TTL, nobody holds their long connections.
- * Logs one `warn` per `everyMs` at most across the cluster (a Redis `SET NX PX` rate limit), so a
- * duplicated job or several worker replicas do not repeat it. Returns whether it warned.
+ * Runs on the worker role (maintenance queue), per channel plugin (Ruling R3): when a plugin has
+ * holdable connections (active, not deleted, org not deleted, plugin enabled for the org) but no
+ * gateway replica with that plugin loaded has a heartbeat newer than one lease TTL (Redis server
+ * clock), nobody holds those long connections.
+ * - Logs one `warn` (naming the plugins) per interval at most across the cluster: a Redis
+ *   `SET NX PX` rate limit a little shorter than the job period, so a duplicated job or several
+ *   worker replicas do not repeat it while each period still gets its line.
+ * - Silent before `graceUntil` (this process's start + one lease TTL), so a fresh cluster does not
+ *   warn before the gateways' first heartbeat.
+ * Returns whether it warned.
  */
 export async function checkGatewayPresence(deps: {
   db: KernelDb;
@@ -505,31 +647,46 @@ export async function checkGatewayPresence(deps: {
   config: () => Pick<KernelConfig, "channels">;
   log: Pick<Logger, "warn">;
   everyMs?: number;
+  graceUntil?: number;
 }): Promise<boolean> {
-  const ttl = deps.config().channels.leaseTtlMs;
-  const live = await deps.redis.zcount(gatewayReplicasKey, `(${Date.now() - ttl}`, "+inf");
-  if (live > 0) return false;
-  const row = await deps.db
+  if (deps.graceUntil !== undefined && Date.now() < deps.graceUntil) return false;
+  // Once webhook inbound exists (T4), only `inbound_mode = 'long_connection'` connections count here
+  const rows = await deps.db
     .selectFrom("channel_connections")
     .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
-    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .innerJoin("plugin_org_configs", (j) =>
+      j
+        .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin")
+        .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id"),
+    )
+    .select(["channel_connections.plugin", (eb) => eb.fn.countAll<string>().as("n")])
+    .where("plugin_org_configs.enabled", "=", true)
     .where("channel_connections.status", "=", "active")
     .where("channel_connections.deleted_at", "is", null)
     .where("orgs.deleted_at", "is", null)
-    .executeTakeFirstOrThrow();
-  const count = Number(row.n);
-  if (count === 0) return false;
+    .groupBy("channel_connections.plugin")
+    .execute();
+  const counts = new Map(rows.map((r) => [r.plugin, Number(r.n)] as const));
+  const plugins = [...counts.keys()].filter((p) => (counts.get(p) ?? 0) > 0).sort();
+  if (plugins.length === 0) return false;
+  const live = await liveGateways(deps.redis, plugins, deps.config().channels.leaseTtlMs);
+  const missing = plugins.filter((p) => (live.get(p) ?? []).length === 0);
+  if (missing.length === 0) return false;
+  const everyMs = deps.everyMs ?? GATEWAY_CHECK_EVERY_MS;
   const first = await deps.redis.set(
     gatewayMissingWarnedKey,
     "1",
     "PX",
-    deps.everyMs ?? GATEWAY_CHECK_EVERY_MS,
+    Math.max(Math.ceil(everyMs / 2), everyMs - 5_000),
     "NX",
   );
   if (first !== "OK") return false;
   deps.log.warn(
-    "active channel connections have no live gateway replica; add the gateway role to a process (CAPYBARA_ROLES) or they receive no messages",
-    { connections: count },
+    "active channel connections have no live gateway replica with their plugin loaded; add the gateway role to a process (CAPYBARA_ROLES) that can load the plugin, or they receive no messages",
+    {
+      plugins: missing,
+      connections: missing.reduce((n, p) => n + (counts.get(p) ?? 0), 0),
+    },
   );
   return true;
 }

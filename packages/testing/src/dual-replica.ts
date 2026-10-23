@@ -316,7 +316,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       return Object.assign(res, { replica }) as ReplicaResponse;
     };
     let calls = 0;
-    let pendingExtra = 0;
+    let extraChain: Promise<void> = Promise.resolve();
     const kill = async (index: number) => {
       const { runner: r } = runnerAt(index);
       if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill("SIGKILL");
@@ -328,31 +328,34 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       redisUrl,
       stop,
       kill,
-      async startExtraReplica(extraRoles) {
-        if (stopPromise) throw new Error("harness is stopped");
-        // Reserve the index before the (slow) start so concurrent calls get distinct indexes
-        const index = handles.length + pendingExtra++;
-        let started: Awaited<ReturnType<typeof startReplica>>;
-        try {
-          started = await startReplica({ ...config, roles: [...extraRoles] }, index);
-        } finally {
-          pendingExtra--;
-        }
-        runners.push(started.runner);
-        const handle: ReplicaHandle = {
-          index,
-          roles: [...extraRoles],
-          port: started.port,
-          pid: started.runner.child.pid as number,
-        };
-        handles[index] = handle;
-        replicaRunners[index] = started.runner;
-        // A stop() that began while this replica was starting must not leave it running
-        if (stopPromise) {
-          await stopRunner(started.runner);
-          throw new Error("harness is stopped");
-        }
-        return { ...handle, kill: () => kill(index) };
+      startExtraReplica(extraRoles) {
+        // Extra starts run one at a time: the index is the next free slot when the start begins,
+        // and a failed start appends nothing, so there are never holes in the replica indexes
+        const p = extraChain.then(async (): Promise<ExtraReplicaHandle> => {
+          if (stopPromise) throw new Error("harness is stopped");
+          const index = handles.length;
+          const started = await startReplica({ ...config, roles: [...extraRoles] }, index);
+          runners.push(started.runner);
+          // A stop() that began while this replica was starting must not leave it running
+          if (stopPromise) {
+            await stopRunner(started.runner);
+            throw new Error("harness is stopped");
+          }
+          const handle: ReplicaHandle = {
+            index,
+            roles: [...extraRoles],
+            port: started.port,
+            pid: started.runner.child.pid as number,
+          };
+          handles.push(handle);
+          replicaRunners.push(started.runner);
+          return { ...handle, kill: () => kill(index) };
+        });
+        extraChain = p.then(
+          () => {},
+          () => {},
+        );
+        return p;
       },
       async request(path, init) {
         const api = handles.filter((h) => h.roles.includes("api"));
