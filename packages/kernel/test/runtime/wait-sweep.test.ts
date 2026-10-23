@@ -11,6 +11,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
 import {
   MAINTENANCE_QUEUE_NAME,
   WAIT_SWEEP_EVERY_MS,
@@ -55,6 +56,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelDb;
 let maint: Queue;
+let runQueue: Queue;
 let kA: Kernel;
 let kB: Kernel;
 /** 两个副本各自的 warn 日志（只收扫描写的行）。 */
@@ -94,12 +96,14 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+  runQueue = new Queue(RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
   kA = await boot("A");
   kB = await boot("B");
 }, 120_000);
 
 afterAll(async () => {
   await maint?.close();
+  await runQueue?.close();
   await kA?.stop();
   await kB?.stop();
   await raw?.destroy();
@@ -156,7 +160,14 @@ async function runStatus(runId: string): Promise<string> {
   return r.status;
 }
 
-/** 新会话里发消息并等到运行进入 waiting，返回会话、运行与等待对象 id。 */
+/**
+ * Starts a conversation, posts the message and waits until the run has fully suspended; returns the
+ * conversation, run and wait ids. Seeing `status = 'waiting'` is not enough: after setting waiting,
+ * `Waits.suspend` still schedules the timeout job and re-checks whether the wait was already settled
+ * (and resumes if so). A test that changes the approval before that re-check gets a legitimate
+ * resume. So also wait for the run job to leave the run queue (removeOnComplete: the job completes
+ * only after the worker returns from `suspend`).
+ */
 async function waiting(
   text: string,
   type: "approval_requested" | "question_asked",
@@ -166,6 +177,13 @@ async function waiting(
   const event = await waitForEvent(db, convId, (e) => e.type === type, 10_000, type);
   const runId = event.runId as string;
   await waitFor(async () => (await runStatus(runId)) === "waiting", 10_000, "run waiting");
+  const { trigger_seq } = await db
+    .selectFrom("runs")
+    .select("trigger_seq")
+    .where("id", "=", runId)
+    .executeTakeFirstOrThrow();
+  const jobId = runJobId(convId, Number(trigger_seq));
+  await waitFor(async () => (await runQueue.getJob(jobId)) === undefined, 10_000, "run job done");
   const p = event.payload as { approvalId?: string; questionId?: string };
   return { convId, runId, waitId: (p.approvalId ?? p.questionId) as string };
 }

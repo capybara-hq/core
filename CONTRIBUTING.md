@@ -1,12 +1,25 @@
 # Contributing
 
+## How contributions work
+
+Capybara uses one contribution workflow across the `capybara-hq` organization: issue, `accepted`, `/claim`, a pull request that closes the issue, review, and merge by a maintainer. Read the [organization guide](https://github.com/capybara-hq/.github/blob/main/CONTRIBUTING.md) first; this file only adds what is specific to this repository. If you use a coding agent, it can follow the same workflow from [.agents/skills/contributing/SKILL.md](.agents/skills/contributing/SKILL.md) (and start with the `onboarding` skill).
+
+Two commands help at every step:
+
+- `pnpm doctor:env` checks your environment (Node, pnpm, dependencies, Docker, remotes, git identity); `--fix` performs only fixes that need no decision.
+- `pnpm verify` runs the required checks locally for your branch. Run it before pushing.
+
+Both accept `--json`; run them as `pnpm -s doctor:env --json` so pnpm's banner does not precede the JSON.
+
+Start a task in a worktree with `pnpm wt:new <branch>`; it branches from the upstream `main` (a fork's `upstream` remote, or `origin` for core developers).
+
 ## Development environment
 
 - Node 24, pnpm 10
 - Start local dependencies: `docker compose -f docker/compose.dev.yaml up -d` (PostgreSQL 17 @ 5432, Valkey 8 @ 6379)
 - After `pnpm install`, run `pnpm lint && pnpm typecheck && pnpm check && pnpm test`
 
-Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change. Task-specific guides live in [.agents/skills/](.agents/skills/) (`.claude/skills` is a symlink to it). On Windows, enable symlinks before cloning (`git config --global core.symlinks true`, plus Developer Mode) or Claude Code won't find them.
+Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change. Task-specific guides live in [.agents/skills/](.agents/skills/) (`onboarding`, `contributing` and `reviewing-prs` are synced from `capybara-hq/.github` and must be edited there; `.claude/skills` is a symlink to `.agents/skills`). On Windows, enable symlinks before cloning (`git config --global core.symlinks true`, plus Developer Mode) or Claude Code won't find them.
 
 ## Larger changes: design first
 
@@ -21,7 +34,8 @@ Small fixes can go straight to a PR. If you're unsure whether a change counts as
 ## Pull requests
 
 - All changes reach `main` through pull requests; a maintainer reviews and merges.
-- CI must be green; the required check is `ci-ok` (see "CI and checks" in AGENTS.md).
+- CI must be green. The required statuses are `ci-ok` and `issue-linked` (the PR body must contain `Closes #N` for an accepted issue (community PRs; authors with write access are exempt); see the organization guide and "CI and checks" in AGENTS.md).
+- The PR description is filled from the organization's default template.
 
 ## Language
 

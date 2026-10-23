@@ -607,6 +607,12 @@ importers:
 
   tools/ci: {}
 
+  tools/dev:
+    dependencies:
+      '@capybara-hq/ci':
+        specifier: workspace:*
+        version: link:../ci
+
   tools/pack-plugin:
     dependencies:
       '@capybara-hq/plugin-sdk':
@@ -626,7 +632,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/kernel
 
-  tools/worktree: {}
+  tools/worktree:
+    dependencies:
+      '@capybara-hq/dev':
+        specifier: workspace:*
+        version: link:../dev
 
 packages:
 

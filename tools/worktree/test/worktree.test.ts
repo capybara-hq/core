@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -13,9 +13,10 @@ import { git, makeRepo, type Sandbox } from "./helpers.js";
 
 describe("parseNewArgs", () => {
   const remotes = ["origin"];
+  const defaultFrom = "origin/main";
 
   it("默认从 origin/main 切、装依赖", () => {
-    expect(parseNewArgs(["feat/x"], remotes)).toEqual({
+    expect(parseNewArgs(["feat/x"], remotes, defaultFrom)).toEqual({
       branch: "feat/x",
       from: "origin/main",
       install: true,
@@ -23,33 +24,39 @@ describe("parseNewArgs", () => {
   });
 
   it("认 --from / --from= / --no-install", () => {
-    expect(parseNewArgs(["fix/y", "--from", "origin/feat/x", "--no-install"], remotes)).toEqual({
+    expect(
+      parseNewArgs(["fix/y", "--from", "origin/feat/x", "--no-install"], remotes, defaultFrom),
+    ).toEqual({
       branch: "fix/y",
       from: "origin/feat/x",
       install: false,
     });
-    expect(parseNewArgs(["fix/y", "--from=feat/x"], remotes).from).toBe("feat/x");
+    expect(parseNewArgs(["fix/y", "--from=feat/x"], remotes, defaultFrom).from).toBe("feat/x");
   });
 
   it("分支名必须是第一个参数（顺序写反直接拒绝）", () => {
-    expect(() => parseNewArgs(["--from", "origin/main", "feat/x"], remotes)).toThrow(
+    expect(() => parseNewArgs(["--from", "origin/main", "feat/x"], remotes, defaultFrom)).toThrow(
       /第一个参数必须是分支名/,
     );
-    expect(() => parseNewArgs([], remotes)).toThrow(/没给分支名/);
+    expect(() => parseNewArgs([], remotes, defaultFrom)).toThrow(/没给分支名/);
   });
 
   it("拒绝以 remote 名开头的分支名", () => {
-    expect(() => parseNewArgs(["origin/main"], remotes)).toThrow(/remote 名/);
-    expect(() => parseNewArgs(["origin"], remotes)).toThrow(/remote 名/);
-    expect(parseNewArgs(["originals/x"], remotes).branch).toBe("originals/x");
+    expect(() => parseNewArgs(["origin/main"], remotes, defaultFrom)).toThrow(/remote 名/);
+    expect(() => parseNewArgs(["origin"], remotes, defaultFrom)).toThrow(/remote 名/);
+    expect(parseNewArgs(["originals/x"], remotes, defaultFrom).branch).toBe("originals/x");
   });
 
   it("拒绝多个位置参数、缺取值的 --from、不认识的选项", () => {
-    expect(() => parseNewArgs(["feat/x", "feat/y"], remotes)).toThrow(/只接受一个分支名/);
-    expect(() => parseNewArgs(["feat/x", "--from"], remotes)).toThrow(/缺少取值/);
-    expect(() => parseNewArgs(["feat/x", "--from", "--no-install"], remotes)).toThrow(/缺少取值/);
-    expect(() => parseNewArgs(["feat/x", "--from="], remotes)).toThrow(/缺少取值/);
-    expect(() => parseNewArgs(["feat/x", "--form", "origin/feat/y"], remotes)).toThrow(
+    expect(() => parseNewArgs(["feat/x", "feat/y"], remotes, defaultFrom)).toThrow(
+      /只接受一个分支名/,
+    );
+    expect(() => parseNewArgs(["feat/x", "--from"], remotes, defaultFrom)).toThrow(/缺少取值/);
+    expect(() => parseNewArgs(["feat/x", "--from", "--no-install"], remotes, defaultFrom)).toThrow(
+      /缺少取值/,
+    );
+    expect(() => parseNewArgs(["feat/x", "--from="], remotes, defaultFrom)).toThrow(/缺少取值/);
+    expect(() => parseNewArgs(["feat/x", "--form", "origin/feat/y"], remotes, defaultFrom)).toThrow(
       /不认识的选项/,
     );
   });
@@ -87,6 +94,25 @@ describe("wt:new / wt:rm（临时仓库）", () => {
     expect(() => git(target, "rev-parse", "--abbrev-ref", "feat/new@{upstream}")).toThrow();
     // 主 checkout 的 HEAD 不动
     expect(git(repo.main, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+  });
+
+  it("in a fork clone, new branches start from upstream/main", { timeout: 30_000 }, () => {
+    repo = makeRepo();
+    const url = "https://github.com/capybara-hq/core.git";
+    const upstream = join(repo.base, "upstream.git");
+    const work = join(repo.base, "work");
+    // upstream gets one commit that the fork's main does not have
+    git(repo.base, "clone", "-q", "--bare", repo.origin, upstream);
+    git(repo.base, "clone", "-q", upstream, work);
+    writeFileSync(join(work, "ahead.txt"), "ahead\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "upstream ahead");
+    git(work, "push", "-q", "origin", "main");
+    git(repo.main, "config", `url.${upstream}.insteadOf`, url);
+    git(repo.main, "remote", "add", "upstream", url);
+    const target = cmdNew(["feat/fork", "--no-install"], { cwd: repo.main, log });
+    expect(git(target, "rev-parse", "HEAD")).toBe(git(upstream, "rev-parse", "main"));
+    expect(git(repo.main, "rev-parse", "origin/main")).not.toBe(git(upstream, "rev-parse", "main"));
   });
 
   it("远端已有该分支：checkout 并跟踪远端", { timeout: 30_000 }, () => {

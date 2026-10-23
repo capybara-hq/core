@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship the shared contributor workflow: a new `capybara-hq/.github` repository (org defaults, issue gate, settings script, shared skills, org profile) and its first consumer, `capybara-hq/core` (`pnpm doctor`, `pnpm verify`, upstream-aware worktrees, synced skills, gate caller, CODEOWNERS, docs), then roll out the rulesets.
+**Note:** the environment check is `pnpm doctor:env` (pnpm's built-in `doctor` shadows a `doctor` script); agents parse JSON with `pnpm -s doctor:env --json` / `pnpm -s verify --json` (pnpm's script banner otherwise precedes the JSON).
+
+**Goal:** Ship the shared contributor workflow: a new `capybara-hq/.github` repository (org defaults, issue gate, settings script, shared skills, org profile) and its first consumer, `capybara-hq/core` (`pnpm doctor:env`, `pnpm verify`, upstream-aware worktrees, synced skills, gate caller, CODEOWNERS, docs), then roll out the rulesets.
 
 **Architecture:** Logic that GitHub runs (gate, settings, skill sync) is plain Node 24 TypeScript in `capybara-hq/.github`, run with `node` (type stripping), tested with `node --test`, no runtime dependencies; reusable workflows check out that repository at the called tag and run the scripts, never the PR's code. `core` gets a new private package `tools/dev` for `doctor` / `verify`, reuses `tools/ci`'s plan, and gains one custom check for synced skills.
 
@@ -70,7 +72,7 @@ Both forms: `labels: [needs-triage]` (bug also `bug`, feature also `enhancement`
 
 - [ ] **Step 1: Write the failing test** `src/templates.test.ts`: `forms list exactly FORM_SECTIONS` parses each form's `body[]` (a minimal YAML reader for this shape is fine, or match `label:` lines) and asserts labels and `validations.required` equal `FORM_SECTIONS`; `forms apply needs-triage`; `config disables blank issues`.
 - [ ] **Step 2: Run** `pnpm test`. Expected: FAIL, files missing.
-- [ ] **Step 3: Write the files.** `CODE_OF_CONDUCT.md`: Contributor Covenant 2.1 verbatim, enforcement contact `284885069@qq.com`. `SECURITY.md`: report through GitHub private vulnerability reporting (preferred) or `284885069@qq.com`; first reply within 2 days; no fixed time to fix, depends on severity; supported versions table: before 1.0 only the latest release, fixes ship in the next release, no backports. `CONTRIBUTING.md` (humans): the two kinds of contributors and the remotes (spec §3), issue → `accepted` → `/claim` → PR with `Closes #N` (spec §4), no exemptions for small PRs, who merges (spec §5), `pnpm doctor` / `pnpm verify`, agents optional and where the skills are, a placeholder "Supported agents" table filled in Task C2, link to each repository's `AGENTS.md`. PR template: What and why; `Closes #`; checklist `pnpm verify` passes, changeset if a published package changed, design doc linked for larger changes.
+- [ ] **Step 3: Write the files.** `CODE_OF_CONDUCT.md`: Contributor Covenant 2.1 verbatim, enforcement contact `284885069@qq.com`. `SECURITY.md`: report through GitHub private vulnerability reporting (preferred) or `284885069@qq.com`; first reply within 2 days; no fixed time to fix, depends on severity; supported versions table: before 1.0 only the latest release, fixes ship in the next release, no backports. `CONTRIBUTING.md` (humans): the two kinds of contributors and the remotes (spec §3), issue → `accepted` → `/claim` → PR with `Closes #N` (spec §4), no exemptions for small PRs, who merges (spec §5), `pnpm doctor:env` / `pnpm verify`, agents optional and where the skills are, a placeholder "Supported agents" table filled in Task C2, link to each repository's `AGENTS.md`. PR template: What and why; `Closes #`; checklist `pnpm verify` passes, changeset if a published package changed, design doc linked for larger changes.
 - [ ] **Step 4: Run** `pnpm test`. Expected: PASS.
 - [ ] **Step 5: Commit** `docs: add org default community files` on branch `docs/community-files`, open the PR (it publishes the contacts: confirm with the maintainer first). After merge, check on github.com that `capybara-hq/core` shows the org `CODE_OF_CONDUCT` / `SECURITY` and the "New issue" chooser shows both forms; if templates are not picked up from `.github/ISSUE_TEMPLATE/`, move them to the repository root `ISSUE_TEMPLATE/` and re-check.
 
@@ -167,7 +169,7 @@ Both forms: `labels: [needs-triage]` (bug also `bug`, feature also `enhancement`
 
 Content per spec §7, English. Must state, in each: run commands, don't re-implement them; outward actions only after the user agrees; never print secrets. `contributing`: sub-actions *start*, *verify*, *open the PR* (including the local pre-check of `issue-linked` rules via `gh issue view`, the PR body format, and the optional self-review), *address review* (read threads with `gh api graphql` for `reviewThreads`, reply per thread, re-request review); the workflow description for agents (two kinds of contributors, remotes, issue gate, no exemptions for small PRs, who merges). `reviewing-prs`: gather with `gh pr view --json`, `gh pr diff`, `gh pr checks`, `gh issue view`; never `gh pr checkout`, install or run the PR's code unless the maintainer asks, and then never with live API env loaded; check against `AGENTS.md` and the skills of touched areas; verdict + findings with file:line; draft review with inline comments; post only after confirmation; never merge.
 
-- [ ] **Step 1: Write the failing test** `every skill has matching name and a description under 1024 chars` and `no skill mentions a repository-specific command other than pnpm doctor, pnpm verify, pnpm wt:new` (scan for `pnpm [a-z:-]+`).
+- [ ] **Step 1: Write the failing test** `every skill has matching name and a description under 1024 chars` and `no skill mentions a repository-specific command other than pnpm doctor:env, pnpm verify, pnpm wt:new` (scan for `pnpm [a-z:-]+`).
 - [ ] **Step 2: Run** `pnpm test`. Expected: FAIL.
 - [ ] **Step 3: Write the skills.**
 - [ ] **Step 4: Run** `pnpm test`. Expected: PASS.
@@ -211,11 +213,11 @@ Worktree: `pnpm wt:new feat/contributor-workflow`. One PR for Part B. `tools/*` 
 
 Runs alongside `feat/m7-release` in another session. Overlap: `pnpm-lock.yaml` only (whoever merges second re-runs `pnpm install`). Don't run the dev stack (kernel, `pnpm dev:web`, `docker/compose.dev.yaml`) while the other session does; tests with their own containers are fine.
 
-### Task B1: `tools/dev` with upstream detection and `pnpm doctor`
+### Task B1: `tools/dev` with upstream detection and `pnpm doctor:env`
 
 **Files:**
 - Create: `tools/dev/package.json`, `tools/dev/tsconfig.json`, `tools/dev/src/report.ts`, `tools/dev/src/remotes.ts`, `tools/dev/src/doctor.ts`, `tools/dev/src/doctor-cli.ts`
-- Modify: `tsconfig.json` (add reference `tools/dev`), `package.json` (script `"doctor": "node tools/dev/src/doctor-cli.ts"`)
+- Modify: `tsconfig.json` (add reference `tools/dev`), `package.json` (script `"doctor:env": "node tools/dev/src/doctor-cli.ts"`)
 - Test: `tools/dev/test/remotes.test.ts`, `tools/dev/test/doctor.test.ts`
 
 **Interfaces:**
@@ -229,7 +231,7 @@ Runs alongside `feat/m7-release` in another session. Overlap: `pnpm-lock.yaml` o
 - [ ] **Step 2: Run** `pnpm exec vitest run tools/dev`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `pnpm exec vitest run tools/dev && node tools/dev/src/doctor-cli.ts`. Expected: tests pass; doctor prints a table, all required checks pass on this machine.
-- [ ] **Step 5: Commit** `feat(dev): add pnpm doctor and upstream detection`.
+- [ ] **Step 5: Commit** `feat(dev): add pnpm doctor:env and upstream detection`.
 
 ### Task B2: `pnpm verify`
 
@@ -305,8 +307,8 @@ Runs alongside `feat/m7-release` in another session. Overlap: `pnpm-lock.yaml` o
 - Modify: `CONTRIBUTING.md`, `AGENTS.md`
 - Delete: `.github/pull_request_template.md`
 
-- [ ] **Step 1: `CONTRIBUTING.md`** (English): start with "How contributions work" pointing to the org guide (`https://github.com/capybara-hq/.github/blob/main/CONTRIBUTING.md`) and, for agents, `.agents/skills/contributing/SKILL.md`; then `pnpm doctor` / `pnpm verify`; keep the existing repository specifics (development environment, design first, changesets, live API tests, CLA note).
-- [ ] **Step 2: `AGENTS.md`**: repository map adds `tools/dev` (`pnpm doctor` / `pnpm verify`) and notes that `.agents/skills/{onboarding,contributing,reviewing-prs}` are synced from `capybara-hq/.github` and must not be edited here; dependency chain adds `@capybara-hq/dev` (`tools/dev`, private) -> `@capybara-hq/ci`, and `@capybara-hq/worktree` -> `@capybara-hq/dev`; "How work is done" adds one line: the workflow (issues, PRs, review) is in the `contributing` skill; "CI and checks": required statuses are `ci-ok` and `issue-linked` (the latter from `community.yml`, not part of `ci-ok`), and the new `check:synced-skills` runs in full on PRs (part of `pnpm check`, cheap); common commands add `pnpm doctor`, `pnpm verify`.
+- [ ] **Step 1: `CONTRIBUTING.md`** (English): start with "How contributions work" pointing to the org guide (`https://github.com/capybara-hq/.github/blob/main/CONTRIBUTING.md`) and, for agents, `.agents/skills/contributing/SKILL.md`; then `pnpm doctor:env` / `pnpm verify`; keep the existing repository specifics (development environment, design first, changesets, live API tests, CLA note).
+- [ ] **Step 2: `AGENTS.md`**: repository map adds `tools/dev` (`pnpm doctor:env` / `pnpm verify`) and notes that `.agents/skills/{onboarding,contributing,reviewing-prs}` are synced from `capybara-hq/.github` and must not be edited here; dependency chain adds `@capybara-hq/dev` (`tools/dev`, private) -> `@capybara-hq/ci`, and `@capybara-hq/worktree` -> `@capybara-hq/dev`; "How work is done" adds one line: the workflow (issues, PRs, review) is in the `contributing` skill; "CI and checks": required statuses are `ci-ok` and `issue-linked` (the latter from `community.yml`, not part of `ci-ok`), and the new `check:synced-skills` runs in full on PRs (part of `pnpm check`, cheap); common commands add `pnpm doctor:env`, `pnpm verify`.
 - [ ] **Step 3: Run** `pnpm lint && pnpm typecheck && pnpm check`. Expected: PASS.
 - [ ] **Step 4: Commit** `docs: point contributors to the shared workflow`; open the Part B PR. The PR description states that `check:synced-skills` runs in full (cheap, part of `pnpm check`).
 
@@ -324,7 +326,7 @@ Runs alongside `feat/m7-release` in another session. Overlap: `pnpm-lock.yaml` o
 
 ### Task C2: Agent smoke tests
 
-- [ ] **Step 1:** For Claude Code, Codex, Cursor and Copilot (whichever the maintainer has), in a fresh clone of core: does it read `AGENTS.md`; does it list `onboarding`, `contributing`, `reviewing-prs` and the domain skills; does it list any skill twice; can it run `pnpm doctor` and follow `onboarding` to green. Record agent, version, date, results.
+- [ ] **Step 1:** For Claude Code, Codex, Cursor and Copilot (whichever the maintainer has), in a fresh clone of core: does it read `AGENTS.md`; does it list `onboarding`, `contributing`, `reviewing-prs` and the domain skills; does it list any skill twice; can it run `pnpm doctor:env` and follow `onboarding` to green. Record agent, version, date, results.
 - [ ] **Step 2:** Fill the "Supported agents" table in the org `CONTRIBUTING.md` (PR in `.github`). If a duplicate listing breaks behaviour, stop and ask the maintainer (spec §9).
 
 ### Task C3: Profile settings checklist for the maintainer

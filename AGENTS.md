@@ -17,8 +17,10 @@ Capybara: an open-source enterprise agent platform (TypeScript, pnpm monorepo, A
 | `tools/pack-plugin` | Plugin packer (`pnpm pack-plugin` / `pack-plugins`: esbuild into an npm-pack tgz with a static manifest) |
 | `tools/ci` | CI plan for a diff (`tools/ci/src/affected.ts`, run by the `changes` job) and `test-plugins.json` |
 | `tools/worktree` | Worktree tool for starting work (`pnpm wt:new` / `wt:rm` / `wt:ls`), paired with `.claude/hooks/branch-safety.sh` |
+| `tools/dev` | Contributor tools (`pnpm doctor:env` checks the environment, `pnpm verify` runs the required checks locally; private) |
 | `docs/` | Design docs and plans |
 | `.agents/skills/` | Agent-facing skills for working on this repo, read natively by Codex, Cursor, Copilot, Gemini CLI and others (`.claude/skills` symlinks here for Claude Code) |
+| `.agents/skills/{onboarding,contributing,reviewing-prs}` | Synced from `capybara-hq/.github`: edit them there and run the sync; `check:synced-skills` rejects in-place edits |
 
 ## Three layers and dependency direction
 
@@ -40,6 +42,8 @@ The full package dependency chain (only these directions are allowed):
 - `@capybara-hq/pack-plugin` (`tools/pack-plugin`, private) -> `@capybara-hq/plugin-sdk` (tests also use the devDependency `@capybara-hq/kernel` to validate the output)
 - `@capybara-hq/plugin-sdk` depends on no `@capybara-hq/*`
 - `@capybara-hq/ci` (`tools/ci`, private) depends on no `@capybara-hq/*` (CI runs it with plain `node`, before `pnpm install`)
+- `@capybara-hq/dev` (`tools/dev`, private) -> `@capybara-hq/ci` (`pnpm verify` reuses the CI plan)
+- `@capybara-hq/worktree` (`tools/worktree`, private) -> `@capybara-hq/dev` (remote detection)
 
 Kernel, CLI and plugin tests use `@capybara-hq/testing` as a devDependency, in tests only. Tests outside a plugin that load an official plugin by path (e.g. kernel tests loading `plugins/todo/src/index.ts`) do **not** declare it as a devDependency; they list it in `tools/ci/test-plugins.json` instead (enforced by `pnpm check:test-plugins`). A devDependency would make pnpm treat the kernel as depending on the plugin: every plugin change would then pull in everything that depends on the kernel, it would add kernel -> plugin -> testing -> kernel cycles, and apps/web may depend only on design. `pnpm check:deps` only checks the plugin/SDK boundary; dependency direction for the kernel, CLI and web is not checked automatically yet and relies on review.
 
@@ -84,6 +88,8 @@ pnpm test        # vitest run
 pnpm exec vitest run <path>   # a single test: run from the repo root (the root config adds the @capybara-hq/source condition dual-replica tests need); don't use pnpm --filter <pkg> exec vitest
 pnpm check       # custom checks
 pnpm wt:new <branch>   # start a task worktree (see "Branches and worktrees")
+pnpm doctor:env  # check your environment (--json for machines; use pnpm -s for clean JSON)
+pnpm verify      # run the required checks locally for the current branch (--json, pnpm -s)
 docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 ```
 
@@ -91,17 +97,18 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 
 - **Design before code for larger changes.** A new feature, a cross-package change, a new contract or a behavior change starts with a design doc in `docs/superpowers/specs/`, reviewed by a maintainer; then an implementation plan in `docs/superpowers/plans/` (tasks with files, interfaces, tests), also reviewed; then implementation against the plan. Small fixes skip this.
 - Changes reach `main` only through pull requests; a maintainer merges.
+- The contribution workflow (issues, claiming, PRs, review) is in the `contributing` skill (`.agents/skills/contributing/SKILL.md`) and the [org guide](https://github.com/capybara-hq/.github/blob/main/CONTRIBUTING.md).
 
 ## Branches and worktrees
 
 - The Claude session runs in the main checkout, not in a separate window; the main checkout's HEAD stays on `main` so it is always a clean baseline.
-- All task work happens in a worktree: `pnpm wt:new <branch> [--from origin/main] [--no-install]` creates `.claude/worktrees/<dir>` (gitignored; checks out the remote branch if it exists, otherwise creates it from `--from` with `--no-track`; runs its own `pnpm install`). Work in that directory (cd into it or use absolute paths); after merge, `pnpm wt:rm <branch>` cleans up (the branch is kept). The branch name must be the first argument.
+- All task work happens in a worktree: `pnpm wt:new <branch> [--from origin/main] [--no-install]` creates `.claude/worktrees/<dir>` (gitignored; checks out the remote branch if it exists, otherwise creates it from `--from` (default `<upstream>/main`: `origin/main` in clones of capybara-hq/core, the upstream remote's main in fork clones) with `--no-track`; runs its own `pnpm install`). Work in that directory (cd into it or use absolute paths); after merge, `pnpm wt:rm <branch>` cleans up (the branch is kept). The branch name must be the first argument.
 - `.claude/hooks/branch-safety.sh` (PreToolUse, wired in `.claude/settings.json`) enforces this: no pushes to `main`; no switching the main checkout to `feat/` `fix/` `docs/` `chore/` `test/` `refactor/` branches (worktrees are not restricted).
 - Don't run the dev stack in two worktrees at once (`docker/compose.dev.yaml`, the kernel, `pnpm dev:web`): the ports collide; stop one before starting the other.
 
 ## CI and checks
 
-- The aggregate check `ci-ok` is the only required check; every job in `.github/workflows/ci.yml` must feed into it.
+- The required statuses are `ci-ok` and `issue-linked`. `ci-ok` aggregates every job in `.github/workflows/ci.yml`, which must all feed into it. `issue-linked` is set by `.github/workflows/community.yml` (the shared gate from `capybara-hq/.github`) and is not part of `ci-ok`.
 - **PRs run what the diff affects; pushes to `main` run everything.** Cheap checks or checks that inherently look at the whole repo run in full on PRs too; expensive checks that can be scoped run only when affected. The plan is computed by `tools/ci/src/affected.ts` (rules unit-tested in `tools/ci/test`); keep this list, that file and the comments in `ci.yml` in sync:
 
   | Job | On PRs | Runs when |
@@ -115,6 +122,7 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
   - **Run everything** when the diff touches root `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `vitest.config.*`, `tsconfig*.json`, `biome.json`, `.github/**`, `tools/ci/**`, `packages/testing/**`, any file that is neither a doc nor inside a workspace package (e.g. `docker/**`, `tools/fixtures/**`, `commitlint.config.ts`), or when the diff can't be computed.
   - **Docs-only** diffs (`docs/**` except `docs/config.md`, `*.md` outside packages, `.gitignore`, `.agents/**`, `.claude/**` except hooks and `settings.json`) skip test / web / e2e / visual.
   - Files outside packages that tests read are mapped in `EXTRA_INPUTS` in `affected.ts` (`.claude/hooks/**`, `.claude/settings.json` -> `tools/worktree`; `docs/config.md` -> `tools/checks`); add an entry when a new test reads such a file.
+  - `check:synced-skills` (full: cheap, part of `pnpm check`): the synced skills under `.agents/skills/` must match the versions and hashes recorded from `capybara-hq/.github`.
   - `check:test-plugins` (full: cheap): a test outside a plugin that loads an official plugin by path or package name must have it as a dependency of its package or listed under its test root (`<package>/test`, `<package>/e2e`) in `tools/ci/test-plugins.json`, written as a literal path (no interpolated plugin names); stale entries fail too.
 - **Every new check must state whether it runs in full or by diff on PRs**, with the reasoning in the PR description, and update this section and the comments in `ci.yml`; on `main` everything always runs.
 - **Flaky tests get fixed, not hidden behind retries.** Reproduce locally first by injecting a delay or adding load (`pnpm exec vitest run --maxWorkers=2`), then decide whether it's a test timing issue (wait for the full convergence condition instead of betting on one moment's state) or a product bug (fix the code and add a test). One "flaky" test once turned out to be a real lost-message bug.

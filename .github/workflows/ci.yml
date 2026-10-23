@@ -10,7 +10,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Branch protection requires only ci-ok, which aggregates every job below.
+# Branch protection requires `ci-ok` (which aggregates every job below) and `issue-linked`
+# (set by community.yml, not part of this workflow).
 #
 # PRs run what the diff affects; pushes to main run everything. The plan comes from
 # tools/ci/src/affected.ts (rules and their tests live there; AGENTS.md "CI and checks" lists them):

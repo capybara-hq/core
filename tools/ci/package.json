@@ -9,5 +9,8 @@
   },
   "scripts": {
     "build": "tsc -b"
+  },
+  "exports": {
+    "./affected": "./src/affected.ts"
   }
 }
