@@ -1,9 +1,11 @@
 import { fileURLToPath } from "node:url";
 import {
+  type AvailableHook,
   definePlugin,
   type HookHandler,
   type HookOptions,
   type HookPayloads,
+  type ModelRequestHookPayload,
   type PluginManifest,
   PluginPermissionError,
   type ToolPreHookPayload,
@@ -16,8 +18,19 @@ import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.j
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { HookRegistry } from "../../src/plugins/hooks.js";
+import {
+  EMPTY_DENY_REASON,
+  errMsg,
+  HOOK_REASON_MAX_CHARS,
+  HookRegistry,
+  type HookSource,
+  OBSERVE_INFLIGHT_MAX,
+  type RegisteredHook,
+  sanitizeDenyReason,
+} from "../../src/plugins/hooks.js";
 import { PluginHost } from "../../src/plugins/host.js";
+import { InflightTracker } from "../../src/plugins/inflight.js";
+import type { HooksDrainState } from "../fixtures/plugins/hooks-drain/index.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -75,44 +88,74 @@ const toolPre = (input: unknown = { x: 1 }): ToolPreHookPayload => ({
   specHash: "h1",
   input,
 });
+const modelReq = (): ModelRequestHookPayload => ({
+  ...scope,
+  step: 1,
+  attempt: 1,
+  provider: "p",
+  model: "m",
+  request: { model: "m", system: [], messages: [], tools: [], maxOutputTokens: 10, params: {} },
+});
 
-function registry(
-  opts: { enabled?: string[]; timeoutMs?: number; log?: KernelDeps["log"] } = {},
-): HookRegistry {
-  return new HookRegistry({
-    enabledPlugins: async () => new Set(opts.enabled ?? ["alpha", "zeta", "beta"]),
+/** A fake plugin instance: hooks and an in-flight tracker. */
+class Src implements HookSource {
+  readonly hooks: RegisteredHook[] = [];
+  readonly inflight: InflightTracker;
+  constructor(readonly name: string) {
+    this.inflight = new InflightTracker(name);
+  }
+  on<K extends AvailableHook>(mount: K, handler: HookHandler<K>, opts: HookOptions): this {
+    this.hooks.push({ mount, handler: handler as HookHandler<AvailableHook>, mode: opts.mode });
+    return this;
+  }
+}
+
+function setup(
+  opts: {
+    enabled?: string[] | (() => Promise<Set<string>>);
+    timeoutMs?: number;
+    log?: KernelDeps["log"];
+  } = {},
+) {
+  const sources: Src[] = [];
+  const current = new Map<string, Src>();
+  const enabled = opts.enabled;
+  const r = new HookRegistry({
+    instances: () => sources,
+    current: (p) => current.get(p),
+    enabledPlugins:
+      typeof enabled === "function"
+        ? enabled
+        : async () => new Set(enabled ?? ["alpha", "beta", "zeta"]),
     redis,
     config: () => ({ hooks: { timeoutMs: opts.timeoutMs ?? 1000 } }),
     log: opts.log ?? quiet,
   });
+  const plugin = (name: string) => {
+    const s = new Src(name);
+    sources.push(s);
+    current.set(name, s);
+    return s;
+  };
+  const remove = (s: Src) => {
+    sources.splice(sources.indexOf(s), 1);
+    if (current.get(s.name) === s) current.delete(s.name);
+  };
+  return { r, plugin, remove, current, sources };
 }
 
-const on = <K extends keyof HookPayloads>(
-  r: HookRegistry,
-  plugin: string,
-  mount: K,
-  handler: HookHandler<K>,
-  opts: HookOptions,
-) => r.add(plugin, mount, handler as HookHandler<keyof HookPayloads>, opts);
-
 const signal = () => new AbortController().signal;
+const warnSpy = () => {
+  const warn = vi.fn();
+  return { warn, log: { ...quiet, warn } };
+};
 
-describe("HookRegistry.run", () => {
-  it("runs by plugin name; the first policy deny stops the chain", async () => {
-    const r = registry();
+describe("HookRegistry.run: policy hooks", () => {
+  it("run serially by plugin name; the first deny stops the chain", async () => {
+    const { r, plugin } = setup();
     const calls: string[] = [];
-    on(
-      r,
-      "zeta",
-      "tool.preExecute",
-      () => {
-        calls.push("zeta");
-      },
-      { mode: "policy" },
-    );
-    on(
-      r,
-      "alpha",
+    plugin("zeta").on("tool.preExecute", () => void calls.push("zeta"), { mode: "policy" });
+    plugin("alpha").on(
       "tool.preExecute",
       () => {
         calls.push("alpha");
@@ -129,73 +172,44 @@ describe("HookRegistry.run", () => {
     expect(calls).toEqual(["alpha"]);
   });
 
-  it("all allow: every hook runs in plugin-name order", async () => {
-    const r = registry();
+  it("all allow: every hook runs, by plugin name, registration order within a plugin", async () => {
+    const { r, plugin } = setup();
     const calls: string[] = [];
-    for (const p of ["zeta", "alpha", "beta"]) {
-      on(
-        r,
-        p,
-        "tool.preExecute",
-        () => {
-          calls.push(p);
-        },
-        { mode: "policy" },
-      );
-    }
+    const rec = (s: string) => () => void calls.push(s);
+    plugin("zeta").on("tool.preExecute", rec("zeta"), { mode: "policy" });
+    plugin("alpha")
+      .on("tool.preExecute", rec("alpha-1"), { mode: "policy" })
+      .on("tool.preExecute", rec("alpha-2"), { mode: "policy" });
+    plugin("beta").on("tool.preExecute", rec("beta"), { mode: "policy" });
     expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
-    expect(calls).toEqual(["alpha", "beta", "zeta"]);
+    expect(calls).toEqual(["alpha-1", "alpha-2", "beta", "zeta"]);
   });
 
-  it("an observe hook returning deny is ignored and the chain continues", async () => {
-    const r = registry();
-    const zeta = vi.fn();
-    on(r, "alpha", "tool.preExecute", () => ({ deny: "nope" }), { mode: "observe" });
-    on(r, "zeta", "tool.preExecute", zeta, { mode: "policy" });
-    expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
-    expect(zeta).toHaveBeenCalledOnce();
-  });
-
-  it("a policy hook that throws denies with cause hook_error", async () => {
-    const r = registry();
-    on(
-      r,
-      "alpha",
+  it("a throwing policy hook denies with a generic reason; the raw error is only in detail and the log", async () => {
+    const { warn, log } = warnSpy();
+    const { r, plugin } = setup({ log });
+    plugin("alpha").on(
       "model.request",
       () => {
-        throw new Error("boom");
+        throw new Error("secret internals");
       },
       { mode: "policy" },
     );
-    const out = await r.run(
-      "model.request",
-      {
-        ...scope,
-        step: 1,
-        attempt: 1,
-        provider: "p",
-        model: "m",
-        request: {
-          model: "m",
-          system: [],
-          messages: [],
-          tools: [],
-          maxOutputTokens: 10,
-          params: {},
-        },
-      },
-      signal(),
-    );
-    expect(out).toMatchObject({ allowed: false, plugin: "alpha", cause: "hook_error" });
-    expect(out.allowed === false && out.reason).toContain("boom");
+    const out = await r.run("model.request", modelReq(), signal());
+    expect(out).toEqual({
+      allowed: false,
+      plugin: "alpha",
+      reason: "The alpha policy check failed",
+      cause: "hook_error",
+      detail: "secret internals",
+    });
+    expect(JSON.stringify(warn.mock.calls)).toContain("secret internals");
   });
 
-  it("a policy hook past hooks.timeoutMs denies with cause timeout and its signal aborts", async () => {
-    const r = registry({ timeoutMs: 50 });
+  it("a policy hook past hooks.timeoutMs denies (timeout, generic reason) and its signal aborts", async () => {
+    const { r, plugin } = setup({ timeoutMs: 50 });
     let aborted = false;
-    on(
-      r,
-      "alpha",
+    plugin("alpha").on(
       "tool.preExecute",
       (_p, s) =>
         new Promise<void>((resolve) => {
@@ -207,30 +221,126 @@ describe("HookRegistry.run", () => {
       { mode: "policy" },
     );
     const out = await r.run("tool.preExecute", toolPre(), signal());
-    expect(out).toMatchObject({ allowed: false, plugin: "alpha", cause: "timeout" });
+    expect(out).toMatchObject({
+      allowed: false,
+      plugin: "alpha",
+      cause: "timeout",
+      reason: "The alpha policy check did not respond in time",
+    });
     expect(aborted).toBe(true);
   });
 
-  it("an observe hook that throws is allowed and warns once per plugin and mount per minute", async () => {
-    const warn = vi.fn();
-    const r = registry({ log: { ...quiet, warn } });
+  it("deny reasons are sanitized for the model", async () => {
+    const { r, plugin } = setup();
+    plugin("alpha").on("tool.preExecute", () => ({ deny: "  no\n\tway\u0007 \u0000 here " }), {
+      mode: "policy",
+    });
+    expect(await r.run("tool.preExecute", toolPre(), signal())).toMatchObject({
+      reason: "no way here",
+      cause: "deny",
+    });
+  });
+
+  it("a plugin the organization has not enabled is not called", async () => {
+    const { r, plugin } = setup({ enabled: ["zeta"] });
+    const alpha = vi.fn(() => ({ deny: "x" }));
+    plugin("alpha").on("tool.preExecute", alpha, { mode: "policy" });
+    expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
+    expect(alpha).not.toHaveBeenCalled();
+  });
+
+  it("the payload is a deep-frozen copy: mutating it is a hook_error", async () => {
+    const original = toolPre({ nested: { x: 1 } });
+    const { r, plugin } = setup();
+    plugin("alpha").on(
+      "tool.preExecute",
+      (p) => {
+        (p.input as { nested: { x: number } }).nested.x = 2;
+      },
+      { mode: "policy" },
+    );
+    expect(await r.run("tool.preExecute", original, signal())).toMatchObject({
+      allowed: false,
+      cause: "hook_error",
+    });
+    expect(original.input).toEqual({ nested: { x: 1 } });
+    expect(Object.isFrozen(original)).toBe(false);
+  });
+
+  it("a hook cut off by revocation reruns once on the current generation", async () => {
+    const { r, plugin, current, remove } = setup();
+    const old = plugin("alpha");
+    old.on("tool.preExecute", () => new Promise<void>(() => {}), { mode: "policy" });
+    const running = r.run("tool.preExecute", toolPre(), signal());
+    await vi.waitFor(() => expect(old.inflight.size).toBe(1));
+    // upgrade: the new generation replaces the old one, which is then aborted
+    remove(old);
+    const next = plugin("alpha");
+    next.on("tool.preExecute", () => ({ deny: "from the new generation" }), { mode: "policy" });
+    expect(current.get("alpha")).toBe(next);
+    old.inflight.abort();
+    expect(await running).toMatchObject({ reason: "from the new generation", cause: "deny" });
+  });
+
+  it("a hook cut off by revocation with no current generation denies", async () => {
+    const { r, plugin, remove } = setup();
+    const old = plugin("alpha");
+    old.on("tool.preExecute", () => new Promise<void>(() => {}), { mode: "policy" });
+    const running = r.run("tool.preExecute", toolPre(), signal());
+    await vi.waitFor(() => expect(old.inflight.size).toBe(1));
+    remove(old);
+    old.inflight.abort();
+    expect(await running).toMatchObject({
+      allowed: false,
+      plugin: "alpha",
+      cause: "hook_error",
+      reason: "The alpha policy check failed",
+    });
+  });
+});
+
+describe("HookRegistry.run: observe hooks", () => {
+  it("are fire-and-forget: run never waits for them, and they run even when the call is denied", async () => {
+    const { r, plugin } = setup();
+    let release: () => void = () => {};
+    const observed: string[] = [];
+    plugin("alpha").on(
+      "tool.preExecute",
+      () =>
+        new Promise<void>((resolve) => {
+          observed.push("alpha");
+          release = resolve;
+        }),
+      { mode: "observe" },
+    );
+    plugin("beta").on("tool.preExecute", () => ({ deny: "no" }), { mode: "policy" });
+    plugin("zeta").on("tool.preExecute", () => ({ deny: "ignored" }), { mode: "observe" });
+    const out = await r.run("tool.preExecute", toolPre(), signal());
+    expect(out).toMatchObject({ allowed: false, plugin: "beta", reason: "no" });
+    await vi.waitFor(() => expect(observed).toEqual(["alpha"]));
+    release();
+  });
+
+  it("a throwing observe hook warns once per plugin and mount per minute (Redis TTL)", async () => {
+    const { warn, log } = warnSpy();
+    const { r, plugin } = setup({ log });
     const boom = () => {
       throw new Error("observe failed");
     };
-    on(r, "alpha", "tool.preExecute", boom, { mode: "observe" });
-    on(r, "alpha", "tool.postExecute", boom, { mode: "observe" });
+    plugin("alpha")
+      .on("tool.preExecute", boom, { mode: "observe" })
+      .on("tool.postExecute", boom, { mode: "observe" });
     for (let i = 0; i < 3; i++) {
       expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
     }
-    expect(warn).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
     expect(warn.mock.calls[0]?.[1]).toMatchObject({ plugin: "alpha", mount: "tool.preExecute" });
     await r.run(
       "tool.postExecute",
       { ...toolPre(), isError: false, content: "ok", durationMs: 1 },
       signal(),
     );
-    expect(warn).toHaveBeenCalledTimes(2);
-    // the counter lives in Redis with a TTL of at most a minute (shared by replicas)
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
     const keys = await redis.keys("*hook-warn*");
     expect(keys.length).toBe(2);
     for (const k of keys) {
@@ -240,57 +350,211 @@ describe("HookRegistry.run", () => {
     }
   });
 
-  it("a plugin the organization has not enabled is not called", async () => {
-    const r = registry({ enabled: ["zeta"] });
-    const alpha = vi.fn(() => ({ deny: "x" }));
-    on(r, "alpha", "tool.preExecute", alpha, { mode: "policy" });
+  it("an observe hook past hooks.timeoutMs is aborted and warned about", async () => {
+    const { warn, log } = warnSpy();
+    const { r, plugin } = setup({ timeoutMs: 30, log });
+    let aborted = false;
+    plugin("alpha").on(
+      "tool.preExecute",
+      (_p, s) =>
+        new Promise<void>((resolve) => {
+          s.addEventListener("abort", () => {
+            aborted = true;
+            resolve();
+          });
+        }),
+      { mode: "observe" },
+    );
     expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
+    expect(aborted).toBe(true);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({ error: "timed out after 30 ms" });
+  });
+
+  it("mutating the payload in an observe hook is ignored", async () => {
+    const { r, plugin } = setup();
+    plugin("alpha").on(
+      "tool.preExecute",
+      (p) => {
+        (p.input as { x: number }).x = 2;
+      },
+      { mode: "observe" },
+    );
+    const original = toolPre({ x: 1 });
+    expect(await r.run("tool.preExecute", original, signal())).toEqual({ allowed: true });
+    expect(original.input).toEqual({ x: 1 });
+  });
+
+  it(`at most ${OBSERVE_INFLIGHT_MAX} observe calls per plugin are in flight; overflow is dropped with a warning`, async () => {
+    const { warn, log } = warnSpy();
+    const { r, plugin } = setup({ timeoutMs: 10_000, log });
+    let started = 0;
+    const releases: (() => void)[] = [];
+    const alpha = plugin("alpha").on(
+      "tool.preExecute",
+      () =>
+        new Promise<void>((resolve) => {
+          started += 1;
+          releases.push(resolve);
+        }),
+      { mode: "observe" },
+    );
+    for (let i = 0; i < OBSERVE_INFLIGHT_MAX + 3; i++) {
+      await r.run("tool.preExecute", toolPre(), signal());
+    }
+    await vi.waitFor(() => expect(started).toBe(OBSERVE_INFLIGHT_MAX));
+    expect(alpha.inflight.size).toBe(OBSERVE_INFLIGHT_MAX);
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
+    expect(String(warn.mock.calls[0]?.[0])).toContain("dropped");
+    for (const f of releases) f();
+    await vi.waitFor(() => expect(alpha.inflight.size).toBe(0));
+    // capacity is back
+    await r.run("tool.preExecute", toolPre(), signal());
+    await vi.waitFor(() => expect(started).toBe(OBSERVE_INFLIGHT_MAX + 1));
+    for (const f of releases) f();
+  });
+});
+
+describe("HookRegistry.run: failures before the hooks run (Ruling R10)", () => {
+  const failingEnablement = async (): Promise<Set<string>> => {
+    throw new Error("pg down");
+  };
+
+  it("enablement lookup throws with a policy hook on the mount: deny, generic reason", async () => {
+    const { warn, log } = warnSpy();
+    const { r, plugin } = setup({ enabled: failingEnablement, log });
+    plugin("zeta").on("tool.preExecute", () => {}, { mode: "policy" });
+    plugin("alpha").on("tool.preExecute", () => {}, { mode: "observe" });
+    expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({
+      allowed: false,
+      plugin: "zeta",
+      reason: "The zeta policy check failed",
+      cause: "hook_error",
+      detail: "pg down",
+    });
+    expect(JSON.stringify(warn.mock.calls)).toContain("pg down");
+  });
+
+  it("enablement lookup throws with only observe hooks: allow and warn", async () => {
+    const { warn, log } = warnSpy();
+    const { r, plugin } = setup({ enabled: failingEnablement, log });
+    const alpha = vi.fn();
+    plugin("alpha").on("tool.preExecute", alpha, { mode: "observe" });
+    expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
     expect(alpha).not.toHaveBeenCalled();
   });
 
-  it("the payload is a deep-frozen copy: mutating it is a hook_error (policy) or ignored (observe)", async () => {
-    const original = toolPre({ nested: { x: 1 } });
-    const mutate = (p: ToolPreHookPayload) => {
-      (p.input as { nested: { x: number } }).nested.x = 2;
-    };
-    const policy = registry();
-    on(policy, "alpha", "tool.preExecute", mutate, { mode: "policy" });
-    const out = await policy.run("tool.preExecute", original, signal());
-    expect(out).toMatchObject({ allowed: false, plugin: "alpha", cause: "hook_error" });
-    const observe = registry();
-    on(observe, "alpha", "tool.preExecute", mutate, { mode: "observe" });
-    expect(await observe.run("tool.preExecute", original, signal())).toEqual({ allowed: true });
-    expect(original.input).toEqual({ nested: { x: 1 } });
-    expect(Object.isFrozen(original)).toBe(false);
+  it("an uncloneable payload with a policy hook: deny; with only observe hooks: allow", async () => {
+    const bad = toolPre({ fn: () => 1 });
+    const policy = setup();
+    policy.plugin("alpha").on("tool.preExecute", () => {}, { mode: "policy" });
+    expect(await policy.r.run("tool.preExecute", bad, signal())).toMatchObject({
+      allowed: false,
+      cause: "hook_error",
+      reason: "The alpha policy check failed",
+    });
+    const observe = setup();
+    observe.plugin("alpha").on("tool.preExecute", () => {}, { mode: "observe" });
+    expect(await observe.r.run("tool.preExecute", bad, signal())).toEqual({ allowed: true });
+  });
+});
+
+describe("HookRegistry.run: the caller's abort", () => {
+  it("an already aborted signal throws its reason", async () => {
+    const { r, plugin } = setup();
+    const hook = vi.fn();
+    plugin("alpha").on("tool.preExecute", hook, { mode: "policy" });
+    const ac = new AbortController();
+    const reason = new Error("caller gave up");
+    ac.abort(reason);
+    await expect(r.run("tool.preExecute", toolPre(), ac.signal)).rejects.toBe(reason);
+    expect(hook).not.toHaveBeenCalled();
   });
 
+  it("an abort while a policy hook runs throws the reason, never a deny; later hooks don't run", async () => {
+    const { r, plugin } = setup({ timeoutMs: 10_000 });
+    const ac = new AbortController();
+    const reason = new Error("caller gave up");
+    plugin("alpha").on(
+      "tool.preExecute",
+      () => {
+        queueMicrotask(() => ac.abort(reason));
+        return new Promise<void>(() => {});
+      },
+      { mode: "policy" },
+    );
+    const zeta = vi.fn();
+    plugin("zeta").on("tool.preExecute", zeta, { mode: "policy" });
+    await expect(r.run("tool.preExecute", toolPre(), ac.signal)).rejects.toBe(reason);
+    expect(zeta).not.toHaveBeenCalled();
+  });
+});
+
+describe("HookRegistry: has / handlers", () => {
   it("no handlers: has() is false and run allows without querying the organization", async () => {
     const enabledPlugins = vi.fn(async () => new Set<string>());
-    const r = new HookRegistry({
-      enabledPlugins,
-      redis,
-      config: () => ({ hooks: { timeoutMs: 1000 } }),
-      log: quiet,
-    });
+    const { r } = setup({ enabled: enabledPlugins });
     expect(r.has("tool.preExecute")).toBe(false);
     expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
     expect(enabledPlugins).not.toHaveBeenCalled();
   });
 
-  it("revoking removes the handler; has() turns false", () => {
-    const r = registry();
-    const revoke = on(r, "alpha", "tool.preExecute", () => {}, { mode: "observe" });
+  it("has() follows the active instances", () => {
+    const { r, plugin, remove } = setup();
+    const a = plugin("alpha").on("tool.preExecute", () => {}, { mode: "observe" });
     expect(r.has("tool.preExecute")).toBe(true);
-    revoke();
+    expect(r.has("model.request")).toBe(false);
+    remove(a);
     expect(r.has("tool.preExecute")).toBe(false);
   });
 
-  it("handlers('usage.report') lists handlers by plugin name", () => {
-    const r = registry();
-    const h = async () => {};
-    on(r, "zeta", "usage.report", h, { mode: "observe" });
-    on(r, "alpha", "usage.report", h, { mode: "observe" });
-    expect(r.handlers("usage.report").map((x) => x.plugin)).toEqual(["alpha", "zeta"]);
+  it("handlers('usage.report') lists handlers by plugin name, tracked as in-flight calls", async () => {
+    const { r, plugin } = setup();
+    let inflight = -1;
+    const zeta = plugin("zeta");
+    zeta.on(
+      "usage.report",
+      async () => {
+        inflight = zeta.inflight.size;
+      },
+      { mode: "observe" },
+    );
+    plugin("alpha").on("usage.report", async () => {}, { mode: "observe" });
+    const hs = r.handlers("usage.report");
+    expect(hs.map((x) => x.plugin)).toEqual(["alpha", "zeta"]);
+    await hs[1]?.handler({} as HookPayloads["usage.report"], signal());
+    expect(inflight).toBe(1);
+  });
+});
+
+describe("helpers", () => {
+  it("sanitizeDenyReason: control characters, whitespace, clipping by code point, empty", () => {
+    expect(sanitizeDenyReason("a\u0000b\r\nc\u009fd")).toBe("a b c d");
+    expect(sanitizeDenyReason(" \n\t ")).toBe(EMPTY_DENY_REASON);
+    expect(sanitizeDenyReason("")).toBe(EMPTY_DENY_REASON);
+    const long = sanitizeDenyReason("x".repeat(1000));
+    expect(Array.from(long).length).toBe(HOOK_REASON_MAX_CHARS);
+    // the clip point falls inside an astral character: it is kept whole or dropped, never split
+    const emoji = sanitizeDenyReason(`${"x".repeat(HOOK_REASON_MAX_CHARS - 2)}${"😀".repeat(10)}`);
+    expect(Array.from(emoji).length).toBe(HOOK_REASON_MAX_CHARS);
+    expect(emoji).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+  });
+
+  it("errMsg survives a throwing toString / message", () => {
+    const evil = {
+      toString() {
+        throw new Error("nope");
+      },
+    };
+    expect(errMsg(evil)).toBe("unprintable error");
+    const e = new Error("x");
+    Object.defineProperty(e, "message", {
+      get() {
+        throw new Error("nope");
+      },
+    });
+    expect(errMsg(e)).toBe("unprintable error");
   });
 });
 
@@ -305,20 +569,20 @@ const manifest = (): PluginManifest =>
   });
 
 describe("ctx.hooks.on", () => {
-  it("records the hook in the instance ledger; closing the ctx revokes it", async () => {
-    const r = registry();
-    const ctx = createPluginContext(deps, manifest(), undefined, undefined, r);
+  it("keeps the hook on the ctx and in the ledger; closing the ctx revokes it", async () => {
+    const ctx = createPluginContext(deps, manifest(), undefined);
     ctx.hooks.on("tool.preExecute", () => {}, { mode: "policy" });
     ctx.sealTools();
     expect(ctx.ledger.list().map((x) => `${x.kind}:${x.key}`)).toEqual(["hook:tool.preExecute"]);
-    expect(r.has("tool.preExecute")).toBe(true);
+    expect(ctx.registeredHooks.map((h) => `${h.mount}/${h.mode}`)).toEqual([
+      "tool.preExecute/policy",
+    ]);
     await ctx.close();
-    expect(r.has("tool.preExecute")).toBe(false);
+    expect(ctx.registeredHooks).toEqual([]);
   });
 
   it("throws for the four illegal uses", async () => {
-    const r = registry();
-    const ctx = createPluginContext(deps, manifest(), undefined, undefined, r);
+    const ctx = createPluginContext(deps, manifest(), undefined);
     try {
       // not declared in permissions.hooks
       expect(() => ctx.hooks.on("tool.postExecute", () => {}, { mode: "observe" })).toThrow(
@@ -336,8 +600,7 @@ describe("ctx.hooks.on", () => {
       expect(() => ctx.hooks.on("tool.preExecute", () => {}, { mode: "observe" })).toThrow(
         /only allowed during setup/,
       );
-      expect(r.has("tool.preExecute")).toBe(false);
-      expect(r.has("model.response")).toBe(false);
+      expect(ctx.registeredHooks).toEqual([]);
     } finally {
       await ctx.close();
     }
@@ -345,23 +608,31 @@ describe("ctx.hooks.on", () => {
 });
 
 describe("plugin host", () => {
+  const drainState = () => {
+    const g = globalThis as { __hooksDrain?: HooksDrainState };
+    g.__hooksDrain = { setups: 0, calls: [], gate: undefined };
+    let release: () => void = () => {};
+    g.__hooksDrain.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { s: g.__hooksDrain, release };
+  };
+
   it("unload and reload revoke the instance's hooks through the ledger", async () => {
     const h = new PluginHost(deps, {}, { autoApprove: true });
     hosts.push(h);
     await h.load([fx("hooks-a")]);
+    vi.spyOn(h, "enabledPlugins").mockResolvedValue(new Set(["hooks-a"]));
     expect(h.hooks.has("tool.preExecute")).toBe(true);
     expect(h.hooks.has("model.response")).toBe(true);
-    expect(
-      h
-        .current("hooks-a")
-        ?.registrations()
-        .map((x) => `${x.kind}:${x.key}`),
-    ).toEqual(["hook:tool.preExecute", "hook:model.response"]);
+    const first = h.current("hooks-a");
+    expect(first?.registrations().map((x) => `${x.kind}:${x.key}`)).toEqual([
+      "hook:tool.preExecute",
+      "hook:model.response",
+    ]);
 
     await h.reload("hooks-a", { drainMs: 0 });
-    // the new instance's hook answers (the old one's is revoked: see the unload below)
-    const enabled = new Set(["hooks-a"]);
-    vi.spyOn(h, "enabledPlugins").mockResolvedValue(enabled);
+    expect(first?.hooks).toEqual([]);
     expect(await h.hooks.run("tool.preExecute", toolPre({ deny: true }), signal())).toEqual({
       allowed: false,
       plugin: "hooks-a",
@@ -372,5 +643,44 @@ describe("plugin host", () => {
     await h.unload("hooks-a", { drainMs: 0 });
     expect(h.hooks.has("tool.preExecute")).toBe(false);
     expect(h.hooks.has("model.response")).toBe(false);
+  });
+
+  it("during an upgrade's drain window each hook fires exactly once, and the old call is drained", async () => {
+    const { s, release } = drainState();
+    const h = new PluginHost(deps, {}, { autoApprove: true });
+    hosts.push(h);
+    await h.load([fx("hooks-drain")]);
+    vi.spyOn(h, "enabledPlugins").mockResolvedValue(new Set(["hooks-drain"]));
+    const old = h.current("hooks-drain");
+    // call A is held inside generation 1's policy hook
+    const a = h.hooks.run("tool.preExecute", toolPre({ hold: 1 }), signal());
+    await vi.waitFor(() => expect(s.calls).toEqual(["policy:1"]));
+    const reloading = h.reload("hooks-drain", { drainMs: 10_000 });
+    await vi.waitFor(() => expect(h.current("hooks-drain")).not.toBe(old));
+    // call B during the drain window: only generation 2 fires
+    expect(await h.hooks.run("tool.preExecute", toolPre(), signal())).toMatchObject({
+      reason: "generation 2",
+    });
+    expect(old?.inflight.size).toBe(1);
+    release();
+    // A finishes on generation 1 (drained, not aborted); the reload then completes
+    expect(await a).toMatchObject({ reason: "generation 1", cause: "deny" });
+    await reloading;
+    await vi.waitFor(() => expect(s.calls.filter((c) => c.startsWith("observe")).length).toBe(2));
+    expect([...s.calls].sort()).toEqual(["observe:2", "observe:2", "policy:1", "policy:2"]);
+  });
+
+  it("a policy hook cut off at the end of the drain reruns on the new generation", async () => {
+    const { s, release } = drainState();
+    const h = new PluginHost(deps, {}, { autoApprove: true });
+    hosts.push(h);
+    await h.load([fx("hooks-drain")]);
+    vi.spyOn(h, "enabledPlugins").mockResolvedValue(new Set(["hooks-drain"]));
+    const a = h.hooks.run("tool.preExecute", toolPre({ hold: 1 }), signal());
+    await vi.waitFor(() => expect(s.calls).toEqual(["policy:1"]));
+    await h.reload("hooks-drain", { drainMs: 50 });
+    expect(await a).toMatchObject({ reason: "generation 2", cause: "deny" });
+    expect(s.calls.filter((c) => c.startsWith("policy"))).toEqual(["policy:1", "policy:2"]);
+    release();
   });
 });

@@ -110,8 +110,14 @@ export type HookHandler<K extends AvailableHook> = (
 ) => Promise<HookVerdict> | HookVerdict;
 
 /**
- * `observe`: errors, timeouts and verdicts are ignored. `policy`: a deny, an error or a timeout blocks
- * the call (only on {@link POLICY_HOOKS}).
+ * - `policy` (only on {@link POLICY_HOOKS}): policy hooks run serially by plugin name (registration
+ *   order within a plugin) before the call; the first `{ deny }`, error or timeout blocks the call and
+ *   the rest are skipped. The model sees your deny reason (sanitized, at most 500 characters), but
+ *   only a generic sentence for an error or a timeout.
+ * - `observe`: dispatched after the policy hooks, concurrently and fire-and-forget, whether or not
+ *   the call was denied; the call never waits for them. Verdicts, errors and timeouts are ignored
+ *   (logged as throttled warnings). Each call keeps the `hooks.timeoutMs` limit and its abort signal;
+ *   when too many observe calls of one plugin are in flight on a replica, new ones are dropped.
  */
 export interface HookOptions {
   mode: "observe" | "policy";

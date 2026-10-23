@@ -28,7 +28,7 @@ import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { checkHookRegistration, DEFAULT_HOOK_TIMEOUT_MS, HookRegistry } from "../plugins/hooks.js";
+import { checkHookRegistration, type RegisteredHook } from "../plugins/hooks.js";
 import { RegistrationLedger } from "../plugins/ledger.js";
 import { StorageService } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
@@ -267,6 +267,8 @@ export type KernelPluginContext = PluginContext & {
   provided: Map<CapabilityRef, unknown>;
   /** 已注册的工具（按注册顺序）。 */
   registeredTools: RegisteredTool[];
+  /** Hooks registered through `ctx.hooks.on` (registration order). */
+  registeredHooks: RegisteredHook[];
   /** 经 `ctx.ui.view` 注册的视图（按贡献 id）。 */
   uiViews: ReadonlyMap<string, UiRender>;
   /** 经 `ctx.ui.action` 注册的动作处理函数（按贡献 id）。 */
@@ -296,8 +298,8 @@ export class LiveConfig {
  *   调用者仍是该组织的 active 成员（组织未删除），返回此刻的角色；
  * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
  * - `hooks.on` only during setup, only mount points declared in `permissions.hooks` and available
- *   (`HOOKS_AVAILABLE`), `policy` only on `POLICY_HOOKS`; registered in `hooks` (the host's registry;
- *   a private one when not given) and recorded in the ledger, so revoking the instance revokes them.
+ *   (`HOOKS_AVAILABLE`), `policy` only on `POLICY_HOOKS`; kept on the ctx (`registeredHooks`, read by
+ *   the host's `HookRegistry` from active instances only) and recorded in the ledger.
  * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
  */
 export function createPluginContext(
@@ -305,7 +307,6 @@ export function createPluginContext(
   manifest: PluginManifest,
   deploymentConfig: unknown,
   capabilityAccess: CapabilityAccess = noProviders(deps),
-  hooks?: HookRegistry,
 ): KernelPluginContext {
   const name = manifest.name;
   const live =
@@ -350,14 +351,7 @@ export function createPluginContext(
   const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
   const declaredTools = new Set(perms.tools ?? []);
   const declaredHooks = new Set<string>(perms.hooks ?? []);
-  const hookRegistry =
-    hooks ??
-    new HookRegistry({
-      enabledPlugins: (orgId) => capabilityAccess.enabledPlugins(orgId),
-      redis: deps.redis,
-      config: () => ({ hooks: { timeoutMs: DEFAULT_HOOK_TIMEOUT_MS } }),
-      log: deps.log,
-    });
+  const registeredHooks: RegisteredHook[] = [];
   const declaredCaps = new Set<CapabilityRef>([
     ...(manifest.requires ?? []),
     ...(manifest.optional ?? []),
@@ -550,13 +544,20 @@ export function createPluginContext(
         // not-available / malformed registrations are programming errors, not permission denials
         checkHookRegistration(name, mount, handler, opts);
         if (!declaredHooks.has(mount)) deny(`permissions.hooks ${mount}`);
-        const revoke = hookRegistry.add(
-          name,
-          mount as AvailableHook,
-          handler as HookHandler<AvailableHook>,
-          { mode: opts.mode },
-        );
-        ledger.add({ kind: "hook", key: mount, dispose: async () => revoke() });
+        const hook: RegisteredHook = {
+          mount: mount as AvailableHook,
+          handler: handler as HookHandler<AvailableHook>,
+          mode: opts.mode,
+        };
+        registeredHooks.push(hook);
+        ledger.add({
+          kind: "hook",
+          key: mount,
+          dispose: async () => {
+            const i = registeredHooks.indexOf(hook);
+            if (i >= 0) registeredHooks.splice(i, 1);
+          },
+        });
       },
     },
     ui: {
@@ -647,6 +648,7 @@ export function createPluginContext(
     routes,
     provided,
     registeredTools,
+    registeredHooks,
     uiViews: uiReg.views,
     uiActions: uiReg.actions,
     ledger,

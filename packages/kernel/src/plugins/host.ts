@@ -567,9 +567,9 @@ export class PluginHost {
   /** 本进程生效的插件实例（C17）：消费方每次实时取，不缓存实现对象。 */
   private readonly registry = new PluginRegistry();
   /**
-   * Hooks registered by this process's plugin instances through `ctx.hooks.on` (recorded in each
-   * instance's ledger, so unload / upgrade / disable revokes them). Organization enablement is
-   * {@link enabledPlugins}, queried on every run.
+   * Runs the hooks of this process's active plugin instances (resolved from the registry on every
+   * call, so an upgrade fires only the new generation; calls go through each instance's in-flight
+   * tracker and are drained on revocation). Organization enablement is {@link enabledPlugins}.
    */
   readonly hooks: HookRegistry;
   /** 加载成功过的插件的加载参数（同进程重新加载用；撤销后保留，`unavailable` 据此判断）。 */
@@ -690,6 +690,8 @@ export class PluginHost {
     this.installedNames = opts.installedNames;
     const hookTimeoutMs = opts.hookTimeoutMs ?? (() => DEFAULT_HOOK_TIMEOUT_MS);
     this.hooks = new HookRegistry({
+      instances: () => this.registry.all(),
+      current: (plugin) => this.registry.current(plugin),
       enabledPlugins: (orgId) => this.enabledPlugins(orgId),
       redis: deps.redis,
       config: () => ({ hooks: { timeoutMs: hookTimeoutMs() } }),
@@ -1793,7 +1795,6 @@ export class PluginHost {
     return {
       kernel: this.deps,
       capabilityAccess: this.capabilityAccess,
-      hooks: this.hooks,
       nextGeneration: (name) => {
         const g = (this.generations.get(name) ?? 0) + 1;
         this.generations.set(name, g);
