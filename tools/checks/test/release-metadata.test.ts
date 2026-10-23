@@ -12,7 +12,7 @@ describe("checkReleaseMetadata", () => {
     expect(checkReleaseMetadata(fixture("clean"))).toEqual([]);
   });
 
-  it("reports missing / wrong repository, missing description and public must-be-private packages", () => {
+  it("reports missing / wrong repository, description, homepage, files and public must-be-private packages", () => {
     const root = fixture("violations");
     const f = checkReleaseMetadata(root).map((x) => [
       relative(root, x.file).split("\\").join("/"),
@@ -20,6 +20,8 @@ describe("checkReleaseMetadata", () => {
     ]);
     expect(f).toEqual([
       ["packages/design/package.json", "release-private"],
+      ["packages/no-files-homepage/package.json", "release-homepage"],
+      ["packages/no-files-homepage/package.json", "release-files"],
       ["packages/no-repo/package.json", "release-repository"],
       ["plugins/example-demo/package.json", "release-private"],
       ["plugins/no-desc/package.json", "release-description"],

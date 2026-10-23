@@ -6,21 +6,36 @@ name: Release
 # - First release (0.1.0): only by running this workflow manually (workflow_dispatch) on main, once the
 #   prerequisites in the M7 release checklist are confirmed. Pushes never publish it: `pnpm release
 #   --if-bumped-since` refuses while none of our packages is on npm yet.
-# - Afterwards: changesets. On push to main, if .changeset/ has pending changesets, changesets/action
-#   opens or updates the "Version Packages" PR (no publish). Merging that PR is a push whose diff
-#   changes package versions; `pnpm release --if-bumped-since <commit before the push>` sees the bump
+# - Afterwards: changesets. On push to main, if .changeset/ has pending changesets, the `version-pr`
+#   job opens or updates the "Version Packages" PR. Merging that PR is a push whose diff changes package
+#   versions; the `publish` job's `pnpm release --if-bumped-since <commit before the push>` sees the bump
 #   and publishes. A push that changes no published package's version (e.g. merging M7, which leaves
 #   zero changesets and every version at 0.1.0) publishes nothing.
 # - A manual run publishes whatever version is not on npm yet (also the way to finish a release that
 #   failed half-way: versions already on npm are skipped, so reruns are idempotent). `dry_run` packs
 #   everything and runs `npm publish --dry-run`.
 #
-# Auth: the NPM_TOKEN secret (a granular npm access token with read and write access to the
-# @capybara-hq packages; required for the first publish, because npm trusted publishing is configured
-# per existing package). Later you may configure npm trusted publishing (OIDC) for each package with
-# this repository and workflow file `release.yml`, then delete NPM_TOKEN: npm >= 11.5 (Node 24) uses the
-# OIDC token when no NPM_TOKEN is set. Provenance (`--provenance`) needs `id-token: write` and a public
-# repository whose URL matches each package's `repository` field (checked by check:release-metadata).
+# Why two jobs (never merge them): `changeset version` rewrites package versions in the version-pr
+# job's checkout (and commits them to the changeset-release/main branch). If publishing ran in that
+# same checkout it would see the bump and ship versions nobody has reviewed. The publish job runs on
+# a fresh runner, checks out exactly github.sha, does not depend on version-pr (no `needs`, no
+# artifacts), and the gate reads versions from committed trees and requires HEAD == GITHUB_SHA.
+# tools/release/test/workflow.test.ts asserts this layout.
+#
+# Least privilege: version-pr can write contents and PRs but has no id-token and no npm token;
+# publish can only read contents, gets id-token (provenance / trusted publishing) and the npm token.
+#
+# Secrets:
+# - NPM_TOKEN: a granular npm access token with read and write access to the @capybara-hq packages.
+#   Required for the first publish, because npm trusted publishing is configured per existing
+#   package. Later you may configure npm trusted publishing (OIDC) for each package with this
+#   repository and workflow file `release.yml`, then delete NPM_TOKEN: npm >= 11.5 (Node 24) uses the
+#   OIDC token when no NPM_TOKEN is set. Provenance needs a public repository whose URL matches each
+#   package's `repository` field (checked by check:release-metadata).
+# - RELEASE_PR_TOKEN (optional, recommended): a fine-grained PAT or GitHub App token with contents and
+#   pull-requests write on this repository. A Version Packages PR opened or pushed with GITHUB_TOKEN
+#   does not trigger ci.yml, so `ci-ok` never reports; without this secret, trigger CI by hand (close and
+#   reopen the PR, or push an empty commit to it).
 on:
   push:
     branches: [main]
@@ -33,44 +48,72 @@ on:
 
 # One release at a time, never cancelled half-way.
 concurrency:
-  group: release
+  group: release-${{ github.workflow }}
   cancel-in-progress: false
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
-  npm:
-    # Forks never publish.
+  version-pr:
+    # Push only; forks never run it. It never publishes.
+    if: github.event_name == 'push' && github.repository == 'capybara-hq/core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # changesets/action pushes the changeset-release/main branch
+      pull-requests: write # changesets/action opens the Version Packages PR
+    env:
+      HAS_RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' }}
+    steps:
+      # Credentials stay in this checkout on purpose: changesets/action pushes the version branch with
+      # them (so with RELEASE_PR_TOKEN those pushes trigger ci.yml on the PR).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Note when CI will not run on the Version Packages PR
+        if: env.HAS_RELEASE_PR_TOKEN != 'true'
+        run: >
+          echo "::notice::RELEASE_PR_TOKEN is not set: the Version Packages PR is updated with
+          GITHUB_TOKEN, which does not trigger ci.yml. Trigger CI on it by hand (close and reopen the
+          PR, or push an empty commit)."
+      # With pending changesets, open / update the "Version Packages" PR. No `publish` input, so this
+      # step never publishes; without changesets it does nothing.
+      - name: Version Packages PR
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          title: "chore: version packages"
+          commit: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+
+  publish:
+    # Forks never publish. Independent of version-pr: no `needs`, nothing shared.
     if: github.repository == 'capybara-hq/core'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write # changesets/action pushes the changeset-release/main branch
-      pull-requests: write # changesets/action opens the Version Packages PR
+      contents: read
       id-token: write # npm provenance (and trusted publishing)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-
-      # Push only: with pending changesets, open / update the "Version Packages" PR. No `publish`
-      # input, so this step never publishes; without changesets it does nothing.
-      - name: Version Packages PR
-        if: github.event_name == 'push'
-        uses: changesets/action@v1
-        with:
-          title: "chore: version packages"
-          commit: "chore: version packages"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # A manual publish must come from main (provenance records the ref); a dry run may use any ref.
       - name: Check the ref of a manual publish
@@ -103,14 +146,15 @@ jobs:
           fi
           pnpm release "${args[@]}"
 
+      # Also after a failure half-way: `published` and the checksums are written after every publish.
       - name: Upload the published plugin packages and their sha512
-        if: steps.publish.outputs.published != '' && steps.publish.outputs.published != '0'
-        uses: actions/upload-artifact@v4
+        if: always() && steps.publish.outputs.published != '' && steps.publish.outputs.published != '0'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: npm-plugin-packages
           path: |
             artifacts/release/plugins/*.tgz
             artifacts/release/plugins/SHA512SUMS
             artifacts/release/plugins/integrity.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90

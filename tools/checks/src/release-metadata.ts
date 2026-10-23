@@ -23,9 +23,10 @@ function mustBePrivate(dir: string): boolean {
 
 /**
  * Release metadata of the workspace packages under `root`: a package that would be published (not
- * `"private": true`) needs a `description`, a `license` and `repository` = `{ type: "git", url:
- * REPOSITORY_URL, directory: <its dir> }` (npm provenance rejects a publish whose repository does not
- * match); packages that must stay off npm must be private.
+ * `"private": true`) needs a `description`, a `license`, an https `homepage` and `repository` =
+ * `{ type: "git", url: REPOSITORY_URL, directory: <its dir> }` (npm provenance rejects a publish whose
+ * repository does not match); published packages outside `plugins/` also need a `files` allowlist.
+ * Packages that must stay off npm must be private.
  */
 export function checkReleaseMetadata(root: string): Finding[] {
   const out: Finding[] = [];
@@ -50,6 +51,14 @@ export function checkReleaseMetadata(root: string): Finding[] {
       }
       if (typeof pkg.license !== "string") {
         finding("release-license", `${dir} is published and needs a "license"`);
+      }
+      if (typeof pkg.homepage !== "string" || !pkg.homepage.startsWith("https://")) {
+        finding("release-homepage", `${dir} is published and needs an https "homepage"`);
+      }
+      // Plugins are published as the pack-plugin tgz (its contents are fixed); libraries go through
+      // pnpm pack, which without an allowlist would ship the whole directory (src, tests, configs).
+      if (group !== "plugins" && !(Array.isArray(pkg.files) && pkg.files.length > 0)) {
+        finding("release-files", `${dir} is published and needs a "files" allowlist`);
       }
       const repo = pkg.repository as Record<string, unknown> | undefined;
       if (

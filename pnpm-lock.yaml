@@ -186,7 +186,7 @@ importers:
   packages/kernel:
     dependencies:
       '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../plugin-sdk
       '@fastify/cookie':
         specifier: ^11.1.3
@@ -305,7 +305,7 @@ importers:
         specifier: ^3.1154.0
         version: 3.1154.0
       '@capybara-hq/kernel':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../kernel
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
@@ -333,7 +333,7 @@ importers:
         version: 8.22.0
     devDependencies:
       '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../plugin-sdk
       '@types/pg':
         specifier: ^8.23.1
@@ -637,6 +637,9 @@ importers:
       '@capybara-hq/pack-plugin':
         specifier: workspace:*
         version: link:../pack-plugin
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   tools/worktree:
     dependencies:

@@ -14,5 +14,11 @@
     "directory": "tools/pack-plugin/test/fixtures/metadata"
   },
   "license": "Apache-2.0",
-  "type": "module"
+  "type": "module",
+  "files": [
+    "dist",
+    "notes.txt",
+    "assets",
+    "missing.txt"
+  ]
 }

@@ -1,1 +1,15 @@
-{ "name": "lib", "version": "0.1.0", "description": "A library", "license": "Apache-2.0", "repository": { "type": "git", "url": "git+https://github.com/capybara-hq/core.git", "directory": "packages/lib" } }
+{
+  "name": "lib",
+  "version": "0.1.0",
+  "description": "A library",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "packages/lib"
+  },
+  "homepage": "https://example.com/lib",
+  "files": [
+    "dist"
+  ]
+}

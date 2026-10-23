@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { packPlugin } from "@capybara-hq/pack-plugin";
 import {
   isFirstRelease,
-  type PublishStep,
+  packedManifestIssues,
   planPublish,
   publishedVersionsOf,
+  versionBumps,
   type WorkspacePackage,
 } from "./publish-plan.js";
 
@@ -107,9 +108,12 @@ export const integrityOf = (bytes: Uint8Array) =>
 const tgzName = (name: string, version: string) =>
   `${name.replace(/^@/, "").replace("/", "-")}-${version}.tgz`;
 
+/** Runs a command; the release passes `cwd` and expects a non-zero exit to throw. */
+export type Exec = (cmd: string, args: string[], cwd: string) => Promise<void>;
+
 /** Runs a command with inherited stdio (its output is the publish log; it never echoes tokens). */
-function run(cmd: string, args: string[], cwd: string): Promise<void> {
-  return new Promise((res, rej) => {
+const run: Exec = (cmd, args, cwd) =>
+  new Promise((res, rej) => {
     const child = spawn(cmd, args, { cwd, stdio: "inherit", env: process.env });
     child.on("error", rej);
     child.on("exit", (code, signal) =>
@@ -118,22 +122,62 @@ function run(cmd: string, args: string[], cwd: string): Promise<void> {
         : rej(new Error(`${cmd} ${args.join(" ")} exited with ${signal ?? `code ${code}`}`)),
     );
   });
+
+/** `package/package.json` of an npm tgz, via the system tar. */
+function readTgzManifest(tgz: string): Record<string, unknown> {
+  return JSON.parse(
+    execFileSync("tar", ["-xzOf", tgz, "package/package.json"], { encoding: "utf8" }),
+  ) as Record<string, unknown>;
 }
 
-/** Builds the tgz a step publishes. Plugins go through pack-plugin; libraries through `pnpm pack`. */
-async function tgzOf(step: PublishStep, root: string, out: string): Promise<string> {
-  const dir = join(root, step.dir);
-  if (step.kind === "plugin-tgz") return (await packPlugin(dir, join(out, "plugins"))).file;
-  if (!existsSync(join(dir, "dist"))) {
-    throw new Error(`${step.dir}/dist is missing: run \`pnpm build\` before releasing`);
+export interface ReleaseGate {
+  publish: boolean;
+  /** Why not, or the version bumps that allow publishing. */
+  reason: string;
+}
+
+/**
+ * The push gate (P-16): publish only when a published package's version differs between `since` (the
+ * commit before the push) and HEAD. Both sides are read from committed trees, never from the working
+ * tree, and uncommitted changes to a workspace package.json abort; with `expectedHead` (GITHUB_SHA) HEAD
+ * must be exactly the pushed commit. So a `changeset version` run (or its commit) in the same checkout
+ * can't open the gate. An all-zero or unknown `since` publishes nothing.
+ */
+export function releaseGate(
+  since: string,
+  opts: { root?: string; expectedHead?: string | undefined } = {},
+): ReleaseGate {
+  const root = opts.root ?? REPO_ROOT;
+  if (opts.expectedHead !== undefined && opts.expectedHead !== "") {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    if (head !== opts.expectedHead) {
+      throw new Error(
+        `the release checkout is at ${head}, not the pushed commit ${opts.expectedHead}: refusing to publish`,
+      );
+    }
   }
-  const dest = join(out, "packages");
-  await mkdir(dest, { recursive: true });
-  // pnpm pack rewrites `workspace:` ranges to real versions; npm publish then handles provenance.
-  await run("pnpm", ["pack", "--pack-destination", dest], dir);
-  const file = join(dest, tgzName(step.name, step.version));
-  if (!existsSync(file)) throw new Error(`pnpm pack did not produce ${file}`);
-  return file;
+  if (/^0+$/.test(since)) return { publish: false, reason: `no previous commit (${since})` };
+  let before: WorkspacePackage[];
+  try {
+    before = workspaceAt(since, root);
+  } catch {
+    return { publish: false, reason: `cannot read the workspace at ${since}` };
+  }
+  const dirty = execFileSync(
+    "git",
+    ["status", "--porcelain", "--", ...workspaceDirs(root).map((d) => `${d}/package.json`)],
+    { cwd: root, encoding: "utf8" },
+  ).trim();
+  if (dirty !== "") {
+    throw new Error(
+      `uncommitted package.json changes in the release checkout (publish only committed versions):\n${dirty}`,
+    );
+  }
+  const bumps = versionBumps(before, workspaceAt("HEAD", root));
+  if (bumps.length === 0) {
+    return { publish: false, reason: `no published package changed version since ${since}` };
+  }
+  return { publish: true, reason: bumps.join(", ") };
 }
 
 export interface RunPublishOptions {
@@ -152,12 +196,21 @@ export interface RunPublishOptions {
   refuseFirstRelease?: boolean;
   /** Registry lookup (tests). */
   publishedVersions?: (name: string) => Promise<readonly string[]>;
+  /** Command runner for `pnpm pack` / `npm publish` (tests). */
+  exec?: Exec;
+  /** Plugin packer (tests); returns the tgz path. */
+  packPluginTgz?: (dir: string, outDir: string) => Promise<string>;
+  /** Reads `package/package.json` out of a packed library tgz (tests). */
+  readPackedManifest?: (tgz: string) => Record<string, unknown>;
+  /** Called after each successful publish with the running count (the CLI writes $GITHUB_OUTPUT). */
+  onPublished?: (count: number) => void;
 }
 
 /**
- * Publishes every workspace package whose version is not on npm yet, in plan order. Writes
- * `<out>/plugins/SHA512SUMS` (hex, `sha512sum -c` format) and `<out>/plugins/integrity.json` (SRI) for
- * the plugin tgz files published (or, in dry run, packed) by this run.
+ * Publishes every workspace package whose version is not on npm yet, in plan order. After each plugin
+ * publish it rewrites `<out>/plugins/SHA512SUMS` (hex, `sha512sum -c` format) and
+ * `<out>/plugins/integrity.json` (SRI), so a release that fails half-way still leaves the checksums of
+ * what it did publish.
  */
 export async function runPublish(
   opts: RunPublishOptions,
@@ -165,6 +218,10 @@ export async function runPublish(
   const root = opts.root ?? REPO_ROOT;
   const out = resolve(opts.out);
   const lookup = opts.publishedVersions ?? fetchPublishedVersions;
+  const exec = opts.exec ?? run;
+  const packTgz =
+    opts.packPluginTgz ?? (async (dir: string, o: string) => (await packPlugin(dir, o)).file);
+  const readManifest = opts.readPackedManifest ?? readTgzManifest;
   const pkgs = discoverWorkspace(root);
   const published = new Map<string, readonly string[]>();
   for (const p of pkgs) if (!p.private) published.set(p.name, await lookup(p.name));
@@ -191,17 +248,34 @@ export async function runPublish(
   }
 
   await rm(out, { recursive: true, force: true });
-  await mkdir(join(out, "plugins"), { recursive: true });
+  const pluginsOut = join(out, "plugins");
+  const packagesOut = join(out, "packages");
+  await mkdir(pluginsOut, { recursive: true });
+  await mkdir(packagesOut, { recursive: true });
   const done: string[] = [];
   const sums: string[] = [];
   const integrity: { name: string; version: string; file: string; integrity: string }[] = [];
   for (const step of steps) {
-    const file = await tgzOf(step, root, out);
+    const dir = join(root, step.dir);
+    let file: string;
+    if (step.kind === "plugin-tgz") file = await packTgz(dir, pluginsOut);
+    else {
+      if (!existsSync(join(dir, "dist"))) {
+        throw new Error(`${step.dir}/dist is missing: run \`pnpm build\` before releasing`);
+      }
+      // pnpm pack rewrites `workspace:` ranges and applies publishConfig; npm publish adds provenance.
+      await exec("pnpm", ["pack", "--pack-destination", packagesOut], dir);
+      file = join(packagesOut, tgzName(step.name, step.version));
+      if (!existsSync(file)) throw new Error(`pnpm pack did not produce ${file}`);
+      const issues = packedManifestIssues(readManifest(file));
+      if (issues.length > 0) throw new Error(`${basename(file)}: ${issues.join("; ")}`);
+    }
     const args = ["publish", file, "--access", "public"];
     if (opts.provenance) args.push("--provenance");
     if (opts.dryRun) args.push("--dry-run");
-    await run("npm", args, root);
+    await exec("npm", args, root);
     done.push(`${step.name}@${step.version}`);
+    opts.onPublished?.(done.length);
     if (step.kind === "plugin-tgz") {
       const bytes = await readFile(file);
       sums.push(`${createHash("sha512").update(bytes).digest("hex")}  ${basename(file)}`);
@@ -211,12 +285,12 @@ export async function runPublish(
         file: basename(file),
         integrity: integrityOf(bytes),
       });
+      await writeFile(join(pluginsOut, "SHA512SUMS"), sums.map((l) => `${l}\n`).join(""));
+      await writeFile(
+        join(pluginsOut, "integrity.json"),
+        `${JSON.stringify(integrity, null, 2)}\n`,
+      );
     }
   }
-  await writeFile(join(out, "plugins", "SHA512SUMS"), sums.map((l) => `${l}\n`).join(""));
-  await writeFile(
-    join(out, "plugins", "integrity.json"),
-    `${JSON.stringify(integrity, null, 2)}\n`,
-  );
   return { published: done, skipped };
 }

@@ -16,4 +16,4 @@
 "@capybara-hq/plugin-todo": patch
 ---
 
-npm release metadata: published packages carry `description`, `repository` (with `directory`, required by npm provenance) and `homepage`; plugin packages built by pack-plugin pass `description` / `repository` / `homepage` / `keywords` through. `@capybara-hq/design` and the `example-*` plugins are now private.
+npm release metadata: published packages carry `description`, `repository` (with `directory`, required by npm provenance) and `homepage`; plugin packages built by pack-plugin pass `description` / `repository` / `homepage` / `keywords` through and now ship `README.md`, `LICENSE`, plain files listed in `files` (slack's `app-manifest.yaml`) and `THIRD-PARTY-NOTICES.txt` for bundled dependencies. SDK, kernel and testing publish without the dev-only `@capybara-hq/source` export condition (`publishConfig.exports`) and depend on each other with `^` ranges. `@capybara-hq/design` and the `example-*` plugins are now private.

@@ -93,3 +93,18 @@ export function isFirstRelease(
 ): boolean {
   return pkgs.every((p) => p.private || (published.get(p.name) ?? []).length === 0);
 }
+
+/**
+ * Problems in a library manifest as packed for npm: a leftover `workspace:` range (pnpm pack failed to
+ * rewrite it) or the dev-only `@capybara-hq/source` export condition, which points at `src/` that is
+ * not shipped (`publishConfig.exports` replaces it).
+ */
+export function packedManifestIssues(pkg: Record<string, unknown>): string[] {
+  const issues: string[] = [];
+  const text = JSON.stringify(pkg);
+  if (text.includes('"workspace:')) issues.push("has a workspace: dependency range");
+  if (text.includes('"@capybara-hq/source"'))
+    issues.push('exports the "@capybara-hq/source" condition');
+  if (pkg.publishConfig !== undefined) issues.push("still has publishConfig (not applied)");
+  return issues;
+}

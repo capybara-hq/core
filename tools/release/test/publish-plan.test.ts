@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isFirstRelease,
   type PublishStep,
+  packedManifestIssues,
   planPublish,
   publishedVersionsOf,
   versionBumps,
@@ -138,5 +139,27 @@ describe("isFirstRelease", () => {
     expect(isFirstRelease(WORKSPACE, new Map([["@capybara-hq/plugin-sdk", ["0.1.0"]]]))).toBe(
       false,
     );
+  });
+});
+
+describe("packedManifestIssues", () => {
+  it("accepts a manifest pnpm pack rewrote", () => {
+    expect(
+      packedManifestIssues({
+        name: "@capybara-hq/kernel",
+        exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
+        dependencies: { "@capybara-hq/plugin-sdk": "^0.1.0" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("reports workspace ranges, the source condition and an unapplied publishConfig", () => {
+    expect(
+      packedManifestIssues({
+        exports: { ".": { "@capybara-hq/source": "./src/index.ts" } },
+        dependencies: { "@capybara-hq/plugin-sdk": "workspace:^" },
+        publishConfig: { exports: {} },
+      }),
+    ).toHaveLength(3);
   });
 });

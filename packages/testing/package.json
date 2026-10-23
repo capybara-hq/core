@@ -29,6 +29,20 @@
       "default": "./dist/global-setup.js"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      },
+      "./global-setup": {
+        "types": "./dist/global-setup.d.ts",
+        "import": "./dist/global-setup.js",
+        "default": "./dist/global-setup.js"
+      }
+    }
+  },
   "files": [
     "dist"
   ],
@@ -37,7 +51,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1154.0",
-    "@capybara-hq/kernel": "workspace:*",
+    "@capybara-hq/kernel": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@testcontainers/postgresql": "^12.2.1",
     "ioredis": "^6.0.0",
@@ -47,12 +61,12 @@
     "ws": "^8.22.0"
   },
   "devDependencies": {
-    "@capybara-hq/plugin-sdk": "workspace:*",
+    "@capybara-hq/plugin-sdk": "workspace:^",
     "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.2"
   },
   "peerDependencies": {
-    "@capybara-hq/plugin-sdk": "workspace:*",
+    "@capybara-hq/plugin-sdk": "workspace:^",
     "vitest": "^5.0.5"
   }
 }

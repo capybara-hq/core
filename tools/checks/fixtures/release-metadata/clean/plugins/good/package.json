@@ -1,1 +1,12 @@
-{ "name": "good", "version": "0.1.0", "description": "A plugin", "license": "Apache-2.0", "repository": { "type": "git", "url": "git+https://github.com/capybara-hq/core.git", "directory": "plugins/good" } }
+{
+  "name": "good",
+  "version": "0.1.0",
+  "description": "A plugin",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "plugins/good"
+  },
+  "homepage": "https://example.com/good"
+}

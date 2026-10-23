@@ -23,6 +23,12 @@ describe("checkPluginPack", () => {
     expect(f[0]?.message).toMatch(/capybara-fixture-not-installed/);
   });
 
+  it("reports package.json files entries the plugin package cannot carry", async () => {
+    const f = await checkPluginPack([fixture("plugin-pack-dropped")]);
+    expect(f.map((x) => x.rule)).toEqual(["plugin-pack-dropped"]);
+    expect(f[0]?.message).toContain('"assets"');
+  });
+
   it("违规 fixture 不留下临时目录", async () => {
     await checkPluginPack([fixture("plugin-pack-dynamic-import")]);
     expect(await readdir(fixture("plugin-pack-dynamic-import"))).toEqual(["package.json", "src"]);

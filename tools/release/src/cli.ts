@@ -9,15 +9,16 @@
  *
  * `--if-bumped-since <rev>` publishes only when some published package's version differs from `<rev>`
  * (the release workflow passes the commit before a push to main, so only a merged "Version Packages" PR
- * publishes; an unknown or all-zero `<rev>` publishes nothing). It also refuses the first release
+ * publishes; an unknown or all-zero `<rev>` publishes nothing; versions are read from committed trees
+ * and uncommitted package.json changes abort). It also refuses the first release
  * (nothing public on the registry yet): that one is only ever published by a manual workflow run.
  *
- * Under GitHub Actions it appends `published=<count>` to $GITHUB_OUTPUT (0 in dry run).
+ * Under GitHub Actions it appends `published=<count>` to $GITHUB_OUTPUT after every publish (the last
+ * line wins; always 0 in dry run).
  */
 import { appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { discoverWorkspace, REPO_ROOT, runPublish, workspaceAt } from "./publish.js";
-import { versionBumps } from "./publish-plan.js";
+import { REPO_ROOT, releaseGate, runPublish } from "./publish.js";
 
 function usage(msg: string): never {
   console.error(
@@ -51,32 +52,28 @@ for (let i = 0; i < args.length; i++) {
 
 try {
   if (since !== undefined) {
-    let before: ReturnType<typeof workspaceAt> | undefined;
-    try {
-      before = /^0+$/.test(since) ? undefined : workspaceAt(since);
-    } catch {
-      before = undefined;
-    }
-    if (before === undefined) {
-      console.log(`cannot read the workspace at ${since}: nothing to publish`);
-      output(0);
-      process.exit(0);
-    }
-    const bumps = versionBumps(before, discoverWorkspace());
-    if (bumps.length === 0) {
+    const gate = releaseGate(since, { expectedHead: process.env.GITHUB_SHA });
+    if (!gate.publish) {
       console.log(
-        `no published package changed version since ${since}: nothing to publish ` +
+        `${gate.reason}: nothing to publish ` +
           `(merge the "Version Packages" PR, or run the release workflow manually)`,
       );
       output(0);
       process.exit(0);
     }
-    for (const b of bumps) console.log(`version bump: ${b}`);
+    console.log(`version bumps: ${gate.reason}`);
   }
-  const r = await runPublish({ dryRun, provenance, out, refuseFirstRelease: since !== undefined });
+  output(0);
+  const r = await runPublish({
+    dryRun,
+    provenance,
+    out,
+    refuseFirstRelease: since !== undefined,
+    // Written after every publish, so a run that fails half-way still reports what it published.
+    onPublished: (n) => output(dryRun ? 0 : n),
+  });
   const verb = dryRun ? "would publish" : "published";
   console.log(`\n${verb} ${r.published.length}, skipped ${r.skipped.length} (already published)`);
-  output(dryRun ? 0 : r.published.length);
 } catch (e) {
   console.error(`release failed: ${e instanceof Error ? e.message : String(e)}`);
   process.exit(1);

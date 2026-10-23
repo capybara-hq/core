@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,7 +16,11 @@ import {
   validatePluginPackageJson,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { packPlugin } from "../src/index.js";
+import { NOTICES_FILE, packPlugin } from "../src/index.js";
+
+/** One entry of a tgz as text, via the system tar. */
+const readEntry = (tgz: string, path: string) =>
+  execFileSync("tar", ["-xzOf", tgz, `package/${path}`], { encoding: "utf8" });
 
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
 const plugin = (name: string) => join(repo, "plugins", name);
@@ -139,6 +144,31 @@ describe("packPlugin 的其他行为", () => {
   it("非字面量动态 import 的插件打包失败", async () => {
     await expect(packPlugin(fixture("dynamic-import"), out)).rejects.toThrow(/non-literal/);
     expect((await readdir(fixture("dynamic-import"))).sort()).toEqual(["package.json", "src"]);
+  });
+
+  it("slack: ships README, LICENSE, app-manifest.yaml and the bundled dependencies' notices", async () => {
+    const r = await packPlugin(plugin("slack"), out);
+    const p = await readPluginPackage(new Uint8Array(await readFile(r.file)), OPTS);
+    const paths = p.files.map((f) => f.path);
+    for (const f of ["README.md", "LICENSE", "app-manifest.yaml", NOTICES_FILE]) {
+      expect(paths).toContain(f);
+    }
+    expect(r.dropped).toEqual([]);
+    const notices = await readEntry(r.file, NOTICES_FILE);
+    expect(notices).toMatch(/^-{72}\n@slack\/web-api@\S+ \(MIT\)/m);
+    expect(notices).toContain("Permission is hereby granted");
+    expect(await readEntry(r.file, "LICENSE")).toBe(await readFile(join(repo, "LICENSE"), "utf8"));
+  }, 60_000);
+
+  it("ships plain files listed in `files` and reports entries it cannot ship", async () => {
+    const r = await packPlugin(fixture("metadata"), out);
+    const p = await readPluginPackage(new Uint8Array(await readFile(r.file)), OPTS);
+    const paths = p.files.map((f) => f.path);
+    expect(paths).toEqual(
+      expect.arrayContaining(["README.md", "LICENSE", "notes.txt", "dist/index.mjs"]),
+    );
+    expect(paths.some((x) => x.startsWith("assets/"))).toBe(false);
+    expect(r.dropped).toEqual(["assets", "missing.txt"]);
   });
 
   it("passes homepage and keywords through when the source package.json has them", async () => {
