@@ -1,7 +1,7 @@
 import { Redis } from "ioredis";
 import pg from "pg";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startRedisContainer } from "../src/containers.js";
+import { startRedisContainer, withStartSlot } from "../src/containers.js";
 import setup from "../src/global-setup.js";
 import {
   createFreshDatabase,
@@ -49,6 +49,45 @@ async function onRedis<T>(url: string, fn: (r: Redis) => Promise<T>): Promise<T>
 }
 
 // With CAPYBARA_TEST_NO_SHARED=1 the globalSetup starts nothing, so there is nothing shared to test.
+describe.skipIf(process.env.CAPYBARA_TEST_NO_SHARED === "1")("container start slots", () => {
+  const KEY = "capybara-test:container-starts";
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it("never runs more starts at once than CAPYBARA_TEST_CONTAINER_STARTS", async () => {
+    // A key of its own: other files of the run take real slots on the shared key meanwhile.
+    vi.stubEnv("CAPYBARA_TEST_CONTAINER_STARTS", "2");
+    let running = 0;
+    let peak = 0;
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        withStartSlot(async () => {
+          running++;
+          peak = Math.max(peak, running);
+          await sleep(150);
+          running--;
+          return i;
+        }, `${KEY}-test-${process.pid}`),
+      ),
+    );
+    expect(results).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(peak).toBe(2);
+  });
+
+  it("reclaims a slot left behind by a crashed worker, and releases its own on failure", async () => {
+    vi.stubEnv("CAPYBARA_TEST_CONTAINER_STARTS", "1");
+    const key = `${KEY}-stale-${process.pid}`;
+    const url = process.env.CAPYBARA_TEST_REDIS_URL as string;
+    await onRedis(url, (r) => r.zadd(key, Date.now() - 10 * 60_000, "crashed"));
+    await expect(
+      withStartSlot(async () => {
+        throw new Error("start failed");
+      }, key),
+    ).rejects.toThrow("start failed");
+    expect(await onRedis(url, (r) => r.zcard(key))).toBe(0);
+    expect(await withStartSlot(async () => "ok", key)).toBe("ok");
+  });
+});
+
 describe.skipIf(process.env.CAPYBARA_TEST_NO_SHARED === "1")("shared test containers", () => {
   it("the globalSetup addresses reach the worker through process.env", () => {
     expect(process.env.CAPYBARA_TEST_PG_ADMIN_URL).toMatch(/^postgres(ql)?:\/\//);

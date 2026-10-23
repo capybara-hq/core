@@ -43,6 +43,61 @@ export function sharedRedisUrl(): string | undefined {
 }
 
 /**
+ * Concurrent container starts allowed across all workers of a run (env
+ * `CAPYBARA_TEST_CONTAINER_STARTS`, default {@link DEFAULT_CONTAINER_STARTS}).
+ */
+export const CONTAINER_STARTS_ENV = "CAPYBARA_TEST_CONTAINER_STARTS";
+export const DEFAULT_CONTAINER_STARTS = 4;
+/** Sorted set (DB 0 of the shared Valkey) of the start slots in use, scored by acquisition time. */
+const START_SLOTS_KEY = "capybara-test:container-starts";
+/** A slot older than this is taken to belong to a crashed worker and is reclaimed. */
+const START_SLOT_TTL_MS = 120_000;
+const START_SLOT_POLL_MS = 100;
+
+const ACQUIRE_SLOT = `
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', tonumber(ARGV[1]) - tonumber(ARGV[2]))
+if redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[3]) then
+  redis.call('ZADD', KEYS[1], ARGV[1], ARGV[4])
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+return 0`;
+
+/**
+ * Run `start` (a container start) while holding one of the run-wide start slots. Under a full
+ * parallel run every file starting its own Valkey at once overloads the Docker daemon, and
+ * testcontainers' fixed 30 s wait for the port binding times out. Limiting how many containers start
+ * at the same time keeps each start fast; the wait for a slot is plain queueing, not a retry. Without
+ * the globalSetup's Valkey (sharing disabled, or the globalSetup's own starts) it starts directly.
+ * `key` is the slot set (tests use their own).
+ */
+export async function withStartSlot<T>(
+  start: () => Promise<T>,
+  key: string = START_SLOTS_KEY,
+): Promise<T> {
+  const url = sharingDisabled() ? undefined : process.env[REDIS_URL_ENV] || undefined;
+  if (url === undefined) return start();
+  const limit = Number(process.env[CONTAINER_STARTS_ENV]) || DEFAULT_CONTAINER_STARTS;
+  const token = `${process.pid}-${randomBytes(6).toString("hex")}`;
+  const r = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1 });
+  await r.connect();
+  try {
+    for (;;) {
+      const got = await r.eval(ACQUIRE_SLOT, 1, key, Date.now(), START_SLOT_TTL_MS, limit, token);
+      if (got === 1) break;
+      await new Promise((resolve) => setTimeout(resolve, START_SLOT_POLL_MS));
+    }
+    try {
+      return await start();
+    } finally {
+      await r.zrem(key, token);
+    }
+  } finally {
+    r.disconnect();
+  }
+}
+
+/**
  * Start a throwaway PostgreSQL 17 container. `tuned` is for the run-wide shared instance: many files
  * connect at once (raise `max_connections`), and durability is irrelevant for tests (no fsync).
  */
@@ -63,7 +118,7 @@ export async function startPostgresContainer(
       "full_page_writes=off",
     ]);
   }
-  const container = await image.start();
+  const container = await withStartSlot(() => image.start());
   return {
     url: container.getConnectionUri(),
     stop: async () => {
@@ -82,7 +137,7 @@ export async function startRedisContainer(
   if (opts.databases !== undefined) {
     image.withCommand(["valkey-server", "--databases", String(opts.databases)]);
   }
-  const container = await image.start();
+  const container = await withStartSlot(() => image.start());
   return {
     url: `redis://${container.getHost()}:${container.getMappedPort(6379)}`,
     stop: async () => {
@@ -222,12 +277,12 @@ export async function startTestS3(): Promise<TestS3> {
       },
     ],
   });
-  const container = await new GenericContainer(TEST_S3_IMAGE)
+  const image = new GenericContainer(TEST_S3_IMAGE)
     .withCopyContentToContainer([{ content: s3Config, target: "/etc/seaweedfs/s3.json" }])
     .withCommand(["server", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-dir=/data"])
     .withExposedPorts(8333)
-    .withWaitStrategy(Wait.forLogMessage(/Starting S3 API Server/))
-    .start();
+    .withWaitStrategy(Wait.forLogMessage(/Starting S3 API Server/));
+  const container = await withStartSlot(() => image.start());
   const endpoint = `http://${container.getHost()}:${container.getMappedPort(8333)}`;
   const client = new S3Client({
     endpoint,

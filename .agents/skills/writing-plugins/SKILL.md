@@ -320,7 +320,9 @@ channels ignore the database number; pass `startTestRedis({ shared: true })` (a 
 shared Valkey, `stop()` = `FLUSHDB`) only in files where nothing subscribes to the bus (no kernel, no
 plugin host loading subscribing plugins). Never query cluster-wide views (`pg_stat_activity`,
 `pg_locks`) without filtering to `current_database()`. `CAPYBARA_TEST_NO_SHARED=1` restores per-file
-containers for debugging.
+containers for debugging. Under the globalSetup at most 4 containers start at once across the run
+(`CAPYBARA_TEST_CONTAINER_STARTS` changes it; slots live in the shared Valkey): unthrottled, a full run
+overloads Docker Desktop and testcontainers' fixed 30 s port-bind wait times out.
 
 
 ## Plugin packages (npm-pack tgz)
