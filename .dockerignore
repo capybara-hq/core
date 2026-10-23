@@ -12,7 +12,7 @@
 .capybara-pack-*
 artifacts
 docs
-skills
+.agents
 apps/web/visual
 apps/web/e2e
 **/test-results
