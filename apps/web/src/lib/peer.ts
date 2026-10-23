@@ -13,6 +13,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
+import { BlockList, isIP } from "node:net";
 
 /** server.mjs 打的可信标记请求头（转发给内核前删除）。 */
 export const PEER_TOKEN_HEADER = "x-capybara-peer-token";
@@ -36,11 +37,103 @@ export interface IncomingLike {
   socket: { remoteAddress?: string | undefined };
 }
 
-/** 交给 Next 之前清理请求头：去掉客户端的转发头，写入真实对端地址与可信标记。 */
-export function sanitizeIncoming(req: IncomingLike, token: string): void {
+/** Environment variable naming the proxies in front of the web tier (see {@link parseTrustProxy}). */
+export const TRUST_PROXY_ENV = "CAPYBARA_WEB_TRUST_PROXY";
+
+/**
+ * Which hops in front of the web tier are trusted to report the client address in
+ * `x-forwarded-for`: none (the socket peer is the client), the nearest `hops` hops, or the hops
+ * whose address is in `list`.
+ */
+export type TrustProxy =
+  | { kind: "none" }
+  | { kind: "hops"; hops: number }
+  | { kind: "cidrs"; list: BlockList };
+
+/**
+ * Parses {@link TRUST_PROXY_ENV}: unset or empty trusts nothing; a non-negative integer is a hop
+ * count (0 trusts nothing); anything else is a comma-separated list of IPs / CIDRs. Throws on a
+ * malformed value so the server fails at startup instead of silently trusting the wrong hops.
+ */
+export function parseTrustProxy(raw: string | undefined): TrustProxy {
+  const value = raw?.trim() ?? "";
+  if (value === "") return { kind: "none" };
+  if (/^\d+$/.test(value)) {
+    const hops = Number.parseInt(value, 10);
+    return hops === 0 ? { kind: "none" } : { kind: "hops", hops };
+  }
+  const list = new BlockList();
+  for (const entry of value.split(",").map((e) => e.trim())) {
+    const [addr = "", prefix, extra] = entry.split("/");
+    const ip = normalizeIp(addr);
+    const family = ip === undefined ? 0 : isIP(ip);
+    const max = family === 6 ? 128 : 32;
+    const bits = prefix === undefined ? max : Number(prefix);
+    if (
+      ip === undefined ||
+      extra !== undefined ||
+      (prefix !== undefined && !/^\d+$/.test(prefix)) ||
+      bits > max
+    ) {
+      throw new Error(
+        `${TRUST_PROXY_ENV}: invalid entry "${entry}"; expected a hop count or comma-separated IPs / CIDRs`,
+      );
+    }
+    list.addSubnet(ip, bits, family === 6 ? "ipv6" : "ipv4");
+  }
+  return { kind: "cidrs", list };
+}
+
+/** A bare IPv4 / IPv6 address (IPv4-mapped IPv6 unwrapped to IPv4), or undefined if malformed. */
+function normalizeIp(value: string): string | undefined {
+  const v = value.trim();
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(v)?.[1];
+  if (mapped !== undefined && isIP(mapped) === 4) return mapped;
+  return isIP(v) === 0 ? undefined : v;
+}
+
+function trusts(trust: TrustProxy, addr: string, hop: number): boolean {
+  if (trust.kind === "none") return false;
+  if (trust.kind === "hops") return hop < trust.hops;
+  return trust.list.check(addr, isIP(addr) === 6 ? "ipv6" : "ipv4");
+}
+
+/**
+ * The client address: starting at the socket peer, walk the `x-forwarded-for` chain from the
+ * right while the current hop is trusted (like Fastify / proxy-addr). A malformed entry stops the
+ * walk at the last address that could be vouched for, so it can never be forwarded.
+ */
+export function clientAddress(
+  peer: string | undefined,
+  xff: string | string[] | undefined,
+  trust: TrustProxy,
+): string | undefined {
+  if (peer === undefined || trust.kind === "none") return peer;
+  const raw = Array.isArray(xff) ? xff.join(",") : (xff ?? "");
+  const chain = raw.trim() === "" ? [] : raw.split(",").reverse();
+  let current = normalizeIp(peer) ?? peer;
+  for (let hop = 0; hop < chain.length; hop++) {
+    if (!trusts(trust, current, hop)) return current;
+    const next = normalizeIp(chain[hop] ?? "");
+    if (next === undefined) return current;
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * 交给 Next 之前清理请求头：去掉客户端的转发头，写入真实对端地址与可信标记。
+ * With `trust` set (from {@link TRUST_PROXY_ENV}), the client address is derived from the incoming
+ * `x-forwarded-for` chain first; the forwarded value is still a single sanitized address.
+ */
+export function sanitizeIncoming(
+  req: IncomingLike,
+  token: string,
+  trust: TrustProxy = { kind: "none" },
+): void {
+  const client = clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], trust);
   for (const h of FORWARDING_HEADERS) delete req.headers[h];
-  const peer = req.socket.remoteAddress;
-  if (peer !== undefined) req.headers["x-forwarded-for"] = peer;
+  if (client !== undefined) req.headers["x-forwarded-for"] = client;
   req.headers[PEER_TOKEN_HEADER] = token;
 }
 

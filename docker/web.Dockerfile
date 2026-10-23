@@ -11,11 +11,13 @@
 # `http.trustProxy: 1` (CAPYBARA_HTTP__TRUST_PROXY=1) behind this tier.
 #
 # The image holds the Next build output (.next without its cache), server.mjs, src/lib/peer.ts
-# (imported by server.mjs through Node's type stripping), next.config.mjs (types stripped from
-# next.config.ts) and the web app's production dependencies. It does not contain the kernel.
+# (imported by server.mjs through Node's type stripping), next.config.mjs (Next loads its config
+# again at runtime) and the web app's production dependencies. It does not contain the kernel.
 #
 # Runtime variables: PORT (default 3000), CAPYBARA_KERNEL_URL (default http://api:8080),
-# CAPYBARA_WEB_HOST (default 0.0.0.0), CAPYBARA_WEB_MAX_BODY_BYTES, CAPYBARA_WEB_MAX_PACKAGE_BYTES.
+# CAPYBARA_WEB_HOST (default 0.0.0.0), CAPYBARA_WEB_TRUST_PROXY (set it behind a TLS proxy / load
+# balancer), CAPYBARA_WEB_SHUTDOWN_GRACE_MS, CAPYBARA_WEB_MAX_BODY_BYTES,
+# CAPYBARA_WEB_MAX_PACKAGE_BYTES. See docs/config.md.
 # Run it with an init process (compose `init: true`) so signals reach node.
 
 # Pinned to an exact Node version plus the multi-arch index digest, so builds are reproducible
@@ -59,13 +61,10 @@ RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked 
     # .tmp is a pnpm leftover; the hoisted link to the web package points back into /src.
     && rm -rf /out/node_modules/.tmp /out/node_modules/.pnpm/node_modules/@capybara-hq/web \
     && cd apps/web \
-    && cp package.json server.mjs /out/ \
+    && cp package.json server.mjs next.config.mjs /out/ \
     && cp src/lib/peer.ts /out/src/lib/peer.ts \
     && cp -R .next /out/.next \
     && if [ -d public ]; then cp -R public /out/public; fi \
-    # Next loads its config again at runtime (poweredByHeader, ...). Ship it as JavaScript: the
-    # config uses only erasable TypeScript syntax, so stripping the types is enough.
-    && node --no-warnings -e 'const fs = require("node:fs"); const { stripTypeScriptTypes } = require("node:module"); fs.writeFileSync("/out/next.config.mjs", stripTypeScriptTypes(fs.readFileSync("next.config.ts", "utf8")));' \
     # Build cache, generated route types, traces and source maps are not needed to serve.
     && rm -rf /out/.next/cache /out/.next/types /out/.next/trace /out/.next/trace-build \
               /out/.next/diagnostics \

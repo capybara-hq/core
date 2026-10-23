@@ -1,6 +1,13 @@
 import * as crypto from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PEER_TOKEN_ENV, PEER_TOKEN_HEADER, trustedPeer } from "../src/lib/peer";
+import {
+  type IncomingLike,
+  PEER_TOKEN_ENV,
+  PEER_TOKEN_HEADER,
+  parseTrustProxy,
+  sanitizeIncoming,
+  trustedPeer,
+} from "../src/lib/peer";
 
 // 包一层真实实现以便断言「用的是常量时间比较」。
 vi.mock("node:crypto", async (importOriginal) => {
@@ -44,5 +51,76 @@ describe("trustedPeer（可信标记的比较）", () => {
 
   it("本进程没有标记（未经 server.mjs）→ 一律不信任", () => {
     expect(trustedPeer(headers(TOKEN))).toBeUndefined();
+  });
+});
+
+describe("sanitizeIncoming with CAPYBARA_WEB_TRUST_PROXY", () => {
+  /** Runs sanitizeIncoming on a request from `peer` carrying `xff`; returns the headers. */
+  const sanitize = (trustRaw: string | undefined, peer: string, xff?: string) => {
+    const req: IncomingLike = {
+      headers: {
+        ...(xff !== undefined && { "x-forwarded-for": xff }),
+        "x-real-ip": "9.9.9.9",
+        forwarded: "for=9.9.9.9",
+        [PEER_TOKEN_HEADER]: "forged",
+      },
+      socket: { remoteAddress: peer },
+    };
+    sanitizeIncoming(req, TOKEN, parseTrustProxy(trustRaw));
+    expect(req.headers["x-real-ip"]).toBeUndefined();
+    expect(req.headers.forwarded).toBeUndefined();
+    expect(req.headers[PEER_TOKEN_HEADER]).toBe(TOKEN);
+    return req.headers;
+  };
+
+  it("unset: the socket peer replaces any client-sent x-forwarded-for", () => {
+    expect(sanitize(undefined, "10.0.0.2", "1.2.3.4")["x-forwarded-for"]).toBe("10.0.0.2");
+    expect(sanitize("", "10.0.0.2", "1.2.3.4")["x-forwarded-for"]).toBe("10.0.0.2");
+    expect(sanitize("0", "10.0.0.2", "1.2.3.4")["x-forwarded-for"]).toBe("10.0.0.2");
+  });
+
+  it("hop count 1: the address the proxy appended, never what the client prepended", () => {
+    const h = sanitize("1", "10.0.0.2", "6.6.6.6, 203.0.113.7");
+    expect(h["x-forwarded-for"]).toBe("203.0.113.7");
+    // No x-forwarded-for from the proxy: fall back to the peer.
+    expect(sanitize("1", "10.0.0.2")["x-forwarded-for"]).toBe("10.0.0.2");
+  });
+
+  it("CIDR match: trusted proxies are skipped from the right", () => {
+    const h = sanitize(
+      "10.0.0.0/8, 192.168.1.5",
+      "::ffff:10.0.0.2",
+      "6.6.6.6, 203.0.113.7, 192.168.1.5",
+    );
+    expect(h["x-forwarded-for"]).toBe("203.0.113.7");
+  });
+
+  it("CIDR mismatch: an untrusted peer is the client, its x-forwarded-for is ignored", () => {
+    expect(sanitize("10.0.0.0/8", "172.16.0.9", "1.2.3.4")["x-forwarded-for"]).toBe("172.16.0.9");
+  });
+
+  it("malformed x-forwarded-for: stops at the last address that can be vouched for", () => {
+    expect(sanitize("1", "10.0.0.2", "not-an-ip")["x-forwarded-for"]).toBe("10.0.0.2");
+    expect(sanitize("2", "10.0.0.2", "1.2.3.4, 203.0.113.7:443")["x-forwarded-for"]).toBe(
+      "10.0.0.2",
+    );
+    expect(sanitize("10.0.0.0/8", "10.0.0.2", "1.2.3.4,, 10.0.0.3")["x-forwarded-for"]).toBe(
+      "10.0.0.3",
+    );
+  });
+
+  it("rejects a malformed CAPYBARA_WEB_TRUST_PROXY", () => {
+    for (const bad of [
+      "-1",
+      "true",
+      "10.0.0.0/33",
+      "10.0.0.0/8/1",
+      "10.0.0.0/x",
+      "proxy.local",
+      "1,",
+    ]) {
+      expect(() => parseTrustProxy(bad), bad).toThrow(/CAPYBARA_WEB_TRUST_PROXY/);
+    }
+    expect(parseTrustProxy("fd00::/8, ::1").kind).toBe("cidrs");
   });
 });

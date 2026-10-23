@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Smoke test for docker/web.Dockerfile: builds capybara-web (and capybara-api from
 # docker/kernel.Dockerfile), runs both on a throwaway network with PostgreSQL + Valkey, and checks
-# that the web image serves pages, proxies /api to the kernel, and hands the kernel the real client
-# address (server.mjs strips client-sent forwarding headers; the kernel runs with trustProxy 1).
+# that the web image serves pages and proxies /api to the kernel, and that with forged forwarding
+# headers the kernel (trustProxy 1) resolves the real client address and ignores the forged one.
+# An echo upstream then shows what web actually forwards: x-forwarded-for replaced by the client
+# address (not appended to), and, with CAPYBARA_WEB_TRUST_PROXY, the trusted proxy's client address.
 # Publishes no host ports: requests come from a client container on the same network.
 # Written for bash 3.2 (macOS) too: empty arrays expand as ${a[@]+"${a[@]}"} under `set -u`.
 #
@@ -19,6 +21,8 @@ PG="$ID-pg"
 VALKEY="$ID-valkey"
 API="$ID-api"
 WEB="$ID-web"
+WEB_ECHO="$ID-web-echo"
+WEB_TRUST="$ID-web-trust"
 CLIENT="$ID-client"
 MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
 FORGED_IP="1.2.3.4"
@@ -121,10 +125,11 @@ CLIENT_IP="$(ip_of "$CLIENT")"
 WEB_IP="$(ip_of "$WEB")"
 echo "    client $CLIENT_IP, web $WEB_IP"
 
-# request METHOD PATH [JSON_BODY]: prints "<status> <body>" of a request from the client container,
-# always with forged forwarding headers.
+# request METHOD PATH [JSON_BODY]: prints "<status> <body>" of a request from the client container
+# to $TARGET (default: the web container), always with forged forwarding headers.
 request() {
-  docker exec -e "M=$1" -e "P=$2" -e "B=${3:-}" -e "U=http://$WEB:3000" -e "F=$FORGED_IP" "$CLIENT" node -e '
+  docker exec -e "M=$1" -e "P=$2" -e "B=${3:-}" -e "U=http://${TARGET:-$WEB}:3000" -e "F=$FORGED_IP" \
+    "$CLIENT" node -e '
 const headers = { "x-forwarded-for": process.env.F, "x-real-ip": process.env.F,
   forwarded: `for=${process.env.F}`, "x-capybara-peer-token": "forged" };
 const init = { method: process.env.M, headers, redirect: "manual" };
@@ -138,13 +143,17 @@ fetch(process.env.U + process.env.P, init).then(
 );'
 }
 
-ok=""
-for _ in $(seq 1 60); do
-  out="$(request GET /zh/login 2>/dev/null || echo 0)"
-  if [ "${out%% *}" = "200" ]; then ok=1; break; fi
-  sleep 1
-done
-[ -n "$ok" ] || fail "GET /zh/login never returned 200 (last: $out)"
+# wait_web NAME: waits until NAME answers GET /zh/login with 200.
+wait_web() {
+  local ok="" out=""
+  for _ in $(seq 1 60); do
+    out="$(TARGET="$1" request GET /zh/login 2>/dev/null || echo 0)"
+    if [ "${out%% *}" = "200" ]; then ok=1; break; fi
+    sleep 1
+  done
+  [ -n "$ok" ] || fail "GET /zh/login on $1 never returned 200 (last: $out)"
+}
+wait_web "$WEB"
 echo "    GET /zh/login 200"
 # next.config.mjs is loaded at runtime (it sets poweredByHeader: false).
 POWERED="$(docker exec -e "U=http://$WEB:3000/zh/login" "$CLIENT" node -e \
@@ -173,16 +182,54 @@ echo "$out" | grep -q "auth.rate_limited" || fail "login $i: expected auth.rate_
 echo "    login $i: 429 auth.rate_limited"
 
 # The kernel keys its per-IP counter by the client address it resolved (capk:login-fail:ip:<ip>).
+# This shows the kernel resolved the client and ignored the forged address; the echo upstream
+# below checks the raw header web forwards.
 vk() { docker exec "$VALKEY" valkey-cli "$@"; }
 KEYS="$(vk --scan --pattern 'capk:login-fail:ip:*')"
 echo "    kernel per-IP counters: $(echo $KEYS)"
 [ "$(vk GET "capk:login-fail:ip:$CLIENT_IP")" = "$LOGIN_IP_LIMIT" ] \
   || fail "the kernel did not count the failures against the client address $CLIENT_IP"
 [ -z "$(vk --scan --pattern "capk:login-fail:ip:$FORGED_IP")" ] \
-  || fail "the forged address $FORGED_IP reached the kernel"
+  || fail "the kernel counted the failures against the forged address $FORGED_IP"
 [ -z "$(vk --scan --pattern "capk:login-fail:ip:$WEB_IP")" ] \
   || fail "the kernel saw the web container ($WEB_IP), not the client"
 [ "$(echo "$KEYS" | grep -c .)" = "1" ] || fail "expected exactly one per-IP counter, got: $KEYS"
+
+echo "==> forwarded headers, seen by an echo upstream"
+# The client container doubles as the upstream: it echoes the request headers as JSON.
+docker exec -d "$CLIENT" node -e \
+  'require("node:http").createServer((q, s) => s.end(JSON.stringify(q.headers))).listen(8081)'
+docker run -d --name "$WEB_ECHO" --network "$NET" -e "CAPYBARA_KERNEL_URL=http://$CLIENT:8081" \
+  "$WEB_IMAGE" >/dev/null
+STARTED+=("$WEB_ECHO")
+# The client acts as a TLS proxy that web trusts: its x-forwarded-for (the forged value) is used.
+docker run -d --name "$WEB_TRUST" --network "$NET" -e "CAPYBARA_KERNEL_URL=http://$CLIENT:8081" \
+  -e "CAPYBARA_WEB_TRUST_PROXY=$CLIENT_IP/32" "$WEB_IMAGE" >/dev/null
+STARTED+=("$WEB_TRUST")
+wait_web "$WEB_ECHO"
+wait_web "$WEB_TRUST"
+# echoed_header WEB HEADER: the HEADER value the upstream received through WEB ("none" if absent).
+echoed_header() {
+  docker exec -e "U=http://$1:3000/api/echo" -e "H=$2" -e "F=$FORGED_IP" "$CLIENT" node -e '
+const F = process.env.F;
+fetch(process.env.U, { headers: { "x-forwarded-for": F, "x-real-ip": F, forwarded: `for=${F}`,
+  "x-capybara-peer-token": "forged" } })
+  .then(async (r) => {
+    if (r.status !== 200) throw new Error(`status ${r.status}`);
+    console.log((await r.json())[process.env.H] ?? "none");
+  })
+  .catch((e) => { console.error(String(e)); process.exit(1); });' || fail "GET /api/echo through $1 failed"
+}
+XFF="$(echoed_header "$WEB_ECHO" x-forwarded-for)"
+[ "$XFF" = "$CLIENT_IP" ] || fail "web forwarded x-forwarded-for \"$XFF\", expected exactly $CLIENT_IP"
+for h in x-real-ip forwarded x-capybara-peer-token; do
+  [ "$(echoed_header "$WEB_ECHO" "$h")" = "none" ] || fail "web forwarded $h"
+done
+echo "    x-forwarded-for replaced with $CLIENT_IP; x-real-ip, forwarded and the peer token dropped"
+XFF="$(echoed_header "$WEB_TRUST" x-forwarded-for)"
+[ "$XFF" = "$FORGED_IP" ] \
+  || fail "with CAPYBARA_WEB_TRUST_PROXY web forwarded \"$XFF\", expected the proxy's $FORGED_IP"
+echo "    CAPYBARA_WEB_TRUST_PROXY=$CLIENT_IP/32: forwarded the trusted proxy's client $FORGED_IP"
 
 echo "==> waiting for the image HEALTHCHECK"
 health=""
