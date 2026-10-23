@@ -423,13 +423,73 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     await r.enqueue(ev.conv, ev.seq);
     const out = await finished();
     // failed without retries (UnrecoverableError) after delivering to y; the reason names x
-    expect(out).toMatchObject({ state: "failed", attemptsMade: 1, pending: [] });
+    // pending = the dropped plugin only (m-1)
+    expect(out).toMatchObject({ state: "failed", attemptsMade: 1, pending: ["x"] });
     expect(out.failedReason).toContain("dropped: x (registered no usage.report handler)");
     expect(c.y).toBe(1);
     expect(errors).toEqual([]);
     expect(warns).toEqual([
       ["usage.report target dropped", expect.objectContaining({ plugin: "x" })],
     ]);
+    await r.stop();
+  });
+
+  it("a dropped job keeps only the dropped plugins pending: a manual retry reaches them, not the served ones (m-1)", async () => {
+    const { c, y } = yCounter();
+    const first = reporter({ y }, ["x", "y"], { attempts: 3, active: ["x", "y"] });
+    first.startWorker();
+    await first.enqueue(ev.conv, ev.seq);
+    const out = await finished();
+    expect(out).toMatchObject({ state: "failed", pending: ["x"] });
+    expect((await jobOf())?.data.dropped).toEqual({ x: "registered no usage.report handler" });
+    await first.stop();
+    // x now has a handler: a manual retry delivers to x only
+    let x = 0;
+    const second = reporter(
+      {
+        x: async () => {
+          x++;
+        },
+        y,
+      },
+      ["x", "y"],
+      { attempts: 3, active: ["x", "y"] },
+    );
+    second.startWorker();
+    await (await jobOf())?.retry("failed");
+    await waitFor(
+      async () => (await jobOf())?.getState().then((st) => st === "completed") ?? false,
+      10_000,
+      "retried job completed",
+    );
+    expect({ x, y: c.y }).toEqual({ x: 1, y: 1 });
+    const j = await jobOf();
+    expect(j?.data.pending).toEqual([]);
+    expect(j?.data.dropped).toBeUndefined();
+    await second.stop();
+  });
+
+  it("a drop on an attempt with a transient failure still fails the job once the rest succeeds (m-2)", async () => {
+    const { c, y } = yCounter();
+    let z = 0;
+    const r = reporter(
+      {
+        y,
+        z: async () => {
+          z++;
+          if (z === 1) throw new Error("transient");
+        },
+      },
+      ["x", "y", "z"],
+      { attempts: 3, active: ["x", "y", "z"] },
+    );
+    r.startWorker();
+    await r.enqueue(ev.conv, ev.seq);
+    const out = await finished();
+    // attempt 1: y delivered, x dropped, z failed; attempt 2: z delivered; the job then fails on x
+    expect(out).toMatchObject({ state: "failed", attemptsMade: 2, pending: ["x"] });
+    expect(out.failedReason).toContain("dropped: x (registered no usage.report handler)");
+    expect({ y: c.y, z }).toEqual({ y: 1, z: 2 });
     await r.stop();
   });
 
@@ -446,7 +506,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     r.startWorker();
     await r.enqueue(ev.conv, ev.seq);
     const out = await finished();
-    expect(out).toMatchObject({ state: "failed", attemptsMade: 2, pending: [] });
+    expect(out).toMatchObject({ state: "failed", attemptsMade: 2, pending: ["x"] });
     expect(out.failedReason).toContain("dropped: x (no replica has it loaded)");
     expect(c.y).toBe(1);
     expect(errors).toEqual([]);

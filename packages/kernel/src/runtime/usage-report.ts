@@ -20,6 +20,12 @@ export interface UsageReportJob {
   seq: number;
   /** Plugins not yet succeeded; absent = every subscriber (decided on the first attempt). */
   pending?: string[];
+  /**
+   * Targets dropped so far (plugin → why), accumulated across attempts (m-2): when the job would
+   * otherwise complete it fails naming them, and `pending` is then exactly these plugins, so a
+   * manual retry reaches only them (m-1). A later delivery to one of them removes it.
+   */
+  dropped?: Record<string, string>;
 }
 
 /** First attempt plus 5 retries (F11). */
@@ -445,14 +451,30 @@ export class UsageReporter {
   }
 
   /** Writes the next `pending` set, fenced against a concurrent (stalled-over) execution (m-2). */
-  private async writePending(j: Job<UsageReportJob>, failed: string[]): Promise<void> {
+  /**
+   * Writes the next `pending` set and the accumulated drops, fenced against a concurrent
+   * (stalled-over) execution (m-2 fence): only plugins the stored data still lists as pending or
+   * dropped can stay, so a plugin another execution delivered never comes back.
+   */
+  private async writePending(
+    j: Job<UsageReportJob>,
+    next: string[],
+    dropped: ReadonlyMap<string, string>,
+  ): Promise<void> {
     const fresh = j.id === undefined ? undefined : await Job.fromId(this.getQueue(), j.id);
-    const stored = (fresh?.data as UsageReportJob | undefined)?.pending ?? j.data.pending;
-    await j.updateData({
+    const data = fresh?.data as UsageReportJob | undefined;
+    const stored = data?.pending ?? j.data.pending;
+    const storedDropped = data?.dropped ?? j.data.dropped ?? {};
+    const allowed = stored === undefined ? undefined : [...stored, ...Object.keys(storedDropped)];
+    const keep = [...dropped].filter(([p]) => allowed === undefined || allowed.includes(p));
+    const out: UsageReportJob = {
       conversationId: j.data.conversationId,
       seq: j.data.seq,
-      pending: narrowPending(stored, failed),
-    });
+      pending: narrowPending(allowed, next),
+      ...(keep.length > 0 && { dropped: Object.fromEntries(keep) }),
+    };
+    await j.updateData(out);
+    j.data = out;
   }
 
   private async process(j: Job<UsageReportJob>, token: string | undefined): Promise<void> {
@@ -520,8 +542,16 @@ export class UsageReporter {
       if (gone.has(plugin)) dropped.set(plugin, "no replica has it loaded");
       else failed.push(plugin);
     }
+    // m-2: drops accumulate across attempts (minus plugins delivered now), so a drop on an attempt
+    // that also had a transient failure still fails the job once the rest succeeds
+    const delivered = new Set(targets.filter((_, i) => results[i]?.status === "fulfilled"));
+    const allDropped = new Map(
+      // (a plugin the organization disabled meanwhile is no target any more: not traced)
+      Object.entries(j.data.dropped ?? {}).filter(([p]) => !delivered.has(p) && subscribers.has(p)),
+    );
+    for (const [p, why] of dropped) allDropped.set(p, why);
     if (failed.length > 0) {
-      await this.writePending(j, failed);
+      await this.writePending(j, failed, allDropped);
       if (this.stopping.signal.aborted) {
         // shutdown is not the plugin's fault: back to the queue without using up an attempt (m-3)
         await j.moveToDelayed(Date.now(), token);
@@ -529,8 +559,11 @@ export class UsageReporter {
       }
       throw new Error(`usage.report failed for: ${failed.join(", ")}${droppedNote(dropped)}`);
     }
-    await j.updateData({ conversationId, seq, pending: [] });
-    if (dropped.size === 0) return;
+    // m-1: pending = the dropped plugins only, so a manual retry reaches them and never the
+    // plugins already served
+    await this.writePending(j, [...allDropped.keys()], allDropped);
+    const traced = new Map([...allDropped].filter(([p]) => j.data.dropped?.[p] !== undefined));
+    if (traced.size === 0) return;
     // N-3: a definite drop leaves a durable trace: the job ends failed (kept under the failed-job
     // cap, visible in queue tooling) with the dropped plugins in failedReason; no more retries
     for (const [plugin, reason] of dropped) {
@@ -540,7 +573,7 @@ export class UsageReporter {
         reason,
       });
     }
-    throw new UnrecoverableError(`usage.report delivered to the rest;${droppedNote(dropped)}`);
+    throw new UnrecoverableError(`usage.report delivered to the rest;${droppedNote(traced)}`);
   }
 
   /** {@link UsageReporterDeps.unservable}; a lookup failure counts as "unknown" (keep retrying). */

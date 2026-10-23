@@ -239,7 +239,9 @@ only in chat conversations, never in eval replays. Payloads are deep-frozen copi
   loaded but registered no `usage.report` handler is dropped as a target, and a target still
   undelivered on the last attempt is dropped only when it is definitely unservable (replicas report
   it, none has it loaded or still serves an older version). A drop is never silent: the job ends
-  failed (kept, capped) with the dropped plugins in its failedReason, plus a throttled warning.
+  failed (kept, capped) with the dropped plugins in its failedReason, plus a throttled warning,
+  even when the drop happened on an earlier attempt; its `pending` then lists only the dropped
+  plugins, so a manual retry of the job reaches them and never the plugins already served.
   Declare `usage.report` only when you always register the handler.
 - Hooks live on the plugin instance: an upgrade or disable drains in-flight hook calls like tool
   calls.
