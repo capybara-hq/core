@@ -14,7 +14,9 @@
  * - The upstream `Host` is the configured public host, never the incoming one: presigned URLs
  *   sign the host they were issued for, and front proxies rewrite Host.
  * - Only GET, HEAD and POST (presigned download / upload); anything else is 405. The bucket
- *   itself (`/<bucket>`, the presigned POST target) takes only POST, so listings are refused.
+ *   itself (`/<bucket>`, the presigned POST target) takes only POST. This only narrows what
+ *   reaches the gateway: what refuses listings (and any other unpresigned request) is the S3
+ *   gateway's signature check, since it has no anonymous identity and no bucket policy.
  * - Bodies stream both ways without buffering; uploads above the limit are refused (the object
  *   store also enforces the presigned size range).
  * - Cookies, authorization and forwarding headers are not sent upstream; upstream cookies are not
@@ -146,7 +148,11 @@ export function isObjectStorePath(cfg: ObjectStoreProxy, target: string): boolea
   return path === `/${cfg.bucket}` || target.startsWith(`/${cfg.bucket}/`);
 }
 
-/** The bucket itself (no object key): only presigned POST uploads, never listings. */
+/**
+ * The bucket itself (no object key), where presigned POST uploads go. Other methods here are
+ * refused as a narrowing only; a listing without a valid signature is refused by the gateway
+ * (no anonymous identity, no bucket policy), not by this proxy.
+ */
 function isBucketRoot(cfg: ObjectStoreProxy, target: string): boolean {
   return (target.split("?")[0] ?? "") === `/${cfg.bucket}`;
 }
@@ -182,6 +188,7 @@ export function proxyObjectStore(
     reply(res, 405, { allow: ALLOWED_METHODS.join(", ") });
     return;
   }
+  // Narrowing, not the security boundary: unsigned listings fail the gateway's signature check.
   if (isBucketRoot(cfg, target) && method !== "POST") {
     req.resume();
     reply(res, 405, { allow: "POST" });

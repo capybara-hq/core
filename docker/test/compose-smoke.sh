@@ -296,6 +296,10 @@ for target in postgres:5432 valkey:6379 seaweedfs:8888 seaweedfs:9333 seaweedfs:
 done
 [ "$(tcp_probe web api 8080)" = "open" ] || fail "web cannot reach api:8080"
 [ "$(tcp_probe web seaweedfs-s3 8333)" = "open" ] || fail "web cannot reach seaweedfs-s3:8333"
+# The S3 gateway's Iceberg (8181) and Lance (9101) servers are off (gRPC 18333 can't be disabled).
+for p in 8181 9101; do
+  [ "$(tcp_probe web seaweedfs-s3 "$p")" = "closed" ] || fail "web reaches seaweedfs-s3:$p"
+done
 echo "    web reaches api and seaweedfs-s3 only (not postgres, valkey, the filer, worker, gateway)"
 # probe SERVICE PATH: status of GET http://sandbox-proxy:2375PATH from SERVICE (0 = unreachable).
 probe() {
