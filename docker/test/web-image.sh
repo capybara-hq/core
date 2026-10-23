@@ -61,12 +61,13 @@ echo "==> image contents ($WEB_IMAGE)"
 PKGS="$(docker run --rm --entrypoint ls "$WEB_IMAGE" /app/node_modules/@capybara-hq)"
 echo "    @capybara-hq packages: $(echo $PKGS)"
 if echo "$PKGS" | grep -qx kernel; then fail "@capybara-hq/kernel is in the web image"; fi
-# The only TypeScript source allowed is src/lib/peer.ts (server.mjs imports it via type stripping).
+# The only TypeScript sources allowed are src/lib/peer.ts and src/lib/object-store-proxy.ts
+# (server.mjs imports them via type stripping).
 TS_FILES="$(docker run --rm --entrypoint sh "$WEB_IMAGE" -c \
-  'find /app -name "*.ts" ! -name "*.d.ts" ! -path "/app/src/lib/peer.ts" ! -path "/app/node_modules/*"; find /app/node_modules -path "*/@capybara-hq/*" -name "*.ts" ! -name "*.d.ts"; true')"
+  'find /app -name "*.ts" ! -name "*.d.ts" ! -path "/app/src/lib/peer.ts" ! -path "/app/src/lib/object-store-proxy.ts" ! -path "/app/node_modules/*"; find /app/node_modules -path "*/@capybara-hq/*" -name "*.ts" ! -name "*.d.ts"; true')"
 [ -z "$TS_FILES" ] || fail "TypeScript sources in the image: $(echo "$TS_FILES" | head -5)"
 docker run --rm --entrypoint sh "$WEB_IMAGE" -c \
-  'test -f /app/server.mjs && test -f /app/src/lib/peer.ts && test -f /app/.next/BUILD_ID && test ! -e /app/.next/cache' \
+  'test -f /app/server.mjs && test -f /app/src/lib/peer.ts && test -f /app/src/lib/object-store-proxy.ts && test -f /app/.next/BUILD_ID && test ! -e /app/.next/cache' \
   || fail "server.mjs, peer.ts or the Next build output is missing (or .next/cache was shipped)"
 docker run --rm --entrypoint sh "$WEB_IMAGE" -c '! command -v npm && ! command -v corepack' >/dev/null \
   || fail "npm or corepack is in the image"

@@ -65,6 +65,7 @@ export function renderConfigDocs(schema: core.$ZodType): string {
     // 网页层的环境变量与默认值以 apps/web/src/lib/kernel-proxy.ts（内核地址、请求体与包上传上限）、
     // apps/web/server.mjs（PORT / CAPYBARA_WEB_HOST）、apps/web/src/dev/catalog/routes.tsx（CAPYBARA_DEV_UI）为准，改那边时同步改这里
     // CAPYBARA_WEB_TRUST_PROXY: apps/web/src/lib/peer.ts; CAPYBARA_WEB_SHUTDOWN_GRACE_MS: apps/web/server.mjs.
+    // CAPYBARA_WEB_OBJECT_STORE_*: apps/web/src/lib/object-store-proxy.ts.
     "## 网页层（apps/web）的环境变量",
     "",
     "网页层是独立进程（经 `apps/web/server.mjs` 启动），不读内核配置，只认下列环境变量：",
@@ -77,6 +78,9 @@ export function renderConfigDocs(schema: core.$ZodType): string {
     "| `CAPYBARA_WEB_SHUTDOWN_GRACE_MS` | Production only: after SIGTERM / SIGINT, how long in-flight requests (including SSE streams) may run before the process exits; default 5000 |",
     "| `CAPYBARA_WEB_MAX_BODY_BYTES` | `/api/*` 代理的请求体上限，默认 1 MiB（与内核的 bodyLimit 一致） |",
     "| `CAPYBARA_WEB_MAX_PACKAGE_BYTES` | 插件包、目录包与应用包上传（`/api/v1/admin/plugins/packages/file`、`/api/v1/admin/directory/import/file`、`/api/v1/admin/directory/apps/prepare/file`）的请求体上限，默认 50 MiB，边读边转发。这是网页层的上限，内核另按 `packages.maxBytes` 拒绝；调大 `packages.maxBytes` 时两个一起调，否则经网页上传的大包先被网页层以 413 拒绝 |",
+    "| `CAPYBARA_WEB_OBJECT_STORE_URL` | Object storage on the web origin: the object store's address as web reaches it (e.g. `http://seaweedfs-s3:8333`). When set, web proxies `/<bucket>/**` (and `/<bucket>` itself for POST only) there, so browsers upload attachments (presigned POST) and download attachments and artifacts (presigned GET) through web; set the object-store plugin's `publicEndpoint` to the web origin with `forcePathStyle: true`. Only GET, HEAD and POST; the path is forwarded unchanged; cookies and authorization are not forwarded; responses carry `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`; uploads are capped at `CAPYBARA_WEB_MAX_PACKAGE_BYTES`. Unset (default): off |",
+    "| `CAPYBARA_WEB_OBJECT_STORE_BUCKET` | With `CAPYBARA_WEB_OBJECT_STORE_URL`: the bucket, equal to the object-store plugin's `bucket` (it is the first path segment web proxies) |",
+    "| `CAPYBARA_WEB_OBJECT_STORE_PUBLIC_HOST` | With `CAPYBARA_WEB_OBJECT_STORE_URL`: the host of the plugin's `publicEndpoint` (a host such as `capybara.example.com`, or that URL). Sent upstream as `Host` instead of the incoming one, because presigned URLs sign the host they were issued for and front proxies rewrite it |",
     "| `CAPYBARA_DEV_UI` | 设为 `1` 时生产构建也开放 `/dev/ui` 组件目录页（默认关闭） |",
     "",
   ].join("\n");

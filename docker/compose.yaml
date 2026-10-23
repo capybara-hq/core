@@ -9,13 +9,14 @@
 #   docker compose -f compose.yaml -f compose.build.yaml build
 # Needs Docker Compose v2.23 or newer (inline `configs: content:`).
 #
-# Services: postgres (17; 15 or newer is required), valkey, seaweedfs (S3 for object-store-s3) and
-# createbuckets; init (one-shot: migrate, then create the enterprise admin if none exists); api,
+# Services: postgres (17; 15 or newer is required), valkey, seaweedfs + seaweedfs-s3 (S3 for the
+# object-store-s3 plugin, proxied by web on its own origin) and createbuckets; init (one-shot: migrate, then create the enterprise admin if none exists); api,
 # worker and gateway (the three kernel roles, one image each); web (the only published port).
 # Scale workers with `docker compose up -d --scale worker=N`.
 #
-# Ports: only web is published. Networks: "frontend" holds only web and api; everything else is on
-# the backend (default) network, which api also joins. Never publish api or worker ports (api
+# Ports: only web is published. Networks: "frontend" holds only web and api, "objectstore" only web
+# and the S3 gateway; everything else is on the backend (default) network, which api and the S3
+# gateway also join. Never publish api or worker ports (api
 # trusts one proxy hop: web).
 #
 # Secrets: nothing secret is written here; values come from .env (POSTGRES_PASSWORD,
@@ -42,16 +43,16 @@ x-kernel-env: &kernel-env
   CAPYBARA_HTTP__TRUST_PROXY: "1"
   CAPYBARA_HTTP__PUBLIC_URL: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
   CAPYBARA_AUTH__COOKIE_SECURE: ${CAPYBARA_COOKIE_SECURE:-true}
-  # Deployment config of the builtin object-store-s3 plugin: the seaweedfs service below.
-  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__ENDPOINT: http://seaweedfs:8333
+  # Deployment config of the builtin object-store-s3 plugin: the seaweedfs-s3 service below.
+  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__ENDPOINT: http://seaweedfs-s3:8333
   CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__REGION: us-east-1
   CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET: capybara
   CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__FORCE_PATH_STYLE: "true"
   CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__ACCESS_KEY_ID: ${CAPYBARA_S3_ACCESS_KEY:?set CAPYBARA_S3_ACCESS_KEY in .env}
   CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__SECRET_ACCESS_KEY: ${CAPYBARA_S3_SECRET_KEY:?set CAPYBARA_S3_SECRET_KEY in .env}
-  # Browsers upload and download attachments with presigned URLs signed for this address; it must
-  # be reachable from browsers (seaweedfs publishes no port by default; see the seaweedfs service).
-  # CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__PUBLIC_ENDPOINT: https://s3.capybara.example.com
+  # Browsers upload and download attachments with presigned URLs signed for this address: the web
+  # origin, where web proxies /capybara/** to seaweedfs-s3 (path-style URLs; see the web service).
+  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__PUBLIC_ENDPOINT: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
 
 x-kernel: &kernel
   # An init process forwards signals to node and reaps zombies; the grace period outlasts the
@@ -67,6 +68,8 @@ x-kernel: &kernel
       condition: service_completed_successfully
     createbuckets:
       condition: service_completed_successfully
+    seaweedfs-s3:
+      condition: service_healthy
     valkey:
       condition: service_healthy
 
@@ -100,21 +103,38 @@ services:
       timeout: 3s
       retries: 30
 
-  # Object storage for the builtin object-store-s3 plugin: SeaweedFS in one container (S3 API on
-  # 8333). Not published. Browser uploads and downloads use presigned URLs, so for attachments and
-  # artifacts in the web app publish the S3 API behind HTTPS (for example uncomment the ports below
-  # and put a TLS proxy in front) and set ..._OBJECT_STORE_S3__PUBLIC_ENDPOINT above to its address.
+  # Object storage for the builtin object-store-s3 plugin, in two containers of the official
+  # SeaweedFS image, neither published:
+  # - seaweedfs: master, volume server and filer (unauthenticated internal APIs: backend only);
+  # - seaweedfs-s3: the S3 gateway (signed requests only, credentials from .env). It is also on
+  #   the "objectstore" network, the only thing web reaches besides api: browsers upload and
+  #   download through web's proxy of /capybara/** (see the web service).
   seaweedfs:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     restart: unless-stopped
-    command: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-dir=/data"]
+    # -ip: the address the volume server and filer advertise to seaweedfs-s3.
+    command: ["server", "-filer", "-ip=seaweedfs", "-dir=/data"]
+    volumes:
+      - seaweedfsdata:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8888/"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  seaweedfs-s3:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    restart: unless-stopped
+    command: ["s3", "-filer=seaweedfs:8888", "-config=/etc/seaweedfs/s3.json", "-port=8333"]
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
     configs:
       - source: seaweedfs-s3
         target: /etc/seaweedfs/s3.json
-    volumes:
-      - seaweedfsdata:/data
-    # ports:
-    #   - "127.0.0.1:8333:8333"
+    networks:
+      - default
+      - objectstore
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
       interval: 2s
@@ -219,9 +239,17 @@ services:
       # share one login rate limit: set CAPYBARA_WEB_TRUST_PROXY in .env to the proxy's hop count
       # or its addresses / CIDRs (e.g. 1, or 10.0.0.0/8). Unset or 0 trusts no X-Forwarded-For.
       CAPYBARA_WEB_TRUST_PROXY: ${CAPYBARA_WEB_TRUST_PROXY:-0}
-    # Only api: web never reaches postgres, valkey, seaweedfs, worker or gateway.
+      # Object storage on the web origin: web proxies /capybara/** (GET, HEAD, POST) to the S3
+      # gateway with Host set to the public origin's host, which the presigned URLs are signed
+      # for (the object-store plugin's publicEndpoint above).
+      CAPYBARA_WEB_OBJECT_STORE_URL: http://seaweedfs-s3:8333
+      CAPYBARA_WEB_OBJECT_STORE_BUCKET: capybara
+      CAPYBARA_WEB_OBJECT_STORE_PUBLIC_HOST: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
+    # api and the S3 gateway only: web never reaches postgres, valkey, the SeaweedFS filer /
+    # master / volume server, worker or gateway.
     networks:
       - frontend
+      - objectstore
     # CAPYBARA_WEB_BIND: the host address to publish on; 127.0.0.1 behind a TLS proxy on the same
     # host, so plain http is not exposed.
     ports:
@@ -276,6 +304,8 @@ networks:
   default: {}
   # web and api only.
   frontend: {}
+  # web and seaweedfs-s3 only.
+  objectstore: {}
   # No route out: only worker and sandbox-proxy are on it.
   sandbox:
     internal: true

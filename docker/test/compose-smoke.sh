@@ -6,8 +6,9 @@
 #   3. install model-fake from a local tgz with `compose run api plugins install`, enable it, and
 #      without restarting anything both workers load it and a conversation turn completes;
 #   4. a third `up`: init exits 0 again and there is still exactly one enterprise admin;
-#   5. object storage: an attachment goes through presigned upload, finalize and download;
-#   6. networks: web reaches only api; the sandbox profile's sandbox-proxy publishes no port and
+#   5. object storage on the web origin: an attachment's presigned upload and download go through
+#      web's proxy (the client uses another Host than the signed one, like behind a front proxy);
+#   6. networks: web reaches only api and the S3 gateway; the sandbox profile's sandbox-proxy publishes no port and
 #      only worker reaches it;
 #   7. PostgreSQL 14 on fresh volumes: init fails with a clear error and api never starts.
 # (`pnpm check` keeps the inline haproxy config in sync with docker/sandbox-proxy/haproxy.cfg.)
@@ -58,11 +59,15 @@ fail() {
 [ -f "$COMPOSE" ] || fail "missing $COMPOSE"
 
 hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+# A free host port for web: the public URL (and so the presigned URLs) must name it.
+WEB_PORT="$(node -e 'const s = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+  console.log(s.address().port); s.close(); });')"
 # Local images: no registry prefix, tag "test" (the tags docker/test/{kernel,web}-image.sh use).
 cat >"$ENV_FILE" <<EOF
 CAPYBARA_IMAGE_PREFIX=
 CAPYBARA_VERSION=test
-CAPYBARA_WEB_PORT=0
+CAPYBARA_WEB_PORT=$WEB_PORT
+CAPYBARA_PUBLIC_URL=http://localhost:$WEB_PORT
 POSTGRES_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -d '/+=')
 CAPYBARA_MASTER_KEY=$(head -c 32 /dev/urandom | base64)
 CAPYBARA_S3_ACCESS_KEY=$(hex 12)
@@ -81,14 +86,15 @@ const cfg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
 for (const [n, s] of Object.entries(cfg.services)) if ((s.ports ?? []).length > 0) console.log(n);
 ' "$TMP/config.json")"
 [ "$PUBLISHED" = "web" ] || fail "services publishing ports: $(echo $PUBLISHED) (expected only web)"
-# The frontend network holds exactly web and api; web is on nothing else.
-FRONTEND="$(node -e '
+# frontend holds exactly web and api, objectstore exactly web and the S3 gateway; web is on
+# nothing else.
+NETS="$(node -e '
 const cfg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-const nets = (s) => Object.keys(s.networks ?? { default: null }).sort().join(",");
-const on = Object.entries(cfg.services).filter(([, s]) => nets(s).split(",").includes("frontend"));
-console.log(on.map(([n]) => n).sort().join(" "), "|", nets(cfg.services.web));
+const nets = (s) => Object.keys(s.networks ?? { default: null }).sort();
+const on = (net) => Object.entries(cfg.services).filter(([, s]) => nets(s).includes(net)).map(([n]) => n).sort().join(" ");
+console.log(`${on("frontend")} | ${on("objectstore")} | ${nets(cfg.services.web).join(",")}`);
 ' "$TMP/config.json")"
-[ "$FRONTEND" = "api web | frontend" ] || fail "frontend network / web networks: $FRONTEND"
+[ "$NETS" = "api web | seaweedfs-s3 web | frontend,objectstore" ] || fail "networks: $NETS"
 
 if [ "${SKIP_BUILD:-}" != "1" ]; then
   echo "==> building the images (compose.build.yaml)"
@@ -129,7 +135,7 @@ dc logs --no-color init | grep -q "web setup page" || fail "init did not print t
 [ "$(dc ps -q worker | grep -c .)" = "2" ] || fail "expected two worker containers"
 [ "$(admin_count)" = "0" ] || fail "an enterprise admin exists without a password file"
 
-WEB_PORT="$(dc port web 3000 | sed 's/.*://')"
+# 127.0.0.1, not the public URL's "localhost": the Host web sees differs from the signed one.
 WEB="http://127.0.0.1:$WEB_PORT"
 JAR="$TMP/cookies"
 echo "    web on $WEB"
@@ -222,15 +228,20 @@ for n in 1 2 3 4; do
 done
 echo "    4 turns finished with the echoed reply"
 
-echo "==> object storage: attachment upload, finalize, download"
+echo "==> object storage on the web origin: attachment upload, finalize, download through web"
 CONTENT="compose smoke object $$"
 out="$(api POST "$BASE/attachments" "{\"name\":\"smoke.txt\",\"contentType\":\"text/plain\",\"size\":${#CONTENT}}")"
 [ "${out%% *}" = "201" ] || [ "${out%% *}" = "200" ] || fail "create attachment: $out"
 ATT="$(json_get id)"
-# The presigned URL points at seaweedfs:8333 (backend network): upload from the api container.
-dc exec -T -e "U=$(cat "$TMP/body")" -e "C=$CONTENT" api node -e '
-const u = JSON.parse(process.env.U).upload;
-const body = new Blob([process.env.C], { type: "text/plain" });
+# As a browser: the presigned URL is on the public origin (http://localhost:<port>/capybara/...).
+# Send it to 127.0.0.1 instead, as if a front proxy rewrote the Host: web signs nothing, it only
+# forwards with the public host, so the signature still verifies.
+node -e '
+const u = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).upload;
+const pub = new URL(u.url);
+if (pub.origin !== process.argv[3]) { console.error(`presigned origin ${pub.origin}`); process.exit(1); }
+const url = process.argv[2] + pub.pathname + pub.search;
+const body = new Blob([process.argv[4]], { type: "text/plain" });
 let init;
 if (u.method === "POST") {
   const form = new FormData();
@@ -240,18 +251,25 @@ if (u.method === "POST") {
 } else {
   init = { method: "PUT", headers: u.headers, body };
 }
-fetch(u.url, init).then(async (r) => {
+fetch(url, init).then(async (r) => {
   if (!r.ok) { console.error(r.status, await r.text()); process.exit(1); }
-}, (e) => { console.error(String(e)); process.exit(1); });' || fail "presigned upload to seaweedfs failed"
+}, (e) => { console.error(String(e)); process.exit(1); });' "$TMP/body" "$WEB" "http://localhost:$WEB_PORT" "$CONTENT" \
+  || fail "presigned upload through web failed"
 out="$(api POST "$BASE/attachments/$ATT/finalize" '{}')"
 [ "${out%% *}" = "200" ] || fail "finalize attachment: $out"
 LOCATION="$(curl -sS -o /dev/null -w '%{redirect_url}' -b "$JAR" "$WEB$BASE/attachments/$ATT/download")"
-[ -n "$LOCATION" ] || fail "attachment download did not redirect"
-GOT="$(dc exec -T -e "L=$LOCATION" api node -e '
-fetch(process.env.L).then(async (r) => { if (!r.ok) process.exit(1); process.stdout.write(await r.text()); },
-  () => process.exit(1));')" || fail "presigned download failed"
+case "$LOCATION" in
+  "http://localhost:$WEB_PORT/capybara/"*) ;;
+  *) fail "attachment download redirects to $LOCATION, not the web origin's /capybara/" ;;
+esac
+GOT="$(curl -sS -D "$TMP/dl-headers" --fail "$WEB${LOCATION#http://localhost:$WEB_PORT}")" \
+  || fail "presigned download through web failed"
 [ "$GOT" = "$CONTENT" ] || fail "downloaded \"$GOT\", expected \"$CONTENT\""
-echo "    presigned upload, finalize and download round trip through seaweedfs"
+grep -qi '^x-content-type-options: nosniff' "$TMP/dl-headers" || fail "download lacks nosniff"
+grep -qi '^content-security-policy: sandbox' "$TMP/dl-headers" || fail "download lacks CSP sandbox"
+st="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT --data x "$WEB/capybara/kernel/x")"
+[ "$st" = "405" ] || fail "PUT through the object-store proxy: $st (expected 405)"
+echo "    presigned upload and download through web (other Host than signed); PUT 405; nosniff, CSP"
 
 echo "==> third up: init exits 0, still one enterprise admin"
 dc up -d --scale worker=2
@@ -260,7 +278,7 @@ wait_healthy api worker gateway web
 dc logs --no-color init | grep -q "already exists; skipped" || fail "init did not skip the admin"
 [ "$(admin_count)" = "1" ] || fail "expected one enterprise admin after the third up, got $(admin_count)"
 
-echo "==> networks: web reaches only api; sandbox-proxy on the internal network only"
+echo "==> networks: web reaches only api and the S3 gateway; sandbox-proxy on the internal network only"
 dc --profile sandbox up -d --no-deps sandbox-proxy
 PORT_OUT="$(dc --profile sandbox port sandbox-proxy 2375 2>/dev/null || true)"
 echo "$PORT_OUT" | grep -q ':[0-9]' && fail "sandbox-proxy publishes 2375 at $PORT_OUT"
@@ -272,11 +290,13 @@ const done = (r) => { console.log(r); s.destroy(); process.exit(0); };
 s.once("connect", () => done("open")).once("error", () => done("closed"));
 setTimeout(() => done("closed"), 5000);' "$2" "$3"
 }
-for target in postgres:5432 valkey:6379 seaweedfs:8333 worker:8080 gateway:8080; do
+for target in postgres:5432 valkey:6379 seaweedfs:8888 seaweedfs:9333 seaweedfs:8080 \
+  worker:8080 gateway:8080; do
   [ "$(tcp_probe web "${target%%:*}" "${target##*:}")" = "closed" ] || fail "web reaches $target"
 done
 [ "$(tcp_probe web api 8080)" = "open" ] || fail "web cannot reach api:8080"
-echo "    web reaches api only (not postgres, valkey, seaweedfs, worker, gateway)"
+[ "$(tcp_probe web seaweedfs-s3 8333)" = "open" ] || fail "web cannot reach seaweedfs-s3:8333"
+echo "    web reaches api and seaweedfs-s3 only (not postgres, valkey, the filer, worker, gateway)"
 # probe SERVICE PATH: status of GET http://sandbox-proxy:2375PATH from SERVICE (0 = unreachable).
 probe() {
   dc exec -T "$1" node -e '
