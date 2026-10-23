@@ -122,6 +122,17 @@ export interface FakeChannelServer {
     reason?: "auth" | "target_gone" | "rejected" | "too_large",
     delayMs?: number,
   ): void;
+  /**
+   * Delay the response of the next `count` successful `/send` (or `/update`) requests by `delayMs`.
+   * The message is recorded (visible in `sent` / `updated`) as soon as the request arrives; only the
+   * response carrying its `messageId` is late (a slow platform API, or a sender that dies mid-call).
+   * `onlyCards`: count and delay only requests whose message carries cards.
+   */
+  delayNext(
+    path: "/send" | "/update",
+    delayMs: number,
+    opts?: { count?: number; onlyCards?: boolean },
+  ): void;
   /** 让 /connect 返回该状态码（null 恢复正常）。 */
   failConnect(status: number | null): void;
   /** 该渠道连接当前在线的长连接。 */
@@ -179,6 +190,7 @@ export async function startFakeChannelServer(
     reason?: string;
     delayMs?: number;
   }[] = [];
+  const delays: { path: string; delayMs: number; left: number; onlyCards: boolean }[] = [];
   const live = new Map<FakeChannelStream, ServerResponse>();
   const peaks = new Map<string, number>();
   let failStatus: number | null = null;
@@ -237,6 +249,12 @@ export async function startFakeChannelServer(
     else {
       sent.push(rec);
       if (key !== undefined && seen === undefined) byKey.set(key, messageId);
+    }
+    const hasCards = (b.message?.cards?.length ?? 0) > 0;
+    const d = delays.find((x) => x.path === path && x.left > 0 && (!x.onlyCards || hasCards));
+    if (d) {
+      d.left--;
+      await new Promise((r) => setTimeout(r, d.delayMs));
     }
     json(res, 200, { messageId });
   };
@@ -369,6 +387,9 @@ export async function startFakeChannelServer(
         ...(reason !== undefined && { reason }),
         ...(delayMs !== undefined && { delayMs }),
       });
+    },
+    delayNext(path, delayMs, opts = {}) {
+      delays.push({ path, delayMs, left: opts.count ?? 1, onlyCards: opts.onlyCards ?? false });
     },
     failConnect(status) {
       failStatus = status;

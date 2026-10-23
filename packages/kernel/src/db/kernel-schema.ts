@@ -457,7 +457,10 @@ export interface ChannelCardMessagesTable {
   connection_id: string;
   card_kind: "approval" | "question";
   card_id: string;
-  message_id: string;
+  /** 0039: null while the row is `pending` (recorded before the send returned). */
+  message_id: string | null;
+  /** 0039: `pending` = recorded before sending; `sent` = message_id is known. */
+  status: Generated<"pending" | "sent">;
   target: Json<unknown>;
   created_at: Ts;
 }
