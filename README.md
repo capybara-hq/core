@@ -2,7 +2,52 @@
 
 开源的企业级 Agent 平台。内核精简，能力以插件提供。TypeScript / Node 24 / pnpm monorepo，Apache-2.0。
 
-## 快速开始
+## Quick start
+
+Run a complete deployment on one machine with Docker Compose: PostgreSQL, Valkey, S3 storage, the
+kernel and the web app. You need Docker with Compose v2.23 or newer, git and openssl. Pulling the
+images takes most of the time; on a typical connection it's under 5 minutes.
+
+```bash
+git clone https://github.com/capybara-hq/core.git
+cd core/docker
+{
+  echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
+  echo "CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)"   # encrypts stored secrets: back it up
+  echo "CAPYBARA_S3_ACCESS_KEY=$(openssl rand -hex 24)"
+  echo "CAPYBARA_S3_SECRET_KEY=$(openssl rand -hex 24)"
+} > .env
+docker compose up -d
+docker compose ps -a     # init exits 0, the other services become healthy
+```
+
+`.env.example` lists every optional setting: the image version, the port, the public URL, and an
+admin password file instead of the setup page.
+
+1. Open <http://localhost:3000>. The setup page creates the enterprise admin and the first
+   organization. Use `localhost`: over plain http on another host name, browsers drop the session
+   cookie (see [docs/deploy](docs/deploy/README.md#https-the-public-url-and-cookies)).
+2. Install a plugin from npm. `model-fake` is a scripted model that needs no API key:
+
+   ```bash
+   docker compose exec api node /app/bin/capybara.mjs plugins install npm:@capybara-hq/plugin-model-fake --yes
+   docker compose exec api node /app/bin/capybara.mjs plugins approve model-fake --yes
+   docker compose exec api node /app/bin/capybara.mjs plugins enable model-fake
+   ```
+
+   Or use the admin console: Admin → Plugins → Install plugin, enter the npm package name, review
+   the permissions, then approve and enable. No restart is needed.
+3. Create an agent with the model `model-fake/fake-1` and send `echo:hello`.
+
+For real models, configure the builtin `openai-compatible` plugin (Admin → Plugins), or install
+another model plugin, such as `@capybara-hq/plugin-anthropic` or `@capybara-hq/plugin-openai`, the
+same way. To connect Slack or Lark, install `@capybara-hq/plugin-slack` or `@capybara-hq/plugin-lark`.
+
+**Production:** read [docs/deploy](docs/deploy/README.md) for HTTPS and the public URL, roles and
+scaling, IM webhooks, the sandbox and Kubernetes; [docs/deploy/upgrade.md](docs/deploy/upgrade.md)
+for upgrades; and [docs/config.md](docs/config.md) for every setting.
+
+## Development: run from source
 
 需要 Node 24、pnpm、Docker、openssl。数据库要求 PostgreSQL ≥ 15（迁移用到 `UNIQUE NULLS NOT DISTINCT`；开发与 CI 用 17）。
 
@@ -249,7 +294,7 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 - Slack：[plugins/slack/README.md](plugins/slack/README.md)
 - Lark：[plugins/lark/README.md](plugins/lark/README.md)
 
-**0. 前提**：配置 `http.publicUrl`（网页的外部可达源，同上文 OAuth 一节）。绑定链接、卡片里的网页链接、登录回调都基于它；没配时机器人认不出未绑定的人（只回「请联系管理员」），审批 / 提问卡片退化为一句「请到网页上处理」，第三方登录不可用。长连接只在 `worker` 角色的副本上运行（`capybara start` 默认全部角色）。
+**0. 前提**：配置 `http.publicUrl`（网页的外部可达源，同上文 OAuth 一节）。绑定链接、卡片里的网页链接、登录回调都基于它；没配时机器人认不出未绑定的人（只回「请联系管理员」），审批 / 提问卡片退化为一句「请到网页上处理」，第三方登录不可用。长连接只在 `gateway` 角色的副本上运行（`capybara start` 默认全部角色）。
 
 **1. 建平台应用**
 - Slack：用 [`plugins/slack/app-manifest.yaml`](plugins/slack/app-manifest.yaml) 从 manifest 建应用（Socket Mode、事件订阅与 bot scope 都在里面），再生成应用级令牌 `xapp-…`（scope `connections:write`）、安装到工作区得到 `xoxb-…`。
@@ -261,7 +306,7 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 - `bind`（默认）：不认识的人私聊机器人会收到绑定卡片，点开网页登录后确认绑定；在群里只提示他去私聊（绑定链接不发在群里）。
 - `anonymous`：本组织租户里未绑定的人以该组织的「匿名访客」身份对话，只在绑定的 agent 对全组织可见时生效，不能用个人凭据；外部租户的人仍只能绑定。
 
-保存时插件会校验凭据（`verify`），随后某个 worker 副本建立长连接；连接页显示状态与最近一次错误（`last_error`）。IM 里机器人固定话术的语言取「设置 → 组织 → IM 语言」（zh / en，默认 en）。
+保存时插件会校验凭据（`verify`），随后某个 gateway 副本建立长连接；连接页显示状态与最近一次错误（`last_error`）。IM 里机器人固定话术的语言取「设置 → 组织 → IM 语言」（zh / en，默认 en）。
 
 **4. 网页登录**（企业管理员，部署级）：
 - 在平台应用里登记回调地址 `<http.publicUrl>/api/v1/auth/sso/slack/callback` / `.../sso/lark/callback`；
