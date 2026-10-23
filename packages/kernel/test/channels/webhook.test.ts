@@ -1,5 +1,10 @@
 import { fileURLToPath } from "node:url";
-import type { ChannelWebhookRequest, InboundEvent } from "@capybara-hq/plugin-sdk";
+import type {
+  ChannelWebhook,
+  ChannelWebhookRequest,
+  ChannelWebhookResult,
+  InboundEvent,
+} from "@capybara-hq/plugin-sdk";
 import {
   FAKE_WEBHOOK_SIGNATURE_HEADER,
   type FakeChannelServer,
@@ -20,6 +25,7 @@ import { CHANNEL_QUEUE_NAME } from "../../src/channels/outbound.js";
 import { ChannelWebhooks } from "../../src/channels/webhook.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -249,6 +255,21 @@ describe("channel webhook route (single replica, api + gateway)", () => {
     }
   });
 
+  it("a malformed Content-Type → 415 before the plugin is called", async () => {
+    const body = fakeWebhookChallenge("chal-bad-type");
+    const res = await k.http.inject({
+      method: "POST",
+      url: `/channels/webhook/${webhookConn}`,
+      headers: {
+        [FAKE_WEBHOOK_SIGNATURE_HEADER]: signFakeWebhook(body, TOKEN),
+        "content-type": "not a media type",
+      },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(415);
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+  });
+
   it("long_connection, disabled and unknown connections answer the same 404", async () => {
     const longConn = await createChannel("fake-im", "cli_long", TOKEN);
     const body = fakeWebhookEvents([fakeDm("hook-404", "u-1", "nobody home")]);
@@ -272,6 +293,8 @@ describe("channel webhook route (single replica, api + gateway)", () => {
     const res = await hook(webhookConn, big, signFakeWebhook(big, TOKEN));
     expect(res.statusCode).toBe(413);
     expect(errCode(res)).toBe("payload_too_large");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["content-security-policy"]).toBe("default-src 'none'");
     // Exactly the limit reaches the plugin (signed but not JSON → its 400)
     const atLimit = Buffer.alloc(MAX_BODY, 0x61);
     const ok = await hook(webhookConn, atLimit, signFakeWebhook(atLimit, TOKEN));
@@ -356,8 +379,21 @@ describe("ChannelWebhooks.handle", () => {
     body: new Uint8Array(),
     receivedAt: 0,
   };
-  const make = (onEvent: (id: string, e: InboundEvent) => Promise<void>) =>
-    new ChannelWebhooks({
+  const twoEvents = async (): Promise<ChannelWebhookResult> => ({
+    kind: "events",
+    events: [fakeDm("x1", "u", "a"), fakeDm("x2", "u", "b")],
+    ack: { status: 200, body: "ok" },
+  });
+  const make = (
+    opts: {
+      handle?: ChannelWebhook["handle"];
+      runtime?: () => Promise<unknown>;
+      onEvent?: (id: string, e: InboundEvent) => Promise<void>;
+      handleTimeoutMs?: number;
+    } = {},
+  ) => {
+    let runtimeCalls = 0;
+    const webhooks = new ChannelWebhooks({
       connections: {
         row: async () => ({
           id: ID,
@@ -370,39 +406,172 @@ describe("ChannelWebhooks.handle", () => {
           tenantId: "t1",
           pluginEnabled: true,
         }),
-        runtime: async () =>
-          ({
-            row: {} as never,
+        runtime: (async () => {
+          runtimeCalls++;
+          if (opts.runtime) return opts.runtime();
+          return {
+            row: {},
             config: {},
-            channel: {
-              webhook: {
-                handle: async () => ({
-                  kind: "events",
-                  events: [fakeDm("x1", "u", "a"), fakeDm("x2", "u", "b")],
-                  ack: { status: 200, body: "ok" },
-                }),
-              },
-            },
-          }) as never,
+            channel: { webhook: { handle: opts.handle ?? twoEvents } },
+          };
+        }) as never,
       },
-      inbound: { onEvent },
+      inbound: { onEvent: opts.onEvent ?? (async () => {}) },
       log: { warn: () => {} },
+      ...(opts.handleTimeoutMs !== undefined && { handleTimeoutMs: opts.handleTimeoutMs }),
     });
+    return {
+      webhooks,
+      call: () => webhooks.handle(ID, request, new AbortController().signal),
+      runtimeCalls: () => runtimeCalls,
+    };
+  };
+  const code = (res: { body?: string }) => JSON.parse(res.body ?? "{}").error?.code;
 
-  it("acks only after every onEvent resolved", async () => {
+  it("acks only after every onEvent resolved, waiting on a slow one", async () => {
     const accepted: string[] = [];
-    const res = await make(async (_id, e) => {
-      accepted.push((e as { messageId: string }).messageId);
-    }).handle(ID, request, new AbortController().signal);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const { call } = make({
+      onEvent: async (_id, e) => {
+        const id = (e as { messageId: string }).messageId;
+        if (id === "x2") await gate;
+        accepted.push(id);
+      },
+    });
+    let settled = false;
+    const pending = call().then((r) => {
+      settled = true;
+      return r;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(settled).toBe(false);
+    expect(accepted).toEqual(["x1"]);
+    release();
+    const res = await pending;
     expect(res.status).toBe(200);
     expect(accepted).toEqual(["x1", "x2"]);
   });
 
   it("any onEvent rejection → 503 so the platform redelivers", async () => {
-    const res = await make(async (_id, e) => {
-      if ((e as { messageId: string }).messageId === "x2") throw new Error("redis down");
-    }).handle(ID, request, new AbortController().signal);
+    const res = await make({
+      onEvent: async (_id, e) => {
+        if ((e as { messageId: string }).messageId === "x2") throw new Error("redis down");
+      },
+    }).call();
     expect(res.status).toBe(503);
-    expect(JSON.parse(res.body ?? "{}").error.code).toBe("channel.webhook_retry");
+    expect(code(res)).toBe("channel.webhook_retry");
+  });
+
+  it("a plugin that ignores its signal → 503 at the deadline", async () => {
+    let aborted = false;
+    const started = Date.now();
+    const res = await make({
+      handleTimeoutMs: 100,
+      handle: ({ signal }) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+        });
+        return new Promise(() => {});
+      },
+    }).call();
+    expect(res.status).toBe(503);
+    expect(code(res)).toBe("channel.webhook_retry");
+    expect(aborted).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("an onEvent stuck past the deadline (Redis reconnecting) → 503", async () => {
+    const res = await make({
+      handleTimeoutMs: 100,
+      onEvent: () => new Promise(() => {}),
+    }).call();
+    expect(res.status).toBe(503);
+    expect(code(res)).toBe("channel.webhook_retry");
+  });
+
+  it("a plugin that throws, or returns an invalid result → 500", async () => {
+    const thrown = await make({
+      handle: async () => {
+        throw new Error("boom");
+      },
+    }).call();
+    expect(thrown.status).toBe(500);
+    expect(code(thrown)).toBe("internal");
+    const invalid = await make({
+      handle: async () => ({ kind: "nonsense" }) as unknown as ChannelWebhookResult,
+    }).call();
+    expect(invalid.status).toBe(500);
+    const noArray = await make({
+      handle: async () =>
+        ({ kind: "events", events: "x", ack: { status: 200 } }) as unknown as ChannelWebhookResult,
+    }).call();
+    expect(noArray.status).toBe(500);
+  });
+
+  it("reject maps to 400 / 401 / 403 with generic codes", async () => {
+    for (const [status, want] of [
+      [403, "forbidden"],
+      [401, "auth.required"],
+      [400, "validation_failed"],
+    ] as const) {
+      const res = await make({ handle: async () => ({ kind: "reject", status }) }).call();
+      expect(res.status).toBe(status);
+      expect(code(res)).toBe(want);
+    }
+  });
+
+  it("drops framing / cookie headers and always sets the security headers", async () => {
+    const res = await make({
+      handle: async () => ({
+        kind: "respond",
+        response: {
+          status: 200,
+          headers: {
+            "content-type": "text/plain",
+            "Set-Cookie": "a=b",
+            "content-length": "999",
+            "X-Content-Type-Options": "sniff-away",
+            "content-security-policy": "default-src *",
+          },
+          body: "hi",
+        },
+      }),
+    }).call();
+    expect(res.status).toBe(200);
+    expect(res.headers).toEqual({
+      "content-type": "text/plain",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'",
+    });
+    expect(res.body).toBe("hi");
+    // Kernel-made errors carry them too
+    const err = await make({ handle: async () => ({ kind: "reject", status: 401 }) }).call();
+    expect(err.headers?.["x-content-type-options"]).toBe("nosniff");
+  });
+
+  it("plugin not loaded on this gateway → 503 plugin.unavailable", async () => {
+    const res = await make({
+      runtime: async () => {
+        throw new ApiError("plugin.not_found", "Plugin p does not provide a channel");
+      },
+    }).call();
+    expect(res.status).toBe(503);
+    expect(code(res)).toBe("plugin.unavailable");
+  });
+
+  it("caches the runtime between requests until invalidated", async () => {
+    const { webhooks, call, runtimeCalls } = make();
+    await call();
+    await call();
+    expect(runtimeCalls()).toBe(1);
+    webhooks.invalidate(ID);
+    await call();
+    expect(runtimeCalls()).toBe(2);
+    webhooks.invalidateAll();
+    await call();
+    expect(runtimeCalls()).toBe(3);
   });
 });

@@ -129,8 +129,27 @@ export type ChannelWebhookResult =
  * Optional webhook inbound mode (`Channel.webhook`). Signature verification, decryption and
  * timestamp replay protection all happen here: the kernel knows no platform formats, applies no
  * auth on the route, and only calls this for connections in webhook mode. `config` is the
- * connection config (validated against `connectionSchema`, secrets included). Must be quick: the
- * platform's ack deadline is a few seconds, and `signal` aborts when the platform hangs up.
+ * connection config (validated against `connectionSchema`, secrets included).
+ *
+ * Timing: one request has a 10 second kernel deadline covering `handle` and handing its events to
+ * the kernel. `signal` aborts at the deadline or when the platform hangs up; past the deadline the
+ * kernel answers 503 whether or not `handle` stops (late work is not cancelled). Platforms' own ack
+ * deadlines are a few seconds, so keep it quick.
+ *
+ * Responses the kernel writes without asking the plugin:
+ * - 404 `channel.webhook_not_found`, the same body for an unknown connection, one not in webhook
+ *   mode, a disabled one, or one whose plugin is off for its org;
+ * - 503 `plugin.unavailable` when the plugin is not loaded on the replica that got the request (a
+ *   rolling upgrade; the platform retries and reaches one that has it) or the stored config no
+ *   longer matches `connectionSchema`; only reachable with an existing webhook connection's id;
+ * - 413 `payload_too_large` above `channels.webhookMaxBodyBytes` (default 1 MiB), and 415 for a
+ *   malformed `Content-Type` header, both before `handle` is called (any well-formed content type,
+ *   or none, reaches the plugin as raw bytes);
+ * - after `handle`: 503 `channel.webhook_retry` when the deadline passes or any `onEvent` rejects,
+ *   500 `internal` when `handle` throws or returns something else.
+ * Every response carries `x-content-type-options: nosniff` and
+ * `content-security-policy: default-src 'none'`, which the plugin cannot override; plugin-set
+ * `set-cookie`, `content-length`, `transfer-encoding`, `connection` and `keep-alive` are dropped.
  */
 export interface ChannelWebhook {
   handle(args: {

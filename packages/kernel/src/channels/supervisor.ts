@@ -657,9 +657,9 @@ export const GATEWAY_CHECK_EVERY_MS = 60_000;
 
 /**
  * Runs on the worker role (maintenance queue), per channel plugin (Ruling R3): when a plugin has
- * holdable connections (active, not deleted, org not deleted, plugin enabled for the org) but no
- * gateway replica with that plugin loaded has a heartbeat newer than one lease TTL (Redis server
- * clock), nobody holds those long connections.
+ * active connections (not deleted, org not deleted, plugin enabled for the org; long connection or
+ * webhook mode, Ruling R4) but no gateway replica with that plugin loaded has a heartbeat newer than
+ * one lease TTL (Redis server clock), nobody holds those long connections or answers their webhooks.
  * - Logs one `warn` (naming the plugins) per interval at most across the cluster: a Redis
  *   `SET NX PX` rate limit a little shorter than the job period, so a duplicated job or several
  *   worker replicas do not repeat it while each period still gets its line.
@@ -676,7 +676,8 @@ export async function checkGatewayPresence(deps: {
   graceUntil?: number;
 }): Promise<boolean> {
   if (deps.graceUntil !== undefined && Date.now() < deps.graceUntil) return false;
-  // Only long connections count: webhook-mode connections are not held by the supervisor
+  // Webhook-mode connections count too (Ruling R4): the webhook route is served only by gateway
+  // replicas, so without one their callbacks get no answer either
   const rows = await deps.db
     .selectFrom("channel_connections")
     .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
@@ -688,7 +689,6 @@ export async function checkGatewayPresence(deps: {
     .select(["channel_connections.plugin", (eb) => eb.fn.countAll<string>().as("n")])
     .where("plugin_org_configs.enabled", "=", true)
     .where("channel_connections.status", "=", "active")
-    .where("channel_connections.inbound_mode", "=", "long_connection")
     .where("channel_connections.deleted_at", "is", null)
     .where("orgs.deleted_at", "is", null)
     .groupBy("channel_connections.plugin")

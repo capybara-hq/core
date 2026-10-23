@@ -2,7 +2,7 @@ import type { ChannelWebhookResponse, Logger } from "@capybara-hq/plugin-sdk";
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { errorBody } from "../errors.js";
 import { codeForStatus, redactPath } from "../http/error.filter.js";
-import type { ChannelWebhooks } from "./webhook.js";
+import { type ChannelWebhooks, WEBHOOK_SECURITY_HEADERS } from "./webhook.js";
 import { CHANNEL_WEBHOOK_PREFIX } from "./webhook-url.js";
 
 /** Fastify route template of the channel webhook (F9). */
@@ -66,6 +66,13 @@ export async function registerChannelWebhookRoute(
   };
 
   await fastify.register(async (scope) => {
+    // Every response of the route, including Fastify's own 413 / 415 / 500
+    scope.addHook("onSend", async (_req, reply, payload) => {
+      for (const [name, value] of Object.entries(WEBHOOK_SECURITY_HEADERS)) {
+        reply.header(name, value);
+      }
+      return payload;
+    });
     scope.removeAllContentTypeParsers();
     scope.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
     scope.setErrorHandler((err: FastifyError, req, reply) => {

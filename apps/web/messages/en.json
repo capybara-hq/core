@@ -1154,7 +1154,8 @@
       "callbackUrl": "Callback URL",
       "callbackUrlHint": "Register this address as the event / request URL in the platform's app settings.",
       "saveInbound": "Save inbound mode",
-      "inboundSaved": "Inbound mode saved."
+      "inboundSaved": "Inbound mode saved.",
+      "webhookNoUrlWarning": "This channel is in webhook mode, but the deployment has no webhook address (channels.webhookBaseUrl), so the platform cannot reach the bot. Configure the address or switch back to long connection."
     },
     "inboundMode": {
       "long_connection": "Long connection",

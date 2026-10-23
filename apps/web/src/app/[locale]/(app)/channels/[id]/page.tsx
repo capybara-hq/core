@@ -273,6 +273,9 @@ function InboundCard({
     <Card title={t("detail.inboundTitle")}>
       <Stack gap={12}>
         <Text tone="muted">{t("detail.inboundHint")}</Text>
+        {channel.inboundMode === "webhook" && channel.webhookUrl === null && (
+          <Text tone="warn">{`! ${t("detail.webhookNoUrlWarning")}`}</Text>
+        )}
         {switchable ? (
           <RadioGroup
             label={t("detail.inboundLabel")}

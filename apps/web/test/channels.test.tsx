@@ -307,6 +307,16 @@ describe("渠道连接详情（DetailPage）", () => {
     renderPage(<ChannelDetailPage />);
     expect(await screen.findByText(d.inboundNoBaseUrl)).toBeTruthy();
     expect(screen.queryByRole("radiogroup", { name: d.inboundLabel })).toBeNull();
+    expect(screen.queryByText(`! ${d.webhookNoUrlWarning}`)).toBeNull();
+    cleanup();
+    // In webhook mode without a base URL: a warning, and the switch back stays available
+    routes({
+      [`GET ${BASE}/channels/ch1`]: () =>
+        json(200, { channel: { ...CHANNEL, inboundMode: "webhook", webhookUrl: null } }),
+    });
+    renderPage(<ChannelDetailPage />);
+    expect(await screen.findByText(`! ${d.webhookNoUrlWarning}`)).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: d.inboundLabel })).toBeTruthy();
   });
 
   it("凭据：已设置的密钥只显示「已设置」；替换 appSecret、其余密钥省略 → PATCH config", async () => {

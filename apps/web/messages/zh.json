@@ -1154,7 +1154,8 @@
       "callbackUrl": "回调地址",
       "callbackUrlHint": "在平台的应用设置里把此地址填为事件 / 请求地址。",
       "saveInbound": "保存接收方式",
-      "inboundSaved": "接收方式已保存。"
+      "inboundSaved": "接收方式已保存。",
+      "webhookNoUrlWarning": "该渠道处于 Webhook 模式，但部署未配置回调地址（channels.webhookBaseUrl），平台无法把消息送达机器人。请配置该地址，或切回长连接。"
     },
     "inboundMode": {
       "long_connection": "长连接",

@@ -15,3 +15,7 @@ uniform 404 `channel.webhook_not_found`); `PATCH .../channels/:id` takes `inboun
 `inboundMode`, `webhookSupported`, `webhookUrl`; the supervisor only holds long-connection connections.
 Testing: `signFakeWebhook`, `fakeWebhookEvents`, `fakeWebhookChallenge`. Web: inbound mode switch with
 the read-only callback URL on the channel page.
+One 10 s deadline covers `handle` plus enqueueing (503 `channel.webhook_retry` past it); responses
+always carry `x-content-type-options: nosniff` and `content-security-policy: default-src 'none'`; the
+decrypted connection runtime is cached for 5 s per gateway and dropped on `channel.changed`. The
+no-live-gateway warning also counts webhook-mode connections.

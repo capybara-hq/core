@@ -463,6 +463,19 @@ describe("channel long connections: fair share across gateway replicas", () => {
       );
     }
     expect(warns).toHaveLength(2);
+
+    // Ruling R4: webhook-mode connections also need a live gateway (it serves the webhook route)
+    await redis.del(gatewayMissingWarnedKey);
+    await sql`UPDATE capybara.channel_connections SET inbound_mode = 'webhook'`.execute(raw);
+    try {
+      expect(await checkGatewayPresence(deps)).toBe(true);
+    } finally {
+      await sql`UPDATE capybara.channel_connections SET inbound_mode = 'long_connection'`.execute(
+        raw,
+      );
+    }
+    expect(warns).toHaveLength(3);
+    expect(warns[2]?.fields).toMatchObject({ plugins: ["chan-mini"], connections: CONNECTIONS });
     await redis.del(MINI_KEY, OTHER_KEY, gatewayMissingWarnedKey);
   });
 

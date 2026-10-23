@@ -9,18 +9,35 @@ import { ApiError, type ErrorCode, errorBody } from "../errors.js";
 import type { ChannelConnections } from "./connections.service.js";
 import type { ChannelInbound } from "./inbound.js";
 
-/** How long the plugin's `webhook.handle` may take (platform ack deadlines are a few seconds). */
+/**
+ * Deadline of one webhook request: the plugin's `webhook.handle` plus handing its events to
+ * `onEvent` (platform ack deadlines are a few seconds). Past it the kernel answers 503.
+ */
 export const WEBHOOK_HANDLE_TIMEOUT_MS = 10_000;
+/** How long a connection's decrypted runtime (plugin + config) is reused across requests. */
+export const WEBHOOK_RUNTIME_CACHE_MS = 5_000;
+/** Most connections whose runtime is cached in one process. */
+export const WEBHOOK_RUNTIME_CACHE_MAX = 1_000;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Response headers a plugin may not set (the HTTP server owns framing and cookies). */
+/**
+ * Headers every webhook response carries; a plugin cannot override them (the body is never meant to
+ * be rendered or sniffed by a browser).
+ */
+export const WEBHOOK_SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  "x-content-type-options": "nosniff",
+  "content-security-policy": "default-src 'none'",
+};
+
+/** Response headers a plugin may not set (the HTTP server owns framing, cookies and the above). */
 const DROPPED_HEADERS: ReadonlySet<string> = new Set([
   "connection",
   "content-length",
   "keep-alive",
   "set-cookie",
   "transfer-encoding",
+  ...Object.keys(WEBHOOK_SECURITY_HEADERS),
 ]);
 
 const jsonError = (status: number, code: ErrorCode, message: string): ChannelWebhookResponse => ({
@@ -36,12 +53,44 @@ const jsonError = (status: number, code: ErrorCode, message: string): ChannelWeb
 const notFound = () =>
   jsonError(404, "channel.webhook_not_found", "No webhook is registered at this address");
 
+const retryLater = () =>
+  jsonError(503, "channel.webhook_retry", "The event could not be accepted; retry later");
+
+/** Thrown by {@link raceAbort} when the request's deadline (or the platform hanging up) wins. */
+class WebhookDeadline extends Error {}
+
+/** Settles with `p`, or rejects with {@link WebhookDeadline} once `signal` aborts (whatever `p` does). */
+function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    p.catch(() => {});
+    return Promise.reject(new WebhookDeadline());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new WebhookDeadline());
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
+type Runtime = Awaited<ReturnType<ChannelConnections["runtime"]>>;
+
 export interface ChannelWebhooksDeps {
   connections: Pick<ChannelConnections, "row" | "runtime">;
   inbound: Pick<ChannelInbound, "onEvent">;
   log: Pick<Logger, "warn">;
   /** Defaults to {@link WEBHOOK_HANDLE_TIMEOUT_MS}. */
   handleTimeoutMs?: number;
+  /** Defaults to {@link WEBHOOK_RUNTIME_CACHE_MS}; 0 disables the cache. */
+  runtimeCacheMs?: number;
 }
 
 /**
@@ -50,18 +99,69 @@ export interface ChannelWebhooksDeps {
  * everything a request can do goes through the plugin's `webhook.handle`, which verifies the
  * signature, decrypts and checks timestamps:
  * - unknown connection, not in webhook mode, not active or plugin off for the org → uniform 404
- *   `channel.webhook_not_found`; plugin not loaded here or stored config no longer valid → 503 so
- *   the platform retries (another replica may have it);
- * - `respond` → written back as is (minus framing / cookie headers);
+ *   `channel.webhook_not_found` (the connection row is read on every request);
+ * - plugin not loaded on this replica, or stored config no longer valid → 503 `plugin.unavailable`.
+ *   Deliberate tradeoff: during a rolling upgrade the platform retries and reaches a replica that
+ *   has the plugin. It is only reachable with the UUID of an existing webhook-mode connection
+ *   (the URL the platform already has), so it reveals nothing to a guesser;
+ * - `respond` → written back (minus framing / cookie headers);
  * - `events` → each goes through the same `onEvent` as the long connection (dedupe by `messageId` /
  *   `eventId`, durable enqueue); the plugin's `ack` is written only after every one resolved, and
  *   any rejection answers 503 `channel.webhook_retry` so the platform redelivers;
- * - `reject` → that status, nothing enqueued; a plugin error → 500.
+ * - `reject` → that status (400 / 401 / 403), nothing enqueued;
+ * - plugin throws or returns something else → 500 `internal`;
+ * - the whole request (handle + onEvent) has one deadline ({@link WEBHOOK_HANDLE_TIMEOUT_MS}): a
+ *   plugin that ignores its `signal` or an enqueue stuck on Redis answers 503 `channel.webhook_retry`
+ *   when it passes (late work is not cancelled; dedupe makes the redelivery safe).
+ * Every response carries {@link WEBHOOK_SECURITY_HEADERS}.
+ *
+ * The decrypted runtime (plugin implementation + config) is cached per connection for a few seconds
+ * (bounded, process local), so unauthenticated requests stay cheap before the signature check. It is
+ * a read-through cache only: the kernel calls {@link invalidate} on `channel.changed` (config rotation,
+ * mode switch, deletion…) and {@link invalidateAll} when a plugin instance changes.
  */
 export class ChannelWebhooks {
+  private readonly runtimes = new Map<string, { value: Runtime; expiresAt: number }>();
+
   constructor(private readonly deps: ChannelWebhooksDeps) {}
 
+  /** Drops the cached runtime of one connection (on `channel.changed`). */
+  invalidate(connectionId: string): void {
+    this.runtimes.delete(connectionId);
+  }
+
+  /** Drops every cached runtime (a plugin was replaced, revoked or reloaded). */
+  invalidateAll(): void {
+    this.runtimes.clear();
+  }
+
   async handle(
+    connectionId: string,
+    request: ChannelWebhookRequest,
+    signal: AbortSignal,
+  ): Promise<ChannelWebhookResponse> {
+    return secure(await this.respond(connectionId, request, signal));
+  }
+
+  private async runtime(connectionId: string): Promise<Runtime> {
+    const ttl = this.deps.runtimeCacheMs ?? WEBHOOK_RUNTIME_CACHE_MS;
+    const now = Date.now();
+    const hit = this.runtimes.get(connectionId);
+    if (hit && hit.expiresAt > now) return hit.value;
+    const value = await this.deps.connections.runtime(connectionId);
+    if (ttl > 0) {
+      this.runtimes.delete(connectionId);
+      while (this.runtimes.size >= WEBHOOK_RUNTIME_CACHE_MAX) {
+        const oldest = this.runtimes.keys().next().value;
+        if (oldest === undefined) break;
+        this.runtimes.delete(oldest);
+      }
+      this.runtimes.set(connectionId, { value, expiresAt: now + ttl });
+    }
+    return value;
+  }
+
+  private async respond(
     connectionId: string,
     request: ChannelWebhookRequest,
     signal: AbortSignal,
@@ -74,11 +174,12 @@ export class ChannelWebhooks {
       row.status !== "active" ||
       !row.pluginEnabled
     ) {
+      this.invalidate(connectionId);
       return notFound();
     }
-    let runtime: Awaited<ReturnType<ChannelConnections["runtime"]>>;
+    let runtime: Runtime;
     try {
-      runtime = await this.deps.connections.runtime(connectionId);
+      runtime = await this.runtime(connectionId);
     } catch (err) {
       if (
         err instanceof ApiError &&
@@ -95,18 +196,26 @@ export class ChannelWebhooks {
     const webhook = runtime.channel.webhook;
     if (webhook === undefined) return notFound();
 
+    // One deadline for the whole request; also aborts when the platform hangs up
+    const deadline = AbortSignal.any([
+      signal,
+      AbortSignal.timeout(this.deps.handleTimeoutMs ?? WEBHOOK_HANDLE_TIMEOUT_MS),
+    ]);
     let result: ChannelWebhookResult;
     try {
-      result = await webhook.handle({
-        connectionId,
-        config: runtime.config,
-        request,
-        signal: AbortSignal.any([
-          signal,
-          AbortSignal.timeout(this.deps.handleTimeoutMs ?? WEBHOOK_HANDLE_TIMEOUT_MS),
-        ]),
-      });
+      result = await raceAbort(
+        Promise.resolve().then(() =>
+          webhook.handle({ connectionId, config: runtime.config, request, signal: deadline }),
+        ),
+        deadline,
+      );
     } catch (err) {
+      if (err instanceof WebhookDeadline) {
+        this.deps.log.warn("channel webhook handler timed out; the platform will retry", {
+          connectionId,
+        });
+        return retryLater();
+      }
       // The kernel log redacts the connection's secrets (runtime() registered them)
       this.deps.log.warn("channel webhook handler failed", { connectionId, err });
       return jsonError(500, "internal", "Internal error");
@@ -122,17 +231,13 @@ export class ChannelWebhooks {
         if (!Array.isArray(events)) break;
         for (const e of events as InboundEvent[]) {
           try {
-            await this.deps.inbound.onEvent(connectionId, e);
+            await raceAbort(this.deps.inbound.onEvent(connectionId, e), deadline);
           } catch (err) {
             this.deps.log.warn("channel webhook event not accepted; the platform will retry", {
               connectionId,
-              err,
+              ...(err instanceof WebhookDeadline ? { timedOut: true } : { err }),
             });
-            return jsonError(
-              503,
-              "channel.webhook_retry",
-              "The event could not be accepted; retry later",
-            );
+            return retryLater();
           }
         }
         return sanitize(result.ack);
@@ -168,4 +273,13 @@ function sanitize(r: ChannelWebhookResponse | undefined): ChannelWebhookResponse
     headers,
     ...(typeof r?.body === "string" && { body: r.body }),
   };
+}
+
+/** Adds {@link WEBHOOK_SECURITY_HEADERS}, replacing any same-named header whatever its case. */
+function secure(r: ChannelWebhookResponse): ChannelWebhookResponse {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(r.headers ?? {})) {
+    if (!(name.toLowerCase() in WEBHOOK_SECURITY_HEADERS)) headers[name] = value;
+  }
+  return { ...r, headers: { ...headers, ...WEBHOOK_SECURITY_HEADERS } };
 }

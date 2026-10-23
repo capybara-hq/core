@@ -12,7 +12,7 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
-import { ChannelConnections } from "./channels/connections.service.js";
+import { CHANNEL_CHANGED_TOPIC, ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
 import {
@@ -886,6 +886,12 @@ export async function createKernel(
     }),
   };
   let channelSupervisor: ChannelSupervisor | undefined;
+  /** Channel webhook inbound (gateway role only; F8 / F9). */
+  const channelWebhooks = config.roles.includes("gateway")
+    ? new ChannelWebhooks({ connections: channelConnections, inbound: channels.inbound, log })
+    : undefined;
+  let unwatchWebhooks: (() => void) | undefined;
+  let unsubscribeWebhooks: (() => Promise<void>) | undefined;
   // Warn (rate limited) when a channel plugin has holdable connections but no live gateway replica
   // with it loaded (R1 / R3); silent for one lease TTL after this process starts (first heartbeats)
   const gatewayCheckGraceFrom = Date.now();
@@ -984,13 +990,9 @@ export async function createKernel(
       },
       serveApi: config.roles.includes("api"),
       servePlugins,
-      ...(config.roles.includes("gateway") && {
+      ...(channelWebhooks && {
         gateway: {
-          webhooks: new ChannelWebhooks({
-            connections: channelConnections,
-            inbound: channels.inbound,
-            log,
-          }),
+          webhooks: channelWebhooks,
           webhookMaxBodyBytes: config.channels.webhookMaxBodyBytes,
         },
       }),
@@ -1127,6 +1129,8 @@ export async function createKernel(
       );
     unwatch?.();
     unwatchPlugins?.();
+    unwatchWebhooks?.();
+    await unsubscribeWebhooks?.().catch(() => {});
     // 不再接 reconcile（进行中的那次由宿主关闭收尾）
     await within("plugin-lifecycle", pluginLifecycle.stop(), 1_000);
     unwatch = undefined;
@@ -1367,6 +1371,17 @@ export async function createKernel(
           // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）
           const supervisor = channelSupervisor;
           unwatchPlugins = host.onChange((plugin) => supervisor.pluginChanged(plugin));
+          checkpoint();
+        }
+        if (channelWebhooks) {
+          // The webhook runtime cache is read-through only: drop entries on every connection change
+          // and whenever a plugin instance changes
+          const webhooks = channelWebhooks;
+          unsubscribeWebhooks = await bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
+            const id = (payload as { connectionId?: unknown } | null)?.connectionId;
+            if (typeof id === "string") webhooks.invalidate(id);
+          });
+          unwatchWebhooks = host.onChange(() => webhooks.invalidateAll());
           checkpoint();
         }
         // 路由保留挂载、实时取：插件撤销后 503 plugin.unavailable，重新加载后恢复（C17）
