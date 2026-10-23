@@ -138,8 +138,9 @@ stable semver tag already in ghcr.io:
 - Re-running an old release builds that version without `latest`, so `latest` never moves back.
 - In a manual run, an image whose tag lookup was `denied` doesn't get `latest`. The first image
   release is the exception: every lookup is `denied` and ghcr.io shows no tag at all, because none of
-  the four packages exists yet. This is decided from the registry, not from npm, because the
-  `publish` job of the same run has already put the version on npm when the images are planned.
+  the four packages exists yet, and npm shows no version other than this run's own (the `publish` job
+  of the same run has already put it there when the images are planned). A denied lookup also hides
+  existing tags, so a re-run of an older release while access is denied never gets `latest`.
 - `latest` is pushed before the version tag. The version tag is the "done" marker the planner looks
   for.
 

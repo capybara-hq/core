@@ -141,11 +141,33 @@ describe("planImages", () => {
       expect(latestOf(first)).toBe(true);
     });
 
-    it("every package denied and no tags anywhere: the first image release keeps latest", () => {
-      // npm already shows the version (the publish job ran first in the same run).
-      const p = planImages({ ...base, mode: "manual", tags: all("denied"), existingTags: [] });
+    it("every package denied, no tags, npm shows only this tree's versions: first image release keeps latest", () => {
+      // npm already shows the version (the publish job ran first in the same run), and nothing else.
+      const p = planImages({
+        ...base,
+        mode: "manual",
+        tags: all("denied"),
+        existingTags: [],
+        npmOnlyTreeVersions: true,
+      });
       expect(names(p)).toEqual(IMAGES.map((i) => i.image));
       expect(latestOf(p)).toBe(true);
+    });
+
+    it("every lookup denied but npm shows other versions: a re-run while access is denied, no latest", () => {
+      // listTags reads [] when access is denied, so the registry alone can't tell this from a first
+      // release; npm can: a newer version exists, and latest must not move back to this one.
+      for (const npmOnlyTreeVersions of [false, undefined]) {
+        const p = planImages({
+          ...base,
+          mode: "manual",
+          tags: all("denied"),
+          existingTags: [],
+          ...(npmOnlyTreeVersions !== undefined && { npmOnlyTreeVersions }),
+        });
+        expect(names(p)).toEqual(IMAGES.map((i) => i.image));
+        expect(p.build.some((t) => t.latest)).toBe(false);
+      }
     });
 
     it("every lookup denied but some tag exists: not a first release, latest dropped", () => {

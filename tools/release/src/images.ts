@@ -110,6 +110,11 @@ export interface PlanImagesInput {
   tags: Readonly<Record<string, TagState>>;
   /** Every tag the image packages already have (all four together); `latest` never moves back. */
   existingTags?: readonly string[];
+  /**
+   * npm shows no version of any public package other than the one in this run's tree (the first
+   * release is this run's own). Unset = false.
+   */
+  npmOnlyTreeVersions?: boolean;
 }
 
 /** An image to build, and whether its multi-arch tag set includes `latest`. */
@@ -154,8 +159,11 @@ export function planImages(input: PlanImagesInput): ImagePlan {
   // No image package exists at all: every lookup is denied (ghcr.io answers "denied" for a package
   // that doesn't exist) and the registry shows no tag anywhere. That is the first image release, even
   // though npm already shows the version: the `publish` job of the same manual run published it before
-  // `images-plan` looked.
+  // `images-plan` looked. A denied lookup also hides the tags of packages that do exist (private
+  // packages, a token problem), so npm must show nothing but this tree's versions too: otherwise this
+  // is a re-run of an older release, and `latest` would move back.
   const firstImageRelease =
+    input.npmOnlyTreeVersions === true &&
     IMAGES.every((t) => input.tags[t.image] === "denied") &&
     (input.existingTags ?? []).length === 0;
   const build: PlannedImage[] = [];

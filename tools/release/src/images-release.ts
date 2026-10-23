@@ -43,6 +43,10 @@ export async function planImageRelease(deps: ImageReleaseDeps): Promise<ImagePla
   const published = new Map<string, readonly string[]>();
   for (const p of pkgs) if (!p.private) published.set(p.name, await lookup(p.name));
   const npmReleased = !isFirstRelease(pkgs, published);
+  // Only this tree's own versions are on npm: the first release, published by this very run.
+  const npmOnlyTreeVersions = pkgs.every(
+    (p) => p.private || (published.get(p.name) ?? []).every((v) => v === p.version),
+  );
   if (mode === "auto" && !npmReleased) return planImages({ mode, version, npmReleased, tags: {} });
 
   const state = deps.tagState ?? registryTagState;
@@ -54,7 +58,7 @@ export async function planImageRelease(deps: ImageReleaseDeps): Promise<ImagePla
     existingTags.push(...(await list(t.image)));
     log(`${t.image}:${version}: ${tags[t.image]}`);
   }
-  return planImages({ mode, version, npmReleased, tags, existingTags });
+  return planImages({ mode, version, npmReleased, tags, existingTags, npmOnlyTreeVersions });
 }
 
 /** `key=value` lines for $GITHUB_OUTPUT (single-line values only). */

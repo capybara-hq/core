@@ -122,6 +122,21 @@ describe("planImageRelease", () => {
     expect(p.build.every((t) => t.latest)).toBe(true);
   });
 
+  it("manual: re-running an old run while ghcr access is denied never tags latest", async () => {
+    // Private packages or a token problem: every lookup is denied and listTags reads []. npm shows
+    // a newer version than this tree's 0.1.1, so this is not the first release.
+    const p = await planImageRelease({
+      mode: "manual",
+      root,
+      log: quiet,
+      publishedVersions: async () => ["0.1.1", "0.1.2"],
+      tagState: async () => "denied",
+      listTags: async () => [],
+    });
+    expect(p.build).toHaveLength(4);
+    expect(p.build.some((t) => t.latest)).toBe(false);
+  });
+
   it("manual: once some image package exists, a denied lookup drops latest", async () => {
     const p = await planImageRelease({
       mode: "manual",
