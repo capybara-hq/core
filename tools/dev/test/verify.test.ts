@@ -23,6 +23,7 @@ const basePlan: Plan = {
   web: false,
   visual: false,
   e2e: false,
+  docker: false,
 };
 const find = (plan: Plan, id: string) => verifySteps(plan, "abc").find((s) => s.id === id);
 
@@ -58,9 +59,9 @@ describe("verifySteps", () => {
     ]);
   });
 
-  it("web/visual/e2e are reported, not run", () => {
-    const plan = { ...basePlan, web: true, visual: true, e2e: true };
-    for (const id of ["web", "visual", "e2e"]) {
+  it("web/visual/e2e/docker are reported, not run", () => {
+    const plan = { ...basePlan, web: true, visual: true, e2e: true, docker: true };
+    for (const id of ["web", "visual", "e2e", "docker"]) {
       expect(find(plan, id)).toMatchObject({ cmd: null, note: "CI runs this" });
     }
     expect(find(basePlan, "web")).toBeUndefined();
