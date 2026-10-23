@@ -55,6 +55,8 @@ Some tests call real services and run only when their `CAPYBARA_TEST_*` variable
 
 ## CLA
 
-This project uses a Contributor License Agreement (CLA); a bot guides you through signing on your first PR. **External PRs are not merged until the CLA bot is live (milestone M7).** The CLA text will be published after legal review.
+This project uses a Contributor License Agreement; the draft is in [CLA.md](CLA.md). On your first pull request the CLA bot comments with instructions: reply with the sentence `I have read the CLA Document and I hereby sign the CLA` (comment `recheck` to re-run the check). Signatures are stored on the `cla-signatures` branch, and the bot ignores `dependabot[bot]`, `github-actions[bot]` and `changeset-bot`.
+
+The CLA draft is **not yet in effect** (it is pending legal review), so **external PRs are not merged until the CLA is in effect**, even though the bot may already be collecting signatures.
 
 Whatever happens, the code is and will always remain open source under Apache-2.0.

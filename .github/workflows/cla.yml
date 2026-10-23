@@ -1,0 +1,34 @@
+# CLA signing bot (contributor-assistant). Separate from ci.yml and NOT part of `ci-ok`.
+# It runs in the base repository context (pull_request_target / issue_comment) and must never
+# check out or run the PR's code: there is deliberately no checkout step here.
+# Signatures live on the `cla-signatures` branch of this repo at signatures/v1/cla.json.
+name: cla
+on:
+  pull_request_target:
+    types: [opened, closed, synchronize]
+  issue_comment:
+    types: [created]
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+jobs:
+  cla:
+    # Comments act only on PR comments that are the signing sentence or the recheck phrase.
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+      (github.event.comment.body == 'recheck' ||
+      github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: CLA assistant
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: signatures/v1/cla.json
+          path-to-document: https://github.com/capybara-hq/core/blob/main/CLA.md
+          branch: cla-signatures
+          allowlist: dependabot[bot],github-actions[bot],changeset-bot
+          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
