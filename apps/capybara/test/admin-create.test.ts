@@ -237,7 +237,7 @@ describe("capybara admin create --if-none / --password-file (fresh database)", (
     expect(await verifyPassword(hash as string, PW)).toBe(true);
   }, 60_000);
 
-  it("--if-none treats a taken login as skipped when no active admin exists", async () => {
+  it("--if-none with a taken login and no active admin exits 1 with a hint", async () => {
     // Disable the only admin: --if-none then tries to create "root" again and hits login_taken.
     const raw = createDb(fresh.url, 1);
     try {
@@ -250,8 +250,13 @@ describe("capybara admin create --if-none / --password-file (fresh database)", (
       `${PW}\n`,
       fresh.url,
     );
-    expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain('login "root" already exists; skipped');
+    expect(r.code).toBe(1);
+    expect(r.stdout).not.toContain("skipped");
+    expect(r.stderr).toContain("account.login_taken");
+    expect(r.stderr).toContain(
+      "no active enterprise admin; choose another --login or re-enable the account",
+    );
+    expect(`${r.stdout}${r.stderr}`).not.toContain(PW);
     expect(await countAccounts(fresh.url)).toBe(1);
   }, 60_000);
 });

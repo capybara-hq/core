@@ -101,7 +101,7 @@ export async function readPasswordFile(path: string): Promise<string> {
  * （去掉行尾换行）→ 跑内核迁移（幂等）→ 建企业管理员。
  * `ifNone`：已有活跃企业管理员时打印 `enterprise admin already exists; skipped` 并返回 0——这一检查在读密码之前，
  * 所以此时密码文件缺失也不报错；没有管理员时照常要求密码（文件缺失 → 1，P-7）。检查与插入在同一事务、
- * 同一咨询锁内（SetupService.createEnterpriseAdminIfNone），并发执行也只建一个；登录名已占用同样视为跳过。
+ * 同一咨询锁内（SetupService.createEnterpriseAdminIfNone），并发执行也只建一个；没有活跃管理员而登录名已占用 → 1。
  * 只连 PG，不连 Redis。退出码：0 成功 / 1 失败（用法错误的 2 由 parseCli 负责）。
  * 错误信息不回显密码：密码登记为日志密钥，stderr 输出里出现的密码一律打码。
  */
@@ -202,8 +202,13 @@ export async function runAdminCreate(
         log.info("enterprise admin created", { accountId: account.id, login: opts.login });
         return 0;
       } catch (e) {
+        // Under the setup lock a taken login cannot come from a concurrent run: there is no active
+        // enterprise admin and the login belongs to a non-admin or disabled account. Fail so an
+        // open setup wizard is not hidden.
         if (e instanceof ApiError && e.code === "account.login_taken") {
-          return skipped(`login "${opts.login}" already exists`);
+          return fail(
+            `${e.code}: ${e.message} (no active enterprise admin; choose another --login or re-enable the account)`,
+          );
         }
         throw e;
       }
