@@ -45,6 +45,7 @@ import {
   withPreApproved,
 } from "./approvals.js";
 import { PluginBlobIntegrityError } from "./blobs.js";
+import { DEFAULT_HOOK_TIMEOUT_MS, HookRegistry } from "./hooks.js";
 import { type InflightTracker, type TrackOptions, trackCalls } from "./inflight.js";
 import type { DesiredPlugin } from "./installs.js";
 import {
@@ -565,6 +566,12 @@ export class PluginHost {
 
   /** 本进程生效的插件实例（C17）：消费方每次实时取，不缓存实现对象。 */
   private readonly registry = new PluginRegistry();
+  /**
+   * Hooks registered by this process's plugin instances through `ctx.hooks.on` (recorded in each
+   * instance's ledger, so unload / upgrade / disable revokes them). Organization enablement is
+   * {@link enabledPlugins}, queried on every run.
+   */
+  readonly hooks: HookRegistry;
   /** 加载成功过的插件的加载参数（同进程重新加载用；撤销后保留，`unavailable` 据此判断）。 */
   private readonly specs = new Map<string, InstanceSpec>();
   /** 因必需能力没了而随提供方卸下的插件：提供方回来后重新加载。 */
@@ -657,6 +664,8 @@ export class PluginHost {
       disposeTimeoutMs?: () => number;
       /** 运行中重新加载时 setup 的时限（毫秒），默认 60s；内核传 `pluginHost.reloadSetupTimeoutSeconds`。 */
       reloadSetupTimeoutMs?: () => number;
+      /** Hook time limit in milliseconds, default 5 s; the kernel passes `hooks.timeoutMs` (hot). */
+      hookTimeoutMs?: () => number;
       /**
        * 安装记录里的插件名（T11 安装记录，任何 desired_state）：与内置、配置声明的一起构成「部署已知」的插件，
        * 不在本副本生效时它们的路由返回 503，完全未知的名字 404。缓存 {@link KNOWN_NAMES_TTL_MS}。
@@ -679,6 +688,13 @@ export class PluginHost {
     this.reloadSetupTimeoutMs =
       opts.reloadSetupTimeoutMs ?? (() => DEFAULT_RELOAD_SETUP_TIMEOUT_MS);
     this.installedNames = opts.installedNames;
+    const hookTimeoutMs = opts.hookTimeoutMs ?? (() => DEFAULT_HOOK_TIMEOUT_MS);
+    this.hooks = new HookRegistry({
+      enabledPlugins: (orgId) => this.enabledPlugins(orgId),
+      redis: deps.redis,
+      config: () => ({ hooks: { timeoutMs: hookTimeoutMs() } }),
+      log: deps.log,
+    });
     this.registry.onChange(() => {
       this.installedCache = undefined;
     });
@@ -1777,6 +1793,7 @@ export class PluginHost {
     return {
       kernel: this.deps,
       capabilityAccess: this.capabilityAccess,
+      hooks: this.hooks,
       nextGeneration: (name) => {
         const g = (this.generations.get(name) ?? 0) + 1;
         this.generations.set(name, g);

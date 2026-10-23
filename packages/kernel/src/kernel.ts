@@ -339,6 +339,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   // 登录方式与受信任的身份源在每次请求时经 `config()` 读取，替换配置即生效。
   "auth.loginSources": () => {},
   "auth.trustedIdentitySources": () => {},
+  // The hook registry reads the time limit through `config()` on every run.
+  "hooks.timeoutMs": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
@@ -445,6 +447,7 @@ export async function createKernel(
     drainMs: () => current.pluginHost.drainSeconds * 1000,
     disposeTimeoutMs: () => current.pluginHost.disposeTimeoutSeconds * 1000,
     reloadSetupTimeoutMs: () => current.pluginHost.reloadSetupTimeoutSeconds * 1000,
+    hookTimeoutMs: () => current.hooks.timeoutMs,
     // 路由闸门的「部署已知」插件：安装记录（任何 desired_state）；pluginInstalls 在下面创建，调用时才取
     installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
     // 生效部署配置 = 启动配置补上 PG 里保存的字段（C10）；服务在下面创建，调用时才取

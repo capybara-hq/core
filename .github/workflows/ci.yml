@@ -19,7 +19,8 @@ permissions: {}
 #
 # PRs run what the diff affects; pushes to main run everything. The plan comes from
 # tools/ci/src/affected.ts (rules and their tests live there; AGENTS.md "CI and checks" lists them):
-# - ci (lint, typecheck, pnpm check, plugin packing, commitlint): always, in full;
+# - ci (lint, typecheck, pnpm check, plugin packing, commitlint): always, in full (pnpm check
+#   includes perm-hooks: cheap, reads all plugin sources);
 # npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
 # main and workflow_dispatch only, never on PRs.
 # - test: the affected workspace packages only (4 shards when the kernel tests run, else 1);

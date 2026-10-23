@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 import type { CapabilityRef } from "./capability.js";
+import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
@@ -129,6 +130,16 @@ export interface PluginContext {
       contribution: string;
     }): Promise<void>;
     verifyEmbedToken(token: string): Promise<EmbedClaims | null>;
+  };
+  /**
+   * Hooks (`permissions.hooks`): observe model and tool calls, or deny them with a policy hook.
+   * `on` is only allowed during `setup`; the mount point must be declared in `permissions.hooks` and be
+   * one of `HOOKS_AVAILABLE`; `mode: "policy"` only on `POLICY_HOOKS`. Hooks fire only for organizations
+   * that enabled the plugin, only in chat conversations (never in eval replays), serially by plugin
+   * name. Unloading, upgrading or disabling the plugin instance revokes them.
+   */
+  hooks: {
+    on<K extends AvailableHook>(mount: K, handler: HookHandler<K>, opts: HookOptions): void;
   };
   provide(capability: CapabilityRef, impl: unknown): void;
   /**

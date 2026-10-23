@@ -7,7 +7,8 @@ export type RegistrationKind =
   | "lease"
   | "ui.view"
   | "ui.action"
-  | "provide";
+  | "provide"
+  | "hook";
 
 /** 账上的一项：撤销时调用 `dispose()`。 */
 export interface Registration {

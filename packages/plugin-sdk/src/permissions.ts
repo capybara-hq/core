@@ -8,7 +8,10 @@ export interface PluginPermissions {
   http?: { method: "GET" | "POST" | "PUT" | "DELETE"; path: string; public?: boolean }[];
   /** ctx.tools.register 的工具名。 */
   tools?: string[];
-  /** 预留（M6），只校验挂载点名（见 {@link HOOK_MOUNT_POINTS}）。 */
+  /**
+   * Hook mount points (`ctx.hooks.on`). From M7, five mount points are registrable; see
+   * `HOOKS_AVAILABLE`.
+   */
   hooks?: HookMountPoint[];
   /** 预留：模型用途，键须为 `<插件名>.<名称>`。 */
   models?: { purpose: string; kind: "chat" | "embedding"; label: { zh: string; en: string } }[];

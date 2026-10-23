@@ -24,6 +24,7 @@ describe("configFields", () => {
       "auth.trustedIdentitySources",
       "runtime.orgConcurrency",
       "evals.orgConcurrency",
+      "hooks.timeoutMs",
       "log.level",
     ]);
   });

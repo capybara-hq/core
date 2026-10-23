@@ -18,6 +18,7 @@ import {
   type Route,
 } from "../ctx/create-ctx.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
+import type { HookRegistry } from "./hooks.js";
 import { InflightTracker } from "./inflight.js";
 import type { Registration } from "./ledger.js";
 import type { PermissionSet } from "./permission-set.js";
@@ -345,6 +346,8 @@ export function warnUpgrades(log: KernelDeps["log"], imports: ImportTracker): vo
 export interface LoadDeps {
   kernel: KernelDeps;
   capabilityAccess: CapabilityAccess;
+  /** The host's hook registry: `ctx.hooks.on` registers here (recorded in the instance ledger). */
+  hooks?: HookRegistry;
   /** 该插件下一代的编号（宿主按插件名递增）。 */
   nextGeneration(name: string): number;
   /** 本进程导入过的模块入口（{@link loadInstance} 每次导入都记一笔，超过阈值时告警）。 */
@@ -367,7 +370,7 @@ export async function setupInstance(
   },
 ): Promise<PluginInstance> {
   const live = new LiveConfig(input.config);
-  const ctx = createPluginContext(deps.kernel, manifest, live, deps.capabilityAccess);
+  const ctx = createPluginContext(deps.kernel, manifest, live, deps.capabilityAccess, deps.hooks);
   input.onCtx?.(ctx);
   try {
     await manifest.setup(ctx);

@@ -1183,6 +1183,23 @@ export const KernelConfigSchema = z.object({
       path: ["defaultTokenCap"],
     })
     .prefault({} as never),
+  hooks: z
+    .object({
+      timeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(60_000)
+        .default(5000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Time limit in milliseconds for one plugin hook call; a policy hook that exceeds it denies the call, an observe hook is skipped",
+          }),
+        ),
+    })
+    .prefault({} as never),
   log: z
     .object({
       level: z
