@@ -55,7 +55,7 @@ Some tests call real services and run only when their `CAPYBARA_TEST_*` variable
 
 ## CLA
 
-This project uses a Contributor License Agreement; the draft is in [CLA.md](CLA.md). On your first pull request the CLA bot comments with instructions: reply with the sentence `I have read the CLA Document and I hereby sign the CLA` (comment `recheck` to re-run the check). Signatures are stored on the `cla-signatures` branch, and the bot ignores `dependabot[bot]`, `github-actions[bot]` and `changeset-bot`.
+This project uses a Contributor License Agreement; the draft is in [CLA.md](CLA.md). On your first pull request the CLA bot comments with instructions: reply with the sentence `I have read the CLA Document and I hereby sign the CLA` (comment `recheck` to re-run the check). Signatures are stored on the `cla-signatures` branch (the workflow seeds this branch itself; no ruleset may cover it), and the bot ignores `dependabot[bot]`, `github-actions[bot]` and `changeset-bot` / `changeset-bot[bot]`.
 
 The CLA draft is **not yet in effect** (it is pending legal review), so **external PRs are not merged until the CLA is in effect**, even though the bot may already be collecting signatures.
 

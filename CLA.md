@@ -12,8 +12,8 @@ the `capybara-hq` organization (the "Licensee").
 ## In plain language (informal summary, not part of the legal text)
 
 - You keep the copyright in your contribution. You give the project permission to use it.
-- The project may distribute your contribution under the Apache License 2.0 and may
-  relicense it as described below; you also grant a patent license for your contribution.
+- You grant the project a broad copyright license (section 2), which includes the right to
+  sublicense and distribute it, and a patent license for your contribution (section 3).
 - You confirm you have the right to contribute the work (for example, your employer does not
   own it, or has agreed).
 - **Our commitment: the Capybara code is and will always remain available as open source under
@@ -24,7 +24,7 @@ the `capybara-hq` organization (the "Licensee").
 
 "Contribution" means any original work of authorship, including modifications or additions to
 existing work, that You intentionally submit to Capybara for inclusion in a project repository.
-"Submit" means any form of communication sent to Capybara, including pull requests, issues and
+"Work" means the project to which the Contribution was submitted. "Submit" means any form of communication sent to Capybara, including pull requests, issues and
 code review comments, but excluding communication conspicuously marked "Not a Contribution".
 
 ## 2. Grant of Copyright License
