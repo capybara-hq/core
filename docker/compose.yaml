@@ -255,9 +255,12 @@ services:
     environment:
       CAPYBARA_KERNEL_URL: http://api:8080
       # Behind a TLS proxy (or load balancer) every client would look like the proxy's address and
-      # share one login rate limit: set CAPYBARA_WEB_TRUST_PROXY in .env to the proxy's addresses /
-      # CIDRs (preferred, e.g. 172.18.0.1) or its hop count; a hop count only with
-      # CAPYBARA_WEB_BIND=127.0.0.1. Unset or 0 trusts no X-Forwarded-For.
+      # share one login rate limit: set CAPYBARA_WEB_TRUST_PROXY in .env. A proxy on this host with
+      # CAPYBARA_WEB_BIND=127.0.0.1: use 1 (one hop; nothing else can reach the port). A proxy on
+      # another host: its address / CIDR as web sees it. A host-side proxy reaches web from the
+      # bridge gateway of the "frontend" network, not "default":
+      #   docker network inspect capybara_frontend --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+      # Unset or 0 trusts no X-Forwarded-For.
       CAPYBARA_WEB_TRUST_PROXY: ${CAPYBARA_WEB_TRUST_PROXY:-0}
       # Object storage on the web origin: web proxies /capybara/** (GET, HEAD, POST) to the S3
       # gateway with Host set to the public origin's host, which the presigned URLs are signed

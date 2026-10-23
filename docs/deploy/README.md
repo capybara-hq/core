@@ -158,7 +158,9 @@ starting. Read its output with `docker compose logs init`.
   sign-in seems to succeed and then drops you back at the login page. In that case the login page
   shows a notice ("If sign-in doesn't stick: ..."). Serve `web` over HTTPS. For a short trial only,
   set `CAPYBARA_COOKIE_SECURE=false` in `.env`; compose passes it on as
-  `CAPYBARA_AUTH__COOKIE_SECURE`.
+  `CAPYBARA_AUTH__COOKIE_SECURE`. Also set `CAPYBARA_PUBLIC_URL` to the address you open (for example
+  `http://192.168.1.20:3000`): presigned attachment URLs point at it, and at the `localhost` default
+  uploads and downloads from other machines fail with a network error.
 - **`CAPYBARA_PUBLIC_URL` must be the exact origin browsers open** (scheme, host and any port), for
   example `https://capybara.example.com`. It sets the kernel's `http.publicUrl`, which is used for
   OAuth redirects, sign-in callbacks and links in IM cards. It also sets the object-store plugin's
@@ -167,12 +169,22 @@ starting. Read its output with `docker compose logs init`.
 - **A TLS proxy on the same host:** set `CAPYBARA_WEB_BIND=127.0.0.1`, so plain http isn't exposed on
   other interfaces, and point the proxy at `127.0.0.1:3000`.
 - **`CAPYBARA_WEB_TRUST_PROXY`** behind a TLS proxy or load balancer: without it, every client looks
-  like the proxy's address and all clients share one login rate limit. Set it to the proxy's addresses
-  or CIDRs (preferred, e.g. `172.18.0.1` or `10.0.0.0/8`) or to a hop count (`1` = the nearest proxy).
-  A hop count is safe only when clients can't reach `web` directly (`CAPYBARA_WEB_BIND=127.0.0.1`, or
-  a firewall): otherwise a client could send its own `X-Forwarded-For` and `web` would trust it. It is
-  unset or `0` by default, which trusts nothing. A `/0` CIDR such as `0.0.0.0/0` trusts every address
-  and is refused, and any malformed value stops `web` at startup.
+  like the proxy's address and all clients share one login rate limit.
+  - **A proxy on the same host:** set `CAPYBARA_WEB_BIND=127.0.0.1` and
+    `CAPYBARA_WEB_TRUST_PROXY=1` (one hop). Only the local proxy can reach the port, so nobody can
+    send `web` a forged `X-Forwarded-For`. This doesn't depend on Docker's network addresses.
+  - **A proxy or load balancer elsewhere:** list its addresses or CIDRs (e.g. `10.0.0.0/8`), and
+    firewall `web`'s port to it. A hop count is safe only when clients can't reach `web` directly:
+    otherwise a client could send its own `X-Forwarded-For` and `web` would trust it.
+  - **Addresses as `web` sees them:** a proxy on the Docker host connects from the bridge gateway of
+    the network that carries `web`'s published port, which is `frontend`, never `default` (`web` isn't
+    on it; the gateway's address on `default` is what the `gateway` service sees). Find it with
+    `docker network inspect capybara_frontend --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'`.
+  - The grammar is the kernel's `http.trustProxy` one: comma-separated or a JSON array, dotted
+    netmasks (`10.0.0.0/255.0.0.0`) and the names `loopback`, `linklocal` and `uniquelocal`. Unlike
+    the kernel, `true` and `false` aren't accepted (use `0`).
+  - It is unset or `0` by default, which trusts nothing. A range that trusts every address, such as
+    `0.0.0.0/0`, is refused, and any malformed value stops `web` at startup.
 - **`CAPYBARA_WEB_SHUTDOWN_GRACE_MS`** (default 5000) is how long in-flight requests, including SSE
   streams, may run after SIGTERM before `web` exits. To raise it, add it to the `web` service's
   environment in a `compose.override.yaml` (below) and keep it below the service's stop grace period
