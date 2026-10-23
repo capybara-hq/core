@@ -1,6 +1,0 @@
----
-"@capybara-hq/kernel": minor
-"@capybara-hq/capybara": minor
----
-
-插件免重启生命周期（C16 / C18）：新增 `POST /api/v1/admin/plugins/:name/install {sha256}`、`…/enable`、`…/disable` 与 `DELETE /api/v1/admin/plugins/:name`（`PluginAdminOps`，只写 PG 期望状态与审计 `plugin.installed / enabled / disabled / uninstalled`，发布 `kernel.plugins.changed`；错误码 `plugin.package_not_found`、`plugin.name_mismatch`、`plugin.downgrade_unsupported`、`plugin.not_disabled`；同名插件换 npm 包在安装事务里锁行判断）。每副本一个 `PluginLifecycle` 订阅 `kernel.plugins.changed / reconcile / migrated` 并 reconcile（启动同一路径；维护任务 `plugins-reconcile` 周期兜底；刷新副本状态心跳、清理过期行；收到 changed 时作废路由闸门缓存）：换版本先加载新、再在后台排空并撤销旧，新版失败旧版保留并记 `failed`（`sync_failed` / `sha_mismatch` / `import_failed` / `manifest_mismatch` / `setup_failed` / `migration_failed`），失败与待批准的每个周期重试，依赖方连锁 reload。插件迁移改为 `ensureMigrated`：独立连接上的咨询锁，一个副本执行、其余 `pending_migration`，完成后发布 `kernel.plugins.migrated`；降级只能回到迁移都已执行的版本。connector / sandbox / model-provider 的调用计入提供方实例的在途计数（`trackCalls`），停用 / 升级时排空。组织插件列表增加 `available`：部署上停用的安装记录列为不可用，组织的启用开关不变。CLI 新增 `capybara plugins list | install <file.tgz | npm:<名>[@<版本>]> | enable | disable | uninstall`（包一律存 PG），`review / approve` 覆盖安装记录，写完 PG 后经 Redis 发布 `kernel.plugins.changed`（失败只告警），不再提示重启。
