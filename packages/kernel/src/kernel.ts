@@ -1302,7 +1302,11 @@ export async function createKernel(
           }
           checkpoint();
           maintenance.startWorker();
-          // 渠道长连接选主：每个 worker 副本都参与，同一连接只有取得租约的一个副本连接
+          channelOutbound.startWorker();
+        }
+        if (config.roles.includes("gateway")) {
+          // Channel long-connection leader election: every gateway replica takes part, and only the
+          // replica that holds a connection's lease connects it (E11-A)
           channelSupervisor = new ChannelSupervisor({
             db: kdb,
             redis,
@@ -1322,7 +1326,6 @@ export async function createKernel(
           const supervisor = channelSupervisor;
           unwatchPlugins = host.onChange((plugin) => supervisor.pluginChanged(plugin));
           checkpoint();
-          channelOutbound.startWorker();
         }
         // 路由保留挂载、实时取：插件撤销后 503 plugin.unavailable，重新加载后恢复（C17）
         httpApp.mountPlugins(host.routeTable());

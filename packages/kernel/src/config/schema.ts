@@ -721,7 +721,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long",
+              "TTL of the lease that lets one gateway replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long",
           }),
         ),
       scanIntervalMs: z
@@ -732,7 +732,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "How often each worker replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds",
+              "How often each gateway replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds",
           }),
         ),
       retryBaseMs: z

@@ -107,7 +107,7 @@ const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t
   evs.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
 
 type Json = Record<string, unknown>;
-type Res = { status: number; json: Json; replica: 0 | 1 };
+type Res = { status: number; json: Json; replica: number };
 
 describe("M3 第一段双副本验收", () => {
   it("todo 启用前后、MCP 只读 / 审批 / 跨副本批准 / 审批超时 / 杀 worker 后结果未知", async () => {

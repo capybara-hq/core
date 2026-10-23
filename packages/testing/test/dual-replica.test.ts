@@ -67,6 +67,26 @@ describe("双副本测试工具", { timeout: 60_000 }, () => {
     expect(seen).toEqual([0, 1, 0, 1, 0, 1]);
   });
 
+  it("per-replica roles: request() goes only to api replicas; requestTo reaches any replica", async () => {
+    const h = await createDualReplicaHarness({
+      plugins: [fx("whoami")],
+      pgUrl: pgc.url,
+      roles: [["api"], ["gateway"]],
+    });
+    harnesses.push(h);
+    const [a, b] = h.replicas;
+    expect(a.roles).toEqual(["api"]);
+    expect(b.roles).toEqual(["gateway"]);
+    const seen: number[] = [];
+    for (let i = 0; i < 4; i++) seen.push((await h.request("/plugins/whoami/pid")).replica);
+    expect(seen).toEqual([0, 0, 0, 0]);
+    // The gateway replica serves plugin routes too (servePlugins = api || gateway)
+    const r = await h.requestTo(1, "/plugins/whoami/pid");
+    expect(r.replica).toBe(1);
+    expect(((await r.json()) as { pid: number }).pid).toBe(b.pid);
+    await expect(h.requestTo(2, "/healthz")).rejects.toThrow(/no replica 2/);
+  });
+
   it("good-counter（ctx.kv）：4 次 inc 后 count 为 4", async () => {
     expect(await scenario(await harness("good-counter"), "good-counter")).toBe(4);
   });

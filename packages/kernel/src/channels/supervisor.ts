@@ -69,7 +69,7 @@ export interface ChannelSupervisorDeps {
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 渠道长连接选主（只在 worker 角色运行）。每个副本两个各自独立的循环，周期都是 `channels.scanIntervalMs`（默认 10s）：
+ * 渠道长连接选主（runs only on the gateway role）。每个副本两个各自独立的循环，周期都是 `channels.scanIntervalMs`（默认 10s）：
  * - 续租循环：为本进程持有的连接续租（`capk:channel-lease:<id>`，TTL `channels.leaseTtlMs` 默认 30s）。
  *   它不做任何可能慢的事（不等交还、不查库），一个插件迟迟不退出不会拖慢其他连接的续租。
  * - 扫描循环：复核持有的连接仍为 active、未删除且插件在该组织启用（不满足就交还，交还不阻塞本轮），

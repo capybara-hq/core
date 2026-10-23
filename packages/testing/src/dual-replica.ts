@@ -40,11 +40,20 @@ export interface DualReplicaOptions {
    * harness 默认开启 `pluginPermissions.autoApprove`（插件权限自动批准），传 `false` 可关闭。
    */
   config?: Record<string, unknown>;
+  /**
+   * Kernel roles per replica (`[replica 0, replica 1]`), e.g. `[["api", "worker"], ["gateway"]]`.
+   * Defaults to all roles (`api`, `worker`, `gateway`) on both. `request()` only goes to replicas
+   * with the `api` role; use `requestTo(index, …)` to reach a specific replica.
+   */
+  roles?: [string[], string[]];
 }
 
 /** 一个副本（独立子进程）的句柄。 */
 export interface ReplicaHandle {
-  index: 0 | 1;
+  /** Replica index (0 and 1 for the two base replicas). */
+  index: number;
+  /** Kernel roles this replica runs. */
+  roles: string[];
   /** 该副本实际监听的 HTTP 端口（127.0.0.1）。 */
   port: number;
   /** 该副本子进程 pid。 */
@@ -55,24 +64,32 @@ export interface ReplicaHandle {
 export const REPLICA_HEADER = "x-capybara-replica";
 
 /**
- * 读响应头 `x-capybara-replica`，得到处理该请求的副本序号；不是 harness 副本发出的响应（没有该头或值不是 0 / 1）
- * 返回 undefined。直接 `fetch` 某个副本端口（如 SSE）时用它确认落点。
+ * Reads the `x-capybara-replica` response header to get the index of the replica that handled the
+ * request; undefined when the response did not come from a harness replica (no header, or not a
+ * non-negative integer). Use it to confirm where a direct `fetch` to a replica port (e.g. SSE) landed.
  */
-export function replicaOf(res: Response): 0 | 1 | undefined {
+export function replicaOf(res: Response): number | undefined {
   const v = res.headers.get(REPLICA_HEADER);
-  return v === "0" ? 0 : v === "1" ? 1 : undefined;
+  return v !== null && /^(0|[1-9][0-9]*)$/.test(v) ? Number(v) : undefined;
 }
 
 /** `Harness.request` 的返回值：普通 `Response` 加上处理它的副本序号（取自 `x-capybara-replica` 响应头）。 */
-export type ReplicaResponse = Response & { readonly replica: 0 | 1 };
+export type ReplicaResponse = Response & { readonly replica: number };
 
-/** 两个独立进程的内核副本 + 严格交替的请求入口。 */
+/** Two kernel replicas in separate processes, plus a round-robin request entry over the api replicas. */
 export interface Harness {
   /**
-   * 严格交替发往两个副本：第 1、3、5… 次到 replica 0，第 2、4、6… 次到 replica 1。
-   * 返回值的 `replica` 取自响应头 `x-capybara-replica`；响应头缺失或与目标不符时抛错。
+   * Round-robin over the replicas that run the `api` role. With the default roles this strictly
+   * alternates: calls 1, 3, 5… go to replica 0 and calls 2, 4, 6… to replica 1.
+   * The result's `replica` comes from the `x-capybara-replica` response header; throws when the
+   * header is missing or does not match the target, or when no replica runs the `api` role.
    */
   request(path: string, init?: RequestInit): Promise<ReplicaResponse>;
+  /**
+   * Sends the request to replica `index`, whatever its roles (a replica without `api` only serves
+   * health endpoints and, with `gateway`, plugin routes). Same header check as `request()`.
+   */
+  requestTo(index: number, path: string, init?: RequestInit): Promise<ReplicaResponse>;
   replicas: [ReplicaHandle, ReplicaHandle];
   /** 本 harness 独占数据库的连接串，测试可直接连上去查表。 */
   dbUrl: string;
@@ -80,11 +97,13 @@ export interface Harness {
    * 模拟副本硬崩溃：对该副本子进程发 SIGKILL 并等它退出（不走优雅停机）。之后发往它的请求直接抛错；
    * 另一个副本照常工作。已退出时是空操作。
    */
-  kill(index: 0 | 1): Promise<void>;
+  kill(index: number): Promise<void>;
   /** 停两个副本（15s 后 SIGKILL）、删临时库、关自有容器；幂等。 */
   stop(): Promise<void>;
 }
 
+/** Default roles of every replica. */
+const ALL_ROLES = ["api", "worker", "gateway"];
 const STOP_TIMEOUT_MS = 15_000;
 const START_TIMEOUT_MS = 60_000;
 const STDERR_TAIL = 4000;
@@ -131,7 +150,7 @@ export function runnerEnv(
 /** 启动一个副本子进程，等它通过 IPC 报告 ready。失败时抛出带 输出尾部的错误（不含配置）。 */
 async function startReplica(
   config: Record<string, unknown>,
-  index: 0 | 1,
+  index: number,
 ): Promise<{ runner: Runner; port: number }> {
   const child = spawn(process.execPath, runnerArgv(runnerPath), {
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -183,7 +202,7 @@ async function startReplica(
 
 /**
  * 启动两个共享同一套 PG / Redis、同一 masterKey 的内核副本，**每个副本一个独立子进程**，
- * 模块缓存、进程内状态完全隔离，贴近生产多副本。请求经真实 HTTP 交替发往两个副本。
+ * 模块缓存、进程内状态完全隔离，贴近生产多副本。请求经真实 HTTP 交替发往含 api 角色的副本。
  * 两个副本都就绪后才 resolve；用来暴露「只在多副本下才出现」的进程内状态缺陷。
  */
 export async function createDualReplicaHarness(opts: DualReplicaOptions): Promise<Harness> {
@@ -242,11 +261,13 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       // 副本进程的 cwd 不是调用方的 cwd，相对路径必须先按调用方 cwd 绝对化再经 IPC 传过去
       resolveFrom: resolve(opts.resolveFrom ?? process.cwd()),
       pluginConfig: opts.pluginConfig ?? {},
-      roles: ["api", "worker", "gateway"],
       overrides: opts.config ?? {},
     };
+    const roles: [string[], string[]] = opts.roles ?? [ALL_ROLES, ALL_ROLES];
 
-    const started = await Promise.allSettled([startReplica(config, 0), startReplica(config, 1)]);
+    const started = await Promise.allSettled(
+      roles.map((r, i) => startReplica({ ...config, roles: [...r] }, i)),
+    );
     for (const s of started) if (s.status === "fulfilled") runners.push(s.value.runner);
     const failed = started.find((s) => s.status === "rejected");
     if (failed) throw (failed as PromiseRejectedResult).reason;
@@ -254,38 +275,50 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       (s) => (s as PromiseFulfilledResult<Awaited<ReturnType<typeof startReplica>>>).value,
     ) as [Awaited<ReturnType<typeof startReplica>>, Awaited<ReturnType<typeof startReplica>>];
     const replicas: [ReplicaHandle, ReplicaHandle] = [
-      { index: 0, port: a.port, pid: a.runner.child.pid as number },
-      { index: 1, port: b.port, pid: b.runner.child.pid as number },
+      { index: 0, roles: [...roles[0]], port: a.port, pid: a.runner.child.pid as number },
+      { index: 1, roles: [...roles[1]], port: b.port, pid: b.runner.child.pid as number },
     ];
+    // Index-aligned with `replicas`; T3's extra replicas append to both.
+    const handles: ReplicaHandle[] = [...replicas];
+    const replicaRunners: Runner[] = [a.runner, b.runner];
+    const runnerAt = (index: number): { handle: ReplicaHandle; runner: Runner } => {
+      const handle = handles[index];
+      const runner = replicaRunners[index];
+      if (handle === undefined || runner === undefined) throw new Error(`no replica ${index}`);
+      return { handle, runner };
+    };
+    const send = async (index: number, path: string, init?: RequestInit) => {
+      const { handle: r, runner } = runnerAt(index);
+      if (runner.crashed !== undefined) {
+        throw new Error(`replica ${index} (pid ${r.pid}) ${runner.crashed}\n${runner.output()}`);
+      }
+      const res = await fetch(`http://127.0.0.1:${r.port}${path}`, init);
+      const replica = replicaOf(res);
+      if (replica !== index) {
+        await res.body?.cancel();
+        throw new Error(
+          `response from port ${r.port} has ${REPLICA_HEADER}=${replica}, want ${index}`,
+        );
+      }
+      return Object.assign(res, { replica }) as ReplicaResponse;
+    };
     let calls = 0;
     return {
       replicas,
       dbUrl: db.url,
       stop,
       async kill(index) {
-        const r = (index === 0 ? a : b).runner;
+        const { runner: r } = runnerAt(index);
         if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill("SIGKILL");
         await r.exited;
       },
       async request(path, init) {
-        const i = calls++ % 2;
-        const r = replicas[i] as ReplicaHandle;
-        const dead = (i === 0 ? a : b).runner.crashed;
-        if (dead !== undefined) {
-          throw new Error(
-            `replica ${i} (pid ${r.pid}) ${dead}\n${(i === 0 ? a : b).runner.output()}`,
-          );
-        }
-        const res = await fetch(`http://127.0.0.1:${r.port}${path}`, init);
-        const replica = replicaOf(res);
-        if (replica !== i) {
-          await res.body?.cancel();
-          throw new Error(
-            `response from port ${r.port} has ${REPLICA_HEADER}=${replica}, want ${i}`,
-          );
-        }
-        return Object.assign(res, { replica }) as ReplicaResponse;
+        const api = handles.filter((h) => h.roles.includes("api"));
+        if (api.length === 0) throw new Error("no replica runs the api role");
+        const target = api[calls++ % api.length] as ReplicaHandle;
+        return send(target.index, path, init);
       },
+      requestTo: send,
     };
   } catch (e) {
     await stop();
