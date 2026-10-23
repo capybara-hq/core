@@ -74,6 +74,12 @@ function track<T>(p: Promise<T>) {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 30));
+/** Polls until a tracked promise settled (a fixed wait races the Redis round trips after it). */
+const waitSettled = async (state: { settled: boolean }) => {
+  for (let i = 0; i < 100 && !state.settled; i++) await tick();
+  expect(state.settled).toBe(true);
+};
+
 const waitCalls = async (q: ReturnType<typeof manualQueue>, n: number) => {
   for (let i = 0; i < 100 && q.calls.length < n; i++) await tick();
   expect(q.calls).toHaveLength(n);
@@ -114,12 +120,12 @@ describe("two-state inbound dedupe (long connection: onEvent)", () => {
     expect(again.settled).toBe(false); // not acked before the job is queued
 
     q.calls[1]?.resolve();
-    await tick();
+    await waitSettled(again);
     expect(again).toMatchObject({ settled: true, ok: true });
     expect(await redis.get(key)).toBe(DEDUPE_DONE);
 
     q.calls[0]?.reject(new Error("redis reconnecting"));
-    await tick();
+    await waitSettled(first);
     expect(first).toMatchObject({ settled: true, ok: false });
     // Compare-and-delete: the failed first attempt does not drop `done`
     expect(await redis.get(key)).toBe(DEDUPE_DONE);
@@ -138,17 +144,17 @@ describe("two-state inbound dedupe (long connection: onEvent)", () => {
     const again = track(inbound.onEvent(CONN, event));
     await waitCalls(q, 2);
     q.calls[1]?.reject(new Error("down"));
-    await tick();
+    await waitSettled(again);
     expect(again).toMatchObject({ settled: true, ok: false });
     q.calls[0]?.reject(new Error("down"));
-    await tick();
+    await waitSettled(first);
     expect(first).toMatchObject({ settled: true, ok: false });
     expect(await redis.get(key)).toBeNull();
 
     const third = track(inbound.onEvent(CONN, event));
     await waitCalls(q, 3);
     q.calls[2]?.resolve();
-    await tick();
+    await waitSettled(third);
     expect(third).toMatchObject({ settled: true, ok: true });
     expect(q.queued.size).toBe(1);
     expect(await redis.get(key)).toBe(DEDUPE_DONE);
@@ -180,7 +186,7 @@ describe("two-state inbound dedupe (key vanishes between SET NX and GET)", () =>
     await tick();
     expect(again.settled).toBe(false);
     q.calls[0]?.resolve();
-    await tick();
+    await waitSettled(again);
     expect(again).toMatchObject({ settled: true, ok: true });
     expect(q.queued.size).toBe(1);
     expect(await redis.get(key)).toBe(DEDUPE_DONE);
@@ -233,34 +239,54 @@ describe("two-state inbound dedupe (webhook path)", () => {
       log: { warn: () => {} },
     });
 
-  it("a redelivered webhook is answered 200 only after its job is queued, 503 if that fails", async () => {
-    const q = manualQueue();
-    const webhooks = makeWebhooks(makeInbound(q));
-    const call = () => webhooks.handle(CONN, request, new AbortController().signal);
+  /** The same Redis with an extra delay before every command (slow network or a busy server). */
+  const slowRedis = () =>
+    new Proxy(redis, {
+      get(t, p) {
+        const v = Reflect.get(t, p);
+        return typeof v === "function"
+          ? async (...a: unknown[]) => {
+              await new Promise((r) => setTimeout(r, 40));
+              return v.apply(t, a);
+            }
+          : v;
+      },
+    });
 
-    const first = track(call());
-    await waitCalls(q, 1);
-    const again = track(call());
-    await waitCalls(q, 2);
-    await tick();
-    expect(again.settled).toBe(false);
-    q.calls[1]?.reject(new Error("down"));
-    await tick();
-    expect(again.value?.status).toBe(503);
+  it.each([
+    ["Redis", () => redis],
+    ["a slow Redis", slowRedis],
+  ])(
+    "a redelivered webhook is answered 200 only after its job is queued, 503 if that fails (%s)",
+    async (_name, r) => {
+      const q = manualQueue();
+      const webhooks = makeWebhooks(makeInbound(q, r()));
+      const call = () => webhooks.handle(CONN, request, new AbortController().signal);
 
-    const third = track(call());
-    await waitCalls(q, 3);
-    await tick();
-    expect(third.settled).toBe(false);
-    q.calls[2]?.resolve();
-    await tick();
-    expect(third.value?.status).toBe(200);
+      const first = track(call());
+      await waitCalls(q, 1);
+      const again = track(call());
+      await waitCalls(q, 2);
+      await tick();
+      expect(again.settled).toBe(false);
+      q.calls[1]?.reject(new Error("down"));
+      await waitSettled(again);
+      expect(again.value?.status).toBe(503);
 
-    q.calls[0]?.reject(new Error("late failure"));
-    await tick();
-    expect(first.value?.status).toBe(503);
-    // The event is not lost: queued once, and the key says so
-    expect(q.queued.size).toBe(1);
-    expect(await redis.get(key)).toBe(DEDUPE_DONE);
-  });
+      const third = track(call());
+      await waitCalls(q, 3);
+      await tick();
+      expect(third.settled).toBe(false);
+      q.calls[2]?.resolve();
+      await waitSettled(third);
+      expect(third.value?.status).toBe(200);
+
+      q.calls[0]?.reject(new Error("late failure"));
+      await waitSettled(first);
+      expect(first.value?.status).toBe(503);
+      // The event is not lost: queued once, and the key says so
+      expect(q.queued.size).toBe(1);
+      expect(await redis.get(key)).toBe(DEDUPE_DONE);
+    },
+  );
 });

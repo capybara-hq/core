@@ -11,7 +11,10 @@ images takes most of the time; on a typical connection it's under 5 minutes.
 ```bash
 git clone https://github.com/capybara-hq/core.git
 cd core
-git checkout "$(git describe --tags --abbrev=0 --match 'v*')"   # the latest release
+# the latest stable release (prerelease tags such as v0.2.0-rc.1 are skipped)
+tag="$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*' 2>/dev/null)" \
+  && git checkout "$tag" \
+  || echo "No stable release tag yet: staying on main, whose images may not be published yet."
 cd docker
 {
   echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
