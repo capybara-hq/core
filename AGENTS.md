@@ -1,105 +1,117 @@
 # AGENTS.md
 
-Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache-2.0）。内核只做配置 / 数据库 / 插件宿主 / HTTP，能力全部以插件形式提供。
+Capybara: an open-source enterprise agent platform (TypeScript, pnpm monorepo, Apache-2.0). The kernel only does config, database, plugin hosting and HTTP; every capability is provided by a plugin.
 
-## 目录地图
+## Repository map
 
-| 路径 | 说明 |
+| Path | What it is |
 |---|---|
-| `packages/plugin-sdk` | 插件 SDK：只含类型与纯函数，不得 import 其他 `@capybara-hq/*` |
-| `packages/kernel` | 内核：配置、db、`ctx`、插件宿主、HTTP |
-| `packages/testing` | 测试容器与双副本工具 |
-| `packages/design` | Web 设计系统：token、组件、页面模板（规格 `docs/design/spec.md`） |
+| `packages/plugin-sdk` | Plugin SDK: types and pure functions only; must not import any other `@capybara-hq/*` |
+| `packages/kernel` | Kernel: config, db, `ctx`, plugin host, HTTP |
+| `packages/testing` | Test containers and dual-replica helpers |
+| `packages/design` | Web design system: tokens, components, page templates (spec: `docs/design/spec.md`) |
 | `apps/capybara` | CLI |
-| `apps/web` | Next 网页（私有包，经 `/api/*` 代理调内核 HTTP；须经 `server.mjs` 启动），只用 `@capybara-hq/design` 搭页面 |
-| `plugins/*` | 官方插件（`example-counter` 是参考实现） |
-| `tools/*` | 仓库内部工具与自定义检查 |
-| `tools/pack-plugin` | 插件打包工具（`pnpm pack-plugin` / `pack-plugins`，esbuild 打成 npm-pack tgz 并生成静态清单） |
-| `tools/worktree` | 开工用的 worktree 工具（`pnpm wt:new` / `wt:rm` / `wt:ls`），配合 `.claude/hooks/branch-safety.sh` |
-| `docs/` | 设计文档与计划 |
-| `skills/` | 面向 Agent 的技能（`.claude/skills` 软链到此处） |
+| `apps/web` | Next web app (private; calls the kernel HTTP API through the `/api/*` proxy; must be started via `server.mjs`); pages are built only from `@capybara-hq/design` |
+| `plugins/*` | Official plugins (`example-counter` is the reference implementation) |
+| `tools/*` | Internal tools and custom checks |
+| `tools/pack-plugin` | Plugin packer (`pnpm pack-plugin` / `pack-plugins`: esbuild into an npm-pack tgz with a static manifest) |
+| `tools/worktree` | Worktree tool for starting work (`pnpm wt:new` / `wt:rm` / `wt:ls`), paired with `.claude/hooks/branch-safety.sh` |
+| `docs/` | Design docs and plans |
+| `skills/` | Agent-facing skills (`.claude/skills` symlinks here) |
 
+## Three layers and dependency direction
 
-## 三层与依赖方向
+Kernel / plugins / external apps. Dependencies only point downward:
 
-内核 / 插件 / 外部应用 三层，依赖只能自上而下：
+- External apps -> the kernel HTTP API; never import kernel internals.
+- Plugins -> only `@capybara-hq/plugin-sdk` and third-party npm packages; **never** `@capybara-hq/kernel`.
+- Kernel -> implements the interfaces declared in the SDK.
 
-- 外部应用 -> 内核 HTTP 接口，不 import 内核内部代码。
-- 插件 -> 只能 import `@capybara-hq/plugin-sdk` 与第三方 npm 包，**不能** import `@capybara-hq/kernel`。
-- 内核 -> 实现 SDK 中声明的接口。
+The full package dependency chain (only these directions are allowed):
 
-完整的包依赖链（只允许这些方向）：
-
-- `plugins/*` -> `@capybara-hq/plugin-sdk`（测试可额外用 devDependency `@capybara-hq/testing`）
+- `plugins/*` -> `@capybara-hq/plugin-sdk` (tests may also use the devDependency `@capybara-hq/testing`)
 - `@capybara-hq/kernel` -> `@capybara-hq/plugin-sdk`
-- `@capybara-hq/testing` -> `@capybara-hq/kernel`（`@capybara-hq/plugin-sdk` 为 peerDependency）
-- `@capybara-hq/capybara`（CLI，负责组装核心镜像）-> `@capybara-hq/kernel`、`@capybara-hq/plugin-openai-compatible`、`@capybara-hq/plugin-object-store-s3`（核心镜像只内置这两个插件，以 `builtinPlugins` 传给内核，来源 `builtin`；CLI 只按模块路径解析它们，不 import 其代码；其余插件按插件包装进插件目录）
-- `@capybara-hq/design` 不依赖任何 `@capybara-hq/*`
-- `@capybara-hq/web` 只依赖 `@capybara-hq/design`，不依赖内核等其他包，只经 HTTP 调内核（属于「外部应用」层）
-- `tools/checks` -> `@capybara-hq/kernel`（devDependency，读配置 schema 生成文档、校验插件包）；`tools/checks` -> `@capybara-hq/design`（devDependency，仅测试用，核对模板清单）；`tools/checks` -> `@capybara-hq/pack-plugin`、`@capybara-hq/plugin-sdk`（devDependency，`check:plugin-pack` 打包官方插件）
-- `@capybara-hq/pack-plugin`（`tools/pack-plugin`，私有）-> `@capybara-hq/plugin-sdk`（测试另用 devDependency `@capybara-hq/kernel` 校验产物）
-- `@capybara-hq/plugin-sdk` 不依赖任何 `@capybara-hq/*`
+- `@capybara-hq/testing` -> `@capybara-hq/kernel` (`@capybara-hq/plugin-sdk` is a peerDependency)
+- `@capybara-hq/capybara` (CLI, assembles the core image) -> `@capybara-hq/kernel`, `@capybara-hq/plugin-openai-compatible`, `@capybara-hq/plugin-object-store-s3` (the core image bundles only these two plugins, passed to the kernel as `builtinPlugins` with source `builtin`; the CLI resolves them by module path and does not import their code; every other plugin is installed as a plugin package into the plugin directory)
+- `@capybara-hq/design` depends on no `@capybara-hq/*`
+- `@capybara-hq/web` depends only on `@capybara-hq/design`, never on the kernel or other packages; it talks to the kernel only over HTTP (the "external app" layer)
+- `tools/checks` -> `@capybara-hq/kernel` (devDependency: reads the config schema to generate docs, validates plugin packages); `tools/checks` -> `@capybara-hq/design` (devDependency, tests only: checks the template list); `tools/checks` -> `@capybara-hq/pack-plugin`, `@capybara-hq/plugin-sdk` (devDependency: `check:plugin-pack` packs the official plugins)
+- `@capybara-hq/pack-plugin` (`tools/pack-plugin`, private) -> `@capybara-hq/plugin-sdk` (tests also use the devDependency `@capybara-hq/kernel` to validate the output)
+- `@capybara-hq/plugin-sdk` depends on no `@capybara-hq/*`
 
-内核、CLI 与插件的测试把 `@capybara-hq/testing` 作为 devDependency，只在测试里用。`pnpm check:deps` 只检查插件与 SDK 的边界；内核、CLI、web 的依赖方向暂无自动检查，靠评审。
+Kernel, CLI and plugin tests use `@capybara-hq/testing` as a devDependency, in tests only. `pnpm check:deps` only checks the plugin/SDK boundary; dependency direction for the kernel, CLI and web is not checked automatically yet and relies on review.
 
-包名一律 `@capybara-hq/<name>`。
+Package names are always `@capybara-hq/<name>`.
 
-## 多副本纪律（生产环境多副本部署）
+## Multi-replica discipline (production runs multiple replicas)
 
-- `ctx` 不提供定时器、不提供进程内共享对象；周期性与延迟任务走队列。
-- `ctx.kv` 写入必须带 TTL。
-- 写入方与读取方可能不在同一个请求 / 进程的状态，不得放进程内存（进程内 Map、定时器、本地事件等一律不行），用 Redis / PG。
-- BullMQ 队列名与 job id 不得含 `:`。
+- `ctx` provides no timers and no in-process shared objects; periodic and delayed work goes through queues.
+- Every `ctx.kv` write must have a TTL.
+- State whose writer and reader may be in different requests or processes must not live in process memory (no in-process Maps, timers, local events); use Redis / PG.
+- BullMQ queue names and job ids must not contain `:`.
 
-## 规则速记
+## Rules at a glance
 
-- 迁移：纯 SQL 文件，命名 `NNNN_<snake_desc>.sql`，建删对象必须带 `IF NOT EXISTS` / `IF EXISTS`；内核 schema 为 `capybara`，插件为 `plugin_<name>`（`-` 换 `_`）。详见 [skills/writing-migrations](skills/writing-migrations/SKILL.md)。
-- 配置：环境变量前缀 `CAPYBARA_`，嵌套用双下划线（`CAPYBARA_DB__URL` -> `db.url`），环境变量优先级最高；来源由 `CAPYBARA_CONFIG_SOURCE`（`file` / `nacos`）选择。详见 [skills/adding-config](skills/adding-config/SKILL.md)。插件部署配置另可由企业管理员在后台存 PG（优先级 环境变量 > 文件 / Nacos > PG > 默认值，启动配置里有的字段只读；不合法 = 插件待配置，不让内核启动失败），见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)「两级配置」。
-- 国际化：给模型看的文案（提示词、工具描述、模型可见的错误）一律英文；界面文案走 i18n。
-- 界面：页面 = 模板 + design 组件，apps/web 不写样式（无 className / style / .css / 颜色字面量），详见 [skills/writing-web-ui](skills/writing-web-ui/SKILL.md)；规则由 `pnpm check:web-ui` 检查。
-- 插件开发：详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，参考实现 `plugins/example-counter`。插件包 = npm-pack tgz（`pnpm pack-plugin` / `pack-plugins`，单文件 ESM、只有 SDK 与 zod 由宿主提供、动态 import 只许字面量），校验见 `packages/kernel/src/plugins/package.ts`。
-- 内核 HTTP 用 NestJS + Fastify：领域类不依赖 Nest，构造参数显式 `@Inject`；插件不依赖 Nest。详见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
-- 运行时：会话事件日志是唯一事实源，模型看到的一切都进日志（任一次模型请求都能由日志加 agent 版本还原），发给模型的历史只追加。代码在 `packages/kernel/src/runtime`。
-- 模型供应商插件（含媒体块 image / document：能力声明把关、上限与占位都在内核，插件收不到 `ref`）：详见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。
-- 工具（`ctx.tools`、描述与错误文案、默认策略、输出存档、`tool_search`、漂移复核；内置的 `sandbox_*` 与技能工具 `skill_load` / `skill_write`，key 不含点，`skill_write` 对共享 agent 固定确认，私有 agent 默认不确认、可设 `skills.writePolicy: "ask"`）：详见 [skills/writing-tools](skills/writing-tools/SKILL.md)，参考实现 `plugins/todo`。
-- 沙箱（`sandbox@1`：中止要杀命令、确定不在才抛 `SandboxGoneError`、已停止的自动启动、沙箱内也有命令时限、`killAll`、同名替换、`/skills` 只读、出站 `open` 须 `allowOpenEgress`；锁、休眠、销毁由内核 `SandboxService` 负责；socket 代理绝不发布到宿主机地址）：详见 [skills/writing-sandbox-providers](skills/writing-sandbox-providers/SKILL.md)，参考实现 `plugins/sandbox-docker`、`plugins/sandbox-e2b`。
-- 对象存储（`object-store@1` / `ctx.storage`：键前缀 `plugins/<插件>/<orgId>/` 与 `kernel/<orgId>/` 由内核加，预签名上传的大小必须由存储端拒绝，键不能含 `${`，用了 `ctx.storage` 须声明 `permissions.storage`）：详见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)，参考实现 `plugins/object-store-s3`。
-- 连接器（远端服务实例，旧称「应用」；协议由提供 `connector@1` 的**连接器插件**实现，如 MCP / OpenAPI；不支持 stdio MCP）：详见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，参考实现 `plugins/connector-mcp`、`plugins/connector-openapi`。
-- 渠道、第三方登录、通讯录（`channel@1` / `identity-source@1` / `directory@1`：身份键 `<插件>:<租户>`、onEvent 后才确认、卡片规范、防 @所有人、长连接与选主由内核负责）：详见 [skills/writing-channels](skills/writing-channels/SKILL.md)，参考实现 `plugins/slack`、`plugins/lark`。
-- 插件界面（`ctx.ui`：对话页右侧标签与「扩展」页面；渲染 schema 视图不卡加载，嵌入应用要批准、是敏感项，令牌只认本插件、`/api` 不认）：详见 [skills/writing-plugin-ui](skills/writing-plugin-ui/SKILL.md)，参考实现 `plugins/todo`（视图）、`plugins/example-board`（嵌入应用）。
-- 评测与回放（轨迹、评测集、单步 / 整轮回放、评委）：事件日志是唯一事实源，改请求构建（`runtime/context/build.ts`、`model-call.ts`）前后都要跑零漂移夹具测试，新的模型可见输入必须进日志并加 `DriftReason`；整轮回放只用记录的工具结果、从不执行工具；评测走队列 `cap-kernel-evals`，组织并发与 token 上限。详见 [skills/replay-evals](skills/replay-evals/SKILL.md)。
-- 插件包与生命周期：插件包 = npm-pack tgz，安装 / 启用 / 停用 / 升级 / 卸载都不重启（PG 期望状态 + 各副本 reconcile，按实例记账撤销、可选 `dispose` 与 `ctx.signal`、在途调用排空 `pluginHost.drainSeconds`）；插件迁移只做扩展；插件进程内全权运行，权限审批是治理不是沙箱。详见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)。
-- 企业目录与目录来源：目录条目四种（插件 / 连接器模板 / 技能 / 应用），策略 允许 / 需审批 / 禁用；来源 = 官方清单、企业清单、手动上传；清单与应用清单的 JSON Schema 在 `packages/plugin-sdk/schemas/`（`pnpm gen:package-schemas` 生成，`check:package-schemas` 防漂移），下载一律按清单（或应用 lock）的 sha512 校验，不认 npm 元数据。
-- 应用包（`app.yaml`：插件按 npm 名 + 范围 + lock 引用、内联连接器模板、技能打在包里；组织安装只撤 / 只删本次新建且别处不在用的组件；M6 不支持升级）与连接器模板：详见 [skills/writing-apps](skills/writing-apps/SKILL.md)。
-- **能自动检查的规则以检查为准**：`pnpm check` 会逐步收录各项自定义检查，每道检查都有「违规 fixture 使其失败」的测试。
+- Migrations: plain SQL files named `NNNN_<snake_desc>.sql`; creating or dropping objects must use `IF NOT EXISTS` / `IF EXISTS`; the kernel schema is `capybara`, a plugin's is `plugin_<name>` (`-` becomes `_`). See [skills/writing-migrations](skills/writing-migrations/SKILL.md).
+- Config: env var prefix `CAPYBARA_`, nesting with double underscores (`CAPYBARA_DB__URL` -> `db.url`), env vars win; the source is chosen by `CAPYBARA_CONFIG_SOURCE` (`file` / `nacos`). See [skills/adding-config](skills/adding-config/SKILL.md). Plugin deployment config can also be stored in PG by an enterprise admin from the admin console (precedence: env > file / Nacos > PG > default; fields present in the startup config are read-only; invalid config = plugin pending configuration, never a kernel startup failure); see "two-level config" in [skills/writing-plugins](skills/writing-plugins/SKILL.md).
+- Language: English is preferred for docs, code comments, identifiers and commit messages; Chinese is not required. Existing Chinese docs are migrated gradually. Model-facing text (prompts, tool descriptions, model-visible errors) is always English; UI text goes through i18n (zh and en).
+- UI: page = template + design components; apps/web writes no styles (no className / style / .css / color literals). See [skills/writing-web-ui](skills/writing-web-ui/SKILL.md); enforced by `pnpm check:web-ui`.
+- Plugins: see [skills/writing-plugins](skills/writing-plugins/SKILL.md); reference implementation `plugins/example-counter`. A plugin package is an npm-pack tgz (`pnpm pack-plugin` / `pack-plugins`; single-file ESM; only the SDK and zod are provided by the host; dynamic imports must be literals); validated by `packages/kernel/src/plugins/package.ts`.
+- Kernel HTTP uses NestJS + Fastify: domain classes don't depend on Nest, constructor params use explicit `@Inject`; plugins don't depend on Nest. See [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md).
+- Runtime: the conversation event log is the single source of truth; everything the model sees goes into the log (any model request can be reconstructed from the log plus the agent version), and the history sent to the model is append-only. Code lives in `packages/kernel/src/runtime`.
+- Model provider plugins (including media blocks image / document: capability declarations, limits and placeholders are owned by the kernel; plugins never receive `ref`): see [skills/writing-model-providers](skills/writing-model-providers/SKILL.md).
+- Tools (`ctx.tools`, descriptions and error text, default policy, output archiving, `tool_search`, drift review; the builtin `sandbox_*` tools and the skill tools `skill_load` / `skill_write`; keys contain no dots; `skill_write` always asks on shared agents, private agents don't ask by default and may set `skills.writePolicy: "ask"`): see [skills/writing-tools](skills/writing-tools/SKILL.md); reference implementation `plugins/todo`.
+- Sandboxes (`sandbox@1`: abort must kill the command; throw `SandboxGoneError` only when certain the sandbox is gone; auto-start stopped instances; commands have a time limit inside the sandbox too; `killAll`; same-name replacement; `/skills` is read-only; `open` egress requires `allowOpenEgress`; locking, suspension and destruction are owned by the kernel `SandboxService`; never publish the socket proxy on a host address): see [skills/writing-sandbox-providers](skills/writing-sandbox-providers/SKILL.md); reference implementations `plugins/sandbox-docker`, `plugins/sandbox-e2b`.
+- Object storage (`object-store@1` / `ctx.storage`: the key prefixes `plugins/<plugin>/<orgId>/` and `kernel/<orgId>/` are added by the kernel; presigned upload size must be enforced by the store; keys may not contain `${`; using `ctx.storage` requires declaring `permissions.storage`): see [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md); reference implementation `plugins/object-store-s3`.
+- Connectors (remote service instances, formerly called "apps"; protocols are implemented by **connector plugins** providing `connector@1`, e.g. MCP / OpenAPI; stdio MCP is not supported): see [skills/writing-connectors](skills/writing-connectors/SKILL.md); reference implementations `plugins/connector-mcp`, `plugins/connector-openapi`.
+- Channels, third-party login, directory sync (`channel@1` / `identity-source@1` / `directory@1`: identity key `<plugin>:<tenant>`, ack only after onEvent resolves, the card spec, no @everyone, long connections and leader election are owned by the kernel): see [skills/writing-channels](skills/writing-channels/SKILL.md); reference implementations `plugins/slack`, `plugins/lark`.
+- Plugin UI (`ctx.ui`: right-panel tabs on the conversation page and "Extensions" pages; schema-rendered views don't gate loading, embedded apps require approval and are sensitive, tokens are valid only for their own plugin and never for `/api`): see [skills/writing-plugin-ui](skills/writing-plugin-ui/SKILL.md); reference implementations `plugins/todo` (views), `plugins/example-board` (embedded app).
+- Evals and replay (trajectories, eval sets, step / full-run replay, judge): the event log is the single source of truth; run the zero-drift fixture tests before and after changing request building (`runtime/context/build.ts`, `model-call.ts`); any new model-visible input must go into the log with a matching `DriftReason`; full-run replay only uses recorded tool results and never executes tools; evals run on queue `cap-kernel-evals` with per-org concurrency and token caps. See [skills/replay-evals](skills/replay-evals/SKILL.md).
+- Plugin packages and lifecycle: a plugin package is an npm-pack tgz; install / enable / disable / upgrade / uninstall never restart (desired state in PG + per-replica reconcile, per-instance ledger revocation, optional `dispose` and `ctx.signal`, in-flight calls drained within `pluginHost.drainSeconds`); plugin migrations are expand-only; plugins run in-process with full trust, so permission approval is governance, not a sandbox. See [skills/writing-plugins](skills/writing-plugins/SKILL.md).
+- Enterprise directory and sources: four item kinds (plugin / connector template / skill / app), policy allow / needs approval / disabled; sources = the official catalog, enterprise catalogs, manual upload; the JSON Schemas for catalogs and app manifests live in `packages/plugin-sdk/schemas/` (generated by `pnpm gen:package-schemas`, drift-checked by `check:package-schemas`); downloads are always verified against the catalog's (or app lock's) sha512, never npm metadata.
+- App bundles (`app.yaml`: plugins referenced by npm name + range + lock, inline connector templates, skills packed in; an org install only removes components it created that nothing else uses; upgrades are not supported in M6) and connector templates: see [skills/writing-apps](skills/writing-apps/SKILL.md).
+- **When a rule can be checked automatically, the check is the authority**: `pnpm check` gathers the custom checks; every check has a test where a violating fixture makes it fail. A new check must be proven red first.
 
-## 常用命令
+## Common commands
 
 ```bash
 pnpm install
 pnpm lint        # biome check
 pnpm typecheck   # tsc -b
 pnpm test        # vitest run
-pnpm exec vitest run <路径>   # 单个测试：从仓库根跑（根配置带 @capybara-hq/source 条件，双副本测试需要）；别用 pnpm --filter <包> exec vitest
-pnpm check       # 自定义检查
-pnpm wt:new <branch>   # 开任务 worktree（见「分支与 worktree」）
-docker compose -f docker/compose.dev.yaml up -d   # 本地 postgres + valkey
+pnpm exec vitest run <path>   # a single test: run from the repo root (the root config adds the @capybara-hq/source condition dual-replica tests need); don't use pnpm --filter <pkg> exec vitest
+pnpm check       # custom checks
+pnpm wt:new <branch>   # start a task worktree (see "Branches and worktrees")
+docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 ```
 
-## 分支与 worktree
+## How work is done
 
-- Claude 会话开在主 checkout、不另开窗口；主 checkout 的 HEAD 只停 `main`，随时可当基线用。
-- 任务一律在 worktree 里做：`pnpm wt:new <branch> [--from origin/main] [--no-install]` 建到 `.claude/worktrees/<目录>`（已 gitignore；远端有该分支就 checkout，否则从 `--from` 以 `--no-track` 新建；新目录独立 `pnpm install`），之后在该目录里工作（cd 进去或用绝对路径）；合并后 `pnpm wt:rm <branch>` 清理（分支不删）。分支名必须是第一个参数。
-- `.claude/hooks/branch-safety.sh`（PreToolUse，接在 `.claude/settings.json`）强制执行：禁止推送 `main`；禁止在主 checkout 里切到 `feat/` `fix/` `docs/` `chore/` `test/` `refactor/` 分支（worktree 里不限）。
-- 两个 worktree 不要同时起开发栈（`docker/compose.dev.yaml`、内核、`pnpm dev:web`）：端口相同会撞，要并行就先停掉另一边。
+- **Design before code for larger changes.** A new feature, a cross-package change, a new contract or a behavior change starts with a design doc in `docs/superpowers/specs/`, reviewed by a maintainer; then an implementation plan in `docs/superpowers/plans/` (tasks with files, interfaces, tests), also reviewed; then implementation against the plan. Small fixes skip this.
+- Changes reach `main` only through pull requests; a maintainer merges.
 
-## CI 与检查
+## Branches and worktrees
 
-- 汇总检查 `ci-ok` 是唯一的必需检查；`.github/workflows/ci.yml` 里每个任务都要接进它。
-- **PR 按差异跑，推到 `main` 跑全量。** 便宜或天然看全仓库的检查（lint、`tsc -b`、`pnpm check`）在 PR 上也全量跑；贵的、能限定范围的（测试、web 构建、e2e、visual）只在受影响时跑，触发条件写清楚。算不出差异、或动了根配置 / `.github` / lockfile 时一律全量。
-- **新增任何检查，都要明确它在 PR 上是全量还是按差异**，在 PR 说明里写出理由，并更新本节与 `ci.yml` 里的注释；`main` 上一律全量。
-- **不稳定的测试要修，不加重试掩盖。** 先在本地注入延迟或加压（`pnpm exec vitest run --maxWorkers=2`）复现，再判断是测试时序问题（等完整的收敛条件，不赌某一刻的状态）还是产品 bug（修代码并补测试）。曾有一个「偶发失败」是真的丢消息。
+- The Claude session runs in the main checkout, not in a separate window; the main checkout's HEAD stays on `main` so it is always a clean baseline.
+- All task work happens in a worktree: `pnpm wt:new <branch> [--from origin/main] [--no-install]` creates `.claude/worktrees/<dir>` (gitignored; checks out the remote branch if it exists, otherwise creates it from `--from` with `--no-track`; runs its own `pnpm install`). Work in that directory (cd into it or use absolute paths); after merge, `pnpm wt:rm <branch>` cleans up (the branch is kept). The branch name must be the first argument.
+- `.claude/hooks/branch-safety.sh` (PreToolUse, wired in `.claude/settings.json`) enforces this: no pushes to `main`; no switching the main checkout to `feat/` `fix/` `docs/` `chore/` `test/` `refactor/` branches (worktrees are not restricted).
+- Don't run the dev stack in two worktrees at once (`docker/compose.dev.yaml`, the kernel, `pnpm dev:web`): the ports collide; stop one before starting the other.
 
-## 提交
+## CI and checks
 
-Conventional Commits（commitlint 校验）；影响发布的改动附 changeset（`pnpm changeset`）。
+- The aggregate check `ci-ok` is the only required check; every job in `.github/workflows/ci.yml` must feed into it.
+- **PRs run what the diff affects; pushes to `main` run everything.** Cheap checks or checks that inherently look at the whole repo (lint, `tsc -b`, `pnpm check`) run in full on PRs too; expensive checks that can be scoped (tests, web build, e2e, visual) run only when affected, with the trigger conditions written down. When the diff can't be computed, or root config / `.github` / the lockfile changed, everything runs.
+- **Every new check must state whether it runs in full or by diff on PRs**, with the reasoning in the PR description, and update this section and the comments in `ci.yml`; on `main` everything always runs.
+- **Flaky tests get fixed, not hidden behind retries.** Reproduce locally first by injecting a delay or adding load (`pnpm exec vitest run --maxWorkers=2`), then decide whether it's a test timing issue (wait for the full convergence condition instead of betting on one moment's state) or a product bug (fix the code and add a test). One "flaky" test once turned out to be a real lost-message bug.
+- Visual baselines are generated only in the Playwright Docker image, via the `visual-update` workflow (see [skills/writing-web-ui](skills/writing-web-ui/SKILL.md)). The bot's baseline commit does not trigger PR checks; push an empty commit afterwards to rerun CI.
+
+## Live API tests
+
+- Tests that hit real services (model providers, E2B, MCP servers, Slack / Lark) run only when their `CAPYBARA_TEST_*` env vars are set; each skill lists the variables.
+- Keep keys in a local env file outside the repo, load it only inside the test command, and never print it, paste it into a chat or commit it.
+- Run the live tests after changing request mapping, protocol handling or upgrading a vendor SDK.
+- A transient network error (e.g. `ECONNRESET`) is rerun once for that case before it is treated as a bug.
+
+## Commits
+
+Conventional Commits (checked by commitlint), body lines ≤ 100 characters; changes that affect a published package include a changeset (`pnpm changeset`).

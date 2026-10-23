@@ -1,21 +1,46 @@
-# 贡献指南
+# Contributing
 
-## 开发环境
+## Development environment
 
-- Node 24、pnpm 10
-- 启动本地依赖：`docker compose -f docker/compose.dev.yaml up -d`（PostgreSQL 17 @ 5432、Valkey 8 @ 6379）
-- `pnpm install` 后运行 `pnpm lint && pnpm typecheck && pnpm check && pnpm test`
+- Node 24, pnpm 10
+- Start local dependencies: `docker compose -f docker/compose.dev.yaml up -d` (PostgreSQL 17 @ 5432, Valkey 8 @ 6379)
+- After `pnpm install`, run `pnpm lint && pnpm typecheck && pnpm check && pnpm test`
 
-## 提交规范
+Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change.
 
-使用 [Conventional Commits](https://www.conventionalcommits.org/)，例如 `feat(kernel): 增加配置加载`。CI 会在 PR 上用 commitlint 校验。
+## Larger changes: design first
 
-## Changeset
+A new feature, a cross-package change, a new plugin contract or a behavior change follows three steps:
 
-改动了会发布的包时，运行 `pnpm changeset` 并提交生成的文件。
+1. A design doc in `docs/superpowers/specs/`, reviewed by a maintainer.
+2. An implementation plan in `docs/superpowers/plans/`: tasks with the files, interfaces and tests each one touches, also reviewed.
+3. Implementation against the plan.
 
-## CLA 说明
+Small fixes can go straight to a PR. If you're unsure whether a change counts as "larger", open an issue first.
 
-本项目采用贡献者许可协议（CLA），首次提 PR 时由机器人引导签署。CLA 机器人上线（里程碑 M6）之前，**外部 PR 暂不合并**。CLA 文本将经法务审阅后公布。
+## Pull requests
 
-无论如何，代码现在是、将来也始终以 Apache-2.0 开源。
+- All changes reach `main` through pull requests; a maintainer reviews and merges.
+- CI must be green; the required check is `ci-ok` (see "CI and checks" in AGENTS.md).
+
+## Language
+
+English is preferred for docs, code comments, identifiers and commit messages; Chinese is not required. Some existing docs are still in Chinese and are being migrated. UI text goes through i18n (zh and en).
+
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/), e.g. `feat(kernel): add config loading`; body lines ≤ 100 characters. commitlint checks this on PRs.
+
+## Changesets
+
+If you change a package that is published, run `pnpm changeset` and commit the generated file.
+
+## Live API tests
+
+Some tests call real services and run only when their `CAPYBARA_TEST_*` variables are set (see the skills under `skills/`). Keep your keys in a local env file outside the repo, never print or commit them, and run the relevant live tests after changing request mapping or upgrading a vendor SDK.
+
+## CLA
+
+This project uses a Contributor License Agreement (CLA); a bot guides you through signing on your first PR. **External PRs are not merged until the CLA bot is live (milestone M7).** The CLA text will be published after legal review.
+
+Whatever happens, the code is and will always remain open source under Apache-2.0.
