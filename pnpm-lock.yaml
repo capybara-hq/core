@@ -607,7 +607,11 @@ importers:
 
   tools/ci: {}
 
-  tools/dev: {}
+  tools/dev:
+    dependencies:
+      '@capybara-hq/ci':
+        specifier: workspace:*
+        version: link:../ci
 
   tools/pack-plugin:
     dependencies:
