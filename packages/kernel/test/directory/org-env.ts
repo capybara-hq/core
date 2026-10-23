@@ -26,8 +26,18 @@ import { createOrg, PW, type Req, runConfig, session, waitFor } from "../helpers
 import { SKILL_MD } from "../skills/zip.js";
 import { mcpTemplate, skillTgz, templateTgz } from "./packages.js";
 
-const plugin = (name: string) =>
-  fileURLToPath(new URL(`../../../../plugins/${name}/src/index.ts`, import.meta.url));
+// Literal paths (no helper that interpolates the plugin name) so the test-plugins check can see which
+// official plugins these tests load; see tools/ci/test-plugins.json.
+const OBJECT_STORE_S3 = fileURLToPath(
+  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
+);
+const CONNECTOR_MCP = fileURLToPath(
+  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
+);
+const TODO = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
+const EXAMPLE_COUNTER = fileURLToPath(
+  new URL("../../../../plugins/example-counter/src/index.ts", import.meta.url),
+);
 
 function templateNoIcon() {
   const { icon: _icon, ...t } = mcpTemplate();
@@ -92,11 +102,11 @@ export async function startOrgEnv(): Promise<OrgEnv> {
       roles: ["api", "worker"],
       pluginHost: { dir: pluginsDir },
       plugins: [
-        plugin("object-store-s3"),
+        OBJECT_STORE_S3,
         MODEL_FAKE,
-        plugin("connector-mcp"),
-        plugin("todo"),
-        plugin("example-counter"),
+        CONNECTOR_MCP,
+        TODO,
+        EXAMPLE_COUNTER,
         fixture("dep-provider"),
         fixture("dep-requirer"),
       ],
