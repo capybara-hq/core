@@ -1055,6 +1055,25 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     expect(await lastError(noEditId)).toBeNull();
   });
 
+  it("target_gone 的失败请求很慢：同一运行的后续事件在它持锁期间到达（其任务直接结束），结束时复核补投", async () => {
+    const chat = "grp-gone-slow";
+    // 失败响应推迟 2 秒：运行在此期间跑完，后续事件的投递任务都见锁被占直接结束（CI 负载下的时序）
+    im.failNext("/send", 403, 1, undefined, "target_gone", 2000);
+    im.push(noEditId, group("tgs1", "u-owner", "echo:removed while slow", { chatId: chat }));
+    const conv = await convOf(noEditId, chat);
+    await waitFor(
+      async () => sentTo("cli_noedit", chat).some((s) => s.message.text === "removed while slow"),
+      15_000,
+      "delivered by the follow-up after the stopped job",
+    );
+    await settled(conv);
+    expect(
+      sentTo("cli_noedit", chat).filter((s) => s.message.text === "removed while slow"),
+    ).toHaveLength(1);
+    expect(await failCountOf(conv)).toBe(0);
+    expect(await lastError(noEditId)).toBeNull();
+  });
+
   it("不可重试 → 记连接 last_error，停止本轮；会话后续事件触发续投，消息恰好投递一次", async () => {
     const chat = "grp-fatal";
     im.failNext("/send", 400, 1);

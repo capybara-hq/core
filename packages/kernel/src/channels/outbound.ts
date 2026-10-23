@@ -409,6 +409,8 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       // 再次被占：取到锁的那个任务会投递
       if (!lease) return;
     }
+    // 本次尝试开始时的日志位置：持锁期间提交的事件，其任务见锁被占直接结束，靠本任务结束时复核补上
+    const startSeq = await this.lastSeq(conversationId);
     let outcome: DeliveryOutcome;
     try {
       outcome = await new Delivery(this.d, conversationId, lease, this.stopping.signal).run();
@@ -437,6 +439,9 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
         if (outcome.seen !== undefined) await this.followUp(conversationId, outcome.seen);
         return;
       case "stopped":
+        // 不可重试失败：只在本次尝试开始之后又有新事件时复核（那些事件的任务因锁被占已直接结束，
+        // 否则「后续事件触发续投」会丢）；没有新事件就停下，不立刻重试同一个事件
+        if (startSeq !== undefined) await this.followUp(conversationId, startSeq);
         return;
       case "changed":
         // 连接改过（轮换凭据等）：释放锁之后排新任务，用新的出站会话从 last_seq 接着投
@@ -447,15 +452,20 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     }
   }
 
-  /** 日志比本任务处理到的更新时再排一个任务。 */
-  private async followUp(conversationId: string, seen: number): Promise<void> {
+  /** 会话日志当前的最后位置（会话不存在时 undefined）。 */
+  private async lastSeq(conversationId: string): Promise<number | undefined> {
     const conv = await this.d.db
       .selectFrom("conversations")
       .select("last_seq")
       .where("id", "=", conversationId)
       .executeTakeFirst();
-    if (conv && Number(conv.last_seq) > seen)
-      await this.enqueue(conversationId, { followUp: true });
+    return conv ? Number(conv.last_seq) : undefined;
+  }
+
+  /** 日志比 `seen` 更新时再排一个任务。 */
+  private async followUp(conversationId: string, seen: number): Promise<void> {
+    const last = await this.lastSeq(conversationId);
+    if (last !== undefined && last > seen) await this.enqueue(conversationId, { followUp: true });
   }
 
   /** 不可重试（或重试用尽）的发送失败：记连接 `last_error`（已打码）。 */
@@ -473,7 +483,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
 
 /**
  * 一次任务的结果：`done` 正常结束（`seen` 为处理到的 seq，供结束后复核；没有可投递的地方时不带）；
- * `stopped` 不可重试失败、本会话本轮停止（不复核，否则会立刻重试同一个事件）；`lost` 锁丢失；`shutdown` 停机；
+ * `stopped` 不可重试失败、本会话本轮停止（只在本次尝试开始之后又有新事件时复核，不立刻重试同一个事件）；`lost` 锁丢失；`shutdown` 停机；
  * `pending` 本副本没有加载连接的插件（推迟重试）；`changed` 连接在投递中被改过（排新任务接着投）。
  * 投递中连接被停用 / 删除按 `done`（不带 seen，不复核）结束。
  * `error` 需要记到连接 `last_error` 的失败说明。
