@@ -360,10 +360,17 @@ describe("渠道连接生命周期", () => {
       expect(toRoll().length).toBe(before);
       // b 上处理需要回复的入站任务：插件不在本副本 → 推迟重试，不消耗重试次数
       await b.channels.inbound.onEvent(connId, dm("roll-bind", "u-roll-new", "hi"));
-      await sleep(2500);
-      const job = await queue.getJob(inboundJobId(connId, "roll-bind"));
-      expect(await job?.getState()).toBe("delayed");
-      expect(job?.attemptsMade).toBe(0);
+      // Wait for the state instead of reading it once after a fixed sleep: under load the job can
+      // still be waiting or active at any fixed moment.
+      const job = await waitFor(
+        async () => {
+          const j = await queue.getJob(inboundJobId(connId, "roll-bind"));
+          return (await j?.getState()) === "delayed" ? j : undefined;
+        },
+        15_000,
+        "inbound job delayed",
+      );
+      expect(job.attemptsMade).toBe(0);
       // 有插件的副本回来：照常接管长连接，并补投 b 上没投出去的回复
       a = await startKernel(cfg([MODEL_FAKE, CHAN_MINI], 100, 2000));
       owner = await session(a, "owner");
