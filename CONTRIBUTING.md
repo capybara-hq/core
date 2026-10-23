@@ -19,7 +19,7 @@ Start a task in a worktree with `pnpm wt:new <branch>`; it branches from the ups
 - Start local dependencies: `docker compose -f docker/compose.dev.yaml up -d` (PostgreSQL 17 @ 5432, Valkey 8 @ 6379)
 - After `pnpm install`, run `pnpm lint && pnpm typecheck && pnpm check && pnpm test`
 
-Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change. Task-specific guides live in [.agents/skills/](.agents/skills/) (`onboarding`, `contributing` and `reviewing-prs` are synced from `capybara-hq/.github` and must be edited there; `.claude/skills` is a symlink to it). On Windows, enable symlinks before cloning (`git config --global core.symlinks true`, plus Developer Mode) or Claude Code won't find them.
+Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change. Task-specific guides live in [.agents/skills/](.agents/skills/) (`onboarding`, `contributing` and `reviewing-prs` are synced from `capybara-hq/.github` and must be edited there; `.claude/skills` is a symlink to `.agents/skills`). On Windows, enable symlinks before cloning (`git config --global core.symlinks true`, plus Developer Mode) or Claude Code won't find them.
 
 ## Larger changes: design first
 
@@ -34,7 +34,7 @@ Small fixes can go straight to a PR. If you're unsure whether a change counts as
 ## Pull requests
 
 - All changes reach `main` through pull requests; a maintainer reviews and merges.
-- CI must be green. The required statuses are `ci-ok` and `issue-linked` (the PR body must contain `Closes #N` for an accepted issue; see the organization guide and "CI and checks" in AGENTS.md).
+- CI must be green. The required statuses are `ci-ok` and `issue-linked` (the PR body must contain `Closes #N` for an accepted issue (community PRs; authors with write access are exempt); see the organization guide and "CI and checks" in AGENTS.md).
 - The PR description is filled from the organization's default template.
 
 ## Language

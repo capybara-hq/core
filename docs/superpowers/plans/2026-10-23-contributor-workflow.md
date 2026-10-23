@@ -217,7 +217,7 @@ Runs alongside `feat/m7-release` in another session. Overlap: `pnpm-lock.yaml` o
 
 **Files:**
 - Create: `tools/dev/package.json`, `tools/dev/tsconfig.json`, `tools/dev/src/report.ts`, `tools/dev/src/remotes.ts`, `tools/dev/src/doctor.ts`, `tools/dev/src/doctor-cli.ts`
-- Modify: `tsconfig.json` (add reference `tools/dev`), `package.json` (script `"doctor": "node tools/dev/src/doctor-cli.ts"`)
+- Modify: `tsconfig.json` (add reference `tools/dev`), `package.json` (script `"doctor:env": "node tools/dev/src/doctor-cli.ts"`)
 - Test: `tools/dev/test/remotes.test.ts`, `tools/dev/test/doctor.test.ts`
 
 **Interfaces:**

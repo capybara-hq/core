@@ -102,7 +102,7 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 ## Branches and worktrees
 
 - The Claude session runs in the main checkout, not in a separate window; the main checkout's HEAD stays on `main` so it is always a clean baseline.
-- All task work happens in a worktree: `pnpm wt:new <branch> [--from origin/main] [--no-install]` creates `.claude/worktrees/<dir>` (gitignored; checks out the remote branch if it exists, otherwise creates it from `--from` with `--no-track`; runs its own `pnpm install`). Work in that directory (cd into it or use absolute paths); after merge, `pnpm wt:rm <branch>` cleans up (the branch is kept). The branch name must be the first argument.
+- All task work happens in a worktree: `pnpm wt:new <branch> [--from origin/main] [--no-install]` creates `.claude/worktrees/<dir>` (gitignored; checks out the remote branch if it exists, otherwise creates it from `--from` (default `<upstream>/main`: `origin/main` in clones of capybara-hq/core, the upstream remote's main in fork clones) with `--no-track`; runs its own `pnpm install`). Work in that directory (cd into it or use absolute paths); after merge, `pnpm wt:rm <branch>` cleans up (the branch is kept). The branch name must be the first argument.
 - `.claude/hooks/branch-safety.sh` (PreToolUse, wired in `.claude/settings.json`) enforces this: no pushes to `main`; no switching the main checkout to `feat/` `fix/` `docs/` `chore/` `test/` `refactor/` branches (worktrees are not restricted).
 - Don't run the dev stack in two worktrees at once (`docker/compose.dev.yaml`, the kernel, `pnpm dev:web`): the ports collide; stop one before starting the other.
 
