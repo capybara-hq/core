@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdtemp, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
@@ -129,7 +130,7 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
   const entry = `import { definePlugin } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 const NAME = ${JSON.stringify(name)};
 const VERSION = ${JSON.stringify(o.version)};
 // 模块顶层代码：记一笔导入（测试「批准之前不执行插件代码」）
@@ -253,24 +254,35 @@ export default definePlugin({
 }
 
 /**
- * 用 `tools/pack-plugin` 把仓库里的一个官方插件打成插件包（子进程，避免内核依赖 pack-plugin）。
- * 先把插件复制到临时目录（`node_modules` 链接回原处）再打包：打包的临时文件不落在仓库的插件目录里，
- * 与同时运行的 pack-plugin 测试互不干扰。`edit` 在打包前改这份副本（如升版本、加迁移），仓库里的插件不动。
+ * 用 `tools/pack-plugin` 把仓库里的一个官方插件（`plugins/<plugin>`）打成插件包，见 {@link packPluginDir}。
  */
 export async function packOfficialPlugin(
   plugin: string,
   edit?: (dir: string) => Promise<void>,
 ): Promise<Uint8Array> {
+  return packPluginDir(join(REPO_ROOT, "plugins", plugin), edit);
+}
+
+/**
+ * 用 `tools/pack-plugin` 把任意插件目录（pack-plugin 布局：`package.json` + `src/index.ts`，如官方插件或
+ * `test/fixtures/plugins/hooks-probe`）打成插件包（子进程，避免内核依赖 pack-plugin）。
+ * 先把目录复制到临时目录再打包（`node_modules` 链接回离源目录最近、装有 SDK 的那个 `node_modules`：官方插件是
+ * 它自己的，内核测试夹具是内核包的）：打包的临时文件不落在仓库里，与同时运行的 pack-plugin 测试互不干扰。
+ * `edit` 在打包前改这份副本（如升版本、加迁移、改名），仓库里的源目录不动。
+ */
+export async function packPluginDir(
+  src: string,
+  edit?: (dir: string) => Promise<void>,
+): Promise<Uint8Array> {
   const work = await mkdtemp(join(tmpdir(), "kernel-pack-"));
-  const src = join(REPO_ROOT, "plugins", plugin);
-  const copy = join(work, plugin);
+  const copy = join(work, basename(src));
   const out = join(work, "out");
   try {
     await cp(src, copy, {
       recursive: true,
       filter: (from) => !/[/\\](node_modules|dist|test)([/\\]|$)/.test(from.slice(src.length)),
     });
-    await symlink(join(src, "node_modules"), join(copy, "node_modules"), "dir");
+    await symlink(nodeModulesFor(src), join(copy, "node_modules"), "dir");
     await edit?.(copy);
     await promisify(execFile)("pnpm", ["-s", "pack-plugin", copy, "--out", out], {
       cwd: REPO_ROOT,
@@ -282,6 +294,15 @@ export async function packOfficialPlugin(
     return new Uint8Array(await readFile(join(out, files[0] as string)));
   } finally {
     await rm(work, { recursive: true, force: true });
+  }
+}
+
+/** 从 `dir` 向上找第一个装有 `@capybara-hq/plugin-sdk` 的 `node_modules`。 */
+function nodeModulesFor(dir: string): string {
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    const nm = join(d, "node_modules");
+    if (existsSync(join(nm, "@capybara-hq", "plugin-sdk"))) return nm;
+    if (dirname(d) === d) throw new Error(`no node_modules with the plugin SDK above ${dir}`);
   }
 }
 
