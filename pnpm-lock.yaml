@@ -607,6 +607,8 @@ importers:
 
   tools/ci: {}
 
+  tools/dev: {}
+
   tools/pack-plugin:
     dependencies:
       '@capybara-hq/plugin-sdk':
