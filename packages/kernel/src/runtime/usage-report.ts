@@ -69,8 +69,8 @@ export interface UsageReporterDeps {
 
 /**
  * Plugins that subscribe to `usage.report` according to deployment state: an approved permission
- * snapshot that declares the `usage.report` hook, for a plugin the deployment still knows (an enabled
- * install, or a replica status row: declared / loaded on some replica). With `orgId`, only plugins
+ * snapshot that declares the `usage.report` hook, for a plugin the deployment still knows: an enabled
+ * install, or a config-declared plugin with a replica status row that is not `unloaded`. With `orgId`, only plugins
  * the organization enabled. Builtin plugins have no snapshot; callers add those themselves.
  */
 export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promise<Set<string>> {
@@ -87,11 +87,15 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
             .whereRef("i.name", "=", "s.plugin")
             .where("i.desired_state", "=", "enabled"),
         ),
+        // config-declared plugins still declared (and not unloaded) on some replica; installs are
+        // covered by desired_state above (their replica rows linger as `unloaded` when disabled)
         eb.exists(
           eb
             .selectFrom("plugin_replica_status as r")
             .select(sql`1`.as("one"))
-            .whereRef("r.plugin", "=", "s.plugin"),
+            .whereRef("r.plugin", "=", "s.plugin")
+            .where("r.source", "=", "config")
+            .where("r.state", "<>", "unloaded"),
         ),
       ]),
     );
@@ -182,37 +186,40 @@ export class UsageReporter {
    * sweep starts at `now - lag - overlap`. Returns the number of events offered to the queue.
    */
   async sweep(opts: { now?: number } = {}): Promise<number> {
-    const now = opts.now ?? Date.now();
-    const to = new Date(now - USAGE_SWEEP_LAG_MS);
+    // bounds and keyset as full-precision timestamp text (microseconds), computed with the DB clock
+    // unless a test fixes "now" (m-a, m-c)
+    const to =
+      opts.now !== undefined
+        ? new Date(opts.now - USAGE_SWEEP_LAG_MS).toISOString()
+        : (
+            await sql<{ to: string }>`SELECT (now() - make_interval(secs => ${
+              USAGE_SWEEP_LAG_MS / 1000
+            }))::text AS to`.execute(this.d.db)
+          ).rows[0]?.to;
+    if (to === undefined) return 0;
     const row = await this.d.db
       .selectFrom("usage_report_sweep")
-      .select("watermark")
+      .select(sql<string>`watermark::text`.as("watermark"))
       .where("id", "=", 1)
       .executeTakeFirst();
-    const watermark = row ? new Date(row.watermark) : to;
-    const from = new Date(watermark.getTime() - USAGE_SWEEP_OVERLAP_MS);
+    const watermark = row?.watermark ?? to;
     let offered = 0;
-    if ((await this.d.subscribers()).size > 0 && from < to) {
-      let after: { at: Date; conv: string; seq: number } | undefined;
+    if ((await this.d.subscribers()).size > 0) {
+      let after: { at: string; conv: string; seq: string } | undefined;
       for (;;) {
         let q = this.d.db
           .selectFrom("conversation_events")
-          .select(["conversation_id", "seq", "created_at"])
+          .select(["conversation_id", "seq", sql<string>`created_at::text`.as("at")])
           .where("type", "=", "usage")
-          .where("created_at", ">=", from)
-          .where("created_at", "<=", to);
+          .where(
+            sql<boolean>`created_at >= ${watermark}::timestamptz - make_interval(secs => ${
+              USAGE_SWEEP_OVERLAP_MS / 1000
+            })`,
+          )
+          .where(sql<boolean>`created_at <= ${to}::timestamptz`);
         if (after) {
-          const a = after;
-          q = q.where((eb) =>
-            eb.or([
-              eb("created_at", ">", a.at),
-              eb.and([eb("created_at", "=", a.at), eb("conversation_id", ">", a.conv)]),
-              eb.and([
-                eb("created_at", "=", a.at),
-                eb("conversation_id", "=", a.conv),
-                eb("seq", ">", String(a.seq)),
-              ]),
-            ]),
+          q = q.where(
+            sql<boolean>`(created_at, conversation_id, seq) > (${after.at}::timestamptz, ${after.conv}, ${after.seq}::bigint)`,
           );
         }
         const page = await q
@@ -233,16 +240,12 @@ export class UsageReporter {
         }
         const last = page.at(-1);
         if (!last || page.length < SWEEP_PAGE) break;
-        after = {
-          at: new Date(last.created_at),
-          conv: last.conversation_id,
-          seq: Number(last.seq),
-        };
+        after = { at: last.at, conv: last.conversation_id, seq: String(last.seq) };
       }
     }
     await this.d.db
       .insertInto("usage_report_sweep")
-      .values({ id: 1, watermark: to })
+      .values({ id: 1, watermark: sql<Date>`${to}::timestamptz` as unknown as Date })
       .onConflict((oc) =>
         oc.column("id").doUpdateSet({
           watermark: sql`GREATEST(usage_report_sweep.watermark, excluded.watermark)`,
@@ -257,6 +260,9 @@ export class UsageReporter {
   startWorker(): void {
     if (this.worker || this.closed) return;
     const { jobLockMs, stalledIntervalMs } = this.d.config().runtime;
+    // the queue exists before any job runs: in-flight jobs fence and requeue through it, even on a
+    // replica that never enqueued (m-b)
+    this.getQueue();
     this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
     this.worker = new Worker<UsageReportJob>(USAGE_REPORT_QUEUE, (j, t) => this.process(j, t), {
       connection: this.workerConn,

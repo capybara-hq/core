@@ -12,6 +12,7 @@ import type { Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import {
   narrowPending,
+  queryUsageSubscribers,
   USAGE_REPORT_QUEUE,
   UsageReporter,
   usageReportJobId,
@@ -460,6 +461,127 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     });
     const wm = await db.selectFrom("usage_report_sweep").select("watermark").executeTakeFirst();
     expect(new Date(wm?.watermark as Date).getTime()).toBe(now - 30_000);
+  });
+
+  it("a worker that never enqueued still requeues on shutdown (its queue exists)", async () => {
+    const producer = reporter({}, ["x"]);
+    let started = 0;
+    const worker = reporter(
+      {
+        x: (_p, s) =>
+          new Promise<void>((resolve) => {
+            started++;
+            s.addEventListener("abort", () => resolve(), { once: true });
+          }),
+      },
+      ["x"],
+      { attempts: 2 },
+    );
+    worker.startWorker();
+    await producer.enqueue(ev.conv, ev.seq);
+    await producer.stop();
+    await waitFor(async () => started === 1, 10_000, "delivery started");
+    await worker.stop();
+    const j = await jobOf();
+    expect(j?.attemptsMade ?? 0).toBe(0);
+    expect(await j?.getState()).not.toBe("failed");
+  });
+
+  it("a plugin disabled at deployment level is no target: no job, no error log", async () => {
+    const sha = "a".repeat(64);
+    const snapshot = (plugin: string) => ({
+      plugin,
+      version: "1.0.0",
+      permissions: JSON.stringify({ permissions: { hooks: ["usage.report"] } }),
+      source: "auto" as const,
+    });
+    await db
+      .insertInto("plugin_packages")
+      .values({
+        sha256: sha,
+        name: "gone",
+        package_name: "@test/gone",
+        version: "1.0.0",
+        size: 1,
+        section: JSON.stringify({}),
+        blob_store: "pg",
+        source: "file",
+        source_ref: "gone.tgz",
+      })
+      .execute();
+    await db
+      .insertInto("plugin_installs")
+      .values({
+        name: "gone",
+        sha256: sha,
+        version: "1.0.0",
+        source: "file",
+        desired_state: "disabled",
+      })
+      .execute();
+    await db
+      .insertInto("plugin_permission_snapshots")
+      .values([snapshot("gone"), snapshot("gone-cfg")])
+      .execute();
+    const status = (plugin: string, source: "install" | "config") => ({
+      replica_id: "replica-x",
+      plugin,
+      version: "1.0.0",
+      sha256: null,
+      source,
+      state: "unloaded" as const,
+      reason: null,
+      detail: null,
+      http_replica_id: null,
+    });
+    await db
+      .insertInto("plugin_replica_status")
+      .values([status("gone", "install"), status("gone-cfg", "config")])
+      .execute();
+    for (const plugin of ["gone", "gone-cfg"]) {
+      await db
+        .insertInto("plugin_org_configs")
+        .values({ plugin, org_id: orgId, enabled: true })
+        .execute();
+    }
+    try {
+      const subs = await queryUsageSubscribers(db, orgId);
+      expect(subs.has("gone")).toBe(false);
+      expect(subs.has("gone-cfg")).toBe(false);
+      // a config-declared plugin loaded on a replica is a subscriber
+      expect(subs.has("hooks-probe")).toBe(true);
+      const errors: unknown[] = [];
+      const only = new Set(["gone", "gone-cfg"]);
+      const r = new UsageReporter({
+        db,
+        redisUrl: rd2.url,
+        hooks: { handlers: () => [] },
+        subscribers: async (o) =>
+          new Set([...(await queryUsageSubscribers(db, o))].filter((p) => only.has(p))),
+        config: () => k.config,
+        log: { ...silent, error: (...a: unknown[]) => errors.push(a) },
+        retry: { attempts: 2, backoffMs: 50 },
+      });
+      reporters.push(r);
+      r.startWorker();
+      await r.enqueue(ev.conv, ev.seq);
+      await sleep(500);
+      expect(await jobOf()).toBeUndefined();
+      expect(errors).toEqual([]);
+      await r.stop();
+    } finally {
+      await db
+        .deleteFrom("plugin_org_configs")
+        .where("plugin", "in", ["gone", "gone-cfg"])
+        .execute();
+      await db.deleteFrom("plugin_replica_status").where("replica_id", "=", "replica-x").execute();
+      await db
+        .deleteFrom("plugin_permission_snapshots")
+        .where("plugin", "in", ["gone", "gone-cfg"])
+        .execute();
+      await db.deleteFrom("plugin_installs").where("name", "=", "gone").execute();
+      await db.deleteFrom("plugin_packages").where("sha256", "=", sha).execute();
+    }
   });
 
   it("narrowPending never brings back a plugin another execution delivered", () => {
