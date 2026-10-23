@@ -1,5 +1,5 @@
 /**
- * Checks a contributor's environment.
+ * Checks a contributor's environment (`pnpm doctor:env`; plain `pnpm doctor` is pnpm's own command).
  *
  *   node tools/dev/src/doctor-cli.ts [--json] [--fix]
  *

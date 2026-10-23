@@ -8,7 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "doctor": "node tools/dev/src/doctor-cli.ts",
+    "doctor:env": "node tools/dev/src/doctor-cli.ts",
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json && pnpm --filter @capybara-hq/web typecheck",
