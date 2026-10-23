@@ -1615,6 +1615,10 @@ export class PluginHost {
       const loader = this.installLoader;
       if (!loader) return;
       const desired = await loader.desired();
+      // N-2: drop plugins no longer desired before applyInstalls unloads them (the drain can take
+      // pluginHost.drainSeconds; meanwhile a disabled policy plugin must not fail calls closed).
+      // Shrink only: plugins that are newly expected are added after they had their chance to load.
+      await this.refreshPolicyExpectations(desired, { shrinkOnly: true });
       await this.applyInstalls(loader, desired, false);
       if (this.pendingActivations.size > 0) await this.activatePendingNow();
       await this.refreshPolicyExpectations(desired);
@@ -1625,8 +1629,12 @@ export class PluginHost {
    * Refreshes {@link policyExpected} from deployment state (M-1): builtin plugins from their manifest,
    * config-declared plugins and enabled installs (`desired`) from their approved permission snapshot.
    * `desired` undefined (install records unreadable) keeps the previous install entries.
+   * `shrinkOnly`: only remove entries (a plugin no longer desired or approved), never add new ones.
    */
-  private async refreshPolicyExpectations(desired: readonly DesiredPlugin[] | undefined) {
+  private async refreshPolicyExpectations(
+    desired: readonly DesiredPlugin[] | undefined,
+    opts: { shrinkOnly?: boolean } = {},
+  ) {
     const snapshots = await new PluginApprovals(kernelDb(this.deps.db)).all();
     const next = new Map<string, readonly string[]>();
     const add = (name: string, set: PermissionSet | undefined) => {
@@ -1644,6 +1652,11 @@ export class PluginHost {
     } else {
       for (const d of desired) {
         if (!declared.has(d.name)) add(d.name, snapshots.get(d.name)?.permissions);
+      }
+    }
+    if (opts.shrinkOnly) {
+      for (const name of [...next.keys()]) {
+        if (!this.policyExpected.has(name)) next.delete(name);
       }
     }
     this.policyExpected = next;

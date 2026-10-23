@@ -92,6 +92,12 @@ export interface LifePkgOptions {
   packageName?: string;
   /** 包里 `migrations/` 下的 SQL（有就声明 `capybara.migrations`）。 */
   migrations?: { file: string; sql: string }[];
+  /**
+   * A `tool.preExecute` policy hook (declared in `permissions.hooks` / `policyHooks`): input
+   * `{ hold: true }` waits on `globalThis.__lifeGate`; input `{ deny: true }` denies with
+   * `<name> <version> denies`; anything else is allowed.
+   */
+  policy?: boolean;
 }
 
 /**
@@ -116,6 +122,14 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
     annotations: { readOnlyHint: true },
   };
   const { z } = await import("zod");
+  const perms = {
+    tools: ["wait"],
+    http: [{ method: "GET" as const, path: "/version" }],
+    ...(o.policy && {
+      hooks: ["tool.preExecute" as const],
+      policyHooks: ["tool.preExecute" as const],
+    }),
+  };
   const real: PluginManifest = definePlugin({
     name,
     version: o.version,
@@ -123,7 +137,7 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
     provides: provides as never,
     requires: requires as never,
     optional: optional as never,
-    permissions: { tools: ["wait"], http: [{ method: "GET", path: "/version" }] },
+    permissions: perms,
     config: { deployment: z.object({ dir: z.string().default("") }).default({ dir: "" }) },
     setup() {},
   });
@@ -143,9 +157,19 @@ export default definePlugin({
   provides: ${JSON.stringify(provides)},
   requires: ${JSON.stringify(requires)},
   optional: ${JSON.stringify(optional)},
-  permissions: { tools: ["wait"], http: [{ method: "GET", path: "/version" }] },
+  permissions: ${JSON.stringify(perms)},
   config: { deployment: z.object({ dir: z.string().default("") }).default({ dir: "" }) },
   async setup(ctx) {
+    if (${JSON.stringify(o.policy === true)}) {
+      ctx.hooks.on(
+        "tool.preExecute",
+        async (p) => {
+          if (p.input?.hold && globalThis.__lifeGate) await globalThis.__lifeGate;
+          return p.input?.deny ? { deny: NAME + " " + VERSION + " denies" } : undefined;
+        },
+        { mode: "policy" },
+      );
+    }
     const dir = ctx.config.dir;
     if (dir && existsSync(join(dir, "fail-" + VERSION + "-" + process.pid))) {
       throw new Error("setup failure requested by the test");

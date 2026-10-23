@@ -598,6 +598,82 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
   });
 });
 
+describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000 }, () => {
+  const run = (input: Record<string, unknown>) =>
+    k.host.hooks.run(
+      "tool.preExecute",
+      {
+        orgId,
+        accountId: "acc-1",
+        agentId: "agent-1",
+        agentVersion: 1,
+        conversationId: "conv-1",
+        runId: "run-1",
+        step: 1,
+        callId: "call-1",
+        toolKey: "x__y",
+        specHash: "h",
+        input,
+      },
+      new AbortController().signal,
+    );
+  const gate = () => {
+    let release: () => void = () => {};
+    g.__lifeGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  };
+
+  it("an upgrade leaves no unguarded or fail-closed window; a disable's drain does not fail calls closed", async () => {
+    await install("guard", await lifePkg({ name: "guard", version: "1.0.0", policy: true }));
+    await approve("guard");
+    await setState("guard", "enable");
+    await waitFor(async () => loadedVersion("guard") === "1.0.0", 15_000, "guard 1.0.0 loaded");
+    const res = await admin({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/plugins/guard`,
+      payload: { enabled: true },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(k.host.expectedPolicy("tool.preExecute")).toEqual(["guard"]);
+    expect(await run({ deny: true })).toMatchObject({ reason: "guard 1.0.0 denies" });
+
+    // upgrade while a v1 policy call is in flight: every call in the window is decided by a loaded
+    // generation (never "not loaded")
+    let release = gate();
+    const v1 = k.host.current("guard") as PluginInstance;
+    const held = run({ hold: true, deny: true });
+    await waitFor(async () => v1.inflight.size === 1, 5_000, "v1 policy call in flight");
+    await install("guard", await lifePkg({ name: "guard", version: "2.0.0", policy: true }));
+    const seen: unknown[] = [];
+    while (loadedVersion("guard") !== "2.0.0") {
+      seen.push(await run({ deny: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    seen.push(await run({ deny: true }));
+    for (const o of seen) expect(o).toMatchObject({ allowed: false, cause: "deny" });
+    expect(seen.at(-1)).toMatchObject({ reason: "guard 2.0.0 denies" });
+    release();
+    expect(await held).toMatchObject({ reason: "guard 1.0.0 denies" });
+
+    // disable while a v2 policy call is in flight: during the drain the plugin is no longer
+    // expected, so new calls are allowed (not denied as "not loaded", nothing sticky to record)
+    release = gate();
+    const v2 = k.host.current("guard") as PluginInstance;
+    const held2 = run({ hold: true });
+    await waitFor(async () => v2.inflight.size === 1, 5_000, "v2 policy call in flight");
+    await setState("guard", "disable");
+    await waitFor(async () => k.host.current("guard") === undefined, 15_000, "guard deactivated");
+    expect(v2.inflight.size).toBe(1);
+    expect(k.host.expectedPolicy("tool.preExecute")).toEqual([]);
+    expect(await run({ deny: true })).toEqual({ allowed: true });
+    release();
+    expect(await held2).toEqual({ allowed: true });
+    delete g.__lifeGate;
+  });
+});
+
 describe("停机：后台排空中的旧实例在 lifecycleWaitMs 后强制撤销", { timeout: 60_000 }, () => {
   it("升级后旧实例的在途调用不结束：停机不等 drainSeconds，调用以 PluginUnloadedError 结束", async () => {
     await setState("life", "enable");
