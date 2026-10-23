@@ -122,6 +122,7 @@ export default definePlugin({
         const cfg = await prelude("usage.report", p.orgId, p, signal);
         // per event: deliveries and the last payload (idempotency is the handler's job: by eventId)
         const n = await ctx.kv.incr(`usage:${p.eventId}`, TTL);
+        await ctx.kv.incr(`usage-by:${instanceId}`, TTL);
         await ctx.kv.set(`usage-last:${p.eventId}`, JSON.stringify(p), TTL);
         if (n === 1 && cfg.usageThrowOnce) throw new Error("probe usage failure (first delivery)");
         if (n === 1 && cfg.usageHoldOnce) {
@@ -177,7 +178,12 @@ export default definePlugin({
       }
       return Response.json(out);
     });
-    ctx.http.route("GET", "/whoami", async () => Response.json({ instanceId }));
+    ctx.http.route("GET", "/whoami", async () =>
+      Response.json({
+        instanceId,
+        delivered: Number((await ctx.kv.get(`usage-by:${instanceId}`)) ?? 0),
+      }),
+    );
     ctx.http.route("POST", "/config", async (req) => {
       const { orgId, ...cfg } = (await req.json()) as ProbeConfig & { orgId: string };
       await ctx.kv.set(`cfg:${orgId}`, JSON.stringify(cfg), TTL);

@@ -792,6 +792,13 @@ export interface PluginReplicaStatusTable {
   heartbeat_at: Ts;
 }
 
+/** 0040: the usage.report sweeper's watermark (a single row, id = 1). */
+export interface UsageReportSweepTable {
+  id: ColumnType<number, number | undefined, never>;
+  watermark: Ts;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 export interface KernelDatabase {
   accounts: AccountsTable;
   identities: IdentitiesTable;
@@ -843,6 +850,7 @@ export interface KernelDatabase {
   plugin_blobs: PluginBlobsTable;
   plugin_installs: PluginInstallsTable;
   plugin_replica_status: PluginReplicaStatusTable;
+  usage_report_sweep: UsageReportSweepTable;
   plugin_name_owners: PluginNameOwnersTable;
   plugin_deployment_configs: PluginDeploymentConfigsTable;
   directory_items: DirectoryItemsTable;

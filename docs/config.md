@@ -104,7 +104,8 @@
 | `evals.judgeMaxOutputTokens` | `CAPYBARA_EVALS__JUDGE_MAX_OUTPUT_TOKENS` | `number` | `1024` | 否 | 否 | Maximum output tokens of one LLM judge request |
 | `evals.maxConsecutiveErrors` | `CAPYBARA_EVALS__MAX_CONSECUTIVE_ERRORS` | `number` | `10` | 否 | 否 | Consecutive failed results after which an eval run is marked failed and its remaining cases are skipped |
 | `hooks.timeoutMs` | `CAPYBARA_HOOKS__TIMEOUT_MS` | `number` | `5000` | 是 | 否 | Time limit in milliseconds for one plugin hook call; a policy hook that exceeds it denies the call, an observe hook is skipped |
-| `hooks.usageReportConcurrency` | `CAPYBARA_HOOKS__USAGE_REPORT_CONCURRENCY` | `number` | `4` | 否 | 否 | usage.report delivery jobs one worker replica processes at the same time |
+| `hooks.usageReportConcurrency` | `CAPYBARA_HOOKS__USAGE_REPORT_CONCURRENCY` | `number` | `16` | 否 | 否 | usage.report delivery jobs one worker replica processes at the same time |
+| `hooks.usageReportKeepHours` | `CAPYBARA_HOOKS__USAGE_REPORT_KEEP_HOURS` | `number` | `24` | 否 | 否 | Hours a finished usage.report job is kept in Redis so re-enqueueing the same usage event (resumed step, sweeper) is deduplicated; at least 1, well above the sweeper's 10-minute overlap |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源

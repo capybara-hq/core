@@ -1202,10 +1202,22 @@ export const KernelConfigSchema = z.object({
         .number()
         .int()
         .positive()
-        .default(4)
+        .default(16)
         .meta(
           meta({
             description: "usage.report delivery jobs one worker replica processes at the same time",
+          }),
+        ),
+      usageReportKeepHours: z
+        .number()
+        .int()
+        .min(1)
+        .max(720)
+        .default(24)
+        .meta(
+          meta({
+            description:
+              "Hours a finished usage.report job is kept in Redis so re-enqueueing the same usage event (resumed step, sweeper) is deduplicated; at least 1, well above the sweeper's 10-minute overlap",
           }),
         ),
     })

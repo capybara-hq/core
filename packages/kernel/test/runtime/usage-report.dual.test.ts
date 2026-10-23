@@ -48,7 +48,12 @@ let agentId: string;
 const config = () =>
   runConfig(
     { pg: pgc.url, redis: rd.url },
-    { roles: ["api", "worker"], plugins: [MODEL_FAKE, HOOKS_PROBE] },
+    {
+      roles: ["api", "worker"],
+      plugins: [MODEL_FAKE, HOOKS_PROBE],
+      // one delivery at a time per replica, so both replicas take jobs
+      hooks: { usageReportConcurrency: 1 },
+    },
   );
 
 async function login(k: Kernel): Promise<Req> {
@@ -113,39 +118,51 @@ async function usageOf(req: Req, ids: string[]): Promise<Record<string, Delivery
   return res.json() as Record<string, Delivery>;
 }
 
-async function whoami(req: Req): Promise<string> {
+async function who(req: Req): Promise<{ instanceId: string; delivered: number }> {
   const res = await req({ method: "GET", url: "/plugins/hooks-probe/whoami" });
-  return (res.json() as { instanceId: string }).instanceId;
+  return res.json() as { instanceId: string; delivered: number };
 }
+const whoami = async (req: Req) => (await who(req)).instanceId;
 
 const idOf = (e: ConversationEvent) => `${e.conversationId}/${e.seq}`;
 
 describe("usage.report across two replicas", { timeout: 90_000 }, () => {
-  it("every usage event is delivered; deliveries run on either replica", async () => {
+  it("every usage event is delivered exactly once, and both replicas delivered some", async () => {
+    // each delivery takes ~200 ms, so while one replica is busy the other takes the next job
+    const cfg = await reqA({
+      method: "POST",
+      url: "/plugins/hooks-probe/config",
+      payload: { orgId, sleepMs: 200, sleepIn: ["usage.report"] },
+    });
+    expect(cfg.statusCode, cfg.body).toBe(200);
     const usage: ConversationEvent[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       const conv = await createConv(reqA, orgId, agentId);
       await postMessage(reqA, orgId, conv, `tool:${TOOL}:{"text":"${i}"}`);
       await waitForTerminal(db, conv, 1, 20_000);
       usage.push(...(await eventsOf(db, conv)).filter((e) => e.type === "usage"));
     }
-    expect(usage).toHaveLength(6);
+    expect(usage).toHaveLength(10);
     const ids = usage.map(idOf);
     await waitFor(
       async () => {
         const d = await usageOf(reqB, ids);
         return ids.every((id) => d[id]?.calls === 1) ? d : null;
       },
-      15_000,
+      20_000,
       "all deliveries",
     );
+    const [onA, onB] = [await who(reqA), await who(reqB)];
+    expect(onA.delivered + onB.delivered).toBe(10);
+    expect(onA.delivered).toBeGreaterThan(0);
+    expect(onB.delivered).toBeGreaterThan(0);
   });
 
   it("killing the replica that holds a delivery: the other replica finishes it", async () => {
     const cfg = await reqA({
       method: "POST",
       url: "/plugins/hooks-probe/config",
-      payload: { orgId, usageHoldOnce: true },
+      payload: { orgId, usageHoldOnce: true, sleepMs: 0 },
     });
     expect(cfg.statusCode, cfg.body).toBe(200);
     const conv = await createConv(reqA, orgId, agentId);

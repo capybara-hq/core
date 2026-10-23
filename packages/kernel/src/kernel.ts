@@ -103,7 +103,13 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
-import { UsageReporter } from "./runtime/usage-report.js";
+import {
+  queryUsageSubscribers,
+  USAGE_SWEEP_EVERY_MS,
+  USAGE_SWEEP_JOB,
+  USAGE_SWEEP_SCHEDULER_ID,
+  UsageReporter,
+} from "./runtime/usage-report.js";
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService, sandboxConfigWarnings } from "./sandbox/sandbox.service.js";
@@ -230,6 +236,8 @@ export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
   readonly http: KernelHttp;
   readonly host: PluginHost;
+  /** usage.report delivery (fast path, sweeper and, on the worker role, the worker). */
+  readonly usageReport: UsageReporter;
   /** 本进程的副本 id（`<hostname>-<pid>-<6 位随机>`，写 `plugin_replica_status`）。 */
   readonly replicaId: string;
   /** 插件包的导入（上传 / npm）与安装记录。 */
@@ -947,9 +955,27 @@ export async function createKernel(
     db: kdb,
     redisUrl: config.redis.url,
     hooks: host.hooks,
-    enabledPlugins: (orgId) => host.enabledPlugins(orgId),
+    // deployment state (approved manifests in PG) plus builtin plugins (no snapshot, always enabled)
+    subscribers: async (orgId) => {
+      const subs = await queryUsageSubscribers(kdb, orgId);
+      for (const m of host.manifests()) {
+        if (host.sourceOf(m.name) === "builtin" && m.permissions?.hooks?.includes("usage.report")) {
+          subs.add(m.name);
+        }
+      }
+      return subs;
+    },
     config: () => current,
     log,
+  });
+  // R13 sweeper: re-enqueue recent usage events (once across replicas through the maintenance queue)
+  maintenance.handle(USAGE_SWEEP_JOB, async () => {
+    await usageReporter.sweep();
+  });
+  maintenance.schedule({
+    id: USAGE_SWEEP_SCHEDULER_ID,
+    name: USAGE_SWEEP_JOB,
+    everyMs: () => USAGE_SWEEP_EVERY_MS,
   });
   const stepDeps: LoopDeps = {
     db: kdb,
@@ -1215,6 +1241,7 @@ export async function createKernel(
   const kernel: Kernel = {
     http: httpApp,
     host,
+    usageReport: usageReporter,
     replicaId,
     pluginInstalls,
     pluginAdmin,
