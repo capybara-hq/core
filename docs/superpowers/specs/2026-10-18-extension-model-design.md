@@ -220,7 +220,9 @@ Things derivable from existing fields are not declared again; the new `permissio
 
 Sensitive items are highlighted separately on the install confirmation page; an org admin enabling a plugin sees the same manifest.
 
-> **M4 implementation note**: `permissions.http[].public` is currently used only for display and the snapshot (Ruling A2): plugin routes, whether or not they declare `public`, still bypass kernel auth as since M0 and the plugin verifies signatures itself; having the kernel authenticate non-public plugin routes is a later decision (it will be a behavior change then). `hooks` only validates the mount point names (`ctx.hooks` comes in M6), `models` / `storage` are reserved items, and using them makes `check:plugin-permissions` report `perm-reserved` (since M5 `storage` is provided, see section 5; `models` is still a reserved item).
+> **M4 implementation note**: `permissions.http[].public` is currently used only for display and the snapshot (Ruling A2): plugin routes, whether or not they declare `public`, still bypass kernel auth as since M0 and the plugin verifies signatures itself; having the kernel authenticate non-public plugin routes is a later decision (it will be a behavior change then). since M7 `hooks` is no longer reserved (see the M7 note below), `models` / `storage` are reserved items, and using them makes `check:plugin-permissions` report `perm-reserved` (since M5 `storage` is provided, see section 5; `models` is still a reserved item).
+
+> **M7 implementation note**: `ctx.hooks` is live. Five mount points are registrable (`model.request`, `model.response`, `tool.preExecute`, `tool.postExecute`, `usage.report`); `session.*` and `agent.preStep` are still reserved. `permissions.hooks` lists the mount points; the new `permissions.policyHooks` lists the ones (only `model.request` / `tool.preExecute`) where the plugin registers `mode: "policy"` hooks, so deployment state can fail a call closed on a replica where such a plugin is not loaded. Both are sensitive at review (approval key `permissions.hooks.policy:<mount>` for the policy declarations), and `check:plugin-permissions` reports an undeclared registration as `perm-hooks`. Hooks observe or deny, never rewrite, and fire only for orgs that enabled the plugin. Details: `.agents/skills/writing-plugins/SKILL.md`, "Hooks".
 
 ### 7.3 Approval and upgrades
 
@@ -270,6 +272,7 @@ For items the platform cannot block, such as "external network", the install pag
 | `object-store@1` + `object-store-s3` + `ctx.storage` | **Start of M5** (done) | The first consumers are attachments and sandbox files |
 | Media input contract | **M5** (done: images and PDF) | Depends on object storage and attachments |
 | Deployment-level plugin config into PG, install confirmation page, purpose → model config page | **M6** (admin console) | The UI is in M6; the manifest format must be stable before M6's "SDK public API snapshot check" |
+| `ctx.hooks` (observe / policy hooks) + `usage.report` metering | **M7** (done) | The permission manifest and the SDK API snapshot were stable; hooks are the first extension point that can deny model and tool calls |
 | `ctx.models`, embedding, rerank | After the MVP, with the first consumer | No consumer within the MVP (memory and knowledge bases are not built) |
 
 M3 needs no change: `ctx.tools` and `ToolCallContext` already conform to section 3; when M4 introduces the permission manifest, `tools` just needs to be included in the declaration.

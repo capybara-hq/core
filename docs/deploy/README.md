@@ -297,6 +297,19 @@ otherwise.
 
   Run two or more gateway replicas for availability. Adding replicas spreads connections; it doesn't
   add throughput, because the work happens on `worker`.
+- **Usage reporting (`usage.report` hooks).** When a plugin registers a `usage.report` hook, every
+  model call's usage event is delivered to it through the BullMQ queue `cap-kernel-usage-report`,
+  processed by the `worker` role (so deployments with such plugins need a worker, and Redis).
+  - A job per usage event, retried up to 5 times (2 s doubling) on any replica. A maintenance job
+    re-offers recent usage events every minute so a lost enqueue is caught up; the job ids dedupe it.
+  - Redis retention: completed jobs are kept for `hooks.usageReportKeepHours` (default 24, at least 1)
+    and at most 100 000; failed jobs (given up, or a target that was dropped because it cannot take
+    deliveries) are kept for 7 days and at most 100 000. A failed job can be retried by hand: its
+    pending list holds only the plugins that did not get the event.
+  - `hooks.usageReportConcurrency` (default 16 jobs per worker replica) is read when the worker
+    starts, so changing it needs a restart; `hooks.timeoutMs` (hot) limits each delivery call.
+  - Plugin hook failures never block a conversation, except a policy hook denying a call; see
+    [Writing plugins](https://github.com/capybara-hq/core/blob/main/.agents/skills/writing-plugins/SKILL.md).
 - **The api trusts one proxy hop.** `http.trustProxy: 1` is right for `api` only when nothing but
   `web` can reach it. `web` drops forged forwarding headers and sets `X-Forwarded-For` to the real
   peer address. The kernel needs this address for the per-IP login rate limit and for session records.

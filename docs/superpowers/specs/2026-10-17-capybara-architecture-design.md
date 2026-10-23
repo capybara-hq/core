@@ -179,7 +179,14 @@ Plugin tests must pass in this environment; it is also a mandatory check for plu
 
 Rule: **policy kinds reject on error, observability kinds allow on error and alert**.
 
-The hook chain (`ctx.hooks`) opens in M6, together with `usage.report` metering (adjusted 2026-10-19).
+The hook chain (`ctx.hooks`) opened in M7 (it was planned for M6, adjusted 2026-10-19), together with `usage.report` metering.
+
+**M7 implementation notes** (see the writing-plugins skill, "Hooks"):
+
+- **Available now**: `model.request`, `model.response`, `tool.preExecute`, `tool.postExecute` and `usage.report`. `session.start` / `session.end` and `agent.preStep` stay reserved: they validate in a permission manifest but `ctx.hooks.on` rejects them.
+- **Observe or deny only.** A hook never rewrites a request or a result. Policy hooks (`model.request`, `tool.preExecute`) run serially by plugin name and can deny; an error or timeout denies too (fail closed), with a generic reason for the model and the raw error only in the `hook.denied` audit row. Observe hooks are fire-and-forget and bounded per plugin and replica. Every denial is logged (audit row and a `hook_denied` event).
+- **Declared and approved**: a mount point must be in `permissions.hooks`, and a policy hook also in `permissions.policyHooks`, so deployment state knows which plugins must fail calls closed on a replica where they are not loaded. Hooks are sensitive items at review. Hooks fire only for chat conversations of orgs that enabled the plugin, never in eval replays. Payloads are deep-frozen copies without media bytes (placeholders instead). Compaction model calls pass through the same hooks (`purpose: "compaction"`).
+- **`usage.report`** (F11) goes through the BullMQ queue `cap-kernel-usage-report`: at least once, per-plugin retries (up to 5, 2 s doubling), a sweeper that re-offers recent usage events, handlers idempotent by `eventId`. Compaction calls and full-run eval replays are reported; single-step replays and judges are not.
 
 ### 2.5 Trust and versions
 
@@ -608,7 +615,7 @@ docker compose up
 ├── api        backend image, role api      ┐
 ├── worker     backend image, role worker   ├─ the backend is always one image, split into services by role
 ├── gateway    backend image, role gateway  ┘
-├── web        frontend image (Next standalone), proxies /api to api
+├── web        frontend image (`node server.mjs` serving the Next build), proxies /api to api
 ├── postgres
 ├── valkey
 ├── object storage (S3-compatible)
@@ -616,6 +623,8 @@ docker compose up
 ```
 
 The admin console and web chat are one **Next** app, built and released independently; the first version's UI supports Chinese and English.
+
+**M7 implementation notes**: four images are published, `capybara-api`, `capybara-worker`, `capybara-gateway` (one Dockerfile, differing in the default roles chosen by the build argument `ROLES`) and `capybara-web`. `web` runs as `node server.mjs`, not Next's standalone server: `server.mjs` drops forwarding headers sent by clients and sets `X-Forwarded-For` to the real peer, which the `api` (with `http.trustProxy: 1`, one hop) needs for the per-IP login rate limit and session records. A one-shot `init` container runs `capybara migrate` on every `up` (and creates the first admin when a password file is set) before `api`, `worker` and `gateway` start. The optional `sandbox` compose profile publishes no ports: `sandbox-proxy` (the only container with the Docker socket) sits on an internal network reachable only by `worker`. See `docs/deploy/README.md`.
 A marketing / docs site, if it needs SEO, goes in a separate repository, apart from the product frontend.
 
 ### 8.5 Zero-downtime upgrades
@@ -625,7 +634,9 @@ A marketing / docs site, if it needs SEO, goes in a separate repository, apart f
 
 ### 8.6 Scaling
 
-`api` scales by CPU / connection count; `worker` by queue backlog (KEDA optional); for `gateway` long-connection bots, `ctx.lock` does leader election, so each bot connection has only one holder globally.
+`api` scales by CPU / connection count; `worker` by queue backlog (KEDA optional); for `gateway`, which holds the IM long connections, see the M7 note below.
+
+**M7 implementation notes**: long connections run **only on processes with the `gateway` role** (outbound delivery and inbound jobs stay on `worker`). Each connection still has exactly one holder, guaranteed by a Redis lease (`capk:channel-lease:<id>`), and gateways claim connections **by fair share**: replicas heartbeat per channel plugin, each computes its target as its share of the runnable connections plus `channels.shareSlack`, stops claiming at the target and hands back one connection per scan round when above it. A dead gateway's leases expire after `channels.leaseTtlMs` and the survivors take over. Adding gateways spreads connections; it does not add throughput.
 
 ### 8.7 Observability
 
@@ -653,7 +664,8 @@ An ecosystem plugin can provide identity source, directory and channel capabilit
 
 - **Channel connection = (channel plugin, a set of bot credentials) → bound to one agent**; an org can have several channel connections (e.g. "HR assistant" and "IT assistant" are each a bot).
 - Long-connection mode is supported (Slack Socket Mode, Lark long connection, DingTalk Stream), **so intranet deployments need no public address**; long connections use `ctx.lock` leader election to avoid receiving messages twice.
-  When there is a public address, webhook mode (`ctx.http`) is used.
+  When there is a public address, webhook mode can be used instead.
+  **M7 implementation notes** (F8, F9): webhook is an **optional inbound mode** of a channel connection (long connection stays the default; `inboundMode` is per connection). A channel plugin opts in with `Channel.webhook`; the kernel serves one route, `POST /channels/webhook/<connectionId>` on the gateway role, outside `/api` and without kernel authentication. The plugin verifies signatures, decrypts, answers URL-verification challenges and checks replays; the kernel dedupes by `messageId` / `eventId`, enqueues durably and acks only after every event was accepted (otherwise 503, and the platform redelivers). It needs `channels.webhookBaseUrl` (a public https origin); Slack and Lark implement it.
 - Special handling for China platforms (callback encryption, trusted IPs, old and new APIs, Feishu China edition / Lark) is all encapsulated inside the plugins.
 - Business capabilities such as docs, calendar and approvals are built as external apps; the marketplace shows them as a whole in the form of an "ecosystem bundle".
 - The recommended first official plugins are **Slack + Lark**; DingTalk and WeCom come in the second batch or go to the community.
@@ -739,3 +751,4 @@ This layer is as important as the product architecture.
   keeping the option to adjust the license or launch a commercial edition in the future.
 - The contributing guide states explicitly: **the code will always be open source under Apache-2.0**, easing the community's concerns about the CLA.
 - The CLA text and the signing tool (such as CLA Assistant) are decided when the repository is initialized; the text needs a look from the company's legal team.
+- **M7**: the draft text is in [`CLA.md`](../../../CLA.md) (marked draft; not in effect until legal review finishes and the notice is removed) and the signing workflow is `.github/workflows/cla.yml`. External PRs are not merged until the CLA is in effect.

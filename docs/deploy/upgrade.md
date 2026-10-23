@@ -98,6 +98,16 @@ SELECT pg_size_pretty(pg_relation_size('capybara.conversation_events')) AS event
        pg_size_pretty(pg_relation_size('capybara.conversations')) AS conversations;
 ```
 
+### Upgrading across 0040 (index build and table lock)
+
+Migration `0040_usage_report_sweep.sql` builds `conversation_events_usage_idx`, a partial index on
+`conversation_events (created_at) WHERE type = 'usage'`, **non-concurrently inside the migration
+transaction** (the same class of note as 0027 / 0028 above). A plain `CREATE INDEX` blocks **writes**
+to `conversation_events` until it finishes: new messages and agent runs stall, reads continue. It also
+creates the small `usage_report_sweep` table. This only matters for deployments that ran `main`
+before 0.1.0 and have large event logs; run the upgrade off-peak and estimate from the size query
+above. New installs migrate an empty table.
+
 ### 0.1.0: IM long connections move to the gateway role
 
 IM long connections (Slack Socket Mode, Lark long connection) now run **only on processes with the
