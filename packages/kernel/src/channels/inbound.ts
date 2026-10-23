@@ -31,6 +31,17 @@ import {
 /** 入站消息去重键的保留时长（秒）：平台在这段时间内重投同一条消息只处理一次。 */
 export const MESSAGE_DEDUPE_TTL_SECONDS = 86_400;
 
+/** Dedupe key states: the enqueue is running (`pending`) or has succeeded (`done`). */
+export const DEDUPE_PENDING = "pending";
+export const DEDUPE_DONE = "done";
+/** A `pending` key outlives a crashed enqueuer only this long, then redeliveries enqueue again. */
+export const DEDUPE_PENDING_TTL_SECONDS = 60;
+/** Deletes KEYS[1] only while it still holds ARGV[1] (a failed enqueue must not drop `done`). */
+const DEL_IF_PENDING = `if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0`;
+
 /** 入站消息去重键（Redis 键，不是队列名 / job id，可以含 `:`）。 */
 export const messageDedupeKey = (connectionId: string, messageId: string) =>
   `capk:channel-msg:${connectionId}:${messageId}`;
@@ -139,21 +150,36 @@ export class ChannelInbound {
     );
   }
 
-  /** `SET NX` 24 小时去重后入队；入队失败删掉去重键并抛错（插件不确认，平台重投时再试）。 */
+  /**
+   * Two-state dedupe, then enqueue (the key is `pending` while the enqueue runs, `done` after it):
+   * - fresh: `SET key pending NX EX 60`, enqueue, then `SET key done EX <dedupe TTL>`; on failure the
+   *   key is deleted only if still `pending` (compare-and-delete) and the error is rethrown, so the
+   *   plugin does not ack and the platform redelivers;
+   * - duplicate seeing `done`: already queued, return (the plugin acks);
+   * - duplicate seeing `pending` (the first enqueue is still running or hangs): enqueue again with the
+   *   same deterministic job id and return only once that succeeds, else throw. BullMQ `add` with an
+   *   existing job id is a no-op, and completed inbound jobs are retained (1 h / 1000), so this does
+   *   not create a second run; it means a redelivery is never acked before the job is really queued.
+   */
   private async dedupeAndEnqueue(
     connectionId: string,
     e: InboundEvent,
     key: string,
     jobId: string,
   ): Promise<void> {
-    const fresh = await this.deps.redis.set(key, "1", "EX", MESSAGE_DEDUPE_TTL_SECONDS, "NX");
-    if (fresh !== "OK") return;
+    const { redis, queue } = this.deps;
+    const fresh = await redis.set(key, DEDUPE_PENDING, "EX", DEDUPE_PENDING_TTL_SECONDS, "NX");
+    if (fresh !== "OK") {
+      const state = await redis.get(key);
+      if (state !== DEDUPE_PENDING) return;
+    }
     try {
-      await this.deps.queue.enqueueInbound(connectionId, e, jobId);
+      await queue.enqueueInbound(connectionId, e, jobId);
     } catch (err) {
-      await this.deps.redis.del(key).catch(() => {});
+      await redis.eval(DEL_IF_PENDING, 1, key, DEDUPE_PENDING).catch(() => {});
       throw err;
     }
+    await redis.set(key, DEDUPE_DONE, "EX", MESSAGE_DEDUPE_TTL_SECONDS);
   }
 
   /** 入站任务的处理（worker 上执行；失败抛错由队列重试）。 */

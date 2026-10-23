@@ -10,8 +10,8 @@ import type { ChannelConnections } from "./connections.service.js";
 import type { ChannelInbound } from "./inbound.js";
 
 /**
- * Deadline of one webhook request: the plugin's `webhook.handle` plus handing its events to
- * `onEvent` (platform ack deadlines are a few seconds). Past it the kernel answers 503.
+ * Deadline of one webhook request: connection lookups, the plugin's `webhook.handle` and handing
+ * its events to `onEvent` (platform ack deadlines are a few seconds). Past it the kernel answers 503.
  */
 export const WEBHOOK_HANDLE_TIMEOUT_MS = 10_000;
 /** How long a connection's decrypted runtime (plugin + config) is reused across requests. */
@@ -110,7 +110,7 @@ export interface ChannelWebhooksDeps {
  *   any rejection answers 503 `channel.webhook_retry` so the platform redelivers;
  * - `reject` → that status (400 / 401 / 403), nothing enqueued;
  * - plugin throws or returns something else → 500 `internal`;
- * - the whole request (handle + onEvent) has one deadline ({@link WEBHOOK_HANDLE_TIMEOUT_MS}): a
+ * - the whole request (connection lookups, handle, onEvent) has one deadline ({@link WEBHOOK_HANDLE_TIMEOUT_MS}): a
  *   plugin that ignores its `signal` or an enqueue stuck on Redis answers 503 `channel.webhook_retry`
  *   when it passes (late work is not cancelled; dedupe makes the redelivery safe).
  * Every response carries {@link WEBHOOK_SECURITY_HEADERS}.
@@ -118,10 +118,13 @@ export interface ChannelWebhooksDeps {
  * The decrypted runtime (plugin implementation + config) is cached per connection for a few seconds
  * (bounded, process local), so unauthenticated requests stay cheap before the signature check. It is
  * a read-through cache only: the kernel calls {@link invalidate} on `channel.changed` (config rotation,
- * mode switch, deletion…) and {@link invalidateAll} when a plugin instance changes.
+ * mode switch, deletion…) and {@link invalidateAll} when a plugin instance changes; a generation
+ * counter keeps a fetch that started before `invalidateAll` from storing the old plugin instance.
  */
 export class ChannelWebhooks {
   private readonly runtimes = new Map<string, { value: Runtime; expiresAt: number }>();
+  /** Bumped by {@link invalidateAll}: a fetch started before the bump is not stored. */
+  private generation = 0;
 
   constructor(private readonly deps: ChannelWebhooksDeps) {}
 
@@ -132,6 +135,7 @@ export class ChannelWebhooks {
 
   /** Drops every cached runtime (a plugin was replaced, revoked or reloaded). */
   invalidateAll(): void {
+    this.generation++;
     this.runtimes.clear();
   }
 
@@ -143,13 +147,15 @@ export class ChannelWebhooks {
     return secure(await this.respond(connectionId, request, signal));
   }
 
-  private async runtime(connectionId: string): Promise<Runtime> {
+  private async runtime(connectionId: string, deadline: AbortSignal): Promise<Runtime> {
     const ttl = this.deps.runtimeCacheMs ?? WEBHOOK_RUNTIME_CACHE_MS;
     const now = Date.now();
     const hit = this.runtimes.get(connectionId);
     if (hit && hit.expiresAt > now) return hit.value;
-    const value = await this.deps.connections.runtime(connectionId);
-    if (ttl > 0) {
+    const generation = this.generation;
+    const value = await raceAbort(this.deps.connections.runtime(connectionId), deadline);
+    // A plugin instance changed while fetching: use the value once, keep no stale instance
+    if (ttl > 0 && generation === this.generation) {
       this.runtimes.delete(connectionId);
       while (this.runtimes.size >= WEBHOOK_RUNTIME_CACHE_MAX) {
         const oldest = this.runtimes.keys().next().value;
@@ -167,7 +173,27 @@ export class ChannelWebhooks {
     signal: AbortSignal,
   ): Promise<ChannelWebhookResponse> {
     if (!UUID_RE.test(connectionId)) return notFound();
-    const row = await this.deps.connections.row(connectionId);
+    // One deadline for the whole request (DB lookups, handle, onEvent); also aborts when the
+    // platform hangs up
+    const deadline = AbortSignal.any([
+      signal,
+      AbortSignal.timeout(this.deps.handleTimeoutMs ?? WEBHOOK_HANDLE_TIMEOUT_MS),
+    ]);
+    try {
+      return await this.respondBefore(connectionId, request, deadline);
+    } catch (err) {
+      if (!(err instanceof WebhookDeadline)) throw err;
+      this.deps.log.warn("channel webhook timed out; the platform will retry", { connectionId });
+      return retryLater();
+    }
+  }
+
+  private async respondBefore(
+    connectionId: string,
+    request: ChannelWebhookRequest,
+    deadline: AbortSignal,
+  ): Promise<ChannelWebhookResponse> {
+    const row = await raceAbort(this.deps.connections.row(connectionId), deadline);
     if (
       row === undefined ||
       row.inboundMode !== "webhook" ||
@@ -179,8 +205,9 @@ export class ChannelWebhooks {
     }
     let runtime: Runtime;
     try {
-      runtime = await this.runtime(connectionId);
+      runtime = await this.runtime(connectionId, deadline);
     } catch (err) {
+      if (err instanceof WebhookDeadline) throw err;
       if (
         err instanceof ApiError &&
         (err.code === "channel.not_found" || err.code === "plugin.not_enabled")
@@ -196,11 +223,6 @@ export class ChannelWebhooks {
     const webhook = runtime.channel.webhook;
     if (webhook === undefined) return notFound();
 
-    // One deadline for the whole request; also aborts when the platform hangs up
-    const deadline = AbortSignal.any([
-      signal,
-      AbortSignal.timeout(this.deps.handleTimeoutMs ?? WEBHOOK_HANDLE_TIMEOUT_MS),
-    ]);
     let result: ChannelWebhookResult;
     try {
       result = await raceAbort(

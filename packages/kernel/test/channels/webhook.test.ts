@@ -562,6 +562,44 @@ describe("ChannelWebhooks.handle", () => {
     expect(code(res)).toBe("plugin.unavailable");
   });
 
+  it("a slow runtime lookup on a cache miss → 503 at the deadline", async () => {
+    const res = await make({ handleTimeoutMs: 100, runtime: () => new Promise(() => {}) }).call();
+    expect(res.status).toBe(503);
+    expect(code(res)).toBe("channel.webhook_retry");
+  });
+
+  it("a slow connection row lookup → 503 at the deadline", async () => {
+    const webhooks = new ChannelWebhooks({
+      connections: { row: () => new Promise(() => {}), runtime: (async () => ({})) as never },
+      inbound: { onEvent: async () => {} },
+      log: { warn: () => {} },
+      handleTimeoutMs: 100,
+    });
+    const res = await webhooks.handle(ID, request, new AbortController().signal);
+    expect(res.status).toBe(503);
+  });
+
+  it("a runtime fetched across invalidateAll is used once but not cached", async () => {
+    let release: () => void = () => {};
+    let calls = 0;
+    const { webhooks, call } = make({
+      runtime: async () => {
+        calls++;
+        if (calls === 1) await new Promise<void>((r) => (release = r));
+        return { row: {}, config: {}, channel: { webhook: { handle: twoEvents } } };
+      },
+    });
+    const pending = call();
+    await new Promise((r) => setTimeout(r, 20));
+    webhooks.invalidateAll(); // a plugin instance changed mid-fetch
+    release();
+    expect((await pending).status).toBe(200);
+    await call();
+    expect(calls).toBe(2);
+    await call();
+    expect(calls).toBe(2);
+  });
+
   it("caches the runtime between requests until invalidated", async () => {
     const { webhooks, call, runtimeCalls } = make();
     await call();
