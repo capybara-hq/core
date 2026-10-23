@@ -19,7 +19,7 @@ Start a task in a worktree with `pnpm wt:new <branch>`; it branches from the ups
 - Start local dependencies: `docker compose -f docker/compose.dev.yaml up -d` (PostgreSQL 17 @ 5432, Valkey 8 @ 6379)
 - After `pnpm install`, run `pnpm lint && pnpm typecheck && pnpm check && pnpm test`
 
-Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change. Task-specific guides live in [.agents/skills/](.agents/skills/) (`onboarding`, `contributing` and `reviewing-prs` are synced from `capybara-hq/.github` and must be edited there) (`.claude/skills` is a symlink to it). On Windows, enable symlinks before cloning (`git config --global core.symlinks true`, plus Developer Mode) or Claude Code won't find them.
+Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change. Task-specific guides live in [.agents/skills/](.agents/skills/) (`onboarding`, `contributing` and `reviewing-prs` are synced from `capybara-hq/.github` and must be edited there; `.claude/skills` is a symlink to it). On Windows, enable symlinks before cloning (`git config --global core.symlinks true`, plus Developer Mode) or Claude Code won't find them.
 
 ## Larger changes: design first
 
