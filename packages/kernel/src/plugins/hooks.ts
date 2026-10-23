@@ -211,6 +211,10 @@ export class HookRegistry {
     let frozen: HookPayloads[K];
     try {
       enabled = await Promise.race([this.d.enabledPlugins(payload.orgId), abortOf(signal)]);
+      if (!all.some((e) => enabled.has(e.src.name))) return { allowed: true };
+      // Cost (M-2): clone + deep-freeze copies the whole request on every attempt, multi-MB base64
+      // media included. Accepted: freezing in place would freeze the object that goes into the log.
+      // The clone is skipped when has() is false or no enabled plugin has a hook on this mount.
       frozen = deepFreeze(structuredClone(payload));
     } catch (err) {
       if (signal.aborted) throw signal.reason;

@@ -1770,7 +1770,12 @@ export class PluginHost {
     return new Set([...this.sources].flatMap(([n, s]) => (s.source === "builtin" ? [n] : [])));
   }
 
-  /** 在该组织启用的插件：`plugin_org_configs.enabled` 加上全部内置插件；每次查询，不缓存。 */
+  /**
+   * 在该组织启用的插件：`plugin_org_configs.enabled` 加上全部内置插件；每次查询，不缓存。
+   * Cost (M-4): hooks call this on every run, so one PG query per model attempt and per tool call.
+   * Acceptable for now; if a cache is ever added, give it a short TTL so an org disabling a plugin
+   * takes effect quickly.
+   */
   async enabledPlugins(orgId: string): Promise<Set<string>> {
     const set = await queryEnabledPlugins(this.deps.db, orgId);
     for (const n of this.builtinNames()) set.add(n);
