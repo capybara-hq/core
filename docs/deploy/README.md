@@ -139,6 +139,10 @@ starting. Read its output with `docker compose logs init`.
 - **Shutdown:** the kernel services and `web` run with `init: true`, so signals reach node. The kernel
   services have `stop_grace_period: 40s`, which is longer than the kernel's drain
   (`pluginHost.drainSeconds`, default 30, inside a 30-second shutdown budget).
+- **Plugin packages:** each kernel container unpacks installed plugins into its own anonymous volume
+  (`/var/lib/capybara/plugins`, declared by the image). It's a cache rebuilt from PostgreSQL and
+  object storage, so it isn't shared between containers (the same rule as on Kubernetes below), and
+  `docker compose down -v` may delete it.
 - **Scaling workers:** `docker compose up -d --scale worker=N`.
 - **Image source:** `CAPYBARA_VERSION` picks the tag. Its default is the version the compose file
   belongs to: every release tags its commit `v<version>`, and the compose file at that tag defaults

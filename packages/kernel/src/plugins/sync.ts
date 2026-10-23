@@ -11,7 +11,8 @@ import { extractPluginPackage, type PluginPackageLimits } from "./package.js";
  *
  * - 目录里有校验文件 {@link MARKER} 且其中每个文件的 sha256 都对得上 → 直接复用（同一 sha 重启不再下载）；
  * - 否则取包（`blobs.get` 按记录的存放位置读取并校验 sha256），先解到同级的临时目录、写好宿主包链接与校验文件，
- *   再改名换入；目标位置的残缺目录先删掉。并发的同机进程各自解到自己的临时目录，改名失败时以已就位且完整的为准。
+ *   再改名换入；目标位置的残缺目录先原子地改名移开再删（不原地删除，见 {@link clearBrokenRoot}）。并发的同机进程
+ *   各自解到自己的临时目录，改名失败时以已就位且完整的为准。
  * - `node_modules/` 下为 {@link HOST_PROVIDED_PACKAGES} 建指向宿主副本的符号链接：插件 import 的 SDK 与 zod
  *   就是内核用的那一份（同一模块实例）。插件目录不在宿主 `node_modules` 的上游，别的包一概解析不到。
  */
@@ -31,7 +32,7 @@ export const MARKER = ".capybara-package.json";
 const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
-interface Marker {
+export interface Marker {
   sha256: string;
   entry: string;
   /** 包内文件（相对包根） → sha256。 */
@@ -153,7 +154,8 @@ export async function syncPackage(
     // 换入：解包期间同机另一个进程可能已换入完整的目录——以它为准，不删；否则先移走残缺目录
     const done = await intact(root, sha);
     if (done) return urlOf(done);
-    if (await exists(root)) await rm(root, { recursive: true, force: true });
+    const restored = await clearBrokenRoot(root, sha);
+    if (restored) return urlOf(restored);
     try {
       await rename(tmp, root);
     } catch (e) {
@@ -165,6 +167,36 @@ export async function syncPackage(
     return urlOf(marker);
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Gets a broken package root out of the way before the rename. Never `rm` in place: another process
+ * on the same volume may have renamed its complete directory in after our `intact` check. The root is
+ * renamed aside atomically and checked again there: if it turns out complete, it is put back (or,
+ * when yet another process filled the root meanwhile, that one is used) and returned; otherwise the
+ * moved-aside copy is deleted. Exported for tests.
+ */
+export async function clearBrokenRoot(root: string, sha: string): Promise<Marker | undefined> {
+  if (!(await exists(root))) return undefined;
+  const aside = join(dirname(root), `.old-${sha.slice(0, 16)}-${randomBytes(4).toString("hex")}`);
+  try {
+    await rename(root, aside);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw e;
+  }
+  try {
+    const moved = await intact(aside, sha);
+    if (!moved) return undefined;
+    try {
+      await rename(aside, root);
+      return moved;
+    } catch {
+      return await intact(root, sha);
+    }
+  } finally {
+    await rm(aside, { recursive: true, force: true }).catch(() => {});
   }
 }
 

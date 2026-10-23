@@ -62,9 +62,10 @@ x-kernel: &kernel
   init: true
   stop_grace_period: 40s
   restart: unless-stopped
-  # Unpacked plugin packages: the same path in every kernel service (rebuilt from PostgreSQL).
-  volumes:
-    - plugins:/var/lib/capybara/plugins
+  # Unpacked plugin packages live in /var/lib/capybara/plugins, which the image declares as a
+  # VOLUME: every container gets its own anonymous volume. Never share one between containers: it
+  # is a cache rebuilt from PostgreSQL / object storage, and containers of different image
+  # versions (a rolling upgrade) would keep re-extracting each other's packages.
   depends_on:
     init:
       condition: service_completed_successfully
@@ -342,7 +343,6 @@ volumes:
   pgdata:
   valkeydata:
   seaweedfsdata:
-  plugins:
 
 configs:
   seaweedfs-s3:
