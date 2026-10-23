@@ -1,5 +1,6 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+  "newlineKind": "lf",
   "mainEntryPointFilePath": "<projectFolder>/dist/index.d.ts",
   "compiler": {
     "overrideTsconfig": {
@@ -27,7 +28,7 @@
     "extractorMessageReporting": {
       "default": { "logLevel": "warning" },
       "ae-missing-release-tag": { "logLevel": "none" },
-      "ae-forgotten-export": { "logLevel": "none" }
+      "ae-forgotten-export": { "logLevel": "warning" }
     },
     "tsdocMessageReporting": { "default": { "logLevel": "none" } }
   }

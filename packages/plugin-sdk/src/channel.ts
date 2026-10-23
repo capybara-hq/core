@@ -1,5 +1,5 @@
 import type { ZodTypeAny } from "zod";
-import type { CardAction, OutboundMessage } from "./cards.js";
+import type { CardAction, Locale, OutboundMessage } from "./cards.js";
 
 /**
  * 消息的投递目标。群聊里的 `threadId` 是话题**根消息的 `messageId`**（内核用它把同一话题归到一个会话，
@@ -81,7 +81,7 @@ export interface ChannelSendArgs {
   message: OutboundMessage;
   signal: AbortSignal;
   /** 连接所属组织的界面语言：插件自己渲染的文案（卡片按钮、降级文本里的固定词）按它选择。 */
-  locale: "zh" | "en";
+  locale: Locale;
   /**
    * 幂等键（可选）：不超过 40 个 `[A-Za-z0-9_-]` 字符，同一条逻辑消息的每次重试（崩溃后其他副本续投、
    * 可重试失败后重发）都相同——内核由「会话 + 事件 seq」或「卡片 + 状态」稳定哈希得到。平台支持幂等发送

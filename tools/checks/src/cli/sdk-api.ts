@@ -1,4 +1,4 @@
 import { checkSdkApi } from "../sdk-api.js";
-import { report } from "./report.js";
+import { reportEn } from "./report.js";
 
-report("SDK API snapshot", await checkSdkApi({ update: false }));
+reportEn("SDK API snapshot", await checkSdkApi({ update: false }));

@@ -287,7 +287,7 @@ export interface ChannelConnectArgs {
 export interface ChannelSendArgs {
     config: unknown;
     idempotencyKey?: string;
-    locale: "zh" | "en";
+    locale: Locale;
     message: OutboundMessage;
     signal: AbortSignal;
     target: ChannelTarget;
@@ -668,7 +668,7 @@ export type EmbedParentMessage = {
     protocol: typeof EMBED_PROTOCOL;
     type: "init";
     token: string;
-    locale: "zh" | "en";
+    locale: Locale;
     theme: "dark" | "light";
     tokens: Record<string, string>;
     context: {
@@ -833,15 +833,14 @@ export interface InboundSender {
 export interface InputForm {
     fields: {
         key: string;
-        label: Text_2;
-        description?: Text_2;
+        label: LocalizedText;
+        description?: LocalizedText;
         schema: ParamSchema;
         multiSelect?: boolean;
         allowOther?: boolean;
         required?: boolean;
     }[];
-    // Warning: (ae-forgotten-export) The symbol "Text_2" needs to be exported by the entry point index.d.ts
-    title: Text_2;
+    title: LocalizedText;
     url?: string;
 }
 
@@ -883,10 +882,19 @@ export interface Lease {
 }
 
 // @public
+export type Locale = "zh" | "en";
+
+// @public
 export interface LocalizedName {
     en: string;
     zh: string;
 }
+
+// @public
+export type LocalizedText = {
+    zh: string;
+    en: string;
+} | string;
 
 // @public
 export interface Logger {
@@ -1418,8 +1426,6 @@ export interface ProviderOpaque {
 // @public
 export function questionRenderableInline(form: InputForm): boolean;
 
-// Warning: (ae-forgotten-export) The symbol "Locale" needs to be exported by the entry point index.d.ts
-//
 // @public
 export function renderCardAsText(card: ChannelCard, locale: Locale): string;
 
@@ -1784,7 +1790,7 @@ export type UiPlace = "conversation" | "page";
 export interface UiRenderArgs {
     accountId: string;
     conversationId?: string;
-    locale: "zh" | "en";
+    locale: Locale;
     orgId: string;
     role: UiRole;
     signal: AbortSignal;

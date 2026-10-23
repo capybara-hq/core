@@ -16,3 +16,15 @@ export function report(name: string, findings: Finding[]): void {
   }
   console.log(`${name}检查通过`);
 }
+
+/** `report` with English pass / fail text (new checks are English; see AGENTS.md "Language"). */
+export function reportEn(name: string, findings: Finding[]): void {
+  for (const f of findings) {
+    console.error(`${relative(root, f.file)}:${f.line} ${f.rule} ${f.message}`);
+  }
+  if (findings.length > 0) {
+    console.error(`\n${name} check failed: ${findings.length} finding(s)`);
+    process.exit(1);
+  }
+  console.log(`${name} check passed`);
+}

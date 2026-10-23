@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { checkSdkApiChangeset, SDK_API_REPORT } from "../sdk-api-changeset.js";
-import { report, root } from "./report.js";
+import { reportEn, root } from "./report.js";
 
 // PR-only check: `pnpm check:sdk-api-changeset --base <base sha>` compares <base>...HEAD.
 const { values } = parseArgs({ options: { base: { type: "string" } } });
@@ -33,7 +33,7 @@ const added = lines(
 ).filter((f) => f.endsWith(".md") && !f.endsWith("/README.md"));
 const changesets = new Map(added.map((f) => [f, readFileSync(join(root, f), "utf8")]));
 
-report(
+reportEn(
   "SDK API changeset",
   checkSdkApiChangeset(changed, changesets, { reportAtBase }).map((f) => ({
     ...f,
