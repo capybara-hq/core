@@ -113,6 +113,11 @@ IM long connections (Slack Socket Mode, Lark long connection) now run **only on 
 - New settings: `channels.shareSlack` (fair share across gateway replicas), and
   `channels.webhookBaseUrl` / `channels.webhookMaxBodyBytes` (optional webhook inbound). Migration
   0038 adds `inbound_mode` to channel connections. Existing connections stay on `long_connection`.
+- Migration 0039 lets a channel card be recorded before it is sent (`message_id` may be NULL while a
+  card is pending). Replicas older than 0.1.0 don't expect that: during a rolling update, an old
+  replica that handles the update of such a card fails and retries it until the event is skipped. To
+  avoid it, stop the old `worker` replicas before starting the new ones (or accept that a card update
+  may be lost while both versions run).
 
 ### 0.1.0: the official catalog is off by default
 

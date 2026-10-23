@@ -144,6 +144,12 @@ starting. Read its output with `docker compose logs init`.
   object storage, so it isn't shared between containers (the same rule as on Kubernetes below), and
   `docker compose down -v` may delete it.
 - **Scaling workers:** `docker compose up -d --scale worker=N`.
+- **Scaling gateways:** `docker compose up -d --scale gateway=2` (or more) for IM long connections;
+  the replicas share the connections (see [Roles and scaling](#roles-and-scaling)). This works while
+  the gateway's webhook port is unpublished. A fixed mapping such as `127.0.0.1:8081:8080` can't be
+  bound twice, so with webhooks and several gateways publish a port range instead
+  (`"127.0.0.1:8081-8082:8080"`, one host port per replica) and let the HTTPS proxy balance across
+  those ports, or put a load balancer service inside compose in front of the gateways.
 - **Image source:** `CAPYBARA_VERSION` picks the tag. Its default is the version the compose file
   belongs to: every release tags its commit `v<version>`, and the compose file at that tag defaults
   to that version's images. When `CAPYBARA_IMAGE_PREFIX` is
@@ -372,7 +378,8 @@ replica.
         CAPYBARA_CHANNELS__WEBHOOK_BASE_URL: https://im.example.com
     gateway:
       environment:
-        CAPYBARA_HTTP__TRUST_PROXY: 172.18.0.1   # the HTTPS proxy as the gateway sees it
+        # The HTTPS proxy as the gateway sees it (here: a proxy on the host; see below)
+        CAPYBARA_HTTP__TRUST_PROXY: 172.23.0.1
       ports:
         - "127.0.0.1:8081:8080"
   ```
@@ -380,14 +387,18 @@ replica.
   port is reachable without going through `web`, so a hop count would let any caller forge
   `X-Forwarded-For`. In compose, set `CAPYBARA_GATEWAY_TRUST_PROXY` to the proxy's address as the
   gateway sees it (a comma-separated list of addresses / CIDRs works too), or leave it `false` (the
-  default). A proxy on the host connects from the bridge gateway address: the Gateway shown by
-  `docker network inspect capybara_default`.
+  default). A proxy on the host connects from the bridge gateway of the `default` network, the only
+  network the gateway is on:
+  `docker network inspect capybara_default --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'`.
 - **Limits:**
   - Bodies over `channels.webhookMaxBodyBytes` (default 1 MiB) get 413.
   - Unknown connections, disabled connections and connections that aren't in webhook mode all get
     the same 404.
   - The kernel acks only after every event has been queued. If queueing fails or takes longer than
     10 s, it answers 503, so the platform retries. Duplicate deliveries are dropped.
+  - A gateway replica that doesn't have the channel plugin loaded right now (during a rolling
+    upgrade, or while the plugin is being disabled or upgraded there) answers 503
+    `plugin.unavailable`, and the platform retries, usually reaching another replica.
 
 Platform setup:
 

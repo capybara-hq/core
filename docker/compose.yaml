@@ -242,7 +242,9 @@ services:
     # proxy's address or CIDR as the gateway sees it (a proxy on the host connects from your
     # bridge gateway: the Gateway of `docker network inspect capybara_default`), or leave it
     # false. Never 1: the port is reachable directly, and a hop count would let any caller forge
-    # X-Forwarded-For.
+    # X-Forwarded-For. Several gateways (--scale gateway=2, for long connections) can't share this
+    # fixed host port: publish a range instead ("127.0.0.1:8081-8082:8080", one port per replica)
+    # and let the proxy balance across them.
     # ports:
     #   - "127.0.0.1:${CAPYBARA_GATEWAY_PORT:-8081}:8080"
 
