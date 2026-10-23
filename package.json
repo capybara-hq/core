@@ -27,6 +27,7 @@
     "check:web-ui": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/web-ui.ts",
     "check:plugin-pack": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/plugin-pack.ts",
     "check:test-plugins": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/test-plugins.ts",
+    "check:synced-skills": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/synced-skills.ts",
     "check:package-schemas": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/package-schemas.ts",
     "gen:package-schemas": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-package-schemas.ts",
     "gen:config-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-config-docs.ts",
