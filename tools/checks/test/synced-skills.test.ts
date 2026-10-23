@@ -1,7 +1,17 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  cpSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { checkSyncedSkills, inspectSyncedSkills, skillHash } from "../src/synced-skills.js";
 
 const fixtures = fileURLToPath(new URL("../fixtures/synced-skills/", import.meta.url));
@@ -56,5 +66,46 @@ describe("checkSyncedSkills", () => {
     const r = inspectSyncedSkills(fixture("ignored"));
     expect(r.findings).toEqual([]);
     expect(r.checked).toEqual([]);
+  });
+});
+
+describe("checkSyncedSkills on a copy", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const copyClean = () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), "synced-skills-")));
+    dirs.push(d);
+    cpSync(fixture("clean"), d, { recursive: true });
+    return d;
+  };
+
+  it("is unaffected by CRLF line endings in the checked-out files", () => {
+    const d = copyClean();
+    const skill = join(d, ".agents/skills/demo");
+    for (const f of readdirSync(skill)) {
+      const file = join(skill, f);
+      writeFileSync(file, readFileSync(file, "utf8").replaceAll("\n", "\r\n"));
+    }
+    expect(checkSyncedSkills(d)).toEqual([]);
+  });
+
+  it("ignores untracked files next to a clean synced copy in a git repo", () => {
+    const d = copyClean();
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: d, stdio: "pipe" });
+    git("init", "-q");
+    git("add", ".");
+    writeFileSync(join(d, ".agents/skills/demo/.DS_Store"), "junk");
+    expect(checkSyncedSkills(d)).toEqual([]);
+  });
+
+  it("still catches an edit to a tracked file in a git repo", () => {
+    const d = copyClean();
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: d, stdio: "pipe" });
+    git("init", "-q");
+    git("add", ".");
+    writeFileSync(join(d, ".agents/skills/demo/extra.md"), "edited\n");
+    expect(checkSyncedSkills(d).map((x) => x.rule)).toEqual(["synced-skill-edited"]);
   });
 });

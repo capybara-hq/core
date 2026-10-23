@@ -1,6 +1,7 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { Finding } from "./source.js";
 
 /**
@@ -54,6 +55,32 @@ function readFiles(dir: string, prefix = ""): SkillFile[] {
   );
 }
 
+/**
+ * The synced skill's files for hashing: only git-tracked ones (the sync side hashes the committed
+ * tree, so an untracked `.DS_Store` or editor file must not matter). Outside a git work tree
+ * (temp dirs in tests) every file counts.
+ */
+function skillFiles(root: string, dir: string): SkillFile[] {
+  const r = spawnSync("git", ["ls-files", "-z", "--", relative(root, dir) || "."], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  if (r.status !== 0) return readFiles(dir);
+  const prefix = relative(root, dir);
+  const tracked = r.stdout
+    .split("\0")
+    .filter((f) => f !== "")
+    .map((f) => ({ path: f.slice(prefix.length + 1), abs: join(root, f) }))
+    .filter((f) => existsSync(f.abs));
+  // `git ls-files` run from a root that is not a work tree of its own lists the enclosing repo's
+  // files, which is still correct; an empty answer means nothing is tracked here (temp dir).
+  if (tracked.length === 0) return readFiles(dir);
+  return tracked.map((f) => ({
+    path: f.path.split(sep).join("/"),
+    content: readFileSync(f.abs, "utf8").replaceAll("\r\n", "\n"),
+  }));
+}
+
 /** metadata.* values of the frontmatter, with the 1-based line of each. */
 function metadata(skillMd: string): Map<string, { value: string; line: number }> {
   const out = new Map<string, { value: string; line: number }>();
@@ -101,7 +128,7 @@ export function inspectSyncedSkills(root: string): SyncedSkillsResult {
       });
       continue;
     }
-    if (skillHash(readFiles(dir)) !== sha.value) {
+    if (skillHash(skillFiles(root, dir)) !== sha.value) {
       result.findings.push({
         file: skillFile,
         line,
