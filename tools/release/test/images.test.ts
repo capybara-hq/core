@@ -171,12 +171,16 @@ describe("planImages", () => {
     expect(names(p)).toEqual(IMAGES.map((i) => i.image));
     expect(p.push).toBe(true);
     expect(latestOf(p)).toBe(false);
+    // The GitHub release of a backport doesn't become the repository's latest release either.
+    expect(p.latest).toBe(false);
   });
 
   it("a new highest version takes latest; no tags yet is eligible", () => {
     const tags = all("missing");
     const existingTags = ["0.1.0", "0.1.1", "latest", "sha256-abc.sig"];
     expect(latestOf(planImages({ ...base, mode: "manual", tags, existingTags }))).toBe(true);
+    expect(planImages({ ...base, mode: "manual", tags, existingTags }).latest).toBe(true);
+    expect(planImages({ ...base, version: "0.3.0-rc.1", mode: "manual", tags }).latest).toBe(false);
     expect(latestOf(planImages({ ...base, mode: "manual", tags, existingTags: [] }))).toBe(true);
     // A rebuild of the version that has latest keeps it.
     expect(

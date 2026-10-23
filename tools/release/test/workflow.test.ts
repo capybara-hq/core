@@ -37,12 +37,13 @@ describe("release.yml", () => {
     expect(wf.permissions).toEqual({});
   });
 
-  it("has the version-pr and publish jobs and the three image jobs", () => {
+  it("has the version-pr and publish jobs, the three image jobs and the release tag", () => {
     expect(Object.keys(wf.jobs).sort()).toEqual([
       "images-build",
       "images-plan",
       "images-publish",
       "publish",
+      "release-tag",
       "version-pr",
     ]);
   });
@@ -62,6 +63,15 @@ describe("release.yml", () => {
       expect(jobText(job)).not.toMatch(
         /NPM_TOKEN|NODE_AUTH_TOKEN|id-token|pnpm release|npm publish/,
       );
+    });
+
+    it("versions with pnpm version-packages, which also syncs the compose image tag", () => {
+      const cs = job.steps.find((s) => s.uses?.startsWith("changesets/action@"));
+      expect(cs?.with?.version).toBe("pnpm version-packages");
+      const pkg = JSON.parse(
+        readFileSync(fileURLToPath(new URL("../../../package.json", import.meta.url)), "utf8"),
+      ) as { scripts: Record<string, string> };
+      expect(pkg.scripts["version-packages"]).toBe("changeset version && pnpm sync:image-tag");
     });
 
     it("uses RELEASE_PR_TOKEN when set and logs a notice when it is not", () => {
@@ -190,6 +200,39 @@ describe("release.yml", () => {
       expect(run).toContain(
         "index:org.opencontainers.image.source=https://github.com/capybara-hq/core",
       );
+    });
+  });
+
+  describe("release-tag", () => {
+    const job = wf.jobs["release-tag"] as Job;
+    const run = job.steps.find((s) => s.run?.includes("gh release create"));
+
+    it("runs only after the images of this run were pushed and tagged", () => {
+      expect(job.needs).toEqual(["images-plan", "images-publish"]);
+      expect(job.if).toBe("needs.images-plan.outputs.push == 'true'");
+    });
+
+    it("can only write contents: no packages, npm token or id-token, nothing checked out", () => {
+      expect(job.permissions).toEqual({ contents: "write" });
+      expect(jobText(job)).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|id-token|actions\/checkout/);
+    });
+
+    it("tags exactly github.sha v<version>, idempotently", () => {
+      expect(run?.env).toMatchObject({
+        SHA: `\${{ github.sha }}`,
+        VERSION: `\${{ needs.images-plan.outputs.version }}`,
+        LATEST: `\${{ needs.images-plan.outputs.latest }}`,
+      });
+      const r = run?.run ?? "";
+      expect(r).toContain('tag="v$VERSION"');
+      expect(r).toMatch(/if gh release view "\$tag"[^\n]*; then\s+echo[^\n]*\s+exit 0/);
+      expect(r).toContain('--target "$SHA"');
+    });
+
+    it("marks prereleases and versions below latest like the image latest rule", () => {
+      const r = run?.run ?? "";
+      expect(r).toContain("*-*) args+=(--prerelease)");
+      expect(r).toMatch(/if \[ "\$LATEST" != "true" \]; then\s+args\+=\(--latest=false\)/);
     });
   });
 

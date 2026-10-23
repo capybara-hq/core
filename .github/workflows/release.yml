@@ -53,10 +53,17 @@ name: Release
 #   imagetools create`. Runs only when every build succeeded, so a release never tags half the images
 #   from one run; the next run builds whatever is still missing.
 #
+# - release-tag: after images-publish pushed the version tag of every image it built, tags the commit
+#   `v<version>` (a GitHub release, marked prerelease / not latest like the images), so the
+#   compose.yaml of a release can be fetched by tag. The compose default image tag equals the
+#   apps/capybara version in every commit (`pnpm version-packages` rewrites it in the Version
+#   Packages PR; check:release-metadata enforces it).
+#
 # Least privilege: version-pr can write contents and PRs but has no id-token and no npm token;
 # publish can only read contents, gets id-token (provenance / trusted publishing) and the npm token;
 # the images jobs get only `packages` (read to look up tags, write to push) and no npm token or
 # id-token (buildx attestations are pushed as registry manifests, not signed with OIDC).
+# release-tag gets only `contents: write` and checks nothing out.
 #
 # Secrets:
 # - NPM_TOKEN: a granular npm access token with read and write access to the @capybara-hq packages.
@@ -124,10 +131,14 @@ jobs:
           GITHUB_TOKEN, which does not trigger ci.yml. Trigger CI on it by hand (close and reopen the
           PR, or push an empty commit)."
       # With pending changesets, open / update the "Version Packages" PR. No `publish` input, so this
-      # step never publishes; without changesets it does nothing.
+      # step never publishes; without changesets it does nothing. `pnpm version-packages` runs
+      # `changeset version` and then rewrites the compose default image tag (docker/compose.yaml,
+      # docker/.env.example) to the new apps/capybara version, so the PR carries that bump too
+      # (check:release-metadata fails when they drift).
       - name: Version Packages PR
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
+          version: pnpm version-packages
           title: "chore: version packages"
           commit: "chore: version packages"
         env:
@@ -211,6 +222,7 @@ jobs:
     outputs:
       version: ${{ steps.plan.outputs.version }}
       push: ${{ steps.plan.outputs.push }}
+      latest: ${{ steps.plan.outputs.latest }}
       build: ${{ steps.plan.outputs.build }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -370,3 +382,38 @@ jobs:
             --annotation "index:org.opencontainers.image.version=$VERSION" \
             "${sources[@]}"
           docker buildx imagetools inspect "$IMAGE:$VERSION"
+
+  release-tag:
+    # After the images of a version were pushed: tag the commit they were built from `v<version>` and
+    # create a GitHub release, so operators can fetch the compose.yaml (and docs) of a release. Only
+    # the run that pushed images tags (a later push with the same version would point the tag at a
+    # newer tree); it is idempotent, so "Re-run failed jobs" retries it at the same commit.
+    needs: [images-plan, images-publish]
+    if: needs.images-plan.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # create the tag and the release
+    steps:
+      - name: Tag v<version> and create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          VERSION: ${{ needs.images-plan.outputs.version }}
+          LATEST: ${{ needs.images-plan.outputs.latest }}
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
+            echo "release $tag already exists"
+            exit 0
+          fi
+          args=(--repo "$REPO" --target "$SHA" --title "$tag")
+          case "$VERSION" in *-*) args+=(--prerelease) ;; esac
+          if [ "$LATEST" != "true" ]; then
+            args+=(--latest=false)
+          fi
+          notes="Images: ghcr.io/capybara-hq/capybara-{api,worker,gateway,web}:$VERSION
+          Compose: https://github.com/$REPO/blob/$tag/docker/compose.yaml
+          Changes: see the CHANGELOG.md of each package at this tag."
+          gh release create "$tag" "${args[@]}" --notes "$notes"

@@ -149,6 +149,7 @@ describe("imageOutputs", () => {
       [
         "version=0.1.1",
         "push=true",
+        "latest=true",
         "build=true",
         'matrix=[{"image":"capybara-api","dockerfile":"docker/kernel.Dockerfile","roles":"api","cache":"kernel","latest":true}]',
         "",

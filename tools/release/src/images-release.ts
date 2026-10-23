@@ -62,6 +62,7 @@ export function imageOutputs(plan: ImagePlan): string {
   const outputs: Record<string, string> = {
     version: plan.version,
     push: String(plan.push),
+    latest: String(plan.latest),
     build: String(plan.build.length > 0),
     matrix: JSON.stringify(plan.build),
   };

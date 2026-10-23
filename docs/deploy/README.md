@@ -140,7 +140,9 @@ starting. Read its output with `docker compose logs init`.
   services have `stop_grace_period: 40s`, which is longer than the kernel's drain
   (`pluginHost.drainSeconds`, default 30, inside a 30-second shutdown budget).
 - **Scaling workers:** `docker compose up -d --scale worker=N`.
-- **Image source:** `CAPYBARA_VERSION` (default `0.1.0`) picks the tag. When `CAPYBARA_IMAGE_PREFIX` is
+- **Image source:** `CAPYBARA_VERSION` picks the tag. Its default is the version the compose file
+  belongs to: every release tags its commit `v<version>`, and the compose file at that tag defaults
+  to that version's images. When `CAPYBARA_IMAGE_PREFIX` is
   unset, images come from `ghcr.io/capybara-hq/`. Set it to empty to use local tags. To build the
   images from a checkout, use `docker/compose.build.yaml`:
 

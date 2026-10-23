@@ -10,7 +10,9 @@ images takes most of the time; on a typical connection it's under 5 minutes.
 
 ```bash
 git clone https://github.com/capybara-hq/core.git
-cd core/docker
+cd core
+git checkout "$(git describe --tags --abbrev=0 --match 'v*')"   # the latest release
+cd docker
 {
   echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
   echo "CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)"   # encrypts stored secrets: back it up
@@ -23,7 +25,9 @@ docker compose ps -a     # init exits 0, the other services become healthy
 ```
 
 `.env.example` lists every optional setting: the image version, the port, the public URL, and an
-admin password file instead of the setup page.
+admin password file instead of the setup page. The compose file pulls the images of its own version
+(`CAPYBARA_VERSION` defaults to it), which is why the commands check out a release tag: on `main`,
+the compose file may name a version whose images are still being published.
 
 1. Open <http://localhost:3000>. The setup page creates the enterprise admin and the first
    organization. Enter the setup token from `.env` (`grep CAPYBARA_SETUP_TOKEN .env`): without it,

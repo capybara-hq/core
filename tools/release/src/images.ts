@@ -121,6 +121,11 @@ export interface ImagePlan {
   version: string;
   /** Push to ghcr.io (false: build only, or nothing to do). */
   push: boolean;
+  /**
+   * `version` takes `latest` (no prerelease part, not below any stable tag). The git tag job uses it
+   * to decide whether the GitHub release becomes the repository's latest release.
+   */
+  latest: boolean;
   build: PlannedImage[];
   reason: string;
 }
@@ -133,12 +138,13 @@ export function planImages(input: PlanImagesInput): ImagePlan {
   const latest = takesLatest(version, input.existingTags ?? []);
   if (mode === "dry-run") {
     const build = IMAGES.map((t) => ({ ...t, latest }));
-    return { version, push: false, build, reason: "dry run: build only" };
+    return { version, push: false, latest, build, reason: "dry run: build only" };
   }
   if (mode === "auto" && !input.npmReleased) {
     return {
       version,
       push: false,
+      latest,
       build: [],
       reason:
         "nothing is on npm yet: the first release (npm and images) is published only by running " +
@@ -166,7 +172,7 @@ export function planImages(input: PlanImagesInput): ImagePlan {
     build.length === 0
       ? `every image already has tag ${version}`
       : `missing tag ${version}: ${build.map((t) => t.image).join(", ")}`;
-  return { version, push: build.length > 0, build, reason };
+  return { version, push: build.length > 0, latest, build, reason };
 }
 
 /** Follows a registry `Link: <...>; rel="next"` header (relative to the registry). */

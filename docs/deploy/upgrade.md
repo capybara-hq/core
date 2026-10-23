@@ -22,17 +22,25 @@ the admin console or with `capybara plugins install`. See
 
 ### Docker Compose
 
-Set the new tag in `.env` (`CAPYBARA_VERSION=<version>`; the default follows the `compose.yaml` you
-have), then:
+Each release tags its commit `v<version>` (GitHub release), and the `compose.yaml` at that tag
+defaults `CAPYBARA_VERSION` to that version. So the usual upgrade moves the compose file and the
+images together. In a clone used as in the README quick start:
 
 ```bash
+git fetch --tags
+git checkout v<version>      # compose.yaml and .env.example of the new release
+cd docker
 docker compose pull
 docker compose up -d
 ```
 
+Compare your `.env` with the new `.env.example` before `up`. If you pinned `CAPYBARA_VERSION` in
+`.env`, change or remove it: a pinned value wins over the compose default. Running new images with an
+old compose file (only setting `CAPYBARA_VERSION`) works when the release notes say the compose file
+didn't change; otherwise take the compose file of the release too.
+
 `init` runs on every `up` and re-applies migrations. If it fails, compose doesn't start the new `api`,
-`worker` and `gateway`: read `docker compose logs init`. When you update `compose.yaml` itself from
-the new release, compare your `.env` with the new `.env.example`.
+`worker` and `gateway`: read `docker compose logs init`.
 
 ### Kubernetes
 

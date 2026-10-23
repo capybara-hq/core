@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { checkImageTag } from "./image-tag.js";
 import type { Finding } from "./source.js";
 
 /** The repository every published package points at (F4); npm provenance checks it against the build. */
@@ -26,10 +27,11 @@ function mustBePrivate(dir: string): boolean {
  * `"private": true`) needs a `description`, a `license`, an https `homepage` and `repository` =
  * `{ type: "git", url: REPOSITORY_URL, directory: <its dir> }` (npm provenance rejects a publish whose
  * repository does not match); published packages outside `plugins/` also need a `files` allowlist.
- * Packages that must stay off npm must be private. Also runs `checkImageVersions`.
+ * Packages that must stay off npm must be private. Also runs `checkImageVersions` and `checkImageTag`
+ * (the compose default image tag).
  */
 export function checkReleaseMetadata(root: string): Finding[] {
-  const out: Finding[] = checkImageVersions(root);
+  const out: Finding[] = [...checkImageVersions(root), ...checkImageTag(root)];
   for (const group of WORKSPACE_DIRS) {
     const base = join(root, group);
     if (!existsSync(base)) continue;

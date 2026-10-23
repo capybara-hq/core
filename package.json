@@ -18,6 +18,8 @@
     "dev:web": "pnpm --filter @capybara-hq/web dev",
     "check": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/all.ts",
     "changeset": "changeset",
+    "version-packages": "changeset version && pnpm sync:image-tag",
+    "sync:image-tag": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/sync-image-tag.ts",
     "check:migrations": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/migrations.ts",
     "check:deps": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/deps.ts",
     "check:plugin-state": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/plugin-state.ts",

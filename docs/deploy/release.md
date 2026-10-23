@@ -10,6 +10,9 @@ never on pull requests. One run publishes:
   `capybara-web`, for linux/amd64 and linux/arm64. Each has SLSA provenance (mode=max) and an SBOM.
   - The tag is the version of `apps/capybara` (`@capybara-hq/capybara`, private and versioned by
     changesets), plus `latest` (see below).
+- **A git tag `v<version>` and a GitHub release** (the `apps/capybara` version) on the commit the
+  images were built from, once every image of the run is pushed. Prereleases are marked prerelease,
+  and a version below `latest` (a backport) doesn't become the latest release.
 - **Workflow artifact `npm-plugin-packages`:** the plugin tgz files published in that run, with
   `SHA512SUMS` and `integrity.json`. It is kept for 90 days and is useful for enterprise catalogs.
 
@@ -75,7 +78,15 @@ or bumping a version before 0.1.0, publishes nothing.
 4. Check the result:
    - `npm view @capybara-hq/kernel version`;
    - `docker buildx imagetools inspect ghcr.io/capybara-hq/capybara-api:0.1.0`;
-   - `docker compose pull` with `docker/compose.yaml`.
+   - the tag `v0.1.0` and its GitHub release exist;
+   - `docker compose pull` with `docker/compose.yaml` at that tag.
+
+**If a changeset merges before the first manual run:** the Version Packages PR opens as usual. If it
+merges too, `main` carries the bumped versions (say 0.1.1) and the first manual run publishes those:
+npm, images and the tag `v0.1.1`. `0.1.0` is then never published. That is consistent, because the
+Version Packages PR also moved the compose default image tag to 0.1.1 (`pnpm version-packages`), so
+the compose file always names the version that the same commit releases. To keep 0.1.0 as the first
+release, don't merge the Version Packages PR before the manual run.
 
 Locally, after `pnpm build`, `pnpm release --dry-run` shows the npm plan, and
 `pnpm release:images --mode dry-run` shows the image plan.
@@ -92,6 +103,21 @@ Locally, after `pnpm build`, `pnpm release --dry-run` shows the npm plan, and
 The two jobs are deliberately separate. `changeset version` rewrites versions in the `version-pr`
 checkout. The `publish` job checks out exactly `github.sha` on a fresh runner and refuses to run with
 uncommitted `package.json` changes, so only reviewed versions ship.
+
+### The compose image tag
+
+`docker/compose.yaml` pulls `${CAPYBARA_VERSION:-<version>}`, and `docker/.env.example` shows the
+same version. The workflow runs `pnpm version-packages` (`changeset version`, then `pnpm
+sync:image-tag`) for the Version Packages PR, so the PR rewrites both to the new `apps/capybara`
+version. `check:release-metadata` fails when they differ, for example after running `changeset
+version` by hand: run `pnpm sync:image-tag`.
+
+### Git tags and GitHub releases
+
+The `release-tag` job runs after `images-publish`, only in the run that pushed images. It tags
+`github.sha` `v<version>` and creates a GitHub release; when the release already exists it does
+nothing. If it fails, re-run the failed job: it tags the same commit. A later push with the same
+version doesn't tag, because it would point the tag at a newer tree than the images.
 
 ### Image versions and the fixed group
 
