@@ -83,16 +83,30 @@ const TRUST_PROXY_NAMES = new Set(["loopback", "linklocal", "uniquelocal"]);
  */
 export function trustProxyEntryProblem(entry: string): string | undefined {
   if (TRUST_PROXY_NAMES.has(entry)) return undefined;
-  const [addr = "", prefix, extra] = entry.split("/");
+  const [addr = "", range, extra] = entry.split("/");
   const family = isIP(addr);
-  if (family === 0 || extra !== undefined || (prefix !== undefined && !/^\d+$/.test(prefix))) {
+  if (family === 0 || extra !== undefined) return `"${entry}" is not an IP address or CIDR`;
+  if (range === undefined) return undefined;
+  let bits: number;
+  if (/^\d+$/.test(range)) {
+    bits = Number(range);
+  } else if (family === 4 && isIP(range) === 4) {
+    // A dotted netmask (10.0.0.0/255.0.0.0), as proxy-addr accepts: it must be contiguous.
+    const mask = range.split(".").reduce((n, o) => n * 256 + Number(o), 0);
+    const ones = mask.toString(2).replace(/^0+/, "");
+    if (mask !== 0 && (ones.length !== 32 || /01/.test(ones))) {
+      return `"${entry}" has a non-contiguous netmask`;
+    }
+    bits = mask === 0 ? 0 : (ones.match(/1/g) ?? []).length;
+  } else {
     return `"${entry}" is not an IP address or CIDR`;
   }
-  if (prefix === undefined) return undefined;
-  const bits = Number(prefix);
   if (bits > (family === 6 ? 128 : 32)) return `"${entry}" has an out-of-range prefix`;
-  if (bits === 0)
+  // proxy-addr turns an IPv4-mapped IPv6 range (::ffff:a.b.c.d/N) into the IPv4 range /N-96.
+  const mapped = family === 6 && /^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(addr);
+  if (bits === 0 || (mapped && bits - 96 <= 0)) {
     return `"${entry}" trusts every address; list the proxies' own addresses or CIDRs`;
+  }
   return undefined;
 }
 

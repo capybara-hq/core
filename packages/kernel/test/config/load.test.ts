@@ -223,6 +223,27 @@ describe("http.trustProxy", () => {
     ).toEqual(["192.168.0.0/16", "10.1.2.3"]);
   });
 
+  it("accepts contiguous dotted netmasks and refuses /0 in every spelling", () => {
+    expect(
+      trust({ CAPYBARA_HTTP__TRUST_PROXY: "10.0.0.0/255.0.0.0,192.168.1.0/255.255.255.0" }),
+    ).toEqual(["10.0.0.0/255.0.0.0", "192.168.1.0/255.255.255.0"]);
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:10.0.0.0/104" })).toEqual([
+      "::ffff:10.0.0.0/104",
+    ]);
+    for (const v of [
+      "0.0.0.0/0.0.0.0",
+      "10.0.0.0/255.0.255.0",
+      "::ffff:0.0.0.0/96",
+      "::ffff:10.0.0.1/90",
+      "fd00::/255.0.0.0",
+    ]) {
+      expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v }), v).toThrow(ConfigError);
+    }
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:0.0.0.0/96" })).toThrow(
+      /trusts every address/,
+    );
+  });
+
   it("refuses malformed entries and /0 prefixes", () => {
     for (const v of ["proxy.local", "10.0.0.0/33", "10.0.0.0/8/1", ",", "0.0.0.0/0", "::/0"]) {
       expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v }), v).toThrow(ConfigError);
