@@ -5,42 +5,61 @@ on:
     branches: [main]
   pull_request:
 
-# 同一 PR 推了新提交就取消旧的运行；main 上的运行不取消。
+# A new push to a PR cancels its older run; runs on main are never cancelled.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# 分支保护只需要求 ci-ok（汇总下面全部任务，跳过算通过）。
+# Branch protection requires only ci-ok, which aggregates every job below.
+#
+# PRs run what the diff affects; pushes to main run everything. The plan comes from
+# tools/ci/src/affected.ts (rules and their tests live there; AGENTS.md "CI and checks" lists them):
+# - ci (lint, typecheck, pnpm check, plugin packing, commitlint): always, in full;
+# - test: the affected workspace packages only (4 shards when the kernel tests run, else 1);
+# - web, visual: when apps/web or packages/design changed;
+# - e2e: when anything the e2e stack is built from or loads changed;
+# - docs-only diffs skip test / web / e2e / visual; root config, the lockfile, .github/**, tools/ci/**,
+#   packages/testing/**, unknown files, or a diff that can't be computed run everything.
 jobs:
-  # 只改文档的 PR 跳过重任务（测试分片、web、e2e、visual）；判定见 .github/scripts/code-changed.sh。
-  # push 到 main 一律全跑。
   changes:
     runs-on: ubuntu-latest
     outputs:
-      code: ${{ steps.filter.outputs.code }}
+      test: ${{ steps.plan.outputs.test }}
+      test-dirs: ${{ steps.plan.outputs.test-dirs }}
+      test-shards: ${{ steps.plan.outputs.test-shards }}
+      test-shard-total: ${{ steps.plan.outputs.test-shard-total }}
+      web: ${{ steps.plan.outputs.web }}
+      visual: ${{ steps.plan.outputs.visual }}
+      e2e: ${{ steps.plan.outputs.e2e }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - id: filter
+      # The plan script is plain erasable TypeScript run by node 24; no pnpm install needed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: plan
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # 拿不到差异时按有代码改动处理（宁可全跑，不可漏跑）。
+          # When in doubt, run everything: a missed run is worse than a wasted one.
           if [ "$EVENT" != "pull_request" ]; then
-            code=true
-          elif git diff --name-only "$BASE...$HEAD_SHA" > changed-files.txt; then
+            node tools/ci/src/cli.ts --all "push to main"
+          elif ! git diff --name-only "$BASE...$HEAD_SHA" > changed-files.txt; then
+            node tools/ci/src/cli.ts --all "could not diff $BASE...$HEAD_SHA"
+          elif grep -qE '^(\.github/|tools/ci/)' changed-files.txt; then
+            # Decided here, not by the script: the PR may have changed the script itself.
             cat changed-files.txt
-            code=$(.github/scripts/code-changed.sh < changed-files.txt)
+            node tools/ci/src/cli.ts --all "CI definition changed (.github/** or tools/ci/**)"
           else
-            code=true
+            cat changed-files.txt
+            node tools/ci/src/cli.ts < changed-files.txt
           fi
-          echo "code=$code"
-          echo "code=$code" >> "$GITHUB_OUTPUT"
 
-  # 便宜的检查与产物：总是跑。测试在 test 分片里。
+  # Cheap or whole-repo checks and build artifacts: always run in full. Tests are in the test job.
   ci:
     runs-on: ubuntu-latest
     steps:
@@ -71,17 +90,18 @@ jobs:
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
 
-  # vitest 按文件分 4 片并行（2 核 runner 上整跑约 18 分钟）；每片各自起 Testcontainers。
+  # vitest by file, sharded (the full suite takes ~18 min on a 2-core runner); each shard starts its own
+  # Testcontainers. On PRs only the affected package directories run (test-dirs, empty = everything).
   test:
-    name: test (${{ matrix.shard }}/4)
+    name: test (${{ matrix.shard }}/${{ needs.changes.outputs.test-shard-total }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.test == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: ${{ fromJSON(needs.changes.outputs.test-shards) }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -90,11 +110,19 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec vitest run --shard=${{ matrix.shard }}/4
+      - env:
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ needs.changes.outputs.test-shard-total }}
+          DIRS: ${{ needs.changes.outputs.test-dirs }}
+        run: |
+          echo "test dirs: ${DIRS:-<all>}"
+          # Word splitting of DIRS is intended: space-separated directories, none of them with spaces.
+          # shellcheck disable=SC2086
+          pnpm exec vitest run --passWithNoTests --shard="$SHARD/$TOTAL" $DIRS
 
   web:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,7 +136,7 @@ jobs:
 
   e2e:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     # 本地实测 e2e 本身约 10s（含 Testcontainers 启动），CI 另需依赖安装、Playwright 与镜像拉取。
     # Chromium 按 lockfile 里 @playwright/test 的版本缓存在 ~/.cache/ms-playwright；命中时只装系统依赖
@@ -154,7 +182,7 @@ jobs:
 
   visual:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.visual == 'true'
     runs-on: ubuntu-latest
     # 基准截图只在此镜像中生成与比对（版本与 apps/web 的 @playwright/test 一致，升级时同步修改）。
     container: mcr.microsoft.com/playwright:v1.64.1-noble
@@ -178,31 +206,31 @@ jobs:
             apps/web/test-results
           retention-days: 7
 
-  # 汇总：分支保护只要求这一项。changes 与 ci 必须成功；其余任务在有代码改动时必须成功，
-  # 只改文档时允许跳过。always()：上游失败时也要跑到这里并报失败，而不是被跳过（跳过 = 通过）。
+  # Aggregate: the only required check. changes and ci must succeed; every other job must succeed
+  # when the plan says it runs, and may be skipped only when the plan says it doesn't. always():
+  # report failure when an upstream job failed instead of being skipped (skipped = passed).
   ci-ok:
     if: always()
     needs: [changes, ci, test, web, e2e, visual]
     runs-on: ubuntu-latest
     steps:
       - env:
-          CODE: ${{ needs.changes.outputs.code }}
           CHANGES: ${{ needs.changes.result }}
           CI_JOB: ${{ needs.ci.result }}
-          TEST: ${{ needs.test.result }}
-          WEB: ${{ needs.web.result }}
-          E2E: ${{ needs.e2e.result }}
-          VISUAL: ${{ needs.visual.result }}
+          TEST: ${{ needs.changes.outputs.test }}:${{ needs.test.result }}
+          WEB: ${{ needs.changes.outputs.web }}:${{ needs.web.result }}
+          E2E: ${{ needs.changes.outputs.e2e }}:${{ needs.e2e.result }}
+          VISUAL: ${{ needs.changes.outputs.visual }}:${{ needs.visual.result }}
         run: |
-          echo "code=$CODE changes=$CHANGES ci=$CI_JOB test=$TEST web=$WEB e2e=$E2E visual=$VISUAL"
+          # Each job is "<planned>:<result>".
+          echo "changes=$CHANGES ci=$CI_JOB test=$TEST web=$WEB e2e=$E2E visual=$VISUAL"
           fail=0
           [ "$CHANGES" = "success" ] || fail=1
           [ "$CI_JOB" = "success" ] || fail=1
           for r in "$TEST" "$WEB" "$E2E" "$VISUAL"; do
-            if [ "$CODE" = "true" ]; then
-              [ "$r" = "success" ] || fail=1
-            else
-              [ "$r" = "success" ] || [ "$r" = "skipped" ] || fail=1
-            fi
+            case "$r" in
+              true:success | false:success | false:skipped) ;;
+              *) fail=1 ;;
+            esac
           done
           exit "$fail"

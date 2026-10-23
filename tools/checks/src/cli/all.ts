@@ -8,6 +8,7 @@ import { checkPluginPack } from "../plugin-pack.js";
 import { checkPluginPermissions } from "../plugin-permissions.js";
 import { checkPluginState } from "../plugin-state.js";
 import type { Finding } from "../source.js";
+import { checkTestPlugins } from "../test-plugins.js";
 import { checkToolDesign } from "../tool-design.js";
 import { checkWebUi } from "../web-ui.js";
 import { migrationDirs, pluginDirs, requireScanTargets, toolDesignDirs } from "./dirs.js";
@@ -29,6 +30,7 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
     name: "界面规范",
     run: () => checkWebUi(join(root, "apps/web/src"), join(root, "packages/design/src")),
   },
+  { name: "测试插件", run: () => checkTestPlugins(root) },
 ];
 
 let failed = 0;
