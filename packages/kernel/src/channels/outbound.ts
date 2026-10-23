@@ -660,6 +660,10 @@ class Delivery {
     } catch (err) {
       this.d.log.warn("cannot send channel skip notice", { err: errMsg(err) });
     }
+    // A card row recorded for the skipped event deliberately stays `pending`: the send may have
+    // reached the platform even though it failed for us, so a click on it must still be accepted.
+    // That is safe: Ruling A13 (same connection and chat), the plugin's signature checks and the
+    // approver / asker authorization in decide / answer still apply.
     await this.advance(seq, { draft: null });
     this.seen = seq;
     return true;
@@ -846,6 +850,8 @@ class Delivery {
    * and the card resent with the same idempotency key. An existing `sent` row is never touched.
    */
   private async recordCard(kind: "approval" | "question", id: string): Promise<void> {
+    // Best-effort guard only (the lease can be lost right after it): correctness rests on
+    // ON CONFLICT DO NOTHING below and on advance() being conditional on last_seq
     if (this.lease.lost) throw new DeliveryLostError();
     await this.d.db
       .insertInto("channel_card_messages")
@@ -1005,10 +1011,12 @@ class Delivery {
 
   /**
    * 已发出的卡片消息；不是本连接发的（或在投递目标建立之前）返回 undefined。
-   * A `pending` row has no message to update. Events are delivered in order, so the card's own
-   * event set `message_id` before any later update is handled; a row still `pending` here means the
-   * card was never delivered (its event was skipped after repeated failures), so the update is
-   * skipped rather than applied to nothing.
+   * A row without `message_id` has no message to update. Events are delivered in order, so the
+   * card's own event set `message_id` before any later update is handled; a row without one here
+   * means the card was never delivered (its event was skipped after repeated failures), so the
+   * update is skipped rather than applied to nothing. Only `message_id` decides: `status` is
+   * informational, because a replica still on the pre-0039 code fills `message_id` without setting
+   * `status`, leaving a delivered card `pending` during a rolling upgrade.
    */
   private async cardMessageOf(
     kind: "approval" | "question",
@@ -1016,14 +1024,14 @@ class Delivery {
   ): Promise<{ messageId: string; target: ChannelTarget } | undefined> {
     const r = await this.d.db
       .selectFrom("channel_card_messages")
-      .select(["message_id", "status", "target"])
+      .select(["message_id", "target"])
       .where("conversation_id", "=", this.conversationId)
       .where("connection_id", "=", this.s.row.id)
       .where("card_kind", "=", kind)
       .where("card_id", "=", id)
       .executeTakeFirst();
     if (!r) return undefined;
-    if (r.status !== "sent" || r.message_id === null) {
+    if (r.message_id === null) {
       this.d.log.warn("channel card update skipped: the card was never delivered", {
         conversationId: this.conversationId,
         kind,

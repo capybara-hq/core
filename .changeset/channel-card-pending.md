@@ -11,3 +11,5 @@ resent with the same idempotency key; a card update never targets a card without
 Migration `0039_channel_card_pending.sql` makes `message_id` nullable and adds `status`. The fake
 channel server gains `delayNext(path, delayMs, { count, onlyCards })`, which delays the send /
 update response while the message is already visible.
+Known limitation (Ruling R5): Slack ignores `idempotencyKey`, so a crash between the send and
+`advance` can show a duplicate card on Slack whose first copy does not reflect the decision.
