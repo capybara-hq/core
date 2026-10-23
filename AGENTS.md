@@ -15,6 +15,7 @@ Capybara：开源的企业级 Agent 平台（TypeScript、pnpm monorepo、Apache
 | `plugins/*` | 官方插件（`example-counter` 是参考实现） |
 | `tools/*` | 仓库内部工具与自定义检查 |
 | `tools/pack-plugin` | 插件打包工具（`pnpm pack-plugin` / `pack-plugins`，esbuild 打成 npm-pack tgz 并生成静态清单） |
+| `tools/worktree` | 开工用的 worktree 工具（`pnpm wt:new` / `wt:rm` / `wt:ls`），配合 `.claude/hooks/branch-safety.sh` |
 | `docs/` | 设计文档与计划 |
 | `skills/` | 面向 Agent 的技能（`.claude/skills` 软链到此处） |
 
@@ -81,8 +82,16 @@ pnpm typecheck   # tsc -b
 pnpm test        # vitest run
 pnpm exec vitest run <路径>   # 单个测试：从仓库根跑（根配置带 @capybara-hq/source 条件，双副本测试需要）；别用 pnpm --filter <包> exec vitest
 pnpm check       # 自定义检查
+pnpm wt:new <branch>   # 开任务 worktree（见「分支与 worktree」）
 docker compose -f docker/compose.dev.yaml up -d   # 本地 postgres + valkey
 ```
+
+## 分支与 worktree
+
+- Claude 会话开在主 checkout、不另开窗口；主 checkout 的 HEAD 只停 `main`，随时可当基线用。
+- 任务一律在 worktree 里做：`pnpm wt:new <branch> [--from origin/main] [--no-install]` 建到 `.claude/worktrees/<目录>`（已 gitignore；远端有该分支就 checkout，否则从 `--from` 以 `--no-track` 新建；新目录独立 `pnpm install`），之后在该目录里工作（cd 进去或用绝对路径）；合并后 `pnpm wt:rm <branch>` 清理（分支不删）。分支名必须是第一个参数。
+- `.claude/hooks/branch-safety.sh`（PreToolUse，接在 `.claude/settings.json`）强制执行：禁止推送 `main`；禁止在主 checkout 里切到 `feat/` `fix/` `docs/` `chore/` `test/` `refactor/` 分支（worktree 里不限）。
+- 两个 worktree 不要同时起开发栈（`docker/compose.dev.yaml`、内核、`pnpm dev:web`）：端口相同会撞，要并行就先停掉另一边。
 
 ## 提交
 
