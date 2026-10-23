@@ -124,10 +124,12 @@ export interface FakeSlackOptions {
   /** Extra Slack apps served alongside the default one (whose tokens are `appToken` / `botToken`). */
   apps?: FakeSlackApp[];
   /**
-   * Redeliver unacked envelopes (Slack Socket Mode semantics: an envelope not acked is retried). When
-   * the socket an envelope went to closes before the client acked it, the envelope goes again to the
-   * app's next open socket, with `retry_attempt` (1, 2, …) and `retry_reason: "timeout"`. Default
-   * off, so tests that leave an envelope unacked on purpose don't see it again in a later connection.
+   * Redeliver unacked envelopes (after Slack Socket Mode: an envelope not acked is retried). The fake
+   * redelivers on socket close only: when the socket an envelope went to closes before the client
+   * acked it, the envelope goes again to the app's next open socket, with `retry_attempt` (1, 2, …)
+   * and `retry_reason: "timeout"`. Real Slack also retries on an ack timeout while the socket stays
+   * open; the fake does not. Default off, so tests that leave an envelope unacked on purpose don't
+   * see it again in a later connection.
    */
   redeliverUnacked?: boolean;
 }
