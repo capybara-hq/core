@@ -39,8 +39,13 @@ Complete these before dispatching the release. Secret and variable names are the
   - Trusted publishing (OIDC; repository `capybara-hq/core`, workflow `release.yml`) can replace it
     later: when `NPM_TOKEN` is unset the workflow logs "relying on npm trusted publishing" and npm >= 11.5
     uses the OIDC token (the job has `id-token: write`). This path is untested live.
-- [ ] **`RELEASE_PR_TOKEN` (optional, recommended).** Repository secret: a fine-grained PAT or GitHub App
-  token with Contents and Pull requests read/write on `capybara-hq/core`.
+- [ ] **`RELEASE_PR_TOKEN` (optional, recommended).** Repository secret: a maintainer's fine-grained PAT
+  with Contents and Pull requests read/write on `capybara-hq/core`.
+  - Use a maintainer PAT, not a GitHub App token. With an App token the Version Packages PR is authored
+    by `<app>[bot]`, which the shared `issue-linked` gate does not exempt (it exempts users with write
+    access and `github-actions[bot]`, `dependabot[bot]`, `renovate[bot]`) and which is not on the CLA
+    allowlist, so the PR is blocked. If an App is used anyway, add its bot to `EXEMPT_BOTS` in
+    capybara-hq/.github and to the allowlist in `cla.yml` first.
   - With it, Version Packages PRs are opened and updated with that token, so `ci.yml` runs on them and
     `ci-ok` reports.
   - Without it the workflow falls back to `GITHUB_TOKEN`, whose pushes do not trigger `ci.yml`: `ci-ok`
@@ -60,6 +65,9 @@ Complete these before dispatching the release. Secret and variable names are the
 - [ ] **`protect-main` ruleset.** A ruleset named `protect-main` is active on `main`: pull request
   required, status checks `ci-ok` and `issue-linked` required. The branch **`cla-signatures` is
   excluded** and no ruleset covers it (the CLA workflow pushes signatures there).
+- [ ] **No changeset-bearing PR before the first release.** Between merging M7 and the manual first run,
+  merge no PR that adds a changeset. Any such PR makes `version-pr` open a Version Packages PR, and
+  merging that moves the first release to 0.1.1. Hold those PRs until step 2 is done.
 - [ ] **CLA.** Legal review of [CLA.md](../../../CLA.md) is done, and the draft banner is removed, before
   any external PR is merged (CONTRIBUTING.md: external PRs are not merged while the CLA is a draft).
 
@@ -86,6 +94,8 @@ Prerequisite: section 0 complete, M7 merged to `main`, `main` CI green.
 - [ ] **Dry run.** Actions → Release → Run workflow on `main` with `dry_run: true`. Expect: packages are
   packed, `npm publish --dry-run` succeeds, all four images build for both architectures (8 jobs) and
   nothing is pushed. Fix anything red; a dry run may also run from another ref.
+  - The publish step passes `--provenance` together with `--dry-run`; that combination is untested. If
+    `npm publish --dry-run --provenance` fails, drop `--provenance` for dry runs in the publish step.
 - [ ] **Real run.** Run the workflow on `main` with `dry_run: false` (a real manual publish is refused
   from any other ref). Expect: green run, the `npm-plugin-packages` artifact is attached.
 - [ ] **npm.** `npm view @capybara-hq/plugin-sdk version` prints `0.1.0`; the same for `kernel`,
@@ -93,6 +103,9 @@ Prerequisite: section 0 complete, M7 merged to `main`, `main` CI green.
 - [ ] **Images.** `docker buildx imagetools inspect ghcr.io/capybara-hq/capybara-api:0.1.0` lists
   `linux/amd64` and `linux/arm64`; repeat for `capybara-worker`, `capybara-gateway`, `capybara-web`. The
   `latest` tag exists on each.
+  - If `latest` is missing (the planner treats the first image release as the one where no image
+    package exists yet), add it by hand for each image:
+    `docker buildx imagetools create -t ghcr.io/capybara-hq/<image>:latest ghcr.io/capybara-hq/<image>:0.1.0`.
 - [ ] **Package settings.** Each of the four ghcr packages is **Public** and "Manage Actions access"
   lists `capybara-hq/core` with Write.
 - [ ] **Tag and release.** The tag `v0.1.0` and its GitHub release exist.
@@ -104,11 +117,16 @@ Prerequisite: section 2 done. Use a clean amd64 Linux host (Docker Compose v2.23
 an arm64 machine. Do not use a repository checkout: copy only `docker/compose.yaml` and
 `docker/.env.example`.
 
-- [ ] Copy both files, `cp .env.example .env`, fill in the five required values (see
-  [docs/deploy/README.md](../../deploy/README.md#first-start)), run `docker compose up -d`, and
+This step is the first real proof that compose works from the two copied files: the CI smoke test always
+runs from a checkout. `compose.yaml` keeps a `build:` context for the inactive `sandbox` profile; compose
+should ignore inactive services, but if `docker compose up -d` complains about the missing build context,
+record it as a known issue.
+
+- [ ] Copy both files, create `.env` with the five required values using the commands in
+  [docs/deploy/README.md](../../deploy/README.md#first-start), run `docker compose up -d`, and
   **start the timer**.
-- [ ] Expect: images pull without login; `docker compose ps -a` shows `init` exited 0 and every other
-  service healthy; `http://localhost:3000` shows the setup page.
+- [ ] Expect: images pull without login; `docker compose ps -a` shows the two one-shot containers
+  `createbuckets` and `init` exited 0 and every other service healthy; `http://localhost:3000` shows the setup page.
 
 ## 4. Web login and installing a plugin from npm
 

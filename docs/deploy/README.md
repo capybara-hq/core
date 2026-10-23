@@ -35,18 +35,33 @@ is the exception: it needs a full checkout (see [Sandbox](#sandbox-optional)).
 ```bash
 git clone https://github.com/capybara-hq/core.git
 cd core/docker
-cp .env.example .env
 ```
 
-Fill in the required values in `.env`:
+Create `.env` from `.env.example` with the five required values generated. Run this in the shell (do
+not paste it into `.env`: compose does not run `$(...)`):
 
 ```bash
-POSTGRES_PASSWORD=$(openssl rand -hex 24)       # letters and digits only: it goes into a URL
-CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)  # encrypts stored secrets: back it up
-CAPYBARA_S3_ACCESS_KEY=$(openssl rand -hex 24)  # hex only: embedded in SeaweedFS's JSON config
-CAPYBARA_S3_SECRET_KEY=$(openssl rand -hex 24)
-CAPYBARA_SETUP_TOKEN=$(openssl rand -hex 16)    # the web setup page asks for it
+grep -vE '^(POSTGRES_PASSWORD|CAPYBARA_MASTER_KEY|CAPYBARA_S3_ACCESS_KEY|CAPYBARA_S3_SECRET_KEY|CAPYBARA_SETUP_TOKEN)=' \
+  .env.example > .env
+{
+  echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
+  echo "CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)"
+  echo "CAPYBARA_S3_ACCESS_KEY=$(openssl rand -hex 24)"
+  echo "CAPYBARA_S3_SECRET_KEY=$(openssl rand -hex 24)"
+  echo "CAPYBARA_SETUP_TOKEN=$(openssl rand -hex 16)"
+} >> .env
 ```
+
+What the values are:
+
+- `POSTGRES_PASSWORD`: letters and digits only, because it goes into a URL.
+- `CAPYBARA_MASTER_KEY`: encrypts stored secrets; back it up.
+- `CAPYBARA_S3_ACCESS_KEY` / `CAPYBARA_S3_SECRET_KEY`: hex only, because they are embedded in
+  SeaweedFS's JSON config.
+- `CAPYBARA_SETUP_TOKEN`: the web setup page asks for it.
+
+To fill `.env` by hand instead, run each `openssl` command above and paste its **output** after the
+`=` of the matching line.
 
 Without `CAPYBARA_MASTER_KEY`, encrypted secrets (plugin, connector and channel credentials) can't be
 read. Keep a copy somewhere safe. To rotate it, see `masterKeyPrevious` in
@@ -56,7 +71,7 @@ Then start:
 
 ```bash
 docker compose up -d
-docker compose ps -a     # init exits 0; everything else becomes healthy
+docker compose ps -a     # createbuckets and init exit 0; everything else becomes healthy
 ```
 
 Open `http://localhost:3000` (`CAPYBARA_WEB_PORT` changes the port).

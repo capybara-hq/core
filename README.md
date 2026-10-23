@@ -24,7 +24,7 @@ cd docker
   echo "CAPYBARA_SETUP_TOKEN=$(openssl rand -hex 16)"     # the setup page asks for it
 } > .env
 docker compose up -d
-docker compose ps -a     # init exits 0, the other services become healthy
+docker compose ps -a     # createbuckets and init exit 0, the other services become healthy
 ```
 
 `.env.example` lists every optional setting: the image version, the port, the public URL, and an
