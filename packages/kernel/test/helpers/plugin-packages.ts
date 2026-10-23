@@ -130,7 +130,7 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
   const entry = `import { definePlugin } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { existsSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 const NAME = ${JSON.stringify(name)};
 const VERSION = ${JSON.stringify(o.version)};
 // 模块顶层代码：记一笔导入（测试「批准之前不执行插件代码」）

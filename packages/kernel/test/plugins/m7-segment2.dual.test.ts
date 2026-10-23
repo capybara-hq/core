@@ -302,7 +302,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     expect(await counts(PROBE)).toMatchObject({ "model.request": 0, "usage.report": 0 });
   });
 
-  it("2. a shared agent runs two turns: model / tool hooks counted, usage.report once per usage event", async () => {
+  it("2. a shared agent runs two turns: model / tool hooks counted, usage.report once per usage event on both replicas", async () => {
     const ag = await ok(0, "POST", `${base}/agents`, {
       definition: {
         name: "Planner",
@@ -322,15 +322,41 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     expect(String(result.content)).toContain("Todo list updated (1 items)");
     await turn(1, "echo:second turn");
 
+    // usage.report is asynchronous: wait until every usage event was delivered exactly once. Each
+    // replica's probe instance counts its own deliveries (`/whoami` on that replica); the queue may
+    // hand every job to one worker, so more echo turns run (bounded) until both instances delivered.
+    const delivered = async (i: 0 | 1) =>
+      (await ok(i, "GET", `/plugins/${PROBE}/whoami`)) as { instanceId: string; delivered: number };
+    let extra = 0;
+    const [d0, d1] = await waitFor(
+      async () => {
+        const all = await usageIds();
+        await waitFor(
+          () => deliveredOnce(PROBE, all),
+          30_000,
+          "usage.report for every usage event",
+        );
+        const both = [await delivered(0), await delivered(1)] as const;
+        if (both[0].delivered > 0 && both[1].delivered > 0) return both;
+        extra++;
+        await turn(extra % 2 === 0 ? 0 : 1, `echo:extra turn ${extra}`);
+        return undefined;
+      },
+      120_000,
+      "both replicas' probe instances delivered usage.report",
+      0,
+    );
+    expect(d0.instanceId).not.toBe(d1.instanceId);
+
     const all = await eventsOf(db, conv);
     const modelCalls = ofType(all, "model_call").length;
     const ids = await usageIds();
-    expect(modelCalls).toBe(3); // tool call + answer, then the echo
+    expect(modelCalls).toBe(3 + extra); // tool call + answer, the echo, then any extra echo turns
     expect(ids).toHaveLength(modelCalls);
     expect(new Set(ids).size).toBe(ids.length);
+    // every delivery ran on exactly one of the two instances
+    expect(d0.delivered + d1.delivered).toBe(ids.length);
 
-    // usage.report is asynchronous: wait until every usage event was delivered exactly once
-    await waitFor(() => deliveredOnce(PROBE, ids), 30_000, "usage.report for every usage event");
     const c = await waitFor(
       async () => {
         const v = await counts(PROBE, 1);
@@ -485,13 +511,27 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
       "usage queue drained",
       100,
     );
-    // the barrier's hooks ran through the whole turn
-    expect(await counts(BARRIER)).toMatchObject({
+    // the barrier's hooks ran through the whole turn (observe hooks are fire-and-forget: wait)
+    const barrierExpected = {
       "model.request": barrierBefore["model.request"] + modelCalls,
       "model.response": barrierBefore["model.response"] + modelCalls,
       "tool.preExecute": barrierBefore["tool.preExecute"] + 1,
       "tool.postExecute": barrierBefore["tool.postExecute"] + 1,
-    });
+    };
+    const barrierAfter = await waitFor(
+      async () => {
+        const v = await counts(BARRIER);
+        return (Object.keys(barrierExpected) as (keyof typeof barrierExpected)[]).every(
+          (m) => v[m] >= barrierExpected[m],
+        )
+          ? v
+          : undefined;
+      },
+      10_000,
+      "barrier hooks counted",
+      100,
+    );
+    expect(barrierAfter).toMatchObject(barrierExpected);
     // ... and the disabled probe's did not
     expect(await kvCounts(PROBE)).toEqual(settled);
 
