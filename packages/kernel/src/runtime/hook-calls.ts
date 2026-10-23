@@ -6,7 +6,7 @@ import type {
   Logger,
   ModelRequest,
 } from "@capybara-hq/plugin-sdk";
-import type { EventLog } from "../conversations/event-log.js";
+import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
@@ -72,12 +72,15 @@ export function fireObserve<K extends "model.response" | "tool.postExecute">(
  * provider never carries refs (the kernel resolves them to bytes or text placeholders), so this
  * normally returns the request unchanged; it only guards against a ref slipping through.
  */
-export function withoutMediaRefs(request: ModelRequest): ModelRequest {
+export function withoutMediaRefs(request: ModelRequest, log?: Pick<Logger, "warn">): ModelRequest {
   const hasRef = (b: ContentBlock) =>
     (b.type === "image" || b.type === "document") && b.source.kind === "ref";
   if (!request.messages.some((m) => typeof m.content !== "string" && m.content.some(hasRef))) {
     return request;
   }
+  log?.warn("attachment refs reached a model.request hook payload; stripped them", {
+    model: request.model,
+  });
   return {
     ...request,
     messages: request.messages.map((m) =>
@@ -93,58 +96,86 @@ export function withoutMediaRefs(request: ModelRequest): ModelRequest {
   };
 }
 
+/** Where a denial is recorded (conversation, run, actor and the idem key of its `hook_denied`). */
+export interface DenialSite {
+  orgId: string;
+  conversationId: string;
+  runId: string;
+  accountId?: string;
+  agentId?: string;
+  idemKey: string;
+}
+
+/** The `hook_denied` event of a denial (not model-visible: request building skips it). */
+export function hookDeniedEvent(
+  at: DenialSite,
+  mount: Extract<AvailableHook, "model.request" | "tool.preExecute">,
+  denial: HookDenial,
+  where: { step: number; attempt?: number; callId?: string },
+): AppendEvent & { type: "hook_denied"; payload: EventPayload<"hook_denied"> } {
+  return {
+    type: "hook_denied",
+    runId: at.runId,
+    idemKey: at.idemKey,
+    payload: {
+      mount,
+      plugin: denial.plugin,
+      reason: denial.reason,
+      cause: denial.cause,
+      step: where.step,
+      ...(where.attempt !== undefined && { attempt: where.attempt }),
+      ...(where.callId !== undefined && { callId: where.callId }),
+      ...(denial.detail !== undefined && { detail: denial.detail }),
+    },
+  };
+}
+
 /**
- * Writes a `hook_denied` event and a `hook.denied` audit entry in one transaction. The event is not
- * model-visible (request building skips it). For an R10 denial (`preflight`) the audit says that no
- * plugin ran and that the named plugin is only the first policy plugin on the mount.
+ * The `hook.denied` audit entry of a denial. For an R10 denial (`preflight`) it says that no plugin ran
+ * and that the named plugin is only the first policy plugin on the mount.
+ */
+export function hookDeniedAudit(
+  at: DenialSite,
+  payload: EventPayload<"hook_denied">,
+  denial: HookDenial,
+): AuditEntry {
+  return {
+    ...(at.accountId !== undefined && { actorAccountId: at.accountId }),
+    orgId: at.orgId,
+    action: "hook.denied",
+    target: at.conversationId,
+    detail: {
+      ...payload,
+      conversationId: at.conversationId,
+      runId: at.runId,
+      ...(at.agentId !== undefined && { agentId: at.agentId }),
+      ...(denial.preflight
+        ? { preflight: true, firstPolicyPlugin: denial.plugin, causedByPlugin: false }
+        : {}),
+    },
+  };
+}
+
+/** Audit entry shape (the argument of `audit()`). */
+export type AuditEntry = Parameters<typeof audit>[1];
+
+/**
+ * Writes a model request's `hook_denied` event and its audit entry in one transaction (the tool path
+ * writes them with the `tool_result` instead). Idempotent by idem key: a resumed run that finds the
+ * denial rethrows it before running the hooks again, so no second audit entry is written.
  */
 export async function recordHookDenial(
   d: { db: KernelDb; eventLog: EventLog },
-  at: {
-    orgId: string;
-    conversationId: string;
-    runId: string;
-    accountId?: string;
-    agentId?: string;
-    idemKey: string;
-  },
+  at: DenialSite,
   mount: Extract<AvailableHook, "model.request" | "tool.preExecute">,
   denial: HookDenial,
   where: { step: number; attempt?: number; callId?: string },
 ): Promise<void> {
-  // already recorded (a resumed run denied again): no second audit entry
   if (await d.eventLog.findByIdem(at.conversationId, at.idemKey)) return;
-  const payload: EventPayload<"hook_denied"> = {
-    mount,
-    plugin: denial.plugin,
-    reason: denial.reason,
-    cause: denial.cause,
-    step: where.step,
-    ...(where.attempt !== undefined && { attempt: where.attempt }),
-    ...(where.callId !== undefined && { callId: where.callId }),
-    ...(denial.detail !== undefined && { detail: denial.detail }),
-  };
+  const event = hookDeniedEvent(at, mount, denial, where);
   const written = await d.db.transaction().execute(async (t) => {
-    const out = await d.eventLog.append(
-      at.conversationId,
-      [{ type: "hook_denied", runId: at.runId, idemKey: at.idemKey, payload }],
-      t,
-    );
-    await audit(t, {
-      ...(at.accountId !== undefined && { actorAccountId: at.accountId }),
-      orgId: at.orgId,
-      action: "hook.denied",
-      target: at.conversationId,
-      detail: {
-        ...payload,
-        conversationId: at.conversationId,
-        runId: at.runId,
-        ...(at.agentId !== undefined && { agentId: at.agentId }),
-        ...(denial.preflight
-          ? { preflight: true, firstPolicyPlugin: denial.plugin, causedByPlugin: false }
-          : {}),
-      },
-    });
+    const out = await d.eventLog.append(at.conversationId, [event], t);
+    await audit(t, hookDeniedAudit(at, event.payload, denial));
     return out;
   });
   if (written.length > 0) {

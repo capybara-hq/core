@@ -119,7 +119,8 @@
       "model_unavailable": "模型不可用。",
       "provider_unavailable": "模型供应商列表暂时读不到。",
       "provider_error": "模型供应商出错。",
-      "storage_unavailable": "附件存储暂时不可用。"
+      "storage_unavailable": "附件存储暂时不可用。",
+      "hook_denied": "请求被插件「{plugin}」的策略拦截。"
     },
     "connector": {
       "not_found": "连接器不存在或已被删除。",

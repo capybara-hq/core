@@ -20,11 +20,13 @@ import { clipText } from "../plugins/hooks.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR, PluginUnloadedError } from "../plugins/inflight.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import {
+  type AuditEntry,
   type ConversationKindForHooks,
   fireObserve,
   type HookRunner,
+  hookDeniedAudit,
+  hookDeniedEvent,
   hookScope,
-  recordHookDenial,
 } from "../runtime/hook-calls.js";
 import type { WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
@@ -508,14 +510,29 @@ export class ToolPipeline {
     // tool.preExecute after policy and approval, before tool_call_started (F10)
     const hooks = this.deps.pluginHooks;
     const scope = hookScope(hooks, ctx);
-    const hookBase = scope && {
-      ...scope,
-      step: ctx.step,
-      callId: call.id,
-      toolKey: tool.key,
-      specHash: tool.specHash,
-      input,
-    };
+    if (scope) {
+      // sticky: a denial already logged for this call (e.g. an older log, or a crash right after it)
+      // is final: fail with the recorded reason, never re-run the hooks or execute the tool
+      const prior = await this.deps.eventLog.findByIdem(
+        ctx.conversationId,
+        idem.hookDenied(ctx.runId, call.id),
+      );
+      if (prior?.type === "hook_denied") {
+        return fail(hookDeniedText(prior.payload.plugin, prior.payload.reason), tool.key);
+      }
+    }
+    // payload only built when a tool hook is registered (zero overhead otherwise)
+    const hookBase =
+      scope && hooks && (hooks.has("tool.preExecute") || hooks.has("tool.postExecute"))
+        ? {
+            ...scope,
+            step: ctx.step,
+            callId: call.id,
+            toolKey: tool.key,
+            specHash: tool.specHash,
+            input,
+          }
+        : null;
     if (hooks && hookBase && hooks.has("tool.preExecute")) {
       let verdict: Awaited<ReturnType<HookRunner["run"]>>;
       try {
@@ -526,21 +543,30 @@ export class ToolPipeline {
         throw e;
       }
       if (!verdict.allowed) {
-        await recordHookDenial(
-          this.deps,
-          {
-            orgId: ctx.orgId,
-            conversationId: ctx.conversationId,
-            runId: ctx.runId,
-            accountId: ctx.accountId,
-            agentId: ctx.agentId,
-            idemKey: idem.hookDenied(ctx.runId, call.id),
-          },
-          "tool.preExecute",
-          verdict,
-          { step: ctx.step, callId: call.id },
+        // hook_denied, its audit entry and the tool_result in one transaction (no window where the
+        // denial is logged but the call has no result)
+        const site = {
+          orgId: ctx.orgId,
+          conversationId: ctx.conversationId,
+          runId: ctx.runId,
+          accountId: ctx.accountId,
+          agentId: ctx.agentId,
+          idemKey: idem.hookDenied(ctx.runId, call.id),
+        };
+        const event = hookDeniedEvent(site, "tool.preExecute", verdict, {
+          step: ctx.step,
+          callId: call.id,
+        });
+        await this.writeResult(
+          ctx,
+          call.id,
+          tool.key,
+          { content: hookDeniedText(verdict.plugin, verdict.reason), isError: true },
+          [event],
+          undefined,
+          [hookDeniedAudit(site, event.payload, verdict)],
         );
-        return fail(hookDeniedText(verdict.plugin, verdict.reason), tool.key);
+        return undefined;
       }
     }
 
@@ -1040,6 +1066,8 @@ export class ToolPipeline {
     },
     pre: AppendEvent[] = [],
     callAudit?: CallAudit,
+    /** Extra audit entries written in the same transaction (e.g. `hook.denied`). */
+    audits: AuditEntry[] = [],
   ): Promise<void> {
     const events: AppendEvent[] = [
       ...pre,
@@ -1050,12 +1078,14 @@ export class ToolPipeline {
         payload: { step: ctx.step, callId, toolKey, ...r },
       },
     ];
-    if (callAudit === undefined) {
+    if (callAudit === undefined && audits.length === 0) {
       await this.deps.eventLog.append(ctx.conversationId, events);
       return;
     }
     const written = await this.deps.db.transaction().execute(async (t) => {
       const out = await this.deps.eventLog.append(ctx.conversationId, events, t);
+      for (const a of audits) await audit(t, a);
+      if (callAudit === undefined) return out;
       await audit(t, {
         actorAccountId: ctx.accountId,
         orgId: ctx.orgId,

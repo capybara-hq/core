@@ -74,6 +74,10 @@ export function toolsUnavailableReminder(unavailable: readonly UnavailableTool[]
   return `${TOOLS_UNAVAILABLE_PREFIX}${unavailable.map((u) => `${u.ref} (${u.reason})`).join(", ")}`;
 }
 
+/** `run_failed` message of a model request denied by a policy hook (user-facing, never model-visible). */
+const modelDeniedText = (plugin: string, reason: string) =>
+  `Model request blocked by the "${plugin}" policy hook: ${reason}`;
+
 /** 可重试错误在同一模型上重试前的默认等待（供应商未给 retryAfterMs 时）。 */
 const DEFAULT_RETRY_DELAY_MS = 1000;
 
@@ -810,6 +814,20 @@ async function ladder(
         m.outcome === "bytes" ? [m.attachmentId] : [],
       );
       // model.request before model_call: a denied request is never logged as sent nor sent
+      if (scope) {
+        // sticky: this attempt's denial is already logged (crash after recording it) → fail the
+        // same way without running the hooks again
+        const prior = await deps.eventLog.findByIdem(
+          conversationId,
+          idem.hookDenied(runId, step, attempt),
+        );
+        if (prior?.type === "hook_denied") {
+          throw new RunError(
+            "run.hook_denied",
+            modelDeniedText(prior.payload.plugin, prior.payload.reason),
+          );
+        }
+      }
       if (scope && deps.hooks?.has("model.request")) {
         let verdict: Awaited<ReturnType<HookRunner["run"]>>;
         try {
@@ -821,7 +839,7 @@ async function ladder(
               attempt,
               provider: rung.ref.provider,
               model: rung.ref.model,
-              request: withoutMediaRefs(request),
+              request: withoutMediaRefs(request, deps.log),
             },
             signal,
           );
@@ -845,10 +863,7 @@ async function ladder(
             verdict,
             { step, attempt },
           );
-          throw new RunError(
-            "run.hook_denied",
-            `Model request blocked by the "${verdict.plugin}" policy hook: ${verdict.reason}`,
-          );
+          throw new RunError("run.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
         }
       }
       // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务

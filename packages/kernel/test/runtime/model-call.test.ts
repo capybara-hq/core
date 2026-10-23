@@ -1004,3 +1004,60 @@ describe("runModelStep", () => {
     });
   });
 });
+
+describe("model.request hooks", () => {
+  it("sticky: a logged denial for this attempt fails the step again without running the hooks or the model", async () => {
+    await say("hello");
+    await eventLog.append(conversationId, [
+      {
+        type: "hook_denied",
+        runId,
+        idemKey: `hook_denied:${runId}:1:1`,
+        payload: {
+          mount: "model.request",
+          plugin: "guard",
+          reason: "recorded reason",
+          cause: "deny",
+          step: 1,
+          attempt: 1,
+        },
+      },
+    ]);
+    const runs: string[] = [];
+    const hooked: ModelStepDeps = {
+      ...deps,
+      hooks: {
+        has: () => true,
+        run: async (mount) => {
+          runs.push(mount);
+          return { allowed: true };
+        },
+      },
+    };
+    let err: unknown;
+    try {
+      await runModelStep(hooked, {
+        orgId,
+        conversationId,
+        runId,
+        step: 1,
+        agent: agentWith(),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+        agentId: randomUUID(),
+        accountId,
+        conversationKind: "chat",
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RunError);
+    expect((err as RunError).code).toBe("run.hook_denied");
+    expect((err as RunError).message).toContain('"guard"');
+    expect((err as RunError).message).toContain("recorded reason");
+    expect(runs).toEqual([]);
+    expect(await ofType("model_call")).toEqual([]);
+  });
+});

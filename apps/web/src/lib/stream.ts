@@ -321,7 +321,14 @@ export type ChatItem =
       /** 所在运行已到终态（历史里的卡片不再提供「连接」）。 */
       closed: boolean;
     }
-  | { kind: "failed"; key: string; text: string; code: string };
+  | {
+      kind: "failed";
+      key: string;
+      text: string;
+      code: string;
+      /** `run.hook_denied`: the plugin whose policy hook blocked the model request. */
+      plugin?: string;
+    };
 
 /** 消息里上传的文件。 */
 export interface MessageFile {
@@ -374,6 +381,8 @@ export function chatItems(state: ChatState): ChatItem[] {
   const toolKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
   const approvals = new Map<string, number>();
   const questions = new Map<string, number>();
+  /** runId → plugin of the latest model.request denial (named on that run's failure). */
+  const modelDenials = new Map<string, string>();
   const replace = (i: number, next: ChatItem) => {
     items[i] = next;
   };
@@ -486,8 +495,22 @@ export function chatItems(state: ChatState): ChatItem[] {
         connectorName: e.payload.appName,
         closed: e.runId !== null && state.closedRuns[e.runId] === true,
       });
+    } else if (e.type === "hook_denied") {
+      if (e.payload.mount === "model.request" && e.runId !== null) {
+        modelDenials.set(e.runId, e.payload.plugin);
+      }
     } else if (e.type === "run_failed") {
-      items.push({ kind: "failed", key, text: "", code: e.payload.error.code });
+      const plugin =
+        e.payload.error.code === "run.hook_denied" && e.runId !== null
+          ? modelDenials.get(e.runId)
+          : undefined;
+      items.push({
+        kind: "failed",
+        key,
+        text: "",
+        code: e.payload.error.code,
+        ...(plugin !== undefined && { plugin }),
+      });
     }
   }
   // 运行已到终态却没有结果的调用（中止、失败）：不再显示为进行中
