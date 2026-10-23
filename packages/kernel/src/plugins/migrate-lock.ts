@@ -39,7 +39,7 @@ export const MIGRATION_LOCK_TIMEOUT_MS = 30_000;
  * 1. 独立 `pg.Client`（不走连接池）上 `pg_try_advisory_lock(hashtext('capybara.plugin-migrate:' || name))`，
  *    拿不到 → `busy`（别的副本正在迁移；调用方记 `pending_migration`，等 `plugins.migrated` 或下一个周期）；
  * 2. 拿到后复核安装记录：已换成别的包 → `busy`（不迁移过期目标，下一轮按新目标处理）；`migrated_sha` 已是它 → `migrated`；
- * 3. 执行迁移（迁移器另开会话，持按 schema 的锁；只做扩展，见 skills/writing-migrations；`timeoutMs` 限时），
+ * 3. 执行迁移（迁移器另开会话，持按 schema 的锁；只做扩展，见 .agents/skills/writing-migrations；`timeoutMs` 限时），
  *    写 `migrated_sha`；
  * 4. 结束会话（锁随之释放，进程崩溃时同样释放），发布 `plugins.migrated {plugin, sha256}`（失败只告警）。
  * `dir` 为迁移目录的绝对路径（只取审阅过的 `capybara.migrations`）；没有迁移时直接记下 `migrated_sha`。

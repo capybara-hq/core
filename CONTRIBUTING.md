@@ -6,7 +6,7 @@
 - Start local dependencies: `docker compose -f docker/compose.dev.yaml up -d` (PostgreSQL 17 @ 5432, Valkey 8 @ 6379)
 - After `pnpm install`, run `pnpm lint && pnpm typecheck && pnpm check && pnpm test`
 
-Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change.
+Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS.md); read it before your first change. Task-specific guides live in [.agents/skills/](.agents/skills/) (`.claude/skills` is a symlink to it). On Windows, enable symlinks before cloning (`git config --global core.symlinks true`, plus Developer Mode) or Claude Code won't find them.
 
 ## Larger changes: design first
 
@@ -37,7 +37,7 @@ If you change a package that is published, run `pnpm changeset` and commit the g
 
 ## Live API tests
 
-Some tests call real services and run only when their `CAPYBARA_TEST_*` variables are set (see the skills under `skills/`). Keep your keys in a local env file outside the repo, never print or commit them, and run the relevant live tests after changing request mapping or upgrading a vendor SDK.
+Some tests call real services and run only when their `CAPYBARA_TEST_*` variables are set (see the skills under `.agents/skills/`). Keep your keys in a local env file outside the repo, never print or commit them, and run the relevant live tests after changing request mapping or upgrading a vendor SDK.
 
 ## CLA
 

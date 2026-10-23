@@ -13,7 +13,7 @@ description: 新建或修改 IM 渠道、第三方登录、通讯录插件时使
 | `identity-source@1`（网页登录） | `identity.ts` | **部署级**（`config.deployment`，经 `auth.loginSources` 启用） | 否（Ruling P1） |
 | `directory@1`（通讯录） | `directory.ts` | **组织级**（`config.org`） | 是（`orgScoped`） |
 
-通用的插件写法（清单、两级配置、多副本禁令、权限批准）见 `skills/writing-plugins`，这里只讲这三种能力特有的部分。
+通用的插件写法（清单、两级配置、多副本禁令、权限批准）见 `.agents/skills/writing-plugins`，这里只讲这三种能力特有的部分。
 
 参考实现：
 

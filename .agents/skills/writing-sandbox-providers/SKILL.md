@@ -7,7 +7,7 @@ description: 新建或修改沙箱插件时使用（provides sandbox@1，如 plu
 
 每个对话一个沙箱（D4），内核的沙箱工具（`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`）、
 附件同步与 `skill_load` 都经 `SandboxService` 用它。`sandbox@1` 是**单选、中转**能力：一个部署只装一个沙箱插件，
-别的插件不能 `requires` 它。通用插件写法见 `skills/writing-plugins`，工具这一侧见 `skills/writing-tools`。
+别的插件不能 `requires` 它。通用插件写法见 `.agents/skills/writing-plugins`，工具这一侧见 `.agents/skills/writing-tools`。
 
 参考实现：
 

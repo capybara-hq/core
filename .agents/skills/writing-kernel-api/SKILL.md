@@ -5,7 +5,7 @@ description: 给内核新增或修改 HTTP API（Nest controller、guard、错�
 
 # 写内核 HTTP API
 
-内核 HTTP 是 **NestJS + Fastify**（`packages/kernel/src/http/`）。只有内核用 Nest：**插件不依赖 Nest**，插件路由仍是 `ctx.http.route(method, path, (req: Request) => Promise<Response>)`（见 `skills/writing-plugins`）。
+内核 HTTP 是 **NestJS + Fastify**（`packages/kernel/src/http/`）。只有内核用 Nest：**插件不依赖 Nest**，插件路由仍是 `ctx.http.route(method, path, (req: Request) => Promise<Response>)`（见 `.agents/skills/writing-plugins`）。
 
 参考实现：`packages/kernel/src/orgs/`（`orgs.controller.ts` + `members.service.ts` + `org.guard.ts`）。
 
@@ -207,5 +207,5 @@ it("未登录访问被拒，登录后可访问", async () => {
 2. `tokens.ts` 加令牌，`api.module.ts` 加 `useFactory` provider 与 controller。
 3. controller：构造参数 `@Inject`、鉴权装饰器、`ZodPipe`；新错误码登记 `errors.ts`。
 4. 新 `@Public()` 路由 → 更新 `public-routes.test.ts`。
-5. 新配置项按 `skills/adding-config`；新表按 `skills/writing-migrations`。
+5. 新配置项按 `.agents/skills/adding-config`；新表按 `.agents/skills/writing-migrations`。
 6. `pnpm lint && pnpm typecheck && pnpm check && pnpm test`；影响发布的改动加 changeset。

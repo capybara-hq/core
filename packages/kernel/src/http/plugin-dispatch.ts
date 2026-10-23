@@ -79,7 +79,7 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
  *   （413 `payload_too_large`、415 `unsupported_media_type` 等），5xx 记日志并返回 `internal`。
  * - 停机：返回的 `abortAll()` 中止所有进行中请求的 `req.signal`（插件的 SSE 等长连接据此收尾，不占用 http
  *   停机预算），此后到达的请求的 `req.signal` 一开始就是中止的。进行中的 AbortController 只在请求期间持有。
- *   所以插件 handler 要么很快结束，要么能容忍中止（见 skills/writing-plugins「插件路由的匹配语义」）。
+ *   所以插件 handler 要么很快结束，要么能容忍中止（见 .agents/skills/writing-plugins「插件路由的匹配语义」）。
  * 必须在 Nest `app.init()` 之前调用。
  */
 export async function registerPluginDispatch(

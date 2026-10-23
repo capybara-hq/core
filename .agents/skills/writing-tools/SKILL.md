@@ -5,7 +5,7 @@ description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.regi
 
 # 写工具
 
-通用的插件写法（清单、配置、ctx、多副本禁令、双副本测试）见 `skills/writing-plugins`，这里只讲工具特有的部分。参考实现：
+通用的插件写法（清单、配置、ctx、多副本禁令、双副本测试）见 `.agents/skills/writing-plugins`，这里只讲工具特有的部分。参考实现：
 
 - 插件工具：`plugins/todo`（一个 `write` 工具，整表写入本插件 schema，默认 allow）。
 - 连接器：`plugins/connector-mcp`（`connector@1`，把远端 MCP 服务接成连接器）；`plugins/connector-openapi`（OpenAPI 3.0 / 3.1 描述的 HTTP API，每个 operation 一个工具，实现了 `inspect`）。
@@ -121,7 +121,7 @@ async (input, call) => {
 - `state` 可 JSON 序列化、≤ 16 KB；它存在 PG，续跑可能在另一个副本上，**不要把续跑需要的东西放内存**。
 - 同一调用最多连续请求输入 3 次，第 4 次 → `Tool requested user input too many times.`
 - 内置 `ask_user` 就是用这套机制实现的，可作参考。
-- MCP 连接器的 elicitation（远端在调用途中向用户要输入）由内核转成同一套输入请求：内核中止远端调用、用户回答后用**同一 input** 重新发起调用，远端再次发起同样的 elicitation 时用答案答复（至多 3 轮；远端不再问或换了 schema 时答案用不上，elicitation 之前的副作用会重做一次）。这是连接器与内核之间的事，细节见 `skills/writing-connectors`，插件工具不涉及。
+- MCP 连接器的 elicitation（远端在调用途中向用户要输入）由内核转成同一套输入请求：内核中止远端调用、用户回答后用**同一 input** 重新发起调用，远端再次发起同样的 elicitation 时用答案答复（至多 3 轮；远端不再问或换了 schema 时答案用不上，elicitation 之前的副作用会重做一次）。这是连接器与内核之间的事，细节见 `.agents/skills/writing-connectors`，插件工具不涉及。
 
 ## `tool_search`：工具多时的目录与按需加载
 
@@ -149,11 +149,11 @@ async (input, call) => {
 
 `pending_review` / 停用的工具不进 `forAgent`：点名引用的进 `unavailable`（每步提醒模型），`tools: "all"` 引用的进 `hidden`（不提醒，模型调用时给事实原因）。管理员 `POST .../connectors/:connectorId/tools/:name/review {action: "approve" | "reject"}`：approve 采用新定义并启用并记 `reviewed_at`，reject 停用并保留旧定义（从未复核过的工具被拒后 `reviewed_at` 仍为空，之后仍可 approve）；待复核或从未复核过的工具不能经 PATCH 启用。授权按 `spec_hash` 比对，采用新定义后旧的「记住的授权」自然失效。
 
-**默认策略与 `policy_source`**：连接器工具的默认策略（`connector_tools.default_policy`）由注解推导（`policySource: "derived"`），管理员改过则为 `"admin"`，从企业目录的连接器模板安装、取自模板 `defaultToolPolicies` 的为 `"template"`（与 `admin` 一样保留，见 `skills/writing-apps`）。approve 或刷新采用新定义时，`derived` 的按新注解重新推导（注解变严格——如 `readOnlyHint` 变成 destructive——也会跟着变成 ask，不会沿用旧的 allow）；`admin` 的保留，除非工具的来源（`source`）变了。插件 / 内置工具没有这一层：用 `defaultPolicy` 或注解（见上）。
+**默认策略与 `policy_source`**：连接器工具的默认策略（`connector_tools.default_policy`）由注解推导（`policySource: "derived"`），管理员改过则为 `"admin"`，从企业目录的连接器模板安装、取自模板 `defaultToolPolicies` 的为 `"template"`（与 `admin` 一样保留，见 `.agents/skills/writing-apps`）。approve 或刷新采用新定义时，`derived` 的按新注解重新推导（注解变严格——如 `readOnlyHint` 变成 destructive——也会跟着变成 ask，不会沿用旧的 allow）；`admin` 的保留，除非工具的来源（`source`）变了。插件 / 内置工具没有这一层：用 `defaultPolicy` 或注解（见上）。
 
 后台检查用的凭据：组织凭据；个人凭据型连接器依次试至多 3 个现任成员的个人凭据（按凭据最近写入时间倒序），没有则跳过并记日志。审计 `connector.tools_drifted`（只有计数）/ `connector.tool_reviewed`。
 
-写连接器的人要注意：`listTools` 的输出必须确定性，否则会反复触发复核（见 `skills/writing-connectors`）。
+写连接器的人要注意：`listTools` 的输出必须确定性，否则会反复触发复核（见 `.agents/skills/writing-connectors`）。
 
 ## 内核内置工具：沙箱与技能
 
@@ -166,7 +166,7 @@ async (input, call) => {
 `sandbox_glob`、`sandbox_grep`、`sandbox_deliver`。
 
 - agent 定义显式引用才有（`DEFAULT_AGENT_TOOLS` 不含）；部署没有沙箱插件时报不可用（`unavailable()`）。
-- 全部经 `SandboxService.withSandbox`（每个对话一个沙箱，懒创建，见 `skills/writing-sandbox-providers`），把锁关联的
+- 全部经 `SandboxService.withSandbox`（每个对话一个沙箱，懒创建，见 `.agents/skills/writing-sandbox-providers`），把锁关联的
   signal 传给每次提供方调用；路径过 `validateSandboxPath`，`write` / `edit` 拒绝 `/skills`。
 - 超时：`sandbox_bash` = `min(timeoutSeconds ?? 120, sandbox.limits.maxCommandSeconds)` 秒加余量（余量 =
   `tools.timeoutMs` + `sandbox.lockWaitSeconds`，盖住等锁与创建 / 恢复）；超过上限的 `timeoutSeconds` 直接报错。
@@ -203,14 +203,14 @@ async (input, call) => {
 
 ## 连接器
 
-连接器（`connector@1`）把远端服务接成连接器，工具由远端决定，上述策略、审批、输出存档、漂移、`tool_search` 全部照常适用。契约、会话生命周期、鉴权注入、`ToolError` 的熔断语义、`connectorData` 路由、`inspect`、elicitation、测试夹具都在 **`skills/writing-connectors`**。参考实现：`plugins/connector-mcp`、`plugins/connector-openapi`。
+连接器（`connector@1`）把远端服务接成连接器，工具由远端决定，上述策略、审批、输出存档、漂移、`tool_search` 全部照常适用。契约、会话生命周期、鉴权注入、`ToolError` 的熔断语义、`connectorData` 路由、`inspect`、elicitation、测试夹具都在 **`.agents/skills/writing-connectors`**。参考实现：`plugins/connector-mcp`、`plugins/connector-openapi`。
 
 要点：`ToolError` 的 `kind: "unavailable"` 才计入连接器熔断（见上）；OAuth 全在内核，连接器只做 `auth()` / `onUnauthorized()`；连接器工具的结果与错误由内核按本次注入的凭据打码。
 
 ## 测试
 
 - 插件单测：直接调用处理函数（构造 `ToolCallContext`），见 `plugins/todo/test/todo.test.ts`；多副本读写一致用 `createDualReplicaHarness`。
-- 连接器的测试夹具（`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`）见 `skills/writing-connectors`；漂移检测见 `packages/kernel/test/tools/drift.test.ts`，`tool_search` 见 `packages/kernel/test/tools/tool-search*.test.ts`。
+- 连接器的测试夹具（`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`）见 `.agents/skills/writing-connectors`；漂移检测见 `packages/kernel/test/tools/drift.test.ts`，`tool_search` 见 `packages/kernel/test/tools/tool-search*.test.ts`。
 - 内核端到端：model-fake 的 `tool:<key>:<json>` 指令让模型调用指定工具（如 `tool:todo__write:{"todos":[]}`），见 `packages/kernel/test/tools/mcp-e2e.test.ts` 与双副本验收 `packages/kernel/test/tools/m3-segment1.dual.test.ts`（审批跨副本、审批超时、杀 worker 后结果未知、插件启用前后）。
 - 沙箱与技能工具：真实内核 + model-fake + 假沙箱插件（`packages/kernel/test/fixtures/plugins/sandbox-fake`）+ SeaweedFS，
   见 `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`、`packages/kernel/test/skills/skills-runtime.test.ts`、

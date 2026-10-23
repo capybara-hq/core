@@ -87,7 +87,7 @@ pnpm capybara plugins disable todo    # 卸载前须先停用：pnpm capybara pl
 2. 从 `plugins` 列表里去掉它（`pluginConfig` 里的部署配置可以留着，照样生效；也可以搬到后台），滚动重启各副本。此时插件不加载，依赖它的插件随之卸下（后台显示 `dependency`），插件装回后自动重新加载。
 3. 上传 / npm 安装该包并启用（后台或 `capybara plugins install …` + `enable`）。插件 schema、密钥、组织配置与批准记录都沿用；新包的权限没超出已批准的就直接加载。
 
-**信任模型**：插件在内核进程里全权运行（插件的迁移 SQL 也以内核的数据库连接执行）。权限清单、批准与目录策略是**治理与审计，不是沙箱**：它们管住内核握着的资源（密钥、存储、工具、会话内容），管不住插件直连数据库或网络。只安装你信任的发布者的包，批准前看迁移 SQL（写到插件自己 schema 之外、改权限、`DO` 块等会列为敏感警告，警告变了要重新批准）；不要对不受信的源码运行 `pnpm pack-plugin`（打包会执行插件代码）。不受信的扩展做成外部应用，经 HTTP 调内核。写插件见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)。
+**信任模型**：插件在内核进程里全权运行（插件的迁移 SQL 也以内核的数据库连接执行）。权限清单、批准与目录策略是**治理与审计，不是沙箱**：它们管住内核握着的资源（密钥、存储、工具、会话内容），管不住插件直连数据库或网络。只安装你信任的发布者的包，批准前看迁移 SQL（写到插件自己 schema 之外、改权限、`DO` 块等会列为敏感警告，警告变了要重新批准）；不要对不受信的源码运行 `pnpm pack-plugin`（打包会执行插件代码）。不受信的扩展做成外部应用，经 HTTP 调内核。写插件见 [.agents/skills/writing-plugins](.agents/skills/writing-plugins/SKILL.md)。
 
 ### 在网页上和 agent 对话（不需要模型密钥）
 
@@ -114,7 +114,7 @@ pnpm dev:web          # 即 pnpm --filter @capybara-hq/web dev，经 apps/web/se
 - **网页层后面的内核要设 `http.trustProxy: 1`**（`CAPYBARA_HTTP__TRUST_PROXY=1`）：`server.mjs` 会丢弃客户端伪造的转发头，把 `x-forwarded-for` 改写为真实对端地址再转给内核，内核信任这一跳才能拿到真实客户端 IP（登录限流按 IP 计数）。网页层必须经 `server.mjs` 启动（`pnpm dev:web` / `pnpm --filter @capybara-hq/web start`），直接 `next dev` / `next start` 不做这一步。
 - 内核同时对外直接暴露时不要用跳数，改用受信代理地址列表（如 `CAPYBARA_HTTP__TRUST_PROXY='["10.0.0.0/8"]'`），见 [docs/config.md](docs/config.md)。
 
-接下来可以邀请成员（`POST /api/v1/orgs/:orgId/invitations`）、按角色管理成员（`/api/v1/orgs/:orgId/members`）；内核 API 的写法见 [skills/writing-kernel-api](skills/writing-kernel-api/SKILL.md)。
+接下来可以邀请成员（`POST /api/v1/orgs/:orgId/invitations`）、按角色管理成员（`/api/v1/orgs/:orgId/members`）；内核 API 的写法见 [.agents/skills/writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)。
 
 用完：`docker compose -f docker/compose.dev.yaml down`（加 `-v` 同时清掉数据卷）。
 
@@ -170,9 +170,9 @@ export CAPYBARA_PLUGIN_CONFIG='{"openai":{"apiKey":"sk-...","models":[{"id":"gpt
 
 真实接口的一致性测试默认跳过，设了环境变量才跑：anthropic 用 `CAPYBARA_TEST_ANTHROPIC_API_KEY`；openai 用 `CAPYBARA_TEST_OPENAI_API_KEY` 与 `CAPYBARA_TEST_OPENAI_MODEL`；openai-compatible 用 `CAPYBARA_TEST_OAICOMPAT_BASE_URL` / `_API_KEY` / `_MODEL` / `_DIALECT`（四个都设才跑）。
 
-写模型供应商插件见 [skills/writing-model-providers](skills/writing-model-providers/SKILL.md)。
+写模型供应商插件见 [.agents/skills/writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)。
 
-`example-counter` 是写插件的参考实现；写自己的插件见 [skills/writing-plugins](skills/writing-plugins/SKILL.md)，配置项清单见 [docs/config.md](docs/config.md)。
+`example-counter` 是写插件的参考实现；写自己的插件见 [.agents/skills/writing-plugins](.agents/skills/writing-plugins/SKILL.md)，配置项清单见 [docs/config.md](docs/config.md)。
 
 ### 工具与连接器（MCP / OpenAPI）
 
@@ -240,7 +240,7 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
   -H 'Content-Type: application/json' -H 'X-Capybara-Csrf: 1' -d '{"enabled":true}'
 ```
 
-写工具见 [skills/writing-tools](skills/writing-tools/SKILL.md)，写连接器见 [skills/writing-connectors](skills/writing-connectors/SKILL.md)，相关配置（`tools.*`、`http.publicUrl`）见 [docs/config.md](docs/config.md)。
+写工具见 [.agents/skills/writing-tools](.agents/skills/writing-tools/SKILL.md)，写连接器见 [.agents/skills/writing-connectors](.agents/skills/writing-connectors/SKILL.md)，相关配置（`tools.*`、`http.publicUrl`）见 [docs/config.md](docs/config.md)。
 
 ### 接入 Slack 与 Lark（机器人、登录、通讯录）
 
@@ -284,7 +284,7 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 - **其他限制**：Sign in with Slack 不用 PKCE（Slack OIDC 未声明），任何工作区的 Slack 用户都能完成登录（只建账号）；Lark 登录只服务于部署级登录应用所在的租户，其他租户的组织照样可以用机器人并在 IM 里绑定；Slack 发送没有幂等参数，超长回复拆成多条时中途失败重试可能重复前几段；IM 里暂不支持仅自己可见的回复（ephemeral）。
 - **尚待真实平台联调确认**（目前只在假服务端上验证）：Lark 卡片回调在回失败后是否像事件一样重推（不重推时这次点击丢失、需再点）；Lark 卡片回调以事件帧到达、JSON 2.0 卡片里多选表单与按钮布局的渲染；Lark 长连接 WSS 主机名；Lark v2 token 接口的返回码类型与部门递归分页在结构不变时的稳定性；Slack Socket Mode 的重连与限流在真实工作区的表现。
 
-写渠道、登录、通讯录插件见 [skills/writing-channels](skills/writing-channels/SKILL.md)。
+写渠道、登录、通讯录插件见 [.agents/skills/writing-channels](.agents/skills/writing-channels/SKILL.md)。
 
 ### 对话页的右侧面板与插件界面
 
@@ -298,7 +298,7 @@ curl -s -X PUT localhost:8080/api/v1/orgs/$ORG/plugins/todo -b cookies.txt \
 - **渲染 schema 视图**：插件只返回结构化的块（清单、表格、图表、按钮、表单等），网页用设计系统组件画。插件写不了样式，也执行不了代码。升级时多出视图不需要重新批准。参考 `plugins/todo`。
 - **嵌入应用**：插件自己的页面放进沙箱 iframe，用来做看板、工作流这类复杂交互。页面经同源代理 `/plugin-ui/<插件>/...` 加载，读不到会话 Cookie，只拿到一个只对这个插件有效、5 分钟过期的令牌。嵌入应用在 `capybara plugins review` 里标为 `(sensitive)`，必须批准后才加载。参考 `plugins/example-board`：加进 `CAPYBARA_PLUGINS` 并在组织启用后，从顶栏「扩展」菜单打开组织看板，对话里会多一个「看板」标签。
 
-写插件界面见 [skills/writing-plugin-ui](skills/writing-plugin-ui/SKILL.md)。
+写插件界面见 [.agents/skills/writing-plugin-ui](.agents/skills/writing-plugin-ui/SKILL.md)。
 
 ### 对象存储（附件、产物、技能文件）
 
@@ -358,7 +358,7 @@ MinIO、Ceph 等支持 `PutBucketCors` 的 S3 兼容存储，用 AWS CLI 指向�
 
 对象存储插件没配置好（后台显示「待配置」）时：声明了 `permissions.storage` 的插件不加载（`capybara plugins review` 与启动日志里说明缺 `object-store@1`），内核里依赖存储的功能返回 `storage.unavailable`（503）。组织删除后，它的对象在 `storage.purgeDeletedOrgsAfterDays`（默认 30）天后由维护任务彻底删除。组织还在时，技能的对象不随删除而清理：被删除（软删除）的技能、技能的旧版本、已删除 agent 的 agent 级技能，文件都留在对象存储里，直到组织被删除后的这次清理（日志里的技能目录快照与已加载的版本仍引用它们）。
 
-**附件与图片 / PDF 输入**：装了对象存储后，对话输入框可以加附件（默认单个 ≤ 20MB、每条消息 ≤ 10 个，类型限 PNG / JPEG / GIF / WebP、PDF 与纯文本 / Markdown / CSV，见 `docs/config.md` 的 `attachments.*`）。模型声明支持图片（`vision`）或文档（`documents`）时收到原文件，不支持时只收到英文文字占位，字节绝不发给不支持的模型；事件日志只记附件引用。单次请求的媒体总量由 `attachments.requestMediaBytes` 限制，超出时较早的附件换成占位。写存储插件见 [skills/writing-object-store-providers](skills/writing-object-store-providers/SKILL.md)。
+**附件与图片 / PDF 输入**：装了对象存储后，对话输入框可以加附件（默认单个 ≤ 20MB、每条消息 ≤ 10 个，类型限 PNG / JPEG / GIF / WebP、PDF 与纯文本 / Markdown / CSV，见 `docs/config.md` 的 `attachments.*`）。模型声明支持图片（`vision`）或文档（`documents`）时收到原文件，不支持时只收到英文文字占位，字节绝不发给不支持的模型；事件日志只记附件引用。单次请求的媒体总量由 `attachments.requestMediaBytes` 限制，超出时较早的附件换成占位。写存储插件见 [.agents/skills/writing-object-store-providers](.agents/skills/writing-object-store-providers/SKILL.md)。
 
 ### 对话沙箱（Docker）
 
@@ -377,7 +377,7 @@ export CAPYBARA_PLUGIN_CONFIG='{"sandbox-docker":{"endpoint":"tcp://127.0.0.1:23
 - **出站**：`sandbox.limits.egress` 默认 `allowlist`，只放行 `sandbox.limits.allowHosts`（预置 npm、PyPI 与 GitHub 的克隆、归档、raw 与 release 下载地址；不预置 Debian 源：沙箱用户没有 sudo，装不了 apt 包，系统包请装进镜像），代理按解析后的 IP 拒绝内网与云元数据地址；`none` 断网；`open` 须显式打开插件配置 `allowOpenEgress`（默认关），只在可信环境用。组织管理员可在组织设置里改本组织的沙箱网络（`sandboxEgress`）：换一份白名单（替换部署的清单）或断网，但不能比部署放得更开（没有 `open`，部署为 `none` 时只能选 `none`）。改出站与资源限制只影响之后新建的沙箱。默认的 local 卷驱动不限 `diskMb`。
 - **长命令要放宽运行时限**：单条命令最长 `sandbox.limits.maxCommandSeconds`（默认 7200 秒），但命令也会在所属运行快到 `runtime.maxRunSeconds`（默认 900 秒）前被停掉（结果告诉模型是运行时限所致）。agent 要跑长命令时把 `runtime.maxRunSeconds` 调到不小于 `maxCommandSeconds`；不满足时内核启动会打 warn。
 
-给 agent 加内置工具 `sandbox_bash` / `sandbox_read` / `sandbox_write` / `sandbox_edit` / `sandbox_glob` / `sandbox_grep` / `sandbox_deliver` 后就能用（默认不带）。沙箱工具默认直接执行。**沙箱隔离的是宿主机与内网，不是数据**：出站白名单挡得住内网与云元数据地址，挡不住把数据发到白名单里的主机（例如 `git push` 到 github.com、往 npm 发包）；对话里的附件与 agent 能读到的数据都可能这样流出。处理敏感数据的组织，管理员应在组织设置里把 `sandboxToolPolicy` 改成 `ask`（写、执行、交付需要审批），和 / 或把沙箱网络（`sandboxEgress`）设为不联网。附件自动放进 `/workspace/attachments/`，`sandbox_deliver` 交付的文件出现在对话页右侧的「产物」标签。空闲 10 分钟休眠（文件保留）、7 天不用销毁，见 `docs/config.md` 的 `sandbox.*`。配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)；写沙箱插件见 [skills/writing-sandbox-providers](skills/writing-sandbox-providers/SKILL.md)。
+给 agent 加内置工具 `sandbox_bash` / `sandbox_read` / `sandbox_write` / `sandbox_edit` / `sandbox_glob` / `sandbox_grep` / `sandbox_deliver` 后就能用（默认不带）。沙箱工具默认直接执行。**沙箱隔离的是宿主机与内网，不是数据**：出站白名单挡得住内网与云元数据地址，挡不住把数据发到白名单里的主机（例如 `git push` 到 github.com、往 npm 发包）；对话里的附件与 agent 能读到的数据都可能这样流出。处理敏感数据的组织，管理员应在组织设置里把 `sandboxToolPolicy` 改成 `ask`（写、执行、交付需要审批），和 / 或把沙箱网络（`sandboxEgress`）设为不联网。附件自动放进 `/workspace/attachments/`，`sandbox_deliver` 交付的文件出现在对话页右侧的「产物」标签。空闲 10 分钟休眠（文件保留）、7 天不用销毁，见 `docs/config.md` 的 `sandbox.*`。配置项、隔离设置、磁盘限制与出站白名单的细节见 [plugins/sandbox-docker/README.md](plugins/sandbox-docker/README.md)；写沙箱插件见 [.agents/skills/writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)。
 
 ### 对话沙箱（E2B）
 
@@ -410,7 +410,7 @@ export CAPYBARA_PLUGIN_CONFIG='{"sandbox-e2b":{"apiKey":"e2b_…","template":"ca
 - **轨迹查看器**（`/trajectories`）：一次对话的事件时间线与 Span 瀑布，每次模型调用的 token、延迟与成本（按「管理 → 模型」里的价格表读时估算，币种取部署设置 `priceCurrency`，没有价格显示「—」），工具调用与审批链。只有组织管理员与该 agent 的负责人能看，无权时一律 404；每次查看都记审计 `trajectory.viewed`。
 - **评测集**（`/evals`）：从真实对话加用例或抽样（一个评测集对应一个 agent；用例存日志快照，≤ `evals.maxCaseBytes`），换模型 / 参数 / 指令 / agent 版本做候选，选**单步回放**（逐次重发当时的模型请求比较）或**整轮回放**（在隐藏对话里重跑整轮，工具结果用当时记录的，**不执行任何工具**）。运行前显示预计请求数与 token，到 token 上限就停（`evals.defaultTokenCap` / `evals.maxTokenCap`）；每个组织同时执行的用例数受 `evals.orgConcurrency` 限制。结果有结构差异、可选的 LLM 评委（先在「设置 → 模型」或「管理 → 模型」给用途 `eval` 选模型）与人工通过 / 不通过。评测数据留在组织内，不提供导出。
 
-写评测与回放相关代码见 [skills/replay-evals](skills/replay-evals/SKILL.md)。
+写评测与回放相关代码见 [.agents/skills/replay-evals](.agents/skills/replay-evals/SKILL.md)。
 
 ### 企业目录、清单与应用包
 
@@ -423,7 +423,7 @@ export CAPYBARA_PLUGIN_CONFIG='{"sandbox-e2b":{"apiKey":"e2b_…","template":"ca
 - **应用包**：`app.yaml` 按 npm 包名 + 版本范围 + lock（精确版本 + sha512）引用插件，插件包不打进应用包，导入时从 `packages.npmRegistry` 拉取并按 lock 校验——**离线部署导入应用包必须有 npm 镜像**。企业管理员导入时一次审阅全部插件的权限与迁移警告，确认时可以同时把插件装到部署并启用（`deployPlugins`）；不勾选时只建目录条目、不动部署，之后要在插件后台按条目里的 sha256 手动安装（组织安装时必选插件没装会提示「未部署」）。组织管理员安装应用 = 在本组织启用插件、按模板建连接器（填凭据）、导入技能，失败会撤销本次新建的部分；卸载只移除本次新建且别处不在用的组件，保留项列出原因。安装中途副本崩溃、超过 `directory.staleInstallMinutes`（默认 30）分钟仍在「安装中」的，以及失败的安装，都可以通过卸载清理。**M6 不支持应用升级**：先卸载再安装新版本。
 - **插件条目与策略**：插件只能由企业管理员装到部署；组织侧的「安装」= 在本组织启用，受条目策略约束。组织直接启用插件（「设置 → 插件」）时，按把这个插件带进部署的全部目录条目判定，**最严格的生效**（任一条目 `disabled` 就不能启用，任一 `needs_approval` 且本组织未获批准就要先申请）；应用里的插件按应用条目的策略判定。不经目录安装的插件不受目录策略约束。例外：插件自己的目录条目设为 `disabled` 是总开关，不论有没有来源记录、经不经应用，都不能在组织里新启用它。
 
-写连接器模板与应用包见 [skills/writing-apps](skills/writing-apps/SKILL.md)。
+写连接器模板与应用包见 [.agents/skills/writing-apps](.agents/skills/writing-apps/SKILL.md)。
 
 ## 运维须知
 

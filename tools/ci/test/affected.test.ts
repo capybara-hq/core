@@ -96,7 +96,8 @@ describe("planFromFiles: docs-only fast path", () => {
     [["docs/plan.md"]],
     [["docs/design/spec.md", "README.md", "AGENTS.md"]],
     [[".claude/skills/x/SKILL.md", ".gitignore", ".changeset/brave-cats.md"]],
-    [["skills/writing-plugins/SKILL.md"]],
+    [[".agents/skills/writing-plugins/SKILL.md"]],
+    [[".agents/skills/x/scripts/helper.sh", ".agents/skills/x/reference.json"]],
     [[]],
     [["", "  "]],
   ])("%j runs nothing", (files) => {
