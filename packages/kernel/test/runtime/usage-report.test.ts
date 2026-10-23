@@ -390,33 +390,42 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     await r.stop();
   });
 
-  it("a plugin loaded here without a usage.report handler is dropped, not retried (I-2)", async () => {
-    const warns: [string, unknown][] = [];
-    const errors: unknown[] = [];
-    let y = 0;
-    const r = reporter(
-      {
-        y: async () => {
-          y++;
-        },
-      },
-      ["x", "y"],
-      {
-        attempts: 3,
-        active: ["x", "y"],
-        warn: (m, f) => warns.push([m, f]),
-        error: (m) => errors.push(m),
-      },
-    );
-    r.startWorker();
-    await r.enqueue(ev.conv, ev.seq);
+  /** Waits for the job to finish; returns its state, attempts and failedReason. */
+  const finished = async () => {
     await waitFor(async () => (await jobOf())?.finishedOn !== undefined, 10_000, "job done");
     const j = await jobOf();
-    expect(await j?.getState()).toBe("completed");
-    // completed on the first attempt (BullMQ counts the successful attempt too)
-    expect(j?.attemptsMade).toBe(1);
-    expect(j?.data.pending).toEqual([]);
-    expect(y).toBe(1);
+    return {
+      state: await j?.getState(),
+      attemptsMade: j?.attemptsMade,
+      failedReason: j?.failedReason,
+      pending: j?.data.pending,
+    };
+  };
+  const yCounter = () => {
+    const c = { y: 0 };
+    const y: H = async () => {
+      c.y++;
+    };
+    return { c, y };
+  };
+
+  it("loaded here without a usage.report handler: dropped at once with a durable trace (I-2, N-3)", async () => {
+    const warns: [string, unknown][] = [];
+    const errors: unknown[] = [];
+    const { c, y } = yCounter();
+    const r = reporter({ y }, ["x", "y"], {
+      attempts: 3,
+      active: ["x", "y"],
+      warn: (m, f) => warns.push([m, f]),
+      error: (m) => errors.push(m),
+    });
+    r.startWorker();
+    await r.enqueue(ev.conv, ev.seq);
+    const out = await finished();
+    // failed without retries (UnrecoverableError) after delivering to y; the reason names x
+    expect(out).toMatchObject({ state: "failed", attemptsMade: 1, pending: [] });
+    expect(out.failedReason).toContain("dropped: x (registered no usage.report handler)");
+    expect(c.y).toBe(1);
     expect(errors).toEqual([]);
     expect(warns).toEqual([
       ["usage.report target dropped", expect.objectContaining({ plugin: "x" })],
@@ -424,57 +433,53 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     await r.stop();
   });
 
-  it("a plugin no replica has loaded is dropped at once, with one warning (I-2)", async () => {
-    const warns: [string, unknown][] = [];
-    const r = reporter({}, ["x"], {
-      attempts: 6,
-      unservable: ["x"],
-      warn: (m, f) => warns.push([m, f]),
-    });
-    r.startWorker();
-    await r.enqueue(ev.conv, ev.seq);
-    await waitFor(async () => (await jobOf())?.finishedOn !== undefined, 10_000, "job done");
-    const j = await jobOf();
-    expect(await j?.getState()).toBe("completed");
-    // completed on the first attempt (BullMQ counts the successful attempt too)
-    expect(j?.attemptsMade).toBe(1);
-    expect(warns.filter(([m]) => m === "usage.report target dropped")).toEqual([
-      [
-        "usage.report target dropped",
-        expect.objectContaining({ plugin: "x", reason: "no replica has the plugin loaded" }),
-      ],
-    ]);
-    await r.stop();
-  });
-
-  it("a plugin not loaded here is retried, then dropped on the last attempt instead of failing (I-2)", async () => {
+  it("definitely gone: retried, then dropped on the last attempt with a durable trace (N-3)", async () => {
     const warns: [string, unknown][] = [];
     const errors: unknown[] = [];
-    const r = reporter({}, ["x"], {
+    const { c, y } = yCounter();
+    const r = reporter({ y }, ["x", "y"], {
       attempts: 2,
-      unservable: [],
+      unservable: ["x"],
       warn: (m, f) => warns.push([m, f]),
       error: (m) => errors.push(m),
     });
     r.startWorker();
     await r.enqueue(ev.conv, ev.seq);
-    await waitFor(async () => (await jobOf())?.finishedOn !== undefined, 10_000, "job done");
-    const j = await jobOf();
-    expect(await j?.getState()).toBe("completed");
-    // one failed attempt, then the last one drops the target and completes
-    expect(j?.attemptsMade).toBe(2);
+    const out = await finished();
+    expect(out).toMatchObject({ state: "failed", attemptsMade: 2, pending: [] });
+    expect(out.failedReason).toContain("dropped: x (no replica has it loaded)");
+    expect(c.y).toBe(1);
     expect(errors).toEqual([]);
     expect(warns.filter(([m]) => m === "usage.report target dropped")).toEqual([
-      [
-        "usage.report target dropped",
-        expect.objectContaining({ reason: "no replica delivered it before the last attempt" }),
-      ],
+      ["usage.report target dropped", expect.objectContaining({ plugin: "x" })],
     ]);
     await r.stop();
   });
 
-  it("queryUnservable: reported by live replicas and loaded on none (I-2)", async () => {
-    const row = (replica: string, plugin: string, state: "loaded" | "failed" | "pending") => ({
+  it("unknown (slow to load, pending upgrade, just re-enabled) on the last attempt: the job fails as before (N-3)", async () => {
+    const errors: [string, unknown][] = [];
+    const r = reporter({}, ["x"], {
+      attempts: 2,
+      unservable: [],
+      error: (m, f) => errors.push([m, f]),
+    });
+    r.startWorker();
+    await r.enqueue(ev.conv, ev.seq);
+    const out = await finished();
+    expect(out).toMatchObject({ state: "failed", attemptsMade: 2, pending: ["x"] });
+    expect(out.failedReason).toBe("usage.report failed for: x");
+    await waitFor(async () => errors.length > 0, 5_000, "give-up log");
+    expect(errors[0]?.[0]).toBe("usage report given up after retries");
+    await r.stop();
+  });
+
+  it("queryUnservable: definitely unservable only (N-3)", async () => {
+    const row = (
+      replica: string,
+      plugin: string,
+      state: "loaded" | "failed" | "pending" | "unloaded",
+      servingVersion: string | null = null,
+    ) => ({
       replica_id: replica,
       plugin,
       version: "1.0.0",
@@ -483,21 +488,34 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       state,
       reason: null,
       detail: null,
+      serving_version: servingVersion,
       http_replica_id: null,
     });
     await db
       .insertInto("plugin_replica_status")
       .values([
-        row("rx-1", "nowhere", "failed"),
-        row("rx-2", "nowhere", "pending"),
+        // definitely gone: reported, failed / pending everywhere, serving nothing
+        row("rx-1", "gone", "failed"),
+        row("rx-2", "gone", "pending"),
+        // loaded on one replica
         row("rx-1", "somewhere", "failed"),
         row("rx-2", "somewhere", "loaded"),
+        // an upgrade pending approval: the new version is pending, the old one still serves
+        row("rx-1", "upgrading", "pending", "0.9.0"),
+        // just re-enabled: every row still says unloaded until the replicas reconcile
+        row("rx-1", "reenabled", "unloaded"),
+        row("rx-2", "reenabled", "unloaded"),
+        // reported only by a replica that is gone (stale heartbeat)
         { ...row("rx-1", "stale", "failed"), heartbeat_at: new Date(Date.now() - 3_600_000) },
       ])
       .execute();
     try {
-      const got = await queryUnservable(db, ["nowhere", "somewhere", "stale", "unknown"], 60);
-      expect([...got]).toEqual(["nowhere"]);
+      const got = await queryUnservable(
+        db,
+        ["gone", "somewhere", "upgrading", "reenabled", "stale", "slow-to-load"],
+        60,
+      );
+      expect([...got]).toEqual(["gone"]);
       expect(await queryUnservable(db, [], 60)).toEqual(new Set());
     } finally {
       await db

@@ -1,5 +1,5 @@
 import type { HookHandler, Logger, UsageReportPayload } from "@capybara-hq/plugin-sdk";
-import { DelayedError, Job, type JobsOptions, Queue, Worker } from "bullmq";
+import { DelayedError, Job, type JobsOptions, Queue, UnrecoverableError, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
@@ -133,9 +133,12 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
 }
 
 /**
- * Of `plugins`, those that live replicas report (a `plugin_replica_status` row with a heartbeat newer
- * than `staleSeconds`) and none has loaded (I-2). A plugin with no live row at all is not listed: the
- * state is unknown (e.g. a host without a status store), so it keeps the normal retries.
+ * Of `plugins`, those that are **definitely** unservable right now (I-2, N-3): live replicas report
+ * them (a `plugin_replica_status` row with a heartbeat newer than `staleSeconds`), no live row is
+ * `loaded` or still serves an older version (`serving_version`, e.g. an upgrade pending approval), and
+ * the rows are not all `unloaded` (that is the state right after a re-enable, before the replicas
+ * reconcile). A plugin with no live row at all is unknown too (slow to load, or a host without a
+ * status store). Unknown plugins are never listed.
  */
 export async function queryUnservable(
   db: KernelDb,
@@ -149,10 +152,17 @@ export async function queryUnservable(
     .where("plugin", "in", [...plugins])
     .where("heartbeat_at", ">", sql<Date>`now() - make_interval(secs => ${staleSeconds})`)
     .groupBy("plugin")
-    .having(sql<boolean>`bool_or(state = 'loaded')`, "=", false)
+    .having(sql<boolean>`bool_or(state = 'loaded' OR serving_version IS NOT NULL)`, "=", false)
+    .having(sql<boolean>`bool_and(state = 'unloaded')`, "=", false)
     .execute();
   return new Set(rows.map((r) => r.plugin));
 }
+
+/** `" dropped: x (why), y (why)"`, or empty. */
+const droppedNote = (dropped: ReadonlyMap<string, string>): string =>
+  dropped.size === 0
+    ? ""
+    : ` dropped: ${[...dropped].map(([p, why]) => `${p} (${why})`).join(", ")}`;
 
 /** A target this replica cannot deliver to: not loaded here, or loaded without a handler. */
 class Undeliverable extends Error {
@@ -191,12 +201,14 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  *   the targets are the deployment's subscribers the organization enabled (I-2: not this replica's
  *   handlers), written into `pending`; plugins run concurrently (`allSettled`); failed ones stay in
  *   `pending` and are retried (5 retries, 2 s doubling). A plugin not loaded on this replica (or
- *   between generations) is a failure, so another replica or a later attempt delivers it, except that
- *   (I-2) it is dropped at once when live replicas report it and none has it loaded, and dropped
- *   instead of failing on the last attempt (a throttled warning, never once per attempt). A plugin
- *   loaded here that registered no handler is not a subscriber: dropped. Plugins the organization
- *   disabled by delivery time are dropped. The final failure logs an error (no audit); failed jobs
- *   are kept 7 days, at most 100 000. Each call runs through the instance's `inflight.run`, limited by `hooks.timeoutMs`;
+ *   between generations) is a failure, so another replica or a later attempt delivers it. On the
+ *   last attempt it is dropped only when it is definitely unservable ({@link queryUnservable});
+ *   otherwise the job fails as usual. A plugin loaded here that registered no handler is dropped at
+ *   once (I-2). A drop (N-3) is never silent: after delivering to the other targets the job ends
+ *   failed with an `UnrecoverableError` whose failedReason names the dropped plugins, plus a
+ *   throttled warning. Plugins the organization disabled by delivery time are dropped silently (not
+ *   targets any more). The final failure logs an error (no audit); failed jobs are kept 7 days, at
+ *   most 100 000. Each call runs through the instance's `inflight.run`, limited by `hooks.timeoutMs`;
  *   when this replica stops, in-flight calls are aborted and the job goes back to the queue without
  *   using up an attempt.
  * Handlers must be idempotent by `eventId` (`<conversationId>/<seq>`). Nothing is written to the event
@@ -337,6 +349,8 @@ export class UsageReporter {
     this.worker.on("error", (err) => this.d.log.error("usage report worker error", { err }));
     this.worker.on("failed", (j, err) => {
       if (!j || err instanceof DelayedError || err.name === "DelayedError") return;
+      // a definite drop (N-3) was already warned about (throttled); the failed job is the trace
+      if (err instanceof UnrecoverableError || err.name === "UnrecoverableError") return;
       const final = j.attemptsMade >= (j.opts.attempts ?? 1);
       const fields = {
         jobId: j.id,
@@ -473,19 +487,17 @@ export class UsageReporter {
     );
     const failed: string[] = [];
     const notHere: string[] = [];
+    /** Definite drops (N-3): plugin → why; they end the job as failed, with no further retries. */
+    const dropped = new Map<string, string>();
     results.forEach((r, i) => {
       if (r.status === "fulfilled") return;
       const plugin = targets[i] as string;
       if (r.reason instanceof Undeliverable) {
-        if (r.reason.why === "no_handler") {
-          // I-2: loaded here without a handler: not a subscriber (declared but never registered, or
-          // a downgrade); dropped, not retried
-          void this.warnOnce(plugin, "no-handler", "usage.report target dropped", {
-            plugin,
-            eventId: payload.eventId,
-            reason: "loaded on this replica but registered no usage.report handler",
-          });
-        } else notHere.push(plugin);
+        // I-2: loaded here without a handler: not a subscriber (declared but never registered, or
+        // a downgrade); dropped, not retried
+        if (r.reason.why === "no_handler")
+          dropped.set(plugin, "registered no usage.report handler");
+        else notHere.push(plugin);
         return;
       }
       failed.push(plugin);
@@ -497,36 +509,38 @@ export class UsageReporter {
         });
       }
     });
-    if (notHere.length > 0 && !this.stopping.signal.aborted) {
-      // not loaded here: another replica may serve it (retry), unless no replica can (dropped at once)
-      // or this was the last attempt (dropped instead of failing); one warning per job, not per attempt
-      const final = j.attemptsMade + 1 >= (j.opts.attempts ?? 1);
-      const nobody = final ? new Set(notHere) : await this.unservable(notHere);
-      for (const plugin of notHere) {
-        if (!nobody.has(plugin)) {
-          failed.push(plugin);
-          continue;
-        }
-        void this.warnOnce(plugin, "unservable", "usage.report target dropped", {
-          plugin,
-          eventId: payload.eventId,
-          reason: final
-            ? "no replica delivered it before the last attempt"
-            : "no replica has the plugin loaded",
-        });
+    // not loaded here: another replica or a later attempt may serve it (retry). On the last attempt a
+    // target is dropped only when it is definitely unservable; unknown ones fail the job as before.
+    const final = j.attemptsMade + 1 >= (j.opts.attempts ?? 1);
+    const gone =
+      final && notHere.length > 0 && !this.stopping.signal.aborted
+        ? await this.unservable(notHere)
+        : new Set<string>();
+    for (const plugin of notHere) {
+      if (gone.has(plugin)) dropped.set(plugin, "no replica has it loaded");
+      else failed.push(plugin);
+    }
+    if (failed.length > 0) {
+      await this.writePending(j, failed);
+      if (this.stopping.signal.aborted) {
+        // shutdown is not the plugin's fault: back to the queue without using up an attempt (m-3)
+        await j.moveToDelayed(Date.now(), token);
+        throw new DelayedError();
       }
-    } else failed.push(...notHere);
-    if (failed.length === 0) {
-      await j.updateData({ conversationId, seq, pending: [] });
-      return;
+      throw new Error(`usage.report failed for: ${failed.join(", ")}${droppedNote(dropped)}`);
     }
-    await this.writePending(j, failed);
-    if (this.stopping.signal.aborted) {
-      // shutdown is not the plugin's fault: back to the queue without using up an attempt (m-3)
-      await j.moveToDelayed(Date.now(), token);
-      throw new DelayedError();
+    await j.updateData({ conversationId, seq, pending: [] });
+    if (dropped.size === 0) return;
+    // N-3: a definite drop leaves a durable trace: the job ends failed (kept under the failed-job
+    // cap, visible in queue tooling) with the dropped plugins in failedReason; no more retries
+    for (const [plugin, reason] of dropped) {
+      void this.warnOnce(plugin, "dropped", "usage.report target dropped", {
+        plugin,
+        eventId: payload.eventId,
+        reason,
+      });
     }
-    throw new Error(`usage.report failed for: ${failed.join(", ")}`);
+    throw new UnrecoverableError(`usage.report delivered to the rest;${droppedNote(dropped)}`);
   }
 
   /** {@link UsageReporterDeps.unservable}; a lookup failure counts as "unknown" (keep retrying). */

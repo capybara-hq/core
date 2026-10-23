@@ -11,6 +11,8 @@ the mount in `permissions.policyHooks` but is not loaded on a replica denies cal
 `notLoaded`, throttled warning). `model.request` payloads carry media placeholders instead of bytes.
 A `model.request` denial is sticky for the whole step across a resume. Without hooks, runs make no
 extra lookups (sticky denials read from the loaded log; `usage.report` enqueue skipped without a local
-handler). `usage.report` drops targets that are loaded without a handler or that no replica has loaded
-(once, not on every attempt), drops unserved targets on the last attempt instead of failing, and caps
-kept failed jobs at 100 000.
+handler). `usage.report` drops a target that is loaded without a handler, or that is still undelivered on the
+last attempt and definitely unservable (reported by replicas, loaded or served by none, not merely
+re-enabled); the job then ends failed with the dropped plugins in its failedReason. Kept failed jobs
+are capped at 100 000. Policy hook mounts appear in permission keys as
+`permissions.hooks.policy:<mount>` (valid in catalog indexes).
