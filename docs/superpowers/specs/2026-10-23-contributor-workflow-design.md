@@ -16,7 +16,7 @@ Items marked **(designer's call)** were decided by the author of this document, 
 1. One workflow for two kinds of contributors that differ only where they push (§3).
 2. Community work starts from an issue a maintainer accepted; PRs without one are blocked automatically (§4).
 3. Only the maintainer(s) approve and merge into `main`, enforced by repository settings that a script applies and verifies (§5).
-4. Every repository offers the same two local commands, `pnpm doctor` and `pnpm verify`, so people and agents can check setup and run the CI gates locally (§6).
+4. Every repository offers the same two local commands, `pnpm doctor:env` and `pnpm verify`, so people and agents can check setup and run the CI gates locally (§6). The environment check is named `doctor:env` because pnpm's built-in `doctor` command shadows a script called `doctor` in a workspace. Agents parse JSON with `pnpm -s doctor:env --json` / `pnpm -s verify --json`, since pnpm's script banner otherwise precedes the JSON.
 5. Agent skills that turn the workflow into plain-language actions for any agent that reads `.agents/skills/`: `onboarding`, `contributing`, `reviewing-prs` (§7).
 6. Everything shared lives in `capybara-hq/.github`, versioned; `core` is the first consumer and the future plugins repository the second (§8).
 7. The organization's GitHub page shows a real profile instead of GitHub's getting-started page: what Capybara is, where to start, how to contribute (§8).
@@ -50,7 +50,7 @@ Items marked **(designer's call)** were decided by the author of this document, 
 
 Everything else is the same for both: worktree per task, design doc first for larger changes (existing `AGENTS.md` rule, reviewed by a maintainer), Conventional Commits, changesets, `pnpm verify` before pushing, PR with the template, review, changes, merge by a maintainer.
 
-**Remote detection** (designer's call): the tools find "the upstream" as the remote whose URL points to `capybara-hq/<this repo>` (HTTPS or SSH). If that is `origin`, the person is working in the main repository (core developer); otherwise it is a fork clone and that remote is upstream (normally named `upstream`; any name works). If no remote points to `capybara-hq`, `pnpm doctor` reports it with the command to add one. `pnpm wt:new` uses `<upstream>/main` as its default `--from` and fetches that remote; new branches are still created with `--no-track` and pushed to `origin`.
+**Remote detection** (designer's call): the tools find "the upstream" as the remote whose URL points to `capybara-hq/<this repo>` (HTTPS or SSH). If that is `origin`, the person is working in the main repository (core developer); otherwise it is a fork clone and that remote is upstream (normally named `upstream`; any name works). If no remote points to `capybara-hq`, `pnpm doctor:env` reports it with the command to add one. `pnpm wt:new` uses `<upstream>/main` as its default `--from` and fetches that remote; new branches are still created with `--no-track` and pushed to `origin`.
 
 The `branch-safety` Claude hook stays as an early warning for Claude Code users; it is not part of the enforcement (§5).
 
@@ -114,9 +114,9 @@ Each repository implements both as `pnpm` scripts. The shared skills rely on thi
 - Exit code 0 when everything required passes, 1 otherwise.
 - `--json` prints `{ "ok": bool, "checks": [{ "id", "title", "status": "pass" | "fail" | "warn" | "skip", "detail", "fix"? }] }` so agents don't parse prose; without it, a readable table.
 - Never print secret values; report only whether a variable or file exists.
-- Safe to run repeatedly; `doctor --fix` may perform fixes that need no decision (for example `pnpm install`), never anything that changes git state or touches the network beyond package installs.
+- Safe to run repeatedly; `doctor:env --fix` may perform fixes that need no decision (for example `pnpm install`), never anything that changes git state or touches the network beyond package installs.
 
-**`pnpm doctor` in `core`**: Node 24 and pnpm 10; dependencies installed and matching the lockfile; Docker daemon reachable (tests start their own Postgres and Valkey containers); `.claude/skills` symlink resolves (Windows checkouts without `core.symlinks` turn it into a text file); remotes as in §3; git `user.name` and `user.email` set; `gh` installed and logged in (warn, not fail: only the skills and maintainers need it); optional: local Postgres / Valkey from `docker/compose.dev.yaml` reachable (needed for the dev stack, not for tests), live API test env file present (names only).
+**`pnpm doctor:env` in `core`**: Node 24 and pnpm 10; dependencies installed and matching the lockfile; Docker daemon reachable (tests start their own Postgres and Valkey containers); `.claude/skills` symlink resolves (Windows checkouts without `core.symlinks` turn it into a text file); remotes as in §3; git `user.name` and `user.email` set; `gh` installed and logged in (warn, not fail: only the skills and maintainers need it); optional: local Postgres / Valkey from `docker/compose.dev.yaml` reachable (needed for the dev stack, not for tests), live API test env file present (names only).
 
 **`pnpm verify` in `core`**: the local equivalent of the required checks for the current branch. Base = merge base with `<upstream>/main`. Runs `pnpm lint`, `pnpm typecheck`, `pnpm check`, commitlint over the branch's commits, and vitest on the directories `tools/ci/src/affected.ts` selects for the diff (reusing the CI plan, not a second copy of the rules). Reports, without running, what CI will additionally run (web build, visual, e2e) (designer's call: those need the Playwright image or minutes of build and stay in CI). Warns when a published package changed and no changeset was added. Prints the plan before running.
 
@@ -124,7 +124,7 @@ Each repository implements both as `pnpm` scripts. The shared skills rely on thi
 
 Three shared skills, written in English (model-facing), kept in `capybara-hq/.github` and installed into each repository's `.agents/skills/` (§8). They describe intent, when to stop, and which command to run; logic stays in scripts and `gh`. Each sub-action is a target state, not a step: asking for "open the PR" first does whatever earlier steps are missing (idempotently), and stops only where a human must decide (borrowed from `octok-platform`). Every outward action (push, opening a PR, posting a comment or review) is shown to the user and done only after they agree, unless they already said to go ahead.
 
-**`onboarding`** (anyone, first contact): runs `pnpm doctor --json`, explains each failing item and fixes what can be fixed with the user's consent, re-runs until required items pass, then gives a short tour: what the repository is (from `AGENTS.md`), which skill to read for which kind of change, the daily flow below, and open `good first issue` issues (`gh issue list`). Never prints or asks the user to paste secrets.
+**`onboarding`** (anyone, first contact): runs `pnpm doctor:env --json`, explains each failing item and fixes what can be fixed with the user's consent, re-runs until required items pass, then gives a short tour: what the repository is (from `AGENTS.md`), which skill to read for which kind of change, the daily flow below, and open `good first issue` issues (`gh issue list`). Never prints or asks the user to paste secrets.
 
 **`contributing`** (anyone, daily work), with these sub-actions, triggered by plain language:
 - *start* from an issue number: check the issue is `accepted` (community) and claim it, then `pnpm wt:new <type>/<N>-<slug>` from upstream `main`; for larger changes, remind of the design-doc rule.
@@ -161,7 +161,7 @@ Files in `capybara-hq/.github` are **not** part of a clone of `core`: org-wide d
 - Opening the sync PRs automatically on each release needs a token that can write to other repositories (a GitHub App or PAT secret); a later step, not in this project.
 
 **Each consumer repository** (`core` now, the plugins repository later):
-- `pnpm doctor` and `pnpm verify` (§6), its `AGENTS.md` and domain skills.
+- `pnpm doctor:env` and `pnpm verify` (§6), its `AGENTS.md` and domain skills.
 - `.github/CODEOWNERS`, a workflow file calling the shared workflows `@v1`, the synced copies of the shared skills.
 - A short `CONTRIBUTING.md` and a line in `AGENTS.md`, both pointing local readers to the `contributing` skill for the workflow and to the org guide on github.com; `core`'s `CONTRIBUTING.md` keeps its repository specifics (development environment, design-first rule, changesets, live API tests, CLA note). Note: a repository's own `CONTRIBUTING.md` hides the org default on github.com, which is why it must link to it.
 - No PR template or issue forms of its own; `core` drops its Chinese `pull_request_template.md` (designer's call). Whether `gh pr create` picks up org default templates is for the plan to check; the `contributing` skill fills the body itself either way.
@@ -170,7 +170,7 @@ What stays inside `core` and is not shared: the diff-based CI plan (`tools/ci`),
 
 ## 9. Supported agents
 
-The workflow must work without any agent. For agents, tier 1 is Claude Code, Codex, Cursor and GitHub Copilot; others are best effort. For each tier-1 agent the implementation records a manual smoke test (date, version): it reads `AGENTS.md`, it lists the skills from `.agents/skills/` (Claude Code through the `.claude/skills` symlink), it lists each skill once (open question from PR #15: Cursor reads both `.agents/skills` and `.claude/skills`), and it can run `pnpm doctor` and follow `onboarding` to a green result. Results go in a short table in the org `CONTRIBUTING.md`; this is not a CI check.
+The workflow must work without any agent. For agents, tier 1 is Claude Code, Codex, Cursor and GitHub Copilot; others are best effort. For each tier-1 agent the implementation records a manual smoke test (date, version): it reads `AGENTS.md`, it lists the skills from `.agents/skills/` (Claude Code through the `.claude/skills` symlink), it lists each skill once (open question from PR #15: Cursor reads both `.agents/skills` and `.claude/skills`), and it can run `pnpm doctor:env` and follow `onboarding` to a green result. Results go in a short table in the org `CONTRIBUTING.md`; this is not a CI check.
 
 If an agent lists each skill twice (the likely case for Cursor), that is accepted and documented when the duplicates behave identically, since both paths point to the same files (designer's call). If it breaks behaviour, the fix is decided with the maintainer; removing `.claude/skills` or adding per-agent copies is not an option (§2).
 
