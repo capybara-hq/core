@@ -62,6 +62,9 @@
       "path": "tools/worktree"
     },
     {
+      "path": "tools/ci"
+    },
+    {
       "path": "apps/capybara"
     },
     {

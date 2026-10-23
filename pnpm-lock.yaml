@@ -605,6 +605,8 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
+  tools/ci: {}
+
   tools/pack-plugin:
     dependencies:
       '@capybara-hq/plugin-sdk':
