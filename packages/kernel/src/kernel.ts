@@ -22,6 +22,7 @@ import {
   GATEWAY_CHECK_JOB,
   GATEWAY_CHECK_SCHEDULER_ID,
 } from "./channels/supervisor.js";
+import { ChannelWebhooks } from "./channels/webhook.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
@@ -838,6 +839,7 @@ export async function createKernel(
     log,
     onSecrets: (v) => log.addOrgSecrets(v),
     onResume: (id) => channelOutbound.resumeConnection(id),
+    config: () => current,
   });
   const channelOutbound = new ChannelOutbound({
     db: kdb,
@@ -982,6 +984,16 @@ export async function createKernel(
       },
       serveApi: config.roles.includes("api"),
       servePlugins,
+      ...(config.roles.includes("gateway") && {
+        gateway: {
+          webhooks: new ChannelWebhooks({
+            connections: channelConnections,
+            inbound: channels.inbound,
+            log,
+          }),
+          webhookMaxBodyBytes: config.channels.webhookMaxBodyBytes,
+        },
+      }),
       apiModule: ApiModule.register({
         db: kdb,
         redis,

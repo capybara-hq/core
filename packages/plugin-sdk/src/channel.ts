@@ -90,6 +90,57 @@ export interface ChannelSendArgs {
   idempotencyKey?: string;
 }
 
+/**
+ * An inbound webhook request as the kernel received it on `POST /channels/webhook/<connectionId>`.
+ * `headers` names are lowercase (repeated headers joined with `, `; cookies are dropped); `body` is
+ * the raw request bytes, unparsed, so the plugin can verify signatures over them; `receivedAt` is the
+ * kernel's receive time in epoch milliseconds (use it for timestamp replay checks).
+ */
+export interface ChannelWebhookRequest {
+  method: "POST";
+  headers: Readonly<Record<string, string>>;
+  body: Uint8Array;
+  receivedAt: number;
+}
+
+/** An HTTP response the kernel writes back to the platform as is. */
+export interface ChannelWebhookResponse {
+  status: number;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+/**
+ * What the plugin made of a webhook request:
+ * - `respond`: reply directly without any event (URL verification challenge and the like);
+ * - `events`: hand these events to the kernel, which dedupes and enqueues them like the long
+ *   connection's `onEvent` and replies `ack` only after every one resolved; if any rejects, the
+ *   kernel replies 503 so the platform redelivers (dedupe makes the redelivery safe);
+ *   an empty list just replies `ack` (ignored events are still acknowledged);
+ * - `reject`: the request is not genuine (bad signature, stale timestamp, malformed): reply this
+ *   status and enqueue nothing.
+ */
+export type ChannelWebhookResult =
+  | { kind: "respond"; response: ChannelWebhookResponse }
+  | { kind: "events"; events: InboundEvent[]; ack: ChannelWebhookResponse }
+  | { kind: "reject"; status: 400 | 401 | 403 };
+
+/**
+ * Optional webhook inbound mode (`Channel.webhook`). Signature verification, decryption and
+ * timestamp replay protection all happen here: the kernel knows no platform formats, applies no
+ * auth on the route, and only calls this for connections in webhook mode. `config` is the
+ * connection config (validated against `connectionSchema`, secrets included). Must be quick: the
+ * platform's ack deadline is a few seconds, and `signal` aborts when the platform hangs up.
+ */
+export interface ChannelWebhook {
+  handle(args: {
+    connectionId: string;
+    config: unknown;
+    request: ChannelWebhookRequest;
+    signal: AbortSignal;
+  }): Promise<ChannelWebhookResult>;
+}
+
 /** 渠道实现（bot 用渠道连接配置）。 */
 export interface Channel {
   /** 渠道连接配置的 schema；密钥字段用 secret()。 */
@@ -113,6 +164,12 @@ export interface Channel {
    * （由插件拆分）。
    */
   update(args: ChannelSendArgs & { messageId: string }): Promise<void>;
+  /**
+   * Optional webhook inbound (see {@link ChannelWebhook}). Only connections of plugins that
+   * implement it can be switched from the default long connection to webhook mode; a connection in
+   * webhook mode gets no `connect` call.
+   */
+  webhook?: ChannelWebhook;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type {
@@ -21,6 +21,9 @@ import type {
  *   `code_challenge`（S256）的，换 token 必须带对应的 `codeVerifier`，否则 `invalid_grant`。
  * - **通讯录**：`GET /d/<key>/members?cursor=<n>` 按页返回 {@link FakeChannelServer.book} 的成员，可让某页失败、让第一页挂起。
  * - **其他写操作**：`POST /posts` 记下插件工具发的「公告」（`posts`），供断言工具确实执行（且只执行一次）。
+ *
+ * - **Webhook** (the platform calling the kernel): {@link signFakeWebhook} signs a body with HMAC-SHA256
+ *   for the `x-fake-signature` header; {@link fakeWebhookEvents} / {@link fakeWebhookChallenge} build bodies.
  *
  * 所有请求读 `x-pid` 头记下发起进程，双副本测试据此判断是哪个副本连上 / 发出的。
  * 统计每个渠道连接同时在线的长连接数峰值（任一时刻只能有一条）。配套的测试插件见内核测试的 `fixtures/plugins/fake-im`。
@@ -498,3 +501,22 @@ export function fakeDirectoryMember(
     ...over,
   };
 }
+
+/** Signature header of the fake platform's webhooks (`sha256=<hex HMAC-SHA256 of the raw body>`). */
+export const FAKE_WEBHOOK_SIGNATURE_HEADER = "x-fake-signature";
+
+/**
+ * Signs a fake-platform webhook body the way the `fake-im` test plugin verifies it: returns the
+ * value for {@link FAKE_WEBHOOK_SIGNATURE_HEADER}, `sha256=` + hex HMAC-SHA256(secret, body).
+ */
+export function signFakeWebhook(body: string | Uint8Array, secret: string): string {
+  return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+}
+
+/** Body of a fake-platform webhook that delivers events (`fake-im` answers with its ack). */
+export const fakeWebhookEvents = (events: InboundEvent[]): string =>
+  JSON.stringify({ type: "events", events });
+
+/** Body of a fake-platform URL verification request (`fake-im` echoes `{ challenge }`). */
+export const fakeWebhookChallenge = (challenge: string): string =>
+  JSON.stringify({ type: "challenge", challenge });

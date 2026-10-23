@@ -9,6 +9,7 @@ import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
 import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
 import { ErrorFilter, redactPath } from "./error.filter.js";
+import { type GatewayRoutes, registerGatewayRoutes } from "./gateway.module.js";
 import { HealthController, type HealthOptions } from "./health.controller.js";
 import { NestLogAdapter } from "./nest-logger.js";
 import {
@@ -53,6 +54,11 @@ export interface CreateHttpAppOptions {
   serveApi: boolean;
   /** 是否转发 `/plugins/*` 到插件路由。 */
   servePlugins: boolean;
+  /**
+   * Gateway-role routes (the channel webhook), registered only when given: the kernel passes them
+   * when `roles` includes `gateway` (`serveGateway`).
+   */
+  gateway?: GatewayRoutes;
   apiModule?: DynamicModule;
   /** 信任哪些代理跳：false、跳数，或受信代理 IP / CIDR 列表（见 `http.trustProxy` 配置）。 */
   trustProxy?: boolean | number | string[];
@@ -200,6 +206,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
   const dispatch = opts.servePlugins
     ? await registerPluginDispatch(fastify, () => table, opts.log)
     : undefined;
+  if (opts.gateway) await registerGatewayRoutes(fastify, opts.gateway, opts.log);
   await app.init();
 
   return {

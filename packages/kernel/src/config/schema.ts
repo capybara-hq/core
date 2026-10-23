@@ -779,6 +779,26 @@ export const KernelConfigSchema = z.object({
               "A channel delivery job that has caught up ends after this many milliseconds without new conversation output; the next event of the conversation starts a new job",
           }),
         ),
+      webhookBaseUrl: z
+        .url({ protocol: /^https?$/ })
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Public origin (https) that reaches the gateway replicas, e.g. https://im.example.com; a channel connection's webhook callback URL is <webhookBaseUrl>/channels/webhook/<connection id>. Without it connections cannot switch to webhook inbound (long connections stay the default). Plain http is accepted only for loopback hosts when tools.oauthAllowInsecureLoopback is true (tests)",
+          }),
+        ),
+      webhookMaxBodyBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(1_048_576)
+        .meta(
+          meta({
+            description:
+              "Largest channel webhook request body in bytes; a larger request is rejected with 413",
+          }),
+        ),
     })
     // 续租周期必须明显短于 TTL：至少能在租约过期前续两次，偶尔一次 Redis 抖动不至于丢租约
     .refine((c) => c.scanIntervalMs <= c.leaseTtlMs / 2, {
@@ -792,6 +812,7 @@ export const KernelConfigSchema = z.object({
       retryBaseMs: 5000,
       deliveryConcurrency: 100,
       deliveryIdleMs: 15000,
+      webhookMaxBodyBytes: 1_048_576,
     }),
   storage: z
     .object({

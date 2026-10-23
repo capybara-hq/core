@@ -36,6 +36,8 @@ const PUBLIC_ROUTES = new Set([
   "GET /api/v1/auth/sources",
   "GET /api/v1/auth/sso/:plugin/start",
   "GET /api/v1/auth/sso/:plugin/callback",
+  // Gateway role: raw Fastify route outside Nest (P-4); the channel plugin verifies signatures
+  "POST /channels/webhook/:connectionId",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
@@ -97,6 +99,10 @@ beforeAll(async () => {
     health: { isStopping: () => false, log, checks: {} },
     serveApi: true,
     servePlugins: false,
+    gateway: {
+      webhooks: { handle: async () => ({ status: 404, body: "" }) },
+      webhookMaxBodyBytes: 1024,
+    },
     apiModule: {
       module: ProbeModule,
       imports: [

@@ -416,6 +416,8 @@ export interface ChannelConnectionsTable {
   config: Json;
   unbound_policy: Generated<"bind" | "anonymous">;
   status: Generated<"active" | "disabled" | "error">;
+  /** 0038_channel_inbound_mode.sql: how inbound events arrive (long connection by default). */
+  inbound_mode: Generated<"long_connection" | "webhook">;
   last_error: string | null;
   bot_user_id: string | null;
   tenant_id: string | null;

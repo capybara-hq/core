@@ -185,7 +185,8 @@
     },
     "channel": {
       "not_found": "The channel does not exist or has been deleted.",
-      "verify_failed": "The platform rejected the bot credentials. Check them and try again."
+      "verify_failed": "The platform rejected the bot credentials. Check them and try again.",
+      "webhook_unavailable": "Webhooks are not available for this channel: the plugin does not support them or the deployment has no webhook address."
     },
     "identity": {
       "taken": "This IM account is already linked to another Capybara account.",
@@ -1144,7 +1145,24 @@
       "dangerTitle": "Danger zone",
       "delete": "Delete channel",
       "deleteTitle": "Delete {name}?",
-      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in Capybara."
+      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in Capybara.",
+      "inboundTitle": "Inbound mode",
+      "inboundHint": "How the bot receives messages. A long connection works from an internal network; webhooks need the platform to reach this deployment over a public address.",
+      "inboundLabel": "Inbound mode",
+      "inboundUnsupported": "This channel plugin only supports long connections.",
+      "inboundNoBaseUrl": "Webhooks are not available: the deployment has no public webhook address (channels.webhookBaseUrl).",
+      "callbackUrl": "Callback URL",
+      "callbackUrlHint": "Register this address as the event / request URL in the platform's app settings.",
+      "saveInbound": "Save inbound mode",
+      "inboundSaved": "Inbound mode saved."
+    },
+    "inboundMode": {
+      "long_connection": "Long connection",
+      "webhook": "Webhook"
+    },
+    "inboundModeHint": {
+      "long_connection": "The bot keeps a connection open to the platform (default; no public address needed).",
+      "webhook": "The platform calls this deployment for every event; needs a public address."
     }
   },
   "plugins": {

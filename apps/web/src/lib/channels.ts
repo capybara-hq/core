@@ -5,6 +5,8 @@ import type { JsonSchema } from "./json-schema";
 export type ChannelStatus = "active" | "disabled" | "error";
 /** 认不出发言人时：`bind` 发绑定提示；`anonymous` 以匿名访客对话（只能用全组织可见的 agent）。 */
 export type UnboundPolicy = "bind" | "anonymous";
+/** How the bot receives messages: a long connection (default) or platform webhooks. */
+export type InboundMode = "long_connection" | "webhook";
 
 /** 内核 `ChannelConnectionView`：`config` 只含非密钥字段，密钥只回显「是否已设置」。 */
 export interface ChannelConnection {
@@ -15,6 +17,11 @@ export interface ChannelConnection {
   agentId: string;
   unboundPolicy: UnboundPolicy;
   status: ChannelStatus;
+  inboundMode: InboundMode;
+  /** The plugin supports webhook inbound. */
+  webhookSupported: boolean;
+  /** Callback URL to register with the platform; null without plugin support or webhook base URL. */
+  webhookUrl: string | null;
   lastError: string | null;
   botUserId: string | null;
   tenantId: string | null;
@@ -39,6 +46,7 @@ export interface UpdateChannelInput {
   agentId?: string;
   unboundPolicy?: UnboundPolicy;
   status?: "active" | "disabled";
+  inboundMode?: InboundMode;
   config?: Record<string, unknown>;
 }
 

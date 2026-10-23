@@ -24,6 +24,7 @@ export {
 } from "./fake-catalog.js";
 export {
   FAKE_CHANNEL_BAD_SECRET,
+  FAKE_WEBHOOK_SIGNATURE_HEADER,
   type FakeChannelPost,
   type FakeChannelSent,
   type FakeChannelServer,
@@ -36,6 +37,9 @@ export {
   fakeDirectoryMember,
   fakeDm,
   fakeGroupMessage,
+  fakeWebhookChallenge,
+  fakeWebhookEvents,
+  signFakeWebhook,
   startFakeChannelServer,
 } from "./fake-channel.js";
 export {

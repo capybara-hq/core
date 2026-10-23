@@ -392,20 +392,24 @@ export class ChannelSupervisor {
    * 且插件在本进程已加载——滚动升级期间还没有该插件的副本根本不考虑它（不取租约、不记失败），留给有插件的副本。
    */
   private runnable(plugins: string[]) {
-    return this.deps.db
-      .selectFrom("channel_connections")
-      .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
-      .innerJoin("plugin_org_configs", (j) =>
-        j
-          .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin")
-          .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id"),
-      )
-      .select(["channel_connections.id", "channel_connections.plugin"])
-      .where("plugin_org_configs.enabled", "=", true)
-      .where("channel_connections.status", "=", "active")
-      .where("channel_connections.deleted_at", "is", null)
-      .where("orgs.deleted_at", "is", null)
-      .where("channel_connections.plugin", "in", plugins);
+    return (
+      this.deps.db
+        .selectFrom("channel_connections")
+        .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
+        .innerJoin("plugin_org_configs", (j) =>
+          j
+            .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin")
+            .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id"),
+        )
+        .select(["channel_connections.id", "channel_connections.plugin"])
+        .where("plugin_org_configs.enabled", "=", true)
+        .where("channel_connections.status", "=", "active")
+        // Webhook-mode connections get callbacks on the gateway route instead (F9)
+        .where("channel_connections.inbound_mode", "=", "long_connection")
+        .where("channel_connections.deleted_at", "is", null)
+        .where("orgs.deleted_at", "is", null)
+        .where("channel_connections.plugin", "in", plugins)
+    );
   }
 
   /**
@@ -672,7 +676,7 @@ export async function checkGatewayPresence(deps: {
   graceUntil?: number;
 }): Promise<boolean> {
   if (deps.graceUntil !== undefined && Date.now() < deps.graceUntil) return false;
-  // Once webhook inbound exists (T4), only `inbound_mode = 'long_connection'` connections count here
+  // Only long connections count: webhook-mode connections are not held by the supervisor
   const rows = await deps.db
     .selectFrom("channel_connections")
     .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
@@ -684,6 +688,7 @@ export async function checkGatewayPresence(deps: {
     .select(["channel_connections.plugin", (eb) => eb.fn.countAll<string>().as("n")])
     .where("plugin_org_configs.enabled", "=", true)
     .where("channel_connections.status", "=", "active")
+    .where("channel_connections.inbound_mode", "=", "long_connection")
     .where("channel_connections.deleted_at", "is", null)
     .where("orgs.deleted_at", "is", null)
     .groupBy("channel_connections.plugin")

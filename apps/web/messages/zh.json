@@ -185,7 +185,8 @@
     },
     "channel": {
       "not_found": "渠道不存在或已删除。",
-      "verify_failed": "平台拒绝了机器人凭据，请检查后重试。"
+      "verify_failed": "平台拒绝了机器人凭据，请检查后重试。",
+      "webhook_unavailable": "该渠道无法使用 Webhook：插件不支持，或部署未配置回调地址。"
     },
     "identity": {
       "taken": "这个 IM 账号已绑定到另一个 Capybara 账号。",
@@ -1144,7 +1145,24 @@
       "dangerTitle": "危险操作",
       "delete": "删除渠道",
       "deleteTitle": "删除 {name}？",
-      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 Capybara 中。"
+      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 Capybara 中。",
+      "inboundTitle": "接收方式",
+      "inboundHint": "机器人如何接收消息。长连接在内网即可使用；Webhook 需要平台能经公网地址访问本部署。",
+      "inboundLabel": "接收方式",
+      "inboundUnsupported": "该渠道插件只支持长连接。",
+      "inboundNoBaseUrl": "无法使用 Webhook：部署未配置公网回调地址（channels.webhookBaseUrl）。",
+      "callbackUrl": "回调地址",
+      "callbackUrlHint": "在平台的应用设置里把此地址填为事件 / 请求地址。",
+      "saveInbound": "保存接收方式",
+      "inboundSaved": "接收方式已保存。"
+    },
+    "inboundMode": {
+      "long_connection": "长连接",
+      "webhook": "Webhook"
+    },
+    "inboundModeHint": {
+      "long_connection": "机器人与平台保持一条连接（默认，无需公网地址）。",
+      "webhook": "平台每个事件都回调本部署，需要公网地址。"
     }
   },
   "plugins": {
