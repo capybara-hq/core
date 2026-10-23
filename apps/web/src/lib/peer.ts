@@ -51,9 +51,24 @@ export type TrustProxy =
   | { kind: "cidrs"; list: BlockList };
 
 /**
+ * proxy-addr's named ranges (what the kernel's `http.trustProxy` also accepts), so a value that works
+ * for the kernel works here too.
+ */
+const NAMED_RANGES: Readonly<Record<string, readonly string[]>> = {
+  loopback: ["127.0.0.1/8", "::1/128"],
+  linklocal: ["169.254.0.0/16", "fe80::/10"],
+  uniquelocal: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"],
+};
+
+/**
  * Parses {@link TRUST_PROXY_ENV}: unset or empty trusts nothing; a non-negative integer is a hop
- * count (0 trusts nothing); anything else is a comma-separated list of IPs / CIDRs (a /0 prefix is
- * refused: it would trust every address). Throws on a malformed value so the server fails at startup instead of silently trusting the wrong hops.
+ * count (0 trusts nothing); anything else is a list of IPs / CIDRs, comma-separated or as a JSON
+ * array. The list grammar is the kernel's `http.trustProxy` one: an IPv4 prefix may be a dotted
+ * netmask (`10.0.0.0/255.0.0.0`), `loopback` / `linklocal` / `uniquelocal` name proxy-addr's ranges,
+ * and an IPv4-mapped IPv6 range (`::ffff:10.0.0.0/104`) is the IPv4 range /N-96. A range that trusts
+ * every address (/0) is refused. Unlike the kernel there is no `true` (trust everyone) or `false`
+ * (use 0). Throws on a malformed value so the server fails at startup instead of silently trusting
+ * the wrong hops.
  */
 export function parseTrustProxy(raw: string | undefined): TrustProxy {
   const value = raw?.trim() ?? "";
@@ -63,31 +78,72 @@ export function parseTrustProxy(raw: string | undefined): TrustProxy {
     return hops === 0 ? { kind: "none" } : { kind: "hops", hops };
   }
   const list = new BlockList();
-  for (const entry of value.split(",").map((e) => e.trim())) {
-    const [addr = "", prefix, extra] = entry.split("/");
-    const ip = normalizeIp(addr);
-    const family = ip === undefined ? 0 : isIP(ip);
-    const max = family === 6 ? 128 : 32;
-    const bits = prefix === undefined ? max : Number(prefix);
-    if (
-      ip === undefined ||
-      extra !== undefined ||
-      (prefix !== undefined && !/^\d+$/.test(prefix)) ||
-      bits > max
-    ) {
-      throw new Error(
-        `${TRUST_PROXY_ENV}: invalid entry "${entry}"; expected a hop count or comma-separated IPs / CIDRs`,
-      );
+  for (const entry of listEntries(value)) {
+    for (const range of NAMED_RANGES[entry] ?? [entry]) {
+      const { ip, bits, family } = parseRange(range, entry);
+      list.addSubnet(ip, bits, family);
     }
-    if (bits === 0) {
-      // A /0 prefix trusts every address: any client could forge X-Forwarded-For.
-      throw new Error(
-        `${TRUST_PROXY_ENV}: "${entry}" trusts every address; list the proxies' own addresses or CIDRs`,
-      );
-    }
-    list.addSubnet(ip, bits, family === 6 ? "ipv6" : "ipv4");
   }
   return { kind: "cidrs", list };
+}
+
+function invalid(entry: string): Error {
+  return new Error(
+    `${TRUST_PROXY_ENV}: invalid entry "${entry}"; expected a hop count or comma-separated IPs / CIDRs`,
+  );
+}
+
+/** The entries of a comma-separated or JSON array list (empty entries dropped). */
+function listEntries(value: string): string[] {
+  if (value.startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw invalid(value);
+    }
+    if (!Array.isArray(parsed) || !parsed.every((e) => typeof e === "string")) {
+      throw invalid(value);
+    }
+    return parsed.map((e) => e.trim()).filter((e) => e !== "");
+  }
+  return value
+    .split(",")
+    .map((e) => e.trim())
+    .filter((e) => e !== "");
+}
+
+/** Prefix length of a contiguous dotted IPv4 netmask, or undefined. */
+function netmaskBits(mask: string): number | undefined {
+  if (isIP(mask) !== 4) return undefined;
+  const n = mask.split(".").reduce((acc, o) => acc * 256 + Number(o), 0);
+  const ones = n.toString(2).padStart(32, "0");
+  return /01/.test(ones) ? undefined : (ones.match(/1/g) ?? []).length;
+}
+
+/** One IP / CIDR entry as a BlockList subnet (IPv4-mapped IPv6 unwrapped to IPv4). */
+function parseRange(
+  range: string,
+  entry: string,
+): { ip: string; bits: number; family: "ipv4" | "ipv6" } {
+  const [addr = "", prefix, extra] = range.split("/");
+  const raw = addr.trim();
+  const ip = normalizeIp(raw);
+  if (ip === undefined || extra !== undefined) throw invalid(entry);
+  const family = isIP(ip) === 6 ? 6 : 4;
+  const mapped = family === 4 && isIP(raw) === 6;
+  let bits: number | undefined;
+  if (prefix === undefined) bits = family === 6 ? 128 : 32;
+  else if (/^\d+$/.test(prefix)) bits = Number(prefix) - (mapped ? 96 : 0);
+  else if (family === 4 && !mapped) bits = netmaskBits(prefix);
+  if (bits === undefined || bits > (family === 6 ? 128 : 32)) throw invalid(entry);
+  if (bits <= 0) {
+    // A /0 range trusts every address: any client could forge X-Forwarded-For.
+    throw new Error(
+      `${TRUST_PROXY_ENV}: "${entry}" trusts every address; list the proxies' own addresses or CIDRs`,
+    );
+  }
+  return { ip, bits, family: family === 6 ? "ipv6" : "ipv4" };
 }
 
 /** A bare IPv4 / IPv6 address (IPv4-mapped IPv6 unwrapped to IPv4), or undefined if malformed. */

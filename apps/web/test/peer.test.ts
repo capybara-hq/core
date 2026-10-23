@@ -124,6 +124,32 @@ describe("sanitizeIncoming with CAPYBARA_WEB_TRUST_PROXY", () => {
     expect(parseTrustProxy("fd00::/8, ::1").kind).toBe("cidrs");
   });
 
+  it("accepts the kernel's trustProxy grammar: netmasks, named ranges, mapped ranges, JSON", () => {
+    // Values that work for CAPYBARA_HTTP__TRUST_PROXY must not crash web at startup.
+    expect(sanitize("10.0.0.0/255.0.0.0", "10.1.2.3", "1.2.3.4")["x-forwarded-for"]).toBe(
+      "1.2.3.4",
+    );
+    expect(sanitize("10.0.0.0/255.0.0.0", "11.0.0.1", "1.2.3.4")["x-forwarded-for"]).toBe(
+      "11.0.0.1",
+    );
+    expect(sanitize("loopback", "127.0.0.1", "1.2.3.4")["x-forwarded-for"]).toBe("1.2.3.4");
+    expect(sanitize("uniquelocal", "172.20.0.1", "1.2.3.4")["x-forwarded-for"]).toBe("1.2.3.4");
+    expect(sanitize("uniquelocal", "8.8.8.8", "1.2.3.4")["x-forwarded-for"]).toBe("8.8.8.8");
+    expect(sanitize("linklocal", "fe80::1", "1.2.3.4")["x-forwarded-for"]).toBe("1.2.3.4");
+    expect(sanitize("::ffff:10.0.0.0/104", "10.9.9.9", "1.2.3.4")["x-forwarded-for"]).toBe(
+      "1.2.3.4",
+    );
+    expect(sanitize('["10.0.0.0/8", "loopback"]', "10.0.0.2", "1.2.3.4")["x-forwarded-for"]).toBe(
+      "1.2.3.4",
+    );
+    for (const bad of ["10.0.0.0/255.0.255.0", "fd00::/255.0.0.0", '["10.0.0.1", 1]', "[x"]) {
+      expect(() => parseTrustProxy(bad), bad).toThrow(/CAPYBARA_WEB_TRUST_PROXY/);
+    }
+    for (const bad of ["10.0.0.0/0.0.0.0", "::ffff:10.0.0.0/96", '["0.0.0.0/0"]']) {
+      expect(() => parseTrustProxy(bad), bad).toThrow(/trusts every address/);
+    }
+  });
+
   it("refuses a /0 prefix, which would trust every address", () => {
     for (const bad of ["0.0.0.0/0", "::/0", "10.0.0.1, 0.0.0.0/00", "::ffff:0.0.0.0/0"]) {
       expect(() => parseTrustProxy(bad), bad).toThrow(/trusts every address/);

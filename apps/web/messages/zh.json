@@ -38,7 +38,7 @@
       },
       "unknown": "登录失败，请重试。"
     },
-    "insecureOrigin": "如果登录后马上又回到登录页：当前页面通过 http 从非 localhost 的地址访问，而会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它。请改用 HTTPS（或在 localhost 上）访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false）。"
+    "insecureOrigin": "如果登录后马上又回到登录页：当前页面通过 http 从非 localhost 的地址访问，而会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它。请改用 HTTPS（或在 localhost 上）访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false），并把 CAPYBARA_PUBLIC_URL 设为当前地址，否则附件上传与下载会失败。"
   },
   "setup": {
     "title": "初始化",
