@@ -19,6 +19,10 @@ interface ProbeConfig {
   /** Hooks of the mount points in `sleepIn` wait this long (they stop early when aborted). */
   sleepMs?: number;
   sleepIn?: AvailableHook[];
+  /** usage.report throws on the first delivery of each event (succeeds on the retry). */
+  usageThrowOnce?: boolean;
+  /** usage.report blocks on the first delivery of each event until its signal aborts. */
+  usageHoldOnce?: boolean;
 }
 
 const TTL = { ttlSeconds: 600 };
@@ -45,10 +49,14 @@ export default definePlugin({
     http: [
       { method: "GET", path: "/counts" },
       { method: "POST", path: "/config" },
+      { method: "GET", path: "/usage" },
+      { method: "GET", path: "/whoami" },
     ],
     tools: ["probe_echo"],
   },
   setup(ctx: PluginContext) {
+    /** This plugin instance (per replica): lets a test tell which replica holds a delivery. */
+    const instanceId = crypto.randomUUID();
     const config = async (orgId: string): Promise<ProbeConfig> =>
       JSON.parse((await ctx.kv.get(`cfg:${orgId}`)) ?? "{}") as ProbeConfig;
     const record = async (mount: AvailableHook, orgId: string, payload: unknown) => {
@@ -111,7 +119,18 @@ export default definePlugin({
     ctx.hooks.on(
       "usage.report",
       async (p, signal) => {
-        await prelude("usage.report", p.orgId, p, signal);
+        const cfg = await prelude("usage.report", p.orgId, p, signal);
+        // per event: deliveries and the last payload (idempotency is the handler's job: by eventId)
+        const n = await ctx.kv.incr(`usage:${p.eventId}`, TTL);
+        await ctx.kv.set(`usage-last:${p.eventId}`, JSON.stringify(p), TTL);
+        if (n === 1 && cfg.usageThrowOnce) throw new Error("probe usage failure (first delivery)");
+        if (n === 1 && cfg.usageHoldOnce) {
+          await ctx.kv.set(`usage-holder:${p.eventId}`, instanceId, TTL);
+          await new Promise<void>((resolve) =>
+            signal.addEventListener("abort", () => resolve(), { once: true }),
+          );
+          throw new Error("probe usage delivery aborted");
+        }
       },
       { mode: "observe" },
     );
@@ -145,6 +164,20 @@ export default definePlugin({
       }
       return Response.json({ counts, last });
     });
+    ctx.http.route("GET", "/usage", async (req) => {
+      const ids = (new URL(req.url).searchParams.get("eventIds") ?? "").split(",").filter(Boolean);
+      const out: Record<string, { calls: number; last: unknown; holder: string | null }> = {};
+      for (const id of ids) {
+        const last = await ctx.kv.get(`usage-last:${id}`);
+        out[id] = {
+          calls: Number((await ctx.kv.get(`usage:${id}`)) ?? 0),
+          last: last === null ? null : JSON.parse(last),
+          holder: await ctx.kv.get(`usage-holder:${id}`),
+        };
+      }
+      return Response.json(out);
+    });
+    ctx.http.route("GET", "/whoami", async () => Response.json({ instanceId }));
     ctx.http.route("POST", "/config", async (req) => {
       const { orgId, ...cfg } = (await req.json()) as ProbeConfig & { orgId: string };
       await ctx.kv.set(`cfg:${orgId}`, JSON.stringify(cfg), TTL);

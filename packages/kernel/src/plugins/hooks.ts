@@ -104,7 +104,7 @@ const failedReason = (plugin: string) => `The ${plugin} policy check failed`;
 const timeoutReason = (plugin: string) => `The ${plugin} policy check did not respond in time`;
 
 /** Deep-freezes a structured clone in place (typed arrays cannot be frozen and are left as they are). */
-function deepFreeze<T>(v: T): T {
+export function deepFreeze<T>(v: T): T {
   if (typeof v !== "object" || v === null || ArrayBuffer.isView(v) || Object.isFrozen(v)) return v;
   for (const k of Reflect.ownKeys(v)) deepFreeze((v as Record<string | symbol, unknown>)[k]);
   return Object.freeze(v);
@@ -200,7 +200,7 @@ export class HookRegistry {
       current(plugin: string): HookSource | undefined;
       enabledPlugins(orgId: string): Promise<Set<string>>;
       redis: Redis;
-      config: () => Pick<KernelConfig, "hooks">;
+      config: () => { hooks: Pick<KernelConfig["hooks"], "timeoutMs"> };
       log: Logger;
     },
   ) {}

@@ -54,6 +54,7 @@ import {
 } from "./hook-calls.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
+import type { UsageReporter } from "./usage-report.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
 export const WRAP_UP_REMINDER =
@@ -117,6 +118,11 @@ export interface ModelStepDeps {
    * `conversationKind: "chat"` on the step input.
    */
   hooks?: HookRunner;
+  /**
+   * `usage.report` delivery (P-17): each written `usage` event is enqueued (chat runs and full-run eval
+   * replays, which both log usage). `enqueue` never throws and returns at once without handlers.
+   */
+  usageReport?: Pick<UsageReporter, "enqueue">;
 }
 
 /** 构建请求用到的附件来源。 */
@@ -293,7 +299,14 @@ async function runStep(
 ): Promise<ModelStepResult> {
   const { conversationId, runId, step, signal } = input;
   const existing = await findExisting(deps.eventLog, conversationId, runId, step);
-  if (existing) return existing;
+  if (existing) {
+    // resumed after a crash between writing usage and enqueueing it: enqueue again (job id dedupes)
+    if (deps.usageReport && existing.usage !== null) {
+      const u = await deps.eventLog.findByIdem(conversationId, idem.usage(runId, step));
+      if (u) void deps.usageReport.enqueue(conversationId, u.seq);
+    }
+    return existing;
+  }
 
   const runtime = deps.config().runtime;
   /** 本次尝试已流出的文本；中止时写进 aborted 的 assistant_message。 */
@@ -348,7 +361,7 @@ async function runStep(
 
     const { outcome, ref } = await ladder(deps, input, events, runtime, tools, wrapUp, streamed);
     // assistant_message 与 usage 同一次 append = 同一事务。
-    await deps.eventLog.append(conversationId, [
+    const appended = await deps.eventLog.append(conversationId, [
       {
         type: "assistant_message",
         runId,
@@ -362,6 +375,10 @@ async function runStep(
         payload: { step, provider: ref.provider, model: ref.model, ...outcome.usage },
       },
     ]);
+    // usage.report metering (never awaited on the run's path; enqueue logs and swallows failures)
+    const usageEvent = appended.find((e) => e.type === "usage");
+    if (deps.usageReport && usageEvent)
+      void deps.usageReport.enqueue(conversationId, usageEvent.seq);
     return {
       content: outcome.content,
       stopReason: outcome.stopReason,

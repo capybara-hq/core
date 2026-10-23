@@ -395,6 +395,21 @@ describe("scope", { timeout: 60_000 }, () => {
     const evalEvents = await eventsOf(db, r?.evalConversationId as string);
     expect(evalEvents.some((e) => e.type === "model_call")).toBe(true);
     await sleep(300);
-    expect((await counts()).counts).toEqual(before);
+    // model and tool hooks never fire in replays; usage.report does (the replay logs usage, P-17),
+    // with conversationKind "eval"
+    const after = await waitFor(
+      async () => {
+        const c = await counts();
+        return (c.counts["usage.report"] ?? 0) > (before["usage.report"] ?? 0) ? c : null;
+      },
+      15_000,
+      "eval usage reported",
+    );
+    const { "usage.report": _afterUsage, ...afterRest } = after.counts;
+    const { "usage.report": _beforeUsage, ...beforeRest } = before;
+    expect(afterRest).toEqual(beforeRest);
+    expect((after.last["usage.report"] as { conversationKind: string }).conversationKind).toBe(
+      "eval",
+    );
   });
 });

@@ -66,8 +66,11 @@ export interface ToolPostHookPayload extends ToolPreHookPayload {
 }
 
 /**
- * `usage.report`: the usage of one model call, delivered through a queue with retries. Handlers must
- * be idempotent by `eventId` (`<conversationId>/<seq>`).
+ * `usage.report`: the usage of one model call that the event log recorded (chat runs and full-run eval
+ * replays, see `conversationKind`), delivered through a queue **at least once**: a failed or
+ * interrupted delivery is retried (up to 5 times, 2 s doubling), possibly on another replica, so
+ * handlers must be idempotent by `eventId` (`<conversationId>/<seq>`). Delivered only while the
+ * organization has the plugin enabled; the verdict is ignored.
  */
 export interface UsageReportPayload {
   eventId: string;

@@ -1198,6 +1198,16 @@ export const KernelConfigSchema = z.object({
               "Time limit in milliseconds for one plugin hook call; a policy hook that exceeds it denies the call, an observe hook is skipped",
           }),
         ),
+      usageReportConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(4)
+        .meta(
+          meta({
+            description: "usage.report delivery jobs one worker replica processes at the same time",
+          }),
+        ),
     })
     .prefault({} as never),
   log: z

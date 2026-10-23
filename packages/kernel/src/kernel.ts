@@ -103,6 +103,7 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import { UsageReporter } from "./runtime/usage-report.js";
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService, sandboxConfigWarnings } from "./sandbox/sandbox.service.js";
@@ -941,10 +942,20 @@ export async function createKernel(
         .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
     };
   };
+  // usage.report metering: producer on every role, worker on the worker role (P-17)
+  const usageReporter = new UsageReporter({
+    db: kdb,
+    redisUrl: config.redis.url,
+    hooks: host.hooks,
+    enabledPlugins: (orgId) => host.enabledPlugins(orgId),
+    config: () => current,
+    log,
+  });
   const stepDeps: LoopDeps = {
     db: kdb,
     eventLog,
     registry,
+    usageReport: usageReporter,
     tools: toolRegistry,
     config: () => current,
     log,
@@ -1178,6 +1189,8 @@ export async function createKernel(
       );
     }
     await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
+    // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
+    await within("usage-report", usageReporter.stop(), Math.max(0, runsDeadline - Date.now()));
     // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
     await within(
       "channel-outbound",
@@ -1353,6 +1366,7 @@ export async function createKernel(
           checkpoint();
           maintenance.startWorker();
           channelOutbound.startWorker();
+          usageReporter.startWorker();
           if (!config.roles.includes("gateway")) {
             log.info(
               "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",
