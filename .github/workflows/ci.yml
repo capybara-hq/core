@@ -110,9 +110,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    # spec 13.4：≤ 10 分钟。本地实测 e2e 本身约 10s（含 Testcontainers 启动），CI 另需依赖安装、
-    # Playwright Chromium 安装与镜像拉取（合计约 3–4 分钟），10 分钟留有余量。
-    timeout-minutes: 10
+    # 本地实测 e2e 本身约 10s（含 Testcontainers 启动），CI 另需依赖安装、Playwright 与镜像拉取。
+    # Chromium 按 lockfile 里 @playwright/test 的版本缓存在 ~/.cache/ms-playwright；命中时只装系统依赖
+    # （install-deps 仍走 apt）。apt 镜像慢时只装依赖也能花掉几分钟（run 39890548962 在 10 分钟处被取消，
+    # 测试其实都已通过），所以时限 20 分钟。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -121,8 +123,23 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 安装 Playwright Chromium
+      - name: 读 Playwright 版本
+        id: playwright
+        run: |
+          version=$(node -p "require('./apps/web/node_modules/@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: 缓存 Playwright 浏览器
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: 安装 Playwright Chromium（含系统依赖）
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @capybara-hq/web exec playwright install --with-deps chromium
+      - name: 只装 Chromium 的系统依赖（浏览器来自缓存）
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter @capybara-hq/web exec playwright install-deps chromium
       - name: 端到端测试（Testcontainers 起 PG / Valkey，内核 + model-fake，Web 层）
         run: pnpm --filter @capybara-hq/web e2e
       - uses: actions/upload-artifact@v4
