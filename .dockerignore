@@ -1,0 +1,19 @@
+# Build context for docker/*.Dockerfile: sources, manifests and the lockfile only.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/coverage
+**/.next
+.git
+.github
+.claude
+.superpowers
+.changeset
+.capybara-pack-*
+artifacts
+docs
+skills
+apps/web/visual
+**/.DS_Store
+**/.env
+**/.env.*

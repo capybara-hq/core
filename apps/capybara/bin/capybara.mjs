@@ -1,13 +1,25 @@
 #!/usr/bin/env node
-// 从源码运行 CLI 的入口。tsx 只认当前工作目录下（且 include 覆盖到的）tsconfig，从任意目录运行时
-// 内核源码会丢掉 experimentalDecorators（Nest 装饰器无法编译），所以这里显式指定仓库的 tsconfig.base.json；
-// 同时补上 `@capybara-hq/source` 导出条件，让 workspace 包解析到 src 而不是 dist。
+// CLI entry. In a repo checkout (src/cli.ts present) it runs the TypeScript sources through tsx, so
+// a stale dist never shadows edits. In a production install (pnpm deploy / the kernel image) only
+// `bin` and `dist` ship, and it runs the `tsc -b` output with plain Node: tsx is a devDependency and
+// is imported lazily, so the dist path never loads it.
+import { existsSync } from "node:fs";
 import { register } from "node:module";
 import { fileURLToPath } from "node:url";
-import { register as registerTsx } from "tsx/esm/api";
 
-registerTsx({ tsconfig: fileURLToPath(new URL("../../../tsconfig.base.json", import.meta.url)) });
-register(
-  "data:text/javascript,export function resolve(s, c, next) { return next(s, { ...c, conditions: [...c.conditions, '@capybara-hq/source'] }); }",
-);
-await import("../src/cli.ts");
+const source = new URL("../src/cli.ts", import.meta.url);
+
+if (existsSync(source)) {
+  // tsx only honors the tsconfig in the working directory (when its include covers the file), so
+  // running from elsewhere would drop experimentalDecorators for the kernel sources (Nest decorators
+  // fail to compile); point it at the repo's tsconfig.base.json explicitly. Also add the
+  // `@capybara-hq/source` export condition so workspace packages resolve to src instead of dist.
+  const { register: registerTsx } = await import("tsx/esm/api");
+  registerTsx({ tsconfig: fileURLToPath(new URL("../../../tsconfig.base.json", import.meta.url)) });
+  register(
+    "data:text/javascript,export function resolve(s, c, next) { return next(s, { ...c, conditions: [...c.conditions, '@capybara-hq/source'] }); }",
+  );
+  await import(source.href);
+} else {
+  await import(new URL("../dist/cli.js", import.meta.url).href);
+}

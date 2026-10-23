@@ -77,13 +77,13 @@ importers:
       '@capybara-hq/plugin-openai-compatible':
         specifier: workspace:*
         version: link:../../plugins/openai-compatible
-      tsx:
-        specifier: ^4.23.15
-        version: 4.23.15
     devDependencies:
       '@capybara-hq/testing':
         specifier: workspace:*
         version: link:../../packages/testing
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
 
   apps/web:
     dependencies:
