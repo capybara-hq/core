@@ -1,119 +1,119 @@
-# Capybara 设计系统规格（E · 终端）
+# Capybara Design System Spec (E · Terminal)
 
-> 状态：已实现（`packages/design` + `/dev/ui`）· 2026-10-18
-> 视觉参考：设计画布 https://claude.ai/artifact/KsyGe4akVT4KbqUHfHXdXd （"E · 设计系统" 两行，深 / 浅）
-> 视觉真值：`/dev/ui` 目录页与入库的截图基准（`apps/web/visual/`，Linux 版）；`docs/design/reference/`（画布导出）暂缺，导出后再补
+> Status: implemented (`packages/design` + `/dev/ui`) · 2026-10-18
+> Visual reference: design canvas https://claude.ai/artifact/KsyGe4akVT4KbqUHfHXdXd (two rows "E · Design System", dark / light)
+> Visual source of truth: the `/dev/ui` catalog page and the screenshot baselines checked into the repo (`apps/web/visual/`, Linux version); `docs/design/reference/` (canvas export) is not there yet and will be added after the export
 
-本文是 Web 界面的**唯一规范**。画布与截图是对本文的图示；两者不一致时以本文为准，并修正画布。
-实现位于 `packages/design`（包名 `@capybara-hq/design`），`apps/web` 只消费它。能自动检查的规则以 `pnpm check` 与截图测试为准（见 §9）。
+This document is the **only specification** for the web UI. The canvas and the screenshots illustrate this document; when they disagree, this document wins and the canvas is corrected.
+The implementation lives in `packages/design` (package name `@capybara-hq/design`); `apps/web` only consumes it. Rules that can be checked automatically are enforced by `pnpm check` and the screenshot tests (see §9).
 
-规范用词：**必须** / **不得** 为强制；**应** 为默认做法，偏离须在评审中说明理由。
-
----
-
-## 1. 设计原则
-
-1. **字符网格**：全站一款等宽字体，中文一字恰为英文两格，界面在字符网格上对齐。
-2. **克制**：直角、1px 线、灰阶为主；主色只承担 §2.3 列出的五种职责。
-3. **高密度、可扫读**：数字等宽右对齐，状态用「符号 + 颜色 + 文字」三重编码。
-4. **结构先于样式**：页面由 App Shell（§4）与页面模板（§5）组成，页面不自行布局外壳。
-5. **深色优先，深浅同源**：两套主题共享同一组 token 名，只换值。
+Wording: **must** / **must not** are mandatory; **should** is the default practice, and deviations need a reason stated in review.
 
 ---
 
-## 2. Token
+## 1. Design principles
 
-所有颜色、尺寸、阴影只能通过 token 使用：`packages/design/src/styles/tokens.css` 中的 CSS 变量 `--cb-<token>`，深色值挂在 `:root[data-theme="dark"]`，浅色值挂在 `:root[data-theme="light"]`。颜色字面量只允许出现在 `tokens.css`。不使用 Tailwind。
+1. **Character grid**: one monospace font across the whole site, where one Chinese character is exactly two English cells, and the UI aligns on the character grid.
+2. **Restraint**: right angles, 1px lines, mostly grayscale; the accent color takes only the five roles listed in §2.3.
+3. **Dense and scannable**: numbers are monospaced and right-aligned; status is triple-encoded as "symbol + color + text".
+4. **Structure before style**: a page is composed of the App Shell (§4) and page templates (§5); pages never lay out the shell themselves.
+5. **Dark first, dark and light from one source**: the two themes share the same set of token names and only change the values.
 
-### 2.1 颜色
+---
 
-| Token | 深色 | 浅色 | 用途 |
+## 2. Tokens
+
+All colors, sizes and shadows may only be used through tokens: the CSS variables `--cb-<token>` in `packages/design/src/styles/tokens.css`, with dark values under `:root[data-theme="dark"]` and light values under `:root[data-theme="light"]`. Color literals are allowed only in `tokens.css`. Tailwind is not used.
+
+### 2.1 Colors
+
+| Token | Dark | Light | Purpose |
 |---|---|---|---|
-| `bg` | `#0A0A0A` | `#F6F6F3` | 页面底色 |
-| `panel` | `#121211` | `#FFFFFF` | TopBar、StatusBar、ActionRow、浮层、Inspector 卡片 |
-| `hover` | `#161614` | `#ECECE7` | 悬停底色、禁用输入底色、骨架 |
-| `line` | `#262624` | `#D6D6D0` | 默认 1px 线、分隔、输入框边 |
-| `line-strong` | `#3A3A37` | `#B5B5AE` | 浮层边框、ActionRow 上边线、悬停边框、未选复选框 |
-| `ink` | `#E6E6E3` | `#0A0A0A` | 正文 |
-| `muted` | `#8E8E89` | `#5E5E5A` | 次要文字、表头、标签 |
-| `faint` | `#5A5A56` | `#9A9A94` | 占位符、禁用文字、分隔符号（**不得**承载必要信息，对比度不足 4.5:1） |
-| `accent` | `#FF6A13` | `#CC4609` | 主色（§2.3） |
-| `accent-hover` | `#FF8240` | `#B83F08` | 实心主按钮悬停 |
-| `accent-press` | `#E85A08` | `#A33707` | 实心主按钮按下 |
-| `on-accent` | `#0A0A0A` | `#FFFFFF` | 主色实心底上的文字 / 图标 |
-| `accent-tint` | accent @ 12% | accent @ 12% | 选中行 / 项底色 |
-| `ok` | `#3FD483` | `#16803F` | 成功、上涨 |
-| `fail` | `#FF5C52` | `#C8302A` | 失败、错误、危险、下跌 |
-| `warn` | `#F2C14B` | `#8F6500` | 待审批、未保存、警告 |
-| `scrim` | `rgba(0,0,0,.60)` | `rgba(10,10,10,.25)` | 对话框遮罩 |
+| `bg` | `#0A0A0A` | `#F6F6F3` | Page background |
+| `panel` | `#121211` | `#FFFFFF` | TopBar, StatusBar, ActionRow, overlays, Inspector cards |
+| `hover` | `#161614` | `#ECECE7` | Hover background, disabled input background, skeleton |
+| `line` | `#262624` | `#D6D6D0` | Default 1px line, dividers, input border |
+| `line-strong` | `#3A3A37` | `#B5B5AE` | Overlay border, ActionRow top line, hover border, unchecked checkbox |
+| `ink` | `#E6E6E3` | `#0A0A0A` | Body text |
+| `muted` | `#8E8E89` | `#5E5E5A` | Secondary text, table headers, labels |
+| `faint` | `#5A5A56` | `#9A9A94` | Placeholders, disabled text, separator symbols (**must not** carry essential information; contrast is below 4.5:1) |
+| `accent` | `#FF6A13` | `#CC4609` | Accent color (§2.3) |
+| `accent-hover` | `#FF8240` | `#B83F08` | Solid primary button hover |
+| `accent-press` | `#E85A08` | `#A33707` | Solid primary button pressed |
+| `on-accent` | `#0A0A0A` | `#FFFFFF` | Text / icons on a solid accent background |
+| `accent-tint` | accent @ 12% | accent @ 12% | Selected row / item background |
+| `ok` | `#3FD483` | `#16803F` | Success, up |
+| `fail` | `#FF5C52` | `#C8302A` | Failure, error, danger, down |
+| `warn` | `#F2C14B` | `#8F6500` | Pending approval, unsaved, warning |
+| `scrim` | `rgba(0,0,0,.60)` | `rgba(10,10,10,.25)` | Dialog scrim |
 
-浅色主色取 `#CC4609`：白字对比度 4.72:1（WCAG AA）。原 `#FF6A13` 配白字仅 2.87:1，不得用于浅色主题。
+The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme.
 
-### 2.2 字体与字号
+### 2.2 Font and sizes
 
-- 字体：**更纱等宽黑体 SC**（Sarasa Mono SC，OFL-1.1），字重仅 400 / 700。全站唯一字体，不得引入第二款。
-- 交付：构建期子集化为 woff2（ASCII + 一级常用汉字 3755 字 + 界面实际用字 + 符号表），自托管，`font-display: swap`。
-- 回退：`'Sarasa Mono SC', ui-monospace, monospace`。
+- Font: **Sarasa Mono SC** (OFL-1.1), weights 400 / 700 only. It is the only font on the site; a second font must not be introduced.
+- Delivery: subsetted to woff2 at build time (ASCII + the 3,755 level-1 common Chinese characters + the characters the UI actually uses + a symbol table), self-hosted, `font-display: swap`.
+- Fallback: `'Sarasa Mono SC', ui-monospace, monospace`.
 
-| 名称 | 字号 / 行高 | 字重 | 用途 |
+| Name | Size / line height | Weight | Purpose |
 |---|---|---|---|
-| `h1` | 20 / 28 | 700 | PageHeader 标题 |
-| `h2` | 16 / 24 | 700 | 区块标题、Dialog 标题 |
-| `body` | 13 / 20 | 400 | 默认正文、表格、控件 |
-| `small` | 12 / 16 | 400 | 表头、帮助文字、错误信息、StatusBar |
-| `micro` | 11 / 14 | 400 | PageHeader 指标标签 |
+| `h1` | 20 / 28 | 700 | PageHeader title |
+| `h2` | 16 / 24 | 700 | Section title, Dialog title |
+| `body` | 13 / 20 | 400 | Default body text, tables, controls |
+| `small` | 12 / 16 | 400 | Table header, help text, error messages, StatusBar |
+| `micro` | 11 / 14 | 400 | PageHeader metric labels |
 
-- 数字一律 `font-variant-numeric: tabular-nums`。
-- 不使用斜体、不使用字距调整（等宽网格）。
+- Numbers always use `font-variant-numeric: tabular-nums`.
+- No italics and no letter-spacing adjustment (monospace grid).
 
-### 2.3 主色的五种职责（仅此五种）
+### 2.3 The five roles of the accent color (only these five)
 
-| 形态 | 用于 |
+| Form | Used for |
 |---|---|
-| 实心（`accent` 底 + `on-accent` 字） | 视图内**唯一**的主操作 |
-| 描边（1px `accent` 边 + `accent` 字） | 需强调的次级操作、选中的分段、当前页码；待人处理的对话卡片只描边（`Card tone="accent"`） |
-| 下划线（`inset 0 -2px 0 accent`） | 当前一级导航、当前 PageTab |
-| 文字（`accent` 字 / `●`） | 正在发生：运行中、实时、自动刷新倒计时、光标 |
-| 底色 + 左标（`accent-tint` 底 + `inset 2px 0 0 accent`） | 选中的行 / 项 / 锚点 |
+| Solid (`accent` background + `on-accent` text) | The **only** primary action in a view |
+| Outline (1px `accent` border + `accent` text) | Secondary actions that need emphasis, the selected segment, the current page number; a conversation card waiting for a person gets only an outline (`Card tone="accent"`) |
+| Underline (`inset 0 -2px 0 accent`) | The current top-level navigation item, the current PageTab |
+| Text (`accent` text / `●`) | Something is happening: running, live, auto-refresh countdown, cursor |
+| Background + left marker (`accent-tint` background + `inset 2px 0 0 accent`) | The selected row / item / anchor |
 
-其余地方不得使用主色。涨跌只用 `ok` / `fail`。
+The accent color must not be used anywhere else. Up and down use only `ok` / `fail`.
 
-### 2.4 状态编码
+### 2.4 Status encoding
 
-| 状态 | 符号 | 颜色 | 文案 |
+| Status | Symbol | Color | Text |
 |---|---|---|---|
-| 运行中 | `●` | accent | 运行中 |
-| 成功 | `✓` | ok | 成功 |
-| 失败 | `✗` | fail | 失败 |
-| 待审批 / 暂停 | `‖` | warn | 待审批 |
-| 排队 | `○` | muted | 排队 |
-| 已取消 | `⊘` | muted | 已取消 |
-| 已达上限 | `◆` | warn | 已达上限（配额如 token 上限用尽后停下，与人为取消区分） |
+| Running | `●` | accent | Running |
+| Succeeded | `✓` | ok | Succeeded |
+| Failed | `✗` | fail | Failed |
+| Pending approval / paused | `‖` | warn | Pending approval |
+| Queued | `○` | muted | Queued |
+| Cancelled | `⊘` | muted | Cancelled |
+| Limit reached | `◆` | warn | Limit reached (stopped after a quota such as the token limit ran out; distinguished from a manual cancel) |
 
-状态必须同时有符号与文字，不得只靠颜色。
+A status must have both a symbol and text; it must not rely on color alone.
 
-### 2.5 尺寸、线、圆角、阴影、层级、动效
+### 2.5 Size, lines, corner radius, shadow, layering, motion
 
-- 间距：4 的倍数（4 / 8 / 12 / 16 / 24 / 32 / 40）。
-- 控件高：24（表格内、紧凑）/ **28（默认）**/ 36（页面级强调）。图标按钮为正方形。
-- 线：1px；圆角：**0**（全站）。
-- 阴影只用于浮层：
+- Spacing: multiples of 4 (4 / 8 / 12 / 16 / 24 / 32 / 40).
+- Control height: 24 (inside tables, compact) / **28 (default)** / 36 (page-level emphasis). Icon buttons are square.
+- Lines: 1px; corner radius: **0** (site-wide).
+- Shadows are used only for overlays:
 
-| Token | 深色 | 浅色 | 用于 |
+| Token | Dark | Light | Used for |
 |---|---|---|---|
-| `shadow-1` | `0 8px 24px rgba(0,0,0,.40)` | `0 2px 8px rgba(10,10,10,.08)` | Menu、Popover、Toast、行内菜单 |
-| `shadow-2` | `0 16px 48px rgba(0,0,0,.50)` | `0 8px 24px rgba(10,10,10,.12)` | Dialog、命令面板 |
+| `shadow-1` | `0 8px 24px rgba(0,0,0,.40)` | `0 2px 8px rgba(10,10,10,.08)` | Menu, Popover, Toast, inline menu |
+| `shadow-2` | `0 16px 48px rgba(0,0,0,.50)` | `0 8px 24px rgba(10,10,10,.12)` | Dialog, command palette |
 | `shadow-sheet` | `-16px 0 40px rgba(0,0,0,.40)` | `-4px 0 16px rgba(10,10,10,.08)` | Sheet |
 
-- 层级：Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70。
-- 动效：120ms，淡入 + 4px 位移，`ease-out`，无弹性；尊重 `prefers-reduced-motion`。
-- 焦点环：控件 `outline: 2px solid accent; outline-offset: 2px`；表格行 / 列表项 `outline: 1px solid accent; outline-offset: -1px`。仅 `:focus-visible`。
+- Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70.
+- Motion: 120ms, fade in + 4px offset, `ease-out`, no bounce; respects `prefers-reduced-motion`.
+- Focus ring: controls use `outline: 2px solid accent; outline-offset: 2px`; table rows / list items use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only.
 
 ---
 
-## 3. 品牌元素
+## 3. Brand elements
 
-- **Logo**：像素水豚，14×10 位图，以 2px（TopBar）/ 3px（空状态）/ 6px（认证页）为像素单位绘制，`shape-rendering: crispEdges`，主色填充。位图（`X` 为实心，`O` 为眼睛镂空）：
+- **Logo**: a pixel capybara, a 14×10 bitmap drawn with a pixel unit of 2px (TopBar) / 3px (empty state) / 6px (auth pages), `shape-rendering: crispEdges`, filled with the accent color. The bitmap (`X` is solid, `O` is the eye cut-out):
 
 ```
 ..........X...
@@ -128,248 +128,248 @@
 ..XX..X..XX...
 ```
 
-- 字标：`CAPYBARA`，700，与 Logo 间距 8。
-- **抖动点阵**：只用于认证页两侧背景与（可选）概览页页头角落，方块 4px，密度由一侧向另一侧递减，可点缀 ≤1% 主色方块。其他页面不得使用。
-- 不使用插画、渐变、毛玻璃、emoji。
+- Wordmark: `CAPYBARA`, 700, 8 away from the Logo.
+- **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares, density decreasing from one side to the other, with at most 1% accent-colored squares as accents. No other page may use it.
+- No illustrations, gradients, frosted glass or emoji.
 
 ---
 
-## 4. App Shell（系统布局）
+## 4. App Shell (system layout)
 
-每个页面自上而下固定为以下层，顺序不可变（认证页除外，见 §5 T10）：
+Every page is made of the following layers from top to bottom, in a fixed order (except auth pages, see §5 T10):
 
-| 层 | 高 | 是否必有 | 内容 |
+| Layer | Height | Required | Content |
 |---|---|---|---|
-| TopBar | 40 | 必有 | Logo · 组织 / 环境切换 · 一级导航 · ⌘K 搜索 · 账户 |
-| PageHeader | 56 | 必有 | 单行：`父级 /` 标题 + 计数·状态 ｜ 关键指标 ≤5 ｜ 操作 |
-| PageTabs | 36 | 可选（仅详情类） | 页内标签，当前项下划线 |
-| Body | 自适应 | 必有 | §4.3 五种布局之一 |
-| ActionRow | 40 | 可选 | 有待提交改动时出现，叠在 StatusBar 上方 |
-| StatusBar | 24 | 必有 | 上下文路径 · 页面状态 ｜ 系统状态 · 版本 |
+| TopBar | 40 | Required | Logo · org / environment switcher · top-level navigation · ⌘K search · account |
+| PageHeader | 56 | Required | Single line: `parent /` title + count · status ｜ key metrics ≤5 ｜ actions |
+| PageTabs | 36 | Optional (detail pages only) | In-page tabs, current item underlined |
+| Body | Flexible | Required | One of the five layouts in §4.3 |
+| ActionRow | 40 | Optional | Appears when there are changes to submit, stacked above the StatusBar |
+| StatusBar | 24 | Required | Context path · page status ｜ system status · version |
 
 ### 4.1 TopBar
-- 底色 `panel`，下边线 `line`。
-- 一级导航：概览 · Agents · 运行记录 · 审批 · 知识库 · 插件 · 设置（以产品实际为准，顺序固定）。当前项 `ink` + 主色下划线，其余 `muted`。
-- 导航项可带计数（如收件箱的待处理数）：大于 0 时在名称后以计数版 Badge 显示（超过 99 显示 `99+`；`countMore` 表示列表被截断，显示 `n+`），为 0 不显示；链接的可访问名称带上计数（「收件箱，3 项待处理」）；窄屏收进「更多 ▾」时以「名称 (n)」写进菜单项。
-- 插件页面入口：一级导航之后的「扩展 ▾」下拉（`Menu`），只有存在页面贡献时才显示；样式同导航项。
-- ⌘K 输入框宽 220，前缀 `>`，后缀 `⌘K`。
+- Background `panel`, bottom line `line`.
+- Top-level navigation: Overview · Agents · Runs · Approvals · Knowledge · Plugins · Settings (subject to the actual product; the order is fixed). The current item is `ink` + accent underline; the others are `muted`.
+- A navigation item can carry a count (such as the pending count of the inbox): when greater than 0 it is shown after the name as a count-style Badge (over 99 shows `99+`; `countMore` means the list was truncated and shows `n+`) and is not shown when 0; the link's accessible name includes the count ("Inbox, 3 pending"); when collapsed into "More ▾" on narrow screens it is written into the menu item as "Name (n)".
+- Plugin page entry: an "Extensions ▾" dropdown (`Menu`) after the top-level navigation, shown only when there are page contributions; styled like a navigation item.
+- The ⌘K input is 220 wide, with prefix `>` and suffix `⌘K`.
 
 ### 4.2 PageHeader
-- 单行，高 56，左右内边距 16。一级页面与二级页面高度一致。
-- 左：父级路径（`muted`，13px，可点击）+ ` / ` + 标题（`h1`）+ 计数 / 状态（13px）。一级页面只有标题。
-- 中：关键指标 ≤5，每项「标签（micro, muted）/ 数值（700）」，项间 1px `line` 竖线。
-- 右：操作，≤ 1 个实心主操作 + 2 个次级 + `⋯` 菜单；主操作在最右。表单类页面的提交操作**不得**放这里，放 ActionRow。
-- 有 PageTabs 时 PageHeader 不画下边线，由 PageTabs 下边线收口。
+- Single line, height 56, left and right padding 16. Top-level and second-level pages have the same height.
+- Left: parent path (`muted`, 13px, clickable) + ` / ` + title (`h1`) + count / status (13px). A top-level page has only the title.
+- Middle: key metrics ≤5, each as "label (micro, muted) / value (700)", with a 1px `line` vertical rule between items.
+- Right: actions, ≤ 1 solid primary action + 2 secondary + a `⋯` menu; the primary action is rightmost. The submit action of form pages **must not** go here; it goes in the ActionRow.
+- When there are PageTabs, the PageHeader draws no bottom line, and the PageTabs bottom line closes it off.
 
-### 4.3 Body 的五种布局
+### 4.3 The five Body layouts
 
-| 布局 | 结构 | 用于 |
+| Layout | Structure | Used for |
 |---|---|---|
-| Single | Content | 概览、链路查看器、系统状态、首次使用 |
-| Rail + Content | 240 + 自适应 | 列表 |
-| Content + Inspector | 自适应 + 400 | 详情、调试台 |
-| Rail + Content + Inspector | 240 + 自适应 + 400 | 收件箱 |
-| Centered | 锚点导航 180 + 内容最大 760，整体最大 960 居中 | 表单、设置、向导 |
+| Single | Content | Overview, trace viewer, system status, first use |
+| Rail + Content | 240 + flexible | Lists |
+| Content + Inspector | flexible + 400 | Details, playground |
+| Rail + Content + Inspector | 240 + flexible + 400 | Inbox |
+| Centered | anchor navigation 180 + content max 760, whole max 960 centered | Forms, settings, wizards |
 
-- Content 最小宽 560。Rail 可折叠；Inspector 可关闭。
-- 滚动：TopBar / PageHeader / PageTabs / ActionRow / StatusBar 固定；Rail、Content、Inspector 各自独立滚动；页面级不得出现第二条横向滚动条（宽表格在自身容器内横向滚动）。
-- 响应式：< 1280 Inspector 改为右侧 Sheet；< 960 Rail 改为工具栏「筛选」按钮 + Sheet；< 640 PageHeader 指标折叠进 `⋯`。
+- Content has a minimum width of 560. The Rail is collapsible; the Inspector is closable.
+- Scrolling: TopBar / PageHeader / PageTabs / ActionRow / StatusBar are fixed; Rail, Content and Inspector scroll independently; the page level must not show a second horizontal scrollbar (wide tables scroll horizontally inside their own container).
+- Responsive: < 1280 the Inspector becomes a right-side Sheet; < 960 the Rail becomes a toolbar "Filter" button + Sheet; < 640 the PageHeader metrics fold into `⋯`.
 
-### 4.4 ActionRow 与 StatusBar
-- **StatusBar 只有一种形态**：24 高，底色 `panel`，上边线 `line`，`small` 字号 `muted`。左：`> 用户@组织:路由` · 页面状态（如「已筛选 18 / 24」「自动刷新 15s」）；右：`●` 系统状态 · 版本 · 时区。
-- **ActionRow**：页面存在待提交改动（表单、批量编辑、审批决策、向导）时出现在 StatusBar **上方**，StatusBar 不变。高 40，底色 `panel`，上边线 `line-strong`，与 StatusBar 之间 1px `line`。左：`‖ N 处未保存`（warn）`· N 处错误`（fail）；右：取消（ghost）· 次操作（default）· 主操作（primary，最右）。
-- 页面不得另造悬浮 / 固定的底部按钮条。
-- 页面通过 `useStatusBar(...)` 写入「页面状态」文案（由 AppShell 的 StatusBar 渲染）；StatusBar 与 ActionRow 是 design 组件，页面不直接渲染 StatusBar。
+### 4.4 ActionRow and StatusBar
+- **The StatusBar has only one form**: 24 high, background `panel`, top line `line`, `small` size `muted`. Left: `> user@org:route` · page status (such as "Filtered 18 / 24", "Auto-refresh 15s"); right: `●` system status · version · time zone.
+- **ActionRow**: when the page has changes to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar, and the StatusBar is unchanged. Height 40, background `panel`, top line `line-strong`, with a 1px `line` between it and the StatusBar. Left: `‖ N unsaved` (warn) `· N errors` (fail); right: Cancel (ghost) · secondary action (default) · primary action (primary, rightmost).
+- A page must not create its own floating / fixed bottom button bar.
+- A page writes the "page status" text through `useStatusBar(...)` (rendered by the AppShell's StatusBar); StatusBar and ActionRow are design components, and a page does not render the StatusBar directly.
 
 ---
 
-## 5. 页面模板
+## 5. Page templates
 
-新页面**必须**选用以下模板之一；需要新模板时先扩展本节并经评审。
+A new page **must** pick one of the following templates; a new template requires extending this section first and going through review.
 
-| # | 模板 | Body | PageTabs | ActionRow | 典型页面 |
+| # | Template | Body | PageTabs | ActionRow | Typical pages |
 |---|---|---|---|---|---|
-| T1 | 概览 Overview | Single | — | — | 组织首页、Agent 概要 |
-| T2 | 列表 List | Rail + Content | — | 批量编辑时 | Agents、知识库、插件、成员 |
-| T3 | 详情 Detail | Content + Inspector | 有 | — | Agent、知识库、插件详情 |
-| T4 | 表单 Form | Centered | — | 始终（提交操作） | 新建 / 编辑 Agent |
-| T5 | 设置 Settings | Rail（二级导航）+ Centered | — | 有改动时 | 组织、环境、安全、计费 |
-| T6 | 收件箱 Inbox | Rail + Content (+ Inspector) | — | 决策时 | 人工审批、告警处理 |
-| T7 | 调试台 Playground | Content + Inspector | — | — | 对话试运行 Agent，右侧实时链路 |
-| T8 | 链路查看器 Trace | Single（上：Span 瀑布，下：Span 详情） | — | — | 单次运行详情 |
-| T9 | 向导 Wizard | Centered + 步骤条 | — | 始终（上一步 / 下一步） | 首次接入模型、连接器、插件 |
-| T10 | 认证 Auth | 无 Shell，居中卡片 + 两侧抖动点阵 | — | — | 登录、找回密码、接受邀请、初始化 |
-| T11 | 系统状态 | Single 居中 | — | — | 404、403、维护中、未开通 |
-| T12 | 首次使用 Onboarding | Single 居中清单 | — | — | 新组织、空环境 |
+| T1 | Overview | Single | — | — | Org home, Agent summary |
+| T2 | List | Rail + Content | — | During bulk edits | Agents, knowledge bases, plugins, members |
+| T3 | Detail | Content + Inspector | Yes | — | Agent, knowledge base, plugin details |
+| T4 | Form | Centered | — | Always (submit actions) | Create / edit Agent |
+| T5 | Settings | Rail (second-level navigation) + Centered | — | When there are changes | Org, environment, security, billing |
+| T6 | Inbox | Rail + Content (+ Inspector) | — | During decisions | Human approval, alert handling |
+| T7 | Playground | Content + Inspector | — | — | Trial-run an Agent in conversation, live trace on the right |
+| T8 | Trace | Single (top: span waterfall, bottom: span detail) | — | — | Single run detail |
+| T9 | Wizard | Centered + step bar | — | Always (Previous / Next) | First-time model, connector and plugin setup |
+| T10 | Auth | No Shell, centered card + dither dot matrix on both sides | — | — | Sign in, password recovery, accept invitation, initialization |
+| T11 | System status | Single centered | — | — | 404, 403, under maintenance, not enabled |
+| T12 | Onboarding | Single centered checklist | — | — | New org, empty environment |
 
-### 5.1 列表（T2）
-- Rail：分面筛选，每组标题（muted）+ 复选项 + 计数（faint）。
-- Content = 一个 DataTable（§6.6），其工具栏、批量栏、分页均属于 DataTable。
-- 从属区块（可选，至多一个）：主表之下、间距 24，`h2` 标题 + 一个 DataTable，列出与主对象紧密相关、条目不多的次要对象（如成员页的「邀请」）；不另带筛选与 PageHeader 指标，新建入口仍放 PageHeader。次要对象需要独立筛选或条目多时，另做列表页。
-- PageHeader：标题 + 总数，指标 ≤4，右侧次操作 + 新建（主）。
-- StatusBar 页面状态：筛选结果数。
+### 5.1 List (T2)
+- Rail: faceted filters; each group has a title (muted) + checkbox items + counts (faint).
+- Content = one DataTable (§6.6), whose toolbar, bulk bar and pagination all belong to the DataTable.
+- Subordinate section (optional, at most one): below the main table with a 24 gap, an `h2` title + one DataTable listing secondary objects closely related to the main object and few in number (such as "Invitations" on the members page); it has no filters or PageHeader metrics of its own, and the create entry stays in the PageHeader. When the secondary objects need their own filters or are numerous, make a separate list page.
+- PageHeader: title + total, metrics ≤4, secondary actions on the right + Create (primary).
+- StatusBar page status: the number of filter results.
 
-### 5.2 详情（T3）
-- PageHeader：`父级 /` 名称 + 版本（faint）+ 状态；指标 ≤4；操作：编辑（default）、试运行（secondary）、`⋯`。
-- PageTabs：概要 · 运行 · 配置 · 版本 · 权限 · 审计（按对象类型取舍），计数用 faint 跟随。
-- Content：卡片式区块（1px `line` 外框，区块头 h2 + 右侧操作），区块间距 16。
-- Inspector：分组属性，组标题 small muted，键 8ch 宽 muted，值单行省略。
+### 5.2 Detail (T3)
+- PageHeader: `parent /` name + version (faint) + status; metrics ≤4; actions: Edit (default), Trial run (secondary), `⋯`.
+- PageTabs: Summary · Runs · Config · Versions · Permissions · Audit (pick per object type), with counts following in faint.
+- Content: card-style sections (1px `line` frame, section header h2 + actions on the right), 16 between sections.
+- Inspector: grouped properties, group title small muted, key 8ch wide muted, value single line with ellipsis.
 
-### 5.3 表单（T4）
-- PageHeader：`父级 /` 新建 X + 草稿徽标；右侧只放辅助操作（如「从 YAML 导入」）。
-- 锚点导航：当前项主色左标；含错误的分组后缀 `●`（fail）。
-- 分组：两栏网格 `220px | 1fr`，左为组标题（700）+ 说明（small muted），右为字段；组间 1px `line` 上边线，上下内边距 20。
-- 字段：标签在上（必填标 `*` 主色、可选标「可选」faint）；控件 28 高；帮助文字与错误信息在下（small）；错误时边框 `fail` 并以 `✗` 开头给出可执行建议。
-- ActionRow 始终存在：取消 · 保存草稿（⌘S）· 发布。
+### 5.3 Form (T4)
+- PageHeader: `parent /` Create X + draft badge; only auxiliary actions on the right (such as "Import from YAML").
+- Anchor navigation: the current item has an accent left marker; a group containing errors gets a `●` (fail) suffix.
+- Groups: a two-column grid `220px | 1fr`, group title (700) + description (small muted) on the left, fields on the right; groups are separated by a 1px `line` top line, with 20 padding above and below.
+- Fields: label on top (required marked with an accent `*`, optional marked "Optional" in faint); control 28 high; help text and error message below (small); on error the border is `fail` and an actionable suggestion starts with `✗`.
+- The ActionRow is always present: Cancel · Save draft (⌘S) · Publish.
 
 ---
 
-## 6. 组件
+## 6. Components
 
-所有组件提供：默认、悬停、按下（如适用）、焦点、禁用、加载（如适用）状态，深浅两套。
+All components provide these states where applicable: default, hover, pressed, focus, disabled and loading, in both dark and light.
 
 ### 6.1 Button
 
-| 变体 | 默认 | 悬停 | 按下 | 用途 |
+| Variant | Default | Hover | Pressed | Purpose |
 |---|---|---|---|---|
-| primary | `accent` 底，`on-accent` 字，700 | `accent-hover` 底 | `accent-press` 底 | 视图唯一主操作 |
-| secondary | 透明底，1px `accent` 边与字 | `accent-tint` 底 | accent @ 20% 底 | 需强调的次操作 |
-| default | 透明底，1px `line` 边，`ink` 字 | `line-strong` 边 + `hover` 底 | `line` 底 | 普通操作 |
-| ghost | 无边，`muted` 字 | `hover` 底 + `ink` 字 | `line` 底 | 取消、低优先级 |
-| danger | 透明底，1px `fail` 边与字 | fail @ 12% 底 | fail @ 20% 底 | 危险操作入口 |
-| danger-solid | `fail` 底，`on-accent` 字 | — | — | 仅危险确认对话框中、确认条件满足后 |
+| primary | `accent` background, `on-accent` text, 700 | `accent-hover` background | `accent-press` background | The only primary action of a view |
+| secondary | transparent background, 1px `accent` border and text | `accent-tint` background | accent @ 20% background | Secondary actions that need emphasis |
+| default | transparent background, 1px `line` border, `ink` text | `line-strong` border + `hover` background | `line` background | Ordinary actions |
+| ghost | no border, `muted` text | `hover` background + `ink` text | `line` background | Cancel, low priority |
+| danger | transparent background, 1px `fail` border and text | fail @ 12% background | fail @ 20% background | Entry point of a dangerous action |
+| danger-solid | `fail` background, `on-accent` text | — | — | Only in a dangerous-confirmation dialog, once the confirmation condition is met |
 
-- 禁用：`faint` 字，`line` 边（primary 为 `line` 底），`cursor: not-allowed`。
-- 加载：文案前加旋转字符 `⠿`，保持宽度，不可重复点击。
-- 尺寸 24 / 28 / 36，水平内边距 8 / 12 / 16。快捷键提示以 `⌘S` 形式跟在文案后。
+- Disabled: `faint` text, `line` border (primary gets a `line` background), `cursor: not-allowed`.
+- Loading: a spinning character `⠿` before the label, width kept, no repeated clicks.
+- Sizes 24 / 28 / 36, horizontal padding 8 / 12 / 16. A shortcut hint follows the label in the form `⌘S`.
 
 ### 6.2 Input / Select / Textarea / Stepper
-- 高 28，内边距 0 8，1px `line` 边，透明底。
-- 悬停 `line-strong` 边；聚焦 `accent` 边 + `0 0 0 1px accent` 外环；错误 `fail` 边；禁用 `hover` 底 + `faint` 字。
-- 前缀 / 后缀用 `faint` / `muted`（如 `>`、`⌘K`、`▾`）。
-- Textarea 带字数时右下角 `n / max`（faint）。
-- 代码类输入（提示词）用带行号的编辑区：行号列 `faint` + 右边线。
-- Stepper：`− 值 +`，两侧 28 宽按钮。
-- Slider：离散方块轨道（默认 20 格，格宽自适应、格间距 2、高 8），已选部分 `accent`，其余 `line`；拇指为 4×16 `ink` 竖条；键盘 ←→ 按步长、PageUp/PageDown 按 10 步；可与右侧数值输入框（宽 8ch）联动。未设置值时拇指居中且轨道全为 `line`，不冒充某个取值。
-- 恢复默认：字段被用户设置过时，标签行右侧出现 ghost 小链接「↺ 恢复默认」（small），点击清除该值并回到默认显示。
+- Height 28, padding 0 8, 1px `line` border, transparent background.
+- Hover `line-strong` border; focus `accent` border + `0 0 0 1px accent` outer ring; error `fail` border; disabled `hover` background + `faint` text.
+- Prefix / suffix use `faint` / `muted` (such as `>`, `⌘K`, `▾`).
+- A Textarea with a character count shows `n / max` (faint) at the bottom right.
+- Code-like input (prompts) uses an editing area with line numbers: the line-number column is `faint` + a right line.
+- Stepper: `− value +`, with 28-wide buttons on both sides.
+- Slider: a discrete block track (20 cells by default, cell width adaptive, 2 between cells, 8 high); the selected part is `accent` and the rest `line`; the thumb is a 4×16 `ink` vertical bar; keyboard ←→ by step, PageUp/PageDown by 10 steps; can be linked with a value input box on the right (8ch wide). When no value is set, the thumb is centered and the track is all `line`, so it doesn't pretend to be some value.
+- Reset to default: when a field has been set by the user, a ghost small link "↺ Reset to default" (small) appears on the right of the label row; clicking clears the value and returns to the default display.
 
-### 6.3 Checkbox / Radio / Switch / 选项卡片
-- 全部方形 14×14。复选框选中：`accent` 底 + `on-accent` 的 `✓`；半选 `–`。单选选中：`accent` 边 + 6×6 `accent` 内方块。
-- Switch：28×16 轨道 + 10×10 方形滑块；开：`accent` 轨 + `on-accent` 滑块靠右。
-- 选项卡片（单选的富选项）：1px `line` 边；选中 `accent` 边 + `accent-tint` 底。
+### 6.3 Checkbox / Radio / Switch / option card
+- All square, 14×14. Checkbox checked: `accent` background + `on-accent` `✓`; indeterminate `–`. Radio checked: `accent` border + a 6×6 `accent` inner square.
+- Switch: a 28×16 track + a 10×10 square thumb; on: `accent` track + `on-accent` thumb at the right.
+- Option card (rich option of a single choice): 1px `line` border; selected `accent` border + `accent-tint` background.
 
 ### 6.4 Tabs / Segmented / Pagination
-- Tabs：文字 + 选中下划线（§2.3）；悬停 `hover` 底；禁用 `faint`。
-  - 计数 `count`：名称后 small `faint` 数字。
-  - 徽标 `badge`（如 Inspector「任务 2/4」）：1px `line` 边、small `muted`；选中时 `line-strong` 边 + `ink` 字。
-  - 提醒 `alert`（如「运行」有待批准）：名称后主色小方块 `■`，并带读屏文字「有待处理」，不只靠颜色。
-- Segmented：相邻按钮共边，高 24；选中描边主色。
-- Pagination：`1–50 / 1,284` · 每页 N ▾ · `‹ 上一页` 页码 `下一页 ›`；当前页描边主色。
+- Tabs: text + underline when selected (§2.3); hover `hover` background; disabled `faint`.
+  - Count `count`: a small `faint` number after the name.
+  - Badge `badge` (such as Inspector "Tasks 2/4"): 1px `line` border, small `muted`; when selected `line-strong` border + `ink` text.
+  - Alert `alert` (such as "Runs" having something to approve): a small accent square `■` after the name, with screen-reader text "needs attention", so it doesn't rely on color alone.
+- Segmented: adjacent buttons share borders, height 24; the selected one is outlined in the accent color.
+- Pagination: `1–50 / 1,284` · N per page ▾ · `‹ Previous` page numbers `Next ›`; the current page is outlined in the accent color.
 
-### 6.5 Badge / Kbd / Tooltip / 指标
-- Badge：1px `line` 边，small，左右 6；强调版描边主色；计数版 `ink` 底 `bg` 字。
-- Kbd：1px `line` 边 + 2px 下边。
-- Tooltip：`panel` 底 + `line-strong` 边，small，延迟 400ms。
-- 涨跌：`▲8.2%`（ok）/ `▼1.1s`（fail）。
-- KeyValue：键值对列表（Inspector 属性组、详情区块）；键 muted 固定 8ch 宽，值单行省略。
+### 6.5 Badge / Kbd / Tooltip / metrics
+- Badge: 1px `line` border, small, 6 left and right; the emphasis version is outlined in the accent color; the count version is `ink` background with `bg` text.
+- Kbd: 1px `line` border + 2px bottom edge.
+- Tooltip: `panel` background + `line-strong` border, small, 400ms delay.
+- Up / down: `▲8.2%` (ok) / `▼1.1s` (fail).
+- KeyValue: a key-value list (Inspector property groups, detail sections); key muted with a fixed 8ch width, value single line with ellipsis.
 
 ### 6.6 DataTable
-结构（自上而下，同一外框 1px `line`）：工具栏 / 批量操作栏 → 表头 → 行 → 分页。
+Structure (top to bottom, in one 1px `line` frame): toolbar / bulk action bar → header → rows → pagination.
 
-- 工具栏：搜索（`/` 聚焦）、已应用筛选（default 按钮样式，带 `✕`）、清除全部、排序、视图切换、列设置。高 40，24 / 28 高的控件在其中垂直居中（上下内边距 6，由居中推得，不是自由间距值），与批量操作栏等高，原位替换时不跳动。
-- 外框：默认 `framed`（1px `line` 外框）；嵌入 Card 或贴边铺满内容区时用 `framed={false}` 去掉外框。
-- 批量操作栏：勾选 ≥1 行时**原位替换**工具栏，高 40，`panel` 底，左「已选 N 项」（700）+ 批量操作（24 高），右「取消选择 Esc」。不得使用主色边框或底色。
-- 表头：small，muted；正在排序的列 `ink` + `▼`/`▲`；可排序列悬停出 `↕` 与 `hover` 底；下边线 `line`。
-- 行：默认高 32（紧凑 28，带缩略图 44），单元格内边距 6 8，行间 1px `line`。
-- 对齐：数字、耗时、金额右对齐；ID、时间左对齐；ID 与时间用 `muted`。超长单行省略，悬停以原生 `title` 显示全文（每格一个 Tooltip 过重）。
-- 行状态（同时出现时优先级从高到低）：焦点环 > 选中 > 勾选 > 悬停 > 默认。
-  - 悬停：`hover` 底；复选框边变 `ink`。
-  - 选中（打开详情 / Inspector）：`accent-tint` 底 + 左侧 2px 主色。
-  - 勾选：仅复选框变主色，行底不变。
-  - 焦点：内描边 1px 主色。
-  - 禁用 / 归档：整行 `faint`，不可勾选。
-- 行内菜单 `⋯`：≤5 项，危险项置底并以分隔线隔开；打开时 `⋯` 底色 `line`。某行没有可用的操作时该行不显示 `⋯`（单元格保留，列对齐不变）。菜单 `panel` 底 + `line-strong` 边 + `shadow-1`。
-- 展开行：`panel` 底，缩进与 `└` 引导，显示摘要（如执行链路前几步）。
-- 空状态：
-  - 加载：骨架行（`hover` / `line` 色条），不用转圈。
-  - 空（首次）：像素 Logo（`line-strong`）+ 一句说明 + 下一步主操作。
-  - 无结果（筛选导致）：`∅` + 说明当前筛选 + 「清除筛选」。
-  - 错误：外框 `fail`，`✗ 加载失败` + 错误码 · 请求 ID + 「↻ 重试」。
-- 键盘：↑↓ 移动焦点，空格勾选，↵ 打开，Esc 取消选择。
-- 表头吸顶；横向滚动时首列吸左。
+- Toolbar: search (`/` focuses), applied filters (default button style, with `✕`), clear all, sort, view switch, column settings. Height 40; the 24 / 28-high controls are vertically centered in it (padding 6 above and below, derived from the centering and not a free spacing value), and it has the same height as the bulk action bar so nothing jumps when one replaces the other in place.
+- Frame: `framed` by default (1px `line` frame); when embedded in a Card or flush with the content area, use `framed={false}` to remove the frame.
+- Bulk action bar: when ≥1 row is checked it **replaces the toolbar in place**, height 40, `panel` background, left "N selected" (700) + bulk actions (24 high), right "Deselect Esc". An accent border or background must not be used.
+- Header: small, muted; the column being sorted is `ink` + `▼`/`▲`; a sortable column shows `↕` and a `hover` background on hover; bottom line `line`.
+- Rows: default height 32 (compact 28, with thumbnail 44), cell padding 6 8, 1px `line` between rows.
+- Alignment: numbers, durations and amounts are right-aligned; IDs and times are left-aligned; IDs and times use `muted`. An overlong single line is truncated with an ellipsis and the full text is shown on hover with a native `title` (a Tooltip per cell is too heavy).
+- Row states (priority from high to low when they occur together): focus ring > selected > checked > hover > default.
+  - Hover: `hover` background; the checkbox border turns `ink`.
+  - Selected (opens the detail / Inspector): `accent-tint` background + a 2px accent bar on the left.
+  - Checked: only the checkbox turns accent; the row background is unchanged.
+  - Focus: 1px inner outline in the accent color.
+  - Disabled / archived: the whole row is `faint` and cannot be checked.
+- Inline menu `⋯`: ≤5 items, the dangerous item at the bottom and separated by a divider; while open, the `⋯` background is `line`. When a row has no available actions it shows no `⋯` (the cell stays, so column alignment doesn't change). The menu has `panel` background + `line-strong` border + `shadow-1`.
+- Expanded row: `panel` background, indentation and a `└` leader, showing a summary (such as the first few steps of an execution trace).
+- Empty states:
+  - Loading: skeleton rows (`hover` / `line` colored bars), no spinner.
+  - Empty (first time): pixel Logo (`line-strong`) + one sentence of explanation + the next primary action.
+  - No results (caused by filters): `∅` + a description of the current filters + "Clear filters".
+  - Error: `fail` frame, `✗ Failed to load` + error code · request ID + "↻ Retry".
+- Keyboard: ↑↓ move focus, Space checks, ↵ opens, Esc deselects.
+- The header is sticky; when scrolling horizontally the first column sticks to the left.
 
-### 6.7 浮层
+### 6.7 Overlays
 
-选择规则：需要用户决定 → Dialog；查看 / 编辑一个对象且不离开列表 → Sheet；就地选项 / 筛选 → Popover / Menu；操作结果反馈 → Toast（不得用 Dialog）；超过 6 个字段的新建 → 表单页（T4）。
+Selection rules: the user needs to decide → Dialog; view / edit one object without leaving the list → Sheet; in-place options / filters → Popover / Menu; feedback on an operation result → Toast (a Dialog must not be used); creating something with more than 6 fields → a form page (T4).
 
-- **Dialog**：宽 480 / 640，`panel` 底 + `line-strong` 边 + `shadow-2` + `scrim`。头（h2 标题 + 关闭 ✕）/ 体（内边距 16）/ 尾（右对齐：ghost 取消 + 主操作，主操作带 `↵`），头尾 1px `line` 分隔。Esc 关闭；焦点锁定并在关闭后归还。默认焦点：普通对话框在主操作，危险对话框在取消。
-- **危险确认**：外框 `fail`，标题 `fail`；说明后果与可恢复性；需输入对象名称，匹配前确认按钮禁用，匹配后为 danger-solid。
-- **Sheet**：右侧滑出，宽 480 / 720，`panel` 底 + 左边线 `line-strong` + `shadow-sheet`；默认无遮罩（列表仍可操作）。头：名称 + 版本 + 在新页打开 `↗` + 关闭 `✕`；可含 Tabs；尾：操作。存在未保存修改时关闭需二次确认。
-- **链接**：design 包与框架无关，TopBar 导航、PageHeader 父级、Tabs、Sheet 的链接通过 `DesignProvider` 的 `link` 组件渲染（默认 `<a>`）；`apps/web` 传入 next-intl 的 `Link`，以获得客户端导航与语言前缀。页面不要自己拼 `<a href>` 做站内跳转。
-- **Popover / Menu**：`panel` 底 + `line-strong` 边 + `shadow-1`；筛选 Popover 顶部为搜索 `>`，底部「清除 / 应用 ↵」；悬停项 `hover` 底。触发按钮在打开且有值时描边主色。
-- **命令面板（⌘K）**：宽 560，`>` 前缀输入；分组标题 small faint；当前项 `accent-tint` 底 + 左标；底部键位提示。
-- **Toast**：右下角堆叠，`panel` 底 + `line-strong` 边 + `shadow-1`，左侧 2px 状态色（ok / accent / fail）；成功 4s 自动消失；错误需手动关闭并可附「查看 →」；进度型带分段进度条。
+- **Dialog**: width 480 / 640, `panel` background + `line-strong` border + `shadow-2` + `scrim`. Header (h2 title + close ✕) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the primary action for an ordinary dialog, on Cancel for a dangerous dialog.
+- **Dangerous confirmation**: `fail` frame, `fail` title; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches.
+- **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `↗` + close `✕`; may contain Tabs; footer: actions. Closing with unsaved changes needs a second confirmation.
+- **Links**: the design package is framework-agnostic; links in the TopBar navigation, the PageHeader parent, Tabs and Sheet are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
+- **Popover / Menu**: `panel` background + `line-strong` border + `shadow-1`; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
+- **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has an `accent-tint` background + left marker; key hints at the bottom.
+- **Toast**: stacked at the bottom right, `panel` background + `line-strong` border + `shadow-1`, a 2px status-color bar on the left (ok / accent / fail); success auto-dismisses after 4s; an error must be dismissed manually and may carry "View →"; a progress type carries a segmented progress bar.
 
-### 6.8 图表
-- 柱状图用离散方块堆叠（像素风），`line-strong` 为常规值，`fail` 标出失败数，当前时段用主色。
-- 迷你趋势 Sparkline（表格内）：12 根 4px 宽方柱，`muted`。
-- 柱状图的 `fail` 是 `value`（总数）的子集：柱高 = 总数，失败数画在柱顶的块上。
-- 坐标标签 small faint；不画网格线。
+### 6.8 Charts
+- Bar charts stack discrete blocks (pixel style), `line-strong` for normal values, `fail` marks the failure count, and the current period uses the accent color.
+- Mini trend Sparkline (inside tables): 12 square bars 4px wide, `muted`.
+- The `fail` in a bar chart is a subset of `value` (the total): the bar height = the total, and the failure count is drawn as blocks at the top of the bar.
+- Axis labels small faint; no grid lines.
 
-### 6.9 对话时间线与插件视图积木
+### 6.9 Conversation timeline and plugin view building blocks
 
-对话流（参照 Claude Code VS Code 插件）与插件视图（渲染 schema，见 `docs/superpowers/specs/2026-10-21-chat-panel-plugin-ui-design.md` §3–§4）共用的组件。组件只收普通 props，不依赖 SDK 类型；文案可经 `labels` 覆盖，缺省走 design 自己的 i18n。
+Components shared by the conversation stream (modeled on the Claude Code VS Code extension) and plugin views (rendered from a schema, see `docs/superpowers/specs/2026-10-21-chat-panel-plugin-ui-design.md` §3–§4). The components take only plain props and do not depend on SDK types; text can be overridden through `labels`, and defaults to the design package's own i18n.
 
-- **Timeline / TimelineItem**：有序列表；每步左侧 7×7 方形标记，1px `line-strong` 竖线把各步串起（首项从标记开始、末项到标记结束）。标记：`dot`（`muted` 实心，已完成）、`hollow`（`faint` 边空心，思考 / 次要）、`running`（主色实心，闪烁，减少动效时静止）、`error`（`fail` 实心）。
-- **ThinkingRow**：`muted` 一行「思考了 N 秒」（秒数取整）；有正文时整行是展开按钮（`aria-expanded`，右侧 `▸` / `▾` `faint`），展开后正文 `muted`，左侧 1px `line` 引线，保留换行。
-- **ToolCallRow**：默认只一行：工具名（700）+ 一句说明（`muted`，单行省略）+ 非完成态的 `StatusMark`（运行中 / 失败 / 已取消）+ 右侧 `▸`。整行是展开按钮，悬停 `hover` 底。出错时工具名 `fail`，已取消时 `muted`。展开后在 1px `line` 外框里依次为 IN、OUT 两个 `IoBlock`（运行中无 OUT）；输出已截断时底部 small `faint`「输出过长，已截断」+「查看全部输出」文字按钮（交给调用方从存档取全文）。
-- **IoBlock**：`panel` 底；左侧 5ch 标签列（`IN` / `OUT`，11px 700 `faint`，右边线 `line`），右侧等宽原文（保留换行、长词断行）；IN 为 `ink`，OUT 为 `muted`（工具出错时 `fail`）。超过 `collapsedLines`（默认 12）行时只显示前 N 行，下方「展开全部（共 M 行）」/「收起」文字按钮（`aria-expanded`）。
-- **Checklist**：每项 `glyph + 文字`。`pending` `□` `faint`；`in_progress` `▶` 主色，整行 `accent-tint` 底 + 左侧 2px 主色 + 700，`aria-current="step"`；`completed` `✓` `ok`，文字 `faint` 并用 `<s>` 划线。每项带读屏状态文字（待办 / 进行中 / 已完成）。
-- **CodeBlock**：1px `line` 外框、`panel` 底；有语言时顶部 11px `faint` 语言标注 + 下边线；正文等宽、不换行、框内横向滚动；不做语法高亮。
-- **EmbedFrame**：界面里**唯一**渲染 iframe 的组件（`apps/web` 不得自己写 iframe）。`sandbox` 固定为 `allow-scripts allow-forms`（绝不含 `allow-same-origin`），`referrerpolicy="no-referrer"`，`title` 必填；宽度撑满，高度来自 props（默认 360）；1px `line` 边、`panel` 底。只把 `event.source` 为本 iframe 的 `message` 交给 `onMessage`（内容由调用方解析校验），并以 `frameRef` 暴露 iframe 以便 `postMessage`。
-- **ImageBlock**：插件视图里的图片；块级、宽度不超出容器、按比例缩放，1px `line` 边；`loading="lazy"`、`referrerpolicy="no-referrer"`。只收地址与 alt；只渲染 http(s) 绝对地址，其他（`javascript:`、`data:`、相对路径）什么都不渲染。
-- **AttachmentChip**：输入框里待发送的上传文件。1px `line` 边、`panel` 底的一行：文件名（单行省略，最多 24ch）+ 大小（small `muted`，`B` / `KB` / `MB`）+ 右侧移除按钮（`✕` 图标按钮，`aria-label`「移除 <文件名>」）。三态（`data-status`）：`uploading` 在名称下方一条 4px 分段进度条（`role="progressbar"`，`aria-valuenow` 0–100，已完成段主色、其余 `line-strong`，与 Toast 进度一致）；`ready` 无进度条；`error` 边框 `fail`，名称下方 small `fail` 的错误文字（`role="alert"`），仍可移除；调用方给了重试时移除按钮左侧多一个 `↻` 图标按钮（「重试 <文件名>」）。
-- **FileDrop**：包住输入区的拖放 / 粘贴区域。拖入带文件的内容时（只认 `Files`，拖文字不响应）在区域上盖一层覆盖层：`accent-tint` 底 + 1px 虚线 `accent` 边，居中一行提示文字（由调用方传入）；松手把文件交给 `onFiles`。区域内粘贴含文件的剪贴板时同样交给 `onFiles`；剪贴板里没有文字时阻止默认粘贴，同时有文字的（如从文档里复制）文字照常粘贴；不含文件的粘贴不受影响。松手（drop）与拖放结束（dragend）时一律收起覆盖层。`disabled` 时两者都不响应。`dragging` 可强制显示覆盖层（目录页与截图用）。
-- **FileButton**：选文件按钮。外观同 `IconButton`（默认 `+`，`aria-label` 由调用方传入），点击打开系统文件选择（隐藏的 `input type=file`，可设 `accept` / `multiple`），选中后交给 `onFiles` 并清空，同一文件可再次选择。
-- **AttachmentPreview**：消息里的附件。`kind="image"` 为缩略图：最大 240×160、按比例裁切填满（`object-fit: cover`），1px `line` 边，`loading="lazy"`、`referrerpolicy="no-referrer"`；`kind="file"` 为文件卡片：1px `line` 边、`panel` 底，左侧 `▤` `muted`，文件名（单行省略）+ 下方 small `muted` 说明（如类型）。两者都是新标签页打开的链接（`target="_blank"`、`rel="noopener noreferrer"`），悬停边框 `line-strong`。地址只认 http(s) 绝对地址与本源的绝对路径：原串含任何 ASCII 控制字符、空白或 `\` 一律不认（浏览器会删掉制表 / 换行，`/\t/evil` 会变成 `//evil`），`/` 开头的按占位源解析后源必须不变；其他（`javascript:`、`data:`、协议相对地址、相对路径）不渲染链接与图片，只显示文件名。图片加载失败时回调 `onImageError`；`retry` 大于 0 时图片地址加上缓存参数 `retry=<n>` 重新加载（链接不变）；给了 `onOpen` 时，不带修饰键的左键点击交给调用方打开。
-- **Card `tone="accent"`**：对话里待人处理的卡片（审批 / 提问 / 连接）用 1px `accent` 描边（§2.3 描边），处理完回到默认边框。
-- 图表沿用 §6.8 的 `BarChart` / `Sparkline`，属性列表沿用 `KeyValue`，表格沿用 DataTable，不另造。
+- **Timeline / TimelineItem**: an ordered list; each step has a 7×7 square marker on the left, and a 1px `line-strong` vertical line strings the steps together (the first item starts at the marker, the last ends at the marker). Markers: `dot` (`muted` solid, completed), `hollow` (`faint` border, hollow, thinking / secondary), `running` (accent solid, blinking, static under reduced motion), `error` (`fail` solid).
+- **ThinkingRow**: one `muted` line "Thought for N seconds" (seconds rounded); when there is body text the whole row is an expand button (`aria-expanded`, `▸` / `▾` `faint` on the right), and once expanded the body is `muted`, with a 1px `line` guide on the left, preserving line breaks.
+- **ToolCallRow**: by default only one line: tool name (700) + a one-sentence description (`muted`, single line with ellipsis) + a `StatusMark` for non-completed states (running / failed / cancelled) + `▸` on the right. The whole row is an expand button, with a `hover` background on hover. On error the tool name is `fail`; when cancelled it is `muted`. Once expanded, inside a 1px `line` frame come two `IoBlock`s, IN and OUT (no OUT while running); when the output is truncated, the bottom shows small `faint` "Output too long, truncated" + a "View full output" text button (leaving it to the caller to fetch the full text from the archive).
+- **IoBlock**: `panel` background; a 5ch label column on the left (`IN` / `OUT`, 11px 700 `faint`, right line `line`), and monospace raw text on the right (line breaks preserved, long words broken); IN is `ink`, OUT is `muted` (`fail` when the tool errored). Beyond `collapsedLines` (default 12) lines only the first N lines are shown, with an "Expand all (M lines)" / "Collapse" text button below (`aria-expanded`).
+- **Checklist**: each item is `glyph + text`. `pending` `□` `faint`; `in_progress` `▶` accent, the whole row gets an `accent-tint` background + a 2px accent bar on the left + 700, `aria-current="step"`; `completed` `✓` `ok`, text `faint` and struck through with `<s>`. Each item carries screen-reader status text (To do / In progress / Done).
+- **CodeBlock**: 1px `line` frame, `panel` background; when there is a language, an 11px `faint` language label at the top + a bottom line; body monospace, no wrapping, horizontal scrolling inside the frame; no syntax highlighting.
+- **EmbedFrame**: the **only** component in the UI that renders an iframe (`apps/web` must not write an iframe itself). `sandbox` is fixed to `allow-scripts allow-forms` (never containing `allow-same-origin`), `referrerpolicy="no-referrer"`, `title` is required; width fills, height comes from props (default 360); 1px `line` border, `panel` background. Only `message` events whose `event.source` is this iframe are passed to `onMessage` (the caller parses and validates the content), and the iframe is exposed through `frameRef` for `postMessage`.
+- **ImageBlock**: an image in a plugin view; block-level, width not exceeding the container, scaled proportionally, 1px `line` border; `loading="lazy"`, `referrerpolicy="no-referrer"`. It takes only an address and alt; it renders only absolute http(s) addresses, and anything else (`javascript:`, `data:`, relative paths) renders nothing.
+- **AttachmentChip**: an uploaded file waiting to be sent in the input box. A line with a 1px `line` border and `panel` background: file name (single line with ellipsis, at most 24ch) + size (small `muted`, `B` / `KB` / `MB`) + a remove button on the right (a `✕` icon button, `aria-label` "Remove <file name>"). Three states (`data-status`): `uploading` shows a 4px segmented progress bar under the name (`role="progressbar"`, `aria-valuenow` 0–100, completed segments accent, the rest `line-strong`, consistent with the Toast progress); `ready` has no progress bar; `error` has a `fail` border and small `fail` error text under the name (`role="alert"`), and can still be removed; when the caller supplies a retry, an extra `↻` icon button appears to the left of the remove button ("Retry <file name>").
+- **FileDrop**: a drag-and-drop / paste area wrapping the input area. When content carrying files is dragged in (only `Files` is recognized; dragging text does not respond) an overlay covers the area: `accent-tint` background + 1px dashed `accent` border, with one centered line of hint text (passed in by the caller); dropping hands the files to `onFiles`. Pasting a clipboard containing files inside the area also hands them to `onFiles`; when the clipboard has no text, the default paste is prevented, while if it also has text (such as copied from a document) the text is pasted as usual; a paste without files is unaffected. The overlay is always dismissed on drop and dragend. When `disabled` neither responds. `dragging` can force the overlay to show (for the catalog page and screenshots).
+- **FileButton**: a file-picking button. It looks like `IconButton` (default `+`, `aria-label` passed in by the caller); clicking opens the system file picker (a hidden `input type=file`, with `accept` / `multiple` settable), and after selection the files are handed to `onFiles` and the input is cleared so the same file can be chosen again.
+- **AttachmentPreview**: an attachment in a message. `kind="image"` is a thumbnail: at most 240×160, cropped proportionally to fill (`object-fit: cover`), 1px `line` border, `loading="lazy"`, `referrerpolicy="no-referrer"`; `kind="file"` is a file card: 1px `line` border, `panel` background, `▤` `muted` on the left, file name (single line with ellipsis) + small `muted` description below (such as the type). Both are links that open in a new tab (`target="_blank"`, `rel="noopener noreferrer"`), with a `line-strong` border on hover. Addresses accept only absolute http(s) addresses and same-origin absolute paths: a raw string containing any ASCII control character, whitespace or `\` is rejected outright (browsers strip tabs / newlines, so `/\t/evil` would become `//evil`), and one starting with `/` is resolved against a placeholder origin whose origin must stay unchanged; anything else (`javascript:`, `data:`, protocol-relative addresses, relative paths) renders no link and no image, and shows only the file name. When an image fails to load, `onImageError` is called; when `retry` is greater than 0 the image address gets the cache parameter `retry=<n>` and reloads (the link is unchanged); when `onOpen` is given, an unmodified left click is handed to the caller to open.
+- **Card `tone="accent"`**: a card in the conversation waiting for a person (approval / question / connection) gets a 1px `accent` outline (§2.3 outline) and returns to the default border once handled.
+- Charts keep using `BarChart` / `Sparkline` from §6.8, property lists keep using `KeyValue`, and tables keep using DataTable; none is reinvented.
 
-### 6.10 Span 瀑布（SpanWaterfall）
+### 6.10 Span waterfall (SpanWaterfall)
 
-链路查看器（T8）上方的瀑布图：一次对话里各次运行的 span 按层级与时间排开。只收普通 props（`spans`、`selectedId`、`onSelect`、`labels.empty`、可选 `labels.kinds`、可选 `label`），span 的层级由 `parentId` 给出，调用方按深度优先顺序传入。
+The waterfall above the trace viewer (T8): the spans of the runs in one conversation laid out by hierarchy and time. It takes only plain props (`spans`, `selectedId`, `onSelect`, `labels.empty`, optional `labels.kinds`, optional `label`); span hierarchy is given by `parentId`, and the caller passes them in depth-first order.
 
-- span 字段：`kind`（`run` / `step` / `model` / `tool` / `wait`）、`label`、`startMs`（相对最早 span 的偏移）、`durationMs`（未知为 null）、`status`（`ok` / `error` / `pending`）、可选 `meta`（如 token 数）。
-- 每个 span 一行（高 28），自左而右：名称列（固定 40%：按深度每级缩进 16，`kind` 徽标（文案缺省走 design i18n：运行 / 步骤 / 模型 / 工具 / 等待，en 为 run / step / model / tool / wait；可经 `labels.kinds` 覆盖）11px `faint` 定宽 5ch + 名称单行省略 + `meta` small `muted`）｜时间轨（1px `line` 左边线，条形按 `startMs / 总时长` 定位、按 `durationMs / 总时长` 定宽，最窄 2px）｜状态（`StatusMark`：ok 成功、error 失败、pending 运行中；`wait` 未结束为待审批）｜耗时（右对齐，`6.8s` / `312ms` / `00:02:18`，未知 `—`）。
-- 条形颜色：ok `line-strong`；error `fail`；pending `accent`（正在发生，§2.3「文字」职责的延伸），未结束的 span 从起点延伸到时间轨末端。`wait` 条形为 1px 描边空心（等待不是执行）。
-- 总时长 = 各 span 的 `startMs + (durationMs ?? 0)` 的最大值（至少 1ms）。
-- 交互：`role="tree"`（`aria-label` 取 `label`，缺省「Span 瀑布」，总是展开，不能折叠），每行 `role="treeitem"`，`aria-selected`、`aria-level`（深度 + 1），有子 span 的行 `aria-expanded="true"`；焦点留在 tree 上，当前项由 `aria-activedescendant` 指出。点击行选中；获得焦点后 ↑ / ↓ 选上一个 / 下一个，Home / End 选首 / 末项。选中行 `accent-tint` 底 + 左侧 2px 主色（§2.3）。
-- 空：只显示一行 `labels.empty`（`muted`）。
+- Span fields: `kind` (`run` / `step` / `model` / `tool` / `wait`), `label`, `startMs` (offset relative to the earliest span), `durationMs` (null if unknown), `status` (`ok` / `error` / `pending`), optional `meta` (such as the token count).
+- Each span is one row (height 28), from left to right: name column (fixed 40%: indented 16 per depth level, a `kind` badge (text defaults to the design i18n: Run / Step / Model / Tool / Wait in zh, run / step / model / tool / wait in en; overridable through `labels.kinds`) 11px `faint` with a fixed width of 5ch + name single line with ellipsis + `meta` small `muted`) ｜ time track (1px `line` left line; the bar is positioned by `startMs / total duration` and sized by `durationMs / total duration`, minimum 2px) ｜ status (`StatusMark`: ok succeeded, error failed, pending running; a `wait` that has not ended is pending approval) ｜ duration (right-aligned, `6.8s` / `312ms` / `00:02:18`, `—` if unknown).
+- Bar colors: ok `line-strong`; error `fail`; pending `accent` (something is happening, an extension of the §2.3 "text" role), and a span that has not ended extends from its start to the end of the time track. A `wait` bar is a 1px outlined hollow bar (waiting is not execution).
+- Total duration = the maximum over spans of `startMs + (durationMs ?? 0)` (at least 1ms).
+- Interaction: `role="tree"` (`aria-label` taken from `label`, default "Span waterfall"; always expanded, cannot be collapsed), each row `role="treeitem"`, with `aria-selected`, `aria-level` (depth + 1), and a row with child spans has `aria-expanded="true"`; focus stays on the tree, and the current item is indicated by `aria-activedescendant`. Clicking a row selects it; once focused, ↑ / ↓ select the previous / next, and Home / End select the first / last. The selected row gets an `accent-tint` background + a 2px accent bar on the left (§2.3).
+- Empty: only one line of `labels.empty` (`muted`).
 
 ---
 
-## 7. 文案与国际化
-- 所有界面文案走 next-intl；中英两套。给模型看的文案（提示词、工具描述）一律英文，表单中提示词字段需注明。
-- 数字千分位；耗时 `6.8s` / `41.2s` / `00:00:18`；金额 `¥412.80`；相对时间（「2 小时前」）用于列表，绝对时间（`10-18 14:02:11`）用于记录与日志。
-- 错误信息说明原因并给出可执行的下一步；附错误码与请求 ID 以便排查。
+## 7. Copy and internationalization
+- All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
+- Thousands separators for numbers; durations `6.8s` / `41.2s` / `00:00:18`; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.
+- Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
 
-## 8. 可访问性
-- 文字对比度 ≥ 4.5:1（`faint` 仅用于非必要信息）。
-- 所有交互元素为原生 `button` / `a` / `input`；图标按钮必须有 `aria-label`；状态不只用颜色表达。
-- 完整键盘可达，焦点可见（§2.5）；浮层焦点锁定与归还。
-- 尊重 `prefers-reduced-motion` 与 `prefers-color-scheme`（默认深色，用户可切换）。
+## 8. Accessibility
+- Text contrast ≥ 4.5:1 (`faint` only for non-essential information).
+- All interactive elements are native `button` / `a` / `input`; icon buttons must have an `aria-label`; status is not expressed by color alone.
+- Fully keyboard accessible, focus visible (§2.5); overlay focus is trapped and returned.
+- Respect `prefers-reduced-motion` and `prefers-color-scheme` (dark by default, switchable by the user).
 
-## 9. 落实与验收（如何保证实现与本规格一致）
+## 9. Enforcement and acceptance (how the implementation is kept consistent with this spec)
 
-1. **包边界**：`apps/web` 只能从 `@capybara-hq/design` 引入 UI 组件与模板。导入规则是**黑名单**：`@radix-ui/*`、`cmdk`、CSS-in-JS（`@emotion/*`、`styled-components`、`@stitches/*`、`@vanilla-extract/*`、`styled-jsx`）、组件库（`@mui/*`、`@chakra-ui/*`、`@mantine/*`、`@headlessui/*`、`antd`）、`tailwindcss` / `tailwind-merge`、类名工具（`clsx`、`classnames`、`class-variance-authority`）、图标库（`lucide-react`、`react-icons`）一律不得导入；`.css` 只允许导入 `@capybara-hq/design/styles.css`。黑名单随新增的样式类依赖扩充。
-2. **模板强制**：`apps/web/src/app` 下每个 `page.tsx` 必须渲染从 `@capybara-hq/design` 导入的 §5 模板之一（识别别名与命名空间导入）；Shell 各层只由模板渲染。两处豁免：开发用目录页 `app/[locale]/dev/**`；以及只负责 404 的 page（不含任何 JSX、调用 `next/navigation` 的 `notFound()`，如 `[...rest]/page.tsx`），其页面由同段 `not-found.tsx` 的 StatusPage 渲染。
-3. **样式归属**：`apps/web/src` 中不得出现 `className` / `class` / `style` / `dangerouslySetInnerHTML` 属性（含展开属性与 `createElement` / `jsx` 调用）、`<style>` 元素、`.css` 文件、任何颜色字面量（`#hex`、`rgb()`、`hsl()`、`oklch()`、`color-mix()` 等）；页面内的排版只能用 design 包的布局原语（`Stack`、`Grid`、`Card`、`Text`）。`packages/design` 中颜色字面量只允许出现在 `tokens.css`。
-4. **组件目录页**：`/dev/ui` 用固定假数据渲染每个组件的全部状态与每个模板页，深浅两套。
-5. **截图回归**：Playwright 对目录页截图并与基准比对，差异即失败；入库基准只含 Linux 版，在固定的 Playwright Docker 镜像中由 `visual-update` 工作流生成（CI `visual` job 用同一镜像）；本地（darwin）截图被 gitignore，仅供本地对照；更新基准须在 PR 中附差异图并经确认。
-6. **首次验收**：对照页左侧为画布基准图、右侧为真实截图，逐张由产品确认后锁定基准。
-7. **评审清单**：每个界面 PR 对照本规格检查模板选用、主色用法、状态编码与 ActionRow 规则。
+1. **Package boundary**: `apps/web` may import UI components and templates only from `@capybara-hq/design`. The import rule is a **blacklist**: `@radix-ui/*`, `cmdk`, CSS-in-JS (`@emotion/*`, `styled-components`, `@stitches/*`, `@vanilla-extract/*`, `styled-jsx`), component libraries (`@mui/*`, `@chakra-ui/*`, `@mantine/*`, `@headlessui/*`, `antd`), `tailwindcss` / `tailwind-merge`, class-name utilities (`clsx`, `classnames`, `class-variance-authority`) and icon libraries (`lucide-react`, `react-icons`) must never be imported; `.css` may only import `@capybara-hq/design/styles.css`. The blacklist grows as new styling dependencies appear.
+2. **Template enforcement**: every `page.tsx` under `apps/web/src/app` must render one of the §5 templates imported from `@capybara-hq/design` (aliases and namespace imports are recognized); the Shell layers are rendered only by templates. Two exemptions: the development catalog pages `app/[locale]/dev/**`; and pages that only handle 404 (containing no JSX and calling `notFound()` from `next/navigation`, such as `[...rest]/page.tsx`), whose page is rendered by the StatusPage in the same segment's `not-found.tsx`.
+3. **Style ownership**: in `apps/web/src` there must be no `className` / `class` / `style` / `dangerouslySetInnerHTML` attributes (including spread props and `createElement` / `jsx` calls), `<style>` elements, `.css` files, or any color literal (`#hex`, `rgb()`, `hsl()`, `oklch()`, `color-mix()` and so on); layout inside a page may only use the design package's layout primitives (`Stack`, `Grid`, `Card`, `Text`). In `packages/design`, color literals are allowed only in `tokens.css`.
+4. **Component catalog page**: `/dev/ui` renders every state of every component and every template page with fixed fake data, in both dark and light.
+5. **Screenshot regression**: Playwright screenshots the catalog page and compares against the baseline, and any difference fails; the baselines checked in contain only the Linux version, generated by the `visual-update` workflow in a fixed Playwright Docker image (the CI `visual` job uses the same image); local (darwin) screenshots are gitignored and only for local comparison; updating a baseline requires attaching the diff images in the PR and getting confirmation.
+6. **First acceptance**: a comparison page with the canvas baseline image on the left and the real screenshot on the right; the product owner confirms them one by one before the baseline is locked.
+7. **Review checklist**: every UI PR is checked against this spec for template choice, accent color usage, status encoding and ActionRow rules.
 
-第 1–3 条由 `pnpm check` 检查，每条检查附违规样例测试。
+Items 1–3 are checked by `pnpm check`, and every check has a violating-fixture test.
 
-## 10. 变更流程
-新增组件、模板或 token：先改本规格与画布 → 评审确认 → 在 `packages/design` 与 `/dev/ui` 实现 → 更新基准截图。页面中不得临时造新模式。
+## 10. Change process
+Adding a component, template or token: change this spec and the canvas first → review and confirm → implement in `packages/design` and `/dev/ui` → update the baseline screenshots. Pages must not invent new patterns ad hoc.
