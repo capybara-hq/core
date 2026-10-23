@@ -900,7 +900,6 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       });
       expect(res.statusCode, res.body).toBe(204);
       const jobs = await q.getJobs([
-        "paused",
         "waiting",
         "delayed",
         "active",
@@ -929,7 +928,6 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       });
       expect(res.statusCode).toBe(204);
       const jobs = await q.getJobs([
-        "paused",
         "waiting",
         "delayed",
         "active",
