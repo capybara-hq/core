@@ -1,6 +1,6 @@
 ---
 name: writing-migrations
-description: Use when adding or changing a SQL migration (kernel packages/kernel/src/migrations or plugin plugins/*/migrations): file naming, idempotent style, the expand-then-contract two-step column drop, the exemption comment and reason required for destructive statements, and how to run capybara migrate locally.
+description: 'Use when adding or changing a SQL migration (kernel packages/kernel/src/migrations or plugin plugins/*/migrations): file naming, idempotent style, the expand-then-contract two-step column drop, the exemption comment and reason required for destructive statements, and how to run capybara migrate locally.'
 ---
 
 # Writing migrations

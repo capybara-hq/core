@@ -56,6 +56,39 @@ describe("checkSkillsFrontmatter", () => {
     expect(findings[0]?.rule).toBe("skills-frontmatter-missing");
   });
 
+  it("flags a description longer than 1024 characters", () => {
+    const dir = skills({ a: `---\nname: a\ndescription: ${"x".repeat(1025)}\n---\n` });
+    const findings = checkSkillsFrontmatter(dir);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ rule: "skills-frontmatter-length", line: 3 });
+    expect(findings[0]?.message).toContain("1025");
+  });
+
+  it("accepts a description of exactly 1024 characters", () => {
+    const dir = skills({ a: `---\nname: a\ndescription: ${"x".repeat(1024)}\n---\n` });
+    expect(checkSkillsFrontmatter(dir)).toEqual([]);
+  });
+
+  it("counts a folded multi-line description as one value", () => {
+    const long = `${"x".repeat(600)}\n  ${"y".repeat(600)}`;
+    const dir = skills({ a: `---\nname: a\ndescription: >-\n  ${long}\n---\n` });
+    expect(checkSkillsFrontmatter(dir).map((f) => f.rule)).toEqual(["skills-frontmatter-length"]);
+  });
+
+  it("flags frontmatter that is not valid YAML (an unquoted ': ' in a plain value)", () => {
+    const dir = skills({
+      a: "---\nname: a\ndescription: Use when adding tools: names and keys\n---\n",
+    });
+    const findings = checkSkillsFrontmatter(dir);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ rule: "skills-frontmatter-yaml", line: 1 });
+  });
+
+  it("accepts a quoted value that contains ': '", () => {
+    const dir = skills({ a: "---\nname: a\ndescription: 'Use when adding tools: names'\n---\n" });
+    expect(checkSkillsFrontmatter(dir)).toEqual([]);
+  });
+
   it("passes on the repository skills", () => {
     expect(checkSkillsFrontmatter(join(repoRoot, ".agents/skills"))).toEqual([]);
   });

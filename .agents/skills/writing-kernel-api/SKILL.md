@@ -1,6 +1,6 @@
 ---
 name: writing-kernel-api
-description: Use when adding or changing a kernel HTTP API (Nest controller, guard, error code): domain classes do not depend on Nest and are injected with useFactory, constructor parameters use explicit @Inject, default deny and the @Public list, @OrgAction and HUMAN_ONLY, ZodPipe, registering error codes, where state lives under multiple replicas, and a template for writing tests with http.inject().
+description: 'Use when adding or changing a kernel HTTP API (Nest controller, guard, error code): domain classes do not depend on Nest and are injected with useFactory, constructor parameters use explicit @Inject, default deny and the @Public list, @OrgAction and HUMAN_ONLY, ZodPipe, registering error codes, where state lives under multiple replicas, and a template for writing tests with http.inject().'
 ---
 
 # Writing the kernel HTTP API

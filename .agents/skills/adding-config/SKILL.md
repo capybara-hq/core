@@ -1,6 +1,6 @@
 ---
 name: adding-config
-description: Use when adding or changing a kernel config option (KernelConfigSchema in packages/kernel/src/config/schema.ts): field meta (hot / secret / description), the rules for deriving environment variable names, and regenerating docs/config.md.
+description: 'Use when adding or changing a kernel config option (KernelConfigSchema in packages/kernel/src/config/schema.ts): field meta (hot / secret / description), the rules for deriving environment variable names, and regenerating docs/config.md.'
 ---
 
 # Adding a kernel config option

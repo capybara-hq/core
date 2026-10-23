@@ -1,6 +1,6 @@
 ---
 name: writing-object-store-providers
-description: Use when creating or changing an object store plugin (provides object-store@1, e.g. plugins/object-store-s3), or when using ctx.storage or StorageService in a plugin or the kernel: the semantics of each ObjectStore method (range, list pagination, deletePrefix, return null when missing), presigned uploads must have their size limited by the store (POST policy key / content-length-range / Content-Type conditions), rejecting keys containing ${, presignGet disposition and responseContentType; the key prefixes the kernel adds, plugins/<plugin>/<orgId>/ and kernel/<orgId>/, StorageKeyError, TTL limits; the cleanup job after an org is deleted; and writing tests with SeaweedFS (startTestS3).
+description: 'Use when creating or changing an object store plugin (provides object-store@1, e.g. plugins/object-store-s3), or when using ctx.storage or StorageService in a plugin or the kernel: the semantics of each ObjectStore method (range, list pagination, deletePrefix, return null when missing), presigned uploads must have their size limited by the store (POST policy key / content-length-range / Content-Type conditions), rejecting keys containing ${, presignGet disposition and responseContentType; the key prefixes the kernel adds, plugins/<plugin>/<orgId>/ and kernel/<orgId>/, StorageKeyError, TTL limits; the cleanup job after an org is deleted; and writing tests with SeaweedFS (startTestS3).'
 ---
 
 # Writing object store plugins

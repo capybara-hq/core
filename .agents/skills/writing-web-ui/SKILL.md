@@ -1,6 +1,6 @@
 ---
 name: writing-web-ui
-description: Use when adding or changing UI under apps/web or packages/design: page = page template + design components, which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).
+description: 'Use when adding or changing UI under apps/web or packages/design: page = page template + design components, which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).'
 ---
 
 # Writing UI
