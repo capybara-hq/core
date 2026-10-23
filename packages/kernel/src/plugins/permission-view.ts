@@ -132,7 +132,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
     ["permissions.http.public:", "publicRoutes", ""],
     ["permissions.tools:", "tools", ""],
     ["permissions.hooks:", "hooks", ""],
-    ["permissions.policyHooks:", "hooks", "policy:"],
+    ["permissions.hooks.policy:", "hooks", "policy:"],
     ["ui.embed:", "ui", "embed:"],
     ["ui.view:", "ui", "view:"],
   ];

@@ -218,8 +218,11 @@ export function permissionKeys(set: PermissionSet): string[] {
   return sortedUnique(keys);
 }
 
-/** Key prefix of a policy hook mount (`permissions.policyHooks`): needs approval like any hook. */
-export const POLICY_HOOK_KEY_PREFIX = "permissions.policyHooks:";
+/**
+ * Key prefix of a policy hook mount (manifest `permissions.policyHooks`): needs approval like any hook.
+ * Lower-case letters and dots only, as catalog permission keys require (`PERMISSION_KEY_RE`).
+ */
+export const POLICY_HOOK_KEY_PREFIX = "permissions.hooks.policy:";
 
 /** 渲染 schema 视图的权限键前缀：记入快照但不卡加载（见 {@link blockingKeys}）。 */
 export const UI_VIEW_KEY_PREFIX = "ui.view:";

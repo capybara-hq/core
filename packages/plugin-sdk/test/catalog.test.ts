@@ -36,6 +36,16 @@ const errorsOf = (json: unknown): string[] => {
 };
 
 describe("parseCatalogIndex", () => {
+  it("accepts the kernel's policy hook permission key (N-1)", () => {
+    const e = pluginEntry({
+      permissions: {
+        keys: ["permissions.hooks:tool.preExecute", "permissions.hooks.policy:tool.preExecute"],
+        sensitive: ["permissions.hooks.policy:tool.preExecute"],
+      },
+    });
+    expect(errorsOf(index([e]))).toEqual([]);
+  });
+
   it("合法清单通过，返回解析结果", () => {
     expect(CATALOG_SCHEMA_VERSION).toBe(1);
     const r = parseCatalogIndex(index());
@@ -193,6 +203,21 @@ describe("JSON Schema（ajv）与 zod 一致", () => {
     ["updatedAt 不是时间", { ...index(), updatedAt: "yesterday" }],
     ["name 为空", { ...index(), name: "" }],
     ["kind 未知", index([{ ...pluginEntry(), kind: "theme" }])],
+    [
+      "policy hook permission key (permissions.hooks.policy:<mount>)",
+      index([
+        pluginEntry({
+          permissions: {
+            keys: ["permissions.hooks:model.request", "permissions.hooks.policy:model.request"],
+            sensitive: ["permissions.hooks.policy:model.request"],
+          },
+        }),
+      ]),
+    ],
+    [
+      "permission key category with a capital letter",
+      index([pluginEntry({ permissions: { keys: ["permissions.policyHooks:x"], sensitive: [] } })]),
+    ],
   ];
 
   for (const [label, json] of fixtures) {
