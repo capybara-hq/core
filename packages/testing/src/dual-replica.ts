@@ -2,8 +2,13 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import pg from "pg";
-import { startTestPostgres, startTestRedis, type TestContainer } from "./containers.js";
+import {
+  createFreshDatabase,
+  sharedPgAdminUrl,
+  startPostgresContainer,
+  startTestRedis,
+  type TestContainer,
+} from "./containers.js";
 
 /** 双副本测试工具的选项。 */
 export interface DualReplicaOptions {
@@ -19,8 +24,9 @@ export interface DualReplicaOptions {
    */
   builtinPlugins?: string[];
   /**
-   * 复用已有的 PostgreSQL（管理员连接串，需能 CREATE DATABASE）。
-   * 省略则自己起容器，stop() 时关闭；传入则只创建并在 stop() 时删除本 harness 的 `cap_*` 库。
+   * 复用已有的 PostgreSQL（管理员连接串，需能 CREATE DATABASE）。传入则只创建并在 stop() 时删除本 harness 的 `cap_*` 库。
+   * Omitted: use the run-wide shared PostgreSQL of the vitest globalSetup (same per-harness database),
+   * or, without one / with `CAPYBARA_TEST_NO_SHARED=1`, start a container and stop it in stop().
    */
   pgUrl?: string;
   /**
@@ -90,27 +96,6 @@ interface Runner {
   exited: Promise<void>;
   /** 子进程已退出时的描述（含退出码/信号），否则 undefined。 */
   crashed: string | undefined;
-}
-
-/** 新建随机名数据库，返回 `{ url, drop }`。 */
-async function createFreshDatabase(adminUrl: string) {
-  const name = `cap_${randomBytes(6).toString("hex")}`;
-  const admin = async (sql: string) => {
-    const client = new pg.Client({ connectionString: adminUrl });
-    await client.connect();
-    try {
-      await client.query(sql);
-    } finally {
-      await client.end();
-    }
-  };
-  await admin(`CREATE DATABASE ${name}`);
-  const url = new URL(adminUrl);
-  url.pathname = `/${name}`;
-  return {
-    url: url.toString(),
-    drop: () => admin(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`),
-  };
 }
 
 /** runner 与本文件同目录；源码下是 .ts，编译后是 .js。 */
@@ -232,9 +217,11 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
   };
 
   try {
-    let pgUrl = opts.pgUrl;
+    // Without `pgUrl`: the run-wide shared PostgreSQL when the vitest globalSetup started one,
+    // else a container of our own. Either way the replicas get a fresh database created below.
+    let pgUrl = opts.pgUrl ?? sharedPgAdminUrl();
     if (pgUrl === undefined) {
-      const c = await startTestPostgres();
+      const c = await startPostgresContainer();
       owned.push(c);
       pgUrl = c.url;
     }

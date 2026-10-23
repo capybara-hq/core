@@ -14,6 +14,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./global-setup": {
+      "@capybara-hq/source": "./src/global-setup.ts",
+      "types": "./dist/global-setup.d.ts",
+      "import": "./dist/global-setup.js",
+      "default": "./dist/global-setup.js"
     }
   },
   "files": [
@@ -27,6 +33,7 @@
     "@capybara-hq/kernel": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@testcontainers/postgresql": "^12.2.1",
+    "ioredis": "^6.0.0",
     "pg": "^8.23.1",
     "protobufjs": "^7.5.4",
     "testcontainers": "^12.2.1",
@@ -35,8 +42,7 @@
   "devDependencies": {
     "@capybara-hq/plugin-sdk": "workspace:*",
     "@types/pg": "^8.23.1",
-    "@types/ws": "^8.18.2",
-    "ioredis": "^6.0.0"
+    "@types/ws": "^8.18.2"
   },
   "peerDependencies": {
     "@capybara-hq/plugin-sdk": "workspace:*",

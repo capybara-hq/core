@@ -313,6 +313,9 @@ importers:
       '@testcontainers/postgresql':
         specifier: ^12.2.1
         version: 12.2.1
+      ioredis:
+        specifier: ^6.0.0
+        version: 6.0.0
       pg:
         specifier: ^8.23.1
         version: 8.23.1
@@ -338,9 +341,6 @@ importers:
       '@types/ws':
         specifier: ^8.18.2
         version: 8.18.2
-      ioredis:
-        specifier: ^6.0.0
-        version: 6.0.0
 
   plugins/anthropic:
     dependencies:

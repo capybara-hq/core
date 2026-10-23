@@ -82,7 +82,7 @@ async function pgKernelConnections(): Promise<number> {
   await c.connect();
   try {
     const r = await c.query<{ n: number }>(
-      "select count(*)::int as n from pg_stat_activity where application_name = 'capybara-kernel'",
+      "select count(*)::int as n from pg_stat_activity where application_name = 'capybara-kernel' and datname = current_database()",
     );
     return r.rows[0]?.n ?? 0;
   } finally {
@@ -104,7 +104,7 @@ async function stopDuringMigration(schema: string, config: KernelConfig): Promis
     starting.catch(() => {});
     const waiting = await waitFor(async () => {
       const r = await holder.query<{ n: number }>(
-        "select count(*)::int as n from pg_stat_activity where application_name = 'capybara-kernel' and wait_event_type = 'Lock'",
+        "select count(*)::int as n from pg_stat_activity where application_name = 'capybara-kernel' and wait_event_type = 'Lock' and datname = current_database()",
       );
       return (r.rows[0]?.n ?? 0) > 0;
     });

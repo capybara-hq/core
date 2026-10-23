@@ -1,5 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
+import { Redis } from "ioredis";
+import pg from "pg";
 import { GenericContainer, Wait } from "testcontainers";
 
 /** 测试容器句柄：连接串与停止函数。 */
@@ -8,9 +11,54 @@ export interface TestContainer {
   stop(): Promise<void>;
 }
 
-/** 启动一个临时 PostgreSQL 17 容器，返回连接串与停止函数。 */
-export async function startTestPostgres(): Promise<TestContainer> {
-  const container = await new PostgreSqlContainer("postgres:17").start();
+/** Admin URL of the run-wide PostgreSQL started by the vitest globalSetup (see `global-setup.ts`). */
+export const PG_ADMIN_URL_ENV = "CAPYBARA_TEST_PG_ADMIN_URL";
+/** URL of the run-wide Valkey started by the vitest globalSetup. */
+export const REDIS_URL_ENV = "CAPYBARA_TEST_REDIS_URL";
+/** Set to `1` to turn sharing off: every caller starts its own containers (for debugging). */
+export const NO_SHARED_ENV = "CAPYBARA_TEST_NO_SHARED";
+/** Logical databases of the shared Valkey: DB 0 holds the allocation counter, callers get 1..1023. */
+export const SHARED_REDIS_DATABASES = 1024;
+/** Counter key (in DB 0 of the shared Valkey) that hands out database numbers. */
+const REDIS_DB_COUNTER = "capybara-test:db";
+
+/** True when `CAPYBARA_TEST_NO_SHARED=1`. */
+export function sharingDisabled(): boolean {
+  return process.env[NO_SHARED_ENV] === "1";
+}
+
+/** The shared PostgreSQL admin URL, or undefined when not running under the globalSetup / sharing is off. */
+export function sharedPgAdminUrl(): string | undefined {
+  return sharingDisabled() ? undefined : process.env[PG_ADMIN_URL_ENV] || undefined;
+}
+
+/** The shared Valkey URL, or undefined when not running under the globalSetup / sharing is off. */
+export function sharedRedisUrl(): string | undefined {
+  return sharingDisabled() ? undefined : process.env[REDIS_URL_ENV] || undefined;
+}
+
+/**
+ * Start a throwaway PostgreSQL 17 container. `tuned` is for the run-wide shared instance: many files
+ * connect at once (raise `max_connections`), and durability is irrelevant for tests (no fsync).
+ */
+export async function startPostgresContainer(
+  opts: { tuned?: boolean } = {},
+): Promise<TestContainer> {
+  const image = new PostgreSqlContainer("postgres:17");
+  if (opts.tuned) {
+    image.withCommand([
+      "postgres",
+      "-c",
+      "max_connections=2000",
+      "-c",
+      "fsync=off",
+      "-c",
+      "synchronous_commit=off",
+      "-c",
+      "full_page_writes=off",
+    ]);
+  }
+  const container = await image.start();
   return {
     url: container.getConnectionUri(),
     stop: async () => {
@@ -19,18 +67,109 @@ export async function startTestPostgres(): Promise<TestContainer> {
   };
 }
 
-/** 启动一个临时 Valkey 8（Redis 兼容）容器，返回 `redis://host:port` 与停止函数。 */
-export async function startTestRedis(): Promise<TestContainer> {
-  const container = await new GenericContainer("valkey/valkey:8")
+/** Start a throwaway Valkey 8 container, returning `redis://host:port`. */
+export async function startRedisContainer(
+  opts: { databases?: number } = {},
+): Promise<TestContainer> {
+  const image = new GenericContainer("valkey/valkey:8")
     .withExposedPorts(6379)
-    .withWaitStrategy(Wait.forLogMessage("Ready to accept connections"))
-    .start();
+    .withWaitStrategy(Wait.forLogMessage("Ready to accept connections"));
+  if (opts.databases !== undefined) {
+    image.withCommand(["valkey-server", "--databases", String(opts.databases)]);
+  }
+  const container = await image.start();
   return {
     url: `redis://${container.getHost()}:${container.getMappedPort(6379)}`,
     stop: async () => {
       await container.stop();
     },
   };
+}
+
+/**
+ * Create a randomly named database on the server behind `adminUrl` (a connection that may
+ * `CREATE DATABASE`); `drop()` removes it with `DROP DATABASE … WITH (FORCE)`.
+ */
+export async function createFreshDatabase(
+  adminUrl: string,
+): Promise<{ url: string; drop(): Promise<void> }> {
+  const name = `cap_${randomBytes(6).toString("hex")}`;
+  const admin = async (sql: string) => {
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      await client.query(sql);
+    } finally {
+      await client.end();
+    }
+  };
+  await admin(`CREATE DATABASE ${name}`);
+  const url = new URL(adminUrl);
+  url.pathname = `/${name}`;
+  return {
+    url: url.toString(),
+    drop: () => admin(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`),
+  };
+}
+
+/**
+ * A PostgreSQL for one test file. Under the vitest globalSetup (shared mode) this is a fresh random
+ * database on the run-wide server and `stop()` drops it; otherwise (no globalSetup, or
+ * `CAPYBARA_TEST_NO_SHARED=1`) it starts a dedicated PostgreSQL 17 container and `stop()` stops it.
+ * Either way the URL points at an empty database the caller owns.
+ */
+export async function startTestPostgres(): Promise<TestContainer> {
+  const adminUrl = sharedPgAdminUrl();
+  if (adminUrl === undefined) return startPostgresContainer();
+  const db = await createFreshDatabase(adminUrl);
+  let stopped: Promise<void> | undefined;
+  return {
+    url: db.url,
+    stop: () => {
+      stopped ??= db.drop();
+      return stopped;
+    },
+  };
+}
+
+/**
+ * A Redis (Valkey 8) for one test file, `redis://host:port[/db]`.
+ *
+ * By default it starts a dedicated container: bus channels (`cap:<namespace>:<topic>`) ignore the
+ * database number, so files that subscribe to the bus (anything that boots a kernel) must not share
+ * an instance. `{ shared: true }` is opt-in for callers that never subscribe to pub/sub: under the
+ * globalSetup it hands out a free logical database of the run-wide Valkey (`stop()` = `FLUSHDB`);
+ * without one it falls back to a dedicated container.
+ */
+export async function startTestRedis(opts: { shared?: boolean } = {}): Promise<TestContainer> {
+  const sharedUrl = opts.shared ? sharedRedisUrl() : undefined;
+  if (sharedUrl === undefined) return startRedisContainer();
+  const n = await withRedis(sharedUrl, (r) => r.incr(REDIS_DB_COUNTER));
+  const db = 1 + ((n - 1) % (SHARED_REDIS_DATABASES - 1));
+  const url = new URL(sharedUrl);
+  url.pathname = `/${db}`;
+  const dbUrl = url.toString();
+  // Start clean even if the counter wrapped around onto a database used earlier in the run.
+  await withRedis(dbUrl, (r) => r.flushdb());
+  let stopped: Promise<void> | undefined;
+  return {
+    url: dbUrl,
+    stop: () => {
+      stopped ??= withRedis(dbUrl, (r) => r.flushdb()).then(() => undefined);
+      return stopped;
+    },
+  };
+}
+
+/** Run one command batch on a short-lived connection. */
+async function withRedis<T>(url: string, fn: (r: Redis) => Promise<T>): Promise<T> {
+  const r = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1 });
+  try {
+    await r.connect();
+    return await fn(r);
+  } finally {
+    r.disconnect();
+  }
 }
 
 /**

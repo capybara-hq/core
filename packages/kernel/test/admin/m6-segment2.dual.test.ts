@@ -378,7 +378,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         async () => {
           const r = await lock.query<{ n: number }>(
             `SELECT count(*)::int AS n FROM pg_stat_activity
-             WHERE wait_event_type = 'Lock' AND query ILIKE '%todos%'`,
+             WHERE wait_event_type = 'Lock' AND query ILIKE '%todos%' AND datname = current_database()`,
           );
           return (r.rows[0]?.n ?? 0) > 0;
         },

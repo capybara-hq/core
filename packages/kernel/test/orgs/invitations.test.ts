@@ -365,7 +365,8 @@ describe("InvitationsService.accept", () => {
       for (;;) {
         const { rows } = await watcher.query<{ n: string }>(
           `SELECT count(*) AS n FROM pg_stat_activity
-           WHERE wait_event_type = 'Lock' AND query ILIKE '%"orgs"%for update%'`,
+           WHERE wait_event_type = 'Lock' AND query ILIKE '%"orgs"%for update%'
+             AND datname = current_database()`,
         );
         if (Number(rows[0]?.n) >= 2) break;
         if (Date.now() > deadline) throw new Error("accepts did not both block on the org lock");

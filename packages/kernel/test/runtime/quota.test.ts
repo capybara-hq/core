@@ -17,7 +17,7 @@ let raw: ReturnType<typeof createDb>;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
-  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis({ shared: true })]);
   await migrate(pgc.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR });
   redis = new Redis(rd.url);
   raw = createDb(pgc.url, 3);

@@ -677,7 +677,7 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
           (
             await sql<{
               n: number;
-            }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`.execute(
+            }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`.execute(
               db,
             )
           ).rows[0]?.n === 1,
@@ -692,7 +692,7 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
         (
           await sql<{
             n: number;
-          }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`.execute(
+          }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`.execute(
             db,
           )
         ).rows[0]?.n,
@@ -848,7 +848,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
           (
             await sql<{
               n: number;
-            }>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE query LIKE 'SELECT pg_sleep(60)%'`.execute(
+            }>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE query LIKE 'SELECT pg_sleep(60)%' AND datname = current_database()`.execute(
               db,
             )
           ).rows[0]?.n === 0,

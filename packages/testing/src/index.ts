@@ -1,4 +1,5 @@
 export {
+  createFreshDatabase,
   startTestPostgres,
   startTestRedis,
   startTestS3,

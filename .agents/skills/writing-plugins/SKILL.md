@@ -246,6 +246,16 @@ it("交替请求两个副本，结果一致", async () => {
 
 要点：`h.request` 的返回值带 `replica`（0 / 1，取自响应头 `x-capybara-replica`，harness 给每个副本设了 `http.replicaId`）；按 `h.replicas[i].port` 直接 `fetch` 指定副本时用 `replicaOf(res)` 确认落点（如 SSE 长连接）。`h.kill(i)` 对副本 i 发 SIGKILL 模拟硬崩溃（之后经 `h.request` 发往它的请求抛错），用来测「另一个副本接手」。`config` 选项可把额外的内核配置深合并进两个副本（如 `config: { auth: { cookieSecure: false } }`，经 IPC 传递）；每个 harness 自带一个 Redis 容器，用完 `stop()`；传入 `pgUrl`（管理员连接串）可让多个 harness 复用同一个 PG 容器；队列任务异步执行，断言时轮询等到期望值，不要只 `sleep` 固定时长；测试文件放在插件根的 `test/` 目录（`pnpm test` 会收集）。**单独跑某个测试时从仓库根跑** `pnpm exec vitest run plugins/<name>/test/<file>`，不要用 `pnpm --filter <包> exec vitest`：根配置提供 `@capybara-hq/source` 条件，双副本测试按源码（`src/index.ts`）加载插件与它 import 的 `.js` 相对路径需要它，否则子进程副本加载失败。
 
+Shared test containers: the root vitest config's node project has a `globalSetup`
+(`@capybara-hq/testing/global-setup`) that starts one PostgreSQL 17 and one Valkey per run. There
+`startTestPostgres()` returns a fresh random database on the shared server (`stop()` drops it), and a
+harness without `pgUrl` also uses it. Redis stays one container per caller by default, because bus
+channels ignore the database number; pass `startTestRedis({ shared: true })` (a logical database of the
+shared Valkey, `stop()` = `FLUSHDB`) only in files where nothing subscribes to the bus (no kernel, no
+plugin host loading subscribing plugins). Never query cluster-wide views (`pg_stat_activity`,
+`pg_locks`) without filtering to `current_database()`. `CAPYBARA_TEST_NO_SHARED=1` restores per-file
+containers for debugging.
+
 ## 插件包（npm-pack tgz）
 
 插件在核心镜像之外，按插件包安装（C11）。`pnpm pack-plugin plugins/<name> [--out <dir>]` 打一个，`pnpm pack-plugins` 打全部（默认输出 `artifacts/plugins/`，CI 作为构建产物上传）；`pnpm check` 里的「插件打包」（`check:plugin-pack`）要求每个官方插件都能打成并通过内核校验。写插件时注意：
