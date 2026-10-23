@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   computePermissionSet,
@@ -9,7 +9,11 @@ import {
   permissionSetOfPackage,
   readPluginPackage,
 } from "@capybara-hq/kernel";
-import { type PluginManifest, SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import {
+  type PluginManifest,
+  SDK_VERSION,
+  validatePluginPackageJson,
+} from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { packPlugin } from "../src/index.js";
 
@@ -46,7 +50,17 @@ describe.each(["todo", "slack"])("packPlugin(plugins/%s)", (name) => {
   it("能通过内核校验，package.json 只保留规定字段", async () => {
     const p = await readPluginPackage(bytes, OPTS);
     expect(Object.keys(p.packageJson).sort()).toEqual(
-      ["capybara", "license", "name", "peerDependencies", "type", "version"].sort(),
+      [
+        "capybara",
+        "description",
+        "homepage",
+        "license",
+        "name",
+        "peerDependencies",
+        "repository",
+        "type",
+        "version",
+      ].sort(),
     );
     expect(p.packageJson.name).toBe(`@capybara-hq/plugin-${name}`);
     expect(Object.keys(p.packageJson.peerDependencies as object).sort()).toEqual([
@@ -58,6 +72,21 @@ describe.each(["todo", "slack"])("packPlugin(plugins/%s)", (name) => {
     const paths = p.files.map((f) => f.path);
     expect(paths).toContain("dist/index.mjs");
     expect(paths.some((x) => x.includes("node_modules"))).toBe(false);
+  });
+
+  it("passes npm metadata through; repository.directory is the plugin dir", async () => {
+    const p = await readPluginPackage(bytes, OPTS);
+    expect(typeof p.packageJson.description).toBe("string");
+    const dir = relative(repo, plugin(name)).split(sep).join("/");
+    expect(p.packageJson.homepage).toBe(
+      `https://github.com/capybara-hq/core/tree/main/${dir}#readme`,
+    );
+    expect(p.packageJson.repository).toEqual({
+      type: "git",
+      url: "git+https://github.com/capybara-hq/core.git",
+      directory: dir,
+    });
+    expect(validatePluginPackageJson(p.packageJson, SDK_VERSION)).toEqual([]);
   });
 
   it("permissionSetOfPackage 与 computePermissionSet(真实模块) 的键完全相等", async () => {
@@ -110,6 +139,18 @@ describe("packPlugin 的其他行为", () => {
   it("非字面量动态 import 的插件打包失败", async () => {
     await expect(packPlugin(fixture("dynamic-import"), out)).rejects.toThrow(/non-literal/);
     expect((await readdir(fixture("dynamic-import"))).sort()).toEqual(["package.json", "src"]);
+  });
+
+  it("passes homepage and keywords through when the source package.json has them", async () => {
+    const r = await packPlugin(fixture("metadata"), out);
+    const p = await readPluginPackage(new Uint8Array(await readFile(r.file)), OPTS);
+    expect(p.packageJson.homepage).toBe("https://example.com/metadata");
+    expect(p.packageJson.keywords).toEqual(["capybara", "fixture"]);
+    expect(p.packageJson.repository).toEqual({
+      type: "git",
+      url: "git+https://github.com/capybara-hq/core.git",
+      directory: "tools/pack-plugin/test/fixtures/metadata",
+    });
   });
 
   it("清单版本与 package.json 不一致时打包失败", async () => {

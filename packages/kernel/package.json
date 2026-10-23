@@ -1,7 +1,14 @@
 {
   "name": "@capybara-hq/kernel",
   "version": "0.1.0",
+  "description": "Capybara kernel: config, database, plugin host and HTTP API of the Capybara agent platform",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "packages/kernel"
+  },
+  "homepage": "https://github.com/capybara-hq/core/tree/main/packages/kernel#readme",
   "type": "module",
   "engines": {
     "node": ">=24"

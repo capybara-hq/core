@@ -1,0 +1,1 @@
+{ "name": "no-desc", "version": "0.1.0", "repository": { "type": "git", "url": "git+https://github.com/capybara-hq/core.git", "directory": "plugins/no-desc" } }

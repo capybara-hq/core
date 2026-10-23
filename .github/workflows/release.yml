@@ -1,0 +1,116 @@
+name: Release
+
+# npm release. Never runs on pull requests: only on push to main and on manual dispatch.
+#
+# How a release happens (P-16):
+# - First release (0.1.0): only by running this workflow manually (workflow_dispatch) on main, once the
+#   prerequisites in the M7 release checklist are confirmed. Pushes never publish it: `pnpm release
+#   --if-bumped-since` refuses while none of our packages is on npm yet.
+# - Afterwards: changesets. On push to main, if .changeset/ has pending changesets, changesets/action
+#   opens or updates the "Version Packages" PR (no publish). Merging that PR is a push whose diff
+#   changes package versions; `pnpm release --if-bumped-since <commit before the push>` sees the bump
+#   and publishes. A push that changes no published package's version (e.g. merging M7, which leaves
+#   zero changesets and every version at 0.1.0) publishes nothing.
+# - A manual run publishes whatever version is not on npm yet (also the way to finish a release that
+#   failed half-way: versions already on npm are skipped, so reruns are idempotent). `dry_run` packs
+#   everything and runs `npm publish --dry-run`.
+#
+# Auth: the NPM_TOKEN secret (a granular npm access token with read and write access to the
+# @capybara-hq packages; required for the first publish, because npm trusted publishing is configured
+# per existing package). Later you may configure npm trusted publishing (OIDC) for each package with
+# this repository and workflow file `release.yml`, then delete NPM_TOKEN: npm >= 11.5 (Node 24) uses the
+# OIDC token when no NPM_TOKEN is set. Provenance (`--provenance`) needs `id-token: write` and a public
+# repository whose URL matches each package's `repository` field (checked by check:release-metadata).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Pack and run npm publish --dry-run only (nothing is published)
+        type: boolean
+        default: false
+
+# One release at a time, never cancelled half-way.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    # Forks never publish.
+    if: github.repository == 'capybara-hq/core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # changesets/action pushes the changeset-release/main branch
+      pull-requests: write # changesets/action opens the Version Packages PR
+      id-token: write # npm provenance (and trusted publishing)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+
+      # Push only: with pending changesets, open / update the "Version Packages" PR. No `publish`
+      # input, so this step never publishes; without changesets it does nothing.
+      - name: Version Packages PR
+        if: github.event_name == 'push'
+        uses: changesets/action@v1
+        with:
+          title: "chore: version packages"
+          commit: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A manual publish must come from main (provenance records the ref); a dry run may use any ref.
+      - name: Check the ref of a manual publish
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::publish from main only (got $REF); use dry_run on other refs"
+          exit 1
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish to npm
+        id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::NPM_TOKEN is not set: relying on npm trusted publishing (OIDC)"
+          fi
+          args=(--provenance --out artifacts/release)
+          if [ "$EVENT" = "push" ]; then
+            args+=(--if-bumped-since "$BEFORE")
+          elif [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          pnpm release "${args[@]}"
+
+      - name: Upload the published plugin packages and their sha512
+        if: steps.publish.outputs.published != '' && steps.publish.outputs.published != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-plugin-packages
+          path: |
+            artifacts/release/plugins/*.tgz
+            artifacts/release/plugins/SHA512SUMS
+            artifacts/release/plugins/integrity.json
+          if-no-files-found: error
+          retention-days: 90

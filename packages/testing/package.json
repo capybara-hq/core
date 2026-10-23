@@ -1,7 +1,14 @@
 {
   "name": "@capybara-hq/testing",
   "version": "0.1.0",
+  "description": "Test helpers for Capybara: test containers, dual-replica harness and fake third-party servers",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "packages/testing"
+  },
+  "homepage": "https://github.com/capybara-hq/core/tree/main/packages/testing#readme",
   "type": "module",
   "engines": {
     "node": ">=24"

@@ -16,6 +16,8 @@ concurrency:
 # PRs run what the diff affects; pushes to main run everything. The plan comes from
 # tools/ci/src/affected.ts (rules and their tests live there; AGENTS.md "CI and checks" lists them):
 # - ci (lint, typecheck, pnpm check, plugin packing, commitlint): always, in full;
+# npm publishing is not here: .github/workflows/release.yml runs on push to main and
+# workflow_dispatch only, never on PRs.
 # - test: the affected workspace packages only (4 shards when the kernel tests run, else 1);
 # - web, visual: when apps/web or packages/design changed;
 # - e2e: when anything the e2e stack is built from or loads changed;
@@ -75,6 +77,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
+      # Every custom check, in full on PRs (all cheap), including check:release-metadata
+      # (published packages carry the repository npm provenance needs; F2 packages stay private).
       - run: pnpm check
       - name: 打包全部官方插件（C12，构建产物；发布到 npm / ghcr 在 M7）
         run: pnpm pack-plugins --out artifacts/plugins

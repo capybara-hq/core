@@ -632,6 +632,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/kernel
 
+  tools/release:
+    devDependencies:
+      '@capybara-hq/pack-plugin':
+        specifier: workspace:*
+        version: link:../pack-plugin
+
   tools/worktree:
     dependencies:
       '@capybara-hq/dev':

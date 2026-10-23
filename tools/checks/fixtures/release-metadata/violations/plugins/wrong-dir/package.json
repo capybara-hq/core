@@ -1,0 +1,1 @@
+{ "name": "wrong-dir", "version": "0.1.0", "description": "Wrong dir", "license": "Apache-2.0", "repository": { "type": "git", "url": "git+https://github.com/capybara-hq/core.git", "directory": "plugins/other" } }

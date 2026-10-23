@@ -163,6 +163,15 @@ async function makeTgz(files: Map<string, Buffer>): Promise<Buffer> {
   return promisify(gzip)(Buffer.concat(chunks), { level: 9 });
 }
 
+/**
+ * npm metadata copied verbatim from the plugin's package.json when present (F4). They only describe
+ * the package on npm; `repository` (with `directory`) is required for npm provenance.
+ */
+export const METADATA_FIELDS = ["description", "repository", "homepage", "keywords"] as const;
+
+const pick = (o: Record<string, unknown>, keys: readonly string[]) =>
+  Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+
 /** npm pack 的文件名：`@scope/name` → `scope-name-<version>.tgz`。 */
 const tgzName = (name: string, version: string) =>
   `${name.replace(/^@/, "").replace("/", "-")}-${version}.tgz`;
@@ -173,7 +182,8 @@ const tgzName = (name: string, version: string) =>
  *    {@link HOST_PROVIDED_PACKAGES} 与 Node 内置模块（改写为 `node:*`），CJS 依赖经 createRequire 横幅兼容；
  * 2. 扫描产物的 import（白名单、非字面量动态 import），导入产物取默认导出，经 definePlugin 校验后用
  *    `staticManifestOf` 生成静态清单；清单 version 必须与插件 package.json 一致；
- * 3. 生成只含 name / version / type / license / peerDependencies / capybara 的 package.json，复制
+ * 3. 生成只含 name / version / type / license / {@link METADATA_FIELDS} / peerDependencies / capybara 的
+ *    package.json，复制
  *    `migrations/`（清单声明了 migrations 时，必须解析到插件根的 `migrations/`）与 `ui/`（存在时）；
  * 4. 打成带 `package/` 前缀、可复现的 tgz，写到 `outDir/<npm 风格文件名>`。
  *
@@ -256,6 +266,7 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       version: srcPkg.version,
       type: "module",
       ...(srcPkg.license === undefined ? {} : { license: srcPkg.license }),
+      ...pick(srcPkg, METADATA_FIELDS),
       peerDependencies: { "@capybara-hq/plugin-sdk": m.sdk, zod: deps.zod ?? "^4.0.0" },
       capybara: section,
     };

@@ -56,6 +56,9 @@
       "path": "tools/pack-plugin"
     },
     {
+      "path": "tools/release"
+    },
+    {
       "path": "tools/checks"
     },
     {
