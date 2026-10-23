@@ -1,0 +1,4 @@
+{
+  "packages/core/test": ["alpha", "delta", "gamma"],
+  "packages/nope/test": []
+}
