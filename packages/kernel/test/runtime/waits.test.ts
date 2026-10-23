@@ -10,6 +10,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
 import {
   APPROVAL_CANCELLED_TEXT,
@@ -55,6 +56,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelDb;
 let redis: Redis;
 let maint: Queue;
+let runQueue: Queue;
 
 let req: Req;
 let orgId: string;
@@ -80,10 +82,12 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+  runQueue = new Queue(RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
 }, 120_000);
 
 afterAll(async () => {
   await maint?.close();
+  await runQueue?.close();
   await k?.stop();
   redis?.disconnect();
   await raw?.destroy();
@@ -154,6 +158,11 @@ async function startAndWait(
   const event = await waitForEvent(db, convId, (e) => e.type === type, 10_000, type);
   const runId = event.runId as string;
   await waitFor(async () => (await runStatus(runId)) === "waiting", 10_000, "run waiting");
+  // `waiting` is set at the start of suspend(); it then schedules the timeout and re-checks whether
+  // the wait is already settled (resuming if so). suspend() runs inside the run job, so wait for the
+  // job to finish: only then is the run idle in `waiting`, and a decision written directly to the
+  // database stays un-resumed (otherwise suspend's re-check can resume it under CI load).
+  await waitFor(async () => (await runQueue.getActiveCount()) === 0, 10_000, "run job finished");
   return { runId, event };
 }
 

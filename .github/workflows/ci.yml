@@ -5,7 +5,42 @@ on:
     branches: [main]
   pull_request:
 
+# 同一 PR 推了新提交就取消旧的运行；main 上的运行不取消。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# 分支保护只需要求 ci-ok（汇总下面全部任务，跳过算通过）。
 jobs:
+  # 只改文档的 PR 跳过重任务（测试分片、web、e2e、visual）；判定见 .github/scripts/code-changed.sh。
+  # push 到 main 一律全跑。
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # 拿不到差异时按有代码改动处理（宁可全跑，不可漏跑）。
+          if [ "$EVENT" != "pull_request" ]; then
+            code=true
+          elif git diff --name-only "$BASE...$HEAD_SHA" > changed-files.txt; then
+            cat changed-files.txt
+            code=$(.github/scripts/code-changed.sh < changed-files.txt)
+          else
+            code=true
+          fi
+          echo "code=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+  # 便宜的检查与产物：总是跑。测试在 test 分片里。
   ci:
     runs-on: ubuntu-latest
     steps:
@@ -21,7 +56,6 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm check
-      - run: pnpm test
       - name: 打包全部官方插件（C12，构建产物；发布到 npm / ghcr 在 M7）
         run: pnpm pack-plugins --out artifacts/plugins
       - uses: actions/upload-artifact@v4
@@ -37,7 +71,30 @@ jobs:
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
 
+  # vitest 按文件分 4 片并行（2 核 runner 上整跑约 18 分钟）；每片各自起 Testcontainers。
+  test:
+    name: test (${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run --shard=${{ matrix.shard }}/4
+
   web:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,10 +107,14 @@ jobs:
       - run: pnpm --filter @capybara-hq/web build
 
   e2e:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    # spec 13.4：≤ 10 分钟。本地实测 e2e 本身约 10s（含 Testcontainers 启动），CI 另需依赖安装、
-    # Playwright Chromium 安装与镜像拉取（合计约 3–4 分钟），10 分钟留有余量。
-    timeout-minutes: 10
+    # 本地实测 e2e 本身约 10s（含 Testcontainers 启动），CI 另需依赖安装、Playwright 与镜像拉取。
+    # Chromium 按 lockfile 里 @playwright/test 的版本缓存在 ~/.cache/ms-playwright；命中时只装系统依赖
+    # （install-deps 仍走 apt）。apt 镜像慢时只装依赖也能花掉几分钟（run 39890548962 在 10 分钟处被取消，
+    # 测试其实都已通过），所以时限 20 分钟。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -62,8 +123,23 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 安装 Playwright Chromium
+      - name: 读 Playwright 版本
+        id: playwright
+        run: |
+          version=$(node -p "require('./apps/web/node_modules/@playwright/test/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: 缓存 Playwright 浏览器
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: 安装 Playwright Chromium（含系统依赖）
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @capybara-hq/web exec playwright install --with-deps chromium
+      - name: 只装 Chromium 的系统依赖（浏览器来自缓存）
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter @capybara-hq/web exec playwright install-deps chromium
       - name: 端到端测试（Testcontainers 起 PG / Valkey，内核 + model-fake，Web 层）
         run: pnpm --filter @capybara-hq/web e2e
       - uses: actions/upload-artifact@v4
@@ -77,6 +153,8 @@ jobs:
           retention-days: 7
 
   visual:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     # 基准截图只在此镜像中生成与比对（版本与 apps/web 的 @playwright/test 一致，升级时同步修改）。
     container: mcr.microsoft.com/playwright:v1.64.1-noble
@@ -99,3 +177,32 @@ jobs:
             apps/web/playwright-report
             apps/web/test-results
           retention-days: 7
+
+  # 汇总：分支保护只要求这一项。changes 与 ci 必须成功；其余任务在有代码改动时必须成功，
+  # 只改文档时允许跳过。always()：上游失败时也要跑到这里并报失败，而不是被跳过（跳过 = 通过）。
+  ci-ok:
+    if: always()
+    needs: [changes, ci, test, web, e2e, visual]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CODE: ${{ needs.changes.outputs.code }}
+          CHANGES: ${{ needs.changes.result }}
+          CI_JOB: ${{ needs.ci.result }}
+          TEST: ${{ needs.test.result }}
+          WEB: ${{ needs.web.result }}
+          E2E: ${{ needs.e2e.result }}
+          VISUAL: ${{ needs.visual.result }}
+        run: |
+          echo "code=$CODE changes=$CHANGES ci=$CI_JOB test=$TEST web=$WEB e2e=$E2E visual=$VISUAL"
+          fail=0
+          [ "$CHANGES" = "success" ] || fail=1
+          [ "$CI_JOB" = "success" ] || fail=1
+          for r in "$TEST" "$WEB" "$E2E" "$VISUAL"; do
+            if [ "$CODE" = "true" ]; then
+              [ "$r" = "success" ] || fail=1
+            else
+              [ "$r" = "success" ] || [ "$r" = "skipped" ] || fail=1
+            fi
+          done
+          exit "$fail"

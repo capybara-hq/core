@@ -624,6 +624,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/kernel
 
+  tools/worktree: {}
+
 packages:
 
   '@anthropic-ai/sdk@0.135.0':

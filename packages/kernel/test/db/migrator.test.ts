@@ -225,10 +225,11 @@ describe("createDb", () => {
           () => "resolved",
           (e: Error) => e.message,
         ),
-        new Promise<string>((r) => setTimeout(() => r("timeout"), 2_000)),
+        new Promise<string>((r) => setTimeout(() => r("timeout"), 4_000)),
       ]);
       expect(outcome).toMatch(/aborted/);
-      expect(Date.now() - t0).toBeLessThan(2_000);
+      // connectTimeoutMs is 30 s; 4 s still proves the abort cut it short and tolerates CI load.
+      expect(Date.now() - t0).toBeLessThan(4_000);
       // 客户端已主动断开正在建立的连接
       const until = Date.now() + 1_000;
       while (closed < sockets.length && Date.now() < until)

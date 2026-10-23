@@ -109,6 +109,7 @@ export interface FakeChannelServer {
   /**
    * 让接下来 `count` 次 `/send`（或 `/update`）返回该状态码（不记录）；`retryAfterMs` 与 `reason` 放进响应体，
    * 测试插件据此抛 `ChannelSendError`（429 / 5xx 可重试，带等待时长；其他不可重试，带失败原因）。
+   * `delayMs`：失败响应推迟这么久才返回（模拟慢的失败请求，让会话的后续事件在投递任务持锁期间到达）。
    */
   failNext(
     path: "/send" | "/update",
@@ -116,6 +117,7 @@ export interface FakeChannelServer {
     count?: number,
     retryAfterMs?: number,
     reason?: "auth" | "target_gone" | "rejected" | "too_large",
+    delayMs?: number,
   ): void;
   /** 让 /connect 返回该状态码（null 恢复正常）。 */
   failConnect(status: number | null): void;
@@ -172,6 +174,7 @@ export async function startFakeChannelServer(
     left: number;
     retryAfterMs?: number;
     reason?: string;
+    delayMs?: number;
   }[] = [];
   const live = new Map<FakeChannelStream, ServerResponse>();
   const peaks = new Map<string, number>();
@@ -215,6 +218,7 @@ export async function startFakeChannelServer(
     const f = failures.find((x) => x.path === path && x.left > 0);
     if (f) {
       f.left--;
+      if (f.delayMs !== undefined) await new Promise((r) => setTimeout(r, f.delayMs));
       json(res, f.status, { retryAfterMs: f.retryAfterMs ?? null, reason: f.reason ?? null });
       return;
     }
@@ -353,13 +357,14 @@ export async function startFakeChannelServer(
     duplicateSends,
     posts,
     users,
-    failNext(path, status, count = 1, retryAfterMs, reason) {
+    failNext(path, status, count = 1, retryAfterMs, reason, delayMs) {
       failures.push({
         path,
         status,
         left: count,
         ...(retryAfterMs !== undefined && { retryAfterMs }),
         ...(reason !== undefined && { reason }),
+        ...(delayMs !== undefined && { delayMs }),
       });
     },
     failConnect(status) {

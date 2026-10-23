@@ -151,6 +151,20 @@ describe("渠道出站投递（双副本）", () => {
       "approval card",
     );
     const approvalId = cardOf(cardMsg)?.id as string;
+    // The card shows up on the platform before delivery records it in channel_card_messages (send
+    // first, then advance last_seq in a transaction). A click handled in between is refused as
+    // "not a card this connection sent" (Ruling A13), so click only once the card is recorded.
+    await waitFor(
+      async () =>
+        (
+          await sql`SELECT 1 FROM capybara.channel_card_messages
+            WHERE connection_id = ${connId} AND card_kind = 'approval' AND card_id = ${approvalId}`.execute(
+            raw,
+          )
+        ).rows.length > 0,
+      20_000,
+      "approval card recorded",
+    );
     im.push(
       connId,
       cardAction(

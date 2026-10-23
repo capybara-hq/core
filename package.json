@@ -29,7 +29,10 @@
     "gen:config-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-config-docs.ts",
     "pack-plugin": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/pack-plugin/src/cli.ts",
     "pack-plugins": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/pack-plugin/src/cli.ts --all",
-    "capybara": "node apps/capybara/bin/capybara.mjs"
+    "capybara": "node apps/capybara/bin/capybara.mjs",
+    "wt:new": "tsx tools/worktree/src/cli.ts new",
+    "wt:rm": "tsx tools/worktree/src/cli.ts rm",
+    "wt:ls": "tsx tools/worktree/src/cli.ts ls"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

@@ -961,7 +961,8 @@ describe("ToolPipeline.runStep", () => {
     toolsCfg = { timeoutMs: 150 };
     const t0 = Date.now();
     const evs = await runCalls([{ id: "c1", name: "probe__slow", input: {} }]);
-    expect(Date.now() - t0).toBeLessThan(2000);
+    // probe__slow never settles; 4 s leaves room for CI load.
+    expect(Date.now() - t0).toBeLessThan(4000);
     expect(resultsOf(evs)[0]).toMatchObject({
       isError: true,
       content:
