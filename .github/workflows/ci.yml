@@ -16,12 +16,17 @@ concurrency:
 # PRs run what the diff affects; pushes to main run everything. The plan comes from
 # tools/ci/src/affected.ts (rules and their tests live there; AGENTS.md "CI and checks" lists them):
 # - ci (lint, typecheck, pnpm check, plugin packing, commitlint): always, in full;
-# npm publishing is not here: .github/workflows/release.yml runs on push to main and
-# workflow_dispatch only, never on PRs.
+# npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
+# main and workflow_dispatch only, never on PRs.
 # - test: the affected workspace packages only (4 shards when the kernel tests run, else 1);
 # - web, visual: when apps/web or packages/design changed;
 # - e2e: when anything the e2e stack is built from or loads changed;
-# - docs-only diffs skip test / web / e2e / visual; root config, the lockfile, .github/**, tools/ci/**,
+# - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;
+#   ~15 min, so by diff): when anything the images are built from changed (the dependency closure of
+#   apps/capybara and apps/web: kernel, plugin-sdk, the builtin plugins openai-compatible and
+#   object-store-s3, design) or plugins/model-fake (the smoke test installs it); docker/**, the
+#   Dockerfiles and .dockerignore are outside every package, so they run everything;
+# - docs-only diffs skip test / web / e2e / visual / docker; root config, the lockfile, .github/**, tools/ci/**,
 #   packages/testing/**, unknown files, or a diff that can't be computed run everything.
 jobs:
   changes:
@@ -34,6 +39,7 @@ jobs:
       web: ${{ steps.plan.outputs.web }}
       visual: ${{ steps.plan.outputs.visual }}
       e2e: ${{ steps.plan.outputs.e2e }}
+      docker: ${{ steps.plan.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -211,12 +217,85 @@ jobs:
             apps/web/test-results
           retention-days: 7
 
+  # The release images, built for linux/amd64 only (the runner's platform), loaded into the runner's
+  # Docker and never pushed; then the compose smoke test runs against them (docker/compose.yaml from
+  # scratch, see the script header). arm64 is built only by the release (release.yml, native runners).
+  # Layers come from the GitHub Actions cache; only pushes to main write it (the scopes release.yml
+  # reads too), so PR runs don't evict it.
+  docker:
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CACHE_TO: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      # compose-smoke.sh packs plugins/model-fake with `pnpm pack-plugin`.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The three kernel images share every layer but the last; the builder keeps them between steps.
+      - name: Build capybara-api
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/kernel.Dockerfile
+          platforms: linux/amd64
+          build-args: ROLES=api
+          load: true
+          provenance: false
+          tags: capybara-api:test
+          cache-from: type=gha,scope=kernel-amd64
+          cache-to: ${{ env.CACHE_TO != '' && format('{0},scope=kernel-amd64', env.CACHE_TO) || '' }}
+      - name: Build capybara-worker
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/kernel.Dockerfile
+          platforms: linux/amd64
+          build-args: ROLES=worker
+          load: true
+          provenance: false
+          tags: capybara-worker:test
+          cache-from: type=gha,scope=kernel-amd64
+      - name: Build capybara-gateway
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/kernel.Dockerfile
+          platforms: linux/amd64
+          build-args: ROLES=gateway
+          load: true
+          provenance: false
+          tags: capybara-gateway:test
+          cache-from: type=gha,scope=kernel-amd64
+      - name: Build capybara-web
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/web.Dockerfile
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          tags: capybara-web:test
+          cache-from: type=gha,scope=web-amd64
+          cache-to: ${{ env.CACHE_TO != '' && format('{0},scope=web-amd64', env.CACHE_TO) || '' }}
+      - name: Compose smoke test
+        env:
+          SKIP_BUILD: "1"
+        run: docker/test/compose-smoke.sh
+
   # Aggregate: the only required check. changes and ci must succeed; every other job must succeed
   # when the plan says it runs, and may be skipped only when the plan says it doesn't. always():
   # report failure when an upstream job failed instead of being skipped (skipped = passed).
   ci-ok:
     if: always()
-    needs: [changes, ci, test, web, e2e, visual]
+    needs: [changes, ci, test, web, e2e, visual, docker]
     runs-on: ubuntu-latest
     steps:
       - env:
@@ -226,13 +305,14 @@ jobs:
           WEB: ${{ needs.changes.outputs.web }}:${{ needs.web.result }}
           E2E: ${{ needs.changes.outputs.e2e }}:${{ needs.e2e.result }}
           VISUAL: ${{ needs.changes.outputs.visual }}:${{ needs.visual.result }}
+          DOCKER: ${{ needs.changes.outputs.docker }}:${{ needs.docker.result }}
         run: |
           # Each job is "<planned>:<result>".
-          echo "changes=$CHANGES ci=$CI_JOB test=$TEST web=$WEB e2e=$E2E visual=$VISUAL"
+          echo "changes=$CHANGES ci=$CI_JOB test=$TEST web=$WEB e2e=$E2E visual=$VISUAL docker=$DOCKER"
           fail=0
           [ "$CHANGES" = "success" ] || fail=1
           [ "$CI_JOB" = "success" ] || fail=1
-          for r in "$TEST" "$WEB" "$E2E" "$VISUAL"; do
+          for r in "$TEST" "$WEB" "$E2E" "$VISUAL" "$DOCKER"; do
             case "$r" in
               true:success | false:success | false:skipped) ;;
               *) fail=1 ;;

@@ -16,6 +16,8 @@ interface Step {
 }
 interface Job {
   if?: string;
+  "runs-on"?: string;
+  strategy?: { matrix?: Record<string, unknown> };
   needs?: unknown;
   permissions?: Record<string, string>;
   env?: Record<string, string>;
@@ -35,8 +37,14 @@ describe("release.yml", () => {
     expect(wf.permissions).toEqual({});
   });
 
-  it("has exactly the version-pr and publish jobs", () => {
-    expect(Object.keys(wf.jobs).sort()).toEqual(["publish", "version-pr"]);
+  it("has the version-pr and publish jobs and the three image jobs", () => {
+    expect(Object.keys(wf.jobs).sort()).toEqual([
+      "images-build",
+      "images-plan",
+      "images-publish",
+      "publish",
+      "version-pr",
+    ]);
   });
 
   describe("version-pr", () => {
@@ -92,6 +100,76 @@ describe("release.yml", () => {
       expect(run?.run).toMatch(/if \[ "\$EVENT" = "push" \]; then\s+args\+=\(--auto\)/);
       // No comparison against the previous commit: a replaced (cancelled) run must not skip a release.
       expect(jobText(job)).not.toMatch(/github\.event\.before|if-bumped-since/);
+    });
+  });
+
+  describe("images", () => {
+    const plan = wf.jobs["images-plan"] as Job;
+    const build = wf.jobs["images-build"] as Job;
+    const publish = wf.jobs["images-publish"] as Job;
+    const images = [plan, build, publish];
+
+    it("follow a successful npm publish and run in order plan -> build -> publish", () => {
+      expect(plan.needs).toBe("publish");
+      expect(plan.if).toContain("github.repository == 'capybara-hq/core'");
+      expect(build.needs).toBe("images-plan");
+      expect(build.if).toBe("needs.images-plan.outputs.build == 'true'");
+      expect(publish.needs).toEqual(["images-plan", "images-build"]);
+      expect(publish.if).toBe("needs.images-plan.outputs.push == 'true'");
+    });
+
+    it("get only packages access: no npm token, no id-token, no contents write", () => {
+      expect(plan.permissions).toEqual({ contents: "read", packages: "read" });
+      expect(build.permissions).toEqual({ contents: "read", packages: "write" });
+      expect(publish.permissions).toEqual({ packages: "write" });
+      for (const j of images) expect(jobText(j)).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|id-token/);
+    });
+
+    it("check out exactly github.sha without persisted credentials", () => {
+      for (const j of [plan, build]) {
+        const co = j.steps.filter((s) => s.uses?.startsWith("actions/checkout@"));
+        expect(co).toHaveLength(1);
+        expect(co[0]?.with?.ref).toBe(`\${{ github.sha }}`);
+        expect(co[0]?.with?.["persist-credentials"]).toBe(false);
+      }
+    });
+
+    it("plan: auto on push (first release refused), dry-run or manual on dispatch", () => {
+      const run = plan.steps.find((s) => s.run?.includes("pnpm release:images"))?.run ?? "";
+      expect(run).toMatch(/"\$EVENT" = "push" \]; then\s+mode=auto/);
+      expect(run).toMatch(/"\$DRY_RUN" = "true" \]; then\s+mode=dry-run/);
+      expect(run).toMatch(/else\s+mode=manual/);
+    });
+
+    it("build: each image on a native runner per architecture, by digest, with attestations", () => {
+      expect(build.strategy?.matrix).toEqual({
+        target: `\${{ fromJSON(needs.images-plan.outputs.matrix) }}`,
+        arch: ["amd64", "arm64"],
+      });
+      expect(build["runs-on"]).toBe(
+        `\${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}`,
+      );
+      const b = build.steps.find((s) => s.uses?.startsWith("docker/build-push-action@"));
+      expect(b?.with).toMatchObject({
+        platforms: `linux/\${{ matrix.arch }}`,
+        provenance: "mode=max",
+        sbom: true,
+      });
+      expect(String(b?.with?.outputs)).toContain("push-by-digest=true");
+      expect(String(b?.with?.outputs)).toContain(`push=\${{ needs.images-plan.outputs.push }}`);
+      expect(String(b?.with?.labels)).toContain(
+        "org.opencontainers.image.source=https://github.com/capybara-hq/core",
+      );
+      expect(String(b?.with?.["cache-to"])).toMatch(/^type=gha,mode=max,/);
+    });
+
+    it("publish: tags latest only when the plan says so, the version tag last", () => {
+      const run = publish.steps.find((s) => s.run?.includes("imagetools create"))?.run ?? "";
+      expect(run).toMatch(/if \[ "\$LATEST" = "true" \]; then\s+tags\+=\(--tag "\$IMAGE:latest"\)/);
+      expect(run.indexOf(':latest"')).toBeLessThan(run.indexOf('tags+=(--tag "$IMAGE:$VERSION")'));
+      expect(run).toContain(
+        "index:org.opencontainers.image.source=https://github.com/capybara-hq/core",
+      );
     });
   });
 

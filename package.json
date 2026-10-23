@@ -37,6 +37,7 @@
     "pack-plugin": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/pack-plugin/src/cli.ts",
     "pack-plugins": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/pack-plugin/src/cli.ts --all",
     "release": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/release/src/cli.ts",
+    "release:images": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/release/src/images-cli.ts",
     "capybara": "node apps/capybara/bin/capybara.mjs",
     "wt:new": "tsx tools/worktree/src/cli.ts new",
     "wt:rm": "tsx tools/worktree/src/cli.ts rm",
