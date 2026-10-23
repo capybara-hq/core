@@ -11,8 +11,8 @@ function makeEnv(over: Partial<DoctorEnv> & { missing?: string[] } = {}): Doctor
     exec(cmd, args) {
       if (missing.includes(cmd)) return { status: 127, stdout: "" };
       if (cmd === "pnpm") return { status: 0, stdout: "10.4.0\n" };
-      if (cmd === "git" && args[0] === "remote") {
-        return { status: 0, stdout: "origin\thttps://github.com/capybara-hq/core.git (fetch)\n" };
+      if (cmd === "git" && args[1] === "--get-regexp") {
+        return { status: 0, stdout: "remote.origin.url https://github.com/capybara-hq/core.git\n" };
       }
       if (cmd === "git" && args[0] === "config") {
         return { status: 0, stdout: args[1] === "user.name" ? "Grant\n" : "g@example.com\n" };
@@ -52,6 +52,25 @@ describe("runDoctor", () => {
     ]);
     expect(checks.every((c) => c.status === "pass")).toBe(true);
     expect(printReport(checks, true)).toBe(0);
+  });
+
+  it("detects the upstream from raw config urls (what insteadOf rewrites hide)", async () => {
+    const base = makeEnv({ fileExists: (p) => p === "/home/u/.capybara-test.env" });
+    const checks = await runDoctor({
+      ...base,
+      exec(cmd, args) {
+        if (cmd === "git" && args[1] === "--get-regexp") {
+          return {
+            status: 0,
+            stdout:
+              "remote.origin.url git@github.com:me/core.git\n" +
+              "remote.upstream.url https://github.com/capybara-hq/core.git\n",
+          };
+        }
+        return base.exec(cmd, args);
+      },
+    });
+    expect(byId(checks, "remotes").detail).toContain('upstream is "upstream"');
   });
 
   it("node 22 fails node", async () => {

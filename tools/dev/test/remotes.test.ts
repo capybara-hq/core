@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findUpstream } from "../src/remotes.ts";
+import { findUpstream, parseRemoteConfig } from "../src/remotes.ts";
 
 describe("findUpstream", () => {
   it("origin pointing to capybara-hq/core is not a fork", () => {
@@ -34,5 +34,26 @@ describe("findUpstream", () => {
         "core",
       ),
     ).toBeNull();
+  });
+});
+
+describe("parseRemoteConfig", () => {
+  it("handles dotted remote names", () => {
+    expect(parseRemoteConfig("remote.my.fork.url git@github.com:me/core.git\n")).toEqual([
+      { name: "my.fork", url: "git@github.com:me/core.git" },
+    ]);
+  });
+
+  it("keeps the first url of a remote with several", () => {
+    expect(
+      parseRemoteConfig("remote.origin.url a\nremote.origin.url b\nremote.up.url c\n"),
+    ).toEqual([
+      { name: "origin", url: "a" },
+      { name: "up", url: "c" },
+    ]);
+  });
+
+  it("returns [] for empty output", () => {
+    expect(parseRemoteConfig("")).toEqual([]);
   });
 });

@@ -2,11 +2,17 @@ import { spawnSync } from "node:child_process";
 
 export type Remote = { name: string; url: string };
 
-/** Parses `git remote -v` output into unique name/url pairs (fetch URLs). */
-export function parseRemotes(output: string): Remote[] {
+/** Arguments for listing the configured remote URLs (raw, without `insteadOf` rewrites). */
+export const REMOTE_URL_CONFIG_ARGS = ["config", "--get-regexp", "^remote\\..+\\.url$"];
+
+/**
+ * Parses `git config --get-regexp '^remote\..+\.url$'` output (`remote.<name>.url <url>` lines)
+ * into name/url pairs, keeping the first url of each remote.
+ */
+export function parseRemoteConfig(output: string): Remote[] {
   const seen = new Map<string, Remote>();
   for (const line of output.split("\n")) {
-    const m = /^(\S+)\s+(\S+)(?:\s+\((fetch|push)\))?\s*$/.exec(line.trim());
+    const m = /^remote\.(.+)\.url (.+)$/.exec(line.trim());
     if (m?.[1] === undefined || m[2] === undefined) continue;
     if (!seen.has(m[1])) seen.set(m[1], { name: m[1], url: m[2] });
   }
@@ -18,17 +24,8 @@ export function parseRemotes(output: string): Remote[] {
  * because it applies `url.<base>.insteadOf` rewrites, which would hide the canonical URL.
  */
 export function readRemotes(cwd: string): Remote[] {
-  const r = spawnSync("git", ["config", "--get-regexp", "^remote\\..+\\.url$"], {
-    cwd,
-    encoding: "utf8",
-  });
-  if (r.status !== 0) return [];
-  const remotes: Remote[] = [];
-  for (const line of r.stdout.split("\n")) {
-    const m = /^remote\.(.+)\.url (.+)$/.exec(line.trim());
-    if (m?.[1] !== undefined && m[2] !== undefined) remotes.push({ name: m[1], url: m[2] });
-  }
-  return remotes;
+  const r = spawnSync("git", REMOTE_URL_CONFIG_ARGS, { cwd, encoding: "utf8" });
+  return r.status === 0 ? parseRemoteConfig(r.stdout) : [];
 }
 
 function escapeRegExp(s: string): string {

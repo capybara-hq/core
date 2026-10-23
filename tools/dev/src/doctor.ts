@@ -1,4 +1,4 @@
-import { findUpstream, parseRemotes } from "./remotes.ts";
+import { findUpstream, parseRemoteConfig, REMOTE_URL_CONFIG_ARGS } from "./remotes.ts";
 import type { Check } from "./report.ts";
 
 export type DoctorEnv = {
@@ -82,7 +82,7 @@ export async function runDoctor(env: DoctorEnv): Promise<Check[]> {
         }),
   });
 
-  const remotes = parseRemotes(env.exec("git", ["remote", "-v"]).stdout);
+  const remotes = parseRemoteConfig(env.exec("git", REMOTE_URL_CONFIG_ARGS).stdout);
   const upstream = findUpstream(remotes, "core");
   checks.push({
     id: "remotes",
