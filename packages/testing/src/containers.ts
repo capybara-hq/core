@@ -77,11 +77,14 @@ export async function withStartSlot<T>(
 ): Promise<T> {
   const url = sharingDisabled() ? undefined : process.env[REDIS_URL_ENV] || undefined;
   if (url === undefined) return start();
-  const limit = Number(process.env[CONTAINER_STARTS_ENV]) || DEFAULT_CONTAINER_STARTS;
+  // Unset or not a number: the default. Otherwise at least one slot: 0, a negative or a fractional
+  // value below 1 would wait forever.
+  const raw = Number(process.env[CONTAINER_STARTS_ENV] || Number.NaN);
+  const limit = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : DEFAULT_CONTAINER_STARTS;
   const token = `${process.pid}-${randomBytes(6).toString("hex")}`;
   const r = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1 });
-  await r.connect();
   try {
+    await r.connect();
     for (;;) {
       const got = await r.eval(ACQUIRE_SLOT, 1, key, Date.now(), START_SLOT_TTL_MS, limit, token);
       if (got === 1) break;
@@ -90,7 +93,10 @@ export async function withStartSlot<T>(
     try {
       return await start();
     } finally {
-      await r.zrem(key, token);
+      // Releasing must not mask the start's result; an unreleased slot expires after the TTL.
+      await r.zrem(key, token).catch((err: unknown) => {
+        console.warn(`container start slot ${token} not released: ${String(err)}`);
+      });
     }
   } finally {
     r.disconnect();

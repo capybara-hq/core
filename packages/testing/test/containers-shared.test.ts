@@ -73,6 +73,25 @@ describe.skipIf(process.env.CAPYBARA_TEST_NO_SHARED === "1")("container start sl
     expect(peak).toBe(2);
   });
 
+  it("treats a limit below 1 as 1 instead of waiting forever", async () => {
+    for (const v of ["0", "-3", "0.5"]) {
+      vi.stubEnv("CAPYBARA_TEST_CONTAINER_STARTS", v);
+      let running = 0;
+      let peak = 0;
+      await Promise.all(
+        Array.from({ length: 3 }, () =>
+          withStartSlot(async () => {
+            running++;
+            peak = Math.max(peak, running);
+            await sleep(30);
+            running--;
+          }, `${KEY}-clamp-${process.pid}`),
+        ),
+      );
+      expect(peak, v).toBe(1);
+    }
+  });
+
   it("reclaims a slot left behind by a crashed worker, and releases its own on failure", async () => {
     vi.stubEnv("CAPYBARA_TEST_CONTAINER_STARTS", "1");
     const key = `${KEY}-stale-${process.pid}`;
