@@ -6,8 +6,10 @@ import {
   type Harness,
   startFakeChannelServer,
 } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -142,15 +144,19 @@ describe("channel long connections on the gateway role (dual replica)", () => {
   }, 120_000);
 
   it("replicas without the gateway role open no long connection", async () => {
-    const { connId } = await setup(
+    const { harness, connId } = await setup(
       [
         ["api", "worker"],
         ["api", "worker"],
       ],
       "cli_nogw",
     );
+    const redis = new Redis(harness.redisUrl);
+    cleanups.push(() => redis.disconnect());
     await sleep(SCAN_MS * 3 + 1000);
     expect(im.maxConcurrent(connId)).toBe(0);
     expect(im.streams.filter((s) => s.connectionId === connId)).toHaveLength(0);
+    // Nobody even took the lease
+    expect(await redis.exists(channelLeaseKey(connId))).toBe(0);
   }, 120_000);
 });

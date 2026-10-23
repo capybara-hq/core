@@ -15,7 +15,13 @@ import { AgentsService } from "./agents/agents.service.js";
 import { ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
-import { ChannelSupervisor } from "./channels/supervisor.js";
+import {
+  ChannelSupervisor,
+  checkGatewayPresence,
+  GATEWAY_CHECK_EVERY_MS,
+  GATEWAY_CHECK_JOB,
+  GATEWAY_CHECK_SCHEDULER_ID,
+} from "./channels/supervisor.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
@@ -878,6 +884,15 @@ export async function createKernel(
     }),
   };
   let channelSupervisor: ChannelSupervisor | undefined;
+  // Warn (rate limited) when active channel connections exist but no gateway replica is live (R1)
+  maintenance.handle(GATEWAY_CHECK_JOB, async () => {
+    await checkGatewayPresence({ db: kdb, redis, config: () => current, log });
+  });
+  maintenance.schedule({
+    id: GATEWAY_CHECK_SCHEDULER_ID,
+    name: GATEWAY_CHECK_JOB,
+    everyMs: () => GATEWAY_CHECK_EVERY_MS,
+  });
   const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
@@ -1303,6 +1318,12 @@ export async function createKernel(
           checkpoint();
           maintenance.startWorker();
           channelOutbound.startWorker();
+          if (!config.roles.includes("gateway")) {
+            log.info(
+              "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",
+              { roles: config.roles },
+            );
+          }
         }
         if (config.roles.includes("gateway")) {
           // Channel long-connection leader election: every gateway replica takes part, and only the
@@ -1320,6 +1341,7 @@ export async function createKernel(
             onEvent: (id, e) => channels.inbound.onEvent(id, e),
             config: () => current,
             log,
+            replicaId,
           });
           await channelSupervisor.start();
           // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）

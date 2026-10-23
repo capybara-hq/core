@@ -10,6 +10,7 @@ export {
 export {
   createDualReplicaHarness,
   type DualReplicaOptions,
+  type ExtraReplicaHandle,
   type Harness,
   REPLICA_HEADER,
   type ReplicaHandle,

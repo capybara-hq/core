@@ -15,6 +15,34 @@ import {
 /** 长连接租约键（内核锁）：值为持有方的随机 token。 */
 export const channelLeaseKey = (connectionId: string) => `capk:channel-lease:${connectionId}`;
 
+/**
+ * Gateway heartbeats: a ZSET whose members are process replica ids and whose scores are the
+ * millisecond time of the member's last lease-renewal round. Live = score > now - `leaseTtlMs`.
+ */
+export const gatewayReplicasKey = "capk:gateway-replicas";
+
+/**
+ * Handoff marker written when an over-share replica gives a connection back: value = that replica's
+ * id, PX = 2 x `scanIntervalMs`. The releasing replica does not claim the connection while it exists.
+ */
+export const channelHandoffKey = (connectionId: string) => `capk:channel-handoff:${connectionId}`;
+
+/** Rate-limit key of the "no live gateway" warning (one line per check interval, cluster-wide). */
+export const gatewayMissingWarnedKey = "capk:gateway-missing-warned";
+
+/**
+ * Upper bound of the connections one gateway replica holds: `ceil(runnable / live) + slack`, with
+ * `live < 1` treated as 1. With `rank` (this replica's index among the live replicas sorted by id)
+ * the remainder goes to the lowest ranks only, so the per-replica targets add up to exactly
+ * `runnable + live * slack`: with slack 0, 4 connections on 3 replicas split 2 / 1 / 1 instead of
+ * leaving a newcomer with nothing next to two replicas that each sit at the ceiling. Rank 0 (the
+ * default) gets the full ceiling.
+ */
+export function shareTarget(runnable: number, live: number, slack: number, rank = 0): number {
+  const n = Math.max(1, live);
+  return Math.floor(runnable / n) + (rank < runnable % n ? 1 : 0) + slack;
+}
+
 /** 连续失败的退避上限。 */
 const MAX_BACKOFF_MS = 300_000;
 /** 连续失败计数的保留时长（秒）。 */
@@ -64,6 +92,11 @@ export interface ChannelSupervisorDeps {
   onEvent(connectionId: string, e: InboundEvent): Promise<void>;
   config: () => Pick<KernelConfig, "channels">;
   log: Pick<Logger, "warn" | "error">;
+  /**
+   * This process's replica id (`newReplicaId()` in kernel.ts), the member of the gateway heartbeat
+   * ZSET. Not `http.replicaId`, which is optional and may repeat across replicas.
+   */
+  replicaId: string;
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -79,6 +112,11 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * 或扫描时复核发现）→ 中止、等 `connect` 返回后释放租约，下一轮任一副本按新配置重连；取得租约到 `connect` 开始之间
  * 收到的重连广播会被记下，开始后立即交还。
  * `connect` 抛错或提前返回 → 记 `last_error`，在 Redis 写退避标记（指数退避，上限 5 分钟），释放租约后由任一副本重试。
+ * Fair share (E11-B): the renewal loop also writes this replica's heartbeat into `capk:gateway-replicas`;
+ * each scan computes this replica's target from the runnable count and the live replicas
+ * (`shareTarget`), stops claiming at the target and, when above it, gives back one connection per
+ * round (the most recently connected) with a handoff marker. Exactly one holder per connection is
+ * still guaranteed by the lease alone; the share only decides who claims.
  * 停机时中止全部长连接并释放租约，并等进行中的 `onEvent`（入队）结束。持有的长连接、租约 token 与定时器都是「本进程持有的资源」，
  * 跨副本的状态（租约、退避、失败计数）都在 Redis。
  */
@@ -140,6 +178,9 @@ export class ChannelSupervisor {
 
   private async renewAll(): Promise<void> {
     const { leaseTtlMs: ttl, scanIntervalMs } = this.deps.config().channels;
+    // Heartbeat before renewing: a crashed replica's heartbeat then goes stale no later than its
+    // leases expire, so the survivors' share already excludes it when those connections free up
+    await this.heartbeat(ttl);
     await Promise.all(
       [...this.held].map(async ([id, h]) => {
         let ok: boolean;
@@ -163,6 +204,48 @@ export class ChannelSupervisor {
         }),
       ),
     );
+  }
+
+  /** Writes this replica's heartbeat and drops members older than one TTL; the key itself expires too. */
+  private async heartbeat(ttl: number): Promise<void> {
+    if (this.stopped) return;
+    const now = Date.now();
+    try {
+      await this.deps.redis
+        .multi()
+        .zadd(gatewayReplicasKey, now, this.deps.replicaId)
+        .zremrangebyscore(gatewayReplicasKey, "-inf", now - ttl)
+        .pexpire(gatewayReplicasKey, ttl * 2)
+        .exec();
+    } catch (err) {
+      this.deps.log.warn("gateway heartbeat failed", { err });
+    }
+  }
+
+  /**
+   * This replica's share target for the round. Live replicas are the heartbeat members newer than
+   * one TTL plus this replica itself (its own heartbeat may not be written yet on the first round).
+   */
+  private async target(runnable: number): Promise<number> {
+    const { leaseTtlMs: ttl, shareSlack } = this.deps.config().channels;
+    const members = await this.deps.redis.zrangebyscore(
+      gatewayReplicasKey,
+      `(${Date.now() - ttl}`,
+      "+inf",
+    );
+    const live = [...new Set([...members, this.deps.replicaId])].sort();
+    return shareTarget(runnable, live.length, shareSlack, live.indexOf(this.deps.replicaId));
+  }
+
+  /** Gives back the most recently connected connection, leaving a handoff marker first. */
+  private async handOff(): Promise<void> {
+    let latest: [string, Held] | undefined;
+    for (const e of this.held) if (!latest || e[1].startedAt > latest[1].startedAt) latest = e;
+    if (!latest) return;
+    const [id] = latest;
+    const px = this.deps.config().channels.scanIntervalMs * 2;
+    await this.deps.redis.set(channelHandoffKey(id), this.deps.replicaId, "PX", px);
+    this.releaseInBackground(id);
   }
 
   private async afterRenew(id: string, h: Held, ok: boolean, ttl: number): Promise<void> {
@@ -221,10 +304,19 @@ export class ChannelSupervisor {
     const plugins = this.deps.localPlugins();
     if (plugins.length === 0) return;
     const rows = await this.runnable(plugins).execute();
+    const target = await this.target(rows.length);
+    // Above the share: give back one per round (never more, so this replica does not drop below
+    // its target) and claim nothing
+    if (this.held.size > target) {
+      await this.handOff();
+      return;
+    }
     for (const { id } of rows) {
       if (this.stopped) return;
+      if (this.held.size >= target) return;
       if (this.held.has(id)) continue;
       if ((await this.deps.redis.exists(channelBackoffKey(id))) === 1) continue;
+      if ((await this.deps.redis.get(channelHandoffKey(id))) === this.deps.replicaId) continue;
       const token = randomUUID();
       const ttl = this.deps.config().channels.leaseTtlMs;
       const ok = await this.deps.redis.set(channelLeaseKey(id), token, "PX", ttl, "NX");
@@ -384,10 +476,60 @@ export class ChannelSupervisor {
     await Promise.all(this.loops.map((st) => st.running?.catch(() => {})));
     await this.unsubscribe?.().catch(() => {});
     this.unsubscribe = undefined;
+    // Leave the share first so the other gateways count one replica fewer right away
+    await this.deps.redis.zrem(gatewayReplicasKey, this.deps.replicaId).catch((err: unknown) => {
+      this.deps.log.warn("cannot remove gateway heartbeat", { err });
+    });
     await Promise.all([...this.held.keys()].map((id) => this.release(id)));
     // 别处发起、仍在进行的交还（bus 广播、复核）也要等完，租约才都释放了
     await Promise.all([...this.releasing]);
     // 插件交来的事件已在入队途中：等它们结束（之后内核才关闭队列）
     await Promise.all([...this.inflight]);
   }
+}
+
+/** Maintenance job that warns when channel connections need a gateway and none is live (Ruling R1). */
+export const GATEWAY_CHECK_JOB = "channel-gateway-check";
+export const GATEWAY_CHECK_SCHEDULER_ID = "channel-gateway-check-every";
+export const GATEWAY_CHECK_EVERY_MS = 60_000;
+
+/**
+ * Runs on the worker role (maintenance queue): when active channel connections exist but no
+ * gateway replica has a heartbeat newer than one lease TTL, nobody holds their long connections.
+ * Logs one `warn` per `everyMs` at most across the cluster (a Redis `SET NX PX` rate limit), so a
+ * duplicated job or several worker replicas do not repeat it. Returns whether it warned.
+ */
+export async function checkGatewayPresence(deps: {
+  db: KernelDb;
+  redis: Redis;
+  config: () => Pick<KernelConfig, "channels">;
+  log: Pick<Logger, "warn">;
+  everyMs?: number;
+}): Promise<boolean> {
+  const ttl = deps.config().channels.leaseTtlMs;
+  const live = await deps.redis.zcount(gatewayReplicasKey, `(${Date.now() - ttl}`, "+inf");
+  if (live > 0) return false;
+  const row = await deps.db
+    .selectFrom("channel_connections")
+    .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("channel_connections.status", "=", "active")
+    .where("channel_connections.deleted_at", "is", null)
+    .where("orgs.deleted_at", "is", null)
+    .executeTakeFirstOrThrow();
+  const count = Number(row.n);
+  if (count === 0) return false;
+  const first = await deps.redis.set(
+    gatewayMissingWarnedKey,
+    "1",
+    "PX",
+    deps.everyMs ?? GATEWAY_CHECK_EVERY_MS,
+    "NX",
+  );
+  if (first !== "OK") return false;
+  deps.log.warn(
+    "active channel connections have no live gateway replica; add the gateway role to a process (CAPYBARA_ROLES) or they receive no messages",
+    { connections: count },
+  );
+  return true;
 }

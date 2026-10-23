@@ -735,6 +735,17 @@ export const KernelConfigSchema = z.object({
               "How often each gateway replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds",
           }),
         ),
+      shareSlack: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(1)
+        .meta(
+          meta({
+            description:
+              "Extra channel long connections a gateway replica may hold above its fair share (connections divided by live gateway replicas); a replica above share + slack hands one back per scan round",
+          }),
+        ),
       retryBaseMs: z
         .number()
         .int()
@@ -777,6 +788,7 @@ export const KernelConfigSchema = z.object({
     .default({
       leaseTtlMs: 30000,
       scanIntervalMs: 10000,
+      shareSlack: 1,
       retryBaseMs: 5000,
       deliveryConcurrency: 100,
       deliveryIdleMs: 15000,

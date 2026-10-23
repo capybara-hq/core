@@ -60,6 +60,11 @@ export interface ReplicaHandle {
   pid: number;
 }
 
+/** A replica added with `Harness.startExtraReplica`; `kill()` SIGKILLs it like `Harness.kill(index)`. */
+export interface ExtraReplicaHandle extends ReplicaHandle {
+  kill(): Promise<void>;
+}
+
 /** 副本在响应头里标明自己的序号（runner 把 `http.replicaId` 设为 `"0"` / `"1"`）。 */
 export const REPLICA_HEADER = "x-capybara-replica";
 
@@ -91,8 +96,16 @@ export interface Harness {
    */
   requestTo(index: number, path: string, init?: RequestInit): Promise<ReplicaResponse>;
   replicas: [ReplicaHandle, ReplicaHandle];
+  /**
+   * Starts one more replica with the given roles on the same PG / Redis / masterKey and resolves
+   * once it is ready. It gets the next index (2, 3, …): `requestTo(index)` and `kill(index)` reach
+   * it, an `api` replica joins the `request()` rotation, and `stop()` stops it too.
+   */
+  startExtraReplica(roles: string[]): Promise<ExtraReplicaHandle>;
   /** 本 harness 独占数据库的连接串，测试可直接连上去查表。 */
   dbUrl: string;
+  /** The Redis the replicas share (tests may read kernel keys from it). */
+  redisUrl: string;
   /**
    * 模拟副本硬崩溃：对该副本子进程发 SIGKILL 并等它退出（不走优雅停机）。之后发往它的请求直接抛错；
    * 另一个副本照常工作。已退出时是空操作。
@@ -278,7 +291,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       { index: 0, roles: [...roles[0]], port: a.port, pid: a.runner.child.pid as number },
       { index: 1, roles: [...roles[1]], port: b.port, pid: b.runner.child.pid as number },
     ];
-    // Index-aligned with `replicas`; T3's extra replicas append to both.
+    // Index-aligned with `replicas`; extra replicas append to both.
     const handles: ReplicaHandle[] = [...replicas];
     const replicaRunners: Runner[] = [a.runner, b.runner];
     const runnerAt = (index: number): { handle: ReplicaHandle; runner: Runner } => {
@@ -303,14 +316,43 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       return Object.assign(res, { replica }) as ReplicaResponse;
     };
     let calls = 0;
+    let pendingExtra = 0;
+    const kill = async (index: number) => {
+      const { runner: r } = runnerAt(index);
+      if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill("SIGKILL");
+      await r.exited;
+    };
     return {
       replicas,
       dbUrl: db.url,
+      redisUrl,
       stop,
-      async kill(index) {
-        const { runner: r } = runnerAt(index);
-        if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill("SIGKILL");
-        await r.exited;
+      kill,
+      async startExtraReplica(extraRoles) {
+        if (stopPromise) throw new Error("harness is stopped");
+        // Reserve the index before the (slow) start so concurrent calls get distinct indexes
+        const index = handles.length + pendingExtra++;
+        let started: Awaited<ReturnType<typeof startReplica>>;
+        try {
+          started = await startReplica({ ...config, roles: [...extraRoles] }, index);
+        } finally {
+          pendingExtra--;
+        }
+        runners.push(started.runner);
+        const handle: ReplicaHandle = {
+          index,
+          roles: [...extraRoles],
+          port: started.port,
+          pid: started.runner.child.pid as number,
+        };
+        handles[index] = handle;
+        replicaRunners[index] = started.runner;
+        // A stop() that began while this replica was starting must not leave it running
+        if (stopPromise) {
+          await stopRunner(started.runner);
+          throw new Error("harness is stopped");
+        }
+        return { ...handle, kill: () => kill(index) };
       },
       async request(path, init) {
         const api = handles.filter((h) => h.roles.includes("api"));

@@ -87,6 +87,35 @@ describe("双副本测试工具", { timeout: 60_000 }, () => {
     await expect(h.requestTo(2, "/healthz")).rejects.toThrow(/no replica 2/);
   });
 
+  it("startExtraReplica: index 2, api replicas join request(), kill() and stop() reach it", async () => {
+    const h = await createDualReplicaHarness({
+      plugins: [fx("whoami")],
+      pgUrl: pgc.url,
+      roles: [["api"], ["gateway"]],
+    });
+    harnesses.push(h);
+    expect(h.redisUrl).toMatch(/^redis:\/\//);
+    const gw = await h.startExtraReplica(["gateway"]);
+    expect(gw.index).toBe(2);
+    expect(gw.roles).toEqual(["gateway"]);
+    const api = await h.startExtraReplica(["api"]);
+    expect(api.index).toBe(3);
+    const pids = new Set([...h.replicas.map((r) => r.pid), gw.pid, api.pid]);
+    expect(pids.size).toBe(4);
+    // Round-robin over the api replicas: 0 and 3
+    const seen: number[] = [];
+    for (let i = 0; i < 4; i++) seen.push((await h.request("/plugins/whoami/pid")).replica);
+    expect(seen).toEqual([0, 3, 0, 3]);
+    const r = await h.requestTo(2, "/plugins/whoami/pid");
+    expect(((await r.json()) as { pid: number }).pid).toBe(gw.pid);
+    await gw.kill();
+    expect(alive(gw.pid)).toBe(false);
+    await expect(h.requestTo(2, "/healthz")).rejects.toThrow(/replica 2 .*signal SIGKILL/);
+    await h.stop();
+    expect(alive(api.pid)).toBe(false);
+    await expect(h.startExtraReplica(["api"])).rejects.toThrow(/stopped/);
+  });
+
   it("good-counter（ctx.kv）：4 次 inc 后 count 为 4", async () => {
     expect(await scenario(await harness("good-counter"), "good-counter")).toBe(4);
   });
