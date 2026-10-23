@@ -20,3 +20,5 @@ apps/web/e2e
 **/.DS_Store
 **/.env
 **/.env.*
+# Compose deployment secrets (admin password file and the like) never enter a build context.
+docker/secrets
