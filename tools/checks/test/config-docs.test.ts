@@ -33,7 +33,7 @@ describe("renderConfigDocs", () => {
     expect(row("http.port")).toContain("`8080`");
     expect(row("masterKeyPrevious")).not.toContain("`[]`");
   });
-  it("可选且无默认值的字段is marked "optional", not "required"", () => {
+  it("an optional field without a default is marked optional, not required", () => {
     const row = (p: string) => md.split("\n").find((l) => l.startsWith(`| \`${p}\``)) ?? "";
     expect(row("auth.setupToken")).toMatch(/\| optional \| no \| yes \|/);
     expect(row("db.url")).toMatch(/\| required \| no \| yes \|/);
