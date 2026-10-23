@@ -152,7 +152,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       content: z.array(ContentBlockSchema),
       /**
        * `@` 资源引用的附件元数据：第 i 个附件的正文是 `content[i + 1]`（`content[0]` 是用户输入的文本）。
-       * 界面据此把附件显示为条目而不是正文。较早的事件没有。
+       * 界面据此把附件显示为条目而不是正文。较早的事件没有。`appId` / `appName` 是连接器的 id 与名称：
+       * 「应用」改名「连接器」后字段名不变（D17 / C27：日志确定性）。
        */
       attachments: z
         .array(
@@ -245,6 +246,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
             }),
           )
           .optional(),
+        /**
+         * 本次请求的媒体字节预算（`attachments.requestMediaBytes`，见 planMedia）：请求里有媒体时才写，
+         * 还原时用它重现同样的省略结果。较早的事件没有。
+         */
+        mediaBudgetBytes: count.optional(),
       }),
     }),
   ),
@@ -293,8 +299,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
-   * 工具调用时发现发起人尚未连接个人凭据的应用：界面据此显示连接卡片（不进模型请求；模型看到的是
-   * 同一调用的 tool_result 错误说明）。组织凭据缺失不写此事件。
+   * 工具调用时发现发起人尚未连接个人凭据的连接器：界面据此显示连接卡片（不进模型请求；模型看到的是
+   * 同一调用的 tool_result 错误说明）。组织凭据缺失不写此事件。`appId` / `appName` 是连接器的 id 与名称，
+   * 改名后字段名不变（D17 / C27）。
    */
   ev(
     "connection_required",
@@ -419,7 +426,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "run_aborted",
     z.object({
       byAccountId: z.string().nullable(),
-      reason: z.enum(["user", "shutdown_exhausted"]),
+      /** `eval_stopped`：评测整轮回放被评测运行停下（只出现在 `kind = 'eval'` 的对话里），原因见 `detail`。 */
+      reason: z.enum(["user", "shutdown_exhausted", "eval_stopped"]),
+      detail: z
+        .enum(["cancelled", "capped", "too_many_errors", "claim_lost", "shutdown"])
+        .optional(),
     }),
   ),
 ]);

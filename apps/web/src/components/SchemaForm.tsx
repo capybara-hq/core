@@ -178,6 +178,7 @@ export function SchemaForm({
   secrets,
   disabled = false,
   showRequired = false,
+  readOnly,
 }: {
   schema: JsonSchema | null | undefined;
   draft: SchemaDraft;
@@ -188,6 +189,8 @@ export function SchemaForm({
   disabled?: boolean;
   /** 是否显示必填缺失的错误（通常在第一次尝试提交之后）。 */
   showRequired?: boolean;
+  /** 只读字段（如部署级配置里由启动配置给出的）：控件禁用，密钥不提供替换 / 清除。 */
+  readOnly?: ReadonlySet<string>;
 }) {
   const t = useTranslations("schemaForm");
   const fields = schemaFields(schema);
@@ -211,6 +214,8 @@ export function SchemaForm({
           ...(error !== undefined ? { error } : {}),
         };
         const v = draft[f.key];
+        const locked = readOnly?.has(f.key) === true;
+        const off = disabled || locked;
         switch (f.kind) {
           case "boolean":
             return (
@@ -218,7 +223,7 @@ export function SchemaForm({
                 <Switch
                   label={f.label}
                   checked={v === true}
-                  disabled={disabled}
+                  disabled={off}
                   onChange={(next) => set(f.key, next)}
                 />
               </Field>
@@ -228,7 +233,7 @@ export function SchemaForm({
               <Field key={f.key} {...common}>
                 <Select
                   value={typeof v === "string" ? v : ""}
-                  disabled={disabled}
+                  disabled={off}
                   onChange={(e) => set(f.key, e.target.value)}
                   options={[
                     ...(f.required ? [] : [{ value: "", label: t("none") }]),
@@ -244,7 +249,7 @@ export function SchemaForm({
                   code
                   rows={4}
                   value={typeof v === "string" ? v : ""}
-                  disabled={disabled}
+                  disabled={off}
                   onChange={(e) => set(f.key, e.target.value)}
                 />
               </Field>
@@ -257,6 +262,7 @@ export function SchemaForm({
                 value={v}
                 existing={mode === "edit" && isSet(secrets, f.key)}
                 disabled={disabled}
+                locked={locked}
                 {...(error !== undefined ? { error } : {})}
                 onChange={(next) => set(f.key, next)}
               />
@@ -268,7 +274,7 @@ export function SchemaForm({
                   type={f.kind === "string" ? "text" : "number"}
                   {...(f.kind === "string" ? {} : { inputMode: "decimal" as const })}
                   value={typeof v === "string" ? v : ""}
-                  disabled={disabled}
+                  disabled={off}
                   onChange={(e) => set(f.key, e.target.value)}
                 />
               </Field>
@@ -288,6 +294,7 @@ function SecretField({
   value,
   existing,
   disabled,
+  locked = false,
   error,
   onChange,
 }: {
@@ -295,6 +302,8 @@ function SecretField({
   value: SchemaDraft[string];
   existing: boolean;
   disabled: boolean;
+  /** 只读：密码框禁用（只显示是否已设置），不提供替换 / 清除。 */
+  locked?: boolean;
   error?: string;
   onChange(next: string | null | undefined): void;
 }) {
@@ -305,6 +314,20 @@ function SecretField({
     ...(field.help !== undefined ? { help: field.help } : {}),
     ...(error !== undefined ? { error } : {}),
   };
+  if (locked) {
+    return (
+      <Field {...common}>
+        <Input
+          type="password"
+          autoComplete="off"
+          value=""
+          placeholder={existing ? t("secretSet") : ""}
+          disabled
+          onChange={() => {}}
+        />
+      </Field>
+    );
+  }
   if (!existing) {
     return (
       <Field {...common}>

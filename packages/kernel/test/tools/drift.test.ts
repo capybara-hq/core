@@ -14,7 +14,7 @@ import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import {
-  DRIFT_APP_JOB,
+  DRIFT_CONNECTOR_JOB,
   DRIFT_SCAN_JOB,
   DRIFT_SCHEDULER_ID,
   driftScanJobId,
@@ -162,7 +162,7 @@ const docsTools = () => (memState().servers.docs as { tools: ServerTool[] }).too
 async function createApp(req: Req, orgId: string, body: Record<string, unknown> = {}) {
   const res = await req({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/apps`,
+    url: `/api/v1/orgs/${orgId}/connectors`,
     payload: {
       name: "Docs",
       connector: "mem",
@@ -173,21 +173,21 @@ async function createApp(req: Req, orgId: string, body: Record<string, unknown> 
     },
   });
   expect(res.statusCode, res.body).toBe(201);
-  return (res.json() as { app: AppJson }).app;
+  return (res.json() as { connector: AppJson }).connector;
 }
 
-async function getApp(req: Req, orgId: string, appId: string): Promise<AppJson> {
-  const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/${appId}` });
+async function getConnector(req: Req, orgId: string, connectorId: string): Promise<AppJson> {
+  const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/${connectorId}` });
   expect(res.statusCode, res.body).toBe(200);
-  return (res.json() as { app: AppJson }).app;
+  return (res.json() as { connector: AppJson }).connector;
 }
 
 const toolsByName = (app: AppJson) => Object.fromEntries(app.tools.map((t) => [t.name, t]));
 
-const review = (req: Req, orgId: string, appId: string, name: string, action: string) =>
+const review = (req: Req, orgId: string, connectorId: string, name: string, action: string) =>
   req({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/apps/${appId}/tools/${name}/review`,
+    url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/tools/${name}/review`,
     payload: { action },
   });
 
@@ -229,7 +229,7 @@ describe("漂移检测（后台检查）", () => {
       status: "checked",
       changes: { added: ["list_docs"], changed: ["search"], removed: ["create_doc"] },
     });
-    const after = toolsByName(await getApp(req, orgId, app.id));
+    const after = toolsByName(await getConnector(req, orgId, app.id));
     // 新增：待复核，不可用
     expect(after.list_docs).toMatchObject({ status: "pending_review", pending: null });
     // 变化：待复核，当前定义仍是旧的，新定义在 pending 里供对比
@@ -245,7 +245,7 @@ describe("漂移检测（后台检查）", () => {
     // 没变的不动
     expect(after.delete_doc).toMatchObject({ status: "enabled", pending: null, missing: false });
 
-    const rows = await auditOf("app.tools_drifted");
+    const rows = await auditOf("connector.tools_drifted");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       actor_account_id: null,
@@ -260,7 +260,7 @@ describe("漂移检测（后台检查）", () => {
       status: "checked",
       changes: { added: [], changed: [], removed: [] },
     });
-    expect(await auditOf("app.tools_drifted")).toHaveLength(1);
+    expect(await auditOf("connector.tools_drifted")).toHaveLength(1);
   });
 
   it("待复核 / 停用（含已消失）的工具不出现在 forAgent，注明原因", async () => {
@@ -271,7 +271,11 @@ describe("漂移检测（后台检查）", () => {
     await k.tools.drift.check(orgId, app.id, "schedule");
     const { tools, unavailable } = await k.tools.registry.forAgent(orgId, {
       tools: [
-        { kind: "app", appId: app.id, tools: ["search", "create_doc", "list_docs", "delete_doc"] },
+        {
+          kind: "connector",
+          connectorId: app.id,
+          tools: ["search", "create_doc", "list_docs", "delete_doc"],
+        },
       ],
     });
     expect(tools.map((t) => t.key)).toEqual(["docs__delete_doc"]);
@@ -281,7 +285,7 @@ describe("漂移检测（后台检查）", () => {
       { ref: "docs__list_docs", reason: "Tool is pending review" },
     ]);
     const all = await k.tools.registry.forAgent(orgId, {
-      tools: [{ kind: "app", appId: app.id, tools: "all" }],
+      tools: [{ kind: "connector", connectorId: app.id, tools: "all" }],
     });
     expect(all.tools.map((t) => t.key)).toEqual(["docs__delete_doc"]);
   });
@@ -296,7 +300,7 @@ describe("漂移检测（后台检查）", () => {
     memState().servers.docs = { ...memState().servers.docs, tools: original as never };
     const r = await k.tools.drift.check(orgId, app.id, "schedule");
     expect(r).toMatchObject({ changes: { added: ["create_doc"], removed: ["list_docs"] } });
-    const t = toolsByName(await getApp(req, orgId, app.id));
+    const t = toolsByName(await getConnector(req, orgId, app.id));
     expect(t.create_doc).toMatchObject({ status: "pending_review", missing: false });
   });
 
@@ -308,8 +312,8 @@ describe("漂移检测（后台检查）", () => {
     const r = await k.tools.drift.check(orgId, app.id, "schedule");
     expect(r).toMatchObject({ status: "skipped" });
     expect(JSON.stringify(r)).not.toContain(TOKEN);
-    expect(toolsByName(await getApp(req, orgId, app.id)).search?.status).toBe("enabled");
-    expect(await auditOf("app.tools_drifted")).toHaveLength(0);
+    expect(toolsByName(await getConnector(req, orgId, app.id)).search?.status).toBe("enabled");
+    expect(await auditOf("connector.tools_drifted")).toHaveLength(0);
   });
 });
 
@@ -325,12 +329,12 @@ describe("复核", () => {
     const tools = docsTools();
     (tools[0] as ServerTool).annotations = { destructiveHint: true };
     await k.tools.drift.check(orgId, app.id, "schedule");
-    const pending = toolsByName(await getApp(req, orgId, app.id)).search;
+    const pending = toolsByName(await getConnector(req, orgId, app.id)).search;
     expect(pending?.pending?.annotations).toEqual({ destructiveHint: true });
 
     const res = await review(req, orgId, app.id, "search", "approve");
     expect(res.statusCode, res.body).toBe(200);
-    const t = toolsByName((res.json() as { app: AppJson }).app).search;
+    const t = toolsByName((res.json() as { connector: AppJson }).connector).search;
     expect(t).toMatchObject({
       status: "enabled",
       pending: null,
@@ -340,7 +344,7 @@ describe("复核", () => {
       policySource: "derived",
     });
     expect(t?.reviewedAt).not.toBeNull();
-    const audits = await auditOf("app.tool_reviewed");
+    const audits = await auditOf("connector.tool_reviewed");
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({
       actor_account_id: owner.id,
@@ -355,17 +359,19 @@ describe("复核", () => {
     const app = await createApp(req, orgId);
     const patched = await req({
       method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}`,
       payload: { tools: { create_doc: { defaultPolicy: "deny" } } },
     });
-    expect(toolsByName((patched.json() as { app: AppJson }).app).create_doc).toMatchObject({
+    expect(
+      toolsByName((patched.json() as { connector: AppJson }).connector).create_doc,
+    ).toMatchObject({
       defaultPolicy: "deny",
       policySource: "admin",
     });
     (docsTools()[2] as ServerTool).annotations = { readOnlyHint: true };
     await k.tools.drift.check(orgId, app.id, "schedule");
     const res = await review(req, orgId, app.id, "create_doc", "approve");
-    expect(toolsByName((res.json() as { app: AppJson }).app).create_doc).toMatchObject({
+    expect(toolsByName((res.json() as { connector: AppJson }).connector).create_doc).toMatchObject({
       status: "enabled",
       defaultPolicy: "deny",
       policySource: "admin",
@@ -378,10 +384,10 @@ describe("复核", () => {
     const app = await createApp(req, orgId);
     const res = await req({
       method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}`,
       payload: { allowUnannotated: true },
     });
-    expect(toolsByName((res.json() as { app: AppJson }).app).create_doc).toMatchObject({
+    expect(toolsByName((res.json() as { connector: AppJson }).connector).create_doc).toMatchObject({
       defaultPolicy: "allow",
       policySource: "admin",
     });
@@ -397,7 +403,7 @@ describe("复核", () => {
 
     const rej = await review(req, orgId, app.id, "search", "reject");
     expect(rej.statusCode, rej.body).toBe(200);
-    expect(toolsByName((rej.json() as { app: AppJson }).app).search).toMatchObject({
+    expect(toolsByName((rej.json() as { connector: AppJson }).connector).search).toMatchObject({
       status: "disabled",
       specHash: oldHash,
       description: "Search documents.",
@@ -406,12 +412,12 @@ describe("复核", () => {
 
     const ok = await review(req, orgId, app.id, "list_docs", "approve");
     expect(ok.statusCode, ok.body).toBe(200);
-    expect(toolsByName((ok.json() as { app: AppJson }).app).list_docs).toMatchObject({
+    expect(toolsByName((ok.json() as { connector: AppJson }).connector).list_docs).toMatchObject({
       status: "enabled",
       defaultPolicy: "allow",
     });
     const { tools } = await k.tools.registry.forAgent(orgId, {
-      tools: [{ kind: "app", appId: app.id, tools: "all" }],
+      tools: [{ kind: "connector", connectorId: app.id, tools: "all" }],
     });
     expect(tools.map((t) => t.key).sort()).toEqual(["docs__delete_doc", "docs__list_docs"]);
   });
@@ -425,7 +431,7 @@ describe("复核", () => {
     (tools[0] as ServerTool).inputSchema = [] as never;
     const r1 = await k.tools.drift.check(orgId, app.id, "schedule");
     expect(r1).toMatchObject({ changes: { changed: ["search"] } });
-    let t = toolsByName(await getApp(req, orgId, app.id)).search;
+    let t = toolsByName(await getConnector(req, orgId, app.id)).search;
     expect(t).toMatchObject({
       status: "disabled",
       specHash: reviewedHash,
@@ -439,13 +445,13 @@ describe("复核", () => {
     // 当前定义（上次复核通过的）本身合规，但待复核的新定义未处理：PATCH 不能绕过复核直接启用
     const enable = await req({
       method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}`,
       payload: { tools: { search: { status: "enabled" } } },
     });
     expect(enable.statusCode, enable.body).toBe(400);
     expect((enable.json() as { error: { code: string } }).error.code).toBe("validation_failed");
-    expect(enable.body).toContain(`/apps/${app.id}/tools/search/review`);
-    expect(toolsByName(await getApp(req, orgId, app.id)).search?.status).toBe("disabled");
+    expect(enable.body).toContain(`/connectors/${app.id}/tools/search/review`);
+    expect(toolsByName(await getConnector(req, orgId, app.id)).search?.status).toBe("disabled");
 
     // 修好的定义到来：对比的「当前」仍是上次复核通过的定义，而不是那份不合规的
     (tools[0] as ServerTool).inputSchema = {
@@ -455,7 +461,7 @@ describe("复核", () => {
     (tools[0] as ServerTool).description = "Search documents, now paged.";
     const r2 = await k.tools.drift.check(orgId, app.id, "schedule");
     expect(r2).toMatchObject({ changes: { changed: ["search"] } });
-    t = toolsByName(await getApp(req, orgId, app.id)).search;
+    t = toolsByName(await getConnector(req, orgId, app.id)).search;
     expect(t).toMatchObject({
       status: "pending_review",
       specHash: reviewedHash,
@@ -468,7 +474,7 @@ describe("复核", () => {
     await k.tools.drift.check(orgId, app.id, "schedule");
     const rej = await review(req, orgId, app.id, "search", "reject");
     expect(rej.statusCode, rej.body).toBe(200);
-    expect(toolsByName((rej.json() as { app: AppJson }).app).search).toMatchObject({
+    expect(toolsByName((rej.json() as { connector: AppJson }).connector).search).toMatchObject({
       status: "disabled",
       specHash: reviewedHash,
       pending: null,
@@ -484,25 +490,25 @@ describe("复核", () => {
 
     const rej = await review(req, orgId, app.id, "list_docs", "reject");
     expect(rej.statusCode, rej.body).toBe(200);
-    expect(toolsByName((rej.json() as { app: AppJson }).app).list_docs).toMatchObject({
+    expect(toolsByName((rej.json() as { connector: AppJson }).connector).list_docs).toMatchObject({
       status: "disabled",
       reviewedAt: null,
     });
     const enable = await req({
       method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}`,
       payload: { tools: { list_docs: { status: "enabled" } } },
     });
     expect(enable.statusCode).toBe(400);
     expect(enable.body).toContain("never been reviewed");
-    expect(toolsByName(await getApp(req, orgId, app.id)).list_docs?.status).toBe("disabled");
+    expect(toolsByName(await getConnector(req, orgId, app.id)).list_docs?.status).toBe("disabled");
 
     // 新工具的定义又变了：直接替换当前定义，仍待复核，不产生 pending（没有复核过的旧定义可比）
     const list = docsTools().find((x) => x.name === "list_docs") as ServerTool;
     list.description = "List docs (v2).";
     const r = await k.tools.drift.check(orgId, app.id, "schedule");
     expect(r).toMatchObject({ changes: { changed: ["list_docs"] } });
-    const t = toolsByName(await getApp(req, orgId, app.id)).list_docs;
+    const t = toolsByName(await getConnector(req, orgId, app.id)).list_docs;
     expect(t).toMatchObject({
       status: "pending_review",
       description: "List docs (v2).",
@@ -514,23 +520,25 @@ describe("复核", () => {
     await review(req, orgId, app.id, "list_docs", "reject");
     const ok = await review(req, orgId, app.id, "list_docs", "approve");
     expect(ok.statusCode, ok.body).toBe(200);
-    const approved = toolsByName((ok.json() as { app: AppJson }).app).list_docs;
+    const approved = toolsByName((ok.json() as { connector: AppJson }).connector).list_docs;
     expect(approved).toMatchObject({ status: "enabled", description: "List docs (v2)." });
     expect(approved?.reviewedAt).not.toBeNull();
   });
 
-  it("不在待复核状态 → 409 app.tool_not_pending；不存在 → 404；member → 403；动作不合法 → 400", async () => {
+  it("不在待复核状态 → 409 connector.tool_not_pending；不存在 → 404；member → 403；动作不合法 → 400", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const app = await createApp(req, orgId);
     const notPending = await review(req, orgId, app.id, "search", "approve");
     expect(notPending.statusCode).toBe(409);
     expect((notPending.json() as { error: { code: string } }).error.code).toBe(
-      "app.tool_not_pending",
+      "connector.tool_not_pending",
     );
     const missing = await review(req, orgId, app.id, "nope", "approve");
     expect(missing.statusCode).toBe(404);
-    expect((missing.json() as { error: { code: string } }).error.code).toBe("app.tool_not_found");
+    expect((missing.json() as { error: { code: string } }).error.code).toBe(
+      "connector.tool_not_found",
+    );
     const bad = await review(req, orgId, app.id, "search", "maybe");
     expect(bad.statusCode).toBe(400);
 
@@ -544,26 +552,26 @@ describe("复核", () => {
     const reviewGone = await review(req, orgId, app.id, "create_doc", "approve");
     expect(reviewGone.statusCode).toBe(409);
     expect((reviewGone.json() as { error: { code: string } }).error.code).toBe(
-      "app.tool_not_pending",
+      "connector.tool_not_pending",
     );
     memState().servers.docs = {
       ...memState().servers.docs,
       tools: docsTools().filter((x) => x.name !== "list_docs") as never,
     };
     await k.tools.drift.check(orgId, app.id, "schedule");
-    expect(toolsByName(await getApp(req, orgId, app.id)).list_docs).toMatchObject({
+    expect(toolsByName(await getConnector(req, orgId, app.id)).list_docs).toMatchObject({
       missing: true,
       reviewedAt: null,
     });
     const reviewGoneNew = await review(req, orgId, app.id, "list_docs", "approve");
     expect(reviewGoneNew.statusCode).toBe(409);
     expect((reviewGoneNew.json() as { error: { code: string } }).error.code).toBe(
-      "app.tool_not_pending",
+      "connector.tool_not_pending",
     );
     // 已消失的工具不能启用
     const enableGone = await req({
       method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/apps/${app.id}`,
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}`,
       payload: { tools: { create_doc: { status: "enabled" } } },
     });
     expect(enableGone.statusCode).toBe(400);
@@ -578,7 +586,7 @@ describe("复核", () => {
       VALUES ('ag-d', ${orgId}, ${owner.id}, 'org', 1)`.execute(raw);
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       VALUES ('cv-d', ${orgId}, 'ag-d', ${owner.id})`.execute(raw);
-    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
       VALUES (${orgId}, ${owner.id}, 'ag-d', 'docs__create_doc', ${oldHash}, ${app.id})`.execute(
       raw,
     );
@@ -594,7 +602,7 @@ describe("复核", () => {
     const decide = createDecidePolicy(db);
     const resolve = async () => {
       const { tools } = await k.tools.registry.forAgent(orgId, {
-        tools: [{ kind: "app", appId: app.id, tools: ["create_doc"] }],
+        tools: [{ kind: "connector", connectorId: app.id, tools: ["create_doc"] }],
       });
       return tools[0];
     };
@@ -621,15 +629,18 @@ describe("复核", () => {
 });
 
 describe("手动刷新走同一逻辑", () => {
-  it("POST refresh：新增 / 变化 → 待复核，消失 → 停用；只要 apps.manage", async () => {
+  it("POST refresh：新增 / 变化 → 待复核，消失 → 停用；只要 connectors.manage", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const app = await createApp(req, orgId);
     driftServer();
-    const res = await req({ method: "POST", url: `/api/v1/orgs/${orgId}/apps/${app.id}/refresh` });
+    const res = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}/refresh`,
+    });
     expect(res.statusCode, res.body).toBe(200);
     const body = res.json() as {
-      app: AppJson;
+      connector: AppJson;
       changes: { added: string[]; removed: string[]; changed: string[] };
     };
     expect(body.changes).toEqual({
@@ -637,27 +648,29 @@ describe("手动刷新走同一逻辑", () => {
       removed: ["create_doc"],
       changed: ["search"],
     });
-    const t = toolsByName(body.app);
+    const t = toolsByName(body.connector);
     expect(t.list_docs?.status).toBe("pending_review");
     expect(t.search).toMatchObject({ status: "pending_review", description: "Search documents." });
     expect(t.create_doc).toMatchObject({ status: "disabled", missing: true });
   });
 
-  it("OAuth 授权码应用首次连接的初始快照：直接启用（安装即复核，A16）", async () => {
+  it("OAuth 授权码连接器首次连接的初始快照：直接启用（安装即复核，A16）", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     // 模拟「安装时没有快照」：清空工具并把 tools_synced_at 置空
     const app = await createApp(req, orgId);
-    await sql`DELETE FROM capybara.app_tools WHERE app_id = ${app.id}`.execute(raw);
-    await sql`UPDATE capybara.apps SET tools_synced_at = NULL WHERE id = ${app.id}`.execute(raw);
+    await sql`DELETE FROM capybara.connector_tools WHERE connector_id = ${app.id}`.execute(raw);
+    await sql`UPDATE capybara.connectors SET tools_synced_at = NULL WHERE id = ${app.id}`.execute(
+      raw,
+    );
     const r = await k.tools.drift.check(orgId, app.id, "schedule");
     expect(r).toMatchObject({ status: "checked" });
-    const t = toolsByName(await getApp(req, orgId, app.id));
+    const t = toolsByName(await getConnector(req, orgId, app.id));
     expect(Object.values(t).map((x) => x.status)).toEqual(["enabled", "enabled", "enabled"]);
   });
 });
 
-describe("个人凭据型应用", () => {
+describe("个人凭据型连接器", () => {
   it("用最近写入凭据的现任成员的凭据；没有任何成员凭据 → 跳过并记日志", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
@@ -681,7 +694,10 @@ describe("个人凭据型应用", () => {
     expect(r).toMatchObject({ status: "checked", changes: { added: ["you"] } });
 
     // 没有成员凭据 → 跳过
-    await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/apps/${app.id}/credentials/me` });
+    await req({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}/credentials/me`,
+    });
     const skipped = await k.tools.drift.check(orgId, app.id, "schedule");
     expect(skipped).toEqual({ status: "skipped", reason: "no_credential" });
   });
@@ -691,16 +707,16 @@ describe("定时任务与 list_changed", () => {
   it("scheduler id / job id 不含冒号；list_changed 按分钟桶去重", async () => {
     expect(DRIFT_SCHEDULER_ID).not.toContain(":");
     expect(DRIFT_SCAN_JOB).not.toContain(":");
-    expect(DRIFT_APP_JOB).not.toContain(":");
-    const appId = "0b4f8d2e-1c3a-4e5f-9a7b-123456789abc";
+    expect(DRIFT_CONNECTOR_JOB).not.toContain(":");
+    const connectorId = "0b4f8d2e-1c3a-4e5f-9a7b-123456789abc";
     const t = Date.UTC(2026, 9, 19, 8, 30, 15);
-    expect(listChangedJobId(appId, t)).toBe(`drift-${appId}-${Math.floor(t / 60_000)}`);
-    expect(listChangedJobId(appId, t + 30_000)).toBe(listChangedJobId(appId, t));
-    expect(listChangedJobId(appId, t + 60_000)).not.toBe(listChangedJobId(appId, t));
-    expect(driftScanJobId(appId, 7)).not.toContain(":");
+    expect(listChangedJobId(connectorId, t)).toBe(`drift-${connectorId}-${Math.floor(t / 60_000)}`);
+    expect(listChangedJobId(connectorId, t + 30_000)).toBe(listChangedJobId(connectorId, t));
+    expect(listChangedJobId(connectorId, t + 60_000)).not.toBe(listChangedJobId(connectorId, t));
+    expect(driftScanJobId(connectorId, 7)).not.toContain(":");
   });
 
-  it("list_changed：投递一次该应用的漂移检查，worker 执行后进入待复核", async () => {
+  it("list_changed：投递一次该连接器的漂移检查，worker 执行后进入待复核", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const app = await createApp(req, orgId);
@@ -709,19 +725,25 @@ describe("定时任务与 list_changed", () => {
       k.tools.drift.onToolsChanged(orgId, app.id),
       k.tools.drift.onToolsChanged(orgId, app.id),
     ]);
-    await waitFor(async () => (await auditOf("app.tools_drifted")).length === 1, 10_000, "drift");
-    expect((await auditOf("app.tools_drifted"))[0]?.detail).toMatchObject({
+    await waitFor(
+      async () => (await auditOf("connector.tools_drifted")).length === 1,
+      10_000,
+      "drift",
+    );
+    expect((await auditOf("connector.tools_drifted"))[0]?.detail).toMatchObject({
       trigger: "list_changed",
     });
-    expect(toolsByName(await getApp(req, orgId, app.id)).search?.status).toBe("pending_review");
+    expect(toolsByName(await getConnector(req, orgId, app.id)).search?.status).toBe(
+      "pending_review",
+    );
   });
 
-  it("双副本：只有一个 drift scheduler；扫描任务重复执行也只检查每个应用一次", async () => {
+  it("双副本：只有一个 drift scheduler；扫描任务重复执行也只检查每个连接器一次", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const app = await createApp(req, orgId);
-    // 让应用看起来已到检查周期
-    await sql`UPDATE capybara.apps SET tools_synced_at = now() - interval '2 days'
+    // 让连接器看起来已到检查周期
+    await sql`UPDATE capybara.connectors SET tools_synced_at = now() - interval '2 days'
       WHERE id = ${app.id}`.execute(raw);
     driftServer();
     const opened = memState().opened;
@@ -737,9 +759,13 @@ describe("定时任务与 list_changed", () => {
       // 模拟同一周期的扫描被投递了两次（两个副本各一次）
       await probe.add(DRIFT_SCAN_JOB, {}, { removeOnComplete: true });
       await probe.add(DRIFT_SCAN_JOB, {}, { removeOnComplete: true });
-      await waitFor(async () => (await auditOf("app.tools_drifted")).length === 1, 10_000, "drift");
+      await waitFor(
+        async () => (await auditOf("connector.tools_drifted")).length === 1,
+        10_000,
+        "drift",
+      );
       await new Promise((r) => setTimeout(r, 1000));
-      expect(await auditOf("app.tools_drifted")).toHaveLength(1);
+      expect(await auditOf("connector.tools_drifted")).toHaveLength(1);
       expect(memState().opened - opened).toBe(1);
     } finally {
       await k2.stop();

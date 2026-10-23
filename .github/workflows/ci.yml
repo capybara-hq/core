@@ -22,6 +22,14 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm check
       - run: pnpm test
+      - name: 打包全部官方插件（C12，构建产物；发布到 npm / ghcr 在 M7）
+        run: pnpm pack-plugins --out artifacts/plugins
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-packages
+          path: artifacts/plugins/*.tgz
+          if-no-files-found: error
+          retention-days: 14
       - name: 校验提交信息
         if: github.event_name == 'pull_request'
         run: >

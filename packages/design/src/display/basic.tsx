@@ -20,7 +20,14 @@ export function Kbd({ children }: { children?: ReactNode }) {
   return <kbd className="cb-kbd">{children}</kbd>;
 }
 
-export type Status = "running" | "success" | "failed" | "waiting" | "queued" | "cancelled";
+export type Status =
+  | "running"
+  | "success"
+  | "failed"
+  | "waiting"
+  | "queued"
+  | "cancelled"
+  | "capped";
 
 // spec §2.4：符号 + 颜色（CSS 按 data-status）+ 文字
 const GLYPH: Record<Status, string> = {
@@ -30,6 +37,7 @@ const GLYPH: Record<Status, string> = {
   waiting: "‖",
   queued: "○",
   cancelled: "⊘",
+  capped: "◆",
 };
 
 export function StatusMark({ status, label }: { status: Status; label?: string }) {

@@ -4,7 +4,7 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 
 /**
  * 把工具定义按指纹存进 `capybara.tool_specs`（内容寻址：同一指纹只存一次，已存在不改）。
- * `model_call` 只记 `{key, specHash}`，定义本身存这里——应用刷新 / 插件升级改了定义之后，早先请求用过的定义
+ * `model_call` 只记 `{key, specHash}`，定义本身存这里——连接器刷新 / 插件升级改了定义之后，早先请求用过的定义
  * 仍可按指纹取回，模型请求可由日志还原。
  */
 export async function recordToolSpecs(

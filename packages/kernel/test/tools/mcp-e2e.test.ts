@@ -33,7 +33,7 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Task 11：connector-mcp 端到端。安装 MCP 应用（bearer，组织凭据）→ agent 调用只读工具直接执行、
+ * Task 11：connector-mcp 端到端。安装 MCP 连接器（bearer，组织凭据）→ agent 调用只读工具直接执行、
  * destructive 工具触发审批；resources 的两个内核工具；超时由内核管线截断。
  *
  * Review Focus 3：假 MCP 服务把收到的 Authorization 头回显到结果、错误、JSON-RPC 错误与 HTTP 错误正文里，
@@ -176,10 +176,10 @@ async function call(opts: Parameters<Req>[0]) {
   return res;
 }
 
-async function installApp(): Promise<{ appId: string; body: Record<string, unknown> }> {
+async function installConnector(): Promise<{ connectorId: string; body: Record<string, unknown> }> {
   const res = await call({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/apps`,
+    url: `/api/v1/orgs/${orgId}/connectors`,
     payload: {
       name: "Docs",
       slug: "docs",
@@ -190,11 +190,11 @@ async function installApp(): Promise<{ appId: string; body: Record<string, unkno
     },
   });
   expect(res.statusCode, res.body).toBe(201);
-  const body = res.json() as { app: { id: string } };
-  return { appId: body.app.id, body: body as unknown as Record<string, unknown> };
+  const body = res.json() as { connector: { id: string } };
+  return { connectorId: body.connector.id, body: body as unknown as Record<string, unknown> };
 }
 
-async function agentFor(appId: string): Promise<string> {
+async function agentFor(connectorId: string): Promise<string> {
   const res = await call({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -203,7 +203,7 @@ async function agentFor(appId: string): Promise<string> {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "app", appId, tools: "all" }],
+        tools: [{ kind: "connector", connectorId, tools: "all" }],
       },
       visibility: "org",
     },
@@ -224,9 +224,10 @@ async function runTool(convId: string, n: number, key: string, input: unknown) {
 
 describe("connector-mcp 端到端", () => {
   it("安装：工具快照带注解推导的默认策略，resources 工具默认 allow", async () => {
-    const { body } = await installApp();
-    const tools = (body.app as { tools: { name: string; key: string; defaultPolicy: string }[] })
-      .tools;
+    const { body } = await installConnector();
+    const tools = (
+      body.connector as { tools: { name: string; key: string; defaultPolicy: string }[] }
+    ).tools;
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
     expect(byName.search?.defaultPolicy).toBe("allow");
     expect(byName.delete_doc?.defaultPolicy).toBe("ask");
@@ -249,7 +250,7 @@ describe("connector-mcp 端到端", () => {
     try {
       const res = await call({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/apps`,
+        url: `/api/v1/orgs/${orgId}/connectors`,
         payload: {
           name: "Files",
           slug: "files",
@@ -260,10 +261,10 @@ describe("connector-mcp 端到端", () => {
       });
       expect(res.statusCode, res.body).toBe(201);
       const body = res.json() as {
-        app: { id: string; tools: { name: string; source: string; description: string }[] };
+        connector: { id: string; tools: { name: string; source: string; description: string }[] };
         issues: { name: string; reason: string }[];
       };
-      expect(body.app.tools.map((t) => [t.name, t.source])).toEqual([
+      expect(body.connector.tools.map((t) => [t.name, t.source])).toEqual([
         ["list_resources", "connector"],
         ["read_resource", "resources"],
       ]);
@@ -271,23 +272,23 @@ describe("connector-mcp 端到端", () => {
         {
           name: "list_resources",
           reason:
-            "The app has its own tool named list_resources; the built-in resource tool is not added",
+            "The connector has its own tool named list_resources; the built-in resource tool is not added",
         },
       ]);
 
       delete opts.resources;
       const r2 = await call({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/apps/${body.app.id}/refresh`,
+        url: `/api/v1/orgs/${orgId}/connectors/${body.connector.id}/refresh`,
       });
       expect(r2.statusCode, r2.body).toBe(200);
       const after = r2.json() as {
-        app: { tools: { name: string; status: string; missing: boolean }[] };
+        connector: { tools: { name: string; status: string; missing: boolean }[] };
         changes: { removed: string[] };
       };
       expect(after.changes.removed).toEqual(["read_resource"]);
       // 消失的工具停用并标记（漂移检测，Task 17），不删除
-      expect(after.app.tools.map((t) => [t.name, t.status, t.missing])).toEqual([
+      expect(after.connector.tools.map((t) => [t.name, t.status, t.missing])).toEqual([
         ["list_resources", "enabled", false],
         ["read_resource", "disabled", true],
       ]);
@@ -302,7 +303,7 @@ describe("connector-mcp 端到端", () => {
     try {
       const res = await call({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/apps`,
+        url: `/api/v1/orgs/${orgId}/connectors`,
         payload: {
           name: "Notes",
           slug: "notes",
@@ -313,7 +314,7 @@ describe("connector-mcp 端到端", () => {
       });
       expect(res.statusCode, res.body).toBe(201);
       type Tool = { name: string; source: string; defaultPolicy: string };
-      const app = (res.json() as { app: { id: string; tools: Tool[] } }).app;
+      const app = (res.json() as { connector: { id: string; tools: Tool[] } }).connector;
       expect(app.tools.find((t) => t.name === "list_resources")).toMatchObject({
         source: "resources",
         defaultPolicy: "allow",
@@ -323,25 +324,28 @@ describe("connector-mcp 端到端", () => {
       opts.tools.push({ name: "list_resources", description: "Server's own listing" });
       const r2 = await call({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/apps/${app.id}/refresh`,
+        url: `/api/v1/orgs/${orgId}/connectors/${app.id}/refresh`,
       });
       expect(r2.statusCode, r2.body).toBe(200);
       type Pending = Tool & { status: string; pending: { source: string } | null };
-      const after = r2.json() as { app: { tools: Pending[] }; changes: { changed: string[] } };
+      const after = r2.json() as {
+        connector: { tools: Pending[] };
+        changes: { changed: string[] };
+      };
       expect(after.changes.changed).toEqual(["list_resources"]);
       // 换了来源也是定义变化：待复核（Task 17），复核通过后才采用连接器的工具
-      expect(after.app.tools.find((t) => t.name === "list_resources")).toMatchObject({
+      expect(after.connector.tools.find((t) => t.name === "list_resources")).toMatchObject({
         source: "resources",
         status: "pending_review",
         pending: { source: "connector" },
       });
       const approved = await call({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/apps/${app.id}/tools/list_resources/review`,
+        url: `/api/v1/orgs/${orgId}/connectors/${app.id}/tools/list_resources/review`,
         payload: { action: "approve" },
       });
       expect(approved.statusCode, approved.body).toBe(200);
-      const reviewed = (approved.json() as { app: { tools: Pending[] } }).app;
+      const reviewed = (approved.json() as { connector: { tools: Pending[] } }).connector;
       expect(reviewed.tools.find((t) => t.name === "list_resources")).toMatchObject({
         source: "connector",
         status: "enabled",
@@ -358,8 +362,8 @@ describe("connector-mcp 端到端", () => {
   });
 
   it("只读工具直接执行；resources；超时；Review Focus 3：凭据回显处处打码", async () => {
-    const { appId } = await installApp();
-    const agentId = await agentFor(appId);
+    const { connectorId } = await installConnector();
+    const agentId = await agentFor(connectorId);
     const convId = await createConv(req, orgId, agentId);
 
     const search = await runTool(convId, 1, "docs__search", { q: "cats" });
@@ -421,7 +425,7 @@ describe("connector-mcp 端到端", () => {
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/events`,
     });
     expect(eventsRes.statusCode).toBe(200);
-    await call({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/${appId}` });
+    await call({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/${connectorId}` });
     const audits = await db.selectFrom("audit_events").selectAll().execute();
     const outputs = await db.selectFrom("tool_outputs").select("content").execute();
     const haystacks: [string, string][] = [
@@ -439,8 +443,8 @@ describe("connector-mcp 端到端", () => {
   }, 60_000);
 
   it("destructive 工具触发审批：批准前不执行，批准后执行一次", async () => {
-    const { appId } = await installApp();
-    const agentId = await agentFor(appId);
+    const { connectorId } = await installConnector();
+    const agentId = await agentFor(connectorId);
     const convId = await createConv(req, orgId, agentId);
     const before = mcp.calls.filter((c) => c.name === "delete_doc").length;
 
@@ -496,7 +500,7 @@ describe("connector-mcp 端到端", () => {
     try {
       const res = await call({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/apps`,
+        url: `/api/v1/orgs/${orgId}/connectors`,
         payload: {
           name: "Kb",
           slug: "kb",
@@ -506,8 +510,8 @@ describe("connector-mcp 端到端", () => {
         },
       });
       expect(res.statusCode, res.body).toBe(201);
-      const appId = (res.json() as { app: { id: string } }).app.id;
-      const agentId = await agentFor(appId);
+      const connectorId = (res.json() as { connector: { id: string } }).connector.id;
+      const agentId = await agentFor(connectorId);
       const convId = await createConv(req, orgId, agentId);
       await runTool(convId, 1, "kb__lookup", {});
       const firstCall = ofType(await eventsOf(db, convId), "model_call")[0];
@@ -516,10 +520,13 @@ describe("connector-mcp 端到端", () => {
       const oldHash = used?.specHash as string;
 
       (opts.tools[0] as { description: string }).description = "Look up v2";
-      const r2 = await call({ method: "POST", url: `/api/v1/orgs/${orgId}/apps/${appId}/refresh` });
+      const r2 = await call({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/refresh`,
+      });
       expect(r2.statusCode, r2.body).toBe(200);
       type T = { name: string; specHash: string; pending: { specHash: string } | null };
-      const after = (r2.json() as { app: { tools: T[] } }).app;
+      const after = (r2.json() as { connector: { tools: T[] } }).connector;
       // 变化的定义待复核（Task 17）：新定义的指纹在 pending 里
       const newHash = after.tools.find((t) => t.name === "lookup")?.pending?.specHash as string;
       expect(newHash).not.toBe(oldHash);

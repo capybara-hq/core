@@ -358,3 +358,89 @@ describe("企业管理员写操作执行期复核（R5）", () => {
     }
   });
 });
+
+describe("setEnterpriseAdminByLogin（CLI 的 capybara admin grant / revoke）", () => {
+  const make = (login: string, enterpriseAdmin: boolean) =>
+    svc.createLocal({ login, password: PW, displayName: login, enterpriseAdmin });
+  const cliAudits = () =>
+    db
+      .selectFrom("audit_events")
+      .select(["action", "target", "actor_account_id", "detail"])
+      .where("action", "=", "account.updated")
+      .orderBy("id")
+      .execute();
+
+  beforeEach(async () => {
+    await truncateTables(raw, "capybara.audit_events");
+  });
+
+  it("grant：按登录名（大小写不敏感）设为企业管理员，写审计（无发起账号，via cli）", async () => {
+    await make("root", true);
+    const u = await make("alice", false);
+    const r = await svc.setEnterpriseAdminByLogin("Alice", true);
+    expect(r.changed).toBe(true);
+    expect(r.account.id).toBe(u.id);
+    expect((await svc.get(u.id))?.isEnterpriseAdmin).toBe(true);
+    expect(await cliAudits()).toEqual([
+      {
+        action: "account.updated",
+        target: u.id,
+        actor_account_id: null,
+        detail: { isEnterpriseAdmin: true, via: "cli" },
+      },
+    ]);
+    // 已是企业管理员：不改、不写审计
+    const again = await svc.setEnterpriseAdminByLogin("alice", true);
+    expect(again.changed).toBe(false);
+    expect(await cliAudits()).toHaveLength(1);
+  });
+
+  it("revoke：还有别的活跃企业管理员时撤销成功；最后一个 → account.last_enterprise_admin，库不变", async () => {
+    const a = await make("root", true);
+    const b = await make("bob", true);
+    expect((await svc.setEnterpriseAdminByLogin("bob", false)).changed).toBe(true);
+    expect((await svc.get(b.id))?.isEnterpriseAdmin).toBe(false);
+    expect(await codeOf(svc.setEnterpriseAdminByLogin("root", false))).toBe(
+      "account.last_enterprise_admin",
+    );
+    expect((await svc.get(a.id))?.isEnterpriseAdmin).toBe(true);
+    expect((await cliAudits()).map((e) => e.detail)).toEqual([
+      { isEnterpriseAdmin: false, via: "cli" },
+    ]);
+  });
+
+  it("账号不存在 → account.not_found", async () => {
+    expect(await codeOf(svc.setEnterpriseAdminByLogin("ghost", true))).toBe("account.not_found");
+    expect(await codeOf(svc.setEnterpriseAdminByLogin("ghost", false))).toBe("account.not_found");
+  });
+
+  it("在企业管理员锁内复核：网页撤销持锁未提交时 CLI 撤销等待，提交后判定为最后一个 → 拒绝", async () => {
+    const raw2 = createDb(box.url, 10);
+    const svc2 = new AccountsService(kernelDb(raw2));
+    try {
+      const a = await make("root-a", true);
+      await make("root-b", true);
+      let revoke: Promise<unknown> | undefined;
+      let settled = false;
+      await raw.transaction().execute(async (trx) => {
+        // 模拟网页撤销 A：已取企业管理员锁、已改行、尚未提交
+        await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))`.execute(
+          trx,
+        );
+        await sql`UPDATE capybara.accounts SET is_enterprise_admin = false WHERE id = ${a.id}`.execute(
+          trx,
+        );
+        revoke = svc2.setEnterpriseAdminByLogin("root-b", false).finally(() => {
+          settled = true;
+        });
+        revoke.catch(() => {});
+        await new Promise((r) => setTimeout(r, 300));
+        expect(settled).toBe(false);
+      });
+      expect(await codeOf(revoke as Promise<unknown>)).toBe("account.last_enterprise_admin");
+      expect(await svc.countEnterpriseAdmins()).toBe(1);
+    } finally {
+      await raw2.destroy();
+    }
+  });
+});

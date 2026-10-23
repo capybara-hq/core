@@ -139,6 +139,14 @@ describe("DataTable rows", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("某行的菜单项为空：该行不显示 ⋯（列仍保留，其他行照常）", () => {
+    plain({ rowMenu: (r) => (r.id === rows[0]?.id ? [] : [{ label: "编辑", onSelect() {} }]) });
+    const [r1, r2] = screen.getAllByRole("row").slice(1) as HTMLElement[];
+    expect(within(r1 as HTMLElement).queryByRole("button", { name: "行操作" })).toBeNull();
+    expect(within(r1 as HTMLElement).getAllByRole("cell")).toHaveLength(columns.length + 1);
+    expect(within(r2 as HTMLElement).getByRole("button", { name: "行操作" })).toBeTruthy();
+  });
+
   it("展开行：内容放进缩进容器，引导符由每行 CSS 前缀提供（不再单独渲染一行 └）", () => {
     const { container } = plain({
       expand: (r) =>

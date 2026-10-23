@@ -16,11 +16,28 @@
 | `masterKeyPrevious` | `CAPYBARA_MASTER_KEY_PREVIOUS` | `array<string>` | — | 否 | 是 | Previous master keys kept during rotation |
 | `plugins` | `CAPYBARA_PLUGINS` | `array<string>` | `[]` | 否 | 否 | Plugin names to load |
 | `pluginConfig` | `CAPYBARA_PLUGIN_CONFIG` | `record` | `{}` | 否 | 否 | Deployment-level config keyed by plugin name |
+| `pluginHost.dir` | `CAPYBARA_PLUGIN_HOST__DIR` | `string` | `"/var/lib/capybara/plugins"` | 否 | 否 | Local directory where each replica unpacks installed plugin packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store |
+| `pluginHost.drainSeconds` | `CAPYBARA_PLUGIN_HOST__DRAIN_SECONDS` | `number` | `30` | 否 | 否 | Seconds in-flight tool calls and queue jobs of a plugin being unloaded may keep running before they are aborted |
+| `pluginHost.disposeTimeoutSeconds` | `CAPYBARA_PLUGIN_HOST__DISPOSE_TIMEOUT_SECONDS` | `number` | `10` | 否 | 否 | Seconds a plugin's dispose() may run when it is unloaded or replaced; after that the kernel logs a warning and moves on |
+| `pluginHost.reloadSetupTimeoutSeconds` | `CAPYBARA_PLUGIN_HOST__RELOAD_SETUP_TIMEOUT_SECONDS` | `number` | `60` | 否 | 否 | Seconds a plugin's setup() may run when it is reloaded in a running process (enable, upgrade, dependency change), and when an installed plugin (install record) is loaded at startup; on timeout the load fails and the previous instance, if any, stays. Built-in and config-declared plugins are not bounded at startup |
+| `pluginHost.migrationTimeoutSeconds` | `CAPYBARA_PLUGIN_HOST__MIGRATION_TIMEOUT_SECONDS` | `number` | `300` | 否 | 否 | Seconds an installed plugin's migrations may run on the replica holding the migration lock; on timeout the migration session is terminated (statement_timeout bounds each statement, lock_timeout bounds lock waits), the lock is released and the replica reports migration_failed (retried on the next reconcile). Built-in and config-declared plugins are not bounded |
+| `pluginHost.reconcileIntervalSeconds` | `CAPYBARA_PLUGIN_HOST__RECONCILE_INTERVAL_SECONDS` | `number` | `60` | 否 | 否 | Seconds between periodic reconciles of each replica's loaded plugins against the installed state in PostgreSQL |
+| `packages.npmRegistry` | `CAPYBARA_PACKAGES__NPM_REGISTRY` | `string` | `"https://registry.npmjs.org"` | 否 | 否 | npm registry used to install plugin packages by name |
+| `packages.npmToken` | `CAPYBARA_PACKAGES__NPM_TOKEN` | `string` | 可选 | 否 | 是 | Bearer token for the npm registry (private registries); sent only to the registry origin |
+| `packages.maxBytes` | `CAPYBARA_PACKAGES__MAX_BYTES` | `number` | `52428800` | 否 | 否 | Largest plugin package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store. Lowering it also caps what replicas read back from the object store, so packages accepted earlier under a larger limit can no longer be synced. Uploads through the web tier (apps/web) are also capped by its own CAPYBARA_WEB_MAX_PACKAGE_BYTES (default 50 MiB); raise both together |
+| `directory.maxBundleBytes` | `CAPYBARA_DIRECTORY__MAX_BUNDLE_BYTES` | `number` | 可选 | 否 | 否 | Largest total size in bytes of one app bundle import: the app package plus every plugin package it locks (downloaded and held in memory while validating). Defaults to 4 x packages.maxBytes |
+| `directory.staleInstallMinutes` | `CAPYBARA_DIRECTORY__STALE_INSTALL_MINUTES` | `number` | `30` | 否 | 否 | Minutes after which an organization app install still in the installing state (e.g. the replica crashed mid-install) may be cleaned up through uninstall, which rolls back the components it recorded |
+| `catalogs.official.enabled` | `CAPYBARA_CATALOGS__OFFICIAL__ENABLED` | `boolean` | `true` | 否 | 否 | Use the official directory catalog. Set to false for offline deployments: the official catalog is never fetched and the admin UI shows offline mode |
+| `catalogs.official.url` | `CAPYBARA_CATALOGS__OFFICIAL__URL` | `string` | `"https://catalog.capybarahq.com/v1/index.json"` | 否 | 否 | URL of the official catalog index.json (https; a placeholder until the official catalog goes live) |
+| `catalogs.official.mirrors` | `CAPYBARA_CATALOGS__OFFICIAL__MIRRORS` | `array<string>` | `[]` | 否 | 否 | Mirror URLs of the official catalog index.json (https), tried in order when the main URL fails |
+| `catalogs.refreshIntervalMinutes` | `CAPYBARA_CATALOGS__REFRESH_INTERVAL_MINUTES` | `number` | `360` | 否 | 否 | Minutes between periodic refreshes of every enabled catalog (one maintenance job for all replicas) |
+| `catalogs.maxIndexBytes` | `CAPYBARA_CATALOGS__MAX_INDEX_BYTES` | `number` | `5242880` | 否 | 否 | Largest catalog index.json in bytes; a larger response is rejected and the previous entries are kept |
+| `catalogs.allowInsecureLoopback` | `CAPYBARA_CATALOGS__ALLOW_INSECURE_LOOPBACK` | `boolean` | `false` | 否 | 否 | Testing only: allow plain http for catalog and tarball URLs on loopback addresses |
 | `pluginPermissions.autoApprove` | `CAPYBARA_PLUGIN_PERMISSIONS__AUTO_APPROVE` | `boolean` | `false` | 否 | 否 | Approve plugin permissions automatically at startup (development and trials only). When false, a plugin that is new or whose upgrade asks for more permissions is not loaded until an admin runs `capybara plugins approve <name>` |
 | `http.port` | `CAPYBARA_HTTP__PORT` | `number` | `8080` | 否 | 否 | HTTP listen port |
 | `http.trustProxy` | `CAPYBARA_HTTP__TRUST_PROXY` | `boolean \| number \| array<string>` | `false` | 否 | 否 | Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies |
 | `http.replicaId` | `CAPYBARA_HTTP__REPLICA_ID` | `string \| number` | 可选 | 否 | 否 | Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers) |
-| `http.publicUrl` | `CAPYBARA_HTTP__PUBLIC_URL` | `string` | 可选 | 否 | 否 | Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth apps: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com |
+| `http.publicUrl` | `CAPYBARA_HTTP__PUBLIC_URL` | `string` | 可选 | 否 | 否 | Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth connectors: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com |
 | `roles` | `CAPYBARA_ROLES` | `array<"api" \| "worker" \| "gateway">` | `["api","worker","gateway"]` | 否 | 否 | Roles this process runs |
 | `auth.accessTokenTtlSeconds` | `CAPYBARA_AUTH__ACCESS_TOKEN_TTL_SECONDS` | `number` | `900` | 否 | 否 | Lifetime of web session access tokens in seconds |
 | `auth.refreshTokenTtlDays` | `CAPYBARA_AUTH__REFRESH_TOKEN_TTL_DAYS` | `number` | `30` | 否 | 否 | Absolute lifetime of a web session (refresh token) in days; refreshing does not extend it |
@@ -41,7 +58,7 @@
 | `runtime.sseHeartbeatMs` | `CAPYBARA_RUNTIME__SSE_HEARTBEAT_MS` | `number` | `15000` | 否 | 否 | Interval in milliseconds between heartbeat comments on a conversation event stream (SSE) |
 | `runtime.sseRecheckMs` | `CAPYBARA_RUNTIME__SSE_RECHECK_MS` | `number` | `60000` | 否 | 否 | How often an open conversation event stream (SSE) re-checks that the viewer may still access the conversation, in milliseconds; the stream closes when access is lost |
 | `tools.timeoutMs` | `CAPYBARA_TOOLS__TIMEOUT_MS` | `number` | `60000` | 否 | 否 | Timeout of one tool call in milliseconds |
-| `tools.breakerFailures` | `CAPYBARA_TOOLS__BREAKER_FAILURES` | `number` | `5` | 否 | 否 | Consecutive failures of one app that open its circuit breaker |
+| `tools.breakerFailures` | `CAPYBARA_TOOLS__BREAKER_FAILURES` | `number` | `5` | 否 | 否 | Consecutive failures of one connector that open its circuit breaker |
 | `tools.breakerOpenSeconds` | `CAPYBARA_TOOLS__BREAKER_OPEN_SECONDS` | `number` | `60` | 否 | 否 | Seconds an open circuit breaker rejects calls before allowing a probe |
 | `tools.outputSpillChars` | `CAPYBARA_TOOLS__OUTPUT_SPILL_CHARS` | `number` | `50000` | 否 | 否 | Tool results longer than this many characters are archived and replaced by a preview |
 | `tools.outputPreviewChars` | `CAPYBARA_TOOLS__OUTPUT_PREVIEW_CHARS` | `number` | `2000` | 否 | 否 | Characters of an archived tool result kept in the conversation as a preview |
@@ -49,7 +66,7 @@
 | `tools.approvalTimeoutHours` | `CAPYBARA_TOOLS__APPROVAL_TIMEOUT_HOURS` | `number` | `24` | 否 | 否 | Hours a pending approval or question waits before it expires (treated as denied) |
 | `tools.searchThresholdTools` | `CAPYBARA_TOOLS__SEARCH_THRESHOLD_TOOLS` | `number` | `30` | 否 | 否 | Switch to on-demand tool search when an agent has more than this many tools |
 | `tools.searchThresholdTokens` | `CAPYBARA_TOOLS__SEARCH_THRESHOLD_TOKENS` | `number` | `8000` | 否 | 否 | Switch to on-demand tool search when tool definitions exceed this many estimated tokens |
-| `tools.driftIntervalHours` | `CAPYBARA_TOOLS__DRIFT_INTERVAL_HOURS` | `number` | `24` | 否 | 否 | Hours between checks of connected apps for changed tool definitions |
+| `tools.driftIntervalHours` | `CAPYBARA_TOOLS__DRIFT_INTERVAL_HOURS` | `number` | `24` | 否 | 否 | Hours between checks of connectors for changed tool definitions |
 | `tools.maxResultReadChars` | `CAPYBARA_TOOLS__MAX_RESULT_READ_CHARS` | `number` | `20000` | 否 | 否 | Maximum characters returned by one read_tool_output call |
 | `tools.oauthAllowInsecureLoopback` | `CAPYBARA_TOOLS__OAUTH_ALLOW_INSECURE_LOOPBACK` | `boolean` | `false` | 否 | 否 | Allow OAuth discovery, registration and token endpoints over plain http on loopback hosts (development and tests only; production requires https) |
 | `channels.leaseTtlMs` | `CAPYBARA_CHANNELS__LEASE_TTL_MS` | `number` | `30000` | 否 | 否 | TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long |
@@ -75,6 +92,14 @@
 | `sandbox.limits.maxRunningMinutes` | `CAPYBARA_SANDBOX__LIMITS__MAX_RUNNING_MINUTES` | `number` | `120` | 否 | 否 | Minutes a sandbox may run continuously before it is suspended even while in use (skipped while a command is running) |
 | `sandbox.limits.egress` | `CAPYBARA_SANDBOX__LIMITS__EGRESS` | `"none" \| "allowlist" \| "open"` | `"allowlist"` | 否 | 否 | Outbound network from sandboxes: none, allowlist (only allowHosts) or open; applies to sandboxes created after the change, existing ones keep theirs until destroyed |
 | `sandbox.limits.allowHosts` | `CAPYBARA_SANDBOX__LIMITS__ALLOW_HOSTS` | `array<string>` | `["registry.npmjs.org","pypi.org","files.pythonhosted.org","github.com","codeload.github.com","raw.githubusercontent.com","objects.githubusercontent.com","release-assets.githubusercontent.com"]` | 否 | 否 | Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to sandboxes created after the change |
+| `evals.orgConcurrency` | `CAPYBARA_EVALS__ORG_CONCURRENCY` | `number` | `2` | 是 | 否 | Maximum eval cases executing concurrently per organization across all replicas |
+| `evals.workerConcurrency` | `CAPYBARA_EVALS__WORKER_CONCURRENCY` | `number` | `4` | 否 | 否 | Eval case jobs one replica processes at the same time |
+| `evals.defaultTokenCap` | `CAPYBARA_EVALS__DEFAULT_TOKEN_CAP` | `number` | `1000000` | 否 | 否 | Token cap of an eval run when none is given; the run stops sending new model requests once it is reached |
+| `evals.maxTokenCap` | `CAPYBARA_EVALS__MAX_TOKEN_CAP` | `number` | `20000000` | 否 | 否 | Largest token cap an eval run may ask for |
+| `evals.maxCasesPerSet` | `CAPYBARA_EVALS__MAX_CASES_PER_SET` | `number` | `500` | 否 | 否 | Maximum number of cases in one eval set |
+| `evals.maxCaseBytes` | `CAPYBARA_EVALS__MAX_CASE_BYTES` | `number` | `4194304` | 否 | 否 | Largest log snapshot in bytes (serialized JSON) one eval case may store; larger runs cannot be added |
+| `evals.judgeMaxOutputTokens` | `CAPYBARA_EVALS__JUDGE_MAX_OUTPUT_TOKENS` | `number` | `1024` | 否 | 否 | Maximum output tokens of one LLM judge request |
+| `evals.maxConsecutiveErrors` | `CAPYBARA_EVALS__MAX_CONSECUTIVE_ERRORS` | `number` | `10` | 否 | 否 | Consecutive failed results after which an eval run is marked failed and its remaining cases are skipped |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | 是 | 否 | Log level |
 
 ## Nacos 配置来源
@@ -88,3 +113,15 @@
 | `CAPYBARA_NACOS_DATA_ID` | 配置的 dataId（YAML），必填；分组固定为 `DEFAULT_GROUP` |
 | `CAPYBARA_NACOS_USERNAME` / `CAPYBARA_NACOS_PASSWORD` | Nacos 开启鉴权时的用户名与密码：登录换取 accessToken，用到 `tokenTtl` 的 80% 或收到 403 时重新登录；须成对设置 |
 | `CAPYBARA_NACOS_ACCESS_TOKEN` | 直接使用的 accessToken（不调用登录接口）；不能与用户名密码同时设置 |
+
+## 网页层（apps/web）的环境变量
+
+网页层是独立进程（经 `apps/web/server.mjs` 启动），不读内核配置，只认下列环境变量：
+
+| 环境变量 | 说明 |
+| --- | --- |
+| `CAPYBARA_KERNEL_URL` | 内核地址，`/api/*` 代理转发到这里；默认 `http://localhost:8080` |
+| `PORT` / `CAPYBARA_WEB_HOST` | 网页层的监听端口（默认 3000）与地址 |
+| `CAPYBARA_WEB_MAX_BODY_BYTES` | `/api/*` 代理的请求体上限，默认 1 MiB（与内核的 bodyLimit 一致） |
+| `CAPYBARA_WEB_MAX_PACKAGE_BYTES` | 插件包、目录包与应用包上传（`/api/v1/admin/plugins/packages/file`、`/api/v1/admin/directory/import/file`、`/api/v1/admin/directory/apps/prepare/file`）的请求体上限，默认 50 MiB，边读边转发。这是网页层的上限，内核另按 `packages.maxBytes` 拒绝；调大 `packages.maxBytes` 时两个一起调，否则经网页上传的大包先被网页层以 413 拒绝 |
+| `CAPYBARA_DEV_UI` | 设为 `1` 时生产构建也开放 `/dev/ui` 组件目录页（默认关闭） |

@@ -26,12 +26,26 @@ export function createQueue(
   redisUrl: string,
   namespace: string,
   opts: { runWorkers: boolean; log?: Pick<Logger, "error"> },
-): PluginContext["queue"] & { close(): Promise<void> } {
+): PluginContext["queue"] & {
+  close(): Promise<void>;
+  /** 停止取新任务（不等进行中的）：撤销插件实例的第一步。 */
+  pauseWorkers(): Promise<void>;
+  /** 等全部 worker 进行中的任务结束，最多等到 `deadline`（epoch 毫秒）；不关闭 worker。 */
+  drainWorkers(deadline: number): Promise<"drained" | "timeout">;
+  /**
+   * 关闭一个队列的 worker：不再取新任务，等进行中的任务结束，最多等到 `deadline`（epoch 毫秒）；到点仍未结束的
+   * 强制关闭——任务留在队列里（锁过期后按 stalled 交回等待），由新实例的 worker 接着处理（队列名不含版本）。
+   * 不给 `deadline` 时一直等到进行中的任务结束（停机路径）。没有 worker（本进程不含 worker 角色）时什么都不做。
+   */
+  stopWorker(name: string, deadline?: number): Promise<void>;
+} {
   assertNamespace(namespace);
   const log = opts.log ?? consoleLog;
   const connections: Redis[] = [];
   const queues = new Map<string, Queue>();
   const workers = new Map<string, Worker>();
+  /** 每个 worker 进行中的任务数与「空了」的等待者（撤销时排空用）。 */
+  const active = new Map<string, { n: number; idle: (() => void)[] }>();
   const defined = new Set<string>();
   let closed = false;
   const assertOpen = () => {
@@ -63,12 +77,22 @@ export function createQueue(
       if (defined.has(name)) throw new Error(`queue "${name}" already defined`);
       defined.add(name);
       if (!opts.runWorkers) return;
+      const st = { n: 0, idle: [] as (() => void)[] };
+      active.set(name, st);
       const worker = new Worker(
         queueName(name),
         async (job) => {
-          await handler(job.data);
+          st.n += 1;
+          try {
+            await handler(job.data);
+          } finally {
+            st.n -= 1;
+            if (st.n === 0) for (const w of st.idle.splice(0)) w();
+          }
         },
-        { connection: newConn(), concurrency: o?.concurrency ?? 1 },
+        // 撤销插件实例时到点仍未完成的任务被强制留在队列里（锁过期后按 stalled 交回），新实例再执行一次：
+        // 任务是至少一次。stalled 次数放宽到 3，连续几次撤销 / 升级不至于把任务判为失败
+        { connection: newConn(), concurrency: o?.concurrency ?? 1, maxStalledCount: 3 },
       );
       worker.on("error", (err) => log.error("queue worker error", { queue: name, err }));
       worker.on("failed", (job, err) =>
@@ -88,6 +112,49 @@ export function createQueue(
         removeOnComplete: 1000,
         removeOnFail: 5000,
       });
+    },
+    async pauseWorkers() {
+      await Promise.all([...workers.values()].map((w) => w.pause(true).catch(() => {})));
+    },
+    async drainWorkers(deadline) {
+      const busy = [...active.values()].filter((st) => st.n > 0);
+      if (busy.length === 0) return "drained";
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        return await Promise.race([
+          Promise.all(busy.map((st) => new Promise<void>((resolve) => st.idle.push(resolve)))).then(
+            () => "drained" as const,
+          ),
+          new Promise<"timeout">((resolve) => {
+            timer = setTimeout(() => resolve("timeout"), Math.max(0, deadline - Date.now()));
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    async stopWorker(name, deadline) {
+      const w = workers.get(name);
+      if (!w) return;
+      workers.delete(name);
+      const st = active.get(name);
+      active.delete(name);
+      if (deadline === undefined) {
+        await w.close();
+        return;
+      }
+      await w.pause(true).catch(() => {});
+      if (st && st.n > 0) {
+        let timer: NodeJS.Timeout | undefined;
+        await Promise.race([
+          new Promise<void>((resolve) => st.idle.push(resolve)),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+          }),
+        ]);
+        clearTimeout(timer);
+      }
+      await w.close(st !== undefined && st.n > 0);
     },
     async close() {
       closed = true;

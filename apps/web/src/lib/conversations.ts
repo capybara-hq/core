@@ -19,7 +19,10 @@ export type MediaSource = { kind: "ref"; attachmentId: string } | { kind: "base6
 
 type FormText = string | { zh: string; en: string };
 
-/** 用户消息附带的资源（内核读取正文，这里只有元数据）。 */
+/**
+ * 用户消息附带的资源（内核读取正文，这里只有元数据）。`appId` / `appName` 是连接器的 id 与名称：
+ * 事件 payload 字段名在「应用」改名「连接器」后不变（内核 C27）。
+ */
 export interface MessageAttachment {
   appId: string;
   appName: string;
@@ -250,7 +253,7 @@ export const postMessage = (
   id: string,
   text: string,
   clientMessageId: string,
-  attachments: { appId: string; uri: string }[] = [],
+  attachments: { connectorId: string; uri: string }[] = [],
   files: string[] = [],
 ) =>
   apiFetch<{ event: ConversationEvent }>(`${one(orgId, id)}/messages`, {

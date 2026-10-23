@@ -218,3 +218,15 @@ describe("createLogger", () => {
     expect(JSON.parse(lines[0] as string).msg).toBe("loop");
   });
 });
+
+describe("redact（日志之外的文本打码）", () => {
+  it("按部署方与组织来源的密钥打码；没有登记的文本原样返回", () => {
+    const log = createLogger("info", { write: () => {} });
+    log.addSecrets(["deploy-secret-1"]);
+    log.addOrgSecrets(["org-secret-value-123"]);
+    expect(
+      log.redact("connect failed: token deploy-secret-1 / org-secret-value-123 rejected"),
+    ).toBe("connect failed: token [REDACTED] / [REDACTED] rejected");
+    expect(log.redact("nothing to hide")).toBe("nothing to hide");
+  });
+});

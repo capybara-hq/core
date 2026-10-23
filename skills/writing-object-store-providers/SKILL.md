@@ -50,7 +50,12 @@ S3 兼容接口都能用）。
 
 - 插件拿到的 `ctx.storage`（`PluginStorage`）每个方法多一个打头的 `orgId`，键落在 **`plugins/<插件名>/<orgId>/`** 下；
   内核功能用 **`kernel/<orgId>/`**（附件 `attachments/…`、产物 `artifacts/<对话>/<id>`、技能 `skills/<上传 id>/…`）。
-  返回给调用方的键都去掉前缀，列举只保留本前缀下的对象。
+  部署级的内核数据在 **`deployment/`** 下（如插件包 `deployment/plugins/blobs/<sha256>.tgz`，PG 里记
+  `plugin_packages.blob_store = 'object'`）。返回给调用方的键都去掉前缀，列举只保留本前缀下的对象。
+- **换桶 / 换地址**：PG 只记「在对象存储里」，不记哪个桶。部署改了对象存储插件的桶或 endpoint 之后，旧桶里的对象
+  （附件、产物、技能、插件包）在新桶里都找不到：插件包同步失败（副本状态 `sync_failed`，详情点名缺的键），
+  附件等按「不再可用」处理。换之前把旧桶的 `deployment/`、`kernel/`、`plugins/` 前缀整体复制过去；
+  插件包也可以重新上传同一个 tgz 补回。
 - 校验在调用提供方之前：`orgId` 必须是 UUID（统一转小写）；相对键不能为空、不能以 `/` 开头、不能有 `.` / `..` 段、
   `\`、控制字符与 `${`，加前缀后 ≤ 1024 字节，否则抛 `StorageKeyError`。
 - 没有提供方时各方法 reject `storage.unavailable`（HTTP 503）；声明了 `permissions.storage` 的插件不加载（pending，原因 dependency）。

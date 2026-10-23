@@ -144,8 +144,8 @@ export function useDecide(orgId: string) {
 }
 
 /**
- * 对话内的审批卡片：工具名、应用、参数、三种范围单选与「批准 / 拒绝」；已处理的显示结果与处理人。
- * 待处理时读取审批详情（应用名、工具原名、能否选范围）；当前用户不能处理（404）时只显示「等待审批人」。
+ * 对话内的审批卡片：工具名、连接器、参数、三种范围单选与「批准 / 拒绝」；已处理的显示结果与处理人。
+ * 待处理时读取审批详情（连接器名、工具原名、能否选范围）；当前用户不能处理（404）时只显示「等待审批人」。
  */
 export function ApprovalCard({ orgId, item }: { orgId: string; item: ApprovalItem }) {
   const t = useTranslations("approval");
@@ -187,7 +187,7 @@ export function ApprovalCard({ orgId, item }: { orgId: string; item: ApprovalIte
   const canDecide = outcome === null && view !== undefined && view !== null;
   const rows = [
     { k: t("tool"), v: view?.toolName ?? item.toolKey },
-    ...(view?.app ? [{ k: t("app"), v: view.app.name }] : []),
+    ...(view?.connector ? [{ k: t("connector"), v: view.connector.name }] : []),
     { k: t("expires"), v: formatTime(item.expiresAt, locale) },
   ];
 

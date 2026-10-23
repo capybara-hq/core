@@ -86,6 +86,28 @@ export function OrgSkillsPicker({
 }
 
 /**
+ * 私有 agent 的 `skill_write` 确认开关（`skills.writePolicy`，D10）：勾选 = `ask`，agent 每次写技能前都要负责人确认；
+ * 不勾选（缺省）= 直接生效。共享 agent 的技能变更一律走审批，表单只在私有 agent 上显示它。
+ */
+export function SkillWriteSwitch({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange(next: boolean): void;
+}) {
+  const t = useTranslations("agents.form");
+  return (
+    <Stack gap={4}>
+      <Checkbox label={t("confirmSkillWrite")} checked={value} onChange={onChange} />
+      <Text variant="small" tone="faint">
+        {t("confirmSkillWriteHint")}
+      </Text>
+    </Stack>
+  );
+}
+
+/**
  * agent 自己写的技能（`scope=agent`，只读）：名称 · 版本与描述；负责人可删除（输入技能名二次确认）。
  */
 export function OwnSkills({

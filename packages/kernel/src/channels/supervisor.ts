@@ -42,6 +42,8 @@ return 0
 
 /** 本进程持有的一条长连接。 */
 interface Held {
+  /** 提供这条连接的插件（实例撤销 / 替换时据此交还）。 */
+  plugin: string;
   token: string;
   abort: AbortController;
   done: Promise<void>;
@@ -253,6 +255,7 @@ export class ChannelSupervisor {
     const abort = new AbortController();
     const now = Date.now();
     const h: Held = {
+      plugin: rt.row.plugin,
       token,
       abort,
       done: Promise.resolve(),
@@ -362,6 +365,16 @@ export class ChannelSupervisor {
     } catch (err) {
       this.deps.log.warn("cannot release channel lease", { connectionId: id, err });
     }
+  }
+
+  /**
+   * 本进程的插件实例变了（撤销、替换为新实例；内核接 `host.onChange`，C17）：交还该插件持有的全部长连接
+   * （中止旧实例的 `connect`、等它返回后释放租约）。插件仍在本进程（新实例）时，下一轮扫描由任一副本按新实例重新选主；
+   * 已撤销则本副本不再考虑它（`localPlugins` 里没有了）。
+   */
+  pluginChanged(plugin: string): void {
+    if (this.stopped) return;
+    for (const [id, h] of this.held) if (h.plugin === plugin) this.releaseInBackground(id);
   }
 
   /** 停机：停止扫描，中止全部长连接并释放租约。幂等。 */

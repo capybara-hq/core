@@ -26,9 +26,17 @@ export interface OrgSettingsDeployment {
   sandboxEgress: { mode: "none" | "allowlist" | "open"; allowHosts: string[] };
 }
 
+/** 组织实际生效的沙箱 cpu / 内存（只读：企业管理员在部署设置里按组织覆盖；旧内核不返回）。 */
+export interface OrgSandboxLimits {
+  cpu: number;
+  memoryMb: number;
+  source: "deployment" | "override";
+}
+
 export interface OrgSettingsResponse {
   settings: OrgSettings;
   deployment?: OrgSettingsDeployment;
+  sandboxLimits?: OrgSandboxLimits;
 }
 
 /** PATCH 体：`sandboxEgress: null` 恢复跟随部署默认。 */

@@ -119,6 +119,7 @@ beforeEach(async () => {
 async function createAgent(
   visibility: "private" | "org",
   extraTools: { kind: "builtin"; name: string }[] = [],
+  writePolicy?: "allow" | "ask",
 ): Promise<string> {
   const res = await owner({
     method: "POST",
@@ -129,6 +130,7 @@ async function createAgent(
         instructions: "Write skills.",
         model: { provider: "model-fake", model: "fake-1" },
         tools: [{ kind: "builtin", name: "skill_write" }, ...extraTools],
+        ...(writePolicy !== undefined && { skills: { writePolicy } }),
       },
       visibility,
     },
@@ -419,6 +421,54 @@ describe("skill_write on a private agent", { timeout: 120_000 }, () => {
     expect(r.isError).toBe(true);
     expect(r.content).toContain(String(AGENT_SKILLS_MAX));
     expect(r.content).toMatch(/update an existing skill|ask/i);
+  });
+});
+
+describe("skill_write confirmation switch on a private agent (D10)", { timeout: 120_000 }, () => {
+  it("writePolicy ask: asks the owner, takes effect directly after approval, no change request", async () => {
+    const agentId = await createAgent("private", [], "ask");
+    const conv = await createConv(owner, orgId, agentId);
+    const r = await sharedWrite(owner, conv, write("asked", "Asked v1."), 1);
+    expect(r.isError, r.content).toBe(false);
+    const skill = await db
+      .selectFrom("skills")
+      .selectAll()
+      .where("agent_id", "=", agentId)
+      .executeTakeFirstOrThrow();
+    expect(skill).toMatchObject({ name: "asked", current_version: 1 });
+    expect(await db.selectFrom("skill_change_requests").select("id").execute()).toHaveLength(0);
+  });
+
+  it("switching to ask mid-conversation applies from the next call (current version read live)", async () => {
+    const agentId = await createAgent("private");
+    const conv = await createConv(owner, orgId, agentId);
+    const r1 = await call(owner, conv, "skill_write", write("first", "First v1."), 1);
+    expect(r1.isError, r1.content).toBe(false);
+    expect(await db.selectFrom("approvals").select("id").execute()).toHaveLength(0);
+
+    const def = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", agentId)
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow();
+    const patch = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: { definition: { ...def.definition, skills: { orgSkills: [], writePolicy: "ask" } } },
+    });
+    expect(patch.statusCode, patch.body).toBe(200);
+
+    const r2 = await sharedWrite(owner, conv, write("second", "Second v1."), 2);
+    expect(r2.isError, r2.content).toBe(false);
+    expect(await db.selectFrom("approvals").select("id").execute()).toHaveLength(1);
+  });
+
+  it("a shared agent with writePolicy allow still asks (R3) and files a change request (R4)", async () => {
+    const agentId = await createAgent("org", [], "allow");
+    const conv = await createConv(owner, orgId, agentId);
+    await sharedWrite(owner, conv, write("shared", "Shared v1."), 1);
+    expect(await pending()).toHaveLength(1);
   });
 });
 

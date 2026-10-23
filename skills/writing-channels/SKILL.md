@@ -1,6 +1,6 @@
 ---
 name: writing-channels
-description: 新建或修改 IM 渠道、第三方登录、通讯录插件时使用（provides channel@1 / identity-source@1 / directory@1，如 plugins/slack、plugins/lark）：入站事件的 messageId / threadId / tenantId 约定、去掉 @ 机器人、只处理文本、onEvent resolve 后才 ack、card_action 的 eventId 与卡片目标、locale、ChannelSendError 的 retryable / reason、features 与 minEditIntervalMs、拆分返回最后一条 id、idempotencyKey；卡片规范（validateChannelCard、renderCardAsText、questionRenderableInline、按钮回传值）；防 @所有人与链接白名单；长连接与选主、持久入站 / 出站、去重、卡片操作复核由内核负责；自管重连；身份源键 <插件>:<租户>、PKCE、ID token；通讯录分页、configured()、不完整必须报错、大批移除保护；以及用 startFakeChannelServer / startFakeSlack / startFakeLark 与双副本写测试。
+description: 新建或修改 IM 渠道、第三方登录、通讯录插件时使用（provides channel@1 / identity-source@1 / directory@1，如 plugins/slack、plugins/lark）：入站事件的 messageId / threadId / tenantId 约定、去掉 @ 机器人、只处理文本、onEvent resolve 后才 ack、card_action 的 eventId 与卡片目标、locale、ChannelSendError 的 retryable / reason、features 与 minEditIntervalMs、拆分返回最后一条 id、idempotencyKey；卡片规范（validateChannelCard、renderCardAsText、questionRenderableInline、按钮回传值）；防 @所有人与链接白名单；长连接与选主（含插件停用 / 升级时 supervisor 停掉旧实例的长连接）、持久入站 / 出站、去重、卡片操作复核由内核负责；自管重连；身份源键 <插件>:<租户>、PKCE、ID token；通讯录分页、configured()、不完整必须报错、大批移除保护；以及用 startFakeChannelServer / startFakeSlack / startFakeLark 与双副本写测试。
 ---
 
 # 写渠道、登录与通讯录插件
@@ -98,7 +98,7 @@ interface Channel {
 
 | `kind` | 内容 | 交互 |
 |---|---|---|
-| `approval` | 标题、工具 / 应用、agent、参数预览（内核已按键名与连接密钥打码，≤500 字符）、可选范围 `scopes`、`expiresAt`、`state`、`decidedBy`、`webUrl` | `pending` 时每个范围一个批准按钮 + 拒绝 + 网页链接；其他状态去掉按钮，只显示状态与「详情」链接 |
+| `approval` | 标题、工具 / 连接器、agent、参数预览（内核已按键名与连接密钥打码，≤500 字符）、可选范围 `scopes`、`expiresAt`、`state`、`decidedBy`、`webUrl` | `pending` 时每个范围一个批准按钮 + 拒绝 + 网页链接；其他状态去掉按钮，只显示状态与「详情」链接 |
 | `question` | `form`（`InputForm`）、`state`、`answerSummary`、`webUrl` | `questionRenderableInline(form)` 为真（恰一个枚举字段，单选 ≤5 / 多选 ≤10，不允许「其他」）时在 IM 内作答，否则只给网页链接 |
 | `connect` | `appName`、`url` | 链接按钮 |
 | `bind` | `text`、`url` | 链接按钮（内核只在私聊里发） |
@@ -118,7 +118,7 @@ interface Channel {
 
 ## 内核负责什么（插件不要做）
 
-- **长连接与选主**：只在 worker 角色上运行。每个渠道连接任一时刻只由一个副本持有（Redis 租约 `capk:channel-lease:<id>`，TTL `channels.leaseTtlMs` 默认 30s，`channels.scanIntervalMs` 默认 10s 续租与扫描）；持有者死了，另一副本在租约过期后接管；连接被停用、删除或轮换凭据时持有者断开、按新配置重连。插件的 `connect` 只管一条连接，不判断「该不该由我连」。
+- **长连接与选主**：只在 worker 角色上运行。每个渠道连接任一时刻只由一个副本持有（Redis 租约 `capk:channel-lease:<id>`，TTL `channels.leaseTtlMs` 默认 30s，`channels.scanIntervalMs` 默认 10s 续租与扫描）；持有者死了，另一副本在租约过期后接管；连接被停用、删除或轮换凭据时持有者断开、按新配置重连。插件的 `connect` 只管一条连接，不判断「该不该由我连」。**插件在运行中被停用、卸载或升级换实例时（C17）**，内核的 `ChannelSupervisor.pluginChanged` 交还该插件在本副本持有的全部长连接：中止旧实例 `connect` 的 `signal`、等它返回后释放租约；插件仍在（新实例）时下一轮扫描由任一副本按新实例重新选主，已撤销的不再连接。所以 `connect` 必须及时响应 `signal` 并返回，不要吞掉中止继续重连。
 - **持久入站与出站**：入站在队列里处理（失败退避重试共 5 次），出站按会话事件序号（`channel_deliveries.last_seq`）续投，崩溃后由别的副本接着投、不重复；流式草稿、定稿、卡片状态更新都由内核编排。
 - **去重**：入站按 `messageId` / `eventId`，出站按 `idempotencyKey` 与已投递序号。
 - **卡片操作的再授权**：点击者按入站同样的规则映射到账号，再走审批 / 提问服务的授权（不是审批人只回一句说明，未绑定的人在私聊里收到绑定卡片、群里只提示去私聊）。

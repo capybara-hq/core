@@ -54,7 +54,7 @@ const APPROVAL = {
   callId: "call_1",
   toolKey: "fixture__delete_item",
   toolName: "delete_item",
-  app: { id: "app1", name: "Fixture", slug: "fixture" },
+  connector: { id: "app1", name: "Fixture", slug: "fixture" },
   agent: { id: "ag1", name: "Echo agent" },
   input: { id: "x1" },
   requestedFor: "a1",
@@ -162,7 +162,7 @@ describe("chatItems：工具调用、审批、输入请求、需要连接", () =
     expect(items.map((i) => i.kind)).toEqual(["tool", "question", "tool", "connect"]);
     expect(items[1]).toMatchObject({ answered: { outcome: "answered", answer: { c: true } } });
     expect(items[0]).toMatchObject({ status: "cancelled" });
-    expect(items[3]).toMatchObject({ appId: "app2", appName: "GitHub", closed: true });
+    expect(items[3]).toMatchObject({ connectorId: "app2", connectorName: "GitHub", closed: true });
   });
 
   it("approval_requested / question_asked 使运行进入 waiting（不是 running），处理后恢复", () => {
@@ -284,7 +284,7 @@ describe("ApprovalCard", () => {
   });
 
   it.each(LOCALES)(
-    "工具名、应用、参数、三种范围；选「本会话内」批准 → POST decision（%s）",
+    "工具名、连接器、参数、三种范围；选「本会话内」批准 → POST decision（%s）",
     async (locale) => {
       const m = msgs[locale];
       const calls = stubApi({
@@ -571,7 +571,7 @@ describe("QuestionCard（通用 InputForm 渲染器）", () => {
 });
 
 describe("ConnectCard", () => {
-  it.each(LOCALES)("静态凭据应用：「连接」跳到个人连接页填 token（%s）", async (locale) => {
+  it.each(LOCALES)("静态凭据连接器：「连接」跳到个人连接页填 token（%s）", async (locale) => {
     const m = msgs[locale];
     renderPage(
       <ConnectCard
@@ -580,25 +580,25 @@ describe("ConnectCard", () => {
           kind: "connect",
           key: "e7",
           callId: "c",
-          appId: "app2",
-          appName: "GitHub",
+          connectorId: "app2",
+          connectorName: "GitHub",
           closed: false,
         }}
       />,
       { locale },
     );
     stubApi({
-      "GET /api/v1/orgs/o1/apps/app2": () =>
+      "GET /api/v1/orgs/o1/connectors/app2": () =>
         json(200, {
-          app: { id: "app2", auth: { type: "bearer", ownership: "personal" } },
+          connector: { id: "app2", auth: { type: "bearer", ownership: "personal" } },
         }),
     });
-    expect(screen.getByText(m.connect.description.replace("{app}", "GitHub"))).toBeTruthy();
+    expect(screen.getByText(m.connect.description.replace("{connector}", "GitHub"))).toBeTruthy();
     const connect = screen.getByRole("button", { name: m.connect.action });
     expect(connect.getAttribute("data-variant")).not.toBe("primary");
     await userEvent.setup().click(connect);
     await vi.waitFor(() =>
-      expect(router.push).toHaveBeenCalledWith("/settings/connections#app-app2"),
+      expect(router.push).toHaveBeenCalledWith("/settings/connections#connector-app2"),
     );
   });
 
@@ -611,14 +611,14 @@ describe("ConnectCard", () => {
           kind: "connect",
           key: "e7",
           callId: "c",
-          appId: "app2",
-          appName: "GitHub",
+          connectorId: "app2",
+          connectorName: "GitHub",
           closed: true,
         }}
       />,
       { locale },
     );
-    expect(screen.getByText(m.connect.ended.replace("{app}", "GitHub"))).toBeTruthy();
+    expect(screen.getByText(m.connect.ended.replace("{connector}", "GitHub"))).toBeTruthy();
     expect(screen.queryByRole("button", { name: m.connect.action })).toBeNull();
     expect(screen.queryByText(`‖ ${m.connect.status}`)).toBeNull();
   });

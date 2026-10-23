@@ -30,9 +30,27 @@ const FAKE_IM = {
   config: null,
   secrets: [{ path: "token", set: true }],
   permissions: [
-    { category: "provides", sensitive: false, items: ["channel@1", "directory@1"] },
-    { category: "secrets", sensitive: true, items: ["org:token"] },
-    { category: "tools", sensitive: true, items: ["post_announcement"] },
+    {
+      category: "provides",
+      sensitive: false,
+      items: ["channel@1", "directory@1"],
+      entries: [
+        { value: "channel@1", sensitive: false },
+        { value: "directory@1", sensitive: false },
+      ],
+    },
+    {
+      category: "secrets",
+      sensitive: true,
+      items: ["org:token"],
+      entries: [{ value: "org:token", sensitive: true, reason: "secrets" }],
+    },
+    {
+      category: "tools",
+      sensitive: true,
+      items: ["post_announcement"],
+      entries: [{ value: "post_announcement", sensitive: true, reason: "tools" }],
+    },
   ],
   orgConfigSchema: {
     type: "object",
@@ -50,7 +68,14 @@ const CORE = {
   configurable: false,
   config: null,
   secrets: [],
-  permissions: [{ category: "provides", sensitive: false, items: ["directory-core@1"] }],
+  permissions: [
+    {
+      category: "provides",
+      sensitive: false,
+      items: ["directory-core@1"],
+      entries: [{ value: "directory-core@1", sensitive: false }],
+    },
+  ],
   orgConfigSchema: null,
 };
 
@@ -90,6 +115,44 @@ describe("组织插件（SettingsPage）", () => {
       expect(
         await screen.findByRole("button", { name: m.syncLabel.replace("{plugin}", "fake-im") }),
       ).toBeTruthy();
+    },
+  );
+
+  it.each(["zh", "en"] as const)(
+    "部署上停用的插件：显示「不可用」，开关只读、保留组织的启用设置，没有配置与同步（%s）",
+    async (locale) => {
+      const m = msgs[locale].plugins;
+      const calls = stubApi({
+        [`GET ${BASE}/plugins`]: () =>
+          json(200, {
+            plugins: [
+              {
+                ...FAKE_IM,
+                enabled: true,
+                configurable: false,
+                secrets: [],
+                permissions: [],
+                orgConfigSchema: null,
+                available: false,
+              },
+            ],
+          }),
+      });
+      renderPage(<PluginsPage />, { locale });
+      const toggle = await screen.findByRole("switch", {
+        name: m.enableLabel.replace("{plugin}", "fake-im"),
+      });
+      expect(
+        toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
+      ).toBe(true);
+      expect(screen.getByText(m.unavailable)).toBeTruthy();
+      expect(screen.getByText(m.unavailableHint)).toBeTruthy();
+      expect(screen.getByText(m.enabled)).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: m.syncLabel.replace("{plugin}", "fake-im") }),
+      ).toBeNull();
+      await userEvent.setup().click(toggle);
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
     },
   );
 

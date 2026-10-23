@@ -3,8 +3,8 @@
 import { useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
-import { type AppAuth, connectApp } from "./apps";
 import { navigateBrowser } from "./browser";
+import { type ConnectorAuth, connectConnector } from "./connectors";
 import { useErrorMessage } from "./use-error-message";
 
 /** 内核回调页放在回跳 URL `oauth_error` 里的原因码（界面只显示自己的译文，不回显任何服务器文本）。 */
@@ -15,7 +15,7 @@ const OAUTH_ERROR_CODES = new Set([
   "provider_error",
   "token_exchange_failed",
   "issuer_mismatch",
-  "app_unavailable",
+  "connector_unavailable",
 ]);
 
 export type ConnectResult = { kind: "connected" } | { kind: "error"; code: string };
@@ -23,7 +23,7 @@ export type ConnectResult = { kind: "connected" } | { kind: "error"; code: strin
 const RESULT_PARAMS = ["connected", "oauth_error"] as const;
 
 /**
- * 读取 OAuth 回跳带回的结果（`connected=<appId>` 或 `oauth_error=<code>`），并给出去掉这些参数后的查询串。
+ * 读取 OAuth 回跳带回的结果（`connected=<connectorId>` 或 `oauth_error=<code>`），并给出去掉这些参数后的查询串。
  * 错误码不在已知集合里按 `unknown` 处理。
  */
 export function parseConnectResult(search: string): {
@@ -60,15 +60,15 @@ const isHttpUrl = (u: string): boolean => {
   }
 };
 
-/** 授权码流应用（个人凭据）走 OAuth 授权，其余认证方式填 token。 */
-export const isOAuthCodeApp = (auth: AppAuth): boolean => auth.type === "oauth_code";
+/** 授权码流连接器（个人凭据）走 OAuth 授权，其余认证方式填 token。 */
+export const isOAuthCodeConnector = (auth: ConnectorAuth): boolean => auth.type === "oauth_code";
 
 /**
  * 发起 OAuth 连接：请求授权地址（带回到当前页的 returnTo），再整页跳转过去
  * （内核写的浏览器绑定 Cookie 只在整页导航的回跳里随请求带回，不能用 fetch 完成）。
  */
 export function useStartConnect(orgId: string): {
-  start(appId: string): Promise<void>;
+  start(connectorId: string): Promise<void>;
   starting: boolean;
 } {
   const toast = useToast();
@@ -76,10 +76,14 @@ export function useStartConnect(orgId: string): {
   const t = useTranslations("connect.result");
   const [starting, setStarting] = useState(false);
   const start = useCallback(
-    async (appId: string) => {
+    async (connectorId: string) => {
       setStarting(true);
       try {
-        const { authorizationUrl } = await connectApp(orgId, appId, currentReturnPath());
+        const { authorizationUrl } = await connectConnector(
+          orgId,
+          connectorId,
+          currentReturnPath(),
+        );
         if (!isHttpUrl(authorizationUrl)) {
           toast.error(t("unknown"));
           return;

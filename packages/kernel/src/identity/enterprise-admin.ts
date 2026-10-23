@@ -3,15 +3,24 @@ import type { KernelDatabase } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 
 /**
- * 企业管理员写操作的执行期复核（spec 3.6 R5）：在调用方事务内取 `capybara.enterprise_admins` 咨询锁，
- * 串行化所有企业管理员写操作（撤销 / 停用 / 新建管理员 / 改部署设置），并在锁内实时确认发起人仍是活跃企业管理员，
- * 否则 `forbidden`。鉴权守卫在请求开头读到的身份可能已过期（另一个管理员刚撤销了他），必须在锁内重读。
+ * 在调用方事务内取 `capybara.enterprise_admins` 咨询锁（事务结束释放），串行化所有企业管理员写操作
+ * （撤销 / 停用 / 新建管理员 / 改部署设置 / CLI 的 `capybara admin grant|revoke`）。只加锁、不鉴权：
+ * 没有发起账号的调用方（CLI）用它；有发起账号的用 {@link lockEnterpriseAdminsAndAuthorize}。
+ */
+export async function lockEnterpriseAdmins(trx: Transaction<KernelDatabase>): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))`.execute(trx);
+}
+
+/**
+ * 企业管理员写操作的执行期复核（spec 3.6 R5）：{@link lockEnterpriseAdmins} 后在锁内实时确认发起人仍是
+ * 活跃企业管理员，否则 `forbidden`。鉴权守卫在请求开头读到的身份可能已过期（另一个管理员刚撤销了他），
+ * 必须在锁内重读。
  */
 export async function lockEnterpriseAdminsAndAuthorize(
   trx: Transaction<KernelDatabase>,
   actorAccountId: string,
 ): Promise<void> {
-  await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))`.execute(trx);
+  await lockEnterpriseAdmins(trx);
   const actor = await trx
     .selectFrom("accounts")
     .select("id")

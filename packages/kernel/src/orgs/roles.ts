@@ -21,13 +21,19 @@ export type OrgAction =
   | "agents.create"
   | "agents.use"
   | "agents.manage"
-  | "apps.manage"
-  | "apps.use"
+  | "connectors.manage"
+  | "connectors.use"
   | "approvals.decide"
   | "channels.manage"
   | "skills.read"
   | "skills.manage"
-  | "ui.use";
+  | "ui.use"
+  | "trajectories.read"
+  | "evals.manage"
+  | "org.models.manage"
+  | "directory.read"
+  | "directory.request"
+  | "directory.decide";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -44,10 +50,10 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "agents.use": "guest",
   // 管理他人的 agent（如离职后重新指派负责人）
   "agents.manage": "admin",
-  // 安装 / 配置应用与审阅工具
-  "apps.manage": "admin",
-  // 读取本人可见的应用、连接自己的凭据（凭据属于具体的人，服务令牌不可用）
-  "apps.use": "guest",
+  // 安装 / 配置连接器与审阅工具
+  "connectors.manage": "admin",
+  // 读取本人可见的连接器、连接自己的凭据（凭据属于具体的人，服务令牌不可用）
+  "connectors.use": "guest",
   // 能否处理某条审批另由 requested_for / approver_role 判定；审批只能由人处理（服务令牌 / agent 不可）
   "approvals.decide": "guest",
   // 渠道连接（bot 凭据、绑定的 agent、未绑定用户策略）
@@ -57,6 +63,17 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "skills.manage": "admin",
   // 插件界面（列出贡献、取视图、执行动作、组织级刷新流）：只给人用，服务令牌不可
   "ui.use": "guest",
+  // 轨迹查看器：服务里再判定「组织管理员或该 agent 的负责人」（实时读负责人），其余一律 404
+  "trajectories.read": "member",
+  // 评测集、用例与评测运行（用例快照即对话内容，只给组织管理员）
+  "evals.manage": "admin",
+  // 本组织的模型用途映射（覆盖部署默认，如评委用途 eval）
+  "org.models.manage": "admin",
+  // 企业目录（组织视角）：成员浏览（看不到 disabled）与申请；组织管理员决定成员申请（F-AF）。
+  // 安装另按条目种类要求 skills.manage / connectors.manage / org.plugins.manage（服务里在组织行锁内复核）
+  "directory.read": "member",
+  "directory.request": "member",
+  "directory.decide": "admin",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

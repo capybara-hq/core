@@ -29,6 +29,27 @@ description: 在 apps/web 或 packages/design 下新增或修改界面时使用�
 | 404 / 403 / 维护中 | `StatusPage` | Single 居中 |
 | 新组织、空环境 | `OnboardingPage` | Single 居中清单 |
 
+### 管理后台、评测与企业目录用哪些模板（M6 的现成例子）
+
+| 页面 | 路由 | 模板 |
+|---|---|---|
+| 后台概览 | `/admin` | `OverviewPage` |
+| 账号、组织、插件、企业目录条目、清单浏览 | `/admin/accounts`、`/admin/orgs`、`/admin/plugins`、`/admin/directory`、`/admin/directory/catalog` | `ListPage` |
+| 插件详情、目录条目详情 | `/admin/plugins/[name]`、`/admin/directory/[itemId]` | `DetailPage`（概要 / 权限 / 配置等用 PageTabs） |
+| 安装插件、应用包审阅 | `/admin/plugins/install`、`/admin/directory/apps/review` | `WizardPage` |
+| 部署设置、模型与价格、目录来源 | `/admin/settings`、`/admin/models`、`/admin/directory/sources` | `SettingsPage` |
+| 待企业管理员决定的目录申请 | `/admin/directory/requests` | `InboxPage` |
+| 轨迹列表 / 评测集列表 | `/trajectories`、`/evals` | `ListPage` |
+| 轨迹详情、评测用例 | `/trajectories/[conversationId]`、`/evals/[setId]/cases/[caseId]` | `TracePage`：`waterfall` 放 `SpanWaterfall`，`detail` 放选中 span 的详情 |
+| 评测集、评测运行 | `/evals/[setId]`、`/evals/runs/[runId]` | `DetailPage` |
+| 新建评测集 / 发起运行 | `/evals/new`、`/evals/[setId]/run` | `FormPage` / `WizardPage` |
+| 组织侧的企业目录、条目详情、安装 | `/directory`、`/directory/[itemId]`、`/directory/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
+
+- 后台页面整页包在 `components/AdminGate` 里：不是企业管理员时显示 `StatusPage` 403、不请求 `/api/v1/admin/*`（界面拦截，最终以内核为准）。界面上一律称「企业管理员」。
+- **`SpanWaterfall`**（spec §6.10）只收普通 props（`spans`、`selectedId`、`onSelect`、`labels`、`label`）：span 的 `kind`（`run` / `step` / `model` / `tool` / `wait`）、`startMs`（相对最早 span）、`durationMs`（未知 null）、`status`、`parentId`，调用方按深度优先顺序传入；时间与成本由页面按内核返回的数据算好（延迟由事件时间推出、成本标「估算」）。
+- 权限审阅（安装确认页、组织插件设置、应用包审阅）共用 `components/PermissionReview`；用途映射共用 `components/PurposeEditor`。不要在页面里另画一份。
+- `ListPage` 的主表之后可以附一个从属区块（`h2` + 一个 `DataTable`，如成员页的邀请），见 spec §5.1。
+
 提交操作放 ActionRow（`FormPage`、`WizardPage` 等自带），**不得**放 PageHeader；视图内至多一个 `variant: "primary"`，指标 ≤5（`PageHeader` 在开发与测试里会抛错）。
 
 ## 骨架示例

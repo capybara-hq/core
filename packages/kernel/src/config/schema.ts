@@ -61,6 +61,14 @@ export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
   "release-assets.githubusercontent.com",
 ];
 
+/** `packages.maxBytes` 的默认值（插件包 tgz 的大小上限）；`check:plugin-pack` 用同一个值。 */
+export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
+
+/** `catalogs.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
+export const CATALOG_OFFICIAL_URL_DEFAULT = "https://catalog.capybarahq.com/v1/index.json";
+/** 每个清单来源最多的镜像数。 */
+export const CATALOG_MAX_MIRRORS = 5;
+
 const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
@@ -109,6 +117,198 @@ export const KernelConfigSchema = z.object({
     .record(z.string(), z.unknown())
     .default({})
     .meta(meta({ description: "Deployment-level config keyed by plugin name" })),
+  pluginHost: z
+    .object({
+      dir: z
+        .string()
+        .min(1)
+        .default("/var/lib/capybara/plugins")
+        .meta(
+          meta({
+            description:
+              "Local directory where each replica unpacks installed plugin packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store",
+          }),
+        ),
+      drainSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Seconds in-flight tool calls and queue jobs of a plugin being unloaded may keep running before they are aborted",
+          }),
+        ),
+      disposeTimeoutSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({
+            description:
+              "Seconds a plugin's dispose() may run when it is unloaded or replaced; after that the kernel logs a warning and moves on",
+          }),
+        ),
+      reloadSetupTimeoutSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(60)
+        .meta(
+          meta({
+            description:
+              "Seconds a plugin's setup() may run when it is reloaded in a running process (enable, upgrade, dependency change), and when an installed plugin (install record) is loaded at startup; on timeout the load fails and the previous instance, if any, stays. Built-in and config-declared plugins are not bounded at startup",
+          }),
+        ),
+      migrationTimeoutSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(300)
+        .meta(
+          meta({
+            description:
+              "Seconds an installed plugin's migrations may run on the replica holding the migration lock; on timeout the migration session is terminated (statement_timeout bounds each statement, lock_timeout bounds lock waits), the lock is released and the replica reports migration_failed (retried on the next reconcile). Built-in and config-declared plugins are not bounded",
+          }),
+        ),
+      reconcileIntervalSeconds: z
+        .number()
+        .int()
+        .positive()
+        .default(60)
+        .meta(
+          meta({
+            description:
+              "Seconds between periodic reconciles of each replica's loaded plugins against the installed state in PostgreSQL",
+          }),
+        ),
+    })
+    .prefault({} as never),
+  packages: z
+    .object({
+      npmRegistry: z
+        .url()
+        .default("https://registry.npmjs.org")
+        .meta(meta({ description: "npm registry used to install plugin packages by name" })),
+      npmToken: z
+        .string()
+        .min(1)
+        .optional()
+        .meta(
+          meta({
+            secret: true,
+            description:
+              "Bearer token for the npm registry (private registries); sent only to the registry origin",
+          }),
+        ),
+      maxBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(PACKAGES_MAX_BYTES_DEFAULT)
+        .meta(
+          meta({
+            description:
+              "Largest plugin package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store. Lowering it also caps what replicas read back from the object store, so packages accepted earlier under a larger limit can no longer be synced. Uploads through the web tier (apps/web) are also capped by its own CAPYBARA_WEB_MAX_PACKAGE_BYTES (default 50 MiB); raise both together",
+          }),
+        ),
+    })
+    .prefault({} as never),
+  directory: z
+    .object({
+      maxBundleBytes: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Largest total size in bytes of one app bundle import: the app package plus every plugin package it locks (downloaded and held in memory while validating). Defaults to 4 x packages.maxBytes",
+          }),
+        ),
+      staleInstallMinutes: z
+        .number()
+        .int()
+        .positive()
+        .default(30)
+        .meta(
+          meta({
+            description:
+              "Minutes after which an organization app install still in the installing state (e.g. the replica crashed mid-install) may be cleaned up through uninstall, which rolls back the components it recorded",
+          }),
+        ),
+    })
+    .prefault({} as never),
+  catalogs: z
+    .object({
+      official: z
+        .object({
+          enabled: z
+            .boolean()
+            .default(true)
+            .meta(
+              meta({
+                description:
+                  "Use the official directory catalog. Set to false for offline deployments: the official catalog is never fetched and the admin UI shows offline mode",
+              }),
+            ),
+          url: z
+            .url({ protocol: /^https?$/ })
+            .default(CATALOG_OFFICIAL_URL_DEFAULT)
+            .meta(
+              meta({
+                description:
+                  "URL of the official catalog index.json (https; a placeholder until the official catalog goes live)",
+              }),
+            ),
+          mirrors: z
+            .array(z.url({ protocol: /^https?$/ }))
+            .max(CATALOG_MAX_MIRRORS)
+            .default([])
+            .meta(
+              meta({
+                description:
+                  "Mirror URLs of the official catalog index.json (https), tried in order when the main URL fails",
+              }),
+            ),
+        })
+        .prefault({} as never),
+      refreshIntervalMinutes: z
+        .number()
+        .int()
+        .min(1)
+        .default(360)
+        .meta(
+          meta({
+            description:
+              "Minutes between periodic refreshes of every enabled catalog (one maintenance job for all replicas)",
+          }),
+        ),
+      maxIndexBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(5_242_880)
+        .meta(
+          meta({
+            description:
+              "Largest catalog index.json in bytes; a larger response is rejected and the previous entries are kept",
+          }),
+        ),
+      allowInsecureLoopback: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Testing only: allow plain http for catalog and tarball URLs on loopback addresses",
+          }),
+        ),
+    })
+    .prefault({} as never),
   pluginPermissions: z
     .object({
       autoApprove: z
@@ -163,7 +363,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth apps: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com",
+              "Externally reachable origin of the web app (apps/web, which proxies /api to the kernel), not the kernel's own address; required for OAuth connectors: the redirect URI is <publicUrl>/api/v1/oauth/callback (served through the web /api proxy, which also carries the OAuth binding cookie) and the callback redirects to web pages under it, e.g. https://capybara.example.com",
           }),
         ),
     })
@@ -396,7 +596,9 @@ export const KernelConfigSchema = z.object({
         .positive()
         .default(5)
         .meta(
-          meta({ description: "Consecutive failures of one app that open its circuit breaker" }),
+          meta({
+            description: "Consecutive failures of one connector that open its circuit breaker",
+          }),
         ),
       breakerOpenSeconds: z
         .number()
@@ -476,7 +678,7 @@ export const KernelConfigSchema = z.object({
         .default(24)
         .meta(
           meta({
-            description: "Hours between checks of connected apps for changed tool definitions",
+            description: "Hours between checks of connectors for changed tool definitions",
           }),
         ),
       maxResultReadChars: z
@@ -790,6 +992,84 @@ export const KernelConfigSchema = z.object({
             ),
         })
         .prefault({} as never),
+    })
+    .prefault({} as never),
+  evals: z
+    .object({
+      orgConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(2)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Maximum eval cases executing concurrently per organization across all replicas",
+          }),
+        ),
+      workerConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(4)
+        .meta(meta({ description: "Eval case jobs one replica processes at the same time" })),
+      defaultTokenCap: z
+        .number()
+        .int()
+        .positive()
+        .default(1_000_000)
+        .meta(
+          meta({
+            description:
+              "Token cap of an eval run when none is given; the run stops sending new model requests once it is reached",
+          }),
+        ),
+      maxTokenCap: z
+        .number()
+        .int()
+        .positive()
+        .default(20_000_000)
+        .meta(meta({ description: "Largest token cap an eval run may ask for" })),
+      maxCasesPerSet: z
+        .number()
+        .int()
+        .positive()
+        .default(500)
+        .meta(meta({ description: "Maximum number of cases in one eval set" })),
+      maxCaseBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(4_194_304)
+        .meta(
+          meta({
+            description:
+              "Largest log snapshot in bytes (serialized JSON) one eval case may store; larger runs cannot be added",
+          }),
+        ),
+      judgeMaxOutputTokens: z
+        .number()
+        .int()
+        .positive()
+        .default(1024)
+        .meta(meta({ description: "Maximum output tokens of one LLM judge request" })),
+      maxConsecutiveErrors: z
+        .number()
+        .int()
+        .positive()
+        .default(10)
+        .meta(
+          meta({
+            description:
+              "Consecutive failed results after which an eval run is marked failed and its remaining cases are skipped",
+          }),
+        ),
+    })
+    // 默认上限必须在允许范围内，否则不传 tokenCap 的运行一律被拒
+    .refine((c) => c.defaultTokenCap <= c.maxTokenCap, {
+      message: "evals.defaultTokenCap must be at most evals.maxTokenCap",
+      path: ["defaultTokenCap"],
     })
     .prefault({} as never),
   log: z

@@ -149,7 +149,8 @@
 .cb-status[data-status="failed"] {
   color: var(--cb-fail);
 }
-.cb-status[data-status="waiting"] {
+.cb-status[data-status="waiting"],
+.cb-status[data-status="capped"] {
   color: var(--cb-warn);
 }
 
@@ -590,6 +591,11 @@
   font: inherit;
   white-space: pre;
 }
+/* <code> 的 UA 样式是 font-family: monospace（系统字体）：与外层 Sarasa 的基线 / 行高不一致，
+   且 Linux 下系统等宽字体的度量不稳定（行距在 20 / 21px 间跳），一律继承设计字体。 */
+.cb-code-pre code {
+  font: inherit;
+}
 
 /* 插件嵌入页：宽度撑满，高度由属性给定 */
 .cb-embed {
@@ -722,4 +728,102 @@ a.cb-attachment:hover {
   color: var(--cb-muted);
   font-size: 12px;
   line-height: 16px;
+}
+
+/* SpanWaterfall（spec §6.10）：名称列 40% | 时间轨 | 状态 | 耗时 */
+.cb-waterfall {
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+.cb-waterfall:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-waterfall-empty {
+  padding: 12px 16px;
+}
+.cb-waterfall-row {
+  display: grid;
+  grid-template-columns: 40% minmax(80px, 1fr) 10ch 9ch;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--cb-line);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.cb-waterfall-row:hover {
+  background: var(--cb-hover);
+}
+.cb-waterfall-row[aria-selected="true"] {
+  background: var(--cb-accent-tint);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+.cb-waterfall-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.cb-waterfall-kind {
+  flex: none;
+  width: 5ch;
+  color: var(--cb-faint);
+  font-size: 11px;
+  line-height: 14px;
+}
+.cb-waterfall-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-waterfall-row[data-kind="run"] .cb-waterfall-label,
+.cb-waterfall-row[data-kind="step"] .cb-waterfall-label {
+  font-weight: 700;
+}
+.cb-waterfall-meta {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.cb-waterfall-track {
+  position: relative;
+  height: 28px;
+  border-left: 1px solid var(--cb-line);
+}
+.cb-waterfall-bar {
+  position: absolute;
+  top: 10px;
+  height: 8px;
+  min-width: 2px;
+  background: var(--cb-line-strong);
+}
+.cb-waterfall-row[data-status="error"] .cb-waterfall-bar {
+  background: var(--cb-fail);
+}
+.cb-waterfall-row[data-status="pending"] .cb-waterfall-bar {
+  background: var(--cb-accent);
+}
+.cb-waterfall-row[data-kind="wait"] .cb-waterfall-bar {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--cb-line-strong);
+}
+.cb-waterfall-row[data-kind="wait"][data-status="pending"] .cb-waterfall-bar {
+  box-shadow: inset 0 0 0 1px var(--cb-accent);
+}
+.cb-waterfall-row[data-kind="wait"][data-status="error"] .cb-waterfall-bar {
+  box-shadow: inset 0 0 0 1px var(--cb-fail);
+}
+.cb-waterfall-status {
+  min-width: 0;
+  overflow: hidden;
+}
+.cb-waterfall-ms {
+  text-align: right;
+  color: var(--cb-muted);
 }

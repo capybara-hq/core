@@ -36,6 +36,8 @@ const CreateBody = z.object({ uploadId: z.string().min(1).max(100) }).strict();
  *   2. 浏览器直传对象存储（可再调 `POST /attachments/:id/finalize`，也可省略，由下一步代为 finalize）；
  *   3. `POST /` `{ uploadId }` 解包校验，创建技能或给同名技能新增一个版本；
  *   `DELETE /:id` 软删除（二次确认由网页负责，R3）。
+ * 部署设置 `customSkills` 为 deny 时，上传登记与创建都返回 403 `directory.custom_disabled`（服务里判定，
+ * 创建时在组织行锁内复核）；从企业目录安装技能不受影响。
  */
 @Controller("api/v1/orgs/:orgId/skills")
 export class SkillsController {

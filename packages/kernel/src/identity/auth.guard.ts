@@ -24,6 +24,74 @@ const BEARER_RE = /^Bearer\s+(\S+)$/i;
 /** 凭据解析的结果；`cookie` 为 true 表示经 Cookie 认证（需要 CSRF 检查）。 */
 type Resolved = { principal: Principal; cookie: boolean } | undefined;
 
+/** 解析凭据要用的服务（{@link AuthGuard} 与 {@link authorizeEnterpriseAdmin} 共用）。 */
+export interface AuthServices {
+  accounts: AccountsService;
+  sessions: SessionService;
+  tokens: ApiTokenService;
+}
+
+function requireCsrf(req: FastifyRequest): void {
+  if (req.headers[CSRF_HEADER] !== "1") {
+    throw new ApiError("auth.csrf", `Missing ${CSRF_HEADER} header`);
+  }
+}
+
+/** 解析凭据；无凭据返回 undefined，凭据无效抛对应的 ApiError。 */
+async function resolvePrincipal(req: FastifyRequest, s: AuthServices): Promise<Resolved> {
+  const bearer = BEARER_RE.exec(req.headers.authorization ?? "")?.[1];
+  if (bearer !== undefined) {
+    const rec = await s.tokens.authenticate(bearer);
+    if (!rec) throw new ApiError("auth.required", "Authentication required");
+    if (rec.kind === "service") {
+      return {
+        principal: {
+          kind: "service",
+          tokenId: rec.id,
+          orgId: rec.orgId as string,
+          role: rec.role as "admin" | "member" | "guest",
+        },
+        cookie: false,
+      };
+    }
+    const account = await s.accounts.get(rec.accountId as string);
+    if (!account) throw new ApiError("auth.required", "Authentication required");
+    return {
+      principal: { kind: "user", account: requireActive(account), via: "pat", tokenId: rec.id },
+      cookie: false,
+    };
+  }
+  const at = req.cookies[ACCESS_COOKIE];
+  if (at) {
+    // 一条查询同时完成吊销检查与账号读取
+    const { account, sessionId } = await s.sessions.verifyAccess(at);
+    return {
+      principal: { kind: "user", account: requireActive(account), via: "session", sessionId },
+      cookie: true,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * 在读请求体之前（Fastify `onRequest`）按 `@EnterpriseAdmin` 路由的规则认证：无凭据 / 凭据无效 → `auth.required`
+ * 等，Cookie 认证的非安全请求要求 CSRF 头，服务令牌与非企业管理员 → `forbidden`。插件包上传用它：
+ * 未认证的大请求体不被读入内存。之后 {@link AuthGuard} 照常再判一次。
+ */
+export async function authorizeEnterpriseAdmin(
+  req: FastifyRequest,
+  s: AuthServices,
+): Promise<void> {
+  const resolved = await resolvePrincipal(req, s);
+  if (!resolved) throw new ApiError("auth.required", "Authentication required");
+  if (resolved.cookie && !SAFE_METHODS.has(req.method.toUpperCase())) requireCsrf(req);
+  const p = resolved.principal;
+  if (p.kind === "service") {
+    throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
+  }
+  if (!p.account.isEnterpriseAdmin) throw new ApiError("forbidden", "Enterprise admin required");
+}
+
 /**
  * 全局守卫（`APP_GUARD`），默认拒绝：
  * 1. `Authorization: Bearer cap_pat_…|cap_svc_…` → API 令牌；个人令牌再实时读账号状态。不做 CSRF 检查。
@@ -41,9 +109,9 @@ type Resolved = { principal: Principal; cookie: boolean } | undefined;
 export class AuthGuard implements CanActivate {
   constructor(
     @Inject(Reflector) private readonly reflector: Reflector,
-    @Inject(ACCOUNTS) private readonly accounts: AccountsService,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
+    @Inject(ACCOUNTS) readonly accounts: AccountsService,
+    @Inject(SESSIONS) readonly sessions: SessionService,
+    @Inject(API_TOKENS) readonly tokens: ApiTokenService,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -53,11 +121,11 @@ export class AuthGuard implements CanActivate {
     const isPublic = flag(PUBLIC_KEY);
     const unsafe = !SAFE_METHODS.has(req.method.toUpperCase());
 
-    if (isPublic && unsafe) this.requireCsrf(req);
+    if (isPublic && unsafe) requireCsrf(req);
 
     let resolved: Resolved;
     try {
-      resolved = await this.resolve(req);
+      resolved = await resolvePrincipal(req, this);
     } catch (e) {
       // 公开路由上只把「凭据无效」（ApiError）视同未携带；PG / Redis 故障等照常抛出（500），
       // 否则故障期间带着有效 Cookie 的请求会被当作匿名放行
@@ -68,7 +136,7 @@ export class AuthGuard implements CanActivate {
       if (isPublic) return true;
       throw new ApiError("auth.required", "Authentication required");
     }
-    if (resolved.cookie && unsafe) this.requireCsrf(req);
+    if (resolved.cookie && unsafe) requireCsrf(req);
 
     const p = resolved.principal;
     req.principal = p;
@@ -86,50 +154,6 @@ export class AuthGuard implements CanActivate {
       throw new ApiError("forbidden", "Enterprise admin required");
     }
     return true;
-  }
-
-  private requireCsrf(req: FastifyRequest): void {
-    if (req.headers[CSRF_HEADER] !== "1") {
-      throw new ApiError("auth.csrf", `Missing ${CSRF_HEADER} header`);
-    }
-  }
-
-  /** 解析凭据；无凭据返回 undefined，凭据无效抛对应的 ApiError。 */
-  private async resolve(req: FastifyRequest): Promise<Resolved> {
-    const bearer = BEARER_RE.exec(req.headers.authorization ?? "")?.[1];
-    if (bearer !== undefined) {
-      const rec = await this.tokens.authenticate(bearer);
-      if (!rec) throw new ApiError("auth.required", "Authentication required");
-      if (rec.kind === "service") {
-        return {
-          principal: {
-            kind: "service",
-            tokenId: rec.id,
-            orgId: rec.orgId as string,
-            role: rec.role as "admin" | "member" | "guest",
-          },
-          cookie: false,
-        };
-      }
-      const account = await this.activeAccount(rec.accountId as string);
-      return { principal: { kind: "user", account, via: "pat", tokenId: rec.id }, cookie: false };
-    }
-    const at = req.cookies[ACCESS_COOKIE];
-    if (at) {
-      // 一条查询同时完成吊销检查与账号读取
-      const { account, sessionId } = await this.sessions.verifyAccess(at);
-      return {
-        principal: { kind: "user", account: requireActive(account), via: "session", sessionId },
-        cookie: true,
-      };
-    }
-    return undefined;
-  }
-
-  private async activeAccount(id: string): Promise<Account> {
-    const account = await this.accounts.get(id);
-    if (!account) throw new ApiError("auth.required", "Authentication required");
-    return requireActive(account);
   }
 }
 

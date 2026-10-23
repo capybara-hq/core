@@ -16,6 +16,34 @@ export interface PluginRouter {
   find(method: string, path: string): Route["handler"] | undefined;
 }
 
+/**
+ * 插件路由的实时来源（C17）：路由随插件实例撤销 / 替换而变，`revision()` 变了就重建路由表。
+ * `unavailable(plugin)`：插件属于本部署但此刻不在注册表里（已撤销 / 待批准 / 加载失败）——
+ * 它的 `/plugins/<plugin>/*` 一律 503 `plugin.unavailable`（路由保留挂载只做闸门）。
+ */
+export interface PluginRouteTable {
+  routes(): Route[];
+  revision(): number;
+  unavailable(plugin: string): boolean | Promise<boolean>;
+  /**
+   * 插件实例变化（撤销 / 替换）的通知：转发层据此中止该插件进行中请求的 `req.signal`
+   * （SSE 等长连接随之收尾，不留在旧实例上）。返回取消订阅函数。
+   */
+  onChange?(listener: (plugin: string) => void): () => void;
+}
+
+/** 固定的路由列表（测试与只挂一次的调用方）：版本不变、没有不可用的插件。 */
+export function staticRouteTable(routes: Route[]): PluginRouteTable {
+  return { routes: () => routes, revision: () => 0, unavailable: () => false };
+}
+
+/** 路径里的插件名（`/plugins/<name>/...` 的 `<name>`）；不在插件前缀下返回 undefined。 */
+export function pluginOfPath(path: string): string | undefined {
+  if (!path.startsWith(PLUGIN_PREFIX)) return undefined;
+  const name = path.slice(PLUGIN_PREFIX.length).split("/", 1)[0];
+  return name === undefined || name === "" ? undefined : name;
+}
+
 /** 用 find-my-way 建立插件路由表，路径语法与 Fastify 相同；路径不在 `/plugins/` 下时抛错。 */
 export function createPluginRouter(routes: Route[]): PluginRouter {
   const router = FindMyWay();
@@ -41,6 +69,8 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
 /**
  * 在独立的封装作用域里注册 `/plugins/*`，转成 Web `Request` 交给插件 handler：
  * 作用域内移除默认解析器、所有 content-type 一律按原始 Buffer 收下，插件拿到的 body 与客户端发出的字节一致。
+ * - 插件属于本部署但不在注册表里（已撤销等）→ 503 `plugin.unavailable`；插件实例被撤销或替换时，
+ *   该插件进行中请求的 `req.signal` 被中止（`abortPlugin`，路由来源的 `onChange` 触发）；
  * - 未挂载或无匹配 → 404 `not_found`；HEAD 没有专门路由时按 GET 处理，响应不带 body。
  * - 无法构造 `Request`（如畸形 Host）→ 400 `validation_failed`，不记 error。
  * - `req.signal` 只在响应写完之前客户端断开时中止（正常完成不中止），长连接 handler 用它退订；
@@ -54,21 +84,38 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
  */
 export async function registerPluginDispatch(
   fastify: FastifyInstance,
-  getRouter: () => PluginRouter | undefined,
+  getTable: () => PluginRouteTable | undefined,
   log: Logger,
-): Promise<{ abortAll(): void }> {
-  const inFlight = new Set<AbortController>();
+): Promise<{ abortAll(): void; abortPlugin(plugin: string): void }> {
+  /** 进行中的请求 → 所属插件（停机时全部中止；插件实例变化时只中止该插件的）。 */
+  const inFlight = new Map<AbortController, string>();
   let stopping = false;
+  // 按路由来源的版本缓存路由表（插件撤销 / 替换时版本变化才重建）
+  let cached: { table: PluginRouteTable; revision: number; router: PluginRouter } | undefined;
+  const routerOf = (table: PluginRouteTable): PluginRouter => {
+    const revision = table.revision();
+    if (!cached || cached.table !== table || cached.revision !== revision) {
+      cached = { table, revision, router: createPluginRouter(table.routes()) };
+    }
+    return cached.router;
+  };
   const handler = async (req: FastifyRequest, reply: FastifyReply) => {
     const path = req.url.split("?")[0] as string;
-    const pluginHandler = getRouter()?.find(req.method, path);
+    const table = getTable();
+    const plugin = pluginOfPath(path);
+    if (table && plugin !== undefined && (await table.unavailable(plugin))) {
+      return reply
+        .code(503)
+        .send(errorBody("plugin.unavailable", `Plugin ${plugin} is not available right now`));
+    }
+    const pluginHandler = table ? routerOf(table).find(req.method, path) : undefined;
     if (!pluginHandler) {
       return reply.code(404).send(errorBody("not_found", `Route ${req.method} ${path} not found`));
     }
     // 只在响应写完之前连接就关了（客户端断开）时中止 `req.signal`：长连接（SSE）的 handler 据此退订、收尾。
     // 正常写完后的 close 不中止（writableFinished 为 true）。
     const ac = new AbortController();
-    inFlight.add(ac);
+    inFlight.set(ac, plugin ?? "");
     if (stopping) ac.abort();
     reply.raw.once("close", () => {
       inFlight.delete(ac);
@@ -116,7 +163,10 @@ export async function registerPluginDispatch(
   return {
     abortAll() {
       stopping = true;
-      for (const ac of [...inFlight]) ac.abort();
+      for (const ac of [...inFlight.keys()]) ac.abort();
+    },
+    abortPlugin(plugin) {
+      for (const [ac, p] of [...inFlight]) if (p === plugin) ac.abort();
     },
   };
 }

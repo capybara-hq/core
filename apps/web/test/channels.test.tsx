@@ -64,7 +64,17 @@ const PLUGINS = [
     configurable: true,
     config: null,
     secrets: [],
-    permissions: [{ category: "provides", sensitive: false, items: ["channel@1", "directory@1"] }],
+    permissions: [
+      {
+        category: "provides",
+        sensitive: false,
+        items: ["channel@1", "directory@1"],
+        entries: [
+          { value: "channel@1", sensitive: false },
+          { value: "directory@1", sensitive: false },
+        ],
+      },
+    ],
     orgConfigSchema: null,
   },
   {
@@ -74,7 +84,14 @@ const PLUGINS = [
     configurable: false,
     config: null,
     secrets: [],
-    permissions: [{ category: "tools", sensitive: true, items: ["todo_add"] }],
+    permissions: [
+      {
+        category: "tools",
+        sensitive: true,
+        items: ["todo_add"],
+        entries: [{ value: "todo_add", sensitive: true, reason: "tools" }],
+      },
+    ],
     orgConfigSchema: null,
   },
   {
@@ -84,7 +101,14 @@ const PLUGINS = [
     configurable: false,
     config: null,
     secrets: [],
-    permissions: [{ category: "provides", sensitive: false, items: ["channel@1"] }],
+    permissions: [
+      {
+        category: "provides",
+        sensitive: false,
+        items: ["channel@1"],
+        entries: [{ value: "channel@1", sensitive: false }],
+      },
+    ],
     orgConfigSchema: null,
   },
 ];

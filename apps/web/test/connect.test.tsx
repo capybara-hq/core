@@ -37,8 +37,8 @@ const item = {
   kind: "connect" as const,
   key: "e1",
   callId: "c",
-  appId: "app1",
-  appName: "Docs",
+  connectorId: "app1",
+  connectorName: "Docs",
   closed: false,
 };
 
@@ -70,14 +70,15 @@ describe("parseConnectResult", () => {
   });
 });
 
-describe("ConnectCard：OAuth 应用", () => {
+describe("ConnectCard：OAuth 连接器", () => {
   it.each(LOCALES)(
     "「连接」以当前页为 returnTo 调 connect，再整页跳到授权地址（%s）",
     async (locale) => {
       window.history.replaceState(null, "", `/${locale}/chat/c1`);
       const calls = stubApi({
-        "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: oauthApp("missing") }),
-        "POST /api/v1/orgs/o1/apps/app1/connect": () => json(200, { authorizationUrl: AUTH_URL }),
+        "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: oauthApp("missing") }),
+        "POST /api/v1/orgs/o1/connectors/app1/connect": () =>
+          json(200, { authorizationUrl: AUTH_URL }),
       });
       renderPage(<ConnectCard orgId="o1" item={item} />, { locale });
       await userEvent
@@ -93,8 +94,8 @@ describe("ConnectCard：OAuth 应用", () => {
 
   it("授权地址不是 http(s) 时不跳转", async () => {
     stubApi({
-      "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: oauthApp("missing") }),
-      "POST /api/v1/orgs/o1/apps/app1/connect": () =>
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: oauthApp("missing") }),
+      "POST /api/v1/orgs/o1/connectors/app1/connect": () =>
         json(200, { authorizationUrl: "javascript:alert(1)" }),
     });
     renderPage(<ConnectCard orgId="o1" item={item} />);
@@ -105,9 +106,9 @@ describe("ConnectCard：OAuth 应用", () => {
 
   it("connect 失败：toast 显示译文，不跳转", async () => {
     stubApi({
-      "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: oauthApp("missing") }),
-      "POST /api/v1/orgs/o1/apps/app1/connect": () =>
-        json(404, { error: { code: "app.not_found", message: "x" } }),
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: oauthApp("missing") }),
+      "POST /api/v1/orgs/o1/connectors/app1/connect": () =>
+        json(404, { error: { code: "connector.not_found", message: "x" } }),
     });
     renderPage(<ConnectCard orgId="o1" item={item} />);
     await userEvent.setup().click(screen.getByRole("button", { name: en.connect.action }));
@@ -146,17 +147,20 @@ describe("回跳结果提示", () => {
   });
 });
 
-describe("个人连接页：OAuth 应用", () => {
+describe("个人连接页：OAuth 连接器", () => {
   it.each(LOCALES)("连接 / 重新连接 / 断开连接（%s）", async (locale) => {
     const m = msgs[locale];
     window.history.replaceState(null, "", `/${locale}/settings/connections`);
     let status: "connected" | "missing" = "missing";
     const calls = stubApi({
-      "GET /api/v1/orgs/o1/apps": () =>
-        json(200, { apps: [{ ...oauthApp("missing"), tools: undefined, credential: undefined }] }),
-      "GET /api/v1/orgs/o1/apps/app1": () => json(200, { app: oauthApp(status) }),
-      "POST /api/v1/orgs/o1/apps/app1/connect": () => json(200, { authorizationUrl: AUTH_URL }),
-      "DELETE /api/v1/orgs/o1/apps/app1/credentials/me": () => {
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, {
+          connectors: [{ ...oauthApp("missing"), tools: undefined, credential: undefined }],
+        }),
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: oauthApp(status) }),
+      "POST /api/v1/orgs/o1/connectors/app1/connect": () =>
+        json(200, { authorizationUrl: AUTH_URL }),
+      "DELETE /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
         status = "missing";
         return noContent();
       },
@@ -164,7 +168,7 @@ describe("个人连接页：OAuth 应用", () => {
     const { container } = renderPage(<ConnectionsPage />, { locale });
     const section = await screen.findByRole("region", { name: "Docs" });
     // 没有 token 输入框；页面没有多个主操作
-    expect(within(section).queryByLabelText(m.apps.form.tokenLabel)).toBeNull();
+    expect(within(section).queryByLabelText(m.connectors.form.tokenLabel)).toBeNull();
     expect(
       container.querySelectorAll('[data-variant="primary"], .cb-btn-link-primary').length,
     ).toBeLessThanOrEqual(1);

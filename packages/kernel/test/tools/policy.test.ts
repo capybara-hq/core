@@ -25,29 +25,29 @@ import {
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
-import { seedApp, seedConversation } from "../helpers/tool-fixtures.js";
+import { seedConnector, seedConversation } from "../helpers/tool-fixtures.js";
 
 // ---- decide 真值表（纯函数） ----
 
 describe("decide", () => {
-  const base: PolicyInput = { appDefault: "allow", fixedAsk: false, grant: null };
+  const base: PolicyInput = { connectorDefault: "allow", fixedAsk: false, grant: null };
   const POLICIES = ["allow", "ask", "deny"] as const;
   const OVERRIDES = [undefined, "ask", "deny"] as const;
   const GRANTS = [null, "session", "always"] as const;
   const rank = { allow: 0, ask: 1, deny: 2 } as const;
 
-  it("全组合：取 appDefault / agentOverride / fixedAsk 中最严者；授权只能把 ask 放行为 allow（fixedAsk 除外）", () => {
-    for (const appDefault of POLICIES) {
+  it("全组合：取 connectorDefault / agentOverride / fixedAsk 中最严者；授权只能把 ask 放行为 allow（fixedAsk 除外）", () => {
+    for (const connectorDefault of POLICIES) {
       for (const agentOverride of OVERRIDES) {
         for (const fixedAsk of [false, true]) {
           for (const grant of GRANTS) {
             const got = decide({
-              appDefault,
+              connectorDefault,
               ...(agentOverride !== undefined && { agentOverride }),
               fixedAsk,
               grant,
             });
-            let strict: number = rank[appDefault];
+            let strict: number = rank[connectorDefault];
             if (agentOverride !== undefined) strict = Math.max(strict, rank[agentOverride]);
             if (fixedAsk) strict = Math.max(strict, rank.ask);
             const expected =
@@ -58,7 +58,7 @@ describe("decide", () => {
                     ? "allow"
                     : "ask"
                   : "allow";
-            expect(got, JSON.stringify({ appDefault, agentOverride, fixedAsk, grant })).toBe(
+            expect(got, JSON.stringify({ connectorDefault, agentOverride, fixedAsk, grant })).toBe(
               expected,
             );
           }
@@ -68,20 +68,20 @@ describe("decide", () => {
   });
 
   it("deny 不可被授权越过", () => {
-    expect(decide({ ...base, appDefault: "deny", grant: "always" })).toBe("deny");
+    expect(decide({ ...base, connectorDefault: "deny", grant: "always" })).toBe("deny");
     expect(decide({ ...base, agentOverride: "deny", grant: "session" })).toBe("deny");
   });
 
   it("R3 / requiresUserInteraction 至少 ask，且记住的授权不放行", () => {
     expect(decide({ ...base, fixedAsk: true })).toBe("ask");
     expect(decide({ ...base, fixedAsk: true, grant: "always" })).toBe("ask");
-    expect(decide({ ...base, fixedAsk: true, appDefault: "deny" })).toBe("deny");
+    expect(decide({ ...base, fixedAsk: true, connectorDefault: "deny" })).toBe("deny");
   });
 
   it("agent 放宽无效：组织默认 deny / ask 时 agent 覆盖为 ask 不改变结果", () => {
-    expect(decide({ ...base, appDefault: "deny", agentOverride: "ask" })).toBe("deny");
-    expect(decide({ ...base, appDefault: "ask", agentOverride: "ask" })).toBe("ask");
-    expect(decide({ ...base, appDefault: "allow", agentOverride: "ask" })).toBe("ask");
+    expect(decide({ ...base, connectorDefault: "deny", agentOverride: "ask" })).toBe("deny");
+    expect(decide({ ...base, connectorDefault: "ask", agentOverride: "ask" })).toBe("ask");
+    expect(decide({ ...base, connectorDefault: "allow", agentOverride: "ask" })).toBe("ask");
   });
 
   it("R3 固定询问清单：M5 起含 skill_write（改共享技能），只对共享 agent 生效", () => {
@@ -100,6 +100,23 @@ describe("decide", () => {
     // 不知道可见性时按共享处理（更严）
     expect(isFixedAsk(tool("skill_write"), undefined)).toBe(true);
     expect(isFixedAsk(tool("skill_load"), "org")).toBe(false);
+  });
+
+  it("skill_write 的私有 agent 开关（D10）：私有且 ask → 固定询问；缺省 / allow → 不问；共享不论取值都问", () => {
+    const t = {
+      key: "skill_write",
+      source: { kind: "builtin", name: "skill_write" },
+      spec: { name: "skill_write", description: "d", inputSchema: { type: "object" } },
+      specHash: "h",
+      defaultPolicy: "allow",
+    } as ResolvedTool;
+    expect(isFixedAsk(t, "private")).toBe(false);
+    expect(isFixedAsk(t, "private", undefined)).toBe(false);
+    expect(isFixedAsk(t, "private", "allow")).toBe(false);
+    expect(isFixedAsk(t, "private", "ask")).toBe(true);
+    expect(isFixedAsk(t, "org", "allow")).toBe(true);
+    expect(isFixedAsk(t, "members", "allow")).toBe(true);
+    expect(isFixedAsk(t, undefined, "allow")).toBe(true);
   });
 });
 
@@ -153,7 +170,7 @@ const agentDef: AgentDefinition = {
 };
 
 let seed: Awaited<ReturnType<typeof seedConversation>>;
-let appId: string;
+let connectorId: string;
 let runId: string;
 let ctx: PolicyContext;
 
@@ -166,7 +183,7 @@ const SPEC: ToolSpec = {
 function appTool(overrides: Partial<ResolvedTool> = {}): ResolvedTool {
   return {
     key: "docs__create_doc",
-    source: { kind: "app", appId, name: "create_doc" },
+    source: { kind: "connector", connectorId, name: "create_doc" },
     spec: SPEC,
     specHash: specHash(SPEC),
     defaultPolicy: "allow",
@@ -190,9 +207,9 @@ async function setAppTool(
   hash = specHash(SPEC),
   status = "enabled",
 ) {
-  await sql`INSERT INTO capybara.app_tools (app_id, name, spec, spec_hash, status, default_policy)
-    VALUES (${appId}, 'create_doc', ${JSON.stringify(SPEC)}::jsonb, ${hash}, ${status}, ${policy})
-    ON CONFLICT (app_id, name) DO UPDATE SET default_policy = EXCLUDED.default_policy,
+  await sql`INSERT INTO capybara.connector_tools (connector_id, name, spec, spec_hash, status, default_policy)
+    VALUES (${connectorId}, 'create_doc', ${JSON.stringify(SPEC)}::jsonb, ${hash}, ${status}, ${policy})
+    ON CONFLICT (connector_id, name) DO UPDATE SET default_policy = EXCLUDED.default_policy,
       spec_hash = EXCLUDED.spec_hash, status = EXCLUDED.status`.execute(raw);
 }
 
@@ -205,7 +222,10 @@ async function setMember(accountId: string, role: string) {
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   seed = await seedConversation(raw);
-  appId = await seedApp(raw, seed.orgId, seed.accountId, { slug: "docs", name: "Docs" });
+  connectorId = await seedConnector(raw, seed.orgId, seed.accountId, {
+    slug: "docs",
+    name: "Docs",
+  });
   await setMember(seed.accountId, "member");
   runId = randomUUID();
   await db
@@ -229,7 +249,7 @@ beforeEach(async () => {
 });
 
 describe("createDecidePolicy（执行时实时读取，R5）", () => {
-  it("应用工具：每次调用重读 app_tools.default_policy（不信 ResolvedTool 上的旧值）", async () => {
+  it("连接器工具：每次调用重读 connector_tools.default_policy（不信 ResolvedTool 上的旧值）", async () => {
     const policy = createDecidePolicy(db);
     await setAppTool("deny");
     expect(await policy(appTool({ defaultPolicy: "allow" }), agentDef, ctx)).toBe("deny");
@@ -237,7 +257,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     expect(await policy(appTool({ defaultPolicy: "deny" }), agentDef, ctx)).toBe("allow");
   });
 
-  it("应用 / 工具在调用时已不可用 → unavailable（给事实原因，不按策略拒绝）", async () => {
+  it("连接器 / 工具在调用时已不可用 → unavailable（给事实原因，不按策略拒绝）", async () => {
     const policy = createDecidePolicy(db);
     await setAppTool("allow", specHash(SPEC), "disabled");
     expect(await policy(appTool(), agentDef, ctx)).toEqual({ unavailable: "Tool is disabled" });
@@ -245,29 +265,33 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     expect(await policy(appTool(), agentDef, ctx)).toEqual({
       unavailable: "Tool is pending review",
     });
-    await sql`DELETE FROM capybara.app_tools WHERE app_id = ${appId}`.execute(raw);
+    await sql`DELETE FROM capybara.connector_tools WHERE connector_id = ${connectorId}`.execute(
+      raw,
+    );
     expect(await policy(appTool(), agentDef, ctx)).toEqual({
       unavailable: "Tool no longer exists in app docs",
     });
     await setAppTool("allow");
-    await sql`UPDATE capybara.apps SET status = 'disabled' WHERE id = ${appId}`.execute(raw);
+    await sql`UPDATE capybara.connectors SET status = 'disabled' WHERE id = ${connectorId}`.execute(
+      raw,
+    );
     expect(await policy(appTool(), agentDef, ctx)).toEqual({ unavailable: "App docs is disabled" });
-    await sql`UPDATE capybara.apps SET status = 'active', deleted_at = now() WHERE id = ${appId}`.execute(
+    await sql`UPDATE capybara.connectors SET status = 'active', deleted_at = now() WHERE id = ${connectorId}`.execute(
       raw,
     );
     expect(await policy(appTool(), agentDef, ctx)).toEqual({ unavailable: "App docs was deleted" });
-    await sql`DELETE FROM capybara.apps WHERE id = ${appId}`.execute(raw);
+    await sql`DELETE FROM capybara.connectors WHERE id = ${connectorId}`.execute(raw);
     expect(await policy(appTool(), agentDef, ctx)).toEqual({ unavailable: "App does not exist" });
   });
 
-  it("ask → 指向发起人的审批请求（带 specHash 与来源应用）", async () => {
+  it("ask → 指向发起人的审批请求（带 specHash 与来源连接器）", async () => {
     await setAppTool("ask");
     const d = await createDecidePolicy(db)(appTool(), agentDef, ctx);
     expect(d).toEqual({
       ask: {
         toolKey: "docs__create_doc",
         specHash: specHash(SPEC),
-        appId,
+        connectorId,
         requestedFor: seed.accountId,
         approverRole: null,
       },
@@ -296,18 +320,18 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     await setAppTool("ask");
     const policy = createDecidePolicy(db);
     const hash = specHash(SPEC);
-    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, app_id)
-      VALUES (${seed.conversationId}, 'docs__create_doc', ${hash}, ${appId})`.execute(raw);
+    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, connector_id)
+      VALUES (${seed.conversationId}, 'docs__create_doc', ${hash}, ${connectorId})`.execute(raw);
     expect(await policy(appTool(), agentDef, ctx)).toEqual({ grant: "session" });
     await sql`UPDATE capybara.conversation_tool_grants SET spec_hash = 'stale'`.execute(raw);
     expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: {} });
 
-    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
-      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash}, ${appId})`.execute(
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash}, ${connectorId})`.execute(
       raw,
     );
     expect(await policy(appTool(), agentDef, ctx)).toEqual({ grant: "always" });
-    // 应用刷新后定义指纹变化：旧授权不再生效
+    // 连接器刷新后定义指纹变化：旧授权不再生效
     const spec2 = { ...SPEC, description: "Create v2." };
     await setAppTool("ask", specHash(spec2));
     expect(
@@ -318,32 +342,32 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     expect(await policy(appTool(), agentDef, ctx)).toBe("deny");
   });
 
-  it("授权绑定应用：删除后用同一 slug 重新安装的应用（新 id）不继承旧授权", async () => {
+  it("授权绑定连接器：删除后用同一 slug 重新安装的连接器（新 id）不继承旧授权", async () => {
     await setAppTool("ask");
     const policy = createDecidePolicy(db);
     const hash = specHash(SPEC);
-    // 旧应用（同 slug、同工具 key、同定义）留下的授权
+    // 旧连接器（同 slug、同工具 key、同定义）留下的授权
     const oldApp = randomUUID();
-    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, app_id)
+    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash, connector_id)
       VALUES (${seed.conversationId}, 'docs__create_doc', ${hash}, ${oldApp})`.execute(raw);
-    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
       VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'docs__create_doc', ${hash}, ${oldApp})`.execute(
       raw,
     );
-    expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: { appId } });
-    // 插件工具的授权 app_id 为空，空对空才匹配
+    expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: { connectorId } });
+    // 插件工具的授权 connector_id 为空，空对空才匹配
     const tool = pluginTool(
       { name: "p", description: "P.", inputSchema: { type: "object" } },
       {
         defaultPolicy: "ask",
       },
     );
-    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
-      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, ${tool.key}, ${tool.specHash}, ${appId})`.execute(
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, ${tool.key}, ${tool.specHash}, ${connectorId})`.execute(
       raw,
     );
     expect(await policy(tool, agentDef, ctx)).toMatchObject({ ask: {} });
-    await sql`UPDATE capybara.tool_grants SET app_id = NULL WHERE tool_key = ${tool.key}`.execute(
+    await sql`UPDATE capybara.tool_grants SET connector_id = NULL WHERE tool_key = ${tool.key}`.execute(
       raw,
     );
     expect(await policy(tool, agentDef, ctx)).toEqual({ grant: "always" });
@@ -366,6 +390,56 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     });
   });
 
+  it("skill_write 私有 agent（D10）：缺省不问；当前版本设为 ask 即时生效且记住的授权无效；共享 agent 设 allow 仍 ask", async () => {
+    const tool: ResolvedTool = {
+      key: "skill_write",
+      source: { kind: "builtin", name: "skill_write" },
+      spec: { name: "skill_write", description: "d", inputSchema: { type: "object" } },
+      specHash: "h-sw",
+      defaultPolicy: "allow",
+    };
+    const policy = createDecidePolicy(db);
+    await sql`UPDATE capybara.agents SET visibility = 'private' WHERE id = ${seed.agentId}`.execute(
+      raw,
+    );
+    // 缺省（定义里没有 skills.writePolicy）
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES (${seed.agentId}, 1, ${JSON.stringify(agentDef)}::jsonb, ${seed.accountId})`.execute(
+      raw,
+    );
+    expect(await policy(tool, agentDef, ctx)).toBe("allow");
+    // 运行中负责人把当前版本改为 ask：运行所用版本（agentDef）不变，下一次调用即生效
+    const ver = (n: number, writePolicy: "allow" | "ask") =>
+      sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+        VALUES (${seed.agentId}, ${n}, ${JSON.stringify({ ...agentDef, skills: { orgSkills: [], writePolicy } })}::jsonb,
+          ${seed.accountId})`.execute(raw);
+    const setCurrent = (n: number) =>
+      sql`UPDATE capybara.agents SET current_version = ${n} WHERE id = ${seed.agentId}`.execute(
+        raw,
+      );
+    await ver(2, "ask");
+    await setCurrent(2);
+    // 记住的授权不放行固定 ask
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'skill_write', 'h-sw')`.execute(
+      raw,
+    );
+    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
+      VALUES (${seed.conversationId}, 'skill_write', 'h-sw')`.execute(raw);
+    expect(await policy(tool, agentDef, ctx)).toMatchObject({
+      ask: { toolKey: "skill_write", requestedFor: seed.accountId },
+    });
+    // 改回 allow 后不再询问
+    await ver(3, "allow");
+    await setCurrent(3);
+    expect(await policy(tool, agentDef, ctx)).toBe("allow");
+    // 共享 agent：writePolicy 为 allow 仍固定 ask，授权无效
+    await sql`UPDATE capybara.agents SET visibility = 'org' WHERE id = ${seed.agentId}`.execute(
+      raw,
+    );
+    expect(await policy(tool, agentDef, ctx)).toMatchObject({ ask: { toolKey: "skill_write" } });
+  });
+
   it("R1：requiredRole 高于发起人实时角色 → 按角色升级（approverRole = 所需角色，requestedFor = null）", async () => {
     const tool = pluginTool(
       { name: "admin_op", description: "Admin op.", inputSchema: { type: "object" } },
@@ -376,7 +450,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
       ask: {
         toolKey: "probe__admin_op",
         specHash: tool.specHash,
-        appId: null,
+        connectorId: null,
         requestedFor: null,
         approverRole: "admin",
       },
@@ -410,7 +484,7 @@ describe("ApprovalsService.request", () => {
       callId: "c1",
       toolKey: "docs__create_doc",
       specHash: specHash(SPEC),
-      appId,
+      connectorId,
       input: { title: "x" },
       requestedFor: seed.accountId,
       approverRole: null,
@@ -463,7 +537,7 @@ describe("ApprovalsService.request", () => {
         callId: "c2",
         toolKey: "docs__create_doc",
         specHash: "h",
-        appId: null,
+        connectorId: null,
         input: {},
         requestedFor: null,
         approverRole: null,

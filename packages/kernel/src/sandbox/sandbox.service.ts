@@ -22,7 +22,12 @@ import {
 } from "../config/schema.js";
 import type { KernelDatabase, KernelDb, SandboxesTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { effectiveSandboxEgress, readOrgSettings } from "../orgs/settings.service.js";
+import { readSandboxLimitOverride } from "../identity/settings.js";
+import {
+  effectiveSandboxEgress,
+  effectiveSandboxLimits,
+  readOrgSettings,
+} from "../orgs/settings.service.js";
 import { ConversationLock, type Lease } from "../runtime/conversation-lock.js";
 
 /** 沙箱锁的键前缀：`capk:sandbox:<conversationId>`。 */
@@ -760,11 +765,17 @@ export class SandboxService {
       cfg.limits,
       (await readOrgSettings(this.d.db, ctx.orgId)).sandboxEgress,
     );
+    // cpu / 内存按企业管理员的组织覆盖（C19 / Ruling M16），同样只在创建时生效
+    const sized = effectiveSandboxLimits(
+      { ...cfg.limits, ...egress },
+      await readSandboxLimitOverride(this.d.db, ctx.orgId),
+    );
     const limits: SandboxLimits = {
-      cpu: cfg.limits.cpu,
-      memoryMb: cfg.limits.memoryMb,
-      diskMb: cfg.limits.diskMb,
-      ...egress,
+      cpu: sized.cpu,
+      memoryMb: sized.memoryMb,
+      diskMb: sized.diskMb,
+      egress: sized.egress,
+      allowHosts: sized.allowHosts,
     };
     const handle = await p.impl.create({ name: `cap-${id}`, image: cfg.image, limits, signal });
     try {

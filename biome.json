@@ -10,7 +10,8 @@
       "!.superpowers",
       "!pnpm-lock.yaml",
       "!docs",
-      "!tools/checks/fixtures"
+      "!tools/checks/fixtures",
+      "!packages/plugin-sdk/schemas"
     ]
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },

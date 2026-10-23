@@ -113,8 +113,8 @@ export type ToolHandler = (
 
 /**
  * 工具错误的类别：
- * - `error`（缺省）：远端可用、但这次调用失败（参数不对、业务错误、鉴权失败等），不计入应用熔断；
- * - `unavailable`：远端不可用（连接 / 传输错误、超时、HTTP 5xx），计入应用熔断（连接器用它告诉内核）。
+ * - `error`（缺省）：远端可用、但这次调用失败（参数不对、业务错误、鉴权失败等），不计入连接器熔断；
+ * - `unavailable`：远端不可用（连接 / 传输错误、超时、HTTP 5xx），计入连接器熔断（连接器用它告诉内核）。
  */
 export type ToolErrorKind = "error" | "unavailable";
 

@@ -51,6 +51,8 @@ export function runConfig(
     plugins: [MODEL_FAKE, MODEL_LOOPER],
     pluginPermissions: { autoApprove: true },
     runtime: { jobLockMs: 2000, stalledIntervalMs: 1000, ...runtime },
+    // 测试不拉官方清单（默认的占位地址在外网）
+    catalogs: { official: { enabled: false } },
     ...rest,
   });
 }

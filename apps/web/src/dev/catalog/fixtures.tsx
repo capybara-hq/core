@@ -2,7 +2,7 @@
  * 目录页假数据：逐字取自已确认的画布稿（e-list / e-detail / e-form / e-table / e-overlays /
  * e-components / e-shell）。这些是目录页夹具而非产品文案，因此不走 next-intl。
  */
-import type { CommandGroup, MenuItem, MetricProps, TopBarProps } from "@capybara-hq/design";
+import type { CommandGroup, MenuItem, MetricProps, Span, TopBarProps } from "@capybara-hq/design";
 
 const noop = () => {};
 
@@ -516,4 +516,100 @@ export const SEGMENTS = [
   { value: "24h", label: "24H" },
   { value: "7d", label: "7D" },
   { value: "30d", label: "30D" },
+];
+
+/** Span 瀑布的假数据（spec §6.10）：成功 / 失败 / 进行中、审批等待、未结束延伸到末端。 */
+export const TRACE_SPANS: Span[] = [
+  { id: "run", kind: "run", label: "run · v12", startMs: 0, durationMs: null, status: "pending" },
+  {
+    id: "s0",
+    parentId: "run",
+    kind: "step",
+    label: "step 0",
+    startMs: 200,
+    durationMs: 5200,
+    status: "ok",
+  },
+  {
+    id: "m0",
+    parentId: "s0",
+    kind: "model",
+    label: "anthropic/claude-opus-5-5",
+    startMs: 200,
+    durationMs: 900,
+    status: "error",
+  },
+  {
+    id: "m1",
+    parentId: "s0",
+    kind: "model",
+    label: "model-fake/fake-1",
+    startMs: 1100,
+    durationMs: 1800,
+    status: "ok",
+    meta: "↑9,214 ↓312",
+  },
+  {
+    id: "t0",
+    parentId: "s0",
+    kind: "tool",
+    label: "kb__search",
+    startMs: 2900,
+    durationMs: 312,
+    status: "ok",
+  },
+  {
+    id: "t1",
+    parentId: "s0",
+    kind: "tool",
+    label: "crm__refund_order",
+    startMs: 3300,
+    durationMs: 2100,
+    status: "ok",
+  },
+  {
+    id: "w1",
+    parentId: "t1",
+    kind: "wait",
+    label: "approval",
+    startMs: 3300,
+    durationMs: 1800,
+    status: "ok",
+  },
+  {
+    id: "s1",
+    parentId: "run",
+    kind: "step",
+    label: "step 1",
+    startMs: 5500,
+    durationMs: null,
+    status: "pending",
+  },
+  {
+    id: "m2",
+    parentId: "s1",
+    kind: "model",
+    label: "model-fake/fake-1",
+    startMs: 5500,
+    durationMs: null,
+    status: "pending",
+  },
+  {
+    id: "t2",
+    parentId: "s1",
+    kind: "tool",
+    label: "ticket__reply",
+    startMs: 6400,
+    durationMs: null,
+    status: "pending",
+  },
+  {
+    id: "w2",
+    parentId: "t2",
+    kind: "wait",
+    label: "approval",
+    startMs: 6400,
+    durationMs: null,
+    status: "pending",
+  },
 ];

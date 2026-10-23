@@ -29,7 +29,7 @@ import { eventsOf, gate, PW, waitFor, waitForEvent, waitForTerminal } from "../h
  *
  * 1. todo 插件工具（Ruling A5）：插件未在组织启用 → 运行写不可用提醒，调用得到「不可用」错误；启用后
  *    `todo__write` 按默认 allow 直接执行，结果是清单渲染。
- * 2. 安装 MCP 应用（bearer，组织凭据）→ 只读工具直接执行（结果里回显的凭据被打码）→ destructive 工具
+ * 2. 安装 MCP 连接器（bearer，组织凭据）→ 只读工具直接执行（结果里回显的凭据被打码）→ destructive 工具
  *    请求审批、运行 waiting → 在另一个副本批准（再拒绝 → 409）→ 续跑完成，工具只调用一次。
  * 3. 审批超时（改 `expires_at` 并提前执行超时任务）→ 按拒绝写结果，工具不被调用。
  * 4. 工具执行中 SIGKILL 执行它的 worker 副本 → 存活副本续跑，该调用「结果未知」，工具只被调用一次。
@@ -178,8 +178,8 @@ describe("M3 第一段双副本验收", () => {
     const orgId = (org.json.org as { id: string }).id;
     const base = `/api/v1/orgs/${orgId}`;
 
-    // ---- 安装 MCP 应用（bearer，组织凭据）----
-    const app = await alt("POST", `${base}/apps`, {
+    // ---- 安装 MCP 连接器（bearer，组织凭据）----
+    const app = await alt("POST", `${base}/connectors`, {
       name: "Docs",
       slug: "docs",
       connector: "mcp",
@@ -188,21 +188,21 @@ describe("M3 第一段双副本验收", () => {
       credential: { token: TOKEN },
     });
     expect(app.status, JSON.stringify(app.json)).toBe(201);
-    const appJson = app.json.app as {
+    const appJson = app.json.connector as {
       id: string;
       tools: { name: string; defaultPolicy: string }[];
     };
     const policies = Object.fromEntries(appJson.tools.map((t) => [t.name, t.defaultPolicy]));
     expect(policies).toMatchObject({ search: "allow", delete_doc: "ask", export: "allow" });
 
-    // ---- agent：应用全部工具 + todo 插件工具 ----
+    // ---- agent：连接器全部工具 + todo 插件工具 ----
     const ag = await alt("POST", `${base}/agents`, {
       definition: {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
         tools: [
-          { kind: "app", appId: appJson.id, tools: "all" },
+          { kind: "connector", connectorId: appJson.id, tools: "all" },
           { kind: "plugin", plugin: "todo", name: "write" },
         ],
       },

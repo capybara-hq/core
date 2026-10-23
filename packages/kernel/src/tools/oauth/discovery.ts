@@ -224,7 +224,7 @@ export async function discoverMcp(
     if (probe.status === 401) challenge = probe.headers.get("www-authenticate");
   } catch (e) {
     if (e instanceof OAuthSetupError) throw e;
-    throw failed("Could not reach the app's server for OAuth discovery");
+    throw failed("Could not reach the connector's server for OAuth discovery");
   }
 
   const metadataUrl = challengeParam(challenge, "resource_metadata");
@@ -239,7 +239,9 @@ export async function discoverMcp(
   }
   const prm = await firstJson(prmCandidates, http);
   if (!prm) {
-    throw failed("The app's server did not publish OAuth protected resource metadata (RFC 9728)");
+    throw failed(
+      "The connector's server did not publish OAuth protected resource metadata (RFC 9728)",
+    );
   }
   const resource = prm.resource;
   const servers = strings(prm.authorization_servers);
@@ -247,7 +249,9 @@ export async function discoverMcp(
     throw failed("The protected resource metadata lacks resource or authorization_servers");
   }
   if (!resourceMatches(resource, endpoint)) {
-    throw failed("The protected resource metadata names a different resource than the app's URL");
+    throw failed(
+      "The protected resource metadata names a different resource than the connector's URL",
+    );
   }
 
   const issuer = servers[0] as string;
@@ -317,7 +321,7 @@ export function pickAuthMethod(
 }
 
 /**
- * 动态客户端注册（RFC 7591），每个应用注册一次。授权服务器没有注册端点 → `dcr_unsupported`（向导据此改为手填
+ * 动态客户端注册（RFC 7591），每个连接器注册一次。授权服务器没有注册端点 → `dcr_unsupported`（向导据此改为手填
  * client）。注册失败只报 HTTP 状态，不带对方正文。
  */
 export async function registerClient(

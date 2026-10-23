@@ -47,7 +47,8 @@ async function scenario(h: Harness, name: string): Promise<number> {
   return ((await r.json()) as { count: number }).count;
 }
 
-describe("双副本测试工具", () => {
+// 每个用例都起两个副本子进程（迁移 + 插件宿主收敛）：全量并行跑时 5s 的本地默认值不够
+describe("双副本测试工具", { timeout: 60_000 }, () => {
   it("两个副本是不同进程，请求严格交替：第 1、3、5… 次到 replica 0", async () => {
     const h = await harness("whoami");
     const [a, b] = h.replicas;
@@ -142,7 +143,7 @@ describe("runnerArgv", () => {
   });
 });
 
-describe("双副本测试工具：进程与解析", () => {
+describe("双副本测试工具：进程与解析", { timeout: 60_000 }, () => {
   it("裸包名插件按 resolveFrom 解析，两个副本都可用", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cap-resolve-"));
     try {

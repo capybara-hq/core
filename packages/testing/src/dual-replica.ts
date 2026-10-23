@@ -14,6 +14,11 @@ export interface DualReplicaOptions {
   /** 部署级插件配置，按插件名索引。 */
   pluginConfig?: Record<string, unknown>;
   /**
+   * 内置插件（绝对路径或 file URL），以 `builtinPlugins` 传给内核（来源 `builtin`：预先批准、始终启用，
+   * 部署配置没配好时待配置），与 CLI 传入的 `openai-compatible`、`object-store-s3` 同一条路径。
+   */
+  builtinPlugins?: string[];
+  /**
    * 复用已有的 PostgreSQL（管理员连接串，需能 CREATE DATABASE）。
    * 省略则自己起容器，stop() 时关闭；传入则只创建并在 stop() 时删除本 harness 的 `cap_*` 库。
    */
@@ -246,6 +251,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       redisUrl,
       masterKey: randomBytes(32).toString("base64"),
       plugins: opts.plugins,
+      builtinPlugins: opts.builtinPlugins ?? [],
       // 副本进程的 cwd 不是调用方的 cwd，相对路径必须先按调用方 cwd 绝对化再经 IPC 传过去
       resolveFrom: resolve(opts.resolveFrom ?? process.cwd()),
       pluginConfig: opts.pluginConfig ?? {},

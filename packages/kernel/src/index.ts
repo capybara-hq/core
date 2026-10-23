@@ -7,11 +7,23 @@ export {
   ConfigError,
   type ConfigSource,
   loadConfig,
+  loadConfigWithSources,
   resolveConfig,
   selectConfigSource,
 } from "./config/load.js";
 export { createNacosSource, type NacosSourceOptions } from "./config/nacos-source.js";
-export { type FieldMeta, type KernelConfig, KernelConfigSchema, meta } from "./config/schema.js";
+export {
+  type FieldMeta,
+  type KernelConfig,
+  KernelConfigSchema,
+  meta,
+  PACKAGES_MAX_BYTES_DEFAULT,
+} from "./config/schema.js";
+export {
+  type ConfigSourceKind,
+  configSourceKind,
+  pluginConfigSources,
+} from "./config/sources.js";
 export { type BusSubscriber, createBus, createBusSubscriber } from "./ctx/bus.js";
 export {
   createPluginContext,
@@ -32,6 +44,13 @@ export {
 export { type KernelDatabase, type KernelDb, kernelDb } from "./db/kernel-schema.js";
 export { type MigrationOwner, migrate } from "./db/migrator.js";
 export { createDb } from "./db/pool.js";
+export {
+  destructiveStatements,
+  isDestructiveBody,
+  isDestructiveSql,
+  type SqlStatement,
+  splitSqlStatements,
+} from "./db/sql-statements.js";
 export { ApiError, ERROR_CODES, type ErrorCode } from "./errors.js";
 export {
   type CreateHttpAppOptions,
@@ -67,13 +86,99 @@ export {
 export { createLogger, type KernelLogger, LOG_LEVELS, type LogLevel } from "./log.js";
 export { type Org, OrgsService } from "./orgs/orgs.service.js";
 export {
+  fetchNpmPackage,
+  IntegrityMismatchError,
+  type NpmFetchConfig,
+  NpmFetchError,
+  PackageTooLargeError,
+} from "./packages/npm.js";
+export { PluginAdminOps, type PluginAdminOpsDeps } from "./plugins/admin-ops.js";
+export { PLUGINS_CHANGED_TOPIC, PluginAdmin } from "./plugins/admin-view.js";
+export {
   type ApprovalDecision,
   type PendingPlugin,
   type PermissionSnapshot,
   PluginApprovals,
   planApprovals,
+  snapshotCovers,
+  withPreApproved,
 } from "./plugins/approvals.js";
-export { assertSecretsReachable, type InspectedPlugin, PluginHost } from "./plugins/host.js";
+export {
+  blobKey,
+  PluginBlobIntegrityError,
+  type PluginBlobSource,
+  PluginBlobs,
+} from "./plugins/blobs.js";
+export { openPluginCli, type PluginCli } from "./plugins/cli.js";
+export {
+  DEPLOYMENT_SECRETS_ORG,
+  type DeploymentConfigField,
+  type DeploymentConfigView,
+  DeploymentPluginConfigService,
+  mergeDeploymentConfig,
+  PLUGIN_DEPLOYMENT_CONFIG_TOPIC,
+  readStoredDeploymentConfig,
+} from "./plugins/deployment-config.js";
+export {
+  assertSecretsReachable,
+  type InspectedPlugin,
+  type InstalledPluginLoader,
+  type InstallFailureReason,
+  PluginHost,
+  type PluginLoadPlan,
+} from "./plugins/host.js";
+export {
+  type InflightEntry,
+  InflightTracker,
+  PLUGIN_UNLOADED_TOOL_ERROR,
+  PluginUnloadedError,
+  type TrackOptions,
+  trackCalls,
+} from "./plugins/inflight.js";
+export {
+  type DesiredPlugin,
+  type IngestSource,
+  type PackageReview,
+  type PluginInstallRow,
+  PluginInstalls,
+} from "./plugins/installs.js";
+export {
+  DEFAULT_DISPOSE_TIMEOUT_MS,
+  type DisposeOptions,
+  ImportTracker,
+  type LoadDeps,
+  loadInstance,
+  ManifestMismatchError,
+  PluginInstance,
+  type Registration,
+  type RegistrationKind,
+  UPGRADE_WARN_THRESHOLD,
+} from "./plugins/instance.js";
+export {
+  type LifecycleHost,
+  PLUGINS_RECONCILE_JOB,
+  PLUGINS_RECONCILE_TOPIC,
+  PluginLifecycle,
+  type PluginLifecycleDeps,
+} from "./plugins/lifecycle.js";
+export {
+  ensureMigrated,
+  MIGRATE_LOCK_PREFIX,
+  type MigrateLockDeps,
+  PLUGINS_MIGRATED_TOPIC,
+  unrunMigrations,
+} from "./plugins/migrate-lock.js";
+export {
+  extractPluginPackage,
+  HOST_ZOD_VERSION,
+  PLUGIN_PACKAGE_LIMITS,
+  type PluginPackage,
+  PluginPackageError,
+  type PluginPackageLimits,
+  permissionSetOfPackage,
+  type ReadPluginPackageOptions,
+  readPluginPackage,
+} from "./plugins/package.js";
 export {
   blockingKeys,
   computePermissionSet,
@@ -81,8 +186,28 @@ export {
   type PermissionSet,
   permissionKeys,
 } from "./plugins/permission-set.js";
-export { isSensitivePermissionKey } from "./plugins/permission-view.js";
+export {
+  type AdminPluginView,
+  type DeploymentPluginStatus,
+  isSensitivePermissionKey,
+  type PermissionGroup,
+  type PermissionItem,
+  permissionGroups,
+  permissionKeyItems,
+  reviewHash,
+  SENSITIVE_CAPABILITIES,
+  type SensitiveReason,
+} from "./plugins/permission-view.js";
+export { PluginRegistry } from "./plugins/registry.js";
 export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
+export {
+  newReplicaId,
+  type PendingReason,
+  type PluginLoadStatus,
+  type PluginSource,
+  ReplicaStatusStore,
+} from "./plugins/sources.js";
+export { syncPackage } from "./plugins/sync.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
 export {
   SANDBOX_DESTROY_JOB,

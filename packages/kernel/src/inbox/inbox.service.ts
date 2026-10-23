@@ -1,4 +1,9 @@
 import {
+  DIRECTORY_REQUESTS_LIST_MAX,
+  type DirectoryRequestsService,
+  type DirectoryRequestView,
+} from "../directory/requests.service.js";
+import {
   SKILL_CHANGES_LIST_MAX,
   type SkillChangesService,
   type SkillChangeView,
@@ -15,11 +20,13 @@ export const INBOX_MAX_ITEMS = 100;
 /**
  * 收件箱里的一项（按 `type` 区分，形状稳定）：
  * - `tool_approval`：当前用户能处理的待处理工具调用审批（与 `GET /approvals?status=pending` 同一视图）；
- * - `skill_change`：当前用户作为 agent 负责人能决定的待处理技能变更（M5 T15，R4）。
+ * - `skill_change`：当前用户作为 agent 负责人能决定的待处理技能变更（M5 T15，R4）；
+ * - `directory_request`：当前用户是组织管理员时，成员提交的待处理目录申请（M6 T26，C22）。
  */
 export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: ApprovalView }
-  | { type: "skill_change"; id: string; createdAt: string; skillChange: SkillChangeView };
+  | { type: "skill_change"; id: string; createdAt: string; skillChange: SkillChangeView }
+  | { type: "directory_request"; id: string; createdAt: string; request: DirectoryRequestView };
 
 /** `GET /inbox` 的结果：新的在前，最多 {@link INBOX_MAX_ITEMS} 项；`truncated` 为 true 表示还有更多。 */
 export interface InboxView {
@@ -33,13 +40,15 @@ export class InboxService {
     private readonly d: {
       approvals: Pick<ApprovalsService, "list">;
       skillChanges: Pick<SkillChangesService, "listPending">;
+      directoryRequests?: Pick<DirectoryRequestsService, "listForOrgAdmin">;
     },
   ) {}
 
   async list(orgId: string, accountId: string): Promise<InboxView> {
-    const [approvals, changes] = await Promise.all([
+    const [approvals, changes, requests] = await Promise.all([
       this.d.approvals.list(orgId, accountId, "pending"),
       this.d.skillChanges.listPending(orgId, accountId),
+      this.d.directoryRequests?.listForOrgAdmin(orgId, accountId) ?? [],
     ]);
     const all: InboxItem[] = [
       ...approvals.map(
@@ -58,6 +67,14 @@ export class InboxService {
           skillChange: c,
         }),
       ),
+      ...requests.map(
+        (r): InboxItem => ({
+          type: "directory_request",
+          id: r.id,
+          createdAt: r.createdAt,
+          request: r,
+        }),
+      ),
     ];
     // 新的在前；同一时刻按 id 定序（结果稳定）
     all.sort((a, b) =>
@@ -72,7 +89,10 @@ export class InboxService {
             : 0,
     );
     // 各来源自己也有上限：某个来源取满了也算还有更多
-    const full = approvals.length >= APPROVALS_LIST_MAX || changes.length >= SKILL_CHANGES_LIST_MAX;
+    const full =
+      approvals.length >= APPROVALS_LIST_MAX ||
+      changes.length >= SKILL_CHANGES_LIST_MAX ||
+      requests.length >= DIRECTORY_REQUESTS_LIST_MAX;
     return {
       items: all.slice(0, INBOX_MAX_ITEMS),
       truncated: full || all.length > INBOX_MAX_ITEMS,

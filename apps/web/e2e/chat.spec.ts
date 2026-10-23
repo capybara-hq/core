@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
@@ -35,21 +36,10 @@ async function send(page: Page, text: string) {
   await expect(users(page).filter({ hasText: text })).toHaveCount(1);
 }
 
-test("初始化 → 新建 agent → 流式回复、停止、插话、刷新后历史完整", async ({ page }) => {
-  // 1. 初始化向导（同时建组织）→ 选当前组织 → 新建 agent（model-fake / fake-1）
-  await page.goto("/zh");
-  await expect(page).toHaveURL(/\/zh\/setup$/);
-  // 认证页也能切换语言
-  await expect(page.getByRole("link", { name: zh.common.localeName.en })).toBeVisible();
-  await page.getByLabel(zh.setup.loginLabel).fill("admin");
-  await page.getByLabel(zh.setup.passwordLabel).fill("correct-horse-battery");
-  await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");
-  await page.getByLabel(zh.setup.orgNameLabel).fill("Acme");
-  await page.getByRole("button", { name: zh.setup.submit }).click();
-
-  await expect(page).toHaveURL(/\/zh$/);
+test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历史完整", async ({ page }) => {
+  // 1. 登录（初始化由 setup 项目完成）→ 选当前组织 → 新建 agent（model-fake / fake-1）
+  await signIn(page);
   await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
-  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
   await page.getByRole("link", { name: zh.home.openAgents }).click();
   await expect(page).toHaveURL(/\/zh\/agents$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();

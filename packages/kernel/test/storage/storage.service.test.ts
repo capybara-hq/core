@@ -250,3 +250,27 @@ describe("deleteOrg", () => {
     );
   });
 });
+
+describe("部署级存储 deployment()", () => {
+  it("键落在 deployment/ 下、返回的键不带前缀；deleteOrg 不触及", async () => {
+    const { mem, svc } = setup();
+    const d = svc.deployment();
+    const h = await d.put("plugins/blobs/x.tgz", bytes("tgz"), {
+      contentType: "application/gzip",
+    });
+    expect(h.key).toBe("plugins/blobs/x.tgz");
+    await svc.kernel(ORG_A).put("k", bytes("k"), { contentType: "text/plain" });
+    expect([...mem.objects.keys()].sort()).toEqual([
+      "deployment/plugins/blobs/x.tgz",
+      `kernel/${ORG_A}/k`,
+    ]);
+    await svc.deleteOrg(ORG_A);
+    expect([...mem.objects.keys()]).toEqual(["deployment/plugins/blobs/x.tgz"]);
+    const got = await d.get("plugins/blobs/x.tgz");
+    expect(got && (await text(got.body))).toBe("tgz");
+    expect((await d.list("plugins/")).items.map((i) => i.key)).toEqual(["plugins/blobs/x.tgz"]);
+    await expect(d.put("../x", bytes("x"), { contentType: "text/plain" })).rejects.toThrow(
+      StorageKeyError,
+    );
+  });
+});

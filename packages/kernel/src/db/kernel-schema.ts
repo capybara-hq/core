@@ -142,7 +142,7 @@ export interface PluginPermissionSnapshotsTable {
   permissions: Json<unknown>;
   approved_by: string | null;
   approved_at: Ts;
-  source: "cli" | "auto";
+  source: "cli" | "auto" | "web";
 }
 
 /** 0002_secrets.sql：加密值（读写走 `createSecrets`，这里只供按键查询是否存在）。 */
@@ -197,7 +197,13 @@ export interface ConversationsTable {
   consumed_seq: Int8;
   created_at: Ts;
   updated_at: Ts;
+  /** 0028：chat（普通对话）/ eval（整轮回放的隐藏对话）。 */
+  kind: ColumnType<ConversationKind, ConversationKind | undefined, ConversationKind>;
+  /** 0028：eval 对话所属的评测运行。 */
+  eval_run_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
+
+export type ConversationKind = "chat" | "eval";
 
 /** 0006_conversations.sql：会话事件日志，只追加。 */
 export interface ConversationEventsTable {
@@ -232,8 +238,11 @@ export interface RunsTable {
   queued_at: TsNullable;
 }
 
-/** 0010_tools.sql：已安装的应用（连接器实例）。 */
-export interface AppsTable {
+/**
+ * 0010_tools.sql（0033 由 `apps` 改名）：已安装的连接器（远端服务实例）。列 `connector` 是连接器插件的 kind，
+ * 改名后叫 `connectors.connector` 有点别扭，但为避免多一次 RENAME 保持原名。
+ */
+export interface ConnectorsTable {
   id: string;
   org_id: string;
   slug: string;
@@ -251,25 +260,34 @@ export interface AppsTable {
   deleted_at: TsNullable;
   /** 0015：最近一次成功拿到工具清单的时间；为空 = 从未拍过快照（首个快照按安装处理）。 */
   tools_synced_at: TsNullable;
+  /** 0037：从目录模板安装时的来源条目（应用里的模板记应用条目）与版本。 */
+  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0037：模板的 defaultToolPolicies（授权码连接器在首个快照时应用）。 */
+  template_tool_policies: ColumnType<
+    Record<string, "allow" | "ask" | "deny"> | null,
+    string | null | undefined,
+    string | null
+  >;
 }
 
-/** 0010_tools.sql：应用暴露的工具。 */
-export interface AppToolsTable {
-  app_id: string;
+/** 0010_tools.sql（0033 由 `app_tools` 改名）：连接器暴露的工具。 */
+export interface ConnectorToolsTable {
+  connector_id: string;
   name: string;
   spec: Json<unknown>;
   spec_hash: string;
   status: "enabled" | "disabled" | "pending_review";
   default_policy: "allow" | "ask" | "deny";
   reviewed_at: TsNullable;
-  /** 0013：工具来源（`resources` = 内核为支持 resources 的应用补上的两个工具）。 */
+  /** 0013：工具来源（`resources` = 内核为支持 resources 的连接器补上的两个工具）。 */
   source: Generated<"connector" | "resources">;
   /** 0015：变化后待复核的新定义（复核前 spec / spec_hash / source 仍是旧的）。 */
   pending_spec: ColumnType<unknown, string | null | undefined, string | null>;
   pending_spec_hash: string | null;
   pending_source: "connector" | "resources" | null;
   /** 0015：默认策略的来历（admin = 管理员设定，复核通过后保留；derived = 按注解重新推导）。 */
-  policy_source: Generated<"derived" | "admin">;
+  policy_source: Generated<"derived" | "admin" | "template">;
   /** 0015：远端不再提供该工具的时间（工具停用，行保留）。 */
   missing_since: TsNullable;
 }
@@ -281,8 +299,8 @@ export interface ToolGrantsTable {
   agent_id: string;
   tool_key: string;
   spec_hash: string;
-  /** 应用工具的来源应用（插件 / 内置工具为 null）；授权只对同一个应用有效。 */
-  app_id: string | null;
+  /** 连接器工具的来源连接器（插件 / 内置工具为 null；0033 由 `app_id` 改名）；授权只对同一个连接器有效。 */
+  connector_id: string | null;
   created_at: Ts;
 }
 
@@ -291,8 +309,8 @@ export interface ConversationToolGrantsTable {
   conversation_id: string;
   tool_key: string;
   spec_hash: string;
-  /** 同 `ToolGrantsTable.app_id`。 */
-  app_id: string | null;
+  /** 同 `ToolGrantsTable.connector_id`。 */
+  connector_id: string | null;
 }
 
 /** 0010_tools.sql：工具调用审批；requested_for 与 approver_role 至少一个非空。 */
@@ -315,8 +333,8 @@ export interface ApprovalsTable {
   created_at: Ts;
   /** 0011：所批准的工具定义指纹（写授权用）。 */
   spec_hash: string;
-  /** 0011：应用工具的来源应用。 */
-  app_id: string | null;
+  /** 0011：连接器工具的来源连接器（0033 由 `app_id` 改名）。 */
+  connector_id: string | null;
   /** 0012：同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
   attempt: Generated<number>;
 }
@@ -500,6 +518,9 @@ export interface SkillsTable {
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
+  /** 0037：从目录安装时的来源条目（应用里的技能记应用条目）与版本。 */
+  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0024_skills.sql：技能的版本。 */
@@ -510,6 +531,9 @@ export interface SkillVersionsTable {
   object_prefix: string;
   created_by: string;
   created_at: Ts;
+  /** 0037：本版本的企业目录来源（自定义上传 / agent 技能为 NULL）。 */
+  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0026_skill_changes.sql：技能变更申请里提议的版本。 */
@@ -568,10 +592,201 @@ export interface SandboxesTable {
   sweep_failed_at: TsNullable;
 }
 
+/** pg numeric：驱动读出为字符串（精确小数），读取方自行 `Number()`。 */
+type Numeric = ColumnType<string, number | string, number | string>;
+type NumericNullable = ColumnType<string | null, number | string | null, number | string | null>;
+
+/** 0027_model_prices.sql：模型价格（每百万 token，币种为部署设置 priceCurrency）。 */
+export interface ModelPricesTable {
+  provider: string;
+  model: string;
+  input_per_mtok: Numeric;
+  output_per_mtok: Numeric;
+  cache_read_per_mtok: NumericNullable;
+  cache_write_per_mtok: NumericNullable;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
+/** 0029_model_purposes.sql：模型用途映射（org_id 为 null = 部署默认；组织可覆盖）。 */
+export interface ModelPurposeMappingsTable {
+  org_id: string | null;
+  purpose: string;
+  provider: string;
+  model: string;
+  params: Json;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
+/** 0028_evals.sql：评测集（一个集合对应一个 agent；软删除）。 */
+export interface EvalSetsTable {
+  id: Generated<string>;
+  org_id: string;
+  agent_id: string;
+  name: string;
+  description: ColumnType<string, string | undefined, string>;
+  rubric: string | null;
+  created_by: string;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0028_evals.sql：评测用例（某次运行的日志快照，不引用原对话）。 */
+export interface EvalCasesTable {
+  id: Generated<string>;
+  set_id: string;
+  org_id: string;
+  source_conversation_id: string;
+  source_run_id: string;
+  agent_version: number;
+  title: string;
+  snapshot: Json<unknown>;
+  snapshot_bytes: number;
+  replayable_steps: ColumnType<number, number | undefined, number>;
+  /** 两种回放模式的计划（`StoredCasePlan`），写入时算好。 */
+  plan_step: Json<unknown>;
+  plan_run: Json<unknown>;
+  /** 用例原版本的模型（`ModelRef`）；没有定义时为 null。 */
+  base_model: ColumnType<unknown | null, string | null | undefined, string | null>;
+  added_by: string;
+  created_at: Ts;
+}
+
+export type EvalRunStatus = "queued" | "running" | "completed" | "cancelled" | "capped" | "failed";
+
+/** 0028_evals.sql：评测运行（T4 起写入）。 */
+export interface EvalRunsTable {
+  id: Generated<string>;
+  org_id: string;
+  set_id: string;
+  mode: "step" | "run";
+  candidate: Json<unknown>;
+  judge: ColumnType<boolean, boolean | undefined, boolean>;
+  token_cap: Int8;
+  tokens_used: Int8;
+  status: ColumnType<EvalRunStatus, EvalRunStatus | undefined, EvalRunStatus>;
+  cases_total: number;
+  cases_done: ColumnType<number, number | undefined, number>;
+  consecutive_errors: ColumnType<number, number | undefined, number>;
+  error: ColumnType<unknown | null, string | null | undefined, string | null>;
+  estimate: Json<unknown>;
+  created_by: string;
+  created_at: Ts;
+  started_at: TsNullable;
+  finished_at: TsNullable;
+}
+
+export type EvalResultStatus = "pending" | "running" | "done" | "error" | "skipped";
+/** 0029：评委状态（pending = 结果已 done、评委还没做）。 */
+export type JudgeStatus = "none" | "pending" | "done" | "error" | "skipped";
+
+/** 0028_evals.sql：评测结果（每用例一行或每步一行，T4 起写入）。 */
+export interface EvalResultsTable {
+  id: Generated<string>;
+  run_id: string;
+  case_id: string;
+  org_id: string;
+  step: number | null;
+  model_call_seq: ColumnType<
+    string | null,
+    number | string | null | undefined,
+    number | string | null
+  >;
+  status: ColumnType<EvalResultStatus, EvalResultStatus | undefined, EvalResultStatus>;
+  baseline: ColumnType<unknown | null, string | null | undefined, string | null>;
+  candidate: ColumnType<unknown | null, string | null | undefined, string | null>;
+  diff: ColumnType<unknown | null, string | null | undefined, string | null>;
+  judge: ColumnType<unknown | null, string | null | undefined, string | null>;
+  drift: ColumnType<string[], string[] | undefined, string[]>;
+  error: ColumnType<unknown | null, string | null | undefined, string | null>;
+  eval_conversation_id: string | null;
+  claimed_by: ColumnType<string | null, string | null | undefined, string | null>;
+  judge_status: ColumnType<JudgeStatus, JudgeStatus | undefined, JudgeStatus>;
+  label: "pass" | "fail" | null;
+  label_note: string | null;
+  labeled_by: string | null;
+  labeled_at: TsNullable;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 /**
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
  */
+/** 0030_plugin_installs.sql：内容寻址的插件包（sha256 = 整个 tgz）。 */
+export interface PluginPackagesTable {
+  sha256: string;
+  /** 插件清单名。 */
+  name: string;
+  /** package.json 的 npm 包名。 */
+  package_name: string;
+  version: string;
+  size: Int8;
+  /** package.json 的 `capybara` 段（审阅过的静态清单）。 */
+  section: Json<unknown>;
+  blob_store: "object" | "pg";
+  source: "npm" | "file" | "directory";
+  source_ref: string;
+  uploaded_by: string | null;
+  created_at: Ts;
+}
+
+/** 0030：没有对象存储时的包字节。 */
+export interface PluginBlobsTable {
+  sha256: string;
+  bytes: Buffer;
+}
+
+/** 0030：每插件一行的安装记录（期望状态）。 */
+export interface PluginInstallsTable {
+  name: string;
+  sha256: string;
+  version: string;
+  source: "npm" | "file" | "directory";
+  desired_state: ColumnType<"enabled" | "disabled", "enabled" | "disabled" | undefined>;
+  migrated_sha: string | null;
+  installed_by: string | null;
+  installed_at: Ts;
+  updated_by: string | null;
+  updated_at: Ts;
+  /** 0034（F-AA）：经企业目录装到部署时的来源条目。 */
+  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** 0030：每个副本每个插件的加载结果。 */
+/** 插件名归哪个 npm 包（Ruling P3）：第一次安装时写入，卸载不删。 */
+export interface PluginNameOwnersTable {
+  name: string;
+  package_name: string;
+  created_at: Generated<Date>;
+}
+
+/** 0032：部署级插件配置的非密钥字段（密钥在 `secrets`，org_id `_deployment`）。 */
+export interface PluginDeploymentConfigsTable {
+  plugin: string;
+  config: ColumnType<Record<string, unknown>, string | undefined, string>;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
+export interface PluginReplicaStatusTable {
+  replica_id: string;
+  plugin: string;
+  version: string;
+  sha256: string | null;
+  source: "builtin" | "config" | "install";
+  state: "loaded" | "failed" | "unloaded" | "pending";
+  reason: string | null;
+  detail: string | null;
+  /** 这一行的版本没加载成、本副本仍在用的旧版本（见迁移 0030）。 */
+  serving_version: Generated<string | null>;
+  http_replica_id: string | null;
+  heartbeat_at: Ts;
+}
+
 export interface KernelDatabase {
   accounts: AccountsTable;
   identities: IdentitiesTable;
@@ -593,8 +808,8 @@ export interface KernelDatabase {
   runs: RunsTable;
   lg_checkpoints: LgCheckpointsTable;
   lg_checkpoint_writes: LgCheckpointWritesTable;
-  apps: AppsTable;
-  app_tools: AppToolsTable;
+  connectors: ConnectorsTable;
+  connector_tools: ConnectorToolsTable;
   tool_grants: ToolGrantsTable;
   conversation_tool_grants: ConversationToolGrantsTable;
   approvals: ApprovalsTable;
@@ -613,6 +828,177 @@ export interface KernelDatabase {
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;
+  model_prices: ModelPricesTable;
+  eval_sets: EvalSetsTable;
+  eval_cases: EvalCasesTable;
+  eval_runs: EvalRunsTable;
+  eval_results: EvalResultsTable;
+  model_purpose_mappings: ModelPurposeMappingsTable;
+  plugin_packages: PluginPackagesTable;
+  plugin_blobs: PluginBlobsTable;
+  plugin_installs: PluginInstallsTable;
+  plugin_replica_status: PluginReplicaStatusTable;
+  plugin_name_owners: PluginNameOwnersTable;
+  plugin_deployment_configs: PluginDeploymentConfigsTable;
+  directory_items: DirectoryItemsTable;
+  directory_item_versions: DirectoryItemVersionsTable;
+  catalog_sources: CatalogSourcesTable;
+  catalog_entries: CatalogEntriesTable;
+  app_import_staging: AppImportStagingTable;
+  directory_requests: DirectoryRequestsTable;
+  directory_org_grants: DirectoryOrgGrantsTable;
+  app_installs: AppInstallsTable;
+  app_install_components: AppInstallComponentsTable;
+  plugin_directory_sources: PluginDirectorySourcesTable;
+}
+
+/** 0034_directory.sql：企业目录条目。 */
+export interface DirectoryItemsTable {
+  id: string;
+  kind: "plugin" | "connector-template" | "skill" | "app";
+  name: string;
+  package_name: string;
+  publisher: string;
+  display_name: ColumnType<
+    { zh: string; en: string } | null,
+    string | null | undefined,
+    string | null
+  >;
+  description: string;
+  policy: ColumnType<
+    "allow" | "needs_approval" | "disabled",
+    "allow" | "needs_approval" | "disabled" | undefined,
+    "allow" | "needs_approval" | "disabled"
+  >;
+  latest_version: string;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Ts;
+  deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0035：从清单引入时的来源清单（来源删除后为空）。 */
+  catalog_source_id: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/** 0034：企业目录条目的各版本。 */
+export interface DirectoryItemVersionsTable {
+  item_id: string;
+  version: string;
+  section: Json<unknown>;
+  source: "file" | "npm" | "catalog";
+  source_ref: string;
+  integrity: string | null;
+  object_prefix: string | null;
+  plugin_sha256: string | null;
+  resolved: ColumnType<unknown, string | null | undefined, string | null>;
+  files: Json<{ path: string; size: number; sha256: string }[]>;
+  size: Int8;
+  imported_by: string | null;
+  imported_at: Generated<Date>;
+}
+
+/** 0035_catalogs.sql：目录来源（官方 / 企业清单）。 */
+export interface CatalogSourcesTable {
+  id: string;
+  name: string;
+  url: string;
+  mirrors: Json<string[]>;
+  builtin: ColumnType<boolean, boolean | undefined, boolean>;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  etag: ColumnType<string | null, string | null | undefined, string | null>;
+  last_refreshed_at: ColumnType<
+    Date | null,
+    Date | string | null | undefined,
+    Date | string | null
+  >;
+  last_status: ColumnType<
+    "ok" | "error" | "never",
+    "ok" | "error" | "never" | undefined,
+    "ok" | "error" | "never"
+  >;
+  last_error: ColumnType<string | null, string | null | undefined, string | null>;
+  created_by: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Generated<Date>;
+}
+
+/** 0035：清单条目缓存（每次成功刷新整体替换）。 */
+export interface CatalogEntriesTable {
+  source_id: string;
+  kind: "plugin" | "connector-template" | "skill" | "app";
+  name: string;
+  npm: string;
+  entry: Json<unknown>;
+  updated_at: Ts;
+}
+
+/** 0036_app_import_staging.sql：应用包导入的暂存（prepare 写、confirm 删，24 小时过期）。 */
+export interface AppImportStagingTable {
+  id: string;
+  review: Json<unknown>;
+  bundle: Json<unknown>;
+  object_prefix: string | null;
+  source: Json<unknown>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  expires_at: ColumnType<Date, Date | string, Date | string>;
+}
+
+type NullableCol<T> = ColumnType<T | null, T | null | undefined, T | null>;
+
+/** 0037：组织的目录申请（stage org = 成员申请；deployment = 等企业管理员批准）。 */
+export interface DirectoryRequestsTable {
+  id: string;
+  org_id: string;
+  item_id: string;
+  version: NullableCol<string>;
+  stage: "org" | "deployment";
+  requested_by: string | null;
+  note: ColumnType<string, string | undefined, string>;
+  status: ColumnType<
+    "pending" | "approved" | "rejected" | "cancelled",
+    "pending" | "approved" | "rejected" | "cancelled" | undefined,
+    "pending" | "approved" | "rejected" | "cancelled"
+  >;
+  decided_by: NullableCol<string>;
+  decided_at: NullableCol<Date>;
+  org_decided_by: NullableCol<string>;
+  org_decided_at: NullableCol<Date>;
+  created_at: Generated<Date>;
+}
+
+/** 0037：把插件带进部署的目录条目（插件条目、应用条目）。 */
+export interface PluginDirectorySourcesTable {
+  plugin: string;
+  item_id: string;
+  created_at: Generated<Date>;
+}
+
+/** 0037：企业管理员批准某组织安装 needs_approval 条目。 */
+export interface DirectoryOrgGrantsTable {
+  item_id: string;
+  org_id: string;
+  granted_by: string | null;
+  granted_at: Generated<Date>;
+}
+
+/** 0037：应用在组织里的安装。 */
+export interface AppInstallsTable {
+  id: string;
+  org_id: string;
+  item_id: string;
+  version: string;
+  status: "installing" | "installed" | "failed" | "uninstalling";
+  installed_by: string | null;
+  installed_at: Generated<Date>;
+  error: ColumnType<unknown, string | null | undefined, string | null>;
+}
+
+/** 0037：应用安装的组件（created = 本次新建）。 */
+export interface AppInstallComponentsTable {
+  install_id: string;
+  kind: "plugin" | "connector" | "skill";
+  ref: string;
+  created: boolean;
+  skill_version: NullableCol<number>;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

@@ -122,7 +122,7 @@ export class Offboarding {
    * 在事务 `t` 内（调用方应已锁组织行——顺序：组织行 → 成员关系，并完成「最后一个 owner」等前置检查）：
    * 1. 删除成员关系（非成员 → `member.not_found`；删后组织没有 owner → `org.last_owner`），清空指向该组织的会话当前组织；
    * 2. 吊销该账号**全部**会话与个人令牌（令牌与会话是账号级的，无法只吊销「该组织下」的，按保守处理）；
-   * 3. 删除其在该组织所有应用上的个人凭据；
+   * 3. 删除其在该组织所有连接器上的个人凭据；
    * 4. 取消其作为处理人的 pending 审批与提问（写 cancelled 事件），记下此人在该组织进行中的运行（提交后中止）；
    * 5. 其负责的该组织 agent 转给组织所有者（最早加入的 owner）并置 `needs_reassignment = true`；
    * 6. 归档其在该组织各渠道连接上的 IM 话题行（重新加入后在 IM 里开始新的对话，不接着旧会话），
@@ -194,6 +194,10 @@ export class Offboarding {
       .innerJoin("conversations", "conversations.id", "runs.conversation_id")
       .select(["runs.id", "runs.conversation_id", "runs.status"])
       .where("conversations.org_id", "=", orgId)
+      // 评测回放的隐藏对话由评测 worker 驱动（不执行工具），随评测运行停下，不在这里中止。
+      // 评测运行的创建者离开组织也不取消评测运行（Ruling S1-b）：管理员发起的评测运行是组织的工作，
+      // 只有取消、删除评测集、删除组织或 agent 才会停下（见 evals/budget.ts cancelEvalRuns）
+      .where("conversations.kind", "=", "chat")
       .where("runs.status", "in", ACTIVE)
       .where((eb) =>
         eb.or([
@@ -395,6 +399,7 @@ export class Offboarding {
         .select(["runs.id", "runs.conversation_id", "runs.status"])
         .select(sql<string>`runs.created_at::text`.as("created_at_text"))
         .where("runs.status", "in", ACTIVE)
+        .where("conversations.kind", "=", "chat")
         .where(({ not, exists, selectFrom }) =>
           not(
             exists(

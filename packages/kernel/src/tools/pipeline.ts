@@ -16,6 +16,7 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { PLUGIN_UNLOADED_TOOL_ERROR, PluginUnloadedError } from "../plugins/inflight.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import type { WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
@@ -23,7 +24,7 @@ import { skillLoadOffered } from "../skills/catalog.js";
 import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
-import { type AppAuth, CredentialMissing, type Credentials } from "./credentials.js";
+import { type ConnectorAuth, CredentialMissing, type Credentials } from "./credentials.js";
 import { ElicitationSession } from "./elicitation.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, type ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
@@ -66,10 +67,10 @@ const invalidFormText = (key: string, problems: string[]) =>
   `Tool ${key} returned an invalid input form: ${problems.join("; ")}.`;
 const stateTooLargeText = (key: string) =>
   `Tool ${key} returned input state larger than ${MAX_INPUT_STATE_BYTES / 1024} KB.`;
-const personalMissingText = (appName: string) =>
-  `The user has not connected ${appName}. A connect card was shown; ask the user to connect, then retry.`;
-const orgMissingText = (appName: string) =>
-  `${appName} has no organization credential configured; ask an organization admin to set it up.`;
+const personalMissingText = (connectorName: string) =>
+  `The user has not connected ${connectorName}. A connect card was shown; ask the user to connect, then retry.`;
+const orgMissingText = (connectorName: string) =>
+  `${connectorName} has no organization credential configured; ask an organization admin to set it up.`;
 
 // ---- 策略（判定见 policy.ts） ----
 
@@ -78,8 +79,8 @@ export interface AskRequest {
   toolKey: string;
   /** 所批准的工具定义指纹（「本会话 / 以后都允许」授权按它匹配）。 */
   specHash: string;
-  /** 应用工具的来源应用；插件 / 内置工具为 null。 */
-  appId: string | null;
+  /** 连接器工具的来源连接器；插件 / 内置工具为 null。 */
+  connectorId: string | null;
   /** 指定处理人（发起人本人）；按角色升级时为 null。 */
   requestedFor: string | null;
   /** 按角色升级（R1）时所需的角色；否则为 null。 */
@@ -87,7 +88,7 @@ export interface AskRequest {
 }
 
 /**
- * `unavailable`：调用那一刻工具已不可用（应用 / 工具不存在、停用、删除、待审核），值为事实原因；
+ * `unavailable`：调用那一刻工具已不可用（连接器 / 工具不存在、停用、删除、待审核），值为事实原因；
  * 管线写「工具不可用」说明，而不是「策略拒绝」。
  */
 export type PolicyDecision =
@@ -139,10 +140,10 @@ export interface ToolPipelineDeps {
   decidePolicy?: DecidePolicy;
   hooks?: ToolPipelineHooks;
   /**
-   * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该应用的漂移检查。
+   * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该连接器的漂移检查。
    * 不等待、不抛错（实现自己吞掉错误）。
    */
-  onToolsChanged?: (orgId: string, appId: string) => void;
+  onToolsChanged?: (orgId: string, connectorId: string) => void;
 }
 
 /** tools 节点处理一步工具调用所需的上下文。 */
@@ -178,7 +179,7 @@ export type ExecOutcome =
   /** 执行失败（超时、抛错、熔断、中止等），message 给模型看。 */
   | { kind: "error"; message: string }
   /** 发起人未连接个人凭据：除错误结果外再写 `connection_required`。 */
-  | { kind: "connection_required"; appId: string; appName: string; message: string };
+  | { kind: "connection_required"; connectorId: string; connectorName: string; message: string };
 
 type ToolCall = { id: string; name: string; input: unknown };
 
@@ -194,7 +195,7 @@ type Authorization =
 /** `tool.called` 审计的附加信息：传入即表示工具确实执行过（durationMs 为 null = 耗时未知）。 */
 interface CallAudit {
   durationMs: number | null;
-  appId: string | null;
+  connectorId: string | null;
   authorization?: Authorization;
 }
 
@@ -306,7 +307,7 @@ export class ToolPipeline {
     );
     let resolved: Resolved | undefined;
     const resolve = async (): Promise<Resolved> => {
-      // 每步实时解析（应用 / 插件状态可能在模型调用之后变化）
+      // 每步实时解析（连接器 / 插件状态可能在模型调用之后变化）
       if (!resolved) {
         // 与构建请求时同一判定：日志里有过技能目录快照 → skill_load 可用（空快照也不收回，见 skillLoadOffered）
         const skillLoad = skillLoadOffered(
@@ -362,7 +363,11 @@ export class ToolPipeline {
         [],
         {
           durationMs: null,
-          appId: approved ? approved.appId : source?.kind === "app" ? source.appId : null,
+          connectorId: approved
+            ? approved.connectorId
+            : source?.kind === "connector"
+              ? source.connectorId
+              : null,
           ...(approved && { authorization: approvalAuthorization(approved) }),
         },
       );
@@ -424,9 +429,9 @@ export class ToolPipeline {
       if (e instanceof ToolError) return fail(e.message, tool.key);
       throw e;
     }
-    // 应用工具的 schema 来自连接器（不受信任）：去掉有风险的关键字并限制大小 / 层数
+    // 连接器工具的 schema 来自连接器（不受信任）：去掉有风险的关键字并限制大小 / 层数
     const invalid = validateInput(tool.key, tool.spec, input, {
-      untrusted: tool.source.kind === "app",
+      untrusted: tool.source.kind === "connector",
       log: this.deps.log,
     });
     if (invalid !== null) return fail(invalid, tool.key);
@@ -457,7 +462,7 @@ export class ToolPipeline {
         callId: call.id,
         toolKey: tool.key,
         specHash: decision.ask.specHash,
-        appId: decision.ask.appId,
+        connectorId: decision.ask.connectorId,
         input: call.input,
         requestedFor: decision.ask.requestedFor,
         approverRole: decision.ask.approverRole,
@@ -506,7 +511,7 @@ export class ToolPipeline {
     // 显示摘要：只认插件 / 内置工具与内核的 resources 工具给的（连接器结果来自外部服务，不采信），
     // 校验不过就丢弃并告警
     const display =
-      outcome.kind === "result" && (tool.source.kind !== "app" || tool.source.resources)
+      outcome.kind === "result" && (tool.source.kind !== "connector" || tool.source.resources)
         ? this.displayOf(outcome.result, tool.key)
         : undefined;
     const cfg = this.deps.config().tools;
@@ -535,8 +540,9 @@ export class ToolPipeline {
               payload: {
                 step: ctx.step,
                 callId: call.id,
-                appId: outcome.appId,
-                appName: outcome.appName,
+                // 事件 payload 字段名改名后不变（C27：日志确定性）
+                appId: outcome.connectorId,
+                appName: outcome.connectorName,
               },
             },
           ]
@@ -556,7 +562,7 @@ export class ToolPipeline {
       pre,
       {
         durationMs,
-        appId: tool.source.kind === "app" ? tool.source.appId : null,
+        connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,
         authorization,
       },
     );
@@ -635,9 +641,9 @@ export class ToolPipeline {
   }
 
   /**
-   * 管线第 4 阶段：执行。内置 / 插件工具直接调用处理函数，应用工具经连接器（每次调用打开并关闭会话）。
+   * 管线第 4 阶段：执行。内置 / 插件工具直接调用处理函数，连接器工具经连接器（每次调用打开并关闭会话）。
    * 带 `tools.timeoutMs` 超时与 run 的中止信号（合并后传给处理函数 / 连接器，不响应信号的也按时结束）。
-   * 熔断只作用于应用工具（键为组织 × 应用）。
+   * 熔断只作用于连接器工具（键为组织 × 连接器）。
    */
   async execute(
     tool: ResolvedTool,
@@ -647,8 +653,8 @@ export class ToolPipeline {
     resume?: ToolResume,
     stepTools?: readonly ResolvedTool[],
   ): Promise<ExecOutcome> {
-    if (tool.source.kind === "app") {
-      return this.executeApp(tool, tool.source, input, ctx, resume);
+    if (tool.source.kind === "connector") {
+      return this.executeConnector(tool, tool.source, input, ctx, resume);
     }
     const handler = this.deps.registry.handler(tool.source);
     if (!handler) return { kind: "error", message: `Tool ${tool.key} is no longer available.` };
@@ -687,20 +693,20 @@ export class ToolPipeline {
     }
   }
 
-  private async executeApp(
+  private async executeConnector(
     tool: ResolvedTool,
-    source: Extract<ResolvedTool["source"], { kind: "app" }>,
+    source: Extract<ResolvedTool["source"], { kind: "connector" }>,
     input: unknown,
     ctx: ToolStepContext,
     resume?: ToolResume,
   ): Promise<ExecOutcome> {
     const { db, registry, breaker, credentials, config } = this.deps;
     const { orgId } = ctx;
-    const appId = source.appId;
+    const connectorId = source.connectorId;
     const app = await db
-      .selectFrom("apps")
+      .selectFrom("connectors")
       .select(["name", "connector", "endpoint", "auth", "status"])
-      .where("id", "=", appId)
+      .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
@@ -714,7 +720,7 @@ export class ToolPipeline {
         message: `The connector for ${tool.key} is not installed; ask an administrator.`,
       };
     }
-    const state = await breaker.check(orgId, appId);
+    const state = await breaker.check(orgId, connectorId);
     if (state.open) {
       return {
         kind: "error",
@@ -722,12 +728,12 @@ export class ToolPipeline {
       };
     }
 
-    const auth = app.auth as AppAuth;
+    const auth = app.auth as ConnectorAuth;
     let injection: Promise<AuthInjection> | undefined;
     /** 本次调用实际注入过的凭据（含 401 后重新读取的），结果打码用。 */
     const injected: AuthInjection[] = [];
     const getAuth = () => {
-      injection ??= credentials.injection(orgId, appId, auth, ctx.accountId).then((inj) => {
+      injection ??= credentials.injection(orgId, connectorId, auth, ctx.accountId).then((inj) => {
         injected.push(inj);
         return inj;
       });
@@ -762,7 +768,7 @@ export class ToolPipeline {
     /** 本次执行要问用户（elicitation）：服务可达，算成功；返回打码后的输入请求。 */
     const asked = async (): Promise<ExecOutcome | undefined> => {
       if (!elicit.pending) return undefined;
-      await breaker.success(orgId, appId);
+      await breaker.success(orgId, connectorId);
       return clean({
         kind: "input_required",
         form: elicit.pending.form,
@@ -773,8 +779,8 @@ export class ToolPipeline {
       e.ownership === "personal"
         ? {
             kind: "connection_required",
-            appId,
-            appName: app.name,
+            connectorId,
+            connectorName: app.name,
             message: personalMissingText(app.name),
           }
         : { kind: "error", message: orgMissingText(app.name) };
@@ -802,22 +808,26 @@ export class ToolPipeline {
             onUnauthorized: async () => {
               const stale = injected.at(-1);
               injection = undefined;
-              await credentials.onUnauthorized(orgId, appId, auth, ctx.accountId, stale);
+              await credentials.onUnauthorized(orgId, connectorId, auth, ctx.accountId, stale);
             },
             signal,
             onElicit: elicit.handle,
             onToolsChanged: () => {
               try {
-                this.deps.onToolsChanged?.(orgId, appId);
+                this.deps.onToolsChanged?.(orgId, connectorId);
               } catch (err) {
-                this.deps.log.warn("tools changed notification failed", { orgId, appId, err });
+                this.deps.log.warn("tools changed notification failed", {
+                  orgId,
+                  connectorId,
+                  err,
+                });
               }
             },
           });
           const session = await opened;
           return source.resources
             ? runResourceTool(session, source.name, input)
-            : // 交回已复核的定义（app_tools.spec，含 connectorData）：连接器按它路由，远端变化须先经漂移复核
+            : // 交回已复核的定义（connector_tools.spec，含 connectorData）：连接器按它路由，远端变化须先经漂移复核
               session.callTool(source.name, input, AbortSignal.any([signal, suspend.signal]), {
                 spec: tool.spec,
               });
@@ -828,11 +838,11 @@ export class ToolPipeline {
       const ask = await asked();
       if (ask) return ask;
       if (r === "timeout") {
-        await breaker.failure(orgId, appId);
+        await breaker.failure(orgId, connectorId);
         return { kind: "error", message: timeoutText(tool.key, config().tools.timeoutMs) };
       }
       // 工具自己报告的错误（isError）说明服务可用，也算成功。
-      await breaker.success(orgId, appId);
+      await breaker.success(orgId, connectorId);
       return clean({ kind: "result", result: r.value });
     } catch (e) {
       // 为问用户而中止了调用：中止引起的错误不是失败
@@ -841,8 +851,9 @@ export class ToolPipeline {
       if (e instanceof CredentialMissing) return missing(e);
       // 熔断只计远端不可用（连接 / 传输错误、HTTP 5xx：连接器抛 kind = unavailable 的 ToolError 或原始错误）。
       // 其余 ToolError（JSON-RPC 业务错误、鉴权失败、重定向等）说明服务可达，与 isError 结果一样算成功。
-      if (e instanceof ToolError && e.kind !== "unavailable") await breaker.success(orgId, appId);
-      else await breaker.failure(orgId, appId);
+      if (e instanceof ToolError && e.kind !== "unavailable")
+        await breaker.success(orgId, connectorId);
+      else await breaker.failure(orgId, connectorId);
       return clean(this.thrown(tool.key, e));
     } finally {
       if (opened) await this.closeSession(opened, tool.key);
@@ -852,6 +863,11 @@ export class ToolPipeline {
   /** 抛出的错误 → 给模型的结果：ToolError 的消息原样（插件约定为英文、可操作），其他只给错误类名。 */
   private thrown(key: string, e: unknown): ExecOutcome {
     if (e instanceof ToolError) return { kind: "error", message: e.message };
+    // 提供工具的插件实例在调用进行中被撤销（停用 / 升级），排空时限到后中止（C17）
+    if (e instanceof PluginUnloadedError) {
+      this.deps.log.warn("tool call aborted: plugin unloaded", { toolKey: key, plugin: e.plugin });
+      return { kind: "error", message: PLUGIN_UNLOADED_TOOL_ERROR };
+    }
     // 不记参数与结果；错误经日志打码
     this.deps.log.warn("tool call failed", { toolKey: key, err: e });
     return { kind: "error", message: failedText(key, errName(e)) };
@@ -934,7 +950,7 @@ export class ToolPipeline {
   /**
    * 管线第 6 阶段：写 `tool_result`（与 `connection_required` 同批）。传入 `callAudit`（即工具实际执行过；
    * 耗时 null = 执行过但耗时未知，如续跑时「有开始无结果」的调用）时在同一事务里写审计 `tool.called`。
-   * 审计链（R6）：actor = 发起人 → agent（id + 版本）→ 会话 / 运行 / 调用 / 工具（应用工具带 appId）→
+   * 审计链（R6）：actor = 发起人 → agent（id + 版本）→ 会话 / 运行 / 调用 / 工具（连接器工具带 connectorId）→
    * 放行依据（审批人 / 授权 / 策略）。不含参数、结果与凭据。
    */
   private async writeResult(
@@ -981,7 +997,7 @@ export class ToolPipeline {
           conversationId: ctx.conversationId,
           runId: ctx.runId,
           callId,
-          ...(callAudit.appId !== null && { appId: callAudit.appId }),
+          ...(callAudit.connectorId !== null && { connectorId: callAudit.connectorId }),
           ...callAudit.authorization,
         },
       });

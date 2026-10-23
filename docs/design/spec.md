@@ -88,6 +88,7 @@
 | 待审批 / 暂停 | `‖` | warn | 待审批 |
 | 排队 | `○` | muted | 排队 |
 | 已取消 | `⊘` | muted | 已取消 |
+| 已达上限 | `◆` | warn | 已达上限（配额如 token 上限用尽后停下，与人为取消区分） |
 
 状态必须同时有符号与文字，不得只靠颜色。
 
@@ -204,6 +205,7 @@
 ### 5.1 列表（T2）
 - Rail：分面筛选，每组标题（muted）+ 复选项 + 计数（faint）。
 - Content = 一个 DataTable（§6.6），其工具栏、批量栏、分页均属于 DataTable。
+- 从属区块（可选，至多一个）：主表之下、间距 24，`h2` 标题 + 一个 DataTable，列出与主对象紧密相关、条目不多的次要对象（如成员页的「邀请」）；不另带筛选与 PageHeader 指标，新建入口仍放 PageHeader。次要对象需要独立筛选或条目多时，另做列表页。
 - PageHeader：标题 + 总数，指标 ≤4，右侧次操作 + 新建（主）。
 - StatusBar 页面状态：筛选结果数。
 
@@ -286,7 +288,7 @@
   - 勾选：仅复选框变主色，行底不变。
   - 焦点：内描边 1px 主色。
   - 禁用 / 归档：整行 `faint`，不可勾选。
-- 行内菜单 `⋯`：≤5 项，危险项置底并以分隔线隔开；打开时 `⋯` 底色 `line`。菜单 `panel` 底 + `line-strong` 边 + `shadow-1`。
+- 行内菜单 `⋯`：≤5 项，危险项置底并以分隔线隔开；打开时 `⋯` 底色 `line`。某行没有可用的操作时该行不显示 `⋯`（单元格保留，列对齐不变）。菜单 `panel` 底 + `line-strong` 边 + `shadow-1`。
 - 展开行：`panel` 底，缩进与 `└` 引导，显示摘要（如执行链路前几步）。
 - 空状态：
   - 加载：骨架行（`hover` / `line` 色条），不用转圈。
@@ -332,6 +334,17 @@
 - **AttachmentPreview**：消息里的附件。`kind="image"` 为缩略图：最大 240×160、按比例裁切填满（`object-fit: cover`），1px `line` 边，`loading="lazy"`、`referrerpolicy="no-referrer"`；`kind="file"` 为文件卡片：1px `line` 边、`panel` 底，左侧 `▤` `muted`，文件名（单行省略）+ 下方 small `muted` 说明（如类型）。两者都是新标签页打开的链接（`target="_blank"`、`rel="noopener noreferrer"`），悬停边框 `line-strong`。地址只认 http(s) 绝对地址与本源的绝对路径：原串含任何 ASCII 控制字符、空白或 `\` 一律不认（浏览器会删掉制表 / 换行，`/\t/evil` 会变成 `//evil`），`/` 开头的按占位源解析后源必须不变；其他（`javascript:`、`data:`、协议相对地址、相对路径）不渲染链接与图片，只显示文件名。图片加载失败时回调 `onImageError`；`retry` 大于 0 时图片地址加上缓存参数 `retry=<n>` 重新加载（链接不变）；给了 `onOpen` 时，不带修饰键的左键点击交给调用方打开。
 - **Card `tone="accent"`**：对话里待人处理的卡片（审批 / 提问 / 连接）用 1px `accent` 描边（§2.3 描边），处理完回到默认边框。
 - 图表沿用 §6.8 的 `BarChart` / `Sparkline`，属性列表沿用 `KeyValue`，表格沿用 DataTable，不另造。
+
+### 6.10 Span 瀑布（SpanWaterfall）
+
+链路查看器（T8）上方的瀑布图：一次对话里各次运行的 span 按层级与时间排开。只收普通 props（`spans`、`selectedId`、`onSelect`、`labels.empty`、可选 `labels.kinds`、可选 `label`），span 的层级由 `parentId` 给出，调用方按深度优先顺序传入。
+
+- span 字段：`kind`（`run` / `step` / `model` / `tool` / `wait`）、`label`、`startMs`（相对最早 span 的偏移）、`durationMs`（未知为 null）、`status`（`ok` / `error` / `pending`）、可选 `meta`（如 token 数）。
+- 每个 span 一行（高 28），自左而右：名称列（固定 40%：按深度每级缩进 16，`kind` 徽标（文案缺省走 design i18n：运行 / 步骤 / 模型 / 工具 / 等待，en 为 run / step / model / tool / wait；可经 `labels.kinds` 覆盖）11px `faint` 定宽 5ch + 名称单行省略 + `meta` small `muted`）｜时间轨（1px `line` 左边线，条形按 `startMs / 总时长` 定位、按 `durationMs / 总时长` 定宽，最窄 2px）｜状态（`StatusMark`：ok 成功、error 失败、pending 运行中；`wait` 未结束为待审批）｜耗时（右对齐，`6.8s` / `312ms` / `00:02:18`，未知 `—`）。
+- 条形颜色：ok `line-strong`；error `fail`；pending `accent`（正在发生，§2.3「文字」职责的延伸），未结束的 span 从起点延伸到时间轨末端。`wait` 条形为 1px 描边空心（等待不是执行）。
+- 总时长 = 各 span 的 `startMs + (durationMs ?? 0)` 的最大值（至少 1ms）。
+- 交互：`role="tree"`（`aria-label` 取 `label`，缺省「Span 瀑布」，总是展开，不能折叠），每行 `role="treeitem"`，`aria-selected`、`aria-level`（深度 + 1），有子 span 的行 `aria-expanded="true"`；焦点留在 tree 上，当前项由 `aria-activedescendant` 指出。点击行选中；获得焦点后 ↑ / ↓ 选上一个 / 下一个，Home / End 选首 / 末项。选中行 `accent-tint` 底 + 左侧 2px 主色（§2.3）。
+- 空：只显示一行 `labels.empty`（`muted`）。
 
 ---
 

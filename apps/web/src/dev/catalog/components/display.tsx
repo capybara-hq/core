@@ -9,16 +9,19 @@ import {
   Logo,
   Metric,
   Skeleton,
+  SpanWaterfall,
   Sparkline,
   StatusMark,
   Text,
   Tooltip,
 } from "@capybara-hq/design";
-import { AGENTS, RUN_TREND } from "../fixtures";
+import { useState } from "react";
+import { AGENTS, RUN_TREND, TRACE_SPANS } from "../fixtures";
 import { Row, Section } from "../frame";
 
-/** spec §2.4 / §3 / §6.5 / §6.8：状态、徽标、快捷键、提示、指标、Logo、图表与文字。 */
+/** spec §2.4 / §3 / §6.5 / §6.8 / §6.10：状态、徽标、快捷键、提示、指标、Logo、图表、Span 瀑布与文字。 */
 export function DisplaySection() {
+  const [span, setSpan] = useState<string | null>("m1");
   return (
     <Section title="状态 Status / 徽标 Badge / 快捷键 Kbd / 指标">
       <Row label="状态（符号 + 颜色 + 文字）">
@@ -28,6 +31,7 @@ export function DisplaySection() {
         <StatusMark status="waiting" />
         <StatusMark status="queued" />
         <StatusMark status="cancelled" />
+        <StatusMark status="capped" />
       </Row>
       <Row label="Badge · 默认 / 强调 / 计数">
         <Badge>PROD</Badge>
@@ -74,6 +78,28 @@ export function DisplaySection() {
             { k: "模型", v: "claude-opus-5-5" },
             { k: "写", v: "ticket.reply（需审批 > ¥500）· crm.update_order · kb.write" },
           ]}
+        />
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          Span 瀑布（成功 / 失败 / 进行中 · 审批等待 · 选中行）
+        </Text>
+        <SpanWaterfall
+          spans={TRACE_SPANS}
+          selectedId={span}
+          onSelect={setSpan}
+          labels={{ empty: "还没有 span" }}
+        />
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          Span 瀑布 · 空
+        </Text>
+        <SpanWaterfall
+          spans={[]}
+          selectedId={null}
+          onSelect={() => {}}
+          labels={{ empty: "这个对话还没有开始过运行。" }}
         />
       </Grid>
       <Grid columns="form" gap={12}>

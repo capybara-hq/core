@@ -1,9 +1,9 @@
 import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
 
-/** 熔断器键：每个组织 × 应用一个 hash（`f` = 连续失败次数，`o` = 打开到期的毫秒时间戳）。 */
-export const breakerKey = (orgId: string, appId: string): string =>
-  `capk:breaker:${orgId}:${appId}`;
+/** 熔断器键：每个组织 × 连接器一个 hash（`f` = 连续失败次数，`o` = 打开到期的毫秒时间戳）。 */
+export const breakerKey = (orgId: string, connectorId: string): string =>
+  `capk:breaker:${orgId}:${connectorId}`;
 
 /**
  * 连续失败计数的保留时间：没有新的失败也没有成功时，计数在这之后过期（多副本纪律：Redis 写入带 TTL）。
@@ -52,12 +52,16 @@ export type BreakerState =
   | { open: true; failures: number; retryAfterSeconds: number };
 
 /** 熔断打开时给模型的说明（英文）。 */
-export function breakerOpenMessage(appName: string, failures: number, retryAfterSeconds: number) {
-  return `Tool temporarily unavailable: ${appName} failed ${failures} times in a row; retry after ${retryAfterSeconds}s.`;
+export function breakerOpenMessage(
+  connectorName: string,
+  failures: number,
+  retryAfterSeconds: number,
+) {
+  return `Tool temporarily unavailable: ${connectorName} failed ${failures} times in a row; retry after ${retryAfterSeconds}s.`;
 }
 
 /**
- * 应用级熔断器（spec 5.4；只用于应用工具）：同一组织同一应用连续失败 `tools.breakerFailures` 次后打开
+ * 连接器级熔断器（spec 5.4；只用于连接器工具）：同一组织同一连接器连续失败 `tools.breakerFailures` 次后打开
  * `tools.breakerOpenSeconds` 秒，期间直接拒绝；到期后半开放行，成功清零、失败立即重新打开。
  * 状态只在 Redis（多副本共享），计数与打开状态都带 TTL。
  */
@@ -67,8 +71,8 @@ export class Breaker {
     private readonly config: () => KernelConfig,
   ) {}
 
-  async check(orgId: string, appId: string): Promise<BreakerState> {
-    const [failures, left] = (await this.redis.eval(CHECK, 1, breakerKey(orgId, appId))) as [
+  async check(orgId: string, connectorId: string): Promise<BreakerState> {
+    const [failures, left] = (await this.redis.eval(CHECK, 1, breakerKey(orgId, connectorId))) as [
       number,
       number,
     ];
@@ -77,13 +81,13 @@ export class Breaker {
   }
 
   /** 记一次失败，返回当前连续失败次数。 */
-  async failure(orgId: string, appId: string): Promise<number> {
+  async failure(orgId: string, connectorId: string): Promise<number> {
     const { breakerFailures, breakerOpenSeconds } = this.config().tools;
     return Number(
       await this.redis.eval(
         FAILURE,
         1,
-        breakerKey(orgId, appId),
+        breakerKey(orgId, connectorId),
         breakerFailures,
         breakerOpenSeconds * 1000,
         COUNT_TTL_MS,
@@ -92,7 +96,7 @@ export class Breaker {
   }
 
   /** 调用成功：清零。 */
-  async success(orgId: string, appId: string): Promise<void> {
-    await this.redis.del(breakerKey(orgId, appId));
+  async success(orgId: string, connectorId: string): Promise<void> {
+    await this.redis.del(breakerKey(orgId, connectorId));
   }
 }

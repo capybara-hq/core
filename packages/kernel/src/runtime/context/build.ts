@@ -63,6 +63,8 @@ export interface ModelCallMeta {
    * 请求里每个附件的处理结果（按首次出现，同一附件一条）；发了字节的带 finalize 时的 etag。没有媒体则没有该字段。
    */
   media?: MediaOutcomeEntry[];
+  /** 请求里有媒体、且给了有限的预算时：所用的媒体字节预算（还原时重现同样的省略）。 */
+  mediaBudgetBytes?: number;
 }
 
 /** 构建请求用到的工具信息（`ResolvedTool` 的子集）。 */
@@ -764,6 +766,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     }),
     ...(toolChoice !== undefined && { toolChoice }),
     ...(mediaOutcomes.size > 0 && { media: [...mediaOutcomes.values()] }),
+    ...(mediaOutcomes.size > 0 &&
+      input.mediaBudgetBytes !== undefined &&
+      Number.isFinite(input.mediaBudgetBytes) && { mediaBudgetBytes: input.mediaBudgetBytes }),
   };
   return { request, meta, mediaTokens };
 }

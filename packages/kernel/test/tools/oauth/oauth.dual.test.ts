@@ -18,7 +18,7 @@ import { PW } from "../../helpers/runs.js";
 
 /**
  * Task 15（双副本，独立进程）：在副本 0 发起连接、回调落在副本 1（state 在 Redis，不依赖进程内存）；
- * 授权服务器作废全部 access token 后，两个副本同时刷新应用工具清单 → 各自收到 401 → 只刷新一次 token
+ * 授权服务器作废全部 access token 后，两个副本同时刷新连接器工具清单 → 各自收到 401 → 只刷新一次 token
  * （refresh token 轮换，第二次刷新会失败从而暴露并发刷新）。
  */
 
@@ -105,7 +105,7 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
     const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });
     const orgId = (org.json.org as { id: string }).id;
     const base = `/api/v1/orgs/${orgId}`;
-    const app = await at(0, "POST", `${base}/apps`, {
+    const app = await at(0, "POST", `${base}/connectors`, {
       name: "Docs",
       slug: "docs",
       connector: "mcp",
@@ -113,27 +113,27 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
       auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
     });
     expect(app.status, JSON.stringify(app.json)).toBe(201);
-    const appId = (app.json.app as { id: string }).id;
+    const connectorId = (app.json.connector as { id: string }).id;
 
     // 副本 0 发起，回调落在副本 1
-    const c = await at(0, "POST", `${base}/apps/${appId}/connect`, {});
+    const c = await at(0, "POST", `${base}/connectors/${connectorId}/connect`, {});
     expect(c.status, JSON.stringify(c.json)).toBe(200);
     const authorize = await fetch(c.json.authorizationUrl as string, { redirect: "manual" });
     const back = new URL(authorize.headers.get("location") as string);
     const cb = await at(1, "GET", `${back.pathname}${back.search}`);
     expect(cb.status).toBe(302);
-    expect(cb.location).toBe(`${PUBLIC_URL}/settings/connections?connected=${appId}`);
-    const detail = await at(1, "GET", `${base}/apps/${appId}`);
-    expect((detail.json.app as { tools: { name: string }[] }).tools.map((t) => t.name)).toEqual([
-      "whoami",
-    ]);
+    expect(cb.location).toBe(`${PUBLIC_URL}/settings/connections?connected=${connectorId}`);
+    const detail = await at(1, "GET", `${base}/connectors/${connectorId}`);
+    expect(
+      (detail.json.connector as { tools: { name: string }[] }).tools.map((t) => t.name),
+    ).toEqual(["whoami"]);
 
     // 两个副本同时刷新工具清单：都用已作废的 access token → 401 → 只刷新一次
     as.revokeAccessTokens();
     const before = as.tokenRequests.filter((r) => r.grantType === "refresh_token").length;
     const [r0, r1] = await Promise.all([
-      at(0, "POST", `${base}/apps/${appId}/refresh`),
-      at(1, "POST", `${base}/apps/${appId}/refresh`),
+      at(0, "POST", `${base}/connectors/${connectorId}/refresh`),
+      at(1, "POST", `${base}/connectors/${connectorId}/refresh`),
     ]);
     expect(r0.status, JSON.stringify(r0.json)).toBe(200);
     expect(r1.status, JSON.stringify(r1.json)).toBe(200);

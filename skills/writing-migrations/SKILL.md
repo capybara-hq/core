@@ -31,10 +31,24 @@ CREATE TABLE IF NOT EXISTS events (
 | 建对象带 `IF NOT EXISTS` | `CREATE TABLE / INDEX / SCHEMA / EXTENSION / SEQUENCE` | `idempotent` |
 | 删对象带 `IF EXISTS` | `DROP TABLE / INDEX / ...`、`DROP COLUMN IF EXISTS`、`DROP CONSTRAINT IF EXISTS` | `idempotent` |
 | 不写事务控制 | 不要 `BEGIN` / `COMMIT` / `ROLLBACK` / `SAVEPOINT`；不要 `CREATE INDEX CONCURRENTLY`（事务内不能执行，用普通 `CREATE INDEX IF NOT EXISTS`） | `transaction-control` |
-| 不用 `DO` 块 | 其内部语句无法静态审查；拆成普通幂等语句 | `do-block` |
+| 尽量不用 `DO` 块 | 其内部语句无法静态审查；能拆成普通幂等语句就拆。确需时（如 `RENAME COLUMN` 没有 `IF EXISTS`，要放进 `IF EXISTS (SELECT … information_schema.columns …) THEN … END IF` 才幂等），在 `DO` 行**正上方**写豁免注释，见下 | `do-block` |
 | 破坏性语句要豁免 | 见下 | `destructive` |
 
-破坏性语句 = 删列、`DROP TABLE` / `DROP SCHEMA`、`TRUNCATE`、`DELETE FROM`、含 `RENAME`、改列类型（`ALTER COLUMN ... TYPE`）。
+破坏性语句 = 删列、`DROP TABLE` / `DROP SCHEMA`、`TRUNCATE`、`DELETE FROM`、含 `RENAME`、改列类型（`ALTER COLUMN ... TYPE`）。检查也扫描 `DO $$ … $$` 块体：块体里有这些语句、而 `DO` 行上方没有豁免注释时，除 `do-block` 外另报 `destructive`。写在 `$$` 里面的注释不算。块体里用 `EXECUTE` 拼出来的语句检查看不见，所以带豁免注释的 `DO` 块不论块体是否被识别为破坏性，原因都必填。
+
+```sql
+-- capybara:allow-destructive 表改名；同一发布内代码同步改名（项目未发布，无兼容层）
+ALTER TABLE IF EXISTS apps RENAME TO connectors;
+-- capybara:allow-destructive 列改名；同一发布内代码同步改名（项目未发布，无兼容层）
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema = 'capybara' AND table_name = 'connector_tools' AND column_name = 'app_id') THEN
+    ALTER TABLE connector_tools RENAME COLUMN app_id TO connector_id;
+  END IF;
+END
+$$;
+```
 
 ## 扩展 → 收缩（两步删列）
 
@@ -57,7 +71,7 @@ ALTER TABLE events DROP COLUMN IF EXISTS old_name;
 
 ## 豁免注释
 
-- 写法：`-- capybara:allow-destructive <原因>`，必须在破坏性语句**紧邻的上一行**（中间不能隔空行或别的注释）。
+- 写法：`-- capybara:allow-destructive <原因>`，必须在破坏性语句（或 `DO` 块的 `DO` 行）**紧邻的上一行**（中间不能隔空行或别的注释）。
 - **原因不能为空**，且应说明为什么本版本可以直接执行（例如「该表是本版本新建、尚无数据」「已在上一个版本停止读写」）。写了标记但原因为空，仍报 `destructive`。
 - 没有标记直接写破坏性语句，报 `destructive`。
 

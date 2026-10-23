@@ -41,30 +41,30 @@ const one = (v: unknown): string | undefined =>
   typeof v === "string" && v.length <= 4096 ? v : undefined;
 
 /**
- * 发起 OAuth 连接（`POST /orgs/:orgId/apps/:appId/connect`，`apps.use`，仅用户主体）：返回授权 URL，并写浏览器绑定
+ * 发起 OAuth 连接（`POST /orgs/:orgId/connectors/:connectorId/connect`，`connectors.use`，仅用户主体）：返回授权 URL，并写浏览器绑定
  * Cookie `cap_oauth`（HttpOnly、SameSite=Lax——授权服务器回跳是跨站顶级 GET 导航、Lax 会带上；Path 只到回调）。
  */
-@Controller("api/v1/orgs/:orgId/apps")
+@Controller("api/v1/orgs/:orgId/connectors")
 export class OAuthConnectController {
   constructor(
     @Inject(OAUTH_FLOW) private readonly flow: OAuthFlow,
     @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
   ) {}
 
-  @Post(":appId/connect")
+  @Post(":connectorId/connect")
   @HttpCode(200)
-  @OrgAction("apps.use")
+  @OrgAction("connectors.use")
   async connect(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("appId") appId: string,
+    @Param("connectorId") connectorId: string,
     @Body(new ZodPipe(ConnectBody)) body: z.infer<typeof ConnectBody>,
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ authorizationUrl: string }> {
     const p = requireUser(principal);
     const binding = browserBinding(req.cookies[OAUTH_BINDING_COOKIE]);
-    const out = await this.flow.start(org.orgId, appId, p.account.id, body.returnTo, binding);
+    const out = await this.flow.start(org.orgId, connectorId, p.account.id, body.returnTo, binding);
     reply.setCookie(OAUTH_BINDING_COOKIE, binding, {
       path: OAUTH_CALLBACK_PATH,
       httpOnly: true,
