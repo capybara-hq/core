@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { fileURLToPath } from "node:url";
 import {
   type AvailableHook,
@@ -21,6 +22,7 @@ import { createDb } from "../../src/db/pool.js";
 import {
   EMPTY_DENY_REASON,
   errMsg,
+  HOOK_DETAIL_MAX_CHARS,
   HOOK_REASON_MAX_CHARS,
   HookRegistry,
   type HookSource,
@@ -488,6 +490,31 @@ describe("HookRegistry.run: the caller's abort", () => {
     plugin("zeta").on("tool.preExecute", zeta, { mode: "policy" });
     await expect(r.run("tool.preExecute", toolPre(), ac.signal)).rejects.toBe(reason);
     expect(zeta).not.toHaveBeenCalled();
+  });
+});
+
+describe("HookRegistry: listeners and detail", () => {
+  it("many runs on one signal leave no abort listeners behind", async () => {
+    const { r, plugin } = setup();
+    plugin("alpha").on("tool.preExecute", () => {}, { mode: "policy" });
+    plugin("beta").on("tool.preExecute", () => ({ deny: "no" }), { mode: "policy" });
+    const ac = new AbortController();
+    const before = getEventListeners(ac.signal, "abort").length;
+    for (let i = 0; i < 50; i++) await r.run("tool.preExecute", toolPre(), ac.signal);
+    expect(getEventListeners(ac.signal, "abort").length).toBe(before);
+  });
+
+  it(`detail is clipped to ${HOOK_DETAIL_MAX_CHARS} characters`, async () => {
+    const { r, plugin } = setup();
+    plugin("alpha").on(
+      "tool.preExecute",
+      () => {
+        throw new Error("e".repeat(10_000));
+      },
+      { mode: "policy" },
+    );
+    const out = await r.run("tool.preExecute", toolPre(), signal());
+    expect(out.allowed === false && out.detail?.length).toBe(HOOK_DETAIL_MAX_CHARS);
   });
 });
 

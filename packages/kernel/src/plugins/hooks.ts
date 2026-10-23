@@ -125,15 +125,26 @@ type CallResult =
   | { kind: "error"; message: string }
   | { kind: "timeout" };
 
-/** Rejects with the signal's reason once it aborts (never resolves otherwise). */
-const abortOf = (s: AbortSignal): Promise<never> => {
-  const p = new Promise<never>((_, reject) => {
-    if (s.aborted) reject(s.reason);
-    else s.addEventListener("abort", () => reject(s.reason), { once: true });
+/**
+ * A promise that rejects with the signal's reason once it aborts (never resolves otherwise), and a
+ * cleanup that removes its listener (call it in a `finally`: callers reuse one signal for many runs).
+ */
+const abortOf = (s: AbortSignal): { aborted: Promise<never>; cleanup: () => void } => {
+  let onAbort: () => void = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(s.reason);
+    if (s.aborted) onAbort();
+    else s.addEventListener("abort", onAbort, { once: true });
   });
-  p.catch(() => {});
-  return p;
+  aborted.catch(() => {});
+  return { aborted, cleanup: () => s.removeEventListener("abort", onAbort) };
 };
+
+/** Longest raw error kept in `HookOutcome.detail` (characters). */
+export const HOOK_DETAIL_MAX_CHARS = 2048;
+
+const clipDetail = (s: string): string =>
+  s.length > HOOK_DETAIL_MAX_CHARS ? `${s.slice(0, HOOK_DETAIL_MAX_CHARS - 1)}…` : s;
 
 /**
  * Runs the hooks of this process's **active** plugin instances (one registry per replica, like
@@ -210,7 +221,12 @@ export class HookRegistry {
     let enabled: Set<string>;
     let frozen: HookPayloads[K];
     try {
-      enabled = await Promise.race([this.d.enabledPlugins(payload.orgId), abortOf(signal)]);
+      const abort = abortOf(signal);
+      try {
+        enabled = await Promise.race([this.d.enabledPlugins(payload.orgId), abort.aborted]);
+      } finally {
+        abort.cleanup();
+      }
       if (!all.some((e) => enabled.has(e.src.name))) return { allowed: true };
       // Cost (M-2): clone + deep-freeze copies the whole request on every attempt, multi-MB base64
       // media included. Accepted: freezing in place would freeze the object that goes into the log.
@@ -218,7 +234,7 @@ export class HookRegistry {
       frozen = deepFreeze(structuredClone(payload));
     } catch (err) {
       if (signal.aborted) throw signal.reason;
-      const detail = errMsg(err);
+      const detail = clipDetail(errMsg(err));
       const policy = all.find((e) => e.hook.mode === "policy");
       if (policy) {
         this.d.log.warn("plugin hooks could not run; denying the call", {
@@ -314,7 +330,7 @@ export class HookRegistry {
           plugin,
           reason: failedReason(plugin),
           cause: "hook_error",
-          detail: r.message,
+          detail: clipDetail(r.message),
         };
       }
       if (r.kind === "timeout") {
@@ -353,8 +369,8 @@ export class HookRegistry {
       );
       return;
     }
-    this.observing.set(plugin, n + 1);
     const timeoutMs = this.d.config().hooks.timeoutMs;
+    this.observing.set(plugin, n + 1);
     void (async () => {
       try {
         const r = await src.inflight.run(signal, (s) => this.call(hook, payload, s, timeoutMs));
@@ -393,6 +409,7 @@ export class HookRegistry {
     if (s.aborted) onAbort();
     else s.addEventListener("abort", onAbort, { once: true });
     let timer: NodeJS.Timeout | undefined;
+    const abort = abortOf(s);
     try {
       const timedOut = new Promise<"timeout">((resolve) => {
         timer = setTimeout(() => resolve("timeout"), timeoutMs);
@@ -403,7 +420,7 @@ export class HookRegistry {
           (v) => ({ v }),
           (err: unknown) => ({ err }),
         );
-      const result = await Promise.race([handled, timedOut, abortOf(s)]);
+      const result = await Promise.race([handled, timedOut, abort.aborted]);
       if (result === "timeout") {
         ac.abort(new Error(`hook timed out after ${timeoutMs} ms`));
         return { kind: "timeout" };
@@ -421,6 +438,7 @@ export class HookRegistry {
       return { kind: "ok" };
     } finally {
       clearTimeout(timer);
+      abort.cleanup();
       s.removeEventListener("abort", onAbort);
     }
   }
