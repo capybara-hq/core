@@ -242,6 +242,13 @@ describe("http.trustProxy", () => {
     expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:0.0.0.0/96" })).toThrow(
       /trusts every address/,
     );
+    // A mapped prefix below /96 has no IPv4 equivalent: out of range, not "every address".
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:10.0.0.0/90" })).toThrow(
+      /out-of-range prefix/,
+    );
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:0.0.0.0/0" })).toThrow(
+      /trusts every address/,
+    );
   });
 
   it("refuses malformed entries and /0 prefixes", () => {
@@ -265,5 +272,17 @@ describe("auth.setupToken", () => {
     expect(resolveConfig(raw, { CAPYBARA_AUTH__SETUP_TOKEN: "" }).auth.setupToken).toBeUndefined();
     expect(resolveConfig(raw, {}).auth.setupToken).toBeUndefined();
     expect(resolveConfig(raw, { CAPYBARA_AUTH__SETUP_TOKEN: "abc" }).auth.setupToken).toBe("abc");
+  });
+
+  it("keeps an all-digit or true / false token a string", () => {
+    const token = (v: string) =>
+      resolveConfig(raw, { CAPYBARA_AUTH__SETUP_TOKEN: v }).auth.setupToken;
+    expect(token("12345678")).toBe("12345678");
+    expect(token("true")).toBe("true");
+    expect(token("false")).toBe("false");
+    // The same from a config file that wrote it unquoted.
+    expect(resolveConfig({ ...raw, auth: { setupToken: 12345678 } }, {}).auth.setupToken).toBe(
+      "12345678",
+    );
   });
 });

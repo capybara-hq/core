@@ -104,9 +104,11 @@ export function trustProxyEntryProblem(entry: string): string | undefined {
   if (bits > (family === 6 ? 128 : 32)) return `"${entry}" has an out-of-range prefix`;
   // proxy-addr turns an IPv4-mapped IPv6 range (::ffff:a.b.c.d/N) into the IPv4 range /N-96.
   const mapped = family === 6 && /^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(addr);
-  if (bits === 0 || (mapped && bits - 96 <= 0)) {
+  if (bits === 0 || (mapped && bits === 96)) {
     return `"${entry}" trusts every address; list the proxies' own addresses or CIDRs`;
   }
+  // Between /1 and /95 a mapped prefix has no IPv4 equivalent.
+  if (mapped && bits < 96) return `"${entry}" has an out-of-range prefix`;
   return undefined;
 }
 
@@ -481,8 +483,14 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       setupToken: z
-        // An empty value means "not set" (compose passes ${CAPYBARA_SETUP_TOKEN:-}).
-        .preprocess((v) => (v === "" ? undefined : v), z.string().min(1).optional())
+        // An empty value means "not set" (compose passes ${CAPYBARA_SETUP_TOKEN:-}). Env values are
+        // JSON-parsed, so an all-digit or true / false token arrives as a number or boolean: it is
+        // still the token text.
+        .preprocess(
+          (v) =>
+            v === "" ? undefined : typeof v === "number" || typeof v === "boolean" ? String(v) : v,
+          z.string().min(1).optional(),
+        )
         .optional()
         .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
       loginSources: z
