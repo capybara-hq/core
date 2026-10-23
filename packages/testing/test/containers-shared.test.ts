@@ -1,6 +1,8 @@
 import { Redis } from "ioredis";
 import pg from "pg";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { startRedisContainer } from "../src/containers.js";
+import setup from "../src/global-setup.js";
 import {
   createFreshDatabase,
   startTestPostgres,
@@ -118,5 +120,28 @@ describe.skipIf(process.env.CAPYBARA_TEST_NO_SHARED === "1")("shared test contai
     vi.stubEnv("CAPYBARA_TEST_NO_SHARED", "1");
     const own = track(await startTestRedis({ shared: true }));
     expect(hostPort(own.url)).not.toBe(hostPort(process.env.CAPYBARA_TEST_REDIS_URL as string));
+  });
+
+  it("with an external Redis the globalSetup wraps the allocator on its CONFIG GET databases", async () => {
+    const external = track(await startRedisContainer({ databases: 3 }));
+    vi.stubEnv("CAPYBARA_TEST_REDIS_URL", external.url);
+    const teardown = await setup();
+    try {
+      expect(process.env.CAPYBARA_TEST_REDIS_DATABASES).toBe("3");
+      const dbs: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        const c = await startTestRedis({ shared: true });
+        expect(hostPort(c.url)).toBe(hostPort(external.url));
+        dbs.push(Number(dbName(c.url)));
+        await c.stop();
+      }
+      // DB 0 holds the counter; files get 1..databases-1 and wrap.
+      expect(dbs).toEqual([1, 2, 1]);
+    } finally {
+      await teardown();
+    }
+    expect(process.env.CAPYBARA_TEST_REDIS_DATABASES).toBeUndefined();
+    // The external Redis is not ours: teardown leaves it running.
+    expect(await onRedis(external.url, (r) => r.ping())).toBe("PONG");
   });
 });

@@ -19,6 +19,11 @@ export const REDIS_URL_ENV = "CAPYBARA_TEST_REDIS_URL";
 export const NO_SHARED_ENV = "CAPYBARA_TEST_NO_SHARED";
 /** Logical databases of the shared Valkey: DB 0 holds the allocation counter, callers get 1..1023. */
 export const SHARED_REDIS_DATABASES = 1024;
+/**
+ * Number of logical databases of the shared Redis, set by the globalSetup (read with
+ * `CONFIG GET databases` when the Redis was provided externally). Unset = {@link SHARED_REDIS_DATABASES}.
+ */
+export const REDIS_DATABASES_ENV = "CAPYBARA_TEST_REDIS_DATABASES";
 /** Counter key (in DB 0 of the shared Valkey) that hands out database numbers. */
 const REDIS_DB_COUNTER = "capybara-test:db";
 
@@ -144,8 +149,12 @@ export async function startTestPostgres(): Promise<TestContainer> {
 export async function startTestRedis(opts: { shared?: boolean } = {}): Promise<TestContainer> {
   const sharedUrl = opts.shared ? sharedRedisUrl() : undefined;
   if (sharedUrl === undefined) return startRedisContainer();
+  const databases = Number(process.env[REDIS_DATABASES_ENV]) || SHARED_REDIS_DATABASES;
   const n = await withRedis(sharedUrl, (r) => r.incr(REDIS_DB_COUNTER));
-  const db = 1 + ((n - 1) % (SHARED_REDIS_DATABASES - 1));
+  // Wrap around over 1..databases-1 (DB 0 holds the counter). The FLUSHDB below can only hit a file
+  // that is still using the database after more than databases-1 allocations in one run (1023 with
+  // the default container); a run makes about 15, so a reused database is long released.
+  const db = 1 + ((n - 1) % (databases - 1));
   const url = new URL(sharedUrl);
   url.pathname = `/${db}`;
   const dbUrl = url.toString();
@@ -162,7 +171,7 @@ export async function startTestRedis(opts: { shared?: boolean } = {}): Promise<T
 }
 
 /** Run one command batch on a short-lived connection. */
-async function withRedis<T>(url: string, fn: (r: Redis) => Promise<T>): Promise<T> {
+export async function withRedis<T>(url: string, fn: (r: Redis) => Promise<T>): Promise<T> {
   const r = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1 });
   try {
     await r.connect();
