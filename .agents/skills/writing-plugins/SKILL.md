@@ -1,6 +1,6 @@
 ---
 name: writing-plugins
-description: Use when creating or changing a Capybara plugin under plugins/*: manifest fields, the permission manifest and approval (admin console, capybara plugins review / approve, pluginPermissions.autoApprove, migration warning digest), the trust model (plugins run in-process with full trust, approval is governance not a sandbox), capability consumption ctx.capabilities and orgScoped, deployment-level (including stored in PG from the admin console) / org-level / channel-connection config, how to use each ctx item, patterns forbidden under multiple replicas (timers, module-level state) and their alternatives, plugin packages (pnpm pack-plugin, the host provides only the SDK and zod) and the no-restart lifecycle (install / enable / disable / upgrade / uninstall, ledger revocation, dispose, ctx.signal, drain limit, dependents reloading, expand-only migrations, builtin and config-declared plugins, CLI), and the template for writing tests with the dual-replica harness. For adding UI to the web app (ctx.ui) see writing-plugin-ui; for writing app bundles see writing-apps.
+description: Use when creating or changing a Capybara plugin under plugins/*: manifest fields, the permission manifest and approval (admin console, capybara plugins review / approve, pluginPermissions.autoApprove, migration warning digest), the trust model (plugins run in-process with full trust, approval is governance not a sandbox), capability consumption ctx.capabilities and orgScoped, deployment-level (including stored in PG from the admin console) / org-level / channel-connection config, how to use each ctx item, patterns forbidden under multiple replicas (timers, module-level state) and their alternatives, plugin packages (pnpm pack-plugin, the host provides only the SDK and zod) and the no-restart lifecycle (install / enable / disable / upgrade / uninstall, ledger revocation, dispose, ctx.signal, drain limit, dependents reloading, expand-only migrations, builtin and config-declared plugins, CLI), hooks (ctx.hooks: model.request / model.response / tool.preExecute / tool.postExecute / usage.report, observe vs policy, permissions.hooks / permissions.policyHooks, perm-hooks, fail-closed policy hooks, usage.report idempotent by eventId), publishing a plugin to npm (repository field, provenance), and the template for writing tests with the dual-replica harness. For adding UI to the web app (ctx.ui) see writing-plugin-ui; for writing app bundles see writing-apps.
 ---
 
 # Writing plugins
@@ -199,7 +199,20 @@ A plugin adding UI to the web app (right-panel tabs on the conversation page, or
 `ctx.hooks.on(mount, handler, { mode })`, only during `setup`, on mount points declared in
 `permissions.hooks` (and, for `mode: "policy"`, in `permissions.policyHooks`). Hooks observe or deny;
 they never rewrite a request or a result. They fire only for organizations that enabled the plugin,
-only in chat conversations, never in eval replays. Payloads are deep-frozen copies.
+only in chat conversations, never in eval replays (the one exception is `usage.report`, below).
+Payloads are deep-frozen copies.
+
+- **Registration.** The five mount points are `model.request`, `model.response`, `tool.preExecute`,
+  `tool.postExecute` and `usage.report` (`HOOKS_AVAILABLE`); `session.*` and `agent.preStep` still
+  validate in a manifest but cannot be registered. `ctx.hooks.on` throws when called after `setup`,
+  for a mount point that is not available, with a handler that is not a function, without a `mode`
+  of `"observe"` or `"policy"`, or with `mode: "policy"` on a mount outside `model.request` /
+  `tool.preExecute`. A mount missing from `permissions.hooks`, or a policy hook missing from
+  `permissions.policyHooks`, throws `PluginPermissionError`; `check:plugin-permissions` reports both
+  as `perm-hooks`. Hooks are sensitive at review (they see conversation content).
+- **Order.** Policy hooks of several plugins run serially by plugin name (registration order within a
+  plugin); the first deny, error or timeout stops the chain. `hooks.timeoutMs` (hot) limits every
+  hook call, including each `usage.report` call.
 
 - **Policy hooks** (`model.request`, `tool.preExecute`) run serially by plugin name before the call;
   `{ deny: reason }`, an error or a timeout (`hooks.timeoutMs`) blocks it. The model sees your reason
@@ -213,8 +226,13 @@ only in chat conversations, never in eval replays. Payloads are deep-frozen copi
   the plugin; fix it from the plugin's status in the admin console. Observe hooks of a plugin that
   is not loaded are simply skipped. So declare `policyHooks` exactly for the mounts you register
   policy hooks on.
-- **Observe hooks** are fire-and-forget (the call never waits), capped per plugin and replica, and
-  also run for denied calls.
+- **Observe hooks** are fire-and-forget (the call never waits), capped at 64 in flight per plugin and
+  replica (extra calls are dropped), and also run for denied calls. Their verdicts, errors and
+  timeouts are ignored (throttled warnings).
+- **Denials are logged.** A denial writes a `hook.denied` audit row (with the raw error for an error
+  or timeout) and, on a tool call or a model step, a `hook_denied` event in the conversation log; it
+  is sticky: a resumed or retried step or call is denied again without rerunning the hooks. An abort
+  (the user stopped the run) is never a denial.
 - **`model.request`** fires once per attempt of a step (`purpose: "step"`) and once per compaction
   call (`purpose: "compaction"`, `attempt` 1): compaction sends earlier history to the same provider,
   so DLP and budget policies see it too. A denied compaction only skips compaction (the step's own
@@ -234,8 +252,15 @@ only in chat conversations, never in eval replays. Payloads are deep-frozen copi
   even when the drop happened on an earlier attempt; its `pending` then lists only the dropped
   plugins, so a manual retry of the job reaches them and never the plugins already served.
   Declare `usage.report` only when you always register the handler.
+- **`tool.preExecute`** runs after the tool policy and approval and before `tool_call_started`; a
+  denial becomes the call's `tool_result` (text `Tool call blocked by the "<plugin>" policy hook:
+  ...`). **`tool.postExecute`** gets the result as the model sees it (after output spilling), and is
+  observe-only.
+- **`usage.report` also covers full-run eval replays** (`conversationKind: "eval"`); single-step
+  replays and judge calls are not reported, and no other hook fires in a replay.
 - Hooks live on the plugin instance: an upgrade or disable drains in-flight hook calls like tool
-  calls.
+  calls, and a policy hook whose instance was revoked mid-call reruns once on the plugin's new
+  generation instead of failing the call.
 
 
 ### Durable counters and idempotency (reference example-counter)
@@ -303,6 +328,7 @@ Plugins live outside the core image and are installed as plugin packages (C11). 
 - The manifest `version` must equal the plugin `package.json` `version`; when `migrations` is declared it must resolve to the plugin root's `migrations/` (such as `"../migrations"`), and is recorded in the package as `capybara.migrations: "migrations"`; when the plugin root has `ui/` it is carried as is.
 - `capybara.manifest` in `package.json` is the result of `staticManifestOf(manifest)`: review looks only at it and the migration SQL and does not execute plugin code; at load time it is checked again against the real module, and a mismatch is `manifest_mismatch`. So the manifest (permissions, the secret / hot of config fields) cannot depend on the runtime environment.
 - The package also carries `README.md`, `LICENSE` (the plugin's own, else the repository's), every plain root file listed in `package.json` `files` (e.g. slack's `app-manifest.yaml`), and `THIRD-PARTY-NOTICES.txt` with the license notices of the bundled npm dependencies. Other `files` entries (directories, globs) are not shipped: `check:plugin-pack` reports them (`plugin-pack-dropped`). The generated `package.json` passes `description` / `repository` / `homepage` / `keywords` through (npm provenance needs `repository.directory`).
+- **Publishing to npm**: the release workflow (maintainers, `docs/deploy/release.md`) publishes every `plugins/*` package except `example-*` as the packed tgz, with npm provenance. For that the plugin's `package.json` needs a `repository` field with `url` `git+https://github.com/capybara-hq/core.git` and `directory: "plugins/<name>"` (provenance rejects a mismatch), plus `description`, `license` and an https `homepage` (`check:release-metadata` enforces all of this), and a `version` equal to the manifest's. A new official plugin is picked up automatically; a version bump goes through a changeset.
 - The generated package carries no install scripts, `dependencies` or `node_modules/`; at install time the kernel rejects these (and path escapes, links, oversize packages) according to the rules of `readPluginPackage`.
 
 **Install, enable, disable, upgrade, uninstall (no restart, C16 / C18)**: a package is first imported into package storage (admin console upload / npm, or `capybara plugins install <file.tgz | npm:<name>[@<version>]>`; packages imported by the CLI are always stored in PG), and then an install record points to it (`POST /api/v1/admin/plugins/:name/install {sha256}`; a new install is disabled); `…/enable`, `…/disable` and `DELETE …/:name` (must be disabled first) change the desired state; the CLI equivalents are `capybara plugins list | enable | disable | uninstall <name>`. The admin console and CLI **only write the desired state in PG** and publish `kernel.plugins.changed`, and each replica converges by reconcile (the maintenance job `plugins-reconcile` publishes `kernel.plugins.reconcile` every `pluginHost.reconcileIntervalSeconds` seconds as a backstop, so it converges even if a message is lost). The load state is each replica's own (`plugin_replica_status`; replicas whose heartbeat is older than 3 reconcile cycles are not counted), and the admin console summarizes it as `enabled` / `converging` / `pending_approval` / `pending_config` / `pending_migration` / `dependency` / `failed` and so on.

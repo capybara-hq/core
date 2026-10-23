@@ -1,6 +1,6 @@
 ---
 name: writing-tools
-description: Use when adding or modifying tools for an agent. Covers plugins registering tools with ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations and default policy, defaultPolicy and policy_source, ToolError and kind (unavailable counts toward the circuit breaker), timeouts and abort, output size and archiving (limited to the conversation, read_tool_output, {"$output": id}), InputRequired and resume, tool_search (catalog, loaded set, descriptions are searchable), tool definition drift and review, plugins must be enabled in the org; the builtin sandbox tools sandbox_* (per-tool timeouts and spill thresholds, sandboxToolPolicy, first-use / recreate notices) and the skill tools skill_load / skill_write (catalog snapshot, R3 fixed ask for shared agents, the writePolicy switch for private agents, change approval, customSkills does not affect skill_write); the tool error when a plugin is disabled / upgraded mid-call (PLUGIN_UNLOADED_TOOL_ERROR). For writing connectors see writing-connectors.
+description: Use when adding or modifying tools for an agent. Covers plugins registering tools with ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations and default policy, defaultPolicy and policy_source, ToolError and kind (unavailable counts toward the circuit breaker), timeouts and abort, output size and archiving (limited to the conversation, read_tool_output, {"$output": id}), InputRequired and resume, tool_search (catalog, loaded set, descriptions are searchable), tool definition drift and review, plugins must be enabled in the org; the builtin sandbox tools sandbox_* (per-tool timeouts and spill thresholds, sandboxToolPolicy, first-use / recreate notices) and the skill tools skill_load / skill_write (catalog snapshot, R3 fixed ask for shared agents, the writePolicy switch for private agents, change approval, customSkills does not affect skill_write); the tool error when a plugin is disabled / upgraded mid-call (PLUGIN_UNLOADED_TOOL_ERROR); and where plugin hooks sit in a tool call (tool.preExecute denial text hookDeniedText, tool.postExecute). For writing connectors see writing-connectors.
 ---
 
 # Writing tools
@@ -200,6 +200,19 @@ the same transaction as the business rows.
     guarded by R3 / R4).
   - On success a catalog snapshot is appended in the same transaction, so the next step of the same run can `skill_load`. Cost: when the conversation's first catalog appears mid-run,
     the next step's tool list gains `skill_load`, and the prompt cache is invalidated once.
+
+## Plugin hooks around a tool call
+
+Plugins can observe or deny tool calls through `ctx.hooks` (see "Hooks" in `.agents/skills/writing-plugins`).
+
+- `tool.preExecute` runs after the tool policy and approval, and before `tool_call_started`. A policy
+  denial never runs the tool: the call's `tool_result` is `hookDeniedText` (`Tool call blocked by the
+  "<plugin>" policy hook: <reason>`, reason sanitized and cut to 500 characters, or a generic sentence
+  for a hook error or timeout), written with the `hook_denied` event and a `hook.denied` audit row in
+  one transaction. The denial is sticky per call: a resumed step reuses it and does not rerun hooks.
+- `tool.postExecute` is observe-only and gets the result the model sees, that is, after output
+  spilling (`content` is the spilled or truncated text, not the raw output).
+- Hooks fire only for chat conversations, never in eval replays (`RecordedToolPipeline` runs none).
 
 ## Connectors
 

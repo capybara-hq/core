@@ -1,6 +1,6 @@
 ---
 name: replay-evals
-description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, and the privacy rules (trajectory 404, trajectory.viewed audit, no export).
+description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, the privacy rules (trajectory 404, trajectory.viewed audit, no export), and how plugin hooks interact with replays (hook_denied is not model-visible and needs no DriftReason, replays fire no hooks, compaction usage events).
 ---
 
 # Evals and replay
@@ -83,6 +83,18 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   step-replay baselines, `plan_step`) must skip it; run totals (trajectory `totals`, `plan_run`,
   full-run replay summaries) include it, since it is real spend. It is not model-visible and needs no
   `DriftReason`.
+
+## Hooks and replays
+
+- `hook_denied` events are **not model-visible**: `runtime/context/build.ts` skips them. A
+  `tool.preExecute` denial reaches the model as the denied call's `tool_result` text, which is already
+  in the log, so it needs **no `DriftReason`**. A model-path denial ends the step with a `RunError`
+  and puts nothing in a request.
+- Replays fire no plugin hooks, twice over: `runReplay` strips `hooks` from the loop deps, and the
+  loop runs with `conversationKind: "eval"` (hooks only fire for `"chat"`).
+- The one exception is metering: usage of a **full-run** replay is still enqueued to `usage.report`
+  and delivered with `conversationKind: "eval"`; single-step replays and judge calls are not reported.
+- The trajectory shows denials: `toolCalls[].hookDenied` and `steps[].modelHookDenied`.
 
 ## Tests
 
