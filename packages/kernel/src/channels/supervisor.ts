@@ -156,6 +156,8 @@ export interface ChannelSupervisorDeps {
    * ZSET. Not `http.replicaId`, which is optional and may repeat across replicas.
    */
   replicaId: string;
+  /** Called at the start of every scan round (`claimOnly` for handoff nudges); for tests / metrics. */
+  onScan?: (claimOnly: boolean) => void;
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -200,6 +202,8 @@ export class ChannelSupervisor {
   private scanChain: Promise<void> = Promise.resolve();
   /** Plugins this replica heartbeats for (to ZREM when a plugin goes away and on stop). */
   private heartbeated = new Set<string>();
+  /** A claim-only scan is queued and has not started yet: further nudges until then are dropped. */
+  private claimQueued = false;
 
   constructor(private readonly deps: ChannelSupervisorDeps) {}
 
@@ -216,10 +220,18 @@ export class ChannelSupervisor {
     });
     // Another replica handed a connection back: claim right away instead of waiting for the next
     // round. Claim only (no hand-back), so hand-backs stay at one per plugin per scan round.
+    // Nudges coalesce: at most one claim-only scan waits behind the one running; nudges for a
+    // plugin not loaded here are ignored.
     this.unsubscribeHandoff = await this.deps.bus.subscribe(CHANNEL_HANDOFF_TOPIC, (payload) => {
-      const m = payload as { replicaId?: unknown } | null;
-      if (this.stopped || m?.replicaId === this.deps.replicaId) return;
-      this.track(this.exclusive(() => this.scan(true))).catch((err: unknown) =>
+      const m = payload as { replicaId?: unknown; plugin?: unknown } | null;
+      if (this.stopped || m?.replicaId === this.deps.replicaId || this.claimQueued) return;
+      if (typeof m?.plugin !== "string" || !this.deps.localPlugins().includes(m.plugin)) return;
+      this.claimQueued = true;
+      const run = this.exclusive(() => {
+        this.claimQueued = false;
+        return this.scan(true);
+      });
+      this.track(run).catch((err: unknown) =>
         this.deps.log.error("channel supervisor scan failed", { err }),
       );
     });
@@ -351,11 +363,15 @@ export class ChannelSupervisor {
     const [id] = latest;
     const px = this.deps.config().channels.scanIntervalMs * 2;
     await this.deps.redis.set(channelHandoffKey(id), this.deps.replicaId, "PX", px);
-    this.releaseInBackground(id, () =>
+    this.releaseInBackground(id, this.nudge(plugin));
+  }
+
+  /** After-release callback: tells the other replicas a connection of `plugin` is free to claim. */
+  private nudge(plugin: string): () => Promise<void> {
+    return () =>
       this.deps.bus
         .publish(CHANNEL_HANDOFF_TOPIC, { plugin, replicaId: this.deps.replicaId })
-        .catch((err: unknown) => this.deps.log.warn("cannot publish channel handoff", { err })),
-    );
+        .catch((err: unknown) => this.deps.log.warn("cannot publish channel handoff", { err }));
   }
 
   private async afterRenew(id: string, h: Held, ok: boolean, ttl: number): Promise<void> {
@@ -407,7 +423,10 @@ export class ChannelSupervisor {
             (r) => r.id,
           ),
     );
-    for (const id of ids) if (!live.has(id)) this.releaseInBackground(id);
+    for (const id of ids) {
+      const h = this.held.get(id);
+      if (h && !live.has(id)) this.releaseInBackground(id, this.nudge(h.plugin));
+    }
   }
 
   /**
@@ -417,6 +436,7 @@ export class ChannelSupervisor {
    */
   private async scan(claimOnly: boolean): Promise<void> {
     if (this.stopped) return;
+    this.deps.onScan?.(claimOnly);
     const plugins = this.deps.localPlugins();
     if (plugins.length === 0) return;
     const rows = await this.runnable(plugins).execute();
@@ -593,7 +613,9 @@ export class ChannelSupervisor {
    */
   pluginChanged(plugin: string): void {
     if (this.stopped) return;
-    for (const [id, h] of this.held) if (h.plugin === plugin) this.releaseInBackground(id);
+    for (const [id, h] of this.held) {
+      if (h.plugin === plugin) this.releaseInBackground(id, this.nudge(plugin));
+    }
   }
 
   /** 停机：停止扫描，中止全部长连接并释放租约。幂等。 */

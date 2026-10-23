@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ChannelConnections } from "../../src/channels/connections.service.js";
 import {
+  CHANNEL_HANDOFF_TOPIC,
   ChannelSupervisor,
   channelHandoffKey,
   checkGatewayPresence,
@@ -182,6 +183,7 @@ async function startSup(
     replicaId?: string;
     plugins?: string[];
     channels?: KernelConfig["channels"];
+    onScan?: (claimOnly: boolean) => void;
   } = {},
 ) {
   const replicaId = opts.replicaId ?? `rep-${name}-${randomUUID()}`;
@@ -204,6 +206,7 @@ async function startSup(
     config: () => ({ channels: cfg }),
     log: { warn: () => {}, error: () => {} },
     replicaId,
+    ...(opts.onScan !== undefined && { onScan: opts.onScan }),
   });
   await sup.start();
   running.push({ name, replicaId, sup });
@@ -367,6 +370,27 @@ describe("channel long connections: fair share across gateway replicas", () => {
     const up = events.find((e) => e.inst === "b" && e.kind === "up") as Ev;
     expect(up.id).toBe(down.id);
     expect(up.at - down.at).toBeLessThan(1_000);
+  }, 30_000);
+
+  it("handoff nudges coalesce: a burst of 20 runs at most 2 claim-only scans", async () => {
+    let claimScans = 0;
+    await startSup("burst", {
+      channels: { ...channels, leaseTtlMs: 20_000, scanIntervalMs: 4_000 },
+      onScan: (claimOnly) => {
+        if (claimOnly) claimScans++;
+      },
+    });
+    await waitFor(async () => countOf("burst") === CONNECTIONS, 10_000, "burst holds all");
+    // A nudge for a plugin this replica has not loaded is ignored
+    await bus.publish(CHANNEL_HANDOFF_TOPIC, { plugin: "chan-other", replicaId: "someone" });
+    await sleep(100);
+    expect(claimScans).toBe(0);
+    for (let i = 0; i < 20; i++) {
+      await bus.publish(CHANNEL_HANDOFF_TOPIC, { plugin: "chan-mini", replicaId: "someone" });
+    }
+    await sleep(500);
+    expect(claimScans).toBeGreaterThanOrEqual(1);
+    expect(claimScans).toBeLessThanOrEqual(2);
   }, 30_000);
 
   it("heartbeat: the member is the replica id with a server-time score; stop() removes it", async () => {
