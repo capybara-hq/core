@@ -19,7 +19,7 @@ import {
 } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CHANNEL_CHANGED_TOPIC } from "../../src/channels/connections.service.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/outbound.js";
 import { ChannelWebhooks } from "../../src/channels/webhook.js";
@@ -28,6 +28,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { InflightTracker } from "../../src/plugins/inflight.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -390,6 +391,7 @@ describe("ChannelWebhooks.handle", () => {
       runtime?: () => Promise<unknown>;
       onEvent?: (id: string, e: InboundEvent) => Promise<void>;
       handleTimeoutMs?: number;
+      inflight?: InflightTracker;
     } = {},
   ) => {
     let runtimeCalls = 0;
@@ -413,6 +415,7 @@ describe("ChannelWebhooks.handle", () => {
             row: {},
             config: {},
             channel: { webhook: { handle: opts.handle ?? twoEvents } },
+            ...(opts.inflight !== undefined && { inflight: opts.inflight }),
           };
         }) as never,
       },
@@ -550,6 +553,71 @@ describe("ChannelWebhooks.handle", () => {
     // Kernel-made errors carry them too
     const err = await make({ handle: async () => ({ kind: "reject", status: 401 }) }).call();
     expect(err.headers?.["x-content-type-options"]).toBe("nosniff");
+  });
+
+  it("a running handle counts toward the plugin's in-flight calls: drain waits for it", async () => {
+    const inflight = new InflightTracker("p");
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const { call } = make({
+      inflight,
+      handle: async () => {
+        await gate;
+        return { kind: "respond", response: { status: 200, body: "ok" } };
+      },
+    });
+    const pending = call();
+    await vi.waitFor(() => expect(inflight.size).toBe(1));
+    let drained: string | undefined;
+    const drain = inflight.drain(5_000).then((r) => {
+      drained = r;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(drained).toBeUndefined();
+    release();
+    expect((await pending).status).toBe(200);
+    await drain;
+    expect(drained).toBe("drained");
+    expect(inflight.size).toBe(0);
+  });
+
+  it("a plugin instance being revoked → 503 plugin.unavailable without calling handle", async () => {
+    const inflight = new InflightTracker("p");
+    inflight.close();
+    let called = false;
+    const res = await make({
+      inflight,
+      handle: async () => {
+        called = true;
+        return twoEvents();
+      },
+    }).call();
+    expect(res.status).toBe(503);
+    expect(code(res)).toBe("plugin.unavailable");
+    expect(called).toBe(false);
+  });
+
+  it("a handle still running past the drain is aborted → 503 so the platform retries", async () => {
+    const inflight = new InflightTracker("p");
+    let seen: AbortSignal | undefined;
+    const { call } = make({
+      inflight,
+      handle: async ({ signal }) => {
+        seen = signal;
+        return new Promise<never>(() => {});
+      },
+    });
+    const pending = call();
+    await vi.waitFor(() => expect(inflight.size).toBe(1));
+    expect(await inflight.drain(20)).toBe("timeout");
+    inflight.abort();
+    const res = await pending;
+    expect(res.status).toBe(503);
+    expect(code(res)).toBe("channel.webhook_retry");
+    expect(seen?.aborted).toBe(true);
+    expect(inflight.size).toBe(0);
   });
 
   it("plugin not loaded on this gateway → 503 plugin.unavailable", async () => {

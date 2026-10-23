@@ -6,6 +6,7 @@ import type {
   Logger,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError, type ErrorCode, errorBody } from "../errors.js";
+import { type InflightEntry, PluginUnloadedError } from "../plugins/inflight.js";
 import type { ChannelConnections } from "./connections.service.js";
 import type { ChannelInbound } from "./inbound.js";
 
@@ -100,7 +101,8 @@ export interface ChannelWebhooksDeps {
  * signature, decrypts and checks timestamps:
  * - unknown connection, not in webhook mode, not active or plugin off for the org → uniform 404
  *   `channel.webhook_not_found` (the connection row is read on every request);
- * - plugin not loaded on this replica, or stored config no longer valid → 503 `plugin.unavailable`.
+ * - plugin not loaded on this replica, being disabled / upgraded, or stored config no longer valid →
+ *   503 `plugin.unavailable`.
  *   Deliberate tradeoff: during a rolling upgrade the platform retries and reaches a replica that
  *   has the plugin. It is only reachable with the UUID of an existing webhook-mode connection
  *   (the URL the platform already has), so it reveals nothing to a guesser;
@@ -113,6 +115,9 @@ export interface ChannelWebhooksDeps {
  * - the whole request (connection lookups, handle, onEvent) has one deadline ({@link WEBHOOK_HANDLE_TIMEOUT_MS}): a
  *   plugin that ignores its `signal` or an enqueue stuck on Redis answers 503 `channel.webhook_retry`
  *   when it passes (late work is not cancelled; dedupe makes the redelivery safe).
+ * - `webhook.handle` counts toward the plugin instance's in-flight calls: a disable or upgrade waits
+ *   for it (`pluginHost.drainSeconds`) before `dispose`; past that the call is aborted → 503
+ *   `channel.webhook_retry`.
  * Every response carries {@link WEBHOOK_SECURITY_HEADERS}.
  *
  * The decrypted runtime (plugin implementation + config) is cached per connection for a few seconds
@@ -223,13 +228,25 @@ export class ChannelWebhooks {
     const webhook = runtime.channel.webhook;
     if (webhook === undefined) return notFound();
 
+    // The call counts toward the plugin instance's in-flight work, so disabling or upgrading the
+    // plugin drains it before `dispose` (and aborts it past pluginHost.drainSeconds).
+    let inflight: InflightEntry | undefined;
+    try {
+      inflight = runtime.inflight?.enter(deadline);
+    } catch (err) {
+      if (!(err instanceof PluginUnloadedError)) throw err;
+      // The cached runtime belongs to a revoked instance: the next request loads the new one
+      this.invalidate(connectionId);
+      return jsonError(503, "plugin.unavailable", "The channel is not available right now");
+    }
+    const callSignal = inflight?.signal ?? deadline;
     let result: ChannelWebhookResult;
     try {
       result = await raceAbort(
         Promise.resolve().then(() =>
-          webhook.handle({ connectionId, config: runtime.config, request, signal: deadline }),
+          webhook.handle({ connectionId, config: runtime.config, request, signal: callSignal }),
         ),
-        deadline,
+        callSignal,
       );
     } catch (err) {
       if (err instanceof WebhookDeadline) {
@@ -241,6 +258,8 @@ export class ChannelWebhooks {
       // The kernel log redacts the connection's secrets (runtime() registered them)
       this.deps.log.warn("channel webhook handler failed", { connectionId, err });
       return jsonError(500, "internal", "Internal error");
+    } finally {
+      inflight?.leave();
     }
 
     switch (result?.kind) {

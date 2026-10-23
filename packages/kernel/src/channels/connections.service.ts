@@ -22,6 +22,7 @@ import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { configToJsonSchema, type JsonSchema } from "../plugins/config-json-schema.js";
 import type { PluginHost } from "../plugins/host.js";
+import type { InflightTracker } from "../plugins/inflight.js";
 import { toIssues } from "../plugins/org-config.js";
 import { adaptToFeatures } from "./features.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
@@ -196,11 +197,15 @@ export class ChannelConnections {
 
   /** 插件提供的 `channel@1`；未加载或不提供 → `plugin.not_found`。 */
   channel(plugin: string): Channel {
+    return this.channelEntry(plugin).impl as Channel;
+  }
+
+  private channelEntry(plugin: string): ReturnType<PluginHost["list"]>[number] {
     const e = this.deps.host
       .list("channel")
       .find((x) => x.plugin === plugin && x.capability === CHANNEL_CAPABILITY);
     if (!e) throw new ApiError("plugin.not_found", `Plugin ${plugin} does not provide a channel`);
-    return e.impl as Channel;
+    return e;
   }
 
   /** 插件在该组织未启用 → `plugin.not_enabled`。 */
@@ -647,12 +652,17 @@ export class ChannelConnections {
    * 连接不存在 / 已删除 → `channel.not_found`；插件未加载 → `plugin.not_found`；组织未启用 → `plugin.not_enabled`；
    * 已存配置不再满足 schema（插件升级后）→ `plugin.config_invalid`。不得回显到响应或日志。
    */
-  async runtime(
-    id: string,
-  ): Promise<{ row: ChannelConnectionRow; channel: Channel; config: unknown }> {
+  async runtime(id: string): Promise<{
+    row: ChannelConnectionRow;
+    channel: Channel;
+    config: unknown;
+    /** The plugin instance's in-flight count (webhook calls enter it, so an upgrade drains them). */
+    inflight?: InflightTracker;
+  }> {
     const row = await this.row(id);
     if (!row) throw notFound();
-    const channel = this.channel(row.plugin);
+    const entry = this.channelEntry(row.plugin);
+    const channel = entry.impl as Channel;
     await this.assertEnabled(row.orgId, row.plugin);
     const stored = await this.deps.db
       .selectFrom("channel_connections")
@@ -663,7 +673,7 @@ export class ChannelConnections {
     for (const [p, v] of Object.entries(await this.readSecrets(row.orgId, id))) setDeep(full, p, v);
     const config = this.parse(row.plugin, channel.connectionSchema, full);
     this.reportSecrets(channel.connectionSchema, config);
-    return { row, channel, config };
+    return { row, channel, config, inflight: entry.inflight };
   }
 
   /**
