@@ -1,481 +1,539 @@
-# 界面改版：E 精修、左侧栏外框与会话页 设计
+# UI Refresh: Refined E, Left-Sidebar Shell and Conversation Page — Design
 
-日期：2026-10-22。执行时间：**M7（首期整体结束）之后**，由用户决定。
+- First draft: 2026-10-22 (Chinese, written against the M5-era `main`, fc3b558).
+- This revision: 2026-10-24, rewritten in English against the post-M7 `main` (5bb285b) for maintainer review.
+- When: **after M7**; M7 has shipped, so this is now up for scheduling.
+- Design canvas: https://claude.ai/artifact/USm2Mfhi3PqqgmkW4USLbz (rows listed in §9). Early layout wireframes were kept locally under `.superpowers/brainstorm/7142-1792663469/content/`, not checked in; the canvas wins.
 
-草图：
-- 设计画板 https://claude.ai/artifact/USm2Mfhi3PqqgmkW4USLbz。各行内容见 §9。
-- 早期布局线框保存在本地 `.superpowers/brainstorm/7142-1792663469/content/`，不入库，以画板为准。
+**Markers**
+- **(decided)**: the maintainer said so in the 2026-10-22 discussion, or accepted a designer proposal afterwards. Binding.
+- **(designer's call)**: the author decided on the maintainer's behalf; not yet confirmed item by item. Open to change in review.
+- Items with no marker restate current code or rules from `AGENTS.md`, `docs/design/spec.md` and the skills.
 
-**标记约定**：
-- 标「（设计者的决定）」的条目，是写这份文档的人替用户拿的主意，用户还没有逐条确认。
-- 其余条目都是用户在讨论中明确表达过的意见。
+**Terminology.** UI copy and this document follow the package ecosystem spec (`docs/superpowers/specs/2026-10-22-package-ecosystem-design.md`, branch `docs/package-ecosystem`): the in-process code that used to be called a "plugin" is an **extension**; a capability is an **extension point**; a **plugin** is an install and distribution bundle (like a Claude Code plugin); directory sources are **marketplaces**; the enterprise directory is the **catalog**; an "embedded app" is an **embed page**; and "conversation" always means talking to an agent ("session" is only the login session). The code still uses the old names (`ctx.ui`, `plugins/*`, `/admin/plugins`, `/directory`) until the ecosystem spec's rename phase lands; where this document names code, it uses the code's current names.
 
-本文取代 `2026-10-21-chat-panel-plugin-ui-design.md`（D13）里的这几部分：§3.1 布局、§3.2 内核自带的标签、§3.3 工具调用显示。D13 的插件界面机制（`ctx.ui`、渲染 schema、嵌入应用、令牌、代理、权限）继续有效，本文只扩展它能放的位置。
+**Supersedes** §3.1 (layout), §3.2 (the kernel's built-in tabs) and §3.3 (tool call display) of `2026-10-21-chat-panel-plugin-ui-design.md` (D13). The rest of D13 stays in force: `ctx.ui`, rendered views, embed pages, embed tokens, the `/plugin-ui` proxy, permissions. This document only adds places where extension UI can appear.
 
 ---
 
-## 1. 为什么做
+## What changed since the 2026-10-22 draft
 
-- 用户用了 Claude Code 桌面客户端以后，觉得它比 Capybara 的网页精致，希望向它学习：
-  - 整体结构：左侧栏，中间对话，右侧面板；
-  - 对话里工具、子 agent、文件的展示方式；
-  - 「点对话里的东西，右侧打开详情」的联动。
-- 讨论中试过三种像素风：像素描边、全点阵、复古桌面。用户对比后**保留 E 终端**。用户当初接受「非像素风」，正是因为 E 终端本身不错。
-- 用户认为 E 终端的问题不在方向，而在不够精致。原因有这些：
-  - 线太多；
-  - 颜色点太多；
-  - 用字符代替图标；
-  - 控件和卡片的内边距偏大；
-  - 大段中文用等宽字体，读起来硬；
-  - 没有动效。
-- 插件要能往会话页上加界面。用户的说法是「右侧的区域插件可以实现」。没装的插件，就没有它的图标和面板。
+- **Rebased on post-M7 code.** M6 added the trajectory viewer (`/trajectories`, TracePage + `SpanWaterfall`, design spec §6.10), evals (`/evals/*`), the admin console (`/admin/*`: accounts, orgs, plugins, catalog, models, deployment settings), the org catalog (`/directory`), members, model purposes and installed apps under `/settings/*`. M7 added hook denials in the conversation (`hook_denied`, a failed run names the blocking extension), the channel inbound-mode switch, same-origin attachment upload through the web's object-store proxy, and the release pipeline. The shell, the 12 templates and the conversation timeline components are unchanged since the draft; §4 and §5 now name what each part replaces.
+- **Inventory of what the shell must carry** (§4.4): the TopBar today has 9 top-level items plus an "Extensions" menu; org settings hang off the "Connectors" item; the admin console has its own second-level nav. The sidebar now has to hold all of these, so it gets an explicit section layout.
+- **There is no conversation list in the web app today.** Conversations start from the Agents list, which creates the conversation before the first message; the kernel's `GET /conversations` is a flat "mine" list; conversation `title` exists in the schema but nothing sets it and nothing can rename it. The sidebar's conversation section (§4.4) and the title bar (§5.1) need titles and a grouped list API (§5.9).
+- **Model and effort switching is grounded in the actual model contract.** `effort` is a standard knob that each model declares (subset of `low|medium|high|xhigh|max`) or doesn't; agents have `model` + `fallback` + params; `model_call` already records the resolved model and params per request. There is no org-level model allowlist, only purpose mapping. §5.2 now says what the dropdowns show; which models a conversation may switch to is open question 1.
+- **The "minimal outputs plugin" is replaced by a kernel built-in.** The draft wanted a small plugin to show the kernel's delivered files (`artifact_created`). Extensions have no access to a conversation's events or the kernel's storage prefix, so that plugin would need a new platform API. The outputs section and preview panel are now built into the conversation page, like Context; the todo extension and `example-board` validate the extension slots (§5.4, open question 4).
+- **MCP Apps needs more plumbing than the draft assumed.** `connector-mcp` drops `_meta` (except one Anthropic hint) and the MCP `title`; `ToolSpec` has no title; `EmbedFrame` only takes a `src`; `/plugin-ui` only serves extension routes. §5.3 lists the pieces; open question 3 proposes splitting MCP Apps into its own stage.
+- **Subagents now have a direction.** The ecosystem spec §11 plans subagents as a built-in tool whose child run has its own event log (a child conversation). §5.6 uses that shape; the UI still ships with fixture data until the runtime exists.
+- **Approvals offer three scopes** (`once` / `session` / `always`, filtered by what the request allows), not two; §5.7 follows the code.
+- **Release mechanics.** UI changes now ship through changesets: `@capybara-hq/design` is private and ships only inside the web image, so every UI change needs a changeset on `@capybara-hq/web` (fixed group with `@capybara-hq/capybara`, so it bumps the image tag). Kernel and SDK changes need their own changesets, and SDK changes regenerate `api/plugin-sdk.api.md` (§8).
+- **Repository split.** The ecosystem spec moves official plugins (todo, `connector-mcp`, `example-board`) to `capybara-hq/plugins`. Project B's extension-side work may become a cross-repo change (§8, open question 2).
+- **Terminology** follows the ecosystem spec (see the note above). The sidebar labels use the new terms.
+- **Language.** The spec is now in English, per `AGENTS.md`.
 
-## 2. 目标、非目标、反目标
+---
 
-**目标**
-1. 全站外框换成左侧栏，取代全局顶栏。
-2. 按「E 精修」规则改造设计系统：线、颜色、图标、圆角、间距、字体、动效。深色和浅色两套主题一起改。
-3. 会话页改成三栏结构：标题栏图标、属性面板、右侧面板。
-4. 插件在会话页有三个扩展位，并且可以联动。连接器可以通过 MCP Apps 提供内联小组件。
-5. 工具调用、子 agent、人机交互、文件在对话里的展示，都按 §5 的规则做。
-6. 建立一套「按设计稿高保真还原」的机制（§7）。实现做完，要能证明和参考稿一致，而不只是「没有改坏」。
+## 1. Why
 
-**非目标**
-- 终端面板、浏览器面板（用户明确不要）。
-- Artifacts 插件本身。它包括自有存储服务、分享、在线设计，是一个独立项目，以后单独讨论（§6）。本文只要求先有一个最小的「输出内容」插件，用来验证扩展位。
-- 子 agent 的运行时。内核目前没有子 agent，本文只定义它的界面。内核加上子 agent 以后，界面按 §5.6 做。
-- 移动端适配。窄屏规则见 §4.4，只保证能用。
+- After using the Claude Code desktop client, the maintainer finds it more refined than Capybara's web app and wants to learn from it (decided):
+  - the overall structure: left sidebar, conversation in the middle, panel on the right;
+  - how tools, subagents and files are shown in the conversation;
+  - "click something in the conversation, its detail opens on the right".
+- Three pixel styles were tried (pixel outline, full dot matrix, retro desktop). After comparing them the maintainer **kept E (Terminal)**; the original choice of E was sound (decided).
+- The problem with E is not its direction but that it is not refined enough (decided):
+  - too many lines;
+  - too many spots of color;
+  - characters standing in for icons;
+  - padding in controls and cards is too large;
+  - long Chinese prose in a monospace font reads stiffly;
+  - no motion.
+- Extensions need to add UI to the conversation page: "the right-hand area can be provided by plugins". An extension that is not enabled shows no icon and no panel (decided).
 
-**反目标**（出现了就算失败，即使功能能用）
-- 实现出来的界面和参考稿「差不多」，但量出来的尺寸、间距、颜色和参考稿不一致。
-- 改版后的会话页丢了现有能力：插话、停止、审批、提问、连接卡片、崩溃续跑、重连、附件上传。
-- 插件的卡片或面板挂了，拖慢或卡住了对话流。
-- 为了精致而牺牲可读性。比如对比度不够，或者状态只靠颜色区分。
+## 2. Goals, non-goals, anti-goals
 
-## 3. 拆分与顺序
+**Goals**
+1. Replace the global TopBar with a left sidebar on every page (decided).
+2. Refine the design system per the "refined E" rules: lines, color, icons, radius, spacing, type, motion; dark and light together.
+3. Rebuild the conversation page as three columns: title-bar icons, a properties panel, a right panel (decided).
+4. Give extensions three slots on the conversation page, linked to each other; let connectors provide inline widgets through MCP Apps (decided).
+5. Show tool calls, subagents, human-in-the-loop cards and files in the conversation by the rules in §5.
+6. Build a fidelity mechanism (§7): the implementation must be shown to match the reference set, not just "not broken".
 
-| 项目 | 内容 | 依赖 |
+**Non-goals**
+- Terminal panel, browser panel (decided: not wanted).
+- The Artifacts product itself: its own storage service, sharing, online design. A separate project, discussed later (§6) (decided).
+- The subagent runtime. This document defines only its UI; the runtime is the ecosystem spec's §11 and its own design.
+- Mobile. Narrow-screen rules in §4.4 keep it usable, no more.
+- The terminology rename itself (routes, tables, API names): that is the ecosystem spec's phase 0. This document only uses the new words in copy.
+
+**Anti-goals** (a failure even if everything works)
+- The result looks "about right" but measured sizes, spacing and colors differ from the reference set.
+- The new conversation page loses an existing capability: interjecting, stopping, approvals (all three scopes), questions (including URL elicitation), connect cards, crash resume, reconnect, file upload (button, drag, paste), `/` connector prompts, `@` connector resources, the hook-denial notice, archived full output.
+- An extension's card or panel failing slows or blocks the conversation stream.
+- Refinement at the cost of legibility: insufficient contrast, or status shown by color alone.
+
+## 3. Split and order
+
+| Project | Content | Depends on |
 |---|---|---|
-| A. 外框与 E 精修 | 设计系统的 token 和规则（§4.1–4.3）、左侧栏（§4.4）、页头（§4.5）、状态栏（§4.6），全站页面跟着换 | 无 |
-| B. 会话页 | 三栏布局、扩展位与联动、工具 / 子 agent / 交互 / 文件的展示、内核配合（§5） | A |
-| C. Artifacts 插件 | 自有服务、分享、在线设计（§6） | B |
-| 贯穿 | 高保真还原机制（§7）。先于 A 建好，A、B 都用它验收 | — |
+| 0. Reference set | Finalize the canvas with the maintainer: real fonts, `tokens.json`, fixture data, PNGs (§7.1) | — |
+| A. Shell and refined E | Design-system tokens and rules (§4.1–4.3), sidebar (§4.4), page header (§4.5), status bar (§4.6); every page moves | 0 |
+| B. Conversation page | Three-column layout, slots and linkage, display of tools / subagents / interaction / files, kernel and SDK support (§5) | A |
+| C. Artifacts | Own service, sharing, online design (§6) | B |
+| Throughout | The fidelity mechanism (§7), built before A, used to accept A and B | — |
 
-交付顺序：A 先上线，单独一个 PR；B 随后。A 上线期间，旧会话页先套进新外框，只做过渡所需的最小改动。（设计者的决定）
-
-A 和 B 各自独立出计划，由 superpowers:writing-plans 编写。计划在执行时按当时的代码写，本文不写代码路径。（设计者的决定）
+- Order: reference-set finalization with the maintainer → A → B → C (decided).
+- A ships first as its own PR; B follows. While A is live and B isn't, the current conversation page (PlaygroundPage + ChatPanel tabs) is placed inside the new shell with only the changes the transition needs (designer's call).
+- A and B each get their own implementation plan (superpowers:writing-plans), written against the code at that time; this document names current code only to say what is replaced (designer's call).
 
 ---
 
-## 4. 项目 A：外框与 E 精修
+## 4. Project A: shell and refined E
 
-### 4.1 视觉方向
+### 4.1 Visual direction
 
-- 保留 E 终端的识别特征：
-  - 深色优先，深浅同源；
-  - 橙色主色；
-  - 像素水豚 Logo；
-  - 等宽字体作为界面骨架；
-  - 高信息密度；
-  - 数字等宽对齐。
-- 像素风不采用。
-- 精修参照的是 Claude Code 桌面客户端的克制程度，**不照搬它的品牌和配色**。
+- Keep what makes E recognizable (decided):
+  - dark first, dark and light from one set of tokens;
+  - the orange accent;
+  - the pixel capybara logo;
+  - the monospace font as the UI skeleton;
+  - high information density;
+  - tabular numbers.
+- No pixel styles (decided).
+- Refinement follows the restraint of the Claude Code desktop client; **its branding and colors are not copied** (decided).
 
-### 4.2 精修规则
+### 4.2 Refinement rules
 
-1. **线**
-   - 只保留栏与栏之间的分隔线，颜色比现在的 `line` 更淡。
-   - 区块、卡片、工具组、属性分区不画边框，靠底色深浅区分。
-   - 浮在内容上的东西才用 1px 边框：输入框、内联卡片、待处理卡片、浮层。
-2. **颜色**
-   - 成功、已完成、已连接**不着色**。
-   - 只有失败、需要人处理的（审批、需要授权）、正在发生的（转圈、光标），以及主操作，才用颜色。
-   - 主色的职责在规范 §2.3 基础上调整：
-     - 「当前一级导航」从下划线改成「浅底色」，因为侧栏是竖着排的；
-     - 其余四种职责保留。
-   - 规范 §2.4 的状态编码表也要更新：在工具行、待办等高频列表里，成功用「没有标记」表示，失败用 `fail` 色的「失败」二字表示。状态仍然有文字，不只靠颜色。
-3. **图标**
-   - 全站使用一套线性图标：24 网格，描边 1.5，常用尺寸 16 / 14 / 12。
-   - 不再用 ▾ ✓ ◐ › ● 这类字符充当图标。
-   - 图标以组件形式放在 `packages/design` 里，`apps/web` 不得直接引入图标库，这条规则现在已经有了。
-   - 来源（自绘或引入开源图标集的 SVG）由实现者定，但风格要统一。（设计者的决定）
-4. **圆角**
-   - 输入框、按钮、内联卡片、属性分区、浮层：4 到 8。
-   - 气泡：10。
-   - 表格、页面结构：直角。
-   - 规范里「全站 0 圆角」这一条随之修改。（设计者的决定，用户看过画板后接受）
-5. **字体**
-   - 界面骨架用更纱等宽黑体：导航、标签、按钮、表格、工具行、键名、路径、数字、状态栏。
-   - **对话正文、Markdown 渲染、表单和页头里的说明文字**改用比例字体：一款英文无衬线体配思源黑体，15px，行高 1.75。（设计者提议，用户已确认）
-   - 规范里「全站唯一字体」这一条随之修改。
-   - 比例字体也自托管、子集化，交付方式和更纱一样。
-6. **对话区限宽**：对话列最大宽度 720，居中。
-7. **动效**
-   - 悬停底色过渡 120–150ms。
-   - 展开和收起有高度过渡。
-   - 运行中用转圈，并显示已用时间。
-   - 流式输出时，正文末尾显示光标。
-   - 尊重 `prefers-reduced-motion`。
-8. **阴影**：输入框浮在底部，带一层轻阴影，深色和浅色各用一个值。其余规则沿用现有阴影 token。
+1. **Lines**
+   - Keep only the dividers between columns, in a color softer than today's `line`.
+   - Sections, cards, tool groups and property sections have no border; they are separated by background tint.
+   - Only things floating over content get a 1px border: inputs, inline cards, pending cards, overlays.
+2. **Color**
+   - Success, done and connected are **not colored**.
+   - Color is only for failure, things needing a person (approval, connect), things happening (spinner, cursor) and the primary action.
+   - Accent roles (design spec §2.3): "current top-level navigation" changes from an underline to a tinted background, because the sidebar is vertical; the other four roles stay.
+   - Status encoding (design spec §2.4): in high-frequency lists (tool rows, todo items) success is shown by **no mark**, failure by the word "Failed" in `fail`. Status still always has text.
+3. **Icons**
+   - One line-icon set site-wide: 24 grid, stroke 1.5, sizes 16 / 14 / 12.
+   - No more characters as icons (`▾ ✓ ◐ › ●`, the `⠿` spinner, `▤`).
+   - Icons are components in `packages/design`; `apps/web` must not import an icon library (already enforced by `web-ui-import`).
+   - Source (drawn in-house or an open-source set's SVGs) is up to the builder, as long as the style is consistent (designer's call).
+4. **Radius**
+   - Inputs, buttons, inline cards, property sections, overlays: 4 to 8.
+   - Message bubbles: 10.
+   - Tables and page structure: square.
+   - The spec's "radius 0 site-wide" rule changes accordingly (designer's call; the maintainer accepted it after seeing the canvas).
+5. **Type**
+   - Sarasa Mono SC stays the UI skeleton: navigation, labels, buttons, tables, tool rows, key names, paths, numbers, the status bar.
+   - **Conversation prose, rendered Markdown, and descriptive text in forms and page headers** use a proportional font: a Latin sans paired with Source Han Sans, 15px, line height 1.75 (decided).
+   - The spec's "the only font on the site" rule changes accordingly.
+   - The proportional font is self-hosted and subset like Sarasa today (`packages/design/src/fonts`, OFL).
+6. **Conversation width**: the chat column is at most 720 wide, centered.
+7. **Motion**
+   - Hover background transitions 120–150ms.
+   - Height transitions on expand and collapse.
+   - Running work shows a spinner and elapsed time.
+   - A cursor at the end of streaming text.
+   - `prefers-reduced-motion` is respected.
+8. **Shadow**: the composer floats at the bottom with one light shadow (one value each for dark and light). Other shadows keep the current tokens.
 
-### 4.3 间距与尺寸（用户要求「间距小一些，紧凑一些，显得精致」）
+### 4.3 Spacing and sizes ("smaller spacing, more compact, looks refined" — decided)
 
-- 间距只取 4 的倍数：4、8、12、16、24、32。
-- 内边距：
-  - 组件内边距 6–12，包括按钮、输入框、卡片、工具行、表格单元格；
-  - 组件之间 8–12；
-  - 区块之间 16–24。
-- **能用间距分开的，就不画线。**
-- 控件默认高 28，包括按钮、输入框、下拉框、筛选标签、分段选择器。24 只用于表格内和工具组里。规范里 36 这一档取消，页面级主按钮也是 28。（设计者提议，用户已确认）
-- 表格行高约 34，单元格上下内边距 6。
-- 统计卡内边距 8/12，数值 18px，卡片之间间距 8。
-- 表单字段卡片内边距 14，字段之间 12。
-- 内联文件卡片内边距 6/10，图标 16，最小宽 240。
-- 输入框内边距 8/12，圆角 8。
-- 精确数值以 §7 的 `tokens.json` 为准。本节是定稿时的取值方向。
+- Spacing only in multiples of 4: 4, 8, 12, 16, 24, 32.
+- Padding:
+  - inside components 6–12 (buttons, inputs, cards, tool rows, table cells);
+  - between components 8–12;
+  - between sections 16–24.
+- **If spacing can separate it, don't draw a line.**
+- Default control height 28 for buttons, inputs, selects, filter chips and segmented controls; 24 only inside tables and tool groups; the 36 size is removed, page-level primary buttons are 28 too (decided).
+- Table rows about 34, cell padding 6 vertical.
+- Stat cards: padding 8/12, value 18px, gap 8.
+- Form field cards: padding 14, 12 between fields.
+- Inline file cards: padding 6/10, icon 16, min width 240.
+- Composer: padding 8/12, radius 8.
+- Exact values come from `tokens.json` (§7). This section sets the direction for finalization.
 
-### 4.4 左侧栏（取代全局顶栏，全站统一）
+### 4.4 Left sidebar (replaces the TopBar, on every page)
 
-- 侧栏分两个区：
-  - **导航区**：承载原顶栏的一级导航，包括概览、Agents、技能、收件箱（带待处理数）、连接器、渠道、评测、管理后台、扩展。按角色隐藏的规则不变。
-  - **会话区**：和 Claude 左侧一样，是会话列表，**按 agent 分组**，组名旁边有 ＋，可以对这个 agent 开新会话。
-- 顶部：Logo、字标、⌘K 搜索按钮。（设计者的决定）
-- 「＋ 新会话」放在导航区第一项。（设计者的决定）
-- 底部：账户和组织切换。（设计者的决定）
-- 所有页面都显示会话区，不只会话页。（设计者提议，用户已确认）
-- 会话区只列当前用户自己的会话，按 agent 分组，每组显示最近几条，带「更多」；没有会话的 agent 不列出。组之间按最近活动排序。需要一个按 agent 分组、各组可单独翻页的列表接口。（设计者的决定）
-- 宽 256。
-- 窄屏：
-  - 宽度小于 1280 时，侧栏收成只有图标的窄条；
-  - 宽度小于 960 时，侧栏变成抽屉。
-  - （设计者的决定，阈值由实现者结合内容最小宽度定）
-- 会话区内容很多时，单独滚动；分组可以折叠。
+What it replaces: the TopBar (`packages/design/src/shell/top-bar.tsx`, filled by `apps/web/src/components/shell/{AppFrame,nav}.tsx`) carries the logo, org switcher, top-level nav (Overview · Agents · Skills · Inbox with pending count · Connectors · Catalog (route `/directory`, member+) · Channels (admin) · Evals (admin) · Admin (enterprise admin)), an "Extensions" menu of extension pages (`place: "page"`, route `/p/<plugin>/<id>`), ⌘K and the user menu (language, theme, sign out). Org settings (`/settings/*`) currently sit under "Connectors"; the admin console (`/admin/*`) has its own second-level nav.
 
-### 4.5 页头
+- Two areas (decided):
+  - **Navigation**: the top-level navigation that used to be in the TopBar. Role-based hiding is unchanged (`NavAudience` all / member / admin / enterprise; hiding is cosmetic, the kernel decides).
+  - **Conversations**: like Claude's sidebar, a list of conversations **grouped by agent**, with a ＋ next to each group name to start a new conversation with that agent.
+- The conversation area is shown on every page, not just the conversation page (decided).
+- It lists only the current user's own conversations; each group shows the most recent few with "More"; agents without conversations are not listed; groups are ordered by latest activity. This needs a list API grouped by agent with per-group paging (§5.9) (designer's call).
+- Navigation layout (designer's call):
+  - "＋ New conversation" is the first item;
+  - then Overview · Agents · Skills · Inbox (count) · Connectors · Catalog · Channels · Evals;
+  - an **Extensions** group listing the org's extension pages directly (replacing the "Extensions" dropdown), shown only when there are any;
+  - **Settings** as its own item for `/settings/*` (personal connections, grants, identities, org, members, org plugins, installed plugins, model purposes), instead of hiding them under Connectors;
+  - **Admin** last, for enterprise admins. The admin console keeps its own second-level nav inside its pages (SettingsPage rail); the sidebar does not swap to admin navigation.
+- Top: logo, wordmark, ⌘K search button (designer's call).
+- Bottom: account and org switcher; language and theme stay in the account menu (designer's call).
+- Width 256.
+- Narrow screens (designer's call; exact thresholds are the builder's, based on content minimum widths):
+  - below 1280 the sidebar collapses to an icon rail;
+  - below 960 it becomes a drawer.
+- When the conversation area is long it scrolls on its own; groups can be collapsed.
+- The inbox pending count keeps its current behavior (count, `99+`, `n+` when truncated, accessible name includes the count).
 
-- 页头从「单行：标题 + 指标 + 操作」改成：
-  - 第一行：面包屑（可选）；
-  - 第二行：标题 + 一句说明，右侧放操作。
-- 列表页的关键指标挪到页头下方，做成一排统计卡，最多 4–5 个。（画板「列表页」）
-- 列表页、表单页的内容区限宽：列表 1080，表单 880，居中。（设计者提议，用户已确认）
+### 4.5 Page header
 
-### 4.6 状态栏与操作栏（用户定）
+- From "single row: title + metrics + actions" to:
+  - row 1: breadcrumb (optional);
+  - row 2: title + one-line description, actions on the right.
+- List-page key metrics move below the header as a row of stat cards, at most 4–5 (canvas "list page").
+- Content width: lists 1080, forms 880, centered (decided). This replaces the Centered body's "180 anchor nav + 760 content, 960 total".
+- The header actions rule stays: at most one solid primary; form submit actions never go in the header.
 
-- 状态栏**不横跨整个窗口**，只在侧栏右侧的内容区里，固定在内容区底部。
-- 样式：高 26，没有底色，上方一条淡线，11.5px，灰色，等宽字体。
-- 每个页面默认都有一条状态栏。
-- 状态栏**只放只读信息**，不放能点的控件：
-  - 左边：路径 `用户@组织:路由` · 页面状态；
-  - 右边：系统状态 · 版本 · 时区。
-- 页面有额外操作时（比如表单的提交区），在状态栏**上方**再出现一条**操作栏**，两条一起固定在底部。
-- 会话页也一样：状态栏在内容区底部，输入框在它上方。
+### 4.6 Status bar and action row (decided)
 
-### 4.7 对设计规范（`docs/design/spec.md`）的改动清单
+- The status bar **does not span the window**: it sits only in the content area to the right of the sidebar, fixed at the bottom of the content area.
+- Style: height 26, no background, a soft line above, 11.5px, gray, monospace.
+- Every page has one by default.
+- It holds **read-only information only**, no clickable controls:
+  - left: path `user@org:route` · page status (`useStatusBar(...)`, as today);
+  - right: system status · version · time zone.
+- When a page has extra actions (a form's submit area, bulk edits, approval decisions, wizards), an **action row** appears **above** the status bar; both stay fixed at the bottom. The status bar never grows into an action bar.
+- The conversation page does the same: the status bar at the bottom of the content area, the composer above it.
 
-项目 A 的第一个任务是按本节改规范，再经评审。规范仍然是唯一的规范来源。
+### 4.7 Changes to the design spec (`docs/design/spec.md`)
 
-| 规范章节 | 要做的改动 |
+Project A's first task is to change the spec per this section and get it reviewed. The spec stays the single source of rules.
+
+| Spec section | Change |
 |---|---|
-| §1 设计原则 | 补「能用间距就不画线」「颜色只给需要注意的东西」 |
-| §2.1 颜色 | 按 `tokens.json` 补 `panel-2`、`raised`、`line-soft` 等新 token |
-| §2.2 字体 | 改为两款字体及各自的用途 |
-| §2.3 主色职责 | 当前导航改为浅底色 |
-| §2.4 状态编码 | 补高频列表的规则 |
-| §2.5 尺寸 | 控件高、圆角、间距按 §4.3 调整 |
-| §4 App Shell | 外框改为「左侧栏 + 内容区（页头 / 内容 / 操作栏 / 状态栏）」，删除 TopBar |
-| §5 模板 | 新增「会话」模板，取代 T7 Playground，或者扩展 T7，由实现者定；其余模板换页头样式 |
-| §6 组件 | 新增：图标、侧栏、会话列表、工具组与工具行、子 agent 行、文件卡片、附件条、内联卡片外框、属性分区、右侧面板外框、输入框（含下拉选择器和排队状态）、差异块 |
-| §9 落实与验收 | 按 §7 改写 |
+| §1 Principles | Add "spacing before lines" and "color only for what needs attention"; rewrite "character grid / one monospace font" for two fonts |
+| §2.1 Colors | Add the new tokens from `tokens.json` (e.g. `panel-2`, `raised`, `line-soft`) |
+| §2.2 Font | Two fonts and what each is for |
+| §2.3 Accent roles | Current navigation becomes a tinted background |
+| §2.4 Status encoding | The high-frequency list rule |
+| §2.5 Sizes | Control heights (28, 24 in tables / tool groups, no 36), radii, spacing per §4.3 |
+| §3 Brand | Logo sizes for the sidebar instead of the TopBar |
+| §4 App Shell | "Left sidebar + content area (page header / body / action row / status bar)"; remove the TopBar; the Centered body widths |
+| §5 Templates | A "Conversation" template replacing T7 Playground or extending it (builder's choice; only the conversation page uses T7 today); the other templates take the new header |
+| §6 Components | New: icon, sidebar, conversation list, tool group and tool row, subagent row, file card, attachment strip, inline card frame, property section, right panel frame, composer (with dropdowns and queue state), diff block, queued message. Replaced: ToolCallRow's IN / OUT IoBlock layout (§5.5), the TopBar's Extensions menu |
+| §9 Enforcement and acceptance | Rewrite per §7 (reference images become the baseline for first acceptance) |
 
 ---
 
-## 5. 项目 B：会话页
+## 5. Project B: conversation page
 
-### 5.1 布局（用户定）
+What it replaces: `/chat/[conversationId]` renders **PlaygroundPage** with header "Agents / <agent name>", the message list (`MessageList`, items user / assistant / tool / approval / question / connect / failed) and the composer in the content area, and an Inspector `ChatPanel` with tabs: extension views and embeds (`place: "conversation"`, in contribution order) · Artifacts (files delivered by `sandbox_deliver`, rebuilt from `artifact_created`) · Run (tool calls with archived full output, alert when approvals are pending) · Context (model, usage, connectors used, sandbox status). The last tab is remembered in `localStorage` (`cap.chat.panelTab`).
 
-- 三栏：左侧栏、中间栏、右侧区域。
-- **标题栏只属于中间栏**，不横跨右侧面板。
-- 标题栏左边是会话标题（带 ⌄，可以重命名等）。右边是两组图标按钮：
-  - 第一组只有一个：属性面板开关；
-  - 中间一条竖线隔开；
-  - 第二组：已启用插件提供的面板图标，最后是「更多 ⋮」。图标放不下时，收进「更多」菜单。
-- 当前打开的那一项，图标高亮。
-- 右侧区域同一时间只放一样东西：**要么属性面板，要么某个插件的右侧面板**。打开一个，另一个就让开。
-- 状态 A，属性面板打开：属性面板算中间栏的一部分，标题栏横跨对话和属性面板。
-- 状态 B，右侧面板打开：
-  - 面板从顶到底占满高度；
-  - 自带头部：返回（可选）、标题（可下拉切换）、操作、全屏、关闭；
-  - 中间栏变窄，标题栏跟着变窄。
-- 属性面板宽约 300。右侧面板宽 520–600，可以拖动调整，并记住宽度。宽度属于个人偏好，存在浏览器本地即可。（设计者的决定）
+### 5.1 Layout (decided)
 
-### 5.2 输入框与状态栏的分工（用户定）
+- Three columns: left sidebar, middle column, right area.
+- **The title bar belongs to the middle column only**; it does not span the right panel.
+- Title bar: conversation title on the left (with ⌄ for rename etc.). On the right, two groups of icon buttons:
+  - group 1, one button: properties panel toggle;
+  - a vertical divider;
+  - group 2: the panel icons of enabled extensions, then "More ⋮". Icons that don't fit go into "More".
+- The open item's icon is highlighted.
+- The right area holds one thing at a time: **either the properties panel or one extension's right panel**. Opening one closes the other.
+- State A, properties panel open: the panel is part of the middle column; the title bar spans the conversation and the properties panel.
+- State B, a right panel open:
+  - it is full height;
+  - its own header: back (optional), title (with a dropdown to switch), actions, full screen, close;
+  - the middle column and its title bar get narrower.
+- Properties panel about 300 wide. Right panel 520–600, resizable, width remembered; it is a personal preference, kept in browser storage (designer's call).
+- Below the right-panel minimum width, the right area becomes an overlay sheet (designer's call; matches today's "Inspector becomes a Sheet below 1280").
 
-- **下拉的含义**（用户定）：
-  - agent 下拉只在新会话里可选；会话发出第一条消息后锁定，要换 agent 就开新会话；
-  - 模型和思考档位可以随时切换，从下一条消息起生效，对这个会话一直有效，直到再次切换；
-  - 切换记进事件日志，保证任一次模型请求都能由日志加 agent 版本还原；
-  - 可选的模型和档位范围，受 agent 配置和组织模型设置约束。
-- **能切换的控件都在输入框里**。输入框底部一行依次是：
-  - 「＋」（附件）；
-  - agent 下拉；
-  - 模型下拉；
-  - 思考档位下拉；
-  - 最右边是发送按钮。运行中，发送按钮换成停止按钮。
-- 会话页的状态栏只放只读信息：
-  - 左边：路径、会话的统计信息（比如轮次、已用时间，具体放什么由实现者定）；
-  - 右边：运行状态、上下文占用、版本。
+### 5.2 Composer and status bar (decided)
 
-### 5.3 插件扩展位与联动（用户定）
+- **What the dropdowns mean** (decided):
+  - the agent dropdown can only be changed in a new conversation; after the first message it is locked, and changing agent means a new conversation;
+  - model and effort can be switched any time, take effect from the next message, and stay for the conversation until switched again;
+  - a switch is written to the conversation event log, so any model request can still be reconstructed from the log plus the agent version;
+  - the choices are bounded by the agent's configuration and the org's model settings (which models exactly: open question 1).
+- What that means against the code (designer's call):
+  - **New conversation**: today the Agents list creates the conversation (`POST /conversations {agentId}`) before anything is typed. With an agent dropdown, "New conversation" opens an empty composer and the conversation is created on first send; the ＋ next to a sidebar group pre-selects that agent. Empty conversations are never created.
+  - **Effort** is the standard `effort` knob that a model may declare (`low|medium|high|xhigh|max` subset). The dropdown lists exactly the values the selected model declares; when it declares none, the dropdown is hidden. The default is the agent's saved `modelParams.effort` or the model default. Other knobs (temperature, max output) stay in the agent form.
+  - The model dropdown shows the agent's model first; the fallback model stays automatic and is never picked here.
+- **Every switchable control is in the composer.** Its bottom row, in order:
+  - ＋ (attachments);
+  - agent dropdown;
+  - model dropdown;
+  - effort dropdown;
+  - on the far right, send. While running, send becomes stop.
+- Existing composer behavior carries over: Enter sends (interjects while running), Shift+Enter newline, `/` connector prompts, `@` connector resources, file drop and paste, at most 5 attachments, `clientMessageId` dedupe on retry.
+- The conversation page's status bar is read-only:
+  - left: path and conversation stats (e.g. turns, elapsed time; which ones is the builder's call);
+  - right: run status, context usage, version.
 
-插件可以在会话页的三个位置加界面：
+### 5.3 Extension slots and linkage (decided)
 
-1. **内联卡片**：插在对话里，比如 todo 的清单卡、产出物的文件卡。
-2. **属性面板分区**：插件在属性面板里占一块，比如「待办」「输出内容」。
-3. **右侧面板**：插件在标题栏有一个图标，点开是它自己的整页面板。
+Extensions can add UI in three places on the conversation page:
 
-规则：
-- **联动**：
-  - 内联卡片和属性分区里的条目，可以带一个「打开」目标，形式是「某个插件的右侧面板 + 其中某一项」；
-  - 点了就展开那个右侧面板，并定位到那一项；
-  - 内联卡片标题行的 ⤢，就是「在右侧面板打开」。
-- **没装就不出现**：插件没有在组织里启用，它的图标、分区、卡片都不出现。
-- **两档都能用**：渲染 schema 和嵌入应用沿用 D13 的机制，三个位置都能用。
-- **连接器的 MCP Apps**：
-  - `connector-mcp` 支持 MCP Apps 扩展：工具在定义里声明一个 `ui://` 界面资源，调用后在对话里渲染成沙箱小组件；
-  - 标题行写「来自 <连接器> 的小组件 <工具名>」，可以放大到右侧面板，也可以收起；
-  - 小组件可以通过宿主再调用工具，比如 Send 按钮由人点。这种调用照样走策略和审批；
-  - 沙箱、通信、权限的要求和 D13 的嵌入应用一致，具体协议遵循 MCP Apps 规范。
-- **插件挂了**：只有那一块显示「加载失败 · 重试」，对话照常进行（D13 的反目标继续有效）。
-- **和现有 `ctx.ui` 的关系**：
-  - 现有的 `place: "conversation"`（对话页右侧标签）对应到新的「右侧面板」，已有插件不用改就能继续工作；
-  - 新增「内联卡片」和「属性分区」两个位置；
-  - 内联卡片**挂在某次工具调用的结果上**：插件的工具结果可以声明「在这里显示哪个视图」，和现在的 `display.summary` 一样只用于显示，写进 `tool_result` 事件，不进模型上下文；
-  - 不允许插件自己往事件日志里写卡片。
-  - （设计者的决定）
-- **MCP Apps 做到哪一步**：至少要能渲染小组件、让小组件发起工具调用（Send 按钮要用）、由宿主把主题和尺寸传给小组件。实现时以当时最新发布的 MCP Apps 规范版本为准，并在计划里写明版本。（设计者的决定）
-- **内核自带的属性分区**：
-  - 「上下文」：占用比例、模型、沙箱状态；
-  - 「后台任务」：运行中的子 agent 和已完成数，可以停止，也可以打开。
-- D13 里的「运行」标签取消，由对话里的工具分组代替。
+1. **Inline card**: inside the conversation, e.g. todo's checklist card.
+2. **Properties section**: a block in the properties panel, e.g. "Tasks".
+3. **Right panel**: an icon in the title bar that opens the extension's own full panel.
 
-### 5.4 验证扩展位用的最小插件（设计者的决定）
+Rules:
+- **Linkage**:
+  - items in inline cards and properties sections may carry an "open" target: "an extension's right panel + an item in it";
+  - clicking it opens that right panel scrolled to that item;
+  - the ⤢ in an inline card's title row means "open in the right panel".
+- **Not enabled, not shown**: when the extension isn't enabled in the org, its icon, sections and cards don't appear.
+- **Both tiers everywhere**: rendered views and embed pages work in all three places, with D13's mechanisms.
+- **Extension failure**: only that block shows "Failed to load · Retry"; the conversation carries on (D13's anti-goal still holds).
+- **Relation to today's `ctx.ui`** (designer's call):
+  - today's `place: "conversation"` (a right-panel tab) maps to the new right panel; existing extensions keep working unchanged;
+  - two new places: inline card and properties section;
+  - an inline card **hangs off a tool result**: an extension's tool result may declare which view to show there; like `display.summary` it is display-only, recorded in the `tool_result` event, never in the model's context;
+  - extensions may not write cards into the event log themselves.
+- **Connector MCP Apps** (decided):
+  - `connector-mcp` supports the MCP Apps extension: a tool declares a `ui://` resource in its definition, and after a call it renders in the conversation as a sandboxed widget;
+  - the title row reads "Widget <tool> from <connector>"; it can be enlarged into the right panel or collapsed;
+  - the widget can ask the host to call tools (e.g. a Send button a person clicks); those calls go through policy and approval as usual;
+  - sandboxing, messaging and permissions match D13's embed pages; the protocol follows the MCP Apps spec.
+- **How far MCP Apps goes** (designer's call): at least render widgets, let widgets call tools (the Send button needs it), and pass theme and size from host to widget; target the latest published MCP Apps spec version at implementation time and name it in the plan.
+- **What MCP Apps needs that doesn't exist yet** (designer's call): `connector-mcp` today keeps only `annotations` and one `_meta` hint, so the tool's UI resource declaration must be carried through `connector@1` / `ToolSpec`; the widget HTML comes from the remote server (`resources/read`), so the kernel needs a same-origin, CSP-sandboxed route to serve it (like `/plugin-ui` but for connector content, with no embed token reaching the widget); and `EmbedFrame` stays the only iframe in the UI. Whether this ships inside B or as its own stage is open question 3.
+- **Built-in properties sections** (designer's call):
+  - "Context": usage ratio, model, sandbox status, connectors used (today's Context tab);
+  - "Outputs": delivered files (§5.4);
+  - "Background tasks": running subagents and the completed count, each stoppable and openable (§5.6).
+- D13's "Run" tab is dropped; the tool groups in the conversation replace it. Archived full output moves into the expanded tool row ("View full output") (designer's call).
 
-- 用 **todo 插件**验证三个位置：内联清单卡、「待办」分区、右侧面板，以及联动。
-- 做一个最小的「输出内容」插件：
-  - 把内核现有的产出物（`artifact_created`）显示成文件卡片、「输出内容」分区和右侧预览面板；
-  - 正式的 Artifacts 插件（项目 C）以后取代它。
+### 5.4 Validating the slots (designer's call)
 
-### 5.5 工具调用的展示规则（参照 Claude Code，画板「会话 · 工具调用」）
+- The **todo extension** (`plugins/todo`) validates all three places: an inline checklist card, a "Tasks" section, a right panel, and the linkage between them.
+- **`example-board`** validates an embed page in the right panel (it already has a `place: "conversation"` embed).
+- **Outputs are built in, not an extension.** The draft proposed a minimal "outputs" plugin; extensions cannot read a conversation's events or the kernel's `kernel/<orgId>/` storage, so that would need a new platform API just to be thrown away by project C. Instead the conversation page shows the kernel's delivered files (`artifact_created`) as file cards, an "Outputs" section and a right-side preview panel, built in like Context. Project C later replaces or extends it (open question 4).
 
-1. **单次调用**：一行灰字，不套框，比如「已使用 Slack: Search messages #feedback 本周 · 42 条 ›」。
-2. **连续两次及以上的调用**合成一组：
-   - 组头是统计，下面是圆角框，每次调用占一行，行与行之间有分隔线；
-   - 组头**按类型分别计数**，动词各不相同：「已运行 N 个命令」「已使用 N 个工具」「已读取 / 已修改 N 个文件」「已加载的工具」；
-   - 有失败的，在后面加「（N 个失败）」，用 `fail` 色；
-   - 只涉及一个对象时，组头直接写对象名，比如「已读取 AURE财务工作流交付说明.pdf」。
-3. **运行中**：
-   - 组头写正在做什么，比如「正在运行命令 · 已完成 2 个」；
-   - 正在运行的那一行，转圈并计时。
-4. **每行的写法**：
-   - 格式是「动词 + 来源: 工具标题 + 关键参数 + 补充信息」；
-   - 动词和工具名用灰色，**关键参数用正文色**；
-   - 工具标题优先用工具声明的 title，比如 MCP 工具的 `title`，不用 key。
-5. **命令（shell）那一行**，用模型调用时写的 `description`，比如「Generated the final PDF」。
-6. **展开一行**：
-   - 输入显示成「键: 值」列表，键用等宽小字、灰色；命令显示成 `$ 命令`；
-   - 下面紧跟输出：等宽，最大高度 120，可以滚动；
-   - 再下面一行是用时和「复制输出」；
-   - 不显示 IN / OUT 标签。
-7. **改文件**：
-   - 展开就是差异，带行号，增删行只用浅底色区分；
-   - 组头写「已修改 N 个文件 · +a −b」。
-8. **大输出**：只显示开头一段，下面写「输出 82 KB，已显示前 4 KB · 查看全文」，全文走现有的输出存档接口。
-9. **失败**：
-   - 行内显示「失败」加错误摘要，比如「404 文件不存在」；
-   - 展开看完整错误；
-   - 对 shell 命令来说，**非零退出码算失败**。
-10. 工具组夹在正文之间，**正文永远不折叠**。
+### 5.5 Tool calls (after Claude Code; canvas "conversation · tool calls")
 
-### 5.6 子 agent 的展示规则（画板「会话 · 子 agent」）
+1. **A single call**: one gray line, no box, e.g. "Used Slack: Search messages #feedback this week · 42 results ›".
+2. **Two or more consecutive calls** form a group:
+   - the group header is a summary; below it a rounded box, one call per row, dividers between rows;
+   - the header **counts by kind** with different verbs: "Ran N commands", "Used N tools", "Read / Edited N files", "Loaded tools";
+   - failures add "(N failed)" in `fail`;
+   - when a group touches only one object, the header names it, e.g. "Read AURE finance workflow handover.pdf".
+3. **Running**:
+   - the header says what is happening, e.g. "Running command · 2 done";
+   - the running row spins and shows elapsed time.
+4. **Each row**:
+   - "verb + source: tool title + key arguments + extra info";
+   - verb and tool name gray, **key arguments in body color**;
+   - prefer the tool's declared title (e.g. the MCP `title`) over its key.
+5. **A shell row** shows the `description` the model wrote for the call, e.g. "Generated the final PDF".
+6. **Expanding a row**:
+   - inputs as a "key: value" list, keys small monospace gray; a command shows as `$ command`;
+   - then the output: monospace, max height 120, scrollable;
+   - then a line with duration and "Copy output";
+   - no IN / OUT labels (this replaces today's `ToolCallRow` + `IoBlock`).
+7. **File edits**:
+   - expanding shows the diff with line numbers, added and removed lines by tinted background only;
+   - the header reads "Edited N files · +a −b".
+8. **Large output**: show only the start, then "Output 82 KB, showing first 4 KB · View all"; the full text comes from the existing output archive (`GET .../outputs/:outputId`, `read_tool_output`).
+9. **Failure**:
+   - the row shows "Failed" with an error summary, e.g. "404 file not found";
+   - expanding shows the full error;
+   - for shell commands, **a non-zero exit code is a failure**.
+10. Tool groups sit between prose; **prose is never collapsed**.
+11. A run blocked by an extension's policy hook keeps today's notice naming the extension (`run.hook_denied`); a denied tool call shows as a failed row with the denying extension (designer's call).
 
-- 多个子 agent 和工具一样，折叠成一组：
-  - 运行中，组头写「N 个子 agent 运行中」；
-  - 结束后收成「N 个子 agent 已完成（M 个失败）· 共 X 次调用 · 用时」。
-- 每个子 agent 占一行：状态（转圈 / ✓ / 失败）、类型小标签、任务名、调用次数、用时，行尾 `›`。
-- **点一行，就在右侧面板打开这个子 agent 的对话**：
-  - 头部：返回、任务名、转圈和用时、停止、全屏、关闭；
-  - 第一块是主 agent 派给它的任务，显示成灰底块；
-  - 下面一行写明它用的 agent、模型、工具范围；
-  - 再往下是它自己的工具组和正文，样式和主对话一致；
-  - 面板底部有自己的状态栏。
-- 正在右侧打开的那一行，带浅底色，左侧一道强调色竖线。
-- 子 agent 的对话是**只读**的，用户只能看和停止，不能对它发消息。（设计者提议，用户已确认）
-- 也可以就地展开某一行，只显示步骤摘要和结论。（设计者的决定）
-- 属性面板的「后台任务」分区列出运行中的子 agent：转圈、名称、用时、停止按钮，下面是「已完成 N 项 ›」。
-- **范围**：内核目前没有子 agent 运行时。项目 B 只在 `packages/design` 和 `/dev/ui` 里用示例数据把这些组件做出来，并通过参考稿验收；接到真实事件，等运行时落地后再做。（设计者的决定）
+### 5.6 Subagents (canvas "conversation · subagents")
 
-### 5.7 人机交互与运行状态（画板「会话 · 人机交互」）
+- Several subagents collapse into a group like tools:
+  - while running: "N subagents running";
+  - when done: "N subagents done (M failed) · X calls · duration".
+- One row per subagent: status (spinner / done / Failed), a kind tag, task name, call count, duration, `›` at the end.
+- **Clicking a row opens that subagent's conversation in the right panel** (decided):
+  - header: back, task name, spinner and duration, stop, full screen, close;
+  - first, the task the parent agent gave it, as a gray block;
+  - then a line naming its agent, model and tool scope;
+  - then its own tool groups and prose, styled like the main conversation;
+  - the panel has its own status bar at the bottom.
+- The row open in the right panel gets a tinted background and an accent bar on the left.
+- A subagent conversation is **read-only**: the user can watch and stop it, not message it (decided).
+- A row can also expand in place to show a step summary and the result (designer's call).
+- The "Background tasks" section lists running subagents: spinner, name, duration, stop, then "N completed ›".
+- **Data shape**: per the ecosystem spec §11, a subagent is a child run with its own event log (a child conversation); the parent log records only the dispatch and the result. The right panel reads the child conversation's events through the same event API as a normal conversation (designer's call).
+- **Scope**: there is no subagent runtime yet. Project B builds these components in `packages/design` and `/dev/ui` with fixture data and accepts them against the reference set; wiring to real events waits for the runtime (designer's call).
 
-- **思考**：收成「思考了 N 秒 ›」，展开后是灰色正文，左侧一道竖线。
-- **流式输出**：正文末尾显示光标。
-- **审批**：
-  - 待处理时，是对话里**唯一用强调色描边**的卡片：
-    - 第一行是标题和工具名；
-    - 下面用「键: 值」列出关键参数；
-    - 按钮：批准、本会话内都批准、拒绝…（拒绝可以附理由）；
-    - 右侧注明是哪条策略要求审批的；
-  - 处理完收成一行，记下谁、在什么时候批准或拒绝，以及拒绝理由。
-- **提问**（ask_user）：选项加「其他」自由输入，按钮是回答和跳过；回答后收成一问一答。
-- **需要连接**：卡片写清连接哪个服务、为什么，以及「只对你生效」，配一个连接按钮。
-- **排队与插话**（用户定，参照 Claude）：
-  - 运行中，输入框提示「按 ↵ 立即发送，按 ⌘↵ 加入队列」；
-  - **↵ 立即发送 = 插话**，就是现在的行为；
-  - **⌘↵ = 排队**：
-    - 排队的消息**显示在对话列里**，是半透明、虚线框的用户气泡；
-    - 下面一排操作：复制、撤回编辑、删除、立即发送（插队）；
-    - 排队的消息等这一轮结束后，按顺序**一条一条**发出，每条是一条独立的用户消息；
-    - 插话不影响队列，也不插到队列前面；队列里某条点「立即发送」，就变成插话；
-    - 运行失败或被停止时，队列暂停，队列下方显示「继续发送」；等审批或等回答时，队列不动，等这一轮真正结束；
-    - 排队的消息在真正发出之前**不写进事件日志**，因为模型还没看到它。
-  - （以上排队规则是设计者的决定）
-  - 排队属于会话状态，可能由别的副本处理，所以要放在 PG 或 Redis，不能只放在浏览器里。（设计者的决定，按多副本纪律）
-- **结束状态**：都是居中的一条细分隔线，有三种：
-  - 已停止（谁、何时）；
-  - 运行失败（原因 · 重试）；
-  - 上下文已压缩（节省多少 · 查看摘要）。
+### 5.7 Human in the loop and run states (canvas "conversation · human in the loop")
 
-### 5.8 文件（画板「会话 · 文件」）
+- **Thinking**: collapsed to "Thought for N seconds ›"; expanded, gray prose with a line on the left.
+- **Streaming**: a cursor at the end of the text.
+- **Approval**:
+  - while pending, it is the **only card in the conversation with an accent outline**:
+    - first row: title and tool name;
+    - then key arguments as "key: value";
+    - buttons: Approve, Approve for this conversation, Always approve (each only when the request allows that scope: `once` / `session` / `always`), Deny… (with an optional reason);
+    - on the right, which policy required approval;
+  - once handled it collapses to one line: who approved or denied, when, and the reason.
+- **Question** (`ask_user` and connector elicitation): options plus "Other" free text, Answer and Skip; when the form has a `url`, it shows as a link with the full address; once answered it collapses to a question-and-answer pair.
+- **Connect needed**: the card says which service, why, and "only affects you", with a Connect button.
+- **Queue and interject** (decided, after Claude):
+  - while running, the composer hint reads "↵ send now, ⌘↵ add to queue";
+  - **↵ = interject**, today's behavior;
+  - **⌘↵ = queue**:
+    - queued messages are **shown in the chat column** as translucent, dashed user bubbles;
+    - below each: copy, edit, delete, send now;
+    - queued messages go out **one at a time** after the current turn ends, each as its own user message (designer's call);
+    - interjecting doesn't touch the queue or jump ahead of it; "send now" on a queued message turns it into an interjection (designer's call);
+    - when the run fails or is stopped, the queue pauses and shows "Continue sending"; while waiting for approval or an answer, the queue waits for the turn to actually end (designer's call);
+    - a queued message is **not written to the event log** until it is sent, because the model hasn't seen it (designer's call).
+  - The queue is conversation state that another replica may act on, so it lives in PG or Redis, not only in the browser (designer's call, per the multi-replica rules).
+- **End states**: a thin centered divider, three kinds:
+  - Stopped (who, when);
+  - Run failed (reason · Retry);
+  - Context compacted (how much saved · View summary). Today the web app does not render `compaction_summary` at all; B adds it.
 
-- **输入框里的附件**：
-  - 图片显示成缩略图，带删除按钮；
-  - 文件显示成文件条：类型角标、文件名、大小；
-  - 上传中显示进度条；
-  - 被拦下的（超过大小等）用 `fail` 色描边并写明原因。
-- **用户消息里的附件**：显示在气泡上方，右对齐。
-- **产出物卡片**：
-  - 类型角标、中间截断的文件名（保留扩展名）、大小；
-  - 点卡片，在右侧面板打开预览。
-- **多个产出物**：两列排开，超过 4 个时收起成「还有 N 个文件 ›」。
-- **图片产出物**：直接显示图片，悬停出现放大和下载按钮，下面一行是文件名、尺寸、大小。
-- **文本类产出物**（md、txt、csv 等）：预览前几行，底部渐隐，带「打开」。
-- **正文里提到的文件路径**：显示成可点的等宽小块，点了在右侧面板打开对应文件。
-- **文件已清理**：卡片保留，变灰并加删除线，写明原因（比如沙箱已回收）。
-- **右侧预览面板**（画板「会话 · 右侧面板联动」）：
-  - 头部：类型角标、可下拉切换的文件名、版本、分享、下载、全屏、关闭；
-  - 表格类文件按工作表分标签。
-  - 「分享」要等项目 C 才有，项目 B 里先隐藏。
+### 5.8 Files (canvas "conversation · files")
 
-### 5.9 需要内核和 SDK 配合的改动
+- **Attachments in the composer**:
+  - images as thumbnails with a remove button;
+  - files as a strip: type badge, name, size;
+  - a progress bar while uploading (upload goes through the web's same-origin object-store proxy since M7);
+  - rejected ones (too large etc.) get a `fail` outline and the reason.
+- **Attachments in a user message**: above the bubble, right-aligned.
+- **Output cards** (delivered files):
+  - type badge, middle-truncated name (keeping the extension), size;
+  - clicking opens a preview in the right panel.
+- **Several outputs**: two columns; beyond 4, collapsed to "N more files ›".
+- **Image outputs**: shown inline; hover shows enlarge and download; below, name, dimensions, size. Inline images use the existing `?inline=1` rule (bitmaps only).
+- **Text outputs** (md, txt, csv…): first lines, fading out at the bottom, with "Open". Text is always shown as plain text, never HTML.
+- **File paths mentioned in prose**: small clickable monospace chips that open the file in the right panel.
+- **File cleaned up**: the card stays, grayed and struck through, with the reason (e.g. sandbox reclaimed).
+- **Right-side preview panel** (canvas "conversation · right panel linkage"):
+  - header: type badge, file name with a dropdown to switch, version, share, download, full screen, close;
+  - spreadsheets get one tab per sheet;
+  - "Share" waits for project C and is hidden in B.
 
-| 改动 | 为什么 |
+### 5.9 Kernel and SDK support
+
+| Change | Why |
 |---|---|
-| shell 工具（`sandbox_bash`）加**必填**的 `description` 参数，说明这条命令要做什么；工具描述里写明要求 | 命令那一行要显示模型写的意图（§5.5 第 5 条） |
-| shell 命令非零退出算失败（结果里带结构化的退出码，展示时据此判定） | 组头要统计失败数 |
-| 工具分类：命令、读文件、写 / 改文件、搜索、连接器、元操作（如 `tool_search`） | 选动词和分组计数 |
-| 工具可以声明「关键参数」；连接器工具保留 MCP `title` | 每行的写法（§5.5 第 4 条） |
-| 写 / 改文件的结果里带差异，或者带足以生成差异的信息 | §5.5 第 7 条 |
-| 每次调用的耗时（可以由 started / result 两个事件的时间算出），网页要保留 | 展开后显示用时 |
-| 排队消息：新的会话状态和接口，包括加入、编辑、删除、立即发送 | §5.7 |
-| 会话的模型和思考档位可以中途切换：消息或会话上的新字段，加一个记录切换的日志事件；评测回放也要支持 | §5.2 |
-| 侧栏用的会话列表接口：按 agent 分组，各组可单独翻页 | §4.4 |
-| 产出物列表接口（现在网页是从日志里自己拼的） | 属性分区和右侧面板 |
-| `ctx.ui` 扩展：位置从「对话标签 / 页面」扩成「内联卡片 / 属性分区 / 右侧面板 / 页面」，并加上「打开目标」 | §5.3 |
-| `connector-mcp` 支持 MCP Apps | §5.3 |
-| 子 agent 的事件形状：派出、进度、结束、对话日志（等子 agent 运行时落地再定） | §5.6 |
+| `sandbox_bash` gets a **required** `description` argument stating what the command is for; the tool description says so | The shell row shows the model's intent (§5.5 item 5) |
+| A non-zero exit counts as a failure: the result carries a structured exit code and the display uses it (today `isError` is only set on timeout or abort) | Group headers count failures |
+| Tool kinds: command, read file, write / edit file, search, connector, meta (e.g. `tool_search`, `skill_load`) | Verbs and per-kind counts |
+| Tools may declare key arguments and a title; `ToolSpec` gains a title and `connector-mcp` keeps the MCP `title` (today it only uses it as a description fallback) | Row wording (§5.5 item 4) |
+| `sandbox_edit` / `sandbox_write` results carry a diff, or enough to compute one (today only "Edited <path>") | §5.5 item 7 |
+| Per-call duration (from `tool_call_started` / `tool_result` times), kept by the web app | Duration in expanded rows |
+| Queued messages: new conversation state and API (add, edit, delete, send now), in PG or Redis | §5.7 |
+| Mid-conversation model and effort switches: a new field on the message or conversation plus a log event recording the switch, with a matching `DriftReason`; replay and evals must honor it | §5.2; the replay invariant |
+| Conversation creation on first send, with the agent chosen in the composer (or `POST` + first message in one call) | §5.2 |
+| Conversation titles and rename (`title` exists, nothing sets it; no PATCH) | Sidebar and title bar (open question 5) |
+| Sidebar list API: the user's conversations grouped by agent, each group pageable | §4.4 |
+| An outputs list API for a conversation (today the web app rebuilds it from the log) | Outputs section and preview panel |
+| `ctx.ui` extension: places go from "conversation tab / page" to "inline card / properties section / right panel / page", plus "open" targets; existing `place: "conversation"` keeps working | §5.3 |
+| MCP Apps in `connector-mcp`, carried through `connector@1`, plus a sandboxed route for widget HTML | §5.3 |
+| Subagent event shapes: dispatch, progress, finish, child conversation (decided with the subagent runtime design) | §5.6 |
 
-这些改动里，凡是改变模型可见内容的（比如 `description` 参数），都要遵守「会话事件日志是唯一事实源」和「工具文案用英文」两条规则。
-
----
-
-## 6. 项目 C：Artifacts 插件（只记录意图）
-
-- 用户的设想：
-  - Artifacts 是插件，默认安装；
-  - 它自己起一个服务，存储 html、md 等文件，方便分享；
-  - 最终做到和 Claude Artifacts 一样，连在线设计都提供。
-- 本文不展开设计，等项目 B 完成后单独讨论。
-- 项目 B 的「输出内容」插件和右侧面板外框，要为它留好接口：数据来源可以替换，面板头部的「分享」位置要预留。
+Anything here that changes what the model sees (e.g. the `description` argument) follows "the conversation event log is the single source of truth", runs the zero-drift fixture tests (`replay-evals`), and keeps model-facing text in English (`pnpm check` tool-design rules).
 
 ---
 
-## 7. 高保真还原机制（贯穿 A、B）
+## 6. Project C: Artifacts (intent only)
 
-**要解决的问题**：现有的截图回归，基准是实现自己截的图，只能防止「改坏」，证明不了「做对」。这次要让**参考稿**成为基准。
-
-### 7.1 先定稿参考稿（A 开工前完成）
-
-由一次 Claude 会话和用户一起，在现有画板上完成，作为 A 的第 0 步，排在 A 的计划之前。（设计者的决定）
-
-1. **字体一致**：参考稿必须用实现时的实际字体（更纱等宽黑体子集，加选定的比例字体），把字体文件上传到画板。现在的画板用的是网上的替代字体，不能直接作为基准。
-2. **数值抽出**：颜色、间距、圆角、字号、行高、阴影、动效时长，全部写进 `docs/design/tokens.json`，深浅两套。
-   - 画板从它读数；
-   - `packages/design` 的 `tokens.css` 由它生成，加一条检查确保两者一致。
-3. **按组件和状态整理**：每个组件的每个状态一块，用**固定的示例数据**（同样的文案、同样的条数）。示例数据单独存一份，`/dev/ui` 目录页用同一份。
-4. **参考图入库**：每块导出一张 PNG，深浅各一，放进 `docs/design/reference/`。同时把参考稿源文件也存进去，方便以后改。
-5. **定稿要经用户确认**，之后改参考稿要走规范 §10 的变更流程。
-
-### 7.2 尺寸表与量尺测试
-
-- 规范 §6 里每个组件都有一张**尺寸表**：高度、内边距、间距、圆角、字号、行高，以及各状态下用哪个颜色 token。数值来自 `tokens.json`。
-- Playwright 在 `/dev/ui` 上**实际测量**：用元素的边界框和计算后的样式，和尺寸表对比，超出容差就失败。
-- jsdom 量不出布局，所以这类测试只用 Playwright。
-
-### 7.3 状态覆盖检查
-
-- 每个组件在规范里列出必须实现的状态，比如默认、悬停、焦点、禁用、出错、运行中、失败、空、加载中。
-- 加一条检查：核对 `/dev/ui` 目录页是否每个状态都有一块，少一个就失败。
-- 检查本身要有违规样例测试。
-
-### 7.4 对照验收
-
-- 每个任务完成后，生成「参考图 | 实现截图」**并排对照页**，深浅各一，覆盖本任务涉及的全部状态。
-- 先由一个**看图的评审子代理**对照，按严重程度列出差异：
-  - 严重：结构或布局不同、缺状态、颜色用错；
-  - 一般：尺寸或间距偏差；
-  - 轻微：渲染细节。
-- 有严重或一般的差异，就不能合并。
-- 最后由用户看对照页确认。
-- 不做像素级比对。字体渲染的细微差异会导致误报，像素级的约束由 §7.2 的量尺测试承担。
-
-### 7.5 交互规格
-
-- 悬停、焦点、展开收起的动画，键盘操作（↵、⌘↵、Esc、方向键），以及右侧面板的切换和关闭，都写进规范。
-- 用 Playwright 交互测试覆盖。
-
-### 7.6 现有截图回归保留
-
-- 实现通过对照验收后，用 `visual-update` 工作流生成新的截图基准，继续防止改坏。
+- The maintainer's idea (decided):
+  - Artifacts is an extension-backed plugin, installed by default;
+  - it runs its own service storing html, md and other files so they can be shared;
+  - eventually as capable as Claude Artifacts, including online design.
+- Not designed here; discussed after B.
+- B's built-in outputs section and right-panel frame keep room for it: the data source can be replaced, and the "Share" spot in the panel header is reserved.
+- Naming: the kernel already calls delivered files "artifacts" (`artifact_created`, `/artifacts/:id/download`, UI copy 产物). Project C must pick names that don't collide, or define how it absorbs them (designer's call).
 
 ---
 
-## 8. 约束
+## 7. Fidelity mechanism (throughout A and B)
 
-- 依赖方向、`check:web-ui`（`apps/web` 不写样式）、模板强制，这些规则都不变。新组件和新模板一律先改规范，走变更流程。
-- 界面文案走 i18n，中文和英文两套。给模型看的文本（工具描述、`description` 参数说明、错误）用英文。
-- 多副本纪律：排队消息、插件刷新、子 agent 状态，都放在 PG 或 Redis。
-- 深浅两套主题同时交付，所有对比度满足 WCAG AA。
-- 新增的自动检查都要有违规样例测试，先证明它会报错。
-- 截图基准只在 CI 的 Linux 环境生成。
+**The problem**: the screenshot regression in `apps/web/visual/` uses the implementation's own screenshots as the baseline. It catches breakage; it cannot prove the implementation is right. This time the **reference set** becomes the baseline.
 
-## 9. 参考稿清单（画板各行）
+### 7.1 Finalize the reference set (before A)
 
-| 行 | 内容 | 状态 |
+Done by one Claude session together with the maintainer, on the existing canvas, as step 0 before A's plan (decided).
+
+1. **Same fonts**: the reference set uses the real fonts (the Sarasa Mono SC subset plus the chosen proportional font), uploaded to the canvas. Today's canvas uses web substitutes and cannot serve as a baseline.
+2. **Extract values**: colors, spacing, radii, sizes, line heights, shadows, motion durations, all into `docs/design/tokens.json`, dark and light.
+   - the canvas reads from it;
+   - `packages/design/src/styles/tokens.css` is generated from it, with a check that the two agree.
+3. **By component and state**: one block per state of each component, with **fixed fixture data** (same copy, same counts). The fixtures are stored once and `/dev/ui` uses the same file.
+4. **Reference images in the repo**: one PNG per block, dark and light, in `docs/design/reference/` (the design spec already points there; it doesn't exist yet), plus the canvas source so it can be edited later.
+5. **Sign-off by the maintainer**; afterwards, changes to the reference set go through the spec's §10 change process.
+
+### 7.2 Size tables and measuring tests
+
+- Each component in spec §6 gets a **size table**: height, padding, gaps, radius, font size, line height, and the color token per state. Values come from `tokens.json`.
+- Playwright **measures** `/dev/ui`: element boxes and computed styles against the size table; outside tolerance fails.
+- jsdom can't measure layout, so these tests are Playwright only.
+
+### 7.3 State coverage check
+
+- Each component lists its required states in the spec (default, hover, focus, disabled, error, running, failed, empty, loading…).
+- A check confirms `/dev/ui` has a block for every state; a missing one fails.
+- The check has a violating-fixture test, proven red first.
+
+### 7.4 Side-by-side acceptance
+
+- After each task, generate a "reference | implementation" side-by-side page, dark and light, covering every state the task touches.
+- First an **image-reviewing subagent** compares them and lists differences by severity:
+  - severe: different structure or layout, missing state, wrong color;
+  - moderate: size or spacing off;
+  - minor: rendering details.
+- Severe or moderate differences block the merge.
+- Finally the maintainer reviews the side-by-side page.
+- No pixel diffing: font rendering differences cause false alarms; the measuring tests (§7.2) carry the pixel-level constraints.
+
+### 7.5 Interaction spec
+
+- Hover, focus, expand / collapse motion, keyboard (↵, ⌘↵, Esc, arrows), and right-panel switching and closing are written into the spec.
+- Covered by Playwright interaction tests.
+
+### 7.6 Existing screenshot regression stays
+
+- Once a change passes side-by-side acceptance, new baselines are generated with the `visual-update` workflow and keep guarding against breakage.
+
+### 7.7 CI placement (designer's call)
+
+- The measuring, state-coverage and interaction tests run with the existing `visual` job (by diff: `apps/web/**`, `packages/design/**`); the `tokens.json` ↔ `tokens.css` check is cheap and runs in full inside `pnpm check`. Each new check states full vs. diff in its PR and updates `AGENTS.md` and `ci.yml` comments, per the CI rules.
+
+---
+
+## 8. Constraints
+
+- Dependency direction, `check:web-ui` (`apps/web` writes no styles, iframes only via `EmbedFrame`, templates enforced) are unchanged. New components and templates change the spec first and go through the change process.
+- UI copy goes through i18n (zh and en) and uses the ecosystem spec's terms. Model-facing text (tool descriptions, the `description` argument, errors) is English.
+- Multi-replica: queued messages, extension refresh, subagent state live in PG or Redis.
+- Dark and light ship together; all contrast meets WCAG AA.
+- Every new automatic check has a violating-fixture test, proven red first.
+- Screenshot baselines are generated only in CI's Linux Playwright image (`visual-update`).
+- **Release**: UI work ships in the web image, so each UI PR adds a changeset on `@capybara-hq/web` (fixed group with `@capybara-hq/capybara`; `@capybara-hq/design` is private and needs none). Kernel changes add a changeset on `@capybara-hq/kernel`; SDK changes (`ctx.ui` places, `ToolSpec` title) regenerate `api/plugin-sdk.api.md` (`pnpm gen:sdk-api`) and add a changeset bumping `@capybara-hq/plugin-sdk`; changed official extensions (todo, `connector-mcp`) bump their own packages.
+- **Repository split**: if the ecosystem spec's split has happened, extension-side work (todo's new places, MCP Apps in `connector-mcp`) is a PR in `capybara-hq/plugins` against the published SDK, coordinated with the core PR.
+- **SDK compatibility**: existing extensions using `place: "conversation"` keep working without changes.
+
+## 9. Reference set (canvas rows)
+
+| Row | Content | Status |
 |---|---|---|
-| 1–2 | 现状 E 终端，以及三种像素风（深 / 浅） | 只作对比，已否决的像素风不实现 |
-| 3 | E 精修 · 会话页（比例正文 / 等宽正文 / 浅色） | 方向稿 |
-| 4 | E 精修 · 列表页、表单页（深 / 浅）、侧栏组件 | 方向稿 |
-| 5 | 会话交互全集（深色）：工具调用、人机交互、子 agent 与内联面板、文件、右侧面板联动、子 agent 右侧面板 | 方向稿 |
-| 6 | 会话交互全集（浅色） | 方向稿 |
+| 1–2 | Current E (Terminal), and the three pixel styles (dark / light) | Comparison only; the rejected pixel styles are not built |
+| 3 | Refined E · conversation page (proportional prose / monospace prose / light) | Direction |
+| 4 | Refined E · list page, form page (dark / light), sidebar components | Direction |
+| 5 | Conversation interactions (dark): tool calls, human in the loop, subagents and inline panels, files, right-panel linkage, subagent right panel | Direction |
+| 6 | Conversation interactions (light) | Direction |
 
-画板里的示例文字借用了用户真实工作里的人名和项目名，定稿参考稿（§7.1）时要换成占位内容。
+The canvas sample text borrows names and projects from the maintainer's real work; they are replaced with placeholders when the reference set is finalized (§7.1). The canvas copy predates the terminology change ("plugin" where it now means extension); finalization updates it.
 
-## 10. 留给实现者决定的
+## 10. Left to the builder
 
-- 组件、模板、接口、SDK 方法的具体命名。
-- 「会话」是新增模板，还是扩展 T7。
-- 图标的来源，以及比例字体选哪一款英文字体（要能配思源黑体）。
-- 侧栏收起的具体断点、右侧面板的最小和最大宽度。
-- 量尺测试的容差。建议尺寸 ±1px，颜色必须等于 token。
-- 会话页状态栏左侧放哪些统计。
-- 排队消息的存储与接口形状。
-- 任务拆分。由各自的计划决定。
+- Names of components, templates, APIs and SDK methods.
+- Whether "Conversation" is a new template or extends T7.
+- The icon source, and the Latin face for the proportional font (must pair with Source Han Sans).
+- The sidebar breakpoints and the right panel's min and max widths.
+- Measuring tolerances; suggested ±1px for sizes, colors must equal the token.
+- Which stats go on the left of the conversation status bar.
+- The storage and API shape of queued messages.
+- Task breakdown, decided by each plan.
+
+## 11. Open questions for the maintainer
+
+Only questions whose answer changes what gets built, most important first.
+
+1. **Which models can a conversation switch to?** There is no org model allowlist today (org model settings are purpose mappings) and agents store one model plus a fallback, so "bounded by agent config and org settings" has nothing to bound by yet. **Recommendation**: the agent definition gains an optional list of switchable models, set by the agent owner; empty means only the agent's model (the model dropdown is then read-only, the effort dropdown still works). This keeps cost under the owner's control and needs no org-level setting.
+2. **Order relative to the ecosystem work (rename phase 0 and the plugins repo split).** Project A's sidebar labels and B's extension changes both touch what that work renames or moves. **Recommendation**: A uses the new terms in copy from day one regardless of route names; run B's SDK and extension-side changes (todo, `connector-mcp`) before the repo split if the timing allows, otherwise as paired PRs across the two repos.
+3. **Is MCP Apps part of B, or its own stage after B?** It needs `connector@1` / `ToolSpec` changes, a new sandboxed route for remote widget HTML and a host-side bridge, none of which the other slots need. **Recommendation**: a separate stage B2 right after B; B ships the three extension slots, the built-in sections and the display rules first.
+4. **Outputs: built into the conversation page instead of a minimal plugin?** Extensions can't read a conversation's delivered files without a new platform API. **Recommendation**: built in (as §5.4 now says); project C decides later whether the Artifacts plugin replaces it through the right-panel slot.
+5. **How do conversations get titles?** The sidebar and title bar need them; nothing sets `title` today. **Recommendation**: default to the first user message, trimmed, with rename from the title bar's ⌄ menu; a model-generated title (a new `title` model purpose, off unless mapped) can come later.
+6. **Does "Settings" get its own sidebar item?** Org settings currently live under "Connectors". **Recommendation**: yes, as §4.4 proposes, with Connectors keeping only the connector list and install.
