@@ -335,7 +335,7 @@ describe("capybara extensions install / enable / disable / uninstall（运行中
 
     const review = await cli(["extensions", "review"]);
     expect(review.code, review.stderr).toBe(0);
-    expect(review.stdout).toContain("life 1.0.0: awaiting approval (new plugin");
+    expect(review.stdout).toContain("life 1.0.0: awaiting approval (new extension");
     expect(review.stdout).toContain("+ permissions.tools:wait");
 
     const enable = await cli(["extensions", "enable", "life"]);

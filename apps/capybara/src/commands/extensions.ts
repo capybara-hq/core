@@ -100,7 +100,7 @@ function describePending(p: PendingExtension): string[] {
   }
   const head =
     p.reason === "new"
-      ? `${p.plugin} ${p.version}: awaiting approval (new plugin)`
+      ? `${p.plugin} ${p.version}: awaiting approval (new extension)`
       : `${p.plugin} ${p.version}: awaiting approval (permissions added since the approved snapshot)`;
   return [head, ...p.added.map((k) => `  + ${mark(k)}`), ...p.removed.map((k) => `  - ${k}`)];
 }
@@ -145,7 +145,7 @@ export async function runExtensionsReview(
         }
         if (!installPending(v)) continue;
         out.push(
-          `${v.name} ${v.version}: awaiting approval (${v.snapshot ? "permissions added since the approved snapshot" : "new plugin"}; installed package ${v.sha256?.slice(0, 16)})`,
+          `${v.name} ${v.version}: awaiting approval (${v.snapshot ? "permissions added since the approved snapshot" : "new extension"}; installed package ${v.sha256?.slice(0, 16)})`,
           ...v.added.map((k) => `  + ${mark(k)}`),
           ...v.removed.map((k) => `  - ${k}`),
         );
@@ -172,7 +172,7 @@ export async function runExtensionsReview(
       }
       if (cli.config.extensionPermissions.autoApprove) {
         out.push(
-          "Note: extensionPermissions.autoApprove is on; the kernel approves plugin permissions automatically.",
+          "Note: extensionPermissions.autoApprove is on; the kernel approves extension permissions automatically.",
         );
       }
       io.stdout.write(`${out.join("\n")}\n`);
