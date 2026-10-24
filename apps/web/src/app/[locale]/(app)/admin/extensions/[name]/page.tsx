@@ -65,12 +65,12 @@ export default function ExtensionDetailPage() {
   const { name } = useParams<{ name: string }>();
   return (
     <AdminGate>
-      <PluginDetail name={decodeURIComponent(name)} />
+      <ExtensionDetail name={decodeURIComponent(name)} />
     </AdminGate>
   );
 }
 
-function PluginDetail({ name }: { name: string }) {
+function ExtensionDetail({ name }: { name: string }) {
   const t = useTranslations("admin.extensions");
   const errorMessage = useErrorMessage();
   const { state, reload, set } = useLoad(listAdminExtensions, [name]);

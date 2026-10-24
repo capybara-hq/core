@@ -50,7 +50,7 @@ import { useLoad } from "../../../../../../lib/use-load";
 export default function ExtensionInstallPage() {
   return (
     <AdminGate>
-      <PluginInstall />
+      <ExtensionInstall />
     </AdminGate>
   );
 }
@@ -65,7 +65,7 @@ const upgradeTarget = (): string | null => {
 type Step = 0 | 1 | 2;
 type Problem = { message: string; extra: string[] };
 
-function PluginInstall() {
+function ExtensionInstall() {
   const t = useTranslations("admin.extensions.wizard");
   const tp = useTranslations("admin.extensions");
   const td = useTranslations("admin.extensions.detail");

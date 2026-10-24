@@ -68,7 +68,7 @@ function Plugins({ orgId }: { orgId: string }) {
         <Text tone="muted">{t("empty")}</Text>
       ) : (
         state.data.map((p) => (
-          <PluginSection key={p.plugin} orgId={orgId} plugin={p} onSaved={replace} />
+          <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} onSaved={replace} />
         ))
       )}
     </SettingsPage>
@@ -91,7 +91,7 @@ const strings = (raw: unknown[], key: string): string[] => [
   ),
 ];
 
-function PluginSection({
+function ExtensionSection({
   orgId,
   plugin,
   onSaved,
