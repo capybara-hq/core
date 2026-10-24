@@ -623,7 +623,7 @@ describe("ChannelWebhooks.handle", () => {
   it("plugin not loaded on this gateway → 503 extension.unavailable", async () => {
     const res = await make({
       runtime: async () => {
-        throw new ApiError("extension.not_found", "Plugin p does not provide a channel");
+        throw new ApiError("extension.not_found", "Extension p does not provide a channel");
       },
     }).call();
     expect(res.status).toBe(503);

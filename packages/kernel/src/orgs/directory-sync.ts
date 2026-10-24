@@ -316,24 +316,24 @@ export class DirectorySync {
         case "plugin_unavailable":
           throw new ApiError(
             "extension.not_found",
-            `Plugin ${plugin} does not provide a directory`,
+            `Extension ${plugin} does not provide a directory`,
           );
         case "org_not_found":
           throw new ApiError("org.not_found", "Organization not found");
         case "not_enabled":
           throw new ApiError(
             "extension.not_enabled",
-            `Plugin ${plugin} is not enabled for this organization`,
+            `Extension ${plugin} is not enabled for this organization`,
           );
         case "config_invalid":
           throw new ApiError(
             "extension.config_invalid",
-            `Invalid organization config for plugin ${plugin}`,
+            `Invalid organization config for extension ${plugin}`,
           );
         case "not_configured":
           throw new ApiError(
             "directory.not_configured",
-            `The directory of plugin ${plugin} is not configured for this organization`,
+            `The directory of extension ${plugin} is not configured for this organization`,
           );
       }
     }

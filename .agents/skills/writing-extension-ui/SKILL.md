@@ -1,46 +1,46 @@
 ---
-name: writing-plugin-ui
-description: 'Use when adding UI to a plugin (a tab on the right of the conversation page, or an org page under the top-bar "Extensions" menu): choosing between a rendered schema view and an embedded app iframe; the manifest ui contribution and permissions.ui.views / embeds (an embed blocks loading and is sensitive), the perm-ui check; ctx.ui.view / action / invalidate (signal, timeout, error codes); UiView blocks and UI_LIMITS; the bilingual ToolResult.display summary; embed tokens (verifyEmbedToken, not accepted by /api), the /plugin-ui proxy (header allowlist, CSP sandbox), the message bridge (init, navigate rules), SSE via ctx.bus with req.signal; reference plugins/todo, plugins/example-board, and how to write tests.'
+name: writing-extension-ui
+description: 'Use when adding UI to an extension (a tab on the right of the conversation page, or an org page under the top-bar "Extensions" menu): choosing between a rendered schema view and an embed iframe; the manifest ui contribution and permissions.ui.views / embeds (an embed blocks loading and is sensitive), the perm-ui check; ctx.ui.view / action / invalidate (signal, timeout, error codes); UiView blocks and UI_LIMITS; the bilingual ToolResult.display summary; embed tokens (verifyEmbedToken, not accepted by /api), the /plugin-ui proxy (header allowlist, CSP sandbox), the message bridge (init, navigate rules), SSE via ctx.bus with req.signal; reference plugins/todo, plugins/example-board, and how to write tests.'
 ---
 
-# Writing plugin UI
+# Writing extension UI
 
 ## What this skill covers
 
-Adding UI to a plugin (a tab on the right of the conversation page, or an org page under the top-bar "Extensions" menu): how to choose between the two tiers (rendered schema view / embedded app iframe); the manifest ui contribution (place, kind, an embed's path under /ui/ and declared as GET) and permissions.ui.views / embeds, a view does not block loading while an embed does and is a sensitive item, the perm-ui check; ctx.ui.view / action / invalidate (respond to signal, 5 second timeout, error codes, web refresh coalescing); UiView blocks and UI_LIMITS (text is shown as plain text in M4, images accept only http(s), actionId is unique, danger buttons, use Object.hasOwn for table cells); the bilingual summary in ToolResult.display for tool results; embed tokens (300 seconds, valid only for their own plugin, verifyEmbedToken checks enablement, not accepted by /api), the /plugin-ui proxy (header allowlist, private / no-store, forwards only embed tokens, CSP sandbox), the message bridge (init sent only on the first load, no navigation before load, remount limit, History API, navigate rules), static pages carry no data, SSE subscribes to ctx.bus per request with req.signal; reference plugins/todo, plugins/example-board, and how to write tests.
+Adding UI to an extension (a tab on the right of the conversation page, or an org page under the top-bar "Extensions" menu): how to choose between the two tiers (rendered schema view / embed iframe); the manifest ui contribution (place, kind, an embed's path under /ui/ and declared as GET) and permissions.ui.views / embeds, a view does not block loading while an embed does and is a sensitive item, the perm-ui check; ctx.ui.view / action / invalidate (respond to signal, 5 second timeout, error codes, web refresh coalescing); UiView blocks and UI_LIMITS (text is shown as plain text in M4, images accept only http(s), actionId is unique, danger buttons, use Object.hasOwn for table cells); the bilingual summary in ToolResult.display for tool results; embed tokens (300 seconds, valid only for their own extension, verifyEmbedToken checks enablement, not accepted by /api), the /plugin-ui proxy (header allowlist, private / no-store, forwards only embed tokens, CSP sandbox), the message bridge (init sent only on the first load, no navigation before load, remount limit, History API, navigate rules), static pages carry no data, SSE subscribes to ctx.bus per request with req.signal; reference plugins/todo, plugins/example-board, and how to write tests.
 
-For general plugin authoring (manifest, permission approval, ctx, multi-replica prohibitions, dual-replica tests) see `.agents/skills/writing-plugins`, and for tools themselves see `.agents/skills/writing-tools`; this skill covers only the UI. The design basis is `docs/superpowers/specs/2026-10-21-chat-panel-plugin-ui-design.md`. Reference implementations:
+For general extension authoring (manifest, permission approval, ctx, multi-replica prohibitions, dual-replica tests) see `.agents/skills/writing-extensions`, and for tools themselves see `.agents/skills/writing-tools`; this skill covers only the UI. The design basis is `docs/superpowers/specs/2026-10-21-chat-panel-plugin-ui-design.md`. Reference implementations:
 
 - Tier 1 (rendered schema view): `plugins/todo`, conversation view `tasks`; `todo__write` calls `invalidate` after writing.
-- Tier 2 (embedded app): `plugins/example-board`, org page `board` and conversation tab `board-conv`, with live SSE refresh.
+- Tier 2 (embed): `plugins/example-board`, org page `board` and conversation tab `board-conv`, with live SSE refresh.
 
 ## How to choose between the two tiers
 
-| | Tier 1: rendered schema (`kind: "view"`) | Tier 2: embedded app (`kind: "embed"`) |
+| | Tier 1: rendered schema (`kind: "view"`) | Tier 2: embed (`kind: "embed"`) |
 |---|---|---|
-| What the plugin provides | `render()` returns a `UiView` (a list of blocks), drawn by the web app with design system components | A full page of HTML / JS served by plugin routes, placed in a sandboxed iframe |
-| Styles and code | The plugin cannot write styles or run code | The page is responsible for itself and can use the `--cb-*` design tokens sent by the outer page |
+| What the extension provides | `render()` returns a `UiView` (a list of blocks), drawn by the web app with design system components | A full page of HTML / JS served by extension routes, placed in a sandboxed iframe |
+| Styles and code | The extension cannot write styles or run code | The page is responsible for itself and can use the `--cb-*` design tokens sent by the outer page |
 | Interaction | Buttons and forms call back into `ctx.ui.action` | Anything (drag and drop, multi-user collaboration, complex forms) |
-| Refresh | `ctx.ui.invalidate` -> the web app re-fetches the view | The plugin opens its own SSE / long polling |
+| Refresh | `ctx.ui.invalidate` -> the web app re-fetches the view | The extension opens its own SSE / long polling |
 | Approval | Recorded in the snapshot, **does not block loading** | **Blocks loading**, needs approval, a sensitive item |
 
-**Use tier 1 whenever you can**: lists, progress, key-values, tables, simple charts, a few buttons or one form are all covered, and there is no new security surface. Only things the blocks cannot draw (kanban drag and drop, real-time multi-user editing, workflow canvases) should use an embedded app.
+**Use tier 1 whenever you can**: lists, progress, key-values, tables, simple charts, a few buttons or one form are all covered, and there is no new security surface. Only things the blocks cannot draw (kanban drag and drop, real-time multi-user editing, workflow canvases) should use an embed.
 
-Both tiers can be placed in the same positions: `place: "conversation"` is a tab in the right panel of the conversation page (the panel also has the kernel's own "Run" and "Context"); `place: "page"` is an org page in the top-bar "Extensions" menu, route `/p/<plugin>/<id>`. A contribution appears only in **orgs where this plugin is enabled**; kind view also requires that the plugin actually registered a render with `ctx.ui.view`.
+Both tiers can be placed in the same positions: `place: "conversation"` is a tab in the right panel of the conversation page (the panel also has the kernel's own "Run" and "Context"); `place: "page"` is an org page in the top-bar "Extensions" menu, route `/p/<plugin>/<id>`. A contribution appears only in **orgs where this extension is enabled**; kind view also requires that the extension actually registered a render with `ctx.ui.view`.
 
-**Roles (Ruling A38)**: contributions with `place: "page"` (view and embed) are given only to org roles **member and above**. A guest's contribution list has no org pages; when a guest fetches an org page view, runs its actions, mints an embed token for an org page, or connects to the org-level refresh stream, the answer is always 404 `ui.not_found` (the same as if it did not exist). Contributions with `place: "conversation"` are given as usual to any role that can access the conversation (a guest also uses shared agents). The plugin can read `role` (`owner` / `admin` / `member` / `guest`) in `UiRenderArgs` / `UiActionArgs` / `EmbedClaims` and can tighten further on it (for example, only member and above may change data); but it does not need to block guests from org pages itself, the kernel already does.
+**Roles (Ruling A38)**: contributions with `place: "page"` (view and embed) are given only to org roles **member and above**. A guest's contribution list has no org pages; when a guest fetches an org page view, runs its actions, mints an embed token for an org page, or connects to the org-level refresh stream, the answer is always 404 `ui.not_found` (the same as if it did not exist). Contributions with `place: "conversation"` are given as usual to any role that can access the conversation (a guest also uses shared agents). The extension can read `role` (`owner` / `admin` / `member` / `guest`) in `UiRenderArgs` / `UiActionArgs` / `EmbedClaims` and can tighten further on it (for example, only member and above may change data); but it does not need to block guests from org pages itself, the kernel already does.
 
 ## Manifest
 
 ```ts
-definePlugin({
+defineExtension({
   name: "todo",
   ui: [{ id: "tasks", title: { zh: "任务", en: "Tasks" }, place: "conversation", kind: "view" }],
   permissions: { tools: ["write"], ui: { views: ["tasks"] } },
   // ...
 });
 
-definePlugin({
+defineExtension({
   name: "example-board",
   ui: [
     { id: "board", title: { zh: "看板", en: "Board" }, place: "page", kind: "embed", path: "/ui/board" },
@@ -53,12 +53,12 @@ definePlugin({
 });
 ```
 
-- A contribution `id` matches `^[a-z][a-z0-9-]{0,39}$` and is unique within the plugin; both the zh and en parts of `title` must be non-empty and <= 100 characters.
+- A contribution `id` matches `^[a-z][a-z0-9-]{0,39}$` and is unique within the extension; both the zh and en parts of `title` must be non-empty and <= 100 characters.
 - `path` is allowed only on embeds: it starts with `/ui/` and is declared as `GET <path>` in `permissions.http`. All routes an embed uses (page, scripts, data, SSE) must be under `/ui/`; the web proxy forwards only there.
-- **Two-way cross-check** (`definePlugin` -> `validateUiContributions`, which the kernel also runs when loading): the id of a kind view must be listed in `permissions.ui.views`, and that of a kind embed in `permissions.ui.embeds`; conversely every id in `permissions.ui` must have a contribution of the same kind. The same id cannot be listed on both sides.
+- **Two-way cross-check** (`defineExtension` -> `validateUiContributions`, which the kernel also runs when loading): the id of a kind view must be listed in `permissions.ui.views`, and that of a kind embed in `permissions.ui.embeds`; conversely every id in `permissions.ui` must have a contribution of the same kind. The same id cannot be listed on both sides.
 - **Approval**: the permission keys are `ui.view:<id>` and `ui.embed:<id>`.
-  - `ui.view:*` is recorded in the snapshot and visible when admins review, but **never blocks loading**: when a plugin upgrade adds only views it loads as usual and the kernel merges them into the snapshot (no audit entry, one info log `plugin ui views merged into the permission snapshot`); `capybara plugins approve` also answers "no approval needed" for such an upgrade. The reason is that a view only hands the plugin's existing data to our components and adds no new capability. Exception: a brand-new plugin (no snapshot yet) needs approval even if it has only views.
-  - `ui.embed:*` blocks loading like any other newly added permission, waits for `capybara plugins approve`, and is a **sensitive item**: `capybara plugins review` / `approve` mark it with `  (sensitive)` after it, and the `ui` group on the org enablement page is highlighted. There is only one definition of sensitive (`isSensitivePermissionKey` in `permission-view.ts`).
+  - `ui.view:*` is recorded in the snapshot and visible when admins review, but **never blocks loading**: when an extension upgrade adds only views it loads as usual and the kernel merges them into the snapshot (no audit entry, one info log `plugin ui views merged into the permission snapshot`); `capybara extensions approve` also answers "no approval needed" for such an upgrade. The reason is that a view only hands the extension's existing data to our components and adds no new extension point. Exception: a brand-new extension (no snapshot yet) needs approval even if it has only views.
+  - `ui.embed:*` blocks loading like any other newly added permission, waits for `capybara extensions approve`, and is a **sensitive item**: `capybara extensions review` / `approve` mark it with `  (sensitive)` after it, and the `ui` group on the org enablement page is highlighted. There is only one definition of sensitive (`isSensitivePermissionKey` in `permission-view.ts`).
 - **Static check `perm-ui`** (`pnpm check:plugin-permissions`): the id of `ctx.ui.view(id)` / `ctx.ui.action(id)` must be in `permissions.ui.views` (action is also checked against views; embeds do not go through action). Write the id as a string literal or a same-file const; dynamic values and aliasing `ctx.ui` both report "Cannot statically confirm", and for ones truly only known at runtime use the exemption `// capybara:allow-dynamic-permission <reason>`; an outright undeclared id cannot be exempted. When passing `ctx.ui` to another function, pass a wrapper (todo's `{ invalidate: (t) => ctx.ui.invalidate(t) }`) so the check can see the usage.
 
 ## Tier 1: `ctx.ui`
@@ -77,22 +77,22 @@ setup(ctx) {
 await ctx.ui.invalidate({ orgId, conversationId, contribution: "tasks" }).catch(() => {});
 ```
 
-- `view` / `action` can be called only in `setup` (sealed when setup ends), and the id must be in `permissions.ui.views`, otherwise `PluginPermissionError` is thrown and an out-of-scope audit entry is written; registering the same id twice throws.
-- The identities in the arguments (`orgId`, `accountId`, `role`, `conversationId`) are given by the kernel after authentication: a conversation view has already verified that the caller can access this conversation, and the plugin never gets the user's session credentials. Org pages (place page) are not passed `conversationId`. `locale` is the web app's current language (`zh` / `en`, default `en`), and text in the view is produced according to it.
+- `view` / `action` can be called only in `setup` (sealed when setup ends), and the id must be in `permissions.ui.views`, otherwise `ExtensionPermissionError` is thrown and an out-of-scope audit entry is written; registering the same id twice throws.
+- The identities in the arguments (`orgId`, `accountId`, `role`, `conversationId`) are given by the kernel after authentication: a conversation view has already verified that the caller can access this conversation, and the extension never gets the user's session credentials. Org pages (place page) are not passed `conversationId`. `locale` is the web app's current language (`zh` / `en`, default `en`), and text in the view is produced according to it.
 - **5 second timeout; both `render` and `action` must respond to `signal`**: pass it to queries and external requests (`fetch(url, { signal })`) and give up as soon as it aborts. After a timeout the user sees a failure and may retry, so a write in an `action` in particular must not keep running to completion after the timeout.
 - A failure affects only that one tab (it shows the error and "Retry"); the conversation keeps streaming as usual; the kernel logs a warning and writes nothing to the conversation log. Error codes:
 
   | Code | Status | When |
   |---|---|---|
-  | `ui.not_found` | 404 | plugin not enabled / not loaded, contribution does not exist, an embed fetched as a view, the view has no action, the conversation is not accessible (someone else's, nonexistent, another org's, id is not a UUID) |
-  | `ui.render_failed` | 502 | `render` threw (the plugin's exception message is not echoed) |
+  | `ui.not_found` | 404 | extension not enabled / not loaded, contribution does not exist, an embed fetched as a view, the view has no action, the conversation is not accessible (someone else's, nonexistent, another org's, id is not a UUID) |
+  | `ui.render_failed` | 502 | `render` threw (the extension's exception message is not echoed) |
   | `ui.action_failed` | 502 | `action` threw |
   | `ui.invalid_view` | 502 | the returned view or toast is invalid |
   | `ui.timeout` | 504 | over 5 seconds (`signal` has been aborted) |
   | `validation_failed` | 400 | a conversation view lacks `conversationId`, an org page carries one, the action request body is over the limit |
 
 - Action request body: `actionId` 1-200 characters; `payload` <= `UI_LIMITS.payloadBytes` in UTF-8 bytes of its JSON; the number of keys and the multi-select length of a form `answer` <= `UI_LIMITS.tableRows`, a single text <= `UI_LIMITS.textChars`. When `{ view }` is returned the web app replaces the view directly (the badge is updated together), and for `{ toast }` it shows `toast[locale]`.
-- **`invalidate({ orgId, conversationId?, contribution })`**: `contribution` is an id in the manifest `ui` (view or embed both work), and `conversationId` must be a conversation UUID. With a conversation it is sent to the conversation topic, and the conversation SSE receives `event: ui` `{"plugin","contribution"}`; without one it is sent to the org topic, and the org-level SSE `GET /api/v1/orgs/:orgId/ui/stream` receives it. It crosses replicas through the Redis bus, and the plugin needs to do nothing. The kernel first checks the target with one query: this plugin is enabled in `orgId`, and when a conversation is given it belongs to `orgId`; if not satisfied it is silently dropped (only a debug log, no error). It is only a "go fetch again" hint, and authorization happens when the view is fetched; a refresh failure should not affect business writes, hence `.catch(() => {})`.
+- **`invalidate({ orgId, conversationId?, contribution })`**: `contribution` is an id in the manifest `ui` (view or embed both work), and `conversationId` must be a conversation UUID. With a conversation it is sent to the conversation topic, and the conversation SSE receives `event: ui` `{"plugin","contribution"}`; without one it is sent to the org topic, and the org-level SSE `GET /api/v1/orgs/:orgId/ui/stream` receives it. It crosses replicas through the Redis bus, and the extension needs to do nothing. The kernel first checks the target with one query: this extension is enabled in `orgId`, and when a conversation is given it belongs to `orgId`; if not satisfied it is silently dropped (only a debug log, no error). It is only a "go fetch again" hint, and authorization happens when the view is fetched; a refresh failure should not affect business writes, hence `.catch(() => {})`.
 - **Web refresh coalescing**: each view has at most one request in flight at a time; refreshes that arrive in flight, however many, produce just one re-fetch after it completes; the old view is kept during the re-fetch, with no flash back to loading; after the event stream reconnects, all views are re-fetched once (frames may have been missed during the disconnection). So you can call invalidate on every write without throttling yourself.
 
 ## Tier 1: `UiView` blocks and limits
@@ -107,7 +107,7 @@ The types and `validateUiView` are in `packages/plugin-sdk/src/ui.ts`; the kerne
 | `keyValue` | `items[{ label, value }]` | key-value table |
 | `table` | `columns[{ key, label }]`, `rows[Record<key, string>]` | data table. Column keys cannot repeat; a row cannot have undeclared columns, but may omit columns |
 | `code` | `language?`, `text` | monospace code block |
-| `image` | `url`, `alt` | **Absolute http(s) addresses only** (<= 2000 characters, Ruling A34); a relative address under the plugin's own routes is rejected |
+| `image` | `url`, `alt` | **Absolute http(s) addresses only** (<= 2000 characters, Ruling A34); a relative address under the extension's own routes is rejected |
 | `chart` | `kind: bar / line`, `series[{ label, value }]` | bar chart / line chart; `value` must be a finite number |
 | `actions` | `buttons[{ actionId, label, payload?, danger? }]` (non-empty) | a group of buttons, calling back into `ctx.ui.action` |
 | `form` | `form: InputForm`, `actionId`, `submitLabel` | reuses the form fields of `ask_user`; submitting goes through `action` (with `answer`); it does not submit while a required field is empty |
@@ -122,7 +122,7 @@ A view may carry a `badge` (<= 32 characters), shown on the tab, such as todo's 
 
 ## The display summary for tool results, `ToolResult.display`
 
-A tool (plugin tools and builtin tools) can return in its result a sentence meant only for people, and the tool-call line in the conversation stream shows it instead of the raw input JSON:
+A tool (extension tools and builtin tools) can return in its result a sentence meant only for people, and the tool-call line in the conversation stream shows it instead of the raw input JSON:
 
 ```ts
 return {
@@ -135,25 +135,25 @@ return {
 - The summary goes into the log with the `tool_result` event, so reloading the page restores it; it **does not enter the model context**, and neither rebuilding the model request nor generating compaction records uses it, so anything the model needs must be written in `content`.
 - Without a summary (connector tools' are never trusted), the web app falls back to "tool name + the first two fields of the input". Details are in `.agents/skills/writing-tools`.
 
-## Tier 2: embedded apps
+## Tier 2: embeds
 
-The plugin's own page is placed in the web app's sandboxed iframe (`sandbox="allow-scripts allow-forms"`, without `allow-same-origin`, so it has an opaque origin) and cannot read the outer page or cookies. `apps/web` renders the iframe only through the design system's `EmbedFrame` (the `web-ui-iframe` rule of `check:web-ui`).
+The extension's own page is placed in the web app's sandboxed iframe (`sandbox="allow-scripts allow-forms"`, without `allow-same-origin`, so it has an opaque origin) and cannot read the outer page or cookies. `apps/web` renders the iframe only through the design system's `EmbedFrame` (the `web-ui-iframe` rule of `check:web-ui`).
 
 ### Embed tokens
 
-- The web app calls `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token` (a conversation embed carries `{ conversationId }`) and gets `{ token, src, expiresAt, expiresIn }`; `src` is `/plugin-ui/<plugin>/<path with the leading /ui/ removed>`, such as `/plugin-ui/example-board/board`. At signing time the kernel has already verified that the plugin is enabled, the contribution is an embed, and the caller can access this conversation.
+- The web app calls `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token` (a conversation embed carries `{ conversationId }`) and gets `{ token, src, expiresAt, expiresIn }`; `src` is `/plugin-ui/<plugin>/<path with the leading /ui/ removed>`, such as `/plugin-ui/example-board/board`. At signing time the kernel has already verified that the extension is enabled, the contribution is an embed, and the caller can access this conversation.
 - A token is `base64url(claims).base64url(HMAC)`, **stateless** (not stored in the DB or Redis), verified by every replica with the same master key; valid for 300 seconds (`EMBED_TOKEN_TTL_SECONDS`, tolerating 30 seconds of clock skew); after a master key rotation, tokens signed by the previous key remain valid until they expire. The claims are `EmbedClaims`: `plugin`, `orgId`, `accountId`, `role`, `conversationId?`, `contribution`, `exp` (`role` is written at signing and checked at verification to be one of the four roles).
-- **Every data route of the plugin first does `await ctx.ui.verifyEmbedToken(token)`** and returns 401 if it returns null. It accepts only tokens signed for **this plugin** (a token signed for another plugin is always null), and each time uses one PG query to confirm that this plugin is still enabled in `claims.orgId`, the org is not deleted, and the account is active and still a member of that org (Ruling A37, not cached): after an org disables the plugin, a member leaves, or an account is disabled, already-issued tokens become invalid immediately, and after re-enabling the unexpired ones work again. The returned `role` is the role at verification time; an org-page token also returns null after the caller is demoted to guest. Take the org, account and conversation only from the returned claims, and trust no parameter in the request. A conversation token must scope data by `conversationId`; an org token (no conversation) must not see data inside conversations (example-board's `scoped()`).
-- **The kernel's `/api` does not accept embed tokens**: the auth guard treats a Bearer only as an API token (`cap_pat_` / `cap_svc_`) lookup, and an embed token is always 401 `auth.required`. The worst outcome of a leaked token is calling **this plugin's** data routes as that user within 300 seconds.
+- **Every data route of the extension first does `await ctx.ui.verifyEmbedToken(token)`** and returns 401 if it returns null. It accepts only tokens signed for **this extension** (a token signed for another extension is always null), and each time uses one PG query to confirm that this extension is still enabled in `claims.orgId`, the org is not deleted, and the account is active and still a member of that org (Ruling A37, not cached): after an org disables the extension, a member leaves, or an account is disabled, already-issued tokens become invalid immediately, and after re-enabling the unexpired ones work again. The returned `role` is the role at verification time; an org-page token also returns null after the caller is demoted to guest. Take the org, account and conversation only from the returned claims, and trust no parameter in the request. A conversation token must scope data by `conversationId`; an org token (no conversation) must not see data inside conversations (example-board's `scoped()`).
+- **The kernel's `/api` does not accept embed tokens**: the auth guard treats a Bearer only as an API token (`cap_pat_` / `cap_svc_`) lookup, and an embed token is always 401 `auth.required`. The worst outcome of a leaked token is calling **this extension's** data routes as that user within 300 seconds.
 
 ### The `/plugin-ui` same-origin proxy
 
 The web app's `/plugin-ui/<plugin>/<rest>` is forwarded to the kernel's `/plugins/<plugin>/ui/<rest>` (`apps/web/src/lib/plugin-ui-proxy.ts`):
 
-- Only GET / POST pass (OPTIONS answers 204 for preflight); a non-conforming plugin name or path segment (empty segment, `.` / `..`, containing `/`, `\` or control characters after decoding) is a 404 without forwarding. An undeclared route gets 404 from the kernel.
-- **Request header allowlist**: `accept`, `accept-language`, `cache-control`, `content-type`, `if-modified-since`, `if-none-match`, `last-event-id`, plus the trusted `x-forwarded-for`. Cookies and the CSRF header are not forwarded. **`Authorization` is forwarded only as a Bearer in the embed-token shape** (`Bearer <base64url>.<base64url>`, not starting with `cap_`), so API tokens and Basic never reach the plugin.
+- Only GET / POST pass (OPTIONS answers 204 for preflight); a non-conforming extension name or path segment (empty segment, `.` / `..`, containing `/`, `\` or control characters after decoding) is a 404 without forwarding. An undeclared route gets 404 from the kernel.
+- **Request header allowlist**: `accept`, `accept-language`, `cache-control`, `content-type`, `if-modified-since`, `if-none-match`, `last-event-id`, plus the trusted `x-forwarded-for`. Cookies and the CSRF header are not forwarded. **`Authorization` is forwarded only as a Bearer in the embed-token shape** (`Bearer <base64url>.<base64url>`, not starting with `cap_`), so API tokens and Basic never reach the extension.
 - **Response header allowlist**: `content-type`, `cache-control`, `etag`, `last-modified`, `expires`, `vary`, `content-language`, `x-accel-buffering`, `retry-after`; other headers such as `Set-Cookie`, `Clear-Site-Data`, HSTS, NEL and `Link` are dropped. A 3xx `Location` is kept only if it is still under `/plugin-ui/<this plugin>/` and unchanged after normalization.
-- **Caching can only be private**: if this request forwarded a token it is always `no-store`; without a token, the plugin's Cache-Control has `public` / `s-maxage` / `proxy-revalidate` removed and `private` prepended; if none is given it is `no-store`.
+- **Caching can only be private**: if this request forwarded a token it is always `no-store`; without a token, the extension's Cache-Control has `public` / `s-maxage` / `proxy-revalidate` removed and `private` prepended; if none is given it is `no-store`.
 - Every response gets the same security headers: CSP (`default-src 'self'`, scripts and styles allow `'unsafe-inline'`, `connect-src 'self'`, `frame-ancestors 'self'`, `base-uri 'none'`, `object-src` / `frame-src` / `worker-src 'none'`, and the critical **`sandbox allow-scripts allow-forms`**: a page opened directly at top level is also an opaque origin and cannot call `/api` same-origin with the user's cookies), `nosniff`, `Referrer-Policy: no-referrer`, `Access-Control-Allow-Origin: *` (without `Allow-Credentials`).
 - The request body limit is the same as `/api` (413 when exceeded), an unreachable upstream is 502, and the response body is streamed through (SSE works).
 - So always use **relative addresses** in the page (`fetch("cards")`, `<script src="board.js">`); external resources are blocked by the CSP.
@@ -164,14 +164,14 @@ The web app's `/plugin-ui/<plugin>/<rest>` is forwarded to the kernel's `/plugin
   - `init` (token, `locale`, `theme`, the `--cb-*` design tokens (at most 300, each value <= 200 characters), `context: { orgId, conversationId? }`) is **sent only on the iframe's first `load`**; if the token arrives late, wait until it arrives and then send.
   - `token`: renewal, scheduled after a token is obtained at `max(30 seconds, expiresIn - 60 seconds)` (not relative to the browser clock); on failure retry after 10 seconds and show a warning line in the tab.
   - `theme`: sent when the outer theme switches.
-- **A second `load` of the iframe is taken as having left the plugin page** (whole-page navigation, a navigation caused by a form submit, assigning to `location`): the outer page sends it no more messages and handles none of its messages, and remounts the iframe at the original `src`; at most 3 remounts within 10 seconds, beyond that it stops and shows an error until the user clicks "Retry". So:
+- **A second `load` of the iframe is taken as having left the extension page** (whole-page navigation, a navigation caused by a form submit, assigning to `location`): the outer page sends it no more messages and handles none of its messages, and remounts the iframe at the original `src`; at most 3 remounts within 10 seconds, beyond that it stops and shows an error until the user clicks "Retry". So:
   - **Use the History API for multiple pages** (`history.pushState` plus a front-end router), not whole-page navigation.
-  - **The page must not navigate before `load`**: the outer page sees only the `load` event and cannot tell which document it is for, so `init` (with the token) goes to the first document that fires `load`. Do not redirect during loading, and do not use `location.replace` or `<meta http-equiv="refresh">`; route-level redirects may only stay under this plugin's `/plugin-ui/<plugin>/`.
+  - **The page must not navigate before `load`**: the outer page sees only the `load` event and cannot tell which document it is for, so `init` (with the token) goes to the first document that fires `load`. Do not redirect during loading, and do not use `location.replace` or `<meta http-equiv="refresh">`; route-level redirects may only stay under this extension's `/plugin-ui/<plugin>/`.
 - **iframe -> outer**, using `window.parent.postMessage(msg, "*")` (an opaque origin cannot specify a targetOrigin); the outer page first checks that the source is this iframe, then validates with `parseEmbedChildMessage`, and ignores what it does not recognize:
   - `resize { height }`: 0-10000, which the outer page clamps to 120-4000 pixels.
   - `navigate { path }`: only an in-site path (such as `/chat/<id>`): a single leading `/`, no `//`, backslash or control characters anywhere; no `.` / `..` segments in the path part (including `%2e` encoding), no `%2f` / `%5c` / `%00`-`%1f` / `%7f`; identical to the original after URL normalization; <= 2000 characters. Non-ASCII characters are first passed through `encodeURIComponent`. The SDK and the web app validate verbatim identically, sharing the test vectors `tools/fixtures/embed-navigate-vectors.json`.
   - `toast { text }`: non-empty, <= 500 characters, shown as plain text.
-- The outer implementation is in `apps/web/src/lib/embed-bridge.ts` and `components/chat-panel/EmbedTab.tsx`; plugins need not care about it and only follow the rules above.
+- The outer implementation is in `apps/web/src/lib/embed-bridge.ts` and `components/chat-panel/EmbedTab.tsx`; extensions need not care about it and only follow the rules above.
 
 ### Pages and data
 
@@ -183,7 +183,7 @@ The web app's `/plugin-ui/<plugin>/<rest>` is forwarded to the kernel's `/plugin
 ## Writing tests
 
 - **Pure functions**: unit-test the view function (todo's `tasksView`) and assert `validateUiView` returns empty; for a tool handler inject a fake `ui` (`{ invalidate: async (t) => void calls.push(t) }`) and assert the call arguments; see `plugins/todo/test/todo.test.ts`.
-- **Kernel API (single-replica `createKernel`)**: `packages/kernel/test/ui/views.http.test.ts` (success, 502, 504, invalid view, someone else's conversation 404, not enabled 404, service token 403) and `embed.http.test.ts` (signing 401 / 403 / 404 / 400, a token calling `/api` 401, another plugin's token 401, cross-org / cross-conversation isolation, 401 after disabling). The test plugin `test/fixtures/plugins/ui-probe` covers the various failures, and its route `POST /invalidate` can trigger a refresh from a chosen replica.
+- **Kernel API (single-replica `createKernel`)**: `packages/kernel/test/ui/views.http.test.ts` (success, 502, 504, invalid view, someone else's conversation 404, not enabled 404, service token 403) and `embed.http.test.ts` (signing 401 / 403 / 404 / 400, a token calling `/api` 401, another extension's token 401, cross-org / cross-conversation isolation, 401 after disabling). The test extension `test/fixtures/plugins/ui-probe` covers the various failures, and its route `POST /invalidate` can trigger a refresh from a chosen replica.
 - **Permissions**: `packages/kernel/test/ui/permissions.test.ts` (`planApprovals`, host upgrades adding views / embeds, fixtures `ui-a` -> `ui-a-view` -> `ui-a-embed`); for the CLI's `(sensitive)` marker see `apps/capybara/test/plugins.test.ts`.
 - **Dual-replica**: `packages/kernel/test/ui/ui-stream.dual.test.ts`, `embed.dual.test.ts` and the acceptance test `m4-segment3.dual.test.ts`. For SSE use `openSse(url, headers)` from `test/helpers/sse.ts` to connect straight to one replica's port (`replicaOf(res)` confirms where it landed), `until(pred)` to wait for frames, and `uiFrames(messages)` to extract the data of `event: ui`. For cross-replica refresh assertions open streams on **both** replicas (which replica a tool runs on is not certain); for unsubscription assert with Redis `PUBSUB CHANNELS` that no subscription is left over.
 - **Web**: `apps/web/test/chat-panel.test.tsx` (tabs, failure retry, the embed tab's sandbox / init / ignoring other windows), `embed-bridge.test.tsx`, `plugin-ui-proxy.test.ts`; end-to-end `e2e/embed-board.spec.ts`.

@@ -1,6 +1,6 @@
 ---
 name: replay-evals
-description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, the privacy rules (trajectory 404, trajectory.viewed audit, no export), and how plugin hooks interact with replays (hook_denied is not model-visible and needs no DriftReason, replays fire no hooks, compaction usage events).
+description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, the privacy rules (trajectory 404, trajectory.viewed audit, no export), and how extension hooks interact with replays (hook_denied is not model-visible and needs no DriftReason, replays fire no hooks, compaction usage events).
 ---
 
 # Evals and replay
@@ -65,7 +65,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   likewise counted by estimate**, and requests already sent by an old execution that lost its claim are counted too (Ruling P2); judge requests count as well.
 - Before every model request, check that the run is still active (not cancelled / not capped / org and agent not deleted) and still holds the claim; results are written by claim number. After
   `evals.maxConsecutiveErrors` consecutive error results the run is `failed`. A set whose agent was deleted can no longer be estimated or started (`agent.not_found`).
-- When a provider plugin is revoked / upgraded / reloaded mid-request (`ExtensionUnloadedError`, for example after changing a non-hot deployment config): handled like the runtime, as a retryable
+- When a provider extension is revoked / upgraded / reloaded mid-request (`ExtensionUnloadedError`, for example after changing a non-hot deployment config): handled like the runtime, as a retryable
   `run.provider_unavailable`; step replay and judge requests both retry (failed attempts are still counted by estimate), and the retry picks up the new instance live; no error is recorded and the circuit breaker is untouched. Run states: `queued` / `running` / `completed` / `cancelled` /
   `capped` / `failed`; result states: `pending` / `running` / `done` / `error` / `skipped`.
 
@@ -90,7 +90,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `tool.preExecute` denial reaches the model as the denied call's `tool_result` text, which is already
   in the log, so it needs **no `DriftReason`**. A model-path denial ends the step with a `RunError`
   and puts nothing in a request.
-- Replays fire no plugin hooks, twice over: `runReplay` strips `hooks` from the loop deps, and the
+- Replays fire no extension hooks, twice over: `runReplay` strips `hooks` from the loop deps, and the
   loop runs with `conversationKind: "eval"` (hooks only fire for `"chat"`).
 - The one exception is metering: usage of a **full-run** replay is still enqueued to `usage.report`
   and delivered with `conversationKind: "eval"`; single-step replays and judge calls are not reported.
@@ -99,8 +99,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 ## Tests
 
 - Unit / HTTP: `packages/kernel/test/evals/` (`reconstruct`, `step-replay`, `run-replay`, `runs`, `judge`, `diff`, `sets.*`,
-  `trajectory.*`). For a deterministic judge verdict, map the `eval` purpose to a fake model plugin in the test (such as `judge-gate` in
+  `trajectory.*`). For a deterministic judge verdict, map the `eval` purpose to a fake model extension in the test (such as `judge-gate` in
   `m6-segment1.dual.test.ts`).
 - Dual-replica: `runs.dual.test.ts` (org concurrency 1 / 2, `capped` after the limit and the bound on overshoot), `m6-segment1.dual.test.ts` (conversation -> trajectory ->
   eval set -> killing a replica mid step replay -> full-run over the limit -> labeling).
-- Always run vitest from the repo root (`pnpm exec vitest run <path>`): the root config carries the `@capybara-hq/source` condition that dual-replica tests need to load plugins from source.
+- Always run vitest from the repo root (`pnpm exec vitest run <path>`): the root config carries the `@capybara-hq/source` condition that dual-replica tests need to load extensions from source.

@@ -258,7 +258,8 @@ function checkManifest(m: unknown, pkgVersion: unknown, sectionSdk: unknown, err
   if (typeof sectionSdk === "string" && m.sdk !== sectionSdk) {
     errs.push(`${at}.sdk "${String(m.sdk)}" does not match capybara.sdk "${sectionSdk}"`);
   }
-  // 名字、版本、sdk 范围、能力引用、权限、界面贡献：与 defineExtension 同一套规则（setup 用占位函数）。
+  // Name, version, sdk range, extension point refs, permissions, UI contributions: the same rules
+  // as defineExtension (with a placeholder setup).
   try {
     defineExtension({
       ...(m as unknown as ExtensionManifest),

@@ -92,7 +92,7 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
  *   budget); requests arriving afterwards start with an aborted `req.signal`. In-progress
  *   AbortControllers are held only for the request's lifetime.
  *   So extension handlers either finish quickly or tolerate the abort (see
- *   .agents/skills/writing-plugins "matching semantics of plugin routes").
+ *   .agents/skills/writing-extensions "Extension route matching semantics").
  * Must be called before Nest `app.init()`.
  */
 export async function registerPluginDispatch(

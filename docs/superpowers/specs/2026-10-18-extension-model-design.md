@@ -1,7 +1,7 @@
 # Extension Model Design
 
 - Date: 2026-10-18
-- Status: confirmed; the conclusions were merged into the architecture spec on 2026-10-19 (§2.1–§2.5, §4.5, §7.3, §8.1, §8.2); this document is kept as the decision record and for details
+- Status: confirmed; the conclusions were merged into the architecture spec on 2026-10-19 (§2.1–§2.5, §4.5, §7.3, §8.1, §8.2); this document is kept as the decision record and for details; terms superseded on 2026-10-24 (see §1: plugin -> extension, capability -> extension point)
 - Relationship: supplements and revises chapter 2 "Kernel and plugin contract" of the *Capybara Architecture Design* (`2026-10-17-capybara-architecture-design.md`);
   written in parallel with M3 (tools and connectors) and **does not depend on the M3 implementation**; once M3 is merged, its conclusions are merged into the architecture spec (see section 10).
 
@@ -33,7 +33,9 @@ This document defines a "plugin" as the unit that can extend any capability of t
 | **Provider / consumer** | The plugin that implements a capability / the kernel module or plugin that uses it |
 | **Extension-point call** | The kernel calls an implementation provided by a plugin at some moment (tool execution, hook, channel inbound, ...) and passes the context of this call |
 
-The name stays "plugin" and is not changed to "extension": the platform already has "app", "skill" and "connector", and adding "extension" would be confusing.
+~~The name stays "plugin" and is not changed to "extension": the platform already has "app", "skill" and "connector", and adding "extension" would be confusing.~~
+
+> **Superseded (2026-10-24)** by the package ecosystem design (`2026-10-22-package-ecosystem-design.md` §1, §13): the in-process unit described in this document (`defineExtension`, `ctx`, the permission manifest, approval) is now called an **extension**; **plugin** now names the install and distribution unit that bundles an extension, connector templates and skills (formerly the "app bundle"); a **capability** is now an **extension point** and a **platform capability** is the **platform API**; "app" keeps only the meaning "external app". Read "plugin" in the rest of this decision record as "extension" and "capability" as "extension point". Code names in this document were updated to the renamed identifiers (`defineExtension`, `ctx.extensionPoints`, `EXTENSION_POINTS`, …); data locations such as the `plugin_<name>` schema keep their names.
 
 ## 2. Providing and consuming capabilities
 
@@ -42,7 +44,7 @@ The name stays "plugin" and is not changed to "extension": the platform already 
 Plugin A needs "some kind of capability", not "plugin B":
 
 ```ts
-definePlugin({
+defineExtension({
   name: "approval-cards",
   requires: ["channel@1"],            // cannot load without it
   optional: ["directory@1"],          // can load without it; using it yields an empty list
@@ -58,30 +60,30 @@ definePlugin({
 
 | Kind | Examples | How the consumer uses it | Reason |
 |---|---|---|---|
-| **Pass-through** | `directory@1`, `channel@1`, `identity-source@1` | `ctx.capabilities.get` / `list` returns the implementation directly | No need for unified platform governance |
+| **Pass-through** | `directory@1`, `channel@1`, `identity-source@1` | `ctx.extensionPoints.get` / `list` returns the implementation directly | No need for unified platform governance |
 | **Brokered (governed)** | `model-provider`, `embedding-provider`, `object-store`, `secret-store`, `connector`, `sandbox` | Usable only through platform capabilities (`ctx.models`, `ctx.storage`, ...); **the raw implementation is not reachable** | Credentials, metering, quotas, audit and tenant isolation must be handled uniformly in the kernel |
 
-The capability registry (`CAPABILITY_CARDINALITY`) is widened to `{ cardinality, brokered }`; `ctx.capabilities.get` throws directly for a `brokered` capability.
+The capability registry (`EXTENSION_POINT_CARDINALITY`) is widened to `{ cardinality, brokered }`; `ctx.extensionPoints.get` throws directly for a `brokered` capability.
 
-> **M4 implementation note**: the registry is `CAPABILITIES` (`packages/plugin-sdk/src/capability.ts`), each entry `{ cardinality, brokered, orgScoped }`; `channel` and `directory` are `orgScoped`, `identity-source` is not (login is deployment-level, enabled through `auth.loginSources`, Ruling P1). `get` / `list` also have overloads taking `{ orgId }`: they return a Promise and filter by that org's enabled state (a DB lookup every time, no caching; Ruling A1); without `orgId` they are synchronous and do not filter by org. Getting a brokered capability throws a plain `Error` (declaring cannot fix it, and no audit is written; Ruling A3).
+> **M4 implementation note**: the registry is `EXTENSION_POINTS` (`packages/plugin-sdk/src/extension-point.ts`), each entry `{ cardinality, brokered, orgScoped }`; `channel` and `directory` are `orgScoped`, `identity-source` is not (login is deployment-level, enabled through `auth.loginSources`, Ruling P1). `get` / `list` also have overloads taking `{ orgId }`: they return a Promise and filter by that org's enabled state (a DB lookup every time, no caching; Ruling A1); without `orgId` they are synchronous and do not filter by org. Getting a brokered capability throws a plain `Error` (declaring cannot fix it, and no audit is written; Ruling A3).
 
 ```ts
 // New on ctx (only capabilities declared in the manifest's requires / optional can be obtained)
 capabilities: {
   /** Single-select capabilities take no provider; multi-select capabilities must pass one. */
-  get<T>(ref: CapabilityRef, provider?: string): T;
-  list<T>(ref: CapabilityRef): { plugin: string; impl: T }[];
+  get<T>(ref: ExtensionPointRef, provider?: string): T;
+  list<T>(ref: ExtensionPointRef): { plugin: string; impl: T }[];
 };
 ```
 
 - Dependencies are loaded in topological order, and the depended-on plugin is ready at `setup` time; the implementation object itself is a stateless factory / function that can be obtained in `setup` and held by closure,
   which does not violate "no mutable in-process state".
-- The kernel's existing `PluginHost.get` / `list` are the basis of the implementation of this set of interfaces.
+- The kernel's existing `ExtensionHost.get` / `list` are the basis of the implementation of this set of interfaces.
 
 ### 2.3 Org enablement and unavailability
 
 - A plugin is **installed at the deployment level and enabled at the org level** (architecture spec 2.2). When a capability that A depends on has no enabled provider in some org, **enabling A in that org is rejected**, with a message saying which capability is missing.
-- If the depended-on plugin is disabled in that org at runtime: using it throws `CapabilityUnavailableError` (an `optional` capability disappears from `list`), and A decides whether to fail or degrade.
+- If the depended-on plugin is disabled in that org at runtime: using it throws `ExtensionPointUnavailableError` (an `optional` capability disappears from `list`), and A decides whether to fail or degrade.
   When disabling a depended-on plugin, the UI says "the following plugins depend on it".
   (M4 implementation: disabling is rejected only when it would leave an already-enabled dependent with **no** enabled provider of that capability, `plugin.has_dependents`, and can be forced; Ruling A5.)
 - Deployment-level capabilities (such as model providers) are not affected by the org enable switch; which models an org can use is decided by the purpose configuration in 4.2.
@@ -186,7 +188,7 @@ Three things kept apart:
 - **Plugin config always has a schema** (manifest `config.deployment` / `config.org`, zod): validated on write, the UI generates forms from the schema,
   `secret()` fields are handed to the secret store automatically, and it can be shown in the manifest. Schema-less free key-value config is not provided; plugin runtime state uses `ctx.kv` (a TTL is required), and business data uses `ctx.db`.
 - Org-level plugin config is already in PG (M1). **Change: deployment-level plugin config is also stored in PG**, edited by the enterprise admin in the admin console, and the platform handles validation, encryption, audit and effect across replicas:
-  - `pluginConfig.<plugin name>` in the startup config is kept as the **values managed by the deployment files**: fields that appear in the file / Nacos / env vars are read-only in the UI with their source marked,
+  - `extensionConfig.<plugin name>` in the startup config is kept as the **values managed by the deployment files**: fields that appear in the file / Nacos / env vars are read-only in the UI with their source marked,
     and fields that don't appear are managed by the UI. This allows both GitOps and editing in the UI, and the same field never has two sources.
   - Effect across replicas: after a write it is broadcast through `ctx.bus`; fields marked `hot: true` in the schema field's meta by the plugin (the same notation as kernel config) take effect on each replica immediately
     (the plugin reads the new value through `ctx.config`; interface details are settled in the implementation plan), and the UI tells the user the other fields "take effect after restart".
@@ -197,7 +199,7 @@ Three things kept apart:
 ### 7.1 Principle
 
 A plugin **declares everything it will use**, the enterprise admin sees and confirms it at install time, and **anything not declared is forbidden**: the kernel builds each plugin's `ctx` from the manifest, and a platform capability that was not declared does not exist
-(access throws `PluginPermissionError`, with a message saying what to declare in the manifest).
+(access throws `ExtensionPermissionError`, with a message saying what to declare in the manifest).
 
 ### 7.2 What is declared and how it is shown
 
@@ -222,22 +224,22 @@ Sensitive items are highlighted separately on the install confirmation page; an 
 
 > **M4 implementation note**: `permissions.http[].public` is currently used only for display and the snapshot (Ruling A2): plugin routes, whether or not they declare `public`, still bypass kernel auth as since M0 and the plugin verifies signatures itself; having the kernel authenticate non-public plugin routes is a later decision (it will be a behavior change then). since M7 `hooks` is no longer reserved (see the M7 note below), `models` / `storage` are reserved items, and using them makes `check:plugin-permissions` report `perm-reserved` (since M5 `storage` is provided, see section 5; `models` is still a reserved item).
 
-> **M7 implementation note**: `ctx.hooks` is live. Five mount points are registrable (`model.request`, `model.response`, `tool.preExecute`, `tool.postExecute`, `usage.report`); `session.*` and `agent.preStep` are still reserved. `permissions.hooks` lists the mount points; the new `permissions.policyHooks` lists the ones (only `model.request` / `tool.preExecute`) where the plugin registers `mode: "policy"` hooks, so deployment state can fail a call closed on a replica where such a plugin is not loaded. Both are sensitive at review (approval key `permissions.hooks.policy:<mount>` for the policy declarations), and `check:plugin-permissions` reports an undeclared registration as `perm-hooks`. Hooks observe or deny, never rewrite, and fire only for orgs that enabled the plugin. Details: `.agents/skills/writing-plugins/SKILL.md`, "Hooks".
+> **M7 implementation note**: `ctx.hooks` is live. Five mount points are registrable (`model.request`, `model.response`, `tool.preExecute`, `tool.postExecute`, `usage.report`); `session.*` and `agent.preStep` are still reserved. `permissions.hooks` lists the mount points; the new `permissions.policyHooks` lists the ones (only `model.request` / `tool.preExecute`) where the plugin registers `mode: "policy"` hooks, so deployment state can fail a call closed on a replica where such a plugin is not loaded. Both are sensitive at review (approval key `permissions.hooks.policy:<mount>` for the policy declarations), and `check:plugin-permissions` reports an undeclared registration as `perm-hooks`. Hooks observe or deny, never rewrite, and fire only for orgs that enabled the plugin. Details: `.agents/skills/writing-extensions/SKILL.md`, "Hooks".
 
 ### 7.3 Approval and upgrades
 
 - The kernel records each plugin's **approved permission snapshot** in PG. When a plugin first appears, or after an upgrade its manifest has any item beyond the snapshot, the plugin is **not loaded**,
   the admin console shows "pending approval", and it takes effect after the enterprise admin confirms; an upgrade with fewer or unchanged permissions takes effect directly.
-- Before the admin console UI (before M6) the CLI is used: `capybara plugins review` / `capybara plugins approve <name>`.
-- For development and trials, `pluginPermissions.autoApprove: true` can be turned on explicitly in the startup config (`plugins` is still the array of plugin names to load, Ruling A4); it approves automatically at startup and logs a warn; it is off by default in production.
+- Before the admin console UI (before M6) the CLI is used: `capybara extensions review` / `capybara extensions approve <name>`.
+- For development and trials, `extensionPermissions.autoApprove: true` can be turned on explicitly in the startup config (`plugins` is still the array of plugin names to load, Ruling A4); it approves automatically at startup and logs a warn; it is off by default in production.
 - **M4 implementation note**: the snapshot also constrains `capybara migrate` (an unapproved plugin runs no migrations and creates no tables; `plugins review` runs the kernel migrations first); auto-approval writes a snapshot (source auto) but writes no audit; a plugin older than the snapshot version (an old replica restarted during a rolling upgrade, a rollback) loads as usual as long as its permissions do not exceed the snapshot, and the snapshot is not shrunk; "beyond the snapshot" is compared per entry, so changing a public route to non-public or a secret field to a normal field also counts as a new entry; data tables are parsed from `CREATE TABLE` only (`ALTER … RENAME` and views do not enter the snapshot). "The admin console shows pending approval" comes with the M6 admin console; M4 has only the CLI and startup logs.
 
 ### 7.4 Automatic checks
 
-- `definePlugin` validates the `permissions` format (purpose key prefix, route format, mount point names).
+- `defineExtension` validates the `permissions` format (purpose key prefix, route format, mount point names).
 - A new check `check:plugin-permissions`: statically scans a plugin's source for `ctx.<x>` usage, tool names of `ctx.tools.register` and routes of `ctx.http.route`,
   and compares them with the manifest; using something undeclared fails. As usual it comes with a test where a violating fixture makes it fail.
-- Runtime backstop: an undeclared access throws `PluginPermissionError` and is audited.
+- Runtime backstop: an undeclared access throws `ExtensionPermissionError` and is audited.
 
 ### 7.5 Boundary: this is not a sandbox
 
@@ -255,12 +257,12 @@ For items the platform cannot block, such as "external network", the install pag
 
 | Location | Change |
 |---|---|
-| `packages/plugin-sdk/src/define-plugin.ts` | Manifest gains `optional`, `permissions`; validation |
-| `packages/plugin-sdk/src/capability.ts` | Registry gains `brokered`; new capability `object-store` (single-select, brokered), reserved `embedding-provider` / `rerank-provider` |
+| `packages/plugin-sdk/src/define-extension.ts` | Manifest gains `optional`, `permissions`; validation |
+| `packages/plugin-sdk/src/extension-point.ts` | Registry gains `brokered`; new capability `object-store` (single-select, brokered), reserved `embedding-provider` / `rerank-provider` |
 | `packages/plugin-sdk/src/ctx.ts` | Add `capabilities`, `storage`; reserve `models`; platform capabilities can be omitted per the manifest |
-| `packages/kernel/src/ctx/create-ctx.ts`, `plugins/host.ts` | Build `ctx` per the manifest; permission snapshot and "pending approval"; check dependencies at org enablement |
-| `packages/kernel/src/plugins/org-config.ts` | Deployment-level plugin config into PG, source marking, broadcast to take effect |
-| `skills/writing-plugins` | Permission manifest, capability consumption, call context |
+| `packages/kernel/src/ctx/create-ctx.ts`, `extensions/host.ts` | Build `ctx` per the manifest; permission snapshot and "pending approval"; check dependencies at org enablement |
+| `packages/kernel/src/extensions/org-config.ts` | Deployment-level plugin config into PG, source marking, broadcast to take effect |
+| `skills/writing-extensions` | Permission manifest, capability consumption, call context |
 | Architecture spec §2.1–§2.3, §4.5, §7.3, §8.1, §8.2 | Merge the conclusions of this document (see section 10) |
 
 ## 9. Phasing
@@ -268,7 +270,7 @@ For items the platform cannot block, such as "external network", the install pag
 | Content | When | Reason |
 |---|---|---|
 | Ark dialect (`openai-compatible` gains `ark`) | Any time, after M2 | Small change, independent of this document |
-| Manifest format (`optional`, `permissions`) + building `ctx` per the manifest + `ctx.capabilities` + `check:plugin-permissions` + permission snapshot and CLI approval | **First task group of M4** | M4 brings in multi-capability plugins such as Slack and Lark all at once, so the manifest format must be fixed before them; channels, identity and directory start consuming each other |
+| Manifest format (`optional`, `permissions`) + building `ctx` per the manifest + `ctx.extensionPoints` + `check:plugin-permissions` + permission snapshot and CLI approval | **First task group of M4** | M4 brings in multi-capability plugins such as Slack and Lark all at once, so the manifest format must be fixed before them; channels, identity and directory start consuming each other |
 | `object-store@1` + `object-store-s3` + `ctx.storage` | **Start of M5** (done) | The first consumers are attachments and sandbox files |
 | Media input contract | **M5** (done: images and PDF) | Depends on object storage and attachments |
 | Deployment-level plugin config into PG, install confirmation page, purpose → model config page | **M6** (admin console) | The UI is in M6; the manifest format must be stable before M6's "SDK public API snapshot check" |

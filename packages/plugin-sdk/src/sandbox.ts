@@ -1,9 +1,11 @@
 /**
- * 沙箱契约 `sandbox@1`：单选、中转能力（插件不得 `requires`，由内核 `SandboxService` 取用）。
- * 提供方只实现下面的原语；`glob` / `grep` / `edit` 由内核用 `exec` 加 `readFile` / `writeFile` 组合。
+ * Sandbox contract `sandbox@1`: a single-select, brokered extension point (extensions may not
+ * `requires` it; the kernel's `SandboxService` consumes it). The provider implements only the
+ * primitives below; the kernel builds `glob` / `grep` / `edit` from `exec` plus `readFile` /
+ * `writeFile`.
  */
 
-/** 沙箱能力引用。 */
+/** Sandbox extension point ref. */
 export const SANDBOX_EXTENSION_POINT = "sandbox@1";
 
 /** 沙箱内允许模型访问的根目录。 */

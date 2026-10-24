@@ -205,7 +205,7 @@ export class ChannelConnections {
       .list("channel")
       .find((x) => x.plugin === plugin && x.capability === CHANNEL_EXTENSION_POINT);
     if (!e)
-      throw new ApiError("extension.not_found", `Plugin ${plugin} does not provide a channel`);
+      throw new ApiError("extension.not_found", `Extension ${plugin} does not provide a channel`);
     return e;
   }
 
@@ -214,7 +214,7 @@ export class ChannelConnections {
     if (!(await queryEnabledPlugins(this.deps.db, orgId)).has(plugin)) {
       throw new ApiError(
         "extension.not_enabled",
-        `Plugin ${plugin} is not enabled for this organization`,
+        `Extension ${plugin} is not enabled for this organization`,
       );
     }
   }
@@ -229,7 +229,7 @@ export class ChannelConnections {
     if (!r.success) {
       throw new ApiError(
         "extension.config_invalid",
-        `Invalid channel connection config for plugin ${plugin}`,
+        `Invalid channel connection config for extension ${plugin}`,
         toIssues(r.error),
       );
     }
@@ -349,7 +349,7 @@ export class ChannelConnections {
     if (this.channel(plugin).webhook === undefined) {
       throw new ApiError(
         "channel.webhook_unavailable",
-        `Plugin ${plugin} does not support webhook inbound`,
+        `Extension ${plugin} does not support webhook inbound`,
       );
     }
     if (this.webhookBase() === undefined) {

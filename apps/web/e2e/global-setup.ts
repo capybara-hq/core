@@ -198,13 +198,15 @@ type StartFakeMarketplace = (opts: {
 }) => Promise<{ url: string; stop(): Promise<void> }>;
 
 /**
- * 企业目录用例的夹具：插件包 `crm-core`（`@test/plugin-crm-core`）与应用包 `@acme/app-crm`（插件 crm-core + 连接器模板
- * `docs`（connector-mcp，端点指向假 MCP、url 可改、无认证）+ 技能 `crm-notes`）放进假 npm registry；假清单只列应用条目
- * `crm`（按应用包的 sha512）。目录用例在后台刷新官方清单后从清单引入应用。
+ * Fixtures of the catalog cases: the extension package `crm-core` (`@test/plugin-crm-core`) and the
+ * plugin `@acme/app-crm` (extension crm-core + connector template `docs` (connector-mcp, endpoint at
+ * the fake MCP, url editable, no auth) + skill `crm-notes`) go into a fake npm registry; the fake
+ * marketplace lists only the plugin entry `crm` (by the plugin package's sha512). The catalog cases
+ * refresh the official marketplace in the admin console and import the plugin from it.
  */
 async function startCatalogFixtures(mcpUrl: string): Promise<{
   registryUrl: string;
-  catalogUrl: string;
+  marketplaceUrl: string;
   stop(): Promise<void>;
 }> {
   const { pluginTgz } = (await import(pluginPackagesModule)) as {
@@ -293,7 +295,7 @@ async function startCatalogFixtures(mcpUrl: string): Promise<{
   });
   return {
     registryUrl: registry.url,
-    catalogUrl: catalog.url,
+    marketplaceUrl: catalog.url,
     async stop() {
       await Promise.all([registry.stop(), catalog.stop()]);
     },
@@ -398,9 +400,10 @@ export default async function globalSetup(): Promise<Cleanup> {
     const openapi = await startFakeOpenApiServer({ apiKey: OPENAPI_KEY });
     cleanups.push(() => openapi.stop());
 
-    // 企业目录：假 npm registry（插件 crm-core 与应用包 @acme/app-crm）+ 假官方清单（应用条目 crm）
-    const directory = await startCatalogFixtures(mcp.url);
-    cleanups.push(() => directory.stop());
+    // Catalog: a fake npm registry (extension crm-core and plugin @acme/app-crm) + a fake official
+    // marketplace (plugin entry crm)
+    const catalogFixtures = await startCatalogFixtures(mcp.url);
+    cleanups.push(() => catalogFixtures.stop());
 
     const [kernelPort, webPort] = [await freePort(), await freePort()];
     const configFile = join(dir, "capybara.yaml");
@@ -438,15 +441,17 @@ export default async function globalSetup(): Promise<Cleanup> {
           clientSecret: "e2e-login-secret",
         },
       },
-      // 官方清单指向假清单，插件与应用包从假 npm registry 下载（都是本机 http）
-      packages: { npmRegistry: directory.registryUrl },
+      // The official marketplace points at the fake one; extension packages and plugins download
+      // from the fake npm registry (all local http)
+      packages: { npmRegistry: catalogFixtures.registryUrl },
       marketplaces: {
-        official: { enabled: true, url: directory.catalogUrl },
+        official: { enabled: true, url: catalogFixtures.marketplaceUrl },
         allowInsecureLoopback: true,
       },
-      // e2e 自动批准插件权限（生产默认关闭）
+      // e2e approves extension permissions automatically (off by default in production)
       extensionPermissions: { autoApprove: true },
-      // 后台安装的插件包解到临时目录（默认 /var/lib/capybara/plugins 在开发机上没有写权限）
+      // Extension packages installed from the admin console unpack into a temp dir (the default
+      // /var/lib/capybara/plugins is not writable on a dev machine)
       extensionHost: { dir: join(dir, "plugins") },
       // publicUrl：机器人发的绑定链接指向 Web 层（`<publicUrl>/bind/<token>`）
       http: { port: kernelPort, trustProxy: 1, publicUrl: `http://localhost:${webPort}` },

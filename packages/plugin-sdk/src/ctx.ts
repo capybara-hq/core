@@ -101,13 +101,16 @@ export interface ExtensionContext {
     register(spec: ToolSpec, handler: ToolHandler): void;
   };
   /**
-   * 取用其他插件提供的能力：只能取清单 `requires` / `optional` 中声明的、非 brokered 的能力。
-   * 不传 orgId 是部署级视角，同步返回；传 orgId 时返回 Promise——orgScoped 能力（如 `channel`、`directory`）
-   * 按该组织的启用状态过滤（每次查询、不缓存），`get` 的提供方在该组织未启用时 reject `ExtensionPointUnavailableError`。
-   * 提供方不存在时 `get` 抛 `ExtensionPointUnavailableError`，`list` 返回空列表。
+   * Consume extension points provided by other extensions: only non-brokered refs declared in the
+   * manifest's `requires` / `optional`. Without `orgId` it is the deployment-level view and returns
+   * synchronously; with `orgId` it returns a Promise, and orgScoped extension points (such as
+   * `channel`, `directory`) are filtered by that org's enablement (queried every time, not cached);
+   * `get` rejects with `ExtensionPointUnavailableError` when the provider is not enabled in that org.
+   * When there is no provider, `get` throws `ExtensionPointUnavailableError` and `list` returns an
+   * empty list.
    */
   extensionPoints: {
-    /** 单选能力可不传 provider；多选能力必须传。 */
+    /** `provider` may be omitted for a single-select extension point; required for multi-select. */
     get<T>(ref: ExtensionPointRef, provider?: string): T;
     get<T>(
       ref: ExtensionPointRef,

@@ -9,11 +9,14 @@ export interface DirectoryMember {
 
 export interface Directory {
   /**
-   * 可选：这份组织级配置是否已把通讯录配好（如必填凭据都已填写）。组织级配置里通讯录字段可选的插件
-   * （同一插件还提供渠道等别的能力，组织只用那些能力时不填通讯录配置）实现它。返回 false 时内核视为
-   * 「通讯录未配置」：每小时扫描、`directory_changed` 与移除前复核都静默跳过（不投递任务、不写审计、不记警告），
-   * 管理员手动同步返回 409 `directory.not_configured`。不实现则只要配置满足 schema 就算已配置。
-   * 必须是纯函数（不发请求、不抛错）。
+   * Optional: whether this org-level config has the directory fully set up (e.g. every required
+   * credential filled in). Implement it in an extension whose directory fields are optional in the
+   * org-level config (the same extension also provides other extension points such as a channel, and
+   * an org that uses only those leaves the directory config empty). When it returns false the kernel
+   * treats the directory as "not configured": the hourly scan, `directory_changed` and the
+   * pre-removal recheck are skipped silently (no job, no audit, no warning), and a manual sync by an
+   * admin returns 409 `directory.not_configured`. When not implemented, any config that satisfies
+   * the schema counts as configured. Must be a pure function (no requests, never throws).
    */
   configured?(orgConfig: unknown): boolean;
   listMembers(args: {
