@@ -22,16 +22,16 @@ import { migrationWarnings, warningsDigest } from "./permission-view.js";
  * 插件包（npm-pack tgz，C11）的读取与校验。tgz 一律当作恶意输入：
  *
  * - 压缩后 ≤ `maxBytes`（调用方给，即 `packages.maxBytes`）；用 `zlib.gunzip` 的 `maxOutputLength`
- *   按**实际**解压字节数封顶（{@link PLUGIN_PACKAGE_LIMITS.maxUnpackedBytes}），超过即中止，挡压缩炸弹。
+ *   按**实际**解压字节数封顶（{@link EXTENSION_PACKAGE_LIMITS.maxUnpackedBytes}），超过即中止，挡压缩炸弹。
  *   整个包与解出的内容都在内存里处理。
  * - tar 解析用 tar-stream（3.2.2，固定版本）：纯内存、从不碰文件系统（不像 node-tar 的 extract 会直接落盘，
  *   历史上多次出现路径穿越 / 符号链接类 CVE），校验头部 checksum，自己处理 pax / GNU 长路径头并把真实路径与
  *   大小交给我们；只给出原始头，取舍全由这里决定。它已在锁文件中（testcontainers 间接依赖），不引入新的传递依赖。
  * - 只接受普通文件与目录：符号链接、硬链接、设备、fifo 等一律拒绝；条目数 ≤
- *   {@link PLUGIN_PACKAGE_LIMITS.maxEntries}；路径必须在 `package/` 下且是安全的相对路径
+ *   {@link EXTENSION_PACKAGE_LIMITS.maxEntries}；路径必须在 `package/` 下且是安全的相对路径
  *   （见 plugin-sdk `isSafePackagePath`：无 `..`、`.`、空段、反斜杠、控制字符、盘符），按小写去重
  *   （大小写不敏感的文件系统上解出来会互相覆盖）；不许有 `node_modules/`、`*.node`、`binding.gyp`。
- * - `package.json` ≤ {@link PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes}，严格 UTF-8 + `JSON.parse`；规则见
+ * - `package.json` ≤ {@link EXTENSION_PACKAGE_LIMITS.maxPackageJsonBytes}，严格 UTF-8 + `JSON.parse`；规则见
  *   plugin-sdk `validatePluginPackageJson`（安装脚本、依赖字段、peerDependencies、capybara 段、SDK 范围、版本一致）。
  * - import 白名单：用 es-module-lexer（2.3.2，固定版本）静态分析 entry 及其包内相对 import 到的模块：
  *   静态 import / `export ... from` / 字面量动态 `import()` 只许 `node:*`、宿主两包（含子路径）与包内相对路径；
@@ -46,7 +46,7 @@ import { migrationWarnings, warningsDigest } from "./permission-view.js";
  */
 
 /** 解压、条目与 package.json 的上限。 */
-export const PLUGIN_PACKAGE_LIMITS = {
+export const EXTENSION_PACKAGE_LIMITS = {
   /** 解压后的 tar 总字节数上限。 */
   maxUnpackedBytes: 256 * 1024 * 1024,
   /** tar 条目数上限（含目录项）。 */
@@ -89,7 +89,7 @@ export interface ExtensionPackage {
   migrationSql: { file: string; sql: string }[];
 }
 
-/** 解包上限：`maxBytes` 即 `packages.maxBytes`；其余默认取 {@link PLUGIN_PACKAGE_LIMITS}。 */
+/** 解包上限：`maxBytes` 即 `packages.maxBytes`；其余默认取 {@link EXTENSION_PACKAGE_LIMITS}。 */
 export interface ExtensionPackageLimits {
   maxBytes: number;
   maxUnpackedBytes?: number;
@@ -104,8 +104,8 @@ export interface ReadExtensionPackageOptions extends ExtensionPackageLimits {
 
 const unpackLimits = (l: ExtensionPackageLimits) => ({
   maxBytes: l.maxBytes,
-  maxUnpackedBytes: l.maxUnpackedBytes ?? PLUGIN_PACKAGE_LIMITS.maxUnpackedBytes,
-  maxEntries: l.maxEntries ?? PLUGIN_PACKAGE_LIMITS.maxEntries,
+  maxUnpackedBytes: l.maxUnpackedBytes ?? EXTENSION_PACKAGE_LIMITS.maxUnpackedBytes,
+  maxEntries: l.maxEntries ?? EXTENSION_PACKAGE_LIMITS.maxEntries,
 });
 
 /** tgz 里的一个文件（路径相对包根，已去掉 `package/`）。 */
@@ -293,13 +293,13 @@ export function unpackPackageTgz(
 
 /**
  * Reads the package's `package.json`: it must exist, be ≤
- * {@link PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes} and strict UTF-8 JSON.
+ * {@link EXTENSION_PACKAGE_LIMITS.maxPackageJsonBytes} and strict UTF-8 JSON.
  * Invalid -> {@link ExtensionPackageError}. Returns the parse result (shape not validated).
  */
 export function parsePackageJsonFile(file: { data: Buffer } | undefined): unknown {
   if (!file) return fail("package.json not found in the package");
-  if (file.data.byteLength > PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes) {
-    fail(`package.json is larger than ${PLUGIN_PACKAGE_LIMITS.maxPackageJsonBytes} bytes`);
+  if (file.data.byteLength > EXTENSION_PACKAGE_LIMITS.maxPackageJsonBytes) {
+    fail(`package.json is larger than ${EXTENSION_PACKAGE_LIMITS.maxPackageJsonBytes} bytes`);
   }
   const text = utf8("package.json", file.data);
   try {

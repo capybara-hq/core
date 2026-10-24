@@ -102,9 +102,12 @@ export async function loadConfig(env: NodeJS.ProcessEnv): Promise<KernelConfig> 
  */
 export async function loadConfigWithSources(env: NodeJS.ProcessEnv): Promise<{
   config: KernelConfig;
-  pluginSources: Record<string, Record<string, ConfigSourceKind>>;
+  extensionConfigSources: Record<string, Record<string, ConfigSourceKind>>;
 }> {
   const raw = await selectConfigSource(env).load();
   const config = resolveConfig(raw, env);
-  return { config, pluginSources: extensionConfigSources(raw, env, configSourceKind(env)) };
+  return {
+    config,
+    extensionConfigSources: extensionConfigSources(raw, env, configSourceKind(env)),
+  };
 }

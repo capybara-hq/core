@@ -286,8 +286,8 @@ const satisfies = (version: string, range: string) =>
 
 type Trx = Transaction<KernelDatabase>;
 
-/** 部署上一个插件的现状。 */
-type PluginState =
+/** The current deployment state of one extension. */
+type ExtensionState =
   | { kind: "declared"; source: ExtensionSource; version: string }
   | { kind: "installed"; version: string; sha256: string; packageName: string }
   | { kind: "absent" };
@@ -524,7 +524,7 @@ export class PluginImport {
       const states = await this.pluginStates(staged.manifest, trx);
       const now: PluginReviewExtension[] = review.plugins.map((p, i) => ({
         ...p,
-        ...actionOf(states[i] as PluginState, p.range, p.name),
+        ...actionOf(states[i] as ExtensionState, p.range, p.name),
       }));
       if (pluginReviewHash({ ...review, plugins: now }, staged.files) !== review.reviewHash) {
         throw stale();
@@ -946,7 +946,7 @@ export class PluginImport {
   private async pluginStates(
     m: AppManifest,
     db: KernelDb | Trx = this.d.db,
-  ): Promise<PluginState[]> {
+  ): Promise<ExtensionState[]> {
     const declared = new Map(this.d.declaredPlugins().map((p) => [p.name, p]));
     const rows = m.plugins.length
       ? await db
@@ -966,7 +966,7 @@ export class PluginImport {
           .execute()
       : [];
     const installed = new Map(rows.map((r) => [r.name, r]));
-    const out: PluginState[] = [];
+    const out: ExtensionState[] = [];
     for (const p of m.plugins) {
       const d = declared.get(p.name);
       if (d) {
@@ -1068,7 +1068,7 @@ export class PluginImport {
   /** 审阅里的插件：权限、相对当前快照的增减、迁移警告、action。 */
   private async reviewPlugins(
     m: AppManifest,
-    states: PluginState[],
+    states: ExtensionState[],
     fetched: { pkg: ExtensionPackage }[],
   ): Promise<PluginReviewExtension[]> {
     const snaps = await this.d.db
@@ -1089,7 +1089,7 @@ export class PluginImport {
         range: p.version,
         lockVersion: p.lock.version,
         sha256: pkg.sha256,
-        ...actionOf(states[i] as PluginState, p.version, p.name),
+        ...actionOf(states[i] as ExtensionState, p.version, p.name),
         optional: p.optional === true,
         permissions,
         added,
@@ -1126,7 +1126,7 @@ export class PluginImport {
 
 /** 插件在部署上的现状 → action 与当前版本。 */
 function actionOf(
-  s: PluginState,
+  s: ExtensionState,
   range: string,
   name: string,
 ): Pick<PluginReviewExtension, "action" | "currentVersion" | "currentSha256"> {

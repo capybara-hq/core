@@ -338,8 +338,10 @@ export interface KernelOptions {
    */
   builtinExtensions?: string[];
   /**
-   * 启动配置里各插件部署配置字段的来源（`loadConfigWithSources` 的 `pluginSources`）：这些字段在后台只读（D8）。
-   * 不传时按 `config.extensionConfig` 推出：环境变量里有的记 env，其余记 `CAPYBARA_CONFIG_SOURCE` 的来源（file / nacos）。
+   * Where each extension deployment config field of the startup config comes from (the
+   * `extensionConfigSources` returned by `loadConfigWithSources`); these fields are read-only in the
+   * admin console (D8). When omitted it is derived from `config.extensionConfig`: fields present in
+   * the environment are `env`, the rest take the `CAPYBARA_CONFIG_SOURCE` kind (file / nacos).
    */
   extensionConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
 }

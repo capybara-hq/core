@@ -79,7 +79,7 @@ describe("配置来源标注（extensionConfigSources / loadConfigWithSources）
     ).toEqual({ q: { k: "env" } });
   });
 
-  it("loadConfigWithSources：读文件、合并环境变量并给出插件配置来源", async () => {
+  it("loadConfigWithSources reads the file, merges env vars and reports the extension config sources", async () => {
     const dir = await mkdtemp(join(tmpdir(), "cap-cfg-src-"));
     try {
       const file = join(dir, "c.yaml");
@@ -92,12 +92,12 @@ describe("配置来源标注（extensionConfigSources / loadConfigWithSources）
           extensionConfig: { p: { a: 1, b: 2 } },
         }),
       );
-      const { config, pluginSources } = await loadConfigWithSources({
+      const { config, extensionConfigSources } = await loadConfigWithSources({
         CAPYBARA_CONFIG_FILE: file,
         CAPYBARA_EXTENSION_CONFIG__P__B: "5",
       });
       expect(config.extensionConfig).toEqual({ p: { a: 1, b: 5 } });
-      expect(pluginSources).toEqual({ p: { a: "file", b: "env" } });
+      expect(extensionConfigSources).toEqual({ p: { a: "file", b: "env" } });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

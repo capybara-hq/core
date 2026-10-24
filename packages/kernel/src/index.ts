@@ -129,12 +129,12 @@ export {
   unrunMigrations,
 } from "./extensions/migrate-lock.js";
 export {
+  EXTENSION_PACKAGE_LIMITS,
   type ExtensionPackage,
   ExtensionPackageError,
   type ExtensionPackageLimits,
   extractExtensionPackage,
   HOST_ZOD_VERSION,
-  PLUGIN_PACKAGE_LIMITS,
   permissionSetOfPackage,
   type ReadExtensionPackageOptions,
   readExtensionPackage,
