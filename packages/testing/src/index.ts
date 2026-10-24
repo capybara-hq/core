@@ -18,6 +18,10 @@ export {
   replicaOf,
 } from "./dual-replica.js";
 export {
+  assertExtensionSecretsReachable,
+  extensionDeploymentSecretValues,
+} from "./extension-config.js";
+export {
   FAKE_CHANNEL_BAD_SECRET,
   FAKE_WEBHOOK_SIGNATURE_HEADER,
   type FakeChannelPost,
@@ -137,4 +141,3 @@ export {
   MEDIA_SAMPLES,
   thinkingReplayParams,
 } from "./model-conformance.js";
-export { assertPluginSecretsReachable, pluginDeploymentSecretValues } from "./plugin-config.js";

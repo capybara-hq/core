@@ -6,12 +6,12 @@ import type { ExtensionManifest } from "@capybara-hq/plugin-sdk";
  * `assertSecretsReachable` as `ExtensionHost` uses); throws when a `secret()` is not on an object
  * field path (the kernel would refuse to load the extension).
  */
-export function assertPluginSecretsReachable(manifest: ExtensionManifest): void {
+export function assertExtensionSecretsReachable(manifest: ExtensionManifest): void {
   assertSecretsReachable(manifest);
 }
 
 /** For extension tests: the deployment config secret values the kernel registers for log redaction (the same collection logic as `ExtensionHost` uses when loading). */
-export function pluginDeploymentSecretValues(
+export function extensionDeploymentSecretValues(
   manifest: ExtensionManifest,
   config: unknown,
 ): string[] {

@@ -129,6 +129,10 @@ export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
     what: "an old skill folder (now writing-extensions / writing-extension-ui)",
   },
   { re: /\borg\.plugins\.manage\b/, what: "an old RBAC action (now org.extensions.manage)" },
+  {
+    re: /\b(?:assertPluginSecretsReachable|pluginDeploymentSecretValues)\b/,
+    what: "an old @capybara-hq/testing helper (now assertExtensionSecretsReachable / extensionDeploymentSecretValues)",
+  },
 ];
 
 /** Paths (prefix or full path) never searched by terms-reference, with the reason. */

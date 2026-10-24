@@ -41,6 +41,7 @@ describe("checkTerms", () => {
       ["terms-reference", ...at("docs/guide.md", "CAPYBARA_PLUGIN_CONFIG")],
       ["terms-reference", ...at("docs/guide.md", "/admin/directory/requests")],
       ["terms-reference", ...at("docs/guide.md", "/settings/apps")],
+      ["terms-reference", ...at("docs/guide.md", "assertPluginSecretsReachable")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
     expect(f[3]?.message).toContain("/marketplaces");
