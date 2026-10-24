@@ -3,7 +3,7 @@ import { type Selectable, sql, type Transaction, type Updateable } from "kysely"
 import type { AccountsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
+import { lockEnterpriseAdmins, lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
 
@@ -319,53 +319,117 @@ export class AccountsService {
         .where("id", "=", id)
         .executeTakeFirst();
       if (!before) throw new ApiError("account.not_found", "Account not found");
-      const values: Updateable<AccountsTable> = { updated_at: new Date() };
-      if (patch.displayName !== undefined) values.display_name = patch.displayName;
-      if (patch.status !== undefined) values.status = patch.status;
-      if (patch.isEnterpriseAdmin !== undefined)
-        values.is_enterprise_admin = patch.isEnterpriseAdmin;
-      const row = await trx
-        .updateTable("accounts")
-        .set(values)
-        .where("id", "=", id)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      const wasActiveAdmin = before.is_enterprise_admin && before.status === "active";
-      const isActiveAdmin = row.is_enterprise_admin && row.status === "active";
-      if (wasActiveAdmin && !isActiveAdmin && (await this.countEnterpriseAdmins(trx)) === 0) {
-        throw new ApiError(
-          "account.last_enterprise_admin",
-          "Cannot remove the last active enterprise admin",
-        );
-      }
-      await audit(trx, {
+      return this.applyUpdate(trx, before, patch, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
-        action: "account.updated",
-        target: id,
         detail: patch,
       });
-      let revokedSessionIds: string[] = [];
-      if (patch.status === "disabled") {
-        // 鉴权每次请求实时读账号状态，停用已立即生效；这里再吊销凭据，重新启用后旧凭据也不复活
-        const sessions = await trx
-          .updateTable("sessions")
-          .set({ revoked_at: sql<Date>`now()` })
-          .where("account_id", "=", id)
-          .where("revoked_at", "is", null)
-          .returning("id")
-          .execute();
-        await trx
-          .updateTable("api_tokens")
-          .set({ revoked_at: sql<Date>`now()` })
-          .where("kind", "=", "personal")
-          .where("account_id", "=", id)
-          .where("revoked_at", "is", null)
-          .execute();
-        revokedSessionIds = sessions.map((r) => r.id);
-      }
-      return { account: toAccount(row), revokedSessionIds };
     });
+  }
+
+  /**
+   * CLI 的 `capybara admin grant|revoke <login>`（没有发起账号）：按本地登录名在 {@link lockEnterpriseAdmins}
+   * 的事务里改企业管理员标记；撤销沿用 {@link updateAccount} 的「最后一个活跃企业管理员」复核
+   * （`account.last_enterprise_admin`），在锁内判定，与网页撤销并发也不会一个都不剩。审计 `account.updated`
+   * 不带发起账号，`detail.via = "cli"`。已是目标状态时不改、不写审计（`changed: false`）。
+   * 登录名不存在 → `account.not_found`。
+   */
+  async setEnterpriseAdminByLogin(
+    login: string,
+    isEnterpriseAdmin: boolean,
+  ): Promise<{ account: Account; changed: boolean }> {
+    let external: string;
+    try {
+      external = normalizeLogin(login);
+    } catch {
+      throw new ApiError("account.not_found", "Account not found");
+    }
+    return this.db.transaction().execute(async (trx) => {
+      await lockEnterpriseAdmins(trx);
+      const before = await trx
+        .selectFrom("identities")
+        .innerJoin("accounts", "accounts.id", "identities.account_id")
+        .selectAll("accounts")
+        .where("identities.source", "=", "local")
+        .where("identities.external_id", "=", external)
+        .executeTakeFirst();
+      if (!before) throw new ApiError("account.not_found", "Account not found");
+      if (before.is_enterprise_admin === isEnterpriseAdmin) {
+        return { account: toAccount(before), changed: false };
+      }
+      const patch = { isEnterpriseAdmin };
+      const { account } = await this.applyUpdate(trx, before, patch, {
+        detail: { ...patch, via: "cli" },
+      });
+      return { account, changed: true };
+    });
+  }
+
+  /**
+   * 已持企业管理员锁的事务内改账号：改行、复核「最后一个活跃企业管理员」、写审计 `account.updated`；
+   * 停用时吊销该账号的全部会话与个人令牌。
+   */
+  private async applyUpdate(
+    trx: Trx,
+    before: Selectable<AccountsTable>,
+    patch: AccountPatch,
+    auditAs: { actorAccountId?: string; actorTokenId?: string; detail: Record<string, unknown> },
+  ): Promise<{ account: Account; revokedSessionIds: string[] }> {
+    const id = before.id;
+    const values: Updateable<AccountsTable> = { updated_at: new Date() };
+    if (patch.displayName !== undefined) values.display_name = patch.displayName;
+    if (patch.status !== undefined) values.status = patch.status;
+    if (patch.isEnterpriseAdmin !== undefined) values.is_enterprise_admin = patch.isEnterpriseAdmin;
+    const row = await trx
+      .updateTable("accounts")
+      .set(values)
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const wasActiveAdmin = before.is_enterprise_admin && before.status === "active";
+    const isActiveAdmin = row.is_enterprise_admin && row.status === "active";
+    if (wasActiveAdmin && !isActiveAdmin && (await this.countEnterpriseAdmins(trx)) === 0) {
+      throw new ApiError(
+        "account.last_enterprise_admin",
+        "Cannot remove the last active enterprise admin",
+      );
+    }
+    await audit(trx, {
+      ...(auditAs.actorAccountId !== undefined && { actorAccountId: auditAs.actorAccountId }),
+      ...(auditAs.actorTokenId !== undefined && { actorTokenId: auditAs.actorTokenId }),
+      action: "account.updated",
+      target: id,
+      detail: auditAs.detail,
+    });
+    let revokedSessionIds: string[] = [];
+    if (patch.status === "disabled") {
+      // 鉴权每次请求实时读账号状态，停用已立即生效；这里再吊销凭据，重新启用后旧凭据也不复活
+      const sessions = await trx
+        .updateTable("sessions")
+        .set({ revoked_at: sql<Date>`now()` })
+        .where("account_id", "=", id)
+        .where("revoked_at", "is", null)
+        .returning("id")
+        .execute();
+      await trx
+        .updateTable("api_tokens")
+        .set({ revoked_at: sql<Date>`now()` })
+        .where("kind", "=", "personal")
+        .where("account_id", "=", id)
+        .where("revoked_at", "is", null)
+        .execute();
+      revokedSessionIds = sessions.map((r) => r.id);
+    }
+    return { account: toAccount(row), revokedSessionIds };
+  }
+
+  /** 全部账号数（含停用的；后台概览）。 */
+  async count(): Promise<number> {
+    const r = await this.db
+      .selectFrom("accounts")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .executeTakeFirstOrThrow();
+    return Number(r.n);
   }
 
   /** 活跃（status = active）的企业管理员数量。 */

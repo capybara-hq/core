@@ -21,7 +21,7 @@ import {
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { MAX_ATTACHMENTS } from "../tools/app-content.js";
+import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
 import {
   ARTIFACT_DOWNLOAD_CACHE_SECONDS,
   type ArtifactPreview,
@@ -63,7 +63,7 @@ const MessageBody = z
     clientMessageId: z.string().min(1).max(200).optional(),
     /** `@` 资源引用：内核以发送者的凭据读取并作为附加文本块写入（见 ConversationsService.postUserMessage）。 */
     attachments: z
-      .array(z.object({ appId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
+      .array(z.object({ connectorId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
       .max(MAX_ATTACHMENTS)
       .optional(),
     /**

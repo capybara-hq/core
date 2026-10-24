@@ -1,7 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb, OrgsTable } from "../db/kernel-schema.js";
+import { cancelPendingRequests } from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
+import { cancelEvalRuns } from "../evals/budget.js";
 import type { Account } from "../identity/accounts.js";
 import type { ApiTokenService } from "../identity/api-tokens.js";
 import { audit } from "../identity/audit.js";
@@ -207,7 +209,8 @@ export class OrgsService {
   }
 
   /**
-   * 软删除（需 owner，锁内实时判定）：同一事务吊销该组织的服务令牌、清空指向它的会话当前组织；
+   * 软删除（需 owner，锁内实时判定）：同一事务吊销该组织的服务令牌、取消在执行的评测运行与挂着的目录申请、清空指向它的
+   * 会话当前组织；
    * 提交后调用 `afterDelete`（渠道连接随组织失效：运行时读连接行时 join 组织过滤已删除的）。
    */
   async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
@@ -219,6 +222,21 @@ export class OrgsService {
         .where("id", "=", orgId)
         .execute();
       await this.apiTokens.revokeAllForOrg(orgId, trx);
+      // 组织删除后评测运行不再花钱：显式取消（审计带原因）
+      await cancelEvalRuns(
+        trx,
+        { orgId },
+        { accountId: actor.id, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
+        "org_deleted",
+      );
+      // 挂着的目录申请（含已交企业管理员的）一并取消
+      await cancelPendingRequests(
+        trx,
+        { orgId },
+        actor.id,
+        "org_deleted",
+        actorTokenId !== undefined ? { actorTokenId } : {},
+      );
       await trx
         .updateTable("sessions")
         .set({ current_org_id: null })

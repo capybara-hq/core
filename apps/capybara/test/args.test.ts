@@ -25,10 +25,17 @@ describe("parseCli", () => {
       command: "admin-create",
       login: "root",
       displayName: "Root",
+      ifNone: false,
     });
     expect(
       parseCli(["admin", "create", "--login=root", "--display-name=Root", "--email", "r@x.io"]),
-    ).toEqual({ command: "admin-create", login: "root", displayName: "Root", email: "r@x.io" });
+    ).toEqual({
+      command: "admin-create",
+      login: "root",
+      displayName: "Root",
+      email: "r@x.io",
+      ifNone: false,
+    });
     expect(() => parseCli(["admin", "create", "--display-name", "R"])).toThrow(/--login/);
     expect(() => parseCli(["admin", "create", "--login", "r"])).toThrow(/--display-name/);
     expect(() => parseCli(["admin"])).toThrow(UsageError);
@@ -41,6 +48,61 @@ describe("parseCli", () => {
     );
     expect(() => parseCli(["start", "--login", "r"])).toThrow(/only valid for admin create/);
     expect(() => parseCli(["admin", "create", "--role", "api"])).toThrow(/only valid for start/);
+  });
+
+  it("admin create --if-none --password-file", () => {
+    expect(
+      parseCli([
+        "admin",
+        "create",
+        "--login",
+        "a",
+        "--display-name",
+        "A",
+        "--if-none",
+        "--password-file",
+        "/run/secrets/pw",
+      ]),
+    ).toEqual({
+      command: "admin-create",
+      login: "a",
+      displayName: "A",
+      ifNone: true,
+      passwordFile: "/run/secrets/pw",
+    });
+    expect(() =>
+      parseCli(["admin", "create", "--login", "a", "--display-name", "A", "--password-file", ""]),
+    ).toThrow(/--password-file/);
+    for (const opt of [["--if-none"], ["--password-file", "/pw"]]) {
+      expect(() => parseCli(["start", ...opt])).toThrow(/only valid for admin create/);
+      expect(() => parseCli(["admin", "grant", "a", ...opt])).toThrow(
+        /only valid for admin create/,
+      );
+      expect(() => parseCli(["plugins", "list", ...opt])).toThrow(/only valid for admin create/);
+    }
+  });
+
+  it("admin grant / revoke <login>", () => {
+    expect(parseCli(["admin", "grant", "alice"])).toEqual({
+      command: "admin-grant",
+      login: "alice",
+      grant: true,
+    });
+    expect(parseCli(["admin", "revoke", "alice"])).toEqual({
+      command: "admin-grant",
+      login: "alice",
+      grant: false,
+    });
+    expect(() => parseCli(["admin", "grant"])).toThrow(/needs a login/);
+    expect(() => parseCli(["admin", "revoke", " "])).toThrow(/needs a login/);
+    expect(() => parseCli(["admin", "grant", "a", "b"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["admin", "grant", "a", "--login", "b"])).toThrow(
+      /only valid for admin create/,
+    );
+    expect(() => parseCli(["admin", "revoke", "a", "--role", "api"])).toThrow(
+      /only valid for start/,
+    );
+    expect(() => parseCli(["admin", "grant", "a", "--yes"])).toThrow(UsageError);
   });
 
   it("plugins review / approve", () => {
@@ -62,16 +124,47 @@ describe("parseCli", () => {
     expect(() => parseCli(["plugins", "approve", "a", "b"])).toThrow(/unexpected argument/);
     expect(() => parseCli(["plugins", "review", "x"])).toThrow(/unexpected argument/);
     expect(() => parseCli(["plugins", "review", "--yes"])).toThrow(
-      /only valid for plugins approve/,
+      /only valid for plugins approve and plugins install/,
     );
     expect(() => parseCli(["plugins", "review", "--role", "api"])).toThrow(/only valid for start/);
     expect(() => parseCli(["plugins", "approve", "a", "--login", "r"])).toThrow(
       /only valid for admin create/,
     );
-    expect(() => parseCli(["start", "--yes"])).toThrow(/only valid for plugins approve/);
+    expect(() => parseCli(["start", "--yes"])).toThrow(
+      /only valid for plugins approve and plugins install/,
+    );
     expect(() =>
       parseCli(["admin", "create", "--login", "r", "--display-name", "R", "--yes"]),
-    ).toThrow(/only valid for plugins approve/);
+    ).toThrow(/only valid for plugins approve and plugins install/);
+  });
+
+  it("plugins list / install / enable / disable / uninstall", () => {
+    expect(parseCli(["plugins", "list"])).toEqual({ command: "plugins-list" });
+    expect(parseCli(["plugins", "install", "./life.tgz"])).toEqual({
+      command: "plugins-install",
+      target: "./life.tgz",
+      yes: false,
+    });
+    expect(parseCli(["plugins", "install", "./life.tgz", "--yes"])).toMatchObject({ yes: true });
+    expect(parseCli(["plugins", "install", "npm:@acme/plugin-x@1.2.3"])).toEqual({
+      command: "plugins-install",
+      target: "npm:@acme/plugin-x@1.2.3",
+      yes: false,
+    });
+    for (const action of ["enable", "disable", "uninstall"] as const) {
+      expect(parseCli(["plugins", action, "life"])).toEqual({
+        command: "plugins-state",
+        name: "life",
+        action,
+      });
+      expect(() => parseCli(["plugins", action])).toThrow(/plugin name/);
+      expect(() => parseCli(["plugins", action, "a", "b"])).toThrow(/unexpected argument/);
+      expect(() => parseCli(["plugins", action, "a", "--yes"])).toThrow(
+        /only valid for plugins approve and plugins install/,
+      );
+    }
+    expect(() => parseCli(["plugins", "install"])).toThrow(/needs a package/);
+    expect(() => parseCli(["plugins", "list", "x"])).toThrow(/unexpected argument/);
   });
 
   it("非法输入抛 UsageError", () => {

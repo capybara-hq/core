@@ -1,3 +1,4 @@
+import type { Locale } from "./cards.js";
 import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
 import { isHttpUrl } from "./url.js";
 
@@ -290,7 +291,7 @@ export interface UiRenderArgs {
   role: UiRole;
   /** 仅对话视图。 */
   conversationId?: string;
-  locale: "zh" | "en";
+  locale: Locale;
   signal: AbortSignal;
 }
 
@@ -325,7 +326,7 @@ export type EmbedParentMessage =
       protocol: typeof EMBED_PROTOCOL;
       type: "init";
       token: string;
-      locale: "zh" | "en";
+      locale: Locale;
       theme: "dark" | "light";
       tokens: Record<string, string>;
       context: { orgId: string; conversationId?: string };

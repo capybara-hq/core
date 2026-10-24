@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import {
   CHANNEL_CAPABILITY,
+  type Connector,
   DIRECTORY_CAPABILITY,
   OBJECT_STORE_CAPABILITY,
   type ObjectStore,
@@ -11,13 +12,21 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
-import { ChannelConnections } from "./channels/connections.service.js";
+import { CHANNEL_CHANGED_TOPIC, ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
-import { ChannelSupervisor } from "./channels/supervisor.js";
+import {
+  ChannelSupervisor,
+  checkGatewayPresence,
+  GATEWAY_CHECK_EVERY_MS,
+  GATEWAY_CHECK_JOB,
+  GATEWAY_CHECK_SCHEDULER_ID,
+} from "./channels/supervisor.js";
+import { ChannelWebhooks } from "./channels/webhook.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
+import { type ConfigSourceKind, configSourceKind, pluginConfigSources } from "./config/sources.js";
 import {
   ATTACHMENT_CLEANUP_EVERY_MS,
   ATTACHMENT_CLEANUP_JOB,
@@ -36,6 +45,12 @@ import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
+import { AppImport } from "./directory/app-import.js";
+import { CATALOGS_REFRESH_DEADLINE_MS, CatalogsService } from "./directory/catalogs.service.js";
+import { DirectoryService } from "./directory/directory.service.js";
+import type { EvalReplayHooks } from "./evals/run-replay.js";
+import { EvalQueue } from "./evals/runs.service.js";
+import { EvalWorker } from "./evals/worker.js";
 import { ApiModule } from "./http/api.module.js";
 import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
 import { AccountsService } from "./identity/accounts.js";
@@ -45,22 +60,58 @@ import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { createLogger, type KernelLogger } from "./log.js";
+import { PricesService } from "./models/prices.js";
+import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
+import { PluginAdminOps } from "./plugins/admin-ops.js";
+import { PluginAdmin } from "./plugins/admin-view.js";
 import type { PendingPlugin } from "./plugins/approvals.js";
+import { PluginBlobs } from "./plugins/blobs.js";
+import {
+  DeploymentPluginConfigService,
+  schemaFields,
+  staticDeploymentSchema,
+} from "./plugins/deployment-config.js";
 import { PluginHost } from "./plugins/host.js";
+import { PluginInstalls } from "./plugins/installs.js";
+import {
+  PLUGINS_RECONCILE_JOB,
+  PLUGINS_RECONCILE_SCHEDULER_ID,
+  PLUGINS_RECONCILE_TOPIC,
+  PluginLifecycle,
+  STALE_RECONCILE_PERIODS,
+} from "./plugins/lifecycle.js";
+import { ensureMigrated } from "./plugins/migrate-lock.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
+import { newReplicaId, ReplicaStatusStore } from "./plugins/sources.js";
+import { syncPackage } from "./plugins/sync.js";
 import { RunAbort } from "./runtime/abort.js";
 import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
 import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
-import { Maintenance } from "./runtime/maintenance.js";
+import {
+  APP_STAGING_CLEANUP_EVERY_MS,
+  APP_STAGING_CLEANUP_JOB,
+  APP_STAGING_CLEANUP_SCHEDULER_ID,
+  CATALOGS_REFRESH_JOB,
+  CATALOGS_REFRESH_SCHEDULER_ID,
+  Maintenance,
+} from "./runtime/maintenance.js";
 import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
-import { OrgQuota } from "./runtime/quota.js";
+import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import {
+  queryUnservable,
+  queryUsageSubscribers,
+  USAGE_SWEEP_EVERY_MS,
+  USAGE_SWEEP_JOB,
+  USAGE_SWEEP_SCHEDULER_ID,
+  UsageReporter,
+} from "./runtime/usage-report.js";
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService, sandboxConfigWarnings } from "./sandbox/sandbox.service.js";
@@ -73,7 +124,6 @@ import {
   STORAGE_PURGE_SCHEDULER_ID,
 } from "./storage/purge.js";
 import { StorageService } from "./storage/storage.service.js";
-import { AppContent } from "./tools/app-content.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
@@ -82,6 +132,7 @@ import { sandboxTools } from "./tools/builtins/sandbox/index.js";
 import { skillLoadTool } from "./tools/builtins/skill-load.js";
 import { skillWriteTool } from "./tools/builtins/skill-write.js";
 import { toolSearchTool } from "./tools/builtins/tool-search.js";
+import { ConnectorContent } from "./tools/connector-content.js";
 import { Credentials } from "./tools/credentials.js";
 import { ToolDrift } from "./tools/drift.js";
 import { ToolOutputs } from "./tools/outputs.js";
@@ -154,8 +205,8 @@ export interface KernelTools {
   readonly questions: QuestionsService;
   /** 工具定义漂移检测（周期扫描、list_changed、手动刷新）。 */
   readonly drift: ToolDrift;
-  /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
-  readonly appContent: AppContent;
+  /** 连接器的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
+  readonly connectorContent: ConnectorContent;
 }
 
 /** 外部身份相关的内核服务（渠道运行时、通讯录同步与 HTTP 共用）。 */
@@ -187,13 +238,35 @@ export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
   readonly http: KernelHttp;
   readonly host: PluginHost;
+  /** usage.report delivery (fast path, sweeper and, on the worker role, the worker). */
+  readonly usageReport: UsageReporter;
+  /** 本进程的副本 id（`<hostname>-<pid>-<6 位随机>`，写 `plugin_replica_status`）。 */
+  readonly replicaId: string;
+  /** 插件包的导入（上传 / npm）与安装记录。 */
+  readonly pluginInstalls: PluginInstalls;
+  /** 部署级插件后台：列表、状态与网页批准权限。 */
+  readonly pluginAdmin: PluginAdmin;
+  /** 部署级插件的安装 / 启用 / 停用 / 卸载（只写期望状态并发布 `kernel.plugins.changed`）。 */
+  readonly pluginAdminOps: PluginAdminOps;
+  /** 本副本的插件生命周期：订阅 bus 并 reconcile 到 PG 期望状态（C16）。 */
+  readonly pluginLifecycle: PluginLifecycle;
+  /** 内容寻址的插件包存储（对象存储或 PG）。 */
+  readonly pluginBlobs: PluginBlobs;
+  /** 企业目录：条目与导入（插件 / 连接器模板 / 技能）。 */
+  readonly directory: DirectoryService;
+  /** 应用包（app.yaml）的企业导入：prepare / confirm 与暂存清理。 */
+  readonly apps: AppImport;
+  /** 目录来源：官方 / 企业清单与刷新。 */
+  readonly catalogs: CatalogsService;
+  /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
+  readonly pluginDeploymentConfigs: DeploymentPluginConfigService;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
   readonly orgPluginConfigs: OrgPluginConfigs;
   /** 内核总线（命名空间 `kernel`）。 */
   readonly bus: PluginContext["bus"];
   /** 运行编排服务。 */
   readonly runs: KernelRuns;
-  /** 工具注册表与应用凭据。 */
+  /** 工具注册表与连接器凭据。 */
   readonly tools: KernelTools;
   /** 外部身份、绑定、第三方登录与离职处理。 */
   readonly identity: KernelIdentity;
@@ -210,6 +283,10 @@ export interface Kernel {
   readonly skills: SkillsService;
   /** agent 自写技能（`skill_write`）与共享 agent 的技能变更审批（R4）。 */
   readonly skillChanges: SkillChangesService;
+  /** 模型价格表（PG `model_prices`，成本读时计算）。 */
+  readonly prices: PricesService;
+  /** 模型用途映射（部署默认 + 组织覆盖；评委用途 `eval`）。 */
+  readonly purposes: ModelPurposesService;
   /**
    * 按对话的沙箱（`sandbox@1` 提供方之上：懒创建、锁、休眠与销毁）；
    * 没有提供方时 `available` 为 false，使用时抛 `sandbox.unavailable`（503）。
@@ -245,6 +322,19 @@ export interface KernelOptions {
   loop?: (deps: LoopDeps) => AgentLoop;
   /** 运行 worker 的测试钩子。 */
   runHooks?: RunHooks;
+  /** 评测整轮回放的测试钩子。 */
+  evalHooks?: EvalReplayHooks;
+  /**
+   * 内置插件（C14）：由 CLI 传入（`openai-compatible`、`object-store-s3`），按模块解析（建议 `file:` URL），
+   * 来源 `builtin`：预先批准、始终启用、不需组织启用；部署配置没配好时不加载（待配置），内核照常启动。
+   * 与配置 `plugins` 列表重名时以内置为准并告警。
+   */
+  builtinPlugins?: string[];
+  /**
+   * 启动配置里各插件部署配置字段的来源（`loadConfigWithSources` 的 `pluginSources`）：这些字段在后台只读（D8）。
+   * 不传时按 `config.pluginConfig` 推出：环境变量里有的记 env，其余记 `CAPYBARA_CONFIG_SOURCE` 的来源（file / nacos）。
+   */
+  pluginConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
 }
 
 /**
@@ -255,9 +345,13 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "log.level": (k, v) => k.log.setLevel(String(v)),
   // 并发上限由运行时在每次取额度时经 `config()` 读取当前值，替换配置即生效，无需额外动作。
   "runtime.orgConcurrency": () => {},
+  // 评测的组织并发同样在每次取额度时经 `config()` 读取当前值。
+  "evals.orgConcurrency": () => {},
   // 登录方式与受信任的身份源在每次请求时经 `config()` 读取，替换配置即生效。
   "auth.loginSources": () => {},
   "auth.trustedIdentitySources": () => {},
+  // The hook registry reads the time limit through `config()` on every run.
+  "hooks.timeoutMs": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
@@ -272,7 +366,13 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  */
 export async function migrateAll(
   config: KernelConfig,
-  opts: { resolveFrom?: string; onPending?: (pending: PendingPlugin[]) => void } = {},
+  opts: {
+    resolveFrom?: string;
+    onPending?: (pending: PendingPlugin[]) => void;
+    /** 内置插件（见 {@link KernelOptions.builtinPlugins}）：不过权限闸门。 */
+    builtinPlugins?: string[];
+    log?: { warn(msg: string, fields?: Record<string, unknown>): void };
+  } = {},
 ): Promise<{ schema: string; plugin?: string; applied: string[] }[]> {
   const connectTimeoutMs = config.db.connectTimeoutMs;
   const kernel = await migrate(
@@ -286,6 +386,8 @@ export async function migrateAll(
     autoApprove: config.pluginPermissions.autoApprove,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     ...(opts.onPending !== undefined && { onPending: opts.onPending }),
+    ...(opts.builtinPlugins !== undefined && { builtin: opts.builtinPlugins }),
+    ...(opts.log !== undefined && { log: opts.log }),
   });
   return [{ schema: KERNEL_SCHEMA, applied: kernel.applied }, ...plugins];
 }
@@ -314,6 +416,8 @@ export async function createKernel(
   let migratePromise: Promise<unknown> | undefined;
   const startAbort = new AbortController();
   let unwatch: (() => void) | undefined;
+  /** 渠道 supervisor 对插件注册表变化的订阅（停机时取消）。 */
+  let unwatchPlugins: (() => void) | undefined;
 
   const redis = new Redis(config.redis.url, { lazyConnect: true });
   redis.on("error", (err: Error) => log.error("redis connection error", { err }));
@@ -339,10 +443,27 @@ export async function createKernel(
     runWorkers: config.roles.includes("worker"),
     log,
   };
+  const replicaId = newReplicaId();
+  const replicaStatus = new ReplicaStatusStore(
+    kernelDb(db),
+    replicaId,
+    config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
+    (text) => log.redact(text),
+  );
   const host = new PluginHost(deps, config.pluginConfig, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
     autoApprove: config.pluginPermissions.autoApprove,
+    status: replicaStatus,
+    drainMs: () => current.pluginHost.drainSeconds * 1000,
+    disposeTimeoutMs: () => current.pluginHost.disposeTimeoutSeconds * 1000,
+    reloadSetupTimeoutMs: () => current.pluginHost.reloadSetupTimeoutSeconds * 1000,
+    hookTimeoutMs: () => current.hooks.timeoutMs,
+    // 路由闸门的「部署已知」插件：安装记录（任何 desired_state）；pluginInstalls 在下面创建，调用时才取
+    installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
+    // 生效部署配置 = 启动配置补上 PG 里保存的字段（C10）；服务在下面创建，调用时才取
+    deploymentConfig: (plugin, fileValue, schema) =>
+      pluginDeploymentConfigs.effective(plugin, fileValue, schema),
   });
   const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),
@@ -350,6 +471,9 @@ export async function createKernel(
     afterPut: async (orgId, plugin, enabled) => {
       if (!enabled) await channelConnections.notifyOrgChanged(orgId, plugin);
     },
+    // 部署上停用的安装记录插件：组织页显示「不可用」，组织的启用开关不变（T14）
+    installed: async () =>
+      (await pluginInstalls.list()).map((r) => ({ name: r.name, version: r.version })),
   });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   const kdb = kernelDb(db);
@@ -408,6 +532,127 @@ export async function createKernel(
       return [...rows.map((r) => r.plugin), ...host.manifests().map((m) => m.name)];
     },
   });
+  // 插件包：有对象存储放 deployment/plugins/blobs/，否则放 PG；安装记录与包的导入
+  const pluginBlobs = new PluginBlobs({
+    db: kdb,
+    storage,
+    maxBytes: () => current.packages.maxBytes,
+  });
+  const pluginInstalls = new PluginInstalls({
+    db: kdb,
+    blobs: pluginBlobs,
+    config: () => current,
+    declared: () => host.declared(),
+  });
+  const pluginAdmin = new PluginAdmin({
+    db: kdb,
+    blobs: pluginBlobs,
+    installs: pluginInstalls,
+    config: () => current,
+    host,
+    bus,
+    log,
+    // 批准后等本副本 reconcile 一次再返回视图（其他副本经 bus 收敛）
+    reconcile: (reason) => pluginLifecycle.reconcile(reason),
+  });
+  // 插件生命周期（C16）：后台 / CLI 只写期望状态并发布 kernel.plugins.changed，各副本订阅后 reconcile；
+  // 维护任务 plugins-reconcile 每 pluginHost.reconcileIntervalSeconds 秒发布 kernel.plugins.reconcile 兜底
+  const pluginLifecycle = new PluginLifecycle({
+    host,
+    bus,
+    status: replicaStatus,
+    installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
+    reconcileIntervalSeconds: () => current.pluginHost.reconcileIntervalSeconds,
+    log,
+  });
+  const pluginAdminOps = new PluginAdminOps({
+    db: kdb,
+    view: (name) => pluginAdmin.get(name, { allowUnreadable: true }),
+    declared: () => host.declared(),
+    blobs: pluginBlobs,
+    config: () => current,
+    bus,
+    reconcile: (reason) => pluginLifecycle.reconcile(reason),
+    log,
+  });
+  const findConnector = (plugin: string, kind: string) =>
+    host
+      .list("connector")
+      .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
+      | Connector
+      | undefined;
+  // 应用包导入（C31）：一次审阅、一次批准；暂存 24 小时，维护任务 app-staging-cleanup 每小时清理过期的
+  const apps = new AppImport({
+    db: kdb,
+    config: () => current,
+    storage,
+    installs: pluginInstalls,
+    ops: pluginAdminOps,
+    blobs: pluginBlobs,
+    declaredPlugins: () => host.declaredPlugins(),
+    findConnector,
+    isConnectorPlugin: (name) => host.list("connector").some((e) => e.plugin === name),
+    log,
+  });
+  maintenance.handle(APP_STAGING_CLEANUP_JOB, async () => {
+    const n = await apps.cleanupExpired();
+    if (n > 0) log.info("expired app imports cleaned up", { count: n });
+  });
+  maintenance.schedule({
+    id: APP_STAGING_CLEANUP_SCHEDULER_ID,
+    name: APP_STAGING_CLEANUP_JOB,
+    everyMs: () => APP_STAGING_CLEANUP_EVERY_MS,
+  });
+  // 企业目录（D9 / C21）：插件包交给 pluginInstalls 入库、pluginAdminOps 装到部署；连接器模板按本副本已加载的连接器校验
+  const directory = new DirectoryService({
+    db: kdb,
+    config: () => current,
+    storage,
+    installs: pluginInstalls,
+    ops: pluginAdminOps,
+    declared: () => host.declared(),
+    findConnector,
+    pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
+    apps,
+  });
+  // 目录来源（D16 / C26）：official 启动时按配置同步；维护任务 catalogs-refresh 定期刷新全部生效的来源
+  const catalogs = new CatalogsService({ db: kdb, config: () => current, keyring, log });
+  maintenance.handle(CATALOGS_REFRESH_JOB, async () => {
+    await catalogs.refreshAll(AbortSignal.timeout(CATALOGS_REFRESH_DEADLINE_MS));
+  });
+  maintenance.schedule({
+    id: CATALOGS_REFRESH_SCHEDULER_ID,
+    name: CATALOGS_REFRESH_JOB,
+    everyMs: () => current.catalogs.refreshIntervalMinutes * 60_000,
+  });
+  // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
+  const pluginDeploymentConfigs = new DeploymentPluginConfigService({
+    db: kdb,
+    keyring,
+    fileConfig: () => current.pluginConfig,
+    sources:
+      opts.pluginConfigSources ??
+      pluginConfigSources({ pluginConfig: config.pluginConfig }, env, configSourceKind(env)),
+    schemaOf: async (plugin) => {
+      const local = host.deploymentSchema(plugin);
+      if (local) return { ...local, fields: schemaFields(local.schema) };
+      // 与内置 / 配置声明重名的安装记录不生效
+      if (host.declared().has(plugin)) return undefined;
+      return staticDeploymentSchema(kdb, plugin);
+    },
+    bus,
+    applyLocal: (plugin) => pluginLifecycle.applyConfig(plugin),
+    onSecrets: (v) => log.addSecrets(v),
+    log,
+  });
+  maintenance.handle(PLUGINS_RECONCILE_JOB, async () => {
+    await bus.publish(PLUGINS_RECONCILE_TOPIC, {});
+  });
+  maintenance.schedule({
+    id: PLUGINS_RECONCILE_SCHEDULER_ID,
+    name: PLUGINS_RECONCILE_JOB,
+    everyMs: () => current.pluginHost.reconcileIntervalSeconds * 1000,
+  });
   // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
   maintenance.handle(STORAGE_PURGE_JOB, async () => {
     await purgeDeletedOrgStorage({
@@ -439,6 +684,13 @@ export async function createKernel(
     log,
   });
   const skills = new SkillsService({ db: kdb, storage, attachments });
+  const prices = new PricesService(kdb);
+  const purposes = new ModelPurposesService({
+    db: kdb,
+    registry,
+    config: () => current,
+    manifests: () => host.manifests(),
+  });
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
     const n = await attachments.deleteExpired();
     if (n > 0) log.info("expired attachments deleted", { count: n });
@@ -480,8 +732,8 @@ export async function createKernel(
     maintenance,
   });
   const breaker = new Breaker(redis, () => current);
-  // 用户直接使用应用内容（斜杠命令 / @ 资源引用）
-  const appContent = new AppContent({
+  // 用户直接使用连接器内容（斜杠命令 / @ 资源引用）
+  const connectorContent = new ConnectorContent({
     db: kdb,
     registry: toolRegistry,
     credentials,
@@ -500,8 +752,10 @@ export async function createKernel(
     questions,
     config: () => current,
     log,
-    onToolsChanged: (orgId, appId) => {
-      void toolDrift.onToolsChanged(orgId, appId);
+    // plugin hooks (chat runs only; the eval replay uses RecordedToolPipeline, which has none)
+    pluginHooks: host.hooks,
+    onToolsChanged: (orgId, connectorId) => {
+      void toolDrift.onToolsChanged(orgId, connectorId);
     },
   });
   const tools: KernelTools = {
@@ -512,7 +766,7 @@ export async function createKernel(
     approvals,
     questions,
     drift: toolDrift,
-    appContent,
+    connectorContent,
   };
   const lock = new ConversationLock(redis, log);
   const quota = new OrgQuota(redis);
@@ -601,6 +855,7 @@ export async function createKernel(
     log,
     onSecrets: (v) => log.addOrgSecrets(v),
     onResume: (id) => channelOutbound.resumeConnection(id),
+    config: () => current,
   });
   const channelOutbound = new ChannelOutbound({
     db: kdb,
@@ -647,6 +902,29 @@ export async function createKernel(
     }),
   };
   let channelSupervisor: ChannelSupervisor | undefined;
+  /** Channel webhook inbound (gateway role only; F8 / F9). */
+  const channelWebhooks = config.roles.includes("gateway")
+    ? new ChannelWebhooks({ connections: channelConnections, inbound: channels.inbound, log })
+    : undefined;
+  let unwatchWebhooks: (() => void) | undefined;
+  let unsubscribeWebhooks: (() => Promise<void>) | undefined;
+  // Warn (rate limited) when a channel plugin has holdable connections but no live gateway replica
+  // with it loaded (R1 / R3); silent for one lease TTL after this process starts (first heartbeats)
+  const gatewayCheckGraceFrom = Date.now();
+  maintenance.handle(GATEWAY_CHECK_JOB, async () => {
+    await checkGatewayPresence({
+      db: kdb,
+      redis,
+      config: () => current,
+      log,
+      graceUntil: gatewayCheckGraceFrom + current.channels.leaseTtlMs,
+    });
+  });
+  maintenance.schedule({
+    id: GATEWAY_CHECK_SCHEDULER_ID,
+    name: GATEWAY_CHECK_JOB,
+    everyMs: () => GATEWAY_CHECK_EVERY_MS,
+  });
   const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
@@ -674,14 +952,51 @@ export async function createKernel(
         .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
     };
   };
+  // usage.report metering: producer on every role, worker on the worker role (P-17)
+  const usageReporter = new UsageReporter({
+    db: kdb,
+    redisUrl: config.redis.url,
+    hooks: host.hooks,
+    isActive: (plugin) => host.current(plugin) !== undefined,
+    unservable: (plugins) =>
+      queryUnservable(
+        kdb,
+        plugins,
+        STALE_RECONCILE_PERIODS * current.pluginHost.reconcileIntervalSeconds,
+      ),
+    // deployment state (approved manifests in PG) plus builtin plugins (no snapshot, always enabled)
+    subscribers: async (orgId) => {
+      const subs = await queryUsageSubscribers(kdb, orgId);
+      for (const m of host.manifests()) {
+        if (host.sourceOf(m.name) === "builtin" && m.permissions?.hooks?.includes("usage.report")) {
+          subs.add(m.name);
+        }
+      }
+      return subs;
+    },
+    config: () => current,
+    log,
+  });
+  // R13 sweeper: re-enqueue recent usage events (once across replicas through the maintenance queue)
+  maintenance.handle(USAGE_SWEEP_JOB, async () => {
+    await usageReporter.sweep();
+  });
+  maintenance.schedule({
+    id: USAGE_SWEEP_SCHEDULER_ID,
+    name: USAGE_SWEEP_JOB,
+    everyMs: () => USAGE_SWEEP_EVERY_MS,
+  });
   const stepDeps: LoopDeps = {
     db: kdb,
     eventLog,
     registry,
+    usageReport: usageReporter,
     tools: toolRegistry,
     config: () => current,
     log,
     toolPipeline,
+    // plugin hooks for chat runs; the full-run replay below drops them (P-18)
+    hooks: host.hooks,
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
       fetch: (orgId, conversationId, ids, caps) =>
@@ -700,6 +1015,9 @@ export async function createKernel(
     maintenance,
   };
   let runWorker: RunWorker | undefined;
+  /** 评测队列（生产方：API 启动运行时入队）与 worker（含 worker 角色时启动）。 */
+  const evalQueue = new EvalQueue(config.redis.url, log);
+  let evalWorker: EvalWorker | undefined;
   /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
   const releaseConnections = async (): Promise<void> => {
     redis.disconnect();
@@ -725,6 +1043,12 @@ export async function createKernel(
       },
       serveApi: config.roles.includes("api"),
       servePlugins,
+      ...(channelWebhooks && {
+        gateway: {
+          webhooks: channelWebhooks,
+          webhookMaxBodyBytes: config.channels.webhookMaxBodyBytes,
+        },
+      }),
       apiModule: ApiModule.register({
         db: kdb,
         redis,
@@ -742,7 +1066,7 @@ export async function createKernel(
         questions,
         drift: toolDrift,
         outputs: toolOutputs,
-        appContent,
+        connectorContent,
         identity,
         channels: channelConnections,
         runs: runControl,
@@ -751,10 +1075,21 @@ export async function createKernel(
         sandbox,
         skills,
         skillChanges,
+        prices,
+        purposes,
+        pluginInstalls,
+        pluginAdmin,
+        pluginAdminOps,
+        pluginDeploymentConfigs,
+        directory,
+        apps,
+        catalogs,
+        evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
       trustProxy: config.http.trustProxy,
       replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
+      packageMaxBytes: config.packages.maxBytes,
     });
   } catch (e) {
     await releaseConnections();
@@ -846,6 +1181,11 @@ export async function createKernel(
         STOP_BUDGET_MS.migrate,
       );
     unwatch?.();
+    unwatchPlugins?.();
+    unwatchWebhooks?.();
+    await unsubscribeWebhooks?.().catch(() => {});
+    // 不再接 reconcile（进行中的那次由宿主关闭收尾）
+    await within("plugin-lifecycle", pluginLifecycle.stop(), 1_000);
     unwatch = undefined;
     // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
     const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
@@ -868,6 +1208,13 @@ export async function createKernel(
       const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
+    if (evalWorker) {
+      await within(
+        "evals",
+        evalWorker.close(Math.max(0, runsDeadline - Date.now() - RUNS_FORCE_CLOSE_MS)),
+        Math.max(0, runsDeadline - Date.now()),
+      );
+    }
     if (channelsStopped) {
       // 至少留 2s 交还租约：否则其他副本要等租约过期（默认 30s）才能接管
       await within(
@@ -877,6 +1224,8 @@ export async function createKernel(
       );
     }
     await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
+    // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
+    await within("usage-report", usageReporter.stop(), Math.max(0, runsDeadline - Date.now()));
     // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
     await within(
       "channel-outbound",
@@ -884,7 +1233,10 @@ export async function createKernel(
       Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
     );
     await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
+    await within("eval-queue", evalQueue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
+    // 删掉本副本的加载状态行（尽力而为；崩溃副本心跳过期的行由 reconcile 清理）
+    await within("plugin-status", replicaStatus.removeAll(), 1_000);
     await within("bus", busSubscriber.close());
     if (redis.status === "ready") {
       if (!(await within("redis", redis.quit()))) redis.disconnect();
@@ -898,6 +1250,17 @@ export async function createKernel(
   const kernel: Kernel = {
     http: httpApp,
     host,
+    usageReport: usageReporter,
+    replicaId,
+    pluginInstalls,
+    pluginAdmin,
+    pluginAdminOps,
+    pluginLifecycle,
+    pluginBlobs,
+    directory,
+    apps,
+    catalogs,
+    pluginDeploymentConfigs,
     orgPluginConfigs,
     bus,
     runs,
@@ -908,6 +1271,8 @@ export async function createKernel(
     attachments,
     skills,
     skillChanges,
+    prices,
+    purposes,
     sandbox,
     log,
     get config() {
@@ -935,7 +1300,39 @@ export async function createKernel(
         );
         await migratePromise;
         checkpoint();
-        await host.load(config.plugins);
+        // official 清单来源按配置同步（幂等；每个副本启动时都做）
+        await catalogs.syncOfficialFromConfig();
+        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 pluginHost.dir 后导入，
+        // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
+        await host.load({
+          builtin: opts.builtinPlugins ?? [],
+          config: config.plugins,
+          installs: {
+            desired: () => pluginInstalls.desired(),
+            sync: (d) =>
+              syncPackage(current.pluginHost.dir, d.name, d.sha256, pluginBlobs, {
+                maxBytes: current.packages.maxBytes,
+              }),
+            migrate: async (d, dir, signal) =>
+              d.migratedSha === d.sha256
+                ? "migrated"
+                : ensureMigrated(
+                    {
+                      db: kdb,
+                      dbUrl: config.db.url,
+                      connectTimeoutMs: config.db.connectTimeoutMs,
+                      bus,
+                      log,
+                      // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
+                      signal: AbortSignal.any([signal, startAbort.signal]),
+                      timeoutMs: current.pluginHost.migrationTimeoutSeconds * 1000,
+                    },
+                    d.name,
+                    d.sha256,
+                    dir,
+                  ),
+          },
+        });
         checkpoint();
         const sandboxPlugin = host
           .list("sandbox")
@@ -963,6 +1360,38 @@ export async function createKernel(
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();
+          evalWorker = new EvalWorker({
+            db: kdb,
+            redisUrl: config.redis.url,
+            quota: new OrgQuota(redis, EVAL_QUOTA_PREFIX),
+            config: () => current,
+            log,
+            purposes,
+            // 媒体按快照自己的组织与对话、经组织范围的附件接口取（C3）
+            replay: {
+              registry,
+              config: () => current,
+              ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+            },
+            // 整轮回放（C6）：同一个 loop 工厂（同一 LangGraphLoop），只换工具管线（RecordedToolPipeline，
+            // 从不执行工具）、计费的模型注册表与按原对话取附件的来源
+            runReplay: {
+              db: kdb,
+              eventLog,
+              config: () => current,
+              log,
+              registry,
+              ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+              checkpoints,
+              // explicitly without plugin hooks: eval replays never fire them (P-18)
+              loop: (d) => {
+                const { hooks: _noHooks, ...replayDeps } = stepDeps;
+                return loopFactory({ ...replayDeps, ...d });
+              },
+              ...(opts.evalHooks !== undefined && { hooks: opts.evalHooks }),
+            },
+          });
+          evalWorker.start();
           // 维护队列：周期任务的 scheduler（幂等，多副本重复登记无害）与唯一的 Worker。
           // 登记失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再登记。
           try {
@@ -972,7 +1401,18 @@ export async function createKernel(
           }
           checkpoint();
           maintenance.startWorker();
-          // 渠道长连接选主：每个 worker 副本都参与，同一连接只有取得租约的一个副本连接
+          channelOutbound.startWorker();
+          usageReporter.startWorker();
+          if (!config.roles.includes("gateway")) {
+            log.info(
+              "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",
+              { roles: config.roles },
+            );
+          }
+        }
+        if (config.roles.includes("gateway")) {
+          // Channel long-connection leader election: every gateway replica takes part, and only the
+          // replica that holds a connection's lease connects it (E11-A)
           channelSupervisor = new ChannelSupervisor({
             db: kdb,
             redis,
@@ -986,12 +1426,32 @@ export async function createKernel(
             onEvent: (id, e) => channels.inbound.onEvent(id, e),
             config: () => current,
             log,
+            replicaId,
           });
           await channelSupervisor.start();
+          // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）
+          const supervisor = channelSupervisor;
+          unwatchPlugins = host.onChange((plugin) => supervisor.pluginChanged(plugin));
           checkpoint();
-          channelOutbound.startWorker();
         }
-        httpApp.mountPlugins(host.routes());
+        if (channelWebhooks) {
+          // The webhook runtime cache is read-through only: drop entries on every connection change
+          // and whenever a plugin instance changes
+          const webhooks = channelWebhooks;
+          unsubscribeWebhooks = await bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
+            const id = (payload as { connectionId?: unknown } | null)?.connectionId;
+            if (typeof id === "string") webhooks.invalidate(id);
+          });
+          unwatchWebhooks = host.onChange(() => webhooks.invalidateAll());
+          checkpoint();
+        }
+        // 路由保留挂载、实时取：插件撤销后 503 plugin.unavailable，重新加载后恢复（C17）
+        httpApp.mountPlugins(host.routeTable());
+        // 订阅插件生命周期主题后补一次 reconcile（启动加载期间错过的消息，并写下第一轮心跳）
+        await pluginLifecycle.start();
+        checkpoint();
+        await pluginLifecycle.reconcile("startup");
+        checkpoint();
         if (opts.source?.watch) {
           unwatch = opts.source.watch(onConfigChange, (err) =>
             log.error("config watch error", { error: err.message }),

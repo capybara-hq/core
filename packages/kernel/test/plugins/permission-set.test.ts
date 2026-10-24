@@ -1,10 +1,16 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { definePlugin, type PluginManifest, secret } from "@capybara-hq/plugin-sdk";
+import {
+  definePlugin,
+  type PluginManifest,
+  parseCatalogIndex,
+  secret,
+} from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  buildPermissionSet,
   computePermissionSet,
   diffPermissions,
   parseCreatedTables,
@@ -174,5 +180,61 @@ describe("diffPermissions", () => {
       added: ["permissions.tools:x"],
       removed: [],
     });
+  });
+});
+
+describe("permissionKeys and catalog indexes", () => {
+  it("every key category, policy hooks included, is a valid catalog permission key (N-1)", () => {
+    const set = buildPermissionSet({
+      provides: ["channel@1"],
+      requires: ["model-provider@2"],
+      optional: ["directory@1"],
+      config: {
+        deployment: [{ path: "apiKey", secret: true }],
+        org: [{ path: "team", secret: false }],
+      },
+      tables: ["todos"],
+      permissions: {
+        secrets: true,
+        storage: true,
+        http: [
+          { method: "GET", path: "/x" },
+          { method: "POST", path: "/events", public: true },
+        ],
+        tools: ["write"],
+        hooks: ["model.request", "tool.preExecute", "usage.report"],
+        policyHooks: ["model.request", "tool.preExecute"],
+        network: ["api.example.com"],
+        ui: { views: ["tasks"], embeds: ["board"] },
+      },
+      warningsDigest: "abc123",
+    });
+    const keys = permissionKeys(set);
+    expect(keys).toContain("permissions.hooks.policy:model.request");
+    expect(keys).toContain("permissions.hooks.policy:tool.preExecute");
+    const r = parseCatalogIndex({
+      schemaVersion: 1,
+      name: "Enterprise",
+      updatedAt: "2026-10-24T00:00:00Z",
+      entries: [
+        {
+          kind: "plugin",
+          name: "guard",
+          npm: "@acme/plugin-guard",
+          publisher: "Acme",
+          summary: { en: "Guard" },
+          permissions: { keys, sensitive: keys.filter((k) => k.startsWith("permissions.hooks")) },
+          versions: [
+            {
+              version: "1.0.0",
+              integrity: `sha512-${"A".repeat(86)}==`,
+              minKernel: "0.1.0",
+              minSdk: "0.1.0",
+            },
+          ],
+        },
+      ],
+    });
+    expect("errors" in r ? r.errors : []).toEqual([]);
   });
 });

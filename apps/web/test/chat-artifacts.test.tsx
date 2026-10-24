@@ -269,7 +269,7 @@ describe("上下文标签：沙箱状态", () => {
     stubApi({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
-      [`GET ${ORG}/apps`]: () => json(200, { apps: [] }),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
       [`GET ${BASE}/sandbox`]: () => json(200, { status, lastUsedAt }),
     });
     renderPage(<ChatPage />, { locale: "zh" });
@@ -289,7 +289,7 @@ describe("上下文标签：沙箱状态", () => {
     const calls = stubApi({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
-      [`GET ${ORG}/apps`]: () => json(200, { apps: [] }),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
       [`GET ${BASE}/sandbox`]: () => status,
     });
     renderPage(<ChatPage />, { locale: "en" });
@@ -307,7 +307,7 @@ describe("上下文标签：沙箱状态", () => {
     stubApi({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
-      [`GET ${ORG}/apps`]: () => json(200, { apps: [] }),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
       [`GET ${BASE}/sandbox`]: () => json(500, { error: { code: "internal", message: "x" } }),
     });
     renderPage(<ChatPage />, { locale: "en" });

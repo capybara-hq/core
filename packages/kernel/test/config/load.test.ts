@@ -45,6 +45,22 @@ describe("loadConfig", () => {
     expect(config.roles).toEqual(["api", "worker", "gateway"]);
   });
 
+  it("roles accept a JSON array or a comma-separated string", async () => {
+    expect((await loadConfig(baseEnv({ CAPYBARA_ROLES: '["api"]' }))).roles).toEqual(["api"]);
+    expect((await loadConfig(baseEnv({ CAPYBARA_ROLES: "api" }))).roles).toEqual(["api"]);
+    expect((await loadConfig(baseEnv({ CAPYBARA_ROLES: " api , worker ," }))).roles).toEqual([
+      "api",
+      "worker",
+    ]);
+    const file = writeYaml("roles: gateway,worker\n");
+    expect((await loadConfig(baseEnv({ CAPYBARA_CONFIG_FILE: file }))).roles).toEqual([
+      "gateway",
+      "worker",
+    ]);
+    await expect(loadConfig(baseEnv({ CAPYBARA_ROLES: "api,db" }))).rejects.toThrow(/roles/);
+    await expect(loadConfig(baseEnv({ CAPYBARA_ROLES: "," }))).rejects.toThrow(/roles/);
+  });
+
   it("nested snake to camel", async () => {
     const config = await loadConfig(baseEnv({ CAPYBARA_DB__POOL_MAX: "20" }));
     expect(config.db.poolMax).toBe(20);
@@ -192,5 +208,93 @@ describe("http.trustProxy", () => {
     for (const v of ["0", "1.5", "[]", '"10.0.0.0/8"']) {
       expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v })).toThrow(ConfigError);
     }
+  });
+
+  it("accepts a comma-separated string of addresses / CIDRs", () => {
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: "172.18.0.1" })).toEqual(["172.18.0.1"]);
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: " 10.0.0.0/8 , fd00::/8,loopback," })).toEqual([
+      "10.0.0.0/8",
+      "fd00::/8",
+      "loopback",
+    ]);
+    expect(
+      resolveConfig({ ...raw, http: { trustProxy: "192.168.0.0/16,10.1.2.3" } }, {}).http
+        .trustProxy,
+    ).toEqual(["192.168.0.0/16", "10.1.2.3"]);
+  });
+
+  it("accepts contiguous dotted netmasks and refuses /0 in every spelling", () => {
+    expect(
+      trust({ CAPYBARA_HTTP__TRUST_PROXY: "10.0.0.0/255.0.0.0,192.168.1.0/255.255.255.0" }),
+    ).toEqual(["10.0.0.0/255.0.0.0", "192.168.1.0/255.255.255.0"]);
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:10.0.0.0/104" })).toEqual([
+      "::ffff:10.0.0.0/104",
+    ]);
+    for (const v of [
+      "0.0.0.0/0.0.0.0",
+      "10.0.0.0/255.0.255.0",
+      "::ffff:0.0.0.0/96",
+      "::ffff:10.0.0.1/90",
+      "fd00::/255.0.0.0",
+    ]) {
+      expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v }), v).toThrow(ConfigError);
+    }
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:0.0.0.0/96" })).toThrow(
+      /trusts every address/,
+    );
+    // A mapped prefix below /96 has no IPv4 equivalent: out of range, not "every address".
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:10.0.0.0/90" })).toThrow(
+      /out-of-range prefix/,
+    );
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:0.0.0.0/0" })).toThrow(
+      /trusts every address/,
+    );
+    // proxy-addr unwraps a mapped address in any spelling, so detection must parse, not match text.
+    for (const v of [
+      "::ffff:a00:0/96",
+      "0:0:0:0:0:ffff:10.0.0.0/96",
+      "0:0:0:0:0:FFFF:0A00:0000/96",
+    ]) {
+      expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v }), v).toThrow(/trusts every address/);
+    }
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:a00:0/90" })).toThrow(
+      /out-of-range prefix/,
+    );
+    expect(trust({ CAPYBARA_HTTP__TRUST_PROXY: "::ffff:a00:0/104" })).toEqual(["::ffff:a00:0/104"]);
+  });
+
+  it("refuses malformed entries and /0 prefixes", () => {
+    for (const v of ["proxy.local", "10.0.0.0/33", "10.0.0.0/8/1", ",", "0.0.0.0/0", "::/0"]) {
+      expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: v }), v).toThrow(ConfigError);
+    }
+    expect(() => trust({ CAPYBARA_HTTP__TRUST_PROXY: '["10.0.0.1","0.0.0.0/0"]' })).toThrow(
+      /trusts every address/,
+    );
+  });
+});
+
+describe("auth.setupToken", () => {
+  const raw = {
+    db: { url: "postgres://h/db" },
+    redis: { url: "redis://h" },
+    masterKey: MASTER_KEY,
+  };
+
+  it("treats an empty value as unset", () => {
+    expect(resolveConfig(raw, { CAPYBARA_AUTH__SETUP_TOKEN: "" }).auth.setupToken).toBeUndefined();
+    expect(resolveConfig(raw, {}).auth.setupToken).toBeUndefined();
+    expect(resolveConfig(raw, { CAPYBARA_AUTH__SETUP_TOKEN: "abc" }).auth.setupToken).toBe("abc");
+  });
+
+  it("keeps an all-digit or true / false token a string", () => {
+    const token = (v: string) =>
+      resolveConfig(raw, { CAPYBARA_AUTH__SETUP_TOKEN: v }).auth.setupToken;
+    expect(token("12345678")).toBe("12345678");
+    expect(token("true")).toBe("true");
+    expect(token("false")).toBe("false");
+    // The same from a config file that wrote it unquoted.
+    expect(resolveConfig({ ...raw, auth: { setupToken: 12345678 } }, {}).auth.setupToken).toBe(
+      "12345678",
+    );
   });
 });

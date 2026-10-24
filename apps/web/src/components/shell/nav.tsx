@@ -7,8 +7,11 @@ import { useRouter } from "../../i18n/navigation";
 import { listInbox } from "../../lib/inbox";
 import { listUiContributions, type UiContributionItem, uiLocale } from "../../lib/ui";
 
-/** 导航项的可见范围：`all` 所有人，`member` 成员以上（访客看不到），`admin` 管理员以上。 */
-type NavAudience = "all" | "member" | "admin";
+/**
+ * 导航项的可见范围：`all` 所有人，`member` 成员以上（访客看不到），`admin` 管理员以上；
+ * `enterprise` 只给企业管理员（`me.account.isEnterpriseAdmin`，与组织角色无关）。
+ */
+type NavAudience = "all" | "member" | "admin" | "enterprise";
 /** 当前用户在当前组织里能看到哪一档导航项。 */
 export type NavLevel = "guest" | "member" | "admin";
 
@@ -21,8 +24,14 @@ const NAV: readonly { id: string; key: string; href: string; audience: NavAudien
   { id: "agents", key: "agents", href: "/agents", audience: "all" },
   { id: "skills", key: "skills", href: "/skills", audience: "member" },
   { id: "inbox", key: "inbox", href: "/inbox", audience: "all" },
-  { id: "apps", key: "apps", href: "/apps", audience: "all" },
+  { id: "connectors", key: "connectors", href: "/connectors", audience: "all" },
+  // 企业目录（组织视角）：成员浏览与申请，组织管理员安装
+  { id: "directory", key: "directory", href: "/directory", audience: "member" },
   { id: "channels", key: "channels", href: "/channels", audience: "admin" },
+  // 评测：评测集与运行（评测页有「运行记录」入口）；agent 负责人从 agent 详情页进入运行记录
+  { id: "evals", key: "evals", href: "/evals", audience: "admin" },
+  // 管理后台（部署设置与全部组织 / 账号）：企业管理员
+  { id: "admin", key: "admin", href: "/admin", audience: "enterprise" },
 ];
 
 const VISIBLE: Record<NavLevel, readonly NavAudience[]> = {
@@ -44,25 +53,31 @@ export function navLevelOf(me: {
 /** 收件箱待处理数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
 const PENDING_POLL_MS = 30_000;
 
-/** 归在「应用」下的设置页，与设置页的二级导航一致。 */
-const APP_SETTINGS = [
+/** 归在「连接器」下的设置页，与设置页的二级导航一致。 */
+const CONNECTOR_SETTINGS = [
   "/settings/connections",
   "/settings/grants",
   "/settings/identities",
   "/settings/organization",
   "/settings/plugins",
+  "/settings/apps",
+  "/settings/models",
 ];
 
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);
 
-/** 当前路由属于哪个一级导航项（对话页归在 Agents 下，个人连接 / 授权页归在应用下）。 */
+/** 当前路由属于哪个一级导航项（对话页归在 Agents 下，个人连接 / 授权页归在连接器下，运行记录归在评测下）。 */
 export function activeNavOf(pathname: string): string {
   if (under(pathname, "/agents") || under(pathname, "/chat")) return "agents";
   if (under(pathname, "/skills")) return "skills";
   if (under(pathname, "/inbox")) return "inbox";
   if (under(pathname, "/channels")) return "channels";
-  if (under(pathname, "/apps") || APP_SETTINGS.some((p) => under(pathname, p))) return "apps";
+  if (under(pathname, "/evals") || under(pathname, "/trajectories")) return "evals";
+  if (under(pathname, "/admin")) return "admin";
+  if (under(pathname, "/directory")) return "directory";
+  if (under(pathname, "/connectors") || CONNECTOR_SETTINGS.some((p) => under(pathname, p)))
+    return "connectors";
   return pathname === "/" ? "overview" : "";
 }
 
@@ -153,14 +168,21 @@ export function routeLabel(pathname: string): string {
   return p === "" ? "~" : p;
 }
 
+/**
+ * 顶栏一级导航与命令面板。`enterpriseAdmin`：当前账号是企业管理员时多出「管理」（只是界面上的隐藏，
+ * `/api/v1/admin/*` 由内核判定）。
+ */
 export function useNav(
   pending = 0,
   level: NavLevel = "guest",
   pendingMore = false,
+  enterpriseAdmin = false,
 ): Pick<TopBarProps, "nav" | "commands"> {
   const t = useTranslations();
   const router = useRouter();
-  const nav = NAV.filter((n) => VISIBLE[level].includes(n.audience)).map((n) => ({
+  const visible = (a: NavAudience) =>
+    a === "enterprise" ? enterpriseAdmin : VISIBLE[level].includes(a);
+  const nav = NAV.filter((n) => visible(n.audience)).map((n) => ({
     id: n.id,
     label: t(`nav.${n.key}`),
     href: n.href,
@@ -181,7 +203,11 @@ export function useNav(
       label: t("nav.actions"),
       items: [
         { id: "new-agent", label: t("agents.new"), onSelect: () => router.push("/agents/new") },
-        { id: "new-app", label: t("apps.new"), onSelect: () => router.push("/apps/install") },
+        {
+          id: "new-app",
+          label: t("connectors.new"),
+          onSelect: () => router.push("/connectors/install"),
+        },
       ],
     },
   ];

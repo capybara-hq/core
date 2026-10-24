@@ -1,37 +1,15 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
+import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
   readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
 ) as typeof import("../messages/zh.json");
 
-const LOGIN = "admin";
-const PASSWORD = "correct-horse-battery";
 /** 内核要求非安全方法带的 CSRF 头。 */
 const CSRF = { "X-Capybara-Csrf": "1" };
-
-/** 登录（若尚未初始化则走初始化向导），并选中组织 Acme。 */
-async function signIn(page: Page) {
-  await page.goto("/zh");
-  const setupButton = page.getByRole("button", { name: zh.setup.submit });
-  const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
-  await expect(setupButton.or(loginButton)).toBeVisible();
-  if (await setupButton.isVisible()) {
-    await page.getByLabel(zh.setup.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.setup.passwordLabel).fill(PASSWORD);
-    await page.getByLabel(zh.setup.displayNameLabel).fill("Admin");
-    await page.getByLabel(zh.setup.orgNameLabel).fill("Acme");
-    await page.getByRole("button", { name: zh.setup.submit }).click();
-  } else {
-    await page.getByLabel(zh.login.loginLabel).fill(LOGIN);
-    await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
-    await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
-  }
-  await expect(page).toHaveURL(/\/zh$/);
-  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: "Acme" });
-}
 
 /** 登录后经同源代理建一个 fake-1 的 agent 与会话，打开对话页，返回输入框所在的表单。 */
 async function openChat(page: Page, agentName: string) {

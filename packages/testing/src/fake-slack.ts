@@ -1,4 +1,10 @@
-import { createSign, generateKeyPairSync, type KeyObject, randomUUID } from "node:crypto";
+import {
+  createHmac,
+  createSign,
+  generateKeyPairSync,
+  type KeyObject,
+  randomUUID,
+} from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -13,6 +19,12 @@ import { type WebSocket, WebSocketServer } from "ws";
  *   （429 带 `Retry-After`）。WebClient 用 `slackApiUrl: server.apiUrl` 指过来。
  * - **Socket Mode**：`apps.connections.open` 返回 `ws://…/link?ticket=<n>`；连上后先发 `hello`，测试用
  *   {@link FakeSlackServer.push}（或 `pushEvent` / `pushInteractive`）推信封，记下客户端回的确认（`acks`）。
+ *   Envelopes are routed per app (`appToken`): a push goes to the most recently opened socket of that
+ *   app, and is queued while the app has no open socket (delivered, in push order, when one opens).
+ *   With `redeliverUnacked`, an envelope delivered to a socket that closes before acking it is
+ *   retried on the app's next socket with `retry_attempt` / `retry_reason`, like Slack does.
+ * - **Several apps**: {@link FakeSlackOptions.apps} adds Slack apps (one per channel connection) to the
+ *   same fake; each has its own app / bot token and bot user, and `auth.test` answers per bot token.
  *
  * - **Sign in with Slack（OpenID Connect）**：`GET /openid/connect/authorize`（测试在授权地址后加 `&as=<user id>`
  *   表示以该用户登录，302 回 `redirect_uri?code=…&state=…`；`client_id` 不符或用户不存在 → `error=access_denied`）、
@@ -82,6 +94,23 @@ export interface FakeSlackFailure {
   retryAfter?: number;
 }
 
+/** One more Slack app on the same fake (another channel connection with its own tokens). */
+export interface FakeSlackApp {
+  appToken: string;
+  botToken: string;
+  /** Defaults to the server's `teamId`. */
+  teamId?: string;
+  /** Defaults to the server's `botUserId`. */
+  botUserId?: string;
+  /** Defaults to the server's `botId`. */
+  botId?: string;
+}
+
+/** Which app an envelope is for (default: the server's own `appToken`). */
+export interface FakeSlackPushTarget {
+  appToken?: string;
+}
+
 export interface FakeSlackOptions {
   teamId?: string;
   botUserId?: string;
@@ -92,6 +121,17 @@ export interface FakeSlackOptions {
   /** Sign in with Slack 的 OAuth 客户端。 */
   clientId?: string;
   clientSecret?: string;
+  /** Extra Slack apps served alongside the default one (whose tokens are `appToken` / `botToken`). */
+  apps?: FakeSlackApp[];
+  /**
+   * Redeliver unacked envelopes (after Slack Socket Mode: an envelope not acked is retried). The fake
+   * redelivers on socket close only: when the socket an envelope went to closes before the client
+   * acked it, the envelope goes again to the app's next open socket, with `retry_attempt` (1, 2, …)
+   * and `retry_reason: "timeout"`. Real Slack also retries on an ack timeout while the socket stays
+   * open; the fake does not. Default off, so tests that leave an envelope unacked on purpose don't
+   * see it again in a later connection.
+   */
+  redeliverUnacked?: boolean;
 }
 
 export interface FakeSlackServer {
@@ -111,28 +151,46 @@ export interface FakeSlackServer {
   calls: FakeSlackCall[];
   acks: FakeSlackAck[];
   users: Map<string, FakeSlackUser>;
-  /** `apps.connections.open` 成功的次数。 */
-  connectionsOpened(): number;
-  /** 当前打开的 WebSocket 数。 */
-  openSockets(): number;
-  /** 同时打开的 WebSocket 数峰值。 */
-  maxConcurrentSockets(): number;
+  /** `apps.connections.open` 成功的次数（given an `appToken`: for that app only）。 */
+  connectionsOpened(appToken?: string): number;
+  /** 当前打开的 WebSocket 数（given an `appToken`: of that app only）。 */
+  openSockets(appToken?: string): number;
+  /** 同时打开的 WebSocket 数峰值（given an `appToken`: of that app only）。 */
+  maxConcurrentSockets(appToken?: string): number;
   /**
-   * 当前打开的长连接各自的对端（客户端）TCP 端口，按打开顺序。双副本测试据此（经操作系统查端口属于哪个进程）
-   * 找出持有长连接的副本——真实插件不带 `x-pid` 之类的标记。
+   * 当前打开的长连接各自的对端（客户端）TCP 端口，按打开顺序（given an `appToken`: of that app only）。
+   * 双副本测试据此（经操作系统查端口属于哪个进程）找出持有长连接的副本——真实插件不带 `x-pid` 之类的标记。
    */
-  socketPeerPorts(): number[];
+  socketPeerPorts(appToken?: string): number[];
+  /**
+   * Envelopes pushed but not acked yet: queued (no open socket) or delivered and awaiting the ack
+   * (given an `appToken`: of that app only). Without `redeliverUnacked`, an envelope whose socket
+   * closed unacked is dropped from this count.
+   */
+  pendingEnvelopes(appToken?: string): number;
   failNext(method: string, failure: FakeSlackFailure, count?: number): void;
   /** 之后该方法的每次调用先等 `ms` 毫秒再响应（0 取消）。 */
   delay(method: string, ms: number): void;
   /** 接下来 `count` 条 Socket Mode 连接在发出 hello 后立即被关闭（不发 disconnect 消息）。 */
   dropNextConnections(count: number): void;
-  /** 推一个原始信封给最近打开的一条连接，返回 envelope_id；没有打开的连接时抛错。 */
-  push(envelope: { type: string; payload: unknown; envelope_id?: string }): string;
-  /** 推一个 Events API 事件（`events_api` 信封，外层 `event_callback` 带 team_id / event_id）。 */
-  pushEvent(event: Record<string, unknown>, opts?: { eventId?: string; teamId?: string }): string;
+  /**
+   * 推一个原始信封给该 app 最近打开的一条连接，返回 envelope_id；the app has no open socket → queued
+   * and delivered when one opens. Throws for an unknown `appToken`.
+   */
+  push(
+    envelope: { type: string; payload: unknown; envelope_id?: string },
+    target?: FakeSlackPushTarget,
+  ): string;
+  /**
+   * 推一个 Events API 事件（`events_api` 信封，外层 `event_callback` 带 team_id / event_id；team_id
+   * defaults to the target app's team）。
+   */
+  pushEvent(
+    event: Record<string, unknown>,
+    opts?: { eventId?: string; teamId?: string } & FakeSlackPushTarget,
+  ): string;
   /** 推一个交互负载（`interactive` 信封，如 block_actions）。 */
-  pushInteractive(payload: Record<string, unknown>): string;
+  pushInteractive(payload: Record<string, unknown>, target?: FakeSlackPushTarget): string;
   /** 等到该信封被确认（超时抛错）。 */
   waitForAck(envelopeId: string, timeoutMs?: number): Promise<FakeSlackAck>;
   /** 是否已确认该信封。 */
@@ -209,6 +267,31 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
   const failures: { method: string; failure: FakeSlackFailure; left: number }[] = [];
   const sockets: WebSocket[] = [];
   const peerPorts = new WeakMap<WebSocket, number>();
+  /** Every app by app token; the default app first. */
+  const apps = new Map<string, Required<FakeSlackApp>>();
+  apps.set(appToken, { appToken, botToken, teamId, botUserId, botId });
+  for (const a of opts.apps ?? []) {
+    if (apps.has(a.appToken)) throw new Error(`fake slack: duplicate app token ${a.appToken}`);
+    apps.set(a.appToken, {
+      appToken: a.appToken,
+      botToken: a.botToken,
+      teamId: a.teamId ?? teamId,
+      botUserId: a.botUserId ?? botUserId,
+      botId: a.botId ?? botId,
+    });
+  }
+  const appOfBot = (token: string) => [...apps.values()].find((a) => a.botToken === token);
+  const redeliver = opts.redeliverUnacked ?? false;
+  /** Which app each socket belongs to; the ticket from `apps.connections.open` names the app. */
+  const socketApp = new WeakMap<WebSocket, string>();
+  const ticketApp = new Map<number, string>();
+  const openedBy = new Map<string, number>();
+  const peakBy = new Map<string, number>();
+  /** Pushed, not yet acked envelopes in push order; `ws` is set while delivered to an open socket. */
+  const pending = new Map<
+    string,
+    { app: string; envelope: Record<string, unknown>; attempt: number; ws?: WebSocket | undefined }
+  >();
   const ackWaiters = new Map<string, ((a: FakeSlackAck) => void)[]>();
   const delays = new Map<string, number>();
   let dropLeft = 0;
@@ -252,8 +335,8 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
       if (!u) return reply(res, { ok: false, error: "invalid_auth" });
       return reply(res, { ok: true, ...profileClaims(u) });
     }
-    const expected = method === "apps.connections.open" ? appToken : botToken;
-    if (token !== expected) return reply(res, { ok: false, error: "invalid_auth" });
+    const app = method === "apps.connections.open" ? apps.get(token) : appOfBot(token);
+    if (!app) return reply(res, { ok: false, error: "invalid_auth" });
 
     switch (method) {
       case "auth.test":
@@ -262,12 +345,14 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
           url: "https://fake.slack.com/",
           team: "Fake Team",
           user: botName,
-          team_id: teamId,
-          user_id: botUserId,
-          bot_id: botId,
+          team_id: app.teamId,
+          user_id: app.botUserId,
+          bot_id: app.botId,
         });
       case "apps.connections.open":
         opened++;
+        ticketApp.set(opened, app.appToken);
+        openedBy.set(app.appToken, (openedBy.get(app.appToken) ?? 0) + 1);
         return reply(res, {
           ok: true,
           url: `${base.replace(/^http/, "ws")}/link?ticket=${opened}`,
@@ -479,13 +564,27 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
       socket.destroy();
       return;
     }
+    const app = ticketApp.get(Number(u.searchParams.get("ticket"))) ?? appToken;
     wss.handleUpgrade(req, socket, head, (ws) => {
       sockets.push(ws);
+      socketApp.set(ws, app);
       if (req.socket.remotePort !== undefined) peerPorts.set(ws, req.socket.remotePort);
       peak = Math.max(peak, sockets.length);
+      peakBy.set(app, Math.max(peakBy.get(app) ?? 0, socketsOf(app).length));
       ws.on("close", () => {
         const i = sockets.indexOf(ws);
         if (i >= 0) sockets.splice(i, 1);
+        // Envelopes this socket never acked: retried on the app's next socket, or dropped
+        for (const [id, p] of pending) {
+          if (p.ws !== ws) continue;
+          if (!redeliver) {
+            pending.delete(id);
+            continue;
+          }
+          p.ws = undefined;
+          p.attempt++;
+        }
+        flush(app);
       });
       ws.on("message", (data) => {
         let msg: { envelope_id?: unknown; payload?: unknown };
@@ -501,6 +600,7 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
           at: Date.now(),
         };
         acks.push(a);
+        pending.delete(a.envelopeId);
         for (const w of ackWaiters.get(a.envelopeId) ?? []) w(a);
         ackWaiters.delete(a.envelopeId);
       });
@@ -515,18 +615,51 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
       if (dropLeft > 0) {
         dropLeft--;
         ws.close(1011);
+        return;
       }
+      flush(app);
     });
   });
 
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-  const push: FakeSlackServer["push"] = (envelope) => {
-    const ws = sockets.at(-1);
-    if (!ws) throw new Error("fake slack: no open Socket Mode connection");
+  function socketsOf(app: string): WebSocket[] {
+    return sockets.filter((ws) => socketApp.get(ws) === app);
+  }
+
+  /** Delivers the app's queued envelopes (push order) to its most recently opened open socket. */
+  function flush(app: string) {
+    const ws = socketsOf(app)
+      .filter((s) => s.readyState === s.OPEN)
+      .at(-1);
+    if (!ws) return;
+    for (const [envelope_id, p] of pending) {
+      if (p.app !== app || p.ws !== undefined) continue;
+      p.ws = ws;
+      ws.send(
+        JSON.stringify({
+          ...p.envelope,
+          envelope_id,
+          accepts_response_payload: false,
+          ...(p.attempt > 0 && { retry_attempt: p.attempt, retry_reason: "timeout" }),
+        }),
+      );
+    }
+  }
+
+  const appTokenOf = (target?: FakeSlackPushTarget) => {
+    const app = target?.appToken ?? appToken;
+    if (!apps.has(app)) throw new Error(`fake slack: unknown app token ${app}`);
+    return app;
+  };
+
+  const push: FakeSlackServer["push"] = (envelope, target) => {
+    const app = appTokenOf(target);
     const envelope_id = envelope.envelope_id ?? `env-${++envSeq}`;
-    ws.send(JSON.stringify({ ...envelope, envelope_id, accepts_response_payload: false }));
+    const { envelope_id: _, ...rest } = envelope;
+    pending.set(envelope_id, { app, envelope: rest, attempt: 0 });
+    flush(app);
     return envelope_id;
   };
 
@@ -545,11 +678,13 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
     calls,
     acks,
     users,
-    connectionsOpened: () => opened,
-    openSockets: () => sockets.length,
-    maxConcurrentSockets: () => peak,
-    socketPeerPorts: () =>
-      sockets.flatMap((ws) => {
+    connectionsOpened: (app) => (app === undefined ? opened : (openedBy.get(app) ?? 0)),
+    openSockets: (app) => (app === undefined ? sockets : socketsOf(app)).length,
+    maxConcurrentSockets: (app) => (app === undefined ? peak : (peakBy.get(app) ?? 0)),
+    pendingEnvelopes: (app) =>
+      [...pending.values()].filter((p) => app === undefined || p.app === app).length,
+    socketPeerPorts: (app) =>
+      (app === undefined ? sockets : socketsOf(app)).flatMap((ws) => {
         const port = peerPorts.get(ws);
         return port === undefined ? [] : [port];
       }),
@@ -564,21 +699,20 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
     },
     push,
     pushEvent(event, o = {}) {
-      return push({
-        type: "events_api",
-        payload: {
-          token: "verification-token",
-          team_id: o.teamId ?? teamId,
-          api_app_id: "A0001",
-          type: "event_callback",
-          event_id: o.eventId ?? `Ev${++envSeq}`,
-          event_time: Math.floor(Date.now() / 1000),
-          event,
+      const app = appTokenOf(o);
+      return push(
+        {
+          type: "events_api",
+          payload: slackEventCallback(event, {
+            teamId: o.teamId ?? apps.get(app)?.teamId ?? teamId,
+            eventId: o.eventId ?? `Ev${++envSeq}`,
+          }),
         },
-      });
+        { appToken: app },
+      );
     },
-    pushInteractive(payload) {
-      return push({ type: "interactive", payload });
+    pushInteractive(payload, target) {
+      return push({ type: "interactive", payload }, { appToken: appTokenOf(target) });
     },
     waitForAck(envelopeId, timeoutMs = 5000) {
       const done = acks.find((a) => a.envelopeId === envelopeId);
@@ -733,3 +867,42 @@ export function findSlackButton(
   }
   return undefined;
 }
+
+/**
+ * An Events API `event_callback` body: what Slack posts to a webhook Request URL, and the payload
+ * of a Socket Mode `events_api` envelope (the same object, so both inbound modes see one shape).
+ */
+export function slackEventCallback(
+  event: Record<string, unknown>,
+  opts: { teamId?: string; eventId?: string } = {},
+): Record<string, unknown> {
+  return {
+    token: "verification-token",
+    team_id: opts.teamId ?? "T0001",
+    api_app_id: "A0001",
+    type: "event_callback",
+    event_id: opts.eventId ?? `Ev${Math.random().toString(36).slice(2, 10)}`,
+    event_time: Math.floor(Date.now() / 1000),
+    event,
+  };
+}
+
+/**
+ * Signs a Slack webhook request the way Slack does
+ * (https://docs.slack.dev/authentication/verifying-requests-from-slack/): returns the
+ * `x-slack-request-timestamp` and `x-slack-signature` headers, where the signature is
+ * `v0=` + hex HMAC-SHA256(signingSecret, `v0:<ts>:<raw body>`). `ts` is in seconds.
+ */
+export function signSlackWebhook(
+  body: string | Uint8Array,
+  signingSecret: string,
+  ts: number,
+): Record<string, string> {
+  const raw = typeof body === "string" ? Buffer.from(body) : Buffer.from(body);
+  const mac = createHmac("sha256", signingSecret).update(`v0:${ts}:`).update(raw).digest("hex");
+  return { "x-slack-request-timestamp": String(ts), "x-slack-signature": `v0=${mac}` };
+}
+
+/** The form body Slack posts for an interactive payload (`payload=<url-encoded JSON>`). */
+export const slackInteractiveForm = (payload: Record<string, unknown>): string =>
+  new URLSearchParams({ payload: JSON.stringify(payload) }).toString();

@@ -40,19 +40,20 @@ export interface RunControl {
   requestAbort(runId: string, byAccountId: string): Promise<void>;
 }
 
-/** 消息附件引用（应用 + 资源 URI）。 */
+/** 消息附件引用（连接器 + 资源 URI）。 */
 export interface AttachmentRef {
-  appId: string;
+  connectorId: string;
   uri: string;
 }
 
-/** 附件解析：以发送者的凭据读取资源，返回追加在消息后的文本块与元数据（见 tools/app-content.ts）。 */
+/** 附件解析：以发送者的凭据读取资源，返回追加在消息后的文本块与元数据（见 tools/connector-content.ts）。 */
 export type ResolveAttachments = (
   orgId: string,
   accountId: string,
   refs: AttachmentRef[],
 ) => Promise<{
   blocks: { type: "text"; text: string }[];
+  /** 写进 user_message 的附件元数据：事件 payload 字段名仍为 `appId` / `appName`（C27）。 */
   attachments: { appId: string; appName: string; uri: string; name: string }[];
 }>;
 
@@ -158,6 +159,8 @@ export class ConversationsService {
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .where("account_id", "=", viewerAccountId)
+      // 评测回放的隐藏对话（kind = 'eval'）不经会话接口访问（只读轨迹查看器可见）
+      .where("kind", "=", "chat")
       .executeTakeFirst();
     if (!row) throw notFound();
     try {
@@ -185,6 +188,7 @@ export class ConversationsService {
       .where("conversations.id", "=", conversationId)
       .where("conversations.org_id", "=", orgId)
       .where("conversations.account_id", "=", viewerAccountId)
+      .where("conversations.kind", "=", "chat")
       .where((eb) =>
         eb.and([
           eb.exists(
@@ -222,6 +226,8 @@ export class ConversationsService {
       .select(COLUMNS)
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
+      // 评测回放的隐藏对话（kind = 'eval'）不在「我的对话」里
+      .where("kind", "=", "chat")
       .where((eb) =>
         eb.exists(
           eb

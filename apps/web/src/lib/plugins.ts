@@ -1,11 +1,34 @@
 import { apiFetch } from "./api";
 import type { JsonSchema } from "./json-schema";
 
-/** 权限清单的一组（内核 `PermissionGroup`）：`sensitive` 为需要特别留意的类别。 */
+/**
+ * 敏感原因码（内核 `SensitiveReason`）：界面按码翻译（`plugins.review.reason.<码>`），敏感判定只在内核。
+ */
+export type SensitiveReason =
+  | "secrets"
+  | "public_routes"
+  | "tools"
+  | "hooks"
+  | "ui_embed"
+  | "channel"
+  | "directory"
+  | "identity_source"
+  | "sandbox"
+  | "object_store";
+
+/** 权限清单的一项（内核 `PermissionItem`）：逐项的敏感标记与原因码。 */
+export interface PermissionItem {
+  value: string;
+  sensitive: boolean;
+  reason?: SensitiveReason;
+}
+
+/** 权限清单的一组（内核 `PermissionGroup`）：`sensitive` 为需要特别留意的类别，`entries` 与 `items` 一一对应。 */
 export interface PermissionGroup {
   category: string;
   sensitive: boolean;
   items: string[];
+  entries: PermissionItem[];
 }
 
 /** 组织视角下的一个插件（内核 `OrgPluginView`）。 */
@@ -18,6 +41,8 @@ export interface OrgPlugin {
   secrets: { path: string; set: boolean }[];
   permissions: PermissionGroup[];
   orgConfigSchema: JsonSchema | null;
+  /** false：此插件在部署上当前不可用（如被停用；组织页显示「不可用」，启用设置保留、不能修改）。 */
+  available?: boolean;
 }
 
 export interface PutOrgPluginInput {

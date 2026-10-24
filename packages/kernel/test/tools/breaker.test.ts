@@ -16,7 +16,7 @@ const base = KernelConfigSchema.parse({
 const config = (): KernelConfig => ({ ...base, tools: { ...base.tools, ...tools } });
 
 beforeAll(async () => {
-  rd = await startTestRedis();
+  rd = await startTestRedis({ shared: true });
   redis = new Redis(rd.url);
 }, 120_000);
 afterAll(async () => {
@@ -29,7 +29,7 @@ beforeEach(async () => {
 });
 
 describe("Breaker", () => {
-  it("键名为 capk:breaker:<orgId>:<appId>", () => {
+  it("键名为 capk:breaker:<orgId>:<connectorId>", () => {
     expect(breakerKey("o1", "a1")).toBe("capk:breaker:o1:a1");
   });
 
@@ -47,7 +47,7 @@ describe("Breaker", () => {
     expect(open).toMatchObject({ open: true, failures: 5 });
     expect(open.open && open.retryAfterSeconds).toBe(1);
     expect(await redis.pttl(breakerKey("o1", "a1"))).toBeGreaterThan(0);
-    // 另一个应用不受影响
+    // 另一个连接器不受影响
     expect((await b.check("o1", "a2")).open).toBe(false);
     await sleep(1100);
     expect((await b.check("o1", "a1")).open).toBe(false);

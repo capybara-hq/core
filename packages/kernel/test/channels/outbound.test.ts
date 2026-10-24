@@ -24,6 +24,7 @@ import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
+  cardRecorded,
   createOrg,
   eventsOf,
   PW,
@@ -463,13 +464,16 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     expect(card.inputPreview).not.toContain("app-secret-1234567");
     expect(card.inputPreview).toContain('"max_tokens":42');
     expect(card.inputPreview.length).toBeLessThanOrEqual(500);
-    // 卡片消息 id 与 last_seq 在发送之后的同一事务里写入
+    // The card is recorded as pending before the send; its message id is filled in, and the row
+    // marked sent, in the transaction that advances last_seq after the send
     const rows = await waitFor(
       async () => {
-        const r = await sql<{ message_id: string }>`SELECT message_id
+        const r = await sql<{ message_id: string; status: string }>`SELECT message_id, status
           FROM capybara.channel_card_messages WHERE conversation_id = ${conv}
             AND card_kind = 'approval' AND card_id = ${approvalId}`.execute(raw);
-        return r.rows.length > 0 ? r.rows : null;
+        return r.rows[0]?.status === "sent"
+          ? r.rows.map((x) => ({ message_id: x.message_id }))
+          : null;
       },
       10_000,
       "card message row",
@@ -534,6 +538,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       10_000,
       "second approval card",
     );
+    await cardRecorded(db, cardMsg);
     const updatesBefore = updatesOf(cardMsg.messageId).length;
 
     // 组织里的另一个成员（不是审批人）点了批准
@@ -650,6 +655,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       10_000,
       "question card",
     );
+    await cardRecorded(db, cardMsg);
     const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "question" }>;
     expect(card).toMatchObject({
       kind: "question",
@@ -704,6 +710,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     );
     const approvalId = (cardOf(cardMsg) as { id: string }).id;
     expect(cardMsg.target).toEqual({ chatId: chat, chatType: "group", threadId: "an1" });
+    await cardRecorded(db, cardMsg);
     // 另一个匿名访客（同一个共享访客账号）在别的话题里点了这张卡片
     const other: ChannelTarget = { chatId: chat, chatType: "group", threadId: "an-b" };
     const n = im.sent.length;
@@ -741,6 +748,120 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
   });
 });
 
+describe("T5a: cards are recorded before they are sent", { timeout: 40_000 }, () => {
+  const cardRow = async (approvalId: string) =>
+    (
+      await sql<{ message_id: string | null; status: string }>`SELECT message_id, status
+        FROM capybara.channel_card_messages
+        WHERE connection_id = ${connId} AND card_kind = 'approval' AND card_id = ${approvalId}`.execute(
+        raw,
+      )
+    ).rows[0];
+
+  it("a click right after the card appears is accepted while the send response is still pending; the update waits for message_id", async () => {
+    const chat = "dm-u-owner";
+    const before = sentTo("cli_out", chat).length;
+    // The platform shows the card at once but answers the send call 1 s later
+    im.delayNext("/send", 1000, { onlyCards: true });
+    im.push(connId, dm("t5a-1", "u-owner", ECHO));
+    const cardMsg = await waitFor(
+      async () =>
+        sentTo("cli_out", chat)
+          .slice(before)
+          .find((s) => cardOf(s)?.kind === "approval"),
+      10_000,
+      "approval card",
+    );
+    const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    // Recorded before the send: the row exists while the platform has not answered yet
+    expect(await cardRow(approvalId)).toEqual({ message_id: null, status: "pending" });
+    const sentBefore = im.sent.length;
+    // A13 unchanged: the same card clicked in another chat, or through another connection, is refused
+    const elsewhere: ChannelTarget = { chatId: "grp-t5a", chatType: "group" };
+    im.push(
+      connId,
+      cardAction(
+        "t5a-x",
+        "u-owner",
+        { cardKind: "approval", cardId: approvalId, action: "approve" },
+        elsewhere,
+      ),
+    );
+    im.push(
+      noEditId,
+      cardAction(
+        "t5a-y",
+        "u-owner",
+        { cardKind: "approval", cardId: approvalId, action: "approve" },
+        cardMsg.target,
+      ),
+    );
+    // The approver clicks immediately
+    im.push(
+      connId,
+      cardAction(
+        "t5a-ok",
+        "u-owner",
+        { cardKind: "approval", cardId: approvalId, action: "approve", scope: "once" },
+        cardMsg.target,
+      ),
+    );
+    await waitFor(
+      async () => (await approvalStatus(approvalId)) === "approved",
+      10_000,
+      "approved",
+    );
+    const refusals = await waitFor(
+      async () => {
+        const r = im.sent
+          .slice(sentBefore)
+          .filter((s) => s.message.text === "You can't handle this request.");
+        return r.length >= 2 ? r : null;
+      },
+      10_000,
+      "refusals",
+    );
+    // Refusals are sent as to a group (the chat type in the click is not trusted)
+    expect(refusals.map((s) => ({ appId: s.appId, target: s.target }))).toHaveLength(2);
+    expect(refusals.map((s) => ({ appId: s.appId, target: s.target }))).toEqual(
+      expect.arrayContaining([
+        { appId: "cli_noedit", target: { chatId: chat, chatType: "group" } },
+        { appId: "cli_out", target: elsewhere },
+      ]),
+    );
+    // The card update lands on the card's message once message_id is known, never on nothing
+    const up = await waitFor(
+      async () =>
+        updatesOf(cardMsg.messageId).find(
+          (u) => (cardOf(u) as { state?: string } | undefined)?.state === "approved",
+        ),
+      10_000,
+      "card updated",
+    );
+    expect(up.at - cardMsg.at).toBeGreaterThanOrEqual(900);
+    const known = new Set(im.sent.map((s) => s.messageId));
+    expect(im.updated.every((u) => known.has(u.messageId))).toBe(true);
+    await settled(await convOf(connId, chat));
+    expect(await cardRow(approvalId)).toEqual({ message_id: cardMsg.messageId, status: "sent" });
+    // The approver got no refusal
+    expect(
+      im.sent
+        .slice(sentBefore)
+        .filter(
+          (s) =>
+            s.appId === "cli_out" &&
+            chatOf(s) === chat &&
+            s.message.text === "You can't handle this request.",
+        ),
+    ).toHaveLength(0);
+    expect(
+      sentTo("cli_out", chat).filter(
+        (s) => (cardOf(s) as { id?: string } | undefined)?.id === approvalId,
+      ),
+    ).toHaveLength(1);
+  });
+});
+
 describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeout: 40_000 }, () => {
   it("平台用同一 eventId 重投卡片点击 → 只处理一次（不回「已处理」）", async () => {
     const chat = "grp-evt";
@@ -751,6 +872,7 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
       "approval card",
     );
     const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    await cardRecorded(db, cardMsg);
     // 未绑定的人在卡片所在的群里点卡片，插件声称是私聊 → 仍按记下的群处理：只提示去私聊，不含链接
     const n0 = im.sent.length;
     im.push(
@@ -799,6 +921,7 @@ describe("卡片操作：eventId 去重与缺 threadId（Ruling A26）", { timeo
       "anonymous approval card",
     );
     const approvalId = (cardOf(cardMsg) as { id: string }).id;
+    await cardRecorded(db, cardMsg);
     const n = im.sent.length;
     im.push(
       anonId,
@@ -1050,6 +1173,25 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     await settled(conv);
     expect(
       sentTo("cli_noedit", chat).filter((s) => s.message.text === "bot was removed"),
+    ).toHaveLength(1);
+    expect(await failCountOf(conv)).toBe(0);
+    expect(await lastError(noEditId)).toBeNull();
+  });
+
+  it("target_gone 的失败请求很慢：同一运行的后续事件在它持锁期间到达（其任务直接结束），结束时复核补投", async () => {
+    const chat = "grp-gone-slow";
+    // 失败响应推迟 2 秒：运行在此期间跑完，后续事件的投递任务都见锁被占直接结束（CI 负载下的时序）
+    im.failNext("/send", 403, 1, undefined, "target_gone", 2000);
+    im.push(noEditId, group("tgs1", "u-owner", "echo:removed while slow", { chatId: chat }));
+    const conv = await convOf(noEditId, chat);
+    await waitFor(
+      async () => sentTo("cli_noedit", chat).some((s) => s.message.text === "removed while slow"),
+      15_000,
+      "delivered by the follow-up after the stopped job",
+    );
+    await settled(conv);
+    expect(
+      sentTo("cli_noedit", chat).filter((s) => s.message.text === "removed while slow"),
     ).toHaveLength(1);
     expect(await failCountOf(conv)).toBe(0);
     expect(await lastError(noEditId)).toBeNull();

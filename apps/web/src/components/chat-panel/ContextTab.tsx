@@ -3,8 +3,8 @@
 import { Badge, KeyValue, Stack, Text } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef } from "react";
-import { listApps } from "../../lib/apps";
 import { getSandboxStatus } from "../../lib/artifacts";
+import { listConnectors } from "../../lib/connectors";
 import type { ConversationEvent, ModelRef } from "../../lib/conversations";
 import { useLoad } from "../../lib/use-load";
 import { formatTime } from "../ApprovalCard";
@@ -24,22 +24,24 @@ function latestModel(events: ConversationEvent[]): ModelRef | null {
 function latestUsage(events: ConversationEvent[]): Usage | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i] as ConversationEvent;
-    if (e.type === "usage") return e.payload;
+    // the context the agent works with: a compaction call's usage measures the old history instead
+    if (e.type === "usage" && e.payload.purpose !== "compaction") return e.payload;
   }
   return null;
 }
 
-/** 应用工具的 key 是 `<应用 slug>__<工具名>`。 */
+/** 连接器工具的 key 是 `<连接器 slug>__<工具名>`。 */
 const slugOf = (toolKey: string): string | null => {
   const i = toolKey.indexOf("__");
   return i > 0 ? toolKey.slice(0, i) : null;
 };
 
 /**
- * 本对话用到的应用（按首次出现的顺序）：工具调用按 key 前缀对上应用 slug，
- * 再加上消息附件与「需要连接」里的应用名。插件工具（如 todo__write）不是应用，对不上 slug 的不列。
+ * 本对话用到的连接器（按首次出现的顺序）：工具调用按 key 前缀对上连接器 slug，
+ * 再加上消息附件与「需要连接」里的连接器名（事件 payload 字段仍叫 `appName`）。插件工具（如 todo__write）
+ * 不是连接器，对不上 slug 的不列。
  */
-function appsUsed(events: ConversationEvent[], nameOfSlug: Map<string, string>): string[] {
+function connectorsUsed(events: ConversationEvent[], nameOfSlug: Map<string, string>): string[] {
   const out: string[] = [];
   const add = (name: string | undefined) => {
     if (name !== undefined && name !== "" && !out.includes(name)) out.push(name);
@@ -83,7 +85,7 @@ function useSandboxStatus(orgId: string, conversationId: string, uses: number) {
 
 /**
  * 上下文标签：最近一次 `usage` 的 token 数对模型的上下文窗口（模型没有声明窗口时只显示 token 数）、
- * agent / 模型 / 会话、沙箱状态、本对话用到的应用、压缩记录（`compaction_summary`）。
+ * agent / 模型 / 会话、沙箱状态、本对话用到的连接器、压缩记录（`compaction_summary`）。
  */
 export function ContextTab({
   orgId,
@@ -100,11 +102,15 @@ export function ContextTab({
 }) {
   const t = useTranslations("chatPanel");
   const locale = useLocale();
-  const apps = useLoad(() => listApps(orgId), [orgId]);
+  const connectors = useLoad(() => listConnectors(orgId), [orgId]);
   const nameOfSlug = useMemo(
     () =>
-      new Map(apps.state.kind === "ready" ? apps.state.data.apps.map((a) => [a.slug, a.name]) : []),
-    [apps.state],
+      new Map(
+        connectors.state.kind === "ready"
+          ? connectors.state.data.connectors.map((a) => [a.slug, a.name])
+          : [],
+      ),
+    [connectors.state],
   );
   const sandbox = useSandboxStatus(orgId, conversationId, sandboxUses(events));
   const sandboxRows: { k: string; v: string }[] =
@@ -142,7 +148,7 @@ export function ContextTab({
       });
     }
   }
-  const used = appsUsed(events, nameOfSlug);
+  const used = connectorsUsed(events, nameOfSlug);
   const compactions = events.filter(
     (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
       e.type === "compaction_summary",
@@ -169,7 +175,7 @@ export function ContextTab({
       </Stack>
       <Stack gap={8}>
         <Text variant="small" tone="muted">
-          {t("apps")}
+          {t("connectors")}
         </Text>
         {used.length === 0 ? (
           <Text variant="small" tone="faint">

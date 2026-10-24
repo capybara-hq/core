@@ -37,7 +37,8 @@
         "account_disabled": "This account has been disabled."
       },
       "unknown": "Sign-in failed. Please try again."
-    }
+    },
+    "insecureOrigin": "If sign-in doesn't stick: this page is served over plain http from a host other than localhost, and browsers drop the session cookie here while it is marked Secure (the default). Open the app over HTTPS (or on localhost), or, for a short trial over http only, set CAPYBARA_AUTH__COOKIE_SECURE=false on the kernel services (CAPYBARA_COOKIE_SECURE=false in the compose .env), and set CAPYBARA_PUBLIC_URL to this address, or attachment uploads and downloads fail."
   },
   "setup": {
     "title": "Setup",
@@ -88,11 +89,15 @@
       "csrf": "The request was rejected. Refresh the page and try again."
     },
     "account": {
-      "login_taken": "This username is already taken."
+      "login_taken": "This username is already taken.",
+      "not_found": "The account does not exist.",
+      "last_enterprise_admin": "The last enterprise admin cannot be revoked or deactivated."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
-      "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network."
+      "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network.",
+      "last_owner": "An organization must keep at least one owner.",
+      "owner_required": "Only an owner can do this."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -110,15 +115,21 @@
       "artifact_not_previewable": "This file can't be previewed."
     },
     "run": {
-      "not_active": "There is no reply in progress."
+      "not_active": "There is no reply in progress.",
+      "model_unavailable": "The model is unavailable.",
+      "provider_unavailable": "The model provider list is temporarily unavailable.",
+      "provider_error": "The model provider returned an error.",
+      "storage_unavailable": "Attachment storage is temporarily unavailable.",
+      "hook_denied": "The request was blocked by the policy of the \"{plugin}\" plugin.",
+      "hook_denied_unknown": "The request was blocked by a plugin policy."
     },
-    "app": {
-      "not_found": "The app does not exist or has been removed.",
-      "slug_taken": "This slug is already used by another app.",
-      "connect_failed": "Could not connect to the app's server. Check the URL and credential.",
-      "tool_not_found": "The tool does not exist in this app.",
+    "connector": {
+      "not_found": "The connector does not exist or has been removed.",
+      "slug_taken": "This slug is already used by another connector.",
+      "connect_failed": "Could not connect to the connector's server. Check the URL and credential.",
+      "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",
-      "resources_disabled": "Reading resources is turned off for this app."
+      "resources_disabled": "Reading resources is turned off for this connector."
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
@@ -129,7 +140,7 @@
       "already_answered": "This question has already been answered or has expired."
     },
     "credential": {
-      "missing": "A credential is required for this app."
+      "missing": "A credential is required for this connector."
     },
     "plugin": {
       "not_found": "The plugin is not installed.",
@@ -137,10 +148,36 @@
       "config_invalid": "The config is invalid:",
       "no_org_config": "This plugin has no organization config.",
       "dependency_missing": "Enable the plugins it depends on first.",
-      "has_dependents": "Other enabled plugins depend on this plugin."
+      "has_dependents": "Other enabled plugins depend on this plugin.",
+      "config_readonly": "This field comes from the startup config and is read-only.",
+      "config_declared": "A plugin with this name is declared in the startup config and cannot be installed here.",
+      "builtin": "This is a built-in plugin; that action is not available.",
+      "name_conflict": "This plugin name belonged to another npm package and cannot be taken over by a different one.",
+      "approval_stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
+      "not_pending": "This plugin does not need approval.",
+      "package_unavailable": "The plugin package cannot be read (it may be corrupt or over the size limit).",
+      "package_not_found": "The plugin package no longer exists. Upload it again.",
+      "name_mismatch": "The plugin name in the package does not match.",
+      "downgrade_unsupported": "Cannot downgrade to this version: it has migrations that were never run.",
+      "not_disabled": "Disable the plugin before uninstalling it.",
+      "package_invalid": "The plugin package is invalid:",
+      "package_too_large": "The plugin package is over the size limit.",
+      "unavailable": "The plugin is unavailable right now."
     },
     "directory": {
-      "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first."
+      "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first.",
+      "invalid_package": "The package is invalid.",
+      "version_exists": "This version has already been imported.",
+      "item_not_found": "The item does not exist or you cannot see it.",
+      "wrong_kind": "This action does not apply to this kind of item (use “Import app” for app packages).",
+      "name_conflict": "An item with the same name comes from a different npm package.",
+      "item_disabled": "An enterprise admin disabled this directory item (or a plugin it contains), so it cannot be newly installed or enabled.",
+      "approval_required": "A directory item that brought this in needs enterprise admin approval before this organization can install or enable it.",
+      "request_not_found": "The request does not exist or was already handled.",
+      "request_decided": "This request has already been decided.",
+      "custom_disabled": "Enterprise admins turned off custom creation; install from the directory instead.",
+      "not_deployed": "A plugin it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
+      "icon_not_found": "No icon."
     },
     "ui": {
       "not_found": "This panel is not available. The plugin may be disabled or you cannot access this conversation.",
@@ -151,7 +188,8 @@
     },
     "channel": {
       "not_found": "The channel does not exist or has been deleted.",
-      "verify_failed": "The platform rejected the bot credentials. Check them and try again."
+      "verify_failed": "The platform rejected the bot credentials. Check them and try again.",
+      "webhook_unavailable": "Webhooks are not available for this channel: the plugin does not support them or the deployment has no webhook address."
     },
     "identity": {
       "taken": "This IM account is already linked to another Capybara account.",
@@ -162,7 +200,9 @@
       "invalid": "This link is invalid or has expired."
     },
     "member": {
-      "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed."
+      "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed.",
+      "not_found": "Member not found.",
+      "already_exists": "You are already a member of this organization."
     },
     "attachment": {
       "too_large": "The file is larger than the size limit for one attachment.",
@@ -188,6 +228,70 @@
       "not_found": "The skill change does not exist or you cannot see it.",
       "not_owner": "Only the agent's owner can approve or reject its skill changes.",
       "already_decided": "This skill change has already been handled."
+    },
+    "trajectory": {
+      "not_found": "Run history not found, or you do not have access to it."
+    },
+    "eval": {
+      "set_not_found": "Eval set not found.",
+      "case_exists": "This run is already in the eval set.",
+      "too_many_cases": "The eval set is full.",
+      "agent_mismatch": "This run belongs to a different agent than the eval set.",
+      "run_not_finished": "The run has not finished yet. Add it after it ends.",
+      "case_too_large": "This run is too large to add to an eval set.",
+      "call_not_found": "This model call is not in the snapshot.",
+      "case_not_found": "The case doesn't exist.",
+      "run_not_found": "The eval run doesn't exist.",
+      "result_not_found": "The eval result doesn't exist.",
+      "token_cap_invalid": "The token cap is out of range (at least 1 and no more than the deployment maximum).",
+      "run_finished": "The run has already ended.",
+      "nothing_to_replay": "The eval set has no replayable cases.",
+      "candidate_invalid": "The candidate isn't usable (wrong version, model or parameters).",
+      "too_many_errors": "Too many errors in a row; the run was stopped.",
+      "definition_missing": "The snapshot has no agent definition, so it can't be replayed.",
+      "stalled": "The replay was interrupted too many times.",
+      "internal": "The replay failed unexpectedly."
+    },
+    "model": {
+      "unconfigured": "No model is mapped to this purpose yet.",
+      "purpose_unknown": "There is no such model purpose.",
+      "rate_limited": "The model provider is rate limiting.",
+      "overloaded": "The model provider is overloaded.",
+      "server": "The model provider returned an error.",
+      "timeout": "The model request timed out.",
+      "network": "Couldn't reach the model provider.",
+      "auth": "The model provider rejected the credentials.",
+      "invalid_request": "The model provider rejected the request.",
+      "context_overflow": "The request exceeds the model's context length.",
+      "aborted": "The model request was aborted."
+    },
+    "payload_too_large": "The request is over the size limit.",
+    "invitation": {
+      "invalid": "This invitation link is invalid or has been revoked.",
+      "expired": "This invitation has expired.",
+      "used": "This invitation has already been used."
+    },
+    "catalog": {
+      "not_found": "The catalog source does not exist.",
+      "entry_not_found": "The catalog entry or version does not exist (the source may be disabled).",
+      "fetch_failed": "Fetching the catalog failed; the previous entries are kept.",
+      "invalid": "The catalog is invalid; the previous entries are kept.",
+      "integrity_mismatch": "The downloaded package does not match the catalog's sha512 and was rejected. It may have been tampered with; contact the catalog maintainer.",
+      "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
+      "package_mismatch": "The downloaded package does not match the catalog entry.",
+      "builtin": "The official catalog comes from the deployment config; it can only be enabled or disabled here."
+    },
+    "app": {
+      "invalid_manifest": "The app manifest (app.yaml) is invalid.",
+      "lock_mismatch": "A plugin package locked by the app does not match the download (sha512 mismatch) and was rejected. It may have been tampered with.",
+      "review_stale": "The review is out of date (plugins on the deployment changed). Fetch the app package again.",
+      "staging_not_found": "The staged app package has expired. Fetch it again.",
+      "plugin_conflict": "The app needs a plugin version that conflicts with a built-in or config-declared plugin.",
+      "bundle_too_large": "The app package is too large.",
+      "install_failed": "Installing failed; the components it created were rolled back.",
+      "install_not_found": "The install does not exist.",
+      "already_installed": "This app is already installed in this organization. Uninstall it before installing again.",
+      "install_in_progress": "This app is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up after the timeout."
     }
   },
   "agents": {
@@ -232,9 +336,9 @@
         "read_tool_output": "Read archived tool output (read_tool_output)",
         "skill_write": "Write skills (skill_write)"
       },
-      "appsLabel": "Apps",
-      "appTools": "All tools of {name}",
-      "noApps": "No apps are installed.",
+      "connectorsLabel": "Connectors",
+      "connectorTools": "All tools of {name}",
+      "noConnectors": "No connectors are installed.",
       "policiesLabel": "Policies",
       "policy": {
         "default": "Default",
@@ -245,6 +349,8 @@
       "skillsSection": "Skills",
       "skillsSectionHint": "Skills the agent can load when a task needs them.",
       "orgSkillsLabel": "Organization skills",
+      "confirmSkillWrite": "Ask me before the agent writes a skill",
+      "confirmSkillWriteHint": "Private agents only. When off, skills the agent writes take effect immediately; when on, each write needs your confirmation and then takes effect immediately too.",
       "noOrgSkills": "The organization has no skills yet.",
       "deletedSkill": "Deleted skill ({id})",
       "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",
@@ -286,7 +392,8 @@
     },
     "emptyHint": "Create an agent, then start a conversation.",
     "noOrgHint": "Pick one on the home page or from the organization menu in the top bar.",
-    "edit": "Edit"
+    "edit": "Edit",
+    "runHistory": "Run history"
   },
   "skills": {
     "title": "Skills",
@@ -369,14 +476,14 @@
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
     "insertPrompt": "Insert",
-    "unavailableApps": "Unavailable apps",
-    "appUnavailable": {
+    "unavailableConnectors": "Unavailable connectors",
+    "connectorUnavailable": {
       "not_connected": "not connected",
       "failed": "unavailable"
     },
-    "appUnavailableHint": {
-      "not_connected": "You have not connected {app}. Connect it on the Apps page, then try again.",
-      "failed": "Could not reach {app}. Try again later."
+    "connectorUnavailableHint": {
+      "not_connected": "You have not connected {connector}. Connect it on the Connectors page, then try again.",
+      "failed": "Could not reach {connector}. Try again later."
     },
     "timeline": "Steps",
     "thinkingLive": "Thinking…",
@@ -407,7 +514,7 @@
     "tokensOnly": "{used} tokens",
     "noUsage": "No usage yet",
     "windowUnknown": "The model doesn't declare a context window; showing tokens used only.",
-    "apps": "Apps used",
+    "connectors": "Connectors used",
     "none": "None",
     "compactions": "Compactions",
     "compactionCovers": "Compacted up to event #{seq}",
@@ -436,9 +543,12 @@
     "goto": "Go to",
     "actions": "Actions",
     "inbox": "Inbox",
-    "apps": "Apps",
+    "connectors": "Connectors",
     "channels": "Channels",
-    "skills": "Skills"
+    "skills": "Skills",
+    "evals": "Evals",
+    "admin": "Admin",
+    "directory": "Directory"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -465,7 +575,7 @@
     "title": "Approval required",
     "waiting": "Waiting",
     "tool": "Tool",
-    "app": "App",
+    "connector": "Connector",
     "agent": "Agent",
     "expires": "Expires",
     "input": "Arguments",
@@ -520,20 +630,20 @@
   "connect": {
     "title": "Connection required",
     "status": "Not connected",
-    "description": "{app} needs your credential before the agent can use it.",
+    "description": "{connector} needs your credential before the agent can use it.",
     "action": "Connect",
-    "ended": "{app} was not connected when this ran. Set your credential in My connections, then ask again.",
+    "ended": "{connector} was not connected when this ran. Set your credential in My connections, then ask again.",
     "result": {
-      "connected": "App connected. Ask the agent to try again.",
-      "unknown": "Could not connect the app. Please try again.",
+      "connected": "Connector connected. Ask the agent to try again.",
+      "unknown": "Could not complete the connection. Please try again.",
       "error": {
         "state_invalid": "The connection request expired. Please try again.",
         "session_mismatch": "The connection must be completed in the same browser that started it.",
-        "access_denied": "Access was denied, so the app was not connected.",
-        "provider_error": "The app's sign-in service reported a problem. Please try again.",
-        "token_exchange_failed": "Could not finish signing in to the app. Please try again.",
+        "access_denied": "Access was denied, so the connector was not connected.",
+        "provider_error": "The connector's sign-in service reported a problem. Please try again.",
+        "token_exchange_failed": "Could not finish signing in to the connector. Please try again.",
         "issuer_mismatch": "The sign-in response did not come from the expected service.",
-        "app_unavailable": "This app is not available for connecting."
+        "connector_unavailable": "This connector is not available for connecting."
       }
     }
   },
@@ -579,11 +689,11 @@
       "rejected": "Skill change rejected"
     }
   },
-  "apps": {
-    "title": "Apps",
-    "new": "Add app",
+  "connectors": {
+    "title": "Connectors",
+    "new": "Add connector",
     "myConnections": "My connections",
-    "empty": "No apps yet.",
+    "empty": "No connectors yet.",
     "emptyHint": "Connect an MCP server to give agents tools.",
     "columns": {
       "name": "Name",
@@ -625,7 +735,7 @@
       "ownershipLabel": "Credential",
       "ownershipHelp": {
         "org": "One credential set by an admin is used for everyone.",
-        "personal": "Every member fills in their own credential before using the app."
+        "personal": "Every member fills in their own credential before using the connector."
       },
       "keyInLabel": "Send the key in",
       "keyIn": {
@@ -636,7 +746,7 @@
       "headerNamesLabel": "Header names",
       "headerNamesHelp": "One per line.",
       "credentialHint": {
-        "org": "Organization credential (optional now; you can set it later on the app page).",
+        "org": "Organization credential (optional now; you can set it later on the connector page).",
         "personal": "Your own credential (optional now; you can set it later in My connections)."
       },
       "tokenLabel": "Token",
@@ -645,14 +755,14 @@
       "headerValueLabel": "Value of {name}"
     },
     "detail": {
-      "tabsLabel": "App sections",
+      "tabsLabel": "Connector sections",
       "tabs": {
         "tools": "Tools",
         "review": "Review",
         "credentials": "Credentials",
         "settings": "Settings"
       },
-      "inspectorTitle": "App",
+      "inspectorTitle": "Connector",
       "refresh": "Refresh tools",
       "refreshed": "Tool list refreshed.",
       "retry": "Retry"
@@ -675,7 +785,7 @@
       "enabledLabel": "Enable {tool}",
       "enabled": "Enabled",
       "disabled": "Disabled",
-      "empty": "This app has no tools.",
+      "empty": "This connector has no tools.",
       "missing": "No longer provided by the server",
       "pendingReview": "Pending review",
       "neverReviewed": "Never reviewed: approve it on the Review tab to enable it"
@@ -693,9 +803,9 @@
       "openConnections": "Open My connections",
       "save": "Save credential",
       "saved": "Credential saved.",
-      "oauthOrgHint": "This app signs in with an OAuth client; the organization token is obtained automatically.",
+      "oauthOrgHint": "This connector signs in with an OAuth client; the organization token is obtained automatically.",
       "clientTitle": "OAuth client",
-      "clientDcr": "This app's client was registered automatically and cannot be replaced; reinstall the app to change it.",
+      "clientDcr": "This connector's client was registered automatically and cannot be replaced; reinstall the connector to change it.",
       "rotate": "Replace client",
       "rotated": "OAuth client replaced.",
       "rotateVerified": "The new client is verified by obtaining a token first; nothing changes if that fails.",
@@ -703,13 +813,13 @@
     },
     "settings": {
       "title": "General",
-      "activeLabel": "App enabled",
+      "activeLabel": "Connector enabled",
       "save": "Save",
       "saved": "Saved.",
       "dangerTitle": "Danger zone",
-      "delete": "Delete app",
+      "delete": "Delete connector",
       "deleteTitle": "Delete {name}?",
-      "deleteHint": "Agents that use this app lose its tools, and stored credentials are removed. This cannot be undone."
+      "deleteHint": "Agents that use this connector lose its tools, and stored credentials are removed. This cannot be undone."
     },
     "oauth": {
       "clientIdLabel": "Client ID",
@@ -737,7 +847,7 @@
       }
     },
     "wizard": {
-      "title": "Install app",
+      "title": "Install connector",
       "steps": {
         "type": "Type",
         "endpoint": "Endpoint",
@@ -748,7 +858,7 @@
       "next": "Next",
       "previous": "Previous",
       "install": "Install",
-      "openApp": "Open app",
+      "openConnector": "Open connector",
       "typeTitle": "Choose the endpoint type",
       "connector": {
         "mcp": "MCP server",
@@ -783,8 +893,8 @@
       "oauthClientHint": "One shared OAuth client obtains tokens for the organization; the client is verified when you install.",
       "noticeTitle": "Needs your attention",
       "dcrUnsupported": "The authorization server does not support automatic client registration. Register a client with the provider and enter its client ID and secret below.",
-      "publicUrlRequired": "OAuth apps need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask your deployment admin to set it, or use another authentication method.",
-      "operationsHint": "Choose the operations agents may use. Default policies follow the HTTP method; you can change them on the app page later.",
+      "publicUrlRequired": "OAuth connectors need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask your deployment admin to set it, or use another authentication method.",
+      "operationsHint": "Choose the operations agents may use. Default policies follow the HTTP method; you can change them on the connector page later.",
       "operationsLabel": "Operations",
       "noOperations": "The document has no operations.",
       "selectOperation": "Select at least one operation.",
@@ -792,9 +902,9 @@
         "operation": "Operation"
       },
       "toolsTitle": "Tools",
-      "toolsHint": "These tools come with the app. Default policies follow the tool annotations; you can change them on the app page later.",
-      "toolsAfterInstall": "The tools are listed when the app is installed.",
-      "toolsAfterConnect": "OAuth authorization-code apps list their tools after the first member connects.",
+      "toolsHint": "These tools come with the connector. Default policies follow the tool annotations; you can change them on the connector page later.",
+      "toolsAfterInstall": "The tools are listed when the connector is installed.",
+      "toolsAfterConnect": "OAuth authorization-code connectors list their tools after the first member connects.",
       "annotation": {
         "readOnly": "Read-only",
         "destructive": "Destructive",
@@ -803,7 +913,7 @@
       "issuesTitle": "These tools will be disabled:",
       "doneTitle": "{name} is installed",
       "doneTools": "{count, plural, one {# tool} other {# tools}}.",
-      "doneOAuthCode": "Each member must connect their own account before agents can use this app on their behalf.",
+      "doneOAuthCode": "Each member must connect their own account before agents can use this connector on their behalf.",
       "connectNow": "Connect my account",
       "credentialRequired": "Enter the credential; it is used to list the tools when installing.",
       "credentialHint": {
@@ -838,21 +948,24 @@
   "connections": {
     "title": "My settings",
     "nav": {
-      "connections": "Connected apps",
+      "connections": "My connections",
       "grants": "Remembered approvals",
       "organization": "Organization",
       "identities": "IM identities",
-      "plugins": "Plugins"
+      "plugins": "Plugins",
+      "models": "Model purposes",
+      "members": "Members",
+      "apps": "Installed apps"
     },
-    "empty": "No app needs your own credential.",
-    "emptyHint": "Apps that use personal credentials show up here.",
-    "sectionHint": "Your own credential for this app; other members use theirs.",
+    "empty": "No connector needs your own credential.",
+    "emptyHint": "Connectors that use personal credentials show up here.",
+    "sectionHint": "Your own credential for this connector; other members use theirs.",
     "connected": "Connected",
     "missing": "Not connected",
     "save": "Save",
     "clear": "Clear",
-    "saved": "Credential for {app} saved.",
-    "cleared": "Credential for {app} cleared.",
+    "saved": "Credential for {connector} saved.",
+    "cleared": "Credential for {connector} cleared.",
     "grants": {
       "empty": "No remembered approvals.",
       "emptyHint": "Choosing “Always for this agent” when approving adds one here.",
@@ -869,7 +982,7 @@
     "reconnect": "Reconnect",
     "oauthConnect": "Connect",
     "disconnect": "Disconnect",
-    "oauthHint": "Sign in to this app with your own account; other members use theirs."
+    "oauthHint": "Sign in to this connector with your own account; other members use theirs."
   },
   "orgSettings": {
     "title": "Organization settings",
@@ -913,6 +1026,20 @@
       "hosts": "Allowed hosts",
       "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
       "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed."
+    },
+    "limits": {
+      "title": "Sandbox resources",
+      "description": "CPU and memory available to each sandbox. Enterprise admins adjust them per organization in deployment settings; organization admins can only view them.",
+      "cpu": "CPU",
+      "cpuValue": "{cpu} cores",
+      "memory": "Memory",
+      "memoryValue": "{mb} MiB",
+      "sourceLabel": "Source",
+      "source": {
+        "deployment": "Deployment default",
+        "override": "Set for this organization by an enterprise admin"
+      },
+      "newOnly": "Only applies to newly created sandboxes; existing sandboxes keep the limits they were created with until they are destroyed."
     }
   },
   "schemaForm": {
@@ -1021,7 +1148,25 @@
       "dangerTitle": "Danger zone",
       "delete": "Delete channel",
       "deleteTitle": "Delete {name}?",
-      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in Capybara."
+      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in Capybara.",
+      "inboundTitle": "Inbound mode",
+      "inboundHint": "How the bot receives messages. A long connection works from an internal network; webhooks need the platform to reach this deployment over a public address.",
+      "inboundLabel": "Inbound mode",
+      "inboundUnsupported": "This channel plugin only supports long connections.",
+      "inboundNoBaseUrl": "Webhooks are not available: the deployment has no public webhook address (channels.webhookBaseUrl).",
+      "callbackUrl": "Callback URL",
+      "callbackUrlHint": "Register this address as the event / request URL in the platform's app settings.",
+      "saveInbound": "Save inbound mode",
+      "inboundSaved": "Inbound mode saved.",
+      "webhookNoUrlWarning": "This channel is in webhook mode, but the deployment has no webhook address (channels.webhookBaseUrl), so the platform cannot reach the bot. Configure the address or switch back to long connection."
+    },
+    "inboundMode": {
+      "long_connection": "Long connection",
+      "webhook": "Webhook"
+    },
+    "inboundModeHint": {
+      "long_connection": "The bot keeps a connection open to the platform (default; no public address needed).",
+      "webhook": "The platform calls this deployment for every event; needs a public address."
     }
   },
   "plugins": {
@@ -1031,6 +1176,8 @@
     "enableLabel": "Enable {plugin}",
     "enabled": "Enabled for this organization",
     "disabled": "Not enabled",
+    "unavailable": "Unavailable",
+    "unavailableHint": "This plugin is currently unavailable on this deployment. The organization setting is kept.",
     "enabledToast": "{plugin} enabled.",
     "disabledToast": "{plugin} disabled.",
     "dependencyMissing": "Enable a plugin that provides these capabilities first:",
@@ -1062,7 +1209,35 @@
     "sync": "Sync now",
     "syncLabel": "Sync directory of {plugin} now",
     "syncHint": "Directory sync adds and removes organization members from the platform's directory.",
-    "syncStarted": "Directory sync started."
+    "syncStarted": "Directory sync started.",
+    "review": {
+      "network": "Declared only; the platform does not enforce it",
+      "added": "Added permissions",
+      "removed": "Removed permissions",
+      "none": "No permissions declared.",
+      "reason": {
+        "secrets": "can read and write secrets",
+        "public_routes": "these routes are reachable without signing in",
+        "tools": "agents in organizations can call these tools",
+        "hooks": "can hook into kernel flows",
+        "ui_embed": "embeds the plugin's own pages in the web app",
+        "channel": "receives the organization's IM conversations",
+        "directory": "can add people to organizations and create their accounts",
+        "identity_source": "decides who can sign in as which account",
+        "sandbox": "runs arbitrary commands in the deployment",
+        "object_store": "holds every attachment and plugin package",
+        "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again"
+      },
+      "warnings": "Migration warnings",
+      "warningsHint": "Plugin migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
+      "warning": {
+        "destructive_migration": "Destructive statement",
+        "dynamic_sql": "DO block (contents not checked)",
+        "foreign_schema": "Statement outside the plugin's own schema (kernel tables, grants / roles, functions / triggers or transaction control)"
+      },
+      "at": "{file} line {line}"
+    },
+    "openDirectory": "Open the enterprise directory to view or request it"
   },
   "identities": {
     "title": "IM identities",
@@ -1099,5 +1274,1385 @@
     "invalidTitle": "Link expired",
     "invalidHint": "Send the bot a new message in IM to get a fresh link.",
     "goHome": "Go to Capybara"
+  },
+  "trajectories": {
+    "title": "Run history",
+    "untitled": "Untitled conversation",
+    "noRun": "No runs",
+    "empty": "No run history to view yet",
+    "emptyHint": "Conversations with agents you own (all agents for org admins) appear here once they run.",
+    "noMatch": "No conversations match the current filters.",
+    "loadMore": "Load more",
+    "columns": {
+      "title": "Conversation",
+      "agent": "Agent",
+      "status": "Last run",
+      "updated": "Updated"
+    },
+    "filters": {
+      "agent": "Agent",
+      "allAgents": "All agents",
+      "status": "Last run status",
+      "allStatuses": "All"
+    },
+    "status": {
+      "queued": "Queued",
+      "running": "Running",
+      "waiting": "Waiting",
+      "completed": "Completed",
+      "failed": "Failed",
+      "aborted": "Aborted"
+    },
+    "detail": {
+      "waterfall": "Span waterfall",
+      "region": "Span details",
+      "audited": "Viewing run history is recorded in the audit log.",
+      "loadEarlier": "Load earlier runs",
+      "empty": "This conversation has not started any runs yet.",
+      "selectHint": "Select a span above to see its details.",
+      "spans": {
+        "run": "run · v{version}",
+        "step": "step {n}",
+        "approval": "approval",
+        "question": "question"
+      },
+      "metrics": {
+        "tokens": "TOKENS",
+        "cost": "Cost (est.)",
+        "calls": "Calls",
+        "duration": "Duration"
+      },
+      "run": {
+        "title": "Run {id}",
+        "version": "Agent version",
+        "trigger": "Started by",
+        "started": "Started",
+        "ended": "Ended",
+        "result": "Result",
+        "running": "In progress",
+        "end": {
+          "finished": "Finished",
+          "failed": "Failed",
+          "aborted": "Aborted"
+        },
+        "tokens": "Tokens",
+        "cost": "Run cost (est.)",
+        "calls": "Call counts",
+        "callsValue": "Model {model} · Tools {tool}",
+        "duration": "Duration"
+      },
+      "step": {
+        "title": "Step {n}",
+        "stopReason": "Stop reason",
+        "text": "Reply text",
+        "noText": "(no text)"
+      },
+      "model": {
+        "title": "Model call · {name}",
+        "provider": "Provider",
+        "model": "Model",
+        "attempt": "Attempt",
+        "attemptValue": "#{n}",
+        "fallback": "Fallback",
+        "fallbackYes": "Yes (fallback model)",
+        "fallbackNo": "No (primary model)",
+        "outcome": "Outcome",
+        "outcomes": {
+          "ok": "Succeeded",
+          "failed": "Failed",
+          "pending": "In progress"
+        },
+        "tokens": "Tokens",
+        "tokensValue": "Input {input} · Output {output} · Cache read {cacheRead} · Cache write {cacheWrite}",
+        "latency": "Latency",
+        "cost": "Cost (est.)",
+        "params": "Parameters",
+        "tools": "Tools",
+        "started": "Started"
+      },
+      "tool": {
+        "title": "Tool call · {name}",
+        "result": "Result",
+        "noResult": "(no result)",
+        "error": "Error",
+        "duration": "Duration",
+        "started": "Started",
+        "notStarted": "Not run",
+        "approval": "Approval",
+        "approvalRequested": "Requested",
+        "decision": "Decision",
+        "decisions": {
+          "approved": "Approved",
+          "denied": "Denied",
+          "expired": "Expired",
+          "cancelled": "Cancelled",
+          "pending": "Pending"
+        },
+        "scope": "Scope",
+        "scopes": {
+          "once": "This time only",
+          "session": "This conversation",
+          "always": "Always"
+        },
+        "by": "Decided by",
+        "decidedAt": "Decided",
+        "question": "Question",
+        "asked": "Asked",
+        "questionOutcome": "Answer",
+        "questionOutcomes": {
+          "answered": "Answered",
+          "expired": "Expired",
+          "cancelled": "Cancelled",
+          "pending": "Awaiting answer"
+        }
+      },
+      "hook": {
+        "title": "Blocked by a policy hook",
+        "plugin": "Plugin",
+        "cause": "Cause",
+        "causes": {
+          "deny": "Denied",
+          "hook_error": "Hook failed",
+          "timeout": "Hook timed out"
+        },
+        "reason": "Reason (shown to the model)",
+        "attempt": "Attempt"
+      }
+    },
+    "addToSet": {
+      "action": "Add to eval set",
+      "title": "Add to eval set",
+      "set": "Eval set",
+      "run": "Run",
+      "submit": "Add",
+      "noSets": "This agent has no eval sets yet.",
+      "runNotFinished": "This run has not finished yet. Add it after it ends.",
+      "added": "Added to eval set \"{name}\"."
+    },
+    "endDetail": {
+      "completed": "completed",
+      "max_steps": "step limit reached",
+      "max_duration": "time limit reached",
+      "user": "stopped by a user",
+      "shutdown_exhausted": "server shutdown",
+      "eval_stopped": "eval stopped",
+      "cancelled": "eval run cancelled",
+      "capped": "token cap reached",
+      "too_many_errors": "too many consecutive errors",
+      "claim_lost": "taken over by another worker",
+      "shutdown": "worker shut down"
+    }
+  },
+  "evals": {
+    "title": "Evals",
+    "runHistory": "Run history",
+    "new": "New eval set",
+    "empty": "No eval sets yet",
+    "emptyHint": "Pick runs from real conversations into an eval set, then replay them with another model, prompt or agent version and compare.",
+    "columns": {
+      "name": "Name",
+      "agent": "Agent",
+      "cases": "Cases",
+      "created": "Created"
+    },
+    "form": {
+      "title": "New eval set",
+      "basic": "Basics",
+      "basicHint": "An eval set belongs to one agent; cases can only come from that agent's conversations.",
+      "grading": "Grading",
+      "gradingHint": "The LLM judge compares baseline and candidate replies against it.",
+      "agentLabel": "Agent",
+      "noAgents": "No agents yet. Create one first.",
+      "nameLabel": "Name",
+      "descriptionLabel": "Description",
+      "rubricLabel": "Rubric",
+      "rubricHint": "Shown to the judge model; write it in English. Leave empty to use the default rubric.",
+      "submit": "Create",
+      "nameRequired": "Enter a name"
+    },
+    "set": {
+      "tabsLabel": "Eval set contents",
+      "tabs": {
+        "cases": "Cases",
+        "runs": "Runs"
+      },
+      "count": "{n} cases",
+      "run": "Run eval",
+      "sample": "Sample from conversations",
+      "more": "More actions",
+      "delete": "Delete eval set",
+      "deleteTitle": "Delete eval set \"{name}\"",
+      "deleteHint": "Cases and run results will no longer be visible, and runs in progress are cancelled.",
+      "deleted": "Deleted eval set \"{name}\".",
+      "inspectorTitle": "Eval set",
+      "agent": "Agent",
+      "description": "Description",
+      "rubric": "Rubric",
+      "defaultRubric": "(default rubric)",
+      "created": "Created",
+      "casesLabel": "Cases",
+      "casesEmpty": "No cases yet",
+      "casesEmptyHint": "Use \"Sample from conversations\", or \"Add to eval set\" from a run in the run history.",
+      "caseColumns": {
+        "title": "Trigger message",
+        "version": "Agent version",
+        "steps": "Replayable steps",
+        "created": "Added"
+      },
+      "viewTrajectory": "View snapshot trajectory",
+      "removeCase": "Remove case",
+      "caseRemoved": "Case removed.",
+      "runsLabel": "Runs",
+      "runsEmpty": "No runs yet",
+      "runColumns": {
+        "created": "Started",
+        "mode": "Mode",
+        "status": "Status",
+        "progress": "Progress",
+        "tokens": "Tokens"
+      }
+    },
+    "sample": {
+      "title": "Sample from conversations",
+      "hint": "Randomly picks finished runs of this agent's conversations; runs already in the set are not added again.",
+      "count": "Count",
+      "status": "Run outcome",
+      "statuses": {
+        "completed": "Completed",
+        "failed": "Failed",
+        "any": "Any (incl. aborted)"
+      },
+      "minToolCalls": "At least this many tool calls",
+      "from": "From (inclusive)",
+      "to": "To (exclusive)",
+      "submit": "Sample",
+      "done": "Added {added} cases, skipped {skipped}."
+    },
+    "case": {
+      "title": "Case · {title}"
+    },
+    "mode": {
+      "step": "Step replay",
+      "run": "Whole-run replay",
+      "stepHint": "Rebuilds each model request from the log and resends it with only the model, parameters and instructions changed.",
+      "runHint": "Reruns the whole turn from the original start; tool results come from the recording and no real tool runs."
+    },
+    "runStatus": {
+      "queued": "Queued",
+      "running": "Running",
+      "completed": "Completed",
+      "cancelled": "Cancelled",
+      "capped": "Cap reached",
+      "failed": "Failed"
+    },
+    "wizard": {
+      "title": "Run eval",
+      "steps": {
+        "candidate": "Mode & candidate",
+        "judge": "Judge & cap",
+        "confirm": "Estimate & confirm"
+      },
+      "next": "Next",
+      "back": "Back",
+      "start": "Start run",
+      "mode": "Replay mode",
+      "candidate": "Candidate",
+      "candidateHint": "Anything you leave unchanged keeps each case's original setting.",
+      "version": "Agent version",
+      "versionKeep": "Keep the case's version",
+      "versionValue": "v{n}",
+      "model": "Model",
+      "modelKeep": "Keep the case's model",
+      "params": "Model parameters",
+      "instructionsOverride": "Override instructions",
+      "instructions": "Instructions",
+      "instructionsHint": "System instructions shown to the model; write them in English.",
+      "judge": "LLM judge",
+      "judgeHint": "The judge (the model mapped to the eval purpose) compares baseline and candidate and gives pass / fail with a reason; judge requests count towards tokens.",
+      "judgeUnmapped": "No model is mapped to the judge purpose (eval), so the judge can't be turned on.",
+      "judgeConfigure": "Configure model purposes",
+      "tokenCap": "Token cap",
+      "tokenCapHint": "Leave empty for the deployment default. Once reached, no new requests are sent and the run ends as \"Cap reached\".",
+      "tokenCapInvalid": "Enter a positive whole number.",
+      "estimating": "Estimating…",
+      "estimate": {
+        "title": "Estimate",
+        "cases": "Cases",
+        "modelRequests": "Model requests",
+        "judgeRequests": "Judge requests",
+        "tokens": "Tokens",
+        "cost": "Cost (estimated)",
+        "tokenCap": "Token cap",
+        "overCap": "The estimate exceeds the cap; the run will stop at the cap.",
+        "judgeShare": "Judge share",
+        "judgeShareValue": "{tokens} tokens · cost {cost}"
+      },
+      "summary": {
+        "mode": "Mode",
+        "judge": "Judge",
+        "on": "On",
+        "off": "Off"
+      },
+      "tokenCapRange": "Deployment default {default}, maximum {max}.",
+      "tokenCapTooLarge": "Can't exceed the deployment maximum of {max}."
+    },
+    "run": {
+      "title": "Eval run · {time}",
+      "cancel": "Cancel run",
+      "cancelled": "Run cancelled.",
+      "metrics": {
+        "progress": "Progress",
+        "tokens": "Tokens / cap",
+        "toolMatch": "Tool calls match",
+        "judgePass": "Judge pass",
+        "humanPass": "Human pass"
+      },
+      "progressValue": "{done}/{total}",
+      "tokensValue": "{used} / {cap}",
+      "capped": "The token cap was reached ({used} / {cap}); unfinished results were skipped.",
+      "failed": "The run failed: {reason}",
+      "cancelledNotice": "The run was cancelled; unfinished results were skipped.",
+      "polling": "Running; refreshes every 5 seconds.",
+      "tabsLabel": "Run contents",
+      "tabs": {
+        "results": "Results",
+        "summary": "Summary"
+      },
+      "resultsLabel": "Results",
+      "resultsEmpty": "No results",
+      "columns": {
+        "case": "Case",
+        "step": "Step",
+        "status": "Status",
+        "tools": "Tool calls",
+        "similarity": "Text similarity",
+        "judge": "Judge",
+        "label": "Human label"
+      },
+      "wholeRun": "Whole run",
+      "stepValue": "Step {n}",
+      "match": "Match",
+      "mismatch": "Differ",
+      "resultStatus": {
+        "pending": "Queued",
+        "running": "Running",
+        "done": "Done",
+        "error": "Error",
+        "skipped": "Skipped"
+      },
+      "judgeStatus": {
+        "none": "—",
+        "pending": "Judging",
+        "skipped": "Not judged",
+        "error": "Judge error"
+      },
+      "verdict": {
+        "pass": "Pass",
+        "fail": "Fail"
+      },
+      "summary": {
+        "title": "Summary",
+        "pending": "The summary is available once the run ends.",
+        "done": "Done",
+        "errors": "Errors",
+        "skipped": "Skipped",
+        "toolMatch": "Tool-call match rate",
+        "similarity": "Mean text similarity",
+        "judgePass": "Judge pass rate",
+        "judgeErrors": "Judge errors",
+        "humanPass": "Human pass rate",
+        "labeled": "Labeled",
+        "drifted": "Drifted"
+      },
+      "candidate": {
+        "title": "Candidate",
+        "mode": "Mode",
+        "version": "Agent version",
+        "model": "Model",
+        "params": "Parameters",
+        "instructions": "Instructions",
+        "judge": "Judge",
+        "keep": "Keep the case's",
+        "overridden": "Overridden",
+        "estimate": "Estimate before run",
+        "estimateValue": "{model} requests + {judge} judge · {tokens} tokens · cost {cost}",
+        "judgeShare": "Judge share",
+        "judgeShareValue": "{tokens} tokens · cost {cost}"
+      },
+      "inspector": {
+        "title": "Result",
+        "selectHint": "Select a result in the table to see the diff and the judge's reason.",
+        "case": "Case",
+        "status": "Status",
+        "drift": "Drift",
+        "error": "Error",
+        "textDiff": "Reply text diff (- baseline / + candidate)",
+        "noTextDiff": "The reply text is the same.",
+        "toolDiff": "Tool-call diff",
+        "noToolCalls": "Neither side made tool calls.",
+        "toolKinds": {
+          "same": "same",
+          "args_changed": "args differ",
+          "name_changed": "tool differs",
+          "added": "only in candidate",
+          "removed": "only in baseline"
+        },
+        "judge": "Judge",
+        "verdict": "Verdict",
+        "score": "Score",
+        "reason": "Reason",
+        "judgeError": "The judge gave no verdict: {reason}",
+        "unparseable": "the judge's reply could not be parsed",
+        "label": "Human label",
+        "note": "Note",
+        "pass": "Pass",
+        "fail": "Fail",
+        "clear": "Clear label",
+        "evalTrajectory": "View eval conversation trajectory",
+        "diffCaption": "diff",
+        "driftSeparator": ", "
+      }
+    },
+    "drift": {
+      "system_hash": "System prompt changed since the recording",
+      "tools_changed": "Tool definitions changed",
+      "tool_spec_missing": "A recorded tool definition is missing",
+      "definition_missing": "The agent version definition is missing",
+      "legacy_event": "Recorded by an older format",
+      "params_changed": "Model parameters changed",
+      "media_missing": "An attachment is no longer available",
+      "media_changed": "An attachment changed",
+      "tool_unmatched": "A tool call had no recorded result"
+    }
+  },
+  "models": {
+    "admin": {
+      "title": "Models",
+      "providers": {
+        "title": "Providers and models",
+        "description": "Installed model providers and their models. Prices are per million tokens in {currency} (change it in Deployment settings); costs in trajectories and evals are estimated from these prices."
+      },
+      "providerError": "Provider {provider} failed to list its models. Other providers are not affected.",
+      "noProviders": "No model providers yet. Install a model provider plugin and it will show up here.",
+      "noModels": "This provider has no models.",
+      "columns": {
+        "model": "Model",
+        "capabilities": "Capabilities",
+        "context": "Context window",
+        "input": "Input",
+        "output": "Output",
+        "cacheRead": "Cache read",
+        "cacheWrite": "Cache write"
+      },
+      "sameAsInput": "Same as input",
+      "menu": {
+        "editPrice": "Edit price",
+        "clearPrice": "Clear price"
+      },
+      "price": {
+        "input": "Input (per million tokens)",
+        "output": "Output (per million tokens)",
+        "cacheRead": "Cache read (per million tokens)",
+        "cacheWrite": "Cache write (per million tokens)",
+        "cacheHint": "Leave empty to use the input price.",
+        "invalid": "Enter a number from 0 to 1,000,000.",
+        "save": "Save price",
+        "saveLabel": "Save price for {model}",
+        "cancel": "Cancel",
+        "saved": "Saved the price for {model}.",
+        "cleared": "Cleared the price for {model}."
+      },
+      "purposes": {
+        "title": "Default model per purpose",
+        "description": "The kernel and plugins pick models by purpose. Set the deployment default here; org admins can override it in their org settings. There is no model allowlist."
+      }
+    },
+    "org": {
+      "title": "Model purposes",
+      "description": "The kernel and plugins pick models by purpose. Each purpose uses the deployment default set by the enterprise admins; you can override it for this org or restore the default."
+    },
+    "evalUnmapped": "The eval purpose has no model mapped, so evals cannot use a judge.",
+    "capability": {
+      "tools": "Tools",
+      "vision": "Images",
+      "documents": "Documents",
+      "reasoning": "Reasoning",
+      "caching": "Caching"
+    },
+    "purpose": {
+      "declaredByKernel": "Kernel purpose",
+      "declaredByPlugin": "Plugin {plugin}",
+      "pluginNote": "Plugins cannot call models yet. You can configure this in advance.",
+      "model": "Model",
+      "modelInvalid": "The selected model is not available.",
+      "unset": "Not set",
+      "useDefault": "Use deployment default",
+      "deploymentDefault": "Deployment default: {target}",
+      "overridden": "Overridden",
+      "unavailable": "{target} (unavailable)",
+      "params": "Parameters",
+      "save": "Save",
+      "saveLabel": "Save purpose {purpose}",
+      "clear": "Clear",
+      "clearLabel": "Clear the deployment default for purpose {purpose}",
+      "restore": "Restore default",
+      "restoreLabel": "Restore the deployment default for purpose {purpose}",
+      "saved": "Saved purpose {purpose}.",
+      "cleared": "Cleared the deployment default for purpose {purpose}.",
+      "restored": "Purpose {purpose} now uses the deployment default."
+    }
+  },
+  "admin": {
+    "title": "Admin",
+    "nav": {
+      "overview": "Overview",
+      "accounts": "Accounts",
+      "orgs": "Organizations",
+      "settings": "Deployment settings",
+      "plugins": "Plugins",
+      "models": "Models",
+      "directory": "Directory"
+    },
+    "forbidden": {
+      "title": "Enterprise admin required",
+      "hint": "Only enterprise admins can open the admin console. Ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
+    },
+    "overview": {
+      "intro": "Enterprise admins manage the whole deployment here: accounts, organizations, plugins and deployment settings. Each organization's own settings stay under its Settings. Enterprise admins cannot read conversations.",
+      "metrics": {
+        "plugins": "Plugins needing action",
+        "directoryRequests": "Pending directory requests",
+        "orgs": "Organizations",
+        "accounts": "Accounts"
+      },
+      "accounts": {
+        "title": "Accounts",
+        "hint": "Create and deactivate accounts; grant or revoke enterprise admin.",
+        "open": "Manage accounts"
+      },
+      "orgs": {
+        "title": "Organizations",
+        "hint": "Set each organization's run concurrency and sandbox CPU / memory.",
+        "open": "Manage organizations"
+      },
+      "settings": {
+        "title": "Deployment settings",
+        "hint": "Who can create organizations, the price currency, and whether organizations may add their own connectors and skills.",
+        "open": "Open deployment settings"
+      },
+      "plugins": {
+        "title": "Plugins",
+        "hint": "Install, approve, enable, disable and upgrade plugins; fill in deployment config.",
+        "open": "Manage plugins"
+      },
+      "models": {
+        "title": "Models",
+        "hint": "Model providers, prices and the default model for each purpose.",
+        "open": "Manage models"
+      }
+    },
+    "accounts": {
+      "title": "Accounts",
+      "new": "New account",
+      "empty": "No accounts yet",
+      "loadMore": "Load more",
+      "columns": {
+        "name": "Name",
+        "email": "Email",
+        "status": "Status",
+        "role": "Role"
+      },
+      "status": {
+        "active": "Active",
+        "disabled": "Deactivated"
+      },
+      "enterpriseAdmin": "Enterprise admin",
+      "menu": {
+        "grant": "Grant enterprise admin",
+        "revoke": "Revoke enterprise admin",
+        "disable": "Deactivate account",
+        "enable": "Reactivate account"
+      },
+      "confirm": {
+        "grantTitle": "Make {name} an enterprise admin?",
+        "grantHint": "Enterprise admins manage the whole deployment: accounts, organizations, plugins and deployment settings.",
+        "grant": "Grant",
+        "revokeTitle": "Revoke enterprise admin from {name}?",
+        "revokeHint": "The account will no longer be able to open the admin console. The last enterprise admin cannot be revoked.",
+        "revoke": "Revoke",
+        "disableTitle": "Deactivate {name}?",
+        "disableHint": "The account is signed out at once; its sessions and personal tokens stop working.",
+        "disable": "Deactivate",
+        "enableTitle": "Reactivate {name}?",
+        "enableHint": "The account can sign in again; earlier sessions and tokens stay revoked.",
+        "enable": "Reactivate"
+      },
+      "done": {
+        "grant": "{name} is now an enterprise admin",
+        "revoke": "{name} is no longer an enterprise admin",
+        "disable": "{name} was deactivated",
+        "enable": "{name} was reactivated"
+      },
+      "form": {
+        "title": "New account",
+        "login": "Login",
+        "password": "Initial password",
+        "passwordHelp": "At least 12 characters; ask the person to change it after signing in.",
+        "displayName": "Display name",
+        "email": "Email",
+        "enterpriseAdmin": "Make enterprise admin",
+        "submit": "Create",
+        "created": "Created account {name}"
+      }
+    },
+    "orgs": {
+      "title": "Organizations",
+      "hint": "Empty values use the deployment default. Organization admins can only view them in their settings.",
+      "empty": "No organizations yet",
+      "default": "Default",
+      "edit": "Set limits",
+      "saved": "Saved",
+      "columns": {
+        "name": "Name",
+        "slug": "Slug",
+        "members": "Members",
+        "runConcurrency": "Run concurrency",
+        "cpu": "Sandbox CPU",
+        "memory": "Sandbox memory"
+      },
+      "dialog": {
+        "title": "Limits for {name}",
+        "runConcurrency": "Run concurrency limit",
+        "runConcurrencyHelp": "How many conversations may run at once; leave empty for the deployment default.",
+        "runConcurrencyInvalid": "Enter a positive whole number, or leave empty for the deployment default.",
+        "cpu": "Sandbox CPU (cores)",
+        "cpuHelp": "0.25 to 64; leave empty for the deployment default.",
+        "cpuInvalid": "CPU must be between 0.25 and 64.",
+        "memory": "Sandbox memory (MB)",
+        "memoryHelp": "A whole number from 256 to 262144; leave empty for the deployment default.",
+        "memoryInvalid": "Memory must be a whole number from 256 to 262144.",
+        "newOnly": "Sandbox limits apply to sandboxes created from now on.",
+        "e2bNote": "E2B sandboxes ignore the CPU and memory overrides: their size comes from the E2B template (the run concurrency limit still applies).",
+        "save": "Save"
+      }
+    },
+    "settings": {
+      "title": "Deployment settings",
+      "save": "Save",
+      "saved": "Deployment settings saved",
+      "allow": "Allow",
+      "deny": "Deny",
+      "orgCreation": {
+        "title": "Who can create organizations",
+        "description": "When restricted, only enterprise admins can create organizations.",
+        "anyone": "Anyone",
+        "anyoneHint": "Any signed-in user can create an organization.",
+        "enterprise_admin": "Enterprise admins only",
+        "enterprise_adminHint": "Other users can only join organizations they are invited to."
+      },
+      "currency": {
+        "title": "Price currency",
+        "description": "The currency of the model price table; used only to show estimated costs, never converted.",
+        "label": "Currency code",
+        "help": "Three letters from ISO 4217, such as USD or CNY.",
+        "invalid": "Enter a three-letter uppercase currency code."
+      },
+      "customConnectors": {
+        "title": "Custom connectors",
+        "description": "Whether organizations may add connectors themselves, outside the enterprise directory.",
+        "allowHint": "Organization admins can add connectors themselves or install them from the enterprise directory.",
+        "denyHint": "Organizations can only install connectors from the enterprise directory."
+      },
+      "customSkills": {
+        "title": "Custom skills",
+        "description": "Whether organizations may create or import skills themselves, outside the enterprise directory.",
+        "allowHint": "Organizations can create and import skills themselves or install them from the enterprise directory.",
+        "denyHint": "Organizations can only install skills from the enterprise directory."
+      }
+    },
+    "plugins": {
+      "title": "Plugins",
+      "install": "Install plugin",
+      "hint": "Every plugin on this deployment. Installing, enabling, disabling and upgrading need no restart: replicas converge within seconds of a change.",
+      "empty": "No plugins yet",
+      "noResults": "No plugins match the filters",
+      "sensitive": "Sensitive",
+      "columns": {
+        "name": "Name",
+        "version": "Version",
+        "source": "Source",
+        "status": "Status",
+        "sensitive": "Sensitive",
+        "replicas": "Replicas"
+      },
+      "filters": {
+        "status": "Status",
+        "source": "Source",
+        "allStatuses": "All statuses",
+        "allSources": "All sources"
+      },
+      "source": {
+        "builtin": "Built-in",
+        "config": "Config",
+        "install": "Installed"
+      },
+      "status": {
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "pending_approval": "Awaiting approval",
+        "pending_config": "Needs config",
+        "pending_migration": "Awaiting migration",
+        "converging": "Converging",
+        "failed": "Failed",
+        "dependency": "Missing dependency"
+      },
+      "replicas": {
+        "consistent": "In sync ({n})",
+        "diverged": "Out of sync ({n})",
+        "none": "No replica reported"
+      },
+      "detail": {
+        "tabsLabel": "Plugin details",
+        "tabs": {
+          "overview": "Overview",
+          "permissions": "Permissions",
+          "config": "Config"
+        },
+        "notFound": "The plugin does not exist or has been uninstalled.",
+        "fields": {
+          "source": "Source",
+          "version": "Version",
+          "desired": "Desired state",
+          "sha": "Package sha256"
+        },
+        "desired": {
+          "enabled": "Enabled",
+          "disabled": "Disabled",
+          "always": "Always enabled"
+        },
+        "replicasTitle": "Replica status",
+        "replicaColumns": {
+          "replica": "Replica",
+          "version": "Version",
+          "state": "State",
+          "reason": "Reason",
+          "heartbeat": "Heartbeat"
+        },
+        "replicaState": {
+          "loaded": "Loaded",
+          "failed": "Failed",
+          "unloaded": "Unloaded",
+          "pending": "Pending"
+        },
+        "failedReplica": "Replica {replica} failed to load: {reason}",
+        "stillServing": "This replica still serves {version}",
+        "replicaReason": {
+          "config": "Deployment config missing or invalid",
+          "approval": "Permissions awaiting approval",
+          "migration": "Another replica is running the migrations",
+          "dependency": "A required capability has no available provider",
+          "sync_failed": "Could not sync the plugin package",
+          "sha_mismatch": "Package contents do not match the recorded sha256",
+          "import_failed": "Could not import the plugin module",
+          "manifest_mismatch": "Plugin module does not match the reviewed manifest",
+          "setup_failed": "Plugin setup failed",
+          "migration_failed": "Plugin migration failed"
+        },
+        "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
+        "refresh": "Refresh",
+        "noReplicas": "No replica has reported yet.",
+        "builtinNote": "Built-in plugins ship with the core image and are always enabled: they cannot be disabled, upgraded or uninstalled. Only their deployment config needs filling in.",
+        "configNote": "This plugin is declared in the startup config's plugins list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
+        "actions": {
+          "enable": "Enable",
+          "disable": "Disable",
+          "upgrade": "Upgrade",
+          "uninstall": "Uninstall"
+        },
+        "uninstallNeedsDisable": "Disable the plugin before uninstalling it.",
+        "drainHint": "In-flight tool calls get up to {seconds} seconds to finish before they are aborted.",
+        "disableConfirm": {
+          "title": "Disable “{name}”?",
+          "hint": "Every replica unloads the plugin; agents in organizations can no longer use its tools.",
+          "confirm": "Disable"
+        },
+        "uninstallConfirm": {
+          "title": "Uninstall “{name}”",
+          "hint": "Uninstalling removes the plugin from the deployment. Its data, secrets and organization config are kept, so reinstalling the same package picks them up again.",
+          "confirm": "Uninstall"
+        },
+        "done": {
+          "enable": "Enable submitted; replicas are converging.",
+          "disable": "Disable submitted; replicas are converging.",
+          "uninstall": "Uninstalled “{name}”."
+        },
+        "packageError": "The plugin package cannot be read: {error}"
+      },
+      "approve": {
+        "title": "Approve permissions",
+        "hint": "This version asks for more than what was approved (or was never approved). The plugin loads only after approval.",
+        "ack": "I understand the sensitive items",
+        "submit": "Approve",
+        "done": "Approved; replicas are loading the plugin.",
+        "stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
+        "refresh": "Refresh and review again",
+        "builtin": "Pre-approved with the core image",
+        "approved": "Approved: version {version}, {at} ({source})",
+        "notApproved": "Not approved yet.",
+        "via": {
+          "cli": "command line",
+          "auto": "auto-approved",
+          "web": "web"
+        }
+      },
+      "wizard": {
+        "title": "Install plugin",
+        "upgradeTitle": "Upgrade “{name}”",
+        "steps": {
+          "source": "Source",
+          "review": "Review permissions",
+          "confirm": "Confirm"
+        },
+        "sourceLabel": "Source",
+        "sourceFile": "Upload a plugin package (.tgz)",
+        "sourceNpm": "Fetch from npm",
+        "choose": "Choose a .tgz file",
+        "fileHint": "A plugin package is an npm-pack tgz (the repository's pack-plugin tool builds one).",
+        "noFile": "No file chosen yet.",
+        "npmPackage": "npm package",
+        "npmVersion": "Version",
+        "npmVersionHelp": "A version, dist-tag or range; leave empty for latest.",
+        "upload": "Upload and review",
+        "fetch": "Fetch and review",
+        "cancelled": "Upload cancelled.",
+        "next": "Next",
+        "back": "Back",
+        "cancel": "Cancel",
+        "package": "{name} {version}",
+        "sha": "Package sha256: {sha}",
+        "newInstall": "New plugins start disabled; they load once their permissions are approved and they are enabled.",
+        "upgradeFrom": "Upgrades from {from} to {to}.",
+        "upgradeMismatch": "This package is plugin “{got}”, not “{want}” which you are upgrading.",
+        "conflictBuiltin": "“{name}” is a built-in plugin; a plugin with the same name cannot be installed.",
+        "conflictConfig": "“{name}” is declared in the startup config; a plugin with the same name cannot be installed here.",
+        "ack": "I understand the sensitive items",
+        "ackHint": "This plugin has sensitive items (highlighted). Check each one before confirming.",
+        "enableAfter": "Enable right after installing",
+        "install": "Install",
+        "done": "Installed “{name}”; replicas are converging.",
+        "failedAfterInstall": "The plugin is installed but a later step did not finish. Continue on the plugin's page.",
+        "sessionExpired": "Your sign-in has expired. Sign in again, then upload."
+      },
+      "config": {
+        "none": "This plugin has no deployment config.",
+        "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the plugin reloads after saving (no restart).",
+        "invalid": "The config is incomplete or invalid; the plugin is waiting for config:",
+        "notValidated": "This plugin is not loaded right now: saving does not validate; it is validated when the plugin loads.",
+        "source": {
+          "env": "From an environment variable (read-only)",
+          "file": "From the config file (read-only)",
+          "nacos": "From Nacos (read-only)",
+          "db": "Saved in the admin console",
+          "default": "Default value",
+          "unset": "Not set"
+        },
+        "secretSet": "Set",
+        "secretUnset": "Not set",
+        "hot": "applies immediately",
+        "reload": "plugin reloads after saving",
+        "save": "Save config",
+        "saving": "Saving; reloading the plugin can take up to about {seconds} seconds.",
+        "saved": "Config saved."
+      }
+    }
+  },
+  "members": {
+    "title": "Members",
+    "invite": "Invite members",
+    "columns": {
+      "name": "Member",
+      "email": "Email",
+      "role": "Role",
+      "joined": "Joined"
+    },
+    "you": "you",
+    "anonymous": "Anonymous guest",
+    "roleOf": "Role of {name}",
+    "roles": {
+      "guest": "Guest",
+      "member": "Member",
+      "admin": "Admin",
+      "owner": "Owner"
+    },
+    "roleChanged": "Changed {name} to {role}",
+    "empty": "No members yet",
+    "menu": {
+      "transfer": "Transfer ownership",
+      "remove": "Remove from organization"
+    },
+    "confirm": {
+      "removeTitle": "Remove {name}?",
+      "removeHint": "They lose access to this organization immediately: their sessions and tokens are revoked, and their agents and other resources go through offboarding.",
+      "remove": "Remove",
+      "transferTitle": "Transfer ownership to {name}?",
+      "transferHint": "They become an owner and you become an admin.",
+      "transfer": "Transfer"
+    },
+    "removed": "Removed {name}",
+    "transferred": "Transferred ownership to {name}",
+    "invitations": {
+      "title": "Invitations",
+      "empty": "No invitations yet",
+      "columns": {
+        "role": "Role",
+        "status": "Status",
+        "created": "Created",
+        "expires": "Expires"
+      },
+      "status": {
+        "pending": "Pending",
+        "accepted": "Accepted",
+        "expired": "Expired",
+        "revoked": "Revoked"
+      },
+      "revoke": "Revoke invitation",
+      "revoked": "Invitation revoked"
+    },
+    "inviteDialog": {
+      "title": "Invite members",
+      "role": "Role",
+      "roleHelp": "They join the organization with this role after accepting.",
+      "expires": "Valid for",
+      "hours": {
+        "24": "1 day",
+        "168": "7 days",
+        "720": "30 days"
+      },
+      "create": "Create invitation link",
+      "link": "Invitation link",
+      "linkHelp": "The link is shown only once and works only once; send it to them over a trusted channel.",
+      "copy": "Copy link",
+      "copied": "Invitation link copied",
+      "done": "Done"
+    }
+  },
+  "invite": {
+    "title": "Accept invitation",
+    "loading": "Loading…",
+    "subtitle": "You are invited to join {org}",
+    "role": "Role",
+    "expires": "Valid until",
+    "accept": "Accept invitation",
+    "signInHint": "Sign in to accept the invitation, or create a new account.",
+    "signIn": "Sign in to accept",
+    "signupToggle": "No account? Create one",
+    "loginLabel": "Username",
+    "loginHint": "3–64 characters: letters, digits and . _ @ + -",
+    "passwordLabel": "Password",
+    "passwordHint": "12–256 characters",
+    "displayNameLabel": "Display name",
+    "signup": "Create account and join",
+    "backToSignIn": "Have an account? Sign in",
+    "invalidTitle": "Invitation link no longer valid",
+    "invalidHint": "Ask the admin who invited you to send a new invitation.",
+    "goHome": "Go to Capybara"
+  },
+  "directory": {
+    "kind": {
+      "plugin": "Plugin",
+      "connector-template": "Connector template",
+      "skill": "Skill",
+      "app": "App"
+    },
+    "policy": {
+      "allow": "Allowed",
+      "needs_approval": "Needs approval",
+      "disabled": "Disabled"
+    },
+    "source": {
+      "manual": "Manual import",
+      "official": "Official catalog",
+      "removed": "Removed catalog"
+    },
+    "versionSource": {
+      "file": "Upload",
+      "npm": "npm",
+      "catalog": "Catalog"
+    },
+    "newer": "New version",
+    "iconAlt": "{name} icon",
+    "admin": {
+      "title": "Enterprise directory",
+      "hint": "Plugins, connector templates, skills and apps in the enterprise directory can be installed by organizations; the policy decides whether they can install directly.",
+      "empty": "The directory has no items yet.",
+      "noResults": "No items match the filters.",
+      "columns": {
+        "name": "Name",
+        "kind": "Kind",
+        "version": "Version",
+        "source": "Source",
+        "policy": "Policy",
+        "installs": "Organizations"
+      },
+      "filters": {
+        "kind": "Kind",
+        "allKinds": "All kinds",
+        "source": "Source",
+        "allSources": "All sources"
+      },
+      "actions": {
+        "import": "Import",
+        "importApp": "Import app",
+        "catalog": "Browse catalogs",
+        "more": "More",
+        "sources": "Directory sources",
+        "requests": "Deployment requests"
+      },
+      "import": {
+        "title": "Import to the directory",
+        "hint": "Plugins, connector templates and skills: upload an npm-pack .tgz (templates and skills may also be .zip), or enter an npm package name. Use “Import app” for apps, which reviews all their plugins at once.",
+        "sourceLabel": "Source",
+        "sourceFile": "Upload a file",
+        "sourceNpm": "npm package",
+        "choose": "Choose file",
+        "noFile": "No file chosen",
+        "npmPackage": "npm package name",
+        "npmVersion": "Version",
+        "npmVersionHelp": "A version, dist-tag or range; empty means latest.",
+        "submit": "Import",
+        "cancel": "Cancel",
+        "appLink": "Import app",
+        "done": "Imported {name}",
+        "isApp": "This is an app package. Use “Import app” to review all its plugins at once."
+      },
+      "detail": {
+        "tabsLabel": "Item details",
+        "tabs": {
+          "overview": "Overview",
+          "versions": "Versions"
+        },
+        "notFound": "The item does not exist.",
+        "deleted": "This item was deleted. Organizations can no longer see it; installed components are not affected.",
+        "fields": {
+          "kind": "Kind",
+          "package": "npm package",
+          "publisher": "Publisher",
+          "latest": "Latest version",
+          "source": "Source",
+          "installs": "Organizations",
+          "updated": "Updated"
+        },
+        "policyTitle": "Policy",
+        "policyHint": "Allowed: organization admins install directly. Needs approval: an enterprise admin approves after the organization admin asks. Disabled: no new installs; existing installs are not affected.",
+        "policySaved": "Policy changed to “{policy}”",
+        "deployTitle": "Install to the deployment",
+        "deployHint": "Install a version of the plugin on the deployment (a new install starts disabled and its permissions still need approval in the plugin admin). Organizations can enable it only after that.",
+        "deployVersion": "Version",
+        "deploy": "Install to deployment",
+        "deployed": "Installed on the deployment: {name}",
+        "openPlugin": "Open plugin admin",
+        "delete": "Delete item",
+        "deleteConfirm": {
+          "title": "Delete item {name}",
+          "hint": "Organizations will no longer see this item; installed components are not affected. You can import it again later.",
+          "confirm": "Delete"
+        },
+        "deletedToast": "Deleted {name}",
+        "versionColumns": {
+          "version": "Version",
+          "source": "Source",
+          "ref": "Reference",
+          "size": "Size",
+          "imported": "Imported"
+        }
+      },
+      "review": {
+        "title": "Import app",
+        "steps": {
+          "source": "Choose package",
+          "review": "Review",
+          "confirm": "Confirm"
+        },
+        "sourceLabel": "Source",
+        "sourceFile": "Upload app package (.tgz)",
+        "sourceNpm": "npm package",
+        "fetch": "Fetch and review",
+        "loadingCatalog": "Downloading and verifying the app package from the catalog…",
+        "app": "{name} {version}",
+        "publisher": "Publisher: {publisher}",
+        "plugins": "Plugins",
+        "pluginsHint": "Each plugin's permissions in the app; confirming approves them all at once. Sensitive items are highlighted.",
+        "action": {
+          "install": "Install {version}",
+          "upgrade": "Upgrade {from} → {to}",
+          "keep": "Keep {version} (already satisfies the range)"
+        },
+        "optional": "Optional",
+        "templates": "Connector templates",
+        "templatesEmpty": "No connector templates.",
+        "endpoint": "Endpoint",
+        "editable": "Organizations can change: {paths}",
+        "auth": "Authentication: {type}",
+        "unchecked": "The connector plugin is not loaded on this replica, so the endpoint has not been checked against its schema yet.",
+        "skills": "Skills",
+        "skillsEmpty": "No skills.",
+        "skillFiles": "{n} files",
+        "mismatch": "The permission summary in the catalog does not match the downloaded package (the package is what counts).",
+        "mismatchMissing": "Not listed in the catalog: {keys}",
+        "mismatchExtra": "Listed in the catalog but not requested: {keys}",
+        "deployPlugins": "Also install the plugins to the deployment",
+        "deployOn": "After confirming, the plugins to install or upgrade are installed on the deployment and enabled.",
+        "deployOff": "If unchecked, the plugins are only recorded as directory items and are not installed. Organizations cannot use them until an enterprise admin installs them on the deployment.",
+        "ackHint": "The app has sensitive permissions or migration warnings. Review them before confirming.",
+        "ack": "I understand the sensitive items",
+        "confirm": "Confirm import",
+        "done": "Imported app {name}",
+        "deployResult": "Deployment result",
+        "deployEnabled": "{name} {version}: installed and enabled",
+        "deployFailed": "{name} {version}: failed ({code}); retry in the plugin admin",
+        "openItem": "Open item",
+        "stale": "The review is out of date (plugins on the deployment changed). Fetch the app package again."
+      },
+      "catalog": {
+        "title": "Browse catalogs",
+        "hint": "Catalog entries become directory items only after you import them; the package is downloaded and checked against the catalog's sha512.",
+        "empty": "No catalog entries. Add or refresh a catalog in Directory sources first.",
+        "noResults": "No entries match.",
+        "truncated": "There are too many entries and the list is truncated. Narrow it down by source, kind or keyword.",
+        "search": "Search",
+        "searchPlaceholder": "Name, npm package or summary",
+        "columns": {
+          "name": "Name",
+          "kind": "Kind",
+          "source": "Source",
+          "publisher": "Publisher",
+          "summary": "Summary",
+          "permissions": "Permissions",
+          "versions": "Versions",
+          "status": "Status"
+        },
+        "permissionsCount": "{n} items",
+        "permissionsSensitive": "{n} sensitive",
+        "permissionsNone": "Not provided",
+        "incompatible": "{version} (incompatible)",
+        "adopted": "Imported {version}",
+        "notAdopted": "Not imported",
+        "importVersion": "Import {version}",
+        "noCompatible": "No compatible version",
+        "imported": "Imported {name} {version}",
+        "mismatch": "{name}: the permission summary in the catalog does not match the downloaded package (the package is what counts)."
+      },
+      "sources": {
+        "title": "Directory sources",
+        "official": "Official catalog",
+        "officialHint": "The address is set in the deployment config catalogs.official.* and is read-only here.",
+        "offline": "Offline mode: the official catalog is not live yet, so the deployment config keeps it off (catalogs.official.enabled = false).",
+        "enabled": "Enabled",
+        "url": "URL",
+        "mirrors": "Mirrors",
+        "status": "Status",
+        "statusValue": {
+          "ok": "OK ({n} entries, {at})",
+          "error": "Error: {error}",
+          "never": "Not fetched yet"
+        },
+        "refresh": "Refresh now",
+        "refreshed": "Refreshed {name}",
+        "enterprise": "Enterprise catalogs",
+        "enterpriseHint": "Only https addresses are accepted; the token is sent only to the catalog's own origin.",
+        "enterpriseEmpty": "No enterprise catalogs yet.",
+        "name": "Name",
+        "token": "Token",
+        "tokenHelp": "Optional; leave empty to keep it unchanged.",
+        "tokenSet": "Token set",
+        "clearToken": "Clear token",
+        "save": "Save",
+        "saved": "Saved {name}",
+        "remove": "Remove",
+        "removeConfirm": {
+          "title": "Remove catalog {name}",
+          "hint": "Its cached entries are removed; directory items already imported are kept.",
+          "confirm": "Remove"
+        },
+        "removed": "Removed {name}",
+        "add": "Add enterprise catalog",
+        "added": "Added {name}"
+      },
+      "requests": {
+        "title": "Deployment requests",
+        "listLabel": "Pending requests",
+        "empty": "No pending requests.",
+        "emptyHint": "Requests from organizations to install items that need approval appear here.",
+        "pick": "Pick an item on the left.",
+        "inspectorTitle": "Details",
+        "columns": {
+          "request": "Request",
+          "time": "Time"
+        },
+        "fields": {
+          "org": "Organization",
+          "requester": "Requested by",
+          "kind": "Kind",
+          "version": "Version",
+          "requested": "Requested",
+          "orgApproved": "Approved by org admin",
+          "note": "Note"
+        },
+        "hint": "Once approved, this organization can install the item (for every version).",
+        "approve": "Approve",
+        "reject": "Reject",
+        "approved": "Approved",
+        "rejected": "Rejected"
+      }
+    },
+    "org": {
+      "title": "Directory",
+      "hint": "Plugins, connector templates, skills and apps provided by your enterprise admins.",
+      "empty": "There are no items in the directory yet.",
+      "noResults": "No items match the filters.",
+      "columns": {
+        "name": "Name",
+        "kind": "Kind",
+        "description": "Description",
+        "status": "Status"
+      },
+      "filters": {
+        "kind": "Kind",
+        "allKinds": "All kinds"
+      },
+      "status": {
+        "installed": "Installed {version}",
+        "yes": "Available",
+        "granted": "Approved",
+        "needs_approval": "Needs enterprise admin approval",
+        "disabled": "Disabled",
+        "not_deployed": "Plugin not deployed",
+        "requested": "Requested, waiting"
+      },
+      "action": {
+        "install": "Install",
+        "requestApproval": "Ask an enterprise admin",
+        "request": "Request install",
+        "disabledHint": "An enterprise admin disabled this item; it cannot be newly installed.",
+        "notDeployedHint": "The plugins it needs are not installed on the deployment yet. Contact an enterprise admin.",
+        "pendingHint": "A request has been submitted ({stage}) and is waiting.",
+        "stage": {
+          "org": "organization admin",
+          "deployment": "enterprise admin"
+        },
+        "installed": "Installed {name}",
+        "requested": "Request submitted",
+        "approvalRequested": "Enterprise admin approval is needed; a request was submitted",
+        "openApps": "View installed apps"
+      },
+      "detail": {
+        "notFound": "The item does not exist or you cannot see it.",
+        "tabsLabel": "Item details",
+        "tabs": {
+          "overview": "Overview"
+        },
+        "fields": {
+          "kind": "Kind",
+          "publisher": "Publisher",
+          "version": "Version",
+          "status": "Status"
+        },
+        "templates": "Connector templates",
+        "plugins": "Plugins",
+        "skills": "Skills"
+      },
+      "install": {
+        "title": "Install {name}",
+        "connectorStep": "Connector: {name}",
+        "pluginsStep": "Plugin settings",
+        "confirmStep": "Confirm",
+        "name": "Connector name",
+        "slug": "Slug",
+        "slugHelp": "Prefix of the tool names: starts with a lowercase letter, lowercase letters, digits and underscores, at most 24 characters; empty derives it from the name.",
+        "endpoint": "Endpoint",
+        "endpointHint": "Read-only fields are set by the template and cannot be changed.",
+        "credential": "Credentials",
+        "credentialHint": "You can leave this empty and set it later on the connector's credentials page.",
+        "personalHint": "This connector uses personal credentials: each member connects later.",
+        "noneHint": "This connector needs no credentials.",
+        "dcrHint": "The client is registered automatically; nothing to fill in.",
+        "pluginsHint": "The app enables these plugins in this organization. Fill in the organization settings where needed (plugins already enabled keep their settings).",
+        "pluginsNone": "No plugin settings to fill in.",
+        "pluginEnabled": "{name}: already enabled in this organization; settings unchanged",
+        "summary": "This will install:",
+        "summaryTemplates": "{n} connectors",
+        "summaryPlugins": "{n} plugins",
+        "summarySkills": "{n} skills",
+        "submit": "Install",
+        "next": "Next",
+        "back": "Back",
+        "cancel": "Cancel",
+        "failed": "Installing failed at the “{step}” step ({code}); the components it created were rolled back.",
+        "failedNoRollback": "Installing failed at the “{step}” step ({code}) and some components could not be rolled back; uninstall it under Installed apps to clean up.",
+        "step": {
+          "plugins": "plugins",
+          "connectors": "connectors",
+          "skills": "skills"
+        },
+        "notInstallable": "This item cannot be installed right now."
+      }
+    },
+    "apps": {
+      "title": "Installed apps",
+      "empty": "This organization has not installed any apps from the directory.",
+      "status": {
+        "installing": "Installing",
+        "installed": "Installed",
+        "failed": "Install failed (rolled back)",
+        "uninstalling": "Uninstalling"
+      },
+      "failedAt": "Failed at “{step}”: {code}",
+      "components": "Components",
+      "created": "Created by this install",
+      "existing": "Pre-existing",
+      "componentKind": {
+        "plugin": "Plugin",
+        "connector": "Connector",
+        "skill": "Skill"
+      },
+      "installedAt": "Installed {at}",
+      "uninstall": "Uninstall",
+      "cleanup": "Clean up",
+      "confirm": {
+        "title": "Uninstall {name}",
+        "hint": "Only components created by this install and not used elsewhere are removed; pre-existing and still-used ones are kept.",
+        "confirm": "Uninstall",
+        "cancel": "Cancel"
+      },
+      "report": {
+        "title": "{name} was uninstalled",
+        "removed": "Removed",
+        "kept": "Kept",
+        "none": "None",
+        "reason": {
+          "pre_existing": "existed before the install",
+          "used_by_agents": "still used by agents",
+          "used_by_other_install": "used by another app install",
+          "used_by_connectors": "still used by connectors",
+          "used_by_plugins": "still required by plugins"
+        },
+        "dismiss": "Got it"
+      },
+      "inProgress": "This app is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up here after the timeout."
+    },
+    "inbox": {
+      "label": "Directory request",
+      "title": "Directory request · {name}",
+      "requester": "Requested by",
+      "kind": "Kind",
+      "version": "Version",
+      "note": "Note",
+      "hint": "If approved: allowed items can be installed by an organization admin; items that need approval are forwarded to an enterprise admin.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approved": "Directory request approved",
+      "rejected": "Directory request rejected",
+      "openItem": "Open item"
+    }
   }
 }

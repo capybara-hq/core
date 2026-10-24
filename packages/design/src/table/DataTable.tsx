@@ -217,6 +217,7 @@ export function DataTable<T>({
                 const first = columns[0]?.cell(row);
                 const rowName = rowLabel?.(row) ?? (typeof first === "string" ? first : key);
                 const extra = expand?.(row);
+                const menuItems = rowMenu?.(row);
                 // 行内控件随行做 roving tabindex：只有 Tab 停靠行的复选框 / ⋯ 在 Tab 顺序里
                 const inTabRow = key === tabKey ? 0 : -1;
                 return (
@@ -257,10 +258,13 @@ export function DataTable<T>({
                           </td>
                         );
                       })}
-                      {rowMenu ? (
+                      {menuItems === undefined ? null : menuItems.length === 0 ? (
+                        // 这一行没有可用的操作：保留单元格对齐列，不显示 ⋯
+                        <td className="cb-table-menu" data-no-open="true" />
+                      ) : (
                         <td className="cb-table-menu" data-no-open="true">
                           <Menu
-                            items={rowMenu(row)}
+                            items={menuItems}
                             trigger={
                               <IconButton
                                 size={24}
@@ -271,7 +275,7 @@ export function DataTable<T>({
                             }
                           />
                         </td>
-                      ) : null}
+                      )}
                     </tr>
                     {extra ? (
                       <tr className="cb-table-expand">

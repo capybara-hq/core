@@ -44,6 +44,9 @@ const CHANNEL = {
   agentId: "ag1",
   unboundPolicy: "bind",
   status: "error",
+  inboundMode: "long_connection",
+  webhookSupported: true,
+  webhookUrl: "https://hooks.example/channels/webhook/ch1",
   lastError: "connect failed with status 503",
   botUserId: "bot-cli_acme",
   tenantId: "t1",
@@ -64,7 +67,17 @@ const PLUGINS = [
     configurable: true,
     config: null,
     secrets: [],
-    permissions: [{ category: "provides", sensitive: false, items: ["channel@1", "directory@1"] }],
+    permissions: [
+      {
+        category: "provides",
+        sensitive: false,
+        items: ["channel@1", "directory@1"],
+        entries: [
+          { value: "channel@1", sensitive: false },
+          { value: "directory@1", sensitive: false },
+        ],
+      },
+    ],
     orgConfigSchema: null,
   },
   {
@@ -74,7 +87,14 @@ const PLUGINS = [
     configurable: false,
     config: null,
     secrets: [],
-    permissions: [{ category: "tools", sensitive: true, items: ["todo_add"] }],
+    permissions: [
+      {
+        category: "tools",
+        sensitive: true,
+        items: ["todo_add"],
+        entries: [{ value: "todo_add", sensitive: true, reason: "tools" }],
+      },
+    ],
     orgConfigSchema: null,
   },
   {
@@ -84,7 +104,14 @@ const PLUGINS = [
     configurable: false,
     config: null,
     secrets: [],
-    permissions: [{ category: "provides", sensitive: false, items: ["channel@1"] }],
+    permissions: [
+      {
+        category: "provides",
+        sensitive: false,
+        items: ["channel@1"],
+        entries: [{ value: "channel@1", sensitive: false }],
+      },
+    ],
     orgConfigSchema: null,
   },
 ];
@@ -239,6 +266,57 @@ describe("渠道连接详情（DetailPage）", () => {
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ status: "disabled" });
     expect(await screen.findByRole("button", { name: d.enable })).toBeTruthy();
     expect(screen.getByText(d.noError)).toBeTruthy();
+  });
+
+  it("inbound mode: switching to webhook shows the callback URL and PATCHes inboundMode", async () => {
+    const calls = routes({
+      [`PATCH ${BASE}/channels/ch1`]: (c) =>
+        json(200, { channel: { ...CHANNEL, ...(bodyOf(c) as object) } }),
+    });
+    renderPage(<ChannelDetailPage />);
+    const d = en.channels.detail;
+    const user = userEvent.setup();
+    const save = await screen.findByRole("button", { name: d.saveInbound });
+    expect(save).toHaveProperty("disabled", true);
+    expect(screen.queryByDisplayValue(CHANNEL.webhookUrl)).toBeNull();
+    await user.click(
+      screen.getByRole("radio", { name: new RegExp(`^${en.channels.inboundMode.webhook}`) }),
+    );
+    const url = screen.getByDisplayValue(CHANNEL.webhookUrl) as HTMLInputElement;
+    expect(url.readOnly).toBe(true);
+    await user.click(save);
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ inboundMode: "webhook" }),
+    );
+    expect(await screen.findByText(d.inboundSaved)).toBeTruthy();
+  });
+
+  it("inbound mode: no switch without plugin support or webhook base URL", async () => {
+    const d = en.channels.detail;
+    routes({
+      [`GET ${BASE}/channels/ch1`]: () =>
+        json(200, { channel: { ...CHANNEL, webhookSupported: false, webhookUrl: null } }),
+    });
+    renderPage(<ChannelDetailPage />);
+    expect(await screen.findByText(d.inboundUnsupported)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: d.saveInbound })).toBeNull();
+    cleanup();
+    routes({
+      [`GET ${BASE}/channels/ch1`]: () => json(200, { channel: { ...CHANNEL, webhookUrl: null } }),
+    });
+    renderPage(<ChannelDetailPage />);
+    expect(await screen.findByText(d.inboundNoBaseUrl)).toBeTruthy();
+    expect(screen.queryByRole("radiogroup", { name: d.inboundLabel })).toBeNull();
+    expect(screen.queryByText(`! ${d.webhookNoUrlWarning}`)).toBeNull();
+    cleanup();
+    // In webhook mode without a base URL: a warning, and the switch back stays available
+    routes({
+      [`GET ${BASE}/channels/ch1`]: () =>
+        json(200, { channel: { ...CHANNEL, inboundMode: "webhook", webhookUrl: null } }),
+    });
+    renderPage(<ChannelDetailPage />);
+    expect(await screen.findByText(`! ${d.webhookNoUrlWarning}`)).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: d.inboundLabel })).toBeTruthy();
   });
 
   it("凭据：已设置的密钥只显示「已设置」；替换 appSecret、其余密钥省略 → PATCH config", async () => {

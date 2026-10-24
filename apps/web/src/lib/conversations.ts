@@ -19,7 +19,10 @@ export type MediaSource = { kind: "ref"; attachmentId: string } | { kind: "base6
 
 type FormText = string | { zh: string; en: string };
 
-/** 用户消息附带的资源（内核读取正文，这里只有元数据）。 */
+/**
+ * 用户消息附带的资源（内核读取正文，这里只有元数据）。`appId` / `appName` 是连接器的 id 与名称：
+ * 事件 payload 字段名在「应用」改名「连接器」后不变（内核 C27）。
+ */
 export interface MessageAttachment {
   appId: string;
   appName: string;
@@ -80,6 +83,8 @@ type EventBody =
         outputTokens: number;
         cacheReadTokens: number;
         cacheWriteTokens: number;
+        /** `compaction`: the usage of a compaction call, not of the step's call. */
+        purpose?: "compaction";
       };
     }
   | { type: "reminder"; payload: { step: number; text: string } }
@@ -179,6 +184,19 @@ type EventBody =
     }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }
   | { type: "run_failed"; payload: { error: { code: string; message: string } } }
+  /** A plugin policy hook denied a model request or a tool call (the timeline names the plugin). */
+  | {
+      type: "hook_denied";
+      payload: {
+        mount: "model.request" | "tool.preExecute";
+        plugin: string;
+        reason: string;
+        cause: "deny" | "hook_error" | "timeout";
+        step: number;
+        attempt?: number;
+        callId?: string;
+      };
+    }
   | { type: "run_aborted"; payload: { byAccountId: string | null; reason: string } };
 
 /** 已写入日志的会话事件。 */
@@ -250,7 +268,7 @@ export const postMessage = (
   id: string,
   text: string,
   clientMessageId: string,
-  attachments: { appId: string; uri: string }[] = [],
+  attachments: { connectorId: string; uri: string }[] = [],
   files: string[] = [],
 ) =>
   apiFetch<{ event: ConversationEvent }>(`${one(orgId, id)}/messages`, {

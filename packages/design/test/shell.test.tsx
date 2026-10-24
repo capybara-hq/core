@@ -335,7 +335,7 @@ describe("TopBar 组织与账户按钮", () => {
     const nav = [
       ...topBar.nav,
       { id: "inbox", label: "收件箱", href: "/inbox", count: 3 },
-      { id: "apps", label: "应用", href: "/apps", count: 0 },
+      { id: "connectors", label: "连接器", href: "/connectors", count: 0 },
     ];
     zh(
       <AppShell topBar={{ ...topBar, nav }} status={status}>
@@ -346,7 +346,7 @@ describe("TopBar 组织与账户按钮", () => {
     const inbox = screen.getByRole("link", { name: "收件箱，3 项待处理" });
     const badge = inbox.querySelector('.cb-badge[data-tone="count"]');
     expect(badge?.textContent).toBe("3");
-    expect(screen.getByRole("link", { name: "应用" }).querySelector(".cb-badge")).toBeNull();
+    expect(screen.getByRole("link", { name: "连接器" }).querySelector(".cb-badge")).toBeNull();
     cleanup();
 
     stubMedia(959, 1279);

@@ -3,6 +3,7 @@
 import {
   Field,
   FormSection,
+  KeyValue,
   RadioGroup,
   Select,
   SettingsPage,
@@ -33,7 +34,8 @@ import { useLoad } from "../../../../../lib/use-load";
 
 /**
  * `/[locale]/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）、
- * 沙箱工具的默认策略（直接执行 / 需要审批）、沙箱出站（跟随部署 / 自定义白名单 / 不联网，Ruling M19）。
+ * 沙箱工具的默认策略（直接执行 / 需要审批）、沙箱出站（跟随部署 / 自定义白名单 / 不联网，Ruling M19）、
+ * 沙箱资源（cpu / 内存，只读：企业管理员在部署设置里按组织覆盖，C19）。
  * 成员可看，管理员可改；有改动时出现 ActionRow。
  */
 
@@ -61,6 +63,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
 
   const saved = state.kind === "ready" ? state.data.settings : undefined;
   const deployment = state.kind === "ready" ? state.data.deployment : undefined;
+  const sandboxLimits = state.kind === "ready" ? state.data.sandboxLimits : undefined;
   const toolSearch = draft.toolSearch ?? saved?.toolSearch ?? "on";
   const locale = draft.locale ?? saved?.locale ?? "en";
   const sandboxPolicy = draft.sandboxToolPolicy ?? saved?.sandboxToolPolicy ?? "allow";
@@ -104,7 +107,12 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
     try {
       const res = await updateOrgSettings(orgId, patch);
       const dep = res.deployment ?? deployment;
-      set({ settings: res.settings, ...(dep !== undefined ? { deployment: dep } : {}) });
+      const lim = res.sandboxLimits ?? sandboxLimits;
+      set({
+        settings: res.settings,
+        ...(dep !== undefined ? { deployment: dep } : {}),
+        ...(lim !== undefined ? { sandboxLimits: lim } : {}),
+      });
       setDraft({});
       toast.success(t("saved"));
     } catch (e) {
@@ -248,6 +256,30 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
             )}
             <Text variant="small" tone="muted">
               {t("egress.newOnly")}
+            </Text>
+          </Stack>
+        </FormSection>
+      )}
+      {saved !== undefined && sandboxLimits !== undefined && (
+        <FormSection
+          id="sandbox-limits"
+          title={t("limits.title")}
+          description={t("limits.description")}
+        >
+          <Stack gap={8}>
+            <KeyValue
+              keyWidth="10ch"
+              rows={[
+                { k: t("limits.cpu"), v: t("limits.cpuValue", { cpu: sandboxLimits.cpu }) },
+                {
+                  k: t("limits.memory"),
+                  v: t("limits.memoryValue", { mb: sandboxLimits.memoryMb }),
+                },
+                { k: t("limits.sourceLabel"), v: t(`limits.source.${sandboxLimits.source}`) },
+              ]}
+            />
+            <Text variant="small" tone="muted">
+              {t("limits.newOnly")}
             </Text>
           </Stack>
         </FormSection>

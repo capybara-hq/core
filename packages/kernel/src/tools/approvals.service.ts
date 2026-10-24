@@ -27,7 +27,7 @@ export interface ApprovalRecord {
   attempt: number;
   toolKey: string;
   specHash: string;
-  appId: string | null;
+  connectorId: string | null;
   input: unknown;
   requestedFor: string | null;
   approverRole: OrgRole | null;
@@ -41,9 +41,9 @@ export interface ApprovalRecord {
 
 /** 审批详情（列表与详情接口返回）。 */
 export interface ApprovalView extends ApprovalRecord {
-  /** 来源内的工具原名（应用工具为应用里的名字；否则同 `toolKey`）。 */
+  /** 来源内的工具原名（连接器工具为连接器里的名字；否则同 `toolKey`）。 */
   toolName: string;
-  app: { id: string; name: string; slug: string } | null;
+  connector: { id: string; name: string; slug: string } | null;
   agent: { id: string; name: string };
   /** 网页中该会话的路径（不含语言前缀）。 */
   conversationPath: string;
@@ -61,7 +61,7 @@ export interface ApprovalRequestInput {
   callId: string;
   toolKey: string;
   specHash: string;
-  appId: string | null;
+  connectorId: string | null;
   input: unknown;
   /** 指定处理人；与 `approverRole` 至少一个非空。 */
   requestedFor: string | null;
@@ -113,7 +113,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     attempt: r.attempt,
     toolKey: r.tool_key,
     specHash: r.spec_hash,
-    appId: r.app_id,
+    connectorId: r.connector_id,
     input: r.input,
     requestedFor: r.requested_for,
     approverRole: isRole(r.approver_role) ? r.approver_role : null,
@@ -176,7 +176,7 @@ export class ApprovalsService {
           attempt: input.attempt ?? 1,
           tool_key: input.toolKey,
           spec_hash: input.specHash,
-          app_id: input.appId,
+          connector_id: input.connectorId,
           input: JSON.stringify(input.input ?? {}),
           requested_for: input.requestedFor,
           approver_role: input.approverRole,
@@ -326,9 +326,9 @@ export class ApprovalsService {
         .where("id", "=", id)
         .returningAll()
         .executeTakeFirstOrThrow();
-      // 授权绑定所批准的定义指纹与来源应用（同 slug 重新安装的应用 id 不同，不继承）
+      // 授权绑定所批准的定义指纹与来源连接器（同 slug 重新安装的连接器 id 不同，不继承）
       const hash = before.specHash;
-      const appId = before.appId;
+      const connectorId = before.connectorId;
       if (scope === "session") {
         await t
           .insertInto("conversation_tool_grants")
@@ -336,12 +336,12 @@ export class ApprovalsService {
             conversation_id: before.conversationId,
             tool_key: before.toolKey,
             spec_hash: hash,
-            app_id: appId,
+            connector_id: connectorId,
           })
           .onConflict((oc) =>
             oc
               .columns(["conversation_id", "tool_key"])
-              .doUpdateSet({ spec_hash: hash, app_id: appId }),
+              .doUpdateSet({ spec_hash: hash, connector_id: connectorId }),
           )
           .execute();
       } else if (scope === "always" && before.requestedFor !== null) {
@@ -353,12 +353,14 @@ export class ApprovalsService {
             agent_id: ctx.agent_id,
             tool_key: before.toolKey,
             spec_hash: hash,
-            app_id: appId,
+            connector_id: connectorId,
           })
           .onConflict((oc) =>
-            oc
-              .columns(["org_id", "account_id", "agent_id", "tool_key"])
-              .doUpdateSet({ spec_hash: hash, app_id: appId, created_at: sql<Date>`now()` }),
+            oc.columns(["org_id", "account_id", "agent_id", "tool_key"]).doUpdateSet({
+              spec_hash: hash,
+              connector_id: connectorId,
+              created_at: sql<Date>`now()`,
+            }),
           )
           .execute();
       }
@@ -640,7 +642,7 @@ export class ApprovalsService {
     );
   }
 
-  /** 补齐详情字段（批量读会话、运行、agent 名与应用）。 */
+  /** 补齐详情字段（批量读会话、运行、agent 名与连接器）。 */
   private async views(recs: ApprovalRecord[]): Promise<ApprovalView[]> {
     if (recs.length === 0) return [];
     const { db } = this.deps;
@@ -652,20 +654,22 @@ export class ApprovalsService {
       .execute();
     const ctx = new Map(ctxRows.map((r) => [r.id, r]));
     const names = await this.agentNames([...new Set(ctxRows.map((r) => r.agent_id))]);
-    const appIds = [...new Set(recs.flatMap((r) => (r.appId === null ? [] : [r.appId])))];
+    const connectorIds = [
+      ...new Set(recs.flatMap((r) => (r.connectorId === null ? [] : [r.connectorId]))),
+    ];
     const apps =
-      appIds.length === 0
+      connectorIds.length === 0
         ? []
         : await db
-            .selectFrom("apps")
+            .selectFrom("connectors")
             .select(["id", "name", "slug"])
-            .where("id", "in", appIds)
+            .where("id", "in", connectorIds)
             .execute();
-    const appById = new Map(apps.map((a) => [a.id, a]));
+    const connectorById = new Map(apps.map((a) => [a.id, a]));
     return recs.flatMap((r) => {
       const c = ctx.get(r.runId);
       if (!c) return [];
-      const app = r.appId === null ? undefined : appById.get(r.appId);
+      const app = r.connectorId === null ? undefined : connectorById.get(r.connectorId);
       const prefix = app ? `${app.slug}__` : undefined;
       return [
         {
@@ -674,7 +678,7 @@ export class ApprovalsService {
             prefix !== undefined && r.toolKey.startsWith(prefix)
               ? r.toolKey.slice(prefix.length)
               : r.toolKey,
-          app: app ? { id: app.id, name: app.name, slug: app.slug } : null,
+          connector: app ? { id: app.id, name: app.name, slug: app.slug } : null,
           agent: { id: c.agent_id, name: names.get(c.agent_id) ?? "" },
           conversationPath: `/chat/${r.conversationId}`,
           initiatorAccountId: c.trigger_account_id,

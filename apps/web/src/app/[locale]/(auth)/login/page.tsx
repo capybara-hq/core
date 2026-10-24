@@ -4,7 +4,12 @@ import { AuthPage, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { LocaleLinks } from "../../../../components/locale-links";
-import { LoginErrorNotice, LoginForm, SsoButtons } from "../../../../components/login-form";
+import {
+  InsecureOriginNotice,
+  LoginErrorNotice,
+  LoginForm,
+  SsoButtons,
+} from "../../../../components/login-form";
 import { useRouter } from "../../../../i18n/navigation";
 import { type LoginErrorCode, parseLoginError, safeReturnTo } from "../../../../lib/auth-sources";
 import { getSetupStatus } from "../../../../lib/session";
@@ -38,6 +43,7 @@ export default function LoginPage() {
   return (
     <AuthPage title={t("title")} subtitle={t("subtitle")} footer={<LocaleLinks />}>
       <Stack gap={16}>
+        <InsecureOriginNotice />
         {error !== null && <LoginErrorNotice code={error} />}
         <LoginForm onSuccess={() => router.replace(returnTo)} />
         <SsoButtons returnTo={returnTo} />

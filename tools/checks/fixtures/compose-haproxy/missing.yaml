@@ -1,0 +1,3 @@
+configs:
+  sandbox-proxy-haproxy:
+    file: ./haproxy.cfg

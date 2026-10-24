@@ -325,9 +325,9 @@ describe("通讯录同步", () => {
     const AUTH = { type: "bearer", ownership: "personal" } as never;
     const personal = (accountId: string) => ({ kind: "user" as const, accountId });
 
-    async function insertApp(orgId: string, slug: string): Promise<string> {
+    async function insertConnector(orgId: string, slug: string): Promise<string> {
       const id = randomUUID();
-      await sql`INSERT INTO capybara.apps (id, org_id, slug, name, connector, auth, created_by)
+      await sql`INSERT INTO capybara.connectors (id, org_id, slug, name, connector, auth, created_by)
         VALUES (${id}, ${orgId}, ${slug}, ${slug}, 'test',
           ${JSON.stringify({ type: "bearer", ownership: "personal" })}::jsonb, ${owner.id})`.execute(
         raw,
@@ -360,11 +360,11 @@ describe("通讯录同步", () => {
       const req1 = await session(k, login);
       await session(k, login);
       const pat = (await new ApiTokenService(db).createPersonal(leaver.id, { name: "cli" })).token;
-      const appId = await insertApp(orgId, `docs-${login}`);
-      const otherAppId = await insertApp(otherOrgId, `docs-${login}`);
+      const connectorId = await insertConnector(orgId, `docs-${login}`);
+      const otherAppId = await insertConnector(otherOrgId, `docs-${login}`);
       const creds = k.tools.credentials;
-      await creds.setStatic(orgId, appId, AUTH, personal(leaver.id), { token: "mine" });
-      await creds.setStatic(orgId, appId, AUTH, personal(owner.id), { token: "owners" });
+      await creds.setStatic(orgId, connectorId, AUTH, personal(leaver.id), { token: "mine" });
+      await creds.setStatic(orgId, connectorId, AUTH, personal(owner.id), { token: "owners" });
       await creds.setStatic(otherOrgId, otherAppId, AUTH, personal(leaver.id), { token: "other" });
       const agentId = await insertAgent(orgId, leaver.id);
       const otherAgentId = await insertAgent(otherOrgId, leaver.id);

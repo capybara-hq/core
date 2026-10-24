@@ -1,0 +1,5 @@
+{
+  "name": "@capybara-hq/core",
+  "version": "0.0.0",
+  "devDependencies": { "@capybara-hq/plugin-gamma": "workspace:*" }
+}

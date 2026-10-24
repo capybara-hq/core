@@ -29,6 +29,19 @@ describe("definePlugin", () => {
     const bad = { ...valid(), setup: undefined } as any;
     expect(() => definePlugin(bad)).toThrow(/setup/);
   });
+  it("accepts an optional dispose function and rejects a non-function dispose", () => {
+    const m = valid({ dispose() {} });
+    expect(definePlugin(m)).toBe(m);
+    // biome-ignore lint/suspicious/noExplicitAny: 构造 dispose 不是函数的畸形清单
+    const bad = { ...valid(), dispose: "nope" } as any;
+    expect(() => definePlugin(bad)).toThrow(/dispose/);
+  });
+  it("PluginContext carries an AbortSignal and dispose receives the context", () => {
+    expectTypeOf<PluginContext["signal"]>().toEqualTypeOf<AbortSignal>();
+    expectTypeOf<NonNullable<PluginManifest["dispose"]>>()
+      .parameter(0)
+      .toEqualTypeOf<PluginContext>();
+  });
   it("rejects bad name", () => {
     expect(() => definePlugin(valid({ name: "Bad_Name" }))).toThrow(/name/);
     expect(() => definePlugin(valid({ name: "Bad_Name" }))).toThrow(PluginManifestError);

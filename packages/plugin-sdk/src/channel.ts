@@ -1,5 +1,5 @@
 import type { ZodTypeAny } from "zod";
-import type { CardAction, OutboundMessage } from "./cards.js";
+import type { CardAction, Locale, OutboundMessage } from "./cards.js";
 
 /**
  * 消息的投递目标。群聊里的 `threadId` 是话题**根消息的 `messageId`**（内核用它把同一话题归到一个会话，
@@ -81,13 +81,83 @@ export interface ChannelSendArgs {
   message: OutboundMessage;
   signal: AbortSignal;
   /** 连接所属组织的界面语言：插件自己渲染的文案（卡片按钮、降级文本里的固定词）按它选择。 */
-  locale: "zh" | "en";
+  locale: Locale;
   /**
    * 幂等键（可选）：不超过 40 个 `[A-Za-z0-9_-]` 字符，同一条逻辑消息的每次重试（崩溃后其他副本续投、
    * 可重试失败后重发）都相同——内核由「会话 + 事件 seq」或「卡片 + 状态」稳定哈希得到。平台支持幂等发送
    * （如飞书的 `uuid`）时插件应原样透传或按平台要求映射，以免重复消息；不支持的平台忽略即可。
    */
   idempotencyKey?: string;
+}
+
+/**
+ * An inbound webhook request as the kernel received it on `POST /channels/webhook/<connectionId>`.
+ * `headers` names are lowercase (repeated headers joined with `, `; cookies are dropped); `body` is
+ * the raw request bytes, unparsed, so the plugin can verify signatures over them; `receivedAt` is the
+ * kernel's receive time in epoch milliseconds (use it for timestamp replay checks).
+ */
+export interface ChannelWebhookRequest {
+  method: "POST";
+  headers: Readonly<Record<string, string>>;
+  body: Uint8Array;
+  receivedAt: number;
+}
+
+/** An HTTP response the kernel writes back to the platform as is. */
+export interface ChannelWebhookResponse {
+  status: number;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+/**
+ * What the plugin made of a webhook request:
+ * - `respond`: reply directly without any event (URL verification challenge and the like);
+ * - `events`: hand these events to the kernel, which dedupes and enqueues them like the long
+ *   connection's `onEvent` and replies `ack` only after every one resolved; if any rejects, the
+ *   kernel replies 503 so the platform redelivers (dedupe makes the redelivery safe);
+ *   an empty list just replies `ack` (ignored events are still acknowledged);
+ * - `reject`: the request is not genuine (bad signature, stale timestamp, malformed): reply this
+ *   status and enqueue nothing.
+ */
+export type ChannelWebhookResult =
+  | { kind: "respond"; response: ChannelWebhookResponse }
+  | { kind: "events"; events: InboundEvent[]; ack: ChannelWebhookResponse }
+  | { kind: "reject"; status: 400 | 401 | 403 };
+
+/**
+ * Optional webhook inbound mode (`Channel.webhook`). Signature verification, decryption and
+ * timestamp replay protection all happen here: the kernel knows no platform formats, applies no
+ * auth on the route, and only calls this for connections in webhook mode. `config` is the
+ * connection config (validated against `connectionSchema`, secrets included).
+ *
+ * Timing: one request has a 10 second kernel deadline covering `handle` and handing its events to
+ * the kernel. `signal` aborts at the deadline or when the platform hangs up; past the deadline the
+ * kernel answers 503 whether or not `handle` stops (late work is not cancelled). Platforms' own ack
+ * deadlines are a few seconds, so keep it quick.
+ *
+ * Responses the kernel writes without asking the plugin:
+ * - 404 `channel.webhook_not_found`, the same body for an unknown connection, one not in webhook
+ *   mode, a disabled one, or one whose plugin is off for its org;
+ * - 503 `plugin.unavailable` when the plugin is not loaded on the replica that got the request (a
+ *   rolling upgrade; the platform retries and reaches one that has it) or the stored config no
+ *   longer matches `connectionSchema`; only reachable with an existing webhook connection's id;
+ * - 413 `payload_too_large` above `channels.webhookMaxBodyBytes` (default 1 MiB), and 415 for a
+ *   malformed `Content-Type` header, both before `handle` is called (any well-formed content type,
+ *   or none, reaches the plugin as raw bytes);
+ * - after `handle`: 503 `channel.webhook_retry` when the deadline passes or any `onEvent` rejects,
+ *   500 `internal` when `handle` throws or returns something else.
+ * Every response carries `x-content-type-options: nosniff` and
+ * `content-security-policy: default-src 'none'`, which the plugin cannot override; plugin-set
+ * `set-cookie`, `content-length`, `transfer-encoding`, `connection` and `keep-alive` are dropped.
+ */
+export interface ChannelWebhook {
+  handle(args: {
+    connectionId: string;
+    config: unknown;
+    request: ChannelWebhookRequest;
+    signal: AbortSignal;
+  }): Promise<ChannelWebhookResult>;
 }
 
 /** 渠道实现（bot 用渠道连接配置）。 */
@@ -113,6 +183,12 @@ export interface Channel {
    * （由插件拆分）。
    */
   update(args: ChannelSendArgs & { messageId: string }): Promise<void>;
+  /**
+   * Optional webhook inbound (see {@link ChannelWebhook}). Only connections of plugins that
+   * implement it can be switched from the default long connection to webhook mode; a connection in
+   * webhook mode gets no `connect` call.
+   */
+  webhook?: ChannelWebhook;
 }
 
 /**

@@ -1,8 +1,9 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import type { Connector, Logger } from "@capybara-hq/plugin-sdk";
 import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import { AdminController } from "../admin/admin.controller.js";
+import { AdminPluginsController } from "../admin/plugins.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
 import { SetupService } from "../admin/setup.service.js";
 import { AgentsController } from "../agents/agents.controller.js";
@@ -19,9 +20,26 @@ import { ConversationsService, type RunControl } from "../conversations/conversa
 import type { EventBus, EventLog } from "../conversations/event-log.js";
 import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
-import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { AdminDirectoryController } from "../directory/admin-directory.controller.js";
+import type { AppImport } from "../directory/app-import.js";
+import { AppInstaller } from "../directory/app-install.js";
+import { CatalogsController } from "../directory/catalogs.controller.js";
+import type { CatalogsService } from "../directory/catalogs.service.js";
+import type { DirectoryService } from "../directory/directory.service.js";
+import {
+  AdminDirectoryRequestsController,
+  OrgDirectoryController,
+} from "../directory/org-directory.controller.js";
+import { OrgDirectoryService } from "../directory/org-directory.service.js";
+import { DirectoryRequestsService } from "../directory/requests.service.js";
+import { EvalRunsController } from "../evals/runs.controller.js";
+import { type EvalQueue, EvalRunsService } from "../evals/runs.service.js";
+import { EvalSetsController } from "../evals/sets.controller.js";
+import { EvalSetsService } from "../evals/sets.service.js";
+import { TrajectoryController } from "../evals/trajectory.controller.js";
+import { TrajectoryService } from "../evals/trajectory.service.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { AuthController } from "../identity/auth.controller.js";
@@ -37,6 +55,9 @@ import {
 } from "../identity/sso.controller.js";
 import { InboxService } from "../inbox/inbox.service.js";
 import type { KernelIdentity } from "../kernel.js";
+import type { PricesService } from "../models/prices.js";
+import { ModelPurposesController } from "../models/purposes.controller.js";
+import type { ModelPurposesService } from "../models/purposes.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
 import { InvitationsService } from "../orgs/invitations.service.js";
@@ -45,7 +66,11 @@ import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import { OrgSettingsService } from "../orgs/settings.service.js";
+import type { PluginAdminOps } from "../plugins/admin-ops.js";
+import type { PluginAdmin } from "../plugins/admin-view.js";
+import type { DeploymentPluginConfigService } from "../plugins/deployment-config.js";
 import type { PluginHost } from "../plugins/host.js";
+import type { PluginInstalls } from "../plugins/installs.js";
 import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
 import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
@@ -61,12 +86,12 @@ import type { SkillChangesService } from "../skills/changes.service.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
-import { AppContentController } from "../tools/app-content.controller.js";
-import type { AppContent } from "../tools/app-content.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
-import { AppsController } from "../tools/apps.controller.js";
-import { AppsService } from "../tools/apps.service.js";
+import { ConnectorContentController } from "../tools/connector-content.controller.js";
+import type { ConnectorContent } from "../tools/connector-content.js";
+import { ConnectorsController } from "../tools/connectors.controller.js";
+import { ConnectorsService } from "../tools/connectors.service.js";
 import type { Credentials } from "../tools/credentials.js";
 import type { ToolDrift } from "../tools/drift.js";
 import { OAuthFlow } from "../tools/oauth/flow.js";
@@ -86,19 +111,26 @@ import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
-  APP_CONTENT,
+  APP_IMPORT,
+  APP_INSTALLER,
   APPROVALS,
-  APPS,
   ATTACHMENTS,
+  CATALOGS,
   CHANNEL_CONNECTIONS,
+  CONNECTOR_CONTENT,
+  CONNECTORS,
   CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
   CONVERSATION_SANDBOX,
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
+  DIRECTORY,
+  DIRECTORY_REQUESTS,
   DIRECTORY_SYNC,
   EMBED_TOKENS,
+  EVAL_RUNS,
+  EVAL_SETS,
   EVENT_LOG,
   EXTERNAL_IDENTITIES,
   IDENTITY_BINDING,
@@ -110,12 +142,19 @@ import {
   KERNEL_LOG,
   KERNEL_REDIS,
   MEMBERS,
+  MODEL_PURPOSES,
   OAUTH_FLOW,
   OFFBOARDING,
+  ORG_DIRECTORY,
   ORG_PLUGIN_CONFIGS,
   ORG_SETTINGS,
   ORG_UI_STREAMS,
   ORGS,
+  PLUGIN_ADMIN,
+  PLUGIN_ADMIN_OPS,
+  PLUGIN_DEPLOYMENT_CONFIGS,
+  PLUGIN_INSTALLS,
+  PRICES,
   PROVIDER_REGISTRY,
   QUESTIONS,
   RATE_LIMITER,
@@ -126,6 +165,7 @@ import {
   SKILLS,
   SSO_FLOW,
   TOOL_REGISTRY,
+  TRAJECTORIES,
   UI_VIEWS,
 } from "./tokens.js";
 
@@ -148,7 +188,7 @@ export interface ApiDeps {
   registry: ProviderRegistry;
   /** 运行投递与中止。 */
   runs: RunControl;
-  /** 应用凭据（与 `Kernel.tools.credentials` 同一实例）。 */
+  /** 连接器凭据（与 `Kernel.tools.credentials` 同一实例）。 */
   credentials: Credentials;
   /** 工具注册表（与 `Kernel.tools.registry` 同一实例）。 */
   toolRegistry: ToolRegistry;
@@ -160,8 +200,8 @@ export interface ApiDeps {
   drift: ToolDrift;
   /** 工具输出存档（与 `Kernel.tools.outputs` 同一实例；网页的运行标签读全文）。 */
   outputs: ToolOutputs;
-  /** 应用的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
-  appContent: AppContent;
+  /** 连接器的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
+  connectorContent: ConnectorContent;
   /** 外部身份、绑定、第三方登录与离职处理（与 `Kernel.identity` 同一组实例）。 */
   identity: KernelIdentity;
   /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
@@ -176,9 +216,39 @@ export interface ApiDeps {
   skills: SkillsService;
   /** agent 自写技能与技能变更审批（与 `Kernel.skillChanges` 同一实例）。 */
   skillChanges: SkillChangesService;
+  /** 模型价格表（与 `Kernel.prices` 同一实例）。 */
+  prices: PricesService;
+  /** 模型用途映射（与 `Kernel.purposes` 同一实例；评测 worker 的评委也用它）。 */
+  purposes: ModelPurposesService;
+  /** 插件包的导入与安装记录（与 `Kernel.pluginInstalls` 同一实例）。 */
+  pluginInstalls: PluginInstalls;
+  /** 部署级插件后台：列表与网页批准（与 `Kernel.pluginAdmin` 同一实例）。 */
+  pluginAdmin: PluginAdmin;
+  /** 部署级插件的安装 / 启用 / 停用 / 卸载（与 `Kernel.pluginAdminOps` 同一实例）。 */
+  pluginAdminOps: PluginAdminOps;
+  /** 部署级插件配置（与 `Kernel.pluginDeploymentConfigs` 同一实例）。 */
+  pluginDeploymentConfigs: DeploymentPluginConfigService;
+  /** 企业目录（与 `Kernel.directory` 同一实例）。 */
+  directory: DirectoryService;
+  /** 应用包导入（与 `Kernel.apps` 同一实例）。 */
+  apps: AppImport;
+  /** 目录来源（与 `Kernel.catalogs` 同一实例）。 */
+  catalogs: CatalogsService;
+  /** 评测队列的生产方（与 worker 同一队列名）。 */
+  evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
   sandboxDestroy?: { destroy(conversationIds: string[]): Promise<void> };
 }
+
+/** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`。 */
+const findConnectorOf =
+  (host: ApiDeps["host"]) =>
+  (plugin: string, kind: string): Connector | undefined =>
+    host
+      .list("connector")
+      .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
+      | Connector
+      | undefined;
 
 /** 内核 API 的全部 controller；后续任务往这里追加。 */
 const CONTROLLERS: Type[] = [
@@ -189,6 +259,9 @@ const CONTROLLERS: Type[] = [
   InvitationsController,
   SetupController,
   AdminController,
+  AdminPluginsController,
+  AdminDirectoryController,
+  CatalogsController,
   OrgPluginConfigsController,
   AgentsController,
   ModelsController,
@@ -199,8 +272,8 @@ const CONTROLLERS: Type[] = [
   AgentSkillsController,
   InboxController,
   ConversationStreamController,
-  AppContentController,
-  AppsController,
+  ConnectorContentController,
+  ConnectorsController,
   ApprovalsController,
   ToolGrantsController,
   QuestionsController,
@@ -212,6 +285,12 @@ const CONTROLLERS: Type[] = [
   ChannelConnectionsController,
   DirectorySyncController,
   UiController,
+  TrajectoryController,
+  EvalSetsController,
+  EvalRunsController,
+  ModelPurposesController,
+  OrgDirectoryController,
+  AdminDirectoryRequestsController,
 ];
 
 /**
@@ -293,15 +372,119 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         new AgentsService(db, registry, tools, deps.skillChanges, deps.sandboxDestroy, deps.log),
       inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY],
     },
+    { provide: PRICES, useValue: deps.prices },
+    { provide: MODEL_PURPOSES, useValue: deps.purposes },
+    { provide: PLUGIN_INSTALLS, useValue: deps.pluginInstalls },
+    { provide: PLUGIN_ADMIN, useValue: deps.pluginAdmin },
+    { provide: PLUGIN_ADMIN_OPS, useValue: deps.pluginAdminOps },
+    { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.pluginDeploymentConfigs },
+    { provide: DIRECTORY, useValue: deps.directory },
+    { provide: APP_IMPORT, useValue: deps.apps },
+    { provide: CATALOGS, useValue: deps.catalogs },
+    {
+      provide: TRAJECTORIES,
+      useFactory: (
+        db: KernelDb,
+        eventLog: EventLog,
+        prices: PricesService,
+        settings: SettingsService,
+      ) => new TrajectoryService(db, eventLog, prices, settings),
+      inject: [KERNEL_DB, EVENT_LOG, PRICES, SETTINGS],
+    },
+    {
+      provide: EVAL_SETS,
+      useFactory: (
+        db: KernelDb,
+        config: () => KernelConfig,
+        prices: PricesService,
+        settings: SettingsService,
+      ) => new EvalSetsService(db, config, prices, settings),
+      inject: [KERNEL_DB, KERNEL_CONFIG, PRICES, SETTINGS],
+    },
+    {
+      provide: EVAL_RUNS,
+      useFactory: (
+        db: KernelDb,
+        config: () => KernelConfig,
+        registry: ProviderRegistry,
+        prices: PricesService,
+        settings: SettingsService,
+        redis: Redis,
+      ) =>
+        new EvalRunsService({
+          db,
+          redis,
+          config,
+          registry,
+          prices,
+          settings,
+          queue: deps.evalQueue,
+          purposes: deps.purposes,
+        }),
+      inject: [KERNEL_DB, KERNEL_CONFIG, PROVIDER_REGISTRY, PRICES, SETTINGS, KERNEL_REDIS],
+    },
     { provide: KERNEL_BUS, useValue: deps.bus },
     { provide: EVENT_LOG, useValue: deps.eventLog },
-    { provide: APP_CONTENT, useValue: deps.appContent },
+    { provide: CONNECTOR_CONTENT, useValue: deps.connectorContent },
     { provide: ATTACHMENTS, useValue: deps.attachments },
     { provide: SKILLS, useValue: deps.skills },
     { provide: SKILL_CHANGES, useValue: deps.skillChanges },
     {
+      provide: DIRECTORY_REQUESTS,
+      useFactory: (db: KernelDb) => new DirectoryRequestsService(db),
+      inject: [KERNEL_DB],
+    },
+    {
       provide: INBOX,
-      useValue: new InboxService({ approvals: deps.approvals, skillChanges: deps.skillChanges }),
+      useFactory: (requests: DirectoryRequestsService) =>
+        new InboxService({
+          approvals: deps.approvals,
+          skillChanges: deps.skillChanges,
+          directoryRequests: requests,
+        }),
+      inject: [DIRECTORY_REQUESTS],
+    },
+    {
+      provide: APP_INSTALLER,
+      useFactory: (
+        db: KernelDb,
+        connectors: ConnectorsService,
+        requests: DirectoryRequestsService,
+      ) =>
+        new AppInstaller({
+          db,
+          storage: deps.storage,
+          host: deps.host,
+          findConnector: findConnectorOf(deps.host),
+          connectors,
+          skills: deps.skills,
+          orgConfigs: deps.orgPluginConfigs,
+          requests,
+          log: deps.log,
+          staleInstallMinutes: () => deps.config().directory.staleInstallMinutes,
+        }),
+      inject: [KERNEL_DB, CONNECTORS, DIRECTORY_REQUESTS],
+    },
+    {
+      provide: ORG_DIRECTORY,
+      useFactory: (
+        db: KernelDb,
+        connectors: ConnectorsService,
+        requests: DirectoryRequestsService,
+        apps: AppInstaller,
+      ) =>
+        new OrgDirectoryService({
+          db,
+          storage: deps.storage,
+          host: deps.host,
+          findConnector: findConnectorOf(deps.host),
+          connectors,
+          skills: deps.skills,
+          orgConfigs: deps.orgPluginConfigs,
+          requests,
+          apps,
+        }),
+      inject: [KERNEL_DB, CONNECTORS, DIRECTORY_REQUESTS, APP_INSTALLER],
     },
     {
       provide: CONVERSATIONS,
@@ -309,7 +492,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         db: KernelDb,
         eventLog: EventLog,
         agents: AgentsService,
-        content: AppContent,
+        content: ConnectorContent,
         attachments: AttachmentsService,
       ) =>
         new ConversationsService(
@@ -322,7 +505,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           (trx, orgId, conversationId, accountId, ids) =>
             attachments.bindForMessage(trx, orgId, conversationId, accountId, ids),
         ),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS, APP_CONTENT, ATTACHMENTS],
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS, CONNECTOR_CONTENT, ATTACHMENTS],
     },
     {
       provide: CONVERSATION_OUTPUTS,
@@ -371,15 +554,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: UI_VIEWS,
-      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+      useFactory: (conversations: ConversationsService) =>
         new UiViews({
           host: deps.host,
-          enabledPlugins: (orgId) => queryEnabledPlugins(db, orgId),
+          // 内置插件始终启用（C14）
+          enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
           canAccessConversation: (orgId, id, accountId) =>
             conversations.isAccessible(orgId, id, accountId),
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CONVERSATIONS],
+      inject: [CONVERSATIONS],
     },
     { provide: EMBED_TOKENS, useFactory: () => new EmbedTokens(deps.keyring) },
     {
@@ -399,13 +583,13 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: APPROVALS, useValue: deps.approvals },
     { provide: QUESTIONS, useValue: deps.questions },
     {
-      provide: APPS,
+      provide: CONNECTORS,
       useFactory: (
         db: KernelDb,
         registry: ToolRegistry,
         credentials: Credentials,
         config: () => KernelConfig,
-      ) => new AppsService(db, registry, deps.host, credentials, config, deps.drift),
+      ) => new ConnectorsService(db, registry, deps.host, credentials, config, deps.drift),
       inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG],
     },
     {
@@ -415,7 +599,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         redis: Redis,
         credentials: Credentials,
         config: () => KernelConfig,
-        apps: AppsService,
+        connectors: ConnectorsService,
       ) =>
         new OAuthFlow({
           db,
@@ -423,11 +607,13 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           credentials,
           config,
           log: deps.log,
-          onFirstConnect: async (orgId, appId, accountId) => {
-            await apps.refresh(orgId, appId, accountId, undefined, { trigger: "first_connect" });
+          onFirstConnect: async (orgId, connectorId, accountId) => {
+            await connectors.refresh(orgId, connectorId, accountId, undefined, {
+              trigger: "first_connect",
+            });
           },
         }),
-      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, APPS],
+      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS],
     },
   ];
 }

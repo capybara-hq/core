@@ -5,6 +5,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelDb } from "../../src/db/kernel-schema.js";
 import { createKernel, type Kernel, type KernelOptions } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { runJobId } from "../../src/runtime/run-queue.js";
 import { asUser, cookieJar } from "./http.js";
 import { MODEL_FAKE } from "./model-plugins.js";
 
@@ -37,6 +38,29 @@ export async function waitFor<T>(
   }
 }
 
+/**
+ * 等 IM 卡片的消息 id 记进 `channel_card_messages`。它在卡片发出之后的事务里才写，记下之前的点击按
+ * 「卡片不在这个会话」处理（只回「不能处理」）——测试点卡片之前要等到这一步，不能只看平台收到了卡片。
+ */
+export async function cardRecorded(
+  db: KernelDb,
+  card: { messageId: string } | { kind: "approval" | "question" },
+  timeoutMs = 20_000,
+): Promise<void> {
+  await waitFor(
+    async () => {
+      const q = db.selectFrom("channel_card_messages").select("card_id");
+      const row = await ("messageId" in card
+        ? q.where("message_id", "=", card.messageId)
+        : q.where("card_kind", "=", card.kind)
+      ).executeTakeFirst();
+      return row !== undefined;
+    },
+    timeoutMs,
+    "card message row",
+  );
+}
+
 /** 运行测试的内核配置：加载 model-fake 与 model-looper；`runtime` 与其他字段可覆盖。 */
 export function runConfig(
   urls: { pg: string; redis: string },
@@ -51,6 +75,8 @@ export function runConfig(
     plugins: [MODEL_FAKE, MODEL_LOOPER],
     pluginPermissions: { autoApprove: true },
     runtime: { jobLockMs: 2000, stalledIntervalMs: 1000, ...runtime },
+    // 测试不拉官方清单（默认的占位地址在外网）
+    catalogs: { official: { enabled: false } },
     ...rest,
   });
 }
@@ -203,7 +229,33 @@ export async function runsOf(
     .execute();
 }
 
-/** 可从外部放行的闸门。 */
+/**
+ * Wait until the BullMQ job that ran `runId` has finished (run jobs use `removeOnComplete` /
+ * `removeOnFail`, so finished = gone). The job id is `runs.job_id` for resumed runs, else derived from
+ * the trigger message. Use it after a run reads `waiting`: `WaitsService.suspend()` sets `waiting`
+ * first, then schedules the timeout and re-checks whether the wait is already settled (resuming if
+ * so), all inside the job. Only once the job is gone is the run idle in `waiting`.
+ */
+export async function waitForRunJobDone(
+  db: KernelDb,
+  queue: { getJob(id: string): Promise<unknown> },
+  runId: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const run = await db
+    .selectFrom("runs")
+    .select(["conversation_id", "trigger_seq", "job_id"])
+    .where("id", "=", runId)
+    .executeTakeFirstOrThrow();
+  const jobId = run.job_id ?? runJobId(run.conversation_id, Number(run.trigger_seq));
+  await waitFor(
+    async () => (await queue.getJob(jobId)) == null,
+    timeoutMs,
+    `run job ${jobId} done`,
+  );
+}
+
+/** A gate that can be opened from outside. */
 export function gate(): { promise: Promise<void>; open: () => void } {
   let open!: () => void;
   const promise = new Promise<void>((r) => {

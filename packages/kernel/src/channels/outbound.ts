@@ -205,6 +205,8 @@ export interface ChannelOutboundDeps {
  *   锁被自己上一次（已崩溃的）尝试占着 → 推迟重试，等锁过期。
  *   崩溃后 BullMQ stalled 机制把任务交给其他副本，从 `last_seq` 续投；每投递一个事件就在同一事务里推进 `last_seq`
  *   并记下 IM 消息 id（草稿 id、卡片消息 id），已投递的不会重发。
+ *   审批 / 提问卡片在发送之前先记一行 `pending`（T5a），卡片一出现就被点击也能通过 Ruling A13 的核对；
+ *   推进 `last_seq` 的事务再补上消息 id、改为 `sent`。崩溃后续投的副本用同一个幂等键重发。
  * 同一队列还承载入站任务（`inbound`，Ruling A21）：由 `enqueueInbound` 排入，worker 调用 `deps.inbound` 处理，
  * 失败按 BullMQ 指数退避重试。
  * 状态全部在 PG / Redis；进程内只有本任务自己的订阅、草稿节流时刻与等待定时器（本进程持有的资源）。
@@ -409,6 +411,8 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
       // 再次被占：取到锁的那个任务会投递
       if (!lease) return;
     }
+    // 本次尝试开始时的日志位置：持锁期间提交的事件，其任务见锁被占直接结束，靠本任务结束时复核补上
+    const startSeq = await this.lastSeq(conversationId);
     let outcome: DeliveryOutcome;
     try {
       outcome = await new Delivery(this.d, conversationId, lease, this.stopping.signal).run();
@@ -437,6 +441,9 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
         if (outcome.seen !== undefined) await this.followUp(conversationId, outcome.seen);
         return;
       case "stopped":
+        // 不可重试失败：只在本次尝试开始之后又有新事件时复核（那些事件的任务因锁被占已直接结束，
+        // 否则「后续事件触发续投」会丢）；没有新事件就停下，不立刻重试同一个事件
+        if (startSeq !== undefined) await this.followUp(conversationId, startSeq);
         return;
       case "changed":
         // 连接改过（轮换凭据等）：释放锁之后排新任务，用新的出站会话从 last_seq 接着投
@@ -447,15 +454,20 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     }
   }
 
-  /** 日志比本任务处理到的更新时再排一个任务。 */
-  private async followUp(conversationId: string, seen: number): Promise<void> {
+  /** 会话日志当前的最后位置（会话不存在时 undefined）。 */
+  private async lastSeq(conversationId: string): Promise<number | undefined> {
     const conv = await this.d.db
       .selectFrom("conversations")
       .select("last_seq")
       .where("id", "=", conversationId)
       .executeTakeFirst();
-    if (conv && Number(conv.last_seq) > seen)
-      await this.enqueue(conversationId, { followUp: true });
+    return conv ? Number(conv.last_seq) : undefined;
+  }
+
+  /** 日志比 `seen` 更新时再排一个任务。 */
+  private async followUp(conversationId: string, seen: number): Promise<void> {
+    const last = await this.lastSeq(conversationId);
+    if (last !== undefined && last > seen) await this.enqueue(conversationId, { followUp: true });
   }
 
   /** 不可重试（或重试用尽）的发送失败：记连接 `last_error`（已打码）。 */
@@ -473,7 +485,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
 
 /**
  * 一次任务的结果：`done` 正常结束（`seen` 为处理到的 seq，供结束后复核；没有可投递的地方时不带）；
- * `stopped` 不可重试失败、本会话本轮停止（不复核，否则会立刻重试同一个事件）；`lost` 锁丢失；`shutdown` 停机；
+ * `stopped` 不可重试失败、本会话本轮停止（只在本次尝试开始之后又有新事件时复核，不立刻重试同一个事件）；`lost` 锁丢失；`shutdown` 停机；
  * `pending` 本副本没有加载连接的插件（推迟重试）；`changed` 连接在投递中被改过（排新任务接着投）。
  * 投递中连接被停用 / 删除按 `done`（不带 seen，不复核）结束。
  * `error` 需要记到连接 `last_error` 的失败说明。
@@ -648,6 +660,10 @@ class Delivery {
     } catch (err) {
       this.d.log.warn("cannot send channel skip notice", { err: errMsg(err) });
     }
+    // A card row recorded for the skipped event deliberately stays `pending`: the send may have
+    // reached the platform even though it failed for us, so a click on it must still be accepted.
+    // That is safe: Ruling A13 (same connection and chat), the plugin's signature checks and the
+    // approver / asker authorization in decide / answer still apply.
     await this.advance(seq, { draft: null });
     this.seen = seq;
     return true;
@@ -793,6 +809,7 @@ class Delivery {
         .executeTakeFirst();
       if (r.numUpdatedRows === 0n) throw new DeliveryLostError();
       if (opts.card) {
+        // The row was recorded as `pending` before the send (recordCard); fill in the message id
         const messageId = opts.card.messageId;
         await t
           .insertInto("channel_card_messages")
@@ -802,12 +819,15 @@ class Delivery {
             card_kind: opts.card.kind,
             card_id: opts.card.id,
             message_id: messageId,
+            status: "sent",
             target: JSON.stringify(this.target),
           })
           .onConflict((oc) =>
-            oc
-              .columns(["conversation_id", "connection_id", "card_kind", "card_id"])
-              .doUpdateSet({ message_id: messageId, target: JSON.stringify(this.target) }),
+            oc.columns(["conversation_id", "connection_id", "card_kind", "card_id"]).doUpdateSet({
+              message_id: messageId,
+              status: "sent",
+              target: JSON.stringify(this.target),
+            }),
           )
           .execute();
       }
@@ -820,6 +840,34 @@ class Delivery {
         this.draftText = undefined;
       }
     }
+  }
+
+  /**
+   * Record a card as `pending` before it is sent (T5a), in its own statement, so a click that arrives
+   * as soon as the card shows up on the platform finds it (Ruling A13: the card must be one this
+   * connection sent in this chat). The send's message id is filled in by {@link advance}. A row left
+   * `pending` by a failed send or a dead replica is kept: the event is handled again from `last_seq`
+   * and the card resent with the same idempotency key. An existing `sent` row is never touched.
+   */
+  private async recordCard(kind: "approval" | "question", id: string): Promise<void> {
+    // Best-effort guard only (the lease can be lost right after it): correctness rests on
+    // ON CONFLICT DO NOTHING below and on advance() being conditional on last_seq
+    if (this.lease.lost) throw new DeliveryLostError();
+    await this.d.db
+      .insertInto("channel_card_messages")
+      .values({
+        conversation_id: this.conversationId,
+        connection_id: this.s.row.id,
+        card_kind: kind,
+        card_id: id,
+        message_id: null,
+        status: "pending",
+        target: JSON.stringify(this.target),
+      })
+      .onConflict((oc) =>
+        oc.columns(["conversation_id", "connection_id", "card_kind", "card_id"]).doNothing(),
+      )
+      .execute();
   }
 
   private send(message: OutboundMessage, idempotencyKey: string): Promise<{ messageId: string }> {
@@ -843,6 +891,7 @@ class Delivery {
           this.s.redact,
         );
         if (!card) return;
+        await this.recordCard("approval", card.id);
         const { messageId } = await this.send(cardMessage(card.title, card), this.key(e.seq));
         return this.advance(e.seq, { card: { kind: "approval", id: card.id, messageId } });
       }
@@ -857,6 +906,7 @@ class Delivery {
           "pending",
           conversationUrl(this.base, this.conversationId),
         );
+        await this.recordCard("question", card.id);
         const { messageId } = await this.send(
           cardMessage(phrase("questionTitle", this.locale), card),
           this.key(e.seq),
@@ -959,7 +1009,15 @@ class Delivery {
     return true;
   }
 
-  /** 已发出的卡片消息；不是本连接发的（或在投递目标建立之前）返回 undefined。 */
+  /**
+   * 已发出的卡片消息；不是本连接发的（或在投递目标建立之前）返回 undefined。
+   * A row without `message_id` has no message to update. Events are delivered in order, so the
+   * card's own event set `message_id` before any later update is handled; a row without one here
+   * means the card was never delivered (its event was skipped after repeated failures), so the
+   * update is skipped rather than applied to nothing. Only `message_id` decides: `status` is
+   * informational, because a replica still on the pre-0039 code fills `message_id` without setting
+   * `status`, leaving a delivered card `pending` during a rolling upgrade.
+   */
   private async cardMessageOf(
     kind: "approval" | "question",
     id: string,
@@ -972,7 +1030,16 @@ class Delivery {
       .where("card_kind", "=", kind)
       .where("card_id", "=", id)
       .executeTakeFirst();
-    return r && { messageId: r.message_id, target: r.target as ChannelTarget };
+    if (!r) return undefined;
+    if (r.message_id === null) {
+      this.d.log.warn("channel card update skipped: the card was never delivered", {
+        conversationId: this.conversationId,
+        kind,
+        id,
+      });
+      return undefined;
+    }
+    return { messageId: r.message_id, target: r.target as ChannelTarget };
   }
 
   /**

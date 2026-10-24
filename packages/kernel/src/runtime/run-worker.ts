@@ -3,11 +3,11 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
-import type { AgentDefinition } from "../agents/definition.js";
+import { normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
 import type { SettingsService } from "../identity/settings.js";
 import { recordSkillsCatalog } from "../skills/catalog.js";
 import type { RunAbort } from "./abort.js";
@@ -341,7 +341,7 @@ export class RunWorker {
     if (run.status === "waiting") return;
     const conv = await this.d.db
       .selectFrom("conversations")
-      .select(["org_id", "agent_id"])
+      .select(["org_id", "agent_id", "kind"])
       .where("id", "=", conversationId)
       .executeTakeFirst();
     if (!conv) return;
@@ -448,7 +448,7 @@ export class RunWorker {
       started_at: Date | null;
       waited_ms: string;
     },
-    conv: { id: string; org_id: string; agent_id: string },
+    conv: { id: string; org_id: string; agent_id: string; kind: ConversationKind },
     state: ActiveRun,
   ): Promise<ExecResult> {
     const runId = run.id;
@@ -460,7 +460,7 @@ export class RunWorker {
       .where("agent_id", "=", conv.agent_id)
       .where("version", "=", run.agent_version)
       .executeTakeFirstOrThrow();
-    const agent = version.definition as unknown as AgentDefinition;
+    const agent = normalizeStoredDefinition(version.definition);
 
     let startedAt = run.started_at;
     if (run.status === "queued" || startedAt === null) {
@@ -568,6 +568,7 @@ export class RunWorker {
           sink: this.d.sinkFor?.(conversationId) ?? noopSink,
           pendingUserMessages,
           limits: { maxSteps: runtime.maxSteps, deadline },
+          conversationKind: conv.kind,
         });
       } catch (e) {
         if (state.abandoned) return "abandoned";

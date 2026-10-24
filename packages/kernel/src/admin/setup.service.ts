@@ -69,31 +69,57 @@ export class SetupService {
   }
 
   /** CLI 用：直接建企业管理员，不检查是否已初始化；登录名已存在 → `account.login_taken`。 */
-  async createEnterpriseAdmin(input: {
-    login: string;
-    password: string;
-    displayName: string;
-    email?: string | undefined;
-  }): Promise<Account> {
+  async createEnterpriseAdmin(input: EnterpriseAdminInput): Promise<Account> {
+    const passwordHash = await this.accounts.hashNewPassword(input.password);
+    return this.db
+      .transaction()
+      .execute((trx) => this.insertEnterpriseAdmin(trx, input, passwordHash));
+  }
+
+  /**
+   * CLI `admin create --if-none`: create an enterprise admin only when no active one exists. The
+   * check and the insert run in one transaction under the same advisory lock as {@link complete},
+   * so concurrent runs (and a concurrent web setup) create exactly one. Returns undefined when an
+   * active enterprise admin already exists; a taken login still throws `account.login_taken`.
+   */
+  async createEnterpriseAdminIfNone(input: EnterpriseAdminInput): Promise<Account | undefined> {
     const passwordHash = await this.accounts.hashNewPassword(input.password);
     return this.db.transaction().execute(async (trx) => {
-      const account = await this.accounts.createLocal(
-        {
-          login: input.login,
-          password: input.password,
-          displayName: input.displayName,
-          enterpriseAdmin: true,
-          ...(input.email !== undefined && { email: input.email }),
-        },
-        trx,
-        passwordHash,
-      );
-      await audit(trx, {
-        action: "account.created",
-        target: account.id,
-        detail: { enterpriseAdmin: true, via: "cli" },
-      });
-      return account;
+      await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.setup'))`.execute(trx);
+      if ((await this.accounts.countEnterpriseAdmins(trx)) > 0) return undefined;
+      return this.insertEnterpriseAdmin(trx, input, passwordHash);
     });
   }
+
+  private async insertEnterpriseAdmin(
+    trx: Transaction<KernelDatabase>,
+    input: EnterpriseAdminInput,
+    passwordHash: string,
+  ): Promise<Account> {
+    const account = await this.accounts.createLocal(
+      {
+        login: input.login,
+        password: input.password,
+        displayName: input.displayName,
+        enterpriseAdmin: true,
+        ...(input.email !== undefined && { email: input.email }),
+      },
+      trx,
+      passwordHash,
+    );
+    await audit(trx, {
+      action: "account.created",
+      target: account.id,
+      detail: { enterpriseAdmin: true, via: "cli" },
+    });
+    return account;
+  }
+}
+
+/** Input of the CLI enterprise admin creation. */
+export interface EnterpriseAdminInput {
+  login: string;
+  password: string;
+  displayName: string;
+  email?: string | undefined;
 }

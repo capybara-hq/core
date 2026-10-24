@@ -22,8 +22,8 @@ export async function seedConversation(
   return { accountId, orgId, agentId, conversationId };
 }
 
-/** 直接插库造一个应用（连接器 kind、认证方式可选），返回应用 id。 */
-export async function seedApp(
+/** 直接插库造一个连接器（连接器 kind、认证方式可选），返回连接器 id。 */
+export async function seedConnector(
   // biome-ignore lint/suspicious/noExplicitAny: 测试库无表结构类型
   raw: Kysely<any>,
   orgId: string,
@@ -31,7 +31,7 @@ export async function seedApp(
   opts: { slug: string; name?: string; connector?: string; auth?: unknown; endpoint?: unknown },
 ): Promise<string> {
   const id = randomUUID();
-  await sql`INSERT INTO capybara.apps (id, org_id, slug, name, connector, endpoint, auth, created_by)
+  await sql`INSERT INTO capybara.connectors (id, org_id, slug, name, connector, endpoint, auth, created_by)
     VALUES (${id}, ${orgId}, ${opts.slug}, ${opts.name ?? opts.slug}, ${opts.connector ?? "test"},
       ${JSON.stringify(opts.endpoint ?? {})}::jsonb, ${JSON.stringify(opts.auth ?? { type: "none" })}::jsonb,
       ${createdBy})`.execute(raw);

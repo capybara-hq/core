@@ -4,6 +4,7 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { readSandboxLimitOverride, type SandboxLimitOverride } from "../identity/settings.js";
 import { lockOrgAndAuthorize } from "./org-lock.js";
 
 /**
@@ -86,6 +87,29 @@ export function effectiveSandboxEgress(
   return { egress: "allowlist", allowHosts: [...(org.allowHosts ?? deployment.allowHosts)] };
 }
 
+/**
+ * 组织实际生效的沙箱限额（C19 / Ruling M16）：企业管理员的覆盖（部署设置 `sandboxLimitOverrides[orgId]`）
+ * 给出的 cpu / memoryMb 替换部署默认，未给的项、disk 与出站沿用 `deployment`。只在创建沙箱时读取。
+ */
+export function effectiveSandboxLimits(
+  deployment: SandboxLimits,
+  override: { cpu?: number | undefined; memoryMb?: number | undefined } | undefined,
+): SandboxLimits {
+  return {
+    ...deployment,
+    allowHosts: [...deployment.allowHosts],
+    ...(override?.cpu !== undefined && { cpu: override.cpu }),
+    ...(override?.memoryMb !== undefined && { memoryMb: override.memoryMb }),
+  };
+}
+
+/** 组织设置 GET 带回的只读沙箱限额：实际生效值与来源（有企业管理员的覆盖为 `override`）。 */
+export interface OrgSandboxLimits {
+  cpu: number;
+  memoryMb: number;
+  source: "deployment" | "override";
+}
+
 /** 设置页展示用的部署默认值（`GET` 一并返回）。 */
 export interface OrgSettingsDeployment {
   sandboxEgress: { mode: SandboxLimits["egress"]; allowHosts: string[] };
@@ -127,6 +151,21 @@ export class OrgSettingsService {
     const lim = this.config?.().sandbox.limits;
     return {
       sandboxEgress: { mode: lim?.egress ?? "allowlist", allowHosts: [...(lim?.allowHosts ?? [])] },
+    };
+  }
+
+  /** 组织实际生效的沙箱 cpu / 内存（只读；由企业管理员在部署设置里覆盖）。 */
+  async sandboxLimits(orgId: string): Promise<OrgSandboxLimits> {
+    const lim = this.config?.().sandbox.limits;
+    const override: SandboxLimitOverride | undefined = await readSandboxLimitOverride(
+      this.db,
+      orgId,
+    );
+    return {
+      // 没有部署配置（测试构造）时用 schema 默认值 1 核 / 2048 MiB
+      cpu: override?.cpu ?? lim?.cpu ?? 1,
+      memoryMb: override?.memoryMb ?? lim?.memoryMb ?? 2048,
+      source: override === undefined ? "deployment" : "override",
     };
   }
 

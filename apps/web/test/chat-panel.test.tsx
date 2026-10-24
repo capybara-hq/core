@@ -401,7 +401,7 @@ describe("对话页右侧标签面板", () => {
     expect(fetched()).toHaveLength(1);
   });
 
-  it("上下文标签：最近一次 usage 对模型上下文窗口、agent / 模型、用到的应用、压缩记录", async () => {
+  it("上下文标签：最近一次 usage 对模型上下文窗口、agent / 模型、用到的连接器、压缩记录", async () => {
     stubApi({
       [`GET ${BASE}/events`]: () =>
         json(200, {
@@ -444,8 +444,10 @@ describe("对话页右侧标签面板", () => {
             },
           ],
         }),
-      [`GET ${ORG}/apps`]: () =>
-        json(200, { apps: [{ id: "app1", slug: "fixture", name: "Fixture", status: "active" }] }),
+      [`GET ${ORG}/connectors`]: () =>
+        json(200, {
+          connectors: [{ id: "app1", slug: "fixture", name: "Fixture", status: "active" }],
+        }),
       [`GET ${BASE}/sandbox`]: () => json(404, { error: { code: "sandbox.not_found" } }),
       [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
     });

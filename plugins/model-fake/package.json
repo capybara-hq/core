@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "description": "Deterministic scripted model provider (model-provider@2) for runtime tests, e2e tests and keyless demos",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "plugins/model-fake"
+  },
+  "homepage": "https://github.com/capybara-hq/core/tree/main/plugins/model-fake#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

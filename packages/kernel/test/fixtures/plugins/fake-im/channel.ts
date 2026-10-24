@@ -1,7 +1,9 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   type Channel,
   ChannelSendError,
   type ChannelSendFailure,
+  type ChannelWebhook,
   type InboundEvent,
   secret,
 } from "@capybara-hq/plugin-sdk";
@@ -21,7 +23,10 @@ export const FakeImConnection = z.object({
   appId: z.string().min(1),
   tenant: z.string().min(1).default("t1"),
   appSecret: secret(z.string().min(1)),
-  /** 可选密钥（测试 PATCH 的密钥字段语义）。 */
+  /**
+   * Optional secret (also tests PATCH secret semantics); the webhook signing secret: webhook
+   * requests are signed `x-fake-signature: sha256=<hex HMAC-SHA256(webhookToken, raw body)>`.
+   */
   webhookToken: secret(z.string().min(1).optional()),
   /** 被中止后拖这么久才返回（模拟不及时退出的插件）。 */
   lingerMs: z.number().int().nonnegative().default(0),
@@ -88,8 +93,63 @@ async function pump(body: ReadableStream<Uint8Array>, onEvent: (e: InboundEvent)
   }
 }
 
-/** 按能力开关造一个假渠道（chan-mini / chan-noedit 复用，只是插件名与 features 不同）。 */
-export const makeFakeImChannel = (features: Channel["features"]): Channel => ({
+/** Constant-time check of `x-fake-signature` against HMAC-SHA256(secret, body). */
+function signatureOk(header: string | undefined, secret: string, body: Uint8Array): boolean {
+  if (header === undefined) return false;
+  const want = Buffer.from(`sha256=${createHmac("sha256", secret).update(body).digest("hex")}`);
+  const got = Buffer.from(header);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
+/**
+ * Webhook inbound of the fake platform (see `signFakeWebhook` in `@capybara-hq/testing`): every
+ * request must be signed with `webhookToken` (missing secret or bad signature → reject 401);
+ * `{ type: "challenge", challenge }` echoes `{ challenge }`; `{ type: "events", events }` hands the
+ * events to the kernel with the ack body `ok`; anything else → reject 400.
+ */
+export const fakeImWebhook: ChannelWebhook = {
+  async handle({ config, request }) {
+    const c = config as ConnConfig;
+    if (c.webhookToken === undefined) return { kind: "reject", status: 401 };
+    if (!signatureOk(request.headers["x-fake-signature"], c.webhookToken, request.body)) {
+      return { kind: "reject", status: 401 };
+    }
+    let msg: { type?: unknown; challenge?: unknown; events?: unknown };
+    try {
+      msg = JSON.parse(new TextDecoder().decode(request.body)) as typeof msg;
+    } catch {
+      return { kind: "reject", status: 400 };
+    }
+    if (msg.type === "challenge" && typeof msg.challenge === "string") {
+      return {
+        kind: "respond",
+        response: {
+          status: 200,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ challenge: msg.challenge }),
+        },
+      };
+    }
+    if (msg.type === "events" && Array.isArray(msg.events)) {
+      return {
+        kind: "events",
+        events: msg.events as InboundEvent[],
+        ack: { status: 200, headers: { "content-type": "text/plain" }, body: "ok" },
+      };
+    }
+    return { kind: "reject", status: 400 };
+  },
+};
+
+/**
+ * 按能力开关造一个假渠道（chan-mini / chan-noedit 复用，只是插件名与 features 不同）。
+ * `opts.webhook` adds {@link fakeImWebhook} (only `fake-im` has it; the others test "unsupported").
+ */
+export const makeFakeImChannel = (
+  features: Channel["features"],
+  opts: { webhook?: boolean } = {},
+): Channel => ({
+  ...(opts.webhook === true && { webhook: fakeImWebhook }),
   connectionSchema: FakeImConnection,
   features,
   async verify({ config, signal }) {

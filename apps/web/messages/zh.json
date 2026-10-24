@@ -37,7 +37,8 @@
         "account_disabled": "该账号已被停用。"
       },
       "unknown": "登录失败，请重试。"
-    }
+    },
+    "insecureOrigin": "如果登录后马上又回到登录页：当前页面通过 http 从非 localhost 的地址访问，而会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它。请改用 HTTPS（或在 localhost 上）访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false），并把 CAPYBARA_PUBLIC_URL 设为当前地址，否则附件上传与下载会失败。"
   },
   "setup": {
     "title": "初始化",
@@ -88,11 +89,15 @@
       "csrf": "请求被拒绝，请刷新页面后重试。"
     },
     "account": {
-      "login_taken": "用户名已被占用。"
+      "login_taken": "用户名已被占用。",
+      "not_found": "账号不存在。",
+      "last_enterprise_admin": "不能撤销或停用最后一个企业管理员。"
     },
     "org": {
       "not_found": "组织不存在或你已不是成员。",
-      "sandbox_egress_not_allowed": "本部署已禁止沙箱联网，组织只能选择「不联网」。"
+      "sandbox_egress_not_allowed": "本部署已禁止沙箱联网，组织只能选择「不联网」。",
+      "last_owner": "组织至少要保留一个所有者。",
+      "owner_required": "只有所有者可以执行这个操作。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -110,15 +115,21 @@
       "artifact_not_previewable": "这个文件不能预览。"
     },
     "run": {
-      "not_active": "当前没有进行中的回复。"
+      "not_active": "当前没有进行中的回复。",
+      "model_unavailable": "模型不可用。",
+      "provider_unavailable": "模型供应商列表暂时读不到。",
+      "provider_error": "模型供应商出错。",
+      "storage_unavailable": "附件存储暂时不可用。",
+      "hook_denied": "请求被插件「{plugin}」的策略拦截。",
+      "hook_denied_unknown": "请求被插件策略拦截。"
     },
-    "app": {
-      "not_found": "应用不存在或已被删除。",
-      "slug_taken": "该 slug 已被其他应用使用。",
-      "connect_failed": "无法连接应用的服务，请检查 URL 与凭据。",
-      "tool_not_found": "该应用没有这个工具。",
+    "connector": {
+      "not_found": "连接器不存在或已被删除。",
+      "slug_taken": "该 slug 已被其他连接器使用。",
+      "connect_failed": "无法访问连接器的服务，请检查 URL 与凭据。",
+      "tool_not_found": "该连接器没有这个工具。",
       "tool_not_pending": "该工具不在待复核状态。",
-      "resources_disabled": "该应用已关闭读取资源。"
+      "resources_disabled": "该连接器已关闭读取资源。"
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",
@@ -129,7 +140,7 @@
       "already_answered": "该问题已被回答或已过期。"
     },
     "credential": {
-      "missing": "使用该应用需要凭据。"
+      "missing": "使用该连接器需要凭据。"
     },
     "plugin": {
       "not_found": "插件未安装。",
@@ -137,10 +148,36 @@
       "config_invalid": "配置不正确：",
       "no_org_config": "该插件没有组织级配置。",
       "dependency_missing": "请先启用它依赖的插件。",
-      "has_dependents": "还有其他已启用的插件依赖它。"
+      "has_dependents": "还有其他已启用的插件依赖它。",
+      "config_readonly": "这个字段由启动配置给出，只读。",
+      "config_declared": "同名插件已由启动配置声明，不能在网页上安装。",
+      "builtin": "这是内置插件，不能执行这个操作。",
+      "name_conflict": "这个插件名之前属于另一个 npm 包，不能被别的包接手。",
+      "approval_stale": "审阅之后插件包或权限已经变化，请刷新后重新审阅。",
+      "not_pending": "这个插件不需要批准。",
+      "package_unavailable": "插件包读不到（可能已损坏或超过大小上限）。",
+      "package_not_found": "插件包不存在，请重新上传。",
+      "name_mismatch": "插件包里的插件名与目标不符。",
+      "downgrade_unsupported": "不能降级到这个版本：它有尚未执行的迁移。",
+      "not_disabled": "请先停用再卸载。",
+      "package_invalid": "插件包不合法：",
+      "package_too_large": "插件包超过大小上限。",
+      "unavailable": "插件当前不可用。"
     },
     "directory": {
-      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
+      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。",
+      "invalid_package": "包不合法。",
+      "version_exists": "这个版本已经导入过。",
+      "item_not_found": "条目不存在或你看不到它。",
+      "wrong_kind": "这个操作不适用于该种类的条目（应用包请用「导入应用」）。",
+      "name_conflict": "同名条目来自另一个 npm 包。",
+      "item_disabled": "企业管理员禁用了这个条目（或它包含的某个插件），不能新装或启用。",
+      "approval_required": "把它带进部署的目录条目需要企业管理员批准，本组织获批前不能安装或启用。",
+      "request_not_found": "申请不存在或已处理。",
+      "request_decided": "这条申请已经处理过了。",
+      "custom_disabled": "企业管理员关闭了自建，只能从目录安装。",
+      "not_deployed": "依赖的插件还没装到部署上，或部署的版本不满足要求，请联系企业管理员。",
+      "icon_not_found": "没有图标。"
     },
     "ui": {
       "not_found": "这个面板不可用：插件可能未启用，或你无权访问这个对话。",
@@ -151,7 +188,8 @@
     },
     "channel": {
       "not_found": "渠道不存在或已删除。",
-      "verify_failed": "平台拒绝了机器人凭据，请检查后重试。"
+      "verify_failed": "平台拒绝了机器人凭据，请检查后重试。",
+      "webhook_unavailable": "该渠道无法使用 Webhook：插件不支持，或部署未配置回调地址。"
     },
     "identity": {
       "taken": "这个 IM 账号已绑定到另一个 Capybara 账号。",
@@ -162,7 +200,9 @@
       "invalid": "绑定链接无效或已过期。"
     },
     "member": {
-      "anonymous_guest": "匿名访客不能被授予角色、所有权或 agent，也不能被邀请或移出。"
+      "anonymous_guest": "匿名访客不能被授予角色、所有权或 agent，也不能被邀请或移出。",
+      "not_found": "成员不存在。",
+      "already_exists": "你已经是这个组织的成员了。"
     },
     "attachment": {
       "too_large": "文件太大，超过了单个附件的大小上限。",
@@ -188,6 +228,70 @@
       "not_found": "该技能改动不存在或你无权查看。",
       "not_owner": "只有该 agent 的负责人可以批准或拒绝它的技能改动。",
       "already_decided": "该技能改动已被处理。"
+    },
+    "trajectory": {
+      "not_found": "没有找到这条运行记录，或你没有查看权限。"
+    },
+    "eval": {
+      "set_not_found": "评测集不存在。",
+      "case_exists": "这次运行已经在该评测集里了。",
+      "too_many_cases": "评测集已满，无法再加入用例。",
+      "agent_mismatch": "这次运行不属于该评测集的 agent。",
+      "run_not_finished": "运行还没结束，结束后才能加入评测集。",
+      "case_too_large": "这次运行太大，不能加入评测集。",
+      "call_not_found": "快照里找不到这次模型调用。",
+      "case_not_found": "用例不存在。",
+      "run_not_found": "评测运行不存在。",
+      "result_not_found": "评测结果不存在。",
+      "token_cap_invalid": "token 上限超出允许范围（至少 1，且不超过部署上限）。",
+      "run_finished": "运行已经结束了。",
+      "nothing_to_replay": "评测集里没有可回放的用例。",
+      "candidate_invalid": "候选设置不可用（版本、模型或参数不对）。",
+      "too_many_errors": "连续出错太多次，运行已停止。",
+      "definition_missing": "快照里缺少 agent 定义，无法回放。",
+      "stalled": "回放被中断太多次。",
+      "internal": "回放意外失败。"
+    },
+    "model": {
+      "unconfigured": "这个用途还没有映射模型。",
+      "purpose_unknown": "没有这个模型用途。",
+      "rate_limited": "模型供应商限流。",
+      "overloaded": "模型供应商繁忙。",
+      "server": "模型供应商出错。",
+      "timeout": "模型请求超时。",
+      "network": "连不上模型供应商。",
+      "auth": "模型供应商认证失败。",
+      "invalid_request": "模型供应商拒绝了请求。",
+      "context_overflow": "超出模型的上下文长度。",
+      "aborted": "模型请求被中止。"
+    },
+    "payload_too_large": "内容超过大小上限。",
+    "invitation": {
+      "invalid": "邀请链接无效或已被撤销。",
+      "expired": "邀请已过期。",
+      "used": "这个邀请已经被使用过了。"
+    },
+    "catalog": {
+      "not_found": "清单来源不存在。",
+      "entry_not_found": "清单条目或版本不存在（来源可能已停用）。",
+      "fetch_failed": "拉取清单失败，已保留上一份条目。",
+      "invalid": "清单格式不合法，已保留上一份条目。",
+      "integrity_mismatch": "下载的包与清单的 sha512 不符，已拒绝引入。包可能被篡改，请联系清单维护者。",
+      "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
+      "package_mismatch": "下载的包与清单条目不一致。",
+      "builtin": "官方清单由部署配置决定，这里只能启用或停用。"
+    },
+    "app": {
+      "invalid_manifest": "应用清单（app.yaml）不合法。",
+      "lock_mismatch": "应用锁定的插件包与下载的不符（sha512 不一致），已拒绝。包可能被篡改。",
+      "review_stale": "审阅已过期（部署上的插件有变化），请重新读取应用包。",
+      "staging_not_found": "暂存的应用包已过期，请重新读取。",
+      "plugin_conflict": "应用要的插件版本与内置 / 配置声明的插件冲突。",
+      "bundle_too_large": "应用包太大。",
+      "install_failed": "安装失败，已回滚本次新建的组件。",
+      "install_not_found": "安装记录不存在。",
+      "already_installed": "本组织已经装了这个应用，请先卸载再装。",
+      "install_in_progress": "这个应用还在安装中，暂时不能卸载；安装中断时，超过时限后可以清理。"
     }
   },
   "agents": {
@@ -232,9 +336,9 @@
         "read_tool_output": "读取存档的工具结果（read_tool_output）",
         "skill_write": "编写技能（skill_write）"
       },
-      "appsLabel": "应用",
-      "appTools": "{name} 的全部工具",
-      "noApps": "还没有安装应用。",
+      "connectorsLabel": "连接器",
+      "connectorTools": "{name} 的全部工具",
+      "noConnectors": "还没有安装连接器。",
       "policiesLabel": "策略",
       "policy": {
         "default": "默认",
@@ -246,6 +350,8 @@
       "skillsSectionHint": "agent 在任务需要时可以加载的技能。",
       "orgSkillsLabel": "组织技能",
       "noOrgSkills": "组织还没有技能。",
+      "confirmSkillWrite": "agent 写技能前需要我确认",
+      "confirmSkillWriteHint": "仅私有 agent。不勾选时 agent 写的技能直接生效；勾选后每次写入都要你确认，确认后同样直接生效。",
       "deletedSkill": "已删除的技能（{id}）",
       "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
       "ownSkillsLabel": "agent 自己写的技能",
@@ -286,7 +392,8 @@
     },
     "emptyHint": "新建一个 Agent，然后开始对话。",
     "noOrgHint": "请在工作台或顶栏的组织菜单中选择组织。",
-    "edit": "编辑"
+    "edit": "编辑",
+    "runHistory": "运行记录"
   },
   "skills": {
     "title": "技能",
@@ -369,14 +476,14 @@
     "removeAttachment": "移除 {name}",
     "attachLimit": "每条消息最多 {max} 个附件。",
     "insertPrompt": "插入",
-    "unavailableApps": "不可用的应用",
-    "appUnavailable": {
+    "unavailableConnectors": "不可用的连接器",
+    "connectorUnavailable": {
       "not_connected": "未连接",
       "failed": "不可用"
     },
-    "appUnavailableHint": {
-      "not_connected": "你还没有连接 {app}。请先在「应用」页连接，再重试。",
-      "failed": "暂时无法访问 {app}，请稍后重试。"
+    "connectorUnavailableHint": {
+      "not_connected": "你还没有连接 {connector}。请先在「连接器」页连接，再重试。",
+      "failed": "暂时无法访问 {connector}，请稍后重试。"
     },
     "timeline": "本轮步骤",
     "thinkingLive": "思考中…",
@@ -407,7 +514,7 @@
     "tokensOnly": "{used}",
     "noUsage": "暂无用量",
     "windowUnknown": "模型没有声明上下文窗口，只显示已用 token 数。",
-    "apps": "用到的应用",
+    "connectors": "用到的连接器",
     "none": "无",
     "compactions": "压缩记录",
     "compactionCovers": "压缩到第 {seq} 条事件",
@@ -436,9 +543,12 @@
     "goto": "跳转",
     "actions": "操作",
     "inbox": "收件箱",
-    "apps": "应用",
+    "connectors": "连接器",
     "channels": "渠道",
-    "skills": "技能"
+    "skills": "技能",
+    "evals": "评测",
+    "admin": "管理",
+    "directory": "目录"
   },
   "shell": {
     "switchLocale": "切换到 {name}",
@@ -465,7 +575,7 @@
     "title": "需要审批",
     "waiting": "待处理",
     "tool": "工具",
-    "app": "应用",
+    "connector": "连接器",
     "agent": "Agent",
     "expires": "过期时间",
     "input": "参数",
@@ -518,22 +628,22 @@
     "openLink": "打开链接"
   },
   "connect": {
-    "title": "需要连接应用",
+    "title": "需要授权连接器",
     "status": "未连接",
-    "description": "agent 使用 {app} 前，需要先填写你的凭据。",
+    "description": "agent 使用 {connector} 前，需要先填写你的凭据。",
     "action": "连接",
-    "ended": "这次运行时 {app} 尚未连接。请在「我的连接」中填写凭据后再试。",
+    "ended": "这次运行时 {connector} 尚未连接。请在「我的连接」中填写凭据后再试。",
     "result": {
-      "connected": "应用已连接，请让智能体重试。",
-      "unknown": "无法连接该应用，请重试。",
+      "connected": "连接器已连接，请让智能体重试。",
+      "unknown": "无法完成该连接器的授权，请重试。",
       "error": {
         "state_invalid": "连接请求已过期，请重试。",
         "session_mismatch": "必须在发起连接的同一浏览器中完成授权。",
-        "access_denied": "授权被拒绝，应用未连接。",
-        "provider_error": "应用的登录服务报告了问题，请重试。",
-        "token_exchange_failed": "无法完成应用登录，请重试。",
+        "access_denied": "授权被拒绝，连接器未连接。",
+        "provider_error": "连接器的登录服务报告了问题，请重试。",
+        "token_exchange_failed": "无法完成连接器登录，请重试。",
         "issuer_mismatch": "登录响应并非来自预期的服务。",
-        "app_unavailable": "该应用当前无法连接。"
+        "connector_unavailable": "该连接器当前无法连接。"
       }
     }
   },
@@ -579,11 +689,11 @@
       "rejected": "已拒绝技能变更"
     }
   },
-  "apps": {
-    "title": "应用",
-    "new": "添加应用",
+  "connectors": {
+    "title": "连接器",
+    "new": "添加连接器",
     "myConnections": "我的连接",
-    "empty": "还没有应用。",
+    "empty": "还没有连接器。",
     "emptyHint": "接入一个 MCP 服务，为 agent 提供工具。",
     "columns": {
       "name": "名称",
@@ -636,7 +746,7 @@
       "headerNamesLabel": "请求头名称",
       "headerNamesHelp": "每行一个。",
       "credentialHint": {
-        "org": "组织凭据（现在可不填，之后在应用详情页设置）。",
+        "org": "组织凭据（现在可不填，之后在连接器详情页设置）。",
         "personal": "你自己的凭据（现在可不填，之后在「我的连接」中设置）。"
       },
       "tokenLabel": "令牌",
@@ -645,14 +755,14 @@
       "headerValueLabel": "{name} 的值"
     },
     "detail": {
-      "tabsLabel": "应用页内导航",
+      "tabsLabel": "连接器页内导航",
       "tabs": {
         "tools": "工具",
         "review": "复核",
         "credentials": "凭据",
         "settings": "设置"
       },
-      "inspectorTitle": "应用",
+      "inspectorTitle": "连接器",
       "refresh": "刷新工具",
       "refreshed": "工具列表已刷新。",
       "retry": "重试"
@@ -675,7 +785,7 @@
       "enabledLabel": "启用 {tool}",
       "enabled": "启用",
       "disabled": "已停用",
-      "empty": "该应用没有工具。",
+      "empty": "该连接器没有工具。",
       "missing": "服务已不再提供此工具",
       "pendingReview": "待复核",
       "neverReviewed": "从未复核：在「复核」页签批准后才能启用"
@@ -693,9 +803,9 @@
       "openConnections": "打开我的连接",
       "save": "保存凭据",
       "saved": "凭据已保存。",
-      "oauthOrgHint": "此应用通过 OAuth 客户端登录，组织令牌自动获取。",
+      "oauthOrgHint": "此连接器通过 OAuth 客户端登录，组织令牌自动获取。",
       "clientTitle": "OAuth 客户端",
-      "clientDcr": "此应用的客户端是自动注册的，不能替换；需要更换时请重新安装。",
+      "clientDcr": "此连接器的客户端是自动注册的，不能替换；需要更换时请重新安装。",
       "rotate": "替换客户端",
       "rotated": "OAuth 客户端已替换。",
       "rotateVerified": "新客户端会先换取一次令牌验证，验证失败则不做任何修改。",
@@ -703,13 +813,13 @@
     },
     "settings": {
       "title": "常规",
-      "activeLabel": "启用应用",
+      "activeLabel": "启用连接器",
       "save": "保存",
       "saved": "已保存。",
       "dangerTitle": "危险操作",
-      "delete": "删除应用",
+      "delete": "删除连接器",
       "deleteTitle": "删除 {name}？",
-      "deleteHint": "使用该应用的 agent 将失去它的工具，已保存的凭据也会删除。此操作不可撤销。"
+      "deleteHint": "使用该连接器的 agent 将失去它的工具，已保存的凭据也会删除。此操作不可撤销。"
     },
     "oauth": {
       "clientIdLabel": "Client ID",
@@ -737,7 +847,7 @@
       }
     },
     "wizard": {
-      "title": "安装应用",
+      "title": "安装连接器",
       "steps": {
         "type": "类型",
         "endpoint": "端点",
@@ -748,7 +858,7 @@
       "next": "下一步",
       "previous": "上一步",
       "install": "安装",
-      "openApp": "打开应用",
+      "openConnector": "打开连接器",
       "typeTitle": "选择端点类型",
       "connector": {
         "mcp": "MCP 服务",
@@ -783,8 +893,8 @@
       "oauthClientHint": "用一个组织共用的 OAuth 客户端换取令牌；安装时会先验证客户端。",
       "noticeTitle": "需要调整",
       "dcrUnsupported": "授权服务器不支持自动注册客户端。请在服务方注册一个客户端，并在下面填写 Client ID 与 Client secret。",
-      "publicUrlRequired": "OAuth 应用需要内核配置 http.publicUrl（用于生成 OAuth 回调地址）。请联系部署管理员配置后再安装，或改用其他认证方式。",
-      "operationsHint": "勾选要提供给 agent 的操作；默认策略按 HTTP 方法推导，安装后可在应用详情中调整。",
+      "publicUrlRequired": "OAuth 连接器需要内核配置 http.publicUrl（用于生成 OAuth 回调地址）。请联系部署管理员配置后再安装，或改用其他认证方式。",
+      "operationsHint": "勾选要提供给 agent 的操作；默认策略按 HTTP 方法推导，安装后可在连接器详情中调整。",
       "operationsLabel": "操作",
       "noOperations": "文档里没有操作。",
       "selectOperation": "至少勾选一个操作。",
@@ -792,9 +902,9 @@
         "operation": "操作"
       },
       "toolsTitle": "工具",
-      "toolsHint": "以下工具将随应用安装；默认策略按工具注解推导，安装后可在应用详情中调整。",
+      "toolsHint": "以下工具将随连接器安装；默认策略按工具注解推导，安装后可在连接器详情中调整。",
       "toolsAfterInstall": "安装时列出工具。",
-      "toolsAfterConnect": "OAuth 授权码应用在第一位成员连接后列出工具。",
+      "toolsAfterConnect": "OAuth 授权码连接器在第一位成员连接后列出工具。",
       "annotation": {
         "readOnly": "只读",
         "destructive": "有破坏性",
@@ -803,7 +913,7 @@
       "issuesTitle": "以下工具将被停用：",
       "doneTitle": "已安装 {name}",
       "doneTools": "共 {count} 个工具。",
-      "doneOAuthCode": "每位成员需要先连接自己的账号，agent 才能代表他们调用此应用。",
+      "doneOAuthCode": "每位成员需要先连接自己的账号，agent 才能代表他们调用此连接器。",
       "connectNow": "连接我的账号",
       "credentialRequired": "请填写凭据，安装时要用它列出工具。",
       "credentialHint": {
@@ -838,21 +948,24 @@
   "connections": {
     "title": "个人设置",
     "nav": {
-      "connections": "已连接的应用",
+      "connections": "我的连接",
       "grants": "已记住的授权",
       "organization": "组织设置",
       "identities": "IM 身份",
-      "plugins": "插件"
+      "plugins": "插件",
+      "models": "模型用途",
+      "members": "成员",
+      "apps": "已安装的应用"
     },
-    "empty": "没有需要你个人凭据的应用。",
-    "emptyHint": "使用个人凭据的应用会出现在这里。",
-    "sectionHint": "你在该应用上的个人凭据，其他成员使用各自的凭据。",
+    "empty": "没有需要你个人凭据的连接器。",
+    "emptyHint": "使用个人凭据的连接器会出现在这里。",
+    "sectionHint": "你在该连接器上的个人凭据，其他成员使用各自的凭据。",
     "connected": "已连接",
     "missing": "未连接",
     "save": "保存",
     "clear": "清除",
-    "saved": "{app} 的凭据已保存。",
-    "cleared": "{app} 的凭据已清除。",
+    "saved": "{connector} 的凭据已保存。",
+    "cleared": "{connector} 的凭据已清除。",
     "grants": {
       "empty": "没有已记住的授权。",
       "emptyHint": "审批时选择「以后都允许」会在这里留下一条。",
@@ -869,7 +982,7 @@
     "reconnect": "重新连接",
     "oauthConnect": "连接",
     "disconnect": "断开连接",
-    "oauthHint": "用你自己的账号登录此应用；其他成员各用各的。"
+    "oauthHint": "用你自己的账号登录此连接器；其他成员各用各的。"
   },
   "orgSettings": {
     "title": "组织设置",
@@ -913,6 +1026,20 @@
       "hosts": "允许的主机",
       "hostsHelp": "每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称；最多 200 个。",
       "newOnly": "改动只对之后新建的沙箱生效；已有的沙箱沿用原来的网络设置，直到被销毁。"
+    },
+    "limits": {
+      "title": "沙箱资源",
+      "description": "每个沙箱可用的 CPU 与内存。由企业管理员在部署设置里按组织调整，组织管理员只能查看。",
+      "cpu": "CPU",
+      "cpuValue": "{cpu} 核",
+      "memory": "内存",
+      "memoryValue": "{mb} MiB",
+      "sourceLabel": "来源",
+      "source": {
+        "deployment": "部署默认",
+        "override": "企业管理员为本组织设置"
+      },
+      "newOnly": "只对新建的沙箱生效；已有的沙箱沿用创建时的限额，直到被销毁。"
     }
   },
   "schemaForm": {
@@ -1021,7 +1148,25 @@
       "dangerTitle": "危险操作",
       "delete": "删除渠道",
       "deleteTitle": "删除 {name}？",
-      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 Capybara 中。"
+      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 Capybara 中。",
+      "inboundTitle": "接收方式",
+      "inboundHint": "机器人如何接收消息。长连接在内网即可使用；Webhook 需要平台能经公网地址访问本部署。",
+      "inboundLabel": "接收方式",
+      "inboundUnsupported": "该渠道插件只支持长连接。",
+      "inboundNoBaseUrl": "无法使用 Webhook：部署未配置公网回调地址（channels.webhookBaseUrl）。",
+      "callbackUrl": "回调地址",
+      "callbackUrlHint": "在平台的应用设置里把此地址填为事件 / 请求地址。",
+      "saveInbound": "保存接收方式",
+      "inboundSaved": "接收方式已保存。",
+      "webhookNoUrlWarning": "该渠道处于 Webhook 模式，但部署未配置回调地址（channels.webhookBaseUrl），平台无法把消息送达机器人。请配置该地址，或切回长连接。"
+    },
+    "inboundMode": {
+      "long_connection": "长连接",
+      "webhook": "Webhook"
+    },
+    "inboundModeHint": {
+      "long_connection": "机器人与平台保持一条连接（默认，无需公网地址）。",
+      "webhook": "平台每个事件都回调本部署，需要公网地址。"
     }
   },
   "plugins": {
@@ -1031,6 +1176,8 @@
     "enableLabel": "启用 {plugin}",
     "enabled": "已在该组织启用",
     "disabled": "未启用",
+    "unavailable": "不可用",
+    "unavailableHint": "此插件在部署上当前不可用；组织的启用设置会保留。",
     "enabledToast": "已启用 {plugin}。",
     "disabledToast": "已停用 {plugin}。",
     "dependencyMissing": "请先启用提供以下能力的插件：",
@@ -1062,7 +1209,35 @@
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
     "syncHint": "通讯录同步会按平台通讯录增删组织成员。",
-    "syncStarted": "已开始同步通讯录。"
+    "syncStarted": "已开始同步通讯录。",
+    "review": {
+      "network": "声明，平台不拦截",
+      "added": "新增的权限",
+      "removed": "减少的权限",
+      "none": "没有声明任何权限。",
+      "reason": {
+        "secrets": "可以读写密钥",
+        "public_routes": "这些路由不需要登录就能访问",
+        "tools": "组织里的 agent 可以调用这些工具",
+        "hooks": "可以介入内核流程",
+        "ui_embed": "会把插件自己的页面嵌入网页",
+        "channel": "收到组织在 IM 里的对话内容",
+        "directory": "能把人加进组织，并为其建账号",
+        "identity_source": "决定谁能登录成哪个账号",
+        "sandbox": "在部署里执行任意命令",
+        "object_store": "保管全部附件与插件包",
+        "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准"
+      },
+      "warnings": "迁移警告",
+      "warningsHint": "插件迁移只该做扩展：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
+      "warning": {
+        "destructive_migration": "破坏性语句",
+        "dynamic_sql": "DO 块（内容没有检查）",
+        "foreign_schema": "越出插件自己 schema 的语句（内核表、权限 / 角色、函数 / 触发器或事务控制）"
+      },
+      "at": "{file} 第 {line} 行"
+    },
+    "openDirectory": "去企业目录查看或申请"
   },
   "identities": {
     "title": "IM 身份",
@@ -1099,5 +1274,1385 @@
     "invalidTitle": "链接已失效",
     "invalidHint": "在 IM 里给机器人重新发一条消息，获取新的绑定链接。",
     "goHome": "进入 Capybara"
+  },
+  "trajectories": {
+    "title": "运行记录",
+    "untitled": "未命名对话",
+    "noRun": "没有运行",
+    "empty": "还没有可查看的运行记录",
+    "emptyHint": "你负责的 agent（组织管理员为全部 agent）有对话运行后会出现在这里。",
+    "noMatch": "没有符合当前筛选的对话。",
+    "loadMore": "加载更多",
+    "columns": {
+      "title": "对话",
+      "agent": "Agent",
+      "status": "最近一次运行",
+      "updated": "更新时间"
+    },
+    "filters": {
+      "agent": "Agent",
+      "allAgents": "全部 agent",
+      "status": "最近一次运行的状态",
+      "allStatuses": "全部"
+    },
+    "status": {
+      "queued": "排队",
+      "running": "运行中",
+      "waiting": "等人处理",
+      "completed": "已完成",
+      "failed": "失败",
+      "aborted": "已中止"
+    },
+    "detail": {
+      "waterfall": "Span 瀑布",
+      "region": "Span 详情",
+      "audited": "查看运行记录会记入审计。",
+      "loadEarlier": "加载更早的运行",
+      "empty": "这个对话还没有开始过运行。",
+      "selectHint": "选择上方的一个 span 查看详情。",
+      "spans": {
+        "run": "运行 · v{version}",
+        "step": "步骤 {n}",
+        "approval": "审批",
+        "question": "提问"
+      },
+      "metrics": {
+        "tokens": "总 TOKEN",
+        "cost": "成本（估算）",
+        "calls": "调用数",
+        "duration": "耗时"
+      },
+      "run": {
+        "title": "运行 {id}",
+        "version": "agent 版本",
+        "trigger": "发起人",
+        "started": "开始",
+        "ended": "结束",
+        "result": "结果",
+        "running": "进行中",
+        "end": {
+          "finished": "完成",
+          "failed": "失败",
+          "aborted": "中止"
+        },
+        "tokens": "token",
+        "cost": "本次运行成本（估算）",
+        "calls": "调用次数",
+        "callsValue": "模型 {model} · 工具 {tool}",
+        "duration": "耗时"
+      },
+      "step": {
+        "title": "步骤 {n}",
+        "stopReason": "停止原因",
+        "text": "回复正文",
+        "noText": "（没有文本）"
+      },
+      "model": {
+        "title": "模型调用 · {name}",
+        "provider": "供应商",
+        "model": "模型",
+        "attempt": "尝试",
+        "attemptValue": "第 {n} 次",
+        "fallback": "兜底",
+        "fallbackYes": "是（兜底模型）",
+        "fallbackNo": "否（主模型）",
+        "outcome": "结果",
+        "outcomes": {
+          "ok": "成功",
+          "failed": "失败",
+          "pending": "进行中"
+        },
+        "tokens": "token",
+        "tokensValue": "输入 {input} · 输出 {output} · 缓存读 {cacheRead} · 缓存写 {cacheWrite}",
+        "latency": "延迟",
+        "cost": "成本（估算）",
+        "params": "参数",
+        "tools": "工具",
+        "started": "开始"
+      },
+      "tool": {
+        "title": "工具调用 · {name}",
+        "result": "结果",
+        "noResult": "（没有结果）",
+        "error": "出错",
+        "duration": "耗时",
+        "started": "开始执行",
+        "notStarted": "未执行",
+        "approval": "审批",
+        "approvalRequested": "请求审批",
+        "decision": "决定",
+        "decisions": {
+          "approved": "已批准",
+          "denied": "已拒绝",
+          "expired": "已过期",
+          "cancelled": "已取消",
+          "pending": "待决定"
+        },
+        "scope": "范围",
+        "scopes": {
+          "once": "仅本次",
+          "session": "本会话",
+          "always": "始终"
+        },
+        "by": "处理人",
+        "decidedAt": "决定于",
+        "question": "提问",
+        "asked": "提问于",
+        "questionOutcome": "回答",
+        "questionOutcomes": {
+          "answered": "已回答",
+          "expired": "已过期",
+          "cancelled": "已取消",
+          "pending": "待回答"
+        }
+      },
+      "hook": {
+        "title": "被策略 hook 拦截",
+        "plugin": "插件",
+        "cause": "原因类别",
+        "causes": {
+          "deny": "拒绝",
+          "hook_error": "hook 出错",
+          "timeout": "hook 超时"
+        },
+        "reason": "原因（模型可见）",
+        "attempt": "尝试"
+      }
+    },
+    "addToSet": {
+      "action": "加入评测集",
+      "title": "加入评测集",
+      "set": "评测集",
+      "run": "运行",
+      "submit": "加入",
+      "noSets": "该 agent 还没有评测集。",
+      "runNotFinished": "这次运行还没结束，结束后才能加入。",
+      "added": "已加入评测集「{name}」。"
+    },
+    "endDetail": {
+      "completed": "正常完成",
+      "max_steps": "达到步数上限",
+      "max_duration": "达到时长上限",
+      "user": "被用户停止",
+      "shutdown_exhausted": "服务停机",
+      "eval_stopped": "评测停止",
+      "cancelled": "评测运行已取消",
+      "capped": "达到 token 上限",
+      "too_many_errors": "连续出错过多",
+      "claim_lost": "已由其他 worker 接手",
+      "shutdown": "worker 停机"
+    }
+  },
+  "evals": {
+    "title": "评测",
+    "runHistory": "运行记录",
+    "new": "新建评测集",
+    "empty": "还没有评测集",
+    "emptyHint": "从真实对话里挑出运行组成评测集，换模型、提示词或 agent 版本后回放比较。",
+    "columns": {
+      "name": "名称",
+      "agent": "Agent",
+      "cases": "用例",
+      "created": "创建时间"
+    },
+    "form": {
+      "title": "新建评测集",
+      "basic": "基本信息",
+      "basicHint": "一个评测集对应一个 agent，用例只能来自这个 agent 的对话。",
+      "grading": "评分标准",
+      "gradingHint": "LLM 评委按它比较基线与候选的回复。",
+      "agentLabel": "Agent",
+      "noAgents": "还没有 agent，先新建一个。",
+      "nameLabel": "名称",
+      "descriptionLabel": "说明",
+      "rubricLabel": "评分标准（rubric）",
+      "rubricHint": "给评委模型看，请用英文；留空时用默认标准。",
+      "submit": "创建",
+      "nameRequired": "请填写名称"
+    },
+    "set": {
+      "tabsLabel": "评测集内容",
+      "tabs": {
+        "cases": "用例",
+        "runs": "运行"
+      },
+      "count": "{n} 个用例",
+      "run": "运行评测",
+      "sample": "从对话抽样",
+      "more": "更多操作",
+      "delete": "删除评测集",
+      "deleteTitle": "删除评测集「{name}」",
+      "deleteHint": "删除后用例与运行结果都不再可见，正在执行的运行会被取消。",
+      "deleted": "已删除评测集「{name}」。",
+      "inspectorTitle": "评测集",
+      "agent": "Agent",
+      "description": "说明",
+      "rubric": "评分标准",
+      "defaultRubric": "（默认标准）",
+      "created": "创建时间",
+      "casesLabel": "用例",
+      "casesEmpty": "还没有用例",
+      "casesEmptyHint": "用「从对话抽样」批量加入，或在运行记录里把一次运行「加入评测集」。",
+      "caseColumns": {
+        "title": "触发消息",
+        "version": "agent 版本",
+        "steps": "可回放步骤",
+        "created": "加入时间"
+      },
+      "viewTrajectory": "查看快照轨迹",
+      "removeCase": "移除用例",
+      "caseRemoved": "已移除用例。",
+      "runsLabel": "运行",
+      "runsEmpty": "还没有运行过",
+      "runColumns": {
+        "created": "开始时间",
+        "mode": "模式",
+        "status": "状态",
+        "progress": "进度",
+        "tokens": "token"
+      }
+    },
+    "sample": {
+      "title": "从对话抽样",
+      "hint": "从该 agent 已结束的对话运行里随机挑选，已在评测集里的不会重复加入。",
+      "count": "数量",
+      "status": "运行结果",
+      "statuses": {
+        "completed": "已完成",
+        "failed": "失败",
+        "any": "全部（含已中止）"
+      },
+      "minToolCalls": "至少几次工具调用",
+      "from": "开始日期（含）",
+      "to": "结束日期（不含）",
+      "submit": "抽样",
+      "done": "加入 {added} 个用例，跳过 {skipped} 个。"
+    },
+    "case": {
+      "title": "用例 · {title}"
+    },
+    "mode": {
+      "step": "单步回放",
+      "run": "整轮回放",
+      "stepHint": "由日志还原每次模型请求，只换模型、参数与指令后重发比较。",
+      "runHint": "从原对话的起点重跑整轮，工具结果取记录的，不执行真实工具。"
+    },
+    "runStatus": {
+      "queued": "排队",
+      "running": "运行中",
+      "completed": "已完成",
+      "cancelled": "已取消",
+      "capped": "已达上限",
+      "failed": "失败"
+    },
+    "wizard": {
+      "title": "运行评测",
+      "steps": {
+        "candidate": "模式与候选",
+        "judge": "评委与上限",
+        "confirm": "估算与确认"
+      },
+      "next": "下一步",
+      "back": "上一步",
+      "start": "开始运行",
+      "mode": "回放模式",
+      "candidate": "候选",
+      "candidateHint": "各项不改表示沿用用例原来的设置。",
+      "version": "agent 版本",
+      "versionKeep": "沿用用例的版本",
+      "versionValue": "v{n}",
+      "model": "模型",
+      "modelKeep": "沿用用例的模型",
+      "params": "模型参数",
+      "instructionsOverride": "覆盖指令",
+      "instructions": "指令",
+      "instructionsHint": "给模型看的系统指令，请用英文。",
+      "judge": "LLM 评委",
+      "judgeHint": "评委（用途 eval 映射的模型）比较基线与候选，给出通过 / 不通过与理由；评委请求也计入 token。",
+      "judgeUnmapped": "评委用途（eval）还没有映射模型，不能开评委。",
+      "judgeConfigure": "去配置模型用途",
+      "tokenCap": "token 上限",
+      "tokenCapHint": "留空用部署默认上限。达到上限后不再发新请求，运行记为「已达上限」。",
+      "tokenCapInvalid": "请输入正整数。",
+      "estimating": "正在估算…",
+      "estimate": {
+        "title": "估算",
+        "cases": "用例",
+        "modelRequests": "预计模型请求",
+        "judgeRequests": "预计评委请求",
+        "tokens": "预计 token",
+        "cost": "预计成本（估算）",
+        "tokenCap": "token 上限",
+        "overCap": "预计 token 超过上限，运行会在上限处停下。",
+        "judgeShare": "其中评委",
+        "judgeShareValue": "{tokens} token · 成本 {cost}"
+      },
+      "summary": {
+        "mode": "模式",
+        "judge": "评委",
+        "on": "开",
+        "off": "关"
+      },
+      "tokenCapRange": "部署默认 {default}，最多 {max}。",
+      "tokenCapTooLarge": "不能超过部署上限 {max}。"
+    },
+    "run": {
+      "title": "评测运行 · {time}",
+      "cancel": "取消运行",
+      "cancelled": "已取消运行。",
+      "metrics": {
+        "progress": "进度",
+        "tokens": "TOKEN / 上限",
+        "toolMatch": "工具调用一致",
+        "judgePass": "评委通过",
+        "humanPass": "人工通过"
+      },
+      "progressValue": "{done}/{total}",
+      "tokensValue": "{used} / {cap}",
+      "capped": "已达到 token 上限（{used} / {cap}），没做完的结果已跳过。",
+      "failed": "运行失败：{reason}",
+      "cancelledNotice": "运行已取消，没做完的结果已跳过。",
+      "polling": "运行中，每 5 秒刷新一次。",
+      "tabsLabel": "运行内容",
+      "tabs": {
+        "results": "结果",
+        "summary": "汇总"
+      },
+      "resultsLabel": "结果",
+      "resultsEmpty": "没有结果",
+      "columns": {
+        "case": "用例",
+        "step": "步骤",
+        "status": "状态",
+        "tools": "工具调用",
+        "similarity": "文本相似度",
+        "judge": "评委",
+        "label": "人工标注"
+      },
+      "wholeRun": "整轮",
+      "stepValue": "步骤 {n}",
+      "match": "一致",
+      "mismatch": "不一致",
+      "resultStatus": {
+        "pending": "排队",
+        "running": "进行中",
+        "done": "完成",
+        "error": "出错",
+        "skipped": "已跳过"
+      },
+      "judgeStatus": {
+        "none": "—",
+        "pending": "评分中",
+        "skipped": "未评",
+        "error": "评委出错"
+      },
+      "verdict": {
+        "pass": "通过",
+        "fail": "不通过"
+      },
+      "summary": {
+        "title": "汇总",
+        "pending": "运行结束后才有汇总。",
+        "done": "完成",
+        "errors": "出错",
+        "skipped": "跳过",
+        "toolMatch": "工具调用一致率",
+        "similarity": "平均文本相似度",
+        "judgePass": "评委通过率",
+        "judgeErrors": "评委出错",
+        "humanPass": "人工通过率",
+        "labeled": "已标注",
+        "drifted": "有漂移"
+      },
+      "candidate": {
+        "title": "候选",
+        "mode": "模式",
+        "version": "agent 版本",
+        "model": "模型",
+        "params": "参数",
+        "instructions": "指令",
+        "judge": "评委",
+        "keep": "沿用用例",
+        "overridden": "已覆盖",
+        "estimate": "运行前估算",
+        "estimateValue": "请求 {model} + 评委 {judge} · token {tokens} · 成本 {cost}",
+        "judgeShare": "其中评委",
+        "judgeShareValue": "{tokens} token · 成本 {cost}"
+      },
+      "inspector": {
+        "title": "结果详情",
+        "selectHint": "在表格里选择一条结果查看差异与评委理由。",
+        "case": "用例",
+        "status": "状态",
+        "drift": "漂移",
+        "error": "错误",
+        "textDiff": "回复文本差异（- 基线 / + 候选）",
+        "noTextDiff": "回复文本相同。",
+        "toolDiff": "工具调用差异",
+        "noToolCalls": "两边都没有工具调用。",
+        "toolKinds": {
+          "same": "相同",
+          "args_changed": "参数不同",
+          "name_changed": "工具不同",
+          "added": "候选新增",
+          "removed": "候选缺少"
+        },
+        "judge": "评委",
+        "verdict": "结论",
+        "score": "分数",
+        "reason": "理由",
+        "judgeError": "评委没有给出结论：{reason}",
+        "unparseable": "评委回复无法解析",
+        "label": "人工标注",
+        "note": "备注",
+        "pass": "通过",
+        "fail": "不通过",
+        "clear": "清除标注",
+        "evalTrajectory": "查看评测对话轨迹",
+        "diffCaption": "差异",
+        "driftSeparator": "、"
+      }
+    },
+    "drift": {
+      "system_hash": "系统提示词与记录时不同",
+      "tools_changed": "工具定义有变化",
+      "tool_spec_missing": "缺少记录的工具定义",
+      "definition_missing": "缺少 agent 版本定义",
+      "legacy_event": "旧格式记录",
+      "params_changed": "模型参数有变化",
+      "media_missing": "附件已不可用",
+      "media_changed": "附件有变化",
+      "tool_unmatched": "有工具调用没有对应的记录"
+    }
+  },
+  "models": {
+    "admin": {
+      "title": "模型",
+      "providers": {
+        "title": "供应商与模型",
+        "description": "已安装的模型供应商及其模型。价格为每百万 token 的单价，币种 {currency}（在部署设置中修改）；轨迹与评测里的成本都按这里的价格估算。"
+      },
+      "providerError": "供应商 {provider} 列模型失败，其他供应商不受影响。",
+      "noProviders": "还没有模型供应商。安装模型供应商插件后会出现在这里。",
+      "noModels": "这个供应商没有模型。",
+      "columns": {
+        "model": "模型",
+        "capabilities": "能力",
+        "context": "上下文长度",
+        "input": "输入",
+        "output": "输出",
+        "cacheRead": "缓存读",
+        "cacheWrite": "缓存写"
+      },
+      "sameAsInput": "同输入",
+      "menu": {
+        "editPrice": "编辑价格",
+        "clearPrice": "清除价格"
+      },
+      "price": {
+        "input": "输入（每百万 token）",
+        "output": "输出（每百万 token）",
+        "cacheRead": "缓存读（每百万 token）",
+        "cacheWrite": "缓存写（每百万 token）",
+        "cacheHint": "留空按输入价计。",
+        "invalid": "填 0 到 1,000,000 之间的数。",
+        "save": "保存价格",
+        "saveLabel": "保存 {model} 的价格",
+        "cancel": "取消",
+        "saved": "已保存 {model} 的价格。",
+        "cleared": "已清除 {model} 的价格。"
+      },
+      "purposes": {
+        "title": "用途默认映射",
+        "description": "内核与插件按用途取模型。这里设部署默认，各组织的管理员可以在组织设置里覆盖。不设模型白名单。"
+      }
+    },
+    "org": {
+      "title": "模型用途",
+      "description": "内核与插件按用途取模型。每个用途默认使用企业管理员设的部署默认；你可以为本组织覆盖，或恢复默认。"
+    },
+    "evalUnmapped": "评测用途 eval 还没有映射模型：评测不能开评委。",
+    "capability": {
+      "tools": "工具",
+      "vision": "图片",
+      "documents": "文档",
+      "reasoning": "推理",
+      "caching": "缓存"
+    },
+    "purpose": {
+      "declaredByKernel": "内核用途",
+      "declaredByPlugin": "插件 {plugin}",
+      "pluginNote": "插件调用模型尚未开放，可先配置。",
+      "model": "模型",
+      "modelInvalid": "所选模型不可用。",
+      "unset": "未设置",
+      "useDefault": "使用部署默认",
+      "deploymentDefault": "部署默认：{target}",
+      "overridden": "已覆盖",
+      "unavailable": "{target}（不可用）",
+      "params": "参数",
+      "save": "保存",
+      "saveLabel": "保存用途 {purpose}",
+      "clear": "清除",
+      "clearLabel": "清除用途 {purpose} 的部署默认",
+      "restore": "恢复默认",
+      "restoreLabel": "用途 {purpose} 恢复部署默认",
+      "saved": "已保存用途 {purpose}。",
+      "cleared": "已清除用途 {purpose} 的部署默认。",
+      "restored": "用途 {purpose} 已恢复部署默认。"
+    }
+  },
+  "admin": {
+    "title": "管理",
+    "nav": {
+      "overview": "概览",
+      "accounts": "账号",
+      "orgs": "组织",
+      "settings": "部署设置",
+      "plugins": "插件",
+      "models": "模型",
+      "directory": "企业目录"
+    },
+    "forbidden": {
+      "title": "需要企业管理员",
+      "hint": "只有企业管理员能打开管理后台。可以请企业管理员授予，或在服务器上运行 capybara admin grant 加登录名。"
+    },
+    "overview": {
+      "intro": "企业管理员在这里管理整个部署：账号、组织、插件与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
+      "metrics": {
+        "plugins": "需要处理的插件",
+        "directoryRequests": "待处理的目录申请",
+        "orgs": "组织",
+        "accounts": "账号"
+      },
+      "accounts": {
+        "title": "账号",
+        "hint": "新建、停用账号，授予或撤销企业管理员。",
+        "open": "管理账号"
+      },
+      "orgs": {
+        "title": "组织",
+        "hint": "为各组织设置运行并发与沙箱 CPU / 内存。",
+        "open": "管理组织"
+      },
+      "settings": {
+        "title": "部署设置",
+        "hint": "谁能建组织、价格币种、组织能否自建连接器与技能。",
+        "open": "打开部署设置"
+      },
+      "plugins": {
+        "title": "插件",
+        "hint": "安装、批准、启用、停用、升级插件，填写部署级配置。",
+        "open": "管理插件"
+      },
+      "models": {
+        "title": "模型",
+        "hint": "模型供应商、价格与各用途的默认模型。",
+        "open": "管理模型"
+      }
+    },
+    "accounts": {
+      "title": "账号",
+      "new": "新建账号",
+      "empty": "还没有账号",
+      "loadMore": "加载更多",
+      "columns": {
+        "name": "名称",
+        "email": "邮箱",
+        "status": "状态",
+        "role": "角色"
+      },
+      "status": {
+        "active": "正常",
+        "disabled": "已停用"
+      },
+      "enterpriseAdmin": "企业管理员",
+      "menu": {
+        "grant": "授予企业管理员",
+        "revoke": "撤销企业管理员",
+        "disable": "停用账号",
+        "enable": "启用账号"
+      },
+      "confirm": {
+        "grantTitle": "授予「{name}」企业管理员？",
+        "grantHint": "企业管理员可以管理整个部署：账号、组织、插件与部署设置。",
+        "grant": "授予",
+        "revokeTitle": "撤销「{name}」的企业管理员？",
+        "revokeHint": "撤销后该账号不能再打开管理后台。最后一个企业管理员不能撤销。",
+        "revoke": "撤销",
+        "disableTitle": "停用「{name}」？",
+        "disableHint": "停用后该账号立即无法登录，已登录的会话与个人令牌全部失效。",
+        "disable": "停用",
+        "enableTitle": "启用「{name}」？",
+        "enableHint": "启用后该账号可以重新登录；之前的会话与令牌不会恢复。",
+        "enable": "启用"
+      },
+      "done": {
+        "grant": "已授予「{name}」企业管理员",
+        "revoke": "已撤销「{name}」的企业管理员",
+        "disable": "已停用「{name}」",
+        "enable": "已启用「{name}」"
+      },
+      "form": {
+        "title": "新建账号",
+        "login": "登录名",
+        "password": "初始密码",
+        "passwordHelp": "至少 12 个字符；请让对方登录后自行修改。",
+        "displayName": "显示名",
+        "email": "邮箱",
+        "enterpriseAdmin": "设为企业管理员",
+        "submit": "创建",
+        "created": "已创建账号「{name}」"
+      }
+    },
+    "orgs": {
+      "title": "组织",
+      "hint": "留空的项使用部署默认。组织管理员在组织设置里只能查看。",
+      "empty": "还没有组织",
+      "default": "默认",
+      "edit": "设置限额",
+      "saved": "已保存",
+      "columns": {
+        "name": "名称",
+        "slug": "标识",
+        "members": "成员",
+        "runConcurrency": "运行并发",
+        "cpu": "沙箱 CPU",
+        "memory": "沙箱内存"
+      },
+      "dialog": {
+        "title": "「{name}」的限额",
+        "runConcurrency": "运行并发上限",
+        "runConcurrencyHelp": "同时运行的对话数上限；留空使用部署默认。",
+        "runConcurrencyInvalid": "请输入正整数，或留空使用部署默认。",
+        "cpu": "沙箱 CPU（核）",
+        "cpuHelp": "0.25 到 64；留空使用部署默认。",
+        "cpuInvalid": "CPU 须在 0.25 到 64 之间。",
+        "memory": "沙箱内存（MB）",
+        "memoryHelp": "256 到 262144 的整数；留空使用部署默认。",
+        "memoryInvalid": "内存须是 256 到 262144 之间的整数。",
+        "newOnly": "沙箱限额只对之后新建的沙箱生效。",
+        "e2bNote": "E2B 沙箱不支持按组织设置 CPU 与内存：规格由 E2B 模板决定，这两项对 E2B 不生效（运行并发照常生效）。",
+        "save": "保存"
+      }
+    },
+    "settings": {
+      "title": "部署设置",
+      "save": "保存",
+      "saved": "部署设置已保存",
+      "allow": "允许",
+      "deny": "禁止",
+      "orgCreation": {
+        "title": "谁能建组织",
+        "description": "限制后只有企业管理员能新建组织。",
+        "anyone": "所有人",
+        "anyoneHint": "任何登录的用户都能新建组织。",
+        "enterprise_admin": "只有企业管理员",
+        "enterprise_adminHint": "其他用户只能加入被邀请的组织。"
+      },
+      "currency": {
+        "title": "价格币种",
+        "description": "模型价格表使用的币种，只用于显示估算成本，不做换算。",
+        "label": "币种代码",
+        "help": "ISO 4217 的三位字母，如 USD、CNY。",
+        "invalid": "请输入三位大写字母的币种代码。"
+      },
+      "customConnectors": {
+        "title": "自建连接器",
+        "description": "组织能否不经企业目录、自己接入连接器。",
+        "allowHint": "组织管理员可以自己接入连接器，也可以从企业目录安装。",
+        "denyHint": "组织只能从企业目录安装连接器。"
+      },
+      "customSkills": {
+        "title": "自建技能",
+        "description": "组织能否不经企业目录、自己新建或导入技能。",
+        "allowHint": "组织可以自己新建、导入技能，也可以从企业目录安装。",
+        "denyHint": "组织只能从企业目录安装技能。"
+      }
+    },
+    "plugins": {
+      "title": "插件",
+      "install": "安装插件",
+      "hint": "部署上的全部插件。安装、启用、停用、升级都不需要重启：操作提交后各副本会在几秒内收敛。",
+      "empty": "还没有插件",
+      "noResults": "没有符合筛选条件的插件",
+      "sensitive": "敏感",
+      "columns": {
+        "name": "名称",
+        "version": "版本",
+        "source": "来源",
+        "status": "状态",
+        "sensitive": "敏感",
+        "replicas": "副本"
+      },
+      "filters": {
+        "status": "状态",
+        "source": "来源",
+        "allStatuses": "全部状态",
+        "allSources": "全部来源"
+      },
+      "source": {
+        "builtin": "内置",
+        "config": "配置",
+        "install": "安装"
+      },
+      "status": {
+        "enabled": "已启用",
+        "disabled": "已停用",
+        "pending_approval": "待批准",
+        "pending_config": "待配置",
+        "pending_migration": "待迁移",
+        "converging": "收敛中",
+        "failed": "失败",
+        "dependency": "依赖缺失"
+      },
+      "replicas": {
+        "consistent": "一致（{n}）",
+        "diverged": "不一致（{n}）",
+        "none": "无副本上报"
+      },
+      "detail": {
+        "tabsLabel": "插件详情",
+        "tabs": {
+          "overview": "概要",
+          "permissions": "权限",
+          "config": "配置"
+        },
+        "notFound": "插件不存在或已卸载。",
+        "fields": {
+          "source": "来源",
+          "version": "版本",
+          "desired": "期望状态",
+          "sha": "包 sha256"
+        },
+        "desired": {
+          "enabled": "启用",
+          "disabled": "停用",
+          "always": "始终启用"
+        },
+        "replicasTitle": "各副本状态",
+        "replicaColumns": {
+          "replica": "副本",
+          "version": "版本",
+          "state": "状态",
+          "reason": "原因",
+          "heartbeat": "心跳"
+        },
+        "replicaState": {
+          "loaded": "已加载",
+          "failed": "失败",
+          "unloaded": "已卸下",
+          "pending": "待处理"
+        },
+        "failedReplica": "副本 {replica} 加载失败：{reason}",
+        "stillServing": "该副本仍在用 {version}",
+        "replicaReason": {
+          "config": "部署配置缺失或不合法",
+          "approval": "权限待批准",
+          "migration": "另一个副本正在执行迁移",
+          "dependency": "依赖的能力没有可用的提供方",
+          "sync_failed": "同步插件包失败",
+          "sha_mismatch": "插件包内容与记录的 sha256 不符",
+          "import_failed": "导入插件模块失败",
+          "manifest_mismatch": "插件模块与审阅过的清单不一致",
+          "setup_failed": "插件初始化（setup）失败",
+          "migration_failed": "插件迁移失败"
+        },
+        "converging": "各副本正在收敛到期望状态，页面会自动刷新。",
+        "refresh": "刷新",
+        "noReplicas": "还没有副本上报状态。",
+        "builtinNote": "内置插件随核心镜像提供、始终启用：不能停用、升级或卸载，只需要填部署级配置。",
+        "configNote": "这个插件由启动配置的 plugins 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
+        "actions": {
+          "enable": "启用",
+          "disable": "停用",
+          "upgrade": "升级",
+          "uninstall": "卸载"
+        },
+        "uninstallNeedsDisable": "卸载前须先停用。",
+        "drainHint": "进行中的工具调用最多等待 {seconds} 秒后中止。",
+        "disableConfirm": {
+          "title": "停用「{name}」？",
+          "hint": "停用后各副本会卸下这个插件，组织里的 agent 不能再用它的工具。",
+          "confirm": "停用"
+        },
+        "uninstallConfirm": {
+          "title": "卸载「{name}」",
+          "hint": "卸载会把这个插件从部署移除；它的数据、密钥与组织配置会保留，以后重新安装同一个包可以继续使用。",
+          "confirm": "卸载"
+        },
+        "done": {
+          "enable": "已提交启用，各副本正在收敛。",
+          "disable": "已提交停用，各副本正在收敛。",
+          "uninstall": "已卸载「{name}」。"
+        },
+        "packageError": "插件包读不到：{error}"
+      },
+      "approve": {
+        "title": "批准权限",
+        "hint": "这个版本的权限超出已批准的范围（或还没有批准过），批准后插件才会加载。",
+        "ack": "我已了解敏感项",
+        "submit": "批准",
+        "done": "已批准，各副本正在加载。",
+        "stale": "审阅之后插件包或权限已经变化，请刷新后重新审阅。",
+        "refresh": "刷新后重新审阅",
+        "builtin": "随核心镜像预先批准",
+        "approved": "已批准：版本 {version}，{at}（{source}）",
+        "notApproved": "尚未批准。",
+        "via": {
+          "cli": "命令行",
+          "auto": "自动批准",
+          "web": "网页"
+        }
+      },
+      "wizard": {
+        "title": "安装插件",
+        "upgradeTitle": "升级「{name}」",
+        "steps": {
+          "source": "选来源",
+          "review": "审阅权限",
+          "confirm": "确认"
+        },
+        "sourceLabel": "来源",
+        "sourceFile": "上传插件包（.tgz）",
+        "sourceNpm": "从 npm 获取",
+        "choose": "选择 .tgz 文件",
+        "fileHint": "插件包是 npm pack 格式的 tgz（可用仓库里的 pack-plugin 打包）。",
+        "noFile": "还没有选文件。",
+        "npmPackage": "npm 包名",
+        "npmVersion": "版本",
+        "npmVersionHelp": "版本号、dist-tag 或范围；留空取 latest。",
+        "upload": "上传并审阅",
+        "fetch": "获取并审阅",
+        "cancelled": "已取消上传。",
+        "next": "下一步",
+        "back": "上一步",
+        "cancel": "取消",
+        "package": "{name} {version}",
+        "sha": "包 sha256：{sha}",
+        "newInstall": "安装后默认停用，批准权限并启用后才会加载。",
+        "upgradeFrom": "将从 {from} 升级到 {to}。",
+        "upgradeMismatch": "这个包是插件「{got}」，不是要升级的「{want}」。",
+        "conflictBuiltin": "「{name}」是内置插件，不能安装同名插件。",
+        "conflictConfig": "「{name}」由启动配置声明，不能在网页上安装同名插件。",
+        "ack": "我已了解敏感项",
+        "ackHint": "这个插件含敏感项（已高亮），确认前请逐项核对。",
+        "enableAfter": "安装后立即启用",
+        "install": "安装",
+        "done": "已安装「{name}」，各副本正在收敛。",
+        "failedAfterInstall": "插件已安装，但后续步骤没有完成，请到插件详情页继续。",
+        "sessionExpired": "登录已过期，请重新登录后再上传。"
+      },
+      "config": {
+        "none": "这个插件没有部署级配置。",
+        "hint": "启动配置（配置文件、Nacos、环境变量）给出的字段只读；即时生效的字段保存后马上生效，其余字段保存后插件会重新加载（不重启）。",
+        "invalid": "配置不完整或不合法，插件待配置：",
+        "notValidated": "这个插件当前没有加载：保存时不校验，加载时再校验。",
+        "source": {
+          "env": "来自环境变量（只读）",
+          "file": "来自配置文件（只读）",
+          "nacos": "来自 Nacos（只读）",
+          "db": "已在后台保存",
+          "default": "使用默认值",
+          "unset": "未设置"
+        },
+        "secretSet": "已设置",
+        "secretUnset": "未设置",
+        "hot": "即时生效",
+        "reload": "保存后插件重新加载",
+        "save": "保存配置",
+        "saving": "正在保存；插件重新加载最多需要约 {seconds} 秒。",
+        "saved": "配置已保存。"
+      }
+    }
+  },
+  "members": {
+    "title": "成员",
+    "invite": "邀请成员",
+    "columns": {
+      "name": "成员",
+      "email": "邮箱",
+      "role": "角色",
+      "joined": "加入时间"
+    },
+    "you": "你",
+    "anonymous": "匿名访客",
+    "roleOf": "{name} 的角色",
+    "roles": {
+      "guest": "访客",
+      "member": "成员",
+      "admin": "管理员",
+      "owner": "所有者"
+    },
+    "roleChanged": "已把「{name}」改为{role}",
+    "empty": "还没有成员",
+    "menu": {
+      "transfer": "转让所有权",
+      "remove": "移出组织"
+    },
+    "confirm": {
+      "removeTitle": "移出「{name}」？",
+      "removeHint": "对方会立即失去这个组织的访问权限：登录会话与令牌被吊销，名下的 agent 等资源按离职流程处理。",
+      "remove": "移出",
+      "transferTitle": "把所有权转让给「{name}」？",
+      "transferHint": "对方成为所有者，你将降为管理员。",
+      "transfer": "转让"
+    },
+    "removed": "已移出「{name}」",
+    "transferred": "已把所有权转让给「{name}」",
+    "invitations": {
+      "title": "邀请",
+      "empty": "还没有邀请",
+      "columns": {
+        "role": "角色",
+        "status": "状态",
+        "created": "创建时间",
+        "expires": "过期时间"
+      },
+      "status": {
+        "pending": "待接受",
+        "accepted": "已接受",
+        "expired": "已过期",
+        "revoked": "已撤销"
+      },
+      "revoke": "撤销邀请",
+      "revoked": "已撤销邀请"
+    },
+    "inviteDialog": {
+      "title": "邀请成员",
+      "role": "角色",
+      "roleHelp": "对方接受后以这个角色加入组织。",
+      "expires": "有效期",
+      "hours": {
+        "24": "1 天",
+        "168": "7 天",
+        "720": "30 天"
+      },
+      "create": "生成邀请链接",
+      "link": "邀请链接",
+      "linkHelp": "链接只显示这一次，只能使用一次；请通过可信的渠道发给对方。",
+      "copy": "复制链接",
+      "copied": "已复制邀请链接",
+      "done": "完成"
+    }
+  },
+  "invite": {
+    "title": "接受邀请",
+    "loading": "加载中…",
+    "subtitle": "你被邀请加入「{org}」",
+    "role": "角色",
+    "expires": "有效期至",
+    "accept": "接受邀请",
+    "signInHint": "请先登录再接受邀请；还没有账号可以直接创建一个。",
+    "signIn": "登录后接受",
+    "signupToggle": "没有账号？创建账号",
+    "loginLabel": "用户名",
+    "loginHint": "3–64 个字符：字母、数字及 . _ @ + -",
+    "passwordLabel": "密码",
+    "passwordHint": "12–256 个字符",
+    "displayNameLabel": "显示名称",
+    "signup": "创建账号并加入",
+    "backToSignIn": "已有账号？登录",
+    "invalidTitle": "邀请链接已失效",
+    "invalidHint": "请联系邀请你的管理员重新发送邀请。",
+    "goHome": "进入 Capybara"
+  },
+  "directory": {
+    "kind": {
+      "plugin": "插件",
+      "connector-template": "连接器模板",
+      "skill": "技能",
+      "app": "应用"
+    },
+    "policy": {
+      "allow": "允许",
+      "needs_approval": "需审批",
+      "disabled": "禁用"
+    },
+    "source": {
+      "manual": "手动导入",
+      "official": "官方清单",
+      "removed": "已删除的清单"
+    },
+    "versionSource": {
+      "file": "上传",
+      "npm": "npm",
+      "catalog": "清单"
+    },
+    "newer": "有新版本",
+    "iconAlt": "{name} 的图标",
+    "admin": {
+      "title": "企业目录",
+      "hint": "企业目录里的插件、连接器模板、技能与应用可以让各组织安装；策略决定组织能否直接安装。",
+      "empty": "目录里还没有条目。",
+      "noResults": "没有符合筛选条件的条目。",
+      "columns": {
+        "name": "名称",
+        "kind": "种类",
+        "version": "版本",
+        "source": "来源",
+        "policy": "策略",
+        "installs": "安装的组织"
+      },
+      "filters": {
+        "kind": "种类",
+        "allKinds": "全部种类",
+        "source": "来源",
+        "allSources": "全部来源"
+      },
+      "actions": {
+        "import": "导入",
+        "importApp": "导入应用",
+        "catalog": "浏览清单",
+        "more": "更多",
+        "sources": "目录来源",
+        "requests": "部署申请"
+      },
+      "import": {
+        "title": "导入到目录",
+        "hint": "插件、连接器模板与技能：上传 npm-pack 生成的 .tgz（模板与技能也可以是 .zip），或填 npm 包名。应用请用「导入应用」，一次审阅全部插件。",
+        "sourceLabel": "来源",
+        "sourceFile": "上传文件",
+        "sourceNpm": "npm 包",
+        "choose": "选择文件",
+        "noFile": "未选择文件",
+        "npmPackage": "npm 包名",
+        "npmVersion": "版本",
+        "npmVersionHelp": "版本、dist-tag 或范围；留空为 latest。",
+        "submit": "导入",
+        "cancel": "取消",
+        "appLink": "导入应用",
+        "done": "已导入 {name}",
+        "isApp": "这是应用包，请用「导入应用」一次审阅它的全部插件。"
+      },
+      "detail": {
+        "tabsLabel": "条目详情",
+        "tabs": {
+          "overview": "概要",
+          "versions": "版本"
+        },
+        "notFound": "条目不存在。",
+        "deleted": "这个条目已删除，组织不再能看到它；已安装的组件不受影响。",
+        "fields": {
+          "kind": "种类",
+          "package": "npm 包",
+          "publisher": "发布者",
+          "latest": "最新版本",
+          "source": "来源",
+          "installs": "安装的组织",
+          "updated": "更新时间"
+        },
+        "policyTitle": "策略",
+        "policyHint": "允许：组织管理员可直接安装；需审批：组织管理员提交后由企业管理员批准；禁用：不能新装，已安装的不受影响。",
+        "policySaved": "策略已改为「{policy}」",
+        "deployTitle": "装到部署",
+        "deployHint": "把插件的某个版本装到部署上（新装为停用，权限仍需在插件后台批准）。装好后组织才能启用它。",
+        "deployVersion": "版本",
+        "deploy": "装到部署",
+        "deployed": "已装到部署：{name}",
+        "openPlugin": "去插件后台",
+        "delete": "删除条目",
+        "deleteConfirm": {
+          "title": "删除条目 {name}",
+          "hint": "组织将不再看到这个条目，已安装的组件不受影响。之后可以重新导入。",
+          "confirm": "删除"
+        },
+        "deletedToast": "已删除 {name}",
+        "versionColumns": {
+          "version": "版本",
+          "source": "来源",
+          "ref": "来源引用",
+          "size": "大小",
+          "imported": "导入时间"
+        }
+      },
+      "review": {
+        "title": "导入应用",
+        "steps": {
+          "source": "选择应用包",
+          "review": "审阅",
+          "confirm": "确认"
+        },
+        "sourceLabel": "来源",
+        "sourceFile": "上传应用包（.tgz）",
+        "sourceNpm": "npm 包",
+        "fetch": "读取并审阅",
+        "loadingCatalog": "正在从清单下载并校验应用包…",
+        "app": "{name} {version}",
+        "publisher": "发布者：{publisher}",
+        "plugins": "插件",
+        "pluginsHint": "应用里每个插件的权限，确认时一次批准。敏感项已高亮。",
+        "action": {
+          "install": "安装 {version}",
+          "upgrade": "升级 {from} → {to}",
+          "keep": "保持 {version}（已满足范围）"
+        },
+        "optional": "可选",
+        "templates": "连接器模板",
+        "templatesEmpty": "没有连接器模板。",
+        "endpoint": "端点",
+        "editable": "组织可改：{paths}",
+        "auth": "认证方式：{type}",
+        "unchecked": "连接器插件没有在本副本加载，端点还没按它的 schema 校验。",
+        "skills": "技能",
+        "skillsEmpty": "没有技能。",
+        "skillFiles": "{n} 个文件",
+        "mismatch": "清单列出的权限摘要与下载的包不一致（以包为准）。",
+        "mismatchMissing": "清单没列出：{keys}",
+        "mismatchExtra": "清单列了但包没有要：{keys}",
+        "deployPlugins": "同时把插件装到部署",
+        "deployOn": "确认后把要安装 / 升级的插件装到部署并启用。",
+        "deployOff": "不勾选时，这些插件只记为目录条目，不会安装到部署；在企业管理员把它们装到部署之前，组织无法使用它们。",
+        "ackHint": "应用里有敏感权限或迁移警告，确认前请逐项看过。",
+        "ack": "我已了解敏感项",
+        "confirm": "确认导入",
+        "done": "已导入应用 {name}",
+        "deployResult": "部署结果",
+        "deployEnabled": "{name} {version}：已安装并启用",
+        "deployFailed": "{name} {version}：失败（{code}），可在插件后台重试",
+        "openItem": "查看条目",
+        "stale": "审阅已过期（部署上的插件有变化），请重新读取应用包。"
+      },
+      "catalog": {
+        "title": "浏览清单",
+        "hint": "清单条目要先「引入」才会成为目录条目；引入时下载并按清单的 sha512 校验。",
+        "empty": "没有清单条目。先在「目录来源」里添加或刷新清单。",
+        "noResults": "没有符合条件的条目。",
+        "truncated": "条目太多，只显示了前一部分；请按来源、种类或关键词缩小范围。",
+        "search": "搜索",
+        "searchPlaceholder": "名称、npm 包名或简介",
+        "columns": {
+          "name": "名称",
+          "kind": "种类",
+          "source": "来源",
+          "publisher": "发布者",
+          "summary": "简介",
+          "permissions": "权限摘要",
+          "versions": "版本",
+          "status": "状态"
+        },
+        "permissionsCount": "{n} 项",
+        "permissionsSensitive": "{n} 项敏感",
+        "permissionsNone": "未提供",
+        "incompatible": "{version}（不兼容）",
+        "adopted": "已引入 {version}",
+        "notAdopted": "未引入",
+        "importVersion": "引入 {version}",
+        "noCompatible": "没有兼容的版本",
+        "imported": "已引入 {name} {version}",
+        "mismatch": "{name}：清单列出的权限摘要与下载的包不一致（以包为准）。"
+      },
+      "sources": {
+        "title": "目录来源",
+        "official": "官方清单",
+        "officialHint": "地址在部署配置 catalogs.official.* 里设置，这里只读。",
+        "offline": "离线模式：官方清单尚未上线，部署配置默认关闭它（catalogs.official.enabled = false）。",
+        "enabled": "启用",
+        "url": "地址",
+        "mirrors": "镜像",
+        "status": "状态",
+        "statusValue": {
+          "ok": "正常（{n} 个条目，{at}）",
+          "error": "出错：{error}",
+          "never": "还没有拉取过"
+        },
+        "refresh": "立即刷新",
+        "refreshed": "已刷新 {name}",
+        "enterprise": "企业清单",
+        "enterpriseHint": "地址只认 https；令牌只发往清单地址的源。",
+        "enterpriseEmpty": "还没有企业清单。",
+        "name": "名称",
+        "token": "令牌",
+        "tokenHelp": "可选；留空不改。",
+        "tokenSet": "已设置令牌",
+        "clearToken": "清除令牌",
+        "save": "保存",
+        "saved": "已保存 {name}",
+        "remove": "删除",
+        "removeConfirm": {
+          "title": "删除清单 {name}",
+          "hint": "它的条目缓存随之删除，已引入的目录条目保留。",
+          "confirm": "删除"
+        },
+        "removed": "已删除 {name}",
+        "add": "添加企业清单",
+        "added": "已添加 {name}"
+      },
+      "requests": {
+        "title": "部署申请",
+        "listLabel": "待处理的申请",
+        "empty": "没有待处理的申请。",
+        "emptyHint": "组织申请安装「需审批」的条目时，申请会出现在这里。",
+        "pick": "在左侧选择一项。",
+        "inspectorTitle": "详情",
+        "columns": {
+          "request": "申请",
+          "time": "时间"
+        },
+        "fields": {
+          "org": "组织",
+          "requester": "申请人",
+          "kind": "种类",
+          "version": "版本",
+          "requested": "提交时间",
+          "orgApproved": "组织管理员批准",
+          "note": "说明"
+        },
+        "hint": "批准后这个组织可以安装该条目（所有版本有效）。",
+        "approve": "批准",
+        "reject": "拒绝",
+        "approved": "已批准",
+        "rejected": "已拒绝"
+      }
+    },
+    "org": {
+      "title": "目录",
+      "hint": "企业管理员提供的插件、连接器模板、技能与应用。",
+      "empty": "目录里还没有可用的条目。",
+      "noResults": "没有符合筛选条件的条目。",
+      "columns": {
+        "name": "名称",
+        "kind": "种类",
+        "description": "简介",
+        "status": "状态"
+      },
+      "filters": {
+        "kind": "种类",
+        "allKinds": "全部种类"
+      },
+      "status": {
+        "installed": "已安装 {version}",
+        "yes": "可安装",
+        "granted": "已获批准",
+        "needs_approval": "需企业管理员批准",
+        "disabled": "已禁用",
+        "not_deployed": "插件尚未部署",
+        "requested": "已申请，等待处理"
+      },
+      "action": {
+        "install": "安装",
+        "requestApproval": "申请企业管理员批准",
+        "request": "申请安装",
+        "disabledHint": "企业管理员禁用了这个条目，不能新装。",
+        "notDeployedHint": "它依赖的插件还没装到部署上，请联系企业管理员。",
+        "pendingHint": "已提交申请（{stage}），等待处理。",
+        "stage": {
+          "org": "组织管理员",
+          "deployment": "企业管理员"
+        },
+        "installed": "已安装 {name}",
+        "requested": "已提交申请",
+        "approvalRequested": "需要企业管理员批准，已提交申请",
+        "openApps": "查看已安装的应用"
+      },
+      "detail": {
+        "notFound": "条目不存在或你看不到它。",
+        "tabsLabel": "条目详情",
+        "tabs": {
+          "overview": "概要"
+        },
+        "fields": {
+          "kind": "种类",
+          "publisher": "发布者",
+          "version": "版本",
+          "status": "状态"
+        },
+        "templates": "连接器模板",
+        "plugins": "插件",
+        "skills": "技能"
+      },
+      "install": {
+        "title": "安装 {name}",
+        "connectorStep": "连接器：{name}",
+        "pluginsStep": "插件配置",
+        "confirmStep": "确认",
+        "name": "连接器名称",
+        "slug": "标识（slug）",
+        "slugHelp": "工具名的前缀：小写字母开头，小写字母、数字与下划线，最长 24 位；留空则由名称推导。",
+        "endpoint": "端点",
+        "endpointHint": "只读的字段由模板决定，不能修改。",
+        "credential": "凭据",
+        "credentialHint": "可以留空，之后在连接器的凭据页设置。",
+        "personalHint": "这个连接器使用个人凭据：每位成员之后各自连接。",
+        "noneHint": "这个连接器不需要凭据。",
+        "dcrHint": "客户端会自动注册，不需要填写。",
+        "pluginsHint": "应用会在本组织启用这些插件；需要组织配置的请填写（已启用的插件不改配置）。",
+        "pluginsNone": "没有需要填写的插件配置。",
+        "pluginEnabled": "{name}：已在本组织启用，保持现有配置",
+        "summary": "将安装：",
+        "summaryTemplates": "{n} 个连接器",
+        "summaryPlugins": "{n} 个插件",
+        "summarySkills": "{n} 个技能",
+        "submit": "安装",
+        "next": "下一步",
+        "back": "上一步",
+        "cancel": "取消",
+        "failed": "安装在「{step}」一步失败（{code}），已回滚本次新建的组件。",
+        "failedNoRollback": "安装在「{step}」一步失败（{code}），回滚时有组件没能移除，可在「已安装的应用」里卸载清理。",
+        "step": {
+          "plugins": "插件",
+          "connectors": "连接器",
+          "skills": "技能"
+        },
+        "notInstallable": "这个条目现在不能安装。"
+      }
+    },
+    "apps": {
+      "title": "已安装的应用",
+      "empty": "本组织还没有从目录安装应用。",
+      "status": {
+        "installing": "安装中",
+        "installed": "已安装",
+        "failed": "安装失败（已回滚）",
+        "uninstalling": "卸载中"
+      },
+      "failedAt": "失败于「{step}」：{code}",
+      "components": "组件",
+      "created": "本次新建",
+      "existing": "原有",
+      "componentKind": {
+        "plugin": "插件",
+        "connector": "连接器",
+        "skill": "技能"
+      },
+      "installedAt": "安装于 {at}",
+      "uninstall": "卸载",
+      "cleanup": "清理",
+      "confirm": {
+        "title": "卸载 {name}",
+        "hint": "只移除这次安装新建、且别处没有在用的组件；原有的和仍在用的会保留。",
+        "confirm": "卸载",
+        "cancel": "取消"
+      },
+      "report": {
+        "title": "{name} 已卸载",
+        "removed": "已移除",
+        "kept": "已保留",
+        "none": "无",
+        "reason": {
+          "pre_existing": "安装前就有",
+          "used_by_agents": "仍有 agent 在用",
+          "used_by_other_install": "另一个应用也在用",
+          "used_by_connectors": "仍有连接器在用",
+          "used_by_plugins": "仍有插件依赖"
+        },
+        "dismiss": "知道了"
+      },
+      "inProgress": "这个应用还在安装中，暂时不能卸载；安装中断时，超过时限后可以在这里清理。"
+    },
+    "inbox": {
+      "label": "目录申请",
+      "title": "目录申请 · {name}",
+      "requester": "申请人",
+      "kind": "种类",
+      "version": "版本",
+      "note": "说明",
+      "hint": "批准后：允许的条目可以由组织管理员安装；需审批的条目会转交企业管理员决定。",
+      "approve": "批准",
+      "reject": "拒绝",
+      "approved": "已批准目录申请",
+      "rejected": "已拒绝目录申请",
+      "openItem": "查看条目"
+    }
   }
 }

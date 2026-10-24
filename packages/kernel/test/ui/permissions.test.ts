@@ -17,7 +17,11 @@ import {
   type PermissionSet,
   permissionKeys,
 } from "../../src/plugins/permission-set.js";
-import { isSensitivePermissionKey, permissionGroups } from "../../src/plugins/permission-view.js";
+import {
+  isSensitivePermissionKey,
+  permissionGroups,
+  permissionKeyItems,
+} from "../../src/plugins/permission-view.js";
 
 /**
  * 界面权限（spec §4.1、审查重点 5）：`ui.view:*` 记入快照但不卡加载（升级时自动补进快照，不写审计、记日志）；
@@ -79,6 +83,7 @@ describe("permissionKeys / permissionGroups 的 ui 项", () => {
       category: "ui",
       sensitive: false,
       items: ["view:tasks"],
+      entries: [{ value: "view:tasks", sensitive: false }],
     });
     const both = await computePermissionSet(
       manifest({
@@ -91,7 +96,45 @@ describe("permissionKeys / permissionGroups 的 ui 项", () => {
       category: "ui",
       sensitive: true,
       items: ["view:tasks", "embed:board"],
+      entries: [
+        { value: "view:tasks", sensitive: false },
+        { value: "embed:board", sensitive: true, reason: "ui_embed" },
+      ],
     });
+  });
+});
+
+describe("permissionKeyItems：权限键逐项的敏感标记与原因码", () => {
+  it("与 isSensitivePermissionKey 一致，并给出原因码", () => {
+    expect(
+      permissionKeyItems([
+        "permissions.secrets",
+        "config.org.secret:token",
+        "permissions.http.public:GET /hook",
+        "permissions.tools:echo",
+        "permissions.hooks:run.start",
+        "provides:sandbox@1",
+        "provides:object-store@1",
+        "provides:identity-source@1",
+        "ui.embed:board",
+        "ui.view:tasks",
+        "provides:counter@1",
+        "permissions.network:api.example.com",
+      ]),
+    ).toEqual([
+      { value: "permissions.secrets", sensitive: true, reason: "secrets" },
+      { value: "config.org.secret:token", sensitive: true, reason: "secrets" },
+      { value: "permissions.http.public:GET /hook", sensitive: true, reason: "public_routes" },
+      { value: "permissions.tools:echo", sensitive: true, reason: "tools" },
+      { value: "permissions.hooks:run.start", sensitive: true, reason: "hooks" },
+      { value: "provides:sandbox@1", sensitive: true, reason: "sandbox" },
+      { value: "provides:object-store@1", sensitive: true, reason: "object_store" },
+      { value: "provides:identity-source@1", sensitive: true, reason: "identity_source" },
+      { value: "ui.embed:board", sensitive: true, reason: "ui_embed" },
+      { value: "ui.view:tasks", sensitive: false },
+      { value: "provides:counter@1", sensitive: false },
+      { value: "permissions.network:api.example.com", sensitive: false },
+    ]);
   });
 });
 

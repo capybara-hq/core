@@ -22,7 +22,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { pidOwningLocalPort } from "../helpers/port-owner.js";
-import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
+import { cardRecorded, eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
 
 /**
  * M4 第二段验收（双副本，假 Slack）：官方 Slack 插件（`plugins/slack`，按源码路径加载）的三种能力接内核，
@@ -133,7 +133,7 @@ describe("M4 第二段验收：Slack（双副本）", () => {
     const db: KernelDb = kernelDb(raw);
 
     // ---- HTTP：杀副本前严格交替发往两个副本；之后只发往幸存的副本 ----
-    let dead: 0 | 1 | undefined;
+    let dead: number | undefined;
     const send = async (path: string, init: RequestInit) => {
       if (dead === undefined) return harness.request(path, init);
       const r = harness.replicas[dead === 0 ? 1 : 0];
@@ -222,7 +222,7 @@ describe("M4 第二段验收：Slack（双副本）", () => {
     expect(sync1.status).toBe(202);
     await waitFor(async () => (await syncAudits()).length === 1, 20_000, "first directory sync");
     expect((await syncAudits())[0]?.detail).toMatchObject({ added: 1, partial: false });
-    const bobId = await waitFor(async () => identityOwner("UBOB"), 5_000, "bob's account");
+    const bobId = await waitFor(async () => identityOwner("UBOB"), 15_000, "bob's account");
     expect(await membership(bobId)).toEqual({ role: "member", source: "directory:slack" });
     // alice 在 Slack 上（资料可查、可登录），首轮同步之后才出现在工作区里
     slack.users.set("UALICE", {
@@ -363,7 +363,7 @@ describe("M4 第二段验收：Slack（双副本）", () => {
           .select(["id", "status", "requested_for", "decided_by"])
           .where("org_id", "=", orgId)
           .executeTakeFirst(),
-      5_000,
+      20_000,
       "approval row",
     );
     expect(approvalRow).toMatchObject({ status: "pending", requested_for: aliceId });
@@ -376,6 +376,7 @@ describe("M4 第二段验收：Slack（双副本）", () => {
     expect(im.posts).toEqual([]);
     const approve = findSlackButton(cardMsg.blocks, (b) => b.action_id === "cap_a_once");
     if (!approve) throw new Error("no approve button");
+    await cardRecorded(db, { kind: "approval" });
 
     // ================= 6. 非审批人 bob 点批准 → 被拒并说明 =================
     const beforeBob = postedTo("COPS").length;

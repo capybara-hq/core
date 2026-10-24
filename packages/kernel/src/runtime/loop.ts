@@ -27,6 +27,11 @@ export interface LoopContext {
    */
   pendingUserMessages(afterSeq: number): Promise<ConversationEvent[]>;
   limits: { maxSteps: number; deadline: number };
+  /**
+   * Kind of the conversation: plugin hooks fire only for `chat` (F10, P-18). Eval replays pass `eval`;
+   * when absent, hooks do not fire.
+   */
+  conversationKind?: "chat" | "eval";
 }
 
 /**

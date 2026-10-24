@@ -20,7 +20,7 @@ const mk = (ns: string, runWorkers = true) => {
 };
 
 beforeAll(async () => {
-  box = await startTestRedis();
+  box = await startTestRedis({ shared: true });
 });
 afterAll(async () => {
   await Promise.all(queues.map((q) => q.close()));

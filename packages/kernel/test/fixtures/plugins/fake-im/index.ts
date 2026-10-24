@@ -10,7 +10,7 @@ import { makeFakeImChannel } from "./channel.js";
 import { FakeImOrgConfig, fakeImDirectory } from "./directory.js";
 import { fakeImIdentitySource } from "./identity.js";
 
-export { FakeImConnection, makeFakeImChannel } from "./channel.js";
+export { FakeImConnection, fakeImWebhook, makeFakeImChannel } from "./channel.js";
 export { FakeImOrgConfig, fakeImDirectory } from "./directory.js";
 export { fakeImIdentitySource } from "./identity.js";
 
@@ -80,7 +80,10 @@ export default definePlugin({
   config: { deployment: Deployment, org: FakeImOrgConfig },
   setup(ctx) {
     const config = () => Deployment.parse(ctx.config);
-    ctx.provide("channel@1", makeFakeImChannel({ cards: true, edit: true, threads: true }));
+    ctx.provide(
+      "channel@1",
+      makeFakeImChannel({ cards: true, edit: true, threads: true }, { webhook: true }),
+    );
     ctx.provide("identity-source@1", fakeImIdentitySource);
     ctx.provide("directory@1", fakeImDirectory);
     ctx.tools.register(POST_SPEC, postHandler(config));

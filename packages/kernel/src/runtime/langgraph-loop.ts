@@ -147,6 +147,9 @@ export class LangGraphLoop implements AgentLoop {
       sink: ctx.sink,
       absorbedUpToSeq,
       mediaCache,
+      agentId: ctx.agentId,
+      accountId: ctx.triggerAccountId,
+      ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
     });
     const deps = this.stepDeps;
     const hooks = this.hooks;
@@ -187,6 +190,7 @@ export class LangGraphLoop implements AgentLoop {
         accountId: ctx.triggerAccountId,
         signal: ctx.signal,
         deadline: ctx.limits.deadline,
+        ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
       });
       if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
       return {};

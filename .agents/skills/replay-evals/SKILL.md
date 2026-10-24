@@ -1,0 +1,106 @@
+---
+name: replay-evals
+description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, the privacy rules (trajectory 404, trajectory.viewed audit, no export), and how plugin hooks interact with replays (hook_denied is not model-visible and needs no DriftReason, replays fire no hooks, compaction usage events).
+---
+
+# Evals and replay
+
+Code is in `packages/kernel/src/evals/`; HTTP is under `/api/v1/orgs/:orgId/trajectories*` (`trajectories.read`), `/eval-sets*`,
+`/eval-runs*` and `/eval-results/:id/label` (`evals.manage`). Web: the trajectory viewer `/trajectories` and evals `/evals` (`TracePage`,
+see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle 8, M6 plan C1-C9 (D2-D6).
+
+## Replay invariants (read this first)
+
+**The event log is the single source of truth**: any model request can be reconstructed from "the log + the agent version". Replay reads only the case snapshot and never changes the original conversation's log.
+
+- `reconstructRequest` (`evals/reconstruct.ts`) shares `assembleModelRequest` (`runtime/model-call.ts`) with the runtime,
+  and all its inputs come from the log: the `model_call` event records `toSeq`, `absorbedUpToSeq`, `params`, `toolChoice`, `maxOutputTokens`,
+  `mediaBudgetBytes`, the sequence of tool specHashes and the system fingerprint; tool definitions are fetched from the snapshot by specHash.
+- **Run both zero-drift test groups before and after changing request building**:
+  - `packages/kernel/test/evals/reconstruct.test.ts` ("baseline zero drift": multi-step tools, `tool_search` loading, approval resume, skill catalog snapshot,
+    reminders, mid-run messages, compaction, images / placeholders, and so on; it reconstructs from logs produced by real runs and requires `drift` to be empty and the reconstructed request to equal the one sent to the model at the time);
+  - `packages/kernel/test/tools/rename-compat.test.ts` (fixtures recorded before the T22 rename, in `test/evals/fixtures/pre-rename/`; the old form
+    `{kind:"app", appId}` and `appId` event fields must show zero drift).
+  Run from the repo root: `pnpm exec vitest run packages/kernel/test/evals/reconstruct.test.ts packages/kernel/test/tools/rename-compat.test.ts`.
+- **Any new model-visible input must go into the log** (written into an event or the `model_call` record); request building must not read PG / config / the clock on the spot.
+  Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
+  or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
+  `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `legacy_event`, `params_changed`,
+  `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
+- The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
+
+## Case snapshots and eval sets
+
+- An eval set belongs to one agent (C4). An org admin adds cases from real conversations (by run) or by sampling; the run must have reached a terminal state (`eval.run_not_finished`).
+- A snapshot (`evals/snapshot.ts`, stored in `eval_cases.snapshot`) = the events up to that run's terminal state + the referenced agent version definition + the tool definitions the requests used
+  (by specHash); the serialized size must be <= `evals.maxCaseBytes` (`eval.case_too_large`), and each set <= `evals.maxCasesPerSet`.
+  Media bytes are not copied: replay fetches the original attachment by reference, and deleted ones get a "no longer available" placeholder (`media_missing`).
+- When a case is written, the replay plan is computed from the snapshot (`evals/plan.ts`, stored in `plan_step` / `plan_run`); estimation and start read only the plan columns, not the snapshot.
+- Always read snapshots through `readSnapshot`: it normalizes the pre-rename `{kind:"app", appId}` to the connector form (C27).
+- Deleting an eval set: cases are hard-deleted (results cascade), the set row stays as a soft-deleted stub (Ruling S1-a), runs in progress are cancelled, and the eval conversations are deleted.
+
+## The two kinds of replay
+
+- **Step replay** (`step-replay.ts`, C5): keeps the recorded tool definitions and swaps only the system prompt (instructions), model and params; one result per replayable model call.
+  A candidate = an optional agent version + optional model / params (`modelParams`, validated against the candidate model's declarations, `eval.candidate_invalid`) / instruction override.
+- **Full-run replay** (`run-replay.ts`, C6): runs the **same** `LangGraphLoop` in a hidden conversation with `kind = 'eval'`, with the tool pipeline replaced by
+  `RecordedToolPipeline` (`recorded-tools.ts`):
+  - **Never executes any tool**: no policy, approval, sandbox or connector, and no handler is called; it matches the first unused recording exactly on (toolKey, normalized arguments),
+    and if nothing matches it returns the English error result `REPLAY_NO_RECORDING` (`isError: true`) and records `tool_unmatched`.
+  - Seed events keep their original seq; mid-run messages absorbed during the original run are fed in at the original absorption step; after a crash, that case's old eval conversation is deleted and the case reruns from the start.
+  - Eval conversations always return 404 on the ordinary conversation endpoints; there is no real-tool replay (D2).
+- Scoring (`diff.ts`, `judge.ts`): structural diff (tool calls / arguments, text LCS similarity, C8) + an optional LLM judge + manual pass / fail in the viewer.
+  The judge uses the model purpose `eval` (`model_purpose_mappings`, deployment default, overridable per org; judge enabled but not mapped -> `model.unconfigured`),
+  with an output cap of `evals.judgeMaxOutputTokens`; the content being compared is placed in the user message as data only.
+
+## Eval queue, concurrency and token caps
+
+- Queue `cap-kernel-evals`, one job per case, `eval-<runId>-<caseId>` (queue names and job ids contain no `:`), consumed only on the `worker` role,
+  `evals.workerConcurrency` jobs per replica. The per-org concurrency quota is the Redis ZSET `capk:org-evals:<orgId>`, capped by `evals.orgConcurrency`
+  (default 2, hot-reloadable); a job that can't get quota is delayed by 5 seconds.
+- The pre-run estimate (`POST .../runs/estimate`, D5) gives the expected request count, tokens, and the default / max / effective cap; `tokenCap` defaults to
+  `evals.defaultTokenCap` and must not exceed `evals.maxTokenCap` (`eval.token_cap_invalid`).
+- Accounting (`budget.ts`): usage = input + output + cache read + cache write; `consumeTokens` accumulates atomically in PG `eval_runs.tokens_used`,
+  and the run is set to `capped` once the total reaches the cap, after which no new requests are sent; in-flight requests may exceed it (at most one extra per concurrent job). **Attempts that fail after being sent are
+  likewise counted by estimate**, and requests already sent by an old execution that lost its claim are counted too (Ruling P2); judge requests count as well.
+- Before every model request, check that the run is still active (not cancelled / not capped / org and agent not deleted) and still holds the claim; results are written by claim number. After
+  `evals.maxConsecutiveErrors` consecutive error results the run is `failed`. A set whose agent was deleted can no longer be estimated or started (`agent.not_found`).
+- When a provider plugin is revoked / upgraded / reloaded mid-request (`PluginUnloadedError`, for example after changing a non-hot deployment config): handled like the runtime, as a retryable
+  `run.provider_unavailable`; step replay and judge requests both retry (failed attempts are still counted by estimate), and the retry picks up the new instance live; no error is recorded and the circuit breaker is untouched. Run states: `queued` / `running` / `completed` / `cancelled` /
+  `capped` / `failed`; result states: `pending` / `running` / `done` / `error` / `skipped`.
+
+## Trajectory viewer and privacy
+
+- After `trajectories.read` (member and up), the service additionally checks "org admin or the agent's owner" (the owner is read live); eval replay conversations
+  (`kind = 'eval'`) are visible only to org admins (Ruling S1-c). **No permission and does not exist both return 404** (`trajectory.not_found`).
+- Every view of trajectory details or eval case details writes the audit entry `trajectory.viewed`. Eval data has no export endpoint. Enterprise admins cannot read conversations by default.
+- Latency is derived from event `created_at`, with no new event fields (C2): model latency = that step's `usage` - `model_call`, tool duration = `tool_result` -
+  `tool_call_started`, approval wait = `approval_decided` - `approval_requested`. Cost is computed at read time from PG `model_prices` (per million tokens, currency =
+  the deployment setting `priceCurrency`), is not written to the log, is labeled "estimated" in the UI, and shows "—" when there is no price.
+- A compaction call logs its own `usage` event with `purpose: "compaction"` (written with
+  `compaction_summary` / `compaction_failed`, before the step's `model_call`). It is not a step call:
+  anything that pairs `usage` with a step's `model_call` (estimate calibration, trajectory steps,
+  step-replay baselines, `plan_step`) must skip it; run totals (trajectory `totals`, `plan_run`,
+  full-run replay summaries) include it, since it is real spend. It is not model-visible and needs no
+  `DriftReason`.
+
+## Hooks and replays
+
+- `hook_denied` events are **not model-visible**: `runtime/context/build.ts` skips them. A
+  `tool.preExecute` denial reaches the model as the denied call's `tool_result` text, which is already
+  in the log, so it needs **no `DriftReason`**. A model-path denial ends the step with a `RunError`
+  and puts nothing in a request.
+- Replays fire no plugin hooks, twice over: `runReplay` strips `hooks` from the loop deps, and the
+  loop runs with `conversationKind: "eval"` (hooks only fire for `"chat"`).
+- The one exception is metering: usage of a **full-run** replay is still enqueued to `usage.report`
+  and delivered with `conversationKind: "eval"`; single-step replays and judge calls are not reported.
+- The trajectory shows denials: `toolCalls[].hookDenied` and `steps[].modelHookDenied`.
+
+## Tests
+
+- Unit / HTTP: `packages/kernel/test/evals/` (`reconstruct`, `step-replay`, `run-replay`, `runs`, `judge`, `diff`, `sets.*`,
+  `trajectory.*`). For a deterministic judge verdict, map the `eval` purpose to a fake model plugin in the test (such as `judge-gate` in
+  `m6-segment1.dual.test.ts`).
+- Dual-replica: `runs.dual.test.ts` (org concurrency 1 / 2, `capped` after the limit and the bound on overshoot), `m6-segment1.dual.test.ts` (conversation -> trajectory ->
+  eval set -> killing a replica mid step replay -> full-run over the limit -> labeling).
+- Always run vitest from the repo root (`pnpm exec vitest run <path>`): the root config carries the `@capybara-hq/source` condition that dual-replica tests need to load plugins from source.

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import { MessageList } from "../src/components/MessageList";
 import { AppFrame } from "../src/components/shell/AppFrame";
 import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
@@ -456,29 +457,41 @@ describe("对话页切换组织", () => {
 });
 
 describe("输入框：/ 斜杠命令与 @ 资源引用（MCP prompts / resources）", () => {
-  const APPS = "/api/v1/orgs/o1/apps";
+  const APPS = "/api/v1/orgs/o1/connectors";
   const PROMPTS = {
     prompts: [
       {
-        appId: "a1",
-        appSlug: "docs",
-        appName: "Docs",
+        connectorId: "a1",
+        connectorSlug: "docs",
+        connectorName: "Docs",
         name: "summarize",
         description: "Summarize a topic",
         arguments: [{ name: "topic", description: "What to summarize", required: true }],
       },
-      { appId: "a1", appSlug: "docs", appName: "Docs", name: "hello", arguments: [] },
+      {
+        connectorId: "a1",
+        connectorSlug: "docs",
+        connectorName: "Docs",
+        name: "hello",
+        arguments: [],
+      },
     ],
-    unavailable: [{ appId: "a2", appName: "Mail", reason: "not_connected" }],
+    unavailable: [{ connectorId: "a2", connectorName: "Mail", reason: "not_connected" }],
   };
   const RESOURCES = {
     resources: [
-      { appId: "a1", appSlug: "docs", appName: "Docs", uri: "docs://handbook", name: "Handbook" },
+      {
+        connectorId: "a1",
+        connectorSlug: "docs",
+        connectorName: "Docs",
+        uri: "docs://handbook",
+        name: "Handbook",
+      },
     ],
     unavailable: [],
   };
 
-  it("空输入框键入 / → 面板列出 /应用:提示名；有参数时弹对话框，渲染结果放进输入框", async () => {
+  it("空输入框键入 / → 面板列出 /连接器:提示名；有参数时弹对话框，渲染结果放进输入框", async () => {
     const calls = stubApi({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${APPS}/prompts`]: () => json(200, PROMPTS),
@@ -494,9 +507,9 @@ describe("输入框：/ 斜杠命令与 @ 资源引用（MCP prompts / resources
     const option = await screen.findByRole("option", {
       name: "/docs:summarize — Summarize a topic",
     });
-    // 未连接的应用单独一组
+    // 未连接的连接器单独一组
     expect(
-      screen.getByRole("option", { name: `Mail · ${en.chat.appUnavailable.not_connected}` }),
+      screen.getByRole("option", { name: `Mail · ${en.chat.connectorUnavailable.not_connected}` }),
     ).toBeTruthy();
     await user.click(option);
     const dialog = await screen.findByRole("dialog", { name: "/docs:summarize" });
@@ -593,11 +606,39 @@ describe("输入框：/ 斜杠命令与 @ 资源引用（MCP prompts / resources
     const post = calls.find((c) => c.method === "POST" && c.url === `${BASE}/messages`);
     expect(JSON.parse(String(post?.body))).toMatchObject({
       text: "read",
-      attachments: [{ appId: "a1", uri: "docs://handbook" }],
+      attachments: [{ connectorId: "a1", uri: "docs://handbook" }],
     });
     // 发送成功：输入框的附件清空；消息里只显示用户文本与附件条目
     expect(await screen.findByText("@Handbook · Docs")).toBeTruthy();
     expect(screen.queryByText("Attached resource …")).toBeNull();
     expect(screen.queryByText("@Handbook")).toBeNull();
+  });
+});
+
+describe("MessageList: run.hook_denied", () => {
+  afterEach(cleanup);
+
+  it("names the plugin when the event carries one, and drops the name when it doesn't", () => {
+    const failed = (plugin?: string) => ({
+      kind: "failed" as const,
+      key: "f1",
+      text: "",
+      code: "run.hook_denied",
+      ...(plugin !== undefined && { plugin }),
+    });
+    for (const [locale, msgs] of [
+      ["en", en],
+      ["zh", zh],
+    ] as const) {
+      const named = renderPage(<MessageList orgId="o1" items={[failed("guard")]} />, { locale });
+      expect(named.container.textContent).toContain(
+        `✗ ${msgs.errors.run.hook_denied.replace("{plugin}", "guard")}`,
+      );
+      named.unmount();
+      const unnamed = renderPage(<MessageList orgId="o1" items={[failed()]} />, { locale });
+      expect(unnamed.container.textContent).toContain(`✗ ${msgs.errors.run.hook_denied_unknown}`);
+      expect(unnamed.container.textContent).not.toContain('"?"');
+      unnamed.unmount();
+    }
   });
 });

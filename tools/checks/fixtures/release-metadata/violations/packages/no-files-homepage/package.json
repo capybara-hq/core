@@ -1,0 +1,11 @@
+{
+  "name": "no-files-homepage",
+  "version": "0.1.0",
+  "description": "Ships everything",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "packages/no-files-homepage"
+  }
+}

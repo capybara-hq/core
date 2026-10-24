@@ -23,6 +23,9 @@ export default defineConfig({
           name: "node",
           include: ["{packages,apps,plugins,tools}/*/test/**/*.test.ts"],
           exclude: ["packages/design/**", "**/node_modules/**"],
+          // One PostgreSQL + one Valkey per run, handed to workers via env vars: startTestPostgres()
+          // creates a database per file on it. CAPYBARA_TEST_NO_SHARED=1 restores per-file containers.
+          globalSetup: ["packages/testing/src/global-setup.ts"],
         },
       },
       // jsdom 环境：设计系统包 @capybara-hq/design 的测试。

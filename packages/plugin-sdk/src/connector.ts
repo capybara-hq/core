@@ -11,7 +11,7 @@ export interface AuthInjection {
 export interface ConnectorSession {
   listTools(): Promise<ToolSpec[]>;
   /**
-   * `ctx.spec`：内核快照里该工具已复核的定义（`app_tools.spec`，绝不是待复核的新定义），含 listTools 时给出的
+   * `ctx.spec`：内核快照里该工具已复核的定义（`connector_tools.spec`，绝不是待复核的新定义），含 listTools 时给出的
    * `connectorData`。连接器应按它路由调用，而不是重新读取远端描述（远端变化须先经漂移复核）。旧内核不传，须判空。
    */
   callTool(
@@ -31,7 +31,7 @@ export interface ConnectorSession {
   close(): Promise<void>;
 }
 
-/** 远端提示模板（`/应用:提示名` 斜杠命令）。 */
+/** 远端提示模板（`/连接器:提示名` 斜杠命令）。 */
 export interface PromptInfo {
   name: string;
   title?: string;
@@ -87,7 +87,7 @@ export interface ConnectorOpenArgs {
 }
 
 /**
- * 远端描述里声明的一种认证方式，映射到内核应用认证（AppAuth）的形状，供安装向导预填。
+ * 远端描述里声明的一种认证方式，映射到内核连接器认证（ConnectorAuth）的形状，供安装向导预填。
  * `scheme` 是远端描述里的名字（如 OpenAPI `securitySchemes` 的键），`description` 原样给出（可能缺省）。
  * 只列内核支持的方式；其余（cookie 里的 API key、OpenID Connect、implicit / password 流等）不出现。
  */

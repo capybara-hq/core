@@ -3,6 +3,7 @@ import { type Logger, type ModelParameter, validateParams } from "@capybara-hq/p
 import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { cancelEvalRuns } from "../evals/budget.js";
 import { audit } from "../identity/audit.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
@@ -11,7 +12,7 @@ import type { ProviderRegistry } from "../runtime/providers.js";
 import type { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills } from "../skills/skills.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { AgentDefinition } from "./definition.js";
+import { type AgentDefinition, normalizeStoredDefinition } from "./definition.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -50,9 +51,9 @@ export type AgentWarning = "fallback_same_provider";
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
 
-/** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`。 */
-function paramIssues(
-  field: "modelParams" | "fallbackParams",
+/** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`（评测候选也用它）。 */
+export function paramIssues(
+  field: string,
   decl: ModelParameter[],
   params: Record<string, unknown>,
 ): { path: string; message: string }[] {
@@ -139,7 +140,7 @@ export class AgentsService {
   ) {}
 
   /**
-   * 校验工具引用与工具策略：引用的内置 / 插件 / 应用工具必须存在（见 `ToolRegistry.checkRefs`）；
+   * 校验工具引用与工具策略：引用的内置 / 插件 / 连接器工具必须存在（见 `ToolRegistry.checkRefs`）；
    * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
    * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
    */
@@ -250,7 +251,7 @@ export class AgentsService {
           ownerAccountId: r.owner_account_id,
           visibility: r.visibility,
           currentVersion: r.current_version,
-          definition: r.definition as unknown as AgentDefinition,
+          definition: normalizeStoredDefinition(r.definition),
           memberIds:
             r.visibility === "members"
               ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)
@@ -441,7 +442,7 @@ export class AgentsService {
     return { agent, warnings };
   }
 
-  /** 软删除：权限同 update。待处理的技能改动一并取消，提交后删除草稿（T15）。 */
+  /** 软删除：权限同 update。待处理的技能改动与该 agent 评测集在执行的评测运行一并取消，提交后删除草稿（T15）。 */
   async softDelete(
     orgId: string,
     agentId: string,
@@ -462,6 +463,13 @@ export class AgentsService {
         action: "agent.deleted",
         target: agentId,
       });
+      // 评测集的 agent 删除后其评测运行不再花钱：显式取消（审计带原因）
+      await cancelEvalRuns(
+        t,
+        { orgId, agentId },
+        { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
+        "agent_deleted",
+      );
       return this.skillChanges.cancelPendingForAgent(
         t,
         orgId,
@@ -590,7 +598,7 @@ export class AgentsService {
     if (!r) throw notFound();
     return {
       version: r.version,
-      definition: r.definition as unknown as AgentDefinition,
+      definition: normalizeStoredDefinition(r.definition),
       createdBy: r.created_by,
       createdAt: r.created_at,
     };

@@ -116,6 +116,7 @@ export function MessageList({
   reasoningOf?: (model: ModelRef) => boolean | undefined;
 }) {
   const t = useTranslations("chat");
+  const te = useTranslations("errors");
   if (items.length === 0) return <Text tone="muted">{t("empty")}</Text>;
 
   const assistant = (item: AssistantItem): ReactNode[] => {
@@ -194,7 +195,15 @@ export function MessageList({
         return [
           <TimelineItem key={item.key} mark="error">
             <div data-role="failed">
-              <Text tone="fail">{`✗ ${t("failed", { code: item.code })}`}</Text>
+              <Text tone="fail">
+                {`✗ ${
+                  item.code === "run.hook_denied"
+                    ? item.plugin !== undefined
+                      ? te("run.hook_denied", { plugin: item.plugin })
+                      : te("run.hook_denied_unknown")
+                    : t("failed", { code: item.code })
+                }`}
+              </Text>
             </div>
           </TimelineItem>,
         ];
