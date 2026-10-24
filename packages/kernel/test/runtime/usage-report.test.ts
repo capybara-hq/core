@@ -66,7 +66,7 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { roles: ["api", "worker"], plugins: [MODEL_FAKE, fx("hooks-probe"), fx("usage-b")] },
+      { roles: ["api", "worker"], extensions: [MODEL_FAKE, fx("hooks-probe"), fx("usage-b")] },
     ),
   );
   await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });

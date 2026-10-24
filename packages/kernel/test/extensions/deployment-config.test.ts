@@ -6,7 +6,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { loadConfigWithSources, resolveConfig } from "../../src/config/load.js";
-import { pluginConfigSources } from "../../src/config/sources.js";
+import { extensionConfigSources } from "../../src/config/sources.js";
 import { createKeyring, createSecrets } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -48,30 +48,34 @@ interface ConfigView {
   issues: { path: string; message: string }[];
 }
 
-describe("配置来源标注（pluginConfigSources / loadConfigWithSources）", () => {
+describe("配置来源标注（extensionConfigSources / loadConfigWithSources）", () => {
   it("文件里的叶子标 file、Nacos 来源标 nacos；环境变量（逐字段与整段 JSON）覆盖为 env", () => {
     const raw = {
-      pluginConfig: {
+      extensionConfig: {
         a: { x: 1, nested: { y: "f" }, list: [1, 2] },
         b: { z: true },
       },
     };
     const env = {
-      CAPYBARA_PLUGIN_CONFIG__A__NESTED__Y: "e",
-      CAPYBARA_PLUGIN_CONFIG__C_D__W: "3",
+      CAPYBARA_EXTENSION_CONFIG__A__NESTED__Y: "e",
+      CAPYBARA_EXTENSION_CONFIG__C_D__W: "3",
     };
-    expect(pluginConfigSources(raw, env, "file")).toEqual({
+    expect(extensionConfigSources(raw, env, "file")).toEqual({
       a: { x: "file", "nested.y": "env", list: "file" },
       b: { z: "file" },
       "c-d": { w: "env" },
     });
-    expect(pluginConfigSources(raw, {}, "nacos").a).toEqual({
+    expect(extensionConfigSources(raw, {}, "nacos").a).toEqual({
       x: "nacos",
       "nested.y": "nacos",
       list: "nacos",
     });
     expect(
-      pluginConfigSources({}, { CAPYBARA_PLUGIN_CONFIG: JSON.stringify({ q: { k: 1 } }) }, "file"),
+      extensionConfigSources(
+        {},
+        { CAPYBARA_EXTENSION_CONFIG: JSON.stringify({ q: { k: 1 } }) },
+        "file",
+      ),
     ).toEqual({ q: { k: "env" } });
   });
 
@@ -85,14 +89,14 @@ describe("配置来源标注（pluginConfigSources / loadConfigWithSources）", 
           db: { url: "postgres://x/y" },
           redis: { url: "redis://x" },
           masterKey: Buffer.alloc(32, 1).toString("base64"),
-          pluginConfig: { p: { a: 1, b: 2 } },
+          extensionConfig: { p: { a: 1, b: 2 } },
         }),
       );
       const { config, pluginSources } = await loadConfigWithSources({
         CAPYBARA_CONFIG_FILE: file,
-        CAPYBARA_PLUGIN_CONFIG__P__B: "5",
+        CAPYBARA_EXTENSION_CONFIG__P__B: "5",
       });
-      expect(config.pluginConfig).toEqual({ p: { a: 1, b: 5 } });
+      expect(config.extensionConfig).toEqual({ p: { a: 1, b: 5 } });
       expect(pluginSources).toEqual({ p: { a: "file", b: "env" } });
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -113,8 +117,8 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   /** 文件来源（region）与环境变量（poolSize）各占一个字段；endpoint 必填但没配。 */
   async function boot(fileCfg: Record<string, unknown>): Promise<Kernel> {
     const env = {
-      CAPYBARA_PLUGIN_CONFIG__DEPLOYCFG__POOL_SIZE: "3",
-      CAPYBARA_PLUGIN_CONFIG__DEPLOYCFG__HEADERS__X: "v1",
+      CAPYBARA_EXTENSION_CONFIG__DEPLOYCFG__POOL_SIZE: "3",
+      CAPYBARA_EXTENSION_CONFIG__DEPLOYCFG__HEADERS__X: "v1",
     };
     const raw = {
       db: { url: pgc.url, poolMax: 5 },
@@ -122,14 +126,14 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0 },
       roles: ["api", "worker"],
-      plugins: [MODEL_FAKE, DEPLOYCFG],
-      pluginPermissions: { autoApprove: true },
-      pluginConfig: { deploycfg: fileCfg },
+      extensions: [MODEL_FAKE, DEPLOYCFG],
+      extensionPermissions: { autoApprove: true },
+      extensionConfig: { deploycfg: fileCfg },
     };
     const kernel = await createKernel(resolveConfig(raw, env), {
       env,
       logger: createLogger("info", { write: (l) => lines.push(l) }),
-      pluginConfigSources: pluginConfigSources(raw, env, "file"),
+      extensionConfigSources: extensionConfigSources(raw, env, "file"),
       // 内置插件（C14）同样可以在 PG 里配：badconfig 的必填字段 port 没配，待配置
       builtinExtensions: [BADCONFIG],
     });

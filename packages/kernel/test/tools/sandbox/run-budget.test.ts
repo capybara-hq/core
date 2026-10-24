@@ -83,10 +83,10 @@ describe("运行时限与命令超时（纯函数）", () => {
     };
     const [w] = sandboxConfigWarnings(open, "sandbox-docker");
     expect(w?.level).toBe("warn");
-    expect(w?.message).toContain('pluginConfig."sandbox-docker".allowOpenEgress');
+    expect(w?.message).toContain('extensionConfig."sandbox-docker".allowOpenEgress');
     expect(
       sandboxConfigWarnings(
-        { ...open, pluginConfig: { "sandbox-docker": { allowOpenEgress: true } } },
+        { ...open, extensionConfig: { "sandbox-docker": { allowOpenEgress: true } } },
         "sandbox-docker",
       ),
     ).toEqual([]);
@@ -112,8 +112,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, SANDBOX_FAKE],
-        pluginConfig: { "sandbox-fake": { root } },
+        extensions: [MODEL_FAKE, SANDBOX_FAKE],
+        extensionConfig: { "sandbox-fake": { root } },
         runtime: { maxRunSeconds: MAX_RUN_SECONDS },
       },
     ),

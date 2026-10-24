@@ -232,8 +232,8 @@ const fail = (path: string, message: string) =>
 export const INSTALL_ACTIONS: Record<PackageKind, OrgAction[]> = {
   skill: ["skills.manage"],
   "connector-template": ["connectors.manage"],
-  plugin: ["org.plugins.manage"],
-  app: ["org.plugins.manage", "connectors.manage", "skills.manage"],
+  plugin: ["org.extensions.manage"],
+  app: ["org.extensions.manage", "connectors.manage", "skills.manage"],
 };
 
 /** 在调用方事务里锁组织行，并复核发起人能执行全部 `actions`（否则 `forbidden`）。 */
@@ -503,7 +503,7 @@ const displayNameOf = (n: LocalizedName | null | undefined, fallback: string) =>
 /**
  * Organizations browse and install from the enterprise catalog (C22): members browse (without
  * disabled items) and request, org admins install. Installing requires `skills.manage` /
- * `connectors.manage` / `org.plugins.manage` by item kind (apps need all three), re-checked inside
+ * `connectors.manage` / `org.extensions.manage` by item kind (apps need all three), re-checked inside
  * the org row lock; item disabled -> `catalog.item_disabled`; needs_approval without a grant ->
  * a stage deployment request (HTTP 202); a required plugin not installed on the deployment ->
  * `catalog.not_deployed`. When components are actually created (enabling plugins, creating

@@ -376,7 +376,7 @@ export class CatalogService {
       if (declared === "config") {
         throw new ApiError(
           "extension.config_declared",
-          `Extension ${name} is declared in the startup config (plugins); remove it there before importing it as a package`,
+          `Extension ${name} is declared in the startup config (extensions); remove it there before importing it as a package`,
         );
       }
       await assertPluginNameOwner(this.d.db, name, packageName);

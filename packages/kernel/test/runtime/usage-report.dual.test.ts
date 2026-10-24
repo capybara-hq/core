@@ -50,7 +50,7 @@ const config = () =>
     { pg: pgc.url, redis: rd.url },
     {
       roles: ["api", "worker"],
-      plugins: [MODEL_FAKE, HOOKS_PROBE],
+      extensions: [MODEL_FAKE, HOOKS_PROBE],
       // one delivery at a time per replica, so both replicas take jobs
       hooks: { usageReportConcurrency: 1 },
     },

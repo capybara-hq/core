@@ -23,7 +23,7 @@ export const PLUGIN_STATUSES = [
 ] as const;
 export type PluginStatus = (typeof PLUGIN_STATUSES)[number];
 
-/** 插件来源：内置（随核心镜像）、启动配置的 `plugins` 列表、后台安装。 */
+/** Extension source: builtin (ships in the core image), the startup config `extensions` list, or installed from the admin console. */
 export const PLUGIN_SOURCES = ["builtin", "config", "install"] as const;
 export type PluginSource = (typeof PLUGIN_SOURCES)[number];
 

@@ -31,7 +31,7 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0 },
       log: { level: "error" },
-      plugins: [
+      extensions: [
         fx("cap-chan-a"),
         fx("cap-chan-b"),
         fx("cap-consumer"),
@@ -39,7 +39,7 @@ beforeAll(async () => {
         fx("cap-chan-v2"),
         fx("cap-consumer-v2"),
       ],
-      pluginPermissions: { autoApprove: true },
+      extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );

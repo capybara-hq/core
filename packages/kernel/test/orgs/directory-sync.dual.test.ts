@@ -51,7 +51,7 @@ type Json = Record<string, unknown>;
 describe("通讯录同步（双副本）", () => {
   it("两个副本同时触发：同时只跑一轮，被锁挡掉的那次在持有者跑完后补一轮", async () => {
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, DIR_MINI],
+      extensions: [MODEL_FAKE, DIR_MINI],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: { auth: { cookieSecure: false } },

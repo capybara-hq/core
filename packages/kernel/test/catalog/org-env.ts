@@ -100,8 +100,8 @@ export async function startOrgEnv(): Promise<OrgEnv> {
     { pg: pgc.url, redis: rd.url },
     {
       roles: ["api", "worker"],
-      pluginHost: { dir: pluginsDir },
-      plugins: [
+      extensionHost: { dir: pluginsDir },
+      extensions: [
         OBJECT_STORE_S3,
         MODEL_FAKE,
         CONNECTOR_MCP,
@@ -110,7 +110,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
         fixture("dep-provider"),
         fixture("dep-requirer"),
       ],
-      pluginConfig: {
+      extensionConfig: {
         "object-store-s3": {
           endpoint: s3.endpoint,
           region: s3.region,

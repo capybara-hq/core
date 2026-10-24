@@ -44,7 +44,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   k = await startKernel(
-    runConfig({ pg: pgc.url, redis: rd.url }, { plugins: [MODEL_FAKE, MODEL_EVAL] }),
+    runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MODEL_EVAL] }),
   );
 }, 120_000);
 afterAll(async () => {

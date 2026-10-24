@@ -215,7 +215,7 @@ describe("M2 双副本端到端验收", () => {
     cleanups.push(() => redis.disconnect());
     await redis.flushdb();
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE],
+      extensions: [MODEL_FAKE],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: {

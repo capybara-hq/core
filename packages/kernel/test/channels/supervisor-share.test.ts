@@ -72,7 +72,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, CHAN_MINI],
+        extensions: [MODEL_FAKE, CHAN_MINI],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
       },

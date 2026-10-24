@@ -106,10 +106,10 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, MODEL_LOOPER, S3_PLUGIN, TOOLS_PROBE, HOOKS_PROBE],
+        extensions: [MODEL_FAKE, MODEL_LOOPER, S3_PLUGIN, TOOLS_PROBE, HOOKS_PROBE],
         runtime: { maxSteps: 4, keepRecentTurns: 1 },
         tools: { searchThresholdTools: 1 },
-        pluginConfig: {
+        extensionConfig: {
           "model-fake": {
             models: [
               { id: "fake-1" },

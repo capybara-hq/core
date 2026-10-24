@@ -94,7 +94,7 @@ const errCode = (r: { json: Json }) => (r.json.error as { code?: string } | unde
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   h = await createDualReplicaHarness({
-    plugins: [MODEL_FAKE, TODO, BOARD, UI_PROBE, UI_A],
+    extensions: [MODEL_FAKE, TODO, BOARD, UI_PROBE, UI_A],
     pgUrl: pgc.url,
     redisUrl: rdc.url,
     config: { auth: { cookieSecure: false } },
@@ -399,7 +399,7 @@ function runCli(
     CAPYBARA_DB__URL: h.dbUrl,
     CAPYBARA_REDIS__URL: "redis://127.0.0.1:1",
     CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
-    CAPYBARA_PLUGINS: JSON.stringify(plugins),
+    CAPYBARA_EXTENSIONS: JSON.stringify(plugins),
   });
   return new Promise((resolve, reject) => {
     const child = spawn("pnpm", ["--silent", "capybara", ...args], {

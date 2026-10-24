@@ -173,7 +173,7 @@ const clipDetail = (s: string): string => clipText(s, HOOK_DETAIL_MAX_CHARS);
  * tools). Hooks live on each instance (`ctx.hooks.on` records them in the instance ledger), and the
  * registry resolves them from the host's active instances on every call: after an upgrade only the
  * new generation fires, and unloading or disabling an instance stops its hooks. Every hook call runs
- * through the instance's `inflight.run`, so revocation drains it (up to `pluginHost.drainSeconds`).
+ * through the instance's `inflight.run`, so revocation drains it (up to `extensionHost.drainSeconds`).
  *
  * {@link run} (Ruling R11):
  * 1. If the caller's signal is aborted, throw its reason (an abort is never a deny).

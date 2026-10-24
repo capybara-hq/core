@@ -2064,7 +2064,7 @@
         "refresh": "Refresh",
         "noReplicas": "No replica has reported yet.",
         "builtinNote": "Built-in plugins ship with the core image and are always enabled: they cannot be disabled, upgraded or uninstalled. Only their deployment config needs filling in.",
-        "configNote": "This plugin is declared in the startup config's plugins list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
+        "configNote": "This plugin is declared in the startup config's extensions list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
         "actions": {
           "enable": "Enable",
           "disable": "Disable",
@@ -2447,8 +2447,8 @@
       "sources": {
         "title": "Directory sources",
         "official": "Official catalog",
-        "officialHint": "The address is set in the deployment config catalogs.official.* and is read-only here.",
-        "offline": "Offline mode: the official catalog is not live yet, so the deployment config keeps it off (catalogs.official.enabled = false).",
+        "officialHint": "The address is set in the deployment config marketplaces.official.* and is read-only here.",
+        "offline": "Offline mode: the official catalog is not live yet, so the deployment config keeps it off (marketplaces.official.enabled = false).",
         "enabled": "Enabled",
         "url": "URL",
         "mirrors": "Mirrors",

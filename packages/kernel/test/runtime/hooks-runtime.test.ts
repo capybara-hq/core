@@ -83,7 +83,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, HOOKS_PROBE],
+        extensions: [MODEL_FAKE, HOOKS_PROBE],
         hooks: { timeoutMs: HOOK_TIMEOUT_MS },
       },
     ),

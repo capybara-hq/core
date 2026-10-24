@@ -17,7 +17,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MARKETPLACE_ENTRIES_MAX } from "../../src/catalog/marketplaces.service.js";
 import { resolveConfig } from "../../src/config/load.js";
-import { CATALOG_OFFICIAL_URL_DEFAULT, type KernelConfig } from "../../src/config/schema.js";
+import { type KernelConfig, MARKETPLACE_OFFICIAL_URL_DEFAULT } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -130,9 +130,9 @@ beforeAll(async () => {
     { pg: pgc.url, redis: rd.url },
     {
       roles: ["api"],
-      pluginHost: { dir: pluginsDir },
+      extensionHost: { dir: pluginsDir },
       packages: { npmRegistry: reg.url },
-      catalogs: {
+      marketplaces: {
         official: { enabled: true, url: official.url },
         maxIndexBytes: MAX_INDEX_BYTES,
         allowInsecureLoopback: true,
@@ -642,9 +642,9 @@ describe("定期刷新（维护任务 catalogs-refresh）", () => {
         { pg: pgc.url, redis: rd.url },
         {
           roles: ["worker"],
-          pluginHost: { dir: pluginsDir },
+          extensionHost: { dir: pluginsDir },
           packages: { npmRegistry: reg.url },
-          catalogs: {
+          marketplaces: {
             official: { enabled: true, url: official.url },
             refreshIntervalMinutes: 30,
             allowInsecureLoopback: true,
@@ -712,15 +712,15 @@ describe("浏览条目的上限", () => {
 });
 
 describe("official catalog default (not live yet)", () => {
-  /** Default catalogs config: no `catalogs.official` keys, no env. */
+  /** Default catalogs config: no `marketplaces.official` keys, no env. */
   const defaultsConfig = () =>
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        pluginHost: { dir: pluginsDir },
+        extensionHost: { dir: pluginsDir },
         packages: { npmRegistry: reg.url },
-        catalogs: { allowInsecureLoopback: true },
+        marketplaces: { allowInsecureLoopback: true },
       },
     );
   const baseRaw = () => ({
@@ -731,10 +731,10 @@ describe("official catalog default (not live yet)", () => {
 
   it("is off without config, and on only when enabled explicitly through the environment", () => {
     const off = resolveConfig(baseRaw(), {});
-    expect(off.catalogs.official.enabled).toBe(false);
-    expect(off.catalogs.official.url).toBe(CATALOG_OFFICIAL_URL_DEFAULT);
-    const on = resolveConfig(baseRaw(), { CAPYBARA_CATALOGS__OFFICIAL__ENABLED: "true" });
-    expect(on.catalogs.official.enabled).toBe(true);
+    expect(off.marketplaces.official.enabled).toBe(false);
+    expect(off.marketplaces.official.url).toBe(MARKETPLACE_OFFICIAL_URL_DEFAULT);
+    const on = resolveConfig(baseRaw(), { CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED: "true" });
+    expect(on.marketplaces.official.enabled).toBe(true);
   });
 
   it("shows offline mode, never fetches the official URL and logs no refresh failure", async () => {
@@ -751,7 +751,7 @@ describe("official catalog default (not live yet)", () => {
       logger: createLogger("debug", { write: (l) => lines.push(l) }),
     });
     try {
-      expect(worker.config.catalogs.official.enabled).toBe(false);
+      expect(worker.config.marketplaces.official.enabled).toBe(false);
       await worker.start();
       await worker.marketplaces.refreshAll(new AbortController().signal);
       const offline = await session(worker, "root");
@@ -760,7 +760,7 @@ describe("official catalog default (not live yet)", () => {
       expect(off).toMatchObject({ id: "official", enabled: false, disabledByConfig: true });
       const manual = await refresh(offline, "official");
       expect(manual.statusCode).not.toBe(200);
-      expect(urls.filter((u) => u === CATALOG_OFFICIAL_URL_DEFAULT)).toEqual([]);
+      expect(urls.filter((u) => u === MARKETPLACE_OFFICIAL_URL_DEFAULT)).toEqual([]);
       expect(lines.filter((l) => l.includes("marketplace refresh failed"))).toEqual([]);
     } finally {
       spy.mockRestore();

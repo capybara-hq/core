@@ -54,7 +54,7 @@ export interface MarketplaceView {
   url: string;
   mirrors: string[];
   builtin: boolean;
-  /** 生效的启用状态（official 还要配置 `catalogs.official.enabled` 为 true）。 */
+  /** 生效的启用状态（official 还要配置 `marketplaces.official.enabled` 为 true）。 */
   enabled: boolean;
   /** official 被配置关闭（离线模式）；企业清单恒为 false。 */
   disabledByConfig: boolean;
@@ -116,7 +116,7 @@ const notFound = () => new ApiError("marketplace.not_found", "Marketplace not fo
 const builtinErr = (what: string) =>
   new ApiError(
     "marketplace.builtin",
-    `The official marketplace is configured in catalogs.official.*; it cannot be ${what} here (only enabled or disabled)`,
+    `The official marketplace is configured in marketplaces.official.*; it cannot be ${what} here (only enabled or disabled)`,
   );
 
 /** 宿主版本（清单条目的 minKernel / minSdk 按它判断兼容）。 */
@@ -126,7 +126,7 @@ export const HOST_VERSIONS = { kernel: KERNEL_VERSION, sdk: SDK_VERSION } as con
 export const sourceEffective = (
   row: { builtin: boolean; enabled: boolean },
   config: KernelConfig,
-): boolean => row.enabled && (!row.builtin || config.catalogs.official.enabled);
+): boolean => row.enabled && (!row.builtin || config.marketplaces.official.enabled);
 
 /**
  * Reads a marketplace entry for import: marketplace missing -> `marketplace.not_found`;
@@ -165,9 +165,9 @@ export async function loadMarketplaceEntry(
 
 /**
  * Marketplaces (D16 / C25 / C26, `/api/v1/admin/marketplaces/*`, enterprise admins only): the official
- * marketplace (config `catalogs.official.*`, synced at startup into the marketplace with id
+ * marketplace (config `marketplaces.official.*`, synced at startup into the marketplace with id
  * `official`) and enterprise marketplaces (PG, optional token in secrets). A refresh (maintenance
- * job `catalogs-refresh` every `catalogs.refreshIntervalMinutes` minutes, or manual) tries the main
+ * job `catalogs-refresh` every `marketplaces.refreshIntervalMinutes` minutes, or manual) tries the main
  * URL and then the mirrors with If-None-Match; on success it replaces that marketplace's cached
  * entries as a whole, when all fail (an invalid index included) it keeps the previous ones with
  * status `error`. A status change audits `marketplace.refreshed` and logs once. Stateless, shared
@@ -178,7 +178,7 @@ export class MarketplacesService {
 
   /** 按配置建 / 更新 official 来源（名字、地址、镜像；不动后台的启停）。每个副本启动时调用，幂等。 */
   async syncOfficialFromConfig(): Promise<void> {
-    const o = this.d.config().catalogs.official;
+    const o = this.d.config().marketplaces.official;
     const mirrors = JSON.stringify(o.mirrors);
     await this.d.db
       .insertInto("marketplaces")
@@ -396,7 +396,7 @@ export class MarketplacesService {
 
   /**
    * Refreshes one marketplace: the main URL, then the mirrors (with If-None-Match, at most
-   * `catalogs.maxIndexBytes`); 304 keeps the entries, a valid 200 replaces them as a whole; when all
+   * `marketplaces.maxIndexBytes`); 304 keeps the entries, a valid 200 replaces them as a whole; when all
    * fail the old entries are kept with status `error`. A disabled marketplace -> 409 `conflict`.
    * A status change audits `marketplace.refreshed {from, to}` (a periodic refresh has no actor) and
    * logs once. If the URL / mirrors changed during the fetch: the result is discarded and nothing is
@@ -421,8 +421,8 @@ export class MarketplacesService {
     if (!sourceEffective(row, config)) {
       throw new ApiError(
         "conflict",
-        row.builtin && !config.catalogs.official.enabled
-          ? "The official marketplace is disabled by catalogs.official.enabled (offline mode)"
+        row.builtin && !config.marketplaces.official.enabled
+          ? "The official marketplace is disabled by marketplaces.official.enabled (offline mode)"
           : "This marketplace is disabled; enable it before refreshing",
       );
     }
@@ -439,9 +439,9 @@ export class MarketplacesService {
         const r = await fetchMarketplaceIndex(url, {
           etag: row.etag,
           ...(token !== undefined && { token, tokenOrigin }),
-          maxBytes: config.catalogs.maxIndexBytes,
+          maxBytes: config.marketplaces.maxIndexBytes,
           timeoutMs: this.d.fetchTimeoutMs ?? MARKETPLACE_FETCH_TIMEOUT_MS,
-          allowInsecureLoopback: config.catalogs.allowInsecureLoopback,
+          allowInsecureLoopback: config.marketplaces.allowInsecureLoopback,
           signal,
         });
         outcome = r.status === "not_modified" ? "not_modified" : r;
@@ -557,7 +557,7 @@ export class MarketplacesService {
       .orderBy("e.name")
       .orderBy("e.source_id")
       .limit(MARKETPLACE_ENTRIES_MAX + 1);
-    if (!config.catalogs.official.enabled) query = query.where("s.builtin", "=", false);
+    if (!config.marketplaces.official.enabled) query = query.where("s.builtin", "=", false);
     if (q.sourceId !== undefined) query = query.where("e.source_id", "=", q.sourceId);
     if (q.kind !== undefined) query = query.where("e.kind", "=", q.kind);
     if (q.q !== undefined && q.q !== "") {
@@ -662,7 +662,7 @@ export class MarketplacesService {
       mirrors: r.mirrors,
       builtin: r.builtin,
       enabled: sourceEffective(r, config),
-      disabledByConfig: r.builtin && !config.catalogs.official.enabled,
+      disabledByConfig: r.builtin && !config.marketplaces.official.enabled,
       hasToken: hasToken.has(tokenKey(r.id)),
       etag: r.etag,
       lastRefreshedAt: r.last_refreshed_at?.toISOString() ?? null,
@@ -686,7 +686,7 @@ export class MarketplacesService {
   }
 
   private checkUrls(url: string, mirrors: string[]): void {
-    const allow = this.d.config().catalogs.allowInsecureLoopback;
+    const allow = this.d.config().marketplaces.allowInsecureLoopback;
     if (mirrors.length > MARKETPLACE_MAX_MIRRORS) {
       throw new ApiError("validation_failed", `at most ${MARKETPLACE_MAX_MIRRORS} mirrors`);
     }

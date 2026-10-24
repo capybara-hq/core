@@ -408,7 +408,7 @@ export default async function globalSetup(): Promise<Cleanup> {
       db: { url: pg.getConnectionUri() },
       redis: { url: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}` },
       masterKey: randomBytes(32).toString("base64"),
-      plugins: [
+      extensions: [
         modelFake,
         connectorMcp,
         connectorOpenApi,
@@ -418,7 +418,7 @@ export default async function globalSetup(): Promise<Cleanup> {
         objectStoreS3,
         sandboxFake,
       ],
-      pluginConfig: {
+      extensionConfig: {
         // fake-1 声明支持图片与文档：上传附件用例核对模型收到的是 image 块（不是文字占位）
         "model-fake": { models: [{ id: "fake-1", vision: true, documents: true }] },
         "object-store-s3": {
@@ -440,14 +440,14 @@ export default async function globalSetup(): Promise<Cleanup> {
       },
       // 官方清单指向假清单，插件与应用包从假 npm registry 下载（都是本机 http）
       packages: { npmRegistry: directory.registryUrl },
-      catalogs: {
+      marketplaces: {
         official: { enabled: true, url: directory.catalogUrl },
         allowInsecureLoopback: true,
       },
       // e2e 自动批准插件权限（生产默认关闭）
-      pluginPermissions: { autoApprove: true },
+      extensionPermissions: { autoApprove: true },
       // 后台安装的插件包解到临时目录（默认 /var/lib/capybara/plugins 在开发机上没有写权限）
-      pluginHost: { dir: join(dir, "plugins") },
+      extensionHost: { dir: join(dir, "plugins") },
       // publicUrl：机器人发的绑定链接指向 Web 层（`<publicUrl>/bind/<token>`）
       http: { port: kernelPort, trustProxy: 1, publicUrl: `http://localhost:${webPort}` },
       auth: { cookieSecure: false, loginSources: ["fake-im"] },

@@ -17,7 +17,7 @@ export type OrgAction =
   | "org.members.manage"
   | "org.invitations.manage"
   | "org.tokens.manage"
-  | "org.plugins.manage"
+  | "org.extensions.manage"
   | "agents.create"
   | "agents.use"
   | "agents.manage"
@@ -43,7 +43,7 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "org.members.manage": "admin",
   "org.invitations.manage": "admin",
   "org.tokens.manage": "admin",
-  "org.plugins.manage": "admin",
+  "org.extensions.manage": "admin",
   "org.delete": "owner",
   "org.transfer": "owner",
   "agents.create": "member",
@@ -70,7 +70,7 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   // 本组织的模型用途映射（覆盖部署默认，如评委用途 eval）
   "org.models.manage": "admin",
   // 企业目录（组织视角）：成员浏览（看不到 disabled）与申请；组织管理员决定成员申请（F-AF）。
-  // 安装另按条目种类要求 skills.manage / connectors.manage / org.plugins.manage（服务里在组织行锁内复核）
+  // 安装另按条目种类要求 skills.manage / connectors.manage / org.extensions.manage（服务里在组织行锁内复核）
   "catalog.read": "member",
   "catalog.request": "member",
   "catalog.decide": "admin",

@@ -28,13 +28,13 @@ export class OrgExtensionConfigsController {
   constructor(@Inject(ORG_EXTENSION_CONFIGS) private readonly configs: OrgExtensionConfigs) {}
 
   @Get()
-  @OrgAction("org.plugins.manage")
+  @OrgAction("org.extensions.manage")
   async list(@CurrentOrg() org: OrgContext): Promise<{ extensions: OrgExtensionView[] }> {
     return { extensions: await this.configs.list(org.orgId) };
   }
 
   @Put(":extension")
-  @OrgAction("org.plugins.manage")
+  @OrgAction("org.extensions.manage")
   async put(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,

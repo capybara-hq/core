@@ -13,7 +13,7 @@ export const PLUGINS_CHANGED_TOPIC = "plugins.changed";
 export const PLUGINS_RECONCILE_TOPIC = "plugins.reconcile";
 export { PLUGINS_MIGRATED_TOPIC };
 
-/** 维护任务：每 `pluginHost.reconcileIntervalSeconds` 秒发布一次 `plugins.reconcile`（任务名与 scheduler id 不含 `:`）。 */
+/** 维护任务：每 `extensionHost.reconcileIntervalSeconds` 秒发布一次 `plugins.reconcile`（任务名与 scheduler id 不含 `:`）。 */
 export const PLUGINS_RECONCILE_JOB = "plugins-reconcile";
 export const PLUGINS_RECONCILE_SCHEDULER_ID = "plugins-reconcile-every";
 

@@ -1,6 +1,6 @@
--- M6 T24：目录来源（D16 / C25 / C26）。官方清单（id 'official'，builtin，地址来自配置 catalogs.official.*，
+-- M6 T24：目录来源（D16 / C25 / C26）。官方清单（id 'official'，builtin，地址来自配置 marketplaces.official.*，
 -- 每次启动按配置同步）与企业清单（id 为 uuid，企业管理员维护；可选令牌存 secrets：namespace kernel、
--- org_id _deployment、键 catalog-token:<id>）。enabled：后台的启停（official 另受配置 catalogs.official.enabled 约束）。
+-- org_id _deployment、键 catalog-token:<id>）。enabled：后台的启停（official 另受配置 marketplaces.official.enabled 约束）。
 -- etag：上次成功拉取的 ETag（下次带 If-None-Match）；last_status：never / ok / error；拉取或校验失败保留上一份条目。
 CREATE TABLE IF NOT EXISTS catalog_sources (
   id text PRIMARY KEY,

@@ -48,7 +48,7 @@ let maint: Queue;
 const kernels: Kernel[] = [];
 
 const config = () =>
-  runConfig({ pg: pgc.url, redis: rd.url }, { plugins: [MODEL_FAKE, MEM_CONNECTOR] });
+  runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MEM_CONNECTOR] });
 const ECHO = 'tool:mem-connector__echo:{"text":"hi"}';
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], type: T) =>
   evs.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);

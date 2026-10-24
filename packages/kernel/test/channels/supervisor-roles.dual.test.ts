@@ -49,7 +49,7 @@ type Json = Record<string, unknown>;
 /** Starts a harness with the given roles, then logs in, creates an org, an agent and a channel. */
 async function setup(roles: [string[], string[]], appId: string) {
   h = await createDualReplicaHarness({
-    plugins: [MODEL_FAKE, CHAN_MINI],
+    extensions: [MODEL_FAKE, CHAN_MINI],
     roles,
     config: {
       auth: { cookieSecure: false },

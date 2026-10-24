@@ -59,7 +59,7 @@ describe("渠道长连接选主（双副本）", () => {
     cleanups.push(() => redis.disconnect());
     await redis.flushdb();
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, CHAN_MINI],
+      extensions: [MODEL_FAKE, CHAN_MINI],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: {

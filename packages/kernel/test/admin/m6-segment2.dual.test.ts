@@ -29,7 +29,7 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M6 第二段验收（双副本）：两个独立进程的内核副本（api / worker）共享 PG / Redis / 插件目录，
- * `pluginPermissions.autoApprove: false`；内置 object-store-s3（SeaweedFS，起初没配）、配置声明的 model-fake 与
+ * `extensionPermissions.autoApprove: false`；内置 object-store-s3（SeaweedFS，起初没配）、配置声明的 model-fake 与
  * deploycfg；其余插件经后台安装。全部经 HTTP（「卡住工具调用」用测试连接锁表；匿名访客由渠道产生，这里直接建）。
  *
  * 1. 副本 A 上传打包好的 sandbox@1 假插件 v1（敏感）与 todo v1，副本 B 安装、批准、启用：两个副本都加载，不重启；
@@ -209,11 +209,11 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       sandboxFakePkg(),
     ]);
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, DEPLOYCFG],
+      extensions: [MODEL_FAKE, DEPLOYCFG],
       builtinExtensions: [S3_PLUGIN],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: {
+      extensionConfig: {
         "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] },
         "sandbox-fake": { root: sandboxRoot },
         // region 在启动配置（文件）里：后台只读
@@ -221,8 +221,8 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       },
       config: {
         auth: { cookieSecure: false },
-        pluginPermissions: { autoApprove: false },
-        pluginHost: {
+        extensionPermissions: { autoApprove: false },
+        extensionHost: {
           dir: pluginsDir,
           reconcileIntervalSeconds: 2,
           drainSeconds: DRAIN_SECONDS,

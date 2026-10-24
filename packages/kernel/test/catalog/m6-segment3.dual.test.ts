@@ -49,9 +49,9 @@ import { appBundleTgz, mcpTemplate, SVG_ICON, skillTgz, templateTgz } from "./pa
 /**
  * M6 segment 3 acceptance (dual replica, enterprise catalog): two kernel replicas in separate
  * processes (api / worker) share PG / Redis / the plugin directory, with
- * `pluginPermissions.autoApprove: false`; builtin object-store-s3 (SeaweedFS), config-declared
+ * `extensionPermissions.autoApprove: false`; builtin object-store-s3 (SeaweedFS), config-declared
  * model-fake and connector-mcp; a fake npm registry, a fake official marketplace
- * (`catalogs.official.url` points at it) plus one enterprise marketplace, and a fake MCP server.
+ * (`marketplaces.official.url` points at it) plus one enterprise marketplace, and a fake MCP server.
  * Everything goes through HTTP ("the maintenance job refreshes the enterprise marketplace" enqueues
  * a real `catalogs-refresh` job on the maintenance queue; in the rename regression the "old agent
  * version" and the "snapshot case" have no HTTP write path and are written to the DB directly, as
@@ -301,11 +301,11 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     acme = await startFakeMarketplace({ index: acmeIndex(false) });
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, CONNECTOR_MCP],
+      extensions: [MODEL_FAKE, CONNECTOR_MCP],
       builtinExtensions: [S3_PLUGIN],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: {
+      extensionConfig: {
         "object-store-s3": {
           endpoint: s3.endpoint,
           region: s3.region,
@@ -318,10 +318,13 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       },
       config: {
         auth: { cookieSecure: false },
-        pluginPermissions: { autoApprove: false },
-        pluginHost: { dir: pluginsDir, reconcileIntervalSeconds: 2 },
+        extensionPermissions: { autoApprove: false },
+        extensionHost: { dir: pluginsDir, reconcileIntervalSeconds: 2 },
         packages: { npmRegistry: reg.url },
-        catalogs: { official: { enabled: true, url: official.url }, allowInsecureLoopback: true },
+        marketplaces: {
+          official: { enabled: true, url: official.url },
+          allowInsecureLoopback: true,
+        },
         tools: { timeoutMs: 10_000 },
       },
     });

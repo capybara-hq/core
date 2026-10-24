@@ -36,9 +36,9 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0, publicUrl: PUBLIC },
       auth: { cookieSecure: false, loginSources: ["fake-idp", "not-installed"] },
-      plugins: [FAKE_IDP],
-      pluginConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
-      pluginPermissions: { autoApprove: true },
+      extensions: [FAKE_IDP],
+      extensionConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
+      extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );

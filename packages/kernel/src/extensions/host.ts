@@ -139,9 +139,9 @@ export interface ExtensionPointEntry {
 
 const CLOSED_DURING_LOAD = "plugin host closed during load";
 
-/** 撤销实例时在途调用的默认排空时限（`pluginHost.drainSeconds` 的默认值）。 */
+/** 撤销实例时在途调用的默认排空时限（`extensionHost.drainSeconds` 的默认值）。 */
 const DEFAULT_DRAIN_MS = 30_000;
-/** 运行中重新加载时 setup 的默认时限（`pluginHost.reloadSetupTimeoutSeconds` 的默认值）。 */
+/** 运行中重新加载时 setup 的默认时限（`extensionHost.reloadSetupTimeoutSeconds` 的默认值）。 */
 const DEFAULT_RELOAD_SETUP_TIMEOUT_MS = 60_000;
 /** 停机时等进行中的 unload / reload 的上限（之后直接关闭 setup 中的 ctx、撤销其余实例）。 */
 const CLOSE_LIFECYCLE_WAIT_MS = 2_000;
@@ -236,7 +236,7 @@ function dropShadowed(
   return config.filter((e) => {
     if (!names.has(e.manifest.name)) return true;
     log.warn(
-      "plugin is built in; ignoring the same plugin in the plugins config list (remove it from the list)",
+      "plugin is built in; ignoring the same extension in the extensions config list (remove it from the list)",
       { plugin: e.manifest.name },
     );
     return false;
@@ -400,7 +400,7 @@ export interface DeclaredExtensionInfo {
 export interface ExtensionLoadPlan {
   /** 内置插件（模块 specifier，建议 `file:` URL）：预先批准、始终启用。 */
   builtin?: string[];
-  /** 启动配置 `plugins` 列表。 */
+  /** The startup config `extensions` list. */
   config?: string[];
   /** 安装记录。 */
   installs?: InstalledExtensionLoader;
@@ -660,7 +660,7 @@ export class ExtensionHost {
    * bare package names are resolved with `createRequire(<resolveFrom>/noop.js).resolve`, so an
    * extension package's exports must expose the `default` (or `require`) condition.
    * @param opts.autoApprove Approve extension permissions automatically (config
-   * `pluginPermissions.autoApprove`, development and trials only): extensions needing approval write a
+   * `extensionPermissions.autoApprove`, development and trials only): extensions needing approval write a
    * snapshot with source auto and load as usual. Default false: extensions pending approval do not
    * load (see {@link pending}).
    * @param opts.status This replica's load status table (`extension_replica_status`): every
@@ -668,17 +668,17 @@ export class ExtensionHost {
    */
   constructor(
     private readonly deps: KernelDeps,
-    private readonly pluginConfig: Record<string, unknown> = {},
+    private readonly extensionConfig: Record<string, unknown> = {},
     opts: {
       resolveFrom?: string;
       onSecrets?: (values: string[]) => void;
       autoApprove?: boolean;
       status?: ReplicaStatusStore;
-      /** 撤销实例时在途调用的排空时限（毫秒），默认 30s；内核传 `pluginHost.drainSeconds`。 */
+      /** 撤销实例时在途调用的排空时限（毫秒），默认 30s；内核传 `extensionHost.drainSeconds`。 */
       drainMs?: () => number;
-      /** 插件 `dispose()` 的时限（毫秒），默认 10s；内核传 `pluginHost.disposeTimeoutSeconds`。 */
+      /** 插件 `dispose()` 的时限（毫秒），默认 10s；内核传 `extensionHost.disposeTimeoutSeconds`。 */
       disposeTimeoutMs?: () => number;
-      /** 运行中重新加载时 setup 的时限（毫秒），默认 60s；内核传 `pluginHost.reloadSetupTimeoutSeconds`。 */
+      /** 运行中重新加载时 setup 的时限（毫秒），默认 60s；内核传 `extensionHost.reloadSetupTimeoutSeconds`。 */
       reloadSetupTimeoutMs?: () => number;
       /** Hook time limit in milliseconds, default 5 s; the kernel passes `hooks.timeoutMs` (hot). */
       hookTimeoutMs?: () => number;
@@ -739,7 +739,7 @@ export class ExtensionHost {
    *    When an extension point in `requires` did not load because its provider is pending
    *    configuration or similar, it is recorded pending (dependency) and converge loads it once the
    *    provider has loaded.
-   * Deployment config = the startup config (`pluginConfig`) plus the fields stored in PG (constructor
+   * Deployment config = the startup config (`extensionConfig`) plus the fields stored in PG (constructor
    *    parameter `deploymentConfig`, C10).
    *    1 and 2 are resolved and ordered together; a config-declared extension whose `requires` can
    *    only be satisfied by an install record is set aside and resolved and loaded after step 3
@@ -760,8 +760,8 @@ export class ExtensionHost {
    * When a builtin / config-declared extension's (trusted) setup never returns, load() (and so the
    * kernel's `start()`) hangs forever: the kernel sets no timeout for them; `close()` / the kernel's
    * `stop()` still close that extension's ctx right away and free its resources. Install records are
-   * not trusted: at startup their setup is also limited by `pluginHost.reloadSetupTimeoutSeconds`
-   * (timeout -> failed / setup_failed) and migrations by `pluginHost.migrationTimeoutSeconds` (see
+   * not trusted: at startup their setup is also limited by `extensionHost.reloadSetupTimeoutSeconds`
+   * (timeout -> failed / setup_failed) and migrations by `extensionHost.migrationTimeoutSeconds` (see
    * `ensureMigrated`).
    * When the host is `close()`d during load: running migrations are aborted, the ctx in setup is closed
    * right away (its queue's define / add then throw `queue is closed`), and load() throws
@@ -801,7 +801,7 @@ export class ExtensionHost {
     const approvals = new ExtensionApprovals(kernelDb(this.deps.db));
     if (this.autoApprove) {
       this.deps.log.warn(
-        "pluginPermissions.autoApprove is ON: plugin permissions are approved automatically without review; never enable this in production",
+        "extensionPermissions.autoApprove is ON: plugin permissions are approved automatically without review; never enable this in production",
       );
     }
     const snapshots: Map<string, PermissionSnapshot> =
@@ -850,9 +850,9 @@ export class ExtensionHost {
     }
     await this.refreshPolicyExpectations(p.installs ? desired : []);
 
-    const orphans = Object.keys(this.pluginConfig).filter((k) => !this.sources.has(k));
+    const orphans = Object.keys(this.extensionConfig).filter((k) => !this.sources.has(k));
     if (orphans.length > 0) {
-      this.deps.log.warn("pluginConfig has keys for plugins that are not loaded", {
+      this.deps.log.warn("extensionConfig has keys for plugins that are not loaded", {
         keys: orphans,
       });
     }
@@ -945,7 +945,7 @@ export class ExtensionHost {
    * 插件此刻的部署配置（未校验）：启动配置补上 PG 里保存的字段（C10，见构造参数 `deploymentConfig`）。
    */
   private async rawConfigOf(name: string, schema: core.$ZodType | undefined): Promise<unknown> {
-    const fileValue = this.pluginConfig[name];
+    const fileValue = this.extensionConfig[name];
     if (!this.storedConfig) return fileValue ?? {};
     return this.storedConfig(name, fileValue, schema);
   }
@@ -984,7 +984,7 @@ export class ExtensionHost {
         if (!this.warnedConflicts.has(d.name)) {
           this.warnedConflicts.add(d.name);
           this.deps.log.warn(
-            `plugin is both installed and ${taken === "builtin" ? "built in" : "declared in the plugins config list"}; using the ${taken} plugin`,
+            `plugin is both installed and ${taken === "builtin" ? "built in" : "declared in the extensions config list"}; using the ${taken} plugin`,
             { plugin: d.name, installedVersion: d.version },
           );
           // 该名字的状态行属于生效的一方，不覆盖；在它的 detail 里记下冲突（后台能看到）
@@ -1195,7 +1195,7 @@ export class ExtensionHost {
   /**
    * 权限闸门放行后导入安装记录的真实模块（模块顶层代码此时才执行）并核对：密钥标记、与审阅过的静态清单一致
    * （名字、版本、能力、权限、界面、配置字段；不一致抛 {@link ManifestMismatchError}）。同一入口 URL 由 Node 模块缓存，
-   * 重复调用不重复执行顶层代码。导入限 `pluginHost.reloadSetupTimeoutSeconds`（与 setup 同一时限）：顶层代码
+   * 重复调用不重复执行顶层代码。导入限 `extensionHost.reloadSetupTimeoutSeconds`（与 setup 同一时限）：顶层代码
    * 永不结束时记 failed / import_failed，不卡住启动与 reconcile（挂住的模块留在内存里，下次导入同样超时）。
    */
   private async importInstalled(c: InstallCandidate): Promise<ExtensionManifest> {
@@ -1210,7 +1210,7 @@ export class ExtensionHost {
           () =>
             reject(
               new Error(
-                `plugin ${c.d.name}: importing its module did not finish within ${Math.round(ms / 1000)}s (pluginHost.reloadSetupTimeoutSeconds); its top-level code may never finish`,
+                `plugin ${c.d.name}: importing its module did not finish within ${Math.round(ms / 1000)}s (extensionHost.reloadSetupTimeoutSeconds); its top-level code may never finish`,
               ),
             ),
           ms,
@@ -1472,7 +1472,7 @@ export class ExtensionHost {
     if (decision.changed) {
       if (decision.autoApprove) {
         await approvals.approve(name, manifest.version, a.set, { source: "auto" });
-        this.deps.log.warn("plugin permissions auto-approved (pluginPermissions.autoApprove)", {
+        this.deps.log.warn("plugin permissions auto-approved (extensionPermissions.autoApprove)", {
           plugin: name,
           version: manifest.version,
           added: decision.added,
@@ -1577,7 +1577,7 @@ export class ExtensionHost {
   }
 
   /**
-   * 后台撤销被替换的旧实例（排空在途调用，最多 `pluginHost.drainSeconds`）：不挡住本副本后续的生命周期操作。
+   * 后台撤销被替换的旧实例（排空在途调用，最多 `extensionHost.drainSeconds`）：不挡住本副本后续的生命周期操作。
    * close() 等它们（最多 lifecycleWaitMs）。
    */
   private retire(old: ExtensionInstance): void {
@@ -1619,7 +1619,7 @@ export class ExtensionHost {
         configurable: schema !== undefined,
         configValid:
           this.configValidity.get(name) ??
-          (schema ? schema.safeParse(this.pluginConfig[name] ?? {}).success : true),
+          (schema ? schema.safeParse(this.extensionConfig[name] ?? {}).success : true),
       };
     });
   }
@@ -1647,7 +1647,7 @@ export class ExtensionHost {
       if (!loader) return;
       const desired = await loader.desired();
       // N-2: drop plugins no longer desired before applyInstalls unloads them (the drain can take
-      // pluginHost.drainSeconds; meanwhile a disabled policy plugin must not fail calls closed).
+      // extensionHost.drainSeconds; meanwhile a disabled policy plugin must not fail calls closed).
       // Shrink only: plugins that are newly expected are added after they had their chance to load.
       await this.refreshPolicyExpectations(desired, { shrinkOnly: true });
       await this.applyInstalls(loader, desired, false);
@@ -1707,7 +1707,7 @@ export class ExtensionHost {
   /**
    * 待定的内置 / 配置声明插件（{@link pendingActivations}）：重读快照，按启动时同一套判定（{@link planApprovals}，
    * 另加「必需能力此刻要有生效的提供方」）逐个处理；能加载的走与启动相同的加载流程（部署配置、迁移、setup，
-   * setup 时限 `pluginHost.reloadSetupTimeoutSeconds`），失败只记 failed、留着下次重试（T13 → T14 交接）；
+   * setup 时限 `extensionHost.reloadSetupTimeoutSeconds`），失败只记 failed、留着下次重试（T13 → T14 交接）；
    * 仍被依赖阻塞的改记 pending / dependency。反复直到不动点（加载一个可能放行依赖它的），
    * 最后对新提供的能力做依赖方连锁（与 {@link reload} 相同）。
    */
@@ -2269,7 +2269,7 @@ export class ExtensionHost {
 
   /**
    * 撤销一个插件（本副本，C17）：从注册表摘下（此后新请求取不到它）、排空在途调用（最多 `drainMs`，
-   * 默认 `pluginHost.drainSeconds`）、逐项撤销登记、调插件 `dispose`（最多 `pluginHost.disposeTimeoutSeconds`）。连锁：
+   * 默认 `extensionHost.drainSeconds`）、逐项撤销登记、调插件 `dispose`（最多 `extensionHost.disposeTimeoutSeconds`）。连锁：
    * - `requires` 它提供的能力、且该能力已没有其他提供方的插件随之卸下（状态 `unloaded`、原因 `dependency`），
    *   提供方回来后（{@link reload}）自动重新加载；
    * - 其余 `requires` / `optional` 它提供的能力的插件（含间接依赖）在本副本按拓扑序各重新加载一次。
@@ -2286,7 +2286,7 @@ export class ExtensionHost {
 
   /**
    * 用同一份加载参数（同一模块入口、部署配置与权限）新建一个实例并原子替换（同进程重新加载 / 撤销后重新启用）：
-   * 新实例 setup 成功后才登记（setup 最多 `pluginHost.reloadSetupTimeoutSeconds`），旧实例随后撤销（排空在途调用）；
+   * 新实例 setup 成功后才登记（setup 最多 `extensionHost.reloadSetupTimeoutSeconds`），旧实例随后撤销（排空在途调用）；
    * setup 失败或超时时旧实例保持不变并抛错。依赖它的插件在本副本按拓扑序各重新加载一次；此前因它卸下的依赖方重新加载。
    * 同一入口的重新加载不新增模块代码；升级到新入口（T14）的模块代码留在内存直到进程重启，不同入口数超过阈值时告警。
    * 宿主关闭后拒绝。

@@ -22,7 +22,7 @@ const EXPECTED: Record<OrgAction, OrgRole[]> = {
   "org.members.manage": [A, O],
   "org.invitations.manage": [A, O],
   "org.tokens.manage": [A, O],
-  "org.plugins.manage": [A, O],
+  "org.extensions.manage": [A, O],
   "org.delete": [O],
   "org.transfer": [O],
   "agents.create": [M, A, O],

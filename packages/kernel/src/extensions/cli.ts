@@ -64,7 +64,7 @@ export async function openPluginCli(
   log: KernelLogger,
   opts: { builtin: string[]; resolveFrom?: string },
 ): Promise<PluginCli> {
-  const inspected = await ExtensionHost.inspect(config.plugins, {
+  const inspected = await ExtensionHost.inspect(config.extensions, {
     builtin: opts.builtin,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
   });
@@ -96,7 +96,7 @@ export async function openPluginCli(
       const r = schema.safeParse(
         mergeDeploymentConfig(
           stored,
-          config.pluginConfig[p.manifest.name],
+          config.extensionConfig[p.manifest.name],
           schemaFields(schema).map((f) => f.path),
         ),
       );

@@ -339,7 +339,7 @@ export class ExtensionAdminOps {
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
-        `Extension ${name} is declared in the startup config (plugins); change that list and restart instead`,
+        `Extension ${name} is declared in the startup config (extensions); change that list and restart instead`,
       );
     }
   }

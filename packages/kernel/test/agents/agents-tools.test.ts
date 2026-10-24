@@ -54,9 +54,9 @@ beforeAll(async () => {
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0 },
-      plugins: [...MODEL_PLUGINS_CONFIG.plugins, MEM_CONNECTOR, TOOLS_PROBE],
-      pluginPermissions: { autoApprove: true },
-      pluginConfig: MODEL_PLUGINS_CONFIG.pluginConfig,
+      extensions: [...MODEL_PLUGINS_CONFIG.extensions, MEM_CONNECTOR, TOOLS_PROBE],
+      extensionPermissions: { autoApprove: true },
+      extensionConfig: MODEL_PLUGINS_CONFIG.extensionConfig,
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );

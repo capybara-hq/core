@@ -229,7 +229,7 @@ export interface OrgInstallBody {
   connector?: ConnectorInstallInput;
   plugin?: {
     connectors: Record<string, ConnectorInstallInput>;
-    pluginConfigs?: Record<string, Record<string, unknown>>;
+    extensionConfigs?: Record<string, Record<string, unknown>>;
   };
 }
 

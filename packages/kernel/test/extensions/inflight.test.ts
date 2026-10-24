@@ -49,8 +49,8 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, fx("everything"), fx("fake-idp"), fx("dir-mini"), fx("sse-hold")],
-        pluginConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
+        extensions: [MODEL_FAKE, fx("everything"), fx("fake-idp"), fx("dir-mini"), fx("sse-hold")],
+        extensionConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false, loginSources: ["fake-idp"] },
       },

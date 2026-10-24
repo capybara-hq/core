@@ -457,7 +457,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           orgConfigs: deps.orgExtensionConfigs,
           requests,
           log: deps.log,
-          staleInstallMinutes: () => deps.config().directory.staleInstallMinutes,
+          staleInstallMinutes: () => deps.config().catalog.staleInstallMinutes,
         }),
       inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS],
     },

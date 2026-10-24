@@ -228,7 +228,7 @@ describe("ExtensionHost", () => {
 });
 
 describe("ExtensionHost config hardening", () => {
-  it("orphan pluginConfig warns", async () => {
+  it("orphan extensionConfig warns", async () => {
     warned.length = 0;
     await host({ ghost: {} }).load([fx("fixture")]);
     const w = warned.filter((x) => x.msg.includes("not loaded"));

@@ -57,7 +57,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, MODEL_EVAL],
+        extensions: [MODEL_FAKE, MODEL_EVAL],
         evals: {
           maxTokenCap: MAX_TOKEN_CAP,
           defaultTokenCap: 50_000,

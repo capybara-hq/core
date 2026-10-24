@@ -49,7 +49,7 @@ type Json = Record<string, unknown>;
 describe("嵌入应用（双副本）", () => {
   it("副本 0 签发的令牌在副本 1 校验通过；副本 0 改卡片，副本 1 的 /ui/events 收到推送", async () => {
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, BOARD],
+      extensions: [MODEL_FAKE, BOARD],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: { auth: { cookieSecure: false } },

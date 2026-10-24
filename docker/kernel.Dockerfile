@@ -13,7 +13,7 @@
 #
 # Running it (compose / K8s): run with an init process (compose `init: true`) so signals reach node
 # and zombies are reaped, and allow a stop grace period longer than the kernel's drain
-# (compose `stop_grace_period: 40s`; pluginHost.drainSeconds defaults to 30).
+# (compose `stop_grace_period: 40s`; extensionHost.drainSeconds defaults to 30).
 
 # Pinned to an exact Node version plus the multi-arch index digest, so builds are reproducible
 # across platforms. To bump: pick the new tag, then
@@ -80,7 +80,7 @@ RUN node -e 'const v = process.argv[1].trim(); let r; if (v.startsWith("[")) { t
 
 ENV NODE_ENV=production \
     CAPYBARA_ROLES=${ROLES} \
-    CAPYBARA_PLUGIN_HOST__DIR=/var/lib/capybara/plugins
+    CAPYBARA_EXTENSION_HOST__DIR=/var/lib/capybara/plugins
 # Unpacked plugin packages (rebuilt from PostgreSQL on start, so a volume is only a cache).
 VOLUME /var/lib/capybara/plugins
 

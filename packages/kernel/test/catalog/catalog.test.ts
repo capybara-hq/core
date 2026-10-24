@@ -80,10 +80,10 @@ beforeAll(async () => {
     { pg: pgc.url, redis: rd.url },
     {
       roles: ["api", "worker"],
-      pluginHost: { dir: pluginsDir },
+      extensionHost: { dir: pluginsDir },
       packages: { maxBytes: MAX_BYTES, npmRegistry: reg.url },
-      plugins: [S3_PLUGIN, MODEL_FAKE, CONNECTOR_MCP],
-      pluginConfig: {
+      extensions: [S3_PLUGIN, MODEL_FAKE, CONNECTOR_MCP],
+      extensionConfig: {
         "object-store-s3": {
           endpoint: s3.endpoint,
           region: s3.region,

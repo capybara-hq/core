@@ -85,12 +85,12 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, CHAN_MINI, CHAN_NOEDIT, CHAN_SLOWEDIT, CHAN_PLAIN, MEM_CONNECTOR],
+        extensions: [MODEL_FAKE, CHAN_MINI, CHAN_NOEDIT, CHAN_SLOWEDIT, CHAN_PLAIN, MEM_CONNECTOR],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 2000, deliveryIdleMs: IDLE_MS },
         // fake-idle：流式输出停顿 400ms 即判超时（构造流式中途失败的运行）
-        pluginConfig: {
+        extensionConfig: {
           "model-fake": {
             models: [{ id: "fake-1" }, { id: "fake-idle", streamIdleTimeoutMs: 400 }],
           },

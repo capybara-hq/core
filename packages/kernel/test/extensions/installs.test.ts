@@ -89,7 +89,7 @@ async function boot(
     { pg: pgc.url, redis: rd.url },
     {
       roles: ["api", "worker"],
-      pluginHost: { dir: pluginsDir },
+      extensionHost: { dir: pluginsDir },
       packages: { maxBytes: MAX_BYTES, npmRegistry: reg.url },
       ...overrides,
     },
@@ -172,7 +172,7 @@ describe("有对象存储：上传、npm 与包存储", () => {
   let k: Kernel;
   beforeAll(async () => {
     await resetData();
-    k = await boot({ plugins: [S3_PLUGIN, MODEL_FAKE], pluginConfig: s3Config() });
+    k = await boot({ extensions: [S3_PLUGIN, MODEL_FAKE], extensionConfig: s3Config() });
     await loginUsers(k);
   }, 120_000);
   afterAll(stopAll);
@@ -347,7 +347,7 @@ describe("没有对象存储：包存 PG", () => {
   let k: Kernel;
   beforeAll(async () => {
     await resetData();
-    k = await boot({ plugins: [MODEL_FAKE] });
+    k = await boot({ extensions: [MODEL_FAKE] });
     await loginUsers(k);
   }, 120_000);
   afterAll(stopAll);
@@ -407,9 +407,12 @@ describe("启动时加载安装记录", () => {
     ));
   }
 
-  it("写一条启用的安装记录后启动：todo 从 pluginHost.dir 加载，迁移已执行，组织启用后工具可用", async () => {
+  it("写一条启用的安装记录后启动：todo 从 extensionHost.dir 加载，迁移已执行，组织启用后工具可用", async () => {
     await installTodo();
-    const k = await boot({ plugins: [MODEL_FAKE], pluginPermissions: { autoApprove: false } });
+    const k = await boot({
+      extensions: [MODEL_FAKE],
+      extensionPermissions: { autoApprove: false },
+    });
     expect(k.host.sourceOf("todo")).toBe("install");
     expect(k.host.manifests().map((m) => m.name)).toContain("todo");
     expect(await readdir(join(pluginsDir, "todo"))).toEqual([todoSha.slice(0, 16)]);
@@ -462,7 +465,10 @@ describe("启动时加载安装记录", () => {
 
   it("同一 sha 再次启动复用本地目录（包存储里没有字节也能加载）", async () => {
     await db.deleteFrom("extension_blobs").execute();
-    const k = await boot({ plugins: [MODEL_FAKE], pluginPermissions: { autoApprove: false } });
+    const k = await boot({
+      extensions: [MODEL_FAKE],
+      extensionPermissions: { autoApprove: false },
+    });
     expect(k.host.sourceOf("todo")).toBe("install");
     expect(k.host.tools().some((t) => t.plugin === "todo")).toBe(true);
     await stopAll();
@@ -492,7 +498,10 @@ describe("启动时加载安装记录", () => {
         desired_state: "enabled",
       })
       .execute();
-    const k = await boot({ plugins: [MODEL_FAKE], pluginPermissions: { autoApprove: false } });
+    const k = await boot({
+      extensions: [MODEL_FAKE],
+      extensionPermissions: { autoApprove: false },
+    });
     expect(k.host.manifests().map((m) => m.name)).not.toContain("todo");
     const rows = await db
       .selectFrom("extension_replica_status")
@@ -581,7 +590,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
         entry: entry("mig-mismatch", "permissions: { secrets: true }"),
       }),
     );
-    const k = await boot({ plugins: [MODEL_FAKE] });
+    const k = await boot({ extensions: [MODEL_FAKE] });
     expect(k.host.sourceOf("mig-dir")).toBe("install");
     expect(await statusOf("mig-dir")).toEqual({ state: "loaded", reason: null });
     expect(await tablesOf("plugin_mig_dir")).toEqual(["reviewed"]);
@@ -606,7 +615,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       new URL("../fixtures/plugins/everything-dependent/index.ts", import.meta.url),
     );
     // 没有任何提供方：与此前一样，内核启动失败并点名
-    await expect(boot({ plugins: [MODEL_FAKE, DEPENDENT] })).rejects.toThrow(
+    await expect(boot({ extensions: [MODEL_FAKE, DEPENDENT] })).rejects.toThrow(
       /everything-dependent: required extension point counter@1 has no provider/,
     );
     await installPkg(
@@ -620,7 +629,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
         ].join("\n"),
       }),
     );
-    const k = await boot({ plugins: [MODEL_FAKE, DEPENDENT] });
+    const k = await boot({ extensions: [MODEL_FAKE, DEPENDENT] });
     expect(k.host.sourceOf("inst-counter")).toBe("install");
     expect(k.host.sourceOf("everything-dependent")).toBe("config");
     const names = k.host.manifests().map((m) => m.name);
@@ -645,7 +654,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
         ].join("\n"),
       }),
     );
-    const k = await boot({ plugins: [MODEL_FAKE, DEPENDENT] });
+    const k = await boot({ extensions: [MODEL_FAKE, DEPENDENT] });
     const status = async (plugin: string) =>
       db
         .selectFrom("extension_replica_status")
@@ -690,7 +699,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
         ].join("\n"),
       }),
     );
-    const k = await boot({ plugins: [MODEL_FAKE, fixture("chain-mid"), fixture("chain-top")] });
+    const k = await boot({ extensions: [MODEL_FAKE, fixture("chain-mid"), fixture("chain-top")] });
     const status = async (plugin: string) =>
       db
         .selectFrom("extension_replica_status")
@@ -743,7 +752,7 @@ describe("内置插件", () => {
       .execute();
     const k = await boot(
       // 配置列表里也写了 todo：以内置为准并告警
-      { plugins: [MODEL_FAKE, TODO_SRC], pluginPermissions: { autoApprove: false } },
+      { extensions: [MODEL_FAKE, TODO_SRC], extensionPermissions: { autoApprove: false } },
       // object-store-s3 没有部署配置：待配置，内核照常启动
       { builtinExtensions: [TODO_SRC, S3_PLUGIN] },
     );

@@ -82,12 +82,12 @@ export class MarketplacesController {
     @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
   ) {}
 
-  /** 全部来源；`offline` 为 true 表示 `catalogs.official.enabled` 为 false（界面显示「离线模式」）。 */
+  /** 全部来源；`offline` 为 true 表示 `marketplaces.official.enabled` 为 false（界面显示「离线模式」）。 */
   @Get()
   async list(): Promise<{ items: MarketplaceView[]; offline: boolean }> {
     return {
       items: await this.marketplaces.list(),
-      offline: !this.config().catalogs.official.enabled,
+      offline: !this.config().marketplaces.official.enabled,
     };
   }
 

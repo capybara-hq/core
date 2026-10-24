@@ -129,7 +129,7 @@ beforeAll(async () => {
     version: "1.0.0",
     migrations: [{ file: "0001_notes.sql", sql: "CREATE TABLE IF NOT EXISTS notes (id int);\n" }],
   });
-  // huge：单个包不超过 packages.maxBytes，但应用包加上它超过 directory.maxBundleBytes
+  // huge：单个包不超过 packages.maxBytes，但应用包加上它超过 catalog.maxBundleBytes
   pkgs["huge@1.0.0"] = await pluginTgz({
     name: "huge",
     version: "1.0.0",
@@ -173,12 +173,12 @@ beforeAll(async () => {
     { pg: pgc.url, redis: rd.url },
     {
       roles: ["api", "worker"],
-      pluginHost: { dir: pluginsDir },
+      extensionHost: { dir: pluginsDir },
       packages: { maxBytes: MAX_BYTES, npmRegistry: reg.url },
-      directory: { maxBundleBytes: MAX_BUNDLE_BYTES },
-      catalogs: { allowInsecureLoopback: true },
-      plugins: [S3_PLUGIN, MODEL_FAKE, CONNECTOR_MCP],
-      pluginConfig: {
+      catalog: { maxBundleBytes: MAX_BUNDLE_BYTES },
+      marketplaces: { allowInsecureLoopback: true },
+      extensions: [S3_PLUGIN, MODEL_FAKE, CONNECTOR_MCP],
+      extensionConfig: {
         "object-store-s3": {
           endpoint: s3.endpoint,
           region: s3.region,
@@ -924,7 +924,7 @@ describe("恶意 / 不合法的应用包：什么都不写", { timeout: 60_000 }
     await nothingStored();
   });
 
-  it("应用包加上锁定的插件包超过 directory.maxBundleBytes → 413 app.bundle_too_large", async () => {
+  it("应用包加上锁定的插件包超过 catalog.maxBundleBytes → 413 app.bundle_too_large", async () => {
     const res = await prepareFile(
       admin,
       await bundle(

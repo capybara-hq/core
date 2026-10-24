@@ -297,7 +297,7 @@ export class ExtensionInstance {
   }
 }
 
-/** 插件 `dispose()` 的默认时限（`pluginHost.disposeTimeoutSeconds` 的默认值）。 */
+/** 插件 `dispose()` 的默认时限（`extensionHost.disposeTimeoutSeconds` 的默认值）。 */
 export const DEFAULT_DISPOSE_TIMEOUT_MS = 10_000;
 
 /** Parameters of {@link ExtensionInstance.dispose}. */

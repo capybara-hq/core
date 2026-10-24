@@ -14,9 +14,9 @@ export const MODEL_FAKE_B = fileURLToPath(
 
 /** 加载两个模型供应商的内核配置片段：model-fake 配 fake-1、fake-2。 */
 export const MODEL_PLUGINS_CONFIG = {
-  plugins: [MODEL_FAKE, MODEL_FAKE_B],
-  pluginPermissions: { autoApprove: true },
-  pluginConfig: { "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] } },
+  extensions: [MODEL_FAKE, MODEL_FAKE_B],
+  extensionPermissions: { autoApprove: true },
+  extensionConfig: { "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] } },
 };
 
 /** 读 `model-fake-b` 的 listModels 调用次数。 */

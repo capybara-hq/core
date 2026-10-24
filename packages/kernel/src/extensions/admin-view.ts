@@ -316,7 +316,7 @@ export class ExtensionAdmin {
     const names = subjects.map((s) => s.name);
     const snapshots = await new ExtensionApprovals(this.d.db).all();
     const staleSeconds =
-      STALE_RECONCILE_PERIODS * this.d.config().pluginHost.reconcileIntervalSeconds;
+      STALE_RECONCILE_PERIODS * this.d.config().extensionHost.reconcileIntervalSeconds;
     const rows = await this.d.db
       .selectFrom("extension_replica_status")
       .selectAll()

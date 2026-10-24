@@ -33,9 +33,9 @@ let raw: ReturnType<typeof createDb>;
 beforeAll(async () => {
   im = await startFakeChannelServer();
   h = await createDualReplicaHarness({
-    plugins: [MODEL_FAKE, FAKE_IM],
+    extensions: [MODEL_FAKE, FAKE_IM],
     roles: [["api", "worker"], ["gateway"]],
-    pluginConfig: {
+    extensionConfig: {
       "fake-im": { platformUrl: im.url, clientId: "c1", clientSecret: "client-secret-1" },
     },
     config: {

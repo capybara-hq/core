@@ -149,7 +149,7 @@ export class ExtensionInstalls {
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
-        `Extension ${m.name} is declared in the startup config (plugins); remove it there before installing it as a package`,
+        `Extension ${m.name} is declared in the startup config (extensions); remove it there before installing it as a package`,
       );
     }
     const installed = await this.d.db
@@ -247,7 +247,7 @@ export class ExtensionInstalls {
 
   /**
    * Downloads one package by the catalog (T24, C26): from the catalog's `tarball` when it gives one
-   * (https required, `catalogs.allowInsecureLoopback` for tests only; no registry metadata request;
+   * (https required, `marketplaces.allowInsecureLoopback` for tests only; no registry metadata request;
    * `packages.npmToken` is sent only when the tarball has the registry's origin), otherwise from the
    * configured npm registry; always verified against the catalog's sha512, never npm metadata.
    * Mismatch -> 502 `marketplace.integrity_mismatch` (with prefixes of the expected and actual sha512);
@@ -292,7 +292,7 @@ export class ExtensionInstalls {
     const cfg: NpmFetchConfig = {
       registry: c.packages.npmRegistry,
       maxBytes: c.packages.maxBytes,
-      allowInsecureLoopback: c.catalogs.allowInsecureLoopback,
+      allowInsecureLoopback: c.marketplaces.allowInsecureLoopback,
       ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
     };
     const timeout = AbortSignal.timeout(this.d.npmTimeoutMs ?? 120_000);

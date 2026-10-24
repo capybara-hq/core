@@ -67,7 +67,7 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { plugins: [MODEL_FAKE, DIR_MINI, DIR_OPT], auth: { cookieSecure: false } },
+      { extensions: [MODEL_FAKE, DIR_MINI, DIR_OPT], auth: { cookieSecure: false } },
     ),
   );
   raw = createDb(pgc.url, 5);

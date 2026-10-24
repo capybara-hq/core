@@ -152,9 +152,9 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE],
-        pluginPermissions: { autoApprove: false },
-        pluginHost: { dir: pluginsDir, drainSeconds: 30, reconcileIntervalSeconds: 3600 },
+        extensions: [MODEL_FAKE],
+        extensionPermissions: { autoApprove: false },
+        extensionHost: { dir: pluginsDir, drainSeconds: 30, reconcileIntervalSeconds: 3600 },
         packages: { maxBytes: MAX_BYTES },
       },
     ),
@@ -738,9 +738,9 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
           { pg: pgc.url, redis: rd.url },
           {
             roles: ["api"],
-            plugins: [],
-            pluginPermissions: { autoApprove: true },
-            pluginHost: { dir: pluginsDir },
+            extensions: [],
+            extensionPermissions: { autoApprove: true },
+            extensionHost: { dir: pluginsDir },
             packages: { maxBytes: MAX_BYTES },
           },
         ),
@@ -823,15 +823,15 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
       .select(["state", "reason", "detail"])
       .where("plugin", "=", plugin)
       .execute();
-  const kernelWith = (pluginHost: Record<string, unknown>) =>
+  const kernelWith = (extensionHost: Record<string, unknown>) =>
     createKernel(
       runConfig(
         { pg: pgc.url, redis: rd.url },
         {
           roles: ["api"],
-          plugins: [],
-          pluginPermissions: { autoApprove: true },
-          pluginHost: { dir: pluginsDir, ...pluginHost },
+          extensions: [],
+          extensionPermissions: { autoApprove: true },
+          extensionHost: { dir: pluginsDir, ...extensionHost },
           packages: { maxBytes: MAX_BYTES },
         },
       ),
@@ -887,7 +887,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
     }
   });
 
-  it("迁移挂住：pluginHost.migrationTimeoutSeconds 到时终止会话、记 migration_failed，锁随之释放", async () => {
+  it("迁移挂住：extensionHost.migrationTimeoutSeconds 到时终止会话、记 migration_failed，锁随之释放", async () => {
     await seedInstall(
       "sleepmig",
       await lifePkg({
@@ -946,7 +946,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
 
 describe("插件名归属：内置与配置声明的插件也占名字（I4）", { timeout: 60_000 }, () => {
   it("配置声明的插件从 plugins 去掉后，别的包不能用同名插件安装；无归属但有遗留数据的名字同样拒绝", async () => {
-    // 第一个内核启动时（plugins: [MODEL_FAKE]，内置 object-store-s3）已登记归属
+    // 第一个内核启动时（extensions: [MODEL_FAKE]，内置 object-store-s3）已登记归属
     const owners = await db
       .selectFrom("extension_name_owners")
       .select(["name", "package_name"])
@@ -963,9 +963,9 @@ describe("插件名归属：内置与配置声明的插件也占名字（I4）",
         { pg: pgc.url, redis: rd.url },
         {
           roles: ["api"],
-          plugins: [],
-          pluginPermissions: { autoApprove: false },
-          pluginHost: { dir: pluginsDir, reconcileIntervalSeconds: 3600 },
+          extensions: [],
+          extensionPermissions: { autoApprove: false },
+          extensionHost: { dir: pluginsDir, reconcileIntervalSeconds: 3600 },
           packages: { maxBytes: MAX_BYTES },
         },
       ),
@@ -1045,9 +1045,9 @@ describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, ()
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api"],
-        plugins: [],
-        pluginPermissions: { autoApprove: true },
-        pluginHost: { dir: pluginsDir, reconcileIntervalSeconds: 3600 },
+        extensions: [],
+        extensionPermissions: { autoApprove: true },
+        extensionHost: { dir: pluginsDir, reconcileIntervalSeconds: 3600 },
         packages: { maxBytes: MAX_BYTES },
       },
     );

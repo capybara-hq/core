@@ -51,10 +51,10 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
   });
   try {
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, CONNECTOR_MCP],
+      extensions: [MODEL_FAKE, CONNECTOR_MCP],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+      extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
       config: {
         auth: { cookieSecure: false },
         http: { publicUrl: PUBLIC_URL },

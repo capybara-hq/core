@@ -83,13 +83,13 @@ export class AdminExtensionsController {
 
   /**
    * 部署上的全部插件（内置、配置声明、安装记录）及其状态、权限与快照；`drainSeconds` 为停用 / 升级时
-   * 在途工具调用最多等待的秒数（`pluginHost.drainSeconds`，界面提示用）。
+   * 在途工具调用最多等待的秒数（`extensionHost.drainSeconds`，界面提示用）。
    */
   @Get()
   async list(): Promise<{ extensions: AdminExtensionView[]; drainSeconds: number }> {
     return {
       extensions: await this.admin.list(),
-      drainSeconds: this.kernelConfig().pluginHost.drainSeconds,
+      drainSeconds: this.kernelConfig().extensionHost.drainSeconds,
     };
   }
 

@@ -24,7 +24,7 @@ afterAll(async () => {
 
 async function harness(): Promise<Harness> {
   const h = await createDualReplicaHarness({
-    plugins: [],
+    extensions: [],
     pgUrl: pgc.url,
     // 测试走明文 http：关掉 Cookie 的 Secure 属性，与本地试用一致
     config: { auth: { cookieSecure: false } },

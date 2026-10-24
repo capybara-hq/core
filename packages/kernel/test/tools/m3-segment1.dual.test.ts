@@ -115,10 +115,10 @@ describe("M3 第一段双副本验收", () => {
     cleanups.push(() => redis.disconnect());
     await redis.flushdb();
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, CONNECTOR_MCP, TODO],
+      extensions: [MODEL_FAKE, CONNECTOR_MCP, TODO],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+      extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
       config: {
         auth: { cookieSecure: false },
         // 短锁期与 stalled 检测间隔：被杀副本持有的运行任务约 1.5 秒后由存活副本接手

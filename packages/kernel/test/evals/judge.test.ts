@@ -260,7 +260,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, MODEL_EVAL],
+        extensions: [MODEL_FAKE, MODEL_EVAL],
         evals: { judgeMaxOutputTokens: 321, orgConcurrency: 2 },
       },
     ),

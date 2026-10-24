@@ -259,7 +259,7 @@ export class OrgExtensionConfigs {
 
   /**
    * Writes enablement and / or config. The actor's role is re-read under the org row lock (needs
-   * `org.plugins.manage`).
+   * `org.extensions.manage`).
    * - Extension not loaded -> `extension.not_found`; `config` given but the extension has no
    *   `config.org` -> `extension.no_org_config`.
    * - Non-secret fields are replaced as a whole by the given value; secret fields keep the old value
@@ -292,7 +292,7 @@ export class OrgExtensionConfigs {
     }
     let seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
     const view = await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.plugins.manage");
+      await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.extensions.manage");
       const row = await t
         .selectFrom("extension_org_configs")
         .select(["enabled", "config"])

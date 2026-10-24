@@ -91,10 +91,10 @@ const cardOf = (s: FakeChannelSent | undefined) => s?.message.cards?.[0] as Json
 describe("M4 第一段验收（双副本）", () => {
   it("渠道 → 绑定 → 流式对话 → IM 审批 → 杀副本接管 → SSO 登录 → 通讯录加入与离职", async () => {
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, FAKE_IM],
+      extensions: [MODEL_FAKE, FAKE_IM],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: {
+      extensionConfig: {
         "fake-im": {
           platformUrl: im.url,
           tenant: "t1",

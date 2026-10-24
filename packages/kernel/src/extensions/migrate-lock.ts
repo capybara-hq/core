@@ -24,7 +24,7 @@ export interface MigrateLockDeps {
   /** 中止进行中的迁移（宿主关闭）。 */
   signal?: AbortSignal | undefined;
   /**
-   * 迁移的总时限（毫秒，`pluginHost.migrationTimeoutSeconds`）：到时终止迁移会话并抛错（调用方记 migration_failed），
+   * 迁移的总时限（毫秒，`extensionHost.migrationTimeoutSeconds`）：到时终止迁移会话并抛错（调用方记 migration_failed），
    * 咨询锁随会话结束释放；迁移会话另设同值的 `statement_timeout` 与不超过 {@link MIGRATION_LOCK_TIMEOUT_MS} 的
    * `lock_timeout`。不给不限时。
    */
@@ -91,7 +91,7 @@ export async function ensureMigrated(
       } catch (e) {
         if (timeout?.aborted && !d.signal?.aborted) {
           throw new Error(
-            `plugin ${name}: migrations did not finish within ${Math.round((d.timeoutMs as number) / 1000)}s (pluginHost.migrationTimeoutSeconds); the migration session was terminated`,
+            `plugin ${name}: migrations did not finish within ${Math.round((d.timeoutMs as number) / 1000)}s (extensionHost.migrationTimeoutSeconds); the migration session was terminated`,
             { cause: e },
           );
         }

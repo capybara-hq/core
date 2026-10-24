@@ -123,10 +123,10 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     await redis.flushdb();
     gateDir = await mkdtemp(join(tmpdir(), "cap-m6-judge-"));
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, TODO, JUDGE_GATE],
+      extensions: [MODEL_FAKE, TODO, JUDGE_GATE],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: {
+      extensionConfig: {
         "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] },
         "judge-gate": { dir: gateDir },
       },

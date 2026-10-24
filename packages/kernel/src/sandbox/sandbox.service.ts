@@ -127,16 +127,16 @@ const opSignal = (held: Held): AbortSignal =>
  * 两个时限都是默认值（900 < 7200，已知的取舍）时只记 info；运维改过其中一个却仍不一致时才 warn。
  */
 export function sandboxConfigWarnings(
-  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "pluginConfig">,
+  cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig">,
   providerPlugin?: string,
 ): { level: "info" | "warn"; message: string }[] {
   const out: { level: "info" | "warn"; message: string }[] = [];
   if (cfg.sandbox.limits.egress === "open" && providerPlugin !== undefined) {
-    const pc = cfg.pluginConfig[providerPlugin] as { allowOpenEgress?: unknown } | undefined;
+    const pc = cfg.extensionConfig[providerPlugin] as { allowOpenEgress?: unknown } | undefined;
     if (pc?.allowOpenEgress !== true) {
       out.push({
         level: "warn",
-        message: `sandbox.limits.egress is "open" but pluginConfig."${providerPlugin}".allowOpenEgress is not true: the ${providerPlugin} plugin refuses to create sandboxes with open egress; set allowOpenEgress to true (trusted environments only) or use "allowlist" or "none"`,
+        message: `sandbox.limits.egress is "open" but extensionConfig."${providerPlugin}".allowOpenEgress is not true: the ${providerPlugin} plugin refuses to create sandboxes with open egress; set allowOpenEgress to true (trusted environments only) or use "allowlist" or "none"`,
       });
     }
   }

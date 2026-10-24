@@ -32,7 +32,11 @@ import { ChannelWebhooks } from "./channels/webhook.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
-import { type ConfigSourceKind, configSourceKind, pluginConfigSources } from "./config/sources.js";
+import {
+  type ConfigSourceKind,
+  configSourceKind,
+  extensionConfigSources,
+} from "./config/sources.js";
 import {
   ATTACHMENT_CLEANUP_EVERY_MS,
   ATTACHMENT_CLEANUP_JOB,
@@ -335,9 +339,9 @@ export interface KernelOptions {
   builtinExtensions?: string[];
   /**
    * 启动配置里各插件部署配置字段的来源（`loadConfigWithSources` 的 `pluginSources`）：这些字段在后台只读（D8）。
-   * 不传时按 `config.pluginConfig` 推出：环境变量里有的记 env，其余记 `CAPYBARA_CONFIG_SOURCE` 的来源（file / nacos）。
+   * 不传时按 `config.extensionConfig` 推出：环境变量里有的记 env，其余记 `CAPYBARA_CONFIG_SOURCE` 的来源（file / nacos）。
    */
-  pluginConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
+  extensionConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
 }
 
 /**
@@ -365,7 +369,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。
- * 权限待批准的插件不迁移（`pluginPermissions.autoApprove` 时除外），经 `opts.onPending` 报告。
+ * 权限待批准的插件不迁移（`extensionPermissions.autoApprove` 时除外），经 `opts.onPending` 报告。
  */
 export async function migrateAll(
   config: KernelConfig,
@@ -383,10 +387,10 @@ export async function migrateAll(
     { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
     { connectTimeoutMs },
   );
-  const plugins = await ExtensionHost.migrateOnly(config.plugins, {
+  const plugins = await ExtensionHost.migrateOnly(config.extensions, {
     dbUrl: config.db.url,
     connectTimeoutMs,
-    autoApprove: config.pluginPermissions.autoApprove,
+    autoApprove: config.extensionPermissions.autoApprove,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     ...(opts.onPending !== undefined && { onPending: opts.onPending }),
     ...(opts.builtinExtensions !== undefined && { builtin: opts.builtinExtensions }),
@@ -453,14 +457,14 @@ export async function createKernel(
     config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
     (text) => log.redact(text),
   );
-  const host = new ExtensionHost(deps, config.pluginConfig, {
+  const host = new ExtensionHost(deps, config.extensionConfig, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
-    autoApprove: config.pluginPermissions.autoApprove,
+    autoApprove: config.extensionPermissions.autoApprove,
     status: replicaStatus,
-    drainMs: () => current.pluginHost.drainSeconds * 1000,
-    disposeTimeoutMs: () => current.pluginHost.disposeTimeoutSeconds * 1000,
-    reloadSetupTimeoutMs: () => current.pluginHost.reloadSetupTimeoutSeconds * 1000,
+    drainMs: () => current.extensionHost.drainSeconds * 1000,
+    disposeTimeoutMs: () => current.extensionHost.disposeTimeoutSeconds * 1000,
+    reloadSetupTimeoutMs: () => current.extensionHost.reloadSetupTimeoutSeconds * 1000,
     hookTimeoutMs: () => current.hooks.timeoutMs,
     // Extensions the route gate treats as "known to the deployment": install records (any desired_state); extensionInstalls is created below and read at call time
     installedNames: async () => (await extensionInstalls.list()).map((r) => r.name),
@@ -562,13 +566,13 @@ export async function createKernel(
     reconcile: (reason) => extensionLifecycle.reconcile(reason),
   });
   // 插件生命周期（C16）：后台 / CLI 只写期望状态并发布 kernel.plugins.changed，各副本订阅后 reconcile；
-  // 维护任务 plugins-reconcile 每 pluginHost.reconcileIntervalSeconds 秒发布 kernel.plugins.reconcile 兜底
+  // 维护任务 plugins-reconcile 每 extensionHost.reconcileIntervalSeconds 秒发布 kernel.plugins.reconcile 兜底
   const extensionLifecycle = new ExtensionLifecycle({
     host,
     bus,
     status: replicaStatus,
     installedNames: async () => (await extensionInstalls.list()).map((r) => r.name),
-    reconcileIntervalSeconds: () => current.pluginHost.reconcileIntervalSeconds,
+    reconcileIntervalSeconds: () => current.extensionHost.reconcileIntervalSeconds,
     log,
   });
   const extensionAdminOps = new ExtensionAdminOps({
@@ -631,16 +635,20 @@ export async function createKernel(
   maintenance.schedule({
     id: MARKETPLACES_REFRESH_SCHEDULER_ID,
     name: MARKETPLACES_REFRESH_JOB,
-    everyMs: () => current.catalogs.refreshIntervalMinutes * 60_000,
+    everyMs: () => current.marketplaces.refreshIntervalMinutes * 60_000,
   });
   // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
   const extensionDeploymentConfigs = new ExtensionDeploymentConfigService({
     db: kdb,
     keyring,
-    fileConfig: () => current.pluginConfig,
+    fileConfig: () => current.extensionConfig,
     sources:
-      opts.pluginConfigSources ??
-      pluginConfigSources({ pluginConfig: config.pluginConfig }, env, configSourceKind(env)),
+      opts.extensionConfigSources ??
+      extensionConfigSources(
+        { extensionConfig: config.extensionConfig },
+        env,
+        configSourceKind(env),
+      ),
     schemaOf: async (plugin) => {
       const local = host.deploymentSchema(plugin);
       if (local) return { ...local, fields: schemaFields(local.schema) };
@@ -659,7 +667,7 @@ export async function createKernel(
   maintenance.schedule({
     id: PLUGINS_RECONCILE_SCHEDULER_ID,
     name: PLUGINS_RECONCILE_JOB,
-    everyMs: () => current.pluginHost.reconcileIntervalSeconds * 1000,
+    everyMs: () => current.extensionHost.reconcileIntervalSeconds * 1000,
   });
   // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
   maintenance.handle(STORAGE_PURGE_JOB, async () => {
@@ -973,7 +981,7 @@ export async function createKernel(
       queryUnservable(
         kdb,
         plugins,
-        STALE_RECONCILE_PERIODS * current.pluginHost.reconcileIntervalSeconds,
+        STALE_RECONCILE_PERIODS * current.extensionHost.reconcileIntervalSeconds,
       ),
     // deployment state (approved manifests in PG) plus builtin plugins (no snapshot, always enabled)
     subscribers: async (orgId) => {
@@ -1313,15 +1321,15 @@ export async function createKernel(
         checkpoint();
         // official 清单来源按配置同步（幂等；每个副本启动时都做）
         await marketplaces.syncOfficialFromConfig();
-        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 pluginHost.dir 后导入，
+        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
         // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
         await host.load({
           builtin: opts.builtinExtensions ?? [],
-          config: config.plugins,
+          config: config.extensions,
           installs: {
             desired: () => extensionInstalls.desired(),
             sync: (d) =>
-              syncPackage(current.pluginHost.dir, d.name, d.sha256, extensionBlobs, {
+              syncPackage(current.extensionHost.dir, d.name, d.sha256, extensionBlobs, {
                 maxBytes: current.packages.maxBytes,
               }),
             migrate: async (d, dir, signal) =>
@@ -1336,7 +1344,7 @@ export async function createKernel(
                       log,
                       // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
                       signal: AbortSignal.any([signal, startAbort.signal]),
-                      timeoutMs: current.pluginHost.migrationTimeoutSeconds * 1000,
+                      timeoutMs: current.extensionHost.migrationTimeoutSeconds * 1000,
                     },
                     d.name,
                     d.sha256,

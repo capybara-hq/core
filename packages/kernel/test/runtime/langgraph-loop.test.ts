@@ -417,7 +417,7 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
     // Redis 每个测试独占（harness 要求同一 Redis 不被多个同时存活的 harness 共用）
     await redis.flushdb();
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE],
+      extensions: [MODEL_FAKE],
       pgUrl: pgc.url,
       redisUrl: rd.url,
       config: {

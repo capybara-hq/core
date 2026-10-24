@@ -40,8 +40,8 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0 },
       log: { level: "debug" },
-      plugins: [fx("fixture"), fx("orgcfg")],
-      pluginPermissions: { autoApprove: true },
+      extensions: [fx("fixture"), fx("orgcfg")],
+      extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("debug", { write: (l) => lines.push(l) }) },
   );

@@ -57,7 +57,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   const base = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   k = await createKernel(
-    { ...base, plugins: [...base.plugins, UI_PROBE, TODO] },
+    { ...base, extensions: [...base.extensions, UI_PROBE, TODO] },
     { env: {}, logger: createLogger("warn", { write: (l) => lines.push(l) }) },
   );
   await k.start();

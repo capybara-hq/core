@@ -52,7 +52,7 @@ export interface PluginInstallInput {
     }
   >;
   /** 插件的组织级配置（只用于本次新启用的插件）。 */
-  pluginConfigs?: Record<string /* 插件名 */, Record<string, unknown>>;
+  extensionConfigs?: Record<string /* 插件名 */, Record<string, unknown>>;
 }
 
 export type ComponentKind = "extension" | "connector" | "skill";
@@ -99,7 +99,7 @@ export interface PluginInstallerDeps {
   skills: Pick<SkillsService, "createVersionFromFiles" | "softDeleteIn" | "revertVersionIn">;
   orgConfigs: Pick<OrgExtensionConfigs, "put" | "disableIn" | "afterDisable" | "enabledDependents">;
   requests: Pick<CatalogRequestsService, "resolveByInstall">;
-  /** `directory.staleInstallMinutes`：installing 超过这么久可以经卸载清理。 */
+  /** `catalog.staleInstallMinutes`：installing 超过这么久可以经卸载清理。 */
   staleInstallMinutes: () => number;
   log?: Pick<Logger, "warn">;
 }
@@ -211,7 +211,7 @@ export class PluginInstaller {
       for (const p of plugins) {
         // 「之前就启用」在组织行锁内判定（已启用时 put 什么都不写，配置也不动），组件在同一事务里记下
         const holder = { skipped: false };
-        const config = input.pluginConfigs?.[p];
+        const config = input.extensionConfigs?.[p];
         await this.d.orgConfigs.put(
           orgId,
           p,
@@ -385,9 +385,9 @@ export class PluginInstaller {
         throw fail(`plugin.connectors.${k}`, "No such connector template in this plugin");
     }
     const names = new Set(manifest.plugins.map((p) => p.name));
-    for (const k of Object.keys(input.pluginConfigs ?? {})) {
+    for (const k of Object.keys(input.extensionConfigs ?? {})) {
       if (!names.has(k))
-        throw fail(`plugin.pluginConfigs.${k}`, "No such extension in this plugin");
+        throw fail(`plugin.extensionConfigs.${k}`, "No such extension in this plugin");
     }
   }
 
@@ -469,7 +469,7 @@ export class PluginInstaller {
   }
 
   /**
-   * Uninstall (`org.plugins.manage` + `connectors.manage` + `skills.manage`, re-checked under the
+   * Uninstall (`org.extensions.manage` + `connectors.manage` + `skills.manage`, re-checked under the
    * org row lock, one transaction). Removes only components with created=true:
    * - a skill is kept when an agent selects it (used_by_agents) or another plugin install in this
    * org uses it too (used_by_other_install);
@@ -482,7 +482,7 @@ export class PluginInstaller {
    * component row becomes created=true), so the uninstall order doesn't change the end result.
    * Deletes the install row and audits `plugin.org_uninstalled` (detail has removed / kept). Can be
    * uninstalled: installed; failed (already rolled back: clears the row and leftovers); installing
-   * for longer than `directory.staleInstallMinutes` (a replica crashed midway) - the last two are
+   * for longer than `catalog.staleInstallMinutes` (a replica crashed midway) - the last two are
    * cleaned up as a rollback (versions added to existing skills are reverted too). Still installing
    * -> `plugin.install_in_progress`.
    */

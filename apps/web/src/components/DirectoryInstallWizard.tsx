@@ -323,7 +323,7 @@ function Wizard({
                 templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
               ),
               ...(withConfig.length > 0 && {
-                pluginConfigs: Object.fromEntries(
+                extensionConfigs: Object.fromEntries(
                   withConfig.map((o) => [
                     o.plugin,
                     draftToConfig(

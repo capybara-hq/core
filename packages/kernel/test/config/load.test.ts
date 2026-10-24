@@ -66,6 +66,32 @@ describe("loadConfig", () => {
     expect(config.db.poolMax).toBe(20);
   });
 
+  it("extension config env keeps the kebab-case extension name", async () => {
+    const config = await loadConfig(
+      baseEnv({ CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__BUCKET: "b" }),
+    );
+    expect(config.extensionConfig["object-store-s3"]).toEqual({ bucket: "b" });
+  });
+
+  it("the old CAPYBARA_PLUGIN_CONFIG__ env var is ignored like any unknown key", async () => {
+    const config = await loadConfig(
+      baseEnv({ CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET: "b" }),
+    );
+    expect(config.extensionConfig).toEqual({});
+    expect("pluginConfig" in config).toBe(false);
+  });
+
+  it("marketplace and catalog keys come from env", async () => {
+    const config = await loadConfig(
+      baseEnv({
+        CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED: "false",
+        CAPYBARA_CATALOG__STALE_INSTALL_MINUTES: "5",
+      }),
+    );
+    expect(config.marketplaces.official.enabled).toBe(false);
+    expect(config.catalog.staleInstallMinutes).toBe(5);
+  });
+
   it("bad type names the key", async () => {
     await expect(loadConfig(baseEnv({ CAPYBARA_DB__POOL_MAX: "abc" }))).rejects.toThrow(
       /db\.poolMax/,
@@ -94,23 +120,23 @@ describe("loadConfig", () => {
   });
 
   it("JSON values are parsed", async () => {
-    const config = await loadConfig(baseEnv({ CAPYBARA_PLUGINS: '["a","b"]' }));
-    expect(config.plugins).toEqual(["a", "b"]);
+    const config = await loadConfig(baseEnv({ CAPYBARA_EXTENSIONS: '["a","b"]' }));
+    expect(config.extensions).toEqual(["a", "b"]);
   });
 });
 
 describe("envOverrides", () => {
   it("keeps strings that do not round-trip as numbers", () => {
     const env = {
-      CAPYBARA_PLUGIN_CONFIG__X__A: "0123",
-      CAPYBARA_PLUGIN_CONFIG__X__B: "1e3",
-      CAPYBARA_PLUGIN_CONFIG__X__C: "12345678901234567890",
-      CAPYBARA_PLUGIN_CONFIG__X__D: "1.0",
-      CAPYBARA_PLUGIN_CONFIG__X__E: "123456",
-      CAPYBARA_PLUGIN_CONFIG__X__F: "true",
+      CAPYBARA_EXTENSION_CONFIG__X__A: "0123",
+      CAPYBARA_EXTENSION_CONFIG__X__B: "1e3",
+      CAPYBARA_EXTENSION_CONFIG__X__C: "12345678901234567890",
+      CAPYBARA_EXTENSION_CONFIG__X__D: "1.0",
+      CAPYBARA_EXTENSION_CONFIG__X__E: "123456",
+      CAPYBARA_EXTENSION_CONFIG__X__F: "true",
     };
     expect(envOverrides(env)).toEqual({
-      pluginConfig: {
+      extensionConfig: {
         x: {
           a: "0123",
           b: "1e3",
@@ -163,11 +189,11 @@ describe("file source errors", () => {
 describe("envOverrides 插件寻址与冲突", () => {
   it("plugin name segment maps to kebab", () => {
     const o = envOverrides({
-      CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__STEP: "2",
-      CAPYBARA_PLUGIN_CONFIG__EXAMPLE_COUNTER__POOL_SIZE: "3",
-    }) as { pluginConfig: Record<string, Record<string, unknown>> };
-    expect(o.pluginConfig["example-counter"]?.step).toBe(2);
-    expect(o.pluginConfig["example-counter"]?.poolSize).toBe(3);
+      CAPYBARA_EXTENSION_CONFIG__EXAMPLE_COUNTER__STEP: "2",
+      CAPYBARA_EXTENSION_CONFIG__EXAMPLE_COUNTER__POOL_SIZE: "3",
+    }) as { extensionConfig: Record<string, Record<string, unknown>> };
+    expect(o.extensionConfig["example-counter"]?.step).toBe(2);
+    expect(o.extensionConfig["example-counter"]?.poolSize).toBe(3);
   });
 
   it("scalar vs nested conflict", () => {

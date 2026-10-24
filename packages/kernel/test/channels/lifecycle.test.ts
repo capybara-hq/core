@@ -62,7 +62,7 @@ const cfg = (plugins: string[], scanIntervalMs = SCAN, leaseTtlMs = TTL) =>
   runConfig(
     { pg: pgc.url, redis: rd.url },
     {
-      plugins,
+      extensions: plugins,
       http: { port: 0, publicUrl: "https://cap.example" },
       auth: { cookieSecure: false },
       channels: { leaseTtlMs, scanIntervalMs, retryBaseMs: 100, deliveryIdleMs: 500 },

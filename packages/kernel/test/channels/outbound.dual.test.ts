@@ -68,7 +68,7 @@ async function bootstrap(platform: FakeChannelServer, appId: string) {
   cleanups.push(() => redis.disconnect());
   await redis.flushdb();
   h = await createDualReplicaHarness({
-    plugins: [MODEL_FAKE, CHAN_MINI, MEM_CONNECTOR],
+    extensions: [MODEL_FAKE, CHAN_MINI, MEM_CONNECTOR],
     pgUrl: pgc.url,
     redisUrl: rdc.url,
     config: {

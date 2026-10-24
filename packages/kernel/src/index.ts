@@ -22,7 +22,7 @@ export {
 export {
   type ConfigSourceKind,
   configSourceKind,
-  pluginConfigSources,
+  extensionConfigSources,
 } from "./config/sources.js";
 export { type BusSubscriber, createBus, createBusSubscriber } from "./ctx/bus.js";
 export {

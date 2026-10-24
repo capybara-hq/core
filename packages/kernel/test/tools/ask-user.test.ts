@@ -199,8 +199,8 @@ beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const urls = { pg: pgc.url, redis: rd.url };
   const plugins = [MODEL_FAKE, MEM_CONNECTOR];
-  ka = await startKernel(runConfig(urls, { plugins, roles: ["api", "worker"] }));
-  kb = await startKernel(runConfig(urls, { plugins, roles: ["api"] }));
+  ka = await startKernel(runConfig(urls, { extensions: plugins, roles: ["api", "worker"] }));
+  kb = await startKernel(runConfig(urls, { extensions: plugins, roles: ["api"] }));
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
 }, 120_000);

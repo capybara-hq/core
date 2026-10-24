@@ -23,7 +23,7 @@ export const OUTPUT_CLEANUP_BATCH = 1000;
 
 /**
  * Periodic marketplace refresh (C26): job name and job scheduler id (no `:`), every
- * `catalogs.refreshIntervalMinutes`. One scheduler for all replicas; the handler refreshes each
+ * `marketplaces.refreshIntervalMinutes`. One scheduler for all replicas; the handler refreshes each
  * enabled marketplace in turn (see catalog/marketplaces.service.ts). The values keep their old
  * names: the scheduler id is stored in Redis, and renaming it would leave the old scheduler behind.
  */

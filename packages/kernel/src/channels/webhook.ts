@@ -116,7 +116,7 @@ export interface ChannelWebhooksDeps {
  *   plugin that ignores its `signal` or an enqueue stuck on Redis answers 503 `channel.webhook_retry`
  *   when it passes (late work is not cancelled; dedupe makes the redelivery safe).
  * - `webhook.handle` counts toward the plugin instance's in-flight calls: a disable or upgrade waits
- *   for it (`pluginHost.drainSeconds`) before `dispose`; past that the call is aborted → 503
+ *   for it (`extensionHost.drainSeconds`) before `dispose`; past that the call is aborted → 503
  *   `channel.webhook_retry`.
  * Every response carries {@link WEBHOOK_SECURITY_HEADERS}.
  *
@@ -229,7 +229,7 @@ export class ChannelWebhooks {
     if (webhook === undefined) return notFound();
 
     // The call counts toward the plugin instance's in-flight work, so disabling or upgrading the
-    // plugin drains it before `dispose` (and aborts it past pluginHost.drainSeconds).
+    // plugin drains it before `dispose` (and aborts it past extensionHost.drainSeconds).
     let inflight: InflightEntry | undefined;
     try {
       inflight = runtime.inflight?.enter(deadline);

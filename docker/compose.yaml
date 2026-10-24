@@ -46,19 +46,19 @@ x-kernel-env: &kernel-env
   CAPYBARA_HTTP__PUBLIC_URL: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
   CAPYBARA_AUTH__COOKIE_SECURE: ${CAPYBARA_COOKIE_SECURE:-true}
   # Deployment config of the builtin object-store-s3 plugin: the seaweedfs-s3 service below.
-  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__ENDPOINT: http://seaweedfs-s3:8333
-  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__REGION: us-east-1
-  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET: capybara
-  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__FORCE_PATH_STYLE: "true"
-  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__ACCESS_KEY_ID: ${CAPYBARA_S3_ACCESS_KEY:?set CAPYBARA_S3_ACCESS_KEY in .env}
-  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__SECRET_ACCESS_KEY: ${CAPYBARA_S3_SECRET_KEY:?set CAPYBARA_S3_SECRET_KEY in .env}
+  CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__ENDPOINT: http://seaweedfs-s3:8333
+  CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__REGION: us-east-1
+  CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__BUCKET: capybara
+  CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__FORCE_PATH_STYLE: "true"
+  CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__ACCESS_KEY_ID: ${CAPYBARA_S3_ACCESS_KEY:?set CAPYBARA_S3_ACCESS_KEY in .env}
+  CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__SECRET_ACCESS_KEY: ${CAPYBARA_S3_SECRET_KEY:?set CAPYBARA_S3_SECRET_KEY in .env}
   # Browsers upload and download attachments with presigned URLs signed for this address: the web
   # origin, where web proxies /capybara/** to seaweedfs-s3 (path-style URLs; see the web service).
-  CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__PUBLIC_ENDPOINT: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
+  CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__PUBLIC_ENDPOINT: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
 
 x-kernel: &kernel
   # An init process forwards signals to node and reaps zombies; the grace period outlasts the
-  # kernel's drain of in-flight work (pluginHost.drainSeconds, default 30).
+  # kernel's drain of in-flight work (extensionHost.drainSeconds, default 30).
   init: true
   stop_grace_period: 40s
   restart: unless-stopped

@@ -69,7 +69,7 @@ const InstallBody = z
     plugin: z
       .object({
         connectors: z.record(z.string(), ConnectorInput).default({}),
-        pluginConfigs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+        extensionConfigs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
       })
       .strict()
       .optional(),
@@ -101,9 +101,9 @@ const AdminListQuery = z.object({
  * - `POST catalog/:itemId/requests` (`catalog.request`): a member request, into the org admins'
  *   inbox;
  * - `POST catalog/:itemId/install`: the route only requires `catalog.read`; the service re-checks
- *   `skills.manage` / `connectors.manage` / `org.plugins.manage` by kind inside the org row lock
+ *   `skills.manage` / `connectors.manage` / `org.extensions.manage` by kind inside the org row lock
  *   (plugins need all three); needs_approval without a grant -> 202 `{ request }`, otherwise 201;
- * - `GET / DELETE plugin-installs[/:installId]` (`org.plugins.manage`; uninstall re-checks all
+ * - `GET / DELETE plugin-installs[/:installId]` (`org.extensions.manage`; uninstall re-checks all
  *   three in the service);
  * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins).
  */
@@ -198,13 +198,13 @@ export class OrgCatalogController {
   }
 
   @Get("plugin-installs")
-  @OrgAction("org.plugins.manage")
+  @OrgAction("org.extensions.manage")
   async listInstalls(@CurrentOrg() org: OrgContext): Promise<{ installs: PluginInstallView[] }> {
     return { installs: await this.pluginInstaller.list(org.orgId) };
   }
 
   @Delete("plugin-installs/:installId")
-  @OrgAction("org.plugins.manage")
+  @OrgAction("org.extensions.manage")
   async uninstall(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,

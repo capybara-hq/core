@@ -50,9 +50,9 @@ const cfg = (plugins: string[], roles: string[] = ["api"]) =>
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     http: { port: 0 },
     roles,
-    plugins,
-    pluginConfig: { "sandbox-fake": { root } },
-    pluginPermissions: { autoApprove: true },
+    extensions: plugins,
+    extensionConfig: { "sandbox-fake": { root } },
+    extensionPermissions: { autoApprove: true },
   });
 
 beforeAll(async () => {

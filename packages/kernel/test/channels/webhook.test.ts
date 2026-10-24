@@ -75,8 +75,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "gateway"],
-        plugins: [MODEL_FAKE, FAKE_IM, CHAN_MINI],
-        pluginConfig: {
+        extensions: [MODEL_FAKE, FAKE_IM, CHAN_MINI],
+        extensionConfig: {
           "fake-im": { platformUrl: im.url, clientId: "c1", clientSecret: "client-secret-1" },
         },
         http: { port: 0, publicUrl: "https://cap.example" },
@@ -331,8 +331,8 @@ describe("channel webhook route (single replica, api + gateway)", () => {
         { pg: pgc.url, redis: rd.url },
         {
           roles: ["api"],
-          plugins: [MODEL_FAKE, FAKE_IM, CHAN_MINI],
-          pluginConfig: {
+          extensions: [MODEL_FAKE, FAKE_IM, CHAN_MINI],
+          extensionConfig: {
             "fake-im": { platformUrl: im.url, clientId: "c1", clientSecret: "client-secret-1" },
           },
           http: { port: 0, publicUrl: "https://cap.example" },

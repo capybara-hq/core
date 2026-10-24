@@ -17,7 +17,7 @@ export interface PermissionSnapshot {
   permissions: PermissionSet;
   approvedBy: string | null;
   approvedAt: Date;
-  /** cli：`capybara plugins approve`；auto：`pluginPermissions.autoApprove`；web：后台网页批准（T13）。 */
+  /** cli：`capybara plugins approve`；auto：`extensionPermissions.autoApprove`；web：后台网页批准（T13）。 */
   source: "cli" | "auto" | "web";
 }
 

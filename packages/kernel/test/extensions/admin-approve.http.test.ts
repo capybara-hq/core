@@ -124,9 +124,9 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, PERM_A, PERM_DEP, SANDBOX_FAKE],
-        pluginPermissions: { autoApprove: false },
-        pluginHost: { dir: pluginsDir },
+        extensions: [MODEL_FAKE, PERM_A, PERM_DEP, SANDBOX_FAKE],
+        extensionPermissions: { autoApprove: false },
+        extensionHost: { dir: pluginsDir },
         packages: { maxBytes: MAX_BYTES },
       },
     ),

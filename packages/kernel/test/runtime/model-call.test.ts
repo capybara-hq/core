@@ -122,9 +122,9 @@ beforeAll(async () => {
     redis: { url: rd.url },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     http: { port: 0 },
-    plugins: [MODEL_FAKE],
-    pluginPermissions: { autoApprove: true },
-    pluginConfig: {
+    extensions: [MODEL_FAKE],
+    extensionPermissions: { autoApprove: true },
+    extensionConfig: {
       "model-fake": {
         models: [
           { id: "fake-1" },

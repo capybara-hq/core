@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { createDualReplicaHarness } from "../../src/dual-replica.js";
 
 const h = await createDualReplicaHarness({
-  plugins: [fileURLToPath(new URL("./good-counter/index.ts", import.meta.url))],
+  extensions: [fileURLToPath(new URL("./good-counter/index.ts", import.meta.url))],
   pgUrl: process.env.TEST_PG_URL as string,
   redisUrl: process.env.TEST_REDIS_URL as string,
 });

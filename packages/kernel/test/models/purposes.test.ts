@@ -35,7 +35,7 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { roles: ["api"], plugins: [MODEL_FAKE, MODEL_EVAL] },
+      { roles: ["api"], extensions: [MODEL_FAKE, MODEL_EVAL] },
     ),
   );
 }, 120_000);

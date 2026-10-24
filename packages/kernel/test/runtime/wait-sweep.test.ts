@@ -81,7 +81,7 @@ async function boot(name: "A" | "B"): Promise<Kernel> {
     },
   });
   const k = await createKernel(
-    runConfig({ pg: pgc.url, redis: rd.url }, { plugins: [MODEL_FAKE, MEM_CONNECTOR] }),
+    runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MEM_CONNECTOR] }),
     { env: {}, logger },
   );
   await k.start();

@@ -218,9 +218,9 @@ function defaultOf(schema: core.$ZodType, path: string): { has: boolean; value?:
 export interface ExtensionDeploymentConfigDeps {
   db: KernelDb;
   keyring: Keyring;
-  /** 启动配置里的 `pluginConfig`（文件 / Nacos 与环境变量合并后）。 */
+  /** 启动配置里的 `extensionConfig`（文件 / Nacos 与环境变量合并后）。 */
   fileConfig: () => Record<string, unknown>;
-  /** 启动配置各字段的来源（见 `pluginConfigSources`）；这些字段只读。 */
+  /** 启动配置各字段的来源（见 `extensionConfigSources`）；这些字段只读。 */
   sources: Record<string, Record<string, ConfigSourceKind>>;
   /** The extension's deployment config description; undefined when the deployment does not know the extension (`extension.not_found`). */
   schemaOf: (plugin: string) => Promise<DeploymentSchemaInfo | undefined>;

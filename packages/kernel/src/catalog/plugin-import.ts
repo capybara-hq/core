@@ -76,7 +76,7 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  * locked; the cost is that importing needs access to an npm registry (**offline deployments must
  * configure an npm mirror / private registry** `packages.npmRegistry`, otherwise app imports are not
  * available). The total bytes of one import (the bundle + every plugin package, all in memory during
- * validation) are limited by `directory.maxBundleBytes` (default 4 × `packages.maxBytes`); over it ->
+ * validation) are limited by `catalog.maxBundleBytes` (default 4 × `packages.maxBytes`); over it ->
  * 413 `plugin.bundle_too_large`.
  *
  * prepare: the bundle is always treated as hostile input, and **nothing is written until every
@@ -272,13 +272,13 @@ const invalid = (problems: string[]) =>
     problems.slice(0, 50),
   );
 
-/** 一次应用包导入的总字节上限：`directory.maxBundleBytes`，缺省 4 × `packages.maxBytes`。 */
+/** 一次应用包导入的总字节上限：`catalog.maxBundleBytes`，缺省 4 × `packages.maxBytes`。 */
 export const maxBundleBytes = (c: KernelConfig): number =>
-  c.directory.maxBundleBytes ?? 4 * c.packages.maxBytes;
+  c.catalog.maxBundleBytes ?? 4 * c.packages.maxBytes;
 const bundleTooLarge = (cap: number) =>
   new ApiError(
     "plugin.bundle_too_large",
-    `The plugin package and the extension packages it locks are larger than ${cap} bytes in total (directory.maxBundleBytes)`,
+    `The plugin package and the extension packages it locks are larger than ${cap} bytes in total (catalog.maxBundleBytes)`,
   );
 
 const satisfies = (version: string, range: string) =>

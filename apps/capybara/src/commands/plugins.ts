@@ -170,9 +170,9 @@ export async function runPluginsReview(
           "Set it in the admin console (Plugins → config) or the startup config; running replicas load it without a restart.",
         );
       }
-      if (cli.config.pluginPermissions.autoApprove) {
+      if (cli.config.extensionPermissions.autoApprove) {
         out.push(
-          "Note: pluginPermissions.autoApprove is on; the kernel approves plugin permissions automatically.",
+          "Note: extensionPermissions.autoApprove is on; the kernel approves plugin permissions automatically.",
         );
       }
       io.stdout.write(`${out.join("\n")}\n`);

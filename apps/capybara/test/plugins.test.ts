@@ -59,7 +59,7 @@ function testEnv(
     CAPYBARA_DB__URL: pg.url,
     CAPYBARA_REDIS__URL: redisUrl,
     CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
-    CAPYBARA_PLUGINS: JSON.stringify(plugins),
+    CAPYBARA_EXTENSIONS: JSON.stringify(plugins),
   };
 }
 
@@ -274,9 +274,9 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0 },
       roles: ["api", "worker"],
-      plugins: [],
-      pluginPermissions: { autoApprove: false },
-      pluginHost: { dir: join(work, "plugins"), reconcileIntervalSeconds: 3600 },
+      extensions: [],
+      extensionPermissions: { autoApprove: false },
+      extensionHost: { dir: join(work, "plugins"), reconcileIntervalSeconds: 3600 },
       log: { level: "error" },
     });
     k = await createKernel(config, { env: {}, logger: createLogger("error", { write: () => {} }) });

@@ -73,8 +73,8 @@ async function bootPair(orgConcurrency: number, workerConcurrency: number): Prom
         runConfig(
           { pg: pgc.url, redis: rd.url },
           {
-            plugins: [MODEL_FAKE, MODEL_EVAL],
-            pluginConfig: { "model-eval": { replica } },
+            extensions: [MODEL_FAKE, MODEL_EVAL],
+            extensionConfig: { "model-eval": { replica } },
             evals: { orgConcurrency, workerConcurrency },
           },
         ),

@@ -79,12 +79,12 @@ describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
   beforeAll(async () => {
     [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
     h = await createDualReplicaHarness({
-      plugins: [DEPLOYCFG],
+      extensions: [DEPLOYCFG],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       // endpoint 必填但没配：两个副本都待配置
-      pluginConfig: {},
-      config: { auth: { cookieSecure: false }, pluginHost: { reconcileIntervalSeconds: 2 } },
+      extensionConfig: {},
+      config: { auth: { cookieSecure: false }, extensionHost: { reconcileIntervalSeconds: 2 } },
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);

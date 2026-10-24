@@ -2064,7 +2064,7 @@
         "refresh": "刷新",
         "noReplicas": "还没有副本上报状态。",
         "builtinNote": "内置插件随核心镜像提供、始终启用：不能停用、升级或卸载，只需要填部署级配置。",
-        "configNote": "这个插件由启动配置的 plugins 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
+        "configNote": "这个插件由启动配置的 extensions 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
         "actions": {
           "enable": "启用",
           "disable": "停用",
@@ -2447,8 +2447,8 @@
       "sources": {
         "title": "目录来源",
         "official": "官方清单",
-        "officialHint": "地址在部署配置 catalogs.official.* 里设置，这里只读。",
-        "offline": "离线模式：官方清单尚未上线，部署配置默认关闭它（catalogs.official.enabled = false）。",
+        "officialHint": "地址在部署配置 marketplaces.official.* 里设置，这里只读。",
+        "offline": "离线模式：官方清单尚未上线，部署配置默认关闭它（marketplaces.official.enabled = false）。",
         "enabled": "启用",
         "url": "地址",
         "mirrors": "镜像",

@@ -65,8 +65,8 @@ export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
 /** `packages.maxBytes` 的默认值（插件包 tgz 的大小上限）；`check:plugin-pack` 用同一个值。 */
 export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
 
-/** `catalogs.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
-export const CATALOG_OFFICIAL_URL_DEFAULT = "https://catalog.capybarahq.com/v1/index.json";
+/** `marketplaces.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
+export const MARKETPLACE_OFFICIAL_URL_DEFAULT = "https://catalog.capybarahq.com/v1/index.json";
 /** 每个清单来源最多的镜像数。 */
 export const MARKETPLACE_MAX_MIRRORS = 5;
 
@@ -174,15 +174,15 @@ export const KernelConfigSchema = z.object({
     .array(masterKey)
     .default([])
     .meta(meta({ secret: true, description: "Previous master keys kept during rotation" })),
-  plugins: z
+  extensions: z
     .array(z.string())
     .default([])
-    .meta(meta({ description: "Plugin names to load" })),
-  pluginConfig: z
+    .meta(meta({ description: "Extension names to load" })),
+  extensionConfig: z
     .record(z.string(), z.unknown())
     .default({})
-    .meta(meta({ description: "Deployment-level config keyed by plugin name" })),
-  pluginHost: z
+    .meta(meta({ description: "Deployment-level config keyed by extension name" })),
+  extensionHost: z
     .object({
       dir: z
         .string()
@@ -281,7 +281,7 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .prefault({} as never),
-  directory: z
+  catalog: z
     .object({
       maxBundleBytes: z
         .number()
@@ -307,7 +307,7 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .prefault({} as never),
-  catalogs: z
+  marketplaces: z
     .object({
       official: z
         .object({
@@ -322,7 +322,7 @@ export const KernelConfigSchema = z.object({
             ),
           url: z
             .url({ protocol: /^https?$/ })
-            .default(CATALOG_OFFICIAL_URL_DEFAULT)
+            .default(MARKETPLACE_OFFICIAL_URL_DEFAULT)
             .meta(
               meta({
                 description:
@@ -374,7 +374,7 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .prefault({} as never),
-  pluginPermissions: z
+  extensionPermissions: z
     .object({
       autoApprove: z
         .boolean()

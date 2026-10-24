@@ -72,11 +72,11 @@ export function runConfig(
     redis: { url: urls.redis },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     http: { port: 0 },
-    plugins: [MODEL_FAKE, MODEL_LOOPER],
-    pluginPermissions: { autoApprove: true },
+    extensions: [MODEL_FAKE, MODEL_LOOPER],
+    extensionPermissions: { autoApprove: true },
     runtime: { jobLockMs: 2000, stalledIntervalMs: 1000, ...runtime },
     // 测试不拉官方清单（默认的占位地址在外网）
-    catalogs: { official: { enabled: false } },
+    marketplaces: { official: { enabled: false } },
     ...rest,
   });
 }

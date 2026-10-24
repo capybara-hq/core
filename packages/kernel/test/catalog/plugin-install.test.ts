@@ -316,7 +316,7 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     });
   }
 
-  it("中途崩溃留下的 installing：未超时 409；超过 directory.staleInstallMinutes 后经卸载回滚清理；failed 随时可清", async () => {
+  it("中途崩溃留下的 installing：未超时 409；超过 catalog.staleInstallMinutes 后经卸载回滚清理；failed 随时可清", async () => {
     const appId = await seedApp(env, { templates: false, plugins: ["todo"] });
     const r = await install(env.boss, env, appId);
     const id = r.json().installed.pluginInstallId as string;

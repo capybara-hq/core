@@ -130,14 +130,14 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     gateDir = await mkdtemp(join(tmpdir(), "cap-life-gate-"));
     pluginsDir = await mkdtemp(join(tmpdir(), "cap-life-plugins-"));
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE],
+      extensions: [MODEL_FAKE],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: { life: { dir: gateDir }, "model-fake": { models: [{ id: "fake-1" }] } },
+      extensionConfig: { life: { dir: gateDir }, "model-fake": { models: [{ id: "fake-1" }] } },
       config: {
         auth: { cookieSecure: false },
-        pluginPermissions: { autoApprove: false },
-        pluginHost: { dir: pluginsDir, reconcileIntervalSeconds: 2, drainSeconds: 30 },
+        extensionPermissions: { autoApprove: false },
+        extensionHost: { dir: pluginsDir, reconcileIntervalSeconds: 2, drainSeconds: 30 },
         packages: { maxBytes: MAX_BYTES },
       },
     });

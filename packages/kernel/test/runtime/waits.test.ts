@@ -75,7 +75,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       // 组织并发 1：验证等待中的运行不占配额
-      { plugins: [MODEL_FAKE, MEM_CONNECTOR], runtime: { orgConcurrency: 1, maxRunSeconds: 3 } },
+      { extensions: [MODEL_FAKE, MEM_CONNECTOR], runtime: { orgConcurrency: 1, maxRunSeconds: 3 } },
     ),
   );
   raw = createDb(pgc.url, 5);

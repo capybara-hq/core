@@ -46,7 +46,7 @@ type Json = Record<string, unknown>;
 describe("界面刷新（双副本）", () => {
   it("副本 0 invalidate → 副本 1 的对话 / 组织 SSE 收到 event: ui；todo 写入后 tasks 视图与刷新", async () => {
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, UI_PROBE, TODO],
+      extensions: [MODEL_FAKE, UI_PROBE, TODO],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: { auth: { cookieSecure: false } },

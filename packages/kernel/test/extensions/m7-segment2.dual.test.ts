@@ -18,7 +18,7 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M7 segment 2 acceptance (dual replica): two kernel processes (both `api` + `worker`) share PG /
- * Redis / the plugin directory, `pluginPermissions.autoApprove: false`. model-fake, `plugins/todo` and
+ * Redis / the plugin directory, `extensionPermissions.autoApprove: false`. model-fake, `plugins/todo` and
  * the `hooks-probe` fixture are packed with pack-plugin and installed as install records through the
  * admin HTTP API; everything else goes through HTTP too (the event log, the audit row, the usage
  * queue and the disabled probe's counters are read directly).
@@ -171,12 +171,12 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     ]);
     pkgs = { todo, "model-fake": modelFake, [PROBE]: probe, [BARRIER]: barrier } as typeof pkgs;
     h = await createDualReplicaHarness({
-      plugins: [],
-      pluginConfig: { "model-fake": { models: [{ id: "fake-1" }] } },
+      extensions: [],
+      extensionConfig: { "model-fake": { models: [{ id: "fake-1" }] } },
       config: {
         auth: { cookieSecure: false },
-        pluginPermissions: { autoApprove: false },
-        pluginHost: { dir: pluginsDir, reconcileIntervalSeconds: 2 },
+        extensionPermissions: { autoApprove: false },
+        extensionHost: { dir: pluginsDir, reconcileIntervalSeconds: 2 },
       },
     });
     bootPids.push(h.replicas[0].pid, h.replicas[1].pid);

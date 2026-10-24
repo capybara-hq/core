@@ -82,8 +82,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, TOOLS_COUNT, SANDBOX_FAKE],
-        pluginConfig: { "sandbox-fake": { root } },
+        extensions: [MODEL_FAKE, TOOLS_COUNT, SANDBOX_FAKE],
+        extensionConfig: { "sandbox-fake": { root } },
         evals: { orgConcurrency: 2 },
       },
     ),
