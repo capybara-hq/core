@@ -22,8 +22,9 @@ permissions: {}
 # - ci (lint, typecheck, pnpm check, plugin packing, commitlint): always, in full (pnpm check
 #   includes perm-hooks: cheap, reads all plugin sources; check:sdk-api: cheap, regenerates the
 #   plugin SDK API report; check:skills-frontmatter: cheap, reads the skills' frontmatter;
-#   check:compose-haproxy: cheap, compares two files; and check:release-metadata: cheap, reads the
-#   workspace package.json files and the compose image tag). On PRs the ci job also runs
+#   check:compose-haproxy: cheap, compares two files; check:release-metadata: cheap, reads the
+#   workspace package.json files and the compose image tag; and check:terms: cheap, a text scan
+#   of the tracked files for the old extension / catalog / plugin names). On PRs the ci job also runs
 #   check:sdk-api-changeset, in full (a cheap inspection of the PR diff; skipped on main, which has
 #   no base to compare);
 # npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
