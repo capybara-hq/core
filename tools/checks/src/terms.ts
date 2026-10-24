@@ -158,6 +158,11 @@ export const REFERENCE_EXEMPT_PATHS: { path: RegExp; reason: string }[] = [
     reason: "the phase-0a plan defines the rename",
   },
   {
+    path: /^docs\/superpowers\/plans\/2026-10-25-ecosystem-phase0b-formats\.md$/,
+    reason:
+      "the phase-0b plan reintroduces plugin names for bundles (PluginManifest, capybara plugins, writing-plugins)",
+  },
+  {
     path: /^docs\/superpowers\/specs\/2026-10-22-package-ecosystem-design\.md$/,
     reason:
       "the ecosystem spec defines the rename (§13) and reuses old names for plan 0b (writing-plugins for bundles, §6.2)",
