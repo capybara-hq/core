@@ -10,7 +10,11 @@
 - **(designer's call)**: the author decided on the maintainer's behalf; not yet confirmed item by item. Open to change in review.
 - Items with no marker restate current code or rules from `AGENTS.md`, `docs/design/spec.md` and the skills.
 
-**Terminology.** UI copy and this document follow the package ecosystem spec (`docs/superpowers/specs/2026-10-22-package-ecosystem-design.md`, branch `docs/package-ecosystem`): the in-process code that used to be called a "plugin" is an **extension**; a capability is an **extension point**; a **plugin** is an install and distribution bundle (like a Claude Code plugin); directory sources are **marketplaces**; the enterprise directory is the **catalog**; an "embedded app" is an **embed page**; and "conversation" always means talking to an agent ("session" is only the login session). The code still uses the old names (`ctx.ui`, `plugins/*`, `/admin/plugins`, `/directory`) until the ecosystem spec's rename phase lands; where this document names code, it uses the code's current names.
+**Terminology.** The UI refresh is **not coupled** to the package ecosystem spec (`docs/superpowers/specs/2026-10-22-package-ecosystem-design.md`, branch `docs/package-ecosystem`) and does not wait for its rename or repository split (decided, 2026-10-24). UI copy uses whatever names the code has when each project is built, and follows the rename when it lands. This document uses the ecosystem spec's concepts where it needs a word for them: the in-process code of a package is an **extension** (today's code calls it a plugin), a versioned contract is an **extension point** (today: capability), and an iframe UI is an **embed page** (today: embedded app). "Conversation" always means talking to an agent. Where this document names code, it uses the code's current names (`ctx.ui`, `plugins/*`, `/admin/plugins`, `/directory`).
+
+**Two things that must not be confused** (decided, 2026-10-24):
+- **File outputs**: files the agent generates in the sandbox and delivers (code, PDF, Word, spreadsheets, images…; today `sandbox_deliver` → `artifact_created`). Built into the conversation page (§5.4, §5.8). How a file is previewed is an **extension point**: the web app ships a small default set of previewers and extensions can contribute more.
+- **Artifacts**: online, collaborative documents, spreadsheets and designs, created and edited in place and shared. Project C, separate and later (§6). The kernel's current identifiers for delivered files (`artifact_created`, `/artifacts/:id/…`) are historical names for *file outputs*; UI copy calls those "files", never "artifacts".
 
 **Supersedes** §3.1 (layout), §3.2 (the kernel's built-in tabs) and §3.3 (tool call display) of `2026-10-21-chat-panel-plugin-ui-design.md` (D13). The rest of D13 stays in force: `ctx.ui`, rendered views, embed pages, embed tokens, the `/plugin-ui` proxy, permissions. This document only adds places where extension UI can appear.
 
@@ -21,14 +25,16 @@
 - **Rebased on post-M7 code.** M6 added the trajectory viewer (`/trajectories`, TracePage + `SpanWaterfall`, design spec §6.10), evals (`/evals/*`), the admin console (`/admin/*`: accounts, orgs, plugins, catalog, models, deployment settings), the org catalog (`/directory`), members, model purposes and installed apps under `/settings/*`. M7 added hook denials in the conversation (`hook_denied`, a failed run names the blocking extension), the channel inbound-mode switch, same-origin attachment upload through the web's object-store proxy, and the release pipeline. The shell, the 12 templates and the conversation timeline components are unchanged since the draft; §4 and §5 now name what each part replaces.
 - **Inventory of what the shell must carry** (§4.4): the TopBar today has 9 top-level items plus an "Extensions" menu; org settings hang off the "Connectors" item; the admin console has its own second-level nav. The sidebar now has to hold all of these, so it gets an explicit section layout.
 - **There is no conversation list in the web app today.** Conversations start from the Agents list, which creates the conversation before the first message; the kernel's `GET /conversations` is a flat "mine" list; conversation `title` exists in the schema but nothing sets it and nothing can rename it. The sidebar's conversation section (§4.4) and the title bar (§5.1) need titles and a grouped list API (§5.9).
-- **Model and effort switching is grounded in the actual model contract.** `effort` is a standard knob that each model declares (subset of `low|medium|high|xhigh|max`) or doesn't; agents have `model` + `fallback` + params; `model_call` already records the resolved model and params per request. There is no org-level model allowlist, only purpose mapping. §5.2 now says what the dropdowns show; which models a conversation may switch to is open question 1.
-- **The "minimal outputs plugin" is replaced by a kernel built-in.** The draft wanted a small plugin to show the kernel's delivered files (`artifact_created`). Extensions have no access to a conversation's events or the kernel's storage prefix, so that plugin would need a new platform API. The outputs section and preview panel are now built into the conversation page, like Context; the todo extension and `example-board` validate the extension slots (§5.4, open question 4).
-- **MCP Apps needs more plumbing than the draft assumed.** `connector-mcp` drops `_meta` (except one Anthropic hint) and the MCP `title`; `ToolSpec` has no title; `EmbedFrame` only takes a `src`; `/plugin-ui` only serves extension routes. §5.3 lists the pieces; open question 3 proposes splitting MCP Apps into its own stage.
+- **Model and effort switching is grounded in the actual model contract.** `effort` is a standard knob that each model declares (subset of `low|medium|high|xhigh|max`) or doesn't; agents have `model` + `fallback` + params; `model_call` already records the resolved model and params per request. The maintainer decided the switchable range: any chat model from the org's enabled providers (§5.2).
+- **File outputs are built in; Artifacts stay project C.** The draft wanted a small plugin to show delivered files and blurred them with Artifacts. Now: file outputs (section, cards, preview panel) are built into the conversation page, file previewing is an extension point (`file-preview@1`, §5.8), and Artifacts are online collaborative documents (§6). The todo extension and `example-board` validate the extension slots (§5.4).
+- **MCP Apps is its own stage B2**, right after B, because it needs plumbing the other slots don't: `connector-mcp` drops `_meta` (except one Anthropic hint) and the MCP `title`; `ToolSpec` has no title; `EmbedFrame` only takes a `src`; `/plugin-ui` only serves extension routes (§5.3).
+- **Conversation titles are model-generated** after the first exchange, with manual rename (§5.1, §5.9).
+- **Sizing is a scale, not one number.** The draft's "28 only" vs "28 default, 24 in tables" ambiguity is replaced by named scale steps with usage rules (§4.3).
+- **The maintainer's answers of 2026-10-24** to the first round of open questions are recorded in place, marked (decided, 2026-10-24).
 - **Subagents now have a direction.** The ecosystem spec §11 plans subagents as a built-in tool whose child run has its own event log (a child conversation). §5.6 uses that shape; the UI still ships with fixture data until the runtime exists.
 - **Approvals offer three scopes** (`once` / `session` / `always`, filtered by what the request allows), not two; §5.7 follows the code.
 - **Release mechanics.** UI changes now ship through changesets: `@capybara-hq/design` is private and ships only inside the web image, so every UI change needs a changeset on `@capybara-hq/web` (fixed group with `@capybara-hq/capybara`, so it bumps the image tag). Kernel and SDK changes need their own changesets, and SDK changes regenerate `api/plugin-sdk.api.md` (§8).
-- **Repository split.** The ecosystem spec moves official plugins (todo, `connector-mcp`, `example-board`) to `capybara-hq/plugins`. Project B's extension-side work may become a cross-repo change (§8, open question 2).
-- **Terminology** follows the ecosystem spec (see the note above). The sidebar labels use the new terms.
+- **Independent of the package ecosystem work.** No dependency on its rename or on the move of official plugins (todo, `connector-mcp`, `example-board`) to `capybara-hq/plugins`; the shared seams are coordination points (§3, §8). UI copy uses the code's names at build time.
 - **Language.** The spec is now in English, per `AGENTS.md`.
 
 ---
@@ -55,16 +61,16 @@
 1. Replace the global TopBar with a left sidebar on every page (decided).
 2. Refine the design system per the "refined E" rules: lines, color, icons, radius, spacing, type, motion; dark and light together.
 3. Rebuild the conversation page as three columns: title-bar icons, a properties panel, a right panel (decided).
-4. Give extensions three slots on the conversation page, linked to each other; let connectors provide inline widgets through MCP Apps (decided).
+4. Give extensions three slots on the conversation page, linked to each other; let connectors provide inline widgets through MCP Apps (decided; stage B2, decided 2026-10-24).
 5. Show tool calls, subagents, human-in-the-loop cards and files in the conversation by the rules in §5.
 6. Build a fidelity mechanism (§7): the implementation must be shown to match the reference set, not just "not broken".
 
 **Non-goals**
 - Terminal panel, browser panel (decided: not wanted).
-- The Artifacts product itself: its own storage service, sharing, online design. A separate project, discussed later (§6) (decided).
 - The subagent runtime. This document defines only its UI; the runtime is the ecosystem spec's §11 and its own design.
 - Mobile. Narrow-screen rules in §4.4 keep it usable, no more.
-- The terminology rename itself (routes, tables, API names): that is the ecosystem spec's phase 0. This document only uses the new words in copy.
+- The terminology rename (routes, tables, API names, copy): that is the ecosystem spec's phase 0, independent of this work (decided, 2026-10-24).
+- Artifacts (online collaborative documents, spreadsheets, designs; own service, sharing): a separate project C, discussed later (§6) (decided).
 
 **Anti-goals** (a failure even if everything works)
 - The result looks "about right" but measured sizes, spacing and colors differ from the reference set.
@@ -78,11 +84,13 @@
 |---|---|---|
 | 0. Reference set | Finalize the canvas with the maintainer: real fonts, `tokens.json`, fixture data, PNGs (§7.1) | — |
 | A. Shell and refined E | Design-system tokens and rules (§4.1–4.3), sidebar (§4.4), page header (§4.5), status bar (§4.6); every page moves | 0 |
-| B. Conversation page | Three-column layout, slots and linkage, display of tools / subagents / interaction / files, kernel and SDK support (§5) | A |
-| C. Artifacts | Own service, sharing, online design (§6) | B |
-| Throughout | The fidelity mechanism (§7), built before A, used to accept A and B | — |
+| B. Conversation page | Three-column layout, extension slots and linkage, display of tools / subagents / interaction / file outputs, file previewers, titles, model switching, kernel and SDK support (§5) | A |
+| B2. MCP Apps | Connector widgets from MCP Apps: contract, sandboxed widget route, host bridge (§5.3) | B |
+| C. Artifacts | Online collaborative documents / spreadsheets / designs: own service, sharing, online editing (§6) | B |
+| Throughout | The fidelity mechanism (§7), built before A, used to accept A, B and B2 | — |
 
-- Order: reference-set finalization with the maintainer → A → B → C (decided).
+- Order: reference-set finalization with the maintainer → A → B → B2 (decided, 2026-10-24) → C (decided).
+- **No dependency on the package ecosystem work** (decided, 2026-10-24): A, B and B2 neither wait for nor block its rename or repository split. Shared seams are coordination points only: the sidebar's labels and routes (follow the rename when it lands), the `ctx.ui` and `file-preview@1` SDK additions (the ecosystem rename must carry them over), and the extension-side changes in todo and `connector-mcp` (made wherever those packages live at the time).
 - A ships first as its own PR; B follows. While A is live and B isn't, the current conversation page (PlaygroundPage + ChatPanel tabs) is placed inside the new shell with only the changes the transition needs (designer's call).
 - A and B each get their own implementation plan (superpowers:writing-plans), written against the code at that time; this document names current code only to say what is replaced (designer's call).
 
@@ -137,25 +145,43 @@
    - `prefers-reduced-motion` is respected.
 8. **Shadow**: the composer floats at the bottom with one light shadow (one value each for dark and light). Other shadows keep the current tokens.
 
-### 4.3 Spacing and sizes ("smaller spacing, more compact, looks refined" — decided)
+### 4.3 Sizing system ("compact and refined", 紧凑精致)
 
-- Spacing only in multiples of 4: 4, 8, 12, 16, 24, 32.
-- Padding:
-  - inside components 6–12 (buttons, inputs, cards, tool rows, table cells);
-  - between components 8–12;
-  - between sections 16–24.
-- **If spacing can separate it, don't draw a line.**
-- Default control height 28 for buttons, inputs, selects, filter chips and segmented controls; 24 only inside tables and tool groups; the 36 size is removed, page-level primary buttons are 28 too (decided).
-- Table rows about 34, cell padding 6 vertical.
-- Stat cards: padding 8/12, value 18px, gap 8.
-- Form field cards: padding 14, 12 between fields.
-- Inline file cards: padding 6/10, icon 16, min width 240.
-- Composer: padding 8/12, radius 8.
-- Exact values come from `tokens.json` (§7). This section sets the direction for finalization.
+The target is "smaller spacing, more compact, looks refined" (decided). Sizing is **a set of named scales in the design system, not a single pinned control height** (decided, 2026-10-24). Every size a component uses is a step of one of these scales, stored in `tokens.json` (§7.1) and listed in the component's size table (§7.2); pages never pick sizes.
+
+**Density steps.** Controls and rows come in three steps, and the step is chosen by context, never by taste:
+
+| Step | Used for | Not used for |
+|---|---|---|
+| `dense` | Inside tables and table toolbars, tool groups and tool rows, inline cards, property sections, the status bar, tag-like chips | Anything a person is expected to read at length or aim at often outside a dense container |
+| `default` | Everything else: buttons, inputs, selects, segmented controls, filter chips, the composer's controls, sidebar items, menu items, form fields | — |
+| `prominent` | At most one per view, where the action *is* the page: the auth pages' submit, an empty state's first action, the onboarding checklist's next step | Ordinary page-header primaries, form submits in the action row, dialogs |
+
+Rules:
+- A container sets the step for what it holds (a DataTable is `dense` throughout; a form is `default` throughout); mixing steps inside one row is not allowed.
+- Icon buttons are square at the same step's height.
+- The page-header primary action and the action-row actions are `default`.
+
+**Scales and starting values** (all numbers are (designer's call), to be confirmed or adjusted during reference-set finalization, §7.1):
+
+| Scale | Steps | Starting values |
+|---|---|---|
+| Control height | `dense` / `default` / `prominent` | 24 / 28 / 32 |
+| Row height (lists, tables, sidebar, menus) | `dense` / `default` / `roomy` (rows with a thumbnail or two lines) | 28 / 32 / 44 |
+| Spacing | `1`–`8` | 4, 8, 12, 16, 20, 24, 32, 40 |
+| Inner padding (inside a component) | `dense` / `default` | 4/8 · 6/12 (vertical/horizontal) |
+| Type (monospace UI) | `micro` / `small` / `body` / `h2` / `h1` | 11 / 12 / 13 / 16 / 20 |
+| Type (proportional prose) | `prose` | 15, line height 1.75 |
+| Stat value | `metric` | 18 |
+| Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 |
+
+Spacing usage: inside components spacing steps 1–3; between components 2–3; between sections 4–6; page gutters 4–5. **If spacing can separate it, don't draw a line.**
+
+Starting points for specific components (designer's call; finalized with the reference set): table cell padding 6 vertical; stat cards padding 8/12 with gap 8; form field cards padding 14, 12 between fields; inline file cards padding 6/10, icon 16, min width 240; the composer padding 8/12, radius `md`.
 
 ### 4.4 Left sidebar (replaces the TopBar, on every page)
 
-What it replaces: the TopBar (`packages/design/src/shell/top-bar.tsx`, filled by `apps/web/src/components/shell/{AppFrame,nav}.tsx`) carries the logo, org switcher, top-level nav (Overview · Agents · Skills · Inbox with pending count · Connectors · Catalog (route `/directory`, member+) · Channels (admin) · Evals (admin) · Admin (enterprise admin)), an "Extensions" menu of extension pages (`place: "page"`, route `/p/<plugin>/<id>`), ⌘K and the user menu (language, theme, sign out). Org settings (`/settings/*`) currently sit under "Connectors"; the admin console (`/admin/*`) has its own second-level nav.
+What it replaces: the TopBar (`packages/design/src/shell/top-bar.tsx`, filled by `apps/web/src/components/shell/{AppFrame,nav}.tsx`) carries the logo, org switcher, top-level nav (Overview · Agents · Skills · Inbox with pending count · Connectors · Directory (the org catalog, route `/directory`, member+) · Channels (admin) · Evals (admin) · Admin (enterprise admin)), an "Extensions" menu of extension pages (`place: "page"`, route `/p/<plugin>/<id>`), ⌘K and the user menu (language, theme, sign out). Org settings (`/settings/*`) currently sit under "Connectors"; the admin console (`/admin/*`) has its own second-level nav.
 
 - Two areas (decided):
   - **Navigation**: the top-level navigation that used to be in the TopBar. Role-based hiding is unchanged (`NavAudience` all / member / admin / enterprise; hiding is cosmetic, the kernel decides).
@@ -164,9 +190,9 @@ What it replaces: the TopBar (`packages/design/src/shell/top-bar.tsx`, filled by
 - It lists only the current user's own conversations; each group shows the most recent few with "More"; agents without conversations are not listed; groups are ordered by latest activity. This needs a list API grouped by agent with per-group paging (§5.9) (designer's call).
 - Navigation layout (designer's call):
   - "＋ New conversation" is the first item;
-  - then Overview · Agents · Skills · Inbox (count) · Connectors · Catalog · Channels · Evals;
+  - then Overview · Agents · Skills · Inbox (count) · Connectors · Directory · Channels · Evals (labels as the code names them at build time; "Directory" becomes "Catalog" when the ecosystem rename lands);
   - an **Extensions** group listing the org's extension pages directly (replacing the "Extensions" dropdown), shown only when there are any;
-  - **Settings** as its own item for `/settings/*` (personal connections, grants, identities, org, members, org plugins, installed plugins, model purposes), instead of hiding them under Connectors;
+  - **Settings** as its own item for `/settings/*` (personal connections, grants, identities, org, members, org plugins, installed apps, model purposes), instead of hiding them under Connectors; Connectors keeps only the connector list, detail and install (decided, 2026-10-24);
   - **Admin** last, for enterprise admins. The admin console keeps its own second-level nav inside its pages (SettingsPage rail); the sidebar does not swap to admin navigation.
 - Top: logo, wordmark, ⌘K search button (designer's call).
 - Bottom: account and org switcher; language and theme stay in the account menu (designer's call).
@@ -189,7 +215,7 @@ What it replaces: the TopBar (`packages/design/src/shell/top-bar.tsx`, filled by
 ### 4.6 Status bar and action row (decided)
 
 - The status bar **does not span the window**: it sits only in the content area to the right of the sidebar, fixed at the bottom of the content area.
-- Style: height 26, no background, a soft line above, 11.5px, gray, monospace.
+- Style: no background, a soft line above, gray, monospace; height about 26 and type about 11.5px, snapped to the nearest §4.3 steps during finalization (the numbers are (designer's call)).
 - Every page has one by default.
 - It holds **read-only information only**, no clickable controls:
   - left: path `user@org:route` · page status (`useStatusBar(...)`, as today);
@@ -208,11 +234,11 @@ Project A's first task is to change the spec per this section and get it reviewe
 | §2.2 Font | Two fonts and what each is for |
 | §2.3 Accent roles | Current navigation becomes a tinted background |
 | §2.4 Status encoding | The high-frequency list rule |
-| §2.5 Sizes | Control heights (28, 24 in tables / tool groups, no 36), radii, spacing per §4.3 |
+| §2.5 Sizes | Replace the fixed 24 / 28 / 36 heights and radius 0 with the §4.3 sizing system: named scales, density steps and their usage rules |
 | §3 Brand | Logo sizes for the sidebar instead of the TopBar |
 | §4 App Shell | "Left sidebar + content area (page header / body / action row / status bar)"; remove the TopBar; the Centered body widths |
 | §5 Templates | A "Conversation" template replacing T7 Playground or extending it (builder's choice; only the conversation page uses T7 today); the other templates take the new header |
-| §6 Components | New: icon, sidebar, conversation list, tool group and tool row, subagent row, file card, attachment strip, inline card frame, property section, right panel frame, composer (with dropdowns and queue state), diff block, queued message. Replaced: ToolCallRow's IN / OUT IoBlock layout (§5.5), the TopBar's Extensions menu |
+| §6 Components | New: icon, sidebar, conversation list, tool group and tool row, subagent row, file card, attachment strip, inline card frame, property section, right panel frame, composer (with dropdowns and queue state), diff block, queued message, file preview frame, model / effort dropdowns, untitled-conversation placeholder. Replaced: ToolCallRow's IN / OUT IoBlock layout (§5.5), the TopBar's Extensions menu |
 | §9 Enforcement and acceptance | Rewrite per §7 (reference images become the baseline for first acceptance) |
 
 ---
@@ -225,7 +251,7 @@ What it replaces: `/chat/[conversationId]` renders **PlaygroundPage** with heade
 
 - Three columns: left sidebar, middle column, right area.
 - **The title bar belongs to the middle column only**; it does not span the right panel.
-- Title bar: conversation title on the left (with ⌄ for rename etc.). On the right, two groups of icon buttons:
+- Title bar: conversation title on the left (with ⌄ for rename etc.; titles are model-generated, see "Titles" below). On the right, two groups of icon buttons:
   - group 1, one button: properties panel toggle;
   - a vertical divider;
   - group 2: the panel icons of enabled extensions, then "More ⋮". Icons that don't fit go into "More".
@@ -238,6 +264,13 @@ What it replaces: `/chat/[conversationId]` renders **PlaygroundPage** with heade
   - the middle column and its title bar get narrower.
 - Properties panel about 300 wide. Right panel 520–600, resizable, width remembered; it is a personal preference, kept in browser storage (designer's call).
 - Below the right-panel minimum width, the right area becomes an overlay sheet (designer's call; matches today's "Inspector becomes a Sheet below 1280").
+- **Titles** (decided, 2026-10-24): conversation titles are **generated by a model**, not copied from the first message; the person can always rename from the title bar's ⌄ menu. What that needs (designer's call):
+  - after the first exchange (the first run that ends with an assistant reply), the kernel enqueues a title-generation job (a queue job, no timers, per the multi-replica rules) that sends a short excerpt of the first user message and reply to a model;
+  - the model comes from a new kernel model purpose `title` (kind chat), mapped at deployment or org level like `eval`; when it isn't mapped, the conversation's current chat model is used;
+  - the call is logged: its token usage is a `usage` event in the conversation log with purpose `title` (like compaction's), so cost is accounted for; it is not model-visible to the agent, so it needs no `DriftReason` and replays never run it;
+  - until a title exists the sidebar and title bar show an "Untitled conversation" placeholder (with the start time); a failed call leaves the placeholder and is retried after the next run ends, with a small bounded number of attempts;
+  - a manual rename always wins: once renamed, the title is never regenerated;
+  - the title prompt is English; the title is written in the conversation's language.
 
 ### 5.2 Composer and status bar (decided)
 
@@ -245,11 +278,12 @@ What it replaces: `/chat/[conversationId]` renders **PlaygroundPage** with heade
   - the agent dropdown can only be changed in a new conversation; after the first message it is locked, and changing agent means a new conversation;
   - model and effort can be switched any time, take effect from the next message, and stay for the conversation until switched again;
   - a switch is written to the conversation event log, so any model request can still be reconstructed from the log plus the agent version;
-  - the choices are bounded by the agent's configuration and the org's model settings (which models exactly: open question 1).
+  - **which models** (decided, 2026-10-24): any model from the org's enabled model providers, as long as it is the **same kind** as the current one. Conversations switch only between chat (generation) models, e.g. a conversation on DeepSeek can switch to Claude Opus 5.5 at any time; embedding models are never switched mid-conversation, because vector dimensions differ and stored vectors depend on them. There is no per-agent list of switchable models.
 - What that means against the code (designer's call):
   - **New conversation**: today the Agents list creates the conversation (`POST /conversations {agentId}`) before anything is typed. With an agent dropdown, "New conversation" opens an empty composer and the conversation is created on first send; the ＋ next to a sidebar group pre-selects that agent. Empty conversations are never created.
   - **Effort** is the standard `effort` knob that a model may declare (`low|medium|high|xhigh|max` subset). The dropdown lists exactly the values the selected model declares; when it declares none, the dropdown is hidden. The default is the agent's saved `modelParams.effort` or the model default. Other knobs (temperature, max output) stay in the agent form.
-  - The model dropdown shows the agent's model first; the fallback model stays automatic and is never picked here.
+  - The model dropdown lists the chat models of the org's enabled providers, grouped by provider, with the agent's own model first. The agent's fallback stays automatic and is never picked here; it still applies when the chosen model fails.
+  - A model the conversation was switched to that later disappears (provider disabled, model removed) falls back to the agent's model on the next message, with a notice in the conversation.
 - **Every switchable control is in the composer.** Its bottom row, in order:
   - ＋ (attachments);
   - agent dropdown;
@@ -288,10 +322,10 @@ Rules:
   - the widget can ask the host to call tools (e.g. a Send button a person clicks); those calls go through policy and approval as usual;
   - sandboxing, messaging and permissions match D13's embed pages; the protocol follows the MCP Apps spec.
 - **How far MCP Apps goes** (designer's call): at least render widgets, let widgets call tools (the Send button needs it), and pass theme and size from host to widget; target the latest published MCP Apps spec version at implementation time and name it in the plan.
-- **What MCP Apps needs that doesn't exist yet** (designer's call): `connector-mcp` today keeps only `annotations` and one `_meta` hint, so the tool's UI resource declaration must be carried through `connector@1` / `ToolSpec`; the widget HTML comes from the remote server (`resources/read`), so the kernel needs a same-origin, CSP-sandboxed route to serve it (like `/plugin-ui` but for connector content, with no embed token reaching the widget); and `EmbedFrame` stays the only iframe in the UI. Whether this ships inside B or as its own stage is open question 3.
+- **What MCP Apps needs that doesn't exist yet** (designer's call): `connector-mcp` today keeps only `annotations` and one `_meta` hint, so the tool's UI resource declaration must be carried through `connector@1` / `ToolSpec`; the widget HTML comes from the remote server (`resources/read`), so the kernel needs a same-origin, CSP-sandboxed route to serve it (like `/plugin-ui` but for connector content, with no embed token reaching the widget); and `EmbedFrame` stays the only iframe in the UI. All of this ships as **stage B2, right after B** (decided, 2026-10-24); B leaves the inline-card slot ready for it.
 - **Built-in properties sections** (designer's call):
   - "Context": usage ratio, model, sandbox status, connectors used (today's Context tab);
-  - "Outputs": delivered files (§5.4);
+  - "Files": the conversation's file outputs (§5.4, §5.8);
   - "Background tasks": running subagents and the completed count, each stoppable and openable (§5.6).
 - D13's "Run" tab is dropped; the tool groups in the conversation replace it. Archived full output moves into the expanded tool row ("View full output") (designer's call).
 
@@ -299,7 +333,7 @@ Rules:
 
 - The **todo extension** (`plugins/todo`) validates all three places: an inline checklist card, a "Tasks" section, a right panel, and the linkage between them.
 - **`example-board`** validates an embed page in the right panel (it already has a `place: "conversation"` embed).
-- **Outputs are built in, not an extension.** The draft proposed a minimal "outputs" plugin; extensions cannot read a conversation's events or the kernel's `kernel/<orgId>/` storage, so that would need a new platform API just to be thrown away by project C. Instead the conversation page shows the kernel's delivered files (`artifact_created`) as file cards, an "Outputs" section and a right-side preview panel, built in like Context. Project C later replaces or extends it (open question 4).
+- **File outputs are built in, not an extension** (decided, 2026-10-24). The draft proposed a minimal "outputs" plugin and treated it as a stand-in for Artifacts; those are different things (see the terminology note). The conversation page shows the agent's file outputs (`artifact_created`) as file cards, a "Files" section and a right-side preview panel, built in like Context. Only **previewing** is extensible, through the `file-preview@1` extension point (§5.8).
 
 ### 5.5 Tool calls (after Claude Code; canvas "conversation · tool calls")
 
@@ -389,18 +423,25 @@ Rules:
   - a progress bar while uploading (upload goes through the web's same-origin object-store proxy since M7);
   - rejected ones (too large etc.) get a `fail` outline and the reason.
 - **Attachments in a user message**: above the bubble, right-aligned.
-- **Output cards** (delivered files):
+- **File output cards** (files the agent generated and delivered):
   - type badge, middle-truncated name (keeping the extension), size;
   - clicking opens a preview in the right panel.
-- **Several outputs**: two columns; beyond 4, collapsed to "N more files ›".
-- **Image outputs**: shown inline; hover shows enlarge and download; below, name, dimensions, size. Inline images use the existing `?inline=1` rule (bitmaps only).
-- **Text outputs** (md, txt, csv…): first lines, fading out at the bottom, with "Open". Text is always shown as plain text, never HTML.
+- **Several file outputs**: two columns; beyond 4, collapsed to "N more files ›".
+- **Image files**: shown inline; hover shows enlarge and download; below, name, dimensions, size. Inline images use the existing `?inline=1` rule (bitmaps only).
+- **Text files** (md, txt, csv…): first lines, fading out at the bottom, with "Open". Text is shown as plain text, never as HTML.
 - **File paths mentioned in prose**: small clickable monospace chips that open the file in the right panel.
 - **File cleaned up**: the card stays, grayed and struck through, with the reason (e.g. sandbox reclaimed).
 - **Right-side preview panel** (canvas "conversation · right panel linkage"):
-  - header: type badge, file name with a dropdown to switch, version, share, download, full screen, close;
-  - spreadsheets get one tab per sheet;
-  - "Share" waits for project C and is hidden in B.
+  - header: type badge, file name with a dropdown to switch between the conversation's files, version, download, full screen, close;
+  - the body is whichever previewer handles the file (below); with none, a file card with type, size and Download.
+  - No "Share": sharing belongs to Artifacts (project C), not to file outputs. The canvas's Share button on the file preview is dropped (designer's call).
+
+**File preview is an extension point** (decided, 2026-10-24). Designer's call on the shape:
+- A new extension point `file-preview@1`: an extension declares which files it previews (MIME types and / or file extensions, with a size limit) and renders a preview either as a rendered view (`UiView` blocks) or as an embed page. Several extensions may provide it; the org admin can order or disable them, and the person can switch previewer from the panel header when more than one applies.
+- The extension gets the file through a short-lived, read-only grant for that one file in that conversation, minted by the kernel after checking the viewer can read the conversation; it never gets the kernel's storage prefix or other files. An embed previewer receives the file through the message bridge, not as a URL the page could share.
+- Built-in default set (web + kernel, no extension needed): images (bitmaps; SVG is not rendered inline), plain text and source code (monospace, no syntax execution), Markdown (rendered by the design system's Markdown rules, no raw HTML), CSV / TSV as a table with a row limit. PDF, Word, spreadsheets with sheets, slides and the rest come from extensions; without one they show the file card and Download.
+- Previewers never run in the conversation stream: a slow or failing previewer affects only the panel ("Failed to load · Retry"), and falls back to the file card.
+- The previewer slot is the same right-panel frame project C will use for Artifacts, so C can add an "open as artifact" action later without changing it.
 
 ### 5.9 Kernel and SDK support
 
@@ -413,13 +454,14 @@ Rules:
 | `sandbox_edit` / `sandbox_write` results carry a diff, or enough to compute one (today only "Edited <path>") | §5.5 item 7 |
 | Per-call duration (from `tool_call_started` / `tool_result` times), kept by the web app | Duration in expanded rows |
 | Queued messages: new conversation state and API (add, edit, delete, send now), in PG or Redis | §5.7 |
-| Mid-conversation model and effort switches: a new field on the message or conversation plus a log event recording the switch, with a matching `DriftReason`; replay and evals must honor it | §5.2; the replay invariant |
+| Mid-conversation model and effort switches: a new field on the message or conversation plus a log event recording the switch, with a matching `DriftReason`; replay and evals must honor it. Plus a member-readable list of the org's switchable models (chat kind, enabled providers only) for the dropdown | §5.2; the replay invariant |
 | Conversation creation on first send, with the agent chosen in the composer (or `POST` + first message in one call) | §5.2 |
-| Conversation titles and rename (`title` exists, nothing sets it; no PATCH) | Sidebar and title bar (open question 5) |
+| Conversation titles: a title-generation queue job after the first exchange, a kernel model purpose `title` (falls back to the conversation's current chat model), a `usage` event with purpose `title`, retry while untitled, and `PATCH` rename that stops regeneration (`title` exists today, nothing sets it) | §5.1 titles |
 | Sidebar list API: the user's conversations grouped by agent, each group pageable | §4.4 |
-| An outputs list API for a conversation (today the web app rebuilds it from the log) | Outputs section and preview panel |
+| A file-outputs list API for a conversation (today the web app rebuilds it from the log) | Files section and preview panel |
+| The `file-preview@1` extension point: SDK types, registration, per-file read grants, admin ordering; built-in previewers in web | §5.8 |
 | `ctx.ui` extension: places go from "conversation tab / page" to "inline card / properties section / right panel / page", plus "open" targets; existing `place: "conversation"` keeps working | §5.3 |
-| MCP Apps in `connector-mcp`, carried through `connector@1`, plus a sandboxed route for widget HTML | §5.3 |
+| (Stage B2) MCP Apps in `connector-mcp`, carried through `connector@1`, plus a sandboxed route for widget HTML | §5.3 |
 | Subagent event shapes: dispatch, progress, finish, child conversation (decided with the subagent runtime design) | §5.6 |
 
 Anything here that changes what the model sees (e.g. the `description` argument) follows "the conversation event log is the single source of truth", runs the zero-drift fixture tests (`replay-evals`), and keeps model-facing text in English (`pnpm check` tool-design rules).
@@ -428,17 +470,15 @@ Anything here that changes what the model sees (e.g. the `description` argument)
 
 ## 6. Project C: Artifacts (intent only)
 
-- The maintainer's idea (decided):
-  - Artifacts is an extension-backed plugin, installed by default;
-  - it runs its own service storing html, md and other files so they can be shared;
-  - eventually as capable as Claude Artifacts, including online design.
-- Not designed here; discussed after B.
-- B's built-in outputs section and right-panel frame keep room for it: the data source can be replaced, and the "Share" spot in the panel header is reserved.
-- Naming: the kernel already calls delivered files "artifacts" (`artifact_created`, `/artifacts/:id/download`, UI copy 产物). Project C must pick names that don't collide, or define how it absorbs them (designer's call).
+- **What Artifacts are** (decided, 2026-10-24): online, collaborative documents, spreadsheets and designs, created and edited in place, by people and agents, and shareable. They are **not** the files an agent delivers from its sandbox; those are file outputs (§5.8), built into the conversation page.
+- The maintainer's earlier idea still holds (decided): an extension-backed plugin, installed by default, running its own service that stores the documents (html, md and the like) so they can be shared; eventually as capable as Claude Artifacts, including online design.
+- Not designed here; discussed after B (and B2).
+- What B leaves for it: the right-panel frame (C opens artifacts in it) and the extension slots. File outputs do not reserve a "Share" button; whether a file output can be turned into an artifact is C's decision.
+- Naming (designer's call): the kernel's identifiers for delivered files (`artifact_created`, `/artifacts/:id/download`, `ArtifactsTab`) are historical. UI copy calls them "files" (zh 文件) from B on; the zh word 产出物 is reserved for Artifacts. Renaming the kernel identifiers is optional cleanup, coordinated with the ecosystem rename, never a precondition for C.
 
 ---
 
-## 7. Fidelity mechanism (throughout A and B)
+## 7. Fidelity mechanism (throughout A, B and B2)
 
 **The problem**: the screenshot regression in `apps/web/visual/` uses the implementation's own screenshots as the baseline. It catches breakage; it cannot prove the implementation is right. This time the **reference set** becomes the baseline.
 
@@ -495,13 +535,13 @@ Done by one Claude session together with the maintainer, on the existing canvas,
 ## 8. Constraints
 
 - Dependency direction, `check:web-ui` (`apps/web` writes no styles, iframes only via `EmbedFrame`, templates enforced) are unchanged. New components and templates change the spec first and go through the change process.
-- UI copy goes through i18n (zh and en) and uses the ecosystem spec's terms. Model-facing text (tool descriptions, the `description` argument, errors) is English.
+- UI copy goes through i18n (zh and en) and uses the names the code has at build time, following the ecosystem rename when it lands; "files" and "Artifacts" are never used for each other. Model-facing text (tool descriptions, the `description` argument, errors) is English.
 - Multi-replica: queued messages, extension refresh, subagent state live in PG or Redis.
 - Dark and light ship together; all contrast meets WCAG AA.
 - Every new automatic check has a violating-fixture test, proven red first.
 - Screenshot baselines are generated only in CI's Linux Playwright image (`visual-update`).
-- **Release**: UI work ships in the web image, so each UI PR adds a changeset on `@capybara-hq/web` (fixed group with `@capybara-hq/capybara`; `@capybara-hq/design` is private and needs none). Kernel changes add a changeset on `@capybara-hq/kernel`; SDK changes (`ctx.ui` places, `ToolSpec` title) regenerate `api/plugin-sdk.api.md` (`pnpm gen:sdk-api`) and add a changeset bumping `@capybara-hq/plugin-sdk`; changed official extensions (todo, `connector-mcp`) bump their own packages.
-- **Repository split**: if the ecosystem spec's split has happened, extension-side work (todo's new places, MCP Apps in `connector-mcp`) is a PR in `capybara-hq/plugins` against the published SDK, coordinated with the core PR.
+- **Release**: UI work ships in the web image, so each UI PR adds a changeset on `@capybara-hq/web` (fixed group with `@capybara-hq/capybara`; `@capybara-hq/design` is private and needs none). Kernel changes add a changeset on `@capybara-hq/kernel`; SDK changes (`ctx.ui` places, `ToolSpec` title, `file-preview@1`) regenerate `api/plugin-sdk.api.md` (`pnpm gen:sdk-api`) and add a changeset bumping `@capybara-hq/plugin-sdk`; changed official extensions (todo, `connector-mcp`) bump their own packages.
+- **Package ecosystem work is a coordination point, not a dependency** (decided, 2026-10-24): extension-side changes (todo's new places, MCP Apps in `connector-mcp`) go wherever those packages live at the time; if the repo split has happened, that is a paired PR in `capybara-hq/plugins` against the published SDK. The ecosystem rename carries the new SDK surface (`ctx.ui` places, `file-preview@1`) over like everything else.
 - **SDK compatibility**: existing extensions using `place: "conversation"` keep working without changes.
 
 ## 9. Reference set (canvas rows)
@@ -514,7 +554,7 @@ Done by one Claude session together with the maintainer, on the existing canvas,
 | 5 | Conversation interactions (dark): tool calls, human in the loop, subagents and inline panels, files, right-panel linkage, subagent right panel | Direction |
 | 6 | Conversation interactions (light) | Direction |
 
-The canvas sample text borrows names and projects from the maintainer's real work; they are replaced with placeholders when the reference set is finalized (§7.1). The canvas copy predates the terminology change ("plugin" where it now means extension); finalization updates it.
+The canvas sample text borrows names and projects from the maintainer's real work; they are replaced with placeholders when the reference set is finalized (§7.1). Finalization also updates the canvas copy to the code's current names, replaces the file preview's Share button (§5.8), and re-draws sizes on the §4.3 scales.
 
 ## 10. Left to the builder
 
@@ -522,18 +562,13 @@ The canvas sample text borrows names and projects from the maintainer's real wor
 - Whether "Conversation" is a new template or extends T7.
 - The icon source, and the Latin face for the proportional font (must pair with Source Han Sans).
 - The sidebar breakpoints and the right panel's min and max widths.
+- The concrete numbers of the §4.3 scales, confirmed with the maintainer during reference-set finalization.
 - Measuring tolerances; suggested ±1px for sizes, colors must equal the token.
 - Which stats go on the left of the conversation status bar.
 - The storage and API shape of queued messages.
+- The exact contract of `file-preview@1` (within §5.8) and the title job's retry limit.
 - Task breakdown, decided by each plan.
 
 ## 11. Open questions for the maintainer
 
-Only questions whose answer changes what gets built, most important first.
-
-1. **Which models can a conversation switch to?** There is no org model allowlist today (org model settings are purpose mappings) and agents store one model plus a fallback, so "bounded by agent config and org settings" has nothing to bound by yet. **Recommendation**: the agent definition gains an optional list of switchable models, set by the agent owner; empty means only the agent's model (the model dropdown is then read-only, the effort dropdown still works). This keeps cost under the owner's control and needs no org-level setting.
-2. **Order relative to the ecosystem work (rename phase 0 and the plugins repo split).** Project A's sidebar labels and B's extension changes both touch what that work renames or moves. **Recommendation**: A uses the new terms in copy from day one regardless of route names; run B's SDK and extension-side changes (todo, `connector-mcp`) before the repo split if the timing allows, otherwise as paired PRs across the two repos.
-3. **Is MCP Apps part of B, or its own stage after B?** It needs `connector@1` / `ToolSpec` changes, a new sandboxed route for remote widget HTML and a host-side bridge, none of which the other slots need. **Recommendation**: a separate stage B2 right after B; B ships the three extension slots, the built-in sections and the display rules first.
-4. **Outputs: built into the conversation page instead of a minimal plugin?** Extensions can't read a conversation's delivered files without a new platform API. **Recommendation**: built in (as §5.4 now says); project C decides later whether the Artifacts plugin replaces it through the right-panel slot.
-5. **How do conversations get titles?** The sidebar and title bar need them; nothing sets `title` today. **Recommendation**: default to the first user message, trimmed, with rename from the title bar's ⌄ menu; a model-generated title (a new `title` model purpose, off unless mapped) can come later.
-6. **Does "Settings" get its own sidebar item?** Org settings currently live under "Connectors". **Recommendation**: yes, as §4.4 proposes, with Connectors keeping only the connector list and install.
+None at this revision. The six questions of the 2026-10-24 revision were answered by the maintainer the same day and are recorded in place, marked (decided, 2026-10-24): switchable models (§5.2), independence from the package ecosystem work (terminology note, §3, §8), MCP Apps as stage B2 (§3, §5.3), file outputs vs. Artifacts and file previewers as an extension point (terminology note, §5.4, §5.8, §6), model-generated titles (§5.1, §5.9), and Settings in the sidebar (§4.4). The maintainer also replaced the single control height with a sizing system (§4.3).
