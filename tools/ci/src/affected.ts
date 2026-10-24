@@ -7,8 +7,8 @@
  *   belong to no workspace package) run everything;
  * - otherwise tests run for the changed workspace packages, everything that depends on them
  *   (all dependency kinds, transitively), and every package whose tests load an affected plugin by
- *   path (tools/ci/test-plugins.json, kept honest by `pnpm check`); web / visual / e2e run only when
- *   one of their input packages changed.
+ *   path (tools/ci/test-plugins.json, kept honest by `pnpm check`); web / visual / e2e / docker run
+ *   only when one of their input packages changed.
  *
  * Erasable TypeScript only (no enums, no parameter properties): CI runs this file with plain
  * `node`, before any `pnpm install`.
@@ -48,6 +48,8 @@ export interface Plan {
   web: boolean;
   visual: boolean;
   e2e: boolean;
+  /** Build the amd64 images and run docker/test/compose-smoke.sh. */
+  docker: boolean;
 }
 
 /** Shard count for the full suite, or whenever the kernel tests (the bulk of the suite) run. */
@@ -88,6 +90,15 @@ const EXTRA_INPUTS: { match: (f: string) => boolean; dir: string }[] = [
  */
 const ALWAYS_WITH_TESTS = "tools/checks";
 
+/**
+ * The docker job builds the images from the CLI (kernel, plugin SDK, the builtin plugins) and the web
+ * app (design), and docker/test/compose-smoke.sh packs model-fake (with tools/pack-plugin) and installs
+ * it into the running stack. Everything
+ * under docker/ (Dockerfiles, compose files, the smoke script) and the root .dockerignore belong to no
+ * package, so they already run everything.
+ */
+const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "tools/pack-plugin"];
+
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {
   if (f.startsWith("docs/")) return true;
@@ -112,6 +123,7 @@ export function planAll(reason: string): Plan {
     web: true,
     visual: true,
     e2e: true,
+    docker: true,
   };
 }
 
@@ -125,6 +137,7 @@ function planNone(reason: string): Plan {
     web: false,
     visual: false,
     e2e: false,
+    docker: false,
   };
 }
 
@@ -194,7 +207,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
   tested.add(ALWAYS_WITH_TESTS);
   const testDirs = [...tested].filter((d) => byDir.get(d)?.hasTests === true).sort();
 
-  // web / visual / e2e: run when any package they are built from or load changed.
+  // web / visual / e2e / docker: run when any package they are built from or load changed.
   const hits = (roots: string[]) => [...closure(roots, depsOf)].some((d) => changed.has(d));
   const e2ePlugins = (ws.testPlugins["apps/web/e2e"] ?? []).map((n) => `plugins/${n}`);
   const web = hits(["apps/web"]);
@@ -208,6 +221,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     web,
     visual: web,
     e2e: hits(["apps/web", "apps/capybara", ...e2ePlugins]),
+    docker: hits(DOCKER_ROOTS),
   };
 }
 
@@ -276,5 +290,6 @@ export function toOutputs(plan: Plan): Record<string, string> {
     web: String(plan.web),
     visual: String(plan.visual),
     e2e: String(plan.e2e),
+    docker: String(plan.docker),
   };
 }

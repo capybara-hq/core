@@ -18,6 +18,7 @@ import {
   type Route,
 } from "../ctx/create-ctx.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
+import type { RegisteredHook } from "./hooks.js";
 import { InflightTracker } from "./inflight.js";
 import type { Registration } from "./ledger.js";
 import type { PermissionSet } from "./permission-set.js";
@@ -163,6 +164,10 @@ export class PluginInstance {
   }
   get tools(): readonly RegisteredTool[] {
     return this.ctx.registeredTools;
+  }
+  /** Hooks registered through `ctx.hooks.on` (empty after revocation). */
+  get hooks(): readonly RegisteredHook[] {
+    return this.ctx.registeredHooks;
   }
   get uiViews(): ReadonlyMap<string, UiRender> {
     return this.ctx.uiViews;

@@ -20,12 +20,14 @@ import {
   takeSnapshot,
   toEvents,
 } from "../../src/evals/snapshot.js";
+import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { hookDeniedText } from "../../src/tools/pipeline.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -54,6 +56,9 @@ const S3_PLUGIN = fileURLToPath(
 );
 const TOOLS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/tools-probe/index.ts", import.meta.url),
+);
+const HOOKS_PROBE = fileURLToPath(
+  new URL("../fixtures/plugins/hooks-probe/index.ts", import.meta.url),
 );
 
 /** 1×1 透明 PNG。 */
@@ -101,7 +106,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, MODEL_LOOPER, S3_PLUGIN, TOOLS_PROBE],
+        plugins: [MODEL_FAKE, MODEL_LOOPER, S3_PLUGIN, TOOLS_PROBE, HOOKS_PROBE],
         runtime: { maxSteps: 4, keepRecentTurns: 1 },
         tools: { searchThresholdTools: 1 },
         pluginConfig: {
@@ -594,6 +599,53 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     expect(call.payload.request.media?.map((m) => m.outcome)).toEqual(["placeholder_unsupported"]);
     expect(snapshotMediaRefs(snap, call.seq, await modelInfo("model-fake", "fake-1"))).toEqual([]);
     await expectZeroDrift(conv, snap);
+  });
+
+  it("a tool call denied by a tool.preExecute policy hook: zero drift, hook_denied not in requests", async () => {
+    reset();
+    const enable = async (enabled: boolean) => {
+      const res = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/plugins/hooks-probe`,
+        payload: { enabled },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    };
+    const key = "hooks-probe__probe_echo";
+    await enable(true);
+    try {
+      const cfg = await owner({
+        method: "POST",
+        url: "/plugins/hooks-probe/config",
+        payload: { orgId, denyTools: [key] },
+      });
+      expect(cfg.statusCode, cfg.body).toBe(200);
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-1" },
+        { tools: [{ kind: "plugin", plugin: "hooks-probe", name: "probe_echo" }] },
+      );
+      const conv = await createConv(owner, orgId, agentId);
+      await postMessage(owner, orgId, conv, `tool:${key}:{"text":"x"}`);
+      await waitForTerminal(db, conv, 1, 30_000);
+      const events = await eventsOf(db, conv);
+      expect(events.some((e) => e.type === "hook_denied")).toBe(true);
+      const result = events.find((e) => e.type === "tool_result");
+      expect(result?.type === "tool_result" && result.payload.content).toBe(
+        hookDeniedText("hooks-probe", "nope"),
+      );
+      // the second request carries the denied call's tool_result, and nothing of hook_denied
+      expect(JSON.stringify(sent.at(-1))).not.toContain("hook_denied");
+      const snap = await snapshotOf(conv);
+      await expectZeroDrift(conv, snap);
+      const [run] = buildTrajectory(toEvents(snap), new Map());
+      expect(run?.steps[0]?.toolCalls[0]?.hookDenied).toEqual({
+        plugin: "hooks-probe",
+        reason: "nope",
+        cause: "deny",
+      });
+    } finally {
+      await enable(false);
+    }
   });
 });
 

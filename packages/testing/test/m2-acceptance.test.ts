@@ -98,7 +98,7 @@ async function viaHarness(
   method: string,
   path: string,
   body?: unknown,
-): Promise<{ status: number; json: Json; replica: 0 | 1 }> {
+): Promise<{ status: number; json: Json; replica: number }> {
   const res = await (h as Harness).request(path, jsonInit(jar, method, body));
   jar.store(res);
   const text = await res.text();
@@ -130,7 +130,7 @@ class SseClient {
   readonly deltas: Delta[] = [];
   readonly errors: string[] = [];
   lastId: string | undefined;
-  replica: 0 | 1 | undefined;
+  replica: number | undefined;
   dropped = false;
   private ctrl: AbortController | undefined;
 

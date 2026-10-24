@@ -49,7 +49,7 @@ export function verifySteps(plan: Plan, base: string): VerifyStep[] {
       cmd: ["pnpm", "exec", "vitest", "run", ...plan.testDirs.map((d) => `${d}/`)],
     });
   } else steps.push({ id: "test", title: "Tests", cmd: null, note: "no affected tests" });
-  for (const id of ["web", "visual", "e2e"] as const) {
+  for (const id of ["web", "visual", "e2e", "docker"] as const) {
     if (plan[id]) steps.push({ id, title: id, cmd: null, note: "CI runs this" });
   }
   return steps;

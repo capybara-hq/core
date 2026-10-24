@@ -207,6 +207,24 @@ describe("reduceChat", () => {
     expect(items[1]).toMatchObject({ kind: "failed", code: "model.failed" });
   });
 
+  it("run.hook_denied names the plugin from the run's model.request hook_denied", () => {
+    const s = apply(initialChatState, [
+      started(1, "r3"),
+      ev(
+        2,
+        "hook_denied",
+        { mount: "model.request", plugin: "guard", reason: "nope", cause: "deny", step: 1 },
+        "r3",
+      ),
+      ev(3, "run_failed", { error: { code: "run.hook_denied", message: "x" } }, "r3"),
+    ]);
+    expect(chatItems(s).at(-1)).toMatchObject({
+      kind: "failed",
+      code: "run.hook_denied",
+      plugin: "guard",
+    });
+  });
+
   it("assistant 项带产出它的模型：取该步的 model_call，没有时取 run_started 的模型", () => {
     const call = (seq: number, step: number, provider: string, model: string) =>
       ev(seq, "model_call", { step, provider, model });

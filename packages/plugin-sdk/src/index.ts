@@ -9,6 +9,7 @@ export * from "./connector-auth.js";
 export * from "./ctx.js";
 export * from "./define-plugin.js";
 export * from "./directory.js";
+export * from "./hooks.js";
 export * from "./identity.js";
 export * from "./model.js";
 export * from "./model-params.js";

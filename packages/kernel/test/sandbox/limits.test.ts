@@ -65,7 +65,7 @@ const log = { info() {}, warn() {}, error() {} };
 const signal = () => AbortSignal.timeout(30_000);
 
 beforeAll(async () => {
-  [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis({ shared: true })]);
   await migrate(pgc.url, {
     schema: "capybara",
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),

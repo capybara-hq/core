@@ -37,7 +37,8 @@
         "account_disabled": "该账号已被停用。"
       },
       "unknown": "登录失败，请重试。"
-    }
+    },
+    "insecureOrigin": "如果登录后马上又回到登录页：当前页面通过 http 从非 localhost 的地址访问，而会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它。请改用 HTTPS（或在 localhost 上）访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false），并把 CAPYBARA_PUBLIC_URL 设为当前地址，否则附件上传与下载会失败。"
   },
   "setup": {
     "title": "初始化",
@@ -118,7 +119,9 @@
       "model_unavailable": "模型不可用。",
       "provider_unavailable": "模型供应商列表暂时读不到。",
       "provider_error": "模型供应商出错。",
-      "storage_unavailable": "附件存储暂时不可用。"
+      "storage_unavailable": "附件存储暂时不可用。",
+      "hook_denied": "请求被插件「{plugin}」的策略拦截。",
+      "hook_denied_unknown": "请求被插件策略拦截。"
     },
     "connector": {
       "not_found": "连接器不存在或已被删除。",
@@ -185,7 +188,8 @@
     },
     "channel": {
       "not_found": "渠道不存在或已删除。",
-      "verify_failed": "平台拒绝了机器人凭据，请检查后重试。"
+      "verify_failed": "平台拒绝了机器人凭据，请检查后重试。",
+      "webhook_unavailable": "该渠道无法使用 Webhook：插件不支持，或部署未配置回调地址。"
     },
     "identity": {
       "taken": "这个 IM 账号已绑定到另一个 Capybara 账号。",
@@ -1144,7 +1148,25 @@
       "dangerTitle": "危险操作",
       "delete": "删除渠道",
       "deleteTitle": "删除 {name}？",
-      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 Capybara 中。"
+      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 Capybara 中。",
+      "inboundTitle": "接收方式",
+      "inboundHint": "机器人如何接收消息。长连接在内网即可使用；Webhook 需要平台能经公网地址访问本部署。",
+      "inboundLabel": "接收方式",
+      "inboundUnsupported": "该渠道插件只支持长连接。",
+      "inboundNoBaseUrl": "无法使用 Webhook：部署未配置公网回调地址（channels.webhookBaseUrl）。",
+      "callbackUrl": "回调地址",
+      "callbackUrlHint": "在平台的应用设置里把此地址填为事件 / 请求地址。",
+      "saveInbound": "保存接收方式",
+      "inboundSaved": "接收方式已保存。",
+      "webhookNoUrlWarning": "该渠道处于 Webhook 模式，但部署未配置回调地址（channels.webhookBaseUrl），平台无法把消息送达机器人。请配置该地址，或切回长连接。"
+    },
+    "inboundMode": {
+      "long_connection": "长连接",
+      "webhook": "Webhook"
+    },
+    "inboundModeHint": {
+      "long_connection": "机器人与平台保持一条连接（默认，无需公网地址）。",
+      "webhook": "平台每个事件都回调本部署，需要公网地址。"
     }
   },
   "plugins": {
@@ -1383,6 +1405,18 @@
           "cancelled": "已取消",
           "pending": "待回答"
         }
+      },
+      "hook": {
+        "title": "被策略 hook 拦截",
+        "plugin": "插件",
+        "cause": "原因类别",
+        "causes": {
+          "deny": "拒绝",
+          "hook_error": "hook 出错",
+          "timeout": "hook 超时"
+        },
+        "reason": "原因（模型可见）",
+        "attempt": "尝试"
       }
     },
     "addToSet": {
@@ -2412,7 +2446,7 @@
         "title": "目录来源",
         "official": "官方清单",
         "officialHint": "地址在部署配置 catalogs.official.* 里设置，这里只读。",
-        "offline": "离线模式：部署配置关闭了官方清单（catalogs.official.enabled = false）。",
+        "offline": "离线模式：官方清单尚未上线，部署配置默认关闭它（catalogs.official.enabled = false）。",
         "enabled": "启用",
         "url": "地址",
         "mirrors": "镜像",

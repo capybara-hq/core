@@ -37,7 +37,8 @@
         "account_disabled": "This account has been disabled."
       },
       "unknown": "Sign-in failed. Please try again."
-    }
+    },
+    "insecureOrigin": "If sign-in doesn't stick: this page is served over plain http from a host other than localhost, and browsers drop the session cookie here while it is marked Secure (the default). Open the app over HTTPS (or on localhost), or, for a short trial over http only, set CAPYBARA_AUTH__COOKIE_SECURE=false on the kernel services (CAPYBARA_COOKIE_SECURE=false in the compose .env), and set CAPYBARA_PUBLIC_URL to this address, or attachment uploads and downloads fail."
   },
   "setup": {
     "title": "Setup",
@@ -118,7 +119,9 @@
       "model_unavailable": "The model is unavailable.",
       "provider_unavailable": "The model provider list is temporarily unavailable.",
       "provider_error": "The model provider returned an error.",
-      "storage_unavailable": "Attachment storage is temporarily unavailable."
+      "storage_unavailable": "Attachment storage is temporarily unavailable.",
+      "hook_denied": "The request was blocked by the policy of the \"{plugin}\" plugin.",
+      "hook_denied_unknown": "The request was blocked by a plugin policy."
     },
     "connector": {
       "not_found": "The connector does not exist or has been removed.",
@@ -185,7 +188,8 @@
     },
     "channel": {
       "not_found": "The channel does not exist or has been deleted.",
-      "verify_failed": "The platform rejected the bot credentials. Check them and try again."
+      "verify_failed": "The platform rejected the bot credentials. Check them and try again.",
+      "webhook_unavailable": "Webhooks are not available for this channel: the plugin does not support them or the deployment has no webhook address."
     },
     "identity": {
       "taken": "This IM account is already linked to another Capybara account.",
@@ -1144,7 +1148,25 @@
       "dangerTitle": "Danger zone",
       "delete": "Delete channel",
       "deleteTitle": "Delete {name}?",
-      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in Capybara."
+      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in Capybara.",
+      "inboundTitle": "Inbound mode",
+      "inboundHint": "How the bot receives messages. A long connection works from an internal network; webhooks need the platform to reach this deployment over a public address.",
+      "inboundLabel": "Inbound mode",
+      "inboundUnsupported": "This channel plugin only supports long connections.",
+      "inboundNoBaseUrl": "Webhooks are not available: the deployment has no public webhook address (channels.webhookBaseUrl).",
+      "callbackUrl": "Callback URL",
+      "callbackUrlHint": "Register this address as the event / request URL in the platform's app settings.",
+      "saveInbound": "Save inbound mode",
+      "inboundSaved": "Inbound mode saved.",
+      "webhookNoUrlWarning": "This channel is in webhook mode, but the deployment has no webhook address (channels.webhookBaseUrl), so the platform cannot reach the bot. Configure the address or switch back to long connection."
+    },
+    "inboundMode": {
+      "long_connection": "Long connection",
+      "webhook": "Webhook"
+    },
+    "inboundModeHint": {
+      "long_connection": "The bot keeps a connection open to the platform (default; no public address needed).",
+      "webhook": "The platform calls this deployment for every event; needs a public address."
     }
   },
   "plugins": {
@@ -1383,6 +1405,18 @@
           "cancelled": "Cancelled",
           "pending": "Awaiting answer"
         }
+      },
+      "hook": {
+        "title": "Blocked by a policy hook",
+        "plugin": "Plugin",
+        "cause": "Cause",
+        "causes": {
+          "deny": "Denied",
+          "hook_error": "Hook failed",
+          "timeout": "Hook timed out"
+        },
+        "reason": "Reason (shown to the model)",
+        "attempt": "Attempt"
       }
     },
     "addToSet": {
@@ -2412,7 +2446,7 @@
         "title": "Directory sources",
         "official": "Official catalog",
         "officialHint": "The address is set in the deployment config catalogs.official.* and is read-only here.",
-        "offline": "Offline mode: the deployment config turned the official catalog off (catalogs.official.enabled = false).",
+        "offline": "Offline mode: the official catalog is not live yet, so the deployment config keeps it off (catalogs.official.enabled = false).",
         "enabled": "Enabled",
         "url": "URL",
         "mirrors": "Mirrors",

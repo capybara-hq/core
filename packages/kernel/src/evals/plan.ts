@@ -84,7 +84,11 @@ export function casePlan(s: CaseSnapshot, mode: "step" | "run"): CasePlan {
   let judgeContextTokens = 0;
   for (const c of calls) {
     const u = own.find(
-      (e) => e.type === "usage" && e.seq > c.seq && (e.payload as { step: number }).step === c.step,
+      (e) =>
+        e.type === "usage" &&
+        e.seq > c.seq &&
+        (e.payload as { step: number; purpose?: string }).step === c.step &&
+        (e.payload as { purpose?: string }).purpose !== "compaction",
     );
     const callUsage = u ? asUsage(u.payload) : ZERO;
     usage = addUsage(usage, callUsage);

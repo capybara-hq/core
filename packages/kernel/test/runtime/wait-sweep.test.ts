@@ -11,7 +11,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
+import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import {
   MAINTENANCE_QUEUE_NAME,
   WAIT_SWEEP_EVERY_MS,
@@ -36,6 +36,7 @@ import {
   session,
   waitFor,
   waitForEvent,
+  waitForRunJobDone,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -166,7 +167,7 @@ async function runStatus(runId: string): Promise<string> {
  * `Waits.suspend` still schedules the timeout job and re-checks whether the wait was already settled
  * (and resumes if so). A test that changes the approval before that re-check gets a legitimate
  * resume. So also wait for the run job to leave the run queue (removeOnComplete: the job completes
- * only after the worker returns from `suspend`).
+ * only after the worker returns from `suspend`; see `waitForRunJobDone`).
  */
 async function waiting(
   text: string,
@@ -177,13 +178,7 @@ async function waiting(
   const event = await waitForEvent(db, convId, (e) => e.type === type, 10_000, type);
   const runId = event.runId as string;
   await waitFor(async () => (await runStatus(runId)) === "waiting", 10_000, "run waiting");
-  const { trigger_seq } = await db
-    .selectFrom("runs")
-    .select("trigger_seq")
-    .where("id", "=", runId)
-    .executeTakeFirstOrThrow();
-  const jobId = runJobId(convId, Number(trigger_seq));
-  await waitFor(async () => (await runQueue.getJob(jobId)) === undefined, 10_000, "run job done");
+  await waitForRunJobDone(db, runQueue, runId);
   const p = event.payload as { approvalId?: string; questionId?: string };
   return { convId, runId, waitId: (p.approvalId ?? p.questionId) as string };
 }

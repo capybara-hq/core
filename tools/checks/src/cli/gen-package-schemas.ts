@@ -6,5 +6,5 @@ mkdirSync(DEFAULT_SCHEMAS_DIR, { recursive: true });
 for (const s of PACKAGE_SCHEMAS) {
   const file = join(DEFAULT_SCHEMAS_DIR, s.file);
   writeFileSync(file, renderPackageSchema(s));
-  console.log(`已写入 ${file}`);
+  console.log(`Wrote ${file}`);
 }

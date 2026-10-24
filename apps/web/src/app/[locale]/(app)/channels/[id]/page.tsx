@@ -8,6 +8,7 @@ import {
   Field,
   Input,
   KeyValue,
+  RadioGroup,
   Skeleton,
   Stack,
   Text,
@@ -38,6 +39,7 @@ import {
   deleteChannel,
   getChannel,
   getChannelSchema,
+  type InboundMode,
   type UnboundPolicy,
   updateChannel,
 } from "../../../../../lib/channels";
@@ -227,7 +229,90 @@ function OverviewTab({
           </Stack>
         </Stack>
       </Card>
+      <InboundCard key={channel.inboundMode} orgId={orgId} channel={channel} onSaved={onSaved} />
     </Stack>
+  );
+}
+
+/**
+ * Inbound mode: long connection (default) or webhook. Webhook needs plugin support and the
+ * deployment's webhook base URL; the callback URL to register with the platform is read-only.
+ */
+function InboundCard({
+  orgId,
+  channel,
+  onSaved,
+}: {
+  orgId: string;
+  channel: ChannelConnection;
+  onSaved(c: ChannelConnection): void;
+}) {
+  const t = useTranslations("channels");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [mode, setMode] = useState<InboundMode>(channel.inboundMode);
+  const [pending, setPending] = useState(false);
+  const available = channel.webhookSupported && channel.webhookUrl !== null;
+  // Switching is offered when webhooks are available, or to get back from webhook mode
+  const switchable = available || channel.inboundMode === "webhook";
+
+  async function save() {
+    setPending(true);
+    try {
+      const { channel: next } = await updateChannel(orgId, channel.id, { inboundMode: mode });
+      onSaved(next);
+      toast.success(t("detail.inboundSaved"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Card title={t("detail.inboundTitle")}>
+      <Stack gap={12}>
+        <Text tone="muted">{t("detail.inboundHint")}</Text>
+        {channel.inboundMode === "webhook" && channel.webhookUrl === null && (
+          <Text tone="warn">{`! ${t("detail.webhookNoUrlWarning")}`}</Text>
+        )}
+        {switchable ? (
+          <RadioGroup
+            label={t("detail.inboundLabel")}
+            variant="card"
+            value={mode}
+            disabled={pending}
+            onChange={(v) => setMode(v as InboundMode)}
+            options={(["long_connection", "webhook"] as const).map((v) => ({
+              value: v,
+              label: t(`inboundMode.${v}`),
+              description: t(`inboundModeHint.${v}`),
+            }))}
+          />
+        ) : (
+          <Text variant="small" tone="muted">
+            {t(channel.webhookSupported ? "detail.inboundNoBaseUrl" : "detail.inboundUnsupported")}
+          </Text>
+        )}
+        {mode === "webhook" && channel.webhookUrl !== null && (
+          <Field label={t("detail.callbackUrl")} help={t("detail.callbackUrlHint")}>
+            <Input value={channel.webhookUrl} readOnly />
+          </Field>
+        )}
+        {switchable && (
+          <Stack direction="row">
+            <Button
+              variant="primary"
+              loading={pending}
+              disabled={mode === channel.inboundMode}
+              onClick={() => void save()}
+            >
+              {t("detail.saveInbound")}
+            </Button>
+          </Stack>
+        )}
+      </Stack>
+    </Card>
   );
 }
 

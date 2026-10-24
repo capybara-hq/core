@@ -133,7 +133,9 @@ describe("ensureMigrated", () => {
     // 多次 busy / migrated 之后，池里没有任何会话还拿着这把锁
     const held = await sql<{
       n: number;
-    }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted`.execute(db);
+    }>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`.execute(
+      db,
+    );
     expect(held.rows[0]?.n).toBe(0);
   });
 

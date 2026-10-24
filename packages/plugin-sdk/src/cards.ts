@@ -139,7 +139,8 @@ export function validateChannelCard(card: unknown): string[] {
   }
 }
 
-type Locale = "zh" | "en";
+/** A UI locale. */
+export type Locale = "zh" | "en";
 
 /**
  * 把模型可控的值（审批标题、输入预览、提问标题、回答摘要）放进代码里，退回文本里它们不会变成链接、强调或 HTML：

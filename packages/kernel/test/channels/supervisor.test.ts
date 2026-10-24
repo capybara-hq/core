@@ -48,14 +48,14 @@ let owner: Req;
 let orgId: string;
 let agentId: string;
 
-const cfg = (leaseTtlMs = TTL, scanIntervalMs = SCAN) =>
+const cfg = (leaseTtlMs = TTL, scanIntervalMs = SCAN, shareSlack = 1) =>
   runConfig(
     { pg: pgc.url, redis: rd.url },
     {
       plugins: [MODEL_FAKE, CHAN_MINI],
       http: { port: 0, publicUrl: "https://cap.example" },
       auth: { cookieSecure: false },
-      channels: { leaseTtlMs, scanIntervalMs, retryBaseMs: 100 },
+      channels: { leaseTtlMs, scanIntervalMs, shareSlack, retryBaseMs: 100 },
     },
   );
 
@@ -208,10 +208,13 @@ describe("渠道长连接选主（单进程）", () => {
       await waitFor(async () => im.active(id).length === 0, 10_000, "closed on stop");
     }
     const longTtl = 20_000;
-    a = await startKernel(cfg(longTtl, SCAN));
+    // A large share slack keeps b from claiming a share of a's connections (fair share would
+    // otherwise hand the newest one, this test's connection, to b before a stops)
+    const slack = 100;
+    a = await startKernel(cfg(longTtl, SCAN, slack));
     owner = await session(a, "owner");
     const id = await newConnection("graceful");
-    b = await startKernel(cfg(longTtl, SCAN));
+    b = await startKernel(cfg(longTtl, SCAN, slack));
     await sleep(SCAN * 5);
     expect(im.active(id)).toHaveLength(1);
     const before = streamsOf(id).length;

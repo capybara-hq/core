@@ -10,3 +10,9 @@ artifacts
 # 本地工作区与流程工具的临时文件（.claude/skills 软链要跟踪，只忽略 worktrees）
 .claude/worktrees/
 .superpowers/
+
+# Compose deployment: local secrets
+docker/.env
+docker/secrets/
+# check:sdk-api temp output (removed after each run)
+.sdk-api-tmp-*

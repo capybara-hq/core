@@ -101,6 +101,10 @@ interface Manifest {
   tools: Set<string>;
   /** permissions.ui.views：ctx.ui.view / action 只能用这些 id。 */
   uiViews: Set<string>;
+  /** permissions.hooks: ctx.hooks.on may only use these mount points. */
+  hooks: Set<string>;
+  /** permissions.policyHooks: `mode: "policy"` only on these mount points (M-1). */
+  policyHooks: Set<string>;
   caps: Set<string>;
   storage: boolean;
   models: boolean;
@@ -117,12 +121,22 @@ const strings = (n: Node | undefined, decls: Map<string, Node>): string[] => {
   });
 };
 
+/** Whether hook options are statically `{ mode: "policy" }` (object literal or same-file const). */
+function policyMode(opts: Node | undefined, decls: Map<string, Node>): boolean {
+  const o = opts ? resolve(opts, decls) : undefined;
+  if (o?.type !== "ObjectExpression") return false;
+  const mode = prop(o, "mode")?.value as Node | undefined;
+  return mode !== undefined && stringValue(resolve(mode, decls)) === "policy";
+}
+
 function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
   const m: Manifest = {
     secrets: false,
     http: new Set(),
     tools: new Set(),
     uiViews: new Set(),
+    hooks: new Set(),
+    policyHooks: new Set(),
     caps: new Set(),
     storage: false,
     models: false,
@@ -140,6 +154,10 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     m.storage = !!storage && (resolve(storage.value as Node, decls) as Node).value === true;
     m.models = !!prop(pe, "models");
     for (const t of strings(prop(pe, "tools")?.value as Node | undefined, decls)) m.tools.add(t);
+    for (const h of strings(prop(pe, "hooks")?.value as Node | undefined, decls)) m.hooks.add(h);
+    for (const h of strings(prop(pe, "policyHooks")?.value as Node | undefined, decls)) {
+      m.policyHooks.add(h);
+    }
     const ui = prop(pe, "ui");
     const ue = ui ? resolve(ui.value as Node, decls) : undefined;
     if (ue?.type === "ObjectExpression") {
@@ -279,6 +297,23 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
               `UI view "${id}" is not declared; add it to permissions.ui.views (and ui) in the plugin manifest`,
             );
           }
+        } else if (area === "hooks" && method === "on") {
+          const mount = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
+          if (mount === undefined) return dynamic(n, "perm-hooks", "the hook mount point");
+          if (!m.hooks.has(mount)) {
+            add(
+              n,
+              "perm-hooks",
+              `Hook "${mount}" is not declared; add it to permissions.hooks in the plugin manifest`,
+            );
+          } else if (policyMode(args[2], decls) && !m.policyHooks.has(mount)) {
+            // a non-literal mode is left to the runtime check (PluginPermissionError)
+            add(
+              n,
+              "perm-hooks",
+              `Policy hook "${mount}" is not declared; add it to permissions.policyHooks in the plugin manifest`,
+            );
+          }
         } else if (area === "capabilities" && (method === "get" || method === "list")) {
           const ref = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
           if (ref === undefined) return dynamic(n, "perm-capability", "the capability ref");
@@ -318,10 +353,12 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
           name === "http" ||
           name === "tools" ||
           name === "capabilities" ||
-          name === "ui"
+          name === "ui" ||
+          name === "hooks"
         ) {
           // 只有 ctx.http.route / ctx.tools.register / ctx.capabilities.get|list /
           // ctx.ui.view|action|invalidate|verifyEmbedToken 能被确认，其余写法无法确认
+          // (likewise only ctx.hooks.on is confirmable)
           const rule =
             name === "http"
               ? "perm-http"
@@ -329,13 +366,16 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
                 ? "perm-tools"
                 : name === "ui"
                   ? "perm-ui"
-                  : "perm-capability";
+                  : name === "hooks"
+                    ? "perm-hooks"
+                    : "perm-capability";
           const outer = parent;
           const ok =
             outer?.type === "MemberExpression" &&
             outer.object === n &&
             ((name === "http" && memberName(outer) === "route") ||
               (name === "tools" && memberName(outer) === "register") ||
+              (name === "hooks" && memberName(outer) === "on") ||
               (name === "capabilities" && ["get", "list"].includes(memberName(outer) ?? "")) ||
               (name === "ui" &&
                 ["view", "action", "invalidate", "verifyEmbedToken"].includes(
@@ -372,6 +412,9 @@ function scanFile(f: ParsedFile): Finding[] {
  * - perm-capability：ctx.capabilities.get|list(ref) 的 ref 不在 requires / optional / provides 里；
  * - perm-ui：ctx.ui.view|action(id) 的 id 不在 permissions.ui.views 里；
  * - perm-storage：用了 ctx.storage 而 permissions.storage 不是 true；
+ * - perm-hooks: the mount point of ctx.hooks.on(mount, …) is not in permissions.hooks (the mount
+ *   point must be a string literal or a same-file const, like the names below), or the options are
+ *   `{ mode: "policy" }` and the mount point is not in permissions.policyHooks;
  * - perm-reserved：用了尚未提供的 ctx.models。
  * 路由路径、工具名、能力 ref、界面 id 须是字符串字面量或本文件的 const；动态的写法报「无法静态确认」，
  * 豁免：`// capybara:allow-dynamic-permission <原因>`（行尾或紧邻上一行，原因必填）。

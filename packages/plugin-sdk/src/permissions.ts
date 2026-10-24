@@ -1,3 +1,4 @@
+import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
 import type { UiContribution } from "./ui.js";
 
 /** 插件权限清单：治理而非沙箱，未声明的平台能力访问抛 PluginPermissionError。 */
@@ -8,8 +9,17 @@ export interface PluginPermissions {
   http?: { method: "GET" | "POST" | "PUT" | "DELETE"; path: string; public?: boolean }[];
   /** ctx.tools.register 的工具名。 */
   tools?: string[];
-  /** 预留（M6），只校验挂载点名（见 {@link HOOK_MOUNT_POINTS}）。 */
+  /**
+   * Hook mount points (`ctx.hooks.on`). From M7, five mount points are registrable; see
+   * `HOOKS_AVAILABLE`.
+   */
   hooks?: HookMountPoint[];
+  /**
+   * Mount points where the plugin registers `policy` hooks (each must also be in `hooks`; only
+   * `POLICY_HOOKS`). Deployment state reads it: while the plugin is enabled and approved but not loaded
+   * on a replica, calls on these mount points fail closed there.
+   */
+  policyHooks?: PolicyHook[];
   /** 预留：模型用途，键须为 `<插件名>.<名称>`。 */
   models?: { purpose: string; kind: "chat" | "embedding"; label: { zh: string; en: string } }[];
   /** ctx.storage（对象存储，键限定在 `plugins/<插件名>/<orgId>/` 下）。 */
@@ -56,7 +66,18 @@ export class CapabilityUnavailableError extends Error {
   }
 }
 
-const KEYS = new Set(["secrets", "http", "tools", "hooks", "models", "storage", "network", "ui"]);
+const KEYS = new Set([
+  "secrets",
+  "http",
+  "tools",
+  "hooks",
+  "policyHooks",
+  "models",
+  "storage",
+  "network",
+  "ui",
+]);
+const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 
@@ -97,6 +118,18 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
         errs.push(
           `permissions.hooks has unknown hook "${h}" (allowed: ${HOOK_MOUNT_POINTS.join(", ")})`,
         );
+      }
+    }
+  }
+  if (p.policyHooks !== undefined) {
+    const declared = Array.isArray(p.hooks) ? p.hooks : [];
+    for (const h of strList("permissions.policyHooks", p.policyHooks, errs)) {
+      if (!POLICY.has(h)) {
+        errs.push(
+          `permissions.policyHooks has "${h}", which takes no policy hooks (allowed: ${POLICY_HOOKS.join(", ")})`,
+        );
+      } else if (!declared.includes(h)) {
+        errs.push(`permissions.policyHooks has "${h}", which is missing from permissions.hooks`);
       }
     }
   }

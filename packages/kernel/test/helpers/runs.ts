@@ -5,6 +5,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelDb } from "../../src/db/kernel-schema.js";
 import { createKernel, type Kernel, type KernelOptions } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { runJobId } from "../../src/runtime/run-queue.js";
 import { asUser, cookieJar } from "./http.js";
 import { MODEL_FAKE } from "./model-plugins.js";
 
@@ -228,7 +229,33 @@ export async function runsOf(
     .execute();
 }
 
-/** 可从外部放行的闸门。 */
+/**
+ * Wait until the BullMQ job that ran `runId` has finished (run jobs use `removeOnComplete` /
+ * `removeOnFail`, so finished = gone). The job id is `runs.job_id` for resumed runs, else derived from
+ * the trigger message. Use it after a run reads `waiting`: `WaitsService.suspend()` sets `waiting`
+ * first, then schedules the timeout and re-checks whether the wait is already settled (resuming if
+ * so), all inside the job. Only once the job is gone is the run idle in `waiting`.
+ */
+export async function waitForRunJobDone(
+  db: KernelDb,
+  queue: { getJob(id: string): Promise<unknown> },
+  runId: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const run = await db
+    .selectFrom("runs")
+    .select(["conversation_id", "trigger_seq", "job_id"])
+    .where("id", "=", runId)
+    .executeTakeFirstOrThrow();
+  const jobId = run.job_id ?? runJobId(run.conversation_id, Number(run.trigger_seq));
+  await waitFor(
+    async () => (await queue.getJob(jobId)) == null,
+    timeoutMs,
+    `run job ${jobId} done`,
+  );
+}
+
+/** A gate that can be opened from outside. */
 export function gate(): { promise: Promise<void>; open: () => void } {
   let open!: () => void;
   const promise = new Promise<void>((r) => {

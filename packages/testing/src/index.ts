@@ -1,4 +1,5 @@
 export {
+  createFreshDatabase,
   startTestPostgres,
   startTestRedis,
   startTestS3,
@@ -9,6 +10,7 @@ export {
 export {
   createDualReplicaHarness,
   type DualReplicaOptions,
+  type ExtraReplicaHandle,
   type Harness,
   REPLICA_HEADER,
   type ReplicaHandle,
@@ -22,6 +24,7 @@ export {
 } from "./fake-catalog.js";
 export {
   FAKE_CHANNEL_BAD_SECRET,
+  FAKE_WEBHOOK_SIGNATURE_HEADER,
   type FakeChannelPost,
   type FakeChannelSent,
   type FakeChannelServer,
@@ -34,6 +37,9 @@ export {
   fakeDirectoryMember,
   fakeDm,
   fakeGroupMessage,
+  fakeWebhookChallenge,
+  fakeWebhookEvents,
+  signFakeWebhook,
   startFakeChannelServer,
 } from "./fake-channel.js";
 export {
@@ -45,6 +51,7 @@ export {
   startFakeE2B,
 } from "./fake-e2b.js";
 export {
+  encryptLarkWebhook,
   type FakeLarkAck,
   type FakeLarkApi,
   type FakeLarkButton,
@@ -58,6 +65,7 @@ export {
   findLarkButton,
   larkCardAction,
   larkMessageEvent,
+  signLarkWebhook,
   startFakeLark,
 } from "./fake-lark.js";
 export {
@@ -107,8 +115,11 @@ export {
   type FakeSlackServer,
   type FakeSlackUser,
   findSlackButton,
+  signSlackWebhook,
   slackBlockAction,
   slackDmEvent,
+  slackEventCallback,
+  slackInteractiveForm,
   slackMentionEvent,
   startFakeSlack,
 } from "./fake-slack.js";

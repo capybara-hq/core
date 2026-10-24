@@ -1,60 +1,60 @@
 ---
 name: writing-web-ui
-description: 在 apps/web 或 packages/design 下新增或修改界面时使用：页面 = 页面模板 + design 组件，哪个页面用哪个模板、ListPage + DataTable 与 FormPage + FormSection + ActionRow 的骨架、check:web-ui 禁止事项（className / style / .css / 颜色字面量 / 底层 UI 包）、新增组件或模板的变更流程，以及 /dev/ui 与截图测试（visual-update）的用法。
+description: 'Use when adding or changing UI under apps/web or packages/design: page = page template + design components, which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).'
 ---
 
-# 写界面
+# Writing UI
 
-规范：`docs/design/spec.md`（唯一规范）。实现：`packages/design`（`@capybara-hq/design`），`apps/web` 只消费它。
-视觉真值是 `/dev/ui` 目录页与入库的截图基准（`apps/web/visual/`）；`docs/design/reference/`（画布导出）目前没有，不要找。
+Spec: `docs/design/spec.md` (the only spec). Implementation: `packages/design` (`@capybara-hq/design`); `apps/web` only consumes it.
+The visual source of truth is the `/dev/ui` catalog page and the committed screenshot baselines (`apps/web/visual/`); `docs/design/reference/` (canvas export) does not exist at the moment, so don't look for it.
 
-## 核心规则
+## Core rules
 
-**页面 = 模板 + design 组件。** `apps/web` 不写样式：没有 `className`、`style`、`.css`、颜色字面量；排版用 `Stack` / `Grid` / `Card` / `Text`，颜色只来自 design 的 token。缺组件时先去 design 包补（见下文「新增组件或模板」），不要在页面里临时造。
+**Page = template + design components.** `apps/web` writes no styles: no `className`, `style`, `.css` or color literals; lay out with `Stack` / `Grid` / `Card` / `Text`, and colors come only from design tokens. When a component is missing, add it to the design package first (see "Adding a component or template" below); don't improvise one in a page.
 
-## 选模板（spec §5）
+## Choosing a template (spec §5)
 
-| 页面 | 模板 | 要点 |
+| Page | Template | Notes |
 |---|---|---|
-| 组织首页、Agent 概要 | `OverviewPage` | Single |
-| Agents / 知识库 / 插件 / 成员列表 | `ListPage` | Rail（可选分面筛选）+ 一个 `DataTable` |
-| Agent / 知识库 / 插件详情 | `DetailPage` | Content + Inspector，带 PageTabs |
-| 新建 / 编辑对象 | `FormPage` | Centered，`FormSection` 分组，始终有 ActionRow |
-| 组织 / 环境 / 安全设置 | `SettingsPage` | 二级导航 + Centered，有改动时 ActionRow |
-| 人工审批、告警处理 | `InboxPage` | Rail + Content (+ Inspector) |
-| 对话试运行 Agent | `PlaygroundPage` | Content + Inspector（实时链路） |
-| 单次运行详情 | `TracePage` | Span 瀑布 + 详情 |
-| 首次接入模型 / 连接器 / 插件 | `WizardPage` | Centered + 步骤条，上一步 / 下一步 |
-| 登录、初始化、接受邀请 | `AuthPage` | 无 Shell |
-| 404 / 403 / 维护中 | `StatusPage` | Single 居中 |
-| 新组织、空环境 | `OnboardingPage` | Single 居中清单 |
+| Org home, Agent summary | `OverviewPage` | Single |
+| Agents / knowledge bases / plugins / members lists | `ListPage` | Rail (optional facet filters) + one `DataTable` |
+| Agent / knowledge base / plugin detail | `DetailPage` | Content + Inspector, with PageTabs |
+| Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
+| Org / environment / security settings | `SettingsPage` | Secondary nav + Centered, ActionRow when there are changes |
+| Human approval, alert handling | `InboxPage` | Rail + Content (+ Inspector) |
+| Trial-run an Agent in a conversation | `PlaygroundPage` | Content + Inspector (live trace) |
+| Single run detail | `TracePage` | Span waterfall + detail |
+| First-time setup of a model / connector / plugin | `WizardPage` | Centered + step bar, previous / next |
+| Login, initialization, accept invitation | `AuthPage` | No Shell |
+| 404 / 403 / under maintenance | `StatusPage` | Single, centered |
+| New org, empty environment | `OnboardingPage` | Single, centered checklist |
 
-### 管理后台、评测与企业目录用哪些模板（M6 的现成例子）
+### Templates for the admin console, evals and the enterprise directory (ready-made M6 examples)
 
-| 页面 | 路由 | 模板 |
+| Page | Route | Template |
 |---|---|---|
-| 后台概览 | `/admin` | `OverviewPage` |
-| 账号、组织、插件、企业目录条目、清单浏览 | `/admin/accounts`、`/admin/orgs`、`/admin/plugins`、`/admin/directory`、`/admin/directory/catalog` | `ListPage` |
-| 插件详情、目录条目详情 | `/admin/plugins/[name]`、`/admin/directory/[itemId]` | `DetailPage`（概要 / 权限 / 配置等用 PageTabs） |
-| 安装插件、应用包审阅 | `/admin/plugins/install`、`/admin/directory/apps/review` | `WizardPage` |
-| 部署设置、模型与价格、目录来源 | `/admin/settings`、`/admin/models`、`/admin/directory/sources` | `SettingsPage` |
-| 待企业管理员决定的目录申请 | `/admin/directory/requests` | `InboxPage` |
-| 轨迹列表 / 评测集列表 | `/trajectories`、`/evals` | `ListPage` |
-| 轨迹详情、评测用例 | `/trajectories/[conversationId]`、`/evals/[setId]/cases/[caseId]` | `TracePage`：`waterfall` 放 `SpanWaterfall`，`detail` 放选中 span 的详情 |
-| 评测集、评测运行 | `/evals/[setId]`、`/evals/runs/[runId]` | `DetailPage` |
-| 新建评测集 / 发起运行 | `/evals/new`、`/evals/[setId]/run` | `FormPage` / `WizardPage` |
-| 组织侧的企业目录、条目详情、安装 | `/directory`、`/directory/[itemId]`、`/directory/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
+| Admin console overview | `/admin` | `OverviewPage` |
+| Accounts, orgs, plugins, enterprise directory items, catalog browsing | `/admin/accounts`, `/admin/orgs`, `/admin/plugins`, `/admin/directory`, `/admin/directory/catalog` | `ListPage` |
+| Plugin detail, directory item detail | `/admin/plugins/[name]`, `/admin/directory/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
+| Install a plugin, app bundle review | `/admin/plugins/install`, `/admin/directory/apps/review` | `WizardPage` |
+| Deployment settings, models and prices, directory sources | `/admin/settings`, `/admin/models`, `/admin/directory/sources` | `SettingsPage` |
+| Directory requests awaiting an enterprise admin decision | `/admin/directory/requests` | `InboxPage` |
+| Trajectory list / eval set list | `/trajectories`, `/evals` | `ListPage` |
+| Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
+| Eval set, eval run | `/evals/[setId]`, `/evals/runs/[runId]` | `DetailPage` |
+| Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
+| Org-side enterprise directory, item detail, install | `/directory`, `/directory/[itemId]`, `/directory/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
 
-- 后台页面整页包在 `components/AdminGate` 里：不是企业管理员时显示 `StatusPage` 403、不请求 `/api/v1/admin/*`（界面拦截，最终以内核为准）。界面上一律称「企业管理员」。
-- **`SpanWaterfall`**（spec §6.10）只收普通 props（`spans`、`selectedId`、`onSelect`、`labels`、`label`）：span 的 `kind`（`run` / `step` / `model` / `tool` / `wait`）、`startMs`（相对最早 span）、`durationMs`（未知 null）、`status`、`parentId`，调用方按深度优先顺序传入；时间与成本由页面按内核返回的数据算好（延迟由事件时间推出、成本标「估算」）。
-- 权限审阅（安装确认页、组织插件设置、应用包审阅）共用 `components/PermissionReview`；用途映射共用 `components/PurposeEditor`。不要在页面里另画一份。
-- `ListPage` 的主表之后可以附一个从属区块（`h2` + 一个 `DataTable`，如成员页的邀请），见 spec §5.1。
+- Admin console pages are wrapped whole in `components/AdminGate`: for non-enterprise-admins it shows the `StatusPage` 403 and does not request `/api/v1/admin/*` (a UI-level block; the kernel is the final authority). The UI always says "enterprise admin".
+- **`SpanWaterfall`**(spec §6.10)takes only plain props (`spans`, `selectedId`, `onSelect`, `labels`, `label`): each span's `kind` (`run` / `step` / `model` / `tool` / `wait`), `startMs` (relative to the earliest span), `durationMs` (null if unknown), `status`, `parentId`; the caller passes them in depth-first order. The page computes time and cost from the data the kernel returns (latency is derived from event times; cost is labeled "estimated").
+- Permission review (install confirmation page, org plugin settings, app bundle review) shares `components/PermissionReview`; the purpose mapping shares `components/PurposeEditor`. Don't draw a second copy in a page.
+- After the main table, a `ListPage` may carry a subordinate block (an `h2` + one `DataTable`, e.g. invitations on the members page); see spec §5.1.
 
-提交操作放 ActionRow（`FormPage`、`WizardPage` 等自带），**不得**放 PageHeader；视图内至多一个 `variant: "primary"`，指标 ≤5（`PageHeader` 在开发与测试里会抛错）。
+Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 
-## 骨架示例
+## Skeleton examples
 
-列表（`apps/web/src/app/[locale]/(app)/agents/page.tsx` 是真实例子）：
+List (`apps/web/src/app/[locale]/(app)/agents/page.tsx` is a real example):
 
 ```tsx
 "use client";
@@ -90,7 +90,7 @@ export default function AgentsPage() {
 }
 ```
 
-表单（真实例子：`agents/new/page.tsx`、`components/AgentForm.tsx`）：
+Form (real examples: `agents/new/page.tsx`, `components/AgentForm.tsx`):
 
 ```tsx
 import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design";
@@ -113,49 +113,49 @@ import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design
 </FormPage>
 ```
 
-`ActionRowProps`：`{ unsaved?, errors?, cancel?, secondary?, primary }`，按钮规格 `{ label, onSelect, shortcut?, loading?, disabled? }`。示例中控件的具体 props 以 `packages/design/src/controls` 与 `/dev/ui` 为准（`Field` 会把标签、帮助、错误的 aria 关联传给子控件）。页面状态文案用 `useStatusBar(...)`；toast 用 `useToast()`；站内链接走 `DesignProvider` 的 `link`（apps/web 已传入 next-intl 的 `Link`）。
+`ActionRowProps`: `{ unsaved?, errors?, cancel?, secondary?, primary }`; button spec `{ label, onSelect, shortcut?, loading?, disabled? }`. For the exact props of the controls in the examples, `packages/design/src/controls` and `/dev/ui` are authoritative (`Field` passes the aria associations for label, help and error to its child control). Use `useStatusBar(...)` for page status text; `useToast()` for toasts; in-app links go through the `DesignProvider` `link` (apps/web already passes next-intl's `Link`).
 
-文案走 next-intl（`apps/web/messages/{zh,en}.json`）；design 内部文案走 design 自己的 i18n。
+UI text goes through next-intl (`apps/web/messages/{zh,en}.json`); text inside design goes through design's own i18n.
 
-## 禁止事项（与 `pnpm check:web-ui` 规则一一对应）
+## Forbidden (maps one-to-one to the `pnpm check:web-ui` rules)
 
-规则实现：`tools/checks/src/web-ui.ts`；每条都有违规 fixture 测试。
+Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fixture test.
 
-| 规则 id | 禁止 | 改成 |
+| Rule id | Forbidden | Use instead |
 |---|---|---|
-| `web-ui-import` | 导入黑名单包：`@radix-ui/*`、`cmdk`、`@emotion/*`、`@stitches/*`、`@vanilla-extract/*`、`@mui/*`、`@chakra-ui/*`、`@mantine/*`、`@headlessui/*`、`styled-components`、`antd`、`tailwindcss`、`tailwind-merge`、`clsx`、`classnames`、`class-variance-authority`、`styled-jsx`、`lucide-react`、`react-icons`；导入除 `@capybara-hq/design/styles.css` 之外的 `.css` | 用 design 导出的组件；缺就先在 design 包里补 |
-| `web-ui-class-name` | `className` / `class` 属性（含 `{...{ className }}` 展开、`createElement` / `jsx` 的 props 对象） | 用 design 组件或 `Stack` / `Grid` / `Card` / `Text` |
-| `web-ui-style` | `style` / `dangerouslySetInnerHTML` 属性、`<style>` 元素（同样包括展开与 `createElement`） | 同上；需要新样式时加到 design 包 |
-| `web-ui-iframe` | `<iframe>` 元素、`createElement("iframe")` | 用 `EmbedFrame`（sandbox 固定 `allow-scripts allow-forms`，只转发本 iframe 的 `message`） |
-| `web-ui-color` | 任何颜色写法：`#hex`、`rgb()` / `rgba()`、`hsl()` / `hsla()`、`hwb()`、`lab()` / `lch()` / `oklab()` / `oklch()`、`color()`、`color-mix()` | 颜色只来自 design token |
-| `web-ui-css-file` | `apps/web/src` 下出现 `.css` 文件 | 样式写进 `packages/design` |
-| `web-ui-template` | `src/app/**/page.tsx` 没有渲染「从 `@capybara-hq/design` 导入」的 12 个模板之一 | 选 §5 的模板作为骨架 |
-| `design-color-literal` | `packages/design/src` 里除 `styles/tokens.css` 外出现 `#hex` / `rgb()` / `hsl()`（CSS 与 TS 字符串都查；`color-mix()` 引用 token 是允许的） | 在 `tokens.css` 定义 token，用 `var(--cb-…)` |
+| `web-ui-import` | Importing blacklisted packages: `@radix-ui/*`, `cmdk`, `@emotion/*`, `@stitches/*`, `@vanilla-extract/*`, `@mui/*`, `@chakra-ui/*`, `@mantine/*`, `@headlessui/*`, `styled-components`, `antd`, `tailwindcss`, `tailwind-merge`, `clsx`, `classnames`, `class-variance-authority`, `styled-jsx`, `lucide-react`, `react-icons`; importing any `.css` other than `@capybara-hq/design/styles.css` | Use components exported by design; if one is missing, add it to the design package first |
+| `web-ui-class-name` | `className` / `class` attributes (including `{...{ className }}` spreads and the props object of `createElement` / `jsx`) | Use design components or `Stack` / `Grid` / `Card` / `Text` |
+| `web-ui-style` | `style` / `dangerouslySetInnerHTML` attributes, `<style>` elements (spreads and `createElement` included too) | Same as above; when new styles are needed, add them to the design package |
+| `web-ui-iframe` | `<iframe>` elements, `createElement("iframe")` | Use `EmbedFrame` (sandbox fixed to `allow-scripts allow-forms`, forwards only this iframe's `message`) |
+| `web-ui-color` | Any color notation: `#hex`, `rgb()` / `rgba()`, `hsl()` / `hsla()`, `hwb()`, `lab()` / `lch()` / `oklab()` / `oklch()`, `color()`, `color-mix()` | Colors come only from design tokens |
+| `web-ui-css-file` | a `.css` file under `apps/web/src` | Put styles in `packages/design` |
+| `web-ui-template` | a `src/app/**/page.tsx` that renders none of the 12 templates "imported from `@capybara-hq/design`" | Pick a §5 template as the skeleton |
+| `design-color-literal` | `#hex` / `rgb()` / `hsl()` in `packages/design/src` outside `styles/tokens.css` (both CSS and TS strings are checked; `color-mix()` referencing tokens is allowed) | Define a token in `tokens.css` and use `var(--cb-…)` |
 
-`web-ui-template` 的两处豁免：`app/[locale]/dev/**`（开发用目录页，其余规则照常检查）；以及只负责 404 的 page —— 不含任何 JSX、调用从 `next/navigation` 导入的 `notFound()`（如 `(app)/[...rest]/page.tsx`），页面由同段 `not-found.tsx` 的 `StatusPage` 渲染。不要借这个豁免写别的页面。
+`web-ui-template` has two exemptions: `app/[locale]/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.
 
-`web-ui-iframe` 是静态检查，只认得字面量：`<iframe>` 与 `createElement("iframe")`。动态标签（`const Tag = "iframe"; <Tag />`、`createElement(tag)`、`document.createElement` 拼出的名字）它看不出来，但规则照样适用——不要这样绕过，评审时按违规处理。
+`web-ui-iframe` is a static check and only recognizes literals: `<iframe>` and `createElement("iframe")`. It cannot see dynamic tags (`const Tag = "iframe"; <Tag />`, `createElement(tag)`, names assembled for `document.createElement`), but the rule applies all the same -- don't work around it this way; review treats it as a violation.
 
-测试文件（`*.test.*`）不受检查。包导入规则是黑名单：引入新的样式 / UI 类依赖时，要把它加进 `FORBIDDEN_PKG`。
+Test files (`*.test.*`) are not checked. The package import rule is a blacklist: when introducing a new style / UI dependency, add it to `FORBIDDEN_PKG`.
 
-## 新增组件或模板
+## Adding a component or template
 
-按顺序，不要跳步（spec §10）：
+In order, don't skip steps (spec §10):
 
-1. **改规格**：`docs/design/spec.md`（组件改 §6，模板改 §5，token 改 §2），评审确认；有画布则同步画布。
-2. **实现**：`packages/design/src/…`，从 `src/index.ts`（或对应子目录的 `index.ts`）导出；样式写在 `src/styles/*.css`，颜色用 token；补测试（`packages/design/test/`，jsdom），覆盖状态、键盘、aria。新模板还要加进 `src/templates/names.ts` 的 `PAGE_TEMPLATES` 与 `tools/checks/src/web-ui.ts` 的 `WEB_UI_TEMPLATES`（测试保证两者一致）。
-3. **目录页**：在 `apps/web/src/dev/catalog` 里加该组件的全部状态 / 该模板的整页（固定假数据，深浅两套）。
-4. **更新截图基准**：入库基准只含 Linux 版，必须在 PR 分支上触发 GitHub Actions 的 `visual-update` 工作流（`workflow_dispatch`，`branch` 输入填分支名），它在固定的 Playwright Docker 镜像里生成并提交；PR 附差异图，经确认后合入。本地 darwin 截图（`*-darwin.png`）被 gitignore，只用于本地对照，不要提交。
+1. **Change the spec**: `docs/design/spec.md` (components in §6, templates in §5, tokens in §2), confirmed by review; sync the canvas if there is one.
+2. **Implement**: `packages/design/src/…`, exported from `src/index.ts` (or the `index.ts` of the matching subdirectory); write styles in `src/styles/*.css` with tokens for colors; add tests (`packages/design/test/`, jsdom) covering states, keyboard and aria. A new template must also be added to `PAGE_TEMPLATES` in `src/templates/names.ts` and `WEB_UI_TEMPLATES` in `tools/checks/src/web-ui.ts` (a test keeps the two consistent).
+3. **Catalog page**: in `apps/web/src/dev/catalog`, add all states of the component / the full page of the template (fixed fake data, light and dark).
+4. **Update the screenshot baselines**: committed baselines contain only the Linux version, so trigger the GitHub Actions `visual-update` workflow on the PR branch (`workflow_dispatch`, with the branch name as the `branch` input); it generates and commits them inside the pinned Playwright Docker image. The PR attaches the diff images and merges after confirmation. Local darwin screenshots (`*-darwin.png`) are gitignored and only for local comparison; don't commit them.
 
-## 怎么跑
+## How to run
 
 ```bash
-pnpm vitest run --project design          # design 包的组件测试
-pnpm check:web-ui                         # 界面规范检查（pnpm check 已包含）
-pnpm --filter @capybara-hq/web dev        # 开发；/zh/dev/ui 是组件目录页
-CAPYBARA_DEV_UI=1 pnpm --filter @capybara-hq/web start   # 生产构建下启用 /dev/ui（默认关闭）
-pnpm --filter @capybara-hq/web visual     # 截图回归（自行 next build + start；本地 darwin 与基准不同，仅供对照）
-pnpm --filter @capybara-hq/web e2e        # 真实栈 e2e（Testcontainers，需 Docker）
+pnpm vitest run --project design          # component tests of the design package
+pnpm check:web-ui                         # UI rule check (already part of pnpm check)
+pnpm --filter @capybara-hq/web dev        # development; /zh/dev/ui is the component catalog page
+CAPYBARA_DEV_UI=1 pnpm --filter @capybara-hq/web start   # enable /dev/ui in a production build (off by default)
+pnpm --filter @capybara-hq/web visual     # screenshot regression (runs next build + start itself; local darwin differs from the baselines, for comparison only)
+pnpm --filter @capybara-hq/web e2e        # real-stack e2e (Testcontainers, needs Docker)
 ```
 
-改 `apps/web` 前先读 `node_modules/next/dist/docs`（见 `apps/web/AGENTS.md`，Next 16 有破坏性变更）。
+Before changing `apps/web`, read `node_modules/next/dist/docs` (see `apps/web/AGENTS.md`; Next 16 has breaking changes).

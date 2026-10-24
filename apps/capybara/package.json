@@ -10,17 +10,22 @@
   "bin": {
     "capybara": "./bin/capybara.mjs"
   },
+  "files": [
+    "bin",
+    "dist"
+  ],
   "scripts": {
+    "build": "tsc -b",
     "start": "node bin/capybara.mjs start",
     "migrate": "node bin/capybara.mjs migrate"
   },
   "dependencies": {
     "@capybara-hq/kernel": "workspace:*",
     "@capybara-hq/plugin-object-store-s3": "workspace:*",
-    "@capybara-hq/plugin-openai-compatible": "workspace:*",
-    "tsx": "^4.23.15"
+    "@capybara-hq/plugin-openai-compatible": "workspace:*"
   },
   "devDependencies": {
-    "@capybara-hq/testing": "workspace:*"
+    "@capybara-hq/testing": "workspace:*",
+    "tsx": "^4.23.15"
   }
 }

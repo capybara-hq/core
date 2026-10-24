@@ -45,6 +45,7 @@ import {
   withPreApproved,
 } from "./approvals.js";
 import { PluginBlobIntegrityError } from "./blobs.js";
+import { DEFAULT_HOOK_TIMEOUT_MS, HookRegistry } from "./hooks.js";
 import { type InflightTracker, type TrackOptions, trackCalls } from "./inflight.js";
 import type { DesiredPlugin } from "./installs.js";
 import {
@@ -565,6 +566,17 @@ export class PluginHost {
 
   /** 本进程生效的插件实例（C17）：消费方每次实时取，不缓存实现对象。 */
   private readonly registry = new PluginRegistry();
+  /**
+   * M-1: plugin → mount points where deployment state expects `policy` hooks. A per-replica copy of PG
+   * deployment state (like the registry), rebuilt on every load / converge, never written elsewhere.
+   */
+  private policyExpected = new Map<string, readonly string[]>();
+  /**
+   * Runs the hooks of this process's active plugin instances (resolved from the registry on every
+   * call, so an upgrade fires only the new generation; calls go through each instance's in-flight
+   * tracker and are drained on revocation). Organization enablement is {@link enabledPlugins}.
+   */
+  readonly hooks: HookRegistry;
   /** 加载成功过的插件的加载参数（同进程重新加载用；撤销后保留，`unavailable` 据此判断）。 */
   private readonly specs = new Map<string, InstanceSpec>();
   /** 因必需能力没了而随提供方卸下的插件：提供方回来后重新加载。 */
@@ -657,6 +669,8 @@ export class PluginHost {
       disposeTimeoutMs?: () => number;
       /** 运行中重新加载时 setup 的时限（毫秒），默认 60s；内核传 `pluginHost.reloadSetupTimeoutSeconds`。 */
       reloadSetupTimeoutMs?: () => number;
+      /** Hook time limit in milliseconds, default 5 s; the kernel passes `hooks.timeoutMs` (hot). */
+      hookTimeoutMs?: () => number;
       /**
        * 安装记录里的插件名（T11 安装记录，任何 desired_state）：与内置、配置声明的一起构成「部署已知」的插件，
        * 不在本副本生效时它们的路由返回 503，完全未知的名字 404。缓存 {@link KNOWN_NAMES_TTL_MS}。
@@ -679,6 +693,16 @@ export class PluginHost {
     this.reloadSetupTimeoutMs =
       opts.reloadSetupTimeoutMs ?? (() => DEFAULT_RELOAD_SETUP_TIMEOUT_MS);
     this.installedNames = opts.installedNames;
+    const hookTimeoutMs = opts.hookTimeoutMs ?? (() => DEFAULT_HOOK_TIMEOUT_MS);
+    this.hooks = new HookRegistry({
+      instances: () => this.registry.all(),
+      current: (plugin) => this.registry.current(plugin),
+      expectedPolicy: (mount) => this.expectedPolicy(mount),
+      enabledPlugins: (orgId) => this.enabledPlugins(orgId),
+      redis: deps.redis,
+      config: () => ({ hooks: { timeoutMs: hookTimeoutMs() } }),
+      log: deps.log,
+    });
     this.registry.onChange(() => {
       this.installedCache = undefined;
     });
@@ -777,9 +801,9 @@ export class PluginHost {
     }
 
     let installProviders = new Map<CapabilityRef, string[]>();
+    let desired: DesiredPlugin[] | undefined;
     if (p.installs) {
       // 与运行中的 reconcile 走同一条路径（{@link converge}）；启动时不做依赖方连锁
-      let desired: DesiredPlugin[] | undefined;
       try {
         desired = await p.installs.desired();
       } catch (e) {
@@ -795,6 +819,7 @@ export class PluginHost {
     if (deferred.length > 0) {
       await this.loadDeferred(deferred, dirs, urls, snapshots, approvals, installProviders);
     }
+    await this.refreshPolicyExpectations(p.installs ? desired : []);
 
     const orphans = Object.keys(this.pluginConfig).filter((k) => !this.sources.has(k));
     if (orphans.length > 0) {
@@ -1590,9 +1615,62 @@ export class PluginHost {
       const loader = this.installLoader;
       if (!loader) return;
       const desired = await loader.desired();
+      // N-2: drop plugins no longer desired before applyInstalls unloads them (the drain can take
+      // pluginHost.drainSeconds; meanwhile a disabled policy plugin must not fail calls closed).
+      // Shrink only: plugins that are newly expected are added after they had their chance to load.
+      await this.refreshPolicyExpectations(desired, { shrinkOnly: true });
       await this.applyInstalls(loader, desired, false);
       if (this.pendingActivations.size > 0) await this.activatePendingNow();
+      await this.refreshPolicyExpectations(desired);
     });
+  }
+
+  /**
+   * Refreshes {@link policyExpected} from deployment state (M-1): builtin plugins from their manifest,
+   * config-declared plugins and enabled installs (`desired`) from their approved permission snapshot.
+   * `desired` undefined (install records unreadable) keeps the previous install entries.
+   * `shrinkOnly`: only remove entries (a plugin no longer desired or approved), never add new ones.
+   */
+  private async refreshPolicyExpectations(
+    desired: readonly DesiredPlugin[] | undefined,
+    opts: { shrinkOnly?: boolean } = {},
+  ) {
+    const snapshots = await new PluginApprovals(kernelDb(this.deps.db)).all();
+    const next = new Map<string, readonly string[]>();
+    const add = (name: string, set: PermissionSet | undefined) => {
+      const mounts = set?.permissions?.policyHooks ?? [];
+      if (mounts.length > 0) next.set(name, [...mounts]);
+    };
+    for (const [name, info] of this.declaredInfo) {
+      add(name, info.source === "builtin" ? info.set : snapshots.get(name)?.permissions);
+    }
+    const declared = this.declared();
+    if (desired === undefined) {
+      for (const [name, mounts] of this.policyExpected) {
+        if (!this.declaredInfo.has(name)) next.set(name, mounts);
+      }
+    } else {
+      for (const d of desired) {
+        if (!declared.has(d.name)) add(d.name, snapshots.get(d.name)?.permissions);
+      }
+    }
+    if (opts.shrinkOnly) {
+      for (const name of [...next.keys()]) {
+        if (!this.policyExpected.has(name)) next.delete(name);
+      }
+    }
+    this.policyExpected = next;
+  }
+
+  /**
+   * Plugins that deployment state expects to run `policy` hooks on the mount point (M-1): enabled and
+   * approved, with the mount in `permissions.policyHooks`. In-process, no I/O (see
+   * {@link refreshPolicyExpectations}); the hook registry fails calls closed for those not loaded here.
+   */
+  expectedPolicy(mount: string): string[] {
+    return [...this.policyExpected].flatMap(([name, mounts]) =>
+      mounts.includes(mount) ? [name] : [],
+    );
   }
 
   /**
@@ -1752,7 +1830,12 @@ export class PluginHost {
     return new Set([...this.sources].flatMap(([n, s]) => (s.source === "builtin" ? [n] : [])));
   }
 
-  /** 在该组织启用的插件：`plugin_org_configs.enabled` 加上全部内置插件；每次查询，不缓存。 */
+  /**
+   * 在该组织启用的插件：`plugin_org_configs.enabled` 加上全部内置插件；每次查询，不缓存。
+   * Cost (M-4): hooks call this on every run, so one PG query per model attempt and per tool call.
+   * Acceptable for now; if a cache is ever added, give it a short TTL so an org disabling a plugin
+   * takes effect quickly.
+   */
   async enabledPlugins(orgId: string): Promise<Set<string>> {
     const set = await queryEnabledPlugins(this.deps.db, orgId);
     for (const n of this.builtinNames()) set.add(n);

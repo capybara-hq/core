@@ -186,7 +186,7 @@ describe("createDb", () => {
       ]);
       expect(outcome).toMatch(/aborted/);
       const waiting = await holder.query<{ n: number }>(
-        "select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted",
+        "select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted and database = (select oid from pg_database where datname = current_database())",
       );
       expect(waiting.rows[0]?.n).toBe(0);
     } finally {

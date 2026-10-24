@@ -1,3 +1,4 @@
+import { webhookBaseUrlProblem } from "../channels/webhook-url.js";
 import { envOverrides } from "./env.js";
 import { fileSource } from "./file-source.js";
 import { createNacosSource, type NacosSourceOptions } from "./nacos-source.js";
@@ -81,6 +82,11 @@ export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfi
       (i) => `  - ${i.path.map(String).join(".") || "(root)"}: ${i.message}`,
     );
     throw new ConfigError(`invalid configuration:\n${lines.join("\n")}`);
+  }
+  // Cross-section rule (the loopback exception lives under `tools`)
+  const webhookProblem = webhookBaseUrlProblem(result.data);
+  if (webhookProblem !== null) {
+    throw new ConfigError(`invalid configuration:\n  - channels.webhookBaseUrl: ${webhookProblem}`);
   }
   return result.data;
 }

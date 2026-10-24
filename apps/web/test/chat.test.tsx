@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import { MessageList } from "../src/components/MessageList";
 import { AppFrame } from "../src/components/shell/AppFrame";
 import { Link, resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
@@ -611,5 +612,33 @@ describe("输入框：/ 斜杠命令与 @ 资源引用（MCP prompts / resources
     expect(await screen.findByText("@Handbook · Docs")).toBeTruthy();
     expect(screen.queryByText("Attached resource …")).toBeNull();
     expect(screen.queryByText("@Handbook")).toBeNull();
+  });
+});
+
+describe("MessageList: run.hook_denied", () => {
+  afterEach(cleanup);
+
+  it("names the plugin when the event carries one, and drops the name when it doesn't", () => {
+    const failed = (plugin?: string) => ({
+      kind: "failed" as const,
+      key: "f1",
+      text: "",
+      code: "run.hook_denied",
+      ...(plugin !== undefined && { plugin }),
+    });
+    for (const [locale, msgs] of [
+      ["en", en],
+      ["zh", zh],
+    ] as const) {
+      const named = renderPage(<MessageList orgId="o1" items={[failed("guard")]} />, { locale });
+      expect(named.container.textContent).toContain(
+        `✗ ${msgs.errors.run.hook_denied.replace("{plugin}", "guard")}`,
+      );
+      named.unmount();
+      const unnamed = renderPage(<MessageList orgId="o1" items={[failed()]} />, { locale });
+      expect(unnamed.container.textContent).toContain(`✗ ${msgs.errors.run.hook_denied_unknown}`);
+      expect(unnamed.container.textContent).not.toContain('"?"');
+      unnamed.unmount();
+    }
   });
 });

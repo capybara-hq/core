@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { syncPackage } from "../../src/plugins/sync.js";
+import { clearBrokenRoot, syncPackage } from "../../src/plugins/sync.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -117,6 +117,27 @@ describe("syncPackage", () => {
     await writeFile(join(root, "dist/index.mjs"), "partial");
     await syncPackage(dir, "sync-demo", digest, blobs);
     expect((await readdir(root)).sort()).toContain(".capybara-package.json");
+  });
+
+  it("clearBrokenRoot never deletes a root that became complete after the caller's check", async () => {
+    // Another process on the same volume renamed its complete directory in between our intact()
+    // check and the swap: it must survive (same inode), and nothing is left aside.
+    const url = await syncPackage(dir, "sync-demo", digest, blobs);
+    const root = join(dir, "sync-demo", digest.slice(0, 16));
+    const ino = (await stat(root)).ino;
+    const kept = await clearBrokenRoot(root, digest);
+    expect(kept?.sha256).toBe(digest);
+    expect((await stat(root)).ino).toBe(ino);
+    expect(await readdir(join(dir, "sync-demo"))).toEqual([digest.slice(0, 16)]);
+    expect(await syncPackage(dir, "sync-demo", digest, blobs)).toBe(url);
+  });
+
+  it("clearBrokenRoot moves a broken root aside and deletes it; a missing root is a no-op", async () => {
+    const root = join(dir, "sync-demo", digest.slice(0, 16));
+    await writeFile(join(root, "extra.txt"), "not in the marker");
+    expect(await clearBrokenRoot(root, digest)).toBeUndefined();
+    expect(await readdir(join(dir, "sync-demo"))).toEqual([]);
+    expect(await clearBrokenRoot(root, digest)).toBeUndefined();
   });
 
   it("名字或 sha256 不合法时拒绝（不落盘）", async () => {

@@ -1,30 +1,24 @@
 ---
 name: writing-apps
-description: 写企业目录里的连接器模板包（capybara.kind = connector-template）、技能包（kind = skill）或应用包（kind = app，app.yaml：插件 + 连接器模板 + 技能），或改内核的目录导入、组织安装与卸载（packages/kernel/src/directory）时使用：package.json 的 capybara 段、app.yaml 的 schema 与 lock（npm 名 + 范围 + 精确版本 + sha512）、editableEndpoint 与 defaultToolPolicies 怎么写、导入（prepare / confirm、deployPlugins）与组织安装 / 卸载的语义、JSON Schema 在 packages/plugin-sdk/schemas/、M6 不支持应用升级。写插件本身见 writing-plugins，写连接器插件见 writing-connectors。
+description: 'Use when writing a connector template package (capybara.kind = connector-template), a skill package (kind = skill) or an app bundle (kind = app, app.yaml: plugins + connector templates + skills) for the enterprise directory, or when changing the kernel''s directory import and org install / uninstall (packages/kernel/src/directory): the capybara section of package.json, the app.yaml schema and lock (npm name + range + exact version + sha512), how to write editableEndpoint and defaultToolPolicies, the semantics of import (prepare / confirm, deployPlugins) and org install / uninstall, the JSON Schemas in packages/plugin-sdk/schemas/, and that M6 does not support app upgrades. For writing a plugin itself see writing-plugins; for writing a connector plugin see writing-connectors.'
 ---
 
-# 写应用包与连接器模板
+# Writing app bundles and connector templates
 
-企业目录（D9 / D16 / D17）里的包统一是 npm-pack tgz，`package.json` 带 `capybara` 段，`kind` 四种（C21）：
+Packages in the enterprise directory (D9 / D16 / D17) are uniformly npm-pack tgz files whose `package.json` carries a `capybara` section, with four `kind`s (C21):
 
-| kind | 内容 | 条目名 | 谁装 |
+| kind | Content | Item name | Who installs |
 |---|---|---|---|
-| `plugin` | 插件包（见 `.agents/skills/writing-plugins`「插件包」） | 插件清单名 | 企业管理员装到部署；组织「安装」= 在本组织启用 |
-| `connector-template` | 连接器模板：引用一个连接器插件，预设端点与认证（不含凭据） | 去掉 scope 的 npm 包名 | 组织管理员（填凭据即建连接器） |
-| `skill` | 技能：包根放 `SKILL.md` 与其他文件 | `SKILL.md` 的 `name` | 组织管理员（导入为组织技能） |
-| `app` | 应用：`app.yaml` 组合插件 + 连接器模板 + 技能 | `app.yaml` 的 `name` | 企业管理员导入（一次审阅全部插件权限）；组织管理员安装 |
+| `plugin` | A plugin package (see "Plugin packages" in `.agents/skills/writing-plugins`) | the plugin manifest name | An enterprise admin installs it to the deployment; an org "install" = enable in this org |
+| `connector-template` | A connector template: references a connector plugin and presets the endpoint and auth (no credentials) | the npm package name without the scope | An org admin (a connector is created once credentials are filled in) |
+| `skill` | A skill: `SKILL.md` and other files at the package root | the `name` in `SKILL.md` | An org admin (imported as an org skill) |
+| `app` | An app bundle: `app.yaml` combines plugins + connector templates + skills | the `name` in `app.yaml` | An enterprise admin imports it (all plugin permissions reviewed at once); an org admin installs it |
 
-连接器模板与技能另接受 zip（根目录放 `package.json`）。非插件包一律不许安装脚本、`dependencies` / `peerDependencies`
-等依赖字段（不执行、不安装）；`version` 必须是 semver。格式与校验是 SDK 的纯函数：`packages/plugin-sdk/src/plugin-package.ts`
-（`parsePackageSection`、`validateConnectorTemplate`）、`app-manifest.ts`（`parseAppManifest`）、`catalog.ts`（清单）。
-内核读包在 `packages/kernel/src/directory/archive.ts`（包一律当作恶意输入，全部校验通过之前什么都不写）。
+Connector templates and skills also accept zip (with `package.json` at the root). Non-plugin packages are never allowed install scripts or dependency fields such as `dependencies` / `peerDependencies` (nothing is executed or installed); `version` must be semver. The format and validation are pure functions in the SDK: `packages/plugin-sdk/src/plugin-package.ts` (`parsePackageSection`, `validateConnectorTemplate`), `app-manifest.ts` (`parseAppManifest`), `catalog.ts` (catalogs). The kernel reads packages in `packages/kernel/src/directory/archive.ts` (a package is always treated as malicious input, and nothing is written until all validation passes).
 
-**JSON Schema**：`packages/plugin-sdk/schemas/app.v1.schema.json`（`app.yaml`）与 `catalog-index.v1.schema.json`（目录清单
-`index.json`）由 `pnpm gen:package-schemas` 从 zod schema 生成，`pnpm check`（`check:package-schemas`）保证不漂移。改了
-`AppManifestSchema` / `CatalogIndexSchema` 要重新生成。JSON Schema 表达不了的规则（lock 版本满足范围、名字 / id / 路径唯一、
-模板引用的插件已列出、模板的静态规则、路径安全）只由 `parseAppManifest` / `parseCatalogIndex` 判定，外部 CI 校验清单时也要跑它们。
+**JSON Schema**: `packages/plugin-sdk/schemas/app.v1.schema.json` (`app.yaml`) and `catalog-index.v1.schema.json` (the directory catalog `index.json`) are generated from the zod schemas by `pnpm gen:package-schemas`, and `pnpm check` (`check:package-schemas`) ensures they do not drift. After changing `AppManifestSchema` / `CatalogIndexSchema`, regenerate them. Rules JSON Schema cannot express (the lock version satisfying the range, uniqueness of names / ids / paths, the plugins a template references being listed, a template's static rules, path safety) are decided only by `parseAppManifest` / `parseCatalogIndex`, and external CI that validates catalogs must run them too.
 
-## 连接器模板（C30）
+## Connector templates (C30)
 
 ```json
 {
@@ -49,113 +43,70 @@ description: 写企业目录里的连接器模板包（capybara.kind = connector
 }
 ```
 
-- `plugin` / `connector`：连接器插件名与它的 `Connector.kind`。**导入时该连接器插件必须已在本副本加载**：内核按它的
-  `endpointSchema` 校验端点，并确认 `editableEndpoint` 的每个路径都是端点 schema 里的字段；没加载就拒绝导入
-  （`directory.invalid_package`）。组织安装时按当时加载的连接器再复核（没加载 → `directory.not_deployed`）。
-- `pluginVersion`（可选，semver 范围）：连接器插件的版本要求。导入时按本副本加载的版本核对（不满足 → `directory.invalid_package`），
-  组织安装时（与列表的「可安装」）再按当时加载的版本核对（不满足 → `directory.not_deployed`，消息带版本）。应用包里的模板另按 lock 核对。
-- `endpoint`：端点预设，所有组织都看得到，**任何层级都不许出现凭据样式的键**（`token`、`apiKey`、`secret`、`password`、
-  `authorization`、`cookie` 等，比较时忽略大小写与 `-` / `_`），内核另按连接器安装的规则检查头 / query / URL 用户信息。
-- `editableEndpoint`：组织安装时允许改的点路径（字母、数字、`_`、`-`，≤ 50 条，不重复，不能像凭据字段）。只列确实因组织而异
-  的字段（如自托管服务的 `url`、某个租户 id）；改了没列出的路径 → 400 `validation_failed`。合并后的整个端点再按 schema、
-  凭据检查与 OAuth 地址策略复核。
-- `auth`：与连接器安装接口的认证方式同形（`ConnectorAuthSchema`：`none` / `bearer` / `basic` / `api_key` / `headers` /
-  `oauth_code` / `oauth_client`），**不含凭据**（多出字段即拒绝）。组织只能填凭据：静态凭据经 `credential`，OAuth 经
-  `client: { clientId, clientSecret? }`。`ownership` 缺省取 `auth.ownership`，给了必须一致；`auth.type = none` 时不能给。
-- `defaultToolPolicies`：**本地工具名**（不带 `<slug>__`）→ `allow` / `ask` / `deny`。安装后工具快照里同名的工具用它作默认策略，
-  记 `policy_source 'template'`（与管理员设定一样在漂移复核后保留）；不在清单里的工具照常按注解推导。授权码连接器安装时不列工具，
-  首个成员连接、拿到第一份工具快照时再套用。拿不准就别写 `allow`。
-- `icon`：包内 `.svg` / `.png`，≤ 64 KB，内容须真是 svg / png。图标只经内核路由给出（nosniff + CSP sandbox），网页只用 `<img>`。
+- `plugin` / `connector`: the connector plugin name and its `Connector.kind`. **At import time that connector plugin must already be loaded on this replica**: the kernel validates the endpoint against its `endpointSchema` and confirms that every path in `editableEndpoint` is a field in the endpoint schema; if it is not loaded, the import is rejected (`directory.invalid_package`). At org install it is re-checked against the connector loaded at that time (not loaded -> `directory.not_deployed`).
+- `pluginVersion` (optional, a semver range): the version requirement on the connector plugin. At import it is checked against the version loaded on this replica (not satisfied -> `directory.invalid_package`), and at org install (and in the list's "installable") against the version loaded at that time (not satisfied -> `directory.not_deployed`, with the version in the message). Templates inside an app bundle are additionally checked against the lock.
+- `endpoint`: the endpoint preset, visible to every org, and **no credential-like keys may appear at any level** (`token`, `apiKey`, `secret`, `password`, `authorization`, `cookie` and so on, compared ignoring case and `-` / `_`); the kernel also checks headers / query / URL userinfo by the connector install rules.
+- `editableEndpoint`: the dotted paths an org may change at install (letters, digits, `_`, `-`, <= 50 entries, no duplicates, must not look like credential fields). List only fields that really differ by org (such as the `url` of a self-hosted service, a tenant id); changing a path that is not listed -> 400 `validation_failed`. The whole merged endpoint is then re-checked against the schema, the credential check and the OAuth address policy.
+- `auth`: the same shape as the auth methods of the connector install API (`ConnectorAuthSchema`: `none` / `bearer` / `basic` / `api_key` / `headers` / `oauth_code` / `oauth_client`), **containing no credentials** (extra fields are rejected). An org can only fill in credentials: static credentials via `credential`, OAuth via `client: { clientId, clientSecret? }`. `ownership` defaults to `auth.ownership`, and if given it must match; it cannot be given when `auth.type = none`.
+- `defaultToolPolicies`: **local tool name** (without `<slug>__`) -> `allow` / `ask` / `deny`. After install, a tool with the same name in the tool snapshot uses it as its default policy, recorded as `policy_source 'template'` (kept after drift review, like an admin's setting); tools not listed are derived from annotations as usual. An authorization-code connector lists no tools at install; it is applied when the first member connects and the first tool snapshot is obtained. When unsure, do not write `allow`.
+- `icon`: an `.svg` / `.png` in the package, <= 64 KB, whose content must really be svg / png. The icon is served only through a kernel route (nosniff + CSP sandbox), and the web app uses only `<img>`.
 
-## 应用包（C31）
+## App bundles (C31)
 
-`package.json`：`{ "name": "@acme/app-crm-suite", "version": "1.0.0", "capybara": { "kind": "app", "manifest": "app.yaml" } }`。
+`package.json`: `{ "name": "@acme/app-crm-suite", "version": "1.0.0", "capybara": { "kind": "app", "manifest": "app.yaml" } }`.
 
 ```yaml
 schemaVersion: 1
-name: crm-suite                # 目录条目名，^[a-z0-9][a-z0-9-]{0,63}$
-version: 1.0.0                 # 必须等于 package.json 的 version
+name: crm-suite                # directory item name, ^[a-z0-9][a-z0-9-]{0,63}$
+version: 1.0.0                 # must equal the version in package.json
 publisher: Acme
 description: CRM tools for sales teams
 displayName: { zh: CRM 套件, en: CRM Suite }
 icon: icon.svg
-plugins:                       # ≤ 20
-  - name: crm                  # 插件清单名
+plugins:                       # <= 20
+  - name: crm                  # plugin manifest name
     npm: "@acme/plugin-crm"
-    version: ^1.0.0            # 部署里已装且满足范围的插件不动
+    version: ^1.0.0            # a plugin already installed in the deployment and satisfying the range is left alone
     lock:
-      version: 1.2.0           # 必须满足 version
-      integrity: sha512-…==    # 该版本 tgz 的 sha512（npm 的 dist.integrity）
-    optional: false            # 可选插件：组织安装时没装到部署 / 版本不满足就跳过（用到它的模板也跳过）
-connectorTemplates:            # ≤ 20，template 与连接器模板包的 template 同形
-    # template.plugin 引用部署里已有的连接器插件 connector-mcp（没列在 plugins 里），见下文 isKnownConnectorPlugin
+      version: 1.2.0           # must satisfy version
+      integrity: sha512-…==    # sha512 of that version's tgz (npm's dist.integrity)
+    optional: false            # optional plugin: skipped at org install if not installed in the deployment / version not satisfied (templates using it are skipped too)
+connectorTemplates:            # <= 20, template has the same shape as the template in a connector template package
+    # template.plugin references the connector plugin connector-mcp already in the deployment (not listed in plugins), see isKnownConnectorPlugin below
   - id: crm-mcp
     displayName: { zh: CRM, en: CRM }
     template: { plugin: connector-mcp, connector: mcp, endpoint: { url: "https://…" }, auth: { type: bearer, ownership: org } }
-skills:                        # ≤ 50，包内目录，各含 SKILL.md
+skills:                        # <= 50, directories in the package, each containing SKILL.md
   - path: skills/crm-notes
 ```
 
-- **插件包不打进应用包**：内核导入时按 lock 从配置的 `packages.npmRegistry` 拉取 `lock.version`，**只认 `lock.integrity`**
-  （`app.lock_mismatch`），不认 npm 元数据；拉下来的包与单独安装时完全相同（同一 sha256）。所以发版流程是：先把插件发到 npm，
-  取 `dist.integrity` 写进 lock，再打应用包。离线部署要配 npm 镜像 / 私有 registry，否则应用包导入不可用。
-- 模板的 `plugin` 必须列在 `plugins` 里，或是部署里已有的连接器插件；给了 `pluginVersion` 时锁定版本必须满足它（只对列在 `plugins` 里的插件核对）。
-  「部署里已有」由调用方经 `parseAppManifest(yaml, { isKnownConnectorPlugin: (name) => … })` 告诉解析器：内核导入时传入「本副本已加载、
-  提供 `connector@1` 的插件」；**不传这个选项时，模板只能引用 `plugins` 里列出的插件**，上例这样引用内置 / 已装的 `connector-mcp`
-  会报 `connectorTemplates.0.template.plugin: connector plugin connector-mcp is not listed in plugins …`。外部 CI 校验应用包时，
-  按目标部署里有哪些连接器插件给这个回调（如 `(n) => ["connector-mcp", "connector-openapi"].includes(n)`），或把连接器插件也列进 `plugins`。
-- 未知字段一律拒绝（拼错字段报错，不是忽略）；YAML 重复键报错，`app.yaml` ≤ 256K 字符。
-- 一次导入的总字节（应用包 + 全部插件包，校验时都在内存里）≤ `directory.maxBundleBytes`（缺省 4 × `packages.maxBytes`），
-  超出 → 413 `app.bundle_too_large`。
-- 应用里的 agent 模板推迟（C32）；不支持 stdio MCP。
+- **Plugin packages are not packed into the app bundle**: at import the kernel fetches `lock.version` from the configured `packages.npmRegistry` according to the lock and **trusts only `lock.integrity`** (`app.lock_mismatch`), not npm metadata; the fetched package is exactly the same as when installed separately (same sha256). So the release flow is: first publish the plugin to npm, take `dist.integrity` and write it into the lock, then pack the app bundle. An offline deployment must configure an npm mirror / private registry, otherwise app bundle import is unavailable.
+- A template's `plugin` must be listed in `plugins` or be a connector plugin already in the deployment; when `pluginVersion` is given, the locked version must satisfy it (checked only for plugins listed in `plugins`). "Already in the deployment" is told to the parser by the caller through `parseAppManifest(yaml, { isKnownConnectorPlugin: (name) => … })`: when the kernel imports it passes "plugins loaded on this replica that provide `connector@1`"; **without this option a template can reference only plugins listed in `plugins`**, and referencing a builtin / installed `connector-mcp` like the example above reports `connectorTemplates.0.template.plugin: connector plugin connector-mcp is not listed in plugins …`. When external CI validates an app bundle, give this callback according to which connector plugins the target deployment has (e.g. `(n) => ["connector-mcp", "connector-openapi"].includes(n)`), or list the connector plugin in `plugins` as well.
+- Unknown fields are always rejected (a misspelled field is an error, not ignored); duplicate YAML keys are an error, and `app.yaml` is <= 256K characters.
+- The total bytes of one import (the app bundle + all plugin packages, all in memory during validation) <= `directory.maxBundleBytes` (default 4 x `packages.maxBytes`); over it -> 413 `app.bundle_too_large`.
+- Agent templates in an app are deferred (C32); stdio MCP is not supported.
 
-### 企业导入：prepare → confirm（`/api/v1/admin/directory/apps/*`）
+### Enterprise import: prepare -> confirm (`/api/v1/admin/directory/apps/*`)
 
-- `POST apps/prepare/file`（原始字节）或 `apps/prepare/npm {package, version?}`，或从清单引入 app 类条目：解包、校验全部组件、
-  按 lock 下载全部插件，**全部通过之前什么都不写**；然后插件入包存储（来源 `directory`）、文件进对象存储、写 24 小时的暂存，
-  返回审阅：每个插件的 action（`install` 部署上没有 / `upgrade` 已装但不满足范围、按 lock 换 / `keep` 已装且满足范围，或内置 /
-  配置声明的插件）、权限与相对当前快照的增减、迁移警告、敏感项，以及模板与技能清单。内置 / 配置声明的插件不满足范围 →
-  `app.plugin_conflict`；降级到有未执行迁移的版本 → `plugin.downgrade_unsupported`。
-- `POST apps/:stagingId/confirm {reviewHash, deployPlugins}`：`reviewHash` 须与审阅一致，按此刻的部署状态重算（审阅后插件被装 /
-  升级 / 换包 → `app.review_stale`）；为 `install` 的插件写权限快照（审计 `plugin.permissions_approved` 带 `app`），建目录条目版本。
-  - `deployPlugins: true`：`upgrade` 的插件同样写快照；提交后先把插件全部装到部署、再全部启用（各副本 reconcile，不重启），
-    逐个返回结果，失败不回滚已提交的条目；`upgrade` 没装上的恢复原快照（审计 `plugin.permissions_restored`），旧版本继续跑。
-  - `deployPlugins: false`：只建条目，不动部署，也**不为 `upgrade` 的插件写快照**（快照必须对应实际运行的版本，F-O）。之后要用
-    这个应用，企业管理员到插件后台按条目版本里的 sha256 装（`POST /api/v1/admin/plugins/:name/install {sha256}` → 需要时
-    `…/approve` → `…/enable`）；必选插件没装到部署时，组织安装返回 `directory.not_deployed`。
-- 过期的暂存由维护任务 `app-staging-cleanup`（每小时）清理；已入库的插件包留在内容寻址的包存储里，没有安装记录引用就不会被加载。
+- `POST apps/prepare/file` (raw bytes) or `apps/prepare/npm {package, version?}`, or importing an app-kind item from a catalog: unpack, validate all components, download all plugins according to the lock, and **write nothing until everything passes**; then the plugins go into the package store (source `directory`), files go into object storage, and a 24-hour staging record is written, and a review is returned: each plugin's action (`install` not in the deployment / `upgrade` installed but not satisfying the range, swapped per the lock / `keep` installed and satisfying the range, or a builtin / config-declared plugin), permissions and their additions and removals relative to the current snapshot, migration warnings, sensitive items, and the template and skill lists. A builtin / config-declared plugin not satisfying the range -> `app.plugin_conflict`; a downgrade to a version with unexecuted migrations -> `plugin.downgrade_unsupported`.
+- `POST apps/:stagingId/confirm {reviewHash, deployPlugins}`: `reviewHash` must match the review, and is recomputed against the deployment state at that moment (a plugin installed / upgraded / swapped after the review -> `app.review_stale`); for plugins with action `install` it writes the permission snapshot (audit `plugin.permissions_approved` carrying `app`) and creates the directory item version.
+  - `deployPlugins: true`: `upgrade` plugins also get a snapshot; after commit it first installs all plugins to the deployment and then enables them all (each replica reconciles, no restart), returns each result, and a failure does not roll back the committed item; an `upgrade` that did not get installed restores the original snapshot (audit `plugin.permissions_restored`) and the old version keeps running.
+  - `deployPlugins: false`: only creates the item, does not touch the deployment, and also **does not write a snapshot for `upgrade` plugins** (a snapshot must correspond to the version actually running, F-O). To use the app afterwards, an enterprise admin goes to the plugin admin console and installs by the sha256 in the item version (`POST /api/v1/admin/plugins/:name/install {sha256}` -> `…/approve` if needed -> `…/enable`); while a required plugin is not installed in the deployment, org install returns `directory.not_deployed`.
+- Expired staging is cleaned up by the maintenance job `app-staging-cleanup` (hourly); plugin packages already stored remain in the content-addressed package store and, with no install record referencing them, are never loaded.
 
-### 组织安装与卸载（`/api/v1/orgs/:orgId/directory/:itemId/install`、`app-installs`）
+### Org install and uninstall (`/api/v1/orgs/:orgId/directory/:itemId/install`, `app-installs`)
 
-- 安装应用要同时有 `org.plugins.manage`、`connectors.manage`、`skills.manage`（组织行锁内复核）；条目策略 `disabled` →
-  `directory.item_disabled`，`needs_approval` 且本组织没有授予 → 202 并建（或升级）待企业管理员批准的申请，否则 201。
-- **应用里的插件按应用条目的策略判定，不看各插件条目的 needs_approval / allow**（C22）。**例外（裁决 M-5，覆盖 C22 的应用途径）**：
-  插件自己的目录条目（`kind = plugin`、同名）设为 `disabled` 是总开关，任何途径都不能在组织里新启用这个插件——直接启用、经插件条目、
-  经含它的应用都不行。含它的应用组织安装时返回 403 `directory.item_disabled`（消息点名插件；本组织已启用的不受影响），导入含它的应用包
-  审阅时同样拒绝（`directory.item_disabled`）。要停掉某个插件，禁用它自己的条目即可，不必逐个禁用含它的应用。
-- 插件判定（列表的「可安装」与安装同一套，按确认时写进条目版本 `resolved.plugins` 的范围与 `optional`）：必选插件没装到部署、或加载的版本
-  不满足 `app.yaml` 的范围 → `directory.not_deployed`（消息带部署的版本与要求的范围）；可选插件遇到这些情况（或插件条目被禁用）就跳过，
-  模板的 `plugin` 是被跳过的可选插件时该模板也跳过。跳过的插件与模板在安装结果 `installed.skipped`（`{ plugins, connectorTemplates }`）
-  与审计 `app.installed` 里列出。
-- 请求体：`{ version?, app: { connectors: { <模板 id>: {…} }, pluginConfigs?: { <插件名>: <组织级配置> } } }`。`pluginConfigs` 只认 `app.yaml`
-  `plugins` 里的插件名（别的 → 400 `validation_failed`），**只用于本次新启用的插件**：本组织已启用的插件记为原有，配置不动；新启用时按该插件的
-  `config.org` schema 校验（同 `PUT /orgs/:orgId/plugins/:plugin`），需要组织级配置才能启用的插件不给就装不上。
-- 依次：在本组织启用插件（按 requires 排序，提供方在前；本组织已启用的记为原有）→ 按模板建连接器（请求体 `app.connectors[<模板 id>]`
-  给 `name?` / `slug?` / `endpoint?`（只限 `editableEndpoint`）/ `credential?` 或 `client?`）→ 导入技能（同名组织技能已存在则新增
-  一个版本，记为原有并记下版本号）。每个组件建好就记进 `app_install_components`（新建 / 原有）。**任一步失败按相反顺序撤销本次
-  新建的组件**，安装记 `failed`，返回 502 `app.install_failed`。
-- 卸载（`DELETE app-installs/:installId`，同样要三项权限）**只移除本次新建且别处不在用的组件**，保留项与原因写进报告：
-  `pre_existing`（原来就有）、`used_by_agents`（技能被 agent 选中 / 连接器被 agent 引用）、`used_by_other_install`（本组织别的应用
-  安装也用到，所有权交给最早的那个安装）、`used_by_connectors`（插件提供的连接器仍有连接器在用）、`used_by_plugins`（别的已启用插件
-  依赖它）。卸载 `failed` 的安装、或超过 `directory.staleInstallMinutes`（默认 30）仍是 `installing` 的安装（副本中途崩溃）时按回滚清理
-  （已有技能上新增的版本也退回）；还在安装中的 → `app.install_in_progress`。
-- **M6 不支持应用升级**：新版本要先卸载再安装。
+- Installing an app needs `org.plugins.manage`, `connectors.manage` and `skills.manage` together (re-checked inside the org row lock); item policy `disabled` -> `directory.item_disabled`; `needs_approval` with no grant for this org -> 202 and a request pending enterprise admin approval is created (or upgraded), otherwise 201.
+- **Plugins in an app are judged by the app item's policy, ignoring each plugin item's needs_approval / allow** (C22). **Exception (Ruling M-5, overriding C22's app path)**: a plugin's own directory item (`kind = plugin`, same name) set to `disabled` is a master switch, and no route may newly enable this plugin in an org: not direct enabling, not via the plugin item, not via an app that contains it. Org install of an app that contains it returns 403 `directory.item_disabled` (the message names the plugin; orgs where it is already enabled are unaffected), and reviewing the import of an app bundle that contains it is likewise rejected (`directory.item_disabled`). To stop a plugin, disable its own item; there is no need to disable the apps that contain it one by one.
+- Plugin judgment (the list's "installable" and install use the same logic, based on the ranges and `optional` written into the item version's `resolved.plugins` at confirmation): a required plugin not installed in the deployment, or whose loaded version does not satisfy the range in `app.yaml` -> `directory.not_deployed` (the message carries the deployed version and the required range); an optional plugin in these situations (or whose plugin item is disabled) is skipped, and a template whose `plugin` is a skipped optional plugin is skipped too. Skipped plugins and templates are listed in the install result `installed.skipped` (`{ plugins, connectorTemplates }`) and in the audit `app.installed`.
+- Request body: `{ version?, app: { connectors: { <template id>: {…} }, pluginConfigs?: { <plugin name>: <org-level config> } } }`. `pluginConfigs` accepts only plugin names in `app.yaml` `plugins` (others -> 400 `validation_failed`) and is **used only for plugins newly enabled by this install**: a plugin already enabled in this org is recorded as pre-existing and its config is untouched; on new enablement it is validated against that plugin's `config.org` schema (same as `PUT /orgs/:orgId/plugins/:plugin`), and a plugin that needs org-level config to be enabled cannot be installed without it.
+- In order: enable plugins in this org (sorted by requires, providers first; ones already enabled in this org are recorded as pre-existing) -> create connectors from templates (the request body `app.connectors[<template id>]` gives `name?` / `slug?` / `endpoint?` (limited to `editableEndpoint`) / `credential?` or `client?`) -> import skills (if an org skill of the same name exists, a new version is added, recorded as pre-existing and the version number noted). Each component is recorded in `app_install_components` as soon as it is built (new / pre-existing). **If any step fails, the components newly created by this install are undone in reverse order**, the install is recorded as `failed`, and 502 `app.install_failed` is returned.
+- Uninstall (`DELETE app-installs/:installId`, also needing the three permissions) **removes only components newly created by this install and not in use elsewhere**, and writes the kept ones and the reasons into the report: `pre_existing` (already there), `used_by_agents` (the skill is selected by an agent / the connector is referenced by an agent), `used_by_other_install` (another app install in this org also uses it; ownership goes to the earliest install), `used_by_connectors` (a connector provided by the plugin is still in use), `used_by_plugins` (another enabled plugin depends on it). Uninstalling a `failed` install, or one still `installing` after `directory.staleInstallMinutes` (default 30) (a replica crashed midway), cleans up as a rollback (versions added on an existing skill are also rolled back); one still installing -> `app.install_in_progress`.
+- **M6 does not support app upgrades**: a new version must be uninstalled and then installed again.
 
-## 写包时的检查清单
+## Checklist for writing packages
 
-1. 连接器模板：先在开发部署里装好、启用对应的连接器插件，再导入模板；端点预设与 `editableEndpoint` 用该插件的 `endpointSchema` 核对。
-2. 应用：插件先发 npm，lock 写 `dist.integrity`；`app.yaml` 的 `version` 与 `package.json` 一致；技能目录各有 `SKILL.md`。
-3. 本地校验：SDK 的 `parsePackageSection(pkg, SDK_VERSION)` 与 `parseAppManifest(yaml, { isKnownConnectorPlugin })` 返回无 `errors`
-   （模板引用的连接器插件没列在 `plugins` 里时必须给 `isKnownConnectorPlugin`，见上文）。
-4. 测试参考：`packages/kernel/test/directory/`（`archive`、`directory`、`app-import`、`app-install`、`org`、`requests`、`catalogs`）与
-   双副本验收 `m6-segment3.dual.test.ts`；从仓库根跑 `pnpm exec vitest run <路径>`。
+1. Connector template: first install and enable the corresponding connector plugin in a development deployment, then import the template; check the endpoint preset and `editableEndpoint` against that plugin's `endpointSchema`.
+2. App: publish the plugins to npm first, and write `dist.integrity` in the lock; the `version` in `app.yaml` matches `package.json`; each skill directory has a `SKILL.md`.
+3. Local validation: the SDK's `parsePackageSection(pkg, SDK_VERSION)` and `parseAppManifest(yaml, { isKnownConnectorPlugin })` return no `errors` (when a template references a connector plugin not listed in `plugins`, `isKnownConnectorPlugin` must be given, see above).
+4. Test references: `packages/kernel/test/directory/` (`archive`, `directory`, `app-import`, `app-install`, `org`, `requests`, `catalogs`) and the dual-replica acceptance test `m6-segment3.dual.test.ts`; run `pnpm exec vitest run <path>` from the repo root.

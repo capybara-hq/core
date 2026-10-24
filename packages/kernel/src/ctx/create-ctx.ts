@@ -1,7 +1,9 @@
 import {
+  type AvailableHook,
   CAPABILITIES,
   type CapabilityRef,
   CapabilityUnavailableError,
+  type HookHandler,
   type Logger,
   OBJECT_STORE_CAPABILITY,
   type ObjectStore,
@@ -26,6 +28,7 @@ import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { checkHookRegistration, type RegisteredHook } from "../plugins/hooks.js";
 import { RegistrationLedger } from "../plugins/ledger.js";
 import { StorageService } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
@@ -264,11 +267,13 @@ export type KernelPluginContext = PluginContext & {
   provided: Map<CapabilityRef, unknown>;
   /** 已注册的工具（按注册顺序）。 */
   registeredTools: RegisteredTool[];
+  /** Hooks registered through `ctx.hooks.on` (registration order). */
+  registeredHooks: RegisteredHook[];
   /** 经 `ctx.ui.view` 注册的视图（按贡献 id）。 */
   uiViews: ReadonlyMap<string, UiRender>;
   /** 经 `ctx.ui.action` 注册的动作处理函数（按贡献 id）。 */
   uiActions: ReadonlyMap<string, UiActionHandler>;
-  /** setup 结束后调用：此后 `tools.register`、`ui.view`、`ui.action` 抛错。 */
+  /** setup 结束后调用：此后 `tools.register`、`ui.view`、`ui.action`、`hooks.on` 抛错。 */
   sealTools(): void;
   /** 中止 signal、封账并逐项撤销仍在账上的登记、关闭队列连接（幂等）。 */
   close(): Promise<void>;
@@ -292,6 +297,9 @@ export class LiveConfig {
  *   `ui.verifyEmbedToken` 校验内核签发的嵌入令牌，`claims.plugin` 必须是本插件、插件仍在该组织启用、
  *   调用者仍是该组织的 active 成员（组织未删除），返回此刻的角色；
  * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
+ * - `hooks.on` only during setup, only mount points declared in `permissions.hooks` and available
+ *   (`HOOKS_AVAILABLE`), `policy` only on `POLICY_HOOKS` declared in `permissions.policyHooks`; kept on the ctx (`registeredHooks`, read by
+ *   the host's `HookRegistry` from active instances only) and recorded in the ledger.
  * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
  */
 export function createPluginContext(
@@ -342,6 +350,9 @@ export function createPluginContext(
     : undefined;
   const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
   const declaredTools = new Set(perms.tools ?? []);
+  const declaredHooks = new Set<string>(perms.hooks ?? []);
+  const declaredPolicyHooks = new Set<string>(perms.policyHooks ?? []);
+  const registeredHooks: RegisteredHook[] = [];
   const declaredCaps = new Set<CapabilityRef>([
     ...(manifest.requires ?? []),
     ...(manifest.optional ?? []),
@@ -524,6 +535,36 @@ export function createPluginContext(
         });
       },
     },
+    hooks: {
+      on(mount, handler, opts) {
+        if (toolsSealed) {
+          throw new Error(
+            `plugin ${name}: hooks.on is only allowed during setup; setup has completed`,
+          );
+        }
+        // not-available / malformed registrations are programming errors, not permission denials
+        checkHookRegistration(name, mount, handler, opts);
+        if (!declaredHooks.has(mount)) deny(`permissions.hooks ${mount}`);
+        // M-1: deployment state learns policy mounts from the manifest, so they must be declared
+        if (opts.mode === "policy" && !declaredPolicyHooks.has(mount)) {
+          deny(`permissions.policyHooks ${mount}`);
+        }
+        const hook: RegisteredHook = {
+          mount: mount as AvailableHook,
+          handler: handler as HookHandler<AvailableHook>,
+          mode: opts.mode,
+        };
+        registeredHooks.push(hook);
+        ledger.add({
+          kind: "hook",
+          key: mount,
+          dispose: async () => {
+            const i = registeredHooks.indexOf(hook);
+            if (i >= 0) registeredHooks.splice(i, 1);
+          },
+        });
+      },
+    },
     ui: {
       view(id, render) {
         uiReg.view(id, render);
@@ -612,6 +653,7 @@ export function createPluginContext(
     routes,
     provided,
     registeredTools,
+    registeredHooks,
     uiViews: uiReg.views,
     uiActions: uiReg.actions,
     ledger,

@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import {
   DOCUMENT_MEDIA_TYPES,
   IMAGE_MEDIA_TYPES,
@@ -72,6 +73,70 @@ export const CATALOG_MAX_MIRRORS = 5;
 const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
+
+/** proxy-addr's named ranges, which Fastify's trustProxy also accepts. */
+const TRUST_PROXY_NAMES = new Set(["loopback", "linklocal", "uniquelocal"]);
+
+/**
+ * The IPv4 address carried by an IPv4-mapped IPv6 address (`::ffff:0:0/96`) in any spelling
+ * (`::ffff:10.0.0.1`, `::ffff:a00:1`, `0:0:0:0:0:ffff:10.0.0.1`), else undefined. Parsed, not matched
+ * as text: proxy-addr unwraps every spelling, so a regex on one spelling lets the others through.
+ */
+function mappedIpv4(addr: string): string | undefined {
+  if (isIP(addr) !== 6) return undefined;
+  let s = addr.toLowerCase().split("%")[0] ?? "";
+  const dotted = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (dotted !== null) {
+    const [a = 0, b = 0, c = 0, d = 0] = dotted.slice(2).map(Number);
+    s = `${dotted[1]}${(a * 256 + b).toString(16)}:${(c * 256 + d).toString(16)}`;
+  }
+  const [head = "", tail] = s.split("::");
+  const h = head === "" ? [] : head.split(":");
+  const t = tail === undefined || tail === "" ? [] : tail.split(":");
+  const words =
+    tail === undefined ? h : [...h, ...Array<string>(8 - h.length - t.length).fill("0"), ...t];
+  if (words.length !== 8) return undefined;
+  const n = words.map((w) => Number.parseInt(w, 16));
+  if (n.slice(0, 5).some((x) => x !== 0) || n[5] !== 0xffff) return undefined;
+  const [hi = 0, lo = 0] = n.slice(6);
+  return [hi >> 8, hi & 255, lo >> 8, lo & 255].join(".");
+}
+
+/**
+ * Why an `http.trustProxy` list entry is refused, or undefined when it is an IP, a CIDR or a named
+ * range. A /0 prefix is refused: it trusts every address, so any client could forge the header.
+ */
+export function trustProxyEntryProblem(entry: string): string | undefined {
+  if (TRUST_PROXY_NAMES.has(entry)) return undefined;
+  const [addr = "", range, extra] = entry.split("/");
+  const family = isIP(addr);
+  if (family === 0 || extra !== undefined) return `"${entry}" is not an IP address or CIDR`;
+  if (range === undefined) return undefined;
+  let bits: number;
+  if (/^\d+$/.test(range)) {
+    bits = Number(range);
+  } else if (family === 4 && isIP(range) === 4) {
+    // A dotted netmask (10.0.0.0/255.0.0.0), as proxy-addr accepts: it must be contiguous.
+    const mask = range.split(".").reduce((n, o) => n * 256 + Number(o), 0);
+    const ones = mask.toString(2).replace(/^0+/, "");
+    if (mask !== 0 && (ones.length !== 32 || /01/.test(ones))) {
+      return `"${entry}" has a non-contiguous netmask`;
+    }
+    bits = mask === 0 ? 0 : (ones.match(/1/g) ?? []).length;
+  } else {
+    return `"${entry}" is not an IP address or CIDR`;
+  }
+  if (bits > (family === 6 ? 128 : 32)) return `"${entry}" has an out-of-range prefix`;
+  // proxy-addr turns an IPv4-mapped IPv6 range (::ffff:a.b.c.d/N, any spelling) into the IPv4
+  // range /N-96.
+  const mapped = mappedIpv4(addr) !== undefined;
+  if (bits === 0 || (mapped && bits === 96)) {
+    return `"${entry}" trusts every address; list the proxies' own addresses or CIDRs`;
+  }
+  // Between /1 and /95 a mapped prefix has no IPv4 equivalent.
+  if (mapped && bits < 96) return `"${entry}" has an out-of-range prefix`;
+  return undefined;
+}
 
 export const KernelConfigSchema = z.object({
   db: z
@@ -248,11 +313,11 @@ export const KernelConfigSchema = z.object({
         .object({
           enabled: z
             .boolean()
-            .default(true)
+            .default(false)
             .meta(
               meta({
                 description:
-                  "Use the official directory catalog. Set to false for offline deployments: the official catalog is never fetched and the admin UI shows offline mode",
+                  "Use the official directory catalog. Off by default because the official catalog is not live yet: while false it is never fetched (no requests, no refresh logs) and the admin UI shows offline mode. Set to true once it is published",
               }),
             ),
           url: z
@@ -332,12 +397,37 @@ export const KernelConfigSchema = z.object({
         .default(8080)
         .meta(meta({ description: "HTTP listen port" })),
       trustProxy: z
-        .union([z.boolean(), z.number().int().min(1), z.array(z.string().min(1)).min(1)])
+        .preprocess(
+          // Also accept a comma-separated string of addresses / CIDRs (an env value that is not JSON
+          // arrives as a string, e.g. CAPYBARA_HTTP__TRUST_PROXY=172.18.0.1,10.0.0.0/8).
+          (v) =>
+            typeof v === "string"
+              ? v
+                  .split(",")
+                  .map((e) => e.trim())
+                  .filter((e) => e !== "")
+              : v,
+          z.union([
+            z.boolean(),
+            z.number().int().min(1),
+            z
+              .array(
+                z
+                  .string()
+                  .min(1)
+                  .superRefine((e, ctx) => {
+                    const problem = trustProxyEntryProblem(e);
+                    if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+                  }),
+              )
+              .min(1),
+          ]),
+        )
         .default(false)
         .meta(
           meta({
             description:
-              "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies",
+              "Which X-Forwarded-For hops to trust for the client IP (login rate limiting, session records): false (use the socket address), a hop count, or a list of trusted proxy IPs/CIDRs (recommended; a JSON array or a comma-separated string; a /0 prefix is refused). true trusts any client-supplied X-Forwarded-For and lets clients spoof their IP. A hop count is only safe when the service is reachable solely through exactly that many proxies",
           }),
         ),
       // 环境变量按 JSON 解析，CAPYBARA_HTTP__REPLICA_ID=0 会得到数字，所以也接受非负整数（输出头时转字符串）
@@ -369,9 +459,25 @@ export const KernelConfigSchema = z.object({
     })
     .default({ port: 8080, trustProxy: false }),
   roles: z
-    .array(z.enum(["api", "worker", "gateway"]))
+    .preprocess(
+      // Also accept a comma-separated string (CAPYBARA_ROLES=api,worker; env values that are not
+      // JSON arrive as strings).
+      (v) =>
+        typeof v === "string"
+          ? v
+              .split(",")
+              .map((r) => r.trim())
+              .filter((r) => r !== "")
+          : v,
+      z.array(z.enum(["api", "worker", "gateway"])).min(1),
+    )
     .default(["api", "worker", "gateway"])
-    .meta(meta({ description: "Roles this process runs" })),
+    .meta(
+      meta({
+        description:
+          'Roles this process runs: a JSON array or a comma-separated string, e.g. ["api"] or api,worker',
+      }),
+    ),
   auth: z
     .object({
       accessTokenTtlSeconds: z
@@ -403,8 +509,14 @@ export const KernelConfigSchema = z.object({
           }),
         ),
       setupToken: z
-        .string()
-        .min(1)
+        // An empty value means "not set" (compose passes ${CAPYBARA_SETUP_TOKEN:-}). Env values are
+        // JSON-parsed, so an all-digit or true / false token arrives as a number or boolean: it is
+        // still the token text.
+        .preprocess(
+          (v) =>
+            v === "" ? undefined : typeof v === "number" || typeof v === "boolean" ? String(v) : v,
+          z.string().min(1).optional(),
+        )
         .optional()
         .meta(meta({ secret: true, description: "If set, the setup wizard requires this token" })),
       loginSources: z
@@ -721,7 +833,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "TTL of the lease that lets one worker replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long",
+              "TTL of the lease that lets one gateway replica hold a channel connection's long connection, in milliseconds; another replica takes over after the holder stops renewing it for this long",
           }),
         ),
       scanIntervalMs: z
@@ -732,7 +844,18 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "How often each worker replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds",
+              "How often each gateway replica renews its channel leases and scans for active channel connections that nobody holds, in milliseconds",
+          }),
+        ),
+      shareSlack: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(1)
+        .meta(
+          meta({
+            description:
+              "Extra channel long connections a gateway replica may hold above its fair share (connections divided by live gateway replicas); a replica above share + slack hands one back per scan round",
           }),
         ),
       retryBaseMs: z
@@ -768,6 +891,26 @@ export const KernelConfigSchema = z.object({
               "A channel delivery job that has caught up ends after this many milliseconds without new conversation output; the next event of the conversation starts a new job",
           }),
         ),
+      webhookBaseUrl: z
+        .url({ protocol: /^https?$/ })
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Public origin (https) that reaches the gateway replicas, e.g. https://im.example.com; a channel connection's webhook callback URL is <webhookBaseUrl>/channels/webhook/<connection id>. Without it connections cannot switch to webhook inbound (long connections stay the default). Plain http is accepted only for loopback hosts when tools.oauthAllowInsecureLoopback is true (tests)",
+          }),
+        ),
+      webhookMaxBodyBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(1_048_576)
+        .meta(
+          meta({
+            description:
+              "Largest channel webhook request body in bytes; a larger request is rejected with 413",
+          }),
+        ),
     })
     // 续租周期必须明显短于 TTL：至少能在租约过期前续两次，偶尔一次 Redis 抖动不至于丢租约
     .refine((c) => c.scanIntervalMs <= c.leaseTtlMs / 2, {
@@ -777,9 +920,11 @@ export const KernelConfigSchema = z.object({
     .default({
       leaseTtlMs: 30000,
       scanIntervalMs: 10000,
+      shareSlack: 1,
       retryBaseMs: 5000,
       deliveryConcurrency: 100,
       deliveryIdleMs: 15000,
+      webhookMaxBodyBytes: 1_048_576,
     }),
   storage: z
     .object({
@@ -1070,6 +1215,45 @@ export const KernelConfigSchema = z.object({
     .refine((c) => c.defaultTokenCap <= c.maxTokenCap, {
       message: "evals.defaultTokenCap must be at most evals.maxTokenCap",
       path: ["defaultTokenCap"],
+    })
+    .prefault({} as never),
+  hooks: z
+    .object({
+      timeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(60_000)
+        .default(5000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Time limit in milliseconds for one plugin hook call; a policy hook that exceeds it denies the call, an observe hook is skipped",
+          }),
+        ),
+      usageReportConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(16)
+        .meta(
+          meta({
+            description: "usage.report delivery jobs one worker replica processes at the same time",
+          }),
+        ),
+      usageReportKeepHours: z
+        .number()
+        .int()
+        .min(1)
+        .max(720)
+        .default(24)
+        .meta(
+          meta({
+            description:
+              "Hours a finished usage.report job is kept in Redis so re-enqueueing the same usage event (resumed step, sweeper) is deduplicated; at least 1, well above the sweeper's 10-minute overlap",
+          }),
+        ),
     })
     .prefault({} as never),
   log: z

@@ -25,10 +25,17 @@ describe("parseCli", () => {
       command: "admin-create",
       login: "root",
       displayName: "Root",
+      ifNone: false,
     });
     expect(
       parseCli(["admin", "create", "--login=root", "--display-name=Root", "--email", "r@x.io"]),
-    ).toEqual({ command: "admin-create", login: "root", displayName: "Root", email: "r@x.io" });
+    ).toEqual({
+      command: "admin-create",
+      login: "root",
+      displayName: "Root",
+      email: "r@x.io",
+      ifNone: false,
+    });
     expect(() => parseCli(["admin", "create", "--display-name", "R"])).toThrow(/--login/);
     expect(() => parseCli(["admin", "create", "--login", "r"])).toThrow(/--display-name/);
     expect(() => parseCli(["admin"])).toThrow(UsageError);
@@ -41,6 +48,38 @@ describe("parseCli", () => {
     );
     expect(() => parseCli(["start", "--login", "r"])).toThrow(/only valid for admin create/);
     expect(() => parseCli(["admin", "create", "--role", "api"])).toThrow(/only valid for start/);
+  });
+
+  it("admin create --if-none --password-file", () => {
+    expect(
+      parseCli([
+        "admin",
+        "create",
+        "--login",
+        "a",
+        "--display-name",
+        "A",
+        "--if-none",
+        "--password-file",
+        "/run/secrets/pw",
+      ]),
+    ).toEqual({
+      command: "admin-create",
+      login: "a",
+      displayName: "A",
+      ifNone: true,
+      passwordFile: "/run/secrets/pw",
+    });
+    expect(() =>
+      parseCli(["admin", "create", "--login", "a", "--display-name", "A", "--password-file", ""]),
+    ).toThrow(/--password-file/);
+    for (const opt of [["--if-none"], ["--password-file", "/pw"]]) {
+      expect(() => parseCli(["start", ...opt])).toThrow(/only valid for admin create/);
+      expect(() => parseCli(["admin", "grant", "a", ...opt])).toThrow(
+        /only valid for admin create/,
+      );
+      expect(() => parseCli(["plugins", "list", ...opt])).toThrow(/only valid for admin create/);
+    }
   });
 
   it("admin grant / revoke <login>", () => {

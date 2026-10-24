@@ -1,173 +1,173 @@
-# M6 真实环境验收清单（评委模型、npm、企业清单、Nacos、多主机插件同步、真实应用包）
+# M6 live environment acceptance checklist (judge model, npm, enterprise catalog, Nacos, multi-host plugin sync, a real app bundle)
 
-M6 的验收分两部分：
+M6 acceptance has two parts:
 
-1. **自动验收**（`pnpm test` 里跑，用假模型、假 npm registry、假清单服务器、双副本）：
-   第一段评测、第二段插件生命周期与管理后台、第三段企业目录各有一份验收测试，见计划
-   `docs/superpowers/plans/2026-10-22-m6-eval-admin.md` 的 Task 9、21、29。
-2. **真实环境验收**（本清单，条件到位后补跑）：真实评委模型、公共与私有 npm、真实托管的企业清单、
-   Nacos 来源、多主机、全部官方插件以 tgz 安装后的冒烟、一个真实的应用包。
+1. **Automatic acceptance** (runs in `pnpm test`, with a fake model, a fake npm registry, a fake catalog server and dual replicas):
+   the first segment (evals), the second segment (plugin lifecycle and admin console) and the third segment (enterprise directory) each have an acceptance test, see Tasks 9, 21 and 29 of the plan
+   `docs/superpowers/plans/2026-10-22-m6-eval-admin.md`.
+2. **Live environment acceptance** (this checklist, to be run once the conditions are in place): a real judge model, public and private npm, a really hosted enterprise catalog,
+   the Nacos source, multiple hosts, a smoke test after installing all official plugins from tgz, and one real app bundle.
 
-插件包格式、生命周期与目录的细节见 `skills/writing-plugins`、`skills/writing-apps`、`skills/replay-evals`，这里不重复。
+For details of the plugin package format, lifecycle and directory, see `skills/writing-plugins`, `skills/writing-apps` and `skills/replay-evals`; they are not repeated here.
 
-M4 / M5 遗留的真实环境项（Slack / Lark、E2B、runsc 等）仍以各自的清单为准
-（`m4-live-acceptance-checklist.md`、`m5-live-acceptance-checklist.md`）；本清单第 6 节只要求
-「改用 tgz 安装后」把那两份清单里的冒烟跑一遍，不重复列步骤。
+The live environment items left over from M4 / M5 (Slack / Lark, E2B, runsc and so on) are still governed by their own checklists
+(`m4-live-acceptance-checklist.md`, `m5-live-acceptance-checklist.md`); section 6 of this checklist only requires
+running the smoke tests in those two checklists once "after switching to tgz installs", without repeating the steps.
 
 ---
 
-## 1. 凭据与环境变量
+## 1. Credentials and environment variables
 
-凭据放在 `~/.capybara-test.env`，由外层 shell 注入环境（测试代码不读这个文件），
-**任何时候都不要打印或贴出值**，也不要把值写进本清单、日志或提交。值以「替换为」开头视为未填。
+Credentials live in `~/.capybara-test.env` and are injected into the environment by the outer shell (the test code does not read this file).
+**Never print or paste the values at any time**, and never write them into this checklist, logs or commits. A value that starts with "替换为" (placeholder text meaning "replace with") counts as unfilled.
 
-下表的变量名是为人工验收拟定的约定，代码与测试目前都不读取它们；补跑时若写成自动化测试，以测试里实际用的名字为准。
+The variable names in the table below are conventions drafted for manual acceptance; neither the code nor the tests read them currently. If the run is later written as an automated test, the names the test actually uses win.
 
-| 变量 | 必填 | 说明 |
+| Variable | Required | Description |
 |---|---|---|
-| `CAPYBARA_TEST_JUDGE_BASE_URL` / `_API_KEY` / `_MODEL` | 第 2 节必填 | 评委用的真实模型（任一已装的供应商插件；沿用 `capybara-live-api-tests` 里验证过的模型） |
-| `CAPYBARA_TEST_NPM_TOKEN` | 第 3 节私有 registry 必填 | 私有 npm registry 的只读令牌 |
-| `CAPYBARA_TEST_NPM_REGISTRY` | 第 3 节私有 registry 必填 | 私有 registry 地址 |
-| `CAPYBARA_TEST_CATALOG_URL` / `_TOKEN` | 第 4 节必填 | 真实托管的企业清单 `index.json` 地址与访问令牌 |
-| `CAPYBARA_TEST_NACOS_*` | 第 5 节必填 | Nacos 地址、命名空间、dataId、凭据 |
-| `CAPYBARA_TEST_HOSTS` | 第 7 节必填 | 参与多主机验收的主机清单 |
+| `CAPYBARA_TEST_JUDGE_BASE_URL` / `_API_KEY` / `_MODEL` | Required for section 2 | The real model used as the judge (any installed provider plugin; reuse a model verified in `capybara-live-api-tests`) |
+| `CAPYBARA_TEST_NPM_TOKEN` | Required for the private registry in section 3 | A read-only token for the private npm registry |
+| `CAPYBARA_TEST_NPM_REGISTRY` | Required for the private registry in section 3 | Private registry address |
+| `CAPYBARA_TEST_CATALOG_URL` / `_TOKEN` | Required for section 4 | Address and access token of the really hosted enterprise catalog `index.json` |
+| `CAPYBARA_TEST_NACOS_*` | Required for section 5 | Nacos address, namespace, dataId and credentials |
+| `CAPYBARA_TEST_HOSTS` | Required for section 7 | The list of hosts taking part in multi-host acceptance |
 
-公共 npm 不需要凭据。每一节开头写明「前置条件」；条件不满足就跳过那一节并在文末记录原因。
+Public npm needs no credentials. Each section begins with its "Prerequisites"; if they are not met, skip that section and record the reason at the end.
 
-## 通用准备
+## General preparation
 
-- [ ] 前置：本机或测试环境有 PG、Valkey；已用 `capybara admin create` 建好企业管理员，并能登录网页后台。
-- [ ] 前置：核心镜像或本地构建里只有内核加 `openai-compatible`、`object-store-s3`；其余官方插件一律经第 6 节安装。
-- [ ] 步骤：`pnpm pack-plugins` 打出全部官方插件的 tgz（记下输出目录）。
-- [ ] 预期：每个插件一个 tgz，且 `capybara plugins install <tgz>` 的校验阶段不报错。
+- [ ] Prerequisite: PG and Valkey are available locally or in the test environment; an enterprise admin has been created with `capybara admin create` and can sign in to the web admin console.
+- [ ] Prerequisite: the core image or local build contains only the kernel plus `openai-compatible` and `object-store-s3`; every other official plugin is installed through section 6.
+- [ ] Step: `pnpm pack-plugins` builds the tgz of all official plugins (note the output directory).
+- [ ] Expected: one tgz per plugin, and the validation stage of `capybara plugins install <tgz>` reports no errors.
 
-## 2. 真实模型当评委
+## 2. A real model as the judge
 
-前置：已装并启用一个真实模型供应商；组织内有一个 agent 和至少 3 段真实对话（含工具调用与一次审批）；
-管理后台「模型」页已把用途 `eval` 映射到评委模型。
+Prerequisites: a real model provider is installed and enabled; the org has an agent and at least 3 real conversations (including tool calls and one approval);
+the admin console's "Models" page has mapped the purpose `eval` to the judge model.
 
-- [ ] 步骤：在「评测」页从这几段对话建一个评测集；打开其中一个用例，检查快照里有事件、agent 版本和工具定义。
-  预期：用例可打开，页面没有对话以外的泄露（不属于本人 / 本组织的轨迹返回 404）。
-- [ ] 步骤：对评测集发起一次单步回放（换一个模型），运行前页面显示预计请求数。
-  预期：运行入队、按组织并发上限执行，结果里有结构差异和每步的 token / 成本。
-- [ ] 步骤：发起一次整轮回放。
-  预期：工具调用只回放记录的结果，没有真实工具被执行（外部系统无副作用，沙箱无新命令）。
-- [ ] 步骤：为运行开启 LLM 评委，评委用途 `eval`。
-  预期：每个用例得到评委的通过 / 不通过与理由；评委调用计入 `eval` 用途与组织用量。
-- [ ] 步骤：把运行的 token 上限设得很小再运行一次。
-  预期：到上限后运行停止，状态显示因上限停止，已完成的用例结果保留。
-- [ ] 步骤：在轨迹查看器里对一个用例手工标注通过 / 不通过。
-  预期：标注保存，运行汇总里计入人工结果；审计里有 `trajectory.viewed` 记录。
+- [ ] Step: on the "Evals" page, create an eval set from these conversations; open one of the cases and check that the snapshot has events, the agent version and the tool definitions.
+  Expected: the case opens, and the page leaks nothing beyond the conversation (a trajectory that does not belong to the person / org returns 404).
+- [ ] Step: start a step replay on the eval set (swapping in a different model); before the run the page shows the estimated request count.
+  Expected: the run is enqueued and executes within the org's concurrency cap, and the result has the structural diff and each step's tokens / cost.
+- [ ] Step: start a full-run replay.
+  Expected: tool calls replay only the recorded results, and no real tool is executed (no side effects on external systems, no new commands in the sandbox).
+- [ ] Step: turn on the LLM judge for the run, with the judge purpose `eval`.
+  Expected: each case gets the judge's pass / fail and reason; the judge calls count toward the `eval` purpose and the org's usage.
+- [ ] Step: set the run's token cap very small and run again.
+  Expected: the run stops once the cap is reached, the status shows it stopped because of the cap, and the results of completed cases are kept.
+- [ ] Step: in the trajectory viewer, manually label a case pass / fail.
+  Expected: the label is saved and counted as a human result in the run summary; the audit has a `trajectory.viewed` record.
 
-## 3. 公共与私有 npm
+## 3. Public and private npm
 
-前置：部署能访问公共 npm；第 3.2 节需要一个私有 registry 与令牌，且里面有一个已用 `pnpm pack-plugin` 规范打好并发布的测试插件。
+Prerequisites: the deployment can reach public npm; section 3.2 needs a private registry and a token, and the registry holds a test plugin that was packed to the `pnpm pack-plugin` conventions and published.
 
-### 3.1 公共 npm
+### 3.1 Public npm
 
-- [ ] 步骤：后台「插件」页按包名安装一个已发布到公共 npm 的官方插件（或 `capybara plugins install <包名>`）。
-  预期：显示安装确认页（权限清单），批准后下载包、校验 sha512 / 单文件 ESM 约束，状态变为已安装；不跑 npm install、不跑安装脚本。
-- [ ] 步骤：安装一个不合规的包（带原生模块或含非字面量动态 import）。
-  预期：安装被拒绝，错误说明原因，PG 里没有半装状态。
+- [ ] Step: on the admin console "Plugins" page, install by package name an official plugin published to public npm (or `capybara plugins install <package name>`).
+  Expected: an install confirmation page (permission manifest) is shown; after approval the package is downloaded, the sha512 / single-file ESM constraints are validated, and the status becomes installed; no npm install and no install scripts run.
+- [ ] Step: install a non-compliant package (with a native module or a non-literal dynamic import).
+  Expected: the install is rejected with an error explaining why, and PG has no half-installed state.
 
-### 3.2 私有 npm
+### 3.2 Private npm
 
-- [ ] 步骤：设置 `packages.npmRegistry` 与 `packages.npmToken`（经环境变量），按包名安装私有 registry 里的插件。
-  预期：安装成功；令牌只发给 registry 的源站，不出现在日志、审计或界面里。
-- [ ] 步骤：用错误令牌重试。
-  预期：安装失败并给出可操作的提示（认证失败），不泄露令牌。
-- [ ] 步骤：不填 `npmToken`，在后台改 registry 为私有地址后重试。
-  预期：配置来自环境变量 / 文件的字段在界面里显示为只读并标来源。
+- [ ] Step: set `packages.npmRegistry` and `packages.npmToken` (through environment variables) and install a plugin from the private registry by package name.
+  Expected: the install succeeds; the token is sent only to the registry's origin and does not appear in logs, audit or the UI.
+- [ ] Step: retry with a wrong token.
+  Expected: the install fails with an actionable hint (authentication failed) and does not leak the token.
+- [ ] Step: leave `npmToken` unset, change the registry to the private address in the admin console, and retry.
+  Expected: fields whose config comes from environment variables / a file show as read-only in the UI with their source marked.
 
-## 4. 真实托管的企业清单与离线模式
+## 4. A really hosted enterprise catalog and offline mode
 
-前置：有一个真实托管的企业清单 `index.json`（HTTPS，要令牌），里面至少含一个插件、一个连接器模板、一个技能和一个应用；
-若有镜像地址，也准备好。
+Prerequisites: a really hosted enterprise catalog `index.json` (HTTPS, needs a token) containing at least one plugin, one connector template, one skill and one app;
+if there is a mirror address, prepare it too.
 
-- [ ] 步骤：在「企业目录 → 来源」添加企业清单（地址 + 令牌）。
-  预期：拉取成功，条目出现在目录；令牌不在界面或日志里回显；`catalogs.maxIndexBytes` 之内。
-- [ ] 步骤：手动刷新，再等一个 `catalogs.refreshIntervalMinutes` 周期。
-  预期：手动刷新立即生效；周期刷新只由一个副本执行（多副本下日志里不重复）。
-- [ ] 步骤：让主地址不可用（临时改错），配置 `mirrors`。
-  预期：按顺序尝试镜像并成功；全部失败时保留上一次的条目，来源显示最近一次错误。
-- [ ] 步骤：从清单引入一个插件条目。
-  预期：下载的包按清单里的 sha512 校验；篡改 integrity 后引入被拒绝。
-- [ ] 步骤：设 `catalogs.official.enabled = false`（离线模式），断开外网。
-  预期：官方清单从不被拉取；企业清单与手动上传仍可用；已引入的条目照常安装。
-- [ ] 步骤：恢复在线后重新打开官方清单。
-  预期：官方清单地址现在是占位地址（M7 换成正式地址），拉取失败只显示在来源状态里，不影响内核启动。
+- [ ] Step: under "Enterprise directory → Sources", add the enterprise catalog (address + token).
+  Expected: the fetch succeeds and the entries appear in the directory; the token is not echoed in the UI or logs; the size is within `catalogs.maxIndexBytes`.
+- [ ] Step: refresh manually, then wait one `catalogs.refreshIntervalMinutes` period.
+  Expected: the manual refresh takes effect immediately; the periodic refresh is run by only one replica (with multiple replicas the log shows no duplicates).
+- [ ] Step: make the primary address unavailable (temporarily break it) and configure `mirrors`.
+  Expected: the mirrors are tried in order and one succeeds; when all fail, the previous entries are kept and the source shows the most recent error.
+- [ ] Step: import a plugin entry from the catalog.
+  Expected: the downloaded package is verified against the sha512 in the catalog; after tampering with the integrity the import is rejected.
+- [ ] Step: set `catalogs.official.enabled = false` (offline mode) and disconnect from the internet.
+  Expected: the official catalog is never fetched; enterprise catalogs and manual upload still work; already imported entries install as usual.
+- [ ] Step: go back online and turn the official catalog on again.
+  Expected: the official catalog address is now a placeholder address (M7 swaps in the real one), and a failed fetch shows only in the source status and does not affect kernel startup.
 
-## 5. Nacos 来源的只读显示
+## 5. Read-only display of the Nacos source
 
-前置：`CAPYBARA_CONFIG_SOURCE=nacos` 启动内核，Nacos 里某个插件的部署配置含至少一个字段（例如 `slack` 的某项）；
-PG 里对同一插件也存了另一些字段。
+Prerequisites: the kernel started with `CAPYBARA_CONFIG_SOURCE=nacos`, the deployment config of some plugin in Nacos contains at least one field (for example some `slack` field);
+PG also stores some other fields for the same plugin.
 
-- [ ] 步骤：打开后台该插件的配置页。
-  预期：Nacos 里出现的字段显示为只读并标「来源：Nacos」；只存在于 PG 的字段可编辑并标「来源：后台」。
-- [ ] 步骤：在 Nacos 里改动那个字段并发布。
-  预期：热更新字段生效（`hot`），非热更新字段提示需重启；界面显示的值随之变化。
-- [ ] 步骤：设置同名环境变量。
-  预期：环境变量优先级最高，该字段标来源「环境变量」，依然只读。
-- [ ] 步骤：在 Nacos 里写一个不合法的值。
-  预期：该插件进入待处理（原因：配置），内核照常运行，其他插件不受影响；修正后恢复。
+- [ ] Step: open that plugin's config page in the admin console.
+  Expected: fields present in Nacos show as read-only marked "Source: Nacos"; fields present only in PG are editable and marked "Source: Admin console".
+- [ ] Step: change that field in Nacos and publish.
+  Expected: a hot-reloadable field (`hot`) takes effect, a non-hot field prompts for a restart; the value shown in the UI changes accordingly.
+- [ ] Step: set an environment variable of the same name.
+  Expected: the environment variable has the highest precedence, the field is marked with the source "Environment variable", and it is still read-only.
+- [ ] Step: write an invalid value in Nacos.
+  Expected: that plugin goes into pending (reason: config), the kernel keeps running and other plugins are unaffected; it recovers after the value is fixed.
 
-## 6. 官方插件全部以 tgz 安装后跑 M4 / M5 冒烟
+## 6. Run the M4 / M5 smoke tests after installing all official plugins from tgz
 
-前置：全新的部署，核心镜像只含 `openai-compatible` 与 `object-store-s3`；第 1 节的凭据按 M4 / M5 清单齐备。
+Prerequisites: a brand-new deployment whose core image contains only `openai-compatible` and `object-store-s3`; the credentials of section 1 are in place per the M4 / M5 checklists.
 
-- [ ] 步骤：用 `capybara plugins install <tgz>` 或网页上传，依次安装 `anthropic`、`openai`、`model-fake`、`connector-mcp`、
-  `connector-openapi`、`todo`、`example-board`、`example-counter`、`slack`、`lark`、`sandbox-docker`、`sandbox-e2b`。
-  预期：每个都经过安装确认页并由企业管理员批准权限；沙箱 / 存储类插件在确认页标为敏感项；全程不重启内核。
-- [ ] 步骤：对每个插件做「停用 → 启用 → 升级到同一包的新版本 → 卸载」。
-  预期：在途工具调用跑完或超时后中止；依赖方（例如依赖 `sandbox@1` 的功能）收到停用并在启用后重新加载；卸载后注册项全部撤销。
-- [ ] 步骤：按 `m4-live-acceptance-checklist.md` 的第 2–5 节跑 Slack / Lark 的真实平台检查。
-  预期：与源码目录加载时的结果一致。
-- [ ] 步骤：按 `m5-live-acceptance-checklist.md` 的各节跑沙箱（runsc / E2B）、附件与媒体、技能检查。
-  预期：与源码目录加载时的结果一致。
-- [ ] 步骤：安装后立即在另一个组织里启用同一插件。
-  预期：不同组织的配置与数据互不可见。
+- [ ] Step: with `capybara plugins install <tgz>` or a web upload, install in turn `anthropic`, `openai`, `model-fake`, `connector-mcp`,
+  `connector-openapi`, `todo`, `example-board`, `example-counter`, `slack`, `lark`, `sandbox-docker`, `sandbox-e2b`.
+  Expected: each goes through the install confirmation page and an enterprise admin approves its permissions; sandbox / storage plugins are marked as sensitive items on the confirmation page; the kernel is never restarted.
+- [ ] Step: for each plugin do "disable → enable → upgrade to a new version of the same package → uninstall".
+  Expected: in-flight tool calls finish or are aborted after the timeout; dependents (for example features that depend on `sandbox@1`) receive the disable and reload after enable; after uninstall all registrations are revoked.
+- [ ] Step: run the Slack / Lark live-platform checks per sections 2–5 of `m4-live-acceptance-checklist.md`.
+  Expected: the same results as when loaded from the source directory.
+- [ ] Step: run the sandbox (runsc / E2B), attachment and media, and skill checks per the sections of `m5-live-acceptance-checklist.md`.
+  Expected: the same results as when loaded from the source directory.
+- [ ] Step: right after installing, enable the same plugin in another org.
+  Expected: different orgs' config and data are invisible to each other.
 
-## 7. 多主机下的插件同步与收敛
+## 7. Plugin sync and convergence across multiple hosts
 
-前置：至少两台主机各跑一个内核副本（同一 PG、Valkey，对象存储可选）；两台主机的本地插件目录互相独立。
+Prerequisites: at least two hosts each running a kernel replica (the same PG and Valkey, object storage optional); the two hosts' local plugin directories are independent.
 
-- [ ] 步骤：在 A 主机的网页上安装一个插件并启用。
-  预期：B 主机在几秒内同步包并加载，两边后台「加载状态」都显示已加载，版本一致。
-- [ ] 步骤：不配置对象存储（包存 PG）重复上面一步。
-  预期：同样收敛。
-- [ ] 步骤：升级插件，升级途中停掉 B 主机的内核，升级完成后再启动 B。
-  预期：B 启动时按 PG 的期望状态加载新版本；升级期间 A 上在途调用不丢。
-- [ ] 步骤：让 B 的本地插件目录被清空后重启。
-  预期：B 重新从 PG / 对象存储拉取包并加载，不需要人工介入。
-- [ ] 步骤：在 A 上停用插件，同时在 B 上有一个进行中的会话调用它的工具。
-  预期：B 的在途调用等它跑完或超时后中止，之后工具返回「插件已停用」类的错误；会话本身不崩。
-- [ ] 步骤：在 A、B 同时点「升级」同一个插件。
-  预期：迁移只由一个副本持锁执行，不出现重复迁移或半升级；最终两边版本一致。
-- [ ] 步骤：停掉 Valkey 的发布订阅（或断开某台主机的广播连接）约 1 分钟再恢复。
-  预期：周期性维护任务兜底，主机在恢复后收敛到期望状态。
+- [ ] Step: on host A's web app, install a plugin and enable it.
+  Expected: host B syncs the package and loads it within a few seconds, both sides' admin console "load status" shows loaded, and the versions match.
+- [ ] Step: repeat the above without configuring object storage (packages stored in PG).
+  Expected: it converges the same way.
+- [ ] Step: upgrade a plugin, stop host B's kernel during the upgrade, and start B again after the upgrade completes.
+  Expected: on startup B loads the new version according to PG's desired state; in-flight calls on A are not lost during the upgrade.
+- [ ] Step: clear B's local plugin directory and restart.
+  Expected: B fetches the package from PG / object storage again and loads it, with no manual intervention.
+- [ ] Step: disable the plugin on A while an in-progress conversation on B calls its tool.
+  Expected: B's in-flight call is aborted after it finishes or times out, after which the tool returns a "plugin disabled" style error; the conversation itself does not crash.
+- [ ] Step: click "Upgrade" on the same plugin on A and B at the same time.
+  Expected: the migration is run by only one replica holding the lock, with no duplicate migration or half upgrade; in the end both sides' versions match.
+- [ ] Step: stop Valkey's pub/sub (or disconnect one host's broadcast connection) for about 1 minute and then restore it.
+  Expected: the periodic maintenance task is the backstop, and the hosts converge to the desired state after recovery.
 
-## 8. 一个真实的应用包端到端安装与卸载
+## 8. End-to-end install and uninstall of a real app bundle
 
-前置：一个真实的应用包，例如飞书应用：`app.yaml` 含 `lark` 插件、一个文档连接器模板（例如飞书文档的 MCP / OpenAPI 连接器模板）和一个技能；
-`lock` 里有 npm 名、范围、精确版本与 sha512；`lark` 的平台侧应用已按 `plugins/lark/README.md` 建好。
+Prerequisites: a real app bundle, for example a Feishu app: `app.yaml` contains the `lark` plugin, a document connector template (for example a Feishu docs MCP / OpenAPI connector template) and a skill;
+`lock` has the npm name, range, exact version and sha512; and the platform-side app for `lark` has been created per `plugins/lark/README.md`.
 
-- [ ] 步骤：企业管理员在「企业目录」从文件 / npm / 清单导入该应用包（先预览再确认）。
-  预期：预览列出全部组件、权限摘要与锁定的版本；确认后插件以包安装、连接器模板与技能进入目录；
-  任一组件校验失败则整个导入不落库。
-- [ ] 步骤：为各条目设策略（允许 / 需审批 / 禁用）；其中一个设「需审批」。
-  预期：成员对「需审批」的条目只能申请，管理员批准后才可安装。
-- [ ] 步骤：组织管理员在组织里安装这个应用，填 `lark` 的组织级配置与连接器的可编辑端点。
-  预期：一次装好插件（组织内启用）、连接器、组织技能；组件台账里记着每个组件是否由本应用带来。
-- [ ] 步骤：端到端使用：在飞书里向机器人提问，让 agent 读一份飞书文档并按技能整理。
-  预期：agent 看到文档连接器的工具，工具策略符合 `defaultToolPolicies`，写操作触发飞书卡片审批，审批后继续。
-- [ ] 步骤：另装一个与它共用某个组件（例如同一个技能或连接器模板）的应用，再卸载第一个应用。
-  预期：共用的组件保留，独占的组件被移除；插件在组织内停用但部署级安装仍在（不影响别的组织）。
-- [ ] 步骤：卸载第二个应用。
-  预期：全部组件移除，台账清空，会话中已有对话保留历史；可再次安装且结果与首次一致。
-- [ ] 步骤：尝试升级应用（目录里发布了新版本）。
-  预期：M6 不支持应用升级，界面说明只能卸载后重装。
+- [ ] Step: an enterprise admin imports the app bundle under "Enterprise directory" from a file / npm / catalog (preview first, then confirm).
+  Expected: the preview lists all components, the permission summary and the locked versions; after confirming, the plugin is installed as a package, and the connector template and skill enter the directory;
+  if any component fails validation the whole import is not persisted.
+- [ ] Step: set a policy for each entry (allow / needs approval / disabled); set one of them to "needs approval".
+  Expected: members can only request an entry that "needs approval", and it can be installed only after an admin approves.
+- [ ] Step: an org admin installs this app in the org, filling in `lark`'s org-level config and the connector's editable endpoint.
+  Expected: the plugin (enabled in the org), connector and org skill are installed in one go; the component ledger records whether each component was brought in by this app.
+- [ ] Step: end-to-end use: ask the bot a question in Feishu and have the agent read a Feishu document and organize it per the skill.
+  Expected: the agent sees the document connector's tools, the tool policies match `defaultToolPolicies`, and write operations trigger a Feishu card approval, after which it continues.
+- [ ] Step: install another app that shares a component with it (for example the same skill or connector template), then uninstall the first app.
+  Expected: shared components are kept and exclusive ones are removed; the plugin is disabled in the org but the deployment-level install remains (other orgs are not affected).
+- [ ] Step: uninstall the second app.
+  Expected: all components are removed and the ledger is emptied, existing conversations keep their history; it can be installed again with a result identical to the first time.
+- [ ] Step: try to upgrade the app (a new version was published in the directory).
+  Expected: M6 does not support app upgrades, and the UI explains it can only be uninstalled and reinstalled.
 
-## 9. 记录
+## 9. Record
 
-- [ ] 每一节跑完在这里记下日期、环境、结论；失败的项写成 issue，不要在本清单里贴任何凭据或令牌。
-- [ ] 全部通过后，把路线图 M6 行里的「真实环境验收」推迟项标为已完成。
+- [ ] After each section is run, record the date, environment and conclusion here; write failed items up as issues, and never paste any credentials or tokens into this checklist.
+- [ ] After everything passes, mark the deferred "live environment acceptance" item in the roadmap's M6 row as done.

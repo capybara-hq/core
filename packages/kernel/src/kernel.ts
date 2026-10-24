@@ -12,10 +12,17 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
-import { ChannelConnections } from "./channels/connections.service.js";
+import { CHANNEL_CHANGED_TOPIC, ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
-import { ChannelSupervisor } from "./channels/supervisor.js";
+import {
+  ChannelSupervisor,
+  checkGatewayPresence,
+  GATEWAY_CHECK_EVERY_MS,
+  GATEWAY_CHECK_JOB,
+  GATEWAY_CHECK_SCHEDULER_ID,
+} from "./channels/supervisor.js";
+import { ChannelWebhooks } from "./channels/webhook.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
@@ -73,6 +80,7 @@ import {
   PLUGINS_RECONCILE_SCHEDULER_ID,
   PLUGINS_RECONCILE_TOPIC,
   PluginLifecycle,
+  STALE_RECONCILE_PERIODS,
 } from "./plugins/lifecycle.js";
 import { ensureMigrated } from "./plugins/migrate-lock.js";
 import { OrgPluginConfigs } from "./plugins/org-config.js";
@@ -96,6 +104,14 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import {
+  queryUnservable,
+  queryUsageSubscribers,
+  USAGE_SWEEP_EVERY_MS,
+  USAGE_SWEEP_JOB,
+  USAGE_SWEEP_SCHEDULER_ID,
+  UsageReporter,
+} from "./runtime/usage-report.js";
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService, sandboxConfigWarnings } from "./sandbox/sandbox.service.js";
@@ -222,6 +238,8 @@ export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
   readonly http: KernelHttp;
   readonly host: PluginHost;
+  /** usage.report delivery (fast path, sweeper and, on the worker role, the worker). */
+  readonly usageReport: UsageReporter;
   /** 本进程的副本 id（`<hostname>-<pid>-<6 位随机>`，写 `plugin_replica_status`）。 */
   readonly replicaId: string;
   /** 插件包的导入（上传 / npm）与安装记录。 */
@@ -332,6 +350,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   // 登录方式与受信任的身份源在每次请求时经 `config()` 读取，替换配置即生效。
   "auth.loginSources": () => {},
   "auth.trustedIdentitySources": () => {},
+  // The hook registry reads the time limit through `config()` on every run.
+  "hooks.timeoutMs": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
@@ -438,6 +458,7 @@ export async function createKernel(
     drainMs: () => current.pluginHost.drainSeconds * 1000,
     disposeTimeoutMs: () => current.pluginHost.disposeTimeoutSeconds * 1000,
     reloadSetupTimeoutMs: () => current.pluginHost.reloadSetupTimeoutSeconds * 1000,
+    hookTimeoutMs: () => current.hooks.timeoutMs,
     // 路由闸门的「部署已知」插件：安装记录（任何 desired_state）；pluginInstalls 在下面创建，调用时才取
     installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
     // 生效部署配置 = 启动配置补上 PG 里保存的字段（C10）；服务在下面创建，调用时才取
@@ -731,6 +752,8 @@ export async function createKernel(
     questions,
     config: () => current,
     log,
+    // plugin hooks (chat runs only; the eval replay uses RecordedToolPipeline, which has none)
+    pluginHooks: host.hooks,
     onToolsChanged: (orgId, connectorId) => {
       void toolDrift.onToolsChanged(orgId, connectorId);
     },
@@ -832,6 +855,7 @@ export async function createKernel(
     log,
     onSecrets: (v) => log.addOrgSecrets(v),
     onResume: (id) => channelOutbound.resumeConnection(id),
+    config: () => current,
   });
   const channelOutbound = new ChannelOutbound({
     db: kdb,
@@ -878,6 +902,29 @@ export async function createKernel(
     }),
   };
   let channelSupervisor: ChannelSupervisor | undefined;
+  /** Channel webhook inbound (gateway role only; F8 / F9). */
+  const channelWebhooks = config.roles.includes("gateway")
+    ? new ChannelWebhooks({ connections: channelConnections, inbound: channels.inbound, log })
+    : undefined;
+  let unwatchWebhooks: (() => void) | undefined;
+  let unsubscribeWebhooks: (() => Promise<void>) | undefined;
+  // Warn (rate limited) when a channel plugin has holdable connections but no live gateway replica
+  // with it loaded (R1 / R3); silent for one lease TTL after this process starts (first heartbeats)
+  const gatewayCheckGraceFrom = Date.now();
+  maintenance.handle(GATEWAY_CHECK_JOB, async () => {
+    await checkGatewayPresence({
+      db: kdb,
+      redis,
+      config: () => current,
+      log,
+      graceUntil: gatewayCheckGraceFrom + current.channels.leaseTtlMs,
+    });
+  });
+  maintenance.schedule({
+    id: GATEWAY_CHECK_SCHEDULER_ID,
+    name: GATEWAY_CHECK_JOB,
+    everyMs: () => GATEWAY_CHECK_EVERY_MS,
+  });
   const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
@@ -905,14 +952,51 @@ export async function createKernel(
         .catch((err) => log.warn("stream delta publish failed", { conversationId, err }));
     };
   };
+  // usage.report metering: producer on every role, worker on the worker role (P-17)
+  const usageReporter = new UsageReporter({
+    db: kdb,
+    redisUrl: config.redis.url,
+    hooks: host.hooks,
+    isActive: (plugin) => host.current(plugin) !== undefined,
+    unservable: (plugins) =>
+      queryUnservable(
+        kdb,
+        plugins,
+        STALE_RECONCILE_PERIODS * current.pluginHost.reconcileIntervalSeconds,
+      ),
+    // deployment state (approved manifests in PG) plus builtin plugins (no snapshot, always enabled)
+    subscribers: async (orgId) => {
+      const subs = await queryUsageSubscribers(kdb, orgId);
+      for (const m of host.manifests()) {
+        if (host.sourceOf(m.name) === "builtin" && m.permissions?.hooks?.includes("usage.report")) {
+          subs.add(m.name);
+        }
+      }
+      return subs;
+    },
+    config: () => current,
+    log,
+  });
+  // R13 sweeper: re-enqueue recent usage events (once across replicas through the maintenance queue)
+  maintenance.handle(USAGE_SWEEP_JOB, async () => {
+    await usageReporter.sweep();
+  });
+  maintenance.schedule({
+    id: USAGE_SWEEP_SCHEDULER_ID,
+    name: USAGE_SWEEP_JOB,
+    everyMs: () => USAGE_SWEEP_EVERY_MS,
+  });
   const stepDeps: LoopDeps = {
     db: kdb,
     eventLog,
     registry,
+    usageReport: usageReporter,
     tools: toolRegistry,
     config: () => current,
     log,
     toolPipeline,
+    // plugin hooks for chat runs; the full-run replay below drops them (P-18)
+    hooks: host.hooks,
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
       fetch: (orgId, conversationId, ids, caps) =>
@@ -959,6 +1043,12 @@ export async function createKernel(
       },
       serveApi: config.roles.includes("api"),
       servePlugins,
+      ...(channelWebhooks && {
+        gateway: {
+          webhooks: channelWebhooks,
+          webhookMaxBodyBytes: config.channels.webhookMaxBodyBytes,
+        },
+      }),
       apiModule: ApiModule.register({
         db: kdb,
         redis,
@@ -1092,6 +1182,8 @@ export async function createKernel(
       );
     unwatch?.();
     unwatchPlugins?.();
+    unwatchWebhooks?.();
+    await unsubscribeWebhooks?.().catch(() => {});
     // 不再接 reconcile（进行中的那次由宿主关闭收尾）
     await within("plugin-lifecycle", pluginLifecycle.stop(), 1_000);
     unwatch = undefined;
@@ -1132,6 +1224,8 @@ export async function createKernel(
       );
     }
     await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
+    // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
+    await within("usage-report", usageReporter.stop(), Math.max(0, runsDeadline - Date.now()));
     // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
     await within(
       "channel-outbound",
@@ -1156,6 +1250,7 @@ export async function createKernel(
   const kernel: Kernel = {
     http: httpApp,
     host,
+    usageReport: usageReporter,
     replicaId,
     pluginInstalls,
     pluginAdmin,
@@ -1288,7 +1383,11 @@ export async function createKernel(
               registry,
               ...(stepDeps.media !== undefined && { media: stepDeps.media }),
               checkpoints,
-              loop: (d) => loopFactory({ ...stepDeps, ...d }),
+              // explicitly without plugin hooks: eval replays never fire them (P-18)
+              loop: (d) => {
+                const { hooks: _noHooks, ...replayDeps } = stepDeps;
+                return loopFactory({ ...replayDeps, ...d });
+              },
               ...(opts.evalHooks !== undefined && { hooks: opts.evalHooks }),
             },
           });
@@ -1302,7 +1401,18 @@ export async function createKernel(
           }
           checkpoint();
           maintenance.startWorker();
-          // 渠道长连接选主：每个 worker 副本都参与，同一连接只有取得租约的一个副本连接
+          channelOutbound.startWorker();
+          usageReporter.startWorker();
+          if (!config.roles.includes("gateway")) {
+            log.info(
+              "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",
+              { roles: config.roles },
+            );
+          }
+        }
+        if (config.roles.includes("gateway")) {
+          // Channel long-connection leader election: every gateway replica takes part, and only the
+          // replica that holds a connection's lease connects it (E11-A)
           channelSupervisor = new ChannelSupervisor({
             db: kdb,
             redis,
@@ -1316,13 +1426,24 @@ export async function createKernel(
             onEvent: (id, e) => channels.inbound.onEvent(id, e),
             config: () => current,
             log,
+            replicaId,
           });
           await channelSupervisor.start();
           // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）
           const supervisor = channelSupervisor;
           unwatchPlugins = host.onChange((plugin) => supervisor.pluginChanged(plugin));
           checkpoint();
-          channelOutbound.startWorker();
+        }
+        if (channelWebhooks) {
+          // The webhook runtime cache is read-through only: drop entries on every connection change
+          // and whenever a plugin instance changes
+          const webhooks = channelWebhooks;
+          unsubscribeWebhooks = await bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
+            const id = (payload as { connectionId?: unknown } | null)?.connectionId;
+            if (typeof id === "string") webhooks.invalidate(id);
+          });
+          unwatchWebhooks = host.onChange(() => webhooks.invalidateAll());
+          checkpoint();
         }
         // 路由保留挂载、实时取：插件撤销后 503 plugin.unavailable，重新加载后恢复（C17）
         httpApp.mountPlugins(host.routeTable());

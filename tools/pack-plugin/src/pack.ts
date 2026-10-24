@@ -7,6 +7,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -37,6 +38,11 @@ export interface PackResult {
   file: string;
   sha256: string;
   manifest: StaticPluginManifest;
+  /**
+   * Entries of the plugin's package.json `files` that are not in the package (directories other than
+   * `dist` / `migrations` / `ui`, globs, missing paths). Callers print them; `check:plugin-pack` fails.
+   */
+  dropped: string[];
 }
 
 /**
@@ -163,6 +169,105 @@ async function makeTgz(files: Map<string, Buffer>): Promise<Buffer> {
   return promisify(gzip)(Buffer.concat(chunks), { level: 9 });
 }
 
+/**
+ * npm metadata copied verbatim from the plugin's package.json when present (F4). They only describe
+ * the package on npm; `repository` (with `directory`) is required for npm provenance.
+ */
+export const METADATA_FIELDS = ["description", "repository", "homepage", "keywords"] as const;
+
+const pick = (o: Record<string, unknown>, keys: readonly string[]) =>
+  Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+
+/** Third-party license notices of the bundled dependencies (written only when there are any). */
+export const NOTICES_FILE = "THIRD-PARTY-NOTICES.txt";
+
+const LICENSE_FILE_RE = /^(?:licen[cs]e|copying|notice)(?:[.-].*)?$/i;
+
+/** Nearest `LICENSE` from the plugin dir up to the workspace root (the dir with pnpm-workspace.yaml). */
+function findLicense(dir: string): string | undefined {
+  for (let d = dir; ; d = dirname(d)) {
+    const f = join(d, "LICENSE");
+    if (existsSync(f)) return f;
+    if (existsSync(join(d, "pnpm-workspace.yaml")) || dirname(d) === d) return undefined;
+  }
+}
+
+/**
+ * Files shipped besides the bundle: `README.md` and `LICENSE` (the plugin's own, else the workspace's),
+ * the `NOTICE` next to that `LICENSE` if there is one (Apache-2.0 4(d) asks redistributions to carry it),
+ * plus every plain file named in the package.json `files` list at the plugin root (e.g. slack's
+ * `app-manifest.yaml`). `dist` is replaced by the bundle and `migrations` / `ui` are handled by the
+ * manifest; any other entry (a directory, a glob, a missing path) is reported in `dropped`.
+ */
+async function extraFiles(
+  dir: string,
+  listed: unknown,
+): Promise<{ files: Map<string, Buffer>; dropped: string[] }> {
+  const files = new Map<string, Buffer>();
+  const dropped: string[] = [];
+  if (existsSync(join(dir, "README.md"))) {
+    files.set("README.md", await readFile(join(dir, "README.md")));
+  }
+  const license = findLicense(dir);
+  if (license !== undefined) files.set("LICENSE", await readFile(license));
+  const notice = license === undefined ? undefined : join(dirname(license), "NOTICE");
+  if (notice !== undefined && existsSync(notice)) files.set("NOTICE", await readFile(notice));
+  for (const raw of Array.isArray(listed) ? listed : []) {
+    const entry = String(raw).replace(/^\.\//, "").replace(/\/+$/, "");
+    if (["dist", "migrations", "ui", "README.md", "LICENSE", "NOTICE"].includes(entry)) continue;
+    const p = join(dir, entry);
+    const plain = /^[\w.-]+$/.test(entry) && existsSync(p) && (await stat(p)).isFile();
+    if (plain) files.set(entry, await readFile(p));
+    else dropped.push(entry);
+  }
+  return { files, dropped };
+}
+
+/** Package root of a bundled input under node_modules (`.../node_modules/@scope/name` or `/name`). */
+function packageRootOf(abs: string): string | undefined {
+  const m = /^(.*[/\\]node_modules[/\\](?:@[^/\\]+[/\\])?[^/\\]+)/.exec(abs);
+  return m?.[1];
+}
+
+/**
+ * THIRD-PARTY-NOTICES.txt for the npm packages esbuild bundled (from the metafile inputs): name,
+ * version, license and the package's license / notice files, sorted, so MIT / BSD notices that require
+ * reproduction survive bundling. Undefined when nothing third-party was bundled.
+ */
+async function thirdPartyNotices(dir: string, inputs: string[]): Promise<string | undefined> {
+  const roots = new Set<string>();
+  for (const i of inputs) {
+    const r = packageRootOf(resolve(dir, i));
+    if (r !== undefined) roots.add(r);
+  }
+  const entries: { id: string; text: string }[] = [];
+  for (const root of roots) {
+    const pj = join(root, "package.json");
+    if (!existsSync(pj)) continue;
+    const pkg = JSON.parse(await readFile(pj, "utf8")) as Record<string, unknown>;
+    const id = `${String(pkg.name)}@${String(pkg.version)}`;
+    const license = typeof pkg.license === "string" ? pkg.license : "UNKNOWN";
+    const texts: string[] = [];
+    for (const f of (await readdir(root)).filter((n) => LICENSE_FILE_RE.test(n)).sort()) {
+      if ((await stat(join(root, f))).isFile())
+        texts.push((await readFile(join(root, f), "utf8")).trim());
+    }
+    const body =
+      texts.length > 0
+        ? texts.join("\n\n")
+        : `(no license file in the package; license: ${license})`;
+    entries.push({ id, text: `${id} (${license})\n\n${body}` });
+  }
+  if (entries.length === 0) return undefined;
+  const unique = [...new Map(entries.map((e) => [e.id, e])).values()].sort((a, b) =>
+    a.id.localeCompare(b.id),
+  );
+  const rule = "-".repeat(72);
+  return `This package bundles the third-party software listed below. Their license notices follow.\n\n${unique
+    .map((e) => `${rule}\n${e.text}\n`)
+    .join("\n")}`;
+}
+
 /** npm pack 的文件名：`@scope/name` → `scope-name-<version>.tgz`。 */
 const tgzName = (name: string, version: string) =>
   `${name.replace(/^@/, "").replace("/", "-")}-${version}.tgz`;
@@ -173,7 +278,8 @@ const tgzName = (name: string, version: string) =>
  *    {@link HOST_PROVIDED_PACKAGES} 与 Node 内置模块（改写为 `node:*`），CJS 依赖经 createRequire 横幅兼容；
  * 2. 扫描产物的 import（白名单、非字面量动态 import），导入产物取默认导出，经 definePlugin 校验后用
  *    `staticManifestOf` 生成静态清单；清单 version 必须与插件 package.json 一致；
- * 3. 生成只含 name / version / type / license / peerDependencies / capybara 的 package.json，复制
+ * 3. 生成只含 name / version / type / license / {@link METADATA_FIELDS} / peerDependencies / capybara 的
+ *    package.json，复制
  *    `migrations/`（清单声明了 migrations 时，必须解析到插件根的 `migrations/`）与 `ui/`（存在时）；
  * 4. 打成带 `package/` 前缀、可复现的 tgz，写到 `outDir/<npm 风格文件名>`。
  *
@@ -204,6 +310,9 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       define: DEFINE,
       charset: "utf8",
       logLevel: "silent",
+      metafile: true,
+      // Notices of bundled dependencies go to THIRD-PARTY-NOTICES.txt (built from the metafile).
+      legalComments: "none",
     });
     if (result.errors.length > 0) {
       throw new Error(`${label}: esbuild failed: ${result.errors.map((e) => e.text).join("; ")}`);
@@ -243,6 +352,10 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       }
       section.migrations = "migrations";
     }
+    const notices = await thirdPartyNotices(dir, Object.keys(result.metafile?.inputs ?? {}));
+    if (notices !== undefined) files.set(NOTICES_FILE, Buffer.from(notices));
+    const extra = await extraFiles(dir, srcPkg.files);
+    for (const [path, data] of extra.files) files.set(path, data);
     if (existsSync(join(dir, "ui"))) {
       for (const f of await listFiles(join(dir, "ui"))) {
         files.set(posix.join("ui", f), await readFile(join(dir, "ui", f)));
@@ -256,6 +369,7 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       version: srcPkg.version,
       type: "module",
       ...(srcPkg.license === undefined ? {} : { license: srcPkg.license }),
+      ...pick(srcPkg, METADATA_FIELDS),
       peerDependencies: { "@capybara-hq/plugin-sdk": m.sdk, zod: deps.zod ?? "^4.0.0" },
       capybara: section,
     };
@@ -267,7 +381,12 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
     await mkdir(outDir, { recursive: true });
     const file = resolve(outDir, tgzName(String(srcPkg.name), String(srcPkg.version)));
     await writeFile(file, tgz);
-    return { file, sha256: createHash("sha256").update(tgz).digest("hex"), manifest };
+    return {
+      file,
+      sha256: createHash("sha256").update(tgz).digest("hex"),
+      manifest,
+      dropped: extra.dropped,
+    };
   } finally {
     await rm(stage, { recursive: true, force: true });
   }

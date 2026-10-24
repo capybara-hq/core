@@ -1,0 +1,419 @@
+name: Release
+
+# npm and container image release. Never runs on pull requests: only on push to main and on manual
+# dispatch.
+#
+# How a release happens (P-16, R8):
+# - First release (0.1.0): only by running this workflow manually (workflow_dispatch) on main, once the
+#   prerequisites in the M7 release checklist are confirmed. Pushes never publish it: `pnpm release
+#   --auto` refuses while none of our packages is on npm yet (so merging M7, or a version bump before
+#   0.1.0, publishes nothing).
+# - Afterwards: changesets. On push to main, if .changeset/ has pending changesets, the `version-pr`
+#   job opens or updates the "Version Packages" PR. On every push the `publish` job runs `pnpm release
+#   --auto`: it publishes whatever versions in the committed main tree are not on npm yet. Versions on
+#   main only change when a reviewed PR (the Version Packages PR) merges, so an ordinary push finds
+#   everything already published and does nothing. There is deliberately no "did this push bump a
+#   version" check: GitHub keeps only one pending run per concurrency group, so a queued run can be
+#   cancelled by a newer one, and the newer run must still publish what the cancelled one would have.
+# - A manual run publishes whatever version is not on npm yet (also the way to finish a release that
+#   failed half-way: versions already on npm are skipped, so reruns are idempotent). `dry_run` packs
+#   everything and runs `npm publish --dry-run`.
+#
+# Why two jobs (never merge them): `changeset version` rewrites package versions in the version-pr
+# job's checkout (and commits them to the changeset-release/main branch). If publishing ran in that
+# same checkout it would ship versions nobody has reviewed. The publish job runs on a fresh runner,
+# checks out exactly github.sha, does not depend on version-pr (no `needs`, no artifacts), and
+# `--auto` requires HEAD == GITHUB_SHA with no uncommitted package.json changes.
+# tools/release/test/workflow.test.ts asserts this layout.
+#
+# Container images (T10): ghcr.io/capybara-hq/capybara-{api,worker,gateway,web}, linux/amd64 + arm64,
+# tagged with the version of apps/capybara (private, versioned by changesets) plus `latest` when that
+# version has no prerelease part and no higher stable semver tag exists (re-running an old release
+# never moves `latest` back; prerelease tags don't count), and not for an image whose tag lookup was
+# denied after the first release. apps/web shares that version (changesets `fixed` group, enforced
+# by check:release-metadata), so a web change bumps the tag; a change that only touches the images
+# (Dockerfiles, .dockerignore, runtime files baked into an image) needs a changeset on
+# @capybara-hq/capybara, or the images are never rebuilt. Three jobs after `publish` (so images
+# follow a successful npm release; `needs` shares no files, every job checks out github.sha itself):
+# - images-plan (`pnpm release:images`, tools/release/src/images.ts): on push, nothing until the first
+#   npm release exists (P-16: the first release, npm and images, is the manual run), then every image
+#   whose version tag is not in ghcr.io yet. A run only ever builds the apps/capybara version of its
+#   own commit, so re-running an old failed run rebuilds that version from exactly that commit; like
+#   npm it catches up after a failed or cancelled run (R8); a manual run builds whatever tag is
+#   missing; a dry run builds all four and pushes nothing. If the first manual run published npm but
+#   no image digest at all (every build failed), the packages don't exist, ghcr.io answers "denied"
+#   and push runs fail (red) until a manual run publishes the images; once every package got at least
+#   one digest, the packages exist and push runs catch up by themselves.
+# - images-build: one job per image and architecture, on native runners (ubuntu-24.04 and
+#   ubuntu-24.04-arm: no QEMU, and each build installs the native prebuilds of its own platform),
+#   pushing an untagged image by digest, with SLSA provenance (mode=max) and an SBOM attestation and the
+#   OCI source label (links the package to this repository). Layers are cached in the GitHub Actions
+#   cache per Dockerfile and architecture (shared with ci.yml's docker job on main).
+# - images-publish: per image, joins the two digests into one multi-arch tag set with `docker buildx
+#   imagetools create`. Runs only when every build succeeded, so a release never tags half the images
+#   from one run; the next run builds whatever is still missing.
+#
+# - release-tag: after images-publish pushed the version tag of every image it built, tags the commit
+#   `v<version>` (a GitHub release, marked prerelease / not latest like the images), so the
+#   compose.yaml of a release can be fetched by tag. The compose default image tag equals the
+#   apps/capybara version in every commit (`pnpm version-packages` rewrites it in the Version
+#   Packages PR; check:release-metadata enforces it).
+#
+# Least privilege: version-pr can write contents and PRs but has no id-token and no npm token;
+# publish can only read contents, gets id-token (provenance / trusted publishing) and the npm token;
+# the images jobs get only `packages` (read to look up tags, write to push) and no npm token or
+# id-token (buildx attestations are pushed as registry manifests, not signed with OIDC).
+# release-tag gets only `contents: write` and checks nothing out.
+#
+# Secrets:
+# - NPM_TOKEN: a granular npm access token with read and write access to the @capybara-hq packages.
+#   Required for the first publish, because npm trusted publishing is configured per existing
+#   package. Later you may configure npm trusted publishing (OIDC) for each package with this
+#   repository and workflow file `release.yml`, then delete NPM_TOKEN: npm >= 11.5 (Node 24) uses the
+#   OIDC token when no NPM_TOKEN is set. Provenance needs a public repository whose URL matches each
+#   package's `repository` field (checked by check:release-metadata).
+# - Images use GITHUB_TOKEN only (`packages: write`), which needs: the org's Packages settings to
+#   allow public container packages; repository workflow permissions that let jobs request
+#   `packages: write`; this repository public (free ubuntu-24.04-arm runners). The first manual run
+#   creates the four packages (private by default): then make each public and check that its
+#   "Manage Actions access" lists this repository with write (the source label normally links it).
+# - RELEASE_PR_TOKEN (optional, recommended): a fine-grained PAT or GitHub App token with contents and
+#   pull-requests write on this repository. A Version Packages PR opened or pushed with GITHUB_TOKEN
+#   does not trigger ci.yml, so `ci-ok` never reports; without this secret, trigger CI by hand (close and
+#   reopen the PR, or push an empty commit to it).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Dry run: pack and run npm publish --dry-run, build the images for both architectures; nothing
+          is published or pushed
+        type: boolean
+        default: false
+
+# One release at a time, never cancelled half-way.
+concurrency:
+  group: release-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  version-pr:
+    # Push only; forks never run it. It never publishes.
+    if: github.event_name == 'push' && github.repository == 'capybara-hq/core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # changesets/action pushes the changeset-release/main branch
+      pull-requests: write # changesets/action opens the Version Packages PR
+    env:
+      HAS_RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' }}
+    steps:
+      # Credentials stay in this checkout on purpose: changesets/action pushes the version branch with
+      # them (so with RELEASE_PR_TOKEN those pushes trigger ci.yml on the PR).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Note when CI will not run on the Version Packages PR
+        if: env.HAS_RELEASE_PR_TOKEN != 'true'
+        run: >
+          echo "::notice::RELEASE_PR_TOKEN is not set: the Version Packages PR is updated with
+          GITHUB_TOKEN, which does not trigger ci.yml. Trigger CI on it by hand (close and reopen the
+          PR, or push an empty commit)."
+      # With pending changesets, open / update the "Version Packages" PR. No `publish` input, so this
+      # step never publishes; without changesets it does nothing. `pnpm version-packages` runs
+      # `changeset version` and then rewrites the compose default image tag (docker/compose.yaml,
+      # docker/.env.example) to the new apps/capybara version, so the PR carries that bump too
+      # (check:release-metadata fails when they drift).
+      - name: Version Packages PR
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: pnpm version-packages
+          title: "chore: version packages"
+          commit: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+
+  publish:
+    # Forks never publish. Independent of version-pr: no `needs`, nothing shared.
+    if: github.repository == 'capybara-hq/core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # npm provenance (and trusted publishing)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+
+      # A manual publish must come from main (provenance records the ref); a dry run may use any ref.
+      - name: Check the ref of a manual publish
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::publish from main only (got $REF); use dry_run on other refs"
+          exit 1
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish to npm
+        id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::NPM_TOKEN is not set: relying on npm trusted publishing (OIDC)"
+          fi
+          args=(--provenance --out artifacts/release)
+          if [ "$EVENT" = "push" ]; then
+            args+=(--auto)
+          elif [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          pnpm release "${args[@]}"
+
+      # Also after a failure half-way: `published` and the checksums are written after every publish.
+      - name: Upload the published plugin packages and their sha512
+        if: always() && steps.publish.outputs.published != '' && steps.publish.outputs.published != '0'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-plugin-packages
+          path: |
+            artifacts/release/plugins/*.tgz
+            artifacts/release/plugins/SHA512SUMS
+            artifacts/release/plugins/integrity.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  images-plan:
+    # After a successful npm publish (also a dry run, or a push that had nothing to publish). Forks
+    # never publish.
+    needs: publish
+    if: github.repository == 'capybara-hq/core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read # look up the version tag of packages that are not public
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      push: ${{ steps.plan.outputs.push }}
+      latest: ${{ steps.plan.outputs.latest }}
+      build: ${{ steps.plan.outputs.build }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Plan the image release
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            mode=auto
+          elif [ "$DRY_RUN" = "true" ]; then
+            mode=dry-run
+          else
+            mode=manual
+          fi
+          pnpm release:images --mode "$mode"
+
+  images-build:
+    name: images-build (${{ matrix.target.image }}, ${{ matrix.arch }})
+    needs: images-plan
+    if: needs.images-plan.outputs.build == 'true'
+    # Native runners per architecture: no QEMU (slow), and pnpm installs the prebuilds of the
+    # platform it runs on, which the image ships.
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write # push the per-architecture image by digest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.images-plan.outputs.matrix) }}
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io
+        if: needs.images-plan.outputs.push == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Untagged, by digest: images-publish tags the multi-arch index once both architectures exist.
+      - name: Build (and push by digest)
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.target.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          build-args: ${{ matrix.target.roles != '' && format('ROLES={0}', matrix.target.roles) || '' }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/capybara-hq/core
+            org.opencontainers.image.url=https://github.com/capybara-hq/core
+            org.opencontainers.image.title=${{ matrix.target.image }}
+            org.opencontainers.image.version=${{ needs.images-plan.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          outputs: >-
+            type=image,name=ghcr.io/capybara-hq/${{ matrix.target.image }},push-by-digest=true,name-canonical=true,push=${{ needs.images-plan.outputs.push }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.target.cache }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target.cache }}-${{ matrix.arch }}
+      - name: Export the digest
+        if: needs.images-plan.outputs.push == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          DIR: ${{ runner.temp }}/digests
+        run: |
+          case "$DIGEST" in
+            sha256:*) ;;
+            *) echo "::error::unexpected digest '$DIGEST'"; exit 1 ;;
+          esac
+          mkdir -p "$DIR"
+          touch "$DIR/${DIGEST#sha256:}"
+      - name: Upload the digest
+        if: needs.images-plan.outputs.push == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digests-${{ matrix.target.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true # a re-run of the job replaces its digest
+
+  images-publish:
+    name: images-publish (${{ matrix.target.image }})
+    # Only when every build succeeded (needs), and never for a dry run.
+    needs: [images-plan, images-build]
+    if: needs.images-plan.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write # create the tags
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.images-plan.outputs.matrix) }}
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: digests-${{ matrix.target.image }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The version tag is what images-plan looks for, so it is listed last: `latest` is pushed first.
+      # Index annotations: ghcr.io reads the source (repository link) and description of a multi-arch
+      # image from them.
+      - name: Tag the multi-arch image
+        env:
+          IMAGE: ghcr.io/capybara-hq/${{ matrix.target.image }}
+          VERSION: ${{ needs.images-plan.outputs.version }}
+          LATEST: ${{ matrix.target.latest }}
+          DIR: ${{ runner.temp }}/digests
+        run: |
+          sources=()
+          for f in "$DIR"/*; do
+            sources+=("$IMAGE@sha256:$(basename "$f")")
+          done
+          if [ "${#sources[@]}" -ne 2 ]; then
+            echo "::error::expected 2 digests (amd64, arm64), got ${#sources[@]}"
+            exit 1
+          fi
+          tags=()
+          if [ "$LATEST" = "true" ]; then
+            tags+=(--tag "$IMAGE:latest")
+          fi
+          tags+=(--tag "$IMAGE:$VERSION")
+          docker buildx imagetools create "${tags[@]}" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/capybara-hq/core" \
+            --annotation "index:org.opencontainers.image.description=Capybara ${IMAGE##*/} $VERSION" \
+            --annotation "index:org.opencontainers.image.licenses=Apache-2.0" \
+            --annotation "index:org.opencontainers.image.version=$VERSION" \
+            "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+
+  release-tag:
+    # After the images of a version were pushed: tag the commit they were built from `v<version>` and
+    # create a GitHub release, so operators can fetch the compose.yaml (and docs) of a release. Only
+    # the run that pushed images tags (a later push with the same version would point the tag at a
+    # newer tree); it is idempotent, so "Re-run failed jobs" retries it at the same commit.
+    needs: [images-plan, images-publish]
+    if: needs.images-plan.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # create the tag and the release
+    steps:
+      - name: Tag v<version> and create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          VERSION: ${{ needs.images-plan.outputs.version }}
+          LATEST: ${{ needs.images-plan.outputs.latest }}
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
+            echo "release $tag already exists"
+            exit 0
+          fi
+          args=(--repo "$REPO" --target "$SHA" --title "$tag")
+          case "$VERSION" in *-*) args+=(--prerelease) ;; esac
+          if [ "$LATEST" != "true" ]; then
+            args+=(--latest=false)
+          fi
+          notes="Images: ghcr.io/capybara-hq/capybara-{api,worker,gateway,web}:$VERSION
+          Compose: https://github.com/$REPO/blob/$tag/docker/compose.yaml
+          Changes: see the CHANGELOG.md of each package at this tag."
+          gh release create "$tag" "${args[@]}" --notes "$notes"

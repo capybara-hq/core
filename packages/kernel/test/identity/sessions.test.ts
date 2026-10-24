@@ -35,7 +35,7 @@ const replica = (keyring: Keyring = ring, opts = OPTS, which: 1 | 2 = 1) =>
     : new SessionService(db2, redis2, keyring, opts);
 
 beforeAll(async () => {
-  [pgBox, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  [pgBox, rd] = await Promise.all([startTestPostgres(), startTestRedis({ shared: true })]);
   pgUrl = pgBox.url;
   await migrate(pgUrl, {
     schema: "capybara",

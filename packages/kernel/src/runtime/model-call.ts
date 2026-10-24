@@ -19,6 +19,7 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { audit } from "../identity/audit.js";
 import { PluginUnloadedError } from "../plugins/inflight.js";
 import { skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
@@ -44,8 +45,19 @@ import {
 import { guardToolPairs } from "./context/pairing.js";
 import { turnLimitReminder } from "./context/reminders.js";
 import { calibrate, estimateTokens } from "./context/tokens.js";
+import {
+  type ConversationKindForHooks,
+  fireObserve,
+  type HookRunner,
+  hookDeniedAudit,
+  hookDeniedEvent,
+  hookRequestOf,
+  hookScope,
+  recordHookDenial,
+} from "./hook-calls.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
+import type { UsageReporter } from "./usage-report.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
 export const WRAP_UP_REMINDER =
@@ -65,6 +77,10 @@ export const TOOLS_AVAILABLE_AGAIN = "All previously unavailable tools are avail
 export function toolsUnavailableReminder(unavailable: readonly UnavailableTool[]): string {
   return `${TOOLS_UNAVAILABLE_PREFIX}${unavailable.map((u) => `${u.ref} (${u.reason})`).join(", ")}`;
 }
+
+/** `run_failed` message of a model request denied by a policy hook (user-facing, never model-visible). */
+const modelDeniedText = (plugin: string, reason: string) =>
+  `Model request blocked by the "${plugin}" policy hook: ${reason}`;
 
 /** 可重试错误在同一模型上重试前的默认等待（供应商未给 retryAfterMs 时）。 */
 const DEFAULT_RETRY_DELAY_MS = 1000;
@@ -99,6 +115,18 @@ export interface ModelStepDeps {
    * 两个方法都只对「确定不存在」返回缺省 / null；暂时故障（存储不可用、网络错误）一律抛错（Ruling M4）。
    */
   media?: MediaSourceDeps;
+  /**
+   * Plugin hooks (`model.request` policy / observe before the call, `model.response` observe after it),
+   * for every attempt of a step and for the compaction call (`purpose: "compaction"`, I-1).
+   * Only chat runs get it: full-run and single-step eval replays omit it (P-18), and hooks also need
+   * `conversationKind: "chat"` on the step input.
+   */
+  hooks?: HookRunner;
+  /**
+   * `usage.report` delivery (P-17): each written `usage` event is enqueued (chat runs and full-run eval
+   * replays, which both log usage). `enqueue` never throws and returns at once without handlers.
+   */
+  usageReport?: Pick<UsageReporter, "enqueue">;
 }
 
 /** 构建请求用到的附件来源。 */
@@ -149,6 +177,11 @@ export interface ModelStepInput {
   absorbedUpToSeq: number;
   /** 本次运行的附件字节缓存（同一次运行的各步共用，见 {@link MediaCache}）；缺省时只在本步内缓存。 */
   mediaCache?: MediaCache;
+  /** Hook payload scope: the run's agent, its trigger account and the conversation kind. */
+  agentId?: string;
+  accountId?: string;
+  /** Hooks fire only for `chat` (never for eval replays). */
+  conversationKind?: ConversationKindForHooks;
 }
 
 export interface ModelStepResult {
@@ -212,6 +245,11 @@ const idem = {
   toolsUnavailable: (runId: string, step: number) => `tools_unavailable:${runId}:${step}`,
   toolsUnsupported: (runId: string, step: number) => `tools_unsupported:${runId}:${step}`,
   modelCall: modelCallIdemKey,
+  hookDenied: (runId: string, step: number, attempt: number) =>
+    `hook_denied:${runId}:${step}:${attempt}`,
+  /** Usage of a compaction call: `n` is the compaction attempt (consecutive failures + 1). */
+  compactionUsage: (runId: string, step: number, n: number) =>
+    `usage_compaction:${runId}:${step}:${n}`,
   mediaExcluded: (runId: string, step: number, attempt: number, part: number) =>
     `media_excluded:${runId}:${step}:${attempt}:${part}`,
 };
@@ -268,7 +306,14 @@ async function runStep(
 ): Promise<ModelStepResult> {
   const { conversationId, runId, step, signal } = input;
   const existing = await findExisting(deps.eventLog, conversationId, runId, step);
-  if (existing) return existing;
+  if (existing) {
+    // resumed after a crash between writing usage and enqueueing it: enqueue again (job id dedupes)
+    if (deps.usageReport && existing.usage !== null) {
+      const u = await deps.eventLog.findByIdem(conversationId, idem.usage(runId, step));
+      if (u) void deps.usageReport.enqueue(conversationId, u.seq);
+    }
+    return existing;
+  }
 
   const runtime = deps.config().runtime;
   /** 本次尝试已流出的文本；中止时写进 aborted 的 assistant_message。 */
@@ -276,6 +321,18 @@ async function runStep(
   try {
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
+    // sticky (M-4): a model.request denial already logged for this step (any attempt, e.g. a crash
+    // after recording it) is final: fail the same way, before compaction or any model call. Read from
+    // the events just loaded, so it costs no query (M-2).
+    if (hookScope(deps.hooks, input)) {
+      const prior = stickyModelDenial(events, runId, step);
+      if (prior) {
+        throw new RunError(
+          "run.hook_denied",
+          modelDeniedText(prior.payload.plugin, prior.payload.reason),
+        );
+      }
+    }
     // 每步实时解析（连接器 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
     // 日志里有过技能目录快照 → 带上 skill_load（Ruling M17；空快照也不收回，见 skillLoadOffered）
     const resolved = await deps.tools.forAgent(input.orgId, {
@@ -323,7 +380,7 @@ async function runStep(
 
     const { outcome, ref } = await ladder(deps, input, events, runtime, tools, wrapUp, streamed);
     // assistant_message 与 usage 同一次 append = 同一事务。
-    await deps.eventLog.append(conversationId, [
+    const appended = await deps.eventLog.append(conversationId, [
       {
         type: "assistant_message",
         runId,
@@ -337,6 +394,10 @@ async function runStep(
         payload: { step, provider: ref.provider, model: ref.model, ...outcome.usage },
       },
     ]);
+    // usage.report metering (never awaited on the run's path; enqueue logs and swallows failures)
+    const usageEvent = appended.find((e) => e.type === "usage");
+    if (deps.usageReport && usageEvent)
+      void deps.usageReport.enqueue(conversationId, usageEvent.seq);
     return {
       content: outcome.content,
       stopReason: outcome.stopReason,
@@ -359,6 +420,21 @@ async function runStep(
     ]);
     return { content, stopReason: "aborted", reused: false, aborted: true, usage: null };
   }
+}
+
+/** The `hook_denied` of a `model.request` denial already logged for this run step (any attempt). */
+function stickyModelDenial(
+  events: readonly ConversationEvent[],
+  runId: string,
+  step: number,
+): Extract<ConversationEvent, { type: "hook_denied" }> | undefined {
+  return events.findLast(
+    (e): e is Extract<ConversationEvent, { type: "hook_denied" }> =>
+      e.type === "hook_denied" &&
+      e.runId === runId &&
+      e.payload.mount === "model.request" &&
+      e.payload.step === step,
+  );
 }
 
 /** 幂等命中：返回已写入的 assistant_message（与同批的 usage）对应的结果。 */
@@ -594,7 +670,8 @@ async function loadMedia(
  */
 function lastActual(events: ConversationEvent[]): { estimate: number; inputTokens: number } | null {
   let usage: (ConversationEvent & { type: "usage" }) | undefined;
-  for (const e of events) if (e.type === "usage") usage = e;
+  // compaction calls have their own request (not a model_call): only step usage calibrates
+  for (const e of events) if (e.type === "usage" && e.payload.purpose !== "compaction") usage = e;
   if (!usage) return null;
   let estimate: number | undefined;
   for (const e of events) {
@@ -663,19 +740,104 @@ async function maybeCompact(
   const plan = compactionPlan(events, runtime.keepRecentTurns);
   if (!plan) return events;
 
+  const { runId, step, signal, conversationId } = input;
+  const ref = input.agent.model;
+  const request = buildCompactionRequest(plan.transcript, info.id);
+  const attemptNo = consecutiveCompactionFailures(events) + 1;
+  // hooks see compaction calls like step attempts (I-1): same scope, chat runs only
+  const scope = hookScope(deps.hooks, input);
+  const hookBase = scope && {
+    ...scope,
+    purpose: "compaction" as const,
+    step,
+    attempt: 1,
+    provider: ref.provider,
+    model: ref.model,
+  };
+  if (hookBase && deps.hooks?.has("model.request")) {
+    let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+    try {
+      verdict = await deps.hooks.run(
+        "model.request",
+        { ...hookBase, request: hookRequestOf(request, deps.log) },
+        signal,
+      );
+    } catch (e) {
+      // run() rejects only when the run's signal aborted: an abort, never a deny
+      if (signal.aborted) throw new StepAborted();
+      throw e;
+    }
+    if (!verdict.allowed) {
+      // compaction fails (generic reason in the log, raw detail only in the audit row, R12); the
+      // step continues and its own request meets the hooks next
+      const site = {
+        orgId: input.orgId,
+        conversationId,
+        runId,
+        ...(input.accountId !== undefined && { accountId: input.accountId }),
+        ...(input.agentId !== undefined && { agentId: input.agentId }),
+        idemKey: `hook_denied_compaction:${runId}:${step}:${attemptNo}`,
+      };
+      const denied = hookDeniedEvent(site, "model.request", verdict, { step, attempt: 1 });
+      const entry = hookDeniedAudit(site, denied.payload, verdict);
+      entry.detail = { ...entry.detail, purpose: "compaction" };
+      const failed: AppendEvent = {
+        type: "compaction_failed",
+        runId,
+        payload: {
+          attempt: attemptNo,
+          reason: `compaction request blocked by the "${verdict.plugin}" policy hook (${verdict.cause})`,
+        },
+      };
+      deps.log.warn("compaction blocked by a policy hook", {
+        conversationId,
+        plugin: verdict.plugin,
+        cause: verdict.cause,
+      });
+      const written = await deps.db.transaction().execute(async (t) => {
+        const out = await deps.eventLog.append(conversationId, [failed], t);
+        await audit(t, entry);
+        return out;
+      });
+      if (written.length > 0) {
+        await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
+      }
+      return mergeLocal(events, written);
+    }
+  }
+
   let failure: string | null = null;
   let summary = "";
+  let usage: ModelUsage | null = null;
+  const sentAt = Date.now();
   try {
     let partial = "";
     const out = await consumeModelStream(
       provider,
-      buildCompactionRequest(plan.transcript, info.id),
+      request,
       info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-      input.signal,
+      signal,
       (ev) => {
         if (ev.type === "text_delta") partial += ev.text;
       },
     );
+    usage = out.usage;
+    if (hookBase && deps.hooks) {
+      fireObserve(
+        deps.hooks,
+        "model.response",
+        {
+          ...hookBase,
+          outcome: "ok",
+          content: out.content,
+          stopReason: out.stopReason,
+          usage: out.usage,
+          latencyMs: Date.now() - sentAt,
+        },
+        signal,
+        deps.log,
+      );
+    }
     const final = out.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
     summary = (final || partial).trim();
     if (!acceptSummary(summary, plan.transcript)) {
@@ -683,6 +845,23 @@ async function maybeCompact(
     }
   } catch (err) {
     if (err instanceof StepAborted) throw err;
+    if (hookBase && deps.hooks) {
+      fireObserve(
+        deps.hooks,
+        "model.response",
+        {
+          ...hookBase,
+          outcome: "failed",
+          content: [],
+          stopReason: null,
+          usage: null,
+          latencyMs: Date.now() - sentAt,
+          errorCode: classify(err).code,
+        },
+        signal,
+        deps.log,
+      );
+    }
     failure = err instanceof Error ? err.message : String(err);
   }
 
@@ -690,18 +869,41 @@ async function maybeCompact(
     failure === null
       ? {
           type: "compaction_summary",
-          runId: input.runId,
+          runId,
           payload: { coversUpToSeq: plan.coversUpToSeq, text: summary },
         }
       : {
           type: "compaction_failed",
-          runId: input.runId,
-          payload: { attempt: consecutiveCompactionFailures(events) + 1, reason: failure },
+          runId,
+          payload: { attempt: attemptNo, reason: failure },
         };
   if (failure !== null) {
-    deps.log.warn("compaction failed", { conversationId: input.conversationId, reason: failure });
+    deps.log.warn("compaction failed", { conversationId, reason: failure });
   }
-  return appendLocal(deps.eventLog, input.conversationId, events, event);
+  // the compaction call's usage (I-1): logged with the outcome in one append (one transaction), marked
+  // `purpose: "compaction"` so step consumers (calibration, trajectory steps, replay plans) skip it
+  const batch: AppendEvent[] = [event];
+  if (usage !== null) {
+    batch.push({
+      type: "usage",
+      runId,
+      idemKey: idem.compactionUsage(runId, step, attemptNo),
+      payload: { step, provider: ref.provider, model: ref.model, ...usage, purpose: "compaction" },
+    });
+  }
+  const written = await deps.eventLog.append(conversationId, batch);
+  const usageEvent = written.find((e) => e.type === "usage");
+  if (deps.usageReport && usageEvent) void deps.usageReport.enqueue(conversationId, usageEvent.seq);
+  return mergeLocal(events, written);
+}
+
+/** Merges written events into the local list (idempotent hits already in it are not added twice). */
+function mergeLocal(
+  events: ConversationEvent[],
+  written: readonly ConversationEvent[],
+): ConversationEvent[] {
+  const fresh = written.filter((w) => !events.some((e) => e.seq === w.seq));
+  return fresh.length === 0 ? events : [...events, ...fresh];
 }
 
 /**
@@ -732,6 +934,8 @@ async function ladder(
 
   let last: Failure | undefined;
   let attempt = 0;
+  // hooks fire only for chat runs that have a registry (eval replays omit it, P-18)
+  const scope = hookScope(deps.hooks, input);
   /** 本次尝试发出的请求里带了字节的附件（供应商拒收时写 media_excluded）。 */
   let sentMedia: string[] = [];
   for (const rung of rungs) {
@@ -751,6 +955,8 @@ async function ladder(
       if (!rung.fallback) await abortableSleep(last.retryAfterMs ?? DEFAULT_RETRY_DELAY_MS, signal);
     }
     sentMedia = [];
+    /** When the request went out (model.response fires only for sent requests). */
+    let sentAt: number | undefined;
     try {
       const { provider, info } = await deps.registry.resolve(rung.ref);
       if (tools.list.length > 0 && !info.capabilities.tools) {
@@ -784,6 +990,47 @@ async function ladder(
       sentMedia = (meta.media ?? []).flatMap((m) =>
         m.outcome === "bytes" ? [m.attachmentId] : [],
       );
+      // model.request before model_call: a denied request is never logged as sent nor sent (a denial
+      // logged before a crash is sticky: runStep checks it before compaction)
+      if (scope && deps.hooks?.has("model.request")) {
+        let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+        try {
+          verdict = await deps.hooks.run(
+            "model.request",
+            {
+              ...scope,
+              purpose: "step",
+              step,
+              attempt,
+              provider: rung.ref.provider,
+              model: rung.ref.model,
+              request: hookRequestOf(request, deps.log),
+            },
+            signal,
+          );
+        } catch (e) {
+          // run() rejects only when the run's signal aborted: an abort, never a deny
+          if (signal.aborted) throw new StepAborted();
+          throw e;
+        }
+        if (!verdict.allowed) {
+          await recordHookDenial(
+            deps,
+            {
+              orgId: input.orgId,
+              conversationId,
+              runId,
+              ...(input.accountId !== undefined && { accountId: input.accountId }),
+              ...(input.agentId !== undefined && { agentId: input.agentId }),
+              idemKey: idem.hookDenied(runId, step, attempt),
+            },
+            "model.request",
+            verdict,
+            { step, attempt },
+          );
+          throw new RunError("run.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
+        }
+      }
       // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
       // （请求可由日志 + tool_specs 还原）
       const sent = new Set([...meta.tools, ...(meta.catalog ?? [])].map((t) => t.specHash));
@@ -818,6 +1065,7 @@ async function ladder(
         );
       });
       await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
+      sentAt = Date.now();
       const outcome = await consumeModelStream(
         provider,
         request,
@@ -832,11 +1080,56 @@ async function ladder(
           }
         },
       );
+      if (scope && deps.hooks) {
+        fireObserve(
+          deps.hooks,
+          "model.response",
+          {
+            ...scope,
+            purpose: "step",
+            step,
+            attempt,
+            provider: rung.ref.provider,
+            model: rung.ref.model,
+            outcome: "ok",
+            content: outcome.content,
+            stopReason: outcome.stopReason,
+            usage: outcome.usage,
+            latencyMs: Date.now() - sentAt,
+          },
+          signal,
+          deps.log,
+        );
+      }
       return { outcome, ref: rung.ref };
     } catch (err) {
       if (err instanceof StepAborted) throw err;
       if (signal.aborted) throw new StepAborted();
+      // a hook denial is final (not retried, not reclassified)
+      if (err instanceof RunError) throw err;
       const f = classify(err);
+      if (scope && deps.hooks && sentAt !== undefined) {
+        fireObserve(
+          deps.hooks,
+          "model.response",
+          {
+            ...scope,
+            purpose: "step",
+            step,
+            attempt,
+            provider: rung.ref.provider,
+            model: rung.ref.model,
+            outcome: "failed",
+            content: [],
+            stopReason: null,
+            usage: null,
+            latencyMs: Date.now() - sentAt,
+            errorCode: f.code,
+          },
+          signal,
+          deps.log,
+        );
+      }
       deps.log.warn("model call attempt failed", {
         conversationId,
         runId,

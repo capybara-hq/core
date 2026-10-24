@@ -14,14 +14,16 @@ import {
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { KernelConfig } from "../../src/config/schema.js";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveConfig } from "../../src/config/load.js";
+import { CATALOG_OFFICIAL_URL_DEFAULT, type KernelConfig } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { CATALOG_ENTRIES_MAX } from "../../src/directory/catalogs.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { createLogger } from "../../src/log.js";
 import {
   CATALOGS_REFRESH_JOB,
   CATALOGS_REFRESH_SCHEDULER_ID,
@@ -698,5 +700,63 @@ describe("浏览条目的上限", () => {
     expect(big.statusCode, big.body).toBe(200);
     expect(big.json().truncated).toBe(true);
     expect(big.json().items).toHaveLength(CATALOG_ENTRIES_MAX);
+  }, 60_000);
+});
+
+describe("official catalog default (not live yet)", () => {
+  /** Default catalogs config: no `catalogs.official` keys, no env. */
+  const defaultsConfig = () =>
+    runConfig(
+      { pg: pgc.url, redis: rd.url },
+      {
+        roles: ["api", "worker"],
+        pluginHost: { dir: pluginsDir },
+        packages: { npmRegistry: reg.url },
+        catalogs: { allowInsecureLoopback: true },
+      },
+    );
+  const baseRaw = () => ({
+    db: { url: pgc.url },
+    redis: { url: rd.url },
+    masterKey: Buffer.alloc(32, 7).toString("base64"),
+  });
+
+  it("is off without config, and on only when enabled explicitly through the environment", () => {
+    const off = resolveConfig(baseRaw(), {});
+    expect(off.catalogs.official.enabled).toBe(false);
+    expect(off.catalogs.official.url).toBe(CATALOG_OFFICIAL_URL_DEFAULT);
+    const on = resolveConfig(baseRaw(), { CAPYBARA_CATALOGS__OFFICIAL__ENABLED: "true" });
+    expect(on.catalogs.official.enabled).toBe(true);
+  });
+
+  it("shows offline mode, never fetches the official URL and logs no refresh failure", async () => {
+    await resetAll();
+    const lines: string[] = [];
+    const urls: string[] = [];
+    const realFetch = globalThis.fetch;
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      urls.push(String(input instanceof Request ? input.url : input));
+      return realFetch(input, init);
+    });
+    const worker = await createKernel(defaultsConfig(), {
+      env: {},
+      logger: createLogger("debug", { write: (l) => lines.push(l) }),
+    });
+    try {
+      expect(worker.config.catalogs.official.enabled).toBe(false);
+      await worker.start();
+      await worker.catalogs.refreshAll(new AbortController().signal);
+      const offline = await session(worker, "root");
+      const list = await offline({ method: "GET", url: "/api/v1/admin/catalogs" });
+      const off = list.json().items.find((s: { id: string }) => s.id === "official");
+      expect(off).toMatchObject({ id: "official", enabled: false, disabledByConfig: true });
+      const manual = await refresh(offline, "official");
+      expect(manual.statusCode).not.toBe(200);
+      expect(urls.filter((u) => u === CATALOG_OFFICIAL_URL_DEFAULT)).toEqual([]);
+      expect(lines.filter((l) => l.includes("catalog refresh failed"))).toEqual([]);
+    } finally {
+      spy.mockRestore();
+      await worker.stop();
+    }
   }, 60_000);
 });

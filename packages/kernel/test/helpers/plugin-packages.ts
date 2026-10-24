@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdtemp, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
@@ -91,6 +92,12 @@ export interface LifePkgOptions {
   packageName?: string;
   /** 包里 `migrations/` 下的 SQL（有就声明 `capybara.migrations`）。 */
   migrations?: { file: string; sql: string }[];
+  /**
+   * A `tool.preExecute` policy hook (declared in `permissions.hooks` / `policyHooks`): input
+   * `{ hold: true }` waits on `globalThis.__lifeGate`; input `{ deny: true }` denies with
+   * `<name> <version> denies`; anything else is allowed.
+   */
+  policy?: boolean;
 }
 
 /**
@@ -115,6 +122,14 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
     annotations: { readOnlyHint: true },
   };
   const { z } = await import("zod");
+  const perms = {
+    tools: ["wait"],
+    http: [{ method: "GET" as const, path: "/version" }],
+    ...(o.policy && {
+      hooks: ["tool.preExecute" as const],
+      policyHooks: ["tool.preExecute" as const],
+    }),
+  };
   const real: PluginManifest = definePlugin({
     name,
     version: o.version,
@@ -122,7 +137,7 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
     provides: provides as never,
     requires: requires as never,
     optional: optional as never,
-    permissions: { tools: ["wait"], http: [{ method: "GET", path: "/version" }] },
+    permissions: perms,
     config: { deployment: z.object({ dir: z.string().default("") }).default({ dir: "" }) },
     setup() {},
   });
@@ -142,9 +157,19 @@ export default definePlugin({
   provides: ${JSON.stringify(provides)},
   requires: ${JSON.stringify(requires)},
   optional: ${JSON.stringify(optional)},
-  permissions: { tools: ["wait"], http: [{ method: "GET", path: "/version" }] },
+  permissions: ${JSON.stringify(perms)},
   config: { deployment: z.object({ dir: z.string().default("") }).default({ dir: "" }) },
   async setup(ctx) {
+    if (${JSON.stringify(o.policy === true)}) {
+      ctx.hooks.on(
+        "tool.preExecute",
+        async (p) => {
+          if (p.input?.hold && globalThis.__lifeGate) await globalThis.__lifeGate;
+          return p.input?.deny ? { deny: NAME + " " + VERSION + " denies" } : undefined;
+        },
+        { mode: "policy" },
+      );
+    }
     const dir = ctx.config.dir;
     if (dir && existsSync(join(dir, "fail-" + VERSION + "-" + process.pid))) {
       throw new Error("setup failure requested by the test");
@@ -253,24 +278,35 @@ export default definePlugin({
 }
 
 /**
- * 用 `tools/pack-plugin` 把仓库里的一个官方插件打成插件包（子进程，避免内核依赖 pack-plugin）。
- * 先把插件复制到临时目录（`node_modules` 链接回原处）再打包：打包的临时文件不落在仓库的插件目录里，
- * 与同时运行的 pack-plugin 测试互不干扰。`edit` 在打包前改这份副本（如升版本、加迁移），仓库里的插件不动。
+ * 用 `tools/pack-plugin` 把仓库里的一个官方插件（`plugins/<plugin>`）打成插件包，见 {@link packPluginDir}。
  */
 export async function packOfficialPlugin(
   plugin: string,
   edit?: (dir: string) => Promise<void>,
 ): Promise<Uint8Array> {
+  return packPluginDir(join(REPO_ROOT, "plugins", plugin), edit);
+}
+
+/**
+ * 用 `tools/pack-plugin` 把任意插件目录（pack-plugin 布局：`package.json` + `src/index.ts`，如官方插件或
+ * `test/fixtures/plugins/hooks-probe`）打成插件包（子进程，避免内核依赖 pack-plugin）。
+ * 先把目录复制到临时目录再打包（`node_modules` 链接回离源目录最近、装有 SDK 的那个 `node_modules`：官方插件是
+ * 它自己的，内核测试夹具是内核包的）：打包的临时文件不落在仓库里，与同时运行的 pack-plugin 测试互不干扰。
+ * `edit` 在打包前改这份副本（如升版本、加迁移、改名），仓库里的源目录不动。
+ */
+export async function packPluginDir(
+  src: string,
+  edit?: (dir: string) => Promise<void>,
+): Promise<Uint8Array> {
   const work = await mkdtemp(join(tmpdir(), "kernel-pack-"));
-  const src = join(REPO_ROOT, "plugins", plugin);
-  const copy = join(work, plugin);
+  const copy = join(work, basename(src));
   const out = join(work, "out");
   try {
     await cp(src, copy, {
       recursive: true,
       filter: (from) => !/[/\\](node_modules|dist|test)([/\\]|$)/.test(from.slice(src.length)),
     });
-    await symlink(join(src, "node_modules"), join(copy, "node_modules"), "dir");
+    await symlink(nodeModulesFor(src), join(copy, "node_modules"), "dir");
     await edit?.(copy);
     await promisify(execFile)("pnpm", ["-s", "pack-plugin", copy, "--out", out], {
       cwd: REPO_ROOT,
@@ -282,6 +318,15 @@ export async function packOfficialPlugin(
     return new Uint8Array(await readFile(join(out, files[0] as string)));
   } finally {
     await rm(work, { recursive: true, force: true });
+  }
+}
+
+/** 从 `dir` 向上找第一个装有 `@capybara-hq/plugin-sdk` 的 `node_modules`。 */
+function nodeModulesFor(dir: string): string {
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    const nm = join(d, "node_modules");
+    if (existsSync(join(nm, "@capybara-hq", "plugin-sdk"))) return nm;
+    if (dirname(d) === d) throw new Error(`no node_modules with the plugin SDK above ${dir}`);
   }
 }
 

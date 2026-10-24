@@ -41,6 +41,8 @@ const PatchBody = z
     agentId: z.string().min(1).max(100).optional(),
     unboundPolicy: Policy.optional(),
     status: z.enum(["active", "disabled"]).optional(),
+    // webhook needs plugin support and channels.webhookBaseUrl (409 channel.webhook_unavailable)
+    inboundMode: z.enum(["long_connection", "webhook"]).optional(),
     config: Config.optional(),
   })
   .strict();

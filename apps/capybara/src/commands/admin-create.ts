@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { type Readable, Writable } from "node:stream";
 import {
@@ -75,16 +76,52 @@ export function readPassword(
 }
 
 /**
- * `capybara admin create`：从 stdin 读一行密码（终端上不回显，见 readPassword） → 跑内核迁移（幂等）→ 建企业管理员。
+ * Read the password from a file (Docker / K8s secret): the content minus a leading UTF-8 BOM and
+ * trailing newlines. A missing or unreadable file, or content spanning several lines, throws with an
+ * English message naming the path (never the content).
+ */
+export async function readPasswordFile(path: string): Promise<string> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (e) {
+    const reason =
+      (e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e));
+    throw new Error(`cannot read password file ${path}: ${reason}`);
+  }
+  const password = text.replace(/^\uFEFF/, "").replace(/[\r\n]+$/, "");
+  if (/[\r\n]/.test(password)) {
+    throw new Error(`password file ${path} must contain a single line`);
+  }
+  return password;
+}
+
+/**
+ * `capybara admin create`：从 stdin 读一行密码（终端上不回显，见 readPassword），或用 `passwordFile` 从文件读
+ * （去掉行尾换行）→ 跑内核迁移（幂等）→ 建企业管理员。
+ * `ifNone`：已有活跃企业管理员时打印 `enterprise admin already exists; skipped` 并返回 0——这一检查在读密码之前，
+ * 所以此时密码文件缺失也不报错；没有管理员时照常要求密码（文件缺失 → 1，P-7）。检查与插入在同一事务、
+ * 同一咨询锁内（SetupService.createEnterpriseAdminIfNone），并发执行也只建一个；没有活跃管理员而登录名已占用 → 1。
  * 只连 PG，不连 Redis。退出码：0 成功 / 1 失败（用法错误的 2 由 parseCli 负责）。
  * 错误信息不回显密码：密码登记为日志密钥，stderr 输出里出现的密码一律打码。
  */
 export async function runAdminCreate(
-  opts: { login: string; displayName: string; email?: string },
+  opts: {
+    login: string;
+    displayName: string;
+    email?: string;
+    ifNone?: boolean;
+    passwordFile?: string;
+  },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  io: { stdin: PasswordInput; stderr: NodeJS.WritableStream } = {
+  io: {
+    stdin: PasswordInput;
+    stdout?: NodeJS.WritableStream;
+    stderr: NodeJS.WritableStream;
+  } = {
     stdin: process.stdin,
+    stdout: process.stdout,
     stderr: process.stderr,
   },
 ): Promise<number> {
@@ -94,11 +131,29 @@ export async function runAdminCreate(
     io.stderr.write(`capybara: admin create failed: ${safe}\n`);
     return 1;
   };
-  password = await readPassword(io.stdin, io.stderr);
-  if (password === undefined || password === "") {
-    return fail("password is required: write it as one line to stdin");
+  /** Reads the password into `password`; returns an error message when there is none. */
+  const obtainPassword = async (): Promise<string | undefined> => {
+    if (opts.passwordFile !== undefined) {
+      try {
+        password = await readPasswordFile(opts.passwordFile);
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e);
+      }
+      if (password === "") return `password file ${opts.passwordFile} is empty`;
+    } else {
+      password = await readPassword(io.stdin, io.stderr);
+      if (password === undefined || password === "") {
+        return "password is required: write it as one line to stdin";
+      }
+    }
+    log.addSecrets([password]);
+    return undefined;
+  };
+  // Without --if-none the password comes first, so a missing one fails before touching PG.
+  if (!opts.ifNone) {
+    const err = await obtainPassword();
+    if (err !== undefined) return fail(err);
   }
-  log.addSecrets([password]);
 
   let raw: ReturnType<typeof createDb> | undefined;
   try {
@@ -116,13 +171,49 @@ export async function runAdminCreate(
     });
     const db = kernelDb(raw);
     const accounts = new AccountsService(db);
-    const orgs = new OrgsService(db, new SettingsService(db, log), new ApiTokenService(db));
-    const account = await new SetupService(db, accounts, orgs).createEnterpriseAdmin({
+    const skipped = (msg: string): number => {
+      (io.stdout ?? process.stdout).write(`${msg}; skipped\n`);
+      return 0;
+    };
+    const setup = new SetupService(
+      db,
+      accounts,
+      new OrgsService(db, new SettingsService(db, log), new ApiTokenService(db)),
+    );
+    const input = {
       login: opts.login,
-      password,
       displayName: opts.displayName,
       ...(opts.email !== undefined && { email: opts.email }),
-    });
+    };
+    if (opts.ifNone) {
+      // Fast path without reading a password; the authoritative check runs again under the setup
+      // lock in createEnterpriseAdminIfNone, so concurrent runs create exactly one admin.
+      if ((await accounts.countEnterpriseAdmins()) > 0) {
+        return skipped("enterprise admin already exists");
+      }
+      const err = await obtainPassword();
+      if (err !== undefined) return fail(err);
+      try {
+        const account = await setup.createEnterpriseAdminIfNone({
+          ...input,
+          password: password as string,
+        });
+        if (account === undefined) return skipped("enterprise admin already exists");
+        log.info("enterprise admin created", { accountId: account.id, login: opts.login });
+        return 0;
+      } catch (e) {
+        // Under the setup lock a taken login cannot come from a concurrent run: there is no active
+        // enterprise admin and the login belongs to a non-admin or disabled account. Fail so an
+        // open setup wizard is not hidden.
+        if (e instanceof ApiError && e.code === "account.login_taken") {
+          return fail(
+            `${e.code}: ${e.message} (no active enterprise admin; choose another --login or re-enable the account)`,
+          );
+        }
+        throw e;
+      }
+    }
+    const account = await setup.createEnterpriseAdmin({ ...input, password: password as string });
     log.info("enterprise admin created", { accountId: account.id, login: opts.login });
     return 0;
   } catch (e) {

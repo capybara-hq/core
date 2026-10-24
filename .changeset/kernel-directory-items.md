@@ -1,6 +1,0 @@
----
-"@capybara-hq/kernel": minor
-"@capybara-hq/web": patch
----
-
-企业目录条目与导入（D9 / C21 / C22，`DirectoryService`，`Kernel.directory`）：迁移 `0034_directory.sql`（`directory_items` / `directory_item_versions`；`plugin_installs.directory_item_id`，F-AA）。企业管理员接口 `POST /api/v1/admin/directory/import/file`（octet-stream，tgz；连接器模板与技能也可以是 zip，读请求体前先认证）与 `…/import/npm {package, version?}`（按 `dist.integrity` 校验并记下）、`GET …/items[?kind&includeDeleted]`、`GET …/items/:id`、`PUT …/items/:id/policy {policy}`（allow / needs_approval / disabled）、`DELETE …/items/:id`（软删除）、`POST …/items/:id/install-deployment {version}`（插件条目，经 `PluginAdminOps.install` 并记下来源条目）。导入时全部校验通过才写（F-AD）：解包规则复用插件包（tgz）与技能包（zip）的读取器，插件包走 `readPluginPackage` 后交给 `PluginInstalls.ingest`（来源 `directory`，ref `<itemId>@<version>`，F-L），连接器模板按已加载连接器的 `endpointSchema` 校验端点与 `editableEndpoint`，技能与模板的文件放 `deployment/directory/<itemId>/<version>/`；写操作锁内复核企业管理员，审计 `directory.imported` / `directory.policy_changed` / `directory.removed`。错误码 `directory.invalid_package`、`directory.version_exists`、`directory.item_not_found`、`directory.wrong_kind`（应用包在应用导入上线前、非插件条目装到部署）、`directory.name_conflict`（同名条目来自别的 npm 包）。`PluginInstalls.fetchNpm` 抽出供复用；技能包读取拆出 `readZipFiles` / `checkSkillFiles`，插件包读取拆出 `unpackPackageTgz` / `parsePackageJsonFile`。Web 代理对 `/api/v1/admin/directory/import/file` 同样放宽上限并流式透传。

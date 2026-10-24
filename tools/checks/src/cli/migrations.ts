@@ -4,4 +4,4 @@ import { report } from "./report.js";
 
 requireScanTargets();
 
-report("迁移", checkMigrations(migrationDirs()));
+report("Migrations", checkMigrations(migrationDirs()));

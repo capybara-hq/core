@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -771,10 +772,12 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
 
   it("PG 断开时访问 @Public 路由并携带 Cookie → 500（不是被当作匿名放行）", async () => {
     const adminDb = createDb(pgc.url, 1);
+    // Random name: the PostgreSQL server is shared by every test file of the run.
+    const brkName = `brk_${randomBytes(6).toString("hex")}`;
+    const brkDb = sql.id(brkName);
     const url = new URL(pgc.url);
-    url.pathname = "/brk";
-    await sql`DROP DATABASE IF EXISTS brk WITH (FORCE)`.execute(adminDb);
-    await sql`CREATE DATABASE brk`.execute(adminDb);
+    url.pathname = `/${brkName}`;
+    await sql`CREATE DATABASE ${brkDb}`.execute(adminDb);
     const kk = await createKernel(
       KernelConfigSchema.parse({
         db: { url: url.toString(), poolMax: 2 },
@@ -802,7 +805,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       const cookie = jar.header() as string;
       const up = await kk.http.inject({ method: "GET", url: "/healthz", headers: { cookie } });
       expect(up.statusCode).toBe(200);
-      await sql`DROP DATABASE brk WITH (FORCE)`.execute(adminDb);
+      await sql`DROP DATABASE ${brkDb} WITH (FORCE)`.execute(adminDb);
       const down = await kk.http.inject({ method: "GET", url: "/healthz", headers: { cookie } });
       expect(down.statusCode).toBe(500);
       // 不带 Cookie 的公开路由不受影响
@@ -810,7 +813,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     } finally {
       await kk.stop();
       await brk.destroy().catch(() => {});
-      await sql`DROP DATABASE IF EXISTS brk WITH (FORCE)`.execute(adminDb);
+      await sql`DROP DATABASE IF EXISTS ${brkDb} WITH (FORCE)`.execute(adminDb);
       await adminDb.destroy();
     }
   }, 60_000);

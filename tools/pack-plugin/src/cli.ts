@@ -51,6 +51,9 @@ for (const dir of dirs) {
   try {
     const r = await packPlugin(dir, out);
     console.log(`${relative(root, r.file)}  sha256=${r.sha256}`);
+    for (const d of r.dropped) {
+      console.warn(`${relative(root, dir)}: warning: "files" entry "${d}" is not in the package`);
+    }
   } catch (e) {
     failed++;
     console.error(`${relative(root, dir)}: ${e instanceof Error ? e.message : String(e)}`);

@@ -25,6 +25,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
+import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
@@ -33,6 +34,7 @@ import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentia
 import { ToolOutputs } from "../../src/tools/outputs.js";
 import {
   type DecidePolicy,
+  hookDeniedText,
   RUN_STOPPED_DURING_TEXT,
   RUN_STOPPED_TEXT,
   ToolPipeline,
@@ -184,6 +186,8 @@ let toolSearch = false;
 let builtinHandlers: Record<string, BuiltinHandler> = {};
 let decidePolicy: DecidePolicy | undefined;
 let afterExecute: ((runId: string, callId: string) => Promise<void>) | undefined;
+/** Plugin hooks given to the pipeline (a fake registry). */
+let pluginHooks: HookRunner | undefined;
 
 function pipeline(): ToolPipeline {
   const deps: ToolPipelineDeps = {
@@ -217,12 +221,13 @@ function pipeline(): ToolPipeline {
     },
     ...(decidePolicy !== undefined && { decidePolicy }),
     hooks: { ...(afterExecute !== undefined && { afterExecute }) },
+    ...(pluginHooks !== undefined && { pluginHooks }),
   };
   return new ToolPipeline(deps);
 }
 
 beforeAll(async () => {
-  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis({ shared: true })]);
   await migrate(pgc.url, {
     schema: "capybara",
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
@@ -253,6 +258,7 @@ beforeEach(async () => {
   builtinHandlers = {};
   decidePolicy = undefined;
   afterExecute = undefined;
+  pluginHooks = undefined;
   unavailable = [];
   hidden = [];
   handlerCalls = {};
@@ -1370,5 +1376,90 @@ describe("tool_search 模式", () => {
     await modelCall(["tool_search"], true);
     const evs = await runCalls([{ id: "c1", name: "tool_search", input: { query: "zzzz" } }]);
     expect(resultsOf(evs)[0]).not.toHaveProperty("loadedTools");
+  });
+});
+
+describe("plugin hooks (tool.preExecute)", () => {
+  /** A fake registry: `verdict` decides tool.preExecute; counts runs per mount. */
+  function fakeHooks(verdict: Awaited<ReturnType<HookRunner["run"]>>) {
+    const runs: string[] = [];
+    const hooks: HookRunner = {
+      has: () => true,
+      run: async (mount) => {
+        runs.push(mount);
+        return mount === "tool.preExecute" ? verdict : { allowed: true };
+      },
+    };
+    return { hooks, runs };
+  }
+  const chat = { conversationKind: "chat" as const };
+  const denial = {
+    allowed: false as const,
+    plugin: "guard",
+    reason: "nope",
+    cause: "deny" as const,
+  };
+
+  it("a denial writes hook_denied, its audit entry and the tool_result together; the tool never runs", async () => {
+    const f = fakeHooks(denial);
+    pluginHooks = f.hooks;
+    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "1" } }], chat);
+    expect(handlerCalls.echo ?? []).toHaveLength(0);
+    expect(startedOf(evs)).toEqual([]);
+    expect(resultsOf(evs)[0]).toMatchObject({
+      isError: true,
+      content: hookDeniedText("guard", "nope"),
+    });
+    const denied = evs.find((e) => e.type === "hook_denied");
+    const result = evs.find((e) => e.type === "tool_result");
+    // same append: adjacent seqs, denial first
+    expect((result?.seq ?? 0) - (denied?.seq ?? 0)).toBe(1);
+    const audits = await db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("action", "=", "hook.denied")
+      .execute();
+    expect(audits).toHaveLength(1);
+  });
+
+  it("sticky: a logged denial without a result (crash between the old two writes) stays denied after the hook flips to allow", async () => {
+    await assistant([{ id: "c1", name: "probe__echo", input: { text: "1" } }]);
+    // the state an old crash left behind: hook_denied logged, no tool_result
+    await eventLog.append(seed.conversationId, [
+      {
+        type: "hook_denied",
+        runId,
+        idemKey: `hook_denied:${runId}:c1`,
+        payload: {
+          mount: "tool.preExecute",
+          plugin: "guard",
+          reason: "recorded reason",
+          cause: "deny",
+          step: 1,
+          callId: "c1",
+        },
+      },
+    ]);
+    const f = fakeHooks({ allowed: true });
+    pluginHooks = f.hooks;
+    await pipeline().runStep(stepCtx(chat));
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(handlerCalls.echo ?? []).toHaveLength(0);
+    expect(f.runs).not.toContain("tool.preExecute");
+    expect(resultsOf(evs)[0]).toMatchObject({
+      isError: true,
+      content: hookDeniedText("guard", "recorded reason"),
+    });
+  });
+
+  it("no hooks fire outside chat conversations", async () => {
+    const f = fakeHooks(denial);
+    pluginHooks = f.hooks;
+    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "1" } }], {
+      conversationKind: "eval",
+    });
+    expect(f.runs).toEqual([]);
+    expect(handlerCalls.echo).toHaveLength(1);
+    expect(evs.some((e) => e.type === "hook_denied")).toBe(false);
   });
 });

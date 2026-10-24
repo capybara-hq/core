@@ -1,34 +1,38 @@
 ---
 name: writing-tools
-description: 给 agent 新增或修改工具时使用：插件用 ctx.tools.register 注册工具（参考 plugins/todo）、内核内置工具、连接器工具的共性规则。工具命名与 key、英文描述与可执行的错误文案（pnpm check 的工具设计规则）、注解与默认策略、defaultPolicy 与 policy_source、ToolError 与 kind（unavailable 计入熔断）、超时与中止、输出大小与存档（限本会话，read_tool_output、{"$output": id}）、InputRequired 与续跑、tool_search（目录、已加载集合、描述可被搜索）、工具定义漂移与复核、插件须在组织启用；内置的沙箱工具 sandbox_*（按工具的超时与转存阈值、sandboxToolPolicy、首次使用 / 重建提示）与技能工具 skill_load / skill_write（目录快照、R3 对共享 agent 固定 ask、私有 agent 的 writePolicy 开关、变更审批、customSkills 不影响 skill_write）；插件在调用途中被停用 / 升级时的工具错误（PLUGIN_UNLOADED_TOOL_ERROR）。写连接器见 writing-connectors。
+description: 'Use when adding or modifying tools for an agent: plugin tools via ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Covers tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output size and archiving (read_tool_output, {"$output": id}), InputRequired and resume, tool_search, tool definition drift and review; the builtin sandbox tools sandbox_* (sandboxToolPolicy) and the skill tools skill_load / skill_write (writePolicy, change approval); PLUGIN_UNLOADED_TOOL_ERROR when a plugin is disabled mid-call; and plugin hooks in a tool call (tool.preExecute, tool.postExecute). For connectors see writing-connectors.'
 ---
 
-# 写工具
+# Writing tools
 
-通用的插件写法（清单、配置、ctx、多副本禁令、双副本测试）见 `.agents/skills/writing-plugins`，这里只讲工具特有的部分。参考实现：
+## What this skill covers
 
-- 插件工具：`plugins/todo`（一个 `write` 工具，整表写入本插件 schema，默认 allow）。
-- 连接器：`plugins/connector-mcp`（`connector@1`，把远端 MCP 服务接成连接器）；`plugins/connector-openapi`（OpenAPI 3.0 / 3.1 描述的 HTTP API，每个 operation 一个工具，实现了 `inspect`）。
-- 内核内置工具：`packages/kernel/src/tools/builtins`（`ask_user`、`read_tool_output`、`tool_search`；沙箱工具 `sandbox_*`
-  在 `builtins/sandbox/`；技能工具 `skill_load` / `skill_write`）。见下文「内核内置工具：沙箱与技能」。
+Adding or modifying tools for an agent. Covers plugins registering tools with ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations and default policy, defaultPolicy and policy_source, ToolError and kind (unavailable counts toward the circuit breaker), timeouts and abort, output size and archiving (limited to the conversation, read_tool_output, {"$output": id}), InputRequired and resume, tool_search (catalog, loaded set, descriptions are searchable), tool definition drift and review, plugins must be enabled in the org; the builtin sandbox tools sandbox_* (per-tool timeouts and spill thresholds, sandboxToolPolicy, first-use / recreate notices) and the skill tools skill_load / skill_write (catalog snapshot, R3 fixed ask for shared agents, the writePolicy switch for private agents, change approval, customSkills does not affect skill_write); the tool error when a plugin is disabled / upgraded mid-call (PLUGIN_UNLOADED_TOOL_ERROR); and where plugin hooks sit in a tool call (tool.preExecute denial text hookDeniedText, tool.postExecute). For writing connectors see writing-connectors.
 
-工具的执行全部经内核管线 `packages/kernel/src/tools/pipeline.ts`：解析 `{"$output": id}` 引用 → ajv 校验参数 → 策略判定（allow / ask / deny）→ 写 `tool_call_started` → 执行（超时 + 中止）→ 渲染结果 → 超大结果转存 → 写 `tool_result`。插件只管「做事并返回结果」，审批、超时、存档、审计、打码都是内核的事，**不要在插件里重复实现**。
+General plugin authoring (manifest, config, ctx, the multi-replica prohibitions, dual-replica tests) is in `.agents/skills/writing-plugins`; this skill covers only what is specific to tools. Reference implementations:
 
-## 三种工具来源与 key
+- Plugin tool: `plugins/todo` (one `write` tool, writes the whole list into the plugin's schema, default allow).
+- Connectors: `plugins/connector-mcp` (`connector@1`, connects a remote MCP service as a connector); `plugins/connector-openapi` (an HTTP API described by OpenAPI 3.0 / 3.1, one tool per operation, implements `inspect`).
+- Kernel builtin tools: `packages/kernel/src/tools/builtins` (`ask_user`, `read_tool_output`, `tool_search`; the sandbox tools `sandbox_*`
+  are in `builtins/sandbox/`; the skill tools `skill_load` / `skill_write`). See "Kernel builtin tools: sandbox and skills" below.
 
-模型看到的工具名（key）必须匹配 `^[a-zA-Z0-9_-]{1,64}$`：
+All tool execution goes through the kernel pipeline `packages/kernel/src/tools/pipeline.ts`: resolve `{"$output": id}` references -> ajv validates the arguments -> policy decision (allow / ask / deny) -> write `tool_call_started` -> execute (timeout + abort) -> render the result -> spill oversized results -> write `tool_result`. A plugin only "does the work and returns the result"; approval, timeouts, archiving, audit and redaction are the kernel's job, and **must not be reimplemented in the plugin**.
 
-| 来源 | key | 名字规则 |
+## Three tool sources and keys
+
+The tool name (key) the model sees must match `^[a-zA-Z0-9_-]{1,64}$`:
+
+| Source | key | Naming rule |
 |---|---|---|
-| 内置 | 名字本身：`ask_user`、`read_tool_output`、`tool_search`、`sandbox_bash`、`skill_load` | 小写 + 下划线，**不含点**（Ruling M12） |
-| 插件 | `<plugin>__<tool>`，如 `todo__write` | `spec.name` 匹配 `^[a-zA-Z0-9_-]{1,40}$`（`PLUGIN_TOOL_NAME`） |
-| 连接器 | `<connectorSlug>__<tool>`，如 `docs__search` | slug `^[a-z][a-z0-9_]{0,23}$`，不含连续 / 结尾下划线；工具名由远端决定 |
+| builtin | the name itself: `ask_user`, `read_tool_output`, `tool_search`, `sandbox_bash`, `skill_load` | lowercase + underscores, **no dots** (Ruling M12) |
+| plugin | `<plugin>__<tool>`, e.g. `todo__write` | `spec.name` matches `^[a-zA-Z0-9_-]{1,40}$` (`PLUGIN_TOOL_NAME`) |
+| connector | `<connectorSlug>__<tool>`, e.g. `docs__search` | slug `^[a-z][a-z0-9_]{0,23}$`, no consecutive / trailing underscores; the tool name is decided by the remote |
 
-key 超长或含非法字符时**不截断、不猜**：保存 agent 时报 `validation_failed`；连接器工具在安装 / 刷新时停用并在 `issues` 里写原因。名字用小写 + 下划线的动词短语（`write`、`search`、`delete_doc`），不要把插件名再写进工具名（key 已带前缀）。
+A key that is too long or contains illegal characters is **neither truncated nor guessed**: saving an agent reports `validation_failed`; a connector tool is disabled at install / refresh with the reason written in `issues`. Name tools with lowercase + underscore verb phrases (`write`, `search`, `delete_doc`), and don't write the plugin name into the tool name again (the key already carries the prefix).
 
-agent 定义按引用选工具：`{kind:"builtin",name}`、`{kind:"plugin",plugin,name}`、`{kind:"connector",connectorId,tools:"all"|string[]}`。运行时每步实时解析（`ToolRegistry.forAgent`），不可用的工具（插件未启用、连接器停用 / 删除、工具待复核等）跳过并写一条英文 `reminder`（`The following tools are unavailable in this run: <key> (<reason>), …`），模型仍调用它时得到 `Tool "<key>" is unavailable: <reason>.`，整轮不失败。
+An agent definition selects tools by reference: `{kind:"builtin",name}`, `{kind:"plugin",plugin,name}`, `{kind:"connector",connectorId,tools:"all"|string[]}`. At runtime they are resolved live on every step (`ToolRegistry.forAgent`); unavailable tools (plugin not enabled, connector disabled / deleted, tool pending review, etc.) are skipped and an English `reminder` is written (`The following tools are unavailable in this run: <key> (<reason>), …`); if the model still calls one it gets `Tool "<key>" is unavailable: <reason>.`, and the run does not fail.
 
-## 插件工具：`ctx.tools.register`
+## Plugin tools: `ctx.tools.register`
 
 ```ts
 import { definePlugin, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
@@ -48,65 +52,65 @@ export default definePlugin({
   setup(ctx) {
     ctx.tools.register(SPEC, async (input, call) => {
       // call: { orgId, accountId, agentId, conversationId, callId, signal, resume? }
-      // …校验、写 ctx.db…
+      // …validate, write ctx.db…
       return { content: [{ type: "text", text: "Todo list updated (3 items): …" }] };
     });
   },
 });
 ```
 
-- **只能在 `setup` 期间注册**，之后调用抛错；同一插件内名字不可重复；`validateToolSpec` 在注册时校验（名字、非空描述、inputSchema 为对象、`defaultPolicy` 只能 `allow` / `ask`）。
-- **插件工具只在启用了该插件的组织可用**（Ruling A5，与模型供应商不同）：组织 admin 需 `PUT /api/v1/orgs/:orgId/plugins/<plugin> {"enabled": true}`。未启用时 agent 仍可保存引用（只校验插件已注册），运行时按「不可用」处理（见上）。连接器是部署级的，不需要按组织启用。
-- 处理函数里的状态遵守多副本纪律：持久数据进 `ctx.db`（todo 按 `conversationId` 一行 upsert），不放模块级 Map。
-- 处理函数**必须响应 `call.signal`**（超时 `tools.timeoutMs` 与 run 中止合并后的信号）：把它传给 `fetch` / 数据库查询等。内核与处理函数竞速，不响应也会按时返回超时结果，但你的副作用可能还在跑。
-- 参数在调用前已按 `inputSchema` 用 ajv（2020-12）校验过；不合法时模型拿到全部错误路径 + 完整 inputSchema，处理函数不会被调用。处理函数里再用 zod 解析一次拿类型，解析失败抛 `ToolError`（见下）。
+- **Register only during `setup`**; calling it afterwards throws; names must be unique within a plugin; `validateToolSpec` validates at registration (name, non-empty description, inputSchema is an object, `defaultPolicy` may only be `allow` / `ask`).
+- **A plugin tool is available only in orgs that have enabled the plugin** (Ruling A5, unlike model providers): an org admin needs `PUT /api/v1/orgs/:orgId/plugins/<plugin> {"enabled": true}`. When not enabled, an agent can still save the reference (only that the plugin is registered is checked), and at runtime it is treated as "unavailable" (see above). Connectors are deployment-level and need no per-org enabling.
+- State in the handler follows the multi-replica discipline: persistent data goes in `ctx.db` (todo upserts one row per `conversationId`), not in a module-level Map.
+- The handler **must respond to `call.signal`** (the signal merging the `tools.timeoutMs` timeout and the run abort): pass it to `fetch` / database queries and so on. The kernel races the handler, so a timeout result is returned on time even if you don't respond, but your side effects may still be running.
+- Arguments have already been validated against `inputSchema` with ajv (2020-12) before the call; when invalid, the model gets all error paths + the full inputSchema and the handler is not called. In the handler, parse once more with zod to get types, and throw `ToolError` on a parse failure (see below).
 
-## 描述与错误文案（模型可见，一律英文）
+## Descriptions and error text (model-visible, always English)
 
-`pnpm check`（`check:tool-design`，`tools/checks/src/tool-design.ts`）静态检查：
+`pnpm check` (`check:tool-design`, `tools/checks/src/tool-design.ts`) checks statically:
 
-| 规则 id | 要求 |
+| Rule id | Requirement |
 |---|---|
-| `tool-description` | `ctx.tools.register(spec, …)` 与内置 `BuiltinTool` 字面量的 `spec.description` 是字符串字面量（可 `+` 拼接、可引用本文件内的 const），≥ 20 字符，不含中文 |
-| `tool-error-actionable` | `new ToolError(msg)` 的 msg 是字面量 / 模板（或本文件内的常量、函数返回值），且含建议动词 `use` / `call` / `retry` / `check` / `ask` / `pass` / `provide` 之一 |
+| `tool-description` | The `spec.description` of `ctx.tools.register(spec, …)` and of builtin `BuiltinTool` literals is a string literal (may be joined with `+`, may reference a const in the same file), ≥ 20 characters, with no Chinese |
+| `tool-error-actionable` | The msg of `new ToolError(msg)` is a literal / template (or a constant or function return value in the same file) and contains one of the suggestion verbs `use` / `call` / `retry` / `check` / `ask` / `pass` / `provide` |
 
-检查之外的写法要求：
+Writing requirements beyond the checks:
 
-- **描述说清三件事**：做什么、什么时候用、什么时候不该用；有副作用的说明副作用（如「Each call replaces the whole list」）。inputSchema 每个字段写 `description`，给例子。
-- **错误给事实与下一步**：说清哪里错了、模型下一步该做什么（换参数重试、先调用别的工具、请用户处理）。例：`Invalid todos: pass an array of items with content, status and activeForm, where status is pending, in_progress or completed.`；`Authentication failed for this app; ask the user to reconnect it.`
-- 不在错误里回显凭据、内部路径或堆栈；不做模糊匹配（「你是不是想调用 X」）。
-- 界面上显示的文案（表单标题、字段标签）可给 `{ zh, en }` 双语，走 i18n；给模型的只用英文。
+- **A description covers three things**: what it does, when to use it, and when not to; for side effects, state them (e.g. "Each call replaces the whole list"). Give every inputSchema field a `description`, and give examples.
+- **Errors give facts and a next step**: say what went wrong and what the model should do next (retry with different arguments, call another tool first, ask the user to handle it). Examples: `Invalid todos: pass an array of items with content, status and activeForm, where status is pending, in_progress or completed.`; `Authentication failed for this app; ask the user to reconnect it.`
+- Don't echo credentials, internal paths or stack traces in errors; no fuzzy matching ("did you mean to call X").
+- Text shown in the UI (form titles, field labels) may be given bilingually as `{ zh, en }` and goes through i18n; text for the model is English only.
 
-## 注解与默认策略
+## Annotations and default policy
 
-`ToolSpec.annotations`（与 MCP 对齐）：`readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`、`requiresUserInteraction`。
+`ToolSpec.annotations` (aligned with MCP): `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `requiresUserInteraction`.
 
-- 默认策略：插件 / 内置工具声明了 `defaultPolicy` 就用它；否则按注解推导 —— `readOnlyHint: true` → `allow`，其余（含无注解、destructive）→ `ask`（`policyFromAnnotations`）。连接器工具在安装时按注解推导并存进 `connector_tools.default_policy`，管理员可改。
-- 只有确实无副作用、或副作用只落在本会话的工具才声明 `defaultPolicy: "allow"`（如 todo）；拿不准就别声明，让它走 `ask`。
-- 最终策略在**执行那一刻**取最严者：组织默认策略、agent 的 `toolPolicies`（只能收紧为 `ask` / `deny`）、`requiresUserInteraction` 与 R3 清单（至少 `ask`，记住的授权对它们无效；`skill_write` 对共享 agent 固定 ask，对私有 agent 仅在 `skills.writePolicy = "ask"` 时固定 ask，见下文）；用户记住的授权（本会话 / 以后都允许）只能把 `ask` 放行为 `allow`，`spec_hash` 变了即失效，不越过 `deny`。
-- `ask` → 内核建审批、run 进入 `waiting`（不占会话锁与配额），批准后从 checkpoint 续跑；拒绝 / 超时（`tools.approvalTimeoutHours`）/ 等待中被中止一律按拒绝写 `tool_result`。插件无需关心。
+- Default policy: a plugin / builtin tool that declares `defaultPolicy` uses it; otherwise it is derived from the annotations: `readOnlyHint: true` -> `allow`, everything else (including no annotations, and destructive) -> `ask` (`policyFromAnnotations`). A connector tool's policy is derived from the annotations at install time and stored in `connector_tools.default_policy`, and admins can change it.
+- Declare `defaultPolicy: "allow"` only for a tool that truly has no side effects, or whose side effects land only in this conversation (such as todo); when unsure, don't declare it and let it go through `ask`.
+- The final policy takes the strictest at **the moment of execution**: the org default policy, the agent's `toolPolicies` (which can only tighten to `ask` / `deny`), `requiresUserInteraction` and the R3 list (at least `ask`, and remembered grants don't apply to them; `skill_write` is fixed to ask for shared agents, and for private agents is fixed to ask only when `skills.writePolicy = "ask"`, see below); a user's remembered grant (allow for this conversation / from now on) can only let an `ask` through as `allow`, becomes invalid when the `spec_hash` changes, and never overrides `deny`.
+- `ask` -> the kernel creates an approval and the run goes to `waiting` (it holds no conversation lock or quota), and resumes from the checkpoint after approval; rejection / timeout (`tools.approvalTimeoutHours`) / abort while waiting are all written as a rejection in `tool_result`. The plugin doesn't need to care.
 
-## 结果、`ToolError` 与失败
+## Results, `ToolError` and failure
 
-- 返回 `{ content: ToolContent[], isError? }`。`text` 原样拼接；`image` / `resource_link` 给模型的是类型说明（不丢弃）。`isError: true` 表示「工具执行了但结果是错误」，内容照样给模型。
-- 抛 `ToolError(message)`：message **原样**给模型（所以必须英文、可执行）。可选第二个参数 `{ kind: "unavailable" }` 表示远端不可用（连不上、HTTP 5xx），只对连接器有意义；缺省 `kind: "error"`（参数错误、业务错误、鉴权失败等）说明远端可达。熔断语义（Ruling A15）：连接器级熔断只统计「远端不可用」——超时、传输 / 连接错误（非 `ToolError` 的异常）、`kind: "unavailable"`；`kind: "error"` 的 `ToolError` 与 `isError` 结果都表示远端可达，清零计数。插件工具与内置工具不受熔断影响。
-- **显示摘要 `display`（可选，只给人看）**：`{ content, display: { summary: { zh, en } } }`，对话流里那一行工具调用显示这句话（如 todo 的「更新任务清单（3 项）」/「Updated task list (3 items)」），不再显示原样的输入 JSON。中英文都要给、各 ≤ 200 码点（`validateToolDisplay`）；不合法的内核丢弃并记告警，结果照常写入。摘要随 `tool_result` 事件进日志（刷新页面能还原），**不进模型上下文**（重建请求只用 content / isError），所以别把模型需要的信息只写在摘要里。只认插件工具、内核内置工具与内核的 resources 工具给的摘要；连接器工具的结果不采信（网页退回「工具名 + 输入的前几个字段」）。内置工具 `ask_user` / `read_tool_output` / `tool_search` 都给了摘要。
-- 抛其他错误：模型只看到 `Tool <key> failed (<ErrorName>). The operation may not have completed; check before retrying or try another approach.`，错误详情进日志（经打码）。不要依赖异常消息传话。
-- 超时：`Tool <key> timed out after <n>s. The operation may or may not have completed; verify before retrying.`
-- **提供工具的插件在调用途中被卸下**（部署上停用 / 卸载 / 升级换实例，C17）：内核先停止接新调用，等在途调用最多 `pluginHost.drainSeconds`（默认 30 秒）；到时仍没结束的，`call.signal` 被中止，模型收到 `PLUGIN_UNLOADED_TOOL_ERROR`（`plugins/inflight.ts`：`The plugin that provides this tool was disabled or upgraded while the call was running, so the call was aborted. Retry if the tool is still available.`）。之后的步骤里，本副本已没有的插件工具按不可用工具处理（原因 `Plugin tool does not exist`；组织未启用时是 `Plugin <name> is not enabled in this organization`）。所以处理函数要理会 `call.signal`，长操作做成可中止、可重试的。
-- **有副作用不盲目重跑**（spec 4.3）：内核在执行前写 `tool_call_started`。进程在执行中崩溃，续跑时这次调用的结果写为 `Result unknown: the call was interrupted before a result was recorded. Verify the outcome before retrying.`，**不会再调用你的处理函数**。所以处理函数无需为「被内核重放」做幂等，但模型可能看到「结果未知」后自己重试 —— 有条件的话让写操作天然幂等（如 todo 的整表覆盖）。
+- Return `{ content: ToolContent[], isError? }`. `text` is concatenated as is; for `image` / `resource_link` the model gets a type description (not dropped). `isError: true` means "the tool ran but the result is an error", and the content is still given to the model.
+- Throw `ToolError(message)`: the message is given to the model **as is** (so it must be English and actionable). An optional second argument `{ kind: "unavailable" }` means the remote is unavailable (can't connect, HTTP 5xx) and is meaningful only for connectors; the default `kind: "error"` (argument errors, business errors, authentication failures, etc.) means the remote is reachable. Circuit breaker semantics (Ruling A15): the connector-level circuit breaker counts only "remote unavailable": timeouts, transport / connection errors (exceptions that are not `ToolError`), and `kind: "unavailable"`; a `ToolError` with `kind: "error"` and `isError` results both mean the remote is reachable and reset the count. Plugin tools and builtin tools are not affected by the circuit breaker.
+- **Display summary `display` (optional, for humans only)**: `{ content, display: { summary: { zh, en } } }`; the tool call line in the conversation stream shows this sentence (for example todo's "更新任务清单（3 项）" / "Updated task list (3 items)") instead of the raw input JSON. Both Chinese and English are required, each ≤ 200 code points (`validateToolDisplay`); the kernel drops an invalid one and logs a warning, and the result is written as usual. The summary goes into the log with the `tool_result` event (so a page refresh can restore it) and **does not go into the model context** (request rebuilding uses only content / isError), so don't put information the model needs only in the summary. Only summaries from plugin tools, kernel builtin tools and the kernel's resources tools are honored; connector tool results are not trusted (the web falls back to "tool name + the first few input fields"). The builtin tools `ask_user` / `read_tool_output` / `tool_search` all give summaries.
+- Throwing any other error: the model sees only `Tool <key> failed (<ErrorName>). The operation may not have completed; check before retrying or try another approach.`, and the error details go into the log (redacted). Don't rely on the exception message to pass information.
+- Timeout: `Tool <key> timed out after <n>s. The operation may or may not have completed; verify before retrying.`
+- **The plugin providing a tool is taken down mid-call** (disabled / uninstalled / upgraded to a new instance on the deployment, C17): the kernel first stops accepting new calls, and waits for in-flight calls for up to `pluginHost.drainSeconds` (default 30 seconds); calls still unfinished at that point have `call.signal` aborted, and the model receives `PLUGIN_UNLOADED_TOOL_ERROR` (`plugins/inflight.ts`: `The plugin that provides this tool was disabled or upgraded while the call was running, so the call was aborted. Retry if the tool is still available.`). In later steps, a plugin tool that this replica no longer has is treated as an unavailable tool (reason `Plugin tool does not exist`; when the org hasn't enabled it, `Plugin <name> is not enabled in this organization`). So the handler must honor `call.signal`, and long operations should be abortable and retryable.
+- **Don't blindly rerun side effects** (spec 4.3): the kernel writes `tool_call_started` before executing. If the process crashes mid-execution, on resume the result of this call is written as `Result unknown: the call was interrupted before a result was recorded. Verify the outcome before retrying.`, and **your handler is not called again**. So the handler needn't be idempotent against "replay by the kernel", but the model may see "result unknown" and retry itself; where possible make write operations naturally idempotent (such as todo's whole-list overwrite).
 
-## 输出大小与存档
+## Output size and archiving
 
-- 渲染后的结果超过 `tools.outputSpillChars`（默认 50000 字符）时，全文存进输出存档（`tool_outputs`，保留 `tools.outputRetentionDays` 天），模型只见前 `tools.outputPreviewChars`（默认 2000）字符与说明：`[Output truncated: … Full output id: <id>. Use read_tool_output to page through it, or pass {"$output":"<id>"} as a tool argument.]`。
-- 模型用内置工具 `read_tool_output {id, offset?, limit?, charOffset?}` 按行分页读存档（每次不超过 `tools.maxResultReadChars`）。
-- 参数里任意位置的 `{"$output": "<id>"}`（对象恰好只有这一个键）在校验前被替换为该存档全文，所以大结果可以直接传给下一个工具，不经模型上下文。处理函数看到的就是替换后的值。
-- 存档**只属于产生它的会话**：`read_tool_output` 与 `$output` 只能读同一会话（且同一组织）的存档，别的会话的 id 一律按「not found or expired」处理（会话之间可见范围不同，不能借 id 跨会话读结果）。
-- 因此插件**不要自己截断**大结果或自造分页；返回完整文本即可。真正无界的数据（整库导出）在工具层面设上限或分页参数，并在描述里写明。
+- When a rendered result exceeds `tools.outputSpillChars` (default 50000 characters), the full text is stored in the output archive (`tool_outputs`, kept for `tools.outputRetentionDays` days), and the model sees only the first `tools.outputPreviewChars` (default 2000) characters and a note: `[Output truncated: … Full output id: <id>. Use read_tool_output to page through it, or pass {"$output":"<id>"} as a tool argument.]`.
+- The model uses the builtin tool `read_tool_output {id, offset?, limit?, charOffset?}` to read the archive page by page by line (each read at most `tools.maxResultReadChars`).
+- A `{"$output": "<id>"}` anywhere in the arguments (an object with exactly this one key) is replaced with the full text of that archive before validation, so a large result can be passed straight to the next tool without going through the model context. The handler sees the replaced value.
+- An archive **belongs only to the conversation that produced it**: `read_tool_output` and `$output` can read only archives of the same conversation (and the same org), and ids from other conversations are always treated as "not found or expired" (different conversations have different visibility scopes, so an id can't be used to read results across conversations).
+- So a plugin **should not truncate** large results or invent pagination itself; just return the full text. For truly unbounded data (a whole-database export), set a limit or pagination parameters at the tool level and say so in the description.
 
-## 需要用户输入：`InputRequired` 与续跑
+## Needing user input: `InputRequired` and resume
 
-处理函数可以返回 `{ kind: "input_required", form, state? }` 而不是结果：内核校验表单（`validateInputForm`，字段 schema 只用 ParamSchema 子集，枚举可 `multiSelect` / `allowOther`）、建输入请求、run 暂停。用户提交后（或超时 / 取消），内核**用同一 input 再次调用**该处理函数，并带上 `call.resume = { state, answer }`（超时 / 取消时 `answer` 为 `null`）。
+A handler can return `{ kind: "input_required", form, state? }` instead of a result: the kernel validates the form (`validateInputForm`; field schemas use only the ParamSchema subset, and enums can be `multiSelect` / `allowOther`), creates an input request, and the run pauses. After the user submits (or on timeout / cancel), the kernel **calls the handler again with the same input** and passes `call.resume = { state, answer }` (`answer` is `null` on timeout / cancel).
 
 ```ts
 async (input, call) => {
@@ -114,105 +118,118 @@ async (input, call) => {
     return { kind: "input_required", form: { title: { zh: "确认", en: "Confirm" }, fields: [ /* … */ ] }, state: { step: 1 } };
   }
   if (call.resume.answer === null) throw new ToolError("The user did not answer; ask again later or try another approach.");
-  // 用 call.resume.state / answer 继续
+  // continue with call.resume.state / answer
 }
 ```
 
-- `state` 可 JSON 序列化、≤ 16 KB；它存在 PG，续跑可能在另一个副本上，**不要把续跑需要的东西放内存**。
-- 同一调用最多连续请求输入 3 次，第 4 次 → `Tool requested user input too many times.`
-- 内置 `ask_user` 就是用这套机制实现的，可作参考。
-- MCP 连接器的 elicitation（远端在调用途中向用户要输入）由内核转成同一套输入请求：内核中止远端调用、用户回答后用**同一 input** 重新发起调用，远端再次发起同样的 elicitation 时用答案答复（至多 3 轮；远端不再问或换了 schema 时答案用不上，elicitation 之前的副作用会重做一次）。这是连接器与内核之间的事，细节见 `.agents/skills/writing-connectors`，插件工具不涉及。
+- `state` must be JSON-serializable and ≤ 16 KB; it is stored in PG and the resume may happen on another replica, so **don't keep anything the resume needs in memory**.
+- The same call may request input at most 3 times in a row; the 4th -> `Tool requested user input too many times.`
+- The builtin `ask_user` is implemented with this mechanism and can serve as a reference.
+- MCP connector elicitation (the remote asking the user for input mid-call) is turned by the kernel into the same input request: the kernel aborts the remote call, and after the user answers re-issues the call with the **same input**, and when the remote raises the same elicitation again it is answered with the answer (at most 3 rounds; if the remote stops asking or changes the schema the answer is unused, and side effects before the elicitation are redone once). This is between the connector and the kernel; details are in `.agents/skills/writing-connectors`, and plugin tools are not involved.
 
-## `tool_search`：工具多时的目录与按需加载
+## `tool_search`: the catalog and on-demand loading when there are many tools
 
-可用工具数超过 `tools.searchThresholdTools`（默认 30）或其定义的估算 token 超过 `tools.searchThresholdTokens`（默认 8000），且组织设置 `toolSearch` 为 `on`（默认；admin 经 `PATCH /api/v1/orgs/:orgId/settings {"toolSearch":"on"|"off"}` 改）时，内核对该 agent 启用 `tool_search`（`ToolRegistry.forAgent` 在每步实时判定，由注册表追加，不进 agent 定义）：
+When the number of available tools exceeds `tools.searchThresholdTools` (default 30) or the estimated tokens of their definitions exceed `tools.searchThresholdTokens` (default 8000), and the org setting `toolSearch` is `on` (the default; an admin changes it through `PATCH /api/v1/orgs/:orgId/settings {"toolSearch":"on"|"off"}`), the kernel enables `tool_search` for that agent (`ToolRegistry.forAgent` decides live on every step, and the registry appends it; it is not in the agent definition):
 
-- 发给模型的 `tools` 只有内置工具（`ask_user`、`read_tool_output`、`tool_search`，始终完整加载）与**已加载**工具的完整定义；其余工具以「目录」形式出现在 system 的第二个块：每行 `- <key>: <描述的第一行>`（超过 200 字符截断），按 key 排序。目录只依赖工具集合，与加载状态无关，缓存前缀稳定。
-- 模型调 `tool_search {query, limit?}`（`limit` 默认 5、最多 10）：对**目录里的工具**按关键词确定性评分（key 里出现的词权重是描述里的 2 倍，稀有词权重更高，同分按 key 排序），返回命中工具的完整定义（名字、描述、inputSchema），并把它们加载到**下一步**起的 `tools` 里。
-- 已加载集合 = 会话日志里全部 `tool_result.loadedTools` 的并集（压缩摘要之前的也算；本步已不可用的忽略），所以只由日志还原。同一步里刚被 `tool_search` 加载的工具若立刻被调用会被拒（`Tool "<key>" is not loaded. Call tool_search first…`，模型形成那次调用时并没有它的定义）；调用目录里没加载的工具同理，内核不自动加载。
+- The `tools` sent to the model contain only the builtin tools (`ask_user`, `read_tool_output`, `tool_search`, always fully loaded) and the full definitions of **loaded** tools; the remaining tools appear as a "catalog" in the second block of system: one line each, `- <key>: <first line of the description>` (truncated beyond 200 characters), sorted by key. The catalog depends only on the tool set and not on loading state, so the cache prefix is stable.
+- The model calls `tool_search {query, limit?}` (`limit` defaults to 5, max 10): it scores **the tools in the catalog** deterministically by keyword (a word in the key weighs twice as much as one in the description, rarer words weigh more, ties are sorted by key), returns the full definitions (name, description, inputSchema) of the matching tools, and loads them into `tools` from the **next step** on.
+- The loaded set = the union of all `tool_result.loadedTools` in the conversation log (including those before a compaction summary; ones no longer available this step are ignored), so it is reconstructed from the log alone. A tool just loaded by `tool_search` in the same step is rejected if called immediately (`Tool "<key>" is not loaded. Call tool_search first…`, since the model did not have its definition when forming that call); the same goes for calling a catalog tool that isn't loaded, and the kernel does not auto-load.
 
-**对工具作者的含义**：
+**What this means for tool authors**:
 
-- **描述会被搜索，也是目录的唯一文字**：写清「做什么、对象、动作」的关键词（`create calendar event`），**第一行**要能单独说明工具用途（目录只取第一行）；把对象和动作的词放进描述或工具名，模型才搜得到。
-- 工具名（key）里的词权重更高，起名用动词短语（`search_docs`）有利于命中。
-- 不要为了「让模型总能看到」把工具做成内置或加到 agent 的 system 提示里；工具数量大时本来就该走目录。
-- 小规模部署（工具少于阈值）下所有工具照旧完整加载，`tool_search` 不出现。
+- **The description is searched, and is the only text in the catalog**: write the keywords for "what it does, the object, the action" (`create calendar event`), the **first line** must explain the tool's purpose on its own (the catalog takes only the first line); put the object and action words in the description or the tool name so the model can find it.
+- Words in the tool name (key) weigh more, so naming with a verb phrase (`search_docs`) helps matching.
+- Don't make a tool builtin or add it to the agent's system prompt just to "make sure the model always sees it"; when there are many tools it should go through the catalog anyway.
+- In a small deployment (fewer tools than the thresholds) all tools are fully loaded as before, and `tool_search` doesn't appear.
 
-## 工具定义漂移与复核
+## Tool definition drift and review
 
-连接器工具的定义来自远端，可能被改（spec 7.3 防 rug-pull / 工具投毒）。内核（`packages/kernel/src/tools/drift.ts`）每 `tools.driftIntervalHours` 小时、收到连接器的 `onToolsChanged`、管理员 `POST .../connectors/:connectorId/refresh` 时重新 `listTools` 并与快照比对：
+A connector tool's definition comes from the remote and may be changed (spec 7.3, against rug-pulls / tool poisoning). The kernel (`packages/kernel/src/tools/drift.ts`) re-runs `listTools` and compares with the snapshot every `tools.driftIntervalHours` hours, when the connector sends `onToolsChanged`, and when an admin calls `POST .../connectors/:connectorId/refresh`:
 
-- 新增的工具 → `pending_review`；
-- **任何 spec 变化**（描述、`inputSchema`、注解、`connectorData`，即 `spec_hash` 或来源变了；`connectorData` 计入哈希）→ `pending_review`，新定义存 `pending_spec`、旧定义保留供对比；管理员停用过的工具变了也一样；变成不合规的定义同样只进 `pending_spec`（工具停用，approve 被拒，reject 清掉），`spec` 始终是上次复核通过的定义；
-- 从未复核过的工具（`reviewed_at` 为空：新增待复核、被拒的新工具）没有可比的旧定义，再变时直接替换 `spec`（仍待复核）；
-- 消失 → `disabled` 并标记 `missing`（又出现按新增处理）。
+- A new tool -> `pending_review`;
+- **Any spec change** (description, `inputSchema`, annotations, `connectorData`, i.e. `spec_hash` or the source changed; `connectorData` counts toward the hash) -> `pending_review`, the new definition is stored in `pending_spec` and the old one is kept for comparison; the same for a tool an admin had disabled; a definition that becomes non-compliant likewise goes only into `pending_spec` (the tool is disabled, approve is refused, reject clears it), and `spec` is always the definition that last passed review;
+- A tool that has never been reviewed (`reviewed_at` is empty: new and pending review, or a rejected new tool) has no old definition to compare with, and when it changes again `spec` is replaced directly (still pending review);
+- Disappearing -> `disabled` and marked `missing` (reappearing is treated as new).
 
-`pending_review` / 停用的工具不进 `forAgent`：点名引用的进 `unavailable`（每步提醒模型），`tools: "all"` 引用的进 `hidden`（不提醒，模型调用时给事实原因）。管理员 `POST .../connectors/:connectorId/tools/:name/review {action: "approve" | "reject"}`：approve 采用新定义并启用并记 `reviewed_at`，reject 停用并保留旧定义（从未复核过的工具被拒后 `reviewed_at` 仍为空，之后仍可 approve）；待复核或从未复核过的工具不能经 PATCH 启用。授权按 `spec_hash` 比对，采用新定义后旧的「记住的授权」自然失效。
+`pending_review` / disabled tools do not enter `forAgent`: ones named by reference go into `unavailable` (the model is reminded every step), ones from a `tools: "all"` reference go into `hidden` (no reminder, and the model gets the factual reason when it calls one). An admin calls `POST .../connectors/:connectorId/tools/:name/review {action: "approve" | "reject"}`: approve adopts the new definition, enables it and records `reviewed_at`; reject disables it and keeps the old definition (a never-reviewed tool that is rejected keeps `reviewed_at` empty and can still be approved later); a tool pending review or never reviewed can't be enabled through PATCH. Grants are compared by `spec_hash`, so after the new definition is adopted the old "remembered grants" lapse naturally.
 
-**默认策略与 `policy_source`**：连接器工具的默认策略（`connector_tools.default_policy`）由注解推导（`policySource: "derived"`），管理员改过则为 `"admin"`，从企业目录的连接器模板安装、取自模板 `defaultToolPolicies` 的为 `"template"`（与 `admin` 一样保留，见 `.agents/skills/writing-apps`）。approve 或刷新采用新定义时，`derived` 的按新注解重新推导（注解变严格——如 `readOnlyHint` 变成 destructive——也会跟着变成 ask，不会沿用旧的 allow）；`admin` 的保留，除非工具的来源（`source`）变了。插件 / 内置工具没有这一层：用 `defaultPolicy` 或注解（见上）。
+**Default policy and `policy_source`**: a connector tool's default policy (`connector_tools.default_policy`) is derived from the annotations (`policySource: "derived"`), `"admin"` if an admin changed it, and `"template"` if installed from an enterprise directory connector template and taken from the template's `defaultToolPolicies` (kept like `admin`, see `.agents/skills/writing-apps`). When approve or a refresh adopts a new definition, `derived` ones are re-derived from the new annotations (annotations getting stricter, such as `readOnlyHint` becoming destructive, also turn it into ask and do not keep the old allow); `admin` ones are kept unless the tool's source (`source`) changed. Plugin / builtin tools have no such layer: use `defaultPolicy` or annotations (see above).
 
-后台检查用的凭据：组织凭据；个人凭据型连接器依次试至多 3 个现任成员的个人凭据（按凭据最近写入时间倒序），没有则跳过并记日志。审计 `connector.tools_drifted`（只有计数）/ `connector.tool_reviewed`。
+Credentials used by the admin console checks: the org credential; for personal-credential connectors, it tries the personal credentials of up to 3 current members in turn (in descending order of the credential's last write time), and if there are none it skips and logs. Audit events `connector.tools_drifted` (only counts) / `connector.tool_reviewed`.
 
-写连接器的人要注意：`listTools` 的输出必须确定性，否则会反复触发复核（见 `.agents/skills/writing-connectors`）。
+Connector authors should note: the output of `listTools` must be deterministic, otherwise it will trigger review again and again (see `.agents/skills/writing-connectors`).
 
-## 内核内置工具：沙箱与技能
+## Kernel builtin tools: sandbox and skills
 
-内置工具（`BuiltinTool`）比插件工具多三个可选项：`timeoutMs(input)` 覆盖 `tools.timeoutMs`；`spillChars` 给比
-`tools.outputSpillChars` 更低的转存阈值（取两者较小的）；`unavailable()` 返回本部署不可用的英文原因（注册表据此报
-不可用）。新内置工具的名字要加进 `BUILTIN_TOOL_NAMES`。内置工具写自己的事件时用 `ctx.runId` 与唯一的幂等键，并在
-同一事务里与业务行一起提交。
+Builtin tools (`BuiltinTool`) have three optional extras over plugin tools: `timeoutMs(input)` overrides `tools.timeoutMs`; `spillChars` gives a spill threshold lower than
+`tools.outputSpillChars` (the smaller of the two is taken); `unavailable()` returns the English reason it is unavailable in this deployment (the registry reports
+unavailable accordingly). The name of a new builtin tool must be added to `BUILTIN_TOOL_NAMES`. When a builtin tool writes its own events, use `ctx.runId` and a unique idempotency key, and commit them in
+the same transaction as the business rows.
 
-**沙箱工具**（Ruling M12：key 不含点）：`sandbox_bash`、`sandbox_read`、`sandbox_write`、`sandbox_edit`、
-`sandbox_glob`、`sandbox_grep`、`sandbox_deliver`。
+**Sandbox tools** (Ruling M12: keys contain no dots): `sandbox_bash`, `sandbox_read`, `sandbox_write`, `sandbox_edit`,
+`sandbox_glob`, `sandbox_grep`, `sandbox_deliver`.
 
-- agent 定义显式引用才有（`DEFAULT_AGENT_TOOLS` 不含）；部署没有沙箱插件时报不可用（`unavailable()`）。
-- 全部经 `SandboxService.withSandbox`（每个对话一个沙箱，懒创建，见 `.agents/skills/writing-sandbox-providers`），把锁关联的
-  signal 传给每次提供方调用；路径过 `validateSandboxPath`，`write` / `edit` 拒绝 `/skills`。
-- 超时：`sandbox_bash` = `min(timeoutSeconds ?? 120, sandbox.limits.maxCommandSeconds)` 秒加余量（余量 =
-  `tools.timeoutMs` + `sandbox.lockWaitSeconds`，盖住等锁与创建 / 恢复）；超过上限的 `timeoutSeconds` 直接报错。
-  其他沙箱工具只用余量（deliver 两倍）。提供方的命令时限先到，模型拿到 `timedOut`，沙箱照常可用。
-- 转存：`sandbox_bash` 的 `spillChars` 为 30000，大输出照常经 `read_tool_output` / `{"$output": id}` 读。
-- 结果前缀提示（英文）：首次使用 `Sandbox started for this conversation (first use)…`，重建
-  `Sandbox was recreated; previous files are gone.`，新复制的附件列出路径。每次调用前把对话里已就绪的附件同步到
-  `/workspace/attachments/`。
-- 默认策略 allow（沙箱是隔离的，D5）；组织设置 `sandboxToolPolicy: "ask"` 时 bash / write / edit / deliver 需要审批，
-  **在执行那一刻**读设置，只读的 read / glob / grep 不受影响。
-- `sandbox_deliver` 把文件放进对象存储（`kernel/<orgId>/artifacts/<对话>/<id>`，上限 `sandbox.deliverMaxBytes`），
-  追加 `artifact_created` 事件，网页「产物」标签从日志重建。
+- They exist only when the agent definition references them explicitly (`DEFAULT_AGENT_TOOLS` does not include them); when the deployment has no sandbox plugin they are reported unavailable (`unavailable()`).
+- All go through `SandboxService.withSandbox` (one sandbox per conversation, created lazily, see `.agents/skills/writing-sandbox-providers`), passing the lock-linked
+  signal to every provider call; paths go through `validateSandboxPath`, and `write` / `edit` reject `/skills`.
+- Timeout: `sandbox_bash` = `min(timeoutSeconds ?? 120, sandbox.limits.maxCommandSeconds)` seconds plus a margin (margin =
+  `tools.timeoutMs` + `sandbox.lockWaitSeconds`, covering lock waiting and creation / resume); a `timeoutSeconds` above the limit is rejected with an error.
+  The other sandbox tools use only the margin (deliver twice). The provider's command time limit arrives first, the model gets `timedOut`, and the sandbox remains usable as usual.
+- Spilling: `sandbox_bash`'s `spillChars` is 30000, and large output is read as usual through `read_tool_output` / `{"$output": id}`.
+- Result prefix notices (English): on first use `Sandbox started for this conversation (first use)…`, on recreation
+  `Sandbox was recreated; previous files are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to
+  `/workspace/attachments/`.
+- Default policy is allow (the sandbox is isolated, D5); when the org setting `sandboxToolPolicy: "ask"` is set, bash / write / edit / deliver need approval,
+  the setting is read **at the moment of execution**, and the read-only read / glob / grep are unaffected.
+- `sandbox_deliver` puts a file into object storage (`kernel/<orgId>/artifacts/<conversation>/<id>`, limit `sandbox.deliverMaxBytes`),
+  appends an `artifact_created` event, and the web "Artifacts" tab is rebuilt from the log.
 
-**技能工具**：
+**Skill tools**:
 
-- `skill_load {name}` 不进 agent 定义，由注册表自动加入：对话日志里有技能目录快照 `skills_catalog`（运行开始时按
-  agent 版本解析、与上一份不同才写，Ruling M17）时出现。它按**最新快照**把名字解析成技能 id、版本与 `source`（对象前缀），
-  只按 `source` 精确取文件，核对大小与 sha256。带其他文件的技能复制进沙箱 `/skills/<name>/`（只读，脚本没有可执行位，
-  结果提示用 `sh` / `python3` 运行；旧版本留下的文件列为可忽略，Ruling M18）；agent 没有沙箱工具时只返回正文。
-  目录的第一份进 system 缓存段，之后的变化在所在位置渲染为英文提醒（只追加），所以改动在**下一次运行开始**才到模型。
-- `skill_write {name, description, files}` 要 agent 定义显式引用（`builtin` / `skill_write`）。内核按 name / description
-  合成 SKILL.md 的 frontmatter，只收文本、合计 ≤ 1 MiB、每个 agent 最多 50 个自写技能。
-  - 私有 agent：默认 allow，直接生成新版本。负责人可在 agent 定义里设 `skills.writePolicy: "ask"`（D10，缺省即 allow，
-    不写进定义），此时与共享 agent 一样固定 ask（记住的授权无效），但确认后**直接生效**、不走变更申请。`writePolicy`
-    与可见性一样在执行那一刻读 agent **当前版本**（R5），运行中改为 ask 下一次调用即生效；共享 agent 不论取值都走 R3 + R4。
-    网页只在私有 agent 的表单上显示这个开关。
-  - 共享 agent：在 R3 固定 ask 清单上，**只对共享 agent 生效**（`R3_SHARED_AGENT_ONLY_TOOL_KEYS`，可见性在执行时实时读，
-    读不到按共享处理），记住的授权对它无效。发起人确认后生成变更申请（`skills/changes.service.ts`），负责人在收件箱批准前
-    只有发起对话能试用；同一对话再写取代旧申请，别的对话写同一技能被拒。
-  - 部署设置 `customSkills` 为 `deny` 只挡组织管理员上传技能包，**不影响 `skill_write`**（agent 级技能与共享 agent 的变更由
-    R3 / R4 把关）。
-  - 成功后在同一事务里追加一份目录快照，同一运行的下一步即可 `skill_load`。代价：对话里第一份目录在运行中途出现时，
-    下一步的工具清单多出 `skill_load`，提示缓存失效一次。
+- `skill_load {name}` is not in the agent definition and is added automatically by the registry: it appears when the conversation log has a skill catalog snapshot `skills_catalog` (resolved from the
+  agent version at run start, written only when it differs from the previous one, Ruling M17). It resolves the name to a skill id, version and `source` (object prefix) from the **latest snapshot**,
+  fetches files strictly by `source`, and checks size and sha256. A skill with other files is copied into the sandbox at `/skills/<name>/` (read-only, scripts have no executable bit,
+  the result tells you to run them with `sh` / `python3`; files left by older versions are listed as ignorable, Ruling M18); when the agent has no sandbox tools only the body is returned.
+  The first catalog goes into the system cache segment, and later changes are rendered at their position as English reminders (append-only), so a change reaches the model only at **the start of the next run**.
+- `skill_write {name, description, files}` requires the agent definition to reference it explicitly (`builtin` / `skill_write`). The kernel
+  synthesizes the SKILL.md frontmatter from name / description, accepts only text, ≤ 1 MiB in total, and at most 50 self-written skills per agent.
+  - Private agent: default allow, directly generates a new version. The owner may set `skills.writePolicy: "ask"` in the agent definition (D10, absent means allow and
+    is not written into the definition), in which case it is fixed to ask like a shared agent (remembered grants don't apply), but after confirmation it **takes effect directly** without a change request. `writePolicy`,
+    like visibility, reads the agent's **current version** at the moment of execution (R5), so setting it to ask during a run takes effect on the next call; a shared agent goes through R3 + R4 whatever the value.
+    The web shows this switch only on the form of a private agent.
+  - Shared agent: on the R3 fixed-ask list, **in effect only for shared agents** (`R3_SHARED_AGENT_ONLY_TOOL_KEYS`, visibility is read live at execution time,
+    and if it can't be read it is treated as shared), and remembered grants don't apply to it. After the initiator confirms, a change request is generated (`skills/changes.service.ts`), and until the owner approves it in the inbox
+    only the initiating conversation can try it; another write in the same conversation supersedes the old request, and a write to the same skill from another conversation is refused.
+  - The deployment setting `customSkills` set to `deny` only blocks org admins from uploading skill packages and **does not affect `skill_write`** (agent-level skills and shared agents' changes are
+    guarded by R3 / R4).
+  - On success a catalog snapshot is appended in the same transaction, so the next step of the same run can `skill_load`. Cost: when the conversation's first catalog appears mid-run,
+    the next step's tool list gains `skill_load`, and the prompt cache is invalidated once.
 
-## 连接器
+## Plugin hooks around a tool call
 
-连接器（`connector@1`）把远端服务接成连接器，工具由远端决定，上述策略、审批、输出存档、漂移、`tool_search` 全部照常适用。契约、会话生命周期、鉴权注入、`ToolError` 的熔断语义、`connectorData` 路由、`inspect`、elicitation、测试夹具都在 **`.agents/skills/writing-connectors`**。参考实现：`plugins/connector-mcp`、`plugins/connector-openapi`。
+Plugins can observe or deny tool calls through `ctx.hooks` (see "Hooks" in `.agents/skills/writing-plugins`).
 
-要点：`ToolError` 的 `kind: "unavailable"` 才计入连接器熔断（见上）；OAuth 全在内核，连接器只做 `auth()` / `onUnauthorized()`；连接器工具的结果与错误由内核按本次注入的凭据打码。
+- `tool.preExecute` runs after the tool policy and approval, and before `tool_call_started`. A policy
+  denial never runs the tool: the call's `tool_result` is `hookDeniedText` (`Tool call blocked by the
+  "<plugin>" policy hook: <reason>`, reason sanitized and cut to 500 characters, or a generic sentence
+  for a hook error or timeout), written with the `hook_denied` event and a `hook.denied` audit row in
+  one transaction. The denial is sticky per call: a resumed step reuses it and does not rerun hooks.
+- `tool.postExecute` is observe-only and gets the result the model sees, that is, after output
+  spilling (`content` is the spilled or truncated text, not the raw output).
+- Hooks fire only for chat conversations, never in eval replays (`RecordedToolPipeline` runs none).
 
-## 测试
+## Connectors
 
-- 插件单测：直接调用处理函数（构造 `ToolCallContext`），见 `plugins/todo/test/todo.test.ts`；多副本读写一致用 `createDualReplicaHarness`。
-- 连接器的测试夹具（`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`）见 `.agents/skills/writing-connectors`；漂移检测见 `packages/kernel/test/tools/drift.test.ts`，`tool_search` 见 `packages/kernel/test/tools/tool-search*.test.ts`。
-- 内核端到端：model-fake 的 `tool:<key>:<json>` 指令让模型调用指定工具（如 `tool:todo__write:{"todos":[]}`），见 `packages/kernel/test/tools/mcp-e2e.test.ts` 与双副本验收 `packages/kernel/test/tools/m3-segment1.dual.test.ts`（审批跨副本、审批超时、杀 worker 后结果未知、插件启用前后）。
-- 沙箱与技能工具：真实内核 + model-fake + 假沙箱插件（`packages/kernel/test/fixtures/plugins/sandbox-fake`）+ SeaweedFS，
-  见 `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`、`packages/kernel/test/skills/skills-runtime.test.ts`、
-  `skill-write.test.ts`；双副本验收 `packages/kernel/test/sandbox/m5-segment2.dual.test.ts`（真实 Docker）与
-  `packages/kernel/test/skills/m5-segment3.dual.test.ts`（技能变更跨副本批准、脚本进沙箱）。
+A connector (`connector@1`) connects a remote service as a connector; the tools are decided by the remote, and the policy, approval, output archiving, drift and `tool_search` above all apply as usual. The contract, session lifecycle, auth injection, the circuit breaker semantics of `ToolError`, `connectorData` routing, `inspect`, elicitation and test fixtures are all in **`.agents/skills/writing-connectors`**. Reference implementations: `plugins/connector-mcp`, `plugins/connector-openapi`.
+
+Key points: only `ToolError` with `kind: "unavailable"` counts toward the connector circuit breaker (see above); OAuth is entirely in the kernel, and a connector only does `auth()` / `onUnauthorized()`; the kernel redacts connector tool results and errors using the credentials injected for this call.
+
+## Testing
+
+- Plugin unit tests: call the handler directly (constructing a `ToolCallContext`), see `plugins/todo/test/todo.test.ts`; for multi-replica read/write consistency use `createDualReplicaHarness`.
+- Connector test fixtures (`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`) are in `.agents/skills/writing-connectors`; drift detection is in `packages/kernel/test/tools/drift.test.ts`, and `tool_search` in `packages/kernel/test/tools/tool-search*.test.ts`.
+- Kernel end-to-end: model-fake's `tool:<key>:<json>` directive makes the model call a given tool (such as `tool:todo__write:{"todos":[]}`), see `packages/kernel/test/tools/mcp-e2e.test.ts` and the dual-replica acceptance `packages/kernel/test/tools/m3-segment1.dual.test.ts` (approval across replicas, approval timeout, result unknown after killing the worker, before and after plugin enabling).
+- Sandbox and skill tools: the real kernel + model-fake + the fake sandbox plugin (`packages/kernel/test/fixtures/plugins/sandbox-fake`) + SeaweedFS,
+  see `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/skills-runtime.test.ts`,
+  `skill-write.test.ts`; dual-replica acceptance `packages/kernel/test/sandbox/m5-segment2.dual.test.ts` (real Docker) and
+  `packages/kernel/test/skills/m5-segment3.dual.test.ts` (skill change approved across replicas, scripts into the sandbox).

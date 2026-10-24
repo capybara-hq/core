@@ -1,18 +1,18 @@
 ---
 name: adding-config
-description: 给内核新增或修改配置项（packages/kernel/src/config/schema.ts 的 KernelConfigSchema）时使用：字段 meta（hot / secret / description）、环境变量名的推导规则、重新生成 docs/config.md。
+description: 'Use when adding or changing a kernel config option (KernelConfigSchema in packages/kernel/src/config/schema.ts): field meta (hot / secret / description), the rules for deriving environment variable names, and regenerating docs/config.md.'
 ---
 
-# 加内核配置项
+# Adding a kernel config option
 
-内核配置只有一个来源的定义：`packages/kernel/src/config/schema.ts` 里的 `KernelConfigSchema`（Zod 4）。插件的部署级配置不在这里加，写在插件清单的 `config.deployment`（见 `.agents/skills/writing-plugins`）。
+Kernel config has a single source of definition: `KernelConfigSchema` (Zod 4) in `packages/kernel/src/config/schema.ts`. A plugin's deployment-level config is not added here; it goes in the plugin manifest's `config.deployment` (see `.agents/skills/writing-plugins`).
 
-## 步骤
+## Steps
 
-1. 在 `KernelConfigSchema` 加字段，**每个字段都带 `meta`**：
+1. Add the field to `KernelConfigSchema`, **and give every field a `meta`**:
 
    ```ts
-   // schema.ts 里直接用同文件的 meta()
+   // use the meta() from the same file in schema.ts
    timeoutMs: z
      .number()
      .int()
@@ -21,50 +21,50 @@ description: 给内核新增或修改配置项（packages/kernel/src/config/sche
      .meta(meta({ description: "Upstream request timeout in milliseconds" })),
    ```
 
-   `meta` 字段：
-   - `description`（必填）：英文一句话；会进入生成的文档。
-   - `secret: true`：敏感值（连接串、密钥、token）。文档不展示其默认值，日志与错误信息不得回显其值。
-   - `hot: true`：允许热更新。只给确实能在运行中安全生效的字段（如 `log.level`）；默认不热更，改动需重启。
+   `meta` fields:
+   - `description` (required): one English sentence; it goes into the generated docs.
+   - `secret: true`: a sensitive value (connection string, key, token). The docs do not show its default, and logs and error messages must not echo its value.
+   - `hot: true`: allows hot reload. Only set it on fields that can safely take effect at runtime (such as `log.level`); by default a field is not hot, and changing it needs a restart.
 
-2. 合理的字段给 `.default(...)`；必填字段不给默认值。嵌套对象沿用现有写法（`z.object({...}).prefault({} as never)` 或 `.default({...})`）。
-3. 重新生成配置文档并提交：
+2. Give sensible fields `.default(...)`; required fields get no default. Nested objects follow the existing style (`z.object({...}).prefault({} as never)` or `.default({...})`).
+3. Regenerate the config docs and commit them:
 
    ```bash
-   pnpm gen:config-docs      # 写 docs/config.md
+   pnpm gen:config-docs      # writes docs/config.md
    ```
 
-   `pnpm check:config-docs`（含在 `pnpm check` 中）发现 `docs/config.md` 与 schema 不一致会报 `config-docs-stale`；不要手改该文件。
-4. 影响发布的改动加 changeset（`pnpm changeset`，kernel 一般是 minor）。
+   `pnpm check:config-docs` (part of `pnpm check`) reports `config-docs-stale` when `docs/config.md` disagrees with the schema; do not edit that file by hand.
+4. Changes that affect a release get a changeset (`pnpm changeset`; for the kernel usually minor).
 
-## 环境变量名怎么推导
+## How environment variable names are derived
 
-规则（与 `packages/kernel/src/config/env.ts` 一致）：
+The rules (consistent with `packages/kernel/src/config/env.ts`):
 
-- 前缀 `CAPYBARA_`；
-- 嵌套层级之间用**双下划线** `__`；
-- 每一段 camelCase 转 SNAKE_CASE（大写）：`poolMax` → `POOL_MAX`。
+- Prefix `CAPYBARA_`;
+- levels of nesting are joined with a **double underscore** `__`;
+- each segment is converted from camelCase to SNAKE_CASE (upper case): `poolMax` -> `POOL_MAX`.
 
-| 配置路径 | 环境变量 |
+| Config path | Environment variable |
 |---|---|
 | `db.url` | `CAPYBARA_DB__URL` |
 | `db.poolMax` | `CAPYBARA_DB__POOL_MAX` |
 | `http.port` | `CAPYBARA_HTTP__PORT` |
 | `masterKey` | `CAPYBARA_MASTER_KEY` |
 | `pluginConfig` | `CAPYBARA_PLUGIN_CONFIG` |
-| 新增 `upstream.timeoutMs` | `CAPYBARA_UPSTREAM__TIMEOUT_MS` |
+| new `upstream.timeoutMs` | `CAPYBARA_UPSTREAM__TIMEOUT_MS` |
 
-值按 JSON 解析（数字、布尔、数组、对象都能传，如 `CAPYBARA_PLUGINS='["a","b"]'`），解析不了则当字符串。环境变量优先级**高于**配置文件 / Nacos。同时设置 `CAPYBARA_X`（标量）与 `CAPYBARA_X__Y`（嵌套）属于冲突，启动时抛 `ConfigError` 并点名两个变量；`CAPYBARA_CONFIG_SOURCE` 为空串按未设置处理。
+Values are parsed as JSON (numbers, booleans, arrays and objects can all be passed, e.g. `CAPYBARA_PLUGINS='["a","b"]'`); a value that cannot be parsed is taken as a string. Environment variables take precedence **over** the config file / Nacos. Setting both `CAPYBARA_X` (scalar) and `CAPYBARA_X__Y` (nested) is a conflict: startup throws `ConfigError` naming both variables; an empty-string `CAPYBARA_CONFIG_SOURCE` is treated as unset.
 
-**整段 JSON 与逐字段不能混用**：`CAPYBARA_X` 即使传的是 JSON 对象（如 `CAPYBARA_DB='{"url":"postgres://..."}'`），只要同时设置了 `CAPYBARA_X__Y`（如 `CAPYBARA_DB__POOL_MAX=5`），同样判冲突、启动失败——不会把两者合并。同一段配置只选一种写法。冲突只看「父子路径」：`CAPYBARA_DB__URL` 与 `CAPYBARA_DB__URL_EXTRA`、`CAPYBARA_LOG` 与 `CAPYBARA_LOGGING__X` 都不冲突；被忽略的 `CAPYBARA_CONFIG_*` / `CAPYBARA_NACOS_*` 先剔除、不参与冲突检测。
+**A whole-section JSON value and per-field variables cannot be mixed**: even if `CAPYBARA_X` carries a JSON object (e.g. `CAPYBARA_DB='{"url":"postgres://..."}'`), setting `CAPYBARA_X__Y` as well (e.g. `CAPYBARA_DB__POOL_MAX=5`) is likewise judged a conflict and startup fails; the two are not merged. Pick one style per section of config. Conflicts only consider parent/child paths: `CAPYBARA_DB__URL` and `CAPYBARA_DB__URL_EXTRA`, or `CAPYBARA_LOG` and `CAPYBARA_LOGGING__X`, do not conflict; ignored `CAPYBARA_CONFIG_*` / `CAPYBARA_NACOS_*` variables are removed first and take no part in conflict detection.
 
-`CAPYBARA_CONFIG_*` 与 `CAPYBARA_NACOS_*` 是配置来源自身的选择（`CAPYBARA_CONFIG_SOURCE=file|nacos`、`CAPYBARA_CONFIG_FILE`、`CAPYBARA_NACOS_SERVER` / `_NAMESPACE` / `_DATA_ID`，以及 Nacos 鉴权的 `_USERNAME` / `_PASSWORD` / `_ACCESS_TOKEN`），**不会**被当成配置项；新字段不要起 `config` 或 `nacos` 这种会撞前缀的顶层名。
+`CAPYBARA_CONFIG_*` and `CAPYBARA_NACOS_*` are the choices of the config source itself (`CAPYBARA_CONFIG_SOURCE=file|nacos`, `CAPYBARA_CONFIG_FILE`, `CAPYBARA_NACOS_SERVER` / `_NAMESPACE` / `_DATA_ID`, and the Nacos auth variables `_USERNAME` / `_PASSWORD` / `_ACCESS_TOKEN`) and are **not** treated as config options; do not give a new field a top-level name like `config` or `nacos` that would collide with those prefixes.
 
-Nacos 开启鉴权时二选一：`CAPYBARA_NACOS_USERNAME` + `CAPYBARA_NACOS_PASSWORD`（启动时 `POST /nacos/v1/auth/login` 换取 accessToken，用到 `tokenTtl` 的 80% 后或请求收到 403 时重新登录），或 `CAPYBARA_NACOS_ACCESS_TOKEN`（直接使用，不登录）。令牌以 `accessToken` 查询参数随读取与监听请求发送。登录失败启动即失败，错误信息含 server、不含密码；两种方式同时设置、或用户名密码不成对，启动报 `ConfigError`。
+When Nacos auth is enabled, choose one of two: `CAPYBARA_NACOS_USERNAME` + `CAPYBARA_NACOS_PASSWORD` (at startup `POST /nacos/v1/auth/login` exchanges them for an accessToken, which is logged in again after 80% of `tokenTtl` has elapsed or when a request receives 403), or `CAPYBARA_NACOS_ACCESS_TOKEN` (used directly, no login). The token is sent as the `accessToken` query parameter on read and listen requests. A failed login fails startup, and the error message contains the server but not the password; setting both methods, or a username and password that are not paired, makes startup report `ConfigError`.
 
-## 主密钥轮换
+## Master key rotation
 
-内核用 `createKeyring(masterKey, masterKeyPrevious)` 建密钥环：新包装一律用 `masterKey`，`masterKeyPrevious` 只用于解包旧数据密钥。`rewrapDataKeys(db, keyring)`（从 `@capybara-hq/kernel` 导出，M0 尚无 CLI 子命令）把仍由旧主密钥包装的组织数据密钥改用当前主密钥重新包装，返回处理条数。顺序不能乱：
+The kernel builds a keyring with `createKeyring(masterKey, masterKeyPrevious)`: new wrapping always uses `masterKey`, and `masterKeyPrevious` is only used to unwrap old data keys. `rewrapDataKeys(db, keyring)` (exported from `@capybara-hq/kernel`; M0 has no CLI subcommand yet) re-wraps the org data keys still wrapped by an old master key with the current master key, and returns the number processed. The order must not be changed:
 
-1. 滚动发布，让**所有副本**都换上新密钥环：`masterKey` = 新钥，`masterKeyPrevious` = `[旧钥]`。
-2. 确认没有任何副本还只持有旧钥后，再执行 `rewrapDataKeys`（否则旧副本解不开已被新钥重包的数据密钥）。
-3. rewrap 完成后，再一次滚动发布把旧钥从 `masterKeyPrevious` 移除。
+1. Roll out so that **all replicas** have the new keyring: `masterKey` = the new key, `masterKeyPrevious` = `[old key]`.
+2. Only after confirming no replica still holds just the old key, run `rewrapDataKeys` (otherwise an old replica cannot open data keys that were re-wrapped with the new key).
+3. After the rewrap completes, roll out once more to remove the old key from `masterKeyPrevious`.

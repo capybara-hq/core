@@ -262,9 +262,20 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       stopReason: z.enum([...STOP_REASONS, "aborted"]),
     }),
   ),
+  /**
+   * Usage of one model call. Absent `purpose` = the step's call (written with its
+   * `assistant_message`); `compaction` = the compaction call before the step (I-1: billed and
+   * reported, but no step consumer may pair it with the step's `model_call`).
+   */
   ev(
     "usage",
-    z.object({ step: count, provider: z.string(), model: z.string(), ...ModelUsageShape }),
+    z.object({
+      step: count,
+      provider: z.string(),
+      model: z.string(),
+      ...ModelUsageShape,
+      purpose: z.literal("compaction").optional(),
+    }),
   ),
   ev("reminder", z.object({ step: count, text: z.string() })),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
@@ -410,6 +421,25 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           }),
         )
         .max(SKILLS_CATALOG_MAX),
+    }),
+  ),
+  /**
+   * A plugin policy hook denied a model request or a tool call (E6). Not model-visible: request building
+   * skips it; the model sees only `reason`, inside the tool error of a denied tool call (and nothing for a
+   * denied model request, whose run fails with `run.hook_denied`). No raw hook error here (Ruling R12):
+   * the events API reaches conversation participants, so the raw text lives in the `hook.denied` audit
+   * row only.
+   */
+  ev(
+    "hook_denied",
+    z.object({
+      mount: z.enum(["model.request", "tool.preExecute"]),
+      plugin: z.string(),
+      reason: z.string().max(500),
+      cause: z.enum(["deny", "hook_error", "timeout"]),
+      step: count,
+      attempt: count.optional(),
+      callId: z.string().optional(),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),

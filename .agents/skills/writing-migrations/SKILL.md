@@ -1,21 +1,21 @@
 ---
 name: writing-migrations
-description: 新增或修改 SQL 迁移（内核 packages/kernel/src/migrations 或插件 plugins/*/migrations）时使用：文件命名、幂等写法、扩展→收缩两步删列、破坏性语句的豁免注释与原因要求，以及如何本地运行 capybara migrate。
+description: 'Use when adding or changing a SQL migration (kernel packages/kernel/src/migrations or plugin plugins/*/migrations): file naming, idempotent style, the expand-then-contract two-step column drop, the exemption comment and reason required for destructive statements, and how to run capybara migrate locally.'
 ---
 
-# 写迁移
+# Writing migrations
 
-迁移是纯 SQL 文件。`pnpm check:migrations`（也含在 `pnpm check` 里）逐条检查，下表的规则 id 就是它报出来的 id。
+Migrations are plain SQL files. `pnpm check:migrations` (also part of `pnpm check`) checks them statement by statement; the rule ids in the table below are the ids it reports.
 
-## 命名
+## Naming
 
-`NNNN_<snake_desc>.sql`：四位数字、小写字母 / 数字 / 下划线，按数字顺序执行。例：`0002_add_label.sql`。不合规报 `naming`。已发布的迁移文件**不要改**，要改就新加一个。
+`NNNN_<snake_desc>.sql`: four digits, then lower-case letters / digits / underscores; files run in numeric order. Example: `0002_add_label.sql`. A non-conforming name reports `naming`. **Do not edit** a migration file that has been released; add a new one instead.
 
-位置：内核 `packages/kernel/src/migrations/`（schema `capybara`）；插件 `plugins/<name>/migrations/`（schema `plugin_<name>`，`-` 换成 `_`）。
+Location: kernel `packages/kernel/src/migrations/` (schema `capybara`); plugin `plugins/<name>/migrations/` (schema `plugin_<name>`, with `-` replaced by `_`).
 
-## 迁移在哪个 schema 里跑
+## Which schema a migration runs in
 
-迁移器为每个文件包一层事务，并执行 `set local search_path to <该 schema>, public`。所以**表名不带 schema 前缀**；注意 `public` 排在后面：在本 schema 里找不到的名字会解析到 `public` 里的同名对象，所以不要依赖 `public` 里的东西，也别让表名与 `public` 里已有对象重名。
+The migrator wraps each file in a transaction and runs `set local search_path to <that schema>, public`. So **table names carry no schema prefix**. Note that `public` comes second: a name not found in this schema resolves to the same-named object in `public`, so do not depend on anything in `public`, and do not give a table the same name as an existing object in `public`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS events (
@@ -24,22 +24,22 @@ CREATE TABLE IF NOT EXISTS events (
 );
 ```
 
-## 规则
+## Rules
 
-| 规则 | 说明 | 规则 id |
+| Rule | Description | Rule id |
 |---|---|---|
-| 建对象带 `IF NOT EXISTS` | `CREATE TABLE / INDEX / SCHEMA / EXTENSION / SEQUENCE` | `idempotent` |
-| 删对象带 `IF EXISTS` | `DROP TABLE / INDEX / ...`、`DROP COLUMN IF EXISTS`、`DROP CONSTRAINT IF EXISTS` | `idempotent` |
-| 不写事务控制 | 不要 `BEGIN` / `COMMIT` / `ROLLBACK` / `SAVEPOINT`；不要 `CREATE INDEX CONCURRENTLY`（事务内不能执行，用普通 `CREATE INDEX IF NOT EXISTS`） | `transaction-control` |
-| 尽量不用 `DO` 块 | 其内部语句无法静态审查；能拆成普通幂等语句就拆。确需时（如 `RENAME COLUMN` 没有 `IF EXISTS`，要放进 `IF EXISTS (SELECT … information_schema.columns …) THEN … END IF` 才幂等），在 `DO` 行**正上方**写豁免注释，见下 | `do-block` |
-| 破坏性语句要豁免 | 见下 | `destructive` |
+| Creating objects takes `IF NOT EXISTS` | `CREATE TABLE / INDEX / SCHEMA / EXTENSION / SEQUENCE` | `idempotent` |
+| Dropping objects takes `IF EXISTS` | `DROP TABLE / INDEX / ...`, `DROP COLUMN IF EXISTS`, `DROP CONSTRAINT IF EXISTS` | `idempotent` |
+| No transaction control | No `BEGIN` / `COMMIT` / `ROLLBACK` / `SAVEPOINT`; no `CREATE INDEX CONCURRENTLY` (it cannot run inside a transaction; use a plain `CREATE INDEX IF NOT EXISTS`) | `transaction-control` |
+| Avoid `DO` blocks where possible | The statements inside cannot be reviewed statically; split into ordinary idempotent statements when you can. When one is really needed (for example `RENAME COLUMN` has no `IF EXISTS`, so it has to go inside `IF EXISTS (SELECT … information_schema.columns …) THEN … END IF` to be idempotent), write the exemption comment **directly above** the `DO` line, see below | `do-block` |
+| Destructive statements need an exemption | See below | `destructive` |
 
-破坏性语句 = 删列、`DROP TABLE` / `DROP SCHEMA`、`TRUNCATE`、`DELETE FROM`、含 `RENAME`、改列类型（`ALTER COLUMN ... TYPE`）。检查也扫描 `DO $$ … $$` 块体：块体里有这些语句、而 `DO` 行上方没有豁免注释时，除 `do-block` 外另报 `destructive`。写在 `$$` 里面的注释不算。块体里用 `EXECUTE` 拼出来的语句检查看不见，所以带豁免注释的 `DO` 块不论块体是否被识别为破坏性，原因都必填。
+Destructive statements = dropping a column, `DROP TABLE` / `DROP SCHEMA`, `TRUNCATE`, `DELETE FROM`, anything containing `RENAME`, and changing a column type (`ALTER COLUMN ... TYPE`). The check also scans the body of `DO $$ … $$` blocks: if the body has such statements and there is no exemption comment above the `DO` line, it reports `destructive` in addition to `do-block`. A comment written inside the `$$` does not count. Statements assembled with `EXECUTE` inside a block body are invisible to the check, so for a `DO` block carrying an exemption comment the reason is required whether or not the body was recognized as destructive.
 
 ```sql
--- capybara:allow-destructive 表改名；同一发布内代码同步改名（项目未发布，无兼容层）
+-- capybara:allow-destructive table rename; code is renamed in the same release (project not released, no compatibility layer)
 ALTER TABLE IF EXISTS apps RENAME TO connectors;
--- capybara:allow-destructive 列改名；同一发布内代码同步改名（项目未发布，无兼容层）
+-- capybara:allow-destructive column rename; code is renamed in the same release (project not released, no compatibility layer)
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns
@@ -50,40 +50,40 @@ END
 $$;
 ```
 
-## 扩展 → 收缩（两步删列）
+## Expand -> contract (two-step column drop)
 
-多副本滚动发布期间新旧版本代码同时在线，所以**不能在一个版本里既停止使用某列又把它删掉**。
+During a multi-replica rolling release, old and new versions of the code are online at the same time, so you **cannot both stop using a column and drop it in one version**.
 
-版本 N（扩展）：加新列，代码改为读写新列，旧列不再使用但保留。
+Version N (expand): add the new column, change the code to read and write the new column; the old column is no longer used but is kept.
 
 ```sql
 -- 0002_add_label.sql
 ALTER TABLE events ADD COLUMN IF NOT EXISTS label text;
 ```
 
-版本 N+1（收缩）：确认没有任何运行中的版本还读写旧列后，删除旧列。
+Version N+1 (contract): after confirming that no running version still reads or writes the old column, drop it.
 
 ```sql
 -- 0003_drop_old_name.sql
--- capybara:allow-destructive 0002 起代码已全部改读 label，没有任何版本再读写 old_name
+-- capybara:allow-destructive since 0002 all code reads label instead; no version reads or writes old_name any more
 ALTER TABLE events DROP COLUMN IF EXISTS old_name;
 ```
 
-## 豁免注释
+## Exemption comment
 
-- 写法：`-- capybara:allow-destructive <原因>`，必须在破坏性语句（或 `DO` 块的 `DO` 行）**紧邻的上一行**（中间不能隔空行或别的注释）。
-- **原因不能为空**，且应说明为什么本版本可以直接执行（例如「该表是本版本新建、尚无数据」「已在上一个版本停止读写」）。写了标记但原因为空，仍报 `destructive`。
-- 没有标记直接写破坏性语句，报 `destructive`。
+- Form: `-- capybara:allow-destructive <reason>`; it must be on the line **immediately above** the destructive statement (or the `DO` line of a `DO` block), with no blank line or other comment in between.
+- **The reason cannot be empty**, and should explain why this version may run the statement directly (for example "this table is new in this version and has no data yet", "reads and writes stopped in the previous version"). A marker with an empty reason still reports `destructive`.
+- Writing a destructive statement with no marker reports `destructive`.
 
-## 本地运行
+## Running locally
 
 ```bash
 docker compose -f docker/compose.dev.yaml up -d      # postgres + valkey
 export CAPYBARA_DB__URL=postgres://capybara:capybara@localhost:5432/capybara
 export CAPYBARA_REDIS__URL=redis://localhost:6379
 export CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)
-export CAPYBARA_PLUGINS='["@capybara-hq/plugin-example-counter"]'   # 要迁移哪些插件
+export CAPYBARA_PLUGINS='["@capybara-hq/plugin-example-counter"]'   # which plugins to migrate
 pnpm capybara migrate
 ```
 
-`capybara migrate` 先迁移内核，再按依赖顺序迁移 `CAPYBARA_PLUGINS` 里声明了 `migrations` 的插件，然后退出；已应用的文件不会重复执行。检查：`pnpm check:migrations`。
+`capybara migrate` migrates the kernel first, then, in dependency order, the plugins listed in `CAPYBARA_PLUGINS` that declare `migrations`, and then exits; files already applied are not run again. Check: `pnpm check:migrations`.

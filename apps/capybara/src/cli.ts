@@ -44,6 +44,8 @@ async function main(argv: string[]): Promise<number | undefined> {
           login: cmd.login,
           displayName: cmd.displayName,
           ...(cmd.email !== undefined && { email: cmd.email }),
+          ifNone: cmd.ifNone,
+          ...(cmd.passwordFile !== undefined && { passwordFile: cmd.passwordFile }),
         },
         log,
         process.env,

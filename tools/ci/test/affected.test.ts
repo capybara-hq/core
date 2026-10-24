@@ -34,6 +34,7 @@ const ws: Workspace = {
     pkg("plugins/todo", ["packages/sdk", "packages/testing"]),
     pkg("plugins/slack", ["packages/sdk", "packages/testing"]),
     pkg("plugins/lonely", ["packages/sdk"]),
+    pkg("plugins/model-fake", ["packages/sdk"]),
     pkg("tools/checks", ["packages/kernel"]),
     pkg("tools/worktree"),
     pkg("tools/ci"),
@@ -65,6 +66,9 @@ describe("planFromFiles: run everything", () => {
     "packages/testing/README.md",
     // Outside every workspace package and not a doc: unknown, so everything.
     "docker/compose.dev.yaml",
+    "docker/kernel.Dockerfile",
+    "docker/test/compose-smoke.sh",
+    ".dockerignore",
     "commitlint.config.ts",
     "tools/fixtures/vectors.json",
     "LICENSE",
@@ -77,6 +81,7 @@ describe("planFromFiles: run everything", () => {
       web: true,
       visual: true,
       e2e: true,
+      docker: true,
     });
     expect(p.testDirs).toEqual([]);
     expect(p.reason).toContain(f);
@@ -87,7 +92,13 @@ describe("planFromFiles: run everything", () => {
   });
 
   it("planAll (push to main, diff unavailable)", () => {
-    expect(planAll("push")).toMatchObject({ all: true, test: true, e2e: true, reason: "push" });
+    expect(planAll("push")).toMatchObject({
+      all: true,
+      test: true,
+      e2e: true,
+      docker: true,
+      reason: "push",
+    });
   });
 });
 
@@ -107,6 +118,7 @@ describe("planFromFiles: docs-only fast path", () => {
       web: false,
       visual: false,
       e2e: false,
+      docker: false,
       testDirs: [],
     });
   });
@@ -121,6 +133,7 @@ describe("planFromFiles: by diff", () => {
       web: false,
       visual: false,
       e2e: false,
+      docker: false,
     });
   });
 
@@ -167,6 +180,7 @@ describe("planFromFiles: by diff", () => {
       "packages/testing",
       "plugins/builtin",
       "plugins/lonely",
+      "plugins/model-fake",
       "plugins/slack",
       "plugins/todo",
       "tools/checks",
@@ -176,6 +190,28 @@ describe("planFromFiles: by diff", () => {
 
   it("the kernel runs e2e but not the web build or visual", () => {
     expect(plan("packages/kernel/src/kernel.ts")).toMatchObject({ e2e: true, web: false });
+  });
+
+  it("docker: the images' inputs (CLI and web closures) and the plugin the smoke test installs", () => {
+    for (const f of [
+      "apps/capybara/src/cli.ts",
+      "apps/web/src/app/page.tsx",
+      "packages/kernel/src/kernel.ts",
+      "packages/sdk/src/index.ts",
+      "packages/design/src/button.tsx",
+      "plugins/builtin/src/index.ts",
+      "plugins/model-fake/src/index.ts",
+    ]) {
+      expect(plan(f).docker, f).toBe(true);
+    }
+    expect(plan("plugins/model-fake/src/index.ts")).toMatchObject({ e2e: false, docker: true });
+    for (const f of [
+      "plugins/todo/src/index.ts",
+      "plugins/lonely/src/index.ts",
+      "tools/checks/x.ts",
+    ]) {
+      expect(plan(f).docker, f).toBe(false);
+    }
   });
 
   it("packages without a test dir are not passed to vitest", () => {
@@ -204,6 +240,7 @@ describe("toOutputs", () => {
       "test-shards": "[1,2,3,4]",
       "test-shard-total": "4",
       e2e: "true",
+      docker: "true",
     });
   });
 
@@ -213,6 +250,7 @@ describe("toOutputs", () => {
       "test-shards": "[1]",
       "test-shard-total": "1",
       web: "false",
+      docker: "false",
     });
   });
 });
@@ -236,6 +274,23 @@ describe("the real workspace", () => {
       "plugins/slack",
       "tools/checks",
     ]);
+  });
+
+  it("docker runs for every directory the images or the compose smoke test are built from (P-12)", () => {
+    for (const dir of [
+      "apps/capybara",
+      "apps/web",
+      "packages/kernel",
+      "packages/plugin-sdk",
+      "packages/design",
+      "plugins/openai-compatible",
+      "plugins/object-store-s3",
+      "plugins/model-fake",
+      "tools/pack-plugin",
+    ]) {
+      expect(planFromFiles([`${dir}/src/x.ts`], real).docker, dir).toBe(true);
+    }
+    expect(planFromFiles(["plugins/slack/src/index.ts"], real).docker).toBe(false);
   });
 
   it("the CLI prints the outputs and runs everything when asked", () => {

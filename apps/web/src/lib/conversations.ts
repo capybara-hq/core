@@ -83,6 +83,8 @@ type EventBody =
         outputTokens: number;
         cacheReadTokens: number;
         cacheWriteTokens: number;
+        /** `compaction`: the usage of a compaction call, not of the step's call. */
+        purpose?: "compaction";
       };
     }
   | { type: "reminder"; payload: { step: number; text: string } }
@@ -182,6 +184,19 @@ type EventBody =
     }
   | { type: "run_finished"; payload: { reason: string; consumedUpToSeq: number } }
   | { type: "run_failed"; payload: { error: { code: string; message: string } } }
+  /** A plugin policy hook denied a model request or a tool call (the timeline names the plugin). */
+  | {
+      type: "hook_denied";
+      payload: {
+        mount: "model.request" | "tool.preExecute";
+        plugin: string;
+        reason: string;
+        cause: "deny" | "hook_error" | "timeout";
+        step: number;
+        attempt?: number;
+        callId?: string;
+      };
+    }
   | { type: "run_aborted"; payload: { byAccountId: string | null; reason: string } };
 
 /** 已写入日志的会话事件。 */

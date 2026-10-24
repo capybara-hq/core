@@ -26,6 +26,13 @@ export interface TrajectoryModelCall {
   request: EventPayload<"model_call">["request"];
 }
 
+/** A plugin policy hook's denial (`hook_denied`): cause and sanitized reason (raw errors: audit log). */
+export interface TrajectoryHookDenial {
+  plugin: string;
+  reason: string;
+  cause: "deny" | "hook_error" | "timeout";
+}
+
 /** 一次工具调用（模型回复里的一个 `tool_call` 块）。 */
 export interface TrajectoryToolCall {
   callId: string;
@@ -54,10 +61,18 @@ export interface TrajectoryToolCall {
     outcome: "answered" | "expired" | "cancelled" | null;
     byAccountId: string | null;
   } | null;
+  /** A `tool.preExecute` policy hook denied the call (it never started). */
+  hookDenied?: TrajectoryHookDenial;
 }
 
 export interface TrajectoryStep {
   step: number;
+  /**
+   * A `model.request` policy hook denied the step's request (attempt number included). The denied
+   * attempt has no `model_call` (it was never sent), so the denial sits on the step, next to
+   * `modelCalls`.
+   */
+  modelHookDenied?: TrajectoryHookDenial & { attempt?: number };
   modelCalls: TrajectoryModelCall[];
   toolCalls: TrajectoryToolCall[];
   /** 该步模型回复里的文本块（不含 thinking）按顺序拼接；还没有回复时为空串。 */
@@ -75,8 +90,9 @@ export interface TrajectoryRun {
   end: { kind: "finished" | "failed" | "aborted"; detail: string } | null;
   steps: TrajectoryStep[];
   totals: {
+    /** Usage of the step calls plus the compaction calls (`usage` events with `purpose: "compaction"`). */
     usage: ModelUsage;
-    /** 各次成功调用的成本之和；任一成功调用没有价格时为 null（部分求和会误导）。 */
+    /** 各次成功调用的成本之和（含压缩调用）；任一成功调用没有价格时为 null（部分求和会误导）。 */
     cost: number | null;
     modelCalls: number;
     toolCalls: number;
@@ -88,6 +104,12 @@ export interface TrajectoryRun {
 type Ev<T extends ConversationEvent["type"]> = Extract<ConversationEvent, { type: T }>;
 
 const iso = (d: Date): string => d.toISOString();
+
+const denialOf = (e: Ev<"hook_denied">): TrajectoryHookDenial => ({
+  plugin: e.payload.plugin,
+  reason: e.payload.reason,
+  cause: e.payload.cause,
+});
 const ms = (from: Date, to: Date): number => to.getTime() - from.getTime();
 
 const zeroUsage = (): ModelUsage => ({
@@ -157,12 +179,15 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
   const modelCalls = new Map<number, Ev<"model_call">[]>();
   const assistants = new Map<number, Ev<"assistant_message">[]>();
   const usages = new Map<number, Ev<"usage">[]>();
+  const compactions: Ev<"usage">[] = [];
   const toolStarts = new Map<string, Ev<"tool_call_started">>(); // callId → 最后一次
   const toolResults = new Map<string, Ev<"tool_result">>();
   const approvals = new Map<string, Ev<"approval_requested">>(); // callId → 最近一次
   const decisions = new Map<string, Ev<"approval_decided">>(); // approvalId → 决定
   const questions = new Map<string, Ev<"question_asked">>(); // callId → 最近一次
   const answers = new Map<string, Ev<"question_answered">>(); // questionId → 结果
+  const toolDenials = new Map<string, Ev<"hook_denied">>(); // callId → denial
+  const modelDenials = new Map<number, Ev<"hook_denied">>(); // step → denial
   /** 步骤里出现过的调用 id（按首次出现），用于给不在 assistant_message 里的调用兜底。 */
   const stepCalls = new Map<number, string[]>();
   const steps = new Set<number>();
@@ -187,6 +212,11 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         assistants.set(e.payload.step, [...(assistants.get(e.payload.step) ?? []), e]);
         break;
       case "usage":
+        // a compaction call's usage is not a step call's: counted in the totals only (I-1)
+        if (e.payload.purpose === "compaction") {
+          compactions.push(e);
+          break;
+        }
         steps.add(e.payload.step);
         usages.set(e.payload.step, [...(usages.get(e.payload.step) ?? []), e]);
         break;
@@ -211,6 +241,15 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         break;
       case "question_answered":
         answers.set(e.payload.questionId, e);
+        break;
+      case "hook_denied":
+        if (e.payload.callId !== undefined) {
+          noteCall(e.payload.step, e.payload.callId);
+          toolDenials.set(e.payload.callId, e);
+        } else {
+          steps.add(e.payload.step);
+          modelDenials.set(e.payload.step, e);
+        }
         break;
       default:
         break;
@@ -271,7 +310,9 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         const dec = ap === undefined ? undefined : decisions.get(ap.payload.approvalId);
         const q = questions.get(callId);
         const ans = q === undefined ? undefined : answers.get(q.payload.questionId);
+        const denied = toolDenials.get(callId);
         return {
+          ...(denied !== undefined && { hookDenied: denialOf(denied) }),
           callId,
           step,
           toolKey:
@@ -328,8 +369,17 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
       }
       totals.toolCalls += toolOut.length;
 
+      const modelDenied = modelDenials.get(step);
       return {
         step,
+        ...(modelDenied !== undefined && {
+          modelHookDenied: {
+            ...denialOf(modelDenied),
+            ...(modelDenied.payload.attempt !== undefined && {
+              attempt: modelDenied.payload.attempt,
+            }),
+          },
+        }),
         modelCalls: modelOut,
         toolCalls: toolOut,
         text: (msg?.payload.content ?? [])
@@ -338,6 +388,16 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         stopReason: msg?.payload.stopReason ?? null,
       };
     });
+
+  for (const c of compactions) {
+    const u = usageOf(c.payload);
+    totals.usage.inputTokens += u.inputTokens;
+    totals.usage.outputTokens += u.outputTokens;
+    totals.usage.cacheReadTokens += u.cacheReadTokens;
+    totals.usage.cacheWriteTokens += u.cacheWriteTokens;
+    const cost = costOf(u, prices.get(priceKey(c.payload.provider, c.payload.model)));
+    totals.cost = totals.cost === null || cost === null ? null : totals.cost + cost;
+  }
 
   return {
     runId,

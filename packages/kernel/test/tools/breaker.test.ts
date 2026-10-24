@@ -16,7 +16,7 @@ const base = KernelConfigSchema.parse({
 const config = (): KernelConfig => ({ ...base, tools: { ...base.tools, ...tools } });
 
 beforeAll(async () => {
-  rd = await startTestRedis();
+  rd = await startTestRedis({ shared: true });
   redis = new Redis(rd.url);
 }, 120_000);
 afterAll(async () => {
