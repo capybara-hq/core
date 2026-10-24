@@ -309,10 +309,10 @@ describe("M4 第三段验收（双副本）", () => {
     // 已经进了快照的 view 不再列出
     expect(review.stdout).not.toContain("ui.view:tasks");
 
-    // 只多 view 的版本：plugins review 没有待批准项
+    // A version that only adds a view: extensions review has nothing awaiting approval
     const viewOnly = await runCli(["extensions", "review"], [UI_A_VIEW]);
     expect(viewOnly.code, viewOnly.stderr).toBe(0);
-    expect(viewOnly.stdout).toContain("No plugins await permission approval.");
+    expect(viewOnly.stdout).toContain("No extensions await permission approval.");
   }, 120_000);
 
   it("嵌入令牌：副本 0 签发、副本 1 只对本插件有效；停用插件后失效；调 /api 得 401", async () => {
