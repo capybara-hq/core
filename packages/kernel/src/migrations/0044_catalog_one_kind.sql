@@ -4,7 +4,7 @@
 -- tables lose their kind:
 -- - deleted, in FK order: org plugin installs and their components, requests, grants, extension
 --   catalog sources, import staging, versions, items, cached marketplace entries (refetched at the
---   next refresh). Org skills / connectors / skill versions and deployment extension installs stay,
+--   next refresh: each marketplace's ETag is cleared and its status reset to 'never'). Org skills / connectors / skill versions and deployment extension installs stay,
 --   with their catalog link set to NULL. Objects under deployment/directory/ are left in object
 --   storage, unreachable.
 -- - catalog_items: no kind; one live item per name.
@@ -39,6 +39,9 @@ BEGIN
     DELETE FROM capybara.catalog_item_versions;
     DELETE FROM capybara.catalog_items;
     DELETE FROM capybara.marketplace_entries;
+    -- The entries are gone, so the next refresh must not get a 304 for them
+    UPDATE capybara.marketplaces SET etag = NULL, last_status = 'never', last_error = NULL
+      WHERE etag IS NOT NULL OR last_status <> 'never';
   END IF;
 END
 $$;

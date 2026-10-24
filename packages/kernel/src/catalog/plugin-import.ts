@@ -334,10 +334,12 @@ export class PluginImport {
       : undefined;
     const content = this.checkContent(pkg);
     const existing = await precheckCatalogImport(this.d.db, m.name, packageName, version);
+    // The catalog name space is the extension name space: a declarative plugin cannot take a
+    // builtin's / config-declared or another package's extension name either
+    this.assertNotDeclared(m.name);
+    await assertPluginNameOwner(this.d.db, m.name, packageName);
     let extension: PluginReviewExtension | undefined;
     if (ext) {
-      this.assertNotDeclared(m.name);
-      await assertPluginNameOwner(this.d.db, m.name, packageName);
       extension = await this.reviewExtension(ext, await this.extensionState(m.name, packageName));
       await assertDowngradable(this.d.db, extension, ext.migrationSql);
     }
@@ -815,19 +817,19 @@ export class PluginImport {
     }
   }
 
-  /** A builtin / config-declared extension name cannot be imported from a package. */
+  /** A builtin / config-declared extension's name cannot be taken by an imported plugin. */
   private assertNotDeclared(name: string): void {
     const declared = this.d.declared().get(name);
     if (declared === "builtin") {
       throw new ApiError(
         "extension.builtin",
-        `Extension ${name} is built into this deployment and cannot be imported from a package`,
+        `Extension ${name} is built into this deployment; a plugin with this name cannot be imported`,
       );
     }
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
-        `Extension ${name} is declared in the startup config (extensions); remove it there before importing it as a package`,
+        `Extension ${name} is declared in the startup config (extensions); remove it there before importing a plugin with this name`,
       );
     }
   }

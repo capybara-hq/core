@@ -130,6 +130,12 @@ export interface MarketplaceImportResult {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
+/** An archive URL as recorded (origin + path): a query string or fragment may carry a token. */
+export const archiveRef = (url: string): string => {
+  const u = new URL(url);
+  return `${u.origin}${u.pathname}`;
+};
+
 const sourceUnsupported = (name: string, form: "path" | "git") =>
   new ApiError(
     "marketplace.source_unsupported",
@@ -205,7 +211,7 @@ export class CatalogService {
       ref = `${input.marketplaceId}:${src.npm.package}@${src.npm.version}`;
     } else if ("archive" in src) {
       got = await this.d.fetchArchive(src.archive, opts.signal);
-      ref = `${input.marketplaceId}:${src.archive.url}`;
+      ref = `${input.marketplaceId}:${archiveRef(src.archive.url)}`;
     } else {
       throw sourceUnsupported(entry.name, "path" in src ? "path" : "git");
     }

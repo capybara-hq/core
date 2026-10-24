@@ -69,13 +69,13 @@ const entry = (
   ...over,
 });
 /** A marketplace.json entry with an archive source on the fake registry. */
-const archiveEntry = (name: string, integrity: string) => ({
+const archiveEntry = (name: string, integrity: string, suffix = "") => ({
   name,
   summary: { en: `${name} plugin` },
   version: "1.0.0",
   source: {
     archive: {
-      url: `${reg.url}/@acme/plugin-${name}/-/plugin-${name}-1.0.0.tgz`,
+      url: `${reg.url}/@acme/plugin-${name}/-/plugin-${name}-1.0.0.tgz${suffix}`,
       integrity,
     },
   },
@@ -123,7 +123,8 @@ beforeAll(async () => {
       }),
       // archive sources: sha512 and sha256 SRI
       archiveEntry("cat-b", sri(pkgs["cat-b"] as Uint8Array)),
-      archiveEntry("cat-f", sri256(pkgs["cat-f"] as Uint8Array)),
+      // A signed URL: the query string and fragment are not recorded
+      archiveEntry("cat-f", sri256(pkgs["cat-f"] as Uint8Array), "?sig=s3cret#part"),
       entry("cat-c", pkgs["cat-a"] as Uint8Array),
       entry("cat-d", pkgs["cat-a"] as Uint8Array),
       entry("cat-e", pkgs["cat-e"] as Uint8Array, { minKernel: "99.0.0" }),
@@ -643,6 +644,18 @@ describe("从清单引入", () => {
     const f = await importEntry(admin, id, "cat-f");
     expect(f.statusCode, f.body).toBe(200);
     expect(f.json().review.source.integrity).toBe(sri256(pkgs["cat-f"] as Uint8Array));
+    expect(f.json().review.source.ref).toBe(
+      `${id}:${reg.url}/@acme/plugin-cat-f/-/plugin-cat-f-1.0.0.tgz`,
+    );
+    const staged = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "catalog.plugin_staged")
+      .execute();
+    expect(JSON.stringify(staged)).not.toContain("s3cret");
+    expect(
+      JSON.stringify(await db.selectFrom("extension_packages").select("source_ref").execute()),
+    ).not.toContain("s3cret");
     // A wrong archive digest -> 502 marketplace.integrity_mismatch, nothing written
     await resetAll();
     cat.setManifest({

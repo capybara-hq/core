@@ -750,6 +750,24 @@ describe("invalid plugins: nothing is written", { timeout: 60_000 }, () => {
     }
   });
 
+  it("a declarative plugin cannot take a config-declared extension's name, nor one owned by another package", async () => {
+    const declared = await prepareFile(admin, await skillPlugin("model-fake"));
+    expect(declared.statusCode, declared.body).toBe(409);
+    expect(declared.json().error.code).toBe("extension.config_declared");
+    await db
+      .insertInto("extension_name_owners")
+      .values({ name: "owned-name", package_name: "@other/plugin-owned-name" })
+      .execute();
+    try {
+      const owned = await prepareFile(admin, await skillPlugin("owned-name"));
+      expect(owned.statusCode, owned.body).toBe(409);
+      expect(owned.json().error.code).toBe("extension.name_conflict");
+    } finally {
+      await db.deleteFrom("extension_name_owners").where("name", "=", "owned-name").execute();
+    }
+    await nothingStored();
+  });
+
   it("an extension named like a config-declared one is 409 extension.config_declared", async () => {
     const res = await prepareFile(
       admin,

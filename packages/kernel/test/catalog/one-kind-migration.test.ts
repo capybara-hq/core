@@ -107,9 +107,8 @@ beforeAll(async () => {
     values (${ID(12)}, '{}', '{}', '{"kind":"file","ref":"upload"}', 'a1', now() + interval '1 day')`.execute(
     db,
   );
-  await sql`insert into capybara.marketplaces (id, name, url) values ('m1', 'M', 'https://m.example/index.json')`.execute(
-    db,
-  );
+  await sql`insert into capybara.marketplaces (id, name, url, etag, last_status, last_refreshed_at)
+    values ('m1', 'M', 'https://m.example/index.json', '"old"', 'ok', now())`.execute(db);
   await sql`insert into capybara.marketplace_entries (source_id, kind, name, npm, entry)
     values ('m1', 'plugin', 'cat-a', '@x/cat-a', '{}')`.execute(db);
   // An org skill (with a version) and a connector created from catalog items.
@@ -134,6 +133,14 @@ afterAll(async () => {
 describe("0044 catalog with one kind", () => {
   it("removes every pre-0.1.0 catalog row", async () => {
     for (const t of CATALOG_TABLES) expect(await count(t), t).toBe(0);
+  });
+
+  it("clears each marketplace's ETag and status, so the next refresh fetches the entries again", async () => {
+    const m = await sql<{
+      etag: string | null;
+      last_status: string;
+    }>`select etag, last_status from capybara.marketplaces where id = 'm1'`.execute(db);
+    expect(m.rows).toEqual([{ etag: null, last_status: "never" }]);
   });
 
   it("keeps org skills and connectors, with their catalog link cleared", async () => {
@@ -206,6 +213,9 @@ describe("0044 catalog with one kind", () => {
   });
 
   it("is a no-op when run a second time (rows in the new shape survive)", async () => {
+    await sql`update capybara.marketplaces set etag = '"new"', last_status = 'ok' where id = 'm1'`.execute(
+      db,
+    );
     const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
     await sql.raw(`set search_path to capybara, public; ${text}`).execute(db);
     expect(await count("catalog_items")).toBe(2);
@@ -214,5 +224,10 @@ describe("0044 catalog with one kind", () => {
     expect(await count("plugin_import_staging")).toBe(1);
     expect(await count("skills")).toBe(1);
     expect(await count("extension_installs")).toBe(1);
+    const m = await sql<{
+      etag: string | null;
+      last_status: string;
+    }>`select etag, last_status from capybara.marketplaces where id = 'm1'`.execute(db);
+    expect(m.rows).toEqual([{ etag: '"new"', last_status: "ok" }]);
   });
 });
