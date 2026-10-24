@@ -1,4 +1,4 @@
-import type { AdminPlugin, PackageWarning } from "./admin-extensions";
+import type { AdminExtension, PackageWarning } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession } from "./api";
 import type { PermissionGroup, PermissionItem } from "./extensions";
 
@@ -17,23 +17,23 @@ import type { PermissionGroup, PermissionItem } from "./extensions";
 export const PACKAGE_KINDS = ["plugin", "connector-template", "skill", "app"] as const;
 export type PackageKind = (typeof PACKAGE_KINDS)[number];
 
-export const DIRECTORY_POLICIES = ["allow", "needs_approval", "disabled"] as const;
-export type DirectoryPolicy = (typeof DIRECTORY_POLICIES)[number];
+export const CATALOG_POLICIES = ["allow", "needs_approval", "disabled"] as const;
+export type CatalogPolicy = (typeof CATALOG_POLICIES)[number];
 
 export interface LocalizedName {
   zh: string;
   en: string;
 }
 
-/** 后台目录条目（内核 `DirectoryItemView`）。 */
-export interface DirectoryItem {
+/** A catalog item, admin view (kernel `CatalogItemView`). */
+export interface CatalogItem {
   id: string;
   kind: PackageKind;
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
   description: string;
-  policy: DirectoryPolicy;
+  policy: CatalogPolicy;
   latestVersion: string;
   versions: string[];
   installs: number;
@@ -48,7 +48,7 @@ export interface DirectoryItem {
   updatedAt: string;
 }
 
-export interface DirectoryItemVersion {
+export interface CatalogItemVersion {
   version: string;
   source: "file" | "npm" | "marketplace";
   sourceRef: string;
@@ -57,15 +57,15 @@ export interface DirectoryItemVersion {
   importedAt: string;
 }
 
-export interface DirectoryItemDetail {
-  item: DirectoryItem & { packageName: string; deletedAt: string | null };
-  versions: DirectoryItemVersion[];
+export interface CatalogItemDetail {
+  item: CatalogItem & { packageName: string; deletedAt: string | null };
+  versions: CatalogItemVersion[];
   /** 最新版本有图标（经内核路由以 `<img>` 显示）。 */
   hasIcon: boolean;
 }
 
-/** 应用审阅里的一个插件（内核 `AppReviewPlugin`）。 */
-export interface AppReviewPlugin {
+/** One extension in a plugin review (kernel `PluginReviewExtension`). */
+export interface PluginReviewExtension {
   name: string;
   npm: string;
   range: string;
@@ -82,13 +82,13 @@ export interface AppReviewPlugin {
   sensitive: boolean;
 }
 
-/** 应用一次审阅（内核 `AppReview`）。 */
-export interface AppReview {
+/** The one review of a plugin (kernel `PluginReview`). */
+export interface PluginReview {
   name: string;
   version: string;
   publisher: string;
   description: string;
-  plugins: AppReviewPlugin[];
+  plugins: PluginReviewExtension[];
   connectorTemplates: {
     id: string;
     plugin: string;
@@ -106,13 +106,13 @@ export interface AppReview {
 /** 清单权限摘要与包算出的不一致（只警告）。 */
 export type PermissionsMismatch = { missing: string[]; extra: string[] } | null;
 
-export interface AppPrepared {
+export interface PluginPrepared {
   stagingId: string;
-  review: AppReview;
+  review: PluginReview;
   permissionsMismatch?: PermissionsMismatch;
 }
 
-export interface AppDeployResult {
+export interface PluginDeployResult {
   name: string;
   action: "install" | "upgrade";
   version: string;
@@ -122,13 +122,13 @@ export interface AppDeployResult {
   message?: string;
 }
 
-export interface AppConfirmResult {
-  item: DirectoryItem;
-  deploy: AppDeployResult[] | null;
+export interface PluginConfirmResult {
+  item: CatalogItem;
+  deploy: PluginDeployResult[] | null;
 }
 
-/** 清单来源（内核 `CatalogSourceView`）。 */
-export interface CatalogSource {
+/** A marketplace (kernel `MarketplaceView`). */
+export interface Marketplace {
   id: string;
   name: string;
   url: string;
@@ -143,8 +143,8 @@ export interface CatalogSource {
   entryCount: number;
 }
 
-/** 清单条目（内核 `CatalogEntryView`）。 */
-export interface CatalogEntry {
+/** A marketplace entry (kernel `MarketplaceEntryView`). */
+export interface MarketplaceEntry {
   sourceId: string;
   sourceName: string;
   kind: PackageKind;
@@ -158,8 +158,8 @@ export interface CatalogEntry {
   newerAvailable: boolean;
 }
 
-/** 目录申请（内核 `DirectoryRequestView`）。 */
-export interface DirectoryRequest {
+/** A catalog request (kernel `CatalogRequestView`). */
+export interface CatalogRequest {
   id: string;
   orgId: string;
   orgName: string;
@@ -177,10 +177,10 @@ export interface DirectoryRequest {
   createdAt: string;
 }
 
-/** 组织视角的条目（内核 `OrgDirectoryItem`）。 */
-export interface OrgDirectoryItem
+/** A catalog item from the org's view (kernel `OrgCatalogItem`). */
+export interface OrgCatalogItem
   extends Omit<
-    DirectoryItem,
+    CatalogItem,
     "installs" | "marketplaceId" | "latestMarketplaceVersion" | "newerInMarketplace"
   > {
   installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
@@ -194,8 +194,8 @@ export interface OrgDirectoryItem
   request: { id: string; stage: "org" | "deployment"; status: string } | null;
 }
 
-/** 条目详情里的连接器模板（内核 `OrgDirectoryTemplate`）。 */
-export interface OrgDirectoryTemplate {
+/** A connector template in an item's detail (kernel `OrgCatalogTemplate`). */
+export interface OrgCatalogTemplate {
   id: string;
   displayName: LocalizedName | null;
   description: string;
@@ -207,10 +207,10 @@ export interface OrgDirectoryTemplate {
   ownership: "org" | "personal" | null;
 }
 
-export interface OrgDirectoryDetail {
-  item: OrgDirectoryItem;
+export interface OrgCatalogDetail {
+  item: OrgCatalogItem;
   hasIcon: boolean;
-  templates: OrgDirectoryTemplate[];
+  templates: OrgCatalogTemplate[];
   plugins: { name: string; range: string; optional: boolean }[];
   skills: string[];
 }
@@ -244,12 +244,12 @@ export type OrgInstallResult =
         pluginInstallId?: string;
       };
     }
-  | { request: DirectoryRequest };
+  | { request: CatalogRequest };
 
 export type ComponentKind = "extension" | "connector" | "skill";
 
-/** 已安装的应用（内核 `AppInstallView`）。 */
-export interface AppInstall {
+/** An installed plugin (kernel `PluginInstallView`). */
+export interface PluginInstall {
   id: string;
   itemId: string;
   name: string;
@@ -291,34 +291,34 @@ const npmBody = (pkg: string, version: string) => ({
 
 // ---- 部署级：目录条目 ----
 
-export const listDirectoryItems = () =>
-  apiFetch<{ items: DirectoryItem[]; nextOffset: number | null }>(`${admin}/items?limit=1000`);
+export const listCatalogItems = () =>
+  apiFetch<{ items: CatalogItem[]; nextOffset: number | null }>(`${admin}/items?limit=1000`);
 
-export const getDirectoryItem = (id: string) =>
-  apiFetch<DirectoryItemDetail>(`${admin}/items/${enc(id)}`);
+export const getCatalogItem = (id: string) =>
+  apiFetch<CatalogItemDetail>(`${admin}/items/${enc(id)}`);
 
-export const setDirectoryPolicy = (id: string, policy: DirectoryPolicy) =>
-  apiFetch<DirectoryItem>(`${admin}/items/${enc(id)}/policy`, {
+export const setCatalogPolicy = (id: string, policy: CatalogPolicy) =>
+  apiFetch<CatalogItem>(`${admin}/items/${enc(id)}/policy`, {
     method: "PUT",
     body: JSON.stringify({ policy }),
   });
 
-export const removeDirectoryItem = (id: string) =>
+export const removeCatalogItem = (id: string) =>
   apiFetch<void>(`${admin}/items/${enc(id)}`, { method: "DELETE" });
 
 export const installItemToDeployment = (id: string, version: string) =>
-  apiFetch<AdminPlugin>(`${admin}/items/${enc(id)}/install-deployment`, post({ version }));
+  apiFetch<AdminExtension>(`${admin}/items/${enc(id)}/install-deployment`, post({ version }));
 
-export const importDirectoryNpm = (pkg: string, version: string) =>
-  apiFetch<DirectoryItem>(`${admin}/import/npm`, post(npmBody(pkg, version)));
+export const importCatalogNpm = (pkg: string, version: string) =>
+  apiFetch<CatalogItem>(`${admin}/import/npm`, post(npmBody(pkg, version)));
 
-export const prepareAppNpm = (pkg: string, version: string) =>
-  apiFetch<AppPrepared>(`${admin}/plugins/prepare/npm`, post(npmBody(pkg, version)));
+export const preparePluginNpm = (pkg: string, version: string) =>
+  apiFetch<PluginPrepared>(`${admin}/plugins/prepare/npm`, post(npmBody(pkg, version)));
 
-export const confirmApp = (
+export const confirmPlugin = (
   stagingId: string,
   body: { reviewHash: string; deployPlugins: boolean },
-) => apiFetch<AppConfirmResult>(`${admin}/plugins/${enc(stagingId)}/confirm`, post(body));
+) => apiFetch<PluginConfirmResult>(`${admin}/plugins/${enc(stagingId)}/confirm`, post(body));
 
 /** 后台条目图标地址（只用作 `<img>` 的地址）。 */
 export const adminIconUrl = (id: string) => `${admin}/items/${enc(id)}/icon`;
@@ -329,7 +329,7 @@ export const adminIconUrl = (id: string) => `${admin}/items/${enc(id)}/icon`;
  * review). Checks the session first (the proxy streams the body through, and a stream cannot be
  * replayed).
  */
-export async function uploadDirectoryPackage<T>(file: Blob, target: "item" | "app"): Promise<T> {
+export async function uploadCatalogPackage<T>(file: Blob, target: "item" | "app"): Promise<T> {
   await ensureSession();
   const res = await fetch(
     target === "app" ? `${admin}/plugins/prepare/file` : `${admin}/import/file`,
@@ -360,38 +360,35 @@ export async function uploadDirectoryPackage<T>(file: Blob, target: "item" | "ap
 // ---- 部署级：申请 ----
 
 export const listDeploymentRequests = () =>
-  apiFetch<{ requests: DirectoryRequest[] }>(`${admin}/requests?status=pending`);
+  apiFetch<{ requests: CatalogRequest[] }>(`${admin}/requests?status=pending`);
 
 export const decideDeploymentRequest = (id: string, decision: "approve" | "reject") =>
-  apiFetch<{ request: DirectoryRequest }>(
-    `${admin}/requests/${enc(id)}/decide`,
-    post({ decision }),
-  );
+  apiFetch<{ request: CatalogRequest }>(`${admin}/requests/${enc(id)}/decide`, post({ decision }));
 
 // ---- 部署级：清单 ----
 
-export const listCatalogSources = () =>
-  apiFetch<{ items: CatalogSource[]; offline: boolean }>(marketplaces);
+export const listMarketplaces = () =>
+  apiFetch<{ items: Marketplace[]; offline: boolean }>(marketplaces);
 
-export const addCatalogSource = (body: { name: string; url: string; token?: string }) =>
-  apiFetch<CatalogSource>(marketplaces, post(body));
+export const addMarketplace = (body: { name: string; url: string; token?: string }) =>
+  apiFetch<Marketplace>(marketplaces, post(body));
 
-export const updateCatalogSource = (
+export const updateMarketplace = (
   id: string,
   body: { name?: string; url?: string; enabled?: boolean; token?: string | null },
 ) =>
-  apiFetch<CatalogSource>(`${marketplaces}/${enc(id)}`, {
+  apiFetch<Marketplace>(`${marketplaces}/${enc(id)}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
 
-export const removeCatalogSource = (id: string) =>
+export const removeMarketplace = (id: string) =>
   apiFetch<void>(`${marketplaces}/${enc(id)}`, { method: "DELETE" });
 
-export const refreshCatalogSource = (id: string) =>
-  apiFetch<CatalogSource>(`${marketplaces}/${enc(id)}/refresh`, post());
+export const refreshMarketplace = (id: string) =>
+  apiFetch<Marketplace>(`${marketplaces}/${enc(id)}/refresh`, post());
 
-export const listCatalogEntries = (
+export const listMarketplaceEntries = (
   q: { sourceId?: string; kind?: PackageKind; q?: string } = {},
 ) => {
   const params = new URLSearchParams();
@@ -399,19 +396,19 @@ export const listCatalogEntries = (
   if (q.kind) params.set("kind", q.kind);
   if (q.q) params.set("q", q.q);
   const qs = params.toString();
-  return apiFetch<{ items: CatalogEntry[]; truncated?: boolean }>(
+  return apiFetch<{ items: MarketplaceEntry[]; truncated?: boolean }>(
     `${marketplaces}/entries${qs === "" ? "" : `?${qs}`}`,
   );
 };
 
 /** 从清单引入：插件 / 模板 / 技能返回条目；应用返回暂存 id 与审阅（再去审阅页确认）。 */
-export const importCatalogEntry = (
-  e: Pick<CatalogEntry, "sourceId" | "kind" | "name">,
+export const importMarketplaceEntry = (
+  e: Pick<MarketplaceEntry, "sourceId" | "kind" | "name">,
   version: string,
 ) =>
   apiFetch<
-    | { item: DirectoryItem; permissionsMismatch: PermissionsMismatch }
-    | { stagingId: string; review: AppReview; permissionsMismatch: PermissionsMismatch }
+    | { item: CatalogItem; permissionsMismatch: PermissionsMismatch }
+    | { stagingId: string; review: PluginReview; permissionsMismatch: PermissionsMismatch }
   >(
     `${marketplaces}/${enc(e.sourceId)}/entries/${enc(e.kind)}/${enc(e.name)}/import`,
     post({ version }),
@@ -419,34 +416,34 @@ export const importCatalogEntry = (
 
 // ---- 组织侧 ----
 
-export const listOrgDirectory = (orgId: string) =>
-  apiFetch<{ items: OrgDirectoryItem[] }>(`${org(orgId)}/catalog`);
+export const listOrgCatalog = (orgId: string) =>
+  apiFetch<{ items: OrgCatalogItem[] }>(`${org(orgId)}/catalog`);
 
-export const getOrgDirectoryItem = (orgId: string, itemId: string) =>
-  apiFetch<OrgDirectoryDetail>(`${org(orgId)}/catalog/${enc(itemId)}`);
+export const getOrgCatalogItem = (orgId: string, itemId: string) =>
+  apiFetch<OrgCatalogDetail>(`${org(orgId)}/catalog/${enc(itemId)}`);
 
 export const orgIconUrl = (orgId: string, itemId: string) =>
   `${org(orgId)}/catalog/${enc(itemId)}/icon`;
 
-export const requestDirectoryItem = (orgId: string, itemId: string, note: string) =>
-  apiFetch<{ request: DirectoryRequest; created: boolean }>(
+export const requestCatalogItem = (orgId: string, itemId: string, note: string) =>
+  apiFetch<{ request: CatalogRequest; created: boolean }>(
     `${org(orgId)}/catalog/${enc(itemId)}/requests`,
     post(note === "" ? {} : { note }),
   );
 
-export const installDirectoryItem = (orgId: string, itemId: string, body: OrgInstallBody) =>
+export const installCatalogItem = (orgId: string, itemId: string, body: OrgInstallBody) =>
   apiFetch<OrgInstallResult>(`${org(orgId)}/catalog/${enc(itemId)}/install`, post(body));
 
-export const listAppInstalls = (orgId: string) =>
-  apiFetch<{ installs: AppInstall[] }>(`${org(orgId)}/plugin-installs`);
+export const listPluginInstalls = (orgId: string) =>
+  apiFetch<{ installs: PluginInstall[] }>(`${org(orgId)}/plugin-installs`);
 
-export const uninstallApp = (orgId: string, installId: string) =>
+export const uninstallPlugin = (orgId: string, installId: string) =>
   apiFetch<UninstallReport>(`${org(orgId)}/plugin-installs/${enc(installId)}`, {
     method: "DELETE",
   });
 
 export const decideOrgRequest = (orgId: string, id: string, decision: "approve" | "reject") =>
-  apiFetch<{ request: DirectoryRequest }>(
+  apiFetch<{ request: CatalogRequest }>(
     `${org(orgId)}/catalog-requests/${enc(id)}/decide`,
     post({ decision }),
   );
@@ -460,12 +457,12 @@ export const displayNameOf = (
 ): string => (i.displayName ? (locale === "zh" ? i.displayName.zh : i.displayName.en) : i.name);
 
 /** 申请人：显示名，账号已删除时退回账号 id，都没有为「—」。 */
-export const requesterOf = (r: Pick<DirectoryRequest, "requestedBy" | "requestedByName">): string =>
+export const requesterOf = (r: Pick<CatalogRequest, "requestedBy" | "requestedByName">): string =>
   r.requestedByName ?? r.requestedBy ?? "—";
 
-/** 条目来源的筛选键：`manual`（文件 / npm 导入）或 `catalog:<清单 id>`。 */
-export const sourceKeyOf = (i: Pick<DirectoryItem, "marketplaceId">): string =>
-  i.marketplaceId === null ? "manual" : `catalog:${i.marketplaceId}`;
+/** An item's source filter key: `manual` (file / npm import) or `marketplace:<marketplace id>`. */
+export const sourceKeyOf = (i: Pick<CatalogItem, "marketplaceId">): string =>
+  i.marketplaceId === null ? "manual" : `marketplace:${i.marketplaceId}`;
 
 /** 对象的叶子点路径与值（数组与非对象值算叶子），用于展示端点预设。 */
 export function endpointLeaves(v: Record<string, unknown>, base = ""): [string, unknown][] {
@@ -510,5 +507,5 @@ export const isOAuth = (auth: Record<string, unknown>): boolean =>
   auth.type === "oauth_code" || auth.type === "oauth_client";
 
 /** 审阅里是否有敏感项（任一插件敏感或有迁移警告）。 */
-export const appReviewSensitive = (r: AppReview): boolean =>
+export const pluginReviewSensitive = (r: PluginReview): boolean =>
   r.sensitive || r.plugins.some((p) => p.sensitive || p.warnings.length > 0);

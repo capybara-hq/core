@@ -10,8 +10,8 @@ import type { JsonSchema } from "./json-schema";
  * may be `converging`).
  */
 
-/** 部署级插件状态（内核 `DeploymentPluginStatus`）。 */
-export const PLUGIN_STATUSES = [
+/** Deployment-level extension status (kernel `DeploymentExtensionStatus`). */
+export const EXTENSION_STATUSES = [
   "enabled",
   "disabled",
   "pending_approval",
@@ -21,13 +21,13 @@ export const PLUGIN_STATUSES = [
   "failed",
   "dependency",
 ] as const;
-export type PluginStatus = (typeof PLUGIN_STATUSES)[number];
+export type ExtensionStatus = (typeof EXTENSION_STATUSES)[number];
 
 /** Extension source: builtin (ships in the core image), the startup config `extensions` list, or installed from the admin console. */
-export const PLUGIN_SOURCES = ["builtin", "config", "install"] as const;
-export type PluginSource = (typeof PLUGIN_SOURCES)[number];
+export const EXTENSION_SOURCES = ["builtin", "config", "install"] as const;
+export type ExtensionSource = (typeof EXTENSION_SOURCES)[number];
 
-export interface PluginReplica {
+export interface ExtensionReplica {
   replicaId: string;
   version: string;
   /** `loaded` / `failed` / `unloaded` / `pending`。 */
@@ -40,15 +40,15 @@ export interface PluginReplica {
   heartbeatAt: string;
 }
 
-/** 后台插件列表的一项（内核 `AdminPluginView`）。 */
-export interface AdminPlugin {
+/** One row of the admin extension list (kernel `AdminExtensionView`). */
+export interface AdminExtension {
   name: string;
   version: string;
-  source: PluginSource;
+  source: ExtensionSource;
   sha256: string | null;
-  status: PluginStatus;
+  status: ExtensionStatus;
   desired: { version: string; sha256: string; state: "enabled" | "disabled" } | null;
-  replicas: PluginReplica[];
+  replicas: ExtensionReplica[];
   permissions: PermissionGroup[];
   added: string[];
   /** `added` 逐项的敏感标记与原因码（内核判定）。 */
@@ -128,10 +128,10 @@ const post = (body?: unknown): RequestInit => ({
 
 /** 全部插件；`drainSeconds`：停用 / 升级时在途工具调用最多等待的秒数。 */
 /** A single extension (polled while the detail page converges); 409 `extension.package_unavailable` when the package cannot be read. */
-export const getAdminPlugin = (name: string) => apiFetch<AdminPlugin>(one(name));
+export const getAdminExtension = (name: string) => apiFetch<AdminExtension>(one(name));
 
-export const listAdminPlugins = () =>
-  apiFetch<{ extensions: AdminPlugin[]; drainSeconds: number }>(base);
+export const listAdminExtensions = () =>
+  apiFetch<{ extensions: AdminExtension[]; drainSeconds: number }>(base);
 
 export const ingestNpm = (pkg: string, version?: string) =>
   apiFetch<PackageReview>(
@@ -139,23 +139,26 @@ export const ingestNpm = (pkg: string, version?: string) =>
     post({ package: pkg, ...(version !== undefined && version !== "" && { version }) }),
   );
 
-export const installPlugin = (name: string, sha256: string) =>
-  apiFetch<AdminPlugin>(`${one(name)}/install`, post({ sha256 }));
+export const installExtension = (name: string, sha256: string) =>
+  apiFetch<AdminExtension>(`${one(name)}/install`, post({ sha256 }));
 
 /** 批准权限；安装记录传审阅时的 sha256，配置声明的插件传 null。 */
-export const approvePlugin = (name: string, body: { sha256: string | null; reviewHash: string }) =>
-  apiFetch<AdminPlugin>(`${one(name)}/approve`, post(body));
+export const approveExtension = (
+  name: string,
+  body: { sha256: string | null; reviewHash: string },
+) => apiFetch<AdminExtension>(`${one(name)}/approve`, post(body));
 
-export const enablePlugin = (name: string) => apiFetch<AdminPlugin>(`${one(name)}/enable`, post());
-export const disablePlugin = (name: string) =>
-  apiFetch<AdminPlugin>(`${one(name)}/disable`, post());
-export const uninstallPlugin = (name: string) => apiFetch<void>(one(name), { method: "DELETE" });
+export const enableExtension = (name: string) =>
+  apiFetch<AdminExtension>(`${one(name)}/enable`, post());
+export const disableExtension = (name: string) =>
+  apiFetch<AdminExtension>(`${one(name)}/disable`, post());
+export const uninstallExtension = (name: string) => apiFetch<void>(one(name), { method: "DELETE" });
 
-export const getPluginConfig = (name: string) =>
+export const getExtensionConfig = (name: string) =>
   apiFetch<DeploymentConfigView>(`${one(name)}/config`);
 
 /** 保存部署级配置：键为字段点路径，`null` 清除，没给的字段不变。 */
-export const putPluginConfig = (name: string, values: Record<string, unknown>) =>
+export const putExtensionConfig = (name: string, values: Record<string, unknown>) =>
   apiFetch<DeploymentConfigView>(`${one(name)}/config`, {
     method: "PUT",
     body: JSON.stringify({ values }),
@@ -199,7 +202,7 @@ export const UPLOAD_SESSION_EXPIRED = "extension.upload_session_expired";
  * 上传遇到 401，或代理报上游不可达（流式请求体遇上游 401 时 undici 报网络错误）时，再确认一次登录，
  * 登录确实失效则抛 {@link UPLOAD_SESSION_EXPIRED}。
  */
-export async function uploadPluginPackage(
+export async function uploadExtensionPackage(
   file: Blob,
   opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
 ): Promise<PackageReview> {
@@ -251,10 +254,10 @@ function sendPackage(
 /**
  * 副本是否一致：至少一个副本上报，且全部副本的版本与状态相同、没有失败的。`failed` 为出错（失败）的副本。
  */
-export function replicaSummary(p: Pick<AdminPlugin, "replicas">): {
+export function replicaSummary(p: Pick<AdminExtension, "replicas">): {
   total: number;
   consistent: boolean;
-  failed: PluginReplica[];
+  failed: ExtensionReplica[];
 } {
   const failed = p.replicas.filter((r) => r.state === "failed");
   const first = p.replicas[0];

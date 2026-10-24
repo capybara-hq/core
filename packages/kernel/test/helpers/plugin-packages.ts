@@ -219,9 +219,10 @@ export default defineExtension({
 }
 
 /**
- * 网页 e2e（`apps/web/e2e/admin-plugins.spec.ts`）用的插件包 `greeter` 1.0.0：工具 `greet` 返回
- * `<greeting> from greeter`；部署配置 `greeting`（hot，默认 `hello`）与可选密钥 `token`。
- * 工具是敏感权限，安装确认页须勾选「我已了解敏感项」。
+ * The extension package `greeter` 1.0.0 used by the web e2e (`apps/web/e2e/admin-extensions.spec.ts`):
+ * tool `greet` returns `<greeting> from greeter`; deployment config `greeting` (hot, default `hello`)
+ * and an optional secret `token`. Tools are a sensitive permission, so the install confirmation needs
+ * "I understand the sensitive items" checked.
  */
 export async function greeterPkg(): Promise<Uint8Array> {
   const { z } = await import("zod");

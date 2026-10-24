@@ -3,8 +3,8 @@
 import { WizardPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
+import { CatalogInstallWizard } from "../../../../../components/CatalogInstallWizard";
 import { useConnectorWizard } from "../../../../../components/ConnectorWizard";
-import { DirectoryInstallWizard } from "../../../../../components/DirectoryInstallWizard";
 import { OrgGate } from "../../../../../components/OrgGate";
 
 /** `?template=<目录条目 id>`：挂载后在 effect 里读（客户端跳转时渲染那一刻地址栏可能还没更新）。 */
@@ -14,10 +14,14 @@ const templateParam = (): string | null => {
 };
 
 /**
- * `/[locale]/connectors/install`：安装连接器向导（WizardPage）：端点类型 → 端点与文档 → 认证 → 工具与默认策略 → 完成。
- * `?template=<目录条目 id>`：按企业目录里的连接器模板预填（端点以模板为准，只能改模板允许的字段与凭据），
- * 走目录安装（受条目策略约束），与 `/directory/<id>/install` 同一个向导。
- * 向导属于打开它时的组织：切换组织后从头开始（以 orgId 为 key 重建）。
+ * `/[locale]/connectors/install`: the install-connector wizard (WizardPage): endpoint type ->
+ * endpoint and docs -> auth -> tools and default policies -> done.
+ * `?template=<catalog item id>`: prefilled from a connector template in the catalog (the template
+ * decides the endpoint; only the fields the template allows and the credentials can change),
+ * installed through the catalog (subject to the item's policy), the same wizard as
+ * `/catalog/<id>/install`.
+ * The wizard belongs to the org it was opened in: switching orgs starts over (rebuilt with orgId as
+ * the key).
  */
 export default function InstallAppPage() {
   return <OrgGate>{(orgId) => <Install key={orgId} orgId={orgId} />}</OrgGate>;
@@ -29,7 +33,7 @@ function Install({ orgId }: { orgId: string }) {
   useEffect(() => setTemplate(templateParam()), []);
   if (template === undefined) return null;
   return template !== null ? (
-    <DirectoryInstallWizard
+    <CatalogInstallWizard
       orgId={orgId}
       itemId={template}
       frame={(v) => (

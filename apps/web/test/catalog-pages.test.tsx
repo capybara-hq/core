@@ -3,18 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import AdminDirectoryItemPage from "../src/app/[locale]/(app)/admin/directory/[itemId]/page";
-import AppReviewPage from "../src/app/[locale]/(app)/admin/directory/apps/review/page";
-import CatalogPage from "../src/app/[locale]/(app)/admin/directory/catalog/page";
-import AdminDirectoryPage from "../src/app/[locale]/(app)/admin/directory/page";
-import RequestsPage from "../src/app/[locale]/(app)/admin/directory/requests/page";
-import SourcesPage from "../src/app/[locale]/(app)/admin/directory/sources/page";
-import InstallPage from "../src/app/[locale]/(app)/directory/[itemId]/install/page";
-import DirectoryPage from "../src/app/[locale]/(app)/directory/page";
+import AdminCatalogItemPage from "../src/app/[locale]/(app)/admin/catalog/[itemId]/page";
+import AdminCatalogPage from "../src/app/[locale]/(app)/admin/catalog/page";
+import PluginReviewPage from "../src/app/[locale]/(app)/admin/catalog/plugins/review/page";
+import CatalogRequestsPage from "../src/app/[locale]/(app)/admin/catalog/requests/page";
+import MarketplaceEntriesPage from "../src/app/[locale]/(app)/admin/marketplaces/entries/page";
+import MarketplacesPage from "../src/app/[locale]/(app)/admin/marketplaces/page";
+import InstallPage from "../src/app/[locale]/(app)/catalog/[itemId]/install/page";
+import CatalogPage from "../src/app/[locale]/(app)/catalog/page";
 import InboxRoute from "../src/app/[locale]/(app)/inbox/page";
-import AppsPage from "../src/app/[locale]/(app)/settings/apps/page";
+import ExtensionsPage from "../src/app/[locale]/(app)/settings/extensions/page";
 import PluginsPage from "../src/app/[locale]/(app)/settings/plugins/page";
-import { defaultSlug, slugOf } from "../src/components/DirectoryInstallWizard";
+import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -67,11 +67,11 @@ function orgItem(over: Record<string, unknown> = {}) {
   };
 }
 
-describe("/directory：按 installable 显示操作", () => {
+describe("/catalog: actions follow installable", () => {
   it.each(LOCALES)(
     "组织管理员：可装 / 需审批 / 已获批 / 禁用 / 未部署 / 已装 / 已申请（%s）",
     async (locale) => {
-      const a = msgs[locale].directory.org.action;
+      const a = msgs[locale].catalog.org.action;
       const items = [
         orgItem({ id: "a", name: "yes-skill" }),
         orgItem({ id: "b", name: "approval", installable: "needs_approval" }),
@@ -96,7 +96,7 @@ describe("/directory：按 installable 显示操作", () => {
         [`POST ${ORG}/catalog/a/install`]: () =>
           json(201, { installed: { kind: "skill", itemId: "a", version: "1.0.0" } }),
       });
-      renderPage(<DirectoryPage />, { locale });
+      renderPage(<CatalogPage />, { locale });
       expect(template("ListPage")).not.toBeNull();
       const table = await screen.findByRole("table");
       const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
@@ -116,7 +116,7 @@ describe("/directory：按 installable 显示操作", () => {
       const user = userEvent.setup();
       // 连接器模板进安装向导
       await user.click(within(row("granted-tpl")).getByRole("button", { name: a.install }));
-      expect(router.push).toHaveBeenCalledWith("/directory/c/install");
+      expect(router.push).toHaveBeenCalledWith("/catalog/c/install");
       // 技能直接安装
       await user.click(within(row("yes-skill")).getByRole("button", { name: a.install }));
       await waitFor(() =>
@@ -126,13 +126,13 @@ describe("/directory：按 installable 显示操作", () => {
   );
 
   it("成员：可装的条目只能申请（进组织管理员收件箱）", async () => {
-    const a = en.directory.org.action;
+    const a = en.catalog.org.action;
     const calls = stubApi({
       [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
       [`POST ${ORG}/catalog/${ID}/requests`]: () =>
         json(201, { request: { id: "r" }, created: true }),
     });
-    renderPage(<DirectoryPage />, { me: MEMBER });
+    renderPage(<CatalogPage />, { me: MEMBER });
     const btn = await screen.findByRole("button", { name: a.request });
     expect(screen.queryByRole("button", { name: a.install })).toBeNull();
     await userEvent.setup().click(btn);
@@ -200,19 +200,19 @@ const REVIEW = {
   reviewHash: "h1",
 };
 
-describe("/admin/directory/apps/review（WizardPage）", () => {
+describe("/admin/catalog/plugins/review (WizardPage)", () => {
   it.each(LOCALES)(
     "一次审阅：动作、敏感项、模板与技能；勾选「我已了解敏感项」前确认不可用；不装到部署时说明后果（%s）",
     async (locale) => {
-      const r = msgs[locale].directory.admin.review;
-      const w = msgs[locale].admin.plugins.wizard;
+      const r = msgs[locale].catalog.admin.review;
+      const w = msgs[locale].admin.extensions.wizard;
       const calls = stubApi({
         "POST /api/v1/admin/catalog/plugins/prepare/npm": () =>
           json(200, { stagingId: "st1", review: REVIEW }),
         "POST /api/v1/admin/catalog/plugins/st1/confirm": () =>
           json(201, { item: { id: ID, name: "crm" }, deploy: null }),
       });
-      renderPage(<AppReviewPage />, { locale });
+      renderPage(<PluginReviewPage />, { locale });
       expect(template("WizardPage")).not.toBeNull();
       const user = userEvent.setup();
       await user.click(screen.getByRole("radio", { name: r.sourceNpm }));
@@ -222,20 +222,20 @@ describe("/admin/directory/apps/review（WizardPage）", () => {
       expect(screen.getByText(fill(r.action.keep, { version: "0.1.0" }))).toBeTruthy();
       expect(screen.getByText(fill(r.editable, { paths: "url" }))).toBeTruthy();
       expect(screen.getByText(/pdf-tools/)).toBeTruthy();
-      expect(screen.getAllByText(msgs[locale].plugins.sensitive).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(msgs[locale].extensions.sensitive).length).toBeGreaterThan(0);
       await user.click(screen.getByRole("button", { name: w.next }));
 
       const confirm = screen.getByRole("button", { name: r.confirm }) as HTMLButtonElement;
       expect(confirm.disabled).toBe(true);
       // 默认不装到部署：说明插件只记为目录条目
       expect(screen.getByText(r.deployOff)).toBeTruthy();
-      await user.click(screen.getByRole("checkbox", { name: r.deployPlugins }));
+      await user.click(screen.getByRole("checkbox", { name: r.deployExtensions }));
       expect(screen.getByText(r.deployOn)).toBeTruthy();
       expect(confirm.disabled).toBe(true);
       await user.click(screen.getByRole("checkbox", { name: r.ack }));
       expect(confirm.disabled).toBe(false);
       await user.click(confirm);
-      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/directory/${ID}`));
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
       expect(bodyOf(calls.find((c) => c.url.endsWith("/confirm")))).toEqual({
         reviewHash: "h1",
         deployPlugins: true,
@@ -247,21 +247,21 @@ describe("/admin/directory/apps/review（WizardPage）", () => {
     window.history.replaceState(
       null,
       "",
-      "/admin/directory/apps/review?catalog=official&name=crm&version=1.0.0",
+      "/admin/catalog/plugins/review?catalog=official&name=crm&version=1.0.0",
     );
     stubApi({
       "POST /api/v1/admin/marketplaces/official/entries/app/crm/import": () =>
         json(502, { error: { code: "plugin.lock_mismatch", message: "x" } }),
     });
-    renderPage(<AppReviewPage />);
+    renderPage(<PluginReviewPage />);
     expect(await screen.findByText(`✗ ${en.errors.plugin.lock_mismatch}`)).toBeTruthy();
   });
 });
 
-describe("/directory/[itemId]/install（WizardPage）", () => {
+describe("/catalog/[itemId]/install (WizardPage)", () => {
   it("不可编辑的端点只读，可编辑的可改；提交只带改过的可编辑字段与凭据；失败时说明已回滚", async () => {
     params.current = { itemId: ID };
-    const t = en.directory.org.install;
+    const t = en.catalog.org.install;
     const detail = {
       item: orgItem({ kind: "app", name: "crm" }),
       hasIcon: false,
@@ -342,9 +342,9 @@ const INSTALL = {
   ],
 };
 
-describe("/settings/apps：已安装的应用与卸载", () => {
+describe("/settings/plugins: installed plugins and uninstall", () => {
   it.each(LOCALES)("卸载后按报告列出移除项与保留项及原因（%s）", async (locale) => {
-    const a = msgs[locale].directory.apps;
+    const a = msgs[locale].catalog.plugins;
     let gone = false;
     stubApi({
       [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: gone ? [] : [INSTALL] }),
@@ -359,7 +359,7 @@ describe("/settings/apps：已安装的应用与卸载", () => {
         });
       },
     });
-    renderPage(<AppsPage />, { locale });
+    renderPage(<PluginsPage />, { locale });
     expect(template("SettingsPage")).not.toBeNull();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: a.uninstall }));
@@ -386,15 +386,15 @@ describe("/settings/apps：已安装的应用与卸载", () => {
       [`DELETE ${ORG}/plugin-installs/i1`]: () =>
         json(409, { error: { code: "plugin.install_in_progress", message: "x" } }),
     });
-    renderPage(<AppsPage />);
+    renderPage(<PluginsPage />);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.directory.apps.cleanup }));
+    await user.click(await screen.findByRole("button", { name: en.catalog.plugins.cleanup }));
     await user.click(
       within(await screen.findByRole("dialog")).getByRole("button", {
-        name: en.directory.apps.confirm.confirm,
+        name: en.catalog.plugins.confirm.confirm,
       }),
     );
-    expect(await screen.findByText(`✗ ${en.directory.apps.inProgress}`)).toBeTruthy();
+    expect(await screen.findByText(`✗ ${en.catalog.plugins.inProgress}`)).toBeTruthy();
   });
 });
 
@@ -432,17 +432,17 @@ const SOURCES = {
   ],
 };
 
-describe("/admin/directory/sources（SettingsPage）", () => {
+describe("/admin/marketplaces (SettingsPage)", () => {
   it.each(LOCALES)(
     "官方地址只读、离线模式说明；企业清单可改，显示状态与刷新（%s）",
     async (locale) => {
-      const s = msgs[locale].directory.admin.sources;
+      const s = msgs[locale].catalog.admin.marketplaces;
       stubApi({
         "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
         "POST /api/v1/admin/marketplaces/s2/refresh": () =>
           json(200, { ...SOURCES.items[1], lastStatus: "ok", lastError: null }),
       });
-      renderPage(<SourcesPage />, { locale });
+      renderPage(<MarketplacesPage />, { locale });
       expect(template("SettingsPage")).not.toBeNull();
       expect(await screen.findByText(s.offline)).toBeTruthy();
       const official = screen.getByDisplayValue(
@@ -461,7 +461,7 @@ describe("/admin/directory/sources（SettingsPage）", () => {
   );
 });
 
-describe("/admin/directory 与清单", () => {
+describe("/admin/catalog and marketplace entries", () => {
   const item = (over: Record<string, unknown>) => ({
     id: ID,
     kind: "plugin",
@@ -500,7 +500,7 @@ describe("/admin/directory 与清单", () => {
   });
 
   it("列表：来源与「有新版本」，按来源筛选", async () => {
-    const t = en.directory;
+    const t = en.catalog;
     stubApi({
       "GET /api/v1/admin/catalog/items": () =>
         json(200, {
@@ -519,7 +519,7 @@ describe("/admin/directory 与清单", () => {
         }),
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
     });
-    renderPage(<AdminDirectoryPage />);
+    renderPage(<AdminCatalogPage />);
     const table = await screen.findByRole("table", { name: t.admin.title });
     const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
     expect(within(row("cat-a")).getByText(t.source.official)).toBeTruthy();
@@ -531,7 +531,7 @@ describe("/admin/directory 与清单", () => {
   });
 
   it("清单：不兼容的版本标出；截断时提示；integrity 不符用醒目的错误", async () => {
-    const c = en.directory.admin.catalog;
+    const c = en.catalog.admin.entries;
     stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
       "GET /api/v1/admin/marketplaces/entries": () =>
@@ -539,7 +539,7 @@ describe("/admin/directory 与清单", () => {
       "POST /api/v1/admin/marketplaces/official/entries/plugin/cat-a/import": () =>
         json(502, { error: { code: "marketplace.integrity_mismatch", message: "x" } }),
     });
-    renderPage(<CatalogPage />);
+    renderPage(<MarketplaceEntriesPage />);
     expect(await screen.findByText(c.truncated)).toBeTruthy();
     expect(screen.getByText(fill(c.incompatible, { version: "3.0.0" }))).toBeTruthy();
     const user = userEvent.setup();
@@ -566,9 +566,9 @@ describe("/admin/directory 与清单", () => {
         }),
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
     });
-    renderPage(<AdminDirectoryItemPage />);
+    renderPage(<AdminCatalogItemPage />);
     const img = (await screen.findByRole("img", {
-      name: fill(en.directory.iconAlt, { name: "gh" }),
+      name: fill(en.catalog.iconAlt, { name: "gh" }),
     })) as HTMLImageElement;
     expect(img.src).toMatch(new RegExp(`/api/v1/admin/catalog/items/${ID}/icon$`));
     expect(document.querySelector("svg[data-directory-icon]")).toBeNull();
@@ -589,7 +589,7 @@ describe("/admin/directory 与清单", () => {
         }),
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
     });
-    renderPage(<AdminDirectoryItemPage />);
+    renderPage(<AdminCatalogItemPage />);
     expect(await screen.findByText("@acme/crm")).toBeTruthy();
     expect(screen.queryByRole("img")).toBeNull();
   });
@@ -600,11 +600,11 @@ describe("/admin/directory 与清单", () => {
       "GET /api/v1/admin/marketplaces/entries": () =>
         json(200, { items: [entry()], truncated: false }),
     });
-    renderPage(<CatalogPage />);
+    renderPage(<MarketplaceEntriesPage />);
     await screen.findByText("@acme/plugin-cat-a");
     await userEvent
       .setup()
-      .type(screen.getByRole("textbox", { name: en.directory.admin.catalog.search }), "cat-a");
+      .type(screen.getByRole("textbox", { name: en.catalog.admin.entries.search }), "cat-a");
     await waitFor(() => expect(calls.some((c) => c.url.includes("q=cat-a"))).toBe(true));
     expect(calls.filter((c) => c.url.includes("q=")).map((c) => c.url)).toEqual([
       "/api/v1/admin/marketplaces/entries?q=cat-a",
@@ -614,7 +614,7 @@ describe("/admin/directory 与清单", () => {
 
 describe("inbox: catalog_request", () => {
   it("组织管理员批准成员的目录申请", async () => {
-    const d = en.directory.inbox;
+    const d = en.catalog.inbox;
     const request = {
       id: "r1",
       orgId: "o1",
@@ -680,15 +680,15 @@ describe("组织插件：启用被目录条目拒绝", () => {
       [`PUT ${ORG}/extensions/crm-core`]: () =>
         json(403, { error: { code: "catalog.approval_required", message: "x" } }),
     });
-    renderPage(<PluginsPage />, { locale });
+    renderPage(<ExtensionsPage />, { locale });
     await userEvent.setup().click(
       await screen.findByRole("switch", {
-        name: fill(m.plugins.enableLabel, { plugin: "crm-core" }),
+        name: fill(m.extensions.enableLabel, { plugin: "crm-core" }),
       }),
     );
     expect(await screen.findByText(`✗ ${m.errors.catalog.approval_required}`)).toBeTruthy();
-    expect(screen.getByRole("link", { name: m.plugins.openDirectory }).getAttribute("href")).toBe(
-      "/directory",
+    expect(screen.getByRole("link", { name: m.extensions.openCatalog }).getAttribute("href")).toBe(
+      "/catalog",
     );
   });
 });
@@ -728,7 +728,7 @@ describe("安装向导的默认 slug", () => {
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
     });
     renderPage(<InstallPage />);
-    const slug = (await screen.findByLabelText(en.directory.org.install.slug, {
+    const slug = (await screen.findByLabelText(en.catalog.org.install.slug, {
       exact: false,
     })) as HTMLInputElement;
     expect(slug.value).toBe("github_mcp");
@@ -761,8 +761,8 @@ describe("部署申请页显示申请人", () => {
           ],
         }),
     });
-    renderPage(<RequestsPage />);
+    renderPage(<CatalogRequestsPage />);
     expect(await screen.findByText("Mia")).toBeTruthy();
-    expect(screen.getByText(en.directory.admin.requests.fields.requester)).toBeTruthy();
+    expect(screen.getByText(en.catalog.admin.requests.fields.requester)).toBeTruthy();
   });
 });

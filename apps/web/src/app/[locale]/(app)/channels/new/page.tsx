@@ -27,7 +27,7 @@ import { useRouter } from "../../../../../i18n/navigation";
 import { listAgents } from "../../../../../lib/agents";
 import { ApiClientError, issueLines } from "../../../../../lib/api";
 import { createChannel, getChannelSchema, type UnboundPolicy } from "../../../../../lib/channels";
-import { listOrgPlugins, provides } from "../../../../../lib/extensions";
+import { listOrgExtensions, provides } from "../../../../../lib/extensions";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
@@ -41,7 +41,7 @@ export default function NewChannelPage() {
 
 async function loadOptions(orgId: string) {
   const [{ extensions: plugins }, { agents }] = await Promise.all([
-    listOrgPlugins(orgId),
+    listOrgExtensions(orgId),
     listAgents(orgId),
   ]);
   return {
@@ -145,10 +145,10 @@ function NewChannel({ orgId }: { orgId: string }) {
           >
             {ready?.plugins.length === 0 ? (
               <Stack gap={8}>
-                <Text>{t("form.noPlugins")}</Text>
+                <Text>{t("form.noExtensions")}</Text>
                 <Stack direction="row">
-                  <Button onClick={() => router.push("/settings/plugins")}>
-                    {t("form.openPlugins")}
+                  <Button onClick={() => router.push("/settings/extensions")}>
+                    {t("form.openExtensions")}
                   </Button>
                 </Stack>
               </Stack>

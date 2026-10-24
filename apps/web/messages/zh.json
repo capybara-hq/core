@@ -86,7 +86,8 @@
       "session_revoked": "会话已失效，请重新登录。",
       "refresh_invalid": "登录已失效，请重新登录。",
       "refresh_race": "登录状态刚刚更新，请重试。",
-      "csrf": "请求被拒绝，请刷新页面后重试。"
+      "csrf": "请求被拒绝，请刷新页面后重试。",
+      "session_required": "这个操作需要网页登录会话。"
     },
     "account": {
       "login_taken": "用户名已被占用。",
@@ -97,7 +98,9 @@
       "not_found": "组织不存在或你已不是成员。",
       "sandbox_egress_not_allowed": "本部署已禁止沙箱联网，组织只能选择「不联网」。",
       "last_owner": "组织至少要保留一个所有者。",
-      "owner_required": "只有所有者可以执行这个操作。"
+      "owner_required": "只有所有者可以执行这个操作。",
+      "creation_disabled": "本部署关闭了创建组织。",
+      "slug_taken": "该 slug 已被其他组织使用。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -120,8 +123,8 @@
       "provider_unavailable": "模型供应商列表暂时读不到。",
       "provider_error": "模型供应商出错。",
       "storage_unavailable": "附件存储暂时不可用。",
-      "hook_denied": "请求被插件「{plugin}」的策略拦截。",
-      "hook_denied_unknown": "请求被插件策略拦截。"
+      "hook_denied": "请求被扩展「{plugin}」的策略拦截。",
+      "hook_denied_unknown": "请求被扩展策略拦截。"
     },
     "connector": {
       "not_found": "连接器不存在或已被删除。",
@@ -143,55 +146,57 @@
       "missing": "使用该连接器需要凭据。"
     },
     "extension": {
-      "not_found": "插件未安装。",
-      "not_enabled": "该插件未在本组织启用，请到「设置 → 插件」中启用。",
+      "not_found": "扩展未安装。",
+      "not_enabled": "该扩展未在本组织启用，请到「设置 → 扩展」中启用。",
       "config_invalid": "配置不正确：",
-      "no_org_config": "该插件没有组织级配置。",
-      "dependency_missing": "请先启用它依赖的插件。",
-      "has_dependents": "还有其他已启用的插件依赖它。",
+      "no_org_config": "该扩展没有组织级配置。",
+      "dependency_missing": "请先启用它依赖的扩展。",
+      "has_dependents": "还有其他已启用的扩展依赖它。",
       "config_readonly": "这个字段由启动配置给出，只读。",
-      "config_declared": "同名插件已由启动配置声明，不能在网页上安装。",
-      "builtin": "这是内置插件，不能执行这个操作。",
-      "name_conflict": "这个插件名之前属于另一个 npm 包，不能被别的包接手。",
-      "approval_stale": "审阅之后插件包或权限已经变化，请刷新后重新审阅。",
-      "not_pending": "这个插件不需要批准。",
-      "package_unavailable": "插件包读不到（可能已损坏或超过大小上限）。",
-      "package_not_found": "插件包不存在，请重新上传。",
-      "name_mismatch": "插件包里的插件名与目标不符。",
+      "config_declared": "同名扩展已由启动配置声明，不能在网页上安装。",
+      "builtin": "这是内置扩展，不能执行这个操作。",
+      "name_conflict": "这个扩展名之前属于另一个 npm 包，不能被别的包接手。",
+      "approval_stale": "审阅之后扩展包或权限已经变化，请刷新后重新审阅。",
+      "not_pending": "这个扩展不需要批准。",
+      "package_unavailable": "扩展包读不到（可能已损坏或超过大小上限）。",
+      "package_not_found": "扩展包不存在，请重新上传。",
+      "name_mismatch": "扩展包里的扩展名与目标不符。",
       "downgrade_unsupported": "不能降级到这个版本：它有尚未执行的迁移。",
       "not_disabled": "请先停用再卸载。",
-      "package_invalid": "插件包不合法：",
-      "package_too_large": "插件包超过大小上限。",
-      "unavailable": "插件当前不可用。"
+      "package_invalid": "扩展包不合法：",
+      "package_too_large": "扩展包超过大小上限。",
+      "unavailable": "扩展当前不可用。"
     },
     "catalog": {
       "invalid_package": "包不合法。",
       "version_exists": "这个版本已经导入过。",
       "item_not_found": "条目不存在或你看不到它。",
-      "wrong_kind": "这个操作不适用于该种类的条目（应用包请用「导入应用」）。",
+      "wrong_kind": "这个操作不适用于该种类的条目（插件包请用「导入插件」）。",
       "name_conflict": "同名条目来自另一个 npm 包。",
-      "item_disabled": "企业管理员禁用了这个条目（或它包含的某个插件），不能新装或启用。",
-      "approval_required": "把它带进部署的目录条目需要企业管理员批准，本组织获批前不能安装或启用。",
+      "item_disabled": "企业管理员禁用了这个条目（或它包含的某个扩展），不能新装或启用。",
+      "approval_required": "把它带进部署的企业目录条目需要企业管理员批准，本组织获批前不能安装或启用。",
       "request_not_found": "申请不存在或已处理。",
       "request_decided": "这条申请已经处理过了。",
-      "custom_disabled": "企业管理员关闭了自建，只能从目录安装。",
-      "not_deployed": "依赖的插件还没装到部署上，或部署的版本不满足要求，请联系企业管理员。",
+      "custom_disabled": "企业管理员关闭了自建，只能从企业目录安装。",
+      "not_deployed": "依赖的扩展还没装到部署上，或部署的版本不满足要求，请联系企业管理员。",
       "icon_not_found": "没有图标。"
     },
     "directory": {
-      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
+      "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
     },
     "ui": {
-      "not_found": "这个面板不可用：插件可能未启用，或你无权访问这个对话。",
-      "render_failed": "插件加载这个面板失败，请重试。",
-      "action_failed": "插件执行这个操作失败，请重试。",
-      "invalid_view": "插件返回的内容无法显示，请稍后重试。",
-      "timeout": "插件没有及时响应，请重试。"
+      "not_found": "这个面板不可用：扩展可能未启用，或你无权访问这个对话。",
+      "render_failed": "扩展加载这个面板失败，请重试。",
+      "action_failed": "扩展执行这个操作失败，请重试。",
+      "invalid_view": "扩展返回的内容无法显示，请稍后重试。",
+      "timeout": "扩展没有及时响应，请重试。"
     },
     "channel": {
       "not_found": "渠道不存在或已删除。",
       "verify_failed": "平台拒绝了机器人凭据，请检查后重试。",
-      "webhook_unavailable": "该渠道无法使用 Webhook：插件不支持，或部署未配置回调地址。"
+      "webhook_unavailable": "该渠道无法使用 Webhook：扩展不支持，或部署未配置回调地址。",
+      "webhook_not_found": "这个地址没有注册 Webhook。",
+      "webhook_retry": "事件暂时无法接收，请稍后重试。"
     },
     "identity": {
       "taken": "这个 IM 账号已绑定到另一个 Capybara 账号。",
@@ -274,26 +279,39 @@
       "used": "这个邀请已经被使用过了。"
     },
     "marketplace": {
-      "not_found": "清单来源不存在。",
-      "entry_not_found": "清单条目或版本不存在（来源可能已停用）。",
-      "fetch_failed": "拉取清单失败，已保留上一份条目。",
-      "invalid": "清单格式不合法，已保留上一份条目。",
-      "integrity_mismatch": "下载的包与清单的 sha512 不符，已拒绝引入。包可能被篡改，请联系清单维护者。",
+      "not_found": "市场不存在。",
+      "entry_not_found": "市场条目或版本不存在（市场可能已停用）。",
+      "fetch_failed": "拉取市场内容失败，已保留上一份条目。",
+      "invalid": "市场内容格式不合法，已保留上一份条目。",
+      "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝引入。包可能被篡改，请联系市场维护者。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
-      "package_mismatch": "下载的包与清单条目不一致。",
-      "builtin": "官方清单由部署配置决定，这里只能启用或停用。"
+      "package_mismatch": "下载的包与市场条目不一致。",
+      "builtin": "官方市场由部署配置决定，这里只能启用或停用。"
     },
     "plugin": {
-      "invalid_manifest": "应用清单（app.yaml）不合法。",
-      "lock_mismatch": "应用锁定的插件包与下载的不符（sha512 不一致），已拒绝。包可能被篡改。",
-      "review_stale": "审阅已过期（部署上的插件有变化），请重新读取应用包。",
-      "staging_not_found": "暂存的应用包已过期，请重新读取。",
-      "extension_conflict": "应用要的插件版本与内置 / 配置声明的插件冲突。",
-      "bundle_too_large": "应用包太大。",
+      "invalid_manifest": "插件清单（app.yaml）不合法。",
+      "lock_mismatch": "插件锁定的扩展包与下载的不符（sha512 不一致），已拒绝。包可能被篡改。",
+      "review_stale": "审阅已过期（部署上的扩展有变化），请重新读取插件包。",
+      "staging_not_found": "暂存的插件包已过期，请重新读取。",
+      "extension_conflict": "插件要的扩展版本与内置 / 配置声明的扩展冲突。",
+      "bundle_too_large": "插件包太大。",
       "install_failed": "安装失败，已回滚本次新建的组件。",
       "install_not_found": "安装记录不存在。",
-      "already_installed": "本组织已经装了这个应用，请先卸载再装。",
-      "install_in_progress": "这个应用还在安装中，暂时不能卸载；安装中断时，超过时限后可以清理。"
+      "already_installed": "本组织已经装了这个插件，请先卸载再装。",
+      "install_in_progress": "这个插件还在安装中，暂时不能卸载；安装中断时，超过时限后可以清理。"
+    },
+    "internal": "服务器出错了，请稍后重试。",
+    "not_found": "不存在或已删除。",
+    "conflict": "与当前状态冲突，请刷新后重试。",
+    "unsupported_media_type": "不支持这种内容类型。",
+    "token": {
+      "not_found": "令牌不存在或已吊销。"
+    },
+    "packages": {
+      "npm_failed": "从 npm 下载包失败。"
+    },
+    "tool_output": {
+      "not_found": "工具输出不存在或已过期。"
     }
   },
   "agents": {
@@ -318,7 +336,7 @@
         "members": "指定成员"
       },
       "submit": "保存",
-      "noModels": "没有可用的模型，请先安装并配置模型供应商插件。",
+      "noModels": "没有可用的模型，请先安装并配置模型供应商扩展。",
       "warningsTitle": "已保存，但请注意：",
       "continue": "继续",
       "modelParamsTitle": "模型参数",
@@ -472,7 +490,7 @@
     "empty": "发送一条消息开始对话。",
     "streamLost": "与服务器的实时连接已断开，请刷新页面。",
     "idle": "就绪",
-    "inspectorTitle": "会话信息",
+    "inspectorTitle": "对话信息",
     "waiting": "等你处理",
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
@@ -499,9 +517,9 @@
     "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。"
   },
   "ui": {
-    "dangerDescription": "这个操作由插件执行，可能无法撤销。",
-    "embedRefreshFailed": "插件页面的凭据续期失败，正在重试；页面可能暂时无法读写。",
-    "embedRemountLimit": "插件页面在加载后反复跳转离开，已停止加载。可以重试，或联系插件提供方。"
+    "dangerDescription": "这个操作由扩展执行，可能无法撤销。",
+    "embedRefreshFailed": "扩展页面的凭据续期失败，正在重试；页面可能暂时无法读写。",
+    "embedRemountLimit": "扩展页面在加载后反复跳转离开，已停止加载。可以重试，或联系扩展提供方。"
   },
   "chatPanel": {
     "label": "对话面板",
@@ -510,7 +528,7 @@
     "runEmpty": "本对话还没有工具调用。",
     "agent": "Agent",
     "model": "模型",
-    "conversation": "会话",
+    "conversation": "对话",
     "tokens": "Token",
     "tokensOf": "{used} / {total}（{pct}%）",
     "tokensOnly": "{used}",
@@ -521,7 +539,7 @@
     "compactions": "压缩记录",
     "compactionCovers": "压缩到第 {seq} 条事件",
     "loadingOutput": "正在读取全部输出…",
-    "contributionsFailed": "插件面板加载失败，插件标签暂不可用。",
+    "contributionsFailed": "扩展面板加载失败，扩展标签暂不可用。",
     "artifacts": "产物",
     "artifactType": "类型",
     "artifactSize": "大小",
@@ -550,7 +568,7 @@
     "skills": "技能",
     "evals": "评测",
     "admin": "管理",
-    "directory": "目录"
+    "catalog": "企业目录"
   },
   "shell": {
     "switchLocale": "切换到 {name}",
@@ -584,12 +602,12 @@
     "scopeLabel": "批准范围",
     "scope": {
       "once": "仅本次",
-      "session": "本会话内",
+      "session": "本对话内",
       "always": "以后都允许"
     },
     "scopeHint": {
       "once": "下次调用仍需审批。",
-      "session": "本会话之后的调用不再询问。",
+      "session": "本对话之后的调用不再询问。",
       "always": "该 agent 以后调用这个工具都不再询问；可在设置中撤销。"
     },
     "approve": "批准",
@@ -657,9 +675,9 @@
     "pick": "在左侧选择一项。",
     "pendingCount": "{n} 项待处理",
     "inspectorTitle": "详情",
-    "conversation": "会话",
+    "conversation": "对话",
     "requested": "发起时间",
-    "openConversation": "打开会话",
+    "openConversation": "打开对话",
     "approved": "已批准",
     "denied": "已拒绝",
     "columns": {
@@ -954,10 +972,10 @@
       "grants": "已记住的授权",
       "organization": "组织设置",
       "identities": "IM 身份",
-      "plugins": "插件",
+      "extensions": "扩展",
       "models": "模型用途",
       "members": "成员",
-      "apps": "已安装的应用"
+      "plugins": "已安装的插件"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -1071,7 +1089,7 @@
     "emptyHint": "把 IM 机器人（如 Slack、飞书）接到一个 agent，大家就能在 IM 里和它对话。",
     "columns": {
       "name": "名称",
-      "plugin": "插件",
+      "plugin": "扩展",
       "agent": "Agent",
       "policy": "未绑定的人",
       "status": "状态"
@@ -1092,16 +1110,16 @@
     "form": {
       "title": "新建渠道",
       "pluginSection": "平台",
-      "pluginHint": "该组织已启用的渠道插件。",
-      "pluginLabel": "插件",
-      "pluginPlaceholder": "选择插件",
-      "noPlugins": "该组织还没有启用任何渠道插件。",
-      "openPlugins": "打开插件设置",
+      "pluginHint": "该组织已启用的渠道扩展。",
+      "pluginLabel": "扩展",
+      "pluginPlaceholder": "选择扩展",
+      "noExtensions": "该组织还没有启用任何渠道扩展。",
+      "openExtensions": "打开扩展设置",
       "nameLabel": "名称",
       "nameRequired": "请填写名称",
       "configSection": "机器人凭据",
-      "configHint": "字段由插件定义。保存时会先向平台校验凭据。",
-      "pickPluginFirst": "请先选择插件。",
+      "configHint": "字段由扩展定义。保存时会先向平台校验凭据。",
+      "pickPluginFirst": "请先选择扩展。",
       "agentSection": "Agent",
       "agentSectionHint": "回复发给这个机器人的消息的 agent。",
       "agentLabel": "Agent",
@@ -1114,7 +1132,7 @@
       "submit": "创建渠道"
     },
     "inspector": {
-      "plugin": "插件",
+      "plugin": "扩展",
       "tenant": "租户",
       "bot": "机器人",
       "agent": "Agent",
@@ -1141,7 +1159,7 @@
       "disabledToast": "渠道已停用。",
       "credentialsTitle": "凭据与配置",
       "credentialsHint": "不动的密钥保持原值；替换密钥即轮换凭据，新凭据保存前会先向平台校验。",
-      "schemaUnavailable": "渠道插件不可用，无法编辑配置。请确认插件已安装并已启用。",
+      "schemaUnavailable": "渠道扩展不可用，无法编辑配置。请确认扩展已安装并已启用。",
       "saveCredentials": "保存凭据",
       "credentialsSaved": "凭据已保存。",
       "settingsTitle": "设置",
@@ -1154,7 +1172,7 @@
       "inboundTitle": "接收方式",
       "inboundHint": "机器人如何接收消息。长连接在内网即可使用；Webhook 需要平台能经公网地址访问本部署。",
       "inboundLabel": "接收方式",
-      "inboundUnsupported": "该渠道插件只支持长连接。",
+      "inboundUnsupported": "该渠道扩展只支持长连接。",
       "inboundNoBaseUrl": "无法使用 Webhook：部署未配置公网回调地址（channels.webhookBaseUrl）。",
       "callbackUrl": "回调地址",
       "callbackUrlHint": "在平台的应用设置里把此地址填为事件 / 请求地址。",
@@ -1171,26 +1189,26 @@
       "webhook": "平台每个事件都回调本部署，需要公网地址。"
     }
   },
-  "plugins": {
-    "title": "插件",
-    "empty": "没有安装任何插件。",
+  "extensions": {
+    "title": "扩展",
+    "empty": "没有安装任何扩展。",
     "version": "版本 {version}",
     "enableLabel": "启用 {plugin}",
     "enabled": "已在该组织启用",
     "disabled": "未启用",
     "unavailable": "不可用",
-    "unavailableHint": "此插件在部署上当前不可用；组织的启用设置会保留。",
+    "unavailableHint": "此扩展在部署上当前不可用；组织的启用设置会保留。",
     "enabledToast": "已启用 {plugin}。",
     "disabledToast": "已停用 {plugin}。",
-    "dependencyMissing": "请先启用提供以下能力的插件：",
-    "hasDependents": "以下已启用的插件依赖它，停用后将无法工作：",
+    "dependencyMissing": "请先启用提供以下扩展点的扩展：",
+    "hasDependents": "以下已启用的扩展依赖它，停用后将无法工作：",
     "forceDisable": "仍然停用",
     "permissions": "权限",
     "permissionsLabel": "{plugin} 的权限",
     "sensitive": "敏感",
     "category": {
-      "provides": "提供的能力",
-      "requires": "依赖的能力",
+      "provides": "提供的扩展点",
+      "requires": "依赖的扩展点",
       "optional": "可选依赖",
       "config": "配置项",
       "tables": "数据库表",
@@ -1202,7 +1220,7 @@
       "hooks": "Hook",
       "models": "模型",
       "network": "网络访问",
-      "ui": "界面（视图 / 嵌入应用）"
+      "ui": "界面（视图 / 嵌入页面）"
     },
     "configTitle": "组织级配置",
     "save": "保存配置",
@@ -1222,24 +1240,24 @@
         "public_routes": "这些路由不需要登录就能访问",
         "tools": "组织里的 agent 可以调用这些工具",
         "hooks": "可以介入内核流程",
-        "ui_embed": "会把插件自己的页面嵌入网页",
+        "ui_embed": "会把扩展自己的页面嵌入网页",
         "channel": "收到组织在 IM 里的对话内容",
         "directory": "能把人加进组织，并为其建账号",
         "identity_source": "决定谁能登录成哪个账号",
         "sandbox": "在部署里执行任意命令",
-        "object_store": "保管全部附件与插件包",
+        "object_store": "保管全部附件与扩展包",
         "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准"
       },
       "warnings": "迁移警告",
-      "warningsHint": "插件迁移只该做扩展：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
+      "warningsHint": "扩展迁移只能做增量变更：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
       "warning": {
         "destructive_migration": "破坏性语句",
         "dynamic_sql": "DO 块（内容没有检查）",
-        "foreign_schema": "越出插件自己 schema 的语句（内核表、权限 / 角色、函数 / 触发器或事务控制）"
+        "foreign_schema": "越出扩展自己 schema 的语句（内核表、权限 / 角色、函数 / 触发器或事务控制）"
       },
       "at": "{file} 第 {line} 行"
     },
-    "openDirectory": "去企业目录查看或申请"
+    "openCatalog": "去企业目录查看或申请"
   },
   "identities": {
     "title": "IM 身份",
@@ -1393,7 +1411,7 @@
         "scope": "范围",
         "scopes": {
           "once": "仅本次",
-          "session": "本会话",
+          "session": "本对话",
           "always": "始终"
         },
         "by": "处理人",
@@ -1410,7 +1428,7 @@
       },
       "hook": {
         "title": "被策略 hook 拦截",
-        "plugin": "插件",
+        "plugin": "扩展",
         "cause": "原因类别",
         "causes": {
           "deny": "拒绝",
@@ -1735,7 +1753,7 @@
         "description": "已安装的模型供应商及其模型。价格为每百万 token 的单价，币种 {currency}（在部署设置中修改）；轨迹与评测里的成本都按这里的价格估算。"
       },
       "providerError": "供应商 {provider} 列模型失败，其他供应商不受影响。",
-      "noProviders": "还没有模型供应商。安装模型供应商插件后会出现在这里。",
+      "noProviders": "还没有模型供应商。安装模型供应商扩展后会出现在这里。",
       "noModels": "这个供应商没有模型。",
       "columns": {
         "model": "模型",
@@ -1766,12 +1784,12 @@
       },
       "purposes": {
         "title": "用途默认映射",
-        "description": "内核与插件按用途取模型。这里设部署默认，各组织的管理员可以在组织设置里覆盖。不设模型白名单。"
+        "description": "内核与扩展按用途取模型。这里设部署默认，各组织的管理员可以在组织设置里覆盖。不设模型白名单。"
       }
     },
     "org": {
       "title": "模型用途",
-      "description": "内核与插件按用途取模型。每个用途默认使用企业管理员设的部署默认；你可以为本组织覆盖，或恢复默认。"
+      "description": "内核与扩展按用途取模型。每个用途默认使用企业管理员设的部署默认；你可以为本组织覆盖，或恢复默认。"
     },
     "evalUnmapped": "评测用途 eval 还没有映射模型：评测不能开评委。",
     "capability": {
@@ -1783,8 +1801,8 @@
     },
     "purpose": {
       "declaredByKernel": "内核用途",
-      "declaredByPlugin": "插件 {plugin}",
-      "pluginNote": "插件调用模型尚未开放，可先配置。",
+      "declaredByPlugin": "扩展 {plugin}",
+      "pluginNote": "扩展调用模型尚未开放，可先配置。",
       "model": "模型",
       "modelInvalid": "所选模型不可用。",
       "unset": "未设置",
@@ -1811,19 +1829,19 @@
       "accounts": "账号",
       "orgs": "组织",
       "settings": "部署设置",
-      "plugins": "插件",
+      "extensions": "扩展",
       "models": "模型",
-      "directory": "企业目录"
+      "catalog": "企业目录"
     },
     "forbidden": {
       "title": "需要企业管理员",
       "hint": "只有企业管理员能打开管理后台。可以请企业管理员授予，或在服务器上运行 capybara admin grant 加登录名。"
     },
     "overview": {
-      "intro": "企业管理员在这里管理整个部署：账号、组织、插件与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
+      "intro": "企业管理员在这里管理整个部署：账号、组织、扩展与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
       "metrics": {
-        "plugins": "需要处理的插件",
-        "directoryRequests": "待处理的目录申请",
+        "extensions": "需要处理的扩展",
+        "catalogRequests": "待处理的企业目录申请",
         "orgs": "组织",
         "accounts": "账号"
       },
@@ -1842,10 +1860,10 @@
         "hint": "谁能建组织、价格币种、组织能否自建连接器与技能。",
         "open": "打开部署设置"
       },
-      "plugins": {
-        "title": "插件",
-        "hint": "安装、批准、启用、停用、升级插件，填写部署级配置。",
-        "open": "管理插件"
+      "extensions": {
+        "title": "扩展",
+        "hint": "安装、批准、启用、停用、升级扩展，填写部署级配置。",
+        "open": "管理扩展"
       },
       "models": {
         "title": "模型",
@@ -1877,7 +1895,7 @@
       },
       "confirm": {
         "grantTitle": "授予「{name}」企业管理员？",
-        "grantHint": "企业管理员可以管理整个部署：账号、组织、插件与部署设置。",
+        "grantHint": "企业管理员可以管理整个部署：账号、组织、扩展与部署设置。",
         "grant": "授予",
         "revokeTitle": "撤销「{name}」的企业管理员？",
         "revokeHint": "撤销后该账号不能再打开管理后台。最后一个企业管理员不能撤销。",
@@ -1972,12 +1990,12 @@
         "denyHint": "组织只能从企业目录安装技能。"
       }
     },
-    "plugins": {
-      "title": "插件",
-      "install": "安装插件",
-      "hint": "部署上的全部插件。安装、启用、停用、升级都不需要重启：操作提交后各副本会在几秒内收敛。",
-      "empty": "还没有插件",
-      "noResults": "没有符合筛选条件的插件",
+    "extensions": {
+      "title": "扩展",
+      "install": "安装扩展",
+      "hint": "部署上的全部扩展。安装、启用、停用、升级都不需要重启：操作提交后各副本会在几秒内收敛。",
+      "empty": "还没有扩展",
+      "noResults": "没有符合筛选条件的扩展",
       "sensitive": "敏感",
       "columns": {
         "name": "名称",
@@ -2014,13 +2032,13 @@
         "none": "无副本上报"
       },
       "detail": {
-        "tabsLabel": "插件详情",
+        "tabsLabel": "扩展详情",
         "tabs": {
           "overview": "概要",
           "permissions": "权限",
           "config": "配置"
         },
-        "notFound": "插件不存在或已卸载。",
+        "notFound": "扩展不存在或已卸载。",
         "fields": {
           "source": "来源",
           "version": "版本",
@@ -2052,19 +2070,19 @@
           "config": "部署配置缺失或不合法",
           "approval": "权限待批准",
           "migration": "另一个副本正在执行迁移",
-          "dependency": "依赖的能力没有可用的提供方",
-          "sync_failed": "同步插件包失败",
-          "sha_mismatch": "插件包内容与记录的 sha256 不符",
-          "import_failed": "导入插件模块失败",
-          "manifest_mismatch": "插件模块与审阅过的清单不一致",
-          "setup_failed": "插件初始化（setup）失败",
-          "migration_failed": "插件迁移失败"
+          "dependency": "依赖的扩展点没有可用的提供方",
+          "sync_failed": "同步扩展包失败",
+          "sha_mismatch": "扩展包内容与记录的 sha256 不符",
+          "import_failed": "导入扩展模块失败",
+          "manifest_mismatch": "扩展模块与审阅过的清单不一致",
+          "setup_failed": "扩展初始化（setup）失败",
+          "migration_failed": "扩展迁移失败"
         },
         "converging": "各副本正在收敛到期望状态，页面会自动刷新。",
         "refresh": "刷新",
         "noReplicas": "还没有副本上报状态。",
-        "builtinNote": "内置插件随核心镜像提供、始终启用：不能停用、升级或卸载，只需要填部署级配置。",
-        "configNote": "这个插件由启动配置的 extensions 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
+        "builtinNote": "内置扩展随核心镜像提供、始终启用：不能停用、升级或卸载，只需要填部署级配置。",
+        "configNote": "这个扩展由启动配置的 extensions 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
         "actions": {
           "enable": "启用",
           "disable": "停用",
@@ -2075,12 +2093,12 @@
         "drainHint": "进行中的工具调用最多等待 {seconds} 秒后中止。",
         "disableConfirm": {
           "title": "停用「{name}」？",
-          "hint": "停用后各副本会卸下这个插件，组织里的 agent 不能再用它的工具。",
+          "hint": "停用后各副本会卸下这个扩展，组织里的 agent 不能再用它的工具。",
           "confirm": "停用"
         },
         "uninstallConfirm": {
           "title": "卸载「{name}」",
-          "hint": "卸载会把这个插件从部署移除；它的数据、密钥与组织配置会保留，以后重新安装同一个包可以继续使用。",
+          "hint": "卸载会把这个扩展从部署移除；它的数据、密钥与组织配置会保留，以后重新安装同一个包可以继续使用。",
           "confirm": "卸载"
         },
         "done": {
@@ -2088,15 +2106,15 @@
           "disable": "已提交停用，各副本正在收敛。",
           "uninstall": "已卸载「{name}」。"
         },
-        "packageError": "插件包读不到：{error}"
+        "packageError": "扩展包读不到：{error}"
       },
       "approve": {
         "title": "批准权限",
-        "hint": "这个版本的权限超出已批准的范围（或还没有批准过），批准后插件才会加载。",
+        "hint": "这个版本的权限超出已批准的范围（或还没有批准过），批准后扩展才会加载。",
         "ack": "我已了解敏感项",
         "submit": "批准",
         "done": "已批准，各副本正在加载。",
-        "stale": "审阅之后插件包或权限已经变化，请刷新后重新审阅。",
+        "stale": "审阅之后扩展包或权限已经变化，请刷新后重新审阅。",
         "refresh": "刷新后重新审阅",
         "builtin": "随核心镜像预先批准",
         "approved": "已批准：版本 {version}，{at}（{source}）",
@@ -2108,7 +2126,7 @@
         }
       },
       "wizard": {
-        "title": "安装插件",
+        "title": "安装扩展",
         "upgradeTitle": "升级「{name}」",
         "steps": {
           "source": "选来源",
@@ -2116,10 +2134,10 @@
           "confirm": "确认"
         },
         "sourceLabel": "来源",
-        "sourceFile": "上传插件包（.tgz）",
+        "sourceFile": "上传扩展包（.tgz）",
         "sourceNpm": "从 npm 获取",
         "choose": "选择 .tgz 文件",
-        "fileHint": "插件包是 npm pack 格式的 tgz（可用仓库里的 pack-plugin 打包）。",
+        "fileHint": "扩展包是 npm pack 格式的 tgz（可用仓库里的 pack-plugin 打包）。",
         "noFile": "还没有选文件。",
         "npmPackage": "npm 包名",
         "npmVersion": "版本",
@@ -2134,22 +2152,22 @@
         "sha": "包 sha256：{sha}",
         "newInstall": "安装后默认停用，批准权限并启用后才会加载。",
         "upgradeFrom": "将从 {from} 升级到 {to}。",
-        "upgradeMismatch": "这个包是插件「{got}」，不是要升级的「{want}」。",
-        "conflictBuiltin": "「{name}」是内置插件，不能安装同名插件。",
-        "conflictConfig": "「{name}」由启动配置声明，不能在网页上安装同名插件。",
+        "upgradeMismatch": "这个包是扩展「{got}」，不是要升级的「{want}」。",
+        "conflictBuiltin": "「{name}」是内置扩展，不能安装同名扩展。",
+        "conflictConfig": "「{name}」由启动配置声明，不能在网页上安装同名扩展。",
         "ack": "我已了解敏感项",
-        "ackHint": "这个插件含敏感项（已高亮），确认前请逐项核对。",
+        "ackHint": "这个扩展含敏感项（已高亮），确认前请逐项核对。",
         "enableAfter": "安装后立即启用",
         "install": "安装",
         "done": "已安装「{name}」，各副本正在收敛。",
-        "failedAfterInstall": "插件已安装，但后续步骤没有完成，请到插件详情页继续。",
+        "failedAfterInstall": "扩展已安装，但后续步骤没有完成，请到扩展详情页继续。",
         "sessionExpired": "登录已过期，请重新登录后再上传。"
       },
       "config": {
-        "none": "这个插件没有部署级配置。",
-        "hint": "启动配置（配置文件、Nacos、环境变量）给出的字段只读；即时生效的字段保存后马上生效，其余字段保存后插件会重新加载（不重启）。",
-        "invalid": "配置不完整或不合法，插件待配置：",
-        "notValidated": "这个插件当前没有加载：保存时不校验，加载时再校验。",
+        "none": "这个扩展没有部署级配置。",
+        "hint": "启动配置（配置文件、Nacos、环境变量）给出的字段只读；即时生效的字段保存后马上生效，其余字段保存后扩展会重新加载（不重启）。",
+        "invalid": "配置不完整或不合法，扩展待配置：",
+        "notValidated": "这个扩展当前没有加载：保存时不校验，加载时再校验。",
         "source": {
           "env": "来自环境变量（只读）",
           "file": "来自配置文件（只读）",
@@ -2161,9 +2179,9 @@
         "secretSet": "已设置",
         "secretUnset": "未设置",
         "hot": "即时生效",
-        "reload": "保存后插件重新加载",
+        "reload": "保存后扩展重新加载",
         "save": "保存配置",
-        "saving": "正在保存；插件重新加载最多需要约 {seconds} 秒。",
+        "saving": "正在保存；扩展重新加载最多需要约 {seconds} 秒。",
         "saved": "配置已保存。"
       }
     }
@@ -2259,12 +2277,12 @@
     "invalidHint": "请联系邀请你的管理员重新发送邀请。",
     "goHome": "进入 Capybara"
   },
-  "directory": {
+  "catalog": {
     "kind": {
-      "plugin": "插件",
+      "plugin": "扩展",
       "connector-template": "连接器模板",
       "skill": "技能",
-      "app": "应用"
+      "app": "插件"
     },
     "policy": {
       "allow": "允许",
@@ -2273,8 +2291,8 @@
     },
     "source": {
       "manual": "手动导入",
-      "official": "官方清单",
-      "removed": "已删除的清单"
+      "official": "官方市场",
+      "removed": "已删除的市场"
     },
     "versionSource": {
       "file": "上传",
@@ -2285,8 +2303,8 @@
     "iconAlt": "{name} 的图标",
     "admin": {
       "title": "企业目录",
-      "hint": "企业目录里的插件、连接器模板、技能与应用可以让各组织安装；策略决定组织能否直接安装。",
-      "empty": "目录里还没有条目。",
+      "hint": "企业目录里的扩展、连接器模板、技能与插件可以让各组织安装；策略决定组织能否直接安装。",
+      "empty": "企业目录里还没有条目。",
       "noResults": "没有符合筛选条件的条目。",
       "columns": {
         "name": "名称",
@@ -2304,15 +2322,15 @@
       },
       "actions": {
         "import": "导入",
-        "importApp": "导入应用",
-        "catalog": "浏览清单",
+        "importPlugin": "导入插件",
+        "entries": "浏览市场",
         "more": "更多",
-        "sources": "目录来源",
+        "marketplaces": "市场",
         "requests": "部署申请"
       },
       "import": {
-        "title": "导入到目录",
-        "hint": "插件、连接器模板与技能：上传 npm-pack 生成的 .tgz（模板与技能也可以是 .zip），或填 npm 包名。应用请用「导入应用」，一次审阅全部插件。",
+        "title": "导入到企业目录",
+        "hint": "扩展、连接器模板与技能：上传 npm-pack 生成的 .tgz（模板与技能也可以是 .zip），或填 npm 包名。插件请用「导入插件」，一次审阅全部扩展。",
         "sourceLabel": "来源",
         "sourceFile": "上传文件",
         "sourceNpm": "npm 包",
@@ -2323,9 +2341,9 @@
         "npmVersionHelp": "版本、dist-tag 或范围；留空为 latest。",
         "submit": "导入",
         "cancel": "取消",
-        "appLink": "导入应用",
+        "pluginLink": "导入插件",
         "done": "已导入 {name}",
-        "isApp": "这是应用包，请用「导入应用」一次审阅它的全部插件。"
+        "isPlugin": "这是插件包，请用「导入插件」一次审阅它的全部扩展。"
       },
       "detail": {
         "tabsLabel": "条目详情",
@@ -2348,11 +2366,11 @@
         "policyHint": "允许：组织管理员可直接安装；需审批：组织管理员提交后由企业管理员批准；禁用：不能新装，已安装的不受影响。",
         "policySaved": "策略已改为「{policy}」",
         "deployTitle": "装到部署",
-        "deployHint": "把插件的某个版本装到部署上（新装为停用，权限仍需在插件后台批准）。装好后组织才能启用它。",
+        "deployHint": "把扩展的某个版本装到部署上（新装为停用，权限仍需在扩展后台批准）。装好后组织才能启用它。",
         "deployVersion": "版本",
         "deploy": "装到部署",
         "deployed": "已装到部署：{name}",
-        "openPlugin": "去插件后台",
+        "openExtension": "去扩展后台",
         "delete": "删除条目",
         "deleteConfirm": {
           "title": "删除条目 {name}",
@@ -2369,21 +2387,21 @@
         }
       },
       "review": {
-        "title": "导入应用",
+        "title": "导入插件",
         "steps": {
-          "source": "选择应用包",
+          "source": "选择插件包",
           "review": "审阅",
           "confirm": "确认"
         },
         "sourceLabel": "来源",
-        "sourceFile": "上传应用包（.tgz）",
+        "sourceFile": "上传插件包（.tgz）",
         "sourceNpm": "npm 包",
         "fetch": "读取并审阅",
-        "loadingCatalog": "正在从清单下载并校验应用包…",
-        "app": "{name} {version}",
+        "loadingMarketplace": "正在从市场下载并校验插件包…",
+        "plugin": "{name} {version}",
         "publisher": "发布者：{publisher}",
-        "plugins": "插件",
-        "pluginsHint": "应用里每个插件的权限，确认时一次批准。敏感项已高亮。",
+        "extensions": "扩展",
+        "extensionsHint": "插件里每个扩展的权限，确认时一次批准。敏感项已高亮。",
         "action": {
           "install": "安装 {version}",
           "upgrade": "升级 {from} → {to}",
@@ -2395,30 +2413,30 @@
         "endpoint": "端点",
         "editable": "组织可改：{paths}",
         "auth": "认证方式：{type}",
-        "unchecked": "连接器插件没有在本副本加载，端点还没按它的 schema 校验。",
+        "unchecked": "连接器扩展没有在本副本加载，端点还没按它的 schema 校验。",
         "skills": "技能",
         "skillsEmpty": "没有技能。",
         "skillFiles": "{n} 个文件",
-        "mismatch": "清单列出的权限摘要与下载的包不一致（以包为准）。",
-        "mismatchMissing": "清单没列出：{keys}",
-        "mismatchExtra": "清单列了但包没有要：{keys}",
-        "deployPlugins": "同时把插件装到部署",
-        "deployOn": "确认后把要安装 / 升级的插件装到部署并启用。",
-        "deployOff": "不勾选时，这些插件只记为目录条目，不会安装到部署；在企业管理员把它们装到部署之前，组织无法使用它们。",
-        "ackHint": "应用里有敏感权限或迁移警告，确认前请逐项看过。",
+        "mismatch": "市场列出的权限摘要与下载的包不一致（以包为准）。",
+        "mismatchMissing": "市场没列出：{keys}",
+        "mismatchExtra": "市场列了但包没有要：{keys}",
+        "deployExtensions": "同时把扩展装到部署",
+        "deployOn": "确认后把要安装 / 升级的扩展装到部署并启用。",
+        "deployOff": "不勾选时，这些扩展只记为企业目录条目，不会安装到部署；在企业管理员把它们装到部署之前，组织无法使用它们。",
+        "ackHint": "插件里有敏感权限或迁移警告，确认前请逐项看过。",
         "ack": "我已了解敏感项",
         "confirm": "确认导入",
-        "done": "已导入应用 {name}",
+        "done": "已导入插件 {name}",
         "deployResult": "部署结果",
         "deployEnabled": "{name} {version}：已安装并启用",
-        "deployFailed": "{name} {version}：失败（{code}），可在插件后台重试",
+        "deployFailed": "{name} {version}：失败（{code}），可在扩展后台重试",
         "openItem": "查看条目",
-        "stale": "审阅已过期（部署上的插件有变化），请重新读取应用包。"
+        "stale": "审阅已过期（部署上的扩展有变化），请重新读取插件包。"
       },
-      "catalog": {
-        "title": "浏览清单",
-        "hint": "清单条目要先「引入」才会成为目录条目；引入时下载并按清单的 sha512 校验。",
-        "empty": "没有清单条目。先在「目录来源」里添加或刷新清单。",
+      "entries": {
+        "title": "浏览市场",
+        "hint": "市场条目要先「引入」才会成为企业目录条目；引入时下载并按市场的 sha512 校验。",
+        "empty": "没有市场条目。先在「市场」里添加或刷新市场。",
         "noResults": "没有符合条件的条目。",
         "truncated": "条目太多，只显示了前一部分；请按来源、种类或关键词缩小范围。",
         "search": "搜索",
@@ -2442,13 +2460,13 @@
         "importVersion": "引入 {version}",
         "noCompatible": "没有兼容的版本",
         "imported": "已引入 {name} {version}",
-        "mismatch": "{name}：清单列出的权限摘要与下载的包不一致（以包为准）。"
+        "mismatch": "{name}：市场列出的权限摘要与下载的包不一致（以包为准）。"
       },
-      "sources": {
-        "title": "目录来源",
-        "official": "官方清单",
+      "marketplaces": {
+        "title": "市场",
+        "official": "官方市场",
         "officialHint": "地址在部署配置 marketplaces.official.* 里设置，这里只读。",
-        "offline": "离线模式：官方清单尚未上线，部署配置默认关闭它（marketplaces.official.enabled = false）。",
+        "offline": "离线模式：官方市场尚未上线，部署配置默认关闭它（marketplaces.official.enabled = false）。",
         "enabled": "启用",
         "url": "地址",
         "mirrors": "镜像",
@@ -2460,9 +2478,9 @@
         },
         "refresh": "立即刷新",
         "refreshed": "已刷新 {name}",
-        "enterprise": "企业清单",
-        "enterpriseHint": "地址只认 https；令牌只发往清单地址的源。",
-        "enterpriseEmpty": "还没有企业清单。",
+        "enterprise": "企业市场",
+        "enterpriseHint": "地址只认 https；令牌只发往市场地址的源。",
+        "enterpriseEmpty": "还没有企业市场。",
         "name": "名称",
         "token": "令牌",
         "tokenHelp": "可选；留空不改。",
@@ -2472,12 +2490,12 @@
         "saved": "已保存 {name}",
         "remove": "删除",
         "removeConfirm": {
-          "title": "删除清单 {name}",
-          "hint": "它的条目缓存随之删除，已引入的目录条目保留。",
+          "title": "删除市场 {name}",
+          "hint": "它的条目缓存随之删除，已引入的企业目录条目保留。",
           "confirm": "删除"
         },
         "removed": "已删除 {name}",
-        "add": "添加企业清单",
+        "add": "添加企业市场",
         "added": "已添加 {name}"
       },
       "requests": {
@@ -2508,9 +2526,9 @@
       }
     },
     "org": {
-      "title": "目录",
-      "hint": "企业管理员提供的插件、连接器模板、技能与应用。",
-      "empty": "目录里还没有可用的条目。",
+      "title": "企业目录",
+      "hint": "企业管理员提供的扩展、连接器模板、技能与插件。",
+      "empty": "企业目录里还没有可用的条目。",
       "noResults": "没有符合筛选条件的条目。",
       "columns": {
         "name": "名称",
@@ -2528,7 +2546,7 @@
         "granted": "已获批准",
         "needs_approval": "需企业管理员批准",
         "disabled": "已禁用",
-        "not_deployed": "插件尚未部署",
+        "not_deployed": "扩展尚未部署",
         "requested": "已申请，等待处理"
       },
       "action": {
@@ -2536,7 +2554,7 @@
         "requestApproval": "申请企业管理员批准",
         "request": "申请安装",
         "disabledHint": "企业管理员禁用了这个条目，不能新装。",
-        "notDeployedHint": "它依赖的插件还没装到部署上，请联系企业管理员。",
+        "notDeployedHint": "它依赖的扩展还没装到部署上，请联系企业管理员。",
         "pendingHint": "已提交申请（{stage}），等待处理。",
         "stage": {
           "org": "组织管理员",
@@ -2545,7 +2563,7 @@
         "installed": "已安装 {name}",
         "requested": "已提交申请",
         "approvalRequested": "需要企业管理员批准，已提交申请",
-        "openApps": "查看已安装的应用"
+        "openPlugins": "查看已安装的插件"
       },
       "detail": {
         "notFound": "条目不存在或你看不到它。",
@@ -2560,13 +2578,13 @@
           "status": "状态"
         },
         "templates": "连接器模板",
-        "plugins": "插件",
+        "extensions": "扩展",
         "skills": "技能"
       },
       "install": {
         "title": "安装 {name}",
         "connectorStep": "连接器：{name}",
-        "pluginsStep": "插件配置",
+        "extensionsStep": "扩展配置",
         "confirmStep": "确认",
         "name": "连接器名称",
         "slug": "标识（slug）",
@@ -2578,30 +2596,30 @@
         "personalHint": "这个连接器使用个人凭据：每位成员之后各自连接。",
         "noneHint": "这个连接器不需要凭据。",
         "dcrHint": "客户端会自动注册，不需要填写。",
-        "pluginsHint": "应用会在本组织启用这些插件；需要组织配置的请填写（已启用的插件不改配置）。",
-        "pluginsNone": "没有需要填写的插件配置。",
-        "pluginEnabled": "{name}：已在本组织启用，保持现有配置",
+        "extensionsHint": "插件会在本组织启用这些扩展；需要组织配置的请填写（已启用的扩展不改配置）。",
+        "extensionsNone": "没有需要填写的扩展配置。",
+        "extensionEnabled": "{name}：已在本组织启用，保持现有配置",
         "summary": "将安装：",
         "summaryTemplates": "{n} 个连接器",
-        "summaryPlugins": "{n} 个插件",
+        "summaryExtensions": "{n} 个扩展",
         "summarySkills": "{n} 个技能",
         "submit": "安装",
         "next": "下一步",
         "back": "上一步",
         "cancel": "取消",
         "failed": "安装在「{step}」一步失败（{code}），已回滚本次新建的组件。",
-        "failedNoRollback": "安装在「{step}」一步失败（{code}），回滚时有组件没能移除，可在「已安装的应用」里卸载清理。",
+        "failedNoRollback": "安装在「{step}」一步失败（{code}），回滚时有组件没能移除，可在「已安装的插件」里卸载清理。",
         "step": {
-          "plugins": "插件",
+          "plugins": "扩展",
           "connectors": "连接器",
           "skills": "技能"
         },
         "notInstallable": "这个条目现在不能安装。"
       }
     },
-    "apps": {
-      "title": "已安装的应用",
-      "empty": "本组织还没有从目录安装应用。",
+    "plugins": {
+      "title": "已安装的插件",
+      "empty": "本组织还没有从企业目录安装插件。",
       "status": {
         "installing": "安装中",
         "installed": "已安装",
@@ -2613,7 +2631,7 @@
       "created": "本次新建",
       "existing": "原有",
       "componentKind": {
-        "extension": "插件",
+        "extension": "扩展",
         "connector": "连接器",
         "skill": "技能"
       },
@@ -2634,17 +2652,17 @@
         "reason": {
           "pre_existing": "安装前就有",
           "used_by_agents": "仍有 agent 在用",
-          "used_by_other_install": "另一个应用也在用",
+          "used_by_other_install": "另一个插件也在用",
           "used_by_connectors": "仍有连接器在用",
           "used_by_plugins": "仍有插件依赖"
         },
         "dismiss": "知道了"
       },
-      "inProgress": "这个应用还在安装中，暂时不能卸载；安装中断时，超过时限后可以在这里清理。"
+      "inProgress": "这个插件还在安装中，暂时不能卸载；安装中断时，超过时限后可以在这里清理。"
     },
     "inbox": {
-      "label": "目录申请",
-      "title": "目录申请 · {name}",
+      "label": "企业目录申请",
+      "title": "企业目录申请 · {name}",
       "requester": "申请人",
       "kind": "种类",
       "version": "版本",
@@ -2652,8 +2670,8 @@
       "hint": "批准后：允许的条目可以由组织管理员安装；需审批的条目会转交企业管理员决定。",
       "approve": "批准",
       "reject": "拒绝",
-      "approved": "已批准目录申请",
-      "rejected": "已拒绝目录申请",
+      "approved": "已批准企业目录申请",
+      "rejected": "已拒绝企业目录申请",
       "openItem": "查看条目"
     }
   }

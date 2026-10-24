@@ -224,6 +224,10 @@ describe("planFromFiles: by diff", () => {
     expect(plan("docs/config.md").testDirs).toEqual(["tools/checks"]);
   });
 
+  it("web messages run the web tests and tools/checks (its error-copy test reads them)", () => {
+    expect(plan("apps/web/messages/en.json").testDirs).toEqual(["apps/web", "tools/checks"]);
+  });
+
   it("the longest package directory wins", () => {
     const nested: Workspace = { ...ws, packages: [...ws.packages, pkg("plugins/slack/sub")] };
     expect(planFromFiles(["plugins/slack/sub/x.ts"], nested).testDirs).toContain(

@@ -27,7 +27,7 @@ export function PermissionReview({
   removed?: string[];
   warnings?: PackageWarning[];
 }) {
-  const t = useTranslations("plugins");
+  const t = useTranslations("extensions");
   const label = (category: string) =>
     t.has(`category.${category}`) ? t(`category.${category}`) : category;
   const reasonText = (item: PermissionItem): string | null => {

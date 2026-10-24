@@ -6,10 +6,10 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { EmbedTab } from "../../../../../../components/chat-panel/EmbedTab";
 import {
-  PluginViewTab,
-  usePluginViews,
+  ExtensionViewTab,
+  useExtensionViews,
   useUiAction,
-} from "../../../../../../components/chat-panel/PluginViewTab";
+} from "../../../../../../components/chat-panel/ExtensionViewTab";
 import { FormError } from "../../../../../../components/form-error";
 import { OrgGate } from "../../../../../../components/OrgGate";
 import { ApiClientError } from "../../../../../../lib/api";
@@ -65,7 +65,7 @@ function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string;
     });
   }, [orgId, plugin, id, isView, bump]);
 
-  const views = usePluginViews(orgId, targets, { locale, versions });
+  const views = useExtensionViews(orgId, targets, { locale, versions });
   const runAction = useUiAction(orgId, { locale, onView: views.setView });
   const key = uiKey(plugin, id);
   const title = contribution?.title[locale] ?? id;
@@ -90,7 +90,7 @@ function PluginPageInOrg({ orgId, plugin, id }: { orgId: string; plugin: string;
   } else if (!isView) body = <Text tone="muted">{t("errors.ui.not_found")}</Text>;
   else {
     body = (
-      <PluginViewTab
+      <ExtensionViewTab
         state={views.states[key]}
         onRetry={() => views.retry(key)}
         onAction={runAction({ plugin, id })}

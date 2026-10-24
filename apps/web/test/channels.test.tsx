@@ -233,11 +233,11 @@ describe("新建渠道连接（FormPage）", () => {
       [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
     });
     renderPage(<NewChannelPage />);
-    expect(await screen.findByText(en.channels.form.noPlugins)).toBeTruthy();
+    expect(await screen.findByText(en.channels.form.noExtensions)).toBeTruthy();
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: en.channels.form.openPlugins }));
-    expect(router.push).toHaveBeenCalledWith("/settings/plugins");
+      .click(screen.getByRole("button", { name: en.channels.form.openExtensions }));
+    expect(router.push).toHaveBeenCalledWith("/settings/extensions");
   });
 });
 

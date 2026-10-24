@@ -86,7 +86,8 @@
       "session_revoked": "Your session is no longer valid. Please sign in again.",
       "refresh_invalid": "Your session is no longer valid. Please sign in again.",
       "refresh_race": "Your session was just updated. Please try again.",
-      "csrf": "The request was rejected. Refresh the page and try again."
+      "csrf": "The request was rejected. Refresh the page and try again.",
+      "session_required": "This action needs a signed-in web session."
     },
     "account": {
       "login_taken": "This username is already taken.",
@@ -97,7 +98,9 @@
       "not_found": "The organization does not exist or you are no longer a member.",
       "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network.",
       "last_owner": "An organization must keep at least one owner.",
-      "owner_required": "Only an owner can do this."
+      "owner_required": "Only an owner can do this.",
+      "creation_disabled": "Creating organizations is turned off on this deployment.",
+      "slug_taken": "This slug is already used by another organization."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -120,8 +123,8 @@
       "provider_unavailable": "The model provider list is temporarily unavailable.",
       "provider_error": "The model provider returned an error.",
       "storage_unavailable": "Attachment storage is temporarily unavailable.",
-      "hook_denied": "The request was blocked by the policy of the \"{plugin}\" plugin.",
-      "hook_denied_unknown": "The request was blocked by a plugin policy."
+      "hook_denied": "The request was blocked by the policy of the \"{plugin}\" extension.",
+      "hook_denied_unknown": "The request was blocked by an extension policy."
     },
     "connector": {
       "not_found": "The connector does not exist or has been removed.",
@@ -143,55 +146,57 @@
       "missing": "A credential is required for this connector."
     },
     "extension": {
-      "not_found": "The plugin is not installed.",
-      "not_enabled": "The plugin is not enabled for this organization. Enable it under Settings → Plugins.",
+      "not_found": "The extension is not installed.",
+      "not_enabled": "The extension is not enabled for this organization. Enable it under Settings → Extensions.",
       "config_invalid": "The config is invalid:",
-      "no_org_config": "This plugin has no organization config.",
-      "dependency_missing": "Enable the plugins it depends on first.",
-      "has_dependents": "Other enabled plugins depend on this plugin.",
+      "no_org_config": "This extension has no organization config.",
+      "dependency_missing": "Enable the extensions it depends on first.",
+      "has_dependents": "Other enabled extensions depend on this extension.",
       "config_readonly": "This field comes from the startup config and is read-only.",
-      "config_declared": "A plugin with this name is declared in the startup config and cannot be installed here.",
-      "builtin": "This is a built-in plugin; that action is not available.",
-      "name_conflict": "This plugin name belonged to another npm package and cannot be taken over by a different one.",
+      "config_declared": "An extension with this name is declared in the startup config and cannot be installed here.",
+      "builtin": "This is a built-in extension; that action is not available.",
+      "name_conflict": "This extension name belonged to another npm package and cannot be taken over by a different one.",
       "approval_stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
-      "not_pending": "This plugin does not need approval.",
-      "package_unavailable": "The plugin package cannot be read (it may be corrupt or over the size limit).",
-      "package_not_found": "The plugin package no longer exists. Upload it again.",
-      "name_mismatch": "The plugin name in the package does not match.",
+      "not_pending": "This extension does not need approval.",
+      "package_unavailable": "The extension package cannot be read (it may be corrupt or over the size limit).",
+      "package_not_found": "The extension package no longer exists. Upload it again.",
+      "name_mismatch": "The extension name in the package does not match.",
       "downgrade_unsupported": "Cannot downgrade to this version: it has migrations that were never run.",
-      "not_disabled": "Disable the plugin before uninstalling it.",
-      "package_invalid": "The plugin package is invalid:",
-      "package_too_large": "The plugin package is over the size limit.",
-      "unavailable": "The plugin is unavailable right now."
+      "not_disabled": "Disable the extension before uninstalling it.",
+      "package_invalid": "The extension package is invalid:",
+      "package_too_large": "The extension package is over the size limit.",
+      "unavailable": "The extension is unavailable right now."
     },
     "catalog": {
       "invalid_package": "The package is invalid.",
       "version_exists": "This version has already been imported.",
       "item_not_found": "The item does not exist or you cannot see it.",
-      "wrong_kind": "This action does not apply to this kind of item (use “Import app” for app packages).",
+      "wrong_kind": "This action does not apply to this kind of item (use “Import plugin” for plugin packages).",
       "name_conflict": "An item with the same name comes from a different npm package.",
-      "item_disabled": "An enterprise admin disabled this directory item (or a plugin it contains), so it cannot be newly installed or enabled.",
-      "approval_required": "A directory item that brought this in needs enterprise admin approval before this organization can install or enable it.",
+      "item_disabled": "An enterprise admin disabled this catalog item (or an extension it contains), so it cannot be newly installed or enabled.",
+      "approval_required": "A catalog item that brought this in needs enterprise admin approval before this organization can install or enable it.",
       "request_not_found": "The request does not exist or was already handled.",
       "request_decided": "This request has already been decided.",
-      "custom_disabled": "Enterprise admins turned off custom creation; install from the directory instead.",
-      "not_deployed": "A plugin it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
+      "custom_disabled": "Enterprise admins turned off custom creation; install from the catalog instead.",
+      "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
       "icon_not_found": "No icon."
     },
     "directory": {
-      "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first."
+      "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
     },
     "ui": {
-      "not_found": "This panel is not available. The plugin may be disabled or you cannot access this conversation.",
-      "render_failed": "The plugin failed to load this panel. Try again.",
-      "action_failed": "The plugin failed to perform this action. Try again.",
-      "invalid_view": "The plugin returned content that cannot be displayed. Try again later.",
-      "timeout": "The plugin did not respond in time. Try again."
+      "not_found": "This panel is not available. The extension may be disabled or you cannot access this conversation.",
+      "render_failed": "The extension failed to load this panel. Try again.",
+      "action_failed": "The extension failed to perform this action. Try again.",
+      "invalid_view": "The extension returned content that cannot be displayed. Try again later.",
+      "timeout": "The extension did not respond in time. Try again."
     },
     "channel": {
       "not_found": "The channel does not exist or has been deleted.",
       "verify_failed": "The platform rejected the bot credentials. Check them and try again.",
-      "webhook_unavailable": "Webhooks are not available for this channel: the plugin does not support them or the deployment has no webhook address."
+      "webhook_unavailable": "Webhooks are not available for this channel: the extension does not support them or the deployment has no webhook address.",
+      "webhook_not_found": "No webhook is registered at this address.",
+      "webhook_retry": "The event could not be accepted; retry later."
     },
     "identity": {
       "taken": "This IM account is already linked to another Capybara account.",
@@ -274,26 +279,39 @@
       "used": "This invitation has already been used."
     },
     "marketplace": {
-      "not_found": "The catalog source does not exist.",
-      "entry_not_found": "The catalog entry or version does not exist (the source may be disabled).",
-      "fetch_failed": "Fetching the catalog failed; the previous entries are kept.",
-      "invalid": "The catalog is invalid; the previous entries are kept.",
-      "integrity_mismatch": "The downloaded package does not match the catalog's sha512 and was rejected. It may have been tampered with; contact the catalog maintainer.",
+      "not_found": "The marketplace does not exist.",
+      "entry_not_found": "The marketplace entry or version does not exist (the marketplace may be disabled).",
+      "fetch_failed": "Fetching the marketplace failed; the previous entries are kept.",
+      "invalid": "The marketplace is invalid; the previous entries are kept.",
+      "integrity_mismatch": "The downloaded package does not match the marketplace's sha512 and was rejected. It may have been tampered with; contact the marketplace maintainer.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
-      "package_mismatch": "The downloaded package does not match the catalog entry.",
-      "builtin": "The official catalog comes from the deployment config; it can only be enabled or disabled here."
+      "package_mismatch": "The downloaded package does not match the marketplace entry.",
+      "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here."
     },
     "plugin": {
-      "invalid_manifest": "The app manifest (app.yaml) is invalid.",
-      "lock_mismatch": "A plugin package locked by the app does not match the download (sha512 mismatch) and was rejected. It may have been tampered with.",
-      "review_stale": "The review is out of date (plugins on the deployment changed). Fetch the app package again.",
-      "staging_not_found": "The staged app package has expired. Fetch it again.",
-      "extension_conflict": "The app needs a plugin version that conflicts with a built-in or config-declared plugin.",
-      "bundle_too_large": "The app package is too large.",
+      "invalid_manifest": "The plugin manifest (app.yaml) is invalid.",
+      "lock_mismatch": "An extension package locked by the plugin does not match the download (sha512 mismatch) and was rejected. It may have been tampered with.",
+      "review_stale": "The review is out of date (extensions on the deployment changed). Fetch the plugin package again.",
+      "staging_not_found": "The staged plugin package has expired. Fetch it again.",
+      "extension_conflict": "The plugin needs an extension version that conflicts with a built-in or config-declared extension.",
+      "bundle_too_large": "The plugin package is too large.",
       "install_failed": "Installing failed; the components it created were rolled back.",
       "install_not_found": "The install does not exist.",
-      "already_installed": "This app is already installed in this organization. Uninstall it before installing again.",
-      "install_in_progress": "This app is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up after the timeout."
+      "already_installed": "This plugin is already installed in this organization. Uninstall it before installing again.",
+      "install_in_progress": "This plugin is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up after the timeout."
+    },
+    "internal": "Something went wrong on the server. Please try again later.",
+    "not_found": "It does not exist or has been deleted.",
+    "conflict": "This conflicts with the current state. Refresh and try again.",
+    "unsupported_media_type": "This content type is not supported.",
+    "token": {
+      "not_found": "The token does not exist or has been revoked."
+    },
+    "packages": {
+      "npm_failed": "Downloading the package from npm failed."
+    },
+    "tool_output": {
+      "not_found": "The tool output does not exist or has expired."
     }
   },
   "agents": {
@@ -318,7 +336,7 @@
         "members": "Selected members"
       },
       "submit": "Save",
-      "noModels": "No models are available. Install and configure a model provider plugin first.",
+      "noModels": "No models are available. Install and configure a model provider extension first.",
       "warningsTitle": "Saved, but please note:",
       "continue": "Continue",
       "modelParamsTitle": "Model parameters",
@@ -499,9 +517,9 @@
     "fileTypeNotAllowed": "This file type is not supported. Supported: {types}."
   },
   "ui": {
-    "dangerDescription": "The plugin performs this action. It may not be reversible.",
-    "embedRefreshFailed": "Could not renew the plugin page's credentials. Retrying; the page may not load or save data for now.",
-    "embedRemountLimit": "The plugin page kept navigating away after loading, so it was stopped. Retry, or contact the plugin provider."
+    "dangerDescription": "The extension performs this action. It may not be reversible.",
+    "embedRefreshFailed": "Could not renew the extension page's credentials. Retrying; the page may not load or save data for now.",
+    "embedRemountLimit": "The extension page kept navigating away after loading, so it was stopped. Retry, or contact the extension provider."
   },
   "chatPanel": {
     "label": "Conversation panel",
@@ -521,7 +539,7 @@
     "compactions": "Compactions",
     "compactionCovers": "Compacted up to event #{seq}",
     "loadingOutput": "Loading full output…",
-    "contributionsFailed": "Couldn't load plugin panels; plugin tabs are unavailable.",
+    "contributionsFailed": "Couldn't load extension panels; extension tabs are unavailable.",
     "artifacts": "Artifacts",
     "artifactType": "Type",
     "artifactSize": "Size",
@@ -550,7 +568,7 @@
     "skills": "Skills",
     "evals": "Evals",
     "admin": "Admin",
-    "directory": "Directory"
+    "catalog": "Catalog"
   },
   "shell": {
     "switchLocale": "Switch to {name}",
@@ -954,10 +972,10 @@
       "grants": "Remembered approvals",
       "organization": "Organization",
       "identities": "IM identities",
-      "plugins": "Plugins",
+      "extensions": "Extensions",
       "models": "Model purposes",
       "members": "Members",
-      "apps": "Installed apps"
+      "plugins": "Installed plugins"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -1071,7 +1089,7 @@
     "emptyHint": "Connect an IM bot (such as Slack or Lark) to an agent so people can chat with it in IM.",
     "columns": {
       "name": "Name",
-      "plugin": "Plugin",
+      "plugin": "Extension",
       "agent": "Agent",
       "policy": "Unlinked users",
       "status": "Status"
@@ -1092,16 +1110,16 @@
     "form": {
       "title": "New channel",
       "pluginSection": "Platform",
-      "pluginHint": "Channel plugins enabled for this organization.",
-      "pluginLabel": "Plugin",
-      "pluginPlaceholder": "Choose a plugin",
-      "noPlugins": "No channel plugin is enabled for this organization.",
-      "openPlugins": "Open plugins",
+      "pluginHint": "Channel extensions enabled for this organization.",
+      "pluginLabel": "Extension",
+      "pluginPlaceholder": "Choose an extension",
+      "noExtensions": "No channel extension is enabled for this organization.",
+      "openExtensions": "Open extensions",
       "nameLabel": "Name",
       "nameRequired": "Enter a name",
       "configSection": "Bot credentials",
-      "configHint": "Fields come from the plugin. The credentials are verified with the platform when you save.",
-      "pickPluginFirst": "Choose a plugin first.",
+      "configHint": "Fields come from the extension. The credentials are verified with the platform when you save.",
+      "pickPluginFirst": "Choose an extension first.",
       "agentSection": "Agent",
       "agentSectionHint": "The agent that answers messages sent to this bot.",
       "agentLabel": "Agent",
@@ -1114,7 +1132,7 @@
       "submit": "Create channel"
     },
     "inspector": {
-      "plugin": "Plugin",
+      "plugin": "Extension",
       "tenant": "Tenant",
       "bot": "Bot",
       "agent": "Agent",
@@ -1141,7 +1159,7 @@
       "disabledToast": "Channel disabled.",
       "credentialsTitle": "Credentials and config",
       "credentialsHint": "Secrets you leave alone are kept. Replace a secret to rotate it; the new credentials are verified with the platform before they are saved.",
-      "schemaUnavailable": "The channel plugin is not available, so its config cannot be edited. Check that the plugin is installed and enabled.",
+      "schemaUnavailable": "The channel extension is not available, so its config cannot be edited. Check that the extension is installed and enabled.",
       "saveCredentials": "Save credentials",
       "credentialsSaved": "Credentials saved.",
       "settingsTitle": "Settings",
@@ -1154,7 +1172,7 @@
       "inboundTitle": "Inbound mode",
       "inboundHint": "How the bot receives messages. A long connection works from an internal network; webhooks need the platform to reach this deployment over a public address.",
       "inboundLabel": "Inbound mode",
-      "inboundUnsupported": "This channel plugin only supports long connections.",
+      "inboundUnsupported": "This channel extension only supports long connections.",
       "inboundNoBaseUrl": "Webhooks are not available: the deployment has no public webhook address (channels.webhookBaseUrl).",
       "callbackUrl": "Callback URL",
       "callbackUrlHint": "Register this address as the event / request URL in the platform's app settings.",
@@ -1171,19 +1189,19 @@
       "webhook": "The platform calls this deployment for every event; needs a public address."
     }
   },
-  "plugins": {
-    "title": "Plugins",
-    "empty": "No plugins are installed.",
+  "extensions": {
+    "title": "Extensions",
+    "empty": "No extensions are installed.",
     "version": "Version {version}",
     "enableLabel": "Enable {plugin}",
     "enabled": "Enabled for this organization",
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
-    "unavailableHint": "This plugin is currently unavailable on this deployment. The organization setting is kept.",
+    "unavailableHint": "This extension is currently unavailable on this deployment. The organization setting is kept.",
     "enabledToast": "{plugin} enabled.",
     "disabledToast": "{plugin} disabled.",
-    "dependencyMissing": "Enable a plugin that provides these capabilities first:",
-    "hasDependents": "These enabled plugins depend on it and will stop working:",
+    "dependencyMissing": "Enable an extension that provides these extension points first:",
+    "hasDependents": "These enabled extensions depend on it and will stop working:",
     "forceDisable": "Disable anyway",
     "permissions": "Permissions",
     "permissionsLabel": "Permissions of {plugin}",
@@ -1202,7 +1220,7 @@
       "hooks": "Hooks",
       "models": "Models",
       "network": "Network access",
-      "ui": "Interface (views / embedded apps)"
+      "ui": "Interface (views / embeds)"
     },
     "configTitle": "Organization config",
     "save": "Save config",
@@ -1222,24 +1240,24 @@
         "public_routes": "these routes are reachable without signing in",
         "tools": "agents in organizations can call these tools",
         "hooks": "can hook into kernel flows",
-        "ui_embed": "embeds the plugin's own pages in the web app",
+        "ui_embed": "embeds the extension's own pages in the web app",
         "channel": "receives the organization's IM conversations",
         "directory": "can add people to organizations and create their accounts",
         "identity_source": "decides who can sign in as which account",
         "sandbox": "runs arbitrary commands in the deployment",
-        "object_store": "holds every attachment and plugin package",
+        "object_store": "holds every attachment and extension package",
         "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again"
       },
       "warnings": "Migration warnings",
-      "warningsHint": "Plugin migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
+      "warningsHint": "Extension migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
       "warning": {
         "destructive_migration": "Destructive statement",
         "dynamic_sql": "DO block (contents not checked)",
-        "foreign_schema": "Statement outside the plugin's own schema (kernel tables, grants / roles, functions / triggers or transaction control)"
+        "foreign_schema": "Statement outside the extension's own schema (kernel tables, grants / roles, functions / triggers or transaction control)"
       },
       "at": "{file} line {line}"
     },
-    "openDirectory": "Open the enterprise directory to view or request it"
+    "openCatalog": "Open the catalog to view or request it"
   },
   "identities": {
     "title": "IM identities",
@@ -1410,7 +1428,7 @@
       },
       "hook": {
         "title": "Blocked by a policy hook",
-        "plugin": "Plugin",
+        "plugin": "Extension",
         "cause": "Cause",
         "causes": {
           "deny": "Denied",
@@ -1735,7 +1753,7 @@
         "description": "Installed model providers and their models. Prices are per million tokens in {currency} (change it in Deployment settings); costs in trajectories and evals are estimated from these prices."
       },
       "providerError": "Provider {provider} failed to list its models. Other providers are not affected.",
-      "noProviders": "No model providers yet. Install a model provider plugin and it will show up here.",
+      "noProviders": "No model providers yet. Install a model provider extension and it will show up here.",
       "noModels": "This provider has no models.",
       "columns": {
         "model": "Model",
@@ -1766,12 +1784,12 @@
       },
       "purposes": {
         "title": "Default model per purpose",
-        "description": "The kernel and plugins pick models by purpose. Set the deployment default here; org admins can override it in their org settings. There is no model allowlist."
+        "description": "The kernel and extensions pick models by purpose. Set the deployment default here; org admins can override it in their org settings. There is no model allowlist."
       }
     },
     "org": {
       "title": "Model purposes",
-      "description": "The kernel and plugins pick models by purpose. Each purpose uses the deployment default set by the enterprise admins; you can override it for this org or restore the default."
+      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the enterprise admins; you can override it for this org or restore the default."
     },
     "evalUnmapped": "The eval purpose has no model mapped, so evals cannot use a judge.",
     "capability": {
@@ -1783,8 +1801,8 @@
     },
     "purpose": {
       "declaredByKernel": "Kernel purpose",
-      "declaredByPlugin": "Plugin {plugin}",
-      "pluginNote": "Plugins cannot call models yet. You can configure this in advance.",
+      "declaredByPlugin": "Extension {plugin}",
+      "pluginNote": "Extensions cannot call models yet. You can configure this in advance.",
       "model": "Model",
       "modelInvalid": "The selected model is not available.",
       "unset": "Not set",
@@ -1811,19 +1829,19 @@
       "accounts": "Accounts",
       "orgs": "Organizations",
       "settings": "Deployment settings",
-      "plugins": "Plugins",
+      "extensions": "Extensions",
       "models": "Models",
-      "directory": "Directory"
+      "catalog": "Catalog"
     },
     "forbidden": {
       "title": "Enterprise admin required",
       "hint": "Only enterprise admins can open the admin console. Ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
     },
     "overview": {
-      "intro": "Enterprise admins manage the whole deployment here: accounts, organizations, plugins and deployment settings. Each organization's own settings stay under its Settings. Enterprise admins cannot read conversations.",
+      "intro": "Enterprise admins manage the whole deployment here: accounts, organizations, extensions and deployment settings. Each organization's own settings stay under its Settings. Enterprise admins cannot read conversations.",
       "metrics": {
-        "plugins": "Plugins needing action",
-        "directoryRequests": "Pending directory requests",
+        "extensions": "Extensions needing action",
+        "catalogRequests": "Pending catalog requests",
         "orgs": "Organizations",
         "accounts": "Accounts"
       },
@@ -1842,10 +1860,10 @@
         "hint": "Who can create organizations, the price currency, and whether organizations may add their own connectors and skills.",
         "open": "Open deployment settings"
       },
-      "plugins": {
-        "title": "Plugins",
-        "hint": "Install, approve, enable, disable and upgrade plugins; fill in deployment config.",
-        "open": "Manage plugins"
+      "extensions": {
+        "title": "Extensions",
+        "hint": "Install, approve, enable, disable and upgrade extensions; fill in deployment config.",
+        "open": "Manage extensions"
       },
       "models": {
         "title": "Models",
@@ -1877,7 +1895,7 @@
       },
       "confirm": {
         "grantTitle": "Make {name} an enterprise admin?",
-        "grantHint": "Enterprise admins manage the whole deployment: accounts, organizations, plugins and deployment settings.",
+        "grantHint": "Enterprise admins manage the whole deployment: accounts, organizations, extensions and deployment settings.",
         "grant": "Grant",
         "revokeTitle": "Revoke enterprise admin from {name}?",
         "revokeHint": "The account will no longer be able to open the admin console. The last enterprise admin cannot be revoked.",
@@ -1961,23 +1979,23 @@
       },
       "customConnectors": {
         "title": "Custom connectors",
-        "description": "Whether organizations may add connectors themselves, outside the enterprise directory.",
-        "allowHint": "Organization admins can add connectors themselves or install them from the enterprise directory.",
-        "denyHint": "Organizations can only install connectors from the enterprise directory."
+        "description": "Whether organizations may add connectors themselves, outside the catalog.",
+        "allowHint": "Organization admins can add connectors themselves or install them from the catalog.",
+        "denyHint": "Organizations can only install connectors from the catalog."
       },
       "customSkills": {
         "title": "Custom skills",
-        "description": "Whether organizations may create or import skills themselves, outside the enterprise directory.",
-        "allowHint": "Organizations can create and import skills themselves or install them from the enterprise directory.",
-        "denyHint": "Organizations can only install skills from the enterprise directory."
+        "description": "Whether organizations may create or import skills themselves, outside the catalog.",
+        "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
+        "denyHint": "Organizations can only install skills from the catalog."
       }
     },
-    "plugins": {
-      "title": "Plugins",
-      "install": "Install plugin",
-      "hint": "Every plugin on this deployment. Installing, enabling, disabling and upgrading need no restart: replicas converge within seconds of a change.",
-      "empty": "No plugins yet",
-      "noResults": "No plugins match the filters",
+    "extensions": {
+      "title": "Extensions",
+      "install": "Install extension",
+      "hint": "Every extension on this deployment. Installing, enabling, disabling and upgrading need no restart: replicas converge within seconds of a change.",
+      "empty": "No extensions yet",
+      "noResults": "No extensions match the filters",
       "sensitive": "Sensitive",
       "columns": {
         "name": "Name",
@@ -2014,13 +2032,13 @@
         "none": "No replica reported"
       },
       "detail": {
-        "tabsLabel": "Plugin details",
+        "tabsLabel": "Extension details",
         "tabs": {
           "overview": "Overview",
           "permissions": "Permissions",
           "config": "Config"
         },
-        "notFound": "The plugin does not exist or has been uninstalled.",
+        "notFound": "The extension does not exist or has been uninstalled.",
         "fields": {
           "source": "Source",
           "version": "Version",
@@ -2052,35 +2070,35 @@
           "config": "Deployment config missing or invalid",
           "approval": "Permissions awaiting approval",
           "migration": "Another replica is running the migrations",
-          "dependency": "A required capability has no available provider",
-          "sync_failed": "Could not sync the plugin package",
+          "dependency": "A required extension point has no available provider",
+          "sync_failed": "Could not sync the extension package",
           "sha_mismatch": "Package contents do not match the recorded sha256",
-          "import_failed": "Could not import the plugin module",
-          "manifest_mismatch": "Plugin module does not match the reviewed manifest",
-          "setup_failed": "Plugin setup failed",
-          "migration_failed": "Plugin migration failed"
+          "import_failed": "Could not import the extension module",
+          "manifest_mismatch": "Extension module does not match the reviewed manifest",
+          "setup_failed": "Extension setup failed",
+          "migration_failed": "Extension migration failed"
         },
         "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
         "refresh": "Refresh",
         "noReplicas": "No replica has reported yet.",
-        "builtinNote": "Built-in plugins ship with the core image and are always enabled: they cannot be disabled, upgraded or uninstalled. Only their deployment config needs filling in.",
-        "configNote": "This plugin is declared in the startup config's extensions list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
+        "builtinNote": "Built-in extensions ship with the core image and are always enabled: they cannot be disabled, upgraded or uninstalled. Only their deployment config needs filling in.",
+        "configNote": "This extension is declared in the startup config's extensions list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
         "actions": {
           "enable": "Enable",
           "disable": "Disable",
           "upgrade": "Upgrade",
           "uninstall": "Uninstall"
         },
-        "uninstallNeedsDisable": "Disable the plugin before uninstalling it.",
+        "uninstallNeedsDisable": "Disable the extension before uninstalling it.",
         "drainHint": "In-flight tool calls get up to {seconds} seconds to finish before they are aborted.",
         "disableConfirm": {
           "title": "Disable “{name}”?",
-          "hint": "Every replica unloads the plugin; agents in organizations can no longer use its tools.",
+          "hint": "Every replica unloads the extension; agents in organizations can no longer use its tools.",
           "confirm": "Disable"
         },
         "uninstallConfirm": {
           "title": "Uninstall “{name}”",
-          "hint": "Uninstalling removes the plugin from the deployment. Its data, secrets and organization config are kept, so reinstalling the same package picks them up again.",
+          "hint": "Uninstalling removes the extension from the deployment. Its data, secrets and organization config are kept, so reinstalling the same package picks them up again.",
           "confirm": "Uninstall"
         },
         "done": {
@@ -2088,14 +2106,14 @@
           "disable": "Disable submitted; replicas are converging.",
           "uninstall": "Uninstalled “{name}”."
         },
-        "packageError": "The plugin package cannot be read: {error}"
+        "packageError": "The extension package cannot be read: {error}"
       },
       "approve": {
         "title": "Approve permissions",
-        "hint": "This version asks for more than what was approved (or was never approved). The plugin loads only after approval.",
+        "hint": "This version asks for more than what was approved (or was never approved). The extension loads only after approval.",
         "ack": "I understand the sensitive items",
         "submit": "Approve",
-        "done": "Approved; replicas are loading the plugin.",
+        "done": "Approved; replicas are loading the extension.",
         "stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
         "refresh": "Refresh and review again",
         "builtin": "Pre-approved with the core image",
@@ -2108,7 +2126,7 @@
         }
       },
       "wizard": {
-        "title": "Install plugin",
+        "title": "Install extension",
         "upgradeTitle": "Upgrade “{name}”",
         "steps": {
           "source": "Source",
@@ -2116,10 +2134,10 @@
           "confirm": "Confirm"
         },
         "sourceLabel": "Source",
-        "sourceFile": "Upload a plugin package (.tgz)",
+        "sourceFile": "Upload an extension package (.tgz)",
         "sourceNpm": "Fetch from npm",
         "choose": "Choose a .tgz file",
-        "fileHint": "A plugin package is an npm-pack tgz (the repository's pack-plugin tool builds one).",
+        "fileHint": "An extension package is an npm-pack tgz (the repository's pack-plugin tool builds one).",
         "noFile": "No file chosen yet.",
         "npmPackage": "npm package",
         "npmVersion": "Version",
@@ -2132,24 +2150,24 @@
         "cancel": "Cancel",
         "package": "{name} {version}",
         "sha": "Package sha256: {sha}",
-        "newInstall": "New plugins start disabled; they load once their permissions are approved and they are enabled.",
+        "newInstall": "New extensions start disabled; they load once their permissions are approved and they are enabled.",
         "upgradeFrom": "Upgrades from {from} to {to}.",
-        "upgradeMismatch": "This package is plugin “{got}”, not “{want}” which you are upgrading.",
-        "conflictBuiltin": "“{name}” is a built-in plugin; a plugin with the same name cannot be installed.",
-        "conflictConfig": "“{name}” is declared in the startup config; a plugin with the same name cannot be installed here.",
+        "upgradeMismatch": "This package is extension “{got}”, not “{want}” which you are upgrading.",
+        "conflictBuiltin": "“{name}” is a built-in extension; an extension with the same name cannot be installed.",
+        "conflictConfig": "“{name}” is declared in the startup config; an extension with the same name cannot be installed here.",
         "ack": "I understand the sensitive items",
-        "ackHint": "This plugin has sensitive items (highlighted). Check each one before confirming.",
+        "ackHint": "This extension has sensitive items (highlighted). Check each one before confirming.",
         "enableAfter": "Enable right after installing",
         "install": "Install",
         "done": "Installed “{name}”; replicas are converging.",
-        "failedAfterInstall": "The plugin is installed but a later step did not finish. Continue on the plugin's page.",
+        "failedAfterInstall": "The extension is installed but a later step did not finish. Continue on the extension's page.",
         "sessionExpired": "Your sign-in has expired. Sign in again, then upload."
       },
       "config": {
-        "none": "This plugin has no deployment config.",
-        "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the plugin reloads after saving (no restart).",
-        "invalid": "The config is incomplete or invalid; the plugin is waiting for config:",
-        "notValidated": "This plugin is not loaded right now: saving does not validate; it is validated when the plugin loads.",
+        "none": "This extension has no deployment config.",
+        "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the extension reloads after saving (no restart).",
+        "invalid": "The config is incomplete or invalid; the extension is waiting for config:",
+        "notValidated": "This extension is not loaded right now: saving does not validate; it is validated when the extension loads.",
         "source": {
           "env": "From an environment variable (read-only)",
           "file": "From the config file (read-only)",
@@ -2161,9 +2179,9 @@
         "secretSet": "Set",
         "secretUnset": "Not set",
         "hot": "applies immediately",
-        "reload": "plugin reloads after saving",
+        "reload": "extension reloads after saving",
         "save": "Save config",
-        "saving": "Saving; reloading the plugin can take up to about {seconds} seconds.",
+        "saving": "Saving; reloading the extension can take up to about {seconds} seconds.",
         "saved": "Config saved."
       }
     }
@@ -2259,12 +2277,12 @@
     "invalidHint": "Ask the admin who invited you to send a new invitation.",
     "goHome": "Go to Capybara"
   },
-  "directory": {
+  "catalog": {
     "kind": {
-      "plugin": "Plugin",
+      "plugin": "Extension",
       "connector-template": "Connector template",
       "skill": "Skill",
-      "app": "App"
+      "app": "Plugin"
     },
     "policy": {
       "allow": "Allowed",
@@ -2273,8 +2291,8 @@
     },
     "source": {
       "manual": "Manual import",
-      "official": "Official catalog",
-      "removed": "Removed catalog"
+      "official": "Official marketplace",
+      "removed": "Removed marketplace"
     },
     "versionSource": {
       "file": "Upload",
@@ -2284,9 +2302,9 @@
     "newer": "New version",
     "iconAlt": "{name} icon",
     "admin": {
-      "title": "Enterprise directory",
-      "hint": "Plugins, connector templates, skills and apps in the enterprise directory can be installed by organizations; the policy decides whether they can install directly.",
-      "empty": "The directory has no items yet.",
+      "title": "Catalog",
+      "hint": "Extensions, connector templates, skills and plugins in the catalog can be installed by organizations; the policy decides whether they can install directly.",
+      "empty": "The catalog has no items yet.",
       "noResults": "No items match the filters.",
       "columns": {
         "name": "Name",
@@ -2304,15 +2322,15 @@
       },
       "actions": {
         "import": "Import",
-        "importApp": "Import app",
-        "catalog": "Browse catalogs",
+        "importPlugin": "Import plugin",
+        "entries": "Browse marketplaces",
         "more": "More",
-        "sources": "Directory sources",
+        "marketplaces": "Marketplaces",
         "requests": "Deployment requests"
       },
       "import": {
-        "title": "Import to the directory",
-        "hint": "Plugins, connector templates and skills: upload an npm-pack .tgz (templates and skills may also be .zip), or enter an npm package name. Use “Import app” for apps, which reviews all their plugins at once.",
+        "title": "Import to the catalog",
+        "hint": "Extensions, connector templates and skills: upload an npm-pack .tgz (templates and skills may also be .zip), or enter an npm package name. Use “Import plugin” for plugins, which reviews all their extensions at once.",
         "sourceLabel": "Source",
         "sourceFile": "Upload a file",
         "sourceNpm": "npm package",
@@ -2323,9 +2341,9 @@
         "npmVersionHelp": "A version, dist-tag or range; empty means latest.",
         "submit": "Import",
         "cancel": "Cancel",
-        "appLink": "Import app",
+        "pluginLink": "Import plugin",
         "done": "Imported {name}",
-        "isApp": "This is an app package. Use “Import app” to review all its plugins at once."
+        "isPlugin": "This is a plugin package. Use “Import plugin” to review all its extensions at once."
       },
       "detail": {
         "tabsLabel": "Item details",
@@ -2348,11 +2366,11 @@
         "policyHint": "Allowed: organization admins install directly. Needs approval: an enterprise admin approves after the organization admin asks. Disabled: no new installs; existing installs are not affected.",
         "policySaved": "Policy changed to “{policy}”",
         "deployTitle": "Install to the deployment",
-        "deployHint": "Install a version of the plugin on the deployment (a new install starts disabled and its permissions still need approval in the plugin admin). Organizations can enable it only after that.",
+        "deployHint": "Install a version of the extension on the deployment (a new install starts disabled and its permissions still need approval in the extension admin). Organizations can enable it only after that.",
         "deployVersion": "Version",
         "deploy": "Install to deployment",
         "deployed": "Installed on the deployment: {name}",
-        "openPlugin": "Open plugin admin",
+        "openExtension": "Open extension admin",
         "delete": "Delete item",
         "deleteConfirm": {
           "title": "Delete item {name}",
@@ -2369,21 +2387,21 @@
         }
       },
       "review": {
-        "title": "Import app",
+        "title": "Import plugin",
         "steps": {
           "source": "Choose package",
           "review": "Review",
           "confirm": "Confirm"
         },
         "sourceLabel": "Source",
-        "sourceFile": "Upload app package (.tgz)",
+        "sourceFile": "Upload plugin package (.tgz)",
         "sourceNpm": "npm package",
         "fetch": "Fetch and review",
-        "loadingCatalog": "Downloading and verifying the app package from the catalog…",
-        "app": "{name} {version}",
+        "loadingMarketplace": "Downloading and verifying the plugin package from the marketplace…",
+        "plugin": "{name} {version}",
         "publisher": "Publisher: {publisher}",
-        "plugins": "Plugins",
-        "pluginsHint": "Each plugin's permissions in the app; confirming approves them all at once. Sensitive items are highlighted.",
+        "extensions": "Extensions",
+        "extensionsHint": "Each extension's permissions in the plugin; confirming approves them all at once. Sensitive items are highlighted.",
         "action": {
           "install": "Install {version}",
           "upgrade": "Upgrade {from} → {to}",
@@ -2395,30 +2413,30 @@
         "endpoint": "Endpoint",
         "editable": "Organizations can change: {paths}",
         "auth": "Authentication: {type}",
-        "unchecked": "The connector plugin is not loaded on this replica, so the endpoint has not been checked against its schema yet.",
+        "unchecked": "The connector extension is not loaded on this replica, so the endpoint has not been checked against its schema yet.",
         "skills": "Skills",
         "skillsEmpty": "No skills.",
         "skillFiles": "{n} files",
-        "mismatch": "The permission summary in the catalog does not match the downloaded package (the package is what counts).",
-        "mismatchMissing": "Not listed in the catalog: {keys}",
-        "mismatchExtra": "Listed in the catalog but not requested: {keys}",
-        "deployPlugins": "Also install the plugins to the deployment",
-        "deployOn": "After confirming, the plugins to install or upgrade are installed on the deployment and enabled.",
-        "deployOff": "If unchecked, the plugins are only recorded as directory items and are not installed. Organizations cannot use them until an enterprise admin installs them on the deployment.",
-        "ackHint": "The app has sensitive permissions or migration warnings. Review them before confirming.",
+        "mismatch": "The permission summary in the marketplace does not match the downloaded package (the package is what counts).",
+        "mismatchMissing": "Not listed in the marketplace: {keys}",
+        "mismatchExtra": "Listed in the marketplace but not requested: {keys}",
+        "deployExtensions": "Also install the extensions to the deployment",
+        "deployOn": "After confirming, the extensions to install or upgrade are installed on the deployment and enabled.",
+        "deployOff": "If unchecked, the extensions are only recorded as catalog items and are not installed. Organizations cannot use them until an enterprise admin installs them on the deployment.",
+        "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
         "ack": "I understand the sensitive items",
         "confirm": "Confirm import",
-        "done": "Imported app {name}",
+        "done": "Imported plugin {name}",
         "deployResult": "Deployment result",
         "deployEnabled": "{name} {version}: installed and enabled",
-        "deployFailed": "{name} {version}: failed ({code}); retry in the plugin admin",
+        "deployFailed": "{name} {version}: failed ({code}); retry in the extension admin",
         "openItem": "Open item",
-        "stale": "The review is out of date (plugins on the deployment changed). Fetch the app package again."
+        "stale": "The review is out of date (extensions on the deployment changed). Fetch the plugin package again."
       },
-      "catalog": {
-        "title": "Browse catalogs",
-        "hint": "Catalog entries become directory items only after you import them; the package is downloaded and checked against the catalog's sha512.",
-        "empty": "No catalog entries. Add or refresh a catalog in Directory sources first.",
+      "entries": {
+        "title": "Browse marketplaces",
+        "hint": "Marketplace entries become catalog items only after you import them; the package is downloaded and checked against the marketplace's sha512.",
+        "empty": "No marketplace entries. Add or refresh a marketplace under Marketplaces first.",
         "noResults": "No entries match.",
         "truncated": "There are too many entries and the list is truncated. Narrow it down by source, kind or keyword.",
         "search": "Search",
@@ -2442,13 +2460,13 @@
         "importVersion": "Import {version}",
         "noCompatible": "No compatible version",
         "imported": "Imported {name} {version}",
-        "mismatch": "{name}: the permission summary in the catalog does not match the downloaded package (the package is what counts)."
+        "mismatch": "{name}: the permission summary in the marketplace does not match the downloaded package (the package is what counts)."
       },
-      "sources": {
-        "title": "Directory sources",
-        "official": "Official catalog",
+      "marketplaces": {
+        "title": "Marketplaces",
+        "official": "Official marketplace",
         "officialHint": "The address is set in the deployment config marketplaces.official.* and is read-only here.",
-        "offline": "Offline mode: the official catalog is not live yet, so the deployment config keeps it off (marketplaces.official.enabled = false).",
+        "offline": "Offline mode: the official marketplace is not live yet, so the deployment config keeps it off (marketplaces.official.enabled = false).",
         "enabled": "Enabled",
         "url": "URL",
         "mirrors": "Mirrors",
@@ -2460,9 +2478,9 @@
         },
         "refresh": "Refresh now",
         "refreshed": "Refreshed {name}",
-        "enterprise": "Enterprise catalogs",
-        "enterpriseHint": "Only https addresses are accepted; the token is sent only to the catalog's own origin.",
-        "enterpriseEmpty": "No enterprise catalogs yet.",
+        "enterprise": "Enterprise marketplaces",
+        "enterpriseHint": "Only https addresses are accepted; the token is sent only to the marketplace's own origin.",
+        "enterpriseEmpty": "No enterprise marketplaces yet.",
         "name": "Name",
         "token": "Token",
         "tokenHelp": "Optional; leave empty to keep it unchanged.",
@@ -2472,12 +2490,12 @@
         "saved": "Saved {name}",
         "remove": "Remove",
         "removeConfirm": {
-          "title": "Remove catalog {name}",
-          "hint": "Its cached entries are removed; directory items already imported are kept.",
+          "title": "Remove marketplace {name}",
+          "hint": "Its cached entries are removed; catalog items already imported are kept.",
           "confirm": "Remove"
         },
         "removed": "Removed {name}",
-        "add": "Add enterprise catalog",
+        "add": "Add enterprise marketplace",
         "added": "Added {name}"
       },
       "requests": {
@@ -2508,9 +2526,9 @@
       }
     },
     "org": {
-      "title": "Directory",
-      "hint": "Plugins, connector templates, skills and apps provided by your enterprise admins.",
-      "empty": "There are no items in the directory yet.",
+      "title": "Catalog",
+      "hint": "Extensions, connector templates, skills and plugins provided by your enterprise admins.",
+      "empty": "There are no items in the catalog yet.",
       "noResults": "No items match the filters.",
       "columns": {
         "name": "Name",
@@ -2528,7 +2546,7 @@
         "granted": "Approved",
         "needs_approval": "Needs enterprise admin approval",
         "disabled": "Disabled",
-        "not_deployed": "Plugin not deployed",
+        "not_deployed": "Extension not deployed",
         "requested": "Requested, waiting"
       },
       "action": {
@@ -2536,7 +2554,7 @@
         "requestApproval": "Ask an enterprise admin",
         "request": "Request install",
         "disabledHint": "An enterprise admin disabled this item; it cannot be newly installed.",
-        "notDeployedHint": "The plugins it needs are not installed on the deployment yet. Contact an enterprise admin.",
+        "notDeployedHint": "The extensions it needs are not installed on the deployment yet. Contact an enterprise admin.",
         "pendingHint": "A request has been submitted ({stage}) and is waiting.",
         "stage": {
           "org": "organization admin",
@@ -2545,7 +2563,7 @@
         "installed": "Installed {name}",
         "requested": "Request submitted",
         "approvalRequested": "Enterprise admin approval is needed; a request was submitted",
-        "openApps": "View installed apps"
+        "openPlugins": "View installed plugins"
       },
       "detail": {
         "notFound": "The item does not exist or you cannot see it.",
@@ -2560,13 +2578,13 @@
           "status": "Status"
         },
         "templates": "Connector templates",
-        "plugins": "Plugins",
+        "extensions": "Extensions",
         "skills": "Skills"
       },
       "install": {
         "title": "Install {name}",
         "connectorStep": "Connector: {name}",
-        "pluginsStep": "Plugin settings",
+        "extensionsStep": "Extension settings",
         "confirmStep": "Confirm",
         "name": "Connector name",
         "slug": "Slug",
@@ -2578,30 +2596,30 @@
         "personalHint": "This connector uses personal credentials: each member connects later.",
         "noneHint": "This connector needs no credentials.",
         "dcrHint": "The client is registered automatically; nothing to fill in.",
-        "pluginsHint": "The app enables these plugins in this organization. Fill in the organization settings where needed (plugins already enabled keep their settings).",
-        "pluginsNone": "No plugin settings to fill in.",
-        "pluginEnabled": "{name}: already enabled in this organization; settings unchanged",
+        "extensionsHint": "The plugin enables these extensions in this organization. Fill in the organization settings where needed (extensions already enabled keep their settings).",
+        "extensionsNone": "No extension settings to fill in.",
+        "extensionEnabled": "{name}: already enabled in this organization; settings unchanged",
         "summary": "This will install:",
         "summaryTemplates": "{n} connectors",
-        "summaryPlugins": "{n} plugins",
+        "summaryExtensions": "{n} extensions",
         "summarySkills": "{n} skills",
         "submit": "Install",
         "next": "Next",
         "back": "Back",
         "cancel": "Cancel",
         "failed": "Installing failed at the “{step}” step ({code}); the components it created were rolled back.",
-        "failedNoRollback": "Installing failed at the “{step}” step ({code}) and some components could not be rolled back; uninstall it under Installed apps to clean up.",
+        "failedNoRollback": "Installing failed at the “{step}” step ({code}) and some components could not be rolled back; uninstall it under Installed plugins to clean up.",
         "step": {
-          "plugins": "plugins",
+          "plugins": "extensions",
           "connectors": "connectors",
           "skills": "skills"
         },
         "notInstallable": "This item cannot be installed right now."
       }
     },
-    "apps": {
-      "title": "Installed apps",
-      "empty": "This organization has not installed any apps from the directory.",
+    "plugins": {
+      "title": "Installed plugins",
+      "empty": "This organization has not installed any plugins from the catalog.",
       "status": {
         "installing": "Installing",
         "installed": "Installed",
@@ -2613,7 +2631,7 @@
       "created": "Created by this install",
       "existing": "Pre-existing",
       "componentKind": {
-        "extension": "Plugin",
+        "extension": "Extension",
         "connector": "Connector",
         "skill": "Skill"
       },
@@ -2634,17 +2652,17 @@
         "reason": {
           "pre_existing": "existed before the install",
           "used_by_agents": "still used by agents",
-          "used_by_other_install": "used by another app install",
+          "used_by_other_install": "used by another plugin install",
           "used_by_connectors": "still used by connectors",
           "used_by_plugins": "still required by plugins"
         },
         "dismiss": "Got it"
       },
-      "inProgress": "This app is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up here after the timeout."
+      "inProgress": "This plugin is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up here after the timeout."
     },
     "inbox": {
-      "label": "Directory request",
-      "title": "Directory request · {name}",
+      "label": "Catalog request",
+      "title": "Catalog request · {name}",
       "requester": "Requested by",
       "kind": "Kind",
       "version": "Version",
@@ -2652,8 +2670,8 @@
       "hint": "If approved: allowed items can be installed by an organization admin; items that need approval are forwarded to an enterprise admin.",
       "approve": "Approve",
       "reject": "Reject",
-      "approved": "Directory request approved",
-      "rejected": "Directory request rejected",
+      "approved": "Catalog request approved",
+      "rejected": "Catalog request rejected",
       "openItem": "Open item"
     }
   }

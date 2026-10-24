@@ -29,21 +29,21 @@ The visual source of truth is the `/dev/ui` catalog page and the committed scree
 | 404 / 403 / under maintenance | `StatusPage` | Single, centered |
 | New org, empty environment | `OnboardingPage` | Single, centered checklist |
 
-### Templates for the admin console, evals and the enterprise directory (ready-made M6 examples)
+### Templates for the admin console, evals and the catalog (ready-made M6 examples)
 
 | Page | Route | Template |
 |---|---|---|
 | Admin console overview | `/admin` | `OverviewPage` |
-| Accounts, orgs, plugins, enterprise directory items, catalog browsing | `/admin/accounts`, `/admin/orgs`, `/admin/plugins`, `/admin/directory`, `/admin/directory/catalog` | `ListPage` |
-| Plugin detail, directory item detail | `/admin/plugins/[name]`, `/admin/directory/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
-| Install a plugin, app bundle review | `/admin/plugins/install`, `/admin/directory/apps/review` | `WizardPage` |
-| Deployment settings, models and prices, directory sources | `/admin/settings`, `/admin/models`, `/admin/directory/sources` | `SettingsPage` |
-| Directory requests awaiting an enterprise admin decision | `/admin/directory/requests` | `InboxPage` |
+| Accounts, orgs, extensions, catalog items, marketplace entries | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/catalog`, `/admin/marketplaces/entries` | `ListPage` |
+| Extension detail, catalog item detail | `/admin/extensions/[name]`, `/admin/catalog/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
+| Install an extension, plugin review | `/admin/extensions/install`, `/admin/catalog/plugins/review` | `WizardPage` |
+| Deployment settings, models and prices, marketplaces | `/admin/settings`, `/admin/models`, `/admin/marketplaces` | `SettingsPage` |
+| Catalog requests awaiting an enterprise admin decision | `/admin/catalog/requests` | `InboxPage` |
 | Trajectory list / eval set list | `/trajectories`, `/evals` | `ListPage` |
 | Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
 | Eval set, eval run | `/evals/[setId]`, `/evals/runs/[runId]` | `DetailPage` |
 | Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
-| Org-side enterprise directory, item detail, install | `/directory`, `/directory/[itemId]`, `/directory/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
+| Org-side catalog, item detail, install | `/catalog`, `/catalog/[itemId]`, `/catalog/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
 
 - Admin console pages are wrapped whole in `components/AdminGate`: for non-enterprise-admins it shows the `StatusPage` 403 and does not request `/api/v1/admin/*` (a UI-level block; the kernel is the final authority). The UI always says "enterprise admin".
 - **`SpanWaterfall`**(spec §6.10)takes only plain props (`spans`, `selectedId`, `onSelect`, `labels`, `label`): each span's `kind` (`run` / `step` / `model` / `tool` / `wait`), `startMs` (relative to the earliest span), `durationMs` (null if unknown), `status`, `parentId`; the caller passes them in depth-first order. The page computes time and cost from the data the kernel returns (latency is derived from event times; cost is labeled "estimated").

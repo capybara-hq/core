@@ -3,9 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import PluginDetailPage from "../src/app/[locale]/(app)/admin/plugins/[name]/page";
-import PluginInstallPage from "../src/app/[locale]/(app)/admin/plugins/install/page";
-import AdminPluginsPage from "../src/app/[locale]/(app)/admin/plugins/page";
+import ExtensionDetailPage from "../src/app/[locale]/(app)/admin/extensions/[name]/page";
+import ExtensionInstallPage from "../src/app/[locale]/(app)/admin/extensions/install/page";
+import AdminExtensionsPage from "../src/app/[locale]/(app)/admin/extensions/page";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderPage } from "./support/render";
@@ -125,7 +125,7 @@ const REVIEW = {
 };
 
 beforeEach(() => {
-  resetNavigation("/admin/plugins");
+  resetNavigation("/admin/extensions");
   params.current = { name: "demo" };
 });
 afterEach(() => {
@@ -133,11 +133,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("/admin/plugins（ListPage）", () => {
+describe("/admin/extensions (ListPage)", () => {
   it.each(LOCALES)(
     "列出来源、状态、敏感与副本是否一致；Rail 按状态与来源筛选（%s）",
     async (locale) => {
-      const p = msgs[locale].admin.plugins;
+      const p = msgs[locale].admin.extensions;
       const diverged = plugin({
         name: "split",
         status: "failed",
@@ -155,7 +155,7 @@ describe("/admin/plugins（ListPage）", () => {
         "GET /api/v1/admin/extensions": () =>
           json(200, { extensions: [plugin(), diverged, S3], drainSeconds: 30 }),
       });
-      renderPage(<AdminPluginsPage />, { locale });
+      renderPage(<AdminExtensionsPage />, { locale });
       expect(template("ListPage")).not.toBeNull();
       const table = await screen.findByRole("table", { name: p.title });
       const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
@@ -188,14 +188,14 @@ function detailRoutes(view: View, extra: Record<string, (c: Call) => Response> =
   });
 }
 
-describe("/admin/plugins/[name]（DetailPage）", () => {
+describe("/admin/extensions/[name] (DetailPage)", () => {
   it.each(LOCALES)(
     "内置插件：没有停用 / 升级 / 卸载按钮并说明原因；权限只读、注明预先批准（%s）",
     async (locale) => {
-      const p = msgs[locale].admin.plugins;
+      const p = msgs[locale].admin.extensions;
       params.current = { name: "object-store-s3" };
       detailRoutes(S3);
-      renderPage(<PluginDetailPage />, { locale });
+      renderPage(<ExtensionDetailPage />, { locale });
       expect(template("DetailPage")).not.toBeNull();
       await screen.findByText(p.detail.builtinNote);
       for (const label of Object.values(p.detail.actions)) {
@@ -211,8 +211,8 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
 
   it("配置声明的插件：同样没有生命周期按钮，并说明要改启动配置", async () => {
     detailRoutes(plugin({ source: "config", sha256: null, desired: null, removable: false }));
-    renderPage(<PluginDetailPage />);
-    const p = en.admin.plugins;
+    renderPage(<ExtensionDetailPage />);
+    const p = en.admin.extensions;
     await screen.findByText(p.detail.configNote);
     expect(screen.queryByRole("button", { name: p.detail.actions.disable })).toBeNull();
     expect(screen.queryByRole("button", { name: p.detail.actions.uninstall })).toBeNull();
@@ -236,8 +236,8 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
         ],
       });
       detailRoutes(view);
-      renderPage(<PluginDetailPage />, { locale });
-      const p = msgs[locale].admin.plugins;
+      renderPage(<ExtensionDetailPage />, { locale });
+      const p = msgs[locale].admin.extensions;
       const reason = p.detail.replicaReason.setup_failed;
       const alert = await screen.findByText(
         fill(p.detail.failedReplica, { replica: "web-2-222-bbbbbb", reason }),
@@ -265,8 +265,8 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
           }),
         ),
     });
-    renderPage(<PluginDetailPage />);
-    const p = en.admin.plugins;
+    renderPage(<ExtensionDetailPage />);
+    const p = en.admin.extensions;
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: p.detail.actions.disable }));
     const dialog = await screen.findByRole("dialog");
@@ -281,12 +281,12 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
 
   it("启用中的安装记录：卸载须先停用（不提供卸载按钮）；升级链接到安装向导", async () => {
     detailRoutes(plugin());
-    renderPage(<PluginDetailPage />);
-    const p = en.admin.plugins;
+    renderPage(<ExtensionDetailPage />);
+    const p = en.admin.extensions;
     await screen.findByText(p.detail.uninstallNeedsDisable);
     expect(screen.queryByRole("button", { name: p.detail.actions.uninstall })).toBeNull();
     expect(screen.getByRole("link", { name: p.detail.actions.upgrade }).getAttribute("href")).toBe(
-      "/admin/plugins/install?upgrade=demo",
+      "/admin/extensions/install?upgrade=demo",
     );
   });
 
@@ -300,8 +300,8 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
       "POST /api/v1/admin/extensions/demo/approve": () =>
         json(409, { error: { code: "extension.approval_stale", message: "stale" } }),
     });
-    renderPage(<PluginDetailPage />, { locale: "zh" });
-    const p = zh.admin.plugins;
+    renderPage(<ExtensionDetailPage />, { locale: "zh" });
+    const p = zh.admin.extensions;
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: p.detail.tabs.permissions }));
     const submit = await screen.findByRole("button", { name: p.approve.submit });
@@ -339,8 +339,8 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
       ],
     });
     detailRoutes(pending);
-    renderPage(<PluginDetailPage />);
-    const p = en.admin.plugins;
+    renderPage(<ExtensionDetailPage />);
+    const p = en.admin.extensions;
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: p.detail.tabs.permissions }));
     expect(await screen.findByText("DROP TABLE plugin_demo.old")).toBeTruthy();
@@ -358,13 +358,13 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
       }),
     });
     detailRoutes(pending);
-    renderPage(<PluginDetailPage />, { locale: "zh" });
+    renderPage(<ExtensionDetailPage />, { locale: "zh" });
     const user = userEvent.setup();
     await user.click(
-      await screen.findByRole("tab", { name: zh.admin.plugins.detail.tabs.permissions }),
+      await screen.findByRole("tab", { name: zh.admin.extensions.detail.tabs.permissions }),
     );
     expect(
-      await screen.findByText(`+ permissions.tools:echo · ${zh.plugins.review.reason.tools}`),
+      await screen.findByText(`+ permissions.tools:echo · ${zh.extensions.review.reason.tools}`),
     ).toBeTruthy();
     expect(screen.getByText("+ permissions.network:x.example.com")).toBeTruthy();
   });
@@ -381,8 +381,8 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
             : json(200, plugin({ status: "enabled" }));
         },
       });
-      renderPage(<PluginDetailPage />);
-      const p = en.admin.plugins;
+      renderPage(<ExtensionDetailPage />);
+      const p = en.admin.extensions;
       expect(await screen.findByText(p.detail.converging)).toBeTruthy();
       await vi.advanceTimersByTimeAsync(3100);
       await vi.waitFor(() => expect(polls).toBe(1));
@@ -400,7 +400,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
   it.each(LOCALES)(
     "配置：只读字段显示来源且不可改；密钥不回显，只能设置或清除；保存只发改动（补丁）（%s）",
     async (locale) => {
-      const p = msgs[locale].admin.plugins;
+      const p = msgs[locale].admin.extensions;
       const sf = msgs[locale].schemaForm;
       const calls = detailRoutes(plugin(), {
         "GET /api/v1/admin/extensions/demo/config": () =>
@@ -454,7 +454,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
             echo: bodyOf(c),
           }),
       });
-      renderPage(<PluginDetailPage />, { locale });
+      renderPage(<ExtensionDetailPage />, { locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("tab", { name: p.detail.tabs.config }));
       const region = (await screen.findByLabelText("region")) as HTMLInputElement;
@@ -491,11 +491,11 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-describe("/admin/plugins/install（WizardPage）", () => {
+describe("/admin/extensions/install (WizardPage)", () => {
   it.each(LOCALES)(
     "npm → 审阅（敏感项高亮并写明原因，网络标「声明，平台不拦截」）→ 勾选前确认不可用 → install → approve → enable（%s）",
     async (locale) => {
-      const p = msgs[locale].admin.plugins;
+      const p = msgs[locale].admin.extensions;
       const calls = stubApi({
         "GET /api/v1/admin/extensions": () => json(200, { extensions: [S3], drainSeconds: 30 }),
         "POST /api/v1/admin/extensions/packages/npm": () => json(200, REVIEW),
@@ -512,7 +512,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
         "POST /api/v1/admin/extensions/demo/enable": () =>
           json(200, plugin({ status: "converging" })),
       });
-      renderPage(<PluginInstallPage />, { locale });
+      renderPage(<ExtensionInstallPage />, { locale });
       expect(template("WizardPage")).not.toBeNull();
       const user = userEvent.setup();
       await user.click(screen.getByRole("radio", { name: p.wizard.sourceNpm }));
@@ -525,11 +525,13 @@ describe("/admin/plugins/install（WizardPage）", () => {
       );
       // 审阅：敏感项高亮并写明原因；外部网络标注
       const review = await screen.findByRole("region", {
-        name: fill(msgs[locale].plugins.permissionsLabel, { plugin: "demo" }),
+        name: fill(msgs[locale].extensions.permissionsLabel, { plugin: "demo" }),
       });
-      expect(within(review).getByText(msgs[locale].plugins.review.reason.sandbox)).toBeTruthy();
-      expect(within(review).getByText(msgs[locale].plugins.review.network)).toBeTruthy();
-      expect(within(review).getAllByText(msgs[locale].plugins.sensitive).length).toBeGreaterThan(0);
+      expect(within(review).getByText(msgs[locale].extensions.review.reason.sandbox)).toBeTruthy();
+      expect(within(review).getByText(msgs[locale].extensions.review.network)).toBeTruthy();
+      expect(within(review).getAllByText(msgs[locale].extensions.sensitive).length).toBeGreaterThan(
+        0,
+      );
       await user.click(screen.getByRole("button", { name: p.wizard.next }));
       // 确认：勾选前不可用
       const submit = await screen.findByRole("button", { name: p.wizard.install });
@@ -537,7 +539,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
       await user.click(screen.getByRole("checkbox", { name: p.wizard.ack }));
       expect(submit.hasAttribute("disabled")).toBe(false);
       await user.click(submit);
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/admin/plugins/demo"));
+      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/admin/extensions/demo"));
       const posts = calls.filter((c) => c.method === "POST").map((c) => c.url);
       expect(posts).toEqual([
         "/api/v1/admin/extensions/packages/npm",
@@ -574,8 +576,8 @@ describe("/admin/plugins/install（WizardPage）", () => {
         json(200, plugin({ status: "pending_approval" })),
       "POST /api/v1/admin/extensions/demo/approve": () => json(200, plugin({ status: "disabled" })),
     });
-    renderPage(<PluginInstallPage />);
-    const p = en.admin.plugins;
+    renderPage(<ExtensionInstallPage />);
+    const p = en.admin.extensions;
     const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: p.wizard.sourceNpm }));
     await user.type(screen.getByLabelText(p.wizard.npmPackage), "demo");
@@ -587,7 +589,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
     expect(submit.hasAttribute("disabled")).toBe(true);
     await user.click(screen.getByRole("checkbox", { name: p.wizard.ack }));
     await user.click(submit);
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/admin/plugins/demo"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/admin/extensions/demo"));
     expect(calls.filter((c) => c.method === "POST").map((c) => c.url.split("/").pop())).toEqual([
       "npm",
       "install",
@@ -596,7 +598,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
   });
 
   it("升级：显示新增 / 减少的权限与在途调用的等待时限；包名不符时不能继续", async () => {
-    window.history.replaceState(null, "", "/admin/plugins/install?upgrade=demo");
+    window.history.replaceState(null, "", "/admin/extensions/install?upgrade=demo");
     stubApi({
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [plugin()], drainSeconds: 45 }),
       "POST /api/v1/admin/extensions/packages/npm": (c) =>
@@ -609,8 +611,8 @@ describe("/admin/plugins/install（WizardPage）", () => {
               removed: ["permissions.tools:echo"],
             }),
     });
-    renderPage(<PluginInstallPage />);
-    const p = en.admin.plugins;
+    renderPage(<ExtensionInstallPage />);
+    const p = en.admin.extensions;
     expect(await screen.findByText(fill(p.wizard.upgradeTitle, { name: "demo" }))).toBeTruthy();
     const user = userEvent.setup();
     await user.click(screen.getByRole("radio", { name: p.wizard.sourceNpm }));
@@ -620,8 +622,8 @@ describe("/admin/plugins/install（WizardPage）", () => {
       await screen.findByText(fill(p.wizard.upgradeFrom, { from: "1.0.0", to: "2.0.0" })),
     ).toBeTruthy();
     expect(screen.getByText(fill(p.detail.drainHint, { seconds: 45 }))).toBeTruthy();
-    expect(screen.getByText(en.plugins.review.added)).toBeTruthy();
-    expect(screen.getByText(en.plugins.review.removed)).toBeTruthy();
+    expect(screen.getByText(en.extensions.review.added)).toBeTruthy();
+    expect(screen.getByText(en.extensions.review.removed)).toBeTruthy();
     expect(screen.getByText("permissions.tools:echo")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: p.wizard.back }));
@@ -674,8 +676,8 @@ describe("/admin/plugins/install（WizardPage）", () => {
       }
     }
     vi.stubGlobal("XMLHttpRequest", FakeXhr);
-    renderPage(<PluginInstallPage />);
-    const p = en.admin.plugins;
+    renderPage(<ExtensionInstallPage />);
+    const p = en.admin.extensions;
     const user = userEvent.setup();
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(
@@ -728,8 +730,8 @@ describe("/admin/plugins/install（WizardPage）", () => {
       abort() {}
     }
     vi.stubGlobal("XMLHttpRequest", FakeXhr);
-    renderPage(<PluginInstallPage />, { locale: "zh" });
-    const p = zh.admin.plugins;
+    renderPage(<ExtensionInstallPage />, { locale: "zh" });
+    const p = zh.admin.extensions;
     const user = userEvent.setup();
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File([new Uint8Array([1])], "x.tgz"));

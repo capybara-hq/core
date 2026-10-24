@@ -22,7 +22,7 @@ import {
   ScopePicker,
   useDecide,
 } from "../../../../components/ApprovalCard";
-import { useKindLabel } from "../../../../components/DirectoryParts";
+import { useKindLabel } from "../../../../components/CatalogParts";
 import { OrgGate } from "../../../../components/OrgGate";
 import {
   requesterOf,
@@ -32,7 +32,7 @@ import {
 import { Link, useRouter } from "../../../../i18n/navigation";
 import type { Approval, ApprovalScope } from "../../../../lib/approvals";
 import {
-  type DirectoryRequest,
+  type CatalogRequest,
   decideOrgRequest,
   requesterOf as directoryRequester,
   displayNameOf,
@@ -64,7 +64,7 @@ function Inbox({ orgId }: { orgId: string }) {
   const [scope, setScope] = useState<ApprovalScope>("once");
   const approvals = useDecide(orgId);
   const changes = useDecideSkillChange(orgId);
-  const td = useTranslations("directory.inbox");
+  const td = useTranslations("catalog.inbox");
   const kindLabel = useKindLabel();
   const errorMessage = useErrorMessage();
   const [requestPending, setRequestPending] = useState<"approve" | "reject">();
@@ -119,7 +119,7 @@ function Inbox({ orgId }: { orgId: string }) {
     );
   }
 
-  async function decideRequest(request: DirectoryRequest, decision: "approve" | "reject") {
+  async function decideRequest(request: CatalogRequest, decision: "approve" | "reject") {
     setRequestPending(decision);
     try {
       await decideOrgRequest(orgId, request.id, decision);
@@ -384,10 +384,10 @@ function directoryRequestDetail({
   t,
   locale,
 }: {
-  request: DirectoryRequest;
+  request: CatalogRequest;
   pending: "approve" | "reject" | undefined;
   onDecide(decision: "approve" | "reject"): void;
-  kindLabel(kind: DirectoryRequest["item"]["kind"]): string;
+  kindLabel(kind: CatalogRequest["item"]["kind"]): string;
   td: Translate;
   t: Translate;
   locale: string;
@@ -437,7 +437,7 @@ function directoryRequestDetail({
             {td("hint")}
           </Text>
           <Text>
-            <Link href={`/directory/${request.item.id}`}>{td("openItem")}</Link>
+            <Link href={`/catalog/${request.item.id}`}>{td("openItem")}</Link>
           </Text>
         </Stack>
       </Card>
