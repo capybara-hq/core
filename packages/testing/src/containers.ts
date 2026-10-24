@@ -1,5 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  CreateBucketCommand,
+  DeleteObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { Redis } from "ioredis";
 import pg from "pg";
@@ -262,12 +267,13 @@ export interface TestS3 {
   stop(): Promise<void>;
 }
 
-/** 建桶时等待 S3 网关连上 filer 的上限。 */
+/** Upper bound for creating the bucket and the first write (gateway, filer and volume server ready). */
 const S3_READY_TIMEOUT_MS = 60_000;
 
 /**
  * 启动一个临时 SeaweedFS（`weed server -s3`，单容器含 master / volume / filer / S3 网关），
  * 启用带凭据的 S3 鉴权，经 S3 API 建好桶 `capybara`，返回端点、凭据与停止函数。
+ * Returns only after one object write succeeded (the volume server has joined the master).
  */
 export async function startTestS3(): Promise<TestS3> {
   const accessKey = "capybara-test";
@@ -302,6 +308,23 @@ export async function startTestS3(): Promise<TestS3> {
     for (;;) {
       try {
         await client.send(new CreateBucketCommand({ Bucket: bucket }));
+        break;
+      } catch (e) {
+        if (Date.now() > deadline) throw e;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+    // The gateway and the bucket can be ready before the volume server's first heartbeat reaches
+    // the master: until then the master cannot grow volumes ("Not enough data nodes found") and the
+    // first write blocks for ~5 s, longer than a local test's 5 s timeout. Write (and delete) one
+    // object here, so the first write of a test never pays for that.
+    const warmKey = "capybara-test-warmup";
+    for (;;) {
+      try {
+        await client.send(
+          new PutObjectCommand({ Bucket: bucket, Key: warmKey, Body: new Uint8Array([1]) }),
+        );
+        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: warmKey }));
         break;
       } catch (e) {
         if (Date.now() > deadline) throw e;
