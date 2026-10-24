@@ -27,10 +27,10 @@ import { useLoad } from "../../../../lib/use-load";
  * CatalogInstallAction); the Rail filters by kind. A row opens the detail page.
  */
 export default function CatalogPage() {
-  return <OrgGate>{(orgId) => <Directory key={orgId} orgId={orgId} />}</OrgGate>;
+  return <OrgGate>{(orgId) => <Catalog key={orgId} orgId={orgId} />}</OrgGate>;
 }
 
-function Directory({ orgId }: { orgId: string }) {
+function Catalog({ orgId }: { orgId: string }) {
   const t = useTranslations("catalog.org");
   const locale = useLocale();
   const router = useRouter();
