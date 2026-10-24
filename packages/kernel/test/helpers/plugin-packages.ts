@@ -6,7 +6,13 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
-import { defineExtension, type ExtensionManifest, staticManifestOf } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  type ExtensionManifest,
+  PLUGIN_MANIFEST_FILE,
+  type PluginManifest,
+  staticManifestOf,
+} from "@capybara-hq/plugin-sdk";
 import { pack as tarPack } from "tar-stream";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -31,22 +37,106 @@ export async function tgz(entries: { name: string; data: string | Buffer }[]): P
   return new Uint8Array(gzipSync(Buffer.concat(chunks)));
 }
 
-/** 合法的最小插件包：entry 用 `defineExtension` 导出清单（setup 什么都不做），静态清单与之一致。 */
-export async function pluginTgz(
-  opts: {
-    name?: string;
-    version?: string;
-    packageName?: string;
-    /** 附加到 package.json 的 `capybara` 段 / 改写静态清单。 */
-    section?: Record<string, unknown>;
-    manifest?: Record<string, unknown>;
-    extra?: { name: string; data: string }[];
-    /** 写进 entry 的模块代码（替换默认 entry）。 */
-    entry?: string;
-  } = {},
+/** The extension part of {@link pluginTgz}. */
+export interface ExtensionTgzOpts {
+  /** Overrides of the static extension manifest (default: that of the default entry). */
+  manifest?: Record<string, unknown>;
+  /** Additions to / overrides of the extension section (e.g. `{ migrations: "./migrations" }`). */
+  section?: Record<string, unknown>;
+  /** The entry module's code (replaces the default entry, which exports a no-op defineExtension). */
+  entry?: string;
+}
+
+/**
+ * A valid minimal plugin tgz in the 0.1.0 layout: `.capybara-plugin/plugin.json` (from `manifest`,
+ * with `schemaVersion`, `version` 1.0.0, `publisher` and `description` filled in when missing),
+ * `package.json` (npm name `packageName`, default `@test/plugin-<name>`) and `files` (paths
+ * relative to the package root). With `extension` the plugin has an extension: `dist/index.mjs`
+ * (`extension.entry`) exports `defineExtension` with the plugin's name and version, and the static
+ * manifest in plugin.json matches it; without it the plugin is declarative (no peerDependencies).
+ */
+export async function pluginTgz(opts: {
+  manifest: Partial<PluginManifest> & { name: string };
+  packageName?: string;
+  files?: Record<string, string | Uint8Array>;
+  extension?: ExtensionTgzOpts;
+}): Promise<Uint8Array> {
+  const name = opts.manifest.name;
+  const version = opts.manifest.version ?? "1.0.0";
+  const ext = opts.extension;
+  const entries: { name: string; data: string | Buffer }[] = [];
+  let extension: Record<string, unknown> | undefined;
+  if (ext !== undefined) {
+    const real: ExtensionManifest = defineExtension({
+      name,
+      version,
+      sdk: "^0.1.0",
+      provides: [],
+      permissions: {},
+      setup() {},
+    });
+    extension = {
+      entry: "./dist/index.mjs",
+      manifest: { ...staticManifestOf(real), ...ext.manifest },
+      ...ext.section,
+    };
+    entries.push({
+      name: "package/dist/index.mjs",
+      data:
+        ext.entry ??
+        [
+          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+          `export default defineExtension({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });`,
+        ].join("\n"),
+    });
+  }
+  const manifest = {
+    schemaVersion: 1,
+    publisher: "Test",
+    description: `Test plugin ${name}`,
+    ...opts.manifest,
+    version,
+    ...(extension !== undefined && { extension }),
+  };
+  const pkg = {
+    name: opts.packageName ?? `@test/plugin-${name}`,
+    version,
+    type: "module",
+    ...(ext !== undefined && {
+      peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.0.0" },
+    }),
+  };
+  return tgz([
+    { name: "package/package.json", data: JSON.stringify(pkg) },
+    { name: `package/${PLUGIN_MANIFEST_FILE}`, data: JSON.stringify(manifest) },
+    ...entries,
+    ...Object.entries(opts.files ?? {}).map(([path, data]) => ({
+      name: `package/${path}`,
+      data: typeof data === "string" ? data : Buffer.from(data),
+    })),
+  ]);
+}
+
+/**
+ * A tgz in the pre-0.1.0 format (for the rejection tests): an extension package with a `capybara`
+ * section in package.json, or with `appYaml` a plugin bundle (`app.yaml`, no `capybara` section).
+ * Neither has `.capybara-plugin/plugin.json`.
+ */
+export async function legacyTgz(
+  opts: { name?: string; version?: string; packageName?: string; appYaml?: boolean } = {},
 ): Promise<Uint8Array> {
-  const name = opts.name ?? "demo-pkg";
+  const name = opts.name ?? "legacy-pkg";
   const version = opts.version ?? "1.0.0";
+  const packageName = opts.packageName ?? `@test/plugin-${name}`;
+  if (opts.appYaml) {
+    return tgz([
+      { name: "package/package.json", data: JSON.stringify({ name: packageName, version }) },
+      {
+        name: "package/app.yaml",
+        data: `schemaVersion: 1\nname: ${name}\nversion: ${version}\nplugins: []\n`,
+      },
+    ]);
+  }
   const real: ExtensionManifest = defineExtension({
     name,
     version,
@@ -55,14 +145,8 @@ export async function pluginTgz(
     permissions: {},
     setup() {},
   });
-  const entry =
-    opts.entry ??
-    [
-      'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-      `export default defineExtension({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });`,
-    ].join("\n");
   const pkg = {
-    name: opts.packageName ?? `@test/plugin-${name}`,
+    name: packageName,
     version,
     type: "module",
     peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.0.0" },
@@ -70,14 +154,18 @@ export async function pluginTgz(
       kind: "plugin",
       entry: "dist/index.mjs",
       sdk: "^0.1.0",
-      manifest: { ...staticManifestOf(real), ...opts.manifest },
-      ...opts.section,
+      manifest: staticManifestOf(real),
     },
   };
   return tgz([
     { name: "package/package.json", data: JSON.stringify(pkg) },
-    { name: "package/dist/index.mjs", data: entry },
-    ...(opts.extra ?? []),
+    {
+      name: "package/dist/index.mjs",
+      data: [
+        'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+        `export default defineExtension({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });`,
+      ].join("\n"),
+    },
   ]);
 }
 
@@ -90,7 +178,7 @@ export interface LifePkgOptions {
   optional?: string[];
   /** package.json 的 npm 包名（默认 `@test/plugin-<name>`）。 */
   packageName?: string;
-  /** 包里 `migrations/` 下的 SQL（有就声明 `capybara.migrations`）。 */
+  /** SQL under `migrations/` in the package (declares `extension.migrations` when present). */
   migrations?: { file: string; sql: string }[];
   /**
    * A `tool.preExecute` policy hook (declared in `permissions.hooks` / `policyHooks`): input
@@ -206,15 +294,14 @@ export default defineExtension({
 `;
   const migrations = o.migrations ?? [];
   return pluginTgz({
-    name,
-    version: o.version,
+    manifest: { name, version: o.version },
     ...(o.packageName !== undefined && { packageName: o.packageName }),
-    manifest: staticManifestOf(real) as unknown as Record<string, unknown>,
-    entry,
-    ...(migrations.length > 0 && {
-      section: { migrations: "migrations" },
-      extra: migrations.map((m) => ({ name: `package/migrations/${m.file}`, data: m.sql })),
-    }),
+    files: Object.fromEntries(migrations.map((m) => [`migrations/${m.file}`, m.sql])),
+    extension: {
+      manifest: staticManifestOf(real) as unknown as Record<string, unknown>,
+      entry,
+      ...(migrations.length > 0 && { section: { migrations: "./migrations" } }),
+    },
   });
 }
 
@@ -270,11 +357,9 @@ export default defineExtension({
 });
 `;
   return pluginTgz({
-    name: "greeter",
-    version: "1.0.0",
+    manifest: { name: "greeter", version: "1.0.0" },
     packageName: "@test/plugin-greeter",
-    manifest: staticManifestOf(real) as unknown as Record<string, unknown>,
-    entry,
+    extension: { manifest: staticManifestOf(real) as unknown as Record<string, unknown>, entry },
   });
 }
 
@@ -289,11 +374,14 @@ export async function packOfficialPlugin(
 }
 
 /**
- * 用 `tools/pack-plugin` 把任意插件目录（pack-plugin 布局：`package.json` + `src/index.ts`，如官方插件或
- * `test/fixtures/plugins/hooks-probe`）打成插件包（子进程，避免内核依赖 pack-plugin）。
- * 先把目录复制到临时目录再打包（`node_modules` 链接回离源目录最近、装有 SDK 的那个 `node_modules`：官方插件是
- * 它自己的，内核测试夹具是内核包的）：打包的临时文件不落在仓库里，与同时运行的 pack-plugin 测试互不干扰。
- * `edit` 在打包前改这份副本（如升版本、加迁移、改名），仓库里的源目录不动。
+ * Packs any plugin directory in the pack-plugin layout (`package.json` +
+ * `.capybara-plugin/plugin.json` + `src/index.ts`, e.g. an official plugin or
+ * `test/fixtures/plugins/hooks-probe`) with `tools/pack-plugin` (a child process, so the kernel does
+ * not depend on pack-plugin). The directory is copied to a temp directory first (`node_modules`
+ * links back to the nearest `node_modules` above the source that has the SDK: an official plugin's
+ * own, the kernel package's for kernel fixtures): no temp files land in the repo, and concurrent
+ * pack-plugin tests don't interfere. `edit` changes that copy before packing (bump the version in
+ * both manifests, add a migration, rename); the source directory is untouched.
  */
 export async function packPluginDir(
   src: string,
@@ -345,10 +433,11 @@ export async function sandboxFakePkg(): Promise<Uint8Array> {
   const source = await readFile(SANDBOX_FAKE_SRC, "utf8");
   const mod = (await import(SANDBOX_FAKE_SRC)) as { default: ExtensionManifest };
   return pluginTgz({
-    name: mod.default.name,
-    version: mod.default.version,
+    manifest: { name: mod.default.name, version: mod.default.version },
     packageName: "@test/plugin-sandbox-fake",
-    manifest: staticManifestOf(mod.default) as unknown as Record<string, unknown>,
-    entry: stripTypeScriptTypes(source, { mode: "strip" }),
+    extension: {
+      manifest: staticManifestOf(mod.default) as unknown as Record<string, unknown>,
+      entry: stripTypeScriptTypes(source, { mode: "strip" }),
+    },
   });
 }

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { CapybaraPackageSection } from "@capybara-hq/plugin-sdk";
+import type { PluginExtensionSection } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { core, z } from "zod";
 import { configFields, describeSchema, getPath, secretValues } from "../config/fields.js";
@@ -490,7 +490,9 @@ export async function staticDeploymentSchema(
     .where("extension_installs.name", "=", plugin)
     .executeTakeFirst();
   if (!row) return undefined;
-  const section = row.section as CapybaraPackageSection;
+  // new rows hold the plugin's extension section, pre-0.1.0 rows the old capybara section; both
+  // carry the static manifest
+  const section = row.section as Pick<PluginExtensionSection, "manifest">;
   return {
     version: row.version,
     fields: (section.manifest.config?.deployment ?? []).map((f) => ({

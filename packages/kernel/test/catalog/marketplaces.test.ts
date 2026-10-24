@@ -83,12 +83,16 @@ beforeAll(async () => {
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
   for (const n of ["cat-a", "cat-b", "cat-c", "cat-e"]) {
-    pkgs[n] = await pluginTgz({ name: n, version: "1.0.0", packageName: `@acme/plugin-${n}` });
+    pkgs[n] = await pluginTgz({
+      manifest: { name: n, version: "1.0.0" },
+      packageName: `@acme/plugin-${n}`,
+      extension: {},
+    });
   }
   pkgs["cat-a@2"] = await pluginTgz({
-    name: "cat-a",
-    version: "2.0.0",
+    manifest: { name: "cat-a", version: "2.0.0" },
     packageName: "@acme/plugin-cat-a",
+    extension: {},
   });
   reg = await startFakeNpmRegistry({
     packages: [

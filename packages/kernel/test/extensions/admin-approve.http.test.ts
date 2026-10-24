@@ -17,7 +17,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { pluginTgz } from "../helpers/plugin-packages.js";
+import { legacyTgz, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session, startKernel, waitFor } from "../helpers/runs.js";
 
 const S3_PLUGIN = fileURLToPath(
@@ -114,11 +114,19 @@ beforeAll(async () => {
     db,
     "capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  demo = await pluginTgz({ name: "demo-pkg" });
+  demo = await pluginTgz({ manifest: { name: "demo-pkg" }, extension: {} });
   demoHash = sha(demo);
   await installPkg("demo-pkg", demo, "enabled");
-  await installPkg("demo-off", await pluginTgz({ name: "demo-off" }), "disabled");
-  await installPkg("demo-late", await pluginTgz({ name: "demo-late" }), "enabled");
+  await installPkg(
+    "demo-off",
+    await pluginTgz({ manifest: { name: "demo-off" }, extension: {} }),
+    "disabled",
+  );
+  await installPkg(
+    "demo-late",
+    await pluginTgz({ manifest: { name: "demo-late" }, extension: {} }),
+    "enabled",
+  );
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -403,14 +411,12 @@ describe("插件列表与网页批准权限", () => {
 
   it("安装记录的迁移警告随视图返回（详情页批准前同样高亮）；内置 / 配置声明为空", async () => {
     const bytes = await pluginTgz({
-      name: "demo-warn",
-      section: { migrations: "migrations" },
-      extra: [
-        {
-          name: "package/migrations/0001_init.sql",
-          data: "CREATE TABLE IF NOT EXISTS plugin_demo_warn.notes (id int);\nDROP TABLE IF EXISTS plugin_demo_warn.old;\n",
-        },
-      ],
+      manifest: { name: "demo-warn" },
+      files: {
+        "migrations/0001_init.sql":
+          "CREATE TABLE IF NOT EXISTS plugin_demo_warn.notes (id int);\nDROP TABLE IF EXISTS plugin_demo_warn.old;\n",
+      },
+      extension: { section: { migrations: "./migrations" } },
     });
     await installPkg("demo-warn", bytes, "disabled");
     const all = await list();
@@ -429,7 +435,7 @@ describe("插件列表与网页批准权限", () => {
   });
 
   it("unreadable package (bytes missing): the list degrades to a failed item (no permissions, error names name, version and sha, uninstallable); details and approval return 409 extension.package_unavailable", async () => {
-    const bytes = await pluginTgz({ name: "demo-broken" });
+    const bytes = await pluginTgz({ manifest: { name: "demo-broken" }, extension: {} });
     await installPkg("demo-broken", bytes, "enabled");
     await db.deleteFrom("extension_blobs").where("sha256", "=", sha(bytes)).execute();
     const all = await list();
@@ -452,5 +458,79 @@ describe("插件列表与网页批准权限", () => {
     const res = await approve("demo-broken", { sha256: sha(bytes), reviewHash: b.reviewHash });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("extension.package_unavailable");
+  });
+
+  it("a stored package in the pre-0.1.0 format (installed directly, bypassing ingest): listed as legacy_format with the message, details still readable, approval 422 extension.legacy_format, reconcile records the failure and keeps going", async () => {
+    const bytes = await legacyTgz({ name: "demo-legacy" });
+    // what an M7 box left behind: the old capybara section in the row, the old tgz as the blob
+    await db
+      .insertInto("extension_packages")
+      .values({
+        sha256: sha(bytes),
+        name: "demo-legacy",
+        package_name: "@test/plugin-demo-legacy",
+        version: "1.0.0",
+        size: bytes.byteLength,
+        section: JSON.stringify({
+          kind: "plugin",
+          entry: "dist/index.mjs",
+          sdk: "^0.1.0",
+          manifest: {
+            name: "demo-legacy",
+            version: "1.0.0",
+            sdk: "^0.1.0",
+            provides: [],
+            requires: [],
+            optional: [],
+            permissions: {},
+            config: { deployment: [], org: [] },
+          },
+        }),
+        blob_store: "pg",
+        source: "file",
+        source_ref: "upload",
+        uploaded_by: null,
+      })
+      .execute();
+    await db
+      .insertInto("extension_blobs")
+      .values({ sha256: sha(bytes), bytes: Buffer.from(bytes) })
+      .execute();
+    await db
+      .insertInto("extension_installs")
+      .values({
+        name: "demo-legacy",
+        sha256: sha(bytes),
+        version: "1.0.0",
+        source: "file",
+        desired_state: "enabled",
+      })
+      .execute();
+    const LEGACY =
+      "uses the pre-0.1.0 package format (capybara section / app.yaml); repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)";
+
+    const b = (await list()).get("demo-legacy") as View & { error?: string };
+    expect(b).toMatchObject({ source: "install", status: "legacy_format", permissions: [] });
+    expect(b.error).toBe(`Package @test/plugin-demo-legacy ${LEGACY}`);
+    const got = await admin({ method: "GET", url: "/api/v1/admin/extensions/demo-legacy" });
+    expect(got.statusCode, got.body).toBe(200);
+    expect(got.json()).toMatchObject({ status: "legacy_format", removable: true });
+    const res = await approve("demo-legacy", { sha256: sha(bytes), reviewHash: b.reviewHash });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe("extension.legacy_format");
+    expect(res.json().error.message).toContain(LEGACY);
+
+    await k.extensionLifecycle.reconcile("test");
+    const row = await db
+      .selectFrom("extension_replica_status")
+      .select(["state", "reason", "detail"])
+      .where("plugin", "=", "demo-legacy")
+      .executeTakeFirstOrThrow();
+    expect(row).toMatchObject({ state: "failed", reason: "sync_failed" });
+    expect(row.detail).toContain(LEGACY);
+    expect(k.host.current("demo-legacy")).toBeUndefined();
+    // the rest keeps loading
+    expect(k.host.current("demo-pkg")?.sha256).toBe(demoHash);
+    expect((await list()).get("demo-legacy")?.status).toBe("legacy_format");
   });
 });

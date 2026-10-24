@@ -842,11 +842,13 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
     await seedInstall(
       "hangsetup",
       await pluginTgz({
-        name: "hangsetup",
-        entry: [
-          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-          'export default defineExtension({ name: "hangsetup", version: "1.0.0", sdk: "^0.1.0", provides: [], permissions: {}, setup() { return new Promise(() => {}); } });',
-        ].join("\n"),
+        manifest: { name: "hangsetup" },
+        extension: {
+          entry: [
+            'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+            'export default defineExtension({ name: "hangsetup", version: "1.0.0", sdk: "^0.1.0", provides: [], permissions: {}, setup() { return new Promise(() => {}); } });',
+          ].join("\n"),
+        },
       }),
     );
     const k2 = await kernelWith({ reloadSetupTimeoutSeconds: 1 });
@@ -866,12 +868,14 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
     await seedInstall(
       "hangimport",
       await pluginTgz({
-        name: "hangimport",
-        entry: [
-          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-          "await new Promise(() => {});",
-          'export default defineExtension({ name: "hangimport", version: "1.0.0", sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });',
-        ].join("\n"),
+        manifest: { name: "hangimport" },
+        extension: {
+          entry: [
+            'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+            "await new Promise(() => {});",
+            'export default defineExtension({ name: "hangimport", version: "1.0.0", sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });',
+          ].join("\n"),
+        },
       }),
     );
     const k2 = await kernelWith({ reloadSetupTimeoutSeconds: 1 });
@@ -1020,7 +1024,7 @@ describe("插件名归属：内置与配置声明的插件也占名字（I4）",
 
 describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, () => {
   it("两个副本都加载了插件；一个正常停机后状态立即为 enabled（不等心跳过期）", async () => {
-    const bytes = await pluginTgz({ name: "twin", version: "1.0.0" });
+    const bytes = await pluginTgz({ manifest: { name: "twin", version: "1.0.0" }, extension: {} });
     const pkg = await readExtensionPackage(bytes, {
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,

@@ -142,7 +142,9 @@ describe("readCatalogArchive: connector templates", () => {
 
 describe("readCatalogArchive: other kinds", () => {
   it("插件包不由它读（交给插件包流程）", async () => {
-    expect(await rejected(await pluginTgz())).toMatch(/plugin/);
+    expect(
+      await rejected(await pluginTgz({ manifest: { name: "demo-pkg" }, extension: {} })),
+    ).toMatch(/plugin/);
   });
 
   it("应用包：返回段（内容留给 T25），没有文件", async () => {

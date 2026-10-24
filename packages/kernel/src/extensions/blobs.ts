@@ -76,6 +76,8 @@ export class ExtensionBlobs {
       });
     }
     const m = p.section.manifest;
+    // the row stores the plugin's extension section as reviewed (without the name / version copy)
+    const { name: _name, version: _version, ...section } = p.section;
     await this.d.db.transaction().execute(async (trx) => {
       const inserted = await trx
         .insertInto("extension_packages")
@@ -85,7 +87,7 @@ export class ExtensionBlobs {
           package_name: String(p.packageJson.name),
           version: m.version,
           size: p.size,
-          section: JSON.stringify(p.section),
+          section: JSON.stringify(section),
           blob_store: store,
           source: src.source,
           source_ref: src.ref,

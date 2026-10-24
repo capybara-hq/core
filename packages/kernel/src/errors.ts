@@ -46,6 +46,8 @@ export const ERROR_CODES = {
   "extension.has_dependents": 409,
   "extension.not_enabled": 409,
   "extension.package_invalid": 400,
+  "extension.legacy_format": 422,
+  "extension.no_extension": 400,
   "extension.package_too_large": 413,
   "extension.config_declared": 409,
   "extension.builtin": 409,

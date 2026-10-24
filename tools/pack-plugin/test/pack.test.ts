@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { computePermissionSet, permissionKeys, permissionSetOfPackage } from "@capybara-hq/kernel";
 import {
-  type CapybaraPackageSection,
   type ExtensionManifest,
   PLUGIN_MANIFEST_FILE,
   type PluginManifest,
@@ -142,12 +141,7 @@ describe.each(["todo", "slack"])("packPlugin(plugins/%s)", (name) => {
   it("the permission keys of the packed manifest equal computePermissionSet(real module)", async () => {
     const m = manifestOf(entries);
     const ext = m.extension as NonNullable<PluginManifest["extension"]>;
-    const section = {
-      kind: "plugin",
-      entry: "dist/index.mjs",
-      sdk: ext.manifest.sdk,
-      manifest: ext.manifest,
-    } as CapybaraPackageSection;
+    const section = { ...ext, name: m.name, version: m.version };
     const migrationSql = [...entries.keys()]
       .filter((p) => p.startsWith("migrations/"))
       .sort()

@@ -131,9 +131,9 @@ beforeAll(async () => {
   });
   // huge：单个包不超过 packages.maxBytes，但应用包加上它超过 catalog.maxBundleBytes
   pkgs["huge@1.0.0"] = await pluginTgz({
-    name: "huge",
-    version: "1.0.0",
-    extra: [{ name: "package/dist/blob.txt", data: randomBytes(400_000).toString("base64") }],
+    manifest: { name: "huge", version: "1.0.0" },
+    files: { "dist/blob.txt": randomBytes(400_000).toString("base64") },
+    extension: {},
   });
   const npmApp = await bundle(manifest({ name: "npm-suite" }), "@acme/app-npm-suite");
   const catApp = await bundle(manifest({ name: "cat-suite" }), "@acme/app-cat-suite");

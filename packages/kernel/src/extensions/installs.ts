@@ -1,4 +1,4 @@
-import { type CapybaraPackageSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
@@ -13,7 +13,12 @@ import {
 } from "../packages/npm.js";
 import { ExtensionApprovals } from "./approvals.js";
 import type { ExtensionBlobs } from "./blobs.js";
-import { ExtensionPackageError, permissionSetOfPackage, readExtensionPackage } from "./package.js";
+import {
+  ExtensionPackageError,
+  extensionPackageApiError,
+  permissionSetOfPackage,
+  readExtensionPackage,
+} from "./package.js";
 import { diffPermissions } from "./permission-set.js";
 import {
   migrationWarnings,
@@ -71,8 +76,12 @@ export interface DesiredExtension {
   version: string;
   source: "npm" | "file" | "catalog";
   migratedSha: string | null;
-  /** 审阅过的静态 `capybara` 段（migrations 路径只从这里取）。 */
-  section: CapybaraPackageSection;
+  /**
+   * The reviewed extension section of the plugin (the migrations path is taken only from here). A
+   * row stored before 0.1.0 holds the old `capybara` section instead; its package is in the old
+   * format and fails to sync with `extension.legacy_format`.
+   */
+  section: PluginExtensionSection;
 }
 
 /**
@@ -126,9 +135,7 @@ export class ExtensionInstalls {
     try {
       pkg = await readExtensionPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION });
     } catch (e) {
-      if (e instanceof ExtensionPackageError) {
-        throw new ApiError("extension.package_invalid", e.message, e.issues);
-      }
+      if (e instanceof ExtensionPackageError) throw extensionPackageApiError(e);
       throw e;
     }
     const m = pkg.section.manifest;
@@ -371,7 +378,7 @@ export class ExtensionInstalls {
     }));
   }
 
-  /** 期望启用的安装记录及其审阅过的 `capybara` 段（按名字）。 */
+  /** Install records desired enabled, with their reviewed extension sections (by name). */
   async desired(): Promise<DesiredExtension[]> {
     const rows = await this.d.db
       .selectFrom("extension_installs")
@@ -393,7 +400,7 @@ export class ExtensionInstalls {
       version: r.version,
       source: r.source,
       migratedSha: r.migrated_sha,
-      section: r.section as CapybaraPackageSection,
+      section: r.section as PluginExtensionSection,
     }));
   }
 }

@@ -417,7 +417,10 @@ describe("插件", () => {
       .insertInto("extension_name_owners")
       .values({ name: "owned-elsewhere", package_name: "@other/plugin-owned" })
       .execute();
-    const res = await importFile(admin, await pluginTgz({ name: "owned-elsewhere" }));
+    const res = await importFile(
+      admin,
+      await pluginTgz({ manifest: { name: "owned-elsewhere" }, extension: {} }),
+    );
     expect(res.statusCode, res.body).toBe(409);
     expect(res.json().error.code).toBe("extension.name_conflict");
     expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual(before);
@@ -502,7 +505,10 @@ describe("插件", () => {
 
   it("不合法的插件包被拒，什么都不写（F-AD）", async () => {
     await resetCatalog();
-    const bad = await pluginTgz({ section: { entry: "dist/missing.mjs" } });
+    const bad = await pluginTgz({
+      manifest: { name: "demo-pkg" },
+      extension: { section: { entry: "./dist/missing.mjs" } },
+    });
     const res = await importFile(admin, bad);
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("catalog.invalid_package");
@@ -510,7 +516,10 @@ describe("插件", () => {
   });
 
   it("与配置声明的插件重名被拒，什么都不写", async () => {
-    const res = await importFile(admin, await pluginTgz({ name: "model-fake" }));
+    const res = await importFile(
+      admin,
+      await pluginTgz({ manifest: { name: "model-fake" }, extension: {} }),
+    );
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("extension.config_declared");
     await nothingStored();

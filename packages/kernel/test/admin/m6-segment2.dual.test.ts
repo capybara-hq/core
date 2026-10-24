@@ -196,6 +196,9 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         const pkgPath = join(dir, "package.json");
         const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as { version: string };
         await writeFile(pkgPath, JSON.stringify({ ...pkg, version: "0.2.0" }, null, 2));
+        const manifestPath = join(dir, ".capybara-plugin", "plugin.json");
+        const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { version: string };
+        await writeFile(manifestPath, JSON.stringify({ ...manifest, version: "0.2.0" }, null, 2));
         const srcPath = join(dir, "src", "index.ts");
         const src = await readFile(srcPath, "utf8");
         const next = src

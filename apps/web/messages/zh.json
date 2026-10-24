@@ -164,6 +164,8 @@
       "downgrade_unsupported": "不能降级到这个版本：它有尚未执行的迁移。",
       "not_disabled": "请先停用再卸载。",
       "package_invalid": "扩展包不合法：",
+      "legacy_format": "该包是 0.1.0 之前的旧格式。请用 pnpm pack-plugin 重新打包为带 .capybara-plugin/plugin.json 的插件后再上传。",
+      "no_extension": "该插件不含扩展，部署上没有可安装的内容。请改为导入到目录。",
       "package_too_large": "扩展包超过大小上限。",
       "unavailable": "扩展当前不可用。"
     },
@@ -2024,7 +2026,8 @@
         "pending_migration": "待迁移",
         "converging": "收敛中",
         "failed": "失败",
-        "dependency": "依赖缺失"
+        "dependency": "依赖缺失",
+        "legacy_format": "需要重新打包"
       },
       "replicas": {
         "consistent": "一致（{n}）",

@@ -246,7 +246,7 @@ export async function importDeployedPlugin(
   env: OrgEnv,
   name: string,
 ): Promise<{ itemId: string; sha256: string }> {
-  const bytes = await pluginTgz({ name });
+  const bytes = await pluginTgz({ manifest: { name }, extension: {} });
   const r = await importFile(env.root, bytes);
   expect(r.statusCode, r.body).toBe(201);
   const itemId = (r.json() as { id: string }).id;

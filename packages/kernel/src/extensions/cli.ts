@@ -21,7 +21,12 @@ import { type DeclaredExtensionInfo, ExtensionHost, type InspectedExtension } fr
 import { ExtensionInstalls } from "./installs.js";
 import { PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
 import { toIssues } from "./org-config.js";
-import { permissionSetOfPackage, readExtensionPackage } from "./package.js";
+import {
+  ExtensionPackageError,
+  extensionPackageApiError,
+  permissionSetOfPackage,
+  readExtensionPackage,
+} from "./package.js";
 import type { PermissionSet } from "./permission-set.js";
 
 /** CLI 发布 bus 消息时连 Redis 的时限（连不上只告警）。 */
@@ -177,9 +182,12 @@ export async function openExtensionCli(
       local.set(sha256, bytes);
     },
     async packageSet(sha256) {
+      // a stored package in the pre-0.1.0 format -> extension.legacy_format
       const pkg = await readExtensionPackage(await blobs.get(sha256), {
         maxBytes: config.packages.maxBytes,
         hostSdkVersion: SDK_VERSION,
+      }).catch((e: unknown) => {
+        throw e instanceof ExtensionPackageError ? extensionPackageApiError(e) : e;
       });
       return permissionSetOfPackage(pkg);
     },

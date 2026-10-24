@@ -164,6 +164,8 @@
       "downgrade_unsupported": "Cannot downgrade to this version: it has migrations that were never run.",
       "not_disabled": "Disable the extension before uninstalling it.",
       "package_invalid": "The extension package is invalid:",
+      "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
+      "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now."
     },
@@ -2024,7 +2026,8 @@
         "pending_migration": "Awaiting migration",
         "converging": "Converging",
         "failed": "Failed",
-        "dependency": "Missing dependency"
+        "dependency": "Missing dependency",
+        "legacy_format": "Repack needed"
       },
       "replicas": {
         "consistent": "In sync ({n})",

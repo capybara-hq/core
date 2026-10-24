@@ -739,7 +739,10 @@ export interface ExtensionPackagesTable {
   package_name: string;
   version: string;
   size: Int8;
-  /** The `capybara` section of package.json (the reviewed static manifest). */
+  /**
+   * The plugin's reviewed extension section (`PluginExtensionSection` from plugin.json); rows stored
+   * before 0.1.0 hold the old `capybara` section of package.json (both carry the static manifest).
+   */
   section: Json<unknown>;
   blob_store: "object" | "pg";
   source: "npm" | "file" | "catalog";

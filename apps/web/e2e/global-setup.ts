@@ -210,7 +210,10 @@ async function startCatalogFixtures(mcpUrl: string): Promise<{
   stop(): Promise<void>;
 }> {
   const { pluginTgz } = (await import(pluginPackagesModule)) as {
-    pluginTgz: (o: { name: string; version: string }) => Promise<Uint8Array>;
+    pluginTgz: (o: {
+      manifest: { name: string; version: string };
+      extension?: Record<string, unknown>;
+    }) => Promise<Uint8Array>;
   };
   const { appBundleTgz, SVG_ICON } = (await import(catalogPackagesModule)) as {
     appBundleTgz: (o: {
@@ -231,7 +234,10 @@ async function startCatalogFixtures(mcpUrl: string): Promise<{
   };
   const { createHash } = await import("node:crypto");
   const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
-  const plugin = await pluginTgz({ name: "crm-core", version: "1.0.0" });
+  const plugin = await pluginTgz({
+    manifest: { name: "crm-core", version: "1.0.0" },
+    extension: {},
+  });
   const app = await appBundleTgz({
     name: "@acme/app-crm",
     manifest: {

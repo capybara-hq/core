@@ -1,20 +1,21 @@
-import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, posix, relative, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 import {
-  type CapybaraPackageSection,
   checkEntryImports,
   type EntryImport,
   isSafePackagePath,
-  validatePluginPackageJson,
+  PLUGIN_MANIFEST_FILE,
+  type PluginExtensionSection,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { extract as tarExtract } from "tar-stream";
+import { PluginPackageError, packagePath, readPluginPackage } from "../catalog/plugin-package.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { MIGRATION_FILE_RE } from "../db/migrator.js";
+import { ApiError } from "../errors.js";
 import { buildPermissionSet, type PermissionSet, parseCreatedTables } from "./permission-set.js";
 import { migrationWarnings, warningsDigest } from "./permission-view.js";
 
@@ -31,8 +32,10 @@ import { migrationWarnings, warningsDigest } from "./permission-view.js";
  *   {@link EXTENSION_PACKAGE_LIMITS.maxEntries}；路径必须在 `package/` 下且是安全的相对路径
  *   （见 plugin-sdk `isSafePackagePath`：无 `..`、`.`、空段、反斜杠、控制字符、盘符），按小写去重
  *   （大小写不敏感的文件系统上解出来会互相覆盖）；不许有 `node_modules/`、`*.node`、`binding.gyp`。
- * - `package.json` ≤ {@link EXTENSION_PACKAGE_LIMITS.maxPackageJsonBytes}，严格 UTF-8 + `JSON.parse`；规则见
- *   plugin-sdk `validatePluginPackageJson`（安装脚本、依赖字段、peerDependencies、capybara 段、SDK 范围、版本一致）。
+ * - `package.json` ≤ {@link EXTENSION_PACKAGE_LIMITS.maxPackageJsonBytes}, strict UTF-8 + `JSON.parse`. The
+ *   package is a plugin tgz read by `readPluginPackage` (`catalog/plugin-package.ts`: plugin.json,
+ *   the package.json rules of plugin-sdk `validatePluginPackageJsonFor`, the pre-0.1.0 format
+ *   rejected); an extension package is a plugin with an `extension` section.
  * - import 白名单：用 es-module-lexer（2.3.2，固定版本）静态分析 entry 及其包内相对 import 到的模块：
  *   静态 import / `export ... from` / 字面量动态 `import()` 只许 `node:*`、宿主两包（含子路径）与包内相对路径；
  *   **非字面量的动态 `import()` 拒绝**。相对路径解析后必须仍在包内、指向包里存在的 `.mjs` / `.js`，并同样被扫描。
@@ -66,26 +69,52 @@ export const HOST_ZOD_VERSION: string = (
 /** tgz 内容的统一前缀（npm pack 的约定）。 */
 const PREFIX = "package/";
 
-/** 插件包不合法；`issues` 逐条列出问题（英文，可直接展示给管理员）。 */
+/**
+ * Codes of {@link ExtensionPackageError}: an invalid package, a tgz in the pre-0.1.0 format, or a
+ * plugin without an extension (nothing to install on the deployment).
+ */
+export type ExtensionPackageErrorCode =
+  | "extension.package_invalid"
+  | "extension.legacy_format"
+  | "extension.no_extension";
+
+/** The extension package is invalid; `issues` lists the problems (English, shown to the admin). */
 export class ExtensionPackageError extends Error {
+  readonly code: ExtensionPackageErrorCode;
   readonly issues: string[];
-  constructor(issues: string[]) {
-    super(`Invalid plugin package: ${issues[0] ?? "unknown problem"}`);
+  constructor(issues: string[], code: ExtensionPackageErrorCode = "extension.package_invalid") {
+    super(
+      code === "extension.package_invalid"
+        ? `Invalid plugin package: ${issues[0] ?? "unknown problem"}`
+        : (issues[0] ?? code),
+    );
     this.name = "ExtensionPackageError";
+    this.code = code;
     this.issues = issues;
   }
 }
 
-/** 读取并校验后的插件包。路径都相对包根（已去掉 `package/`）。 */
+/** The API error for an {@link ExtensionPackageError} (its code, message and issues as details). */
+export function extensionPackageApiError(e: ExtensionPackageError): ApiError {
+  return new ApiError(e.code, e.message, e.issues);
+}
+
+/**
+ * The extension of a read package: the plugin's {@link PluginExtensionSection} (paths start with
+ * `./`; resolve them with {@link packagePath}) plus the plugin's name and version.
+ */
+export type ExtensionPackageSection = PluginExtensionSection & { name: string; version: string };
+
+/** A read and validated extension package. Paths are relative to the package root (no `package/`). */
 export interface ExtensionPackage {
-  /** 整个 tgz 的十六进制 sha256。 */
+  /** Hex sha256 of the whole tgz. */
   sha256: string;
-  /** tgz 字节数。 */
+  /** tgz bytes. */
   size: number;
   packageJson: Record<string, unknown>;
-  section: CapybaraPackageSection;
+  section: ExtensionPackageSection;
   files: { path: string; size: number }[];
-  /** `capybara.migrations` 目录下（不递归）符合迁移命名的 SQL，按文件名排序。 */
+  /** Migration-named SQL directly in the `extension.migrations` directory, sorted by file name. */
   migrationSql: { file: string; sql: string }[];
 }
 
@@ -220,7 +249,7 @@ async function unpack(
   return files;
 }
 
-const utf8 = (path: string, data: Buffer): string => {
+const utf8 = (path: string, data: Uint8Array): string => {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(data);
   } catch {
@@ -246,7 +275,7 @@ function scanImports(path: string, code: string): EntryImport[] {
 }
 
 /** 从 entry 出发，沿包内相对 import 逐个扫描，汇总问题。 */
-function checkModuleGraph(entry: string, byPath: Map<string, RawFile>): string[] {
+function checkModuleGraph(entry: string, byPath: Map<string, Uint8Array>): string[] {
   const issues: string[] = [];
   const queue = [entry];
   const visited = new Set<string>();
@@ -254,8 +283,7 @@ function checkModuleGraph(entry: string, byPath: Map<string, RawFile>): string[]
     const path = queue.shift() as string;
     if (visited.has(path)) continue;
     visited.add(path);
-    const file = byPath.get(path) as RawFile;
-    const specs = scanImports(path, utf8(path, file.data));
+    const specs = scanImports(path, utf8(path, byPath.get(path) as Uint8Array));
     for (const msg of checkEntryImports(specs)) issues.push(`${path}: ${msg}`);
     for (const s of specs) {
       if (!s.name.startsWith("./") && !s.name.startsWith("../")) continue;
@@ -309,74 +337,84 @@ export function parsePackageJsonFile(file: { data: Buffer } | undefined): unknow
   }
 }
 
+/** Maps an error of `readPluginPackage` to the extension package error. */
+const fromPluginPackageError = (e: PluginPackageError): ExtensionPackageError =>
+  new ExtensionPackageError(
+    e.issues,
+    e.code === "catalog.legacy_format" ? "extension.legacy_format" : "extension.package_invalid",
+  );
+
 /**
- * Reads and validates an extension package (rules in the file header and C11) without running any
- * code from it. Invalid -> {@link ExtensionPackageError} (listing every problem it can find; problems
- * while unpacking stop at the first).
+ * Reads and validates an extension package without running any code from it: a plugin tgz
+ * (`readPluginPackage`) with an `extension` section, whose entry's module graph passes the import
+ * rules (file header) and whose `extension.migrations` SQL is collected. Invalid ->
+ * {@link ExtensionPackageError} (listing every problem it can find; problems while unpacking stop
+ * at the first): `extension.legacy_format` for the pre-0.1.0 format, `extension.no_extension` for a
+ * plugin without an extension, otherwise `extension.package_invalid`.
  */
 export async function readExtensionPackage(
   bytes: Uint8Array,
   opts: ReadExtensionPackageOptions,
 ): Promise<ExtensionPackage> {
-  const files = await unpack(bytes, unpackLimits(opts));
-  const byPath = new Map(files.map((f) => [f.path, f]));
-
-  const packageJson = parsePackageJsonFile(byPath.get("package.json"));
-  const pkgIssues = validatePluginPackageJson(packageJson, opts.hostSdkVersion, {
-    hostZodVersion: opts.hostZodVersion ?? HOST_ZOD_VERSION,
-  });
-  if (pkgIssues.length > 0) throw new ExtensionPackageError(pkgIssues);
-  const pkg = packageJson as Record<string, unknown>;
-  const section = pkg.capybara as CapybaraPackageSection;
+  let plugin: Awaited<ReturnType<typeof readPluginPackage>>;
+  try {
+    plugin = await readPluginPackage(bytes, opts);
+  } catch (e) {
+    if (e instanceof PluginPackageError) throw fromPluginPackageError(e);
+    throw e;
+  }
+  const { manifest, files } = plugin;
+  const ext = manifest.extension;
+  if (ext === undefined) {
+    throw new ExtensionPackageError(
+      [
+        `plugin ${manifest.name} has no extension (no "extension" in ${PLUGIN_MANIFEST_FILE}); import it into the catalog instead`,
+      ],
+      "extension.no_extension",
+    );
+  }
 
   await lexerInit;
-  const issues: string[] = [];
-  if (!byPath.has(section.entry)) issues.push(`entry ${section.entry} not found in the package`);
-  else issues.push(...checkModuleGraph(section.entry, byPath));
-
-  const underDir = (dir: string) => files.filter((f) => f.path.startsWith(`${dir}/`));
+  const issues = checkModuleGraph(packagePath(ext.entry), files);
   const migrationSql: ExtensionPackage["migrationSql"] = [];
-  if (section.migrations !== undefined) {
-    const dir = section.migrations;
-    const inDir = underDir(dir);
-    if (inDir.length === 0)
-      issues.push(`capybara.migrations directory "${dir}" is missing or empty`);
-    for (const f of inDir) {
-      const file = f.path.slice(dir.length + 1);
+  if (ext.migrations !== undefined) {
+    const dir = packagePath(ext.migrations);
+    for (const [path, data] of files) {
+      if (!path.startsWith(`${dir}/`)) continue;
+      const file = path.slice(dir.length + 1);
       if (file.includes("/") || !MIGRATION_FILE_RE.test(file)) continue;
-      migrationSql.push({ file, sql: utf8(f.path, f.data) });
+      migrationSql.push({ file, sql: utf8(path, data) });
     }
     migrationSql.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
-  }
-  if (section.ui !== undefined && underDir(section.ui).length === 0) {
-    issues.push(`capybara.ui directory "${section.ui}" is missing or empty`);
   }
   if (issues.length > 0) throw new ExtensionPackageError(issues);
 
   return {
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    size: bytes.byteLength,
-    packageJson: pkg,
-    section,
-    files: files.map((f) => ({ path: f.path, size: f.data.byteLength })),
+    sha256: plugin.sha256,
+    size: plugin.size,
+    packageJson: plugin.packageJson,
+    section: { ...ext, name: manifest.name, version: manifest.version },
+    files: [...files].map(([path, data]) => ({ path, size: data.byteLength })),
     migrationSql,
   };
 }
 
 /**
- * 包的权限集合：只看静态 manifest 与迁移 SQL（审阅不执行插件代码），与对真实模块调用 `computePermissionSet`
- * 的结果同形（配置字段只取 path / secret）。
+ * The package's permission set from the static manifest and the migration SQL only (review runs no
+ * extension code), in the same shape as `computePermissionSet` on the real module (config fields
+ * keep only path / secret).
  */
 export function permissionSetOfPackage(p: ExtensionPackage): PermissionSet {
   return permissionSetOfSection(p.section, p.migrationSql);
 }
 
 /**
- * 同 {@link permissionSetOfPackage}，输入为 `capybara` 段与迁移 SQL（宿主在同步到本地的包上用它判定权限闸门，
- * 不导入插件模块：批准之前不执行插件的任何代码，含模块顶层代码）。
+ * Same as {@link permissionSetOfPackage}, from the extension section and the migration SQL (the host
+ * uses it on the locally synced package for the permission gate without importing the module: no
+ * extension code, top-level code included, runs before approval).
  */
 export function permissionSetOfSection(
-  section: CapybaraPackageSection,
+  section: Pick<PluginExtensionSection, "manifest">,
   migrationSql: { file: string; sql: string }[],
 ): PermissionSet {
   const m = section.manifest;
@@ -396,16 +434,16 @@ export function permissionSetOfSection(
 }
 
 /**
- * Reads the migration SQL in `capybara.migrations` under the locally unpacked directory `root` (not
+ * Reads the migration SQL in `extension.migrations` under the locally unpacked directory `root` (not
  * recursive, only files with migration names, sorted by name), in the same shape as the
  * `migrationSql` of {@link readExtensionPackage}; empty when no migrations are declared.
  */
 export async function readMigrationSql(
   root: string,
-  section: CapybaraPackageSection,
+  section: Pick<PluginExtensionSection, "migrations">,
 ): Promise<{ file: string; sql: string }[]> {
   if (section.migrations === undefined) return [];
-  const dir = resolvePath(root, section.migrations);
+  const dir = resolvePath(root, packagePath(section.migrations));
   const names = (await readdir(dir)).filter((f) => MIGRATION_FILE_RE.test(f)).sort();
   const out: { file: string; sql: string }[] = [];
   for (const file of names) out.push({ file, sql: await readFile(resolvePath(dir, file), "utf8") });

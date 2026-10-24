@@ -36,7 +36,7 @@ import {
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { packOfficialPlugin, pluginTgz } from "../helpers/plugin-packages.js";
+import { legacyTgz, packOfficialPlugin, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
 
 const S3_PLUGIN = fileURLToPath(
@@ -248,28 +248,62 @@ describe("有对象存储：上传、npm 与包存储", () => {
     expect(big.json().error.code).toBe("extension.package_too_large");
   });
 
+  it("a pre-0.1.0 tgz (capybara section, or app.yaml) is 422 extension.legacy_format with the repack message; a plugin without an extension is 400 extension.no_extension; nothing is stored", async () => {
+    const LEGACY =
+      "uses the pre-0.1.0 package format (capybara section / app.yaml); repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)";
+    const before = await db.selectFrom("extension_packages").select("sha256").execute();
+    for (const bytes of [await legacyTgz(), await legacyTgz({ appYaml: true })]) {
+      const res = await upload(admin, bytes);
+      expect(res.statusCode, res.body).toBe(422);
+      expect(res.json().error.code).toBe("extension.legacy_format");
+      expect(res.json().error.message).toBe(`Package @test/plugin-legacy-pkg ${LEGACY}`);
+    }
+    const skillsOnly = await pluginTgz({
+      manifest: { name: "skills-only" },
+      files: {
+        "skills/greet/SKILL.md":
+          "---\nname: greet\ndescription: Greets the user. Use when the user says hello.\n---\n\nHi.\n",
+      },
+    });
+    const res = await upload(admin, skillsOnly);
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json().error.code).toBe("extension.no_extension");
+    expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual(before);
+  });
+
   it("same name as a config-declared extension -> 409 extension.config_declared", async () => {
-    const res = await upload(admin, await pluginTgz({ name: "model-fake" }));
+    const res = await upload(
+      admin,
+      await pluginTgz({ manifest: { name: "model-fake" }, extension: {} }),
+    );
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("extension.config_declared");
   });
 
   it("an installed extension of the same name comes from another package -> 409 extension.name_conflict", async () => {
-    const own = await pluginTgz({ name: "demo-owned", packageName: "@acme/plugin-demo" });
+    const own = await pluginTgz({
+      manifest: { name: "demo-owned" },
+      packageName: "@acme/plugin-demo",
+      extension: {},
+    });
     expect((await upload(admin, own)).statusCode).toBe(200);
     await db
       .insertInto("extension_installs")
       .values({ name: "demo-owned", sha256: sha(own), version: "1.0.0", source: "file" })
       .execute();
-    const other = await pluginTgz({ name: "demo-owned", packageName: "@evil/plugin-demo" });
+    const other = await pluginTgz({
+      manifest: { name: "demo-owned" },
+      packageName: "@evil/plugin-demo",
+      extension: {},
+    });
     const res = await upload(admin, other);
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("extension.name_conflict");
     // 同一个包的新版本不算冲突（升级另行处理）
     const next = await pluginTgz({
-      name: "demo-owned",
+      manifest: { name: "demo-owned", version: "1.1.0" },
       packageName: "@acme/plugin-demo",
-      version: "1.1.0",
+      extension: {},
     });
     expect((await upload(admin, next)).statusCode).toBe(200);
   });
@@ -476,7 +510,7 @@ describe("启动时加载安装记录", () => {
 
   it("没有批准快照：不加载，副本状态 pending / approval；包取不到：failed / sync_failed", async () => {
     await db.deleteFrom("extension_permission_snapshots").execute();
-    const ghost = await pluginTgz({ name: "ghost-pkg" });
+    const ghost = await pluginTgz({ manifest: { name: "ghost-pkg" }, extension: {} });
     const pkg = await readExtensionPackage(ghost, {
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
@@ -558,13 +592,10 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       .select(["state", "reason"])
       .where("plugin", "=", plugin)
       .executeTakeFirstOrThrow();
-  const MIGRATIONS = [
-    {
-      name: "package/migrations/0001_reviewed.sql",
-      data: "CREATE TABLE IF NOT EXISTS reviewed (id int);",
-    },
-    { name: "package/evil/0001_evil.sql", data: "CREATE TABLE IF NOT EXISTS evil (id int);" },
-  ];
+  const MIGRATIONS = {
+    "migrations/0001_reviewed.sql": "CREATE TABLE IF NOT EXISTS reviewed (id int);",
+    "evil/0001_evil.sql": "CREATE TABLE IF NOT EXISTS evil (id int);",
+  };
   const entry = (name: string, extra: string) =>
     [
       'import { defineExtension } from "@capybara-hq/plugin-sdk";',
@@ -575,19 +606,23 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
     await installPkg(
       "mig-dir",
       await pluginTgz({
-        name: "mig-dir",
-        section: { migrations: "migrations" },
-        extra: MIGRATIONS,
-        entry: entry("mig-dir", 'permissions: {}, migrations: "../evil"'),
+        manifest: { name: "mig-dir" },
+        files: MIGRATIONS,
+        extension: {
+          section: { migrations: "./migrations" },
+          entry: entry("mig-dir", 'permissions: {}, migrations: "../evil"'),
+        },
       }),
     );
     await installPkg(
       "mig-mismatch",
       await pluginTgz({
-        name: "mig-mismatch",
-        section: { migrations: "migrations" },
-        extra: MIGRATIONS,
-        entry: entry("mig-mismatch", "permissions: { secrets: true }"),
+        manifest: { name: "mig-mismatch" },
+        files: MIGRATIONS,
+        extension: {
+          section: { migrations: "./migrations" },
+          entry: entry("mig-mismatch", "permissions: { secrets: true }"),
+        },
       }),
     );
     const k = await boot({ extensions: [MODEL_FAKE] });
@@ -621,12 +656,14 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
     await installPkg(
       "inst-counter",
       await pluginTgz({
-        name: "inst-counter",
-        manifest: { provides: ["counter@1"] },
-        entry: [
-          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-          'export default defineExtension({ name: "inst-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
-        ].join("\n"),
+        manifest: { name: "inst-counter" },
+        extension: {
+          manifest: { provides: ["counter@1"] },
+          entry: [
+            'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+            'export default defineExtension({ name: "inst-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
+          ].join("\n"),
+        },
       }),
     );
     const k = await boot({ extensions: [MODEL_FAKE, DEPENDENT] });
@@ -646,12 +683,14 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
     await installPkg(
       "bad-counter",
       await pluginTgz({
-        name: "bad-counter",
-        manifest: { provides: ["counter@1"] },
-        entry: [
-          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-          'export default defineExtension({ name: "bad-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: { secrets: true }, setup(ctx) { ctx.provide("counter@1", {}); } });',
-        ].join("\n"),
+        manifest: { name: "bad-counter" },
+        extension: {
+          manifest: { provides: ["counter@1"] },
+          entry: [
+            'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+            'export default defineExtension({ name: "bad-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: { secrets: true }, setup(ctx) { ctx.provide("counter@1", {}); } });',
+          ].join("\n"),
+        },
       }),
     );
     const k = await boot({ extensions: [MODEL_FAKE, DEPENDENT] });
@@ -691,12 +730,14 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
     await installPkg(
       "chain-counter",
       await pluginTgz({
-        name: "chain-counter",
-        manifest: { provides: ["counter@1"] },
-        entry: [
-          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-          'export default defineExtension({ name: "chain-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
-        ].join("\n"),
+        manifest: { name: "chain-counter" },
+        extension: {
+          manifest: { provides: ["counter@1"] },
+          entry: [
+            'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+            'export default defineExtension({ name: "chain-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
+          ].join("\n"),
+        },
       }),
     );
     const k = await boot({ extensions: [MODEL_FAKE, fixture("chain-mid"), fixture("chain-top")] });
