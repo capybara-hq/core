@@ -40,20 +40,43 @@ const cfg = (over: Record<string, unknown> = {}): KernelConfig =>
 
 const silent = (): KernelLogger => createLogger("error", { write: () => {} });
 
-async function kernel(config: KernelConfig, opts?: Parameters<typeof createKernel>[1]) {
+/**
+ * Creates a kernel that afterEach stops. With `signal` (the test context's, aborted when the test
+ * times out): a body that is still running after its test timed out (vitest does not cancel it)
+ * creates no kernel after afterEach has run, so it cannot leak connections into the next test.
+ */
+async function kernel(
+  config: KernelConfig,
+  opts?: Parameters<typeof createKernel>[1],
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
   const k = await createKernel(config, { env: {}, logger: silent(), ...opts });
+  if (signal?.aborted) {
+    await k.stop();
+    signal.throwIfAborted();
+  }
   kernels.push(k);
   return k;
 }
 
-/** 轮询直到 fn 返回 truthy 或超时；返回最后一次的值。 */
-async function waitFor<T>(fn: () => Promise<T>, timeoutMs = 5_000, stepMs = 50): Promise<T> {
+/**
+ * Polls until fn returns a truthy value or the timeout passes, and returns the last value. With
+ * `signal`, stops polling and throws once the test has timed out.
+ */
+async function waitFor<T>(
+  fn: () => Promise<T>,
+  timeoutMs = 5_000,
+  stepMs = 50,
+  signal?: AbortSignal,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let v = await fn();
-  while (!v && Date.now() < deadline) {
+  while (!v && Date.now() < deadline && !signal?.aborted) {
     await sleep(stepMs);
     v = await fn();
   }
+  signal?.throwIfAborted();
   return v;
 }
 
@@ -165,8 +188,13 @@ describe("插件生命周期", () => {
     expect(closed).toEqual(["dep-b", "dep-a"]);
   });
 
-  it("stop during slow start does not leak", async () => {
-    // 每次运行新建 deferred，经部署配置的 key 交给 fixture（重跑不会复用已 resolve 的旧 deferred）
+  // The waits below add up to more than vitest's 5 s default (up to 5 s for the baseline, then the
+  // start, the stop and up to 1 s), so the test has its own timeout. If it still times out, the
+  // signal stops the body before it creates a kernel or right after (see kernel()), so it leaks no
+  // connections into the next test.
+  it("stop during slow start does not leak", { timeout: 30_000 }, async ({ signal }) => {
+    // A new deferred per run, handed to the fixture through a deployment config key (a rerun does
+    // not reuse an old, already resolved deferred)
     const entered = deferred();
     const gate = deferred();
     const key = `run-${Date.now()}-${Math.random()}`;
@@ -174,10 +202,16 @@ describe("插件生命周期", () => {
     g[SLOW_GATES_KEY] ??= new Map();
     g[SLOW_GATES_KEY].set(key, { entered, gate });
     const r = redisClient();
+    // A timed-out body must not stay parked on the gate
+    signal.addEventListener("abort", () => gate.resolve(), { once: true });
     try {
-      await waitFor(async () => (await clientCount(r)) === 1, 5_000);
+      await waitFor(async () => (await clientCount(r)) === 1, 5_000, 50, signal);
       const baseline = await clientCount(r);
-      const k = await kernel(cfg({ extensions: [fx("slow")], extensionConfig: { slow: { key } } }));
+      const k = await kernel(
+        cfg({ extensions: [fx("slow")], extensionConfig: { slow: { key } } }),
+        undefined,
+        signal,
+      );
       const starting = k.start();
       starting.catch(() => {});
       // 等 setup 卡在 gate 上再停机（此时 slow 的 BullMQ Worker 连接已建立）
