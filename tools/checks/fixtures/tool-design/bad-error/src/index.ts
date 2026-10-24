@@ -1,9 +1,9 @@
-import { definePlugin, ToolError } from "@capybara-hq/plugin-sdk";
+import { defineExtension, ToolError } from "@capybara-hq/plugin-sdk";
 
 const NO_VERB = "Something went wrong with the item.";
 const nope = (id: string) => `Item ${id} is gone.`;
 
-export default definePlugin({
+export default defineExtension({
   name: "bad-error",
   version: "0.0.0",
   sdk: "^0.1.0",

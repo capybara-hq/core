@@ -1,10 +1,10 @@
-import { definePlugin, type PluginContext } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionContext } from "@capybara-hq/plugin-sdk";
 
-function mount(c: PluginContext): void {
+function mount(c: ExtensionContext): void {
   c.http.route("DELETE", "/helper", async () => Response.json({})); // FLAG
 }
 
-export default definePlugin({
+export default defineExtension({
   name: "perm-http",
   version: "0.0.0",
   sdk: "^0.1.0",

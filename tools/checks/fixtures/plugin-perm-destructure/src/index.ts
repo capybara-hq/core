@@ -1,8 +1,8 @@
-import { definePlugin, type PluginContext } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionContext } from "@capybara-hq/plugin-sdk";
 
 declare const key: string;
 
-export default definePlugin({
+export default defineExtension({
   name: "perm-destructure",
   version: "0.0.0",
   sdk: "^0.1.0",
@@ -16,22 +16,22 @@ export default definePlugin({
   },
 });
 
-export const second = definePlugin({
+export const second = defineExtension({
   name: "perm-destructure-param",
   version: "0.0.0",
   sdk: "^0.1.0",
   provides: [],
-  setup({ secrets }: PluginContext) { // FLAG
+  setup({ secrets }: ExtensionContext) { // FLAG
     void secrets;
   },
 });
 
-export const third = definePlugin({
+export const third = defineExtension({
   name: "perm-default-param",
   version: "0.0.0",
   sdk: "^0.1.0",
   provides: [],
-  setup(ctx: PluginContext = {} as PluginContext) {
+  setup(ctx: ExtensionContext = {} as ExtensionContext) {
     void ctx.secrets; // FLAG
   },
 });

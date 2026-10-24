@@ -1,9 +1,9 @@
 import {
-  CAPABILITY_CARDINALITY,
-  type CapabilityRef,
-  OBJECT_STORE_CAPABILITY,
-  type PluginManifest,
-  parseCapability,
+  EXTENSION_POINT_CARDINALITY,
+  type ExtensionManifest,
+  type ExtensionPointRef,
+  OBJECT_STORE_EXTENSION_POINT,
+  parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
 import semver from "semver";
 
@@ -21,7 +21,10 @@ export class PluginResolveError extends Error {
  * 声明了 `permissions.storage` 的插件隐含依赖 `object-store@1`（中转能力，不能 `requires`）：提供方排在它前面；
  * 缺提供方不在这里报错，由权限闸门把它列为 pending（见 approvals.ts）。
  */
-export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string): PluginManifest[] {
+export function resolvePlugins(
+  manifests: ExtensionManifest[],
+  sdkVersion: string,
+): ExtensionManifest[] {
   const seen = new Set<string>();
   for (const m of manifests) {
     if (seen.has(m.name)) throw new PluginResolveError(`plugin ${m.name}: loaded more than once`);
@@ -33,12 +36,15 @@ export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string):
     }
   }
 
-  const providers = new Map<CapabilityRef, PluginManifest[]>();
+  const providers = new Map<ExtensionPointRef, ExtensionManifest[]>();
   for (const m of manifests) {
     for (const cap of m.provides) providers.set(cap, [...(providers.get(cap) ?? []), m]);
   }
   for (const [cap, list] of providers) {
-    if (CAPABILITY_CARDINALITY[parseCapability(cap).name] === "single" && list.length > 1) {
+    if (
+      EXTENSION_POINT_CARDINALITY[parseExtensionPoint(cap).name] === "single" &&
+      list.length > 1
+    ) {
       throw new PluginResolveError(
         `capability ${cap} is single-provider but provided by: ${list.map((p) => p.name).join(", ")}`,
       );
@@ -56,8 +62,8 @@ export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string):
 
   const done = new Set<string>();
   const visiting: string[] = [];
-  const out: PluginManifest[] = [];
-  const visit = (m: PluginManifest): void => {
+  const out: ExtensionManifest[] = [];
+  const visit = (m: ExtensionManifest): void => {
     if (done.has(m.name)) return;
     if (visiting.includes(m.name)) {
       const cycle = [...visiting.slice(visiting.indexOf(m.name)), m.name].join(" -> ");
@@ -68,7 +74,7 @@ export function resolvePlugins(manifests: PluginManifest[], sdkVersion: string):
       for (const p of providers.get(cap) ?? []) visit(p);
     }
     if (m.permissions?.storage) {
-      for (const p of providers.get(OBJECT_STORE_CAPABILITY) ?? []) if (p !== m) visit(p);
+      for (const p of providers.get(OBJECT_STORE_EXTENSION_POINT) ?? []) if (p !== m) visit(p);
     }
     visiting.pop();
     done.add(m.name);

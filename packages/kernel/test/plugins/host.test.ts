@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { definePlugin, type PluginManifest, secret } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionManifest, secret } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -252,10 +252,10 @@ describe("PluginHost 配置加固", () => {
 });
 
 describe("PluginHost 加载规则", () => {
-  it("清单不合法：抛 PluginManifestError 并点名 specifier", async () => {
+  it("清单不合法：抛 ExtensionManifestError 并点名 specifier", async () => {
     await expect(host().load([fx("malformed")])).rejects.toThrow(/malformed.*Foo|Foo/);
     await expect(host().load([fx("malformed")])).rejects.toMatchObject({
-      name: "PluginManifestError",
+      name: "ExtensionManifestError",
       message: expect.stringContaining("malformed"),
     });
   });
@@ -321,7 +321,7 @@ describe("PluginHost 加载规则", () => {
 
 describe("createPluginContext 规则", () => {
   it("ctx 关闭后 bus.subscribe 以明确错误拒绝，不留下订阅；关闭与订阅并发时订阅方自行退订", async () => {
-    const manifest = definePlugin({
+    const manifest = defineExtension({
       name: "late-sub",
       version: "0.1.0",
       sdk: "^0.1.0",
@@ -346,7 +346,13 @@ describe("createPluginContext 规则", () => {
   it("ctx.log 附加 plugin 字段", async () => {
     const ctx = createPluginContext(
       deps,
-      definePlugin({ name: "logger-x", version: "0.1.0", sdk: "^0.1.0", provides: [], setup() {} }),
+      defineExtension({
+        name: "logger-x",
+        version: "0.1.0",
+        sdk: "^0.1.0",
+        provides: [],
+        setup() {},
+      }),
       {},
     );
     ctx.log.info("hello", { a: 1 });
@@ -356,8 +362,8 @@ describe("createPluginContext 规则", () => {
     await ctx.close();
   });
 
-  const mf = (over: Partial<PluginManifest> = {}) =>
-    definePlugin({
+  const mf = (over: Partial<ExtensionManifest> = {}) =>
+    defineExtension({
       name: "ctx-test",
       version: "0.1.0",
       sdk: "^0.1.0",

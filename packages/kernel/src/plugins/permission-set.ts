@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
-import type { PluginManifest, PluginPermissions } from "@capybara-hq/plugin-sdk";
+import type { ExtensionManifest, ExtensionPermissions } from "@capybara-hq/plugin-sdk";
 import type { core } from "zod";
 import { configFields } from "../config/fields.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
@@ -106,7 +106,7 @@ function fieldsOf(schema: core.$ZodType | undefined): PermissionConfigField[] {
  * @param pluginDir 插件模块所在目录（`manifest.migrations` 相对它解析）。
  */
 export async function computePermissionSet(
-  manifest: PluginManifest,
+  manifest: ExtensionManifest,
   pluginDir: string,
 ): Promise<PermissionSet> {
   const tables: string[] = [];
@@ -148,7 +148,7 @@ export function buildPermissionSet(input: {
   optional?: readonly string[] | undefined;
   config: { deployment: PermissionConfigField[]; org: PermissionConfigField[] };
   tables: readonly string[];
-  permissions?: PluginPermissions | undefined;
+  permissions?: ExtensionPermissions | undefined;
   warningsDigest?: string | undefined;
 }): PermissionSet {
   const p = input.permissions ?? {};

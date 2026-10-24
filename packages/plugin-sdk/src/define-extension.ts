@@ -1,30 +1,34 @@
 import semver from "semver";
 import type { z } from "zod";
-import { CAPABILITIES, type CapabilityRef, parseCapability } from "./capability.js";
-import type { PluginContext } from "./ctx.js";
+import type { ExtensionContext } from "./ctx.js";
 import {
-  type PluginPermissions,
+  EXTENSION_POINTS,
+  type ExtensionPointRef,
+  parseExtensionPoint,
+} from "./extension-point.js";
+import {
+  type ExtensionPermissions,
   validatePermissions,
   validateUiContributions,
 } from "./permissions.js";
 import type { UiContribution } from "./ui.js";
 
 /** 插件清单。 */
-export interface PluginManifest {
+export interface ExtensionManifest {
   name: string;
   version: string;
   sdk: string;
-  provides: CapabilityRef[];
-  requires?: CapabilityRef[];
-  /** 可选依赖：缺失时插件照常加载，运行时经 ctx.capabilities 判断。 */
-  optional?: CapabilityRef[];
+  provides: ExtensionPointRef[];
+  requires?: ExtensionPointRef[];
+  /** 可选依赖：缺失时插件照常加载，运行时经 ctx.extensionPoints 判断。 */
+  optional?: ExtensionPointRef[];
   /** 权限清单（治理而非沙箱）。 */
-  permissions?: PluginPermissions;
+  permissions?: ExtensionPermissions;
   /** 界面贡献：对话页标签与组织页面；id 须同时列在 `permissions.ui` 里。 */
   ui?: UiContribution[];
   config?: { deployment?: z.ZodTypeAny; org?: z.ZodTypeAny };
   migrations?: string;
-  setup(ctx: PluginContext): void | Promise<void>;
+  setup(ctx: ExtensionContext): void | Promise<void>;
   /**
    * 可选：插件实例被撤销（停用、卸载、升级换新实例、依赖方随提供方重新加载）时调用。
    * 调用时内核已经：停止接新的调用、等在途调用结束（最多 `pluginHost.drainSeconds`）、中止 `ctx.signal`、
@@ -32,20 +36,20 @@ export interface PluginManifest {
    * 这里只收拾插件自己在 ctx 之外开的东西（如自建的连接）；不要再经 ctx 登记任何东西。
    * setup 抛错时不调用（已登记的由内核撤销）。
    */
-  dispose?(ctx: PluginContext): void | Promise<void>;
+  dispose?(ctx: ExtensionContext): void | Promise<void>;
 }
 
 /** 插件清单不合法。 */
-export class PluginManifestError extends Error {
+export class ExtensionManifestError extends Error {
   constructor(plugin: string, message: string) {
     super(`plugin ${plugin}: ${message}`);
-    this.name = "PluginManifestError";
+    this.name = "ExtensionManifestError";
   }
 }
 
 /** 插件名规则（清单 `name`；连接器模板的 `plugin` 也按它校验）。 */
-export const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
-const NAME_RE = PLUGIN_NAME_RE;
+export const EXTENSION_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
+const NAME_RE = EXTENSION_NAME_RE;
 
 /** 保留的插件名：内核用 `kernel` 作为自己的 secrets 命名空间，插件不能与之相同。 */
 const RESERVED_NAMES: ReadonlySet<string> = new Set(["kernel"]);
@@ -59,24 +63,26 @@ function checkRefs(
   for (const ref of refs) {
     let name: string;
     try {
-      name = parseCapability(ref).name;
+      name = parseExtensionPoint(ref).name;
     } catch {
-      fail(`${label} entry "${ref}" is not a valid capability ref`);
+      fail(`${label} entry "${ref}" is not a valid extension point ref`);
     }
-    if (!Object.hasOwn(CAPABILITIES, name)) {
-      fail(`${label} entry "${ref}" references unregistered capability "${name}"`);
+    if (!Object.hasOwn(EXTENSION_POINTS, name)) {
+      fail(`${label} entry "${ref}" references unregistered extension point "${name}"`);
     }
-    if (forbidBrokered && CAPABILITIES[name]?.brokered) {
-      fail(`${label} entry "${ref}" is a brokered capability and is used through the platform`);
+    if (forbidBrokered && EXTENSION_POINTS[name]?.brokered) {
+      fail(
+        `${label} entry "${ref}" is a brokered extension point and is used through the platform`,
+      );
     }
   }
 }
 
-/** 校验并原样返回插件清单；不合法抛 PluginManifestError。 */
-export function definePlugin(m: PluginManifest): PluginManifest {
+/** 校验并原样返回插件清单；不合法抛 ExtensionManifestError。 */
+export function defineExtension(m: ExtensionManifest): ExtensionManifest {
   const plugin = typeof m?.name === "string" && m.name !== "" ? m.name : "<unnamed>";
   const fail = (msg: string): never => {
-    throw new PluginManifestError(plugin, msg);
+    throw new ExtensionManifestError(plugin, msg);
   };
   if (typeof m.name !== "string" || !NAME_RE.test(m.name)) {
     fail(`field "name" must match ${NAME_RE}`);

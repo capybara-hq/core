@@ -1,38 +1,38 @@
 import { describe, expect, it } from "vitest";
 import {
-  CAPABILITIES,
-  CAPABILITY_CARDINALITY,
-  CapabilityUnavailableError,
-  PluginPermissionError,
+  EXTENSION_POINT_CARDINALITY,
+  EXTENSION_POINTS,
+  ExtensionPermissionError,
+  ExtensionPointUnavailableError,
   validatePermissions,
 } from "../src/index.js";
 
-describe("CAPABILITIES", () => {
+describe("EXTENSION_POINTS", () => {
   it("marks brokered / orgScoped per ruling", () => {
     for (const n of ["model-provider", "connector", "sandbox", "secret-store", "object-store"]) {
-      expect(CAPABILITIES[n]?.brokered).toBe(true);
+      expect(EXTENSION_POINTS[n]?.brokered).toBe(true);
     }
     for (const n of ["channel", "identity-source", "directory", "counter", "config-source"]) {
-      expect(CAPABILITIES[n]?.brokered).toBe(false);
+      expect(EXTENSION_POINTS[n]?.brokered).toBe(false);
     }
-    expect(CAPABILITIES.channel?.orgScoped).toBe(true);
-    expect(CAPABILITIES.directory?.orgScoped).toBe(true);
-    expect(CAPABILITIES["identity-source"]?.orgScoped).toBe(false);
-    expect(CAPABILITIES["object-store"]?.cardinality).toBe("single");
+    expect(EXTENSION_POINTS.channel?.orgScoped).toBe(true);
+    expect(EXTENSION_POINTS.directory?.orgScoped).toBe(true);
+    expect(EXTENSION_POINTS["identity-source"]?.orgScoped).toBe(false);
+    expect(EXTENSION_POINTS["object-store"]?.cardinality).toBe("single");
   });
-  it("derives CAPABILITY_CARDINALITY", () => {
-    expect(CAPABILITY_CARDINALITY.sandbox).toBe("single");
-    expect(CAPABILITY_CARDINALITY.channel).toBe("multi");
+  it("derives EXTENSION_POINT_CARDINALITY", () => {
+    expect(EXTENSION_POINT_CARDINALITY.sandbox).toBe("single");
+    expect(EXTENSION_POINT_CARDINALITY.channel).toBe("multi");
   });
 });
 
 describe("errors", () => {
   it("names plugin and manifest item", () => {
-    const e = new PluginPermissionError("slack", "permissions.secrets");
+    const e = new ExtensionPermissionError("slack", "permissions.secrets");
     expect(e.message).toMatch(/slack/);
     expect(e.message).toMatch(/permissions\.secrets/);
-    expect(e.name).toBe("PluginPermissionError");
-    expect(new CapabilityUnavailableError("x").name).toBe("CapabilityUnavailableError");
+    expect(e.name).toBe("ExtensionPermissionError");
+    expect(new ExtensionPointUnavailableError("x").name).toBe("ExtensionPointUnavailableError");
   });
 });
 

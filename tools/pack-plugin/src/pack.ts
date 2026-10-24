@@ -20,12 +20,12 @@ import { gzip } from "node:zlib";
 import {
   type CapybaraPackageSection,
   checkEntryImports,
-  definePlugin,
+  defineExtension,
+  type ExtensionManifest,
   HOST_PROVIDED_PACKAGES,
   PLUGIN_PACKAGE_ENTRY,
-  type PluginManifest,
   SDK_VERSION,
-  type StaticPluginManifest,
+  type StaticExtensionManifest,
   staticManifestOf,
   validatePluginPackageJson,
 } from "@capybara-hq/plugin-sdk";
@@ -37,7 +37,7 @@ import { pack as tarPack } from "tar-stream";
 export interface PackResult {
   file: string;
   sha256: string;
-  manifest: StaticPluginManifest;
+  manifest: StaticExtensionManifest;
   /**
    * Entries of the plugin's package.json `files` that are not in the package (directories other than
    * `dist` / `migrations` / `ui`, globs, missing paths). Callers print them; `check:plugin-pack` fails.
@@ -276,7 +276,7 @@ const tgzName = (name: string, version: string) =>
  * 把一个插件目录打成插件包（C11）：
  * 1. esbuild 把 `src/index.ts` 打成单文件 ESM `dist/index.mjs`（platform node、target node24），只外置
  *    {@link HOST_PROVIDED_PACKAGES} 与 Node 内置模块（改写为 `node:*`），CJS 依赖经 createRequire 横幅兼容；
- * 2. 扫描产物的 import（白名单、非字面量动态 import），导入产物取默认导出，经 definePlugin 校验后用
+ * 2. 扫描产物的 import（白名单、非字面量动态 import），导入产物取默认导出，经 defineExtension 校验后用
  *    `staticManifestOf` 生成静态清单；清单 version 必须与插件 package.json 一致；
  * 3. 生成只含 name / version / type / license / {@link METADATA_FIELDS} / peerDependencies / capybara 的
  *    package.json，复制
@@ -325,7 +325,7 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
     if (typeof mod.default !== "object" || mod.default === null) {
       throw new Error(`${label}: the bundle has no default export object`);
     }
-    const m = definePlugin(mod.default as PluginManifest);
+    const m = defineExtension(mod.default as ExtensionManifest);
     if (m.version !== srcPkg.version) {
       throw new Error(
         `${label}: manifest version ${m.version} does not match package.json version ${String(srcPkg.version)}`,

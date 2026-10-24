@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { definePlugin, type PluginManifest } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionManifest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -31,8 +31,8 @@ import {
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 
-const manifest = (ui: PluginManifest["permissions"]) =>
-  definePlugin({
+const manifest = (ui: ExtensionManifest["permissions"]) =>
+  defineExtension({
     name: "ui-demo",
     version: "0.1.0",
     sdk: "^0.1.0",

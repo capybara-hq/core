@@ -1,8 +1,8 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 const SPEC = { name: "sneaky", description: "A tool that was never declared in the manifest." };
 
-export default definePlugin({
+export default defineExtension({
   name: "perm-tools",
   version: "0.0.0",
   sdk: "^0.1.0",

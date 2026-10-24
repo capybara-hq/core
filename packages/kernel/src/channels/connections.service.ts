@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
-  CHANNEL_CAPABILITY,
+  CHANNEL_EXTENSION_POINT,
   type Channel,
   type ChannelTarget,
+  type ExtensionContext,
   type Logger,
   type OutboundMessage,
-  type PluginContext,
 } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -175,7 +175,7 @@ export interface ChannelConnectionsDeps {
   db: KernelDb;
   keyring: Keyring;
   host: Pick<PluginHost, "list">;
-  bus: PluginContext["bus"];
+  bus: ExtensionContext["bus"];
   redis: Redis;
   log: Pick<Logger, "warn">;
   /** 连接重新可投递（轮换凭据 / 重新启用）后调用；内核传出站的 `resumeConnection`（补投落下的会话）。 */
@@ -203,7 +203,7 @@ export class ChannelConnections {
   private channelEntry(plugin: string): ReturnType<PluginHost["list"]>[number] {
     const e = this.deps.host
       .list("channel")
-      .find((x) => x.plugin === plugin && x.capability === CHANNEL_CAPABILITY);
+      .find((x) => x.plugin === plugin && x.capability === CHANNEL_EXTENSION_POINT);
     if (!e) throw new ApiError("plugin.not_found", `Plugin ${plugin} does not provide a channel`);
     return e;
   }

@@ -1,11 +1,11 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  type CapabilityRef,
-  definePlugin,
-  type PluginManifest,
-  PluginManifestError,
-  type StaticPluginManifest,
+  defineExtension,
+  type ExtensionManifest,
+  ExtensionManifestError,
+  type ExtensionPointRef,
+  type StaticExtensionManifest,
   staticManifestOf,
 } from "@capybara-hq/plugin-sdk";
 import {
@@ -53,19 +53,19 @@ const canonical = (v: unknown): string => {
 
 /** 模块清单与审阅过的静态清单是否一致（名字与 {@link staticManifestOf} 都须相同）。 */
 export function matchesSection(
-  manifest: PluginManifest,
+  manifest: ExtensionManifest,
   name: string,
-  section: StaticPluginManifest,
+  section: StaticExtensionManifest,
 ): boolean {
   return manifest.name === name && canonical(staticManifestOf(manifest)) === canonical(section);
 }
 
-/** 导入一个插件模块（default 导出）并按 definePlugin 校验清单。 */
+/** 导入一个插件模块（default 导出）并按 defineExtension 校验清单。 */
 export async function importPluginModule(
   url: string,
   label: string,
   resolveFrom: string,
-): Promise<PluginManifest> {
+): Promise<ExtensionManifest> {
   let mod: { default?: unknown };
   try {
     mod = (await import(url)) as { default?: unknown };
@@ -77,15 +77,15 @@ export async function importPluginModule(
   if (typeof mod.default !== "object" || mod.default === null)
     throw new Error(`plugin module "${label}" has no default export object`);
   try {
-    return definePlugin(mod.default as PluginManifest);
+    return defineExtension(mod.default as ExtensionManifest);
   } catch (e) {
-    throw new PluginManifestError(label, errMsg(e));
+    throw new ExtensionManifestError(label, errMsg(e));
   }
 }
 
 /** {@link PluginInstance} 的构造参数（内核内部）。 */
 export interface PluginInstanceInit {
-  manifest: PluginManifest;
+  manifest: ExtensionManifest;
   source: PluginSource;
   sha256: string | null;
   generation: number;
@@ -111,7 +111,7 @@ export class PluginInstance {
   readonly sha256: string | null;
   readonly source: PluginSource;
   readonly generation: number;
-  readonly manifest: PluginManifest;
+  readonly manifest: ExtensionManifest;
   readonly permissions: PermissionSet;
   private hash: string;
   private readonly live: LiveConfig;
@@ -156,7 +156,7 @@ export class PluginInstance {
   }
 
   /** 提供的能力（撤销后为空）。 */
-  get provided(): ReadonlyMap<CapabilityRef, unknown> {
+  get provided(): ReadonlyMap<ExtensionPointRef, unknown> {
     return this.ctx.provided;
   }
   get routes(): readonly Route[] {
@@ -359,7 +359,7 @@ export interface LoadDeps {
 /** 在已导入、已核对的清单上建 ctx（记账）并 setup；setup 抛错时撤销已登记的再抛。 */
 export async function setupInstance(
   deps: LoadDeps,
-  manifest: PluginManifest,
+  manifest: ExtensionManifest,
   input: {
     entryUrl: string;
     source: PluginSource;
@@ -407,7 +407,7 @@ export async function setupInstance(
 }
 
 /**
- * 加载一个插件实例：import → definePlugin → 有包内静态清单（`section`）时与 {@link staticManifestOf} 核对
+ * 加载一个插件实例：import → defineExtension → 有包内静态清单（`section`）时与 {@link staticManifestOf} 核对
  * （名字与静态清单都须一致，否则抛 {@link ManifestMismatchError}；配置声明 / 内置插件没有 section，跳过核对）
  * → 建 ctx（记账）→ setup；setup 抛错时撤销已登记的再抛。
  * 不做权限闸门、部署配置校验与迁移（宿主在此之前完成）；`config` 为已校验的部署配置。
@@ -422,7 +422,7 @@ export async function loadInstance(
     configHash: string;
     permissions: PermissionSet;
     /** 安装记录的包内静态清单与插件名（审阅过的那份）。 */
-    section?: { name: string; manifest: StaticPluginManifest };
+    section?: { name: string; manifest: StaticExtensionManifest };
     onCtx?: (ctx: KernelPluginContext | undefined) => void;
   },
 ): Promise<PluginInstance> {

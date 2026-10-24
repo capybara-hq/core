@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import {
   type FakeChannelServer,
   startFakeChannelServer,
@@ -176,7 +176,7 @@ const bus = {
       set.delete(fn);
     };
   },
-} as PluginContext["bus"];
+} as ExtensionContext["bus"];
 
 async function startSup(
   name: string,

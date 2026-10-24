@@ -551,8 +551,8 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
   ];
   const entry = (name: string, extra: string) =>
     [
-      'import { definePlugin } from "@capybara-hq/plugin-sdk";',
-      `export default definePlugin({ name: "${name}", version: "1.0.0", sdk: "^0.1.0", provides: [], ${extra}, setup() {} });`,
+      'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+      `export default defineExtension({ name: "${name}", version: "1.0.0", sdk: "^0.1.0", provides: [], ${extra}, setup() {} });`,
     ].join("\n");
 
   it("(a) 模块清单声明了另一个 migrations 目录：只执行包里审阅过的 SQL；(b) 模块清单与静态清单不符：failed / manifest_mismatch，不跑迁移", async () => {
@@ -605,8 +605,8 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
         name: "inst-counter",
         manifest: { provides: ["counter@1"] },
         entry: [
-          'import { definePlugin } from "@capybara-hq/plugin-sdk";',
-          'export default definePlugin({ name: "inst-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
+          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+          'export default defineExtension({ name: "inst-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
         ].join("\n"),
       }),
     );
@@ -630,8 +630,8 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
         name: "bad-counter",
         manifest: { provides: ["counter@1"] },
         entry: [
-          'import { definePlugin } from "@capybara-hq/plugin-sdk";',
-          'export default definePlugin({ name: "bad-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: { secrets: true }, setup(ctx) { ctx.provide("counter@1", {}); } });',
+          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+          'export default defineExtension({ name: "bad-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: { secrets: true }, setup(ctx) { ctx.provide("counter@1", {}); } });',
         ].join("\n"),
       }),
     );
@@ -675,8 +675,8 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
         name: "chain-counter",
         manifest: { provides: ["counter@1"] },
         entry: [
-          'import { definePlugin } from "@capybara-hq/plugin-sdk";',
-          'export default definePlugin({ name: "chain-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
+          'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+          'export default defineExtension({ name: "chain-counter", version: "1.0.0", sdk: "^0.1.0", provides: ["counter@1"], permissions: {}, setup(ctx) { ctx.provide("counter@1", { n: 1 }); } });',
         ].join("\n"),
       }),
     );

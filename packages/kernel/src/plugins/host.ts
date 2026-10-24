@@ -4,12 +4,12 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  CAPABILITY_CARDINALITY,
-  type CapabilityRef,
-  type PluginManifest,
-  parseCapability,
+  EXTENSION_POINT_CARDINALITY,
+  type ExtensionManifest,
+  type ExtensionPointRef,
+  parseExtensionPoint,
   SDK_VERSION,
-  type StaticPluginManifest,
+  type StaticExtensionManifest,
   type ToolHandler,
   type ToolSpec,
   type UiContribution,
@@ -127,7 +127,7 @@ export interface LoadedUiContribution {
 /** {@link PluginHost.list} 的一项。 */
 export interface PluginCapabilityEntry {
   plugin: string;
-  capability: CapabilityRef;
+  capability: ExtensionPointRef;
   impl: unknown;
   /** 插件清单的 version。 */
   version: string;
@@ -150,7 +150,7 @@ const KNOWN_NAMES_TTL_MS = 5_000;
 
 /** 一个插件的加载参数（{@link PluginHost.reload} 用同一份重新 setup）。 */
 interface InstanceSpec {
-  manifest: PluginManifest;
+  manifest: ExtensionManifest;
   entryUrl: string;
   source: PluginSource;
   sha256: string | null;
@@ -164,9 +164,9 @@ interface InstanceSpec {
  * 反复剔除直到不动点（剔除一个插件也拿掉了它提供的能力）。只有 `deferrable` 里的插件会被挑出。
  */
 function splitDeferred(
-  manifests: PluginManifest[],
+  manifests: ExtensionManifest[],
   deferrable: Set<string>,
-): { ready: PluginManifest[]; deferred: PluginManifest[] } {
+): { ready: ExtensionManifest[]; deferred: ExtensionManifest[] } {
   const deferred = new Set<string>();
   for (let changed = true; changed; ) {
     changed = false;
@@ -204,7 +204,7 @@ function toFileUrl(spec: string, resolveFrom: string): string {
 }
 
 interface ImportedEntry {
-  manifest: PluginManifest;
+  manifest: ExtensionManifest;
   dir: string;
   /** 模块入口（`file:` URL）。 */
   url: string;
@@ -265,7 +265,7 @@ async function packageNameOf(dir: string): Promise<string | undefined> {
 export interface InspectedPlugin {
   /** 内置插件（`opts.builtin`）预先批准，不进审批（C14）；其余为配置声明。 */
   source: "builtin" | "config";
-  manifest: PluginManifest;
+  manifest: ExtensionManifest;
   /** 插件模块所在目录（`migrations` 相对它解析）。 */
   dir: string;
   /** 规范化的权限集合，见 {@link computePermissionSet}。 */
@@ -274,7 +274,7 @@ export interface InspectedPlugin {
 
 /** 计算各插件的权限集合（按插件名索引）。 */
 async function permissionSets(
-  ordered: PluginManifest[],
+  ordered: ExtensionManifest[],
   dirs: Map<string, string>,
 ): Promise<Map<string, PermissionSet>> {
   const sets = new Map<string, PermissionSet>();
@@ -309,7 +309,7 @@ function warnPending(log: KernelDeps["log"], p: PendingPlugin): void {
  */
 async function migratePlugin(
   dbUrl: string,
-  manifest: PluginManifest,
+  manifest: ExtensionManifest,
   migrationsDir: string | undefined,
   connectTimeoutMs: number | undefined,
   signal?: AbortSignal,
@@ -332,7 +332,7 @@ async function migratePlugin(
  * 插件两级配置 schema 中的每个 `secret()` 都必须标在对象路径的字段上（见 `unreachableSecrets`），
  * 否则内核无法把它单独加密存储 / 打码、会按明文保存与回显——此时拒绝加载并点名插件与路径。
  */
-export function assertSecretsReachable(manifest: PluginManifest): void {
+export function assertSecretsReachable(manifest: ExtensionManifest): void {
   for (const level of ["deployment", "org"] as const) {
     const schema = manifest.config?.[level];
     if (!schema) continue;
@@ -346,7 +346,7 @@ export function assertSecretsReachable(manifest: PluginManifest): void {
 }
 
 /** 按模块解析的插件（内置 / 配置声明）的迁移目录：清单 `migrations` 相对模块所在目录。 */
-const migrationsDirOf = (m: PluginManifest, dir: string): string | undefined =>
+const migrationsDirOf = (m: ExtensionManifest, dir: string): string | undefined =>
   m.migrations ? resolvePath(dir, m.migrations) : undefined;
 
 /**
@@ -405,7 +405,7 @@ export interface PluginLoadPlan {
 
 /** 单个插件的加载参数（{@link PluginHost} 内部）。 */
 interface Activation {
-  manifest: PluginManifest;
+  manifest: ExtensionManifest;
   source: PluginSource;
   sha256: string | null;
   /** 模块入口（`file:` URL）。 */
@@ -421,7 +421,7 @@ interface Activation {
    * 安装记录：`manifest` 只是审阅过的静态清单（{@link manifestOfSection}），权限闸门放行之后才调用它导入真实模块
    * 并核对静态清单（不一致抛 {@link ManifestMismatchError}）。批准之前不执行插件的任何代码（含模块顶层代码）。
    */
-  importModule?: () => Promise<PluginManifest>;
+  importModule?: () => Promise<ExtensionManifest>;
 }
 
 /**
@@ -430,7 +430,7 @@ interface Activation {
  */
 interface InstallCandidate {
   d: DesiredPlugin;
-  manifest: PluginManifest;
+  manifest: ExtensionManifest;
   set: PermissionSet;
   entryUrl: string;
   /** 包根目录（解包后的 `package/`）。 */
@@ -442,7 +442,7 @@ interface InstallCandidate {
  * 由审阅过的静态清单拼出解析依赖、判定权限闸门用的清单（没有 setup 与配置 schema，不能用来加载）。
  * 闸门放行后导入的真实模块必须与静态清单一致（{@link matchesSection}），两者在依赖解析上等价。
  */
-function manifestOfSection(m: StaticPluginManifest): PluginManifest {
+function manifestOfSection(m: StaticExtensionManifest): ExtensionManifest {
   return {
     name: m.name,
     version: m.version,
@@ -455,7 +455,7 @@ function manifestOfSection(m: StaticPluginManifest): PluginManifest {
     setup() {
       throw new Error(`plugin ${m.name}: static manifest cannot be set up`);
     },
-  } as unknown as PluginManifest;
+  } as unknown as ExtensionManifest;
 }
 
 /** 内核消费的提供方能力：调用计入提供方实例的在途计数（撤销 / 升级时排空，C17）。 */
@@ -605,12 +605,12 @@ export class PluginHost {
   /** 闸门放行后导入过的安装记录真实清单（按插件名；部署配置 schema 用，含待配置而未加载的）。 */
   private readonly importedManifests = new Map<
     string,
-    { sha256: string; manifest: PluginManifest }
+    { sha256: string; manifest: ExtensionManifest }
   >();
   /** 本副本写过状态行的安装记录插件（停用 / 卸载后把未加载的那行标为 unloaded）。 */
   private readonly installRows = new Map<string, { version: string; sha256: string }>();
   /** 启用的安装记录按静态清单声明提供的能力（最近一次 {@link applyInstalls}；待定插件的 blockedBy 用）。 */
-  private installProvides = new Map<CapabilityRef, string[]>();
+  private installProvides = new Map<ExtensionPointRef, string[]>();
   /** 已记过 error 日志的加载失败（插件名 → `<sha>:<原因>`；加载成功后清掉）。 */
   private readonly loggedFailures = new Map<string, string>();
   /** 已告警过的「安装记录与内置 / 配置声明重名」（每个名字只告警一次）。 */
@@ -620,7 +620,7 @@ export class PluginHost {
   /** 内置与配置声明插件的清单与权限集合（含未加载的；后台列表与网页批准用）。 */
   private readonly declaredInfo = new Map<
     string,
-    { source: "builtin" | "config"; manifest: PluginManifest; set: PermissionSet }
+    { source: "builtin" | "config"; manifest: ExtensionManifest; set: PermissionSet }
   >();
   /** 导入过的插件名 → 来源与包（含未加载的；重名被跳过的一方不在这里）。 */
   private readonly sources = new Map<string, { source: PluginSource; sha256: string | null }>();
@@ -800,7 +800,7 @@ export class PluginHost {
       });
     }
 
-    let installProviders = new Map<CapabilityRef, string[]>();
+    let installProviders = new Map<ExtensionPointRef, string[]>();
     let desired: DesiredPlugin[] | undefined;
     if (p.installs) {
       // 与运行中的 reconcile 走同一条路径（{@link converge}）；启动时不做依赖方连锁
@@ -884,7 +884,7 @@ export class PluginHost {
    * 改为待定（dependency，blockedBy 点名待定的提供方），提供方加载后由 {@link converge} 一并加载。
    */
   private blockedByUnloaded(
-    manifest: PluginManifest,
+    manifest: ExtensionManifest,
     decision: ApprovalDecision,
   ): ApprovalDecision {
     if (decision.action === "pending") return decision;
@@ -943,9 +943,9 @@ export class PluginHost {
     loader: InstalledPluginLoader,
     desired: DesiredPlugin[],
     startup: boolean,
-  ): Promise<Map<CapabilityRef, string[]>> {
+  ): Promise<Map<ExtensionPointRef, string[]>> {
     const declared = this.declared();
-    const installProviders = new Map<CapabilityRef, string[]>();
+    const installProviders = new Map<ExtensionPointRef, string[]>();
     const wanted = new Map<string, DesiredPlugin>();
     for (const d of desired) {
       const taken = declared.get(d.name);
@@ -966,13 +966,13 @@ export class PluginHost {
       }
       wanted.set(d.name, d);
       // 按审阅过的静态清单（不论随后加载成败）
-      for (const cap of d.section.manifest.provides as CapabilityRef[]) {
+      for (const cap of d.section.manifest.provides as ExtensionPointRef[]) {
         installProviders.set(cap, [...(installProviders.get(cap) ?? []), d.name]);
       }
     }
     this.installProvides = installProviders;
     const drainMs = this.drainMs();
-    const changed: CapabilityRef[] = [];
+    const changed: ExtensionPointRef[] = [];
 
     // 1. 不再期望启用：卸下；未加载但写过状态行的标为 unloaded
     for (const inst of this.registry.all()) {
@@ -1167,7 +1167,7 @@ export class PluginHost {
    * 重复调用不重复执行顶层代码。导入限 `pluginHost.reloadSetupTimeoutSeconds`（与 setup 同一时限）：顶层代码
    * 永不结束时记 failed / import_failed，不卡住启动与 reconcile（挂住的模块留在内存里，下次导入同样超时）。
    */
-  private async importInstalled(c: InstallCandidate): Promise<PluginManifest> {
+  private async importInstalled(c: InstallCandidate): Promise<ExtensionManifest> {
     const ms = this.reloadSetupTimeoutMs();
     let timer: NodeJS.Timeout | undefined;
     const importing = importPluginModule(c.entryUrl, c.d.name, c.root);
@@ -1231,12 +1231,12 @@ export class PluginHost {
    * - 缺的能力没有任何提供方 → 与此前一样抛错（内核启动失败）。
    */
   private async loadDeferred(
-    deferred: PluginManifest[],
+    deferred: ExtensionManifest[],
     dirs: Map<string, string>,
     urls: Map<string, string>,
     snapshots: Map<string, PermissionSnapshot>,
     approvals: PluginApprovals,
-    installProviders: Map<CapabilityRef, string[]>,
+    installProviders: Map<ExtensionPointRef, string[]>,
   ): Promise<void> {
     if (this.closed) throw new Error(CLOSED_DURING_LOAD);
     const loaded = this.registry.all();
@@ -1561,7 +1561,7 @@ export class PluginHost {
   }
 
   /** 记下内置 / 配置声明插件的清单与权限集合（安装记录不在这里）。 */
-  private noteDeclared(manifests: PluginManifest[], sets: Map<string, PermissionSet>): void {
+  private noteDeclared(manifests: ExtensionManifest[], sets: Map<string, PermissionSet>): void {
     for (const m of manifests) {
       const source = this.sourceOf(m.name);
       if (source !== "builtin" && source !== "config") continue;
@@ -1748,7 +1748,7 @@ export class PluginHost {
     name: string,
     a: Activation,
     snapshots: Map<string, PermissionSnapshot>,
-    providers: Map<CapabilityRef, string[]> = this.installProvides,
+    providers: Map<ExtensionPointRef, string[]> = this.installProvides,
   ): ApprovalDecision {
     const loaded = this.registry.all().filter((i) => i.name !== name);
     const manifests = loaded.map((i) => i.manifest);
@@ -1843,7 +1843,7 @@ export class PluginHost {
   }
 
   /**
-   * 插件 `ctx.capabilities` 的取用接口：只看注册表里生效的实例（依赖按拓扑序加载，被依赖方先就绪）；
+   * 插件 `ctx.extensionPoints` 的取用接口：只看注册表里生效的实例（依赖按拓扑序加载，被依赖方先就绪）；
    * 组织启用每次查 `plugin_org_configs`，不缓存。每次调用实时取：提供方撤销后立即取不到。
    */
   private readonly capabilityAccess: CapabilityAccess = {
@@ -1923,10 +1923,10 @@ export class PluginHost {
   }
 
   /** 取能力实现：单选能力无需 providerName，多选能力必须指定。 */
-  get<T>(capability: CapabilityRef, providerName?: string): T {
+  get<T>(capability: ExtensionPointRef, providerName?: string): T {
     const providers = this.registry.all().filter((i) => i.provided.has(capability));
     if (providers.length === 0) throw new Error(`capability ${capability} has no provider`);
-    const single = CAPABILITY_CARDINALITY[parseCapability(capability).name] === "single";
+    const single = EXTENSION_POINT_CARDINALITY[parseExtensionPoint(capability).name] === "single";
     let chosen: PluginInstance | undefined;
     if (providerName !== undefined) {
       chosen = providers.find((p) => p.name === providerName);
@@ -1955,7 +1955,7 @@ export class PluginHost {
     const tracked = TRACKED_CAPABILITIES[capabilityName];
     for (const i of this.registry.all()) {
       for (const [cap, impl] of i.provided) {
-        if (parseCapability(cap).name === capabilityName) {
+        if (parseExtensionPoint(cap).name === capabilityName) {
           out.push({
             plugin: i.name,
             capability: cap,
@@ -2107,7 +2107,7 @@ export class PluginHost {
   }
 
   /** 已加载插件的清单（按加载顺序，即依赖拓扑序）。 */
-  manifests(): PluginManifest[] {
+  manifests(): ExtensionManifest[] {
     return this.registry.all().map((i) => i.manifest);
   }
 
@@ -2350,7 +2350,7 @@ export class PluginHost {
    * `skip`：本轮刚加载的插件（已按新的提供方 setup，不再重新加载）。
    */
   private async cascade(
-    caps: CapabilityRef[],
+    caps: ExtensionPointRef[],
     drainMs: number,
     skip: ReadonlySet<string> = new Set(),
   ): Promise<string[]> {

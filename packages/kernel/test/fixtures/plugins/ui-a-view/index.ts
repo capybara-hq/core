@@ -1,7 +1,7 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 界面权限快照测试：ui-a 升级到 0.2.0，只多了一个 view（不卡加载，快照自动补上）。 */
-export default definePlugin({
+export default defineExtension({
   name: "ui-a",
   version: "0.2.0",
   sdk: "^0.1.0",

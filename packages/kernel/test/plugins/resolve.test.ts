@@ -1,17 +1,21 @@
-import { type CapabilityRef, definePlugin, type PluginManifest } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  type ExtensionManifest,
+  type ExtensionPointRef,
+} from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { resolvePlugins } from "../../src/plugins/resolve.js";
 
 const mk = (
   name: string,
   o: {
-    provides?: CapabilityRef[];
-    requires?: CapabilityRef[];
-    optional?: CapabilityRef[];
+    provides?: ExtensionPointRef[];
+    requires?: ExtensionPointRef[];
+    optional?: ExtensionPointRef[];
     sdk?: string;
   } = {},
-): PluginManifest =>
-  definePlugin({
+): ExtensionManifest =>
+  defineExtension({
     name,
     version: "1.0.0",
     sdk: o.sdk ?? "^0.1.0",

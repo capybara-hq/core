@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  DIRECTORY_CAPABILITY,
+  DIRECTORY_EXTENSION_POINT,
   type Directory,
   type DirectoryMember,
   type ExternalIdentity,
@@ -213,7 +213,7 @@ export class DirectorySync {
   private provider(plugin: string): Directory | undefined {
     return this.d.host
       .list("directory")
-      .find((e) => e.plugin === plugin && e.capability === DIRECTORY_CAPABILITY)?.impl as
+      .find((e) => e.plugin === plugin && e.capability === DIRECTORY_EXTENSION_POINT)?.impl as
       | Directory
       | undefined;
   }
@@ -350,7 +350,7 @@ export class DirectorySync {
   async scan(now: Date = new Date()): Promise<DirectorySyncTarget[]> {
     const plugins = this.d.host
       .list("directory")
-      .filter((e) => e.capability === DIRECTORY_CAPABILITY)
+      .filter((e) => e.capability === DIRECTORY_EXTENSION_POINT)
       .map((e) => e.plugin);
     if (plugins.length === 0) return [];
     const rows = await this.d.db

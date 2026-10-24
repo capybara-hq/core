@@ -1,8 +1,8 @@
-import { definePlugin, secret } from "@capybara-hq/plugin-sdk";
+import { defineExtension, secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** 带组织级配置（含 secret 字段，其中一个嵌套在对象里）的插件。 */
-export default definePlugin({
+export default defineExtension({
   name: "orgcfg",
   version: "1.2.3",
   sdk: "^0.1.0",

@@ -1,4 +1,4 @@
-import { OBJECT_STORE_CAPABILITY, type PluginManifest } from "@capybara-hq/plugin-sdk";
+import { type ExtensionManifest, OBJECT_STORE_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import semver from "semver";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
@@ -61,7 +61,7 @@ export type ApprovalDecision =
  * - 声明了 `permissions.storage` 而 `object-store@1` 没有提供方、或提供方全都不加载 → 同样不加载（reason dependency）。
  */
 export function planApprovals(
-  ordered: PluginManifest[],
+  ordered: ExtensionManifest[],
   sets: Map<string, PermissionSet>,
   snapshots: Map<string, PermissionSnapshot>,
   opts: { autoApprove?: boolean } = {},
@@ -97,10 +97,10 @@ export function planApprovals(
     }
     if (m.permissions?.storage) {
       const providers = ordered
-        .filter((p) => p !== m && p.provides.includes(OBJECT_STORE_CAPABILITY))
+        .filter((p) => p !== m && p.provides.includes(OBJECT_STORE_EXTENSION_POINT))
         .map((p) => p.name);
       if (providers.every((p) => skipped.has(p))) {
-        blockedBy.push({ capability: OBJECT_STORE_CAPABILITY, providers });
+        blockedBy.push({ capability: OBJECT_STORE_EXTENSION_POINT, providers });
       }
     }
     if (blockedBy.length > 0) {
@@ -145,7 +145,7 @@ export function planApprovals(
  */
 export function withPreApproved(
   snapshots: Map<string, PermissionSnapshot>,
-  manifests: PluginManifest[],
+  manifests: ExtensionManifest[],
   sets: Map<string, PermissionSet>,
 ): Map<string, PermissionSnapshot> {
   const out = new Map(snapshots);

@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PluginManifest } from "@capybara-hq/plugin-sdk";
+import type { ExtensionManifest } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { clearBrokenRoot, syncPackage } from "../../src/plugins/sync.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
@@ -53,7 +53,7 @@ describe("syncPackage", () => {
     // 只剩最终目录，没有遗留的临时目录
     expect(await readdir(join(dir, "sync-demo"))).toEqual([digest.slice(0, 16)]);
     // 插件能按宿主的 SDK 导入
-    const mod = (await import(url)) as { default: PluginManifest };
+    const mod = (await import(url)) as { default: ExtensionManifest };
     expect(mod.default.name).toBe("sync-demo");
   });
 
@@ -70,7 +70,7 @@ describe("syncPackage", () => {
     const before = gets;
     await syncPackage(dir, "sync-demo", digest, blobs);
     expect(gets).toBe(before + 1);
-    expect(await readFile(join(root, "dist/index.mjs"), "utf8")).toContain("definePlugin");
+    expect(await readFile(join(root, "dist/index.mjs"), "utf8")).toContain("defineExtension");
   });
 
   it("多出不在校验文件里的文件时也重新解包", async () => {

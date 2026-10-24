@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
   type AppManifest,
-  CAPABILITIES,
   type Connector,
+  EXTENSION_POINTS,
+  type ExtensionManifest,
   type Logger,
-  type PluginManifest,
-  parseCapability,
+  parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { normalizeToolRef } from "../agents/definition.js";
@@ -362,7 +362,7 @@ export class AppInstaller {
       .filter((ct) => skippedPlugins.has(ct.template.plugin))
       .map((ct) => ct.id);
     return {
-      plugins: orderByRequires(plan.use.map((n) => manifests.get(n) as PluginManifest)),
+      plugins: orderByRequires(plan.use.map((n) => manifests.get(n) as ExtensionManifest)),
       skipped: { plugins: plan.skipped, connectorTemplates: templates },
     };
   }
@@ -624,7 +624,7 @@ export class AppInstaller {
   /** 卸载时插件的处理顺序：安装顺序（提供方在前）的逆序；本副本没加载的插件排在最后。 */
   private uninstallPluginOrder(refs: string[]): string[] {
     const loaded = new Map(this.d.host.manifests().map((m) => [m.name, m]));
-    const known = refs.filter((r) => loaded.has(r)).map((r) => loaded.get(r) as PluginManifest);
+    const known = refs.filter((r) => loaded.has(r)).map((r) => loaded.get(r) as ExtensionManifest);
     return [...orderByRequires(known).reverse(), ...refs.filter((r) => !loaded.has(r))];
   }
 
@@ -726,8 +726,9 @@ const alreadyInstalled = () =>
   );
 
 /** 按 requires 排序：插件要用的按组织启用的能力，由集合里的别的插件提供时，提供方在前；环则保持原顺序。 */
-function orderByRequires(set: PluginManifest[]): string[] {
-  const orgScoped = (ref: string) => CAPABILITIES[parseCapability(ref).name]?.orgScoped === true;
+function orderByRequires(set: ExtensionManifest[]): string[] {
+  const orgScoped = (ref: string) =>
+    EXTENSION_POINTS[parseExtensionPoint(ref).name]?.orgScoped === true;
   const placed: string[] = [];
   const rest = [...set];
   while (rest.length > 0) {
@@ -740,7 +741,7 @@ function orderByRequires(set: PluginManifest[]): string[] {
       }),
     );
     const [next] = rest.splice(idx === -1 ? 0 : idx, 1);
-    placed.push((next as PluginManifest).name);
+    placed.push((next as ExtensionManifest).name);
   }
   return placed;
 }

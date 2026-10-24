@@ -1,14 +1,14 @@
 export const SDK_VERSION = "0.1.0";
 export * from "./app-manifest.js";
-export * from "./capability.js";
 export * from "./cards.js";
 export * from "./catalog.js";
 export * from "./channel.js";
 export * from "./connector.js";
 export * from "./connector-auth.js";
 export * from "./ctx.js";
-export * from "./define-plugin.js";
+export * from "./define-extension.js";
 export * from "./directory.js";
+export * from "./extension-point.js";
 export * from "./hooks.js";
 export * from "./identity.js";
 export * from "./model.js";

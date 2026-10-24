@@ -1,4 +1,4 @@
-import { definePlugin, MODEL_PROVIDER_CAPABILITY_V2 } from "@capybara-hq/plugin-sdk";
+import { defineExtension, MODEL_PROVIDER_EXTENSION_POINT_V2 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { createFakeProvider } from "./script.js";
 
@@ -24,16 +24,16 @@ const DeploymentConfig = z.object({
  * 提供 model-provider@2：声明三档 effort 与 `model-fake.style`（`shout` 时回复转大写）。
  * 无进程内状态：缓存命中记录放 ctx.kv（TTL 300 秒）。
  */
-export default definePlugin({
+export default defineExtension({
   name: "model-fake",
   version: "0.1.0",
   sdk: "^0.1.0",
-  provides: [MODEL_PROVIDER_CAPABILITY_V2],
+  provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   config: { deployment: DeploymentConfig },
   setup(ctx) {
     const { models } = DeploymentConfig.parse(ctx.config ?? {});
     ctx.provide(
-      MODEL_PROVIDER_CAPABILITY_V2,
+      MODEL_PROVIDER_EXTENSION_POINT_V2,
       createFakeProvider({ kv: ctx.kv, ...(models !== undefined ? { models } : {}) }),
     );
   },

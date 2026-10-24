@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { definePlugin, type PluginManifest, PluginPermissionError } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  type ExtensionManifest,
+  ExtensionPermissionError,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -50,8 +54,8 @@ afterAll(async () => {
   await Promise.all([pg?.stop(), rd?.stop()]);
 });
 
-const mf = (over: Partial<PluginManifest> = {}) =>
-  definePlugin({
+const mf = (over: Partial<ExtensionManifest> = {}) =>
+  defineExtension({
     name: "ui-test",
     version: "0.1.0",
     sdk: "^0.1.0",
@@ -79,15 +83,15 @@ const CONV = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 const action = async () => ({ toast: { zh: "好", en: "OK" } });
 
 describe("ctx.ui 注册", () => {
-  it("声明的 view 可注册 view 与 action；未声明的 id（含 embed）抛 PluginPermissionError；重复抛错", async () => {
+  it("声明的 view 可注册 view 与 action；未声明的 id（含 embed）抛 ExtensionPermissionError；重复抛错", async () => {
     const ctx = createPluginContext(deps, mf(), {});
     ctx.ui.view("tasks", view);
     ctx.ui.action("tasks", action);
     expect(() => ctx.ui.view("tasks", view)).toThrow(/duplicate/);
     expect(() => ctx.ui.action("tasks", action)).toThrow(/duplicate/);
-    expect(() => ctx.ui.view("nope", view)).toThrow(PluginPermissionError);
+    expect(() => ctx.ui.view("nope", view)).toThrow(ExtensionPermissionError);
     expect(() => ctx.ui.view("board", view)).toThrow(/permissions\.ui\.views board/);
-    expect(() => ctx.ui.action("nope", action)).toThrow(PluginPermissionError);
+    expect(() => ctx.ui.action("nope", action)).toThrow(ExtensionPermissionError);
     expect([...ctx.uiViews.keys()]).toEqual(["tasks"]);
     expect([...ctx.uiActions.keys()]).toEqual(["tasks"]);
     await ctx.close();

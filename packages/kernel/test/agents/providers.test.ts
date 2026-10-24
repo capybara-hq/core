@@ -1,6 +1,6 @@
 import {
   assertValidDeclarations,
-  type CapabilityRef,
+  type ExtensionPointRef,
   type ModelInfoV1,
   type ModelParameter,
   type ModelProvider,
@@ -257,7 +257,7 @@ describe("model-provider@1 / @2", () => {
   const reg = (
     entries: {
       plugin: string;
-      capability: CapabilityRef;
+      capability: ExtensionPointRef;
       impl: unknown;
       version?: string;
       configHash?: string;

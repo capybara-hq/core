@@ -1,7 +1,7 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 权限快照测试：必需依赖 counter@1（只由 perm-a 提供）。 */
-export default definePlugin({
+export default defineExtension({
   name: "perm-dep",
   version: "0.1.0",
   sdk: "^0.1.0",

@@ -272,7 +272,7 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
             add(
               n,
               "perm-http",
-              `Route "${verb} ${path}" is not declared; add it to permissions.http in the plugin manifest`,
+              `Route "${verb} ${path}" is not declared; add it to permissions.http in the extension manifest`,
             );
           }
         } else if (area === "tools" && method === "register") {
@@ -284,7 +284,7 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
             add(
               n,
               "perm-tools",
-              `Tool "${name}" is not declared; add it to permissions.tools in the plugin manifest`,
+              `Tool "${name}" is not declared; add it to permissions.tools in the extension manifest`,
             );
           }
         } else if (area === "ui" && (method === "view" || method === "action")) {
@@ -294,7 +294,7 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
             add(
               n,
               "perm-ui",
-              `UI view "${id}" is not declared; add it to permissions.ui.views (and ui) in the plugin manifest`,
+              `UI view "${id}" is not declared; add it to permissions.ui.views (and ui) in the extension manifest`,
             );
           }
         } else if (area === "hooks" && method === "on") {
@@ -304,24 +304,24 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
             add(
               n,
               "perm-hooks",
-              `Hook "${mount}" is not declared; add it to permissions.hooks in the plugin manifest`,
+              `Hook "${mount}" is not declared; add it to permissions.hooks in the extension manifest`,
             );
           } else if (policyMode(args[2], decls) && !m.policyHooks.has(mount)) {
-            // a non-literal mode is left to the runtime check (PluginPermissionError)
+            // a non-literal mode is left to the runtime check (ExtensionPermissionError)
             add(
               n,
               "perm-hooks",
-              `Policy hook "${mount}" is not declared; add it to permissions.policyHooks in the plugin manifest`,
+              `Policy hook "${mount}" is not declared; add it to permissions.policyHooks in the extension manifest`,
             );
           }
-        } else if (area === "capabilities" && (method === "get" || method === "list")) {
+        } else if (area === "extensionPoints" && (method === "get" || method === "list")) {
           const ref = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
-          if (ref === undefined) return dynamic(n, "perm-capability", "the capability ref");
+          if (ref === undefined) return dynamic(n, "perm-capability", "the extension point ref");
           if (!m.caps.has(ref)) {
             add(
               n,
               "perm-capability",
-              `Capability "${ref}" is not declared; add it to requires or optional in the plugin manifest`,
+              `Extension point "${ref}" is not declared; add it to requires or optional in the extension manifest`,
             );
           }
         }
@@ -352,11 +352,11 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
         } else if (
           name === "http" ||
           name === "tools" ||
-          name === "capabilities" ||
+          name === "extensionPoints" ||
           name === "ui" ||
           name === "hooks"
         ) {
-          // 只有 ctx.http.route / ctx.tools.register / ctx.capabilities.get|list /
+          // 只有 ctx.http.route / ctx.tools.register / ctx.extensionPoints.get|list /
           // ctx.ui.view|action|invalidate|verifyEmbedToken 能被确认，其余写法无法确认
           // (likewise only ctx.hooks.on is confirmable)
           const rule =
@@ -376,7 +376,7 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
             ((name === "http" && memberName(outer) === "route") ||
               (name === "tools" && memberName(outer) === "register") ||
               (name === "hooks" && memberName(outer) === "on") ||
-              (name === "capabilities" && ["get", "list"].includes(memberName(outer) ?? "")) ||
+              (name === "extensionPoints" && ["get", "list"].includes(memberName(outer) ?? "")) ||
               (name === "ui" &&
                 ["view", "action", "invalidate", "verifyEmbedToken"].includes(
                   memberName(outer) ?? "",
@@ -395,7 +395,7 @@ function scanFile(f: ParsedFile): Finding[] {
   walk(f.program, (n) => {
     if (n.type !== "CallExpression") return;
     const callee = unwrap(n.callee as Node);
-    if (callee.type !== "Identifier" || callee.name !== "definePlugin") return;
+    if (callee.type !== "Identifier" || callee.name !== "defineExtension") return;
     const arg = (n.arguments as Node[])[0];
     const obj = arg ? resolve(arg, decls) : undefined;
     if (obj?.type !== "ObjectExpression") return;
@@ -405,11 +405,11 @@ function scanFile(f: ParsedFile): Finding[] {
 }
 
 /**
- * 插件权限静态检查（AST）：把 setup(ctx) 里对平台能力的访问与 definePlugin 清单比对。规则：
+ * 插件权限静态检查（AST）：把 setup(ctx) 里对平台能力的访问与 defineExtension 清单比对。规则：
  * - perm-secrets：用了 ctx.secrets 而 permissions.secrets 不是 true；
  * - perm-http：ctx.http.route(method, path) 不在 permissions.http 里；
  * - perm-tools：ctx.tools.register({ name }) 的名字不在 permissions.tools 里；
- * - perm-capability：ctx.capabilities.get|list(ref) 的 ref 不在 requires / optional / provides 里；
+ * - perm-capability：ctx.extensionPoints.get|list(ref) 的 ref 不在 requires / optional / provides 里；
  * - perm-ui：ctx.ui.view|action(id) 的 id 不在 permissions.ui.views 里；
  * - perm-storage：用了 ctx.storage 而 permissions.storage 不是 true；
  * - perm-hooks: the mount point of ctx.hooks.on(mount, …) is not in permissions.hooks (the mount
@@ -419,8 +419,8 @@ function scanFile(f: ParsedFile): Finding[] {
  * 路由路径、工具名、能力 ref、界面 id 须是字符串字面量或本文件的 const；动态的写法报「无法静态确认」，
  * 豁免：`// capybara:allow-dynamic-permission <原因>`（行尾或紧邻上一行，原因必填）。
  * ctx 会跟踪本地别名，以及按位置传给同文件函数的参数。
- * 已知缺口（靠评审与运行时 PluginPermissionError 兜底）：传给其他文件 / 方法的 ctx、闭包外的重新赋值、
- * 没有 definePlugin 的辅助文件、permissions 本身是运行时拼出的。
+ * 已知缺口（靠评审与运行时 ExtensionPermissionError 兜底）：传给其他文件 / 方法的 ctx、闭包外的重新赋值、
+ * 没有 defineExtension 的辅助文件、permissions 本身是运行时拼出的。
  * 扫描范围：传入目录下的非测试源码。
  */
 export function checkPluginPermissions(pluginDirs: string[]): Finding[] {

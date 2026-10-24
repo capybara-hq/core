@@ -1,8 +1,8 @@
 import { fileURLToPath } from "node:url";
 import {
-  definePlugin,
-  type PluginManifest,
-  PluginPermissionError,
+  defineExtension,
+  type ExtensionManifest,
+  ExtensionPermissionError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
@@ -53,8 +53,8 @@ beforeEach(async () => {
   await redis.flushdb();
 });
 
-const mf = (over: Partial<PluginManifest> = {}) =>
-  definePlugin({
+const mf = (over: Partial<ExtensionManifest> = {}) =>
+  defineExtension({
     name: "perm-test",
     version: "0.1.0",
     sdk: "^0.1.0",
@@ -74,9 +74,9 @@ const spec = (name: string): ToolSpec => ({ name, description: "Probe.", inputSc
 const handler = async () => ({ content: [] });
 
 describe("ctx 按权限清单构造", () => {
-  it("未声明 secrets：访问抛 PluginPermissionError 并写审计（每个插件每项只记一次）", async () => {
+  it("未声明 secrets：访问抛 ExtensionPermissionError 并写审计（每个插件每项只记一次）", async () => {
     const ctx = createPluginContext(deps, mf(), {});
-    expect(() => ctx.secrets).toThrow(PluginPermissionError);
+    expect(() => ctx.secrets).toThrow(ExtensionPermissionError);
     expect(() => ctx.secrets.get("o", "k")).toThrow(/permissions\.secrets/);
     await ctx.close();
     const rows = await denials();
@@ -85,7 +85,7 @@ describe("ctx 按权限清单构造", () => {
     expect(rows[0]?.detail).toMatchObject({ item: "permissions.secrets" });
     // 另一个 ctx（如另一副本）再次越权同一项：仍只记一次
     const again = createPluginContext(deps, mf(), {});
-    expect(() => again.secrets).toThrow(PluginPermissionError);
+    expect(() => again.secrets).toThrow(ExtensionPermissionError);
     await again.close();
     expect(await denials()).toHaveLength(1);
     // 去重键带 TTL
@@ -113,9 +113,9 @@ describe("ctx 按权限清单构造", () => {
     expect(await denials()).toEqual([]);
   });
 
-  it("未声明 storage：访问抛 PluginPermissionError 并写审计；getter 不可枚举", async () => {
+  it("未声明 storage：访问抛 ExtensionPermissionError 并写审计；getter 不可枚举", async () => {
     const ctx = createPluginContext(deps, mf(), {});
-    expect(() => ctx.storage).toThrow(PluginPermissionError);
+    expect(() => ctx.storage).toThrow(ExtensionPermissionError);
     expect(() => ctx.storage.head("o", "k")).toThrow(/permissions\.storage/);
     expect(Object.keys(ctx)).not.toContain("storage");
     expect(() => ({ ...ctx })).not.toThrow();
@@ -152,7 +152,7 @@ describe("ctx 按权限清单构造", () => {
     );
     const h = async () => new Response("ok");
     ctx.http.route("GET", "/a", h);
-    expect(() => ctx.http.route("POST", "/a", h)).toThrow(PluginPermissionError);
+    expect(() => ctx.http.route("POST", "/a", h)).toThrow(ExtensionPermissionError);
     expect(() => ctx.http.route("GET", "/b", h)).toThrow(/permissions\.http.*GET \/b/);
     expect(ctx.routes.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /plugins/perm-test/a"]);
     await ctx.close();
@@ -163,7 +163,7 @@ describe("ctx 按权限清单构造", () => {
   it("没有 permissions.http：任何路由都被拒绝", async () => {
     const ctx = createPluginContext(deps, mf(), {});
     expect(() => ctx.http.route("GET", "/a", async () => new Response())).toThrow(
-      PluginPermissionError,
+      ExtensionPermissionError,
     );
     await ctx.close();
   });
@@ -171,7 +171,7 @@ describe("ctx 按权限清单构造", () => {
   it("tools.register：只允许清单中声明的工具名", async () => {
     const ctx = createPluginContext(deps, mf({ permissions: { tools: ["echo"] } }), {});
     ctx.tools.register(spec("echo"), handler);
-    expect(() => ctx.tools.register(spec("other"), handler)).toThrow(PluginPermissionError);
+    expect(() => ctx.tools.register(spec("other"), handler)).toThrow(ExtensionPermissionError);
     expect(() => ctx.tools.register(spec("other"), handler)).toThrow(/permissions\.tools.*other/);
     expect(ctx.registeredTools.map((t) => t.spec.name)).toEqual(["echo"]);
     await ctx.close();
@@ -192,7 +192,7 @@ describe("ctx 按权限清单构造", () => {
     expect(await denials()).toEqual([]);
   });
 
-  it("审计写入失败只记 warn，不影响抛出的 PluginPermissionError", async () => {
+  it("审计写入失败只记 warn，不影响抛出的 ExtensionPermissionError", async () => {
     const warn = vi.fn();
     const broken = {
       ...deps,
@@ -200,7 +200,7 @@ describe("ctx 按权限清单构造", () => {
       db: createDb("postgres://x@127.0.0.1:1/x", 1),
     };
     const ctx = createPluginContext(broken, mf({ name: "perm-broken" }), {});
-    expect(() => ctx.secrets).toThrow(PluginPermissionError);
+    expect(() => ctx.secrets).toThrow(ExtensionPermissionError);
     await ctx.close();
     await broken.db.destroy();
     expect(warn).toHaveBeenCalledWith(

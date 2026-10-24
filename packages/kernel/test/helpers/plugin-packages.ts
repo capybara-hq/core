@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
-import { definePlugin, type PluginManifest, staticManifestOf } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionManifest, staticManifestOf } from "@capybara-hq/plugin-sdk";
 import { pack as tarPack } from "tar-stream";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -31,7 +31,7 @@ export async function tgz(entries: { name: string; data: string | Buffer }[]): P
   return new Uint8Array(gzipSync(Buffer.concat(chunks)));
 }
 
-/** 合法的最小插件包：entry 用 `definePlugin` 导出清单（setup 什么都不做），静态清单与之一致。 */
+/** 合法的最小插件包：entry 用 `defineExtension` 导出清单（setup 什么都不做），静态清单与之一致。 */
 export async function pluginTgz(
   opts: {
     name?: string;
@@ -47,7 +47,7 @@ export async function pluginTgz(
 ): Promise<Uint8Array> {
   const name = opts.name ?? "demo-pkg";
   const version = opts.version ?? "1.0.0";
-  const real: PluginManifest = definePlugin({
+  const real: ExtensionManifest = defineExtension({
     name,
     version,
     sdk: "^0.1.0",
@@ -58,8 +58,8 @@ export async function pluginTgz(
   const entry =
     opts.entry ??
     [
-      'import { definePlugin } from "@capybara-hq/plugin-sdk";',
-      `export default definePlugin({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });`,
+      'import { defineExtension } from "@capybara-hq/plugin-sdk";',
+      `export default defineExtension({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });`,
     ].join("\n");
   const pkg = {
     name: opts.packageName ?? `@test/plugin-${name}`,
@@ -130,7 +130,7 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
       policyHooks: ["tool.preExecute" as const],
     }),
   };
-  const real: PluginManifest = definePlugin({
+  const real: ExtensionManifest = defineExtension({
     name,
     version: o.version,
     sdk: "^0.1.0",
@@ -141,7 +141,7 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
     config: { deployment: z.object({ dir: z.string().default("") }).default({ dir: "" }) },
     setup() {},
   });
-  const entry = `import { definePlugin } from "@capybara-hq/plugin-sdk";
+  const entry = `import { defineExtension } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -150,7 +150,7 @@ const VERSION = ${JSON.stringify(o.version)};
 // 模块顶层代码：记一笔导入（测试「批准之前不执行插件代码」）
 (globalThis.__lifeImports ??= []).push(NAME + " " + VERSION);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-export default definePlugin({
+export default defineExtension({
   name: NAME,
   version: VERSION,
   sdk: "^0.1.0",
@@ -227,7 +227,7 @@ export async function greeterPkg(): Promise<Uint8Array> {
   const { z } = await import("zod");
   const { secret } = await import("@capybara-hq/plugin-sdk");
   const permissions = { tools: ["greet"] };
-  const real: PluginManifest = definePlugin({
+  const real: ExtensionManifest = defineExtension({
     name: "greeter",
     version: "1.0.0",
     sdk: "^0.1.0",
@@ -247,9 +247,9 @@ export async function greeterPkg(): Promise<Uint8Array> {
     inputSchema: { type: "object" },
     annotations: { readOnlyHint: true },
   };
-  const entry = `import { definePlugin, secret } from "@capybara-hq/plugin-sdk";
+  const entry = `import { defineExtension, secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-export default definePlugin({
+export default defineExtension({
   name: "greeter",
   version: "1.0.0",
   sdk: "^0.1.0",
@@ -342,7 +342,7 @@ const SANDBOX_FAKE_SRC = fileURLToPath(
 export async function sandboxFakePkg(): Promise<Uint8Array> {
   const { stripTypeScriptTypes } = await import("node:module");
   const source = await readFile(SANDBOX_FAKE_SRC, "utf8");
-  const mod = (await import(SANDBOX_FAKE_SRC)) as { default: PluginManifest };
+  const mod = (await import(SANDBOX_FAKE_SRC)) as { default: ExtensionManifest };
   return pluginTgz({
     name: mod.default.name,
     version: mod.default.version,

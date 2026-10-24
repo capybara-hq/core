@@ -1,4 +1,4 @@
-import { definePlugin, type PluginContext } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionContext } from "@capybara-hq/plugin-sdk";
 
 /** Shared with the test through globalThis: which generation's hooks ran, and a gate to hold them. */
 export interface HooksDrainState {
@@ -14,13 +14,13 @@ const state = (): HooksDrainState => {
 };
 
 /** Test plugin: each setup is one generation; its hooks record `<kind>:<generation>`. */
-export default definePlugin({
+export default defineExtension({
   name: "hooks-drain",
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: [],
   permissions: { hooks: ["tool.preExecute"], policyHooks: ["tool.preExecute"] },
-  setup(ctx: PluginContext) {
+  setup(ctx: ExtensionContext) {
     const s = state();
     s.setups += 1;
     const gen = s.setups;

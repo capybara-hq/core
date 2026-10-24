@@ -1,11 +1,11 @@
 import { fileURLToPath } from "node:url";
 import {
-  type CapabilityRef,
-  CapabilityUnavailableError,
-  definePlugin,
-  type PluginContext,
-  type PluginManifest,
-  PluginPermissionError,
+  defineExtension,
+  type ExtensionContext,
+  type ExtensionManifest,
+  ExtensionPermissionError,
+  type ExtensionPointRef,
+  ExtensionPointUnavailableError,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -59,8 +59,8 @@ afterAll(async () => {
   await Promise.all([pg?.stop(), rd?.stop()]);
 });
 
-const mf = (over: Partial<PluginManifest> = {}) =>
-  definePlugin({
+const mf = (over: Partial<ExtensionManifest> = {}) =>
+  defineExtension({
     name: "cap-test",
     version: "0.1.0",
     sdk: "^0.1.0",
@@ -71,7 +71,7 @@ const mf = (over: Partial<PluginManifest> = {}) =>
 
 /** 测试用的能力访问：固定的提供方表与组织启用表，并记录启用查询次数（验证不缓存）。 */
 const stubAccess = (
-  table: Partial<Record<CapabilityRef, { plugin: string; impl: unknown }[]>>,
+  table: Partial<Record<ExtensionPointRef, { plugin: string; impl: unknown }[]>>,
   enabled: Record<string, string[]> = {},
 ) => {
   const calls: string[] = [];
@@ -85,49 +85,51 @@ const stubAccess = (
   return { access, calls };
 };
 
-describe("ctx.capabilities（单元）", () => {
-  it("取未声明的能力：抛 PluginPermissionError", async () => {
+describe("ctx.extensionPoints（单元）", () => {
+  it("取未声明的能力：抛 ExtensionPermissionError", async () => {
     const { access } = stubAccess({ "counter@1": [{ plugin: "p", impl: 1 }] });
     const ctx = createPluginContext(deps, mf(), {}, access);
-    expect(() => ctx.capabilities.get("counter@1", "p")).toThrow(PluginPermissionError);
-    expect(() => ctx.capabilities.list("counter@1")).toThrow(/counter@1/);
+    expect(() => ctx.extensionPoints.get("counter@1", "p")).toThrow(ExtensionPermissionError);
+    expect(() => ctx.extensionPoints.list("counter@1")).toThrow(/counter@1/);
     await ctx.close();
   });
 
   it("取 brokered 能力：抛错（只能经平台能力使用）", async () => {
     const { access } = stubAccess({ "model-provider@2": [{ plugin: "p", impl: 1 }] });
     const ctx = createPluginContext(deps, mf(), {}, access);
-    expect(() => ctx.capabilities.get("model-provider@2", "p")).toThrow(/brokered/);
-    expect(() => ctx.capabilities.list("connector@1")).toThrow(/brokered/);
+    expect(() => ctx.extensionPoints.get("model-provider@2", "p")).toThrow(/brokered/);
+    expect(() => ctx.extensionPoints.list("connector@1")).toThrow(/brokered/);
     await ctx.close();
   });
 
-  it("多选能力 get 必须给 provider；provider 不存在抛 CapabilityUnavailableError", async () => {
+  it("多选能力 get 必须给 provider；provider 不存在抛 ExtensionPointUnavailableError", async () => {
     const { access } = stubAccess({ "counter@1": [{ plugin: "p", impl: { v: 1 } }] });
     const ctx = createPluginContext(deps, mf({ requires: ["counter@1"] }), {}, access);
-    expect(() => ctx.capabilities.get("counter@1")).toThrow(/multi-provider.*p/);
-    expect(ctx.capabilities.get("counter@1", "p")).toEqual({ v: 1 });
-    expect(() => ctx.capabilities.get("counter@1", "q")).toThrow(CapabilityUnavailableError);
-    expect(ctx.capabilities.list("counter@1")).toEqual([{ plugin: "p", impl: { v: 1 } }]);
+    expect(() => ctx.extensionPoints.get("counter@1")).toThrow(/multi-provider.*p/);
+    expect(ctx.extensionPoints.get("counter@1", "p")).toEqual({ v: 1 });
+    expect(() => ctx.extensionPoints.get("counter@1", "q")).toThrow(ExtensionPointUnavailableError);
+    expect(ctx.extensionPoints.list("counter@1")).toEqual([{ plugin: "p", impl: { v: 1 } }]);
     await ctx.close();
   });
 
   it("单选能力 get 无需 provider", async () => {
     const { access } = stubAccess({ "config-source@1": [{ plugin: "nacos", impl: "x" }] });
     const ctx = createPluginContext(deps, mf({ requires: ["config-source@1"] }), {}, access);
-    expect(ctx.capabilities.get("config-source@1")).toBe("x");
+    expect(ctx.extensionPoints.get("config-source@1")).toBe("x");
     await ctx.close();
   });
 
-  it("optional 能力缺失：list 为空，get 抛 CapabilityUnavailableError", async () => {
+  it("optional 能力缺失：list 为空，get 抛 ExtensionPointUnavailableError", async () => {
     const { access } = stubAccess({});
     const ctx = createPluginContext(deps, mf({ optional: ["directory@1"] }), {}, access);
-    expect(ctx.capabilities.list("directory@1")).toEqual([]);
-    expect(() => ctx.capabilities.get("directory@1", "x")).toThrow(CapabilityUnavailableError);
+    expect(ctx.extensionPoints.list("directory@1")).toEqual([]);
+    expect(() => ctx.extensionPoints.get("directory@1", "x")).toThrow(
+      ExtensionPointUnavailableError,
+    );
     await ctx.close();
   });
 
-  it("orgScoped 能力传 orgId：按组织启用过滤，未启用抛 CapabilityUnavailableError，每次都查询", async () => {
+  it("orgScoped 能力传 orgId：按组织启用过滤，未启用抛 ExtensionPointUnavailableError，每次都查询", async () => {
     const { access, calls } = stubAccess(
       {
         "channel@1": [
@@ -138,17 +140,17 @@ describe("ctx.capabilities（单元）", () => {
       { o1: ["a"] },
     );
     const ctx = createPluginContext(deps, mf({ requires: ["channel@1"] }), {}, access);
-    await expect(ctx.capabilities.get("channel@1", "a", { orgId: "o1" })).resolves.toBe("A");
-    await expect(ctx.capabilities.get("channel@1", "b", { orgId: "o1" })).rejects.toThrow(
-      CapabilityUnavailableError,
+    await expect(ctx.extensionPoints.get("channel@1", "a", { orgId: "o1" })).resolves.toBe("A");
+    await expect(ctx.extensionPoints.get("channel@1", "b", { orgId: "o1" })).rejects.toThrow(
+      ExtensionPointUnavailableError,
     );
-    await expect(ctx.capabilities.list("channel@1", { orgId: "o1" })).resolves.toEqual([
+    await expect(ctx.extensionPoints.list("channel@1", { orgId: "o1" })).resolves.toEqual([
       { plugin: "a", impl: "A" },
     ]);
-    await expect(ctx.capabilities.list("channel@1", { orgId: "o2" })).resolves.toEqual([]);
+    await expect(ctx.extensionPoints.list("channel@1", { orgId: "o2" })).resolves.toEqual([]);
     expect(calls).toEqual(["o1", "o1", "o1", "o2"]);
     // 不传 orgId：部署级视角，不查询组织启用
-    expect(ctx.capabilities.list("channel@1")).toHaveLength(2);
+    expect(ctx.extensionPoints.list("channel@1")).toHaveLength(2);
     expect(calls).toHaveLength(4);
     await ctx.close();
   });
@@ -156,10 +158,10 @@ describe("ctx.capabilities（单元）", () => {
   it("非 orgScoped 能力传 orgId：不查组织启用", async () => {
     const { access, calls } = stubAccess({ "identity-source@1": [{ plugin: "a", impl: "A" }] });
     const ctx = createPluginContext(deps, mf({ requires: ["identity-source@1"] }), {}, access);
-    await expect(ctx.capabilities.get("identity-source@1", "a", { orgId: "o1" })).resolves.toBe(
+    await expect(ctx.extensionPoints.get("identity-source@1", "a", { orgId: "o1" })).resolves.toBe(
       "A",
     );
-    await expect(ctx.capabilities.list("identity-source@1", { orgId: "o1" })).resolves.toEqual([
+    await expect(ctx.extensionPoints.list("identity-source@1", { orgId: "o1" })).resolves.toEqual([
       { plugin: "a", impl: "A" },
     ]);
     expect(calls).toEqual([]);
@@ -167,7 +169,7 @@ describe("ctx.capabilities（单元）", () => {
   });
 });
 
-describe("ctx.capabilities（经 PluginHost）", () => {
+describe("ctx.extensionPoints（经 PluginHost）", () => {
   it("依赖按拓扑序加载，setup 内可取用被依赖方；optional 缺失时 list 为空；按组织启用取用", async () => {
     const h = new PluginHost(deps, {}, { autoApprove: true });
     hosts.push(h);
@@ -179,28 +181,28 @@ describe("ctx.capabilities（经 PluginHost）", () => {
       picked: "b",
     });
 
-    const ctx = (globalThis as { __capCtx?: PluginContext }).__capCtx as PluginContext;
+    const ctx = (globalThis as { __capCtx?: ExtensionContext }).__capCtx as ExtensionContext;
     await sql`INSERT INTO capybara.orgs (id, slug, name) VALUES ('org-cap', 'org-cap', 'Cap')`.execute(
       deps.db,
     );
     await expect(
-      ctx.capabilities.get("channel@1", "cap-chan-a", { orgId: "org-cap" }),
-    ).rejects.toThrow(CapabilityUnavailableError);
+      ctx.extensionPoints.get("channel@1", "cap-chan-a", { orgId: "org-cap" }),
+    ).rejects.toThrow(ExtensionPointUnavailableError);
     await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled)
       VALUES ('cap-chan-a', 'org-cap', true), ('cap-chan-b', 'org-cap', false)`.execute(deps.db);
     await expect(
-      ctx.capabilities.get<{ id: string }>("channel@1", "cap-chan-a", { orgId: "org-cap" }),
+      ctx.extensionPoints.get<{ id: string }>("channel@1", "cap-chan-a", { orgId: "org-cap" }),
     ).resolves.toEqual({ id: "a" });
     await expect(
-      ctx.capabilities.get("channel@1", "cap-chan-b", { orgId: "org-cap" }),
+      ctx.extensionPoints.get("channel@1", "cap-chan-b", { orgId: "org-cap" }),
     ).rejects.toThrow(/cap-chan-b.*org-cap/);
     expect(
-      (await ctx.capabilities.list("channel@1", { orgId: "org-cap" })).map((e) => e.plugin),
+      (await ctx.extensionPoints.list("channel@1", { orgId: "org-cap" })).map((e) => e.plugin),
     ).toEqual(["cap-chan-a"]);
     // 不缓存：组织停用后立即生效
     await sql`UPDATE capybara.plugin_org_configs SET enabled = false WHERE plugin = 'cap-chan-a'`.execute(
       deps.db,
     );
-    await expect(ctx.capabilities.list("channel@1", { orgId: "org-cap" })).resolves.toEqual([]);
+    await expect(ctx.extensionPoints.list("channel@1", { orgId: "org-cap" })).resolves.toEqual([]);
   });
 });

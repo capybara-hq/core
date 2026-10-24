@@ -6,7 +6,7 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
-  MODEL_PROVIDER_CAPABILITY_V2 as V2,
+  MODEL_PROVIDER_EXTENSION_POINT_V2 as V2,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";

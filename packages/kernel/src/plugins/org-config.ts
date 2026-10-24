@@ -1,4 +1,8 @@
-import { CAPABILITIES, type PluginManifest, parseCapability } from "@capybara-hq/plugin-sdk";
+import {
+  EXTENSION_POINTS,
+  type ExtensionManifest,
+  parseExtensionPoint,
+} from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
 import type { core, z } from "zod";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
@@ -530,7 +534,7 @@ export class OrgPluginConfigs {
 
   /** 引用是否为按组织启用的能力。 */
   private isOrgScoped(ref: string): boolean {
-    return CAPABILITIES[parseCapability(ref).name]?.orgScoped === true;
+    return EXTENSION_POINTS[parseExtensionPoint(ref).name]?.orgScoped === true;
   }
 
   /** 该组织内（已启用、已加载、非 `except`）提供完整引用（含主版本）的插件。 */
@@ -545,7 +549,7 @@ export class OrgPluginConfigs {
   private async assertDependenciesEnabled(
     t: Trx,
     orgId: string,
-    manifest: PluginManifest,
+    manifest: ExtensionManifest,
   ): Promise<void> {
     const needed = (manifest.requires ?? []).filter((r) => this.isOrgScoped(r));
     if (needed.length === 0) return;
@@ -566,7 +570,7 @@ export class OrgPluginConfigs {
   private async assertNoEnabledDependents(
     t: Trx,
     orgId: string,
-    manifest: PluginManifest,
+    manifest: ExtensionManifest,
   ): Promise<void> {
     const provided = manifest.provides.filter((r) => this.isOrgScoped(r));
     if (provided.length === 0) return;
@@ -592,7 +596,7 @@ export class OrgPluginConfigs {
     }
   }
 
-  private manifest(plugin: string): PluginManifest {
+  private manifest(plugin: string): ExtensionManifest {
     const m = this.host.manifests().find((x) => x.name === plugin);
     if (!m) throw new ApiError("plugin.not_found", `Plugin ${plugin} is not installed`);
     return m;
@@ -605,7 +609,7 @@ export class OrgPluginConfigs {
   }
 
   private view(
-    m: PluginManifest,
+    m: ExtensionManifest,
     row: { enabled: boolean; config: Obj | null } | undefined,
     setKeys: ReadonlySet<string>,
   ): OrgPluginView {

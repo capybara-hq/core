@@ -2,13 +2,13 @@ import { getEventListeners } from "node:events";
 import { fileURLToPath } from "node:url";
 import {
   type AvailableHook,
-  definePlugin,
+  defineExtension,
+  type ExtensionManifest,
+  ExtensionPermissionError,
   type HookHandler,
   type HookOptions,
   type HookPayloads,
   type ModelRequestHookPayload,
-  type PluginManifest,
-  PluginPermissionError,
   type ToolPreHookPayload,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
@@ -651,8 +651,8 @@ describe("helpers", () => {
   });
 });
 
-const manifest = (): PluginManifest =>
-  definePlugin({
+const manifest = (): ExtensionManifest =>
+  defineExtension({
     name: "hooky",
     version: "0.1.0",
     sdk: "^0.1.0",
@@ -682,18 +682,18 @@ describe("ctx.hooks.on", () => {
     try {
       // not declared in permissions.hooks
       expect(() => ctx.hooks.on("tool.postExecute", () => {}, { mode: "observe" })).toThrow(
-        PluginPermissionError,
+        ExtensionPermissionError,
       );
       // declared, but reserved (not in HOOKS_AVAILABLE)
       const reserved = () =>
         ctx.hooks.on("session.start" as "model.request", () => {}, { mode: "observe" });
       expect(reserved).toThrow(/not available/);
-      expect(reserved).not.toThrow(PluginPermissionError);
+      expect(reserved).not.toThrow(ExtensionPermissionError);
       // policy on a mount point that cannot deny
       expect(() => ctx.hooks.on("model.response", () => {}, { mode: "policy" })).toThrow(/policy/);
       // policy on a mount point missing from permissions.policyHooks (M-1)
       expect(() => ctx.hooks.on("model.request", () => {}, { mode: "policy" })).toThrow(
-        PluginPermissionError,
+        ExtensionPermissionError,
       );
       ctx.sealTools();
       // outside setup

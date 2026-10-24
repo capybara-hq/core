@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import {
   type CapybaraPackageSection,
-  definePlugin,
+  defineExtension,
   SDK_VERSION,
-  type StaticPluginManifest,
+  type StaticExtensionManifest,
   secret,
   staticManifestOf,
 } from "@capybara-hq/plugin-sdk";
@@ -58,7 +58,7 @@ async function tgz(entries: Entry[]): Promise<Uint8Array> {
   return new Uint8Array(gzipSync(Buffer.concat(chunks)));
 }
 
-const manifest = (over: Partial<StaticPluginManifest> = {}): StaticPluginManifest => ({
+const manifest = (over: Partial<StaticExtensionManifest> = {}): StaticExtensionManifest => ({
   name: "demo",
   version: "1.0.0",
   sdk: "^0.1.0",
@@ -91,9 +91,9 @@ const pkgJson = (over: Record<string, unknown> = {}) =>
 const ENTRY = [
   'import { readFile } from "node:fs/promises";',
   'import { z } from "zod";',
-  'import { definePlugin } from "@capybara-hq/plugin-sdk";',
+  'import { defineExtension } from "@capybara-hq/plugin-sdk";',
   "const meta = import.meta.url;",
-  'export default definePlugin({ async setup() { await import("node:path"); } });',
+  'export default defineExtension({ async setup() { await import("node:path"); } });',
 ].join("\n");
 
 const base = (over: { pkg?: string; entry?: string; extra?: Entry[] } = {}): Entry[] => [
@@ -362,7 +362,7 @@ describe("permissionSetOfPackage", () => {
   });
 
   it("与 computePermissionSet(真实模块) 的键相等", async () => {
-    const real = definePlugin({
+    const real = defineExtension({
       name: "demo",
       version: "1.0.0",
       sdk: "^0.1.0",

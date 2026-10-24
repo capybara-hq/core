@@ -1,5 +1,5 @@
 import type {
-  PluginManifest,
+  ExtensionManifest,
   UiActionArgs,
   UiActionResult,
   UiContribution,
@@ -50,7 +50,7 @@ export const uiFrame = (m: UiBusMessage): string =>
 /**
  * 单个插件在 setup 期间注册的视图与动作：进程内的静态登记（同 `ctx.tools.register`），
  * 不是跨请求的共享状态——各副本加载同一插件得到同样的登记。
- * id 必须是 `permissions.ui.views` 里的（与清单 `ui` 里 kind view 的贡献一一对应，`definePlugin` 已交叉核对）。
+ * id 必须是 `permissions.ui.views` 里的（与清单 `ui` 里 kind view 的贡献一一对应，`defineExtension` 已交叉核对）。
  */
 export class PluginUiRegistration {
   readonly views = new Map<string, UiRender>();
@@ -60,8 +60,8 @@ export class PluginUiRegistration {
   private sealed = false;
 
   constructor(
-    private readonly manifest: PluginManifest,
-    /** 越权（id 未在 `permissions.ui.views` 声明）：抛 PluginPermissionError 并写审计。 */
+    private readonly manifest: ExtensionManifest,
+    /** 越权（id 未在 `permissions.ui.views` 声明）：抛 ExtensionPermissionError 并写审计。 */
     private readonly deny: (item: string) => never,
   ) {
     this.declaredViews = new Set(manifest.permissions?.ui?.views ?? []);

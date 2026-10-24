@@ -11,7 +11,7 @@ import {
   readPluginPackage,
 } from "@capybara-hq/kernel";
 import {
-  type PluginManifest,
+  type ExtensionManifest,
   SDK_VERSION,
   validatePluginPackageJson,
 } from "@capybara-hq/plugin-sdk";
@@ -36,7 +36,7 @@ afterAll(async () => {
 });
 
 const realManifest = async (name: string) =>
-  ((await import(join(plugin(name), "src/index.ts"))) as { default: PluginManifest }).default;
+  ((await import(join(plugin(name), "src/index.ts"))) as { default: ExtensionManifest }).default;
 
 describe.each(["todo", "slack"])("packPlugin(plugins/%s)", (name) => {
   let result: Awaited<ReturnType<typeof packPlugin>>;

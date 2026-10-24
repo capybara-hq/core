@@ -28,8 +28,8 @@ export class PackageShaMismatchError extends Error {
 /** 解包完成后写入包根的校验文件（`wx` 写入：包里自带同名文件时同步失败）。 */
 export const MARKER = ".capybara-package.json";
 
-/** 插件名规则同清单（`definePlugin` 的 name 校验），用作目录名。 */
-const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
+/** 插件名规则同清单（`defineExtension` 的 name 校验），用作目录名。 */
+const EXTENSION_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
 export interface Marker {
@@ -119,7 +119,7 @@ export async function syncPackage(
   blobs: { get(sha256: string): Promise<Uint8Array> },
   limits?: PluginPackageLimits,
 ): Promise<string> {
-  if (!PLUGIN_NAME_RE.test(name)) throw new Error(`invalid plugin name "${name}"`);
+  if (!EXTENSION_NAME_RE.test(name)) throw new Error(`invalid plugin name "${name}"`);
   if (!SHA256_RE.test(sha)) throw new Error(`invalid package sha256 "${sha}"`);
   const base = join(resolvePath(dir), name);
   const root = join(base, sha.slice(0, 16));

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { InboundEvent, Logger, PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext, InboundEvent, Logger } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import { secretValues } from "../config/fields.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -144,7 +144,7 @@ interface Held {
 export interface ChannelSupervisorDeps {
   db: KernelDb;
   redis: Redis;
-  bus: PluginContext["bus"];
+  bus: ExtensionContext["bus"];
   connections: Pick<ChannelConnections, "runtime">;
   /** 本进程已加载、提供 `channel@1` 的插件名（内核传 `host.list("channel")`）。 */
   localPlugins: () => string[];

@@ -1,4 +1,4 @@
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import { assertNamespace } from "./namespace.js";
 
@@ -16,7 +16,7 @@ function assertTtl(name: string, value: unknown): asserts value is number {
 }
 
 /** 创建带命名空间的 ctx.kv：实际键为 `cap:<namespace>:kv:<key>`（与锁键 `cap:<namespace>:lock:<key>` 不重叠），写入必须带 TTL。 */
-export function createKv(redis: Redis, namespace: string): PluginContext["kv"] {
+export function createKv(redis: Redis, namespace: string): ExtensionContext["kv"] {
   assertNamespace(namespace);
   const k = (key: string) => `cap:${namespace}:kv:${key}`;
   return {

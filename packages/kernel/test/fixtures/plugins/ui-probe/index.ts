@@ -1,4 +1,4 @@
-import { definePlugin, type UiRenderArgs, type UiView } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type UiRenderArgs, type UiView } from "@capybara-hq/plugin-sdk";
 
 /** 测试观察点（同进程的单副本测试读它）：slow 视图收到的中止信号次数、最近一次 render / action 的参数。 */
 export interface UiProbeState {
@@ -25,7 +25,7 @@ const plain = ({ signal: _signal, ...rest }: UiRenderArgs) => rest;
  * - panel 的动作：toast / view / bad / boom；orgpage 的动作回一条提示；
  * - 路由 POST /invalidate：按请求体调用 ctx.ui.invalidate（测试从指定副本触发刷新）。
  */
-export default definePlugin({
+export default defineExtension({
   name: "ui-probe",
   version: "0.1.0",
   sdk: "^0.1.0",

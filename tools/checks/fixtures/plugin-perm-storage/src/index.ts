@@ -1,6 +1,6 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
-export const undeclared = definePlugin({
+export const undeclared = defineExtension({
   name: "perm-storage",
   version: "0.0.0",
   sdk: "^0.1.0",
@@ -12,7 +12,7 @@ export const undeclared = definePlugin({
   },
 });
 
-export const declaredFalse = definePlugin({
+export const declaredFalse = defineExtension({
   name: "perm-storage-false",
   version: "0.0.0",
   sdk: "^0.1.0",

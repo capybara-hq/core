@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  CAPABILITY_CARDINALITY,
-  CONNECTOR_CAPABILITY,
-  definePlugin,
+  CONNECTOR_EXTENSION_POINT,
+  defineExtension,
+  EXTENSION_POINT_CARDINALITY,
   type InputForm,
   ToolError,
   validateAnswer,
@@ -13,10 +13,10 @@ import {
 const form = (fields: InputForm["fields"]): InputForm => ({ title: "Pick", fields });
 
 describe("connector@1 能力", () => {
-  it("已登记为 multi，definePlugin 接受 provides connector@1", () => {
-    expect(CONNECTOR_CAPABILITY).toBe("connector@1");
-    expect(CAPABILITY_CARDINALITY.connector).toBe("multi");
-    const m = definePlugin({
+  it("已登记为 multi，defineExtension 接受 provides connector@1", () => {
+    expect(CONNECTOR_EXTENSION_POINT).toBe("connector@1");
+    expect(EXTENSION_POINT_CARDINALITY.connector).toBe("multi");
+    const m = defineExtension({
       name: "demo-conn",
       version: "1.0.0",
       sdk: "^0.1.0",

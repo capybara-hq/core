@@ -1,4 +1,4 @@
-import type { Logger, PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import { assertNamespace } from "./namespace.js";
 
@@ -103,7 +103,7 @@ export function createBus(
   subscriber: BusSubscriber,
   namespace: string,
   log: ErrorLog = consoleLog,
-): PluginContext["bus"] {
+): ExtensionContext["bus"] {
   assertNamespace(namespace);
   const ch = (topic: string) => `cap:${namespace}:${topic}`;
   return {

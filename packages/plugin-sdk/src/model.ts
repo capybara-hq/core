@@ -315,5 +315,5 @@ export interface ModelProviderV1 {
   stream(req: ModelRequestV1, opts: { signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
 }
 
-export const MODEL_PROVIDER_CAPABILITY = "model-provider@1";
-export const MODEL_PROVIDER_CAPABILITY_V2 = "model-provider@2";
+export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
+export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";

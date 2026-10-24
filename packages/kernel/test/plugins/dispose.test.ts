@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { CapabilityUnavailableError, staticManifestOf } from "@capybara-hq/plugin-sdk";
+import { ExtensionPointUnavailableError, staticManifestOf } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -159,11 +159,11 @@ describe("插件撤销：每一种登记", () => {
     expect(firstCtx?.signal.aborted).toBe(true);
     // 旧 ctx 不能再登记
     await expect(firstCtx?.bus.subscribe("ping", () => {})).rejects.toThrow();
-    // optional 依赖方在本副本重新加载：取 everything 的能力抛 CapabilityUnavailableError
+    // optional 依赖方在本副本重新加载：取 everything 的能力抛 ExtensionPointUnavailableError
     expect(consumer.setups).toBe(2);
     const consumerCtx = consumer.ctxs[1];
-    expect(() => consumerCtx?.capabilities.get("counter@1", "everything")).toThrow(
-      CapabilityUnavailableError,
+    expect(() => consumerCtx?.extensionPoints.get("counter@1", "everything")).toThrow(
+      ExtensionPointUnavailableError,
     );
     expect(consumer.seen[1]).toEqual([]);
 
@@ -184,7 +184,7 @@ describe("插件撤销：每一种登记", () => {
     await waitFor(() => probe.messages.length === 1, "bus message");
     expect(probe.messages).toEqual([{ hi: 1 }]);
     expect(consumer.setups).toBe(3);
-    expect(consumer.ctxs[2]?.capabilities.get("counter@1", "everything")).toMatchObject({
+    expect(consumer.ctxs[2]?.extensionPoints.get("counter@1", "everything")).toMatchObject({
       from: "everything",
     });
   }, 30_000);

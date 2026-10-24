@@ -1,12 +1,12 @@
 import { fileURLToPath } from "node:url";
 import {
-  CHANNEL_CAPABILITY,
+  CHANNEL_EXTENSION_POINT,
   type Connector,
-  DIRECTORY_CAPABILITY,
-  OBJECT_STORE_CAPABILITY,
+  DIRECTORY_EXTENSION_POINT,
+  type ExtensionContext,
+  OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
-  type PluginContext,
-  SANDBOX_CAPABILITY,
+  SANDBOX_EXTENSION_POINT,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
@@ -263,7 +263,7 @@ export interface Kernel {
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
   readonly orgPluginConfigs: OrgPluginConfigs;
   /** 内核总线（命名空间 `kernel`）。 */
-  readonly bus: PluginContext["bus"];
+  readonly bus: ExtensionContext["bus"];
   /** 运行编排服务。 */
   readonly runs: KernelRuns;
   /** 工具注册表与连接器凭据。 */
@@ -523,7 +523,7 @@ export async function createKernel(
   // 对象存储：提供方在 host.load() 之后才就绪，按调用时取
   const storage = new StorageService({
     provider: () =>
-      host.list("object-store").find((e) => e.capability === OBJECT_STORE_CAPABILITY)?.impl as
+      host.list("object-store").find((e) => e.capability === OBJECT_STORE_EXTENSION_POINT)?.impl as
         | ObjectStore
         | undefined,
     // 可能存过数据的插件：已批准过权限的（含已卸载的）与当前加载的
@@ -705,12 +705,15 @@ export async function createKernel(
     db: kdb,
     redis,
     provider: () => {
-      const e = host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY);
+      const e = host.list("sandbox").find((x) => x.capability === SANDBOX_EXTENSION_POINT);
       return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
     },
     lookup: (plugin) =>
-      host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY && x.plugin === plugin)
-        ?.impl as SandboxProvider | undefined,
+      host
+        .list("sandbox")
+        .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === plugin)?.impl as
+        | SandboxProvider
+        | undefined,
     config: () => current,
     log,
   });
@@ -793,7 +796,7 @@ export async function createKernel(
     directoryPlugins: () =>
       host
         .list("directory")
-        .filter((e) => e.capability === DIRECTORY_CAPABILITY)
+        .filter((e) => e.capability === DIRECTORY_EXTENSION_POINT)
         .map((e) => e.plugin),
     // 只用来写吊销标记（Redis 快速路径）；会话签发仍在 HTTP 层
     sessions: new SessionService(kdb, redis, keyring, {
@@ -1336,7 +1339,7 @@ export async function createKernel(
         checkpoint();
         const sandboxPlugin = host
           .list("sandbox")
-          .find((x) => x.capability === SANDBOX_CAPABILITY)?.plugin;
+          .find((x) => x.capability === SANDBOX_EXTENSION_POINT)?.plugin;
         if (sandboxPlugin !== undefined) {
           for (const w of sandboxConfigWarnings(current, sandboxPlugin)) log[w.level](w.message);
         }
@@ -1421,7 +1424,7 @@ export async function createKernel(
             localPlugins: () =>
               host
                 .list("channel")
-                .filter((e) => e.capability === CHANNEL_CAPABILITY)
+                .filter((e) => e.capability === CHANNEL_EXTENSION_POINT)
                 .map((e) => e.plugin),
             onEvent: (id, e) => channels.inbound.onEvent(id, e),
             config: () => current,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  definePlugin,
-  MODEL_PROVIDER_CAPABILITY,
+  defineExtension,
+  MODEL_PROVIDER_EXTENSION_POINT,
   ModelError,
   type ModelProviderV1,
   type ModelRequestV1,
@@ -42,11 +42,11 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
 
 const usage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
-export default definePlugin({
+export default defineExtension({
   name: "model-looper",
   version: "0.1.0",
   sdk: "^0.1.0",
-  provides: [MODEL_PROVIDER_CAPABILITY],
+  provides: [MODEL_PROVIDER_EXTENSION_POINT],
   setup(ctx) {
     const provider: ModelProviderV1 = {
       async listModels() {
@@ -104,6 +104,6 @@ export default definePlugin({
         };
       },
     };
-    ctx.provide(MODEL_PROVIDER_CAPABILITY, provider);
+    ctx.provide(MODEL_PROVIDER_EXTENSION_POINT, provider);
   },
 });

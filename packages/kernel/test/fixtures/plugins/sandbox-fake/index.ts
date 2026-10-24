@@ -4,9 +4,9 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  definePlugin,
+  defineExtension,
   type ExecResult,
-  SANDBOX_CAPABILITY,
+  SANDBOX_EXTENSION_POINT,
   SandboxGoneError,
   type SandboxHandle,
   type SandboxLimits,
@@ -306,16 +306,16 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
 }
 
 /** 测试用 `sandbox@1`：部署配置 `{ root }`，见文件头注释。 */
-export default definePlugin({
+export default defineExtension({
   name: "sandbox-fake",
   version: "0.1.0",
   sdk: "^0.1.0",
-  provides: [SANDBOX_CAPABILITY],
+  provides: [SANDBOX_EXTENSION_POINT],
   // 只用部署配置与本地文件，不用任何需要声明的平台能力
   permissions: {},
   config: { deployment: Deployment },
   setup(ctx) {
     const { root } = ctx.config as z.infer<typeof Deployment>;
-    ctx.provide(SANDBOX_CAPABILITY, createFakeSandbox(root));
+    ctx.provide(SANDBOX_EXTENSION_POINT, createFakeSandbox(root));
   },
 });

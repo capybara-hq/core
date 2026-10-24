@@ -1,10 +1,10 @@
 import {
   type AuthInjection,
-  CONNECTOR_CAPABILITY,
+  CONNECTOR_EXTENSION_POINT,
   type Connector,
-  definePlugin,
+  defineExtension,
+  type ExtensionContext,
   type InputForm,
-  type PluginContext,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -102,13 +102,13 @@ export const COLOR_FORM: InputForm = {
 };
 
 /** 测试用 connector@1（kind `mem`），同时经 ctx.tools 注册一个插件工具 `echo`。 */
-export default definePlugin({
+export default defineExtension({
   name: "mem-connector",
   version: "0.1.0",
   sdk: "^0.1.0",
-  provides: [CONNECTOR_CAPABILITY],
+  provides: [CONNECTOR_EXTENSION_POINT],
   permissions: { tools: ["echo", "ask", "wipe"] },
-  setup(ctx: PluginContext) {
+  setup(ctx: ExtensionContext) {
     ctx.tools.register(
       {
         name: "echo",
@@ -158,6 +158,6 @@ export default definePlugin({
       },
       async () => ({ content: [{ type: "text", text: "wiped" }] }),
     );
-    ctx.provide(CONNECTOR_CAPABILITY, connector);
+    ctx.provide(CONNECTOR_EXTENSION_POINT, connector);
   },
 });

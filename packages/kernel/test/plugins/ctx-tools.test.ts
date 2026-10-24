@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -73,7 +73,7 @@ describe("ctx.tools.register", () => {
     const h = new PluginHost(deps, {}, { autoApprove: true });
     hosts.push(h);
     await h.load([fx("tools-probe")]);
-    const ctx = (globalThis as { __probeCtx?: PluginContext }).__probeCtx as PluginContext;
+    const ctx = (globalThis as { __probeCtx?: ExtensionContext }).__probeCtx as ExtensionContext;
     expect(() =>
       ctx.tools.register({ name: "late", description: "Late.", inputSchema: {} }, async () => ({
         content: [],

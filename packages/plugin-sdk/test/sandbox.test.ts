@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  CAPABILITIES,
+  EXTENSION_POINTS,
   isSandboxGoneError,
-  SANDBOX_CAPABILITY,
+  SANDBOX_EXTENSION_POINT,
   SANDBOX_ROOTS,
   SandboxGoneError,
   validateAllowHost,
@@ -11,8 +11,8 @@ import {
 
 describe("sandbox@1", () => {
   it("常量与登记一致", () => {
-    expect(SANDBOX_CAPABILITY).toBe("sandbox@1");
-    expect(CAPABILITIES.sandbox).toBeDefined();
+    expect(SANDBOX_EXTENSION_POINT).toBe("sandbox@1");
+    expect(EXTENSION_POINTS.sandbox).toBeDefined();
     expect([...SANDBOX_ROOTS]).toEqual(["/workspace", "/skills", "/tmp"]);
   });
 

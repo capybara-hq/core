@@ -4,7 +4,7 @@
  */
 
 /** 沙箱能力引用。 */
-export const SANDBOX_CAPABILITY = "sandbox@1";
+export const SANDBOX_EXTENSION_POINT = "sandbox@1";
 
 /** 沙箱内允许模型访问的根目录。 */
 export const SANDBOX_ROOTS = ["/workspace", "/skills", "/tmp"] as const;

@@ -1,8 +1,8 @@
 import semver from "semver";
 import type { z } from "zod";
 import { ConnectorAuthSchema } from "./connector-auth.js";
-import { definePlugin, PLUGIN_NAME_RE, type PluginManifest } from "./define-plugin.js";
-import type { PluginPermissions } from "./permissions.js";
+import { defineExtension, EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
+import type { ExtensionPermissions } from "./permissions.js";
 
 /**
  * 插件包（npm-pack tgz）格式与校验规则（C11）。只含纯函数：读 tgz、扫描 import 由内核做，打包由 `tools/pack-plugin` 做。
@@ -42,15 +42,15 @@ export interface StaticConfigField {
 }
 
 /** 插件清单的静态部分（可 JSON 序列化；不含 setup、zod schema、migrations 路径）。 */
-export interface StaticPluginManifest {
+export interface StaticExtensionManifest {
   name: string;
   version: string;
   sdk: string;
   provides: string[];
   requires: string[];
   optional: string[];
-  permissions: PluginPermissions;
-  ui?: PluginManifest["ui"];
+  permissions: ExtensionPermissions;
+  ui?: ExtensionManifest["ui"];
   config: { deployment: StaticConfigField[]; org: StaticConfigField[] };
 }
 
@@ -59,7 +59,7 @@ export interface CapybaraPackageSection {
   kind: "plugin";
   entry: string;
   sdk: string;
-  manifest: StaticPluginManifest;
+  manifest: StaticExtensionManifest;
   migrations?: string;
   ui?: string;
 }
@@ -180,8 +180,8 @@ const jsonClone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
  * 真实清单的静态部分：打包时写进 `capybara.manifest`，加载时与包内的比对（`manifest_mismatch`）。
  * 结果可 JSON 往返（undefined 字段去掉）；配置字段按路径排序。
  */
-export function staticManifestOf(m: PluginManifest): StaticPluginManifest {
-  const out: StaticPluginManifest = {
+export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest {
+  const out: StaticExtensionManifest = {
     name: m.name,
     version: m.version,
     sdk: m.sdk,
@@ -258,14 +258,14 @@ function checkManifest(m: unknown, pkgVersion: unknown, sectionSdk: unknown, err
   if (typeof sectionSdk === "string" && m.sdk !== sectionSdk) {
     errs.push(`${at}.sdk "${String(m.sdk)}" does not match capybara.sdk "${sectionSdk}"`);
   }
-  // 名字、版本、sdk 范围、能力引用、权限、界面贡献：与 definePlugin 同一套规则（setup 用占位函数）。
+  // 名字、版本、sdk 范围、能力引用、权限、界面贡献：与 defineExtension 同一套规则（setup 用占位函数）。
   try {
-    definePlugin({
-      ...(m as unknown as PluginManifest),
+    defineExtension({
+      ...(m as unknown as ExtensionManifest),
       config: undefined,
       migrations: undefined,
       setup() {},
-    } as unknown as PluginManifest);
+    } as unknown as ExtensionManifest);
   } catch (e) {
     errs.push(`${at}: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -278,7 +278,7 @@ function checkManifest(m: unknown, pkgVersion: unknown, sectionSdk: unknown, err
  * `capybara.sdk` 有上界（`*`、`>=x` 这类会把将来的大版本也当成兼容，拒绝）且满足宿主 SDK 版本（includePrerelease），
  * `peerDependencies` 的 SDK 范围必须存在且等于它；`peerDependencies.zod`（若有）是合法范围，给了
  * `opts.hostZodVersion` 时须被宿主 zod 满足；manifest 的 version 与 package.json 一致、sdk 与 `capybara.sdk` 一致，
- * 其余按 definePlugin 的规则校验。
+ * 其余按 defineExtension 的规则校验。
  */
 export function validatePluginPackageJson(
   pkg: unknown,
@@ -569,8 +569,8 @@ export function validateConnectorTemplate(t: unknown): string[] {
   for (const k of Object.keys(t)) {
     if (!TEMPLATE_KEYS.has(k)) errs.push(`template has unknown field "${k}"`);
   }
-  if (typeof t.plugin !== "string" || !PLUGIN_NAME_RE.test(t.plugin)) {
-    errs.push(`template.plugin must be a plugin name matching ${PLUGIN_NAME_RE}`);
+  if (typeof t.plugin !== "string" || !EXTENSION_NAME_RE.test(t.plugin)) {
+    errs.push(`template.plugin must be a plugin name matching ${EXTENSION_NAME_RE}`);
   }
   if (
     t.pluginVersion !== undefined &&

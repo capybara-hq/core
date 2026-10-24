@@ -1,6 +1,6 @@
 import {
-  definePlugin,
-  MODEL_PROVIDER_CAPABILITY_V2,
+  defineExtension,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
   type ModelInfo,
   type ModelProvider,
   type ModelRequest,
@@ -28,11 +28,11 @@ export interface MediaProvider extends ModelProvider {
   requests: ModelRequest[];
 }
 
-export default definePlugin({
+export default defineExtension({
   name: "model-media",
   version: "0.1.0",
   sdk: "^0.1.0",
-  provides: [MODEL_PROVIDER_CAPABILITY_V2],
+  provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   setup(ctx) {
     const provider: MediaProvider = {
       requests: [],
@@ -49,6 +49,6 @@ export default definePlugin({
         };
       },
     };
-    ctx.provide(MODEL_PROVIDER_CAPABILITY_V2, provider);
+    ctx.provide(MODEL_PROVIDER_EXTENSION_POINT_V2, provider);
   },
 });

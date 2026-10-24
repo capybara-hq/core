@@ -15,8 +15,8 @@ export class StorageKeyError extends Error {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** 插件名规则同清单（`definePlugin` 的 name 校验）。 */
-const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
+/** 插件名规则同清单（`defineExtension` 的 name 校验）。 */
+const EXTENSION_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 /** 字面的 `${`（POST 策略的变量起始符）。 */
@@ -35,7 +35,7 @@ export function normalizeOrgId(orgId: string): string {
 
 /** 插件名必须符合清单规则（不含 `/`、`..`）。 */
 export function assertPluginName(plugin: string): void {
-  if (typeof plugin !== "string" || !PLUGIN_NAME_RE.test(plugin)) {
+  if (typeof plugin !== "string" || !EXTENSION_NAME_RE.test(plugin)) {
     throw new StorageKeyError(`plugin name "${plugin}" is not valid`);
   }
 }

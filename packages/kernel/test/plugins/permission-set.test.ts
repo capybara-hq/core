@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  definePlugin,
-  type PluginManifest,
+  defineExtension,
+  type ExtensionManifest,
   parseCatalogIndex,
   secret,
 } from "@capybara-hq/plugin-sdk";
@@ -25,8 +25,8 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const mf = (over: Partial<PluginManifest> = {}) =>
-  definePlugin({
+const mf = (over: Partial<ExtensionManifest> = {}) =>
+  defineExtension({
     name: "perm-demo",
     version: "1.0.0",
     sdk: "^0.1.0",

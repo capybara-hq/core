@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  IDENTITY_SOURCE_CAPABILITY,
+  IDENTITY_SOURCE_EXTENSION_POINT,
   type IdentitySource,
   type Logger,
 } from "@capybara-hq/plugin-sdk";
@@ -110,7 +110,7 @@ export class SsoFlow {
     if (!this.deps.config().auth.loginSources.includes(plugin)) return undefined;
     const entry = this.deps.host
       .list("identity-source")
-      .find((e) => e.plugin === plugin && e.capability === IDENTITY_SOURCE_CAPABILITY);
+      .find((e) => e.plugin === plugin && e.capability === IDENTITY_SOURCE_EXTENSION_POINT);
     return entry?.impl as IdentitySource | undefined;
   }
 

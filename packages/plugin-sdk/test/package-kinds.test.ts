@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ConnectorAuthSchema,
   type ConnectorTemplateSpec,
-  definePlugin,
+  defineExtension,
   PACKAGE_KINDS,
   parsePackageSection,
   staticManifestOf,
@@ -11,7 +11,7 @@ import {
 
 const pluginPkg = () => {
   const m = staticManifestOf(
-    definePlugin({
+    defineExtension({
       name: "demo-plugin",
       version: "1.2.3",
       sdk: "^0.1.0",

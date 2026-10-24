@@ -1,4 +1,4 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 测试为每次运行创建的一对 deferred：setup 进入等待时 resolve `entered`，放行 `gate` 前 setup 一直挂起。 */
 export interface SlowGates {
@@ -19,7 +19,7 @@ function gates(): Map<string, SlowGates> {
  * 慢启动插件：先定义队列 handler（建立 BullMQ 连接），再等待测试放行。
  * 部署配置 `{ key }` 指向测试在 `globalThis[SLOW_GATES_KEY]` 中登记的 deferred。
  */
-export default definePlugin({
+export default defineExtension({
   name: "slow",
   version: "0.1.0",
   sdk: "^0.1.0",

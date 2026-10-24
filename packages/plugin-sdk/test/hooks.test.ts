@@ -1,13 +1,13 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   type AvailableHook,
+  type ExtensionContext,
   HOOK_MOUNT_POINTS,
   HOOKS_AVAILABLE,
   type HookHandler,
   type HookMediaPlaceholder,
   type HookVerdict,
   type ModelRequestHookPayload,
-  type PluginContext,
   POLICY_HOOKS,
   type ToolPreHookPayload,
   validatePermissions,
@@ -72,6 +72,6 @@ describe("hook mount points", () => {
     expectTypeOf<ReturnType<HookHandler<AvailableHook>>>().toEqualTypeOf<
       Promise<HookVerdict> | HookVerdict
     >();
-    expectTypeOf<PluginContext["hooks"]["on"]>().toBeFunction();
+    expectTypeOf<ExtensionContext["hooks"]["on"]>().toBeFunction();
   });
 });

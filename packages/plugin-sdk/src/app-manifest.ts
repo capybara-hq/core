@@ -2,7 +2,7 @@ import semver from "semver";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { SEMVER_VERSION_RE, SHA512_INTEGRITY_RE } from "./catalog.js";
-import { PLUGIN_NAME_RE } from "./define-plugin.js";
+import { EXTENSION_NAME_RE } from "./define-extension.js";
 import {
   CONNECTOR_TEMPLATE_LIMITS,
   type ConnectorTemplateSpec,
@@ -134,7 +134,7 @@ function buildSchema(opts: AppManifestParseOptions) {
   const plugin = z.strictObject({
     name: z
       .string()
-      .regex(PLUGIN_NAME_RE, { message: "name must be a plugin name (^[a-z][a-z0-9-]{1,40}$)" }),
+      .regex(EXTENSION_NAME_RE, { message: "name must be a plugin name (^[a-z][a-z0-9-]{1,40}$)" }),
     npm: z
       .string()
       .max(214)
