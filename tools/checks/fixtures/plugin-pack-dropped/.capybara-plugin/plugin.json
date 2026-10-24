@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-dropped",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a files entry the plugin package cannot carry"
+}

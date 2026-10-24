@@ -29,12 +29,22 @@ describe("checkPluginPack", () => {
     expect(f[0]?.message).toContain('"assets"');
   });
 
-  it("违规 fixture 不留下临时目录", async () => {
+  it("leaves no temporary dir in a violating fixture", async () => {
     await checkPluginPack([fixture("plugin-pack-dynamic-import")]);
-    expect(await readdir(fixture("plugin-pack-dynamic-import"))).toEqual(["package.json", "src"]);
+    expect((await readdir(fixture("plugin-pack-dynamic-import"))).sort()).toEqual([
+      ".capybara-plugin",
+      "package.json",
+      "src",
+    ]);
   });
 
-  it("官方插件能打成能通过内核校验的自包含包", async () => {
+  it("reports a plugin without .capybara-plugin/plugin.json", async () => {
+    const f = await checkPluginPack([fixture("plugin-pack-no-manifest")]);
+    expect(f.map((x) => x.rule)).toEqual(["plugin-pack"]);
+    expect(f[0]?.message).toMatch(/missing \.capybara-plugin\/plugin\.json/);
+  });
+
+  it("official plugins pack into valid self-contained packages", async () => {
     expect(await checkPluginPack([EXAMPLE_COUNTER, TODO])).toEqual([]);
   }, 60_000);
 });

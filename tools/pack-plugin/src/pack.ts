@@ -18,29 +18,35 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 import {
-  type CapybaraPackageSection,
   checkEntryImports,
   defineExtension,
   type ExtensionManifest,
   HOST_PROVIDED_PACKAGES,
+  PLUGIN_MANIFEST_FILE,
   PLUGIN_PACKAGE_ENTRY,
+  type PluginExtensionSection,
+  type PluginManifest,
+  parseConnectorTemplateFile,
+  parsePluginManifest,
   SDK_VERSION,
-  type StaticExtensionManifest,
   staticManifestOf,
-  validatePluginPackageJson,
+  validatePluginPackageJsonFor,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { build, type Plugin } from "esbuild";
 import { pack as tarPack } from "tar-stream";
 
-/** 打包结果：tgz 路径、十六进制 sha256 与写进 `capybara.manifest` 的静态清单。 */
+/**
+ * The result of packing: the tgz path, its hex sha256 and the `.capybara-plugin/plugin.json`
+ * written into it (the extension's static manifest is `manifest.extension?.manifest`).
+ */
 export interface PackResult {
   file: string;
   sha256: string;
-  manifest: StaticExtensionManifest;
+  manifest: PluginManifest;
   /**
    * Entries of the plugin's package.json `files` that are not in the package (directories other than
-   * `dist` / `migrations` / `ui`, globs, missing paths). Callers print them; `check:plugin-pack` fails.
+   * `dist` / `migrations` / `ui` / `skills` / `connectors` / `.capybara-plugin`, globs, missing paths). Callers print them; `check:plugin-pack` fails.
    */
   dropped: string[];
 }
@@ -192,12 +198,26 @@ function findLicense(dir: string): string | undefined {
   }
 }
 
+/** `files` entries shipped (or deliberately not shipped) by other means than {@link extraFiles}. */
+const SHIPPED_ELSEWHERE = [
+  "dist",
+  "migrations",
+  "ui",
+  "skills",
+  "connectors",
+  ".capybara-plugin",
+  "README.md",
+  "LICENSE",
+  "NOTICE",
+];
+
 /**
  * Files shipped besides the bundle: `README.md` and `LICENSE` (the plugin's own, else the workspace's),
  * the `NOTICE` next to that `LICENSE` if there is one (Apache-2.0 4(d) asks redistributions to carry it),
  * plus every plain file named in the package.json `files` list at the plugin root (e.g. slack's
- * `app-manifest.yaml`). `dist` is replaced by the bundle and `migrations` / `ui` are handled by the
- * manifest; any other entry (a directory, a glob, a missing path) is reported in `dropped`.
+ * `app-manifest.yaml`). `dist` is replaced by the bundle, `migrations` / `ui` are handled by the
+ * extension, `skills` / `connectors` by {@link contentFiles} and `.capybara-plugin` is written by the
+ * packer; any other entry (a directory, a glob, a missing path) is reported in `dropped`.
  */
 async function extraFiles(
   dir: string,
@@ -214,7 +234,7 @@ async function extraFiles(
   if (notice !== undefined && existsSync(notice)) files.set("NOTICE", await readFile(notice));
   for (const raw of Array.isArray(listed) ? listed : []) {
     const entry = String(raw).replace(/^\.\//, "").replace(/\/+$/, "");
-    if (["dist", "migrations", "ui", "README.md", "LICENSE", "NOTICE"].includes(entry)) continue;
+    if (SHIPPED_ELSEWHERE.includes(entry)) continue;
     const p = join(dir, entry);
     const plain = /^[\w.-]+$/.test(entry) && existsSync(p) && (await stat(p)).isFile();
     if (plain) files.set(entry, await readFile(p));
@@ -272,26 +292,118 @@ async function thirdPartyNotices(dir: string, inputs: string[]): Promise<string 
 const tgzName = (name: string, version: string) =>
   `${name.replace(/^@/, "").replace("/", "-")}-${version}.tgz`;
 
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const stripDot = (p: string) => p.replace(/^\.\//, "");
+
 /**
- * 把一个插件目录打成插件包（C11）：
- * 1. esbuild 把 `src/index.ts` 打成单文件 ESM `dist/index.mjs`（platform node、target node24），只外置
- *    {@link HOST_PROVIDED_PACKAGES} 与 Node 内置模块（改写为 `node:*`），CJS 依赖经 createRequire 横幅兼容；
- * 2. 扫描产物的 import（白名单、非字面量动态 import），导入产物取默认导出，经 defineExtension 校验后用
- *    `staticManifestOf` 生成静态清单；清单 version 必须与插件 package.json 一致；
- * 3. 生成只含 name / version / type / license / {@link METADATA_FIELDS} / peerDependencies / capybara 的
- *    package.json，复制
- *    `migrations/`（清单声明了 migrations 时，必须解析到插件根的 `migrations/`）与 `ui/`（存在时）；
- * 4. 打成带 `package/` 前缀、可复现的 tgz，写到 `outDir/<npm 风格文件名>`。
- *
- * 临时文件放在系统临时目录下的 `.capybara-pack-*`，结束后删除。
+ * Reads and validates the source `.capybara-plugin/plugin.json` (without `extension`, which the
+ * packer writes).
  */
-export async function packPlugin(pluginDir: string, outDir: string): Promise<PackResult> {
-  const dir = resolve(pluginDir);
-  const srcPkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as Record<
-    string,
-    unknown
-  >;
-  const label = typeof srcPkg.name === "string" ? srcPkg.name : dir;
+async function readSourceManifest(dir: string, label: string): Promise<PluginManifest> {
+  const file = join(dir, PLUGIN_MANIFEST_FILE);
+  if (!existsSync(file)) {
+    throw new Error(`${label}: missing ${PLUGIN_MANIFEST_FILE} (the plugin manifest)`);
+  }
+  const raw = await readFile(file, "utf8");
+  let data: unknown = raw;
+  try {
+    data = JSON.parse(raw.replace(/^﻿/, ""));
+  } catch {
+    // parsePluginManifest reports the JSON error.
+  }
+  if (isObj(data) && "extension" in data) {
+    throw new Error(
+      `${label}: ${PLUGIN_MANIFEST_FILE}: extension is written by the packer; remove it from the source`,
+    );
+  }
+  const m = parsePluginManifest(data);
+  if ("errors" in m) throw new Error(`${label}: ${PLUGIN_MANIFEST_FILE}: ${m.errors.join("; ")}`);
+  return m;
+}
+
+/**
+ * The skills, connector templates and icons of a plugin: every file under `skills/` and every
+ * `connectors/*.json` when present, plus the paths `plugin.json` lists (`skills`,
+ * `connectorTemplates`, `icon`) and the template icons. Listed paths must exist and connector
+ * template files must parse ({@link parseConnectorTemplateFile}), so a package that lies about its
+ * content fails here instead of at import. `skills` / `templates` count what the kernel
+ * will see (the listed ones, else the scanned ones).
+ */
+async function contentFiles(
+  dir: string,
+  label: string,
+  m: PluginManifest,
+): Promise<{ files: Map<string, Buffer>; skills: number; templates: number }> {
+  const files = new Map<string, Buffer>();
+  const addTree = async (rel: string) => {
+    for (const f of await listFiles(join(dir, rel))) {
+      files.set(posix.join(rel, f), await readFile(join(dir, rel, f)));
+    }
+  };
+  const addFile = async (rel: string, what: string) => {
+    const p = join(dir, rel);
+    if (!existsSync(p) || !(await stat(p)).isFile()) {
+      throw new Error(`${label}: ${what} ./${rel} does not exist`);
+    }
+    files.set(rel, await readFile(p));
+  };
+
+  let scannedSkills = 0;
+  if (existsSync(join(dir, "skills"))) {
+    await addTree("skills");
+    scannedSkills = [...files.keys()].filter((p) => /^skills\/[^/]+\/SKILL\.md$/.test(p)).length;
+  }
+  for (const s of m.skills ?? []) {
+    const rel = stripDot(s.path);
+    if (!existsSync(join(dir, rel, "SKILL.md"))) {
+      throw new Error(`${label}: skill ${s.path} has no SKILL.md`);
+    }
+    await addTree(rel);
+  }
+
+  const templates: string[] = [];
+  if (existsSync(join(dir, "connectors"))) {
+    for (const e of (await readdir(join(dir, "connectors"), { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      if (e.isFile() && e.name.endsWith(".json")) templates.push(`connectors/${e.name}`);
+    }
+  }
+  const listedTemplates = (m.connectorTemplates ?? []).map((c) => stripDot(c.path));
+  for (const rel of new Set([...templates, ...listedTemplates])) {
+    await addFile(rel, "connector template");
+    const t = parseConnectorTemplateFile((files.get(rel) as Buffer).toString("utf8"));
+    if ("errors" in t) throw new Error(`${label}: ${rel}: ${t.errors.join("; ")}`);
+    if (t.icon !== undefined) await addFile(stripDot(t.icon), `${rel} icon`);
+  }
+  if (m.icon !== undefined) await addFile(stripDot(m.icon), "icon");
+
+  return {
+    files,
+    skills: m.skills?.length ?? scannedSkills,
+    templates: m.connectorTemplates?.length ?? templates.length,
+  };
+}
+
+/**
+ * Bundles the extension `src/index.ts`:
+ * 1. esbuild bundles it into the single-file ESM `dist/index.mjs` (platform node, target node24),
+ *    with only {@link HOST_PROVIDED_PACKAGES} and Node builtins (rewritten to `node:*`) external;
+ *    CJS dependencies work through the createRequire banner;
+ * 2. the bundle's imports are checked (allowlist, no non-literal dynamic import), the bundle is
+ *    imported and its default export goes through defineExtension; `staticManifestOf` gives the
+ *    static manifest, whose version must equal the package.json version;
+ * 3. `migrations/` (when the manifest declares migrations, which must resolve to the plugin's
+ *    `migrations/`), `ui/` (when present) and THIRD-PARTY-NOTICES.txt join the files.
+ *
+ * Temporary files live in `.capybara-pack-*` under the system temp dir and are removed afterwards.
+ */
+async function bundleExtension(
+  dir: string,
+  label: string,
+  pkgVersion: unknown,
+): Promise<{ files: Map<string, Buffer>; extension: PluginExtensionSection }> {
   const stage = await realpath(await mkdtemp(join(tmpdir(), STAGING_PREFIX)));
   try {
     await linkHostPackages(dir, stage);
@@ -326,19 +438,16 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       throw new Error(`${label}: the bundle has no default export object`);
     }
     const m = defineExtension(mod.default as ExtensionManifest);
-    if (m.version !== srcPkg.version) {
+    if (m.version !== pkgVersion) {
       throw new Error(
-        `${label}: manifest version ${m.version} does not match package.json version ${String(srcPkg.version)}`,
+        `${label}: manifest version ${m.version} does not match package.json version ${String(pkgVersion)}`,
       );
     }
-    const manifest = staticManifestOf(m);
 
     const files = new Map<string, Buffer>([[PLUGIN_PACKAGE_ENTRY, code]]);
-    const section: CapybaraPackageSection = {
-      kind: "plugin",
-      entry: PLUGIN_PACKAGE_ENTRY,
-      sdk: m.sdk,
-      manifest,
+    const extension: PluginExtensionSection = {
+      entry: `./${PLUGIN_PACKAGE_ENTRY}`,
+      manifest: staticManifestOf(m),
     };
     if (m.migrations !== undefined) {
       const from = resolve(dir, "src", m.migrations);
@@ -350,44 +459,94 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       for (const f of await listFiles(from)) {
         files.set(posix.join("migrations", f), await readFile(join(from, f)));
       }
-      section.migrations = "migrations";
+      extension.migrations = "./migrations";
     }
-    const notices = await thirdPartyNotices(dir, Object.keys(result.metafile?.inputs ?? {}));
-    if (notices !== undefined) files.set(NOTICES_FILE, Buffer.from(notices));
-    const extra = await extraFiles(dir, srcPkg.files);
-    for (const [path, data] of extra.files) files.set(path, data);
     if (existsSync(join(dir, "ui"))) {
       for (const f of await listFiles(join(dir, "ui"))) {
         files.set(posix.join("ui", f), await readFile(join(dir, "ui", f)));
       }
-      section.ui = "ui";
+      extension.ui = "./ui";
     }
-
-    const deps = (srcPkg.dependencies ?? {}) as Record<string, string>;
-    const pkg: Record<string, unknown> = {
-      name: srcPkg.name,
-      version: srcPkg.version,
-      type: "module",
-      ...(srcPkg.license === undefined ? {} : { license: srcPkg.license }),
-      ...pick(srcPkg, METADATA_FIELDS),
-      peerDependencies: { "@capybara-hq/plugin-sdk": m.sdk, zod: deps.zod ?? "^4.0.0" },
-      capybara: section,
-    };
-    const pkgIssues = validatePluginPackageJson(pkg, SDK_VERSION);
-    if (pkgIssues.length > 0) throw new Error(`${label}: ${pkgIssues.join("; ")}`);
-    files.set("package.json", Buffer.from(`${JSON.stringify(pkg, null, 2)}\n`));
-
-    const tgz = await makeTgz(files);
-    await mkdir(outDir, { recursive: true });
-    const file = resolve(outDir, tgzName(String(srcPkg.name), String(srcPkg.version)));
-    await writeFile(file, tgz);
-    return {
-      file,
-      sha256: createHash("sha256").update(tgz).digest("hex"),
-      manifest,
-      dropped: extra.dropped,
-    };
+    const notices = await thirdPartyNotices(dir, Object.keys(result.metafile?.inputs ?? {}));
+    if (notices !== undefined) files.set(NOTICES_FILE, Buffer.from(notices));
+    return { files, extension };
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
+}
+
+/**
+ * Packs a plugin directory into a plugin package (spec §4.1):
+ * 1. reads and validates the source `.capybara-plugin/plugin.json` (it must not carry
+ *    `extension`);
+ * 2. when `src/index.ts` exists, bundles the extension ({@link bundleExtension}) and sets
+ *    `extension = { entry: "./dist/index.mjs", manifest, migrations?: "./migrations", ui?: "./ui" }`;
+ *    a declarative plugin (no `src/index.ts`) runs no esbuild and creates no staging dir;
+ * 3. ships `skills/**`, `connectors/*.json` and the listed paths ({@link contentFiles}), README,
+ *    LICENSE, NOTICE and the plain files of package.json `files` ({@link extraFiles});
+ * 4. writes a package.json with only name / version / type / license / {@link METADATA_FIELDS}
+ *    and, with an extension, peerDependencies (no `capybara` section), and the final
+ *    `plugin.json`, both validated with the SDK (`parsePluginManifest`,
+ *    `validatePluginPackageJsonFor`);
+ * 5. writes a reproducible tgz with the `package/` prefix to `outDir/<npm-style file name>`.
+ */
+export async function packPlugin(pluginDir: string, outDir: string): Promise<PackResult> {
+  const dir = resolve(pluginDir);
+  const srcPkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const label = typeof srcPkg.name === "string" ? srcPkg.name : dir;
+  const source = await readSourceManifest(dir, label);
+  const content = await contentFiles(dir, label, source);
+  const hasExtension = existsSync(join(dir, "src/index.ts"));
+  if (!hasExtension && content.skills === 0 && content.templates === 0) {
+    throw new Error(
+      `${label}: a plugin must contain an extension, a skill or a connector template (src/index.ts, skills/<name>/SKILL.md or connectors/<id>.json)`,
+    );
+  }
+  const ext = hasExtension ? await bundleExtension(dir, label, srcPkg.version) : undefined;
+
+  const files = new Map<string, Buffer>([...(ext?.files ?? []), ...content.files]);
+  const extra = await extraFiles(dir, srcPkg.files);
+  for (const [path, data] of extra.files) files.set(path, data);
+
+  const manifest: PluginManifest =
+    ext === undefined ? source : { ...source, extension: ext.extension };
+  const parsed = parsePluginManifest(manifest);
+  if ("errors" in parsed) {
+    throw new Error(`${label}: packed ${PLUGIN_MANIFEST_FILE}: ${parsed.errors.join("; ")}`);
+  }
+
+  const deps = (srcPkg.dependencies ?? {}) as Record<string, string>;
+  const pkg: Record<string, unknown> = {
+    name: srcPkg.name,
+    version: srcPkg.version,
+    type: "module",
+    ...(srcPkg.license === undefined ? {} : { license: srcPkg.license }),
+    ...pick(srcPkg, METADATA_FIELDS),
+    ...(ext === undefined
+      ? {}
+      : {
+          peerDependencies: {
+            "@capybara-hq/plugin-sdk": ext.extension.manifest.sdk,
+            zod: deps.zod ?? "^4.0.0",
+          },
+        }),
+  };
+  const pkgIssues = validatePluginPackageJsonFor(pkg, parsed, SDK_VERSION);
+  if (pkgIssues.length > 0) throw new Error(`${label}: ${pkgIssues.join("; ")}`);
+  files.set("package.json", Buffer.from(`${JSON.stringify(pkg, null, 2)}\n`));
+  files.set(PLUGIN_MANIFEST_FILE, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
+
+  const tgz = await makeTgz(files);
+  await mkdir(outDir, { recursive: true });
+  const file = resolve(outDir, tgzName(String(srcPkg.name), String(srcPkg.version)));
+  await writeFile(file, tgz);
+  return {
+    file,
+    sha256: createHash("sha256").update(tgz).digest("hex"),
+    manifest: parsed,
+    dropped: extra.dropped,
+  };
 }
