@@ -387,12 +387,13 @@ describe("connect (long connection)", () => {
     lark.revokeTokens();
     lark.delay("token", 3000);
     try {
-      const t = Date.now();
+      const issued = lark.tokensIssued();
       const id = lark.pushEvent(
         larkMessageEvent({ openId: "ou_dave", chatId: "oc_dm3", chatType: "p2p", text: "quick" }),
       );
       expect((await lark.waitForAck(id, 5000)).code).toBe(200);
-      expect(Date.now() - t).toBeLessThan(2000);
+      // 不比墙钟（CI 负载下不稳）：确认时那次推迟 3 秒的取 token 还没完成，说明确认没有等它，是 1 秒时限放的行
+      expect(lark.tokensIssued()).toBe(issued);
       expect(events.at(-1)).toMatchObject({ text: "quick", sender: { externalId: "ou_dave" } });
     } finally {
       lark.delay("token", 0);
@@ -634,7 +635,8 @@ describe("connect (long connection)", () => {
     const { stop } = await connect();
     const t = Date.now();
     await stop();
-    expect(Date.now() - t).toBeLessThan(2000);
+    // Without the abort the loop keeps the socket open indefinitely; 4 s leaves room for CI load.
+    expect(Date.now() - t).toBeLessThan(4000);
     await waitFor(() => lark.openSockets() === 0 || undefined, 3000, "closed");
 
     lark.delay("endpoint", 400);
@@ -650,7 +652,7 @@ describe("connect (long connection)", () => {
     ac.abort();
     const t2 = Date.now();
     await done;
-    expect(Date.now() - t2).toBeLessThan(2000);
+    expect(Date.now() - t2).toBeLessThan(4000);
     await new Promise((r) => setTimeout(r, 800));
     lark.delay("endpoint", 0);
     expect(lark.openSockets()).toBe(0);

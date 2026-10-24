@@ -176,18 +176,34 @@ describe("GET 插件列表：权限清单与配置 schema", () => {
     const consumer = plugins.find((p) => p.plugin === "cap-consumer");
     expect(consumer?.permissions).toEqual(
       expect.arrayContaining([
-        { category: "provides", sensitive: false, items: ["counter@1"] },
-        { category: "requires", sensitive: false, items: ["channel@1"] },
-        { category: "optional", sensitive: false, items: ["directory@1"] },
+        {
+          category: "provides",
+          sensitive: false,
+          items: ["counter@1"],
+          entries: [{ value: "counter@1", sensitive: false }],
+        },
+        {
+          category: "requires",
+          sensitive: false,
+          items: ["channel@1"],
+          entries: [{ value: "channel@1", sensitive: false }],
+        },
+        {
+          category: "optional",
+          sensitive: false,
+          items: ["directory@1"],
+          entries: [{ value: "directory@1", sensitive: false }],
+        },
       ]),
     );
     expect(consumer?.orgConfigSchema).toBeNull();
     const org = plugins.find((p) => p.plugin === "orgcfg");
     const secrets = org?.permissions.find((g) => g.category === "secrets");
-    expect(secrets).toEqual({
+    expect(secrets).toMatchObject({
       category: "secrets",
       sensitive: true,
       items: expect.arrayContaining(["appSecret"]),
+      entries: expect.arrayContaining([{ value: "appSecret", sensitive: true, reason: "secrets" }]),
     });
     expect(org?.orgConfigSchema?.properties?.appSecret?.["x-secret"]).toBe(true);
     expect(org?.orgConfigSchema?.properties?.appId).not.toHaveProperty("x-secret");

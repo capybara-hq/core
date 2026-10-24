@@ -201,6 +201,62 @@ describe("组织设置（SettingsPage）", () => {
     expect(screen.queryByText(en.orgSettings.egress.title)).toBeNull();
   });
 
+  it.each(LOCALES)(
+    "沙箱资源：只读显示实际生效的 cpu / 内存与来源，写明只对新建的沙箱生效（%s）",
+    async (locale) => {
+      const o = msgs[locale].orgSettings.limits;
+      stubApi({
+        [`GET ${SETTINGS}`]: () =>
+          json(200, {
+            settings: { toolSearch: "on" },
+            deployment: DEPLOYMENT,
+            sandboxLimits: { cpu: 2.5, memoryMb: 4096, source: "override" },
+          }),
+      });
+      renderPage(<OrganizationSettingsPage />, { locale });
+      expect(await screen.findByText(o.title)).toBeTruthy();
+      expect(screen.getByText(o.cpuValue.replace("{cpu}", "2.5"))).toBeTruthy();
+      expect(screen.getByText(o.memoryValue.replace("{mb}", "4096"))).toBeTruthy();
+      expect(screen.getByText(o.source.override)).toBeTruthy();
+      expect(screen.getByText(o.newOnly)).toBeTruthy();
+      // 组织管理员只读：这一节没有可编辑的控件
+      expect(screen.queryByRole("spinbutton")).toBeNull();
+      expect(actionRow(locale)).toBeNull();
+    },
+  );
+
+  it("沙箱资源：没有覆盖时来源为部署默认；旧内核不返回 sandboxLimits 时不显示这一节", async () => {
+    const o = en.orgSettings.limits;
+    stubApi({
+      [`GET ${SETTINGS}`]: () =>
+        json(200, {
+          settings: { toolSearch: "on" },
+          sandboxLimits: { cpu: 1, memoryMb: 2048, source: "deployment" },
+        }),
+    });
+    renderPage(<OrganizationSettingsPage />);
+    expect(await screen.findByText(o.source.deployment)).toBeTruthy();
+    cleanup();
+    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    renderPage(<OrganizationSettingsPage />);
+    await screen.findByRole("radio", { name: new RegExp(`^${en.orgSettings.toolSearch.on}`) });
+    expect(screen.queryByText(o.title)).toBeNull();
+  });
+
+  it("二级导航：成员起有「成员」（访客没有）", async () => {
+    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    renderPage(<OrganizationSettingsPage />, { me: MEMBER });
+    const link = await screen.findByRole("link", { name: en.connections.nav.members });
+    expect(link.getAttribute("href")).toBe("/settings/members");
+    cleanup();
+    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    renderPage(<OrganizationSettingsPage />, {
+      me: { ...ME, memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }] },
+    });
+    await screen.findByText(en.orgSettings.readonly);
+    expect(screen.queryByRole("link", { name: en.connections.nav.members })).toBeNull();
+  });
+
   it("普通成员：只读（单选不可用、说明只有管理员能改），没有 ActionRow", async () => {
     stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "off" } }) });
     renderPage(<OrganizationSettingsPage />, { me: MEMBER });

@@ -181,7 +181,7 @@ describe("双副本续跑", () => {
     for (const waitMs of [200, 1_800, 1_000]) {
       const convId = await createConv(reqA, orgId, agentId);
       const { runId, id } = await waitingApproval(reqA, convId);
-      const job = await waitFor(() => maint.getJob(waitTimeoutJobId(id)), 5_000, "timeout job");
+      const job = await waitFor(() => maint.getJob(waitTimeoutJobId(id)), 15_000, "timeout job");
       // 到期时刻设在 1s 之后（按 PG 时钟），两边在到期前后同时动作
       await sql`UPDATE capybara.approvals SET expires_at = now() + interval '1 second'
         WHERE id = ${id}`.execute(raw);

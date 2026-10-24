@@ -16,9 +16,9 @@ export interface Approval {
   runId: string;
   callId: string;
   toolKey: string;
-  /** 来源内的工具原名（应用工具为应用里的名字）。 */
+  /** 来源内的工具原名（连接器工具为连接器里的名字）。 */
   toolName: string;
-  app: { id: string; name: string; slug: string } | null;
+  connector: { id: string; name: string; slug: string } | null;
   agent: { id: string; name: string };
   input: unknown;
   /** 指定处理人；为 null 时按角色升级（只能「仅本次」）。 */
@@ -70,7 +70,7 @@ export const decideApproval = (
   id: string,
   body: { decision: "approve" | "deny"; scope?: ApprovalScope; note?: string },
 ) =>
-  apiFetch<{ approval: Omit<Approval, "toolName" | "app" | "agent"> }>(
+  apiFetch<{ approval: Omit<Approval, "toolName" | "connector" | "agent"> }>(
     `${base(orgId)}/approvals/${encodeURIComponent(id)}/decision`,
     { method: "POST", body: JSON.stringify(body) },
   );

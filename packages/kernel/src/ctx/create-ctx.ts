@@ -1,7 +1,9 @@
 import {
+  type AvailableHook,
   CAPABILITIES,
   type CapabilityRef,
   CapabilityUnavailableError,
+  type HookHandler,
   type Logger,
   OBJECT_STORE_CAPABILITY,
   type ObjectStore,
@@ -26,6 +28,8 @@ import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { checkHookRegistration, type RegisteredHook } from "../plugins/hooks.js";
+import { RegistrationLedger } from "../plugins/ledger.js";
 import { StorageService } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import {
@@ -249,21 +253,43 @@ const noProviders = (deps: KernelDeps): CapabilityAccess => ({
 
 /** 内核视角的插件 ctx：插件契约之外还带宿主要用的登记信息与关闭方法。 */
 export type KernelPluginContext = PluginContext & {
+  /** 本实例的登记账（C17）：每次登记记一笔，撤销时逐项撤销。 */
+  ledger: RegistrationLedger;
+  /**
+   * 撤销第一步：停止取新的队列任务；`deadline`（epoch 毫秒）之后撤销队列 worker 时不再等进行中的任务。
+   */
+  beginDispose(deadline: number): Promise<void>;
+  /** 等本实例队列 worker 进行中的任务结束，最多等到 `deadline`（epoch 毫秒）。 */
+  drainQueues(deadline: number): Promise<"drained" | "timeout">;
+  /** 中止 `ctx.signal`（幂等）。 */
+  abort(): void;
   routes: Route[];
   provided: Map<CapabilityRef, unknown>;
   /** 已注册的工具（按注册顺序）。 */
   registeredTools: RegisteredTool[];
+  /** Hooks registered through `ctx.hooks.on` (registration order). */
+  registeredHooks: RegisteredHook[];
   /** 经 `ctx.ui.view` 注册的视图（按贡献 id）。 */
   uiViews: ReadonlyMap<string, UiRender>;
   /** 经 `ctx.ui.action` 注册的动作处理函数（按贡献 id）。 */
   uiActions: ReadonlyMap<string, UiActionHandler>;
-  /** setup 结束后调用：此后 `tools.register`、`ui.view`、`ui.action` 抛错。 */
+  /** setup 结束后调用：此后 `tools.register`、`ui.view`、`ui.action`、`hooks.on` 抛错。 */
   sealTools(): void;
+  /** 中止 signal、封账并逐项撤销仍在账上的登记、关闭队列连接（幂等）。 */
   close(): Promise<void>;
 };
 
 /**
+ * 插件实例的部署配置（已校验）：`ctx.config` 是读它的 getter。hot 字段改动时宿主替换 `value`（C10），
+ * 插件下次读 `ctx.config` 就是新值；非 hot 改动重新加载实例（新 ctx）。
+ */
+export class LiveConfig {
+  constructor(public value: unknown) {}
+}
+
+/**
  * 为单个插件按权限清单构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。
+ * `deploymentConfig` 可以是 {@link LiveConfig}（实例共用、可就地替换），否则按固定值包一层。
  * - 自动授予：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`；
  * - `secrets` 仅当 `permissions.secrets`，`storage` 仅当 `permissions.storage`；`http.route` 只允许 `permissions.http` 声明的 method + path；
  *   `tools.register` 只允许 `permissions.tools` 声明的名字；`ui.view` / `ui.action` 只允许 `permissions.ui.views`
@@ -271,6 +297,9 @@ export type KernelPluginContext = PluginContext & {
  *   `ui.verifyEmbedToken` 校验内核签发的嵌入令牌，`claims.plugin` 必须是本插件、插件仍在该组织启用、
  *   调用者仍是该组织的 active 成员（组织未删除），返回此刻的角色；
  * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
+ * - `hooks.on` only during setup, only mount points declared in `permissions.hooks` and available
+ *   (`HOOKS_AVAILABLE`), `policy` only on `POLICY_HOOKS` declared in `permissions.policyHooks`; kept on the ctx (`registeredHooks`, read by
+ *   the host's `HookRegistry` from active instances only) and recorded in the ledger.
  * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
  */
 export function createPluginContext(
@@ -280,16 +309,21 @@ export function createPluginContext(
   capabilityAccess: CapabilityAccess = noProviders(deps),
 ): KernelPluginContext {
   const name = manifest.name;
+  const live =
+    deploymentConfig instanceof LiveConfig ? deploymentConfig : new LiveConfig(deploymentConfig);
   const routes: Route[] = [];
   const provided = new Map<CapabilityRef, unknown>();
   const registeredTools: RegisteredTool[] = [];
   let toolsSealed = false;
   const queue = createQueue(deps.redisUrl, name, { runWorkers: deps.runWorkers, log: deps.log });
-  const { close: closeQueue, ...queueApi } = queue;
   const bus = createBus(deps.redis, deps.busSubscriber, name, deps.log);
   // 界面刷新发在内核命名空间（会话主题 conv.<id> / 组织主题 org-ui.<orgId>），不在插件自己的命名空间
   const kernelBus = createBus(deps.redis, deps.busSubscriber, "kernel", deps.log);
-  const unsubs = new Set<() => Promise<void>>();
+  const ledger = new RegistrationLedger(name);
+  const lifecycle = new AbortController();
+  /** 撤销时队列 worker 排空的截止时刻（epoch 毫秒）；undefined = 一直等（停机路径）。 */
+  let drainDeadline: number | undefined;
+  const lock = createLock(deps.redis, name);
   const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
   let closing: Promise<void> | undefined;
   const perms = manifest.permissions ?? {};
@@ -316,6 +350,9 @@ export function createPluginContext(
     : undefined;
   const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
   const declaredTools = new Set(perms.tools ?? []);
+  const declaredHooks = new Set<string>(perms.hooks ?? []);
+  const declaredPolicyHooks = new Set<string>(perms.policyHooks ?? []);
+  const registeredHooks: RegisteredHook[] = [];
   const declaredCaps = new Set<CapabilityRef>([
     ...(manifest.requires ?? []),
     ...(manifest.optional ?? []),
@@ -399,28 +436,52 @@ export function createPluginContext(
 
   const ctx: Omit<KernelPluginContext, "secrets" | "storage"> = {
     kv: createKv(deps.redis, name),
-    lock: createLock(deps.redis, name),
+    lock: {
+      // 取到的租约记账：实例撤销时释放仍持有的；插件自己 release 时销账
+      async acquire(key, opts) {
+        const lease = await lock.acquire(key, opts);
+        if (!lease) return null;
+        const settle = ledger.add({ kind: "lease", key, dispose: () => lease.release() });
+        return {
+          renew: () => lease.renew(),
+          async release() {
+            settle();
+            await lease.release();
+          },
+        };
+      },
+    },
     capabilities,
     bus: {
       publish: bus.publish,
       async subscribe(topic, handler) {
         const closedError = () =>
           new Error(`plugin ${name}: ctx is closed; bus.subscribe is not allowed after close`);
-        if (closing) throw closedError();
+        if (closing || ledger.sealed) throw closedError();
         const un = await bus.subscribe(topic, handler);
-        // 订阅期间 ctx 被关闭：close 已清空退订集合，这里自己退订，不留下无人管的订阅
-        if (closing) {
+        // 订阅期间 ctx 被关闭 / 实例开始撤销：账已封，这里自己退订，不留下无人管的订阅
+        if (closing || ledger.sealed) {
           await un();
           throw closedError();
         }
-        unsubs.add(un);
+        const settle = ledger.add({ kind: "bus", key: topic, dispose: un });
         return async () => {
-          unsubs.delete(un);
+          settle();
           await un();
         };
       },
     },
-    queue: queueApi,
+    queue: {
+      define(qname, handler, o) {
+        queue.define(qname, handler, o);
+        ledger.add({
+          kind: "queue",
+          key: qname,
+          dispose: () => queue.stopWorker(qname, drainDeadline),
+        });
+      },
+      add: queue.add,
+    },
     db: guardDb(deps.db.withSchema(pluginSchemaName(name)), name),
     http: {
       route(method, path, handler) {
@@ -432,7 +493,16 @@ export function createPluginContext(
         if (routes.some((r) => r.method === method && r.path === full)) {
           throw new Error(`plugin ${name}: duplicate route ${method} ${path}`);
         }
-        routes.push({ method, path: full, handler });
+        const route: Route = { method, path: full, handler };
+        routes.push(route);
+        ledger.add({
+          kind: "route",
+          key: `${method} ${path}`,
+          dispose: async () => {
+            const i = routes.indexOf(route);
+            if (i >= 0) routes.splice(i, 1);
+          },
+        });
       },
     },
     tools: {
@@ -453,15 +523,68 @@ export function createPluginContext(
         if (registeredTools.some((t) => t.spec.name === spec.name)) {
           throw new Error(`plugin ${name}: duplicate tool "${spec.name}"`);
         }
-        registeredTools.push({ spec, handler });
+        const tool: RegisteredTool = { spec, handler };
+        registeredTools.push(tool);
+        ledger.add({
+          kind: "tool",
+          key: spec.name,
+          dispose: async () => {
+            const i = registeredTools.indexOf(tool);
+            if (i >= 0) registeredTools.splice(i, 1);
+          },
+        });
+      },
+    },
+    hooks: {
+      on(mount, handler, opts) {
+        if (toolsSealed) {
+          throw new Error(
+            `plugin ${name}: hooks.on is only allowed during setup; setup has completed`,
+          );
+        }
+        // not-available / malformed registrations are programming errors, not permission denials
+        checkHookRegistration(name, mount, handler, opts);
+        if (!declaredHooks.has(mount)) deny(`permissions.hooks ${mount}`);
+        // M-1: deployment state learns policy mounts from the manifest, so they must be declared
+        if (opts.mode === "policy" && !declaredPolicyHooks.has(mount)) {
+          deny(`permissions.policyHooks ${mount}`);
+        }
+        const hook: RegisteredHook = {
+          mount: mount as AvailableHook,
+          handler: handler as HookHandler<AvailableHook>,
+          mode: opts.mode,
+        };
+        registeredHooks.push(hook);
+        ledger.add({
+          kind: "hook",
+          key: mount,
+          dispose: async () => {
+            const i = registeredHooks.indexOf(hook);
+            if (i >= 0) registeredHooks.splice(i, 1);
+          },
+        });
       },
     },
     ui: {
       view(id, render) {
         uiReg.view(id, render);
+        ledger.add({
+          kind: "ui.view",
+          key: id,
+          dispose: async () => {
+            if (uiReg.views.get(id) === render) uiReg.views.delete(id);
+          },
+        });
       },
       action(id, handler) {
         uiReg.action(id, handler);
+        ledger.add({
+          kind: "ui.action",
+          key: id,
+          dispose: async () => {
+            if (uiReg.actions.get(id) === handler) uiReg.actions.delete(id);
+          },
+        });
       },
       // 目标先核对（一条查询）：插件在 orgId 启用；带对话时对话属于 orgId。不满足就只记 debug、不发
       // （插件拿着过期或别的组织的 id 调用不是错误，但不能借它往别的组织的流里发刷新）
@@ -509,8 +632,19 @@ export function createPluginContext(
         throw new Error(`plugin ${name}: capability ${capability} provided more than once`);
       }
       provided.set(capability, impl);
+      ledger.add({
+        kind: "provide",
+        key: capability,
+        dispose: async () => {
+          if (provided.get(capability) === impl) provided.delete(capability);
+        },
+      });
     },
-    config: deploymentConfig,
+    signal: lifecycle.signal,
+    // getter：hot 字段改动就地替换（C10），插件用时读到新值
+    get config(): unknown {
+      return live.value;
+    },
     log: {
       info: (msg, fields) => deps.log.info(msg, tag(fields)),
       warn: (msg, fields) => deps.log.warn(msg, tag(fields)),
@@ -519,8 +653,18 @@ export function createPluginContext(
     routes,
     provided,
     registeredTools,
+    registeredHooks,
     uiViews: uiReg.views,
     uiActions: uiReg.actions,
+    ledger,
+    async beginDispose(deadline) {
+      drainDeadline = deadline;
+      await queue.pauseWorkers();
+    },
+    drainQueues: (deadline) => queue.drainWorkers(deadline),
+    abort() {
+      if (!lifecycle.signal.aborted) lifecycle.abort();
+    },
     sealTools() {
       toolsSealed = true;
       uiReg.seal();
@@ -528,10 +672,16 @@ export function createPluginContext(
     /** 幂等：重复 / 并发调用共享同一次关闭。 */
     close() {
       closing ??= (async () => {
-        const pending = [...unsubs];
-        unsubs.clear();
-        await Promise.allSettled(pending.map((u) => u()));
-        await closeQueue();
+        if (!lifecycle.signal.aborted) lifecycle.abort();
+        await ledger.disposeAll((r, err) =>
+          deps.log.warn("plugin registration dispose failed", {
+            plugin: name,
+            kind: r.kind,
+            key: r.key,
+            err,
+          }),
+        );
+        await queue.close();
         await Promise.allSettled([...audits]);
       })();
       return closing;

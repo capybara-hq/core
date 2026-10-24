@@ -53,7 +53,22 @@
       "path": "plugins/sandbox-e2b"
     },
     {
+      "path": "tools/pack-plugin"
+    },
+    {
+      "path": "tools/release"
+    },
+    {
       "path": "tools/checks"
+    },
+    {
+      "path": "tools/worktree"
+    },
+    {
+      "path": "tools/ci"
+    },
+    {
+      "path": "tools/dev"
     },
     {
       "path": "apps/capybara"

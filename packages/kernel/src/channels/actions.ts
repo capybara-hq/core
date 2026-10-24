@@ -64,7 +64,9 @@ export class ChannelCardActions {
     if (row?.status !== "active" || !row.pluginEnabled) return;
     const { locale } = await readOrgSettings(this.deps.db, row.orgId);
     const a = e.action;
-    // Ruling A13：卡片必须是本连接发在这个 chat 里的（防止伪造卡片 id 去处理别处的请求）
+    // Ruling A13：卡片必须是本连接发在这个 chat 里的（防止伪造卡片 id 去处理别处的请求）。
+    // A `pending` row counts (T5a): delivery records the card before sending it, so a click that
+    // arrives before the send returns is accepted; connection and chat are checked all the same.
     const card = await this.deps.db
       .selectFrom("channel_card_messages")
       .select(["conversation_id", "target"])

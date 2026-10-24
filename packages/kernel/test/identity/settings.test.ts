@@ -66,7 +66,14 @@ describe("SettingsService", () => {
         warns.push({ msg, ...(fields && { fields }) }),
     };
     const s = new SettingsService(db, log);
-    expect(await s.get()).toEqual({ orgCreation: "anyone", runConcurrencyOverrides: {} });
+    expect(await s.get()).toEqual({
+      orgCreation: "anyone",
+      runConcurrencyOverrides: {},
+      priceCurrency: "USD",
+      sandboxLimitOverrides: {},
+      customConnectors: "allow",
+      customSkills: "allow",
+    });
     expect(warns).toHaveLength(1);
     expect(warns[0]?.fields).toMatchObject({ key: "orgCreation" });
   });
@@ -81,5 +88,96 @@ describe("SettingsService", () => {
     const s = new SettingsService(db, { warn: (msg) => warns.push(msg) });
     expect((await s.get()).orgCreation).toBe("enterprise_admin");
     expect(warns).toEqual([]);
+  });
+
+  it("sandboxLimitOverrides 按组织合并（整项替换，null 删除）；customConnectors / customSkills；审计", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const s = new SettingsService(db);
+    const admin = await new AccountsService(db).createLocal({
+      login: "limits-admin",
+      password: "correct horse battery",
+      displayName: "L",
+      enterpriseAdmin: true,
+    });
+    const r1 = await s.update(
+      { sandboxLimitOverrides: { orgA: { cpu: 2, memoryMb: 4096 }, orgB: { cpu: 0.25 } } },
+      admin.id,
+    );
+    expect(r1.sandboxLimitOverrides).toEqual({
+      orgA: { cpu: 2, memoryMb: 4096 },
+      orgB: { cpu: 0.25 },
+    });
+    // 只改列出的组织；给出的组织整项替换；null 删除；其他键不受影响
+    const r2 = await s.update(
+      {
+        sandboxLimitOverrides: { orgA: { memoryMb: 262144 }, orgB: null, orgC: { cpu: 64 } },
+        customConnectors: "deny",
+      },
+      admin.id,
+    );
+    expect(r2).toMatchObject({
+      sandboxLimitOverrides: { orgA: { memoryMb: 262144 }, orgC: { cpu: 64 } },
+      customConnectors: "deny",
+      customSkills: "allow",
+      orgCreation: "anyone",
+    });
+    expect((await s.update({ customSkills: "deny" }, admin.id)).customSkills).toBe("deny");
+    expect((await s.get()).sandboxLimitOverrides).toEqual({
+      orgA: { memoryMb: 262144 },
+      orgC: { cpu: 64 },
+    });
+    const ev = await db
+      .selectFrom("audit_events")
+      .select(["action", "detail"])
+      .where("action", "=", "deployment.settings.updated")
+      .where("actor_account_id", "=", admin.id)
+      .orderBy("id")
+      .execute();
+    expect(ev.map((e) => e.detail)).toContainEqual({
+      sandboxLimitOverrides: { orgA: { memoryMb: 262144 }, orgB: null, orgC: { cpu: 64 } },
+      customConnectors: "deny",
+    });
+  });
+
+  it("sandboxLimitOverrides 越界 / 非整数 / 空项与 customSkills 非法值 → validation_failed，库不变", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const s = new SettingsService(db);
+    const admin = await new AccountsService(db).createLocal({
+      login: "limits-admin-2",
+      password: "correct horse battery",
+      displayName: "L2",
+      enterpriseAdmin: true,
+    });
+    for (const patch of [
+      { sandboxLimitOverrides: { orgA: { cpu: 0.2 } } },
+      { sandboxLimitOverrides: { orgA: { cpu: 64.5 } } },
+      { sandboxLimitOverrides: { orgA: { memoryMb: 255 } } },
+      { sandboxLimitOverrides: { orgA: { memoryMb: 262145 } } },
+      { sandboxLimitOverrides: { orgA: { memoryMb: 512.5 } } },
+      { sandboxLimitOverrides: { orgA: {} } },
+      { sandboxLimitOverrides: { orgA: { cpu: 1, gpu: 1 } } },
+      { customSkills: "maybe" },
+    ]) {
+      try {
+        // biome-ignore lint/suspicious/noExplicitAny: 故意传非法值
+        await s.update(patch as any, admin.id);
+        expect.unreachable(JSON.stringify(patch));
+      } catch (e) {
+        expect((e as ApiError).code, JSON.stringify(patch)).toBe("validation_failed");
+      }
+    }
+    expect(await db.selectFrom("deployment_settings").selectAll().execute()).toEqual([]);
+  });
+
+  it("读：库里非法的 sandboxLimitOverrides 回落为 {}", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "sandboxLimitOverrides", value: JSON.stringify({ orgA: { cpu: 999 } }) })
+      .execute();
+    const warns: string[] = [];
+    const s = new SettingsService(db, { warn: (msg) => warns.push(msg) });
+    expect((await s.get()).sandboxLimitOverrides).toEqual({});
+    expect(warns).toHaveLength(1);
   });
 });

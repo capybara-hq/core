@@ -153,4 +153,50 @@ describe("SetupService", () => {
       await codeOf(setup.createEnterpriseAdmin({ login: "OPS", password: PW, displayName: "X" })),
     ).toBe("account.login_taken");
   });
+  it("createEnterpriseAdminIfNone: an existing active enterprise admin → undefined, nothing created", async () => {
+    await setup.complete({ login: "root", password: PW, displayName: "Root" });
+    expect(
+      await setup.createEnterpriseAdminIfNone({ login: "ops", password: PW, displayName: "Ops" }),
+    ).toBeUndefined();
+    expect(await accounts.count()).toBe(1);
+  });
+
+  it("createEnterpriseAdminIfNone: none yet → creates an enterprise admin", async () => {
+    const a = await setup.createEnterpriseAdminIfNone({
+      login: "ops",
+      password: PW,
+      displayName: "Ops",
+    });
+    expect(a?.isEnterpriseAdmin).toBe(true);
+    expect(await setup.status()).toEqual({ needsSetup: false });
+  });
+
+  it("createEnterpriseAdminIfNone: concurrent runs (and a concurrent web setup) → exactly one admin", async () => {
+    const pools = [createDb(pg.url, 2), createDb(pg.url, 2), createDb(pg.url, 2)];
+    try {
+      const [a, b, c] = pools.map((r) => makeSetup(kernelDb(r)));
+      const results = await Promise.allSettled([
+        (a as SetupService).createEnterpriseAdminIfNone({
+          login: "first",
+          password: PW,
+          displayName: "A",
+        }),
+        (b as SetupService).createEnterpriseAdminIfNone({
+          login: "second",
+          password: PW,
+          displayName: "B",
+        }),
+        (c as SetupService).complete({ login: "third", password: PW, displayName: "C" }),
+      ]);
+      const created = results.filter((r) => r.status === "fulfilled" && r.value !== undefined);
+      expect(created).toHaveLength(1);
+      for (const r of results) {
+        if (r.status === "rejected") expect(r.reason.code).toBe("setup.already_completed");
+      }
+      expect(await accounts.countEnterpriseAdmins()).toBe(1);
+      expect(await accounts.count()).toBe(1);
+    } finally {
+      await Promise.all(pools.map((r) => r.destroy()));
+    }
+  });
 });

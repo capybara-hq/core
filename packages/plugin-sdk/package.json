@@ -1,7 +1,14 @@
 {
   "name": "@capybara-hq/plugin-sdk",
   "version": "0.1.0",
+  "description": "Capybara plugin SDK: the types and pure functions plugins are written against",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "homepage": "https://github.com/capybara-hq/core/tree/main/packages/plugin-sdk#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,8 +20,20 @@
       "default": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      }
+    }
+  },
   "files": [
-    "dist"
+    "dist",
+    "schemas",
+    "README.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc -b"
@@ -26,6 +45,9 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/semver": "^7.8.0"
+    "@microsoft/api-extractor": "7.59.4",
+    "@types/semver": "^7.8.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
   }
 }

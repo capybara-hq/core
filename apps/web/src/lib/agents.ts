@@ -7,12 +7,12 @@ export type AgentVisibility = "private" | "org" | "members";
 
 /**
  * agent 引用的工具（与内核 `AgentToolRef` 对应）：内置工具按名字；插件工具按插件名 + 工具名；
- * 应用工具按应用 id，`tools: "all"` 为该应用当前所有启用的工具。
+ * 连接器工具按连接器 id，`tools: "all"` 为该连接器当前所有启用的工具。
  */
 export type AgentToolRef =
   | { kind: "builtin"; name: string }
   | { kind: "plugin"; plugin: string; name: string }
-  | { kind: "app"; appId: string; tools: "all" | string[] };
+  | { kind: "connector"; connectorId: string; tools: "all" | string[] };
 
 /** 收紧后的策略（只能收紧：`ask` / `deny`）。 */
 export type TightenedPolicy = "ask" | "deny";
@@ -38,8 +38,11 @@ export interface AgentDefinitionInput {
   /** 按工具 key 收紧策略。 */
   toolPolicies?: Record<string, TightenedPolicy>;
   /** 选用的组织技能（id）；不用技能时省略。 */
-  /** 技能设置；表单只管 `orgSkills`，其余键（新版本内核加的）保存时原样带回。 */
-  skills?: { orgSkills: string[]; [key: string]: unknown };
+  /**
+   * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有 agent 的 skill_write 确认开关，缺省不写），
+   * 其余键（新版本内核加的）保存时原样带回。
+   */
+  skills?: { orgSkills: string[]; writePolicy?: "allow" | "ask"; [key: string]: unknown };
 }
 
 export interface Agent {

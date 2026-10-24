@@ -151,6 +151,45 @@ describe("ProviderRegistry", () => {
       expect((err as ProviderListError).provider).toBe("broken");
       expect(((err as ProviderListError).cause as Error).message).toBe("upstream down");
     });
+
+    it("卡住的供应商按时限算失败，不拖住列表；列表视图短时间内不再请求它，resolve 照常请求", async () => {
+      let calls = 0;
+      const hung: ModelProvider = {
+        listModels() {
+          calls++;
+          return new Promise(() => {});
+        },
+        stream() {
+          throw new Error("unused");
+        },
+      };
+      const reg = new ProviderRegistry(
+        {
+          list: (cap: string) => [
+            ...k.host.list(cap),
+            { plugin: "hung", capability: "model-provider@2" as const, impl: hung },
+          ],
+        },
+        redis,
+        undefined,
+        { listTimeoutMs: 200 },
+      );
+      const started = Date.now();
+      const first = await reg.listWithStatus();
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(first.map((p) => [p.provider, p.status])).toEqual([
+        ["model-fake", "ok"],
+        ["model-fake-b", "ok"],
+        ["hung", "error"],
+      ]);
+      expect(calls).toBe(1);
+      expect((await reg.listWithStatus()).find((p) => p.provider === "hung")?.status).toBe("error");
+      expect(calls).toBe(1);
+      expect(await redis.ttl("capk:models-failed:hung:v2:-:-")).toBeGreaterThan(0);
+      const err = await reg.resolve({ provider: "hung", model: "x" }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ProviderListError);
+      expect(calls).toBe(2);
+    });
   });
 });
 

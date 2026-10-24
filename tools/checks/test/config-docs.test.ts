@@ -18,10 +18,14 @@ describe("renderConfigDocs", () => {
     expect(md).toContain("`CAPYBARA_DB__POOL_MAX`");
     expect(md).toContain("`CAPYBARA_LOG__LEVEL`");
   });
+  it("附网页层的环境变量（上传包的上限与内核 packages.maxBytes 分开）", () => {
+    expect(md).toContain("`CAPYBARA_WEB_MAX_PACKAGE_BYTES`");
+    expect(md).toContain("`CAPYBARA_KERNEL_URL`");
+  });
   it("热更与密钥标记", () => {
     const row = (p: string) => md.split("\n").find((l) => l.startsWith(`| \`${p}\``)) ?? "";
-    expect(row("log.level")).toMatch(/\| 是 \| 否 \|/);
-    expect(row("db.url")).toMatch(/\| 否 \| 是 \|/);
+    expect(row("log.level")).toMatch(/\| yes \| no \|/);
+    expect(row("db.url")).toMatch(/\| no \| yes \|/);
   });
   it("默认值：普通字段打印，密钥字段一律 —", () => {
     const row = (p: string) => md.split("\n").find((l) => l.startsWith(`| \`${p}\``)) ?? "";
@@ -29,10 +33,10 @@ describe("renderConfigDocs", () => {
     expect(row("http.port")).toContain("`8080`");
     expect(row("masterKeyPrevious")).not.toContain("`[]`");
   });
-  it("可选且无默认值的字段标「可选」而不是「必填」", () => {
+  it("an optional field without a default is marked optional, not required", () => {
     const row = (p: string) => md.split("\n").find((l) => l.startsWith(`| \`${p}\``)) ?? "";
-    expect(row("auth.setupToken")).toMatch(/\| 可选 \| 否 \| 是 \|/);
-    expect(row("db.url")).toMatch(/\| 必填 \| 否 \| 是 \|/);
+    expect(row("auth.setupToken")).toMatch(/\| optional \| no \| yes \|/);
+    expect(row("db.url")).toMatch(/\| required \| no \| yes \|/);
   });
   it("密钥的默认值永远不会被打印", () => {
     const s = z.object({
@@ -99,6 +103,6 @@ describe("secret 对象节点的后代默认值不打印", () => {
     });
     const md = renderConfigDocs(s);
     expect(md).not.toContain("LEAKY-DEFAULT");
-    expect(md).toMatch(/\| `creds.pw` .* \| — \| 否 \| 是 \|/);
+    expect(md).toMatch(/\| `creds.pw` .* \| — \| no \| yes \|/);
   });
 });

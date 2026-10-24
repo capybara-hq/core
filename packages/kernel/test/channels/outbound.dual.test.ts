@@ -62,83 +62,89 @@ const cardOf = (s: FakeChannelSent | undefined) => s?.message.cards?.[0] as Json
 const finalText = (s: FakeChannelSent) =>
   im.updated.filter((u) => u.messageId === s.messageId).at(-1)?.message.text ?? s.message.text;
 
+/** Two replicas, an org with chan-mini + mem-connector, an agent whose echo tool asks first, a channel. */
+async function bootstrap(platform: FakeChannelServer, appId: string) {
+  const redis = new Redis(rdc.url);
+  cleanups.push(() => redis.disconnect());
+  await redis.flushdb();
+  h = await createDualReplicaHarness({
+    plugins: [MODEL_FAKE, CHAN_MINI, MEM_CONNECTOR],
+    pgUrl: pgc.url,
+    redisUrl: rdc.url,
+    config: {
+      auth: { cookieSecure: false },
+      http: { publicUrl: "https://cap.example" },
+      channels: { leaseTtlMs: 3000, scanIntervalMs: 300 },
+      runtime: { jobLockMs: 2000, stalledIntervalMs: 1000 },
+    },
+  });
+  const harness = h;
+  const raw = createDb(harness.dbUrl, 3);
+  cleanups.push(() => raw.destroy());
+  const db: KernelDb = kernelDb(raw);
+
+  let cookie = "";
+  const call = async (method: string, path: string, body?: unknown) => {
+    const res = await harness.request(path, {
+      method,
+      headers: {
+        "x-capybara-csrf": "1",
+        ...(cookie !== "" && { cookie }),
+        ...(body !== undefined && { "content-type": "application/json" }),
+      },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+    const text = await res.text();
+    if (path === "/api/v1/auth/login") {
+      cookie = res.headers
+        .getSetCookie()
+        .map((c) => c.split(";")[0])
+        .join("; ");
+    }
+    return { status: res.status, json: (text === "" ? {} : JSON.parse(text)) as Json };
+  };
+
+  const ownerId = (
+    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
+  ).id;
+  expect((await call("POST", "/api/v1/auth/login", { login: "owner", password: PW })).status).toBe(
+    200,
+  );
+  const org = await call("POST", "/api/v1/orgs", { name: "Acme" });
+  const orgId = (org.json.org as { id: string }).id;
+  const base = `/api/v1/orgs/${orgId}`;
+  for (const p of ["chan-mini", "mem-connector"]) {
+    expect((await call("PUT", `${base}/plugins/${p}`, { enabled: true })).status).toBe(200);
+  }
+  const ag = await call("POST", `${base}/agents`, {
+    definition: {
+      name: "Helper",
+      instructions: "Be helpful.",
+      model: { provider: "model-fake", model: "fake-1" },
+      tools: [{ kind: "plugin", plugin: "mem-connector", name: "echo" }],
+      toolPolicies: { "mem-connector__echo": "ask" },
+    },
+    visibility: "org",
+  });
+  expect(ag.status, JSON.stringify(ag.json)).toBe(201);
+  const agentId = (ag.json.agent as { id: string }).id;
+  await sql`INSERT INTO capybara.identities (source, external_id, account_id)
+    VALUES ('chan-mini:t1', 'u-owner', ${ownerId})`.execute(raw);
+  const ch = await call("POST", `${base}/channels`, {
+    plugin: "chan-mini",
+    name: "Bot",
+    agentId,
+    config: { platformUrl: platform.url, appId, appSecret: "rf3-secret-0a1b2c3d" },
+  });
+  expect(ch.status, JSON.stringify(ch.json)).toBe(201);
+  const connId = (ch.json.channel as { id: string }).id;
+  await waitFor(async () => platform.active(connId)[0], 15_000, "long connection");
+  return { harness, raw, db, connId };
+}
+
 describe("渠道出站投递（双副本）", () => {
   it("投递中杀掉负责投递的 worker：另一副本从 last_seq 续投，卡片不重发、草稿续写并定稿，无重复", async () => {
-    const redis = new Redis(rdc.url);
-    cleanups.push(() => redis.disconnect());
-    await redis.flushdb();
-    h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, CHAN_MINI, MEM_CONNECTOR],
-      pgUrl: pgc.url,
-      redisUrl: rdc.url,
-      config: {
-        auth: { cookieSecure: false },
-        http: { publicUrl: "https://cap.example" },
-        channels: { leaseTtlMs: 3000, scanIntervalMs: 300 },
-        runtime: { jobLockMs: 2000, stalledIntervalMs: 1000 },
-      },
-    });
-    const harness = h;
-    const raw = createDb(harness.dbUrl, 3);
-    cleanups.push(() => raw.destroy());
-    const db: KernelDb = kernelDb(raw);
-
-    let cookie = "";
-    const call = async (method: string, path: string, body?: unknown) => {
-      const res = await harness.request(path, {
-        method,
-        headers: {
-          "x-capybara-csrf": "1",
-          ...(cookie !== "" && { cookie }),
-          ...(body !== undefined && { "content-type": "application/json" }),
-        },
-        ...(body !== undefined && { body: JSON.stringify(body) }),
-      });
-      const text = await res.text();
-      if (path === "/api/v1/auth/login") {
-        cookie = res.headers
-          .getSetCookie()
-          .map((c) => c.split(";")[0])
-          .join("; ");
-      }
-      return { status: res.status, json: (text === "" ? {} : JSON.parse(text)) as Json };
-    };
-
-    const ownerId = (
-      await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-    ).id;
-    expect(
-      (await call("POST", "/api/v1/auth/login", { login: "owner", password: PW })).status,
-    ).toBe(200);
-    const org = await call("POST", "/api/v1/orgs", { name: "Acme" });
-    const orgId = (org.json.org as { id: string }).id;
-    const base = `/api/v1/orgs/${orgId}`;
-    for (const p of ["chan-mini", "mem-connector"]) {
-      expect((await call("PUT", `${base}/plugins/${p}`, { enabled: true })).status).toBe(200);
-    }
-    const ag = await call("POST", `${base}/agents`, {
-      definition: {
-        name: "Helper",
-        instructions: "Be helpful.",
-        model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "mem-connector", name: "echo" }],
-        toolPolicies: { "mem-connector__echo": "ask" },
-      },
-      visibility: "org",
-    });
-    expect(ag.status, JSON.stringify(ag.json)).toBe(201);
-    const agentId = (ag.json.agent as { id: string }).id;
-    await sql`INSERT INTO capybara.identities (source, external_id, account_id)
-      VALUES ('chan-mini:t1', 'u-owner', ${ownerId})`.execute(raw);
-    const ch = await call("POST", `${base}/channels`, {
-      plugin: "chan-mini",
-      name: "Bot",
-      agentId,
-      config: { platformUrl: im.url, appId: "cli_rf3", appSecret: "rf3-secret-0a1b2c3d" },
-    });
-    expect(ch.status, JSON.stringify(ch.json)).toBe(201);
-    const connId = (ch.json.channel as { id: string }).id;
-    await waitFor(async () => im.active(connId)[0], 15_000, "long connection");
+    const { harness, raw, db, connId } = await bootstrap(im, "cli_rf3");
 
     const chat = "dm-u-owner";
     const mine = () => im.sent.filter((s) => s.appId === "cli_rf3" && s.target.chatId === chat);
@@ -241,5 +247,47 @@ describe("渠道出站投递（双副本）", () => {
       | undefined;
     const lastText = (lastPayload?.content ?? []).map((b) => b.text ?? "").join("");
     expect(lastText).toBe(LONG);
+  }, 180_000);
+
+  it("T5a: the delivering worker dies after recording the card as pending; the other replica sends it exactly once and the row ends sent", async () => {
+    // A platform that dedupes by idempotency key, like Lark's uuid: the survivor's resend reuses it
+    const platform = await startFakeChannelServer();
+    cleanups.push(() => platform.stop());
+    const { harness, raw, connId } = await bootstrap(platform, "cli_t5a");
+    const chat = "dm-u-owner";
+    const cards = () =>
+      platform.sent.filter(
+        (s) => s.appId === "cli_t5a" && s.target.chatId === chat && cardOf(s)?.kind === "approval",
+      );
+    // The card reaches the platform, but the delivering replica never sees the response
+    platform.delayNext("/send", 30_000, { onlyCards: true });
+    expect(platform.push(connId, dm("t5a-1", "u-owner", ECHO))).toBe(1);
+    const cardMsg = await waitFor(async () => cards()[0], 20_000, "approval card");
+    const approvalId = cardOf(cardMsg)?.id as string;
+    const row = async () =>
+      (
+        await sql<{ message_id: string | null; status: string }>`SELECT message_id, status
+          FROM capybara.channel_card_messages
+          WHERE connection_id = ${connId} AND card_kind = 'approval' AND card_id = ${approvalId}`.execute(
+          raw,
+        )
+      ).rows[0];
+    expect(await row()).toEqual({ message_id: null, status: "pending" });
+    const victim = harness.replicas.find((r) => r.pid === cardMsg.pid);
+    const survivor = harness.replicas.find((r) => r.pid !== cardMsg.pid);
+    if (!victim || !survivor) throw new Error("cannot identify the delivering replica");
+    await harness.kill(victim.index);
+
+    // The survivor resends with the same idempotency key; the platform shows the card once
+    const resend = await waitFor(
+      async () => platform.duplicateSends.find((s) => s.pid === survivor.pid),
+      40_000,
+      "resend from the surviving replica",
+    );
+    expect(resend.idempotencyKey).toBe(cardMsg.idempotencyKey);
+    await waitFor(async () => (await row())?.status === "sent", 20_000, "card row sent");
+    expect(await row()).toEqual({ message_id: cardMsg.messageId, status: "sent" });
+    await sleep(1000);
+    expect(cards()).toHaveLength(1);
   }, 180_000);
 });

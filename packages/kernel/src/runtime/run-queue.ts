@@ -99,11 +99,12 @@ export class RunQueue {
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
         .selectFrom("conversations")
-        .select(["consumed_seq", "agent_id"])
+        .select(["consumed_seq", "agent_id", "kind"])
         .where("id", "=", conversationId)
         .forUpdate()
         .executeTakeFirst();
-      if (!conv) return null;
+      // 评测回放的隐藏对话：运行由评测 worker 在里面直接驱动（工具只回放记录），绝不为它起真实运行
+      if (conv?.kind !== "chat") return null;
       const last = await t
         .selectFrom("conversation_events")
         .select(["seq", "payload"])

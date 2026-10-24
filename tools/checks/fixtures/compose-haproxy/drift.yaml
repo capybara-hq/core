@@ -1,0 +1,9 @@
+configs:
+  sandbox-proxy-haproxy:
+    content: |
+      global
+        maxconn 4096
+      frontend docker
+        acl p_ping path_reg '^(/v1\.[0-9]+)?/(_ping|version)$$'
+        http-request allow if p_ping_typo
+        http-request deny

@@ -544,7 +544,7 @@ describe("只有附件的消息", { timeout: 30_000 }, () => {
     const res = await post(owner, convId, {
       text: "",
       files: [img],
-      attachments: [{ appId: "00000000-0000-4000-8000-000000000001", uri: "x://y" }],
+      attachments: [{ connectorId: "00000000-0000-4000-8000-000000000001", uri: "x://y" }],
     });
     expect(res.statusCode).toBe(400);
   });

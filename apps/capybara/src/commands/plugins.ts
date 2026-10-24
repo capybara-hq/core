@@ -1,24 +1,24 @@
+import { readFile } from "node:fs/promises";
 import {
+  type AdminPluginView,
   blockingKeys,
-  createDb,
   diffPermissions,
-  type InspectedPlugin,
   isSensitivePermissionKey,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
-  type KernelConfig,
   KernelConfigSchema,
   type KernelLogger,
-  kernelDb,
   loadConfig,
   migrate,
+  openPluginCli,
   type PendingPlugin,
-  PluginApprovals,
-  PluginHost,
+  type PluginCli,
   permissionKeys,
   planApprovals,
   secretValues,
+  withPreApproved,
 } from "@capybara-hq/kernel";
+import { BUILTIN_PLUGINS } from "../builtin-plugins.js";
 import { type PasswordInput, readLine } from "./admin-create.js";
 
 /** plugins 命令的输入输出流（测试可替换）。 */
@@ -37,38 +37,40 @@ const defaultIo = (): PluginsIo => ({
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 共用准备：加载配置 → 跑内核迁移（幂等，快照表在其中）→ 导入并检查已配置插件（不调用 setup、不连 Redis）
- * → 读已批准快照。只连 PG。
+ * 共用准备：加载配置 → 跑内核迁移（幂等，快照与安装记录表在其中）→ 导入并检查内置与已配置插件（不调用 setup）
+ * → 打开 CLI 的插件管理上下文（只连 PG；发布 `kernel.plugins.changed` 时才连 Redis，连不上只告警）。
  */
-async function withReview<T>(
+async function withCli<T>(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  fn: (r: {
-    config: KernelConfig;
-    plugins: InspectedPlugin[];
-    approvals: PluginApprovals;
-    snapshots: Awaited<ReturnType<PluginApprovals["all"]>>;
-  }) => Promise<T>,
+  fn: (cli: PluginCli) => Promise<T>,
 ): Promise<T> {
   const config = await loadConfig(env);
   log.addSecrets(secretValues(KernelConfigSchema, config));
   log.setLevel(config.log.level);
-  const connectTimeoutMs = config.db.connectTimeoutMs;
   await migrate(
     config.db.url,
     { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
-    { connectTimeoutMs },
+    { connectTimeoutMs: config.db.connectTimeoutMs },
   );
-  const plugins = await PluginHost.inspect(config.plugins);
-  const raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
-    connectTimeoutMs,
-  });
+  const cli = await openPluginCli(config, log, { builtin: [...BUILTIN_PLUGINS] });
   try {
-    const approvals = new PluginApprovals(kernelDb(raw));
-    return await fn({ config, plugins, approvals, snapshots: await approvals.all() });
+    return await fn(cli);
   } finally {
-    await raw.destroy().catch(() => {});
+    await cli.close();
   }
+}
+
+/**
+ * 内置与配置声明插件的快照：内置插件（C14）预先批准，补上与其当前权限相同的快照，因此不会出现在待批准里，
+ * 依赖它们的插件照常判定。
+ */
+async function declaredSnapshots(cli: PluginCli) {
+  return withPreApproved(
+    await cli.approvals.all(),
+    cli.inspected.filter((p) => p.source === "builtin").map((p) => p.manifest),
+    new Map(cli.inspected.map((p) => [p.manifest.name, p.permissions])),
+  );
 }
 
 /** 权限键加敏感标记（与组织启用页的敏感分组同一套规则，spec §5.4）。 */
@@ -103,9 +105,21 @@ function describePending(p: PendingPlugin): string[] {
   return [head, ...p.added.map((k) => `  + ${mark(k)}`), ...p.removed.map((k) => `  - ${k}`)];
 }
 
+/** 安装记录（包读不到的除外）是否待批准：没有快照，或比快照多出需要批准的项（F-N：与期望状态无关）。 */
+const installPending = (v: AdminPluginView): boolean =>
+  v.error === undefined && (v.snapshot === null || blockingKeys(v.added).length > 0);
+
+/** CLI 读不到对象存储里的包（F-Q：CLI 不加载 object-store 插件）。 */
+const OBJECT_STORE_HINT =
+  "the package is kept in object storage, which the CLI cannot read; use the admin console";
+
+/** 包读不到的说明（对象存储里的包换成可操作的提示）。 */
+const unreadable = (v: AdminPluginView): string =>
+  v.error?.includes("object storage is not available") ? OBJECT_STORE_HINT : (v.error ?? "");
+
 /**
- * `capybara plugins review`：列出待批准的插件（与内核启动时的判断相同）及其新增 / 减少的权限项。
- * 退出码：0 成功 / 1 失败。
+ * `capybara plugins review`：列出待批准的插件（配置声明的按内核启动时的判断，安装记录按包的权限与快照）
+ * 及其新增 / 减少的权限项。退出码：0 成功 / 1 失败。
  */
 export async function runPluginsReview(
   log: KernelLogger,
@@ -113,22 +127,52 @@ export async function runPluginsReview(
   io: PluginsIo = defaultIo(),
 ): Promise<number> {
   try {
-    return await withReview(log, env, async ({ config, plugins, snapshots }) => {
-      const sets = new Map(plugins.map((p) => [p.manifest.name, p.permissions]));
+    return await withCli(log, env, async (cli) => {
+      const snapshots = await declaredSnapshots(cli);
+      const sets = new Map(cli.inspected.map((p) => [p.manifest.name, p.permissions]));
       const pending = planApprovals(
-        plugins.map((p) => p.manifest),
+        cli.inspected.map((p) => p.manifest),
         sets,
         snapshots,
       ).flatMap((d) => (d.action === "pending" ? [d.pending] : []));
       const out: string[] = [];
-      if (pending.length === 0) out.push("No plugins await permission approval.");
-      else {
-        for (const p of pending) out.push(...describePending(p));
-        out.push("", "Approve with: capybara plugins approve <name>, then restart the kernel.");
-      }
-      if (config.pluginPermissions.autoApprove) {
+      for (const p of pending) out.push(...describePending(p));
+      for (const v of await cli.admin.list()) {
+        if (v.source !== "install") continue;
+        if (v.error !== undefined) {
+          out.push(`${v.name} ${v.version}: cannot review: ${unreadable(v)}`);
+          continue;
+        }
+        if (!installPending(v)) continue;
         out.push(
-          "Note: pluginPermissions.autoApprove is on; the kernel approves plugin permissions automatically at startup.",
+          `${v.name} ${v.version}: awaiting approval (${v.snapshot ? "permissions added since the approved snapshot" : "new plugin"}; installed package ${v.sha256?.slice(0, 16)})`,
+          ...v.added.map((k) => `  + ${mark(k)}`),
+          ...v.removed.map((k) => `  - ${k}`),
+        );
+      }
+      if (out.length === 0) out.push("No plugins await permission approval.");
+      else out.push("", "Approve with: capybara plugins approve <name>");
+      // 部署配置问题（C10）：不合法的插件内核不加载（待配置），配好后不重启即加载
+      const configLines: string[] = [];
+      // 内置插件是可选的（没配就待配置，后台显示「待配置」），这里只列配置声明的插件
+      for (const p of cli.inspected) {
+        const issues = cli.configIssues.get(p.manifest.name);
+        if (!issues || p.source === "builtin") continue;
+        configLines.push(
+          `${p.manifest.name} ${p.manifest.version}: not loaded until its deployment config is fixed:`,
+          ...issues.map((i) => `  ! ${i.path || "<root>"}: ${i.message}`),
+        );
+      }
+      if (configLines.length > 0) {
+        out.push(
+          "",
+          ...configLines,
+          "Set it in the admin console (Plugins → config) or the startup config; running replicas load it without a restart.",
+        );
+      }
+      if (cli.config.pluginPermissions.autoApprove) {
+        out.push(
+          "Note: pluginPermissions.autoApprove is on; the kernel approves plugin permissions automatically.",
         );
       }
       io.stdout.write(`${out.join("\n")}\n`);
@@ -142,8 +186,9 @@ export async function runPluginsReview(
 
 /**
  * `capybara plugins approve <name>`：展示插件当前的完整权限（新增项标 `+`、减少项标 `-`），
- * 终端确认（`--yes` 跳过）后写入快照（source cli）并记审计 `plugin.permissions_approved`（无 actor）。
- * 内核在启动时读快照，批准后需重启内核生效。
+ * 终端确认（`--yes` 跳过）后写入快照（source cli）并记审计 `plugin.permissions_approved`（无 actor），
+ * 然后发布 `kernel.plugins.changed`：运行中的副本据此加载，不需重启（发布失败时等下一个周期）。
+ * 覆盖配置声明的插件与安装记录；内置插件预先批准。
  * 退出码：0 成功或无需批准 / 1 失败、未确认，或自身已批准但被待批准的依赖阻塞（输出阻塞的提供方）。
  */
 export async function runPluginsApprove(
@@ -157,28 +202,60 @@ export async function runPluginsApprove(
     return 1;
   };
   try {
-    return await withReview(log, env, async ({ plugins, approvals, snapshots }) => {
-      const target = plugins.find((p) => p.manifest.name === opts.name);
-      if (!target) {
-        return fail(
-          `plugin "${opts.name}" is not in the configured plugins (${plugins.map((p) => p.manifest.name).join(", ") || "none"})`,
-        );
+    return await withCli(log, env, async (cli) => {
+      const snapshots = await declaredSnapshots(cli);
+      const target = cli.inspected.find((p) => p.manifest.name === opts.name);
+      let name: string;
+      let version: string;
+      let permissions: Parameters<typeof permissionKeys>[0];
+      let sha256: string | null = null;
+      if (target) {
+        ({ name, version } = target.manifest);
+        permissions = target.permissions;
+        if (target.source === "builtin") {
+          io.stdout.write(
+            `${name} ${version} is built into this deployment and pre-approved; it needs no approval.\n`,
+          );
+          return 0;
+        }
+      } else {
+        const install = (await cli.installs.list()).find((r) => r.name === opts.name);
+        if (!install) {
+          const known = [
+            ...cli.inspected.map((p) => p.manifest.name),
+            ...(await cli.installs.list()).map((r) => r.name),
+          ];
+          return fail(
+            `plugin "${opts.name}" is neither configured nor installed (${known.join(", ") || "none"})`,
+          );
+        }
+        name = install.name;
+        version = install.version;
+        sha256 = install.sha256;
+        try {
+          permissions = await cli.packageSet(install.sha256);
+        } catch (e) {
+          return fail(
+            `cannot read the package of ${name} ${version}: ${errMsg(e).includes("object storage is not available") ? OBJECT_STORE_HINT : errMsg(e)}`,
+          );
+        }
       }
-      const { name, version } = target.manifest;
       const snap = snapshots.get(name);
-      const { added, removed } = diffPermissions(snap?.permissions, target.permissions);
+      const { added, removed } = diffPermissions(snap?.permissions, permissions);
       // 只多出视图（ui.view:*）不需要批准：内核加载时自动补进快照
       if (snap && blockingKeys(added).length === 0) {
-        // 自身已批准但被依赖阻塞：点名阻塞它的提供方，退出码 1（批准它本身无济于事）
-        const decision = planApprovals(
-          plugins.map((p) => p.manifest),
-          new Map(plugins.map((p) => [p.manifest.name, p.permissions])),
-          snapshots,
-        ).find((d) => d.plugin === name);
-        if (decision?.action === "pending" && decision.pending.reason === "dependency") {
-          return fail(
-            `${name} ${version} is already approved but is not loaded because it requires ${blockedByText(decision.pending)}; approve or install those providers instead`,
-          );
+        if (target) {
+          // 自身已批准但被依赖阻塞：点名阻塞它的提供方，退出码 1（批准它本身无济于事）
+          const decision = planApprovals(
+            cli.inspected.map((p) => p.manifest),
+            new Map(cli.inspected.map((p) => [p.manifest.name, p.permissions])),
+            snapshots,
+          ).find((d) => d.plugin === name);
+          if (decision?.action === "pending" && decision.pending.reason === "dependency") {
+            return fail(
+              `${name} ${version} is already approved but is not loaded because it requires ${blockedByText(decision.pending)}; approve or install those providers instead`,
+            );
+          }
         }
         io.stdout.write(
           `${name} ${version} has no new permissions to approve (the kernel loads it and updates the snapshot when permissions shrink or only ui views are added).\n`,
@@ -186,14 +263,13 @@ export async function runPluginsApprove(
         return 0;
       }
       const isNew = new Set(added);
+      const keys = permissionKeys(permissions);
       const lines = [
         `${name} ${version} ${snap ? `(approved: ${snap.version})` : "(not approved yet)"} requests:`,
-        ...permissionKeys(target.permissions).map(
-          (k) => `  ${isNew.has(k) ? "+" : " "} ${mark(k)}`,
-        ),
+        ...keys.map((k) => `  ${isNew.has(k) ? "+" : " "} ${mark(k)}`),
         ...removed.map((k) => `  - ${k}`),
       ];
-      if (permissionKeys(target.permissions).length === 0) lines.push("  (no permissions)");
+      if (keys.length === 0) lines.push("  (no permissions)");
       io.stdout.write(`${lines.join("\n")}\n`);
       if (!opts.yes) {
         io.stdout.write(`Approve these permissions for ${name}? [y/N] `);
@@ -203,15 +279,170 @@ export async function runPluginsApprove(
           return 1;
         }
       }
-      await approvals.approve(name, version, target.permissions, {
+      await cli.approvals.approve(name, version, permissions, {
         source: "cli",
-        audit: { added, removed },
+        audit: { added, removed, ...(sha256 !== null && { sha256 }) },
       });
       log.info("plugin permissions approved", { plugin: name, version, added, removed });
-      io.stdout.write(`Approved ${name} ${version}. Restart the kernel to apply.\n`);
+      const sent = await cli.publishChanged(name);
+      io.stdout.write(
+        `Approved ${name} ${version}. ${sent ? "Running replicas load it without a restart." : "Running replicas pick it up on their next periodic reconcile (could not notify them now)."}\n`,
+      );
       return 0;
     });
   } catch (e) {
     return fail(errMsg(e));
+  }
+}
+
+/** 一行状态：名字、版本、来源、期望状态、部署级状态。 */
+function listLine(v: AdminPluginView): string {
+  const desired = v.desired ? v.desired.state : "always";
+  const status = v.error !== undefined ? `unknown (${unreadable(v)})` : v.status;
+  return [v.name, v.version, v.source, desired, status].join("\t");
+}
+
+/** `capybara plugins list`：部署上的全部插件（内置、配置声明、安装记录）及其状态。退出码：0 / 1。 */
+export async function runPluginsList(
+  log: KernelLogger,
+  env: NodeJS.ProcessEnv,
+  io: PluginsIo = defaultIo(),
+): Promise<number> {
+  try {
+    return await withCli(log, env, async (cli) => {
+      const views = await cli.admin.list();
+      io.stdout.write(
+        `${["NAME", "VERSION", "SOURCE", "DESIRED", "STATUS"].join("\t")}\n${views.map(listLine).join("\n")}${views.length > 0 ? "\n" : ""}`,
+      );
+      return 0;
+    });
+  } catch (e) {
+    io.stderr.write(`capybara: plugins list failed: ${errMsg(e)}\n`);
+    return 1;
+  }
+}
+
+/** `install` 的目标：`npm:<包名>[@<版本>]` 或本地 tgz 文件。 */
+export function parseInstallTarget(
+  target: string,
+): { kind: "npm"; package: string; version?: string } | { kind: "file"; path: string } {
+  if (!target.startsWith("npm:")) return { kind: "file", path: target };
+  const spec = target.slice(4);
+  const at = spec.lastIndexOf("@");
+  if (at > 0) return { kind: "npm", package: spec.slice(0, at), version: spec.slice(at + 1) };
+  return { kind: "npm", package: spec };
+}
+
+/**
+ * 写操作已生效后的视图说明：包读不到（如存在 CLI 读不到的对象存储里）时状态未知，给出可操作的提示。
+ */
+const statusText = (v: AdminPluginView): string =>
+  v.error !== undefined ? `status unknown: ${unreadable(v)}` : `status: ${v.status}`;
+
+/**
+ * `capybara plugins install <file.tgz | npm:<name>[@<ver>]> [--yes]`：校验并存入包（一律存 PG，F-Q），先展示审阅
+ * （相对已批准快照的权限增减与迁移警告），终端确认（`--yes` 跳过）后新装或换版本（期望状态不变：新装为停用），
+ * 审计 `plugin.installed`，然后发布 `kernel.plugins.changed`。未确认时只存了包，不安装。
+ * 新增权限需要 `capybara plugins approve <name>`，新装的插件需要 `capybara plugins enable <name>`。
+ * 退出码：0 / 1（失败或未确认）。
+ */
+export async function runPluginsInstall(
+  opts: { target: string; yes?: boolean },
+  log: KernelLogger,
+  env: NodeJS.ProcessEnv,
+  io: PluginsIo = defaultIo(),
+): Promise<number> {
+  try {
+    return await withCli(log, env, async (cli) => {
+      const t = parseInstallTarget(opts.target);
+      const bytes = t.kind === "file" ? new Uint8Array(await readFile(t.path)) : undefined;
+      const review = bytes
+        ? await cli.installs.ingestFile(null, bytes, { store: "pg" })
+        : await cli.installs.ingestNpm(
+            null,
+            t.kind === "npm"
+              ? { package: t.package, ...(t.version !== undefined && { version: t.version }) }
+              : { package: "" },
+            { store: "pg" },
+          );
+      if (bytes) cli.remember(review.sha256, bytes);
+      const pre = [`${review.name} ${review.version} (package ${review.sha256.slice(0, 16)})`];
+      if (review.added.length > 0 || review.removed.length > 0) {
+        pre.push(
+          "Permissions changed since the approved snapshot (all are new when nothing was approved):",
+          ...review.added.map((k) => `  + ${mark(k)}`),
+          ...review.removed.map((k) => `  - ${k}`),
+        );
+      } else {
+        pre.push("No permission changes since the approved snapshot.");
+      }
+      if (review.warnings.length > 0) {
+        pre.push(
+          "Warning (sensitive): review these migration statements; plugin migrations should only expand, because old and new versions run side by side during an upgrade:",
+          ...review.warnings.map((w) => `  ! [${w.kind}] ${w.file}:${w.line}  ${w.statement}`),
+        );
+      }
+      io.stdout.write(`${pre.join("\n")}\n`);
+      if (!opts.yes) {
+        io.stdout.write(`Install ${review.name} ${review.version}? [y/N] `);
+        const answer = (await readLine(io.stdin))?.trim().toLowerCase();
+        if (answer !== "y" && answer !== "yes") {
+          io.stdout.write("\nNot installed (the package is stored; nothing else changed).\n");
+          return 1;
+        }
+      }
+      const view = await cli.ops.install(review.name, review.sha256, null);
+      const lines = [
+        `Installed ${review.name} ${review.version} (package ${review.sha256.slice(0, 16)}; deployment state: ${view.desired?.state ?? "?"}; ${statusText(view)}).`,
+      ];
+      if (view.status === "pending_approval") {
+        lines.push(`Approve with: capybara plugins approve ${review.name}`);
+      }
+      if (view.desired?.state === "disabled") {
+        lines.push(`Enable with: capybara plugins enable ${review.name}`);
+      }
+      io.stdout.write(`${lines.join("\n")}\n`);
+      return 0;
+    });
+  } catch (e) {
+    io.stderr.write(`capybara: plugins install failed: ${errMsg(e)}\n`);
+    return 1;
+  }
+}
+
+/**
+ * `capybara plugins enable | disable | uninstall <name>`：改期望状态（卸载须先停用，数据保留），审计，
+ * 发布 `kernel.plugins.changed`。退出码：0 / 1。
+ */
+export async function runPluginsState(
+  opts: { name: string; action: "enable" | "disable" | "uninstall" },
+  log: KernelLogger,
+  env: NodeJS.ProcessEnv,
+  io: PluginsIo = defaultIo(),
+): Promise<number> {
+  try {
+    return await withCli(log, env, async (cli) => {
+      if (opts.action === "uninstall") {
+        await cli.ops.uninstall(opts.name, null);
+        io.stdout.write(
+          `Uninstalled ${opts.name}. Its data (database schema, secrets, organization settings) is kept.\n`,
+        );
+        return 0;
+      }
+      const view =
+        opts.action === "enable"
+          ? await cli.ops.enable(opts.name, null)
+          : await cli.ops.disable(opts.name, null);
+      io.stdout.write(
+        `${opts.action === "enable" ? "Enabled" : "Disabled"} ${opts.name} ${view.version} (${statusText(view)}).\n`,
+      );
+      if (opts.action === "enable" && view.status === "pending_approval") {
+        io.stdout.write(`It loads after approval: capybara plugins approve ${opts.name}\n`);
+      }
+      return 0;
+    });
+  } catch (e) {
+    io.stderr.write(`capybara: plugins ${opts.action} failed: ${errMsg(e)}\n`);
+    return 1;
   }
 }

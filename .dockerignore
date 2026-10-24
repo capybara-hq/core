@@ -1,0 +1,24 @@
+# Build context for docker/*.Dockerfile: sources, manifests and the lockfile only.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/coverage
+**/.next
+.git
+.github
+.claude
+.superpowers
+.changeset
+.capybara-pack-*
+artifacts
+docs
+.agents
+apps/web/visual
+apps/web/e2e
+**/test-results
+**/playwright-report
+**/.DS_Store
+**/.env
+**/.env.*
+# Compose deployment secrets (admin password file and the like) never enter a build context.
+docker/secrets

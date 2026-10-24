@@ -22,7 +22,7 @@ import { testMembers } from "../helpers/members.js";
 import { eventsOf } from "../helpers/runs.js";
 
 /**
- * 审批 HTTP。两个内核实例（各自的连接池与 HTTP 应用，共用 PG / Redis）模拟两个副本，
+ * 审批 HTTP。两个内核实例（各自的连接池与 HTTP 连接器，共用 PG / Redis）模拟两个副本，
  * 覆盖 Review Focus 1：同一审批在两个副本上被并发处理，恰好一个成功。
  */
 
@@ -81,7 +81,7 @@ let other: { account: Account; req: Req; reqB: Req };
 let agentId: string;
 let conversationId: string;
 let runId: string;
-let appId: string;
+let connectorId: string;
 
 /** 在两个副本上各持有一个会话（同一 Cookie 罐：登录后的 Cookie 两边都认）。 */
 async function login(loginName: string): Promise<{ req: Req; reqB: Req }> {
@@ -117,7 +117,7 @@ function request(over: Partial<ApprovalRequestInput> = {}): Promise<ApprovalReco
     callId: `c-${randomUUID().slice(0, 8)}`,
     toolKey: "docs__create_doc",
     specHash: "hash-1",
-    appId,
+    connectorId,
     input: { title: "Q3 plan" },
     requestedFor: initiator.account.id,
     approverRole: null,
@@ -140,7 +140,7 @@ beforeEach(async () => {
   agentId = randomUUID();
   conversationId = randomUUID();
   runId = randomUUID();
-  appId = randomUUID();
+  connectorId = randomUUID();
   await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
     VALUES (${agentId}, ${orgId}, ${initiator.account.id}, 'org', 1)`.execute(raw);
   await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
@@ -151,8 +151,8 @@ beforeEach(async () => {
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${initiator.account.id})`.execute(raw);
   await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
     VALUES (${runId}, ${conversationId}, 'running', 1, ${initiator.account.id}, 0)`.execute(raw);
-  await sql`INSERT INTO capybara.apps (id, org_id, slug, name, connector, created_by)
-    VALUES (${appId}, ${orgId}, 'docs', 'Docs', 'test', ${owner.id})`.execute(raw);
+  await sql`INSERT INTO capybara.connectors (id, org_id, slug, name, connector, created_by)
+    VALUES (${connectorId}, ${orgId}, 'docs', 'Docs', 'test', ${owner.id})`.execute(raw);
 });
 
 const base = () => `/api/v1/orgs/${orgId}/approvals`;
@@ -191,7 +191,7 @@ describe("列表与详情的可见性", () => {
     expect(errCode(own)).toBe("approval.not_found");
   });
 
-  it("详情：工具名、应用、参数、agent、会话链接、过期时间", async () => {
+  it("详情：工具名、连接器、参数、agent、会话链接、过期时间", async () => {
     const a = await request();
     const res = await initiator.req({ method: "GET", url: `${base()}/${a.id}` });
     expect(res.statusCode).toBe(200);
@@ -200,7 +200,7 @@ describe("列表与详情的可见性", () => {
       status: "pending",
       toolKey: "docs__create_doc",
       toolName: "create_doc",
-      app: { id: appId, name: "Docs", slug: "docs" },
+      connector: { id: connectorId, name: "Docs", slug: "docs" },
       input: { title: "Q3 plan" },
       agent: { id: agentId, name: "Writer" },
       conversationId,
@@ -278,7 +278,7 @@ describe("决定", () => {
         conversation_id: conversationId,
         tool_key: "docs__create_doc",
         spec_hash: "hash-1",
-        app_id: appId,
+        connector_id: connectorId,
       },
     ]);
     const evs = (await eventsOf(db, conversationId)).filter((e) => e.type === "approval_decided");
@@ -339,7 +339,7 @@ describe("决定", () => {
       url: `/api/v1/orgs/${orgId}/me/tool-grants/${agentId}/docs__create_doc`,
     });
     expect(await db.selectFrom("tool_grants").selectAll().execute()).toMatchObject([
-      { tool_key: "docs__create_doc", spec_hash: "hash-1", app_id: appId },
+      { tool_key: "docs__create_doc", spec_hash: "hash-1", connector_id: connectorId },
     ]);
 
     const del = await initiator.reqB({

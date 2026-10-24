@@ -6,10 +6,48 @@ import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
 
+/** 币种代码：ISO 4217 的三位大写字母（如 USD、CNY）。 */
+const CurrencyCode = z.string().regex(/^[A-Z]{3}$/, "must be a 3-letter ISO 4217 currency code");
+
+/** 沙箱 cpu（核）与内存（MB）覆盖的范围（C19）。 */
+export const SANDBOX_CPU_RANGE = { min: 0.25, max: 64 } as const;
+export const SANDBOX_MEMORY_MB_RANGE = { min: 256, max: 262_144 } as const;
+
+/** 一个组织的沙箱限额覆盖：至少给一项；未给的项用部署默认。 */
+export const SANDBOX_LIMIT_OVERRIDE = z
+  .object({
+    cpu: z.number().min(SANDBOX_CPU_RANGE.min).max(SANDBOX_CPU_RANGE.max).optional(),
+    memoryMb: z
+      .number()
+      .int()
+      .min(SANDBOX_MEMORY_MB_RANGE.min)
+      .max(SANDBOX_MEMORY_MB_RANGE.max)
+      .optional(),
+  })
+  .strict()
+  .refine((o) => o.cpu !== undefined || o.memoryMb !== undefined, {
+    message: "give cpu, memoryMb or both",
+  });
+export type SandboxLimitOverride = z.infer<typeof SANDBOX_LIMIT_OVERRIDE>;
+
+/** 组织能否自建连接器 / 技能（C22）：`deny` 时只能从企业目录安装（T26 执行）。 */
+const CustomPolicy = z.enum(["allow", "deny"]);
+
 export const DEPLOYMENT_SETTINGS = z.object({
   orgCreation: z.enum(["anyone", "enterprise_admin"]).default("anyone"),
   /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
   runConcurrencyOverrides: z.record(z.string().min(1), z.number().int().positive()).default({}),
+  /** 模型价格表（`model_prices`）的币种；只用于显示估算成本，不做换算。 */
+  priceCurrency: CurrencyCode.default("USD"),
+  /** 按组织覆盖沙箱 cpu / 内存（orgId → 覆盖，C19）；只对之后新建的沙箱生效。组织管理员只读。 */
+  sandboxLimitOverrides: z.record(z.string().min(1), SANDBOX_LIMIT_OVERRIDE).default({}),
+  /** 组织能否自建连接器（不经企业目录）。 */
+  customConnectors: CustomPolicy.default("allow"),
+  /**
+   * 组织能否自建技能（不经企业目录）：deny 时组织管理员不能上传技能包。agent 自写技能（`skill_write`，私有 agent 的
+   * agent 级技能与共享 agent 经负责人审批的变更）不受此开关约束——那是 agent 定义的一部分，由 R3 / R4 把关。
+   */
+  customSkills: CustomPolicy.default("allow"),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -19,6 +57,7 @@ const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
  * 设置的修改（PUT /api/v1/admin/settings 的 body）：只改给出的键。
  * `runConcurrencyOverrides` 按组织合并：值为正整数 → 设置该组织的上限；值为 null → 删除该组织的覆盖
  * （回到 `runtime.orgConcurrency`）；未列出的组织保持不变。
+ * `sandboxLimitOverrides` 同样按组织合并：给出的组织整项替换（未给的 cpu / memoryMb 回到部署默认），null 删除。
  */
 export const DEPLOYMENT_SETTINGS_PATCH = z
   .object({
@@ -26,9 +65,75 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
     runConcurrencyOverrides: z
       .record(z.string().min(1), z.number().int().positive().nullable())
       .optional(),
+    priceCurrency: CurrencyCode.optional(),
+    sandboxLimitOverrides: z
+      .record(z.string().min(1), SANDBOX_LIMIT_OVERRIDE.nullable())
+      .optional(),
+    customConnectors: CustomPolicy.optional(),
+    customSkills: CustomPolicy.optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
+
+/**
+ * 读某个组织的沙箱限额覆盖（创建沙箱、组织设置页用）；每次实时读 PG，多副本下改动立即生效。
+ * 只解析这个组织的那一条：没有设置、组织不在其中、或这一条存量值非法 → undefined；别的组织的条目非法不影响它。
+ */
+export async function readSandboxLimitOverride(
+  db: KernelDb,
+  orgId: string,
+): Promise<SandboxLimitOverride | undefined> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "sandboxLimitOverrides")
+    .executeTakeFirst();
+  if (!row) return undefined;
+  const all = row.value;
+  if (typeof all !== "object" || all === null || Array.isArray(all) || !Object.hasOwn(all, orgId)) {
+    return undefined;
+  }
+  const parsed = SANDBOX_LIMIT_OVERRIDE.safeParse((all as Record<string, unknown>)[orgId]);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * 组织自建连接器 / 技能被禁止时（部署设置 `customConnectors` / `customSkills` 为 `deny`，C22）抛
+ * `directory.custom_disabled`：只能从企业目录安装。每次实时读 PG（可在调用方事务里读）；存量值非法按 allow。
+ */
+export async function assertCustomAllowed(
+  db: KernelDb | Transaction<KernelDatabase>,
+  key: "customConnectors" | "customSkills",
+): Promise<void> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", key)
+    .executeTakeFirst();
+  if (!row) return;
+  const parsed = CustomPolicy.safeParse(row.value);
+  if (parsed.success && parsed.data === "deny") {
+    throw new ApiError(
+      "directory.custom_disabled",
+      key === "customConnectors"
+        ? "Custom connectors are disabled in this deployment; install connectors from the enterprise directory"
+        : "Custom skills are disabled in this deployment; install skills from the enterprise directory",
+    );
+  }
+}
+
+/** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */
+function mergeByOrg<T>(
+  current: Record<string, T>,
+  patch: Record<string, T | null>,
+): Record<string, T> {
+  const merged = { ...current };
+  for (const [orgId, value] of Object.entries(patch)) {
+    if (value === null) delete merged[orgId];
+    else merged[orgId] = value;
+  }
+  return merged;
+}
 
 /** 部署级设置：每个键一行，读时缺省用默认值。 */
 export class SettingsService {
@@ -83,13 +188,20 @@ export class SettingsService {
       // 企业管理员锁串行化所有设置修改：在锁内读当前覆盖再合并，不会丢失并发修改。
       const next: Partial<DeploymentSettings> = {};
       if (check.data.orgCreation !== undefined) next.orgCreation = check.data.orgCreation;
-      if (check.data.runConcurrencyOverrides !== undefined) {
-        const merged = { ...(await this.get(trx)).runConcurrencyOverrides };
-        for (const [orgId, limit] of Object.entries(check.data.runConcurrencyOverrides)) {
-          if (limit === null) delete merged[orgId];
-          else merged[orgId] = limit;
+      if (check.data.priceCurrency !== undefined) next.priceCurrency = check.data.priceCurrency;
+      if (check.data.customConnectors !== undefined) {
+        next.customConnectors = check.data.customConnectors;
+      }
+      if (check.data.customSkills !== undefined) next.customSkills = check.data.customSkills;
+      const { runConcurrencyOverrides: runPatch, sandboxLimitOverrides: sandboxPatch } = check.data;
+      if (runPatch !== undefined || sandboxPatch !== undefined) {
+        const current = await this.get(trx);
+        if (runPatch !== undefined) {
+          next.runConcurrencyOverrides = mergeByOrg(current.runConcurrencyOverrides, runPatch);
         }
-        next.runConcurrencyOverrides = merged;
+        if (sandboxPatch !== undefined) {
+          next.sandboxLimitOverrides = mergeByOrg(current.sandboxLimitOverrides, sandboxPatch);
+        }
       }
       for (const [key, value] of Object.entries(next)) {
         if (value === undefined) continue;

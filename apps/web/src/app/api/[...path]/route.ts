@@ -2,18 +2,40 @@
  * 同源代理：浏览器只和 Web 源通信（内核的会话 Cookie 只属于当前主机），
  * `/api/*` 原样转发到内核 `CAPYBARA_KERNEL_URL`（默认 http://localhost:8080）。
  * 响应体以流的形式透传、不缓冲，SSE 可用。请求体有大小上限（`CAPYBARA_WEB_MAX_BODY_BYTES`，
- * 默认 1 MiB，与内核 Fastify 的 bodyLimit 一致）；安装 / 预览应用（`POST /api/v1/orgs/:orgId/apps[/preview]`）
- * 可带最大 2 MB 的 OpenAPI 文档，与内核这两个路由一致放宽到 6 MiB。客户端地址的处理见 `lib/peer.ts`。
+ * 默认 1 MiB，与内核 Fastify 的 bodyLimit 一致）；安装 / 预览连接器（`POST /api/v1/orgs/:orgId/connectors[/preview]`）
+ * 可带最大 2 MB 的 OpenAPI 文档，与内核这两个路由一致放宽到 6 MiB。上传插件包与企业目录包
+ * （`POST /api/v1/admin/plugins/packages/file`、`/api/v1/admin/directory/import/file`、
+ * `/api/v1/admin/directory/apps/prepare/file`）放宽到 `CAPYBARA_WEB_MAX_PACKAGE_BYTES`（默认 50 MiB），
+ * 并且边读边转发、不整个缓冲。客户端地址的处理见 `lib/peer.ts`。
  */
 
-import { configuredMaxBodyBytes, kernelUrl, readBody, tooLarge } from "../../../lib/kernel-proxy";
+import {
+  configuredMaxBodyBytes,
+  configuredMaxPackageBytes,
+  kernelUrl,
+  limitStream,
+  readBody,
+  tooLarge,
+} from "../../../lib/kernel-proxy";
 import { FORWARDING_HEADERS, trustedPeer } from "../../../lib/peer";
 
 export const dynamic = "force-dynamic";
 
-/** 安装 / 预览应用的请求体上限（与内核 http/app.ts 的 LARGE_BODY_LIMIT 一致）。 */
-const APP_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
-const APP_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/apps(?:\/preview)?$/;
+/** 安装 / 预览连接器的请求体上限（与内核 http/app.ts 的 LARGE_BODY_LIMIT 一致）。 */
+const CONNECTOR_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
+const CONNECTOR_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/connectors(?:\/preview)?$/;
+/** 流式透传请求体的上传路由（插件包 tgz、企业目录包 tgz / zip、应用包 tgz，可达几十 MiB）。 */
+const STREAMED_UPLOAD_PATHS = new Set([
+  "/api/v1/admin/plugins/packages/file",
+  "/api/v1/admin/directory/import/file",
+  "/api/v1/admin/directory/apps/prepare/file",
+]);
+
+const upstreamUnavailable = () =>
+  Response.json(
+    { error: { code: "upstream_unavailable", message: "Kernel is unreachable" } },
+    { status: 502 },
+  );
 
 /** 不转发给上游的请求头：host 由 fetch 按上游地址重新生成；其余为逐跳头。 */
 const DROP_REQUEST = new Set([
@@ -48,8 +70,8 @@ const DROP_RESPONSE = new Set([
 
 function maxBodyBytes(method: string, pathname: string): number {
   const base = configuredMaxBodyBytes();
-  return method === "POST" && APP_INSTALL_PATH.test(pathname)
-    ? Math.max(base, APP_INSTALL_MAX_BODY_BYTES)
+  return method === "POST" && CONNECTOR_INSTALL_PATH.test(pathname)
+    ? Math.max(base, CONNECTOR_INSTALL_MAX_BODY_BYTES)
     : base;
 }
 
@@ -64,29 +86,47 @@ async function proxy(req: Request): Promise<Response> {
   const peer = trustedPeer(req.headers);
   if (peer !== undefined) headers.set("x-forwarded-for", peer);
 
-  // 请求体先读完再转发（API 请求体都很小）：Node 的 fetch（undici）对「流式请求体 + 上游 401」
-  // 一律报网络错误（fetch 规范里 401 可能需要重发请求体，而流无法重放），登录失败会变成 502。
-  // 响应体仍以流透传。
-  let body: Uint8Array<ArrayBuffer> | undefined;
-  if (req.method !== "GET" && req.method !== "HEAD" && req.body !== null) {
-    const limit = maxBodyBytes(req.method, src.pathname);
-    body = await readBody(req, limit);
-    if (body === undefined) return tooLarge(limit);
-  }
   let upstream: Response;
-  try {
-    upstream = await fetch(target, {
-      method: req.method,
-      headers,
-      redirect: "manual",
-      signal: req.signal,
-      ...(body !== undefined && { body }),
-    });
-  } catch {
-    return Response.json(
-      { error: { code: "upstream_unavailable", message: "Kernel is unreachable" } },
-      { status: 502 },
-    );
+  if (req.method === "POST" && STREAMED_UPLOAD_PATHS.has(src.pathname) && req.body !== null) {
+    // 大文件上传：边读边转发（不整个缓冲），边转发边计数，超限即中止。代价是上游返回 401 时
+    // undici 报网络错误（流无法重放）：浏览器端上传前先确认登录有效（见 lib/admin-plugins.ts）。
+    const limit = configuredMaxPackageBytes();
+    const declared = Number(req.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > limit) return tooLarge(limit);
+    const limited = limitStream(req.body, limit);
+    try {
+      upstream = await fetch(target, {
+        method: req.method,
+        headers,
+        redirect: "manual",
+        signal: req.signal,
+        body: limited.stream,
+        duplex: "half",
+      } as RequestInit);
+    } catch {
+      return limited.exceeded() ? tooLarge(limit) : upstreamUnavailable();
+    }
+  } else {
+    // 请求体先读完再转发（API 请求体都很小）：Node 的 fetch（undici）对「流式请求体 + 上游 401」
+    // 一律报网络错误（fetch 规范里 401 可能需要重发请求体，而流无法重放），登录失败会变成 502。
+    // 响应体仍以流透传。
+    let body: Uint8Array<ArrayBuffer> | undefined;
+    if (req.method !== "GET" && req.method !== "HEAD" && req.body !== null) {
+      const limit = maxBodyBytes(req.method, src.pathname);
+      body = await readBody(req, limit);
+      if (body === undefined) return tooLarge(limit);
+    }
+    try {
+      upstream = await fetch(target, {
+        method: req.method,
+        headers,
+        redirect: "manual",
+        signal: req.signal,
+        ...(body !== undefined && { body }),
+      });
+    } catch {
+      return upstreamUnavailable();
+    }
   }
 
   const out = new Headers();

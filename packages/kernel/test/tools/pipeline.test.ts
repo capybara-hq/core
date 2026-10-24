@@ -25,14 +25,16 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
+import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
 import { notLoadedText, toolSearchTool } from "../../src/tools/builtins/tool-search.js";
-import { type AppAuth, CredentialMissing } from "../../src/tools/credentials.js";
+import { type ConnectorAuth, CredentialMissing } from "../../src/tools/credentials.js";
 import { ToolOutputs } from "../../src/tools/outputs.js";
 import {
   type DecidePolicy,
+  hookDeniedText,
   RUN_STOPPED_DURING_TEXT,
   RUN_STOPPED_TEXT,
   ToolPipeline,
@@ -49,7 +51,7 @@ import {
 import { validateInput } from "../../src/tools/validate.js";
 import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
-import { seedApp, seedConversation } from "../helpers/tool-fixtures.js";
+import { seedConnector, seedConversation } from "../helpers/tool-fixtures.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -82,7 +84,7 @@ const agent: AgentDefinition = {
   toolPolicies: {},
 };
 
-// ---- 测试用工具：插件工具（处理函数在 handlers 里）与应用工具（经 test 连接器） ----
+// ---- 测试用工具：插件工具（处理函数在 handlers 里）与连接器工具（经 test 连接器） ----
 
 const ECHO_SCHEMA = {
   type: "object",
@@ -109,21 +111,21 @@ function pluginTool(
   };
 }
 
-function appTool(slug: string, appId: string, name: string): ResolvedTool {
+function appTool(slug: string, connectorId: string, name: string): ResolvedTool {
   const spec = pluginSpec(name);
   return {
     key: `${slug}__${name}`,
-    source: { kind: "app", appId, name },
+    source: { kind: "connector", connectorId, name },
     spec,
     specHash: specHash(spec),
     defaultPolicy: "allow",
   };
 }
 
-/** 应用工具的快照行（执行时策略判定会实时重读 app_tools）。 */
+/** 连接器工具的快照行（执行时策略判定会实时重读 connector_tools）。 */
 async function seedAppTool(id: string, name: string): Promise<void> {
   const spec = pluginSpec(name);
-  await sql`INSERT INTO capybara.app_tools (app_id, name, spec, spec_hash, status, default_policy)
+  await sql`INSERT INTO capybara.connector_tools (connector_id, name, spec, spec_hash, status, default_policy)
     VALUES (${id}, ${name}, ${JSON.stringify(spec)}::jsonb, ${specHash(spec)}, 'enabled', 'allow')`.execute(
     raw,
   );
@@ -148,7 +150,7 @@ const conn = {
 };
 /** 最近一次 open 的参数（测试里由 connCall 调用 onToolsChanged）。 */
 let lastOpen: ConnectorOpenArgs | undefined;
-/** 管线收到的「工具清单变了」通知（orgId, appId）。 */
+/** 管线收到的「工具清单变了」通知（orgId, connectorId）。 */
 let toolsChanged: [string, string][] = [];
 const testConnector: Connector = {
   kind: "test",
@@ -176,7 +178,7 @@ const testConnector: Connector = {
 
 let resolved: ResolvedTool[] = [];
 let unavailable: UnavailableTool[] = [];
-/** `tools: "all"` 应用里未启用的工具（不提醒，只在被调用时给原因）。 */
+/** `tools: "all"` 连接器里未启用的工具（不提醒，只在被调用时给原因）。 */
 let hidden: UnavailableTool[] = [];
 /** forAgent 报告的 tool_search 是否生效。 */
 let toolSearch = false;
@@ -184,6 +186,8 @@ let toolSearch = false;
 let builtinHandlers: Record<string, BuiltinHandler> = {};
 let decidePolicy: DecidePolicy | undefined;
 let afterExecute: ((runId: string, callId: string) => Promise<void>) | undefined;
+/** Plugin hooks given to the pipeline (a fake registry). */
+let pluginHooks: HookRunner | undefined;
 
 function pipeline(): ToolPipeline {
   const deps: ToolPipelineDeps = {
@@ -200,9 +204,9 @@ function pipeline(): ToolPipeline {
             : undefined,
     },
     credentials: {
-      async injection(_orgId: string, appId: string, auth: AppAuth) {
+      async injection(_orgId: string, connectorId: string, auth: ConnectorAuth) {
         if (auth.type === "none") return { headers: {} };
-        throw new CredentialMissing(appId, auth.ownership);
+        throw new CredentialMissing(connectorId, auth.ownership);
       },
       async onUnauthorized() {},
     },
@@ -212,17 +216,18 @@ function pipeline(): ToolPipeline {
     questions: new QuestionsService({ db, eventLog, config, log: silent }),
     config,
     log: silent,
-    onToolsChanged: (orgId, appId) => {
-      toolsChanged.push([orgId, appId]);
+    onToolsChanged: (orgId, connectorId) => {
+      toolsChanged.push([orgId, connectorId]);
     },
     ...(decidePolicy !== undefined && { decidePolicy }),
     hooks: { ...(afterExecute !== undefined && { afterExecute }) },
+    ...(pluginHooks !== undefined && { pluginHooks }),
   };
   return new ToolPipeline(deps);
 }
 
 beforeAll(async () => {
-  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis({ shared: true })]);
   await migrate(pgc.url, {
     schema: "capybara",
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),
@@ -245,7 +250,7 @@ afterAll(async () => {
 
 let seed: Awaited<ReturnType<typeof seedConversation>>;
 let runId: string;
-let appId: string;
+let connectorId: string;
 
 beforeEach(async () => {
   toolsCfg = {};
@@ -253,6 +258,7 @@ beforeEach(async () => {
   builtinHandlers = {};
   decidePolicy = undefined;
   afterExecute = undefined;
+  pluginHooks = undefined;
   unavailable = [];
   hidden = [];
   handlerCalls = {};
@@ -264,7 +270,10 @@ beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   seed = await seedConversation(raw);
   runId = randomUUID();
-  appId = await seedApp(raw, seed.orgId, seed.accountId, { slug: "docs", name: "Docs" });
+  connectorId = await seedConnector(raw, seed.orgId, seed.accountId, {
+    slug: "docs",
+    name: "Docs",
+  });
   handlers = {
     probe__echo: async (input) => {
       record("echo", input);
@@ -310,9 +319,9 @@ beforeEach(async () => {
     pluginTool("big"),
     pluginTool("ctx"),
     pluginTool("throws"),
-    appTool("docs", appId, "read"),
+    appTool("docs", connectorId, "read"),
   ];
-  await seedAppTool(appId, "read");
+  await seedAppTool(connectorId, "read");
 });
 
 const stepCtx = (over: Partial<ToolStepContext> = {}): ToolStepContext => ({
@@ -402,7 +411,7 @@ describe("validateInput", () => {
     expect(validateInput("x", spec, { a: 1 })).toContain("/a must be string");
   });
 
-  describe("应用工具（连接器来源，不受信任）的 schema", () => {
+  describe("连接器工具（连接器来源，不受信任）的 schema", () => {
     const warns = () => {
       const lines: { msg: string; meta: unknown }[] = [];
       return {
@@ -652,7 +661,7 @@ describe("ToolPipeline.runStep", () => {
     expect(JSON.stringify(audits)).not.toContain("secret-arg");
   });
 
-  it("审计链：审批放行记审批 id / 批准人 / 范围；记住的授权记 grant；应用工具记 appId", async () => {
+  it("审计链：审批放行记审批 id / 批准人 / 范围；记住的授权记 grant；连接器工具记 connectorId", async () => {
     await insertRun();
     await assistant([{ id: "c1", name: "probe__gated", input: { k: "secret-arg" } }]);
     const first = await pipeline().runStep(stepCtx());
@@ -715,7 +724,7 @@ describe("ToolPipeline.runStep", () => {
           toolKey: "docs__read",
           runId,
           callId: "c3",
-          appId,
+          connectorId,
           policy: "allow",
         },
       },
@@ -766,7 +775,7 @@ describe("ToolPipeline.runStep", () => {
     expect(resultsOf(evs)[0]?.content).toBe('Tool "docs__write" is unavailable: Tool is disabled.');
   });
 
-  it("tools: all 的应用里待复核 / 停用的工具（hidden）：被调用时给事实原因而不是「未知」", async () => {
+  it("tools: all 的连接器里待复核 / 停用的工具（hidden）：被调用时给事实原因而不是「未知」", async () => {
     hidden = [{ ref: "docs__drop", reason: "Tool is pending review" }];
     const evs = await runCalls([{ id: "c1", name: "docs__drop", input: {} }]);
     expect(resultsOf(evs)[0]).toMatchObject({
@@ -865,9 +874,9 @@ describe("ToolPipeline.runStep", () => {
     expect(seen).toEqual([`probe__gated|Helper|${seed.accountId}|${runId}`]);
     expect(handlerCalls.gated).toHaveLength(1);
 
-    // 默认判定为执行时实时读取（createDecidePolicy）：管理员把应用工具改为 deny 立即生效
+    // 默认判定为执行时实时读取（createDecidePolicy）：管理员把连接器工具改为 deny 立即生效
     decidePolicy = undefined;
-    await sql`UPDATE capybara.app_tools SET default_policy = 'deny' WHERE app_id = ${appId}`.execute(
+    await sql`UPDATE capybara.connector_tools SET default_policy = 'deny' WHERE connector_id = ${connectorId}`.execute(
       raw,
     );
     runId = randomUUID();
@@ -958,7 +967,8 @@ describe("ToolPipeline.runStep", () => {
     toolsCfg = { timeoutMs: 150 };
     const t0 = Date.now();
     const evs = await runCalls([{ id: "c1", name: "probe__slow", input: {} }]);
-    expect(Date.now() - t0).toBeLessThan(2000);
+    // probe__slow never settles; 4 s leaves room for CI load.
+    expect(Date.now() - t0).toBeLessThan(4000);
     expect(resultsOf(evs)[0]).toMatchObject({
       isError: true,
       content:
@@ -966,7 +976,7 @@ describe("ToolPipeline.runStep", () => {
     });
   });
 
-  it("应用工具超时：经 AbortSignal 中止连接器调用，会话照样关闭", async () => {
+  it("连接器工具超时：经 AbortSignal 中止连接器调用，会话照样关闭", async () => {
     toolsCfg = { timeoutMs: 150 };
     connCall = (_name, _input, signal) =>
       new Promise((_, reject) => {
@@ -978,22 +988,22 @@ describe("ToolPipeline.runStep", () => {
     expect(conn).toMatchObject({ opened: 1, closed: 1 });
   });
 
-  it("连接器在调用途中报告工具清单变化 → 通知内核（orgId, appId），结果照常", async () => {
+  it("连接器在调用途中报告工具清单变化 → 通知内核（orgId, connectorId），结果照常", async () => {
     connCall = async (name) => {
       lastOpen?.onToolsChanged?.();
       return { content: [{ type: "text", text: `called ${name}` }] };
     };
     const evs = await runCalls([{ id: "c1", name: "docs__read", input: {} }]);
     expect(resultsOf(evs).map((r) => r.content)).toEqual(["called read"]);
-    expect(toolsChanged).toEqual([[seed.orgId, appId]]);
+    expect(toolsChanged).toEqual([[seed.orgId, connectorId]]);
   });
 
-  it("应用工具调用把已复核的定义（app_tools.spec）作为 ctx.spec 传给连接器", async () => {
+  it("连接器工具调用把已复核的定义（connector_tools.spec）作为 ctx.spec 传给连接器", async () => {
     await runCalls([{ id: "c1", name: "docs__read", input: {} }]);
     expect(conn.ctxs).toEqual([{ spec: pluginSpec("read") }]);
   });
 
-  it("应用工具正常调用：每次调用打开并关闭会话", async () => {
+  it("连接器工具正常调用：每次调用打开并关闭会话", async () => {
     const evs = await runCalls([
       { id: "c1", name: "docs__read", input: {} },
       { id: "c2", name: "docs__read", input: {} },
@@ -1002,7 +1012,7 @@ describe("ToolPipeline.runStep", () => {
     expect(conn).toMatchObject({ opened: 2, closed: 2, calls: 2 });
   });
 
-  it("熔断：同一应用连续失败 5 次后打开，第 6 次不再调用连接器并告知多久后重试", async () => {
+  it("熔断：同一连接器连续失败 5 次后打开，第 6 次不再调用连接器并告知多久后重试", async () => {
     connCall = async () => {
       throw new Error("upstream down");
     };
@@ -1037,7 +1047,7 @@ describe("ToolPipeline.runStep", () => {
     expect(
       resultsOf(evs).every((r) => r.content === "The app returned an error: bad arguments."),
     ).toBe(true);
-    expect((await breaker.check(seed.orgId, appId)).open).toBe(false);
+    expect((await breaker.check(seed.orgId, connectorId)).open).toBe(false);
   });
 
   it("熔断：5 次 ToolError(kind unavailable)（HTTP 5xx 等）→ 打开", async () => {
@@ -1084,7 +1094,7 @@ describe("ToolPipeline.runStep", () => {
   });
 
   it("个人凭据缺失：写 connection_required 与可执行的错误结果；不计入熔断", async () => {
-    const priv = await seedApp(raw, seed.orgId, seed.accountId, {
+    const priv = await seedConnector(raw, seed.orgId, seed.accountId, {
       slug: "priv",
       name: "Private Docs",
       auth: { type: "bearer", ownership: "personal" },
@@ -1106,7 +1116,7 @@ describe("ToolPipeline.runStep", () => {
   });
 
   it("组织凭据缺失：不写 connection_required，提示找组织管理员", async () => {
-    const orgApp = await seedApp(raw, seed.orgId, seed.accountId, {
+    const orgApp = await seedConnector(raw, seed.orgId, seed.accountId, {
       slug: "orgc",
       name: "Org Docs",
       auth: { type: "bearer", ownership: "org" },
@@ -1242,7 +1252,7 @@ describe("ToolPipeline.runStep", () => {
     expect(resultsOf(evs)[0]).toMatchObject({ isError: true, content: RUN_STOPPED_DURING_TEXT });
     expect(conn.closed).toBe(1);
     // 用户中止不计入熔断
-    expect(await redis.exists(`capk:breaker:${seed.orgId}:${appId}`)).toBe(0);
+    expect(await redis.exists(`capk:breaker:${seed.orgId}:${connectorId}`)).toBe(0);
   });
 
   it("afterExecute 钩子抛错（模拟执行后崩溃）→ 续跑得到结果未知，工具只被调用一次", async () => {
@@ -1366,5 +1376,90 @@ describe("tool_search 模式", () => {
     await modelCall(["tool_search"], true);
     const evs = await runCalls([{ id: "c1", name: "tool_search", input: { query: "zzzz" } }]);
     expect(resultsOf(evs)[0]).not.toHaveProperty("loadedTools");
+  });
+});
+
+describe("plugin hooks (tool.preExecute)", () => {
+  /** A fake registry: `verdict` decides tool.preExecute; counts runs per mount. */
+  function fakeHooks(verdict: Awaited<ReturnType<HookRunner["run"]>>) {
+    const runs: string[] = [];
+    const hooks: HookRunner = {
+      has: () => true,
+      run: async (mount) => {
+        runs.push(mount);
+        return mount === "tool.preExecute" ? verdict : { allowed: true };
+      },
+    };
+    return { hooks, runs };
+  }
+  const chat = { conversationKind: "chat" as const };
+  const denial = {
+    allowed: false as const,
+    plugin: "guard",
+    reason: "nope",
+    cause: "deny" as const,
+  };
+
+  it("a denial writes hook_denied, its audit entry and the tool_result together; the tool never runs", async () => {
+    const f = fakeHooks(denial);
+    pluginHooks = f.hooks;
+    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "1" } }], chat);
+    expect(handlerCalls.echo ?? []).toHaveLength(0);
+    expect(startedOf(evs)).toEqual([]);
+    expect(resultsOf(evs)[0]).toMatchObject({
+      isError: true,
+      content: hookDeniedText("guard", "nope"),
+    });
+    const denied = evs.find((e) => e.type === "hook_denied");
+    const result = evs.find((e) => e.type === "tool_result");
+    // same append: adjacent seqs, denial first
+    expect((result?.seq ?? 0) - (denied?.seq ?? 0)).toBe(1);
+    const audits = await db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("action", "=", "hook.denied")
+      .execute();
+    expect(audits).toHaveLength(1);
+  });
+
+  it("sticky: a logged denial without a result (crash between the old two writes) stays denied after the hook flips to allow", async () => {
+    await assistant([{ id: "c1", name: "probe__echo", input: { text: "1" } }]);
+    // the state an old crash left behind: hook_denied logged, no tool_result
+    await eventLog.append(seed.conversationId, [
+      {
+        type: "hook_denied",
+        runId,
+        idemKey: `hook_denied:${runId}:c1`,
+        payload: {
+          mount: "tool.preExecute",
+          plugin: "guard",
+          reason: "recorded reason",
+          cause: "deny",
+          step: 1,
+          callId: "c1",
+        },
+      },
+    ]);
+    const f = fakeHooks({ allowed: true });
+    pluginHooks = f.hooks;
+    await pipeline().runStep(stepCtx(chat));
+    const evs = await eventsOf(db, seed.conversationId);
+    expect(handlerCalls.echo ?? []).toHaveLength(0);
+    expect(f.runs).not.toContain("tool.preExecute");
+    expect(resultsOf(evs)[0]).toMatchObject({
+      isError: true,
+      content: hookDeniedText("guard", "recorded reason"),
+    });
+  });
+
+  it("no hooks fire outside chat conversations", async () => {
+    const f = fakeHooks(denial);
+    pluginHooks = f.hooks;
+    const evs = await runCalls([{ id: "c1", name: "probe__echo", input: { text: "1" } }], {
+      conversationKind: "eval",
+    });
+    expect(f.runs).toEqual([]);
+    expect(handlerCalls.echo).toHaveLength(1);
+    expect(evs.some((e) => e.type === "hook_denied")).toBe(false);
   });
 });

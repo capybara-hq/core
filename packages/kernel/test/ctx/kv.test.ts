@@ -9,7 +9,7 @@ let redis: Redis;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
-  box = await startTestRedis();
+  box = await startTestRedis({ shared: true });
   redis = new Redis(box.url);
 });
 afterAll(async () => {

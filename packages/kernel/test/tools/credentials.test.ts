@@ -111,7 +111,7 @@ describe("Credentials 静态认证注入", () => {
     expect(await creds.injection(ORG, "app_none", { type: "none" }, "a1")).toEqual({ headers: {} });
   });
 
-  it("个人凭据互相隔离，org 凭据不被个人应用读取", async () => {
+  it("个人凭据互相隔离，org 凭据不被个人连接器读取", async () => {
     const auth = { type: "bearer", ownership: "personal" } as const;
     await creds.setStatic(ORG, "app_p", auth, user("u1"), { token: "personal-token-u1-xxxx" });
     expect((await creds.injection(ORG, "app_p", auth, "u1")).headers.Authorization).toBe(
@@ -131,16 +131,16 @@ describe("Credentials 静态认证注入", () => {
     );
   });
 
-  it("缺凭据抛 CredentialMissing：带 appId 与归属，不带值", async () => {
+  it("缺凭据抛 CredentialMissing：带 connectorId 与归属，不带值", async () => {
     const err = await creds
       .injection(ORG, "app_nothing", { type: "bearer", ownership: "personal" }, "u9")
       .catch((e) => e);
     expect(err).toBeInstanceOf(CredentialMissing);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.code).toBe("credential.missing");
-    expect(err.appId).toBe("app_nothing");
+    expect(err.connectorId).toBe("app_nothing");
     expect(err.ownership).toBe("personal");
-    expect(err.message).toBe("No credential configured for app app_nothing (personal)");
+    expect(err.message).toBe("No credential configured for connector app_nothing (personal)");
   });
 
   it("clear 之后缺失", async () => {
@@ -173,7 +173,7 @@ describe("Credentials 静态认证注入", () => {
     expect(Buffer.from(row.ciphertext).toString("utf8")).not.toContain(token);
   });
 
-  it("status 按归属判定：个人应用只看个人凭据，org 应用只看 org 凭据", async () => {
+  it("status 按归属判定：个人连接器只看个人凭据，org 连接器只看 org 凭据", async () => {
     const personal = { type: "bearer", ownership: "personal" } as const;
     const orgAuth = { type: "bearer", ownership: "org" } as const;
     await creds.setStatic(ORG, "app_s1", orgAuth, org, { token: TOKEN });
@@ -243,10 +243,10 @@ describe("Credentials 静态认证注入", () => {
     ).rejects.toBeInstanceOf(CredentialMissing);
   });
 
-  it("appId / accountId 含冒号时拒绝", async () => {
+  it("connectorId / accountId 含冒号时拒绝", async () => {
     await expect(
       creds.injection(ORG, "a:b", { type: "bearer", ownership: "org" }, "u1"),
-    ).rejects.toThrow(/invalid appId/);
+    ).rejects.toThrow(/invalid connectorId/);
     await expect(
       creds.status(ORG, "app", { type: "bearer", ownership: "personal" }, "u:1"),
     ).rejects.toThrow(/invalid accountId/);

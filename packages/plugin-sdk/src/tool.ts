@@ -61,12 +61,13 @@ export function validateToolDisplay(d: unknown): string[] {
   return out;
 }
 
-type Text = { zh: string; en: string } | string;
+/** Text shown to people: bilingual (`zh` / `en`) or a single string shown as is. */
+export type LocalizedText = { zh: string; en: string } | string;
 
 /** 交互表单：字段的 schema 只用 M2 的 ParamSchema 子集；枚举字段可设 multiSelect 与 allowOther。 */
 export interface InputForm {
   /** 插件可给双语；内核内置工具给英文（模型生成的问题原样展示）。 */
-  title: Text;
+  title: LocalizedText;
   /**
    * 可选：需要用户在浏览器里打开的外部页面（如 MCP URL 模式的 elicitation：去对方页面授权 / 付款 / 填敏感信息）。
    * 界面把它显示为链接（完整地址可见）；只接受 http(s) 绝对地址、≤ 2000 字符。
@@ -74,8 +75,8 @@ export interface InputForm {
   url?: string;
   fields: {
     key: string;
-    label: Text;
-    description?: Text;
+    label: LocalizedText;
+    description?: LocalizedText;
     schema: ParamSchema;
     multiSelect?: boolean;
     allowOther?: boolean;
@@ -113,8 +114,8 @@ export type ToolHandler = (
 
 /**
  * 工具错误的类别：
- * - `error`（缺省）：远端可用、但这次调用失败（参数不对、业务错误、鉴权失败等），不计入应用熔断；
- * - `unavailable`：远端不可用（连接 / 传输错误、超时、HTTP 5xx），计入应用熔断（连接器用它告诉内核）。
+ * - `error`（缺省）：远端可用、但这次调用失败（参数不对、业务错误、鉴权失败等），不计入连接器熔断；
+ * - `unavailable`：远端不可用（连接 / 传输错误、超时、HTTP 5xx），计入连接器熔断（连接器用它告诉内核）。
  */
 export type ToolErrorKind = "error" | "unavailable";
 

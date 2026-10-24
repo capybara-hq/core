@@ -21,5 +21,15 @@ export default defineConfig({
     }),
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // setup 项目在全新内核上跑初始化向导（初始化页的断言只在 setup.spec.ts）；其余用例依赖它先跑完，
+  // 再用 e2e/support/sign-in.ts 登录，不依赖文件名排序。
+  projects: [
+    { name: "setup", testMatch: /setup\.spec\.ts$/, use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "chromium",
+      testIgnore: /setup\.spec\.ts$/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+  ],
 });

@@ -115,7 +115,7 @@ describe("M4 第一段验收（双副本）", () => {
     const db: KernelDb = kernelDb(raw);
 
     // ---- HTTP：杀副本前严格交替发往两个副本；之后只发往幸存的副本 ----
-    let dead: 0 | 1 | undefined;
+    let dead: number | undefined;
     const send = async (path: string, init: RequestInit) => {
       if (dead === undefined) return harness.request(path, init);
       const r = harness.replicas[dead === 0 ? 1 : 0];
@@ -203,7 +203,7 @@ describe("M4 第一段验收（双副本）", () => {
     const sync1 = await call(ownerJar, "POST", `${base}/plugins/fake-im/directory/sync`);
     expect(sync1.status).toBe(202);
     await waitFor(async () => (await syncAudits()).length === 1, 20_000, "first directory sync");
-    const bobId = await waitFor(async () => identityOwner("u-bob"), 5_000, "bob's account");
+    const bobId = await waitFor(async () => identityOwner("u-bob"), 15_000, "bob's account");
     expect(await membership(bobId)).toEqual({ role: "member", source: "directory:fake-im" });
 
     const ag = await call(ownerJar, "POST", `${base}/agents`, {

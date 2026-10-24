@@ -9,7 +9,7 @@ let redisB: Redis;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
-  rd = await startTestRedis();
+  rd = await startTestRedis({ shared: true });
   redisA = new Redis(rd.url);
   redisB = new Redis(rd.url);
 });

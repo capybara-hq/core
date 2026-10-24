@@ -1,7 +1,7 @@
 export default {
   extends: ["@commitlint/config-conventional"],
   rules: {
-    // 提交标题用中文，常以英文专有名词开头（HTTP、PG、Nacos、CLA），大小写规则不适用
+    // Subjects often start with a proper noun (HTTP, PG, Nacos, CLA), and older ones are in Chinese, so case rules do not apply
     "subject-case": [0],
   },
 };

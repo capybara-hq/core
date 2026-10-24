@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 import type { CapabilityRef } from "./capability.js";
+import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
@@ -130,8 +131,29 @@ export interface PluginContext {
     }): Promise<void>;
     verifyEmbedToken(token: string): Promise<EmbedClaims | null>;
   };
+  /**
+   * Hooks (`permissions.hooks`): observe model and tool calls, or deny them with a policy hook.
+   * `on` is only allowed during `setup`; the mount point must be declared in `permissions.hooks` and be
+   * one of `HOOKS_AVAILABLE`; `mode: "policy"` only on `POLICY_HOOKS` and only for mount points also
+   * declared in `permissions.policyHooks`. Hooks fire only for organizations
+   * that enabled the plugin, only in chat conversations (never in eval replays); see `HookOptions` for
+   * how policy and observe hooks run. Unloading, upgrading or disabling the plugin instance revokes
+   * them (in-flight hook calls are drained like tool calls).
+   */
+  hooks: {
+    on<K extends AvailableHook>(mount: K, handler: HookHandler<K>, opts: HookOptions): void;
+  };
   provide(capability: CapabilityRef, impl: unknown): void;
-  /** 部署级配置，已按插件 schema 校验。 */
-  config: unknown;
+  /**
+   * 本插件实例的生命周期信号：实例被撤销（停用、卸载、升级）时、在途调用排空之后中止。
+   * 插件自己起的长任务（轮询循环、长连接等）据此收尾。
+   */
+  signal: AbortSignal;
+  /**
+   * 部署级配置，已按插件 schema 校验（启动配置与企业管理员在后台保存的值合并后）。这是一个 getter：
+   * 标了 `hot`（`.meta({ hot: true })`）的字段改动时内核就地替换，插件**在用时读** `ctx.config` 才能拿到新值，
+   * 不要在 setup 里把 hot 字段拷进闭包；改了非 hot 字段时内核重新加载插件实例（新的 setup）。
+   */
+  readonly config: unknown;
   log: Logger;
 }

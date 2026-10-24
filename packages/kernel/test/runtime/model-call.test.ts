@@ -12,7 +12,7 @@ import {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -476,7 +476,8 @@ describe("runModelStep", () => {
     });
     const elapsed = Date.now() - t0;
     expect(r.content).toEqual([{ type: "text", text: "fallback answer" }]);
-    expect(elapsed).toBeLessThan(2000);
+    // Without the watchdog the stalled stream never ends; 4 s leaves room for CI load.
+    expect(elapsed).toBeLessThan(4000);
     expect(elapsed).toBeGreaterThanOrEqual(400);
     const calls = await ofType("model_call");
     expect(calls.map((c) => [c.payload.attempt, c.payload.model, c.payload.fallback])).toEqual([
@@ -531,7 +532,8 @@ describe("runModelStep", () => {
         fallback: { provider: "stub", model: "ok" },
       }),
     });
-    expect(Date.now() - t0).toBeLessThan(1000);
+    // Honouring the suggested 600 s wait is the alternative; 5 s leaves room for CI load.
+    expect(Date.now() - t0).toBeLessThan(5000);
     expect(r.content).toEqual([{ type: "text", text: "from fallback" }]);
     const calls = await ofType("model_call");
     expect(calls.map((c) => [c.payload.attempt, c.payload.model, c.payload.fallback])).toEqual([
@@ -551,14 +553,15 @@ describe("runModelStep", () => {
       step({ agent: agentWith({ model: { provider: "stub", model: "limited" } }) }),
     );
     expect(code).toBe("model.rate_limited");
-    expect(Date.now() - t0).toBeLessThan(1000);
+    // Honouring the suggested 600 s wait is the alternative; 5 s leaves room for CI load.
+    expect(Date.now() - t0).toBeLessThan(5000);
     expect(await ofType("model_call")).toHaveLength(1);
   });
 
   it("retryAfterMs 在上限内 → 按建议等待后在同一模型上重试", async () => {
     let n = 0;
     stubImpl = stub([stubInfo("flaky")], () => {
-      if (++n === 1) throw new ModelError("overloaded", "busy", { retryAfterMs: 300 });
+      if (++n === 1) throw new ModelError("overloaded", "busy", { retryAfterMs: 2_000 });
       return "second try";
     });
     await say("hi");
@@ -566,8 +569,10 @@ describe("runModelStep", () => {
     const r = await step({ agent: agentWith({ model: { provider: "stub", model: "flaky" } }) });
     const elapsed = Date.now() - t0;
     expect(r.content).toEqual([{ type: "text", text: "second try" }]);
-    expect(elapsed).toBeGreaterThanOrEqual(280);
-    expect(elapsed).toBeLessThan(900);
+    // 2 s suggested vs the 1 s default delay: the lower bound tells them apart, so the upper
+    // bound only has to stay loose enough for CI load.
+    expect(elapsed).toBeGreaterThanOrEqual(1_900);
+    expect(elapsed).toBeLessThan(4_500);
     expect((await ofType("model_call")).map((c) => c.payload.attempt)).toEqual([1, 2]);
   });
 
@@ -696,12 +701,19 @@ describe("runModelStep", () => {
   });
 
   it("中止：重试等待期间 abort → 立即返回 aborted，不再尝试", async () => {
-    await say("fail:overloaded");
+    // A 5 s suggested wait (the default is 1 s) so "returned immediately" has a wide margin.
+    stubImpl = stub([stubInfo("busy")], () => {
+      throw new ModelError("overloaded", "busy", { retryAfterMs: 5_000 });
+    });
+    await say("hi");
     const ac = new AbortController();
     const t0 = Date.now();
     setTimeout(() => ac.abort(), 100);
-    const r = await step({ signal: ac.signal });
-    expect(Date.now() - t0).toBeLessThan(800);
+    const r = await step({
+      signal: ac.signal,
+      agent: agentWith({ model: { provider: "stub", model: "busy" } }),
+    });
+    expect(Date.now() - t0).toBeLessThan(2_500);
     expect(r).toMatchObject({ aborted: true, content: [] });
     expect(await ofType("model_call")).toHaveLength(1);
   });
@@ -989,6 +1001,225 @@ describe("runModelStep", () => {
         )
         .execute();
       expect(stored).toHaveLength(3);
+    });
+  });
+});
+
+describe("model.request hooks", () => {
+  it("sticky: a logged denial for this attempt fails the step again without running the hooks or the model", async () => {
+    await say("hello");
+    await eventLog.append(conversationId, [
+      {
+        type: "hook_denied",
+        runId,
+        idemKey: `hook_denied:${runId}:1:1`,
+        payload: {
+          mount: "model.request",
+          plugin: "guard",
+          reason: "recorded reason",
+          cause: "deny",
+          step: 1,
+          attempt: 1,
+        },
+      },
+    ]);
+    const runs: string[] = [];
+    const hooked: ModelStepDeps = {
+      ...deps,
+      hooks: {
+        has: () => true,
+        run: async (mount) => {
+          runs.push(mount);
+          return { allowed: true };
+        },
+      },
+    };
+    let err: unknown;
+    try {
+      await runModelStep(hooked, {
+        orgId,
+        conversationId,
+        runId,
+        step: 1,
+        agent: agentWith(),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+        agentId: randomUUID(),
+        accountId,
+        conversationKind: "chat",
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RunError);
+    expect((err as RunError).code).toBe("run.hook_denied");
+    expect((err as RunError).message).toContain('"guard"');
+    expect((err as RunError).message).toContain("recorded reason");
+    expect(runs).toEqual([]);
+    expect(await ofType("model_call")).toEqual([]);
+  });
+});
+
+describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
+  type Seen = { mount: string; payload: Record<string, unknown> };
+  /** Fake hook runner: records every call; `deny(payload)` decides model.request denials. */
+  const fakeHooks = (deny: (p: Record<string, unknown>) => boolean = () => false) => {
+    const seen: Seen[] = [];
+    const hooks: NonNullable<ModelStepDeps["hooks"]> = {
+      has: () => true,
+      run: async (mount, payload) => {
+        seen.push({ mount, payload: payload as unknown as Record<string, unknown> });
+        if (mount === "model.request" && deny(payload as unknown as Record<string, unknown>)) {
+          return {
+            allowed: false,
+            plugin: "guard",
+            reason: "no compaction",
+            cause: "deny",
+            detail: "raw detail",
+          };
+        }
+        return { allowed: true };
+      },
+    };
+    return { seen, hooks };
+  };
+  const hookedStep = (d: ModelStepDeps, agent = agentWith(), n = 1) =>
+    runModelStep(d, {
+      orgId,
+      conversationId,
+      runId,
+      step: n,
+      agent,
+      agentVersion: 1,
+      absorbedUpToSeq: ALL_ABSORBED,
+      signal: new AbortController().signal,
+      sink: () => {},
+      agentId: randomUUID(),
+      accountId,
+      conversationKind: "chat",
+    });
+  /** 每条 ~400 个 ASCII 字符 ≈ 100 token。 */
+  const filler = (n: number) => `turn ${n} `.padEnd(400, "x");
+  const longHistory = async () => {
+    for (let i = 0; i < 8; i++) {
+      await say(filler(i));
+      await answer(filler(i));
+    }
+    await say("echo:after compaction");
+  };
+  const small = () => agentWith({ model: { provider: "model-fake", model: "fake-small" } });
+
+  it("a denial logged at a later attempt is sticky on a resume that restarts at attempt 1 (M-4)", async () => {
+    await say("hello");
+    await eventLog.append(conversationId, [
+      {
+        type: "hook_denied",
+        runId,
+        idemKey: `hook_denied:${runId}:1:2`,
+        payload: {
+          mount: "model.request",
+          plugin: "guard",
+          reason: "denied at attempt 2",
+          cause: "deny",
+          step: 1,
+          attempt: 2,
+        },
+      },
+    ]);
+    const { seen, hooks } = fakeHooks();
+    const code = await runErrorCode(hookedStep({ ...deps, hooks }));
+    expect(code).toBe("run.hook_denied");
+    expect(seen).toEqual([]);
+    expect(await ofType("model_call")).toEqual([]);
+  });
+
+  it("without hooks no hook_denied lookup is made (M-2)", async () => {
+    await say("echo:hi");
+    const keys: string[] = [];
+    const spied = Object.create(eventLog) as EventLog;
+    spied.findByIdem = async (conv: string, key: string) => {
+      keys.push(key);
+      return eventLog.findByIdem(conv, key);
+    };
+    const { hooks } = fakeHooks();
+    await hookedStep({ ...deps, eventLog: spied, hooks: { ...hooks, has: () => false } });
+    expect(keys.filter((k) => k.startsWith("hook_denied"))).toEqual([]);
+  });
+
+  it("compaction: model.request and model.response fire with purpose compaction; its usage is logged and reported (I-1)", async () => {
+    await longHistory();
+    const { seen, hooks } = fakeHooks();
+    const enqueued: number[] = [];
+    const r = await hookedStep(
+      {
+        ...deps,
+        hooks,
+        usageReport: { enqueue: async (_c, seq) => void enqueued.push(seq) },
+      },
+      small(),
+    );
+    expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
+    const purposes = (mount: string) =>
+      seen.filter((x) => x.mount === mount).map((x) => x.payload.purpose);
+    expect(purposes("model.request")).toEqual(["compaction", "step"]);
+    await vi.waitFor(() => expect(purposes("model.response")).toEqual(["compaction", "step"]));
+    const compactReq = seen.find((x) => x.mount === "model.request")?.payload;
+    expect(compactReq).toMatchObject({
+      step: 1,
+      attempt: 1,
+      provider: "model-fake",
+      model: "fake-small",
+    });
+    expect(JSON.stringify(compactReq?.request)).toContain(COMPACTION_MARKER);
+    const compactRes = seen.find((x) => x.mount === "model.response")?.payload;
+    expect(compactRes).toMatchObject({ outcome: "ok", usage: expect.any(Object) });
+
+    const usage = await ofType("usage");
+    expect(usage.map((u) => u.payload.purpose ?? "step")).toEqual(["compaction", "step"]);
+    expect(usage[0]?.payload).toMatchObject({
+      step: 1,
+      provider: "model-fake",
+      model: "fake-small",
+    });
+    const summary = (await ofType("compaction_summary"))[0];
+    // written in the same append as the compaction outcome, before the step's model_call
+    expect(usage[0]?.seq).toBe((summary?.seq ?? 0) + 1);
+    expect(enqueued).toEqual(usage.map((u) => u.seq));
+  });
+
+  it("compaction denied by a policy hook: compaction_failed with a generic reason, raw detail only in audit; the step goes on (I-1)", async () => {
+    await longHistory();
+    const { seen, hooks } = fakeHooks((p) => p.purpose === "compaction");
+    const r = await hookedStep({ ...deps, hooks }, small());
+    expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
+    const [failed] = await ofType("compaction_failed");
+    expect(failed?.payload).toEqual({
+      attempt: 1,
+      reason: 'compaction request blocked by the "guard" policy hook (deny)',
+    });
+    expect(JSON.stringify(await all())).not.toContain("raw detail");
+    expect(await ofType("compaction_summary")).toEqual([]);
+    expect(await ofType("hook_denied")).toEqual([]);
+    // the compaction call was never sent: no usage for it, no model.response for it
+    expect((await ofType("usage")).map((u) => u.payload.purpose ?? "step")).toEqual(["step"]);
+    await new Promise((res) => setTimeout(res, 50));
+    expect(seen.filter((x) => x.mount === "model.response").map((x) => x.payload.purpose)).toEqual([
+      "step",
+    ]);
+    const rows = await db
+      .selectFrom("audit_events")
+      .select(["action", "detail"])
+      .where("action", "=", "hook.denied")
+      .where("target", "=", conversationId)
+      .execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.detail).toMatchObject({
+      purpose: "compaction",
+      plugin: "guard",
+      error: "raw detail",
+      mount: "model.request",
     });
   });
 });

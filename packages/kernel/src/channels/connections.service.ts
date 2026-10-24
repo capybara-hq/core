@@ -11,6 +11,7 @@ import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { z } from "zod";
 import { configFields, getPath, secretValues } from "../config/fields.js";
+import type { KernelConfig } from "../config/schema.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -21,8 +22,10 @@ import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { configToJsonSchema, type JsonSchema } from "../plugins/config-json-schema.js";
 import type { PluginHost } from "../plugins/host.js";
+import type { InflightTracker } from "../plugins/inflight.js";
 import { toIssues } from "../plugins/org-config.js";
 import { adaptToFeatures } from "./features.js";
+import { webhookBase, webhookUrlOf } from "./webhook-url.js";
 
 /** 内核 secrets 命名空间（插件名不能取 `kernel`）。 */
 const SECRETS_NAMESPACE = "kernel";
@@ -44,6 +47,8 @@ const PLUGIN_CALL_TIMEOUT_MS = 15_000;
 
 export type UnboundPolicy = "bind" | "anonymous";
 export type ChannelStatus = "active" | "disabled" | "error";
+/** How inbound events arrive: a long connection held by a gateway replica (default), or webhooks. */
+export type InboundMode = "long_connection" | "webhook";
 
 /** 对外的连接视图：`config` 只含非密钥字段，密钥只回显「是否已设置」。 */
 export interface ChannelConnectionView {
@@ -54,6 +59,14 @@ export interface ChannelConnectionView {
   agentId: string;
   unboundPolicy: UnboundPolicy;
   status: ChannelStatus;
+  inboundMode: InboundMode;
+  /** The plugin implements `Channel.webhook`, so the connection can switch to webhook mode. */
+  webhookSupported: boolean;
+  /**
+   * The callback URL to register with the platform (`<channels.webhookBaseUrl>/channels/webhook/<id>`);
+   * null when the plugin has no webhook support or `channels.webhookBaseUrl` is not configured.
+   */
+  webhookUrl: string | null;
   lastError: string | null;
   botUserId: string | null;
   tenantId: string | null;
@@ -72,6 +85,7 @@ export interface ChannelConnectionRow {
   agentId: string;
   unboundPolicy: UnboundPolicy;
   status: ChannelStatus;
+  inboundMode: InboundMode;
   tenantId: string | null;
   /** 插件此刻在该组织启用。 */
   pluginEnabled: boolean;
@@ -91,6 +105,7 @@ export interface UpdateChannelInput {
   agentId?: string | undefined;
   unboundPolicy?: UnboundPolicy | undefined;
   status?: "active" | "disabled" | undefined;
+  inboundMode?: InboundMode | undefined;
   config?: Record<string, unknown> | undefined;
 }
 
@@ -147,6 +162,7 @@ const COLUMNS = [
   "config",
   "unbound_policy",
   "status",
+  "inbound_mode",
   "last_error",
   "bot_user_id",
   "tenant_id",
@@ -166,6 +182,8 @@ export interface ChannelConnectionsDeps {
   onResume?: (connectionId: string) => Promise<void>;
   /** 经手（写入或解密读出）的密钥值；内核传 `log.addOrgSecrets` 使其在日志中打码。 */
   onSecrets?: (values: string[]) => void;
+  /** Current config (`channels.webhookBaseUrl`); without it webhook mode is unavailable. */
+  config?: () => Pick<KernelConfig, "channels" | "tools">;
 }
 
 /**
@@ -179,11 +197,15 @@ export class ChannelConnections {
 
   /** 插件提供的 `channel@1`；未加载或不提供 → `plugin.not_found`。 */
   channel(plugin: string): Channel {
+    return this.channelEntry(plugin).impl as Channel;
+  }
+
+  private channelEntry(plugin: string): ReturnType<PluginHost["list"]>[number] {
     const e = this.deps.host
       .list("channel")
       .find((x) => x.plugin === plugin && x.capability === CHANNEL_CAPABILITY);
     if (!e) throw new ApiError("plugin.not_found", `Plugin ${plugin} does not provide a channel`);
-    return e.impl as Channel;
+    return e;
   }
 
   /** 插件在该组织未启用 → `plugin.not_enabled`。 */
@@ -270,6 +292,7 @@ export class ChannelConnections {
       config: Obj;
       unbound_policy: UnboundPolicy;
       status: ChannelStatus;
+      inbound_mode: InboundMode;
       last_error: string | null;
       bot_user_id: string | null;
       tenant_id: string | null;
@@ -280,12 +303,16 @@ export class ChannelConnections {
     setPaths: Set<string>,
   ): ChannelConnectionView {
     let paths: string[] = [];
+    let webhookSupported = false;
     try {
-      paths = secretPaths(this.channel(r.plugin).connectionSchema);
+      const channel = this.channel(r.plugin);
+      paths = secretPaths(channel.connectionSchema);
+      webhookSupported = channel.webhook !== undefined;
     } catch {
       // 插件已卸载：只回显已存的密钥路径
       paths = [...setPaths];
     }
+    const base = this.webhookBase();
     return {
       id: r.id,
       orgId: r.org_id,
@@ -294,6 +321,9 @@ export class ChannelConnections {
       agentId: r.agent_id,
       unboundPolicy: r.unbound_policy,
       status: r.status,
+      inboundMode: r.inbound_mode,
+      webhookSupported,
+      webhookUrl: webhookSupported && base !== undefined ? webhookUrlOf(base, r.id) : null,
       lastError: r.last_error,
       botUserId: r.bot_user_id,
       tenantId: r.tenant_id,
@@ -303,6 +333,30 @@ export class ChannelConnections {
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
+  }
+
+  private webhookBase(): string | undefined {
+    const config = this.deps.config?.();
+    return config === undefined ? undefined : webhookBase(config);
+  }
+
+  /**
+   * Switching to webhook mode needs a plugin that implements `Channel.webhook` and a configured
+   * `channels.webhookBaseUrl` (otherwise there is no URL to give the platform): 409 otherwise.
+   */
+  private assertWebhookAvailable(plugin: string): void {
+    if (this.channel(plugin).webhook === undefined) {
+      throw new ApiError(
+        "channel.webhook_unavailable",
+        `Plugin ${plugin} does not support webhook inbound`,
+      );
+    }
+    if (this.webhookBase() === undefined) {
+      throw new ApiError(
+        "channel.webhook_unavailable",
+        "Webhook inbound needs channels.webhookBaseUrl to be configured",
+      );
+    }
   }
 
   private async viewOf(row: Parameters<ChannelConnections["view"]>[0]) {
@@ -417,6 +471,9 @@ export class ChannelConnections {
       else verifySkipped = true;
       rotated = { schema, full, ...split(schema, full) };
     }
+    const modeChanged =
+      patch.inboundMode !== undefined && patch.inboundMode !== current.inbound_mode;
+    if (modeChanged && patch.inboundMode === "webhook") this.assertWebhookAvailable(current.plugin);
     if (patch.agentId !== undefined) await this.assertAgent(this.deps.db, orgId, patch.agentId);
     const row = await this.deps.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "channels.manage");
@@ -436,6 +493,7 @@ export class ChannelConnections {
           ...(patch.agentId !== undefined && { agent_id: patch.agentId }),
           ...(patch.unboundPolicy !== undefined && { unbound_policy: patch.unboundPolicy }),
           ...(patch.status !== undefined && { status: patch.status }),
+          ...(patch.inboundMode !== undefined && { inbound_mode: patch.inboundMode }),
           ...(rotated && { config: JSON.stringify(rotated.plain) }),
           // 跳过了 verify：机器人 id 与租户保留原值（重新启用后插件按新凭据连接，入站以连接行的租户判断外部人员）
           ...(verified && { bot_user_id: verified.botUserId, tenant_id: verified.tenantId }),
@@ -466,13 +524,18 @@ export class ChannelConnections {
       return updated;
     });
     if (rotated) this.reportSecrets(rotated.schema, rotated.full);
-    // 改了配置或重新启用：清掉退避，下一轮扫描立即按新配置连接
-    if (rotated || patch.status === "active") {
+    // New config, re-enabled or back to long connection: clear the backoff so the next scan connects
+    if (
+      rotated ||
+      patch.status === "active" ||
+      (modeChanged && patch.inboundMode === "long_connection")
+    ) {
       await this.deps.redis
         .del(channelBackoffKey(id), channelFailsKey(id))
         .catch((err: unknown) => this.deps.log.warn("cannot clear channel backoff", { err }));
     }
-    await this.changed(id, rotated !== undefined || patch.status !== undefined);
+    // A mode switch also reconnects: the holder drops the long connection when going to webhook (F9)
+    await this.changed(id, rotated !== undefined || patch.status !== undefined || modeChanged);
     if ((rotated || patch.status === "active") && row.status === "active") {
       await this.deps
         .onResume?.(id)
@@ -540,6 +603,7 @@ export class ChannelConnections {
         "c.agent_id",
         "c.unbound_policy",
         "c.status",
+        "c.inbound_mode",
         "c.tenant_id",
         "p.enabled",
       ])
@@ -555,6 +619,7 @@ export class ChannelConnections {
         agentId: r.agent_id,
         unboundPolicy: r.unbound_policy,
         status: r.status,
+        inboundMode: r.inbound_mode,
         tenantId: r.tenant_id,
         pluginEnabled: r.enabled === true,
       }
@@ -587,12 +652,17 @@ export class ChannelConnections {
    * 连接不存在 / 已删除 → `channel.not_found`；插件未加载 → `plugin.not_found`；组织未启用 → `plugin.not_enabled`；
    * 已存配置不再满足 schema（插件升级后）→ `plugin.config_invalid`。不得回显到响应或日志。
    */
-  async runtime(
-    id: string,
-  ): Promise<{ row: ChannelConnectionRow; channel: Channel; config: unknown }> {
+  async runtime(id: string): Promise<{
+    row: ChannelConnectionRow;
+    channel: Channel;
+    config: unknown;
+    /** The plugin instance's in-flight count (webhook calls enter it, so an upgrade drains them). */
+    inflight?: InflightTracker;
+  }> {
     const row = await this.row(id);
     if (!row) throw notFound();
-    const channel = this.channel(row.plugin);
+    const entry = this.channelEntry(row.plugin);
+    const channel = entry.impl as Channel;
     await this.assertEnabled(row.orgId, row.plugin);
     const stored = await this.deps.db
       .selectFrom("channel_connections")
@@ -603,7 +673,7 @@ export class ChannelConnections {
     for (const [p, v] of Object.entries(await this.readSecrets(row.orgId, id))) setDeep(full, p, v);
     const config = this.parse(row.plugin, channel.connectionSchema, full);
     this.reportSecrets(channel.connectionSchema, config);
-    return { row, channel, config };
+    return { row, channel, config, inflight: entry.inflight };
   }
 
   /**

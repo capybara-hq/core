@@ -30,7 +30,14 @@ const num = (name: string) => Number.parseInt(name.slice(0, 4), 10);
 export async function migrate(
   connectionString: string,
   owner: MigrationOwner,
-  opts: { connectTimeoutMs?: number | undefined; signal?: AbortSignal | undefined } = {},
+  opts: {
+    connectTimeoutMs?: number | undefined;
+    signal?: AbortSignal | undefined;
+    /** 迁移会话的 `statement_timeout`（毫秒）；不给不设。 */
+    statementTimeoutMs?: number | undefined;
+    /** 迁移会话的 `lock_timeout`（毫秒，含按 schema 的咨询锁）；不给不设。 */
+    lockTimeoutMs?: number | undefined;
+  } = {},
 ): Promise<{ applied: string[] }> {
   const { schema, dir } = owner;
   const { signal } = opts;
@@ -92,6 +99,14 @@ export async function migrate(
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
     await client.connect();
+    if (opts.statementTimeoutMs !== undefined) {
+      await client.query(
+        `set statement_timeout = ${Math.max(1, Math.floor(opts.statementTimeoutMs))}`,
+      );
+    }
+    if (opts.lockTimeoutMs !== undefined) {
+      await client.query(`set lock_timeout = ${Math.max(1, Math.floor(opts.lockTimeoutMs))}`);
+    }
     await client.query("select pg_advisory_lock(hashtext($1))", [`capybara-migrate:${schema}`]);
     await client.query(`create schema if not exists ${ident(schema)}`);
     await client.query(`create table if not exists ${table} (

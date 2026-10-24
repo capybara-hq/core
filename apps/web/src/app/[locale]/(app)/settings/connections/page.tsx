@@ -16,42 +16,44 @@ import {
   buildCredential,
   CredentialFields,
   EMPTY_CREDENTIAL,
-} from "../../../../../components/AppForm";
+} from "../../../../../components/ConnectorForm";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
 import { useSettingsNav } from "../../../../../components/settings-nav";
 import { ApiClientError } from "../../../../../lib/api";
-import {
-  type AppDetail,
-  clearMyCredential,
-  getApp,
-  listApps,
-  setMyCredential,
-} from "../../../../../lib/apps";
 import { useStartConnect } from "../../../../../lib/connect";
+import {
+  type ConnectorDetail,
+  clearMyCredential,
+  getConnector,
+  listConnectors,
+  setMyCredential,
+} from "../../../../../lib/connectors";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
 /**
- * `/[locale]/settings/connections`：个人连接（SettingsPage）——需要每人各自凭据的应用，
- * 逐个填写或清除自己的凭据。每个应用一个分组，锚点 `app-<appId>`（对话里的「连接」按钮跳到这里）。
+ * `/[locale]/settings/connections`：个人连接（SettingsPage）——需要每人各自凭据的连接器，
+ * 逐个填写或清除自己的凭据。每个连接器一个分组，锚点 `connector-<connectorId>`（对话里的「连接」按钮跳到这里）。
  */
 export default function ConnectionsPage() {
   return <OrgGate>{(orgId) => <Connections orgId={orgId} />}</OrgGate>;
 }
 
-/** 个人凭据型应用的详情（含当前用户的凭据状态）。 */
-async function personalApps(orgId: string): Promise<AppDetail[]> {
-  const { apps } = await listApps(orgId);
-  const personal = apps.filter((a) => a.auth.type !== "none" && a.auth.ownership === "personal");
-  return Promise.all(personal.map((a) => getApp(orgId, a.id).then((r) => r.app)));
+/** 个人凭据型连接器的详情（含当前用户的凭据状态）。 */
+async function personalConnectors(orgId: string): Promise<ConnectorDetail[]> {
+  const { connectors } = await listConnectors(orgId);
+  const personal = connectors.filter(
+    (a) => a.auth.type !== "none" && a.auth.ownership === "personal",
+  );
+  return Promise.all(personal.map((a) => getConnector(orgId, a.id).then((r) => r.connector)));
 }
 
 function Connections({ orgId }: { orgId: string }) {
   const t = useTranslations("connections");
   const errorMessage = useErrorMessage();
   const nav = useSettingsNav();
-  const { state, reload } = useLoad(() => personalApps(orgId), [orgId]);
+  const { state, reload } = useLoad(() => personalConnectors(orgId), [orgId]);
   return (
     <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="connections">
       {state.kind === "loading" ? (
@@ -67,20 +69,20 @@ function Connections({ orgId }: { orgId: string }) {
         </Stack>
       ) : (
         state.data.map((app) => (
-          <AppConnection key={app.id} orgId={orgId} app={app} onChanged={reload} />
+          <ConnectorConnection key={app.id} orgId={orgId} app={app} onChanged={reload} />
         ))
       )}
     </SettingsPage>
   );
 }
 
-function AppConnection({
+function ConnectorConnection({
   orgId,
   app,
   onChanged,
 }: {
   orgId: string;
-  app: AppDetail;
+  app: ConnectorDetail;
   onChanged(): void;
 }) {
   const t = useTranslations("connections");
@@ -99,7 +101,7 @@ function AppConnection({
       setPending("clear");
       try {
         await clearMyCredential(orgId, app.id);
-        toast.success(t("cleared", { app: app.name }));
+        toast.success(t("cleared", { connector: app.name }));
         onChanged();
       } catch (e) {
         toast.error(errorMessage(e));
@@ -146,10 +148,10 @@ function AppConnection({
       if (kind === "save" && credential !== undefined) {
         await setMyCredential(orgId, app.id, credential);
         setValues(EMPTY_CREDENTIAL);
-        toast.success(t("saved", { app: app.name }));
+        toast.success(t("saved", { connector: app.name }));
       } else if (kind === "clear") {
         await clearMyCredential(orgId, app.id);
-        toast.success(t("cleared", { app: app.name }));
+        toast.success(t("cleared", { connector: app.name }));
       }
       onChanged();
     } catch (e) {
@@ -167,7 +169,7 @@ function AppConnection({
       />
       <CredentialFields auth={auth} values={values} onChange={setValues} />
       <Stack direction="row" gap={8}>
-        {/* 每个应用一个分组：保存按钮用次级样式，页面不出现多个主操作 */}
+        {/* 每个连接器一个分组：保存按钮用次级样式，页面不出现多个主操作 */}
         <Button
           variant="secondary"
           loading={pending === "save"}

@@ -274,8 +274,12 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
       ["perm-a", "new"],
       ["fixture", "new"],
     ]);
+    // 待批准的配置声明插件属于本部署、但不在本副本生效：路由闸门 503 plugin.unavailable；完全未知的名字 404
     const res = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(503);
+    expect((res.json() as { error: { code: string } }).error.code).toBe("plugin.unavailable");
+    const unknown = await k.http.inject({ method: "GET", url: "/plugins/nobody/hello" });
+    expect(unknown.statusCode).toBe(404);
   });
 });
 

@@ -12,7 +12,19 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
-import { ACCOUNTS, KERNEL_LOG, ORGS, SESSIONS, SETTINGS } from "../http/tokens.js";
+import type { DirectoryRequestsService } from "../directory/requests.service.js";
+import {
+  ACCOUNTS,
+  DIRECTORY_REQUESTS,
+  KERNEL_LOG,
+  MODEL_PURPOSES,
+  ORGS,
+  PLUGIN_ADMIN,
+  PRICES,
+  PROVIDER_REGISTRY,
+  SESSIONS,
+  SETTINGS,
+} from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
@@ -29,7 +41,33 @@ import {
   type DeploymentSettings,
   type SettingsService,
 } from "../identity/settings.js";
+import {
+  MODEL_PRICE_PUT,
+  type ModelPrice,
+  type ModelPricePut,
+  type PricesService,
+} from "../models/prices.js";
+import { purposeTargetOf } from "../models/purposes.controller.js";
+import {
+  type ModelPurposesService,
+  PURPOSE_PUT,
+  type PurposePut,
+  type PurposeView,
+} from "../models/purposes.js";
 import type { Org, OrgsService } from "../orgs/orgs.service.js";
+import type { PluginAdmin } from "../plugins/admin-view.js";
+import { pluginNeedsAction } from "../plugins/permission-view.js";
+import type { ProviderRegistry, ProviderStatus } from "../runtime/providers.js";
+
+/** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
+export interface AdminOverview {
+  /** 需要企业管理员处理的插件（待批准、待配置、失败、依赖缺失、副本不一致），见 `pluginNeedsAction`。 */
+  pluginsNeedingAction: number;
+  /** 待企业管理员处理的目录申请（stage deployment、pending）。 */
+  directoryRequestsPending: number;
+  orgs: number;
+  accounts: number;
+}
 
 const ListQuery = z.object({
   after: z.string().min(1).optional(),
@@ -68,7 +106,29 @@ export class AdminController {
     @Inject(KERNEL_LOG) private readonly log: Logger,
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(SETTINGS) private readonly settings: SettingsService,
+    @Inject(PRICES) private readonly prices: PricesService,
+    @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
+    @Inject(PLUGIN_ADMIN) private readonly plugins: PluginAdmin,
+    @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
+    @Inject(DIRECTORY_REQUESTS) private readonly directoryRequests: DirectoryRequestsService,
   ) {}
+
+  /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
+  @Get("overview")
+  async overview(): Promise<AdminOverview> {
+    const [plugins, orgs, accounts, directoryRequestsPending] = await Promise.all([
+      this.plugins.list(),
+      this.orgs.listAll(),
+      this.accounts.count(),
+      this.directoryRequests.countPendingDeployment(),
+    ]);
+    return {
+      pluginsNeedingAction: plugins.filter((p) => pluginNeedsAction(p.status)).length,
+      directoryRequestsPending,
+      orgs: orgs.length,
+      accounts,
+    };
+  }
 
   /**
    * 全部账号，按 id 升序分页：`next` 为下一页的游标（作为 `after` 传回），没有更多时为 null。
@@ -158,5 +218,64 @@ export class AdminController {
   ): Promise<DeploymentSettings> {
     const actor = requireUser(principal);
     return this.settings.update(body, actor.account.id, patTokenId(actor));
+  }
+
+  /**
+   * 模型供应商与模型（后台「模型」页）：每个供应商带状态，列模型失败的标 `error`，不影响其他供应商；
+   * 一并返回价格表与币种（改价仍走 `PUT /admin/model-prices`）。
+   */
+  @Get("models")
+  async getModels(): Promise<{
+    providers: ProviderStatus[];
+    prices: ModelPrice[];
+    currency: string;
+  }> {
+    const [providers, prices] = await Promise.all([
+      this.registry.listWithStatus(),
+      this.getModelPrices(),
+    ]);
+    return { providers, ...prices };
+  }
+
+  /** 模型价格表（每百万 token）与币种（部署设置 `priceCurrency`）。 */
+  @Get("model-prices")
+  async getModelPrices(): Promise<{ prices: ModelPrice[]; currency: string }> {
+    const [prices, settings] = await Promise.all([this.prices.list(), this.settings.get()]);
+    return { prices, currency: settings.priceCurrency };
+  }
+
+  /** 设置一个模型的价格，或 `{provider, model, price: null}` 删除；返回更新后的价格表。 */
+  @Put("model-prices")
+  async putModelPrice(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodPipe(MODEL_PRICE_PUT)) body: ModelPricePut,
+  ): Promise<{ prices: ModelPrice[]; currency: string }> {
+    const actor = requireUser(principal);
+    await this.prices.put(body, actor.account.id, patTokenId(actor));
+    return this.getModelPrices();
+  }
+
+  /** 模型用途与部署默认映射（`override` 一律为 null；组织覆盖在组织侧接口）。 */
+  @Get("model-purposes")
+  async getModelPurposes(): Promise<{ purposes: PurposeView[] }> {
+    return { purposes: await this.purposes.list() };
+  }
+
+  /** 设置一个用途的部署默认，或 `target: null` 清除。 */
+  @Put("model-purposes/:purpose")
+  async putModelPurpose(
+    @CurrentPrincipal() principal: Principal,
+    @Param("purpose") purpose: string,
+    @Body(new ZodPipe(PURPOSE_PUT)) body: PurposePut,
+  ): Promise<{ purpose: PurposeView }> {
+    const actor = requireUser(principal);
+    return {
+      purpose: await this.purposes.setDefault(
+        purpose,
+        purposeTargetOf(body),
+        actor.account.id,
+        patTokenId(actor),
+      ),
+    };
   }
 }

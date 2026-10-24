@@ -8,7 +8,7 @@ let r1: Redis;
 let r2: Redis;
 
 beforeAll(async () => {
-  rd = await startTestRedis();
+  rd = await startTestRedis({ shared: true });
   r1 = new Redis(rd.url);
   r2 = new Redis(rd.url);
 }, 120_000);

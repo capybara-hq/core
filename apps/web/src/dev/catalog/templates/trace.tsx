@@ -1,140 +1,75 @@
 import {
   Card,
-  type Column,
-  DataTable,
   Grid,
+  IoBlock,
+  KeyValue,
+  SpanWaterfall,
+  Stack,
   StatusMark,
   Text,
-  Textarea,
   TracePage,
   useStatusBar,
 } from "@capybara-hq/design";
 import { useState } from "react";
+import { TRACE_SPANS } from "../fixtures";
 import { FixtureShell } from "../frame";
 
-type Span = {
-  id: string;
-  at: string;
-  kind: string;
-  name: string;
-  status: "success" | "waiting" | "running";
-  ms: string;
-};
-
-const SPANS: Span[] = [
-  {
-    id: "s1",
-    at: "14:02:11.2",
-    kind: "run",
-    name: "support-triage v12",
-    status: "running",
-    ms: "18.0s",
-  },
-  {
-    id: "s2",
-    at: "14:02:11.8",
-    kind: "plan",
-    name: "分类 → 检索政策 → 起草回复",
-    status: "success",
-    ms: "676ms",
-  },
-  {
-    id: "s3",
-    at: "14:02:12.4",
-    kind: "tool",
-    name: 'kb.search("退款政策")',
-    status: "success",
-    ms: "312ms",
-  },
-  {
-    id: "s4",
-    at: "14:02:12.9",
-    kind: "tool",
-    name: "crm.get_order(A1043)",
-    status: "success",
-    ms: "204ms",
-  },
-  {
-    id: "s5",
-    at: "14:02:13.3",
-    kind: "model",
-    name: "claude-opus-5-5 · 9,214 tokens",
-    status: "success",
-    ms: "1.8s",
-  },
-  {
-    id: "s6",
-    at: "14:02:15.1",
-    kind: "guard",
-    name: "金额 > ¥500，需人工确认",
-    status: "waiting",
-    ms: "—",
-  },
-];
-
-const COLUMNS: Column<Span>[] = [
-  { key: "at", header: "时间", tone: "muted", cell: (s) => s.at },
-  { key: "kind", header: "类型", cell: (s) => <StatusMark status={s.status} label={s.kind} /> },
-  { key: "name", header: "Span", cell: (s) => s.name },
-  { key: "ms", header: "耗时", align: "right", cell: (s) => s.ms },
-];
-
 function TraceBody() {
-  useStatusBar("● 自动刷新 15s");
-  const [active, setActive] = useState("s3");
+  useStatusBar("· 已加载 1 次运行");
+  const [active, setActive] = useState<string | null>("t1");
   return (
     <TracePage
       header={{
         parent: { label: "运行记录", href: "/dev/ui/table" },
-        title: "run_8f2k1x",
+        title: "退款工单 A1043",
         status: <StatusMark status="running" />,
         metrics: [
-          { label: "耗时", value: "18.0s" },
-          { label: "TOKENS", value: "12,408" },
-          { label: "SPANS", value: "6" },
+          { label: "总 TOKEN", value: "12,408" },
+          { label: "成本（估算）", value: "0.0412 USD" },
+          { label: "调用数", value: "6" },
+          { label: "耗时", value: "6.8s" },
         ],
+        actions: [{ label: "加入评测集", variant: "default" }],
       }}
       waterfall={
-        <DataTable<Span>
+        <SpanWaterfall
           label="Span 瀑布"
-          density="compact"
-          framed={false}
-          columns={COLUMNS}
-          rows={SPANS}
-          rowKey={(s) => s.id}
-          rowLabel={(s) => s.name}
-          activeKey={active}
-          onOpen={(s) => setActive(s.id)}
+          spans={TRACE_SPANS}
+          selectedId={active}
+          onSelect={setActive}
+          labels={{ empty: "这个对话还没有开始过运行。" }}
         />
       }
       detail={
-        <Card title='tool · kb.search("退款政策")'>
-          <Grid columns={2} gap={16}>
-            <Textarea
-              code
-              aria-label="输入"
-              readOnly
-              rows={4}
-              value={'{\n  "query": "退款政策",\n  "top_k": 5\n}'}
-            />
-            <Textarea
-              code
-              aria-label="输出"
-              readOnly
-              rows={4}
-              value={'{\n  "hits": 3,\n  "best": "policy/refund.md#L12"\n}'}
-            />
-          </Grid>
+        <Stack gap={12}>
           <Text variant="small" tone="muted">
-            312ms · 10-18 14:02:12
+            查看运行记录会记入审计。
           </Text>
-        </Card>
+          <Card title="工具调用 · crm__refund_order">
+            <Stack gap={12}>
+              <Grid columns={2} gap={16}>
+                <IoBlock label="IN" text={'{\n  "order": "A1043",\n  "amount": 620\n}'} />
+                <IoBlock label="OUT" text={'{\n  "refunded": true\n}'} />
+              </Grid>
+              <KeyValue
+                keyWidth="16ch"
+                rows={[
+                  { k: "耗时", v: "300ms" },
+                  { k: "请求审批", v: "10-18 14:02:12" },
+                  { k: "决定", v: "已批准" },
+                  { k: "范围", v: "仅本次" },
+                  { k: "处理人", v: "acc_zhang" },
+                ]}
+              />
+            </Stack>
+          </Card>
+        </Stack>
       }
     />
   );
 }
 
-/** T8 链路查看器：单次运行。 */
+/** T8 链路查看器：上方 Span 瀑布，下方选中 span 的详情。 */
 export function TraceTemplate() {
   return (
     <FixtureShell nav="runs" context="runs/run_8f2k1x">

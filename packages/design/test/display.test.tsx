@@ -33,7 +33,7 @@ describe("StatusMark", () => {
     wrap(<StatusMark status="failed" />, "en");
     expect(screen.getByText("✗ Failed")).toBeTruthy();
   });
-  it("六种状态符号", () => {
+  it("七种状态符号", () => {
     const map = {
       running: "●",
       success: "✓",
@@ -41,6 +41,7 @@ describe("StatusMark", () => {
       waiting: "‖",
       queued: "○",
       cancelled: "⊘",
+      capped: "◆",
     } as const;
     for (const [s, g] of Object.entries(map)) {
       const { container } = wrap(<StatusMark status={s as keyof typeof map} />);
@@ -48,6 +49,13 @@ describe("StatusMark", () => {
       expect(container.querySelector(`[data-status="${s}"]`)).toBeTruthy();
       cleanup();
     }
+  });
+  it("已达上限（capped）有自己的符号与文字", () => {
+    wrap(<StatusMark status="capped" />);
+    expect(screen.getByText("◆ 已达上限")).toBeTruthy();
+    cleanup();
+    wrap(<StatusMark status="capped" />, "en");
+    expect(screen.getByText("◆ Cap reached")).toBeTruthy();
   });
   it("自定义 label", () => {
     wrap(<StatusMark status="success" label="完成" />);

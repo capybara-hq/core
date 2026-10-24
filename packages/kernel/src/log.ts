@@ -26,6 +26,11 @@ export interface KernelLogger extends Logger {
    * 遮蔽其他租户的日志，也防止集合无限增长；只在字段里打码，不动顶层 `msg`。展开规则同 `addSecrets`。
    */
   addOrgSecrets(values: readonly unknown[]): void;
+  /**
+   * 按已登记的密钥（部署方与组织来源，同日志字段的规则）给一段文本打码；写到日志之外的地方（如 PG 里给后台看的
+   * 报错说明）之前用。
+   */
+  redact(text: string): string;
 }
 
 const REDACTED = "[REDACTED]";
@@ -216,6 +221,7 @@ export function createLogger(
     get level() {
       return current;
     },
+    redact: (text) => redact(text),
     setLevel(l) {
       current = parseLevel(l);
     },

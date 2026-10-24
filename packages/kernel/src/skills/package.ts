@@ -59,6 +59,21 @@ export interface SkillPackage {
 const ignored = (path: string) =>
   path.startsWith("__MACOSX/") || path === ".DS_Store" || path.endsWith("/.DS_Store");
 
+/**
+ * zip 或技能内容不合法（`problems` 逐条列出，英文）。与 HTTP 无关：技能上传映射成 `skill.invalid_package`，
+ * 企业目录导入映射成 `directory.invalid_package`。
+ */
+export class SkillArchiveError extends Error {
+  readonly problems: string[];
+  constructor(problems: string[]) {
+    super(problems[0] ?? "unknown problem");
+    this.name = "SkillArchiveError";
+    this.problems = problems;
+  }
+}
+
+const problem = (problems: string[]) => new SkillArchiveError(problems);
+
 const invalid = (problems: string[]) =>
   new ApiError(
     "skill.invalid_package",
@@ -71,7 +86,7 @@ async function readEntry(
   zip: yauzl.ZipFile,
   entry: yauzl.Entry,
   max: number,
-  onTooBig: () => ApiError,
+  onTooBig: () => Error,
 ): Promise<{ data: Uint8Array; sha256: string }> {
   const stream = await zip.openReadStreamPromise(entry);
   const hash = createHash("sha256");
@@ -95,12 +110,15 @@ async function readEntry(
  * 存在时，去掉 `D/`（如 GitHub 下载的 `repo-main/`；目录名不必等于技能名，技能名只取 SKILL.md 的 name，
  * 沙箱路径用 `/skills/<name>/`）。其他情况（多个顶层条目、SKILL.md 只在更深的目录里）不猜，按缺少 SKILL.md 拒绝。
  */
-export function stripWrapper<T extends { path: string }>(files: T[]): T[] {
-  if (files.some((f) => f.path === SKILL_ENTRY_FILE)) return files;
+export function stripWrapper<T extends { path: string }>(
+  files: T[],
+  entryFile: string = SKILL_ENTRY_FILE,
+): T[] {
+  if (files.some((f) => f.path === entryFile)) return files;
   if (!files.every((f) => f.path.includes("/"))) return files;
   const tops = new Set(files.map((f) => f.path.slice(0, f.path.indexOf("/"))));
   const top = tops.size === 1 ? [...tops][0] : undefined;
-  if (top === undefined || !files.some((f) => f.path === `${top}/${SKILL_ENTRY_FILE}`)) {
+  if (top === undefined || !files.some((f) => f.path === `${top}/${entryFile}`)) {
     return files;
   }
   return files.map((f) => ({ ...f, path: f.path.slice(top.length + 1) }));
@@ -112,8 +130,45 @@ export function stripWrapper<T extends { path: string }>(files: T[]): T[] {
  * 任何问题 → `skill.invalid_package`（400），details 逐条列出。
  */
 export async function readSkillPackage(bytes: Uint8Array): Promise<SkillPackage> {
-  if (bytes.byteLength > SKILL_PACKAGE_MAX_BYTES) {
-    throw invalid([`the zip file is larger than ${SKILL_PACKAGE_MAX_BYTES} bytes`]);
+  try {
+    const files = stripWrapper(await readZipFiles(bytes, SKILL_PACKAGE_MAX_BYTES));
+    return { ...checkSkillFiles(files), files };
+  } catch (e) {
+    if (e instanceof SkillArchiveError) throw invalid(e.problems);
+    throw e;
+  }
+}
+
+/**
+ * 校验一组技能文件（路径相对技能根）：plugin-sdk `validateSkillPackage` 的规则，SKILL.md 是严格 UTF-8 且
+ * frontmatter 合法；返回其中的 name / description。不合法 → {@link SkillArchiveError}。
+ */
+export function checkSkillFiles(files: SkillPackageFile[]): { name: string; description: string } {
+  const problems = validateSkillPackage(files);
+  if (problems.length > 0) throw problem(problems);
+  const entryFile = files.find((f) => f.path === SKILL_ENTRY_FILE) as SkillPackageFile;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(entryFile.data);
+  } catch {
+    throw problem([`${SKILL_ENTRY_FILE} is not valid UTF-8 text`]);
+  }
+  const parsed = parseSkillMd(text);
+  if ("errors" in parsed) throw problem(parsed.errors.map((m) => `${SKILL_ENTRY_FILE}: ${m}`));
+  return { name: parsed.name, description: parsed.description };
+}
+
+/**
+ * 读 zip 里的全部普通文件（规则与上限见文件头；`maxBytes` 为 zip 本身的上限），不去外层目录、不看内容。
+ * 不合法 → {@link SkillArchiveError}。
+ */
+export async function readZipFiles(
+  bytes: Uint8Array,
+  maxBytes: number,
+): Promise<SkillPackageFile[]> {
+  const invalid = problem;
+  if (bytes.byteLength > maxBytes) {
+    throw invalid([`the zip file is larger than ${maxBytes} bytes`]);
   }
   const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let zip: yauzl.ZipFile;
@@ -176,23 +231,9 @@ export async function readSkillPackage(bytes: Uint8Array): Promise<SkillPackage>
     }
   } catch (e) {
     zip.close();
-    if (e instanceof ApiError) throw e;
+    if (e instanceof SkillArchiveError) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     throw invalid([current ? `${current}: ${msg}` : `the zip archive is malformed: ${msg}`]);
   }
-
-  const files = stripWrapper(raw);
-
-  const problems = validateSkillPackage(files);
-  if (problems.length > 0) throw invalid(problems);
-  const entryFile = files.find((f) => f.path === SKILL_ENTRY_FILE) as SkillPackageFile;
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(entryFile.data);
-  } catch {
-    throw invalid([`${SKILL_ENTRY_FILE} is not valid UTF-8 text`]);
-  }
-  const parsed = parseSkillMd(text);
-  if ("errors" in parsed) throw invalid(parsed.errors.map((m) => `${SKILL_ENTRY_FILE}: ${m}`));
-  return { name: parsed.name, description: parsed.description, files };
+  return raw;
 }

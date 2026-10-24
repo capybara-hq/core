@@ -33,8 +33,8 @@ afterAll(async () => {
 describe("0010_tools", () => {
   it("创建全部新表", async () => {
     for (const t of [
-      "apps",
-      "app_tools",
+      "connectors",
+      "connector_tools",
       "tool_grants",
       "approvals",
       "questions",
@@ -75,18 +75,18 @@ describe("0010_tools", () => {
 
   it("apps：slug 在未删除行内唯一，状态受 CHECK 约束", async () => {
     const ins = (id: string, slug: string, status = "active") =>
-      sql`insert into capybara.apps (id, org_id, slug, name, connector, endpoint, auth, status, created_by)
+      sql`insert into capybara.connectors (id, org_id, slug, name, connector, endpoint, auth, status, created_by)
         values (${id}, 'o1', ${slug}, 'N', 'mcp', '{}', '{}', ${status}, 'a1')`.execute(db);
     await ins("app1", "crm");
     await rejects(ins("app2", "crm"), /apps_org_slug|duplicate key/);
-    await sql`update capybara.apps set deleted_at = now() where id='app1'`.execute(db);
+    await sql`update capybara.connectors set deleted_at = now() where id='app1'`.execute(db);
     await ins("app2", "crm");
     await rejects(ins("app3", "x", "bogus"), /check/);
   });
 
-  it("app_tools：状态与默认策略受 CHECK 约束", async () => {
+  it("connector_tools：状态与默认策略受 CHECK 约束", async () => {
     const ins = (name: string, status: string, policy: string) =>
-      sql`insert into capybara.app_tools (app_id, name, spec, spec_hash, status, default_policy)
+      sql`insert into capybara.connector_tools (connector_id, name, spec, spec_hash, status, default_policy)
         values ('app2', ${name}, '{}', 'h', ${status}, ${policy})`.execute(db);
     await ins("t1", "pending_review", "ask");
     await rejects(ins("t2", "weird", "ask"), /check/);
@@ -148,35 +148,37 @@ describe("0010_tools", () => {
     expect(r.rows.map((x) => x.spec)).toEqual([{ name: "a" }]);
   });
 
-  it("0015 漂移：app_tools 待复核定义 / 策略来历 / 消失时间，apps.tools_synced_at", async () => {
-    await sql`insert into capybara.apps (id, org_id, slug, name, connector, created_by)
+  it("0015 漂移：connector_tools 待复核定义 / 策略来历 / 消失时间，apps.tools_synced_at", async () => {
+    await sql`insert into capybara.connectors (id, org_id, slug, name, connector, created_by)
       values ('app15', 'o1', 'a15', 'A', 'mcp', 'a1')`.execute(db);
-    await sql`insert into capybara.app_tools (app_id, name, spec, spec_hash, status, default_policy)
+    await sql`insert into capybara.connector_tools (connector_id, name, spec, spec_hash, status, default_policy)
       values ('app15', 't', '{}', 'h', 'enabled', 'allow')`.execute(db);
     const r = await sql<{
       policy_source: string;
       pending_spec: unknown;
       missing_since: unknown;
-    }>`select policy_source, pending_spec, missing_since from capybara.app_tools
-      where app_id = 'app15'`.execute(db);
+    }>`select policy_source, pending_spec, missing_since from capybara.connector_tools
+      where connector_id = 'app15'`.execute(db);
     expect(r.rows[0]).toEqual({
       policy_source: "derived",
       pending_spec: null,
       missing_since: null,
     });
     await rejects(
-      sql`update capybara.app_tools set policy_source = 'other' where app_id = 'app15'`.execute(db),
+      sql`update capybara.connector_tools set policy_source = 'other' where connector_id = 'app15'`.execute(
+        db,
+      ),
       /check/,
     );
     await rejects(
-      sql`update capybara.app_tools set pending_source = 'other' where app_id = 'app15'`.execute(
+      sql`update capybara.connector_tools set pending_source = 'other' where connector_id = 'app15'`.execute(
         db,
       ),
       /check/,
     );
     const a = await sql<{
       tools_synced_at: unknown;
-    }>`select tools_synced_at from capybara.apps where id = 'app15'`.execute(db);
+    }>`select tools_synced_at from capybara.connectors where id = 'app15'`.execute(db);
     expect(a.rows[0]?.tools_synced_at).toBeNull();
   });
 
@@ -192,7 +194,7 @@ describe("0010_tools", () => {
   it("tool_outputs 与授权表可写", async () => {
     await sql`insert into capybara.tool_outputs (id, org_id, conversation_id, call_id, size_chars, line_count, content, expires_at)
       values ('to1', 'o1', 'c1', 'k1', 3, 1, 'abc', now())`.execute(db);
-    await sql`insert into capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, app_id)
+    await sql`insert into capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
       values ('o1', 'a1', 'ag1', 'crm__x', 'h', 'app1')`.execute(db);
     await sql`insert into capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
       values ('c1', 'crm__x', 'h')`.execute(db);

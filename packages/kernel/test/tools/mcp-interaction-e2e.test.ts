@@ -209,10 +209,13 @@ async function call(opts: Parameters<Req>[0]) {
   return res;
 }
 
-async function installApp(slug = "forms", ownership: "org" | "personal" = "org"): Promise<string> {
+async function installConnector(
+  slug = "forms",
+  ownership: "org" | "personal" = "org",
+): Promise<string> {
   const res = await call({
     method: "POST",
-    url: `/api/v1/orgs/${orgId}/apps`,
+    url: `/api/v1/orgs/${orgId}/connectors`,
     payload: {
       name: slug === "forms" ? "Forms" : `App ${slug}`,
       slug,
@@ -223,10 +226,10 @@ async function installApp(slug = "forms", ownership: "org" | "personal" = "org")
     },
   });
   expect(res.statusCode, res.body).toBe(201);
-  return (res.json() as { app: { id: string } }).app.id;
+  return (res.json() as { connector: { id: string } }).connector.id;
 }
 
-async function agentFor(appId: string): Promise<string> {
+async function agentFor(connectorId: string): Promise<string> {
   const res = await call({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -235,7 +238,7 @@ async function agentFor(appId: string): Promise<string> {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "app", appId, tools: "all" }],
+        tools: [{ kind: "connector", connectorId, tools: "all" }],
       },
       visibility: "org",
     },
@@ -283,7 +286,7 @@ async function lastResult(convId: string, n: number) {
 
 describe("MCP elicitation", () => {
   it("表单：中止调用并转成输入请求（文案打码）；回答后重新发起调用，用答案答复同一 elicitation", async () => {
-    const agentId = await agentFor(await installApp());
+    const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
     const q = await askedBy(convId, "forms__signup");
     expect(q.payload.form).toEqual({
@@ -306,7 +309,7 @@ describe("MCP elicitation", () => {
   }, 60_000);
 
   it("URL 模式：卡片带链接与「已完成」；确认后远端收到 accept", async () => {
-    const agentId = await agentFor(await installApp());
+    const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
     const q = await askedBy(convId, "forms__connect");
     expect(q.payload.form).toMatchObject({
@@ -319,7 +322,7 @@ describe("MCP elicitation", () => {
   }, 60_000);
 
   it("URL 模式未勾选「已完成」→ decline 给远端", async () => {
-    const agentId = await agentFor(await installApp());
+    const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
     const q = await askedBy(convId, "forms__connect");
     await answer(q.payload.questionId, { completed: false });
@@ -327,7 +330,7 @@ describe("MCP elicitation", () => {
   }, 60_000);
 
   it("超出子集的表单：立即 decline，结果附说明，不暂停", async () => {
-    const agentId = await agentFor(await installApp());
+    const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
     await postMessage(req, orgId, convId, "tool:forms__nested:{}");
     const r = await lastResult(convId, 1);
@@ -337,7 +340,7 @@ describe("MCP elicitation", () => {
   }, 60_000);
 
   it("-32042（URL elicitation required）：转成 URL 卡片；用户确认后重新调用成功", async () => {
-    const agentId = await agentFor(await installApp());
+    const agentId = await agentFor(await installConnector());
     const convId = await createConv(req, orgId, agentId);
     const t0 = Date.now();
     const q = await askedBy(convId, "forms__pay");
@@ -354,35 +357,35 @@ describe("MCP elicitation", () => {
 });
 
 describe("prompts 与 resources", () => {
-  it("列出可用应用的 prompts；渲染为文本（打码）；个人应用缺凭据 → unavailable", async () => {
-    const appId = await installApp();
-    const personal = await installApp("mine", "personal");
+  it("列出可用连接器的 prompts；渲染为文本（打码）；个人连接器缺凭据 → unavailable", async () => {
+    const connectorId = await installConnector();
+    const personal = await installConnector("mine", "personal");
     const cleared = await call({
       method: "DELETE",
-      url: `/api/v1/orgs/${orgId}/apps/${personal}/credentials/me`,
+      url: `/api/v1/orgs/${orgId}/connectors/${personal}/credentials/me`,
     });
     expect(cleared.statusCode, cleared.body).toBe(204);
 
-    const list = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/prompts` });
+    const list = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/prompts` });
     expect(list.statusCode, list.body).toBe(200);
     expect(list.json()).toEqual({
       prompts: [
         {
-          appId,
-          appSlug: "forms",
-          appName: "Forms",
+          connectorId,
+          connectorSlug: "forms",
+          connectorName: "Forms",
           name: "summarize",
           title: "Summarize",
           description: "Summarize a topic",
           arguments: [{ name: "topic", description: "Topic", required: true }],
         },
       ],
-      unavailable: [{ appId: personal, appName: "App mine", reason: "not_connected" }],
+      unavailable: [{ connectorId: personal, connectorName: "App mine", reason: "not_connected" }],
     });
 
     const got = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}/prompts/summarize`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/prompts/summarize`,
       payload: { arguments: { topic: "cats" } },
     });
     expect(got.statusCode, got.body).toBe(200);
@@ -390,15 +393,17 @@ describe("prompts 与 resources", () => {
 
     const unknown = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}/prompts/nope`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}/prompts/nope`,
       payload: { arguments: {} },
     });
     expect(unknown.statusCode, unknown.body).toBe(502);
-    expect((unknown.json() as { error: { code: string } }).error.code).toBe("app.connect_failed");
+    expect((unknown.json() as { error: { code: string } }).error.code).toBe(
+      "connector.connect_failed",
+    );
 
     const noCred = await call({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/apps/${personal}/prompts/summarize`,
+      url: `/api/v1/orgs/${orgId}/connectors/${personal}/prompts/summarize`,
       payload: { arguments: { topic: "x" } },
     });
     expect(noCred.statusCode, noCred.body).toBe(409);
@@ -407,8 +412,8 @@ describe("prompts 与 resources", () => {
   }, 60_000);
 
   it("搜索 resources（名称 / URI 子串，不区分大小写）", async () => {
-    const appId = await installApp();
-    const all = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/resources` });
+    const connectorId = await installConnector();
+    const all = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/resources` });
     expect(all.statusCode, all.body).toBe(200);
     expect((all.json() as { resources: { uri: string }[] }).resources.map((r) => r.uri)).toEqual([
       "docs://handbook",
@@ -416,14 +421,14 @@ describe("prompts 与 resources", () => {
     ]);
     const hit = await call({
       method: "GET",
-      url: `/api/v1/orgs/${orgId}/apps/resources?query=HAND`,
+      url: `/api/v1/orgs/${orgId}/connectors/resources?query=HAND`,
     });
     expect(hit.json()).toEqual({
       resources: [
         {
-          appId,
-          appSlug: "forms",
-          appName: "Forms",
+          connectorId,
+          connectorSlug: "forms",
+          connectorName: "Forms",
           uri: "docs://handbook",
           name: "Handbook",
           mimeType: "text/markdown",
@@ -434,8 +439,8 @@ describe("prompts 与 resources", () => {
   }, 60_000);
 
   it("消息附带资源：内核读取（打码、限长）存为额外文本块，并记录附件元数据", async () => {
-    const appId = await installApp();
-    const agentId = await agentFor(appId);
+    const connectorId = await installConnector();
+    const agentId = await agentFor(connectorId);
     const convId = await createConv(req, orgId, agentId);
     const res = await call({
       method: "POST",
@@ -443,8 +448,8 @@ describe("prompts 与 resources", () => {
       payload: {
         text: "Please read these",
         attachments: [
-          { appId, uri: "docs://handbook" },
-          { appId, uri: "docs://big" },
+          { connectorId, uri: "docs://handbook" },
+          { connectorId, uri: "docs://big" },
         ],
       },
     });
@@ -463,8 +468,8 @@ describe("prompts 与 resources", () => {
       /\[Attachment truncated: showing the first 50000 of 60000 characters\.\]$/,
     );
     expect(ev.payload.attachments).toEqual([
-      { appId, appName: "Forms", uri: "docs://handbook", name: "Handbook" },
-      { appId, appName: "Forms", uri: "docs://big", name: "Big file" },
+      { appId: connectorId, appName: "Forms", uri: "docs://handbook", name: "Handbook" },
+      { appId: connectorId, appName: "Forms", uri: "docs://big", name: "Big file" },
     ]);
     expect(JSON.stringify(ev).includes(TOKEN)).toBe(false);
 
@@ -473,38 +478,43 @@ describe("prompts 与 resources", () => {
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
       payload: {
         text: "x",
-        attachments: [{ appId: "3f1c9a2e-8b4d-4e6f-9a1b-2c3d4e5f6a7b", uri: "a" }],
+        attachments: [{ connectorId: "3f1c9a2e-8b4d-4e6f-9a1b-2c3d4e5f6a7b", uri: "a" }],
       },
     });
     expect(bad.statusCode, bad.body).toBe(404);
-    expect((bad.json() as { error: { code: string } }).error.code).toBe("app.not_found");
+    expect((bad.json() as { error: { code: string } }).error.code).toBe("connector.not_found");
     const tooMany = await call({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
-      payload: { text: "x", attachments: Array.from({ length: 6 }, () => ({ appId, uri: "a" })) },
+      payload: {
+        text: "x",
+        attachments: Array.from({ length: 6 }, () => ({ connectorId, uri: "a" })),
+      },
     });
     expect(tooMany.statusCode, tooMany.body).toBe(400);
   }, 60_000);
 
   it("管理员停用了 read_resource 工具（Ruling A23）：资源不列出，附件被拒", async () => {
-    const appId = await installApp();
+    const connectorId = await installConnector();
     const off = await call({
       method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/apps/${appId}`,
+      url: `/api/v1/orgs/${orgId}/connectors/${connectorId}`,
       payload: { tools: { read_resource: { status: "disabled" } } },
     });
     expect(off.statusCode, off.body).toBe(200);
-    const list = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/apps/resources` });
+    const list = await call({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors/resources` });
     expect(list.json()).toEqual({ resources: [], unavailable: [] });
-    const agentId = await agentFor(appId);
+    const agentId = await agentFor(connectorId);
     const convId = await createConv(req, orgId, agentId);
     const res = await call({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
-      payload: { text: "read", attachments: [{ appId, uri: "docs://handbook" }] },
+      payload: { text: "read", attachments: [{ connectorId, uri: "docs://handbook" }] },
     });
     expect(res.statusCode, res.body).toBe(409);
-    expect((res.json() as { error: { code: string } }).error.code).toBe("app.resources_disabled");
+    expect((res.json() as { error: { code: string } }).error.code).toBe(
+      "connector.resources_disabled",
+    );
     expect(ofType(await eventsOf(db, convId), "user_message")).toEqual([]);
   }, 60_000);
 });

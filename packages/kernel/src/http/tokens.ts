@@ -85,17 +85,17 @@ export const CONVERSATION_SANDBOX = Symbol("CONVERSATION_SANDBOX");
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");
 
-/** 应用凭据（`Credentials`）的注入令牌。 */
+/** 连接器凭据（`Credentials`）的注入令牌。 */
 export const CREDENTIALS = Symbol("CREDENTIALS");
 
 /** `ToolRegistry` 的注入令牌。 */
 export const TOOL_REGISTRY = Symbol("TOOL_REGISTRY");
 
-/** `AppsService` 的注入令牌。 */
-export const APPS = Symbol("APPS");
+/** `ConnectorsService` 的注入令牌。 */
+export const CONNECTORS = Symbol("CONNECTORS");
 
-/** `AppContent`（应用的 prompts / resources，供斜杠命令与 @ 引用）的注入令牌。 */
-export const APP_CONTENT = Symbol("APP_CONTENT");
+/** `ConnectorContent`（连接器的 prompts / resources，供斜杠命令与 @ 引用）的注入令牌。 */
+export const CONNECTOR_CONTENT = Symbol("CONNECTOR_CONTENT");
 
 /** `ApprovalsService`（工具调用审批与授权）的注入令牌。 */
 export const APPROVALS = Symbol("APPROVALS");
@@ -131,3 +131,39 @@ export const EMBED_TOKENS = Symbol("EMBED_TOKENS");
 
 /** `OrgUiStreams`（组织级界面刷新 SSE）的注入令牌。 */
 export const ORG_UI_STREAMS = Symbol("ORG_UI_STREAMS");
+
+/** `PricesService`（模型价格表）的注入令牌。 */
+export const PRICES = Symbol("PRICES");
+
+/** `TrajectoryService`（轨迹查看器）的注入令牌。 */
+export const TRAJECTORIES = Symbol("TRAJECTORIES");
+
+/** `EvalSetsService`（评测集与用例）的注入令牌。 */
+export const EVAL_SETS = Symbol("EVAL_SETS");
+
+/** `EvalRunsService`（评测运行）的注入令牌。 */
+export const EVAL_RUNS = Symbol("EVAL_RUNS");
+
+/** `ModelPurposesService`（模型用途映射）的注入令牌。 */
+export const MODEL_PURPOSES = Symbol("MODEL_PURPOSES");
+
+/** `PluginInstalls`（插件包导入与安装记录）的注入令牌。 */
+export const PLUGIN_INSTALLS = Symbol("PLUGIN_INSTALLS");
+/** `PluginAdmin`（部署级插件列表、状态与网页批准权限，企业管理员）的注入令牌。 */
+export const PLUGIN_ADMIN = Symbol("PLUGIN_ADMIN");
+/** 部署级插件的安装 / 启用 / 停用 / 卸载（`PluginAdminOps`）。 */
+export const PLUGIN_ADMIN_OPS = Symbol("PLUGIN_ADMIN_OPS");
+/** 部署级插件配置（`DeploymentPluginConfigService`）。 */
+export const PLUGIN_DEPLOYMENT_CONFIGS = Symbol("PLUGIN_DEPLOYMENT_CONFIGS");
+/** 企业目录（`DirectoryService`）。 */
+export const DIRECTORY = Symbol("DIRECTORY");
+/** 应用包导入（AppImport）。 */
+export const APP_IMPORT = Symbol("APP_IMPORT");
+/** 目录来源（`CatalogsService`）。 */
+export const CATALOGS = Symbol("CATALOGS");
+/** 组织从企业目录浏览与安装（`OrgDirectoryService`）。 */
+export const ORG_DIRECTORY = Symbol("ORG_DIRECTORY");
+/** 目录申请与审批（`DirectoryRequestsService`）。 */
+export const DIRECTORY_REQUESTS = Symbol("DIRECTORY_REQUESTS");
+/** 应用的组织安装与卸载（`AppInstaller`）。 */
+export const APP_INSTALLER = Symbol("APP_INSTALLER");

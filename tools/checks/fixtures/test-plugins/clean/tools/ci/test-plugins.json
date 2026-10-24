@@ -1,0 +1,4 @@
+{
+  "$comment": "fixture",
+  "packages/core/test": ["alpha"]
+}

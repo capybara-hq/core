@@ -32,7 +32,7 @@ const instances: Maintenance[] = [];
 const log = createLogger("error", { write: () => {} });
 
 beforeAll(async () => {
-  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis({ shared: true })]);
   await migrate(pgc.url, {
     schema: "capybara",
     dir: fileURLToPath(new URL("../../src/migrations", import.meta.url)),

@@ -32,10 +32,15 @@ import {
   updateAgent,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
-import { type AppDetail, type AppSummary, getApp, listApps } from "../lib/apps";
+import {
+  type ConnectorDetail,
+  type ConnectorSummary,
+  getConnector,
+  listConnectors,
+} from "../lib/connectors";
 import type { ModelRef } from "../lib/conversations";
 import { useErrorMessage } from "../lib/use-error-message";
-import { OrgSkillsPicker, OwnSkills, useOrgSkills } from "./AgentSkills";
+import { OrgSkillsPicker, OwnSkills, SkillWriteSwitch, useOrgSkills } from "./AgentSkills";
 import { FormError } from "./form-error";
 import { ModelParams } from "./ModelParams";
 import { useSession } from "./shell/session";
@@ -43,9 +48,10 @@ import { useSession } from "./shell/session";
 const VISIBILITIES = ["private", "org"] as const satisfies readonly AgentVisibility[];
 const BUILTIN_SET = new Set<string>(BUILTIN_TOOLS);
 
-/** 修改时表单管不到的工具引用（插件工具、按名单选的应用工具、界面不列的内置工具）：原样保留。 */
+/** 修改时表单管不到的工具引用（插件工具、按名单选的连接器工具、界面不列的内置工具）：原样保留。 */
 const isFormTool = (r: AgentToolRef) =>
-  (r.kind === "builtin" && BUILTIN_SET.has(r.name)) || (r.kind === "app" && r.tools === "all");
+  (r.kind === "builtin" && BUILTIN_SET.has(r.name)) ||
+  (r.kind === "connector" && r.tools === "all");
 
 /** 由已有定义得到表单的初始值；新建时为默认值。 */
 function initialOf(existing: Agent | undefined) {
@@ -62,10 +68,13 @@ function initialOf(existing: Agent | undefined) {
     builtins: d
       ? tools.flatMap((r) => (r.kind === "builtin" && BUILTIN_SET.has(r.name) ? [r.name] : []))
       : [...DEFAULT_BUILTIN_TOOLS],
-    apps: tools.flatMap((r) => (r.kind === "app" && r.tools === "all" ? [r.appId] : [])),
+    apps: tools.flatMap((r) =>
+      r.kind === "connector" && r.tools === "all" ? [r.connectorId] : [],
+    ),
     extraTools: tools.filter((r) => !isFormTool(r)),
     policies: { ...(d?.toolPolicies ?? {}) } as Record<string, TightenedPolicy>,
     orgSkills: [...(d?.skills?.orgSkills ?? [])],
+    confirmSkillWrite: d?.skills?.writePolicy === "ask",
   };
 }
 
@@ -130,19 +139,20 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const [otherErrors, setOtherErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<AgentWarning[]>();
   const [builtins, setBuiltins] = useState<string[]>(initial.builtins);
-  const [apps, setApps] = useState<AppSummary[]>();
-  const [selectedApps, setSelectedApps] = useState<string[]>(initial.apps);
-  const [appDetails, setAppDetails] = useState<Record<string, AppDetail>>({});
+  const [apps, setApps] = useState<ConnectorSummary[]>();
+  const [selectedConnectors, setSelectedConnectors] = useState<string[]>(initial.apps);
+  const [connectorDetails, setConnectorDetails] = useState<Record<string, ConnectorDetail>>({});
   const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>(initial.policies);
   const orgSkills = useOrgSkills(orgId);
   const [skillIds, setSkillIds] = useState<string[]>(initial.orgSkills);
+  const [confirmSkillWrite, setConfirmSkillWrite] = useState(initial.confirmSkillWrite);
 
-  // 可选的应用（读不到时不提供应用工具，内置工具照常可选）
+  // 可选的连接器（读不到时不提供连接器工具，内置工具照常可选）
   useEffect(() => {
     let disposed = false;
-    listApps(orgId).then(
+    listConnectors(orgId).then(
       (r) => {
-        if (!disposed) setApps(r.apps.filter((a) => a.status === "active"));
+        if (!disposed) setApps(r.connectors.filter((a) => a.status === "active"));
       },
       () => {
         if (!disposed) setApps([]);
@@ -153,29 +163,31 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     };
   }, [orgId]);
 
-  // 应用的工具列表只用于收紧策略：读不到时只是不显示该应用的策略选项
-  const loadAppDetail = (appId: string) =>
-    getApp(orgId, appId).then(
-      ({ app }) => setAppDetails((d) => ({ ...d, [appId]: app })),
+  // 连接器的工具列表只用于收紧策略：读不到时只是不显示该连接器的策略选项
+  const loadConnectorDetail = (connectorId: string) =>
+    getConnector(orgId, connectorId).then(
+      ({ connector }) => setConnectorDetails((d) => ({ ...d, [connectorId]: connector })),
       () => {},
     );
 
-  // 修改时：已选应用的工具列表（策略选项要用）
+  // 修改时：已选连接器的工具列表（策略选项要用）
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在打开表单时读一次
   useEffect(() => {
-    for (const id of initial.apps) void loadAppDetail(id);
+    for (const id of initial.apps) void loadConnectorDetail(id);
   }, [orgId]);
 
-  function toggleApp(appId: string, on: boolean) {
-    setSelectedApps((cur) => (on ? [...cur, appId] : cur.filter((id) => id !== appId)));
-    if (on && appDetails[appId] === undefined) void loadAppDetail(appId);
+  function toggleConnector(connectorId: string, on: boolean) {
+    setSelectedConnectors((cur) =>
+      on ? [...cur, connectorId] : cur.filter((id) => id !== connectorId),
+    );
+    if (on && connectorDetails[connectorId] === undefined) void loadConnectorDetail(connectorId);
   }
 
-  /** 当前引用的工具 key（用于策略收紧）：内置工具名 + 已选应用中启用的工具。 */
+  /** 当前引用的工具 key（用于策略收紧）：内置工具名 + 已选连接器中启用的工具。 */
   const toolKeys = [
     ...builtins,
-    ...selectedApps.flatMap((id) =>
-      (appDetails[id]?.tools ?? []).filter((x) => x.status === "enabled").map((x) => x.key),
+    ...selectedConnectors.flatMap((id) =>
+      (connectorDetails[id]?.tools ?? []).filter((x) => x.status === "enabled").map((x) => x.key),
     ),
   ];
 
@@ -252,21 +264,25 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const canSubmit = !pending && providers !== undefined && !noModels;
 
   /**
-   * 保存的工具引用：表单里的内置工具与应用，加上修改时原样保留的其他引用。修改时按原定义的顺序保留仍选着的
+   * 保存的工具引用：表单里的内置工具与连接器，加上修改时原样保留的其他引用。修改时按原定义的顺序保留仍选着的
    * 引用、新加的排在后面——没改动的保存与原定义完全相同，不产生新版本。
    */
   function toolRefs(): AgentToolRef[] {
     const picked: AgentToolRef[] = [
       ...builtins.map((name) => ({ kind: "builtin" as const, name })),
-      ...selectedApps.map((appId) => ({ kind: "app" as const, appId, tools: "all" as const })),
+      ...selectedConnectors.map((connectorId) => ({
+        kind: "connector" as const,
+        connectorId,
+        tools: "all" as const,
+      })),
     ];
     if (!existing) return [...picked, ...initial.extraTools];
-    // 与键顺序无关的身份：内置按名字、应用按 id（表单只管这两种；其余引用总是保留，不参与比较）
+    // 与键顺序无关的身份：内置按名字、连接器按 id（表单只管这两种；其余引用总是保留，不参与比较）
     const keyOf = (r: AgentToolRef) =>
       r.kind === "builtin"
         ? `builtin:${r.name}`
-        : r.kind === "app"
-          ? `app:${r.appId}:${r.tools === "all" ? "*" : r.tools.join(",")}`
+        : r.kind === "connector"
+          ? `app:${r.connectorId}:${r.tools === "all" ? "*" : r.tools.join(",")}`
           : `plugin:${r.plugin}:${r.name}`;
     const pickedKeys = new Set(picked.map(keyOf));
     const kept = (existing.definition.tools ?? []).filter(
@@ -279,7 +295,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   /** 保存的策略：表单里当前引用的工具；修改时，表单管不到的工具（如保留的插件工具）的原有策略也带回。 */
   function toolPolicies(): Record<string, TightenedPolicy> {
     const managed = (k: string) =>
-      BUILTIN_SET.has(k) || Object.values(appDetails).some((a) => a.tools.some((x) => x.key === k));
+      BUILTIN_SET.has(k) ||
+      Object.values(connectorDetails).some((a) => a.tools.some((x) => x.key === k));
     return Object.fromEntries(
       Object.entries(policies).filter(([k]) => toolKeys.includes(k) || !managed(k)),
     );
@@ -307,8 +324,15 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     };
     // 不用技能的定义不带 skills（保存前后不变、不多一个版本）；原来带了就照实保存（含清空）
     // 合并而不是整个替换：skills 里表单不认识的键原样带回
-    if (skillIds.length > 0 || existing?.definition.skills !== undefined) {
-      definition.skills = { ...(existing?.definition.skills ?? {}), orgSkills: skillIds };
+    if (skillIds.length > 0 || confirmSkillWrite || existing?.definition.skills !== undefined) {
+      const skills = { ...(existing?.definition.skills ?? {}), orgSkills: skillIds };
+      // writePolicy：只在开关被改动时写；关闭 = 去掉键（缺省即 allow，不写进定义）。
+      // 开关只对私有 agent 显示，但值保留在定义里（改回私有时仍生效）
+      if (confirmSkillWrite !== initial.confirmSkillWrite) {
+        if (confirmSkillWrite) skills.writePolicy = "ask";
+        else delete skills.writePolicy;
+      }
+      definition.skills = skills;
     }
     setPending(true);
     setError(undefined);
@@ -364,9 +388,11 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             !sameJson(modelParams, initial.modelParams),
             !sameJson(fallbackParams, initial.fallbackParams),
             !sameJson([...builtins].sort(), [...initial.builtins].sort()),
-            !sameJson([...selectedApps].sort(), [...initial.apps].sort()),
+            !sameJson([...selectedConnectors].sort(), [...initial.apps].sort()),
             !sameJson(policies, initial.policies),
             !sameJson(skillIds, initial.orgSkills),
+            // 开关只对私有 agent 显示：共享时不计入改动数
+            visibility === "private" && confirmSkillWrite !== initial.confirmSkillWrite,
           ].filter(Boolean).length
         : [
             name.trim() !== "",
@@ -376,9 +402,10 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
           ].filter(Boolean).length +
           Object.keys(modelParams).length +
           Object.keys(fallbackParams).length +
-          selectedApps.length +
+          selectedConnectors.length +
           Object.keys(policies).length +
-          skillIds.length;
+          skillIds.length +
+          (visibility === "private" && confirmSkillWrite ? 1 : 0);
 
   const anchors: AgentFormView["anchors"] = [
     { id: "basic", label: t("form.basicSection"), error: nameError },
@@ -510,22 +537,22 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
               </Stack>
             </div>
             {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}
-            <div role="group" aria-label={t("form.appsLabel")}>
+            <div role="group" aria-label={t("form.connectorsLabel")}>
               <Stack gap={4}>
                 <Text variant="small" tone="muted">
-                  {t("form.appsLabel")}
+                  {t("form.connectorsLabel")}
                 </Text>
                 {apps !== undefined && apps.length === 0 && (
                   <Text variant="small" tone="faint">
-                    {t("form.noApps")}
+                    {t("form.noConnectors")}
                   </Text>
                 )}
                 {(apps ?? []).map((a) => (
                   <Checkbox
                     key={a.id}
-                    label={t("form.appTools", { name: a.name })}
-                    checked={selectedApps.includes(a.id)}
-                    onChange={(on) => toggleApp(a.id, on)}
+                    label={t("form.connectorTools", { name: a.name })}
+                    checked={selectedConnectors.includes(a.id)}
+                    onChange={(on) => toggleConnector(a.id, on)}
                   />
                 ))}
               </Stack>
@@ -567,6 +594,9 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             description={t("form.skillsSectionHint")}
           >
             <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={setSkillIds} />
+            {visibility === "private" && (
+              <SkillWriteSwitch value={confirmSkillWrite} onChange={setConfirmSkillWrite} />
+            )}
             {existing && (
               <OwnSkills
                 orgId={orgId}

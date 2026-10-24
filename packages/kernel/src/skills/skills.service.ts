@@ -8,11 +8,13 @@ import {
   skillFilesPrefix,
 } from "../conversations/attachments.service.js";
 import type { KernelDatabase, KernelDb, SkillManifest } from "../db/kernel-schema.js";
+import { assertItemInstallable } from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { assertCustomAllowed } from "../identity/settings.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import type { StorageService } from "../storage/storage.service.js";
-import { readSkillPackage } from "./package.js";
+import { readSkillPackage, type SkillPackageFile } from "./package.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -158,6 +160,8 @@ export class SkillsService {
     accountId: string,
     input: { name: string; size: number },
   ): Promise<CreatedAttachment> {
+    // 部署设置 customSkills 为 deny：组织只能从企业目录安装技能（C22）
+    await assertCustomAllowed(this.d.db, "customSkills");
     return this.d.attachments.create(
       orgId,
       accountId,
@@ -201,8 +205,41 @@ export class SkillsService {
         .executeTakeFirstOrThrow();
       return { skill: summary(row), version: done.version, created: done.version === 1 };
     }
+    // 自建被禁止时先拒绝（事务里再复核一次）
+    await assertCustomAllowed(this.d.db, "customSkills");
     const zip = await this.d.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
     const pkg = await readSkillPackage(zip);
+    return this.createVersionFromFiles(orgId, actorAccountId, pkg, {
+      prefix,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      inTransaction: async (t) => {
+        await assertCustomAllowed(t, "customSkills");
+        await this.d.attachments.consumeSkillPackage(t, orgId, actorAccountId, uploadId);
+      },
+    });
+  }
+
+  /**
+   * 用一组已校验的技能文件创建组织技能或给同名技能新增版本（上传与企业目录安装共用）：
+   * 1. 把文件写到 `kernel/<orgId>/<prefix>`（缺省 `skills/<新 id>/`）；
+   * 2. 一个事务里：锁组织行并复核 `skills.manage`，执行 `inTransaction`（上传：标记上传已用；目录：按条目策略复核），
+   *    同名未删除的组织技能存在则 `current_version + 1`，否则新建；技能与版本都记下 `directory` 来源（没有则清空：
+   *    自定义上传盖在目录技能上就不再算目录安装），写版本与审计
+   *    （`skill.created` / `skill.version_created`，目录安装时 detail 带 directory）。
+   */
+  async createVersionFromFiles(
+    orgId: string,
+    actorAccountId: string,
+    pkg: { name: string; description: string; files: SkillPackageFile[] },
+    opts: {
+      prefix?: string;
+      actorTokenId?: string;
+      inTransaction?: (t: Trx) => Promise<void>;
+      directory?: { itemId: string; version: string };
+    } = {},
+  ): Promise<UploadedSkill> {
+    this.d.storage.assertAvailable();
+    const prefix = opts.prefix ?? skillFilesPrefix(randomUUID());
     const store = this.d.storage.kernel(orgId);
     const queue = [...pkg.files];
     await Promise.all(
@@ -220,9 +257,11 @@ export class SkillsService {
       description: pkg.description,
       files: pkg.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
     };
+    const actorTokenId = opts.actorTokenId;
     return this.d.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "skills.manage");
-      await this.d.attachments.consumeSkillPackage(t, orgId, actorAccountId, uploadId);
+      if (opts.directory) await assertItemInstallable(t, orgId, opts.directory.itemId);
+      await opts.inTransaction?.(t);
       const existing = await t
         .selectFrom("skills")
         .select(["id", "current_version"])
@@ -234,10 +273,20 @@ export class SkillsService {
         .executeTakeFirst();
       const id = existing?.id ?? randomUUID();
       const version = (existing?.current_version ?? 0) + 1;
+      // 来源跟着最新版本走：目录安装记条目与版本，自定义上传清掉（内容已不是目录里的那份）
+      const provenance = {
+        directory_item_id: opts.directory?.itemId ?? null,
+        directory_version: opts.directory?.version ?? null,
+      };
       if (existing) {
         await t
           .updateTable("skills")
-          .set({ current_version: version, description: pkg.description, updated_at: sql`now()` })
+          .set({
+            current_version: version,
+            description: pkg.description,
+            ...provenance,
+            updated_at: sql`now()`,
+          })
           .where("id", "=", id)
           .execute();
       } else {
@@ -252,6 +301,7 @@ export class SkillsService {
             description: pkg.description,
             current_version: 1,
             created_by: actorAccountId,
+            ...provenance,
           })
           .execute();
       }
@@ -263,6 +313,7 @@ export class SkillsService {
           manifest: JSON.stringify(manifest),
           object_prefix: prefix,
           created_by: actorAccountId,
+          ...provenance,
         })
         .execute();
       await audit(t, {
@@ -271,7 +322,12 @@ export class SkillsService {
         orgId,
         action: existing ? "skill.version_created" : "skill.created",
         target: id,
-        detail: { name: pkg.name, version, files: manifest.files.length },
+        detail: {
+          name: pkg.name,
+          version,
+          files: manifest.files.length,
+          ...(opts.directory && { directory: opts.directory }),
+        },
       });
       const row = await t
         .selectFrom("skills")
@@ -280,6 +336,92 @@ export class SkillsService {
         .executeTakeFirstOrThrow();
       return { skill: summary(row), version, created: !existing };
     });
+  }
+
+  /**
+   * 在调用方事务里撤销应用安装给已有技能加的版本（调用方已锁组织行）：只有当前版本仍是 `version` 时才退回上一版本并删掉
+   * 该版本行（之后又有新版本则不动，返回 false），技能的描述与目录来源也退回上一版本的。审计 `skill.version_reverted`。
+   */
+  async revertVersionIn(
+    t: Trx,
+    orgId: string,
+    skillId: string,
+    version: number,
+    actorAccountId: string,
+    reason: string,
+  ): Promise<boolean> {
+    const row = await t
+      .selectFrom("skills")
+      .select(["current_version", "name"])
+      .where("id", "=", skillId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.current_version !== version || version <= 1) return false;
+    const prev = await t
+      .selectFrom("skill_versions")
+      .select(["manifest", "directory_item_id", "directory_version"])
+      .where("skill_id", "=", skillId)
+      .where("version", "=", version - 1)
+      .executeTakeFirst();
+    await t
+      .updateTable("skills")
+      .set({
+        current_version: version - 1,
+        ...(prev && {
+          description: prev.manifest.description,
+          directory_item_id: prev.directory_item_id,
+          directory_version: prev.directory_version,
+        }),
+        updated_at: sql`now()`,
+      })
+      .where("id", "=", skillId)
+      .execute();
+    await t
+      .deleteFrom("skill_versions")
+      .where("skill_id", "=", skillId)
+      .where("version", "=", version)
+      .execute();
+    await audit(t, {
+      actorAccountId,
+      orgId,
+      action: "skill.version_reverted",
+      target: skillId,
+      detail: { name: row.name, version, reason },
+    });
+    return true;
+  }
+
+  /**
+   * 在调用方事务里软删除组织技能（调用方已锁组织行；应用安装的回滚与卸载用）。审计 `skill.deleted`（带 reason）。
+   * 已删除 / 不存在时返回 false。
+   */
+  async softDeleteIn(
+    t: Trx,
+    orgId: string,
+    skillId: string,
+    actorAccountId: string,
+    reason: string,
+  ): Promise<boolean> {
+    const r = await t
+      .updateTable("skills")
+      .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
+      .where("id", "=", skillId)
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .returning(["name"])
+      .executeTakeFirst();
+    if (!r) return false;
+    await audit(t, {
+      actorAccountId,
+      orgId,
+      action: "skill.deleted",
+      target: skillId,
+      detail: { name: r.name, reason },
+    });
+    return true;
   }
 
   /** 组织技能库（`scope=org`、未删除），按名字排序。 */
