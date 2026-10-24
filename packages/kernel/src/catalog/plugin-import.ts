@@ -31,13 +31,13 @@ import {
   WARNINGS_KEY_PREFIX,
 } from "../extensions/permission-set.js";
 import {
+  reviewHash as extensionReviewHash,
   migrationWarnings,
   type PackageWarning,
   type PermissionGroup,
   type PermissionItem,
   permissionGroups,
   permissionKeyItems,
-  reviewHash as pluginReviewHash,
 } from "../extensions/permission-view.js";
 import type { ExtensionSource } from "../extensions/sources.js";
 import { audit } from "../identity/audit.js";
@@ -69,14 +69,15 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  *
  * **Where the plugin packages come from**: an app bundle carries no plugin tgz; `app.yaml` references
  * plugins by npm name + lock (exact version + sha512). prepare fetches each `lock.version` from the
- * configured npm registry and verifies it against `lock.integrity` (`app.lock_mismatch`), never npm
+ * configured npm registry and verifies it against `lock.integrity` (`plugin.lock_mismatch`), never
+ * npm
  * metadata. So the bundle stays small, the plugin packages are exactly the same as when installed on
  * their own (content-addressed, same sha256), and the supply chain rests on the sha512 the app author
  * locked; the cost is that importing needs access to an npm registry (**offline deployments must
  * configure an npm mirror / private registry** `packages.npmRegistry`, otherwise app imports are not
  * available). The total bytes of one import (the bundle + every plugin package, all in memory during
  * validation) are limited by `directory.maxBundleBytes` (default 4 × `packages.maxBytes`); over it ->
- * 413 `app.bundle_too_large`.
+ * 413 `plugin.bundle_too_large`.
  *
  * prepare: the bundle is always treated as hostile input, and **nothing is written until every
  * component passes** (F-AD): unpacking (the same limits as catalog packages), `app.yaml` (SDK
@@ -84,7 +85,8 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  * skill package rules, connector templates (checked against the connector plugin's `endpointSchema`
  * when it is loaded on this replica, otherwise static rules only; org install in T26 checks again
  * against the connector of the moment), each plugin's deployment state (builtin / config-declared
- * outside the range -> `app.plugin_conflict`; name ownership) and the download check (all downloads
+ * outside the range -> `plugin.extension_conflict`; name ownership) and the download check (all
+ * downloads
  * kept in memory, each package read to check name, version and npm name), downgrade to a version with
  * unrun migrations (`extension.downgrade_unsupported`) all happen before writing; only then are the
  * plugins handed to `ExtensionInstalls.ingest` (source `catalog`), app.yaml, the icon and skill files
@@ -94,7 +96,7 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  *
  * confirm: `reviewHash` must match the staging; in one transaction it deletes the staging row (confirm
  * works once), locks by plugin name and recomputes against the deployment state of the moment
- * (a plugin installed / upgraded / swapped after the review -> `app.review_stale`), re-checks
+ * (a plugin installed / upgraded / swapped after the review -> `plugin.review_stale`), re-checks
  * downgrades, writes snapshots for plugins whose action is install (source web, audit
  * `extension.permissions_approved` carrying `app`), with `deployPlugins` also for upgrade plugins
  * (not without deploying: a snapshot must match the version actually running, F-O), and creates /
@@ -105,20 +107,20 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  * upgrade that was not installed gets its old snapshot back (see `deploy`).
  *
  * Expired staging is cleaned by the maintenance job `app-staging-cleanup`
- * ({@link AppImport.cleanupExpired}): it deletes the staging row and its object prefix; stored
+ * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix; stored
  * extension packages stay in the content-addressed `extension_packages` (the same as importing the
  * same tgz again; without an install record referencing them they are never loaded).
  */
 
 /** 暂存保留时长。 */
-export const APP_STAGING_TTL_MS = 24 * 3600_000;
+export const PLUGIN_STAGING_TTL_MS = 24 * 3600_000;
 /** 同时下载的插件包数。 */
 const FETCH_CONCURRENCY = 4;
 /** 一次清理的暂存行数上限。 */
 const CLEANUP_BATCH = 100;
 
 /** 审阅里的一个插件。 */
-export interface AppReviewPlugin {
+export interface PluginReviewExtension {
   name: string;
   npm: string;
   /** app.yaml 里的版本范围。 */
@@ -148,12 +150,12 @@ export interface AppReviewPlugin {
 }
 
 /** 应用包的审阅（企业管理员一次看完全部插件权限、敏感项与迁移警告）。 */
-export interface AppReview {
+export interface PluginReview {
   name: string;
   version: string;
   publisher: string;
   description: string;
-  plugins: AppReviewPlugin[];
+  plugins: PluginReviewExtension[];
   connectorTemplates: {
     id: string;
     plugin: string;
@@ -172,7 +174,7 @@ export interface AppReview {
 }
 
 /** `deployPlugins` 时每个插件的部署结果。 */
-export interface AppDeployResult {
+export interface PluginDeployResult {
   name: string;
   action: "install" | "upgrade";
   version: string;
@@ -186,10 +188,13 @@ export interface AppDeployResult {
   note?: string;
 }
 
-/** {@link AppImport.confirm} 的结果：已提交的条目，以及（`deployPlugins` 时）每个插件的部署结果。 */
-export interface AppConfirmResult {
+/**
+ * The result of {@link PluginImport.confirm}: the committed item and (with `deployPlugins`) the
+ * deploy result of each extension.
+ */
+export interface PluginConfirmResult {
   item: CatalogItemView;
-  deploy: AppDeployResult[] | null;
+  deploy: PluginDeployResult[] | null;
 }
 
 /** 确认时被覆盖的快照（部署失败时恢复）。 */
@@ -224,7 +229,7 @@ interface StagedBundle {
  * The source of a prepare (HTTP only passes file / npm; CatalogService adds the marketplace for a
  * marketplace import).
  */
-export interface AppPrepareSource {
+export interface PluginPrepareSource {
   kind: "file" | "npm" | "marketplace";
   ref: string;
   integrity?: string;
@@ -237,7 +242,7 @@ export interface AppPrepareSource {
   marketplace?: { sourceId: string; name: string };
 }
 
-export interface AppImportDeps {
+export interface PluginImportDeps {
   db: KernelDb;
   config: () => KernelConfig;
   storage: StorageService;
@@ -257,12 +262,12 @@ export interface AppImportDeps {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () =>
   new ApiError(
-    "app.staging_not_found",
+    "plugin.staging_not_found",
     "This app import was not found or has expired (staged imports are kept for 24 hours); prepare it again",
   );
 const invalid = (problems: string[]) =>
   new ApiError(
-    "app.invalid_manifest",
+    "plugin.invalid_manifest",
     `Invalid app package: ${problems[0] ?? "unknown problem"}`,
     problems.slice(0, 50),
   );
@@ -272,7 +277,7 @@ export const maxBundleBytes = (c: KernelConfig): number =>
   c.directory.maxBundleBytes ?? 4 * c.packages.maxBytes;
 const bundleTooLarge = (cap: number) =>
   new ApiError(
-    "app.bundle_too_large",
+    "plugin.bundle_too_large",
     `The app package and the plugin packages it locks are larger than ${cap} bytes in total (directory.maxBundleBytes)`,
   );
 
@@ -287,16 +292,16 @@ type PluginState =
   | { kind: "installed"; version: string; sha256: string; packageName: string }
   | { kind: "absent" };
 
-export class AppImport {
-  constructor(private readonly d: AppImportDeps) {}
+export class PluginImport {
+  constructor(private readonly d: PluginImportDeps) {}
 
   /** 解析、校验整个应用包并暂存（见文件头）。返回暂存 id 与审阅。 */
   async prepare(
     actor: string,
     bytes: Uint8Array,
-    source: AppPrepareSource,
+    source: PluginPrepareSource,
     opts: ActorOpts = {},
-  ): Promise<{ stagingId: string; review: AppReview; permissionKeys: string[] }> {
+  ): Promise<{ stagingId: string; review: PluginReview; permissionKeys: string[] }> {
     const maxBytes = this.d.config().packages.maxBytes;
     if (bytes.byteLength > maxBundleBytes(this.d.config())) {
       throw bundleTooLarge(maxBundleBytes(this.d.config()));
@@ -348,7 +353,7 @@ export class AppImport {
       const pkg = (fetched[i] as { pkg: ExtensionPackage }).pkg;
       await assertDowngradable(this.d.db, p, pkg.migrationSql);
     }
-    const review: AppReview = {
+    const review: PluginReview = {
       name: manifest.name,
       version,
       publisher: manifest.publisher,
@@ -359,7 +364,7 @@ export class AppImport {
       sensitive: reviewPlugins.some((p) => p.sensitive),
       reviewHash: "",
     };
-    review.reviewHash = appReviewHash(review, content.files);
+    review.reviewHash = pluginReviewHash(review, content.files);
     // 写之前在锁内复核发起人仍是企业管理员
     await this.d.db.transaction().execute((trx) => lockEnterpriseAdminsAndAuthorize(trx, actor));
 
@@ -403,7 +408,7 @@ export class AppImport {
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       await trx
-        .insertInto("app_import_staging")
+        .insertInto("plugin_import_staging")
         .values({
           id: stagingId,
           review: JSON.stringify(review),
@@ -411,7 +416,7 @@ export class AppImport {
           object_prefix: objectPrefix,
           source: JSON.stringify(src),
           created_by: actor,
-          expires_at: new Date(Date.now() + APP_STAGING_TTL_MS),
+          expires_at: new Date(Date.now() + PLUGIN_STAGING_TTL_MS),
         })
         .execute();
       await audit(trx, {
@@ -451,7 +456,7 @@ export class AppImport {
     actor: string,
     input: { package: string; version?: string },
     opts: ActorOpts = {},
-  ): Promise<{ stagingId: string; review: AppReview }> {
+  ): Promise<{ stagingId: string; review: PluginReview }> {
     const got = await this.d.installs.fetchNpm(input);
     const r = await this.prepare(
       actor,
@@ -469,28 +474,28 @@ export class AppImport {
 
   /**
    * 确认导入（见文件头）。返回已提交的目录条目，`deployPlugins` 时另有每个插件的部署结果（部署失败不抛错，见
-   * {@link AppDeployResult}）。
+   * {@link PluginDeployResult}）。
    */
   async confirm(
     actor: string,
     stagingId: string,
     input: { reviewHash: string; deployPlugins: boolean },
     opts: ActorOpts = {},
-  ): Promise<AppConfirmResult> {
+  ): Promise<PluginConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
     const row = await this.d.db
-      .selectFrom("app_import_staging")
+      .selectFrom("plugin_import_staging")
       .selectAll()
       .where("id", "=", stagingId)
       .where("expires_at", ">", sql<Date>`now()`)
       .executeTakeFirst();
     if (!row) throw notFound();
-    const review = row.review as AppReview;
+    const review = row.review as PluginReview;
     const staged = row.bundle as StagedBundle;
     const src = row.source as StagingSource;
     const stale = () =>
       new ApiError(
-        "app.review_stale",
+        "plugin.review_stale",
         `The review of app ${review.name} ${review.version} is out of date (it changed, or plugins on this deployment changed since it was prepared); review it again`,
       );
     if (input.reviewHash !== review.reviewHash) throw stale();
@@ -503,7 +508,7 @@ export class AppImport {
     const committed = await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const used = await trx
-        .deleteFrom("app_import_staging")
+        .deleteFrom("plugin_import_staging")
         .where("id", "=", stagingId)
         .where("expires_at", ">", sql<Date>`now()`)
         .returning("id")
@@ -517,11 +522,11 @@ export class AppImport {
         );
       }
       const states = await this.pluginStates(staged.manifest, trx);
-      const now: AppReviewPlugin[] = review.plugins.map((p, i) => ({
+      const now: PluginReviewExtension[] = review.plugins.map((p, i) => ({
         ...p,
         ...actionOf(states[i] as PluginState, p.range, p.name),
       }));
-      if (appReviewHash({ ...review, plugins: now }, staged.files) !== review.reviewHash) {
+      if (pluginReviewHash({ ...review, plugins: now }, staged.files) !== review.reviewHash) {
         throw stale();
       }
       // 可预见的部署失败（降级到有未执行迁移的版本）在写任何东西之前拒绝
@@ -654,13 +659,13 @@ export class AppImport {
    */
   private async deploy(
     actor: string,
-    review: AppReview,
+    review: PluginReview,
     itemId: string,
-    plugins: AppReviewPlugin[],
+    plugins: PluginReviewExtension[],
     previous: Map<string, PreviousSnapshot | null>,
     opts: ActorOpts,
-  ): Promise<AppDeployResult[]> {
-    const results: AppDeployResult[] = [];
+  ): Promise<PluginDeployResult[]> {
+    const results: PluginDeployResult[] = [];
     const failure = (e: unknown) =>
       e instanceof ApiError
         ? { code: e.code as string, message: e.message }
@@ -695,7 +700,7 @@ export class AppImport {
               opts,
             );
             if (!restored) {
-              (results.at(-1) as AppDeployResult).note =
+              (results.at(-1) as PluginDeployResult).note =
                 "snapshot_not_restored: the permission approval changed after the import was confirmed, so it was left as it is";
             }
           } catch (err) {
@@ -728,8 +733,8 @@ export class AppImport {
    */
   private async restoreSnapshot(
     actor: string,
-    review: AppReview,
-    p: AppReviewPlugin,
+    review: PluginReview,
+    p: PluginReviewExtension,
     prev: PreviousSnapshot | null,
     opts: ActorOpts,
   ): Promise<boolean> {
@@ -770,7 +775,7 @@ export class AppImport {
         detail: {
           plugin: p.name,
           restoredVersion: prev?.version ?? null,
-          reason: "app_deploy_failed",
+          reason: "plugin_deploy_failed",
           app: { name: review.name, version: review.version },
         },
       });
@@ -786,7 +791,7 @@ export class AppImport {
     let total = 0;
     for (;;) {
       const batch = await this.d.db
-        .selectFrom("app_import_staging")
+        .selectFrom("plugin_import_staging")
         .select(["id", "object_prefix"])
         .where("expires_at", "<=", sql<Date>`now()`)
         .orderBy("expires_at")
@@ -798,7 +803,7 @@ export class AppImport {
         try {
           const done = await this.d.db.transaction().execute(async (trx) => {
             const locked = await trx
-              .selectFrom("app_import_staging")
+              .selectFrom("plugin_import_staging")
               .select("id")
               .where("id", "=", r.id)
               .where("expires_at", "<=", sql<Date>`now()`)
@@ -807,7 +812,7 @@ export class AppImport {
               .executeTakeFirst();
             if (!locked) return false;
             if (r.object_prefix) await this.d.storage.deployment().deletePrefix(r.object_prefix);
-            await trx.deleteFrom("app_import_staging").where("id", "=", r.id).execute();
+            await trx.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
             return true;
           });
           if (done) {
@@ -852,8 +857,8 @@ export class AppImport {
     m: AppManifest,
   ): {
     files: SkillPackageFile[];
-    templates: AppReview["connectorTemplates"];
-    skills: AppReview["skills"];
+    templates: PluginReview["connectorTemplates"];
+    skills: PluginReview["skills"];
   } {
     const problems: string[] = [];
     const byPath = new Map(u.files.map((f) => [f.path, f]));
@@ -875,7 +880,7 @@ export class AppImport {
     if (m.icon !== undefined) icon(m.icon, "icon");
 
     const listed = new Set(m.plugins.map((p) => p.name));
-    const templates: AppReview["connectorTemplates"] = m.connectorTemplates.map((c, i) => {
+    const templates: PluginReview["connectorTemplates"] = m.connectorTemplates.map((c, i) => {
       const at = `connectorTemplates.${i}.template`;
       const t: ConnectorTemplateSpec = c.template;
       if (t.icon !== undefined) icon(t.icon, `${at}.icon`);
@@ -906,7 +911,7 @@ export class AppImport {
       };
     });
 
-    const skills: AppReview["skills"] = [];
+    const skills: PluginReview["skills"] = [];
     const names = new Set<string>();
     m.skills.forEach((s, i) => {
       const dir = `${s.path}/`;
@@ -937,7 +942,7 @@ export class AppImport {
     return { files: [...stored.values()], templates, skills };
   }
 
-  /** Each plugin's state on the deployment; builtin / config-declared but outside the range -> `app.plugin_conflict`; name owned by another package -> `extension.name_conflict`. */
+  /** Each plugin's state on the deployment; builtin / config-declared but outside the range -> `plugin.extension_conflict`; name owned by another package -> `extension.name_conflict`. */
   private async pluginStates(
     m: AppManifest,
     db: KernelDb | Trx = this.d.db,
@@ -967,7 +972,7 @@ export class AppImport {
       if (d) {
         if (!satisfies(d.version, p.version)) {
           throw new ApiError(
-            "app.plugin_conflict",
+            "plugin.extension_conflict",
             `Plugin ${p.name} is ${d.source === "builtin" ? "built into this deployment" : "declared in the startup config"} at version ${d.version}, which does not satisfy the app's range ${p.version}`,
           );
         }
@@ -1065,7 +1070,7 @@ export class AppImport {
     m: AppManifest,
     states: PluginState[],
     fetched: { pkg: ExtensionPackage }[],
-  ): Promise<AppReviewPlugin[]> {
+  ): Promise<PluginReviewExtension[]> {
     const snaps = await this.d.db
       .selectFrom("extension_permission_snapshots")
       .select(["plugin", "permissions"])
@@ -1091,7 +1096,7 @@ export class AppImport {
         addedItems: permissionKeyItems(added),
         removed,
         warnings,
-        reviewHash: pluginReviewHash(set, warnings),
+        reviewHash: extensionReviewHash(set, warnings),
         sensitive: permissions.some((g) => g.sensitive) || warnings.length > 0,
       };
     });
@@ -1124,11 +1129,11 @@ function actionOf(
   s: PluginState,
   range: string,
   name: string,
-): Pick<AppReviewPlugin, "action" | "currentVersion" | "currentSha256"> {
+): Pick<PluginReviewExtension, "action" | "currentVersion" | "currentSha256"> {
   if (s.kind === "declared") {
     if (!satisfies(s.version, range)) {
       throw new ApiError(
-        "app.plugin_conflict",
+        "plugin.extension_conflict",
         `Plugin ${name} is declared by this deployment at version ${s.version}, which does not satisfy the app's range ${range}`,
       );
     }
@@ -1148,8 +1153,8 @@ function actionOf(
  * 应用审阅的总摘要（sha256 前 32 位十六进制）：应用名与版本、每个插件的名字 / sha256 / action / 当前版本 /
  * 当前安装的包（keep / upgrade 的已装插件换了包也算变化）/ 该插件的 reviewHash、每个模板的全部字段、每个技能的名字与路径，以及要存的每个文件的 sha256。
  */
-function appReviewHash(
-  r: Pick<AppReview, "name" | "version" | "plugins" | "connectorTemplates" | "skills">,
+function pluginReviewHash(
+  r: Pick<PluginReview, "name" | "version" | "plugins" | "connectorTemplates" | "skills">,
   files: { path: string; sha256: string }[],
 ): string {
   const canonical = JSON.stringify([
@@ -1185,7 +1190,7 @@ function appReviewHash(
  */
 async function assertDowngradable(
   db: KernelDb | Trx,
-  p: Pick<AppReviewPlugin, "name" | "action" | "lockVersion" | "currentVersion">,
+  p: Pick<PluginReviewExtension, "name" | "action" | "lockVersion" | "currentVersion">,
   migrationSql: { file: string; sql: string }[],
 ): Promise<void> {
   if (p.action !== "upgrade" || p.currentVersion === null) return;

@@ -94,11 +94,11 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
     ).installs;
     expect(view).toMatchObject({ id: installId, status: "installed" });
     expect(view?.components).toHaveLength(4);
-    expect(await auditActions(env)).toContain("app.installed");
+    expect(await auditActions(env)).toContain("plugin.org_installed");
     // 同一应用不能再装
     const again = await install(env.boss, env, appId, appBody());
     expect(again.statusCode).toBe(409);
-    expect(again.json().error.code).toBe("app.already_installed");
+    expect(again.json().error.code).toBe("plugin.already_installed");
   });
 
   it("建连接器那一步失败：已启用的插件被撤销，安装记 failed（只含步骤与错误码），可以重装", async () => {
@@ -106,7 +106,7 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
     const appId = await seedApp(env);
     const r = await install(env.boss, env, appId, appBody("wrong-token"));
     expect(r.statusCode, r.body).toBe(502);
-    expect(r.json().error.code).toBe("app.install_failed");
+    expect(r.json().error.code).toBe("plugin.install_failed");
     expect(r.json().error.details[0]).toMatchObject({
       step: "connectors",
       code: "connector.connect_failed",
@@ -117,14 +117,14 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
     expect(await liveConnectors()).toHaveLength(0);
     expect(await liveSkills()).toHaveLength(0);
     const row = await env.db
-      .selectFrom("app_installs")
+      .selectFrom("plugin_installs")
       .select(["status", "error"])
       .executeTakeFirstOrThrow();
     expect(row).toEqual({
       status: "failed",
       error: { step: "connectors", code: "connector.connect_failed" },
     });
-    expect(await auditActions(env)).toContain("app.install_failed");
+    expect(await auditActions(env)).toContain("plugin.org_install_failed");
     const ok = await install(env.boss, env, appId, appBody());
     expect(ok.statusCode, ok.body).toBe(201);
   });
@@ -173,7 +173,7 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/app-installs/00000000-0000-4000-8000-000000000000`,
     });
     expect(del.statusCode).toBe(404);
-    expect(del.json().error.code).toBe("app.install_not_found");
+    expect(del.json().error.code).toBe("plugin.install_not_found");
   });
 });
 
@@ -221,9 +221,9 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     expect(report.kept).toEqual(
       expect.arrayContaining([
         { kind: "connector", ref: conn?.id, reason: "used_by_agents" },
-        { kind: "plugin", ref: "example-counter", reason: "pre_existing" },
-        { kind: "plugin", ref: "todo", reason: "used_by_other_install" },
-        { kind: "plugin", ref: "connector-mcp", reason: "used_by_connectors" },
+        { kind: "extension", ref: "example-counter", reason: "pre_existing" },
+        { kind: "extension", ref: "todo", reason: "used_by_other_install" },
+        { kind: "extension", ref: "connector-mcp", reason: "used_by_connectors" },
       ]),
     );
     expect(report.kept).toHaveLength(4);
@@ -233,7 +233,7 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     const audit = await env.db
       .selectFrom("audit_events")
       .select("detail")
-      .where("action", "=", "app.uninstalled")
+      .where("action", "=", "plugin.org_uninstalled")
       .executeTakeFirstOrThrow();
     expect(audit.detail).toMatchObject({ removed: report.removed });
     const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/app-installs` });
@@ -245,7 +245,9 @@ describe("应用卸载", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/app-installs/${rb.json().installed.appInstallId}`,
     });
     expect(delB.json().kept).toEqual([]);
-    expect(delB.json().removed).toEqual(expect.arrayContaining([{ kind: "plugin", ref: "todo" }]));
+    expect(delB.json().removed).toEqual(
+      expect.arrayContaining([{ kind: "extension", ref: "todo" }]),
+    );
     expect(delB.json().removed).toHaveLength(2);
     expect(await liveSkills()).toEqual([]);
     expect(await enabledPlugins()).toEqual(["connector-mcp", "example-counter"]);
@@ -298,13 +300,13 @@ describe("应用卸载", { timeout: 60_000 }, () => {
       expect(second.kept).toEqual([]);
       expect(second.removed).toEqual(
         expect.arrayContaining([
-          { kind: "plugin", ref: "todo" },
+          { kind: "extension", ref: "todo" },
           { kind: "skill", ref: skill?.id },
         ]),
       );
       expect(await enabledPlugins()).toEqual([]);
       expect(await liveSkills()).toEqual([]);
-      expect(await env.db.selectFrom("app_installs").select("id").execute()).toEqual([]);
+      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
     });
   }
 
@@ -314,7 +316,7 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     const id = r.json().installed.appInstallId as string;
     // 模拟副本在安装中途崩溃：记录停在 installing
     await env.db
-      .updateTable("app_installs")
+      .updateTable("plugin_installs")
       .set({ status: "installing" })
       .where("id", "=", id)
       .execute();
@@ -323,11 +325,13 @@ describe("应用卸载", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/app-installs/${id}`,
     });
     expect(fresh.statusCode).toBe(409);
-    expect(fresh.json().error.code).toBe("app.install_in_progress");
+    expect(fresh.json().error.code).toBe("plugin.install_in_progress");
     // 同一应用此时不能再装（未失败的安装还在）
-    expect((await install(env.boss, env, appId)).json().error.code).toBe("app.already_installed");
+    expect((await install(env.boss, env, appId)).json().error.code).toBe(
+      "plugin.already_installed",
+    );
     await env.db
-      .updateTable("app_installs")
+      .updateTable("plugin_installs")
       .set({ installed_at: new Date(Date.now() - 31 * 60_000) })
       .where("id", "=", id)
       .execute();
@@ -343,7 +347,7 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     const again = await install(env.boss, env, appId);
     expect(again.statusCode, again.body).toBe(201);
     await env.db
-      .updateTable("app_installs")
+      .updateTable("plugin_installs")
       .set({ status: "failed" })
       .where("id", "=", again.json().installed.appInstallId)
       .execute();
@@ -352,7 +356,7 @@ describe("应用卸载", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/app-installs/${again.json().installed.appInstallId}`,
     });
     expect(failed.statusCode, failed.body).toBe(200);
-    expect(await env.db.selectFrom("app_installs").select("id").execute()).toEqual([]);
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
   });
 
   it("清理 failed 安装不重复回滚：之后手动重新启用的插件、新传的技能版本都不动", async () => {
@@ -383,13 +387,13 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     expect(failed.statusCode, failed.body).toBe(502);
     // 回滚成功的组件行已删掉
     const row = await env.db
-      .selectFrom("app_installs")
+      .selectFrom("plugin_installs")
       .select("id")
       .where("item_id", "=", appId)
       .executeTakeFirstOrThrow();
     expect(
       await env.db
-        .selectFrom("app_install_components")
+        .selectFrom("plugin_install_components")
         .select("ref")
         .where("install_id", "=", row.id)
         .execute(),
@@ -438,8 +442,8 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     expect(del.statusCode, del.body).toBe(200);
     expect(del.json()).toEqual({
       removed: [
-        { kind: "plugin", ref: "dep-requirer" },
-        { kind: "plugin", ref: "dep-provider" },
+        { kind: "extension", ref: "dep-requirer" },
+        { kind: "extension", ref: "dep-provider" },
       ],
       kept: [],
     });

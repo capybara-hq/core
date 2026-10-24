@@ -866,11 +866,11 @@ export interface KernelDatabase {
   catalog_item_versions: CatalogItemVersionsTable;
   marketplaces: MarketplacesTable;
   marketplace_entries: MarketplaceEntriesTable;
-  app_import_staging: AppImportStagingTable;
+  plugin_import_staging: PluginImportStagingTable;
   catalog_requests: CatalogRequestsTable;
   catalog_org_grants: CatalogOrgGrantsTable;
-  app_installs: AppInstallsTable;
-  app_install_components: AppInstallComponentsTable;
+  plugin_installs: PluginInstallsTable;
+  plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
 }
 
@@ -953,7 +953,7 @@ export interface MarketplaceEntriesTable {
 }
 
 /** 0036_app_import_staging.sql：应用包导入的暂存（prepare 写、confirm 删，24 小时过期）。 */
-export interface AppImportStagingTable {
+export interface PluginImportStagingTable {
   id: string;
   review: Json<unknown>;
   bundle: Json<unknown>;
@@ -1009,7 +1009,7 @@ export interface CatalogOrgGrantsTable {
 }
 
 /** 0037：应用在组织里的安装。 */
-export interface AppInstallsTable {
+export interface PluginInstallsTable {
   id: string;
   org_id: string;
   item_id: string;
@@ -1021,9 +1021,9 @@ export interface AppInstallsTable {
 }
 
 /** 0037：应用安装的组件（created = 本次新建）。 */
-export interface AppInstallComponentsTable {
+export interface PluginInstallComponentsTable {
   install_id: string;
-  kind: "plugin" | "connector" | "skill";
+  kind: "extension" | "connector" | "skill";
   ref: string;
   created: boolean;
   skill_version: NullableCol<number>;

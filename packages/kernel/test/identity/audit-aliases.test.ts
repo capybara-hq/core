@@ -23,8 +23,9 @@ describe("审计 action 同义（D17 / F-X）", () => {
     ]);
   });
 
-  it("不按前缀推断：应用包的 app.installed 与其他 action 只有自身", () => {
+  it("infers nothing from a prefix: bundle actions and other actions alias only themselves", () => {
     expect(auditActionAliases("app.installed")).toEqual(["app.installed"]);
+    expect(auditActionAliases("plugin.org_installed")).toEqual(["plugin.org_installed"]);
     expect(auditActionAliases("org.member.role_changed")).toEqual(["org.member.role_changed"]);
   });
 });

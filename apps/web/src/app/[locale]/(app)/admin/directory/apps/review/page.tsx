@@ -299,8 +299,8 @@ function AppReviewWizard() {
 }
 
 /**
- * A prominent error (e.g. `marketplace.integrity_mismatch`, `app.lock_mismatch`): the error row in
- * a danger card.
+ * A prominent error (e.g. `marketplace.integrity_mismatch`, `plugin.lock_mismatch`): the error row
+ * in a danger card.
  */
 function ProminentError({ problem }: { problem: Problem }) {
   return (

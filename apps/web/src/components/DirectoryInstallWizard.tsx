@@ -129,11 +129,11 @@ function parseValue(raw: string, preset: unknown): unknown {
 }
 
 /**
- * 失败的明细行：`app.install_failed` 取出失败那一步的原因（`causeDetails` 的 `path: message`），其余错误取错误信封的
- * details。
+ * Detail lines of a failure: for `plugin.install_failed`, the cause of the failed step
+ * (`causeDetails` as `path: message`); for other errors, the envelope's details.
  */
 function failureLines(e: unknown): string[] {
-  if (e instanceof ApiClientError && e.code === "app.install_failed") {
+  if (e instanceof ApiClientError && e.code === "plugin.install_failed") {
     const cause = (e.rawDetails[0] as { causeDetails?: unknown } | undefined)?.causeDetails;
     if (!Array.isArray(cause)) return [];
     return cause.flatMap((d) => {
@@ -360,9 +360,12 @@ function Wizard({
     }
   };
 
-  /** `app.install_failed`：说明失败的步骤与是否已回滚；其余错误按错误码翻译。 */
+  /**
+   * `plugin.install_failed`: explains the failed step and whether it was rolled back; other errors
+   * are translated by code.
+   */
   const failureMessage = (e: unknown): string => {
-    if (e instanceof ApiClientError && e.code === "app.install_failed") {
+    if (e instanceof ApiClientError && e.code === "plugin.install_failed") {
       const d = (e.rawDetails[0] ?? {}) as { step?: unknown; code?: unknown; rolledBack?: unknown };
       const stepName =
         typeof d.step === "string" && t.has(`step.${d.step}`)

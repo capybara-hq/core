@@ -29,9 +29,9 @@ import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
-import type { AppImport, AppReview } from "./app-import.js";
 import { checkCatalogArchive, invalidPackage, unpackCatalogArchive } from "./archive.js";
 import { HOST_VERSIONS, loadMarketplaceEntry, sourceEffective } from "./marketplaces.service.js";
+import type { PluginImport, PluginReview } from "./plugin-import.js";
 import { cancelPendingRequests } from "./requests.service.js";
 import { schemaHasPath } from "./schema-path.js";
 
@@ -100,8 +100,8 @@ export interface CatalogServiceDeps {
   findConnector: (plugin: string, kind: string) => Connector | undefined;
   /** 本副本已加载的插件版本（导入模板时按 `pluginVersion` 复核；不传则不复核）。 */
   pluginVersion?: (plugin: string) => string | undefined;
-  /** 应用包导入（清单引入 kind app 时走它的 prepare）。 */
-  apps?: Pick<AppImport, "prepare">;
+  /** Plugin (app bundle) import (a marketplace entry of kind app goes through its prepare). */
+  pluginImport?: Pick<PluginImport, "prepare">;
 }
 
 /** 审计里带上 PAT（个人令牌发起时）。 */
@@ -144,7 +144,7 @@ export type PermissionsMismatch = { missing: string[]; extra: string[] } | null;
  */
 export type MarketplaceImportResult =
   | { item: CatalogItemView; permissionsMismatch: PermissionsMismatch }
-  | { stagingId: string; review: AppReview; permissionsMismatch: PermissionsMismatch };
+  | { stagingId: string; review: PluginReview; permissionsMismatch: PermissionsMismatch };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
@@ -273,10 +273,10 @@ export class CatalogService {
         npm: entry.npm,
         version: v.version,
       });
-      if (!this.d.apps) {
+      if (!this.d.pluginImport) {
         throw new ApiError("catalog.wrong_kind", "App packages cannot be imported here");
       }
-      const staged = await this.d.apps.prepare(
+      const staged = await this.d.pluginImport.prepare(
         actor,
         got.bytes,
         {
@@ -1076,7 +1076,7 @@ async function countInstalls(
   if (appIds.length > 0) {
     add(
       await db
-        .selectFrom("app_installs")
+        .selectFrom("plugin_installs")
         .select(["item_id as id", sql<string>`count(DISTINCT org_id)`.as("n")])
         .where("item_id", "in", appIds)
         .where("status", "=", "installed")

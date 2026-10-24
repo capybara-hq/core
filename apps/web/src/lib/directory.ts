@@ -243,7 +243,7 @@ export type OrgInstallResult =
     }
   | { request: DirectoryRequest };
 
-export type ComponentKind = "plugin" | "connector" | "skill";
+export type ComponentKind = "extension" | "connector" | "skill";
 
 /** 已安装的应用（内核 `AppInstallView`）。 */
 export interface AppInstall {

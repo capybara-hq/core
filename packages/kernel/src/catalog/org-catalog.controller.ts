@@ -13,7 +13,7 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
-import { APP_INSTALLER, CATALOG_REQUESTS, ORG_CATALOG } from "../http/tokens.js";
+import { CATALOG_REQUESTS, ORG_CATALOG, PLUGIN_INSTALLER } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -25,7 +25,6 @@ import {
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import { CredentialValue } from "../tools/connectors.controller.js";
-import type { AppInstaller, AppInstallView, UninstallReport } from "./app-install.js";
 import type {
   CatalogIcon,
   OrgCatalogDetail,
@@ -33,6 +32,7 @@ import type {
   OrgCatalogService,
   OrgInstallResult,
 } from "./org-catalog.service.js";
+import type { PluginInstaller, PluginInstallView, UninstallReport } from "./plugin-install.js";
 import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
 
 const KindQuery = z.object({
@@ -112,7 +112,7 @@ export class OrgCatalogController {
   constructor(
     @Inject(ORG_CATALOG) private readonly catalog: OrgCatalogService,
     @Inject(CATALOG_REQUESTS) private readonly requests: CatalogRequestsService,
-    @Inject(APP_INSTALLER) private readonly apps: AppInstaller,
+    @Inject(PLUGIN_INSTALLER) private readonly pluginInstaller: PluginInstaller,
   ) {}
 
   @Get("directory")
@@ -199,8 +199,8 @@ export class OrgCatalogController {
 
   @Get("app-installs")
   @OrgAction("org.plugins.manage")
-  async listInstalls(@CurrentOrg() org: OrgContext): Promise<{ installs: AppInstallView[] }> {
-    return { installs: await this.apps.list(org.orgId) };
+  async listInstalls(@CurrentOrg() org: OrgContext): Promise<{ installs: PluginInstallView[] }> {
+    return { installs: await this.pluginInstaller.list(org.orgId) };
   }
 
   @Delete("app-installs/:installId")
@@ -212,7 +212,7 @@ export class OrgCatalogController {
   ): Promise<UninstallReport> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
-    return this.apps.uninstall(
+    return this.pluginInstaller.uninstall(
       org.orgId,
       p.account.id,
       installId,

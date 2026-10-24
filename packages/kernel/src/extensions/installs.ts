@@ -266,7 +266,7 @@ export class ExtensionInstalls {
   /**
    * Fetches one plugin package by the lock of an app bundle's `app.yaml` (T25, C31): downloads
    * `lock.version` from the configured npm registry, verified against `lock.integrity` (sha512), never
-   * npm metadata. Mismatch -> 502 `app.lock_mismatch` (with prefixes of the expected and actual
+   * npm metadata. Mismatch -> 502 `plugin.lock_mismatch` (with prefixes of the expected and actual
    * sha512); download failure -> 502 `packages.npm_failed`; over `packages.maxBytes` ->
    * `extension.package_too_large`.
    */
@@ -275,7 +275,7 @@ export class ExtensionInstalls {
     signal?: AbortSignal,
   ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
     return this.fetchVerified(input, signal, {
-      mismatch: "app.lock_mismatch",
+      mismatch: "plugin.lock_mismatch",
       failed: "packages.npm_failed",
       against: `the app's lock for ${input.package}@${input.version}`,
     });

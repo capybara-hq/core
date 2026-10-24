@@ -137,7 +137,7 @@ beforeAll(async () => {
           extensionAdminOps: k.extensionAdminOps,
           extensionDeploymentConfigs: k.extensionDeploymentConfigs,
           catalog: k.catalog,
-          apps: k.apps,
+          pluginImport: k.pluginImport,
           marketplaces: k.marketplaces,
           evalQueue: { enqueue: async () => {} },
           storage: k.storage,

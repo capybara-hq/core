@@ -19,10 +19,10 @@ import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorsService } from "../tools/connectors.service.js";
 import {
-  appPluginPlan,
-  appPluginsNotDeployed,
   INSTALL_ACTIONS,
   lockOrgForActions,
+  pluginExtensionPlan,
+  pluginExtensionsNotDeployed,
   readAppManifest,
   readCatalogFiles,
   skillOf,
@@ -39,7 +39,7 @@ import {
 type Trx = Transaction<KernelDatabase>;
 
 /** 组织安装应用时填的部分。 */
-export interface AppInstallInput {
+export interface PluginInstallInput {
   connectors: Record<
     string /* templateId */,
     {
@@ -55,10 +55,10 @@ export interface AppInstallInput {
   pluginConfigs?: Record<string /* 插件名 */, Record<string, unknown>>;
 }
 
-export type ComponentKind = "plugin" | "connector" | "skill";
+export type ComponentKind = "extension" | "connector" | "skill";
 
 /** 安装时跳过的可选部分：没装到部署 / 版本不满足 / 插件条目被禁用的可选插件，以及用这些插件的连接器模板。 */
-export interface AppInstallSkipped {
+export interface PluginInstallSkipped {
   plugins: string[];
   connectorTemplates: string[];
 }
@@ -77,8 +77,8 @@ export interface UninstallReport {
   }[];
 }
 
-/** 应用安装（`GET /orgs/:orgId/app-installs`）。 */
-export interface AppInstallView {
+/** A plugin install in an org (`GET /orgs/:orgId/app-installs`). */
+export interface PluginInstallView {
   id: string;
   itemId: string;
   name: string;
@@ -90,7 +90,7 @@ export interface AppInstallView {
   components: { kind: ComponentKind; ref: string; created: boolean; skillVersion: number | null }[];
 }
 
-export interface AppInstallerDeps {
+export interface PluginInstallerDeps {
   db: KernelDb;
   storage: StorageService;
   host: Pick<ExtensionHost, "manifests" | "list">;
@@ -114,30 +114,35 @@ interface Component {
 type Step = "plugins" | "connectors" | "skills";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const installNotFound = () => new ApiError("app.install_not_found", "App install not found");
+const installNotFound = () => new ApiError("plugin.install_not_found", "App install not found");
 const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
 const isUniqueViolation = (e: unknown) =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === "23505";
 
 /**
- * 应用的组织安装与卸载（C31）。安装依次：在本组织启用插件（已启用的记 created=false；按应用条目的策略，不看各插件
- * 条目，C22）→ 按模板建连接器（凭据 / 客户端写 secrets，默认策略记 `policy_source 'template'`）→ 导入技能（同名组织
- * 技能新增版本，记 created=false 与 skill_version）。每个组件建好就记进 `app_install_components`；任一步失败按相反顺序
- * 撤销本次新建的组件，安装记 failed（error 只含步骤与错误码），抛 502 `app.install_failed`。
- * 卸载只移除 created=true 且别处不在用的组件，保留项与原因写进报告。无进程内状态；组织行锁串行化同一组织的写。
+ * Org install and uninstall of plugins (app bundles, C31). Install, in order: enable the extensions
+ * in this org (already enabled ones are recorded created=false; judged by the plugin item's policy,
+ * not each extension item's, C22) -> create connectors from the templates (credentials / clients go
+ * to secrets, default policies are recorded `policy_source 'template'`) -> import the skills (an
+ * org skill of the same name gets a new version, recorded created=false with skill_version). Each
+ * component is recorded in `plugin_install_components` as soon as it exists; if any step fails, the
+ * components this install created are undone in reverse order, the install is marked failed (error
+ * holds only the step and the error code) and 502 `plugin.install_failed` is thrown. Uninstall
+ * removes only components with created=true that nothing else uses, and reports what it kept and
+ * why. No in-process state; the org row lock serializes writes within one org.
  */
-export class AppInstaller {
-  constructor(private readonly d: AppInstallerDeps) {}
+export class PluginInstaller {
+  constructor(private readonly d: PluginInstallerDeps) {}
 
   async install(
     orgId: string,
     actor: string,
     itemId: string,
     version: string,
-    input: AppInstallInput,
+    input: PluginInstallInput,
     opts: { actorTokenId?: string } = {},
-  ): Promise<{ installId: string; skipped: AppInstallSkipped }> {
+  ): Promise<{ installId: string; skipped: PluginInstallSkipped }> {
     const v = await this.d.db
       .selectFrom("catalog_item_versions as v")
       .innerJoin("catalog_items as i", "i.id", "v.item_id")
@@ -159,7 +164,7 @@ export class AppInstaller {
       await lockOrgForActions(t, orgId, actor, INSTALL_ACTIONS.app);
       await assertItemInstallable(t, orgId, itemId);
       const live = await t
-        .selectFrom("app_installs")
+        .selectFrom("plugin_installs")
         .select("id")
         .where("org_id", "=", orgId)
         .where("item_id", "=", itemId)
@@ -168,7 +173,7 @@ export class AppInstaller {
       if (live) throw alreadyInstalled();
       try {
         await t
-          .insertInto("app_installs")
+          .insertInto("plugin_installs")
           .values({
             id: installId,
             org_id: orgId,
@@ -190,7 +195,7 @@ export class AppInstaller {
       // 先记进 done：记录失败时已建好的组件照样回滚（插件的启用与记录同一事务，失败则一起撤销）
       done.push(c);
       await (t ?? this.d.db)
-        .insertInto("app_install_components")
+        .insertInto("plugin_install_components")
         .values({
           install_id: installId,
           kind: c.kind,
@@ -217,7 +222,7 @@ export class AppInstaller {
             viaItem: itemId,
             ifDisabled: holder,
             inTransaction: (t, skipped) =>
-              record({ kind: "plugin", ref: p, created: !skipped, skillVersion: null }, t),
+              record({ kind: "extension", ref: p, created: !skipped, skillVersion: null }, t),
           },
         );
       }
@@ -258,15 +263,16 @@ export class AppInstaller {
       await this.d.db.transaction().execute(async (t) => {
         await lockOrg(t, orgId);
         const updated = await t
-          .updateTable("app_installs")
+          .updateTable("plugin_installs")
           .set({ status: "installed" })
           .where("id", "=", installId)
           .where("status", "=", "installing")
           .executeTakeFirst();
-        // 安装记录已被当作超时清理掉：不写 app.installed，走失败回滚
+        // The install row was already cleaned up as stale: do not audit plugin.org_installed, roll
+        // back
         if (updated.numUpdatedRows === 0n) {
           throw new ApiError(
-            "app.install_not_found",
+            "plugin.install_not_found",
             "The install record was cleaned up as stale while the install was running",
           );
         }
@@ -275,7 +281,7 @@ export class AppInstaller {
           actorAccountId: actor,
           ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
           orgId,
-          action: "app.installed",
+          action: "plugin.org_installed",
           target: installId,
           detail: { itemId, name: v.name, version, components: done, skipped },
         });
@@ -286,7 +292,7 @@ export class AppInstaller {
       const rollbackErrors = await this.rollback(orgId, actor, installId, done);
       await this.d.db.transaction().execute(async (t) => {
         await t
-          .updateTable("app_installs")
+          .updateTable("plugin_installs")
           .set({ status: "failed", error: JSON.stringify({ step, code }) })
           .where("id", "=", installId)
           .execute();
@@ -294,13 +300,13 @@ export class AppInstaller {
           actorAccountId: actor,
           ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
           orgId,
-          action: "app.install_failed",
+          action: "plugin.org_install_failed",
           target: installId,
           detail: { itemId, name: v.name, version, step, code, rolledBack: done, rollbackErrors },
         });
       });
       throw new ApiError(
-        "app.install_failed",
+        "plugin.install_failed",
         `Installing the app failed at step ${step} (${code}); the components it created were removed`,
         [
           {
@@ -323,7 +329,7 @@ export class AppInstaller {
 
   /**
    * The plugins to enable (ordered by requires: providers of the extension points this org uses
-   * come first), judged the same way as the listing ({@link appPluginPlan}):
+   * come first), judged the same way as the listing ({@link pluginExtensionPlan}):
    * - a required plugin not installed on the deployment, or loaded at a version outside the range
    *   -> `catalog.not_deployed` (naming the version, M-4);
    * - a required plugin not yet enabled in this org whose own catalog item is disabled ->
@@ -335,7 +341,7 @@ export class AppInstaller {
   private async planPlugins(
     orgId: string,
     manifest: AppManifest,
-  ): Promise<{ plugins: string[]; skipped: AppInstallSkipped }> {
+  ): Promise<{ plugins: string[]; skipped: PluginInstallSkipped }> {
     const manifests = new Map(this.d.host.manifests().map((m) => [m.name, m]));
     const names = manifest.plugins.map((p) => p.name);
     const enabled = new Set(
@@ -354,12 +360,12 @@ export class AppInstaller {
     const killed = new Set(
       (await disabledPluginItems(this.d.db, names)).filter((n) => !enabled.has(n)),
     );
-    const plan = appPluginPlan(
+    const plan = pluginExtensionPlan(
       manifest.plugins.map((p) => ({ name: p.name, range: p.version, optional: p.optional })),
       new Map([...manifests].map(([n, m]) => [n, m.version])),
       killed,
     );
-    if (plan.missing.length > 0) throw appPluginsNotDeployed(plan.missing);
+    if (plan.missing.length > 0) throw pluginExtensionsNotDeployed(plan.missing);
     if (plan.disabled.length > 0) throw pluginItemDisabled(plan.disabled);
     const skippedPlugins = new Set(plan.skipped);
     const templates = manifest.connectorTemplates
@@ -372,7 +378,7 @@ export class AppInstaller {
   }
 
   /** 输入只认清单里的模板 id 与插件名。 */
-  private checkInput(manifest: AppManifest, input: AppInstallInput): void {
+  private checkInput(manifest: AppManifest, input: PluginInstallInput): void {
     const ids = new Set(manifest.connectorTemplates.map((c) => c.id));
     for (const k of Object.keys(input.connectors ?? {})) {
       if (!ids.has(k)) throw fail(`app.connectors.${k}`, "No such connector template in this app");
@@ -402,21 +408,21 @@ export class AppInstaller {
           await lockOrg(t, orgId);
           // 别的已启用插件依赖它（本组织里只有它提供所需能力）：保留，不让它们失去依赖
           if (
-            c.kind === "plugin" &&
+            c.kind === "extension" &&
             (await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0
           ) {
             return false;
           }
-          const r = await this.removeComponent(t, orgId, actor, c, "app_install_rollback");
+          const r = await this.removeComponent(t, orgId, actor, c, "plugin_install_rollback");
           await t
-            .deleteFrom("app_install_components")
+            .deleteFrom("plugin_install_components")
             .where("install_id", "=", installId)
             .where("kind", "=", c.kind)
             .where("ref", "=", c.ref)
             .execute();
           return r;
         });
-        if (removed && c.kind === "plugin") await this.d.orgConfigs.afterDisable(orgId, c.ref);
+        if (removed && c.kind === "extension") await this.d.orgConfigs.afterDisable(orgId, c.ref);
       } catch (e) {
         errors.push({ kind: c.kind, ref: c.ref });
         this.d.log?.warn("app install rollback step failed", {
@@ -438,7 +444,7 @@ export class AppInstaller {
     c: Component,
     reason: string,
   ): Promise<boolean> {
-    if (c.kind === "plugin") {
+    if (c.kind === "extension") {
       return this.d.orgConfigs.disableIn(t, orgId, c.ref, actor, reason);
     }
     if (c.kind === "connector") {
@@ -461,16 +467,22 @@ export class AppInstaller {
   }
 
   /**
-   * 卸载（`org.plugins.manage` + `connectors.manage` + `skills.manage`，组织行锁内复核，一个事务）。只移除 created=true 的组件：
-   * - 技能：被 agent 选中（used_by_agents）或本组织别的应用安装也用到（used_by_other_install）时保留；
-   * - 连接器：被 agent 引用时保留（used_by_agents）；
-   * - 插件：别的应用安装也用到（used_by_other_install）、仍有连接器用它提供的连接器（used_by_connectors）、别的已启用
-   *   插件依赖它（used_by_plugins）时保留；
-   * - 之前就有的组件保留（pre_existing）。
-   * 因 used_by_other_install 保留时把所有权交给最早的那个仍在的安装（它的组件行改为 created=true），卸载顺序不影响最终结果。
-   * 删除安装记录，审计 `app.uninstalled`（detail 含 removed / kept）。可以卸载：installed；failed（已回滚，清记录与残留）；
-   * 超过 `directory.staleInstallMinutes` 仍是 installing 的（副本中途崩溃）——后两种按回滚清理（已有技能上新增的版本也退回）。
-   * 仍在安装中的 → `app.install_in_progress`。
+   * Uninstall (`org.plugins.manage` + `connectors.manage` + `skills.manage`, re-checked under the
+   * org row lock, one transaction). Removes only components with created=true:
+   * - a skill is kept when an agent selects it (used_by_agents) or another plugin install in this
+   * org uses it too (used_by_other_install);
+   * - a connector is kept when an agent references it (used_by_agents);
+   * - an extension is kept when another plugin install uses it too (used_by_other_install), a
+   *   connector still uses a connector it provides (used_by_connectors), or another enabled
+   *   extension depends on it (used_by_plugins);
+   * - components that existed before are kept (pre_existing).
+   * When kept for used_by_other_install, ownership passes to the oldest remaining install (its
+   * component row becomes created=true), so the uninstall order doesn't change the end result.
+   * Deletes the install row and audits `plugin.org_uninstalled` (detail has removed / kept). Can be
+   * uninstalled: installed; failed (already rolled back: clears the row and leftovers); installing
+   * for longer than `directory.staleInstallMinutes` (a replica crashed midway) - the last two are
+   * cleaned up as a rollback (versions added to existing skills are reverted too). Still installing
+   * -> `plugin.install_in_progress`.
    */
   async uninstall(
     orgId: string,
@@ -484,7 +496,7 @@ export class AppInstaller {
     await this.d.db.transaction().execute(async (t) => {
       await lockOrgForActions(t, orgId, actor, INSTALL_ACTIONS.app);
       const row = await t
-        .selectFrom("app_installs as a")
+        .selectFrom("plugin_installs as a")
         .innerJoin("catalog_items as i", "i.id", "a.item_id")
         .select([
           "a.id",
@@ -501,20 +513,20 @@ export class AppInstaller {
       if (!row) throw installNotFound();
       if (row.status === "uninstalling" || (row.status === "installing" && !row.stale)) {
         throw new ApiError(
-          "app.install_in_progress",
+          "plugin.install_in_progress",
           `This app install is still in progress; it can be cleaned up after ${staleMinutes} minutes`,
         );
       }
       // failed（已回滚）与超时的 installing（副本中途崩溃）按回滚清理
       const rollbackMode = row.status !== "installed";
       const comps = await t
-        .selectFrom("app_install_components")
+        .selectFrom("plugin_install_components")
         .select(["kind", "ref", "created", "skill_version"])
         .where("install_id", "=", installId)
         .execute();
       // 技能 → 连接器 → 插件；插件按 requires 的逆序（依赖方先于提供方），提供方检查时依赖方已处理完
       const pluginOrder = this.uninstallPluginOrder(
-        comps.filter((c) => c.kind === "plugin").map((c) => c.ref),
+        comps.filter((c) => c.kind === "extension").map((c) => c.ref),
       );
       const rank = (c: { kind: ComponentKind; ref: string }) =>
         c.kind === "skill" ? 0 : c.kind === "connector" ? 1 : 2 + pluginOrder.indexOf(c.ref);
@@ -535,7 +547,7 @@ export class AppInstaller {
             rollbackMode &&
             c.kind === "skill" &&
             c.skill_version !== null &&
-            (await this.removeComponent(t, orgId, actor, comp, "app_install_cleanup"))
+            (await this.removeComponent(t, orgId, actor, comp, "plugin_install_cleanup"))
           ) {
             report.removed.push({ kind: c.kind, ref: c.ref });
             continue;
@@ -553,8 +565,8 @@ export class AppInstaller {
         }
         if (c.kind !== "connector") {
           const heir = await t
-            .selectFrom("app_install_components as c")
-            .innerJoin("app_installs as a", "a.id", "c.install_id")
+            .selectFrom("plugin_install_components as c")
+            .innerJoin("plugin_installs as a", "a.id", "c.install_id")
             .select("a.id")
             .where("a.org_id", "=", orgId)
             .where("a.id", "<>", installId)
@@ -567,7 +579,7 @@ export class AppInstaller {
           if (heir) {
             // 交接所有权：仍在用它的最早安装接手（created=true），卸载它时照常移除，卸载顺序不影响结果
             await t
-              .updateTable("app_install_components")
+              .updateTable("plugin_install_components")
               .set({ created: true })
               .where("install_id", "=", heir.id)
               .where("kind", "=", c.kind)
@@ -577,7 +589,7 @@ export class AppInstaller {
             continue;
           }
         }
-        if (c.kind === "plugin") {
+        if (c.kind === "extension") {
           const kinds = this.connectorKindsOf(c.ref);
           if (kinds.length > 0) {
             const used = await t
@@ -597,17 +609,17 @@ export class AppInstaller {
             continue;
           }
         }
-        const reason = rollbackMode ? "app_install_cleanup" : "app_uninstall";
+        const reason = rollbackMode ? "plugin_install_cleanup" : "plugin_uninstall";
         if (await this.removeComponent(t, orgId, actor, comp, reason)) {
           report.removed.push({ kind: c.kind, ref: c.ref });
         }
       }
-      await t.deleteFrom("app_installs").where("id", "=", installId).execute();
+      await t.deleteFrom("plugin_installs").where("id", "=", installId).execute();
       await audit(t, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         orgId,
-        action: "app.uninstalled",
+        action: "plugin.org_uninstalled",
         target: installId,
         detail: {
           itemId: row.item_id,
@@ -620,7 +632,7 @@ export class AppInstaller {
       });
     });
     for (const r of report.removed) {
-      if (r.kind === "plugin") await this.d.orgConfigs.afterDisable(orgId, r.ref);
+      if (r.kind === "extension") await this.d.orgConfigs.afterDisable(orgId, r.ref);
     }
     return report;
   }
@@ -633,9 +645,9 @@ export class AppInstaller {
   }
 
   /** 本组织的应用安装（含失败的），新的在前。 */
-  async list(orgId: string): Promise<AppInstallView[]> {
+  async list(orgId: string): Promise<PluginInstallView[]> {
     const rows = await this.d.db
-      .selectFrom("app_installs as a")
+      .selectFrom("plugin_installs as a")
       .innerJoin("catalog_items as i", "i.id", "a.item_id")
       .select([
         "a.id",
@@ -653,7 +665,7 @@ export class AppInstaller {
       .execute();
     if (rows.length === 0) return [];
     const comps = await this.d.db
-      .selectFrom("app_install_components")
+      .selectFrom("plugin_install_components")
       .select(["install_id", "kind", "ref", "created", "skill_version"])
       .where(
         "install_id",
@@ -669,7 +681,7 @@ export class AppInstaller {
       status: r.status,
       installedBy: r.installed_by,
       installedAt: r.installed_at.toISOString(),
-      error: (r.error as AppInstallView["error"]) ?? null,
+      error: (r.error as PluginInstallView["error"]) ?? null,
       components: comps
         .filter((c) => c.install_id === r.id)
         .map((c) => ({
@@ -725,7 +737,7 @@ export class AppInstaller {
 
 const alreadyInstalled = () =>
   new ApiError(
-    "app.already_installed",
+    "plugin.already_installed",
     "This app is already installed in this organization; uninstall it before installing again",
   );
 

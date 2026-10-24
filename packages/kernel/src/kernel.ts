@@ -12,12 +12,12 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
-import { AppImport } from "./catalog/app-import.js";
 import { CatalogService } from "./catalog/catalog.service.js";
 import {
   MARKETPLACES_REFRESH_DEADLINE_MS,
   MarketplacesService,
 } from "./catalog/marketplaces.service.js";
+import { PluginImport } from "./catalog/plugin-import.js";
 import { CHANNEL_CHANGED_TOPIC, ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
@@ -95,12 +95,12 @@ import { ConversationLock } from "./runtime/conversation-lock.js";
 import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
 import {
-  APP_STAGING_CLEANUP_EVERY_MS,
-  APP_STAGING_CLEANUP_JOB,
-  APP_STAGING_CLEANUP_SCHEDULER_ID,
   MARKETPLACES_REFRESH_JOB,
   MARKETPLACES_REFRESH_SCHEDULER_ID,
   Maintenance,
+  PLUGIN_STAGING_CLEANUP_EVERY_MS,
+  PLUGIN_STAGING_CLEANUP_JOB,
+  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
 } from "./runtime/maintenance.js";
 import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
@@ -257,8 +257,8 @@ export interface Kernel {
   readonly extensionBlobs: ExtensionBlobs;
   /** The enterprise catalog: items and imports (plugins / connector templates / skills). */
   readonly catalog: CatalogService;
-  /** 应用包（app.yaml）的企业导入：prepare / confirm 与暂存清理。 */
-  readonly apps: AppImport;
+  /** Enterprise import of plugins (app bundles, app.yaml): prepare / confirm and staging cleanup. */
+  readonly pluginImport: PluginImport;
   /** Marketplaces: official / enterprise marketplaces and their refresh. */
   readonly marketplaces: MarketplacesService;
   /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
@@ -587,8 +587,9 @@ export async function createKernel(
       .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
       | Connector
       | undefined;
-  // 应用包导入（C31）：一次审阅、一次批准；暂存 24 小时，维护任务 app-staging-cleanup 每小时清理过期的
-  const apps = new AppImport({
+  // Plugin (app bundle) import (C31): one review, one approval; staged for 24 hours, the
+  // maintenance job app-staging-cleanup removes expired staging every hour
+  const pluginImport = new PluginImport({
     db: kdb,
     config: () => current,
     storage,
@@ -600,14 +601,14 @@ export async function createKernel(
     isConnectorPlugin: (name) => host.list("connector").some((e) => e.plugin === name),
     log,
   });
-  maintenance.handle(APP_STAGING_CLEANUP_JOB, async () => {
-    const n = await apps.cleanupExpired();
-    if (n > 0) log.info("expired app imports cleaned up", { count: n });
+  maintenance.handle(PLUGIN_STAGING_CLEANUP_JOB, async () => {
+    const n = await pluginImport.cleanupExpired();
+    if (n > 0) log.info("expired plugin imports cleaned up", { count: n });
   });
   maintenance.schedule({
-    id: APP_STAGING_CLEANUP_SCHEDULER_ID,
-    name: APP_STAGING_CLEANUP_JOB,
-    everyMs: () => APP_STAGING_CLEANUP_EVERY_MS,
+    id: PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
+    name: PLUGIN_STAGING_CLEANUP_JOB,
+    everyMs: () => PLUGIN_STAGING_CLEANUP_EVERY_MS,
   });
   // Enterprise catalog (D9 / C21): extension packages go through extensionInstalls, extensionAdminOps installs them; connector templates are checked against the connectors loaded on this replica
   const catalog = new CatalogService({
@@ -619,7 +620,7 @@ export async function createKernel(
     declared: () => host.declared(),
     findConnector,
     pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
-    apps,
+    pluginImport,
   });
   // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
   // catalogs-refresh periodically refreshes every enabled marketplace
@@ -1092,7 +1093,7 @@ export async function createKernel(
         extensionAdminOps,
         extensionDeploymentConfigs,
         catalog,
-        apps,
+        pluginImport,
         marketplaces,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
@@ -1268,7 +1269,7 @@ export async function createKernel(
     extensionLifecycle,
     extensionBlobs,
     catalog,
-    apps,
+    pluginImport,
     marketplaces,
     extensionDeploymentConfigs,
     orgExtensionConfigs,

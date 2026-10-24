@@ -251,10 +251,10 @@ describe("/admin/directory/apps/review（WizardPage）", () => {
     );
     stubApi({
       "POST /api/v1/admin/catalogs/official/entries/app/crm/import": () =>
-        json(502, { error: { code: "app.lock_mismatch", message: "x" } }),
+        json(502, { error: { code: "plugin.lock_mismatch", message: "x" } }),
     });
     renderPage(<AppReviewPage />);
-    expect(await screen.findByText(`✗ ${en.errors.app.lock_mismatch}`)).toBeTruthy();
+    expect(await screen.findByText(`✗ ${en.errors.plugin.lock_mismatch}`)).toBeTruthy();
   });
 });
 
@@ -287,7 +287,7 @@ describe("/directory/[itemId]/install（WizardPage）", () => {
       [`POST ${ORG}/directory/${ID}/install`]: () =>
         json(502, {
           error: {
-            code: "app.install_failed",
+            code: "plugin.install_failed",
             message: "x",
             details: [{ step: "skills", code: "internal", rolledBack: true }],
           },
@@ -336,7 +336,7 @@ const INSTALL = {
   installedAt: "2026-10-22T00:00:00.000Z",
   error: null,
   components: [
-    { kind: "plugin", ref: "todo", created: false, skillVersion: null },
+    { kind: "extension", ref: "todo", created: false, skillVersion: null },
     { kind: "connector", ref: "c1", created: true, skillVersion: null },
     { kind: "skill", ref: "s1", created: true, skillVersion: null },
   ],
@@ -353,7 +353,7 @@ describe("/settings/apps：已安装的应用与卸载", () => {
         return json(200, {
           removed: [{ kind: "connector", ref: "c1" }],
           kept: [
-            { kind: "plugin", ref: "todo", reason: "pre_existing" },
+            { kind: "extension", ref: "todo", reason: "pre_existing" },
             { kind: "skill", ref: "s1", reason: "used_by_agents" },
           ],
         });
@@ -371,7 +371,7 @@ describe("/settings/apps：已安装的应用与卸载", () => {
     expect(within(report).getByText(`− ${a.componentKind.connector} c1`)).toBeTruthy();
     expect(
       within(report).getByText(
-        `· ${a.componentKind.plugin} todo — ${a.report.reason.pre_existing}`,
+        `· ${a.componentKind.extension} todo — ${a.report.reason.pre_existing}`,
       ),
     ).toBeTruthy();
     expect(
@@ -384,7 +384,7 @@ describe("/settings/apps：已安装的应用与卸载", () => {
       [`GET ${ORG}/app-installs`]: () =>
         json(200, { installs: [{ ...INSTALL, status: "installing" }] }),
       [`DELETE ${ORG}/app-installs/i1`]: () =>
-        json(409, { error: { code: "app.install_in_progress", message: "x" } }),
+        json(409, { error: { code: "plugin.install_in_progress", message: "x" } }),
     });
     renderPage(<AppsPage />);
     const user = userEvent.setup();

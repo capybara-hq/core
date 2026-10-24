@@ -283,12 +283,12 @@
       "package_mismatch": "The downloaded package does not match the catalog entry.",
       "builtin": "The official catalog comes from the deployment config; it can only be enabled or disabled here."
     },
-    "app": {
+    "plugin": {
       "invalid_manifest": "The app manifest (app.yaml) is invalid.",
       "lock_mismatch": "A plugin package locked by the app does not match the download (sha512 mismatch) and was rejected. It may have been tampered with.",
       "review_stale": "The review is out of date (plugins on the deployment changed). Fetch the app package again.",
       "staging_not_found": "The staged app package has expired. Fetch it again.",
-      "plugin_conflict": "The app needs a plugin version that conflicts with a built-in or config-declared plugin.",
+      "extension_conflict": "The app needs a plugin version that conflicts with a built-in or config-declared plugin.",
       "bundle_too_large": "The app package is too large.",
       "install_failed": "Installing failed; the components it created were rolled back.",
       "install_not_found": "The install does not exist.",
@@ -2613,7 +2613,7 @@
       "created": "Created by this install",
       "existing": "Pre-existing",
       "componentKind": {
-        "plugin": "Plugin",
+        "extension": "Plugin",
         "connector": "Connector",
         "skill": "Skill"
       },

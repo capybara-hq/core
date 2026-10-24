@@ -27,8 +27,10 @@ export async function audit(
 }
 
 /**
- * D17 改名前写下的连接器审计 action（旧记录不改写，C27）→ 改名后的 action。只列这几项，不按 `app.*` 前缀推断：
- * 改名后的「应用」指应用包（`app.installed` 等），与连接器无关（F-X）。
+ * Connector audit actions written before the D17 rename (old rows are not rewritten, C27) -> the
+ * renamed action. Only these are listed, nothing is inferred from the `app.*` prefix: after D17
+ * "app" meant app bundles (`app.installed` etc., `plugin.org_installed` since phase 0a), which are
+ * unrelated to connectors (F-X).
  */
 export const LEGACY_AUDIT_ACTIONS: Readonly<Record<string, string>> = Object.freeze({
   "app.created": "connector.created",

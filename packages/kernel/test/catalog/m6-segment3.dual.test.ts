@@ -696,10 +696,10 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       [...xs].sort((a, b) => `${a.kind}${a.ref}`.localeCompare(`${b.kind}${b.ref}`));
     expect(byKey(rep.kept as { kind: string; ref: string }[])).toEqual([
       { kind: "connector", ref: connectorId, reason: "used_by_agents" },
-      { kind: "plugin", ref: "example-counter", reason: "pre_existing" },
+      { kind: "extension", ref: "example-counter", reason: "pre_existing" },
     ]);
     expect(byKey(rep.removed as { kind: string; ref: string }[])).toEqual([
-      { kind: "plugin", ref: "todo" },
+      { kind: "extension", ref: "todo" },
       { kind: "skill", ref: appSkillId },
     ]);
     const enabled = await db

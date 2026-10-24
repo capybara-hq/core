@@ -283,12 +283,12 @@
       "package_mismatch": "下载的包与清单条目不一致。",
       "builtin": "官方清单由部署配置决定，这里只能启用或停用。"
     },
-    "app": {
+    "plugin": {
       "invalid_manifest": "应用清单（app.yaml）不合法。",
       "lock_mismatch": "应用锁定的插件包与下载的不符（sha512 不一致），已拒绝。包可能被篡改。",
       "review_stale": "审阅已过期（部署上的插件有变化），请重新读取应用包。",
       "staging_not_found": "暂存的应用包已过期，请重新读取。",
-      "plugin_conflict": "应用要的插件版本与内置 / 配置声明的插件冲突。",
+      "extension_conflict": "应用要的插件版本与内置 / 配置声明的插件冲突。",
       "bundle_too_large": "应用包太大。",
       "install_failed": "安装失败，已回滚本次新建的组件。",
       "install_not_found": "安装记录不存在。",
@@ -2613,7 +2613,7 @@
       "created": "本次新建",
       "existing": "原有",
       "componentKind": {
-        "plugin": "插件",
+        "extension": "插件",
         "connector": "连接器",
         "skill": "技能"
       },

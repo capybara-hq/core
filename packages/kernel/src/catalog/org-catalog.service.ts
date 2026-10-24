@@ -27,9 +27,13 @@ import type {
   CreateConnectorInput,
 } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
-import type { AppInstaller, AppInstallInput, AppInstallSkipped } from "./app-install.js";
 import { iconProblem } from "./archive.js";
 import { type CatalogItemView, itemView } from "./catalog.service.js";
+import type {
+  PluginInstaller,
+  PluginInstallInput,
+  PluginInstallSkipped,
+} from "./plugin-install.js";
 import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
 
 type Trx = Transaction<KernelDatabase>;
@@ -176,13 +180,13 @@ export async function readCatalogIcon(
 }
 
 /** 安装连接器模板时组织能填的部分（C30）。 */
-export type ConnectorInstallInput = AppInstallInput["connectors"][string];
+export type ConnectorInstallInput = PluginInstallInput["connectors"][string];
 
 /** `POST /orgs/:orgId/directory/:itemId/install` 的输入。 */
 export interface OrgInstallInput {
   version?: string;
   connector?: ConnectorInstallInput;
-  app?: AppInstallInput;
+  app?: PluginInstallInput;
 }
 
 /** 安装结果：201 已安装；202 需企业管理员批准，已建（或升级）申请。 */
@@ -199,7 +203,7 @@ export type OrgInstallResult =
         plugin?: string;
         appInstallId?: string;
         /** 应用：跳过的可选插件与用到它们的连接器模板。 */
-        skipped?: AppInstallSkipped;
+        skipped?: PluginInstallSkipped;
       };
     }
   | { status: 202; request: CatalogRequestView };
@@ -214,7 +218,7 @@ export interface OrgCatalogDeps {
   skills: Pick<SkillsService, "createVersionFromFiles">;
   orgConfigs: Pick<OrgExtensionConfigs, "put">;
   requests: CatalogRequestsService;
-  apps: Pick<AppInstaller, "install">;
+  pluginInstaller: Pick<PluginInstaller, "install">;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -282,14 +286,14 @@ const satisfies = (version: string, range: string) =>
   semver.satisfies(version, range, { includePrerelease: true });
 
 /** 应用里的一个插件：名字、版本范围（app.yaml 的 `version`）与是否可选。 */
-export interface AppPluginRef {
+export interface PluginExtensionRef {
   name: string;
   range?: string | undefined;
   optional?: boolean | undefined;
 }
 
-/** {@link appPluginPlan} 的结果。 */
-export interface AppPluginPlan {
+/** The result of {@link pluginExtensionPlan}. */
+export interface PluginExtensionPlan {
   /** 要在组织里启用的插件（已加载、版本满足范围、插件条目没被禁用）。 */
   use: string[];
   /** 跳过的可选插件。 */
@@ -304,15 +308,15 @@ export interface AppPluginPlan {
  * 应用的插件此刻能不能用（列表的 `installable` 与安装共用一套判定，M-13）：可选插件没加载、版本不满足、或插件条目被
  * 禁用 → 跳过；必选插件同样情况 → 记进 missing / disabled。`killed` 为插件条目 disabled 的插件名（列表不查时传空）。
  */
-export function appPluginPlan(
-  plugins: readonly AppPluginRef[],
+export function pluginExtensionPlan(
+  plugins: readonly PluginExtensionRef[],
   loaded: ReadonlyMap<string, string>,
   killed: ReadonlySet<string> = new Set(),
-): AppPluginPlan {
-  const out: AppPluginPlan = { use: [], skipped: [], missing: [], disabled: [] };
+): PluginExtensionPlan {
+  const out: PluginExtensionPlan = { use: [], skipped: [], missing: [], disabled: [] };
   for (const p of plugins) {
     const version = loaded.get(p.name);
-    let problem: AppPluginPlan["missing"][number] | "disabled" | undefined;
+    let problem: PluginExtensionPlan["missing"][number] | "disabled" | undefined;
     if (killed.has(p.name)) problem = "disabled";
     else if (version === undefined) problem = { name: p.name, reason: "absent" };
     else if (p.range !== undefined && !satisfies(version, p.range)) {
@@ -327,7 +331,7 @@ export function appPluginPlan(
 }
 
 /** `catalog.not_deployed` for missing required plugins (naming the plugins and versions). */
-export function appPluginsNotDeployed(missing: AppPluginPlan["missing"]): ApiError {
+export function pluginExtensionsNotDeployed(missing: PluginExtensionPlan["missing"]): ApiError {
   const what = missing.map((m) =>
     m.reason === "absent"
       ? m.name
@@ -534,47 +538,48 @@ export class OrgCatalogService {
     const items = await q.execute();
     if (items.length === 0) return [];
     const ids = items.map((i) => i.id);
-    const [versions, grants, requests, skills, connectors, apps, enabled] = await Promise.all([
-      this.d.db
-        .selectFrom("catalog_item_versions")
-        .select(["item_id", "version", "source", "section", "resolved"])
-        .where("item_id", "in", ids)
-        .execute(),
-      this.d.db
-        .selectFrom("catalog_org_grants")
-        .select("item_id")
-        .where("org_id", "=", orgId)
-        .execute(),
-      this.d.requests.latestByItem(orgId),
-      this.d.db
-        .selectFrom("skills")
-        .select(["id", "catalog_item_id", "catalog_version"])
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .where("catalog_item_id", "in", ids)
-        .orderBy("created_at")
-        .execute(),
-      this.d.db
-        .selectFrom("connectors")
-        .select(["id", "catalog_item_id", "catalog_version"])
-        .where("org_id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .where("catalog_item_id", "in", ids)
-        .orderBy("created_at")
-        .execute(),
-      this.d.db
-        .selectFrom("app_installs")
-        .select(["id", "item_id", "version"])
-        .where("org_id", "=", orgId)
-        .where("status", "in", ["installing", "installed"])
-        .execute(),
-      this.d.db
-        .selectFrom("extension_org_configs")
-        .select("plugin")
-        .where("org_id", "=", orgId)
-        .where("enabled", "=", true)
-        .execute(),
-    ]);
+    const [versions, grants, requests, skills, connectors, pluginInstalls, enabled] =
+      await Promise.all([
+        this.d.db
+          .selectFrom("catalog_item_versions")
+          .select(["item_id", "version", "source", "section", "resolved"])
+          .where("item_id", "in", ids)
+          .execute(),
+        this.d.db
+          .selectFrom("catalog_org_grants")
+          .select("item_id")
+          .where("org_id", "=", orgId)
+          .execute(),
+        this.d.requests.latestByItem(orgId),
+        this.d.db
+          .selectFrom("skills")
+          .select(["id", "catalog_item_id", "catalog_version"])
+          .where("org_id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .where("catalog_item_id", "in", ids)
+          .orderBy("created_at")
+          .execute(),
+        this.d.db
+          .selectFrom("connectors")
+          .select(["id", "catalog_item_id", "catalog_version"])
+          .where("org_id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .where("catalog_item_id", "in", ids)
+          .orderBy("created_at")
+          .execute(),
+        this.d.db
+          .selectFrom("plugin_installs")
+          .select(["id", "item_id", "version"])
+          .where("org_id", "=", orgId)
+          .where("status", "in", ["installing", "installed"])
+          .execute(),
+        this.d.db
+          .selectFrom("extension_org_configs")
+          .select("plugin")
+          .where("org_id", "=", orgId)
+          .where("enabled", "=", true)
+          .execute(),
+      ]);
     const granted = new Set(grants.map((g) => g.item_id));
     const enabledPlugins = new Set(enabled.map((e) => e.plugin));
     const loaded = new Map(this.d.host.manifests().map((x) => [x.name, x.version]));
@@ -607,7 +612,7 @@ export class OrgCatalogService {
           installed = { plugin: i.name, version: loaded.get(i.name) ?? "" };
         }
       } else {
-        const a = apps.find((x) => x.item_id === i.id);
+        const a = pluginInstalls.find((x) => x.item_id === i.id);
         if (a) installed = { appInstallId: a.id, version: a.version };
       }
       out.push({ ...view, installable, installed, request: requests.get(i.id) ?? null });
@@ -698,9 +703,11 @@ export class OrgCatalogService {
   }
 
   /**
-   * 条目依赖的插件此刻是否装在部署上（本副本已加载）：插件条目 = 该插件；连接器模板 = 提供该 kind 的连接器插件且满足
-   * `pluginVersion`；应用 = `resolved.plugins` 里的必选插件都已加载且版本满足范围（与安装同一套判定 {@link appPluginPlan}，
-   * 可选插件不算）。
+   * Whether the extensions an item depends on are on the deployment right now (loaded on this
+   * replica): an extension item = that extension; a connector template = a connector extension
+   * providing that kind and satisfying `pluginVersion`; a plugin (app) = every required extension
+   * in `resolved.plugins` is loaded at a version in range (judged as at install, {@link
+   * pluginExtensionPlan}; optional extensions don't count).
    */
   private deployed(
     kind: PackageKind,
@@ -714,8 +721,9 @@ export class OrgCatalogService {
       return t !== undefined && templatePluginProblem(this.templateDeps(), t) === undefined;
     }
     if (kind === "app") {
-      const plugins = (latest?.resolved as { plugins?: AppPluginRef[] } | null)?.plugins ?? [];
-      return appPluginPlan(plugins, loaded).missing.length === 0;
+      const plugins =
+        (latest?.resolved as { plugins?: PluginExtensionRef[] } | null)?.plugins ?? [];
+      return pluginExtensionPlan(plugins, loaded).missing.length === 0;
     }
     return true;
   }
@@ -802,7 +810,7 @@ export class OrgCatalogService {
     let installed: Extract<OrgInstallResult, { status: 201 }>["installed"];
     const base = { kind: item.kind, itemId, version };
     if (item.kind === "app") {
-      const r = await this.d.apps.install(
+      const r = await this.d.pluginInstaller.install(
         orgId,
         actor,
         itemId,

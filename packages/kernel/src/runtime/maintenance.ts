@@ -31,13 +31,14 @@ export const MARKETPLACES_REFRESH_JOB = "catalogs-refresh";
 export const MARKETPLACES_REFRESH_SCHEDULER_ID = "catalogs-refresh-every";
 
 /**
- * Cleanup of app bundle import staging (T25, F-AE): job name and job scheduler id (no `:`), hourly;
- * deletes expired (24-hour) staging rows and their object storage prefixes (see
- * catalog/app-import.ts `AppImport.cleanupExpired`).
+ * Cleanup of plugin (app bundle) import staging (T25, F-AE): job name and job scheduler id (no
+ * `:`), hourly; deletes expired (24-hour) staging rows and their object storage prefixes (see
+ * catalog/plugin-import.ts `PluginImport.cleanupExpired`). The values keep their old names: the
+ * scheduler id is stored in Redis, so renaming it would leave the old scheduler behind.
  */
-export const APP_STAGING_CLEANUP_JOB = "app-staging-cleanup";
-export const APP_STAGING_CLEANUP_SCHEDULER_ID = "app-staging-cleanup-hourly";
-export const APP_STAGING_CLEANUP_EVERY_MS = 3_600_000;
+export const PLUGIN_STAGING_CLEANUP_JOB = "app-staging-cleanup";
+export const PLUGIN_STAGING_CLEANUP_SCHEDULER_ID = "app-staging-cleanup-hourly";
+export const PLUGIN_STAGING_CLEANUP_EVERY_MS = 3_600_000;
 
 /** 维护任务的处理函数（`token` 供 `moveToDelayed` 等使用）。 */
 export type MaintenanceHandler = (job: Job, token: string | undefined) => Promise<void>;

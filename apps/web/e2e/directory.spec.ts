@@ -97,7 +97,7 @@ test("企业目录：刷新官方清单 → 引入应用并一次审阅、装到
   await expect(report).toBeVisible();
   await expect(
     report.getByText(
-      `· ${D.apps.componentKind.plugin} crm-core — ${D.apps.report.reason.pre_existing}`,
+      `· ${D.apps.componentKind.extension} crm-core — ${D.apps.report.reason.pre_existing}`,
     ),
   ).toBeVisible();
   await expect(report.getByText(new RegExp(`− ${D.apps.componentKind.skill} `))).toBeVisible();

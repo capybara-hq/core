@@ -18,9 +18,11 @@ import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
 /**
- * `/[locale]/settings/apps`：本组织从目录安装的应用（SettingsPage，管理员）。每个应用列出状态与组件（本次新建 / 原有），
- * 可以卸载（失败或中断的安装可以「清理」）；卸载后按 `UninstallReport` 显示移除了哪些、保留了哪些及原因。
- * 仍在安装中（`app.install_in_progress`）给出友好的说明。
+ * `/[locale]/settings/apps`: the plugins (app bundles) this org installed from the catalog
+ * (SettingsPage, admins). Each lists its status and components (created by the install / existing)
+ * and can be uninstalled (a failed or interrupted install can be "cleaned up"); after an uninstall
+ * the `UninstallReport` shows what was removed, what was kept and why. An install still in progress
+ * (`plugin.install_in_progress`) gets a friendly explanation.
  */
 export default function AppsPage() {
   return <OrgGate>{(orgId) => <Apps key={orgId} orgId={orgId} />}</OrgGate>;
@@ -90,7 +92,7 @@ function InstallCard({
     } catch (e) {
       setConfirm(false);
       setError(
-        e instanceof ApiClientError && e.code === "app.install_in_progress"
+        e instanceof ApiClientError && e.code === "plugin.install_in_progress"
           ? t("inProgress")
           : errorMessage(e),
       );

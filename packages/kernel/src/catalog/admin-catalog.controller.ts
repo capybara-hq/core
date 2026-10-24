@@ -17,7 +17,7 @@ import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
-import { APP_IMPORT, CATALOG, ORG_CATALOG } from "../http/tokens.js";
+import { CATALOG, ORG_CATALOG, PLUGIN_IMPORT } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -26,7 +26,6 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { AppConfirmResult, AppImport, AppReview } from "./app-import.js";
 import {
   type ActorOpts,
   CATALOG_LIST_MAX_LIMIT,
@@ -36,6 +35,7 @@ import {
 } from "./catalog.service.js";
 import { sendCatalogIcon } from "./org-catalog.controller.js";
 import type { OrgCatalogService } from "./org-catalog.service.js";
+import type { PluginConfirmResult, PluginImport, PluginReview } from "./plugin-import.js";
 
 const NpmBody = z.object({
   package: z.string().min(1).max(214),
@@ -72,7 +72,7 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 export class AdminCatalogController {
   constructor(
     @Inject(CATALOG) private readonly catalog: CatalogService,
-    @Inject(APP_IMPORT) private readonly apps: AppImport,
+    @Inject(PLUGIN_IMPORT) private readonly pluginImport: PluginImport,
     @Inject(ORG_CATALOG) private readonly orgCatalog: OrgCatalogService,
   ) {}
 
@@ -124,16 +124,16 @@ export class AdminCatalogController {
    * App package (npm-pack tgz, raw bytes, `application/octet-stream`, limit `packages.maxBytes`):
    * parses app.yaml, fetches each plugin from npm by the lock and verifies its sha512, checks the
    * templates and skills, and once everything passes stages it for 24 hours and returns one review.
-   * Invalid manifest -> 400 `app.invalid_manifest`; lock sha512 mismatch -> 502 `app.lock_mismatch`;
-   * a builtin / config-declared plugin outside the range -> 409 `app.plugin_conflict`; not an app
-   * package -> 409 `catalog.wrong_kind`.
+   * Invalid manifest -> 400 `plugin.invalid_manifest`; lock sha512 mismatch -> 502
+   * `plugin.lock_mismatch`; a builtin / config-declared plugin outside the range -> 409
+   * `plugin.extension_conflict`; not an app package -> 409 `catalog.wrong_kind`.
    */
   @Post("apps/prepare/file")
   @HttpCode(200)
   async prepareAppFile(
     @CurrentPrincipal() principal: Principal,
     @Req() req: { body?: unknown },
-  ): Promise<{ stagingId: string; review: AppReview }> {
+  ): Promise<{ stagingId: string; review: PluginReview }> {
     const actor = requireUser(principal);
     const body = req.body;
     if (!Buffer.isBuffer(body) || body.byteLength === 0) {
@@ -142,7 +142,7 @@ export class AdminCatalogController {
         "Send the app package (.tgz) as the request body with content-type application/octet-stream",
       );
     }
-    const r = await this.apps.prepare(
+    const r = await this.pluginImport.prepare(
       actor.account.id,
       new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
       { kind: "file", ref: "upload" },
@@ -157,9 +157,9 @@ export class AdminCatalogController {
   prepareAppNpm(
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodPipe(NpmBody)) body: z.infer<typeof NpmBody>,
-  ): Promise<{ stagingId: string; review: AppReview }> {
+  ): Promise<{ stagingId: string; review: PluginReview }> {
     const actor = requireUser(principal);
-    return this.apps.prepareNpm(
+    return this.pluginImport.prepareNpm(
       actor.account.id,
       { package: body.package, ...(body.version !== undefined && { version: body.version }) },
       actorOpts(actor),
@@ -175,8 +175,8 @@ export class AdminCatalogController {
    * snapshot was restored to the old version, so install, approve, then enable. A foreseeable failure
    * (downgrade to a version with unrun migrations) is a 409 `extension.downgrade_unsupported` before
    * anything is written.
-   * Staging missing or expired -> 404 `app.staging_not_found`; `reviewHash` differs or the plugins on
-   * the deployment changed -> 409 `app.review_stale`.
+   * Staging missing or expired -> 404 `plugin.staging_not_found`; `reviewHash` differs or the
+   * plugins on the deployment changed -> 409 `plugin.review_stale`.
    */
   @Post("apps/:stagingId/confirm")
   @HttpCode(201)
@@ -184,9 +184,9 @@ export class AdminCatalogController {
     @CurrentPrincipal() principal: Principal,
     @Param("stagingId") stagingId: string,
     @Body(new ZodPipe(ConfirmBody)) body: z.infer<typeof ConfirmBody>,
-  ): Promise<AppConfirmResult> {
+  ): Promise<PluginConfirmResult> {
     const actor = requireUser(principal);
-    return this.apps.confirm(actor.account.id, stagingId, body, actorOpts(actor));
+    return this.pluginImport.confirm(actor.account.id, stagingId, body, actorOpts(actor));
   }
 
   /**

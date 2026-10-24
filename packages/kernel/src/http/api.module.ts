@@ -10,8 +10,6 @@ import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsService } from "../agents/agents.service.js";
 import { ModelsController } from "../agents/models.controller.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
-import type { AppImport } from "../catalog/app-import.js";
-import { AppInstaller } from "../catalog/app-install.js";
 import type { CatalogService } from "../catalog/catalog.service.js";
 import { MarketplacesController } from "../catalog/marketplaces.controller.js";
 import type { MarketplacesService } from "../catalog/marketplaces.service.js";
@@ -20,6 +18,8 @@ import {
   OrgCatalogController,
 } from "../catalog/org-catalog.controller.js";
 import { OrgCatalogService } from "../catalog/org-catalog.service.js";
+import type { PluginImport } from "../catalog/plugin-import.js";
+import { PluginInstaller } from "../catalog/plugin-install.js";
 import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
@@ -111,8 +111,6 @@ import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
-  APP_IMPORT,
-  APP_INSTALLER,
   APPROVALS,
   ATTACHMENTS,
   CATALOG,
@@ -153,6 +151,8 @@ import {
   PLUGIN_ADMIN,
   PLUGIN_ADMIN_OPS,
   PLUGIN_DEPLOYMENT_CONFIGS,
+  PLUGIN_IMPORT,
+  PLUGIN_INSTALLER,
   PLUGIN_INSTALLS,
   PRICES,
   PROVIDER_REGISTRY,
@@ -230,8 +230,8 @@ export interface ApiDeps {
   extensionDeploymentConfigs: ExtensionDeploymentConfigService;
   /** The enterprise catalog (the same instance as `Kernel.catalog`). */
   catalog: CatalogService;
-  /** 应用包导入（与 `Kernel.apps` 同一实例）。 */
-  apps: AppImport;
+  /** Plugin (app bundle) import (the same instance as `Kernel.pluginImport`). */
+  pluginImport: PluginImport;
   /** Marketplaces (the same instance as `Kernel.marketplaces`). */
   marketplaces: MarketplacesService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
@@ -379,7 +379,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: PLUGIN_ADMIN_OPS, useValue: deps.extensionAdminOps },
     { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.extensionDeploymentConfigs },
     { provide: CATALOG, useValue: deps.catalog },
-    { provide: APP_IMPORT, useValue: deps.apps },
+    { provide: PLUGIN_IMPORT, useValue: deps.pluginImport },
     { provide: MARKETPLACES, useValue: deps.marketplaces },
     {
       provide: TRAJECTORIES,
@@ -445,9 +445,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [CATALOG_REQUESTS],
     },
     {
-      provide: APP_INSTALLER,
+      provide: PLUGIN_INSTALLER,
       useFactory: (db: KernelDb, connectors: ConnectorsService, requests: CatalogRequestsService) =>
-        new AppInstaller({
+        new PluginInstaller({
           db,
           storage: deps.storage,
           host: deps.host,
@@ -467,7 +467,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         db: KernelDb,
         connectors: ConnectorsService,
         requests: CatalogRequestsService,
-        apps: AppInstaller,
+        pluginInstaller: PluginInstaller,
       ) =>
         new OrgCatalogService({
           db,
@@ -478,9 +478,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           skills: deps.skills,
           orgConfigs: deps.orgExtensionConfigs,
           requests,
-          apps,
+          pluginInstaller,
         }),
-      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, APP_INSTALLER],
+      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, PLUGIN_INSTALLER],
     },
     {
       provide: CONVERSATIONS,

@@ -317,7 +317,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     expect(r.statusCode, r.body).toBe(403);
     expect(r.json().error.code).toBe("catalog.item_disabled");
     expect(r.json().error.message).toContain("todo");
-    expect(await env.db.selectFrom("app_installs").select("id").execute()).toEqual([]);
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
     // 直接启用同样不行（没有来源行也一样）
     const direct = await env.boss({
       method: "PUT",
@@ -340,10 +340,10 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     const ok = await install(env.boss, env, appId);
     expect(ok.statusCode, ok.body).toBe(201);
     const comps = await env.db
-      .selectFrom("app_install_components")
+      .selectFrom("plugin_install_components")
       .select(["kind", "ref", "created"])
       .execute();
-    expect(comps).toEqual([{ kind: "plugin", ref: "todo", created: false }]);
+    expect(comps).toEqual([{ kind: "extension", ref: "todo", created: false }]);
   });
 
   it("可选插件：没装到部署时列表可装，安装跳过它与用到它的模板并在结果里列出（M-3）", async () => {
@@ -434,7 +434,8 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
       .where("name", "=", "dirplug")
       .executeTakeFirstOrThrow();
     expect(row.catalog_item_id).toBe(pluginItem);
-    // 一个应用也把它带进了部署（应用包确认时登记来源，见 app-import.test）
+    // A plugin (app) brought it into the deployment too (the source is recorded at confirm, see
+    // plugin-import.test)
     const appId = await seedApp(env, { templates: false, plugins: ["dirplug"], skills: [] });
     await env.db
       .insertInto("extension_catalog_sources")
